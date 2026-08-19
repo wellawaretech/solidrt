@@ -12,7 +12,7 @@ fn tree_with_entry(entry: TransitionEntry) -> RenderTree {
   tree.create_node(2, Rectangle::default().no_layout());
   tree.insert_node(1, 2, None);
   tree.edit(2, |el| {
-    el.transitions = Some(Box::new(TransitionConfig { props: vec![], all: Some(entry) }));
+    el.transitions = Some(Box::new(TransitionConfig { props: vec![], all: Some(entry), stagger_ms: None }));
     Damage::None
   });
   tree
@@ -141,7 +141,7 @@ fn mount_writes_snap() {
   let mut tree = RenderTree::new();
   tree.create_node(2, Rectangle::default().no_layout());
   tree.edit(2, |el| {
-    el.transitions = Some(Box::new(TransitionConfig { props: vec![], all: Some(LINEAR_100.into()) }));
+    el.transitions = Some(Box::new(TransitionConfig { props: vec![], all: Some(LINEAR_100.into()), stagger_ms: None }));
     Damage::None
   });
   // Not inserted yet: the write is not consumed, the normal path snaps it.
@@ -179,7 +179,7 @@ fn attached_geometry_is_not_animatable() {
   tree.create_node(2, Rectangle::default().with_layout());
   tree.insert_node(1, 2, None);
   tree.edit(2, |el| {
-    el.transitions = Some(Box::new(TransitionConfig { props: vec![], all: Some(LINEAR_100.into()) }));
+    el.transitions = Some(Box::new(TransitionConfig { props: vec![], all: Some(LINEAR_100.into()), stagger_ms: None }));
     Damage::None
   });
   assert!(!tree.transition_write(2, AnimProp::X, Some(scalar(80.0))));
@@ -294,7 +294,7 @@ fn batched_advance_bumps_revision_once() {
   tree.create_node(3, Rectangle::default().no_layout());
   tree.insert_node(1, 3, None);
   tree.edit(3, |el| {
-    el.transitions = Some(Box::new(TransitionConfig { props: vec![], all: Some(LINEAR_100.into()) }));
+    el.transitions = Some(Box::new(TransitionConfig { props: vec![], all: Some(LINEAR_100.into()), stagger_ms: None }));
     Damage::None
   });
   tree.set_transition_now(0.0);
@@ -383,6 +383,7 @@ fn enter_from_animates_first_attach_only() {
         TransitionEntry { spec: LINEAR_100, delay_ms: 0.0, from: Some(scalar(100.0)), exit: None },
       )],
       all: None,
+      stagger_ms: None,
     }));
     match &mut el.kind {
       ElementKind::Rectangle(r) => r.set_x(40.0),
@@ -420,6 +421,7 @@ fn enter_from_with_delay_holds_at_from() {
         TransitionEntry { spec: LINEAR_100, delay_ms: 50.0, from: Some(scalar(100.0)), exit: None },
       )],
       all: None,
+      stagger_ms: None,
     }));
     match &mut el.kind {
       ElementKind::Rectangle(r) => r.set_x(40.0),
@@ -447,7 +449,8 @@ fn tree_with_exit_rect(entry: TransitionEntry) -> RenderTree {
   tree.create_node(2, Rectangle::default().no_layout());
   tree.insert_node(1, 2, None);
   tree.edit(2, |el| {
-    el.transitions = Some(Box::new(TransitionConfig { props: vec![(AnimProp::X, entry)], all: None }));
+    el.transitions =
+      Some(Box::new(TransitionConfig { props: vec![(AnimProp::X, entry)], all: None, stagger_ms: None }));
     Damage::None
   });
   tree
@@ -538,4 +541,142 @@ fn exit_with_delay_holds_then_leaves() {
   tree.set_transition_now(150.0);
   tree.advance_transitions();
   assert!(tree.try_node(2).is_none(), "freed after the delayed exit settles");
+}
+
+// Group stagger: a `stagger` declaration on an ancestor spreads descendant
+// enters and exits across time, index * stagger_ms each, counted per frame.
+
+fn entry_from_100() -> TransitionEntry {
+  TransitionEntry { spec: LINEAR_100, delay_ms: 0.0, from: Some(scalar(100.0)), exit: None }
+}
+
+// A root view marked as a stagger group (50ms), with `n` detached rects
+// mounted at x=40 whose transition enters from 100.
+fn tree_with_stagger_group(n: u64) -> RenderTree {
+  let mut tree = RenderTree::new();
+  tree.set_transition_now(0.0);
+  tree.create_node(1, View::default().with_layout());
+  tree.edit(1, |el| {
+    el.transitions = Some(Box::new(TransitionConfig { props: vec![], all: None, stagger_ms: Some(50.0) }));
+    Damage::None
+  });
+  for id in 10..10 + n {
+    tree.create_node(id, Rectangle::default().no_layout());
+    tree.edit(id, |el| {
+      el.transitions =
+        Some(Box::new(TransitionConfig { props: vec![(AnimProp::X, entry_from_100())], all: None, stagger_ms: None }));
+      match &mut el.kind {
+        ElementKind::Rectangle(r) => r.set_x(40.0),
+        _ => unreachable!(),
+      }
+    });
+    tree.insert_node(1, id, None);
+  }
+  tree
+}
+
+#[test]
+fn stagger_spreads_group_enters() {
+  let mut tree = tree_with_stagger_group(3);
+  // All three sit at `from` after the mount.
+  for id in 10..13 {
+    assert_eq!(rect_x(&tree, id), 100.0, "node {id} snapped to from");
+  }
+  // 25ms in: only the first (index 0, no extra delay) moves.
+  tree.set_transition_now(25.0);
+  tree.advance_transitions();
+  assert!(rect_x(&tree, 10) < 100.0, "first item moves immediately");
+  assert_eq!(rect_x(&tree, 11), 100.0, "second item held (50ms)");
+  assert_eq!(rect_x(&tree, 12), 100.0, "third item held (100ms)");
+  // 60ms activates the second; by 90ms it moves while the third holds.
+  tree.set_transition_now(60.0);
+  tree.advance_transitions();
+  tree.set_transition_now(90.0);
+  tree.advance_transitions();
+  assert!(rect_x(&tree, 11) < 100.0, "second item cascades in");
+  assert_eq!(rect_x(&tree, 12), 100.0, "third item still held");
+  // 110ms activates the third; everyone settles on the mounted value.
+  tree.set_transition_now(110.0);
+  tree.advance_transitions();
+  tree.set_transition_now(140.0);
+  tree.advance_transitions();
+  assert!(rect_x(&tree, 12) < 100.0, "third item cascades in last");
+  tree.set_transition_now(300.0);
+  assert!(!tree.advance_transitions());
+  for id in 10..13 {
+    assert_eq!(rect_x(&tree, id), 40.0, "node {id} settled");
+  }
+}
+
+#[test]
+fn stagger_counts_per_frame() {
+  let mut tree = tree_with_stagger_group(1);
+  // A second child mounted on a LATER frame starts its own count at zero:
+  // no accumulated delay from the earlier mount.
+  tree.set_transition_now(16.0);
+  tree.create_node(20, Rectangle::default().no_layout());
+  tree.edit(20, |el| {
+    el.transitions =
+      Some(Box::new(TransitionConfig { props: vec![(AnimProp::X, entry_from_100())], all: None, stagger_ms: None }));
+    match &mut el.kind {
+      ElementKind::Rectangle(r) => r.set_x(40.0),
+      _ => unreachable!(),
+    }
+  });
+  tree.insert_node(1, 20, None);
+  tree.set_transition_now(30.0);
+  tree.advance_transitions();
+  assert!(rect_x(&tree, 20) < 100.0, "index restarted at 0: moves without a held delay");
+}
+
+#[test]
+fn stagger_spreads_group_exits() {
+  let mut tree = RenderTree::new();
+  tree.set_transition_now(0.0);
+  tree.create_node(1, View::default().with_layout());
+  tree.edit(1, |el| {
+    el.transitions = Some(Box::new(TransitionConfig { props: vec![], all: None, stagger_ms: Some(50.0) }));
+    Damage::None
+  });
+  for id in 10..13 {
+    tree.create_node(id, Rectangle::default().no_layout());
+    tree.edit(id, |el| {
+      el.transitions =
+        Some(Box::new(TransitionConfig { props: vec![(AnimProp::X, EXIT_200)], all: None, stagger_ms: None }));
+      Damage::None
+    });
+    tree.insert_node(1, id, None);
+  }
+  // Remove all three in one tick (a list teardown).
+  tree.set_transition_now(1000.0);
+  for id in 10..13 {
+    tree.detach_node(1, id);
+    tree.destroy_node(id);
+  }
+  // First item exits immediately; the others hold their slots.
+  tree.set_transition_now(1025.0);
+  tree.advance_transitions();
+  assert!(rect_x(&tree, 10) > 0.0, "first item exits immediately");
+  assert_eq!(rect_x(&tree, 11), 0.0, "second item holds (50ms)");
+  assert_eq!(rect_x(&tree, 12), 0.0, "third item holds (100ms)");
+  // 1060 activates the second, 1105 the third; the first frees at 1100+.
+  tree.set_transition_now(1060.0);
+  tree.advance_transitions();
+  tree.set_transition_now(1085.0);
+  tree.advance_transitions();
+  assert!(rect_x(&tree, 11) > 0.0, "second item cascades out");
+  assert_eq!(rect_x(&tree, 12), 0.0, "third item still holds");
+  tree.set_transition_now(1105.0);
+  tree.advance_transitions();
+  assert!(tree.try_node(10).is_none(), "first item left first");
+  tree.set_transition_now(1130.0);
+  tree.advance_transitions();
+  assert!(tree.try_node(12).is_some(), "third item still exiting");
+  assert!(rect_x(&tree, 12) > 0.0 && rect_x(&tree, 12) < 200.0, "third item mid-flight, got {}", rect_x(&tree, 12));
+  tree.set_transition_now(1300.0);
+  tree.advance_transitions();
+  for id in 10..13 {
+    assert!(tree.try_node(id).is_none(), "node {id} freed after its slot in the cascade");
+  }
+  assert!(tree.node(1).children.is_empty());
 }

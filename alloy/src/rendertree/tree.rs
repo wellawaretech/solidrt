@@ -146,6 +146,12 @@ impl RenderTree {
         None => return,
       }
     };
+    if entries.is_empty() {
+      return;
+    }
+    // One stagger index per node, shared by all its entering properties, so
+    // a multi-property enter moves as one item of the cascade.
+    let stagger = self.stagger_delay_for(node_id, false);
     let now = self.transitions.now_ms;
     for (prop, entry) in entries {
       let Some(from) = entry.from else { continue };
@@ -155,8 +161,9 @@ impl RenderTree {
       }
       let damage = self.nodes.get_mut(&node_id).map(|el| el.set_anim_value(prop, from)).unwrap_or(Damage::None);
       self.apply_damage(node_id, damage);
-      if entry.delay_ms > 0.0 {
-        let at_ms = now + entry.delay_ms as f64;
+      let delay_ms = entry.delay_ms + stagger;
+      if delay_ms > 0.0 {
+        let at_ms = now + delay_ms as f64;
         self.transitions.schedule(PendingWrite { node: node_id, prop, to: target, spec: entry.spec, at_ms });
       } else {
         self.transitions.retarget(node_id, prop, from, target, entry.spec);
@@ -215,6 +222,8 @@ impl RenderTree {
     if entries.is_empty() {
       return false;
     }
+    // One stagger index per node, shared by all its exiting properties.
+    let stagger = self.stagger_delay_for(node_id, true);
     let now = self.transitions.now_ms;
     let mut started = false;
     for (prop, entry) in entries {
@@ -223,8 +232,9 @@ impl RenderTree {
       if std::mem::discriminant(&current) != std::mem::discriminant(&to) {
         continue;
       }
-      if entry.delay_ms > 0.0 {
-        let at_ms = now + entry.delay_ms as f64;
+      let delay_ms = entry.delay_ms + stagger;
+      if delay_ms > 0.0 {
+        let at_ms = now + delay_ms as f64;
         self.transitions.schedule(PendingWrite { node: node_id, prop, to, spec: entry.spec, at_ms });
         started = true;
       } else {
@@ -346,6 +356,24 @@ impl RenderTree {
   /// pause/scale/step semantics ride in through this value.
   pub fn set_transition_now(&mut self, now_ms: f64) {
     self.transitions.now_ms = now_ms;
+    // Stagger indices are per frame: each stamp opens a fresh count.
+    self.transitions.reset_stagger();
+  }
+
+  /// The extra delay a stagger group imposes on this node's lifecycle event
+  /// (enter when `exit` is false, exit when true): `index * stagger_ms` under
+  /// the nearest ancestor declaring `stagger`, zero without one. Counting is
+  /// per group per frame, in occurrence order.
+  fn stagger_delay_for(&mut self, node_id: u64, exit: bool) -> f32 {
+    let mut cursor = self.nodes.get(&node_id).and_then(|el| el.parent);
+    while let Some(id) = cursor {
+      let Some(el) = self.nodes.get(&id) else { break };
+      if let Some(stagger_ms) = el.transitions.as_ref().and_then(|t| t.stagger_ms) {
+        return self.transitions.stagger_index(id, exit) as f32 * stagger_ms;
+      }
+      cursor = el.parent;
+    }
+    0.0
   }
 
   /// A property write arriving for an animatable property: consume it as a

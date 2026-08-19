@@ -129,6 +129,31 @@ tests/properties.rs):
 - Re-showing mid-exit mounts a fresh node (Solid semantics): briefly the
   old one leaves while the new one enters, AnimatePresence-style.
 
+## Status: group stagger landed (2026-08-19)
+
+`stagger` (ms) as a top-level transition key makes an element a stagger
+group (Framer Motion's staggerChildren, SolidRT-shaped): every descendant
+enter (`from`) or exit that begins in the same frame under it gets
+`index * stagger` of extra delay, indexed in occurrence order. Verified
+live with paused-clock stepping: three chips mounted by one <Show> cascade
+in 80ms apart and cascade back out on removal, freed in order.
+
+- Counters live on the tree, keyed (group, enter|exit), and reset at every
+  clock stamp - a batch mounted in one tick cascades, later frames start at
+  zero, and a same-tick swap (N exits + M enters) runs two clean cascades.
+- One index per node, shared by all its lifecycle properties, so a
+  multi-property enter/exit moves as one item of the cascade.
+- Nearest declaring ancestor wins; nested groups never compound. The group
+  orchestrates descendants only: its own lifecycle is staggered by ITS
+  ancestors, and ordinary property writes never stagger.
+- The added delay IS the delay mechanism, so pause/scale/step govern it,
+  per-entry `delay` adds on top, and the exit gate already waits for
+  staggered exits. One behavioral consequence: a staggered exit whose value
+  already sits on target holds its cascade slot and frees at activation
+  (instead of instantly), keeping the cascade timing coherent.
+- Left for later if ever wanted: `staggerDirection: -1` (last-out-first)
+  and a Framer-style `delayChildren` base (per-entry `delay` covers it).
+
 Nothing remains; see "Deliberately out of scope" for what was consciously
 excluded.
 

@@ -376,6 +376,25 @@ fn transition_exit_decodes_per_property_only() {
 }
 
 #[test]
+fn transition_stagger_decodes_and_validates() {
+  let mut el = Element::from_kind("view").expect("known kind");
+  // A pure group declaration: stagger with no property entries.
+  apply_el(&mut el, "transition", map(&[("stagger", num(60.0))])).expect("stagger applies");
+  assert_eq!(el.transitions.as_ref().expect("config set").stagger_ms, Some(60.0));
+  // And alongside entries.
+  let cfg = map(&[("stagger", num(80.0)), ("opacity", map(&[("duration", num(200.0))]))]);
+  apply_el(&mut el, "transition", cfg).expect("stagger + entries");
+  let config = el.transitions.as_ref().expect("config set");
+  assert_eq!(config.stagger_ms, Some(80.0));
+  assert_eq!(config.props.len(), 1);
+
+  let bad = apply_el(&mut el, "transition", map(&[("stagger", num(0.0))])).unwrap_err();
+  assert!(bad.contains("stagger: must be a positive number"), "{bad}");
+  let not_num = apply_el(&mut el, "transition", map(&[("stagger", text("fast"))])).unwrap_err();
+  assert!(not_num.contains("stagger: must be a number"), "{not_num}");
+}
+
+#[test]
 fn transition_null_clears() {
   let mut el = Element::from_kind("d-rect").expect("known kind");
   let cfg = map(&[("x", map(&[("duration", num(300.0))]))]);

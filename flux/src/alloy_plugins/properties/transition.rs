@@ -67,20 +67,37 @@ pub fn anim_prop_name(prop: AnimProp) -> &'static str {
 /// The spring is the default: naming a `curve` is what opts into a tween,
 /// and a bare `{ duration }` is a critically damped (bounce 0) spring.
 /// A bare string is the `all` catch-all: `transition="300ms ease-out"`.
-/// Durations and delays are milliseconds. `null` clears the declaration.
+/// A `stagger` key (ms) makes the element a stagger group for descendant
+/// enters and exits. Durations and delays are milliseconds. `null` clears
+/// the declaration.
 pub fn decode(value: &PropValue) -> Result<Option<Box<TransitionConfig>>, String> {
   if value.is_null() {
     return Ok(None);
   }
   if let Some(s) = value.as_str() {
-    return Ok(Some(Box::new(TransitionConfig { props: vec![], all: Some(parse_shorthand("transition", s)?) })));
+    return Ok(Some(Box::new(TransitionConfig {
+      props: vec![],
+      all: Some(parse_shorthand("transition", s)?),
+      stagger_ms: None,
+    })));
   }
   let entries = value.as_map().ok_or_else(|| {
     format!("transition must be a shorthand string or an object keyed by property name, got {}", describe(value))
   })?;
   let mut config = TransitionConfig::default();
   for (key, entry_value) in entries {
-    if key == "all" {
+    if key == "stagger" {
+      // Group stagger: descendant enters/exits beginning in the same frame
+      // under this element get index * stagger ms of extra delay.
+      let n = entry_value
+        .as_f64()
+        .ok_or_else(|| format!("transition.stagger: must be a number of ms, got {}", describe(entry_value)))?
+        as f32;
+      if !(n > 0.0 && n.is_finite()) {
+        return Err(format!("transition.stagger: must be a positive number of ms, got {n}"));
+      }
+      config.stagger_ms = Some(n);
+    } else if key == "all" {
       config.all = Some(decode_entry(key, entry_value, None)?);
     } else {
       let prop = anim_prop(key).ok_or_else(|| format!("transition.{key}: '{key}' is not an animatable property"))?;
@@ -132,7 +149,7 @@ fn decode_entry(key: &str, value: &PropValue, prop: Option<AnimProp>) -> Result<
     }
   };
   let delay_ms = decode_delay(&at, value.get("delay"))?;
-  let mut endpoint = |key: &str| -> Result<Option<AnimValue>, String> {
+  let endpoint = |key: &str| -> Result<Option<AnimValue>, String> {
     match value.get(key) {
       None => Ok(None),
       Some(v) => {

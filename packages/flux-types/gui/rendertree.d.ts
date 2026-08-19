@@ -84,10 +84,16 @@ declare module "flux:rendertree" {
   /**
    * Unlink `nodeId` from `parentId` but keep its subtree alive, so it can be
    * re-inserted elsewhere (a move). Mirrors DOM removeChild. Pair with
-   * {@link destroyNode} once the node is confirmed dead.
+   * {@link destroyNode} once the node is confirmed dead. Divergence: a node
+   * whose `transition` declares `exit` values stays linked and animates them
+   * first; the unlink happens when the exit settles, and a re-insert before
+   * then abandons it (moves never play removal animations).
    */
   export function detachNode(parentId: number, nodeId: number): void
-  /** Free `nodeId` and its whole subtree. Call after {@link detachNode}. */
+  /**
+   * Free `nodeId` and its whole subtree. Call after {@link detachNode}. A
+   * node mid-exit is freed when its exit animation settles instead.
+   */
   export function destroyNode(nodeId: number): void
   /**
    * Write a single property on a node; `value` is marshalled per property.
@@ -155,8 +161,8 @@ declare module "flux:rendertree" {
   export function getBoundingBoxViewport(id: number): { x: number, y: number, width: number, height: number } | null
   /**
    * Parses a CSS color string (hex, rgb()/rgba(), hsl()/hsla(), hwb(),
-   * named colors) into the packed 0xRRGGBBAA u32 the color property's wire
-   * format uses. Throws on an invalid string.
+   * named colors) into packed 0xRRGGBBAA form (which the color property
+   * also accepts alongside plain CSS strings). Throws on an invalid string.
    */
   export function parseColor(color: string): number
   /**

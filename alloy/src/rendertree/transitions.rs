@@ -181,10 +181,19 @@ impl From<TransitionSpec> for TransitionEntry {
 /// The transition declaration an element carries: per-property entries plus
 /// an `all` catch-all. Applies to writes from the moment it is set; it does
 /// not retroactively affect running tracks.
+///
+/// `stagger_ms` makes the element a stagger group: every descendant enter
+/// (`from`) or exit that begins in the same frame under this element gets
+/// `index * stagger_ms` of extra delay, indexed in occurrence order (enters
+/// and exits count separately). The nearest declaring ancestor wins; nested
+/// groups never compound. It orchestrates descendants only - the element's
+/// own lifecycle is staggered by ITS ancestors, and ordinary property
+/// writes never stagger.
 #[derive(Clone, Debug, Default)]
 pub struct TransitionConfig {
   pub props: Vec<(AnimProp, TransitionEntry)>,
   pub all: Option<TransitionEntry>,
+  pub stagger_ms: Option<f32>,
 }
 
 impl TransitionConfig {
@@ -369,11 +378,30 @@ pub struct Transitions {
   // (node, prop) pairs whose track settled, awaiting the embedder's drain
   // (the onTransitionEnd dispatch). Cancelled tracks never land here.
   pub settled: Vec<(u64, AnimProp)>,
+  // Per-frame stagger counters, keyed by (group ancestor, is_exit): how many
+  // descendant enters/exits the group has seen this frame. Cleared at every
+  // clock stamp (tree.rs set_transition_now), so a batch mounted in one tick
+  // cascades and later frames start their own count at zero.
+  stagger_counts: std::collections::HashMap<(u64, bool), u32>,
 }
 
 impl Transitions {
   pub fn is_empty(&self) -> bool {
     self.tracks.is_empty() && self.pending.is_empty()
+  }
+
+  /// The next stagger index for a lifecycle event under `group` this frame
+  /// (post-incremented). Enters and exits count separately, so a swap that
+  /// removes and mounts in one tick runs two clean cascades.
+  pub fn stagger_index(&mut self, group: u64, exit: bool) -> u32 {
+    let count = self.stagger_counts.entry((group, exit)).or_insert(0);
+    let index = *count;
+    *count += 1;
+    index
+  }
+
+  pub fn reset_stagger(&mut self) {
+    self.stagger_counts.clear();
   }
 
   /// Hold a delayed write until its activation time. One hold per

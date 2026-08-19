@@ -496,7 +496,18 @@ export interface TransitionProps {
    * declaration; already-running animations finish.
    */
   transition?:
-    | ({ all?: Omit<TransitionSpring, "from" | "exit"> | Omit<TransitionTween, "from" | "exit"> | TransitionShorthand } & {
+    | ({
+        all?: Omit<TransitionSpring, "from" | "exit"> | Omit<TransitionTween, "from" | "exit"> | TransitionShorthand
+        /**
+         * Group stagger (ms): every descendant enter (`from`) or exit that
+         * begins in the same frame under this element gets `index * stagger`
+         * of extra delay, in occurrence order (enters and exits cascade
+         * separately). Nearest declaring ancestor wins; it orchestrates
+         * descendants only - ordinary writes and this element's own
+         * lifecycle are unaffected. Adds on top of a per-entry `delay`.
+         */
+        stagger?: number
+      } & {
         [P in TransitionPropName]?: Transition
       })
     | TransitionShorthand
