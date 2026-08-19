@@ -109,8 +109,8 @@ what it delivered is documented in `packages/3d/AGENTS.md`, not here.
     layouts (tangents, skin weights) when items 7 and 16 force them. The
     direction stays a small set of named layouts, not an open
     BufferGeometry-style model.
-20. [ ] **Geometry as data: transform, merge, public bounds.** Library:
-    [3d-geometry-ops](../backlog/3d-geometry-ops.md). Sits here rather than
+20. [x] **Geometry as data: transform, merge, public bounds.** Library:
+    [3d-geometry-ops](../done/3d-geometry-ops.md) (shipped 2026-08-19). Sits here rather than
     at the end of the list because it ranks with the other geometry work and
     ids are permanent, not positional. The generators build geometry and
     nothing can move or combine it, so a static scene costs one node, one

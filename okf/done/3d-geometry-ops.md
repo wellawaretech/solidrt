@@ -45,10 +45,8 @@ rayBoxDistance(...)                      // exists at bvh.ts:45, not exported
 
 ## Adjacent, smaller
 
-`withColors` throws on anything but standard-layout input and copies into a
-fresh buffer, so building coloured geometry always generates twice. Either a
-`layout` option on the generators or a `colored: true` flag would remove the
-copy.
+The withColors double-generation cost is not part of this item; it is its own
+backlog entry: [3d-colored-generators](../backlog/3d-colored-generators.md).
 
 ## Why the ray helper rides along
 
@@ -62,3 +60,16 @@ unaffected.
 
 Ranked as item 20 in [3d-roadmap](../notes/3d-roadmap.md). Demand recorded
 2026-08-17.
+
+## Shipped 2026-08-19
+
+`transformGeometry(geometry, transform, label?)` and
+`mergeGeometries(parts, label?)` in `packages/3d/src/geometry.ts`;
+`geometryBounds` and `rayBoxDistance` exported from the package root. The
+transform takes the setTransform shape (`TransformUpdate`, shared with setTransform via math.ts: position,
+rotation XOR quaternion, scale as number or Vec3) rather than a Mat4; a
+matrix form can widen it if a consumer appears. To keep geometry.ts a pure
+module (so the new `checks/geometry-check.ts` rig runs headless on flux),
+the two GPU-touching functions (`geometryBuffers`, `disposeGeometry`) moved
+to `geometry-gpu.ts`. Documented in `packages/3d/AGENTS.md`.
+

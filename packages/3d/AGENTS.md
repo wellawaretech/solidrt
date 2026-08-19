@@ -45,7 +45,7 @@ blendMode and pointer events like any element. Design rationale:
   (unlit color, unlit map, each opaque or transparent), `depth: true` +
   `cull: "back"`; an instance is
   just per-entry uniforms (`uColor`) and bindings (`uMap`).
-- The pure pieces (`math.ts`, `bvh.ts`, `order.ts`) have check rigs in
+- The pure pieces (`math.ts`, `bvh.ts`, `order.ts`, `geometry.ts`) have check rigs in
   `checks/`, run headless on flux from the repo root:
   `bunx srt bundle -f --stdout packages/3d/checks/<name>-check.ts | target/release/flux - [seed]`.
   They print PASS or FAIL lines and throw on failure (the flux binary exits
@@ -160,6 +160,25 @@ from the buffer itself - so a packer that bakes transforms while writing
 hands the baker world-space vertices. `fill` indexes relative to
 `first`. It trusts the buffer's layout (no tag to check); withColors is
 the checked path.
+
+Geometry as data: `transformGeometry(geometry, { position?, rotation?,
+quaternion?, scale? }, label?)` bakes a placement into a copy (the
+setTransform shape: Euler XYZ radians or a quaternion, number = uniform
+scale), positions through the matrix and normals through its
+inverse-transpose, renormalized - correct under non-uniform scale; uvs,
+colors, indices and layout copy through. `mergeGeometries(parts, label?)`
+concatenates parts into one geometry with offset indices (uint32 past 64k
+vertices); parts must share one layout, a mixed list throws. Together
+they collapse a static scene to one mesh per material - transform each
+part into place, merge, draw once - so only what actually moves keeps a
+node, a draw entry and a per-frame `uModel` write of its own. Both are
+pure array math (Three's `applyMatrix4` + `mergeGeometries`), no GPU
+call, and the source geometries are untouched. `geometryBounds(geometry)`
+returns the cached local AABB `[minX, minY, minZ, maxX, maxY, maxZ]`, and
+`rayBoxDistance(ox, oy, oz, dx, dy, dz, minX, .., maxZ)` is the picking
+slab test (entry t >= 0 in units of the direction's length, 0 from
+inside, -1 for a miss) - for ray-testing boxes you keep yourself
+(triggers, collision volumes) without meshes you do not want to draw.
 
 Profile kit (2D outlines to solids, real texture UVs): a `Profile` is a
 closed XY polygon, bare `[x, y]` points crease, `{ p, smooth }` points

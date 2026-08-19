@@ -12,16 +12,13 @@
 // unused by the unlit materials so the layout is ready for lights without
 // a geometry change (inactive attributes are skipped but keep the stride).
 //
-// GPU buffers are created lazily on first use and shared by every mesh and
-// scene drawing the geometry. They are app-lifetime by design - one
-// geometry commonly outlives the component that first drew it, so
-// owner-scoped auto-free would free a buffer other scenes still draw from.
-// disposeGeometry frees them when an app is done with a geometry for good.
+// Pure module by design - geometry is data, and every function here is
+// array math (the check rig checks/geometry-check.ts runs it headless on
+// flux). The GPU buffer step lives in geometry-gpu.ts.
 
-import { createBuffer, destroyBuffer } from "@solidrt/core/gpu"
-import type { BufferId, IndexFormat, VertexAttribute } from "@solidrt/core/gpu"
-import { add, cross, normalize, sub } from "./math.ts"
-import type { Vec2, Vec3, Vec4 } from "./math.ts"
+import type { BufferId, VertexAttribute } from "@solidrt/core/gpu"
+import { add, compose, cross, mat4, normalize, normalMatrix, sub, updateRotation, updateScale } from "./math.ts"
+import type { Quat, TransformUpdate, Vec2, Vec3, Vec4 } from "./math.ts"
 
 export type VertexLayout = "standard" | "colored"
 
@@ -92,42 +89,6 @@ export function geometryBounds(geometry: Geometry): Float32Array {
     geometry._bounds = bounds
   }
   return bounds
-}
-
-/** The geometry's GPU buffers, created on first use and cached on it,
- * plus the index format the draw entry must bind them with. */
-export function geometryBuffers(geometry: Geometry): {
-  buffer: BufferId
-  index: BufferId
-  indexFormat: IndexFormat
-} {
-  let buffer = geometry._buffer
-  let index = geometry._index
-  if (buffer === undefined || index === undefined) {
-    buffer = createBuffer(geometry.vertices, {
-      autoFree: false,
-      label: geometry.label ? geometry.label + "-verts" : undefined,
-    })
-    index = createBuffer(geometry.indices, {
-      autoFree: false,
-      label: geometry.label ? geometry.label + "-indices" : undefined,
-    })
-    geometry._buffer = buffer
-    geometry._index = index
-  }
-  return { buffer, index, indexFormat: geometry.indices instanceof Uint32Array ? "uint32" : "uint16" }
-}
-
-/**
- * Free the geometry's GPU buffers. Draw entries created from them hold
- * their own reference, so destruction order is safe; the geometry can be
- * used again afterwards (fresh buffers are created on next use).
- */
-export function disposeGeometry(geometry: Geometry): void {
-  if (geometry._buffer !== undefined) destroyBuffer(geometry._buffer)
-  if (geometry._index !== undefined) destroyBuffer(geometry._index)
-  geometry._buffer = undefined
-  geometry._index = undefined
 }
 
 /** Per-vertex aColor values for withColors/fillColors: a flat 4-per-vertex
@@ -208,6 +169,94 @@ export function fillColors(vertices: Float32Array, fill: ColorFill, first = 0, c
     vertices[d + 11] = c[3]
   }
   return vertices
+}
+
+/**
+ * Bake a placement (the setTransform shape: Euler XYZ radians or a
+ * quaternion, not both; number = uniform scale; absent = identity) into a
+ * geometry: a new geometry (the source is
+ * untouched, its GPU buffers stay independent) whose positions are moved
+ * by the transform and whose normals follow through the inverse-transpose,
+ * renormalized - correct under non-uniform scale. UVs, colors, indices and
+ * layout copy through. This is Three's `geometry.applyMatrix4`, the first
+ * half of authoring a static scene as data: transform each part into place,
+ * mergeGeometries the parts, draw one mesh.
+ */
+export function transformGeometry(geometry: Geometry, transform: TransformUpdate, label?: string): Geometry {
+  let rot: Quat = [0, 0, 0, 1]
+  updateRotation(rot, transform, "transformGeometry")
+  let scl: Vec3 = [1, 1, 1]
+  if (transform.scale !== undefined) updateScale(scl, transform.scale)
+  let m = compose(mat4(), transform.position ?? [0, 0, 0], rot, scl)
+  let n = normalMatrix(mat4(), m)
+  let stride = geometry.layout === "colored" ? COLORED_FLOATS : FLOATS_PER_VERTEX
+  let src = geometry.vertices
+  if (src.length % stride !== 0) {
+    throw new Error("transformGeometry: vertex data is not a whole number of " + (geometry.layout ?? "standard") + "-layout vertices")
+  }
+  let out = new Float32Array(src)
+  for (let i = 0; i < out.length; i += stride) {
+    let x = src[i]!, y = src[i + 1]!, z = src[i + 2]!
+    out[i] = m[0] * x + m[4] * y + m[8] * z + m[12]
+    out[i + 1] = m[1] * x + m[5] * y + m[9] * z + m[13]
+    out[i + 2] = m[2] * x + m[6] * y + m[10] * z + m[14]
+    let nx = src[i + 3]!, ny = src[i + 4]!, nz = src[i + 5]!
+    let tx = n[0] * nx + n[4] * ny + n[8] * nz
+    let ty = n[1] * nx + n[5] * ny + n[9] * nz
+    let tz = n[2] * nx + n[6] * ny + n[10] * nz
+    let len = Math.hypot(tx, ty, tz) || 1
+    out[i + 3] = tx / len
+    out[i + 4] = ty / len
+    out[i + 5] = tz / len
+  }
+  return {
+    vertices: out,
+    indices: geometry.indices,
+    layout: geometry.layout,
+    label: label ?? (geometry.label ? geometry.label + "-transformed" : undefined),
+  }
+}
+
+/**
+ * Concatenate geometries into one: vertices appended in order, indices
+ * offset to match, uint32 indices past 64k vertices. Every part must share
+ * one layout - a mixed list throws, because the strides differ and a merge
+ * that picked one would draw garbage, not a mesh missing a channel. The
+ * second half of authoring a static scene as data (Three's
+ * `BufferGeometryUtils.mergeGeometries`): the result is one draw entry and
+ * one uModel write however many parts went in, so only what actually moves
+ * keeps a node of its own.
+ */
+export function mergeGeometries(parts: Geometry[], label?: string): Geometry {
+  if (parts.length === 0) throw new Error("mergeGeometries: no parts")
+  let layout = parts[0]!.layout ?? "standard"
+  let stride = layout === "colored" ? COLORED_FLOATS : FLOATS_PER_VERTEX
+  let floats = 0
+  let indexCount = 0
+  for (let part of parts) {
+    if ((part.layout ?? "standard") !== layout) {
+      throw new Error("mergeGeometries: mixed layouts (" + layout + " and " + (part.layout ?? "standard") + ")")
+    }
+    if (part.vertices.length % stride !== 0) {
+      throw new Error("mergeGeometries: a part's vertex data is not a whole number of " + layout + "-layout vertices")
+    }
+    floats += part.vertices.length
+    indexCount += part.indices.length
+  }
+  let vertexCount = floats / stride
+  let vertices = new Float32Array(floats)
+  let indices = vertexCount > 65535 ? new Uint32Array(indexCount) : new Uint16Array(indexCount)
+  let vOffset = 0
+  let iOffset = 0
+  for (let part of parts) {
+    vertices.set(part.vertices, vOffset)
+    let base = vOffset / stride
+    let src = part.indices
+    for (let i = 0; i < src.length; i++) indices[iOffset + i] = src[i]! + base
+    vOffset += part.vertices.length
+    iOffset += src.length
+  }
+  return { vertices, indices, layout: parts[0]!.layout, label }
 }
 
 // Indices for a row-major (cellRows + 1) x (cellCols + 1) vertex grid: two

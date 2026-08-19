@@ -25,9 +25,10 @@ import { getOwner, onCleanup } from "@solidrt/core"
 import type { PointerEvent as ElementPointerEvent } from "@solidrt/core"
 // The scene's lookAt() aims a node; math's builds a camera's view matrix -
 // the same pairing (and the same name) as Three's Object3D/Matrix4.
-import { compose, copy, eulerFromQuat, identity, invertAffine, lookAt as lookAtMatrix, mat4, multiply, normalMatrix, perspective, quat, quatFromEuler, quatFromFrame, quatNormalize, transformPoint, transformVector } from "./math.ts"
-import type { Mat4, Quat, Vec3, Vec4 } from "./math.ts"
-import { geometryBounds, geometryBuffers } from "./geometry.ts"
+import { compose, copy, eulerFromQuat, identity, invertAffine, lookAt as lookAtMatrix, mat4, multiply, normalMatrix, perspective, quat, quatFromFrame, transformPoint, transformVector, updateRotation, updateScale } from "./math.ts"
+import type { Mat4, Quat, TransformUpdate, Vec3, Vec4 } from "./math.ts"
+import { geometryBounds } from "./geometry.ts"
+import { geometryBuffers } from "./geometry-gpu.ts"
 import type { Geometry } from "./geometry.ts"
 import { backgroundPipeline } from "./material.ts"
 import { orderEntries } from "./order.ts"
@@ -57,6 +58,7 @@ let pickDir: Vec3 = [0, 0, 0]
 // setTransform's rotation compare happens AFTER conversion, so an euler and
 // the quaternion it produces are the same write. Nothing outlives the call.
 let rotScratch = quat()
+let scaleScratch: Vec3 = [1, 1, 1]
 
 // The scene half a node needs to reach: attach/detach entries and schedule
 // a sync. Kept separate from the public Scene type so internals stay off
@@ -352,18 +354,7 @@ function leaveScene(node: SceneNode): void {
   for (let c of node.children) leaveScene(c)
 }
 
-export type TransformUpdate = {
-  position?: Vec3
-  /** Euler radians in XYZ order (x first), Three's `Euler` default -
-   * converted to the node's quaternion on write. */
-  rotation?: Vec3
-  /** The rotation itself. Normalized on write, so a hand-built or
-   * drifted quaternion cannot silently scale the geometry. Passing this
-   * together with `rotation` is an error, not a precedence question. */
-  quaternion?: Quat
-  /** A number is uniform scale. */
-  scale?: Vec3 | number
-}
+export type { TransformUpdate } from "./math.ts"
 
 /**
  * The one write path for node transforms (so the scene knows to sync).
@@ -377,11 +368,6 @@ export type TransformUpdate = {
  * equal to the node's current quaternion is also a no-op.
  */
 export function setTransform(node: SceneNode, update: TransformUpdate): void {
-  let r = update.rotation
-  let q = update.quaternion
-  if (r !== undefined && q !== undefined) {
-    throw new Error("Pass rotation or quaternion to setTransform, not both")
-  }
   // A no-op write costs nothing: driving every node from onFrame is the
   // intended shape, and most nodes did not move. Exact compares, like
   // setVisible - a value that survives a float round trip unchanged is the
@@ -394,9 +380,7 @@ export function setTransform(node: SceneNode, update: TransformUpdate): void {
     node.position[2] = p[2]
     changed = true
   }
-  if (r !== undefined) quatFromEuler(rotScratch, r)
-  else if (q !== undefined) quatNormalize(rotScratch, q)
-  if (r !== undefined || q !== undefined) {
+  if (updateRotation(rotScratch, update, "setTransform")) {
     let n = node.quaternion
     if (rotScratch[0] !== n[0] || rotScratch[1] !== n[1] || rotScratch[2] !== n[2] || rotScratch[3] !== n[3]) {
       n[0] = rotScratch[0]
@@ -406,15 +390,12 @@ export function setTransform(node: SceneNode, update: TransformUpdate): void {
       changed = true
     }
   }
-  let s = update.scale
-  if (s !== undefined) {
-    let sx = typeof s === "number" ? s : s[0]
-    let sy = typeof s === "number" ? s : s[1]
-    let sz = typeof s === "number" ? s : s[2]
-    if (sx !== node.scale[0] || sy !== node.scale[1] || sz !== node.scale[2]) {
-      node.scale[0] = sx
-      node.scale[1] = sy
-      node.scale[2] = sz
+  if (update.scale !== undefined) {
+    updateScale(scaleScratch, update.scale)
+    if (scaleScratch[0] !== node.scale[0] || scaleScratch[1] !== node.scale[1] || scaleScratch[2] !== node.scale[2]) {
+      node.scale[0] = scaleScratch[0]
+      node.scale[1] = scaleScratch[1]
+      node.scale[2] = scaleScratch[2]
       changed = true
     }
   }

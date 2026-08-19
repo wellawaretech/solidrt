@@ -214,6 +214,51 @@ export function quatNormalize(out: Quat, q: Quat): Quat {
 }
 
 /**
+ * A transform update - the shape setTransform writes and transformGeometry
+ * bakes. Absent keys mean "keep" (nodes) or identity (geometry).
+ */
+export type TransformUpdate = {
+  position?: Vec3
+  /** Euler radians in XYZ order (x first), Three's `Euler` default -
+   * converted to a quaternion on use. */
+  rotation?: Vec3
+  /** The rotation itself. Normalized on use, so a hand-built or drifted
+   * quaternion cannot silently scale the geometry. Passing this together
+   * with `rotation` is an error, not a precedence question. */
+  quaternion?: Quat
+  /** A number is uniform scale. */
+  scale?: Vec3 | number
+}
+
+/**
+ * Resolve an update's rotation into `out`: euler converted, quaternion
+ * normalized. Returns false (out untouched) when the update carries
+ * neither; throws when it carries both. `caller` names the verb in the
+ * error.
+ */
+export function updateRotation(out: Quat, update: TransformUpdate, caller: string): boolean {
+  let r = update.rotation
+  let q = update.quaternion
+  if (r !== undefined && q !== undefined) {
+    throw new Error("Pass rotation or quaternion to " + caller + ", not both")
+  }
+  if (r !== undefined) quatFromEuler(out, r)
+  else if (q !== undefined) quatNormalize(out, q)
+  else return false
+  return true
+}
+
+/** Expand an update's scale (number = uniform) into `out`. */
+export function updateScale(out: Vec3, scale: Vec3 | number): Vec3 {
+  if (typeof scale === "number") {
+    out[0] = scale; out[1] = scale; out[2] = scale
+  } else {
+    out[0] = scale[0]; out[1] = scale[1]; out[2] = scale[2]
+  }
+  return out
+}
+
+/**
  * Euler radians to a quaternion, in XYZ order: x applied first, then y,
  * then z (R = Rx * Ry * Rz on column vectors), Three's `Euler` default - a
  * triple copied from a Three scene means the same thing here.

@@ -33,16 +33,17 @@ Decided and being worked on now. A plan nobody is working on goes back to backlo
 
 Shaped, not started.
 
+- **[Colored geometry generates twice](backlog/3d-colored-generators.md)** [2026-08-19]
+  withColors throws on anything but standard-layout input and copies into a
+  fresh buffer, so building coloured geometry always generates twice; a layout
+  option on the generators or a colored flag would remove the copy. Split from
+  3d-geometry-ops when that shipped 2026-08-19.
 - **[Geometry GPU buffers accumulate when a Mesh's geometry prop changes](backlog/3d-geometry-buffer-disposal.md)** [2026-08-18]
   Swapping <Mesh geometry> reactively leaves every previous generation's
   vertex/index buffers resident, because geometry buffers are app-lifetime and
   only disposeGeometry frees them; the declarative layer has no disposal story
-  to pair with the prop.
-- **[Geometry as data - transform, merge, public bounds](backlog/3d-geometry-ops.md)** [2026-08-17]
-  The generators build geometry and nothing can move or combine it, so a
-  static scene authored as data has to become one Mesh node per part;
-  transformGeometry and mergeGeometries are pure array math with no runtime
-  dependency, and geometryBounds plus rayBoxDistance already exist unexported.
+  to pair with the prop. Rides along - move the _buffer/_index handles off the
+  Geometry type into geometry-gpu.ts (a WeakMap) when the owner is decided.
 - **[Adaptive present-fence depth](backlog/adaptive-present-fence-depth.md)** [2026-07-27]
   Fallback design if unconditional two-deep present fencing ever shows up as
   desktop drag latency - allow the second in-flight frame only when observed
@@ -259,6 +260,10 @@ Shaped, not started.
   get_stats reports gpuPassMs as the raster thread's time issuing passes, so a
   pass that is cheap to issue and expensive on the GPU reads as free; timer
   queries would make the number mean what its name says.
+- **[Color math is unreachable headless](backlog/headless-color-math.md)** [2026-08-19]
+  parseColor/mixColors/brightness live only on flux:rendertree (gui feature),
+  so site tooling, tests, and theme builders cannot call them; the components
+  theme presets hardcode precomputed mix results as a workaround.
 - **[Backdrop filters through Impeller (blur, glass)](backlog/impeller-backdrop-filters.md)** [2026-07-27]
   save_layer already takes a backdrop ImageFilter and we already call it with
   None; wiring Impeller's built-in blur/dilate/erode/matrix filters gives
@@ -524,6 +529,10 @@ Shaped, not started.
   constant factor over JavaScript on tight compute", but nobody has measured
   wasmi against QuickJS in flux; a small benchmark would back that claim with
   a number.
+- **[Nothing builds the website in CI](backlog/website-build-in-ci.md)** [2026-08-19]
+  A broken site build goes unnoticed until someone runs make build locally;
+  the components theme.ts headless-import break sat undetected from the colord
+  removal until the next manual rebuild.
 - **[Dev-tooling storage in XDG base directories instead of one home dotdir](backlog/xdg-storage-layout.md)** [2026-08-13]
   Dev state lives in ~/.solidrt/ (servers/<port>/, clients/client<M>/), chosen
   2026-08-13 for one rule on every platform. XDG splits by purpose instead -
@@ -540,6 +549,11 @@ Shaped, not started.
 
 Finished, kept for the reasoning.
 
+- **[Geometry as data - transform, merge, public bounds](done/3d-geometry-ops.md)** [2026-08-17]
+  The generators build geometry and nothing can move or combine it, so a
+  static scene authored as data has to become one Mesh node per part;
+  transformGeometry and mergeGeometries are pure array math with no runtime
+  dependency, and geometryBounds plus rayBoxDistance already exist unexported.
 - **[Scene uniform channel, camera basis, material class/instance split](done/3d-material-uniform-plumbing.md)** [2026-08-17]
   The three ways an app talks to the shared uniform set and to a pipeline all
   have a gap: a Scene has no app-writable shared params (the workaround goes

@@ -1,6 +1,6 @@
 ---
 title: Geometry GPU buffers accumulate when a Mesh's geometry prop changes
-description: Swapping <Mesh geometry> reactively leaves every previous generation's vertex/index buffers resident, because geometry buffers are app-lifetime and only disposeGeometry frees them; the declarative layer has no disposal story to pair with the prop.
+description: Swapping <Mesh geometry> reactively leaves every previous generation's vertex/index buffers resident, because geometry buffers are app-lifetime and only disposeGeometry frees them; the declarative layer has no disposal story to pair with the prop. Rides along - move the _buffer/_index handles off the Geometry type into geometry-gpu.ts (a WeakMap) when the owner is decided.
 created: 2026-08-18
 ---
 
@@ -21,7 +21,7 @@ it: the app has to track geometry identity by hand and call
 `disposeGeometry(old)` at a moment the component model does not surface.
 Three has the same manual `geometry.dispose()`, and the same complaint.
 
-Where it lives: `geometryBuffers` in `packages/3d/src/geometry.ts` caches
+Where it lives: `geometryBuffers` in `packages/3d/src/geometry-gpu.ts` caches
 `_buffer`/`_index` on the geometry object with `autoFree: false`;
 `disposeGeometry` is the only free; the scene's entry add
 (`packages/3d/src/scene.ts`, the `geometryBuffers(mesh.geometry)` call)
@@ -51,3 +51,19 @@ the intended pattern for geometry that changes reactively in one sentence.
 
 Not decided; check Three's conventions before picking a shape (see
 feedback: follow Three, do not copy its mistakes).
+
+## Ride-along: take the buffer handles off the Geometry type
+
+Since 2026-08-19 `geometry.ts` is a pure data module and the GPU step lives
+in `geometry-gpu.ts`, but `Geometry` still carries `_buffer`/`_index`
+(`BufferId` fields), the one thing left tying the data type to
+`@solidrt/core/gpu`. Whatever owns the refcount or disposal hook above is
+also where the buffer handles belong: a `WeakMap<Geometry, Buffers>` private
+to `geometry-gpu.ts` makes `Geometry` plain data, and a refcount (option 1)
+sits naturally beside the handles in the same map entry. Do the two
+together rather than as separate edits to the same two lines.
+
+Related symptom the same map would see: `mergeGeometries` of parts that
+were already drawn uploads fresh buffers for the result and leaves the
+parts' buffers resident - correct under the app-lifetime rule, and the same
+accumulation as the reactive-swap case.

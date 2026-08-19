@@ -7,8 +7,10 @@
 
 export { add, createGroup, createMesh, createScene, getRotation, lookAt, remove, setGeometry, setMaterial, setMeshParams, setRenderOrder, setTransform, setVisible, worldPosition } from "./scene.ts"
 export type { CameraUpdate, Hit, Mesh as MeshNode, Scene as SceneHandle, SceneHandlers, SceneNode, SceneOptions, ScenePointerEvent, TransformUpdate } from "./scene.ts"
-export { box, circle, cone, cylinder, disposeGeometry, fillColors, plane, ring, sphere, torus, torusKnot, withColors, FLOATS_PER_VERTEX, VERTEX_LAYOUTS } from "./geometry.ts"
+export { disposeGeometry } from "./geometry-gpu.ts"
+export { box, circle, cone, cylinder, fillColors, geometryBounds, mergeGeometries, plane, ring, sphere, torus, torusKnot, transformGeometry, withColors, FLOATS_PER_VERTEX, VERTEX_LAYOUTS } from "./geometry.ts"
 export type { ColorFill, Geometry, VertexLayout } from "./geometry.ts"
+export { rayBoxDistance } from "./bvh.ts"
 export { fillet, roundRect, shape, triangulate } from "./profile.ts"
 export type { Profile, ProfilePoint } from "./profile.ts"
 export { extrude, lathe, pathFrames, sweep, tube } from "./sweep.ts"

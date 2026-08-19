@@ -77,7 +77,9 @@ GLSL as a first-class material), geometry generators (box, plane, circle,
 ring, sphere, cylinder, cone, torus, torus knot), a profile kit for custom
 solids (`extrude` with bevels, `lathe`, polyline `sweep`/`tube` with
 mitred joints, flat `shape`, with `fillet`/`roundRect`/`triangulate`
-helpers), a per-vertex data channel
+helpers), geometry as data (`transformGeometry` bakes a placement into
+vertices and `mergeGeometries` concatenates parts, so a static scene is
+one mesh per material), a per-vertex data channel
 (`withColors` adds an `aColor` vec4 - tint, baked AO, any four scalars -
 to any geometry, for materials that read it), one perspective camera
 with an orbit control (`createOrbitCamera`: drag, pinch/wheel zoom, auto-orbit),
