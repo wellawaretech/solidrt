@@ -4,7 +4,6 @@ import type { Element } from "solid-js"
 import * as tree from "flux:rendertree"
 import { attachWindow } from "./window"
 import { setEventHandler, setFocusable, setTextInputHints, cleanupNode, focusedNode, setFocus } from "./core"
-import { parseColor, isGradient } from "./color"
 
 export { getEventHandler } from "./core"
 
@@ -183,16 +182,6 @@ function applyProp<T>(node: ProxyNode, name: string, value: T): void {
 
   if (name === "textInputHints") {
     setTextInputHints(node.id, value as any)
-    return
-  }
-
-  if (name === "color" && isGradient(value)) {
-    setTreeProperty(node, name, value)
-    return
-  }
-
-  if (name === "color" && typeof value === "string") {
-    setTreeProperty(node, name, parseColor(value))
     return
   }
 

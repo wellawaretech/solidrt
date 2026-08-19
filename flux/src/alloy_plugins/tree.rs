@@ -160,6 +160,13 @@ impl<'js> IntoJs<'js> for JsBoundingBox {
   }
 }
 
+// The packed 0xRRGGBBAA form parseColor hands back to JS (the inverse of
+// properties::packed_to_color).
+fn color_to_packed(c: alloy::impellers::Color) -> u32 {
+  let b = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u32;
+  (b(c.red) << 24) | (b(c.green) << 16) | (b(c.blue) << 8) | b(c.alpha)
+}
+
 /// Emit one "transitionEnd" engine event per settled track, payload
 /// `{ target, property }` (JSX property name). The runner calls this right
 /// after the frame's transition advance; the JS side routes each to the
@@ -230,6 +237,9 @@ impl ModuleDef for RenderTreeModule {
     decl.declare("prepareText")?;
     decl.declare("getBoundingBox")?;
     decl.declare("getBoundingBoxViewport")?;
+    decl.declare("parseColor")?;
+    decl.declare("mixColors")?;
+    decl.declare("brightness")?;
     Ok(())
   }
 
@@ -295,13 +305,22 @@ impl ModuleDef for RenderTreeModule {
         // false consumes nothing and has cancelled any running track for
         // the pair, so the normal write below is authoritative.
         if let Some(prop) = super::properties::transition::anim_prop(&property) {
-          // Colors arrive as packed 0xRRGGBBAA numbers (JS parses the CSS
-          // string); everything else animatable is a plain scalar. A
-          // non-numeric value (null, a gradient object) never animates.
-          let target = value.as_number().map(|n| match prop {
-            AnimProp::Color => AnimValue::Color(super::properties::packed_to_color(n as u32)),
-            _ => AnimValue::Scalar(n as f32),
-          });
+          // Colors arrive as raw CSS strings (or packed 0xRRGGBBAA numbers
+          // for compatibility); everything else animatable is a plain
+          // scalar. Anything else (null, a gradient object, an unparsable
+          // string) never animates - the normal write path raises the
+          // proper error for the bad string.
+          let target = match prop {
+            AnimProp::Color => {
+              let packed = value.as_number().map(|n| super::properties::packed_to_color(n as u32));
+              let parsed = || {
+                let s = value.as_string()?.to_string().ok()?;
+                alloy::color::parse_css(&s).ok()
+              };
+              packed.or_else(parsed).map(AnimValue::Color)
+            }
+            _ => value.as_number().map(|n| AnimValue::Scalar(n as f32)),
+          };
           if tree_ref.borrow_mut().transition_write(node_id, prop, target) {
             platform_ref.request_frame();
             return Ok(());
@@ -494,6 +513,41 @@ impl ModuleDef for RenderTreeModule {
     exports.export("detachNode", detach_node)?;
     exports.export("destroyNode", destroy_node)?;
     exports.export("insertNode", insert_node)?;
+    // Color utilities over alloy's color module (one owner for the CSS
+    // grammar and the perceptual math; okf/backlog/css-colors-in-rust.md).
+    // parseColor returns the same packed 0xRRGGBBAA number the JS parser
+    // used to, and throws on an invalid string.
+    // Returned as f64: a u32 return would marshal through a signed 32-bit
+    // int, turning any color with red >= 0x80 negative on the JS side.
+    let parse_color = Function::new(ctx.clone(), move |ctx: Ctx<'_>, color: String| -> rquickjs::Result<f64> {
+      alloy::color::parse_css(&color)
+        .map(|c| color_to_packed(c) as f64)
+        .map_err(|msg| rquickjs::Exception::throw_message(&ctx, &msg))
+    })?;
+
+    // Mixes in oklab; `t` is the fraction of `b`. Returns a hex string
+    // (#rrggbb, with an alpha byte only when the mix is translucent).
+    let mix_colors =
+      Function::new(ctx.clone(), move |ctx: Ctx<'_>, a: String, b: String, t: f64| -> rquickjs::Result<String> {
+        let err = |msg: String| rquickjs::Exception::throw_message(&ctx, &msg);
+        let a = alloy::color::parse_css(&a).map_err(err)?;
+        let b = alloy::color::parse_css(&b).map_err(|msg| rquickjs::Exception::throw_message(&ctx, &msg))?;
+        let m = alloy::color::mix(a, b, t as f32);
+        let packed = color_to_packed(m);
+        let (r, g, bl, al) = (packed >> 24 & 0xFF, packed >> 16 & 0xFF, packed >> 8 & 0xFF, packed & 0xFF);
+        Ok(if al == 0xFF {
+          format!("#{r:02x}{g:02x}{bl:02x}")
+        } else {
+          format!("#{r:02x}{g:02x}{bl:02x}{al:02x}")
+        })
+      })?;
+
+    let brightness_fn = Function::new(ctx.clone(), move |ctx: Ctx<'_>, color: String| -> rquickjs::Result<f64> {
+      alloy::color::parse_css(&color)
+        .map(|c| alloy::color::brightness(c) as f64)
+        .map_err(|msg| rquickjs::Exception::throw_message(&ctx, &msg))
+    })?;
+
     exports.export("setProperty", set_property)?;
     exports.export("setEventInterest", set_event_interest)?;
     exports.export("requestFrame", request_frame)?;
@@ -503,6 +557,9 @@ impl ModuleDef for RenderTreeModule {
     exports.export("prepareText", prepare_text)?;
     exports.export("getBoundingBox", get_bounding_box)?;
     exports.export("getBoundingBoxViewport", get_bounding_box_viewport)?;
+    exports.export("parseColor", parse_color)?;
+    exports.export("mixColors", mix_colors)?;
+    exports.export("brightness", brightness_fn)?;
     Ok(())
   }
 }

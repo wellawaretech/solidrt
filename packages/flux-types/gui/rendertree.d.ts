@@ -153,4 +153,18 @@ declare module "flux:rendertree" {
    * semantics), for comparing against pointer event coordinates.
    */
   export function getBoundingBoxViewport(id: number): { x: number, y: number, width: number, height: number } | null
+  /**
+   * Parses a CSS color string (hex, rgb()/rgba(), hsl()/hsla(), hwb(),
+   * named colors) into the packed 0xRRGGBBAA u32 the color property's wire
+   * format uses. Throws on an invalid string.
+   */
+  export function parseColor(color: string): number
+  /**
+   * Mixes two CSS colors in oklab; `t` is the fraction of `b` (0 = pure
+   * `a`, 1 = pure `b`). Returns a hex string, with an alpha byte only when
+   * the mix is translucent.
+   */
+  export function mixColors(a: string, b: string, t: number): string
+  /** Perceived brightness of a CSS color, 0 (black) to 1 (white), YIQ-weighted. */
+  export function brightness(color: string): number
 }

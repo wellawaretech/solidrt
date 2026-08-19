@@ -25,9 +25,6 @@
     "jsx-runtime.d.ts",
     "AGENTS.md"
   ],
-  "dependencies": {
-    "colord": "^2.9.3"
-  },
   "devDependencies": {
     "@solidrt/flux-types": "workspace:*"
   },

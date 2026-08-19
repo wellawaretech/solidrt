@@ -1,5 +1,6 @@
 mod gl;
 pub mod sdl_utils;
+pub mod color;
 
 mod app;
 pub mod audio;

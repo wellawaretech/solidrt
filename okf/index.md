@@ -588,6 +588,12 @@ Finished, kept for the reasoning.
   Press semantics extracted from Pressable into a components-package util;
   widened to gesture recognizers and promoted to
   okf/plans/component-gestures.md, this file is a pointer.
+- **[CSS color parsing in Rust; drop colord](done/css-colors-in-rust.md)** [2026-08-19]
+  Move CSS color-string parsing from the JS renderer (colord) into alloy
+  (csscolorparser), so color strings cross the FFI raw and one side owns color
+  understanding; parseColor/mixColors/brightness become flux:rendertree
+  bindings backed by the same oklab math the transitions use, and
+  @solidrt/core loses its only runtime npm dependency.
 - **[Detached-view transform origin pivots around the inherited box](done/detached-view-transform-origin.md)** [2026-08-03]
   Fixed 2026-08-03 - a d-view's unset transform origin now defaults to its
   local (0,0), the point its children's coordinates are authored against,

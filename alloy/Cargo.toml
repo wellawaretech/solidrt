@@ -70,6 +70,10 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 # Font-table reader for what Impeller does not expose: underline metrics
 # (post table) and family names of registered fonts. Safe Rust, no deps.
 ttf-parser = { version = "0.25", default-features = false, features = ["std"] }
+# CSS color-string grammar (hex, rgb()/hsl()/hwb(), named colors) for the
+# color property and the parseColor binding; the color math itself (oklab,
+# mixing) is ours in src/color.rs. Replaced the JS-side colord dependency.
+csscolorparser = { version = "0.7", default-features = false, features = ["named-colors"] }
 # QR decoding for camera streams. Chosen over rqrr after a tolerance probe on
 # camera-realistic frames (blur + noise + low contrast): rxing decoded 9/9,
 # rqrr 3/9. ~3.4ms/frame with a code present, ~0.75ms without (desktop release).

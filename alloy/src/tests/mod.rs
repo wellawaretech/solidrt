@@ -1,4 +1,5 @@
 mod audio;
+mod color;
 mod cull;
 mod fonts;
 mod frame;

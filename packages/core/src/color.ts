@@ -1,30 +1,29 @@
-import { colord, extend } from "colord"
-import namesPlugin from "colord/plugins/names"
-import mixPlugin from "colord/plugins/mix"
-extend([namesPlugin, mixPlugin])
+import * as tree from "flux:rendertree"
+
+// Color parsing and mixing live in the runtime (alloy's color module), one
+// owner for the CSS grammar and the perceptual math; these re-exports keep
+// the core API surface. The renderer no longer parses at all: color strings
+// cross the FFI raw and the runtime decodes them.
 
 /**
  * Parses a CSS color string (named, hex, `rgb()`, `hsl()`, ...) into a packed
- * `0xRRGGBBAA` u32: red in the high byte, alpha in the low byte. Alpha is scaled
- * from colord's 0..1 to 0..255. This is the wire format the runtime expects for
- * the `color` property. Throws on a string that is not a valid CSS color, so a
- * typo fails on the line that wrote it instead of silently painting black.
+ * `0xRRGGBBAA` u32: red in the high byte, alpha in the low byte. This is the
+ * wire format the runtime expects for the `color` property. Throws on a
+ * string that is not a valid CSS color, so a typo fails on the line that
+ * wrote it instead of silently painting black.
  */
 export function parseColor(color: string): number {
-  let c = colord(color)
-  if (!c.isValid()) throw new Error(`Invalid color "${color}"`)
-  let { r, g, b, a } = c.toRgb()
-  return (((r & 0xFF) << 24) | ((g & 0xFF) << 16) | ((b & 0xFF) << 8) | ((a * 255) & 0xFF)) >>> 0
+  return tree.parseColor(color)
 }
 
 /**
- * Mixes two CSS colors in the CIE LAB color space; `t` is the fraction of `b`
- * (0 = pure `a`, 1 = pure `b`). Returns an opaque hex string. Use it to derive
- * semantic tones (muted text, subtle borders) instead of alpha overlays, so
- * the resulting color does not depend on what is drawn beneath it.
+ * Mixes two CSS colors in oklab; `t` is the fraction of `b` (0 = pure `a`,
+ * 1 = pure `b`). Returns a hex string. Use it to derive semantic tones
+ * (muted text, subtle borders) instead of alpha overlays, so the resulting
+ * color does not depend on what is drawn beneath it.
  */
 export function mixColors(a: string, b: string, t: number): string {
-  return colord(a).mix(b, t).toHex()
+  return tree.mixColors(a, b, t)
 }
 
 /**
@@ -33,7 +32,7 @@ export function mixColors(a: string, b: string, t: number): string {
  * e.g. whether a label sits light-on-dark (see typeWeight in components).
  */
 export function brightness(color: string): number {
-  return colord(color).brightness()
+  return tree.brightness(color)
 }
 
 // A color stop: `offset` is 0..1 along the gradient, `color` any CSS color string.

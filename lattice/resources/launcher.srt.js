@@ -5185,303 +5185,6 @@ function attachWindow(nodeId) {
   });
 }
 
-// node_modules/.bun/colord@2.9.3/node_modules/colord/index.mjs
-var r = { grad: 0.9, turn: 360, rad: 360 / (2 * Math.PI) };
-var t = function(r2) {
-  return typeof r2 == "string" ? r2.length > 0 : typeof r2 == "number";
-};
-var n = function(r2, t2, n2) {
-  return t2 === undefined && (t2 = 0), n2 === undefined && (n2 = Math.pow(10, t2)), Math.round(n2 * r2) / n2 + 0;
-};
-var e = function(r2, t2, n2) {
-  return t2 === undefined && (t2 = 0), n2 === undefined && (n2 = 1), r2 > n2 ? n2 : r2 > t2 ? r2 : t2;
-};
-var u = function(r2) {
-  return (r2 = isFinite(r2) ? r2 % 360 : 0) > 0 ? r2 : r2 + 360;
-};
-var a = function(r2) {
-  return { r: e(r2.r, 0, 255), g: e(r2.g, 0, 255), b: e(r2.b, 0, 255), a: e(r2.a) };
-};
-var o = function(r2) {
-  return { r: n(r2.r), g: n(r2.g), b: n(r2.b), a: n(r2.a, 3) };
-};
-var i = /^#([0-9a-f]{3,8})$/i;
-var s = function(r2) {
-  var t2 = r2.toString(16);
-  return t2.length < 2 ? "0" + t2 : t2;
-};
-var h = function(r2) {
-  var { r: t2, g: n2, b: e2, a: u2 } = r2, a2 = Math.max(t2, n2, e2), o2 = a2 - Math.min(t2, n2, e2), i2 = o2 ? a2 === t2 ? (n2 - e2) / o2 : a2 === n2 ? 2 + (e2 - t2) / o2 : 4 + (t2 - n2) / o2 : 0;
-  return { h: 60 * (i2 < 0 ? i2 + 6 : i2), s: a2 ? o2 / a2 * 100 : 0, v: a2 / 255 * 100, a: u2 };
-};
-var b = function(r2) {
-  var { h: t2, s: n2, v: e2, a: u2 } = r2;
-  t2 = t2 / 360 * 6, n2 /= 100, e2 /= 100;
-  var a2 = Math.floor(t2), o2 = e2 * (1 - n2), i2 = e2 * (1 - (t2 - a2) * n2), s2 = e2 * (1 - (1 - t2 + a2) * n2), h2 = a2 % 6;
-  return { r: 255 * [e2, i2, o2, o2, s2, e2][h2], g: 255 * [s2, e2, e2, i2, o2, o2][h2], b: 255 * [o2, o2, s2, e2, e2, i2][h2], a: u2 };
-};
-var g = function(r2) {
-  return { h: u(r2.h), s: e(r2.s, 0, 100), l: e(r2.l, 0, 100), a: e(r2.a) };
-};
-var d = function(r2) {
-  return { h: n(r2.h), s: n(r2.s), l: n(r2.l), a: n(r2.a, 3) };
-};
-var f = function(r2) {
-  return b((n2 = (t2 = r2).s, { h: t2.h, s: (n2 *= ((e2 = t2.l) < 50 ? e2 : 100 - e2) / 100) > 0 ? 2 * n2 / (e2 + n2) * 100 : 0, v: e2 + n2, a: t2.a }));
-  var t2, n2, e2;
-};
-var c = function(r2) {
-  return { h: (t2 = h(r2)).h, s: (u2 = (200 - (n2 = t2.s)) * (e2 = t2.v) / 100) > 0 && u2 < 200 ? n2 * e2 / 100 / (u2 <= 100 ? u2 : 200 - u2) * 100 : 0, l: u2 / 2, a: t2.a };
-  var t2, n2, e2, u2;
-};
-var l = /^hsla?\(\s*([+-]?\d*\.?\d+)(deg|rad|grad|turn)?\s*,\s*([+-]?\d*\.?\d+)%\s*,\s*([+-]?\d*\.?\d+)%\s*(?:,\s*([+-]?\d*\.?\d+)(%)?\s*)?\)$/i;
-var p = /^hsla?\(\s*([+-]?\d*\.?\d+)(deg|rad|grad|turn)?\s+([+-]?\d*\.?\d+)%\s+([+-]?\d*\.?\d+)%\s*(?:\/\s*([+-]?\d*\.?\d+)(%)?\s*)?\)$/i;
-var v = /^rgba?\(\s*([+-]?\d*\.?\d+)(%)?\s*,\s*([+-]?\d*\.?\d+)(%)?\s*,\s*([+-]?\d*\.?\d+)(%)?\s*(?:,\s*([+-]?\d*\.?\d+)(%)?\s*)?\)$/i;
-var m = /^rgba?\(\s*([+-]?\d*\.?\d+)(%)?\s+([+-]?\d*\.?\d+)(%)?\s+([+-]?\d*\.?\d+)(%)?\s*(?:\/\s*([+-]?\d*\.?\d+)(%)?\s*)?\)$/i;
-var y = { string: [[function(r2) {
-  var t2 = i.exec(r2);
-  return t2 ? (r2 = t2[1]).length <= 4 ? { r: parseInt(r2[0] + r2[0], 16), g: parseInt(r2[1] + r2[1], 16), b: parseInt(r2[2] + r2[2], 16), a: r2.length === 4 ? n(parseInt(r2[3] + r2[3], 16) / 255, 2) : 1 } : r2.length === 6 || r2.length === 8 ? { r: parseInt(r2.substr(0, 2), 16), g: parseInt(r2.substr(2, 2), 16), b: parseInt(r2.substr(4, 2), 16), a: r2.length === 8 ? n(parseInt(r2.substr(6, 2), 16) / 255, 2) : 1 } : null : null;
-}, "hex"], [function(r2) {
-  var t2 = v.exec(r2) || m.exec(r2);
-  return t2 ? t2[2] !== t2[4] || t2[4] !== t2[6] ? null : a({ r: Number(t2[1]) / (t2[2] ? 100 / 255 : 1), g: Number(t2[3]) / (t2[4] ? 100 / 255 : 1), b: Number(t2[5]) / (t2[6] ? 100 / 255 : 1), a: t2[7] === undefined ? 1 : Number(t2[7]) / (t2[8] ? 100 : 1) }) : null;
-}, "rgb"], [function(t2) {
-  var n2 = l.exec(t2) || p.exec(t2);
-  if (!n2)
-    return null;
-  var e2, u2, a2 = g({ h: (e2 = n2[1], u2 = n2[2], u2 === undefined && (u2 = "deg"), Number(e2) * (r[u2] || 1)), s: Number(n2[3]), l: Number(n2[4]), a: n2[5] === undefined ? 1 : Number(n2[5]) / (n2[6] ? 100 : 1) });
-  return f(a2);
-}, "hsl"]], object: [[function(r2) {
-  var { r: n2, g: e2, b: u2, a: o2 } = r2, i2 = o2 === undefined ? 1 : o2;
-  return t(n2) && t(e2) && t(u2) ? a({ r: Number(n2), g: Number(e2), b: Number(u2), a: Number(i2) }) : null;
-}, "rgb"], [function(r2) {
-  var { h: n2, s: e2, l: u2, a: a2 } = r2, o2 = a2 === undefined ? 1 : a2;
-  if (!t(n2) || !t(e2) || !t(u2))
-    return null;
-  var i2 = g({ h: Number(n2), s: Number(e2), l: Number(u2), a: Number(o2) });
-  return f(i2);
-}, "hsl"], [function(r2) {
-  var { h: n2, s: a2, v: o2, a: i2 } = r2, s2 = i2 === undefined ? 1 : i2;
-  if (!t(n2) || !t(a2) || !t(o2))
-    return null;
-  var h2 = function(r3) {
-    return { h: u(r3.h), s: e(r3.s, 0, 100), v: e(r3.v, 0, 100), a: e(r3.a) };
-  }({ h: Number(n2), s: Number(a2), v: Number(o2), a: Number(s2) });
-  return b(h2);
-}, "hsv"]] };
-var N = function(r2, t2) {
-  for (var n2 = 0;n2 < t2.length; n2++) {
-    var e2 = t2[n2][0](r2);
-    if (e2)
-      return [e2, t2[n2][1]];
-  }
-  return [null, undefined];
-};
-var x = function(r2) {
-  return typeof r2 == "string" ? N(r2.trim(), y.string) : typeof r2 == "object" && r2 !== null ? N(r2, y.object) : [null, undefined];
-};
-var M = function(r2, t2) {
-  var n2 = c(r2);
-  return { h: n2.h, s: e(n2.s + 100 * t2, 0, 100), l: n2.l, a: n2.a };
-};
-var H = function(r2) {
-  return (299 * r2.r + 587 * r2.g + 114 * r2.b) / 1000 / 255;
-};
-var $ = function(r2, t2) {
-  var n2 = c(r2);
-  return { h: n2.h, s: n2.s, l: e(n2.l + 100 * t2, 0, 100), a: n2.a };
-};
-var j = function() {
-  function r2(r3) {
-    this.parsed = x(r3)[0], this.rgba = this.parsed || { r: 0, g: 0, b: 0, a: 1 };
-  }
-  return r2.prototype.isValid = function() {
-    return this.parsed !== null;
-  }, r2.prototype.brightness = function() {
-    return n(H(this.rgba), 2);
-  }, r2.prototype.isDark = function() {
-    return H(this.rgba) < 0.5;
-  }, r2.prototype.isLight = function() {
-    return H(this.rgba) >= 0.5;
-  }, r2.prototype.toHex = function() {
-    return r3 = o(this.rgba), t2 = r3.r, e2 = r3.g, u2 = r3.b, i2 = (a2 = r3.a) < 1 ? s(n(255 * a2)) : "", "#" + s(t2) + s(e2) + s(u2) + i2;
-    var r3, t2, e2, u2, a2, i2;
-  }, r2.prototype.toRgb = function() {
-    return o(this.rgba);
-  }, r2.prototype.toRgbString = function() {
-    return r3 = o(this.rgba), t2 = r3.r, n2 = r3.g, e2 = r3.b, (u2 = r3.a) < 1 ? "rgba(" + t2 + ", " + n2 + ", " + e2 + ", " + u2 + ")" : "rgb(" + t2 + ", " + n2 + ", " + e2 + ")";
-    var r3, t2, n2, e2, u2;
-  }, r2.prototype.toHsl = function() {
-    return d(c(this.rgba));
-  }, r2.prototype.toHslString = function() {
-    return r3 = d(c(this.rgba)), t2 = r3.h, n2 = r3.s, e2 = r3.l, (u2 = r3.a) < 1 ? "hsla(" + t2 + ", " + n2 + "%, " + e2 + "%, " + u2 + ")" : "hsl(" + t2 + ", " + n2 + "%, " + e2 + "%)";
-    var r3, t2, n2, e2, u2;
-  }, r2.prototype.toHsv = function() {
-    return r3 = h(this.rgba), { h: n(r3.h), s: n(r3.s), v: n(r3.v), a: n(r3.a, 3) };
-    var r3;
-  }, r2.prototype.invert = function() {
-    return w({ r: 255 - (r3 = this.rgba).r, g: 255 - r3.g, b: 255 - r3.b, a: r3.a });
-    var r3;
-  }, r2.prototype.saturate = function(r3) {
-    return r3 === undefined && (r3 = 0.1), w(M(this.rgba, r3));
-  }, r2.prototype.desaturate = function(r3) {
-    return r3 === undefined && (r3 = 0.1), w(M(this.rgba, -r3));
-  }, r2.prototype.grayscale = function() {
-    return w(M(this.rgba, -1));
-  }, r2.prototype.lighten = function(r3) {
-    return r3 === undefined && (r3 = 0.1), w($(this.rgba, r3));
-  }, r2.prototype.darken = function(r3) {
-    return r3 === undefined && (r3 = 0.1), w($(this.rgba, -r3));
-  }, r2.prototype.rotate = function(r3) {
-    return r3 === undefined && (r3 = 15), this.hue(this.hue() + r3);
-  }, r2.prototype.alpha = function(r3) {
-    return typeof r3 == "number" ? w({ r: (t2 = this.rgba).r, g: t2.g, b: t2.b, a: r3 }) : n(this.rgba.a, 3);
-    var t2;
-  }, r2.prototype.hue = function(r3) {
-    var t2 = c(this.rgba);
-    return typeof r3 == "number" ? w({ h: r3, s: t2.s, l: t2.l, a: t2.a }) : n(t2.h);
-  }, r2.prototype.isEqual = function(r3) {
-    return this.toHex() === w(r3).toHex();
-  }, r2;
-}();
-var w = function(r2) {
-  return r2 instanceof j ? r2 : new j(r2);
-};
-var S = [];
-var k = function(r2) {
-  r2.forEach(function(r3) {
-    S.indexOf(r3) < 0 && (r3(j, y), S.push(r3));
-  });
-};
-
-// node_modules/.bun/colord@2.9.3/node_modules/colord/plugins/names.mjs
-function names_default(e2, f2) {
-  var a2 = { white: "#ffffff", bisque: "#ffe4c4", blue: "#0000ff", cadetblue: "#5f9ea0", chartreuse: "#7fff00", chocolate: "#d2691e", coral: "#ff7f50", antiquewhite: "#faebd7", aqua: "#00ffff", azure: "#f0ffff", whitesmoke: "#f5f5f5", papayawhip: "#ffefd5", plum: "#dda0dd", blanchedalmond: "#ffebcd", black: "#000000", gold: "#ffd700", goldenrod: "#daa520", gainsboro: "#dcdcdc", cornsilk: "#fff8dc", cornflowerblue: "#6495ed", burlywood: "#deb887", aquamarine: "#7fffd4", beige: "#f5f5dc", crimson: "#dc143c", cyan: "#00ffff", darkblue: "#00008b", darkcyan: "#008b8b", darkgoldenrod: "#b8860b", darkkhaki: "#bdb76b", darkgray: "#a9a9a9", darkgreen: "#006400", darkgrey: "#a9a9a9", peachpuff: "#ffdab9", darkmagenta: "#8b008b", darkred: "#8b0000", darkorchid: "#9932cc", darkorange: "#ff8c00", darkslateblue: "#483d8b", gray: "#808080", darkslategray: "#2f4f4f", darkslategrey: "#2f4f4f", deeppink: "#ff1493", deepskyblue: "#00bfff", wheat: "#f5deb3", firebrick: "#b22222", floralwhite: "#fffaf0", ghostwhite: "#f8f8ff", darkviolet: "#9400d3", magenta: "#ff00ff", green: "#008000", dodgerblue: "#1e90ff", grey: "#808080", honeydew: "#f0fff0", hotpink: "#ff69b4", blueviolet: "#8a2be2", forestgreen: "#228b22", lawngreen: "#7cfc00", indianred: "#cd5c5c", indigo: "#4b0082", fuchsia: "#ff00ff", brown: "#a52a2a", maroon: "#800000", mediumblue: "#0000cd", lightcoral: "#f08080", darkturquoise: "#00ced1", lightcyan: "#e0ffff", ivory: "#fffff0", lightyellow: "#ffffe0", lightsalmon: "#ffa07a", lightseagreen: "#20b2aa", linen: "#faf0e6", mediumaquamarine: "#66cdaa", lemonchiffon: "#fffacd", lime: "#00ff00", khaki: "#f0e68c", mediumseagreen: "#3cb371", limegreen: "#32cd32", mediumspringgreen: "#00fa9a", lightskyblue: "#87cefa", lightblue: "#add8e6", midnightblue: "#191970", lightpink: "#ffb6c1", mistyrose: "#ffe4e1", moccasin: "#ffe4b5", mintcream: "#f5fffa", lightslategray: "#778899", lightslategrey: "#778899", navajowhite: "#ffdead", navy: "#000080", mediumvioletred: "#c71585", powderblue: "#b0e0e6", palegoldenrod: "#eee8aa", oldlace: "#fdf5e6", paleturquoise: "#afeeee", mediumturquoise: "#48d1cc", mediumorchid: "#ba55d3", rebeccapurple: "#663399", lightsteelblue: "#b0c4de", mediumslateblue: "#7b68ee", thistle: "#d8bfd8", tan: "#d2b48c", orchid: "#da70d6", mediumpurple: "#9370db", purple: "#800080", pink: "#ffc0cb", skyblue: "#87ceeb", springgreen: "#00ff7f", palegreen: "#98fb98", red: "#ff0000", yellow: "#ffff00", slateblue: "#6a5acd", lavenderblush: "#fff0f5", peru: "#cd853f", palevioletred: "#db7093", violet: "#ee82ee", teal: "#008080", slategray: "#708090", slategrey: "#708090", aliceblue: "#f0f8ff", darkseagreen: "#8fbc8f", darkolivegreen: "#556b2f", greenyellow: "#adff2f", seagreen: "#2e8b57", seashell: "#fff5ee", tomato: "#ff6347", silver: "#c0c0c0", sienna: "#a0522d", lavender: "#e6e6fa", lightgreen: "#90ee90", orange: "#ffa500", orangered: "#ff4500", steelblue: "#4682b4", royalblue: "#4169e1", turquoise: "#40e0d0", yellowgreen: "#9acd32", salmon: "#fa8072", saddlebrown: "#8b4513", sandybrown: "#f4a460", rosybrown: "#bc8f8f", darksalmon: "#e9967a", lightgoldenrodyellow: "#fafad2", snow: "#fffafa", lightgrey: "#d3d3d3", lightgray: "#d3d3d3", dimgray: "#696969", dimgrey: "#696969", olivedrab: "#6b8e23", olive: "#808000" }, r2 = {};
-  for (var d2 in a2)
-    r2[a2[d2]] = d2;
-  var l2 = {};
-  e2.prototype.toName = function(f3) {
-    if (!(this.rgba.a || this.rgba.r || this.rgba.g || this.rgba.b))
-      return "transparent";
-    var d3, i2, n2 = r2[this.toHex()];
-    if (n2)
-      return n2;
-    if (f3 == null ? undefined : f3.closest) {
-      var o2 = this.toRgb(), t2 = 1 / 0, b2 = "black";
-      if (!l2.length)
-        for (var c2 in a2)
-          l2[c2] = new e2(a2[c2]).toRgb();
-      for (var g2 in a2) {
-        var u2 = (d3 = o2, i2 = l2[g2], Math.pow(d3.r - i2.r, 2) + Math.pow(d3.g - i2.g, 2) + Math.pow(d3.b - i2.b, 2));
-        u2 < t2 && (t2 = u2, b2 = g2);
-      }
-      return b2;
-    }
-  };
-  f2.string.push([function(f3) {
-    var r3 = f3.toLowerCase(), d3 = r3 === "transparent" ? "#0000" : a2[r3];
-    return d3 ? new e2(d3).toRgb() : null;
-  }, "name"]);
-}
-
-// node_modules/.bun/colord@2.9.3/node_modules/colord/plugins/mix.mjs
-var t2 = function(t3, a2, n2) {
-  return a2 === undefined && (a2 = 0), n2 === undefined && (n2 = 1), t3 > n2 ? n2 : t3 > a2 ? t3 : a2;
-};
-var a2 = function(t3) {
-  var a3 = t3 / 255;
-  return a3 < 0.04045 ? a3 / 12.92 : Math.pow((a3 + 0.055) / 1.055, 2.4);
-};
-var n2 = function(t3) {
-  return 255 * (t3 > 0.0031308 ? 1.055 * Math.pow(t3, 1 / 2.4) - 0.055 : 12.92 * t3);
-};
-var r2 = 96.422;
-var o2 = 100;
-var u2 = 82.521;
-var e2 = function(a3) {
-  var r3, o3, u3 = { x: 0.9555766 * (r3 = a3).x + -0.0230393 * r3.y + 0.0631636 * r3.z, y: -0.0282895 * r3.x + 1.0099416 * r3.y + 0.0210077 * r3.z, z: 0.0122982 * r3.x + -0.020483 * r3.y + 1.3299098 * r3.z };
-  return o3 = { r: n2(0.032404542 * u3.x - 0.015371385 * u3.y - 0.004985314 * u3.z), g: n2(-0.00969266 * u3.x + 0.018760108 * u3.y + 0.00041556 * u3.z), b: n2(0.000556434 * u3.x - 0.002040259 * u3.y + 0.010572252 * u3.z), a: a3.a }, { r: t2(o3.r, 0, 255), g: t2(o3.g, 0, 255), b: t2(o3.b, 0, 255), a: t2(o3.a) };
-};
-var i2 = function(n3) {
-  var e3 = a2(n3.r), i3 = a2(n3.g), p2 = a2(n3.b);
-  return function(a3) {
-    return { x: t2(a3.x, 0, r2), y: t2(a3.y, 0, o2), z: t2(a3.z, 0, u2), a: t2(a3.a) };
-  }(function(t3) {
-    return { x: 1.0478112 * t3.x + 0.0228866 * t3.y + -0.050127 * t3.z, y: 0.0295424 * t3.x + 0.9904844 * t3.y + -0.0170491 * t3.z, z: -0.0092345 * t3.x + 0.0150436 * t3.y + 0.7521316 * t3.z, a: t3.a };
-  }({ x: 100 * (0.4124564 * e3 + 0.3575761 * i3 + 0.1804375 * p2), y: 100 * (0.2126729 * e3 + 0.7151522 * i3 + 0.072175 * p2), z: 100 * (0.0193339 * e3 + 0.119192 * i3 + 0.9503041 * p2), a: n3.a }));
-};
-var p2 = 216 / 24389;
-var h2 = 24389 / 27;
-var f2 = function(t3) {
-  var a3 = i2(t3), n3 = a3.x / r2, e3 = a3.y / o2, f3 = a3.z / u2;
-  return n3 = n3 > p2 ? Math.cbrt(n3) : (h2 * n3 + 16) / 116, { l: 116 * (e3 = e3 > p2 ? Math.cbrt(e3) : (h2 * e3 + 16) / 116) - 16, a: 500 * (n3 - e3), b: 200 * (e3 - (f3 = f3 > p2 ? Math.cbrt(f3) : (h2 * f3 + 16) / 116)), alpha: a3.a };
-};
-var c2 = function(a3, n3, i3) {
-  var c3, y2 = f2(a3), x2 = f2(n3);
-  return function(t3) {
-    var a4 = (t3.l + 16) / 116, n4 = t3.a / 500 + a4, i4 = a4 - t3.b / 200;
-    return e2({ x: (Math.pow(n4, 3) > p2 ? Math.pow(n4, 3) : (116 * n4 - 16) / h2) * r2, y: (t3.l > 8 ? Math.pow((t3.l + 16) / 116, 3) : t3.l / h2) * o2, z: (Math.pow(i4, 3) > p2 ? Math.pow(i4, 3) : (116 * i4 - 16) / h2) * u2, a: t3.alpha });
-  }({ l: t2((c3 = { l: y2.l * (1 - i3) + x2.l * i3, a: y2.a * (1 - i3) + x2.a * i3, b: y2.b * (1 - i3) + x2.b * i3, alpha: y2.alpha * (1 - i3) + x2.alpha * i3 }).l, 0, 400), a: c3.a, b: c3.b, alpha: t2(c3.alpha) });
-};
-function mix_default(t3) {
-  function a3(t4, a4, n3) {
-    n3 === undefined && (n3 = 5);
-    for (var r3 = [], o3 = 1 / (n3 - 1), u3 = 0;u3 <= n3 - 1; u3++)
-      r3.push(t4.mix(a4, o3 * u3));
-    return r3;
-  }
-  t3.prototype.mix = function(a4, n3) {
-    n3 === undefined && (n3 = 0.5);
-    var r3 = a4 instanceof t3 ? a4 : new t3(a4), o3 = c2(this.toRgb(), r3.toRgb(), n3);
-    return new t3(o3);
-  }, t3.prototype.tints = function(t4) {
-    return a3(this, "#fff", t4);
-  }, t3.prototype.shades = function(t4) {
-    return a3(this, "#000", t4);
-  }, t3.prototype.tones = function(t4) {
-    return a3(this, "#808080", t4);
-  };
-}
-
-// packages/core/src/color.ts
-k([names_default, mix_default]);
-function parseColor(color) {
-  let c3 = w(color);
-  if (!c3.isValid())
-    throw new Error(`Invalid color "${color}"`);
-  let {
-    r: r3,
-    g: g2,
-    b: b2,
-    a: a3
-  } = c3.toRgb();
-  return ((r3 & 255) << 24 | (g2 & 255) << 16 | (b2 & 255) << 8 | a3 * 255 & 255) >>> 0;
-}
-function mixColors(a3, b2, t3) {
-  return w(a3).mix(b2, t3).toHex();
-}
-function brightness(color) {
-  return w(color).brightness();
-}
-function createLinearGradient(x0, y0, x1, y1, stops) {
-  return {
-    __gradient: "linear",
-    x0,
-    y0,
-    x1,
-    y1,
-    stops: parseStops(stops)
-  };
-}
-function isGradient(value) {
-  return typeof value === "object" && value !== null && "__gradient" in value;
-}
-function parseStops(stops) {
-  return stops.map((s2) => ({
-    offset: s2.offset,
-    color: parseColor(s2.color)
-  }));
-}
-
 // packages/core/src/renderer.ts
 var nodes = new Map;
 var id = 1;
@@ -5506,14 +5209,14 @@ var pendingDestroy = new Map;
 var destroyScheduled = false;
 function destroyNode2(node) {
   tree2.destroyNode(node.id);
-  let cleanup2 = (n3) => {
-    for (let child of n3.children)
-      if (child.parent === n3)
+  let cleanup2 = (n) => {
+    for (let child of n.children)
+      if (child.parent === n)
         cleanup2(child);
-    if (n3.id === focusedNode())
+    if (n.id === focusedNode())
       setFocus(null);
-    nodes.delete(n3.id);
-    cleanupNode(n3.id);
+    nodes.delete(n.id);
+    cleanupNode(n.id);
   };
   cleanup2(node);
 }
@@ -5565,17 +5268,17 @@ function scanForOrphans(now) {
     return;
   for (let [type] of fresh)
     warnedLeakTypes.add(type);
-  let list = fresh.map(([type, n3]) => `<${type}> x${n3}`).join(", ");
+  let list = fresh.map(([type, n]) => `<${type}> x${n}`).join(", ");
   console.warn(`Leak sentinel: ${total} nodes are unreachable and will never be freed: ${list}. ` + `The usual cause is reading an element-valued prop more than once (every read ` + `builds a new subtree); read it once where it mounts, or resolve it with ` + `children(). If these nodes are intentionally kept for later mounting, ignore ` + `this. Element types already reported are not reported again.`);
 }
 var warnedRejectedProps = new Set;
 function setTreeProperty(node, name, value) {
   try {
     tree2.setProperty(node.id, name, value);
-  } catch (e3) {
-    let message = String(e3);
+  } catch (e) {
+    let message = String(e);
     if (!message.includes("Unknown property") && !message.includes("Detached-only"))
-      throw e3;
+      throw e;
     let key = node.elementType + "." + name;
     if (warnedRejectedProps.has(key))
       return;
@@ -5598,14 +5301,6 @@ function applyProp(node, name, value) {
   }
   if (name === "textInputHints") {
     setTextInputHints(node.id, value);
-    return;
-  }
-  if (name === "color" && isGradient(value)) {
-    setTreeProperty(node, name, value);
-    return;
-  }
-  if (name === "color" && typeof value === "string") {
-    setTreeProperty(node, name, parseColor(value));
     return;
   }
   setTreeProperty(node, name, value);
@@ -5711,6 +5406,33 @@ function createPortal(node, mount) {
   onCleanup(() => removeNode(target, node));
   return null;
 }
+// packages/core/src/color.ts
+import * as tree3 from "flux:rendertree";
+function parseColor2(color) {
+  return tree3.parseColor(color);
+}
+function mixColors2(a, b, t) {
+  return tree3.mixColors(a, b, t);
+}
+function brightness2(color) {
+  return tree3.brightness(color);
+}
+function createLinearGradient(x0, y0, x1, y1, stops) {
+  return {
+    __gradient: "linear",
+    x0,
+    y0,
+    x1,
+    y1,
+    stops: parseStops(stops)
+  };
+}
+function parseStops(stops) {
+  return stops.map((s) => ({
+    offset: s.offset,
+    color: parseColor2(s.color)
+  }));
+}
 // packages/core/src/environment.ts
 import { on as on3 } from "srt:events";
 var devicesAccessor;
@@ -5720,12 +5442,12 @@ function ensureDevicesState() {
   let [devices, setDevices] = createSignal(undefined, {
     ownedWrite: true
   });
-  on3("inputDevices", (d2) => {
+  on3("inputDevices", (d) => {
     setDevices({
-      keyboard: !!d2.keyboard,
-      mouse: !!d2.mouse,
-      touch: !!d2.touch,
-      screenKeyboard: !!d2.screenKeyboard
+      keyboard: !!d.keyboard,
+      mouse: !!d.mouse,
+      touch: !!d.touch,
+      screenKeyboard: !!d.screenKeyboard
     });
   });
   devicesAccessor = devices;
@@ -5737,7 +5459,7 @@ function ensureSystemThemeState() {
   let [theme, setTheme] = createSignal("unknown", {
     ownedWrite: true
   });
-  on3("systemTheme", (e3) => setTheme(e3.theme ?? "unknown"));
+  on3("systemTheme", (e) => setTheme(e.theme ?? "unknown"));
   systemThemeAccessor = theme;
 }
 var visibilityAccessor;
@@ -5747,7 +5469,7 @@ function ensureVisibilityState() {
   let [visibility, setVisibility] = createSignal("visible", {
     ownedWrite: true
   });
-  on3("visibility", (e3) => setVisibility(e3.state === "hidden" ? "hidden" : "visible"));
+  on3("visibility", (e) => setVisibility(e.state === "hidden" ? "hidden" : "visible"));
   visibilityAccessor = visibility;
 }
 var orientationAccessor;
@@ -5757,8 +5479,8 @@ function ensureOrientationState() {
   let [orientation, setOrientation] = createSignal("unknown", {
     ownedWrite: true
   });
-  on3("displayOrientation", (e3) => {
-    setOrientation(e3.orientation ?? "unknown");
+  on3("displayOrientation", (e) => {
+    setOrientation(e.orientation ?? "unknown");
   });
   orientationAccessor = orientation;
 }
@@ -5769,8 +5491,8 @@ function ensureTextScaleState() {
   let [scale, setScale] = createSignal(1, {
     ownedWrite: true
   });
-  on3("textScale", (e3) => {
-    setScale(typeof e3.scale === "number" && e3.scale > 0 ? e3.scale : 1);
+  on3("textScale", (e) => {
+    setScale(typeof e.scale === "number" && e.scale > 0 ? e.scale : 1);
   });
   textScaleAccessor = scale;
 }
@@ -5785,18 +5507,18 @@ function ensurePointerState() {
   let sawTouch = false;
   let unsubs = [];
   let unsubMove = null;
-  let note = (e3) => {
-    if (e3.pointerType === "mouse" && !sawMouse) {
+  let note = (e) => {
+    if (e.pointerType === "mouse" && !sawMouse) {
       sawMouse = true;
       setMouse(true);
       unsubMove();
-    } else if (e3.pointerType === "touch" && !sawTouch) {
+    } else if (e.pointerType === "touch" && !sawTouch) {
       sawTouch = true;
       setTouch(true);
     }
     if (sawMouse && sawTouch)
-      for (let u3 of unsubs)
-        u3();
+      for (let u of unsubs)
+        u();
   };
   unsubMove = createRoot(() => onPointerMove(note));
   unsubs.push(unsubMove, on3("pointerDown", note));
@@ -5871,7 +5593,7 @@ function gamepads() {
     let [pads, setPads] = createSignal([], {
       ownedWrite: true
     });
-    on4("gamepads", (e3) => setPads(e3.pads ?? []));
+    on4("gamepads", (e) => setPads(e.pads ?? []));
     gamepadsAccessor = pads;
   }
   return gamepadsAccessor();
@@ -5893,8 +5615,8 @@ var capabilities = {
     return env.inputDevices?.keyboard ?? env.keyboardSeen;
   },
   get windowSizeClass() {
-    let w2 = env.windowSize.width;
-    return w2 >= EXPANDED_MIN_WIDTH ? "expanded" : w2 >= MEDIUM_MIN_WIDTH ? "medium" : "compact";
+    let w = env.windowSize.width;
+    return w >= EXPANDED_MIN_WIDTH ? "expanded" : w >= MEDIUM_MIN_WIDTH ? "medium" : "compact";
   }
 };
 // packages/core/src/gpu.ts
@@ -5916,7 +5638,7 @@ var svg = String.raw;
 function parseSvg(src, opts) {
   if (opts?.color != null)
     return fluxParseSvg(src, {
-      color: parseColor(opts.color)
+      color: parseColor2(opts.color)
     });
   return fluxParseSvg(src);
 }
@@ -5933,13 +5655,13 @@ function createScroll(viewport, content, options = {}) {
   let warnedCollapsed = false;
   let maxX = 0;
   let maxY = 0;
-  let clamp = (x2, y2) => ({
-    x: canX ? Math.max(0, Math.min(x2, maxX)) : 0,
-    y: canY ? Math.max(0, Math.min(y2, maxY)) : 0
+  let clamp = (x, y) => ({
+    x: canX ? Math.max(0, Math.min(x, maxX)) : 0,
+    y: canY ? Math.max(0, Math.min(y, maxY)) : 0
   });
-  let set = (x2, y2) => {
+  let set = (x, y) => {
     let cur = offset();
-    let next = clamp(x2, y2);
+    let next = clamp(x, y);
     if (next.x !== cur.x || next.y !== cur.y)
       setOffset(next);
   };
@@ -5977,7 +5699,7 @@ ${origin}`);
       let cur = offset();
       set(cur.x + dx, cur.y + dy);
     },
-    scrollTo: (x2, y2) => set(x2, y2)
+    scrollTo: (x, y) => set(x, y)
   };
 }
 // packages/core/src/arena.ts
@@ -6016,11 +5738,11 @@ function createPan(options) {
   let origin = null;
   let active = null;
   let armed = null;
-  let past = (e3) => {
+  let past = (e) => {
     if (!origin)
       return false;
-    let dx = Math.abs(e3.clientX - origin.x);
-    let dy = Math.abs(e3.clientY - origin.y);
+    let dx = Math.abs(e.clientX - origin.x);
+    let dy = Math.abs(e.clientY - origin.y);
     let axis = options.axis ?? "both";
     if (axis === "vertical")
       return dy >= PAN_SLOP;
@@ -6042,25 +5764,25 @@ function createPan(options) {
   };
   onSettled(() => reset);
   let handlers2 = {
-    onPointerDown: (e3) => {
-      if (e3.button != null && e3.button !== 0)
+    onPointerDown: (e) => {
+      if (e.button != null && e.button !== 0)
         return;
       if (armed == null && active == null) {
-        armed = e3.pointerId;
+        armed = e.pointerId;
         origin = {
-          x: e3.clientX,
-          y: e3.clientY
+          x: e.clientX,
+          y: e.clientY
         };
       }
     },
-    onPointerMove: (e3) => {
-      if (armed === e3.pointerId && past(e3)) {
-        if (arena.steal(e3.pointerId, owner)) {
-          active = e3.pointerId;
+    onPointerMove: (e) => {
+      if (armed === e.pointerId && past(e)) {
+        if (arena.steal(e.pointerId, owner)) {
+          active = e.pointerId;
           armed = null;
           origin = {
-            x: e3.clientX,
-            y: e3.clientY
+            x: e.clientX,
+            y: e.clientY
           };
           options.onPanStart?.();
         } else {
@@ -6068,19 +5790,19 @@ function createPan(options) {
         }
         return;
       }
-      if (active === e3.pointerId && origin) {
-        options.onPanMove?.(e3.clientX - origin.x, e3.clientY - origin.y);
+      if (active === e.pointerId && origin) {
+        options.onPanMove?.(e.clientX - origin.x, e.clientY - origin.y);
         origin = {
-          x: e3.clientX,
-          y: e3.clientY
+          x: e.clientX,
+          y: e.clientY
         };
       }
     },
-    onPointerUp: (e3) => {
-      if (active === e3.pointerId) {
+    onPointerUp: (e) => {
+      if (active === e.pointerId) {
         reset();
         options.onPanEnd?.();
-      } else if (armed === e3.pointerId) {
+      } else if (armed === e.pointerId) {
         reset();
       }
     }
@@ -6244,11 +5966,11 @@ function View(props) {
         e: props.style?.backgroundColor ?? "transparent",
         t: props.style?.borderRadius
       }), ({
-        e: e3,
-        t: t3
+        e,
+        t
       }, _p$) => {
-        e3 !== _p$?.e && setProp(_el$2, "color", e3, _p$?.e);
-        t3 !== _p$?.t && setProp(_el$2, "radius", t3, _p$?.t);
+        e !== _p$?.e && setProp(_el$2, "color", e, _p$?.e);
+        t !== _p$?.t && setProp(_el$2, "radius", t, _p$?.t);
       });
       return _el$2;
     })() : null;
@@ -6265,13 +5987,13 @@ function View(props) {
         t: props.style?.borderWidth,
         a: props.style?.borderRadius
       }), ({
-        e: e3,
-        t: t3,
-        a: a3
+        e,
+        t,
+        a
       }, _p$) => {
-        e3 !== _p$?.e && setProp(_el$3, "color", e3, _p$?.e);
-        t3 !== _p$?.t && setProp(_el$3, "strokeWidth", t3, _p$?.t);
-        a3 !== _p$?.a && setProp(_el$3, "radius", a3, _p$?.a);
+        e !== _p$?.e && setProp(_el$3, "color", e, _p$?.e);
+        t !== _p$?.t && setProp(_el$3, "strokeWidth", t, _p$?.t);
+        a !== _p$?.a && setProp(_el$3, "radius", a, _p$?.a);
       });
       return _el$3;
     })() : null;
@@ -6329,7 +6051,7 @@ var darkTheme = {
     surfaceAlt: "#21262d",
     surfaceHover: "#262c34",
     text: "#e6edf3",
-    textMuted: mixColors("#e6edf3", "#0b0f17", 0.4),
+    textMuted: mixColors2("#e6edf3", "#0b0f17", 0.4),
     border: "rgba(255,255,255,0.14)",
     primary: "#547ebf",
     primaryHover: "#7ea9ea",
@@ -6353,7 +6075,7 @@ var lightTheme = {
     surfaceAlt: "#eaeef2",
     surfaceHover: "#e0e5eb",
     text: "#1f2328",
-    textMuted: mixColors("#1f2328", "#ffffff", 0.4),
+    textMuted: mixColors2("#1f2328", "#ffffff", 0.4),
     border: "rgba(0,0,0,0.15)",
     primary: "#547ebf",
     primaryHover: "#3f5494",
@@ -6373,10 +6095,10 @@ var [theme, setThemeStore] = createStore({
   ...darkTheme
 });
 function setTheme(partial) {
-  setThemeStore((s2) => {
+  setThemeStore((s) => {
     for (let key in partial) {
-      let k2 = key;
-      Object.assign(s2[k2], partial[k2]);
+      let k = key;
+      Object.assign(s[k], partial[k]);
     }
   });
 }
@@ -6388,7 +6110,7 @@ function defaultPolicyResolver(caps) {
     interaction,
     density: interaction === "desktop" ? "compact" : "comfortable",
     motion: "normal",
-    focusRing: caps.keyboardNav || gamepads().some((p3) => p3 != null),
+    focusRing: caps.keyboardNav || gamepads().some((p) => p != null),
     textScale: env.textScale,
     textWeightDelta: env.displayScale < 1.5 ? 100 : 0,
     navigation: caps.windowSizeClass === "expanded" ? "sidebar" : caps.windowSizeClass === "medium" ? "rail" : "bottomTabs",
@@ -6440,7 +6162,7 @@ var SMALL_TEXT = 16;
 function lightOnDark(text, fill) {
   if (typeof text !== "string" || typeof fill !== "string" || fill === "transparent")
     return;
-  return brightness(text) > brightness(fill);
+  return brightness2(text) > brightness2(fill);
 }
 function themeOnDark() {
   return lightOnDark(theme.color.text, theme.color.background) ?? false;
@@ -6469,13 +6191,13 @@ function Text(props) {
   let size = () => (props.layout?.fontSize ?? role().size) * policy.textScale;
   let color = () => props.style?.color ?? theme.color[props.color ?? (props.muted ? "textMuted" : "text")];
   let box = createMemo(() => {
-    let l2 = props.layout;
-    if (!l2)
+    let l = props.layout;
+    if (!l)
       return {};
     let out = {};
-    for (let key in l2) {
+    for (let key in l) {
       if (!FONT_KEYS.includes(key))
-        out[key] = l2[key];
+        out[key] = l[key];
     }
     return out;
   });
@@ -6547,23 +6269,23 @@ function Text(props) {
     s: props.layout?.textAlign,
     h: props.layout?.maxLines
   }), ({
-    e: e3,
-    t: t3,
-    a: a3,
-    o: o3,
-    i: i3,
-    n: n3,
-    s: s2,
-    h: h3
+    e,
+    t,
+    a,
+    o,
+    i,
+    n,
+    s,
+    h
   }, _p$) => {
-    e3 !== _p$?.e && setProp(_el$2, "color", e3, _p$?.e);
-    t3 !== _p$?.t && setProp(_el$2, "fontFamily", t3, _p$?.t);
-    a3 !== _p$?.a && setProp(_el$2, "fontSize", a3, _p$?.a);
-    o3 !== _p$?.o && setProp(_el$2, "lineHeight", o3, _p$?.o);
-    i3 !== _p$?.i && setProp(_el$2, "fontStyle", i3, _p$?.i);
-    n3 !== _p$?.n && setProp(_el$2, "fontWeight", n3, _p$?.n);
-    s2 !== _p$?.s && setProp(_el$2, "textAlign", s2, _p$?.s);
-    h3 !== _p$?.h && setProp(_el$2, "maxLines", h3, _p$?.h);
+    e !== _p$?.e && setProp(_el$2, "color", e, _p$?.e);
+    t !== _p$?.t && setProp(_el$2, "fontFamily", t, _p$?.t);
+    a !== _p$?.a && setProp(_el$2, "fontSize", a, _p$?.a);
+    o !== _p$?.o && setProp(_el$2, "lineHeight", o, _p$?.o);
+    i !== _p$?.i && setProp(_el$2, "fontStyle", i, _p$?.i);
+    n !== _p$?.n && setProp(_el$2, "fontWeight", n, _p$?.n);
+    s !== _p$?.s && setProp(_el$2, "textAlign", s, _p$?.s);
+    h !== _p$?.h && setProp(_el$2, "maxLines", h, _p$?.h);
   });
   return _el$;
 }
@@ -6571,12 +6293,12 @@ function Text(props) {
 function SafeArea(props) {
   let pad = (edge) => {
     let defaultOn = edge === "top" || edge === "bottom";
-    let p3 = props[edge] ?? defaultOn;
-    if (p3 === false)
+    let p = props[edge] ?? defaultOn;
+    if (p === false)
       return 0;
-    if (p3 === true)
+    if (p === true)
       return safeArea()[edge];
-    return Math.max(safeArea()[edge], p3);
+    return Math.max(safeArea()[edge], p);
   };
   var _el$ = createElement("view", {
     flex: 1,
@@ -6590,17 +6312,17 @@ function SafeArea(props) {
     o: pad("left"),
     i: pad("right")
   }), ({
-    e: e3,
-    t: t3,
-    a: a3,
-    o: o3,
-    i: i3
+    e,
+    t,
+    a,
+    o,
+    i
   }, _p$) => {
-    e3 !== _p$?.e && setProp(_el$, "position", e3, _p$?.e);
-    t3 !== _p$?.t && setProp(_el$, "marginTop", t3, _p$?.t);
-    a3 !== _p$?.a && setProp(_el$, "marginBottom", a3, _p$?.a);
-    o3 !== _p$?.o && setProp(_el$, "marginLeft", o3, _p$?.o);
-    i3 !== _p$?.i && setProp(_el$, "marginRight", i3, _p$?.i);
+    e !== _p$?.e && setProp(_el$, "position", e, _p$?.e);
+    t !== _p$?.t && setProp(_el$, "marginTop", t, _p$?.t);
+    a !== _p$?.a && setProp(_el$, "marginBottom", a, _p$?.a);
+    o !== _p$?.o && setProp(_el$, "marginLeft", o, _p$?.o);
+    i !== _p$?.i && setProp(_el$, "marginRight", i, _p$?.i);
   });
   return _el$;
 }
@@ -6616,10 +6338,10 @@ function createTextBuffer(options = {}) {
   let value = () => options.value?.() ?? internalValue();
   let selection = () => {
     let len = value().length;
-    let s2 = selectionState();
+    let s = selectionState();
     return {
-      anchor: Math.min(s2.anchor, len),
-      focus: Math.min(s2.focus, len)
+      anchor: Math.min(s.anchor, len),
+      focus: Math.min(s.focus, len)
     };
   };
   let range = () => {
@@ -6639,12 +6361,12 @@ function createTextBuffer(options = {}) {
     return direction === "left" ? Math.max(0, offset - 1) : Math.min(text.length, offset + 1);
   };
   let replace = (start, end, text) => {
-    let v2 = value();
+    let v = value();
     let max = options.maxLength?.();
     if (max != null)
-      text = text.slice(0, Math.max(0, max - (v2.length - (end - start))));
+      text = text.slice(0, Math.max(0, max - (v.length - (end - start))));
     options.onReplace?.(start, end, text);
-    let next = v2.slice(0, start) + text + v2.slice(end);
+    let next = v.slice(0, start) + text + v.slice(end);
     if (options.value?.() == null)
       setInternalValue(next);
     setCaret(start + text.length);
@@ -6667,12 +6389,12 @@ function createTextBuffer(options = {}) {
         replace(step(value(), start, "left"), start, "");
     },
     deleteForward: () => {
-      let v2 = value();
+      let v = value();
       let [start, end] = range();
       if (start !== end)
         replace(start, end, "");
-      else if (end < v2.length)
-        replace(end, step(v2, end, "right"), "");
+      else if (end < v.length)
+        replace(end, step(v, end, "right"), "");
     },
     move: (direction, opts) => {
       let extend = opts?.extend ?? false;
@@ -6718,7 +6440,7 @@ function createTextEditorLayout(viewport, input) {
     width: 0,
     height: 0
   }, {
-    equals: (a3, b2) => a3.width === b2.width && a3.height === b2.height
+    equals: (a, b) => a.width === b.width && a.height === b.height
   });
   let [scrollX, setScrollX] = createSignal(0);
   let [scrollY, setScrollY] = createSignal(0);
@@ -6744,7 +6466,7 @@ function createTextEditorLayout(viewport, input) {
     let width = wrap2 ? Math.max(0, viewportSize().width - caretWidth) : Infinity;
     let units = wrap2 ? splitWide(prepared(), width) : prepared();
     let out = [];
-    let y2 = 0;
+    let y = 0;
     let cursor = 0;
     let line = layoutNextLine(units, cursor, width);
     let hardBreak = false;
@@ -6752,27 +6474,27 @@ function createTextEditorLayout(viewport, input) {
       out.push({
         start: line.start,
         end: line.end,
-        y: y2,
+        y,
         height: line.height,
         width: line.width,
         from: line.from,
         to: line.to
       });
-      y2 += line.height;
+      y += line.height;
       hardBreak = line.hardBreak;
       line = layoutNextLine(units, line.cursor, width);
     }
     if (out.length === 0 || hardBreak) {
       let height = measureText2(" ", font).height;
-      let n3 = units.units.length;
+      let n = units.units.length;
       out.push({
         start: text.length,
         end: text.length,
-        y: y2,
+        y,
         height,
         width: 0,
-        from: n3,
-        to: n3
+        from: n,
+        to: n
       });
     }
     return {
@@ -6791,15 +6513,15 @@ function createTextEditorLayout(viewport, input) {
       return [];
     let stops = [];
     let pen = 0;
-    for (let u3 = line.from;u3 < line.to; u3++) {
-      let unit = units[u3];
+    for (let u = line.from;u < line.to; u++) {
+      let unit = units[u];
       for (let stop of unit.carets ?? []) {
-        let x2 = pen + stop.x;
+        let x = pen + stop.x;
         if (stops.length && stops[stops.length - 1].offset === stop.offset)
           continue;
         stops.push({
           offset: stop.offset,
-          x: x2
+          x
         });
       }
       pen += unit.advance;
@@ -6813,9 +6535,9 @@ function createTextEditorLayout(viewport, input) {
   };
   let lineOf = (offset) => {
     let ls = lines();
-    for (let i3 = 0;i3 < ls.length; i3++) {
-      if (offset < ls[i3].end)
-        return i3;
+    for (let i = 0;i < ls.length; i++) {
+      if (offset < ls[i].end)
+        return i;
     }
     return ls.length - 1;
   };
@@ -6824,36 +6546,36 @@ function createTextEditorLayout(viewport, input) {
     let offset = input().caret;
     let index = caretLine();
     let line = lines()[index];
-    let x2 = 0;
+    let x = 0;
     for (let stop of lineStops(index)) {
       if (stop.offset > offset)
         break;
-      x2 = stop.x;
+      x = stop.x;
     }
     return {
-      x: x2,
+      x,
       y: line.y,
       height: line.height
     };
   });
-  let offsetAtX = (index, x2) => {
+  let offsetAtX = (index, x) => {
     let best = lines()[index]?.start ?? 0;
     let bestDistance = Infinity;
     for (let stop of lineStops(index)) {
       if (lineOf(stop.offset) !== index)
         continue;
-      let d2 = Math.abs(stop.x - x2);
-      if (d2 < bestDistance) {
+      let d = Math.abs(stop.x - x);
+      if (d < bestDistance) {
         best = stop.offset;
-        bestDistance = d2;
+        bestDistance = d;
       }
     }
     return best;
   };
-  let lineAtY = (y2) => {
+  let lineAtY = (y) => {
     let ls = lines();
     let index = 0;
-    while (index + 1 < ls.length && ls[index + 1].y <= y2)
+    while (index + 1 < ls.length && ls[index + 1].y <= y)
       index++;
     return index;
   };
@@ -6873,14 +6595,14 @@ function createTextEditorLayout(viewport, input) {
       }
       return text.length;
     }
-    for (let u3 = units.length - 1;u3 >= 0; u3--) {
-      let unit = units[u3];
+    for (let u = units.length - 1;u >= 0; u--) {
+      let unit = units[u];
       if (unit.start >= offset)
         continue;
       let stops = unit.carets ?? [];
-      for (let i3 = stops.length - 1;i3 >= 0; i3--)
-        if (stops[i3].offset < offset)
-          return stops[i3].offset;
+      for (let i = stops.length - 1;i >= 0; i--)
+        if (stops[i].offset < offset)
+          return stops[i].offset;
       return unit.start;
     }
     return 0;
@@ -6904,12 +6626,12 @@ function createTextEditorLayout(viewport, input) {
       wrap: wrap2
     } = input();
     let ls = lines();
-    let contentWidth = ls.reduce((w2, l2) => Math.max(w2, l2.width), 0);
+    let contentWidth = ls.reduce((w, l) => Math.max(w, l.width), 0);
     let last = ls[ls.length - 1];
     let contentHeight = last.y + last.height;
-    let c3 = caret();
-    setScrollX(wrap2 ? 0 : follow(scrollX(), c3.x, caretWidth, vw, contentWidth + caretWidth));
-    setScrollY(follow(scrollY(), c3.y, c3.height, vh, contentHeight));
+    let c = caret();
+    setScrollX(wrap2 ? 0 : follow(scrollX(), c.x, caretWidth, vw, contentWidth + caretWidth));
+    setScrollY(follow(scrollY(), c.y, c.height, vh, contentHeight));
     flush();
   });
   return {
@@ -6925,41 +6647,41 @@ function createTextEditorLayout(viewport, input) {
 }
 function splitWide(prepared, width) {
   let all = prepared.units;
-  if (!all.some((u3, i3) => !u3.glue && unitInk(all, i3) > width))
+  if (!all.some((u, i) => !u.glue && unitInk(all, i) > width))
     return prepared;
   let wide = false;
   let units = [];
-  for (let u3 = 0;u3 < all.length; u3++) {
-    let unit = all[u3];
+  for (let u = 0;u < all.length; u++) {
+    let unit = all[u];
     if (!unit.glue)
-      wide = unitInk(all, u3) > width;
+      wide = unitInk(all, u) > width;
     let stops = unit.carets;
     if (!wide || !stops || stops.length <= 2) {
       units.push(unit);
       continue;
     }
-    for (let i3 = 1;i3 < stops.length; i3++) {
-      let a3 = stops[i3 - 1];
-      let b2 = stops[i3];
-      let last = i3 === stops.length - 1;
-      let advance = last ? unit.advance - a3.x : b2.x - a3.x;
+    for (let i = 1;i < stops.length; i++) {
+      let a = stops[i - 1];
+      let b = stops[i];
+      let last = i === stops.length - 1;
+      let advance = last ? unit.advance - a.x : b.x - a.x;
       units.push({
-        text: prepared.text.slice(a3.offset, b2.offset),
-        start: a3.offset,
-        end: last ? unit.end : b2.offset,
+        text: prepared.text.slice(a.offset, b.offset),
+        start: a.offset,
+        end: last ? unit.end : b.offset,
         advance,
-        width: Math.max(0, Math.min(b2.x, unit.width) - a3.x),
+        width: Math.max(0, Math.min(b.x, unit.width) - a.x),
         ascent: unit.ascent,
         descent: unit.descent,
         hardBreak: last && unit.hardBreak,
-        glue: i3 === 1 && unit.glue,
+        glue: i === 1 && unit.glue,
         run: unit.run,
         carets: [{
-          offset: a3.offset,
+          offset: a.offset,
           x: 0
         }, {
-          offset: b2.offset,
-          x: b2.x - a3.x
+          offset: b.offset,
+          x: b.x - a.x
         }]
       });
     }
@@ -6993,8 +6715,8 @@ var [scopeStack, setScopeStack] = createSignal([], {
   ownedWrite: true
 });
 function pushNavScope(node) {
-  setScopeStack((s2) => [...s2, node]);
-  return () => setScopeStack((s2) => s2.filter((n3) => n3 !== node));
+  setScopeStack((s) => [...s, node]);
+  return () => setScopeStack((s) => s.filter((n) => n !== node));
 }
 function createFocusNav(options) {
   let currentScope = () => options?.scope?.() ?? scopeStack()[scopeStack().length - 1];
@@ -7004,26 +6726,26 @@ function createFocusNav(options) {
     for (let id2 of getFocusables()) {
       if (scopeNode && !getNodePath(id2).includes(scopeNode.id))
         continue;
-      let b2 = getBoundingBoxViewport2({
+      let b = getBoundingBoxViewport2({
         id: id2
       });
-      if (b2)
+      if (b)
         placed.push({
           id: id2,
-          x: b2.x + b2.width / 2,
-          y: b2.y + b2.height / 2
+          x: b.x + b.width / 2,
+          y: b.y + b.height / 2
         });
     }
     return placed;
   };
-  let ordered = (placed) => [...placed].sort((a3, b2) => Math.abs(a3.y - b2.y) <= 1 ? a3.x - b2.x : a3.y - b2.y);
+  let ordered = (placed) => [...placed].sort((a, b) => Math.abs(a.y - b.y) <= 1 ? a.x - b.x : a.y - b.y);
   let lastPos = null;
-  let focusCandidate = (p3) => {
+  let focusCandidate = (p) => {
     lastPos = {
-      x: p3.x,
-      y: p3.y
+      x: p.x,
+      y: p.y
     };
-    setFocus(p3.id);
+    setFocus(p.id);
   };
   let focusFirst = (placed) => {
     focusCandidate(ordered(placed)[0]);
@@ -7032,10 +6754,10 @@ function createFocusNav(options) {
     if (!lastPos)
       return focusFirst(placed);
     let {
-      x: x2,
-      y: y2
+      x,
+      y
     } = lastPos;
-    let best = placed.reduce((a3, b2) => (b2.x - x2) ** 2 + (b2.y - y2) ** 2 < (a3.x - x2) ** 2 + (a3.y - y2) ** 2 ? b2 : a3);
+    let best = placed.reduce((a, b) => (b.x - x) ** 2 + (b.y - y) ** 2 < (a.x - x) ** 2 + (a.y - y) ** 2 ? b : a);
     focusCandidate(best);
   };
   let move = (dir) => {
@@ -7043,16 +6765,16 @@ function createFocusNav(options) {
     if (placed.length === 0)
       return;
     let focused = focusedNode();
-    let from = focused != null ? placed.find((p3) => p3.id === focused) : undefined;
+    let from = focused != null ? placed.find((p) => p.id === focused) : undefined;
     if (!from)
       return focusEntry(placed);
     let best = null;
     let bestScore = Infinity;
-    for (let p3 of placed) {
-      if (p3 === from)
+    for (let p of placed) {
+      if (p === from)
         continue;
-      let dx = p3.x - from.x;
-      let dy = p3.y - from.y;
+      let dx = p.x - from.x;
+      let dy = p.y - from.y;
       let ahead = dir === "up" ? -dy : dir === "down" ? dy : dir === "left" ? -dx : dx;
       if (ahead <= 1)
         continue;
@@ -7060,7 +6782,7 @@ function createFocusNav(options) {
       let score = ahead + 2 * across;
       if (score < bestScore) {
         bestScore = score;
-        best = p3;
+        best = p;
       }
     }
     if (best)
@@ -7072,20 +6794,20 @@ function createFocusNav(options) {
       return;
     let row = ordered(placed);
     let focused = focusedNode();
-    let i3 = focused != null ? row.findIndex((p3) => p3.id === focused) : -1;
-    if (i3 < 0) {
+    let i = focused != null ? row.findIndex((p) => p.id === focused) : -1;
+    if (i < 0) {
       if (lastPos)
         return focusEntry(placed);
       return focusCandidate(row[delta === 1 ? 0 : row.length - 1]);
     }
-    focusCandidate(row[(i3 + delta + row.length) % row.length]);
+    focusCandidate(row[(i + delta + row.length) % row.length]);
   };
   let activate = () => {
     let placed = reachable();
     if (placed.length === 0)
       return;
     let focused = focusedNode();
-    let hit = focused != null ? placed.find((p3) => p3.id === focused) : undefined;
+    let hit = focused != null ? placed.find((p) => p.id === focused) : undefined;
     if (!hit)
       return focusEntry(placed);
     lastPos = {
@@ -7094,18 +6816,18 @@ function createFocusNav(options) {
     };
     navActions.get(hit.id)?.();
   };
-  let onKeyDown = (e3) => {
-    if (e3.key === "ArrowUp")
+  let onKeyDown = (e) => {
+    if (e.key === "ArrowUp")
       move("up");
-    else if (e3.key === "ArrowDown")
+    else if (e.key === "ArrowDown")
       move("down");
-    else if (e3.key === "ArrowLeft")
+    else if (e.key === "ArrowLeft")
       move("left");
-    else if (e3.key === "ArrowRight")
+    else if (e.key === "ArrowRight")
       move("right");
-    else if (e3.key === "Tab")
-      tab(e3.shiftKey ? -1 : 1);
-    else if ((e3.key === "Enter" || e3.code === "Select") && !e3.repeat)
+    else if (e.key === "Tab")
+      tab(e.shiftKey ? -1 : 1);
+    else if ((e.key === "Enter" || e.code === "Select") && !e.repeat)
       activate();
   };
   let prevFocused = null;
@@ -7143,20 +6865,20 @@ function createFocusNav(options) {
   createEffect(() => gamepads(), (pads) => {
     let now = new Set;
     for (let pad of pads)
-      for (let b2 of pad?.buttons ?? [])
-        now.add(b2);
-    for (let b2 of now) {
-      if (prevButtons.has(b2))
+      for (let b of pad?.buttons ?? [])
+        now.add(b);
+    for (let b of now) {
+      if (prevButtons.has(b))
         continue;
-      if (b2 === "dpadUp")
+      if (b === "dpadUp")
         move("up");
-      else if (b2 === "dpadDown")
+      else if (b === "dpadDown")
         move("down");
-      else if (b2 === "dpadLeft")
+      else if (b === "dpadLeft")
         move("left");
-      else if (b2 === "dpadRight")
+      else if (b === "dpadRight")
         move("right");
-      else if (b2 === "south")
+      else if (b === "south")
         activate();
     }
     prevButtons = now;
@@ -7197,18 +6919,18 @@ function EditorField(props) {
     if (node)
       setFocus(node.id);
   };
-  let handleViewportPointerDown = (e3) => {
+  let handleViewportPointerDown = (e) => {
     if (props.disabled)
       return;
-    let line = editor.lineAtY(e3.localY + editor.scrollY());
-    let offset = editor.offsetAtX(line, e3.localX + editor.scrollX());
+    let line = editor.lineAtY(e.localY + editor.scrollY());
+    let offset = editor.offsetAtX(line, e.localX + editor.scrollX());
     buffer.setSelection(offset, offset);
     setCaretOn(true);
   };
   let handleFocus = () => {
     setCaretOn(true);
     if (blinkId == null) {
-      blinkId = setInterval(() => setCaretOn((v2) => !v2), 500);
+      blinkId = setInterval(() => setCaretOn((v) => !v), 500);
     }
     props.onFocus?.();
   };
@@ -7219,52 +6941,52 @@ function EditorField(props) {
     }
     props.onBlur?.();
   };
-  let handleKeyDown = (e3) => {
+  let handleKeyDown = (e) => {
     if (props.disabled)
       return;
     let consumed = true;
-    if (e3.key === "Backspace") {
+    if (e.key === "Backspace") {
       buffer.deleteBackward();
       setCaretOn(true);
-    } else if (e3.key === "Delete") {
+    } else if (e.key === "Delete") {
       buffer.deleteForward();
       setCaretOn(true);
-    } else if (e3.key === "ArrowLeft") {
+    } else if (e.key === "ArrowLeft") {
       buffer.move("left");
       setCaretOn(true);
-    } else if (e3.key === "ArrowRight") {
+    } else if (e.key === "ArrowRight") {
       buffer.move("right");
       setCaretOn(true);
-    } else if (e3.key === "Home" || e3.key === "End") {
+    } else if (e.key === "Home" || e.key === "End") {
       if (props.multiline) {
-        let offset = editor.offsetAtX(editor.caretLine(), e3.key === "Home" ? 0 : 1e9);
+        let offset = editor.offsetAtX(editor.caretLine(), e.key === "Home" ? 0 : 1e9);
         buffer.setSelection(offset, offset);
       } else {
-        buffer.move(e3.key === "Home" ? "start" : "end");
+        buffer.move(e.key === "Home" ? "start" : "end");
       }
       setCaretOn(true);
-    } else if (props.multiline && (e3.key === "ArrowUp" || e3.key === "ArrowDown")) {
-      moveLine(e3.key === "ArrowUp" ? -1 : 1);
+    } else if (props.multiline && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
+      moveLine(e.key === "ArrowUp" ? -1 : 1);
       setCaretOn(true);
-    } else if (props.multiline && e3.key === "Enter" && textInputActive()) {
+    } else if (props.multiline && e.key === "Enter" && textInputActive()) {
       buffer.insertText(`
 `);
       setCaretOn(true);
-    } else if (e3.key === "Enter" || e3.code === "Select") {
+    } else if (e.key === "Enter" || e.code === "Select") {
       activateField();
-    } else if (e3.key === "Escape") {
+    } else if (e.key === "Escape") {
       if (node)
         setFocus(null);
     } else {
       consumed = false;
     }
     if (consumed)
-      e3.stopPropagation();
+      e.stopPropagation();
   };
-  let handleTextInput = (e3) => {
+  let handleTextInput = (e) => {
     if (props.disabled)
       return;
-    buffer.insertText(e3.text ?? "");
+    buffer.insertText(e.text ?? "");
     setCaretOn(true);
   };
   let moveLine = (delta) => {
@@ -7332,11 +7054,11 @@ function EditorField(props) {
   insertNode2(_el$, _el$2);
   insertNode2(_el$, _el$3);
   insertNode2(_el$, _el$4);
-  ref(() => (n3) => {
-    node = n3;
+  ref(() => (n) => {
+    node = n;
     unregisterNav?.();
-    unregisterNav = registerNavAction(n3.id, activateField);
-    props.ref?.(n3);
+    unregisterNav = registerNavAction(n.id, activateField);
+    props.ref?.(n);
   }, _el$);
   setProp(_el$, "focusable", true);
   setProp(_el$, "flexDirection", "row");
@@ -7382,7 +7104,7 @@ function EditorField(props) {
     onKeyDown: handleKeyDown,
     onTextInput: handleTextInput
   }), true);
-  ref(() => (n3) => viewport = n3, _el$4);
+  ref(() => (n) => viewport = n, _el$4);
   insert(_el$4, (() => {
     var _c$ = memo2(() => !!showPlaceholder());
     return () => _c$() ? (() => {
@@ -7416,15 +7138,15 @@ function EditorField(props) {
         a: caret().y + (caret().height - fontSize()) / 2,
         o: fontSize()
       }), ({
-        e: e3,
-        t: t3,
-        a: a3,
-        o: o3
+        e,
+        t,
+        a,
+        o
       }, _p$) => {
-        e3 !== _p$?.e && setProp(_el$6, "color", e3, _p$?.e);
-        t3 !== _p$?.t && setProp(_el$6, "x", t3, _p$?.t);
-        a3 !== _p$?.a && setProp(_el$6, "y", a3, _p$?.a);
-        o3 !== _p$?.o && setProp(_el$6, "h", o3, _p$?.o);
+        e !== _p$?.e && setProp(_el$6, "color", e, _p$?.e);
+        t !== _p$?.t && setProp(_el$6, "x", t, _p$?.t);
+        a !== _p$?.a && setProp(_el$6, "y", a, _p$?.a);
+        o !== _p$?.o && setProp(_el$6, "h", o, _p$?.o);
       });
       return _el$6;
     })() : null)];
@@ -7440,25 +7162,25 @@ function EditorField(props) {
     h: editor.scrollX(),
     r: editor.scrollY()
   }), ({
-    e: e3,
-    t: t3,
-    a: a3,
-    o: o3,
-    i: i3,
-    n: n3,
-    s: s2,
-    h: h3,
-    r: r3
+    e,
+    t,
+    a,
+    o,
+    i,
+    n,
+    s,
+    h,
+    r
   }, _p$) => {
-    e3 !== _p$?.e && setProp(_el$2, "color", e3, _p$?.e);
-    t3 !== _p$?.t && setProp(_el$2, "radius", t3, _p$?.t);
-    a3 !== _p$?.a && setProp(_el$3, "color", a3, _p$?.a);
-    o3 !== _p$?.o && setProp(_el$3, "strokeWidth", o3, _p$?.o);
-    i3 !== _p$?.i && setProp(_el$3, "radius", i3, _p$?.i);
-    n3 !== _p$?.n && setProp(_el$4, "height", n3, _p$?.n);
-    s2 !== _p$?.s && setProp(_el$4, "alignSelf", s2, _p$?.s);
-    h3 !== _p$?.h && setProp(_el$4, "scrollX", h3, _p$?.h);
-    r3 !== _p$?.r && setProp(_el$4, "scrollY", r3, _p$?.r);
+    e !== _p$?.e && setProp(_el$2, "color", e, _p$?.e);
+    t !== _p$?.t && setProp(_el$2, "radius", t, _p$?.t);
+    a !== _p$?.a && setProp(_el$3, "color", a, _p$?.a);
+    o !== _p$?.o && setProp(_el$3, "strokeWidth", o, _p$?.o);
+    i !== _p$?.i && setProp(_el$3, "radius", i, _p$?.i);
+    n !== _p$?.n && setProp(_el$4, "height", n, _p$?.n);
+    s !== _p$?.s && setProp(_el$4, "alignSelf", s, _p$?.s);
+    h !== _p$?.h && setProp(_el$4, "scrollX", h, _p$?.h);
+    r !== _p$?.r && setProp(_el$4, "scrollY", r, _p$?.r);
   });
   return _el$;
 }
@@ -7471,7 +7193,7 @@ function TextInput(props) {
       let buffer = createTextBuffer({
         value: () => props.value,
         defaultValue: untrack(() => props.defaultValue),
-        onInput: (v2) => props.onInput?.(v2),
+        onInput: (v) => props.onInput?.(v),
         maxLength: () => props.maxLength,
         step
       });
@@ -7550,11 +7272,11 @@ function ScrollView(props) {
     axis: props.horizontal ? "horizontal" : "vertical",
     onPanMove: (dx, dy) => scroll.scrollBy(-dx, -dy)
   });
-  let onWheel = (e3) => {
+  let onWheel = (e) => {
     if (props.horizontal)
-      scroll.scrollBy(e3.deltaX || e3.deltaY, 0);
+      scroll.scrollBy(e.deltaX || e.deltaY, 0);
     else
-      scroll.scrollBy(e3.deltaX, e3.deltaY);
+      scroll.scrollBy(e.deltaX, e.deltaY);
   };
   let direction = () => props.horizontal ? "row" : "column";
   let hasBackground = () => props.style?.backgroundColor != null || props.style?.borderRadius != null;
@@ -7611,17 +7333,17 @@ function ScrollView(props) {
         e: props.style?.backgroundColor ?? "transparent",
         t: props.style?.borderRadius
       }), ({
-        e: e3,
-        t: t3
+        e,
+        t
       }, _p$) => {
-        e3 !== _p$?.e && setProp(_el$4, "color", e3, _p$?.e);
-        t3 !== _p$?.t && setProp(_el$4, "radius", t3, _p$?.t);
+        e !== _p$?.e && setProp(_el$4, "color", e, _p$?.e);
+        t !== _p$?.t && setProp(_el$4, "radius", t, _p$?.t);
       });
       return _el$4;
     })() : null;
   })(), _el$2);
   insertNode2(_el$2, _el$3);
-  ref(() => (n3) => viewport = n3, _el$2);
+  ref(() => (n) => viewport = n, _el$2);
   setProp(_el$2, "flex", 1);
   setProp(_el$2, "overflow", "hidden");
   spread(_el$2, mergeProps({
@@ -7640,7 +7362,7 @@ function ScrollView(props) {
   }, () => pan.handlers, {
     onWheel
   }), true);
-  ref(() => (n3) => content = n3, _el$3);
+  ref(() => (n) => content = n, _el$3);
   insert(_el$3, () => props.children);
   insert(_el$, (() => {
     var _c$2 = memo2(() => !!hasBorder());
@@ -7653,13 +7375,13 @@ function ScrollView(props) {
         t: props.style?.borderWidth,
         a: props.style?.borderRadius
       }), ({
-        e: e3,
-        t: t3,
-        a: a3
+        e,
+        t,
+        a
       }, _p$) => {
-        e3 !== _p$?.e && setProp(_el$5, "color", e3, _p$?.e);
-        t3 !== _p$?.t && setProp(_el$5, "strokeWidth", t3, _p$?.t);
-        a3 !== _p$?.a && setProp(_el$5, "radius", a3, _p$?.a);
+        e !== _p$?.e && setProp(_el$5, "color", e, _p$?.e);
+        t !== _p$?.t && setProp(_el$5, "strokeWidth", t, _p$?.t);
+        a !== _p$?.a && setProp(_el$5, "radius", a, _p$?.a);
       });
       return _el$5;
     })() : null;
@@ -7693,19 +7415,19 @@ function createPress(options) {
     }
   };
   let state = () => live;
-  let ref2 = (n3) => {
-    node = n3;
+  let ref2 = (n) => {
+    node = n;
     unregisterNav?.();
-    unregisterNav = registerNavAction(n3.id, () => {
+    unregisterNav = registerNavAction(n.id, () => {
       if (!options.disabled)
         options.onPress?.();
     });
   };
-  let within = (e3) => {
-    let b2 = node && getBoundingBoxViewport2(node);
-    if (!b2)
+  let within = (e) => {
+    let b = node && getBoundingBoxViewport2(node);
+    if (!b)
       return true;
-    return e3.clientX >= b2.x && e3.clientX < b2.x + b2.width && e3.clientY >= b2.y && e3.clientY < b2.y + b2.height;
+    return e.clientX >= b.x && e.clientX < b.x + b.width && e.clientY >= b.y && e.clientY < b.y + b.height;
   };
   let disengage = () => {
     if (active != null) {
@@ -7725,46 +7447,46 @@ function createPress(options) {
     unregisterNav?.();
   });
   let handlers2 = {
-    onPointerDown: (e3) => {
-      if (e3.button != null && e3.button !== 0)
+    onPointerDown: (e) => {
+      if (e.button != null && e.button !== 0)
         return;
-      if (active == null && arena.claim(e3.pointerId, owner)) {
-        active = e3.pointerId;
+      if (active == null && arena.claim(e.pointerId, owner)) {
+        active = e.pointerId;
         inside = true;
         setPressed(true);
       }
-      options.onPointerDown?.(e3);
+      options.onPointerDown?.(e);
     },
-    onPointerMove: (e3) => {
-      if (active === e3.pointerId) {
-        inside = within(e3);
+    onPointerMove: (e) => {
+      if (active === e.pointerId) {
+        inside = within(e);
         setPressed(inside);
       }
-      options.onPointerMove?.(e3);
+      options.onPointerMove?.(e);
     },
-    onPointerUp: (e3) => {
-      if (active === e3.pointerId) {
+    onPointerUp: (e) => {
+      if (active === e.pointerId) {
         let fire = inside;
         cancel();
         if (fire)
           options.onPress?.();
       }
-      options.onPointerUp?.(e3);
+      options.onPointerUp?.(e);
     },
-    onPointerEnter: (e3) => {
+    onPointerEnter: (e) => {
       setHovered(true);
-      options.onPointerEnter?.(e3);
+      options.onPointerEnter?.(e);
     },
-    onPointerLeave: (e3) => {
+    onPointerLeave: (e) => {
       setHovered(false);
-      options.onPointerLeave?.(e3);
+      options.onPointerLeave?.(e);
     },
-    onKeyDown: (e3) => {
-      if ((e3.key === "Enter" || e3.key === " " || e3.code === "Select") && !e3.repeat && !options.disabled) {
-        e3.stopPropagation();
+    onKeyDown: (e) => {
+      if ((e.key === "Enter" || e.key === " " || e.code === "Select") && !e.repeat && !options.disabled) {
+        e.stopPropagation();
         options.onPress?.();
       }
-      options.onKeyDown?.(e3);
+      options.onKeyDown?.(e);
     },
     onFocus: () => {
       options.onFocus?.();
@@ -7790,15 +7512,15 @@ function Pressable(props) {
   let style = () => typeof props.style === "function" ? props.style(press.state()) : props.style;
   let resolved2 = children(() => props.children);
   let kids = () => {
-    let c3 = resolved2();
-    return typeof c3 === "function" ? c3(press.state()) : c3;
+    let c = resolved2();
+    return typeof c === "function" ? c(press.state()) : c;
   };
   let hasBackground = () => style()?.backgroundColor != null || style()?.borderRadius != null;
   let hasBorder = () => (style()?.borderWidth ?? 0) > 0;
   var _el$ = createElement("view");
-  ref(() => (n3) => {
-    press.ref(n3);
-    props.ref?.(n3);
+  ref(() => (n) => {
+    press.ref(n);
+    props.ref?.(n);
   }, _el$);
   setProp(_el$, "repaintBoundary", true);
   spread(_el$, mergeProps(() => props.layout, {
@@ -7865,11 +7587,11 @@ function Pressable(props) {
         e: style()?.backgroundColor ?? "transparent",
         t: style()?.borderRadius
       }), ({
-        e: e3,
-        t: t3
+        e,
+        t
       }, _p$) => {
-        e3 !== _p$?.e && setProp(_el$2, "color", e3, _p$?.e);
-        t3 !== _p$?.t && setProp(_el$2, "radius", t3, _p$?.t);
+        e !== _p$?.e && setProp(_el$2, "color", e, _p$?.e);
+        t !== _p$?.t && setProp(_el$2, "radius", t, _p$?.t);
       });
       return _el$2;
     })() : null;
@@ -7886,13 +7608,13 @@ function Pressable(props) {
         t: style()?.borderWidth,
         a: style()?.borderRadius
       }), ({
-        e: e3,
-        t: t3,
-        a: a3
+        e,
+        t,
+        a
       }, _p$) => {
-        e3 !== _p$?.e && setProp(_el$3, "color", e3, _p$?.e);
-        t3 !== _p$?.t && setProp(_el$3, "strokeWidth", t3, _p$?.t);
-        a3 !== _p$?.a && setProp(_el$3, "radius", a3, _p$?.a);
+        e !== _p$?.e && setProp(_el$3, "color", e, _p$?.e);
+        t !== _p$?.t && setProp(_el$3, "strokeWidth", t, _p$?.t);
+        a !== _p$?.a && setProp(_el$3, "radius", a, _p$?.a);
       });
       return _el$3;
     })() : null;
@@ -7907,36 +7629,36 @@ var SIZE_WIDTH = {
 };
 function Button(props) {
   let colors = () => {
-    let c3 = theme.color;
+    let c = theme.color;
     switch (props.variant ?? "primary") {
       case "secondary":
         return {
-          fill: c3.secondary,
-          hover: c3.secondaryHover,
-          label: c3.onSecondary
+          fill: c.secondary,
+          hover: c.secondaryHover,
+          label: c.onSecondary
         };
       case "ghost":
         return {
           fill: "transparent",
-          hover: c3.surfaceHover,
-          label: c3.text
+          hover: c.surfaceHover,
+          label: c.text
         };
       case "danger":
         return {
-          fill: c3.danger,
-          hover: c3.dangerHover,
-          label: c3.onPrimary
+          fill: c.danger,
+          hover: c.dangerHover,
+          label: c.onPrimary
         };
       default:
         return {
-          fill: c3.primary,
-          hover: c3.primaryHover,
-          label: c3.onPrimary
+          fill: c.primary,
+          hover: c.primaryHover,
+          label: c.onPrimary
         };
     }
   };
   let idleFill = () => props.disabled ? props.variant === "ghost" ? "transparent" : theme.color.surface : colors().fill;
-  let bg = (s2) => props.style?.backgroundColor ?? (props.disabled ? idleFill() : s2.hovered && policy.interaction !== "touch" ? colors().hover : colors().fill);
+  let bg = (s) => props.style?.backgroundColor ?? (props.disabled ? idleFill() : s.hovered && policy.interaction !== "touch" ? colors().hover : colors().fill);
   let radius = () => props.style?.borderRadius ?? theme.radius.md;
   let label = () => props.disabled ? theme.color.textMuted : colors().label;
   let resolved2 = children(() => props.children);
@@ -7955,9 +7677,9 @@ function Button(props) {
   });
   var _el$ = createElement("view"), _el$2 = createElement("d-rect");
   insertNode2(_el$, _el$2);
-  ref(() => (n3) => {
-    press.ref(n3);
-    props.ref?.(n3);
+  ref(() => (n) => {
+    press.ref(n);
+    props.ref?.(n);
   }, _el$);
   setProp(_el$, "repaintBoundary", true);
   setProp(_el$, "flexDirection", "row");
@@ -8035,13 +7757,13 @@ function Button(props) {
         t: style().borderWidth,
         a: style().borderRadius
       }), ({
-        e: e3,
-        t: t3,
-        a: a3
+        e,
+        t,
+        a
       }, _p$) => {
-        e3 !== _p$?.e && setProp(_el$4, "color", e3, _p$?.e);
-        t3 !== _p$?.t && setProp(_el$4, "strokeWidth", t3, _p$?.t);
-        a3 !== _p$?.a && setProp(_el$4, "radius", a3, _p$?.a);
+        e !== _p$?.e && setProp(_el$4, "color", e, _p$?.e);
+        t !== _p$?.t && setProp(_el$4, "strokeWidth", t, _p$?.t);
+        a !== _p$?.a && setProp(_el$4, "radius", a, _p$?.a);
       });
       return _el$4;
     }
@@ -8050,11 +7772,11 @@ function Button(props) {
     e: style().backgroundColor ?? "transparent",
     t: style().borderRadius
   }), ({
-    e: e3,
-    t: t3
+    e,
+    t
   }, _p$) => {
-    e3 !== _p$?.e && setProp(_el$2, "color", e3, _p$?.e);
-    t3 !== _p$?.t && setProp(_el$2, "radius", t3, _p$?.t);
+    e !== _p$?.e && setProp(_el$2, "color", e, _p$?.e);
+    t !== _p$?.t && setProp(_el$2, "radius", t, _p$?.t);
   });
   return _el$;
 }
@@ -8124,13 +7846,13 @@ function Card(props) {
         t: props.style?.borderWidth ?? theme.borderWidth.sm,
         a: radius()
       }), ({
-        e: e3,
-        t: t3,
-        a: a3
+        e,
+        t,
+        a
       }, _p$) => {
-        e3 !== _p$?.e && setProp(_el$4, "color", e3, _p$?.e);
-        t3 !== _p$?.t && setProp(_el$4, "strokeWidth", t3, _p$?.t);
-        a3 !== _p$?.a && setProp(_el$4, "radius", a3, _p$?.a);
+        e !== _p$?.e && setProp(_el$4, "color", e, _p$?.e);
+        t !== _p$?.t && setProp(_el$4, "strokeWidth", t, _p$?.t);
+        a !== _p$?.a && setProp(_el$4, "radius", a, _p$?.a);
       });
       return _el$4;
     }
@@ -8139,11 +7861,11 @@ function Card(props) {
     e: bg(),
     t: radius()
   }), ({
-    e: e3,
-    t: t3
+    e,
+    t
   }, _p$) => {
-    e3 !== _p$?.e && setProp(_el$2, "color", e3, _p$?.e);
-    t3 !== _p$?.t && setProp(_el$2, "radius", t3, _p$?.t);
+    e !== _p$?.e && setProp(_el$2, "color", e, _p$?.e);
+    t !== _p$?.t && setProp(_el$2, "radius", t, _p$?.t);
   });
   return _el$;
 }
@@ -8161,10 +7883,10 @@ function Spinner(props) {
     return null;
   };
   let path = () => {
-    let s2 = size();
-    let r3 = (s2 - thickness()) / 2;
-    let c3 = s2 / 2;
-    return `M ${c3} ${c3 - r3} A ${r3} ${r3} 0 1 1 ${c3 - r3} ${c3}`;
+    let s = size();
+    let r = (s - thickness()) / 2;
+    let c = s / 2;
+    return `M ${c} ${c - r} A ${r} ${r} 0 1 1 ${c - r} ${c}`;
   };
   var _el$ = createElement("view"), _el$2 = createElement("d-path", {
     drawStyle: "stroke",
@@ -8205,13 +7927,13 @@ function Spinner(props) {
     t: color(),
     a: thickness()
   }), ({
-    e: e3,
-    t: t3,
-    a: a3
+    e,
+    t,
+    a
   }, _p$) => {
-    e3 !== _p$?.e && setProp(_el$2, "d", e3, _p$?.e);
-    t3 !== _p$?.t && setProp(_el$2, "color", t3, _p$?.t);
-    a3 !== _p$?.a && setProp(_el$2, "strokeWidth", a3, _p$?.a);
+    e !== _p$?.e && setProp(_el$2, "d", e, _p$?.e);
+    t !== _p$?.t && setProp(_el$2, "color", t, _p$?.t);
+    a !== _p$?.a && setProp(_el$2, "strokeWidth", a, _p$?.a);
   });
   return _el$;
 }
@@ -8241,8 +7963,8 @@ function Modal(props) {
       onPointerDown: dismiss
     }), _el$3 = createElement("d-rect");
     insertNode2(_el$, _el$2);
-    ref(() => (n3) => {
-      popNavScope = pushNavScope(n3);
+    ref(() => (n) => {
+      popNavScope = pushNavScope(n);
     }, _el$);
     insertNode2(_el$2, _el$3);
     insert(_el$, () => props.children, null);
@@ -8256,21 +7978,21 @@ function Modal(props) {
 function SegmentedControl(props) {
   let [internal, setInternal] = createSignal(props.defaultValue);
   let value = () => props.value !== undefined ? props.value : internal();
-  let select = (v2) => {
+  let select = (v) => {
     if (props.value === undefined)
-      setInternal(() => v2);
-    props.onChange?.(v2);
+      setInternal(() => v);
+    props.onChange?.(v);
   };
   let radius = () => typeof props.style?.borderRadius === "number" ? props.style.borderRadius : theme.radius.md;
-  let corners = (i3) => {
-    let r3 = radius();
+  let corners = (i) => {
+    let r = radius();
     let last = props.options.length - 1;
     if (last === 0)
-      return r3;
-    if (i3 === 0)
-      return [r3, 0, 0, r3];
-    if (i3 === last)
-      return [0, r3, r3, 0];
+      return r;
+    if (i === 0)
+      return [r, 0, 0, r];
+    if (i === last)
+      return [0, r, r, 0];
     return 0;
   };
   let idleFill = () => props.style?.backgroundColor ?? theme.color.surfaceAlt;
@@ -8301,7 +8023,7 @@ function SegmentedControl(props) {
     get each() {
       return props.options;
     },
-    children: (opt, i3) => {
+    children: (opt, i) => {
       let active = () => value() === opt.value;
       let press = createPress({
         onPress: () => select(opt.value)
@@ -8342,13 +8064,13 @@ function SegmentedControl(props) {
       insert(_el$5, () => opt.label);
       effect3(() => ({
         e: fill(),
-        t: corners(i3())
+        t: corners(i())
       }), ({
-        e: e3,
-        t: t3
+        e,
+        t
       }, _p$) => {
-        e3 !== _p$?.e && setProp(_el$4, "color", e3, _p$?.e);
-        t3 !== _p$?.t && setProp(_el$4, "radius", t3, _p$?.t);
+        e !== _p$?.e && setProp(_el$4, "color", e, _p$?.e);
+        t !== _p$?.t && setProp(_el$4, "radius", t, _p$?.t);
       });
       return _el$3;
     }
@@ -8357,11 +8079,11 @@ function SegmentedControl(props) {
     e: theme.color.border,
     t: radius()
   }), ({
-    e: e3,
-    t: t3
+    e,
+    t
   }, _p$) => {
-    e3 !== _p$?.e && setProp(_el$2, "color", e3, _p$?.e);
-    t3 !== _p$?.t && setProp(_el$2, "radius", t3, _p$?.t);
+    e !== _p$?.e && setProp(_el$2, "color", e, _p$?.e);
+    t !== _p$?.t && setProp(_el$2, "radius", t, _p$?.t);
   });
   return _el$;
 }
@@ -8447,16 +8169,16 @@ var qrcode = function(typeNumber, errorCorrectionLevel) {
     mapData(_dataCache, maskPattern);
   };
   const setupPositionProbePattern = function(row, col) {
-    for (let r3 = -1;r3 <= 7; r3 += 1) {
-      if (row + r3 <= -1 || _moduleCount <= row + r3)
+    for (let r = -1;r <= 7; r += 1) {
+      if (row + r <= -1 || _moduleCount <= row + r)
         continue;
-      for (let c3 = -1;c3 <= 7; c3 += 1) {
-        if (col + c3 <= -1 || _moduleCount <= col + c3)
+      for (let c = -1;c <= 7; c += 1) {
+        if (col + c <= -1 || _moduleCount <= col + c)
           continue;
-        if (0 <= r3 && r3 <= 6 && (c3 == 0 || c3 == 6) || 0 <= c3 && c3 <= 6 && (r3 == 0 || r3 == 6) || 2 <= r3 && r3 <= 4 && 2 <= c3 && c3 <= 4) {
-          _modules[row + r3][col + c3] = true;
+        if (0 <= r && r <= 6 && (c == 0 || c == 6) || 0 <= c && c <= 6 && (r == 0 || r == 6) || 2 <= r && r <= 4 && 2 <= c && c <= 4) {
+          _modules[row + r][col + c] = true;
         } else {
-          _modules[row + r3][col + c3] = false;
+          _modules[row + r][col + c] = false;
         }
       }
     }
@@ -8464,45 +8186,45 @@ var qrcode = function(typeNumber, errorCorrectionLevel) {
   const getBestMaskPattern = function() {
     let minLostPoint = 0;
     let pattern = 0;
-    for (let i3 = 0;i3 < 8; i3 += 1) {
-      makeImpl(true, i3);
+    for (let i = 0;i < 8; i += 1) {
+      makeImpl(true, i);
       const lostPoint = QRUtil.getLostPoint(_this);
-      if (i3 == 0 || minLostPoint > lostPoint) {
+      if (i == 0 || minLostPoint > lostPoint) {
         minLostPoint = lostPoint;
-        pattern = i3;
+        pattern = i;
       }
     }
     return pattern;
   };
   const setupTimingPattern = function() {
-    for (let r3 = 8;r3 < _moduleCount - 8; r3 += 1) {
-      if (_modules[r3][6] != null) {
+    for (let r = 8;r < _moduleCount - 8; r += 1) {
+      if (_modules[r][6] != null) {
         continue;
       }
-      _modules[r3][6] = r3 % 2 == 0;
+      _modules[r][6] = r % 2 == 0;
     }
-    for (let c3 = 8;c3 < _moduleCount - 8; c3 += 1) {
-      if (_modules[6][c3] != null) {
+    for (let c = 8;c < _moduleCount - 8; c += 1) {
+      if (_modules[6][c] != null) {
         continue;
       }
-      _modules[6][c3] = c3 % 2 == 0;
+      _modules[6][c] = c % 2 == 0;
     }
   };
   const setupPositionAdjustPattern = function() {
     const pos = QRUtil.getPatternPosition(_typeNumber);
-    for (let i3 = 0;i3 < pos.length; i3 += 1) {
-      for (let j2 = 0;j2 < pos.length; j2 += 1) {
-        const row = pos[i3];
-        const col = pos[j2];
+    for (let i = 0;i < pos.length; i += 1) {
+      for (let j = 0;j < pos.length; j += 1) {
+        const row = pos[i];
+        const col = pos[j];
         if (_modules[row][col] != null) {
           continue;
         }
-        for (let r3 = -2;r3 <= 2; r3 += 1) {
-          for (let c3 = -2;c3 <= 2; c3 += 1) {
-            if (r3 == -2 || r3 == 2 || c3 == -2 || c3 == 2 || r3 == 0 && c3 == 0) {
-              _modules[row + r3][col + c3] = true;
+        for (let r = -2;r <= 2; r += 1) {
+          for (let c = -2;c <= 2; c += 1) {
+            if (r == -2 || r == 2 || c == -2 || c == 2 || r == 0 && c == 0) {
+              _modules[row + r][col + c] = true;
             } else {
-              _modules[row + r3][col + c3] = false;
+              _modules[row + r][col + c] = false;
             }
           }
         }
@@ -8511,36 +8233,36 @@ var qrcode = function(typeNumber, errorCorrectionLevel) {
   };
   const setupTypeNumber = function(test) {
     const bits = QRUtil.getBCHTypeNumber(_typeNumber);
-    for (let i3 = 0;i3 < 18; i3 += 1) {
-      const mod = !test && (bits >> i3 & 1) == 1;
-      _modules[Math.floor(i3 / 3)][i3 % 3 + _moduleCount - 8 - 3] = mod;
+    for (let i = 0;i < 18; i += 1) {
+      const mod = !test && (bits >> i & 1) == 1;
+      _modules[Math.floor(i / 3)][i % 3 + _moduleCount - 8 - 3] = mod;
     }
-    for (let i3 = 0;i3 < 18; i3 += 1) {
-      const mod = !test && (bits >> i3 & 1) == 1;
-      _modules[i3 % 3 + _moduleCount - 8 - 3][Math.floor(i3 / 3)] = mod;
+    for (let i = 0;i < 18; i += 1) {
+      const mod = !test && (bits >> i & 1) == 1;
+      _modules[i % 3 + _moduleCount - 8 - 3][Math.floor(i / 3)] = mod;
     }
   };
   const setupTypeInfo = function(test, maskPattern) {
     const data = _errorCorrectionLevel << 3 | maskPattern;
     const bits = QRUtil.getBCHTypeInfo(data);
-    for (let i3 = 0;i3 < 15; i3 += 1) {
-      const mod = !test && (bits >> i3 & 1) == 1;
-      if (i3 < 6) {
-        _modules[i3][8] = mod;
-      } else if (i3 < 8) {
-        _modules[i3 + 1][8] = mod;
+    for (let i = 0;i < 15; i += 1) {
+      const mod = !test && (bits >> i & 1) == 1;
+      if (i < 6) {
+        _modules[i][8] = mod;
+      } else if (i < 8) {
+        _modules[i + 1][8] = mod;
       } else {
-        _modules[_moduleCount - 15 + i3][8] = mod;
+        _modules[_moduleCount - 15 + i][8] = mod;
       }
     }
-    for (let i3 = 0;i3 < 15; i3 += 1) {
-      const mod = !test && (bits >> i3 & 1) == 1;
-      if (i3 < 8) {
-        _modules[8][_moduleCount - i3 - 1] = mod;
-      } else if (i3 < 9) {
-        _modules[8][15 - i3 - 1 + 1] = mod;
+    for (let i = 0;i < 15; i += 1) {
+      const mod = !test && (bits >> i & 1) == 1;
+      if (i < 8) {
+        _modules[8][_moduleCount - i - 1] = mod;
+      } else if (i < 9) {
+        _modules[8][15 - i - 1 + 1] = mod;
       } else {
-        _modules[8][15 - i3 - 1] = mod;
+        _modules[8][15 - i - 1] = mod;
       }
     }
     _modules[_moduleCount - 8][8] = !test;
@@ -8555,17 +8277,17 @@ var qrcode = function(typeNumber, errorCorrectionLevel) {
       if (col == 6)
         col -= 1;
       while (true) {
-        for (let c3 = 0;c3 < 2; c3 += 1) {
-          if (_modules[row][col - c3] == null) {
+        for (let c = 0;c < 2; c += 1) {
+          if (_modules[row][col - c] == null) {
             let dark = false;
             if (byteIndex < data.length) {
               dark = (data[byteIndex] >>> bitIndex & 1) == 1;
             }
-            const mask = maskFunc(row, col - c3);
+            const mask = maskFunc(row, col - c);
             if (mask) {
               dark = !dark;
             }
-            _modules[row][col - c3] = dark;
+            _modules[row][col - c] = dark;
             bitIndex -= 1;
             if (bitIndex == -1) {
               byteIndex += 1;
@@ -8588,43 +8310,43 @@ var qrcode = function(typeNumber, errorCorrectionLevel) {
     let maxEcCount = 0;
     const dcdata = new Array(rsBlocks.length);
     const ecdata = new Array(rsBlocks.length);
-    for (let r3 = 0;r3 < rsBlocks.length; r3 += 1) {
-      const dcCount = rsBlocks[r3].dataCount;
-      const ecCount = rsBlocks[r3].totalCount - dcCount;
+    for (let r = 0;r < rsBlocks.length; r += 1) {
+      const dcCount = rsBlocks[r].dataCount;
+      const ecCount = rsBlocks[r].totalCount - dcCount;
       maxDcCount = Math.max(maxDcCount, dcCount);
       maxEcCount = Math.max(maxEcCount, ecCount);
-      dcdata[r3] = new Array(dcCount);
-      for (let i3 = 0;i3 < dcdata[r3].length; i3 += 1) {
-        dcdata[r3][i3] = 255 & buffer.getBuffer()[i3 + offset];
+      dcdata[r] = new Array(dcCount);
+      for (let i = 0;i < dcdata[r].length; i += 1) {
+        dcdata[r][i] = 255 & buffer.getBuffer()[i + offset];
       }
       offset += dcCount;
       const rsPoly = QRUtil.getErrorCorrectPolynomial(ecCount);
-      const rawPoly = qrPolynomial(dcdata[r3], rsPoly.getLength() - 1);
+      const rawPoly = qrPolynomial(dcdata[r], rsPoly.getLength() - 1);
       const modPoly = rawPoly.mod(rsPoly);
-      ecdata[r3] = new Array(rsPoly.getLength() - 1);
-      for (let i3 = 0;i3 < ecdata[r3].length; i3 += 1) {
-        const modIndex = i3 + modPoly.getLength() - ecdata[r3].length;
-        ecdata[r3][i3] = modIndex >= 0 ? modPoly.getAt(modIndex) : 0;
+      ecdata[r] = new Array(rsPoly.getLength() - 1);
+      for (let i = 0;i < ecdata[r].length; i += 1) {
+        const modIndex = i + modPoly.getLength() - ecdata[r].length;
+        ecdata[r][i] = modIndex >= 0 ? modPoly.getAt(modIndex) : 0;
       }
     }
     let totalCodeCount = 0;
-    for (let i3 = 0;i3 < rsBlocks.length; i3 += 1) {
-      totalCodeCount += rsBlocks[i3].totalCount;
+    for (let i = 0;i < rsBlocks.length; i += 1) {
+      totalCodeCount += rsBlocks[i].totalCount;
     }
     const data = new Array(totalCodeCount);
     let index = 0;
-    for (let i3 = 0;i3 < maxDcCount; i3 += 1) {
-      for (let r3 = 0;r3 < rsBlocks.length; r3 += 1) {
-        if (i3 < dcdata[r3].length) {
-          data[index] = dcdata[r3][i3];
+    for (let i = 0;i < maxDcCount; i += 1) {
+      for (let r = 0;r < rsBlocks.length; r += 1) {
+        if (i < dcdata[r].length) {
+          data[index] = dcdata[r][i];
           index += 1;
         }
       }
     }
-    for (let i3 = 0;i3 < maxEcCount; i3 += 1) {
-      for (let r3 = 0;r3 < rsBlocks.length; r3 += 1) {
-        if (i3 < ecdata[r3].length) {
-          data[index] = ecdata[r3][i3];
+    for (let i = 0;i < maxEcCount; i += 1) {
+      for (let r = 0;r < rsBlocks.length; r += 1) {
+        if (i < ecdata[r].length) {
+          data[index] = ecdata[r][i];
           index += 1;
         }
       }
@@ -8634,15 +8356,15 @@ var qrcode = function(typeNumber, errorCorrectionLevel) {
   const createData = function(typeNumber2, errorCorrectionLevel2, dataList) {
     const rsBlocks = QRRSBlock.getRSBlocks(typeNumber2, errorCorrectionLevel2);
     const buffer = qrBitBuffer();
-    for (let i3 = 0;i3 < dataList.length; i3 += 1) {
-      const data = dataList[i3];
+    for (let i = 0;i < dataList.length; i += 1) {
+      const data = dataList[i];
       buffer.put(data.getMode(), 4);
       buffer.put(data.getLength(), QRUtil.getLengthInBits(data.getMode(), typeNumber2));
       data.write(buffer);
     }
     let totalDataCount = 0;
-    for (let i3 = 0;i3 < rsBlocks.length; i3 += 1) {
-      totalDataCount += rsBlocks[i3].dataCount;
+    for (let i = 0;i < rsBlocks.length; i += 1) {
+      totalDataCount += rsBlocks[i].dataCount;
     }
     if (buffer.getLengthInBits() > totalDataCount * 8) {
       throw "code length overflow. (" + buffer.getLengthInBits() + ">" + totalDataCount * 8 + ")";
@@ -8702,15 +8424,15 @@ var qrcode = function(typeNumber, errorCorrectionLevel) {
       for (;typeNumber2 < 40; typeNumber2++) {
         const rsBlocks = QRRSBlock.getRSBlocks(typeNumber2, _errorCorrectionLevel);
         const buffer = qrBitBuffer();
-        for (let i3 = 0;i3 < _dataList.length; i3++) {
-          const data = _dataList[i3];
+        for (let i = 0;i < _dataList.length; i++) {
+          const data = _dataList[i];
           buffer.put(data.getMode(), 4);
           buffer.put(data.getLength(), QRUtil.getLengthInBits(data.getMode(), typeNumber2));
           data.write(buffer);
         }
         let totalDataCount = 0;
-        for (let i3 = 0;i3 < rsBlocks.length; i3++) {
-          totalDataCount += rsBlocks[i3].dataCount;
+        for (let i = 0;i < rsBlocks.length; i++) {
+          totalDataCount += rsBlocks[i].dataCount;
         }
         if (buffer.getLengthInBits() <= totalDataCount * 8) {
           break;
@@ -8730,9 +8452,9 @@ var qrcode = function(typeNumber, errorCorrectionLevel) {
     qrHtml += " padding: 0px; margin: " + margin + "px;";
     qrHtml += '">';
     qrHtml += "<tbody>";
-    for (let r3 = 0;r3 < _this.getModuleCount(); r3 += 1) {
+    for (let r = 0;r < _this.getModuleCount(); r += 1) {
       qrHtml += "<tr>";
-      for (let c3 = 0;c3 < _this.getModuleCount(); c3 += 1) {
+      for (let c = 0;c < _this.getModuleCount(); c += 1) {
         qrHtml += '<td style="';
         qrHtml += " border-width: 0px; border-style: none;";
         qrHtml += " border-collapse: collapse;";
@@ -8740,7 +8462,7 @@ var qrcode = function(typeNumber, errorCorrectionLevel) {
         qrHtml += " width: " + cellSize + "px;";
         qrHtml += " height: " + cellSize + "px;";
         qrHtml += " background-color: ";
-        qrHtml += _this.isDark(r3, c3) ? "#000000" : "#ffffff";
+        qrHtml += _this.isDark(r, c) ? "#000000" : "#ffffff";
         qrHtml += ";";
         qrHtml += '"/>';
       }
@@ -8768,7 +8490,7 @@ var qrcode = function(typeNumber, errorCorrectionLevel) {
     title.text = title.text || null;
     title.id = title.text ? title.id || "qrcode-title" : null;
     const size = _this.getModuleCount() * cellSize + margin * 2;
-    let c3, mc, r3, mr, qrSvg = "", rect;
+    let c, mc, r, mr, qrSvg = "", rect;
     rect = "l" + cellSize + ",0 0," + cellSize + " -" + cellSize + ",0 0,-" + cellSize + "z ";
     qrSvg += '<svg version="1.1" xmlns="http://www.w3.org/2000/svg"';
     qrSvg += !opts.scalable ? ' width="' + size + 'px" height="' + size + 'px"' : "";
@@ -8780,11 +8502,11 @@ var qrcode = function(typeNumber, errorCorrectionLevel) {
     qrSvg += alt.text ? '<description id="' + escapeXml(alt.id) + '">' + escapeXml(alt.text) + "</description>" : "";
     qrSvg += '<rect width="100%" height="100%" fill="white" cx="0" cy="0"/>';
     qrSvg += '<path d="';
-    for (r3 = 0;r3 < _this.getModuleCount(); r3 += 1) {
-      mr = r3 * cellSize + margin;
-      for (c3 = 0;c3 < _this.getModuleCount(); c3 += 1) {
-        if (_this.isDark(r3, c3)) {
-          mc = c3 * cellSize + margin;
+    for (r = 0;r < _this.getModuleCount(); r += 1) {
+      mr = r * cellSize + margin;
+      for (c = 0;c < _this.getModuleCount(); c += 1) {
+        if (_this.isDark(r, c)) {
+          mc = c * cellSize + margin;
           qrSvg += "M" + mc + "," + mr + rect;
         }
       }
@@ -8799,11 +8521,11 @@ var qrcode = function(typeNumber, errorCorrectionLevel) {
     const size = _this.getModuleCount() * cellSize + margin * 2;
     const min = margin;
     const max = size - margin;
-    return createDataURL(size, size, function(x2, y2) {
-      if (min <= x2 && x2 < max && min <= y2 && y2 < max) {
-        const c3 = Math.floor((x2 - min) / cellSize);
-        const r3 = Math.floor((y2 - min) / cellSize);
-        return _this.isDark(r3, c3) ? 0 : 1;
+    return createDataURL(size, size, function(x, y) {
+      if (min <= x && x < max && min <= y && y < max) {
+        const c = Math.floor((x - min) / cellSize);
+        const r = Math.floor((y - min) / cellSize);
+        return _this.isDark(r, c) ? 0 : 1;
       } else {
         return 1;
       }
@@ -8832,11 +8554,11 @@ var qrcode = function(typeNumber, errorCorrectionLevel) {
     img += "/>";
     return img;
   };
-  const escapeXml = function(s2) {
+  const escapeXml = function(s) {
     let escaped = "";
-    for (let i3 = 0;i3 < s2.length; i3 += 1) {
-      const c3 = s2.charAt(i3);
-      switch (c3) {
+    for (let i = 0;i < s.length; i += 1) {
+      const c = s.charAt(i);
+      switch (c) {
         case "<":
           escaped += "&lt;";
           break;
@@ -8850,7 +8572,7 @@ var qrcode = function(typeNumber, errorCorrectionLevel) {
           escaped += "&quot;";
           break;
         default:
-          escaped += c3;
+          escaped += c;
           break;
       }
     }
@@ -8862,7 +8584,7 @@ var qrcode = function(typeNumber, errorCorrectionLevel) {
     const size = _this.getModuleCount() * cellSize + margin * 2;
     const min = margin;
     const max = size - margin;
-    let y2, x2, r1, r22, p3;
+    let y, x, r1, r2, p;
     const blocks = {
       "██": "█",
       "█ ": "▀",
@@ -8876,20 +8598,20 @@ var qrcode = function(typeNumber, errorCorrectionLevel) {
       "  ": " "
     };
     let ascii = "";
-    for (y2 = 0;y2 < size; y2 += 2) {
-      r1 = Math.floor((y2 - min) / cellSize);
-      r22 = Math.floor((y2 + 1 - min) / cellSize);
-      for (x2 = 0;x2 < size; x2 += 1) {
-        p3 = "█";
-        if (min <= x2 && x2 < max && min <= y2 && y2 < max && _this.isDark(r1, Math.floor((x2 - min) / cellSize))) {
-          p3 = " ";
+    for (y = 0;y < size; y += 2) {
+      r1 = Math.floor((y - min) / cellSize);
+      r2 = Math.floor((y + 1 - min) / cellSize);
+      for (x = 0;x < size; x += 1) {
+        p = "█";
+        if (min <= x && x < max && min <= y && y < max && _this.isDark(r1, Math.floor((x - min) / cellSize))) {
+          p = " ";
         }
-        if (min <= x2 && x2 < max && min <= y2 + 1 && y2 + 1 < max && _this.isDark(r22, Math.floor((x2 - min) / cellSize))) {
-          p3 += " ";
+        if (min <= x && x < max && min <= y + 1 && y + 1 < max && _this.isDark(r2, Math.floor((x - min) / cellSize))) {
+          p += " ";
         } else {
-          p3 += "█";
+          p += "█";
         }
-        ascii += margin < 1 && y2 + 1 >= max ? blocksLastLineNoMargin[p3] : blocks[p3];
+        ascii += margin < 1 && y + 1 >= max ? blocksLastLineNoMargin[p] : blocks[p];
       }
       ascii += `
 `;
@@ -8909,22 +8631,22 @@ var qrcode = function(typeNumber, errorCorrectionLevel) {
     const size = _this.getModuleCount() * cellSize + margin * 2;
     const min = margin;
     const max = size - margin;
-    let y2, x2, r3, p3;
+    let y, x, r, p;
     const white = Array(cellSize + 1).join("██");
     const black = Array(cellSize + 1).join("  ");
     let ascii = "";
     let line = "";
-    for (y2 = 0;y2 < size; y2 += 1) {
-      r3 = Math.floor((y2 - min) / cellSize);
+    for (y = 0;y < size; y += 1) {
+      r = Math.floor((y - min) / cellSize);
       line = "";
-      for (x2 = 0;x2 < size; x2 += 1) {
-        p3 = 1;
-        if (min <= x2 && x2 < max && min <= y2 && y2 < max && _this.isDark(r3, Math.floor((x2 - min) / cellSize))) {
-          p3 = 0;
+      for (x = 0;x < size; x += 1) {
+        p = 1;
+        if (min <= x && x < max && min <= y && y < max && _this.isDark(r, Math.floor((x - min) / cellSize))) {
+          p = 0;
         }
-        line += p3 ? white : black;
+        line += p ? white : black;
       }
-      for (r3 = 0;r3 < cellSize; r3 += 1) {
+      for (r = 0;r < cellSize; r += 1) {
         ascii += line + `
 `;
       }
@@ -8943,11 +8665,11 @@ var qrcode = function(typeNumber, errorCorrectionLevel) {
   };
   return _this;
 };
-qrcode.stringToBytes = function(s2) {
+qrcode.stringToBytes = function(s) {
   const bytes = [];
-  for (let i3 = 0;i3 < s2.length; i3 += 1) {
-    const c3 = s2.charCodeAt(i3);
-    bytes.push(c3 & 255);
+  for (let i = 0;i < s.length; i += 1) {
+    const c = s.charCodeAt(i);
+    bytes.push(c & 255);
   }
   return bytes;
 };
@@ -8955,10 +8677,10 @@ qrcode.createStringToBytes = function(unicodeData, numChars) {
   const unicodeMap = function() {
     const bin = base64DecodeInputStream(unicodeData);
     const read2 = function() {
-      const b2 = bin.read();
-      if (b2 == -1)
+      const b = bin.read();
+      if (b == -1)
         throw "eof";
-      return b2;
+      return b;
     };
     let count = 0;
     const unicodeMap2 = {};
@@ -8969,9 +8691,9 @@ qrcode.createStringToBytes = function(unicodeData, numChars) {
       const b1 = read2();
       const b2 = read2();
       const b3 = read2();
-      const k2 = String.fromCharCode(b0 << 8 | b1);
-      const v2 = b2 << 8 | b3;
-      unicodeMap2[k2] = v2;
+      const k = String.fromCharCode(b0 << 8 | b1);
+      const v = b2 << 8 | b3;
+      unicodeMap2[k] = v;
       count += 1;
     }
     if (count != numChars) {
@@ -8980,20 +8702,20 @@ qrcode.createStringToBytes = function(unicodeData, numChars) {
     return unicodeMap2;
   }();
   const unknownChar = 63;
-  return function(s2) {
+  return function(s) {
     const bytes = [];
-    for (let i3 = 0;i3 < s2.length; i3 += 1) {
-      const c3 = s2.charCodeAt(i3);
-      if (c3 < 128) {
-        bytes.push(c3);
+    for (let i = 0;i < s.length; i += 1) {
+      const c = s.charCodeAt(i);
+      if (c < 128) {
+        bytes.push(c);
       } else {
-        const b2 = unicodeMap[s2.charAt(i3)];
-        if (typeof b2 == "number") {
-          if ((b2 & 255) == b2) {
-            bytes.push(b2);
+        const b = unicodeMap[s.charAt(i)];
+        if (typeof b == "number") {
+          if ((b & 255) == b) {
+            bytes.push(b);
           } else {
-            bytes.push(b2 >>> 8);
-            bytes.push(b2 & 255);
+            bytes.push(b >>> 8);
+            bytes.push(b & 255);
           }
         } else {
           bytes.push(unknownChar);
@@ -9081,18 +8803,18 @@ var QRUtil = function() {
     return digit;
   };
   _this.getBCHTypeInfo = function(data) {
-    let d2 = data << 10;
-    while (getBCHDigit(d2) - getBCHDigit(G15) >= 0) {
-      d2 ^= G15 << getBCHDigit(d2) - getBCHDigit(G15);
+    let d = data << 10;
+    while (getBCHDigit(d) - getBCHDigit(G15) >= 0) {
+      d ^= G15 << getBCHDigit(d) - getBCHDigit(G15);
     }
-    return (data << 10 | d2) ^ G15_MASK;
+    return (data << 10 | d) ^ G15_MASK;
   };
   _this.getBCHTypeNumber = function(data) {
-    let d2 = data << 12;
-    while (getBCHDigit(d2) - getBCHDigit(G18) >= 0) {
-      d2 ^= G18 << getBCHDigit(d2) - getBCHDigit(G18);
+    let d = data << 12;
+    while (getBCHDigit(d) - getBCHDigit(G18) >= 0) {
+      d ^= G18 << getBCHDigit(d) - getBCHDigit(G18);
     }
-    return data << 12 | d2;
+    return data << 12 | d;
   };
   _this.getPatternPosition = function(typeNumber) {
     return PATTERN_POSITION_TABLE[typeNumber - 1];
@@ -9100,47 +8822,47 @@ var QRUtil = function() {
   _this.getMaskFunction = function(maskPattern) {
     switch (maskPattern) {
       case QRMaskPattern.PATTERN000:
-        return function(i3, j2) {
-          return (i3 + j2) % 2 == 0;
+        return function(i, j) {
+          return (i + j) % 2 == 0;
         };
       case QRMaskPattern.PATTERN001:
-        return function(i3, j2) {
-          return i3 % 2 == 0;
+        return function(i, j) {
+          return i % 2 == 0;
         };
       case QRMaskPattern.PATTERN010:
-        return function(i3, j2) {
-          return j2 % 3 == 0;
+        return function(i, j) {
+          return j % 3 == 0;
         };
       case QRMaskPattern.PATTERN011:
-        return function(i3, j2) {
-          return (i3 + j2) % 3 == 0;
+        return function(i, j) {
+          return (i + j) % 3 == 0;
         };
       case QRMaskPattern.PATTERN100:
-        return function(i3, j2) {
-          return (Math.floor(i3 / 2) + Math.floor(j2 / 3)) % 2 == 0;
+        return function(i, j) {
+          return (Math.floor(i / 2) + Math.floor(j / 3)) % 2 == 0;
         };
       case QRMaskPattern.PATTERN101:
-        return function(i3, j2) {
-          return i3 * j2 % 2 + i3 * j2 % 3 == 0;
+        return function(i, j) {
+          return i * j % 2 + i * j % 3 == 0;
         };
       case QRMaskPattern.PATTERN110:
-        return function(i3, j2) {
-          return (i3 * j2 % 2 + i3 * j2 % 3) % 2 == 0;
+        return function(i, j) {
+          return (i * j % 2 + i * j % 3) % 2 == 0;
         };
       case QRMaskPattern.PATTERN111:
-        return function(i3, j2) {
-          return (i3 * j2 % 3 + (i3 + j2) % 2) % 2 == 0;
+        return function(i, j) {
+          return (i * j % 3 + (i + j) % 2) % 2 == 0;
         };
       default:
         throw "bad maskPattern:" + maskPattern;
     }
   };
   _this.getErrorCorrectPolynomial = function(errorCorrectLength) {
-    let a3 = qrPolynomial([1], 0);
-    for (let i3 = 0;i3 < errorCorrectLength; i3 += 1) {
-      a3 = a3.multiply(qrPolynomial([1, QRMath.gexp(i3)], 0));
+    let a = qrPolynomial([1], 0);
+    for (let i = 0;i < errorCorrectLength; i += 1) {
+      a = a.multiply(qrPolynomial([1, QRMath.gexp(i)], 0));
     }
-    return a3;
+    return a;
   };
   _this.getLengthInBits = function(mode, type) {
     if (1 <= type && type < 10) {
@@ -9193,18 +8915,18 @@ var QRUtil = function() {
       for (let col = 0;col < moduleCount; col += 1) {
         let sameCount = 0;
         const dark = qrcode2.isDark(row, col);
-        for (let r3 = -1;r3 <= 1; r3 += 1) {
-          if (row + r3 < 0 || moduleCount <= row + r3) {
+        for (let r = -1;r <= 1; r += 1) {
+          if (row + r < 0 || moduleCount <= row + r) {
             continue;
           }
-          for (let c3 = -1;c3 <= 1; c3 += 1) {
-            if (col + c3 < 0 || moduleCount <= col + c3) {
+          for (let c = -1;c <= 1; c += 1) {
+            if (col + c < 0 || moduleCount <= col + c) {
               continue;
             }
-            if (r3 == 0 && c3 == 0) {
+            if (r == 0 && c == 0) {
               continue;
             }
-            if (dark == qrcode2.isDark(row + r3, col + c3)) {
+            if (dark == qrcode2.isDark(row + r, col + c)) {
               sameCount += 1;
             }
           }
@@ -9261,30 +8983,30 @@ var QRUtil = function() {
 var QRMath = function() {
   const EXP_TABLE = new Array(256);
   const LOG_TABLE = new Array(256);
-  for (let i3 = 0;i3 < 8; i3 += 1) {
-    EXP_TABLE[i3] = 1 << i3;
+  for (let i = 0;i < 8; i += 1) {
+    EXP_TABLE[i] = 1 << i;
   }
-  for (let i3 = 8;i3 < 256; i3 += 1) {
-    EXP_TABLE[i3] = EXP_TABLE[i3 - 4] ^ EXP_TABLE[i3 - 5] ^ EXP_TABLE[i3 - 6] ^ EXP_TABLE[i3 - 8];
+  for (let i = 8;i < 256; i += 1) {
+    EXP_TABLE[i] = EXP_TABLE[i - 4] ^ EXP_TABLE[i - 5] ^ EXP_TABLE[i - 6] ^ EXP_TABLE[i - 8];
   }
-  for (let i3 = 0;i3 < 255; i3 += 1) {
-    LOG_TABLE[EXP_TABLE[i3]] = i3;
+  for (let i = 0;i < 255; i += 1) {
+    LOG_TABLE[EXP_TABLE[i]] = i;
   }
   const _this = {};
-  _this.glog = function(n3) {
-    if (n3 < 1) {
-      throw "glog(" + n3 + ")";
+  _this.glog = function(n) {
+    if (n < 1) {
+      throw "glog(" + n + ")";
     }
-    return LOG_TABLE[n3];
+    return LOG_TABLE[n];
   };
-  _this.gexp = function(n3) {
-    while (n3 < 0) {
-      n3 += 255;
+  _this.gexp = function(n) {
+    while (n < 0) {
+      n += 255;
     }
-    while (n3 >= 256) {
-      n3 -= 255;
+    while (n >= 256) {
+      n -= 255;
     }
-    return EXP_TABLE[n3];
+    return EXP_TABLE[n];
   };
   return _this;
 }();
@@ -9298,8 +9020,8 @@ var qrPolynomial = function(num, shift) {
       offset += 1;
     }
     const _num2 = new Array(num.length - offset + shift);
-    for (let i3 = 0;i3 < num.length - offset; i3 += 1) {
-      _num2[i3] = num[i3 + offset];
+    for (let i = 0;i < num.length - offset; i += 1) {
+      _num2[i] = num[i + offset];
     }
     return _num2;
   }();
@@ -9310,28 +9032,28 @@ var qrPolynomial = function(num, shift) {
   _this.getLength = function() {
     return _num.length;
   };
-  _this.multiply = function(e3) {
-    const num2 = new Array(_this.getLength() + e3.getLength() - 1);
-    for (let i3 = 0;i3 < _this.getLength(); i3 += 1) {
-      for (let j2 = 0;j2 < e3.getLength(); j2 += 1) {
-        num2[i3 + j2] ^= QRMath.gexp(QRMath.glog(_this.getAt(i3)) + QRMath.glog(e3.getAt(j2)));
+  _this.multiply = function(e) {
+    const num2 = new Array(_this.getLength() + e.getLength() - 1);
+    for (let i = 0;i < _this.getLength(); i += 1) {
+      for (let j = 0;j < e.getLength(); j += 1) {
+        num2[i + j] ^= QRMath.gexp(QRMath.glog(_this.getAt(i)) + QRMath.glog(e.getAt(j)));
       }
     }
     return qrPolynomial(num2, 0);
   };
-  _this.mod = function(e3) {
-    if (_this.getLength() - e3.getLength() < 0) {
+  _this.mod = function(e) {
+    if (_this.getLength() - e.getLength() < 0) {
       return _this;
     }
-    const ratio = QRMath.glog(_this.getAt(0)) - QRMath.glog(e3.getAt(0));
+    const ratio = QRMath.glog(_this.getAt(0)) - QRMath.glog(e.getAt(0));
     const num2 = new Array(_this.getLength());
-    for (let i3 = 0;i3 < _this.getLength(); i3 += 1) {
-      num2[i3] = _this.getAt(i3);
+    for (let i = 0;i < _this.getLength(); i += 1) {
+      num2[i] = _this.getAt(i);
     }
-    for (let i3 = 0;i3 < e3.getLength(); i3 += 1) {
-      num2[i3] ^= QRMath.gexp(QRMath.glog(e3.getAt(i3)) + ratio);
+    for (let i = 0;i < e.getLength(); i += 1) {
+      num2[i] ^= QRMath.gexp(QRMath.glog(e.getAt(i)) + ratio);
     }
-    return qrPolynomial(num2, 0).mod(e3);
+    return qrPolynomial(num2, 0).mod(e);
   };
   return _this;
 };
@@ -9526,11 +9248,11 @@ var QRRSBlock = function() {
     }
     const length = rsBlock.length / 3;
     const list = [];
-    for (let i3 = 0;i3 < length; i3 += 1) {
-      const count = rsBlock[i3 * 3 + 0];
-      const totalCount = rsBlock[i3 * 3 + 1];
-      const dataCount = rsBlock[i3 * 3 + 2];
-      for (let j2 = 0;j2 < count; j2 += 1) {
+    for (let i = 0;i < length; i += 1) {
+      const count = rsBlock[i * 3 + 0];
+      const totalCount = rsBlock[i * 3 + 1];
+      const dataCount = rsBlock[i * 3 + 2];
+      for (let j = 0;j < count; j += 1) {
         list.push(qrRSBlock(totalCount, dataCount));
       }
     }
@@ -9550,8 +9272,8 @@ var qrBitBuffer = function() {
     return (_buffer[bufIndex] >>> 7 - index % 8 & 1) == 1;
   };
   _this.put = function(num, length) {
-    for (let i3 = 0;i3 < length; i3 += 1) {
-      _this.putBit((num >>> length - i3 - 1 & 1) == 1);
+    for (let i = 0;i < length; i += 1) {
+      _this.putBit((num >>> length - i - 1 & 1) == 1);
     }
   };
   _this.getLengthInBits = function() {
@@ -9581,31 +9303,31 @@ var qrNumber = function(data) {
   };
   _this.write = function(buffer) {
     const data2 = _data;
-    let i3 = 0;
-    while (i3 + 2 < data2.length) {
-      buffer.put(strToNum(data2.substring(i3, i3 + 3)), 10);
-      i3 += 3;
+    let i = 0;
+    while (i + 2 < data2.length) {
+      buffer.put(strToNum(data2.substring(i, i + 3)), 10);
+      i += 3;
     }
-    if (i3 < data2.length) {
-      if (data2.length - i3 == 1) {
-        buffer.put(strToNum(data2.substring(i3, i3 + 1)), 4);
-      } else if (data2.length - i3 == 2) {
-        buffer.put(strToNum(data2.substring(i3, i3 + 2)), 7);
+    if (i < data2.length) {
+      if (data2.length - i == 1) {
+        buffer.put(strToNum(data2.substring(i, i + 1)), 4);
+      } else if (data2.length - i == 2) {
+        buffer.put(strToNum(data2.substring(i, i + 2)), 7);
       }
     }
   };
-  const strToNum = function(s2) {
+  const strToNum = function(s) {
     let num = 0;
-    for (let i3 = 0;i3 < s2.length; i3 += 1) {
-      num = num * 10 + chatToNum(s2.charAt(i3));
+    for (let i = 0;i < s.length; i += 1) {
+      num = num * 10 + chatToNum(s.charAt(i));
     }
     return num;
   };
-  const chatToNum = function(c3) {
-    if ("0" <= c3 && c3 <= "9") {
-      return c3.charCodeAt(0) - 48;
+  const chatToNum = function(c) {
+    if ("0" <= c && c <= "9") {
+      return c.charCodeAt(0) - 48;
     }
-    throw "illegal char :" + c3;
+    throw "illegal char :" + c;
   };
   return _this;
 };
@@ -9620,23 +9342,23 @@ var qrAlphaNum = function(data) {
     return _data.length;
   };
   _this.write = function(buffer) {
-    const s2 = _data;
-    let i3 = 0;
-    while (i3 + 1 < s2.length) {
-      buffer.put(getCode(s2.charAt(i3)) * 45 + getCode(s2.charAt(i3 + 1)), 11);
-      i3 += 2;
+    const s = _data;
+    let i = 0;
+    while (i + 1 < s.length) {
+      buffer.put(getCode(s.charAt(i)) * 45 + getCode(s.charAt(i + 1)), 11);
+      i += 2;
     }
-    if (i3 < s2.length) {
-      buffer.put(getCode(s2.charAt(i3)), 6);
+    if (i < s.length) {
+      buffer.put(getCode(s.charAt(i)), 6);
     }
   };
-  const getCode = function(c3) {
-    if ("0" <= c3 && c3 <= "9") {
-      return c3.charCodeAt(0) - 48;
-    } else if ("A" <= c3 && c3 <= "Z") {
-      return c3.charCodeAt(0) - 65 + 10;
+  const getCode = function(c) {
+    if ("0" <= c && c <= "9") {
+      return c.charCodeAt(0) - 48;
+    } else if ("A" <= c && c <= "Z") {
+      return c.charCodeAt(0) - 65 + 10;
     } else {
-      switch (c3) {
+      switch (c) {
         case " ":
           return 36;
         case "$":
@@ -9656,7 +9378,7 @@ var qrAlphaNum = function(data) {
         case ":":
           return 44;
         default:
-          throw "illegal char :" + c3;
+          throw "illegal char :" + c;
       }
     }
   };
@@ -9674,8 +9396,8 @@ var qr8BitByte = function(data) {
     return _bytes.length;
   };
   _this.write = function(buffer) {
-    for (let i3 = 0;i3 < _bytes.length; i3 += 1) {
-      buffer.put(_bytes[i3], 8);
+    for (let i = 0;i < _bytes.length; i += 1) {
+      buffer.put(_bytes[i], 8);
     }
   };
   return _this;
@@ -9684,8 +9406,8 @@ var qrKanji = function(data) {
   const _mode = QRMode.MODE_KANJI;
   const _data = data;
   const stringToBytes = qrcode.stringToBytes;
-  (function(c3, code) {
-    const test = stringToBytes(c3);
+  (function(c, code) {
+    const test = stringToBytes(c);
     if (test.length != 2 || (test[0] << 8 | test[1]) != code) {
       throw "sjis not supported.";
     }
@@ -9700,22 +9422,22 @@ var qrKanji = function(data) {
   };
   _this.write = function(buffer) {
     const data2 = _bytes;
-    let i3 = 0;
-    while (i3 + 1 < data2.length) {
-      let c3 = (255 & data2[i3]) << 8 | 255 & data2[i3 + 1];
-      if (33088 <= c3 && c3 <= 40956) {
-        c3 -= 33088;
-      } else if (57408 <= c3 && c3 <= 60351) {
-        c3 -= 49472;
+    let i = 0;
+    while (i + 1 < data2.length) {
+      let c = (255 & data2[i]) << 8 | 255 & data2[i + 1];
+      if (33088 <= c && c <= 40956) {
+        c -= 33088;
+      } else if (57408 <= c && c <= 60351) {
+        c -= 49472;
       } else {
-        throw "illegal char at " + (i3 + 1) + "/" + c3;
+        throw "illegal char at " + (i + 1) + "/" + c;
       }
-      c3 = (c3 >>> 8 & 255) * 192 + (c3 & 255);
-      buffer.put(c3, 13);
-      i3 += 2;
+      c = (c >>> 8 & 255) * 192 + (c & 255);
+      buffer.put(c, 13);
+      i += 2;
     }
-    if (i3 < data2.length) {
-      throw "illegal char at " + (i3 + 1);
+    if (i < data2.length) {
+      throw "illegal char at " + (i + 1);
     }
   };
   return _this;
@@ -9723,39 +9445,39 @@ var qrKanji = function(data) {
 var byteArrayOutputStream = function() {
   const _bytes = [];
   const _this = {};
-  _this.writeByte = function(b2) {
-    _bytes.push(b2 & 255);
+  _this.writeByte = function(b) {
+    _bytes.push(b & 255);
   };
-  _this.writeShort = function(i3) {
-    _this.writeByte(i3);
-    _this.writeByte(i3 >>> 8);
+  _this.writeShort = function(i) {
+    _this.writeByte(i);
+    _this.writeByte(i >>> 8);
   };
-  _this.writeBytes = function(b2, off, len) {
+  _this.writeBytes = function(b, off, len) {
     off = off || 0;
-    len = len || b2.length;
-    for (let i3 = 0;i3 < len; i3 += 1) {
-      _this.writeByte(b2[i3 + off]);
+    len = len || b.length;
+    for (let i = 0;i < len; i += 1) {
+      _this.writeByte(b[i + off]);
     }
   };
-  _this.writeString = function(s2) {
-    for (let i3 = 0;i3 < s2.length; i3 += 1) {
-      _this.writeByte(s2.charCodeAt(i3));
+  _this.writeString = function(s) {
+    for (let i = 0;i < s.length; i += 1) {
+      _this.writeByte(s.charCodeAt(i));
     }
   };
   _this.toByteArray = function() {
     return _bytes;
   };
   _this.toString = function() {
-    let s2 = "";
-    s2 += "[";
-    for (let i3 = 0;i3 < _bytes.length; i3 += 1) {
-      if (i3 > 0) {
-        s2 += ",";
+    let s = "";
+    s += "[";
+    for (let i = 0;i < _bytes.length; i += 1) {
+      if (i > 0) {
+        s += ",";
       }
-      s2 += _bytes[i3];
+      s += _bytes[i];
     }
-    s2 += "]";
-    return s2;
+    s += "]";
+    return s;
   };
   return _this;
 };
@@ -9765,28 +9487,28 @@ var base64EncodeOutputStream = function() {
   let _length = 0;
   let _base64 = "";
   const _this = {};
-  const writeEncoded = function(b2) {
-    _base64 += String.fromCharCode(encode(b2 & 63));
+  const writeEncoded = function(b) {
+    _base64 += String.fromCharCode(encode(b & 63));
   };
-  const encode = function(n3) {
-    if (n3 < 0) {
-      throw "n:" + n3;
-    } else if (n3 < 26) {
-      return 65 + n3;
-    } else if (n3 < 52) {
-      return 97 + (n3 - 26);
-    } else if (n3 < 62) {
-      return 48 + (n3 - 52);
-    } else if (n3 == 62) {
+  const encode = function(n) {
+    if (n < 0) {
+      throw "n:" + n;
+    } else if (n < 26) {
+      return 65 + n;
+    } else if (n < 52) {
+      return 97 + (n - 26);
+    } else if (n < 62) {
+      return 48 + (n - 52);
+    } else if (n == 62) {
       return 43;
-    } else if (n3 == 63) {
+    } else if (n == 63) {
       return 47;
     } else {
-      throw "n:" + n3;
+      throw "n:" + n;
     }
   };
-  _this.writeByte = function(n3) {
-    _buffer = _buffer << 8 | n3 & 255;
+  _this.writeByte = function(n) {
+    _buffer = _buffer << 8 | n & 255;
     _buflen += 8;
     _length += 1;
     while (_buflen >= 6) {
@@ -9802,7 +9524,7 @@ var base64EncodeOutputStream = function() {
     }
     if (_length % 3 != 0) {
       const padlen = 3 - _length % 3;
-      for (let i3 = 0;i3 < padlen; i3 += 1) {
+      for (let i = 0;i < padlen; i += 1) {
         _base64 += "=";
       }
     }
@@ -9826,34 +9548,34 @@ var base64DecodeInputStream = function(str) {
         }
         throw "unexpected end of file./" + _buflen;
       }
-      const c3 = _str.charAt(_pos);
+      const c = _str.charAt(_pos);
       _pos += 1;
-      if (c3 == "=") {
+      if (c == "=") {
         _buflen = 0;
         return -1;
-      } else if (c3.match(/^\s$/)) {
+      } else if (c.match(/^\s$/)) {
         continue;
       }
-      _buffer = _buffer << 6 | decode(c3.charCodeAt(0));
+      _buffer = _buffer << 6 | decode(c.charCodeAt(0));
       _buflen += 6;
     }
-    const n3 = _buffer >>> _buflen - 8 & 255;
+    const n = _buffer >>> _buflen - 8 & 255;
     _buflen -= 8;
-    return n3;
+    return n;
   };
-  const decode = function(c3) {
-    if (65 <= c3 && c3 <= 90) {
-      return c3 - 65;
-    } else if (97 <= c3 && c3 <= 122) {
-      return c3 - 97 + 26;
-    } else if (48 <= c3 && c3 <= 57) {
-      return c3 - 48 + 52;
-    } else if (c3 == 43) {
+  const decode = function(c) {
+    if (65 <= c && c <= 90) {
+      return c - 65;
+    } else if (97 <= c && c <= 122) {
+      return c - 97 + 26;
+    } else if (48 <= c && c <= 57) {
+      return c - 48 + 52;
+    } else if (c == 43) {
       return 62;
-    } else if (c3 == 47) {
+    } else if (c == 47) {
       return 63;
     } else {
-      throw "c:" + c3;
+      throw "c:" + c;
     }
   };
   return _this;
@@ -9863,8 +9585,8 @@ var gifImage = function(width, height) {
   const _height = height;
   const _data = new Array(width * height);
   const _this = {};
-  _this.setPixel = function(x2, y2, pixel) {
-    _data[y2 * _width + x2] = pixel;
+  _this.setPixel = function(x, y, pixel) {
+    _data[y * _width + x] = pixel;
   };
   _this.write = function(out) {
     out.writeString("GIF87a");
@@ -9930,8 +9652,8 @@ var gifImage = function(width, height) {
     const endCode = (1 << lzwMinCodeSize) + 1;
     let bitLength = lzwMinCodeSize + 1;
     const table = lzwTable();
-    for (let i3 = 0;i3 < clearCode; i3 += 1) {
-      table.add(String.fromCharCode(i3));
+    for (let i = 0;i < clearCode; i += 1) {
+      table.add(String.fromCharCode(i));
     }
     table.add(String.fromCharCode(clearCode));
     table.add(String.fromCharCode(endCode));
@@ -9939,25 +9661,25 @@ var gifImage = function(width, height) {
     const bitOut = bitOutputStream(byteOut);
     bitOut.write(clearCode, bitLength);
     let dataIndex = 0;
-    let s2 = String.fromCharCode(_data[dataIndex]);
+    let s = String.fromCharCode(_data[dataIndex]);
     dataIndex += 1;
     while (dataIndex < _data.length) {
-      const c3 = String.fromCharCode(_data[dataIndex]);
+      const c = String.fromCharCode(_data[dataIndex]);
       dataIndex += 1;
-      if (table.contains(s2 + c3)) {
-        s2 = s2 + c3;
+      if (table.contains(s + c)) {
+        s = s + c;
       } else {
-        bitOut.write(table.indexOf(s2), bitLength);
+        bitOut.write(table.indexOf(s), bitLength);
         if (table.size() < 4095) {
           if (table.size() == 1 << bitLength) {
             bitLength += 1;
           }
-          table.add(s2 + c3);
+          table.add(s + c);
         }
-        s2 = c3;
+        s = c;
       }
     }
-    bitOut.write(table.indexOf(s2), bitLength);
+    bitOut.write(table.indexOf(s), bitLength);
     bitOut.write(endCode, bitLength);
     bitOut.flush();
     return byteOut.toByteArray();
@@ -9988,17 +9710,17 @@ var gifImage = function(width, height) {
 };
 var createDataURL = function(width, height, getPixel) {
   const gif = gifImage(width, height);
-  for (let y2 = 0;y2 < height; y2 += 1) {
-    for (let x2 = 0;x2 < width; x2 += 1) {
-      gif.setPixel(x2, y2, getPixel(x2, y2));
+  for (let y = 0;y < height; y += 1) {
+    for (let x = 0;x < width; x += 1) {
+      gif.setPixel(x, y, getPixel(x, y));
     }
   }
-  const b2 = byteArrayOutputStream();
-  gif.write(b2);
+  const b = byteArrayOutputStream();
+  gif.write(b);
   const base64 = base64EncodeOutputStream();
-  const bytes = b2.toByteArray();
-  for (let i3 = 0;i3 < bytes.length; i3 += 1) {
-    base64.writeByte(bytes[i3]);
+  const bytes = b.toByteArray();
+  for (let i = 0;i < bytes.length; i += 1) {
+    base64.writeByte(bytes[i]);
   }
   base64.flush();
   return "data:image/gif;base64," + base64;
@@ -10071,7 +9793,7 @@ function createCamera(options = {}) {
     setTexture(cam.texture);
     setWidth(cam.width);
     setHeight(cam.height);
-  }).catch((e3) => setError(e3 instanceof Error ? e3 : new Error(String(e3))));
+  }).catch((e) => setError(e instanceof Error ? e : new Error(String(e))));
   onCleanup(() => {
     disposed = true;
     if (session) {
@@ -10151,11 +9873,11 @@ function PuzzleMark(props) {
               color: seg.dark
             }])
           }), ({
-            e: e3,
-            t: t3
+            e,
+            t
           }, _p$) => {
-            e3 !== _p$?.e && setProp(_el$, "d", e3, _p$?.e);
-            t3 !== _p$?.t && setProp(_el$, "color", t3, _p$?.t);
+            e !== _p$?.e && setProp(_el$, "d", e, _p$?.e);
+            t !== _p$?.t && setProp(_el$, "color", t, _p$?.t);
           });
           return _el$;
         })()
@@ -10208,19 +9930,19 @@ function AppIcon(props) {
             t: theme.text.fontFamily,
             a: props.size * 0.45
           }), ({
-            e: e3,
-            t: t3,
-            a: a3
+            e,
+            t,
+            a
           }, _p$) => {
-            e3 !== _p$?.e && setProp(_el$, "color", e3, _p$?.e);
-            t3 !== _p$?.t && setProp(_el$, "fontFamily", t3, _p$?.t);
-            a3 !== _p$?.a && setProp(_el$, "fontSize", a3, _p$?.a);
+            e !== _p$?.e && setProp(_el$, "color", e, _p$?.e);
+            t !== _p$?.t && setProp(_el$, "fontFamily", t, _p$?.t);
+            a !== _p$?.a && setProp(_el$, "fontSize", a, _p$?.a);
           });
           return _el$;
         }
       });
     },
-    children: (d2) => (() => {
+    children: (d) => (() => {
       var _el$2 = createElement("view", {
         repaintBoundary: true,
         pointerEvents: "all",
@@ -10228,7 +9950,7 @@ function AppIcon(props) {
       });
       insert(_el$2, createComponent2(For, {
         get each() {
-          return d2().draws;
+          return d().draws;
         },
         children: (draw) => (() => {
           var _el$3 = createElement("d-path");
@@ -10239,15 +9961,15 @@ function AppIcon(props) {
       effect3(() => ({
         e: props.size,
         t: props.size,
-        a: [d2().width, d2().height]
+        a: [d().width, d().height]
       }), ({
-        e: e3,
-        t: t3,
-        a: a3
+        e,
+        t,
+        a
       }, _p$) => {
-        e3 !== _p$?.e && setProp(_el$2, "width", e3, _p$?.e);
-        t3 !== _p$?.t && setProp(_el$2, "height", t3, _p$?.t);
-        a3 !== _p$?.a && setProp(_el$2, "viewBox", a3, _p$?.a);
+        e !== _p$?.e && setProp(_el$2, "width", e, _p$?.e);
+        t !== _p$?.t && setProp(_el$2, "height", t, _p$?.t);
+        a !== _p$?.a && setProp(_el$2, "viewBox", a, _p$?.a);
       });
       return _el$2;
     })()
@@ -10341,10 +10063,10 @@ function BackButton(props) {
       alignItems: "center",
       justifyContent: "center"
     },
-    style: (s2) => ({
-      backgroundColor: s2.hovered ? theme.color.surfaceHover : "transparent",
+    style: (s) => ({
+      backgroundColor: s.hovered ? theme.color.surfaceHover : "transparent",
       borderRadius: theme.radius.md,
-      ...focusRing(s2.focused)
+      ...focusRing(s.focused)
     }),
     get children() {
       return createComponent2(Icon, {
@@ -10369,10 +10091,10 @@ function ScanButton(props) {
       alignItems: "center",
       justifyContent: "center"
     },
-    style: (s2) => ({
-      backgroundColor: s2.hovered ? theme.color.surfaceHover : "transparent",
+    style: (s) => ({
+      backgroundColor: s.hovered ? theme.color.surfaceHover : "transparent",
       borderRadius: theme.radius.md,
-      ...focusRing(s2.focused)
+      ...focusRing(s.focused)
     }),
     get children() {
       return createComponent2(Icon, {
@@ -10475,10 +10197,10 @@ function SettingsPanel(props) {
                       alignItems: "center",
                       justifyContent: "center"
                     },
-                    style: (s2) => ({
-                      backgroundColor: s2.hovered ? theme.color.surfaceHover : "transparent",
+                    style: (s) => ({
+                      backgroundColor: s.hovered ? theme.color.surfaceHover : "transparent",
                       borderRadius: theme.radius.md,
-                      ...focusRing(s2.focused)
+                      ...focusRing(s.focused)
                     }),
                     get children() {
                       return createComponent2(Icon, {
@@ -10496,7 +10218,7 @@ function SettingsPanel(props) {
                   return createComponent2(Pressable, {
                     focusable: true,
                     onPress: cycleMode,
-                    style: (s2) => focusRing(s2.focused),
+                    style: (s) => focusRing(s.focused),
                     get children() {
                       return createComponent2(SegmentedControl, {
                         options: [{
@@ -10512,7 +10234,7 @@ function SettingsPanel(props) {
                         get value() {
                           return props.mode;
                         },
-                        onChange: (v2) => props.onMode(v2)
+                        onChange: (v) => props.onMode(v)
                       });
                     }
                   });
@@ -10577,12 +10299,12 @@ var [address, setAddress] = createSignal(null);
 var [tunneled, setTunneled] = createSignal(false);
 var [recents, setRecents] = createSignal([]);
 if (available) {
-  on7("dev", (e3) => {
-    setState(e3.state);
-    setAddress(e3.address);
-    setTunneled(e3.tunneled);
-    if (e3.recents)
-      setRecents(e3.recents);
+  on7("dev", (e) => {
+    setState(e.state);
+    setAddress(e.address);
+    setTunneled(e.tunneled);
+    if (e.recents)
+      setRecents(e.recents);
   });
   if (launchAddress)
     devConnect(launchAddress);
@@ -10685,7 +10407,7 @@ function ConnectPanel(props) {
                       capitalize: "none",
                       autocorrect: false
                     },
-                    onInput: (v2) => hostDraft = v2,
+                    onInput: (v) => hostDraft = v,
                     onSubmit: submit
                   }), createComponent2(TextInput, {
                     layout: {
@@ -10696,7 +10418,7 @@ function ConnectPanel(props) {
                     hints: {
                       type: "number"
                     },
-                    onInput: (v2) => portDraft = v2,
+                    onInput: (v) => portDraft = v,
                     onSubmit: submit
                   })];
                 }
@@ -10762,9 +10484,9 @@ function formatStamp(ms) {
   if (!ms)
     return "";
   let then = new Date(ms);
-  let pad = (n3) => String(n3).padStart(2, "0");
+  let pad = (n) => String(n).padStart(2, "0");
   let time = `${pad(then.getHours())}:${pad(then.getMinutes())}`;
-  let midnight = (d2) => new Date(d2.getFullYear(), d2.getMonth(), d2.getDate()).getTime();
+  let midnight = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
   let days = Math.round((midnight(new Date) - midnight(then)) / 86400000);
   if (days <= 0)
     return time;
@@ -10791,8 +10513,8 @@ function AppCard(props) {
     get onPress() {
       return props.onPress;
     },
-    style: (s2) => focusRing(s2.focused, theme.radius.lg),
-    children: (s2) => createComponent2(Card, {
+    style: (s) => focusRing(s.focused, theme.radius.lg),
+    children: (s) => createComponent2(Card, {
       get layout() {
         return {
           flexDirection: "row",
@@ -10802,7 +10524,7 @@ function AppCard(props) {
       },
       get style() {
         return {
-          backgroundColor: props.active ? theme.color.surfaceAlt : s2.hovered ? theme.color.surfaceHover : theme.color.surface
+          backgroundColor: props.active ? theme.color.surfaceAlt : s.hovered ? theme.color.surfaceHover : theme.color.surface
         };
       },
       get children() {
@@ -10855,23 +10577,23 @@ function AppCard(props) {
 }
 function groupCache(entries, key) {
   let groups = new Map;
-  for (let e3 of entries) {
-    let k2 = key(e3);
-    let g2 = groups.get(k2);
-    if (!g2)
-      groups.set(k2, g2 = {
-        key: k2,
+  for (let e of entries) {
+    let k = key(e);
+    let g = groups.get(k);
+    if (!g)
+      groups.set(k, g = {
+        key: k,
         count: 0,
         size: 0
       });
-    g2.count += 1;
-    g2.size += e3.size;
+    g.count += 1;
+    g.size += e.size;
   }
-  return [...groups.values()].sort((a3, b2) => b2.size - a3.size);
+  return [...groups.values()].sort((a, b) => b.size - a.size);
 }
 function cacheDomain(url) {
-  let m2 = /^[a-z][a-z0-9+.-]*:\/\/([^/]+)/i.exec(url);
-  return m2?.[1] ?? "unknown";
+  let m = /^[a-z][a-z0-9+.-]*:\/\/([^/]+)/i.exec(url);
+  return m?.[1] ?? "unknown";
 }
 function amount(count, size) {
   return `${count} file${count === 1 ? "" : "s"}, ${formatSize(size)}`;
@@ -10881,9 +10603,9 @@ function AppDetail(props) {
   createEffect(() => props.app.id, () => {
     setConfirming(false);
   });
-  onBack((e3) => {
+  onBack((e) => {
     if (confirming()) {
-      e3.preventDefault();
+      e.preventDefault();
       setConfirming(false);
     }
   });
@@ -11050,28 +10772,28 @@ function AppDetail(props) {
                 get when() {
                   return details();
                 },
-                children: (d2) => [createComponent2(DetailCard, {
+                children: (d) => [createComponent2(DetailCard, {
                   title: "Storage",
                   get children() {
                     return [createComponent2(DetailRow, {
                       label: "App",
                       get value() {
-                        return formatSize(d2().installSize);
+                        return formatSize(d().installSize);
                       }
                     }), createComponent2(DetailRow, {
                       label: "Files",
                       get value() {
-                        return amount(d2().files.length, d2().files.reduce((sum, f3) => sum + f3.size, 0));
+                        return amount(d().files.length, d().files.reduce((sum, f) => sum + f.size, 0));
                       }
                     }), createComponent2(DetailRow, {
                       label: "Data",
                       get value() {
-                        return amount(d2().data.length, d2().dataSize);
+                        return amount(d().data.length, d().dataSize);
                       }
                     }), createComponent2(DetailRow, {
                       label: "Cache",
                       get value() {
-                        return amount(d2().cache.length, d2().cacheSize);
+                        return amount(d().cache.length, d().cacheSize);
                       }
                     })];
                   }
@@ -11080,17 +10802,17 @@ function AppDetail(props) {
                   get children() {
                     return createComponent2(For, {
                       get each() {
-                        return d2().versions;
+                        return d().versions;
                       },
-                      children: (v2) => createComponent2(DetailRow, {
+                      children: (v) => createComponent2(DetailRow, {
                         get label() {
-                          return v2.id.slice(0, 12) + (v2.current ? " (current)" : "");
+                          return v.id.slice(0, 12) + (v.current ? " (current)" : "");
                         },
                         get value() {
-                          return `${v2.solidrtVersion}, ${formatSize(v2.size)}`;
+                          return `${v.solidrtVersion}, ${formatSize(v.size)}`;
                         },
                         get mutedValue() {
-                          return !v2.current;
+                          return !v.current;
                         }
                       })
                     });
@@ -11100,14 +10822,14 @@ function AppDetail(props) {
                   get children() {
                     return createComponent2(For, {
                       get each() {
-                        return d2().files;
+                        return d().files;
                       },
-                      children: (f3) => createComponent2(DetailRow, {
+                      children: (f) => createComponent2(DetailRow, {
                         get label() {
-                          return f3.path;
+                          return f.path;
                         },
                         get value() {
-                          return formatSize(f3.size);
+                          return formatSize(f.size);
                         }
                       })
                     });
@@ -11117,7 +10839,7 @@ function AppDetail(props) {
                   get children() {
                     return createComponent2(Show, {
                       get when() {
-                        return d2().data.length > 0;
+                        return d().data.length > 0;
                       },
                       get fallback() {
                         return createComponent2(Text, {
@@ -11129,14 +10851,14 @@ function AppDetail(props) {
                       get children() {
                         return createComponent2(For, {
                           get each() {
-                            return d2().data;
+                            return d().data;
                           },
-                          children: (f3) => createComponent2(DetailRow, {
+                          children: (f) => createComponent2(DetailRow, {
                             get label() {
-                              return f3.path;
+                              return f.path;
                             },
                             get value() {
-                              return formatSize(f3.size);
+                              return formatSize(f.size);
                             }
                           })
                         });
@@ -11148,7 +10870,7 @@ function AppDetail(props) {
                   get children() {
                     return createComponent2(Show, {
                       get when() {
-                        return d2().cache.length > 0;
+                        return d().cache.length > 0;
                       },
                       get fallback() {
                         return createComponent2(Text, {
@@ -11163,14 +10885,14 @@ function AppDetail(props) {
                           children: "By type"
                         }), createComponent2(For, {
                           get each() {
-                            return groupCache(d2().cache, (e3) => e3.type ?? "unknown");
+                            return groupCache(d().cache, (e) => e.type ?? "unknown");
                           },
-                          children: (g2) => createComponent2(DetailRow, {
+                          children: (g) => createComponent2(DetailRow, {
                             get label() {
-                              return g2.key;
+                              return g.key;
                             },
                             get value() {
-                              return amount(g2.count, g2.size);
+                              return amount(g.count, g.size);
                             }
                           })
                         }), createComponent2(Text, {
@@ -11178,14 +10900,14 @@ function AppDetail(props) {
                           children: "By domain"
                         }), createComponent2(For, {
                           get each() {
-                            return groupCache(d2().cache, (e3) => cacheDomain(e3.url));
+                            return groupCache(d().cache, (e) => cacheDomain(e.url));
                           },
-                          children: (g2) => createComponent2(DetailRow, {
+                          children: (g) => createComponent2(DetailRow, {
                             get label() {
-                              return g2.key;
+                              return g.key;
                             },
                             get value() {
-                              return amount(g2.count, g2.size);
+                              return amount(g.count, g.size);
                             }
                           })
                         })];
@@ -11194,14 +10916,14 @@ function AppDetail(props) {
                   }
                 }), createComponent2(Show, {
                   get when() {
-                    return d2().cache.length > 0;
+                    return d().cache.length > 0;
                   },
                   get children() {
                     return createComponent2(Button, {
                       variant: "danger",
                       onPress: () => {
                         clearCache(props.app.id);
-                        setDetailsGen((n3) => n3 + 1);
+                        setDetailsGen((n) => n + 1);
                       },
                       children: "Clear cache"
                     });
@@ -11376,27 +11098,27 @@ function DevCard(props) {
 function HomeScreen(props) {
   let [apps, setApps] = createSignal(appsAvailable ? list() : []);
   let twoPane = () => policy.layout === "twoPane";
-  let selectedApp = () => apps().find((a3) => a3.id === props.selectedId) ?? null;
+  let selectedApp = () => apps().find((a) => a.id === props.selectedId) ?? null;
   let status = () => isConnected() ? `Connected to ${serverAddress()}${isTunneled() ? " (tunneled)" : ""}` : props.notice ?? STATUS_TEXT[connectionState()];
   let doLaunch = (id2) => {
     try {
       launch(id2);
-    } catch (e3) {
-      props.setNotice(e3 instanceof Error ? e3.message : String(e3));
+    } catch (e) {
+      props.setNotice(e instanceof Error ? e.message : String(e));
     }
   };
   let doRemove = (id2) => {
     try {
       remove(id2);
-    } catch (e3) {
-      props.setNotice(e3 instanceof Error ? e3.message : String(e3));
+    } catch (e) {
+      props.setNotice(e instanceof Error ? e.message : String(e));
     }
     props.setSelectedId(null);
     setApps(appsAvailable ? list() : []);
   };
-  onBack((e3) => {
+  onBack((e) => {
     if (!twoPane() && props.panel == null && selectedApp() != null) {
-      e3.preventDefault();
+      e.preventDefault();
       props.setSelectedId(null);
     }
   });
@@ -11486,10 +11208,10 @@ function HomeScreen(props) {
                               alignItems: "center",
                               justifyContent: "center"
                             },
-                            style: (s2) => ({
-                              backgroundColor: s2.hovered ? theme.color.surfaceHover : "transparent",
+                            style: (s) => ({
+                              backgroundColor: s.hovered ? theme.color.surfaceHover : "transparent",
                               borderRadius: theme.radius.md,
-                              ...focusRing(s2.focused)
+                              ...focusRing(s.focused)
                             }),
                             get children() {
                               return createComponent2(Icon, {
@@ -11638,29 +11360,29 @@ function ScanScreen(props) {
   let cam = createCamera(untrack(() => ({
     scan: ["qr"]
   })));
-  createEffect(() => cam.barcode(), (b2) => {
-    if (b2)
-      props.onScanned(b2.data);
+  createEffect(() => cam.barcode(), (b) => {
+    if (b)
+      props.onScanned(b.data);
   });
-  createEffect(() => cam.error(), (e3) => {
-    if (e3)
-      props.onError(e3.message);
+  createEffect(() => cam.error(), (e) => {
+    if (e)
+      props.onError(e.message);
   });
   let crop = () => {
     let cw = cam.width();
     let ch = cam.height();
     let {
-      width: w2,
-      height: h3
+      width: w,
+      height: h
     } = env.windowSize;
-    if (!cw || !ch || !w2 || !h3)
+    if (!cw || !ch || !w || !h)
       return null;
-    let scale = Math.max(w2 / cw, h3 / ch);
-    let srcW = w2 / scale;
-    let srcH = h3 / scale;
+    let scale = Math.max(w / cw, h / ch);
+    let srcW = w / scale;
+    let srcH = h / scale;
     return {
-      w: w2,
-      h: h3,
+      w,
+      h,
       srcX: (cw - srcW) / 2,
       srcY: (ch - srcH) / 2,
       srcW,
@@ -11669,16 +11391,16 @@ function ScanScreen(props) {
   };
   let reticle = () => {
     let {
-      width: w2,
-      height: h3
+      width: w,
+      height: h
     } = env.windowSize;
-    let s2 = Math.round(Math.min(w2, h3) * 0.55);
-    let l2 = Math.round(s2 * 0.18);
-    let i3 = RETICLE_STROKE / 2;
-    let r3 = RETICLE_RADIUS;
+    let s = Math.round(Math.min(w, h) * 0.55);
+    let l = Math.round(s * 0.18);
+    let i = RETICLE_STROKE / 2;
+    let r = RETICLE_RADIUS;
     return {
-      size: s2,
-      d: `M${i3} ${l2} L${i3} ${i3 + r3} A ${r3} ${r3} 0 0 1 ${i3 + r3} ${i3} L${l2} ${i3} ` + `M${s2 - l2} ${i3} L${s2 - i3 - r3} ${i3} A ${r3} ${r3} 0 0 1 ${s2 - i3} ${i3 + r3} L${s2 - i3} ${l2} ` + `M${s2 - i3} ${s2 - l2} L${s2 - i3} ${s2 - i3 - r3} A ${r3} ${r3} 0 0 1 ${s2 - i3 - r3} ${s2 - i3} L${s2 - l2} ${s2 - i3} ` + `M${l2} ${s2 - i3} L${i3 + r3} ${s2 - i3} A ${r3} ${r3} 0 0 1 ${i3} ${s2 - i3 - r3} L${i3} ${s2 - l2}`
+      size: s,
+      d: `M${i} ${l} L${i} ${i + r} A ${r} ${r} 0 0 1 ${i + r} ${i} L${l} ${i} ` + `M${s - l} ${i} L${s - i - r} ${i} A ${r} ${r} 0 0 1 ${s - i} ${i + r} L${s - i} ${l} ` + `M${s - i} ${s - l} L${s - i} ${s - i - r} A ${r} ${r} 0 0 1 ${s - i - r} ${s - i} L${s - l} ${s - i} ` + `M${l} ${s - i} L${i + r} ${s - i} A ${r} ${r} 0 0 1 ${i} ${s - i - r} L${i} ${s - l}`
     };
   };
   return createComponent2(View, {
@@ -11694,34 +11416,34 @@ function ScanScreen(props) {
         get when() {
           return memo2(() => cam.texture() != null)() && crop();
         },
-        children: (c3) => (() => {
+        children: (c) => (() => {
           var _el$2 = createElement("texture", {
             position: "absolute"
           });
           effect3(() => ({
             e: cam.texture(),
-            t: c3().w,
-            a: c3().h,
-            o: c3().srcX,
-            i: c3().srcY,
-            n: c3().srcW,
-            s: c3().srcH
+            t: c().w,
+            a: c().h,
+            o: c().srcX,
+            i: c().srcY,
+            n: c().srcW,
+            s: c().srcH
           }), ({
-            e: e3,
-            t: t3,
-            a: a3,
-            o: o3,
-            i: i3,
-            n: n3,
-            s: s2
+            e,
+            t,
+            a,
+            o,
+            i,
+            n,
+            s
           }, _p$) => {
-            e3 !== _p$?.e && setProp(_el$2, "src", e3, _p$?.e);
-            t3 !== _p$?.t && setProp(_el$2, "width", t3, _p$?.t);
-            a3 !== _p$?.a && setProp(_el$2, "height", a3, _p$?.a);
-            o3 !== _p$?.o && setProp(_el$2, "srcX", o3, _p$?.o);
-            i3 !== _p$?.i && setProp(_el$2, "srcY", i3, _p$?.i);
-            n3 !== _p$?.n && setProp(_el$2, "srcW", n3, _p$?.n);
-            s2 !== _p$?.s && setProp(_el$2, "srcH", s2, _p$?.s);
+            e !== _p$?.e && setProp(_el$2, "src", e, _p$?.e);
+            t !== _p$?.t && setProp(_el$2, "width", t, _p$?.t);
+            a !== _p$?.a && setProp(_el$2, "height", a, _p$?.a);
+            o !== _p$?.o && setProp(_el$2, "srcX", o, _p$?.o);
+            i !== _p$?.i && setProp(_el$2, "srcY", i, _p$?.i);
+            n !== _p$?.n && setProp(_el$2, "srcW", n, _p$?.n);
+            s !== _p$?.s && setProp(_el$2, "srcH", s, _p$?.s);
           });
           return _el$2;
         })()
@@ -11789,10 +11511,10 @@ function ScanScreen(props) {
                           alignItems: "center",
                           justifyContent: "center"
                         },
-                        style: (s2) => ({
-                          backgroundColor: s2.hovered ? SCRIM_HOVER : SCRIM,
+                        style: (s) => ({
+                          backgroundColor: s.hovered ? SCRIM_HOVER : SCRIM,
                           borderRadius: TAP_TARGET / 2,
-                          ...focusRing(s2.focused, TAP_TARGET / 2)
+                          ...focusRing(s.focused, TAP_TARGET / 2)
                         }),
                         get children() {
                           return createComponent2(Icon, {
@@ -11823,12 +11545,12 @@ function App() {
       return env.systemTheme !== "light";
     return mode === "dark";
   };
-  createEffect(() => dark(), (d2) => setTheme(d2 ? darkTheme : lightTheme));
+  createEffect(() => dark(), (d) => setTheme(d ? darkTheme : lightTheme));
   let [fullscreen, setFullscreen] = createSignal(false);
   let [screen, setScreen] = createSignal("home");
   let panel = () => {
-    let s2 = screen();
-    return s2 === "settings" || s2 === "connect" ? s2 : null;
+    let s = screen();
+    return s === "settings" || s === "connect" ? s : null;
   };
   let [selectedId, setSelectedId] = createSignal(null);
   let [notice, setNotice] = createSignal(null);
@@ -11838,8 +11560,8 @@ function App() {
     setScreen("home");
     connect(addr);
   };
-  onBack((e3) => {
-    e3.preventDefault();
+  onBack((e) => {
+    e.preventDefault();
     if (confirmExit()) {
       setConfirmExit(false);
     } else if (screen() !== "home") {
@@ -11878,8 +11600,8 @@ function App() {
                   return createComponent2(ScanScreen, {
                     onScanned: (data) => dial(data),
                     onCancel: () => setScreen("connect"),
-                    onError: (m2) => {
-                      setNotice(`Camera: ${m2}`);
+                    onError: (m) => {
+                      setNotice(`Camera: ${m}`);
                       setScreen("home");
                     }
                   });

@@ -298,9 +298,13 @@ pub(crate) fn packed_to_color(rgba: u32) -> Color {
 }
 
 pub(super) fn decode_color(value: &PropValue) -> Result<Color, String> {
+  if let Some(s) = value.as_str() {
+    return alloy::color::parse_css(s);
+  }
   let rgba = value
     .as_f64()
-    .ok_or_else(|| format!("Color must be a number (packed 0xRRGGBBAA), got {}", describe(value)))? as u32;
+    .ok_or_else(|| format!("Color must be a number (packed 0xRRGGBBAA) or a CSS color string, got {}", describe(value)))?
+    as u32;
   Ok(packed_to_color(rgba))
 }
 

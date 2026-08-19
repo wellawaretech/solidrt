@@ -124,10 +124,9 @@ fn params_reject_non_numeric_entries() {
 
 #[test]
 fn colors_and_gradients() {
-  // Colors arrive pre-packed from JS; a raw string reaching the decoder is an
-  // error, not black.
-  let err = apply("rect", "color", text("red")).unwrap_err();
-  assert!(err.contains("\"red\""), "{err}");
+  // Colors arrive as raw CSS strings (parsed runtime-side) or as the packed
+  // 0xRRGGBBAA number the parseColor binding returns; both decode.
+  assert!(apply("rect", "color", text("red")).is_ok());
   assert!(apply("rect", "color", num(0xFF0000FF as u32 as f64)).is_ok());
 
   let no_stops =
@@ -308,4 +307,12 @@ fn transition_null_clears() {
   apply_el(&mut el, "transition", cfg).expect("config applies");
   assert_eq!(apply_el(&mut el, "transition", PropValue::Null), Ok(Damage::None));
   assert!(el.transitions.is_none());
+}
+
+#[test]
+fn color_accepts_css_strings_and_packed_numbers() {
+  assert_eq!(apply("rect", "color", text("tomato")), Ok(Damage::Paint));
+  assert_eq!(apply("rect", "color", num(0xff0000ff_u32 as f64)), Ok(Damage::Paint));
+  let err = apply("rect", "color", text("no-such-color")).unwrap_err();
+  assert!(err.contains("Invalid color"), "{err}");
 }
