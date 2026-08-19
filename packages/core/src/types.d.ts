@@ -366,7 +366,7 @@ export interface LineGeometryProps {
   y2?: number
 }
 
-// Native transitions (okf/backlog/native-transitions.md): declared once on
+// Native transitions (okf/done/native-transitions.md): declared once on
 // the element, applied by the runtime to every later write of the covered
 // properties. JS hands over targets; Rust interpolates every frame, so a
 // running animation costs no JS per frame.
@@ -386,6 +386,16 @@ export type TransitionCurve = "linear" | "ease" | "ease-in" | "ease-out" | "ease
 export interface TransitionSpring {
   duration: number
   bounce?: number
+  /** Hold each write for this long (ms) before it applies; a newer write during the hold replaces it and restarts the delay. */
+  delay?: number
+  /**
+   * Mount-time enter animation: at the element's first attach the property
+   * snaps to this value and animates to the value it mounted with. Numbers
+   * for the scalar properties; the color property takes a CSS color string
+   * or packed number. Per-property entries only (not under `all`); a later
+   * move or reorder re-runs nothing.
+   */
+  from?: number | string
 }
 
 /**
@@ -398,9 +408,27 @@ export interface TransitionSpring {
 export interface TransitionTween {
   duration: number
   curve: TransitionCurve
+  /** Hold each write for this long (ms) before it applies; a newer write during the hold replaces it and restarts the delay. */
+  delay?: number
+  /**
+   * Mount-time enter animation: at the element's first attach the property
+   * snaps to this value and animates to the value it mounted with. Numbers
+   * for the scalar properties; the color property takes a CSS color string
+   * or packed number. Per-property entries only (not under `all`); a later
+   * move or reorder re-runs nothing.
+   */
+  from?: number | string
 }
 
-export type Transition = TransitionSpring | TransitionTween
+/**
+ * The shorthand string: `"<duration>ms [curve] [<delay>ms]"` - `"300ms"` is
+ * a bounce-0 spring, `"300ms ease-out"` a tween, `"300ms ease-out 100ms"`
+ * delayed (first time value the duration, second the delay; ms only).
+ * Bounce, bezier control values and `from` need the object form.
+ */
+export type TransitionShorthand = string
+
+export type Transition = TransitionSpring | TransitionTween | TransitionShorthand
 
 /** The property names a transition can cover (numeric scalars). */
 export type TransitionPropName =
@@ -438,14 +466,21 @@ export interface TransitionProps {
   onTransitionEnd?: (event: TransitionEndEvent) => void
   /**
    * Animate later writes of the listed properties instead of snapping:
-   * `transition={{ x: { duration: 400, bounce: 0.2 }, opacity: { duration: 200, curve: "ease-out" } }}`.
-   * `all` covers every animatable property the element has. Only properties
-   * the element carries animate (a d-rect has x, a view's x is its
-   * transform); the initial value never animates, and a non-numeric write
-   * (e.g. null) cancels the running animation and snaps. `null` clears the
+   * `transition={{ x: { duration: 400, bounce: 0.2 }, opacity: "200ms ease-out" }}`.
+   * `all` covers every animatable property the element has, and a bare
+   * string is shorthand for it: `transition="300ms ease-out"`. Only
+   * properties the element carries animate (a d-rect has x, a view's x is
+   * its transform); the initial value never animates unless the entry sets
+   * `from` (an enter animation), and a non-numeric write (e.g. null)
+   * cancels the running animation and snaps. `null` clears the
    * declaration; already-running animations finish.
    */
-  transition?: Partial<Record<TransitionPropName | "all", Transition>> | null
+  transition?:
+    | ({ all?: Omit<TransitionSpring, "from"> | Omit<TransitionTween, "from"> | TransitionShorthand } & {
+        [P in TransitionPropName]?: Transition
+      })
+    | TransitionShorthand
+    | null
 }
 
 // Primitives

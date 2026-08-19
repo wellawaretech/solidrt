@@ -2,7 +2,7 @@ use crate::color::{color_to_oklab, oklab_to_color};
 use crate::impellers::Color;
 use crate::rendertree::{Damage, Element, ElementKind};
 
-// Native transitions (okf/backlog/native-transitions.md): a `transition`
+// Native transitions (okf/done/native-transitions.md): a `transition`
 // declaration on an element makes numeric property writes animate on the
 // Rust side. JS writes only targets; the tree owns time. This module holds
 // the engine-free pieces: the per-element config, the per-property track
@@ -155,19 +155,53 @@ impl TransitionSpec {
   }
 }
 
-/// The transition declaration an element carries: per-property specs plus an
-/// `all` catch-all. Applies to writes from the moment it is set; it does not
-/// retroactively affect running tracks.
+/// One declared transition: the motion spec plus the conveniences that ride
+/// with it. `delay_ms` holds each write for that long (animation-clock time)
+/// before it applies; `from` seeds a mount-time enter animation - at the
+/// node's first attach the property snaps to `from` and animates to the
+/// value it mounted with. `from` is meaningful on per-property entries only
+/// (the decoder rejects it under `all`).
+#[derive(Clone, Copy, Debug)]
+pub struct TransitionEntry {
+  pub spec: TransitionSpec,
+  pub delay_ms: f32,
+  pub from: Option<AnimValue>,
+}
+
+impl From<TransitionSpec> for TransitionEntry {
+  fn from(spec: TransitionSpec) -> Self {
+    TransitionEntry { spec, delay_ms: 0.0, from: None }
+  }
+}
+
+/// The transition declaration an element carries: per-property entries plus
+/// an `all` catch-all. Applies to writes from the moment it is set; it does
+/// not retroactively affect running tracks.
 #[derive(Clone, Debug, Default)]
 pub struct TransitionConfig {
-  pub props: Vec<(AnimProp, TransitionSpec)>,
-  pub all: Option<TransitionSpec>,
+  pub props: Vec<(AnimProp, TransitionEntry)>,
+  pub all: Option<TransitionEntry>,
 }
 
 impl TransitionConfig {
-  pub fn spec_for(&self, prop: AnimProp) -> Option<TransitionSpec> {
-    self.props.iter().find(|(p, _)| *p == prop).map(|(_, s)| *s).or(self.all)
+  pub fn entry_for(&self, prop: AnimProp) -> Option<TransitionEntry> {
+    self.props.iter().find(|(p, _)| *p == prop).map(|(_, e)| *e).or(self.all)
   }
+}
+
+/// A write held by `delay`: it applies (starts or retargets a track) when
+/// the animation clock reaches `at_ms`, exactly as if JS had written it
+/// then. Until then the element keeps whatever motion or rest it had - a
+/// running track toward an older target keeps going and may settle (and
+/// fire its end event) naturally. A newer write for the pair replaces the
+/// hold; a snap write drops it.
+#[derive(Clone, Copy, Debug)]
+pub struct PendingWrite {
+  pub node: u64,
+  pub prop: AnimProp,
+  pub to: AnimValue,
+  pub spec: TransitionSpec,
+  pub at_ms: f64,
 }
 
 // Track values are lane vectors: scalars use one lane, colors four (oklab
@@ -325,6 +359,9 @@ pub struct Transitions {
   // track list becomes non-empty so an idle gap never enters a spring.
   last_ms: f64,
   tracks: Vec<Track>,
+  // Delayed writes waiting for their activation time (tree.rs drains the
+  // due ones at the top of each advance).
+  pending: Vec<PendingWrite>,
   // (node, prop) pairs whose track settled, awaiting the embedder's drain
   // (the onTransitionEnd dispatch). Cancelled tracks never land here.
   pub settled: Vec<(u64, AnimProp)>,
@@ -332,7 +369,32 @@ pub struct Transitions {
 
 impl Transitions {
   pub fn is_empty(&self) -> bool {
-    self.tracks.is_empty()
+    self.tracks.is_empty() && self.pending.is_empty()
+  }
+
+  /// Hold a delayed write until its activation time. One hold per
+  /// (node, prop): a newer write replaces it, delay restarted.
+  pub fn schedule(&mut self, write: PendingWrite) {
+    self.unschedule(write.node, write.prop);
+    self.pending.push(write);
+  }
+
+  pub fn unschedule(&mut self, node: u64, prop: AnimProp) {
+    self.pending.retain(|w| !(w.node == node && w.prop == prop));
+  }
+
+  /// Drain the pending writes whose activation time has arrived.
+  pub fn take_due(&mut self, now_ms: f64) -> Vec<PendingWrite> {
+    let mut due = Vec::new();
+    self.pending.retain(|w| {
+      if w.at_ms <= now_ms {
+        due.push(*w);
+        false
+      } else {
+        true
+      }
+    });
+    due
   }
 
   /// Start or retarget the track for (node, prop). `current` is the
@@ -370,10 +432,11 @@ impl Transitions {
     self.tracks.push(Track { node, prop, spec, state, to, color, eps: eps_for(cur, to) });
   }
 
-  /// Drop the track for (node, prop), if any: a non-animated write to the
-  /// property took over (null reset, non-numeric value).
+  /// Drop the track and any pending write for (node, prop): a non-animated
+  /// write to the property took over (null reset, non-numeric value).
   pub fn cancel(&mut self, node: u64, prop: AnimProp) {
     self.tracks.retain(|t| !(t.node == node && t.prop == prop));
+    self.unschedule(node, prop);
   }
 
   /// Take the track list for an advance pass (tree.rs), leaving the clock in

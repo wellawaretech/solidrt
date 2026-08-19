@@ -7,7 +7,7 @@ use std::sync::mpsc::channel;
 
 use crate::alloy_plugins::properties::apply_jsx;
 use crate::alloy_plugins::value::PropValue;
-use alloy::rendertree::{Damage, Element, TransitionSpec};
+use alloy::rendertree::{AnimValue, Damage, Element, TransitionEntry, TransitionSpec};
 
 fn apply(kind: &str, name: &str, value: PropValue) -> Result<Damage, String> {
   let mut el = Element::from_kind(kind).expect("known kind");
@@ -233,10 +233,8 @@ fn texture_params_gpu_error_propagates() {
   let mut el = Element::from_kind("texture").expect("known kind");
   apply_el(&mut el, "src", num(7.0)).expect("src applies");
   let (tx, _rx) = channel();
-  let err = apply_jsx(&mut el, "params", &map(&[("uX", num(1.0))]), &tx, &|_, _| {
-    Err("target 7 not found".to_string())
-  })
-  .unwrap_err();
+  let err = apply_jsx(&mut el, "params", &map(&[("uX", num(1.0))]), &tx, &|_, _| Err("target 7 not found".to_string()))
+    .unwrap_err();
   assert!(err.contains("not found"), "{err}");
 }
 
@@ -244,8 +242,12 @@ fn texture_params_gpu_error_propagates() {
 // otherwise it is a spring; bare duration = critically damped spring) and
 // the decode errors.
 
-fn spec_of(el: &Element) -> TransitionSpec {
+fn entry_of(el: &Element) -> TransitionEntry {
   el.transitions.as_ref().expect("config set").props[0].1
+}
+
+fn spec_of(el: &Element) -> TransitionSpec {
+  entry_of(el).spec
 }
 
 #[test]
@@ -285,9 +287,9 @@ fn transition_errors_name_the_problem() {
   let mut el = Element::from_kind("d-rect").expect("known kind");
   let missing = apply_el(&mut el, "transition", map(&[("x", map(&[]))])).unwrap_err();
   assert!(missing.contains("duration (ms) is required"), "{missing}");
-  let unknown_key = apply_el(&mut el, "transition", map(&[("x", map(&[("duration", num(1.0)), ("delay", num(5.0))]))]))
-    .unwrap_err();
-  assert!(unknown_key.contains("unknown key 'delay'"), "{unknown_key}");
+  let unknown_key =
+    apply_el(&mut el, "transition", map(&[("x", map(&[("duration", num(1.0)), ("speed", num(5.0))]))])).unwrap_err();
+  assert!(unknown_key.contains("unknown key 'speed'"), "{unknown_key}");
   let bad_prop = apply_el(&mut el, "transition", map(&[("blendMode", map(&[("duration", num(1.0))]))])).unwrap_err();
   assert!(bad_prop.contains("not an animatable property"), "{bad_prop}");
   let bad_curve =
@@ -295,9 +297,66 @@ fn transition_errors_name_the_problem() {
       .unwrap_err();
   assert!(bad_curve.contains("unknown curve"), "{bad_curve}");
   let bad_bounce =
-    apply_el(&mut el, "transition", map(&[("x", map(&[("duration", num(1.0)), ("bounce", num(2.0))]))]))
-      .unwrap_err();
+    apply_el(&mut el, "transition", map(&[("x", map(&[("duration", num(1.0)), ("bounce", num(2.0))]))])).unwrap_err();
   assert!(bad_bounce.contains("bounce must be in (-1, 1]"), "{bad_bounce}");
+}
+
+#[test]
+fn transition_shorthand_strings() {
+  // A bare string is the `all` catch-all; a per-property string is that
+  // entry. No curve = spring (bounce 0); a curve makes a tween; a second
+  // time value is the delay.
+  let mut el = Element::from_kind("d-rect").expect("known kind");
+  apply_el(&mut el, "transition", text("300ms")).expect("bare duration string");
+  let all = el.transitions.as_ref().expect("config set").all.expect("all set");
+  assert!(matches!(all.spec, TransitionSpec::Spring { .. }));
+  assert_eq!(all.delay_ms, 0.0);
+
+  apply_el(&mut el, "transition", text("300ms ease-out 100ms")).expect("curve and delay");
+  let all = el.transitions.as_ref().expect("config set").all.expect("all set");
+  assert!(matches!(all.spec, TransitionSpec::Tween { .. }));
+  assert_eq!(all.delay_ms, 100.0);
+
+  apply_el(&mut el, "transition", map(&[("x", text("200ms ease-in-out"))])).expect("per-property string");
+  assert!(matches!(spec_of(&el), TransitionSpec::Tween { .. }));
+
+  let bad = apply_el(&mut el, "transition", text("fast")).unwrap_err();
+  assert!(bad.contains("cannot read \"fast\""), "{bad}");
+  let no_duration = apply_el(&mut el, "transition", text("ease-out")).unwrap_err();
+  assert!(no_duration.contains("a duration like \"300ms\" is required"), "{no_duration}");
+  let three_times = apply_el(&mut el, "transition", text("1ms 2ms 3ms")).unwrap_err();
+  assert!(three_times.contains("too many time values"), "{three_times}");
+}
+
+#[test]
+fn transition_delay_decodes_and_validates() {
+  let mut el = Element::from_kind("d-rect").expect("known kind");
+  let cfg = map(&[("x", map(&[("duration", num(300.0)), ("delay", num(150.0))]))]);
+  apply_el(&mut el, "transition", cfg).expect("delay applies");
+  assert_eq!(entry_of(&el).delay_ms, 150.0);
+  let bad =
+    apply_el(&mut el, "transition", map(&[("x", map(&[("duration", num(1.0)), ("delay", num(-5.0))]))])).unwrap_err();
+  assert!(bad.contains("delay must be a non-negative number"), "{bad}");
+}
+
+#[test]
+fn transition_from_decodes_per_property_only() {
+  let mut el = Element::from_kind("d-rect").expect("known kind");
+  let cfg = map(&[("x", map(&[("duration", num(300.0)), ("from", num(-40.0))]))]);
+  apply_el(&mut el, "transition", cfg).expect("scalar from applies");
+  assert!(matches!(entry_of(&el).from, Some(AnimValue::Scalar(v)) if v == -40.0));
+
+  // The color property takes a CSS string (or a packed number).
+  let cfg = map(&[("color", map(&[("duration", num(300.0)), ("from", text("tomato"))]))]);
+  apply_el(&mut el, "transition", cfg).expect("color from applies");
+  assert!(matches!(entry_of(&el).from, Some(AnimValue::Color(_))));
+
+  let under_all =
+    apply_el(&mut el, "transition", map(&[("all", map(&[("duration", num(1.0)), ("from", num(0.0))]))])).unwrap_err();
+  assert!(under_all.contains("from is per-property"), "{under_all}");
+  let bad =
+    apply_el(&mut el, "transition", map(&[("x", map(&[("duration", num(1.0)), ("from", text("left"))]))])).unwrap_err();
+  assert!(bad.contains("from must be a number"), "{bad}");
 }
 
 #[test]

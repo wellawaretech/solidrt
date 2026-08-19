@@ -3,10 +3,9 @@ use std::collections::{HashMap, HashSet};
 use taffy::NodeId;
 
 use crate::impellers::Matrix;
-use crate::rendertree::transitions::{AnimValue, Transitions};
+use crate::rendertree::transitions::{AnimValue, PendingWrite, Transitions};
 use crate::rendertree::{
-  AnimProp, BoundaryMode, Damage, Element, ElementKind, PaintCache, Point, Rect, RunOverrides, Size, TextRun,
-  ATOM_CHAR,
+  AnimProp, BoundaryMode, Damage, Element, ElementKind, PaintCache, Point, Rect, RunOverrides, Size, TextRun, ATOM_CHAR,
 };
 
 pub struct RenderTree {
@@ -120,6 +119,45 @@ impl RenderTree {
     }
     self.invalidate_paint(parent_id);
     self.bump_revision();
+
+    self.apply_enter_transitions(node_id);
+  }
+
+  /// Mount-time enter animations: a per-property `from` in the node's
+  /// transition declaration snaps the property to `from` and starts a track
+  /// toward the value it mounted with (with the entry's delay honored - the
+  /// element sits at `from` until the hold expires). Fires on the node's
+  /// first attach only; a move or reorder re-runs nothing. A property whose
+  /// mounted value is unreadable (no explicit value, a gradient) skips its
+  /// enter animation and simply shows the mounted state.
+  fn apply_enter_transitions(&mut self, node_id: u64) {
+    let entries: Vec<(AnimProp, crate::rendertree::TransitionEntry)> = {
+      let Some(el) = self.nodes.get_mut(&node_id) else { return };
+      if el.entered {
+        return;
+      }
+      el.entered = true;
+      match &el.transitions {
+        Some(t) => t.props.iter().filter(|(_, e)| e.from.is_some()).cloned().collect(),
+        None => return,
+      }
+    };
+    let now = self.transitions.now_ms;
+    for (prop, entry) in entries {
+      let Some(from) = entry.from else { continue };
+      let Some(target) = self.nodes.get(&node_id).and_then(|el| el.anim_value(prop)) else { continue };
+      if std::mem::discriminant(&from) != std::mem::discriminant(&target) {
+        continue;
+      }
+      let damage = self.nodes.get_mut(&node_id).map(|el| el.set_anim_value(prop, from)).unwrap_or(Damage::None);
+      self.apply_damage(node_id, damage);
+      if entry.delay_ms > 0.0 {
+        let at_ms = now + entry.delay_ms as f64;
+        self.transitions.schedule(PendingWrite { node: node_id, prop, to: target, spec: entry.spec, at_ms });
+      } else {
+        self.transitions.retarget(node_id, prop, from, target, entry.spec);
+      }
+    }
   }
 
   /// Unlinks `node_id` from its parent but keeps the subtree alive, so it can be
@@ -201,31 +239,41 @@ impl RenderTree {
   ///
   /// `value` is the numeric target; `None` (a null reset, a non-numeric
   /// value) never animates. Returns true when the write was consumed (a
-  /// track now runs, or the target already holds); false means the caller
-  /// must perform the normal write, and any running track for the pair has
-  /// been cancelled so it cannot overwrite the snap on the next frame.
+  /// track now runs, a delayed write is held, or the target already holds);
+  /// false means the caller must perform the normal write, and any running
+  /// track or held write for the pair has been cancelled so it cannot
+  /// overwrite the snap on the next frame.
   ///
   /// Initial values never animate: a node not yet inserted (no parent) has
   /// never been painted, so its mount-time writes snap. This is what keeps
   /// `transition` listed before other props in JSX from animating the mount.
+  /// (Enter animations opt in explicitly via `from`; see `insert_node`.)
   pub fn transition_write(&mut self, id: u64, prop: AnimProp, value: Option<AnimValue>) -> bool {
     let animate = value.and_then(|to| {
       let el = self.nodes.get(&id)?;
       if el.parent.is_none() {
         return None;
       }
-      let spec = el.transitions.as_ref()?.spec_for(prop)?;
+      let entry = el.transitions.as_ref()?.entry_for(prop)?;
       let current = el.anim_value(prop)?;
       // A kind mismatch (a scalar arriving for the color prop or vice
       // versa) is not animatable; the normal path sorts it out.
       if std::mem::discriminant(&current) != std::mem::discriminant(&to) {
         return None;
       }
-      Some((current, to, spec))
+      Some((current, to, entry))
     });
     match animate {
-      Some((current, to, spec)) => {
-        self.transitions.retarget(id, prop, current, to, spec);
+      Some((current, to, entry)) => {
+        if entry.delay_ms > 0.0 {
+          let at_ms = self.transitions.now_ms + entry.delay_ms as f64;
+          self.transitions.schedule(PendingWrite { node: id, prop, to, spec: entry.spec, at_ms });
+        } else {
+          // Last write wins: an immediate write supersedes a held one (the
+          // config may have changed since the hold was scheduled).
+          self.transitions.unschedule(id, prop);
+          self.transitions.retarget(id, prop, current, to, entry.spec);
+        }
         true
       }
       None => {
@@ -253,6 +301,18 @@ impl RenderTree {
       return false;
     }
     let now = self.transitions.now_ms;
+    // Delayed writes whose hold expired apply now, exactly as a JS write
+    // this frame would: retarget from the property's present value. State
+    // may have shifted during the hold (a gradient took over, the node
+    // died); a write that no longer applies is dropped silently.
+    for w in self.transitions.take_due(now) {
+      let current = self.nodes.get(&w.node).and_then(|el| el.anim_value(w.prop));
+      if let Some(current) = current {
+        if std::mem::discriminant(&current) == std::mem::discriminant(&w.to) {
+          self.transitions.retarget(w.node, w.prop, current, w.to, w.spec);
+        }
+      }
+    }
     let (mut tracks, dt) = self.transitions.begin_advance();
     if dt <= 0.0 {
       self.transitions.end_advance(tracks);
@@ -668,7 +728,14 @@ impl RenderTree {
     let overrides = inherited.layer(&span.overrides);
     if !span.text.is_empty() {
       text.push_str(&span.text);
-      runs.push(TextRun { text: span.text.clone(), overrides: overrides.clone(), node: id, atom: None, float: None, clear: None });
+      runs.push(TextRun {
+        text: span.text.clone(),
+        overrides: overrides.clone(),
+        node: id,
+        atom: None,
+        float: None,
+        clear: None,
+      });
     }
     for &child_id in &node.children {
       self.collect_runs(child_id, &overrides, text, runs);

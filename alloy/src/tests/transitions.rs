@@ -3,12 +3,16 @@ use crate::rendertree::{transitions, *};
 // A detached rect under a root view, with a transition declared for every
 // property: the shape a `<d-rect transition={{ all: ... }}>` write hits.
 fn tree_with_animated_rect(spec: TransitionSpec) -> RenderTree {
+  tree_with_entry(spec.into())
+}
+
+fn tree_with_entry(entry: TransitionEntry) -> RenderTree {
   let mut tree = RenderTree::new();
   tree.create_node(1, View::default().with_layout());
   tree.create_node(2, Rectangle::default().no_layout());
   tree.insert_node(1, 2, None);
   tree.edit(2, |el| {
-    el.transitions = Some(Box::new(TransitionConfig { props: vec![], all: Some(spec) }));
+    el.transitions = Some(Box::new(TransitionConfig { props: vec![], all: Some(entry) }));
     Damage::None
   });
   tree
@@ -137,7 +141,7 @@ fn mount_writes_snap() {
   let mut tree = RenderTree::new();
   tree.create_node(2, Rectangle::default().no_layout());
   tree.edit(2, |el| {
-    el.transitions = Some(Box::new(TransitionConfig { props: vec![], all: Some(LINEAR_100) }));
+    el.transitions = Some(Box::new(TransitionConfig { props: vec![], all: Some(LINEAR_100.into()) }));
     Damage::None
   });
   // Not inserted yet: the write is not consumed, the normal path snaps it.
@@ -175,7 +179,7 @@ fn attached_geometry_is_not_animatable() {
   tree.create_node(2, Rectangle::default().with_layout());
   tree.insert_node(1, 2, None);
   tree.edit(2, |el| {
-    el.transitions = Some(Box::new(TransitionConfig { props: vec![], all: Some(LINEAR_100) }));
+    el.transitions = Some(Box::new(TransitionConfig { props: vec![], all: Some(LINEAR_100.into()) }));
     Damage::None
   });
   assert!(!tree.transition_write(2, AnimProp::X, Some(scalar(80.0))));
@@ -290,7 +294,7 @@ fn batched_advance_bumps_revision_once() {
   tree.create_node(3, Rectangle::default().no_layout());
   tree.insert_node(1, 3, None);
   tree.edit(3, |el| {
-    el.transitions = Some(Box::new(TransitionConfig { props: vec![], all: Some(LINEAR_100) }));
+    el.transitions = Some(Box::new(TransitionConfig { props: vec![], all: Some(LINEAR_100.into()) }));
     Damage::None
   });
   tree.set_transition_now(0.0);
@@ -301,4 +305,128 @@ fn batched_advance_bumps_revision_once() {
   let before = tree.revision();
   tree.advance_transitions();
   assert_eq!(tree.revision(), before + 1, "one bump per advance, not per write");
+}
+
+#[test]
+fn delayed_write_holds_then_animates() {
+  let mut tree = tree_with_entry(TransitionEntry { spec: LINEAR_100, delay_ms: 50.0, from: None });
+  tree.set_transition_now(0.0);
+  assert!(tree.transition_write(2, AnimProp::X, Some(scalar(80.0))), "held write is consumed");
+  assert!(tree.advance_transitions(), "active while held");
+  tree.set_transition_now(30.0);
+  assert!(tree.advance_transitions());
+  assert_eq!(rect_x(&tree, 2), 0.0, "nothing moves during the hold");
+
+  // The hold expires at 50; the write applies as if written then.
+  tree.set_transition_now(50.0);
+  assert!(tree.advance_transitions());
+  tree.set_transition_now(100.0);
+  assert!(tree.advance_transitions());
+  assert!((rect_x(&tree, 2) - 40.0).abs() < 0.01, "halfway 50ms after activation, got {}", rect_x(&tree, 2));
+  tree.set_transition_now(150.0);
+  assert!(!tree.advance_transitions(), "settled");
+  assert_eq!(rect_x(&tree, 2), 80.0);
+  assert_eq!(tree.take_settled_transitions(), vec![(2, AnimProp::X)]);
+}
+
+#[test]
+fn newer_write_replaces_held_write() {
+  let mut tree = tree_with_entry(TransitionEntry { spec: LINEAR_100, delay_ms: 50.0, from: None });
+  tree.set_transition_now(0.0);
+  tree.transition_write(2, AnimProp::X, Some(scalar(80.0)));
+  tree.set_transition_now(30.0);
+  // Replaces the hold and restarts its delay: due at 80, target 40.
+  tree.transition_write(2, AnimProp::X, Some(scalar(40.0)));
+  tree.set_transition_now(60.0);
+  assert!(tree.advance_transitions());
+  assert_eq!(rect_x(&tree, 2), 0.0, "first write's activation time no longer applies");
+  tree.set_transition_now(80.0);
+  tree.advance_transitions();
+  tree.set_transition_now(180.0);
+  assert!(!tree.advance_transitions());
+  assert_eq!(rect_x(&tree, 2), 40.0, "only the newer write ran");
+  assert_eq!(tree.take_settled_transitions().len(), 1, "one settle for the pair");
+}
+
+#[test]
+fn snap_write_drops_held_write() {
+  let mut tree = tree_with_entry(TransitionEntry { spec: LINEAR_100, delay_ms: 50.0, from: None });
+  tree.set_transition_now(0.0);
+  tree.transition_write(2, AnimProp::X, Some(scalar(80.0)));
+  assert!(!tree.transition_write(2, AnimProp::X, None), "snap write falls through");
+  tree.set_transition_now(100.0);
+  assert!(!tree.advance_transitions(), "the held write is gone");
+  assert_eq!(rect_x(&tree, 2), 0.0);
+}
+
+#[test]
+fn held_write_of_destroyed_node_drains_silently() {
+  let mut tree = tree_with_entry(TransitionEntry { spec: LINEAR_100, delay_ms: 50.0, from: None });
+  tree.set_transition_now(0.0);
+  tree.transition_write(2, AnimProp::X, Some(scalar(80.0)));
+  tree.destroy_node(2);
+  tree.set_transition_now(100.0);
+  assert!(!tree.advance_transitions(), "due hold for a dead node drops without a track");
+  assert!(tree.take_settled_transitions().is_empty());
+}
+
+#[test]
+fn enter_from_animates_first_attach_only() {
+  let mut tree = RenderTree::new();
+  tree.set_transition_now(0.0);
+  tree.create_node(1, View::default().with_layout());
+  tree.create_node(2, Rectangle::default().no_layout());
+  tree.edit(2, |el| {
+    el.transitions = Some(Box::new(TransitionConfig {
+      props: vec![(AnimProp::X, TransitionEntry { spec: LINEAR_100, delay_ms: 0.0, from: Some(scalar(100.0)) })],
+      all: None,
+    }));
+    match &mut el.kind {
+      ElementKind::Rectangle(r) => r.set_x(40.0),
+      _ => unreachable!(),
+    }
+  });
+  tree.insert_node(1, 2, None);
+  assert_eq!(rect_x(&tree, 2), 100.0, "attach snaps to from");
+  tree.set_transition_now(50.0);
+  assert!(tree.advance_transitions());
+  assert!((rect_x(&tree, 2) - 70.0).abs() < 0.01, "halfway from 100 to the mounted 40, got {}", rect_x(&tree, 2));
+  tree.set_transition_now(100.0);
+  assert!(!tree.advance_transitions());
+  assert_eq!(rect_x(&tree, 2), 40.0, "settles on the mounted value");
+  assert_eq!(tree.take_settled_transitions(), vec![(2, AnimProp::X)], "enter animations report their settle");
+
+  // A move re-runs no enter animation.
+  tree.detach_node(1, 2);
+  tree.insert_node(1, 2, None);
+  assert_eq!(rect_x(&tree, 2), 40.0);
+  tree.set_transition_now(150.0);
+  assert!(!tree.advance_transitions(), "no track after a re-insert");
+}
+
+#[test]
+fn enter_from_with_delay_holds_at_from() {
+  let mut tree = RenderTree::new();
+  tree.set_transition_now(0.0);
+  tree.create_node(1, View::default().with_layout());
+  tree.create_node(2, Rectangle::default().no_layout());
+  tree.edit(2, |el| {
+    el.transitions = Some(Box::new(TransitionConfig {
+      props: vec![(AnimProp::X, TransitionEntry { spec: LINEAR_100, delay_ms: 50.0, from: Some(scalar(100.0)) })],
+      all: None,
+    }));
+    match &mut el.kind {
+      ElementKind::Rectangle(r) => r.set_x(40.0),
+      _ => unreachable!(),
+    }
+  });
+  tree.insert_node(1, 2, None);
+  tree.set_transition_now(30.0);
+  assert!(tree.advance_transitions(), "active during the hold");
+  assert_eq!(rect_x(&tree, 2), 100.0, "sits at from until the hold expires");
+  tree.set_transition_now(80.0);
+  tree.advance_transitions();
+  tree.set_transition_now(130.0);
+  tree.advance_transitions();
+  assert!((rect_x(&tree, 2) - 70.0).abs() < 0.01, "halfway 50ms after activation, got {}", rect_x(&tree, 2));
 }

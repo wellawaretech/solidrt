@@ -21,7 +21,7 @@ pub use kinds::{
 pub use text::{OverflowWrap, RunOverrides, RunStyle, Span, Text, TextOverflow, TextRun, ATOM_CHAR};
 pub use layout::{LayoutCache, LayoutContext, LayoutData};
 pub use platform::{FontPayload, PlatformContext};
-pub use transitions::{AnimProp, AnimValue, Curve, TransitionConfig, TransitionSpec};
+pub use transitions::{AnimProp, AnimValue, Curve, TransitionConfig, TransitionEntry, TransitionSpec};
 pub use tree::{NodeMatch, NodeSnapshot, RenderTree};
 
 use crate::impellers::{DisplayList, DisplayListBuilder, Texture as ImpellerTexture};
@@ -326,6 +326,10 @@ pub struct Element {
   // animate on write, and how. None (the overwhelmingly common case) makes
   // every write snap, as ever.
   pub transitions: Option<Box<TransitionConfig>>,
+  // The node has been inserted under a parent at least once. Guards the
+  // mount-time `from` enter animation: it fires on the first attach only,
+  // never again on a move or reorder.
+  pub entered: bool,
 }
 
 impl Element {
@@ -342,6 +346,7 @@ impl Element {
       paint_cache: RefCell::new(None),
       envelope: cull::EnvelopeCache::default(),
       transitions: None,
+      entered: false,
     }
   }
 
@@ -364,6 +369,7 @@ impl Element {
       paint_cache: RefCell::new(None),
       envelope: cull::EnvelopeCache::default(),
       transitions: None,
+      entered: false,
     }
   }
 

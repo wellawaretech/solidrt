@@ -6,7 +6,7 @@ created: 2026-08-19
 
 # Native transitions: Rust-side animation, JS writes only targets
 
-## Status (2026-08-19): stage 1 landed; stages 2-3 open
+## Status (2026-08-19): all stages landed
 
 Implemented and verified on the release client: transition config +
 tween/spring math in alloy (rendertree/transitions.rs; tree methods in
@@ -64,7 +64,40 @@ All four stage-2 items, verified on the release client:
   write. Bench: 1000 animated rects hold 60+ fps, jsMs ~0.04, paint
   ~1.3 ms.
 
-Remaining: stage 3 (shorthand string form, delay, mount-time `from`).
+## Status: stage 3 landed (2026-08-19)
+
+All three conveniences, verified on the release client (paused-clock frame
+stepping against probes/transition-demo.tsx):
+
+- Shorthand string: `"<duration>ms [curve] [<delay>ms]"` wherever a spec
+  object is accepted, plus a bare string as the element-level catch-all
+  (`transition="300ms ease-out"` = `{ all: ... }`). Same inference rule as
+  the object form: no curve = bounce-0 spring, a named curve = tween. The
+  second time value is the delay (CSS order); times are ms only. Bounce,
+  bezier control values and `from` need the object form.
+- `delay` (ms, both kinds): each write is held for the delay, then applies
+  exactly as if written then - a spring retargets from its live state (a
+  track mid-flight toward an older target keeps going, and may settle and
+  fire its end event, during the hold), a tween starts from the
+  then-current value. A newer write during the hold replaces it and
+  restarts the delay; a snap write drops it. Holds live on the tree
+  (`PendingWrite`), drain at the top of each advance, and count as
+  animation-active so the demand gate keeps frames coming during a hold
+  (same accepted cost as the paused-clock case above). Delay is
+  animation-clock time, so pause/scale/step govern holds too. Staggered
+  enter animations are `from` + an index-proportional delay per item.
+- Mount-time `from` (per-property entries only; under `all` it is a decode
+  error): at the node's FIRST attach - guarded by `Element::entered`, so a
+  move or reorder re-runs nothing - the property snaps to `from` and
+  animates to the value it mounted with, honoring the entry's delay (the
+  element sits at `from` during the hold). A property whose mounted value
+  is unreadable (no explicit value, a gradient) skips its enter animation.
+  `from` is a number, or a CSS color string / packed number for `color`.
+  Exit animations stay out of scope (they need the node kept alive past
+  removal - a different item if ever wanted).
+
+Nothing remains; see "Deliberately out of scope" for what was consciously
+excluded.
 
 The compositor-side-animation item (finding b in
 notes/app-structure-performance.md), shaped after the update path was
@@ -158,9 +191,9 @@ Retargeting (a new target while a track runs):
    invalidation into a per-frame dirty drain (the `invalidate_paint`
    walk is O(depth) per write and becomes the dominant per-frame cost
    once JS is out of the path).
-3. **Conveniences.** Shorthand string form (`transition="200ms
-   ease-out"`), `delay` for springs, mount-time `from` (enter
-   animations).
+3. **Conveniences (done, see Status).** Shorthand string form
+   (`transition="200ms ease-out"`), `delay` (springs and tweens),
+   mount-time `from` (enter animations).
 
 ## Deliberately out of scope
 

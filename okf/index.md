@@ -315,13 +315,6 @@ Shaped, not started.
   dropped, so Discover searches forever; restoring it means a forge::mdns
   responder (advertise) exposed as a flux capability, and its feasibility next
   to system responders is unproven.
-- **["Native transitions: Rust-side animation, JS writes only targets"](backlog/native-transitions.md)** [2026-08-19]
-  A transition prop declares per-property motion (tween with CSS curves, or a
-  perceptual spring); the signal path then carries one write per target change
-  and Rust interpolates every frame, taking the measured ~10 us/element/frame
-  JS cost off the frame path entirely. Springs are the retargeting-safe
-  primitive; tweens restart from the current value. Stage 1 covers d-*
-  geometry, opacity and transform components.
 - **[Clearing a numeric or transform prop throws instead of resetting it](backlog/null-resets-numeric-props.md)** [2026-08-14]
   Binding scale/x/y/rotate/radius/strokeWidth to a value that flips back to
   undefined errors out, because the decoders accept only numbers; null should
@@ -850,6 +843,13 @@ Finished, kept for the reasoning.
   it. Gaps 2-4 implemented 2026-08-06 (crop/scale, clock control incl. virtual
   timers, props/quad, plus server app identity); gap 1 (input injection) stays
   with its own item.
+- **["Native transitions: Rust-side animation, JS writes only targets"](done/native-transitions.md)** [2026-08-19]
+  A transition prop declares per-property motion (tween with CSS curves, or a
+  perceptual spring); the signal path then carries one write per target change
+  and Rust interpolates every frame, taking the measured ~10 us/element/frame
+  JS cost off the frame path entirely. Springs are the retargeting-safe
+  primitive; tweens restart from the current value. Stage 1 covers d-*
+  geometry, opacity and transform components.
 - **[Nested pressables](done/nested-pressables.md)** [2026-07-22]
   A press on a Pressable nested inside another fires both onPress callbacks;
   the contract is resolved by component-gestures' innermost-wins arena and the
