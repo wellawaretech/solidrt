@@ -171,6 +171,13 @@ fn hit_recursive(
 ) -> bool {
   let element = tree.node(node_id);
 
+  // An exiting node (playing its removal animation, see tree.rs
+  // detach_node) is hit-test invisible: its component is already disposed,
+  // so it must not swallow input on the way out.
+  if element.exiting {
+    return false;
+  }
+
   // An explicit local value wins; otherwise the resolved value cascades down
   // from the parent (see the comment on HitConfig::pointer_events).
   let pointer_events = element.interaction.as_ref().and_then(|i| i.pointer_events).unwrap_or(inherited);

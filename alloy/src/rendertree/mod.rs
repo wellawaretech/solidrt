@@ -330,6 +330,14 @@ pub struct Element {
   // mount-time `from` enter animation: it fires on the first attach only,
   // never again on a move or reorder.
   pub entered: bool,
+  // Playing its `exit` transition: detached by the renderer but kept in the
+  // tree until the exit tracks settle. Exiting nodes are hit-test invisible;
+  // a re-insert clears the flag and abandons the exit (a move, not a
+  // removal). See tree.rs detach_node.
+  pub exiting: bool,
+  // destroy_node was called while exiting: free the node when the exit
+  // settles instead of deferring to a destroy that already happened.
+  pub doomed: bool,
 }
 
 impl Element {
@@ -347,6 +355,8 @@ impl Element {
       envelope: cull::EnvelopeCache::default(),
       transitions: None,
       entered: false,
+      exiting: false,
+      doomed: false,
     }
   }
 
@@ -370,6 +380,8 @@ impl Element {
       envelope: cull::EnvelopeCache::default(),
       transitions: None,
       entered: false,
+      exiting: false,
+      doomed: false,
     }
   }
 

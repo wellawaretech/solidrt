@@ -159,18 +159,22 @@ impl TransitionSpec {
 /// with it. `delay_ms` holds each write for that long (animation-clock time)
 /// before it applies; `from` seeds a mount-time enter animation - at the
 /// node's first attach the property snaps to `from` and animates to the
-/// value it mounted with. `from` is meaningful on per-property entries only
-/// (the decoder rejects it under `all`).
+/// value it mounted with; `exit` seeds the removal animation - a removed
+/// node stays in the tree, animates the property to `exit`, and is freed
+/// when its exit tracks settle (see tree.rs `detach_node`). `from` and
+/// `exit` are meaningful on per-property entries only (the decoder rejects
+/// them under `all`).
 #[derive(Clone, Copy, Debug)]
 pub struct TransitionEntry {
   pub spec: TransitionSpec,
   pub delay_ms: f32,
   pub from: Option<AnimValue>,
+  pub exit: Option<AnimValue>,
 }
 
 impl From<TransitionSpec> for TransitionEntry {
   fn from(spec: TransitionSpec) -> Self {
-    TransitionEntry { spec, delay_ms: 0.0, from: None }
+    TransitionEntry { spec, delay_ms: 0.0, from: None, exit: None }
   }
 }
 
@@ -402,7 +406,16 @@ impl Transitions {
   /// tween); a running spring keeps its position and velocity and only moves
   /// its equilibrium. `current` and `to` must be the same AnimValue kind
   /// (the caller guarantees it by reading `current` for the same property).
-  pub fn retarget(&mut self, node: u64, prop: AnimProp, current: AnimValue, to: AnimValue, spec: TransitionSpec) {
+  /// Returns whether a track now runs for the pair - false means the value
+  /// already sits on the target and there was nothing to animate.
+  pub fn retarget(
+    &mut self,
+    node: u64,
+    prop: AnimProp,
+    current: AnimValue,
+    to: AnimValue,
+    spec: TransitionSpec,
+  ) -> bool {
     let now = self.now_ms;
     let (cur, color) = to_lanes(current);
     let (to, _) = to_lanes(to);
@@ -417,10 +430,10 @@ impl Transitions {
           TransitionSpec::Spring { .. } => TrackState::Spring { pos: cur, vel: [0.0; 4] },
         };
       }
-      return;
+      return true;
     }
     if to == cur {
-      return;
+      return false;
     }
     if self.tracks.is_empty() {
       self.last_ms = now;
@@ -430,6 +443,7 @@ impl Transitions {
       TransitionSpec::Spring { .. } => TrackState::Spring { pos: cur, vel: [0.0; 4] },
     };
     self.tracks.push(Track { node, prop, spec, state, to, color, eps: eps_for(cur, to) });
+    true
   }
 
   /// Drop the track and any pending write for (node, prop): a non-animated
@@ -437,6 +451,25 @@ impl Transitions {
   pub fn cancel(&mut self, node: u64, prop: AnimProp) {
     self.tracks.retain(|t| !(t.node == node && t.prop == prop));
     self.unschedule(node, prop);
+  }
+
+  /// Drop every track and pending write of a node (it is being freed, or an
+  /// exit was abandoned by a re-insert).
+  pub fn cancel_props(&mut self, node: u64, props: &[AnimProp]) {
+    self.tracks.retain(|t| !(t.node == node && props.contains(&t.prop)));
+    self.pending.retain(|w| !(w.node == node && props.contains(&w.prop)));
+  }
+
+  pub fn cancel_node(&mut self, node: u64) {
+    self.tracks.retain(|t| t.node != node);
+    self.pending.retain(|w| w.node != node);
+  }
+
+  /// Whether any track or pending write runs for the node on one of `props`
+  /// (the exiting-node liveness check).
+  pub fn any_running(&self, node: u64, props: &[AnimProp]) -> bool {
+    self.tracks.iter().any(|t| t.node == node && props.contains(&t.prop))
+      || self.pending.iter().any(|w| w.node == node && props.contains(&w.prop))
   }
 
   /// Take the track list for an advance pass (tree.rs), leaving the clock in

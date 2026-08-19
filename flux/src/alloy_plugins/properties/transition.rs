@@ -61,8 +61,9 @@ pub fn anim_prop_name(prop: AnimProp) -> &'static str {
 
 /// Decodes the `transition` property value: an object keyed by animatable
 /// property name (plus `all` as a catch-all), each value
-/// `{ duration, bounce?, delay?, from? }` (a spring),
-/// `{ duration, curve, delay?, from? }` (a tween), or a shorthand string.
+/// `{ duration, bounce?, delay?, from?, exit? }` (a spring),
+/// `{ duration, curve, delay?, from?, exit? }` (a tween), or a shorthand
+/// string.
 /// The spring is the default: naming a `curve` is what opts into a tween,
 /// and a bare `{ duration }` is a critically damped (bounce 0) spring.
 /// A bare string is the `all` catch-all: `transition="300ms ease-out"`.
@@ -90,8 +91,8 @@ pub fn decode(value: &PropValue) -> Result<Option<Box<TransitionConfig>>, String
 }
 
 /// One entry: a shorthand string or the spec object. `prop` is the entry's
-/// property, `None` for the `all` catch-all (where `from` is rejected -
-/// which property it would seed is unanswerable).
+/// property, `None` for the `all` catch-all (where `from` and `exit` are
+/// rejected - which property they would seed is unanswerable).
 fn decode_entry(key: &str, value: &PropValue, prop: Option<AnimProp>) -> Result<TransitionEntry, String> {
   let at = format!("transition.{key}");
   if let Some(s) = value.as_str() {
@@ -100,8 +101,8 @@ fn decode_entry(key: &str, value: &PropValue, prop: Option<AnimProp>) -> Result<
   let map =
     value.as_map().ok_or_else(|| format!("{at} must be an object or a shorthand string, got {}", describe(value)))?;
   for (k, _) in map {
-    if !matches!(k.as_str(), "duration" | "curve" | "bounce" | "delay" | "from") {
-      return Err(format!("{at}: unknown key '{k}' (expected duration, bounce, curve, delay or from)"));
+    if !matches!(k.as_str(), "duration" | "curve" | "bounce" | "delay" | "from" | "exit") {
+      return Err(format!("{at}: unknown key '{k}' (expected duration, bounce, curve, delay, from or exit)"));
     }
   }
   let duration = match value.get("duration") {
@@ -131,16 +132,20 @@ fn decode_entry(key: &str, value: &PropValue, prop: Option<AnimProp>) -> Result<
     }
   };
   let delay_ms = decode_delay(&at, value.get("delay"))?;
-  let from = match value.get("from") {
-    None => None,
-    Some(v) => {
-      let Some(prop) = prop else {
-        return Err(format!("{at}: from is per-property; name the property instead of 'all'"));
-      };
-      Some(decode_from(&at, v, prop)?)
+  let mut endpoint = |key: &str| -> Result<Option<AnimValue>, String> {
+    match value.get(key) {
+      None => Ok(None),
+      Some(v) => {
+        let Some(prop) = prop else {
+          return Err(format!("{at}: {key} is per-property; name the property instead of 'all'"));
+        };
+        decode_endpoint(&at, key, v, prop).map(Some)
+      }
     }
   };
-  Ok(TransitionEntry { spec, delay_ms, from })
+  let from = endpoint("from")?;
+  let exit = endpoint("exit")?;
+  Ok(TransitionEntry { spec, delay_ms, from, exit })
 }
 
 fn decode_delay(at: &str, value: Option<&PropValue>) -> Result<f32, String> {
@@ -156,15 +161,16 @@ fn decode_delay(at: &str, value: Option<&PropValue>) -> Result<f32, String> {
   }
 }
 
-/// The mount-time from-value: a number for the scalar properties; the color
-/// property takes a CSS color string or a packed 0xRRGGBBAA number.
-fn decode_from(at: &str, value: &PropValue, prop: AnimProp) -> Result<AnimValue, String> {
+/// A lifecycle endpoint value (`from` at mount, `exit` at removal): a number
+/// for the scalar properties; the color property takes a CSS color string or
+/// a packed 0xRRGGBBAA number.
+fn decode_endpoint(at: &str, key: &str, value: &PropValue, prop: AnimProp) -> Result<AnimValue, String> {
   if prop == AnimProp::Color {
-    return super::decode_color(value).map(AnimValue::Color).map_err(|e| format!("{at}: from: {e}"));
+    return super::decode_color(value).map(AnimValue::Color).map_err(|e| format!("{at}: {key}: {e}"));
   }
-  let n = value.as_f64().ok_or_else(|| format!("{at}: from must be a number, got {}", describe(value)))? as f32;
+  let n = value.as_f64().ok_or_else(|| format!("{at}: {key} must be a number, got {}", describe(value)))? as f32;
   if !n.is_finite() {
-    return Err(format!("{at}: from must be finite, got {n}"));
+    return Err(format!("{at}: {key} must be finite, got {n}"));
   }
   Ok(AnimValue::Scalar(n))
 }
@@ -173,7 +179,7 @@ fn decode_from(at: &str, value: &PropValue, prop: AnimProp) -> Result<AnimValue,
 /// `"300ms"` (a bounce-0 spring), `"300ms ease-out"` (a tween),
 /// `"300ms ease-out 100ms"` (delayed). The first time value is the
 /// duration, the second the delay (CSS order); times are ms only. Bounce,
-/// bezier control values and `from` need the object form.
+/// bezier control values, `from` and `exit` need the object form.
 fn parse_shorthand(at: &str, s: &str) -> Result<TransitionEntry, String> {
   let mut duration: Option<f32> = None;
   let mut delay: Option<f32> = None;
@@ -212,7 +218,7 @@ fn parse_shorthand(at: &str, s: &str) -> Result<TransitionEntry, String> {
     Some(curve) => TransitionSpec::Tween { duration_ms: duration, curve },
     None => TransitionSpec::spring(duration, 0.0),
   };
-  Ok(TransitionEntry { spec, delay_ms, from: None })
+  Ok(TransitionEntry { spec, delay_ms, from: None, exit: None })
 }
 
 /// The CSS named curves, by their bezier control points.

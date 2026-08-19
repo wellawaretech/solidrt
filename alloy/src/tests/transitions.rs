@@ -309,7 +309,7 @@ fn batched_advance_bumps_revision_once() {
 
 #[test]
 fn delayed_write_holds_then_animates() {
-  let mut tree = tree_with_entry(TransitionEntry { spec: LINEAR_100, delay_ms: 50.0, from: None });
+  let mut tree = tree_with_entry(TransitionEntry { spec: LINEAR_100, delay_ms: 50.0, from: None, exit: None });
   tree.set_transition_now(0.0);
   assert!(tree.transition_write(2, AnimProp::X, Some(scalar(80.0))), "held write is consumed");
   assert!(tree.advance_transitions(), "active while held");
@@ -331,7 +331,7 @@ fn delayed_write_holds_then_animates() {
 
 #[test]
 fn newer_write_replaces_held_write() {
-  let mut tree = tree_with_entry(TransitionEntry { spec: LINEAR_100, delay_ms: 50.0, from: None });
+  let mut tree = tree_with_entry(TransitionEntry { spec: LINEAR_100, delay_ms: 50.0, from: None, exit: None });
   tree.set_transition_now(0.0);
   tree.transition_write(2, AnimProp::X, Some(scalar(80.0)));
   tree.set_transition_now(30.0);
@@ -350,7 +350,7 @@ fn newer_write_replaces_held_write() {
 
 #[test]
 fn snap_write_drops_held_write() {
-  let mut tree = tree_with_entry(TransitionEntry { spec: LINEAR_100, delay_ms: 50.0, from: None });
+  let mut tree = tree_with_entry(TransitionEntry { spec: LINEAR_100, delay_ms: 50.0, from: None, exit: None });
   tree.set_transition_now(0.0);
   tree.transition_write(2, AnimProp::X, Some(scalar(80.0)));
   assert!(!tree.transition_write(2, AnimProp::X, None), "snap write falls through");
@@ -361,7 +361,7 @@ fn snap_write_drops_held_write() {
 
 #[test]
 fn held_write_of_destroyed_node_drains_silently() {
-  let mut tree = tree_with_entry(TransitionEntry { spec: LINEAR_100, delay_ms: 50.0, from: None });
+  let mut tree = tree_with_entry(TransitionEntry { spec: LINEAR_100, delay_ms: 50.0, from: None, exit: None });
   tree.set_transition_now(0.0);
   tree.transition_write(2, AnimProp::X, Some(scalar(80.0)));
   tree.destroy_node(2);
@@ -378,7 +378,10 @@ fn enter_from_animates_first_attach_only() {
   tree.create_node(2, Rectangle::default().no_layout());
   tree.edit(2, |el| {
     el.transitions = Some(Box::new(TransitionConfig {
-      props: vec![(AnimProp::X, TransitionEntry { spec: LINEAR_100, delay_ms: 0.0, from: Some(scalar(100.0)) })],
+      props: vec![(
+        AnimProp::X,
+        TransitionEntry { spec: LINEAR_100, delay_ms: 0.0, from: Some(scalar(100.0)), exit: None },
+      )],
       all: None,
     }));
     match &mut el.kind {
@@ -412,7 +415,10 @@ fn enter_from_with_delay_holds_at_from() {
   tree.create_node(2, Rectangle::default().no_layout());
   tree.edit(2, |el| {
     el.transitions = Some(Box::new(TransitionConfig {
-      props: vec![(AnimProp::X, TransitionEntry { spec: LINEAR_100, delay_ms: 50.0, from: Some(scalar(100.0)) })],
+      props: vec![(
+        AnimProp::X,
+        TransitionEntry { spec: LINEAR_100, delay_ms: 50.0, from: Some(scalar(100.0)), exit: None },
+      )],
       all: None,
     }));
     match &mut el.kind {
@@ -429,4 +435,107 @@ fn enter_from_with_delay_holds_at_from() {
   tree.set_transition_now(130.0);
   tree.advance_transitions();
   assert!((rect_x(&tree, 2) - 70.0).abs() < 0.01, "halfway 50ms after activation, got {}", rect_x(&tree, 2));
+}
+
+// Exit animations: a removed node with `exit` values stays painted, animates
+// them, and is freed when they settle. See tree.rs detach_node/begin_exit.
+
+fn tree_with_exit_rect(entry: TransitionEntry) -> RenderTree {
+  let mut tree = RenderTree::new();
+  tree.set_transition_now(0.0);
+  tree.create_node(1, View::default().with_layout());
+  tree.create_node(2, Rectangle::default().no_layout());
+  tree.insert_node(1, 2, None);
+  tree.edit(2, |el| {
+    el.transitions = Some(Box::new(TransitionConfig { props: vec![(AnimProp::X, entry)], all: None }));
+    Damage::None
+  });
+  tree
+}
+
+const EXIT_200: TransitionEntry =
+  TransitionEntry { spec: LINEAR_100, delay_ms: 0.0, from: None, exit: Some(transitions::AnimValue::Scalar(200.0)) };
+
+#[test]
+fn exit_animates_removal_then_frees() {
+  let mut tree = tree_with_exit_rect(EXIT_200);
+  // The renderer's removal: detach, then the sweep destroys.
+  tree.detach_node(1, 2);
+  assert!(tree.node(1).children.contains(&2), "exiting node stays painted");
+  tree.destroy_node(2);
+  assert!(tree.try_node(2).is_some(), "destroy defers while the exit runs");
+
+  tree.set_transition_now(50.0);
+  assert!(tree.advance_transitions());
+  assert!((rect_x(&tree, 2) - 100.0).abs() < 0.01, "halfway to the exit value, got {}", rect_x(&tree, 2));
+
+  tree.set_transition_now(100.0);
+  tree.advance_transitions();
+  assert!(tree.try_node(2).is_none(), "freed at the exit settle");
+  assert!(tree.node(1).children.is_empty(), "unlinked from the parent");
+  assert!(tree.take_settled_transitions().is_empty(), "exits never fire onTransitionEnd");
+}
+
+#[test]
+fn exit_reinsert_is_a_move() {
+  let mut tree = tree_with_exit_rect(EXIT_200);
+  tree.detach_node(1, 2);
+  // Solid re-inserts the same node: a move, not a removal.
+  tree.insert_node(1, 2, None);
+  tree.set_transition_now(100.0);
+  assert!(!tree.advance_transitions(), "abandoned exit leaves no track");
+  assert_eq!(rect_x(&tree, 2), 0.0, "value untouched");
+  assert!(tree.try_node(2).is_some());
+  // The node behaves normally afterwards: a later removal exits again.
+  tree.detach_node(1, 2);
+  tree.destroy_node(2);
+  tree.set_transition_now(250.0);
+  tree.advance_transitions();
+  assert!(tree.try_node(2).is_none(), "second removal exits and frees");
+}
+
+#[test]
+fn exit_already_at_target_detaches_instantly() {
+  let mut tree = tree_with_exit_rect(EXIT_200);
+  tree.edit(2, |el| match &mut el.kind {
+    ElementKind::Rectangle(r) => r.set_x(200.0),
+    _ => unreachable!(),
+  });
+  tree.detach_node(1, 2);
+  assert!(tree.node(1).children.is_empty(), "nothing to animate, instant detach");
+  tree.destroy_node(2);
+  assert!(tree.try_node(2).is_none(), "and an instant free");
+}
+
+#[test]
+fn destroy_without_detach_skips_the_exit() {
+  // Forced teardown (no renderer detach first) stays instant.
+  let mut tree = tree_with_exit_rect(EXIT_200);
+  tree.destroy_node(2);
+  assert!(tree.try_node(2).is_none());
+  tree.set_transition_now(100.0);
+  assert!(!tree.advance_transitions());
+}
+
+#[test]
+fn exit_with_delay_holds_then_leaves() {
+  let mut tree = tree_with_exit_rect(TransitionEntry {
+    spec: LINEAR_100,
+    delay_ms: 50.0,
+    from: None,
+    exit: Some(transitions::AnimValue::Scalar(200.0)),
+  });
+  tree.detach_node(1, 2);
+  tree.destroy_node(2);
+  tree.set_transition_now(30.0);
+  assert!(tree.advance_transitions(), "active during the hold");
+  assert_eq!(rect_x(&tree, 2), 0.0, "sits in place until the hold expires");
+  tree.set_transition_now(50.0);
+  tree.advance_transitions();
+  tree.set_transition_now(100.0);
+  tree.advance_transitions();
+  assert!((rect_x(&tree, 2) - 100.0).abs() < 0.01, "halfway 50ms after activation, got {}", rect_x(&tree, 2));
+  tree.set_transition_now(150.0);
+  tree.advance_transitions();
+  assert!(tree.try_node(2).is_none(), "freed after the delayed exit settles");
 }

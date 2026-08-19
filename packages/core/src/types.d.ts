@@ -396,6 +396,16 @@ export interface TransitionSpring {
    * move or reorder re-runs nothing.
    */
   from?: number | string
+  /**
+   * Removal exit animation: an unmounted element stays visible, animates
+   * the property to this value (honoring `delay`), and is freed when its
+   * exit animations settle. Same value forms as `from`, per-property only.
+   * A move never plays it, the exiting element is hit-test invisible, its
+   * whole subtree stays painted with it, and no onTransitionEnd fires (the
+   * component is already disposed). An attached element keeps its layout
+   * slot until the exit finishes.
+   */
+  exit?: number | string
 }
 
 /**
@@ -418,6 +428,16 @@ export interface TransitionTween {
    * move or reorder re-runs nothing.
    */
   from?: number | string
+  /**
+   * Removal exit animation: an unmounted element stays visible, animates
+   * the property to this value (honoring `delay`), and is freed when its
+   * exit animations settle. Same value forms as `from`, per-property only.
+   * A move never plays it, the exiting element is hit-test invisible, its
+   * whole subtree stays painted with it, and no onTransitionEnd fires (the
+   * component is already disposed). An attached element keeps its layout
+   * slot until the exit finishes.
+   */
+  exit?: number | string
 }
 
 /**
@@ -476,7 +496,7 @@ export interface TransitionProps {
    * declaration; already-running animations finish.
    */
   transition?:
-    | ({ all?: Omit<TransitionSpring, "from"> | Omit<TransitionTween, "from"> | TransitionShorthand } & {
+    | ({ all?: Omit<TransitionSpring, "from" | "exit"> | Omit<TransitionTween, "from" | "exit"> | TransitionShorthand } & {
         [P in TransitionPropName]?: Transition
       })
     | TransitionShorthand

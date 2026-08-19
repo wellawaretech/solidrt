@@ -50,13 +50,17 @@ impl RenderTree {
   }
 
   pub fn insert_node(&mut self, parent_id: u64, node_id: u64, anchor_id: Option<u64>) {
+    // A re-insert of an exiting node is a move (Solid detaches before
+    // re-inserting), not a removal: abandon the exit and carry on.
+    self.abandon_exit(node_id);
+
     // Unlink from a previous parent first, so the node never lives in two
     // children lists. Solid's control flow detaches before re-inserting, but a
     // bare move into a different parent (no explicit remove) must stay
     // DOM-faithful. A same-parent reorder falls through to the retain below.
     if let Some(old_parent) = self.try_node(node_id).and_then(|n| n.parent) {
       if old_parent != parent_id && self.try_node(old_parent).is_some() {
-        self.detach_node(old_parent, node_id);
+        self.detach_node_now(old_parent, node_id);
       }
     }
 
@@ -164,7 +168,20 @@ impl RenderTree {
   /// re-inserted elsewhere (a move). This mirrors DOM removeChild, which detaches
   /// rather than destroys; the renderer frees the node later via destroy_node if
   /// nothing re-attaches it. See renderer.ts for the deferred-destroy sweep.
+  ///
+  /// Exit animations hook in here: a node whose transition declares `exit`
+  /// values stays linked and animates them instead (see `begin_exit`). If the
+  /// same tick re-inserts the node - a move - the exit is abandoned and the
+  /// unlink happens then, so moves never play removal animations. The
+  /// deferred destroy finding the node exiting defers the free to the settle.
   pub fn detach_node(&mut self, parent_id: u64, node_id: u64) {
+    if self.begin_exit(parent_id, node_id) {
+      return;
+    }
+    self.detach_node_now(parent_id, node_id);
+  }
+
+  fn detach_node_now(&mut self, parent_id: u64, node_id: u64) {
     let child_has_layout = self.try_node(node_id).map(|n| n.has_layout()).unwrap_or(false);
     let parent = self.node_mut(parent_id);
     parent.children.retain(|&id| id != node_id);
@@ -182,10 +199,108 @@ impl RenderTree {
     self.bump_revision();
   }
 
+  /// Start the exit animation instead of detaching, when the node declares
+  /// `exit` values and at least one of them has somewhere to move. Returns
+  /// whether the node is now exiting (still linked). A node whose exit
+  /// values all already hold (or are unreadable) detaches instantly - an
+  /// exit that animates nothing must not defer the removal.
+  fn begin_exit(&mut self, parent_id: u64, node_id: u64) -> bool {
+    let entries: Vec<(AnimProp, crate::rendertree::TransitionEntry)> = match self.nodes.get(&node_id) {
+      Some(el) if !el.exiting && el.parent == Some(parent_id) => match &el.transitions {
+        Some(t) => t.props.iter().filter(|(_, e)| e.exit.is_some()).cloned().collect(),
+        None => return false,
+      },
+      _ => return false,
+    };
+    if entries.is_empty() {
+      return false;
+    }
+    let now = self.transitions.now_ms;
+    let mut started = false;
+    for (prop, entry) in entries {
+      let Some(to) = entry.exit else { continue };
+      let Some(current) = self.nodes.get(&node_id).and_then(|el| el.anim_value(prop)) else { continue };
+      if std::mem::discriminant(&current) != std::mem::discriminant(&to) {
+        continue;
+      }
+      if entry.delay_ms > 0.0 {
+        let at_ms = now + entry.delay_ms as f64;
+        self.transitions.schedule(PendingWrite { node: node_id, prop, to, spec: entry.spec, at_ms });
+        started = true;
+      } else {
+        started |= self.transitions.retarget(node_id, prop, current, to, entry.spec);
+      }
+    }
+    if started {
+      if let Some(el) = self.nodes.get_mut(&node_id) {
+        el.exiting = true;
+      }
+    }
+    started
+  }
+
+  /// The properties of a node's transition declaration that carry an `exit`
+  /// value - the set whose tracks gate the exiting node's free.
+  fn exit_props(&self, node_id: u64) -> Vec<AnimProp> {
+    self
+      .nodes
+      .get(&node_id)
+      .and_then(|el| el.transitions.as_ref())
+      .map(|t| t.props.iter().filter(|(_, e)| e.exit.is_some()).map(|(p, _)| *p).collect())
+      .unwrap_or_default()
+  }
+
+  /// A re-insert reached an exiting node: the removal turned out to be a
+  /// move. Drop the exit tracks (the node holds its current values; later
+  /// writes take over as usual) and clear the marks.
+  fn abandon_exit(&mut self, node_id: u64) {
+    let exiting = self.nodes.get(&node_id).map(|el| el.exiting).unwrap_or(false);
+    if !exiting {
+      return;
+    }
+    let props = self.exit_props(node_id);
+    self.transitions.cancel_props(node_id, &props);
+    if let Some(el) = self.nodes.get_mut(&node_id) {
+      el.exiting = false;
+      el.doomed = false;
+    }
+  }
+
+  /// The last exit track of an exiting node settled: complete the removal
+  /// that was deferred at detach - unlink, and free if the deferred destroy
+  /// already ran (the renderer's sweep found the node exiting).
+  fn finish_exit(&mut self, node_id: u64) {
+    self.transitions.cancel_node(node_id);
+    let Some(el) = self.nodes.get_mut(&node_id) else { return };
+    el.exiting = false;
+    let doomed = el.doomed;
+    let parent = el.parent;
+    if let Some(parent_id) = parent {
+      if self.nodes.contains_key(&parent_id) {
+        self.detach_node_now(parent_id, node_id);
+      }
+    }
+    if doomed {
+      self.delete_recursive(node_id);
+      self.bump_revision();
+    }
+  }
+
   /// Frees `node_id` and its whole subtree. Call after detach_node once the node
   /// is confirmed dead (not moved). Defensively unlinks from any parent still
   /// referencing it, so a direct destroy leaves no dangling child entry.
+  ///
+  /// A node mid-exit is not freed yet: the destroy is remembered (`doomed`)
+  /// and happens when the exit settles. Descendants of a destroyed node never
+  /// exit-animate on their own - only the node the renderer removes does, and
+  /// its whole subtree stays painted with it until the settle.
   pub fn destroy_node(&mut self, node_id: u64) {
+    if let Some(el) = self.nodes.get_mut(&node_id) {
+      if el.exiting {
+        el.doomed = true;
+        return;
+      }
+    }
     if let Some(parent_id) = self.try_node(node_id).and_then(|n| n.parent) {
       let child_has_layout = self.try_node(node_id).map(|n| n.has_layout()).unwrap_or(false);
       if let Some(parent) = self.nodes.get_mut(&parent_id) {
@@ -301,20 +416,29 @@ impl RenderTree {
       return false;
     }
     let now = self.transitions.now_ms;
+    // Exiting nodes whose exit-track gate may have emptied this pass; each
+    // is checked (and freed when the gate is empty) after the advance.
+    let mut exit_checks: Vec<u64> = Vec::new();
     // Delayed writes whose hold expired apply now, exactly as a JS write
     // this frame would: retarget from the property's present value. State
     // may have shifted during the hold (a gradient took over, the node
     // died); a write that no longer applies is dropped silently.
     for w in self.transitions.take_due(now) {
       let current = self.nodes.get(&w.node).and_then(|el| el.anim_value(w.prop));
+      let mut running = false;
       if let Some(current) = current {
         if std::mem::discriminant(&current) == std::mem::discriminant(&w.to) {
-          self.transitions.retarget(w.node, w.prop, current, w.to, w.spec);
+          running = self.transitions.retarget(w.node, w.prop, current, w.to, w.spec);
         }
+      }
+      // A due exit write that starts no track (value already there, state
+      // shifted) may have been the last thing keeping the node around.
+      if !running && self.nodes.get(&w.node).map(|el| el.exiting).unwrap_or(false) {
+        exit_checks.push(w.node);
       }
     }
     let (mut tracks, dt) = self.transitions.begin_advance();
-    if dt <= 0.0 {
+    if dt <= 0.0 && exit_checks.is_empty() {
       self.transitions.end_advance(tracks);
       return true;
     }
@@ -327,12 +451,25 @@ impl RenderTree {
       let damage = self.nodes.get_mut(&t.node).map(|el| el.set_anim_value(t.prop, value)).unwrap_or(Damage::None);
       damages.push((t.node, damage));
       if settled {
-        self.transitions.settled.push((t.node, t.prop));
+        // Exiting nodes settle into their free, not into onTransitionEnd:
+        // the component that could observe the event is already disposed.
+        if self.nodes.get(&t.node).map(|el| el.exiting).unwrap_or(false) {
+          exit_checks.push(t.node);
+        } else {
+          self.transitions.settled.push((t.node, t.prop));
+        }
       }
       !settled
     });
     self.apply_damage_batch(&damages);
     self.transitions.end_advance(tracks);
+    exit_checks.dedup();
+    for node_id in exit_checks {
+      let exiting = self.nodes.get(&node_id).map(|el| el.exiting).unwrap_or(false);
+      if exiting && !self.transitions.any_running(node_id, &self.exit_props(node_id)) {
+        self.finish_exit(node_id);
+      }
+    }
     !self.transitions.is_empty()
   }
 

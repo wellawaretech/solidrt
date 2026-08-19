@@ -360,6 +360,22 @@ fn transition_from_decodes_per_property_only() {
 }
 
 #[test]
+fn transition_exit_decodes_per_property_only() {
+  let mut el = Element::from_kind("d-rect").expect("known kind");
+  let cfg = map(&[("y", map(&[("duration", num(500.0)), ("exit", num(640.0))]))]);
+  apply_el(&mut el, "transition", cfg).expect("scalar exit applies");
+  assert!(matches!(entry_of(&el).exit, Some(AnimValue::Scalar(v)) if v == 640.0));
+
+  let cfg = map(&[("color", map(&[("duration", num(300.0)), ("exit", text("transparent"))]))]);
+  apply_el(&mut el, "transition", cfg).expect("color exit applies");
+  assert!(matches!(entry_of(&el).exit, Some(AnimValue::Color(_))));
+
+  let under_all =
+    apply_el(&mut el, "transition", map(&[("all", map(&[("duration", num(1.0)), ("exit", num(0.0))]))])).unwrap_err();
+  assert!(under_all.contains("exit is per-property"), "{under_all}");
+}
+
+#[test]
 fn transition_null_clears() {
   let mut el = Element::from_kind("d-rect").expect("known kind");
   let cfg = map(&[("x", map(&[("duration", num(300.0))]))]);

@@ -93,8 +93,41 @@ stepping against probes/transition-demo.tsx):
   element sits at `from` during the hold). A property whose mounted value
   is unreadable (no explicit value, a gradient) skips its enter animation.
   `from` is a number, or a CSS color string / packed number for `color`.
-  Exit animations stay out of scope (they need the node kept alive past
-  removal - a different item if ever wanted).
+
+## Status: exit animations landed (2026-08-19)
+
+`exit` on the entry completes the lifecycle pair with `from`: a removed
+node stays in the tree, animates each exit property from its current value
+to the exit target (entry's spec and `delay` honored - staggered exit
+falls out), and is freed when its exit tracks settle. Verified live with
+paused-clock frame stepping (toast springs out, node freed at settle, node
+count back to baseline, no orphans).
+
+Semantics, all pinned by tests (alloy tests/transitions.rs, flux
+tests/properties.rs):
+
+- The renderer's removal path drives it unchanged: `detach_node` finding
+  exit entries with somewhere to move marks the node `exiting` and keeps it
+  linked; the deferred-destroy sweep finding it exiting defers the free
+  (`doomed`) to the settle. A re-insert (Solid detaches before
+  re-inserting, so every move passes through detach) abandons the exit:
+  moves and reorders never play removal animations.
+- An exit whose values already sit on their targets detaches and frees
+  instantly - an exit that animates nothing must not defer the removal.
+  destroy without detach (forced teardown) is instant too.
+- Exiting nodes are hit-test invisible (hit.rs guard): the component is
+  disposed, so they must not swallow input on the way out.
+- No onTransitionEnd for exits - the handler died with the component.
+  Natural-settle events for live nodes are unaffected.
+- Only the node the renderer removes animates; its whole subtree stays
+  painted with it (a dialog leaves with its contents). Descendants of a
+  destroyed subtree never exit on their own.
+- Accepted v1 limitation: an exiting ATTACHED element keeps its layout
+  slot until the exit finishes, so siblings close the gap at settle, not
+  gradually (animating layout is a separate, much bigger item). Detached /
+  absolute / overlay elements - what exits are mostly for - have no slot.
+- Re-showing mid-exit mounts a fresh node (Solid semantics): briefly the
+  old one leaves while the new one enters, AnimatePresence-style.
 
 Nothing remains; see "Deliberately out of scope" for what was consciously
 excluded.
