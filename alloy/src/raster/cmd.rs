@@ -187,6 +187,11 @@ pub(crate) enum RasterCmd {
   /// Overwrite part of a vertex buffer and mark pipelines drawing from it
   /// dirty.
   WriteBuffer { id: u64, data: Vec<u8>, byte_offset: usize },
+  /// Overwrite the front of a vertex buffer from a leased staging block: the
+  /// block MOVES across the channel (no copy, like UpdateYuv) and returns to
+  /// the UI-side pool via `recycle` once the GL write is issued. `len` is
+  /// the published prefix; the block itself is always full buffer size.
+  WriteBufferLease { id: u64, block: Vec<u8>, len: usize, recycle: mpsc::Sender<(u64, Vec<u8>)> },
   /// Read back part of a vertex buffer.
   ReadBuffer { id: u64, byte_offset: usize, len: usize, reply: mpsc::Sender<Result<Vec<u8>, String>> },
   /// Free a vertex buffer.

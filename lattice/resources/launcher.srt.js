@@ -5655,7 +5655,7 @@ var capabilities = {
 };
 // packages/core/src/gpu.ts
 import * as gpu from "flux:gpu";
-import { destroyTexture as destroyTexture2, resizeTexture, setTargetParams as setTargetParams2, setTargetSize as setTargetSize2, setTargetTextures, uploadTexture } from "flux:gpu";
+import { destroyTexture as destroyTexture2, endBufferWrite, resizeTexture, setTargetParams as setTargetParams2, setTargetSize as setTargetSize2, setTargetTextures, uploadTexture } from "flux:gpu";
 import { copyTexture, destroyBuffer as destroyBuffer2, renderTarget, setDraw } from "flux:gpu";
 import { addDraw, removeDraw, setDrawOrder, setDrawParams, setDrawRange, setDrawTextures } from "flux:gpu";
 import { limits } from "flux:gpu";

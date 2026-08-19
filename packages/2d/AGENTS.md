@@ -1,0 +1,107 @@
+# @solidrt/2d - agent notes
+
+An instanced sprite layer above `@solidrt/core/gpu`: one atlas texture, one
+instance buffer, N quads in ONE draw call, composited into the app as an
+ordinary `<texture>` leaf. Sprite records publish through the zero-copy
+buffer write lease (`beginBufferWrite`/`endBufferWrite`), so per-frame motion
+costs float stores plus one bulk publish - never per-sprite property writes,
+which is the whole reason this package exists (rendertree `d-texture` sprites
+are the right tool up to the low thousands; measured ~0.65us paint and ~15KB
+memory per NODE, and every moved node is two setProperty FFI calls per
+frame). The design decisions and measurements live in
+`okf/plans/2d-extension.md`.
+
+## The model
+
+- Two layers, the @solidrt/3d split verbatim: the imperative core (layer.ts:
+  `createSpriteLayer`/`addSprite`/`setSprite`/`removeSprite` - plain objects,
+  dirty flags, no signals, usable without components) and the component face
+  (components.tsx: `SpriteLayer`/`Sprite` over context, effects syncing props
+  into the retained records, no new intrinsic elements).
+- A sprite is 13 floats in the layer's canonical Float32Array:
+  `[cx, cy, w, h, u0, v0, u1, v1, rot, tintR, tintG, tintB, tintA]`
+  (`FLOATS_PER_SPRITE`). Draw order IS record order IS insertion order -
+  painter's algorithm, later over earlier. There is no z field in v1;
+  reorder by remove/re-add, or wait for the z pass (see Traps).
+- Mutations batch to a microtask. The flush does
+  `beginBufferWrite` -> bulk `.set` of the live prefix -> `endBufferWrite`
+  -> `setDraw({ instanceCount })` when the count changed. No mutation, no
+  publish, no frame: a static layer costs zero, the same demand-gate story
+  as the rest of the platform.
+- Layer space is pixels, top-left origin, y-down - the render tree's frame.
+  The pipeline's clip space is y-down too (core gpu.ts pixel contract), so
+  the vertex stage carries NO flip anywhere. Do not add one.
+- The camera (`setCamera`/the `camera` prop) is a shared-params write
+  (`uCamera`: offset + zoom), one call however many sprites exist. Picking
+  undoes it, so events arrive in world (layer) pixels.
+- Frame-rate motion bypasses the declarative layer: `ref` the sprite, call
+  `setSprite` from `onFrame`. Signals carry structure and slow state - a
+  `<Sprite x={sig()}>` re-running 60 times a second works but re-runs an
+  effect per sprite per frame for nothing.
+- Above ~10k moving sprites, setSprite's call overhead dominates (measured
+  30k sprites fullscreen on a desktop RTX machine: 30.8ms via setSprite,
+  12.9ms writing `layer.records` directly + one `layer.touch()`). The raw
+  path is public for exactly this; the record layout is documented on the
+  type and `FLOATS_PER_SPRITE` is exported.
+- frames.ts and pick.ts are pure (no GPU imports) BY DESIGN: the checks rig
+  runs them headless on the flux binary
+  (`bunx srt bundle -f --stdout packages/2d/checks/<x>-check.ts | target/release/flux -`).
+  Keep them that way; anything touching flux:gpu cannot go there.
+
+## Components
+
+| Component | Props |
+|---|---|
+| `SpriteLayer` | width, height (layer pixels), atlas (TextureId), capacity?, clearColor?, camera?, label?, ref?, output?, events? |
+| `Sprite` | x, y (center), w, h, frame?, rotation? (radians, clockwise), tint? ([r,g,b,a] 0..1), onPointer{Down,Move,Up,Enter,Leave}?, ref? |
+
+`SpriteLayer` owns the layer and renders the built-in `<texture>` leaf
+carrying the layer's pointer handlers (opt out with `events={false}`; compose
+yourself with `output`, then spread `useSpriteLayer().handlers` onto your
+leaf). `Sprite` renders nothing - it allocates a record through context and
+syncs props into it.
+
+Pointer events: exact rotated-rect containment, topmost sprite first, capture
+per pointerId (a drag keeps delivering to the grabbed sprite with live
+coordinates), enter/leave paired per pointer. No bubbling - the sprite list
+is flat. Event x/y are layer pixels with the camera undone.
+
+## Traps
+
+- The atlas is NOT owned by the layer: layers come and go, atlases usually
+  live app-long. Dispose atlases yourself (or let the reactive owner do it -
+  createAtlas registers with the owning scope like every core texture).
+- `capacity` is FIXED: the instance buffer cannot grow (core buffers are
+  fixed-size). `addSprite` past capacity throws - reserve the maximum up
+  front; records are 52 bytes each, so err generously.
+- Record order is draw order: `removeSprite` shifts every later sprite down
+  one slot (copyWithin + index fixup, O(later sprites)). Cheap in practice;
+  do not remove thousands per frame and expect it free.
+- The flush publishes the WHOLE live prefix, not a dirty range: one moved
+  sprite re-publishes count x 52 bytes. That is a single memcpy plus the
+  lease message - at 10k sprites ~520KB, microseconds - and keeps the write
+  path one code path. A dirty-range optimization is possible (writeBuffer
+  takes byteOffset) but was deliberately not built until a measurement asks
+  for it.
+- `createImage` is the wrong loader for pixel-art atlases: it never forwards
+  sampler options, so it is always `filter: "linear"`. `createAtlas` decodes
+  bytes and passes `filter: "nearest"` through - use it, or `decodeImage` +
+  `createTexture` directly.
+- Tint multiplies the sampled texel (`texture * tint`) and the pipeline
+  blends with `blend: "alpha"` in record order. The layer's OUTPUT obeys the
+  premultiplied-alpha contract to the extent the atlas does: PNG decode
+  yields straight alpha, and a translucent texel tinted translucent can
+  composite slightly wrong at the edges. Opaque-or-transparent pixel art
+  (the overwhelming case) is exact. A premultiply-on-decode option is the
+  fix if it ever matters; note it, do not silently add it.
+- `pointInSprite` in pick.ts and the vertex stage's rotation must agree on
+  direction (clockwise, y-down). The differential check (pick-check.ts)
+  guards the math against an oracle but NOT against the shader - if you
+  touch one rotation, touch both.
+- Sprite handles go inert on removal (`sprite.layer === null`); setSprite on
+  an inert handle is a silent no-op (matching the throw-in-dev policy would
+  mean throwing, but removal racing a queued pointer event is routine, not
+  a bug).
+- The `<Sprite>` effect syncs ALL seven fields when ANY prop changes (one
+  effect, one tuple). Fine at component scale; if a profile ever blames it,
+  split the effects before inventing anything cleverer.

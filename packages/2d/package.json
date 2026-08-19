@@ -1,0 +1,21 @@
+{
+  "name": "@solidrt/2d",
+  "version": "0.0.0",
+  "license": "MIT",
+  "funding": "https://github.com/sponsors/wellawaretech",
+  "author": "Antoine van Wel",
+  "type": "module",
+  "main": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "files": [
+    "src/",
+    "examples/",
+    "AGENTS.md"
+  ],
+  "peerDependencies": {
+    "@solidrt/core": "workspace:*",
+    "@solidjs/signals": "2.0.0-rc.0"
+  }
+}

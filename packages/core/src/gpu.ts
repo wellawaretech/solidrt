@@ -100,6 +100,7 @@ export type { BufferId, DrawId, ProgramId, RenderPipelineId, ShaderStageId, Text
 // registered at creation keeps working and no re-registration is needed.
 export {
   destroyTexture,
+  endBufferWrite,
   resizeTexture,
   setTargetParams,
   setTargetSize,
@@ -575,10 +576,27 @@ export function createPipelineTexture(
  * created outside a reactive scope you must call `destroyBuffer` yourself.
  * (Destruction order relative to pipelines does not matter.)
  */
-export function createBuffer(data: ArrayBuffer | ArrayBufferView, opts?: CreateOptions): gpu.BufferId {
-  let id = gpu.createBuffer(toUint8(data), opts)
+export function createBuffer(data: ArrayBuffer | ArrayBufferView | number, opts?: CreateOptions): gpu.BufferId {
+  let id = gpu.createBuffer(typeof data === "number" ? data : toUint8(data), opts)
   if (opts?.autoFree !== false && getOwner()) onCleanup(() => gpu.destroyBuffer(id))
   return id
+}
+
+/**
+ * Opens a zero-copy write into a vertex buffer: returns a Float32Array over
+ * runtime-owned memory spanning the whole buffer. Write records in place,
+ * then publish with {@link endBufferWrite} - the bytes move to the GPU with
+ * no copy on the CPU path, which is the per-frame streaming path (instanced
+ * sprites, dynamic geometry). Reach other element types through `.buffer`.
+ *
+ * Contents are UNSPECIFIED at begin (a recycled block holds what was
+ * published the time before last): fill everything you publish. One open
+ * write per buffer at a time. The view is detached at end/destroy - retained
+ * references become zero-length, so a stale write is inert, never a race.
+ */
+export function beginBufferWrite(id: gpu.BufferId): Float32Array {
+  let ab = gpu.beginBufferWrite(id)
+  return new Float32Array(ab, 0, (ab.byteLength / 4) | 0)
 }
 
 /**

@@ -11,6 +11,7 @@
   "devDependencies": {
     "@solidrt/cli": "workspace:*",
     "@solidrt/components": "workspace:*",
+    "@solidrt/2d": "workspace:*",
     "@solidrt/core": "workspace:*",
     "@solidrt/3d": "workspace:*",
     "@solidrt/flux-types": "workspace:*",

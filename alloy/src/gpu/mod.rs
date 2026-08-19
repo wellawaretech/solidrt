@@ -5,6 +5,7 @@
 //! stays on the raster thread; see raster.rs.
 
 mod buffer;
+mod lease;
 mod limits;
 mod pass;
 mod program;
@@ -14,6 +15,7 @@ mod target;
 mod vocab;
 
 pub use buffer::{release_buffer, GpuBuffer};
+pub use lease::WriteLeases;
 pub use limits::GpuLimits;
 pub use pass::{composite_program_over_window, render_program_to_fbo, render_program_to_window, PassInput};
 pub use program::{compile_stage, delete_stage, release_pipeline, release_program, RenderPipeline, ShaderProgram};

@@ -671,6 +671,16 @@ impl RasterState {
               log::warn!("[alloy] buffer write failed: {e}");
             }
           }
+          RasterCmd::WriteBufferLease { id, block, len, recycle } => {
+            // The block is exclusively owned here (it moved across the
+            // channel), so slicing it is sound. Recycle even on failure -
+            // the pool, not this arm, decides a block's fate; a dead UI
+            // side just drops it (send failing is shutdown, not an error).
+            if let Err(e) = self.write_buffer(id, &block[..len], 0) {
+              log::warn!("[alloy] buffer write failed: {e}");
+            }
+            let _ = recycle.send((id, block));
+          }
           RasterCmd::ReadBuffer { id, byte_offset, len, reply: tx } => {
             let result = self
               .buffers

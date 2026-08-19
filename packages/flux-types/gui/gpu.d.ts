@@ -552,10 +552,34 @@ declare module "flux:gpu" {
 
   /**
    * Create a vertex buffer from raw bytes (interleave attribute data to match
-   * the pipeline's attribute list). Buffer ids are their own space, separate
-   * from texture ids.
+   * the pipeline's attribute list), or from a byte length alone - a zeroed
+   * buffer, the natural create when the contents arrive through the write
+   * lease ({@link beginBufferWrite}). Buffer ids are their own space,
+   * separate from texture ids. Size is fixed for the id's lifetime: reserve
+   * the maximum up front and publish a prefix.
    */
-  export function createBuffer(data: Uint8Array, opts?: LabelOption): BufferId
+  export function createBuffer(data: Uint8Array | number, opts?: LabelOption): BufferId
+  /**
+   * Open a zero-copy write into a vertex buffer: returns an ArrayBuffer over
+   * runtime-owned memory exactly the buffer's size. Write into it in place
+   * (wrap it in a Float32Array or any view), then publish with
+   * {@link endBufferWrite} - no copy happens anywhere on the CPU path.
+   *
+   * Contents are UNSPECIFIED at begin: a recycled block holds what was
+   * published the time before last, so fill everything you publish. One open
+   * write per buffer id at a time (a second begin throws). The view is
+   * detached at end/destroy - a retained reference becomes zero-length, and
+   * writes through it are inert, never a race.
+   */
+  export function beginBufferWrite(id: BufferId): ArrayBuffer
+  /**
+   * Publish the open write's first `byteLength` bytes at offset 0 (default:
+   * the whole buffer) and close the lease. `byteLength` 0 cancels: the lease
+   * closes and nothing is published. Always closes the lease, error or not;
+   * throws when no write is open or `byteLength` exceeds the buffer size.
+   * Pipelines drawing from the buffer re-render, like {@link writeBuffer}.
+   */
+  export function endBufferWrite(id: BufferId, byteLength?: number): void
   /**
    * Overwrite part of a vertex buffer at `byteOffset` (default 0), within the
    * size it was created with. Pipelines drawing from the buffer re-render

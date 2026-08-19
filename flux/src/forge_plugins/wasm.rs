@@ -54,9 +54,10 @@ use rquickjs::class::Trace;
 use rquickjs::function::Rest;
 use rquickjs::module::{Declarations, Exports, ModuleDef};
 use rquickjs::{
-  qjs, ArrayBuffer, Class, Ctx, Exception, Function, IntoJs, JsLifetime, Object, Persistent, TypedArray, Value,
+  ArrayBuffer, Class, Ctx, Exception, Function, IntoJs, JsLifetime, Object, Persistent, TypedArray, Value,
 };
 
+use crate::plugins::marshal::array_buffer_over;
 use forge::wasm::{ExportInfo, FuncSig, ImportInfo, WasmType, WasmValue};
 
 // Per-instance JS state lives here, in context userdata, NOT in the
@@ -94,27 +95,6 @@ struct MemoryView {
   ptr: usize,
   len: usize,
   _instance: Rc<forge::wasm::WasmInstance>,
-}
-
-/// Create an ArrayBuffer aliasing external bytes, with NO free callback:
-/// QuickJS never frees or touches the bytes, on detach or at finalization.
-///
-/// Not `ArrayBuffer::from_source`, deliberately: its drop closure is unsound
-/// against detach. `JS_DetachArrayBuffer` invokes the buffer's `free_func`
-/// but does not clear it, so the finalizer invokes it AGAIN at teardown with
-/// the same opaque pointer, and rquickjs's shim then double-drops its boxed
-/// closure (double `Box::from_raw`) - a crash. With no callback registered,
-/// both sites are no-ops and the bytes' lifetime is the caller's contract:
-/// here, `MemoryView` pins the wasm instance in the registry.
-fn array_buffer_over<'js>(ctx: &Ctx<'js>, ptr: *mut u8, len: usize) -> rquickjs::Result<ArrayBuffer<'js>> {
-  let value = unsafe {
-    let raw = qjs::JS_NewArrayBuffer(ctx.as_raw().as_ptr(), ptr, len as _, None, std::ptr::null_mut(), false);
-    Value::from_raw(ctx.clone(), raw)
-  };
-  if value.is_exception() {
-    return Err(rquickjs::Error::Exception);
-  }
-  ArrayBuffer::from_value(value).ok_or(rquickjs::Error::Unknown)
 }
 
 /// Detach the cached memory buffer if the instance's linear memory has moved

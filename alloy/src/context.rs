@@ -10,6 +10,7 @@ use crate::gpu::{
   resolve_draw_range, validate_draw_range, validate_order, validate_param_if_declared, validate_params,
   validate_texture_bindings, vertex_stride, DrawBounds, DrawRange, DrawSpec, DrawUpdate, GpuLimits, GpuResources,
   NodeShader, ParamValue, PipelineDesc, PipelineSpec, ShaderStage, TargetSpec, UniformKind, UniformTable, WindowShader,
+  WriteLeases,
 };
 use crate::microphone::MicrophoneRegistry;
 use crate::raster::{RasterCmd, RasterCounters, RasterSender, RasterStats};
@@ -144,6 +145,13 @@ pub struct Context {
   // and gpu_buffer_len.
   buffer_sizes: RefCell<HashMap<u64, usize>>,
   next_buffer_id: Cell<u64>,
+  // Staging blocks for the zero-copy buffer write path (begin_buffer_write /
+  // end_buffer_write): open leases and the recycled-block pool, plus the
+  // channel the raster thread returns published blocks on. Drained lazily at
+  // the next begin - there is no other party to wake.
+  write_leases: RefCell<WriteLeases>,
+  block_recycle_tx: mpsc::Sender<(u64, Vec<u8>)>,
+  block_recycle_rx: mpsc::Receiver<(u64, Vec<u8>)>,
   // UI-side cache of the device ceilings (see gpu_limits): fetched over one
   // blocking RPC on first use, then a plain read on every validation site.
   limits: Cell<Option<GpuLimits>>,
@@ -220,6 +228,7 @@ unsafe impl Sync for Context {}
 
 impl Context {
   pub(crate) fn new(raster_tx: RasterSender, stats: Arc<RasterStats>) -> Self {
+    let (recycle_tx, recycle_rx) = mpsc::channel();
     Context {
       raster_tx,
       stats,
@@ -236,6 +245,9 @@ impl Context {
       next_stage_id: Cell::new(1),
       buffer_sizes: RefCell::new(HashMap::new()),
       next_buffer_id: Cell::new(1),
+      write_leases: RefCell::new(WriteLeases::new()),
+      block_recycle_tx: recycle_tx,
+      block_recycle_rx: recycle_rx,
       limits: Cell::new(None),
       cameras: CameraRegistry::default(),
       microphones: MicrophoneRegistry::default(),
@@ -712,6 +724,17 @@ impl Context {
     Ok(id)
   }
 
+  /// Create a zeroed vertex buffer of `size` bytes - the natural create for
+  /// buffers filled through the write lease (begin_buffer_write), where
+  /// initial contents would be dead weight.
+  pub fn create_gpu_buffer_zeroed(&self, size: usize, label: Option<String>) -> Result<u64, String> {
+    let id = self.next_buffer_id.get();
+    self.rpc(|reply| RasterCmd::CreateBuffer { id, data: vec![0u8; size], label, reply })??;
+    self.next_buffer_id.set(id + 1);
+    self.buffer_sizes.borrow_mut().insert(id, size);
+    Ok(id)
+  }
+
   /// Overwrite part of a vertex buffer (`data` at `byte_offset`, within the
   /// buffer's original size); every pipeline drawing from it re-renders with
   /// its last-applied params at the next dirty flush, so geometry-only
@@ -728,12 +751,53 @@ impl Context {
     Ok(())
   }
 
+  /// Open a zero-copy write into a vertex buffer: returns a staging block
+  /// exactly the buffer's size for the caller to fill in place, published by
+  /// `end_buffer_write`. Contents are UNSPECIFIED (a recycled block holds
+  /// what was published the time before last), so fill everything you
+  /// publish. The pointer stays valid until end/destroy for this id; no Rust
+  /// reference into the block is formed while the lease is open - the caller
+  /// owns the bytes exclusively.
+  pub fn begin_buffer_write(&self, id: u64) -> Result<(*mut u8, usize), String> {
+    let size = *self.buffer_sizes.borrow().get(&id).ok_or_else(|| format!("buffer {id} not found"))?;
+    let mut leases = self.write_leases.borrow_mut();
+    // Blocks the raster thread finished with, back into the pool (retired
+    // ids drop). Lazy: nothing else needs to observe a recycle promptly.
+    while let Ok((rid, block)) = self.block_recycle_rx.try_recv() {
+      let sizes = self.buffer_sizes.borrow();
+      leases.recycle(rid, block, |i| sizes.contains_key(&i));
+    }
+    leases.begin(id, size)
+  }
+
+  /// Publish the open lease's first `len` bytes at offset 0: the block moves
+  /// to the raster thread (no copy) and comes back through the recycle
+  /// channel. `len` 0 cancels - the lease closes, nothing is sent. Always
+  /// closes the lease, error or not. The caller must request a frame on a
+  /// non-zero publish (same contract as `write_gpu_buffer`).
+  pub fn end_buffer_write(&self, id: u64, len: usize) -> Result<(), String> {
+    let block = self.write_leases.borrow_mut().end(id)?;
+    if len == 0 {
+      self.write_leases.borrow_mut().cancel(id, block);
+      return Ok(());
+    }
+    if len > block.len() {
+      let size = block.len();
+      self.write_leases.borrow_mut().cancel(id, block);
+      return Err(format!("publish of {len} bytes exceeds buffer size {size}"));
+    }
+    self.send(RasterCmd::WriteBufferLease { id, block, len, recycle: self.block_recycle_tx.clone() });
+    self.note_buffer_content(id);
+    Ok(())
+  }
+
   /// Free a vertex buffer: the id retires immediately (further writes error),
   /// while targets drawing from it hold their own reference - like their
   /// pipeline - so either destruction order is safe; the GL buffer is deleted
   /// once the last such target is destroyed.
   pub fn destroy_gpu_buffer(&self, id: u64) {
     self.buffer_sizes.borrow_mut().remove(&id);
+    self.write_leases.borrow_mut().destroy(id);
     self.send(RasterCmd::DestroyBuffer { id });
   }
 

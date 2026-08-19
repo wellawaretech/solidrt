@@ -7,6 +7,7 @@
     "lib": ["ESNext"],
     "jsx": "preserve",
     "jsxImportSource": "@solidrt/core",
+    "allowImportingTsExtensions": true,
     "moduleResolution": "bundler",
     "strict": true,
     "skipLibCheck": true,

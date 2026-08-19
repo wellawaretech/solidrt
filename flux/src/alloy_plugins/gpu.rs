@@ -1,13 +1,13 @@
 use std::cell::RefCell;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::sync::Arc;
 
 use rquickjs::module::{Declarations, Exports, ModuleDef};
 use rquickjs::promise::Promise;
-use rquickjs::{Array, Ctx, Exception, Function, JsLifetime, Object, Persistent, TypedArray};
+use rquickjs::{Array, ArrayBuffer, Ctx, Exception, Function, JsLifetime, Object, Persistent, TypedArray, Value};
 
-use crate::plugins::marshal::OptArg;
+use crate::plugins::marshal::{array_buffer_over, OptArg};
 use super::AlloyContext;
 use alloy::rendertree::PlatformContext;
 use alloy::CaptureInfo;
@@ -31,6 +31,11 @@ struct TextureInner {
   created: RefCell<HashSet<u64>>,
   // Same bookkeeping for vertex buffers (their own id space in alloy).
   created_buffers: RefCell<HashSet<u64>>,
+  // Open buffer write leases (beginBufferWrite): the minted JS view, kept so
+  // end/destroy can detach it before the staging block moves or dies. The
+  // block's bytes are pinned by alloy's Context (its WriteLeases), never by
+  // QuickJS - the view has no free callback (see array_buffer_over).
+  open_buffer_writes: RefCell<HashMap<u64, OpenLease>>,
   // Same bookkeeping for linked programs, render pipelines, and compiled raw
   // stages (each their own id space in alloy).
   created_programs: RefCell<HashSet<u64>>,
@@ -42,6 +47,11 @@ struct TextureInner {
   // each promise with the live `Ctx` it holds (the callback has none). Two hops
   // because a JS promise can only be touched from the JS thread with a `Ctx`.
   capture_settle: RefCell<Vec<CaptureSettle>>,
+}
+
+struct OpenLease {
+  view: Persistent<ArrayBuffer<'static>>,
+  size: usize,
 }
 
 struct CaptureSettle {
@@ -500,6 +510,7 @@ pub fn store_state(ctx: &Ctx<'_>, atx: AlloyContext, platform: Arc<PlatformConte
       platform,
       created: RefCell::new(HashSet::new()),
       created_buffers: RefCell::new(HashSet::new()),
+      open_buffer_writes: RefCell::new(HashMap::new()),
       created_programs: RefCell::new(HashSet::new()),
       created_pipelines: RefCell::new(HashSet::new()),
       created_stages: RefCell::new(HashSet::new()),
@@ -530,6 +541,8 @@ impl ModuleDef for GpuModule {
     decl.declare("destroyProgram")?;
     decl.declare("createPipelineTexture")?;
     decl.declare("createBuffer")?;
+    decl.declare("beginBufferWrite")?;
+    decl.declare("endBufferWrite")?;
     decl.declare("writeBuffer")?;
     decl.declare("destroyBuffer")?;
     decl.declare("setDraw")?;
@@ -819,21 +832,69 @@ impl ModuleDef for GpuModule {
     })
     .expect("create destroyProgram");
 
+    // createBuffer(data | byteLength): bytes seed the buffer; a number makes
+    // a zeroed one, the natural create for buffers filled through the write
+    // lease (beginBufferWrite) where initial contents would be dead weight.
     let create_buffer_atx = atx.clone();
     let create_buffer = Function::new(
       ctx.clone(),
-      move |ctx: Ctx<'_>, data: TypedArray<'_, u8>, opts: OptArg<Object<'_>>| -> rquickjs::Result<u64> {
-        let raw = data.as_raw().ok_or_else(|| throw_str(&ctx, "createBuffer: detached buffer"))?;
+      move |ctx: Ctx<'_>, data: Value<'_>, opts: OptArg<Object<'_>>| -> rquickjs::Result<u64> {
         let label = collect_label(&opts.0)?;
-        let bytes = unsafe { std::slice::from_raw_parts(raw.ptr.as_ptr(), raw.len) };
-        let id =
-          create_buffer_atx.create_gpu_buffer(bytes, label).map_err(|e| throw_str(&ctx, &format!("createBuffer: {e}")))?;
+        let id = if let Some(n) = data.as_number() {
+          if !(n.is_finite() && n >= 0.0 && n.fract() == 0.0) {
+            return Err(throw_str(&ctx, &format!("createBuffer: byteLength must be a non-negative integer, got {n}")));
+          }
+          create_buffer_atx
+            .create_gpu_buffer_zeroed(n as usize, label)
+            .map_err(|e| throw_str(&ctx, &format!("createBuffer: {e}")))?
+        } else {
+          let data = TypedArray::<u8>::from_value(data)
+            .map_err(|_| throw_str(&ctx, "createBuffer: expected a Uint8Array or a byteLength number"))?;
+          let raw = data.as_raw().ok_or_else(|| throw_str(&ctx, "createBuffer: detached buffer"))?;
+          let bytes = unsafe { std::slice::from_raw_parts(raw.ptr.as_ptr(), raw.len) };
+          create_buffer_atx.create_gpu_buffer(bytes, label).map_err(|e| throw_str(&ctx, &format!("createBuffer: {e}")))?
+        };
         let state = ctx.userdata::<TextureState>().expect("texture state userdata");
         state.0.created_buffers.borrow_mut().insert(id);
         Ok(id)
       },
     )
     .expect("create createBuffer");
+
+    // The zero-copy write pair. begin hands JS a view over a runtime-owned
+    // staging block (contents UNSPECIFIED - a recycled block holds what was
+    // published the time before last, so fill everything you publish); end
+    // detaches the view FIRST, then publishes the prefix by moving the block
+    // to the raster thread - no copy anywhere on the CPU path. end always
+    // closes the lease, error or not; byteLength 0 cancels.
+    // begin is a named generic fn (begin_buffer_write_impl below): it returns
+    // an ArrayBuffer whose 'js lifetime must unify with the Ctx arg, which a
+    // closure cannot express (the readTexture/captureSnapshot rule).
+    let end_write_atx = atx.clone();
+    let end_write_platform = platform.clone();
+    let end_buffer_write =
+      Function::new(ctx.clone(), move |ctx: Ctx<'_>, id: u64, byte_length: OptArg<usize>| -> rquickjs::Result<()> {
+        let state = ctx.userdata::<TextureState>().expect("texture state userdata");
+        let lease = state
+          .0
+          .open_buffer_writes
+          .borrow_mut()
+          .remove(&id)
+          .ok_or_else(|| throw_str(&ctx, &format!("endBufferWrite: buffer {id} has no open write")))?;
+        // Detach before the block moves: a JS write after this point lands in
+        // a zero-length view, never in bytes the raster thread is reading.
+        if let Ok(mut view) = lease.view.restore(&ctx) {
+          view.detach();
+        }
+        let len = byte_length.0.unwrap_or(lease.size);
+        end_write_atx.end_buffer_write(id, len).map_err(|e| throw_str(&ctx, &format!("endBufferWrite: {e}")))?;
+        if len > 0 {
+          // New buffer contents change the screen without any tree mutation.
+          end_write_platform.request_frame();
+        }
+        Ok(())
+      })
+      .expect("create endBufferWrite");
 
     // A write re-renders the pipelines drawing from the buffer (alloy does
     // that), so the screen changes without any tree mutation: request a frame.
@@ -856,6 +917,13 @@ impl ModuleDef for GpuModule {
     let destroy_buffer_atx = atx.clone();
     let destroy_buffer = Function::new(ctx.clone(), move |ctx: Ctx<'_>, id: u64| {
       let state = ctx.userdata::<TextureState>().expect("texture state userdata");
+      // A destroy mid-lease detaches the JS view before the block dies with
+      // the Context-side lease state.
+      if let Some(lease) = state.0.open_buffer_writes.borrow_mut().remove(&id) {
+        if let Ok(mut view) = lease.view.restore(&ctx) {
+          view.detach();
+        }
+      }
       state.0.created_buffers.borrow_mut().remove(&id);
       destroy_buffer_atx.destroy_gpu_buffer(id);
     })
@@ -1132,6 +1200,8 @@ impl ModuleDef for GpuModule {
     exports.export("destroyProgram", destroy_program)?;
     exports.export("createPipelineTexture", create_pipeline_texture)?;
     exports.export("createBuffer", create_buffer)?;
+    exports.export("beginBufferWrite", Function::new(ctx.clone(), begin_buffer_write_impl)?)?;
+    exports.export("endBufferWrite", end_buffer_write)?;
     exports.export("writeBuffer", write_buffer)?;
     exports.export("destroyBuffer", destroy_buffer)?;
     exports.export("setDraw", set_draw)?;
@@ -1190,6 +1260,32 @@ fn capture_snapshot_impl<'js>(ctx: Ctx<'js>, node_id: u64) -> rquickjs::Result<P
   // The capture is serviced during a paint; make sure one happens.
   state.0.platform.request_frame();
   Ok(promise)
+}
+
+/// Open a zero-copy write into a vertex buffer: an ArrayBuffer over the
+/// runtime-owned staging block (see Context::begin_buffer_write). Contents
+/// are unspecified; endBufferWrite publishes and detaches. Named generic fn,
+/// not a closure: the returned buffer's 'js lifetime must unify with the Ctx
+/// arg (the readTexture rule above).
+fn begin_buffer_write_impl<'js>(ctx: Ctx<'js>, id: u64) -> rquickjs::Result<ArrayBuffer<'js>> {
+  let state = ctx.userdata::<TextureState>().expect("texture state userdata");
+  if state.0.open_buffer_writes.borrow().contains_key(&id) {
+    return Err(throw_str(&ctx, &format!("beginBufferWrite: buffer {id} already has an open write")));
+  }
+  let (ptr, len) =
+    state.0.atx.begin_buffer_write(id).map_err(|e| throw_str(&ctx, &format!("beginBufferWrite: {e}")))?;
+  let view = match array_buffer_over(&ctx, ptr, len) {
+    Ok(view) => view,
+    Err(e) => {
+      // The lease is open in alloy but no JS view exists: cancel it so the
+      // id is not wedged.
+      state.0.atx.end_buffer_write(id, 0).ok();
+      return Err(e);
+    }
+  };
+  let saved = Persistent::save(&ctx, view.clone());
+  state.0.open_buffer_writes.borrow_mut().insert(id, OpenLease { view: saved, size: len });
+  Ok(view)
 }
 
 /// Read back any registered texture's current RGBA8 pixels (tightly packed,
