@@ -35,9 +35,11 @@ export function Badge(props: BadgeProps) {
         return { bg: c.primary, fg: c.onPrimary }
     }
   }
-  let bg = () => props.style?.backgroundColor ?? colors().bg
-  let fg = () => props.style?.color ?? colors().fg
-  let radius = () => props.style?.borderRadius ?? RADIUS
+  // Theme-level per-component overrides merged under the instance style.
+  let styled = () => ({ ...theme.components.badge, ...props.style })
+  let bg = () => styled().backgroundColor ?? colors().bg
+  let fg = () => styled().color ?? colors().fg
+  let radius = () => styled().borderRadius ?? RADIUS
   // Resolved once via children(): the typeof probe and the mount sites must
   // share one build - reading the raw getter again would orphan native nodes.
   let resolved = children(() => props.children)
@@ -54,11 +56,11 @@ export function Badge(props: BadgeProps) {
       paddingTop={2}
       paddingBottom={2}
       {...props.layout}
-      x={props.style?.x}
-      y={props.style?.y}
-      scale={props.style?.scale}
-      rotate={props.style?.rotate}
-      opacity={props.style?.opacity}
+      x={styled().x}
+      y={styled().y}
+      scale={styled().scale}
+      rotate={styled().rotate}
+      opacity={styled().opacity}
     >
       <d-rect color={bg()} radius={radius()} />
       <Show when={isText()} fallback={resolved()}>

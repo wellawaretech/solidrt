@@ -20,7 +20,7 @@ export function ScanButton(props: { onPress: () => void }) {
         justifyContent: "center",
       }}
       style={(s: PressState) => ({
-        backgroundColor: s.hovered ? theme.color.surfaceHover : "transparent",
+        backgroundColor: s.hovered ? theme.color.overlayHover : "transparent",
         borderRadius: theme.radius.md,
         ...focusRing(s.focused),
       })}

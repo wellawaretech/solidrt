@@ -49,7 +49,7 @@ export function NavShell(props: NavShellProps) {
     item.value === value()
       ? theme.color.surfaceAlt
       : hovered && policy.interaction !== "touch"
-        ? theme.color.surfaceHover
+        ? theme.color.overlayHover
         : "transparent"
 
   // Icon over a small label, centered; shared by the tab bar and the rail.

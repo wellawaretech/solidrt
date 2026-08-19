@@ -1,7 +1,7 @@
 import { arena, createSignal, getBoundingBox, onLayout, onSettled } from "@solidrt/core"
 import type { LayoutProps, PointerEvent } from "@solidrt/core"
 import { theme } from "./theme"
-import { densityScale } from "./policy"
+import { densityScale } from "./density"
 import type { StyleProps } from "./types"
 
 export interface SliderProps {

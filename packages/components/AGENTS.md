@@ -3,7 +3,8 @@
 Higher-level components built on @solidrt/core primitives. Optional: an app can
 be built with core primitives alone. For the underlying element model, events,
 reactivity, and how to run/verify, see @solidrt/core and @solidrt/cli (their
-AGENTS.md). Full prop tables are in this package's README.
+AGENTS.md). Per-module prose is in docs/ (one file per module, generated into the README);
+props are the typed, commented interfaces in src/.
 
 ## Install
 
@@ -34,104 +35,70 @@ Most components group props into two objects, plus top-level event handlers:
 
 ## Exports
 
-- `Window` - root surface; renders a core `<window>`, so `render()` accepts it.
-  Applies `layout` and `style.backgroundColor` only (a window cannot be
-  transformed or bordered). Also: `title`, `fullscreen`.
-- `View` - general box; draws a background/border when the matching `style`
-  props are set.
-- `Text` - text in a layout box; font fields go in `layout`, `color` in `style`.
-- `Image` - fetches/decodes/uploads an image: `src: string | Uint8Array`.
-- `TextInput` - text input, `multiline` to wrap and edit across lines;
-  `value`/`onInput`/`onSubmit` (single-line), controlled or uncontrolled, plus
-  `placeholder`, `maxLength`, `autoFocus`, `disabled`. A thin wrapper over
-  the internal `EditorField` shell (editor-field.tsx: focus, keys, text
-  session, tap-to-position, caret, scroll, placeholder), which takes a
-  buffer factory and a `renderLine`; lines and caret come from core's
-  `createTextEditorLayout` (prepareText + layoutNextLine, one d-text per
-  line). The rich text editor shares the shell (rich-text-document.ts is its
-  value model).
-- `RichTextEditor` - edits a rich `Document` (rich-text-document.ts: text +
-  attributed runs + per-paragraph blocks) over the same `EditorField`; always
-  multiline, no toolbar (the app drives `editorRef`, the document buffer).
-  Drawn attributes: bold/italic/underline/code/color/link inline, heading
-  1-3 block; font-affecting ones also feed the geometry via prepareText
-  `runs`, so caret and wrap follow the drawn glyphs. Each line is one d-text
-  with a span per style interval.
-- `ScrollView` - scrollable region; vertical by default, `horizontal` to flip.
-  Wheel + drag (a pan recognizer: activates on slop along the scroll axis and
-  steals the pointer from a pressable the drag started on), no momentum yet.
-  Backed by `createScroll` and `createPan` from `@solidrt/core` (headless
-  offset+clamp geometry; the recognizers and their gesture arena live in core
-  so every package arbitrates in the one app-wide arena). The press
-  recognizer (press.ts) stays in this package: per-pointer claims, innermost
-  press wins, pan steals on slop.
-- `Pressable` - pressable box; `onPress` on a primary press released inside,
-  `disabled` opts out. `children`/`style` can be functions of `{ pressed,
-  hovered }`. Press retention: a drag out retracts the pressed state, a drag
-  back in restores it; releasing outside does not fire.
-- `Button` - themed Pressable: accent box + label (string/number child), scales
-  on press (via reactive style); colors from `theme.color.primary`/`onPrimary`.
-- `Switch` - on/off toggle; `value`/`onChange`, controlled or uncontrolled
-  (`defaultValue`). Track fills `primary`/`surfaceAlt`, thumb slides.
-- `Checkbox` - `checked`/`onChange` (or `defaultChecked`); checkmark drawn via a
-  core `<d-path>` when checked.
-- `RadioGroup` + `Radio` - single-selection pair; the group owns
-  `value`/`onChange` (or `defaultValue`) and shares it to `Radio` children via a
-  module-local context (not a cross-component dependency). `Radio value=...`;
-  string/number child renders as a themed label.
-- `Slider` - horizontal; `value`/`onChange` (or `defaultValue`), `min`/`max`/
-  `step`. Pointer x mapped to value via `getBoundingBox`; a down resolves the
-  gesture arena outright (no ancestor scroller takeover) and moves follow the
-  frozen down path, so a drag keeps tracking off the track.
-- `Card` - themed surface container: padded column box, `surface` fill, `border`
-  stroke, rounded. Optional `title` heading; override paint via `style`.
-- `Divider` - thin rule in `border` color; `orientation` (default horizontal),
-  `thickness`. Stretches across the cross axis (full width in a column).
-- `Badge` - small rounded pill for counts/labels/status; `primary`/`onPrimary`
-  by default, override via `style.backgroundColor`/`style.color`.
-- `Spinner` - indeterminate rotating arc, driven by core `onFrame`; `size`,
-  `thickness`, `speed` (rev/s). Color from `primary`, override via `style.color`.
-- `ProgressBar` - horizontal; determinate with `value` in [0,1] (fill grows from
-  the left), indeterminate when `value` is undefined (segment slides, `onFrame`).
-  Track `surfaceAlt` / fill `primary`; override via `style.backgroundColor`/`color`.
-- `QrCode` - QR for `data: string`, built from primitives (same-color row runs
-  merged into one box on a light panel); grid memoized on `data`/`level`.
-  `moduleSize`/`margin`/`radius`/`level` (L/M/Q/H). Paints black-on-white by
-  default (NOT the theme) to stay scannable; override `color`/`background` only
-  if contrast holds. Deps on `qrcode-generator`.
-- `Icon` - thin themed wrapper over the core `parseSvg` primitive (draws mapped
-  to `<d-path>` in a `viewBox`-fitted box). `src` is an SVG string (an imported
-  `.svg` asset, a `lucide-static` string export, or an inline literal); `size`
-  sets a square box (default 24); `color` drives `currentColor` (default
-  `theme.color.text`). Carries no icon set of its own and no icon-name registry:
-  pass the SVG string in, so any currentColor set (Lucide, Feather, Heroicons)
-  works and only used icons are bundled. Multi-color documents keep their own
-  fills. Reach for `parseSvg` directly for a non-square box.
-- `SafeArea` - pads children clear of system UI (notches, status bars); top and
-  bottom on by default, pass `false`/a number per edge.
-- `theme` / `setTheme` / `darkTheme` / `lightTheme` - shared REACTIVE appearance
-  (backed by a Solid store, so reads are tracked and switching recolors the live
-  UI). `setTheme(lightTheme)`/`setTheme(darkTheme)` switch presets;
-  `setTheme({...})` merges a one-level-deep override. Default is dark. Color
-  tokens: `background`, `surface`, `surfaceAlt`, `text`, `textMuted`, `border`,
-  `primary`, `onPrimary`, `danger`, `scrim`.
-- `policy` / `setPolicy` / `setPolicyResolver` / `defaultPolicyResolver` /
-  `densityScale` - shared REACTIVE behavior (theme answers "how does it look",
-  policy answers "how does it behave"). Derived from `@solidrt/core`'s
-  `capabilities`/`env` (touch vs. desktop, window size class, display scale).
-  Fields: `interaction` (`"touch" | "desktop" | "hybrid"`, gates hover vs.
-  long-press affordances), `density` (`"comfortable" | "compact" | "dense"`,
-  drives `densityScale()`: 1 / 0.85 / 0.7), `motion` (`"normal" | "reduced" |
-  "none"`), `focusRing` (boolean), `textScale`/`textWeightDelta` (Dynamic-Type
-  and low-DPI weight compensation, consumed by `Text`), `navigation`
-  (`"bottomTabs" | "rail" | "sidebar"`) and `layout` (`"singlePane" |
-  "twoPane"`, both recommendations derived from window size class). Read
-  `policy.*` directly (reactive getters, like `theme`); `setPolicy({ field:
-  value })` pins one field regardless of the derived value, `setPolicy({
-  field: undefined })` hands it back to the resolver; `setPolicyResolver(caps
-  => Policies)` replaces the whole derivation for full custom control.
-  `Tooltip`, `Select`, `ContextMenu` fork on `policy.interaction`; `NavShell`
-  on `policy.navigation`; `SplitView` on `policy.layout`.
+One bullet per module, generated from the first paragraph of its docs/ file.
+
+<!-- BEGIN GENERATED: exports (bun scripts/build-components-docs.ts) -->
+- `Window` - The root surface of an app: renders a core `<window>`, so `render()` accepts it. Applies `layout` and `style.backgroundColor` only (a window cannot be transformed or bordered), plus `title` and `fullscreen`.
+- `View` - A general-purpose box. Spreads `layout` onto the underlying view, applies the transform from `style`, and draws a background and/or border when those style props are set. Takes all pointer event props.
+- `Text` - Themed text in a layout box. `variant` picks a typography role from the theme's type scale (`caption`/`label`/`body`/`title`/`heading`, default `body`); `color` picks a semantic theme color (`text`, `textMuted`, `primary`, `onPrimary`, `danger`, default `text`), with `muted` as sugar for `color="textMuted"`. Font fields go in `layout` (they affect measurement) and individually override the role; `style.color` still wins over `color`.
+- `Image` - Loads and displays an image from a URL or raw bytes (`src: string | Uint8Array`). URL loads are shared runtime-wide: mounts of the same URL reuse one fetch and one texture, and the bytes are cached on disk (fetched with `cache: "force-cache"` - no freshness check, so use versioned URLs for content that changes). Concurrent asset fetches are kept polite with a per-host limit; a failed load rejects the mounts sharing it and a later remount retries.
+- `SafeArea` - Wraps its children in a view padded clear of system UI intrusions (status bars, home indicators, notches). Top and bottom insets are applied by default; pass `false` to opt out of an edge, or a number to apply the inset with that minimum padding.
+- `TextInput` - Text input, single-line by default; `multiline` wraps at the field's width and edits across lines (Enter inserts a newline, Up/Down move by line; grows with content up to `maxRows` unless `layout.height` fixes the box, and scrolls to the caret). Controlled via `value`/`onInput`, or uncontrolled via `defaultValue`; `onSubmit` fires on Enter (single-line only). Also `placeholder`, `maxLength`, `autoFocus`, `disabled`, `onFocus`/`onBlur`, and `hints` for IME behavior (keyboard type, capitalization, autocorrect - identifier-like fields want `{ capitalize: "none", autocorrect: false }`).
+- `RichTextEditor` - Edits a rich text `Document` (styled runs, paragraph attributes) in the same field as `TextInput`: always multiline, same caret, keys, wrapping, and scrolling. Controlled via `value`/`onInput`, or uncontrolled via `defaultValue` (start from `plainDocument("")`). Formatting is driven through `editorRef`, which hands you the document buffer - the component ships no toolbar; the app renders its own controls.
+- `Document model` - The value model behind `RichTextEditor`: a `Document` is `{ text, runs, blocks }` - plain text plus attributed runs (inline formatting) and per-paragraph blocks. `plainDocument(text)` builds one from a string; `createDocumentBuffer(doc)` wraps one in the editing API (`format`, `formatBlock`, `insertAtom`, `attributes`, selection and edits) that `editorRef` hands out. `ATOM` is the inline-atom placeholder character (U+FFFC) for embedded objects.
+- `ScrollView` - A scrollable region; vertical by default, `horizontal` to flip. Both the wheel and dragging scroll the content: the drag activates after a small movement threshold along the scroll axis, also when it starts on a pressable (the press is cancelled and its feedback retracts), and keeps scrolling when the pointer leaves the box. No momentum/fling yet.
+- `Pressable` - A pressable box: `onPress` fires on a primary-button press released over the box; a drag out of the box (or a non-primary button) does not fire it, and a drag back in restores the pressed state. `children` and `style` may each be a function of the live `{ pressed, hovered, pending }` state, so the box restyles on press/hover without extra signals - read the state inside the prop or child expression, never eagerly into a local.
+- `Button` - A themed press target over `Pressable`: a padded, centered box with a label. `variant` picks the visual role - `primary` (accent fill, the default), `secondary`, `ghost` (no fill until hover), `danger` (destructive) - with fill, hover tint, and label color from the matching theme tokens; no variant draws a border. `size` (`sm`/`md`/`lg`) pins a minimum width so a row of buttons lines up (a longer label still expands past it); omitted, the button sizes to its content. A string or number child renders as the themed label; any other child renders as-is (an icon, a row, ...).
+- `createFocusNav` - Focus navigation for pointer-free control (TV remote, keyboard, gamepad), moving real focus across the elements declaring `focusable`. Two movement types over the same candidates: spatial (arrow keys, dpad) picks the nearest candidate in the pressed direction by on-screen boxes, and sequential (Tab / Shift+Tab) walks visual reading order - rows top to bottom, left to right - wrapping at the ends. Enter / remote center / gamepad south activates the focused control. Nothing is focused until the first navigation press; pointer input works unchanged throughout.
+- `Switch` - An on/off toggle: the track fills with `primary` when on and `surfaceAlt` when off; the thumb slides across. Controlled via `value`/`onChange`, or uncontrolled via `defaultValue`. Built on `Pressable`, so `disabled` takes no pointer events. `style` overrides the track colors and radius.
+- `Checkbox` - A checkbox: filled with `primary` and a drawn checkmark when checked, an empty bordered box otherwise. Controlled via `checked`/`onChange`, or uncontrolled via `defaultChecked`. The mark is the `theme.icons.check` slot when a theme sets one. `style` overrides the box colors, border, and radius.
+- `RadioGroup / Radio` - A single-selection pair: `RadioGroup` owns the selected value (controlled via `value`/`onChange`, or uncontrolled via `defaultValue`) and shares it with its `Radio` children; each `Radio` is a ring with an inner dot when selected. A string/number child of `Radio` renders as a themed label beside the ring; anything else as-is. `disabled` on the group disables every option, on a `Radio` just that one.
+- `Slider` - A horizontal slider: the groove fills up to the thumb, and pressing or dragging the track sets the value from the pointer position. Controlled via `value`/`onChange` (fires while dragging), or uncontrolled via `defaultValue` (defaults to `min`). `min`/`max` default to 0/100; `step` snaps to an increment, omitted the value is continuous. The drag keeps tracking when the pointer drifts off the track, and an enclosing ScrollView never takes it over.
+- `Card` - A themed surface container: a padded column box with a `surface` fill, a subtle `border` stroke, and rounded corners, recoloring live on a theme switch. Pass a `title` for a heading, or lay out the content yourself; override paint via `style`, spacing/sizing via `layout`.
+- `Item` - A list row: `startContent` (icon, avatar, checkbox), a `label` with an optional `description` under it, and `endContent` (badge, timestamp, action) pushed to the end. String/number label and description render as themed body and muted caption text; anything else as-is. The dense-data workhorse: rows compose with `<For>` inside a plain column view or `ScrollView` - there is no List wrapper, because a column IS the list. Paddings and gaps are density-scaled, so a `<Density>` region compacts rows wholesale.
+- `Field` - A form row: `label` above the control, the control itself (`children`, rendered as-is), and a help or error line below. `error` renders in the danger color and replaces `description` while set. It draws no chrome and does not reach into the control - error styling of the input itself stays the input's `style` prop, no hidden magic. The message line only occupies space while there is one; reserve the space with a constant `description` if the form must not jump when an error appears.
+- `Divider` - A thin rule in the theme `border` color. It stretches across its container on the cross axis: full width inside a column, full height inside a row (pass `orientation="vertical"`). `thickness` defaults to 1px; add spacing with `layout` margins, and override the color via `style.backgroundColor`.
+- `Badge` - A small rounded pill for counts, labels, and status. `variant` picks the role: `primary` (accent fill, the default), `neutral` (subtle surface), `danger`. A string/number child renders as the themed label, anything else as-is (an icon, a dot, ...). Override the fill via `style.backgroundColor` and the label color via `style.color`.
+- `Spinner` - An indeterminate spinner: a 270-degree arc that rotates continuously, driven by core `onFrame`, so it participates in demand-driven rendering and stops when unmounted. `size` (diameter, default 24), `thickness` (default 3), `speed` (revolutions per second, default 1). Color comes from the theme `primary`; override via `style.color`.
+- `ProgressBar` - A horizontal progress bar: determinate when given a `value` in `[0, 1]` (the fill grows from the left), indeterminate when `value` is undefined (a short segment slides back and forth, driven by core `onFrame`). Track is `surfaceAlt`, fill is `primary`; override via `style.backgroundColor` (track) and `style.color` (fill).
+- `Portal` - Renders its child somewhere other than its lexical position: by default at the window root, so overlays (modals, menus, tooltips) escape the clipping and stacking of their surrounding layout; `mount` targets another node captured from a `ref` instead. A thin JSX wrapper over core `createPortal`. The child should be a single element with `position="absolute"`, since it is inserted into the window's flex root. Portals cannot mount during the app's initial render, so gate them behind a signal that starts false.
+- `Modal` - A centered overlay rendered at the window root via core `createPortal`: it fills the window with a dimming backdrop (theme `scrim`; override via `backdropColor`, `"transparent"` for no dim) and centers `children` on top. Control visibility by mounting/unmounting it, e.g. `<Show when={open()}>`; the gating signal must start false since portals cannot mount during the initial render. Pressing the backdrop calls `onClose` (unless `dismissable` is false), pressing the content does not, and while mounted the modal traps `createFocusNav` inside itself.
+- `Tooltip` - A hover-only affordance: under the `desktop`/`hybrid` interaction policies, resting a mouse pointer on the wrapped content shows a bubble near it after `delay` (default 500ms). Under the `touch` policy it never shows, so tooltip content must stay non-essential. The bubble is portal-mounted at the window root, clamped to the window edges, takes no pointer events, and hides on leave and on press. A string/number `content` renders as themed body text; anything else as-is. `placement` picks the side (`"top"`, the default, or `"bottom"`).
+- `Select` - A single-choice picker whose presentation forks on the interaction policy: `desktop`/`hybrid` opens an anchored dropdown under the trigger (flipping above when there is no room), `touch` opens a bottom sheet over a scrim. Same contract either way: `options` is an `Option[]` (`{ value, label }`), controlled via `value`/`onChange` or uncontrolled via `defaultValue`; pressing outside closes without a change. `placeholder` shows in the trigger while nothing is selected. The option list is not scrollable yet, so keep it short. The trigger's chevron is the `theme.icons.chevronDown` slot when a theme sets one.
+- `SegmentedControl` - A single-choice row of equal-width segments joined flush: only the control's outermost corners are rounded, hairline dividers separate the segments, and the active segment fills with the theme `primary`. Hovered segments tint with the theme `overlayHover` under non-touch interaction policies. `options` is an `Option[]`; controlled via `value`/`onChange`, or uncontrolled via `defaultValue`. Override the inactive fill via `style.backgroundColor` and the outer radius via `style.borderRadius`.
+- `ContextMenu` - Secondary actions on the wrapped content. The opening gesture follows the physical pointer: right-click for a mouse, long-press (500ms, cancelled by finger travel) for touch. The presentation forks on the interaction policy: `touch` gets a bottom sheet over a scrim, `desktop`/`hybrid` an anchored menu at the pointer that flips up near the bottom edge. `items` is a `ContextMenuItem[]` (`{ label, onSelect?, disabled? }`); pressing outside closes without selecting.
+- `NavShell` - An app shell that arranges primary navigation around the content per `policy.navigation`: bottom tabs under it (`bottomTabs`), a narrow rail (`rail`), or a wide sidebar (`sidebar`) beside it. The content is a single stable node; switching arrangement only flips the shell's flex direction and remounts the stateless nav strip, so page state survives a resize across a breakpoint. `items` is a `NavItem[]` (`{ value, label, icon? }`; the icon renders above the label in tabs/rail, beside it in the sidebar); controlled via `value`/`onChange`, or uncontrolled via `defaultValue`. Safe areas are the caller's concern: wrap the shell in `SafeArea`.
+- `SplitView` - A list-detail container driven by `policy.layout`: `twoPane` shows the `list` pane (width `listWidth`, default 320) beside the `detail` pane, `singlePane` shows one at a time per `showDetail`. Keep pane state (selection, scroll) in the app, not in the panes: crossing a breakpoint re-arranges and can remount them. It draws no chrome and adds no padding; a back affordance in the single-pane detail is the app's to render (fork on `policy.layout`).
+- `QrCode` - Renders a QR code for `data` out of primitives: same-color modules in a row collapse into one box, drawn on a light quiet-zone panel; the grid recomputes only when `data` or `level` changes. It paints black on white by default (not the theme) so it stays scannable through a theme switch; override `color`/`background` only if the contrast still holds. `moduleSize` (default 6) is pixels per module, `margin` (default 16) the quiet zone (keep it non-zero), `level` the error correction (`L`/`M`/`Q`/`H`, default `M`: higher tolerates more damage but caps data length sooner), `radius` the panel's corner radius.
+- `Icon` - A thin themed wrapper over the core `parseSvg` primitive. `src` is a whole SVG document as a string; the component parses it once (memoized), maps the draws to `<d-path>` in a square `viewBox`-fitted box (`size`, default 24) and, for monochrome icons that stroke/fill with `currentColor`, recolors it via `color` (default the theme text color). It carries no icon set and no name registry, so any `currentColor` SVG works (Lucide, Feather, Heroicons, ...) and only the icons you import are bundled. Multi-color documents keep their own fills. For a non-square box, use `parseSvg` directly.
+- `Theming` - Appearance (colors, spacing, border, font roles) comes from one shared, reactive theme backed by a Solid store: reads are tracked, so switching the theme at runtime recolors the live UI without remounting. Two presets ship, `darkTheme` and `lightTheme` (default dark); `setTheme(preset)` switches, `setTheme(partial)` merges an override one level deep per category. Custom themes are authored with `defineTheme`.
+- `Policies` - Theme answers "how does it look"; policies answer "how does it behave". `policy` is a second reactive layer derived from the platform facts in `@solidrt/core` (`capabilities`, `env`), so components adapt to touch vs. desktop, window size, and display without every app wiring that logic itself. Reads are reactive like `theme`: a window resize or the first mouse move on a touch-capable device updates every consuming component live.
+- `Density` - `<Density value="compact">` overrides the density policy for its subtree: every density-scaled metric below - `space()`, control sizes (Checkbox, Switch, Radio, Slider), `Item` and `Button` paddings - resolves this value instead of the global `policy.density`. Regions nest; the nearest wins. Use it to tighten a toolbar, a data table, or a sidebar without per-child props.
+- `Typography helpers` - `typeStyle(variant)` resolves a theme type-scale role (`caption`/`label`/`body`/`title`/`heading`) to font props ready to spread onto a `<text>` or `d-text`: `fontSize` carries `policy.textScale`, and `fontWeight` carries the low-DPI weight compensation. Reactive when called inside a tracked scope, like any theme/policy read. `Text` applies it for you; reach for the helpers when building custom text out of core primitives.
+- `Spacing` - `space(token)` is density-scaled spacing: a `theme.spacing` token (`sm`/`md`/`lg`/`xl`) multiplied by the density scale of the nearest `<Density>` region (falling back to the global policy) and rounded to whole pixels. Use it for gaps and paddings that should tighten under `compact`/`dense` density; read `theme.spacing` directly only for distances that must not move with density. Reactive when called inside a tracked scope.
+- `Layout and style` - Most components group their props into two objects, split by one rule: `layout` properties feed the layout engine (flexbox/grid, sizing, padding, margin, position - the core `LayoutProps` set) and changing them triggers a relayout; `style` properties are paint-only and never affect layout: `color`, `backgroundColor`, `borderColor`, `borderWidth`, `borderRadius`, `opacity`, and the transform (`x`, `y`, `scale`, `rotate`, `rotateX`/`rotateY` with `perspective`, `originX`/`originY`, `clipRadius`). Event handlers (`onPointerDown`, `onKeyDown`, ...) are top-level props, never inside `layout` or `style`.
+<!-- END GENERATED: exports -->
+
+## Internals worth knowing
+
+- `TextInput` and `RichTextEditor` share the internal `EditorField` shell
+  (editor-field.tsx: focus, keys, text session, tap-to-position, caret,
+  scroll, placeholder). It takes a buffer factory and a `renderLine`; lines
+  and caret come from core's `createTextEditorLayout` (prepareText +
+  layoutNextLine, one d-text per line). rich-text-document.ts is the rich
+  value model; each rich line is one d-text with a span per style interval,
+  and font-affecting attributes also feed the geometry via prepareText
+  `runs`, so caret and wrap follow the drawn glyphs.
+- Gestures: the arena and the pan/scroll recognizers (`createPan`,
+  `createScroll`) live in `@solidrt/core`, so every package arbitrates in
+  the one app-wide arena. The press recognizer (press.ts) stays in this
+  package: per-pointer claims, innermost press wins, pan steals on slop.
+  `Slider` resolves the arena outright on pointer down, so an enclosing
+  scroller never takes its drag over.
+- `Button` press feedback is a reactive style read (scale) plus an overlay
+  d-rect tinted with `theme.color.overlayHover`, so no nodes are recreated
+  and hover composes over any fill, including a caller-set
+  `style.backgroundColor`.
 
 ## Minimal app (verified to render)
 

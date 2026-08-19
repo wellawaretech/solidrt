@@ -143,7 +143,7 @@ export function RichTextEditor(props: RichTextEditorProps) {
       hints={props.hints}
       ref={props.ref}
       layout={props.layout}
-      style={props.style}
+      style={{ ...theme.components.richTextEditor, ...props.style }}
     />
   )
 }

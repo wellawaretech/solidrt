@@ -1,13 +1,13 @@
 // Generated Reference pages, for the sections whose page bodies ARE an already
-// hand-written source: a flux-types declaration file (JSDoc on every member) or
-// a package README. Where a page needs to choose what it shows, it is authored
-// markdown in docs/ pulling through the directives instead - that is how the
-// Core and Tools references work.
+// hand-written source: a flux-types declaration file (JSDoc on every member),
+// a package's docs/ files, or a package README. Where a page needs to choose
+// what it shows, it is authored markdown in docs/ pulling through the
+// directives instead - that is how the Core and Tools references work.
 //
 //   /runtime/<group>/<module>/   one page per flux-types declaration file,
 //                                grouped by its flux-types directory
-//   /extensions/components/...   the components README: its head, then one
-//                                page per "### Widget" section
+//   /extensions/components/...   one page per components module: its docs/
+//                                file, then the declarations index.ts exports
 //   /extensions/3d/...           the 3d README, plus its export surface
 import { file } from "flux:fs";
 import { escapeHtml, highlight, renderMarkdown } from "./markdown.ts";
@@ -156,42 +156,77 @@ async function runtimePages(): Promise<ReferencePage[]> {
   return pages;
 }
 
-// -- Extensions: the package READMEs ---------------------------------------
+// -- Extensions: components docs/ and the 3d README --------------------------
 
-// The README's h1 text, and the README with that h1 stripped so a page's
-// intro follows the generated heading.
-function slug(text: string): string {
-  return text.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
-}
+// Concept modules (the system the components assume) lead the listing, in
+// this order; every other module is a component. The prose is the module's
+// docs/ file, the API its exported declarations pulled from the typed source,
+// so a page cannot disagree with either.
+// SYNC: scripts/build-components-docs.ts (the README groups by the same list,
+// and its coverage check is the hard gate: every module has a docs/ file).
+const COMPONENT_CONCEPTS = ["theme", "policy", "types", "typography", "spacing"];
 
 async function componentsPages(): Promise<ReferencePage[]> {
   const BASE = "/extensions/components";
-  let readme = await file(COMPONENTS + "/README.md").text();
-  // Head: everything before "## Components"; widgets: each "### X" under it,
-  // up to the next h2 (License). Section headings become page h1s.
-  let at = readme.indexOf("\n## Components\n");
-  let head = at < 0 ? readme : readme.slice(0, at);
-  let rest = at < 0 ? "" : readme.slice(at + "\n## Components\n".length);
-  let nextH2 = rest.search(/^## /m);
-  let widgets = (nextH2 < 0 ? rest : rest.slice(0, nextH2)).split(/^### /m).slice(1);
+  // Modules in src/index.ts order, with the names it re-exports from each.
+  let index = await file(COMPONENTS + "/src/index.ts").text();
+  let modules = new Map<string, string[]>();
+  for (let m of index.matchAll(/^export (?:type )?\{([^}]*)\} from "\.\/([a-z0-9-]+)"/gm)) {
+    let names = m[1]!.split(",").map((n) => n.trim().replace(/^type /, "")).filter(Boolean);
+    modules.set(m[2]!, [...(modules.get(m[2]!) ?? []), ...names]);
+  }
   let pages: ReferencePage[] = [];
-  for (let section of widgets) {
-    let nl = section.indexOf("\n");
-    let title = section.slice(0, nl).trim();
-    let body = section.slice(nl + 1).replace(/^####? /gm, (m) => "#".repeat(m.length - 2) + " ");
+  for (let [stem, names] of modules) {
+    let doc = await file(`${COMPONENTS}/docs/${stem}.md`).text();
+    let m = doc.match(/^# (.+)\n+([\s\S]*)$/);
+    if (!m) throw new Error(`packages/components/docs/${stem}.md must start with an h1 title`);
+    let [, title, body] = m;
+    let ext = (await file(`${COMPONENTS}/src/${stem}.tsx`).exists()) ? "tsx" : "ts";
+    let rel = `packages/components/src/${stem}.${ext}`;
+    let source = await file(`${COMPONENTS}/src/${stem}.${ext}`).text();
+    let decls = splitDeclarations(source);
+    // A module may re-export from an internal sibling (Pressable's PressState
+    // lives in press.ts); pull those declarations too, one level deep.
+    for (let m of source.matchAll(/^export (?:type )?\{([^}]*)\} from "\.\/([a-z0-9-]+)"/gm)) {
+      let inner = splitDeclarations(await file(`${COMPONENTS}/src/${m[2]}.ts`).text());
+      for (let name of m[1]!.split(",").map((n) => n.trim().replace(/^type /, "")).filter(Boolean)) {
+        let d = inner.get(name);
+        if (d && !decls.has(name)) decls.set(name, d);
+      }
+    }
+    let missing = names.filter((n) => !decls.has(n));
+    if (missing.length > 0) console.log(`Not shown on ${BASE}/${stem}, from ${rel}: ${missing.join(", ")}`);
+    let blocks = names
+      .map((n) => decls.get(n))
+      .filter((d): d is Declaration => d !== undefined)
+      .map((d) => `<h3 id="${d.name}">${escapeHtml(d.name)}</h3>\n` + code(d.source))
+      .join("");
     pages.push({
-      path: `${BASE}/${slug(title)}`,
-      title,
-      html: `<h1>${escapeHtml(title)}</h1>\n` + (await renderMarkdown(body)),
+      path: `${BASE}/${stem}`,
+      title: title!.trim(),
+      html:
+        `<h1>${escapeHtml(title!.trim())}</h1>\n` +
+        (await renderMarkdown(body!.trim())) +
+        `<h2>API</h2>\n` +
+        declaredIn(rel) +
+        blocks,
     });
   }
-  let list = pages.map((p) => `<li><a href="${p.path}/"><code>${escapeHtml(p.title)}</code></a></li>`).join("\n");
-  pages.unshift({
+  let item = (p: ReferencePage) => `<li><a href="${p.path}/"><code>${escapeHtml(p.title)}</code></a></li>`;
+  let isConcept = (p: ReferencePage) => COMPONENT_CONCEPTS.includes(p.path.slice(BASE.length + 1));
+  let concepts = pages.filter(isConcept);
+  let components = pages.filter((p) => !isConcept(p));
+  let head = await file(COMPONENTS + "/docs/index.md").text();
+  let indexPage: ReferencePage = {
     path: BASE,
     title: "@solidrt/components",
-    html: (await renderMarkdown(head)) + `<h2>Components</h2>\n<ul>\n${list}\n</ul>\n`,
-  });
-  return pages;
+    html:
+      `<h1>@solidrt/components</h1>\n` +
+      (await renderMarkdown(head.replace(/^# .+\n/, ""))) +
+      `<h2>Concepts</h2>\n<ul>\n${concepts.map(item).join("\n")}\n</ul>\n` +
+      `<h2>Components</h2>\n<ul>\n${components.map(item).join("\n")}\n</ul>\n`,
+  };
+  return [indexPage, ...concepts, ...components];
 }
 
 // One page per source module index.ts re-exports from, in index.ts order,

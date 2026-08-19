@@ -3,6 +3,7 @@ import { createTextBuffer } from "@solidrt/core/text-input"
 import type { LayoutProps, TextInputHints } from "@solidrt/core"
 import { EditorField } from "./editor-field"
 import type { StyleProps } from "./types"
+import { theme } from "./theme"
 
 export interface TextInputProps {
   value?: string
@@ -74,7 +75,7 @@ export function TextInput(props: TextInputProps) {
       hints={props.hints}
       ref={props.ref}
       layout={props.layout}
-      style={props.style}
+      style={{ ...theme.components.textInput, ...props.style }}
     />
   )
 }

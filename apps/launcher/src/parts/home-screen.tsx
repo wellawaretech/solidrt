@@ -125,7 +125,7 @@ function AppCard(props: {
             backgroundColor: props.active
               ? theme.color.surfaceAlt
               : s.hovered
-                ? theme.color.surfaceHover
+                ? theme.color.surfaceAlt
                 : theme.color.surface,
           }}
         >
@@ -149,7 +149,7 @@ function AppCard(props: {
               <Icon
                 src={PLAY_SVG}
                 size={20}
-                color={ps.pressed || ps.hovered ? theme.color.primaryHover : theme.color.primary}
+                color={ps.pressed || ps.hovered ? theme.color.text : theme.color.primary}
               />
             )}
           </Pressable>
@@ -581,7 +581,7 @@ export function HomeScreen(props: {
                       justifyContent: "center",
                     }}
                     style={(s: PressState) => ({
-                      backgroundColor: s.hovered ? theme.color.surfaceHover : "transparent",
+                      backgroundColor: s.hovered ? theme.color.overlayHover : "transparent",
                       borderRadius: theme.radius.md,
                       ...focusRing(s.focused),
                     })}

@@ -6,10 +6,16 @@ import { registerNavAction } from "./focus-nav"
 // so a consumer that reads one inside a JSX prop or child expression tracks that
 // signal there and nothing else re-runs. Read them in those positions, not
 // eagerly into a local, or the read lands in whatever scope destructured it.
-export type PressState = { pressed: boolean; hovered: boolean; focused: boolean }
+export type PressState = { pressed: boolean; hovered: boolean; focused: boolean; pending: boolean }
 
 export interface PressOptions {
-  onPress?: () => void
+  // A returned promise marks the press `pending` until it settles - further
+  // activations (pointer, key, remote) are ignored meanwhile, so an async
+  // action (save, submit) cannot double-fire. A rejection still clears
+  // pending and surfaces as an unhandled rejection. Typed `unknown` (not
+  // `void | Promise<void>`) so plain handlers like `() => setOpen(true)`
+  // keep compiling; any non-thenable return is ignored.
+  onPress?: () => unknown
   disabled?: boolean
   onPointerDown?: (e: PointerEvent) => void
   onPointerUp?: (e: PointerEvent) => void
@@ -55,6 +61,28 @@ export function createPress(options: PressOptions) {
   let node: { id: number } | null = null
   let unregisterNav: (() => void) | null = null
 
+  // Async onPress: while a returned promise is unsettled the press is pending
+  // and activations are ignored. `inflight` is a plain boolean because signal
+  // writes flush on the microtask, so two activations in one dispatch would
+  // both read pending() as false; the signal exists for the UI.
+  let [pending, setPending] = createSignal(false)
+  let inflight = false
+  let activate = () => {
+    if (options.disabled || inflight) return
+    let result = options.onPress?.()
+    if (result && typeof (result as Promise<void>).then === "function") {
+      inflight = true
+      setPending(true)
+      // finally, not then(clear, clear): pending clears either way, but a
+      // rejection keeps propagating to the unhandled-rejection report
+      // instead of being swallowed here.
+      ;(result as Promise<void>).finally(() => {
+        inflight = false
+        setPending(false)
+      })
+    }
+  }
+
   // Focus is derived from core's reactive focus rather than tracked through
   // the onFocus/onBlur handlers - one source of truth. Memoized so a focus
   // move propagates into styling only for the two controls whose value flips.
@@ -89,14 +117,15 @@ export function createPress(options: PressOptions) {
     get focused() {
       return focused()
     },
+    get pending() {
+      return pending()
+    },
   }
   let state = (): PressState => live
   let ref = (n: { id: number }) => {
     node = n
     unregisterNav?.()
-    unregisterNav = registerNavAction(n.id, () => {
-      if (!options.disabled) options.onPress?.()
-    })
+    unregisterNav = registerNavAction(n.id, activate)
   }
 
   let within = (e: PointerEvent) => {
@@ -145,7 +174,7 @@ export function createPress(options: PressOptions) {
       if (active === e.pointerId) {
         let fire = inside
         cancel()
-        if (fire) options.onPress?.()
+        if (fire) activate()
       }
       options.onPointerUp?.(e)
     },
@@ -161,7 +190,7 @@ export function createPress(options: PressOptions) {
       // The remote center key's `key` is "Unidentified"; match its code.
       if ((e.key === "Enter" || e.key === " " || e.code === "Select") && !e.repeat && !options.disabled) {
         e.stopPropagation()
-        options.onPress?.()
+        activate()
       }
       options.onKeyDown?.(e)
     },
@@ -173,5 +202,5 @@ export function createPress(options: PressOptions) {
     },
   }
 
-  return { pressed, hovered, focused, state, ref, handlers, cancel }
+  return { pressed, hovered, focused, pending, state, ref, handlers, cancel }
 }

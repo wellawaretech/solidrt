@@ -82,3 +82,6 @@ jobs:
 
       - name: Check okf index
         run: bun scripts/build-okf-index.ts --check
+
+      - name: Check components docs
+        run: bun scripts/build-components-docs.ts --check

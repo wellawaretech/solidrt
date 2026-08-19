@@ -16,8 +16,8 @@ commercial ones.
 `@solidrt/components` is the official component extension: the widgets you
 would otherwise write yourself for every app.
 
-- **Input:** `Button`, `TextInput`, `Checkbox`, `RadioGroup` with `Radio`, `Switch`,
-  `Slider`, `Select`, `SegmentedControl`, `Pressable`.
+- **Input:** `Button`, `TextInput`, `RichTextEditor`, `Checkbox`, `RadioGroup`
+  with `Radio`, `Switch`, `Slider`, `Select`, `SegmentedControl`, `Pressable`.
 - **Structure:** `Window`, `View`, `Card`, `Divider`, `ScrollView`,
   `SplitView`, `NavShell`, `SafeArea`, `Portal`.
 - **Content and feedback:** `Text`, `Image`, `Icon`, `Badge`, `Spinner`,

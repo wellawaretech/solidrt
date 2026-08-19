@@ -405,3 +405,18 @@ Stage 2 of this track (Pico replacement) is two things, kept separate:
 
 Follow-up, separate: migrate the three `docs/flux-*-plan.md` docs into
 `okf/plans/`.
+
+## Components reference rework (2026-08-19)
+
+The Components pages no longer split the package README: the sources are now
+`packages/components/docs/<module>.md` (one prose file per module src/index.ts
+re-exports from) plus the typed, commented interfaces in src/, shown as
+declarations the flux-types way. `componentsPages()` renders doc + exported
+declarations per module (one level of sibling re-export followed), grouped as
+Concepts (theme, policy, types, typography, spacing) then Components; page
+URLs are the module stems. The package README and the AGENTS.md exports list
+are GENERATED from the same doc files by `scripts/build-components-docs.ts`,
+whose coverage check (module without doc, doc without module, staleness via
+--check) runs in CI and exits non-zero - the hard gate the flux build cannot
+be (flux-script-exit-code). The previously recorded README gap (21 widgets
+documented, 29 exported) is closed structurally by that check.

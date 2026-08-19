@@ -91,9 +91,11 @@ export function ContextMenu(props: ContextMenuProps) {
       >
         <d-rect
           color={
-            press.pressed() || (press.hovered() && policy.interaction !== "touch")
-              ? theme.color.surfaceHover
-              : "transparent"
+            press.pressed()
+              ? theme.color.overlayPressed
+              : press.hovered() && policy.interaction !== "touch"
+                ? theme.color.overlayHover
+                : "transparent"
           }
         />
         <text {...bodyText(p.item.disabled ? theme.color.textMuted : theme.color.text)}>{p.item.label}</text>

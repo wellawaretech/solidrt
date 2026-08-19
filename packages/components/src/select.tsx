@@ -6,6 +6,7 @@ import { policy } from "./policy"
 import { space } from "./spacing"
 import { typeStyle } from "./typography"
 import type { Option, StyleProps } from "./types"
+import { Icon } from "./icon"
 
 export interface SelectProps {
   options: Option[]
@@ -64,9 +65,11 @@ export function Select(props: SelectProps) {
       >
         <d-rect
           color={
-            press.pressed() || (press.hovered() && policy.interaction !== "touch")
-              ? theme.color.surfaceHover
-              : "transparent"
+            press.pressed()
+              ? theme.color.overlayPressed
+              : press.hovered() && policy.interaction !== "touch"
+                ? theme.color.overlayHover
+                : "transparent"
           }
         />
         <text {...bodyText(p.option.value === value() ? theme.color.primary : theme.color.text)}>{p.option.label}</text>
@@ -147,18 +150,25 @@ export function Select(props: SelectProps) {
       </view>,
     )
 
-  let press = createPress({ onPress: () => setOpen(!open()) })
+  let press = createPress({
+    onPress: () => {
+      setOpen(!open())
+    },
+  })
   let style = () => ({
     borderColor: theme.color.border,
     borderWidth: theme.borderWidth.sm,
     borderRadius: theme.radius.sm,
+    backgroundColor: theme.color.surface,
+    ...theme.components.select,
     ...props.style,
-    backgroundColor:
-      props.style?.backgroundColor ??
-      (press.hovered() && !props.disabled && policy.interaction !== "touch"
-        ? theme.color.surfaceHover
-        : theme.color.surface),
   })
+  // Hover feedback: the theme overlay tint drawn over the trigger fill.
+  let overlay = () =>
+    press.hovered() && !props.disabled && policy.interaction !== "touch"
+      ? theme.color.overlayHover
+      : "transparent"
+
 
   return (
     <view
@@ -185,22 +195,30 @@ export function Select(props: SelectProps) {
       pointerEvents={props.disabled ? "none" : undefined}
     >
       <d-rect color={style().backgroundColor ?? "transparent"} radius={style().borderRadius} />
+      <d-rect color={overlay()} radius={style().borderRadius} />
       <Show
         when={selected()}
         fallback={<text {...bodyText(theme.color.textMuted)}>{props.placeholder ?? ""}</text>}
       >
         <text {...bodyText(props.disabled ? theme.color.textMuted : theme.color.text)}>{selected()!.label}</text>
       </Show>
-      <view width={12} height={8}>
-        <d-path
-          d="M 2 2 L 6 6 L 10 2"
-          drawStyle="stroke"
-          color={theme.color.textMuted}
-          strokeWidth={2}
-          strokeCap="round"
-          strokeJoin="round"
-        />
-      </view>
+      <Show
+        when={theme.icons.chevronDown}
+        fallback={
+          <view width={12} height={8}>
+            <d-path
+              d="M 2 2 L 6 6 L 10 2"
+              drawStyle="stroke"
+              color={theme.color.textMuted}
+              strokeWidth={2}
+              strokeCap="round"
+              strokeJoin="round"
+            />
+          </view>
+        }
+      >
+        <Icon src={theme.icons.chevronDown!} size={12} color={theme.color.textMuted} />
+      </Show>
       <Show when={open()}>
         <Show when={policy.interaction === "touch"} fallback={<Dropdown />}>
           <Sheet />

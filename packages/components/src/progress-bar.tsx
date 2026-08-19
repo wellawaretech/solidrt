@@ -27,8 +27,10 @@ let clamp = (x: number, lo: number, hi: number) => (x < lo ? lo : x > hi ? hi : 
 export function ProgressBar(props: ProgressBarProps) {
   let h = () => (props.layout?.height as number) ?? HEIGHT
   let radius = () => h() / 2
-  let track = () => props.style?.backgroundColor ?? theme.color.surfaceAlt
-  let fill = () => props.style?.color ?? theme.color.primary
+  // Theme-level per-component overrides merged under the instance style.
+  let styled = () => ({ ...theme.components.progressBar, ...props.style })
+  let track = () => styled().backgroundColor ?? theme.color.surfaceAlt
+  let fill = () => styled().color ?? theme.color.primary
   let indeterminate = () => props.value === undefined
 
   // Measured track width in pixels. Both the determinate fill and the

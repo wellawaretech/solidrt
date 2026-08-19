@@ -18,7 +18,9 @@ export interface DividerProps {
 export function Divider(props: DividerProps) {
   let vertical = () => props.orientation === "vertical"
   let thickness = () => props.thickness ?? 1
-  let color = () => props.style?.backgroundColor ?? theme.color.border
+  // Theme-level per-component overrides merged under the instance style.
+  let styled = () => ({ ...theme.components.divider, ...props.style })
+  let color = () => styled().backgroundColor ?? theme.color.border
 
   return (
     <view

@@ -1,0 +1,5 @@
+# Layout and style
+
+Most components group their props into two objects, split by one rule: `layout` properties feed the layout engine (flexbox/grid, sizing, padding, margin, position - the core `LayoutProps` set) and changing them triggers a relayout; `style` properties are paint-only and never affect layout: `color`, `backgroundColor`, `borderColor`, `borderWidth`, `borderRadius`, `opacity`, and the transform (`x`, `y`, `scale`, `rotate`, `rotateX`/`rotateY` with `perspective`, `originX`/`originY`, `clipRadius`). Event handlers (`onPointerDown`, `onKeyDown`, ...) are top-level props, never inside `layout` or `style`.
+
+`StyleProps` is that paint set. `TextLayoutProps` extends `LayoutProps` with the font fields (`fontFamily`, `fontSize`, `lineHeight`, `fontStyle`, `fontWeight`, `textAlign`, `maxLines`) because text shaping affects measurement; note `lineHeight` is a multiplier of `fontSize` (the theme uses 1.3-1.6), not a pixel value. `Option` (`{ value, label }`) is the shared shape of the single-choice controls (`Select`, `SegmentedControl`): shared shapes go through this module so components never import a sibling.

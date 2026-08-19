@@ -2,7 +2,7 @@ import { createSignal, Show } from "@solidrt/core"
 import type { LayoutProps } from "@solidrt/core"
 import { createPress } from "./press"
 import { theme } from "./theme"
-import { densityScale } from "./policy"
+import { densityScale } from "./density"
 import type { StyleProps } from "./types"
 
 export interface SwitchProps {
@@ -43,6 +43,7 @@ export function Switch(props: SwitchProps) {
   let style = () => ({
     backgroundColor: on() ? theme.color.primary : theme.color.surfaceAlt,
     borderRadius: h() / 2,
+    ...theme.components.switch,
     ...props.style,
   })
 

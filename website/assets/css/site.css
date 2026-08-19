@@ -20,6 +20,7 @@
   --srt-font-mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, "Noto Sans Mono", monospace;
   --srt-content-width: 46rem;
   --srt-sidebar-width: 14rem;
+  --srt-page-gradient-end: color-mix(in srgb, var(--srt-background) 75%, var(--srt-primary));
   color-scheme: light dark;
 }
 
@@ -31,7 +32,9 @@ html {
   line-height: var(--srt-body-line-height);
   font-weight: var(--srt-body-weight);
   color: var(--srt-text);
-  background: var(--srt-background);
+  /* Diagonal wash from the page fill toward the accent, as on the changelog
+   * card; fixed so it spans the viewport rather than the document. */
+  background: linear-gradient(135deg, var(--srt-background), var(--srt-page-gradient-end)) fixed;
 }
 
 body {
@@ -120,7 +123,7 @@ aside a {
 }
 
 aside a:hover {
-  background: var(--srt-surface-hover);
+  background: var(--srt-overlay-hover);
 }
 
 aside a[aria-current="page"] {
@@ -165,7 +168,7 @@ header nav a {
 }
 
 header nav a:hover {
-  background: var(--srt-surface-hover);
+  background: var(--srt-overlay-hover);
 }
 
 /* The brand link: title-sized wordmark, no button treatment. */
@@ -274,7 +277,7 @@ a {
 }
 
 a:hover {
-  color: var(--srt-primary-hover);
+  color: var(--srt-text);
 }
 
 /* Button primary: accent fill, on-primary label, hover tint, press scale. */
@@ -296,7 +299,8 @@ button {
 
 a[role="button"]:hover,
 button:hover {
-  background: var(--srt-primary-hover);
+  /* The theme's overlay tint composited over the fill, like Button does. */
+  background-image: linear-gradient(var(--srt-overlay-hover), var(--srt-overlay-hover));
   color: var(--srt-on-primary);
 }
 

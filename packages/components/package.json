@@ -12,6 +12,7 @@
   },
   "files": [
     "src/",
+    "docs/",
     "examples/",
     "AGENTS.md"
   ],

@@ -1,5 +1,5 @@
 import { createStore } from "@solidjs/signals"
-import { mixColors } from "@solidrt/core/color"
+import type { StyleProps } from "./types"
 
 export type TextStyle = {
   size: number
@@ -10,6 +10,30 @@ export type TextStyle = {
 // The type scale's role names. <Text variant> and theme.text are keyed by these.
 export type TextVariant = "caption" | "label" | "body" | "title" | "heading"
 
+// The components whose chrome accepts a theme-level paint override (see
+// Theme["components"]). Plain containers (View, Pressable, ...) are not
+// themed, so they take no override either.
+export type ThemedComponent =
+  | "button"
+  | "card"
+  | "badge"
+  | "switch"
+  | "checkbox"
+  | "radio"
+  | "item"
+  | "select"
+  | "segmentedControl"
+  | "textInput"
+  | "richTextEditor"
+  | "tooltip"
+  | "divider"
+  | "progressBar"
+  | "spinner"
+
+// A resolved theme: every value is a plain string/number ready to be read by
+// a component. Authoring happens through defineTheme, which is where
+// [light, dark] pairs and the type-scale expansion live; a Theme itself has
+// no notion of modes.
 export type Theme = {
   text: {
     // Passed through to the core font stack: "sans" | "mono" | a family name.
@@ -27,117 +51,179 @@ export type Theme = {
     surface: string
     // Subtle raised/track fill (switch off-state, slider track, ...).
     surfaceAlt: string
-    // Hover tint for surface-colored controls (non-touch interaction policies).
-    surfaceHover: string
     text: string
     textMuted: string
     border: string
     primary: string
-    // Hover tint for primary-colored controls.
-    primaryHover: string
     onPrimary: string
     // Lower-emphasis accent: the puzzle mark's darker blue.
     secondary: string
-    // Hover tint for secondary-colored controls.
-    secondaryHover: string
     onSecondary: string
     // Validation / destructive.
     danger: string
-    // Hover tint for danger-colored controls.
-    dangerHover: string
     // Overlay dim behind modals.
     scrim: string
+    // Hover/pressed feedback tints: translucent colors DRAWN OVER a control's
+    // own fill (one token pair for every control, instead of a hover variant
+    // per fill color), so feedback works over any background, including a
+    // caller-set style.backgroundColor. Non-touch interaction policies only.
+    overlayHover: string
+    overlayPressed: string
   }
   spacing: { sm: number; md: number; lg: number; xl: number }
   radius: { sm: number; md: number; lg: number }
   borderWidth: { sm: number }
+  // Semantic control glyphs, as SVG document strings (the Icon currency).
+  // Components draw their built-in vector paths by default; a theme that sets
+  // a slot swaps that glyph everywhere it appears. The package still bundles
+  // no icon set.
+  icons: { chevronDown?: string; check?: string }
+  // Per-component paint overrides: merged between a component's themed
+  // defaults and the instance's style prop, so a theme can restyle every
+  // Button (say, pill corners) without wrapping the component. Instance
+  // style still wins.
+  components: { [K in ThemedComponent]?: StyleProps }
 }
 
-// Scheme-independent tokens, shared by both presets. The type scale: body is
-// the base text style; caption and label sit under it (secondary and
-// emphasized small text), title and heading above it (card and page headings).
-const TEXT: Theme["text"] = {
-  fontFamily: "sans",
-  caption: { size: 11, lineHeight: 1.3, weight: 400 },
-  label: { size: 12, lineHeight: 1.3, weight: 600 },
-  body: { size: 14, lineHeight: 1.5, weight: 400 },
-  title: { size: 18, lineHeight: 1.4, weight: 700 },
-  heading: { size: 22, lineHeight: 1.3, weight: 700 },
+// -- Authoring ---------------------------------------------------------------
+
+// A color in a theme definition: one value, or a [light, dark] pair resolved
+// by defineTheme's scheme argument. Pairs are opt-in per token; a definition
+// without any needs no scheme at all (a game ships one look, not two).
+export type ThemeColor = string | [light: string, dark: string]
+
+export type ThemeDefinition = {
+  color: { [K in keyof Theme["color"]]: ThemeColor }
+  text?: {
+    fontFamily?: string
+    // The body font size; the other roles derive from it. Default 14.
+    base?: number
+    // The step between adjacent roles (caption, label, body, title, heading
+    // sit at base * ratio^(-2..2), rounded to whole px). Default 1.26.
+    ratio?: number
+    // Per-role overrides of the derived size and the default line heights
+    // and weights.
+    roles?: { [K in TextVariant]?: Partial<TextStyle> }
+  }
+  spacing?: Partial<Theme["spacing"]>
+  radius?: Partial<Theme["radius"]>
+  borderWidth?: Partial<Theme["borderWidth"]>
+  icons?: Theme["icons"]
+  components?: Theme["components"]
 }
+
 const SPACING = { sm: 4, md: 8, lg: 16, xl: 20 }
 const RADIUS = { sm: 4, md: 8, lg: 12 }
 const BORDER_WIDTH = { sm: 1 }
 
-export let darkTheme: Theme = {
-  text: TEXT,
-  color: {
-    background: "#0b0f17",
-    surface: "#161b22",
-    surfaceAlt: "#21262d",
-    surfaceHover: "#262c34",
-    text: "#e6edf3",
-    // Muted is an opaque tone between text and background, mixed in LAB (like
-    // Material 3's tonal colors, not an alpha overlay): alpha text renders
-    // thin on low-DPI and its contrast depends on what sits behind it.
-    textMuted: mixColors("#e6edf3", "#0b0f17", 0.4),
-    border: "rgba(255,255,255,0.14)",
-    // Accent tuned to the puzzle mark's mid blue; hover lifts toward its
-    // lightest segment tone.
-    primary: "#547ebf",
-    primaryHover: "#7ea9ea",
-    onPrimary: "#ffffff",
-    // The darker shade of the same puzzle segment; hover lifts toward primary.
-    secondary: "#2b5696",
-    secondaryHover: "#3a68ab",
-    onSecondary: "#ffffff",
-    danger: "#f85149",
-    dangerHover: "#ff7b72",
-    scrim: "rgba(0,0,0,0.6)",
-  },
-  spacing: SPACING,
-  radius: RADIUS,
-  borderWidth: BORDER_WIDTH,
+// Line height and weight per role; body is the base text, caption and label
+// sit under it (secondary and emphasized small text), title and heading
+// above it (card and page headings).
+const ROLE_DEFAULTS: { [K in TextVariant]: { step: number; lineHeight: number; weight: TextStyle["weight"] } } = {
+  caption: { step: -2, lineHeight: 1.3, weight: 400 },
+  label: { step: -1, lineHeight: 1.3, weight: 600 },
+  body: { step: 0, lineHeight: 1.5, weight: 400 },
+  title: { step: 1, lineHeight: 1.4, weight: 700 },
+  heading: { step: 2, lineHeight: 1.3, weight: 700 },
 }
 
-export let lightTheme: Theme = {
-  text: TEXT,
-  color: {
-    background: "#ffffff",
-    surface: "#f6f8fa",
-    surfaceAlt: "#eaeef2",
-    surfaceHover: "#e0e5eb",
-    text: "#1f2328",
-    textMuted: mixColors("#1f2328", "#ffffff", 0.4),
-    border: "rgba(0,0,0,0.15)",
-    // Accent tuned to the puzzle mark's mid blue; hover deepens toward its
-    // darker segment tone.
-    primary: "#547ebf",
-    primaryHover: "#3f5494",
-    onPrimary: "#ffffff",
-    // The darker shade of the same puzzle segment; hover deepens it further.
-    secondary: "#2b5696",
-    secondaryHover: "#1f4176",
-    onSecondary: "#ffffff",
-    danger: "#cf222e",
-    dangerHover: "#a40e26",
-    scrim: "rgba(0,0,0,0.4)",
-  },
-  spacing: SPACING,
-  radius: RADIUS,
-  borderWidth: BORDER_WIDTH,
+/**
+ * Resolves a theme definition into a Theme. `scheme` picks the side of every
+ * [light, dark] color pair; a definition without pairs needs no scheme
+ * (modes are a per-theme choice, not a framework requirement). The type
+ * scale expands from text.base and text.ratio, with text.roles overriding
+ * per role. Throws on a pair without a scheme (throw-in-dev policy).
+ */
+export function defineTheme(def: ThemeDefinition, scheme?: "light" | "dark"): Theme {
+  let color = {} as Theme["color"]
+  for (let key in def.color) {
+    let k = key as keyof Theme["color"]
+    let value = def.color[k]
+    if (Array.isArray(value)) {
+      if (!scheme) throw new Error(`Theme color "${key}" is a [light, dark] pair; pass a scheme to defineTheme`)
+      color[k] = value[scheme === "light" ? 0 : 1]
+    } else color[k] = value
+  }
+  let base = def.text?.base ?? 14
+  let ratio = def.text?.ratio ?? 1.26
+  let role = (name: TextVariant): TextStyle => {
+    let d = ROLE_DEFAULTS[name]
+    return {
+      size: Math.round(base * ratio ** d.step),
+      lineHeight: d.lineHeight,
+      weight: d.weight,
+      ...def.text?.roles?.[name],
+    }
+  }
+  return {
+    text: {
+      fontFamily: def.text?.fontFamily ?? "sans",
+      caption: role("caption"),
+      label: role("label"),
+      body: role("body"),
+      title: role("title"),
+      heading: role("heading"),
+    },
+    color,
+    spacing: { ...SPACING, ...def.spacing },
+    radius: { ...RADIUS, ...def.radius },
+    borderWidth: { ...BORDER_WIDTH, ...def.borderWidth },
+    icons: def.icons ?? {},
+    components: def.components ?? {},
+  }
 }
 
-// Backed by a Solid store so reads are tracked: calling setTheme at runtime
-// recolors the live UI without remounting. Components read theme.* through
-// thunks/JSX expressions, so they pick this up with no call-site changes.
-let [theme, setThemeStore] = createStore<Theme>({ ...darkTheme })
-export { theme }
+// -- The built-in presets: one definition, resolved twice ---------------------
+
+const DEFAULT: ThemeDefinition = {
+  color: {
+    background: ["#ffffff", "#0b0f17"],
+    surface: ["#f6f8fa", "#161b22"],
+    surfaceAlt: ["#eaeef2", "#21262d"],
+    text: ["#1f2328", "#e6edf3"],
+    // Muted is an opaque tone between text and background, mixed in oklab
+    // (like Material 3's tonal colors, not an alpha overlay): alpha text
+    // renders thin on low-DPI and its contrast depends on what sits behind
+    // it. Precomputed - core's mixColors delegates to flux:rendertree, and a
+    // preset is data that must not need the render engine at import time
+    // (the website token build imports this module headless). If text or
+    // background changes, recompute: mixColors(text, background, 0.4).
+    textMuted: ["#707376", "#848b92"],
+    border: ["rgba(0,0,0,0.15)", "rgba(255,255,255,0.14)"],
+    // Accent tuned to the puzzle mark's mid blue.
+    primary: "#547ebf",
+    onPrimary: "#ffffff",
+    // The darker shade of the same puzzle segment.
+    secondary: "#2b5696",
+    onSecondary: "#ffffff",
+    danger: ["#cf222e", "#f85149"],
+    scrim: ["rgba(0,0,0,0.4)", "rgba(0,0,0,0.6)"],
+    // Feedback darkens on a light scheme and lightens on a dark one.
+    overlayHover: ["rgba(0,0,0,0.08)", "rgba(255,255,255,0.08)"],
+    overlayPressed: ["rgba(0,0,0,0.14)", "rgba(255,255,255,0.14)"],
+  },
+  // base 14 and ratio 1.26 derive title 18 and heading 22; the two small
+  // roles sit tighter than the ratio, so they are pinned.
+  text: { roles: { caption: { size: 11 }, label: { size: 12 } } },
+}
+
+export let darkTheme: Theme = defineTheme(DEFAULT, "dark")
+export let lightTheme: Theme = defineTheme(DEFAULT, "light")
+
+let [themeStore, setThemeStore] = createStore<Theme>({ ...darkTheme })
+
+// The shared theme, backed by a Solid store so reads are tracked: calling
+// setTheme at runtime recolors the live UI without remounting. Components
+// read theme.* through thunks/JSX expressions, so they pick this up with no
+// call-site changes.
+export let theme: Theme = themeStore
 
 type ThemePartial = { [K in keyof Theme]?: Partial<Theme[K]> }
 
-// Switch themes with a full preset (setTheme(lightTheme)) or apply a targeted
-// override (setTheme({ color: { primary: "#f00" } })). Merges one level deep per
-// category, matching the previous Object.assign behavior.
+// Switch themes with a full preset (setTheme(lightTheme)), a resolved
+// definition (setTheme(defineTheme({...}))), or apply a targeted override
+// (setTheme({ color: { primary: "#f00" } })). Merges one level deep per
+// category (for components, that level is the component name).
 export function setTheme(partial: ThemePartial) {
   setThemeStore((s) => {
     for (let key in partial) {

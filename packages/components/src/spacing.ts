@@ -1,5 +1,5 @@
 import { theme, type Theme } from "./theme"
-import { densityScale } from "./policy"
+import { densityScale } from "./density"
 
 // Density-scaled spacing: a theme.spacing token multiplied by the density
 // policy's metric scale, rounded to whole pixels. Use it for gaps and paddings

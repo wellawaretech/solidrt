@@ -19,9 +19,11 @@ export interface CardProps {
 // style.borderWidth or style.borderColor to draw an outline. Override any paint
 // via style, spacing/sizing via layout.
 export function Card(props: CardProps) {
-  let bg = () => props.style?.backgroundColor ?? theme.color.surface
-  let radius = () => props.style?.borderRadius ?? theme.radius.lg
-  let hasBorder = () => props.style?.borderWidth != null || props.style?.borderColor != null
+  // Theme-level per-component overrides merged under the instance style.
+  let styled = () => ({ ...theme.components.card, ...props.style })
+  let bg = () => styled().backgroundColor ?? theme.color.surface
+  let radius = () => styled().borderRadius ?? theme.radius.lg
+  let hasBorder = () => styled().borderWidth != null || styled().borderColor != null
 
   return (
     <view
@@ -31,11 +33,11 @@ export function Card(props: CardProps) {
       gap={space("lg")}
       padding={space("xl")}
       {...props.layout}
-      x={props.style?.x}
-      y={props.style?.y}
-      scale={props.style?.scale}
-      rotate={props.style?.rotate}
-      opacity={props.style?.opacity}
+      x={styled().x}
+      y={styled().y}
+      scale={styled().scale}
+      rotate={styled().rotate}
+      opacity={styled().opacity}
     >
       <d-rect color={bg()} radius={radius()} />
       <Show when={props.title != null}>
@@ -47,8 +49,8 @@ export function Card(props: CardProps) {
       <Show when={hasBorder()}>
         <d-rect
           drawStyle="stroke"
-          color={props.style?.borderColor ?? theme.color.border}
-          strokeWidth={props.style?.borderWidth ?? theme.borderWidth.sm}
+          color={styled().borderColor ?? theme.color.border}
+          strokeWidth={styled().borderWidth ?? theme.borderWidth.sm}
           radius={radius()}
         />
       </Show>

@@ -2,7 +2,8 @@ import { createSignal, Show } from "@solidrt/core"
 import type { LayoutProps } from "@solidrt/core"
 import { createPress } from "./press"
 import { theme } from "./theme"
-import { densityScale } from "./policy"
+import { densityScale } from "./density"
+import { Icon } from "./icon"
 import type { StyleProps } from "./types"
 
 export interface CheckboxProps {
@@ -43,6 +44,7 @@ export function Checkbox(props: CheckboxProps) {
     borderColor: theme.color.border,
     borderWidth: theme.borderWidth.sm,
     borderRadius: theme.radius.sm,
+    ...theme.components.checkbox,
     ...props.style,
   })
 
@@ -52,6 +54,7 @@ export function Checkbox(props: CheckboxProps) {
       repaintBoundary
       width={size()}
       height={size()}
+      position="relative"
       {...props.layout}
       x={style().x}
       y={style().y}
@@ -63,14 +66,23 @@ export function Checkbox(props: CheckboxProps) {
     >
       <d-rect color={style().backgroundColor ?? "transparent"} radius={style().borderRadius} />
       <Show when={checked()}>
-        <d-path
-          d={check()}
-          drawStyle="stroke"
-          color={theme.color.onPrimary}
-          strokeWidth={2}
-          strokeCap="round"
-          strokeJoin="round"
-        />
+        <Show
+          when={theme.icons.check}
+          fallback={
+            <d-path
+              d={check()}
+              drawStyle="stroke"
+              color={theme.color.onPrimary}
+              strokeWidth={2}
+              strokeCap="round"
+              strokeJoin="round"
+            />
+          }
+        >
+          <view position="absolute" top={0} bottom={0} left={0} right={0} alignItems="center" justifyContent="center">
+            <Icon src={theme.icons.check!} size={Math.round(size() * 0.75)} color={theme.color.onPrimary} />
+          </view>
+        </Show>
       </Show>
       <Show when={(style().borderWidth ?? 0) > 0}>
         <d-rect

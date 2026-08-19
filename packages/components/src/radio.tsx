@@ -2,7 +2,7 @@ import { createSignal, createContext, useContext, Show, children } from "@solidr
 import type { LayoutProps } from "@solidrt/core"
 import { createPress } from "./press"
 import { theme } from "./theme"
-import { densityScale } from "./policy"
+import { densityScale } from "./density"
 import { typeStyle } from "./typography"
 import type { StyleProps } from "./types"
 
@@ -81,6 +81,8 @@ export function Radio(props: RadioProps) {
   // Inner dot inset as a fraction of the ring, so it scales with the density.
   let inset = () => ring() * 0.3
 
+  // Theme-level per-component overrides merged under the instance style.
+  let styled = () => ({ ...theme.components.radio, ...props.style })
   let press = createPress({ onPress: () => ctx.select(props.value) })
 
   return (
@@ -91,16 +93,16 @@ export function Radio(props: RadioProps) {
       alignItems="center"
       gap={theme.spacing.md}
       {...props.layout}
-      x={props.style?.x}
-      y={props.style?.y}
-      scale={props.style?.scale}
-      rotate={props.style?.rotate}
-      opacity={props.style?.opacity}
+      x={styled().x}
+      y={styled().y}
+      scale={styled().scale}
+      rotate={styled().rotate}
+      opacity={styled().opacity}
       {...press.handlers}
       pointerEvents={disabled() ? "none" : undefined}
     >
-      <Show when={props.style?.backgroundColor != null || props.style?.borderRadius != null}>
-        <d-rect color={props.style?.backgroundColor ?? "transparent"} radius={props.style?.borderRadius} />
+      <Show when={styled().backgroundColor != null || styled().borderRadius != null}>
+        <d-rect color={styled().backgroundColor ?? "transparent"} radius={styled().borderRadius} />
       </Show>
       <view width={ring()} height={ring()}>
         <d-oval drawStyle="stroke" color={ringColor()} strokeWidth={2} />
@@ -113,12 +115,12 @@ export function Radio(props: RadioProps) {
           {resolved()}
         </text>
       </Show>
-      <Show when={(props.style?.borderWidth ?? 0) > 0}>
+      <Show when={(styled().borderWidth ?? 0) > 0}>
         <d-rect
           drawStyle="stroke"
-          color={props.style?.borderColor ?? "transparent"}
-          strokeWidth={props.style?.borderWidth}
-          radius={props.style?.borderRadius}
+          color={styled().borderColor ?? "transparent"}
+          strokeWidth={styled().borderWidth}
+          radius={styled().borderRadius}
         />
       </Show>
     </view>

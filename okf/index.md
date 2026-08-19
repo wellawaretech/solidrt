@@ -496,6 +496,11 @@ Shaped, not started.
   Textures always blit once into their destination rect, so a repeating
   background has to be faked with one element per tile or a shader bake;
   Impeller already exposes wrap-mode addressing that would make it a prop.
+- **[Timer deadlines lag the wall clock under frame gating](backlog/timer-deadlines-lag-frame-timeline.md)** [2026-08-19]
+  In a GUI app, setTimeout rides the frame-stepped virtual timeline, so with
+  gated or slow frames a 1.5 s timer observably fires ~0.5-1 s late - async UI
+  (pending buttons, toasts, polls) feels laggy while the app idles or animates
+  lightly.
 - **[Decide the shape of the transform props against CSS, all at once](backlog/transform-props-css-shape.md)** [2026-08-14]
   scale/scaleX/scaleY, x/y, rotate and originX/originY each landed on their
   own; CSS gives per-axis tuples for scale and translate but nothing for

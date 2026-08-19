@@ -85,7 +85,10 @@ export function Tooltip(props: TooltipProps) {
         paddingRight={space("md")}
         pointerEvents="none"
       >
-        <d-rect color={theme.color.surfaceAlt} radius={theme.radius.sm} />
+        <d-rect
+          color={theme.components.tooltip?.backgroundColor ?? theme.color.surfaceAlt}
+          radius={theme.components.tooltip?.borderRadius ?? theme.radius.sm}
+        />
         <Show when={isText()} fallback={content()}>
           <text color={theme.color.text} {...typeStyle("body")}>
             {content()}
@@ -93,9 +96,9 @@ export function Tooltip(props: TooltipProps) {
         </Show>
         <d-rect
           drawStyle="stroke"
-          color={theme.color.border}
-          strokeWidth={theme.borderWidth.sm}
-          radius={theme.radius.sm}
+          color={theme.components.tooltip?.borderColor ?? theme.color.border}
+          strokeWidth={theme.components.tooltip?.borderWidth ?? theme.borderWidth.sm}
+          radius={theme.components.tooltip?.borderRadius ?? theme.radius.sm}
         />
       </view>,
     )

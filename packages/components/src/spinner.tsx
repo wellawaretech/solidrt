@@ -24,7 +24,9 @@ const THICKNESS = 3
 export function Spinner(props: SpinnerProps) {
   let size = () => props.size ?? SIZE
   let thickness = () => props.thickness ?? THICKNESS
-  let color = () => props.style?.color ?? theme.color.primary
+  // Theme-level per-component overrides merged under the instance style.
+  let styled = () => ({ ...theme.components.spinner, ...props.style })
+  let color = () => styled().color ?? theme.color.primary
   let speed = () => props.speed ?? 1
 
   // tick is in milliseconds (like performance.now()). The frame loop is mounted
@@ -55,9 +57,9 @@ export function Spinner(props: SpinnerProps) {
       height={size()}
       {...props.layout}
       rotate={angle()}
-      x={props.style?.x}
-      y={props.style?.y}
-      opacity={props.style?.opacity}
+      x={styled().x}
+      y={styled().y}
+      opacity={styled().opacity}
     >
       <Show when={policy.motion !== "none"}>
         <Animate />

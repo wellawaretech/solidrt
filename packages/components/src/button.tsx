@@ -4,6 +4,7 @@ import { theme } from "./theme"
 import { policy } from "./policy"
 import { space } from "./spacing"
 import { typeStyle, lightOnDark } from "./typography"
+import { Spinner } from "./spinner"
 import type { LayoutProps } from "@solidrt/core"
 import type { StyleProps } from "./types"
 
@@ -22,7 +23,10 @@ export interface ButtonProps {
   // stretches to the container's width (the default). Padding is the same at
   // every size.
   size?: ButtonSize
-  onPress?: () => void
+  // A returned promise makes this an async action: the button shows a
+  // centered spinner in place of the label (geometry unchanged) and ignores
+  // presses until it settles. Non-thenable returns are ignored.
+  onPress?: () => unknown
   disabled?: boolean
   // Focus-navigation candidacy (spatial nav, TV remotes); on by default.
   // Disabled buttons are never candidates.
@@ -37,44 +41,45 @@ export interface ButtonProps {
 const SIZE_WIDTH: Record<ButtonSize, number> = { sm: 88, md: 120, lg: 160 }
 
 // A themed press target: a padded, centered, accent-colored box with a label.
-// Press feedback is a slight scale, hover feedback a tint (non-touch
-// interaction policies only), both reactive reads of the press state so no
-// nodes are recreated. Override the box via style and the padding/sizing via
-// layout. A caller-set backgroundColor disables the hover tint: we cannot know
-// its hover variant. When disabled, it takes no pointer events at all.
-// Focus (spatial nav) draws a ring under the focusRing policy, text-colored
-// rather than primary so it stays visible on primary-filled buttons; Enter/
-// Space/remote-select activates (handled by createPress).
+// Press feedback is a slight scale, hover feedback the theme's overlayHover
+// tint drawn over the fill (non-touch interaction policies only), both
+// reactive reads of the press state so no nodes are recreated. Override the
+// box via style and the padding/sizing via layout; because hover is an
+// overlay, it composes over a caller-set backgroundColor too. When disabled,
+// it takes no pointer events at all. Focus (spatial nav) draws a ring under
+// the focusRing policy, text-colored rather than primary so it stays visible
+// on primary-filled buttons; Enter/Space/remote-select activates (handled by
+// createPress).
 export function Button(props: ButtonProps) {
-  // Fill, hover fill, and label color per variant, read reactively from the
-  // theme. No variant draws a border.
+  // Fill and label color per variant, read reactively from the theme. No
+  // variant draws a border.
   let colors = () => {
     let c = theme.color
     switch (props.variant ?? "primary") {
       case "secondary":
-        return { fill: c.secondary, hover: c.secondaryHover, label: c.onSecondary }
+        return { fill: c.secondary, label: c.onSecondary }
       case "ghost":
-        return { fill: "transparent", hover: c.surfaceHover, label: c.text }
+        return { fill: "transparent", label: c.text }
       case "danger":
-        return { fill: c.danger, hover: c.dangerHover, label: c.onPrimary }
+        return { fill: c.danger, label: c.onPrimary }
       default:
-        return { fill: c.primary, hover: c.primaryHover, label: c.onPrimary }
+        return { fill: c.primary, label: c.onPrimary }
     }
   }
+  // Theme-level per-component overrides merged under the instance style.
+  let styled = (): StyleProps => ({ ...theme.components.button, ...props.style })
   let idleFill = () =>
     props.disabled
       ? props.variant === "ghost"
         ? "transparent"
         : theme.color.surface
       : colors().fill
-  let bg = (s: PressState) =>
-    props.style?.backgroundColor ??
-    (props.disabled
-      ? idleFill()
-      : s.hovered && policy.interaction !== "touch"
-        ? colors().hover
-        : colors().fill)
-  let radius = () => props.style?.borderRadius ?? theme.radius.md
+  let bg = () => styled().backgroundColor ?? idleFill()
+  // The hover feedback: the theme's overlay tint drawn over the fill, so it
+  // composes with any backgroundColor (variant, theme override, or caller).
+  let overlay = (s: PressState) =>
+    s.hovered && !props.disabled && policy.interaction !== "touch" ? theme.color.overlayHover : "transparent"
+  let radius = () => styled().borderRadius ?? theme.radius.md
   let label = () => (props.disabled ? theme.color.textMuted : colors().label)
   // Resolved once via children(): reading the raw children getter builds a new
   // subtree per read, so the typeof probe and the two mount sites below must
@@ -84,19 +89,19 @@ export function Button(props: ButtonProps) {
   // The label's polarity against the idle fill: onPrimary on a saturated fill
   // is light-on-dark even in a light theme, so it needs the low-DPI weight
   // compensation there too.
-  let labelOnDark = () => lightOnDark(label(), props.style?.backgroundColor ?? idleFill())
+  let labelOnDark = () => lightOnDark(label(), bg())
 
   // props (not a literal) so a swapped-in onPress is read at event time.
   let press = createPress(props)
   let style = () => ({
-    ...props.style,
+    ...styled(),
     ...(press.focused() && policy.focusRing ? { borderWidth: 2, borderColor: theme.color.text } : {}),
-    backgroundColor: bg(press.state()),
+    backgroundColor: bg(),
     borderRadius: radius(),
     // Always a number: a scale that flips from a number back to undefined
     // hits the transform decoder, which rejects null. Multiply so a
     // caller-set scale is preserved under the press feedback.
-    scale: (props.style?.scale ?? 1) * (press.pressed() && policy.motion !== "none" ? 0.97 : 1),
+    scale: (styled().scale ?? 1) * (press.pressed() && policy.motion !== "none" ? 0.97 : 1),
   })
 
   return (
@@ -109,6 +114,7 @@ export function Button(props: ButtonProps) {
       flexDirection="row"
       alignItems="center"
       justifyContent="center"
+      position="relative"
       paddingTop={space("md")}
       paddingBottom={space("md")}
       paddingLeft={space("lg")}
@@ -125,10 +131,16 @@ export function Button(props: ButtonProps) {
       pointerEvents={props.disabled ? "none" : undefined}
     >
       <d-rect color={style().backgroundColor ?? "transparent"} radius={style().borderRadius} />
+      <d-rect color={overlay(press.state())} radius={style().borderRadius} />
       <Show when={isText()} fallback={resolved()}>
-        <text color={label()} {...typeStyle("body", labelOnDark())}>
+        <text color={press.pending() ? "transparent" : label()} {...typeStyle("body", labelOnDark())}>
           {resolved()}
         </text>
+      </Show>
+      <Show when={press.pending()}>
+        <view position="absolute" top={0} bottom={0} left={0} right={0} alignItems="center" justifyContent="center">
+          <Spinner size={16} thickness={2} style={{ color: label() }} />
+        </view>
       </Show>
       <Show when={(style().borderWidth ?? 0) > 0}>
         <d-rect

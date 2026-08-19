@@ -15,6 +15,8 @@ export { Checkbox, type CheckboxProps } from "./checkbox"
 export { RadioGroup, Radio, type RadioGroupProps, type RadioProps } from "./radio"
 export { Slider, type SliderProps } from "./slider"
 export { Card, type CardProps } from "./card"
+export { Item, type ItemProps } from "./item"
+export { Field, type FieldProps } from "./field"
 export { Divider, type DividerProps } from "./divider"
 export { Badge, type BadgeProps, type BadgeVariant } from "./badge"
 export { Spinner, type SpinnerProps } from "./spinner"
@@ -32,9 +34,13 @@ export { Icon, type IconProps } from "./icon"
 export {
   theme,
   setTheme,
+  defineTheme,
   darkTheme,
   lightTheme,
   type Theme,
+  type ThemeDefinition,
+  type ThemeColor,
+  type ThemedComponent,
   type TextStyle,
   type TextVariant,
 } from "./theme"
@@ -43,7 +49,6 @@ export {
   setPolicy,
   setPolicyResolver,
   defaultPolicyResolver,
-  densityScale,
   type Policies,
   type PolicyResolver,
   type InteractionPolicy,
@@ -52,6 +57,7 @@ export {
   type NavigationPolicy,
   type LayoutPolicy,
 } from "./policy"
+export { Density, type DensityProps, densityScale } from "./density"
 export { typeStyle, typeWeight, lightOnDark } from "./typography"
 export { space } from "./spacing"
 export type { StyleProps, TextLayoutProps, Option } from "./types"

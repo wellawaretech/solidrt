@@ -118,11 +118,3 @@ export function setPolicy(partial: Partial<Policies>) {
   setOverrides((prev) => ({ ...prev, ...partial }))
 }
 
-// How density maps to component metrics: a multiplier on control sizes,
-// paddings, and hit targets. Comfortable is the components' designed size.
-const DENSITY_SCALE: Record<DensityPolicy, number> = { comfortable: 1, compact: 0.85, dense: 0.7 }
-
-/** Reactive density multiplier for control metrics. */
-export function densityScale(): number {
-  return DENSITY_SCALE[policy.density]
-}

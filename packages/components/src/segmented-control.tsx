@@ -37,8 +37,12 @@ export function SegmentedControl(props: SegmentedControlProps) {
     props.onChange?.(v)
   }
 
-  let radius = () =>
-    typeof props.style?.borderRadius === "number" ? props.style.borderRadius : theme.radius.md
+  // Theme-level per-component overrides merged under the instance style.
+  let styled = () => ({ ...theme.components.segmentedControl, ...props.style })
+  let radius = () => {
+    let r = styled().borderRadius
+    return typeof r === "number" ? r : theme.radius.md
+  }
   // Per-corner radii: round only the corners on the control's outer edge, so
   // the segments read as one joined control. [tl, tr, br, bl].
   let corners = (i: number): number | [number, number, number, number] => {
@@ -50,7 +54,7 @@ export function SegmentedControl(props: SegmentedControlProps) {
     return 0
   }
 
-  let idleFill = () => props.style?.backgroundColor ?? theme.color.surfaceAlt
+  let idleFill = () => styled().backgroundColor ?? theme.color.surfaceAlt
   let activeFill = () => (props.disabled ? theme.color.surface : theme.color.primary)
   let label = (active: boolean) =>
     props.disabled ? theme.color.textMuted : active ? theme.color.onPrimary : theme.color.text
@@ -60,23 +64,23 @@ export function SegmentedControl(props: SegmentedControlProps) {
       flexDirection="row"
       gap={DIVIDER}
       {...props.layout}
-      x={props.style?.x}
-      y={props.style?.y}
-      scale={props.style?.scale}
-      rotate={props.style?.rotate}
-      opacity={props.style?.opacity}
+      x={styled().x}
+      y={styled().y}
+      scale={styled().scale}
+      rotate={styled().rotate}
+      opacity={styled().opacity}
     >
       <d-rect color={theme.color.border} radius={radius()} />
       <For each={props.options}>
         {(opt, i) => {
           let active = () => value() === opt.value
           let press = createPress({ onPress: () => select(opt.value) })
-          let fill = () =>
-            active()
-              ? activeFill()
-              : press.hovered() && !props.disabled && policy.interaction !== "touch"
-                ? theme.color.surfaceHover
-                : idleFill()
+          let fill = () => (active() ? activeFill() : idleFill())
+          // Hover feedback: the theme overlay tint drawn over the segment fill.
+          let overlay = () =>
+            press.hovered() && !props.disabled && policy.interaction !== "touch"
+              ? theme.color.overlayHover
+              : "transparent"
           return (
             <view
               ref={press.ref}
@@ -92,6 +96,7 @@ export function SegmentedControl(props: SegmentedControlProps) {
               pointerEvents={props.disabled ? "none" : undefined}
             >
               <d-rect color={fill()} radius={corners(i())} />
+              <d-rect color={overlay()} radius={corners(i())} />
               <text
                 color={label(active())}
                 {...typeStyle("body", active() ? lightOnDark(label(true), activeFill()) : undefined)}

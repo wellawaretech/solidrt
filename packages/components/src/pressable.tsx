@@ -14,7 +14,10 @@ export interface PressableProps extends PointerProps {
   ref?: (node: { id: number }) => void
   layout?: LayoutProps
   style?: StyleProps | ((state: PressState) => StyleProps)
-  onPress?: () => void
+  // A returned promise sets `state.pending` until it settles; further
+  // presses are ignored meanwhile (no double-fire). Non-thenable returns
+  // are ignored.
+  onPress?: () => unknown
   disabled?: boolean
 }
 
