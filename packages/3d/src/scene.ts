@@ -19,8 +19,8 @@
 // each write lands here, the microtask syncs the affected uModels, and the
 // flush renders once that frame.
 
-import { addDraw, createDrawTarget, destroyProgram, destroyRenderPipeline, destroyTexture, removeDraw, setDrawOrder, setDrawParams, setDrawRange, setTargetParams, setTargetSize } from "@solidrt/core/gpu"
-import type { DrawId, FilterMode, ProgramId, RenderPipelineId, ShaderParams, TextureId, WrapMode } from "@solidrt/core/gpu"
+import { addDraw, createBuffer, createDrawTarget, destroyBuffer, destroyProgram, destroyRenderPipeline, destroyTexture, removeDraw, setDrawOrder, setDrawParams, setDrawRange, setTargetParams, setTargetSize, writeBuffer } from "@solidrt/core/gpu"
+import type { BufferId, DrawId, FilterMode, ProgramId, RenderPipelineId, ShaderParams, TextureId, VertexAttribute, WrapMode } from "@solidrt/core/gpu"
 import { getOwner, onCleanup } from "@solidrt/core"
 import type { PointerEvent as ElementPointerEvent } from "@solidrt/core"
 // The scene's lookAt() aims a node; math's builds a camera's view matrix -
@@ -70,6 +70,7 @@ type SceneHooks = {
   _attach(mesh: Mesh): void
   _detach(mesh: Mesh): void
   _setParams(mesh: Mesh, params: ShaderParams): void
+  _setCount(mesh: Mesh): void
   _reorder(): void
 }
 
@@ -122,7 +123,34 @@ export type Mesh = SceneNode & {
   _fresh: boolean
   _params: ShaderParams | null
   _pickLeaf: number | null
+  /** Instance state when the mesh was made by createInstancedMesh; null on
+   * an ordinary mesh. */
+  _instances: MeshInstances | null
 }
+
+/** The per-mesh half of instancing: the record buffer and its bookkeeping.
+ * Read the public fields freely; write through setInstances /
+ * setInstanceCount so the draw range follows. */
+export type MeshInstances = {
+  /** The GPU record buffer, owned by the mesh (disposeInstances frees it). */
+  buffer: BufferId
+  /** Floats per record - the material's instanceAttributes summed. */
+  stride: number
+  /** Records the buffer has room for; fixed at creation, like every GPU
+   * buffer's byte size. */
+  capacity: number
+  /** Records currently drawn (the entry's instanceCount while visible). */
+  count: number
+  /** Explicit LOCAL bounds covering the whole population ([minX, minY,
+   * minZ, maxX, maxY, maxZ]), or null: the mesh then has no picking leaf -
+   * records are opaque data, so the library cannot derive where the
+   * instances are. */
+  bounds: Float32Array | null
+}
+
+/** A mesh from createInstancedMesh: an ordinary Mesh whose entry draws
+ * `instances.count` copies of the geometry, one record each. */
+export type InstancedMesh = Mesh & { _instances: MeshInstances }
 
 /** One picking intersection: the mesh, the camera-ray distance in world
  * units, and the world-space point - Three's intersect result minus the
@@ -316,7 +344,137 @@ export function createMesh(geometry: Geometry, material: Material): Mesh {
   mesh._fresh = false
   mesh._params = null
   mesh._pickLeaf = null
+  mesh._instances = null
   return mesh
+}
+
+/** The local box picking and sorting work from: explicit instance bounds
+ * when the mesh is instanced (null without them - no leaf, no hits), the
+ * geometry's own bounds otherwise. */
+function localBounds(mesh: Mesh): Float32Array | null {
+  return mesh._instances !== null ? mesh._instances.bounds : geometryBounds(mesh.geometry)
+}
+
+const ATTRIBUTE_FLOATS: Record<VertexAttribute["format"], number> = { f32: 1, vec2: 2, vec3: 3, vec4: 4 }
+
+function instanceStride(attributes: VertexAttribute[]): number {
+  let stride = 0
+  for (let a of attributes) stride += ATTRIBUTE_FLOATS[a.format]
+  return stride
+}
+
+export type InstancedMeshOptions = {
+  /** LOCAL bounds covering every instance the records place ([minX, minY,
+   * minZ, maxX, maxY, maxZ] - geometryBounds' shape), copied in. Records
+   * are opaque data, so only the app knows where its instances are: with
+   * bounds the mesh picks and transparent-sorts like any other
+   * (conservatively - one box around the whole population); without, it
+   * has no picking leaf and pointer events never target it. */
+  bounds?: ArrayLike<number>
+  /** Debug label for the record buffer. */
+  label?: string
+}
+
+/**
+ * A mesh drawing `geometry` once per record of `records`: one draw entry,
+ * one uModel write, N instances - the shape for forests, particles, and
+ * every fleet whose per-copy data is a few floats rather than a merged
+ * vertex buffer. The material must declare `instanceAttributes`
+ * (shaderMaterialClass); its vertex stage reads each record through those
+ * `in` variables. `records` is the interleaved attribute data (stride =
+ * the attributes' floats summed) and is uploaded here - the buffer's
+ * capacity is fixed at creation, like any GPU buffer. `count` limits how
+ * many records draw (default all); grow it later only up to capacity.
+ *
+ * The result is an ordinary Mesh: add/remove, setTransform (uModel places
+ * the whole population), setVisible (hiding zeroes the drawn count,
+ * unhiding restores it), setMeshParams and renderOrder all apply. Update
+ * records with setInstances, the drawn count with setInstanceCount, and
+ * free the record buffer with disposeInstances when done for good.
+ */
+export function createInstancedMesh(
+  geometry: Geometry,
+  material: Material,
+  records: Float32Array,
+  count?: number,
+  opts?: InstancedMeshOptions,
+): InstancedMesh {
+  let attributes = material.instanceAttributes
+  if (attributes === undefined) {
+    throw new Error(
+      "createInstancedMesh: the material declares no instanceAttributes - build it with shaderMaterialClass({ instanceAttributes: [...] })",
+    )
+  }
+  let stride = instanceStride(attributes)
+  if (records.length % stride !== 0) {
+    throw new Error(
+      "createInstancedMesh: " + records.length + " floats is not a whole number of " + stride + "-float records",
+    )
+  }
+  let bounds: Float32Array | null = null
+  if (opts?.bounds !== undefined) {
+    if (opts.bounds.length !== 6) {
+      throw new Error("createInstancedMesh: bounds must be [minX, minY, minZ, maxX, maxY, maxZ]")
+    }
+    bounds = new Float32Array(6)
+    for (let i = 0; i < 6; i++) bounds[i] = opts.bounds[i]!
+  }
+  let capacity = records.length / stride
+  let mesh = createMesh(geometry, material) as InstancedMesh
+  mesh._instances = {
+    buffer: createBuffer(records, { autoFree: false, label: opts?.label }),
+    stride,
+    capacity,
+    count: Math.max(0, Math.min(Math.floor(count ?? capacity), capacity)),
+    bounds,
+  }
+  return mesh
+}
+
+/**
+ * Overwrite an instanced mesh's records from the start of its buffer and
+ * (by default) draw exactly the records written - pass `count` to draw
+ * fewer, or to keep more previously written ones alive past a partial
+ * rewrite. The buffer's capacity is fixed at creation; more records than
+ * capacity throw (make a new mesh for a bigger population). Frame-rate-safe
+ * like setMeshParams.
+ */
+export function setInstances(mesh: InstancedMesh, records: Float32Array, count?: number): void {
+  let inst = mesh._instances
+  if (records.length % inst.stride !== 0) {
+    throw new Error("setInstances: " + records.length + " floats is not a whole number of " + inst.stride + "-float records")
+  }
+  let written = records.length / inst.stride
+  if (written > inst.capacity) {
+    throw new Error(
+      "setInstances: " + written + " records exceed the buffer's capacity of " + inst.capacity + " (fixed at creation)",
+    )
+  }
+  writeBuffer(inst.buffer, records)
+  setInstanceCount(mesh, count ?? written)
+}
+
+/** Set how many records draw (clamped to [0, capacity]). The visibility
+ * switch composes: a hidden mesh stores the count and draws it on unhide. */
+export function setInstanceCount(mesh: InstancedMesh, count: number): void {
+  let inst = mesh._instances
+  let n = Math.max(0, Math.min(Math.floor(count), inst.capacity))
+  if (n === inst.count) return
+  inst.count = n
+  mesh._scene?._setCount(mesh)
+}
+
+/**
+ * Detach the mesh (if attached) and free its record buffer. The buffer is
+ * mesh-owned and app-lifetime (the geometry-buffer rule), so this is the
+ * one explicit free; the mesh cannot be re-added afterwards.
+ */
+export function disposeInstances(mesh: InstancedMesh): void {
+  let inst: MeshInstances | null = mesh._instances
+  if (inst === null) return
+  if (mesh._scene) remove(mesh)
+  destroyBuffer(inst.buffer)
+  ;(mesh as Mesh)._instances = null
 }
 
 /** Attach `child` under `parent` (re-parenting detaches it first). */
@@ -609,8 +767,17 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
   // the local box's center/extents carried through the absolute matrix (the
   // standard tight-AABB-of-a-transformed-AABB construction).
   let updateLeaf = (mesh: Mesh): void => {
-    let b = geometryBounds(mesh.geometry)
+    let b = localBounds(mesh)
     let m = mesh._world
+    if (b === null) {
+      // An instanced mesh without explicit bounds: records are opaque, so
+      // there is nothing to build a leaf from - the mesh never picks. Keep
+      // the transparent sort key at the node's own world position.
+      mesh._center[0] = m[12]
+      mesh._center[1] = m[13]
+      mesh._center[2] = m[14]
+      return
+    }
     let cx = (b[0]! + b[3]!) / 2
     let cy = (b[1]! + b[4]!) / 2
     let cz = (b[2]! + b[5]!) / 2
@@ -693,8 +860,9 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
         let mesh = node as Mesh
         if (mesh._entry !== null) {
           if (mesh._hidden === shown) {
-            // Mismatch: flip the entry's cheap off switch.
-            setDrawRange(texture, mesh._entry, { instanceCount: shown ? 1 : 0 })
+            // Mismatch: flip the entry's cheap off switch. An instanced
+            // mesh's "on" is its own record count, not 1.
+            setDrawRange(texture, mesh._entry, { instanceCount: shown ? (mesh._instances !== null ? mesh._instances.count : 1) : 0 })
             mesh._hidden = !shown
             if (shown) mesh._fresh = true
           }
@@ -744,6 +912,28 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
             "' - a material reading aColor needs withColors() geometry, and colored geometry needs such a material",
         )
       }
+      // Instancing pairs the same way layout does: the pipeline's instance
+      // attributes describe the mesh's record buffer, so one without the
+      // other (or a record stride from a different attribute list) would
+      // bind garbage - errors here, at add().
+      let inst = mesh._instances
+      let instAttrs = mesh.material.instanceAttributes
+      if (instAttrs !== undefined && inst === null) {
+        throw new Error(
+          "Material declares instanceAttributes - create its meshes with createInstancedMesh (records included), not createMesh",
+        )
+      }
+      if (inst !== null) {
+        if (instAttrs === undefined) {
+          throw new Error("Instanced mesh with a non-instanced material - the material must declare instanceAttributes")
+        }
+        let stride = instanceStride(instAttrs)
+        if (stride !== inst.stride) {
+          throw new Error(
+            "Instanced mesh records are " + inst.stride + " floats but the material's instanceAttributes take " + stride,
+          )
+        }
+      }
       let bufs = geometryBuffers(mesh.geometry)
       // The uNormal seed keys off the material flag because entry params
       // validate strictly - and a material declaring uNormal without using
@@ -761,6 +951,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
         indexBuffer: bufs.index,
         indexFormat: bufs.indexFormat,
         textures: mesh.material.textures,
+        instanceBuffer: inst !== null ? inst.buffer : undefined,
         instanceCount: 0,
       })
       meshes.push(mesh)
@@ -789,6 +980,12 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     },
     _setParams(mesh, params) {
       if (mesh._entry !== null && !disposed) setDrawParams(texture, mesh._entry, params)
+    },
+    _setCount(mesh) {
+      // A hidden entry stays at 0; the unhide write restores the count.
+      if (mesh._entry !== null && !mesh._hidden && !disposed && mesh._instances !== null) {
+        setDrawRange(texture, mesh._entry, { instanceCount: mesh._instances.count })
+      }
     },
     _reorder() {
       orderDirty = true
@@ -1016,7 +1213,10 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
         pickDir[1] = dy
         pickDir[2] = dz
         transformVector(pickDir, pickInv, pickDir)
-        let b = geometryBounds(mesh.geometry)
+        // A boundless instanced mesh has no leaf, so the BVH never visits
+        // it; this read is the bounds the leaf was built from.
+        let b = localBounds(mesh)
+        if (b === null) return
         let t = rayBoxDistance(
           pickOrigin[0], pickOrigin[1], pickOrigin[2],
           pickDir[0], pickDir[1], pickDir[2],

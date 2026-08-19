@@ -11,10 +11,14 @@ import type { Element, ParentComponent, TextureId, VoidComponent } from "@solidr
 import {
   add,
   createGroup,
+  createInstancedMesh,
   createMesh,
   createScene,
+  disposeInstances,
   remove,
   setGeometry,
+  setInstanceCount,
+  setInstances,
   setMaterial,
   setMeshParams,
   setRenderOrder,
@@ -22,7 +26,7 @@ import {
   setVisible,
 } from "./scene.ts"
 import type { ShaderParams } from "@solidrt/core/gpu"
-import type { Mesh as MeshNode, Scene as SceneHandle, SceneNode, ScenePointerEvent } from "./scene.ts"
+import type { InstancedMesh as InstancedMeshNode, Mesh as MeshNode, Scene as SceneHandle, SceneNode, ScenePointerEvent } from "./scene.ts"
 import type { Geometry } from "./geometry.ts"
 import type { Material } from "./material.ts"
 import type { Quat, Vec3 } from "./math.ts"
@@ -213,6 +217,74 @@ export let Mesh: VoidComponent<MeshProps> = props => {
   syncNode(mesh, props)
   untrack(() => props.ref)?.(mesh)
   onCleanup(() => remove(mesh))
+  return null
+}
+
+export type InstancedMeshProps = TransformProps & PointerEventProps & {
+  geometry: Geometry
+  /** Must declare instanceAttributes (shaderMaterialClass). */
+  material: Material
+  /** Interleaved per-instance records (stride = the material's instance
+   * attributes summed). Reactive, but the buffer's CAPACITY is fixed by the
+   * first value - a later array may hold at most that many records. */
+  records: Float32Array
+  /** How many records draw; default all of the latest `records`. */
+  count?: number
+  /** LOCAL bounds covering every instance ([minX..maxZ]), fixed at
+   * creation. Without them the mesh has no picking leaf, so pointer events
+   * never target it. */
+  bounds?: ArrayLike<number>
+  /** Per-mesh uniforms, merge semantics - as on Mesh. */
+  params?: ShaderParams
+  /** Explicit draw-order key (setRenderOrder as a prop); default 0. */
+  renderOrder?: number
+  ref?: (mesh: InstancedMeshNode) => void
+}
+
+/** One draw entry covering N instances: geometry repeated per record of
+ * `records` (createInstancedMesh as a component). The record buffer is
+ * component-owned and freed on unmount. */
+export let InstancedMesh: VoidComponent<InstancedMeshProps> = props => {
+  let ctx = useContext(SceneContext)
+  let mesh = untrack(() =>
+    createInstancedMesh(props.geometry, props.material, props.records, props.count, { bounds: props.bounds }),
+  )
+  add(ctx.parent, mesh)
+  createEffect(
+    () => props.records,
+    r => setInstances(mesh, r, untrack(() => props.count)),
+    { defer: true },
+  )
+  createEffect(
+    () => props.count,
+    c => {
+      if (c !== undefined) setInstanceCount(mesh, c)
+    },
+    { defer: true },
+  )
+  createEffect(
+    () => props.geometry,
+    g => setGeometry(mesh, g),
+    { defer: true },
+  )
+  createEffect(
+    () => props.material,
+    m => setMaterial(mesh, m),
+    { defer: true },
+  )
+  createEffect(
+    () => props.params,
+    p => {
+      if (p !== undefined) setMeshParams(mesh, p)
+    },
+  )
+  createEffect(
+    () => props.renderOrder,
+    o => setRenderOrder(mesh, o ?? 0),
+  )
+  syncNode(mesh, props)
+  untrack(() => props.ref)?.(mesh)
+  onCleanup(() => disposeInstances(mesh))
   return null
 }
 

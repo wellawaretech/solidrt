@@ -23,3 +23,8 @@ depends on `@solidrt/3d` (or in-repo from the package directory).
   scene's own pass (`<Scene background>`): one target, no stacked
   backdrop texture, no resize plumbing; the source is shader-target
   compatible verbatim.
+- `instanced.tsx` - instanced meshes: one material class declaring
+  `instanceAttributes`, two `<InstancedMesh>` fleets (400 scattered
+  rocks, a ring of pines) each ONE draw entry and ONE uModel, a spinning
+  group moving both with two matrix writes, and `setInstanceCount` from
+  onFrame breathing the pine population.

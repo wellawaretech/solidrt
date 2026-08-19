@@ -58,6 +58,7 @@ blendMode and pointer events like any element. Design rationale:
 | `Scene` | `width`, `height` (target pixels), `clearColor?`, `background?` (fragment GLSL), `label?`, `ref?(scene)`, `output?(texture)`, `events?` (mesh pointer events, default on) |
 | `Group` | `position?`, `rotation?` (Euler radians, XYZ order), `quaternion?` (either, not both), `scale?` (number = uniform), `visible?`, pointer events (below), `ref?(node)` |
 | `Mesh` | `geometry`, `material`, transforms as Group, `params?` (per-mesh uniforms, merge semantics - no unset), pointer events (below), `ref?(mesh)` |
+| `InstancedMesh` | as Mesh, plus `records` (interleaved per-instance floats; buffer capacity fixed by the first value), `count?` (records drawn, default all), `bounds?` (local [minX..maxZ] over the population - without it the mesh never picks); the record buffer is component-owned and freed on unmount |
 | `PerspectiveCamera` | `fov?` (vertical DEGREES, default 60), `near?`, `far?`, `position?`, `lookAt?`, `up?` |
 
 Output composition: without `output`, `Scene` emits a minimal
@@ -244,6 +245,34 @@ Materials:
   pipeline with its own values. `dispose()` lives on the class alone.
   `shaderMaterial(opts)` is exactly a class with one instance (its
   `dispose` forwards to the class).
+- `instanceAttributes: [{ name, format }]` on either shader-material form
+  makes an INSTANCED material: the vertex stage reads them as `in`
+  variables beside the layout's own, and each drawn instance gets one
+  record of the mesh's instance buffer. Its meshes come from
+  `createInstancedMesh` (below); a `createMesh` mesh is rejected at add().
+
+Instancing - one draw entry covering a population:
+`createInstancedMesh(geometry, material, records, count?, { bounds?,
+label? })` returns an ordinary Mesh whose entry draws the geometry once
+per record. `records` is the interleaved per-instance data (stride = the
+material's instanceAttributes summed, a mismatch throws), uploaded to a
+mesh-owned buffer whose CAPACITY is fixed at creation. `count` picks how
+many records draw (default all). Everything mesh works unchanged:
+setTransform moves the whole population through one uModel, setVisible
+zeroes the drawn count and restores the record count on unhide,
+renderOrder/params/geometry/material swaps apply. `setInstances(mesh,
+records, count?)` rewrites records from the start (count defaults to the
+records written; more than capacity throws - make a new mesh to grow),
+`setInstanceCount(mesh, n)` is the population dial (clamped to capacity;
+frame-rate-safe), and `disposeInstances(mesh)` detaches and frees the
+record buffer - the one explicit free, geometry-buffer rule. Records are
+opaque data (position/yaw/tint/whatever your shader reads), NOT matrices:
+a per-instance mat4 would be four vec4 columns reassembled in the shader,
+but most fleets want a few floats. Picking: the library cannot know where
+records place instances, so an instanced mesh has NO picking leaf unless
+you pass `bounds` (local, covering the population) - then it picks and
+transparent-sorts conservatively as one box. `examples/instanced.tsx` is
+the live proof.
 
 Background: `scene.setBackground(source | null)`, the `background` option
 on createScene, and the reactive `Scene` prop. Fragment GLSL drawn as the
@@ -281,11 +310,26 @@ system.
   "fix" the negated row of `perspective()` - both would mirror the winding
   and show mesh interiors.
 - `visible: false` keeps the entry, drawn with `instanceCount: 0` (a
-  cheap off switch). Hidden meshes skip uModel writes; the fresh matrix is
+  cheap off switch); unhiding writes 1, or the mesh's own record count
+  when it is instanced - never a bare 1 into an instanced entry. Hidden
+  meshes skip uModel writes; the fresh matrix is
   written on unhide. A freshly attached entry starts off the same way and
   sync() turns it on when it writes uModel - never add one live: it has no
   world matrix yet, and drawn before the sync microtask it flashes at the
   world origin for a frame.
+- Instancing pairs strictly at add(), like layout: an instanced material
+  needs a createInstancedMesh mesh (records included) and vice versa, and
+  the record stride must match the material's attributes - each mismatch
+  throws there. The instance buffer is MESH-owned (unlike shared geometry
+  buffers): `disposeInstances` is its one free, and the mesh cannot be
+  re-added afterwards. Capacity is fixed at creation - `setInstances` with
+  more records than capacity throws rather than growing (growing is a new
+  mesh; buffers do not resize).
+- An instanced mesh without explicit `bounds` has no BVH leaf: it never
+  picks, pointer events never target it, and its transparent sort key
+  falls back to the node's world position. That is deliberate - records
+  are opaque to the library, so any inferred box would be a guess. Supply
+  `bounds` for anything pickable or transparent.
 - Transparency is an EXPLICIT material flag, Three's rule: `unlit({ color:
   [r, g, b, 0.5] })` still draws opaque; `unlit({ ..., transparent: true })`
   (or `shaderMaterial({ transparent: true })`) builds the pipeline with

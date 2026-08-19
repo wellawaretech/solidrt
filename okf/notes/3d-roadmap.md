@@ -130,18 +130,21 @@ what it delivered is documented in `packages/3d/AGENTS.md`, not here.
     local matrix bypasses `compose()`, so it needs either a lossy decompose or
     a second matrix-mode node path beside the position/rotation/scale
     dirty-flag model.
-12. [ ] **Instanced mesh sugar, and billboards.** Library only; the engine
-    half (per-instance attributes) is paid, but `instanceAttributes` does not
-    reach `Mesh`, so the scene graph cannot express it at all. One draw entry
-    and one params write covering N instances is also the standing answer to
-    the churn workloads (particles, projectiles) that the FFI boundary
-    punishes. A `Billboard` node belongs in the same entry: there is no
-    camera-facing node and no point-sprite binding, so the current answer is
-    one mesh holding N quads with per-quad data in the `aColor` channel,
-    animated in the vertex stage off the shared clock. That pattern works
-    well and the `aColor` "standard name, your contents" design absorbs it
-    cleanly, but the camera basis it needs is missing from the shared set
-    (item 2).
+12. [ ] **Instanced mesh sugar, and billboards.** The instancing half
+    shipped 2026-08-19: `shaderMaterialClass({ instanceAttributes })` makes
+    an instanced material, `createInstancedMesh(geometry, material,
+    records, count?, { bounds? })` carries the record buffer (plus
+    `setInstances` / `setInstanceCount` / `disposeInstances` and the
+    `<InstancedMesh>` component), the visibility switch restores the record
+    count instead of writing 1, and picking takes explicit population
+    `bounds` (records are opaque, so without them the mesh simply has no
+    leaf). One draw entry and one uModel covering N instances is the
+    standing answer to the churn workloads (particles, projectiles,
+    streamed scatter - the racing demo's forests were the demand evidence
+    and its shim is retired). Still open: a `Billboard` node. The camera
+    basis it needs (uCamRight/uCamUp) is in the shared set since
+    2026-08-17, so it is unblocked - a camera-facing quad (or instanced
+    quad fleet) off those axes is now library-only work.
 13. [ ] **Camera and control breadth.** OrthographicCamera is small library
     work. First-person controls are blocked on engine
     [relative-mouse-input](../backlog/relative-mouse-input.md) - pointer

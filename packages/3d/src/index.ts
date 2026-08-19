@@ -5,8 +5,8 @@
 // without Solid components) and the component face (Scene/Mesh/Group/
 // PerspectiveCamera) on top. See AGENTS.md for the model and the traps.
 
-export { add, createGroup, createMesh, createScene, getRotation, lookAt, remove, setGeometry, setMaterial, setMeshParams, setRenderOrder, setTransform, setVisible, worldPosition } from "./scene.ts"
-export type { CameraUpdate, Hit, Mesh as MeshNode, Scene as SceneHandle, SceneHandlers, SceneNode, SceneOptions, ScenePointerEvent, TransformUpdate } from "./scene.ts"
+export { add, createGroup, createInstancedMesh, createMesh, createScene, disposeInstances, getRotation, lookAt, remove, setGeometry, setInstanceCount, setInstances, setMaterial, setMeshParams, setRenderOrder, setTransform, setVisible, worldPosition } from "./scene.ts"
+export type { CameraUpdate, Hit, InstancedMesh as InstancedMeshNode, InstancedMeshOptions, Mesh as MeshNode, MeshInstances, Scene as SceneHandle, SceneHandlers, SceneNode, SceneOptions, ScenePointerEvent, TransformUpdate } from "./scene.ts"
 export { disposeGeometry } from "./geometry-gpu.ts"
 export { box, circle, cone, cylinder, fillColors, geometryBounds, mergeGeometries, plane, ring, sphere, torus, torusKnot, transformGeometry, withColors, FLOATS_PER_VERTEX, VERTEX_LAYOUTS } from "./geometry.ts"
 export type { ColorFill, Geometry, VertexLayout } from "./geometry.ts"
@@ -17,8 +17,8 @@ export { extrude, lathe, pathFrames, sweep, tube } from "./sweep.ts"
 export type { PathFrames, PathPoint, SweepPath } from "./sweep.ts"
 export { shaderMaterial, shaderMaterialClass, unlit } from "./material.ts"
 export type { Material, ShaderMaterialClass, ShaderMaterialClassOptions, ShaderMaterialInstanceOptions, ShaderMaterialOptions, UnlitOptions } from "./material.ts"
-export { Group, Mesh, PerspectiveCamera, Scene, useScene } from "./components.tsx"
-export type { MeshProps, PerspectiveCameraProps, PointerEventProps, SceneProps, TransformProps } from "./components.tsx"
+export { Group, InstancedMesh, Mesh, PerspectiveCamera, Scene, useScene } from "./components.tsx"
+export type { InstancedMeshProps, MeshProps, PerspectiveCameraProps, PointerEventProps, SceneProps, TransformProps } from "./components.tsx"
 export { createOrbitCamera } from "./orbit.ts"
 export type { OrbitCamera, OrbitCameraOptions, OrbitPose } from "./orbit.ts"
 // math's lookAt (the camera view matrix) stays on the /math subpath: the

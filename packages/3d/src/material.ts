@@ -35,6 +35,7 @@ import type {
   ShaderStageId,
   TextureId,
   Topology,
+  VertexAttribute,
 } from "@solidrt/core/gpu"
 import { VERTEX_LAYOUTS } from "./geometry.ts"
 import type { VertexLayout } from "./geometry.ts"
@@ -59,6 +60,11 @@ export type Material = {
    * the scene draws this material's meshes after every opaque one, sorted
    * back-to-front by mesh origin, and re-sorts them when the camera moves. */
   transparent?: boolean
+  /** Per-instance attributes, when the material's pipeline declares them
+   * (shaderMaterialClass's `instanceAttributes`). Such a material draws
+   * instanced meshes only - createInstancedMesh supplies the record buffer,
+   * and createMesh meshes are rejected at add(). */
+  instanceAttributes?: VertexAttribute[]
   /** Present on materials that own their pipeline (shaderMaterial). */
   dispose?(): void
 }
@@ -226,6 +232,17 @@ export type ShaderMaterialClassOptions = {
    */
   vertex: string
   fragment: string
+  /**
+   * Per-instance attributes: the vertex stage reads these as `in` variables
+   * beside the layout's own, and each drawn instance gets one record from
+   * the mesh's instance buffer (interleaved floats in this order). A class
+   * with instance attributes makes INSTANCED materials: attach their meshes
+   * with createInstancedMesh, which carries the records - a createMesh mesh
+   * is rejected at add(). A per-instance transform is data, not a matrix:
+   * a position/yaw/scale record beats four vec4 columns for most fleets,
+   * and the composed uModel still places the whole population.
+   */
+  instanceAttributes?: VertexAttribute[]
   /** Blend over what is behind, with the scene sorting this material's
    * meshes back-to-front after the opaque ones (see Material.transparent).
    * Sets the pipeline defaults blend "alpha" and depthWrite false; the
@@ -298,6 +315,9 @@ export function shaderMaterialClass(opts: ShaderMaterialClassOptions): ShaderMat
   let normalMatrix = /\buNormal\b/.test(opts.vertex) || /\buNormal\b/.test(opts.fragment)
   let transparent = opts.transparent ?? (opts.blend !== undefined && opts.blend !== "none")
   let depth = opts.depth ?? true
+  // An empty list declares nothing - same as absent (the engine requires an
+  // instance buffer exactly when attributes are declared).
+  let instanceAttributes = opts.instanceAttributes?.length ? opts.instanceAttributes.map(a => ({ ...a })) : undefined
   let pipelineFor = (): RenderPipelineId => {
     if (pipeline === undefined) {
       let vs = compileShader("vertex", opts.vertex, { header: needsHeader(opts.vertex) })
@@ -307,6 +327,7 @@ export function shaderMaterialClass(opts: ShaderMaterialClassOptions): ShaderMat
       destroyShader(fs)
       pipeline = createRenderPipeline(program, {
         attributes: VERTEX_LAYOUTS[layout],
+        instanceAttributes,
         depth,
         // depthWrite needs a depth buffer, so the transparent default
         // only applies when there is one.
@@ -321,7 +342,7 @@ export function shaderMaterialClass(opts: ShaderMaterialClassOptions): ShaderMat
   }
   return {
     instance(inst = {}) {
-      return { normalMatrix, layout, transparent, pipeline: pipelineFor, params: inst.params ?? {}, textures: inst.textures }
+      return { normalMatrix, layout, transparent, instanceAttributes, pipeline: pipelineFor, params: inst.params ?? {}, textures: inst.textures }
     },
     dispose() {
       if (pipeline !== undefined) {
