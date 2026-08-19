@@ -16,7 +16,7 @@
 // array math (the check rig checks/geometry-check.ts runs it headless on
 // flux). The GPU buffer step lives in geometry-gpu.ts.
 
-import type { BufferId, VertexAttribute } from "@solidrt/core/gpu"
+import type { VertexAttribute } from "@solidrt/core/gpu"
 import { add, compose, cross, mat4, normalize, normalMatrix, sub, updateRotation, updateScale } from "./math.ts"
 import type { Quat, TransformUpdate, Vec2, Vec3, Vec4 } from "./math.ts"
 
@@ -58,8 +58,6 @@ export type Geometry = {
   layout?: VertexLayout
   /** Debug name for the lazily-created GPU buffers. */
   label?: string
-  _buffer?: BufferId
-  _index?: BufferId
   _bounds?: Float32Array
 }
 

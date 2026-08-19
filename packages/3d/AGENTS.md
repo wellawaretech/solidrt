@@ -39,8 +39,10 @@ blendMode and pointer events like any element. Design rationale:
   Indices are uint16 or uint32 - the `Geometry.indices` array type picks
   the draw's index format, so hand-built geometry past 64k vertices just
   uses a Uint32Array (generators emit uint16). Geometry GPU buffers are
-  lazy, shared, and app-lifetime (owner-scoped free would break sharing);
-  `disposeGeometry` frees them.
+  lazy, shared, and reference-counted by draw entries: removing the last
+  entry frees them at the end of the microtask (a same-tick rebuild keeps
+  the upload), so swapping `<Mesh geometry>` reactively never accumulates
+  old generations. `disposeGeometry` is the immediate explicit free.
 - Materials dedupe hard: one program + one pipeline per material CLASS
   (unlit color, unlit map, each opaque or transparent), `depth: true` +
   `cull: "back"`; an instance is

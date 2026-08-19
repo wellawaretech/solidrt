@@ -67,7 +67,11 @@ change - plus your own uniforms: scene-wide via `scene.setParams` (one write
 however many meshes read it), or per mesh, declaratively via the `params`
 prop on `<Mesh>` or imperatively via `setMeshParams`. `shaderMaterialClass`
 compiles one program and hands out `instance()` materials that differ only
-in params/textures. And
+in params/textures - and with `instanceAttributes` it makes an instanced
+material: `<InstancedMesh records>` (or `createInstancedMesh`) then draws
+the geometry once per interleaved record as ONE draw entry, the shape for
+forests, particles, and every fleet whose per-copy data is a few floats
+(`examples/instanced.tsx`). And
 `@solidrt/3d/glsl` exports the lighting pieces (hemisphere, lambert,
 blinn, fresnel, a standard vertex stage) to compose your own lit looks
 from plain template literals.

@@ -12,6 +12,10 @@ are in [README.md](README.md); loose ideas are in [ideas.md](ideas.md).
 
 Decided and being worked on now. A plan nobody is working on goes back to backlog/ - see okf/README.md.
 
+- **[The 2D extension (@solidrt/2d) and the buffer write lease](plans/2d-extension.md)** [2026-08-19]
+  An instanced sprite layer as the third extension, built on a new zero-copy
+  GPU buffer write lease in core; tiers, measurements, and the design
+  decisions
 - **[Client storage and bundle updates](plans/client-storage-updates.md)** [2026-07-20]
   "Implements the update-mechanism research: data-root resolution, a
   hardlinked version store with dev-push-as-install and offline relaunch,
@@ -33,17 +37,19 @@ Decided and being worked on now. A plan nobody is working on goes back to backlo
 
 Shaped, not started.
 
+- **[Baked layers and tilemaps for @solidrt/2d](backlog/2d-baked-layers.md)** [2026-08-19]
+  Static 2D bulk (tile worlds, backgrounds) rendered once into a texture and
+  drawn as ONE quad, with incremental re-bake - the primitive-count answer for
+  tiled GPUs
+- **[Retro presets for @solidrt/2d](backlog/2d-retro-presets.md)** [2026-08-19]
+  The pixel-art identity kit - fixed logical resolution with integer nearest
+  scaling, palette LUT, and scanline/CRT passes - as thin layers over what
+  already exists
 - **[Colored geometry generates twice](backlog/3d-colored-generators.md)** [2026-08-19]
   withColors throws on anything but standard-layout input and copies into a
   fresh buffer, so building coloured geometry always generates twice; a layout
   option on the generators or a colored flag would remove the copy. Split from
   3d-geometry-ops when that shipped 2026-08-19.
-- **[Geometry GPU buffers accumulate when a Mesh's geometry prop changes](backlog/3d-geometry-buffer-disposal.md)** [2026-08-18]
-  Swapping <Mesh geometry> reactively leaves every previous generation's
-  vertex/index buffers resident, because geometry buffers are app-lifetime and
-  only disposeGeometry frees them; the declarative layer has no disposal story
-  to pair with the prop. Rides along - move the _buffer/_index handles off the
-  Geometry type into geometry-gpu.ts (a WeakMap) when the owner is decided.
 - **[Adaptive present-fence depth](backlog/adaptive-present-fence-depth.md)** [2026-07-27]
   Fallback design if unconditional two-deep present fencing ever shows up as
   desktop drag latency - allow the second in-flight frame only when observed
@@ -239,6 +245,10 @@ Shaped, not started.
   has depth textures and sampler2DShadow in core. The storage swap is small;
   the open question is naming - a target's id names its color, so depth needs
   an id of its own. Split from gpu-pipeline-extensions 2026-08-11.
+- **[Streaming GPU buffers sampled at frame time](backlog/gpu-stream-buffers.md)** [2026-08-19]
+  A no-publish-call shared-memory buffer - a persistent JS view the raster
+  thread samples during Frame handling - as the follow-on to the begin/end
+  write lease
 - **[Whole-system GPU attribution, per platform](backlog/gpu-system-attribution.md)** [2026-08-13]
   Answering "who else is burning the GPU" needs a different mechanism on every
   OS, so it wants a documented per-platform recipe or an srt doctor helper
@@ -540,6 +550,12 @@ Shaped, not started.
 
 Finished, kept for the reasoning.
 
+- **[Geometry GPU buffers accumulate when a Mesh's geometry prop changes](done/3d-geometry-buffer-disposal.md)** [2026-08-18]
+  Swapping <Mesh geometry> reactively leaves every previous generation's
+  vertex/index buffers resident, because geometry buffers are app-lifetime and
+  only disposeGeometry frees them; the declarative layer has no disposal story
+  to pair with the prop. Rides along - move the _buffer/_index handles off the
+  Geometry type into geometry-gpu.ts (a WeakMap) when the owner is decided.
 - **[Geometry as data - transform, merge, public bounds](done/3d-geometry-ops.md)** [2026-08-17]
   The generators build geometry and nothing can move or combine it, so a
   static scene authored as data has to become one Mesh node per part;

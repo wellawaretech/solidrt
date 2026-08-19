@@ -6,6 +6,7 @@
       "devDependencies": {
         "@solidjs/signals": "2.0.0-rc.0",
         "@solidjs/universal": "2.0.0-rc.0",
+        "@solidrt/2d": "workspace:*",
         "@solidrt/3d": "workspace:*",
         "@solidrt/cli": "workspace:*",
         "@solidrt/components": "workspace:*",
@@ -25,6 +26,14 @@
         "@solidrt/cli": "workspace:*",
         "@solidrt/flux-types": "workspace:*",
         "typescript": "^7",
+      },
+    },
+    "packages/2d": {
+      "name": "@solidrt/2d",
+      "version": "0.0.0",
+      "peerDependencies": {
+        "@solidjs/signals": "2.0.0-rc.0",
+        "@solidrt/core": "workspace:*",
       },
     },
     "packages/3d": {
@@ -224,6 +233,8 @@
     "@solidjs/signals": ["@solidjs/signals@2.0.0-rc.0", "", {}, "sha512-oKZSfvsCcKw1uJjOGbUkJ+OqlhXLHtZ+rShSyu9KH0lUH7UUwfMfsKeh81JPiQxDDg4YLhEwI38hg0JkwzTdvA=="],
 
     "@solidjs/universal": ["@solidjs/universal@2.0.0-rc.0", "", { "peerDependencies": { "solid-js": "^2.0.0-rc.0" } }, "sha512-nSYB1Smg/0GqJtV3bGNz5tsk1ZZLWTeeuXPkCnYpVnhv8NhTiQJbeJHhpKamg4XunPjl73YyEhMDr9kFYnb7qw=="],
+
+    "@solidrt/2d": ["@solidrt/2d@workspace:packages/2d"],
 
     "@solidrt/3d": ["@solidrt/3d@workspace:packages/3d"],
 

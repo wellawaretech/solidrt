@@ -28,7 +28,8 @@ import type { PointerEvent as ElementPointerEvent } from "@solidrt/core"
 import { compose, copy, eulerFromQuat, identity, invertAffine, lookAt as lookAtMatrix, mat4, multiply, normalMatrix, perspective, quat, quatFromFrame, transformPoint, transformVector, updateRotation, updateScale } from "./math.ts"
 import type { Mat4, Quat, TransformUpdate, Vec3, Vec4 } from "./math.ts"
 import { geometryBounds } from "./geometry.ts"
-import { geometryBuffers } from "./geometry-gpu.ts"
+import { acquireGeometryBuffers, releaseGeometryBuffers } from "./geometry-gpu.ts"
+import type { GeometryBuffers } from "./geometry-gpu.ts"
 import type { Geometry } from "./geometry.ts"
 import { backgroundPipeline } from "./material.ts"
 import { orderEntries } from "./order.ts"
@@ -112,6 +113,10 @@ export type Mesh = SceneNode & {
    * transparent group always follows the opaque one. Set with setRenderOrder. */
   renderOrder: number
   _entry: DrawId | null
+  /** The geometry-buffer reference the entry was built from, acquired at
+   * attach and what _detach releases - like _transparent, a snapshot,
+   * because setGeometry swaps mesh.geometry before the rebuild. */
+  _buffers: GeometryBuffers | null
   /** material.transparent as of the last attach - the entry's actual
    * pipeline state, and what _detach counts against (setMaterial swaps
    * mesh.material before the rebuild). */
@@ -306,9 +311,10 @@ export type Scene = {
    * layout just works: `scene.handlersFor(() => ({ width: w(), height:
    * h() }))`. */
   handlersFor(layout: () => { width: number; height: number }): SceneHandlers
-  /** Destroy the target (entries die with it). Idempotent. Geometry
-   * buffers and material pipelines are shared and survive - they are
-   * app-lifetime (see geometry.ts / material.ts). */
+  /** Destroy the target (entries die with it). Idempotent. Material
+   * pipelines are shared and survive (app-lifetime, see material.ts);
+   * geometry buffers are reference-counted and freed with their last
+   * entry (see geometry-gpu.ts). */
   dispose(): void
 }
 
@@ -338,6 +344,7 @@ export function createMesh(geometry: Geometry, material: Material): Mesh {
   mesh.material = material
   mesh.renderOrder = 0
   mesh._entry = null
+  mesh._buffers = null
   mesh._transparent = false
   mesh._center = [0, 0, 0]
   mesh._hidden = false
@@ -466,8 +473,9 @@ export function setInstanceCount(mesh: InstancedMesh, count: number): void {
 
 /**
  * Detach the mesh (if attached) and free its record buffer. The buffer is
- * mesh-owned and app-lifetime (the geometry-buffer rule), so this is the
- * one explicit free; the mesh cannot be re-added afterwards.
+ * mesh-owned with no reference count (unlike geometry buffers it is never
+ * shared), so this is the one explicit free; the mesh cannot be re-added
+ * afterwards.
  */
 export function disposeInstances(mesh: InstancedMesh): void {
   let inst: MeshInstances | null = mesh._instances
@@ -934,7 +942,8 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
           )
         }
       }
-      let bufs = geometryBuffers(mesh.geometry)
+      let bufs = acquireGeometryBuffers(mesh.geometry)
+      mesh._buffers = bufs
       // The uNormal seed keys off the material flag because entry params
       // validate strictly - and a material declaring uNormal without using
       // it therefore throws right here, at add().
@@ -965,6 +974,8 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     _detach(mesh) {
       if (mesh._entry !== null) {
         if (!disposed) removeDraw(texture, mesh._entry)
+        if (mesh._buffers !== null) releaseGeometryBuffers(mesh._buffers)
+        mesh._buffers = null
         let i = meshes.indexOf(mesh)
         if (i >= 0) meshes.splice(i, 1)
         if (mesh._transparent) transparentCount--
@@ -1234,6 +1245,10 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     dispose() {
       if (disposed) return
       disposed = true
+      // Full mesh-side teardown, not just the target: _detach drops each
+      // entry's geometry-buffer reference and pick leaf and clears _entry,
+      // so a disposed scene leaves no mesh bookkeeping behind.
+      for (let mesh of meshes.slice()) hooks._detach(mesh)
       destroyTexture(texture)
       if (background !== null) {
         // The entry died with the target; the pipeline and program are the

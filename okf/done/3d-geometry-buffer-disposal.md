@@ -33,7 +33,28 @@ An app that only ever swaps `<Mesh geometry>` does not leak, and sharing one
 geometry between meshes/scenes stays free. `packages/3d/AGENTS.md` states
 the intended pattern for geometry that changes reactively in one sentence.
 
-## Options
+## Resolution (2026-08-20)
+
+Option 1 shipped, with the free deferred to a microtask. Buffer handles and
+a reference count live in a WeakMap private to `geometry-gpu.ts`
+(`acquireGeometryBuffers`/`releaseGeometryBuffers`); the scene acquires at
+entry add, stores the returned token on the mesh (`_buffers`, the
+`_transparent` idiom: a snapshot, because setGeometry swaps the prop before
+the rebuild), and releases exactly that token at entry remove - so the
+pairing is order-independent and survives any write path to
+`mesh.geometry`. `scene.dispose()` detaches its meshes so their references
+drop, and the last release frees at the end of the microtask - so a
+same-tick rebuild (a `setMaterial`, a geometry that comes right back)
+keeps its upload. `disposeGeometry` stays as the immediate explicit free. The ride-along
+landed with it: `Geometry` lost `_buffer`/`_index` and is plain data again.
+
+The accepted trade from the option list stands: a cached prefab that leaves
+every scene re-uploads on reappearance. Verified live with
+`probes/geometry-swap-probe.tsx` - swapping generations leaves exactly one
+`gen-N` buffer pair resident, and a geometry shared by two meshes keeps its
+buffers when one unmounts.
+
+## Options (as shaped)
 
 1. Refcount by draw entries: the scene increments on entry add, decrements
    on entry remove, frees at zero. Lazy re-creation on next use already

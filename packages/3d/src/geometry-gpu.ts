@@ -1,46 +1,86 @@
 // Geometry on the GPU: the lazy buffer step for geometry.ts's data. Buffers
-// are created on first use and shared by every mesh and scene drawing the
-// geometry. They are app-lifetime by design - one geometry commonly
-// outlives the component that first drew it, so owner-scoped auto-free
-// would free a buffer other scenes still draw from. disposeGeometry frees
-// them when an app is done with a geometry for good.
+// are created on first acquire and shared by every mesh and scene drawing
+// the geometry; each draw entry holds one reference, and the buffers are
+// freed when the last reference is released - deferred to a microtask, so
+// a same-tick entry rebuild (a material swap, a geometry that comes right
+// back) keeps its upload. The handles and the reference count live in a
+// map private to this module, keeping Geometry itself plain data.
+// disposeGeometry frees immediately, the explicit override; either way the
+// geometry stays usable - fresh buffers are created on next acquire.
 
 import { createBuffer, destroyBuffer } from "@solidrt/core/gpu"
 import type { BufferId, IndexFormat } from "@solidrt/core/gpu"
 import type { Geometry } from "./geometry.ts"
 
-/** The geometry's GPU buffers, created on first use and cached on it,
- * plus the index format the draw entry must bind them with. */
-export function geometryBuffers(geometry: Geometry): {
+/** An acquired reference to a geometry's GPU buffers: what a draw entry
+ * binds, and the token releaseGeometryBuffers takes - releasing the exact
+ * acquisition keeps the pairing correct however the caller's geometry
+ * fields have moved since. */
+export type GeometryBuffers = {
   buffer: BufferId
   index: BufferId
   indexFormat: IndexFormat
-} {
-  let buffer = geometry._buffer
-  let index = geometry._index
-  if (buffer === undefined || index === undefined) {
-    buffer = createBuffer(geometry.vertices, {
-      autoFree: false,
-      label: geometry.label ? geometry.label + "-verts" : undefined,
-    })
-    index = createBuffer(geometry.indices, {
-      autoFree: false,
-      label: geometry.label ? geometry.label + "-indices" : undefined,
-    })
-    geometry._buffer = buffer
-    geometry._index = index
+}
+
+type GpuEntry = GeometryBuffers & { geometry: Geometry; refs: number }
+
+let entries = new WeakMap<Geometry, GpuEntry>()
+
+/** The geometry's GPU buffers, created on first use, plus the index format
+ * the draw entry must bind them with. Takes a reference - pair every
+ * acquire with a releaseGeometryBuffers of the returned token when the
+ * entry built from it goes. */
+export function acquireGeometryBuffers(geometry: Geometry): GeometryBuffers {
+  let entry = entries.get(geometry)
+  if (entry === undefined) {
+    entry = {
+      geometry,
+      buffer: createBuffer(geometry.vertices, {
+        autoFree: false,
+        label: geometry.label ? geometry.label + "-verts" : undefined,
+      }),
+      index: createBuffer(geometry.indices, {
+        autoFree: false,
+        label: geometry.label ? geometry.label + "-indices" : undefined,
+      }),
+      indexFormat: geometry.indices instanceof Uint32Array ? "uint32" : "uint16",
+      refs: 0,
+    }
+    entries.set(geometry, entry)
   }
-  return { buffer, index, indexFormat: geometry.indices instanceof Uint32Array ? "uint32" : "uint16" }
+  entry.refs++
+  return entry
+}
+
+/** Release one acquire. At zero references the buffers are freed at the
+ * end of the microtask; an acquire before then keeps them, so a detach and
+ * re-attach in one tick never re-uploads. A token orphaned by an explicit
+ * disposeGeometry releases against the orphan, never against a successor's
+ * fresh buffers. */
+export function releaseGeometryBuffers(acquired: GeometryBuffers): void {
+  let entry = acquired as GpuEntry
+  if (entry.refs === 0) return
+  entry.refs--
+  if (entry.refs > 0) return
+  queueMicrotask(() => {
+    if (entries.get(entry.geometry) !== entry || entry.refs > 0) return
+    entries.delete(entry.geometry)
+    destroyBuffer(entry.buffer)
+    destroyBuffer(entry.index)
+  })
 }
 
 /**
- * Free the geometry's GPU buffers. Draw entries created from them hold
- * their own reference, so destruction order is safe; the geometry can be
- * used again afterwards (fresh buffers are created on next use).
+ * Free the geometry's GPU buffers now, held references or not - the
+ * explicit override for geometry an app is done with for good. Draw
+ * entries created from them hold their own reference, so destruction order
+ * is safe; the geometry can be used again afterwards (fresh buffers are
+ * created on next use).
  */
 export function disposeGeometry(geometry: Geometry): void {
-  if (geometry._buffer !== undefined) destroyBuffer(geometry._buffer)
-  if (geometry._index !== undefined) destroyBuffer(geometry._index)
-  geometry._buffer = undefined
-  geometry._index = undefined
+  let entry = entries.get(geometry)
+  if (entry === undefined) return
+  entries.delete(geometry)
+  destroyBuffer(entry.buffer)
+  destroyBuffer(entry.index)
 }

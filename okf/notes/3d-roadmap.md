@@ -140,8 +140,9 @@ what it delivered is documented in `packages/3d/AGENTS.md`, not here.
     `bounds` (records are opaque, so without them the mesh simply has no
     leaf). One draw entry and one uModel covering N instances is the
     standing answer to the churn workloads (particles, projectiles,
-    streamed scatter - the racing demo's forests were the demand evidence
-    and its shim is retired). Still open: a `Billboard` node. The camera
+    streamed scatter - a chunk-streamed forest at hundreds of instances
+    per chunk was the demand evidence, previously only possible by
+    shimming the entry swap by hand). Still open: a `Billboard` node. The camera
     basis it needs (uCamRight/uCamUp) is in the shared set since
     2026-08-17, so it is unblocked - a camera-facing quad (or instanced
     quad fleet) off those axes is now library-only work.
