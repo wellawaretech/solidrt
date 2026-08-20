@@ -71,7 +71,11 @@ declare module "flux:audio" {
 
   /** One playing instance of a clip, with live controls bound to it. */
   type Playback = {
-    /** Stop this playback. A no-op if it already finished. */
+    /**
+     * Stop this playback. A no-op if it already finished. Stopping is not
+     * pausing: a stopped playback is gone for good, including a looping one -
+     * to silence it temporarily, ramp its gain to 0 instead.
+     */
     stop(options?: StopOptions): void
     /**
      * Change the volume while playing. A finite number >= 0; 1.0 is the clip's
@@ -147,7 +151,9 @@ declare module "flux:audio" {
   export function stream(source: ReturnType<typeof import("flux:fs").file>): Clip
   /**
    * Stop every playing sound - or just one bus with `{ bus }` - fading it
-   * out first if asked.
+   * out first if asked. Stopping is not pausing: stopped playbacks (looping
+   * ones included) cannot be restarted - to silence a group temporarily,
+   * ramp gains to 0 instead.
    */
   export function stop(options?: StopAllOptions): void
   /**
@@ -174,4 +180,10 @@ declare module "flux:audio" {
    * ```
    */
   export function setBusGain(bus: string, gain: number, options?: RampOptions): void
+  /**
+   * The mixer's output sample rate in Hz. Synthesize PCM at this rate and
+   * {@link loadPcm} feeds it to the mixer without a resample. Opens the audio
+   * device on first use, like the load and play calls.
+   */
+  export function outputSampleRate(): number
 }

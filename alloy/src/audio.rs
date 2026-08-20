@@ -579,6 +579,15 @@ impl crate::context::Context {
     }
   }
 
+  /// The mixer's output sample rate in Hz. Synthesizing PCM at this rate
+  /// avoids a resample on every voice. Opens the device if needed, so it is
+  /// valid before the first play.
+  pub fn audio_output_sample_rate(&self) -> Result<i32, String> {
+    let mixer = self.audio.mixer()?;
+    let spec = mixer.format().map_err(|e| format!("failed to query mixer format: {e}"))?;
+    Ok(spec.freq)
+  }
+
   /// Whether a track finished playing, naturally or via stop. An unknown id
   /// reads as ended: finished tracks are swept from the registry, so absence
   /// means the voice is gone.

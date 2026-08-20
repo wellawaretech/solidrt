@@ -88,8 +88,9 @@ declare module "srt:dev" {
   /**
    * Register a named debug command, listable and callable from the dev server
    * (the list_debug / call_debug MCP tools). `args` arrives JSON-parsed; the
-   * return value must be JSON-serializable and synchronous (promises are not
-   * awaited). Re-registering a name replaces it; registrations reset on hot
+   * return value must be JSON-serializable and synchronous (an async command's
+   * Promise is not awaited - the call errors). Re-registering a name replaces
+   * it; registrations reset on hot
    * reload, so register at module init. Callable in every build, but only dev
    * clients ever invoke commands.
    */

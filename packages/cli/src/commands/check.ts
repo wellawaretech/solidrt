@@ -128,6 +128,13 @@ export function reportTypes(
 
 export async function runCheckCommand() {
   let entry = source!
+  if (!existsSync(entry)) {
+    // Without this, the missing file surfaces later as an internal ENOENT
+    // stack trace (scandir/Bun.build), which reads as a CLI bug - the common
+    // cause is just running from the wrong directory.
+    console.error(`No such entry: ${entry} (resolved from ${process.cwd()})`)
+    process.exit(1)
+  }
   let failed = false
 
   let result = await bundleWith({ entry, dev: true, minify: false })

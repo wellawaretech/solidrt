@@ -41,6 +41,7 @@ impl ModuleDef for AudioModule {
     decl.declare("stop")?;
     decl.declare("setMasterGain")?;
     decl.declare("setBusGain")?;
+    decl.declare("outputSampleRate")?;
     Ok(())
   }
 
@@ -52,6 +53,7 @@ impl ModuleDef for AudioModule {
     exports.export("stop", Function::new(ctx.clone(), stop_all_impl)?)?;
     exports.export("setMasterGain", Function::new(ctx.clone(), set_master_gain_impl)?)?;
     exports.export("setBusGain", Function::new(ctx.clone(), set_bus_gain_impl)?)?;
+    exports.export("outputSampleRate", Function::new(ctx.clone(), output_sample_rate_impl)?)?;
     Ok(())
   }
 }
@@ -330,6 +332,11 @@ fn set_master_gain_impl<'js>(ctx: Ctx<'js>, gain: f32, options: OptArg<Object<'j
 /// the interim pattern.
 fn set_bus_gain_impl(ctx: Ctx<'_>) -> rquickjs::Result<()> {
   Err(throw_str(&ctx, "setBusGain: not implemented yet; keep a bus gain in the app and multiply it into each voice's setGain"))
+}
+
+fn output_sample_rate_impl(ctx: Ctx<'_>) -> rquickjs::Result<i32> {
+  let state = ctx.userdata::<AudioPluginState>().expect("audio state");
+  state.0.audio_output_sample_rate().map_err(|e| throw_str(&ctx, &format!("outputSampleRate: {e}")))
 }
 
 fn ended_impl(ctx: Ctx<'_>, id: u64) -> bool {

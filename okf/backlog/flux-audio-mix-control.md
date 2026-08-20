@@ -150,13 +150,25 @@ the `.d.ts`.
 - Playback position and clip duration: `ended()` is the entire query
   surface; syncing visuals to audio or chaining one-shots means polling.
   SDL exposes `Track::playback_position`/`remaining` and `Audio::duration` -
-  plumbing, when a consumer shows up.
+  plumbing, when a consumer shows up. A consumer has now appeared
+  (2026-08-20, a demo app: measuring clip duration meant polling `ended()`
+  in a loop).
+- No pause/resume (new ask 2026-08-20): a voice can only be stopped, never
+  parked - `stop` is destructive (see stage 3b evidence). SDL has
+  `MIX_PauseTrack`/`MIX_ResumeTrack`; plumbing, when the shape is decided
+  (per-playback? per-bus?).
 - `loop` is fixed at `play()` time; "finish this loop then stop" is not
   expressible. `Track::set_loops(0)` is exactly that - a `setLoop` would be
-  plumbing.
-- Output rate: an app synthesizing PCM has to guess the device rate (44100).
-  `Mixer::format()` has the real spec; expose the output sample rate so
-  synthesis can avoid resampling.
+  plumbing. (`stop({ fadeOutMs })` covers most reported wants.)
+- Output rate: DONE 2026-08-20 (uncommitted) - `outputSampleRate()` in
+  flux:audio (alloy `audio_output_sample_rate` over `Mixer::format()`; opens
+  the device on first use). Consumer appeared the same day (a demo app
+  synthesizing its entire soundtrack guessed 44100).
+- UNVERIFIED question (2026-08-20): does SDL_mixer's resampler wrap
+  interpolation across a loop point, or clamp? Clamping would click once
+  per period on a looping clip at non-unity rate. Answerable by reading the
+  SDL_mixer resampler source; not audible-testable here (no loopback
+  capture device).
 
 Deliberate non-goals, for the record: no completion callback (`ended()`
 polling is the contract; the module has no audio-thread pump - the C-level
@@ -202,4 +214,13 @@ okf/done/flux-audio-voice-control.md), and the ~3 dB step between omitted
       in the mix loop; building it over SDL_mixer instead would take ~150
       disposable lines of engine-side composition (voice-gain shadows, bus
       membership, product writes on every change and ramp step).
-4. Position/duration/setLoop/output-rate as consumers appear.
+      Field evidence for the gap (2026-08-20, a demo app): wanting to
+      temporarily silence its looping voices, the only group-level control
+      was `stop({ bus })` - which ends them for good, and since nothing
+      recreated the loops the app went permanently silent, while `setGain`
+      on the ended playbacks kept succeeding as documented no-ops so
+      app-side state looked correct throughout. The .d.ts now warns on both
+      stops that stopping is not pausing (added 2026-08-20); the
+      non-destructive group control remains this item.
+4. Position/duration/setLoop/pause-resume as consumers appear (output-rate
+   landed 2026-08-20, see section 7; position/duration now has a consumer).

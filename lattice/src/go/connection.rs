@@ -1637,8 +1637,15 @@ fn debug_call_reply(ctx: &flux::rquickjs::Ctx<'_>, id: u64, name: &str, args: Op
   match result {
     Err(e) => error_reply(id, &flux::rquickjs::CaughtError::from_error(ctx, e).to_string()),
     Ok(value) => {
-      // A returned Promise stringifies as {} - async commands are not
-      // supported (yet); commands must return synchronously.
+      // An async command returns a Promise, which would stringify as {} and
+      // read as a silent success. The reply is encoded right here - nothing
+      // awaits it - so reject loudly instead.
+      if value.as_promise().is_some() {
+        return error_reply(
+          id,
+          &format!("debug command '{name}' returned a Promise; commands must return synchronously (not be async)"),
+        );
+      }
       match ctx.json_stringify(value) {
         Ok(Some(s)) => {
           let text = s.to_string().unwrap_or_default();
