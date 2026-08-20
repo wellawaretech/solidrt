@@ -7,6 +7,15 @@ trust this file and the types in src/types.d.ts and jsx-runtime.d.ts.
 SolidRT is a custom SolidJS renderer: it paints through a Rust runtime, not the
 DOM. There is no HTML, no CSS cascade, no `className`.
 
+Two companion files carry the depth this one leaves out; read the one that
+matches the work before starting it:
+- agents/painting.md - what you paint with, and what replaces each CSS
+  reflex. Read before styling a screen: a background, a gradient, a shadow,
+  an effect, vector art, a chart.
+- agents/performance.md - the performance model, in order of leverage. Read
+  before writing any per-frame code, any animation, or anything that writes
+  properties in a loop.
+
 ## The window is device-sized - design fluid
 
 A SolidRT window is host-sized and resizable, and the SAME app runs on phones,
@@ -135,6 +144,8 @@ Peer deps @solidjs/signals and @solidjs/universal must match (currently
   box center; a d-view has no box). To scale a detached group around its
   content's center, set the origin explicitly in pixels, e.g.
   `originX={100} originY={50}` for content drawn in a 200x100 local space.
+  Avoid pct()/keyword origins on a d-view - they resolve against the box
+  inherited from the nearest laid-out ancestor.
 
 - Layout-affecting vs not (this matters for per-frame work). Props fall in three
   buckets, split by where they take effect:

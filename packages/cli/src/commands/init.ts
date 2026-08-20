@@ -30,6 +30,18 @@ function packageName(dir: string): string {
 
 const DEFAULT_TEMPLATE = "default"
 
+// One AGENTS.md serves every template, so the lines that point an agent at
+// @solidrt/components docs are fenced between markers: with the extension
+// selected only the markers go, without it the block goes too, so a core-only
+// app never ships references to files that are not installed.
+const MARKED_BLOCK = /^<!-- components:begin -->\n[\s\S]*?^<!-- components:end -->\n/gm
+const MARKER = /^<!-- components:(?:begin|end) -->\n/gm
+
+function resolveMarkers(text: string, extensions: Extension[]): string {
+  let selected = extensions.some((e) => e.pkg === "@solidrt/components")
+  return selected ? text.replace(MARKER, "") : text.replace(MARKED_BLOCK, "")
+}
+
 // Optional packages an app can opt into on top of core. Each maps to a
 // dependency in the scaffold package.json (kept when selected, removed
 // otherwise) and optionally to a starter under scaffold/templates/.
@@ -95,7 +107,9 @@ export async function runInitCommand() {
   for (let { from, to } of TEMPLATE_FILES) {
     let dest = join(dir, to)
     await mkdir(dirname(dest), { recursive: true })
-    await writeFile(dest, await readFile(join(SCAFFOLD_DIR, from)))
+    let body: string | Buffer = await readFile(join(SCAFFOLD_DIR, from))
+    if (to === "AGENTS.md") body = resolveMarkers(body.toString("utf8"), extensions)
+    await writeFile(dest, body)
     console.log(`   Write ${to}`)
   }
 

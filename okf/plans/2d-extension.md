@@ -30,8 +30,8 @@ architecture:
    transitions cover retarget-style motion but not per-frame physics).
 3. **Baked layers** (staged, okf/backlog/2d-baked-layers.md): static bulk as
    ONE quad. On tiled GPUs the budget is primitive count, not pixels or draw
-   calls (scaffold AGENTS.md "Where GPU work stops being free"), so a
-   tilemap is not ten thousand quads - it is a texture.
+   calls (@solidrt/core agents/performance.md, "Where GPU work stops being
+   free"), so a tilemap is not ten thousand quads - it is a texture.
 
 ## The buffer write lease (core, landed with this plan)
 

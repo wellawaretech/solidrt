@@ -8,10 +8,10 @@ created: 2026-08-19
 
 Stage 2 of the 2D extension (okf/plans/2d-extension.md). The sprite layer
 batches draw CALLS, but on tiled GPUs the budget is primitive count
-(scaffold AGENTS.md "Where GPU work stops being free": 20k verts -> 80ms on
-a 2017 Android TV, while 9x the fill was free) - so a 100x100 tile world
-must not be 10,000 quads per frame. Baked, it is one texture drawn as one
-quad, and scrolling it is a camera write.
+(@solidrt/core agents/performance.md, "Where GPU work stops being free": 20k
+verts -> 80ms on a 2017 Android TV, while 9x the fill was free) - so a
+100x100 tile world must not be 10,000 quads per frame. Baked, it is one
+texture drawn as one quad, and scrolling it is a camera write.
 
 Shape to explore:
 

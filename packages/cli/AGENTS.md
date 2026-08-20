@@ -7,6 +7,15 @@ reactivity), see @solidrt/core (its AGENTS.md).
 `srt` is the dev tool. Bun is a dev prerequisite only; SolidRT apps run on the
 bundled `flux` runtime, not on Bun. Invoke via `bunx srt <command>`.
 
+Two companion files carry the depth this one leaves out; read the one that
+matches the work before starting it:
+- agents/debugging.md - driving a running app over MCP, and the debugging
+  lessons that cost real time. Read before investigating a bug or verifying
+  a change against the live app.
+- agents/assets.md - the assets/ folder, inlined imports, fonts, and the
+  `solidrt` package.json key. Read before adding an asset or font, or
+  building for distribution.
+
 ## Commands
 
 - `bunx srt init <dir>` - scaffold a new SolidRT project into a new (empty)

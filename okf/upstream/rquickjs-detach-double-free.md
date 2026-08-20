@@ -3,8 +3,8 @@ title: rquickjs external ArrayBuffer callbacks double-invoked on detach
 description: QuickJS invokes an external ArrayBuffer's free callback on detach AND again at finalization (with data == NULL); rquickjs's shims ignore the data pointer and consume their opaque unconditionally, so safe from_source + detach() - or pure JS transfer(0) on any Rust-minted buffer - is a double free.
 project: rquickjs (github.com/DelSkayn/rquickjs)
 versions: rquickjs 0.12.1 (rquickjs-core 0.12.1, rquickjs-sys 0.12.1 vendoring quickjs-ng 0.15.1)
-status: unfiled
-link:
+status: fixed-upstream
+link: https://github.com/DelSkayn/rquickjs/pull/723
 created: 2026-08-03
 ---
 
@@ -13,6 +13,18 @@ created: 2026-08-03
 Found 2026-08-03 while giving flux:wasm a linear-memory ArrayBuffer view
 (SIGSEGV in the detach-on-grow tests). Sibling engine-side issue:
 [[quickjs-ng-transfer-external-buffers]].
+
+**Outcome (2026-08-20): root cause fixed upstream before we filed; rquickjs
+sync in flight.** quickjs-ng PR #1578 (merged 2026-07-17, in v0.16.0)
+clears the callback and opaque in `JS_DetachArrayBuffer`, making the
+contract single-shot - exactly the suggested fix below - so rquickjs's
+consume-once shims become sound without changes of their own. rquickjs
+master still vendors quickjs-ng 0.15.1 (both invocations, both bugs live in
+our tree); the version bump plus adaptation to the new
+realloc-callback `JS_NewArrayBuffer` signature is PR #723 (open since
+2026-08-07, supersedes #722; dependabot bump #725 was closed unmerged in
+its favor). Nothing for us to file; watch #723 and the next rquickjs
+release.
 
 ## Draft report
 
@@ -59,8 +71,17 @@ registry instead of from a drop closure.
 
 The rest of flux remains exposed through path 2 (every `TypedArray::new`
 buffer we return: readMemory copies, sqlite blobs, subprocess output, file
-reads), but only if a script calls `.transfer(0)` on one - nothing does.
+reads), but only if a script calls `.transfer(0)` on one - nothing does,
+and the isolate transfer() plan (okf/backlog/isolate-transfer-and-abort.md,
+findings 2026-08-20) deletes the `transfer*` prototype methods at context
+setup, closing path 2 entirely. The same plan hits path 1 directly: stage 1
+must detach link-arrived buffers on send, so isolate-received buffers move
+off `ArrayBuffer::new` onto a flux-owned NULL-tolerant free hook (raw
+`qjs::JS_NewArrayBuffer`, StealSlot design in the findings) that also makes
+their backing stealable for zero-copy round trips.
 
 On `resolved`: `array_buffer_over` can revert to `ArrayBuffer::from_source`
 with a source holding the instance Rc, and the registry pin
-(`MemoryView._instance`) comes out.
+(`MemoryView._instance`) comes out; the isolate StealSlot hook can shrink to
+safe `from_source` over a slot-holding source (the steal itself stays, but
+needs no unsafe once detach fires the callback exactly once).
