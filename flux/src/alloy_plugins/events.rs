@@ -97,6 +97,16 @@ pub fn forward(exec: &ExecHandle, event: &AlloyEvent) -> bool {
         emit_sticky(&ctx, "visibility", obj);
       });
     }
+    // Pointer lock (relative mouse mode) as applied by the platform loop.
+    // Sticky: a reload's init events replay the surviving lock state.
+    AlloyEvent::PointerLock { locked } => {
+      let locked = *locked;
+      exec.exec(move |ctx| {
+        let obj = Object::new(ctx.clone()).expect("create object");
+        obj.set("locked", locked).expect("set locked");
+        emit_sticky(&ctx, "pointerLock", obj);
+      });
+    }
     AlloyEvent::Key { down, key, code, modifiers, repeat } => {
       emit_key(exec, if *down { "keydown" } else { "keyup" }, key.clone(), code, *modifiers, *repeat)
     }

@@ -123,9 +123,12 @@ Web reflexes and what replaces them:
    from components (`onPress`), or `onPointerDown` on a `View` for anything
    custom.
 6. Reactive window state: prefer the accessors windowSize(), safeArea(),
-   displayScale(), windowFocused(), keyboardHeight() (re-exported from
-   @solidrt/core) over onResize/onLayout callbacks for reading layout and
-   window state. SafeArea (the component) is usually the simpler fix for
+   displayScale(), windowFocused(), keyboardHeight(), pointerLocked()
+   (re-exported from @solidrt/core) over onResize/onLayout callbacks for
+   reading layout and window state. For mouse look, lockPointer(true)
+   enters relative mouse mode (cursor hidden and confined, positions
+   freeze) and pointer events keep reporting motion through
+   movementX/movementY. SafeArea (the component) is usually the simpler fix for
    avoiding notches/system UI.
 7. Animation is target-shaped first: declare `transition` on the element
    and write targets (performance model rule 1); reach for per-frame JS

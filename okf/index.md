@@ -407,10 +407,6 @@ Shaped, not started.
   One unclaimed error permanently halts the whole app; verified halt
   mechanics, a failure taxonomy, four candidate directions, and loudness as
   the central tension.
-- **[Relative mouse input (mouse look)](backlog/relative-mouse-input.md)** [2026-07-31]
-  No pointer-lock / relative-motion path exists anywhere in the surface, so
-  first-person control is impossible however good the GPU gets; SDL already
-  has the capability and alloy already drops the deltas on the floor.
 - **[Guard that every referenced example ships](backlog/release-example-parity-check.md)** [2026-07-29]
   A committed examples README can name an example file that is untracked, so
   the doc ships and the file does not; a release-time parity check would catch
@@ -930,6 +926,10 @@ Finished, kept for the reasoning.
   A portal visible at first mount throws "no mount target" because windowRoot
   is set only after the initial build; decided as by design, documented with a
   clearer error.
+- **[Relative mouse input (mouse look)](done/relative-mouse-input.md)** [2026-07-31]
+  No pointer-lock / relative-motion path exists anywhere in the surface, so
+  first-person control is impossible however good the GPU gets; SDL already
+  has the capability and alloy already drops the deltas on the floor.
 - **[srt render should be headless, unscaled and able to choose its output folder](done/render-headless-determinism.md)** [2026-08-05]
   Playback mode opened a hidden SDL window on the real display, laid out at
   the host's display scale, and wrote frames into the data sandbox; closed by

@@ -125,6 +125,13 @@ declare module "flux:rendertree" {
   }
   /** Enable or disable text-input capture / the on-screen keyboard. */
   export function setTextInputActive(active: boolean, hints?: TextInputHints): void
+  /**
+   * Enter or leave relative mouse mode (pointer lock): the cursor hides and
+   * confines to the window, absolute pointer positions freeze, and mouse
+   * motion keeps reporting through movementX/movementY. The applied state
+   * comes back on the sticky "pointerLock" bus event.
+   */
+  export function setPointerLock(locked: boolean): void
   /** Request that a frame be rendered soon (coalesced by the demand-driven loop). */
   export function requestFrame(): void
   /**

@@ -236,6 +236,14 @@ export interface PointerEvent {
    */
   parentX: number
   parentY: number
+  /**
+   * Pointer movement since the previous move event, in logical pixels. Mouse
+   * reports hardware deltas (summed, never lost, and the only motion signal
+   * while the pointer is locked); touch reports position diffs. 0 on
+   * non-move events.
+   */
+  movementX: number
+  movementY: number
   /** Node id whose handler is currently running (bubbling changes it per call). */
   currentTarget: number
   /** Deepest node id of the event's path (the hit leaf). */

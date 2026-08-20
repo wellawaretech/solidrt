@@ -583,7 +583,6 @@ async fn try_serve(
                     let resampler = flags.resampler.clone();
                     let reply_tx = queries.outbound_tx.clone();
                     tokio::spawn(async move {
-                      use alloy::AlloyEvent;
                       for (delay_ms, event) in seq {
                         if delay_ms > 0 {
                           tokio::time::sleep(Duration::from_millis(delay_ms)).await;
@@ -591,18 +590,8 @@ async fn try_serve(
                         // Producer-side resampler feed, mirroring the alloy
                         // pump (see DevFlags::resampler): moves are consumed
                         // here and dispatch from the frame verb's samples.
-                        match &event {
-                          AlloyEvent::PointerMove { pointer_id, pointer_type, x, y, modifiers } => {
-                            resampler.push((*pointer_type, *pointer_id), *x, *y, *modifiers);
-                            continue;
-                          }
-                          AlloyEvent::PointerDown { pointer_id, pointer_type, x, y, modifiers, .. } => {
-                            resampler.down((*pointer_type, *pointer_id), *x, *y, *modifiers);
-                          }
-                          AlloyEvent::PointerUp { pointer_id, pointer_type, .. } => {
-                            resampler.remove((*pointer_type, *pointer_id));
-                          }
-                          _ => {}
+                        if resampler.feed(&event) {
+                          continue;
                         }
                         if input_tx.send(event).is_err() {
                           // The runtime is shutting down; nobody left to reply to.
@@ -909,7 +898,9 @@ pub(crate) fn parse_input_events(events: Option<&serde_json::Value>) -> Result<V
         let down =
           || AlloyEvent::PointerDown { pointer_id: SYNTHETIC_POINTER_ID, pointer_type, button, x, y, modifiers };
         let up = || AlloyEvent::PointerUp { pointer_id: SYNTHETIC_POINTER_ID, pointer_type, button, x, y, modifiers };
-        let mv = || AlloyEvent::PointerMove { pointer_id: SYNTHETIC_POINTER_ID, pointer_type, x, y, modifiers };
+        // No hardware delta for synthetic moves: movement derives from the
+        // position diff, the honest synthetic delta.
+        let mv = || AlloyEvent::PointerMove { pointer_id: SYNTHETIC_POINTER_ID, pointer_type, x, y, rel: None, modifiers };
         match action {
           Some("move") => out.push((delay, mv())),
           Some("down") => out.push((delay, down())),

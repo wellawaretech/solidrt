@@ -25,6 +25,11 @@ pub enum AlloyCommand {
   SetFramePacing(crate::vsync::FramePacing),
   SetCursor(sdl3::mouse::SystemCursor),
   SetCursorVisible(bool),
+  // Relative mouse mode (pointer lock): SDL hides the cursor, confines it
+  // to the window, and mouse motion reports hardware deltas while absolute
+  // positions freeze. The loop answers with AlloyEvent::PointerLock carrying
+  // the applied state.
+  SetPointerLock(bool),
   SetTextInputActive(bool, TextInputOptions),
   // Leave the app at the OS level without dying: on Android SDL's minimize
   // routes to Activity.moveTaskToBack, the platform's back-at-root
@@ -144,6 +149,10 @@ pub enum AlloyEvent {
   // may report the same transition through both the app and window paths, so
   // consumers must tolerate repeats of the same value.
   Visibility { visible: bool },
+  // Relative mouse mode (pointer lock) state as applied by the loop: the
+  // answer to SetPointerLock, and the hook for platform-initiated drops if
+  // one ever surfaces. Sticky window fact downstream.
+  PointerLock { locked: bool },
   // The window surface needs a repaint without any visibility change: SDL
   // WINDOW_EXPOSED (damage, or a recreated swapchain surface whose contents
   // are undefined). Repaint trigger only; never surfaces to JS.
@@ -168,8 +177,11 @@ pub enum AlloyEvent {
   DisplayRefreshRate { hz: f32 },
   // Never emitted by the run loop: the pump consumes moves into the
   // resampler at translation (see resample.rs), and every other producer of
-  // pointer events must do the same at its send site.
-  PointerMove { pointer_id: u64, pointer_type: PointerType, x: f32, y: f32, modifiers: Modifiers },
+  // pointer events must do the same at its send site. `rel` is the hardware
+  // motion delta when the device reports one (mouse `xrel`/`yrel`, in the
+  // same logical units as `x`/`y`); None for producers without one (touch,
+  // synthetic input), whose movement is derived from positions instead.
+  PointerMove { pointer_id: u64, pointer_type: PointerType, x: f32, y: f32, rel: Option<(f32, f32)>, modifiers: Modifiers },
   PointerDown { pointer_id: u64, pointer_type: PointerType, button: u8, x: f32, y: f32, modifiers: Modifiers },
   PointerUp { pointer_id: u64, pointer_type: PointerType, button: u8, x: f32, y: f32, modifiers: Modifiers },
   TextInput { text: String },
@@ -366,13 +378,14 @@ pub(crate) fn translate_event(sdl_event: SdlEvent, window: &sdl3::video::Window)
     // size_in_pixels / display_scale (see current_resize_event), so mouse
     // coordinates convert by mouse_scale: the ratio between the two spaces,
     // 1.0 where SDL already reports logical points.
-    SdlEvent::MouseMotion { which, x, y, .. } => {
+    SdlEvent::MouseMotion { which, x, y, xrel, yrel, .. } => {
       let k = mouse_scale(window);
       Some(AlloyEvent::PointerMove {
         pointer_id: which as u64,
         pointer_type: PointerType::Mouse,
         x: x * k,
         y: y * k,
+        rel: Some((xrel * k, yrel * k)),
         modifiers: sdl_utils::mod_state().into(),
       })
     }
@@ -437,6 +450,7 @@ pub(crate) fn translate_event(sdl_event: SdlEvent, window: &sdl3::video::Window)
         pointer_type: PointerType::Touch,
         x: x * lw,
         y: y * lh,
+        rel: None,
         modifiers: sdl_utils::mod_state().into(),
       })
     }

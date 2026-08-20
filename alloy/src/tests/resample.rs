@@ -5,7 +5,7 @@ use crate::resample::Resampler;
 const KEY: (PointerType, u64) = (PointerType::Touch, 1);
 
 fn push(r: &mut Resampler, key: (PointerType, u64), x: f32) {
-  r.push(key, x, 0.0, Modifiers::default());
+  r.push(key, x, 0.0, None, Modifiers::default());
 }
 
 // The x positions dispatched for one frame slot, per pointer id.
@@ -150,4 +150,84 @@ fn touch_bridges_while_mouse_holds() {
   assert_eq!(xs(&mut r), vec![(1, 10.0), (2, 90.0)]);
   // Both go quiet: touch bridges one velocity step, mouse just holds.
   assert_eq!(xs(&mut r), vec![(1, 20.0)]);
+}
+
+// Movement (dx/dy) contract: hardware deltas sum per slot for pointers that
+// report them; everything else diffs against the last dispatched position.
+
+fn push_rel(r: &mut Resampler, key: (PointerType, u64), x: f32, dx: f32) {
+  r.push(key, x, 0.0, Some((dx, 0.0)), Modifiers::default());
+}
+
+// The (x, dx) dispatched for one frame slot, single-pointer tests.
+fn xdx(r: &mut Resampler) -> Vec<(f32, f32)> {
+  r.sample().iter().map(|s| (s.x, s.dx)).collect()
+}
+
+#[test]
+fn hardware_deltas_sum_within_a_slot() {
+  let mut r = Resampler::new();
+  // Two arrivals in one slot: the position collapses to the latest, the
+  // deltas must sum - a fast flick loses distance otherwise.
+  push_rel(&mut r, MOUSE, 10.0, 10.0);
+  push_rel(&mut r, MOUSE, 25.0, 15.0);
+  assert_eq!(xdx(&mut r), vec![(25.0, 25.0)]);
+  // Drained: the next slot accumulates from zero.
+  push_rel(&mut r, MOUSE, 30.0, 5.0);
+  assert_eq!(xdx(&mut r), vec![(30.0, 5.0)]);
+}
+
+#[test]
+fn hardware_deltas_survive_a_mid_flick_down() {
+  let mut r = Resampler::new();
+  push_rel(&mut r, MOUSE, 10.0, 10.0);
+  // A click mid-flick re-seeds the history; the accumulated motion
+  // physically happened and must still dispatch.
+  r.down(MOUSE, 12.0, 0.0, Modifiers::default());
+  push_rel(&mut r, MOUSE, 15.0, 3.0);
+  assert_eq!(xdx(&mut r), vec![(15.0, 13.0)]);
+}
+
+#[test]
+fn hardware_deltas_report_motion_while_position_freezes() {
+  // Relative mouse mode: SDL freezes x/y and reports motion only in rel.
+  let mut r = Resampler::new();
+  push_rel(&mut r, MOUSE, 50.0, 8.0);
+  assert_eq!(xdx(&mut r), vec![(50.0, 8.0)]);
+  push_rel(&mut r, MOUSE, 50.0, 12.0);
+  assert_eq!(xdx(&mut r), vec![(50.0, 12.0)]);
+}
+
+#[test]
+fn derived_movement_diffs_dispatched_positions() {
+  let mut r = Resampler::new();
+  r.down(KEY, 0.0, 0.0, Modifiers::default());
+  // First move diffs against the down's contact seed.
+  push(&mut r, KEY, 10.0);
+  assert_eq!(xdx(&mut r), vec![(10.0, 10.0)]);
+  push(&mut r, KEY, 25.0);
+  assert_eq!(xdx(&mut r), vec![(25.0, 15.0)]);
+}
+
+#[test]
+fn derived_movement_mirrors_extrapolation_bounce() {
+  let mut r = Resampler::new();
+  r.down(KEY, 0.0, 0.0, Modifiers::default());
+  push(&mut r, KEY, 10.0);
+  assert_eq!(xdx(&mut r), vec![(10.0, 10.0)]);
+  push(&mut r, KEY, 20.0);
+  assert_eq!(xdx(&mut r), vec![(20.0, 10.0)]);
+  // Bridged step and settle-back: movement bounces exactly with position.
+  assert_eq!(xdx(&mut r), vec![(30.0, 10.0)]);
+  assert_eq!(xdx(&mut r), vec![(20.0, -10.0)]);
+}
+
+#[test]
+fn derived_movement_without_down_starts_at_zero() {
+  let mut r = Resampler::new();
+  // No down, no baseline: the first dispatch cannot claim movement.
+  push(&mut r, KEY, 10.0);
+  assert_eq!(xdx(&mut r), vec![(10.0, 0.0)]);
+  push(&mut r, KEY, 16.0);
+  assert_eq!(xdx(&mut r), vec![(16.0, 6.0)]);
 }

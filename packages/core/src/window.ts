@@ -1,5 +1,5 @@
 import { createSignal, onCleanup, onSettled, flush } from "@solidjs/signals"
-import { requestFrame } from "flux:rendertree"
+import { requestFrame, setPointerLock } from "flux:rendertree"
 import { renderFrame } from "srt:render"
 import { on, once } from "srt:events"
 import { exit } from "srt:app"
@@ -160,6 +160,33 @@ export function windowFocused(): boolean {
     focusedAccessor = focused
   }
   return focusedAccessor()
+}
+
+/**
+ * Lock the pointer to the window (relative mouse mode) or release it. While
+ * locked the cursor is hidden and confined, clientX/clientY freeze at the
+ * lock point, and mouse motion keeps reporting through the pointer events'
+ * movementX/movementY - the mouse-look primitive. Window-level, no
+ * permission dance: one app, one window. Observe the applied state through
+ * pointerLocked(); the platform can refuse (no relative mode) and the OS
+ * may drop the lock, e.g. on focus loss.
+ */
+export function lockPointer(locked: boolean) {
+  if (typeof locked !== "boolean") throw new Error(`lockPointer: expected a boolean, got ${typeof locked}`)
+  setPointerLock(locked)
+}
+
+let pointerLockedAccessor: (() => boolean) | undefined
+
+/** Whether the pointer is currently locked (relative mouse mode), as a reactive accessor. */
+export function pointerLocked(): boolean {
+  if (!pointerLockedAccessor) {
+    let [locked, setLocked] = createSignal(false)
+    // Sticky event: a subscriber after the lock still observes the state.
+    on("pointerLock", ({ locked }: { locked: boolean }) => setLocked(locked))
+    pointerLockedAccessor = locked
+  }
+  return pointerLockedAccessor()
 }
 
 let keyboardHeightAccessor: (() => number) | undefined

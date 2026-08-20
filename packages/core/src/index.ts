@@ -5,7 +5,7 @@ export { parseColor, mixColors, brightness, createLinearGradient, createRadialGr
 export type { Gradient, GradientStop } from "./color"
 export { onFrame, onLayout, onResize, onWindowFocus, onWindowBlur, onBack, exit } from "./window"
 export type { BackEvent } from "./window"
-export { windowSize, safeArea, displayScale, windowFocused, keyboardHeight } from "./window"
+export { windowSize, safeArea, displayScale, windowFocused, keyboardHeight, lockPointer, pointerLocked } from "./window"
 export { env } from "./environment"
 export type { InputDevices, SystemTheme, Orientation, Visibility } from "./environment"
 export { gamepads } from "./gamepad"

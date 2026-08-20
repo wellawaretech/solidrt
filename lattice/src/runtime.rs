@@ -335,6 +335,8 @@ impl UiRuntime for FluxRuntime {
             pointer_type: m.pointer_type,
             x: m.x,
             y: m.y,
+            dx: m.dx,
+            dy: m.dy,
             modifiers: m.modifiers,
           },
         );

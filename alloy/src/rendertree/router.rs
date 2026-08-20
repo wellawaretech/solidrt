@@ -7,7 +7,10 @@ use crate::{Modifiers, PointerType};
 pub type PointerKey = (PointerType, u64);
 
 pub enum InputEvent {
-  PointerMove { pointer_id: u64, pointer_type: PointerType, x: f32, y: f32, modifiers: Modifiers },
+  // `dx`/`dy` is the movement since the previous move: the resampler's
+  // resolved delta (summed hardware deltas for mouse, dispatched-position
+  // diff otherwise), in the same logical units as `x`/`y`.
+  PointerMove { pointer_id: u64, pointer_type: PointerType, x: f32, y: f32, dx: f32, dy: f32, modifiers: Modifiers },
   PointerDown { pointer_id: u64, pointer_type: PointerType, button: u8, x: f32, y: f32, modifiers: Modifiers },
   PointerUp { pointer_id: u64, pointer_type: PointerType, button: u8, x: f32, y: f32, modifiers: Modifiers },
   Wheel { pointer_id: u64, pointer_type: PointerType, x: f32, y: f32, delta_x: f32, delta_y: f32, modifiers: Modifiers },
@@ -16,7 +19,7 @@ pub enum InputEvent {
 /// The kind of a routed delivery, carrying the per-kind payload.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum RoutedKind {
-  Move,
+  Move { dx: f32, dy: f32 },
   Down { button: u8 },
   Up { button: u8 },
   Enter,
@@ -140,7 +143,7 @@ impl PointerRouter {
   /// enter/leave deliveries are gated.
   pub fn dispatch(&mut self, tree: &RenderTree, event: InputEvent) -> Vec<RoutedPointer> {
     match event {
-      InputEvent::PointerMove { pointer_id, pointer_type, x, y, modifiers } => {
+      InputEvent::PointerMove { pointer_id, pointer_type, x, y, dx, dy, modifiers } => {
         let key = (pointer_type, pointer_id);
         let point = Point::new(x, y);
         let (live_ids, live_locals) = split_path(DefaultHitTester.hit_test(tree, point));
@@ -152,7 +155,7 @@ impl PointerRouter {
         if wants(tree, &ids, EventInterest::MOVE) {
           let parents = parent_locals(point, &locals);
           let target = ids.last().copied().unwrap_or(0);
-          events.push(delivery(RoutedKind::Move, key, point, modifiers, ids, locals, parents, target));
+          events.push(delivery(RoutedKind::Move { dx, dy }, key, point, modifiers, ids, locals, parents, target));
         }
         events.extend(self.update_hover(tree, key, point, modifiers, live_ids));
         events

@@ -4662,7 +4662,7 @@ function createRenderer(options) {
 import * as tree2 from "flux:rendertree";
 
 // packages/core/src/window.ts
-import { requestFrame } from "flux:rendertree";
+import { requestFrame, setPointerLock } from "flux:rendertree";
 import { renderFrame } from "srt:render";
 import { on as on2, once } from "srt:events";
 import { exit } from "srt:app";

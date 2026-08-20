@@ -233,6 +233,7 @@ impl ModuleDef for RenderTreeModule {
     decl.declare("requestFrame")?;
     decl.declare("render")?;
     decl.declare("setTextInputActive")?;
+    decl.declare("setPointerLock")?;
     decl.declare("measureText")?;
     decl.declare("prepareText")?;
     decl.declare("getBoundingBox")?;
@@ -398,6 +399,11 @@ impl ModuleDef for RenderTreeModule {
     })?;
 
     let cmd_tx = alloy_cmd_tx.clone();
+    let set_pointer_lock = Function::new(ctx.clone(), move |locked: bool| {
+      cmd_tx.send(alloy::AlloyCommand::SetPointerLock(locked)).ok();
+    })?;
+
+    let cmd_tx = alloy_cmd_tx.clone();
     let set_text_input_active = Function::new(ctx.clone(), move |active: bool, hints: OptArg<Object<'_>>| {
       let mut options = alloy::TextInputOptions::default();
       if let Some(h) = hints.0 {
@@ -553,6 +559,7 @@ impl ModuleDef for RenderTreeModule {
     exports.export("requestFrame", request_frame)?;
     exports.export("render", render)?;
     exports.export("setTextInputActive", set_text_input_active)?;
+    exports.export("setPointerLock", set_pointer_lock)?;
     exports.export("measureText", measure_text)?;
     exports.export("prepareText", prepare_text)?;
     exports.export("getBoundingBox", get_bounding_box)?;

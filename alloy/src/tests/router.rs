@@ -40,7 +40,15 @@ fn place(tree: &mut RenderTree, id: u64, x: f32, y: f32, w: f32, h: f32) {
 }
 
 fn mouse_move(x: f32, y: f32) -> InputEvent {
-  InputEvent::PointerMove { pointer_id: 0, pointer_type: PointerType::Mouse, x, y, modifiers: Modifiers::default() }
+  InputEvent::PointerMove {
+    pointer_id: 0,
+    pointer_type: PointerType::Mouse,
+    x,
+    y,
+    dx: 0.0,
+    dy: 0.0,
+    modifiers: Modifiers::default(),
+  }
 }
 
 fn assert_xy(got: Point, x: f32, y: f32) {
@@ -68,7 +76,7 @@ fn down_freezes_routing_until_up() {
   // projected locals, while the hover update sees the live path [1, 3].
   let events = router.dispatch(&tree, mouse_move(150.0, 50.0));
   assert_eq!(events.len(), 2);
-  assert!(matches!(events[0].kind, RoutedKind::Move));
+  assert!(matches!(events[0].kind, RoutedKind::Move { .. }));
   assert_eq!(events[0].targets, vec![1, 2]);
   assert_xy(events[0].locals[1], 140.0, 30.0);
   assert_xy(events[0].parents[1], 150.0, 50.0);
@@ -86,7 +94,7 @@ fn down_freezes_routing_until_up() {
 
   let events = router.dispatch(&tree, mouse_move(150.0, 50.0));
   assert_eq!(events.len(), 1, "unfrozen move follows the live path with no hover delta");
-  assert!(matches!(events[0].kind, RoutedKind::Move));
+  assert!(matches!(events[0].kind, RoutedKind::Move { .. }));
   assert_eq!(events[0].targets, vec![1, 3]);
 }
 
@@ -129,6 +137,8 @@ fn touch_up_synthesizes_leave_and_clears_hover() {
     pointer_type: PointerType::Touch,
     x,
     y,
+    dx: 0.0,
+    dy: 0.0,
     modifiers: m,
   };
 
@@ -189,7 +199,7 @@ fn ancestor_interest_keeps_gesture_moves_flowing() {
   // interest, so the gesture's moves keep delivering along it.
   let events = router.dispatch(&tree, mouse_move(300.0, 300.0));
   assert_eq!(events.len(), 1);
-  assert!(matches!(events[0].kind, RoutedKind::Move));
+  assert!(matches!(events[0].kind, RoutedKind::Move { .. }));
   assert_eq!(events[0].targets, vec![1, 2]);
 }
 

@@ -52,6 +52,14 @@ fn build_pointer_obj<'js>(ctx: &Ctx<'js>, ev: &RoutedPointer) -> Object<'js> {
   obj.set("ctrlKey", ev.modifiers.ctrl).expect("set ctrlKey");
   obj.set("altKey", ev.modifiers.alt).expect("set altKey");
   obj.set("metaKey", ev.modifiers.meta).expect("set metaKey");
+  // movementX/movementY are always present (stable shape); non-move kinds
+  // report 0, matching browser practice.
+  let (dx, dy) = match ev.kind {
+    RoutedKind::Move { dx, dy } => (dx, dy),
+    _ => (0.0, 0.0),
+  };
+  obj.set("movementX", dx).expect("set movementX");
+  obj.set("movementY", dy).expect("set movementY");
   match ev.kind {
     RoutedKind::Down { button } | RoutedKind::Up { button } => obj.set("button", button).expect("set button"),
     RoutedKind::Wheel { delta_x, delta_y } => {
@@ -66,7 +74,7 @@ fn build_pointer_obj<'js>(ctx: &Ctx<'js>, ev: &RoutedPointer) -> Object<'js> {
 fn emit_routed(ctx: &Ctx<'_>, events: Vec<RoutedPointer>) {
   for ev in events {
     let name = match ev.kind {
-      RoutedKind::Move => "pointerMove",
+      RoutedKind::Move { .. } => "pointerMove",
       RoutedKind::Down { .. } => "pointerDown",
       RoutedKind::Up { .. } => "pointerUp",
       RoutedKind::Enter => "pointerEnter",

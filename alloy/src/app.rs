@@ -116,6 +116,9 @@ fn setup_video(
   mode: &Mode,
 ) -> Result<(sdl3::video::Window, DisplayContext), String> {
   let video = sdl_context.video().map_err(|e| format!("video subsystem: {e}"))?;
+  // Platform fact worth having in every log: input behavior (pointer lock,
+  // warp, coordinate spaces) differs per driver (wayland vs x11/XWayland).
+  log::info!("[alloy] video driver: {}", video.current_video_driver());
 
   gl::configure_opengl(&video);
 
@@ -313,6 +316,12 @@ impl App {
     // input flows: the arrival rate shows whether the platform delivers moves
     // at input-device rate or batched to vsync (drag latency diagnostics).
     let mut pointer_moves: u32 = 0;
+    // Pointer-lock coordinate freeze (web parity): SDL does NOT freeze x/y
+    // in relative mode - it reports a window-clamped simulated position -
+    // so hit testing would follow an invisible point. While locked, mouse
+    // events report the lock point instead; motion continues via rel.
+    let mut pointer_lock_frozen: Option<(f32, f32)> = None;
+    let mut last_mouse: (f32, f32) = (0.0, 0.0);
     let mut last_power_check = Instant::now();
 
     // Polled each loop iteration; transitions emit KeyboardVisibility so the
@@ -463,7 +472,24 @@ impl App {
         if let Some(g) = gamepads.as_mut() {
           g.handle_event(&sdl_event);
         }
-        if let Some(e) = translate_event(sdl_event, &window) {
+        if let Some(mut e) = translate_event(sdl_event, &window) {
+          // Mouse position bookkeeping and the pointer-lock freeze: while
+          // locked, mouse events carry the lock point (see
+          // pointer_lock_frozen); unlocked, remember the real position as
+          // the next lock's freeze point.
+          match &mut e {
+            AlloyEvent::PointerMove { pointer_type: crate::PointerType::Mouse, x, y, .. }
+            | AlloyEvent::PointerDown { pointer_type: crate::PointerType::Mouse, x, y, .. }
+            | AlloyEvent::PointerUp { pointer_type: crate::PointerType::Mouse, x, y, .. }
+            | AlloyEvent::Wheel { pointer_type: crate::PointerType::Mouse, x, y, .. } => match pointer_lock_frozen {
+              Some((fx, fy)) => {
+                *x = fx;
+                *y = fy;
+              }
+              None => last_mouse = (*x, *y),
+            },
+            _ => {}
+          }
           apply_main_thread_effects(&e, &surface_size, &mode);
           if liveness.on_event(&e, Instant::now()) {
             raster.send(RasterCmd::RebindWindowSurface).ok();
@@ -472,19 +498,9 @@ impl App {
           // consumed here - the UI side samples one position per pointer
           // per frame slot - while downs seed and ups drop the history
           // before their events travel.
-          match &e {
-            AlloyEvent::PointerMove { pointer_id, pointer_type, x, y, modifiers } => {
-              pointer_moves += 1;
-              resampler.push((*pointer_type, *pointer_id), *x, *y, *modifiers);
-              continue;
-            }
-            AlloyEvent::PointerDown { pointer_id, pointer_type, x, y, modifiers, .. } => {
-              resampler.down((*pointer_type, *pointer_id), *x, *y, *modifiers);
-            }
-            AlloyEvent::PointerUp { pointer_id, pointer_type, .. } => {
-              resampler.remove((*pointer_type, *pointer_id));
-            }
-            _ => {}
+          if resampler.feed(&e) {
+            pointer_moves += 1;
+            continue;
           }
           event_tx.send(e).ok();
         }
@@ -567,6 +583,9 @@ impl App {
             if let Some(g) = gamepads.as_ref() {
               event_tx.send(g.snapshot_event()).ok();
             }
+            // Pointer lock survives an engine reload (window state); the new
+            // engine must observe it.
+            event_tx.send(AlloyEvent::PointerLock { locked: sdl_context.mouse().relative_mouse_mode(&window) }).ok();
           }
           AlloyCommand::SetFrameRequestLatch(latch) => liveness.set_latch(latch),
           AlloyCommand::SetFramePacing(p) => {
@@ -612,6 +631,16 @@ impl App {
           },
           AlloyCommand::SetCursorVisible(visible) => {
             sdl_context.mouse().show_cursor(visible);
+          }
+          AlloyCommand::SetPointerLock(locked) => {
+            let mouse = sdl_context.mouse();
+            mouse.set_relative_mouse_mode(&window, locked);
+            // Report the applied state, not the request: SDL can refuse
+            // (platform without relative mode), and the answer is the fact
+            // the reactive accessor reflects.
+            let applied = mouse.relative_mouse_mode(&window);
+            pointer_lock_frozen = if applied { Some(last_mouse) } else { None };
+            event_tx.send(AlloyEvent::PointerLock { locked: applied }).ok();
           }
           AlloyCommand::SetTextInputActive(active, options) => {
             if let Ok(video) = sdl_context.video() {
