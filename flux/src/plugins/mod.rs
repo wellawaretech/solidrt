@@ -183,6 +183,7 @@ pub(crate) async fn init_context(
       crate::standards_plugins::text::init_text(&ctx);
       crate::standards_plugins::websocket::init_websocket(&ctx);
       crate::standards_plugins::abort::init_abort(&ctx);
+      remove_array_buffer_transfer(&ctx);
 
       ctx.globals().set("Flux", flux_obj).unwrap();
 
@@ -193,6 +194,20 @@ pub(crate) async fn init_context(
     .await;
 
   (runtime, context, pending, rejections)
+}
+
+/// The vendored quickjs-ng's `ArrayBuffer.prototype.transfer` family mishandles
+/// externally backed buffers - every buffer flux mints from Rust bytes - with
+/// heap UB reachable from pure JS (fixed upstream after the version we vendor;
+/// see okf/upstream/quickjs-ng-transfer-external-buffers.md). The methods come
+/// off the prototype until the rquickjs bump lands; flux:isolate's planned
+/// `transfer()` is the replacement vocabulary.
+fn remove_array_buffer_transfer(ctx: &Ctx<'_>) {
+  let Ok(ab) = ctx.globals().get::<_, Object>("ArrayBuffer") else { return };
+  let Ok(proto) = ab.get::<_, Object>("prototype") else { return };
+  for name in ["transfer", "transferToImmutable", "transferToFixedLength"] {
+    let _ = proto.remove(name);
+  }
 }
 
 /// Feature names every flux build provides, surfaced as `Flux.capabilities`.

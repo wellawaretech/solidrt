@@ -56,6 +56,25 @@ async fn headers_init_copies_instance_and_rejects_non_string_values() {
 }
 
 #[tokio::test]
+async fn array_buffer_transfer_family_is_removed() {
+  // The vendored quickjs-ng transfer() corrupts externally backed buffers
+  // (okf/upstream/quickjs-ng-transfer-external-buffers.md), so context setup
+  // removes all three variants; ordinary ArrayBuffer use is untouched.
+  let out = run_source(
+    r#"
+            let names = ["transfer", "transferToImmutable", "transferToFixedLength"];
+            console.log(names.map(n => ArrayBuffer.prototype[n] === undefined).join(","));
+            let buf = new ArrayBuffer(4);
+            new Uint8Array(buf)[0] = 7;
+            console.log(buf.byteLength, new Uint8Array(buf)[0]);
+            "#,
+  )
+  .await;
+  assert!(out.errors().is_empty(), "stderr: {}", out.errors());
+  assert_eq!(out.lines_at(flux::LogLevel::Log), vec!["true,true,true", "4 7"]);
+}
+
+#[tokio::test]
 async fn response_status_headers_and_body() {
   let out = run_source(
     r#"
