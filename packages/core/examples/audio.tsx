@@ -23,7 +23,7 @@
 // demand and stays off the heap. Same play()/stop()/playing() surface,
 // always single-voice.
 import { render } from "@solidrt/core"
-import { createPcmSound, createSound } from "@solidrt/core/sound"
+import { createPcmSound, createSound } from "@solidrt/core/audio"
 import blipBytes from "./blip.wav" with { type: "binary" }
 
 const RATE = 44100
