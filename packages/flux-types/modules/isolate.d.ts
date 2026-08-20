@@ -46,6 +46,15 @@ declare module "flux:isolate" {
      * anything never spawned.
      */
     terminate(): void
+    /**
+     * Settles once the child is gone: with the uncaught error that ended it,
+     * or `null` after `terminate()` or a clean end. Reading `exited` is a
+     * first use (it starts the child like a call does) and keeps the runtime
+     * watching the child - the loop stays open until the child exits, so an
+     * exit is noticed with no call in flight. Each read returns an
+     * equivalent promise.
+     */
+    readonly exited: Promise<string | null>
   }
 
   /**
@@ -56,9 +65,9 @@ declare module "flux:isolate" {
    * on its own thread (own heap, own event loop, the non-gui `flux:*`
    * modules). Arguments and results are copied ({@link Sendable}).
    *
-   * The child starts on the first call and lives until `terminate()` or the
-   * parent's end; module state persists between calls; each `isolate()` call
-   * is its own instance. Calls start in call order and run concurrently, as
+   * The child starts on first use (a call, or reading `exited`) and lives
+   * until `terminate()` or the parent's end; module state persists between
+   * calls; each `isolate()` call is its own instance. Calls start in call order and run concurrently, as
    * the same functions would in-process: a sync export runs to completion
    * before anything else (one thread), an async export lets other calls and
    * stream steps run at each `await`; an export that must not interleave with
@@ -74,7 +83,7 @@ declare module "flux:isolate" {
    * error that ends the child rejects pending and later calls with a message
    * naming it. Awaiting a stream call rejects; iterating a plain call rejects. An
    * open stream keeps both runtimes alive until it ends, `break`s, or the
-   * child is terminated. Reserved names: `terminate`, `then`.
+   * child is terminated. Reserved names: `terminate`, `exited`, `then`.
    */
   export function isolate<T = Record<string, (...args: any[]) => any>>(id: string, opts?: IsolateOptions): Isolated<T>
 }

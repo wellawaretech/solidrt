@@ -16,10 +16,6 @@ symptom first where there is one:
   so this is contained: allocate the JS `ArrayBuffer` with a flux-owned free
   hook, hand ownership over the link, detach on the sending side. Opt-in per
   argument or result (the web `transfer` shape), copies stay the default.
-- **Observable exit.** Symptom: an isolate that crashed (uncaught error out
-  of a timer) is only discovered by the next call rejecting. A handle-level
-  `exited: Promise<string | null>` (or `terminate()` resolving once the thread
-  is gone) so it can be noticed and restarted.
 - **`memoryLimit` option.** A runaway isolate takes the whole process down.
   QuickJS `JS_SetMemoryLimit` per child, one option in `isolate(id, opts)`.
 - **`AbortSignal` on plain calls.** Can only mean "stop waiting" (a running
@@ -42,6 +38,15 @@ RangeError` holds), else an `Error` carrying the name; the stack is a field
 another rebuilt error or a sendable value (unsendable dropped, chain capped
 at 8, which also ends a cyclic one); a thrown non-Error crosses as the value
 itself when sendable.
+
+Done: observable exit (2026-08-20): `exited` is the third reserved name on a
+handle - a `Promise<string | null>` settling once the child is gone, with the
+uncaught error that ended it or `null` after a clean end or `terminate()`.
+Reading it is a first use (spawns the child like a call does) and starts the
+exit pump, a link reader that holds the parent's loop open until the child
+exits, so an exit is noticed with no call in flight (before, nothing read the
+link between calls). A never-spawned handle that is terminated resolves
+`null`.
 
 Done: thread name per id (2026-08-20): child threads are named
 `isolate:<id>` instead of a shared `flux-isolate`, so `top -H`, gdb and perf

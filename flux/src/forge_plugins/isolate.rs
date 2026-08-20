@@ -10,10 +10,11 @@
 //! (see `plugins/value.rs`): copied, shared-nothing; unsendable arguments throw
 //! a `TypeError` at the call, an unsendable result rejects it.
 //!
-//! - The child runtime starts on the first call and lives until `terminate()`
-//!   or the parent's end (exit, reload: dropping the parent context fires
-//!   every child's kill switch, transitively). Module state in the child
-//!   persists between calls; each `isolate()` call is its own instance.
+//! - The child runtime starts on first use (a call, or reading `exited`) and
+//!   lives until `terminate()` or the parent's end (exit, reload: dropping the
+//!   parent context fires every child's kill switch, transitively). Module
+//!   state in the child persists between calls; each `isolate()` call is its
+//!   own instance.
 //! - Calls start in call order and run concurrently, as the same functions
 //!   would in-process: the child is single-threaded, so a sync export runs to
 //!   completion before anything else, while an `async` export lets other calls
@@ -38,8 +39,14 @@
 //!   reject with a message naming it.
 //! - `terminate()` kills the child now: busy JS is interrupted, the child
 //!   runtime is dropped, pending calls reject and open streams end.
-//! - Reserved names: `terminate` (the method) and `then` (so a handle is not a
-//!   thenable). Symbol properties are looked up on the handle itself.
+//! - `exited` is a promise settling once the child is gone: with the uncaught
+//!   error that ended it, or `null` after `terminate()` or a clean end.
+//!   Reading it is a first use (spawns the child) and keeps this runtime's
+//!   loop open until the child exits, so an exit is noticed with no call in
+//!   flight.
+//! - Reserved names: `terminate` (the method), `exited` (the promise) and
+//!   `then` (so a handle is not a thenable). Symbol properties are looked up
+//!   on the handle itself.
 //!
 //! The child gets the parent's host config (`EngineConfig`, so it can spawn
 //! isolates of its own) and `opts.args` as its `flux:process` argv.
@@ -52,7 +59,7 @@
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, VecDeque};
 use std::rc::Rc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use rquickjs::atom::PredefinedAtom;
@@ -104,6 +111,14 @@ struct Instance {
   exited: Mutex<Option<String>>,
   /// The child's last uncaught error, to name the cause when it exits.
   last_error: Mutex<Option<String>>,
+  /// Set alongside `exited`: what `exited` watchers settle with - the uncaught
+  /// error that ended the child, `None` for a clean end.
+  exit_cause: Mutex<Option<Option<String>>>,
+  /// `exited` watchers not yet settled.
+  watchers: Mutex<Vec<oneshot::Sender<Option<String>>>>,
+  /// Whether the exit pump runs (one per instance, started on the first
+  /// `exited` read).
+  pumping: AtomicBool,
 }
 
 impl Instance {
@@ -118,8 +133,21 @@ impl Instance {
     }
   }
 
-  fn exit(&self, reason: String) {
-    *self.exited.lock().expect("exited lock poisoned") = Some(reason.clone());
+  /// Record the child's end, once (the first reason wins): later calls
+  /// reject with `reason`, pending calls reject now, watchers settle with
+  /// `cause`.
+  fn exit(&self, reason: String, cause: Option<String>) {
+    {
+      let mut exited = self.exited.lock().expect("exited lock poisoned");
+      if exited.is_some() {
+        return;
+      }
+      *exited = Some(reason.clone());
+    }
+    *self.exit_cause.lock().expect("exit cause lock poisoned") = Some(cause.clone());
+    for w in self.watchers.lock().expect("watchers lock poisoned").drain(..) {
+      let _ = w.send(cause.clone());
+    }
     for (_, tx) in self.pending.lock().expect("pending lock poisoned").drain() {
       let _ = tx.send(Event::Reply(Err(reason.clone().into())));
     }
@@ -127,6 +155,41 @@ impl Instance {
 
   fn exited(&self) -> Option<String> {
     self.exited.lock().expect("exited lock poisoned").clone()
+  }
+
+  /// A receiver that settles with the exit cause; immediately when the child
+  /// is already gone.
+  fn watch(&self) -> oneshot::Receiver<Option<String>> {
+    let (tx, rx) = oneshot::channel();
+    match self.exit_cause.lock().expect("exit cause lock poisoned").as_ref() {
+      Some(cause) => {
+        let _ = tx.send(cause.clone());
+      }
+      None => self.watchers.lock().expect("watchers lock poisoned").push(tx),
+    }
+    rx
+  }
+
+  /// Route one link message to its call's slot; the link's end (`None`)
+  /// records the exit. False once the link is closed.
+  fn route(&self, msg: Option<Msg>) -> bool {
+    match msg {
+      Some(Msg::Reply { id, result }) => self.deliver(id, Event::Reply(result)),
+      Some(Msg::Stream { id }) => self.deliver(id, Event::Stream),
+      Some(Msg::Yield { id, value }) => self.deliver(id, Event::Yield(value)),
+      Some(Msg::Error(e)) => *self.last_error.lock().expect("last error lock poisoned") = Some(e),
+      Some(Msg::Call { .. } | Msg::Next { .. } | Msg::Return { .. }) => {}
+      None => {
+        let cause = self.last_error.lock().expect("last error lock poisoned").take();
+        let reason = match &cause {
+          Some(e) => format!("isolate '{}' exited: {e}", self.id),
+          None => format!("isolate '{}' exited", self.id),
+        };
+        self.exit(reason, cause);
+        return false;
+      }
+    }
+    true
   }
 
   /// Wait for the next event of one call. Whoever holds the link reads for
@@ -137,19 +200,8 @@ impl Instance {
       tokio::select! {
         biased;
         e = rx.recv() => return e.unwrap_or_else(|| Event::Reply(Err(self.exited().unwrap_or_else(|| "isolate call dropped".to_string()).into()))),
-        m = self.link.recv() => match m {
-          Some(Msg::Reply { id, result }) => self.deliver(id, Event::Reply(result)),
-          Some(Msg::Stream { id }) => self.deliver(id, Event::Stream),
-          Some(Msg::Yield { id, value }) => self.deliver(id, Event::Yield(value)),
-          Some(Msg::Error(e)) => *self.last_error.lock().expect("last error lock poisoned") = Some(e),
-          Some(Msg::Call { .. } | Msg::Next { .. } | Msg::Return { .. }) => {}
-          None => {
-            let cause = self.last_error.lock().expect("last error lock poisoned").take();
-            self.exit(match cause {
-              Some(e) => format!("isolate '{}' exited: {e}", self.id),
-              None => format!("isolate '{}' exited", self.id),
-            });
-          }
+        m = self.link.recv() => {
+          self.route(m);
         },
       }
     }
@@ -322,8 +374,46 @@ impl Isolate {
     if let Some(instance) = self.instance.borrow().as_ref() {
       instance.link.close();
       instance.kill.fire();
-      instance.exit(format!("isolate '{}' terminated", self.id));
+      instance.exit(format!("isolate '{}' terminated", self.id), None);
     }
+  }
+
+  /// The `exited` promise: settles once the child is gone, with the uncaught
+  /// error that ended it or `null` for a clean end. Reading it is a first
+  /// use: the child spawns like it would for a call, and the exit pump keeps
+  /// this runtime's loop open until the child exits, so the exit is noticed
+  /// with no call in flight.
+  fn exited_promise<'js>(&self, ctx: Ctx<'js>) -> rquickjs::Result<JsValue<'js>> {
+    let (promise, resolve, _reject) = Promise::new(&ctx)?;
+    let existing = self.instance.borrow().clone();
+    let instance = match existing {
+      Some(instance) => instance,
+      None => {
+        if *self.terminated.borrow() {
+          // Never spawned and never will: gone, cleanly.
+          resolve.call::<_, ()>((JsValue::new_null(ctx.clone()),))?;
+          return Ok(promise.into_value());
+        }
+        self.instance(&ctx).map_err(|m| Exception::throw_message(&ctx, &m))?
+      }
+    };
+    let rx = instance.watch();
+    if !instance.pumping.swap(true, Ordering::Relaxed) {
+      let pump = instance.clone();
+      ctx.spawn(async move { while pump.route(pump.link.recv().await) {} });
+    }
+    let settle_ctx = ctx.clone();
+    ctx.spawn(async move {
+      let cause = rx.await.unwrap_or(None);
+      let value = match cause {
+        Some(e) => e.into_js(&settle_ctx),
+        None => Ok(JsValue::new_null(settle_ctx.clone())),
+      };
+      if let Ok(v) = value {
+        let _ = resolve.call::<_, ()>((v,));
+      }
+    });
+    Ok(promise.into_value())
   }
 
   /// The running child, spawned on first use.
@@ -354,6 +444,9 @@ impl Isolate {
       pending: Mutex::new(HashMap::new()),
       exited: Mutex::new(None),
       last_error: Mutex::new(None),
+      exit_cause: Mutex::new(None),
+      watchers: Mutex::new(Vec::new()),
+      pumping: AtomicBool::new(false),
     });
     *self.instance.borrow_mut() = Some(instance.clone());
     Ok(instance)
@@ -472,9 +565,10 @@ fn isolate<'js>(ctx: Ctx<'js>, id: String, opts: OptArg<Object<'js>>) -> rquickj
 }
 
 /// The handle's `get` trap: a string property is a call to the export of that
-/// name, except `terminate` (the method) and `then` (undefined, so awaiting or
-/// returning a handle from an async function does not treat it as a
-/// thenable). Symbols are looked up on the handle itself.
+/// name, except `terminate` (the method), `exited` (the exit promise) and
+/// `then` (undefined, so awaiting or returning a handle from an async
+/// function does not treat it as a thenable). Symbols are looked up on the
+/// handle itself.
 fn proxy_get<'js>(ctx: Ctx<'js>, handle: Class<'js, Isolate>, prop: JsValue<'js>) -> rquickjs::Result<JsValue<'js>> {
   let name = match prop.as_string() {
     Some(s) => s.to_string()?,
@@ -483,6 +577,7 @@ fn proxy_get<'js>(ctx: Ctx<'js>, handle: Class<'js, Isolate>, prop: JsValue<'js>
   match name.as_str() {
     "then" => Ok(JsValue::new_undefined(ctx)),
     "terminate" => Function::new(ctx, move || handle.borrow().terminate()).map(|f| f.into_value()),
+    "exited" => handle.borrow().exited_promise(ctx),
     _ => Function::new(ctx, move |ctx: Ctx<'js>, args: Rest<Neutral>| handle.borrow().call(ctx, name.clone(), args.0))
       .map(|f| f.into_value()),
   }
