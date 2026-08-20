@@ -30,6 +30,12 @@ declare module "flux:audio" {
      * Defaults to 0 (start at full level).
      */
     fadeInMs?: number
+    /**
+     * Name of the bus this playback belongs to, so `stop({ bus })` can stop
+     * the whole group at once. Buses are plain names created by use - no
+     * setup call, and (for now) no per-bus gain.
+     */
+    bus?: string
   }
 
   /** Options for the live setters ({@link Playback.setGain} and friends). */
@@ -52,6 +58,15 @@ declare module "flux:audio" {
      * playing while it fades; ended() turns true once the fade completes.
      */
     fadeOutMs?: number
+  }
+
+  /** Options for the module-level {@link stop}. */
+  type StopAllOptions = StopOptions & {
+    /**
+     * Stop only the playbacks on this bus (see {@link PlayOptions.bus})
+     * instead of everything.
+     */
+    bus?: string
   }
 
   /** One playing instance of a clip, with live controls bound to it. */
@@ -130,14 +145,33 @@ declare module "flux:audio" {
    * playback; do not overlap a stream with itself. Call `unload()` when done.
    */
   export function stream(source: ReturnType<typeof import("flux:fs").file>): Clip
-  /** Stop every playing sound, fading the whole mix out first if asked. */
-  export function stop(options?: StopOptions): void
+  /**
+   * Stop every playing sound - or just one bus with `{ bus }` - fading it
+   * out first if asked.
+   */
+  export function stop(options?: StopAllOptions): void
   /**
    * Scale the whole mix: every playing and future flux:audio playback, on top
    * of per-playback gains (1.0 = unchanged, 0 = silence). A finite number
    * >= 0; ramps like the per-playback setters. Resets to 1.0 when the app
-   * reloads. Does not affect `flux:video` audio, which has its own volume
-   * control.
+   * reloads.
    */
   export function setMasterGain(gain: number, options?: RampOptions): void
+  /**
+   * Scale one bus (see {@link PlayOptions.bus}): a playback's audible level
+   * is its own gain x its bus's gain x the master gain, each layer set
+   * independently - none overwrites another. Applies to live and future
+   * playbacks on the bus, defaults to 1.0, resets to 1.0 when the app
+   * reloads, and ramps like the other gain setters.
+   *
+   * NOT IMPLEMENTED YET: calling this throws. Until it lands, keep the bus
+   * gain in the app and fold it into each voice's setGain - one ramped
+   * write per change:
+   *
+   * ```ts
+   * let musicGain = 0.3
+   * for (let v of musicVoices) v.setGain(voiceGain * musicGain, { rampMs: 200 })
+   * ```
+   */
+  export function setBusGain(bus: string, gain: number, options?: RampOptions): void
 }

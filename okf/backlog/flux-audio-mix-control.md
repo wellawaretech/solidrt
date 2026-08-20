@@ -45,18 +45,27 @@ audio track, untouched by anything in `flux:audio`, so "mute the app" is not
 expressible at all today.
 
 Done looks like: `setMasterGain(gain)` first (SDL: `Mixer::set_gain`); later
-named buses - `play({ bus })`, per-bus gain and stop. SDL_mixer tags
-(`tag`/`set_tag_gain`/`stop_tag`/`pause_tag`) map directly onto buses.
+named buses - `play({ bus })`, per-bus gain and stop.
 
-Two constraints:
+Constraints, learned along the way:
 
 - The device outlives app runs, so the between-runs close must reset master
   gain to 1.0 or a reloaded app inherits the previous one's mute.
+- SDL_mixer tags are a grouping mechanism, NOT a gain layer:
+  `MIX_SetTagGain` SETS each tagged track's own gain (the slot
+  `MIX_SetTrackGain` writes, per its doc), so a tag-based `setBusGain` would
+  clobber per-voice gains and be escaped by the next `setGain`. Per-bus
+  stop/pause/fade map cleanly onto tags; per-bus GAIN over SDL_mixer means
+  engine-side composition (per-voice gain shadows, bus membership, bus
+  gains, `voice x bus` rewritten on every change and ramp step of either).
 - The planned mixer replacement (okf/backlog/video-playback.md staging:
-  symphonia decode plus own mixing on the PCM sink) would make buses and
-  ramps a few lines and would bring video audio under the same master. Keep
-  the JS surface engine-neutral and do not over-invest in SDL_mixer-specific
-  bus plumbing.
+  symphonia decode plus own mixing on the PCM sink) would make bus gains a
+  few lines and would bring video audio under the same master. Keep the JS
+  surface engine-neutral and do not over-invest in SDL_mixer-specific bus
+  plumbing.
+- Scope decision 2026-08-20: nothing video-related is touched for now.
+  Cross-module mute (video under the master) is explicitly out of this
+  item's scope and lands with the mixer replacement, not before.
 
 ## 3. Gain/pan/rate ramping
 
@@ -173,6 +182,24 @@ okf/done/flux-audio-voice-control.md), and the ~3 dB step between omitted
    validation errors, unload contract, 256-voice cap, global fade stop;
    stable across an app reload) and by driving examples/audio over the
    control API (taps ping at tap-height pitch, counter decays, no errors).
-3. Buses: named groups with gain/stop; video audio joins the master (likely
-   with the mixer replacement).
+3. Buses, audio-only (video explicitly out of scope for now):
+   a. DONE 2026-08-20 (uncommitted). Thin grouping: `play({ bus })` tags the
+      voice; `stop({ bus, fadeOutMs? })` stops or fades one bus
+      (MIX_StopTag; bus-stopped tracks are not destroyed, the sweep reclaims
+      them, so no ramp purge is needed). Solves "stop() cannot clean up one
+      subsystem". Verified end-to-end (probes/audio-mix-probe.tsx 15/15:
+      scoped stop leaves other buses playing, bus fade plays through,
+      empty-name rejected).
+   b. Bus GAINS: contract decided and DECLARED 2026-08-20 (uncommitted) -
+      `setBusGain(bus, gain, { rampMs? })`, audible level = voice x bus x
+      master with each layer independent, applies to live + future voices,
+      resets on reload. The surface is mixer-implementation-neutral, so it
+      survives the replacement unchanged. NOT implemented: the export throws
+      "not implemented yet" (validation policy: throw in dev; a silent no-op
+      would pretend to work), and the .d.ts documents the interim pattern
+      (fold an app-side bus gain into each voice's ramped setGain). The
+      implementation lands with the own mixer, where it is three multipliers
+      in the mix loop; building it over SDL_mixer instead would take ~150
+      disposable lines of engine-side composition (voice-gain shadows, bus
+      membership, product writes on every change and ramp step).
 4. Position/duration/setLoop/output-rate as consumers appear.

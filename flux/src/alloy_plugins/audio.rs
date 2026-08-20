@@ -40,6 +40,7 @@ impl ModuleDef for AudioModule {
     decl.declare("stream")?;
     decl.declare("stop")?;
     decl.declare("setMasterGain")?;
+    decl.declare("setBusGain")?;
     Ok(())
   }
 
@@ -50,6 +51,7 @@ impl ModuleDef for AudioModule {
     exports.export("stream", Function::new(ctx.clone(), stream_impl)?)?;
     exports.export("stop", Function::new(ctx.clone(), stop_all_impl)?)?;
     exports.export("setMasterGain", Function::new(ctx.clone(), set_master_gain_impl)?)?;
+    exports.export("setBusGain", Function::new(ctx.clone(), set_bus_gain_impl)?)?;
     Ok(())
   }
 }
@@ -80,7 +82,7 @@ where
   f
 }
 
-/// Read the shared `{ loop?, gain?, pan?, rate?, fadeInMs? }` play options.
+/// Read the shared `{ loop?, gain?, pan?, rate?, fadeInMs?, bus? }` play options.
 fn read_options(ctx: &Ctx<'_>, options: &OptArg<Object<'_>>) -> rquickjs::Result<alloy::audio::PlayOptions> {
   let mut parsed = alloy::audio::PlayOptions::default();
   if let Some(opts) = &options.0 {
@@ -89,6 +91,7 @@ fn read_options(ctx: &Ctx<'_>, options: &OptArg<Object<'_>>) -> rquickjs::Result
     parsed.pan = opts.get::<_, Option<f32>>("pan")?;
     parsed.rate = opts.get::<_, Option<f32>>("rate")?;
     parsed.fade_in_ms = opts.get::<_, Option<f64>>("fadeInMs")?.unwrap_or(0.0);
+    parsed.bus = opts.get::<_, Option<String>>("bus")?;
   }
   check_gain(ctx, "play", parsed.gain)?;
   if let Some(pan) = parsed.pan {
@@ -98,7 +101,17 @@ fn read_options(ctx: &Ctx<'_>, options: &OptArg<Object<'_>>) -> rquickjs::Result
     check_rate(ctx, "play", rate)?;
   }
   check_ms(ctx, "play", "fadeInMs", parsed.fade_in_ms)?;
+  if let Some(bus) = &parsed.bus {
+    check_bus(ctx, "play", bus)?;
+  }
   Ok(parsed)
+}
+
+fn check_bus(ctx: &Ctx<'_>, who: &str, bus: &str) -> rquickjs::Result<()> {
+  if bus.is_empty() || bus.contains('\0') {
+    return Err(throw_str(ctx, &format!("{who}: bus must be a non-empty string")));
+  }
+  Ok(())
 }
 
 /// Read the `{ rampMs? }` options bag the live setters share.
@@ -310,6 +323,15 @@ fn set_master_gain_impl<'js>(ctx: Ctx<'js>, gain: f32, options: OptArg<Object<'j
   state.0.set_master_gain(gain, ramp_ms).map_err(|e| throw_str(&ctx, &format!("setMasterGain: {e}")))
 }
 
+/// Declared contract, not yet implemented (lands with the own-mixer
+/// replacement; over SDL_mixer a real bus gain layer would need disposable
+/// engine-side composition - see okf/backlog/flux-audio-mix-control.md 3b).
+/// Throws so the unimplemented state cannot be missed; the .d.ts documents
+/// the interim pattern.
+fn set_bus_gain_impl(ctx: Ctx<'_>) -> rquickjs::Result<()> {
+  Err(throw_str(&ctx, "setBusGain: not implemented yet; keep a bus gain in the app and multiply it into each voice's setGain"))
+}
+
 fn ended_impl(ctx: Ctx<'_>, id: u64) -> bool {
   let state = ctx.userdata::<AudioPluginState>().expect("audio state");
   state.0.audio_ended(id)
@@ -329,7 +351,17 @@ fn stop_impl<'js>(ctx: Ctx<'js>, id: u64, options: OptArg<Object<'js>>) -> rquic
 
 fn stop_all_impl<'js>(ctx: Ctx<'js>, options: OptArg<Object<'js>>) -> rquickjs::Result<()> {
   let fade_out_ms = read_fade_out_ms(&ctx, "stop", &options)?;
+  let bus = match &options.0 {
+    Some(opts) => opts.get::<_, Option<String>>("bus")?,
+    None => None,
+  };
   let state = ctx.userdata::<AudioPluginState>().expect("audio state");
-  state.0.stop_all_audio(fade_out_ms);
+  match bus {
+    Some(bus) => {
+      check_bus(&ctx, "stop", &bus)?;
+      state.0.stop_bus_audio(&bus, fade_out_ms);
+    }
+    None => state.0.stop_all_audio(fade_out_ms),
+  }
   Ok(())
 }

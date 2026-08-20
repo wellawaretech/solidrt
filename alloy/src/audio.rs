@@ -263,18 +263,22 @@ impl RampDriver {
 /// Options for starting a voice, shared by the fire-and-forget and clip
 /// paths. `gain` defaults to 1.0 (as loaded); `pan`/`rate` of None leave the
 /// voice unspatialized / at the loaded rate; `fade_in_ms` > 0 fades in from
-/// silence, sample-accurately, via SDL's play option.
+/// silence, sample-accurately, via SDL's play option; `bus` names the group
+/// the voice belongs to (an SDL tag), so `stop_bus_audio` can stop it as a
+/// set. Buses are names only - no gain layer (see the mix-control backlog
+/// item for why SDL tag gain is not one).
 pub struct PlayOptions {
   pub looping: bool,
   pub gain: f32,
   pub pan: Option<f32>,
   pub rate: Option<f32>,
   pub fade_in_ms: f64,
+  pub bus: Option<String>,
 }
 
 impl Default for PlayOptions {
   fn default() -> Self {
-    PlayOptions { looping: false, gain: 1.0, pan: None, rate: None, fade_in_ms: 0.0 }
+    PlayOptions { looping: false, gain: 1.0, pan: None, rate: None, fade_in_ms: 0.0, bus: None }
   }
 }
 
@@ -390,6 +394,9 @@ impl AudioRegistry {
     }
     if let Some(rate) = options.rate {
       track.set_frequency_ratio(clamp_rate(rate)).map_err(|e| format!("failed to set rate: {e}"))?;
+    }
+    if let Some(bus) = &options.bus {
+      track.tag(bus).map_err(|e| format!("failed to tag bus: {e}"))?;
     }
     // MIX_PlayTrack resets the loop count from its play options every call, so a
     // prior set_loops is ignored (see MIX_PROP_PLAY_LOOPS_NUMBER). Pass the loop
@@ -616,6 +623,16 @@ impl crate::context::Context {
       }
     } else {
       self.audio.tracks.borrow_mut().clear();
+    }
+  }
+
+  /// Stop every track on one bus (see `PlayOptions::bus`), fading it out over
+  /// `fade_out_ms` first when it is > 0. Tracks are not destroyed here (SDL
+  /// stops them; the sweep reclaims them), so no ramp purge is needed - live
+  /// ramps on a stopped track are harmless and expire on their own.
+  pub fn stop_bus_audio(&self, bus: &str, fade_out_ms: f64) {
+    if let Some(mixer) = *self.audio.mixer.borrow() {
+      let _ = mixer.stop_tag(bus, fade_out_ms.max(0.0) as i64);
     }
   }
 

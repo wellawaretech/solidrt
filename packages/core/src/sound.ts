@@ -34,6 +34,8 @@ export type SoundOptions = {
   rate?: number
   /** Fade each play() in from silence over this many milliseconds. */
   fadeInMs?: number
+  /** Bus name for every voice of this sound (see flux:audio `stop({ bus })`). */
+  bus?: string
   /**
    * Let play() stack overlapping voices instead of restarting. Defaults to
    * true: rapid triggers overlap. Set false for a single-voice sound where each
@@ -75,6 +77,8 @@ export type SoundStreamOptions = {
   rate?: number
   /** Fade each play() in from silence over this many milliseconds. */
   fadeInMs?: number
+  /** Bus name for the stream's voice (see flux:audio `stop({ bus })`). */
+  bus?: string
 }
 
 /** A decoded sound with reactive lifecycle. */
@@ -102,7 +106,7 @@ export type Sound = {
 function reactiveSound(
   loader: () => Clip,
   overlap: boolean,
-  initial: { loop?: boolean; gain?: number; pan?: number; rate?: number; fadeInMs?: number },
+  initial: { loop?: boolean; gain?: number; pan?: number; rate?: number; fadeInMs?: number; bus?: string },
 ): Sound {
   let [error, setError] = createSignal<Error | undefined>(undefined, { ownedWrite: true })
   let [playing, setPlaying] = createSignal(false, { ownedWrite: true })
@@ -114,6 +118,7 @@ function reactiveSound(
   let pan = initial.pan
   let rate = initial.rate
   let fadeInMs = initial.fadeInMs
+  let bus = initial.bus
   try {
     clip = loader()
   } catch (e) {
@@ -145,7 +150,7 @@ function reactiveSound(
       if (!clip) return
       if (overlap) prune()
       else stopAll()
-      voices.push(clip.play({ loop, gain, pan, rate, fadeInMs }))
+      voices.push(clip.play({ loop, gain, pan, rate, fadeInMs, bus }))
       setPlaying(true)
     },
     stop: stopAll,
@@ -181,6 +186,7 @@ export function createSound(source: Uint8Array, options: SoundOptions = {}): Sou
     pan: options.pan,
     rate: options.rate,
     fadeInMs: options.fadeInMs,
+    bus: options.bus,
   })
 }
 
@@ -204,6 +210,7 @@ export function createPcmSound(
     pan: options.pan,
     rate: options.rate,
     fadeInMs: options.fadeInMs,
+    bus: options.bus,
   })
 }
 
@@ -223,5 +230,6 @@ export function createSoundStream(source: string | FluxFile, options: SoundStrea
     pan: options.pan,
     rate: options.rate,
     fadeInMs: options.fadeInMs,
+    bus: options.bus,
   })
 }
