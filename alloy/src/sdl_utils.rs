@@ -651,6 +651,35 @@ pub fn has_touchscreen_feature() -> bool {
 /// `ndk_context::android_context()` call panics ("android context was not
 /// initialized"). Call once, after `SDL_Init`, before any such dependency runs.
 /// The activity reference and VM live for the whole process, so they are not
+// --- SDL_mixer raw-pointer setters (audio ramp driver) ---
+//
+// The sdl3 crate wraps these on Track/Mixer objects, which are !Send, so the
+// ramp thread (alloy::audio) cannot use them. SDL documents every one of
+// these as safe to call from any thread; what the wrappers do NOT guarantee
+// is pointer liveness - callers pass the raw MIX_Track/MIX_Mixer as usize and
+// must keep it alive for the call (see the purge protocol on RampState).
+
+/// MIX_SetTrackGain on a raw track pointer. Returns false on SDL error.
+pub fn mix_track_set_gain_raw(track: usize, gain: f32) -> bool {
+  unsafe { sdl3::mixer::sys::MIX_SetTrackGain(track as *mut sdl3::mixer::sys::MIX_Track, gain) }
+}
+
+/// MIX_SetTrackStereo (forced-stereo pan gains) on a raw track pointer.
+pub fn mix_track_set_stereo_raw(track: usize, left: f32, right: f32) -> bool {
+  let gains = sdl3::mixer::sys::MIX_StereoGains { left, right };
+  unsafe { sdl3::mixer::sys::MIX_SetTrackStereo(track as *mut sdl3::mixer::sys::MIX_Track, &gains) }
+}
+
+/// MIX_SetTrackFrequencyRatio (playback rate) on a raw track pointer.
+pub fn mix_track_set_frequency_ratio_raw(track: usize, ratio: f32) -> bool {
+  unsafe { sdl3::mixer::sys::MIX_SetTrackFrequencyRatio(track as *mut sdl3::mixer::sys::MIX_Track, ratio) }
+}
+
+/// MIX_SetMixerGain (master) on a raw mixer pointer.
+pub fn mix_mixer_set_gain_raw(mixer: usize, gain: f32) -> bool {
+  unsafe { sdl3::mixer::sys::MIX_SetMixerGain(mixer as *mut sdl3::mixer::sys::MIX_Mixer, gain) }
+}
+
 /// released.
 #[cfg(target_os = "android")]
 pub fn init_android_context() {

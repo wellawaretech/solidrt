@@ -155,6 +155,12 @@ Shaped, not started.
   stages reduce it - createNode with a props object, a one-call-per-flush
   drain, interned prop ids with table dispatch, and a command buffer whose
   props land in a shared buffer Rust reads directly.
+- **["flux:audio mix control: playback rate, master gain, ramps, voice cap, PCM validation"](backlog/flux-audio-mix-control.md)** [2026-08-20]
+  A Playback's rate is fixed forever (no pitch sweeps, no doppler), there is
+  no master gain or bus so every app hand-rolls mute, gain/pan writes cannot
+  ramp, a runaway play() loop wedges the JS thread with no error, and
+  non-finite PCM samples load silently; SDL3_mixer already exposes most of the
+  missing controls.
 - **[Focus navigation (spatial/D-pad, tab order) on the focusable registry](backlog/focus-navigation.md)** [2026-08-01]
   Stage 3 of the focus/key-routing work - move focus across getFocusables()
   candidates from bubbled arrow keys, activate with select/Enter, and fold the

@@ -28,7 +28,8 @@ pub fn store_state(ctx: &Ctx<'_>, atx: AlloyContext) {
 }
 
 /// The `flux:audio` module. Handles are bound objects (playback: `{ stop,
-/// setGain, setPan, ended }`; clip: `{ play, unload }`) so raw ids stay in Rust.
+/// setGain, setPan, setRate, ended }`; clip: `{ play, unload }`) so raw ids
+/// stay in Rust.
 pub struct AudioModule;
 
 impl ModuleDef for AudioModule {
@@ -38,6 +39,7 @@ impl ModuleDef for AudioModule {
     decl.declare("loadPcm")?;
     decl.declare("stream")?;
     decl.declare("stop")?;
+    decl.declare("setMasterGain")?;
     Ok(())
   }
 
@@ -47,6 +49,7 @@ impl ModuleDef for AudioModule {
     exports.export("loadPcm", Function::new(ctx.clone(), load_pcm_impl)?)?;
     exports.export("stream", Function::new(ctx.clone(), stream_impl)?)?;
     exports.export("stop", Function::new(ctx.clone(), stop_all_impl)?)?;
+    exports.export("setMasterGain", Function::new(ctx.clone(), set_master_gain_impl)?)?;
     Ok(())
   }
 }
@@ -60,21 +63,65 @@ where
   f
 }
 
-/// Read the shared `{ loop?, gain?, pan? }` play options.
-fn read_options(ctx: &Ctx<'_>, options: &OptArg<Object<'_>>) -> rquickjs::Result<(bool, f32, Option<f32>)> {
-  let mut looping = false;
-  let mut gain = 1.0f32;
-  let mut pan = None;
+/// Same HRTB coercion for the capturing setter closures, whose `Ctx` and
+/// options bag must share one `'js` (elision infers them independently).
+fn setter_builder<F>(f: F) -> F
+where
+  F: for<'js> Fn(Ctx<'js>, f32, OptArg<Object<'js>>) -> rquickjs::Result<()>,
+{
+  f
+}
+
+/// And for the capturing stop closure (no value argument).
+fn stop_builder<F>(f: F) -> F
+where
+  F: for<'js> Fn(Ctx<'js>, OptArg<Object<'js>>) -> rquickjs::Result<()>,
+{
+  f
+}
+
+/// Read the shared `{ loop?, gain?, pan?, rate?, fadeInMs? }` play options.
+fn read_options(ctx: &Ctx<'_>, options: &OptArg<Object<'_>>) -> rquickjs::Result<alloy::audio::PlayOptions> {
+  let mut parsed = alloy::audio::PlayOptions::default();
   if let Some(opts) = &options.0 {
-    looping = opts.get::<_, Option<bool>>("loop")?.unwrap_or(false);
-    gain = opts.get::<_, Option<f32>>("gain")?.unwrap_or(1.0);
-    pan = opts.get::<_, Option<f32>>("pan")?;
+    parsed.looping = opts.get::<_, Option<bool>>("loop")?.unwrap_or(false);
+    parsed.gain = opts.get::<_, Option<f32>>("gain")?.unwrap_or(1.0);
+    parsed.pan = opts.get::<_, Option<f32>>("pan")?;
+    parsed.rate = opts.get::<_, Option<f32>>("rate")?;
+    parsed.fade_in_ms = opts.get::<_, Option<f64>>("fadeInMs")?.unwrap_or(0.0);
   }
-  check_gain(ctx, "play", gain)?;
-  if let Some(pan) = pan {
+  check_gain(ctx, "play", parsed.gain)?;
+  if let Some(pan) = parsed.pan {
     check_pan(ctx, "play", pan)?;
   }
-  Ok((looping, gain, pan))
+  if let Some(rate) = parsed.rate {
+    check_rate(ctx, "play", rate)?;
+  }
+  check_ms(ctx, "play", "fadeInMs", parsed.fade_in_ms)?;
+  Ok(parsed)
+}
+
+/// Read the `{ rampMs? }` options bag the live setters share.
+fn read_ramp_ms(ctx: &Ctx<'_>, who: &str, options: &OptArg<Object<'_>>) -> rquickjs::Result<f64> {
+  let Some(opts) = &options.0 else { return Ok(0.0) };
+  let ramp = opts.get::<_, Option<f64>>("rampMs")?.unwrap_or(0.0);
+  check_ms(ctx, who, "rampMs", ramp)?;
+  Ok(ramp)
+}
+
+/// Read the `{ fadeOutMs? }` options bag the stop calls share.
+fn read_fade_out_ms(ctx: &Ctx<'_>, who: &str, options: &OptArg<Object<'_>>) -> rquickjs::Result<f64> {
+  let Some(opts) = &options.0 else { return Ok(0.0) };
+  let fade = opts.get::<_, Option<f64>>("fadeOutMs")?.unwrap_or(0.0);
+  check_ms(ctx, who, "fadeOutMs", fade)?;
+  Ok(fade)
+}
+
+fn check_ms(ctx: &Ctx<'_>, who: &str, what: &str, ms: f64) -> rquickjs::Result<()> {
+  if !ms.is_finite() || ms < 0.0 {
+    return Err(throw_str(ctx, &format!("{who}: {what} must be a finite number >= 0")));
+  }
+  Ok(())
 }
 
 fn check_gain(ctx: &Ctx<'_>, who: &str, gain: f32) -> rquickjs::Result<()> {
@@ -91,6 +138,13 @@ fn check_pan(ctx: &Ctx<'_>, who: &str, pan: f32) -> rquickjs::Result<()> {
   Ok(())
 }
 
+fn check_rate(ctx: &Ctx<'_>, who: &str, rate: f32) -> rquickjs::Result<()> {
+  if !rate.is_finite() || rate <= 0.0 {
+    return Err(throw_str(ctx, &format!("{who}: rate must be a finite number > 0")));
+  }
+  Ok(())
+}
+
 /// Borrow a TypedArray's bytes. The caller only decodes during the call, so the
 /// borrow need not outlive it.
 fn typed_bytes<'a>(ctx: &Ctx<'_>, data: &'a TypedArray<'_, u8>, who: &str) -> rquickjs::Result<&'a [u8]> {
@@ -99,33 +153,41 @@ fn typed_bytes<'a>(ctx: &Ctx<'_>, data: &'a TypedArray<'_, u8>, who: &str) -> rq
 }
 
 /// Wrap a started track id in a playback handle (`{ stop, setGain, setPan,
-/// ended }`) so the raw id stays in Rust.
+/// setRate, ended }`) so the raw id stays in Rust.
 fn playback_handle<'js>(ctx: &Ctx<'js>, track_id: u64) -> rquickjs::Result<Object<'js>> {
   let obj = Object::new(ctx.clone())?;
-  obj.set("stop", Function::new(ctx.clone(), move |ctx: Ctx<'_>| stop_impl(ctx, track_id))?)?;
+  obj.set(
+    "stop",
+    Function::new(ctx.clone(), stop_builder(move |ctx, options| stop_impl(ctx, track_id, options)))?,
+  )?;
   obj.set(
     "setGain",
-    Function::new(ctx.clone(), move |ctx: Ctx<'_>, gain: f32| set_gain_impl(ctx, track_id, gain))?,
+    Function::new(ctx.clone(), setter_builder(move |ctx, gain, options| set_gain_impl(ctx, track_id, gain, options)))?,
   )?;
   obj.set(
     "setPan",
-    Function::new(ctx.clone(), move |ctx: Ctx<'_>, pan: f32| set_pan_impl(ctx, track_id, pan))?,
+    Function::new(ctx.clone(), setter_builder(move |ctx, pan, options| set_pan_impl(ctx, track_id, pan, options)))?,
+  )?;
+  obj.set(
+    "setRate",
+    Function::new(ctx.clone(), setter_builder(move |ctx, rate, options| set_rate_impl(ctx, track_id, rate, options)))?,
   )?;
   obj.set("ended", Function::new(ctx.clone(), move |ctx: Ctx<'_>| ended_impl(ctx, track_id))?)?;
   Ok(obj)
 }
 
-/// play(bytes, { loop?, gain?, pan? }) -> playback. Fire-and-forget: decodes and
-/// starts in one call. Use `load` to replay a clip without re-decoding.
+/// play(bytes, { loop?, gain?, pan?, rate?, fadeInMs? }) -> playback.
+/// Fire-and-forget: decodes and starts in one call. Use `load` to replay a
+/// clip without re-decoding.
 fn play_impl<'js>(
   ctx: Ctx<'js>,
   data: TypedArray<'js, u8>,
   options: OptArg<Object<'js>>,
 ) -> rquickjs::Result<Object<'js>> {
-  let (looping, gain, pan) = read_options(&ctx, &options)?;
+  let play_options = read_options(&ctx, &options)?;
   let bytes = typed_bytes(&ctx, &data, "play")?;
   let state = ctx.userdata::<AudioPluginState>().expect("audio state");
-  let id = state.0.play_audio(bytes, looping, gain, pan).map_err(|e| throw_str(&ctx, &format!("play: {e}")))?;
+  let id = state.0.play_audio(bytes, &play_options).map_err(|e| throw_str(&ctx, &format!("play: {e}")))?;
   playback_handle(&ctx, id)
 }
 
@@ -214,22 +276,38 @@ fn stream_impl<'js>(ctx: Ctx<'js>, source: Object<'js>) -> rquickjs::Result<Obje
 }
 
 fn play_sound_impl<'js>(ctx: Ctx<'js>, sound_id: u64, options: OptArg<Object<'js>>) -> rquickjs::Result<Object<'js>> {
-  let (looping, gain, pan) = read_options(&ctx, &options)?;
+  let play_options = read_options(&ctx, &options)?;
   let state = ctx.userdata::<AudioPluginState>().expect("audio state");
-  let id = state.0.play_sound(sound_id, looping, gain, pan).map_err(|e| throw_str(&ctx, &format!("play: {e}")))?;
+  let id = state.0.play_sound(sound_id, &play_options).map_err(|e| throw_str(&ctx, &format!("play: {e}")))?;
   playback_handle(&ctx, id)
 }
 
-fn set_gain_impl(ctx: Ctx<'_>, id: u64, gain: f32) -> rquickjs::Result<()> {
+fn set_gain_impl<'js>(ctx: Ctx<'js>, id: u64, gain: f32, options: OptArg<Object<'js>>) -> rquickjs::Result<()> {
   check_gain(&ctx, "setGain", gain)?;
+  let ramp_ms = read_ramp_ms(&ctx, "setGain", &options)?;
   let state = ctx.userdata::<AudioPluginState>().expect("audio state");
-  state.0.set_audio_gain(id, gain).map_err(|e| throw_str(&ctx, &format!("setGain: {e}")))
+  state.0.set_audio_gain(id, gain, ramp_ms).map_err(|e| throw_str(&ctx, &format!("setGain: {e}")))
 }
 
-fn set_pan_impl(ctx: Ctx<'_>, id: u64, pan: f32) -> rquickjs::Result<()> {
+fn set_pan_impl<'js>(ctx: Ctx<'js>, id: u64, pan: f32, options: OptArg<Object<'js>>) -> rquickjs::Result<()> {
   check_pan(&ctx, "setPan", pan)?;
+  let ramp_ms = read_ramp_ms(&ctx, "setPan", &options)?;
   let state = ctx.userdata::<AudioPluginState>().expect("audio state");
-  state.0.set_audio_pan(id, pan).map_err(|e| throw_str(&ctx, &format!("setPan: {e}")))
+  state.0.set_audio_pan(id, pan, ramp_ms).map_err(|e| throw_str(&ctx, &format!("setPan: {e}")))
+}
+
+fn set_rate_impl<'js>(ctx: Ctx<'js>, id: u64, rate: f32, options: OptArg<Object<'js>>) -> rquickjs::Result<()> {
+  check_rate(&ctx, "setRate", rate)?;
+  let ramp_ms = read_ramp_ms(&ctx, "setRate", &options)?;
+  let state = ctx.userdata::<AudioPluginState>().expect("audio state");
+  state.0.set_audio_rate(id, rate, ramp_ms).map_err(|e| throw_str(&ctx, &format!("setRate: {e}")))
+}
+
+fn set_master_gain_impl<'js>(ctx: Ctx<'js>, gain: f32, options: OptArg<Object<'js>>) -> rquickjs::Result<()> {
+  check_gain(&ctx, "setMasterGain", gain)?;
+  let ramp_ms = read_ramp_ms(&ctx, "setMasterGain", &options)?;
+  let state = ctx.userdata::<AudioPluginState>().expect("audio state");
+  state.0.set_master_gain(gain, ramp_ms).map_err(|e| throw_str(&ctx, &format!("setMasterGain: {e}")))
 }
 
 fn ended_impl(ctx: Ctx<'_>, id: u64) -> bool {
@@ -242,12 +320,16 @@ fn unload_impl(ctx: Ctx<'_>, sound_id: u64) {
   state.0.unload_sound(sound_id);
 }
 
-fn stop_impl(ctx: Ctx<'_>, id: u64) {
+fn stop_impl<'js>(ctx: Ctx<'js>, id: u64, options: OptArg<Object<'js>>) -> rquickjs::Result<()> {
+  let fade_out_ms = read_fade_out_ms(&ctx, "stop", &options)?;
   let state = ctx.userdata::<AudioPluginState>().expect("audio state");
-  state.0.stop_audio(id);
+  state.0.stop_audio(id, fade_out_ms);
+  Ok(())
 }
 
-fn stop_all_impl(ctx: Ctx<'_>) {
+fn stop_all_impl<'js>(ctx: Ctx<'js>, options: OptArg<Object<'js>>) -> rquickjs::Result<()> {
+  let fade_out_ms = read_fade_out_ms(&ctx, "stop", &options)?;
   let state = ctx.userdata::<AudioPluginState>().expect("audio state");
-  state.0.stop_all_audio();
+  state.0.stop_all_audio(fade_out_ms);
+  Ok(())
 }

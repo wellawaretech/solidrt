@@ -28,11 +28,33 @@ export type SoundOptions = {
    */
   pan?: number
   /**
+   * Playback rate: 1.0 plays as loaded, higher is faster and higher-pitched
+   * (clamped to [0.01, 100]). Defaults to 1.0.
+   */
+  rate?: number
+  /** Fade each play() in from silence over this many milliseconds. */
+  fadeInMs?: number
+  /**
    * Let play() stack overlapping voices instead of restarting. Defaults to
    * true: rapid triggers overlap. Set false for a single-voice sound where each
    * play() cuts off the previous one.
    */
   overlap?: boolean
+}
+
+/** Options for the live setters: ramp to the value instead of jumping. */
+export type SoundRampOptions = {
+  /**
+   * Reach the new value over this many milliseconds, engine-smoothed (immune
+   * to frame hitches). Omitted (or 0) sets immediately.
+   */
+  rampMs?: number
+}
+
+/** Options for {@link Sound.stop}. */
+export type SoundStopOptions = {
+  /** Fade to silence over this many milliseconds before stopping. */
+  fadeOutMs?: number
 }
 
 /** Options for a PCM sound: `SoundOptions` plus the channel count. */
@@ -49,18 +71,24 @@ export type SoundStreamOptions = {
   gain?: number
   /** Stereo position in [-1, 1] (see {@link SoundOptions.pan}). */
   pan?: number
+  /** Playback rate (see {@link SoundOptions.rate}). Defaults to 1.0. */
+  rate?: number
+  /** Fade each play() in from silence over this many milliseconds. */
+  fadeInMs?: number
 }
 
 /** A decoded sound with reactive lifecycle. */
 export type Sound = {
   /** Start the clip. Overlaps or restarts per the `overlap` option. */
   play(): void
-  /** Stop every voice started from this sound. */
-  stop(): void
+  /** Stop every voice started from this sound, fading first if asked. */
+  stop(options?: SoundStopOptions): void
   /** Set the volume of every live voice, and of voices started later. */
-  setGain(gain: number): void
+  setGain(gain: number, options?: SoundRampOptions): void
   /** Set the stereo position of every live voice, and of voices started later. */
-  setPan(pan: number): void
+  setPan(pan: number, options?: SoundRampOptions): void
+  /** Set the playback rate of every live voice, and of voices started later. */
+  setRate(rate: number, options?: SoundRampOptions): void
   /** True after play() until stop() (does not track natural completion). */
   playing(): boolean
   /** Set if loading failed. */
@@ -69,12 +97,12 @@ export type Sound = {
 
 // Shared reactive wrapper: owns the loaded clip, tracks live voices, and
 // disposes both on cleanup. `loader` runs once (may throw -> error signal).
-// Gain and pan are remembered so later voices start where setGain/setPan left
-// the sound, not back at the initial options.
+// Gain, pan and rate are remembered so later voices start where the setters
+// left the sound, not back at the initial options.
 function reactiveSound(
   loader: () => Clip,
   overlap: boolean,
-  initial: { loop?: boolean; gain?: number; pan?: number },
+  initial: { loop?: boolean; gain?: number; pan?: number; rate?: number; fadeInMs?: number },
 ): Sound {
   let [error, setError] = createSignal<Error | undefined>(undefined, { ownedWrite: true })
   let [playing, setPlaying] = createSignal(false, { ownedWrite: true })
@@ -84,6 +112,8 @@ function reactiveSound(
   let loop = initial.loop
   let gain = initial.gain
   let pan = initial.pan
+  let rate = initial.rate
+  let fadeInMs = initial.fadeInMs
   try {
     clip = loader()
   } catch (e) {
@@ -96,8 +126,8 @@ function reactiveSound(
     voices = voices.filter((v) => !v.ended())
   }
 
-  let stopAll = () => {
-    for (let v of voices) v.stop()
+  let stopAll = (options?: SoundStopOptions) => {
+    for (let v of voices) v.stop(options)
     voices = []
     setPlaying(false)
   }
@@ -115,19 +145,24 @@ function reactiveSound(
       if (!clip) return
       if (overlap) prune()
       else stopAll()
-      voices.push(clip.play({ loop, gain, pan }))
+      voices.push(clip.play({ loop, gain, pan, rate, fadeInMs }))
       setPlaying(true)
     },
     stop: stopAll,
-    setGain(value) {
+    setGain(value, options) {
       gain = value
       prune()
-      for (let v of voices) v.setGain(value)
+      for (let v of voices) v.setGain(value, options)
     },
-    setPan(value) {
+    setPan(value, options) {
       pan = value
       prune()
-      for (let v of voices) v.setPan(value)
+      for (let v of voices) v.setPan(value, options)
+    },
+    setRate(value, options) {
+      rate = value
+      prune()
+      for (let v of voices) v.setRate(value, options)
     },
     playing,
     error,
@@ -144,6 +179,8 @@ export function createSound(source: Uint8Array, options: SoundOptions = {}): Sou
     loop: options.loop,
     gain: options.gain,
     pan: options.pan,
+    rate: options.rate,
+    fadeInMs: options.fadeInMs,
   })
 }
 
@@ -165,6 +202,8 @@ export function createPcmSound(
     loop: options.loop,
     gain: options.gain,
     pan: options.pan,
+    rate: options.rate,
+    fadeInMs: options.fadeInMs,
   })
 }
 
@@ -178,5 +217,11 @@ export function createPcmSound(
  */
 export function createSoundStream(source: string | FluxFile, options: SoundStreamOptions = {}): Sound {
   let src = typeof source === "string" ? file(source) : source
-  return reactiveSound(() => stream(src), false, { loop: options.loop, gain: options.gain, pan: options.pan })
+  return reactiveSound(() => stream(src), false, {
+    loop: options.loop,
+    gain: options.gain,
+    pan: options.pan,
+    rate: options.rate,
+    fadeInMs: options.fadeInMs,
+  })
 }
