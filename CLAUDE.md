@@ -51,15 +51,16 @@ and other behavioral measurements are profile-independent.
 # Running an app for verification (dev server + MCP)
 Never use the built-in `run` skill here. Drive the app yourself:
 
-- Start: `(sleep 100000 | bunx srt run <entry.tsx> > <scratchpad>/run.log 2>&1 &)`
-  from repo root. `srt run` starts the dev server AND a local client, and
-  runs a REPL on stdin - a plain `&` background gets EOF on stdin and the
-  server exits (and removes its registry record) within a second, which
-  looks like "no dev server" a moment later. The piped sleep holds stdin
-  open. Give it ~10 s, then check `~/.solidrt/servers/34884/live.json`
-  exists (default port 0x8844; `-s <N>` = port + N).
-- Stop: `pkill -f "srt run <entry.tsx>"; pkill -f "sleep 100000"`. The
-  live.json is removed on exit; a leftover record means a crash.
+- Start: `(bunx srt run <entry.tsx> > <scratchpad>/run.log 2>&1 &)` from repo
+  root. `srt run` starts the dev server AND a local client; with no terminal
+  on stdin it runs without the repl and stays up on its own (it logs "No
+  terminal on stdin"). Give it ~10 s, then check
+  `~/.solidrt/servers/34884/live.json` exists (default port 0x8844;
+  `-s <N>` = port + N).
+- Stop: signal the srt process by pid. `pkill -f "srt run <entry.tsx>"` also
+  matches the shell that ran it, so `pgrep -af "<entry.tsx>"`, pick the
+  `bun`/`bunx` pid, and `kill` that - it tears down the server and the
+  client. The live.json is removed on exit; a leftover record means a crash.
 - MCP tools (`mcp__solidrt__*`) resolve the server by PROJECT: the bridge's
   cwd (repo root here) must match the served entry's nearest package.json.
   An entry under `packages/<pkg>/` or `examples/<x>/` registers THAT

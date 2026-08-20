@@ -17,10 +17,10 @@ This site is built by a Flux script.
 Web-standard APIs are global, with the names and shapes you already know:
 `fetch`, `Request`, `Response`, `Headers`, `console`, `setTimeout` and
 `setInterval`, `queueMicrotask`, `performance`, `WebSocket`, `TextEncoder`
-and `TextDecoder`, `atob` and `btoa`. What is not there is as deliberate as
-what is: no `URL`, no `crypto`, no `AbortController`, no `Blob`, `FormData`
-or streams. A single known app rarely needs them, and each is a module away
-when it does.
+and `TextDecoder`, `atob` and `btoa`, `AbortController` and `AbortSignal`.
+What is not there is as deliberate as what is: no `URL`, no `crypto`, no
+`Blob`, `FormData` or streams. A single known app rarely needs them, and
+each is a module away when it does.
 
 Everything else is an explicit `flux:*` module import. Capabilities are
 named, not ambient:

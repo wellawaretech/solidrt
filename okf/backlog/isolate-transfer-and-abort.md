@@ -78,31 +78,38 @@ anything but raw buffers, and `SharedArrayBuffer` (rejected in the plan).
 
 ## AbortSignal on plain calls
 
-Fact first: flux has no `AbortSignal`/`AbortController` implementation. The
-names appear only in flux-types `standards/fetch.d.ts`, so TypeScript
-currently promises a global that does not exist (a parity gap worth fixing
-regardless). This follow-up therefore has a prerequisite:
+Prerequisite done (2026-08-20): `AbortController`/`AbortSignal` as a
+standards plugin (web shape, simplified semantics per the solidrt lens:
+`abort(reason?)`, `signal.aborted`/`reason`/`onabort`/`throwIfAborted()`,
+`AbortSignal.abort(reason?)`; handler property only, like the WebSocket
+client; no `AbortSignal.timeout`/`any` until asked for; default reason is an
+`Error` named "AbortError" - there is no `DOMException`). Fetch honors
+`RequestInit.signal` (same day): abort rejects the fetch promise with the
+signal's `reason` and drops the request mid-flight; an already-aborted
+signal rejects without sending. Native consumers race work against
+`AbortSignal::subscribe()` (a oneshot fired on abort) - the isolate rule
+below uses the same hook.
 
-1. `AbortController`/`AbortSignal` as a standards plugin (web shape,
-   simplified semantics per the solidrt lens: `abort()`, `signal.aborted`,
-   `reason`, `"abort"` event / `onabort`; no `AbortSignal.timeout`/`any`
-   until asked for).
-2. The isolate rule: an `AbortSignal` among a call's arguments is consumed
-   as the call's signal. Abort can only mean "stop waiting": the parent
-   rejects the call's promise with `signal.reason` and forgets the call (the
-   pending slot is removed; the child's eventual reply finds no slot and is
-   dropped, which `deliver` already tolerates). A busy sync export in the
-   child is untouched - interrupting it stays `terminate()`'s job. An
-   already-aborted signal rejects without sending.
-
-Scope: plain calls only. A stream is aborted by `break`/`return()` already;
-wiring a signal to `return()` can come later if a consumer wants it. More
-than one signal in an argument list throws.
+The isolate rule, done (2026-08-20, verified): an `AbortSignal` among a
+call's arguments is consumed as the call's signal (anywhere in the list; the
+export sees only the other arguments; more than one throws a `TypeError`).
+On a plain call, abort means "stop waiting": the parent rejects the call's
+promise with `signal.reason` and forgets the call (the pending slot is
+removed; the child's eventual reply finds no slot and is dropped, which
+`deliver` already tolerates). A busy export in the child is untouched -
+interrupting it stays `terminate()`'s job. An already-aborted signal rejects
+without sending anything, and without spawning the child. On a stream, abort
+acts as `return()`: the generator ends in the child (`finally` runs) and the
+`for await` loop finishes cleanly, like a `break` from outside it - aborting
+a subscription is not an error. Mechanically, once the child answers
+"stream" the racing task hands the signal to a native `on_abort` closure
+that just sends `Return`, so no task stays parked on the signal and an
+unread stream still lets the runtime go idle. Tests:
+flux/tests/isolate.rs.
 
 ## Order
 
-AbortSignal's prerequisite (the standards plugin) is independent and useful
-beyond isolates (fetch should honor it too - today it silently would not).
-Transfer stage 1 and the AbortSignal rule are each small once this note's
-vocabulary is agreed; transfer stage 2 carries the only real unknown
-(stealing the backing from rquickjs).
+Done except transfer: the standards plugin, fetch and the isolate rule all
+landed 2026-08-20. Transfer stage 1 is small now that the vocabulary above
+is in; transfer stage 2 carries the only real unknown (stealing the backing
+from rquickjs).

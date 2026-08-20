@@ -1,6 +1,6 @@
 // The Fetch API cluster (Headers, Request, Response, fetch). A deliberate subset
 // of the WHATWG Fetch standard: flux provides exactly these members and no more
-// (no Blob, FormData, ReadableStream, clone(), AbortSignal, ...).
+// (no Blob, FormData, ReadableStream, clone(), ...).
 // Grouped in one file because the four share BodyInit/HeadersInit and reference
 // each other.
 
@@ -70,6 +70,13 @@ interface RequestInit {
    * throttled.
    */
   cache?: "force-cache" | "reload" | "default" | "no-store" | "no-cache"
+  /**
+   * Abort signal for `fetch`: aborting rejects the fetch promise with the
+   * signal's `reason` and drops the request mid-flight; a fetch on an
+   * already-aborted signal rejects without sending anything. Ignored by the
+   * `Request` constructor.
+   */
+  signal?: AbortSignal
 }
 
 /**

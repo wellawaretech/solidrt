@@ -191,6 +191,17 @@ function guard(p: Promise<void>) {
 }
 
 export function startRepl() {
+  // Without a terminal there is nobody to prompt, and stdin is at EOF from the
+  // start: readline would fire `close` immediately and shutdown() would tear
+  // down the server, the client and the registry record about a second after
+  // boot. A backgrounded or supervisor-launched srt therefore runs with no
+  // repl at all, kept alive by the server process and the watcher, and stopped
+  // with a signal. See okf/backlog/srt-run-exits-on-stdin-eof.md.
+  if (!process.stdin.isTTY) {
+    print("[cli] No terminal on stdin, running without the repl")
+    return
+  }
+
   state.rl = createInterface({ input: process.stdin, output: process.stdout, completer })
   state.rl.setPrompt("srt> ")
 

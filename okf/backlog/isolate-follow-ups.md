@@ -14,9 +14,12 @@ symptom first where there is one:
   calls spread over them; shape undecided (a pool is userland today: N
   `isolate()` calls).
 
-Designed, not yet built: zero-copy buffer transfer and `AbortSignal` on plain
-calls both need new call-surface vocabulary (a special argument on a plain
-function call), decided once in okf/backlog/isolate-transfer-and-abort.md.
+Designed, not yet built: zero-copy buffer transfer needs new call-surface
+vocabulary (a special argument on a plain function call), decided in
+okf/backlog/isolate-transfer-and-abort.md - which also records the
+`AbortSignal` rule, built 2026-08-20: a signal among a call's arguments is
+consumed as the call's signal; abort rejects the call with `signal.reason`
+and drops the eventual reply, without touching the export.
 
 Separate item, done: okf/done/isolate-stack-attribution.md (isolate stacks
 said `main:` and remapped against the app's sourcemap).

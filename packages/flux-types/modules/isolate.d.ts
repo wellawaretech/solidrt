@@ -44,10 +44,10 @@ declare module "flux:isolate" {
       ? 0 extends 1 & R // an `any` result (untyped module) is a plain call, not a stream
         ? (...args: A) => Promise<any>
         : R extends AsyncIterable<infer Y>
-          ? (...args: A) => AsyncIterableIterator<Y>
+          ? (...args: A | [...A, AbortSignal]) => AsyncIterableIterator<Y>
           : R extends Generator<any, any, any> // sync generators do not stream: the call rejects
             ? never
-            : (...args: A) => Promise<Awaited<R>>
+            : (...args: A | [...A, AbortSignal]) => Promise<Awaited<R>>
       : never
   } & {
     /**
@@ -94,7 +94,20 @@ declare module "flux:isolate" {
    * naming it. Awaiting a stream call rejects; iterating a plain call rejects. An
    * open stream keeps both runtimes alive until it ends, `break`s, or the
    * child is terminated. A sync generator export rejects when called: only
-   * async generators stream. Reserved names: `terminate`, `exited`, `then`.
+   * async generators stream.
+   *
+   * An `AbortSignal` among a call's arguments (anywhere in the list; at most
+   * one, more throw) is consumed as the call's signal rather than sent: the
+   * export sees only the other arguments. On a plain call, aborting stops
+   * the waiting - the call rejects with `signal.reason` and the eventual
+   * result is dropped - but does not interrupt the export; interrupting is
+   * `terminate()`'s job. On a stream, aborting acts as `return()`: the
+   * generator ends in the isolate (its `finally` runs) and the `for await`
+   * loop finishes cleanly, like a `break` from outside it. A call on an
+   * already-aborted signal rejects without sending anything (or starting the
+   * child).
+   *
+   * Reserved names: `terminate`, `exited`, `then`.
    */
   export function isolate<T = Record<string, (...args: any[]) => any>>(id: string, opts?: IsolateOptions): Isolated<T>
 }

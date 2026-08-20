@@ -1,11 +1,13 @@
 use rquickjs::{
-  function::MutFn, promise::Promised, Ctx, Exception, Function, IntoJs, JsLifetime, Object, TypedArray, Value,
+  function::MutFn, Class, Ctx, Exception, Function, IntoJs, JsLifetime, Object, Promise, TypedArray, Value,
 };
 use std::path::PathBuf;
 use std::rc::Rc;
 
 use crate::logger::CtxLogger;
+use crate::pending::PendingOps;
 use crate::plugins::marshal::{with_pending, OptArg};
+use crate::standards_plugins::abort::AbortSignal;
 use crate::standards_plugins::body::{is_async_iterable, pump_async_iterable};
 use crate::standards_plugins::headers::header_pairs_from_init;
 use crate::standards_plugins::http::HttpClient;
@@ -33,8 +35,8 @@ pub(crate) fn init_fetch(ctx: &Ctx<'_>) {
 
   let fetch_fn = Function::new(
     ctx.clone(),
-    MutFn::from(
-      move |ctx: Ctx<'_>, url: String, opts: OptArg<Object<'_>>| -> rquickjs::Result<Promised<_>> {
+    MutFn::from(fetch_builder(
+      move |ctx, url: String, opts| {
         let client = ctx.userdata::<HttpClient>().expect("http client").0.clone();
 
         let cache_mode: Option<CacheMode> =
@@ -69,21 +71,88 @@ pub(crate) fn init_fetch(ctx: &Ctx<'_>) {
           None => Vec::new(),
         };
 
-        Ok(with_pending(&ctx, async move {
+        let signal: Option<Class<AbortSignal>> = match opts.0.as_ref() {
+          Some(o) => o
+            .get::<_, Option<Class<AbortSignal>>>("signal")
+            .map_err(|_| Exception::throw_type(&ctx, "signal must be an AbortSignal"))?,
+          None => None,
+        };
+
+        let net = async move {
           match (cache, cache_mode) {
             (Some(cache), Some(mode)) => {
               do_fetch_cached(client, &method, &url, headers, body, cache, mode, limits).await
             }
             _ => do_fetch(client, &method, &url, headers, body).await,
           }
-          .map(JsResponseData)
-        }))
+        };
+
+        let Some(sig) = signal else {
+          return with_pending(&ctx, async move { net.await.map(JsResponseData) }).into_js(&ctx);
+        };
+
+        // Aborting must reject with the signal's own reason (a JS value), so
+        // this path settles the promise from a local task that holds the
+        // signal, instead of a `Promised` future (which cannot hold `'js`
+        // values). Abort wins the race and drops the request mid-flight; an
+        // already-aborted signal rejects without sending anything.
+        let (promise, resolve, reject) = Promise::new(&ctx)?;
+        let mut abort_rx = sig.borrow().subscribe();
+        let pending = ctx.userdata::<PendingOps>().expect("pending ops").clone();
+        pending.hold();
+        let task_ctx = ctx.clone();
+        ctx.spawn(async move {
+          tokio::pin!(net);
+          tokio::select! {
+            biased;
+            res = &mut abort_rx => {
+              if res.is_ok() {
+                let reason = sig.borrow().reason(task_ctx.clone());
+                let _ = reject.call::<_, ()>((reason,));
+              } else {
+                // The sender cannot drop while this task holds the signal;
+                // finish the request if it somehow does.
+                settle_fetch(&task_ctx, &resolve, &reject, net.await);
+              }
+            }
+            r = &mut net => settle_fetch(&task_ctx, &resolve, &reject, r),
+          }
+          pending.release();
+        });
+        Ok(promise.into_value())
       },
-    ),
+    )),
   )
   .expect("create fetch function");
 
   globals.set("fetch", fetch_fn).expect("set fetch global");
+}
+
+/// Forces the HRTB a capturing closure returning a `'js`-bound value needs
+/// (see "Ctx and the `'js` lifetime" in flux/CLAUDE.md).
+fn fetch_builder<F>(f: F) -> F
+where
+  F: for<'js> FnMut(Ctx<'js>, String, OptArg<Object<'js>>) -> rquickjs::Result<Value<'js>>,
+{
+  f
+}
+
+/// Settle a manually-built fetch promise: a response resolves it, an error
+/// message rejects it with an `Error`.
+fn settle_fetch<'js>(ctx: &Ctx<'js>, resolve: &Function<'js>, reject: &Function<'js>, r: Result<ResponseData, String>) {
+  let outcome = match r {
+    Ok(data) => JsResponseData(data).into_js(ctx).map(Ok),
+    Err(msg) => Exception::from_message(ctx.clone(), &msg).map(|e| Err(e.into_value())),
+  };
+  match outcome {
+    Ok(Ok(v)) => {
+      let _ = resolve.call::<_, ()>((v,));
+    }
+    Ok(Err(e)) => {
+      let _ = reject.call::<_, ()>((e,));
+    }
+    Err(e) => ctx.logger().warn(&format!("[flux] fetch: could not build result: {e}")),
+  }
 }
 
 /// Marshal a fetch request body value into a reqwest Body. Buffered bodies

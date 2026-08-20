@@ -963,6 +963,11 @@ Finished, kept for the reasoning.
   captureSnapshot and get_snapshot latch a frame request but do not wake the
   render loop, so a truly idle client never services the capture and the query
   times out.
+- **[srt run exits immediately when stdin is not a terminal](done/srt-run-exits-on-stdin-eof.md)** [2026-08-20]
+  The repl bound readline close to full shutdown, so any non-interactive
+  launch (background shell, supervisor, CI) tore down the server, the client
+  and the registry record within a second; startRepl now returns early when
+  stdin is not a tty, and the piped-sleep workaround is gone.
 - **[Stats overlay should draw after the window shader pass](done/stats-overlay-post-shader.md)** [2026-08-10]
   The debug overlay was recorded into the app's display list, so a window
   shader warped the HUD and its once-per-second refresh forced full rebuilds.

@@ -22,6 +22,7 @@
 /// <reference path="./standards/base64.d.ts" />
 /// <reference path="./standards/fetch.d.ts" />
 /// <reference path="./standards/websocket.d.ts" />
+/// <reference path="./standards/abort.d.ts" />
 
 // GUI capabilities (present only on a gui-enabled runtime). rendertree/camera/
 // microphone/gpu are flux:* modules like the rest; requestAnimationFrame stays a

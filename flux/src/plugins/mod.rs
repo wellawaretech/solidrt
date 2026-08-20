@@ -182,6 +182,7 @@ pub(crate) async fn init_context(
       crate::standards_plugins::response::init_response(&ctx);
       crate::standards_plugins::text::init_text(&ctx);
       crate::standards_plugins::websocket::init_websocket(&ctx);
+      crate::standards_plugins::abort::init_abort(&ctx);
 
       ctx.globals().set("Flux", flux_obj).unwrap();
 

@@ -1,8 +1,10 @@
 // Web-standard JS APIs (WHATWG / web platform): console, fetch, the Fetch
 // types (Headers / Request / Response / Body), TextEncoder/Decoder, timers, the
-// WebSocket client. Installed as globals. The Fetch types are reused by the
-// `flux:http` server in the sibling `modules` layer.
+// WebSocket client, AbortController/AbortSignal. Installed as globals. The
+// Fetch types are reused by the `flux:http` server in the sibling `modules`
+// layer.
 
+pub mod abort;
 pub mod body;
 pub mod console;
 pub mod fetch;

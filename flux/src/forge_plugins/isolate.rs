@@ -38,6 +38,16 @@
 //!   uncaught error elsewhere in the child (a failed module load, a throw out
 //!   of a timer) is logged; when it ends the child, pending and later calls
 //!   reject with a message naming it.
+//! - An `AbortSignal` among a call's arguments is the call's signal: consumed
+//!   here, never sent (the export sees only the other arguments). On a plain
+//!   call, aborting stops the waiting: the promise rejects with
+//!   `signal.reason` and the call is forgotten (the child's eventual reply
+//!   is dropped) - the export itself is not interrupted, that stays
+//!   `terminate()`'s job. On a stream, aborting acts as `return()`: the
+//!   generator ends in the child (its `finally` runs) and the iteration
+//!   finishes cleanly, like a `break` from outside the loop. A call on an
+//!   already-aborted signal rejects without sending (or spawning) anything.
+//!   More than one signal in one call throws.
 //! - `terminate()` kills the child now: busy JS is interrupted, the child
 //!   runtime is dropped, pending calls reject and open streams end.
 //! - `exited` is a promise settling once the child is gone: with the uncaught
@@ -75,6 +85,7 @@ use crate::engine::{EngineConfig, FluxEngineBuilder, ModuleCode};
 use crate::logger::Logger;
 use crate::plugins::marshal::{mark_observed, with_pending, OptArg};
 use crate::plugins::value::{self, Neutral};
+use crate::standards_plugins::abort::AbortSignal;
 use forge::isolate::{CallError, Kill, Link, Msg, Thrown};
 use forge::Value;
 
@@ -249,6 +260,14 @@ enum Outcome {
   Over,
 }
 
+/// One step of the initial pump when a signal is racing it: a pumped event,
+/// the abort, or a signal that can no longer fire (its sender side is gone).
+enum Raced {
+  Event(Outcome),
+  Aborted,
+  SignalGone,
+}
+
 impl CallState {
   fn answer(&self, r: Result<Option<Value>, Thrown>) {
     if let Some(w) = self.waiters.borrow_mut().pop_front() {
@@ -313,13 +332,39 @@ pub struct Isolate {
 impl Isolate {
   /// Call export `name` in the child with `args`: what `handle.name(...args)`
   /// does. Returns the call's promise, which doubles as an async iterator for
-  /// stream results (see `attach_iterator`).
-  fn call<'js>(&self, ctx: Ctx<'js>, name: String, args: Vec<Neutral>) -> rquickjs::Result<JsValue<'js>> {
+  /// stream results (see `attach_iterator`). An `AbortSignal` among the
+  /// arguments is the call's signal: consumed here, not sent.
+  fn call<'js>(&self, ctx: Ctx<'js>, name: String, args: Vec<JsValue<'js>>) -> rquickjs::Result<JsValue<'js>> {
+    let mut signal: Option<Class<'js, AbortSignal<'js>>> = None;
+    let mut sent_args: Vec<Value> = Vec::with_capacity(args.len());
+    for arg in args {
+      if let Some(sig) = arg.as_object().and_then(Class::<AbortSignal>::from_object) {
+        if signal.replace(sig).is_some() {
+          return Err(Exception::throw_type(&ctx, "a call takes at most one AbortSignal"));
+        }
+        continue;
+      }
+      sent_args.push(value::from_js(&ctx, arg)?);
+    }
+    if let Some(sig) = &signal {
+      if sig.borrow().aborted() {
+        // Already aborted: reject with the reason, sending (and spawning)
+        // nothing. Settled from a task so the caller can attach handlers
+        // before the rejection lands.
+        let (promise, _resolve, reject) = Promise::new(&ctx)?;
+        let (sig, reject_ctx) = (sig.clone(), ctx.clone());
+        ctx.spawn(async move {
+          let reason = sig.borrow().reason(reject_ctx.clone());
+          let _ = reject.call::<_, ()>((reason,));
+        });
+        return Ok(promise.into_value());
+      }
+    }
     let instance = self.instance(&ctx).map_err(|m| Exception::throw_message(&ctx, &m))?;
     let (tx, rx) = mpsc::unbounded_channel();
     let id = instance.next_call.fetch_add(1, Ordering::Relaxed);
     instance.pending.lock().expect("pending lock poisoned").insert(id, tx);
-    let sent = instance.link.send(Msg::Call { id, name: name.clone(), args: args.into_iter().map(|a| a.0).collect() });
+    let sent = instance.link.send(Msg::Call { id, name: name.clone(), args: sent_args });
     if let Err(e) = sent {
       instance.deliver(id, Event::Reply(Err(e.into())));
     }
@@ -335,7 +380,12 @@ impl Isolate {
     // The initial pump: drives the call until the child says what it is (a
     // plain call is settled here), then keeps going only while readers that
     // queued before that answer are waiting. Owns the resolvers, so they die
-    // with the task, not with the (JS-owned) state.
+    // with the task, not with the (JS-owned) state. A signal races the wait:
+    // its abort rejects the promise with the reason and forgets the call.
+    let mut abort = signal.map(|sig| {
+      let rx = sig.borrow().subscribe();
+      (sig, rx)
+    });
     let (pump_ctx, pump_state, pump_promise) = (ctx.clone(), state.clone(), promise.clone());
     ctx.spawn(async move {
       let reject_with = |t: Thrown| {
@@ -344,10 +394,58 @@ impl Isolate {
         }
       };
       loop {
-        if pump_state.mode.get() != Mode::Unknown && pump_state.waiters.borrow().is_empty() {
-          return;
+        if pump_state.mode.get() != Mode::Unknown {
+          // The answer is in. On a stream, abort now acts as `return()`: a
+          // closure on the signal sends the normal end-of-stream message, so
+          // no task stays parked on the signal (an unread stream must not
+          // hold the runtime open). A stray `Return` after the stream (or a
+          // plain call) is over is ignored by the child.
+          if let Some((sig, _)) = abort.take() {
+            let (link, id) = (pump_state.instance.link.clone(), pump_state.id);
+            sig.borrow().on_abort(move || {
+              let _ = link.send(Msg::Return { id });
+            });
+          }
+          if pump_state.waiters.borrow().is_empty() {
+            return;
+          }
         }
-        match pump_state.pump_one().await {
+        let raced = match &mut abort {
+          None => Raced::Event(pump_state.pump_one().await),
+          Some((_, rx)) => {
+            let step = pump_state.pump_one();
+            tokio::pin!(step);
+            tokio::select! {
+              biased;
+              res = rx => if res.is_ok() { Raced::Aborted } else { Raced::SignalGone },
+              o = &mut step => Raced::Event(o),
+            }
+          }
+        };
+        let outcome = match raced {
+          Raced::Aborted => {
+            // Stop waiting: forget the call (the child's eventual reply finds
+            // no slot and is dropped), close the stream it may have become,
+            // end any queued readers, and reject with the signal's reason.
+            // The export itself runs on. Marked observed because an iterating
+            // caller never looks at the promise itself.
+            let (sig, _) = abort.take().expect("aborted without a signal");
+            pump_state.instance.pending.lock().expect("pending lock poisoned").remove(&pump_state.id);
+            let _ = pump_state.instance.link.send(Msg::Return { id: pump_state.id });
+            pump_state.mode.set(Mode::Ended);
+            pump_state.answer_all(Ok(None));
+            mark_observed(pump_promise.as_value());
+            let reason = sig.borrow().reason(pump_ctx.clone());
+            let _ = reject.call::<_, ()>((reason,));
+            return;
+          }
+          Raced::SignalGone => {
+            abort = None;
+            continue;
+          }
+          Raced::Event(o) => o,
+        };
+        match outcome {
           Outcome::Continue => {}
           Outcome::Over => return,
           Outcome::Settle(Ok(v)) => {
@@ -591,7 +689,7 @@ fn proxy_get<'js>(ctx: Ctx<'js>, handle: Class<'js, Isolate>, prop: JsValue<'js>
     "then" => Ok(JsValue::new_undefined(ctx)),
     "terminate" => Function::new(ctx, move || handle.borrow().terminate()).map(|f| f.into_value()),
     "exited" => handle.borrow().exited_promise(ctx),
-    _ => Function::new(ctx, move |ctx: Ctx<'js>, args: Rest<Neutral>| handle.borrow().call(ctx, name.clone(), args.0))
+    _ => Function::new(ctx, move |ctx: Ctx<'js>, args: Rest<JsValue<'js>>| handle.borrow().call(ctx, name.clone(), args.0))
       .map(|f| f.into_value()),
   }
 }
