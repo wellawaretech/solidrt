@@ -2,7 +2,7 @@ import { existsSync, watch } from "node:fs"
 import { resolve, dirname, sep, basename } from "path"
 import { state, print, printErr } from "./util"
 import { buildReload, sendReload, showBuildFailure, watchAllowed } from "./dev-server"
-import { bundle } from "./bundler"
+import { bundle, bundleMaps } from "./bundler"
 
 let watchers: ReturnType<typeof watch>[] = []
 
@@ -25,11 +25,11 @@ async function rebuild(filename: string) {
     return
   }
   state.currentCode = result.code
-  state.currentMap = result.map
+  state.currentMaps = bundleMaps(result)
   state.currentManifest = result.manifest
   await sendReload(buildReload({ code: state.currentCode, manifest: state.currentManifest }), {
     latch: true,
-    map: state.currentMap,
+    maps: state.currentMaps,
   })
 }
 

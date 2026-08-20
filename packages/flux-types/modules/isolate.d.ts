@@ -63,9 +63,16 @@ declare module "flux:isolate" {
    * before anything else (one thread), an async export lets other calls and
    * stream steps run at each `await`; an export that must not interleave with
    * itself serialises inside the module. A throw in the export rejects that
-   * call (a throw in a generator rejects the pending step); an uncaught error
-   * that ends the child rejects pending and later calls with a message naming
-   * it. Awaiting a stream call rejects; iterating a plain call rejects. An
+   * call (a throw in a generator rejects the pending step) with the error
+   * rebuilt from its data: `name`, `message` and `stack` carry over, `e
+   * instanceof RangeError` holds for the standard error types (a custom error
+   * class arrives as an `Error` with its `name`), and the `cause` chain
+   * carries over - each cause another rebuilt error or a {@link Sendable}
+   * value (an unsendable cause is dropped; the chain is capped). A thrown
+   * non-Error rejects with the thrown value itself when it is sendable, else
+   * with an `Error` describing it. An uncaught
+   * error that ends the child rejects pending and later calls with a message
+   * naming it. Awaiting a stream call rejects; iterating a plain call rejects. An
    * open stream keeps both runtimes alive until it ends, `break`s, or the
    * child is terminated. Reserved names: `terminate`, `then`.
    */

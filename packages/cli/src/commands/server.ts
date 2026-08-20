@@ -2,7 +2,7 @@ import pkg from "../../package.json"
 import { source, isSource, isPrebuilt, values } from "../args"
 import { state, shutdown, print, printErr } from "../util"
 import { findProjectRoot, typecheck, reportTypes } from "./check"
-import { bundle } from "../bundler"
+import { bundle, bundleMaps } from "../bundler"
 import { buildManifest, projectDirFor } from "../project"
 import { startServer, buildReload, sendReload, showBuildFailure } from "../dev-server"
 import { startRepl } from "../repl"
@@ -34,11 +34,11 @@ export async function runServerCommand() {
     let initialResult = await bundle()
     if (initialResult) {
       state.currentCode = initialResult.code
-      state.currentMap = initialResult.map
+      state.currentMaps = bundleMaps(initialResult)
       state.currentManifest = initialResult.manifest
       await sendReload(buildReload({ code: state.currentCode, manifest: state.currentManifest }), {
         latch: true,
-        map: state.currentMap,
+        maps: state.currentMaps,
       })
     } else {
       await showBuildFailure()

@@ -166,8 +166,20 @@ export type BundleResult = {
   map: string | null
   /** Version manifest JSON for this bundle; clients install pushes under its hash. */
   manifest: string
-  /** The app's isolate bundles, one per "use isolate" module, in id order. */
-  isolates: { id: string; code: string }[]
+  /** The app's isolate bundles, one per "use isolate" module, in id order; maps dev builds only. */
+  isolates: { id: string; code: string; map: string | null }[]
+}
+
+/**
+ * The bundle's sourcemaps keyed by the module name stack frames cite ("main"
+ * for the app, the isolate id for each isolate), for the server's log remap.
+ * Null when the build carries no maps (production builds).
+ */
+export function bundleMaps(result: BundleResult): Record<string, string> | null {
+  let maps: Record<string, string> = {}
+  if (result.map) maps.main = result.map
+  for (let i of result.isolates) if (i.map) maps[i.id] = i.map
+  return Object.keys(maps).length ? maps : null
 }
 
 // The pure bundle: every input is explicit, so it runs identically in the srt
@@ -189,8 +201,8 @@ export async function bundleWith(opts: BundleOptions): Promise<BundleResult | nu
 
   // One Bun.build per entry: the app, then each isolate module as its own
   // self-contained bundle (splitting is off, so a helper both import gets
-  // duplicated rather than shared). Only the app's build gets a composed
-  // sourcemap for now.
+  // duplicated rather than shared). In dev every build gets a composed
+  // sourcemap, keyed downstream by its module name.
   let build = async (entry: string, babelMaps?: Map<string, object>, isolateEntry?: string) => {
     let result = null
     try {
@@ -221,11 +233,16 @@ export async function bundleWith(opts: BundleOptions): Promise<BundleResult | nu
   if (!main) return null
   let code = await codeFromOutputs(main.outputs)
 
-  let isolates: { id: string; code: string }[] = []
+  let isolates: { id: string; code: string; map: string | null }[] = []
   for (let module of findIsolateModules(dirname(resolvePath(opts.entry)))) {
-    let result = await build(module.path, undefined, module.path)
+    let moduleMaps = opts.dev ? new Map<string, object>() : undefined
+    let result = await build(module.path, moduleMaps, module.path)
     if (!result) return null
-    isolates.push({ id: module.id, code: await codeFromOutputs(result.outputs) })
+    isolates.push({
+      id: module.id,
+      code: await codeFromOutputs(result.outputs),
+      map: await composeMap(result.outputs, moduleMaps),
+    })
   }
 
   let extra = isolates.map((i) => manifestAssetFor(isolateAssetPath(i.id, "js"), Buffer.from(i.code, "utf8")))
@@ -324,10 +341,12 @@ export async function bundleSolid(): Promise<BundleResult> {
   return result
 }
 
-// Compile JS source to QuickJS bytecode via the fluxc binary.
-export async function compileToBytecode(jsCode: string): Promise<Buffer> {
+// Compile JS source to QuickJS bytecode via the fluxc binary. `moduleName` is
+// what stack frames cite at runtime: "main" for the entry, the isolate id for
+// an isolate bundle.
+export async function compileToBytecode(jsCode: string, moduleName = "main"): Promise<Buffer> {
   let compiler = requireBinary("fluxc")
-  let proc = Bun.spawn([compiler], {
+  let proc = Bun.spawn([compiler, moduleName], {
     stdin: new Blob([jsCode]),
     stdout: "pipe",
     stderr: "inherit",

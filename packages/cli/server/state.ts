@@ -66,12 +66,13 @@ export let state = {
    */
   currentReload: null as string | null,
   /**
-   * The running bundle's sourcemap (JSON text, bundle -> .tsx sources), used
-   * to remap stack traces in forwarded client logs (see control.ts). Replaced
-   * on every reload; a reload without a map clears it so frames are never
-   * remapped against a stale map.
+   * The running bundle's sourcemaps (JSON text, bundle -> .tsx sources),
+   * keyed by the module name stack frames cite ("main" for the app, the
+   * isolate id for each isolate), used to remap stack traces in forwarded
+   * client logs (see control.ts). Replaced on every reload; a reload without
+   * maps clears them so frames are never remapped against a stale map.
    */
-  currentMap: null as string | null,
+  currentMaps: null as Record<string, string> | null,
   sourceDir: "",
   projectDir: "",
   serverUrl: "",

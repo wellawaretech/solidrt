@@ -8,9 +8,10 @@ export let state = {
   // What srt believes the current bundle is; the server process keeps its own
   // latched copy for late-joining clients (see packages/cli/server/).
   currentCode: null as string | null,
-  // The bundle's composed sourcemap (dev builds), sent to the server alongside
-  // reloads so it can remap logged stack traces to .tsx positions.
-  currentMap: null as string | null,
+  // The bundle's composed sourcemaps (dev builds), keyed by module name
+  // ("main", each isolate id), sent to the server alongside reloads so it can
+  // remap logged stack traces to .tsx positions.
+  currentMaps: null as Record<string, string> | null,
   // The bundle's version manifest (canonical JSON string, see buildManifest);
   // travels with code reloads so clients install the push as a version.
   currentManifest: null as string | null,

@@ -47,7 +47,12 @@ export async function rebuildAndBroadcast(): Promise<string | null> {
   }
 
   // bundle-cli writes one JSON object { code, map, manifest, isolates } to stdout.
-  let bundle: { code?: string; map?: string | null; manifest?: string; isolates?: { id: string; code: string }[] }
+  let bundle: {
+    code?: string
+    map?: string | null
+    manifest?: string
+    isolates?: { id: string; code: string; map?: string | null }[]
+  }
   try {
     bundle = JSON.parse(typeof result.stdout === "string" ? result.stdout : "")
   } catch {
@@ -55,12 +60,15 @@ export async function rebuildAndBroadcast(): Promise<string | null> {
   }
   // Isolate bundles are manifest assets clients fetch from our /isolates/
   // route (served from cacheDir), so they must be on disk before the push.
+  let maps: Record<string, string> = {}
+  if (bundle.map) maps.main = bundle.map
   for (let isolate of bundle.isolates ?? []) {
     let path = `${config.cacheDir}/isolates/${isolate.id}.js`
     await dir(path.slice(0, path.lastIndexOf("/"))).create()
     await file(path).write(isolate.code)
+    if (isolate.map) maps[isolate.id] = isolate.map
   }
-  state.currentMap = bundle.map ?? null
+  state.currentMaps = Object.keys(maps).length ? maps : null
   let text = JSON.stringify(buildReload(bundle.code ?? "", bundle.manifest))
   state.currentReload = text
   for (let ws of state.clients.keys()) ws.send(text)

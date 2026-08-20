@@ -34,7 +34,7 @@ function sleep(ms: number): Promise<void> {
 /// A `log` message arrived from a client: buffer it and wake long-polls.
 /// Bundle positions in stack traces are remapped to .tsx sources on the way in.
 export function appendLog(client: number, level: string, text: string) {
-  logs.push({ seq: ++logSeq, at: Date.now(), client, level, text: remapPositions(text, state.currentMap) })
+  logs.push({ seq: ++logSeq, at: Date.now(), client, level, text: remapPositions(text, state.currentMaps) })
   if (logs.length > LOG_CAP) logs.splice(0, logs.length - LOG_CAP)
   let waiters = logWaiters
   logWaiters = []
@@ -138,7 +138,7 @@ async function handleQuery(
     )
   // Error strings may carry stack traces (e.g. a debug command threw); remap
   // bundle positions to .tsx sources like appendLog does for forwarded logs.
-  if (msg.error) return Response.json({ error: remapPositions(String(msg.error), state.currentMap) }, { status: 502 })
+  if (msg.error) return Response.json({ error: remapPositions(String(msg.error), state.currentMaps) }, { status: 502 })
   return Response.json(msg.data)
 }
 

@@ -1,4 +1,8 @@
 // fluxc - compile JS from stdin to bytecode on stdout
+//
+// Usage: fluxc [module-name]
+// The module name is what stack frames cite at runtime; the entry compiles
+// as "main" (the default), an isolate bundle as its isolate id.
 
 struct StderrLogger;
 impl log::Log for StderrLogger {
@@ -22,7 +26,8 @@ fn main() {
     std::process::exit(1);
   });
 
-  let bytecode = flux::compile_source(&source, "stdin");
+  let name = std::env::args().nth(1).unwrap_or_else(|| "main".to_string());
+  let bytecode = flux::compile_source(&source, &name);
   std::io::Write::write_all(&mut std::io::stdout(), &bytecode).unwrap_or_else(|e| {
     log::error!("[fluxc] error: failed to write stdout: {e}");
     std::process::exit(1);

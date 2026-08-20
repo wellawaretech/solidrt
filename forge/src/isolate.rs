@@ -19,15 +19,41 @@ use tokio::sync::{mpsc, Notify};
 
 use crate::Value;
 
+/// What a call rejects with, crossing the link as data: an error (rebuilt as
+/// a real error on the peer), or - when the throw was not an Error - the
+/// thrown value itself, sendable values only. Internal failures (a missing
+/// export, a closed link, an exit) are plain messages via `From`.
+pub enum Thrown {
+  Error(CallError),
+  Value(Value),
+}
+
+impl From<String> for Thrown {
+  fn from(message: String) -> Self {
+    Thrown::Error(CallError { name: "Error".to_string(), message, stack: None, cause: None })
+  }
+}
+
+/// A thrown error as data: the error's `name` (its constructor's), `message`,
+/// its stack text, and its `cause` chain - each cause another error or a
+/// sendable value; an unsendable cause is dropped, as is anything past the
+/// sender's depth cap (which also ends a cyclic chain).
+pub struct CallError {
+  pub name: String,
+  pub message: String,
+  pub stack: Option<String>,
+  pub cause: Option<Box<Thrown>>,
+}
+
 /// One message on a link.
 pub enum Msg {
   /// Parent -> child: call the module export `name` with `args`; answer with
   /// a `Reply` carrying the same `id`.
   Call { id: u64, name: String, args: Vec<Value> },
-  /// Child -> parent: the outcome of the call `id` (a thrown error as its
-  /// message). For a stream this is the end of it: `Ok` when the iterator
+  /// Child -> parent: the outcome of the call `id` (a throw as `Thrown`
+  /// data). For a stream this is the end of it: `Ok` when the iterator
   /// completed, `Err` when it threw.
-  Reply { id: u64, result: Result<Value, String> },
+  Reply { id: u64, result: Result<Value, Thrown> },
   /// Child -> parent: call `id` returned an async iterable; its items follow
   /// as `Yield`s, one per `Next`.
   Stream { id: u64 },

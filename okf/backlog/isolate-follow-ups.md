@@ -16,18 +16,12 @@ symptom first where there is one:
   so this is contained: allocate the JS `ArrayBuffer` with a flux-owned free
   hook, hand ownership over the link, detach on the sending side. Opt-in per
   argument or result (the web `transfer` shape), copies stay the default.
-- **Errors as data.** Symptom: `catch (e) { if (e instanceof RangeError) }`
-  across the boundary is always false; `e.stack` is glued into `e.message`.
-  Send `{name, message, stack}` on `Reply Err`, rebuild via `globals[name]`
-  when that is a constructor, else `Error`; `cause` only when `Sendable`.
 - **Observable exit.** Symptom: an isolate that crashed (uncaught error out
   of a timer) is only discovered by the next call rejecting. A handle-level
   `exited: Promise<string | null>` (or `terminate()` resolving once the thread
   is gone) so it can be noticed and restarted.
 - **`memoryLimit` option.** A runaway isolate takes the whole process down.
   QuickJS `JS_SetMemoryLimit` per child, one option in `isolate(id, opts)`.
-- **Thread name per id.** All child threads are `flux-isolate` in `top -H`,
-  gdb, perf; make it `flux-isolate:<id>`.
 - **`AbortSignal` on plain calls.** Can only mean "stop waiting" (a running
   sync export is uninterruptible short of `terminate()`); the child drops the
   reply.
@@ -36,8 +30,23 @@ symptom first where there is one:
   `isolate()` calls).
 - **Sync generators.** `function*` exports as streams, same protocol.
 
-Separate item, has a symptom today: okf/backlog/isolate-stack-attribution.md
-(isolate stacks say `main:` and remap against the app's sourcemap).
+Separate item, done: okf/done/isolate-stack-attribution.md (isolate stacks
+said `main:` and remapped against the app's sourcemap).
+
+Done since this list was written: errors as data (2026-08-20): a throw
+crosses as `Thrown` data on `Reply Err` - an error as
+`CallError {name, message, stack, cause}`, rebuilt on the parent via
+`new globals[name](message)` when that yields an error (`instanceof
+RangeError` holds), else an `Error` carrying the name; the stack is a field
+(no longer glued into the message); the `cause` chain crosses too, each cause
+another rebuilt error or a sendable value (unsendable dropped, chain capped
+at 8, which also ends a cyclic one); a thrown non-Error crosses as the value
+itself when sendable.
+
+Done: thread name per id (2026-08-20): child threads are named
+`isolate:<id>` instead of a shared `flux-isolate`, so `top -H`, gdb and perf
+tell isolates apart (Linux truncates thread names at 15 bytes, so a long id
+keeps only its head).
 
 Not wanted, decided in the plan: `SharedArrayBuffer`/`Atomics`, ports or
 `postMessage`, source-text spawning, structured clone of identity-bearing

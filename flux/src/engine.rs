@@ -325,8 +325,10 @@ impl FluxEngine {
   /// Evaluate a module and, once its top level has finished (including any
   /// top-level `await`), hand its namespace to `on_ready`; then run the event
   /// loop. A failed evaluation is reported like the entry module's; `on_ready`
-  /// is not called. This is how an isolate serves its exports.
-  pub async fn eval_module<F>(self, code: ModuleCode, on_ready: F)
+  /// is not called. This is how an isolate serves its exports. `name` is the
+  /// module name stack frames cite; bytecode carries its own, baked in at
+  /// compile time.
+  pub async fn eval_module<F>(self, name: String, code: ModuleCode, on_ready: F)
   where
     F: for<'js> FnOnce(Ctx<'js>, rquickjs::Object<'js>) + Send + 'static,
   {
@@ -339,10 +341,10 @@ impl FluxEngine {
           }
           #[cfg(feature = "compile")]
           ModuleCode::Source(source) => {
-            Module::declare(ctx.clone(), "main", source).catch(&ctx).map_err(|e| format!("module error: {e:?}"))
+            Module::declare(ctx.clone(), name, source).catch(&ctx).map_err(|e| format!("module error: {e:?}"))
           }
           #[cfg(not(feature = "compile"))]
-          ModuleCode::Source(_) => Err("this build cannot evaluate source (compile feature off)".to_string()),
+          ModuleCode::Source(_) => Err(format!("this build cannot evaluate source module '{name}' (compile feature off)")),
         };
         let evaluated = declared.and_then(|m| m.eval().catch(&ctx).map_err(|e| format!("module error: {e:?}")));
         let (module, promise) = match evaluated {

@@ -54,6 +54,17 @@ Reported against an app with one isolate, where it is only cosmetic.
    make `remap.ts` key maps by module name (`main`, `worker`, ...) and only
    rewrite positions whose module has a map.
 
+## Done
+
+Both halves (2026-08-20): `eval_module` declares under the isolate id,
+`fluxc` takes the module name as its one argument (default `main`; `stdin`
+is gone), pack compiles each isolate bundle as its id, every dev build
+composes a sourcemap, and the server latches maps keyed by module name
+(`state.currentMaps`, wire field `maps`) with `remap.ts` rewriting only
+positions whose module has a map. Verified end to end with
+sandbox/isolate-probe: the raw client frame says `worker:33:35`, the
+server's /logs shows `src/worker.ts:32:35` - the actual throw line.
+
 Related: okf/backlog/isolate-follow-ups.md (errors as data is orthogonal:
 that is about `name`/`stack` surviving as fields on the parent's Error, this
 is about what the stack text says).

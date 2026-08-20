@@ -61,9 +61,10 @@ async function post(path: string, body: object) {
  * or to every client when omitted. `latch` keeps the message for late-joining
  * clients (code reloads latch, one-shot bytecode loads do not); `sourceDir`
  * moves the server's file-serving root (repl `load`; the project root is
- * fixed for the life of the run); `map` is the bundle's sourcemap, kept
- * server-side for stack-trace remapping (omitting it clears the server's map,
- * so a mapless reload never remaps against a stale one).
+ * fixed for the life of the run); `maps` is the bundle's sourcemaps keyed by
+ * module name ("main", each isolate id), kept server-side for stack-trace
+ * remapping (omitting it clears the server's maps, so a mapless reload never
+ * remaps against stale ones).
  */
 export async function sendReload(
   message: object,
@@ -72,7 +73,7 @@ export async function sendReload(
     latch?: boolean
     sourceDir?: string
     entry?: string
-    map?: string | null
+    maps?: Record<string, string> | null
   } = {},
 ) {
   await post("/reload", { message, ...opts })

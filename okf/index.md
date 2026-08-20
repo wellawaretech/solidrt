@@ -277,13 +277,6 @@ Shaped, not started.
   kept in one place so none vanishes with the done record; each is small and
   independent, none has a consumer yet. Zero-copy buffer transfer first when a
   payload size makes copying show up.
-- **[Isolate stack traces are attributed to main](backlog/isolate-stack-attribution.md)** [2026-08-17]
-  A throw inside a "use isolate" module reports as `at boom (main:65:13)`; the
-  module is named main like the app bundle and the position is
-  bundle-relative, so the dev server's remap rewrites it against the app's
-  sourcemap and yields a confidently wrong app file and line. Fix is two
-  halves; the runtime half (declare the module under its isolate id) is a few
-  lines and stops the mis-remap on its own.
 - **[JS test infrastructure](backlog/js-test-infrastructure.md)** [2026-08-17]
   The workspace has no JS test story at all - zero test files in core,
   components, cli, 3d; the only automated checks are ad-hoc self-reporting
@@ -839,6 +832,13 @@ Finished, kept for the reasoning.
   equally true when the raster thread was too far behind to have returned a
   frame, closing a positive feedback loop that diverged without bound; fixed
   and TV-verified, with the adjacent findings split into their own items.
+- **[Isolate stack traces are attributed to main](done/isolate-stack-attribution.md)** [2026-08-17]
+  A throw inside a "use isolate" module reports as `at boom (main:65:13)`; the
+  module is named main like the app bundle and the position is
+  bundle-relative, so the dev server's remap rewrites it against the app's
+  sourcemap and yields a confidently wrong app file and line. Fix is two
+  halves; the runtime half (declare the module under its isolate id) is a few
+  lines and stops the mis-remap on its own.
 - **[Isolates (compute off the JS thread)](done/isolates-and-ports.md)** [2026-08-15]
   A synchronous native call through flux:ffi or flux:wasm stalls the whole
   runtime (dropped frames in a GUI app, unanswered requests in a flux:http

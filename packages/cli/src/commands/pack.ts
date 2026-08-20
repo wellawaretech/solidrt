@@ -44,7 +44,7 @@ export async function runPackCommand() {
   let bundled = await bundleSolid()
   let bytecode = await compileToBytecode(bundled.code)
   let isolates = []
-  for (let i of bundled.isolates) isolates.push({ id: i.id, bytecode: await compileToBytecode(i.code) })
+  for (let i of bundled.isolates) isolates.push({ id: i.id, bytecode: await compileToBytecode(i.code, i.id) })
   if (isolates.length) console.log(`>> isolates: ${isolates.map((i) => i.id).join(", ")}`)
   let folder = buildPackFolder(source!, bytecode, isolates)
 

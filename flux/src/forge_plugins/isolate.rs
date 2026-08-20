@@ -25,10 +25,17 @@
 //!   sends `Next` per item and `Return` on break; awaiting it instead rejects.
 //!   Items are values like results; a never-ending generator is a subscription
 //!   (an open stream keeps both runtimes alive until it is closed).
-//! - A throw (or rejection) in the called export rejects that call with its
-//!   message. An uncaught error elsewhere in the child (a failed module load,
-//!   a throw out of a timer) is logged; when it ends the child, pending and
-//!   later calls reject with a message naming it.
+//! - A throw (or rejection) in the called export rejects that call with the
+//!   error rebuilt as data: `new globals[name](message)` when that global is
+//!   an error constructor (so `instanceof RangeError` holds across the
+//!   boundary), else an `Error` carrying the name; the child's stack is the
+//!   rebuilt error's `stack`, and its `cause` chain crosses too - each cause
+//!   another rebuilt error or a sendable value (an unsendable cause is
+//!   dropped, and the chain is capped, which also ends a cyclic one). A
+//!   thrown non-Error rejects with the value itself when it is sendable. An
+//!   uncaught error elsewhere in the child (a failed module load, a throw out
+//!   of a timer) is logged; when it ends the child, pending and later calls
+//!   reject with a message naming it.
 //! - `terminate()` kills the child now: busy JS is interrupted, the child
 //!   runtime is dropped, pending calls reject and open streams end.
 //! - Reserved names: `terminate` (the method) and `then` (so a handle is not a
@@ -60,7 +67,7 @@ use crate::engine::{EngineConfig, FluxEngineBuilder, ModuleCode};
 use crate::logger::Logger;
 use crate::plugins::marshal::{mark_observed, with_pending, OptArg};
 use crate::plugins::value::{self, Neutral};
-use forge::isolate::{Kill, Link, Msg};
+use forge::isolate::{CallError, Kill, Link, Msg, Thrown};
 use forge::Value;
 
 /// Kill switches of every isolate this context spawned. Dropping the context
@@ -76,7 +83,7 @@ impl Drop for Isolates {
   }
 }
 
-type Reply = Result<Value, String>;
+type Reply = Result<Value, Thrown>;
 
 /// What the child sends back about one call, routed to that call's slot.
 enum Event {
@@ -114,7 +121,7 @@ impl Instance {
   fn exit(&self, reason: String) {
     *self.exited.lock().expect("exited lock poisoned") = Some(reason.clone());
     for (_, tx) in self.pending.lock().expect("pending lock poisoned").drain() {
-      let _ = tx.send(Event::Reply(Err(reason.clone())));
+      let _ = tx.send(Event::Reply(Err(reason.clone().into())));
     }
   }
 
@@ -129,7 +136,7 @@ impl Instance {
     loop {
       tokio::select! {
         biased;
-        e = rx.recv() => return e.unwrap_or_else(|| Event::Reply(Err(self.exited().unwrap_or_else(|| "isolate call dropped".to_string())))),
+        e = rx.recv() => return e.unwrap_or_else(|| Event::Reply(Err(self.exited().unwrap_or_else(|| "isolate call dropped".to_string()).into()))),
         m = self.link.recv() => match m {
           Some(Msg::Reply { id, result }) => self.deliver(id, Event::Reply(result)),
           Some(Msg::Stream { id }) => self.deliver(id, Event::Stream),
@@ -177,7 +184,7 @@ struct CallState {
   rx: tokio::sync::Mutex<Option<mpsc::UnboundedReceiver<Event>>>,
   /// `next()`/`return()` callers waiting for an item (`Some`), the end
   /// (`None`), or an error; answered in order, as the child answers.
-  waiters: RefCell<VecDeque<oneshot::Sender<Result<Option<Value>, String>>>>,
+  waiters: RefCell<VecDeque<oneshot::Sender<Result<Option<Value>, Thrown>>>>,
 }
 
 /// What one pumped event means for the call's promise (only the initial pump
@@ -190,13 +197,13 @@ enum Outcome {
 }
 
 impl CallState {
-  fn answer(&self, r: Result<Option<Value>, String>) {
+  fn answer(&self, r: Result<Option<Value>, Thrown>) {
     if let Some(w) = self.waiters.borrow_mut().pop_front() {
       let _ = w.send(r);
     }
   }
 
-  fn answer_all(&self, r: Result<Option<Value>, String>) {
+  fn answer_all(&self, r: Result<Option<Value>, Thrown>) {
     let mut waiters = self.waiters.borrow_mut();
     let mut first = Some(r);
     for w in waiters.drain(..) {
@@ -225,7 +232,7 @@ impl CallState {
           Outcome::Over
         } else {
           self.mode.set(Mode::Plain);
-          self.answer_all(Err(not_a_stream(&self.name)));
+          self.answer_all(Err(not_a_stream(&self.name).into()));
           Outcome::Settle(result)
         }
       }
@@ -259,7 +266,7 @@ impl Isolate {
     instance.pending.lock().expect("pending lock poisoned").insert(id, tx);
     let sent = instance.link.send(Msg::Call { id, name: name.clone(), args: args.into_iter().map(|a| a.0).collect() });
     if let Err(e) = sent {
-      instance.deliver(id, Event::Reply(Err(e)));
+      instance.deliver(id, Event::Reply(Err(e.into())));
     }
     let state = Rc::new(CallState {
       instance,
@@ -276,8 +283,8 @@ impl Isolate {
     // with the task, not with the (JS-owned) state.
     let (pump_ctx, pump_state, pump_promise) = (ctx.clone(), state.clone(), promise.clone());
     ctx.spawn(async move {
-      let reject_with = |msg: String| {
-        if let Ok(err) = Exception::from_message(pump_ctx.clone(), &msg) {
+      let reject_with = |t: Thrown| {
+        if let Ok(err) = build_thrown(&pump_ctx, t) {
           let _ = reject.call::<_, ()>((err,));
         }
       };
@@ -299,7 +306,7 @@ impl Isolate {
           Outcome::Stream => {
             // Only a caller who awaits the stream sees this; a reader does not.
             mark_observed(pump_promise.as_value());
-            reject_with(format!("export '{}' returned a stream: iterate it with for await", pump_state.name));
+            reject_with(format!("export '{}' returned a stream: iterate it with for await", pump_state.name).into());
           }
         }
       }
@@ -337,7 +344,7 @@ impl Isolate {
     let (parent_link, child_link) = Link::pair();
     let kill = Arc::new(Kill::default());
     ctx.userdata::<Isolates>().expect("isolates registry").0.lock().expect("isolates lock poisoned").push(kill.clone());
-    spawn_thread(config, code, self.args.clone(), child_link, kill.clone())?;
+    spawn_thread(config, self.id.clone(), code, self.args.clone(), child_link, kill.clone())?;
 
     let instance = Arc::new(Instance {
       id: self.id.clone(),
@@ -409,29 +416,43 @@ fn stream_step<'js>(ctx: Ctx<'js>, state: &Rc<CallState>, msg: Msg) -> rquickjs:
   let (tx, mut rx) = oneshot::channel();
   state.waiters.borrow_mut().push_back(tx);
   if let Err(e) = state.instance.link.send(msg) {
-    state.answer(Err(e));
+    state.answer(Err(e.into()));
   }
   let state = state.clone();
   with_pending(&ctx, async move {
-    let done = |r: Result<Result<Option<Value>, String>, oneshot::error::RecvError>| match r {
-      Ok(r) => r.map(IterResult),
-      Err(_) => Err(format!("stream '{}' dropped", state.name)),
+    let done = |r: Result<Result<Option<Value>, Thrown>, oneshot::error::RecvError>| match r {
+      Ok(r) => StepResult(r),
+      Err(_) => StepResult(Err(format!("stream '{}' dropped", state.name).into())),
     };
     loop {
       if state.mode.get() == Mode::Unknown {
         // The initial pump answers us (it runs until we are answered).
-        return done(rx.await);
+        return Ok(done(rx.await));
       }
       tokio::select! {
         biased;
-        r = &mut rx => return done(r),
+        r = &mut rx => return Ok(done(r)),
         outcome = state.pump_one() => if matches!(outcome, Outcome::Over) {
-          return done(rx.await);
+          return Ok(done(rx.await));
         },
       }
     }
   })
   .into_js(&ctx)
+}
+
+/// A stream step's outcome, converted on the JS thread: an item or the end as
+/// `{ value, done }`, or the structured throw the step rejects with (like
+/// `JsResult`, but keeping the error's name, stack and cause).
+struct StepResult(Result<Option<Value>, Thrown>);
+
+impl<'js> IntoJs<'js> for StepResult {
+  fn into_js(self, ctx: &Ctx<'js>) -> rquickjs::Result<JsValue<'js>> {
+    match self.0 {
+      Ok(v) => IterResult(v).into_js(ctx),
+      Err(t) => Err(ctx.throw(build_thrown(ctx, t)?)),
+    }
+  }
 }
 
 /// `isolate(id, { args? })`: a handle whose properties call the exports of the
@@ -473,6 +494,7 @@ fn proxy_get<'js>(ctx: Ctx<'js>, handle: Class<'js, Isolate>, prop: JsValue<'js>
 /// calls from the link against the module namespace.
 fn spawn_thread(
   mut config: EngineConfig,
+  id: String,
   code: ModuleCode,
   args: Vec<String>,
   link: Link,
@@ -490,7 +512,7 @@ fn spawn_thread(
   let error_link = link.clone();
   let error_flag = kill.flag();
   std::thread::Builder::new()
-    .name("flux-isolate".to_string())
+    .name(format!("isolate:{id}"))
     .spawn(move || {
       let runtime = match tokio::runtime::Builder::new_current_thread().enable_all().build() {
         Ok(rt) => rt,
@@ -511,7 +533,7 @@ fn spawn_thread(
           .userdata(crate::ProcessArgs(args))
           .build();
         tokio::select! {
-          _ = engine.eval_module(code, move |ctx, ns| serve(ctx, ns, link)) => {}
+          _ = engine.eval_module(id, code, move |ctx, ns| serve(ctx, ns, link)) => {}
           _ = kill.fired() => {}
         }
       }));
@@ -588,9 +610,9 @@ enum Started<'js> {
   Value(JsValue<'js>),
 }
 
-fn start_call<'js>(ctx: &Ctx<'js>, ns: &Object<'js>, name: &str, args: Vec<Value>) -> Result<Started<'js>, String> {
+fn start_call<'js>(ctx: &Ctx<'js>, ns: &Object<'js>, name: &str, args: Vec<Value>) -> Result<Started<'js>, Thrown> {
   let export: JsValue<'js> = ns.get(name).map_err(|e| call_error(ctx, e))?;
-  let f = export.into_function().ok_or_else(|| format!("no exported function '{name}'"))?;
+  let f = export.into_function().ok_or_else(|| Thrown::from(format!("no exported function '{name}'")))?;
   let mut call_args = Args::new(ctx.clone(), args.len());
   for arg in args {
     call_args.push_arg(Neutral(arg)).map_err(|e| call_error(ctx, e))?;
@@ -618,7 +640,7 @@ async fn settle<'js>(ctx: &Ctx<'js>, returned: JsValue<'js>) -> Reply {
 
 /// One iterator method call (`next`/`return`) on a stream's iterator, awaited:
 /// `Some(value)` for an item, `None` when done. A missing `return` is done.
-async fn iter_step<'js>(ctx: &Ctx<'js>, iter: &Object<'js>, method: &str) -> Result<Option<Value>, String> {
+async fn iter_step<'js>(ctx: &Ctx<'js>, iter: &Object<'js>, method: &str) -> Result<Option<Value>, Thrown> {
   let f: Option<Function<'js>> = iter.get(method).map_err(|e| call_error(ctx, e))?;
   let Some(f) = f else { return Ok(None) };
   let returned: JsValue<'js> = f.call((This(iter.clone()),)).map_err(|e| call_error(ctx, e))?;
@@ -633,21 +655,106 @@ async fn iter_step<'js>(ctx: &Ctx<'js>, iter: &Object<'js>, method: &str) -> Res
   value::from_js(ctx, value).map(Some).map_err(|e| call_error(ctx, e))
 }
 
-/// The rejection message for a failed call: the thrown exception's message
-/// (it becomes the parent's `Error.message`, so no `Error:` prefix), with the
-/// child's stack appended when there is one; a thrown non-Error as its debug
-/// form.
-fn call_error(ctx: &Ctx<'_>, err: rquickjs::Error) -> String {
+/// How deep a cause chain crosses; past this (or on a cycle) the rest is
+/// dropped.
+const MAX_CAUSE_DEPTH: usize = 8;
+
+/// Discard a failed JS access, clearing the pending exception it may have
+/// left on the context (a dropped `Err` would otherwise surface at the next
+/// unrelated `ctx.catch()`).
+fn quiet<T>(ctx: &Ctx<'_>, r: rquickjs::Result<T>) -> Option<T> {
+  match r {
+    Ok(v) => Some(v),
+    Err(_) => {
+      let _ = ctx.catch();
+      None
+    }
+  }
+}
+
+/// The rejection data for a failed call: an error's name, message, stack and
+/// cause chain; a thrown non-Error as the value itself when it is sendable,
+/// else as an `Error` with its debug form.
+fn call_error(ctx: &Ctx<'_>, err: rquickjs::Error) -> Thrown {
   if !err.is_exception() {
-    return err.to_string();
+    return err.to_string().into();
   }
-  let caught = ctx.catch();
-  let Some(exc) = caught.as_exception() else { return format!("{caught:?}") };
+  thrown_from(ctx, ctx.catch(), 0)
+}
+
+fn thrown_from<'js>(ctx: &Ctx<'js>, value: JsValue<'js>, depth: usize) -> Thrown {
+  let Some(exc) = value.as_exception() else {
+    return match quiet(ctx, value::from_js(ctx, value.clone())) {
+      Some(v) => Thrown::Value(v),
+      None => format!("{value:?}").into(),
+    };
+  };
+  let name = quiet(ctx, exc.get::<_, Option<String>>("name")).flatten().unwrap_or_else(|| "Error".to_string());
   let message = exc.message().unwrap_or_default();
-  match exc.stack().filter(|s| !s.trim().is_empty()) {
-    Some(stack) => format!("{message}\n{}", stack.trim_end()),
-    None => message,
+  let stack = exc.stack().filter(|s| !s.trim().is_empty()).map(|s| s.trim_end().to_string());
+  let cause = if depth < MAX_CAUSE_DEPTH {
+    quiet(ctx, exc.get::<_, JsValue>("cause"))
+      .filter(|v| !v.is_undefined())
+      .and_then(|v| cause_from(ctx, v, depth + 1))
+      .map(Box::new)
+  } else {
+    None
+  };
+  Thrown::Error(CallError { name, message, stack, cause })
+}
+
+/// A `cause` crossing the link: another error as data, or a sendable value;
+/// an unsendable non-Error cause is dropped (unlike a top-level throw, there
+/// is no need for a placeholder).
+fn cause_from<'js>(ctx: &Ctx<'js>, value: JsValue<'js>, depth: usize) -> Option<Thrown> {
+  if value.as_exception().is_some() {
+    return Some(thrown_from(ctx, value, depth));
   }
+  quiet(ctx, value::from_js(ctx, value)).map(Thrown::Value)
+}
+
+/// Rebuild what the child threw: an error from its data, or the thrown value
+/// itself.
+fn build_thrown<'js>(ctx: &Ctx<'js>, t: Thrown) -> rquickjs::Result<JsValue<'js>> {
+  match t {
+    Thrown::Error(e) => build_error(ctx, e),
+    Thrown::Value(v) => Neutral(v).into_js(ctx),
+  }
+}
+
+/// Rebuild a child's error on the parent: `new globals[name](message)` when
+/// that yields an error (so `instanceof RangeError` holds for the standard
+/// types), else a plain `Error` carrying the name; the child's stack and
+/// (rebuilt) cause ride along as fields.
+fn build_error<'js>(ctx: &Ctx<'js>, e: CallError) -> rquickjs::Result<JsValue<'js>> {
+  let rebuilt = ctx
+    .globals()
+    .get::<_, Option<Constructor>>(e.name.as_str())
+    .ok()
+    .flatten()
+    .and_then(|ctor| ctor.construct::<_, JsValue<'js>>((e.message.as_str(),)).ok())
+    .filter(|v| v.as_exception().is_some());
+  let err = match rebuilt {
+    Some(v) => v,
+    None => {
+      let v = Exception::from_message(ctx.clone(), &e.message)?.into_value();
+      if e.name != "Error" {
+        if let Some(obj) = v.as_object() {
+          obj.set("name", e.name.as_str())?;
+        }
+      }
+      v
+    }
+  };
+  if let Some(obj) = err.as_object() {
+    if let Some(stack) = e.stack {
+      obj.set("stack", stack)?;
+    }
+    if let Some(cause) = e.cause {
+      obj.set("cause", build_thrown(ctx, *cause)?)?;
+    }
+  }
+  Ok(err)
 }
 
 pub struct IsolateModule;

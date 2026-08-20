@@ -3,7 +3,7 @@ import { resolve, dirname } from "path"
 import { readdirSync } from "node:fs"
 import { state, print, printErr, shutdown } from "./util"
 import { buildReload, getClients, sendReload, sendStop, sendStats, sendWatch, showBuildFailure } from "./dev-server"
-import { bundle } from "./bundler"
+import { bundle, bundleMaps } from "./bundler"
 import { buildManifest } from "./project"
 import { startWatcher, stopWatcher } from "./watcher"
 
@@ -28,7 +28,7 @@ async function cmdStop(args: string) {
   if (!args) {
     stopWatcher()
     state.currentCode = null
-    state.currentMap = null
+    state.currentMaps = null
     state.currentManifest = null
     state.source = undefined
     await sendStop()
@@ -51,18 +51,18 @@ async function cmdReload(args: string) {
       return
     }
     state.currentCode = result.code
-    state.currentMap = result.map
+    state.currentMaps = bundleMaps(result)
     state.currentManifest = result.manifest
   }
   let msg = buildReload({ code: state.currentCode, manifest: state.currentManifest })
   if (!args) {
-    await sendReload(msg, { latch: true, map: state.currentMap })
+    await sendReload(msg, { latch: true, maps: state.currentMaps })
     print("[cli] Sent reload to all clients")
     return
   }
   let ids = await indexesToIds(args)
   if (ids.length) {
-    await sendReload(msg, { clients: ids, map: state.currentMap })
+    await sendReload(msg, { clients: ids, maps: state.currentMaps })
     print(`[cli] Sent reload to client(s) ${ids.join(", ")}`)
   }
 }
@@ -123,11 +123,11 @@ async function cmdLoad(file: string) {
       return
     }
     state.currentCode = result.code
-    state.currentMap = result.map
+    state.currentMaps = bundleMaps(result)
     state.currentManifest = result.manifest
   } else if (file.endsWith(".srt.js")) {
     state.currentCode = await Bun.file(path).text()
-    state.currentMap = null
+    state.currentMaps = null
     state.currentManifest = buildManifest(state.currentCode, path)
   } else if (file.endsWith(".srt.bin")) {
     let bytes = await Bun.file(path).arrayBuffer()
@@ -150,7 +150,7 @@ async function cmdLoad(file: string) {
     latch: true,
     sourceDir: state.sourceDir,
     entry: file.endsWith(".tsx") ? path : undefined,
-    map: state.currentMap,
+    maps: state.currentMaps,
   })
   print(`[cli] Loaded ${file}`)
 }

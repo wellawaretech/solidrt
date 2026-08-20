@@ -74,20 +74,20 @@ async function handleInternal(req: FluxRequest, server: Server, path: string): P
 
   switch (path) {
     case "/__internal__/reload": {
-      // { message, clients?, latch?, sourceDir?, map? }: send `message` (a
+      // { message, clients?, latch?, sourceDir?, maps? }: send `message` (a
       // full client-protocol message, built by srt) to the listed client ids,
       // or to all when omitted. `latch` keeps it for late-joining clients
       // (code reloads latch, one-shot bytecode loads do not); `sourceDir`
       // moves the file-serving root (repl `load`; the project root - and with
-      // it the /assets/ root - is fixed for the life of the run); `map` is
-      // the bundle's sourcemap for log remapping, replaced on every reload
-      // (absent means none).
+      // it the /assets/ root - is fixed for the life of the run); `maps` is
+      // the bundle's sourcemaps keyed by module name for log remapping,
+      // replaced on every reload (absent means none).
       let body = await req.json()
       if (typeof body.sourceDir === "string") state.sourceDir = body.sourceDir
       // Keep the rebuild entry in sync when `load` moves it, so a later MCP
       // reload bundles the newly loaded file, not the launch-time one.
       if (typeof body.entry === "string") state.config.entry = body.entry
-      state.currentMap = typeof body.map === "string" ? body.map : null
+      state.currentMaps = body.maps && typeof body.maps === "object" ? body.maps : null
       let text = JSON.stringify(body.message)
       if (body.latch) state.currentReload = text
       sendTo(body.clients, text)
@@ -99,7 +99,7 @@ async function handleInternal(req: FluxRequest, server: Server, path: string): P
       // connects afterwards starts clean.
       if (!body.clients) {
         state.currentReload = null
-        state.currentMap = null
+        state.currentMaps = null
       }
       sendTo(body.clients, JSON.stringify({ type: "stop" }))
       return new Response("", { status: 204 })
