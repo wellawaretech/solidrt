@@ -49,6 +49,7 @@ pub(crate) async fn init_context(
   module_overrides: Vec<ModuleOverrideFn>,
   logger: Logger,
   stack_size: Option<usize>,
+  memory_limit: Option<usize>,
   interrupt: Option<Arc<AtomicBool>>,
   on_uncaught: Option<UncaughtHook>,
   shutdown_hooks: ShutdownHooks,
@@ -57,6 +58,10 @@ pub(crate) async fn init_context(
 
   if let Some(limit) = stack_size {
     runtime.set_max_stack_size(limit).await;
+  }
+
+  if let Some(limit) = memory_limit {
+    runtime.set_memory_limit(limit).await;
   }
 
   if let Some(flag) = interrupt {

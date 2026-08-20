@@ -274,9 +274,14 @@ Shaped, not started.
   layer.
 - **[Isolate follow-ups](backlog/isolate-follow-ups.md)** [2026-08-15]
   The open ends left when isolates (okf/done/isolates-and-ports.md) closed,
-  kept in one place so none vanishes with the done record; each is small and
-  independent, none has a consumer yet. Zero-copy buffer transfer first when a
-  payload size makes copying show up.
+  kept in one place so none vanishes with the done record. Most are done or
+  moved to a design note (okf/backlog/isolate-transfer-and-abort.md); what
+  remains here waits for a consumer.
+- **[Isolate transfer() and AbortSignal](backlog/isolate-transfer-and-abort.md)** [2026-08-20]
+  Design proposal for the two isolate follow-ups that need new call-surface
+  vocabulary - zero-copy buffer hand-over and abortable calls. Decides once
+  how a non-payload argument rides a plain function call, so the module gets
+  one coherent rule instead of two accidents.
 - **[JS test infrastructure](backlog/js-test-infrastructure.md)** [2026-08-17]
   The workspace has no JS test story at all - zero test files in core,
   components, cli, 3d; the only automated checks are ad-hoc self-reporting

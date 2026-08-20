@@ -25,7 +25,8 @@
 //!   that is also an async iterator: `for await (let x of handle.ticks())`
 //!   sends `Next` per item and `Return` on break; awaiting it instead rejects.
 //!   Items are values like results; a never-ending generator is a subscription
-//!   (an open stream keeps both runtimes alive until it is closed).
+//!   (an open stream keeps both runtimes alive until it is closed). A sync
+//!   generator result rejects the call: only async generators stream.
 //! - A throw (or rejection) in the called export rejects that call with the
 //!   error rebuilt as data: `new globals[name](message)` when that global is
 //!   an error constructor (so `instanceof RangeError` holds across the
@@ -302,6 +303,8 @@ pub struct Isolate {
   #[qjs(skip_trace)]
   args: Vec<String>,
   #[qjs(skip_trace)]
+  memory_limit: Option<usize>,
+  #[qjs(skip_trace)]
   instance: RefCell<Option<Arc<Instance>>>,
   #[qjs(skip_trace)]
   terminated: RefCell<bool>,
@@ -434,7 +437,7 @@ impl Isolate {
     let (parent_link, child_link) = Link::pair();
     let kill = Arc::new(Kill::default());
     ctx.userdata::<Isolates>().expect("isolates registry").0.lock().expect("isolates lock poisoned").push(kill.clone());
-    spawn_thread(config, self.id.clone(), code, self.args.clone(), child_link, kill.clone())?;
+    spawn_thread(config, self.id.clone(), code, self.args.clone(), self.memory_limit, child_link, kill.clone())?;
 
     let instance = Arc::new(Instance {
       id: self.id.clone(),
@@ -548,16 +551,26 @@ impl<'js> IntoJs<'js> for StepResult {
   }
 }
 
-/// `isolate(id, { args? })`: a handle whose properties call the exports of the
-/// module `id` resolves to: a `Proxy` over the `Isolate` instance whose `get`
-/// trap is `proxy_get`.
+/// `isolate(id, { args?, memoryLimit? })`: a handle whose properties call the
+/// exports of the module `id` resolves to: a `Proxy` over the `Isolate`
+/// instance whose `get` trap is `proxy_get`.
 fn isolate<'js>(ctx: Ctx<'js>, id: String, opts: OptArg<Object<'js>>) -> rquickjs::Result<JsValue<'js>> {
-  let args: Vec<String> = match opts.0 {
-    Some(o) => o.get::<_, Option<Vec<String>>>("args")?.unwrap_or_default(),
-    None => Vec::new(),
+  let (args, memory_limit) = match opts.0 {
+    Some(o) => {
+      let args = o.get::<_, Option<Vec<String>>>("args")?.unwrap_or_default();
+      let limit = match o.get::<_, Option<f64>>("memoryLimit")? {
+        Some(n) if n.is_finite() && n > 0.0 && n.fract() == 0.0 => Some(n as usize),
+        Some(_) => return Err(Exception::throw_type(&ctx, "memoryLimit must be a positive integer of bytes")),
+        None => None,
+      };
+      (args, limit)
+    }
+    None => (Vec::new(), None),
   };
-  let handle =
-    Class::instance(ctx.clone(), Isolate { id, args, instance: RefCell::new(None), terminated: RefCell::new(false) })?;
+  let handle = Class::instance(
+    ctx.clone(),
+    Isolate { id, args, memory_limit, instance: RefCell::new(None), terminated: RefCell::new(false) },
+  )?;
   let traps = Object::new(ctx.clone())?;
   traps.set("get", Function::new(ctx.clone(), proxy_get)?)?;
   let proxy: Constructor = ctx.globals().get("Proxy")?;
@@ -592,6 +605,7 @@ fn spawn_thread(
   id: String,
   code: ModuleCode,
   args: Vec<String>,
+  memory_limit: Option<usize>,
   link: Link,
   kill: Arc<Kill>,
 ) -> Result<(), String> {
@@ -618,15 +632,18 @@ fn spawn_thread(
       };
       let local = tokio::task::LocalSet::new();
       runtime.block_on(local.run_until(async move {
-        let engine = FluxEngineBuilder::from_config(config)
+        let mut builder = FluxEngineBuilder::from_config(config)
           .interrupt_flag(kill.flag())
           .on_uncaught(move |msg| {
             if !error_flag.load(Ordering::Relaxed) {
               let _ = error_link.send(Msg::Error(msg.to_string()));
             }
           })
-          .userdata(crate::ProcessArgs(args))
-          .build();
+          .userdata(crate::ProcessArgs(args));
+        if let Some(limit) = memory_limit {
+          builder = builder.memory_limit(limit);
+        }
+        let engine = builder.build();
         tokio::select! {
           _ = engine.eval_module(id, code, move |ctx, ns| serve(ctx, ns, link)) => {}
           _ = kill.fired() => {}
@@ -721,6 +738,15 @@ fn start_call<'js>(ctx: &Ctx<'js>, ns: &Object<'js>, name: &str, args: Vec<Value
     if let Some(factory) = factory {
       let iter: Object<'js> = factory.call((This(obj.clone()),)).map_err(|e| call_error(ctx, e))?;
       return Ok(Started::Stream(iter));
+    }
+    // A sync generator cannot stream over the link and would otherwise fall
+    // through as an unsendable (or empty) result; name the fix instead.
+    let tag: Option<String> = obj.get(PredefinedAtom::SymbolToStringTag).map_err(|e| call_error(ctx, e))?;
+    if tag.as_deref() == Some("Generator") {
+      return Err(
+        format!("export '{name}' returned a sync generator: make it an async generator to stream from an isolate")
+          .into(),
+      );
     }
   }
   Ok(Started::Value(returned))

@@ -102,6 +102,7 @@ pub struct FluxEngineBuilder {
   cache_dir: Option<PathBuf>,
   user_agent: Option<String>,
   stack_size: Option<usize>,
+  memory_limit: Option<usize>,
   isolate_resolver: Option<IsolateResolver>,
   interrupt: Option<Arc<AtomicBool>>,
   on_uncaught: Option<UncaughtHook>,
@@ -161,6 +162,16 @@ impl FluxEngineBuilder {
 
   pub fn stack_size(mut self, limit: usize) -> Self {
     self.stack_size = Some(limit);
+    self
+  }
+
+  /// Heap limit in bytes for this engine's runtime (QuickJS's memory limit):
+  /// once reached, allocations fail with an out-of-memory error where they
+  /// happen instead of growing the process. Per engine, not part of the
+  /// inherited `EngineConfig`: an isolate's limit does not cascade to the
+  /// isolates it spawns.
+  pub fn memory_limit(mut self, limit: usize) -> Self {
+    self.memory_limit = Some(limit);
     self
   }
 
@@ -242,6 +253,7 @@ impl FluxEngineBuilder {
       exec_rx,
       logger: config.logger,
       stack_size: config.stack_size,
+      memory_limit: self.memory_limit,
       interrupt: self.interrupt,
       on_uncaught: self.on_uncaught,
     }
@@ -256,6 +268,7 @@ pub struct FluxEngine {
   exec_rx: tokio::sync::mpsc::UnboundedReceiver<ExecFn>,
   logger: Logger,
   stack_size: Option<usize>,
+  memory_limit: Option<usize>,
   interrupt: Option<Arc<AtomicBool>>,
   on_uncaught: Option<UncaughtHook>,
 }
@@ -270,6 +283,7 @@ impl FluxEngine {
       cache_dir: None,
       user_agent: None,
       stack_size: None,
+      memory_limit: None,
       isolate_resolver: None,
       interrupt: None,
       on_uncaught: None,
@@ -375,6 +389,7 @@ impl FluxEngine {
       self.module_overrides,
       self.logger,
       self.stack_size,
+      self.memory_limit,
       self.interrupt,
       self.on_uncaught,
       shutdown_hooks.clone(),

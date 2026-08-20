@@ -22,6 +22,14 @@ declare module "flux:isolate" {
   type IsolateOptions = {
     /** The child's `flux:process` `argv`. Default `[]`. */
     args?: string[]
+    /**
+     * Heap limit in bytes for the child runtime. Once reached, allocations in
+     * the child fail with an out-of-memory error where they happen instead of
+     * growing the process; an exit this causes is observable via `exited`.
+     * Applies to this child only (not to isolates it spawns itself). Default:
+     * unlimited.
+     */
+    memoryLimit?: number
   }
 
   /**
@@ -37,7 +45,9 @@ declare module "flux:isolate" {
         ? (...args: A) => Promise<any>
         : R extends AsyncIterable<infer Y>
           ? (...args: A) => AsyncIterableIterator<Y>
-          : (...args: A) => Promise<Awaited<R>>
+          : R extends Generator<any, any, any> // sync generators do not stream: the call rejects
+            ? never
+            : (...args: A) => Promise<Awaited<R>>
       : never
   } & {
     /**
@@ -83,7 +93,8 @@ declare module "flux:isolate" {
    * error that ends the child rejects pending and later calls with a message
    * naming it. Awaiting a stream call rejects; iterating a plain call rejects. An
    * open stream keeps both runtimes alive until it ends, `break`s, or the
-   * child is terminated. Reserved names: `terminate`, `exited`, `then`.
+   * child is terminated. A sync generator export rejects when called: only
+   * async generators stream. Reserved names: `terminate`, `exited`, `then`.
    */
   export function isolate<T = Record<string, (...args: any[]) => any>>(id: string, opts?: IsolateOptions): Isolated<T>
 }

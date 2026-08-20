@@ -1,6 +1,6 @@
 ---
 title: Isolate follow-ups
-description: The open ends left when isolates (okf/done/isolates-and-ports.md) closed, kept in one place so none vanishes with the done record; each is small and independent, none has a consumer yet. Zero-copy buffer transfer first when a payload size makes copying show up.
+description: The open ends left when isolates (okf/done/isolates-and-ports.md) closed, kept in one place so none vanishes with the done record. Most are done or moved to a design note (okf/backlog/isolate-transfer-and-abort.md); what remains here waits for a consumer.
 created: 2026-08-15
 ---
 
@@ -10,21 +10,13 @@ The plan closed with calls, streams, concurrent dispatch and typed-array kinds
 in place. What it explicitly left for a consumer to ask for, one line each,
 symptom first where there is one:
 
-- **Zero-copy buffer transfer.** Symptom: a large typed array (audio, mesh,
-  frame) crossing per call shows up as copy time on both sides. Now that
-  `Value::Bytes` carries its `Elem`, a transferred buffer keeps its view type,
-  so this is contained: allocate the JS `ArrayBuffer` with a flux-owned free
-  hook, hand ownership over the link, detach on the sending side. Opt-in per
-  argument or result (the web `transfer` shape), copies stay the default.
-- **`memoryLimit` option.** A runaway isolate takes the whole process down.
-  QuickJS `JS_SetMemoryLimit` per child, one option in `isolate(id, opts)`.
-- **`AbortSignal` on plain calls.** Can only mean "stop waiting" (a running
-  sync export is uninterruptible short of `terminate()`); the child drops the
-  reply.
 - **`instances` on a handle.** N instances of one module behind one handle,
   calls spread over them; shape undecided (a pool is userland today: N
   `isolate()` calls).
-- **Sync generators.** `function*` exports as streams, same protocol.
+
+Designed, not yet built: zero-copy buffer transfer and `AbortSignal` on plain
+calls both need new call-surface vocabulary (a special argument on a plain
+function call), decided once in okf/backlog/isolate-transfer-and-abort.md.
 
 Separate item, done: okf/done/isolate-stack-attribution.md (isolate stacks
 said `main:` and remapped against the app's sourcemap).
@@ -52,6 +44,24 @@ Done: thread name per id (2026-08-20): child threads are named
 `isolate:<id>` instead of a shared `flux-isolate`, so `top -H`, gdb and perf
 tell isolates apart (Linux truncates thread names at 15 bytes, so a long id
 keeps only its head).
+
+Done: `memoryLimit` option (2026-08-20): `isolate(id, { memoryLimit })`, a
+heap limit in bytes for the child runtime (QuickJS memory limit via a
+per-engine, non-inherited builder option - a child's limit does not cascade
+to isolates it spawns). Past the limit, allocations in the child fail with
+an out-of-memory error where they happen (verified: the failing call
+rejects, the child survives, the parent is untouched); an exit this causes
+is observable via `exited`. Invalid values throw a `TypeError`.
+
+Done as an error instead (2026-08-20): sync generators. Support was dropped
+deliberately - an `async function*` with a sync body already offloads
+identically, so `function*` streaming would add a second protocol for
+nothing. Instead the child recognizes a returned generator object (via its
+`Generator` toStringTag, so arrays and other sendable iterables stay plain
+values) and rejects with "export 'x' returned a sync generator: make it an
+async generator to stream from an isolate"; before, it fell through to the
+unsendable/empty-object result path. flux-types maps `Generator`-returning
+exports to `never`.
 
 Not wanted, decided in the plan: `SharedArrayBuffer`/`Atomics`, ports or
 `postMessage`, source-text spawning, structured clone of identity-bearing
