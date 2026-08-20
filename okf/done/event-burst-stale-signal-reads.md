@@ -63,3 +63,35 @@ where today it intermittently corrupts.
   is unaffected.
 - Verification: probe app replay on a device plus the blocked-thread replay
   on desktop, both deterministic after the change.
+
+## Outcome (2026-08-20)
+
+Fixed in flux/src/engine.rs: the exec branch of the run loop now runs
+`drain_job_queue(&runtime)` after each closure, looping
+`execute_pending_job()` until no job is pending. A job that throws is
+caught and reported through `report_error` ("job error: ..."), and the
+drain continues.
+
+The backlog's "bias the select toward idle()" shape turned out to be a
+trap: rquickjs's `idle()` also drives the runtime-internal spawner
+(`ctx.spawn` - timers, serve loops, websockets, sqlite) and stays pending
+until that spawner is EMPTY, so awaiting it after a closure would park
+event dispatch on in-flight I/O, and a biased select with idle first
+starves the exec branch when the job queue is empty. `execute_pending_job`
+is the drain primitive: it runs ready work only and never waits.
+
+Verified with probes/event-burst-probe.tsx (keydown does read-then-write
+on a signal; "block" busy-waits so a 10-key send_input burst dispatches in
+one drain). Pre-fix release client: counts 8-10 of 10 with duplicated
+stale reads at varying positions across 5 trials (the race). Post-fix:
+10/10 trials deterministic, reads 0..9, no warnings, event->frame flow
+normal (1 frame per input burst, p50 0.46ms).
+
+Follow-up same day: the checkpoint is now complete - `flush_rejections`
+runs at every drain (unhandled rejections report at the event that caused
+them, browser-consistent, instead of waiting for an idle poll), and the
+same drain+flush runs once after the initial module evaluation, so exec
+closures queued during startup cannot race the entry's microtasks.
+Verified: bursts still 10/10 deterministic; a "reject" debug command's
+unhandled rejection appears in /logs immediately after the event, with a
+remapped tsx stack.

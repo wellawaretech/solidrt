@@ -137,10 +137,6 @@ Shaped, not started.
   Text defaults to Medium so that small type stays readable on 1x desktop
   displays, which over-thickens every label on the 2-3x phone screens that
   never needed it.
-- **[Guarantee a microtask checkpoint between event dispatches](backlog/event-burst-stale-signal-reads.md)** [2026-08-14]
-  Events dispatched in one run-loop drain run without a microtask flush
-  between them, so a handler reads stale signal values written by the previous
-  event - lost edits, intermittent state corruption.
 - **[Move the fetch disk cache out of forge?](backlog/fetch-cache-out-of-forge.md)** [2026-07-24]
   Lattice is now the only cache configurer, so should the mechanism follow the
   policy out of forge, and which of the three candidate shapes pays for
@@ -644,6 +640,10 @@ Finished, kept for the reasoning.
   Explicit opt-in disk cache in the forge fetch layer, needed by a production
   app doing many image fetches; designed and shipped as
   okf/plans/fetch-cache.md.
+- **[Guarantee a microtask checkpoint between event dispatches](done/event-burst-stale-signal-reads.md)** [2026-08-14]
+  Events dispatched in one run-loop drain run without a microtask flush
+  between them, so a handler reads stale signal values written by the previous
+  event - lost edits, intermittent state corruption.
 - **[Examples re-scope and tsconfigs](done/examples-rescope.md)** [2026-07-25]
   "The examples taxonomy settles: packages examples are agent-facing, root
   examples/ are human-facing apps, scratch moves to a gitignored sandbox,

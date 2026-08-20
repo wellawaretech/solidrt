@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 
 use rquickjs::module::ModuleDef;
 
-use crate::logger::{default_logger, report_error, CtxLogger, LogLevel, Logger, UncaughtHook};
+use crate::logger::{default_logger, format_js_error, report_error, CtxLogger, LogLevel, Logger, UncaughtHook};
 use crate::plugins::{self, ModuleOverrideFn, PluginFn, UserdataFn};
 
 type ShutdownFn = Box<dyn FnOnce(&Logger) + Send>;
@@ -380,11 +380,17 @@ impl FluxEngine {
     .await;
 
     context.with(|ctx| task(ctx)).await;
+    // Checkpoint after the entry evaluation too: exec closures queued during
+    // startup must not race the module's own microtasks.
+    drain_job_queue(&runtime).await;
+    flush_rejections(&rejections, &logger, on_uncaught.as_ref());
 
     loop {
       tokio::select! {
           Some(f) = exec_rx.recv() => {
               context.with(|ctx| f(ctx)).await;
+              drain_job_queue(&runtime).await;
+              flush_rejections(&rejections, &logger, on_uncaught.as_ref());
           }
           _ = pending.notified() => {}
           _ = runtime.idle() => {
@@ -401,6 +407,27 @@ impl FluxEngine {
     }
 
     shutdown_hooks.run(&logger);
+  }
+}
+
+/// The microtask checkpoint after each JS entry (the initial evaluation, then
+/// every exec closure): run the job queue dry so the next closure (the next
+/// event dispatch) observes every signal write the previous one queued. Runs only ready work - unlike `idle()`, this never
+/// waits on futures spawned inside the runtime (timers, serve loops).
+async fn drain_job_queue(runtime: &rquickjs::AsyncRuntime) {
+  loop {
+    match runtime.execute_pending_job().await {
+      Ok(true) => {}
+      Ok(false) => break,
+      Err(e) => {
+        e.0
+          .with(|ctx| {
+            let msg = format_js_error(&ctx, rquickjs::Error::Exception);
+            report_error(&ctx, &format!("job error: {msg}"));
+          })
+          .await;
+      }
+    }
   }
 }
 
