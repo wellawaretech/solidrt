@@ -80,11 +80,15 @@ pub fn apply_jsx(
   // `position` is decoded here rather than in the layout style adapter because
   // it has a side effect beyond the taffy Style: it marks the element as a
   // positioning context used to resolve container-relative bounding boxes.
+  // Null resets to relative, every kind's initial position.
   if name == "position" {
-    let position = match str_of(value, "position")? {
-      "relative" => Position::Relative,
-      "absolute" => Position::Absolute,
-      v => return Err(format!("Unknown position value \"{v}\"; expected relative or absolute")),
+    let position = match value {
+      PropValue::Null => Position::Relative,
+      _ => match str_of(value, "position")? {
+        "relative" => Position::Relative,
+        "absolute" => Position::Absolute,
+        v => return Err(format!("Unknown position value \"{v}\"; expected relative or absolute")),
+      },
     };
     el.set_position(position);
     return Ok(Damage::Layout);
@@ -185,8 +189,15 @@ pub fn apply_jsx(
     }
   }
 
+  // A null layout-prop write resets the field to the kind's initial style
+  // (computed only on the null path); everything else decodes as usual.
+  let initial = if value.is_null() { el.initial_style() } else { None };
   if let Some(style) = el.style_mut() {
-    if let Some(damage) = layout::apply(style, name, value)? {
+    if let Some(initial) = &initial {
+      if let Some(damage) = layout::reset(style, initial, name) {
+        return Ok(damage);
+      }
+    } else if let Some(damage) = layout::apply(style, name, value)? {
       return Ok(damage);
     }
   }
@@ -221,6 +232,37 @@ pub(super) fn describe(value: &PropValue) -> String {
 // Shared value decoders, kept here so every per-element module reads the same.
 pub(super) fn f32_of(value: &PropValue, what: &str) -> Result<f32, String> {
   value.as_f64().map(|n| n as f32).ok_or_else(|| format!("{what} must be a number, got {}", describe(value)))
+}
+
+// The resettable variant: null (a cleared JS binding) decodes to None, which
+// the rendertree setters take as "back to the default". Used by every numeric
+// prop; f32_of stays for required interior numbers (gradient fields, viewBox
+// entries) where null is still an error.
+pub(super) fn opt_f32(value: &PropValue, what: &str) -> Result<Option<f32>, String> {
+  if value.is_null() {
+    return Ok(None);
+  }
+  f32_of(value, what).map(Some)
+}
+
+pub(super) fn opt_radius(value: &PropValue, what: &str) -> Result<Option<[f32; 4]>, String> {
+  if value.is_null() {
+    return Ok(None);
+  }
+  decode_radius(value, what).map(Some)
+}
+
+// The same null-means-reset rule for any other decode (the enum props): null
+// becomes the None the setter takes as "back to the default", anything else
+// goes through `decode` unchanged.
+pub(super) fn opt<T>(
+  value: &PropValue,
+  decode: impl FnOnce(&PropValue) -> Result<T, String>,
+) -> Result<Option<T>, String> {
+  if value.is_null() {
+    return Ok(None);
+  }
+  decode(value).map(Some)
 }
 
 // The branded `pct(n)` value from JS: { __unit: "pct", v: n }. Returns the
@@ -310,22 +352,22 @@ pub(super) fn decode_color(value: &PropValue) -> Result<Color, String> {
 
 // A single number applies to all four corners; an array is
 // [top-left, top-right, bottom-right, bottom-left] (CSS border-radius order).
-pub(super) fn decode_radius(value: &PropValue) -> Result<[f32; 4], String> {
+pub(super) fn decode_radius(value: &PropValue, what: &str) -> Result<[f32; 4], String> {
   if let Some(arr) = value.as_list() {
     if arr.len() != 4 {
       return Err(format!(
-        "Radius array must have 4 elements [top-left, top-right, bottom-right, bottom-left], got {}",
+        "{what} array must have 4 elements [top-left, top-right, bottom-right, bottom-left], got {}",
         arr.len()
       ));
     }
     Ok([
-      f32_of(&arr[0], "radius[0]")?,
-      f32_of(&arr[1], "radius[1]")?,
-      f32_of(&arr[2], "radius[2]")?,
-      f32_of(&arr[3], "radius[3]")?,
+      f32_of(&arr[0], &format!("{what}[0]"))?,
+      f32_of(&arr[1], &format!("{what}[1]"))?,
+      f32_of(&arr[2], &format!("{what}[2]"))?,
+      f32_of(&arr[3], &format!("{what}[3]"))?,
     ])
   } else {
-    let v = f32_of(value, "radius")?;
+    let v = f32_of(value, what)?;
     Ok([v, v, v, v])
   }
 }

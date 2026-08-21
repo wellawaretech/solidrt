@@ -72,34 +72,35 @@ impl Bounded for Rectangle {
 
 impl Rectangle {
   // Rectangle geometry is painted within its layout box, so none of these
-  // affect layout.
-  pub fn set_x(&mut self, v: f32) -> Damage {
-    self.x = Some(v);
+  // affect layout. None resets to unset (x/y to 0, w/h to fill the box).
+  pub fn set_x(&mut self, v: Option<f32>) -> Damage {
+    self.x = v;
     Damage::Paint
   }
-  pub fn set_y(&mut self, v: f32) -> Damage {
-    self.y = Some(v);
+  pub fn set_y(&mut self, v: Option<f32>) -> Damage {
+    self.y = v;
     Damage::Paint
   }
-  pub fn set_w(&mut self, v: f32) -> Damage {
-    self.w = Some(v);
+  pub fn set_w(&mut self, v: Option<f32>) -> Damage {
+    self.w = v;
     Damage::Paint
   }
-  pub fn set_h(&mut self, v: f32) -> Damage {
-    self.h = Some(v);
+  pub fn set_h(&mut self, v: Option<f32>) -> Damage {
+    self.h = v;
     Damage::Paint
   }
   // [top-left, top-right, bottom-right, bottom-left].
-  pub fn set_radius(&mut self, radius: [f32; 4]) -> Damage {
-    self.radius = Some(radius);
+  pub fn set_radius(&mut self, radius: Option<[f32; 4]>) -> Damage {
+    self.radius = radius;
     Damage::Paint
   }
 
+  pub fn initial_style() -> taffy::Style {
+    taffy::Style { display: taffy::Display::Block, ..Default::default() }
+  }
+
   pub fn with_layout(self) -> Element {
-    Element::with_layout(
-      ElementKind::Rectangle(self),
-      taffy::Style { display: taffy::Display::Block, ..Default::default() },
-    )
+    Element::with_layout(ElementKind::Rectangle(self), Self::initial_style())
   }
 
   pub fn no_layout(self) -> Element {

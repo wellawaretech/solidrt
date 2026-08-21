@@ -325,10 +325,6 @@ Shaped, not started.
   dropped, so Discover searches forever; restoring it means a forge::mdns
   responder (advertise) exposed as a flux capability, and its feasibility next
   to system responders is unproven.
-- **[Clearing a numeric or transform prop throws instead of resetting it](backlog/null-resets-numeric-props.md)** [2026-08-14]
-  Binding scale/x/y/rotate/radius/strokeWidth to a value that flips back to
-  undefined errors out, because the decoders accept only numbers; null should
-  reset to the property default the way pointerEvents already does.
 - **[onFrame tick reset on reload](backlog/onframe-tick-reset-on-reload.md)** [2026-07-27]
   The tick timebase resets across hot reload after the new instance's first
   frame, handing apps one enormous negative delta; apps clamp dt as a
@@ -905,6 +901,10 @@ Finished, kept for the reasoning.
   A press on a Pressable nested inside another fires both onPress callbacks;
   the contract is resolved by component-gestures' innermost-wins arena and the
   usage survey stands.
+- **[Clearing a numeric or transform prop throws instead of resetting it](done/null-resets-numeric-props.md)** [2026-08-14]
+  Binding scale/x/y/rotate/radius/strokeWidth to a value that flips back to
+  undefined errors out, because the decoders accept only numbers; null should
+  reset to the property default the way pointerEvents already does.
 - **[overflow + viewBox clips the wrong rectangle](done/overflow-viewbox-clip.md)** [2026-08-08]
   The overflow clip rect took the element's box extent as a raw number and
   applied it in the child's design (pre-viewBox) space, so a magnifying fit

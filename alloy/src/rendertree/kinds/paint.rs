@@ -152,6 +152,11 @@ pub struct PaintState {
   pub stroke_miter: f32,
 }
 
+// Stroke metric defaults, shared by Default and the null-reset paths in the
+// setters below.
+pub const DEFAULT_STROKE_WIDTH: f32 = 0.0;
+pub const DEFAULT_STROKE_MITER: f32 = 4.0;
+
 impl Default for PaintState {
   fn default() -> Self {
     Self {
@@ -159,10 +164,10 @@ impl Default for PaintState {
       gradient: None,
       draw_style: DrawStyle::Fill,
       blend_mode: BlendMode::SourceOver,
-      stroke_width: 0.0,
+      stroke_width: DEFAULT_STROKE_WIDTH,
       stroke_cap: StrokeCap::Butt,
       stroke_join: StrokeJoin::Miter,
-      stroke_miter: 4.0,
+      stroke_miter: DEFAULT_STROKE_MITER,
     }
   }
 }
@@ -324,9 +329,11 @@ impl PaintState {
   // Paint never affects layout, so all setters report false. Values arrive
   // already decoded (color unpacked, enums resolved) from the binding layer.
 
-  // A solid color clears any gradient (the two are mutually exclusive fills).
-  pub fn set_color(&mut self, color: Color) -> Damage {
-    self.color = color;
+  // A solid color clears any gradient (the two are mutually exclusive fills);
+  // None resets the whole fill to the default. Like the numeric setters, the
+  // enum setters below take None as "back to the Default value".
+  pub fn set_color(&mut self, color: Option<Color>) -> Damage {
+    self.color = color.unwrap_or_else(|| Self::default().color);
     self.gradient = None;
     Damage::Paint
   }
@@ -340,28 +347,29 @@ impl PaintState {
     self.gradient = Some(gradient);
     Damage::Paint
   }
-  pub fn set_draw_style(&mut self, v: DrawStyle) -> Damage {
-    self.draw_style = v;
+  pub fn set_draw_style(&mut self, v: Option<DrawStyle>) -> Damage {
+    self.draw_style = v.unwrap_or_else(|| Self::default().draw_style);
     Damage::Paint
   }
-  pub fn set_blend_mode(&mut self, v: BlendMode) -> Damage {
-    self.blend_mode = v;
+  pub fn set_blend_mode(&mut self, v: Option<BlendMode>) -> Damage {
+    self.blend_mode = v.unwrap_or_else(|| Self::default().blend_mode);
     Damage::Paint
   }
-  pub fn set_stroke_width(&mut self, v: f32) -> Damage {
-    self.stroke_width = v;
+  // None resets to the Default value on both stroke metrics.
+  pub fn set_stroke_width(&mut self, v: Option<f32>) -> Damage {
+    self.stroke_width = v.unwrap_or(DEFAULT_STROKE_WIDTH);
     Damage::Paint
   }
-  pub fn set_stroke_cap(&mut self, v: StrokeCap) -> Damage {
-    self.stroke_cap = v;
+  pub fn set_stroke_cap(&mut self, v: Option<StrokeCap>) -> Damage {
+    self.stroke_cap = v.unwrap_or_else(|| Self::default().stroke_cap);
     Damage::Paint
   }
-  pub fn set_stroke_join(&mut self, v: StrokeJoin) -> Damage {
-    self.stroke_join = v;
+  pub fn set_stroke_join(&mut self, v: Option<StrokeJoin>) -> Damage {
+    self.stroke_join = v.unwrap_or_else(|| Self::default().stroke_join);
     Damage::Paint
   }
-  pub fn set_stroke_miter(&mut self, v: f32) -> Damage {
-    self.stroke_miter = v;
+  pub fn set_stroke_miter(&mut self, v: Option<f32>) -> Damage {
+    self.stroke_miter = v.unwrap_or(DEFAULT_STROKE_MITER);
     Damage::Paint
   }
 }

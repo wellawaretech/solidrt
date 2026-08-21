@@ -99,8 +99,8 @@ fn envelope_passes_through_own_matrix() {
   let mut tree = RenderTree::new();
   tree.create_node(1, attached());
   let mut v = View::default();
-  v.set_scale_x(0.5);
-  v.set_scale_y(0.5);
+  v.set_scale_x(Some(0.5));
+  v.set_scale_y(Some(0.5));
   tree.create_node(2, v.with_layout());
   tree.create_node(3, Rectangle::default().with_layout());
   tree.insert_node(1, 2, None);
@@ -121,8 +121,8 @@ fn perspective_makes_envelope_unbounded() {
   let mut tree = RenderTree::new();
   tree.create_node(1, attached());
   let mut v = View::default();
-  v.set_rotate_y(0.5);
-  v.set_perspective(400.0);
+  v.set_rotate_y(Some(0.5));
+  v.set_perspective(Some(400.0));
   tree.create_node(2, v.with_layout());
   tree.create_node(3, Rectangle::default().with_layout());
   tree.insert_node(1, 2, None);
@@ -164,7 +164,7 @@ fn compose_damage_clears_the_nodes_own_envelope() {
   let frame = Size::new(200.0, 200.0);
   let before = bounded(envelope(&tree, 2, &platform, frame));
   let damage = match &mut tree.node_mut(2).kind {
-    ElementKind::View(v) => v.set_x(40.0),
+    ElementKind::View(v) => v.set_x(Some(40.0)),
     _ => unreachable!(),
   };
   tree.apply_damage(2, damage);

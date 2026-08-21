@@ -595,7 +595,7 @@ impl Element {
     let detached = !self.has_layout();
     if let AnimValue::Color(c) = value {
       return match (prop, self.kind.paint_mut()) {
-        (Color, Some(p)) => p.set_color(c),
+        (Color, Some(p)) => p.set_color(Some(c)),
         _ => Damage::None,
       };
     }
@@ -603,48 +603,48 @@ impl Element {
       return Damage::None;
     };
     match (&mut self.kind, prop) {
-      (ElementKind::View(view), X) => view.set_x(v),
-      (ElementKind::View(view), Y) => view.set_y(v),
-      (ElementKind::View(view), Opacity) => view.set_opacity(v),
-      (ElementKind::View(view), Rotate) => view.set_rotate(v),
-      (ElementKind::View(view), RotateX) => view.set_rotate_x(v),
-      (ElementKind::View(view), RotateY) => view.set_rotate_y(v),
+      (ElementKind::View(view), X) => view.set_x(Some(v)),
+      (ElementKind::View(view), Y) => view.set_y(Some(v)),
+      (ElementKind::View(view), Opacity) => view.set_opacity(Some(v)),
+      (ElementKind::View(view), Rotate) => view.set_rotate(Some(v)),
+      (ElementKind::View(view), RotateX) => view.set_rotate_x(Some(v)),
+      (ElementKind::View(view), RotateY) => view.set_rotate_y(Some(v)),
       (ElementKind::View(view), Scale) => {
-        view.set_scale_x(v);
-        view.set_scale_y(v)
+        view.set_scale_x(Some(v));
+        view.set_scale_y(Some(v))
       }
-      (ElementKind::View(view), ScaleX) => view.set_scale_x(v),
-      (ElementKind::View(view), ScaleY) => view.set_scale_y(v),
+      (ElementKind::View(view), ScaleX) => view.set_scale_x(Some(v)),
+      (ElementKind::View(view), ScaleY) => view.set_scale_y(Some(v)),
 
-      (ElementKind::Rectangle(r), X) if detached => r.set_x(v),
-      (ElementKind::Rectangle(r), Y) if detached => r.set_y(v),
-      (ElementKind::Rectangle(r), W) if detached => r.set_w(v),
-      (ElementKind::Rectangle(r), H) if detached => r.set_h(v),
-      (ElementKind::Rectangle(r), Radius) => r.set_radius([v.max(0.0); 4]),
+      (ElementKind::Rectangle(r), X) if detached => r.set_x(Some(v)),
+      (ElementKind::Rectangle(r), Y) if detached => r.set_y(Some(v)),
+      (ElementKind::Rectangle(r), W) if detached => r.set_w(Some(v)),
+      (ElementKind::Rectangle(r), H) if detached => r.set_h(Some(v)),
+      (ElementKind::Rectangle(r), Radius) => r.set_radius(Some([v.max(0.0); 4])),
 
-      (ElementKind::Oval(o), X) if detached => o.set_x(v),
-      (ElementKind::Oval(o), Y) if detached => o.set_y(v),
-      (ElementKind::Oval(o), W) if detached => o.set_w(v),
-      (ElementKind::Oval(o), H) if detached => o.set_h(v),
+      (ElementKind::Oval(o), X) if detached => o.set_x(Some(v)),
+      (ElementKind::Oval(o), Y) if detached => o.set_y(Some(v)),
+      (ElementKind::Oval(o), W) if detached => o.set_w(Some(v)),
+      (ElementKind::Oval(o), H) if detached => o.set_h(Some(v)),
 
-      (ElementKind::Text(t), X) if detached => t.set_x(v),
-      (ElementKind::Text(t), Y) if detached => t.set_y(v),
+      (ElementKind::Text(t), X) if detached => t.set_x(Some(v)),
+      (ElementKind::Text(t), Y) if detached => t.set_y(Some(v)),
 
-      (ElementKind::Texture(t), X) if detached => t.set_x(v),
-      (ElementKind::Texture(t), Y) if detached => t.set_y(v),
-      (ElementKind::Texture(t), W) if detached => t.set_w(v),
-      (ElementKind::Texture(t), H) if detached => t.set_h(v),
+      (ElementKind::Texture(t), X) if detached => t.set_x(Some(v)),
+      (ElementKind::Texture(t), Y) if detached => t.set_y(Some(v)),
+      (ElementKind::Texture(t), W) if detached => t.set_w(Some(v)),
+      (ElementKind::Texture(t), H) if detached => t.set_h(Some(v)),
 
-      (ElementKind::Path(p), X) if detached => p.set_x(v),
-      (ElementKind::Path(p), Y) if detached => p.set_y(v),
+      (ElementKind::Path(p), X) if detached => p.set_x(Some(v)),
+      (ElementKind::Path(p), Y) if detached => p.set_y(Some(v)),
 
-      (ElementKind::Line(l), X1) if detached => l.set_x1(v),
-      (ElementKind::Line(l), Y1) if detached => l.set_y1(v),
-      (ElementKind::Line(l), X2) if detached => l.set_x2(v),
-      (ElementKind::Line(l), Y2) if detached => l.set_y2(v),
+      (ElementKind::Line(l), X1) if detached => l.set_x1(Some(v)),
+      (ElementKind::Line(l), Y1) if detached => l.set_y1(Some(v)),
+      (ElementKind::Line(l), X2) if detached => l.set_x2(Some(v)),
+      (ElementKind::Line(l), Y2) if detached => l.set_y2(Some(v)),
 
       (kind, StrokeWidth) => match kind.paint_mut() {
-        Some(p) => p.set_stroke_width(v.max(0.0)),
+        Some(p) => p.set_stroke_width(Some(v.max(0.0))),
         None => Damage::None,
       },
 

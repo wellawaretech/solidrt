@@ -415,6 +415,27 @@ impl Element {
     self.layout.is_some()
   }
 
+  /// The style this element's kind starts layout with; a null layout-prop
+  /// write resets the named field from here (each kind seeds its own
+  /// defaults - a view's column direction, a texture's align-self). None for
+  /// detached elements, which have no style.
+  pub fn initial_style(&self) -> Option<Style> {
+    if !self.has_layout() {
+      return None;
+    }
+    Some(match &self.kind {
+      ElementKind::Window(_) => Window::initial_style(),
+      ElementKind::View(_) => View::initial_style(),
+      ElementKind::Rectangle(_) => Rectangle::initial_style(),
+      ElementKind::Oval(_) => Oval::initial_style(),
+      ElementKind::Line(_) => Line::initial_style(),
+      ElementKind::Path(_) => Path::initial_style(),
+      ElementKind::Text(_) => Text::initial_style(),
+      ElementKind::Texture(_) => Texture::initial_style(),
+      ElementKind::Span(_) => return None,
+    })
+  }
+
   pub fn layout_data(&self) -> &LayoutData {
     self.layout.as_ref().expect("element has no layout data")
   }

@@ -227,7 +227,7 @@ fn radius_animates_uniform_only() {
   tree.set_transition_now(0.0);
   assert!(tree.transition_write(2, AnimProp::Radius, Some(scalar(8.0))), "unset radius reads as 0");
   tree.edit(2, |el| match &mut el.kind {
-    ElementKind::Rectangle(r) => r.set_radius([1.0, 2.0, 3.0, 4.0]),
+    ElementKind::Rectangle(r) => r.set_radius(Some([1.0, 2.0, 3.0, 4.0])),
     _ => unreachable!(),
   });
   assert!(!tree.transition_write(2, AnimProp::Radius, Some(scalar(8.0))), "per-corner radii snap");
@@ -386,7 +386,7 @@ fn enter_from_animates_first_attach_only() {
       stagger_ms: None,
     }));
     match &mut el.kind {
-      ElementKind::Rectangle(r) => r.set_x(40.0),
+      ElementKind::Rectangle(r) => r.set_x(Some(40.0)),
       _ => unreachable!(),
     }
   });
@@ -424,7 +424,7 @@ fn enter_from_with_delay_holds_at_from() {
       stagger_ms: None,
     }));
     match &mut el.kind {
-      ElementKind::Rectangle(r) => r.set_x(40.0),
+      ElementKind::Rectangle(r) => r.set_x(Some(40.0)),
       _ => unreachable!(),
     }
   });
@@ -501,7 +501,7 @@ fn exit_reinsert_is_a_move() {
 fn exit_already_at_target_detaches_instantly() {
   let mut tree = tree_with_exit_rect(EXIT_200);
   tree.edit(2, |el| match &mut el.kind {
-    ElementKind::Rectangle(r) => r.set_x(200.0),
+    ElementKind::Rectangle(r) => r.set_x(Some(200.0)),
     _ => unreachable!(),
   });
   tree.detach_node(1, 2);
@@ -566,7 +566,7 @@ fn tree_with_stagger_group(n: u64) -> RenderTree {
       el.transitions =
         Some(Box::new(TransitionConfig { props: vec![(AnimProp::X, entry_from_100())], all: None, stagger_ms: None }));
       match &mut el.kind {
-        ElementKind::Rectangle(r) => r.set_x(40.0),
+        ElementKind::Rectangle(r) => r.set_x(Some(40.0)),
         _ => unreachable!(),
       }
     });
@@ -619,7 +619,7 @@ fn stagger_counts_per_frame() {
     el.transitions =
       Some(Box::new(TransitionConfig { props: vec![(AnimProp::X, entry_from_100())], all: None, stagger_ms: None }));
     match &mut el.kind {
-      ElementKind::Rectangle(r) => r.set_x(40.0),
+      ElementKind::Rectangle(r) => r.set_x(Some(40.0)),
       _ => unreachable!(),
     }
   });

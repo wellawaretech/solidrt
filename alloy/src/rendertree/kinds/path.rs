@@ -284,22 +284,26 @@ impl Path {
     self.invalidate();
     Damage::Layout
   }
-  pub fn set_x(&mut self, v: f32) -> Damage {
-    self.x = Some(v);
+  pub fn set_x(&mut self, v: Option<f32>) -> Damage {
+    self.x = v;
     Damage::Paint
   }
-  pub fn set_y(&mut self, v: f32) -> Damage {
-    self.y = Some(v);
+  pub fn set_y(&mut self, v: Option<f32>) -> Damage {
+    self.y = v;
     Damage::Paint
   }
-  pub fn set_fill_rule(&mut self, rule: FillType) -> Damage {
-    self.fill_rule = rule;
+  pub fn set_fill_rule(&mut self, rule: Option<FillType>) -> Damage {
+    self.fill_rule = rule.unwrap_or(FillType::NonZero);
     self.invalidate();
     Damage::Paint
   }
 
+  pub fn initial_style() -> taffy::Style {
+    taffy::Style { display: taffy::Display::Block, ..Default::default() }
+  }
+
   pub fn with_layout(self) -> Element {
-    Element::with_layout(ElementKind::Path(self), taffy::Style { display: taffy::Display::Block, ..Default::default() })
+    Element::with_layout(ElementKind::Path(self), Self::initial_style())
   }
 
   pub fn no_layout(self) -> Element {

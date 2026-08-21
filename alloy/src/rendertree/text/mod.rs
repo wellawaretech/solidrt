@@ -46,6 +46,15 @@ pub enum OverflowWrap {
   Anywhere,
 }
 
+// The engine text defaults, shared by Default and the null-reset paths in
+// set_font_size / set_font_weight. Weight is Medium, not Regular: Impeller
+// antialiases text in grayscale only, so small type on a 1x desktop display
+// renders as hairlines that bleed into dark backgrounds. Costs a little
+// extra weight on 2-3x screens that never needed it; see
+// okf/backlog/dpi-aware-default-font-weight.md.
+pub const DEFAULT_FONT_SIZE: f32 = 20.0;
+pub const DEFAULT_FONT_WEIGHT: FontWeight = FontWeight::Medium;
+
 #[derive(Clone, Debug)]
 pub struct Text {
   // Concatenation of every span's text; what search and snapshots read.
@@ -109,13 +118,9 @@ impl Default for Text {
       runs: Vec::new(),
       paragraph_engine: false,
       font_family: "sans".to_string(),
-      font_size: 20.0,
+      font_size: DEFAULT_FONT_SIZE,
       font_style: FontStyle::Normal,
-      // Medium, not Regular: Impeller antialiases text in grayscale only, so
-      // small type on a 1x desktop display renders as hairlines that bleed
-      // into dark backgrounds. Costs a little extra weight on 2-3x screens
-      // that never needed it; see okf/backlog/dpi-aware-default-font-weight.md.
-      font_weight: FontWeight::Medium,
+      font_weight: DEFAULT_FONT_WEIGHT,
       text_alignment: TextAlignment::Left,
       max_lines: 0,
       text_overflow: TextOverflow::default(),
@@ -369,16 +374,16 @@ impl Text {
       .map(|p| self.runs[runs[p.run].style].node)
   }
 
-  pub fn set_underline(&mut self, on: bool) -> Damage {
-    self.underline = on;
+  pub fn set_underline(&mut self, on: Option<bool>) -> Damage {
+    self.underline = on.unwrap_or(false);
     Damage::Paint
   }
-  pub fn set_underline_offset(&mut self, v: f32) -> Damage {
-    self.underline_offset = Some(v);
+  pub fn set_underline_offset(&mut self, v: Option<f32>) -> Damage {
+    self.underline_offset = v;
     Damage::Paint
   }
-  pub fn set_underline_thickness(&mut self, v: f32) -> Damage {
-    self.underline_thickness = Some(v);
+  pub fn set_underline_thickness(&mut self, v: Option<f32>) -> Damage {
+    self.underline_thickness = v;
     Damage::Paint
   }
 
@@ -386,75 +391,81 @@ impl Text {
     self.paragraph_engine = on;
     Damage::Layout
   }
-  pub fn set_text_overflow(&mut self, v: TextOverflow) -> Damage {
-    self.text_overflow = v;
+  pub fn set_text_overflow(&mut self, v: Option<TextOverflow>) -> Damage {
+    self.text_overflow = v.unwrap_or_default();
     Damage::Layout
   }
-  pub fn set_overflow_wrap(&mut self, v: OverflowWrap) -> Damage {
-    self.overflow_wrap = v;
+  pub fn set_overflow_wrap(&mut self, v: Option<OverflowWrap>) -> Damage {
+    self.overflow_wrap = v.unwrap_or_default();
     Damage::Layout
   }
-  pub fn set_text_indent(&mut self, v: f32) -> Damage {
-    self.text_indent = v;
+  pub fn set_text_indent(&mut self, v: Option<f32>) -> Damage {
+    self.text_indent = v.unwrap_or(0.0);
     Damage::Layout
   }
-  pub fn set_text_wrap(&mut self, v: Wrap) -> Damage {
-    self.text_wrap = v;
+  pub fn set_text_wrap(&mut self, v: Option<Wrap>) -> Damage {
+    self.text_wrap = v.unwrap_or_default();
     Damage::Layout
   }
 
   // Box overrides paint within (or independent of) the layout box, so none of
   // them affect layout.
-  pub fn set_x(&mut self, v: f32) -> Damage {
-    self.x = Some(v);
+  pub fn set_x(&mut self, v: Option<f32>) -> Damage {
+    self.x = v;
     Damage::Paint
   }
-  pub fn set_y(&mut self, v: f32) -> Damage {
-    self.y = Some(v);
+  pub fn set_y(&mut self, v: Option<f32>) -> Damage {
+    self.y = v;
     Damage::Paint
   }
-  pub fn set_w(&mut self, v: f32) -> Damage {
-    self.w = Some(v);
+  pub fn set_w(&mut self, v: Option<f32>) -> Damage {
+    self.w = v;
     Damage::Paint
   }
-  pub fn set_h(&mut self, v: f32) -> Damage {
-    self.h = Some(v);
+  pub fn set_h(&mut self, v: Option<f32>) -> Damage {
+    self.h = v;
     Damage::Paint
   }
 
   // All other text properties feed measurement, so every change affects layout.
   // The resolved font family name and FontWeight come in already decoded.
-  pub fn set_font_family(&mut self, family: String) -> Damage {
-    self.font_family = family;
+  // None on the numeric props resets to the Default value.
+  pub fn set_font_family(&mut self, family: Option<String>) -> Damage {
+    self.font_family = family.unwrap_or_else(|| Self::default().font_family);
     Damage::Layout
   }
-  pub fn set_font_size(&mut self, v: f32) -> Damage {
-    self.font_size = v;
+  pub fn set_font_size(&mut self, v: Option<f32>) -> Damage {
+    self.font_size = v.unwrap_or(DEFAULT_FONT_SIZE);
     Damage::Layout
   }
-  pub fn set_line_height(&mut self, v: f32) -> Damage {
-    self.line_height = v;
+  pub fn set_line_height(&mut self, v: Option<f32>) -> Damage {
+    self.line_height = v.unwrap_or(0.0);
     Damage::Layout
   }
-  pub fn set_max_lines(&mut self, v: u32) -> Damage {
-    self.max_lines = v;
+  pub fn set_max_lines(&mut self, v: Option<u32>) -> Damage {
+    self.max_lines = v.unwrap_or(0);
     Damage::Layout
   }
-  pub fn set_font_weight(&mut self, weight: FontWeight) -> Damage {
-    self.font_weight = weight;
+  // fontWeight is numeric on the JS surface, so it resets like the numbers.
+  pub fn set_font_weight(&mut self, weight: Option<FontWeight>) -> Damage {
+    self.font_weight = weight.unwrap_or(DEFAULT_FONT_WEIGHT);
     Damage::Layout
   }
-  pub fn set_font_style(&mut self, style: FontStyle) -> Damage {
-    self.font_style = style;
+  pub fn set_font_style(&mut self, style: Option<FontStyle>) -> Damage {
+    self.font_style = style.unwrap_or(FontStyle::Normal);
     Damage::Layout
   }
-  pub fn set_text_alignment(&mut self, alignment: TextAlignment) -> Damage {
-    self.text_alignment = alignment;
+  pub fn set_text_alignment(&mut self, alignment: Option<TextAlignment>) -> Damage {
+    self.text_alignment = alignment.unwrap_or(TextAlignment::Left);
     Damage::Layout
   }
 
+  pub fn initial_style() -> Style {
+    Style { display: Display::Block, ..Default::default() }
+  }
+
   pub fn with_layout(self) -> Element {
-    Element::with_layout(ElementKind::Text(self), Style { display: Display::Block, ..Default::default() })
+    Element::with_layout(ElementKind::Text(self), Self::initial_style())
   }
 
   pub fn no_layout(self) -> Element {

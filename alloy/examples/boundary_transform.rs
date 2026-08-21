@@ -48,7 +48,7 @@ fn write_view(tree: &mut RenderTree, id: u64, f: impl FnOnce(&mut View) -> Damag
 }
 
 fn write_color(tree: &mut RenderTree, id: u64, color: Color) {
-  tree.edit(id, |el| el.kind.paint_mut().expect("paintable kind").set_color(color));
+  tree.edit(id, |el| el.kind.paint_mut().expect("paintable kind").set_color(Some(color)));
 }
 
 fn styled(tree: &mut RenderTree, id: u64, f: impl FnOnce(&mut Style)) {
@@ -111,15 +111,15 @@ fn build_scene() -> RenderTree {
   write_color(&mut tree, MAGENTA, Color::new_srgba(1.0, 0.0, 1.0, 1.0));
   tree.edit(MARKER, |el| match &mut el.kind {
     ElementKind::Rectangle(r) => {
-      r.set_w(20.0);
-      r.set_h(20.0)
+      r.set_w(Some(20.0));
+      r.set_h(Some(20.0))
     }
     _ => panic!("marker is not a rect"),
   });
   write_color(&mut tree, MARKER, Color::new_srgba(1.0, 0.0, 0.0, 1.0));
 
-  write_view(&mut tree, VIEW_A, |v| v.set_rotate(std::f32::consts::FRAC_PI_2));
-  write_view(&mut tree, VIEW_B, |v| v.set_x(30.0));
+  write_view(&mut tree, VIEW_A, |v| v.set_rotate(Some(std::f32::consts::FRAC_PI_2)));
+  write_view(&mut tree, VIEW_B, |v| v.set_x(Some(30.0)));
 
   for (id, mode) in [(VIEW_A, BoundaryMode::Recording), (VIEW_B, BoundaryMode::Snapshot), (VIEW_C, BoundaryMode::Recording)]
   {
@@ -189,7 +189,7 @@ fn main() {
 
     // Frame 3: un-rotate view A. Damage::Transform keeps A's recording; the
     // cached content is drawn with the new matrix, no re-record.
-    write_view(&mut tree, VIEW_A, |v| v.set_rotate(0.0));
+    write_view(&mut tree, VIEW_A, |v| v.set_rotate(Some(0.0)));
     let (f3, s3) = frame(&mut tree, &platform, &ctx);
     assert_eq!((s3.boundaries_reused, s3.snapshots_reused), (2, 1), "frame 3 reuses all caches");
     assert_eq!(s3.boundaries_recorded, 0, "transform write must not re-record");
@@ -198,7 +198,7 @@ fn main() {
 
     // Frame 4: move view B back to x=0. Damage::Transform keeps B's snapshot;
     // the same texture is composited at the new position, no re-rasterize.
-    write_view(&mut tree, VIEW_B, |v| v.set_x(0.0));
+    write_view(&mut tree, VIEW_B, |v| v.set_x(Some(0.0)));
     let (f4, s4) = frame(&mut tree, &platform, &ctx);
     assert_eq!((s4.snapshots_reused, s4.snapshots_rasterized), (1, 0), "frame 4 reuses B's texture");
     expect_color(&f4, 10, 150, BLUE_PX, "snapshot content back at x=0");
@@ -219,7 +219,7 @@ fn main() {
     // boundary keeps its cache (clip and scroll are applied at composite
     // time): magenta scrolls into view with zero re-records, and the content
     // sliding up must not leak above C's clip box (view B's rows stay blue).
-    write_view(&mut tree, VIEW_C, |v| v.set_scroll_y(100.0));
+    write_view(&mut tree, VIEW_C, |v| v.set_scroll_y(Some(100.0)));
     let (f6, s6) = frame(&mut tree, &platform, &ctx);
     assert_eq!(s6.boundaries_recorded, 0, "scroll write must not re-record");
     assert_eq!((s6.boundaries_reused, s6.snapshots_reused), (2, 1), "frame 6 reuses all caches");
@@ -231,7 +231,7 @@ fn main() {
     // allocation (same size, so the backing texture is reused; see
     // composite::snapshot_node), never a plain reuse: blue shifts up 20
     // inside B's box, the vacated bottom strip is empty.
-    write_view(&mut tree, VIEW_B, |v| v.set_scroll_y(20.0));
+    write_view(&mut tree, VIEW_B, |v| v.set_scroll_y(Some(20.0)));
     let (f7, s7) = frame(&mut tree, &platform, &ctx);
     assert_eq!(
       (s7.snapshots_rerendered, s7.snapshots_rasterized, s7.snapshots_reused),
@@ -245,7 +245,7 @@ fn main() {
     // Frame 8: opacity 0.5 on non-boundary view D (inside A). Baked as a
     // save_layer into A's recording, so A re-records; the white marker fades
     // to half over the green underneath (group composited, then blended).
-    write_view(&mut tree, VIEW_D, |v| v.set_opacity(0.5));
+    write_view(&mut tree, VIEW_D, |v| v.set_opacity(Some(0.5)));
     let (f8, s8) = frame(&mut tree, &platform, &ctx);
     assert_eq!((s8.boundaries_recorded, s8.boundaries_reused), (1, 1), "baked opacity re-records A, reuses C");
     expect_color(&f8, 10, 10, (128, 255, 128, 255), "half-faded marker over green");
@@ -254,7 +254,7 @@ fn main() {
     // the cached recording replays through draw_display_list's opacity arg,
     // zero re-records. The marker pixel proves nested group opacity: the
     // inner 0.5 layer composites first, then A fades as a whole.
-    write_view(&mut tree, VIEW_A, |v| v.set_opacity(0.5));
+    write_view(&mut tree, VIEW_A, |v| v.set_opacity(Some(0.5)));
     let (f9, s9) = frame(&mut tree, &platform, &ctx);
     assert_eq!((s9.boundaries_recorded, s9.boundaries_reused), (0, 2), "opacity write must not re-record");
     expect_color(&f9, 50, 50, (0, 128, 0, 128), "view A faded to half");
@@ -262,7 +262,7 @@ fn main() {
 
     // Frame 10: opacity 0.5 on Snapshot boundary B. The texture is reused;
     // the fade rides on the composited quad's paint.
-    write_view(&mut tree, VIEW_B, |v| v.set_opacity(0.5));
+    write_view(&mut tree, VIEW_B, |v| v.set_opacity(Some(0.5)));
     let (f10, s10) = frame(&mut tree, &platform, &ctx);
     assert_eq!((s10.snapshots_reused, s10.snapshots_rasterized), (1, 0), "opacity write reuses B's texture");
     expect_color(&f10, 10, 150, (0, 0, 128, 128), "snapshot faded to half");

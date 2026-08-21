@@ -314,53 +314,66 @@ impl View {
   // reports Damage::Scroll: a Recording cache survives (offset applied at
   // composite time), a Snapshot texture cannot (scrolled-out pixels are not
   // in it). clip_radius is baked into recorded content, so it reports Paint.
-  pub fn set_rotate(&mut self, v: f32) -> Damage {
-    self.rotate = Some(v);
+  //
+  // Every setter takes an Option: None resets the prop to its unset default
+  // (a cleared JS binding), which the plugin could not express with any
+  // concrete value.
+  pub fn set_rotate(&mut self, v: Option<f32>) -> Damage {
+    self.rotate = v;
     self.invalidate();
     Damage::Compose
   }
-  pub fn set_scale_x(&mut self, v: f32) -> Damage {
-    self.scale_x = Some(v);
+  pub fn set_scale_x(&mut self, v: Option<f32>) -> Damage {
+    self.scale_x = v;
     self.invalidate();
     Damage::Compose
   }
-  pub fn set_scale_y(&mut self, v: f32) -> Damage {
-    self.scale_y = Some(v);
+  pub fn set_scale_y(&mut self, v: Option<f32>) -> Damage {
+    self.scale_y = v;
     self.invalidate();
     Damage::Compose
   }
-  pub fn set_rotate_x(&mut self, v: f32) -> Damage {
-    self.rotate_x = Some(v);
+  pub fn set_rotate_x(&mut self, v: Option<f32>) -> Damage {
+    self.rotate_x = v;
     self.invalidate();
     Damage::Compose
   }
-  pub fn set_rotate_y(&mut self, v: f32) -> Damage {
-    self.rotate_y = Some(v);
+  pub fn set_rotate_y(&mut self, v: Option<f32>) -> Damage {
+    self.rotate_y = v;
     self.invalidate();
     Damage::Compose
   }
-  pub fn set_perspective(&mut self, v: f32) -> Damage {
-    self.perspective = Some(v);
+  pub fn set_perspective(&mut self, v: Option<f32>) -> Damage {
+    self.perspective = v;
     self.invalidate();
     Damage::Compose
   }
-  pub fn set_x(&mut self, v: f32) -> Damage {
-    self.translate.get_or_insert_with(Vector::default).x = v;
+  // x/y reset per component; a translate that never existed stays None.
+  pub fn set_x(&mut self, v: Option<f32>) -> Damage {
+    match (v, &mut self.translate) {
+      (Some(v), t) => t.get_or_insert_with(Vector::default).x = v,
+      (None, Some(t)) => t.x = 0.0,
+      (None, None) => {}
+    }
     self.invalidate();
     Damage::Compose
   }
-  pub fn set_y(&mut self, v: f32) -> Damage {
-    self.translate.get_or_insert_with(Vector::default).y = v;
+  pub fn set_y(&mut self, v: Option<f32>) -> Damage {
+    match (v, &mut self.translate) {
+      (Some(v), t) => t.get_or_insert_with(Vector::default).y = v,
+      (None, Some(t)) => t.y = 0.0,
+      (None, None) => {}
+    }
     self.invalidate();
     Damage::Compose
   }
-  pub fn set_origin_x(&mut self, x: OriginCoord) -> Damage {
-    self.origin_x = Some(x);
+  pub fn set_origin_x(&mut self, x: Option<OriginCoord>) -> Damage {
+    self.origin_x = x;
     self.invalidate();
     Damage::Compose
   }
-  pub fn set_origin_y(&mut self, y: OriginCoord) -> Damage {
-    self.origin_y = Some(y);
+  pub fn set_origin_y(&mut self, y: Option<OriginCoord>) -> Damage {
+    self.origin_y = y;
     self.invalidate();
     Damage::Compose
   }
@@ -369,20 +382,28 @@ impl View {
   // cached content at composite time, and for a non-boundary View the baked
   // save_layer lives in the enclosing boundary's recording, which Compose's
   // parent-up invalidation clears.
-  pub fn set_opacity(&mut self, v: f32) -> Damage {
-    self.opacity = Some(v.clamp(0.0, 1.0));
+  pub fn set_opacity(&mut self, v: Option<f32>) -> Damage {
+    self.opacity = v.map(|v| v.clamp(0.0, 1.0));
     Damage::Compose
   }
-  pub fn set_scroll_x(&mut self, v: f32) -> Damage {
-    self.scroll.get_or_insert_with(Vector::default).x = v;
+  pub fn set_scroll_x(&mut self, v: Option<f32>) -> Damage {
+    match (v, &mut self.scroll) {
+      (Some(v), s) => s.get_or_insert_with(Vector::default).x = v,
+      (None, Some(s)) => s.x = 0.0,
+      (None, None) => {}
+    }
     Damage::Scroll
   }
-  pub fn set_scroll_y(&mut self, v: f32) -> Damage {
-    self.scroll.get_or_insert_with(Vector::default).y = v;
+  pub fn set_scroll_y(&mut self, v: Option<f32>) -> Damage {
+    match (v, &mut self.scroll) {
+      (Some(v), s) => s.get_or_insert_with(Vector::default).y = v,
+      (None, Some(s)) => s.y = 0.0,
+      (None, None) => {}
+    }
     Damage::Scroll
   }
-  pub fn set_clip_radius(&mut self, radius: [f32; 4]) -> Damage {
-    self.clip_radius = Some(radius);
+  pub fn set_clip_radius(&mut self, radius: Option<[f32; 4]>) -> Damage {
+    self.clip_radius = radius;
     Damage::Paint
   }
   /// Declare or clear the boundary shader: composite-time state, hence
@@ -417,14 +438,20 @@ impl View {
   // Paint, not Transform: the fit is recorded into boundary caches and
   // snapshot textures (unlike the hoisted user chain), so changing it must
   // re-record the content.
-  pub fn set_view_box(&mut self, w: f32, h: f32) -> Damage {
-    self.view_box = Some(Size::new(w, h));
+  pub fn set_view_box(&mut self, size: Option<(f32, f32)>) -> Damage {
+    self.view_box = size.map(|(w, h)| Size::new(w, h));
     self.invalidate();
     Damage::Paint
   }
 
+  // The style a layout view starts with; layout-prop resets restore fields
+  // from here (a view's block axis is the column, unlike taffy's row).
+  pub fn initial_style() -> Style {
+    Style { flex_direction: FlexDirection::Column, ..Style::default() }
+  }
+
   pub fn with_layout(self) -> Element {
-    Element::with_layout(ElementKind::View(self), Style { flex_direction: FlexDirection::Column, ..Style::default() })
+    Element::with_layout(ElementKind::View(self), Self::initial_style())
   }
 
   pub fn no_layout(self) -> Element {

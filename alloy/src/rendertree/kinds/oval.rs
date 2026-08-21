@@ -52,25 +52,29 @@ impl Bounded for Oval {
 }
 
 impl Oval {
-  pub fn set_x(&mut self, v: f32) -> Damage {
-    self.x = Some(v);
+  pub fn set_x(&mut self, v: Option<f32>) -> Damage {
+    self.x = v;
     Damage::Paint
   }
-  pub fn set_y(&mut self, v: f32) -> Damage {
-    self.y = Some(v);
+  pub fn set_y(&mut self, v: Option<f32>) -> Damage {
+    self.y = v;
     Damage::Paint
   }
-  pub fn set_w(&mut self, v: f32) -> Damage {
-    self.w = Some(v);
+  pub fn set_w(&mut self, v: Option<f32>) -> Damage {
+    self.w = v;
     Damage::Paint
   }
-  pub fn set_h(&mut self, v: f32) -> Damage {
-    self.h = Some(v);
+  pub fn set_h(&mut self, v: Option<f32>) -> Damage {
+    self.h = v;
     Damage::Paint
   }
 
+  pub fn initial_style() -> taffy::Style {
+    taffy::Style { display: taffy::Display::Block, ..Default::default() }
+  }
+
   pub fn with_layout(self) -> Element {
-    Element::with_layout(ElementKind::Oval(self), taffy::Style { display: taffy::Display::Block, ..Default::default() })
+    Element::with_layout(ElementKind::Oval(self), Self::initial_style())
   }
 
   pub fn no_layout(self) -> Element {

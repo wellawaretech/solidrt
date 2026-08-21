@@ -72,15 +72,16 @@ impl Window {
     self.pending_shader.get_mut().take()
   }
 
+  pub fn initial_style() -> Style {
+    Style {
+      display: Display::Flex,
+      flex_direction: FlexDirection::Column,
+      size: Size { width: percent(1.0), height: percent(1.0) },
+      ..Default::default()
+    }
+  }
+
   pub fn with_layout(self) -> Element {
-    Element::with_layout(
-      ElementKind::Window(self),
-      Style {
-        display: Display::Flex,
-        flex_direction: FlexDirection::Column,
-        size: Size { width: percent(1.0), height: percent(1.0) },
-        ..Default::default()
-      },
-    )
+    Element::with_layout(ElementKind::Window(self), Self::initial_style())
   }
 }

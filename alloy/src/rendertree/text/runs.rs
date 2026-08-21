@@ -116,43 +116,54 @@ impl Span {
 
   // Metrics-affecting overrides are Layout; the paint alone is Paint. Either
   // way the owning Text re-collects its runs (RenderTree::sync_span_parent).
-  pub fn set_font_family(&mut self, family: String) -> Damage {
-    self.overrides.font_family = Some(family);
+  pub fn set_font_family(&mut self, family: Option<String>) -> Damage {
+    self.overrides.font_family = family;
     Damage::Layout
   }
-  pub fn set_font_size(&mut self, v: f32) -> Damage {
-    self.overrides.font_size = Some(v);
+  // None on the numeric overrides clears them: the run falls back to the
+  // paragraph's own value, which no concrete number could express.
+  pub fn set_font_size(&mut self, v: Option<f32>) -> Damage {
+    self.overrides.font_size = v;
     Damage::Layout
   }
-  pub fn set_line_height(&mut self, v: f32) -> Damage {
-    self.overrides.line_height = Some(v);
+  pub fn set_line_height(&mut self, v: Option<f32>) -> Damage {
+    self.overrides.line_height = v;
     Damage::Layout
   }
-  pub fn set_font_weight(&mut self, weight: FontWeight) -> Damage {
-    self.overrides.font_weight = Some(weight);
+  pub fn set_font_weight(&mut self, weight: Option<FontWeight>) -> Damage {
+    self.overrides.font_weight = weight;
     Damage::Layout
   }
-  pub fn set_font_style(&mut self, style: FontStyle) -> Damage {
-    self.overrides.font_style = Some(style);
+  pub fn set_font_style(&mut self, style: Option<FontStyle>) -> Damage {
+    self.overrides.font_style = style;
     Damage::Layout
   }
   // Underline is paint-only: it neither shapes nor breaks.
-  pub fn set_underline(&mut self, on: bool) -> Damage {
-    self.overrides.underline = Some(on);
+  pub fn set_underline(&mut self, on: Option<bool>) -> Damage {
+    self.overrides.underline = on;
     Damage::Paint
   }
-  pub fn set_underline_offset(&mut self, v: f32) -> Damage {
-    self.overrides.underline_offset = Some(v);
+  pub fn set_underline_offset(&mut self, v: Option<f32>) -> Damage {
+    self.overrides.underline_offset = v;
     Damage::Paint
   }
-  pub fn set_underline_thickness(&mut self, v: f32) -> Damage {
-    self.overrides.underline_thickness = Some(v);
+  pub fn set_underline_thickness(&mut self, v: Option<f32>) -> Damage {
+    self.overrides.underline_thickness = v;
     Damage::Paint
   }
   /// The paint override, created from the paragraph default on first write
   /// so paint setters (color, gradient) have something to write into.
   pub fn paint_override_mut(&mut self) -> &mut PaintState {
     self.overrides.paint.get_or_insert_with(PaintState::default)
+  }
+
+  /// Drop the paint override entirely: the run falls back to the paragraph's
+  /// paint. This is what a null `color` means on a span - resetting the
+  /// override to the DEFAULT paint would pin the default gray instead of
+  /// inheriting.
+  pub fn clear_paint_override(&mut self) -> Damage {
+    self.overrides.paint = None;
+    Damage::Paint
   }
 
   pub fn no_layout(self) -> Element {

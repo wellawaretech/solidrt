@@ -12,6 +12,78 @@ use super::{as_pct_fraction, describe, f32_of, str_of};
 use crate::alloy_plugins::value::PropValue;
 use alloy::rendertree::Damage;
 
+// Null resets a layout prop to the field's value in `initial`, the style the
+// element's kind starts with (Element::initial_style) - "the default" for a
+// layout prop is per kind (a view's column direction, a texture's
+// align-self), not taffy's. Mirrors the name set `apply` handles; a new prop
+// there needs its reset arm here.
+pub fn reset(style: &mut Style, initial: &Style, name: &str) -> Option<Damage> {
+  match name {
+    "width" => style.size.width = initial.size.width,
+    "height" => style.size.height = initial.size.height,
+    "minWidth" => style.min_size.width = initial.min_size.width,
+    "minHeight" => style.min_size.height = initial.min_size.height,
+    "maxWidth" => style.max_size.width = initial.max_size.width,
+    "maxHeight" => style.max_size.height = initial.max_size.height,
+    "aspectRatio" => style.aspect_ratio = initial.aspect_ratio,
+
+    "padding" => style.padding = initial.padding,
+    "paddingTop" => style.padding.top = initial.padding.top,
+    "paddingRight" => style.padding.right = initial.padding.right,
+    "paddingBottom" => style.padding.bottom = initial.padding.bottom,
+    "paddingLeft" => style.padding.left = initial.padding.left,
+
+    "margin" => style.margin = initial.margin,
+    "marginTop" => style.margin.top = initial.margin.top,
+    "marginRight" => style.margin.right = initial.margin.right,
+    "marginBottom" => style.margin.bottom = initial.margin.bottom,
+    "marginLeft" => style.margin.left = initial.margin.left,
+
+    "display" => style.display = initial.display,
+    "flexDirection" => style.flex_direction = initial.flex_direction,
+    "flexWrap" => style.flex_wrap = initial.flex_wrap,
+    "alignItems" => style.align_items = initial.align_items,
+    "justifyContent" => style.justify_content = initial.justify_content,
+    "alignContent" => style.align_content = initial.align_content,
+
+    "flex" => {
+      style.flex_grow = initial.flex_grow;
+      style.flex_shrink = initial.flex_shrink;
+      style.flex_basis = initial.flex_basis;
+    }
+    "flexGrow" => style.flex_grow = initial.flex_grow,
+    "flexShrink" => style.flex_shrink = initial.flex_shrink,
+    "flexBasis" => style.flex_basis = initial.flex_basis,
+    "alignSelf" => style.align_self = initial.align_self,
+
+    "gap" => style.gap = initial.gap,
+    "rowGap" => style.gap.height = initial.gap.height,
+    "columnGap" => style.gap.width = initial.gap.width,
+
+    "top" => style.inset.top = initial.inset.top,
+    "right" => style.inset.right = initial.inset.right,
+    "bottom" => style.inset.bottom = initial.inset.bottom,
+    "left" => style.inset.left = initial.inset.left,
+
+    "overflow" => style.overflow = initial.overflow,
+    "overflowX" => style.overflow.x = initial.overflow.x,
+    "overflowY" => style.overflow.y = initial.overflow.y,
+
+    "gridAutoFlow" => style.grid_auto_flow = initial.grid_auto_flow,
+    "gridTemplateColumns" => style.grid_template_columns = initial.grid_template_columns.clone(),
+    "gridTemplateRows" => style.grid_template_rows = initial.grid_template_rows.clone(),
+    "gridAutoColumns" => style.grid_auto_columns = initial.grid_auto_columns.clone(),
+    "gridAutoRows" => style.grid_auto_rows = initial.grid_auto_rows.clone(),
+    "gridColumnStart" => style.grid_column.start = initial.grid_column.start.clone(),
+    "gridColumnEnd" => style.grid_column.end = initial.grid_column.end.clone(),
+    "gridRowStart" => style.grid_row.start = initial.grid_row.start.clone(),
+    "gridRowEnd" => style.grid_row.end = initial.grid_row.end.clone(),
+
+    _ => return None,
+  }
+  Some(Damage::Layout)
+}
+
 pub fn apply(style: &mut Style, name: &str, value: &PropValue) -> Result<Option<Damage>, String> {
   match name {
     // Size

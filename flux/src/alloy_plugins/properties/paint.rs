@@ -1,39 +1,48 @@
 use alloy::impellers::{BlendMode, DrawStyle, Matrix, Point, StrokeCap, StrokeJoin, TileMode};
 
-use super::{decode_color, f32_of, str_of};
+use super::{decode_color, f32_of, opt, opt_f32, str_of};
 use crate::alloy_plugins::value::PropValue;
 use alloy::rendertree::Damage;
 use alloy::rendertree::{Gradient, GradientStop, GradientUnits, PaintState};
 
+// Null resets any of these to the PaintState default (see the Option setters
+// in alloy); the decoded vocabulary is unchanged otherwise.
 pub fn apply(paint: &mut PaintState, name: &str, value: &PropValue) -> Result<Option<Damage>, String> {
   Ok(Some(match name {
     // `color` carries either a solid (a packed-u32 number) or a gradient created
     // by createLinearGradient/createRadialGradient (a branded object).
     "color" => match value {
+      PropValue::Null => paint.set_color(None),
       PropValue::Map(_) => paint.set_gradient(decode_gradient(value)?),
-      _ => paint.set_color(decode_color(value)?),
+      _ => paint.set_color(Some(decode_color(value)?)),
     },
-    "strokeWidth" => paint.set_stroke_width(f32_of(value, "strokeWidth")?),
-    "strokeMiter" => paint.set_stroke_miter(f32_of(value, "strokeMiter")?),
-    "drawStyle" => paint.set_draw_style(match str_of(value, "drawStyle")? {
-      "fill" => DrawStyle::Fill,
-      "stroke" => DrawStyle::Stroke,
-      "stroke-and-fill" => DrawStyle::StrokeAndFill,
-      v => return Err(format!("Unknown drawStyle \"{v}\"; expected fill, stroke or stroke-and-fill")),
-    }),
-    "strokeCap" => paint.set_stroke_cap(match str_of(value, "strokeCap")? {
-      "butt" => StrokeCap::Butt,
-      "round" => StrokeCap::Round,
-      "square" => StrokeCap::Square,
-      v => return Err(format!("Unknown strokeCap \"{v}\"; expected butt, round or square")),
-    }),
-    "strokeJoin" => paint.set_stroke_join(match str_of(value, "strokeJoin")? {
-      "miter" => StrokeJoin::Miter,
-      "round" => StrokeJoin::Round,
-      "bevel" => StrokeJoin::Bevel,
-      v => return Err(format!("Unknown strokeJoin \"{v}\"; expected miter, round or bevel")),
-    }),
-    "blendMode" => paint.set_blend_mode(decode_blend_mode(str_of(value, "blendMode")?)?),
+    "strokeWidth" => paint.set_stroke_width(opt_f32(value, "strokeWidth")?),
+    "strokeMiter" => paint.set_stroke_miter(opt_f32(value, "strokeMiter")?),
+    "drawStyle" => paint.set_draw_style(opt(value, |v| {
+      Ok(match str_of(v, "drawStyle")? {
+        "fill" => DrawStyle::Fill,
+        "stroke" => DrawStyle::Stroke,
+        "stroke-and-fill" => DrawStyle::StrokeAndFill,
+        v => return Err(format!("Unknown drawStyle \"{v}\"; expected fill, stroke or stroke-and-fill")),
+      })
+    })?),
+    "strokeCap" => paint.set_stroke_cap(opt(value, |v| {
+      Ok(match str_of(v, "strokeCap")? {
+        "butt" => StrokeCap::Butt,
+        "round" => StrokeCap::Round,
+        "square" => StrokeCap::Square,
+        v => return Err(format!("Unknown strokeCap \"{v}\"; expected butt, round or square")),
+      })
+    })?),
+    "strokeJoin" => paint.set_stroke_join(opt(value, |v| {
+      Ok(match str_of(v, "strokeJoin")? {
+        "miter" => StrokeJoin::Miter,
+        "round" => StrokeJoin::Round,
+        "bevel" => StrokeJoin::Bevel,
+        v => return Err(format!("Unknown strokeJoin \"{v}\"; expected miter, round or bevel")),
+      })
+    })?),
+    "blendMode" => paint.set_blend_mode(opt(value, |v| decode_blend_mode(str_of(v, "blendMode")?))?),
     _ => return Ok(None),
   }))
 }

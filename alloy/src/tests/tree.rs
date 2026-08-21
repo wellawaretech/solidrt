@@ -209,10 +209,10 @@ fn text_collects_styled_runs_from_nested_spans() {
   tree.create_node(1, Text::default().with_layout());
   tree.create_node(2, Span { text: "Hello, ".into(), ..Default::default() }.no_layout());
   let mut outer = Span::default();
-  outer.set_font_weight(crate::impellers::FontWeight::Bold);
+  outer.set_font_weight(Some(crate::impellers::FontWeight::Bold));
   tree.create_node(3, outer.no_layout());
   let mut inner = Span::default();
-  inner.set_font_size(30.0);
+  inner.set_font_size(Some(30.0));
   tree.create_node(4, inner.no_layout());
   tree.create_node(5, Span { text: "world".into(), ..Default::default() }.no_layout());
   tree.insert_node(1, 2, None);
@@ -239,13 +239,13 @@ fn text_collects_styled_runs_from_nested_spans() {
   });
   assert_eq!(runs_of(&tree, 1)[1].text, "there");
   tree.edit(3, |el| match &mut el.kind {
-    ElementKind::Span(s) => s.set_font_size(12.0),
+    ElementKind::Span(s) => s.set_font_size(Some(12.0)),
     _ => unreachable!(),
   });
   // The inner span's own size still wins over the outer's.
   assert_eq!(runs_of(&tree, 1)[1].overrides.font_size, Some(30.0));
   tree.edit(4, |el| match &mut el.kind {
-    ElementKind::Span(s) => s.set_font_style(crate::impellers::FontStyle::Italic),
+    ElementKind::Span(s) => s.set_font_style(Some(crate::impellers::FontStyle::Italic)),
     _ => unreachable!(),
   });
   let run = &runs_of(&tree, 1)[1];
@@ -459,8 +459,8 @@ fn bounding_box_scaled_ancestor() {
   let mut tree = RenderTree::new();
   tree.create_node(1, attached());
   let mut v = View::default();
-  v.set_scale_x(0.5);
-  v.set_scale_y(0.5);
+  v.set_scale_x(Some(0.5));
+  v.set_scale_y(Some(0.5));
   tree.create_node(2, v.with_layout());
   tree.create_node(3, attached());
   tree.insert_node(1, 2, None);
@@ -484,8 +484,8 @@ fn bounding_box_scrolled_view_box_ancestor() {
   let mut tree = RenderTree::new();
   tree.create_node(1, attached());
   let mut v = View::default();
-  v.set_view_box(200.0, 200.0);
-  v.set_scroll_x(10.0);
+  v.set_view_box(Some((200.0, 200.0)));
+  v.set_scroll_x(Some(10.0));
   tree.create_node(2, v.with_layout());
   tree.create_node(3, attached());
   tree.insert_node(1, 2, None);
@@ -505,7 +505,7 @@ fn bounding_box_rotated_ancestor() {
   let mut tree = RenderTree::new();
   tree.create_node(1, attached());
   let mut v = View::default();
-  v.set_rotate(std::f32::consts::FRAC_PI_2);
+  v.set_rotate(Some(std::f32::consts::FRAC_PI_2));
   tree.create_node(2, v.with_layout());
   tree.create_node(3, attached());
   tree.insert_node(1, 2, None);
@@ -525,8 +525,8 @@ fn bounding_box_own_scale() {
   let mut tree = RenderTree::new();
   tree.create_node(1, attached());
   let mut v = View::default();
-  v.set_scale_x(2.0);
-  v.set_scale_y(2.0);
+  v.set_scale_x(Some(2.0));
+  v.set_scale_y(Some(2.0));
   tree.create_node(2, v.with_layout());
   tree.insert_node(1, 2, None);
   place(&mut tree, 1, 0.0, 0.0, 200.0, 200.0);
@@ -567,7 +567,7 @@ fn painted_quad_rotated_ancestor_carries_corners() {
   let mut tree = RenderTree::new();
   tree.create_node(1, attached());
   let mut v = View::default();
-  v.set_rotate(std::f32::consts::FRAC_PI_2);
+  v.set_rotate(Some(std::f32::consts::FRAC_PI_2));
   tree.create_node(2, v.with_layout());
   tree.create_node(3, attached());
   tree.insert_node(1, 2, None);
@@ -594,8 +594,8 @@ fn bounding_box_translate_and_scroll_fast_path() {
   let mut tree = RenderTree::new();
   tree.create_node(1, attached());
   let mut v = View::default();
-  v.set_x(5.0);
-  v.set_scroll_y(10.0);
+  v.set_x(Some(5.0));
+  v.set_scroll_y(Some(10.0));
   tree.create_node(2, v.with_layout());
   tree.create_node(3, attached());
   tree.insert_node(1, 2, None);

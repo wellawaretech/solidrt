@@ -44,8 +44,8 @@ fn locals_exact_outside_bounds() {
   let mut tree = RenderTree::new();
   tree.create_node(1, attached());
   let mut v = View::default();
-  v.set_scale_x(0.5);
-  v.set_scale_y(0.5);
+  v.set_scale_x(Some(0.5));
+  v.set_scale_y(Some(0.5));
   tree.create_node(2, v.with_layout());
   tree.insert_node(1, 2, None);
   tree.root = Some(1);
@@ -67,9 +67,9 @@ fn locals_match_live_hit_test() {
   let mut tree = RenderTree::new();
   tree.create_node(1, attached());
   let mut v = View::default();
-  v.set_rotate(std::f32::consts::FRAC_PI_2);
-  v.set_scale_x(2.0);
-  v.set_scale_y(2.0);
+  v.set_rotate(Some(std::f32::consts::FRAC_PI_2));
+  v.set_scale_x(Some(2.0));
+  v.set_scale_y(Some(2.0));
   tree.create_node(2, v.with_layout());
   tree.create_node(3, attached());
   tree.insert_node(1, 2, None);
@@ -102,7 +102,7 @@ fn view_box_bounds_measured_in_design_space() {
   let mut tree = RenderTree::new();
   tree.create_node(1, attached());
   let mut v = View::default();
-  v.set_view_box(800.0, 500.0);
+  v.set_view_box(Some((800.0, 500.0)));
   tree.create_node(2, v.with_layout());
   tree.create_node(3, attached());
   tree.insert_node(1, 2, None);
@@ -147,7 +147,7 @@ fn overflow_gate_is_box_space_under_minifying_view_box() {
   let mut tree = RenderTree::new();
   tree.create_node(1, attached());
   let mut v = View::default();
-  v.set_view_box(200.0, 200.0);
+  v.set_view_box(Some((200.0, 200.0)));
   tree.create_node(2, v.with_layout());
   tree.create_node(3, attached());
   tree.insert_node(1, 2, None);
@@ -176,7 +176,7 @@ fn overflow_gate_is_box_space_under_magnifying_view_box() {
   let mut tree = RenderTree::new();
   tree.create_node(1, attached());
   let mut v = View::default();
-  v.set_view_box(50.0, 50.0);
+  v.set_view_box(Some((50.0, 50.0)));
   tree.create_node(2, v.with_layout());
   tree.create_node(3, attached());
   tree.insert_node(1, 2, None);
@@ -210,8 +210,8 @@ fn scroll_is_box_pixels_under_minifying_view_box() {
   let mut tree = RenderTree::new();
   tree.create_node(1, attached());
   let mut v = View::default();
-  v.set_view_box(200.0, 200.0);
-  v.set_scroll_x(10.0);
+  v.set_view_box(Some((200.0, 200.0)));
+  v.set_scroll_x(Some(10.0));
   tree.create_node(2, v.with_layout());
   tree.create_node(3, attached());
   tree.insert_node(1, 2, None);
@@ -243,8 +243,8 @@ fn scroll_is_box_pixels_under_magnifying_view_box() {
   let mut tree = RenderTree::new();
   tree.create_node(1, attached());
   let mut v = View::default();
-  v.set_view_box(50.0, 50.0);
-  v.set_scroll_x(10.0);
+  v.set_view_box(Some((50.0, 50.0)));
+  v.set_scroll_x(Some(10.0));
   tree.create_node(2, v.with_layout());
   tree.create_node(3, attached());
   tree.insert_node(1, 2, None);
@@ -278,7 +278,7 @@ fn view_box_fit_resolves_against_the_border_box_when_padded() {
   let mut tree = RenderTree::new();
   tree.create_node(1, attached());
   let mut v = View::default();
-  v.set_view_box(200.0, 200.0);
+  v.set_view_box(Some((200.0, 200.0)));
   tree.create_node(2, v.with_layout());
   tree.create_node(3, attached());
   tree.insert_node(1, 2, None);

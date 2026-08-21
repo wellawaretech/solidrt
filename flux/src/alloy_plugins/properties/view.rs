@@ -1,39 +1,44 @@
-use super::{as_pct_fraction, decode_params, decode_radius, decode_texture_bindings, describe, f32_of};
+use super::{as_pct_fraction, decode_params, decode_texture_bindings, describe, f32_of, opt_f32, opt_radius};
 use crate::alloy_plugins::value::PropValue;
 use alloy::rendertree::Damage;
 use alloy::rendertree::OriginCoord;
 use alloy::rendertree::View;
 use alloy::NodeShader;
 
+// Null on any of these resets the prop to its unset default (see the Option
+// setters in alloy); a non-numeric non-null value is still an error.
 pub fn apply(view: &mut View, name: &str, value: &PropValue) -> Result<Option<Damage>, String> {
   Ok(Some(match name {
-    "rotate" => view.set_rotate(f32_of(value, "rotate")?),
+    "rotate" => view.set_rotate(opt_f32(value, "rotate")?),
     "scale" => {
       // Uniform scale is a JS convenience; the rendertree is per-axis, so fan
       // it out to both. Last write wins if scale and scaleX/scaleY are mixed.
-      let v = f32_of(value, "scale")?;
+      let v = opt_f32(value, "scale")?;
       view.set_scale_x(v);
       view.set_scale_y(v)
     }
-    "scaleX" => view.set_scale_x(f32_of(value, "scaleX")?),
-    "scaleY" => view.set_scale_y(f32_of(value, "scaleY")?),
-    "rotateX" => view.set_rotate_x(f32_of(value, "rotateX")?),
-    "rotateY" => view.set_rotate_y(f32_of(value, "rotateY")?),
-    "perspective" => view.set_perspective(f32_of(value, "perspective")?),
-    "x" => view.set_x(f32_of(value, "x")?),
-    "y" => view.set_y(f32_of(value, "y")?),
+    "scaleX" => view.set_scale_x(opt_f32(value, "scaleX")?),
+    "scaleY" => view.set_scale_y(opt_f32(value, "scaleY")?),
+    "rotateX" => view.set_rotate_x(opt_f32(value, "rotateX")?),
+    "rotateY" => view.set_rotate_y(opt_f32(value, "rotateY")?),
+    "perspective" => view.set_perspective(opt_f32(value, "perspective")?),
+    "x" => view.set_x(opt_f32(value, "x")?),
+    "y" => view.set_y(opt_f32(value, "y")?),
     "originX" => view.set_origin_x(decode_origin_axis(value)?),
     "originY" => view.set_origin_y(decode_origin_axis(value)?),
-    "opacity" => view.set_opacity(f32_of(value, "opacity")?),
-    "scrollX" => view.set_scroll_x(f32_of(value, "scrollX")?),
-    "scrollY" => view.set_scroll_y(f32_of(value, "scrollY")?),
-    "clipRadius" => view.set_clip_radius(decode_radius(value)?),
+    "opacity" => view.set_opacity(opt_f32(value, "opacity")?),
+    "scrollX" => view.set_scroll_x(opt_f32(value, "scrollX")?),
+    "scrollY" => view.set_scroll_y(opt_f32(value, "scrollY")?),
+    "clipRadius" => view.set_clip_radius(opt_radius(value, "clipRadius")?),
     "viewBox" => {
+      if value.is_null() {
+        return Ok(Some(view.set_view_box(None)));
+      }
       let list = value.as_list().ok_or_else(|| format!("viewBox must be a [w, h] list, got {}", describe(value)))?;
       if list.len() != 2 {
         return Err(format!("viewBox must have exactly [w, h], got {} entries", list.len()));
       }
-      view.set_view_box(f32_of(&list[0], "viewBox w")?, f32_of(&list[1], "viewBox h")?)
+      view.set_view_box(Some((f32_of(&list[0], "viewBox w")?, f32_of(&list[1], "viewBox h")?)))
     }
     "shader" => view.set_shader(decode_shader(value)?),
     _ => return Ok(None),
@@ -73,18 +78,21 @@ fn decode_shader(value: &PropValue) -> Result<Option<NodeShader>, String> {
 
 // One axis of the transform origin (originX / originY): a pixel number, a
 // `pct(n)` fraction, or a position keyword (left/top = 0, center = 0.5,
-// right/bottom = 1).
-fn decode_origin_axis(value: &PropValue) -> Result<OriginCoord, String> {
+// right/bottom = 1). Null resets to the unset default (box center).
+fn decode_origin_axis(value: &PropValue) -> Result<Option<OriginCoord>, String> {
+  if value.is_null() {
+    return Ok(None);
+  }
   if let Some(n) = value.as_f64() {
-    return Ok(OriginCoord::Px(n as f32));
+    return Ok(Some(OriginCoord::Px(n as f32)));
   }
   if let Some(f) = as_pct_fraction(value)? {
-    return Ok(OriginCoord::Fraction(f));
+    return Ok(Some(OriginCoord::Fraction(f)));
   }
   match value.as_str() {
-    Some("left") | Some("top") => Ok(OriginCoord::Fraction(0.0)),
-    Some("center") => Ok(OriginCoord::Fraction(0.5)),
-    Some("right") | Some("bottom") => Ok(OriginCoord::Fraction(1.0)),
+    Some("left") | Some("top") => Ok(Some(OriginCoord::Fraction(0.0))),
+    Some("center") => Ok(Some(OriginCoord::Fraction(0.5))),
+    Some("right") | Some("bottom") => Ok(Some(OriginCoord::Fraction(1.0))),
     Some(other) => {
       Err(format!("Unknown transformOrigin keyword \"{other}\"; expected left, top, center, right or bottom"))
     }

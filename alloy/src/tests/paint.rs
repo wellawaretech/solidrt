@@ -23,7 +23,7 @@ fn set_color_clears_gradient() {
   let mut p = PaintState::default();
   p.set_gradient(Gradient::radial_box(Point::new(0.5, 0.5), 0.5, true, vec![stop(0.0, 1.0, 0.0, 0.0)]));
   assert!(p.gradient.is_some());
-  p.set_color(Color::new_srgba(0.0, 0.0, 1.0, 1.0));
+  p.set_color(Some(Color::new_srgba(0.0, 0.0, 1.0, 1.0)));
   assert!(p.gradient.is_none());
 }
 

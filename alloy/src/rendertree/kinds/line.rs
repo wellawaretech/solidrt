@@ -50,33 +50,37 @@ impl Measurable for Line {
 }
 
 impl Line {
-  pub fn set_x1(&mut self, v: f32) -> Damage {
-    self.x1 = Some(v);
+  pub fn set_x1(&mut self, v: Option<f32>) -> Damage {
+    self.x1 = v;
     Damage::Paint
   }
-  pub fn set_y1(&mut self, v: f32) -> Damage {
-    self.y1 = Some(v);
+  pub fn set_y1(&mut self, v: Option<f32>) -> Damage {
+    self.y1 = v;
     Damage::Paint
   }
-  pub fn set_x2(&mut self, v: f32) -> Damage {
-    self.x2 = Some(v);
+  pub fn set_x2(&mut self, v: Option<f32>) -> Damage {
+    self.x2 = v;
     Damage::Paint
   }
-  pub fn set_y2(&mut self, v: f32) -> Damage {
-    self.y2 = Some(v);
+  pub fn set_y2(&mut self, v: Option<f32>) -> Damage {
+    self.y2 = v;
     Damage::Paint
   }
-  pub fn set_on_length(&mut self, v: f32) -> Damage {
-    self.on_length = Some(v);
+  pub fn set_on_length(&mut self, v: Option<f32>) -> Damage {
+    self.on_length = v;
     Damage::Paint
   }
-  pub fn set_off_length(&mut self, v: f32) -> Damage {
-    self.off_length = Some(v);
+  pub fn set_off_length(&mut self, v: Option<f32>) -> Damage {
+    self.off_length = v;
     Damage::Paint
   }
 
+  pub fn initial_style() -> taffy::Style {
+    taffy::Style { display: taffy::Display::Block, ..Default::default() }
+  }
+
   pub fn with_layout(self) -> Element {
-    Element::with_layout(ElementKind::Line(self), taffy::Style { display: taffy::Display::Block, ..Default::default() })
+    Element::with_layout(ElementKind::Line(self), Self::initial_style())
   }
 
   pub fn no_layout(self) -> Element {

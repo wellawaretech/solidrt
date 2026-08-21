@@ -1,4 +1,4 @@
-use super::{decode_params, describe, f32_of, str_of};
+use super::{decode_params, describe, opt, opt_f32, str_of};
 use crate::alloy_plugins::value::PropValue;
 use alloy::rendertree::Damage;
 use alloy::rendertree::{Texture, TextureFit};
@@ -19,25 +19,24 @@ pub fn apply(
       };
       tex.set_src(id)
     }
-    "fit" => {
-      let fit = match str_of(value, "fit")? {
+    "fit" => tex.set_fit(opt(value, |v| {
+      Ok(match str_of(v, "fit")? {
         "fill" => TextureFit::Fill,
         "cover" => TextureFit::Cover,
         "contain" => TextureFit::Contain,
         "none" => TextureFit::None,
         "scale-down" => TextureFit::ScaleDown,
         v => return Err(format!("Unknown fit value \"{v}\"; expected fill, cover, contain, none or scale-down")),
-      };
-      tex.set_fit(fit)
-    }
-    "srcX" => tex.set_src_x(f32_of(value, "srcX")?),
-    "srcY" => tex.set_src_y(f32_of(value, "srcY")?),
-    "srcW" => tex.set_src_w(f32_of(value, "srcW")?),
-    "srcH" => tex.set_src_h(f32_of(value, "srcH")?),
-    "x" => tex.set_x(f32_of(value, "x")?),
-    "y" => tex.set_y(f32_of(value, "y")?),
-    "w" => tex.set_w(f32_of(value, "w")?),
-    "h" => tex.set_h(f32_of(value, "h")?),
+      })
+    })?),
+    "srcX" => tex.set_src_x(opt_f32(value, "srcX")?),
+    "srcY" => tex.set_src_y(opt_f32(value, "srcY")?),
+    "srcW" => tex.set_src_w(opt_f32(value, "srcW")?),
+    "srcH" => tex.set_src_h(opt_f32(value, "srcH")?),
+    "x" => tex.set_x(opt_f32(value, "x")?),
+    "y" => tex.set_y(opt_f32(value, "y")?),
+    "w" => tex.set_w(opt_f32(value, "w")?),
+    "h" => tex.set_h(opt_f32(value, "h")?),
     // Params are target state, written through the GPU channel like the
     // imperative setTargetParams (one write path; unknown names, arities,
     // and non-target ids all error there). Target state is not element

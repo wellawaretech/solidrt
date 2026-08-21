@@ -164,9 +164,10 @@ impl Measurable for Texture {
 }
 
 impl Texture {
-  // Fit never changes the element box, only how pixels map into it.
-  pub fn set_fit(&mut self, fit: TextureFit) -> Damage {
-    self.fit = fit;
+  // Fit never changes the element box, only how pixels map into it. None
+  // resets to the default fit.
+  pub fn set_fit(&mut self, fit: Option<TextureFit>) -> Damage {
+    self.fit = fit.unwrap_or_default();
     Damage::Paint
   }
 
@@ -177,53 +178,54 @@ impl Texture {
     self.texture_id = id;
     Damage::Layout
   }
-  pub fn set_src_x(&mut self, v: f32) -> Damage {
-    self.src_x = Some(v);
+  pub fn set_src_x(&mut self, v: Option<f32>) -> Damage {
+    self.src_x = v;
     Damage::Paint
   }
-  pub fn set_src_y(&mut self, v: f32) -> Damage {
-    self.src_y = Some(v);
+  pub fn set_src_y(&mut self, v: Option<f32>) -> Damage {
+    self.src_y = v;
     Damage::Paint
   }
-  pub fn set_src_w(&mut self, v: f32) -> Damage {
-    self.src_w = Some(v);
+  pub fn set_src_w(&mut self, v: Option<f32>) -> Damage {
+    self.src_w = v;
     Damage::Layout
   }
-  pub fn set_src_h(&mut self, v: f32) -> Damage {
-    self.src_h = Some(v);
+  pub fn set_src_h(&mut self, v: Option<f32>) -> Damage {
+    self.src_h = v;
     Damage::Layout
   }
 
   // Detached-form geometry: painted within the parent's box (or the
   // explicit x/y/w/h given), never affects the taffy layout tree.
-  pub fn set_x(&mut self, v: f32) -> Damage {
-    self.x = Some(v);
+  pub fn set_x(&mut self, v: Option<f32>) -> Damage {
+    self.x = v;
     Damage::Paint
   }
-  pub fn set_y(&mut self, v: f32) -> Damage {
-    self.y = Some(v);
+  pub fn set_y(&mut self, v: Option<f32>) -> Damage {
+    self.y = v;
     Damage::Paint
   }
-  pub fn set_w(&mut self, v: f32) -> Damage {
-    self.w = Some(v);
+  pub fn set_w(&mut self, v: Option<f32>) -> Damage {
+    self.w = v;
     Damage::Paint
   }
-  pub fn set_h(&mut self, v: f32) -> Damage {
-    self.h = Some(v);
+  pub fn set_h(&mut self, v: Option<f32>) -> Damage {
+    self.h = v;
     Damage::Paint
   }
 
+  pub fn initial_style() -> Style {
+    Style {
+      display: Display::Block,
+      // Replaced-element default: opt out of flex `align-items: stretch`,
+      // matching HTML <img>. User can override via align-self prop.
+      align_self: Some(AlignSelf::START),
+      ..Default::default()
+    }
+  }
+
   pub fn with_layout(self) -> Element {
-    Element::with_layout(
-      ElementKind::Texture(self),
-      Style {
-        display: Display::Block,
-        // Replaced-element default: opt out of flex `align-items: stretch`,
-        // matching HTML <img>. User can override via align-self prop.
-        align_self: Some(AlignSelf::START),
-        ..Default::default()
-      },
-    )
+    Element::with_layout(ElementKind::Texture(self), Self::initial_style())
   }
 
   pub fn no_layout(self) -> Element {

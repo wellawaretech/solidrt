@@ -101,7 +101,7 @@ fn texture_exposes_its_paint() {
   let mut kind = ElementKind::Texture(Texture::default());
   let paint = kind.paint_mut().expect("texture kind exposes a paint");
   assert_eq!(paint.blend_mode, BlendMode::SourceOver);
-  assert_eq!(paint.set_blend_mode(BlendMode::Plus), Damage::Paint);
+  assert_eq!(paint.set_blend_mode(Some(BlendMode::Plus)), Damage::Paint);
 
   match &kind {
     ElementKind::Texture(tex) => assert_eq!(tex.paint.blend_mode, BlendMode::Plus),

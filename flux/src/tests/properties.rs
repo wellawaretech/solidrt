@@ -410,3 +410,83 @@ fn color_accepts_css_strings_and_packed_numbers() {
   let err = apply("rect", "color", text("no-such-color")).unwrap_err();
   assert!(err.contains("Invalid color"), "{err}");
 }
+
+#[test]
+fn null_resets_props_to_defaults() {
+  // The reactive clearing pattern (scale={style()?.scale} flipping back to
+  // undefined): null is a defined value meaning "back to the default", on
+  // numeric, transform, paint and layout props alike - not a validation
+  // error. See okf/done/null-resets-numeric-props.md.
+  use alloy::rendertree::ElementKind;
+  use taffy::prelude::*;
+
+  // Transform props reset to unset, restoring the translation-only path.
+  let mut el = Element::from_kind("view").expect("known kind");
+  apply_el(&mut el, "scale", num(2.0)).expect("scale applies");
+  apply_el(&mut el, "rotate", num(1.0)).expect("rotate applies");
+  assert_eq!(apply_el(&mut el, "scale", PropValue::Null), Ok(Damage::Compose));
+  apply_el(&mut el, "rotate", PropValue::Null).expect("null resets rotate");
+  let ElementKind::View(v) = &el.kind else { panic!("view kind") };
+  assert_eq!((v.scale_x, v.scale_y, v.rotate), (None, None, None));
+
+  // Detached geometry resets to unset - w back to "fill the inherited box",
+  // which no concrete number could express.
+  let mut el = Element::from_kind("d-rect").expect("known kind");
+  apply_el(&mut el, "w", num(40.0)).expect("w applies");
+  apply_el(&mut el, "w", PropValue::Null).expect("null resets w");
+  apply_el(&mut el, "radius", num(4.0)).expect("radius applies");
+  apply_el(&mut el, "radius", PropValue::Null).expect("null resets radius");
+  let ElementKind::Rectangle(r) = &el.kind else { panic!("rect kind") };
+  assert_eq!((r.w, r.radius), (None, None));
+
+  // Paint metrics reset to the PaintState defaults.
+  let mut el = Element::from_kind("rect").expect("known kind");
+  apply_el(&mut el, "strokeWidth", num(8.0)).expect("strokeWidth applies");
+  apply_el(&mut el, "strokeWidth", PropValue::Null).expect("null resets strokeWidth");
+  let ElementKind::Rectangle(r) = &el.kind else { panic!("rect kind") };
+  assert_eq!(r.paint.stroke_width, 0.0);
+
+  // A span's numeric override clears back to inheriting the paragraph value.
+  let mut el = Element::from_kind("span").expect("known kind");
+  apply_el(&mut el, "fontSize", num(12.0)).expect("fontSize applies");
+  apply_el(&mut el, "fontSize", PropValue::Null).expect("null resets fontSize");
+  let ElementKind::Span(s) = &el.kind else { panic!("span kind") };
+  assert_eq!(s.overrides.font_size, None);
+
+  // Layout props reset to the KIND's initial style, not taffy's: a view's
+  // flexDirection goes back to column.
+  let mut el = Element::from_kind("view").expect("known kind");
+  apply_el(&mut el, "width", num(100.0)).expect("width applies");
+  apply_el(&mut el, "flexDirection", text("row")).expect("flexDirection applies");
+  assert_eq!(apply_el(&mut el, "width", PropValue::Null), Ok(Damage::Layout));
+  apply_el(&mut el, "flexDirection", PropValue::Null).expect("null resets flexDirection");
+  let style = el.style().expect("layout element");
+  assert_eq!(style.size.width, Dimension::auto());
+  assert_eq!(style.flex_direction, FlexDirection::Column);
+
+  // Enum props reset to their kind defaults.
+  let mut el = Element::from_kind("rect").expect("known kind");
+  apply_el(&mut el, "drawStyle", text("stroke")).expect("drawStyle applies");
+  apply_el(&mut el, "drawStyle", PropValue::Null).expect("null resets drawStyle");
+  apply_el(&mut el, "color", text("red")).expect("color applies");
+  apply_el(&mut el, "color", PropValue::Null).expect("null resets color");
+  let ElementKind::Rectangle(r) = &el.kind else { panic!("rect kind") };
+  assert_eq!(r.paint.draw_style, alloy::impellers::DrawStyle::Fill);
+  assert_eq!(r.paint.color.red, 0.5);
+
+  // A span's color null drops the paint OVERRIDE (inherit the paragraph's
+  // color), rather than pinning the default paint.
+  let mut el = Element::from_kind("span").expect("known kind");
+  apply_el(&mut el, "color", text("red")).expect("color applies");
+  apply_el(&mut el, "color", PropValue::Null).expect("null clears override");
+  let ElementKind::Span(s) = &el.kind else { panic!("span kind") };
+  assert!(s.overrides.paint.is_none());
+
+  // A bad non-null value still errors; an unknown prop stays unknown on null.
+  let err = apply("view", "scale", text("big")).unwrap_err();
+  assert!(err.contains("scale"), "{err}");
+  let err = apply("rect", "drawStyle", text("outline")).unwrap_err();
+  assert!(err.contains("stroke-and-fill"), "{err}");
+  let err = apply("view", "colr", PropValue::Null).unwrap_err();
+  assert!(err.starts_with("Unknown property"), "{err}");
+}
