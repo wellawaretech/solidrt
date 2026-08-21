@@ -272,7 +272,7 @@ fn view_box_fit_resolves_against_the_border_box_when_padded() {
   // A View's matrices (viewBox fit, transform center) resolve against its
   // BORDER box on both the paint and hit paths; padding shrinks the content
   // box that kinds size against, never the fit
-  // (okf/backlog/padding-box-divergence.md). Border box 100 wide with design
+  // (okf/done/padding-box-divergence.md). Border box 100 wide with design
   // 200 is fit scale 0.5; a content-box fit (80 wide, scale 0.4) would map
   // window x = 95 to design 237.5 and reject the view entirely.
   let mut tree = RenderTree::new();
@@ -296,6 +296,45 @@ fn view_box_fit_resolves_against_the_border_box_when_padded() {
   let ids: Vec<u64> = path.iter().map(|&(id, _, _)| id).collect();
   assert_eq!(ids, vec![1, 2, 3]);
   assert_xy(path[2].2, 40.0, 98.0);
+}
+
+#[test]
+fn content_box_insets_padding_and_border() {
+  let mut tree = RenderTree::new();
+  tree.create_node(1, attached());
+  place(&mut tree, 1, 0.0, 0.0, 100.0, 80.0);
+  let l = tree.node_mut(1).layout_data_mut();
+  l.computed.padding = taffy::Rect { left: 10.0, right: 6.0, top: 4.0, bottom: 2.0 };
+  l.computed.border = taffy::Rect { left: 1.0, right: 1.0, top: 1.0, bottom: 1.0 };
+  let c = tree.node(1).layout.as_ref().expect("laid out above").content_box();
+  assert_xy(c.origin, 11.0, 5.0);
+  assert_xy(Point::new(c.size.width, c.size.height), 82.0, 72.0);
+}
+
+#[test]
+fn padded_rect_hits_its_border_box() {
+  // A rect's default extent is the border box on paint and hit alike;
+  // padding shrinks only the content box
+  // (okf/done/padding-box-divergence.md).
+  let mut tree = RenderTree::new();
+  tree.create_node(1, attached());
+  tree.create_node(2, Rectangle::default().with_layout());
+  tree.insert_node(1, 2, None);
+  tree.root = Some(1);
+  place(&mut tree, 1, 0.0, 0.0, 200.0, 200.0);
+  place(&mut tree, 2, 0.0, 0.0, 100.0, 100.0);
+  tree.node_mut(2).layout_data_mut().computed.padding =
+    taffy::Rect { left: 20.0, right: 20.0, top: 20.0, bottom: 20.0 };
+
+  // Inside the padding ring (outside the content box): still a hit.
+  let path = DefaultHitTester.hit_test(&tree, Point::new(95.0, 5.0));
+  let ids: Vec<u64> = path.iter().map(|&(id, _, _)| id).collect();
+  assert_eq!(ids, vec![1, 2]);
+
+  // Past the border box: a miss.
+  let path = DefaultHitTester.hit_test(&tree, Point::new(105.0, 5.0));
+  let ids: Vec<u64> = path.iter().map(|&(id, _, _)| id).collect();
+  assert_eq!(ids, vec![1]);
 }
 
 #[test]

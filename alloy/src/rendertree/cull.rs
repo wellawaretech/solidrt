@@ -102,30 +102,22 @@ pub(crate) fn child_frame(element: &Element, inherited: Size) -> Size {
   frame
 }
 
-// The frame a node's own build() reads: the content box when laid out
-// (padding subtracted, as the child walk sets ctx.size), else the inherited
-// frame.
-fn own_frame(element: &Element, inherited: Size) -> Size {
-  match &element.layout {
-    Some(l) => {
-      let c = &l.computed;
-      Size::new(c.size.width - c.padding.left - c.padding.right, c.size.height - c.padding.top - c.padding.bottom)
-    }
-    None => inherited,
-  }
-}
-
-// What the node's own build() paints, in its box frame. Kinds that draw in
-// their own coordinate space (Line, Path) or through an engine the extent
-// cannot be read from are unbounded.
-fn own_extent(element: &Element, platform: &PlatformContext, frame: Size) -> Extent {
+// What the node's own build() paints, in its box frame. Kinds default their
+// geometry to the border box (`inherited` for a detached node), text to the
+// content box - the same frames the paint walk hands BuildContext
+// (okf/done/padding-box-divergence.md). Kinds that draw in their own
+// coordinate space (Line, Path) or through an engine the extent cannot be
+// read from are unbounded.
+fn own_extent(element: &Element, platform: &PlatformContext, inherited: Size) -> Extent {
+  let frame = element.layout.as_ref().map(|l| l.size()).unwrap_or(inherited);
+  let content = element.layout.as_ref().map(|l| l.content_box()).unwrap_or(Rect::new(Point::zero(), frame));
   let inflate = |r: Rect, by: f32| Extent::Bounded(r.inflate(by, by));
   let mut extent = match &element.kind {
     ElementKind::Window(_) | ElementKind::View(_) | ElementKind::Span(_) => Extent::Empty,
     ElementKind::Rectangle(r) => inflate(r.local_bounds(frame), AA_OUTSET + r.paint.stroke_width),
     ElementKind::Oval(o) => inflate(o.local_bounds(frame), AA_OUTSET + o.paint.stroke_width),
     ElementKind::Texture(t) => inflate(t.local_bounds(frame), AA_OUTSET),
-    ElementKind::Text(t) => match t.painted_extent(platform, frame) {
+    ElementKind::Text(t) => match t.painted_extent(platform, content) {
       Some(r) => inflate(r, AA_OUTSET),
       None => Extent::Unbounded,
     },
@@ -198,7 +190,7 @@ fn compute_envelope(scene: &RenderTree, element: &Element, platform: &PlatformCo
     }
   }
 
-  let mut extent = own_extent(element, platform, own_frame(element, inherited)).union(children);
+  let mut extent = own_extent(element, platform, inherited).union(children);
 
   // A clipped axis bounds the whole subtree to the box on that axis, whatever
   // the children claim.

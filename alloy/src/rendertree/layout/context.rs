@@ -43,6 +43,23 @@ impl LayoutData {
   pub fn size(&self) -> crate::impellers::Size {
     crate::impellers::Size::new(self.computed.size.width, self.computed.size.height)
   }
+
+  // The border box inset by padding and border, origin included: the box a
+  // kind's own content sizes and places against, matching the inset
+  // place_atoms applies to a text's inline atoms
+  // (okf/done/padding-box-divergence.md). Paint and hit both derive it
+  // from here, so they cannot disagree.
+  pub fn content_box(&self) -> crate::impellers::Rect {
+    let c = &self.computed;
+    let left = c.padding.left + c.border.left;
+    let top = c.padding.top + c.border.top;
+    let right = c.padding.right + c.border.right;
+    let bottom = c.padding.bottom + c.border.bottom;
+    crate::impellers::Rect::new(
+      crate::impellers::Point::new(left, top),
+      crate::impellers::Size::new(c.size.width - left - right, c.size.height - top - bottom),
+    )
+  }
 }
 
 pub struct LayoutContext<'a> {
@@ -201,6 +218,8 @@ impl<'a> LayoutPartialTree for LayoutContext<'a> {
         }
         let platform = tree.platform;
         let alloy = tree.alloy;
+        let (padding, border) = tree.insets(node_id);
+        let inset = padding + border;
         let style = &tree.render_tree.node(id).layout_data().style;
         let kind = &tree.render_tree.node(id).kind;
         let output = compute_leaf_layout(
@@ -208,6 +227,15 @@ impl<'a> LayoutPartialTree for LayoutContext<'a> {
           style,
           |_, _| 0.0,
           |known, available| {
+            // taffy's known dimensions are border-box; measure sees the
+            // content box, matching the content-box available space
+            // compute_leaf_layout itself passes, so a padded text wraps at
+            // the width it will paint at
+            // (okf/done/padding-box-divergence.md).
+            let known = taffy::Size {
+              width: known.width.map(|w| (w - inset.horizontal_axis_sum()).max(0.0)),
+              height: known.height.map(|h| (h - inset.vertical_axis_sum()).max(0.0)),
+            };
             let size = kind.measure(&MeasureContext { platform, alloy, known, available });
             Size { width: size.width, height: size.height }
           },

@@ -144,8 +144,12 @@ impl Default for Text {
 
 impl Buildable for Text {
   fn build<'a>(&'a self, ctx: &mut BuildContext<'a>, builder: &mut DisplayListBuilder) {
-    let origin = Point::new(self.x.unwrap_or(0.0), self.y.unwrap_or(0.0));
-    let width = self.w.unwrap_or(ctx.size.width);
+    // Lines wrap at and start from the content box - the box taffy measured
+    // the text against, and the inset place_atoms already applies to inline
+    // atoms (okf/done/padding-box-divergence.md). x/y are detached-only
+    // geometry, where the content box is the whole frame at origin zero.
+    let origin = Point::new(ctx.content.origin.x + self.x.unwrap_or(0.0), ctx.content.origin.y + self.y.unwrap_or(0.0));
+    let width = self.w.unwrap_or(ctx.content.size.width);
     if !self.paragraph_engine {
       let mut owned = self.owned.borrow_mut();
       self.prepare_owned(ctx.platform, &mut owned);
@@ -241,6 +245,13 @@ impl Measurable for Text {
 }
 
 impl Bounded for Text {
+  // A box-level answer on purpose: `fallback` is taken raw, with no content
+  // inset. Both callers pass a frame where that is the right box - the
+  // bounding-box path (tree::compute_corners) passes the layout box and wants
+  // the element's box, and the detached capture path passes the inherited
+  // frame, which IS the content box for a node with no layout. Line-level ink
+  // (content origin, wrap width) is painted_extent's job
+  // (okf/done/padding-box-divergence.md).
   fn local_bounds(&self, fallback: Size) -> Rect {
     Rect::new(
       Point::new(self.x.unwrap_or(0.0), self.y.unwrap_or(0.0)),
@@ -269,15 +280,17 @@ impl Text {
     Size::new(width, height)
   }
 
-  /// The box the lines and decorations paint into when built in `frame` (the
-  /// frame build() reads its width from), in the text's own frame. None
-  /// under the paragraph engine, whose extent is not read back.
-  pub(crate) fn painted_extent(&self, platform: &PlatformContext, frame: Size) -> Option<Rect> {
+  /// The box the lines and decorations paint into when built against
+  /// `content` (the content box build() reads its origin and width from), in
+  /// the text's own frame. None under the paragraph engine, whose extent is
+  /// not read back.
+  pub(crate) fn painted_extent(&self, platform: &PlatformContext, content: Rect) -> Option<Rect> {
     if self.paragraph_engine {
       return None;
     }
-    let origin = Point::new(self.x.unwrap_or(0.0), self.y.unwrap_or(0.0));
-    let width = self.w.unwrap_or(frame.width);
+    let origin =
+      Point::new(content.origin.x + self.x.unwrap_or(0.0), content.origin.y + self.y.unwrap_or(0.0));
+    let width = self.w.unwrap_or(content.size.width);
     let mut owned = self.owned.borrow_mut();
     self.prepare_owned(platform, &mut owned);
     let index = self.owned_layout(platform, &mut owned, width);
@@ -351,7 +364,7 @@ impl Text {
   /// owned path, from the layout the last paint used; None on a miss, on the
   /// paragraph path, or when nothing has been laid out yet. Atoms are hit as
   /// elements, not through here.
-  pub fn hit_run(&self, point: Point, size: Size) -> Option<u64> {
+  pub fn hit_run(&self, point: Point, content: Rect) -> Option<u64> {
     if self.paragraph_engine {
       return None;
     }
@@ -359,11 +372,28 @@ impl Text {
     if !owned.key.as_ref().is_some_and(|k| k.matches(self)) {
       return None;
     }
-    let width = self.w.unwrap_or(size.width);
-    let index = owned.layouts.iter().position(|l| l.width == width)?;
+    // The content box, matching build(): the lines were laid out at the
+    // content width and drawn from the content origin, so the lookup and the
+    // point both resolve against that box, not the border box
+    // (okf/done/padding-box-divergence.md).
+    let width = self.w.unwrap_or(content.size.width);
+    // Paint and hit derive the width from the same content_box() arithmetic,
+    // so the nearest layout is normally an exact match; the tolerance keeps
+    // span hits alive should a caller ever round differently, and a wrap half
+    // a pixel off resolves the same runs.
+    let index = owned
+      .layouts
+      .iter()
+      .enumerate()
+      .filter(|(_, l)| (l.width - width).abs() < 0.5)
+      .min_by(|(_, a), (_, b)| {
+        (a.width - width).abs().partial_cmp(&(b.width - width).abs()).expect("layout widths are finite")
+      })
+      .map(|(i, _)| i)?;
     let runs = owned.runs_for(index);
     let layout = &owned.layouts[index].layout;
-    let local = point - Point::new(self.x.unwrap_or(0.0), self.y.unwrap_or(0.0)).to_vector();
+    let local = point
+      - Point::new(content.origin.x + self.x.unwrap_or(0.0), content.origin.y + self.y.unwrap_or(0.0)).to_vector();
     let line = layout.lines.iter().find(|l| local.y >= l.y && local.y < l.y + l.height)?;
     layout.runs[line.first..line.end]
       .iter()

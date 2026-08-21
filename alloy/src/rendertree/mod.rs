@@ -41,7 +41,14 @@ pub type Vector = euclid::Vector2D<f32, euclid::UnknownUnit>;
 pub struct BuildContext<'a> {
   pub platform: &'a PlatformContext,
   pub alloy: &'a crate::Context,
+  /// The node's border box (its full layout box; for a detached node, the
+  /// inherited frame). Kinds size their default geometry against it, the box
+  /// hit testing measures (okf/done/padding-box-divergence.md).
   pub size: Size,
+  /// The node's content box in its own frame: the border box inset by
+  /// padding and border (LayoutData::content_box). Equal to `size` at origin
+  /// zero when the node has no layout. Text sizes and places against this.
+  pub content: Rect,
   /// What can still be seen, in the frame the walk is currently in; None
   /// culls nothing (see cull.rs).
   pub cull: Option<Rect>,
@@ -61,6 +68,7 @@ impl<'a> BuildContext<'a> {
       platform,
       alloy,
       size: Size::default(),
+      content: Rect::new(Point::zero(), Size::default()),
       cull: None,
       nodes_painted: 0,
       boundaries_reused: 0,

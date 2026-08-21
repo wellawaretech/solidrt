@@ -1,6 +1,6 @@
 use taffy::style::Overflow;
 
-use super::{ElementKind, Point, RenderTree, Size, Vector};
+use super::{ElementKind, Point, Rect, RenderTree, Size, Vector};
 
 /// Controls whether an element participates in hit testing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -55,7 +55,15 @@ impl Default for HitConfig {
 }
 
 pub struct HitContext {
+  /// The element's border box (for a detached node, the inherited frame; for
+  /// a viewBox view's own bounds, the design size). The box kinds default
+  /// their hit extent to.
   pub size: Size,
+  /// The element's content box in its own frame (LayoutData::content_box);
+  /// equal to `size` at origin zero without a layout. What text geometry
+  /// resolves against, matching paint
+  /// (okf/done/padding-box-divergence.md).
+  pub content: Rect,
 }
 
 pub trait Hittable {
@@ -120,11 +128,12 @@ pub fn locals_along_path(tree: &RenderTree, chain: &[u64], point: Point) -> Vec<
   for (i, &id) in chain.iter().enumerate() {
     let Some(element) = tree.try_node(id) else { break };
     let size = element.layout.as_ref().map(|l| l.size()).unwrap_or(parent_size);
+    let content = element.layout.as_ref().map(|l| l.content_box()).unwrap_or(Rect::new(Point::zero(), size));
     if i > 0 {
       let pos = element.layout.as_ref().map(|l| l.location()).unwrap_or_default();
       point = point - pos.to_vector() + parent_scroll;
     }
-    let local = element.kind.transform_to_local(point, &HitContext { size });
+    let local = element.kind.transform_to_local(point, &HitContext { size, content });
     locals.push(local);
     point = local;
     // A viewBox view hands its children the design-space size, matching
@@ -182,7 +191,12 @@ fn hit_recursive(
   // from the parent (see the comment on HitConfig::pointer_events).
   let pointer_events = element.interaction.as_ref().and_then(|i| i.pointer_events).unwrap_or(inherited);
 
-  let ctx = HitContext { size };
+  // The content box paint derives from the same layout, so text geometry
+  // resolves identically on both paths
+  // (okf/done/padding-box-divergence.md). No layout: the whole frame.
+  let content = element.layout.as_ref().map(|l| l.content_box()).unwrap_or(Rect::new(Point::zero(), size));
+
+  let ctx = HitContext { size, content };
   let local = element.kind.transform_to_local(point, &ctx);
 
   // `local` lives in the frame the element's transform maps INTO, which for a
@@ -194,7 +208,7 @@ fn hit_recursive(
     ElementKind::View(v) => v.view_box.unwrap_or(size),
     _ => size,
   };
-  let local_ctx = HitContext { size: local_size };
+  let local_ctx = HitContext { size: local_size, content };
 
   // Overflow gate: when an axis has non-visible overflow, the layout box clips
   // both self and any descendants on that axis. The clip means the BOX, so the
@@ -279,7 +293,7 @@ fn hit_recursive(
   // The span under the point, with its span ancestors: pushed innermost-last
   // so the leaf span is the target and events bubble span -> span -> text.
   // Spans have no frame of their own, so they share the text's local point.
-  if let Some(leaf) = text.and_then(|t| t.hit_run(local, size)) {
+  if let Some(leaf) = text.and_then(|t| t.hit_run(local, content)) {
     let mut chain = Vec::new();
     let mut id = leaf;
     while id != node_id {

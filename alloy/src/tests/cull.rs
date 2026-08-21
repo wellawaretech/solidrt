@@ -207,3 +207,18 @@ fn extent_intersection_semantics() {
   assert!(Extent::Bounded(rect(90.0, 90.0, 50.0, 50.0)).may_intersect(&cull));
   assert!(!Extent::Bounded(rect(100.0, 0.0, 50.0, 50.0)).may_intersect(&cull));
 }
+
+#[test]
+fn text_painted_extent_starts_at_the_content_origin() {
+  // Text paints from the content box origin at the content width; the
+  // extent must move with the inset exactly as build() does
+  // (okf/done/padding-box-divergence.md).
+  let platform = PlatformContext::new(Vec::new());
+  let mut t = Text::default();
+  t.set_plain_text("hello".to_string());
+  let full = t.painted_extent(&platform, rect(0.0, 0.0, 100.0, 50.0)).expect("owned layout has an extent");
+  let inset = t.painted_extent(&platform, rect(10.0, 5.0, 80.0, 40.0)).expect("owned layout has an extent");
+  assert!((inset.origin.x - full.origin.x - 10.0).abs() < 1e-3);
+  assert!((inset.origin.y - full.origin.y - 5.0).abs() < 1e-3);
+  assert!((full.size.width - inset.size.width - 20.0).abs() < 1e-3);
+}

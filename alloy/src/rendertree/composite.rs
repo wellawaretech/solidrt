@@ -61,6 +61,11 @@ pub fn paint_phase(
 
   let mut ctx = BuildContext::new(platform, alloy);
   ctx.size = Size::new(width, height);
+  // The root's boxes come from its layout like every other node's (the hit
+  // side derives them per element, so a padded root must agree here too);
+  // before the first layout the window is the frame.
+  ctx.content =
+    tree.node(root_id).layout.as_ref().map(|l| l.content_box()).unwrap_or(Rect::new(Point::zero(), ctx.size));
   // Nothing outside the window is visible: the root cull rect is the window.
   ctx.cull = Some(Rect::new(Point::zero(), ctx.size));
   build_recursive(tree, root_id, &mut ctx, builder);
@@ -142,9 +147,8 @@ enum Hoist {
 // maps children into the box, it never moves the box itself, and it is
 // content - recorded by record_node so caches and captures hold fitted,
 // box-sized output). Resolved against the view's border box - the same frame
-// the hit side passes - NOT ctx.size, which is the content box for kinds'
-// build() (okf/backlog/padding-box-divergence.md); detached views fall back
-// to the inherited frame. record_node applies it under Hoist::None; boundary
+// the hit side passes (okf/done/padding-box-divergence.md); detached views
+// fall back to the inherited frame. record_node applies it under Hoist::None; boundary
 // callers hoist it out of the cached content and apply it at composite time,
 // so the cache stays reusable under transform-only changes and Snapshot mode
 // never bakes a rotation/scale into the layout-box crop. None for non-View
@@ -687,6 +691,7 @@ fn service_captures<'a>(scene: &'a RenderTree, node_id: u64, ctx: &mut BuildCont
   let hoist = if own.is_some() { Hoist::Transform } else { Hoist::None };
 
   let saved_size = ctx.size;
+  let saved_content = ctx.content;
   // A capture holds the whole subtree, not the on-screen part of it.
   let saved_cull = ctx.cull.take();
   let saved_stats = (
@@ -703,6 +708,7 @@ fn service_captures<'a>(scene: &'a RenderTree, node_id: u64, ctx: &mut BuildCont
   }
   record_node(scene, node_id, ctx, &mut sub, hoist);
   ctx.size = saved_size;
+  ctx.content = saved_content;
   ctx.cull = saved_cull;
   ctx.boundaries_reused = saved_stats.0;
   ctx.boundaries_recorded = saved_stats.1;
@@ -749,8 +755,8 @@ fn record_node<'a>(
   // explicitly). Under Hoist::Full there is normally nothing to restore - a
   // viewBox fit is the exception, recorded below even when hoisted.
   let view_fit = match &element.kind {
-    // The fit resolves against the border box, like own_matrix; ctx.size is
-    // the content box (okf/backlog/padding-box-divergence.md).
+    // The fit resolves against the border box, like own_matrix; detached
+    // views fall back to the inherited frame in ctx.size.
     ElementKind::View(v) => v.fit_matrix(element.layout.as_ref().map(|l| l.size()).unwrap_or(ctx.size)),
     _ => None,
   };
@@ -831,8 +837,8 @@ fn record_node<'a>(
     _ => None,
   };
 
-  // The frame this node's detached children inherit (the else branch below
-  // and cull::child_frame agree on it); read before the loop mutates ctx.size.
+  // The frame this node's detached children inherit (cull::child_frame is
+  // the one derivation); read before the loop mutates ctx.size.
   let child_frame = cull::child_frame(element, ctx.size);
 
   for &child_id in &element.children {
@@ -864,28 +870,19 @@ fn record_node<'a>(
     builder.translate(pos.x, pos.y);
 
     if child.has_layout() {
-      let layout = &child.layout.as_ref().unwrap().computed;
-      let pad_left = layout.padding.left;
-      let pad_top = layout.padding.top;
-      let pad_right = layout.padding.right;
-      let pad_bottom = layout.padding.bottom;
-
-      ctx.size.width = layout.size.width - pad_left - pad_right;
-      ctx.size.height = layout.size.height - pad_top - pad_bottom;
-
+      // The child's border box, and its content box derived from the same
+      // layout - the split hit testing makes too, so paint and hit size a
+      // kind against the same boxes (okf/done/padding-box-divergence.md).
+      let layout = child.layout.as_ref().expect("has_layout checked above");
+      ctx.size = layout.size();
+      ctx.content = layout.content_box();
       build_recursive(scene, child_id, ctx, builder);
     } else {
-      if let Some(layout) = &element.layout {
-        ctx.size = layout.size();
-      }
-      // Children of a viewBox view draw in the design space: the box they
-      // inherit is the design size (the fit maps it onto the layout box), so
-      // a d-text wraps and a d-rect fills in design units.
-      if let ElementKind::View(v) = &element.kind {
-        if let Some(vb) = v.view_box {
-          ctx.size = vb;
-        }
-      }
+      // A detached child inherits the frame whole (the design size under a
+      // viewBox view, so a d-text wraps and a d-rect fills in design units);
+      // no layout means no padding, so content covers the frame.
+      ctx.size = child_frame;
+      ctx.content = Rect::new(Point::zero(), child_frame);
       build_recursive(scene, child_id, ctx, builder);
     }
 

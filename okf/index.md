@@ -335,14 +335,6 @@ Shaped, not started.
   Windows runner would lose Authenticode the same way; embed the pack inside
   the executable image (Mach-O segment, PE resource) and re-sign after
   packing.
-- **[Padding makes paint and hit size against different boxes](backlog/padding-box-divergence.md)** [2026-08-08]
-  Paint hands every laid-out element its content box (border box minus its own
-  padding) as ctx.size, while hit testing passes the border box. For a View's
-  own matrices (transform center, viewBox fit) that made paint and hit
-  disagree whenever padding combined with a transform or viewBox - settled and
-  fixed 2026-08-08, border box on every path. For non-View kinds the
-  divergence is still open, a padded rect paints its content box but hit-tests
-  its border box.
 - **[Paint viewport culling](backlog/paint-viewport-culling.md)** [2026-08-18]
   The paint walk visits and builds every mounted node whether or not it can be
   seen, so paint cost is O(mounted content) - ~7 us/node, ~155 ms/frame at 17k
@@ -910,6 +902,14 @@ Finished, kept for the reasoning.
   now. Fixed 2026-08-08 - the clip is emitted in box space, under the user
   chain before the fit, on both the paint and hit paths, pinned at both
   scales.
+- **[Padding makes paint and hit size against different boxes](done/padding-box-divergence.md)** [2026-08-21]
+  Paint used to hand every laid-out element its content box as ctx.size while
+  hit testing passed the border box, so padding made the two sides size
+  against different boxes. Settled in two rounds - a View's own matrices
+  resolve against the border box on every path (2026-08-08), and per-kind
+  geometry (2026-08-21) - shapes default to the border box, text sizes AND
+  places against the content box, both derived from one
+  LayoutData::content_box on paint and hit alike.
 - **[Several dev servers on one machine, each with its own clients and MCP route](done/parallel-dev-servers.md)** [2026-08-13]
   Design decided 2026-08-13. Two numbers - `--session`/`-s N` picks the
   dev-server port (34884 + N) and `--client`/`-c M` picks the client data tree
