@@ -30,8 +30,17 @@ flux gui tree - so only the JS-side trigger changes.
 
 Costs, all of which argue for leaving it alone until something forces it:
 
-- needs FinalizationRegistry in QuickJS; verify it is exposed in the rquickjs
-  build before designing around it
+- FinalizationRegistry is available: verified 2026-08-21 by running a probe
+  through the release `flux` binary, where a registered callback fired for a
+  dropped object. It is a quickjs-ng intrinsic, not an rquickjs Rust API,
+  registered by `JS_AddIntrinsicWeakRef` and surfaced as rquickjs's `WeakRef`
+  intrinsic marker, which `intrinsic::All` includes; flux builds every context
+  with `Context::full` ([flux/src/lib.rs:96](../../flux/src/lib.rs),
+  [flux/src/plugins/mod.rs:155](../../flux/src/plugins/mod.rs)), so it is on
+  everywhere. Two constraints come with it: there is no `gc()` global, so a
+  collection cannot be forced from JS, and quickjs-ng enqueues cleanup
+  callbacks as pending jobs, so they only run once the job queue is drained
+  and never during a synchronous stretch
 - destruction timing becomes non-deterministic, which makes node-count
   assertions in tests and the MCP `get_stats` leak checks fuzzy
 - detached subtrees linger in native memory until GC runs, so the memory

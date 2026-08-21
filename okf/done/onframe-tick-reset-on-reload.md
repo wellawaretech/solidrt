@@ -37,6 +37,40 @@ continuous time". Before picking this up, re-verify empirically that the
 reset still reproduces; it may have been fixed as a side effect of the
 frame-pacing work.
 
+## Resolution (2026-08-21)
+
+Re-verified empirically (probes/tick-reload-probe.tsx: log the first
+onFrame ticks of each instance across POST /__control__/reload):
+
+- The original negative-delta reset is gone, as the 2026-07-27 status
+  suspected. The timebase is continuous across reloads (fix candidate 1):
+  real frames continued 11901 -> 11918 -> 11934 ms straight through a
+  reload. The old "first call on the old timebase" ingredient is also
+  structurally impossible now: "render" is not a sticky event and the
+  sticky cache is per-context, so nothing replays a pre-reload frame into
+  the new instance.
+- One discontinuity survived, mirrored: core bootstrapped every instance
+  with a synthetic runFrame(0, 0) (window.ts, fired off the sticky resize
+  event to flush the initialized graph), so a reloaded instance saw tick 0
+  once and then jumped onto the continuous clock - measured one +11.9 s
+  delta. Benign under the documented [0, cap] clamp (positive side), but
+  still a broken timebase for one step, and an uncapped accumulator would
+  swallow it.
+
+Fixed in packages/core/src/window.ts: the bootstrap frame still flushes
+and paints but no longer invokes onFrame callbacks - its timestamp is not
+a frame-timeline reading. Callbacks stay registered and first run on the
+first real render event, which precedes the first paint, so their writes
+still land in it. Every tick an instance sees is now on the one continuous
+timebase and dt is well-defined from the second call on (the onFrame doc
+comment says so).
+
+Verified after the change: boot instance starts at a real reading (29.1
+ms, dt one frame period from there), reloaded instance starts directly on
+the continuous timeline (13824.5 ms), no anomalous delta in either
+direction, and the mounted tree still paints (control-API tree query shows
+the probe rect).
+
 Superseded note: an earlier version of this file claimed the frame demand
 gate freezes a reloaded app whose onFrame early-returns. That is no longer
 true - a pending onFrame callback is a standing request for the next frame

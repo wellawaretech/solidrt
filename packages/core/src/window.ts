@@ -38,10 +38,12 @@ let refreshRate = 60
  * the present count, and `rate` is the current refresh rate in Hz. `tick` is paced
  * by the runtime (one refresh period per present, slow-corrected toward the wall
  * clock) so animations driven off it stay smooth even when swap-return times
- * jitter. Timers march on this same paced timeline (so frame callbacks and
- * timers freeze together under the dev tools' clock control). performance.now()
- * is not on it: it is real elapsed time for measuring work; Date.now() is
- * calendar time.
+ * jitter, and it is continuous across hot reloads: every tick an instance
+ * sees is on one timebase, so dt is well-defined from the second call on.
+ * Timers freeze together with frame callbacks under the dev tools' clock
+ * control, but measure their delays against the wall clock, not this paced
+ * timeline. performance.now() is not on it either: it is real elapsed time
+ * for measuring work; Date.now() is calendar time.
  * Returns a cleanup function; also auto-cleans within a reactive scope.
  */
 export function onFrame(fn: (tick: number, frame: number, rate: number) => void) {
@@ -292,8 +294,16 @@ export function attachWindow(nodeId: number) {
   let unsubRefreshRate: () => void = null!
   let unsubFirstResize: (() => void) | null = null
 
-  function runFrame(t: number, frame: number) {
-    if (animationFrames.size > 0) {
+  // `bootstrap` marks the synthetic first frame (see the first-resize
+  // subscription below): it flushes and paints the freshly initialized graph
+  // but does not invoke onFrame callbacks, because its timestamp is not a
+  // reading of the frame timeline - handing apps a zero tick gave every
+  // reloaded instance one enormous dt on the next real frame
+  // (okf/done/onframe-tick-reset-on-reload.md). The callbacks stay
+  // registered and run on the first real render event, before the first
+  // paint with their writes applied.
+  function runFrame(t: number, frame: number, bootstrap = false) {
+    if (!bootstrap && animationFrames.size > 0) {
       let frames = animationFrames
       animationFrames = new Map()
       for (let fn of frames.values()) fn(t, frame, refreshRate)
@@ -469,7 +479,7 @@ export function attachWindow(nodeId: number) {
     // where flush() is illegal (not reentrant). Defer runFrame to a microtask
     // so the first frame always runs after this callback returns.
     unsubFirstResize = once("resize", () => {
-      queueMicrotask(() => runFrame(0, 0))
+      queueMicrotask(() => runFrame(0, 0, true))
     })
   })
 
