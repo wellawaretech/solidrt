@@ -1,18 +1,19 @@
 ---
 title: Isolate follow-ups
-description: The open ends left when isolates (okf/done/isolates-and-ports.md) closed, kept in one place so none vanishes with the done record. Most are done or moved to a design note (okf/backlog/isolate-transfer-and-abort.md); what remains here waits for a consumer.
+description: The open ends left when isolates (okf/done/isolates-and-ports.md) closed, kept in one place so none vanished with the done record. All of them are now built, decided against, or moved to a design note (okf/backlog/isolate-transfer-and-abort.md); this is the record of how each ended.
 created: 2026-08-15
+completed: 2026-08-21
 ---
 
 # Isolate follow-ups
 
 The plan closed with calls, streams, concurrent dispatch and typed-array kinds
-in place. What it explicitly left for a consumer to ask for, one line each,
-symptom first where there is one:
+in place, and left a handful of ends for a consumer to ask for. They were
+worked off over the following days; what each one became is below.
 
-- **`instances` on a handle.** N instances of one module behind one handle,
-  calls spread over them; shape undecided (a pool is userland today: N
-  `isolate()` calls).
+Still only a wish, no consumer: `instances` on a handle - N instances of one
+module behind one handle with calls spread over them, shape undecided (a pool
+is userland today: N `isolate()` calls). Kept as a line in okf/ideas.md.
 
 Designed, not yet built: zero-copy buffer transfer needs new call-surface
 vocabulary (a special argument on a plain function call), decided in

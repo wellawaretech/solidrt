@@ -399,11 +399,15 @@ fn ui_thread(
     // Dev-tool pause/step/scale state, shared with the dev connection (which
     // is the only writer); permanently scale 1 in builds without one.
     let clock_control = runtime::ClockControl::new();
+    // Raw wall origin behind the paced clock, shared with the schedule-time
+    // timer reading installed below (see set_virtual_now_source).
+    let wall_start = tokio::time::Instant::now();
     let mut ui_runtime = runtime::FluxRuntime::new(
       current_exec_events,
       playback_frame.clone(),
       paced_clock.clone(),
       clock_control.clone(),
+      wall_start,
       platform.clone(),
       resampler.clone(),
       input_state.clone(),
@@ -637,12 +641,14 @@ fn ui_thread(
       dev_server,
     );
 
-    // flux::Timeline is the frame timeline the rAF/render timestamps and the
-    // virtual timers march on - frame-stepped, pausable by the dev clock
-    // control - for native consumers (video sync) and the timer seed below.
-    // Injected into each engine; persists across reloads for continuous time.
-    // performance.now() is deliberately NOT on it: that is real elapsed time,
-    // for measuring work; Date.now() is calendar time.
+    // flux::Timeline is the frame timeline the rAF/render timestamps march
+    // on - frame-stepped, pausable by the dev clock control - for native
+    // consumers (video sync). The virtual timers march on it only in
+    // playback; in run mode they take the paced clock's wall-anchored timer
+    // reading (see the install below). Injected into each engine; persists
+    // across reloads for continuous time. performance.now() is deliberately
+    // NOT on it: that is real elapsed time, for measuring work; Date.now()
+    // is calendar time.
     let timeline = match playback_fps {
       // Playback mode: derive time from the present counter (frame/fps) so
       // the frame timeline is deterministic and recordings reproducible.
@@ -736,14 +742,36 @@ fn ui_thread(
         .module_override("srt:app", plugins::app::SrtAppModule)
         .userdata(timeline.clone())
         .userdata(flux::ProcessArgs(current_args.clone()));
-      // Timers join the frame-stepped timeline (see flux virtual time): the
-      // frame verb advances them with the same timestamp rAF gets, so a
-      // dev-clock pause freezes setTimeout/setInterval too, and playback
-      // replays them deterministically. Seeded with the current reading so a
-      // reload does not replay the timeline from zero.
+      // Timers join a frame-stepped timeline (see flux virtual time): the
+      // frame verb advances them once per frame signal, so a dev-clock pause
+      // freezes setTimeout/setInterval too, and playback replays them
+      // deterministically. In run mode that is the paced clock's
+      // wall-anchored timer reading, NOT the smoothed animation reading rAF
+      // gets - deadlines must not lag the wall clock under slow frames (see
+      // paced_clock). Seeded with the current reading so a reload does not
+      // replay the timeline from zero.
       let builder = {
-        let seed = timeline.now_ms();
+        let seed = match &paced_clock {
+          Some(pc) => pc.timer_now_ms(),
+          None => timeline.now_ms(),
+        };
         builder.plugin(move |ctx| flux::install_virtual_time(&ctx, seed))
+      };
+      // Run mode: anchor schedule-time deadlines to a fresh timer-timeline
+      // reading, so a timer registered mid-frame measures its delay from
+      // registration rather than from the previous advance (which is up to
+      // one frame stale and would fire it that much early). Playback keeps
+      // last-advance anchoring: deterministic replay must not read a live
+      // clock.
+      let builder = match &paced_clock {
+        Some(pc) => {
+          let pc = pc.clone();
+          builder.plugin(move |ctx| {
+            let pc = pc.clone();
+            flux::set_virtual_now_source(&ctx, move || pc.timer_live_ms(wall_start.elapsed().as_secs_f64() * 1000.0))
+          })
+        }
+        None => builder,
       };
       // The running app's own surface (exit()), in every build: the
       // production runtime exits too, it just always quits.

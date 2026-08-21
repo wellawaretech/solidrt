@@ -65,6 +65,6 @@ positions whose module has a map. Verified end to end with
 sandbox/isolate-probe: the raw client frame says `worker:33:35`, the
 server's /logs shows `src/worker.ts:32:35` - the actual throw line.
 
-Related: okf/backlog/isolate-follow-ups.md (errors as data is orthogonal:
+Related: okf/done/isolate-follow-ups.md (errors as data is orthogonal:
 that is about `name`/`stack` surviving as fields on the parent's Error, this
 is about what the stack text says).

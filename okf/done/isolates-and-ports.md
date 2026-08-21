@@ -157,7 +157,7 @@ wanted (pushing to a main that has not subscribed).
      construction rather than re-derived.
    - `ArrayBuffer` transfer is NOT in: bytes are copied in and out. Zero-copy
      needs the buffer allocated with a flux-owned free hook; see
-     okf/backlog/isolate-follow-ups.md.
+     okf/done/isolate-follow-ups.md.
 3. **Calls: runtime half (flux)** (DONE): `isolate<T>(id, opts?)` is a
    `Proxy` built natively (the `Proxy` constructor from globals with a
    native `get` trap; no JS glue is evaluated) over `forge::isolate::Msg`
@@ -227,7 +227,7 @@ wanted (pushing to a main that has not subscribed).
      "return this".
    What was left for a consumer to ask for (zero-copy transfer, errors as
    data, observable exit, memory limit, `AbortSignal`, `instances`, sync
-   generators) is okf/backlog/isolate-follow-ups.md.
+   generators) is okf/done/isolate-follow-ups.md.
 
 ## Deliberately out of scope
 

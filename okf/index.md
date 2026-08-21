@@ -276,11 +276,6 @@ Shaped, not started.
   None; wiring Impeller's built-in blur/dilate/erode/matrix filters gives
   frosted panels with correct see-through semantics, no GLSL and no root
   layer.
-- **[Isolate follow-ups](backlog/isolate-follow-ups.md)** [2026-08-15]
-  The open ends left when isolates (okf/done/isolates-and-ports.md) closed,
-  kept in one place so none vanishes with the done record. Most are done or
-  moved to a design note (okf/backlog/isolate-transfer-and-abort.md); what
-  remains here waits for a consumer.
 - **[Isolate transfer() and AbortSignal](backlog/isolate-transfer-and-abort.md)** [2026-08-20]
   Design proposal for the two isolate follow-ups that need new call-surface
   vocabulary - zero-copy buffer hand-over and abortable calls. Decides once
@@ -498,11 +493,6 @@ Shaped, not started.
   Textures always blit once into their destination rect, so a repeating
   background has to be faked with one element per tile or a shader bake;
   Impeller already exposes wrap-mode addressing that would make it a prop.
-- **[Timer deadlines lag the wall clock under frame gating](backlog/timer-deadlines-lag-frame-timeline.md)** [2026-08-19]
-  In a GUI app, setTimeout rides the frame-stepped virtual timeline, so with
-  gated or slow frames a 1.5 s timer observably fires ~0.5-1 s late - async UI
-  (pending buttons, toasts, polls) feels laggy while the app idles or animates
-  lightly.
 - **[Decide the shape of the transform props against CSS, all at once](backlog/transform-props-css-shape.md)** [2026-08-14]
   scale/scaleX/scaleY, x/y, rotate and originX/originY each landed on their
   own; CSS gives per-axis tuples for scale and translate but nothing for
@@ -840,6 +830,12 @@ Finished, kept for the reasoning.
   equally true when the raster thread was too far behind to have returned a
   frame, closing a positive feedback loop that diverged without bound; fixed
   and TV-verified, with the adjacent findings split into their own items.
+- **[Isolate follow-ups](done/isolate-follow-ups.md)** [2026-08-21]
+  The open ends left when isolates (okf/done/isolates-and-ports.md) closed,
+  kept in one place so none vanished with the done record. All of them are now
+  built, decided against, or moved to a design note
+  (okf/backlog/isolate-transfer-and-abort.md); this is the record of how each
+  ended.
 - **[Isolate stack traces are attributed to main](done/isolate-stack-attribution.md)** [2026-08-17]
   A throw inside a "use isolate" module reports as `at boom (main:65:13)`; the
   module is named main like the app bundle and the position is
@@ -1032,6 +1028,11 @@ Finished, kept for the reasoning.
   2026-08-13 against the measured 1080p TV raster bound; stages 1+2
   (owned-frame YUV upload, double-buffered plane sets) implemented, TV
   measurement pending.
+- **[Timer deadlines lag the wall clock under frame gating](done/timer-deadlines-lag-frame-timeline.md)** [2026-08-19]
+  In a GUI app, setTimeout rides the frame-stepped virtual timeline, so with
+  gated or slow frames a 1.5 s timer observably fires ~0.5-1 s late - async UI
+  (pending buttons, toasts, polls) feels laggy while the app idles or animates
+  lightly.
 - **[Node/memory leak on unmount](done/unmount-node-leak.md)** [2026-07-27]
   Element-valued props built a native subtree on every read, so typeof probes
   orphaned unmounted builds forever; fixed by resolving once through

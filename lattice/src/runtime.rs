@@ -188,6 +188,10 @@ impl FluxRuntime {
     playback_frame: Arc<AtomicU64>,
     paced: Option<PacedClock>,
     clock_control: ClockControl,
+    // Raw wall origin for the paced clock: the frame verb feeds ticks from
+    // it, and the embedder samples it for the schedule-time timer reading
+    // (see lib.rs), so both sides of the timer timeline share one origin.
+    wall_start: tokio::time::Instant,
     platform: Arc<PlatformContext>,
     resampler: SharedResampler,
     input_state: Arc<InputState>,
@@ -197,7 +201,7 @@ impl FluxRuntime {
       playback_frame,
       paced,
       clock_control,
-      wall_start: tokio::time::Instant::now(),
+      wall_start,
       platform,
       resampler,
       gate_engine: None,
@@ -363,14 +367,18 @@ impl UiRuntime for FluxRuntime {
       // app time stands still.
       let scale = clock_control.scale();
       let deliver = scale != 0.0 || clock_control.take_step();
-      // rAF, the render event and the virtual timers all march on one
-      // timeline (the frame timeline flux::Timeline also reports): the paced
-      // clock in run mode, the frame-derived virtual clock in playback.
-      // performance.now() is NOT on it - that stays real elapsed time. Idle
-      // Ticks arrive at the refresh cadence, so ticking the paced clock for
-      // them preserves its one-period-per-call model. Render event carries
-      // seconds; JS scales to ms.
-      let ts = match &paced {
+      // rAF and the render event march on the frame timeline (which
+      // flux::Timeline also reports): the paced clock in run mode, the
+      // frame-derived virtual clock in playback. The virtual timers march on
+      // the paced clock's wall-anchored timer reading instead - same
+      // pause/step/scale policy, but deadlines stay wall-accurate when slow
+      // frames make the smoothed animation reading lag (see paced_clock). In
+      // playback both are the deterministic frame clock. performance.now()
+      // is on NEITHER - that stays real elapsed time. Idle Ticks arrive at
+      // the refresh cadence, so ticking the paced clock for them preserves
+      // its one-period-per-call model. Render event carries seconds; JS
+      // scales to ms.
+      let (ts, timer_ts) = match &paced {
         Some(pc) => {
           // The correction target is wall time. A gated frame ticks at scale
           // 0 (no advance, accrue the offset); a stepped frame advances one
@@ -386,9 +394,12 @@ impl UiRuntime for FluxRuntime {
               scale
             },
           );
-          pc.now_ms()
+          (pc.now_ms(), pc.timer_now_ms())
         }
-        None => ctx.userdata::<flux::Timeline>().map(|t| t.now_ms()).unwrap_or(0.0),
+        None => {
+          let t = ctx.userdata::<flux::Timeline>().map(|t| t.now_ms()).unwrap_or(0.0);
+          (t, t)
+        }
       };
       // Stamp the render tree's animation clock with this frame's app-time
       // before any frame work runs: property writes during the flush start
@@ -433,8 +444,8 @@ impl UiRuntime for FluxRuntime {
       }
       // Timers fire before the frame callbacks, one task-queue turn per
       // frame (see flux virtual time); the frame then consumes the state
-      // they dirtied.
-      flux::advance_virtual_time(&ctx, ts);
+      // they dirtied. They advance on the timer reading, not ts.
+      flux::advance_virtual_time(&ctx, timer_ts);
       flux::gui::raf::flush(&ctx, ts);
       let time = ts / 1000.0;
       let obj = flux::rquickjs::Object::new(ctx.clone()).expect("create object");

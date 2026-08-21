@@ -1,4 +1,4 @@
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
 use alloy::PresentClock;
@@ -18,6 +18,21 @@ const SUSPEND_MS: f64 = 500.0;
 // dev clock's pause/step/scale semantics and suspension skipping. Cloneable
 // and thread-safe so it can back the flux::Clock closure (state is shared,
 // not copied).
+//
+// Two readings share the pause/step/scale policy but differ in anchoring:
+//
+// - `now_ms`, the animation reading: smooth by construction (one period per
+//   present, slow correction), which means it runs BEHIND the wall clock by
+//   up to (signal period - refresh period) / GAIN whenever frame signals
+//   arrive slower than the refresh cadence. Right for animation timestamps,
+//   wrong for deadlines.
+// - `timer_now_ms`, the timer reading: the raw wall clock minus time not
+//   lived through (paused or scaled stretches), no smoothing. Timer
+//   deadlines judged against it stay wall-accurate no matter how slowly
+//   frames arrive; firing stays quantized to the tick sites. Unlike the
+//   animation reading it does not skip suspensions: a timer that came due
+//   while the app was backgrounded fires on the resume tick, browser-style
+//   (one-shots once each; intervals collapse to one fire per advance).
 #[derive(Clone)]
 pub struct PacedClock {
   present: PresentClock,
@@ -29,6 +44,18 @@ pub struct PacedClock {
   // instead of jumping through the gap. Zero until the clock first skips
   // time.
   offset: Arc<AtomicU64>,
+  // f64 bits: latest timer-timeline reading in ms (see timer_now_ms).
+  timer_ms: Arc<AtomicU64>,
+  // f64 bits: wall time the timer timeline has not lived through (startup
+  // and paused or scaled stretches - suspensions are lived through),
+  // subtracted from the raw reading at scale 1.
+  timer_offset: Arc<AtomicU64>,
+  // Whether tick has run at least once. The first tick anchors the timer
+  // timeline at the current reading instead of living through the raw
+  // stretch before it (engine build and eval at cold start): without the
+  // anchor, that stretch would count against every timer registered at
+  // module init and fire them all on the first frame.
+  started: Arc<AtomicBool>,
 }
 
 impl PacedClock {
@@ -37,6 +64,9 @@ impl PacedClock {
       present: PresentClock::new(),
       now_ms: Arc::new(AtomicU64::new(0.0f64.to_bits())),
       offset: Arc::new(AtomicU64::new(0.0f64.to_bits())),
+      timer_ms: Arc::new(AtomicU64::new(0.0f64.to_bits())),
+      timer_offset: Arc::new(AtomicU64::new(0.0f64.to_bits())),
+      started: Arc::new(AtomicBool::new(false)),
     }
   }
 
@@ -71,12 +101,56 @@ impl PacedClock {
       self.offset.store((t - now).to_bits(), Ordering::Relaxed);
     }
     self.now_ms.store(now.to_bits(), Ordering::Relaxed);
+    // The timer timeline: raw wall time at scale 1 (no smoothing, no
+    // suspension skip); any other scale advances period * scale in lockstep
+    // with the animation reading and re-anchors its offset so the return to
+    // scale 1 is jump-free. The first tick only anchors (see `started`).
+    // The max() only guards monotonicity against a raw reading landing
+    // inside the just-re-anchored offset.
+    let mut timer = f64::from_bits(self.timer_ms.load(Ordering::Relaxed));
+    let first = !self.started.swap(true, Ordering::Relaxed);
+    if first || scale != 1.0 {
+      if !first {
+        timer += period * scale;
+      }
+      self.timer_offset.store((raw_ms - timer).to_bits(), Ordering::Relaxed);
+    } else {
+      let toff = f64::from_bits(self.timer_offset.load(Ordering::Relaxed));
+      timer = (raw_ms - toff).max(timer);
+    }
+    self.timer_ms.store(timer.to_bits(), Ordering::Relaxed);
   }
 
   // The app-time reading in ms. Stepped: it only advances on `tick` (once per
   // present), which is what an animation timestamp wants.
   pub fn now_ms(&self) -> f64 {
     f64::from_bits(self.now_ms.load(Ordering::Relaxed))
+  }
+
+  // The timer-timeline reading in ms: wall-accurate at scale 1, sharing the
+  // pause/step/scale policy with `now_ms` (see the struct docs for the
+  // contrast). Virtual timer deadlines advance against this reading so they
+  // never inherit the animation reading's lag under slow frames. Stepped:
+  // it only advances on `tick`.
+  pub fn timer_now_ms(&self) -> f64 {
+    f64::from_bits(self.timer_ms.load(Ordering::Relaxed))
+  }
+
+  // A fresh timer-timeline reading between ticks, from the caller's current
+  // raw wall reading (same origin tick() is fed): what schedule-time timer
+  // deadlines anchor to, so a timer registered mid-frame does not measure
+  // its delay from the previous tick's stale reading and fire up to one
+  // frame early. Before the first tick there is no anchor yet, so it
+  // reports the stepped reading; while paused or scaled it can read up to
+  // one tick gap past it (the offset re-anchors per tick), which a deadline
+  // absorbs as at-most-one-quantum extra delay.
+  pub fn timer_live_ms(&self, raw_ms: f64) -> f64 {
+    let latched = f64::from_bits(self.timer_ms.load(Ordering::Relaxed));
+    if !self.started.load(Ordering::Relaxed) {
+      return latched;
+    }
+    let toff = f64::from_bits(self.timer_offset.load(Ordering::Relaxed));
+    (raw_ms - toff).max(latched)
   }
 
   // The presentation period backing the timeline, for consumers scheduling

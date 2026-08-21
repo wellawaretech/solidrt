@@ -9,7 +9,7 @@ created: 2026-08-20
 Isolate calls are plain function calls: `handle.f(a, b)`. There is no
 `postMessage(value, { transfer })` options slot, so anything that is about the
 call rather than payload needs its own way in. Two follow-ups from
-okf/backlog/isolate-follow-ups.md want exactly that; this note proposes the
+okf/done/isolate-follow-ups.md want exactly that; this note proposes the
 shared rule and the design of each.
 
 ## The shared rule: special arguments

@@ -7,7 +7,7 @@
 use rquickjs::{Context, Ctx, Runtime};
 
 use crate::pending::PendingOps;
-use crate::standards_plugins::time::{advance_virtual_time, install_virtual_time};
+use crate::standards_plugins::time::{advance_virtual_time, install_virtual_time, set_virtual_now_source};
 
 fn with_virtual_ctx(f: impl FnOnce(&Ctx<'_>)) {
   let rt = Runtime::new().expect("js runtime");
@@ -120,6 +120,35 @@ fn time_never_rewinds() {
     advance_virtual_time(ctx, 40.0);
     assert_eq!(log(ctx), "");
     advance_virtual_time(ctx, 150.0);
+    assert_eq!(log(ctx), "a");
+  });
+}
+
+#[test]
+fn schedule_anchors_to_the_now_source() {
+  with_virtual_ctx(|ctx| {
+    // A fresh reading between advances: a timer registered "at 50" measures
+    // its delay from there, not from the last advance's reading (0).
+    set_virtual_now_source(ctx, || 50.0);
+    ctx.eval::<(), _>("setTimeout(() => log.push('a'), 100)").expect("register");
+    advance_virtual_time(ctx, 149.0);
+    assert_eq!(log(ctx), "");
+    advance_virtual_time(ctx, 150.0);
+    assert_eq!(log(ctx), "a");
+  });
+}
+
+#[test]
+fn lagging_now_source_never_schedules_into_the_past() {
+  with_virtual_ctx(|ctx| {
+    advance_virtual_time(ctx, 200.0);
+    // A source reading behind the advance timeline is clamped to it, so the
+    // timer still waits its full delay from the later of the two.
+    set_virtual_now_source(ctx, || 50.0);
+    ctx.eval::<(), _>("setTimeout(() => log.push('a'), 100)").expect("register");
+    advance_virtual_time(ctx, 299.0);
+    assert_eq!(log(ctx), "");
+    advance_virtual_time(ctx, 300.0);
     assert_eq!(log(ctx), "a");
   });
 }

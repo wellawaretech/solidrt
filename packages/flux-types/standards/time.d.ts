@@ -2,15 +2,20 @@
 // from the browser in two ways: the delay is required, and no extra callback
 // arguments are forwarded.
 //
-// In a GUI runtime the timers are FRAME-STEPPED: they march on the same
-// paced timeline as onFrame and requestAnimationFrame, quantized to frames.
-// So timer resolution is one frame (~16 ms at 60 Hz; a setTimeout of 0 runs
-// on the next frame), an interval fires at most once per frame, and pausing
-// the runtime clock (the dev tools' set_time_scale 0) freezes timers and
-// frame callbacks together deterministically. performance.now() is NOT on
-// that timeline: it is real elapsed time, for measuring work. Date.now() is
-// calendar time. Headless flux (scripts, servers) keeps ordinary wall-clock
-// timers.
+// In a GUI runtime the timers are FRAME-QUANTIZED but WALL-ACCURATE: a
+// deadline is measured against the real clock from the moment of
+// registration, and firing happens on frame boundaries. So a timer fires at
+// the first frame at or after its deadline - at least `ms` after
+// registration, at most one frame late (~16 ms at 60 Hz; a setTimeout of 0
+// runs on the next frame) - and deadlines do not drift when frames run
+// slow. An interval fires at most once per frame (missed periods collapse
+// instead of storming). Pausing the runtime clock (the dev tools'
+// set_time_scale 0) freezes timers and frame callbacks together; a timer
+// that came due while the app was suspended (backgrounded) fires on the
+// resume frame. performance.now() is real elapsed time, for measuring
+// work; the onFrame / requestAnimationFrame timestamp is a separate paced
+// animation timeline. Date.now() is calendar time. Headless flux (scripts,
+// servers) keeps ordinary wall-clock timers.
 
 /**
  * Run `callback` after at least `ms` milliseconds. Returns a timer id for

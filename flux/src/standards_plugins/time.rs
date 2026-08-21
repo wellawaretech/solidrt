@@ -43,6 +43,13 @@ struct VirtualState {
   // id -> callback. Cancellation removes the callback and leaves the queue
   // entry stale (lazy deletion); advance() skips ids with no callback.
   callbacks: RefCell<HashMap<u32, Persistent<Function<'static>>>>,
+  // Optional fresh reading of the same timeline the advances report,
+  // sampled at schedule time (see set_virtual_now_source). Without one,
+  // deadlines anchor to the last advance's reading, which is up to one
+  // advance quantum stale at registration - so a timer can fire up to one
+  // quantum early in wall terms. An embedder whose timeline has a
+  // between-advances reading installs it to get at-least-delay firing.
+  now_source: RefCell<Option<Box<dyn Fn() -> f64>>>,
 }
 
 struct VirtualEntry {
@@ -61,7 +68,14 @@ impl VirtualTime {
   fn schedule<'js>(&self, ctx: &Ctx<'js>, cb: Function<'js>, id: u32, delay_ms: f64, period_ms: Option<f64>) {
     self.0.callbacks.borrow_mut().insert(id, Persistent::save(ctx, cb));
     pending(ctx).hold();
-    self.insert(self.0.now.get() + delay_ms, id, period_ms);
+    // Deadline base: the fresh reading when a source is installed (never
+    // behind the advance timeline - max keeps a lagging source from
+    // scheduling into the past), the last advance's reading otherwise.
+    let base = match self.0.now_source.borrow().as_ref() {
+      Some(f) => f().max(self.0.now.get()),
+      None => self.0.now.get(),
+    };
+    self.insert(base + delay_ms, id, period_ms);
   }
 
   /// Remove a live timer; false when the id is unknown or already fired.
@@ -88,8 +102,19 @@ pub fn install_virtual_time(ctx: &Ctx<'_>, now_ms: f64) {
     seq: Cell::new(0),
     queue: RefCell::new(BTreeMap::new()),
     callbacks: RefCell::new(HashMap::new()),
+    now_source: RefCell::new(None),
   }));
   ctx.store_userdata(state).expect("store virtual time");
+}
+
+/// Give schedule-time deadlines a fresh reading of the virtual timeline (the
+/// same one `advance_virtual_time` reports; see VirtualState::now_source).
+/// The source must be cheap and must never run JS. No-op without
+/// `install_virtual_time`.
+pub fn set_virtual_now_source(ctx: &Ctx<'_>, f: impl Fn() -> f64 + 'static) {
+  if let Some(vt) = ctx.userdata::<VirtualTime>() {
+    *vt.0.now_source.borrow_mut() = Some(Box::new(f));
+  }
 }
 
 /// Advance virtual time to `now_ms` and fire everything due at or before it,
