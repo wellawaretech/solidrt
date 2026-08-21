@@ -80,9 +80,11 @@ export function clientStorageArgs(): string[] {
 export let command = positionals[0]
 export let source = positionals[1]
 export let isTsx = source?.endsWith(".tsx") || source?.endsWith(".jsx")
-export let isTs = source?.endsWith(".ts") || source?.endsWith(".js")
-export let isSource = isTsx || isTs
 export let isPrebuilt = source?.endsWith(".srt.js") || source?.endsWith(".srt.bin")
+// A .srt.js also ends with .js: prebuilt wins, or the server would re-bundle
+// a prebuilt bundle as source and skip the prebuilt load path.
+export let isTs = (source?.endsWith(".ts") || source?.endsWith(".js")) && !isPrebuilt
+export let isSource = isTsx || isTs
 
 function usage(line: string): never {
   console.error("Usage: " + line)
@@ -187,7 +189,7 @@ bundle options:
   -d, --dev              Use development build of SolidJS (default: production)
   -m, --minify           Minify the output
       --compile          Compile to bytecode
-  -o, --output <name>    Output filename
+  -o, --output <dir>     Output directory (default: <project>/dist/bundle)
       --stdout           Write bundle to stdout
 
 pack options:

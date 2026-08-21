@@ -7,26 +7,13 @@
 // bytecode; fonts come from the manifest annotations; assets resolve through
 // the mount (a dir, or ranges inside this executable).
 //
-// Trailer layout, must match packages/cli/src/packer.ts: each section's bytes,
-// then a table of section entries, then [table offset u64 LE][entry count
-// u32 LE][magic]. Table entry: [kind u32 LE][offset u64 LE][len u64 LE]
-// [name len u16 LE][name bytes]. Offsets are absolute file offsets. Sections:
+// Trailer parsing lives in forge::trailer (shared with fluxrt); the layout is
+// documented there and written by packages/cli/src/packer.ts. Sections here:
 // 1 = the canonical manifest JSON, 2 = a manifest-listed file (name = its
 // manifest path), 3 = a GL library (name = its filename; extracted and
-// preloaded before window setup, see gl_libs.rs). The CLI and runners ship
-// pinned together, so there is no format version; every offset/length is
-// bounds-checked and any mismatch degrades to "no payload" instead of
-// misparsing.
+// preloaded before window setup, see gl_libs.rs).
 #[cfg(not(feature = "go"))]
 const EMBED_MAGIC: &[u8; 9] = b"SOLIDRT\x88\x44";
-#[cfg(not(feature = "go"))]
-const EMBED_TAIL_LEN: usize = 8 + 4 + EMBED_MAGIC.len(); // table offset + entry count + magic
-#[cfg(not(feature = "go"))]
-const SECTION_MANIFEST: u32 = 1;
-#[cfg(not(feature = "go"))]
-const SECTION_FILE: u32 = 2;
-#[cfg(not(feature = "go"))]
-const SECTION_GL_LIB: u32 = 3;
 
 #[cfg(not(feature = "go"))]
 struct FactoryPayload {
@@ -56,77 +43,38 @@ fn app_from_bundle(name: &str, bytes: Vec<u8>) -> Option<lattice::AppSource> {
   }
 }
 
-// Read our own image and slice out the sections appended by `srt pack`, if any.
+// Read the sections appended to our own image by `srt pack`, if any. Only the
+// boot files (manifest, bundle, fonts, GL libraries) are read here, each as a
+// ranged read; everything else stays in place behind the assets mount.
 #[cfg(not(feature = "go"))]
 fn load_embedded_payload() -> Option<FactoryPayload> {
-  let exe = std::env::current_exe().ok()?;
-  let data = std::fs::read(&exe).ok()?;
-  if data.len() < EMBED_TAIL_LEN {
-    return None;
-  }
-  if &data[data.len() - EMBED_MAGIC.len()..] != EMBED_MAGIC {
-    return None;
-  }
-  let tail = data.len() - EMBED_TAIL_LEN;
-  let table_offset = u64::from_le_bytes(data[tail..tail + 8].try_into().ok()?);
-  let count = u32::from_le_bytes(data[tail + 8..tail + 12].try_into().ok()?);
-  if table_offset >= tail as u64 || count == 0 {
-    return None;
-  }
-  let mut cursor = table_offset as usize;
-  let mut manifest: Option<lattice::manifest::Manifest> = None;
-  let mut index: std::collections::HashMap<String, (u64, u64)> = std::collections::HashMap::new();
-  let mut gl_libs: Vec<(String, (u64, u64))> = Vec::new();
-  for _ in 0..count {
-    if cursor + 22 > tail {
-      return None;
-    }
-    let kind = u32::from_le_bytes(data[cursor..cursor + 4].try_into().ok()?);
-    let offset = u64::from_le_bytes(data[cursor + 4..cursor + 12].try_into().ok()?);
-    let len = u64::from_le_bytes(data[cursor + 12..cursor + 20].try_into().ok()?);
-    let name_len = u16::from_le_bytes(data[cursor + 20..cursor + 22].try_into().ok()?) as usize;
-    cursor += 22;
-    if cursor + name_len > tail {
-      return None;
-    }
-    let name = std::str::from_utf8(&data[cursor..cursor + name_len]).ok()?;
-    cursor += name_len;
-    // Sections precede the table.
-    if offset.checked_add(len)? > table_offset {
-      return None;
-    }
-    match kind {
-      SECTION_MANIFEST => {
-        let text = std::str::from_utf8(&data[offset as usize..(offset + len) as usize]).ok()?;
-        manifest = lattice::manifest::Manifest::parse(text).ok();
-      }
-      SECTION_FILE if !name.is_empty() => {
-        index.insert(name.to_string(), (offset, len));
-      }
-      SECTION_GL_LIB if !name.is_empty() => {
-        gl_libs.push((name.to_string(), (offset, len)));
-      }
-      // Unknown kinds are skipped; pinned CLI/runner versions make this unreachable today.
-      _ => {}
-    }
-  }
-  // The entries must consume the table region exactly.
-  if cursor != tail {
-    return None;
-  }
-  let manifest = manifest?;
-  let slice = |&(offset, len): &(u64, u64)| data[offset as usize..(offset + len) as usize].to_vec();
+  let trailer = forge::trailer::read_own(EMBED_MAGIC)?;
+  let manifest = trailer.sections.iter().find(|s| s.kind == forge::trailer::SECTION_MANIFEST)?;
+  let manifest = String::from_utf8(trailer.section_bytes(manifest).ok()?).ok()?;
+  let manifest = lattice::manifest::Manifest::parse(&manifest).ok()?;
+  let index = trailer.file_index();
+  let read_file = |name: &str| {
+    let &(offset, len) = index.get(name)?;
+    trailer.read_range(offset, len).ok()
+  };
   let bundle_name = plain_bundle_name(&manifest)?;
-  let app = app_from_bundle(bundle_name, slice(index.get(bundle_name)?))?;
+  let app = app_from_bundle(bundle_name, read_file(bundle_name)?)?;
   let fonts = manifest
     .fonts
     .iter()
     .filter_map(|font| {
-      let bytes = slice(index.get(&font.path)?);
+      let bytes = read_file(&font.path)?;
       Some(alloy::rendertree::FontPayload { alias: Some(font.alias.clone()), bytes: std::borrow::Cow::Owned(bytes) })
     })
     .collect();
-  let gl_libs = gl_libs.into_iter().map(|(name, range)| (name, slice(&range))).collect();
+  // Section order, which gl_libs.rs relies on for preload order.
+  let gl_libs = trailer
+    .sections
+    .iter()
+    .filter(|s| s.kind == forge::trailer::SECTION_GL_LIB && !s.name.is_empty())
+    .filter_map(|s| Some((s.name.clone(), trailer.section_bytes(s).ok()?)))
+    .collect();
+  let exe = trailer.exe;
   Some(FactoryPayload { app, fonts, app_id: manifest.app_id, base: forge::fs::AssetsBase::Packed { exe, index }, gl_libs })
 }
 

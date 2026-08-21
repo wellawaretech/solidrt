@@ -1,6 +1,17 @@
 import { values, source, isPrebuilt } from "../args"
-import { bundle, bundleTo, bundleFlux, compileToBytecode } from "../bundler"
-import { resolve } from "path"
+import {
+  bundleFlux,
+  bundleIsolatesDir,
+  bundleSolid,
+  compileToBytecode,
+  findFluxIsolates,
+  readPrebuiltIsolates,
+  walkFiles,
+  writeIsolates,
+} from "../bundler"
+import { projectDirFor } from "../project"
+import { existsSync, mkdirSync, readdirSync, rmSync } from "node:fs"
+import { basename, dirname, join, resolve } from "node:path"
 
 // Write to stdout and resolve only once the whole payload is flushed.
 // process.stdout.write to a pipe is async and applies backpressure; the
@@ -11,7 +22,41 @@ function writeStdout(data: string): Promise<void> {
   })
 }
 
-// Compile JS to a .srt.bin file and report its size.
+// The bundle output dir (okf/backlog/build-output-dirs.md): the bundle flow's
+// subdir of the build root, or an explicit --output dir. Only reused when it
+// is empty or already a bundle output (a *.srt.* or *.flux.* bundle at top
+// level) - the writePackFolder rule - so it never writes into an unrelated
+// directory.
+function ensureOutDir(entry: string): string {
+  let outDir = values.output ?? join(projectDirFor(entry), "dist", "bundle")
+  let existing = existsSync(outDir) ? readdirSync(outDir) : null
+  if (existing && existing.length > 0 && !existing.some((name) => /\.(srt|flux)\.(js|bin)$/.test(name))) {
+    console.error(`${resolve(outDir)} exists and is not a bundle output; choose another --output`)
+    process.exit(1)
+  }
+  mkdirSync(outDir, { recursive: true })
+  return outDir
+}
+
+// Clear one form's files from the output's isolates/ dir before rewriting it,
+// so removed modules cannot go stale. The dir is shared by a bundle's .js and
+// .bin forms, so only the form being rewritten is cleared - a --compile must
+// not delete the .js set the .js bundle pairs with, nor the reverse.
+function clearIsolates(dir: string, ext: ".js" | ".bin") {
+  walkFiles(dir, (abs) => {
+    if (abs.endsWith(ext)) rmSync(abs)
+  })
+}
+
+// Compile one isolate bundle to `<dir>/<id>.bin` (module name = its id, for
+// stack attribution).
+async function writeIsolateBytecode(dir: string, isolate: { id: string; code: string }) {
+  let outfile = join(dir, isolate.id + ".bin")
+  mkdirSync(dirname(outfile), { recursive: true })
+  await Bun.write(outfile, await compileToBytecode(isolate.code, isolate.id))
+}
+
+// Compile JS to a bytecode file and report its size.
 async function writeBytecode(jsCode: string, outfile: string) {
   let bytecode = await compileToBytecode(jsCode)
   await Bun.write(outfile, bytecode)
@@ -21,17 +66,46 @@ async function writeBytecode(jsCode: string, outfile: string) {
 
 export async function runBundleCommand() {
   if (values.flux) {
-    let baseName = values.output ?? source!.replace(/\.[jt]s$/, "")
-    let jsCode = await bundleFlux(source!)
+    let entry = resolve(source!)
+    let name = basename(entry).replace(/\.[jt]s$/, "")
+    let jsCode = await bundleFlux(entry)
+    // Standalone flux resolves isolates by location, not directive: module
+    // <id> is <entry dir>/isolates/<id>.js. Bundling keeps that shape - every
+    // module under the entry's isolates/ dir is built bare like the entry
+    // (which also lets a worker be .ts, unlike running from source) and lands
+    // as isolates/<id>.js next to the bundle.
+    let isolateModules = findFluxIsolates(dirname(entry))
 
     if (values.stdout) {
+      if (isolateModules.length) {
+        console.error("[cli] Warning: this script has isolate modules; --stdout carries only the main bundle")
+      }
       await writeStdout(jsCode)
-    } else if (values.compile) {
-      await writeBytecode(jsCode, baseName + ".flux.bin")
+      process.exit()
+    }
+    let outDir = ensureOutDir(entry)
+    if (values.compile) {
+      await writeBytecode(jsCode, join(outDir, name + ".flux.bin"))
     } else {
-      let outfile = baseName + ".flux.js"
+      let outfile = join(outDir, name + ".flux.js")
       await Bun.write(outfile, jsCode)
       console.log(`>> wrote ${jsCode.length} bytes to ${outfile}`)
+    }
+    // Isolates follow the main bundle's form: source beside a .flux.js,
+    // bytecode beside a .flux.bin (the flux resolver reads .bin first).
+    let isolatesDir = join(outDir, "isolates")
+    if (values.compile) {
+      clearIsolates(isolatesDir, ".bin")
+      for (let module of isolateModules) {
+        await writeIsolateBytecode(isolatesDir, { id: module.id, code: await bundleFlux(module.path) })
+      }
+    } else {
+      clearIsolates(isolatesDir, ".js")
+      for (let module of isolateModules) {
+        let file = join(isolatesDir, module.id + ".js")
+        mkdirSync(dirname(file), { recursive: true })
+        await Bun.write(file, await bundleFlux(module.path))
+      }
     }
     process.exit()
   }
@@ -44,33 +118,44 @@ export async function runBundleCommand() {
     let jsFile = resolve(source!)
     let binOut = jsFile.replace(/\.srt\.js$/, ".srt.bin").replace(/\.js$/, ".bin")
     await writeBytecode(await Bun.file(jsFile).text(), binOut)
+    // The isolate bundles compile along, .bin beside .js in the output's
+    // isolates/ dir (the ids match, the extension picks the form).
+    for (let isolate of readPrebuiltIsolates(jsFile)) {
+      await writeIsolateBytecode(bundleIsolatesDir(jsFile), isolate)
+    }
     process.exit()
   }
 
-  let baseName = values.output ?? source!.replace(/\.[jt]sx?$/, "")
+  let entry = resolve(source!)
+  let name = basename(entry).replace(/\.[jt]sx?$/, "")
 
   if (values.stdout) {
-    let result = await bundle()
-    if (!result) {
-      console.error("Build failed")
-      process.exit(1)
+    let result = await bundleSolid()
+    if (result.isolates.length) {
+      console.error("[cli] Warning: this app has isolate modules; --stdout carries only the main bundle")
     }
     await writeStdout(result.code)
     process.exit()
   }
 
+  let outDir = ensureOutDir(entry)
+  let isolatesDir = join(outDir, "isolates")
+
   if (values.compile) {
-    let result = await bundle()
-    if (!result) {
-      console.error("Build failed")
-      process.exit(1)
+    let result = await bundleSolid()
+    await writeBytecode(result.code, join(outDir, name + ".srt.bin"))
+    clearIsolates(isolatesDir, ".bin")
+    for (let isolate of result.isolates) {
+      await writeIsolateBytecode(isolatesDir, isolate)
     }
-    await writeBytecode(result.code, baseName + ".srt.bin")
     process.exit()
   }
 
-  let jsOutfile = baseName + ".srt.js"
-  let result = await bundleTo(jsOutfile)
+  let result = await bundleSolid()
+  let jsOutfile = join(outDir, name + ".srt.js")
+  await Bun.write(jsOutfile, result.code)
+  clearIsolates(isolatesDir, ".js")
+  writeIsolates(isolatesDir, result.isolates)
   console.log(`>> wrote ${result.code.length} bytes to ${jsOutfile}`)
   process.exit()
 }

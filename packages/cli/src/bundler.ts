@@ -4,11 +4,11 @@ import ts from "@babel/preset-typescript"
 import remapping from "@jridgewell/remapping"
 import solid from "babel-preset-solid"
 import { type BunPlugin, type BuildArtifact } from "bun"
-import { mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs"
 import { dirname, join, relative, resolve as resolvePath, sep } from "node:path"
 import { values, source } from "./args"
 import { state, print, requireBinary } from "./util"
-import { buildManifest, manifestAssetFor } from "./project"
+import { buildManifest, manifestAssetFor, type ManifestAsset } from "./project"
 
 // Babel plugin: rewrite `import data from "./x" with { type: "binary" }` into an
 // inline Uint8Array of the file's bytes, and `with { type: "text" }` into an
@@ -129,26 +129,39 @@ export function hasIsolateDirective(code: string): boolean {
 
 let SKIP_DIRS = new Set(["node_modules", "dist"])
 
+/**
+ * Depth-first files under `root`, visited as (absolute path, forward-slash
+ * path relative to root). Dotfiles and `skipDirs` are skipped; a missing
+ * root visits nothing.
+ */
+export function walkFiles(root: string, visit: (abs: string, rel: string) => void, skipDirs?: Set<string>) {
+  if (!existsSync(root)) return
+  let walk = (dir: string) => {
+    for (let entry of readdirSync(dir, { withFileTypes: true })) {
+      if (entry.name.startsWith(".") || skipDirs?.has(entry.name)) continue
+      let abs = join(dir, entry.name)
+      if (entry.isDirectory()) walk(abs)
+      else if (entry.isFile()) visit(abs, relative(root, abs).split(sep).join("/"))
+    }
+  }
+  walk(root)
+}
+
 export type IsolateModule = { id: string; path: string }
 
 /** Every "use isolate" module under `root`, in id order. */
 export function findIsolateModules(root: string): IsolateModule[] {
   let out: IsolateModule[] = []
-  let walk = (dir: string) => {
-    for (let entry of readdirSync(dir, { withFileTypes: true })) {
-      if (entry.name.startsWith(".") || SKIP_DIRS.has(entry.name)) continue
-      let abs = join(dir, entry.name)
-      if (entry.isDirectory()) {
-        walk(abs)
-      } else if (entry.isFile() && /\.(js|ts)x?$/.test(entry.name) && !entry.name.endsWith(".d.ts")) {
-        if (hasIsolateDirective(readFileSync(abs, "utf8"))) {
-          let id = relative(root, abs).split(sep).join("/").replace(/\.(js|ts)x?$/, "")
-          out.push({ id, path: abs })
-        }
+  walkFiles(
+    root,
+    (abs, rel) => {
+      if (!/\.(js|ts)x?$/.test(rel) || rel.endsWith(".d.ts")) return
+      if (hasIsolateDirective(readFileSync(abs, "utf8"))) {
+        out.push({ id: rel.replace(/\.(js|ts)x?$/, ""), path: abs })
       }
-    }
-  }
-  walk(root)
+    },
+    SKIP_DIRS,
+  )
   out.sort((a, b) => (a.id < b.id ? -1 : 1))
   return out
 }
@@ -245,13 +258,17 @@ export async function bundleWith(opts: BundleOptions): Promise<BundleResult | nu
     })
   }
 
-  let extra = isolates.map((i) => manifestAssetFor(isolateAssetPath(i.id, "js"), Buffer.from(i.code, "utf8")))
   return {
     code,
     map: await composeMap(main.outputs, babelMaps),
-    manifest: buildManifest(code, opts.entry, extra),
+    manifest: buildManifest(code, opts.entry, isolateManifestAssets(isolates)),
     isolates,
   }
+}
+
+/** The manifest assets for a set of isolate bundles (dev form: isolates/<id>.js). */
+export function isolateManifestAssets(isolates: { id: string; code: string }[]): ManifestAsset[] {
+  return isolates.map((i) => manifestAssetFor(isolateAssetPath(i.id, "js"), Buffer.from(i.code, "utf8")))
 }
 
 // Write dev isolate bundles where the dev server serves /isolates/ from
@@ -304,14 +321,52 @@ export function devIsolatesDir(projectDir: string): string {
   return join(projectDir, ".srt-data", "isolates")
 }
 
-export async function bundleTo(outfile: string) {
-  let result = await bundle()
-  if (!result) {
-    console.error("Build failed")
-    process.exit(1)
-  }
-  await Bun.write(outfile, result.code)
-  return result
+// A flux entry's isolate modules: everything under its isolates/ dir, id =
+// the path relative to that dir without extension. Standalone flux resolves
+// isolates by location, not directive - module <id> is
+// <entry dir>/isolates/<id>.bin or .js - so this is the discovery for
+// bundling and packing flux scripts (which also lets a worker be .ts, unlike
+// running from source).
+export function findFluxIsolates(entryDir: string): IsolateModule[] {
+  let out: IsolateModule[] = []
+  walkFiles(join(entryDir, "isolates"), (abs, rel) => {
+    if (/\.[jt]s$/.test(rel) && !rel.endsWith(".d.ts")) {
+      out.push({ id: rel.replace(/\.[jt]s$/, ""), path: abs })
+    }
+  })
+  out.sort((a, b) => (a.id < b.id ? -1 : 1))
+  return out
+}
+
+// A bundle cannot carry its isolate bundles inside itself, so they travel in
+// the isolates/ dir next to it: `<dir>/isolates/<id>.js` (or `.bin`,
+// compiled) beside the bundle file - the shape the flux runtime and an
+// installed version dir resolve. Writes are confined to bundle-owned output
+// dirs (the ensureOutDir rule in the bundle command); loads read the dir
+// from wherever the bundle sits.
+export function bundleIsolatesDir(bundlePath: string): string {
+  return join(dirname(bundlePath), "isolates")
+}
+
+/** A prebuilt bundle's isolate bundles, read back from its sibling dir; no dir means none. */
+export function readPrebuiltIsolates(bundlePath: string): { id: string; code: string }[] {
+  let out: { id: string; code: string }[] = []
+  walkFiles(bundleIsolatesDir(resolvePath(bundlePath)), (abs, rel) => {
+    if (rel.endsWith(".js")) {
+      out.push({ id: rel.replace(/\.js$/, ""), code: readFileSync(abs, "utf8") })
+    }
+  })
+  out.sort((a, b) => (a.id < b.id ? -1 : 1))
+  return out
+}
+
+// Loading a prebuilt .srt.js re-publishes its sibling isolate bundles through
+// the dev flow - written where the server's /isolates/ route serves from,
+// listed in the manifest - so isolate() works as it does from a source build.
+export function prebuiltManifest(code: string, path: string, projectDir: string): string {
+  let isolates = readPrebuiltIsolates(path)
+  writeIsolates(devIsolatesDir(projectDir), isolates)
+  return buildManifest(code, path, isolateManifestAssets(isolates))
 }
 
 // Bundle for the bare Flux runtime: no Solid plugin, flux: modules stay external.
@@ -331,7 +386,8 @@ export async function bundleFlux(entry: string): Promise<string> {
   return codeFromOutputs(result.outputs)
 }
 
-// Bundle for the SolidRT runtime via the standard Solid-aware bundler.
+// Bundle for the SolidRT runtime via the standard Solid-aware bundler, or
+// exit the command on a failed build.
 export async function bundleSolid(): Promise<BundleResult> {
   let result = await bundle()
   if (!result) {

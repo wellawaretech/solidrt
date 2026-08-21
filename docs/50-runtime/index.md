@@ -85,7 +85,7 @@ The Flux binary runs a JavaScript file directly. To go from TypeScript
 sources to something it can run, bundle for the bare runtime:
 
 ```sh
-srt bundle --flux src/main.ts   # -> src/main.flux.js
+srt bundle --flux src/main.ts   # -> dist/bundle/main.flux.js
 srt pack --flux src/main.ts     # standalone executable
 ```
 

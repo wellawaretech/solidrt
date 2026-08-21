@@ -2,8 +2,8 @@ import pkg from "../../package.json"
 import { source, isSource, isPrebuilt, values } from "../args"
 import { state, shutdown, print, printErr } from "../util"
 import { findProjectRoot, typecheck, reportTypes } from "./check"
-import { bundle, bundleMaps } from "../bundler"
-import { buildManifest, projectDirFor } from "../project"
+import { bundle, bundleMaps, prebuiltManifest } from "../bundler"
+import { projectDirFor } from "../project"
 import { startServer, buildReload, sendReload, showBuildFailure } from "../dev-server"
 import { startRepl } from "../repl"
 import { startWatcher } from "../watcher"
@@ -46,7 +46,7 @@ export async function runServerCommand() {
   } else if (source && isPrebuilt && source.endsWith(".srt.js")) {
     let path = resolve(source)
     state.currentCode = await Bun.file(path).text()
-    state.currentManifest = buildManifest(state.currentCode, path)
+    state.currentManifest = prebuiltManifest(state.currentCode, path, state.projectDir)
     await sendReload(buildReload({ code: state.currentCode, manifest: state.currentManifest }), { latch: true })
   }
 

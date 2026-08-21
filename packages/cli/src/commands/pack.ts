@@ -1,11 +1,17 @@
 import { values, source } from "../args"
-import { bundleFlux, bundleSolid, compileToBytecode } from "../bundler"
+import { bundleFlux, bundleSolid, compileToBytecode, findFluxIsolates } from "../bundler"
 import { resolvePackFonts } from "../fonts"
 import { loadAppIdentity } from "../project"
 import { packFlux, packSolid } from "../packer"
 import { buildPackFolder, writePackFolder } from "../pack-folder"
 import { requireBinary } from "../util"
-import { resolve } from "node:path"
+import { dirname, join, resolve } from "node:path"
+
+// Windows executables need the suffix; a user-given --output may already
+// carry it.
+function exeName(outfile: string): string {
+  return process.platform === "win32" && !outfile.toLowerCase().endsWith(".exe") ? outfile + ".exe" : outfile
+}
 
 // Write the packed executable, mark it runnable, and report its size.
 async function writeExecutable(packed: Buffer, outfile: string) {
@@ -22,11 +28,15 @@ export async function runPackCommand() {
       console.error("--folder is for app packs; flux scripts have no folder output")
       process.exit(1)
     }
-    let outfile = values.output ?? source!.replace(/\.[jt]sx?$/, "")
-    if (process.platform === "win32" && !outfile.toLowerCase().endsWith(".exe")) {
-      outfile += ".exe"
+    let outfile = exeName(values.output ?? source!.replace(/\.[jt]s$/, ""))
+    // The entry's isolate modules ride along as isolates/<id>.bin sections
+    // (module name = id, for stack attribution).
+    let isolates = []
+    for (let module of findFluxIsolates(dirname(resolve(source!)))) {
+      isolates.push({ id: module.id, bytecode: await compileToBytecode(await bundleFlux(module.path), module.id) })
     }
-    await writeExecutable(await packFlux(await bundleFlux(source!)), outfile)
+    if (isolates.length) console.log(`>> isolates: ${isolates.map((i) => i.id).join(", ")}`)
+    await writeExecutable(packFlux(await compileToBytecode(await bundleFlux(source!)), isolates), outfile)
     process.exit()
   }
 
@@ -49,7 +59,7 @@ export async function runPackCommand() {
   let folder = buildPackFolder(source!, bytecode, isolates)
 
   if (values.folder) {
-    let outDir = values.output ?? "dist"
+    let outDir = values.output ?? join("dist", "pack")
     writePackFolder(outDir, requireBinary("solidrt"), bytecode, folder)
     console.log(`>> wrote pack folder to ${resolve(outDir)}`)
     process.exit()

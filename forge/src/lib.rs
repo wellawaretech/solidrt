@@ -26,6 +26,7 @@ pub mod sqlite;
 pub mod stream;
 pub mod subprocess;
 pub mod svg;
+pub mod trailer;
 pub mod value;
 #[cfg(feature = "video")]
 pub mod video;

@@ -34,8 +34,8 @@ async fn main() {
     }),
   };
 
-  // `isolate("worker")` is `<entry dir>/worker.js`; a stdin script has no
-  // directory, so its isolates live under the working directory.
+  // `isolate("worker")` is `<entry dir>/isolates/worker.js`; a stdin script
+  // has no directory, so its isolates live under the working directory.
   let base: PathBuf = match path.as_deref() {
     Some("-") | None => PathBuf::from("."),
     Some(p) => Path::new(p).parent().filter(|d| !d.as_os_str().is_empty()).unwrap_or(Path::new(".")).to_path_buf(),
@@ -50,7 +50,13 @@ async fn main() {
     .userdata(ProcessArgs(argv))
     .on_uncaught(move |_| mark_failed.store(true, Ordering::Relaxed))
     .isolate_resolver(move |id| {
-      let file = base.join(format!("{id}.js"));
+      // Bytecode first, like the lattice resolver: a compiled bundle dir
+      // ships isolates/<id>.bin, a source layout isolates/<id>.js.
+      let dir = base.join("isolates");
+      if let Ok(bytes) = std::fs::read(dir.join(format!("{id}.bin"))) {
+        return Ok(ModuleCode::Bytecode(bytes));
+      }
+      let file = dir.join(format!("{id}.js"));
       std::fs::read_to_string(&file)
         .map(ModuleCode::Source)
         .map_err(|e| format!("isolate '{id}': cannot read {}: {e}", file.display()))

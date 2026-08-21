@@ -1,4 +1,4 @@
-// fluxrt - self-contained flux runtime; runs bytecode appended to this binary
+// fluxrt - self-contained flux runtime; runs the payload appended to this binary
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -6,36 +6,33 @@ use std::sync::Arc;
 use flux::{FluxEngine, LogLevel, ProcessArgs};
 
 const MAGIC: &[u8; 8] = b"FLUXRT\x88\x44";
-const TRAILER_LEN: usize = 16; // u64 offset (8 bytes) + magic (8 bytes)
 
 fn log_fn(_level: LogLevel, msg: &str) {
   println!("{msg}");
 }
 
-fn load_embedded_bytecode() -> Option<Vec<u8>> {
-  let exe = std::env::current_exe().ok()?;
-  let data = std::fs::read(&exe).ok()?;
-  if data.len() < TRAILER_LEN {
-    return None;
-  }
-  let magic_start = data.len() - 8;
-  if &data[magic_start..] != MAGIC {
-    return None;
-  }
-  let offset_start = data.len() - TRAILER_LEN;
-  let offset = u64::from_le_bytes(data[offset_start..magic_start].try_into().ok()?) as usize;
-  if offset >= offset_start {
-    return None;
-  }
-  Some(data[offset..offset_start].to_vec())
-}
-
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
-  let bytecode = load_embedded_bytecode().unwrap_or_else(|| {
-    eprintln!("fluxrt: no embedded bytecode found");
+  // The same section trailer the solidrt runner uses (forge::trailer; written
+  // by packages/cli/src/packer.ts). A fluxrt payload carries only kind-2 file
+  // sections: "bundle.bin" is the program, "isolates/<id>.bin" its isolate
+  // modules. The program is read once here; isolates stay in place and
+  // resolve by ranged reads through the assets mount, exactly as in solidrt.
+  let Some(trailer) = forge::trailer::read_own(MAGIC) else {
+    eprintln!("fluxrt: no embedded payload found");
     std::process::exit(1);
-  });
+  };
+  let main = trailer
+    .sections
+    .iter()
+    .find(|s| s.kind == forge::trailer::SECTION_FILE && s.name == "bundle.bin")
+    .and_then(|s| trailer.section_bytes(s).ok())
+    .unwrap_or_else(|| {
+      eprintln!("fluxrt: no embedded payload found");
+      std::process::exit(1);
+    });
+  let index = trailer.file_index();
+  forge::fs::set_assets_base(Some(forge::fs::AssetsBase::Packed { exe: trailer.exe, index }));
 
   // Everything after the executable is the program's argument vector,
   // forwarded to JS through flux:process (app arguments only).
@@ -48,8 +45,9 @@ async fn main() {
     .logger(log_fn)
     .userdata(ProcessArgs(argv))
     .on_uncaught(move |_| mark_failed.store(true, Ordering::Relaxed))
+    .isolate_resolver(flux::resolve_isolate_from_assets)
     .build();
-  engine.eval(bytecode).await;
+  engine.eval(main).await;
   if failed.load(Ordering::Relaxed) {
     std::process::exit(1);
   }

@@ -70,7 +70,7 @@ declare module "flux:isolate" {
   /**
    * A handle on an isolate module: a `"use isolate"` module in a SolidRT
    * project (id = its path relative to the source root, without extension),
-   * or `<id>.js` next to the entry under standalone flux. Each property is
+   * or `isolates/<id>.bin`/`.js` next to the entry under standalone flux. Each property is
    * an async function that runs the export of that name in a second runtime
    * on its own thread (own heap, own event loop, the non-gui `flux:*`
    * modules). Arguments and results are copied ({@link Sendable}).

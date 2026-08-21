@@ -1,18 +1,18 @@
 import { existsSync, readFileSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { requireBinary } from "./util"
-import { compileToBytecode } from "./bundler"
 import type { PackFolder } from "./pack-folder"
 
-// Trailer magic identifying the runner an embedded payload belongs to. Must match
-// the runner-side checks: fluxrt -> flux/src/bin/fluxrt.rs, solidrt ->
-// lattice/src/main.rs (load_embedded_payload).
+// Trailer magic identifying the runner an embedded payload belongs to. Must
+// match the runner-side checks: both runners parse the trailer through
+// forge/src/trailer.rs (readers: lattice/src/main.rs, flux/src/bin/fluxrt.rs).
 const MAGIC = {
   fluxrt: Buffer.from([0x46, 0x4c, 0x55, 0x58, 0x52, 0x54, 0x88, 0x44]), // "FLUXRT\x88\x44"
   solidrt: Buffer.from([0x53, 0x4f, 0x4c, 0x49, 0x44, 0x52, 0x54, 0x88, 0x44]), // "SOLIDRT\x88\x44"
 }
 
-// Section kinds in the solidrt trailer. Must match lattice/src/main.rs.
+// Section kinds in the trailer. Must match forge/src/trailer.rs (fluxrt only
+// consumes kind-2 file sections; solidrt consumes all three).
 const SECTION_MANIFEST = 1
 const SECTION_FILE = 2
 const SECTION_GL_LIB = 3
@@ -92,12 +92,16 @@ export function packSolid(folder: PackFolder, bytecode: Buffer): Buffer {
   return packSections(runnerBytes, sections, MAGIC.solidrt)
 }
 
-// Compile JS to bytecode and append it to the fluxrt runner as its
-// single-payload trailer: [bytecode][u64 offset LE][8-byte magic].
-export async function packFlux(jsCode: string): Promise<Buffer> {
-  let bytecode = await compileToBytecode(jsCode)
+// The single-file flux executable: the fluxrt runner plus the program in the
+// same section trailer packSolid uses, kind-2 file sections only -
+// "bundle.bin" is the program, each isolate module "isolates/<id>.bin".
+// Like packSolid, this assembles precompiled bytecode; the pack command
+// compiles.
+export function packFlux(bytecode: Buffer, isolates: { id: string; bytecode: Buffer }[] = []): Buffer {
   let runnerBytes = readFileSync(requireBinary("fluxrt"))
-  let offsetBuf = Buffer.allocUnsafe(8)
-  offsetBuf.writeBigUInt64LE(BigInt(runnerBytes.length))
-  return Buffer.concat([runnerBytes, bytecode, offsetBuf, MAGIC.fluxrt])
+  let sections: Section[] = [
+    { kind: SECTION_FILE, bytes: bytecode, name: "bundle.bin" },
+    ...isolates.map((i) => ({ kind: SECTION_FILE, bytes: i.bytecode, name: `isolates/${i.id}.bin` })),
+  ]
+  return packSections(runnerBytes, sections, MAGIC.fluxrt)
 }

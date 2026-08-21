@@ -100,6 +100,10 @@ Shaped, not started.
 - **[AVIF decoding in decodeImage](backlog/avif-decode.md)** [2026-07-19]
   The one practical web image format decodeImage lacks; pure-Rust decode does
   not exist in the image crate, so it needs the dav1d C system dependency.
+- **[One build-output root with per-flow subdirs](backlog/build-output-dirs.md)** [2026-08-21]
+  Give dev, render and pack one gitignored output root (dist/) with a subdir
+  per flow, fixing render's missing isolate support and clearing the ground
+  for pack formats and asset pre-processing.
 - **[Move the srt CLI fully into flux](backlog/cli-flux-migration.md)** [2026-07-13]
   Collapse the repl/dev-server split into one flux process so there is exactly
   one rebuild-and-push path, leaving Bun only as a bundler subprocess.
@@ -682,6 +686,9 @@ Finished, kept for the reasoning.
 - **[flux:net socket gaps](done/flux-net-socket-gaps.md)** [2026-07-27]
   "Three flux:net gaps surfaced by the linux VM's NAT gateway: Udp.close, TCP
   half-close, and raw ICMP; closed by one cancellation token per socket."
+- **[Isolates for packed and compiled flux scripts](done/flux-packed-isolates.md)** [2026-08-21]
+  fluxrt and packFlux have no isolate resolver and nothing loads flux isolate
+  bytecode, so packed or compiled flux scripts cannot use isolate().
 - **[Name the flux plugin layers after what they marshal](done/flux-plugin-layer-names.md)** [2026-08-18]
   plugins/modules/ and plugins/gui/ were named for their JS-facing shape while
   standards/ was named for its contract, so placement was a judgment call; the

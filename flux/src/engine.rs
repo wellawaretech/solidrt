@@ -72,9 +72,27 @@ pub enum ModuleCode {
 /// The embedder's answer to "where is isolate `<id>`": the module a
 /// `"use isolate"` entry compiles to, by the id `isolate(id)` was called
 /// with. `Err` is the message the caller's promise rejects with. Standalone
-/// `flux` reads `<entry dir>/<id>.js`; lattice resolves through the app's
-/// assets.
+/// `flux` reads `<entry dir>/isolates/<id>.js`; packed runners (solidrt,
+/// fluxrt) use [`resolve_isolate_from_assets`].
 pub type IsolateResolver = Arc<dyn Fn(&str) -> Result<ModuleCode, String> + Send + Sync>;
+
+/// Resolve an isolate id through the forge assets mount: an app's isolate
+/// modules travel as manifest assets under `isolates/` - packed as bytecode
+/// (`isolates/<id>.bin`), pushed in dev as source (`isolates/<id>.js`). Both
+/// read through the mount, so an installed version dir, a pack folder, and a
+/// packed executable resolve alike; nothing mounted means no isolates.
+pub fn resolve_isolate_from_assets(id: &str) -> Result<ModuleCode, String> {
+  if id.is_empty() || id.starts_with('/') || id.split('/').any(|c| c.is_empty() || c == "." || c == "..") {
+    return Err(format!("isolate '{id}': not a module id"));
+  }
+  if let Ok(bytes) = forge::fs::read_sync(&format!("isolates/{id}.bin")) {
+    return Ok(ModuleCode::Bytecode(bytes));
+  }
+  match forge::fs::read_sync(&format!("isolates/{id}.js")) {
+    Ok(bytes) => String::from_utf8(bytes).map(ModuleCode::Source).map_err(|_| format!("isolate '{id}': not UTF-8")),
+    Err(_) => Err(format!("isolate '{id}': no such isolate module in this app")),
+  }
+}
 
 /// The host-describing part of an engine's configuration: what a runtime
 /// passes on unchanged to the runtimes it spawns (`flux:isolate`). Stored in

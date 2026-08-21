@@ -7,6 +7,7 @@ mod mdns;
 mod net;
 mod sqlite;
 mod svg;
+mod trailer;
 #[cfg(feature = "video")]
 mod video;
 mod wasm;

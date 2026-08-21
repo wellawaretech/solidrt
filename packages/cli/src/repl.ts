@@ -3,8 +3,7 @@ import { resolve, dirname } from "path"
 import { readdirSync } from "node:fs"
 import { state, print, printErr, shutdown } from "./util"
 import { buildReload, getClients, sendReload, sendStop, sendStats, sendWatch, showBuildFailure } from "./dev-server"
-import { bundle, bundleMaps } from "./bundler"
-import { buildManifest } from "./project"
+import { bundle, bundleMaps, prebuiltManifest } from "./bundler"
 import { startWatcher, stopWatcher } from "./watcher"
 
 // Resolve repl client indexes ("0 2") against the server's client list,
@@ -128,7 +127,7 @@ async function cmdLoad(file: string) {
   } else if (file.endsWith(".srt.js")) {
     state.currentCode = await Bun.file(path).text()
     state.currentMaps = null
-    state.currentManifest = buildManifest(state.currentCode, path)
+    state.currentManifest = prebuiltManifest(state.currentCode, path, state.projectDir)
   } else if (file.endsWith(".srt.bin")) {
     let bytes = await Bun.file(path).arrayBuffer()
     // One-shot: bytecode loads are pushed but not latched for late joiners.

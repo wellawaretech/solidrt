@@ -24,9 +24,12 @@ matches the work before starting it:
   `bun create solidrt <dir>`.
 - `bunx srt run src/index.tsx` - dev server + a local client window, watches and
   hot-reloads. NEEDS A DISPLAY (opens a GUI window). Not usable headless.
-- `bunx srt bundle src/index.tsx` - transpile to `<file>.srt.js`. With
-  `--compile`, emits `.srt.bin` bytecode. `--minify`, `--dev`, `--stdout`,
-  `--output` also available.
+- `bunx srt bundle src/index.tsx` - bundle into `dist/bundle/` (or
+  `--output <dir>`): `<name>.srt.js` plus the app's isolate modules as
+  `isolates/<id>.js`. With `--compile`, bytecode (`.srt.bin`/`.bin`)
+  instead. Move the dir, not the bare file - a bundle loaded without its
+  isolates/ dir loses them (`--stdout` cannot carry them at all).
+  `--minify`, `--dev` also available.
 - `bunx srt render src/index.tsx [flags]` - render OFFSCREEN to PNG frames,
   optionally replaying a `--script` file recorded via `--capture`.
 - `bunx srt server [file]` / `bunx srt client` - the two halves of `run`

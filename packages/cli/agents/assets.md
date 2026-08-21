@@ -29,4 +29,4 @@ distribution.
 - `bunx srt pack src/index.tsx` builds a single-file executable;
   `bunx srt pack --folder src/index.tsx` writes the flat app folder
   (runner + manifest.json + bundle + assets/, plus the runner's GL
-  libraries on Windows and macOS) to `dist/`.
+  libraries on Windows and macOS) to `dist/pack/`.
