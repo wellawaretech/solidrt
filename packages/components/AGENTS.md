@@ -3,8 +3,8 @@
 Higher-level components built on @solidrt/core primitives. Optional: an app can
 be built with core primitives alone. For the underlying element model, events,
 reactivity, and how to run/verify, see @solidrt/core and @solidrt/cli (their
-AGENTS.md). Per-module prose is in docs/ (one file per module, generated into the README);
-props are the typed, commented interfaces in src/.
+AGENTS.md). Per-module prose is in docs/ (one file per module, generated into
+the README); props are the typed, commented interfaces in src/.
 
 ## Install
 
@@ -24,6 +24,33 @@ Most components group props into two objects, plus top-level event handlers:
   transform `x`/`y`/`rotate`/`scale`.
 - Event handlers (`onPointerDown`, `onKeyDown`, ...) are top-level props, NOT
   inside `layout`/`style`.
+
+Core intrinsics take these props flat instead - there are no `layout`/`style`
+objects at that level - and the two compose freely in one tree.
+
+## Traps
+
+- `Window`/`View` do not paint on their own; they only paint when you set
+  `style.backgroundColor`/`borderColor` etc. There is no separate background
+  element to place by hand (that is the core-only pattern).
+- There is no `onClick`. `onPress` comes from `Pressable`/`Button`; raw
+  `View` only has `onPointerDown` and friends.
+- `ScrollView` needs an explicit main-axis size - a height, or flex inside a
+  sized parent. With neither it resolves to 0 and its content silently
+  vanishes; `maxHeight` alone does not size it. The runtime warns.
+- `Modal`/`Portal` cannot mount during the initial render: gate them behind
+  a signal that starts false.
+- Cover/contain images: give `Image` a `fit` prop (`"fill" | "cover" |
+  "contain" | "none" | "scale-down"`, CSS object-fit semantics, centered)
+  plus a box via `layout` in any form. Without `fit`, only NUMERIC layout
+  sizes reach the image; `width: pct(100)` alone draws at intrinsic size.
+  `fit="cover"` is the ported-web hero-image/thumbnail pattern.
+- Reach for @solidrt/core directly only for what components does not wrap:
+  raw intrinsics and the `d-` primitives (`d-rect`/`d-path`/`d-oval`) for
+  vector art or perf-sensitive positioned drawing, device/GPU subpath
+  imports (@solidrt/core/camera, /microphone, /gpu), gradients, and
+  createImage/decodeImage below `Image`'s level. Dropping to a `<d-path>`
+  for one custom shape never means giving up `View`/`Text` elsewhere.
 - Focus navigation: `createFocusNav` moves real focus across `focusable`
   elements (Button is focusable by default; Pressable opt-in) - spatially on
   arrows/dpad, sequentially on Tab/Shift+Tab (reading order, wrapping).

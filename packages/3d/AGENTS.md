@@ -4,20 +4,19 @@ A retained 3D scene graph above `@solidrt/core/gpu`. Meshes, materials and
 a camera compile to ONE depth-buffered draw target (`createDrawTarget` +
 one `addDraw` entry per mesh); the scene's output is an ordinary texture
 id composited as a `<texture>` leaf, so it takes layout, transforms,
-blendMode and pointer events like any element. Design rationale:
-`okf/research/scene-graph-3d.md` in the repo.
+blendMode and pointer events like any element.
 
 ## The model
 
 - Two layers. The imperative core is Solid-free: `createScene`,
   `createMesh(geometry, material)`, `add`/`remove`, `setTransform`,
-  `lookAt`, `getRotation`, `setVisible`, `setRenderOrder` - plain objects with dirty flags, batched to a
-  microtask,
-  one `setDrawParams` (uModel, plus uNormal for materials declaring it)
-  per changed mesh and ONE `setTargetParams` (the shared uViewProj +
-  uCamPos) per camera change, however many meshes. The component
-  face (`Scene`/`Group`/`Mesh`/`PerspectiveCamera`) syncs props into that
-  core over context and renders nothing itself.
+  `lookAt`, `getRotation`, `setVisible`, `setRenderOrder` - plain objects
+  with dirty flags, batched to a microtask: one `setDrawParams` (uModel,
+  plus uNormal for materials declaring it) per changed mesh and ONE
+  `setTargetParams` (the shared uViewProj + uCamPos) per camera change,
+  however many meshes. The component face (`Scene`/`Group`/`Mesh`/
+  `PerspectiveCamera`) syncs props into that core over context and renders
+  nothing itself.
 - Rendering is the runtime's. The target is `render: "auto"`: it
   re-renders when entries change, so a STATIC scene costs zero passes and
   the library registers no frame loop. Continuous animation is the app's
@@ -47,11 +46,9 @@ blendMode and pointer events like any element. Design rationale:
   (unlit color, unlit map, each opaque or transparent), `depth: true` +
   `cull: "back"`; an instance is
   just per-entry uniforms (`uColor`) and bindings (`uMap`).
-- The pure pieces (`math.ts`, `bvh.ts`, `order.ts`, `geometry.ts`) have check rigs in
-  `checks/`, run headless on flux from the repo root:
-  `bunx srt bundle -f --stdout packages/3d/checks/<name>-check.ts | target/release/flux - [seed]`.
-  They print PASS or FAIL lines and throw on failure, which exits nonzero.
-  Extend the rig when you change the module.
+- The pure pieces (`math.ts`, `bvh.ts`, `order.ts`, `geometry.ts`) are
+  Solid-free and GPU-free BY DESIGN so they can be checked headless; keep
+  them that way.
 
 ## Components
 
@@ -475,7 +472,7 @@ system.
 - A parameterised class whose variants (mapped/unmapped, ...) are SEPARATE
   classes must have every variant reference every shared uniform it is
   seeded with: a declared-but-unused per-entry name compiles out and
-  throws at add(). Open item: `okf/backlog/gpu-inactive-uniform-two-tier.md`.
+  throws at add().
 - The standard-set contract is checked TEXTUALLY at shaderMaterial()
   creation (uModel and uViewProj must appear in the vertex source) and
   strictly at add() for the per-entry names: a uModel or uNormal that is

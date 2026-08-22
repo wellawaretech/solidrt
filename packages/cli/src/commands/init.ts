@@ -31,22 +31,26 @@ function packageName(dir: string): string {
 const DEFAULT_TEMPLATE = "default"
 
 // One AGENTS.md serves every template, so the lines that point an agent at
-// @solidrt/components docs are fenced between markers: with the extension
-// selected only the markers go, without it the block goes too, so a core-only
-// app never ships references to files that are not installed.
-const MARKED_BLOCK = /^<!-- components:begin -->\n[\s\S]*?^<!-- components:end -->\n/gm
-const MARKER = /^<!-- components:(?:begin|end) -->\n/gm
-
+// an extension's docs are fenced between `<!-- <key>:begin/end -->` markers:
+// with the extension selected only the markers go, without it the block goes
+// too, so an app never ships references to files that are not installed.
 function resolveMarkers(text: string, extensions: Extension[]): string {
-  let selected = extensions.some((e) => e.pkg === "@solidrt/components")
-  return selected ? text.replace(MARKER, "") : text.replace(MARKED_BLOCK, "")
+  for (let ext of EXTENSIONS) {
+    let selected = extensions.includes(ext)
+    let block = new RegExp(`^<!-- ${ext.key}:begin -->\\n[\\s\\S]*?^<!-- ${ext.key}:end -->\\n`, "gm")
+    let marker = new RegExp(`^<!-- ${ext.key}:(?:begin|end) -->\\n`, "gm")
+    text = selected ? text.replace(marker, "") : text.replace(block, "")
+  }
+  return text
 }
 
 // Optional packages an app can opt into on top of core. Each maps to a
 // dependency in the scaffold package.json (kept when selected, removed
-// otherwise) and optionally to a starter under scaffold/templates/.
+// otherwise), to a marker key fencing its lines in scaffold/AGENTS.md, and
+// optionally to a starter under scaffold/templates/.
 interface Extension {
   pkg: string
+  key: string
   template?: string
   description: string
 }
@@ -54,10 +58,12 @@ interface Extension {
 const EXTENSIONS: Extension[] = [
   {
     pkg: "@solidrt/components",
+    key: "components",
     template: "components",
     description: "component framework: widgets, theming, navigation",
   },
-  { pkg: "@solidrt/3d", description: "general purpose 3D library" },
+  { pkg: "@solidrt/2d", key: "2d", description: "general purpose 2D library" },
+  { pkg: "@solidrt/3d", key: "3d", description: "general purpose 3D library" },
 ]
 
 // Resolve which extensions the app takes: an interactive picker on a TTY,

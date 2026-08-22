@@ -1,8 +1,8 @@
 # @solidrt/cli - agent notes
 
-Dense, self-contained facts for running and verifying a SolidRT app. Full docs
-live in docs/ (and the website). For the authoring model (elements, props,
-reactivity), see @solidrt/core (its AGENTS.md).
+Dense, self-contained facts for running and verifying a SolidRT app. For the
+authoring model (elements, props, reactivity), see @solidrt/core (its
+AGENTS.md).
 
 `srt` is the dev tool. Bun is a dev prerequisite only; SolidRT apps run on the
 bundled `flux` runtime, not on Bun. Invoke via `bunx srt <command>`.

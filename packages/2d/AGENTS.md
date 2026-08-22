@@ -8,8 +8,7 @@ costs float stores plus one bulk publish - never per-sprite property writes,
 which is the whole reason this package exists (rendertree `d-texture` sprites
 are the right tool up to the low thousands; measured ~0.65us paint and ~15KB
 memory per NODE, and every moved node is two setProperty FFI calls per
-frame). The design decisions and measurements live in
-`okf/plans/2d-extension.md`.
+frame).
 
 ## The model
 
@@ -43,10 +42,8 @@ frame). The design decisions and measurements live in
   12.9ms writing `layer.records` directly + one `layer.touch()`). The raw
   path is public for exactly this; the record layout is documented on the
   type and `FLOATS_PER_SPRITE` is exported.
-- frames.ts and pick.ts are pure (no GPU imports) BY DESIGN: the checks rig
-  runs them headless on the flux binary
-  (`bunx srt bundle -f --stdout packages/2d/checks/<x>-check.ts | target/release/flux -`).
-  Keep them that way; anything touching flux:gpu cannot go there.
+- frames.ts and pick.ts are pure (no GPU imports) BY DESIGN so they can be
+  checked headless; keep them that way.
 
 ## Components
 

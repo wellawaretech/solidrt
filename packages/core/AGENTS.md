@@ -1,8 +1,8 @@
 # @solidrt/core - agent notes
 
-Dense, self-contained facts for writing a SolidRT app.
-Full docs live in docs/ (and the website). When this conflicts with prose docs,
-trust this file and the types in src/types.d.ts and jsx-runtime.d.ts.
+Dense, self-contained facts for writing a SolidRT app. When this conflicts
+with other prose, trust this file and the types in src/types.d.ts and
+jsx-runtime.d.ts.
 
 SolidRT is a custom SolidJS renderer: it paints through a Rust runtime, not the
 DOM. There is no HTML, no CSS cascade, no `className`.
@@ -88,8 +88,9 @@ bun add @solidrt/core        # the renderer
 bun add -d @solidrt/cli      # the `srt` tool (see its AGENTS.md)
 ```
 
-`@solidrt/components` is a separate, optional package of higher-level components
-(see its own AGENTS.md); core primitives alone are enough to build a full app.
+Core primitives alone are enough to build a full app. The optional extensions
+(each with its own AGENTS.md) build on it: `@solidrt/components` (themed
+widgets), `@solidrt/2d` (2D graphics and games), `@solidrt/3d` (scene graph).
 
 tsconfig.json - the two load-bearing lines are jsx + jsxImportSource:
 
@@ -122,8 +123,8 @@ Peer deps @solidjs/signals and @solidjs/universal must match (currently
   Outlines: `drawStyle="stroke"` (or "stroke-and-fill") plus `strokeWidth`.
   Corner radius on draw primitives: `radius` (number or [tl, tr, br, bl]).
 
-- Registered JSX intrinsics: `window`, `view`, `text`, `rect`, `oval`, `line`,
-  `path`, `texture`, `audio`, plus the `d-` variants `d-view`, `d-rect`,
+- Registered JSX intrinsics: `window`, `view`, `text`, `span`, `rect`, `oval`,
+  `line`, `path`, `texture`, `audio`, plus the `d-` variants `d-view`, `d-rect`,
   `d-oval`, `d-line`, `d-path`, `d-texture`, `d-text`. Line endpoints
   (`x1`/`y1`/`x2`/`y2`) exist only on `d-line`; a laid-out `<line>` has no
   endpoint props and spans its layout box corner to corner.
@@ -164,6 +165,10 @@ Peer deps @solidjs/signals and @solidjs/universal must match (currently
   frame reflows the tree. Anchor the element once with layout (e.g.
   `position:absolute` at `left:0,top:0`, or just let normal flow place it) and
   then translate it with `x`/`y`.
+
+- Text `lineHeight` is a MULTIPLIER of fontSize (1.3-1.6 is typical), not
+  pixels. A CSS-reflex value like 22 makes each line box 22x the font size:
+  the text becomes blank space and the parent balloons.
 
 - JSX text children collapse whitespace (ordinary JSX semantics): runs of
   spaces become one, so space-padding a mono label collapses silently. An
@@ -218,9 +223,55 @@ Peer deps @solidjs/signals and @solidjs/universal must match (currently
   TRACKED compute that reads signals and returns a value, then an UNTRACKED
   effect that receives it - `createEffect(() => count(), (c) => ...)`. The 1.x
   single-callback form `createEffect(() => { ...count()... })` does NOT track
-  here. Per-frame work: `onFrame((tick, frame) => {})` (returns a cleanup;
-  auto-cleaned inside a reactive scope) or standard `requestAnimationFrame`.
-  Also onResize, onLayout, onWindowFocus, onWindowBlur.
+  here.
+  Reading a signal/prop/store at the top level of a component body (not
+  inside JSX, a `createMemo`, or an effect's compute phase) reads it
+  untracked: it silently freezes at the initial value.
+  Writing a signal or store from inside an owned scope (a component body, a
+  `createMemo`, an effect's compute phase) throws
+  `REACTIVE_WRITE_IN_OWNED_SCOPE` in dev; a loader called in the component
+  body that sets state is the classic React / Solid 1.x reflex that hits
+  this. Move the write into an event handler, an effect's apply phase,
+  `onSettled`, or an `untrack` block; opt in narrowly with
+  `createSignal(v, { ownedWrite: true })` for a signal that genuinely is
+  internal state.
+  Signal writes flush on a microtask: a handler that sets a signal and
+  immediately reads it back gets the OLD value. Read it in an effect, or
+  call `flush()` (from @solidjs/signals) to force it through.
+
+- An element-valued prop (children, a content/icon slot) compiles to a getter
+  that builds a fresh native subtree on EVERY read, and a subtree that is
+  never inserted is never freed - native nodes are not garbage collected, so
+  what is only wasted work in DOM Solid is a permanent memory leak here. Read
+  such props exactly once, at the place they are mounted. To inspect
+  children (a typeof probe, counting), resolve them first with the
+  `children()` helper (re-exported from @solidrt/core) and probe the resolved
+  memo - never `typeof props.children` on the raw prop.
+
+- Animation is target-shaped first: declare `transition` on the element and
+  write targets, and the runtime animates natively with no per-frame JS.
+  Reach for per-frame work only for genuinely procedural motion:
+  `onFrame((tick, frame) => {})` is the native hook (runtime-paced, returns a
+  cleanup, auto-cleaned inside a reactive scope); `requestAnimationFrame`
+  exists as a web-standard one-shot but is not the preferred driver. A JS
+  tween loop or an animation library pushing interpolated values through
+  signals is the single most expensive mistake available here - read
+  agents/performance.md before writing either.
+  Window state: onResize, onLayout, onWindowFocus, onWindowBlur exist, but
+  prefer the reactive reads (`env`/`capabilities` above, or the accessors
+  `windowSize()`, `safeArea()`, `displayScale()`, `windowFocused()`,
+  `keyboardHeight()`, `pointerLocked()`) for reading layout and window
+  state. For mouse look, `lockPointer(true)` enters relative mouse mode
+  (cursor hidden and confined, positions freeze) and pointer events keep
+  reporting motion through `movementX`/`movementY`.
+
+- `createPortal` cannot mount during the app's initial render (it throws
+  "no mount target"): gate portal content behind a signal that starts false
+  and open it after startup - overlay content is opened, not born open.
+  `createScroll` containers need an explicit main-axis size (a height, or
+  flex inside a sized parent); with neither they resolve to 0 and the
+  content silently vanishes (`maxHeight` alone does not size it). The
+  runtime warns when this happens.
 
 - Device/GPU access via subpath imports: @solidrt/core/camera, /microphone,
   /speech, /gpu. Image flow: `decodeImage(bytes)` ->
@@ -253,5 +304,4 @@ render(() => <App />)
 Note the two `<d-rect>` underlays: a `<view>`/`<window>` does not paint, so a
 background is a draw-primitive child placed behind the content.
 
-To run and verify (incl. headless), see @solidrt/cli (its AGENTS.md). For
-higher-level components, see @solidrt/components (its AGENTS.md).
+To run and verify (incl. headless), see @solidrt/cli (its AGENTS.md).

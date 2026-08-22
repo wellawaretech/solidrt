@@ -12,6 +12,7 @@
   "dependencies": {
     "@solidrt/core": "0.0.0",
     "@solidrt/components": "0.0.0",
+    "@solidrt/2d": "0.0.0",
     "@solidrt/3d": "0.0.0"
   },
   "devDependencies": {
