@@ -235,11 +235,13 @@ export let {
     if (elementType === "window") tree.createRoot(proxy.id)
     else tree.createNode(proxy.id, elementType)
 
-    // The universal JSX template hands static props here as an object; children
-    // and ref arrive through their own hooks, so skip them.
+    // The universal JSX template hands static props here as an object. The
+    // compiler routes children/ref expressions through their own hooks, so
+    // those names only appear here in degenerate literal forms (children="hi",
+    // a bare ref) - let them flow to the tree so the unknown-property warning
+    // reports them instead of dropping them silently.
     if (props) {
       for (let name in props) {
-        if (name === "children" || name === "ref") continue
         applyProp(proxy, name, props[name])
       }
     }
@@ -320,6 +322,12 @@ let windowRoot: ProxyNode | undefined
  * reactive root, so the whole tree is disposed together on engine reload.
  */
 export function render(code: () => any) {
+  // Once per app: the native side would silently swap its root (leaking the
+  // first window subtree) and a second attachWindow would double-run every
+  // frame. There is no unmount; teardown is engine teardown.
+  if (windowRoot) {
+    throw new Error("render() already called; an app has exactly one render()")
+  }
   createRoot(() => {
     let root = code()
     if (!root || root.elementType !== "window") {
@@ -362,6 +370,11 @@ export function createPortal(node: Element, mount?: ProxyNode): null {
     throw new Error("createPortal: node must be a single built element")
   }
   insertNode(target, node as ProxyNode)
-  onCleanup(() => removeNode(target, node as ProxyNode))
+  // A destroyed mount target has already swept the portaled node with it
+  // (destroy walks the mount tree), so detaching then would hand freed ids to
+  // the native side, which panics. Gone from the proxy map = already freed.
+  onCleanup(() => {
+    if (nodes.has((node as ProxyNode).id)) removeNode(target, node as ProxyNode)
+  })
   return null
 }
