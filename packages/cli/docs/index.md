@@ -48,8 +48,11 @@ Exposes the running app to a coding agent over MCP: logs (source-mapped back
 to your TSX), stats, the live render tree, screenshots and texture readback,
 GPU resources, input injection, a virtual-time transport (`step_frames`,
 `set_time_scale`), reload, and any debug commands the app itself registers.
-A scaffolded project ships an `.mcp.json`, so an agent can attach to your
-running app without setup.
+A scaffolded project ships an `.mcp.json`, so Claude Code attaches to your
+running app with no setup. Other agents keep their server list in their own
+file; point it at `bun node_modules/@solidrt/cli/bin/srt mcp`, run from the
+project root. `agents/debugging.md` in this package lists the file per
+client.
 
 That connection is why SolidRT keeps the app inspectable from outside: an
 agent working on your app should be able to look at what it is actually

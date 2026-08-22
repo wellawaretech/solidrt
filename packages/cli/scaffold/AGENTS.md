@@ -96,4 +96,6 @@ platform-wide and bite in every app:
   surfaces build errors but not type errors; run `bunx srt check src/index.tsx`
   for those (it builds in memory and never triggers a reload).
 - Commands, headless rendering, and the MCP tools are documented in
-  node_modules/@solidrt/cli/AGENTS.md and its agents/debugging.md.
+  node_modules/@solidrt/cli/AGENTS.md and its agents/debugging.md. The
+  `.mcp.json` here is Claude Code's convention; if your client lists no
+  `solidrt` tools, debugging.md has the entry to add to its own config.

@@ -5,16 +5,17 @@ app over MCP to verify a change.
 
 ## Driving the app over MCP
 
-The project ships an MCP server (`.mcp.json`, `srt mcp`) that talks to the dev
-server `bunx srt run` starts. Each tool documents itself in full - read the
-tool description rather than guessing at its arguments. What the individual
-descriptions cannot tell you:
+The project ships an MCP server (`srt mcp`) that talks to the dev server
+`bunx srt run` starts. If your client lists no `solidrt` tools, it has not
+been pointed at the server yet - see "Wiring up an agent client" below. Each
+tool documents itself in full - read the tool description rather than guessing
+at its arguments. What the individual descriptions cannot tell you:
 
 - If `list_clients` is empty, no app is running: ask the user to start
   `bunx srt run src/index.tsx` rather than starting a second one yourself.
-  The bridge dials the dev server's default port (34884), so if the user
-  started it with `--port N`, `.mcp.json` needs the same flag:
-  `"args": [..., "mcp", "--port", "N"]`.
+  The bridge needs no port: each call resolves the server currently serving
+  this project, whatever `-s`/`--port` it was started with. Passing the flag
+  to `srt mcp` pins the bridge to that one server instead.
 - Several clients may be attached at once (desktop window, phone, tablet)
   with different sizes, display scales and safe areas. `reload` pushes to all
   of them, but `call_debug` / `send_input` / `get_snapshot` / log cursors are
@@ -39,6 +40,39 @@ descriptions cannot tell you:
   - in Claude Code, add "mcp__solidrt" to `permissions.allow` in
   ~/.claude/settings.json to cover every solidrt project). This is the user's
   call to make, once, in their own tooling.
+
+## Wiring up an agent client
+
+`.mcp.json` in the project root is Claude Code's convention, and a scaffolded
+app ships one. MCP standardizes the protocol, not how a client discovers
+servers, so every other client reads its own file. The entry is the same
+everywhere, in the client's syntax:
+
+```json
+{ "command": "bun", "args": ["node_modules/@solidrt/cli/bin/srt", "mcp"] }
+```
+
+Where it goes (these locations move between client releases; check the
+client's own docs if it does not match):
+
+- Claude Code: `.mcp.json` in the project root, under `mcpServers`. Claude
+  Code asks once, per project, before it will launch a server from this
+  file; until that is approved the `solidrt` tools are absent.
+- Cursor: `.cursor/mcp.json`, under `mcpServers`
+- VS Code / Copilot: `.vscode/mcp.json`, under `servers`
+- Gemini CLI: `.gemini/settings.json`, under `mcpServers`
+- Codex CLI: `~/.codex/config.toml`, under `[mcp_servers.solidrt]`
+
+Several of these also ship a command that writes the entry for you
+(`claude mcp add`, `codex mcp add`); prefer it over hand-editing.
+
+The one constraint: the bridge must run with the project as its working
+directory. It finds the dev server through the nearest package.json above
+its cwd, and the `args` path is relative to the project root. A per-project
+file gives that for free. A user-level entry works too, but only while the
+client itself was launched from the project root (or the client supports a
+`cwd` field and it is set); launched from elsewhere, every tool call answers
+"No dev server for ..." while one is running.
 
 ## Lessons that cost real time
 
