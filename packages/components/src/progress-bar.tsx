@@ -2,9 +2,10 @@ import { createSignal, onFrame, onLayout, getBoundingBox, Show } from "@solidrt/
 import type { LayoutProps } from "@solidrt/core"
 import { theme } from "./theme"
 import { policy } from "./policy"
-import type { StyleProps } from "./types"
+import type { StyleProps, TransitionProps } from "./types"
+import { splitTransition, transitionEndFor } from "./types"
 
-export interface ProgressBarProps {
+export interface ProgressBarProps extends TransitionProps {
   // Progress from 0 to 1. Omit (or leave undefined) for an indeterminate bar: a
   // segment that slides back and forth.
   value?: number
@@ -71,7 +72,7 @@ export function ProgressBar(props: ProgressBarProps) {
   let offset = () => effectivePhase() * trackWidth() * (1 - SEGMENT)
 
   return (
-    <view ref={(n: { id: number }) => (trackNode = n)} position="relative" width="100%" height={h()} {...props.layout}>
+    <view ref={(n: { id: number }) => (trackNode = n)} position="relative" width="100%" height={h()} transition={splitTransition(props.transition).root} onTransitionEnd={transitionEndFor("root", props.onTransitionEnd)} {...props.layout}>
       <Show when={animating()}>
         <Animate />
       </Show>

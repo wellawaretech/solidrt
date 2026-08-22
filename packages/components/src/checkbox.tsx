@@ -4,9 +4,10 @@ import { createPress } from "./press"
 import { theme } from "./theme"
 import { densityScale } from "./density"
 import { Icon } from "./icon"
-import type { StyleProps } from "./types"
+import type { StyleProps, TransitionProps } from "./types"
+import { splitTransition, transitionEndFor } from "./types"
 
-export interface CheckboxProps {
+export interface CheckboxProps extends TransitionProps {
   // Controlled checked state. If omitted, the checkbox is uncontrolled.
   checked?: boolean
   defaultChecked?: boolean
@@ -50,6 +51,8 @@ export function Checkbox(props: CheckboxProps) {
 
   return (
     <view
+      transition={splitTransition(props.transition).root}
+      onTransitionEnd={transitionEndFor("root", props.onTransitionEnd)}
       ref={press.ref}
       repaintBoundary
       width={size()}

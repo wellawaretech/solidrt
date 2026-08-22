@@ -3,9 +3,10 @@ import type { LayoutProps } from "@solidrt/core"
 import { createPress } from "./press"
 import { theme } from "./theme"
 import { densityScale } from "./density"
-import type { StyleProps } from "./types"
+import type { StyleProps, TransitionProps } from "./types"
+import { splitTransition, transitionEndFor } from "./types"
 
-export interface SwitchProps {
+export interface SwitchProps extends TransitionProps {
   // Controlled on/off. If omitted, the switch is uncontrolled.
   value?: boolean
   // Initial value for uncontrolled use.
@@ -49,6 +50,8 @@ export function Switch(props: SwitchProps) {
 
   return (
     <view
+      transition={splitTransition(props.transition).root}
+      onTransitionEnd={transitionEndFor("root", props.onTransitionEnd)}
       ref={press.ref}
       repaintBoundary
       width={w()}

@@ -2,9 +2,10 @@ import { createSignal, onFrame, Show } from "@solidrt/core"
 import type { LayoutProps } from "@solidrt/core"
 import { theme } from "./theme"
 import { policy } from "./policy"
-import type { StyleProps } from "./types"
+import type { StyleProps, TransitionProps } from "./types"
+import { splitTransition, transitionEndFor } from "./types"
 
-export interface SpinnerProps {
+export interface SpinnerProps extends TransitionProps {
   // Overall diameter in pixels.
   size?: number
   // Arc stroke width in pixels.
@@ -53,6 +54,8 @@ export function Spinner(props: SpinnerProps) {
 
   return (
     <view
+      transition={splitTransition(props.transition).root}
+      onTransitionEnd={transitionEndFor("root", props.onTransitionEnd)}
       width={size()}
       height={size()}
       {...props.layout}

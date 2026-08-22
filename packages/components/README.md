@@ -103,7 +103,11 @@ Most components group their props into two objects, split by one rule: `layout` 
 
 `StyleProps` is that paint set. `TextLayoutProps` extends `LayoutProps` with the font fields (`fontFamily`, `fontSize`, `lineHeight`, `fontStyle`, `fontWeight`, `textAlign`, `maxLines`) because text shaping affects measurement; note `lineHeight` is a multiplier of `fontSize` (the theme uses 1.3-1.6), not a pixel value. `Option` (`{ value, label }`) is the shared shape of the single-choice controls (`Select`, `SegmentedControl`): shared shapes go through this module so components never import a sibling.
 
-API: `StyleProps`, `TextLayoutProps`, `Option` - typed and commented in [src/types.ts](./src/types.ts).
+`TransitionProps` (`transition`, `onTransitionEnd`) is the third top-level group, in the component's own vocabulary rather than core's: a declaration names the view-level properties (`opacity`, `x`, `y`, `scale*`, `rotate*`, `origin*`, `perspective`, `clipRadius`) and the style ones (`backgroundColor`, `borderColor`, `borderWidth`, `borderRadius`), plus `all`, a shorthand string, and `stagger` - `<Button transition={{ backgroundColor: { duration: 300 }, opacity: "200ms ease-out" }}>`. Core's paint names (`color`, `radius`, `strokeWidth`) are rejected by the types: a component is a root view plus the rects it draws for `style`, and `splitTransition` hands each entry to the node that owns it (the background rect gets `backgroundColor`/`borderRadius`, the stroke rect `borderColor`/`borderWidth`/`borderRadius`, the root view the rest). `onTransitionEnd` reports the component name (`backgroundColor`, not `color`). `Text` adds `color` (its text node), `ScrollView` adds `scrollX`/`scrollY` (its viewport).
+
+Controls whose paint is their own - `Switch` knob, `Slider` thumb, `Checkbox` mark, `Radio` dot, `ProgressBar` fill, `Spinner`, `Icon`, `QrCode`, and the chrome of `NavShell`, `ContextMenu`, `Field` - animate the view-level entries only for now; their internal parts are not reachable through `transition` yet (okf/backlog/component-transitions-internal-paint.md).
+
+API: `StyleProps`, `TextLayoutProps`, `Option`, `TransitionProps`, `ComponentTransition`, `TransitionViewProp`, `TransitionStyleProp`, `TransitionScrollProp` - typed and commented in [src/types.ts](./src/types.ts).
 
 ## Typography helpers
 
@@ -290,6 +294,8 @@ import { For } from "@solidrt/core"
   <For each={items()}>{(item) => <Text>{item}</Text>}</For>
 </ScrollView>
 ```
+
+`transition` goes to the viewport, so a scroll offset can spring instead of jump: `transition={{ scrollY: { duration: 250 } }}` makes every wheel notch and `scrollTo` retarget a spring toward the new offset (a spring rather than a tween, because the wheel retargets mid-flight).
 
 The underlying geometry primitive `createScroll` is available from `@solidrt/core` for building custom scrollers.
 

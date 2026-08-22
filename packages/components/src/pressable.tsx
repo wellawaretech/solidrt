@@ -1,11 +1,12 @@
 import { children } from "@solidrt/core"
 import type { LayoutProps, PointerProps } from "@solidrt/core"
-import type { StyleProps } from "./types"
+import type { StyleProps, TransitionProps } from "./types"
+import { splitTransition, transitionEndFor } from "./types"
 import { createPress, type PressState } from "./press"
 
 export type { PressState } from "./press"
 
-export interface PressableProps extends PointerProps {
+export interface PressableProps extends PointerProps, TransitionProps {
   // children and style may be functions of the press state, so a caller can
   // restyle on press/hover without wiring their own signals. The state is live
   // (getters, not a snapshot): read it inside a prop or child expression, never
@@ -50,8 +51,12 @@ export function Pressable(props: PressableProps) {
   let hasBackground = () => style()?.backgroundColor != null || style()?.borderRadius != null
   let hasBorder = () => (style()?.borderWidth ?? 0) > 0
 
+  let split = () => splitTransition(props.transition)
+
   return (
     <view
+      transition={split().root}
+      onTransitionEnd={transitionEndFor("root", props.onTransitionEnd)}
       ref={(n: { id: number }) => {
         press.ref(n)
         props.ref?.(n)
@@ -79,6 +84,8 @@ export function Pressable(props: PressableProps) {
     >
       {hasBackground() ? (
         <d-rect
+          transition={split().background}
+          onTransitionEnd={transitionEndFor("background", props.onTransitionEnd)}
           color={style()?.backgroundColor ?? "transparent"}
           radius={style()?.borderRadius}
         />
@@ -87,6 +94,8 @@ export function Pressable(props: PressableProps) {
       {hasBorder() ? (
         <d-rect
           drawStyle="stroke"
+          transition={split().border}
+          onTransitionEnd={transitionEndFor("border", props.onTransitionEnd)}
           color={style()?.borderColor ?? "transparent"}
           strokeWidth={style()?.borderWidth}
           radius={style()?.borderRadius}

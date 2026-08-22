@@ -3,9 +3,10 @@ import type { LayoutProps } from "@solidrt/core"
 import { theme } from "./theme"
 import { typeStyle } from "./typography"
 import { space } from "./spacing"
-import type { StyleProps } from "./types"
+import type { StyleProps, TransitionProps } from "./types"
+import { splitTransition, transitionEndFor } from "./types"
 
-export interface CardProps {
+export interface CardProps extends TransitionProps {
   children?: any
   // Optional heading rendered above the content.
   title?: string
@@ -25,8 +26,12 @@ export function Card(props: CardProps) {
   let radius = () => styled().borderRadius ?? theme.radius.lg
   let hasBorder = () => styled().borderWidth != null || styled().borderColor != null
 
+  let split = () => splitTransition(props.transition)
+
   return (
     <view
+      transition={split().root}
+      onTransitionEnd={transitionEndFor("root", props.onTransitionEnd)}
       ref={props.ref}
       repaintBoundary
       flexDirection="column"
@@ -39,7 +44,7 @@ export function Card(props: CardProps) {
       rotate={styled().rotate}
       opacity={styled().opacity}
     >
-      <d-rect color={bg()} radius={radius()} />
+      <d-rect transition={split().background} onTransitionEnd={transitionEndFor("background", props.onTransitionEnd)} color={bg()} radius={radius()} />
       <Show when={props.title != null}>
         <text color={theme.color.text} {...typeStyle("title")}>
           {props.title}
@@ -49,6 +54,8 @@ export function Card(props: CardProps) {
       <Show when={hasBorder()}>
         <d-rect
           drawStyle="stroke"
+          transition={split().border}
+          onTransitionEnd={transitionEndFor("border", props.onTransitionEnd)}
           color={styled().borderColor ?? theme.color.border}
           strokeWidth={styled().borderWidth ?? theme.borderWidth.sm}
           radius={radius()}

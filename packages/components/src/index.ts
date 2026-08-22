@@ -60,4 +60,13 @@ export {
 export { Density, type DensityProps, densityScale } from "./density"
 export { typeStyle, typeWeight, lightOnDark } from "./typography"
 export { space } from "./spacing"
-export type { StyleProps, TextLayoutProps, Option } from "./types"
+export type {
+  StyleProps,
+  TextLayoutProps,
+  Option,
+  TransitionProps,
+  ComponentTransition,
+  TransitionViewProp,
+  TransitionStyleProp,
+  TransitionScrollProp,
+} from "./types"

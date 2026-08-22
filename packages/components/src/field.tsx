@@ -3,8 +3,10 @@ import type { LayoutProps } from "@solidrt/core"
 import { theme } from "./theme"
 import { space } from "./spacing"
 import { typeStyle } from "./typography"
+import type { TransitionProps } from "./types"
+import { splitTransition, transitionEndFor } from "./types"
 
-export interface FieldProps {
+export interface FieldProps extends TransitionProps {
   // Label above the control.
   label?: string
   // Help text under the control; replaced by `error` while one is set.
@@ -25,7 +27,7 @@ export interface FieldProps {
 // `description` if that matters.
 export function Field(props: FieldProps) {
   return (
-    <view flexDirection="column" gap={space("sm")} {...props.layout}>
+    <view flexDirection="column" gap={space("sm")} transition={splitTransition(props.transition).root} onTransitionEnd={transitionEndFor("root", props.onTransitionEnd)} {...props.layout}>
       <Show when={props.label != null}>
         <text color={theme.color.text} {...typeStyle("label")}>
           {props.label}

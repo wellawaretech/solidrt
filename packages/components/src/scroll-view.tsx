@@ -1,8 +1,11 @@
 import { createPan, createScroll } from "@solidrt/core"
 import type { LayoutProps, PointerProps, WheelEvent } from "@solidrt/core"
-import type { StyleProps } from "./types"
+import type { StyleProps, TransitionProps, TransitionScrollProp, TransitionStyleProp, TransitionViewProp } from "./types"
+import { splitTransition, transitionEndFor } from "./types"
 
-export interface ScrollViewProps extends PointerProps {
+export interface ScrollViewProps
+  extends PointerProps,
+    TransitionProps<TransitionViewProp | TransitionStyleProp | TransitionScrollProp> {
   children?: any
   ref?: (node: { id: number }) => void
   layout?: LayoutProps
@@ -46,6 +49,23 @@ export function ScrollView(props: ScrollViewProps) {
     else scroll.scrollBy(e.deltaX, e.deltaY)
   }
 
+  // The viewport owns the scroll offset, the outer box everything else: a
+  // scrollX/scrollY entry is lifted out of the root declaration so that a
+  // shared `all` does not animate opacity twice (outer times viewport).
+  let split = () => {
+    let t = splitTransition(props.transition)
+    if (t.root == null || typeof t.root === "string") return { ...t, viewport: t.root }
+    let { scrollX, scrollY, ...rest } = t.root as Record<string, unknown>
+    let viewport: Record<string, unknown> = {}
+    if (scrollX !== undefined) viewport.scrollX = scrollX
+    if (scrollY !== undefined) viewport.scrollY = scrollY
+    if (rest.all !== undefined) viewport.all = rest.all
+    return {
+      ...t,
+      root: Object.keys(rest).length ? (rest as typeof t.root) : undefined,
+      viewport: Object.keys(viewport).length ? (viewport as typeof t.root) : undefined,
+    }
+  }
   let direction = () => (props.horizontal ? "row" : "column")
   let hasBackground = () =>
     props.style?.backgroundColor != null || props.style?.borderRadius != null
@@ -53,6 +73,8 @@ export function ScrollView(props: ScrollViewProps) {
 
   return (
     <view
+      transition={split().root}
+      onTransitionEnd={transitionEndFor("root", props.onTransitionEnd)}
       ref={props.ref}
       {...props.layout}
       x={props.style?.x}
@@ -70,6 +92,8 @@ export function ScrollView(props: ScrollViewProps) {
     >
       {hasBackground() ? (
         <d-rect
+          transition={split().background}
+          onTransitionEnd={transitionEndFor("background", props.onTransitionEnd)}
           color={props.style?.backgroundColor ?? "transparent"}
           radius={props.style?.borderRadius}
         />
@@ -82,6 +106,8 @@ export function ScrollView(props: ScrollViewProps) {
         flexDirection={direction()}
         scrollX={scroll.offset().x}
         scrollY={scroll.offset().y}
+        transition={split().viewport}
+        onTransitionEnd={transitionEndFor("root", props.onTransitionEnd)}
         {...pan.handlers}
         onWheel={onWheel}
       >
@@ -92,6 +118,8 @@ export function ScrollView(props: ScrollViewProps) {
       {hasBorder() ? (
         <d-rect
           drawStyle="stroke"
+          transition={split().border}
+          onTransitionEnd={transitionEndFor("border", props.onTransitionEnd)}
           color={props.style?.borderColor ?? "transparent"}
           strokeWidth={props.style?.borderWidth}
           radius={props.style?.borderRadius}

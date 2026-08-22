@@ -22,7 +22,8 @@ import type { Color, Gradient, KeyEvent, LayoutProps, PointerEvent, TextInputHin
 import type { Element } from "solid-js"
 import type { MeasureTextOptions, TextRunRange } from "flux:rendertree"
 import { registerNavAction } from "./focus-nav"
-import type { StyleProps } from "./types"
+import type { StyleProps, TransitionProps } from "./types"
+import { splitTransition, transitionEndFor } from "./types"
 import { theme } from "./theme"
 import { policy } from "./policy"
 import { space } from "./spacing"
@@ -44,7 +45,7 @@ export type LineRender = {
   color: () => Color | Gradient
 }
 
-export interface EditorFieldProps {
+export interface EditorFieldProps extends TransitionProps {
   /**
    * Creates the buffer the field edits, given the grapheme `step` from the
    * field's geometry (createTextEditorLayout.step); called once.
@@ -290,8 +291,12 @@ export function EditorField(props: EditorFieldProps) {
     return Math.max(rowHeight(), Math.min(content, max))
   }
 
+  let split = () => splitTransition(props.transition)
+
   return (
     <view
+      transition={split().root}
+      onTransitionEnd={transitionEndFor("root", props.onTransitionEnd)}
       ref={(n: { id: number }) => {
         node = n
         unregisterNav?.()
@@ -318,9 +323,11 @@ export function EditorField(props: EditorFieldProps) {
       onKeyDown={handleKeyDown}
       onTextInput={handleTextInput}
     >
-      <d-rect color={surfaceColor()} radius={borderRadius()} />
+      <d-rect transition={split().background} onTransitionEnd={transitionEndFor("background", props.onTransitionEnd)} color={surfaceColor()} radius={borderRadius()} />
       <d-rect
         drawStyle="stroke"
+        transition={split().border}
+        onTransitionEnd={transitionEndFor("border", props.onTransitionEnd)}
         color={borderColor()}
         strokeWidth={borderWidth()}
         radius={borderRadius()}

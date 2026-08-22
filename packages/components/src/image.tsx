@@ -1,8 +1,9 @@
 import { createImage, createEffect, Loading, Errored, pct } from "@solidrt/core"
 import type { ImageSource, LayoutProps, Pct, PointerProps, TextureProps } from "@solidrt/core"
-import type { StyleProps } from "./types"
+import type { StyleProps, TransitionProps } from "./types"
+import { splitTransition, transitionEndFor } from "./types"
 
-export interface ImageProps extends PointerProps {
+export interface ImageProps extends PointerProps, TransitionProps {
   src: string | Uint8Array
   /**
    * How the image maps into the Image's box (CSS object-fit): "fill"
@@ -38,6 +39,7 @@ function FallbackTexture(props: {
   height?: number | Pct
 }) {
   let tex = createImage(() => props.src)
+
   return (
     <Errored fallback={(_err: unknown) => null}>
       <texture src={tex()} fit={props.fit} width={props.width} height={props.height} />
@@ -69,9 +71,12 @@ export function Image(props: ImageProps) {
   let texW = () => (props.fit != null ? pct(100) : typeof props.layout?.width === "number" ? props.layout.width : undefined)
   let texH = () =>
     props.fit != null ? pct(100) : typeof props.layout?.height === "number" ? props.layout.height : undefined
+  let split = () => splitTransition(props.transition)
 
   return (
     <view
+      transition={split().root}
+      onTransitionEnd={transitionEndFor("root", props.onTransitionEnd)}
       {...props.layout}
       overflow={props.style?.borderRadius != null ? "hidden" : props.layout?.overflow}
       clipRadius={props.style?.borderRadius}
@@ -94,7 +99,7 @@ export function Image(props: ImageProps) {
       pointerEvents={props.pointerEvents}
     >
       {props.style?.backgroundColor != null ? (
-        <d-rect color={props.style?.backgroundColor} radius={props.style?.borderRadius} />
+        <d-rect transition={split().background} onTransitionEnd={transitionEndFor("background", props.onTransitionEnd)} color={props.style?.backgroundColor} radius={props.style?.borderRadius} />
       ) : null}
       <Loading fallback={null}>
         <Errored
@@ -110,6 +115,8 @@ export function Image(props: ImageProps) {
       {hasBorder() ? (
         <d-rect
           drawStyle="stroke"
+          transition={split().border}
+          onTransitionEnd={transitionEndFor("border", props.onTransitionEnd)}
           color={props.style?.borderColor ?? "transparent"}
           strokeWidth={props.style?.borderWidth}
           radius={props.style?.borderRadius}

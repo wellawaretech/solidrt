@@ -33,6 +33,19 @@ settled animations produce no frames. Note: a paused clock (scale 0) with
 a mid-flight track keeps producing cheap present-only frames (advance
 writes nothing, Commit::Reused); a stepped frame advances one period.
 
+## Status (2026-08-22): animatable set extended
+
+Added, same read/write pattern as the originals: `scrollX`/`scrollY`
+(view; a ScrollView can spring its offset), `originX`/`originY` (view,
+pixel form only - an unset or fraction origin has no pixel value and
+snaps), `perspective`, `clipRadius` (view, single-number form like
+`radius`), `srcX`/`srcY`/`srcW`/`srcH` (texture crop, both forms; w/h only
+from an explicit value), `onLength`/`offLength` (line dash). Layout
+properties (`width`, `padding`, `fontSize`, ...) stay out on purpose:
+they would relayout every frame, a separate decision. The components now
+forward `transition`/`onTransitionEnd` to their root node (ScrollView to
+its viewport), so the declaration works through `@solidrt/components`.
+
 ## Status: stage 2 landed (2026-08-19)
 
 All four stage-2 items, verified on the release client:

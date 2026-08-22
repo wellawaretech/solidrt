@@ -5,9 +5,10 @@ import { theme } from "./theme"
 import { policy } from "./policy"
 import { space } from "./spacing"
 import { typeStyle, lightOnDark } from "./typography"
-import type { Option, StyleProps } from "./types"
+import type { Option, StyleProps, TransitionProps } from "./types"
+import { splitTransition, transitionEndFor } from "./types"
 
-export interface SegmentedControlProps {
+export interface SegmentedControlProps extends TransitionProps {
   options: Option[]
   // Controlled selected value. If omitted, the control is uncontrolled.
   value?: unknown
@@ -59,8 +60,12 @@ export function SegmentedControl(props: SegmentedControlProps) {
   let label = (active: boolean) =>
     props.disabled ? theme.color.textMuted : active ? theme.color.onPrimary : theme.color.text
 
+  let split = () => splitTransition(props.transition)
+
   return (
     <view
+      transition={split().root}
+      onTransitionEnd={transitionEndFor("root", props.onTransitionEnd)}
       flexDirection="row"
       gap={DIVIDER}
       {...props.layout}
@@ -70,7 +75,7 @@ export function SegmentedControl(props: SegmentedControlProps) {
       rotate={styled().rotate}
       opacity={styled().opacity}
     >
-      <d-rect color={theme.color.border} radius={radius()} />
+      <d-rect transition={split().background} onTransitionEnd={transitionEndFor("background", props.onTransitionEnd)} color={theme.color.border} radius={radius()} />
       <For each={props.options}>
         {(opt, i) => {
           let active = () => value() === opt.value
@@ -81,7 +86,7 @@ export function SegmentedControl(props: SegmentedControlProps) {
             press.hovered() && !props.disabled && policy.interaction !== "touch"
               ? theme.color.overlayHover
               : "transparent"
-          return (
+  return (
             <view
               ref={press.ref}
               repaintBoundary

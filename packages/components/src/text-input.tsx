@@ -2,10 +2,10 @@ import { untrack } from "@solidrt/core"
 import { createTextBuffer } from "@solidrt/core/text-input"
 import type { LayoutProps, TextInputHints } from "@solidrt/core"
 import { EditorField } from "./editor-field"
-import type { StyleProps } from "./types"
+import type { StyleProps, TransitionProps } from "./types"
 import { theme } from "./theme"
 
-export interface TextInputProps {
+export interface TextInputProps extends TransitionProps {
   value?: string
   defaultValue?: string
   onInput?: (value: string) => void
@@ -46,6 +46,8 @@ export function TextInput(props: TextInputProps) {
   let value = (): string => ""
   return (
     <EditorField
+      transition={props.transition}
+      onTransitionEnd={props.onTransitionEnd}
       buffer={(step) => {
         let buffer = createTextBuffer({
           value: () => props.value,

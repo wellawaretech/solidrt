@@ -5,9 +5,10 @@ import { theme } from "./theme"
 import { policy } from "./policy"
 import { space } from "./spacing"
 import { typeStyle } from "./typography"
-import type { StyleProps } from "./types"
+import type { StyleProps, TransitionProps } from "./types"
+import { splitTransition, transitionEndFor } from "./types"
 
-export interface ItemProps {
+export interface ItemProps extends TransitionProps {
   // Leading content: an icon, avatar, checkbox, ...
   startContent?: any
   // Primary text. A string/number renders as themed body text; anything else
@@ -63,8 +64,12 @@ export function Item(props: ItemProps) {
   let description = children(() => props.description)
   let descriptionIsText = () => typeof description() === "string" || typeof description() === "number"
 
+  let split = () => splitTransition(props.transition)
+
   return (
     <view
+      transition={split().root}
+      onTransitionEnd={transitionEndFor("root", props.onTransitionEnd)}
       ref={(n: { id: number }) => {
         press.ref(n)
         props.ref?.(n)
@@ -90,7 +95,7 @@ export function Item(props: ItemProps) {
       focusable={(props.focusable ?? true) && interactive()}
       pointerEvents={props.disabled ? "none" : undefined}
     >
-      <d-rect color={bg()} radius={radius()} />
+      <d-rect transition={split().background} onTransitionEnd={transitionEndFor("background", props.onTransitionEnd)} color={bg()} radius={radius()} />
       <d-rect color={overlay(press.state())} radius={radius()} />
       {props.startContent}
       <view flexDirection="column" flexGrow={1} flexShrink={1} gap={2}>

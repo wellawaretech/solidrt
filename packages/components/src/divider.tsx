@@ -1,8 +1,9 @@
 import type { LayoutProps } from "@solidrt/core"
 import { theme } from "./theme"
-import type { StyleProps } from "./types"
+import type { StyleProps, TransitionProps } from "./types"
+import { splitTransition, transitionEndFor } from "./types"
 
-export interface DividerProps {
+export interface DividerProps extends TransitionProps {
   // Line direction. Horizontal (default) is a full-width rule; vertical is a
   // full-height rule for use inside a row.
   orientation?: "horizontal" | "vertical"
@@ -22,14 +23,18 @@ export function Divider(props: DividerProps) {
   let styled = () => ({ ...theme.components.divider, ...props.style })
   let color = () => styled().backgroundColor ?? theme.color.border
 
+  let split = () => splitTransition(props.transition)
+
   return (
     <view
+      transition={split().root}
+      onTransitionEnd={transitionEndFor("root", props.onTransitionEnd)}
       width={vertical() ? thickness() : "auto"}
       height={vertical() ? "auto" : thickness()}
       alignSelf="stretch"
       {...props.layout}
     >
-      <d-rect color={color()} />
+      <d-rect transition={split().background} onTransitionEnd={transitionEndFor("background", props.onTransitionEnd)} color={color()} />
     </view>
   )
 }

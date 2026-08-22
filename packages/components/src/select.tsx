@@ -5,10 +5,11 @@ import { theme } from "./theme"
 import { policy } from "./policy"
 import { space } from "./spacing"
 import { typeStyle } from "./typography"
-import type { Option, StyleProps } from "./types"
+import type { Option, StyleProps, TransitionProps } from "./types"
+import { splitTransition, transitionEndFor } from "./types"
 import { Icon } from "./icon"
 
-export interface SelectProps {
+export interface SelectProps extends TransitionProps {
   options: Option[]
   // Controlled selected value. If omitted, the select is uncontrolled.
   value?: unknown
@@ -170,8 +171,12 @@ export function Select(props: SelectProps) {
       : "transparent"
 
 
+  let split = () => splitTransition(props.transition)
+
   return (
     <view
+      transition={split().root}
+      onTransitionEnd={transitionEndFor("root", props.onTransitionEnd)}
       ref={(n: { id: number }) => {
         press.ref(n)
         trigger = n
@@ -194,7 +199,7 @@ export function Select(props: SelectProps) {
       {...press.handlers}
       pointerEvents={props.disabled ? "none" : undefined}
     >
-      <d-rect color={style().backgroundColor ?? "transparent"} radius={style().borderRadius} />
+      <d-rect transition={split().background} onTransitionEnd={transitionEndFor("background", props.onTransitionEnd)} color={style().backgroundColor ?? "transparent"} radius={style().borderRadius} />
       <d-rect color={overlay()} radius={style().borderRadius} />
       <Show
         when={selected()}
@@ -227,6 +232,8 @@ export function Select(props: SelectProps) {
       <Show when={(style().borderWidth ?? 0) > 0}>
         <d-rect
           drawStyle="stroke"
+          transition={split().border}
+          onTransitionEnd={transitionEndFor("border", props.onTransitionEnd)}
           color={style().borderColor ?? "transparent"}
           strokeWidth={style().borderWidth}
           radius={style().borderRadius}

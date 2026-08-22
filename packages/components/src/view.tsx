@@ -1,7 +1,8 @@
 import type { LayoutProps, PointerProps } from "@solidrt/core"
-import type { StyleProps } from "./types"
+import type { StyleProps, TransitionProps } from "./types"
+import { splitTransition, transitionEndFor } from "./types"
 
-export interface ViewProps extends PointerProps {
+export interface ViewProps extends PointerProps, TransitionProps {
   children?: any
   ref?: (node: { id: number }) => void
   layout?: LayoutProps
@@ -13,8 +14,12 @@ export function View(props: ViewProps) {
     props.style?.backgroundColor != null || props.style?.borderRadius != null
   let hasBorder = () => (props.style?.borderWidth ?? 0) > 0
 
+  let split = () => splitTransition(props.transition)
+
   return (
     <view
+      transition={split().root}
+      onTransitionEnd={transitionEndFor("root", props.onTransitionEnd)}
       ref={props.ref}
       {...props.layout}
       x={props.style?.x}
@@ -45,6 +50,8 @@ export function View(props: ViewProps) {
     >
       {hasBackground() ? (
         <d-rect
+          transition={split().background}
+          onTransitionEnd={transitionEndFor("background", props.onTransitionEnd)}
           color={props.style?.backgroundColor ?? "transparent"}
           radius={props.style?.borderRadius}
         />
@@ -53,6 +60,8 @@ export function View(props: ViewProps) {
       {hasBorder() ? (
         <d-rect
           drawStyle="stroke"
+          transition={split().border}
+          onTransitionEnd={transitionEndFor("border", props.onTransitionEnd)}
           color={props.style?.borderColor ?? "transparent"}
           strokeWidth={props.style?.borderWidth}
           radius={props.style?.borderRadius}

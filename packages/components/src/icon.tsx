@@ -1,8 +1,10 @@
 import { createMemo, parseSvg, For } from "@solidrt/core"
 import type { LayoutProps } from "@solidrt/core"
 import { theme } from "./theme"
+import type { TransitionProps } from "./types"
+import { splitTransition, transitionEndFor } from "./types"
 
-export interface IconProps {
+export interface IconProps extends TransitionProps {
   // An SVG document as a string: an imported `.svg` asset, a `lucide-static`
   // string export, or an inline template literal. Monochrome icons that stroke/
   // fill with `currentColor` (Lucide, Feather, Heroicons, ...) get recolored by
@@ -31,6 +33,8 @@ export function Icon(props: IconProps) {
 
   return (
     <view
+      transition={splitTransition(props.transition).root}
+      onTransitionEnd={transitionEndFor("root", props.onTransitionEnd)}
       repaintBoundary
       pointerEvents="all"
       width={size()}

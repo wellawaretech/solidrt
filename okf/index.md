@@ -127,6 +127,13 @@ Shaped, not started.
 - **[Move the srt CLI fully into flux](backlog/cli-flux-migration.md)** [2026-07-13]
   Collapse the repl/dev-server split into one flux process so there is exactly
   one rebuild-and-push path, leaving Bun only as a bundler subprocess.
+- **[Component transitions cannot reach a control's internal paint](backlog/component-transitions-internal-paint.md)** [2026-08-22]
+  The components forward `transition` to their root view and to the
+  background/border rects drawn for `style`, but a control's own parts - the
+  Switch knob, Slider thumb, Checkbox mark, Radio dot, ProgressBar fill,
+  Spinner, Icon paths, and the chrome of NavShell/ContextMenu/Field - are not
+  addressable, so the motion users most want on a control (the knob sliding)
+  still snaps.
 - **[Content-damage perf watchpoints](backlog/content-damage-perf.md)** [2026-08-10]
   One remaining perf pothole in the GPU-content-damage path (the O(nodes)
   walk, unrealistic at current app scales; symptom and drop-in fix recorded);

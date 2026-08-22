@@ -5,6 +5,8 @@ import { theme } from "./theme"
 import { policy } from "./policy"
 import { space } from "./spacing"
 import { typeStyle } from "./typography"
+import type { TransitionProps } from "./types"
+import { splitTransition, transitionEndFor } from "./types"
 
 export interface ContextMenuItem {
   label: string
@@ -12,7 +14,7 @@ export interface ContextMenuItem {
   disabled?: boolean
 }
 
-export interface ContextMenuProps {
+export interface ContextMenuProps extends TransitionProps {
   items: ContextMenuItem[]
   // The content the menu attaches to.
   children?: any
@@ -177,6 +179,8 @@ export function ContextMenu(props: ContextMenuProps) {
 
   return (
     <view
+      transition={splitTransition(props.transition).root}
+      onTransitionEnd={transitionEndFor("root", props.onTransitionEnd)}
       onPointerDown={handleDown}
       onPointerMove={handleMove}
       onPointerUp={cancelHold}

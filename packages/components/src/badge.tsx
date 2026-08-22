@@ -2,11 +2,12 @@ import { Show, children } from "@solidrt/core"
 import type { LayoutProps } from "@solidrt/core"
 import { theme } from "./theme"
 import { typeStyle, lightOnDark } from "./typography"
-import type { StyleProps } from "./types"
+import type { StyleProps, TransitionProps } from "./types"
+import { splitTransition, transitionEndFor } from "./types"
 
 export type BadgeVariant = "primary" | "neutral" | "danger"
 
-export interface BadgeProps {
+export interface BadgeProps extends TransitionProps {
   // A string/number renders as the themed pill label; anything else is rendered
   // as-is (an icon, a dot, ...).
   children?: any
@@ -46,8 +47,12 @@ export function Badge(props: BadgeProps) {
   let isText = () => typeof resolved() === "string" || typeof resolved() === "number"
   let labelOnDark = () => lightOnDark(fg(), bg())
 
+  let split = () => splitTransition(props.transition)
+
   return (
     <view
+      transition={split().root}
+      onTransitionEnd={transitionEndFor("root", props.onTransitionEnd)}
       flexDirection="row"
       alignItems="center"
       justifyContent="center"
@@ -62,7 +67,7 @@ export function Badge(props: BadgeProps) {
       rotate={styled().rotate}
       opacity={styled().opacity}
     >
-      <d-rect color={bg()} radius={radius()} />
+      <d-rect transition={split().background} onTransitionEnd={transitionEndFor("background", props.onTransitionEnd)} color={bg()} radius={radius()} />
       <Show when={isText()} fallback={resolved()}>
         <text color={fg()} {...typeStyle("label", labelOnDark())}>
           {resolved()}

@@ -6,12 +6,13 @@ import { space } from "./spacing"
 import { typeStyle, lightOnDark } from "./typography"
 import { Spinner } from "./spinner"
 import type { LayoutProps } from "@solidrt/core"
-import type { StyleProps } from "./types"
+import type { StyleProps, TransitionProps } from "./types"
+import { splitTransition, transitionEndFor } from "./types"
 
 export type ButtonVariant = "primary" | "secondary" | "ghost" | "danger"
 export type ButtonSize = "sm" | "md" | "lg"
 
-export interface ButtonProps {
+export interface ButtonProps extends TransitionProps {
   // A string/number is rendered as the themed label; anything else is rendered
   // as-is, so a button can hold custom content (an icon, a row, ...).
   children?: any
@@ -104,8 +105,12 @@ export function Button(props: ButtonProps) {
     scale: (styled().scale ?? 1) * (press.pressed() && policy.motion !== "none" ? 0.97 : 1),
   })
 
+  let split = () => splitTransition(props.transition)
+
   return (
     <view
+      transition={split().root}
+      onTransitionEnd={transitionEndFor("root", props.onTransitionEnd)}
       ref={(n: { id: number }) => {
         press.ref(n)
         props.ref?.(n)
@@ -130,7 +135,7 @@ export function Button(props: ButtonProps) {
       focusable={(props.focusable ?? true) && props.disabled !== true}
       pointerEvents={props.disabled ? "none" : undefined}
     >
-      <d-rect color={style().backgroundColor ?? "transparent"} radius={style().borderRadius} />
+      <d-rect transition={split().background} onTransitionEnd={transitionEndFor("background", props.onTransitionEnd)} color={style().backgroundColor ?? "transparent"} radius={style().borderRadius} />
       <d-rect color={overlay(press.state())} radius={style().borderRadius} />
       <Show when={isText()} fallback={resolved()}>
         <text color={press.pending() ? "transparent" : label()} {...typeStyle("body", labelOnDark())}>
@@ -145,6 +150,8 @@ export function Button(props: ButtonProps) {
       <Show when={(style().borderWidth ?? 0) > 0}>
         <d-rect
           drawStyle="stroke"
+          transition={split().border}
+          onTransitionEnd={transitionEndFor("border", props.onTransitionEnd)}
           color={style().borderColor ?? "transparent"}
           strokeWidth={style().borderWidth}
           radius={style().borderRadius}

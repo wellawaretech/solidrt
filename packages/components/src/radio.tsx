@@ -4,7 +4,8 @@ import { createPress } from "./press"
 import { theme } from "./theme"
 import { densityScale } from "./density"
 import { typeStyle } from "./typography"
-import type { StyleProps } from "./types"
+import type { StyleProps, TransitionProps } from "./types"
+import { splitTransition, transitionEndFor } from "./types"
 
 // Shared selection state for a group. Created and consumed within this module, so
 // RadioGroup/Radio are a self-contained pair, not a cross-component dependency.
@@ -51,7 +52,7 @@ export function RadioGroup(props: RadioGroupProps) {
   )
 }
 
-export interface RadioProps {
+export interface RadioProps extends TransitionProps {
   // This option's value; selecting it makes it the group's value.
   value: unknown
   disabled?: boolean
@@ -87,6 +88,8 @@ export function Radio(props: RadioProps) {
 
   return (
     <view
+      transition={splitTransition(props.transition).root}
+      onTransitionEnd={transitionEndFor("root", props.onTransitionEnd)}
       ref={press.ref}
       repaintBoundary
       flexDirection="row"

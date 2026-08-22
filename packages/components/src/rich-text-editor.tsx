@@ -3,11 +3,11 @@ import type { LayoutProps, TextInputHints } from "@solidrt/core"
 import type { TextRunRange } from "flux:rendertree"
 import { EditorField } from "./editor-field"
 import { createDocumentBuffer, type Attributes, type Document, type DocumentBuffer } from "./rich-text-document"
-import type { StyleProps } from "./types"
+import type { StyleProps, TransitionProps } from "./types"
 import { theme } from "./theme"
 import { policy } from "./policy"
 
-export interface RichTextEditorProps {
+export interface RichTextEditorProps extends TransitionProps {
   value?: Document
   defaultValue?: Document
   onInput?: (value: Document) => void
@@ -111,6 +111,8 @@ export function RichTextEditor(props: RichTextEditorProps) {
 
   return (
     <EditorField
+      transition={props.transition}
+      onTransitionEnd={props.onTransitionEnd}
       buffer={(step) => {
         editor = createDocumentBuffer({
           value: () => props.value,

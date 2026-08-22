@@ -2,9 +2,10 @@ import { arena, createSignal, getBoundingBox, onLayout, onSettled } from "@solid
 import type { LayoutProps, PointerEvent } from "@solidrt/core"
 import { theme } from "./theme"
 import { densityScale } from "./density"
-import type { StyleProps } from "./types"
+import type { StyleProps, TransitionProps } from "./types"
+import { splitTransition, transitionEndFor } from "./types"
 
-export interface SliderProps {
+export interface SliderProps extends TransitionProps {
   // Controlled value. If omitted, the slider is uncontrolled.
   value?: number
   defaultValue?: number
@@ -97,6 +98,8 @@ export function Slider(props: SliderProps) {
 
   return (
     <view
+      transition={splitTransition(props.transition).root}
+      onTransitionEnd={transitionEndFor("root", props.onTransitionEnd)}
       ref={(n: { id: number }) => (track = n)}
       repaintBoundary
       flexDirection="row"

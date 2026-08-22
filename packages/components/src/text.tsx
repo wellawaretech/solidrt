@@ -1,6 +1,7 @@
 import { createMemo } from "@solidrt/core"
 import type { PointerProps } from "@solidrt/core"
-import type { StyleProps, TextLayoutProps } from "./types"
+import type { StyleProps, TextLayoutProps, TransitionProps, TransitionViewProp } from "./types"
+import { splitTransition, transitionEndFor } from "./types"
 import { theme, type TextVariant } from "./theme"
 import { policy } from "./policy"
 import { typeWeight } from "./typography"
@@ -9,7 +10,7 @@ import { typeWeight } from "./typography"
 // make sense as a text fill; style.color takes raw values for anything else.
 export type TextColor = "text" | "textMuted" | "primary" | "onPrimary" | "danger"
 
-export interface TextProps extends PointerProps {
+export interface TextProps extends PointerProps, TransitionProps<TransitionViewProp | "color"> {
   children?: any
   // Typography role from the theme's type scale; defaults to "body". Explicit
   // layout font props override the role's fields individually. fontSize
@@ -54,8 +55,25 @@ export function Text(props: TextProps) {
     return out
   })
 
+  // The text node owns `color`; everything else a Text animates is on the
+  // wrapper view. A shorthand or `all` reaches both.
+  let split = () => {
+    let t = splitTransition(props.transition)
+    if (t.root == null || typeof t.root === "string") return { root: t.root, text: t.root }
+    let { color, ...rest } = t.root as Record<string, unknown>
+    let text: Record<string, unknown> = {}
+    if (color !== undefined) text.color = color
+    if (rest.all !== undefined) text.all = rest.all
+    return {
+      root: Object.keys(rest).length ? (rest as typeof t.root) : undefined,
+      text: Object.keys(text).length ? (text as typeof t.root) : undefined,
+    }
+  }
+
   return (
     <view
+      transition={split().root}
+      onTransitionEnd={transitionEndFor("root", props.onTransitionEnd)}
       ref={props.ref}
       {...box()}
       x={props.style?.x}
@@ -77,6 +95,8 @@ export function Text(props: TextProps) {
       pointerEvents={props.pointerEvents}
     >
       <text
+        transition={split().text}
+        onTransitionEnd={transitionEndFor("root", props.onTransitionEnd)}
         color={color()}
         fontFamily={props.layout?.fontFamily ?? theme.text.fontFamily}
         fontSize={size()}

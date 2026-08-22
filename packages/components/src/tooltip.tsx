@@ -4,8 +4,10 @@ import { theme } from "./theme"
 import { policy } from "./policy"
 import { space } from "./spacing"
 import { typeStyle } from "./typography"
+import type { TransitionProps } from "./types"
+import { splitTransition, transitionEndFor } from "./types"
 
-export interface TooltipProps {
+export interface TooltipProps extends TransitionProps {
   // The tooltip body. A string/number renders as themed text; anything else
   // renders as-is.
   content?: any
@@ -86,6 +88,8 @@ export function Tooltip(props: TooltipProps) {
         pointerEvents="none"
       >
         <d-rect
+          transition={split().background}
+          onTransitionEnd={transitionEndFor("background", props.onTransitionEnd)}
           color={theme.components.tooltip?.backgroundColor ?? theme.color.surfaceAlt}
           radius={theme.components.tooltip?.borderRadius ?? theme.radius.sm}
         />
@@ -96,6 +100,8 @@ export function Tooltip(props: TooltipProps) {
         </Show>
         <d-rect
           drawStyle="stroke"
+          transition={split().border}
+          onTransitionEnd={transitionEndFor("border", props.onTransitionEnd)}
           color={theme.components.tooltip?.borderColor ?? theme.color.border}
           strokeWidth={theme.components.tooltip?.borderWidth ?? theme.borderWidth.sm}
           radius={theme.components.tooltip?.borderRadius ?? theme.radius.sm}
@@ -104,8 +110,12 @@ export function Tooltip(props: TooltipProps) {
     )
   }
 
+  let split = () => splitTransition(props.transition)
+
   return (
     <view
+      transition={split().root}
+      onTransitionEnd={transitionEndFor("root", props.onTransitionEnd)}
       ref={(n: { id: number }) => (anchor = n)}
       onPointerEnter={enter}
       onPointerLeave={hide}

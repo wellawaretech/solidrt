@@ -5,6 +5,8 @@ import { theme } from "./theme"
 import { policy } from "./policy"
 import { space } from "./spacing"
 import { typeStyle } from "./typography"
+import type { TransitionProps } from "./types"
+import { splitTransition, transitionEndFor } from "./types"
 
 export interface NavItem {
   value: unknown
@@ -14,7 +16,7 @@ export interface NavItem {
   icon?: any
 }
 
-export interface NavShellProps {
+export interface NavShellProps extends TransitionProps {
   items: NavItem[]
   // Controlled selected value. If omitted, the shell is uncontrolled.
   value?: unknown
@@ -147,7 +149,7 @@ export function NavShell(props: NavShellProps) {
   // Children order is (content, nav): "column" puts the nav under the content,
   // "row-reverse" puts it to the left, and the content node never moves.
   return (
-    <view flexDirection={policy.navigation === "bottomTabs" ? "column" : "row-reverse"} {...props.layout}>
+    <view flexDirection={policy.navigation === "bottomTabs" ? "column" : "row-reverse"} transition={splitTransition(props.transition).root} onTransitionEnd={transitionEndFor("root", props.onTransitionEnd)} {...props.layout}>
       <view flex={1} flexDirection="column">
         {props.children}
       </view>

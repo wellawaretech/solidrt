@@ -1,8 +1,10 @@
 import { createMemo } from "@solidrt/core"
 import type { LayoutProps } from "@solidrt/core"
 import qrcode from "qrcode-generator"
+import type { TransitionProps } from "./types"
+import { splitTransition, transitionEndFor } from "./types"
 
-export interface QrCodeProps {
+export interface QrCodeProps extends TransitionProps {
   // The string to encode (URL, pairing ticket, text, ...).
   data: string
   // Pixels per QR module (the smallest square). The grid is
@@ -62,7 +64,7 @@ export function QrCode(props: QrCodeProps) {
   let side = () => grid().n * size() + 2 * margin()
 
   return (
-    <view repaintBoundary width={side()} height={side()} {...props.layout}>
+    <view repaintBoundary width={side()} height={side()} transition={splitTransition(props.transition).root} onTransitionEnd={transitionEndFor("root", props.onTransitionEnd)} {...props.layout}>
       <d-rect color={props.background ?? "#ffffff"} radius={props.radius ?? RADIUS} />
       {grid().runs.map((run) => (
         <d-rect

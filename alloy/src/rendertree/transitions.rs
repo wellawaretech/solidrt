@@ -1,6 +1,6 @@
 use crate::color::{color_to_oklab, oklab_to_color};
 use crate::impellers::Color;
-use crate::rendertree::{Damage, Element, ElementKind};
+use crate::rendertree::{Damage, Element, ElementKind, OriginCoord};
 
 // Native transitions (okf/done/native-transitions.md): a `transition`
 // declaration on an element makes numeric property writes animate on the
@@ -29,7 +29,23 @@ pub enum AnimProp {
   X2,
   Y2,
   // View-only.
+  ScrollX,
+  ScrollY,
   Opacity,
+  // Transform origin, pixel form only (a fraction origin snaps).
+  OriginX,
+  OriginY,
+  Perspective,
+  // Clip corner radius, single-number form only (like Radius).
+  ClipRadius,
+  // Texture source crop (both forms; the crop is paint state, not geometry).
+  SrcX,
+  SrcY,
+  SrcW,
+  SrcH,
+  // Line dash pattern.
+  OnLength,
+  OffLength,
   Rotate,
   RotateX,
   RotateY,
@@ -536,7 +552,33 @@ impl Element {
     let scalar = match (&self.kind, prop) {
       (ElementKind::View(v), X) => Some(v.translate.map(|t| t.x).unwrap_or(0.0)),
       (ElementKind::View(v), Y) => Some(v.translate.map(|t| t.y).unwrap_or(0.0)),
+      (ElementKind::View(v), ScrollX) => Some(v.scroll.map(|s| s.x).unwrap_or(0.0)),
+      (ElementKind::View(v), ScrollY) => Some(v.scroll.map(|s| s.y).unwrap_or(0.0)),
       (ElementKind::View(v), Opacity) => Some(v.opacity.unwrap_or(1.0)),
+      // An unset origin is the box center, a fraction: neither has a pixel
+      // value to animate from.
+      (ElementKind::View(v), OriginX) => match v.origin_x {
+        Some(OriginCoord::Px(px)) => Some(px),
+        _ => None,
+      },
+      (ElementKind::View(v), OriginY) => match v.origin_y {
+        Some(OriginCoord::Px(px)) => Some(px),
+        _ => None,
+      },
+      (ElementKind::View(v), Perspective) => v.perspective,
+      (ElementKind::View(v), ClipRadius) => match v.clip_radius {
+        None => Some(0.0),
+        Some([a, b, c, d]) if a == b && b == c && c == d => Some(a),
+        Some(_) => None,
+      },
+      (ElementKind::Texture(t), SrcX) => Some(t.src_x.unwrap_or(0.0)),
+      (ElementKind::Texture(t), SrcY) => Some(t.src_y.unwrap_or(0.0)),
+      // Crop size defaults to the texture's own, unknowable here: animate
+      // only from an explicit value.
+      (ElementKind::Texture(t), SrcW) => t.src_w,
+      (ElementKind::Texture(t), SrcH) => t.src_h,
+      (ElementKind::Line(l), OnLength) => Some(l.on_length.unwrap_or(0.0)),
+      (ElementKind::Line(l), OffLength) => Some(l.off_length.unwrap_or(0.0)),
       (ElementKind::View(v), Rotate) => Some(v.rotate.unwrap_or(0.0)),
       (ElementKind::View(v), RotateX) => Some(v.rotate_x.unwrap_or(0.0)),
       (ElementKind::View(v), RotateY) => Some(v.rotate_y.unwrap_or(0.0)),
@@ -605,7 +647,19 @@ impl Element {
     match (&mut self.kind, prop) {
       (ElementKind::View(view), X) => view.set_x(Some(v)),
       (ElementKind::View(view), Y) => view.set_y(Some(v)),
+      (ElementKind::View(view), ScrollX) => view.set_scroll_x(Some(v)),
+      (ElementKind::View(view), ScrollY) => view.set_scroll_y(Some(v)),
       (ElementKind::View(view), Opacity) => view.set_opacity(Some(v)),
+      (ElementKind::View(view), OriginX) => view.set_origin_x(Some(OriginCoord::Px(v))),
+      (ElementKind::View(view), OriginY) => view.set_origin_y(Some(OriginCoord::Px(v))),
+      (ElementKind::View(view), Perspective) => view.set_perspective(Some(v)),
+      (ElementKind::View(view), ClipRadius) => view.set_clip_radius(Some([v.max(0.0); 4])),
+      (ElementKind::Texture(t), SrcX) => t.set_src_x(Some(v)),
+      (ElementKind::Texture(t), SrcY) => t.set_src_y(Some(v)),
+      (ElementKind::Texture(t), SrcW) => t.set_src_w(Some(v)),
+      (ElementKind::Texture(t), SrcH) => t.set_src_h(Some(v)),
+      (ElementKind::Line(l), OnLength) => l.set_on_length(Some(v)),
+      (ElementKind::Line(l), OffLength) => l.set_off_length(Some(v)),
       (ElementKind::View(view), Rotate) => view.set_rotate(Some(v)),
       (ElementKind::View(view), RotateX) => view.set_rotate_x(Some(v)),
       (ElementKind::View(view), RotateY) => view.set_rotate_y(Some(v)),

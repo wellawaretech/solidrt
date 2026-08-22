@@ -11,4 +11,6 @@ import { For } from "@solidrt/core"
 </ScrollView>
 ```
 
+`transition` goes to the viewport, so a scroll offset can spring instead of jump: `transition={{ scrollY: { duration: 250 } }}` makes every wheel notch and `scrollTo` retarget a spring toward the new offset (a spring rather than a tween, because the wheel retargets mid-flight).
+
 The underlying geometry primitive `createScroll` is available from `@solidrt/core` for building custom scrollers.
