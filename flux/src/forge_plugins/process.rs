@@ -6,7 +6,7 @@ use std::rc::Rc;
 
 use super::events::{emit_event, has_listeners, register_listener};
 use crate::logger::CtxLogger;
-use forge::process::{arch, platform, rss, SignalStream};
+use forge::process::{arch, home_dir, kill, platform, rss, SignalStream};
 
 // flux:process - process-level events. The first such surface flux owns on top
 // of its own event bus (register_listener + emit_event), separate from the UI
@@ -51,6 +51,24 @@ fn memory_usage(ctx: Ctx<'_>) -> rquickjs::Result<Object<'_>> {
   Ok(obj)
 }
 
+// flux:process also exposes the user's home directory and a portable kill:
+//
+//   import { homedir, kill } from "flux:process"
+//   homedir()  // "/home/me", or null when the environment names none
+//   kill(pid)  // true when the process was terminated (SIGKILL / TerminateProcess)
+//
+// homedir is the one path an app cannot derive otherwise: flux exposes no
+// environment, and a dev tool needs it to find the machine-wide ~/.solidrt
+// state. kill takes a pid only - no signal argument - matching the portable
+// contract of Child.kill in flux:subprocess.
+fn homedir_impl() -> Option<String> {
+  home_dir()
+}
+
+fn kill_impl(pid: u32) -> bool {
+  kill(pid)
+}
+
 // Signals that already have an OS watcher installed for this context, so
 // repeated on()/once() calls do not spawn duplicate watchers. A watcher removes
 // its own entry when it stops, so a later subscribe reinstalls it.
@@ -67,6 +85,8 @@ impl ModuleDef for ProcessModule {
     decl.declare("platform")?;
     decl.declare("arch")?;
     decl.declare("memoryUsage")?;
+    decl.declare("homedir")?;
+    decl.declare("kill")?;
     Ok(())
   }
 
@@ -85,6 +105,8 @@ impl ModuleDef for ProcessModule {
     exports.export("platform", platform())?;
     exports.export("arch", arch())?;
     exports.export("memoryUsage", Function::new(ctx.clone(), memory_usage)?)?;
+    exports.export("homedir", Function::new(ctx.clone(), homedir_impl)?)?;
+    exports.export("kill", Function::new(ctx.clone(), kill_impl)?)?;
     Ok(())
   }
 }

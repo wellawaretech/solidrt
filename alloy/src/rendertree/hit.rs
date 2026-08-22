@@ -236,14 +236,18 @@ fn hit_recursive(
     return false;
   }
 
-  if pointer_events == PointerEvents::Auto && !element.kind.is_in_bounds(local, &local_ctx) {
+  // Auto and All both need the point inside: a miss clips the subtree. Only
+  // None descends regardless, so a click-through container's children can opt
+  // back in. (All used to skip this gate and fall through to `true` below, so
+  // an All node anywhere in the tree captured every point outside it.)
+  if pointer_events != PointerEvents::None && !element.kind.is_in_bounds(local, &local_ctx) {
     return false;
   }
 
   let my_index = path.len();
   path.push((node_id, point, local));
 
-  if pointer_events == PointerEvents::All && element.kind.is_in_bounds(local, &local_ctx) {
+  if pointer_events == PointerEvents::All {
     return true;
   }
 

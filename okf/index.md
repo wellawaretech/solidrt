@@ -833,6 +833,11 @@ Finished, kept for the reasoning.
   one typed UniformSlot (kind + count) driving validation and dispatch alike.
   Sampler arrays deliberately unsupported; large data stays with float
   textures."
+- **[pointerEvents="all" captured every point in the window](done/hit-test-pointer-events-all.md)** [2026-08-22]
+  The hit test only applied its in-bounds gate to pointerEvents auto, so an
+  "all" node outside the pointer descended into its children and fell through
+  to a hit; any list with Icons (which set "all") routed every tap to the last
+  icon in the tree. The gate now applies to auto and all.
 - **[Idle tick runs away when the raster thread falls behind](done/idle-tick-gpu-backlog-runaway.md)** [2026-07-28]
   The idle-tick gate read pending_presents == 0 as "GPU idle", but it was
   equally true when the raster thread was too far behind to have returned a

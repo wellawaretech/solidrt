@@ -3,7 +3,7 @@
 //! Names no scripting-engine types. The marshalling layer
 //! (`plugins/flux/process.rs`) owns the event-bus wiring (`ctx.spawn`,
 //! emit/has-listeners, the per-context dedup) and forwards to the pieces here:
-//! host metadata (`platform`/`arch`/`rss`) and `SignalStream`, which hides the
+//! host metadata (`platform`/`arch`/`rss`/`home_dir`), `kill`, and `SignalStream`, which hides the
 //! unix vs non-unix OS signal split behind one async source.
 
 use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, RefreshKind, System};
@@ -39,6 +39,22 @@ pub fn rss() -> u64 {
     ProcessRefreshKind::nothing().with_memory(),
   );
   system.process(pid).map(|proc| proc.memory()).unwrap_or(0)
+}
+
+/// The current user's home directory, or `None` when the environment does not
+/// name one (HOME on unix, USERPROFILE on Windows).
+pub fn home_dir() -> Option<String> {
+  let var = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
+  std::env::var(var).ok().filter(|v| !v.is_empty())
+}
+
+/// Terminate the process with id `pid`. `false` when no such process exists or
+/// the OS refused (permissions). SIGKILL / TerminateProcess, like `Child::kill`.
+pub fn kill(pid: u32) -> bool {
+  let pid = sysinfo::Pid::from_u32(pid);
+  let mut system = System::new_with_specifics(RefreshKind::nothing());
+  system.refresh_processes_specifics(ProcessesToUpdate::Some(&[pid]), true, ProcessRefreshKind::nothing());
+  system.process(pid).map(|proc| proc.kill()).unwrap_or(false)
 }
 
 /// Signal names with an OS watcher. Unknown names install no watcher (their

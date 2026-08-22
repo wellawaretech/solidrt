@@ -17,6 +17,20 @@ declare module "flux:process" {
    */
   export function memoryUsage(): { rss: number }
   /**
+   * The current user's home directory, or `null` when the environment does
+   * not name one (HOME on unix, USERPROFILE on Windows).
+   */
+  export function homedir(): string | null
+  /**
+   * Terminate another process. Portable (SIGKILL / TerminateProcess), so
+   * there is no signal argument, unlike Node's `process.kill(pid, signal)`.
+   *
+   * @param pid  The OS process id.
+   * @returns `true` when the process was terminated; `false` when it does not
+   *          exist or the OS refused.
+   */
+  export function kill(pid: number): boolean
+  /**
    * Listen for an OS signal. The callback receives the signal name. Returns an
    * unsubscribe function. Unix only; a no-op elsewhere.
    *
