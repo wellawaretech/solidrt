@@ -1,3 +1,6 @@
+---
+order: start core extensions tools runtime architecture
+---
 <section>
   <hgroup>
     <h1>SolidRT</h1>
@@ -14,20 +17,24 @@
 <section>
   <!-- Placeholder: one live Core example (code + captured recording) lands
        here once the capture pipeline exists. -->
-  <pre><code class="hljs language-tsx">import { render, createSignal } from "@solidrt/core"
+
+```tsx
+import { render, createSignal } from "@solidrt/core"
 
 function App() {
   let [count, setCount] = createSignal(0)
   return (
-    &lt;window&gt;
-      &lt;view padding={12} onPointerDown={() => setCount(count() + 1)}&gt;
-        &lt;text&gt;Clicked {count()} times&lt;/text&gt;
-      &lt;/view&gt;
-    &lt;/window&gt;
+    <window>
+      <view padding={12} onPointerDown={() => setCount(count() + 1)}>
+        <text>Clicked {count()} times</text>
+      </view>
+    </window>
   )
 }
 
-render(() => &lt;App /&gt;)</code></pre>
+render(() => <App />)
+```
+
   <p>
     A whole app. No build config, no markup language, no virtual DOM: reading
     <code>count()</code> in the JSX wires that one piece of text to that one

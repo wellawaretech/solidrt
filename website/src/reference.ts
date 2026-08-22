@@ -8,13 +8,19 @@
 //                                grouped by its flux-types directory
 //   /extensions/components/...   one page per components module: its docs/
 //                                file, then the declarations index.ts exports
+//   /extensions/2d/...           the 2d README, plus its export surface
 //   /extensions/3d/...           the 3d README, plus its export surface
 import { file } from "flux:fs";
 import { escapeHtml, highlight, renderMarkdown } from "./markdown.ts";
 
 const FLUX_TYPES = "../packages/flux-types";
 const COMPONENTS = "../packages/components";
-const THREE_D = "../packages/3d";
+// README-fronted extensions: the overview page is the package README, the API
+// pages are its export surface by module.
+const README_EXTENSIONS = [
+  { pkg: "2d", dir: "../packages/2d" },
+  { pkg: "3d", dir: "../packages/3d" },
+];
 
 export type ReferencePage = {
   // URL path of the page directory, e.g. /runtime/modules/fs
@@ -156,7 +162,7 @@ async function runtimePages(): Promise<ReferencePage[]> {
   return pages;
 }
 
-// -- Extensions: components docs/ and the 3d README --------------------------
+// -- Extensions: components docs/, and the 2d/3d READMEs ---------------------
 
 // Concept modules (the system the components assume) lead the listing, in
 // this order; every other module is a component. The prose is the module's
@@ -232,10 +238,10 @@ async function componentsPages(): Promise<ReferencePage[]> {
 // One page per source module index.ts re-exports from, in index.ts order,
 // showing only the exports index.ts names (the public surface): each with its
 // JSDoc and signature (functions) or full declaration (types).
-async function threeDPages(): Promise<ReferencePage[]> {
-  const BASE = "/extensions/3d";
-  let readme = await file(THREE_D + "/README.md").text();
-  let index = await file(THREE_D + "/src/index.ts").text();
+async function readmeExtensionPages(pkg: string, dir: string): Promise<ReferencePage[]> {
+  const BASE = `/extensions/${pkg}`;
+  let readme = await file(dir + "/README.md").text();
+  let index = await file(dir + "/src/index.ts").text();
   // Module stem -> its file extension and the names index.ts takes from it.
   let modules = new Map<string, { ext: string; names: string[] }>();
   for (let m of index.matchAll(/^export (?:type )?\{([^}]*)\} from "\.\/([a-z0-9-]+)\.(tsx?)"/gm)) {
@@ -246,8 +252,8 @@ async function threeDPages(): Promise<ReferencePage[]> {
   }
   let pages: ReferencePage[] = [];
   for (let [stem, { ext, names }] of modules) {
-    let rel = `packages/3d/src/${stem}.${ext}`;
-    let source = await file(`${THREE_D}/src/${stem}.${ext}`).text();
+    let rel = `packages/${pkg}/src/${stem}.${ext}`;
+    let source = await file(`${dir}/src/${stem}.${ext}`).text();
     let decls = splitDeclarations(source);
     let lead = intro(source);
     let blocks = names
@@ -264,7 +270,7 @@ async function threeDPages(): Promise<ReferencePage[]> {
   let list = pages.map((p) => `<li><a href="${p.path}/"><code>${escapeHtml(p.title)}</code></a></li>`).join("\n");
   pages.unshift({
     path: BASE,
-    title: "@solidrt/3d",
+    title: `@solidrt/${pkg}`,
     html: (await renderMarkdown(readme)) + `<h2>API</h2>\n<p>By module, as <code>src/index.ts</code> exports it:</p>\n<ul>\n${list}\n</ul>\n`,
   });
   return pages;
@@ -273,7 +279,7 @@ async function threeDPages(): Promise<ReferencePage[]> {
 export async function referencePages(): Promise<ReferencePage[]> {
   return [
     ...(await componentsPages()),
-    ...(await threeDPages()),
+    ...(await Promise.all(README_EXTENSIONS.map((e) => readmeExtensionPages(e.pkg, e.dir)))).flat(),
     ...(await runtimePages()),
   ];
 }

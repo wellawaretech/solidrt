@@ -25,6 +25,7 @@
     "examples/",
     "jsx-runtime.d.ts",
     "agents/",
+    "docs/",
     "AGENTS.md"
   ],
   "devDependencies": {

@@ -127,11 +127,14 @@ pages were generated, and the hand-written Core page is the quality bar none
 of them met. Inverted:
 
 **`docs/` is the content root**, markdown only, and its tree is the site: a
-directory is a section and a sidebar group, a file is a page, an `NN-` name
-prefix sets the order and is stripped from the URL, and a name starting with
-`_` is not published. The top nav is the top-level directories in that same
-order, so nav and sidebar have one definition and there is no sidebar or nav
-config anywhere. Optional `nav:` frontmatter overrides the label a page takes
+directory is a section and a sidebar group, a file is a page, and a name
+starting with `_` is not published. Siblings are ordered by their directory's
+`index.md`: an `order:` frontmatter line naming them, else the order it first
+links them, else by name (the index page is the table of contents). The top
+nav is the top-level directories in that same order, so nav and sidebar have
+one definition and there is no sidebar or nav config anywhere. Sections that
+document one package live in that package's shipped `docs/` (core, cli today)
+and are mounted into the tree by the build's `MOUNTS` table. Optional `nav:` frontmatter overrides the label a page takes
 in navigation when its h1 is not the right one there (`/runtime/` is the case:
 h1 "Flux", nav "Runtime"). Two levels of sidebar, hard limit: a section
 wanting a third level wants to be its own section (Extensions is the
@@ -195,7 +198,8 @@ Content rework, staged on top (2026-08-18):
    `docs/NN-<section>/index.md`, the landing HTML fragment to `docs/index.md`
    (raw HTML blocks pass through marked, so the folder is markdown only and
    the build's `*.html` page kind is gone), css + icon to `website/assets/`.
-   The build reads `../docs`, strips `NN-` prefixes, skips `_` entries,
+   The build reads `../docs`, skips `_` entries, (`NN-` ordering prefixes
+   were used here until 2026-08-22, when index-driven order replaced them),
    derives the nav from the tree (the hand-kept `nav` array in
    `template.json` deleted), and copies `assets/` separately. Output
    unchanged: 7 pages, 87 generated, same URLs. The stale `docs/*` is staged

@@ -2,20 +2,11 @@
 
 The Solid Runtime - a modern toolkit for building cross-platform applications with SolidJS.
 
-What if you want to build an application that runs everywhere? The options thin out fast. React Native is primarily iOS and Android. Electron is desktop only, and ships a browser to get there. Flutter runs everywhere, but you write Dart and buy into Google's ecosystem to do it.
+What if you want to build an application that runs everywhere? The options thin out fast. React Native is primarily iOS and Android. Electron is desktop only, and ships a browser to get there. Flutter runs everywhere, but you write Dart and buy into Google's ecosystem to do it. Most of the remaining options hand rendering to the system webview, which is a browser again: a different one on every operating system, and a different one after the next OS update.
 
 SolidRT takes a different path: JavaScript you already know, Flutter's renderer underneath, and a GPU that is genuinely open to you rather than sealed behind the framework. All of it on desktop and mobile, from one codebase.
 
 Write SolidJS, ship native applications. SolidRT is not a webview and not a browser engine. Your components run on an embedded JavaScript engine and render straight to the GPU. Runs today on Linux, macOS, Windows, and Android.
-
-## Project status
-
-SolidRT is in alpha and under active development. Expect APIs to change and new surface to land: it is being built in the open, and it is moving.
-
-- **iOS is not supported yet.** There is no technical reason for that. Every platform runs the same rendering path, so iOS is work that has not been done rather than a problem that needs solving.
-- **Agents are the best way to take it for a spin today.** The MCP integration (see below) already works extremely well: an agent can scaffold, build, run and drive a real application with little intervention.
-- **The extension packages move fastest.** `@solidrt/components`, `@solidrt/2d` and `@solidrt/3d` are younger than the core and will change more than it does.
-- **The focus is shifting towards the human experience.** Documentation and developer tooling, the parts of the workflow a person touches directly.
 
 ## Quick start
 
@@ -52,6 +43,15 @@ For a connected Android device, `srt client --android` installs and launches the
 ## Agents see the application, not a screenshot
 
 SolidRT ships MCP tooling wired into every layer, and every project is set up for it from the start. An agent can read the live render tree, snapshot any part of it, inject debug commands into a running application, and drive it with real keyboard, mouse, and gamepad events. It controls time as well: slow the application down, pause it, and step forward one frame at a time, so an animation or a transition can be inspected frame by frame instead of guessed at. That is the actual state of the application, at the level the renderer sees it. Agents can build, run, and test complete applications with minimal intervention. Developer tooling exposing the same view is on the way.
+
+## Project status
+
+SolidRT is in alpha and under active development. Expect APIs to change and new surface to land: it is being built in the open, and it is moving.
+
+- **iOS is not supported yet.** There is no technical reason for that. Every platform runs the same rendering path, so iOS is work that has not been done rather than a problem that needs solving.
+- **Agents are the best way to take it for a spin today.** The MCP integration already works extremely well: an agent can scaffold, build, run and drive a real application with little intervention.
+- **The extension packages move fastest.** `@solidrt/components`, `@solidrt/2d` and `@solidrt/3d` are younger than the core and will change more than it does.
+- **The focus is shifting towards the human experience.** Documentation and developer tooling, the parts of the workflow a person touches directly.
 
 ## Documentation
 

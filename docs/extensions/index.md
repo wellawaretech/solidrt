@@ -5,8 +5,9 @@ app structure. They are siblings, not a stack. You pick one, some, or none,
 and you can always drop down to Core underneath, because an extension
 component is just a component that returns Core elements.
 
-Today there are two, both written by the SolidRT project: [Components](/extensions/components/)
-and [3D](/extensions/3d/). There is room for others, including community and
+Today there are three, all written by the SolidRT project:
+[Components](/extensions/components/), [2D](/extensions/2d/) and
+[3D](/extensions/3d/). There is room for others, including community and
 commercial ones.
 
 ## Components
@@ -59,6 +60,37 @@ with it. Core underneath is the layer that changes least, which is why the
 
 The full component list with props and examples is under
 [@solidrt/components](/extensions/components/).
+
+## 2D
+
+*Status: experimental.*
+
+`@solidrt/2d` is the extension for 2D-heavy apps and games. Core already
+draws 2D well - a `d-texture` with an atlas sub-rect is a sprite, with native
+transitions and pointer events - and carries populations into the low
+thousands. `@solidrt/2d` starts where that stops: an instanced sprite layer
+puts thousands of per-frame animated sprites (entities, particles, bullets)
+into one GPU buffer and one draw call, composited into your UI tree as an
+ordinary texture. Moving ten thousand sprites is ten thousand float stores
+and one publish, not twenty thousand property writes.
+
+```tsx
+import { createAtlas, grid, Sprite, SpriteLayer } from "@solidrt/2d"
+import sheet from "./sheet.png" with { type: "binary" }
+
+let atlas = createAtlas(sheet, { filter: "nearest" })
+let frames = grid(4, 4, { width: atlas.width, height: atlas.height })
+
+<window>
+  <SpriteLayer width={720} height={480} atlas={atlas.texture}>
+    <Sprite x={100} y={120} w={32} h={32} frame={frames[0]} />
+    <Sprite x={200} y={160} w={32} h={32} frame={frames[5]} rotation={0.4} />
+  </SpriteLayer>
+</window>
+```
+
+Pick it in the scaffolder or `bun add @solidrt/2d`. Overview and the export
+surface are under [@solidrt/2d](/extensions/2d/).
 
 ## 3D
 

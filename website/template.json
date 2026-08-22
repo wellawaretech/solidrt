@@ -4,7 +4,8 @@
     "navItem": "<li><a href=\"{href}\">{text}</a></li>",
     "sidebar": "<aside><nav><ul>\n{items}\n</ul></nav></aside>",
     "sidebarItem": "<li><a href=\"{href}\"{current}>{text}</a></li>",
-    "sidebarGroup": "<li><a href=\"{href}\"{current}>{text}</a><ul>\n{items}\n</ul></li>"
+    "sidebarGroup": "<li><details{open}><summary><a href=\"{href}\"{current}>{text}</a></summary><ul>\n{items}\n</ul></details></li>",
+    "sidebarGroupPlain": "<li><a href=\"{href}\"{current}>{text}</a><ul>\n{items}\n</ul></li>"
   },
   "elements": {
     "heading": "<h{depth} id=\"{slug}\">{text}</h{depth}>\n",

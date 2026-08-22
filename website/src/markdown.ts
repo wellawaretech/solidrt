@@ -114,6 +114,7 @@ export type Rules = {
     sidebar?: string;
     sidebarItem?: string;
     sidebarGroup?: string;
+    sidebarGroupPlain?: string;
   };
 } | null;
 
@@ -127,8 +128,10 @@ export type PageEntry = { path: string; title: string };
 // The in-section sidebar for the page at `current`: every page under the same
 // top-level section, in `pages` order. Pages directly in the section come
 // first (its index leading); each subdirectory becomes a group headed by its
-// index page (or its name), holding the pages beneath it. Empty when the
-// section has one page.
+// index page (or its name), holding the pages beneath it. Several groups are
+// collapsible, open only when the current page is in one; a lone group has
+// nothing to collapse against, so it renders plain and always open. Empty
+// when the section has one page.
 export function buildSidebar(current: string, pages: PageEntry[], rules: Rules): string {
   let page = rules?.page;
   if (!page?.sidebar || !page.sidebarItem || !page.sidebarGroup) return "";
@@ -164,13 +167,20 @@ export function buildSidebar(current: string, pages: PageEntry[], rules: Rules):
     if (dir && groups.has(dir)) continue;
     out.push(item(p));
   }
+  let groupTemplate =
+    groups.size === 1 && page.sidebarGroupPlain ? page.sidebarGroupPlain : page.sidebarGroup;
   for (let [dir, members] of groups) {
     let head = top.find((p) => p.path === `${prefix}/${dir}`);
     out.push(
-      applyTemplate(page.sidebarGroup, {
+      applyTemplate(groupTemplate, {
         text: head ? escapeHtml(head.title) : dir,
         href: head ? head.path + "/" : "",
         current: head?.path === current ? ' aria-current="page"' : "",
+        // Collapsed unless the reader is somewhere inside it.
+        open:
+          head?.path === current || members.some((m) => m.path === current)
+            ? " open"
+            : "",
         items: members.map(item).join("\n"),
       }),
     );

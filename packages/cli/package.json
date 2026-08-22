@@ -15,6 +15,7 @@
     "scaffold/",
     "fonts/",
     "agents/",
+    "docs/",
     "AGENTS.md"
   ],
   "dependencies": {

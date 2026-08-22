@@ -22,10 +22,10 @@ the choice this app made: only the extensions listed there are installed -
 do not add one for a change core covers.
 
 Convention: every @solidrt package describes itself in
-node_modules/@solidrt/<name>/AGENTS.md and ships working code in its
-examples/. That file is the reference for the package; open it before using
-anything from the package, and read the extensions' files only when they
-are installed.
+node_modules/@solidrt/<name>/AGENTS.md, carries its prose in docs/, and
+ships working code in examples/. AGENTS.md is the reference for the package;
+open it before using anything from the package, and read the extensions'
+files only when they are installed.
 
 ## Read before you
 

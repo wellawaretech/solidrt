@@ -1,8 +1,8 @@
 # @solidrt/core - agent notes
 
-Dense, self-contained facts for writing a SolidRT app. When this conflicts
-with other prose, trust this file and the types in src/types.d.ts and
-jsx-runtime.d.ts.
+Dense, self-contained facts for writing a SolidRT app. The prose lives in
+docs/ (also the website); when this conflicts with it, trust this file and
+the types in src/types.d.ts and jsx-runtime.d.ts.
 
 SolidRT is a custom SolidJS renderer: it paints through a Rust runtime, not the
 DOM. There is no HTML, no CSS cascade, no `className`.

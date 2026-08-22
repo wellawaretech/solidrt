@@ -9,9 +9,9 @@ include $(SRT_HOME)/platform.mk
 build:
 	bun install
 	bun $(SRT_HOME)/packages/cli/bin/srt bundle --flux src/build.ts
-	$(HOST_DIST)/flux$(HOST_EXT) src/build.flux.js
+	$(HOST_DIST)/flux$(HOST_EXT) dist/bundle/build.flux.js
 
 clean:
-	rm -rf dist src/build.flux.js
+	rm -rf dist
 
 .PHONY: build clean

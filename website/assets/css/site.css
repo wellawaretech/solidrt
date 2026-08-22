@@ -20,7 +20,25 @@
   --srt-font-mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, "Noto Sans Mono", monospace;
   --srt-content-width: 46rem;
   --srt-sidebar-width: 14rem;
+  --srt-column-gap: calc(var(--srt-spacing-xl) * 2);
+  /* The page is one centered block: sidebar, gutter, content column. */
+  --srt-page-width: calc(
+    var(--srt-content-width) + var(--srt-sidebar-width) + var(--srt-column-gap)
+  );
   --srt-page-gradient-end: color-mix(in srgb, var(--srt-background) 75%, var(--srt-primary));
+  /* Filled boxes carry the page's diagonal wash, run the other way: the accent
+   * end sits top-left where the page fill is plainest, so a card reads as a
+   * surface and not as a flat patch. */
+  --srt-surface-gradient: linear-gradient(
+    315deg,
+    var(--srt-surface),
+    color-mix(in srgb, var(--srt-surface) 82%, var(--srt-primary))
+  );
+  --srt-surface-alt-gradient: linear-gradient(
+    315deg,
+    var(--srt-surface-alt),
+    color-mix(in srgb, var(--srt-surface-alt) 82%, var(--srt-primary))
+  );
   color-scheme: light dark;
 }
 
@@ -46,7 +64,7 @@ body {
 header,
 main {
   width: 100%;
-  max-width: var(--srt-content-width);
+  max-width: var(--srt-page-width);
   margin: 0 auto;
   padding: 0 var(--srt-spacing-xl);
 }
@@ -54,41 +72,44 @@ main {
 main {
   flex: 1;
   display: flex;
-  align-items: flex-start;
-  gap: calc(var(--srt-spacing-xl) * 2);
+  flex-direction: column;
+  gap: var(--srt-column-gap);
   padding-top: var(--srt-spacing-xl);
   padding-bottom: calc(var(--srt-spacing-xl) * 3);
 }
 
+/* The content column keeps its reading width whatever the page block is, and
+   centers in the space it is given: with a sidebar that space is exactly one
+   content width, so the margins only do anything on a page without one, where
+   they keep the text off the block's left edge. */
 article {
   flex: 1;
   min-width: 0;
+  max-width: var(--srt-content-width);
+  margin-inline: auto;
 }
 
 /* -- Sidebar ------------------------------------------------------------ */
 
-/* Section pages with more than one page get an in-section sidebar. The
-   content column never moves for it (the header and the logo stay put): with
-   room, the aside hangs in the left gutter; without, it follows the article. */
-main {
-  flex-direction: column;
-}
-
+/* Section pages with more than one page get an in-section sidebar. It is part
+   of the page block, not a gutter hanger: the block (aside plus article)
+   centers as a whole, so the aside survives down to where the two columns
+   stop fitting. Below that it stacks above the article, where it stays in
+   view without scrolling. Source order is aside then article, which is also
+   the stacked order, so neither case sets `order`. */
 aside {
-  order: 1;
   width: 100%;
 }
 
-@media (min-width: 80rem) {
+@media (min-width: 64rem) {
   main {
     flex-direction: row;
+    align-items: flex-start;
   }
 
   aside {
-    order: 0;
     flex: 0 0 var(--srt-sidebar-width);
     width: auto;
-    margin-left: calc(-1 * (var(--srt-sidebar-width) + var(--srt-spacing-xl) * 2));
     position: sticky;
     top: var(--srt-spacing-xl);
     max-height: calc(100vh - var(--srt-spacing-xl) * 2);
@@ -106,10 +127,60 @@ aside li {
   margin: 0;
 }
 
-/* A group: its heading link, then its members indented one step. */
-aside li > ul {
+/* A group: its heading row, then its members indented one step. */
+aside li > ul,
+aside details > ul {
   margin: var(--srt-spacing-sm) 0 var(--srt-spacing-md);
   padding-left: var(--srt-spacing-lg);
+}
+
+/* A group heading is a disclosure row: the title still navigates to the
+   group's own page, the rest of the row opens and closes it. The row carries
+   the hover and current fills so it reads as one target either way. */
+aside summary {
+  display: flex;
+  align-items: center;
+  border-radius: var(--srt-radius-sm);
+  list-style: none;
+  cursor: pointer;
+}
+
+aside summary::-webkit-details-marker {
+  display: none;
+}
+
+aside summary > a {
+  flex: 1;
+}
+
+aside summary:hover {
+  background: var(--srt-overlay-hover);
+}
+
+aside summary:has(> a[aria-current="page"]) {
+  background: var(--srt-surface);
+}
+
+aside summary > a:hover,
+aside summary > a[aria-current="page"] {
+  background: transparent;
+}
+
+/* The chevron: pointing right when closed, down when open. */
+aside summary::after {
+  content: "";
+  flex: none;
+  width: 0.4em;
+  height: 0.4em;
+  margin-right: var(--srt-spacing-md);
+  border-right: var(--srt-border-width-sm) solid var(--srt-text-muted);
+  border-bottom: var(--srt-border-width-sm) solid var(--srt-text-muted);
+  transform: translateY(-0.1em) rotate(-45deg);
+  transition: transform 120ms ease-out;
+}
+
+aside details[open] > summary::after {
+  transform: translateY(-0.1em) rotate(45deg);
 }
 
 aside a {
@@ -320,7 +391,7 @@ button:active {
 article > section {
   padding: var(--srt-spacing-xl);
   border-radius: var(--srt-radius-lg);
-  background: var(--srt-surface);
+  background: var(--srt-surface-gradient);
   margin-bottom: var(--srt-spacing-lg);
 }
 
@@ -344,7 +415,7 @@ code {
 pre {
   padding: var(--srt-spacing-lg);
   border-radius: var(--srt-radius-md);
-  background: var(--srt-surface);
+  background: var(--srt-surface-gradient);
   overflow-x: auto;
 }
 
@@ -358,15 +429,18 @@ pre code.hljs {
   color: var(--srt-text);
 }
 
-section code,
-section pre {
+section code {
   background: var(--srt-surface-alt);
+}
+
+section pre {
+  background: var(--srt-surface-alt-gradient);
 }
 
 blockquote {
   padding: var(--srt-spacing-lg) var(--srt-spacing-xl);
   border-radius: var(--srt-radius-md);
-  background: var(--srt-surface-alt);
+  background: var(--srt-surface-alt-gradient);
   color: var(--srt-text-muted);
 }
 
@@ -389,7 +463,7 @@ table {
   border-spacing: 0;
   border-radius: var(--srt-radius-md);
   overflow: hidden;
-  background: var(--srt-surface);
+  background: var(--srt-surface-gradient);
 }
 
 th,
@@ -403,7 +477,7 @@ th {
   font-size: calc(var(--srt-label-size) * var(--srt-prose-scale));
   font-weight: var(--srt-label-weight);
   color: var(--srt-text-muted);
-  background: var(--srt-surface-alt);
+  background: var(--srt-surface-alt-gradient);
 }
 
 /* -- Media -------------------------------------------------------------- */
