@@ -36,3 +36,19 @@ Open questions: chunk size heuristics, whether tile data gets a first-class
 grid API (`setTile(x, y, frame)`) or stays "records you bake", and how far
 z-interleaving between baked and live layers needs to go (today: separate
 `<texture>` leaves, tree order decides).
+
+## The spatial index belongs with this
+
+Two things in the live sprite layer are O(population) and only start hurting
+when the world exceeds the viewport - which is exactly the case this item
+exists for:
+
+- every live record draws whether or not the camera can see it (the flush
+  publishes the whole live prefix and `instanceCount` covers all of it)
+- `pick` walks every record, topmost first, on every pointer move
+
+One uniform grid over the records answers both: a camera-rect query gives the
+visible set to compact into the instance buffer, and a point query gives
+picking its candidates. Build it here rather than as its own item - alone it
+optimizes a case nobody has hit, and the chunking this item needs is the same
+spatial decomposition.

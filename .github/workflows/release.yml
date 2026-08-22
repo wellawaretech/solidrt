@@ -240,7 +240,7 @@ jobs:
       NPM_CONFIG_TOKEN: ${{ secrets.NPM_TOKEN }}
       # Single source of truth for which packages get version-bumped and published.
       PUBLISH_DIRS: >-
-        packages/core packages/components packages/3d packages/flux-types
+        packages/core packages/components packages/2d packages/3d packages/flux-types
         packages/darwin-arm64 packages/linux-x64-gnu packages/linux-arm64-gnu
         packages/win32-x64-msvc
         packages/android-arm64-v8a packages/android-armeabi-v7a

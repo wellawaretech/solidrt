@@ -77,7 +77,52 @@ rotated-rect picking with capture/hover), components.tsx (SpriteLayer/Sprite
 faces). Registered in the root workspace and the CI typecheck list (adding
 the previously-missing packages/3d as a drive-by).
 
-Deliberately NOT in v1, in staging order: z-ordering (insertion order only),
-dirty-range publishing (whole live prefix per dirty frame), baked/tilemap
-layers, frame-animation helpers, retro presets, website/docs pages (the API
-should settle first; docs/30-extensions/index.md still says "two").
+Deliberately NOT in v1: z-ordering (insertion order only), dirty-range
+publishing (whole live prefix per dirty frame), baked/tilemap layers,
+frame-animation helpers, retro presets, website/docs pages (the API should
+settle first; docs/30-extensions/index.md still says "two").
+
+## Staging after v1
+
+Re-ordered 2026-08-22, after a pass over the package against what a 2D-heavy
+application needs. The original order took the tier model straight down
+(baked layers next, then presets); using the package first surfaces cheaper
+things that block apps sooner. Tiering is a performance argument, and none of
+the items below is one - they are gaps in the layer as an API.
+
+1. **Capacity growth** (okf/backlog/2d-layer-capacity-growth.md). The only
+   item here that is a runtime failure rather than a tradeoff: past
+   `capacity`, `addSprite` throws and the app has no recovery. First.
+2. **A sort key** (okf/backlog/2d-sprite-sort-key.md). Supersedes the
+   "z-ordering" line above. Raising a sprite or depth-sorting a population by
+   y is remove-plus-re-add today, i.e. per-element churn in the one package
+   whose premise is that per-element costs are what kill you.
+3. **The frame animation helper** - `createAnimation(frames, fps)`, pulled
+   out of the retro presets item, which was gating a handful of lines every
+   sprite population wants behind a demo kit.
+4. **Baked layers** (okf/backlog/2d-baked-layers.md), unchanged in substance
+   and still the big one: primitive count is the budget on tiled GPUs. Now
+   also carries the spatial index, since culling and picking want the same
+   grid the chunking already implies.
+5. **Atlas limits** (okf/backlog/2d-atlas-limits.md). One immutable
+   pre-packed sheet per layer: a second sheet costs a whole second render
+   target, and images arriving at runtime have no way in. Normal for an
+   application, unusual for a game, which is why v1 did not feel it.
+6. **The display-scale decision**
+   (okf/backlog/2d-layer-display-scale.md). Layer output is upsampled on a
+   HiDPI screen unless the app sizes and zooms for it by hand. Wants deciding
+   once across @solidrt/2d and @solidrt/3d, not implementing twice.
+
+Dirty-range publishing stays deferred and measurement-gated: one moved sprite
+republishing the whole live prefix is a single memcpy - ~520KB at 10k
+sprites, microseconds - and keeping one write path is worth more than the
+saving until a profile says otherwise.
+
+What stays OUT of the package, restated because it keeps coming up: shapes,
+text, gestures and selection models. The layer composites as an ordinary
+texture inside the render tree, so labels, handles and chrome are core
+elements drawn on top. Core is where the platform's 2D lives; this package is
+tier 2 of that story, not a parallel renderer. Gaps found in core while
+looking at 2D-heavy applications belong in core's own items (shadows,
+clip-to-path and masks, dashes beyond `line`, pattern/image fill - see
+okf/backlog/texture-tile-mode.md for the last one's engine side).

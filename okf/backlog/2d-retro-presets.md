@@ -24,10 +24,21 @@ showcase) as much as function.
 - **Scanlines / CRT**: same mechanism, window `shader` for whole-app
   treatment or a per-layer pass; the classic barrel + mask + vignette
   shader is ~50 lines of GLSL.
-- **Frame animation helper**: `createAnimation(frames, fps)` stepping a
-  sprite's frame - trivially small, listed here because the retro demos
-  want it first.
 
 Do these only after baked layers (okf/backlog/2d-baked-layers.md): the
 flagship retro demo is a scrolling tile world, which tier 2 alone renders
 the expensive way.
+
+## What is actually package work here
+
+Almost none of it. The palette LUT and the scanline/CRT pass are core
+shader features - a view or window `shader` with a program and a texture
+uniform - and the pixel canvas is a component doing arithmetic on the window
+size. Nothing in this item extends the sprite layer, which is why it reads as
+a demo kit rather than an engine stage.
+
+The one exception is the **frame animation helper**,
+`createAnimation(frames, fps)` stepping a sprite's frame. That is sprite-layer
+work, it is a handful of lines, and every sprite population wants it whether
+or not it is going for a retro look - so it is NOT gated on baked layers and
+should not wait behind this item. Take it with the next package pass.

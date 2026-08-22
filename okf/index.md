@@ -37,14 +37,34 @@ Decided and being worked on now. A plan nobody is working on goes back to backlo
 
 Shaped, not started.
 
+- **[A sprite layer draws one pre-packed atlas, fixed at creation](backlog/2d-atlas-limits.md)** [2026-08-22]
+  Every sprite in a layer samples one texture chosen at creation, and
+  createAtlas only decodes an already-packed sheet, so a second sheet costs a
+  second full-size render target and runtime-supplied images have no way in at
+  all.
 - **[Baked layers and tilemaps for @solidrt/2d](backlog/2d-baked-layers.md)** [2026-08-19]
   Static 2D bulk (tile worlds, backgrounds) rendered once into a texture and
   drawn as ONE quad, with incremental re-bake - the primitive-count answer for
   tiled GPUs
+- **[A sprite layer's capacity is fixed and overflow throws](backlog/2d-layer-capacity-growth.md)** [2026-08-22]
+  createSpriteLayer reserves a record buffer for the layer's life, so an app
+  whose sprite count is data-driven has to guess a maximum up front and
+  crashes when it guesses low; growth needs a way to swap a target's instance
+  buffer.
+- **[A sprite layer has no display-scale story, so it is soft on a HiDPI screen](backlog/2d-layer-display-scale.md)** [2026-08-22]
+  createSpriteLayer renders into a texture sized in the numbers the app
+  passed, and the composited leaf scales that to its layout box, so on a 2x
+  display the whole layer is upsampled unless the app doubles the size and the
+  camera zoom itself.
 - **[Retro presets for @solidrt/2d](backlog/2d-retro-presets.md)** [2026-08-19]
   The pixel-art identity kit - fixed logical resolution with integer nearest
   scaling, palette LUT, and scanline/CRT passes - as thin layers over what
   already exists
+- **[Sprite draw order is insertion order, so reordering means remove and re-add](backlog/2d-sprite-sort-key.md)** [2026-08-22]
+  The sprite layer paints in record order with no sort key, so raising one
+  sprite or depth-sorting a population by y - the ordinary case for a dense 2D
+  scene - costs a record shift and an index fixup per element instead of a
+  sort of an index array.
 - **[Colored geometry generates twice](backlog/3d-colored-generators.md)** [2026-08-19]
   withColors throws on anything but standard-layout input and copies into a
   fresh buffer, so building coloured geometry always generates twice; a layout
