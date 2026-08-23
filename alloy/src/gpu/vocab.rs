@@ -29,7 +29,7 @@ impl ParamValue {
 }
 
 /// A float vertex attribute's shape within the interleaved vertex buffer.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AttrFormat {
   F32,
   Vec2,
@@ -55,6 +55,18 @@ impl AttrFormat {
       AttrFormat::Vec3 => 3,
       AttrFormat::Vec4 => 4,
     }
+  }
+
+  /// The format of a linked program's active attribute by its GL type;
+  /// None for types no pipeline layout can feed (matrices, integer vectors).
+  pub fn from_gl(atype: u32) -> Option<Self> {
+    Some(match atype {
+      glow::FLOAT => AttrFormat::F32,
+      glow::FLOAT_VEC2 => AttrFormat::Vec2,
+      glow::FLOAT_VEC3 => AttrFormat::Vec3,
+      glow::FLOAT_VEC4 => AttrFormat::Vec4,
+      _ => return None,
+    })
   }
 
   /// The string form `parse` accepts, for reporting the layout back out.
@@ -403,6 +415,11 @@ impl UniformSlot {
 /// `Inactive` slot: writing it warns and is skipped, where a name that was
 /// never declared throws.
 pub type UniformTable = HashMap<String, UniformSlot>;
+
+/// A linked program's active vertex attributes (name, format), reflected at
+/// link time - what a pipeline's attribute lists must cover. Names appear
+/// in GL's reported order.
+pub type AttributeTable = Vec<(String, AttrFormat)>;
 
 fn unknown_uniform(uniforms: &UniformTable, name: &str) -> String {
   let mut names: Vec<&str> =

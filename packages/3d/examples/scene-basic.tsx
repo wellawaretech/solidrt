@@ -21,8 +21,8 @@ function App() {
   // use one cube geometry (one vertex/index buffer pair on the GPU), and
   // every mesh here shares the one unlit-color pipeline.
   let cube = box()
-  let floor = plane(6, 6, "floor")
-  let ball = sphere(0.35)
+  let floor = plane({ width: 6, height: 6, label: "floor" })
+  let ball = sphere({ radius: 0.35 })
 
   return (
     <window>

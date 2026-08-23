@@ -8,8 +8,8 @@
 // for custom flat work. The swept-solid generators consuming this
 // vocabulary - extrude, lathe, sweep, tube - live in sweep.ts.
 
-import { packIndices } from "./geometry.ts"
-import type { Geometry } from "./geometry.ts"
+import { packGeometry } from "./geometry.ts"
+import type { Geometry, GeometryOptions } from "./geometry.ts"
 import type { Vec2 } from "./math.ts"
 
 /** A profile point: `p` in profile space, `smooth` to share an averaged
@@ -298,7 +298,7 @@ export function roundRect(
  * profile's bounding box to the unit square like plane(); rotate flat the
  * same way: `rotation={[-Math.PI / 2, 0, 0]}`.
  */
-export function shape(profile: Profile, label?: string): Geometry {
+export function shape(profile: Profile, options: GeometryOptions = {}): Geometry {
   let pts = normalizeProfile(profile)
   let { minX, maxY, w, h } = profileBounds(pts)
   let px = pts.map((p) => p.x)
@@ -307,9 +307,5 @@ export function shape(profile: Profile, label?: string): Geometry {
   for (let p of pts) {
     verts.push(p.x, p.y, 0, 0, 0, 1, (p.x - minX) / w, (maxY - p.y) / h)
   }
-  return {
-    vertices: new Float32Array(verts),
-    indices: packIndices(earClip(px, py), pts.length),
-    label,
-  }
+  return packGeometry(verts, earClip(px, py), options)
 }

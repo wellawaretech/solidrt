@@ -23,18 +23,32 @@ blendMode and pointer events like any element.
   own `onFrame` writing a signal (declarative) or `setTransform` on a
   `ref`-grabbed node (the frame-rate escape hatch - signals carry
   structure, per-frame motion goes straight to the scene).
-- Two named vertex layouts (`Geometry.layout`, absent = "standard"):
-  "standard" is `aPos` vec3 + `aNormal` vec3 + `aUV` vec2 - what every
-  generator emits - and "colored" appends `aColor` vec4, the per-vertex
-  data channel (a tint, baked AO, any four scalars; standard name, your
-  contents). Derive colored geometry with `withColors(geometry, fill)` -
-  fill is a flat 4-per-vertex array or a per-vertex callback receiving
-  `(index, pos, normal, uv)`. Geometry and material layouts must match
-  (layout is stride); a mismatched pair throws at add(). The whole layout
+- One interleaved vertex buffer per geometry, described by an open layout
+  (`Geometry.layout`, absent = "standard"): an ordered attribute list that
+  always starts with the standard prefix `aPos` vec3 + `aNormal` vec3 +
+  `aUV` vec2 (what every generator emits) and may carry any named channels
+  after it. `withAttribute(geometry, { name, format }, fill)` appends one
+  (Three's `setAttribute` for an interleave); "colored" names the common
+  case, the prefix plus `aColor` vec4 - the per-vertex data channel (a
+  tint, baked AO, any four scalars; standard name, your contents) - and
+  `withColors(geometry, fill)` is its spelling. Fill is a flat
+  size-per-vertex array or a per-vertex callback receiving `(index, pos,
+  normal, uv)`. Materials read attributes BY NAME: a material's vertex
+  stage may declare any subset of its geometry's channels, and a channel
+  the program reads that the geometry lacks (name + format) throws at
+  add(). What a program reads is the ENGINE's word (`material.attributes()`
+  = `programAttributes` reflection of the linked program, instance
+  attributes excluded), not a parse of the GLSL: an `in` the compiler
+  dropped does not count, and the engine also rejects a pipeline whose
+  attribute lists leave a read attribute uncovered. The material
+  keeps one program and builds one pipeline per layout its meshes bring,
+  so a geometry may carry more than a material reads. The whole layout
   ships whether a material reads every attribute or not (inactive
-  attributes only keep the stride), so colored vertices cost 12 floats
-  regardless - keep data-light passes (a wireframe reading only aPos) on
-  standard geometry.
+  attributes only keep the stride), so extra channels cost their floats on
+  every draw of that geometry - keep data-light passes (a wireframe
+  reading only aPos) on standard geometry. `layoutStride`/`layoutSlot`/
+  `layoutKey`/`layoutAttributes` are the layout arithmetic; two layouts
+  with equal keys interleave identically (merge requires that).
   Indices are uint16 or uint32 - the `Geometry.indices` array type picks
   the draw's index format, so hand-built geometry past 64k vertices just
   uses a Uint32Array (generators emit uint16). Geometry GPU buffers are
@@ -46,9 +60,13 @@ blendMode and pointer events like any element.
   (unlit color, unlit map, each opaque or transparent), `depth: true` +
   `cull: "back"`; an instance is
   just per-entry uniforms (`uColor`) and bindings (`uMap`).
-- The pure pieces (`math.ts`, `bvh.ts`, `order.ts`, `geometry.ts`) are
-  Solid-free and GPU-free BY DESIGN so they can be checked headless; keep
-  them that way.
+- The pure pieces (`math.ts`, `bvh.ts`, `order.ts`, `geometry.ts`,
+  `profile.ts`, `sweep.ts`) are Solid-free and GPU-free BY DESIGN so they
+  can be checked headless; keep them that way. The rigs under `checks/`
+  (`geometry-check`, `sweep-check`, `pick-check`, `order-check`) run on
+  flux from the repo root: `bunx srt bundle -f --stdout
+  packages/3d/checks/<name>.ts | target/release/flux -`. Run the ones
+  touching what you changed.
 
 ## Components
 
@@ -142,24 +160,38 @@ undoes them; localX/localY arrive in the leaf's layout frame). A leaf
 laid out at a different size (the supersampling pattern) uses
 `scene.handlersFor(() => ({ width, height }))` with its layout size.
 
-Geometry: `box(w?, h?, d?)`; `plane(w?, h?)`, `circle(radius?, seg?)` and
-`ring(inner?, outer?, seg?)` (XY, facing +z - rotate `[-Math.PI/2, 0, 0]`
-for a floor); `sphere(radius?, wSeg?, hSeg?)`;
-`cylinder(rTop?, rBottom?, height?, radialSeg?)` (y axis, capped; unequal
-radii taper it) and `cone(radius?, height?, radialSeg?)`;
-`torus(radius?, tube?, radialSeg?, tubularSeg?)` (lying flat, hole on the
-y axis) and `torusKnot(radius?, tube?, tubularSeg?, radialSeg?, p?, q?)`
+Geometry generators take ONE options object, every field optional with
+a default, named as Three names them: `box({ width, height, depth })`
+(1x1x1); `plane({ width, height })`, `circle({ radius, segments })` and
+`ring({ innerRadius, outerRadius, segments })` (XY, facing +z - rotate
+`[-Math.PI/2, 0, 0]` for a floor); `sphere({ radius, widthSegments,
+heightSegments })`; `cylinder({ radiusTop, radiusBottom, height,
+radialSegments })` (y axis, capped; unequal radii taper it) and
+`cone({ radius, height, radialSegments })`; `torus({ radius, tube,
+radialSegments, tubularSegments })` (lying flat, hole on the y axis) and
+`torusKnot({ radius, tube, tubularSegments, radialSegments, p, q })`
 (standing y-up) - both oriented for the y-up world, unlike Three's z-up.
-`withColors(geometry, fill, label?)` derives a "colored"-layout copy of
-any standard-layout geometry (generator or hand-built), adding the
-`aColor` vec4 channel; the source is untouched.
-`fillColors(vertices, fill, first?, count?)` is the in-place primitive
-under it: writes the aColor slots of a colored-layout interleave you
+No positional form: `box()` is the default cube, `box({ label: "rock" })`
+names it. Every options object (the profile kit's `extrude`/`lathe`/
+`sweep`/`tube` too) also takes `label` and `layout` - `layout` makes the
+generator emit that layout in one pass (standard channels written, the
+extra slots zero), so `box({ layout: "colored" })` then
+`fillColors(g.vertices, fill)` builds colored geometry without the
+generate-then-repack copy; the result is byte-identical to
+`withColors(box(), fill)`. `packGeometry(verts, indices, options?)` is
+the tail every generator ends in, for your own generators.
+`withAttribute(geometry, attr, fill, label?)` derives a copy of any
+geometry (generator or hand-built) with one more channel after its
+current layout; the source is untouched. `withColors(geometry, fill,
+label?)` is the aColor vec4 case, keeping the "colored" preset name.
+`fillAttribute(vertices, layout, name, fill, first?, count?)` is the
+in-place primitive under both: writes one channel of an interleave you
 already own (a merging builder's packed buffer), reading pos/normal/uv
 from the buffer itself - so a packer that bakes transforms while writing
 hands the baker world-space vertices. `fill` indexes relative to
-`first`. It trusts the buffer's layout (no tag to check); withColors is
-the checked path.
+`first`. It trusts the buffer to be `layout` data (no tag to check);
+withAttribute is the checked path. `fillColors(vertices, fill, first?,
+count?)` is its "colored"/aColor spelling.
 
 Geometry as data: `transformGeometry(geometry, { position?, rotation?,
 quaternion?, scale? }, label?)` bakes a placement into a copy (the
@@ -185,11 +217,11 @@ closed XY polygon, bare `[x, y]` points crease, `{ p, smooth }` points
 share an averaged normal - `fillet(points, radius, segs?)` and
 `roundRect(w?, h?, radius?, segs?)` emit those (arc corners smooth).
 Winding is normalized, so either authoring direction works.
-`extrude(profile, depth?, bevel?, bevelSegs?)` sweeps along z, centered,
-with a quarter-round bevel at both rims; `lathe(profile, segs?, angle?,
-start?)` revolves a CLOSED (x = radius, y = height) profile about the y
+`extrude(profile, { depth, bevel, bevelSegments })` sweeps along z,
+centered, with a quarter-round bevel at both rims; `lathe(profile, {
+segments, angle, start })` revolves a CLOSED (x = radius, y = height) profile about the y
 axis - watertight by construction, flat caps on partial sweeps;
-`sweep(profile, path)` runs the profile along an open 3D polyline with
+`sweep(profile, path, options?)` runs the profile along an open 3D polyline with
 MITRED joints (each cross-section sits on its bend's bisector plane, so
 bends never gape or overlap) and flat caps at both ends. The path
 mirrors the profile convention: bare `[x, y, z]` points crease (a strap
@@ -197,10 +229,10 @@ folding over an edge), `{ p, smooth }` points shade continuous (tag a
 sampled curve's points); the profile's y starts as close to world up as
 the first segment allows, then parallel-transports without spinning.
 Closed loops are NOT supported yet - overlap the ends by a segment to
-fake one. `tube(path, radius?, radialSegs?)` is the round-profile
+fake one. `tube(path, { radius, radialSegments })` is the round-profile
 shorthand (wire, rope, pipe), and `pathFrames(path)` exports the
 per-segment frames (tangents, cross-section axes, arc lengths) for
-custom work along a path. `shape(profile)` fills one flat (facing +z,
+custom work along a path. `shape(profile, options?)` fills one flat (facing +z,
 like circle); `triangulate(points)` is the ear-clipping core (fan
 fallback, never drops a cap), exported for custom flat work. These pick
 uint16/uint32 indices by vertex count automatically.
@@ -226,9 +258,11 @@ Materials:
   inverse-transpose, written beside uModel for this material's meshes;
   take `mat3(uNormal)` - correct under non-uniform scale, where
   mat3(uModel) bends normals off the surface). Attributes come from the
-  geometry's layout by name; a vertex stage reading `in vec4 aColor` opts
-  the material into the "colored" layout, and its meshes then need
-  `withColors()` geometry. Sources without `#version` get the standard
+  geometry's layout by name; the ones the linked program actually reads
+  (engine reflection, instance attributes excluded) must all be in the
+  mesh's geometry layout or add() throws - so a used `in vec4 aColor`
+  needs `withColors()` geometry and a custom channel needs
+  `withAttribute()`. One program per class, one pipeline per layout met. Sources without `#version` get the standard
   pipeline preamble. App-driven uniforms beyond the standard set: seed
   via `params`, then write per mesh with
   `setMeshParams(mesh, { name: value })` (validated names; values persist
@@ -293,8 +327,8 @@ Lighting GLSL (`@solidrt/3d/glsl`): exported string constants composed
 into shaderMaterial sources with plain template literals - `LIT_VERTEX`
 (the standard vertex stage: clip position plus vWorldPos/vNormal/vUv
 varyings, normals via mat3(uNormal)), `LIT_VERTEX_COLORED` (the same
-plus the colored layout's aColor forwarded raw as vColor - using it opts
-the material into that layout) and the pure functions `HEMISPHERE`
+plus the colored layout's aColor forwarded raw as vColor - using it makes
+the material need that channel) and the pure functions `HEMISPHERE`
 (`hemisphere(n, sky, ground)`), `LAMBERT` (`lambert(n, l)`),
 `BLINN_SPECULAR` (`blinnSpecular(n, v, l, shininess)`), `FRESNEL`
 (`fresnel(n, v, power)`). Lights, colors and exponents are arguments, so

@@ -74,8 +74,8 @@ function App() {
     setTransform(lazy, { quaternion: aimQ })
   })
 
-  let ball = sphere(0.22)
-  let pointer = cone(0.3, 0.9)
+  let ball = sphere({ radius: 0.22 })
+  let pointer = cone({ radius: 0.3, height: 0.9 })
 
   return (
     <window>
@@ -83,7 +83,7 @@ function App() {
         <Scene width={SIZE} height={SIZE} clearColor={[0.07, 0.07, 0.1, 1]} label="aim">
           <PerspectiveCamera fov={55} position={[0, 2.6, 4.6]} lookAt={[0, 0.7, 0]} />
           <Mesh
-            geometry={plane(7, 7, "floor")}
+            geometry={plane({ width: 7, height: 7, label: "floor" })}
             material={unlit({ color: [0.16, 0.17, 0.22] })}
             rotation={[-Math.PI / 2, 0, 0]}
           />
@@ -93,7 +93,7 @@ function App() {
             ref={n => (target = n)}
           />
           <Mesh
-            geometry={tube([[0, 0, 0], [0, 0, 1.1]], 0.09, 10, "rod")}
+            geometry={tube([[0, 0, 0], [0, 0, 1.1]], { radius: 0.09, radialSegments: 10, label: "rod" })}
             material={unlit({ color: [0.85, 0.3, 0.3] })}
             position={[-1.4, 0.5, 0]}
             ref={n => (rod = n)}

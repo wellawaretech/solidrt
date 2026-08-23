@@ -31,9 +31,9 @@ function App() {
       <view width={pct(100)} height={pct(100)} viewBox={[SIZE, SIZE]}>
         <Scene width={SIZE} height={SIZE} background={BACKDROP} label="backdrop-demo">
           <PerspectiveCamera fov={55} position={[0, 1.8, 4.4]} lookAt={[0, 0.4, 0]} />
-          <Mesh geometry={torusKnot(0.7, 0.2, 128, 16)} material={unlit({ color: [0.85, 0.55, 0.25] })} position={[0, 0.9, 0]} />
+          <Mesh geometry={torusKnot({ radius: 0.7, tube: 0.2, tubularSegments: 128, radialSegments: 16 })} material={unlit({ color: [0.85, 0.55, 0.25] })} position={[0, 0.9, 0]} />
           <Mesh geometry={box()} material={unlit({ color: [0.3, 0.5, 0.8] })} position={[-1.5, 0.4, -0.5]} scale={0.8} />
-          <Mesh geometry={sphere(0.4)} material={unlit({ color: [0.4, 0.75, 0.45] })} position={[1.5, 0.4, -0.5]} />
+          <Mesh geometry={sphere({ radius: 0.4 })} material={unlit({ color: [0.4, 0.75, 0.45] })} position={[1.5, 0.4, -0.5]} />
         </Scene>
       </view>
     </window>

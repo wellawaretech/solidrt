@@ -62,11 +62,11 @@ function Pickable(p: { name: string; color: Color; geometry: Geometry; position:
 }
 
 function App() {
-  let floor = plane(8, 8, "floor")
+  let floor = plane({ width: 8, height: 8, label: "floor" })
   let crate = box()
-  let ball = sphere(0.45)
-  let spike = cone(0.45, 1)
-  let ring = torus(0.4, 0.14)
+  let ball = sphere({ radius: 0.45 })
+  let spike = cone({ radius: 0.45, height: 1 })
+  let ring = torus({ radius: 0.4, tube: 0.14 })
 
   return (
     <window>

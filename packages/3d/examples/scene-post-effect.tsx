@@ -39,8 +39,8 @@ function App() {
   onFrame(tick => setSpin(tick / 2000))
 
   let cube = box()
-  let floor = plane(6, 6, "floor")
-  let ball = sphere(0.35)
+  let floor = plane({ width: 6, height: 6, label: "floor" })
+  let ball = sphere({ radius: 0.35 })
 
   return (
     <window>

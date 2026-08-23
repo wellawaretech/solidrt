@@ -60,11 +60,6 @@ Shaped, not started.
   sprite or depth-sorting a population by y - the ordinary case for a dense 2D
   scene - costs a record shift and an index fixup per element instead of a
   sort of an index array.
-- **[Colored geometry generates twice](backlog/3d-colored-generators.md)** [2026-08-19]
-  withColors throws on anything but standard-layout input and copies into a
-  fresh buffer, so building coloured geometry always generates twice; a layout
-  option on the generators or a colored flag would remove the copy. Split from
-  3d-geometry-ops when that shipped 2026-08-19.
 - **[Adaptive present-fence depth](backlog/adaptive-present-fence-depth.md)** [2026-07-27]
   Fallback design if unconditional two-deep present fencing ever shows up as
   desktop drag latency - allow the second in-flight frame only when observed
@@ -538,6 +533,12 @@ Finished, kept for the reasoning.
   data-driven sprite count had to guess a maximum up front and crashed when it
   guessed low; resolved by a draw-entry buffer swap in core (setDraw buffer
   keys / setDrawBuffers) and doubling growth in the layer.
+- **[Colored geometry generates twice](done/3d-colored-generators.md)** [2026-08-19]
+  Building coloured geometry generated twice (generate, then withColors
+  repacked). Fixed in two stages 2026-08-23 - vertex layouts became open
+  attribute lists (withAttribute, one pipeline per layout per material) and
+  every generator takes a layout option to emit the wider stride in one pass.
+  Split from 3d-geometry-ops when that shipped 2026-08-19.
 - **[Geometry GPU buffers accumulate when a Mesh's geometry prop changes](done/3d-geometry-buffer-disposal.md)** [2026-08-18]
   Swapping <Mesh geometry> reactively leaves every previous generation's
   vertex/index buffers resident, because geometry buffers are app-lifetime and

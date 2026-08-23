@@ -50,9 +50,9 @@ export const LIT_VERTEX = glsl`
  * LIT_VERTEX for "colored"-layout geometry: the same interface plus the
  * per-vertex aColor vec4 forwarded raw as `in vec4 vColor` - what it means
  * (a tint, baked AO in one channel, anything) is the fragment's business.
- * Using this constant opts the material into the colored layout (its
- * meshes need withColors() geometry), because shaderMaterial detects
- * aColor in the vertex source.
+ * Using this constant makes the material read aColor (shaderMaterial
+ * collects the vertex stage's `in` declarations), so its meshes need
+ * geometry carrying that channel - withColors() - or add() throws.
  */
 export const LIT_VERTEX_COLORED = glsl`
   in vec3 aPos;

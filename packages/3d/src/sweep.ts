@@ -8,8 +8,8 @@
 // Uint32Array by vertex count - filleted profiles times many path points
 // make dense outputs routine here.
 
-import { FLOATS_PER_VERTEX, packIndices } from "./geometry.ts"
-import type { Geometry } from "./geometry.ts"
+import { STANDARD_FLOATS, packGeometry } from "./geometry.ts"
+import type { Geometry, GeometryOptions } from "./geometry.ts"
 import { add, cross, dot, normalize, scale, sub } from "./math.ts"
 import type { Vec3 } from "./math.ts"
 import { earClip, normalizeProfile, profileBounds, profileRing } from "./profile.ts"
@@ -58,7 +58,7 @@ function emitCap(
   mirrorU: boolean,
   flip: boolean,
 ): void {
-  let base = verts.length / FLOATS_PER_VERTEX
+  let base = verts.length / STANDARD_FLOATS
   for (let i = 0; i < px.length; i++) {
     let p = place(px[i]!, py[i]!)
     let u = mirrorU ? (b.maxX - px[i]!) / b.w : (px[i]! - b.minX) / b.w
@@ -81,13 +81,10 @@ function emitCap(
  * unit square like plane(); the -z cap mirrors u so its texture reads
  * unmirrored from outside.
  */
-export function extrude(
-  profile: Profile,
-  depth = 1,
-  bevel = 0,
-  bevelSegments = 4,
-  label?: string,
-): Geometry {
+export type ExtrudeOptions = GeometryOptions & { depth?: number; bevel?: number; bevelSegments?: number }
+
+export function extrude(profile: Profile, options: ExtrudeOptions = {}): Geometry {
+  let { depth = 1, bevel = 0, bevelSegments = 4 } = options
   let pts = normalizeProfile(profile)
   let { entries, miterX, miterY } = profileRing(pts)
   let h = depth / 2
@@ -155,11 +152,7 @@ export function extrude(
   emitCap(verts, indices, cx, cy, tris, bounds, (x, y) => [x, y, h], [0, 0, 1], false, false)
   emitCap(verts, indices, cx, cy, tris, bounds, (x, y) => [x, y, -h], [0, 0, -1], true, true)
 
-  return {
-    vertices: new Float32Array(verts),
-    indices: packIndices(indices, verts.length / FLOATS_PER_VERTEX),
-    label,
-  }
+  return packGeometry(verts, indices, options)
 }
 
 /**
@@ -172,13 +165,10 @@ export function extrude(
  * duplicated like torus), v = normalized distance around the profile;
  * caps map the profile's bounding box, the end cap mirrored in u.
  */
-export function lathe(
-  profile: Profile,
-  segments = 32,
-  angle = Math.PI * 2,
-  start = 0,
-  label?: string,
-): Geometry {
+export type LatheOptions = GeometryOptions & { segments?: number; angle?: number; start?: number }
+
+export function lathe(profile: Profile, options: LatheOptions = {}): Geometry {
+  let { segments = 32, angle = Math.PI * 2, start = 0 } = options
   if (!(angle > 0) || angle > Math.PI * 2 + 1e-9) throw new Error("Lathe angle must be in (0, 2*PI]")
   let pts = normalizeProfile(profile)
   let { entries } = profileRing(pts)
@@ -215,11 +205,7 @@ export function lathe(
     }
   }
 
-  return {
-    vertices: new Float32Array(verts),
-    indices: packIndices(indices, verts.length / FLOATS_PER_VERTEX),
-    label,
-  }
+  return packGeometry(verts, indices, options)
 }
 
 /** A sweep-path point: `p` in world space, `smooth` to share one ring
@@ -351,7 +337,7 @@ export function pathFrames(path: SweepPath): PathFrames {
  * mirrored in u. A near-reversal joint clamps its mitre stretch (4x,
  * like the profile's own miter clamp) instead of flinging vertices.
  */
-export function sweep(profile: Profile, path: SweepPath, label?: string): Geometry {
+export function sweep(profile: Profile, path: SweepPath, options: GeometryOptions = {}): Geometry {
   let pts = normalizeProfile(profile)
   let { entries } = profileRing(pts)
   let p = normalizePath(path)
@@ -362,7 +348,7 @@ export function sweep(profile: Profile, path: SweepPath, label?: string): Geomet
   let verts: number[] = []
   let indices: number[] = []
   let emitRing = (pos: Vec3[], normals: Vec3[], v: number): number => {
-    let base = verts.length / FLOATS_PER_VERTEX
+    let base = verts.length / STANDARD_FLOATS
     for (let k = 0; k < entries.length; k++) {
       let q = pos[k]!
       let m = normals[k]!
@@ -436,11 +422,7 @@ export function sweep(profile: Profile, path: SweepPath, label?: string): Geomet
   emitCap(verts, indices, px, py, tris, bounds, capPlace(p[0]!.p, 0), scale(tangents[0]!, -1), false, false)
   emitCap(verts, indices, px, py, tris, bounds, capPlace(p[n - 1]!.p, n - 2), tangents[n - 2]!, true, true)
 
-  return {
-    vertices: new Float32Array(verts),
-    indices: packIndices(indices, verts.length / FLOATS_PER_VERTEX),
-    label,
-  }
+  return packGeometry(verts, indices, options)
 }
 
 /**
@@ -450,11 +432,14 @@ export function sweep(profile: Profile, path: SweepPath, label?: string): Geomet
  * bend, smooth = continuous), and both ends get flat caps. UVs: u around
  * the tube, v along the path.
  */
-export function tube(path: SweepPath, radius = 0.5, radialSegments = 12, label?: string): Geometry {
+export type TubeOptions = GeometryOptions & { radius?: number; radialSegments?: number }
+
+export function tube(path: SweepPath, options: TubeOptions = {}): Geometry {
+  let { radius = 0.5, radialSegments = 12, ...rest } = options
   let profile: Profile = []
   for (let i = 0; i < radialSegments; i++) {
     let a = (i / radialSegments) * Math.PI * 2
     profile.push({ p: [Math.cos(a) * radius, Math.sin(a) * radius], smooth: true })
   }
-  return sweep(profile, path, label)
+  return sweep(profile, path, rest)
 }

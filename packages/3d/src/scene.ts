@@ -27,11 +27,11 @@ import type { PointerEvent as ElementPointerEvent } from "@solidrt/core"
 // the same pairing (and the same name) as Three's Object3D/Matrix4.
 import { compose, copy, eulerFromQuat, identity, invertAffine, lookAt as lookAtMatrix, mat4, multiply, normalMatrix, perspective, quat, quatFromFrame, transformPoint, transformVector, updateRotation, updateScale } from "./math.ts"
 import type { Mat4, Quat, TransformUpdate, Vec3, Vec4 } from "./math.ts"
-import { geometryBounds } from "./geometry.ts"
+import { geometryBounds, layoutKey, validateGeometry } from "./geometry.ts"
 import { acquireGeometryBuffers, releaseGeometryBuffers } from "./geometry-gpu.ts"
 import type { GeometryBuffers } from "./geometry-gpu.ts"
 import type { Geometry } from "./geometry.ts"
-import { backgroundPipeline } from "./material.ts"
+import { backgroundPipeline, missingAttributes } from "./material.ts"
 import { orderEntries } from "./order.ts"
 import type { Material } from "./material.ts"
 import { createBvh, rayBoxDistance } from "./bvh.ts"
@@ -923,15 +923,17 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     },
     _attach(mesh) {
       if (disposed) return
-      // Layout is stride: a mismatched pair would not miss a channel, it
-      // would read garbage - so it is an error here, like the rest of the
-      // strict entry path.
-      let geoLayout = mesh.geometry.layout ?? "standard"
-      let matLayout = mesh.material.layout ?? "standard"
-      if (geoLayout !== matLayout) {
+      // A material reads attributes by name; the geometry's layout must
+      // carry every one it declares (the pipeline is built for that layout,
+      // so a missing channel would have no home) - an error here, like the
+      // rest of the strict entry path. Extra channels are fine.
+      validateGeometry(mesh.geometry)
+      let missing = missingAttributes(mesh.material, mesh.geometry.layout)
+      if (missing.length > 0) {
         throw new Error(
-          "Mesh geometry layout '" + geoLayout + "' does not match its material's '" + matLayout +
-            "' - a material reading aColor needs withColors() geometry, and colored geometry needs such a material",
+          "Mesh geometry layout (" + layoutKey(mesh.geometry.layout) + ") lacks attributes its material reads: " +
+            missing.map(a => a.name + " " + a.format).join(", ") +
+            " - add the channel with withAttribute()/withColors(), or use a material that does not read it",
         )
       }
       // Instancing pairs the same way layout does: the pipeline's instance
@@ -969,7 +971,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       // so added live it would draw at the seeded identity until then. The
       // mismatch branch in sync() turns it on in the same pass that writes
       // uModel.
-      mesh._entry = addDraw(texture, mesh.material.pipeline(), seed, {
+      mesh._entry = addDraw(texture, mesh.material.pipeline(mesh.geometry.layout), seed, {
         buffer: bufs.buffer,
         indexBuffer: bufs.index,
         indexFormat: bufs.indexFormat,

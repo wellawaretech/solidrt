@@ -1,9 +1,14 @@
-// Geometry: interleaved vertex data in one of two named layouts - the
-// "standard" position vec3, normal vec3, uv vec2 (8 floats per vertex)
-// every generator emits, and "colored", which appends an aColor vec4
-// (12 floats, derived with withColors) as the per-vertex data channel for
-// custom materials (tint, baked AO, any four scalars) - plus
-// indices, uint16 or uint32 (the generators here emit uint16; hand-built
+// Geometry: one interleaved vertex buffer described by a layout - an
+// ordered attribute list that always starts with the standard prefix
+// (position vec3, normal vec3, uv vec2: 8 floats, what every generator
+// emits) and may carry further channels after it. The layout is open data:
+// `withAttribute` appends any named channel (Three's `setAttribute`), and
+// "colored" names the one common case, the prefix plus an aColor vec4 (12
+// floats) as the per-vertex data channel for custom materials (tint, baked
+// AO, any four scalars). Materials read attributes by name and adapt to
+// whatever layout their geometry carries (one pipeline per layout met),
+// so a geometry may carry more channels than a material reads.
+// Indices are uint16 or uint32 (the generators here emit uint16; hand-built
 // geometry past 64k vertices uses a Uint32Array and the draw entry follows
 // the array type). Winding is counter-clockwise seen from outside in the
 // y-up world, which the standard camera rig (perspective() with its baked
@@ -18,9 +23,12 @@
 
 import type { VertexAttribute } from "@solidrt/core/gpu"
 import { add, compose, cross, mat4, normalize, normalMatrix, sub, updateRotation, updateScale } from "./math.ts"
-import type { Quat, TransformUpdate, Vec2, Vec3, Vec4 } from "./math.ts"
+import type { Quat, TransformUpdate, Vec2, Vec3 } from "./math.ts"
 
-export type VertexLayout = "standard" | "colored"
+/** A vertex layout: the named presets, or an explicit attribute list that
+ * must begin with the standard prefix (aPos vec3, aNormal vec3, aUV vec2).
+ * Absent on a Geometry means "standard". */
+export type VertexLayout = "standard" | "colored" | VertexAttribute[]
 
 const STANDARD_ATTRIBUTES: VertexAttribute[] = [
   { name: "aPos", format: "vec3" },
@@ -28,17 +36,146 @@ const STANDARD_ATTRIBUTES: VertexAttribute[] = [
   { name: "aUV", format: "vec2" },
 ]
 
-/** The pipeline attribute list for each named layout. A deliberately small
- * set (not an open per-geometry model): every layout shares the standard
- * prefix, so one shader vocabulary serves all of them. */
-export const VERTEX_LAYOUTS: Record<VertexLayout, VertexAttribute[]> = {
+/** The attribute lists behind the named layouts. Every layout shares the
+ * standard prefix, so one shader vocabulary serves all of them. */
+export const VERTEX_LAYOUTS: Record<"standard" | "colored", VertexAttribute[]> = {
   standard: STANDARD_ATTRIBUTES,
   colored: [...STANDARD_ATTRIBUTES, { name: "aColor", format: "vec4" }],
 }
 
-/** Floats per vertex in the "standard" layout (what every generator emits). */
-export const FLOATS_PER_VERTEX = 8
-const COLORED_FLOATS = 12
+/** Floats per vertex in the "standard" layout (the generators' own write
+ * format before packing). */
+export const STANDARD_FLOATS = 8
+
+const FORMAT_FLOATS: Record<VertexAttribute["format"], number> = { f32: 1, vec2: 2, vec3: 3, vec4: 4 }
+
+/** The attribute list of a layout (a preset name resolves to its list). */
+export function layoutAttributes(layout: VertexLayout | undefined): VertexAttribute[] {
+  if (layout === undefined || layout === "standard") return VERTEX_LAYOUTS.standard
+  if (layout === "colored") return VERTEX_LAYOUTS.colored
+  return layout
+}
+
+/** Floats per vertex of a layout - its interleave stride. */
+export function layoutStride(layout: VertexLayout | undefined): number {
+  let stride = 0
+  for (let attr of layoutAttributes(layout)) stride += FORMAT_FLOATS[attr.format]
+  return stride
+}
+
+/** A layout's identity as a string (name:format per attribute, in order):
+ * two layouts with equal keys interleave identically. */
+export function layoutKey(layout: VertexLayout | undefined): string {
+  return layoutAttributes(layout)
+    .map(a => a.name + ":" + a.format)
+    .join(",")
+}
+
+/** Where an attribute sits in the interleave: its float offset and size.
+ * Null when the layout does not carry that name. */
+export function layoutSlot(layout: VertexLayout | undefined, name: string): { offset: number; size: number; format: VertexAttribute["format"] } | null {
+  let offset = 0
+  for (let attr of layoutAttributes(layout)) {
+    let size = FORMAT_FLOATS[attr.format]
+    if (attr.name === name) return { offset, size, format: attr.format }
+    offset += size
+  }
+  return null
+}
+
+/** The prefix check every layout must pass: standard attributes first, in
+ * order, and no duplicate names after them. */
+function checkLayout(layout: VertexAttribute[], where: string): void {
+  for (let i = 0; i < STANDARD_ATTRIBUTES.length; i++) {
+    let want = STANDARD_ATTRIBUTES[i]!
+    let got = layout[i]
+    if (got === undefined || got.name !== want.name || got.format !== want.format) {
+      throw new Error(where + ": a layout must start with the standard prefix (aPos vec3, aNormal vec3, aUV vec2)")
+    }
+  }
+  let seen = new Set<string>()
+  for (let attr of layout) {
+    if (seen.has(attr.name)) throw new Error(where + ": duplicate attribute '" + attr.name + "'")
+    seen.add(attr.name)
+  }
+}
+
+/**
+ * The structural check for geometry about to draw: the layout passes the
+ * prefix rule, the vertex float count is a whole number of its stride,
+ * and indices are present. Throws naming the geometry. The scene runs it
+ * at add() so hand-built geometry (a bare `layout: "colored"` over a
+ * miscounted array) fails there instead of drawing garbage triangles.
+ * Deliberately no max-index scan: that is O(indices) per add, and the
+ * generators and merge/transform keep indices in range by construction.
+ */
+export function validateGeometry(geometry: Geometry): void {
+  let name = geometry.label ? "geometry '" + geometry.label + "'" : "geometry"
+  let layout = geometry.layout
+  if (layout !== undefined && typeof layout !== "string") checkLayout(layout, name)
+  let stride = layoutStride(layout)
+  if (geometry.vertices.length % stride !== 0) {
+    throw new Error(
+      name + ": " + geometry.vertices.length + " vertex floats is not a whole number of " + stride + "-float (" + layoutKey(layout) + ") vertices",
+    )
+  }
+  if (geometry.indices.length === 0) throw new Error(name + ": no indices")
+}
+
+/** The options every generator shares (each generator's own options type
+ * extends this with its dimensions, all optional with defaults): `label`
+ * for the GPU buffers, and `layout` to emit vertices in a wider layout
+ * directly (the standard channels written, the extra slots zeroed for
+ * fillAttribute/fillColors to write in place), so colored or custom
+ * channel geometry is built in one pass instead of generate-then-repack. */
+export type GeometryOptions = { label?: string; layout?: VertexLayout }
+
+/** The generator tail: pack standard-layout vertices (number[] of 8 per
+ * vertex, or an already-written Float32Array) and indices into a Geometry
+ * of the requested layout. A wider layout spreads the standard channels
+ * to its stride, leaving the extra slots zero. */
+export function packGeometry(
+  verts: ArrayLike<number>,
+  indices: number[] | Uint16Array | Uint32Array,
+  options: GeometryOptions = {},
+): Geometry {
+  let { label, layout } = options
+  if (verts.length % STANDARD_FLOATS !== 0) {
+    throw new Error("packGeometry: vertex data is not a whole number of standard-layout vertices")
+  }
+  let count = verts.length / STANDARD_FLOATS
+  let packedIndices = indices instanceof Uint16Array || indices instanceof Uint32Array ? indices : packIndices(indices, count)
+  let attrs = layoutAttributes(layout)
+  if (layout !== undefined && typeof layout !== "string") checkLayout(attrs, "packGeometry")
+  let stride = layoutStride(attrs)
+  if (stride === STANDARD_FLOATS) {
+    let vertices = verts instanceof Float32Array ? verts : new Float32Array(verts)
+    return layout === undefined ? { vertices, indices: packedIndices, label } : { vertices, indices: packedIndices, layout, label }
+  }
+  let vertices = new Float32Array(count * stride)
+  for (let i = 0; i < count; i++) {
+    let s = i * STANDARD_FLOATS
+    let d = i * stride
+    for (let k = 0; k < STANDARD_FLOATS; k++) vertices[d + k] = verts[s + k]!
+  }
+  return { vertices, indices: packedIndices, layout, label }
+}
+
+// The stride a generator writing a Float32Array directly must use for the
+// requested layout, and the matching finish (no repack: the data is
+// already laid out).
+function generatorStride(options: GeometryOptions): number {
+  let { layout } = options
+  let attrs = layoutAttributes(layout)
+  if (layout !== undefined && typeof layout !== "string") checkLayout(attrs, "generator layout")
+  return layoutStride(attrs)
+}
+
+function finishGeometry(vertices: Float32Array, indices: number[], options: GeometryOptions): Geometry {
+  let { label, layout } = options
+  let packed = packIndices(indices, vertices.length / layoutStride(layout))
+  return layout === undefined ? { vertices, indices: packed, label } : { vertices, indices: packed, layout, label }
+}
 
 /** Uint16 indices when they fit, Uint32Array past 64k vertices - the draw
  * entry follows the array type. The tail of every unbounded generator. */
@@ -73,7 +210,7 @@ export function geometryBounds(geometry: Geometry): Float32Array {
   if (bounds === undefined) {
     bounds = new Float32Array([Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity])
     let v = geometry.vertices
-    let stride = geometry.layout === "colored" ? COLORED_FLOATS : FLOATS_PER_VERTEX
+    let stride = layoutStride(geometry.layout)
     for (let i = 0; i + 2 < v.length; i += stride) {
       let x = v[i]!, y = v[i + 1]!, z = v[i + 2]!
       if (x < bounds[0]!) bounds[0] = x
@@ -89,84 +226,123 @@ export function geometryBounds(geometry: Geometry): Float32Array {
   return bounds
 }
 
-/** Per-vertex aColor values for withColors/fillColors: a flat 4-per-vertex
- * array, or a callback deriving each vertex's vec4 from the vertex data. */
-export type ColorFill = ArrayLike<number> | ((index: number, pos: Vec3, normal: Vec3, uv: Vec2) => Vec4)
+/** Per-vertex values for withAttribute/fillAttribute: a flat array of the
+ * attribute's size per vertex, or a callback deriving each vertex's value
+ * from the standard channels (what a baker wants). */
+export type AttributeFill = ArrayLike<number> | ((index: number, pos: Vec3, normal: Vec3, uv: Vec2) => ArrayLike<number>)
+/** AttributeFill for the aColor vec4 channel (4 per vertex). */
+export type ColorFill = AttributeFill
+
+/**
+ * Append a named channel to a geometry: a new geometry (the source is
+ * untouched, its GPU buffers stay independent) whose layout is the
+ * source's plus `attr`, every existing channel copied through and the new
+ * slots written from `fill`. This is Three's `geometry.setAttribute` for
+ * an interleaved buffer - the one generic primitive; `withColors` is its
+ * aColor spelling. A material reads the channel by declaring the matching
+ * `in` (name and format) in its vertex stage.
+ */
+export function withAttribute(geometry: Geometry, attr: VertexAttribute, fill: AttributeFill, label?: string): Geometry {
+  let srcLayout = layoutAttributes(geometry.layout)
+  if (layoutSlot(srcLayout, attr.name) !== null) {
+    throw new Error("withAttribute: geometry already carries '" + attr.name + "'")
+  }
+  let srcStride = layoutStride(srcLayout)
+  if (geometry.vertices.length % srcStride !== 0) {
+    throw new Error("withAttribute: vertex data is not a whole number of " + layoutKey(srcLayout) + " vertices")
+  }
+  let layout = [...srcLayout, { name: attr.name, format: attr.format }]
+  checkLayout(layout, "withAttribute")
+  let stride = layoutStride(layout)
+  let count = geometry.vertices.length / srcStride
+  let src = geometry.vertices
+  let out = new Float32Array(count * stride)
+  for (let i = 0; i < count; i++) {
+    let s = i * srcStride
+    let d = i * stride
+    for (let k = 0; k < srcStride; k++) out[d + k] = src[s + k]!
+  }
+  fillAttribute(out, layout, attr.name, fill)
+  return {
+    vertices: out,
+    indices: geometry.indices,
+    layout,
+    label: label ?? (geometry.label ? geometry.label + "-" + attr.name : undefined),
+  }
+}
 
 /**
  * Derive a "colored"-layout geometry from a standard one: the same
  * positions, normals, uvs and indices, plus an aColor vec4 per vertex -
  * the data channel for materials whose vertex stage reads `in vec4 aColor`
  * (a tint, baked ambient occlusion, any four scalars; the name is the
- * standard vocabulary, the contents are yours). The callback form receives
- * each vertex's position, normal and uv - what a baker wants. The source
- * geometry is untouched and its GPU buffers stay independent.
+ * standard vocabulary, the contents are yours). `withAttribute` with the
+ * aColor channel; the "colored" preset name is kept on the result.
  */
 export function withColors(geometry: Geometry, fill: ColorFill, label?: string): Geometry {
-  if (geometry.layout === "colored") {
+  if (layoutSlot(geometry.layout, "aColor") !== null) {
     throw new Error("withColors: geometry already carries an aColor channel")
   }
-  if (geometry.vertices.length % FLOATS_PER_VERTEX !== 0) {
-    throw new Error("withColors: vertex data is not a whole number of standard-layout vertices")
-  }
-  let count = geometry.vertices.length / FLOATS_PER_VERTEX
-  if (typeof fill !== "function" && fill.length !== count * 4) {
-    throw new Error("withColors: fill has " + fill.length + " floats, expected 4 per vertex (" + count * 4 + ")")
-  }
-  let src = geometry.vertices
-  let out = new Float32Array(count * COLORED_FLOATS)
-  for (let i = 0; i < count; i++) {
-    let s = i * FLOATS_PER_VERTEX
-    let d = i * COLORED_FLOATS
-    for (let k = 0; k < FLOATS_PER_VERTEX; k++) out[d + k] = src[s + k]!
-  }
-  fillColors(out, fill)
-  return {
-    vertices: out,
-    indices: geometry.indices,
-    layout: "colored",
-    label: label ?? (geometry.label ? geometry.label + "-colored" : undefined),
-  }
+  let out = withAttribute(geometry, { name: "aColor", format: "vec4" }, fill, label ?? (geometry.label ? geometry.label + "-colored" : undefined))
+  if (layoutKey(out.layout) === layoutKey("colored")) out.layout = "colored"
+  return out
 }
 
 /**
- * The in-place primitive under withColors: write the aColor slots of a
- * colored-layout interleave you already own - the hook for a merging
- * builder baking colors over its packed buffer (the pos/normal/uv the
- * callback receives are read from the buffer itself, so a packer that
+ * The in-place primitive under withAttribute: write one channel of an
+ * interleave you already own, whose layout you state - the hook for a
+ * merging builder baking data over its packed buffer (the pos/normal/uv
+ * the callback receives are read from the buffer itself, so a packer that
  * bakes transforms while writing hands the baker world-space vertices).
  * Fills vertices [first, first + count) - count defaults to the rest of
  * the buffer - and `fill` indexes relative to `first`, so a per-part
  * callback works unchanged for both APIs. Returns `vertices`.
  *
- * This trusts the buffer to BE colored-layout data - a bare array carries
- * no layout tag, so only the arithmetic is checked. The Geometry-level
- * withColors stays the checked path.
+ * This trusts the buffer to BE `layout` data - a bare array carries no
+ * layout tag, so only the arithmetic is checked. The Geometry-level
+ * withAttribute stays the checked path.
  */
-export function fillColors(vertices: Float32Array, fill: ColorFill, first = 0, count?: number): Float32Array {
-  if (vertices.length % COLORED_FLOATS !== 0) {
-    throw new Error("fillColors: vertex data is not a whole number of colored-layout vertices")
+export function fillAttribute(vertices: Float32Array, layout: VertexLayout, name: string, fill: AttributeFill, first = 0, count?: number): Float32Array {
+  let slot = layoutSlot(layout, name)
+  if (slot === null) throw new Error("fillAttribute: layout has no '" + name + "' attribute")
+  let stride = layoutStride(layout)
+  if (vertices.length % stride !== 0) {
+    throw new Error("fillAttribute: vertex data is not a whole number of " + layoutKey(layout) + " vertices")
   }
-  let total = vertices.length / COLORED_FLOATS
+  let total = vertices.length / stride
   let n = count ?? total - first
   if (!Number.isInteger(first) || !Number.isInteger(n) || first < 0 || n < 0 || first + n > total) {
-    throw new Error("fillColors: range [" + first + ", " + (first + n) + ") is outside the buffer's " + total + " vertices")
+    throw new Error("fillAttribute: range [" + first + ", " + (first + n) + ") is outside the buffer's " + total + " vertices")
   }
+  let size = slot.size
   let fn = typeof fill === "function" ? fill : null
-  if (!fn && fill.length !== n * 4) {
-    throw new Error("fillColors: fill has " + fill.length + " floats, expected 4 per vertex (" + n * 4 + ")")
+  let flat = typeof fill === "function" ? null : fill
+  if (flat !== null && flat.length !== n * size) {
+    throw new Error("fillAttribute: fill has " + flat.length + " floats, expected " + size + " per vertex (" + n * size + ")")
   }
   for (let i = 0; i < n; i++) {
-    let d = (first + i) * COLORED_FLOATS
-    let c: Vec4 = fn
-      ? fn(i, [vertices[d]!, vertices[d + 1]!, vertices[d + 2]!], [vertices[d + 3]!, vertices[d + 4]!, vertices[d + 5]!], [vertices[d + 6]!, vertices[d + 7]!])
-      : [(fill as ArrayLike<number>)[i * 4]!, (fill as ArrayLike<number>)[i * 4 + 1]!, (fill as ArrayLike<number>)[i * 4 + 2]!, (fill as ArrayLike<number>)[i * 4 + 3]!]
-    vertices[d + 8] = c[0]
-    vertices[d + 9] = c[1]
-    vertices[d + 10] = c[2]
-    vertices[d + 11] = c[3]
+    let d = (first + i) * stride
+    let value: ArrayLike<number>
+    let s: number
+    if (fn !== null) {
+      value = fn(i, [vertices[d]!, vertices[d + 1]!, vertices[d + 2]!], [vertices[d + 3]!, vertices[d + 4]!, vertices[d + 5]!], [vertices[d + 6]!, vertices[d + 7]!])
+      s = 0
+      if (value.length !== size) {
+        throw new Error("fillAttribute: fill callback returned " + value.length + " floats for '" + name + "', expected " + size)
+      }
+    } else {
+      value = flat!
+      s = i * size
+    }
+    for (let k = 0; k < size; k++) vertices[d + slot.offset + k] = value[s + k]!
   }
   return vertices
+}
+
+/** `fillAttribute` for the aColor channel of a "colored"-layout
+ * interleave (fill is 4 per vertex). */
+export function fillColors(vertices: Float32Array, fill: ColorFill, first = 0, count?: number): Float32Array {
+  return fillAttribute(vertices, "colored", "aColor", fill, first, count)
 }
 
 /**
@@ -187,10 +363,10 @@ export function transformGeometry(geometry: Geometry, transform: TransformUpdate
   if (transform.scale !== undefined) updateScale(scl, transform.scale)
   let m = compose(mat4(), transform.position ?? [0, 0, 0], rot, scl)
   let n = normalMatrix(mat4(), m)
-  let stride = geometry.layout === "colored" ? COLORED_FLOATS : FLOATS_PER_VERTEX
+  let stride = layoutStride(geometry.layout)
   let src = geometry.vertices
   if (src.length % stride !== 0) {
-    throw new Error("transformGeometry: vertex data is not a whole number of " + (geometry.layout ?? "standard") + "-layout vertices")
+    throw new Error("transformGeometry: vertex data is not a whole number of " + layoutKey(geometry.layout) + " vertices")
   }
   let out = new Float32Array(src)
   for (let i = 0; i < out.length; i += stride) {
@@ -227,16 +403,17 @@ export function transformGeometry(geometry: Geometry, transform: TransformUpdate
  */
 export function mergeGeometries(parts: Geometry[], label?: string): Geometry {
   if (parts.length === 0) throw new Error("mergeGeometries: no parts")
-  let layout = parts[0]!.layout ?? "standard"
-  let stride = layout === "colored" ? COLORED_FLOATS : FLOATS_PER_VERTEX
+  let layout = parts[0]!.layout
+  let key = layoutKey(layout)
+  let stride = layoutStride(layout)
   let floats = 0
   let indexCount = 0
   for (let part of parts) {
-    if ((part.layout ?? "standard") !== layout) {
-      throw new Error("mergeGeometries: mixed layouts (" + layout + " and " + (part.layout ?? "standard") + ")")
+    if (layoutKey(part.layout) !== key) {
+      throw new Error("mergeGeometries: mixed layouts (" + key + " and " + layoutKey(part.layout) + ")")
     }
     if (part.vertices.length % stride !== 0) {
-      throw new Error("mergeGeometries: a part's vertex data is not a whole number of " + layout + "-layout vertices")
+      throw new Error("mergeGeometries: a part's vertex data is not a whole number of " + key + " vertices")
     }
     floats += part.vertices.length
     indexCount += part.indices.length
@@ -254,7 +431,7 @@ export function mergeGeometries(parts: Geometry[], label?: string): Geometry {
     vOffset += part.vertices.length
     iOffset += src.length
   }
-  return { vertices, indices, layout: parts[0]!.layout, label }
+  return { vertices, indices, layout, label }
 }
 
 // Indices for a row-major (cellRows + 1) x (cellCols + 1) vertex grid: two
@@ -278,7 +455,10 @@ function gridIndices(cellRows: number, cellCols: number, skipFirst = false, skip
 }
 
 /** An axis-aligned box centered on the origin: 24 vertices, 36 indices. */
-export function box(width = 1, height = 1, depth = 1, label?: string): Geometry {
+export type BoxOptions = GeometryOptions & { width?: number; height?: number; depth?: number }
+
+export function box(options: BoxOptions = {}): Geometry {
+  let { width = 1, height = 1, depth = 1 } = options
   let x = width / 2
   let y = height / 2
   let z = depth / 2
@@ -287,7 +467,7 @@ export function box(width = 1, height = 1, depth = 1, label?: string): Geometry 
   type P = [number, number, number]
   // Corners a (bottom-left) through d (top-left), CCW seen from outside.
   let quad = (a: P, b: P, c: P, d: P, n: P) => {
-    let base = verts.length / FLOATS_PER_VERTEX
+    let base = verts.length / STANDARD_FLOATS
     let uv = [[0, 1], [1, 1], [1, 0], [0, 0]]
     let corners = [a, b, c, d]
     for (let i = 0; i < 4; i++) {
@@ -303,24 +483,27 @@ export function box(width = 1, height = 1, depth = 1, label?: string): Geometry 
   quad([-x, -y, -z], [-x, -y, z], [-x, y, z], [-x, y, -z], [-1, 0, 0]) // left
   quad([-x, y, z], [x, y, z], [x, y, -z], [-x, y, -z], [0, 1, 0]) // top
   quad([-x, -y, -z], [x, -y, -z], [x, -y, z], [-x, -y, z], [0, -1, 0]) // bottom
-  return { vertices: new Float32Array(verts), indices: new Uint16Array(indices), label }
+  return packGeometry(verts, indices, options)
 }
 
 /**
  * A rectangle in the XY plane facing +z, centered on the origin. For a
  * ground plane, rotate it flat: `rotation={[-Math.PI / 2, 0, 0]}`.
  */
-export function plane(width = 1, height = 1, label?: string): Geometry {
+export type PlaneOptions = GeometryOptions & { width?: number; height?: number }
+
+export function plane(options: PlaneOptions = {}): Geometry {
+  let { width = 1, height = 1 } = options
   let x = width / 2
   let y = height / 2
   // prettier-ignore
-  let vertices = new Float32Array([
+  let vertices = [
     -x, -y, 0, 0, 0, 1, 0, 1,
     x, -y, 0, 0, 0, 1, 1, 1,
     x, y, 0, 0, 0, 1, 1, 0,
     -x, y, 0, 0, 0, 1, 0, 0,
-  ])
-  return { vertices, indices: new Uint16Array([0, 1, 2, 0, 2, 3]), label }
+  ]
+  return packGeometry(vertices, [0, 1, 2, 0, 2, 3], options)
 }
 
 /**
@@ -333,15 +516,17 @@ export function plane(width = 1, height = 1, label?: string): Geometry {
  * coordinates, so genuinely distinct vertices). UVs: u 0..1 along the knot,
  * v 0..1 around the tube.
  */
-export function torusKnot(
-  radius = 1,
-  tube = 0.4,
-  tubularSegments = 64,
-  radialSegments = 8,
-  p = 2,
-  q = 3,
-  label?: string,
-): Geometry {
+export type TorusKnotOptions = GeometryOptions & {
+  radius?: number
+  tube?: number
+  tubularSegments?: number
+  radialSegments?: number
+  p?: number
+  q?: number
+}
+
+export function torusKnot(options: TorusKnotOptions = {}): Geometry {
+  let { radius = 1, tube = 0.4, tubularSegments = 64, radialSegments = 8, p = 2, q = 3 } = options
   // A point on the knot curve at parameter t (0..2*PI*p).
   let point = (t: number): Vec3 => {
     let qp = (q / p) * t
@@ -351,7 +536,8 @@ export function torusKnot(
 
   let rows = tubularSegments + 1
   let cols = radialSegments + 1
-  let vertices = new Float32Array(rows * cols * FLOATS_PER_VERTEX)
+  let stride = generatorStride(options)
+  let vertices = new Float32Array(rows * cols * stride)
   let at = 0
 
   for (let i = 0; i < rows; i++) {
@@ -381,13 +567,11 @@ export function torusKnot(
       vertices[at + 5] = n[2]
       vertices[at + 6] = i / tubularSegments
       vertices[at + 7] = j / radialSegments
-      at += FLOATS_PER_VERTEX
+      at += stride
     }
   }
 
-  let indices = new Uint16Array(gridIndices(tubularSegments, radialSegments))
-
-  return { vertices, indices, label }
+  return finishGeometry(vertices, gridIndices(tubularSegments, radialSegments), options)
 }
 
 /**
@@ -398,13 +582,15 @@ export function torusKnot(
  * disc map. A zero radius skips that cap and the degenerate side
  * triangles at the apex.
  */
-export function cylinder(
-  radiusTop = 0.5,
-  radiusBottom = 0.5,
-  height = 1,
-  radialSegments = 24,
-  label?: string,
-): Geometry {
+export type CylinderOptions = GeometryOptions & {
+  radiusTop?: number
+  radiusBottom?: number
+  height?: number
+  radialSegments?: number
+}
+
+export function cylinder(options: CylinderOptions = {}): Geometry {
+  let { radiusTop = 0.5, radiusBottom = 0.5, height = 1, radialSegments = 24 } = options
   let h = height / 2
   let cols = radialSegments + 1
   let verts: number[] = []
@@ -429,7 +615,7 @@ export function cylinder(
   // Caps fan around a center vertex; the planar UV map has no seam, so the
   // ring wraps with modulo instead of duplicating a column.
   let cap = (r: number, y: number, up: number) => {
-    let base = verts.length / FLOATS_PER_VERTEX
+    let base = verts.length / STANDARD_FLOATS
     verts.push(0, y, 0, 0, up, 0, 0.5, 0.5)
     for (let i = 0; i < radialSegments; i++) {
       let phi = (i / radialSegments) * Math.PI * 2
@@ -445,34 +631,40 @@ export function cylinder(
   }
   if (radiusTop > 0) cap(radiusTop, h, 1)
   if (radiusBottom > 0) cap(radiusBottom, -h, -1)
-  return { vertices: new Float32Array(verts), indices: new Uint16Array(indices), label }
+  return packGeometry(verts, indices, options)
 }
 
 /** A capped cone on the y axis, centered on the origin: `cylinder()` with
  * a zero top radius (each apex vertex carries its column's side normal, so
  * the surface shades smoothly around). */
-export function cone(radius = 0.5, height = 1, radialSegments = 24, label?: string): Geometry {
-  return cylinder(0, radius, height, radialSegments, label)
+export type ConeOptions = GeometryOptions & { radius?: number; height?: number; radialSegments?: number }
+
+export function cone(options: ConeOptions = {}): Geometry {
+  let { radius = 0.5, height = 1, radialSegments = 24, ...rest } = options
+  return cylinder({ ...rest, radiusTop: 0, radiusBottom: radius, height, radialSegments })
 }
 
 /**
  * A torus lying flat, centered on the origin: the ring lies in the XZ
  * plane with the hole on the y axis - the y-up orientation torusKnot also
- * uses (Three's equivalent stands in XY). Signature order is Three's:
+ * uses (Three's equivalent stands in XY). Option names are Three's:
  * radialSegments subdivides the tube cross-section, tubularSegments the
  * ring. UVs: u 0..1 around the ring, v 0..1 around the tube, seam
  * row/column duplicated like torusKnot.
  */
-export function torus(
-  radius = 0.5,
-  tube = 0.2,
-  radialSegments = 12,
-  tubularSegments = 32,
-  label?: string,
-): Geometry {
+export type TorusOptions = GeometryOptions & {
+  radius?: number
+  tube?: number
+  radialSegments?: number
+  tubularSegments?: number
+}
+
+export function torus(options: TorusOptions = {}): Geometry {
+  let { radius = 0.5, tube = 0.2, radialSegments = 12, tubularSegments = 32 } = options
   let rows = tubularSegments + 1
   let cols = radialSegments + 1
-  let vertices = new Float32Array(rows * cols * FLOATS_PER_VERTEX)
+  let stride = generatorStride(options)
+  let vertices = new Float32Array(rows * cols * stride)
   let at = 0
   for (let i = 0; i < rows; i++) {
     let phi = (i / tubularSegments) * Math.PI * 2
@@ -491,11 +683,10 @@ export function torus(
       vertices[at + 5] = cp * dz
       vertices[at + 6] = i / tubularSegments
       vertices[at + 7] = j / radialSegments
-      at += FLOATS_PER_VERTEX
+      at += stride
     }
   }
-  let indices = new Uint16Array(gridIndices(tubularSegments, radialSegments))
-  return { vertices, indices, label }
+  return finishGeometry(vertices, gridIndices(tubularSegments, radialSegments), options)
 }
 
 /**
@@ -503,7 +694,10 @@ export function torus(
  * like plane()). UVs are the planar map of the disc inscribed in the unit
  * square.
  */
-export function circle(radius = 0.5, segments = 32, label?: string): Geometry {
+export type CircleOptions = GeometryOptions & { radius?: number; segments?: number }
+
+export function circle(options: CircleOptions = {}): Geometry {
+  let { radius = 0.5, segments = 32 } = options
   let verts: number[] = [0, 0, 0, 0, 0, 1, 0.5, 0.5]
   let indices: number[] = []
   for (let i = 0; i < segments; i++) {
@@ -515,7 +709,7 @@ export function circle(radius = 0.5, segments = 32, label?: string): Geometry {
   for (let i = 0; i < segments; i++) {
     indices.push(0, 1 + i, 1 + ((i + 1) % segments))
   }
-  return { vertices: new Float32Array(verts), indices: new Uint16Array(indices), label }
+  return packGeometry(verts, indices, options)
 }
 
 /**
@@ -523,7 +717,10 @@ export function circle(radius = 0.5, segments = 32, label?: string): Geometry {
  * are the planar map of the OUTER disc, so a ring textures like the
  * matching circle() with the middle cut out.
  */
-export function ring(innerRadius = 0.25, outerRadius = 0.5, segments = 32, label?: string): Geometry {
+export type RingOptions = GeometryOptions & { innerRadius?: number; outerRadius?: number; segments?: number }
+
+export function ring(options: RingOptions = {}): Geometry {
+  let { innerRadius = 0.25, outerRadius = 0.5, segments = 32 } = options
   let verts: number[] = []
   let indices: number[] = []
   for (let i = 0; i < segments; i++) {
@@ -538,11 +735,14 @@ export function ring(innerRadius = 0.25, outerRadius = 0.5, segments = 32, label
     let j = (i + 1) % segments
     indices.push(i * 2, i * 2 + 1, j * 2 + 1, i * 2, j * 2 + 1, j * 2)
   }
-  return { vertices: new Float32Array(verts), indices: new Uint16Array(indices), label }
+  return packGeometry(verts, indices, options)
 }
 
 /** A UV sphere centered on the origin (poles on the y axis). */
-export function sphere(radius = 0.5, widthSegments = 24, heightSegments = 16, label?: string): Geometry {
+export type SphereOptions = GeometryOptions & { radius?: number; widthSegments?: number; heightSegments?: number }
+
+export function sphere(options: SphereOptions = {}): Geometry {
+  let { radius = 0.5, widthSegments = 24, heightSegments = 16 } = options
   let verts: number[] = []
   for (let iy = 0; iy <= heightSegments; iy++) {
     let v = iy / heightSegments
@@ -560,5 +760,5 @@ export function sphere(radius = 0.5, widthSegments = 24, heightSegments = 16, la
   }
   // Both pole rows are collapsed to the pole point.
   let indices = gridIndices(heightSegments, widthSegments, true, true)
-  return { vertices: new Float32Array(verts), indices: new Uint16Array(indices), label }
+  return packGeometry(verts, indices, options)
 }

@@ -216,6 +216,9 @@ pub struct ShaderProgram {
   /// compiler optimized them out. Writes to these are accepted and skipped
   /// (warned at the call site) rather than rejected as unknown names.
   inactive: HashSet<String>,
+  /// Active vertex attributes (name, format), reflected at link time. Empty
+  /// for fullscreen fragment passes (their vertex stage reads gl_VertexID).
+  attributes: super::vocab::AttributeTable,
   /// Vertex+fragment pipeline (own vertex stage over a buffer) vs fullscreen
   /// fragment pass. Decides which target shape the program can back.
   pipeline: bool,
@@ -234,7 +237,7 @@ impl ShaderProgram {
     let program = link_program(gl, VERTEX_SRC, &fragment_full)?;
     let uniforms = reflect_uniforms(gl, program);
     let inactive = inactive_names(&uniforms, declared_uniform_names(&fragment_full));
-    Ok(ShaderProgram { program, uniforms, inactive, pipeline: false, label: None })
+    Ok(ShaderProgram { program, uniforms, inactive, attributes: Vec::new(), pipeline: false, label: None })
   }
 
   /// Compile a vertex+fragment pipeline program. Attribute locations are
@@ -248,7 +251,8 @@ impl ShaderProgram {
     let mut declared = declared_uniform_names(&vertex_full);
     declared.extend(declared_uniform_names(&fragment_full));
     let inactive = inactive_names(&uniforms, declared);
-    Ok(ShaderProgram { program, uniforms, inactive, pipeline: true, label: None })
+    let attributes = reflect_attributes(gl, program)?;
+    Ok(ShaderProgram { program, uniforms, inactive, attributes, pipeline: true, label: None })
   }
 
   /// Link two already-compiled stages into a program: the raw path, no
@@ -274,7 +278,14 @@ impl ShaderProgram {
       }
       let uniforms = reflect_uniforms(gl, program);
       let inactive = inactive_names(&uniforms, declared);
-      Ok(ShaderProgram { program, uniforms, inactive, pipeline: true, label: None })
+      let attributes = match reflect_attributes(gl, program) {
+        Ok(attributes) => attributes,
+        Err(e) => {
+          gl.delete_program(program);
+          return Err(e);
+        }
+      };
+      Ok(ShaderProgram { program, uniforms, inactive, attributes, pipeline: true, label: None })
     }
   }
 
@@ -290,6 +301,11 @@ impl ShaderProgram {
 
   pub fn is_pipeline(&self) -> bool {
     self.pipeline
+  }
+
+  /// The active vertex attributes (name, format) in GL's reported order.
+  pub fn attribute_table(&self) -> super::vocab::AttributeTable {
+    self.attributes.clone()
   }
 
   /// The active uniforms as a plain-data table (name -> slot), for the
@@ -354,6 +370,29 @@ fn reflect_uniforms(
   uniforms
 }
 
+/// Reflect active vertex attributes. The compiler drops unused `in`s, so
+/// this is exactly the set a pipeline layout must feed. Built-in inputs
+/// (gl_VertexID, gl_InstanceID) are not reported by GL. A type no layout
+/// can express (a matrix or integer attribute) is an error here, at link,
+/// rather than a silent mis-bind at draw.
+fn reflect_attributes(gl: &glow::Context, program: glow::Program) -> Result<super::vocab::AttributeTable, String> {
+  let mut attributes = Vec::new();
+  unsafe {
+    let count = gl.get_active_attributes(program);
+    for i in 0..count {
+      if let Some(a) = gl.get_active_attribute(program, i) {
+        if a.name.starts_with("gl_") {
+          continue;
+        }
+        let format = super::vocab::AttrFormat::from_gl(a.atype)
+          .ok_or_else(|| format!("vertex attribute '{}' has type {:#x}, which no pipeline layout can feed (use float, vec2, vec3 or vec4)", a.name, a.atype))?;
+        attributes.push((a.name, format));
+      }
+    }
+  }
+  Ok(attributes)
+}
+
 fn inactive_names(
   uniforms: &HashMap<String, (glow::UniformLocation, super::vocab::UniformSlot)>,
   declared: Vec<String>,
@@ -409,6 +448,28 @@ impl RenderPipeline {
       if desc.attributes.iter().any(|(n, _)| n == name) {
         return Err((program, format!("attribute '{name}' appears in both attributes and instanceAttributes")));
       }
+    }
+    // Every attribute the program actually reads must have a home in one of
+    // the two lists, with the declared format: an uncovered one would bind
+    // nothing (GL feeds a constant and the draw shows garbage), and a
+    // format mismatch would stride the fetch wrong.
+    let uncovered = program.attributes.iter().find_map(|(name, format)| {
+      let found = desc.attributes.iter().chain(desc.instance_attributes.iter()).find(|(n, _)| n == name);
+      match found {
+        None => Some(format!(
+          "program reads vertex attribute '{name}' ({}) which neither attributes nor instanceAttributes declares",
+          format.name()
+        )),
+        Some((_, declared)) if declared != format => Some(format!(
+          "vertex attribute '{name}' is {} in the program but declared as {}",
+          format.name(),
+          declared.name()
+        )),
+        Some(_) => None,
+      }
+    });
+    if let Some(message) = uncovered {
+      return Err((program, message));
     }
     Ok(RenderPipeline { program, program_id, desc, label: None })
   }

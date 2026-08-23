@@ -406,6 +406,16 @@ declare module "flux:gpu" {
    * immediately.
    */
   export function destroyProgram(id: ProgramId): void
+  /**
+   * The vertex attributes a linked program actually reads (name and format),
+   * as the compiler left them: an `in` the vertex stage never uses is not
+   * listed, and a type no layout can feed (a matrix, an integer vector) is
+   * rejected at linkProgram. This is the list a pipeline over the program
+   * must cover between `attributes` and `instanceAttributes` - an uncovered
+   * or mis-formatted one throws at createRenderPipeline. Answered locally,
+   * no GPU round trip.
+   */
+  export function programAttributes(program: ProgramId): VertexAttribute[]
   export type Topology = "points" | "lines" | "line-strip" | "triangles" | "triangle-strip"
   /**
    * Blending for a pipeline's own draw. "none" (default) overwrites:

@@ -574,6 +574,7 @@ impl ModuleDef for GpuModule {
     decl.declare("createRenderPipeline")?;
     decl.declare("destroyRenderPipeline")?;
     decl.declare("destroyProgram")?;
+    decl.declare("programAttributes")?;
     decl.declare("createPipelineTexture")?;
     decl.declare("createBuffer")?;
     decl.declare("beginBufferWrite")?;
@@ -859,6 +860,16 @@ impl ModuleDef for GpuModule {
       },
     )
     .expect("create createShaderTarget");
+
+    // programAttributes(program) -> [{ name, format }]: the vertex attributes
+    // the linked program actually reads, as the compiler left them - the
+    // list a pipeline's attributes + instanceAttributes must cover. Answered
+    // from the UI-side mirror, no raster round trip.
+    let program_attributes_atx = atx.clone();
+    let program_attributes = Function::new(ctx.clone(), move |ctx: Ctx<'js>, id: u64| {
+      program_attributes_impl(ctx, &program_attributes_atx, id)
+    })
+    .expect("create programAttributes");
 
     let destroy_program_atx = atx.clone();
     let destroy_program = Function::new(ctx.clone(), move |ctx: Ctx<'_>, id: u64| {
@@ -1257,6 +1268,7 @@ impl ModuleDef for GpuModule {
     exports.export("createRenderPipeline", create_render_pipeline)?;
     exports.export("destroyRenderPipeline", destroy_render_pipeline)?;
     exports.export("destroyProgram", destroy_program)?;
+    exports.export("programAttributes", program_attributes)?;
     exports.export("createPipelineTexture", create_pipeline_texture)?;
     exports.export("createBuffer", create_buffer)?;
     exports.export("beginBufferWrite", Function::new(ctx.clone(), begin_buffer_write_impl)?)?;
@@ -1352,6 +1364,18 @@ fn begin_buffer_write_impl<'js>(ctx: Ctx<'js>, id: u64) -> rquickjs::Result<Arra
 /// top-to-bottom) as `{ width, height, data }`. Synchronous: the texture was
 /// already rendered on this thread's GL context at creation time, so there is
 /// nothing to wait for.
+fn program_attributes_impl<'js>(ctx: Ctx<'js>, atx: &alloy::Context, id: u64) -> rquickjs::Result<Array<'js>> {
+  let table = atx.program_attributes(id).map_err(|e| throw_str(&ctx, &format!("programAttributes: {e}")))?;
+  let arr = Array::new(ctx.clone())?;
+  for (i, (name, format)) in table.iter().enumerate() {
+    let obj = Object::new(ctx.clone())?;
+    obj.set("name", name.as_str())?;
+    obj.set("format", format.name())?;
+    arr.set(i, obj)?;
+  }
+  Ok(arr)
+}
+
 fn read_texture_impl<'js>(ctx: Ctx<'js>, id: u64) -> rquickjs::Result<Object<'js>> {
   let state = ctx.userdata::<TextureState>().expect("texture state userdata");
   let (width, height, pixels) =

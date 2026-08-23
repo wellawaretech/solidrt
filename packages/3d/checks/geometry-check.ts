@@ -8,7 +8,7 @@
 //
 // A failure prints FAIL lines and throws at the end, so the run exits nonzero.
 
-import { box, geometryBounds, mergeGeometries, plane, transformGeometry, withColors, FLOATS_PER_VERTEX } from "../src/geometry.ts"
+import { box, cylinder, validateGeometry, fillAttribute, fillColors, packGeometry, sphere, torus, torusKnot, geometryBounds, layoutKey, layoutSlot, layoutStride, mergeGeometries, plane, transformGeometry, withAttribute, withColors, STANDARD_FLOATS } from "../src/geometry.ts"
 import type { Geometry } from "../src/geometry.ts"
 import { rayBoxDistance } from "../src/bvh.ts"
 
@@ -99,10 +99,10 @@ throws("rotation and quaternion", () => transformGeometry(tri(), { rotation: [0,
 
 // Merge: offsets and counts.
 {
-  let a = box(1, 1, 1)
-  let b = transformGeometry(box(1, 1, 1), { position: [3, 0, 0] })
+  let a = box()
+  let b = transformGeometry(box(), { position: [3, 0, 0] })
   let m = mergeGeometries([a, b], "pair")
-  let va = a.vertices.length / FLOATS_PER_VERTEX
+  let va = a.vertices.length / STANDARD_FLOATS
   if (m.vertices.length !== a.vertices.length + b.vertices.length) fail("merge vertex count")
   if (m.indices.length !== a.indices.length + b.indices.length) fail("merge index count")
   if (m.indices[a.indices.length]! !== b.indices[0]! + va) fail("merge index offset")
@@ -114,7 +114,7 @@ throws("rotation and quaternion", () => transformGeometry(tri(), { rotation: [0,
 // Merge past 64k vertices widens the index array.
 {
   let parts: Geometry[] = []
-  for (let i = 0; i < 70000 / 4 + 1; i++) parts.push(plane(1, 1))
+  for (let i = 0; i < 70000 / 4 + 1; i++) parts.push(plane())
   let m = mergeGeometries(parts)
   if (!(m.indices instanceof Uint32Array)) fail("merge widens to uint32")
   let last = parts.length - 1
@@ -124,6 +124,82 @@ throws("rotation and quaternion", () => transformGeometry(tri(), { rotation: [0,
 
 throws("merge mixed layouts", () => mergeGeometries([tri(), withColors(tri(), () => [1, 1, 1, 1])]))
 throws("merge empty", () => mergeGeometries([]))
+
+// Open layouts: withAttribute appends a channel after the standard prefix,
+// stride and slots follow the list, and withColors is the aColor spelling
+// (preset name kept, identical bytes).
+{
+  let t = withAttribute(tri(), { name: "aTangent", format: "vec3" }, (_i, pos) => [pos[0], pos[1], 9])
+  if (layoutStride(t.layout) !== 11) fail("tangent stride: " + layoutStride(t.layout))
+  if (layoutKey(t.layout) !== "aPos:vec3,aNormal:vec3,aUV:vec2,aTangent:vec3") fail("tangent key: " + layoutKey(t.layout))
+  expectVec("tangent slot", t.vertices.subarray(11 + 8, 11 + 11), [0, 1, 9])
+  expectVec("tangent prefix kept", t.vertices.subarray(11, 11 + 8), [0, 1, 0, 0, 0, 1, 1, 0])
+  if (t.label !== "tri-aTangent") fail("tangent label: " + t.label)
+  let slot = layoutSlot(t.layout, "aTangent")
+  if (slot === null || slot.offset !== 8 || slot.size !== 3) fail("tangent slot lookup")
+  if (layoutSlot(t.layout, "aColor") !== null) fail("absent slot is null")
+
+  let two = withAttribute(t, { name: "aColor", format: "vec4" }, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12])
+  if (layoutStride(two.layout) !== 15) fail("two-channel stride")
+  expectVec("second channel", two.vertices.subarray(15 + 11, 15 + 15), [5, 6, 7, 8])
+  expectVec("first channel kept", two.vertices.subarray(15 + 8, 15 + 11), [0, 1, 9])
+  fillAttribute(two.vertices, two.layout, "aTangent", () => [7, 7, 7], 1, 1)
+  expectVec("fillAttribute range", two.vertices.subarray(15 + 8, 15 + 11), [7, 7, 7])
+  expectVec("fillAttribute outside range untouched", two.vertices.subarray(8, 11), [1, 0, 9])
+
+  let c = withColors(tri(), [1, 0, 0, 1, 0, 1, 0, 1, 0, 0, 1, 1])
+  let viaAttr = withAttribute(tri(), { name: "aColor", format: "vec4" }, [1, 0, 0, 1, 0, 1, 0, 1, 0, 0, 1, 1])
+  if (c.layout !== "colored") fail("withColors keeps preset name")
+  if (layoutKey(c.layout) !== layoutKey(viaAttr.layout)) fail("colored key equals explicit list")
+  expectVec("colored equals withAttribute", c.vertices, viaAttr.vertices)
+  let m = mergeGeometries([c, viaAttr])
+  if (m.vertices.length !== 72) fail("preset and explicit layouts merge")
+  let t2 = transformGeometry(t, { position: [1, 0, 0] })
+  expectVec("transform keeps extra channel", t2.vertices.subarray(8, 11), [1, 0, 9])
+  expectVec("transform on wide stride", t2.vertices.subarray(11, 14), [1, 1, 0])
+
+  throws("duplicate attribute", () => withAttribute(t, { name: "aTangent", format: "vec3" }, () => [0, 0, 0]))
+  throws("duplicate prefix name", () => withAttribute(tri(), { name: "aUV", format: "vec2" }, () => [0, 0]))
+  throws("fill size mismatch", () => withAttribute(tri(), { name: "aW", format: "f32" }, [1, 2]))
+  throws("callback size mismatch", () => withAttribute(tri(), { name: "aW", format: "f32" }, () => [1, 2]))
+  throws("fillAttribute unknown name", () => fillAttribute(t.vertices, t.layout, "aNope", () => [0]))
+}
+
+// Generators emitting a wider layout in one pass: identical bytes to
+// generate-then-repack, and the string tail still means label.
+{
+  let check = (name: string, std: Geometry, wide: Geometry) => {
+    let viaColors = withColors(std, () => [0, 0, 0, 0])
+    if (layoutKey(wide.layout) !== layoutKey("colored")) fail(name + ": wide layout key")
+    if (wide.vertices.length !== viaColors.vertices.length) fail(name + ": wide length")
+    expectVec(name + " wide bytes", wide.vertices, viaColors.vertices)
+    expectVec(name + " wide indices", wide.indices, std.indices)
+    fillColors(wide.vertices, (_i, pos) => [pos[0], pos[1], pos[2], 1])
+    expectVec(name + " filled color", wide.vertices.subarray(8, 12), [wide.vertices[0]!, wide.vertices[1]!, wide.vertices[2]!, 1])
+  }
+  check("box", box({ width: 1, height: 2, depth: 3 }), box({ width: 1, height: 2, depth: 3, layout: "colored" }))
+  check("sphere", sphere({ radius: 0.7, widthSegments: 6, heightSegments: 4 }), sphere({ radius: 0.7, widthSegments: 6, heightSegments: 4, layout: "colored" }))
+  check("cylinder", cylinder({ radiusTop: 0.2, radialSegments: 5 }), cylinder({ radiusTop: 0.2, radialSegments: 5, layout: "colored" }))
+  check("torus", torus({ radius: 1, tube: 0.3, radialSegments: 4, tubularSegments: 6 }), torus({ radius: 1, tube: 0.3, radialSegments: 4, tubularSegments: 6, layout: "colored" }))
+  check("torusKnot", torusKnot({ tube: 0.3, tubularSegments: 8, radialSegments: 4 }), torusKnot({ tube: 0.3, tubularSegments: 8, radialSegments: 4, layout: "colored" }))
+  let custom = sphere({ radius: 1, widthSegments: 4, heightSegments: 3, layout: [{ name: "aPos", format: "vec3" }, { name: "aNormal", format: "vec3" }, { name: "aUV", format: "vec2" }, { name: "aW", format: "f32" }], label: "w" })
+  if (layoutStride(custom.layout) !== 9 || custom.label !== "w") fail("custom generator layout")
+  expectVec("custom generator prefix", custom.vertices.subarray(9, 17), sphere({ radius: 1, widthSegments: 4, heightSegments: 3 }).vertices.subarray(8, 16))
+  if (box({ label: "named" }).label !== "named") fail("label option")
+  if (box().layout !== undefined) fail("default layout stays absent")
+  throws("generator bad layout", () => box({ layout: [{ name: "aColor", format: "vec4" }] }))
+  throws("torus bad layout", () => torus({ layout: [{ name: "aColor", format: "vec4" }] }))
+  throws("packGeometry ragged", () => packGeometry([1, 2, 3], [0]))
+}
+
+// validateGeometry: the add()-time structural check.
+{
+  validateGeometry(box())
+  validateGeometry(withColors(box(), () => [0, 0, 0, 0]))
+  throws("validate ragged colored", () => validateGeometry({ vertices: new Float32Array(16), indices: new Uint16Array([0, 1]), layout: "colored", label: "ragged" }))
+  throws("validate bad layout", () => validateGeometry({ vertices: new Float32Array(8), indices: new Uint16Array([0]), layout: [{ name: "aColor", format: "vec4" }] }))
+  throws("validate no indices", () => validateGeometry({ vertices: new Float32Array(24), indices: new Uint16Array(0) }))
+}
 
 // Public ray helper: hit from outside, inside, miss.
 {

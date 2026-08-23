@@ -10,7 +10,7 @@ use crate::gpu::{
   resolve_draw_range, validate_draw_range, validate_order, validate_param_if_declared, validate_params,
   validate_texture_bindings, vertex_stride, BufferIds, DrawBounds, DrawRange, DrawSpec, DrawUpdate,
   GpuLimits, GpuResources,
-  NodeShader, ParamValue, PipelineDesc, PipelineSpec, ShaderStage, TargetSpec, UniformKind, UniformTable, WindowShader,
+  NodeShader, ParamValue, PipelineDesc, PipelineSpec, ShaderStage, TargetSpec, UniformKind, UniformTable, WindowShader, AttributeTable,
   WriteLeases,
 };
 use crate::microphone::MicrophoneRegistry;
@@ -133,6 +133,9 @@ pub struct Context {
   // active uniforms (from the LinkProgram reply). Programs are their own id
   // space (like buffers), separate from texture ids.
   program_uniforms: RefCell<HashMap<u64, Rc<UniformTable>>>,
+  /// Per linked program: its active vertex attributes, mirrored from the
+  /// link reply so `program_attributes` answers without a raster round trip.
+  program_attributes: RefCell<HashMap<u64, Rc<AttributeTable>>>,
   next_program_id: Cell<u64>,
   // UI-side mirror of the raster thread's render pipeline registry (its own
   // id space again): per pipeline, its program's uniforms and vertex stride,
@@ -240,6 +243,7 @@ impl Context {
       manual_targets: RefCell::new(HashSet::new()),
       content_changes: RefCell::new(HashSet::new()),
       program_uniforms: RefCell::new(HashMap::new()),
+      program_attributes: RefCell::new(HashMap::new()),
       next_program_id: Cell::new(1),
       pipeline_mirrors: RefCell::new(HashMap::new()),
       next_pipeline_id: Cell::new(1),
@@ -935,10 +939,19 @@ impl Context {
     }
     drop(kinds);
     let id = self.next_program_id.get();
-    let uniforms = self.rpc(|reply| RasterCmd::LinkProgram { id, vertex, fragment, label, reply })??;
+    let (uniforms, attributes) = self.rpc(|reply| RasterCmd::LinkProgram { id, vertex, fragment, label, reply })??;
     self.next_program_id.set(id + 1);
     self.program_uniforms.borrow_mut().insert(id, Rc::new(uniforms));
+    self.program_attributes.borrow_mut().insert(id, Rc::new(attributes));
     Ok(id)
+  }
+
+  /// The active vertex attributes (name, format) of a program from
+  /// `link_shader_program`, as the compiler left them: an `in` the vertex
+  /// stage never reads is not listed. A pipeline over the program must
+  /// declare every one of these (attributes or instanceAttributes).
+  pub fn program_attributes(&self, id: u64) -> Result<Rc<AttributeTable>, String> {
+    self.program_attributes.borrow().get(&id).cloned().ok_or_else(|| format!("program {id} not found"))
   }
 
   /// Delete a compiled stage and retire its id. Programs linked from it are
@@ -1439,6 +1452,7 @@ impl Context {
   /// either destruction order is safe.
   pub fn destroy_shader_program(&self, id: u64) {
     self.program_uniforms.borrow_mut().remove(&id);
+    self.program_attributes.borrow_mut().remove(&id);
     self.send(RasterCmd::DestroyProgram { id });
   }
 

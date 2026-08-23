@@ -1,5 +1,7 @@
-// Materials pair GLSL with pipeline state, deduped hard: one program and
-// one render pipeline per material CLASS (unlit color, unlit textured),
+// Materials pair GLSL with pipeline state, deduped hard: one program per
+// material CLASS (unlit color, unlit textured), and one render pipeline
+// per vertex layout the class meets (a pipeline is program + attribute
+// list, so the program never recompiles for a wider geometry),
 // created lazily at first use and kept for the app's lifetime. A material
 // INSTANCE is just the per-entry uniform values (and sampler bindings) it
 // contributes when a mesh becomes a draw entry - so a thousand meshes with
@@ -25,6 +27,7 @@ import {
   destroyShader,
   glsl,
   linkProgram,
+  programAttributes,
 } from "@solidrt/core/gpu"
 import type {
   BlendMode,
@@ -37,12 +40,13 @@ import type {
   Topology,
   VertexAttribute,
 } from "@solidrt/core/gpu"
-import { VERTEX_LAYOUTS } from "./geometry.ts"
+import { layoutAttributes, layoutKey, layoutSlot } from "./geometry.ts"
 import type { VertexLayout } from "./geometry.ts"
 
 export type Material = {
-  /** The pipeline this material draws with (lazily created). */
-  pipeline(): RenderPipelineId
+  /** The pipeline this material draws with for geometry of `layout`
+   * (lazily created, one per layout met). */
+  pipeline(layout: VertexLayout | undefined): RenderPipelineId
   /** Per-entry uniform values this material contributes at addDraw. */
   params: ShaderParams
   /** Per-entry sampler bindings, when the material samples textures. */
@@ -51,11 +55,13 @@ export type Material = {
    * the world matrix's inverse-transpose alongside uModel for meshes using
    * this material (set automatically by shaderMaterial). */
   normalMatrix?: boolean
-  /** The vertex layout the pipeline is built for; absent means "standard".
-   * shaderMaterial sets "colored" when the vertex stage reads `aColor`. A
-   * mesh whose geometry layout differs is rejected at add() - the strides
-   * disagree, so a mismatch would render garbage, not just miss a channel. */
-  layout?: VertexLayout
+  /** The vertex attributes the linked program reads from the geometry
+   * (name and format, per the engine's reflection of the compiled program,
+   * instance attributes excluded). Links the program on first call. A mesh
+   * whose geometry layout lacks any of them is rejected at add(); extra
+   * channels in the geometry are fine (inactive attributes keep the
+   * stride). */
+  attributes(): VertexAttribute[]
   /** True when the pipeline blends over (blend "alpha", depthWrite off):
    * the scene draws this material's meshes after every opaque one, sorted
    * back-to-front by mesh origin, and re-sorts them when the camera moves. */
@@ -106,30 +112,42 @@ const FRAGMENT_MAP_SRC = glsl`
 `
 
 let sharedVertex: ShaderStageId | undefined
-let pipelines: Partial<Record<UnlitClass, RenderPipelineId>> = {}
+let programs: Partial<Record<UnlitClass, ProgramId>> = {}
+let pipelines = new Map<string, RenderPipelineId>()
 
-// One pipeline per unlit CLASS: fragment kind x transparency, since blend
-// state is pipeline state.
+// One program per unlit CLASS: fragment kind x transparency. Blend state is
+// pipeline state and so is the attribute list, so the pipeline is keyed by
+// class and vertex layout.
 type UnlitClass = "color" | "map" | "color-transparent" | "map-transparent"
 
-function pipelineFor(cls: UnlitClass): RenderPipelineId {
-  let existing = pipelines[cls]
+function programFor(cls: UnlitClass): ProgramId {
+  let program = programs[cls]
+  if (program === undefined) {
+    if (sharedVertex === undefined) sharedVertex = compileShader("vertex", VERTEX_SRC, { header: true })
+    let fragment = compileShader("fragment", cls.startsWith("color") ? FRAGMENT_COLOR_SRC : FRAGMENT_MAP_SRC, {
+      header: true,
+    })
+    program = linkProgram(sharedVertex, fragment, { label: "scene-unlit-" + cls })
+    programs[cls] = program
+  }
+  return program
+}
+
+function pipelineFor(cls: UnlitClass, layout: VertexLayout | undefined): RenderPipelineId {
+  let key = cls + "|" + layoutKey(layout)
+  let existing = pipelines.get(key)
   if (existing !== undefined) return existing
-  if (sharedVertex === undefined) sharedVertex = compileShader("vertex", VERTEX_SRC, { header: true })
+  let program = programFor(cls)
   let transparent = cls.endsWith("-transparent")
-  let fragment = compileShader("fragment", cls.startsWith("color") ? FRAGMENT_COLOR_SRC : FRAGMENT_MAP_SRC, {
-    header: true,
-  })
-  let program = linkProgram(sharedVertex, fragment, { label: "scene-unlit-" + cls })
   let pipeline = createRenderPipeline(program, {
-    attributes: VERTEX_LAYOUTS.standard,
+    attributes: layoutAttributes(layout),
     depth: true,
     depthWrite: transparent ? false : undefined,
     blend: transparent ? "alpha" : undefined,
     cull: "back",
     label: "scene-unlit-" + cls,
   })
-  pipelines[cls] = pipeline
+  pipelines.set(key, pipeline)
   return pipeline
 }
 
@@ -153,15 +171,25 @@ export function unlit(opts: UnlitOptions = {}): Material {
   let a = color.length === 4 ? color[3] : 1
   let uColor = [color[0] * a, color[1] * a, color[2] * a, a]
   let transparent = opts.transparent === true
-  if (opts.map !== undefined) {
-    return {
-      pipeline: () => pipelineFor(transparent ? "map-transparent" : "map"),
-      params: { uColor },
-      textures: { uMap: opts.map },
-      transparent,
-    }
+  let cls: UnlitClass = opts.map !== undefined ? (transparent ? "map-transparent" : "map") : transparent ? "color-transparent" : "color"
+  return {
+    pipeline: layout => pipelineFor(cls, layout),
+    attributes: () => programAttributes(programFor(cls)),
+    params: { uColor },
+    textures: opts.map !== undefined ? { uMap: opts.map } : undefined,
+    transparent,
   }
-  return { pipeline: () => pipelineFor(transparent ? "color-transparent" : "color"), params: { uColor }, transparent }
+}
+
+/** The attributes `material` reads that `layout` does not carry (name and
+ * format) - empty when the pair is drawable. */
+export function missingAttributes(material: Material, layout: VertexLayout | undefined): VertexAttribute[] {
+  let missing: VertexAttribute[] = []
+  for (let attr of material.attributes()) {
+    let slot = layoutSlot(layout, attr.name)
+    if (slot === null || slot.format !== attr.format) missing.push(attr)
+  }
+  return missing
 }
 
 // Mirrors the engine's own preamble rule: a source carrying its own
@@ -222,11 +250,14 @@ export type ShaderMaterialClassOptions = {
    * normals, correct under non-uniform scale - and `uniform vec3 uCamPos`
    * the camera's world position, shared like uViewProj (the specular /
    * fresnel view vector: `uCamPos - worldPos`). Declare any of the
-   * layout's `in` attributes (aPos vec3, aNormal vec3, aUV vec2);
-   * undeclared ones are skipped. Reading `in vec4 aColor` opts the
-   * material into the "colored" 12-float layout - the per-vertex data
-   * channel (tint, baked AO, any four scalars); its meshes then need
-   * withColors() geometry, and a layout mismatch throws at add().
+   * geometry's `in` attributes by name (the standard aPos vec3, aNormal
+   * vec3, aUV vec2, or any channel appended with withAttribute);
+   * undeclared ones are skipped. What the program READS is the engine's
+   * word (reflected from the linked program, so an `in` the compiler
+   * dropped does not count); one the mesh's geometry layout does not
+   * carry (name and format) throws at add() - so `in vec4 aColor` needs
+   * withColors() geometry. The class builds one pipeline per layout its
+   * meshes bring, the program compiles once.
    * `@solidrt/3d/glsl` exports a standard
    * vertex stage and lighting pieces built on exactly this contract.
    */
@@ -308,25 +339,36 @@ export function shaderMaterialClass(opts: ShaderMaterialClassOptions): ShaderMat
     }
   }
   let program: ProgramId | undefined
-  let pipeline: RenderPipelineId | undefined
+  let pipelines = new Map<string, RenderPipelineId>()
   // Attributes live in the vertex stage only, so unlike the uNormal scan
   // there is nothing to look for in the fragment source.
-  let layout: VertexLayout = /\baColor\b/.test(opts.vertex) ? "colored" : "standard"
   let normalMatrix = /\buNormal\b/.test(opts.vertex) || /\buNormal\b/.test(opts.fragment)
   let transparent = opts.transparent ?? (opts.blend !== undefined && opts.blend !== "none")
   let depth = opts.depth ?? true
   // An empty list declares nothing - same as absent (the engine requires an
   // instance buffer exactly when attributes are declared).
   let instanceAttributes = opts.instanceAttributes?.length ? opts.instanceAttributes.map(a => ({ ...a })) : undefined
-  let pipelineFor = (): RenderPipelineId => {
-    if (pipeline === undefined) {
+  let programFor = (): ProgramId => {
+    if (program === undefined) {
       let vs = compileShader("vertex", opts.vertex, { header: needsHeader(opts.vertex) })
       let fs = compileShader("fragment", opts.fragment, { header: needsHeader(opts.fragment) })
       program = linkProgram(vs, fs, { label: opts.label })
       destroyShader(vs)
       destroyShader(fs)
-      pipeline = createRenderPipeline(program, {
-        attributes: VERTEX_LAYOUTS[layout],
+    }
+    return program
+  }
+  // What the program reads from the GEOMETRY: the engine's reflection of
+  // the linked program minus the per-instance names (those come from the
+  // record buffer, declared on the pipeline beside the layout).
+  let attributes = (): VertexAttribute[] =>
+    programAttributes(programFor()).filter(a => !instanceAttributes?.some(i => i.name === a.name))
+  let pipelineFor = (layout: VertexLayout | undefined): RenderPipelineId => {
+    let key = layoutKey(layout)
+    let pipeline = pipelines.get(key)
+    if (pipeline === undefined) {
+      pipeline = createRenderPipeline(programFor(), {
+        attributes: layoutAttributes(layout),
         instanceAttributes,
         depth,
         // depthWrite needs a depth buffer, so the transparent default
@@ -337,18 +379,17 @@ export function shaderMaterialClass(opts: ShaderMaterialClassOptions): ShaderMat
         topology: opts.topology,
         label: opts.label,
       })
+      pipelines.set(key, pipeline)
     }
     return pipeline
   }
   return {
     instance(inst = {}) {
-      return { normalMatrix, layout, transparent, instanceAttributes, pipeline: pipelineFor, params: inst.params ?? {}, textures: inst.textures }
+      return { normalMatrix, attributes, transparent, instanceAttributes, pipeline: pipelineFor, params: inst.params ?? {}, textures: inst.textures }
     },
     dispose() {
-      if (pipeline !== undefined) {
-        destroyRenderPipeline(pipeline)
-        pipeline = undefined
-      }
+      for (let pipeline of pipelines.values()) destroyRenderPipeline(pipeline)
+      pipelines.clear()
       if (program !== undefined) {
         destroyProgram(program)
         program = undefined

@@ -83,9 +83,10 @@ solids (`extrude` with bevels, `lathe`, polyline `sweep`/`tube` with
 mitred joints, flat `shape`, with `fillet`/`roundRect`/`triangulate`
 helpers), geometry as data (`transformGeometry` bakes a placement into
 vertices and `mergeGeometries` concatenates parts, so a static scene is
-one mesh per material), a per-vertex data channel
-(`withColors` adds an `aColor` vec4 - tint, baked AO, any four scalars -
-to any geometry, for materials that read it), one perspective camera
+one mesh per material), open vertex layouts (`withAttribute` appends any
+named channel to a geometry's interleave, `withColors` is the `aColor`
+vec4 case - tint, baked AO, any four scalars - and materials read channels
+by name), one perspective camera
 with an orbit control (`createOrbitCamera`: drag, pinch/wheel zoom, auto-orbit),
 mesh picking with pointer events, and scene backgrounds.
 Lights, transparency and model loading are

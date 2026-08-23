@@ -120,16 +120,16 @@ function App() {
       <view width={pct(100)} height={pct(100)} viewBox={[SIZE, SIZE]}>
         <Scene width={SIZE} height={SIZE} clearColor={[0.07, 0.08, 0.1, 1]} label="instanced">
           <PerspectiveCamera fov={55} position={[0, 3.2, 5.4]} lookAt={[0, 0.2, 0]} />
-          <Mesh geometry={plane(9, 9, "meadow")} material={unlit({ color: [0.16, 0.18, 0.16] })} rotation={[-Math.PI / 2, 0, 0]} />
+          <Mesh geometry={plane({ width: 9, height: 9, label: "meadow" })} material={unlit({ color: [0.16, 0.18, 0.16] })} rotation={[-Math.PI / 2, 0, 0]} />
           <Group rotation={[0, spin(), 0]}>
             <InstancedMesh
-              geometry={box(1, 1, 1, "rock")}
+              geometry={box({ label: "rock" })}
               material={instancedLook.instance()}
               records={rocks(400)}
               bounds={[-3.9, 0, -3.9, 3.9, 0.2, 3.9]}
             />
             <InstancedMesh
-              geometry={cone(0.3, 1, 10, "pine")}
+              geometry={cone({ radius: 0.3, height: 1, radialSegments: 10, label: "pine" })}
               material={instancedLook.instance()}
               records={pines(PINE_COUNT)}
               bounds={[-2.8, 0, -2.8, 2.8, 0.8, 2.8]}

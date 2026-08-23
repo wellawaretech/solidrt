@@ -34,7 +34,7 @@ use crate::backend::{FrameOutput, GlBinding};
 use crate::gl;
 use crate::gpu::{
   release_buffer, release_pipeline, release_program, validate_params, validate_texture_bindings, BufferIds, DrawSpec,
-  EntryBuffers, GpuBuffer, GpuBufferInfo, GpuLimits, GpuPipelineInfo, GpuProgramInfo, GpuRenderPipelineInfo,
+  AttributeTable, EntryBuffers, GpuBuffer, GpuBufferInfo, GpuLimits, GpuPipelineInfo, GpuProgramInfo, GpuRenderPipelineInfo,
   GpuResources, GpuTextureInfo, GpuWindowShaderInfo, ParamValue, PassInput, PassTimer, PipelineDesc, Timed, PipelineSpec,
   RenderPipeline, ShaderProgram, ShaderTexture, TargetSpec, UniformTable, WindowShader,
 };
@@ -1445,16 +1445,22 @@ impl RasterState {
   }
 
   /// Link two compiled stages from the stage registry into a registered
-  /// program, replying with the reflected uniform table for the UI-side
-  /// validation mirror. The UI side validated the ids and stage kinds against
+  /// program, replying with the reflected uniform and attribute tables for
+  /// the UI-side validation mirror. The UI side validated the ids and stage kinds against
   /// its mirror; a miss here means the mirrors diverged.
-  fn link_program(&mut self, id: u64, vertex: u64, fragment: u64, label: Option<String>) -> Result<UniformTable, String> {
+  fn link_program(
+    &mut self,
+    id: u64,
+    vertex: u64,
+    fragment: u64,
+    label: Option<String>,
+  ) -> Result<(UniformTable, AttributeTable), String> {
     let vs = self.stages.get(&vertex).ok_or_else(|| format!("shader {vertex} not found"))?;
     let fs = self.stages.get(&fragment).ok_or_else(|| format!("shader {fragment} not found"))?;
     let program = ShaderProgram::from_stages(&self.gl, vs, fs)?.with_label(label);
-    let uniforms = program.uniform_table();
+    let tables = (program.uniform_table(), program.attribute_table());
     self.programs.insert(id, Rc::new(program));
-    Ok(uniforms)
+    Ok(tables)
   }
 
   /// Pair a registered program with draw state under pipeline id `id`.

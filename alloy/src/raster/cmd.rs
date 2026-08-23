@@ -8,7 +8,7 @@ use std::sync::mpsc;
 
 use crate::gpu::{
   BufferIds, DrawRange, DrawSpec, GpuLimits, GpuResources, NodeShader, ParamValue, PipelineDesc, PipelineSpec, ShaderStage,
-  TargetSpec, UniformTable, WindowShader,
+  TargetSpec, UniformTable, WindowShader, AttributeTable,
 };
 use crate::texture::{SamplerState, TextureFormat};
 
@@ -78,7 +78,7 @@ pub(crate) enum RasterCmd {
   /// stages remain usable for further links. Link errors reach JS via the
   /// reply; success carries the reflected uniform table for the UI-side
   /// validation mirror.
-  LinkProgram { id: u64, vertex: u64, fragment: u64, label: Option<String>, reply: mpsc::Sender<Result<UniformTable, String>> },
+  LinkProgram { id: u64, vertex: u64, fragment: u64, label: Option<String>, reply: mpsc::Sender<Result<(UniformTable, AttributeTable), String>> },
   /// Delete a compiled stage. Programs linked from it are unaffected (a
   /// linked program keeps its own compiled copies).
   DestroyStage { id: u64 },

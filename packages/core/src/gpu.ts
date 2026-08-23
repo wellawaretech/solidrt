@@ -164,6 +164,7 @@ export {
   destroyRenderPipeline,
   destroyShader,
   linkProgram,
+  programAttributes,
 } from "flux:gpu"
 
 /**
