@@ -124,12 +124,21 @@ as written.
 
 ## Sampling
 
-`filter` (`"linear"` default, `"nearest"`) and `wrap` (`"clamp"` default,
-`"repeat"`) are declared at creation and are a property of the texture id:
-`<texture>` display and shader sampling follow the same state, so a nearest
-texture upscales with hard pixels everywhere. Changing either means a new
-id. No mipmaps exist, so minification beyond 2x aliases; render a
-supersampled target at 2x and let `<texture>` scale it down, not more.
+`filter` (`"linear"` default, `"nearest"`), `wrap` (`"clamp"` default,
+`"repeat"`) and `mipmap` (`false` default) are declared at creation and are
+a property of the texture id: `<texture>` display and shader sampling follow
+the same state, so a nearest texture upscales with hard pixels everywhere.
+Changing any of them means a new id.
+
+Without a mip chain, shader sampling of a minified texture skips texels and
+aliases (3d surfaces at distance, a target sampled at a fraction of its
+size). `mipmap: true` keeps the chain on the id and the runtime rebuilds it
+after every upload (data textures) and every render (targets) - there is
+nothing to schedule. Shader sampling then minifies through it (trilinear
+for `"linear"`, per-level nearest for `"nearest"`). The `<texture>` display
+draw samples the full-size level only, so a supersampled target shown
+through `<texture>` should stay at 2x. Rebuilding is one GPU pass per
+upload or render; a per-frame texture pays it per frame.
 
 ## Blending
 

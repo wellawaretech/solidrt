@@ -115,15 +115,15 @@ fn texture_exposes_its_paint() {
 fn sampler_state_parses_options_and_defaults() {
   use crate::texture::{SamplerFilter, SamplerState, SamplerWrap};
 
-  let state = SamplerState::parse(None, None).expect("defaults parse");
-  assert_eq!(state, SamplerState { filter: SamplerFilter::Linear, wrap: SamplerWrap::Clamp });
+  let state = SamplerState::parse(None, None, None).expect("defaults parse");
+  assert_eq!(state, SamplerState { filter: SamplerFilter::Linear, wrap: SamplerWrap::Clamp, mipmap: false });
 
-  let state = SamplerState::parse(Some("nearest"), Some("repeat")).expect("explicit values parse");
-  assert_eq!(state, SamplerState { filter: SamplerFilter::Nearest, wrap: SamplerWrap::Repeat });
+  let state = SamplerState::parse(Some("nearest"), Some("repeat"), Some(true)).expect("explicit values parse");
+  assert_eq!(state, SamplerState { filter: SamplerFilter::Nearest, wrap: SamplerWrap::Repeat, mipmap: true });
 
-  let state = SamplerState::parse(Some("linear"), None).expect("partial options parse");
+  let state = SamplerState::parse(Some("linear"), None, Some(false)).expect("partial options parse");
   assert_eq!(state, SamplerState::default());
 
-  assert!(SamplerState::parse(Some("bilinear"), None).expect_err("unknown filter rejected").contains("filter"));
-  assert!(SamplerState::parse(None, Some("mirror")).expect_err("unknown wrap rejected").contains("wrap"));
+  assert!(SamplerState::parse(Some("bilinear"), None, None).expect_err("unknown filter rejected").contains("filter"));
+  assert!(SamplerState::parse(None, Some("mirror"), None).expect_err("unknown wrap rejected").contains("wrap"));
 }

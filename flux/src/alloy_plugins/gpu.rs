@@ -143,15 +143,20 @@ fn collect_textures(ctx: &Ctx<'_>, obj: &Object<'_>, api: &str) -> rquickjs::Res
   Ok(out)
 }
 
-// Decode the { filter?, wrap? } sampling options every create path accepts
-// ("linear"/"nearest", "clamp"/"repeat", defaults linear/clamp); an unknown
-// value throws at the create call site.
+// Decode the { filter?, wrap?, mipmap? } sampling options every create path
+// accepts ("linear"/"nearest", "clamp"/"repeat", bool; defaults
+// linear/clamp/false); an unknown value throws at the create call site.
 fn collect_sampler(ctx: &Ctx<'_>, opts: &Option<Object<'_>>, api: &str) -> rquickjs::Result<alloy::SamplerState> {
-  let (filter, wrap) = match opts {
-    Some(o) => (o.get::<_, Option<String>>("filter")?, o.get::<_, Option<String>>("wrap")?),
-    None => (None, None),
+  let (filter, wrap, mipmap) = match opts {
+    Some(o) => (
+      o.get::<_, Option<String>>("filter")?,
+      o.get::<_, Option<String>>("wrap")?,
+      o.get::<_, Option<bool>>("mipmap")?,
+    ),
+    None => (None, None, None),
   };
-  alloy::SamplerState::parse(filter.as_deref(), wrap.as_deref()).map_err(|e| throw_str(ctx, &format!("{api}: {e}")))
+  alloy::SamplerState::parse(filter.as_deref(), wrap.as_deref(), mipmap)
+    .map_err(|e| throw_str(ctx, &format!("{api}: {e}")))
 }
 
 // Decode the { label? } debug name every create path accepts: free-form, not

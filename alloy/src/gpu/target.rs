@@ -868,11 +868,24 @@ impl ShaderTexture {
     }
   }
 
+  /// The tail of every content write (render, overwrite, clear): the MSAA
+  /// resolve when the target has one, then the mip regeneration when the id
+  /// declares a chain.
+  fn resolve(&self, gl: &glow::Context) {
+    self.resolve_msaa(gl);
+    // The chain serves the NEXT consumer of this target (another pass
+    // sampling it minified), so it follows every content write: the
+    // automatic regeneration the dirty flush makes possible.
+    if self.sampler.mipmap {
+      crate::texture::generate_mipmap(gl, self.target);
+    }
+  }
+
   /// After a pass on an `Msaa::Explicit` target: blit the multisampled color
   /// into the texture (the resolve), then drop the samples - they are dead
   /// once resolved, and the invalidate keeps tilers from writing them back.
   /// A no-op for the other flavors. Restores the framebuffer bindings.
-  fn resolve(&self, gl: &glow::Context) {
+  fn resolve_msaa(&self, gl: &glow::Context) {
     let Some(Msaa::Explicit { fbo: msaa_fbo, .. }) = self.mesh().and_then(|m| m.msaa.as_ref()) else {
       return;
     };
@@ -1367,6 +1380,7 @@ impl ShaderTexture {
         let draw =
           PassDraw::Fullscreen { program, params, textures: &inputs, vertex_count: 3, clear: None, blend: false };
         run_pass(gl, Some(self.fbo), (0, 0), self.width, self.height, draw);
+        self.resolve(gl);
       }
       TargetKind::Mesh(mesh) => {
         let draws: Vec<ResolvedDraw> = mesh
@@ -1417,6 +1431,7 @@ impl ShaderTexture {
   /// `gl::draw::draw_and_resolve` for why blits are not an option on this stack).
   pub fn overwrite_with(&self, gl: &glow::Context, program: &ShaderProgram, textures: &[PassInput]) {
     super::pass::render_program_to_fbo(gl, program, Some(self.fbo), self.width, self.height, &[], textures);
+    self.resolve(gl);
   }
 
   /// Clear the target to its clear color (and its depth buffer, when

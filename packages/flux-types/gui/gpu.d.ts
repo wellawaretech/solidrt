@@ -17,11 +17,12 @@
 // they return.
 //
 // Sampling is a per-texture property declared at creation: every create path
-// accepts `{ filter?, wrap? }` ("linear"/"nearest", "clamp"/"repeat";
-// defaults linear + clamp for every origin). The state follows the id
-// everywhere it is sampled - shader passes and `<texture>` display alike -
-// and survives id-stable resizes. It cannot be changed after creation. No
-// mipmaps exist.
+// accepts `{ filter?, wrap?, mipmap? }` ("linear"/"nearest", "clamp"/"repeat",
+// boolean; defaults linear + clamp + no mips for every origin). The state
+// follows the id everywhere it is sampled - shader passes and `<texture>`
+// display alike - and survives id-stable resizes. It cannot be changed after
+// creation. `mipmap: true` keeps a mip chain on the id, regenerated after
+// every upload or render, so shader sampling minifies without aliasing.
 //
 // Compositing several targets is a render-tree job, not a shader one: stack
 // `<texture>` elements and set their `blendMode` (the full Skia set, e.g.
@@ -119,8 +120,17 @@ declare module "flux:gpu" {
    * sampler2D inputs AND `<texture src>` display (a "nearest" texture
    * upscales with hard pixels on screen - the pixel-art path). `wrap` only
    * matters to shaders sampling outside 0..1; the display draw never tiles.
+   *
+   * `mipmap` (default false) keeps a mip chain on the id: rebuilt by the
+   * runtime after every upload (data textures) and every render (targets,
+   * automatically - nothing to schedule), and used by shader sampling when
+   * the texture is minified (trilinear for "linear", per-level nearest for
+   * "nearest"). Without it minification skips texels and aliases. Only
+   * shader sampling minifies through the chain; the `<texture>` display
+   * draw samples the full-size level. Regeneration is one GPU pass per
+   * upload or render, so a per-frame texture pays it per frame.
    */
-  export type SamplerOptions = { filter?: FilterMode; wrap?: WrapMode }
+  export type SamplerOptions = { filter?: FilterMode; wrap?: WrapMode; mipmap?: boolean }
   /**
    * A free-form debug name every create accepts (WebGPU's label): surfaced by
    * the dev server's GPU inventory (get_gpu_resources) and in engine log

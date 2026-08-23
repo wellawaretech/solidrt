@@ -11,11 +11,14 @@
 // `flux:gpu` module.
 //
 // Sampling is a per-texture property declared at creation: `filter`
-// ("linear" default | "nearest") and `wrap` ("clamp" default | "repeat") on
-// every create* helper. One state for every consumer - `<texture>` display
-// and shader sampling both follow it - so a nearest texture upscales with
-// hard pixels everywhere (the retro/pixel-art path: render small, display
-// big). No mipmaps exist.
+// ("linear" default | "nearest"), `wrap` ("clamp" default | "repeat") and
+// `mipmap` (default false) on every create* helper. One state for every
+// consumer - `<texture>` display and shader sampling both follow it - so a
+// nearest texture upscales with hard pixels everywhere (the retro/pixel-art
+// path: render small, display big). `mipmap: true` keeps a mip chain the
+// runtime regenerates after every upload or render, so shader sampling of a
+// minified texture (3d surfaces at distance, a supersampled target) does
+// not alias; the display draw samples the full-size level only.
 //
 // Combining several passes is a render-tree job, not a shader one: stack
 // `<texture>` elements and set their `blendMode` (e.g. `blendMode="plus"` for
@@ -62,7 +65,7 @@ export type CreateOptions = { autoFree?: boolean; label?: string }
 
 // Sampling options every texture-producing create* helper accepts, applied at
 // creation as a property of the texture id (there is no set-sampler-later).
-export type SamplerOptions = { filter?: gpu.FilterMode; wrap?: gpu.WrapMode }
+export type SamplerOptions = { filter?: gpu.FilterMode; wrap?: gpu.WrapMode; mipmap?: boolean }
 export type { FilterMode, WrapMode } from "flux:gpu"
 
 // Pixel format option for the pixel-upload creates (createTexture,
@@ -404,7 +407,7 @@ export function createDrawTarget(
 }
 
 /** The reactive shader description `createShaderTextureMemo` builds from.
- * Sampling (`filter`/`wrap`) is creation-time state, so changing it rebuilds
+ * Sampling (`filter`/`wrap`/`mipmap`) is creation-time state, so changing it rebuilds
  * at a fresh id, like a fragment-source or sampler-binding change. */
 export type ShaderSpec = {
   fragmentSrc: string
@@ -461,7 +464,12 @@ export function createShaderTextureMemo(
   opts?: { onError?: (error: unknown) => void },
 ): () => gpu.TextureId {
   let make = (s: ShaderSpec) =>
-    gpu.createShaderTexture(s.fragmentSrc, s.width, s.height, s.params, { textures: s.textures, filter: s.filter, wrap: s.wrap })
+    gpu.createShaderTexture(s.fragmentSrc, s.width, s.height, s.params, {
+      textures: s.textures,
+      filter: s.filter,
+      wrap: s.wrap,
+      mipmap: s.mipmap,
+    })
   let current = untrack(spec)
   let currentId = make(current)
   let [id, setId] = createSignal(currentId)
@@ -471,7 +479,8 @@ export function createShaderTextureMemo(
         next.fragmentSrc === current.fragmentSrc &&
         sameRecord(next.textures, current.textures) &&
         next.filter === current.filter &&
-        next.wrap === current.wrap
+        next.wrap === current.wrap &&
+        next.mipmap === current.mipmap
       ) {
         // Program and inputs unchanged: mutate in place, the id stays stable.
         if (next.width !== current.width || next.height !== current.height) {

@@ -5,8 +5,9 @@ use std::collections::HashMap;
 use std::num::NonZeroU32;
 use std::rc::Rc;
 
-/// How a texture is sampled, everywhere it is sampled: magnification filter
-/// and wrap mode, declared at creation as a property of the texture id. One
+/// How a texture is sampled, everywhere it is sampled: filter, wrap mode and
+/// whether a mip chain exists, declared at creation as a property of the
+/// texture id. One
 /// state for both consumers - shader passes (applied via a bound GL sampler
 /// object) and `<texture>` display (the filter maps to Impeller's per-draw
 /// sampling). Never stored as GL texture-object state: Impeller configures
@@ -16,6 +17,13 @@ use std::rc::Rc;
 pub struct SamplerState {
   pub filter: SamplerFilter,
   pub wrap: SamplerWrap,
+  /// The id keeps a mip chain: regenerated after every upload (data
+  /// textures) or render (targets), and shader passes minify through it
+  /// (trilinear for `Linear`, NEAREST_MIPMAP_LINEAR for `Nearest`). The
+  /// `<texture>` display draw samples level 0 only (Impeller per-draw
+  /// sampling). Id state, not overridable per binding: a sampler asking for
+  /// mip levels on a texture without a chain is sampling-incomplete.
+  pub mipmap: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
@@ -80,9 +88,10 @@ impl TextureFormat {
 }
 
 impl SamplerState {
-  /// Parse the app-facing option strings (each optional, defaulting to
-  /// linear/clamp). Filter: "linear" | "nearest"; wrap: "clamp" | "repeat".
-  pub fn parse(filter: Option<&str>, wrap: Option<&str>) -> Result<Self, String> {
+  /// Parse the app-facing options (each optional, defaulting to
+  /// linear/clamp/no mips). Filter: "linear" | "nearest"; wrap: "clamp" |
+  /// "repeat"; mipmap: bool.
+  pub fn parse(filter: Option<&str>, wrap: Option<&str>, mipmap: Option<bool>) -> Result<Self, String> {
     let filter = match filter {
       None | Some("linear") => SamplerFilter::Linear,
       Some("nearest") => SamplerFilter::Nearest,
@@ -93,11 +102,11 @@ impl SamplerState {
       Some("repeat") => SamplerWrap::Repeat,
       Some(other) => return Err(format!("unknown wrap '{other}' (expected \"clamp\" or \"repeat\")")),
     };
-    Ok(SamplerState { filter, wrap })
+    Ok(SamplerState { filter, wrap, mipmap: mipmap.unwrap_or(false) })
   }
 }
 
-/// The four GL sampler objects covering every SamplerState combination,
+/// The eight GL sampler objects covering every SamplerState combination,
 /// created once on the raster thread and never freed (process-lifetime).
 /// Alloy's own passes bind one of these alongside each sampled texture unit:
 /// a bound sampler object overrides texture-object parameters, so per-texture
@@ -105,36 +114,43 @@ impl SamplerState {
 /// objects it draws, and nothing alloy sets leaks into Impeller's own draws
 /// (the pass unbinds on exit).
 pub struct SamplerCache {
-  samplers: [glow::Sampler; 4],
+  samplers: [glow::Sampler; 8],
 }
 
 impl SamplerCache {
   pub fn new(gl: &glow::Context) -> Self {
-    let mut samplers = [None; 4];
+    let mut samplers = [None; 8];
     for filter in [SamplerFilter::Linear, SamplerFilter::Nearest] {
       for wrap in [SamplerWrap::Clamp, SamplerWrap::Repeat] {
-        let state = SamplerState { filter, wrap };
-        let (min_mag, wrap_st) = (
-          match filter {
+        for mipmap in [false, true] {
+          let state = SamplerState { filter, wrap, mipmap };
+          let mag = match filter {
             SamplerFilter::Linear => glow::LINEAR,
             SamplerFilter::Nearest => glow::NEAREST,
-          },
-          match wrap {
+          };
+          // Minification through the chain picks the nearer two levels and
+          // blends them; within a level the declared filter applies.
+          let min = match (filter, mipmap) {
+            (_, false) => mag,
+            (SamplerFilter::Linear, true) => glow::LINEAR_MIPMAP_LINEAR,
+            (SamplerFilter::Nearest, true) => glow::NEAREST_MIPMAP_LINEAR,
+          };
+          let wrap_st = match wrap {
             SamplerWrap::Clamp => glow::CLAMP_TO_EDGE,
             SamplerWrap::Repeat => glow::REPEAT,
-          },
-        );
-        unsafe {
-          let sampler = gl.create_sampler().expect("glGenSamplers failed");
-          gl.sampler_parameter_i32(sampler, glow::TEXTURE_MIN_FILTER, min_mag as i32);
-          gl.sampler_parameter_i32(sampler, glow::TEXTURE_MAG_FILTER, min_mag as i32);
-          gl.sampler_parameter_i32(sampler, glow::TEXTURE_WRAP_S, wrap_st as i32);
-          gl.sampler_parameter_i32(sampler, glow::TEXTURE_WRAP_T, wrap_st as i32);
-          samplers[Self::index(state)] = Some(sampler);
+          };
+          unsafe {
+            let sampler = gl.create_sampler().expect("glGenSamplers failed");
+            gl.sampler_parameter_i32(sampler, glow::TEXTURE_MIN_FILTER, min as i32);
+            gl.sampler_parameter_i32(sampler, glow::TEXTURE_MAG_FILTER, mag as i32);
+            gl.sampler_parameter_i32(sampler, glow::TEXTURE_WRAP_S, wrap_st as i32);
+            gl.sampler_parameter_i32(sampler, glow::TEXTURE_WRAP_T, wrap_st as i32);
+            samplers[Self::index(state)] = Some(sampler);
+          }
         }
       }
     }
-    SamplerCache { samplers: samplers.map(|s| s.expect("all four sampler states populated")) }
+    SamplerCache { samplers: samplers.map(|s| s.expect("all eight sampler states populated")) }
   }
 
   pub fn get(&self, state: SamplerState) -> glow::Sampler {
@@ -142,7 +158,7 @@ impl SamplerCache {
   }
 
   fn index(state: SamplerState) -> usize {
-    (state.filter as usize) * 2 + (state.wrap as usize)
+    (state.filter as usize) * 4 + (state.wrap as usize) * 2 + (state.mipmap as usize)
   }
 }
 
@@ -255,6 +271,18 @@ pub struct GpuTexture {
   pub label: Option<String>,
 }
 
+/// Rebuild the mip chain of `texture` from its level 0 (glGenerateMipmap
+/// allocates the levels on first use). Raster-thread GL; restores the
+/// texture binding it touches.
+pub fn generate_mipmap(gl: &glow::Context, texture: glow::Texture) {
+  unsafe {
+    let prev = gl.get_parameter_i32(glow::TEXTURE_BINDING_2D);
+    gl.bind_texture(glow::TEXTURE_2D, Some(texture));
+    gl.generate_mipmap(glow::TEXTURE_2D);
+    gl.bind_texture(glow::TEXTURE_2D, NonZeroU32::new(prev as u32).map(glow::NativeTexture));
+  }
+}
+
 impl GpuTexture {
   pub fn new(gl: &glow::Context, size: ISize, sampler: SamplerState, format: TextureFormat) -> Self {
     let (width, height) = (size.width as u32, size.height as u32);
@@ -326,6 +354,9 @@ impl GpuTexture {
       // (glyph atlas), which assume the GL default of 4; restore it.
       if alignment != 4 {
         gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, 4);
+      }
+      if self.sampler.mipmap {
+        gl.generate_mipmap(glow::TEXTURE_2D);
       }
       gl.bind_texture(glow::TEXTURE_2D, NonZeroU32::new(prev as u32).map(glow::NativeTexture));
       // No glFinish: the texture is sampled later on this same (single) GL
