@@ -36,7 +36,7 @@ export type SpriteLayerProps = {
   height: number
   /** The atlas texture every sprite samples (create with createAtlas). */
   atlas: TextureId
-  /** Record capacity, fixed for the layer's life; default 1024. */
+  /** Initial record reservation (grows on demand); default 1024. */
   capacity?: number
   clearColor?: [number, number, number, number]
   /** Pan/zoom over the world; a shared-params write, never per-sprite. */

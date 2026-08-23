@@ -19,7 +19,7 @@
 // each write lands here, the microtask syncs the affected uModels, and the
 // flush renders once that frame.
 
-import { addDraw, createBuffer, createDrawTarget, destroyBuffer, destroyProgram, destroyRenderPipeline, destroyTexture, removeDraw, setDrawOrder, setDrawParams, setDrawRange, setTargetParams, setTargetSize, writeBuffer } from "@solidrt/core/gpu"
+import { addDraw, createBuffer, createDrawTarget, destroyBuffer, destroyProgram, destroyRenderPipeline, destroyTexture, removeDraw, setDrawBuffers, setDrawOrder, setDrawParams, setDrawRange, setTargetParams, setTargetSize, writeBuffer } from "@solidrt/core/gpu"
 import type { BufferId, DrawId, FilterMode, ProgramId, RenderPipelineId, ShaderParams, TextureId, VertexAttribute, WrapMode } from "@solidrt/core/gpu"
 import { getOwner, onCleanup } from "@solidrt/core"
 import type { PointerEvent as ElementPointerEvent } from "@solidrt/core"
@@ -72,6 +72,8 @@ type SceneHooks = {
   _detach(mesh: Mesh): void
   _setParams(mesh: Mesh, params: ShaderParams): void
   _setCount(mesh: Mesh): void
+  /** Re-point the mesh's entry at its (replaced) instance buffer. */
+  _setBuffer(mesh: Mesh): void
   _reorder(): void
 }
 
@@ -141,9 +143,11 @@ export type MeshInstances = {
   buffer: BufferId
   /** Floats per record - the material's instanceAttributes summed. */
   stride: number
-  /** Records the buffer has room for; fixed at creation, like every GPU
-   * buffer's byte size. */
+  /** Records the buffer has room for; doubles when setInstances writes
+   * more (a replacement buffer, never a resize). */
   capacity: number
+  /** The buffer label, carried to replacement buffers on growth. */
+  label: string | undefined
   /** Records currently drawn (the entry's instanceCount while visible). */
   count: number
   /** Explicit LOCAL bounds covering the whole population ([minX, minY,
@@ -389,9 +393,9 @@ export type InstancedMeshOptions = {
  * vertex buffer. The material must declare `instanceAttributes`
  * (shaderMaterialClass); its vertex stage reads each record through those
  * `in` variables. `records` is the interleaved attribute data (stride =
- * the attributes' floats summed) and is uploaded here - the buffer's
- * capacity is fixed at creation, like any GPU buffer. `count` limits how
- * many records draw (default all); grow it later only up to capacity.
+ * the attributes' floats summed) and is uploaded here; its length is the
+ * buffer's initial capacity, which setInstances grows past on demand.
+ * `count` limits how many records draw (default all), up to capacity.
  *
  * The result is an ordinary Mesh: add/remove, setTransform (uModel places
  * the whole population), setVisible (hiding zeroes the drawn count,
@@ -432,6 +436,7 @@ export function createInstancedMesh(
     buffer: createBuffer(records, { autoFree: false, label: opts?.label }),
     stride,
     capacity,
+    label: opts?.label,
     count: Math.max(0, Math.min(Math.floor(count ?? capacity), capacity)),
     bounds,
   }
@@ -442,9 +447,12 @@ export function createInstancedMesh(
  * Overwrite an instanced mesh's records from the start of its buffer and
  * (by default) draw exactly the records written - pass `count` to draw
  * fewer, or to keep more previously written ones alive past a partial
- * rewrite. The buffer's capacity is fixed at creation; more records than
- * capacity throw (make a new mesh for a bigger population). Frame-rate-safe
- * like setMeshParams.
+ * rewrite. More records than the buffer holds grow it: capacity doubles
+ * (or jumps to the records written when that is more), a new buffer is
+ * created and written, the mesh's entry is re-pointed at it and the old
+ * buffer freed - so a population grows without a new mesh, with the
+ * copies amortized like any dynamic array (size the initial records to
+ * skip them). Frame-rate-safe like setMeshParams when no growth happens.
  */
 export function setInstances(mesh: InstancedMesh, records: Float32Array, count?: number): void {
   let inst = mesh._instances
@@ -453,9 +461,11 @@ export function setInstances(mesh: InstancedMesh, records: Float32Array, count?:
   }
   let written = records.length / inst.stride
   if (written > inst.capacity) {
-    throw new Error(
-      "setInstances: " + written + " records exceed the buffer's capacity of " + inst.capacity + " (fixed at creation)",
-    )
+    let previous = inst.buffer
+    inst.capacity = Math.max(written, inst.capacity * 2)
+    inst.buffer = createBuffer(inst.capacity * inst.stride * 4, { autoFree: false, label: inst.label })
+    mesh._scene?._setBuffer(mesh)
+    destroyBuffer(previous)
   }
   writeBuffer(inst.buffer, records)
   setInstanceCount(mesh, count ?? written)
@@ -996,6 +1006,14 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       // A hidden entry stays at 0; the unhide write restores the count.
       if (mesh._entry !== null && !mesh._hidden && !disposed && mesh._instances !== null) {
         setDrawRange(texture, mesh._entry, { instanceCount: mesh._instances.count })
+      }
+    },
+    _setBuffer(mesh) {
+      // The entry keeps its range (at most the old capacity, so the larger
+      // buffer always passes the swap's bounds check); the caller destroys
+      // the old buffer after this, which the entry held alive until now.
+      if (mesh._entry !== null && !disposed && mesh._instances !== null) {
+        setDrawBuffers(texture, mesh._entry, { instanceBuffer: mesh._instances.buffer })
       }
     },
     _reorder() {

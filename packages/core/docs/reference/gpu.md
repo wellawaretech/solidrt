@@ -81,6 +81,14 @@ the dev tooling's GPU inventory and in engine log messages.
 
 {{ decl packages/core/src/gpu.ts writeBuffer }}
 
+A buffer's size is fixed at creation, an entry's buffers are not: `setDraw`
+(single-draw targets) and `setDrawBuffers` (draw-list entries) re-point a
+role the entry already fills - `buffer`, `indexBuffer` + `indexFormat`,
+`instanceBuffer` - at another buffer. That is how a population grows past
+its reservation: create a larger buffer, write it, swap, destroy the old.
+The swap is replace-only (roles are pipeline layout state) and keeps the
+entry's draw range, rechecked against the new sizes.
+
 ## Uniforms
 
 Uniforms are driven by name. Declaratively, `<texture src={id}

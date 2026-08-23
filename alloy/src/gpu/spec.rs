@@ -2,7 +2,7 @@
 //! to the raster thread in one owned value, serving both the public Context
 //! API and the RasterCmd payloads.
 
-use super::vocab::{DrawRange, IndexFormat, ParamValue, PipelineDesc};
+use super::vocab::{BufferIds, DrawRange, IndexFormat, ParamValue, PipelineDesc};
 use crate::texture::SamplerState;
 
 /// The per-target half of a mesh target create: output size, clear, sampling,
@@ -67,6 +67,13 @@ pub struct DrawSpec {
   pub draw: DrawRange,
   pub params: Vec<(String, ParamValue)>,
   pub textures: Vec<(String, u64)>,
+}
+
+impl DrawSpec {
+  /// The entry's buffer ids by role (see `BufferIds`).
+  pub fn buffer_ids(&self) -> BufferIds {
+    BufferIds { buffer: self.buffer, index: self.index, instance_buffer: self.instance_buffer }
+  }
 }
 
 /// Everything `create_pipeline_texture` (the fused convenience) needs:

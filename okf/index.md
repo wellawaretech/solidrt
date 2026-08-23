@@ -46,11 +46,6 @@ Shaped, not started.
   Static 2D bulk (tile worlds, backgrounds) rendered once into a texture and
   drawn as ONE quad, with incremental re-bake - the primitive-count answer for
   tiled GPUs
-- **[A sprite layer's capacity is fixed and overflow throws](backlog/2d-layer-capacity-growth.md)** [2026-08-22]
-  createSpriteLayer reserves a record buffer for the layer's life, so an app
-  whose sprite count is data-driven has to guess a maximum up front and
-  crashes when it guesses low; growth needs a way to swap a target's instance
-  buffer.
 - **[A sprite layer has no display-scale story, so it is soft on a HiDPI screen](backlog/2d-layer-display-scale.md)** [2026-08-22]
   createSpriteLayer renders into a texture sized in the numbers the app
   passed, and the composited leaf scales that to its layout box, so on a 2x
@@ -542,6 +537,11 @@ Shaped, not started.
 
 Finished, kept for the reasoning.
 
+- **[A sprite layer's capacity is fixed and overflow throws](done/2d-layer-capacity-growth.md)** [2026-08-23]
+  createSpriteLayer reserved a record buffer for the layer's life, so a
+  data-driven sprite count had to guess a maximum up front and crashed when it
+  guessed low; resolved by a draw-entry buffer swap in core (setDraw buffer
+  keys / setDrawBuffers) and doubling growth in the layer.
 - **[Geometry GPU buffers accumulate when a Mesh's geometry prop changes](done/3d-geometry-buffer-disposal.md)** [2026-08-18]
   Swapping <Mesh geometry> reactively leaves every previous generation's
   vertex/index buffers resident, because geometry buffers are app-lifetime and

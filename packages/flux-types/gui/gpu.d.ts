@@ -493,6 +493,22 @@ declare module "flux:gpu" {
    * there is no base vertex (ES 3.0, like ES 3.0's missing base instance).
    */
   export type IndexRange = { firstIndex?: number; indexCount?: number; instanceCount?: number }
+  /**
+   * A draw entry's buffer swap: each key present re-points that role of the
+   * entry at another {@link createBuffer} buffer, absent keys keep their
+   * current buffer. Replace-only - the roles an entry fills are pipeline
+   * layout state (`attributes` needs a `buffer`, `instanceAttributes` an
+   * `instanceBuffer`) and indexing is its draw vocabulary, so naming a role
+   * the entry does not fill throws; `indexBuffer` travels with
+   * `indexFormat` as at create. The entry's current range is kept and
+   * rechecked against the new buffers' sizes: a swap to a buffer too small
+   * for the live range throws (shrink the range first); a larger buffer
+   * never does. This is the growth primitive: a population outgrowing its
+   * instance buffer creates a larger one, writes it, swaps, and destroys
+   * the old (the entry holds the old buffer alive until the swap lands, so
+   * either order is safe).
+   */
+  export type BufferUpdate = { buffer?: BufferId; instanceBuffer?: BufferId } & ({} | IndexBinding)
 
   /**
    * Compile a GLSL ES vertex+fragment pipeline into an offscreen texture of
@@ -606,9 +622,13 @@ declare module "flux:gpu" {
    * (On a manual target nothing renders here; the range applies at its next
    * {@link renderTarget}.) An indexed target takes the {@link IndexRange}
    * spelling instead, bounds-checked against its index buffer; the pair
-   * that does not match the target's mode throws.
+   * that does not match the target's mode throws. Buffer keys
+   * ({@link BufferUpdate}) swap the target's buffers in the same call: the
+   * merged range is checked against the swapped buffers, so one call grows a
+   * buffer and extends the range into it, and a call that throws changes
+   * nothing (range and buffers commit together or not at all).
    */
-  export function setDraw(id: TextureId, draw: DrawRange | IndexRange): void
+  export function setDraw(id: TextureId, draw: (DrawRange | IndexRange) & BufferUpdate): void
   /**
    * Create a draw target: a render target whose contents are an ordered,
    * mutable LIST of draws - one render clears once, then executes every
@@ -783,6 +803,12 @@ declare module "flux:gpu" {
    * rule (an indexed entry speaks {@link IndexRange}).
    */
   export function setDrawRange(target: TextureId, draw: DrawId, update: DrawRange | IndexRange): void
+  /**
+   * Swap one draw entry's buffers: the {@link BufferUpdate} half of
+   * {@link setDraw} addressed to a single entry, same replace-only rule and
+   * range recheck.
+   */
+  export function setDrawBuffers(target: TextureId, draw: DrawId, update: BufferUpdate): void
   /**
    * Reorder a draw target's list. `order` must name every current entry
    * exactly once - a full permutation of the live {@link DrawId}s; a

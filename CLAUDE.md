@@ -67,7 +67,8 @@ Never use the built-in `run` skill here. Drive the app yourself:
   directory as projectDir, so the repo-root bridge reports "No dev server"
   even though one is running. In that case talk to the control API
   directly with curl on `http://127.0.0.1:<port>/__control__/...`: `/clients`,
-  `/logs`, `/tree?query=<text>`, `/snapshot?node=<id>` (PNG), `/stats`, and
+  `/logs`, `/tree?query=<text>`, `/snapshot?node=<id>` (JSON `{width, height,
+  pngBase64}`; decode the field for the PNG), `/stats`, and
   POST `/input` with `{"events":[...]}` (same event shape as
   `mcp__solidrt__send_input`), `/reload`, `/load` `{"entry":...}`. The
   bridge is a long-lived process: a change to `packages/cli/src/commands/mcp.ts`

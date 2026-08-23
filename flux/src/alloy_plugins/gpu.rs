@@ -366,13 +366,40 @@ fn collect_target_spec(
 // Decode a partial draw-range update (setDraw / setDrawRange). Both range
 // spellings marshal through untouched; alloy owns the mode rule (the entry
 // state lives in its mirror) and rejects the pair that does not match.
-fn collect_draw_update(update: &Object<'_>) -> rquickjs::Result<alloy::DrawUpdate> {
+// A draw-entry update, both halves: the range keys and the buffer keys
+// (see collect_buffer_update), each absent = keep. Alloy applies them as one
+// validated transaction.
+fn collect_draw_update(ctx: &Ctx<'_>, update: &Object<'_>, api: &str) -> rquickjs::Result<alloy::DrawUpdate> {
   Ok(alloy::DrawUpdate {
     first_vertex: update.get::<_, Option<i32>>("firstVertex")?,
     vertex_count: update.get::<_, Option<i32>>("vertexCount")?,
     first_index: update.get::<_, Option<i32>>("firstIndex")?,
     index_count: update.get::<_, Option<i32>>("indexCount")?,
     instance_count: update.get::<_, Option<i32>>("instanceCount")?,
+    buffers: collect_buffer_update(ctx, update, api)?,
+  })
+}
+
+// The buffer half of a draw-entry update: buffer / indexBuffer + indexFormat
+// / instanceBuffer, each absent = keep. The index pair travels together as
+// at create; alloy applies the replace-only rule (a present key must name a
+// role the entry already fills).
+fn collect_buffer_update(ctx: &Ctx<'_>, update: &Object<'_>, api: &str) -> rquickjs::Result<alloy::BufferUpdate> {
+  let index = match (update.get::<_, Option<u64>>("indexBuffer")?, update.get::<_, Option<String>>("indexFormat")?) {
+    (Some(ib), Some(f)) => {
+      let format = alloy::IndexFormat::parse(&f).map_err(|e| throw_str(ctx, &format!("{api}: {e}")))?;
+      Some((ib, format))
+    }
+    (None, None) => None,
+    (Some(_), None) => {
+      return Err(throw_str(ctx, &format!("{api}: indexBuffer requires indexFormat (\"uint16\" | \"uint32\")")))
+    }
+    (None, Some(_)) => return Err(throw_str(ctx, &format!("{api}: indexFormat requires indexBuffer"))),
+  };
+  Ok(alloy::BufferUpdate {
+    buffer: update.get::<_, Option<u64>>("buffer")?,
+    index,
+    instance_buffer: update.get::<_, Option<u64>>("instanceBuffer")?,
   })
 }
 
@@ -555,6 +582,7 @@ impl ModuleDef for GpuModule {
     decl.declare("setTargetSize")?;
     decl.declare("setDrawTextures")?;
     decl.declare("setDrawRange")?;
+    decl.declare("setDrawBuffers")?;
     decl.declare("setDrawOrder")?;
     decl.declare("renderTarget")?;
     decl.declare("copyTexture")?;
@@ -929,16 +957,19 @@ impl ModuleDef for GpuModule {
     })
     .expect("create destroyBuffer");
 
-    // Partial draw-range update: keys present overwrite, absent keys keep
+    // Partial draw-entry update: keys present overwrite, absent keys keep
     // their current value (the params merge rule). Both range spellings
     // marshal through; alloy rejects the pair that does not match the
     // entry's mode and validates the merged range against the mirrored
-    // fetch bound, all at this call site.
+    // fetch bound, all at this call site. Buffer keys swap the entry's
+    // buffers (replace-only, see Context::update_draw) in the same
+    // transaction, so one call can grow a buffer and extend the range into
+    // it, and a rejected call changes nothing.
     let set_draw_atx = atx.clone();
     let set_draw_platform = platform.clone();
     let set_draw =
       Function::new(ctx.clone(), move |ctx: Ctx<'_>, id: u64, draw: Object<'_>| -> rquickjs::Result<()> {
-        let update = collect_draw_update(&draw)?;
+        let update = collect_draw_update(&ctx, &draw, "setDraw")?;
         set_draw_atx.set_draw(id, update).map_err(|e| throw_str(&ctx, &format!("setDraw: {e}")))?;
         set_draw_platform.request_frame();
         Ok(())
@@ -1138,7 +1169,7 @@ impl ModuleDef for GpuModule {
     let set_draw_range = Function::new(
       ctx.clone(),
       move |ctx: Ctx<'_>, target: u64, draw: u64, update: Object<'_>| -> rquickjs::Result<()> {
-        let update = collect_draw_update(&update)?;
+        let update = collect_draw_update(&ctx, &update, "setDrawRange")?;
         set_draw_range_atx
           .set_draw_range(target, draw, update)
           .map_err(|e| throw_str(&ctx, &format!("setDrawRange: {e}")))?;
@@ -1147,6 +1178,26 @@ impl ModuleDef for GpuModule {
       },
     )
     .expect("create setDrawRange");
+
+    // Per-entry buffer swap: the buffer half of setDraw addressed to one draw
+    // entry (replace-only; the entry's range is kept and rechecked against
+    // the new buffers). The same transaction as setDrawRange with only
+    // buffer keys.
+    let set_draw_buffers_atx = atx.clone();
+    let set_draw_buffers_platform = platform.clone();
+    let set_draw_buffers = Function::new(
+      ctx.clone(),
+      move |ctx: Ctx<'_>, target: u64, draw: u64, update: Object<'_>| -> rquickjs::Result<()> {
+        let buffers = collect_buffer_update(&ctx, &update, "setDrawBuffers")?;
+        let update = alloy::DrawUpdate { buffers, ..Default::default() };
+        set_draw_buffers_atx
+          .set_draw_range(target, draw, update)
+          .map_err(|e| throw_str(&ctx, &format!("setDrawBuffers: {e}")))?;
+        set_draw_buffers_platform.request_frame();
+        Ok(())
+      },
+    )
+    .expect("create setDrawBuffers");
 
     // The explicit render verb for manual targets (render: "manual"); alloy
     // validates the mode and queues the pass in call order.
@@ -1214,6 +1265,7 @@ impl ModuleDef for GpuModule {
     exports.export("setTargetSize", set_target_size)?;
     exports.export("setDrawTextures", set_draw_textures)?;
     exports.export("setDrawRange", set_draw_range)?;
+    exports.export("setDrawBuffers", set_draw_buffers)?;
     exports.export("setDrawOrder", set_draw_order)?;
     exports.export("renderTarget", render_target)?;
     exports.export("copyTexture", copy_texture)?;

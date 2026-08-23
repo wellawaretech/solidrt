@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
 use crate::gpu::{
-  resolve_draw_range, validate_draw_range, validate_params, validate_texture_bindings, DrawBounds, DrawRange,
-  DrawUpdate, GpuLimits, ParamValue, UniformKind, UniformSlot, UniformTable,
+  resolve_draw_range, validate_draw_range, validate_params, validate_texture_bindings, BufferIds, BufferUpdate,
+  DrawBounds, DrawRange, DrawUpdate, GpuLimits, IndexFormat, ParamValue, UniformKind, UniformSlot, UniformTable,
 };
 
 fn table(entries: &[(&str, UniformKind)]) -> UniformTable {
@@ -294,4 +294,30 @@ void main() {}
     crate::gpu::program::declared_uniform_names(src),
     vec!["iResolution", "uColor", "uTint", "uMap"].into_iter().map(String::from).collect::<Vec<_>>()
   );
+}
+
+#[test]
+fn buffer_swap_replaces_filled_roles() {
+  let ids = BufferIds { buffer: 1, index: Some((2, IndexFormat::U16)), instance_buffer: 3 };
+  let next = ids
+    .merged(BufferUpdate { buffer: None, index: Some((7, IndexFormat::U32)), instance_buffer: Some(9) })
+    .expect("swap filled roles");
+  assert_eq!(next, BufferIds { buffer: 1, index: Some((7, IndexFormat::U32)), instance_buffer: 9 });
+  assert!(next.reads(9) && next.reads(7) && !next.reads(3) && !next.reads(0));
+}
+
+#[test]
+fn buffer_swap_rejects_new_roles_and_zero_ids() {
+  let plain = BufferIds { buffer: 1, index: None, instance_buffer: 0 };
+  let err = plain.merged(BufferUpdate { instance_buffer: Some(5), ..Default::default() }).expect_err("no instance role");
+  assert!(err.contains("instanceAttributes"), "{err}");
+  let err = plain
+    .merged(BufferUpdate { index: Some((5, IndexFormat::U16)), ..Default::default() })
+    .expect_err("not indexed");
+  assert!(err.contains("not indexed"), "{err}");
+  let err = plain.merged(BufferUpdate { buffer: Some(0), ..Default::default() }).expect_err("zero id");
+  assert!(err.contains("buffer id"), "{err}");
+  let attributeless = BufferIds::default();
+  let err = attributeless.merged(BufferUpdate { buffer: Some(4), ..Default::default() }).expect_err("no vertex role");
+  assert!(err.contains("no attributes"), "{err}");
 }

@@ -57,7 +57,7 @@ blendMode and pointer events like any element.
 | `Scene` | `width`, `height` (target pixels), `clearColor?`, `background?` (fragment GLSL), `label?`, `ref?(scene)`, `output?(texture)`, `events?` (mesh pointer events, default on) |
 | `Group` | `position?`, `rotation?` (Euler radians, XYZ order), `quaternion?` (either, not both), `scale?` (number = uniform), `visible?`, pointer events (below), `ref?(node)` |
 | `Mesh` | `geometry`, `material`, transforms as Group, `params?` (per-mesh uniforms, merge semantics - no unset), pointer events (below), `ref?(mesh)` |
-| `InstancedMesh` | as Mesh, plus `records` (interleaved per-instance floats; buffer capacity fixed by the first value), `count?` (records drawn, default all), `bounds?` (local [minX..maxZ] over the population - without it the mesh never picks); the record buffer is component-owned and freed on unmount |
+| `InstancedMesh` | as Mesh, plus `records` (interleaved per-instance floats; buffer capacity starts at the first value and grows on larger rewrites), `count?` (records drawn, default all), `bounds?` (local [minX..maxZ] over the population - without it the mesh never picks); the record buffer is component-owned and freed on unmount |
 | `PerspectiveCamera` | `fov?` (vertical DEGREES, default 60), `near?`, `far?`, `position?`, `lookAt?`, `up?` |
 
 Output composition: without `output`, `Scene` emits a minimal
@@ -255,14 +255,15 @@ Instancing - one draw entry covering a population:
 label? })` returns an ordinary Mesh whose entry draws the geometry once
 per record. `records` is the interleaved per-instance data (stride = the
 material's instanceAttributes summed, a mismatch throws), uploaded to a
-mesh-owned buffer whose CAPACITY is fixed at creation. `count` picks how
+mesh-owned buffer whose capacity starts at the records given. `count` picks how
 many records draw (default all). Everything mesh works unchanged:
 setTransform moves the whole population through one uModel, setVisible
 zeroes the drawn count and restores the record count on unhide,
 renderOrder/params/geometry/material swaps apply. `setInstances(mesh,
 records, count?)` rewrites records from the start (count defaults to the
-records written; more than capacity throws - make a new mesh to grow),
-`setInstanceCount(mesh, n)` is the population dial (clamped to capacity;
+records written; more than capacity GROWS: capacity doubles into a
+replacement buffer, the entry is re-pointed via `setDrawBuffers`, the old
+buffer is freed), `setInstanceCount(mesh, n)` is the population dial (clamped to capacity;
 frame-rate-safe), and `disposeInstances(mesh)` detaches and frees the
 record buffer - the one explicit free, geometry-buffer rule. Records are
 opaque data (position/yaw/tint/whatever your shader reads), NOT matrices:
@@ -321,9 +322,10 @@ system.
   the record stride must match the material's attributes - each mismatch
   throws there. The instance buffer is MESH-owned (unlike shared geometry
   buffers): `disposeInstances` is its one free, and the mesh cannot be
-  re-added afterwards. Capacity is fixed at creation - `setInstances` with
-  more records than capacity throws rather than growing (growing is a new
-  mesh; buffers do not resize).
+  re-added afterwards. Capacity grows by REPLACEMENT, never resize:
+  `setInstances` past capacity doubles (at least to the records written)
+  into a new buffer and swaps it in - amortized like a dynamic array, same
+  policy as @solidrt/2d; size the initial records to skip the copies.
 - An instanced mesh without explicit `bounds` has no BVH leaf: it never
   picks, pointer events never target it, and its transparent sort key
   falls back to the node's world position. That is deliberate - records

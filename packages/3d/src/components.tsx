@@ -225,8 +225,8 @@ export type InstancedMeshProps = TransformProps & PointerEventProps & {
   /** Must declare instanceAttributes (shaderMaterialClass). */
   material: Material
   /** Interleaved per-instance records (stride = the material's instance
-   * attributes summed). Reactive, but the buffer's CAPACITY is fixed by the
-   * first value - a later array may hold at most that many records. */
+   * attributes summed). Reactive; a later array larger than the buffer
+   * grows it (capacity doubles into a replacement buffer). */
   records: Float32Array
   /** How many records draw; default all of the latest `records`. */
   count?: number

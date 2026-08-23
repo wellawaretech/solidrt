@@ -777,6 +777,29 @@ impl ShaderTexture {
     }
   }
 
+  /// Swap an entry's buffers (validated UI-side, backstopped here; `draw`
+  /// None = entry 0, the single-draw kinds' one entry): the VAO is rebuilt
+  /// against the new buffers - a VAO captures its buffers at build time, so
+  /// a swap is a rebuild - and the replaced buffers released (deleted when
+  /// this was their last use). The entry's draw range is untouched; the UI
+  /// side has already checked it against the new buffers.
+  pub fn set_entry_buffers(&mut self, gl: &glow::Context, draw: Option<u64>, buffers: EntryBuffers) -> Result<(), String> {
+    let entry = match draw {
+      Some(id) => self.entry_mut(id)?,
+      None => match &mut self.kind {
+        TargetKind::Fragment { .. } => return Err("not a pipeline texture".to_string()),
+        TargetKind::Mesh(mesh) => mesh.entries.first_mut().ok_or_else(|| "target has no draw entries".to_string())?,
+      },
+    };
+    check_entry_buffers(&entry.pipeline.desc, &buffers)?;
+    let vao = build_vao(gl, &entry.pipeline.program, &entry.pipeline.desc, &buffers)?;
+    unsafe { gl.delete_vertex_array(entry.vao) };
+    entry.vao = vao;
+    let previous = std::mem::replace(&mut entry.buffers, buffers);
+    release_entry_buffers(gl, previous);
+    Ok(())
+  }
+
   /// Add a draw entry to a draw target's list (see `DrawEntry`; validated
   /// UI-side, backstopped here): appended - drawing last in list order - or
   /// inserted immediately before entry `before` when given.

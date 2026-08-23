@@ -549,11 +549,13 @@ impl DrawRange {
   }
 }
 
-/// A partial update to a target's `DrawRange` (the setDraw payload); `None`
-/// fields keep their current value. Carries both spellings of the range -
-/// the vertex-named pair for plain entries, the index-named pair for indexed
-/// ones - and `DrawRange::merged` rejects the pair that does not match the
-/// entry, so the marshalling layer stays mode-blind.
+/// A partial update to a draw entry (the setDraw / setDrawRange payload);
+/// `None` fields keep their current value. The range half carries both
+/// spellings - the vertex-named pair for plain entries, the index-named pair
+/// for indexed ones - and `DrawRange::merged` rejects the pair that does not
+/// match the entry, so the marshalling layer stays mode-blind. The buffer
+/// half (`buffers`) swaps the entry's buffers; `Context::update_draw`
+/// applies both halves as one validated transaction.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct DrawUpdate {
   pub first_vertex: Option<i32>,
@@ -561,6 +563,72 @@ pub struct DrawUpdate {
   pub first_index: Option<i32>,
   pub index_count: Option<i32>,
   pub instance_count: Option<i32>,
+  pub buffers: BufferUpdate,
+}
+
+/// The registry ids of one draw entry's buffers by role (vertex, index with
+/// its element format, per-instance); 0 / None = the entry fills no such
+/// role. What `BufferUpdate` merges into, and what the swap carries to the
+/// raster thread.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct BufferIds {
+  pub buffer: u64,
+  pub index: Option<(u64, IndexFormat)>,
+  pub instance_buffer: u64,
+}
+
+impl BufferIds {
+  /// These ids with the update's present fields replaced: the setDrawBuffers
+  /// merge. Replace-only - which roles an entry fills is pipeline layout
+  /// state (attributes, instanceAttributes) and the index binding is the
+  /// entry's draw vocabulary, so a present field must name a role the entry
+  /// already fills and a buffer must be nonzero.
+  pub fn merged(self, update: BufferUpdate) -> Result<BufferIds, String> {
+    let mut next = self;
+    if let Some(id) = update.buffer {
+      if self.buffer == 0 {
+        return Err("the entry has no vertex buffer (the pipeline declares no attributes)".to_string());
+      }
+      if id == 0 {
+        return Err("buffer must be a buffer id".to_string());
+      }
+      next.buffer = id;
+    }
+    if let Some((id, format)) = update.index {
+      if self.index.is_none() {
+        return Err("the entry is not indexed; an index buffer cannot be added after creation".to_string());
+      }
+      if id == 0 {
+        return Err("indexBuffer must be a buffer id".to_string());
+      }
+      next.index = Some((id, format));
+    }
+    if let Some(id) = update.instance_buffer {
+      if self.instance_buffer == 0 {
+        return Err("the entry has no instance buffer (the pipeline declares no instanceAttributes)".to_string());
+      }
+      if id == 0 {
+        return Err("instanceBuffer must be a buffer id".to_string());
+      }
+      next.instance_buffer = id;
+    }
+    Ok(next)
+  }
+
+  /// The nonzero ids, for "which targets read this buffer" bookkeeping.
+  pub fn reads(&self, id: u64) -> bool {
+    id != 0 && (self.buffer == id || self.instance_buffer == id || self.index.is_some_and(|(i, _)| i == id))
+  }
+}
+
+/// A partial update to an entry's buffers (the setDrawBuffers payload);
+/// `None` fields keep their current buffer. See `BufferIds::merged` for the
+/// replace-only rule.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct BufferUpdate {
+  pub buffer: Option<u64>,
+  pub index: Option<(u64, IndexFormat)>,
+  pub instance_buffer: Option<u64>,
 }
 
 /// The unit nouns of a fetch bound: what the range counts. Vertices through

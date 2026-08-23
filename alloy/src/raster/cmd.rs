@@ -7,7 +7,7 @@ use impellers::{DisplayList, Texture};
 use std::sync::mpsc;
 
 use crate::gpu::{
-  DrawRange, DrawSpec, GpuLimits, GpuResources, NodeShader, ParamValue, PipelineDesc, PipelineSpec, ShaderStage,
+  BufferIds, DrawRange, DrawSpec, GpuLimits, GpuResources, NodeShader, ParamValue, PipelineDesc, PipelineSpec, ShaderStage,
   TargetSpec, UniformTable, WindowShader,
 };
 use crate::texture::{SamplerState, TextureFormat};
@@ -129,6 +129,11 @@ pub(crate) enum RasterCmd {
   /// Set one draw entry's range (resolved and validated UI-side) and mark
   /// the target dirty.
   SetDrawRange { target: u64, draw: u64, range: DrawRange },
+  /// Swap an entry's buffers for `ids` (validated and bounds-checked
+  /// UI-side; `draw` None = the single-draw kinds' entry 0): the VAO is
+  /// rebuilt against the new buffers and the replaced ones released. Marks
+  /// the target dirty.
+  SetDrawBuffers { target: u64, draw: Option<u64>, ids: BufferIds },
   /// Reorder a draw target's list to `order`: a full permutation of the
   /// current entry ids (validated UI-side), list order being draw order.
   /// The sorting verb - opaque front-to-back, transparent back-to-front.

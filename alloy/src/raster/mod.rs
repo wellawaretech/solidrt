@@ -33,7 +33,7 @@ use capture::flip_for_fbo;
 use crate::backend::{FrameOutput, GlBinding};
 use crate::gl;
 use crate::gpu::{
-  release_buffer, release_pipeline, release_program, validate_params, validate_texture_bindings, DrawSpec,
+  release_buffer, release_pipeline, release_program, validate_params, validate_texture_bindings, BufferIds, DrawSpec,
   EntryBuffers, GpuBuffer, GpuBufferInfo, GpuLimits, GpuPipelineInfo, GpuProgramInfo, GpuRenderPipelineInfo,
   GpuResources, GpuTextureInfo, GpuWindowShaderInfo, ParamValue, PassInput, PassTimer, PipelineDesc, Timed, PipelineSpec,
   RenderPipeline, ShaderProgram, ShaderTexture, TargetSpec, UniformTable, WindowShader,
@@ -606,6 +606,10 @@ impl RasterState {
           }
           RasterCmd::SetDrawRange { target, draw, range } => {
             self.entry_write(target, "draw range update", |_, shader| shader.set_entry_draw(draw, range));
+          }
+          RasterCmd::SetDrawBuffers { target, draw, ids } => {
+            let buffers = resolve_entry_buffers(&self.buffers, ids);
+            self.entry_write(target, "draw buffer swap", |gl, shader| shader.set_entry_buffers(gl, draw, buffers?));
           }
           RasterCmd::DestroyProgram { id } => {
             if let Some(program) = self.programs.remove(&id) {
@@ -1404,7 +1408,7 @@ impl RasterState {
 
   fn create_pipeline_texture(&mut self, id: u64, spec: PipelineSpec) -> Result<(Texture, UniformTable), String> {
     let label = spec.target.label.clone();
-    let buffers = resolve_entry_buffers(&self.buffers, &spec.entry)?;
+    let buffers = resolve_entry_buffers(&self.buffers, spec.entry.buffer_ids())?;
     let shader = ShaderTexture::new_pipeline(
       &self.gl,
       spec.target.width,
@@ -1478,7 +1482,7 @@ impl RasterState {
     let uniforms = pipeline.uniform_table();
     validate_params(&uniforms, &entry.params)?;
     validate_texture_bindings(&uniforms, &entry.textures)?;
-    let buffers = resolve_entry_buffers(&self.buffers, &entry)?;
+    let buffers = resolve_entry_buffers(&self.buffers, entry.buffer_ids())?;
     let mut shader = ShaderTexture::from_pipeline(
       &self.gl,
       pipeline,
@@ -1516,7 +1520,7 @@ impl RasterState {
   fn add_draw(&mut self, target: u64, draw: u64, entry: DrawSpec, before: Option<u64>) -> Result<(), String> {
     let pipeline =
       self.render_pipelines.get(&entry.pipeline).ok_or_else(|| format!("pipeline {} not found", entry.pipeline))?.clone();
-    let buffers = resolve_entry_buffers(&self.buffers, &entry)?;
+    let buffers = resolve_entry_buffers(&self.buffers, entry.buffer_ids())?;
     let shader = self.shaders.get_mut(&target).ok_or_else(|| format!("shader texture {target} not found"))?;
     shader.add_entry(
       &self.gl,
@@ -1807,19 +1811,19 @@ fn describe(id: u64, label: &Option<String>) -> String {
 /// The draw range itself arrives already resolved and bounds-checked from
 /// the UI thread (`resolve_draw_range`), which owns the stride/size mirrors;
 /// a miss here means those mirrors diverged.
-fn resolve_entry_buffers(buffers: &HashMap<u64, Rc<GpuBuffer>>, entry: &DrawSpec) -> Result<EntryBuffers, String> {
+fn resolve_entry_buffers(buffers: &HashMap<u64, Rc<GpuBuffer>>, ids: BufferIds) -> Result<EntryBuffers, String> {
   let lookup = |id: u64, role: &str| -> Result<Rc<GpuBuffer>, String> {
     buffers.get(&id).cloned().ok_or_else(|| format!("{role} {id} not found"))
   };
-  let vertex = match entry.buffer {
+  let vertex = match ids.buffer {
     0 => None,
     id => Some((lookup(id, "buffer")?, id)),
   };
-  let index = match entry.index {
+  let index = match ids.index {
     Some((id, format)) => Some((lookup(id, "index buffer")?, id, format)),
     None => None,
   };
-  let instance = match entry.instance_buffer {
+  let instance = match ids.instance_buffer {
     0 => None,
     id => Some((lookup(id, "instance buffer")?, id)),
   };

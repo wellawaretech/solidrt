@@ -68,9 +68,11 @@ is flat. Event x/y are layer pixels with the camera undone.
 - The atlas is NOT owned by the layer: layers come and go, atlases usually
   live app-long. Dispose atlases yourself (or let the reactive owner do it -
   createAtlas registers with the owning scope like every core texture).
-- `capacity` is FIXED: the instance buffer cannot grow (core buffers are
-  fixed-size). `addSprite` past capacity throws - reserve the maximum up
-  front; records are 52 bytes each, so err generously.
+- `capacity` is a reservation, not a limit: `addSprite` past it doubles the
+  canonical array, and the next publish creates a larger GPU buffer, writes
+  it, swaps it in with `setDraw({ instanceBuffer })` and destroys the old
+  one. Records are 52 bytes each; reserve realistically to skip the copies.
+  Do not cache `layer.records` across addSprite - growth replaces the array.
 - Record order is draw order: `removeSprite` shifts every later sprite down
   one slot (copyWithin + index fixup, O(later sprites)). Cheap in practice;
   do not remove thousands per frame and expect it free.

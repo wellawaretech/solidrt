@@ -99,6 +99,18 @@ defaults for anything missing, so a manifest from an older CLI still loads.
   asked. The block is where they go if one does.
 - Gesture slop and responsive breakpoints in `packages/core`: theme/design
   level, not runtime config.
+- Instance-buffer growth in `@solidrt/2d` and `@solidrt/3d` (candidates,
+  raised 2026-08-23 with [2d-layer-capacity-growth](../done/2d-layer-capacity-growth.md)):
+  the initial reservation and the growth factor. Today the reservation is
+  `createSpriteLayer({ capacity })` (default 1024) in 2d and, in 3d,
+  implicit in the records given to `createInstancedMesh` (reserve by
+  passing a larger array and a smaller `count`); an explicit `capacity`
+  option on `createInstancedMesh` / `<InstancedMesh>` would make the two
+  packages speak the same word. The growth factor is 2x in both (amortized
+  O(1); waste bounded at 100% of the live size) and hard-coded; 1.5x is the
+  lower-waste alternative. Both are per-object library defaults, so the
+  natural home is the create options, not the runtime block - listed here
+  so they are decided alongside the other tunables rather than ad hoc.
 - Any runtime-mutable config, env-var mirrors for the new keys, or a
   separate config file.
 

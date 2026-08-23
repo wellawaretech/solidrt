@@ -112,7 +112,9 @@ export {
 // updated draw range (vertexCount after its buffer gained or lost dynamic
 // geometry, firstVertex for a different window of a shared buffer,
 // instanceCount for an instanced population; absent keys keep their current
-// value, like params); destroyBuffer is the manual
+// value, like params) and/or swapped buffers (instanceBuffer pointed at a
+// larger buffer once a population outgrows the old one - the growth
+// primitive; replace-only, the range is rechecked); destroyBuffer is the manual
 // cleanup path for buffers created outside a reactive scope. renderTarget is
 // the explicit render verb for `render: "manual"` targets - targets whose
 // pass is state (accumulation, feedback) rather than a pure function of its
@@ -122,22 +124,22 @@ export {
 // GPU-side (exact, same size): seed a loadOp "load" accumulator, snapshot a
 // ping-pong buffer, reset state to a known image.
 export { copyTexture, destroyBuffer, renderTarget, setDraw } from "flux:gpu"
-export type { BlendMode, CullMode, DrawRange, IndexBinding, IndexFormat, IndexRange, ShaderParams, Topology, VertexAttribute } from "flux:gpu"
+export type { BlendMode, BufferUpdate, CullMode, DrawRange, IndexBinding, IndexFormat, IndexRange, ShaderParams, Topology, VertexAttribute } from "flux:gpu"
 
 // The draw-list verbs, re-exported raw: entries live and die with their draw
 // target (see createDrawTarget below), so there is no per-entry lifetime to
 // wrap. addDraw adds an entry (appended, or inserted via opts.before) and
 // returns its stable DrawId; removeDraw drops one; setDrawParams /
-// setDrawTextures / setDrawRange are the per-entry forms of setTargetParams /
-// setTargetTextures / setDraw, taking (target, draw, value) with identical
-// merge and validation semantics. The per-object hot path is setDrawParams (a
+// setDrawTextures / setDrawRange / setDrawBuffers are the per-entry forms of
+// setTargetParams / setTargetTextures / setDraw (its range and buffer halves),
+// taking (target, draw, value) with identical merge and validation semantics. The per-object hot path is setDrawParams (a
 // moved mesh = one call with its new matrix); the per-target one is
 // setTargetParams (exported above), which on a draw target writes the SHARED
 // params every entry reads. setDrawOrder replaces the whole
 // list order with a full permutation of the live ids - the sorting verb
 // (opaque front-to-back, transparent back-to-front, re-issued when the
 // camera moves).
-export { addDraw, removeDraw, setDrawOrder, setDrawParams, setDrawRange, setDrawTextures } from "flux:gpu"
+export { addDraw, removeDraw, setDrawBuffers, setDrawOrder, setDrawParams, setDrawRange, setDrawTextures } from "flux:gpu"
 
 // The device ceilings (max texture/target size, sampler inputs per pass,
 // vertex attributes per pipeline), queried once at startup. Creates and binds

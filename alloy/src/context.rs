@@ -8,7 +8,8 @@ use crate::audio::AudioRegistry;
 use crate::camera::CameraRegistry;
 use crate::gpu::{
   resolve_draw_range, validate_draw_range, validate_order, validate_param_if_declared, validate_params,
-  validate_texture_bindings, vertex_stride, DrawBounds, DrawRange, DrawSpec, DrawUpdate, GpuLimits, GpuResources,
+  validate_texture_bindings, vertex_stride, BufferIds, DrawBounds, DrawRange, DrawSpec, DrawUpdate,
+  GpuLimits, GpuResources,
   NodeShader, ParamValue, PipelineDesc, PipelineSpec, ShaderStage, TargetSpec, UniformKind, UniformTable, WindowShader,
   WriteLeases,
 };
@@ -40,11 +41,12 @@ struct TargetMirror {
   /// The fetch bounds and range vocabulary for set_draw, captured at create
   /// (see `DrawBounds` for why a captured bound stays correct).
   bounds: DrawBounds,
-  /// The nonzero buffer ids the target's fixed-kind pass reads (vertex,
-  /// instance, index), so a buffer write can name the targets whose pixels
-  /// it changes (see `note_buffer_content`). Empty for draw targets, whose
-  /// buffers live per entry.
-  buffers: Vec<u64>,
+  /// The buffer ids the target's fixed-kind pass reads (vertex, index,
+  /// instance), so a buffer write can name the targets whose pixels it
+  /// changes (see `note_buffer_content`) and a buffer swap has a current
+  /// value to merge into. All zero for draw targets, whose buffers live per
+  /// entry.
+  buffers: BufferIds,
   /// Some = a draw target: the mutable ordered draw list, mirrored per entry
   /// (the flat fields above then describe nothing). None for the fixed
   /// kinds, whose one pass the flat fields describe.
@@ -73,8 +75,8 @@ struct EntryMirror {
   draw: DrawRange,
   /// The entry's fetch bounds and range vocabulary (see `TargetMirror::bounds`).
   bounds: DrawBounds,
-  /// The nonzero buffer ids the entry reads (see `TargetMirror::buffers`).
-  buffers: Vec<u64>,
+  /// The buffer ids the entry reads (see `TargetMirror::buffers`).
+  buffers: BufferIds,
 }
 
 // UI-side mirror of a registered render pipeline: its program's uniforms, the
@@ -664,7 +666,7 @@ impl Context {
     self.textures.insert(id, TextureEntry { impeller, width, height, sampler, format: TextureFormat::Rgba8 });
     self.targets.borrow_mut().insert(
       id,
-      TargetMirror { uniforms: Rc::new(uniforms), draw: None, bounds: DrawBounds::default(), buffers: Vec::new(), entries: None },
+      TargetMirror { uniforms: Rc::new(uniforms), draw: None, bounds: DrawBounds::default(), buffers: BufferIds::default(), entries: None },
     );
     self
       .shader_sources
@@ -820,7 +822,7 @@ impl Context {
     let (width, height, sampler) = (spec.target.width, spec.target.height, spec.target.sampler);
     let manual = spec.target.manual;
     let draw = spec.entry.draw;
-    let buffers = entry_buffers(&spec.entry);
+    let buffers = spec.entry.buffer_ids();
     let sources: HashMap<(u64, String), u64> =
       spec.entry.textures.iter().map(|(name, src)| ((0, name.clone()), *src)).collect();
     let (impeller, uniforms) = self.rpc(|reply| RasterCmd::CreatePipelineTexture { id, spec, reply })??;
@@ -995,7 +997,7 @@ impl Context {
     let (width, height, sampler) = (spec.width, spec.height, spec.sampler);
     let manual = spec.manual;
     let draw = entry.draw;
-    let buffers = entry_buffers(&entry);
+    let buffers = entry.buffer_ids();
     let sources: HashMap<(u64, String), u64> =
       entry.textures.iter().map(|(name, src)| ((0, name.clone()), *src)).collect();
     let impeller = self.rpc(|reply| RasterCmd::CreateShaderTarget { id, spec, entry, reply })??;
@@ -1030,7 +1032,7 @@ impl Context {
         uniforms: Rc::new(UniformTable::default()),
         draw: None,
         bounds: DrawBounds::default(),
-        buffers: Vec::new(),
+        buffers: BufferIds::default(),
         entries: Some(DrawListMirror { depth, next_draw: 1, entries: HashMap::new() }),
       },
     );
@@ -1097,7 +1099,7 @@ impl Context {
       self.gpu_limits().check_texture_units(entry.textures.len() + shared_extra)?;
     }
     list.next_draw += 1;
-    list.entries.insert(draw_id, EntryMirror { uniforms, draw: entry.draw, bounds, buffers: entry_buffers(&entry) });
+    list.entries.insert(draw_id, EntryMirror { uniforms, draw: entry.draw, bounds, buffers: entry.buffer_ids() });
     drop(targets);
     let mut sources = self.shader_sources.borrow_mut();
     let record = sources.entry(target).or_default();
@@ -1351,24 +1353,84 @@ impl Context {
     Ok(())
   }
 
-  /// Update one draw entry's range (the per-entry `set_draw`): fields absent
-  /// from `update` keep their current value, and the merged range validates
-  /// against the entry's captured fetch bound. The caller must request a
-  /// frame.
+  /// Update one draw entry's range and/or buffers (the per-entry `set_draw`):
+  /// see `update_draw`. The caller must request a frame.
   pub fn set_draw_range(&self, target: u64, draw: u64, update: DrawUpdate) -> Result<(), String> {
+    self.update_draw(target, Some(draw), update)
+  }
+
+  /// Apply a `DrawUpdate` to one entry - `draw` None addresses the
+  /// single-draw kinds' one entry (the setDraw side), Some a draw target's
+  /// entry (the setDrawRange side). One transaction: the buffer swap
+  /// (replace-only, see `BufferIds::merged`) and the range merge are both
+  /// validated against the resulting state - the merged range against the
+  /// swapped buffers' sizes - before either commits, so an error leaves the
+  /// entry exactly as it was. A swap alone keeps the current range, which
+  /// must still fit the new buffers (a too-small buffer errors here; a
+  /// larger one never does); a swap plus a range extends into the new
+  /// buffer in one call. The growth primitive: a population outgrowing its
+  /// instance buffer allocates a bigger one, writes it, swaps, and destroys
+  /// the old (the entry holds the old buffer alive until the swap lands).
+  fn update_draw(&self, target: u64, draw: Option<u64>, update: DrawUpdate) -> Result<(), String> {
     let mut targets = self.targets.borrow_mut();
     let mirror = targets.get_mut(&target).ok_or_else(|| format!("shader texture {target} not found"))?;
-    let Some(list) = mirror.entries.as_mut() else {
-      return Err(format!("target {target} is not a draw target (create it with createDrawTarget)"));
+    let (ids, bounds, range) = match (draw, mirror.entries.as_mut()) {
+      (None, Some(_)) => {
+        return Err(format!("target {target} is a draw target; update draws per entry with setDrawRange"));
+      }
+      (Some(_), None) => {
+        return Err(format!("target {target} is not a draw target (create it with createDrawTarget)"));
+      }
+      (None, None) => {
+        let Some(range) = mirror.draw.as_mut() else {
+          return Err("not a pipeline texture".to_string());
+        };
+        (&mut mirror.buffers, &mut mirror.bounds, range)
+      }
+      (Some(id), Some(list)) => {
+        let entry = list.entries.get_mut(&id).ok_or_else(|| format!("draw {id} not found on target {target}"))?;
+        (&mut entry.buffers, &mut entry.bounds, &mut entry.draw)
+      }
     };
-    let entry = list.entries.get_mut(&draw).ok_or_else(|| format!("draw {draw} not found on target {target}"))?;
-    let range = entry.draw.merged(update, entry.bounds.indexed)?;
-    validate_draw_range(range, entry.bounds)?;
-    entry.draw = range;
+    let next_ids = ids.merged(update.buffers)?;
+    let swapped = next_ids != *ids;
+    let next_bounds = if swapped { self.rebound(*bounds, next_ids)? } else { *bounds };
+    let next_range = range.merged(update, next_bounds.indexed)?;
+    validate_draw_range(next_range, next_bounds)?;
+    *ids = next_ids;
+    *bounds = next_bounds;
+    *range = next_range;
     drop(targets);
-    self.send(RasterCmd::SetDrawRange { target, draw, range });
+    if swapped {
+      self.send(RasterCmd::SetDrawBuffers { target, draw, ids: next_ids });
+    }
+    match draw {
+      None => self.send(RasterCmd::SetDraw { id: target, range: next_range }),
+      Some(draw) => self.send(RasterCmd::SetDrawRange { target, draw, range: next_range }),
+    }
     self.note_target_content(target);
     Ok(())
+  }
+
+  /// `bounds` re-sized for `ids`: the fetch bounds keep their strides (the
+  /// pipeline layout and vocabulary are unchanged by a swap; only an index
+  /// format change moves the element size) and take the named buffers'
+  /// sizes. Errs on an id the buffer registry does not know.
+  fn rebound(&self, bounds: DrawBounds, ids: BufferIds) -> Result<DrawBounds, String> {
+    let sizes = self.buffer_sizes.borrow();
+    let size_of = |id: u64, role: &str| sizes.get(&id).copied().ok_or_else(|| format!("{role} {id} not found"));
+    let fetch = match bounds.fetch {
+      None => None,
+      Some((stride, _)) => Some(match ids.index {
+        Some((id, format)) => (format.size() as usize, size_of(id, "index buffer")?),
+        None => (stride, size_of(ids.buffer, "buffer")?),
+      }),
+    };
+    let instance = match bounds.instance {
+      None => None,
+      Some((stride, _)) => Some((stride, size_of(ids.instance_buffer, "instance buffer")?)),
+    };
+    Ok(DrawBounds { fetch, indexed: bounds.indexed, instance })
   }
 
   /// Drop a shared program's registry entry and retire its id. Pipelines
@@ -1479,21 +1541,7 @@ impl Context {
   /// at create, see `TargetMirror::bounds` - attributeless targets fetch
   /// nothing, so any non-negative range is safe there).
   pub fn set_draw(&self, id: u64, update: DrawUpdate) -> Result<(), String> {
-    let mut targets = self.targets.borrow_mut();
-    let mirror = targets.get_mut(&id).ok_or_else(|| format!("shader texture {id} not found"))?;
-    if mirror.entries.is_some() {
-      return Err(format!("target {id} is a draw target; set ranges per draw with setDrawRange"));
-    }
-    let Some(current) = mirror.draw else {
-      return Err("not a pipeline texture".to_string());
-    };
-    let range = current.merged(update, mirror.bounds.indexed)?;
-    validate_draw_range(range, mirror.bounds)?;
-    mirror.draw = Some(range);
-    drop(targets);
-    self.send(RasterCmd::SetDraw { id, range });
-    self.note_target_content(id);
-    Ok(())
+    self.update_draw(id, None, update)
   }
 
   /// Inventory the GPU resources the raster thread tracks: registered
@@ -1700,8 +1748,8 @@ impl Context {
         .iter()
         .filter(|(id, mirror)| {
           !manual.contains(id)
-            && (mirror.buffers.contains(&buffer)
-              || mirror.entries.as_ref().is_some_and(|l| l.entries.values().any(|e| e.buffers.contains(&buffer))))
+            && (mirror.buffers.reads(buffer)
+              || mirror.entries.as_ref().is_some_and(|l| l.entries.values().any(|e| e.buffers.reads(buffer))))
         })
         .map(|(id, _)| *id)
         .collect()
@@ -1843,20 +1891,3 @@ pub(crate) fn content_closure(
   }
 }
 
-/// The nonzero buffer ids a draw entry reads (vertex, instance, index): what
-/// the mirrors retain so a buffer write can name the targets whose pixels it
-/// changes (see `note_buffer_content`).
-fn entry_buffers(entry: &DrawSpec) -> Vec<u64> {
-  let mut ids = Vec::new();
-  for id in [entry.buffer, entry.instance_buffer] {
-    if id != 0 {
-      ids.push(id);
-    }
-  }
-  if let Some((index, _)) = entry.index {
-    if index != 0 {
-      ids.push(index);
-    }
-  }
-  ids
-}

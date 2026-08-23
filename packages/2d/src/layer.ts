@@ -136,7 +136,11 @@ export type CameraUpdate = {
 }
 
 export type SpriteLayerOptions = {
-  /** Record capacity, fixed for the layer's life; default 1024. */
+  /**
+   * Initial record reservation; default 1024. The layer grows past it on
+   * demand (doubling), so this is a hint that avoids regrowth copies, not a
+   * limit.
+   */
   capacity?: number
   clearColor?: [number, number, number, number]
   label?: string
@@ -169,7 +173,8 @@ export type SpriteLayer = {
    * Write fields directly for large per-frame populations (setSprite is
    * ~2.4x slower at scale purely from call overhead - measured 30k sprites:
    * 12.9ms raw vs 30.8ms via setSprite), then call touch() once. Do not
-   * cache indices across removeSprite - records shift.
+   * cache indices across removeSprite - records shift - and do not cache
+   * the array across addSprite - growth replaces it.
    */
   records: Float32Array
   /** Mark the records dirty and schedule the publish (the raw-path commit). */
@@ -241,15 +246,32 @@ export function createSpriteLayer(
   let scheduled = false
   let published = 0
 
+  // The GPU buffer's record capacity; the canonical array grows ahead of it
+  // (addSprite) and the publish catches the buffer up: a larger buffer is
+  // created, written in full, swapped in, and the old one destroyed. The
+  // entry holds the old buffer alive until the swap lands, so the destroy
+  // is safe to issue right after.
+  let gpuCapacity = capacity
   let flush = () => {
     scheduled = false
     if (disposed || !dirty) return
     dirty = false
     let count = layer._order.length
-    let out = beginBufferWrite(records)
+    let grown: BufferId | null = null
+    if (layer.records.length > gpuCapacity * FLOATS_PER_SPRITE) {
+      gpuCapacity = layer.records.length / FLOATS_PER_SPRITE
+      grown = createBuffer(layer.records.length * 4, { label: `${label}-records`, autoFree: false })
+    }
+    let target = grown ?? records
+    let out = beginBufferWrite(target)
     out.set(layer.records.subarray(0, count * FLOATS_PER_SPRITE))
-    endBufferWrite(records, count * FLOATS_PER_SPRITE * 4)
-    if (count !== published) {
+    endBufferWrite(target, count * FLOATS_PER_SPRITE * 4)
+    if (grown !== null) {
+      setDraw(texture, { instanceBuffer: grown, instanceCount: count })
+      destroyBuffer(records)
+      records = grown
+      published = count
+    } else if (count !== published) {
       setDraw(texture, { instanceCount: count })
       published = count
     }
@@ -423,13 +445,16 @@ function writeSprite(layer: SpriteLayer, sprite: Sprite, opts: SpriteOptions): v
 
 /**
  * Add a sprite at the top of the draw order (later sprites paint over
- * earlier - the painter's rule; there is no z field in v1). Throws at
- * capacity: reserve enough up front, the record buffer is fixed-size.
+ * earlier - the painter's rule; there is no z field in v1). Past the
+ * layer's reservation the record store doubles (the GPU buffer follows at
+ * the next publish); reserve with `capacity` to avoid the copies.
  */
 export function addSprite(layer: SpriteLayer, opts?: SpriteOptions): Sprite {
   let index = layer._order.length
   if ((index + 1) * FLOATS_PER_SPRITE > layer.records.length) {
-    throw new Error(`addSprite: layer is at capacity (${layer.records.length / FLOATS_PER_SPRITE} sprites)`)
+    let next = new Float32Array(layer.records.length * 2)
+    next.set(layer.records)
+    layer.records = next
   }
   let sprite: Sprite = { layer, _index: index }
   layer._order.push(sprite)
