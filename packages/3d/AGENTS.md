@@ -11,10 +11,17 @@ blendMode and pointer events like any element.
 - Two layers. The imperative core is Solid-free: `createScene`,
   `createMesh(geometry, material)`, `add`/`remove`, `setTransform`,
   `lookAt`, `getRotation`, `setVisible`, `setRenderOrder` - plain objects
-  with dirty flags, batched to a microtask: one `setDrawParams` (uModel,
-  plus uNormal for materials declaring it) per changed mesh and ONE
-  `setTargetParams` (the shared uViewProj + uCamPos) per camera change,
-  however many meshes. The component face (`Scene`/`Group`/`Mesh`/
+  over the spatial core (`flux:spatial`, `alloy/src/spatial/`): every node
+  in a scene has a core node, JS keeps the LOCAL position/quaternion/scale
+  as the readable truth and forwards each write, and the core's flush
+  (one call per microtask) recomputes only the moved subtrees and writes
+  each entry's uModel (plus uNormal for materials declaring it) and its
+  visibility switch itself - a move costs its subtree, never the scene.
+  ONE `setTargetParams` (the shared uViewProj + uCamPos) per camera
+  change, however many meshes. World matrices live in the core only:
+  `worldPosition`/`lookAt`/picking read them back (`worldMatrix`, pending
+  writes included). See okf/backlog/spatial-core.md for what still runs
+  in JS and why. The component face (`Scene`/`Group`/`Mesh`/
   `PerspectiveCamera`) syncs props into that core over context and renders
   nothing itself.
 - Rendering is the runtime's. The target is `render: "auto"`: it
@@ -60,7 +67,7 @@ blendMode and pointer events like any element.
   (unlit color, unlit map, each opaque or transparent), `depth: true` +
   `cull: "back"`; an instance is
   just per-entry uniforms (`uColor`) and bindings (`uMap`).
-- The pure pieces (`math.ts`, `bvh.ts`, `order.ts`, `geometry.ts`,
+- The pure pieces (`math.ts`, `order.ts`, `geometry.ts`,
   `profile.ts`, `sweep.ts`) are Solid-free and GPU-free BY DESIGN so they
   can be checked headless; keep them that way. The rigs under `checks/`
   (`geometry-check`, `sweep-check`, `pick-check`, `order-check`) run on
@@ -130,13 +137,16 @@ Picking: `scene.pick(x, y)` is project()'s inverse - the camera ray
 through a scene pixel, returning `Hit[]` (`{ mesh, distance, point }`,
 world units, nearest first; every hit along the ray, not just the front
 one). `scene.raycast(origin, direction)` is the world-space primitive
-under it. The volume tier: hits test each mesh's local bounding box,
-transformed exactly under any node transform (non-uniform scale
-included), so results are conservative - a ray through a knot's hole
-still hits (no `face`/`uv` fields until a triangle tier exists).
-Broadphase is a dynamic AABB tree (BVH) the sync walk keeps current from
-its own dirty set - maintenance is O(changed), a query O(log meshes) -
-so per-pointer-move picking puts no ceiling on scene size. Both methods
+under it.
+The index and the narrowphase live in the spatial core: every attached
+mesh's local box is a leaf in a dynamic AABB tree the flush refits from
+the fresh world matrices (O(moved) per frame, a query O(log meshes)), and
+an ordinary mesh is then tested per triangle against its geometry's
+shape (one CPU copy per distinct geometry, created with its GPU buffers),
+so hits carry `face`, `uv` and a world-space `normal` facing the ray, and
+a ray through a knot's hole misses. An instanced mesh is box-only (its
+explicit population bounds; records are opaque), so its hits have none of
+the three. Both methods
 flush pending writes first (the lookAt/project immediacy contract), and
 both skip invisible meshes.
 
@@ -347,8 +357,9 @@ scene, the last attached wins. Placement goes through setTransform, the
 light's own fields through `setLight(light, { ... })` (frame-rate-safe,
 like setMeshParams). At most `MAX_LIGHTS` (4, exported from `/glsl`)
 directional lights per scene - the fifth throws at add(); it is a
-shader-source constant, fixed per app. The sync walk rewrites the shared
-params whenever a light attaches, detaches, changes a field or moves -
+shader-source constant, fixed per app. The sync rewrites the shared
+params whenever a light attaches, detaches, changes a field or moves (it
+or an ancestor) -
 `uHemiSky`/`uHemiGround` (vec3, intensity folded in), `uLightCount` (int),
 `uLightDir[MAX_LIGHTS]`/`uLightColor[MAX_LIGHTS]` (world-space vector
 TOWARD the light, normalized; intensity folded into the color) - so a
@@ -385,9 +396,9 @@ classes do not warn about an inactive uniform.
   when it is instanced - never a bare 1 into an instanced entry. Hidden
   meshes skip uModel writes; the fresh matrix is
   written on unhide. A freshly attached entry starts off the same way and
-  sync() turns it on when it writes uModel - never add one live: it has no
-  world matrix yet, and drawn before the sync microtask it flashes at the
-  world origin for a frame.
+  the core's flush turns it on when it writes uModel - never add one
+  live: it has no world matrix yet, and drawn before the sync microtask it
+  flashes at the world origin for a frame.
 - Instancing pairs strictly at add(), like layout: an instanced material
   needs a createInstancedMesh mesh (records included) and vice versa, and
   the record stride must match the material's attributes - each mismatch

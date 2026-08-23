@@ -15,6 +15,7 @@ use crate::gpu::{
 };
 use crate::microphone::MicrophoneRegistry;
 use crate::raster::{RasterCmd, RasterCounters, RasterSender, RasterStats};
+use crate::spatial::{DrawSink, NodeId, SinkWrite, Spatial};
 use crate::texture::{SamplerState, TextureEntry, TextureFormat, TextureRegistry};
 use crate::yuv::{self, YuvLayout, YuvMatrix, YuvRange};
 
@@ -185,6 +186,9 @@ pub struct Context {
   // sets, for update_yuv, and for destroy_texture to take the planes down
   // with the output.
   yuv_groups: RefCell<HashMap<u64, YuvGroup>>,
+  /// The spatial core (transform hierarchy + sinks); see `crate::spatial`.
+  /// Its draw sinks resolve to this context's draw entries.
+  spatial: RefCell<Spatial>,
 }
 
 // The composition behind one YUV texture id: TWO full plane sets, each plane
@@ -268,6 +272,7 @@ impl Context {
       pending_destroys: RefCell::new(Vec::new()),
       borrowed: RefCell::new(HashSet::new()),
       yuv_groups: RefCell::new(HashMap::new()),
+      spatial: RefCell::new(Spatial::new()),
     }
   }
 
@@ -1170,6 +1175,81 @@ impl Context {
     self.send(RasterCmd::RemoveDraw { target, draw });
     self.note_target_content(target);
     Ok(())
+  }
+
+  /// The spatial core, for node create/move/destroy. Sink binding and the
+  /// flush go through the methods below, which resolve sinks against this
+  /// context's draw entries.
+  pub fn spatial(&self) -> std::cell::RefMut<'_, Spatial> {
+    self.spatial.borrow_mut()
+  }
+
+  /// Bind (or with None unbind) a node's draw sink. Validated like the
+  /// entry path: the target/draw must exist and the entry's program must
+  /// take `uModel` (and `uNormal` when `normal`), so a bad binding throws
+  /// at its call site instead of failing silently at every flush.
+  pub fn spatial_bind(&self, node: NodeId, sink: Option<DrawSink>) -> Result<(), String> {
+    if let Some(sink) = sink {
+      let targets = self.targets.borrow();
+      let entry = entry_mirror(&targets, sink.target, sink.draw)?;
+      let identity = ParamValue::Array(crate::spatial::IDENTITY.to_vec());
+      let mut probe = vec![("uModel".to_string(), identity.clone())];
+      if sink.normal {
+        probe.push(("uNormal".to_string(), identity));
+      }
+      validate_params(&entry.uniforms, &probe)?;
+    }
+    self.spatial.borrow_mut().set_sink(node, sink)
+  }
+
+  /// Change a sink's "on" instance count; written at once if the entry is
+  /// on. The caller must request a frame when this returns true.
+  pub fn spatial_set_count(&self, node: NodeId, count: u32) -> Result<bool, String> {
+    let write = self.spatial.borrow_mut().set_sink_count(node, count)?;
+    match write {
+      Some(w) => {
+        self.apply_sink_write(w);
+        Ok(true)
+      }
+      None => Ok(false),
+    }
+  }
+
+  /// Recompute every changed subtree and write the sinks. Returns whether
+  /// anything was written (the caller requests a frame if so).
+  pub fn spatial_flush(&self) -> bool {
+    let mut wrote = false;
+    self.spatial.borrow_mut().flush(&mut |w| {
+      wrote = true;
+      self.apply_sink_write(w);
+    });
+    wrote
+  }
+
+  fn apply_sink_write(&self, write: SinkWrite) {
+    let result = match write {
+      SinkWrite::Params { target, draw, model, normal } => {
+        let mut params = vec![("uModel".to_string(), ParamValue::Array(model.to_vec()))];
+        if let Some(n) = normal {
+          params.push(("uNormal".to_string(), ParamValue::Array(n.to_vec())));
+        }
+        // Validated at bind time; an entry removed since is the one
+        // failure left, and the mirror lookup below reports it.
+        let known = entry_mirror(&self.targets.borrow(), target, draw).map(|_| ());
+        known.map(|_| {
+          self.send(RasterCmd::UpdateDrawParams { target, draw, params });
+          self.note_target_content(target);
+        })
+      }
+      SinkWrite::Count { target, draw, count } => self.update_draw(
+        target,
+        Some(draw),
+        DrawUpdate { instance_count: Some(count as i32), ..DrawUpdate::default() },
+      ),
+    };
+    if let Err(e) = result {
+      log::warn!("[spatial] sink write dropped: {e}");
+    }
   }
 
   /// Update one draw entry's params (the per-entry analog of

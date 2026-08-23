@@ -1,6 +1,8 @@
-// Differential check rig for the picking stack: the BVH against a linear
-// oracle, invertAffine against compose, and the slab test's edge cases.
-// Pure-module inputs only (bvh.ts, math.ts import no GUI), so it runs
+// Check rig for the JS half of the picking math: invertAffine against
+// compose, and the slab test's edge cases. (The index and the triangle
+// narrowphase live in the spatial core; alloy/src/tests/spatial.rs holds
+// their differential check.) Pure-module inputs only (math.ts imports no
+// GUI), so it runs
 // headless on flux, bundled from the repo root:
 //
 //   bunx srt bundle -f --stdout packages/3d/checks/pick-check.ts | target/release/flux - [seed]
@@ -9,8 +11,7 @@
 // A failure prints FAIL lines and throws at the end, so the run exits nonzero.
 
 import { argv } from "flux:process"
-import { createBvh, rayBoxDistance } from "../src/bvh.ts"
-import { compose, invertAffine, mat4, multiply, quatFromEuler, transformPoint, transformVector } from "../src/math.ts"
+import { compose, invertAffine, mat4, multiply, quatFromEuler, rayBoxDistance, transformPoint, transformVector } from "../src/math.ts"
 import type { Mat4, Quat, Vec3, Vec4 } from "../src/math.ts"
 
 let seed = Number(argv[0] ?? Math.floor(Math.random() * 1e9))
@@ -97,99 +98,8 @@ for (let i = 0; i < 500; i++) {
   }
 }
 
-// --- BVH vs linear oracle, through inserts, moves, and removals ---
-
-type Box = { id: number; leaf: number; min: Vec3; max: Vec3; alive: boolean }
-
-let bvh = createBvh<Box>()
-let boxes: Box[] = []
-let makeBox = (id: number): Box => {
-  let cx = range(-100, 100)
-  let cy = range(-100, 100)
-  let cz = range(-100, 100)
-  // Mixed sizes, including flat boxes (a plane's world AABB).
-  let ex = rand() < 0.1 ? 0 : range(0.1, 8)
-  let ey = rand() < 0.1 ? 0 : range(0.1, 8)
-  let ez = rand() < 0.1 ? 0 : range(0.1, 8)
-  return { id, leaf: -1, min: [cx - ex, cy - ey, cz - ez], max: [cx + ex, cy + ey, cz + ez], alive: true }
-}
-
-for (let i = 0; i < 300; i++) {
-  let box = makeBox(i)
-  box.leaf = bvh.insert(box, box.min[0], box.min[1], box.min[2], box.max[0], box.max[1], box.max[2])
-  boxes.push(box)
-}
-
-let queryCount = 0
-let compare = (label: string): void => {
-  for (let i = 0; i < 200; i++) {
-    let ox = range(-150, 150)
-    let oy = range(-150, 150)
-    let oz = range(-150, 150)
-    let dx = range(-1, 1)
-    let dy = range(-1, 1)
-    let dz = range(-1, 1)
-    if (rand() < 0.2) dx = 0
-    if (rand() < 0.2) dy = 0
-    if (Math.hypot(dx, dy, dz) < 1e-3) continue
-    queryCount++
-    // Oracle: narrowphase every live box linearly.
-    let expected = new Set<number>()
-    for (let box of boxes) {
-      if (!box.alive) continue
-      let t = rayBoxDistance(ox, oy, oz, dx, dy, dz, box.min[0], box.min[1], box.min[2], box.max[0], box.max[1], box.max[2])
-      if (t >= 0) expected.add(box.id)
-    }
-    // BVH broadphase (fat boxes: a superset) + the same narrowphase.
-    let got = new Set<number>()
-    let visits = 0
-    bvh.raycast(ox, oy, oz, dx, dy, dz, box => {
-      visits++
-      let t = rayBoxDistance(ox, oy, oz, dx, dy, dz, box.min[0], box.min[1], box.min[2], box.max[0], box.max[1], box.max[2])
-      if (t >= 0) got.add(box.id)
-    })
-    for (let id of expected) {
-      if (!got.has(id)) fail(`${label}: BVH missed box ${id} (query ${i})`)
-    }
-    for (let id of got) {
-      if (!expected.has(id)) fail(`${label}: BVH hit phantom box ${id} (query ${i})`)
-    }
-  }
-}
-
-compare("static")
-
-// Move a third of the boxes (some a little, some far), matching how the
-// scene refits leaves per sync.
-for (let box of boxes) {
-  if (rand() < 0.33) {
-    let far = rand() < 0.5
-    let shift = (): number => (far ? range(-80, 80) : range(-0.05, 0.05))
-    let sx = shift(), sy = shift(), sz = shift()
-    box.min = [box.min[0] + sx, box.min[1] + sy, box.min[2] + sz]
-    box.max = [box.max[0] + sx, box.max[1] + sy, box.max[2] + sz]
-    bvh.update(box.leaf, box.min[0], box.min[1], box.min[2], box.max[0], box.max[1], box.max[2])
-  }
-}
-compare("after moves")
-
-// Remove a quarter, then insert replacements (slot reuse paths).
-for (let box of boxes) {
-  if (rand() < 0.25) {
-    bvh.remove(box.leaf)
-    box.alive = false
-  }
-}
-compare("after removals")
-for (let i = 0; i < 100; i++) {
-  let box = makeBox(1000 + i)
-  box.leaf = bvh.insert(box, box.min[0], box.min[1], box.min[2], box.max[0], box.max[1], box.max[2])
-  boxes.push(box)
-}
-compare("after reinserts")
-
 if (failures === 0) {
-  console.log(`PASS: edge cases, 2000 inverses, 500 ray-parameter trips, ${queryCount} differential queries`)
+  console.log(`PASS: edge cases, 2000 inverses, 500 ray-parameter trips`)
 } else {
   throw new Error(`${failures} FAILURES (seed ${seed})`)
 }

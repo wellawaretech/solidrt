@@ -34,6 +34,7 @@
 /// <reference path="./gui/microphone.d.ts" />
 /// <reference path="./gui/audio.d.ts" />
 /// <reference path="./gui/gpu.d.ts" />
+/// <reference path="./gui/spatial.d.ts" />
 /// <reference path="./gui/video.d.ts" />
 /// <reference path="./gui/raf.d.ts" />
 

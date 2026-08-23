@@ -9,8 +9,8 @@
 // A failure prints FAIL lines and throws at the end, so the run exits nonzero.
 
 import { box, cylinder, validateGeometry, fillAttribute, fillColors, packGeometry, sphere, torus, torusKnot, geometryBounds, layoutKey, layoutSlot, layoutStride, mergeGeometries, plane, transformGeometry, withAttribute, withColors, STANDARD_FLOATS } from "../src/geometry.ts"
+import { rayBoxDistance } from "../src/math.ts"
 import type { Geometry } from "../src/geometry.ts"
-import { rayBoxDistance } from "../src/bvh.ts"
 
 let failures = 0
 let fail = (msg: string): void => {

@@ -12,6 +12,7 @@ pub mod microphone;
 pub(crate) mod properties;
 pub mod raf;
 pub mod gpu;
+pub mod spatial;
 pub mod tree;
 pub mod value;
 #[cfg(feature = "video")]
@@ -68,9 +69,11 @@ pub fn install(builder: FluxEngineBuilder, host: GuiHost) -> FluxEngineBuilder {
   let GuiHost { platform, alloy, render_tree, alloy_cmd_tx } = host;
   let tree_platform = platform.clone();
   let raf_platform = platform.clone();
+  let spatial_platform = platform.clone();
   let gpu_platform = platform;
   let tree_atx = AlloyContext(alloy.clone());
   let gpu_atx = AlloyContext(alloy.clone());
+  let spatial_atx = AlloyContext(alloy.clone());
   let camera_atx = AlloyContext(alloy.clone());
   let microphone_atx = AlloyContext(alloy.clone());
   #[cfg(feature = "video")]
@@ -92,6 +95,7 @@ pub fn install(builder: FluxEngineBuilder, host: GuiHost) -> FluxEngineBuilder {
     .plugin(|ctx| input::store_state(&ctx))
     .plugin(move |ctx| raf::init(&ctx, raf_platform))
     .plugin(move |ctx| gpu::store_state(&ctx, gpu_atx, gpu_platform))
+    .plugin(move |ctx| spatial::store_state(&ctx, spatial_atx, spatial_platform))
     .plugin(move |ctx| camera::store_state(&ctx, camera_atx))
     .plugin(move |ctx| microphone::store_state(&ctx, microphone_atx))
     .plugin(move |ctx| audio::store_state(&ctx, audio_atx))
@@ -100,7 +104,8 @@ pub fn install(builder: FluxEngineBuilder, host: GuiHost) -> FluxEngineBuilder {
     .module_override("flux:camera", camera::CameraModule)
     .module_override("flux:microphone", microphone::MicrophoneModule)
     .module_override("flux:audio", audio::AudioModule)
-    .module_override("flux:gpu", gpu::GpuModule);
+    .module_override("flux:gpu", gpu::GpuModule)
+    .module_override("flux:spatial", spatial::SpatialModule);
   #[cfg(feature = "video")]
   let builder = builder
     .plugin(move |ctx| video::store_state(&ctx, video_atx))
@@ -110,9 +115,9 @@ pub fn install(builder: FluxEngineBuilder, host: GuiHost) -> FluxEngineBuilder {
 
 /// Capability names the gui feature adds on top of `BASE_CAPABILITIES`.
 #[cfg(feature = "video")]
-pub const GUI_CAPABILITIES: &[&str] = &["camera", "microphone", "audio", "gpu", "video"];
+pub const GUI_CAPABILITIES: &[&str] = &["camera", "microphone", "audio", "gpu", "spatial", "video"];
 #[cfg(not(feature = "video"))]
-pub const GUI_CAPABILITIES: &[&str] = &["camera", "microphone", "audio", "gpu"];
+pub const GUI_CAPABILITIES: &[&str] = &["camera", "microphone", "audio", "gpu", "spatial"];
 
 /// Append the gui capability names to `Flux.capabilities` so availability checks
 /// are uniform with the other modules (`Flux.capabilities.includes("camera")`).

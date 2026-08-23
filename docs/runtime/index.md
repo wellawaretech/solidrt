@@ -60,7 +60,8 @@ serve({
 
 A GUI build of Flux, which is what SolidRT runs on, adds the device and
 rendering modules: `flux:rendertree` (the native tree `@solidrt/core` drives),
-`flux:gpu` (textures, shaders, draw targets), `flux:camera`,
+`flux:gpu` (textures, shaders, draw targets), `flux:spatial` (a native
+transform hierarchy feeding draw entries), `flux:camera`,
 `flux:microphone`, `flux:audio` and `flux:video`. The `create*` primitives in
 Core wrap them with reactivity; the modules are the imperative layer
 underneath.

@@ -423,6 +423,14 @@ Shaped, not started.
   A numeric pixel-delta mode on get_snapshot against the previous capture of
   the same node, so "does it still render the same" is one call with a number
   instead of two images an agent has to eyeball.
+- **[Spatial core - transform hierarchy, spatial index and queries in alloy](backlog/spatial-core.md)** [2026-08-23]
+  The @solidrt/3d sync walk recurses the whole node tree in QuickJS on every
+  change (one moved node = O(scene)), picking is a JS box-only test, and both
+  are the interpreter-hostile parts of every large scene. Move the transform
+  hierarchy, its flush and the spatial index into a generic alloy module (no
+  camera, no mesh, no lights) that the 3d package is the first consumer of;
+  triangle-accurate picking (3d roadmap item 4) and the scene-walk descent
+  (item 19) land together on it.
 - **[Every widget hand-wires its own hover/pressed/disabled variants](backlog/state-variant-selection.md)** [2026-07-26]
   Button picks fill/hover/label with a switch over its variant and derives the
   background from press state by hand, and every other widget repeats the

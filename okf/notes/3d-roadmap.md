@@ -54,14 +54,10 @@ what it delivered is documented in `packages/3d/AGENTS.md`, not here.
    [snapshot-boundary-texture-id](../done/snapshot-boundary-texture-id.md)
    (landed 2026-08-23: `snapshotTexture(ref)`). Routing pointer events back
    through a mesh into the mapped subtree stays with item 4.
-4. [ ] **Picking.** The volume tier is delivered (mesh pointer events over
-   `scene.pick`/`scene.raycast`, BVH broadphase maintained from the sync
-   walk, library only as staged). Remaining: the triangle-accurate tier
-   (`face`/`uv` on hits, correct concave silhouettes) - per the
-   differentiators ladder that is CORE work, because per-triangle rays in JS
-   are interpreter-hostile, and it should ride the scene-walk descent (item
-   19) rather than grow a JS implementation. Routing events into a UI subtree
-   mapped onto a mesh stays with item 3.
+4. [x] **Picking.** Delivered 2026-08-23 with stage 2 of
+   [spatial-core](../backlog/spatial-core.md): index and triangle
+   narrowphase in core, hits carry `face`/`uv`/`normal`. Routing events
+   into a UI subtree mapped onto a mesh stays with item 3.
 5. [x] **Lights and lit materials (lambert/phong).** Engine:
    [gpu-uniform-arrays](../done/gpu-uniform-arrays.md). Library landed
    2026-08-23 (`lit`, light NODES with transform inheritance, triplanar
@@ -183,11 +179,16 @@ what it delivered is documented in `packages/3d/AGENTS.md`, not here.
     `packages/3d/AGENTS.md` say so, and the vertex stage might hand the
     fragment a view ray) or to keep the slot deliberately static and point
     at the sphere-mesh shape. Do not leave it as folklore either way.
-19. [ ] **Scene scale.** Frustum culling in the library when a consumer needs
-    it (scenes under a few thousand nodes will not), and the recorded escape
-    hatch behind everything above: the draw-list design deliberately allows
-    the scene walk to move into core without an app-facing API change.
-    Explicit non-goal until something demands it.
+19. [ ] **Scene scale.** The walk itself goes to core as stage 1 of
+    [spatial-core](../backlog/spatial-core.md) - the JS sync recurses the
+    whole tree on every change, so one moved node is O(scene) today, and
+    the known triggers (hundreds of non-instanceable moving nodes; the
+    O(vertices) picking tier of item 4) are not hypothetical. Frustum
+    culling follows as a small query over the same core index when a
+    GPU-bound scene needs it; a JS form is ruled out, not deferred, because
+    testing every node per frame is exactly the O(scene) loop the design
+    avoids. Both land with no app-facing API change, the reason the draw
+    list was shaped as it was.
 
 ## Not in scope
 

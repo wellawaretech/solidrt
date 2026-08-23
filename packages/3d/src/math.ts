@@ -579,3 +579,54 @@ export function lookAt(out: Mat4, eye: Vec3, target: Vec3, up: Vec3): Mat4 {
   out[15] = 1
   return out
 }
+
+/**
+ * Entry distance of a ray against a box: the smallest t >= 0 with
+ * origin + t * direction inside [min, max] (0 when the origin starts
+ * inside), or -1 for a miss. The direction need not be normalized - t is
+ * in units of its length, which is what keeps a ray transformed into a
+ * mesh's local space reporting world distances.
+ */
+export function rayBoxDistance(
+  ox: number, oy: number, oz: number,
+  dx: number, dy: number, dz: number,
+  minX: number, minY: number, minZ: number,
+  maxX: number, maxY: number, maxZ: number,
+): number {
+  let tNear = 0
+  let tFar = Infinity
+  // Per axis: a zero direction component never crosses the slab, so the
+  // origin must already be inside it (the multiply-by-inverse shortcut
+  // turns that case into NaN, hence the explicit branch).
+  if (dx === 0) {
+    if (ox < minX || ox > maxX) return -1
+  } else {
+    let inv = 1 / dx
+    let t1 = (minX - ox) * inv
+    let t2 = (maxX - ox) * inv
+    if (t1 > t2) { let t = t1; t1 = t2; t2 = t }
+    if (t1 > tNear) tNear = t1
+    if (t2 < tFar) tFar = t2
+  }
+  if (dy === 0) {
+    if (oy < minY || oy > maxY) return -1
+  } else {
+    let inv = 1 / dy
+    let t1 = (minY - oy) * inv
+    let t2 = (maxY - oy) * inv
+    if (t1 > t2) { let t = t1; t1 = t2; t2 = t }
+    if (t1 > tNear) tNear = t1
+    if (t2 < tFar) tFar = t2
+  }
+  if (dz === 0) {
+    if (oz < minZ || oz > maxZ) return -1
+  } else {
+    let inv = 1 / dz
+    let t1 = (minZ - oz) * inv
+    let t2 = (maxZ - oz) * inv
+    if (t1 > t2) { let t = t1; t1 = t2; t2 = t }
+    if (t1 > tNear) tNear = t1
+    if (t2 < tFar) tFar = t2
+  }
+  return tFar >= tNear ? tNear : -1
+}

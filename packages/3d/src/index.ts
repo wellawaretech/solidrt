@@ -10,7 +10,6 @@ export type { CameraUpdate, DirectionalLight as DirectionalLightNode, Directiona
 export { disposeGeometry } from "./geometry-gpu.ts"
 export { box, circle, cone, cylinder, fillAttribute, fillColors, geometryBounds, layoutAttributes, layoutKey, layoutSlot, layoutStride, mergeGeometries, packGeometry, plane, ring, sphere, torus, torusKnot, transformGeometry, validateGeometry, withAttribute, withColors, STANDARD_FLOATS, VERTEX_LAYOUTS } from "./geometry.ts"
 export type { AttributeFill, BoxOptions, CircleOptions, ColorFill, ConeOptions, CylinderOptions, Geometry, GeometryOptions, PlaneOptions, RingOptions, SphereOptions, TorusKnotOptions, TorusOptions, VertexLayout } from "./geometry.ts"
-export { rayBoxDistance } from "./bvh.ts"
 export { fillet, roundRect, shape, triangulate } from "./profile.ts"
 export type { Profile, ProfilePoint } from "./profile.ts"
 export { extrude, lathe, pathFrames, sweep, tube } from "./sweep.ts"
@@ -23,5 +22,5 @@ export { createOrbitCamera } from "./orbit.ts"
 export type { OrbitCamera, OrbitCameraOptions, OrbitPose } from "./orbit.ts"
 // math's lookAt (the camera view matrix) stays on the /math subpath: the
 // root's lookAt is the scene verb, the same split as `add`.
-export { compose, copy, eulerFromQuat, identity, mat4, multiply, normalMatrix, perspective, quat, quatFromAxisAngle, quatFromEuler, quatFromFrame, quatFromTo, quatMultiply, quatNormalize, quatSlerp } from "./math.ts"
+export { rayBoxDistance, compose, copy, eulerFromQuat, identity, mat4, multiply, normalMatrix, perspective, quat, quatFromAxisAngle, quatFromEuler, quatFromFrame, quatFromTo, quatMultiply, quatNormalize, quatSlerp } from "./math.ts"
 export type { Mat4, Quat, Vec2, Vec3 } from "./math.ts"

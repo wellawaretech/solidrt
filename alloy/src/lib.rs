@@ -23,6 +23,7 @@ mod present;
 mod raster;
 pub use raster::RasterCounters;
 pub mod rendertree;
+pub mod spatial;
 pub mod resample;
 mod script;
 mod texture;

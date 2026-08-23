@@ -1,8 +1,12 @@
-// The retained scene: plain objects and dirty flags, no signals - the hot
-// path (a moved node) is flat imperative code, and reactivity stays at the
-// component boundary (components.tsx). A scene compiles to one draw
-// target: every mesh is one draw entry whose uModel (and, for materials
-// declaring it, uNormal) this module keeps in step with the tree, and the
+// The retained scene: plain objects, no signals - the hot path (a moved
+// node) is flat imperative code, and reactivity stays at the component
+// boundary (components.tsx). The transform hierarchy itself lives in the
+// spatial core (flux:spatial): every node in a scene has a core node, JS
+// keeps the LOCAL transform as the readable source of truth and forwards
+// each write, and the core's flush recomputes only the moved subtrees and
+// writes each mesh entry's uModel (and, for materials declaring it,
+// uNormal) - so a move costs its subtree, never the scene. A scene
+// compiles to one draw target: every mesh is one draw entry, and the
 // camera is the target's SHARED uViewProj + uCamPos + uCamRight/uCamUp -
 // one setTargetParams per camera move, not one write per mesh. The
 // non-matrix names ride unconditionally: shared params tolerate zero
@@ -16,16 +20,23 @@
 // `render: "auto"` draw target that re-renders when its entries change, so
 // a static scene costs zero passes and this module registers no frame
 // loop. Continuous animation is the app's onFrame writing transforms -
-// each write lands here, the microtask syncs the affected uModels, and the
-// flush renders once that frame.
+// each write lands in the core, the microtask flushes it, and the frame
+// renders once.
+//
+// Still in JS this stage (see okf/backlog/spatial-core.md): the picking
+// broadphase and its leaves, the transparent sort's centers and the light
+// params. They read world matrices back from the core, and only for the
+// subtrees that moved since they last looked.
 
-import { addDraw, createBuffer, createDrawTarget, destroyBuffer, destroyProgram, destroyRenderPipeline, destroyTexture, removeDraw, setDrawBuffers, setDrawOrder, setDrawParams, setDrawRange, setTargetParams, setTargetSize, writeBuffer } from "@solidrt/core/gpu"
+import { addDraw, createBuffer, createDrawTarget, destroyBuffer, destroyProgram, destroyRenderPipeline, destroyTexture, removeDraw, setDrawBuffers, setDrawOrder, setDrawParams, setTargetParams, setTargetSize, writeBuffer } from "@solidrt/core/gpu"
+import * as spatial from "flux:spatial"
+import type { NodeId } from "flux:spatial"
 import type { BufferId, DrawId, FilterMode, ProgramId, RenderPipelineId, ShaderParams, TextureId, VertexAttribute, WrapMode } from "@solidrt/core/gpu"
 import { getOwner, onCleanup } from "@solidrt/core"
 import type { PointerEvent as ElementPointerEvent } from "@solidrt/core"
 // The scene's lookAt() aims a node; math's builds a camera's view matrix -
 // the same pairing (and the same name) as Three's Object3D/Matrix4.
-import { compose, copy, eulerFromQuat, identity, invertAffine, lookAt as lookAtMatrix, mat4, multiply, normalMatrix, perspective, quat, quatFromFrame, transformPoint, transformVector, updateRotation, updateScale } from "./math.ts"
+import { compose, copy, eulerFromQuat, identity, lookAt as lookAtMatrix, mat4, multiply, perspective, quat, quatFromFrame, transformPoint, transformVector, updateRotation, updateScale } from "./math.ts"
 import type { Mat4, Quat, TransformUpdate, Vec3, Vec4 } from "./math.ts"
 import { MAX_LIGHTS } from "./glsl.ts"
 import { geometryBounds, layoutKey, validateGeometry } from "./geometry.ts"
@@ -35,27 +46,24 @@ import type { Geometry } from "./geometry.ts"
 import { backgroundPipeline, missingAttributes } from "./material.ts"
 import { orderEntries } from "./order.ts"
 import type { Material } from "./material.ts"
-import { createBvh, rayBoxDistance } from "./bvh.ts"
 
 const IDENTITY = mat4()
 const RESOLVED = Promise.resolve()
 // lookAt()'s default roll reference. Read-only: quatFromFrame never
 // writes its inputs, so one shared vector is safe.
 const WORLD_UP: Vec3 = [0, 1, 0]
-// Param values are snapshotted at the FFI boundary (addDraw shares
-// IDENTITY the same way), so one scratch serves every uNormal write.
-let normalScratch = mat4()
-// lookAt()/worldPosition() scratch: the ancestor walk recomputes worlds
-// without touching node state, so nothing here outlives a single call.
+// The FFI carriers: one transform write (position, quaternion, scale) and
+// one world-matrix read. Values are copied at the boundary, so one of each
+// serves every call.
+let transformScratch = new Float32Array(10)
+let worldRead = new Float32Array(16)
+// lookAt()/worldPosition() scratch: nothing here outlives a single call.
 let worldScratch = mat4()
 let localScratch = mat4()
 let pointScratch: Vec4 = [0, 0, 0, 0]
 let aimScratch: Vec3 = [0, 0, 0]
 let upScratch: Vec3 = [0, 0, 0]
-// Picking narrowphase scratch: one candidate is tested at a time, so one
-// set serves every raycast.
-let pickInv = mat4()
-let pickOrigin: Vec4 = [0, 0, 0, 0]
+// pick()'s camera-ray scratch.
 let pickDir: Vec3 = [0, 0, 0]
 // setTransform's rotation compare happens AFTER conversion, so an euler and
 // the quaternion it produces are the same write. Nothing outlives the call.
@@ -79,6 +87,8 @@ type SceneHooks = {
   /** Re-point the mesh's entry at its (replaced) instance buffer. */
   _setBuffer(mesh: Mesh): void
   _reorder(): void
+  /** The node's transform changed (for the sort and light bookkeeping). */
+  _moved(node: SceneNode): void
 }
 
 export type SceneNode = {
@@ -104,9 +114,9 @@ export type SceneNode = {
   onPointerUp?: (event: ScenePointerEvent) => void
   onPointerEnter?: (event: ScenePointerEvent) => void
   onPointerLeave?: (event: ScenePointerEvent) => void
-  _localDirty: boolean
-  _local: Mat4
-  _world: Mat4
+  /** The core node while in a scene (created at add, freed at remove). */
+  _node: NodeId | null
+  _moved: boolean
   _scene: SceneHooks | null
 }
 
@@ -153,13 +163,10 @@ export type Mesh = SceneNode & {
    * pipeline state, and what _detach counts against (setMaterial swaps
    * mesh.material before the rebuild). */
   _transparent: boolean
-  /** World-space center of the geometry bounds, kept by the sync walk
-   * beside the picking leaf: the transparent sort key. */
+  /** World-space center of the local bounds, refreshed at sort time: the
+   * transparent sort key. */
   _center: Vec3
-  _hidden: boolean
-  _fresh: boolean
   _params: ShaderParams | null
-  _pickLeaf: number | null
   /** Instance state when the mesh was made by createInstancedMesh; null on
    * an ordinary mesh. */
   _instances: MeshInstances | null
@@ -191,13 +198,20 @@ export type MeshInstances = {
  * `instances.count` copies of the geometry, one record each. */
 export type InstancedMesh = Mesh & { _instances: MeshInstances }
 
-/** One picking intersection: the mesh, the camera-ray distance in world
- * units, and the world-space point - Three's intersect result minus the
- * triangle fields (`face`, `uv`), which cannot exist at the volume tier. */
+/** One picking intersection, Three's intersect result: the mesh, the
+ * camera-ray distance in world units, the world-space point, and for a
+ * triangle hit (every ordinary mesh - the test is per triangle, so a ray
+ * through a knot's hole misses) the world-space geometric `normal` facing
+ * the ray, the triangle index `face` and the interpolated texture `uv`.
+ * An instanced mesh is picked by its explicit population box, so those
+ * three are absent on its hits. */
 export type Hit = {
   mesh: Mesh
   distance: number
   point: Vec3
+  normal?: Vec3
+  face?: number
+  uv?: [number, number]
 }
 
 /**
@@ -364,9 +378,8 @@ function makeNode(kind: SceneNode["kind"]): SceneNode {
     quaternion: [0, 0, 0, 1],
     scale: [1, 1, 1],
     visible: true,
-    _localDirty: true,
-    _local: mat4(),
-    _world: mat4(),
+    _node: null,
+    _moved: false,
     _scene: null,
   }
 }
@@ -422,10 +435,7 @@ export function createMesh(geometry: Geometry, material: Material): Mesh {
   mesh._buffers = null
   mesh._transparent = false
   mesh._center = [0, 0, 0]
-  mesh._hidden = false
-  mesh._fresh = false
   mesh._params = null
-  mesh._pickLeaf = null
   mesh._instances = null
   return mesh
 }
@@ -571,7 +581,6 @@ export function add(parent: SceneNode, child: SceneNode): void {
   if (child.parent !== null) remove(child)
   child.parent = parent
   parent.children.push(child)
-  child._localDirty = true
   if (parent._scene) enterScene(child, parent._scene)
 }
 
@@ -588,7 +597,10 @@ export function remove(child: SceneNode): void {
 
 function enterScene(node: SceneNode, scene: SceneHooks): void {
   node._scene = scene
-  node._localDirty = true
+  node._node = spatial.createNode(fillTransform(node), node.visible)
+  // The parent is in the scene already (add() enters the child only then),
+  // and the scene root is the one node without a parent.
+  if (node.parent !== null && node.parent._node !== null) spatial.setParent(node._node, node.parent._node)
   if (node.kind === "mesh") scene._attach(node as Mesh)
   else if (node.kind === "light") scene._attachLight(node as Light)
   for (let c of node.children) enterScene(c, scene)
@@ -601,6 +613,27 @@ function leaveScene(node: SceneNode): void {
   else if (scene && node.kind === "light") scene._detachLight(node as Light)
   node._scene = null
   for (let c of node.children) leaveScene(c)
+  if (node._node !== null) {
+    spatial.destroyNode(node._node)
+    node._node = null
+  }
+}
+
+/** The node's local transform in the FFI carrier. */
+function fillTransform(node: SceneNode): Float32Array {
+  let t = transformScratch
+  t[0] = node.position[0]; t[1] = node.position[1]; t[2] = node.position[2]
+  t[3] = node.quaternion[0]; t[4] = node.quaternion[1]; t[5] = node.quaternion[2]; t[6] = node.quaternion[3]
+  t[7] = node.scale[0]; t[8] = node.scale[1]; t[9] = node.scale[2]
+  return t
+}
+
+/** Forward a changed local transform to the core (no-op outside a scene:
+ * entering pushes the whole transform). */
+function pushTransform(node: SceneNode): void {
+  if (node._node === null || node._scene === null) return
+  spatial.setTransform(node._node, fillTransform(node))
+  node._scene._moved(node)
 }
 
 export type { TransformUpdate } from "./math.ts"
@@ -649,8 +682,7 @@ export function setTransform(node: SceneNode, update: TransformUpdate): void {
     }
   }
   if (!changed) return
-  node._localDirty = true
-  node._scene?._schedule()
+  pushTransform(node)
 }
 
 /**
@@ -697,8 +729,7 @@ export function lookAt(node: SceneNode, target: Vec3, up: Vec3 = WORLD_UP): void
     unrotate(upScratch, world, up)
     quatFromFrame(node.quaternion, aimScratch, upScratch)
   }
-  node._localDirty = true
-  node._scene?._schedule()
+  pushTransform(node)
 }
 
 /**
@@ -727,18 +758,22 @@ export function worldPosition(node: SceneNode, out: Vec3 = [0, 0, 0]): Vec3 {
 }
 
 /**
- * `out` = node's world matrix, composing any dirty locals up the chain
- * WITHOUT clearing their flags: the pending sync still has to see them to
- * write uModel. One shared local scratch serves any depth - each frame
- * uses it only after its recursive call has returned.
+ * `out` = node's world matrix as the tree stands now. In a scene that is
+ * one core read (pending writes included, nothing cleared); outside one
+ * the chain is composed here. Scene membership is subtree-closed, so the
+ * recursion meets a core node at the first in-scene ancestor at the
+ * latest. One shared local scratch serves any depth - each frame uses it
+ * only after its recursive call has returned.
  */
 function worldInto(out: Mat4, node: SceneNode): Mat4 {
+  if (node._node !== null) {
+    spatial.worldMatrix(node._node, worldRead)
+    for (let i = 0; i < 16; i++) out[i] = worldRead[i]!
+    return out
+  }
   if (node.parent === null) identity(out)
   else worldInto(out, node.parent)
-  let local = node._localDirty
-    ? compose(localScratch, node.position, node.quaternion, node.scale)
-    : node._local
-  return multiply(out, out, local)
+  return multiply(out, out, compose(localScratch, node.position, node.quaternion, node.scale))
 }
 
 /**
@@ -761,7 +796,10 @@ function unrotate(out: Vec3, m: Mat4, v: Vec3): Vec3 {
 export function setVisible(node: SceneNode, visible: boolean): void {
   if (node.visible === visible) return
   node.visible = visible
-  node._scene?._schedule()
+  if (node._node !== null) {
+    spatial.setVisible(node._node, visible)
+    node._scene?._schedule()
+  }
 }
 
 /** Set a mesh's explicit draw-order key (see Mesh.renderOrder). */
@@ -828,10 +866,14 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
   let disposed = false
   let scheduled = false
 
-  // Picking state: the broadphase tree over world boxes, kept current by
-  // the sync walk (the meshes it touches are exactly the leaves to move),
-  // and the pointer bookkeeping behind scene.handlers.
-  let bvh = createBvh<Mesh>()
+  // Picking: the index and the narrowphase live in the spatial core; this
+  // map turns a hit's core node back into the mesh. The pointer
+  // bookkeeping behind scene.handlers follows.
+  let byNode = new Map<NodeId, Mesh>()
+  // Nodes whose transform changed since the last sync (deduped by the
+  // _moved flag): what the light and transparent-order bookkeeping
+  // reacts to, since which meshes moved is the core's knowledge now.
+  let moved: SceneNode[] = []
   let capture = new Map<number, Mesh>()
   let hover = new Map<number, Mesh>()
 
@@ -865,7 +907,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       // The shader wants the vector TOWARD the light, normalized, in
       // world space: rotate the local travel direction by the world
       // matrix and negate.
-      let d = transformVector(dirScratch, light._world, light.direction)
+      let d = transformVector(dirScratch, worldInto(worldScratch, light), light.direction)
       let len = Math.hypot(d[0], d[1], d[2]) || 1
       dirs.push(-d[0] / len, -d[1] / len, -d[2] / len)
       let c = light.color
@@ -886,47 +928,39 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
   let background: { entry: DrawId; pipeline: RenderPipelineId; program: ProgramId } | null = null
   let sortEntries = () => {
     orderDirty = false
+    refreshCenters()
     let order = orderEntries(meshes, view, background?.entry)
     if (order.length === lastOrder.length && order.every((id, i) => id === lastOrder[i])) return
     lastOrder = order
     setDrawOrder(texture, order)
   }
 
-  // Reinsert or refit a mesh's broadphase leaf from its fresh world matrix:
-  // the local box's center/extents carried through the absolute matrix (the
-  // standard tight-AABB-of-a-transformed-AABB construction).
-  let updateLeaf = (mesh: Mesh): void => {
-    let b = localBounds(mesh)
-    let m = mesh._world
-    if (b === null) {
-      // An instanced mesh without explicit bounds: records are opaque, so
-      // there is nothing to build a leaf from - the mesh never picks. Keep
-      // the transparent sort key at the node's own world position.
-      mesh._center[0] = m[12]
-      mesh._center[1] = m[13]
-      mesh._center[2] = m[14]
-      return
+  // The transparent sort keys: each transparent mesh's local-bounds
+  // center carried through its world matrix (read from the core), at
+  // sort time only - opaque meshes never need one.
+  let refreshCenters = () => {
+    if (transparentCount < 2) return
+    for (let mesh of meshes) {
+      if (!mesh._transparent || mesh._node === null) continue
+      let b = localBounds(mesh)
+      let m = worldInto(worldScratch, mesh)
+      let cx = 0, cy = 0, cz = 0
+      if (b !== null) {
+        cx = (b[0]! + b[3]!) / 2
+        cy = (b[1]! + b[4]!) / 2
+        cz = (b[2]! + b[5]!) / 2
+      }
+      mesh._center[0] = m[0] * cx + m[4] * cy + m[8] * cz + m[12]
+      mesh._center[1] = m[1] * cx + m[5] * cy + m[9] * cz + m[13]
+      mesh._center[2] = m[2] * cx + m[6] * cy + m[10] * cz + m[14]
     }
-    let cx = (b[0]! + b[3]!) / 2
-    let cy = (b[1]! + b[4]!) / 2
-    let cz = (b[2]! + b[5]!) / 2
-    let ex = (b[3]! - b[0]!) / 2
-    let ey = (b[4]! - b[1]!) / 2
-    let ez = (b[5]! - b[2]!) / 2
-    let wx = m[0] * cx + m[4] * cy + m[8] * cz + m[12]
-    let wy = m[1] * cx + m[5] * cy + m[9] * cz + m[13]
-    let wz = m[2] * cx + m[6] * cy + m[10] * cz + m[14]
-    mesh._center[0] = wx
-    mesh._center[1] = wy
-    mesh._center[2] = wz
-    let rx = Math.abs(m[0]) * ex + Math.abs(m[4]) * ey + Math.abs(m[8]) * ez
-    let ry = Math.abs(m[1]) * ex + Math.abs(m[5]) * ey + Math.abs(m[9]) * ez
-    let rz = Math.abs(m[2]) * ex + Math.abs(m[6]) * ey + Math.abs(m[10]) * ez
-    if (mesh._pickLeaf === null) {
-      mesh._pickLeaf = bvh.insert(mesh, wx - rx, wy - ry, wz - rz, wx + rx, wy + ry, wz + rz)
-    } else {
-      bvh.update(mesh._pickLeaf, wx - rx, wy - ry, wz - rz, wx + rx, wy + ry, wz + rz)
+  }
+  // A light moved when it or any ancestor did.
+  let lightMoved = (): boolean => {
+    for (let light of lights) {
+      for (let n: SceneNode | null = light; n !== null; n = n.parent) if (n._moved) return true
     }
+    return false
   }
 
   let fov = 60
@@ -974,52 +1008,19 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       })
       if (transparentCount > 1) orderDirty = true
     }
-    let walk = (node: SceneNode, parentChanged: boolean, parentVisible: boolean) => {
-      let changed = parentChanged
-      if (node._localDirty) {
-        compose(node._local, node.position, node.quaternion, node.scale)
-        node._localDirty = false
-        changed = true
-      }
-      if (changed) {
-        multiply(node._world, node.parent ? node.parent._world : IDENTITY, node._local)
-      }
-      let shown = parentVisible && node.visible
-      if (node.kind === "light" && changed) lightsDirty = true
-      if (node.kind === "mesh") {
-        let mesh = node as Mesh
-        if (mesh._entry !== null) {
-          if (mesh._hidden === shown) {
-            // Mismatch: flip the entry's cheap off switch. An instanced
-            // mesh's "on" is its own record count, not 1.
-            setDrawRange(texture, mesh._entry, { instanceCount: shown ? (mesh._instances !== null ? mesh._instances.count : 1) : 0 })
-            mesh._hidden = !shown
-            if (shown) mesh._fresh = true
-          }
-          if (changed && mesh._transparent && transparentCount > 1) orderDirty = true
-          if (!mesh._hidden && (changed || mesh._fresh)) {
-            if (mesh.material.normalMatrix) {
-              setDrawParams(texture, mesh._entry, {
-                uModel: mesh._world,
-                uNormal: normalMatrix(normalScratch, mesh._world),
-              })
-            } else {
-              setDrawParams(texture, mesh._entry, { uModel: mesh._world })
-            }
-            mesh._fresh = false
-          } else if (changed) {
-            // Moved while hidden: write the fresh matrix on unhide.
-            mesh._fresh = true
-          }
-          // The broadphase leaf follows the world matrix - hidden meshes
-          // included (they stay in the tree and are skipped at query time,
-          // so unhiding never picks against a stale box).
-          if (changed || mesh._pickLeaf === null) updateLeaf(mesh)
-        }
-      }
-      for (let c of node.children) walk(c, changed, shown)
+    // The core recomputes the moved subtrees and writes every entry's
+    // uModel/uNormal and visibility switch; what follows is the JS-side
+    // bookkeeping that reads back from it.
+    spatial.flush()
+    if (moved.length > 0) {
+      if (lights.length > 0 && !lightsDirty) lightsDirty = lightMoved()
+      // Which meshes moved is the core's knowledge now, so any move with
+      // two or more transparent meshes re-sorts (sortEntries issues nothing
+      // when the permutation is unchanged).
+      if (transparentCount > 1) orderDirty = true
+      for (let n of moved) n._moved = false
+      moved.length = 0
     }
-    walk(root, false, true)
     if (orderDirty) sortEntries()
     if (lightsDirty) writeLights()
   }
@@ -1106,16 +1107,30 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
         instanceBuffer: inst !== null ? inst.buffer : undefined,
         instanceCount: 0,
       })
+      // The core turns the entry on (with the world matrix) at the next
+      // flush, and off again whenever the node or an ancestor hides.
+      spatial.bindDraw(mesh._node!, texture, mesh._entry, mesh.material.normalMatrix === true, inst !== null ? inst.count : 1)
+      // Picking: the local box puts the node in the core index; an
+      // ordinary mesh also gets its geometry's triangle shape, an
+      // instanced one is box-only (records are opaque, and without
+      // explicit bounds it is not picked at all).
+      spatial.setBounds(mesh._node!, localBounds(mesh))
+      spatial.setShape(mesh._node!, inst === null ? bufs.shape : null)
+      byNode.set(mesh._node!, mesh)
       meshes.push(mesh)
       mesh._transparent = mesh.material.transparent === true
       if (mesh._transparent) transparentCount++
       orderDirty = true
-      mesh._hidden = true
-      mesh._fresh = true
       this._schedule()
     },
     _detach(mesh) {
       if (mesh._entry !== null) {
+        if (mesh._node !== null) {
+          spatial.setShape(mesh._node, null)
+          spatial.setBounds(mesh._node, null)
+          spatial.unbindDraw(mesh._node)
+          byNode.delete(mesh._node)
+        }
         if (!disposed) removeDraw(texture, mesh._entry)
         if (mesh._buffers !== null) releaseGeometryBuffers(mesh._buffers)
         mesh._buffers = null
@@ -1125,20 +1140,15 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
         orderDirty = true
       }
       mesh._entry = null
-      // The leaf goes with the entry: a geometry swap rebuilds the entry,
-      // and re-inserting is what picks up the new local bounds.
-      if (mesh._pickLeaf !== null) {
-        bvh.remove(mesh._pickLeaf)
-        mesh._pickLeaf = null
-      }
     },
     _setParams(mesh, params) {
       if (mesh._entry !== null && !disposed) setDrawParams(texture, mesh._entry, params)
     },
     _setCount(mesh) {
-      // A hidden entry stays at 0; the unhide write restores the count.
-      if (mesh._entry !== null && !mesh._hidden && !disposed && mesh._instances !== null) {
-        setDrawRange(texture, mesh._entry, { instanceCount: mesh._instances.count })
+      // The core composes the count with the visibility switch: a hidden
+      // entry stays at 0 and the unhide restores the new count.
+      if (mesh._entry !== null && mesh._node !== null && !disposed && mesh._instances !== null) {
+        spatial.setDrawCount(mesh._node, mesh._instances.count)
       }
     },
     _setBuffer(mesh) {
@@ -1153,10 +1163,18 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       orderDirty = true
       this._schedule()
     },
+    _moved(node) {
+      if (!node._moved) {
+        node._moved = true
+        moved.push(node)
+      }
+      this._schedule()
+    },
   }
 
   let root = makeNode("group")
   root._scene = hooks
+  root._node = spatial.createNode(fillTransform(root), true)
 
   // --- Pointer event dispatch (behind scene.handlers) ---
 
@@ -1351,42 +1369,17 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       // it, the same immediacy contract as lookAt()/project(). (The queued
       // microtask still runs and finds nothing dirty - harmless.)
       if (scheduled) sync()
-      let dx = direction[0]
-      let dy = direction[1]
-      let dz = direction[2]
-      let len = Math.hypot(dx, dy, dz)
-      if (len === 0 || disposed) return []
-      dx /= len
-      dy /= len
-      dz /= len
-      let ox = origin[0]
-      let oy = origin[1]
-      let oz = origin[2]
+      if (disposed) return []
       let hits: Hit[] = []
-      bvh.raycast(ox, oy, oz, dx, dy, dz, mesh => {
-        if (mesh._hidden || mesh._entry === null) return
-        // Narrowphase: the ray in the mesh's local frame against its tight
-        // local box - exact under any affine world transform. The local
-        // direction stays unnormalized on purpose: an affine map preserves
-        // the ray parameter, so t is world units as-is.
-        invertAffine(pickInv, mesh._world)
-        transformPoint(pickOrigin, pickInv, origin)
-        pickDir[0] = dx
-        pickDir[1] = dy
-        pickDir[2] = dz
-        transformVector(pickDir, pickInv, pickDir)
-        // A boundless instanced mesh has no leaf, so the BVH never visits
-        // it; this read is the bounds the leaf was built from.
-        let b = localBounds(mesh)
-        if (b === null) return
-        let t = rayBoxDistance(
-          pickOrigin[0], pickOrigin[1], pickOrigin[2],
-          pickDir[0], pickDir[1], pickDir[2],
-          b[0]!, b[1]!, b[2]!, b[3]!, b[4]!, b[5]!,
-        )
-        if (t >= 0) hits.push({ mesh, distance: t, point: [ox + dx * t, oy + dy * t, oz + dz * t] })
-      })
-      hits.sort((a, b) => a.distance - b.distance)
+      for (let h of spatial.raycast(origin[0], origin[1], origin[2], direction[0], direction[1], direction[2])) {
+        let mesh = byNode.get(h.node)
+        if (mesh === undefined) continue
+        let hit: Hit = { mesh, distance: h.distance, point: h.point }
+        if (h.normal !== undefined) hit.normal = h.normal
+        if (h.face !== undefined) hit.face = h.face
+        if (h.uv !== undefined) hit.uv = h.uv
+        hits.push(hit)
+      }
       return hits
     },
     handlers,
@@ -1396,10 +1389,16 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     dispose() {
       if (disposed) return
       disposed = true
-      // Full mesh-side teardown, not just the target: _detach drops each
-      // entry's geometry-buffer reference and pick leaf and clears _entry,
-      // so a disposed scene leaves no mesh bookkeeping behind.
-      for (let mesh of meshes.slice()) hooks._detach(mesh)
+      // Full tree-side teardown, not just the target: every node leaves
+      // the scene (entries' geometry-buffer references and pick leaves
+      // dropped, core nodes freed), so a disposed scene leaves no
+      // bookkeeping behind and the JS tree survives as plain data.
+      for (let c of root.children.slice()) leaveScene(c)
+      root._scene = null
+      if (root._node !== null) {
+        spatial.destroyNode(root._node)
+        root._node = null
+      }
       destroyTexture(texture)
       if (background !== null) {
         // The entry died with the target; the pipeline and program are the
