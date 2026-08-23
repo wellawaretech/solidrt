@@ -94,7 +94,8 @@ platform-wide and bite in every app:
   `srt run` when one is already up.
 - The dev loop is edit -> reload -> get_logs -> get_snapshot. `reload`
   surfaces build errors but not type errors; run `bunx srt check src/index.tsx`
-  for those (it builds in memory and never triggers a reload).
+  for those (it builds in memory and never triggers a reload); `bunx srt
+  check .` covers the app and its examples/ entries in one go.
 - Commands, headless rendering, and the MCP tools are documented in
   node_modules/@solidrt/cli/AGENTS.md and its agents/debugging.md. The
   `.mcp.json` here is Claude Code's convention; if your client lists no

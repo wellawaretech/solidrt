@@ -49,7 +49,7 @@ what it delivered is documented in `packages/3d/AGENTS.md`, not here.
    `@solidrt/3d/glsl` is the shared source item 5's lit material classes are
    also built from, so custom materials never become second-class. Two
    sub-forms left for later, both in
-   [3d-material-uniform-plumbing](../backlog/3d-material-uniform-plumbing.md):
+   [3d-material-uniform-plumbing](../done/3d-material-uniform-plumbing.md):
    the set is not app-writable (`scene.setParams`), and it carries no camera
    basis, so anything camera-facing rebuilds the view axes from `uViewProj`
    rows.
@@ -67,25 +67,16 @@ what it delivered is documented in `packages/3d/AGENTS.md`, not here.
    are interpreter-hostile, and it should ride the scene-walk descent (item
    19) rather than grow a JS implementation. Routing events into a UI subtree
    mapped onto a mesh stays with item 3.
-5. [ ] **Lights and lit materials (lambert/phong).** Engine:
-   [gpu-uniform-arrays](../done/gpu-uniform-arrays.md) - light lists without
-   baking a cap into shader source (the agreed answer; the fixed-scalar
-   workaround was rejected in scene-graph-3d). What remains is library-only:
-   light scene nodes plus material classes built per item 2's policy. The
-   `/glsl` foundation (`LIT_VERTEX`, `HEMISPHERE`, `LAMBERT`,
-   `BLINN_SPECULAR`, `FRESNEL`) is the right escape hatch and should stay,
-   but composing from it is currently the ONLY path, so every app writes the
-   same hundred lines of standard material: hemisphere ambient, one
-   directional light, Blinn specular, fresnel rim, exponential fog,
-   vertex-colour tint, one map. A `lit({ color, map, ... })` class beside
-   `unlit`, with the light list in the shared params (item 2's app-writable
-   channel makes that natural), is the missing piece. **Triplanar deserves a
-   decision here.** Generators emit 0..1 UVs per face, so two boxes of
-   different size stretch the same texture to different densities;
-   world-space triplanar sampling fixes it completely and needs only
-   `vWorldPos`, `vNormal` and `wrap: "repeat"`. It is arguably the correct
-   default for generated scene geometry, and the alternative is a UV-scale
-   parameter on every generator. Ship it as a material option or say why not.
+5. [x] **Lights and lit materials (lambert/phong).** Engine:
+   [gpu-uniform-arrays](../done/gpu-uniform-arrays.md). Library landed
+   2026-08-23 (`lit`, light NODES with transform inheritance, triplanar
+   as an option - see `packages/3d/AGENTS.md`). Left for later, on
+   demand: fog (`scene.setFog`, shared `uFogColor`/`uFogDensity`),
+   `emissive`, a fresnel rim option, and point/spot lights (a position
+   list beside the direction list; the node shape already carries the
+   world matrix they need). The cap `MAX_LIGHTS`
+   is an app-level tunable candidate in
+   [app-runtime-config](../backlog/app-runtime-config.md).
 6. [x] **Transparency.** Done 2026-08-17: engine `blend: "multiply"` and
    `"alpha"` ([gpu-pipeline-blend-modes](../backlog/gpu-pipeline-blend-modes.md)),
    library `transparent: true` materials + scene-owned back-to-front sort +
@@ -147,9 +138,9 @@ what it delivered is documented in `packages/3d/AGENTS.md`, not here.
     2026-08-17, so it is unblocked - a camera-facing quad (or instanced
     quad fleet) off those axes is now library-only work.
 13. [ ] **Camera and control breadth.** OrthographicCamera is small library
-    work. First-person controls are blocked on engine
-    [relative-mouse-input](../backlog/relative-mouse-input.md) - pointer
-    lock/relative motion - not on anything in the GPU stack.
+    work. First-person controls were blocked on engine
+    [relative-mouse-input](../done/relative-mouse-input.md) - pointer
+    lock/relative motion - which landed, so they are library-only now.
 14. [ ] **Environment tier: skybox, reflection/environment maps.** Engine:
     [gpu-cube-maps](../backlog/gpu-cube-maps.md). Demand-gated. The binding
     side is already paid: a shared target-level sampler (`setTargetTextures`)

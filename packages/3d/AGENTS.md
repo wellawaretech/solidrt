@@ -332,9 +332,46 @@ the material need that channel) and the pure functions `HEMISPHERE`
 (`hemisphere(n, sky, ground)`), `LAMBERT` (`lambert(n, l)`),
 `BLINN_SPECULAR` (`blinnSpecular(n, v, l, shininess)`), `FRESNEL`
 (`fresnel(n, v, power)`). Lights, colors and exponents are arguments, so
-nothing is pinned but the function names; future lit material classes
-compose from these same constants - customizing never means leaving the
-system.
+nothing is pinned but the function names; `lit` is composed from these
+same constants - customizing never means leaving the system.
+
+Lights and `lit`: lights are graph NODES, like Three. `createDirectionalLight({
+direction?, color?, intensity? })` / `<DirectionalLight>` is parallel light
+travelling along `direction` in the node's LOCAL space (default `[0, -1,
+0]`, a sun overhead; length ignored), so a parent Group's rotation turns it
+and position/scale do not matter - deliberately a direction, not Three's
+position-minus-target. `createHemisphereLight({ sky?, ground?, intensity?
+})` / `<HemisphereLight>` is the ambient term, a gradient by the WORLD
+normal's tilt (fixed to world up, the node's transform is ignored); one per
+scene, the last attached wins. Placement goes through setTransform, the
+light's own fields through `setLight(light, { ... })` (frame-rate-safe,
+like setMeshParams). At most `MAX_LIGHTS` (4, exported from `/glsl`)
+directional lights per scene - the fifth throws at add(); it is a
+shader-source constant, fixed per app. The sync walk rewrites the shared
+params whenever a light attaches, detaches, changes a field or moves -
+`uHemiSky`/`uHemiGround` (vec3, intensity folded in), `uLightCount` (int),
+`uLightDir[MAX_LIGHTS]`/`uLightColor[MAX_LIGHTS]` (world-space vector
+TOWARD the light, normalized; intensity folded into the color) - so a
+custom fragment declaring those names reads the same list, and a light
+change costs one write however many meshes. Everything starts black: a
+lit scene with no light shows nothing, on purpose, like Three.
+
+`lit(opts)` is the standard look beside `unlit`: hemisphere ambient plus
+the directional list, Lambert diffuse, Blinn-Phong highlight when
+`specular` (0..1 strength) is set with `shininess` (default 30), the
+same `color`/`map`/`transparent` as unlit, `vertexColors: true` to
+multiply by the colored layout's aColor (so the geometry must carry it),
+and `triplanar: n` to sample `map` by world position at `n` repeats per
+world unit, blended across the three axis planes by the normal. Triplanar
+is an OPTION, not the default: generators emit 0..1 UVs per face, so a
+map on a plane is a decal (UV) while a map on generated scenery wants one
+density across parts of any size (triplanar); the map must be created
+with `wrap: "repeat"`. Internally one `shaderMaterialClass` per option
+combination (map x vertexColors x triplanar x transparent), cached for
+the app's lifetime, one pipeline per vertex layout - a thousand lit
+meshes share one program. The view vector comes from the shared uCamPos;
+`uTriplanar` is declared only by the triplanar classes so the other
+classes do not warn about an inactive uniform.
 
 ## Traps
 

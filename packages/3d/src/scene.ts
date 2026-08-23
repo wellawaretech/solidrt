@@ -27,6 +27,7 @@ import type { PointerEvent as ElementPointerEvent } from "@solidrt/core"
 // the same pairing (and the same name) as Three's Object3D/Matrix4.
 import { compose, copy, eulerFromQuat, identity, invertAffine, lookAt as lookAtMatrix, mat4, multiply, normalMatrix, perspective, quat, quatFromFrame, transformPoint, transformVector, updateRotation, updateScale } from "./math.ts"
 import type { Mat4, Quat, TransformUpdate, Vec3, Vec4 } from "./math.ts"
+import { MAX_LIGHTS } from "./glsl.ts"
 import { geometryBounds, layoutKey, validateGeometry } from "./geometry.ts"
 import { acquireGeometryBuffers, releaseGeometryBuffers } from "./geometry-gpu.ts"
 import type { GeometryBuffers } from "./geometry-gpu.ts"
@@ -70,6 +71,9 @@ type SceneHooks = {
   _schedule(): void
   _attach(mesh: Mesh): void
   _detach(mesh: Mesh): void
+  _attachLight(light: Light): void
+  _detachLight(light: Light): void
+  _lightChanged(): void
   _setParams(mesh: Mesh, params: ShaderParams): void
   _setCount(mesh: Mesh): void
   /** Re-point the mesh's entry at its (replaced) instance buffer. */
@@ -78,7 +82,7 @@ type SceneHooks = {
 }
 
 export type SceneNode = {
-  kind: "group" | "mesh"
+  kind: "group" | "mesh" | "light"
   parent: SceneNode | null
   children: SceneNode[]
   /** Read freely; write through setTransform/setVisible so changes sync. */
@@ -105,6 +109,32 @@ export type SceneNode = {
   _world: Mat4
   _scene: SceneHooks | null
 }
+
+/** A directional light node: parallel rays travelling along `direction`
+ * in the node's LOCAL space, so a parent's rotation turns the light with
+ * it (the default `[0, -1, 0]` is a sun straight overhead; the length is
+ * ignored). Position and scale do not affect it. Write through setLight. */
+export type DirectionalLight = SceneNode & {
+  kind: "light"
+  type: "directional"
+  direction: Vec3
+  /** Linear [r, g, b] 0..1. */
+  color: Vec3
+  intensity: number
+}
+
+/** The ambient term: a sky/ground gradient by the WORLD normal's
+ * vertical tilt (fixed to world up, not the node's). One per scene - the
+ * last attached wins. Write through setLight. */
+export type HemisphereLight = SceneNode & {
+  kind: "light"
+  type: "hemisphere"
+  sky: Vec3
+  ground: Vec3
+  intensity: number
+}
+
+export type Light = DirectionalLight | HemisphereLight
 
 export type Mesh = SceneNode & {
   kind: "mesh"
@@ -325,7 +355,7 @@ export type Scene = {
   dispose(): void
 }
 
-function makeNode(kind: "group" | "mesh"): SceneNode {
+function makeNode(kind: SceneNode["kind"]): SceneNode {
   return {
     kind,
     parent: null,
@@ -343,6 +373,44 @@ function makeNode(kind: "group" | "mesh"): SceneNode {
 
 export function createGroup(): SceneNode {
   return makeNode("group")
+}
+
+export type DirectionalLightOptions = { direction?: Vec3; color?: Vec3; intensity?: number }
+export type HemisphereLightOptions = { sky?: Vec3; ground?: Vec3; intensity?: number }
+
+export function createDirectionalLight(opts: DirectionalLightOptions = {}): DirectionalLight {
+  let light = makeNode("light") as DirectionalLight
+  light.type = "directional"
+  light.direction = [...(opts.direction ?? [0, -1, 0])] as Vec3
+  light.color = [...(opts.color ?? [1, 1, 1])] as Vec3
+  light.intensity = opts.intensity ?? 1
+  return light
+}
+
+export function createHemisphereLight(opts: HemisphereLightOptions = {}): HemisphereLight {
+  let light = makeNode("light") as HemisphereLight
+  light.type = "hemisphere"
+  light.sky = [...(opts.sky ?? [1, 1, 1])] as Vec3
+  light.ground = [...(opts.ground ?? [0.2, 0.2, 0.2])] as Vec3
+  light.intensity = opts.intensity ?? 1
+  return light
+}
+
+/** The write path for a light's own fields (color, intensity, direction
+ * or sky/ground); absent keys keep their value. Its placement goes
+ * through setTransform like any node. Frame-rate-safe. */
+export function setLight(light: DirectionalLight, update: DirectionalLightOptions): void
+export function setLight(light: HemisphereLight, update: HemisphereLightOptions): void
+export function setLight(light: Light, update: DirectionalLightOptions & HemisphereLightOptions): void {
+  if (update.intensity !== undefined) light.intensity = update.intensity
+  if (light.type === "directional") {
+    if (update.direction !== undefined) light.direction = [...update.direction] as Vec3
+    if (update.color !== undefined) light.color = [...update.color] as Vec3
+  } else {
+    if (update.sky !== undefined) light.sky = [...update.sky] as Vec3
+    if (update.ground !== undefined) light.ground = [...update.ground] as Vec3
+  }
+  light._scene?._lightChanged()
 }
 
 export function createMesh(geometry: Geometry, material: Material): Mesh {
@@ -522,6 +590,7 @@ function enterScene(node: SceneNode, scene: SceneHooks): void {
   node._scene = scene
   node._localDirty = true
   if (node.kind === "mesh") scene._attach(node as Mesh)
+  else if (node.kind === "light") scene._attachLight(node as Light)
   for (let c of node.children) enterScene(c, scene)
   scene._schedule()
 }
@@ -529,6 +598,7 @@ function enterScene(node: SceneNode, scene: SceneHooks): void {
 function leaveScene(node: SceneNode): void {
   let scene = node._scene
   if (scene && node.kind === "mesh") scene._detach(node as Mesh)
+  else if (scene && node.kind === "light") scene._detachLight(node as Light)
   node._scene = null
   for (let c of node.children) leaveScene(c)
 }
@@ -772,6 +842,43 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
   // meshes exist - fewer cannot change relative order.
   let meshes: Mesh[] = []
   let transparentCount = 0
+  // Attached lights in attach order (= light index); any change to the
+  // set, a light's fields, or a light's world matrix rewrites the shared
+  // light params at the end of the sync - one write, however many meshes.
+  let lights: Light[] = []
+  let lightsDirty = false
+  let dirScratch: Vec3 = [0, 0, 0]
+  let writeLights = () => {
+    lightsDirty = false
+    let sky: Vec3 = [0, 0, 0]
+    let ground: Vec3 = [0, 0, 0]
+    let dirs: number[] = []
+    let colors: number[] = []
+    let count = 0
+    for (let light of lights) {
+      if (light.type === "hemisphere") {
+        let k = light.intensity
+        sky = [light.sky[0] * k, light.sky[1] * k, light.sky[2] * k]
+        ground = [light.ground[0] * k, light.ground[1] * k, light.ground[2] * k]
+        continue
+      }
+      // The shader wants the vector TOWARD the light, normalized, in
+      // world space: rotate the local travel direction by the world
+      // matrix and negate.
+      let d = transformVector(dirScratch, light._world, light.direction)
+      let len = Math.hypot(d[0], d[1], d[2]) || 1
+      dirs.push(-d[0] / len, -d[1] / len, -d[2] / len)
+      let c = light.color
+      let k = light.intensity
+      colors.push(c[0] * k, c[1] * k, c[2] * k)
+      count++
+    }
+    for (let i = count; i < MAX_LIGHTS; i++) {
+      dirs.push(0, 0, 0)
+      colors.push(0, 0, 0)
+    }
+    setTargetParams(texture, { uHemiSky: sky, uHemiGround: ground, uLightCount: count, uLightDir: dirs, uLightColor: colors })
+  }
   let orderDirty = false
   // The order last handed to the engine: a resort that lands on the same
   // permutation (the common case under a moving camera) issues nothing.
@@ -878,6 +985,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
         multiply(node._world, node.parent ? node.parent._world : IDENTITY, node._local)
       }
       let shown = parentVisible && node.visible
+      if (node.kind === "light" && changed) lightsDirty = true
       if (node.kind === "mesh") {
         let mesh = node as Mesh
         if (mesh._entry !== null) {
@@ -913,6 +1021,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     }
     walk(root, false, true)
     if (orderDirty) sortEntries()
+    if (lightsDirty) writeLights()
   }
 
   let hooks: SceneHooks = {
@@ -920,6 +1029,24 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       if (scheduled || disposed) return
       scheduled = true
       RESOLVED.then(sync)
+    },
+    _attachLight(light) {
+      if (disposed) return
+      if (light.type === "directional" && lights.filter(l => l.type === "directional").length >= MAX_LIGHTS) {
+        throw new Error("A scene takes at most " + MAX_LIGHTS + " directional lights")
+      }
+      lights.push(light)
+      lightsDirty = true
+    },
+    _detachLight(light) {
+      let i = lights.indexOf(light)
+      if (i >= 0) lights.splice(i, 1)
+      lightsDirty = true
+      hooks._schedule()
+    },
+    _lightChanged() {
+      lightsDirty = true
+      hooks._schedule()
     },
     _attach(mesh) {
       if (disposed) return

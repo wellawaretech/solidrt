@@ -9,8 +9,14 @@ depends on `@solidrt/3d` (or in-repo from the package directory).
   and pipeline sharing, and the one-signal onFrame drive.
 - `sweep-paths.tsx` - swept solids along polylines: a flat strap folding
   over a crate (bare path points crease on the mitred bends) and a coiled
-  tube (smooth-tagged helix, one continuous mesh), lit via the exported
-  GLSL so the creased-vs-smooth normals actually show.
+  tube (smooth-tagged helix, one continuous mesh), lit so the
+  creased-vs-smooth normals actually show.
+- `lit.tsx` - the lit material and light nodes: `<HemisphereLight>` plus
+  a warm key `<DirectionalLight>` turning inside a spinning `<Group>` and
+  a fixed cool fill,
+  a glossy sphere (specular/shininess), a transparent glass sphere, and
+  one checker map shared by a UV-mapped cube (stretched per face) and
+  two triplanar meshes tiling it at one world density.
 - `aim.tsx` - the rotation verbs, one pointer each tracking an orbiting
   target: `lookAt` for a +z solid, `quatFromTo` for aiming a y-axis cone,
   and a `quatSlerp` damped follow that visibly lags; all driven from

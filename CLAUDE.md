@@ -66,16 +66,9 @@ Never use the built-in `run` skill here. Drive the app yourself:
   An entry under `packages/<pkg>/` or `examples/<x>/` registers THAT
   directory as projectDir, so the repo-root bridge reports "No dev server"
   even though one is running. In that case talk to the control API
-  directly with curl on `http://127.0.0.1:<port>/__control__/...`: `/clients`,
-  `/logs`, `/tree?query=<text>`, `/snapshot?node=<id>` (JSON `{width, height,
-  pngBase64}`; decode the field for the PNG; add `&format=raw` for
-  `rgbaBase64` instead - RGBA8 bytes, no decoder needed for pixel
-  assertions), `/texture?id=<textureId>` (same shape and options, native
-  size; `/snapshot` is display-scaled), `/gpu?label=<text>` (resources
-  created with exactly that label; ids change on reload, labels do not),
-  `/stats`, and
-  POST `/input` with `{"events":[...]}` (same event shape as
-  `mcp__solidrt__send_input`), `/reload`, `/load` `{"entry":...}`. The
+  directly with curl on `http://127.0.0.1:<port>/__control__/...`; the
+  endpoints and response shapes are documented in
+  `packages/cli/agents/debugging.md` ("The control API without MCP"). The
   bridge is a long-lived process: a change to `packages/cli/src/commands/mcp.ts`
   only takes effect in a re-spawned bridge.
 - Verify through the tree, not by eye: `send_input`/`/input` tap real

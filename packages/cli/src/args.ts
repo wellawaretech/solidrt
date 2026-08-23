@@ -1,3 +1,4 @@
+import { existsSync, statSync } from "node:fs"
 import { parseArgs } from "node:util"
 import { resolve } from "node:path"
 import { clientsRoot } from "./dev-dir"
@@ -102,7 +103,10 @@ export function validateArgs() {
       }
       break
     case "check":
-      if (source && !isSource) usage("srt check [entry.[tsx|jsx|ts|js]]")
+      // An entry file, or a folder whose entries are discovered (check.ts).
+      if (source && !isSource && !(existsSync(source) && statSync(source).isDirectory())) {
+        usage("srt check [entry.[tsx|jsx|ts|js] | folder]")
+      }
       break
     case "render":
       if (!source || !isTsx) usage("srt render <entry.[tsx|jsx]>")

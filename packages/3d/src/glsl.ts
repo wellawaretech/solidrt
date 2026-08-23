@@ -16,6 +16,13 @@
 
 import { glsl } from "@solidrt/core/gpu"
 
+/** The directional-light cap of the scene's light list (DirectionalLight nodes)
+ * and of the `lit` fragment; a custom fragment declares
+ * `uniform vec3 uLightDir[MAX_LIGHTS]` / `uLightColor[MAX_LIGHTS]` and
+ * loops to `uLightCount`. A shader-source constant, so it is fixed for
+ * the app (see okf/backlog/app-runtime-config.md). */
+export const MAX_LIGHTS = 4
+
 /**
  * The standard lit vertex stage: clip position via uViewProj * uModel,
  * with world position, world normal (via `mat3(uNormal)`, correct under

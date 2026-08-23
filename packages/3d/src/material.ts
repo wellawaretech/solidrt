@@ -43,6 +43,7 @@ import type {
 } from "@solidrt/core/gpu"
 import { layoutAttributes, layoutKey, layoutSlot } from "./geometry.ts"
 import type { VertexLayout } from "./geometry.ts"
+import { BLINN_SPECULAR, HEMISPHERE, LAMBERT, LIT_VERTEX, LIT_VERTEX_COLORED, MAX_LIGHTS } from "./glsl.ts"
 
 export type Material = {
   /** The pipeline this material draws with for geometry of `layout`
@@ -180,6 +181,115 @@ export function unlit(opts: UnlitOptions = {}): Material {
     textures: opts.map !== undefined ? { uMap: opts.map } : undefined,
     transparent,
   }
+}
+
+export type LitOptions = UnlitOptions & {
+  /** Multiply the base by the geometry's per-vertex aColor (withColors
+   * geometry; add() throws without it). */
+  vertexColors?: boolean
+  /** Blinn-Phong highlight strength, 0..1 (default 0: pure diffuse). */
+  specular?: number
+  /** Highlight tightness, wide sheen (~8) to mirror dot (~150); default 30. */
+  shininess?: number
+  /** Sample `map` by WORLD position instead of UV - the value is the
+   * texture repeats per world unit - blended across the three axis planes
+   * by the normal. Tiles generated geometry at one density regardless of
+   * each part's size or UVs; the map must be created with
+   * `wrap: "repeat"`. */
+  triplanar?: number
+}
+
+// The lit fragment is composed from the same exported pieces an app
+// composes by hand, per flag: map x vertexColors x triplanar x
+// transparent. Lights arrive through the scene's shared params
+// (light nodes); the base color, map and highlight are per entry.
+function litFragment(map: boolean, vertexColors: boolean, triplanar: boolean): string {
+  return glsl`
+    in vec3 vWorldPos;
+    in vec3 vNormal;
+    in vec2 vUv;
+    ${vertexColors ? "in vec4 vColor;" : ""}
+    uniform vec4 uColor;
+    ${map ? "uniform sampler2D uMap;" : ""}
+    uniform float uSpecular;
+    uniform float uShininess;
+    ${triplanar ? "uniform float uTriplanar;" : ""}
+    uniform vec3 uCamPos;
+    uniform vec3 uHemiSky;
+    uniform vec3 uHemiGround;
+    uniform int uLightCount;
+    uniform vec3 uLightDir[${MAX_LIGHTS}];
+    uniform vec3 uLightColor[${MAX_LIGHTS}];
+    ${HEMISPHERE}
+    ${LAMBERT}
+    ${BLINN_SPECULAR}
+
+    void main() {
+      vec3 n = normalize(vNormal);
+      vec4 base = uColor;
+      ${
+        map
+          ? triplanar
+            ? `vec3 w = pow(abs(n), vec3(4.0));
+      w /= w.x + w.y + w.z;
+      vec3 p = vWorldPos * uTriplanar;
+      base *= texture(uMap, p.yz) * w.x + texture(uMap, p.xz) * w.y + texture(uMap, p.xy) * w.z;`
+            : "base *= texture(uMap, vUv);"
+          : ""
+      }
+      ${vertexColors ? "base *= vColor;" : ""}
+      vec3 v = normalize(uCamPos - vWorldPos);
+      vec3 light = hemisphere(n, uHemiSky, uHemiGround);
+      vec3 spec = vec3(0.0);
+      for (int i = 0; i < ${MAX_LIGHTS}; i++) {
+        if (i >= uLightCount) break;
+        vec3 l = uLightDir[i];
+        light += uLightColor[i] * lambert(n, l);
+        spec += uLightColor[i] * blinnSpecular(n, v, l, uShininess);
+      }
+      fragColor = vec4(base.rgb * light + spec * uSpecular * base.a, base.a);
+    }
+  `
+}
+
+let litClasses = new Map<string, ShaderMaterialClass>()
+
+/**
+ * A lit material: hemisphere ambient plus the scene's directional lights
+ * (DirectionalLight nodes), Lambert diffuse, optional
+ * Blinn-Phong highlight. Same options as unlit (color, map, transparent)
+ * plus vertexColors, specular/shininess and triplanar mapping. One program
+ * per option combination, one pipeline per vertex layout met, shared by
+ * every instance - a thousand lit meshes still share one pipeline. No
+ * lights set means black except for the hemisphere term, which also
+ * starts at zero: set at least one of the two.
+ */
+export function lit(opts: LitOptions = {}): Material {
+  let color = opts.color ?? [1, 1, 1]
+  let a = color.length === 4 ? color[3] : 1
+  let uColor = [color[0] * a, color[1] * a, color[2] * a, a]
+  let map = opts.map !== undefined
+  let vertexColors = opts.vertexColors === true
+  let triplanar = map && opts.triplanar !== undefined
+  let transparent = opts.transparent === true
+  let key = [map, vertexColors, triplanar, transparent].join("|")
+  let cls = litClasses.get(key)
+  if (cls === undefined) {
+    cls = shaderMaterialClass({
+      vertex: vertexColors ? LIT_VERTEX_COLORED : LIT_VERTEX,
+      fragment: litFragment(map, vertexColors, triplanar),
+      transparent,
+      label: "scene-lit-" + key,
+    })
+    litClasses.set(key, cls)
+  }
+  let material = cls.instance({
+    params: triplanar
+      ? { uColor, uSpecular: opts.specular ?? 0, uShininess: opts.shininess ?? 30, uTriplanar: opts.triplanar! }
+      : { uColor, uSpecular: opts.specular ?? 0, uShininess: opts.shininess ?? 30 },
+    textures: map ? { uMap: opts.map! } : undefined,
+  })
+  return material
 }
 
 /** The attributes `material` reads that `layout` does not carry (name and

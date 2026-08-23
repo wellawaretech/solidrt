@@ -111,8 +111,18 @@ defaults for anything missing, so a manifest from an older CLI still loads.
   lower-waste alternative. Both are per-object library defaults, so the
   natural home is the create options, not the runtime block - listed here
   so they are decided alongside the other tunables rather than ad hoc.
+- The scene light cap in `@solidrt/3d` (`MAX_LIGHTS`, 4, raised
+  2026-08-23 with the lit material): a GLSL array size baked into every
+  lit fragment and into the scene's shared light list, so it is fixed per
+  app, not per scene. Four directional lights cover non-PBR scenes; an app
+  wanting more would raise it here rather than per material.
 - Any runtime-mutable config, env-var mirrors for the new keys, or a
   separate config file.
+
+Neighbour: [shared-config-constants](shared-config-constants.md) collects
+the cross-crate NAMES and identities (cache file names, the client
+identity) that need one code-level home, not an app surface; the fetch
+cache cap is the one value on both lists.
 
 ## Done looks like
 

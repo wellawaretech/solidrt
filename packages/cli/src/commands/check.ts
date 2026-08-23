@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, rmSync } from "node:fs"
+import { existsSync, mkdirSync, rmSync, statSync } from "node:fs"
 import { Glob } from "bun"
 import { dirname, join, resolve } from "node:path"
 import { source } from "../args"
@@ -145,34 +145,39 @@ async function checkEntry(entry: string): Promise<boolean> {
   return !failed
 }
 
-// The app entries a bare `srt check` covers, relative to the cwd: every
-// example app and every package example. The same set CI gates, so one call
-// here answers "did I break any example" before pushing.
-const CHECK_ALL_GLOBS = ["examples/*/src/index.tsx", "packages/*/examples/*.tsx"]
-function discoverEntries(): string[] {
+// The entries `srt check <folder>` covers, relative to the folder (a bare
+// `srt check` is `srt check .`): the app itself, its own examples, and in
+// a monorepo every example app and package example. The same set CI
+// gates, so one call at the repo root answers "did I break any example"
+// before pushing. Entries, not files: a source no entry imports is not
+// checked.
+const CHECK_ALL_GLOBS = ["src/index.tsx", "examples/*.tsx", "examples/*/src/index.tsx", "packages/*/examples/*.tsx"]
+function discoverEntries(root: string): string[] {
   let entries: string[] = []
-  for (let pattern of CHECK_ALL_GLOBS) entries.push(...new Glob(pattern).scanSync({ cwd: process.cwd() }))
+  for (let pattern of CHECK_ALL_GLOBS) {
+    entries.push(...[...new Glob(pattern).scanSync({ cwd: root })].map((e) => join(root, e)))
+  }
   return entries.sort()
 }
 
 export async function runCheckCommand() {
-  if (source) {
-    let entry = source
-    if (!existsSync(entry)) {
-      // Without this, the missing file surfaces later as an internal ENOENT
-      // stack trace (scandir/Bun.build), which reads as a CLI bug - the common
-      // cause is just running from the wrong directory.
-      console.error(`No such entry: ${entry} (resolved from ${process.cwd()})`)
-      process.exit(1)
-    }
-    if (!(await checkEntry(entry))) process.exit(1)
+  let target = source ?? "."
+  if (!existsSync(target)) {
+    // Without this, the missing file surfaces later as an internal ENOENT
+    // stack trace (scandir/Bun.build), which reads as a CLI bug - the common
+    // cause is just running from the wrong directory.
+    console.error(`No such entry: ${target} (resolved from ${process.cwd()})`)
+    process.exit(1)
+  }
+  if (!statSync(target).isDirectory()) {
+    if (!(await checkEntry(target))) process.exit(1)
     console.log("Check passed")
     process.exit(0)
   }
 
-  let entries = discoverEntries()
+  let entries = discoverEntries(target)
   if (entries.length === 0) {
-    console.error(`No entries found under ${process.cwd()} (looked for ${CHECK_ALL_GLOBS.join(", ")})`)
+    console.error(`No entries found under ${resolve(target)} (looked for ${CHECK_ALL_GLOBS.join(", ")})`)
     process.exit(1)
   }
   let failures: string[] = []

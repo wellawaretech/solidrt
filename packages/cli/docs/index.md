@@ -74,6 +74,7 @@ a video.
 
 ```sh
 srt check src/index.tsx    # build and typecheck, no build output
+srt check .                # every entry under a folder (src/index.tsx, examples/*)
 srt bundle src/index.tsx   # transpile to JS or bytecode
 srt pack src/index.tsx     # standalone executable (experimental)
 ```

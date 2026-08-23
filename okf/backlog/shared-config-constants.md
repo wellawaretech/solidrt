@@ -30,3 +30,7 @@ rule like flux-types. This is a larger design question (what is compile-time
 constant vs runtime configuration, and who may override what); do not solve
 it piecemeal by scattering `pub const` at crate roots. Until then new sites
 keep the literal local and this note collects them.
+
+App-author tunables (stack size, cache sizes, log level) have since moved
+to their own item, [app-runtime-config](app-runtime-config.md): that is the
+package.json surface, this is the code-level home for shared names.

@@ -10,7 +10,9 @@ import { createContext, createEffect, onCleanup, untrack, useContext } from "@so
 import type { Element, ParentComponent, TextureId, VoidComponent } from "@solidrt/core"
 import {
   add,
+  createDirectionalLight,
   createGroup,
+  createHemisphereLight,
   createInstancedMesh,
   createMesh,
   createScene,
@@ -19,6 +21,7 @@ import {
   setGeometry,
   setInstanceCount,
   setInstances,
+  setLight,
   setMaterial,
   setMeshParams,
   setRenderOrder,
@@ -26,7 +29,7 @@ import {
   setVisible,
 } from "./scene.ts"
 import type { ShaderParams } from "@solidrt/core/gpu"
-import type { InstancedMesh as InstancedMeshNode, Mesh as MeshNode, Scene as SceneHandle, SceneNode, ScenePointerEvent } from "./scene.ts"
+import type { DirectionalLight as DirectionalLightNode, HemisphereLight as HemisphereLightNode, InstancedMesh as InstancedMeshNode, Mesh as MeshNode, Scene as SceneHandle, SceneNode, ScenePointerEvent } from "./scene.ts"
 import type { Geometry } from "./geometry.ts"
 import type { Material } from "./material.ts"
 import type { Quat, Vec3 } from "./math.ts"
@@ -313,5 +316,46 @@ export let PerspectiveCamera: VoidComponent<PerspectiveCameraProps> = props => {
     ([fov, near, far, position, lookAt, up]) =>
       ctx.scene.setCamera({ fov, near, far, position, target: lookAt, up }),
   )
+  return null
+}
+
+export type HemisphereLightProps = { sky?: Vec3; ground?: Vec3; intensity?: number; ref?: (light: HemisphereLightNode) => void }
+
+/** The scene's ambient term as a node (createHemisphereLight); one per
+ * scene, the last mounted wins. */
+export let HemisphereLight: VoidComponent<HemisphereLightProps> = props => {
+  let ctx = useContext(SceneContext)
+  let light = untrack(() => createHemisphereLight({ sky: props.sky, ground: props.ground, intensity: props.intensity }))
+  add(ctx.parent, light)
+  createEffect(
+    () => [props.sky, props.ground, props.intensity] as const,
+    ([sky, ground, intensity]) => setLight(light, { sky, ground, intensity }),
+  )
+  untrack(() => props.ref)?.(light)
+  onCleanup(() => remove(light))
+  return null
+}
+
+export type DirectionalLightProps = TransformProps & {
+  /** Travel direction in the node's local space; default [0, -1, 0]. */
+  direction?: Vec3
+  color?: Vec3
+  intensity?: number
+  ref?: (light: DirectionalLightNode) => void
+}
+
+/** A directional light node (createDirectionalLight): a parent Group's
+ * rotation turns it; up to MAX_LIGHTS per scene, in mount order. */
+export let DirectionalLight: VoidComponent<DirectionalLightProps> = props => {
+  let ctx = useContext(SceneContext)
+  let light = untrack(() => createDirectionalLight({ direction: props.direction, color: props.color, intensity: props.intensity }))
+  add(ctx.parent, light)
+  syncNode(light, props)
+  createEffect(
+    () => [props.direction, props.color, props.intensity] as const,
+    ([direction, color, intensity]) => setLight(light, { direction, color, intensity }),
+  )
+  untrack(() => props.ref)?.(light)
+  onCleanup(() => remove(light))
   return null
 }

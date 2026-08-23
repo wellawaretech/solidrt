@@ -3,36 +3,18 @@
 // over the crate's edges like real webbing - while smooth-tagged points
 // share averaged normals, so the helix sweeps into ONE continuous coil
 // (per-segment boxes with unmitred gaps are exactly what this replaces).
-// tube() is the round-profile shorthand. Lit materials on purpose:
+// tube() is the round-profile shorthand. lit() materials on purpose:
 // creased vs smooth joints differ only in normals, which unlit color
 // would hide.
 import { createSignal, onFrame, pct, render } from "@solidrt/core"
-import { box, Group, Mesh, PerspectiveCamera, plane, roundRect, Scene, shaderMaterial, sweep, tube, unlit } from "@solidrt/3d"
+import { box, DirectionalLight, Group, HemisphereLight, lit, Mesh, PerspectiveCamera, plane, roundRect, Scene, sweep, tube, unlit } from "@solidrt/3d"
 import type { SweepPath } from "@solidrt/3d"
-import { HEMISPHERE, LAMBERT, LIT_VERTEX } from "@solidrt/3d/glsl"
 
 const SIZE = 720
 
 function App() {
   let [spin, setSpin] = createSignal(0)
   onFrame(tick => setSpin(tick / 4000))
-
-  // One hemisphere + lambert look per color (a material instance is the
-  // pipeline handle, so each look is created once and shared).
-  let lit = (r: number, g: number, b: number) =>
-    shaderMaterial({
-      vertex: LIT_VERTEX,
-      fragment: `
-        in vec3 vNormal;
-        ${HEMISPHERE}
-        ${LAMBERT}
-        void main() {
-          vec3 n = normalize(vNormal);
-          vec3 l = normalize(vec3(0.5, 0.8, 0.4));
-          vec3 base = vec3(${r}, ${g}, ${b});
-          fragColor = vec4(base * (hemisphere(n, vec3(0.45), vec3(0.22)) + 0.8 * lambert(n, l)), 1.0);
-        }`,
-    })
 
   // The strap hugs the crate at half its thickness; every bend is a bare
   // (sharp) point, so each fold creases exactly on a crate edge.
@@ -60,15 +42,17 @@ function App() {
       <view width={pct(100)} height={pct(100)} viewBox={[SIZE, SIZE]}>
         <Scene width={SIZE} height={SIZE} clearColor={[0.07, 0.07, 0.1, 1]} label="sweep-paths">
           <PerspectiveCamera fov={55} position={[0, 1.9, 3.9]} lookAt={[0, 0.35, 0]} />
+          <HemisphereLight sky={[0.45, 0.45, 0.45]} ground={[0.22, 0.22, 0.22]} />
+          <DirectionalLight direction={[-0.5, -0.8, -0.4]} intensity={0.8} />
           <Mesh
             geometry={plane({ width: 6, height: 6, label: "floor" })}
             material={unlit({ color: [0.16, 0.17, 0.22] })}
             rotation={[-Math.PI / 2, 0, 0]}
           />
           <Group rotation={[0, spin(), 0]}>
-            <Mesh geometry={box({ width: 1, height: 0.6, depth: 0.8 })} material={lit(0.55, 0.42, 0.28)} position={[-0.8, 0.3, 0]} />
-            <Mesh geometry={strap} material={lit(0.9, 0.55, 0.2)} />
-            <Mesh geometry={coil} material={lit(0.45, 0.6, 0.8)} />
+            <Mesh geometry={box({ width: 1, height: 0.6, depth: 0.8 })} material={lit({ color: [0.55, 0.42, 0.28] })} position={[-0.8, 0.3, 0]} />
+            <Mesh geometry={strap} material={lit({ color: [0.9, 0.55, 0.2] })} />
+            <Mesh geometry={coil} material={lit({ color: [0.45, 0.6, 0.8] })} />
           </Group>
         </Scene>
       </view>

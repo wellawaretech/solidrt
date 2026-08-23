@@ -88,8 +88,9 @@ named channel to a geometry's interleave, `withColors` is the `aColor`
 vec4 case - tint, baked AO, any four scalars - and materials read channels
 by name), one perspective camera
 with an orbit control (`createOrbitCamera`: drag, pinch/wheel zoom, auto-orbit),
-mesh picking with pointer events, and scene backgrounds.
-Lights, transparency and model loading are
-staged next - see `okf/research/scene-graph-3d.md` for the roadmap. Full
-usage notes and traps: [AGENTS.md](AGENTS.md); runnable examples:
-[examples/](examples/).
+mesh picking with pointer events, scene backgrounds, transparency, and
+lights (`lit` material with hemisphere ambient, up to four directional
+light nodes, Blinn-Phong highlight and triplanar mapping).
+Model loading and shadows are staged next - see `okf/notes/3d-roadmap.md`
+for the ranked list. Full usage notes and traps: [AGENTS.md](AGENTS.md);
+runnable examples: [examples/](examples/).
