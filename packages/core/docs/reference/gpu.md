@@ -172,6 +172,21 @@ Three facts hold for every texture and target:
   no color-space conversion anywhere. Filtering and blending operate on the
   stored values.
 
+## UI as a texture
+
+`snapshotTexture(ref)` (from `@solidrt/core`) is the texture id behind a
+`repaintBoundary="snapshot"` view: the subtree's rasterized pixels, usable
+wherever a texture id is - a `<texture>`, a shader or draw target binding,
+a 3d material. The id is allocated on first call and stable for the node's
+lifetime; the runtime re-points it after every re-rasterization, which
+happens only when the subtree changes, so a static panel sampled by an
+animated consumer costs no repaint. Premultiplied, top-left origin, cropped
+to the layout box. Empty until the boundary's first paint. The boundary owns
+it: `destroyTexture` on it throws, and unmounting the boundary releases it
+on the deferred-destroy path (a consumer still sampling it keeps the last
+pixels). A boundary showing its own texture is not a feedback loop: its
+rasterization is the change, so it does not re-invalidate itself.
+
 ## Readback
 
 `captureSnapshot` renders a render-tree node to pixels and `readTexture`
@@ -179,7 +194,7 @@ reads any texture back; both resolve `{ width, height, data }`. This is the
 one-shot bake path (a glyph atlas, a processed image), paid for with a
 readback stall and a paint pass of latency per call. Never per frame; to
 feed live content into a shader, bind a texture that updates in place
-instead.
+instead - for a UI subtree, `snapshotTexture`.
 
 ## Limits
 

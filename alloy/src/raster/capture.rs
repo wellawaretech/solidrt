@@ -183,7 +183,7 @@ impl RasterState {
 }
 
 /// The GL name behind an adopted Impeller texture, as a glow handle.
-fn gl_name(texture: &Texture) -> Result<glow::NativeTexture, String> {
+pub(super) fn gl_name(texture: &Texture) -> Result<glow::NativeTexture, String> {
   NonZeroU32::new(texture.get_opengl_handle() as u32)
     .map(glow::NativeTexture)
     .ok_or_else(|| "texture has no GL handle".to_string())

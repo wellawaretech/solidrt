@@ -176,6 +176,11 @@ pub struct Context {
   // happens in reclaim_destroyed, once the live render tree no longer
   // references the id (see destroy_texture for why deferral is the contract).
   pending_destroys: RefCell<Vec<u64>>,
+  // Ids vended for runtime-owned textures (snapshot boundary rasterizations,
+  // see `borrow_texture_id`). The app reads them like any id but does not own
+  // them: `destroy_texture` on one is a caller error, and the owner releases
+  // the id when it goes away.
+  borrowed: RefCell<HashSet<u64>>,
   // Planar YUV textures (see yuv.rs): app-visible output id -> its plane
   // sets, for update_yuv, and for destroy_texture to take the planes down
   // with the output.
@@ -261,6 +266,7 @@ impl Context {
       capture_requests: RefCell::new(HashMap::new()),
       capture_ready: RefCell::new(Vec::new()),
       pending_destroys: RefCell::new(Vec::new()),
+      borrowed: RefCell::new(HashSet::new()),
       yuv_groups: RefCell::new(HashMap::new()),
     }
   }
@@ -1782,6 +1788,53 @@ impl Context {
     std::mem::take(&mut *self.content_changes.borrow_mut())
   }
 
+  /// Allocate an id for a texture the runtime owns (a snapshot boundary's
+  /// rasterization, a camera stream). Valid to reference immediately: until
+  /// the owner first publishes or creates at it the registry has no entry,
+  /// so consumers see it as absent (a `<texture>` measures 0x0, a shader
+  /// pass skips the binding).
+  pub fn borrow_texture_id(&self) -> u64 {
+    let id = self.textures.allocate_id();
+    self.borrow_texture(id);
+    id
+  }
+
+  /// Mark an existing id as runtime-owned: the app may read it but not
+  /// destroy it (`destroy_texture` callers check `is_borrowed`); the owner
+  /// releases it with `release_borrowed`.
+  pub fn borrow_texture(&self, id: u64) {
+    self.borrowed.borrow_mut().insert(id);
+  }
+
+  /// Whether `id` is a borrowed (runtime-owned) id the app may not destroy.
+  pub fn is_borrowed(&self, id: u64) -> bool {
+    self.borrowed.borrow().contains(&id)
+  }
+
+  /// The owner of a borrowed id is gone: the id leaves the borrowed set and
+  /// takes the ordinary deferred-destroy path, so a still-mounted consumer
+  /// keeps drawing the last pixels until it lets go.
+  pub fn release_borrowed(&self, id: u64) {
+    if self.borrowed.borrow_mut().remove(&id) {
+      self.destroy_texture(id);
+    }
+  }
+
+  /// Point a borrowed id at `texture` (a snapshot boundary's rasterization,
+  /// Impeller-owned, `width` x `height` pixels): registry entry for UI-side
+  /// consumers, raster-side mirror for shader passes, and a content change
+  /// so everything sampling the id re-renders. Called after every
+  /// rasterization of the boundary, whether the backing was reused or
+  /// reallocated - the id is the stable handle across both.
+  pub fn publish_snapshot_texture(&self, id: u64, texture: &Texture, width: u32, height: u32) {
+    self.textures.insert(
+      id,
+      TextureEntry { impeller: texture.clone(), width, height, sampler: SamplerState::default(), format: TextureFormat::Rgba8 },
+    );
+    self.send(RasterCmd::AdoptTexture { id, texture: texture.clone(), width, height });
+    self.note_content(id);
+  }
+
   pub fn destroy_texture(&self, id: u64) {
     let mut pending = self.pending_destroys.borrow_mut();
     if !pending.contains(&id) {
@@ -1808,23 +1861,36 @@ impl Context {
 
   /// Reclaim every pending destroy whose id is not in `referenced` (the ids
   /// the live render tree currently references, see
-  /// `RenderTree::referenced_texture_ids`). Still-referenced ids stay queued -
-  /// and stay alive - until a later sweep finds them unreferenced, so a
-  /// destroyed-but-still-mounted texture keeps drawing rather than glitching
-  /// to blank. Called by the paint loop after each painted frame.
+  /// `RenderTree::referenced_texture_ids`) and not bound as a sampler source
+  /// on a live target (the recorded binding edges). Still-referenced ids
+  /// stay queued - and stay alive - until a later sweep finds them
+  /// unreferenced, so a destroyed-but-still-mounted texture keeps drawing
+  /// rather than glitching to blank. Called by the paint loop after each
+  /// painted frame.
   pub fn reclaim_destroyed(&self, referenced: &HashSet<u64>) {
     let mut pending = self.pending_destroys.borrow_mut();
-    pending.retain(|&id| {
-      if referenced.contains(&id) {
-        return true;
+    // Reclaiming a target unbinds its sources, which may have been waiting
+    // on exactly that; iterate until a pass reclaims nothing, so a target
+    // and its sources go in one sweep (a sweep needs a frame, and an idle
+    // app may not produce another).
+    loop {
+      let bound = bound_sources(&self.shader_sources.borrow());
+      let before = pending.len();
+      pending.retain(|&id| {
+        if referenced.contains(&id) || bound.contains(&id) {
+          return true;
+        }
+        self.textures.remove(id);
+        self.targets.borrow_mut().remove(&id);
+        self.shader_sources.borrow_mut().remove(&id);
+        self.manual_targets.borrow_mut().remove(&id);
+        self.send(RasterCmd::DestroyTexture { id });
+        false
+      });
+      if pending.len() == before {
+        break;
       }
-      self.textures.remove(id);
-      self.targets.borrow_mut().remove(&id);
-      self.shader_sources.borrow_mut().remove(&id);
-      self.manual_targets.borrow_mut().remove(&id);
-      self.send(RasterCmd::DestroyTexture { id });
-      false
-    });
+    }
   }
 }
 
@@ -1888,6 +1954,15 @@ pub(crate) fn samples_transitively(
 /// `root` itself is the caller's call: a stepped manual target counts, a
 /// written-but-manual one does not. Pure over the id graph, so it unit-tests
 /// without a Context (like `samples_transitively`).
+/// Every texture id bound as a sampler source on any recorded target: the
+/// GPU side's references, which the render tree cannot see. A target that is
+/// itself pending destroy still counts until it is reclaimed (its record
+/// leaves `sources` then); `reclaim_destroyed` iterates so its sources
+/// follow in the same sweep.
+pub(crate) fn bound_sources(sources: &HashMap<u64, HashMap<(u64, String), u64>>) -> HashSet<u64> {
+  sources.values().flat_map(|bindings| bindings.values().copied()).collect()
+}
+
 pub(crate) fn content_closure(
   sources: &HashMap<u64, HashMap<(u64, String), u64>>,
   manual: &HashSet<u64>,

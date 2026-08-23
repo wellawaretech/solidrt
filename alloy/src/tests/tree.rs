@@ -397,6 +397,25 @@ fn referenced_texture_ids_covers_attached_and_detached() {
   let ids = tree.referenced_texture_ids();
   assert!(!ids.contains(&20));
   assert_eq!(ids.len(), 1);
+
+  // A boundary shader's extra sampler inputs are references too: the pass
+  // samples them every re-run, with no texture element to show for it.
+  tree.edit(1, |el| match &mut el.kind {
+    ElementKind::View(v) => {
+      v.shader = Some(crate::gpu::NodeShader {
+        program: 1,
+        params: vec![],
+        textures: vec![crate::gpu::TextureBinding::new("uLut", 30)],
+        outset: 0.0,
+        previous: false,
+      });
+      Damage::None
+    }
+    _ => unreachable!(),
+  });
+  let ids = tree.referenced_texture_ids();
+  assert!(ids.contains(&30));
+  assert_eq!(ids.len(), 2);
 }
 
 // --- bounding box -----------------------------------------------------------
@@ -641,6 +660,41 @@ fn content_change_under_snapshot_bumps_revision() {
   let before = tree.revision();
   assert!(tree.texture_content_changed(&ids(&[7])));
   assert_ne!(tree.revision(), before);
+}
+
+#[test]
+fn own_snapshot_texture_change_does_not_invalidate_boundary() {
+  // A boundary showing its own vended snapshot texture: the rasterization
+  // IS the content change, so it must not re-invalidate itself (a
+  // re-raster every frame). The same id under a different boundary still
+  // counts, and the deleted boundary surrenders its id for release.
+  let mut tree = RenderTree::new();
+  snapshot_over_texture(&mut tree, 7);
+  tree.edit(1, |el| {
+    el.snapshot_texture_id.set(Some(7));
+    Damage::None
+  });
+  let before = tree.revision();
+  assert!(!tree.texture_content_changed(&ids(&[7])));
+  assert_eq!(tree.revision(), before);
+
+  tree.create_node(3, attached());
+  tree.create_node(4, Texture::default().with_layout());
+  tree.insert_node(3, 4, None);
+  tree.edit(3, |el| {
+    el.repaint_boundary = BoundaryMode::Snapshot;
+    Damage::None
+  });
+  tree.edit(4, |el| match &mut el.kind {
+    ElementKind::Texture(t) => t.set_src(Some(7)),
+    _ => unreachable!(),
+  });
+  assert!(tree.texture_content_changed(&ids(&[7])));
+
+  tree.delete_node(1, 2);
+  assert!(tree.take_released_snapshot_textures().is_empty());
+  tree.destroy_node(1);
+  assert_eq!(tree.take_released_snapshot_textures(), vec![7]);
 }
 
 #[test]

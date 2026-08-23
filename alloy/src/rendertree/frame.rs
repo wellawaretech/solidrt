@@ -111,6 +111,9 @@ impl<'d> PendingFrame<'d> {
           // no other tree change (its requested frame lands in this path)
           // is not stranded until the next rebuild. The cached list's Rc'd
           // Impeller handles keep its textures alive regardless.
+          for id in tree.take_released_snapshot_textures() {
+            alloy.release_borrowed(id);
+          }
           if alloy.has_pending_destroys() {
             alloy.reclaim_destroyed(&tree.referenced_texture_ids());
           }

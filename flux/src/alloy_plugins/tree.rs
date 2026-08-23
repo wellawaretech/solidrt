@@ -238,6 +238,7 @@ impl ModuleDef for RenderTreeModule {
     decl.declare("prepareText")?;
     decl.declare("getBoundingBox")?;
     decl.declare("getBoundingBoxViewport")?;
+    decl.declare("snapshotTexture")?;
     decl.declare("parseColor")?;
     decl.declare("mixColors")?;
     decl.declare("brightness")?;
@@ -396,6 +397,12 @@ impl ModuleDef for RenderTreeModule {
     let tree_ref = tree.clone();
     let get_bounding_box_viewport = Function::new(ctx.clone(), move |id: u64| -> Option<JsBoundingBox> {
       tree_ref.borrow().bounding_box_viewport(id).map(JsBoundingBox)
+    })?;
+
+    let tree_ref = tree.clone();
+    let snapshot_atx = atx.clone();
+    let snapshot_texture = Function::new(ctx.clone(), move |ctx: Ctx<'_>, id: u64| -> rquickjs::Result<u64> {
+      tree_ref.borrow().snapshot_texture(id, &snapshot_atx).map_err(|msg| rquickjs::Exception::throw_message(&ctx, &msg))
     })?;
 
     let cmd_tx = alloy_cmd_tx.clone();
@@ -564,6 +571,7 @@ impl ModuleDef for RenderTreeModule {
     exports.export("prepareText", prepare_text)?;
     exports.export("getBoundingBox", get_bounding_box)?;
     exports.export("getBoundingBoxViewport", get_bounding_box_viewport)?;
+    exports.export("snapshotTexture", snapshot_texture)?;
     exports.export("parseColor", parse_color)?;
     exports.export("mixColors", mix_colors)?;
     exports.export("brightness", brightness_fn)?;

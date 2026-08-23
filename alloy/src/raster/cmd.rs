@@ -187,6 +187,14 @@ pub(crate) enum RasterCmd {
   /// program/FBO when the id is a shader target). The GL name itself is owned
   /// by the adopted Impeller Texture and dies with the UI side's last handle.
   DestroyTexture { id: u64 },
+  /// Register an already-adopted Impeller texture (a snapshot boundary's
+  /// retained rasterization) under a registry id so shader passes can
+  /// sample it by id, and mark the id's content changed so targets sampling
+  /// it re-render at the next flush. Sent after every rasterization of a
+  /// boundary whose texture has been vended (`snapshotTexture`): the name
+  /// stays Impeller-owned, so the raster side only mirrors it. Ordered
+  /// behind the rasterization that produced it and ahead of the frame.
+  AdoptTexture { id: u64, texture: Texture, width: u32, height: u32 },
   /// Create an interleaved vertex buffer from raw bytes.
   CreateBuffer { id: u64, data: Vec<u8>, label: Option<String>, reply: mpsc::Sender<Result<(), String>> },
   /// Overwrite part of a vertex buffer and mark pipelines drawing from it

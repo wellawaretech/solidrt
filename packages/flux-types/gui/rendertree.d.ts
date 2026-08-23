@@ -5,6 +5,7 @@
 // module; requestFrame here only schedules a future frame.
 
 declare module "flux:rendertree" {
+  import type { TextureId } from "flux:gpu"
   /** Font options for {@link measureText} and {@link prepareText}. */
   export interface MeasureTextOptions {
     fontFamily?: "sans" | "serif" | "mono" | (string & {})
@@ -170,6 +171,18 @@ declare module "flux:rendertree" {
    * semantics), for comparing against pointer event coordinates.
    */
   export function getBoundingBoxViewport(id: number): { x: number, y: number, width: number, height: number } | null
+  /**
+   * The texture id of a snapshot repaint boundary's retained rasterization
+   * (its subtree's pixels at display scale, premultiplied, top-left origin,
+   * cropped to the layout box). Allocated on the first call and stable for
+   * the node's lifetime; it is re-pointed at the current pixels after every
+   * rasterization, so consumers never rebind. Before the first paint the id
+   * has no pixels yet (a `<texture>` measures 0x0, a shader pass skips the
+   * binding). Owned by the boundary: `destroyTexture` on it throws, and an
+   * unmounted boundary releases it through the deferred-destroy path. Throws
+   * if the node is not a snapshot boundary.
+   */
+  export function snapshotTexture(id: number): TextureId
   /**
    * Parses a CSS color string (hex, rgb()/rgba(), hsl()/hsla(), hwb(),
    * named colors) into packed 0xRRGGBBAA form (which the color property

@@ -1272,14 +1272,20 @@ impl ModuleDef for GpuModule {
 
     let destroy_atx = atx.clone();
     let destroy_platform = platform.clone();
-    let destroy_texture = Function::new(ctx.clone(), move |ctx: Ctx<'_>, id: u64| {
+    let destroy_texture = Function::new(ctx.clone(), move |ctx: Ctx<'_>, id: u64| -> rquickjs::Result<()> {
       let state = ctx.userdata::<TextureState>().expect("texture state userdata");
+      // A runtime-owned id (snapshot boundary, camera, video) is released by
+      // its owner: the boundary's unmount, the session's close.
+      if destroy_atx.is_borrowed(id) {
+        return Err(rquickjs::Exception::throw_message(&ctx, &format!("Texture {id} is owned by the runtime (a snapshot boundary, camera or video) and is released by its owner")));
+      }
       state.0.created.borrow_mut().remove(&id);
       destroy_atx.destroy_texture(id);
       // Destruction is deferred to the paint loop's reclamation sweep, which
       // only runs when a frame is produced - request one so a destroy on an
       // otherwise idle app is not stranded.
       destroy_platform.request_frame();
+      Ok(())
     })
     .expect("create destroyTexture");
 

@@ -1,3 +1,4 @@
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 
 use taffy::NodeId;
@@ -20,6 +21,10 @@ pub struct RenderTree {
   // Native transitions (see transitions.rs): the running tracks and the
   // animation clock.
   transitions: Transitions,
+  // Vended snapshot texture ids (Element::snapshot_texture_id) whose boundary
+  // was deleted, awaiting release by the frame loop. Interior-mutable so the
+  // paint walk can drain it through the shared tree borrow it already holds.
+  released_snapshot_textures: RefCell<Vec<u64>>,
 }
 
 // Taffy's CompactLength stores f32 values as tagged pointers (*const ()),
@@ -29,7 +34,13 @@ unsafe impl Send for RenderTree {}
 
 impl RenderTree {
   pub fn new() -> Self {
-    Self { nodes: HashMap::new(), root: None, revision: 0, transitions: Transitions::default() }
+    Self {
+      nodes: HashMap::new(),
+      root: None,
+      revision: 0,
+      transitions: Transitions::default(),
+      released_snapshot_textures: RefCell::new(Vec::new()),
+    }
   }
 
   pub fn revision(&self) -> u64 {
@@ -834,7 +845,45 @@ impl RenderTree {
     for child_id in child_ids {
       self.delete_recursive(child_id);
     }
-    self.nodes.remove(&node_id);
+    if let Some(element) = self.nodes.remove(&node_id) {
+      if let Some(id) = element.snapshot_texture_id.get() {
+        self.released_snapshot_textures.borrow_mut().push(id);
+      }
+    }
+  }
+
+  /// The texture id of `node_id`'s snapshot rasterization, allocated by
+  /// `alloy` on the first call and stable for the node's lifetime. Errs when
+  /// the node is not a snapshot repaint boundary: only a boundary retains
+  /// pixels to vend.
+  pub fn snapshot_texture(&self, node_id: u64, alloy: &crate::Context) -> Result<u64, String> {
+    let element = self.try_node(node_id).ok_or_else(|| format!("node {node_id} not found"))?;
+    if !matches!(element.repaint_boundary, BoundaryMode::Snapshot | BoundaryMode::SnapshotNoAa) {
+      return Err(format!("node {node_id} is not a snapshot repaint boundary"));
+    }
+    if let Some(id) = element.snapshot_texture_id.get() {
+      return Ok(id);
+    }
+    let id = alloy.borrow_texture_id();
+    element.snapshot_texture_id.set(Some(id));
+    // A boundary that already baked publishes its current pixels now; the
+    // paint walk only re-publishes after a rasterization, which a static
+    // subtree may never trigger again.
+    if let Some(PaintCache::Snapshot(snap)) = &*element.paint_cache.borrow() {
+      if snap.valid {
+        let outset = snap.shaded.as_ref().map_or(0.0, |sc| sc.outset);
+        let tex_w = ((snap.width + 2.0 * outset) * snap.scale).ceil() as u32;
+        let tex_h = ((snap.height + 2.0 * outset) * snap.scale).ceil() as u32;
+        alloy.publish_snapshot_texture(id, &snap.texture, tex_w, tex_h);
+      }
+    }
+    Ok(id)
+  }
+
+  /// Drain the vended snapshot texture ids whose boundary was deleted since
+  /// the last drain; the frame loop releases them (`Context::release_borrowed`).
+  pub fn take_released_snapshot_textures(&self) -> Vec<u64> {
+    std::mem::take(&mut *self.released_snapshot_textures.borrow_mut())
   }
 
   /// Rebuild a Text's computed_text and styled runs from its Span subtree.
@@ -979,8 +1028,10 @@ impl RenderTree {
     for (id, element) in self.nodes.iter() {
       match &element.kind {
         ElementKind::Texture(t) => {
-          if t.texture_id.is_some_and(|t| ids.contains(&t)) && self.under_snapshot_boundary(*id) {
-            bake_hits.push(*id);
+          if let Some(tex) = t.texture_id.filter(|t| ids.contains(t)) {
+            if self.under_snapshot_boundary(*id, tex) {
+              bake_hits.push(*id);
+            }
           }
         }
         // The shader only runs on the view's OWN snapshot boundary (declared
@@ -1019,14 +1070,17 @@ impl RenderTree {
   /// MODE, not cache presence: a declared boundary that has not baked yet has
   /// nothing stale (the invalidation is a no-op then), and mode is plain
   /// element state.
-  fn under_snapshot_boundary(&self, node_id: u64) -> bool {
+  /// A boundary whose own vended texture (`snapshot_texture`) is the changed
+  /// id is excluded: its rasterization IS the change, and invalidating it
+  /// would re-rasterize every frame.
+  fn under_snapshot_boundary(&self, node_id: u64, texture_id: u64) -> bool {
     let mut current = Some(node_id);
     while let Some(id) = current {
       let Some(element) = self.try_node(id) else {
         return false;
       };
       if matches!(element.repaint_boundary, BoundaryMode::Snapshot | BoundaryMode::SnapshotNoAa) {
-        return true;
+        return element.snapshot_texture_id.get() != Some(texture_id);
       }
       current = element.parent;
     }
@@ -1034,17 +1088,26 @@ impl RenderTree {
   }
 
   /// Texture registry ids referenced by any live element, attached or
-  /// detached (a detached node can be re-inserted, so its reference counts).
-  /// Texture elements are the only kind holding registry ids. Used by the
-  /// deferred-destroy sweep to decide which pending ids are reclaimable; only
-  /// called while destroys are pending, so it stays off the per-frame path.
+  /// detached (a detached node can be re-inserted, so its reference counts):
+  /// texture elements' sources and boundary shaders' extra sampler inputs.
+  /// Used by the deferred-destroy sweep to decide which pending ids are
+  /// reclaimable; only called while destroys are pending, so it stays off
+  /// the per-frame path.
   pub fn referenced_texture_ids(&self) -> HashSet<u64> {
     let mut ids = HashSet::new();
     for element in self.nodes.values() {
-      if let ElementKind::Texture(t) = &element.kind {
-        if let Some(id) = t.texture_id {
-          ids.insert(id);
+      match &element.kind {
+        ElementKind::Texture(t) => {
+          if let Some(id) = t.texture_id {
+            ids.insert(id);
+          }
         }
+        ElementKind::View(v) => {
+          if let Some(shader) = &v.shader {
+            ids.extend(shader.textures.iter().map(|b| b.id));
+          }
+        }
+        _ => {}
       }
     }
     ids

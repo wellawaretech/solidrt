@@ -86,7 +86,7 @@ shader-input reference, SnapshotNoAa).
 
 ## Relations
 
-- [snapshot-boundary-texture-id](../backlog/snapshot-boundary-texture-id.md) is the
+- [snapshot-boundary-texture-id](snapshot-boundary-texture-id.md) is the
   reverse direction (UI subtree as a GPU-side texture); its "ordering
   within a frame" question can lean on the same flush-first guarantee.
 - [gpu-target-dependency-propagation](gpu-target-dependency-propagation.md)

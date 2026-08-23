@@ -47,18 +47,13 @@ what it delivered is documented in `packages/3d/AGENTS.md`, not here.
 2. [x] **The standard uniform set and the exported-GLSL policy.** Engine:
    [gpu-shared-draw-params](../done/gpu-shared-draw-params.md).
    `@solidrt/3d/glsl` is the shared source item 5's lit material classes are
-   also built from, so custom materials never become second-class. Two
-   sub-forms left for later, both in
-   [3d-material-uniform-plumbing](../done/3d-material-uniform-plumbing.md):
-   the set is not app-writable (`scene.setParams`), and it carries no camera
-   basis, so anything camera-facing rebuilds the view axes from `uViewProj`
-   rows.
-3. [ ] **UI as live 3D content.** Engine:
-   [snapshot-boundary-texture-id](../backlog/snapshot-boundary-texture-id.md).
-   A snapshot boundary's retained texture as an ordinary TextureId that
-   updates as the subtree repaints - the load-bearing piece of the
-   one-tree differentiator (real UI on 3D geometry), and the capability
-   the browser architecturally forbids.
+   also built from, so custom materials never become second-class. The
+   app-writable channel and the camera basis followed in
+   [3d-material-uniform-plumbing](../done/3d-material-uniform-plumbing.md).
+3. [x] **UI as live 3D content.** Engine:
+   [snapshot-boundary-texture-id](../done/snapshot-boundary-texture-id.md)
+   (landed 2026-08-23: `snapshotTexture(ref)`). Routing pointer events back
+   through a mesh into the mapped subtree stays with item 4.
 4. [ ] **Picking.** The volume tier is delivered (mesh pointer events over
    `scene.pick`/`scene.raycast`, BVH broadphase maintained from the sync
    walk, library only as staged). Remaining: the triangle-accurate tier

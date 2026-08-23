@@ -1,5 +1,5 @@
 use crate::impellers::{
-  ClipOperation, Color, DisplayList, DisplayListBuilder, Matrix, Paint, Point, Rect, RoundingRadii, Size,
+  ClipOperation, Color, DisplayList, DisplayListBuilder, Matrix, Paint, Point, Rect, RoundingRadii, Size, Texture,
   TextureSampling,
 };
 use taffy::style::Overflow;
@@ -75,6 +75,11 @@ pub fn paint_phase(
   // Deliver every capture outcome now the walk is done, so callbacks (which may
   // read back or free textures) run out of the tree borrow.
   alloy.deliver_captures();
+  // Vended snapshot textures whose boundary was deleted join the deferred
+  // destroys below, so a consumer still sampling one keeps its last pixels.
+  for id in tree.take_released_snapshot_textures() {
+    alloy.release_borrowed(id);
+  }
   // Deferred destroys: reclaim ids the live tree no longer references. This
   // frame's display list is already recorded (Rc'd Impeller handles keep its
   // textures alive), and any still-referenced id stays queued so a build never
@@ -543,6 +548,7 @@ fn snapshot_node_uncalled<'a>(
         } else {
           ctx.snapshots_rasterized += 1;
         }
+        publish_snapshot(element, ctx, &source, tex_w, tex_h);
         draw_with_transform(builder, own.as_ref(), |b| {
           b.draw_texture_rect(&output, &src, &dst, TextureSampling::Linear, opacity_paint.as_ref());
         });
@@ -609,6 +615,7 @@ fn snapshot_node_uncalled<'a>(
     match ctx.alloy.render_display_list_into_texture(&dl, &texture, tex_w, tex_h, aa) {
       Ok(()) => {
         ctx.snapshots_rerendered += 1;
+        publish_snapshot(element, ctx, &texture, tex_w, tex_h);
         draw_with_transform(builder, own.as_ref(), |b| {
           b.draw_texture_rect(&texture, &src, &dst, TextureSampling::Linear, opacity_paint.as_ref());
         });
@@ -626,6 +633,7 @@ fn snapshot_node_uncalled<'a>(
   match ctx.alloy.render_display_list_to_texture(&dl, tex_w, tex_h, aa) {
     Ok(texture) => {
       ctx.snapshots_rasterized += 1;
+      publish_snapshot(element, ctx, &texture, tex_w, tex_h);
       draw_with_transform(builder, own.as_ref(), |b| {
         b.draw_texture_rect(&texture, &src, &dst, TextureSampling::Linear, opacity_paint.as_ref());
       });
@@ -643,6 +651,15 @@ fn snapshot_node_uncalled<'a>(
         b.restore();
       });
     }
+  }
+}
+
+// Re-point a boundary's vended texture id (see RenderTree::snapshot_texture)
+// at the rasterization just produced. A boundary nobody asked for publishes
+// nothing.
+fn publish_snapshot(element: &Element, ctx: &BuildContext<'_>, texture: &Texture, tex_w: u32, tex_h: u32) {
+  if let Some(id) = element.snapshot_texture_id.get() {
+    ctx.alloy.publish_snapshot_texture(id, texture, tex_w, tex_h);
   }
 }
 

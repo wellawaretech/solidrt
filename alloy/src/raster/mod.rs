@@ -697,6 +697,17 @@ impl RasterState {
               log::warn!("[alloy] texture copy failed: {e}");
             }
           }
+          RasterCmd::AdoptTexture { id, texture, width, height } => match capture::gl_name(&texture) {
+            Ok(gl_texture) => {
+              let label = Some("snapshot".to_string());
+              self.textures.insert(
+                id,
+                GpuTexture { gl_texture, width, height, sampler: SamplerState::default(), format: TextureFormat::Rgba8, label },
+              );
+              self.dirty.insert(id);
+            }
+            Err(e) => log::warn!("[alloy] adopt snapshot texture {id} failed: {e}"),
+          },
           RasterCmd::DestroyTexture { id } => {
             self.textures.remove(&id);
             self.dirty.remove(&id);

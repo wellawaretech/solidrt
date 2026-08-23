@@ -306,7 +306,7 @@ reorders emphasis:
    apps depend on `uMVP`. Filed as ../backlog/gpu-shared-draw-params.md.
 2. **Expose the snapshot boundary texture as a texture id.** Small, and it
    is the load-bearing piece of the section-3 differentiator. Filed as
-   ../backlog/snapshot-boundary-texture-id.md.
+   ../done/snapshot-boundary-texture-id.md.
 3. **Picking**, which turns section 3 from a rendering trick into an
    interaction model, and needs only bounding volumes plus the localX/localY
    the texture element already delivers.

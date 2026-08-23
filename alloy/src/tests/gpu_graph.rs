@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::context::{content_closure, samples_transitively};
+use crate::context::{bound_sources, content_closure, samples_transitively};
 use crate::raster::propagation_order;
 
 fn edges(list: &[(u64, &[u64])]) -> HashMap<u64, Vec<u64>> {
@@ -190,4 +190,15 @@ fn content_cycle_terminates() {
   // the loop (both are manual, so neither joins as a sampler).
   let s = sources(&[(10, &[11]), (11, &[10]), (12, &[10])]);
   assert_eq!(closure(&s, &[10, 11], 10), HashSet::from([10, 12]));
+}
+
+#[test]
+fn bound_sources_are_every_sampled_id() {
+  // The deferred-destroy sweep keeps these alive: ids a live target samples,
+  // whether one target binds them or many, regardless of which target.
+  let bound = bound_sources(&sources(&[(1, &[10, 11]), (2, &[11, 12]), (3, &[])]));
+  assert_eq!(bound, dirty(&[10, 11, 12]));
+  // Targets themselves are not sources unless sampled.
+  assert!(!bound.contains(&1));
+  assert!(bound_sources(&sources(&[])).is_empty());
 }

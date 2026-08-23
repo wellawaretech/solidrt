@@ -156,6 +156,8 @@ fn build_player<'js>(ctx: Ctx<'js>, path: &str) -> Result<Object<'js>, String> {
     alloy::SamplerState::default(),
     Some(format!("video:{path}")),
   )?;
+  // The player owns its texture: freed by close(), never by the app.
+  state.0.atx.borrow_texture(texture);
 
   // A sink that cannot open (headless box, no output device) plays silent
   // on the wall clock instead of failing the video - and starts paused so
@@ -251,7 +253,7 @@ fn close_impl(ctx: Ctx<'_>, id: u64) {
   let Some(entry) = state.0.players.borrow_mut().remove(&id) else {
     return;
   };
-  state.0.atx.destroy_texture(entry.texture);
+  state.0.atx.release_borrowed(entry.texture);
   if let Some(sink) = entry.sink {
     state.0.atx.destroy_pcm_sink(sink);
   }

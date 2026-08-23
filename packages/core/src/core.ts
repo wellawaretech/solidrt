@@ -1,4 +1,5 @@
 import * as tree from "flux:rendertree"
+import type { TextureId } from "flux:gpu"
 import { createSignal, onCleanup } from "@solidjs/signals"
 import { on } from "srt:events"
 
@@ -322,6 +323,22 @@ export function getBoundingBox(node: { id: number }): BoundingBox | null {
  */
 export function getBoundingBoxViewport(node: { id: number }): BoundingBox | null {
   return tree.getBoundingBoxViewport(node.id)
+}
+
+/**
+ * The texture id of a snapshot boundary's retained rasterization
+ * (`repaintBoundary="snapshot"`): the subtree's pixels as a live texture any
+ * GPU consumer - a `<texture>`, a shader or draw target binding, a 3d
+ * material - samples by id. Allocated on the first call and stable for the
+ * node's lifetime; the runtime re-points it at the current pixels after every
+ * rasterization, and only when the subtree changes (a static panel on an
+ * animated consumer costs no repaint). Empty until the first paint. Owned by
+ * the boundary: `destroyTexture` throws on it, and unmounting the boundary
+ * releases it. Throws if the node is not a snapshot boundary. Not a readback:
+ * for pixels on the CPU use `captureSnapshot`.
+ */
+export function snapshotTexture(node: { id: number }): TextureId {
+  return tree.snapshotTexture(node.id)
 }
 
 /**

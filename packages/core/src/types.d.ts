@@ -626,6 +626,9 @@ export interface ViewOwnProps extends TransformProps, PointerProps {
    * (no multisampled scratch, one render pass), but vector content - svg
    * paths, rounded corners, rotated edges - comes out hard-edged. Text and
    * axis-aligned rects look identical, so prefer it for plain UI panels.
+   *
+   * A snapshot boundary's pixels are available to the GPU stack as a live
+   * texture id through `snapshotTexture(ref)`.
    */
   repaintBoundary?: boolean | "snapshot" | "snapshot-no-aa"
   /**

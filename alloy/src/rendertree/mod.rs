@@ -25,7 +25,7 @@ pub use transitions::{AnimProp, AnimValue, Curve, TransitionConfig, TransitionEn
 pub use tree::{NodeMatch, NodeSnapshot, RenderTree};
 
 use crate::impellers::{DisplayList, DisplayListBuilder, Texture as ImpellerTexture};
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use taffy::{AvailableSpace, Position, Style};
 
 // The rendertree's geometry vocabulary is euclid, spelled through the
@@ -328,6 +328,11 @@ pub struct Element {
   // RenderTree::invalidate_paint on any content or layout change in the
   // subtree. Interior-mutable because painting traverses a shared tree.
   pub paint_cache: RefCell<Option<PaintCache>>,
+  // A snapshot boundary's retained rasterization vended as a registry
+  // texture id (RenderTree::snapshot_texture). Allocated on first request,
+  // stable for the element's lifetime; the paint walk re-publishes the
+  // current backing under it after every rasterization.
+  pub snapshot_texture_id: Cell<Option<u64>>,
   // The subtree's paint envelope (see cull.rs), cleared alongside paint_cache.
   pub envelope: cull::EnvelopeCache,
   // Native transition declaration (see transitions.rs): which properties
@@ -360,6 +365,7 @@ impl Element {
       float: None,
       clear: None,
       paint_cache: RefCell::new(None),
+      snapshot_texture_id: Cell::new(None),
       envelope: cull::EnvelopeCache::default(),
       transitions: None,
       entered: false,
@@ -385,6 +391,7 @@ impl Element {
       float: None,
       clear: None,
       paint_cache: RefCell::new(None),
+      snapshot_texture_id: Cell::new(None),
       envelope: cull::EnvelopeCache::default(),
       transitions: None,
       entered: false,

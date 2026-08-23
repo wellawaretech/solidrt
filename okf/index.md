@@ -419,12 +419,6 @@ Shaped, not started.
   One defined home for cross-crate constants that today live as per-site
   literals (.srt-data, http-cache.db, the SolidRT/go identity, size caps);
   collects sites until designed.
-- **[A snapshot boundary's retained texture as a texture id](backlog/snapshot-boundary-texture-id.md)** [2026-08-05]
-  repaintBoundary="snapshot" already keeps its subtree's rasterization in an
-  adopted texture, but only the boundary shader can sample it; exposing it as
-  an ordinary TextureId that updates as the subtree repaints would make any UI
-  subtree usable as live content in the GPU stack - the load-bearing piece of
-  UI-on-3D-geometry.
 - **[Snapshot diff helper](backlog/snapshot-diff-helper.md)** [2026-08-07]
   A numeric pixel-delta mode on get_snapshot against the previous capture of
   the same node, so "does it still render the same" is one call with a number
@@ -988,6 +982,12 @@ Finished, kept for the reasoning.
   magnified inspection; a ~15-line viewBox-shrinking registerDebug("zoom")
   turns "look closely at X" into one call, worth shipping in the
   create-solidrt scaffold.
+- **[A snapshot boundary's retained texture as a texture id](done/snapshot-boundary-texture-id.md)** [2026-08-23]
+  repaintBoundary="snapshot" kept its subtree's rasterization in an adopted
+  texture only the boundary shader could sample. Landed 2026-08-23 as
+  snapshotTexture(ref), a stable borrowed TextureId re-pointed after every
+  rasterization, so any UI subtree is live content for shader/draw targets and
+  3d materials - the load-bearing piece of UI-on-3D-geometry.
 - **[GPU-only redraws never invalidate snapshot boundaries](done/snapshot-gpu-content-invalidation.md)** [2026-08-10]
   A texture id whose pixels change through GPU writes (draw/shader targets,
   uploadTexture, camera frames) froze inside repaintBoundary="snapshot" - GPU

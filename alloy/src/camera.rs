@@ -255,7 +255,7 @@ impl crate::context::Context {
         status: CameraStatus::Pending,
         opened_at: std::time::Instant::now(),
         approved: false,
-        texture_id: self.textures.allocate_id(),
+        texture_id: self.borrow_texture_id(),
         scratch: Vec::new(),
         convert: Vec::new(),
         scan_qr,
@@ -280,11 +280,13 @@ impl crate::context::Context {
     self.cameras.sessions.borrow().get(&sid).map(|s| s.status.clone())
   }
 
-  /// Close the session and release the device. The session's texture stays in
-  /// the registry showing its last frame.
+  /// Close the session and release the device and its texture id. The id
+  /// takes the deferred-destroy path, so a `<texture>` still showing it
+  /// keeps the last frame until it lets go.
   pub fn close_camera(&self, sid: u64) {
     if let Some(session) = self.cameras.sessions.borrow_mut().remove(&sid) {
       sdl_utils::camera_close(session.camera);
+      self.release_borrowed(session.texture_id);
     }
   }
 
@@ -293,6 +295,7 @@ impl crate::context::Context {
   pub fn close_all_cameras(&self) {
     for (_, session) in self.cameras.sessions.borrow_mut().drain() {
       sdl_utils::camera_close(session.camera);
+      self.release_borrowed(session.texture_id);
     }
   }
 
