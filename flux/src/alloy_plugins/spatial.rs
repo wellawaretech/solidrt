@@ -13,7 +13,7 @@ use rquickjs::{Array, Ctx, Function, JsLifetime, Object, TypedArray, Value};
 use super::AlloyContext;
 use crate::plugins::marshal::OptArg;
 use alloy::rendertree::PlatformContext;
-use alloy::spatial::{DrawSink, Shape};
+use alloy::spatial::{DrawSink, Projection, Shape, SharedSlotSink};
 
 fn throw_str(ctx: &Ctx<'_>, msg: &str) -> rquickjs::Error {
   rquickjs::Exception::throw_message(ctx, msg)
@@ -68,6 +68,8 @@ impl ModuleDef for SpatialModule {
     decl.declare("destroyShape")?;
     decl.declare("setShape")?;
     decl.declare("raycast")?;
+    decl.declare("bindDirectionSlot")?;
+    decl.declare("unbindSlot")?;
     Ok(())
   }
 
@@ -88,6 +90,8 @@ impl ModuleDef for SpatialModule {
     exports.export("destroyShape", Function::new(ctx.clone(), destroy_shape)?)?;
     exports.export("setShape", Function::new(ctx.clone(), set_shape)?)?;
     exports.export("raycast", Function::new(ctx.clone(), raycast)?)?;
+    exports.export("bindDirectionSlot", Function::new(ctx.clone(), bind_direction_slot)?)?;
+    exports.export("unbindSlot", Function::new(ctx.clone(), unbind_slot)?)?;
     Ok(())
   }
 }
@@ -238,8 +242,13 @@ fn set_shape(ctx: Ctx<'_>, id: u64, shape: OptArg<u64>) -> rquickjs::Result<()> 
 
 /// Every shown node with bounds the ray strikes, nearest first, as
 /// `{ node, distance, point, normal?, face?, uv? }` objects.
-fn raycast<'js>(ctx: Ctx<'js>, ox: f64, oy: f64, oz: f64, dx: f64, dy: f64, dz: f64) -> rquickjs::Result<Array<'js>> {
-  let hits = state(&ctx).atx.spatial().raycast([ox as f32, oy as f32, oz as f32], [dx as f32, dy as f32, dz as f32]);
+fn raycast<'js>(ctx: Ctx<'js>, origin: TypedArray<'js, f32>, direction: TypedArray<'js, f32>) -> rquickjs::Result<Array<'js>> {
+  let o = floats(&ctx, &origin, "raycast")?;
+  let d = floats(&ctx, &direction, "raycast")?;
+  if o.len() != 3 || d.len() != 3 {
+    return Err(throw_str(&ctx, "raycast: origin and direction must be Float32Arrays of 3"));
+  }
+  let hits = state(&ctx).atx.spatial().raycast([o[0], o[1], o[2]], [d[0], d[1], d[2]]);
   let arr = Array::new(ctx.clone())?;
   for (i, h) in hits.iter().enumerate() {
     let obj = Object::new(ctx.clone())?;
@@ -258,4 +267,28 @@ fn raycast<'js>(ctx: Ctx<'js>, ox: f64, oy: f64, oz: f64, dx: f64, dy: f64, dz: 
     arr.set(i, obj)?;
   }
   Ok(arr)
+}
+
+/// Bind the node's shared-slot sink with the direction projection: slot
+/// `index` of the `len`-float shared array param `name` on `target`
+/// follows the world direction of the LOCAL vector (a Float32Array of 3).
+fn bind_direction_slot(
+  ctx: Ctx<'_>,
+  id: u64,
+  target: u64,
+  name: String,
+  len: u32,
+  index: u32,
+  vector: TypedArray<'_, f32>,
+) -> rquickjs::Result<()> {
+  let v = floats(&ctx, &vector, "bindDirectionSlot")?;
+  if v.len() != 3 {
+    return Err(throw_str(&ctx, "bindDirectionSlot: vector must be a Float32Array of 3"));
+  }
+  let sink = SharedSlotSink { target, name, len, index, projection: Projection::Direction([v[0], v[1], v[2]]) };
+  state(&ctx).atx.spatial_bind_slot(id, Some(sink)).map_err(|e| throw_str(&ctx, &format!("bindDirectionSlot: {e}")))
+}
+
+fn unbind_slot(ctx: Ctx<'_>, id: u64) -> rquickjs::Result<()> {
+  state(&ctx).atx.spatial_bind_slot(id, None).map_err(|e| throw_str(&ctx, &format!("unbindSlot: {e}")))
 }

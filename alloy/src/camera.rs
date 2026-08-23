@@ -397,7 +397,7 @@ impl crate::context::Context {
         height,
         pixels,
         Default::default(),
-        crate::texture::TextureFormat::Rgba8,
+        crate::gpu::TextureFormat::Rgba8,
         None,
       ) {
         log::warn!("[camera] frame texture create failed: {e}");

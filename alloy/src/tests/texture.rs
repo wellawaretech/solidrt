@@ -113,7 +113,7 @@ fn texture_exposes_its_paint() {
 // strings; defaults are linear + clamp on every creation path.
 #[test]
 fn sampler_state_parses_options_and_defaults() {
-  use crate::texture::{SamplerFilter, SamplerState, SamplerWrap};
+  use crate::gpu::texture::{SamplerFilter, SamplerState, SamplerWrap};
 
   let state = SamplerState::parse(None, None, None).expect("defaults parse");
   assert_eq!(state, SamplerState { filter: SamplerFilter::Linear, wrap: SamplerWrap::Clamp, mipmap: false });
@@ -134,7 +134,7 @@ fn sampler_state_parses_options_and_defaults() {
 #[test]
 fn sampler_override_composes_and_merges() {
   use crate::gpu::{merge_bindings, TextureBinding};
-  use crate::texture::{SamplerFilter, SamplerOverride, SamplerState, SamplerWrap};
+  use crate::gpu::texture::{SamplerFilter, SamplerOverride, SamplerState, SamplerWrap};
 
   let own = SamplerState { filter: SamplerFilter::Nearest, wrap: SamplerWrap::Clamp, mipmap: true };
   let o = SamplerOverride::parse(Some("linear"), None).expect("filter-only override parses");

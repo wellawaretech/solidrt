@@ -26,7 +26,6 @@ pub mod rendertree;
 pub mod spatial;
 pub mod resample;
 mod script;
-mod texture;
 mod threads;
 mod vsync;
 pub mod yuv;
@@ -56,7 +55,7 @@ pub use mode::Mode;
 pub use playback::PlaybackConfig;
 pub use present::PresentClock;
 pub use script::{ScriptEvent, ScriptPlayer, ScriptedAction};
-pub use texture::{GpuTexture, SamplerOverride, SamplerState, TextureEntry, TextureFormat, TextureRegistry};
+pub use gpu::{GpuTexture, SamplerOverride, SamplerState, TextureEntry, TextureFormat, TextureRegistry};
 pub use yuv::{YuvLayout, YuvMatrix, YuvRange};
 
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};

@@ -108,8 +108,8 @@ impl Buildable for Texture {
     // Display sampling follows the texture's declared filter (Impeller
     // applies it per draw; the GL-side sampler objects cover shader passes).
     let sampling = match entry.sampler().filter {
-      crate::texture::SamplerFilter::Linear => TextureSampling::Linear,
-      crate::texture::SamplerFilter::Nearest => TextureSampling::NearestNeighbor,
+      crate::gpu::SamplerFilter::Linear => TextureSampling::Linear,
+      crate::gpu::SamplerFilter::Nearest => TextureSampling::NearestNeighbor,
     };
     builder.draw_texture_rect(&entry.impeller, &src_rect, &dst_rect, sampling, Some(&paint));
   }

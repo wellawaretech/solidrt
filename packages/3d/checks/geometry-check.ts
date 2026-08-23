@@ -143,7 +143,7 @@ throws("merge empty", () => mergeGeometries([]))
   if (layoutStride(two.layout) !== 15) fail("two-channel stride")
   expectVec("second channel", two.vertices.subarray(15 + 11, 15 + 15), [5, 6, 7, 8])
   expectVec("first channel kept", two.vertices.subarray(15 + 8, 15 + 11), [0, 1, 9])
-  fillAttribute(two.vertices, two.layout, "aTangent", () => [7, 7, 7], 1, 1)
+  fillAttribute(two, "aTangent", () => [7, 7, 7], 1, 1)
   expectVec("fillAttribute range", two.vertices.subarray(15 + 8, 15 + 11), [7, 7, 7])
   expectVec("fillAttribute outside range untouched", two.vertices.subarray(8, 11), [1, 0, 9])
 
@@ -162,7 +162,7 @@ throws("merge empty", () => mergeGeometries([]))
   throws("duplicate prefix name", () => withAttribute(tri(), { name: "aUV", format: "vec2" }, () => [0, 0]))
   throws("fill size mismatch", () => withAttribute(tri(), { name: "aW", format: "f32" }, [1, 2]))
   throws("callback size mismatch", () => withAttribute(tri(), { name: "aW", format: "f32" }, () => [1, 2]))
-  throws("fillAttribute unknown name", () => fillAttribute(t.vertices, t.layout, "aNope", () => [0]))
+  throws("fillAttribute unknown name", () => fillAttribute(t, "aNope", () => [0]))
 }
 
 // Generators emitting a wider layout in one pass: identical bytes to
@@ -174,7 +174,7 @@ throws("merge empty", () => mergeGeometries([]))
     if (wide.vertices.length !== viaColors.vertices.length) fail(name + ": wide length")
     expectVec(name + " wide bytes", wide.vertices, viaColors.vertices)
     expectVec(name + " wide indices", wide.indices, std.indices)
-    fillColors(wide.vertices, (_i, pos) => [pos[0], pos[1], pos[2], 1])
+    fillColors(wide, (_i, pos) => [pos[0], pos[1], pos[2], 1])
     expectVec(name + " filled color", wide.vertices.subarray(8, 12), [wide.vertices[0]!, wide.vertices[1]!, wide.vertices[2]!, 1])
   }
   check("box", box({ width: 1, height: 2, depth: 3 }), box({ width: 1, height: 2, depth: 3, layout: "colored" }))

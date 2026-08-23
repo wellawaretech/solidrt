@@ -20,7 +20,7 @@
 // where dropping the padding is free. Chroma dimensions round up, so odd
 // frame sizes are legal (the last chroma column/row just covers one texel).
 
-use crate::texture::TextureFormat;
+use crate::gpu::TextureFormat;
 
 /// Plane arrangement of a packed YUV 4:2:0 frame.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

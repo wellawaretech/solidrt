@@ -83,5 +83,20 @@ declare module "flux:spatial" {
   /** Every shown node with bounds the ray strikes, nearest first. The
    * direction need not be normalized; distances are world units. Reads
    * the index as of the last flush. */
-  export function raycast(ox: number, oy: number, oz: number, dx: number, dy: number, dz: number): Hit[]
+  export function raycast(origin: Float32Array, direction: Float32Array): Hit[]
+
+  /**
+   * Route the world DIRECTION of the node's local `vector` (a
+   * Float32Array of 3) into
+   * vec3 slot `index` of the `len`-float shared array param `name` on a
+   * draw target: the flush writes `normalize(worldRotation * v)` there
+   * and re-sends the whole array when any slot changes; unbound slots are
+   * zeros. Every sink naming the same param shares one array (`len` must
+   * agree); what the slots mean - light directions, an emitter axis - is
+   * the caller's business, packed alongside its own non-spatial params.
+   * Rebinding replaces the node's slot sink; the abandoned slot zeroes.
+   */
+  export function bindDirectionSlot(node: NodeId, target: TextureId, name: string, len: number, index: number, vector: Float32Array): void
+  /** Remove the node's slot sink (its slot zeroes at the next flush). */
+  export function unbindSlot(node: NodeId): void
 }

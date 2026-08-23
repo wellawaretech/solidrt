@@ -38,7 +38,7 @@ use crate::gpu::{
   GpuResources, GpuTextureInfo, GpuWindowShaderInfo, ParamValue, PassInput, PassTimer, PipelineDesc, Timed, PipelineSpec,
   RenderPipeline, ShaderProgram, ShaderTexture, TargetSpec, TextureBinding, UniformTable, WindowShader,
 };
-use crate::texture::{GpuTexture, SamplerCache, SamplerState, TextureFormat};
+use crate::gpu::{GpuTexture, SamplerCache, SamplerState, TextureFormat};
 
 /// Counters shared between the raster thread, the frame loop, and the UI
 /// thread's Context, one allocation for all of them. Diagnostics (get_stats)

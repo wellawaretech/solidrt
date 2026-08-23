@@ -11,7 +11,7 @@ use impellers::{DisplayList, ISize, Texture};
 use super::RasterState;
 use crate::gl;
 use crate::gpu::{NodeShader, PassInput};
-use crate::texture::SamplerState;
+use crate::gpu::SamplerState;
 
 impl RasterState {
   /// Rasterize a display list into a new adopted texture of the given pixel

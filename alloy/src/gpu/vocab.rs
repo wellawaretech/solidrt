@@ -499,12 +499,12 @@ fn warn_inactive(name: &str) {
 pub struct TextureBinding {
   pub name: String,
   pub id: u64,
-  pub sampler: crate::texture::SamplerOverride,
+  pub sampler: crate::gpu::SamplerOverride,
 }
 
 impl TextureBinding {
   pub fn new(name: impl Into<String>, id: u64) -> Self {
-    TextureBinding { name: name.into(), id, sampler: crate::texture::SamplerOverride::default() }
+    TextureBinding { name: name.into(), id, sampler: crate::gpu::SamplerOverride::default() }
   }
 }
 

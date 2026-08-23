@@ -1,21 +1,44 @@
-use crate::spatial::{compose, multiply, DrawSink, SinkWrite, Spatial, IDENTITY};
+use crate::spatial::{compose, multiply, DrawSink, Mat4, SinkWriter, Spatial, IDENTITY};
 
 const Q: [f32; 4] = [0.0, 0.0, 0.0, 1.0];
 const ONE: [f32; 3] = [1.0, 1.0, 1.0];
+
+// The recording SinkWriter: one owned variant per trait method, so the
+// tests assert on flush output by equality.
+#[derive(Clone, Debug, PartialEq)]
+enum Write {
+  Params { target: u64, draw: u64, model: Mat4, normal: Option<Mat4> },
+  Count { target: u64, draw: u64, count: u32 },
+  Shared { target: u64, name: String, values: Vec<f32> },
+}
+
+struct Recorder(Vec<Write>);
+
+impl SinkWriter for Recorder {
+  fn write_params(&mut self, target: u64, draw: u64, model: &Mat4, normal: Option<&Mat4>) {
+    self.0.push(Write::Params { target, draw, model: *model, normal: normal.copied() });
+  }
+  fn write_count(&mut self, target: u64, draw: u64, count: u32) {
+    self.0.push(Write::Count { target, draw, count });
+  }
+  fn write_shared(&mut self, target: u64, name: &str, values: &[f32]) {
+    self.0.push(Write::Shared { target, name: name.to_string(), values: values.to_vec() });
+  }
+}
 
 fn sink(draw: u64) -> Option<DrawSink> {
   Some(DrawSink { target: 1, draw, normal: false, count: 1 })
 }
 
-fn flush(s: &mut Spatial) -> Vec<SinkWrite> {
-  let mut out = Vec::new();
-  s.flush(&mut |w| out.push(w));
-  out
+fn flush(s: &mut Spatial) -> Vec<Write> {
+  let mut out = Recorder(Vec::new());
+  s.flush(&mut out);
+  out.0
 }
 
-fn model(w: &SinkWrite) -> [f32; 16] {
+fn model(w: &Write) -> [f32; 16] {
   match w {
-    SinkWrite::Params { model, .. } => *model,
+    Write::Params { model, .. } => *model,
     other => panic!("expected params, got {other:?}"),
   }
 }
@@ -29,7 +52,7 @@ fn first_flush_switches_entry_on_and_writes_world() {
   s.set_sink(child, sink(7)).expect("sink");
   let writes = flush(&mut s);
   assert_eq!(writes.len(), 2);
-  assert_eq!(writes[0], SinkWrite::Count { target: 1, draw: 7, count: 1 });
+  assert_eq!(writes[0], Write::Count { target: 1, draw: 7, count: 1 });
   let expected = multiply(compose([1.0, 0.0, 0.0], Q, ONE), compose([0.0, 2.0, 0.0], Q, [2.0, 2.0, 2.0]));
   assert_eq!(model(&writes[1]), expected);
   assert_eq!(model(&writes[1])[12..15], [1.0, 2.0, 0.0]);
@@ -55,8 +78,9 @@ fn moving_a_node_writes_only_its_subtree() {
   let draws: Vec<u64> = writes
     .iter()
     .map(|w| match w {
-      SinkWrite::Params { draw, .. } => *draw,
-      SinkWrite::Count { draw, .. } => *draw,
+      Write::Params { draw, .. } => *draw,
+      Write::Count { draw, .. } => *draw,
+      Write::Shared { .. } => panic!("no shared sinks here"),
     })
     .collect();
   assert_eq!(draws, vec![1, 3], "sibling b untouched");
@@ -72,14 +96,14 @@ fn hiding_flips_counts_and_unhide_rewrites_params() {
   s.set_sink(m, Some(DrawSink { target: 1, draw: 9, normal: false, count: 4 })).expect("sink");
   flush(&mut s);
   s.set_visible(root, false).expect("hide");
-  assert_eq!(flush(&mut s), vec![SinkWrite::Count { target: 1, draw: 9, count: 0 }]);
+  assert_eq!(flush(&mut s), vec![Write::Count { target: 1, draw: 9, count: 0 }]);
   assert!(!s.shown(m).expect("alive"));
   // Moved while hidden: no write now, a params write on unhide.
   s.set_transform(m, [3.0, 0.0, 0.0], Q, ONE).expect("move");
   assert!(flush(&mut s).is_empty());
   s.set_visible(root, true).expect("show");
   let writes = flush(&mut s);
-  assert_eq!(writes[0], SinkWrite::Count { target: 1, draw: 9, count: 4 });
+  assert_eq!(writes[0], Write::Count { target: 1, draw: 9, count: 4 });
   assert_eq!(model(&writes[1])[12], 3.0);
 }
 
@@ -251,4 +275,71 @@ fn index_matches_linear_oracle() {
     let want: Vec<NodeId> = want.into_iter().map(|(_, n)| n).collect();
     assert_eq!(got, want);
   }
+}
+
+#[test]
+fn ordered_insertion_stays_shallow() {
+  // A grid inserted row by row is the adversarial order for an SAH tree
+  // without rotations (it degenerates into chains hundreds deep); the
+  // rotations must keep it near log2(n).
+  let mut s = Spatial::new();
+  let side = 55;
+  for i in 0..side * side {
+    let x = (i % side) as f32;
+    let z = (i / side) as f32;
+    let n = s.create([x, 0.0, z], Q, ONE, true);
+    s.set_bounds(n, Some([-0.3, -0.3, -0.3, 0.3, 0.3, 0.3])).expect("bounds");
+  }
+  flush(&mut s);
+  let depth = s.index_depth();
+  assert!(depth <= 40, "grid of {} leaves built a tree {depth} deep", side * side);
+}
+
+use crate::spatial::{Projection, SharedSlotSink};
+
+#[test]
+fn shared_slots_follow_rotation_zero_on_unbind_and_drop_their_group() {
+  let mut s = Spatial::new();
+  let root = s.create([0.0; 3], Q, ONE, true);
+  let a = s.create([0.0; 3], Q, ONE, true);
+  let b = s.create([0.0; 3], Q, ONE, true);
+  s.set_parent(a, Some(root)).expect("parent");
+  s.set_parent(b, Some(root)).expect("parent");
+  let sink = |index: u32, v: [f32; 3]| SharedSlotSink {
+    target: 9,
+    name: "uLightDir".to_string(),
+    len: 6,
+    index,
+    projection: Projection::Direction(v),
+  };
+  // The scaled local vector normalizes away; slot 1 starts as zeros.
+  s.set_shared_slot(a, Some(sink(0, [0.0, -2.0, 0.0]))).expect("bind");
+  let writes = flush(&mut s);
+  assert_eq!(
+    writes,
+    vec![Write::Shared { target: 9, name: "uLightDir".to_string(), values: vec![0.0, -1.0, 0.0, 0.0, 0.0, 0.0] }]
+  );
+  // Rotating an ANCESTOR re-emits with the rotated direction: 90 degrees
+  // about z carries -y to +x. An unrelated move re-emits nothing.
+  let half = (0.5f32).sqrt();
+  s.set_transform(root, [0.0; 3], [0.0, 0.0, half, half], ONE).expect("rotate");
+  let writes = flush(&mut s);
+  let Write::Shared { values, .. } = &writes[0] else { panic!("expected shared write") };
+  assert!((values[0] - 1.0).abs() < 1e-5 && values[1].abs() < 1e-5, "rotated slot {values:?}");
+  s.set_transform(b, [5.0, 0.0, 0.0], [0.0, 0.0, half, half], ONE).expect("move");
+  assert!(flush(&mut s).is_empty(), "translation changes no direction");
+  // A second sink shares the group; slot len mismatch is rejected.
+  s.set_shared_slot(b, Some(sink(1, [0.0, 0.0, 1.0]))).expect("bind");
+  assert!(s.set_shared_slot(b, Some(SharedSlotSink { len: 9, ..sink(1, [0.0, 0.0, 1.0]) })).is_err());
+  flush(&mut s);
+  // Unbind zeroes the slot; destroying the last holder emits the final
+  // zeroed array and drops the group (no further writes).
+  s.set_shared_slot(b, None).expect("unbind");
+  let writes = flush(&mut s);
+  let Write::Shared { values, .. } = &writes[0] else { panic!("expected shared write") };
+  assert_eq!(values[3..6], [0.0, 0.0, 0.0]);
+  s.destroy(a).expect("destroy");
+  let writes = flush(&mut s);
+  assert_eq!(writes, vec![Write::Shared { target: 9, name: "uLightDir".to_string(), values: vec![0.0; 6] }]);
+  assert!(flush(&mut s).is_empty());
 }

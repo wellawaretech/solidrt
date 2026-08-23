@@ -16,6 +16,8 @@ mod bvh;
 mod math;
 mod pick;
 
+use std::collections::HashMap;
+
 pub use bvh::{ray_box_distance, Box3};
 pub use math::{compose, invert_affine, multiply, normal_matrix, transform_point, transform_vector, IDENTITY};
 pub use pick::{Hit, Shape, ShapeId};
@@ -40,11 +42,57 @@ pub struct DrawSink {
   pub count: u32,
 }
 
-/// One write a flush produces, in flush order.
+/// The consumer of sink writes, one method per write kind, called in flush
+/// order. The core's entire output contract: everything a flush produces
+/// goes through this trait, and the core never sees where it lands (alloy's
+/// Context resolves the ids against its draw entries and forwards down the
+/// raster channel; tests record). Arguments are borrowed from core state -
+/// an implementation copies what it keeps.
+pub trait SinkWriter {
+  /// A shown entry's fresh world transform: `uModel`, plus `uNormal` when
+  /// the sink asked for it.
+  fn write_params(&mut self, target: u64, draw: u64, model: &Mat4, normal: Option<&Mat4>);
+  /// An entry's instance count - the visibility switch (0 = hidden, the
+  /// sink's count = shown).
+  fn write_count(&mut self, target: u64, draw: u64, count: u32);
+  /// A shared-slot group's array param, rewritten whole (slot sinks share
+  /// one array value; see `SharedSlotSink`).
+  fn write_shared(&mut self, target: u64, name: &str, values: &[f32]);
+}
+
+/// How a shared-slot sink projects the node's world transform into its
+/// three floats. `Direction` is `normalize(worldRotation * v)` (zeros for
+/// a degenerate result); a world-position projection is the anticipated
+/// sibling when a consumer arrives.
 #[derive(Clone, Debug, PartialEq)]
-pub enum SinkWrite {
-  Params { target: u64, draw: u64, model: Mat4, normal: Option<Mat4> },
-  Count { target: u64, draw: u64, count: u32 },
+pub enum Projection {
+  /// The world direction of this LOCAL vector.
+  Direction([f32; 3]),
+}
+
+/// Routes a projection of the node's world transform to one vec3 slot of
+/// a target shared param: floats [index*3, index*3+3) of the `len`-float
+/// array param `name`, shared by every sink naming it - the whole array
+/// is one param value, re-sent when any slot changes, absent slots zero.
+/// The generic form of "a scene's light directions follow the node tree":
+/// the consumer picks the param name and packs non-spatial data (colors,
+/// counts) itself - core never learns what the slots mean.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SharedSlotSink {
+  pub target: u64,
+  pub name: String,
+  /// Total floats of the array param (a multiple of 3).
+  pub len: u32,
+  /// vec3 slot index within it.
+  pub index: u32,
+  pub projection: Projection,
+}
+
+/// One shared-param array and the sinks feeding it.
+struct SharedGroup {
+  values: Vec<f32>,
+  refs: u32,
+  dirty: bool,
 }
 
 struct Node {
@@ -75,6 +123,7 @@ struct Node {
   leaf: Option<u32>,
   /// Triangle data for the picking narrowphase; None = box only.
   shape: Option<ShapeId>,
+  slot: Option<SharedSlotSink>,
 }
 
 #[derive(Default)]
@@ -84,6 +133,7 @@ pub struct Spatial {
   queue: Vec<u32>,
   bvh: Bvh,
   pub(crate) shapes: pick::Shapes,
+  shared: HashMap<(u64, String), SharedGroup>,
 }
 
 fn index(id: NodeId) -> usize {
@@ -138,6 +188,7 @@ impl Spatial {
       bounds: None,
       leaf: None,
       shape: None,
+      slot: None,
     };
     let i = match self.free.pop() {
       Some(i) => {
@@ -170,6 +221,9 @@ impl Spatial {
     }
     if let Some(leaf) = self.nodes[i as usize].leaf.take() {
       self.bvh.remove(leaf);
+    }
+    if let Some(slot) = self.nodes[i as usize].slot.take() {
+      self.release_slot(&slot);
     }
     let n = &mut self.nodes[i as usize];
     n.alive = false;
@@ -212,6 +266,53 @@ impl Spatial {
     Ok(())
   }
 
+  /// Bind (or with None unbind) the node's shared-slot sink. Binding
+  /// seeds the slot at the next flush; unbinding zeroes it there. The
+  /// caller flushes afterwards (the JS scheduler always does).
+  pub fn set_shared_slot(&mut self, id: NodeId, sink: Option<SharedSlotSink>) -> Result<(), String> {
+    let i = self.resolve(id)?;
+    if let Some(sink) = &sink {
+      if sink.len == 0 || sink.len % 3 != 0 {
+        return Err(format!("shared-slot sink len {} is not a multiple of 3", sink.len));
+      }
+      if (sink.index + 1) * 3 > sink.len {
+        return Err(format!("shared-slot sink slot {} does not fit {} floats", sink.index, sink.len));
+      }
+      let group = self.shared.entry((sink.target, sink.name.clone())).or_insert_with(|| SharedGroup {
+        values: vec![0.0; sink.len as usize],
+        refs: 0,
+        dirty: false,
+      });
+      if group.values.len() != sink.len as usize {
+        return Err(format!(
+          "shared param '{}' on target {} is {} floats, not {}",
+          sink.name,
+          sink.target,
+          group.values.len(),
+          sink.len
+        ));
+      }
+      group.refs += 1;
+    }
+    if let Some(old) = self.nodes[i as usize].slot.take() {
+      self.release_slot(&old);
+    }
+    self.nodes[i as usize].slot = sink;
+    self.enqueue(i);
+    Ok(())
+  }
+
+  /// Drop one sink's claim on its group: the slot zeroes at the next
+  /// flush, and the group itself is dropped there once unreferenced.
+  fn release_slot(&mut self, sink: &SharedSlotSink) {
+    if let Some(group) = self.shared.get_mut(&(sink.target, sink.name.clone())) {
+      let at = sink.index as usize * 3;
+      group.values[at..at + 3].fill(0.0);
+      group.dirty = true;
+      group.refs = group.refs.saturating_sub(1);
+    }
+  }
+
   pub fn create_shape(&mut self, shape: Shape) -> Result<ShapeId, String> {
     self.shapes.create(shape)
   }
@@ -244,6 +345,12 @@ impl Spatial {
         self.nodes[i as usize].leaf = Some(leaf);
       }
     }
+  }
+
+  /// Longest root-to-leaf path of the index (tests only).
+  #[cfg(test)]
+  pub(crate) fn index_depth(&self) -> usize {
+    self.bvh.depth()
   }
 
   /// Every shown node with bounds the ray strikes, nearest first. A node
@@ -378,9 +485,9 @@ impl Spatial {
   }
 
   /// Change the sink's "on" count (an instanced mesh's record count). If
-  /// the entry is currently on, the new count is written at once - the
-  /// caller applies the returned write.
-  pub fn set_sink_count(&mut self, id: NodeId, count: u32) -> Result<Option<SinkWrite>, String> {
+  /// the entry is currently on, the new count goes to `out` at once;
+  /// returns whether it did.
+  pub fn set_sink_count(&mut self, id: NodeId, count: u32, out: &mut dyn SinkWriter) -> Result<bool, String> {
     let i = self.resolve(id)?;
     let n = &mut self.nodes[i as usize];
     let Some(sink) = n.sink.as_mut() else {
@@ -388,9 +495,10 @@ impl Spatial {
     };
     sink.count = count;
     if n.entry_on {
-      return Ok(Some(SinkWrite::Count { target: sink.target, draw: sink.draw, count }));
+      out.write_count(sink.target, sink.draw, count);
+      return Ok(true);
     }
-    Ok(None)
+    Ok(false)
   }
 
   pub fn sink(&self, id: NodeId) -> Result<Option<DrawSink>, String> {
@@ -434,25 +542,34 @@ impl Spatial {
     Ok(world)
   }
 
-  /// Recompute every queued subtree and hand the sink writes to `emit`.
-  pub fn flush(&mut self, emit: &mut dyn FnMut(SinkWrite)) {
-    if self.queue.is_empty() {
-      return;
-    }
-    let queue = std::mem::take(&mut self.queue);
-    for &i in &queue {
-      if !self.nodes[i as usize].alive || self.has_queued_ancestor(i) {
-        continue;
+  /// Recompute every queued subtree and hand the sink writes to `out`.
+  pub fn flush(&mut self, out: &mut dyn SinkWriter) {
+    if !self.queue.is_empty() {
+      let queue = std::mem::take(&mut self.queue);
+      for &i in &queue {
+        if !self.nodes[i as usize].alive || self.has_queued_ancestor(i) {
+          continue;
+        }
+        let (parent_world, parent_shown) = match self.nodes[i as usize].parent {
+          Some(p) => (self.nodes[p as usize].world, self.nodes[p as usize].shown),
+          None => (IDENTITY, true),
+        };
+        self.recompute(i, &parent_world, false, parent_shown, out);
       }
-      let (parent_world, parent_shown) = match self.nodes[i as usize].parent {
-        Some(p) => (self.nodes[p as usize].world, self.nodes[p as usize].shown),
-        None => (IDENTITY, true),
-      };
-      self.recompute(i, &parent_world, false, parent_shown, emit);
+      for &i in &queue {
+        self.nodes[i as usize].queued = false;
+      }
     }
-    for &i in &queue {
-      self.nodes[i as usize].queued = false;
-    }
+    // Shared params changed by the walk, an unbind or a destroy go out
+    // once per flush, whole; a group nothing references any more goes
+    // with its last write.
+    self.shared.retain(|(target, name), group| {
+      if group.dirty {
+        group.dirty = false;
+        out.write_shared(*target, name, &group.values);
+      }
+      group.refs > 0
+    });
   }
 
   fn has_queued_ancestor(&self, i: u32) -> bool {
@@ -472,7 +589,7 @@ impl Spatial {
     parent_world: &Mat4,
     parent_changed: bool,
     parent_shown: bool,
-    emit: &mut dyn FnMut(SinkWrite),
+    out: &mut dyn SinkWriter,
   ) {
     let n = &mut self.nodes[i as usize];
     let mut changed = parent_changed;
@@ -491,17 +608,40 @@ impl Spatial {
     let shown = parent_shown && n.visible;
     n.shown = shown;
     let refit = n.bounds.is_some() && (changed || n.leaf.is_none());
+    if changed {
+      if let Some(slot) = n.slot.clone() {
+        let v = match slot.projection {
+          Projection::Direction(local) => {
+            let v = transform_vector(&n.world, local);
+            let l = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
+            if l > 0.0 {
+              [v[0] / l, v[1] / l, v[2] / l]
+            } else {
+              [0.0; 3]
+            }
+          }
+        };
+        let at = slot.index as usize * 3;
+        if let Some(group) = self.shared.get_mut(&(slot.target, slot.name)) {
+          if group.values[at..at + 3] != v {
+            group.values[at..at + 3].copy_from_slice(&v);
+            group.dirty = true;
+          }
+        }
+      }
+    }
+    let n = &mut self.nodes[i as usize];
     if let Some(sink) = n.sink {
       if shown != n.entry_on {
         n.entry_on = shown;
-        emit(SinkWrite::Count { target: sink.target, draw: sink.draw, count: if shown { sink.count } else { 0 } });
+        out.write_count(sink.target, sink.draw, if shown { sink.count } else { 0 });
         if shown {
           n.fresh = true;
         }
       }
       if shown && (changed || n.fresh) {
         let normal = if sink.normal { Some(normal_matrix(&n.world)) } else { None };
-        emit(SinkWrite::Params { target: sink.target, draw: sink.draw, model: n.world, normal });
+        out.write_params(sink.target, sink.draw, &n.world, normal.as_ref());
         n.fresh = false;
       } else if changed {
         n.fresh = true;
@@ -514,7 +654,7 @@ impl Spatial {
     let mut k = 0;
     while k < self.nodes[i as usize].children.len() {
       let c = self.nodes[i as usize].children[k];
-      self.recompute(c, &world, changed, shown, emit);
+      self.recompute(c, &world, changed, shown, out);
       k += 1;
     }
   }

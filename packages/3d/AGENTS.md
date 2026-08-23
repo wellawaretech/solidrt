@@ -186,7 +186,7 @@ names it. Every options object (the profile kit's `extrude`/`lathe`/
 `sweep`/`tube` too) also takes `label` and `layout` - `layout` makes the
 generator emit that layout in one pass (standard channels written, the
 extra slots zero), so `box({ layout: "colored" })` then
-`fillColors(g.vertices, fill)` builds colored geometry without the
+`fillColors(g, fill)` builds colored geometry without the
 generate-then-repack copy; the result is byte-identical to
 `withColors(box(), fill)`. `packGeometry(verts, indices, options?)` is
 the tail every generator ends in, for your own generators.
@@ -194,14 +194,12 @@ the tail every generator ends in, for your own generators.
 geometry (generator or hand-built) with one more channel after its
 current layout; the source is untouched. `withColors(geometry, fill,
 label?)` is the aColor vec4 case, keeping the "colored" preset name.
-`fillAttribute(vertices, layout, name, fill, first?, count?)` is the
-in-place primitive under both: writes one channel of an interleave you
-already own (a merging builder's packed buffer), reading pos/normal/uv
-from the buffer itself - so a packer that bakes transforms while writing
-hands the baker world-space vertices. `fill` indexes relative to
-`first`. It trusts the buffer to be `layout` data (no tag to check);
-withAttribute is the checked path. `fillColors(vertices, fill, first?,
-count?)` is its "colored"/aColor spelling.
+`fillAttribute(geometry, name, fill, first?, count?)` is the in-place
+primitive under both: overwrites one channel the geometry's layout
+already carries (withAttribute ADDS one), reading pos/normal/uv from the
+buffer itself - so a builder that bakes transforms while writing hands
+the baker world-space vertices. `fill` indexes relative to `first`.
+`fillColors(geometry, fill, first?, count?)` is its aColor spelling.
 
 Geometry as data: `transformGeometry(geometry, { position?, rotation?,
 quaternion?, scale? }, label?)` bakes a placement into a copy (the
@@ -357,9 +355,11 @@ scene, the last attached wins. Placement goes through setTransform, the
 light's own fields through `setLight(light, { ... })` (frame-rate-safe,
 like setMeshParams). At most `MAX_LIGHTS` (4, exported from `/glsl`)
 directional lights per scene - the fifth throws at add(); it is a
-shader-source constant, fixed per app. The sync rewrites the shared
-params whenever a light attaches, detaches, changes a field or moves (it
-or an ancestor) -
+shader-source constant, fixed per app. `uLightDir` is core-driven: each
+directional light's slot is a spatial-core shared-slot sink following
+the node's world rotation, so a MOVING light costs no JS. The sync
+rewrites the rest whenever a light attaches, detaches or changes a
+field -
 `uHemiSky`/`uHemiGround` (vec3, intensity folded in), `uLightCount` (int),
 `uLightDir[MAX_LIGHTS]`/`uLightColor[MAX_LIGHTS]` (world-space vector
 TOWARD the light, normalized; intensity folded into the color) - so a

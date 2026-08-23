@@ -38,6 +38,19 @@ shares:
 - **sinks**: where a node's fresh world matrix goes. A sink never changes
   the walk, it only consumes its result.
 
+The admissibility rule for a sink, stated once because every row must
+pass it: (1) its INPUT is exactly the flush's output - a node's world
+transform, nothing else; (2) its DESTINATION is an existing engine
+channel addressed by caller-supplied ids and names (a draw entry's
+params, its range, a target's shared params); (3) no domain constant or
+name lives in core - no `uLightDir`, no light/bone/instance concept.
+(`uModel`/`uNormal` in the DrawParams sink are the sanctioned exception:
+they are the draw list's own standard vocabulary, engine-level, not a
+package's.) Consumer count is not the test - shape is: a second consumer
+must need zero core changes. A sink that would need core to INTERPRET
+the transform (fold an intensity, pack colors) fails the rule and stays
+in the consumer.
+
 Nothing in the module knows about cameras, perspective, lights, materials
 or meshes. A consumer supplies matrices (a view-projection is target
 state, written through the existing shared-params channel, not through
@@ -54,6 +67,7 @@ reason the binding is a small enum and not a hardwired mesh field:
 | `InstanceRecord { buffer, index }` | one slot of an instance buffer | instanced fleets whose instances are nodes: the thousands-of-dynamic-objects tier |
 | `TextureSlot { texture, index }` | one row of a float texture | skeleton bones for skinning (3d roadmap item 16) |
 | `EntryVisible { target, draw }` | the entry's instance count (0 / N) | frustum culling (item 19's other half) |
+| `SharedSlot { target, name, len, index, projection }` | one vec3 slot of a target shared array param (Direction projection today; Position is the anticipated sibling) | `@solidrt/3d` light directions (`uLightDir`); any tracked axis a shader reads |
 
 Other consumers of the same index, none built here: overlap and sphere-cast
 queries for the lightweight collision tier games need without a physics
@@ -147,9 +161,22 @@ instanced).
   rotating mesh every frame.
 - Transparent sort: which meshes moved is the core's knowledge now, so
   any move with two or more transparent meshes marks the order dirty
-  (the sort issues nothing when the permutation is unchanged). Fine at
-  today's counts; a core-side sort, or a "transparent entry moved" flag
-  from the flush, is the stage-2 fix if it shows up.
+  (the sort issues nothing when the permutation is unchanged). That is
+  already the industry baseline - Three.js sorts its transparent list
+  every frame unconditionally - and the cost only shows for a static
+  camera plus opaque-only motion. Three escalating fixes, none demanded
+  yet:
+  1. JS subtree flag: each scene node tracks "subtree contains a
+     transparent mesh" (maintained at attach/detach/reparent); a move
+     dirties the order only if the moved node's flag is set or the
+     camera moved. Small, JS-only, exact for the common shapes.
+  2. Core dirty bit: mark nodes sort-relevant in core, flush() reports
+     whether any marked node's world changed. Exact under reparenting
+     too, JS stops maintaining flags. Passes the sink admissibility
+     rule (pure flush output, no domain names).
+  3. Core transparent sort: a view-depth sort as a sink writing the
+     draw-order channel. Also removes the per-frame center readbacks,
+     but core would need the view matrix - hold for real demand.
 - Node lifetime: core nodes exist only while the JS node is in a scene
   (created at add, freed at remove/dispose), so nothing needs a
   finalizer; outside a scene `worldInto` composes the chain in JS.
@@ -168,15 +195,68 @@ example taps (hit points now on the sphere surface), lit, bench.
   not worth an API: the cost is bounded by distinct geometry, not scene
   size. Instanced meshes stay box-only (records are opaque).
 - Bench after stage 2 (3000 static + 10 moving): JS sync 3.3 ms -> 0.03
-  ms, core flush 0.04 ms INCLUDING the ten leaf refits, a hitting
-  raycast through the grid 0.37 ms. That query is the next lever if it
-  shows up: the tree has no rotations, so grid-order insertion yields
-  deep chains (the same shape the JS tree had); an SAH rotation at
-  insert, or a rebuild when the scene settles, would fix it and is a
-  core-only change.
+  ms, core flush 0.04 ms INCLUDING the ten leaf refits. A hitting
+  raycast through the row-order grid was 0.37 ms until SAH rotations
+  landed (below); with them it is ~0.004 ms.
 - Trap: `Spatial` derives Default and the tree's empty root is -1, so
   `Bvh` needs a hand-written Default - a derived one (root 0) makes the
   first leaf its own sibling and the tree loops.
 - The `Bvh` is not 3D-specific: flat (2D) boxes cost via their other
   faces in the surface-area heuristic, so a 2D sprite scene or 2D
   overlap queries use it unchanged.
+
+Follow-ups landed 2026-08-23 (uncommitted):
+
+- SAH rotations (Box2D lineage: child/grandchild swaps along both refit
+  walks) in `bvh.rs`: a 3025-leaf grid inserted in row order stays <= 40
+  deep (test `ordered_insertion_stays_shallow`), and the bench's hitting
+  raycast fell 0.37 ms -> 0.004 ms. The oracle test pins correctness.
+- The `SharedSlot` sink (Direction projection): `uLightDir` is now fully
+  core-driven - each directional light's slot follows its node's world
+  rotation with `-direction` as the local vector, so a light that merely
+  moves (or rides a rotating group) costs no JS at all, and the
+  light-ancestor-moved check plus the world-matrix readback left
+  `scene.ts`. JS still owns colors, count, hemisphere and slot indices
+  (`writeLights`, attach/detach/field changes only). Slots zero on
+  unbind/destroy; groups are refcounted and dropped with their last
+  write; `scene.dispose` drains the zeroed slots with one `flush()`
+  before destroying the target so nothing writes to a dead target.
+- `fillAttribute(geometry, name, fill, first?, count?)` and
+  `fillColors(geometry, fill, first?, count?)` take the Geometry and read
+  `.layout` from it, like every sibling helper (the positional
+  `VertexLayout | undefined` param was the fix for two long-standing
+  type errors in `checks/geometry-check.ts`, then judged ugly and
+  replaced; breaking for out-of-repo demos, like the layout work). The
+  raw-array form survives as the private `fillSlot` under withAttribute;
+  the pure layout helpers spell the parameter `layout?: VertexLayout`.
+- The `SinkWrite` enum became the `SinkWriter` trait (write_params /
+  write_count / write_shared), defined in `spatial/mod.rs`: the core's
+  entire output contract in one place, borrowed arguments (no per-write
+  String/Vec allocation on the shared path), implemented by a small
+  `Writer` in `alloy/src/context/spatial.rs` (resolves against the draw
+  mirrors, warns on a stale binding) and by a test recorder.
+  `set_sink_count` writes through the trait too and returns whether it
+  wrote. Part of the same pass: `context.rs` split into `context/` by
+  concern (mirror/texture/buffer/program/target/capture/spatial/content),
+  file names pairing with `gpu/`'s, and the texture registry + sampler
+  vocabulary moved from `src/texture.rs` to `gpu/texture.rs` (imports are
+  `crate::gpu::*` now; `alloy::` root re-exports unchanged).
+- `raycast` on `flux:spatial` takes `(origin, direction)` as two
+  Float32Arrays of 3, closing the plugin's arg-style rule: every
+  vector-shaped payload travels as one Float32Array (transform, bounds,
+  slot vector, ray); scalars only for genuine scalars (ids, counts,
+  offsets). The rquickjs ~8-arg cap forces this shape anyway once a call
+  carries ids plus options.
+
+Considered and rejected (2026-08-23): collapsing the picking shape into a
+retained `createBuffer` CPU copy. The ledger says no: a shape stores only
+positions + uvs, deinterleaved (5 of the standard layout's 8 floats per
+vertex, cache-friendly for the narrowphase), while a retained buffer copy
+would hold the full interleaved data - MORE memory, not less - and the
+raster thread drops its upload Vec today, so retention would be a new
+cost, not a reuse. It would also couple spatial to the gpu buffer
+registry (lifetime entanglement across modules) where shapes are
+currently self-contained. The JS-side `geometry.vertices` is app-owned
+plain data the engine cannot free. If shape memory ever shows up, the
+lever is LAZY shapes - create them on first pointer handler / raycast
+per scene instead of at every buffer acquire - not buffer references.

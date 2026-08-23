@@ -1,4 +1,4 @@
-use crate::texture::TextureFormat;
+use crate::gpu::TextureFormat;
 use crate::yuv::{coefficients, fragment_src, frame_size, planes, YuvLayout, YuvMatrix, YuvRange};
 
 #[test]

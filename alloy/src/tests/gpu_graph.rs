@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::context::{bound_sources, content_closure, samples_transitively};
+use crate::context::content::{bound_sources, content_closure, samples_transitively};
 use crate::raster::propagation_order;
 
 fn edges(list: &[(u64, &[u64])]) -> HashMap<u64, Vec<u64>> {

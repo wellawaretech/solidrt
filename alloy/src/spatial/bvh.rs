@@ -89,10 +89,6 @@ impl Default for Bvh {
 }
 
 impl Bvh {
-  pub fn new() -> Self {
-    Self::default()
-  }
-
   fn allocate(&mut self) -> i32 {
     if let Some(n) = self.free.pop() {
       return n;
@@ -147,8 +143,75 @@ impl Bvh {
     let mut n = new_parent;
     while n != -1 {
       self.refit(n);
+      self.rotate(n);
       n = self.parent[n as usize];
     }
+  }
+
+  // One SAH rotation at n (Box2D lineage): try swapping each child with a
+  // grandchild from the other side and keep the swap that shrinks the
+  // rotated child's box the most. Applied along every refit walk, this
+  // keeps the tree shallow under adversarial insertion orders (a grid
+  // inserted row by row degenerates a rotation-free SAH tree into deep
+  // chains) at a constant cost per walked node.
+  fn rotate(&mut self, n: i32) {
+    let c1 = self.child1[n as usize];
+    let c2 = self.child2[n as usize];
+    if c1 == -1 {
+      return;
+    }
+    // (gain, rotated child, its kept grandchild slot, the swapped-in node)
+    let mut best: Option<(f32, i32, bool, i32)> = None;
+    let mut consider = |rotated: i32, swapped_in: i32, bvh: &Bvh| {
+      if bvh.child1[rotated as usize] == -1 {
+        return;
+      }
+      let g1 = bvh.child1[rotated as usize];
+      let g2 = bvh.child2[rotated as usize];
+      let current = half_area(&bvh.bounds[rotated as usize]);
+      let sb = &bvh.bounds[swapped_in as usize];
+      // Swap `swapped_in` with g2 (keeping g1), then with g1 (keeping g2).
+      for (keep_first, kept) in [(true, g1), (false, g2)] {
+        let gain = current - half_area(&union(&bvh.bounds[kept as usize], sb));
+        if gain > 0.0 && best.is_none_or(|(g, ..)| gain > g) {
+          best = Some((gain, rotated, keep_first, swapped_in));
+        }
+      }
+    };
+    consider(c1, c2, self);
+    consider(c2, c1, self);
+    let Some((_, rotated, keep_first, swapped_in)) = best else {
+      return;
+    };
+    let dropped = if keep_first { self.child2[rotated as usize] } else { self.child1[rotated as usize] };
+    // `swapped_in` (the other child of n) takes the dropped grandchild's
+    // slot; the dropped grandchild becomes n's direct child.
+    if keep_first {
+      self.child2[rotated as usize] = swapped_in;
+    } else {
+      self.child1[rotated as usize] = swapped_in;
+    }
+    self.parent[swapped_in as usize] = rotated;
+    if self.child1[n as usize] == swapped_in {
+      self.child1[n as usize] = dropped;
+    } else {
+      self.child2[n as usize] = dropped;
+    }
+    self.parent[dropped as usize] = n;
+    self.refit(rotated);
+    self.refit(n);
+  }
+
+  /// Longest root-to-leaf path (tests: tree-quality assertions).
+  #[cfg(test)]
+  pub(crate) fn depth(&self) -> usize {
+    fn walk(bvh: &Bvh, n: i32) -> usize {
+      if n == -1 || bvh.child1[n as usize] == -1 {
+        return 0;
+      }
+      1 + walk(bvh, bvh.child1[n as usize]).max(walk(bvh, bvh.child2[n as usize]))
+    }
+    walk(self, self.root)
   }
 
   fn remove_leaf(&mut self, leaf: i32) {
@@ -171,6 +234,7 @@ impl Bvh {
       let mut n = grand;
       while n != -1 {
         self.refit(n);
+        self.rotate(n);
         n = self.parent[n as usize];
       }
     }

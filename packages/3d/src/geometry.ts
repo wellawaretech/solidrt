@@ -50,14 +50,14 @@ export const STANDARD_FLOATS = 8
 const FORMAT_FLOATS: Record<VertexAttribute["format"], number> = { f32: 1, vec2: 2, vec3: 3, vec4: 4 }
 
 /** The attribute list of a layout (a preset name resolves to its list). */
-export function layoutAttributes(layout: VertexLayout | undefined): VertexAttribute[] {
+export function layoutAttributes(layout?: VertexLayout): VertexAttribute[] {
   if (layout === undefined || layout === "standard") return VERTEX_LAYOUTS.standard
   if (layout === "colored") return VERTEX_LAYOUTS.colored
   return layout
 }
 
 /** Floats per vertex of a layout - its interleave stride. */
-export function layoutStride(layout: VertexLayout | undefined): number {
+export function layoutStride(layout?: VertexLayout): number {
   let stride = 0
   for (let attr of layoutAttributes(layout)) stride += FORMAT_FLOATS[attr.format]
   return stride
@@ -65,7 +65,7 @@ export function layoutStride(layout: VertexLayout | undefined): number {
 
 /** A layout's identity as a string (name:format per attribute, in order):
  * two layouts with equal keys interleave identically. */
-export function layoutKey(layout: VertexLayout | undefined): string {
+export function layoutKey(layout?: VertexLayout): string {
   return layoutAttributes(layout)
     .map(a => a.name + ":" + a.format)
     .join(",")
@@ -262,7 +262,7 @@ export function withAttribute(geometry: Geometry, attr: VertexAttribute, fill: A
     let d = i * stride
     for (let k = 0; k < srcStride; k++) out[d + k] = src[s + k]!
   }
-  fillAttribute(out, layout, attr.name, fill)
+  fillSlot(out, layout, attr.name, fill, 0)
   return {
     vertices: out,
     indices: geometry.indices,
@@ -289,20 +289,24 @@ export function withColors(geometry: Geometry, fill: ColorFill, label?: string):
 }
 
 /**
- * The in-place primitive under withAttribute: write one channel of an
- * interleave you already own, whose layout you state - the hook for a
- * merging builder baking data over its packed buffer (the pos/normal/uv
- * the callback receives are read from the buffer itself, so a packer that
- * bakes transforms while writing hands the baker world-space vertices).
- * Fills vertices [first, first + count) - count defaults to the rest of
- * the buffer - and `fill` indexes relative to `first`, so a per-part
- * callback works unchanged for both APIs. Returns `vertices`.
- *
- * This trusts the buffer to BE `layout` data - a bare array carries no
- * layout tag, so only the arithmetic is checked. The Geometry-level
- * withAttribute stays the checked path.
+ * The in-place primitive under withAttribute: write one channel the
+ * geometry's layout already carries (withAttribute ADDS a channel; this
+ * overwrites an existing one). The pos/normal/uv the callback receives
+ * are read from the buffer itself, so a builder baking transforms while
+ * writing hands the baker world-space vertices. Fills vertices
+ * [first, first + count) - count defaults to the rest of the buffer -
+ * and `fill` indexes relative to `first`, so a per-part callback works
+ * unchanged for both APIs. Returns `geometry.vertices`.
  */
-export function fillAttribute(vertices: Float32Array, layout: VertexLayout, name: string, fill: AttributeFill, first = 0, count?: number): Float32Array {
+export function fillAttribute(geometry: Geometry, name: string, fill: AttributeFill, first = 0, count?: number): Float32Array {
+  return fillSlot(geometry.vertices, geometry.layout, name, fill, first, count)
+}
+
+/** The raw form behind fillAttribute (withAttribute writes its fresh
+ * buffer through it, before the Geometry exists): a bare array carries no
+ * layout tag, so the caller states the layout and only the arithmetic is
+ * checked. */
+function fillSlot(vertices: Float32Array, layout: VertexLayout | undefined, name: string, fill: AttributeFill, first: number, count?: number): Float32Array {
   let slot = layoutSlot(layout, name)
   if (slot === null) throw new Error("fillAttribute: layout has no '" + name + "' attribute")
   let stride = layoutStride(layout)
@@ -339,10 +343,10 @@ export function fillAttribute(vertices: Float32Array, layout: VertexLayout, name
   return vertices
 }
 
-/** `fillAttribute` for the aColor channel of a "colored"-layout
- * interleave (fill is 4 per vertex). */
-export function fillColors(vertices: Float32Array, fill: ColorFill, first = 0, count?: number): Float32Array {
-  return fillAttribute(vertices, "colored", "aColor", fill, first, count)
+/** `fillAttribute` for the aColor channel of a color-carrying geometry
+ * (fill is 4 per vertex). */
+export function fillColors(geometry: Geometry, fill: ColorFill, first = 0, count?: number): Float32Array {
+  return fillAttribute(geometry, "aColor", fill, first, count)
 }
 
 /**

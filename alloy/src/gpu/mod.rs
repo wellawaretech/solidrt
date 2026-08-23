@@ -1,8 +1,9 @@
 //! The GPU shading layer behind the raster thread: draw-state vocabulary
 //! (`vocab`), stage compile/link and programs (`program`), vertex buffers
-//! (`buffer`), render targets (`target`), pass execution (`pass`), and the
-//! plain-data command/introspection shapes (`spec`, `resources`). All GL use
-//! stays on the raster thread; see raster.rs.
+//! (`buffer`), render targets (`target`), pass execution (`pass`), textures
+//! and sampling (`texture`: registry, sampler vocabulary, sampler cache),
+//! and the plain-data command/introspection shapes (`spec`, `resources`).
+//! All GL use stays on the raster thread; see raster.rs.
 
 mod buffer;
 mod lease;
@@ -12,6 +13,7 @@ pub(crate) mod program;
 mod resources;
 mod spec;
 mod target;
+pub(crate) mod texture;
 mod timing;
 mod vocab;
 
@@ -26,6 +28,10 @@ pub use resources::{
 };
 pub use spec::{DrawSpec, NodeShader, PipelineSpec, TargetSpec, WindowShader};
 pub use target::{create_layer_target, EntryBuffers, ShaderTexture};
+pub use texture::{
+  generate_mipmap, GpuTexture, SamplerCache, SamplerFilter, SamplerOverride, SamplerState, TextureEntry,
+  TextureFormat, TextureRegistry,
+};
 pub use timing::{PassTimer, Timed};
 pub use vocab::{
   blend_name, cull_name, parse_blend, parse_cull, resolve_draw_range, validate_draw_range, validate_order,

@@ -10,7 +10,7 @@ use crate::gpu::{
   BufferIds, DrawRange, DrawSpec, GpuLimits, GpuResources, NodeShader, ParamValue, PipelineDesc, PipelineSpec, ShaderStage,
   TargetSpec, TextureBinding, UniformTable, WindowShader, AttributeTable,
 };
-use crate::texture::{SamplerState, TextureFormat};
+use crate::gpu::{SamplerState, TextureFormat};
 
 pub(crate) enum RasterCmd {
   /// Draw and present (interactive) or read back (playback) a frame. In

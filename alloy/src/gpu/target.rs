@@ -132,7 +132,7 @@ pub struct ShaderTexture {
   /// Declared sampling for this target's output (how OTHER passes and the
   /// display draw sample it; the target's own inputs carry their own states).
   /// Survives resize; set via `with_sampler` after construction.
-  sampler: crate::texture::SamplerState,
+  sampler: crate::gpu::SamplerState,
   /// Manual render mode (see `TargetSpec::manual`): the dirty flush never
   /// renders this target, only an explicit RenderTarget command does. Set via
   /// `with_manual` after construction.
@@ -575,7 +575,7 @@ impl ShaderTexture {
         target,
         width,
         height,
-        sampler: crate::texture::SamplerState::default(),
+        sampler: crate::gpu::SamplerState::default(),
         manual: false,
         passes: Cell::new(0),
         pass_issue_micros: Cell::new(0),
@@ -669,7 +669,7 @@ impl ShaderTexture {
         target,
         width,
         height,
-        sampler: crate::texture::SamplerState::default(),
+        sampler: crate::gpu::SamplerState::default(),
         manual: false,
         passes: Cell::new(0),
         pass_issue_micros: Cell::new(0),
@@ -706,7 +706,7 @@ impl ShaderTexture {
       target,
       width,
       height,
-      sampler: crate::texture::SamplerState::default(),
+      sampler: crate::gpu::SamplerState::default(),
       manual: false,
       passes: Cell::new(0),
       pass_issue_micros: Cell::new(0),
@@ -716,7 +716,7 @@ impl ShaderTexture {
 
   /// Set the declared sampling for this target's output (builder-style, right
   /// after construction).
-  pub fn with_sampler(mut self, sampler: crate::texture::SamplerState) -> Self {
+  pub fn with_sampler(mut self, sampler: crate::gpu::SamplerState) -> Self {
     self.sampler = sampler;
     self
   }
@@ -754,7 +754,7 @@ impl ShaderTexture {
     self.mesh().is_some_and(|m| m.load)
   }
 
-  pub fn sampler(&self) -> crate::texture::SamplerState {
+  pub fn sampler(&self) -> crate::gpu::SamplerState {
     self.sampler
   }
 
@@ -877,7 +877,7 @@ impl ShaderTexture {
     // sampling it minified), so it follows every content write: the
     // automatic regeneration the dirty flush makes possible.
     if self.sampler.mipmap {
-      crate::texture::generate_mipmap(gl, self.target);
+      crate::gpu::generate_mipmap(gl, self.target);
     }
   }
 

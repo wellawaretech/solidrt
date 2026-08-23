@@ -3,7 +3,7 @@
 //! API and the RasterCmd payloads.
 
 use super::vocab::{BufferIds, DrawRange, IndexFormat, ParamValue, PipelineDesc, TextureBinding};
-use crate::texture::SamplerState;
+use crate::gpu::SamplerState;
 
 /// The per-target half of a mesh target create: output size, clear, sampling,
 /// render mode, load op. What is drawn into the target is the entry half

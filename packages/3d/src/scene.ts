@@ -36,7 +36,7 @@ import { getOwner, onCleanup } from "@solidrt/core"
 import type { PointerEvent as ElementPointerEvent } from "@solidrt/core"
 // The scene's lookAt() aims a node; math's builds a camera's view matrix -
 // the same pairing (and the same name) as Three's Object3D/Matrix4.
-import { compose, copy, eulerFromQuat, identity, lookAt as lookAtMatrix, mat4, multiply, perspective, quat, quatFromFrame, transformPoint, transformVector, updateRotation, updateScale } from "./math.ts"
+import { compose, copy, eulerFromQuat, identity, lookAt as lookAtMatrix, mat4, multiply, perspective, quat, quatFromFrame, transformPoint, updateRotation, updateScale } from "./math.ts"
 import type { Mat4, Quat, TransformUpdate, Vec3, Vec4 } from "./math.ts"
 import { MAX_LIGHTS } from "./glsl.ts"
 import { geometryBounds, layoutKey, validateGeometry } from "./geometry.ts"
@@ -60,6 +60,8 @@ let worldRead = new Float32Array(16)
 // lookAt()/worldPosition() scratch: nothing here outlives a single call.
 let worldScratch = mat4()
 let localScratch = mat4()
+let rayOriginScratch = new Float32Array(3)
+let rayDirScratch = new Float32Array(3)
 let pointScratch: Vec4 = [0, 0, 0, 0]
 let aimScratch: Vec3 = [0, 0, 0]
 let upScratch: Vec3 = [0, 0, 0]
@@ -889,12 +891,17 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
   // light params at the end of the sync - one write, however many meshes.
   let lights: Light[] = []
   let lightsDirty = false
-  let dirScratch: Vec3 = [0, 0, 0]
+  // uLightDir is CORE-DRIVEN: each directional light's slot is a
+  // shared-slot sink (bindDirectionSlot) following the node's world
+  // rotation, with -direction as the local vector (the shader wants the
+  // vector TOWARD the light) - so a light that merely moves costs no JS.
+  // This rewrite runs on attach/detach/field changes only and owns the
+  // rest: colors, count, hemisphere.
+  let vecScratch = new Float32Array(3)
   let writeLights = () => {
     lightsDirty = false
     let sky: Vec3 = [0, 0, 0]
     let ground: Vec3 = [0, 0, 0]
-    let dirs: number[] = []
     let colors: number[] = []
     let count = 0
     for (let light of lights) {
@@ -904,22 +911,17 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
         ground = [light.ground[0] * k, light.ground[1] * k, light.ground[2] * k]
         continue
       }
-      // The shader wants the vector TOWARD the light, normalized, in
-      // world space: rotate the local travel direction by the world
-      // matrix and negate.
-      let d = transformVector(dirScratch, worldInto(worldScratch, light), light.direction)
-      let len = Math.hypot(d[0], d[1], d[2]) || 1
-      dirs.push(-d[0] / len, -d[1] / len, -d[2] / len)
+      vecScratch[0] = -light.direction[0]
+      vecScratch[1] = -light.direction[1]
+      vecScratch[2] = -light.direction[2]
+      spatial.bindDirectionSlot(light._node!, texture, "uLightDir", MAX_LIGHTS * 3, count, vecScratch)
       let c = light.color
       let k = light.intensity
       colors.push(c[0] * k, c[1] * k, c[2] * k)
       count++
     }
-    for (let i = count; i < MAX_LIGHTS; i++) {
-      dirs.push(0, 0, 0)
-      colors.push(0, 0, 0)
-    }
-    setTargetParams(texture, { uHemiSky: sky, uHemiGround: ground, uLightCount: count, uLightDir: dirs, uLightColor: colors })
+    for (let i = count; i < MAX_LIGHTS; i++) colors.push(0, 0, 0)
+    setTargetParams(texture, { uHemiSky: sky, uHemiGround: ground, uLightCount: count, uLightColor: colors })
   }
   let orderDirty = false
   // The order last handed to the engine: a resort that lands on the same
@@ -955,14 +957,6 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       mesh._center[2] = m[2] * cx + m[6] * cy + m[10] * cz + m[14]
     }
   }
-  // A light moved when it or any ancestor did.
-  let lightMoved = (): boolean => {
-    for (let light of lights) {
-      for (let n: SceneNode | null = light; n !== null; n = n.parent) if (n._moved) return true
-    }
-    return false
-  }
-
   let fov = 60
   let near = 0.1
   let far = 100
@@ -1008,12 +1002,13 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       })
       if (transparentCount > 1) orderDirty = true
     }
+    // Light bookkeeping first, so a fresh direction-slot bind is seeded
+    // by the flush below in the same sync.
+    if (lightsDirty) writeLights()
     // The core recomputes the moved subtrees and writes every entry's
-    // uModel/uNormal and visibility switch; what follows is the JS-side
-    // bookkeeping that reads back from it.
+    // uModel/uNormal, visibility switch and direction slots.
     spatial.flush()
     if (moved.length > 0) {
-      if (lights.length > 0 && !lightsDirty) lightsDirty = lightMoved()
       // Which meshes moved is the core's knowledge now, so any move with
       // two or more transparent meshes re-sorts (sortEntries issues nothing
       // when the permutation is unchanged).
@@ -1022,7 +1017,6 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       moved.length = 0
     }
     if (orderDirty) sortEntries()
-    if (lightsDirty) writeLights()
   }
 
   let hooks: SceneHooks = {
@@ -1371,7 +1365,13 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       if (scheduled) sync()
       if (disposed) return []
       let hits: Hit[] = []
-      for (let h of spatial.raycast(origin[0], origin[1], origin[2], direction[0], direction[1], direction[2])) {
+      rayOriginScratch[0] = origin[0]
+      rayOriginScratch[1] = origin[1]
+      rayOriginScratch[2] = origin[2]
+      rayDirScratch[0] = direction[0]
+      rayDirScratch[1] = direction[1]
+      rayDirScratch[2] = direction[2]
+      for (let h of spatial.raycast(rayOriginScratch, rayDirScratch)) {
         let mesh = byNode.get(h.node)
         if (mesh === undefined) continue
         let hit: Hit = { mesh, distance: h.distance, point: h.point }
@@ -1399,6 +1399,9 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
         spatial.destroyNode(root._node)
         root._node = null
       }
+      // Drain the zeroed direction slots the teardown queued while the
+      // target still exists; afterwards their groups are gone.
+      spatial.flush()
       destroyTexture(texture)
       if (background !== null) {
         // The entry died with the target; the pipeline and program are the
