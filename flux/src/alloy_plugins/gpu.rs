@@ -175,8 +175,8 @@ fn collect_format(ctx: &Ctx<'_>, opts: &Option<Object<'_>>, api: &str) -> rquick
 
 // Decode a target create's positional params argument (the live-data half;
 // null and undefined both mean none) and its per-target options -
-// { textures, buffer, vertexCount, clearColor, render, loadOp, filter,
-// wrap, label }, everything optional - into the alloy target spec. `render`
+// { textures, buffer, vertexCount, clearColor, render, loadOp, samples,
+// filter, wrap, label }, everything optional - into the alloy target spec. `render`
 // ("auto" | "manual") and `loadOp` ("clear" | "load") are vocabulary,
 // validated here at the boundary like the pipeline words; the
 // load-requires-manual invariant is alloy's (Context rejects it).
@@ -213,9 +213,17 @@ fn collect_target_half(
     },
     None => false,
   };
+  let samples = match opts {
+    Some(o) => match o.get::<_, Option<f64>>("samples")? {
+      None => 1,
+      Some(n) if n == 1.0 || n == 2.0 || n == 4.0 || n == 8.0 => n as u32,
+      Some(n) => return Err(throw_str(ctx, &format!("{api}: samples must be 1, 2, 4 or 8, got {n}"))),
+    },
+    None => 1,
+  };
   let sampler = collect_sampler(ctx, opts, api)?;
   let label = collect_label(opts)?;
-  Ok(alloy::TargetSpec { width, height, clear_color, sampler, manual, load, label })
+  Ok(alloy::TargetSpec { width, height, clear_color, sampler, manual, load, samples, label })
 }
 
 // The draw-entry half: params (its own argument), textures, buffer, and the

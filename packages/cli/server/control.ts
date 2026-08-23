@@ -105,6 +105,17 @@ function parseRect(query: Map<string, string>): { x: number; y: number; width: n
   return { x: x!, y: y!, width: width!, height: height! }
 }
 
+// Optional output format shared by /snapshot and /texture: "png" (default,
+// the reply carries pngBase64) or "raw" (rgbaBase64: RGBA8 bytes, rows
+// top-down, no decoder needed for pixel assertions). Returns undefined for
+// the default, or a 400 Response.
+function parseFormat(query: Map<string, string>): "raw" | undefined | Response {
+  let param = query.get("format")
+  if (param === undefined || param === "png") return undefined
+  if (param === "raw") return "raw"
+  return Response.json({ error: 'Format must be "png" or "raw"' }, { status: 400 })
+}
+
 // Optional integer magnification shared by /snapshot and /texture. Returns
 // undefined when absent or 1, a 400 Response when out of range.
 function parseScale(query: Map<string, string>): number | Response | undefined {
@@ -241,10 +252,16 @@ export async function handleControl(req: Request, path: string, query: Map<strin
       let scale = parseScale(query)
       if (scale instanceof Response) return scale
       if (scale) extra.scale = scale
+      let format = parseFormat(query)
+      if (format instanceof Response) return format
+      if (format) extra.format = format
       return handleQuery(query, "snapshot", extra)
     }
-    case "/__control__/gpu":
-      return handleQuery(query, "gpu")
+    case "/__control__/gpu": {
+      // ?label=<text> keeps only resources created with exactly that label.
+      let label = query.get("label")
+      return handleQuery(query, "gpu", label === undefined ? undefined : { label })
+    }
     case "/__control__/debug": {
       // GET lists the app's registered debug commands; POST calls one, with
       // an optional JSON body as its args.
@@ -267,6 +284,9 @@ export async function handleControl(req: Request, path: string, query: Map<strin
       let scale = parseScale(query)
       if (scale instanceof Response) return scale
       if (scale) extra.scale = scale
+      let format = parseFormat(query)
+      if (format instanceof Response) return format
+      if (format) extra.format = format
       return handleQuery(query, "texture", extra)
     }
     case "/__control__/clock": {

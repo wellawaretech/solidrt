@@ -102,7 +102,7 @@ export function validateArgs() {
       }
       break
     case "check":
-      if (!source || !isSource) usage("srt check <entry.[tsx|jsx|ts|js]>")
+      if (source && !isSource) usage("srt check [entry.[tsx|jsx|ts|js]]")
       break
     case "render":
       if (!source || !isTsx) usage("srt render <entry.[tsx|jsx]>")
@@ -154,7 +154,8 @@ Commands:
   server [file]          Start dev server only
   client                 Start solidrt-go client only
   bundle <file>          Transpile TS/JS/TSX/JSX to JS or bytecode
-  check <file>           Verify the app builds and typechecks, without writing anything
+  check [file]           Verify the app builds and typechecks, without writing anything
+                         (no file: every examples/*/src/index.tsx and packages/*/examples/*.tsx)
   render <file.tsx|jsx>  Replay a script (optional) and render frames for video generation
   pack <file>            Bundle + compile to a standalone executable (experimental)
   mcp                    MCP server (stdio) exposing the running dev server to coding agents

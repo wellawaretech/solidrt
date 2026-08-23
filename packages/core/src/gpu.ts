@@ -322,6 +322,12 @@ export function createShaderTexture(
  * the default `"clear"` clears to `clearColor` per render; state that must
  * read its own pixels (decay, blur, simulation) still ping-pongs across two
  * manual targets, and `copyTexture` seeds either shape.
+ *
+ * `samples` (2, 4 or 8) multisamples the target's storage so filled
+ * geometry gets anti-aliased edges; the texture id still names a
+ * single-sample image, so nothing downstream changes. Clamped to the device
+ * maximum, falls back to single-sample (with a warning) where the driver
+ * refuses, and throws with `loadOp: "load"`.
  */
 export function createShaderTarget(
   pipeline: gpu.RenderPipelineId,
@@ -335,6 +341,7 @@ export function createShaderTarget(
     clearColor?: [number, number, number, number]
     render?: "auto" | "manual"
     loadOp?: "clear" | "load"
+    samples?: 1 | 2 | 4 | 8
   } & (gpu.DrawRange | (gpu.IndexBinding & gpu.IndexRange)) &
     CreateOptions &
     SamplerOptions,
@@ -386,6 +393,7 @@ export function createDrawTarget(
     clearColor?: [number, number, number, number]
     render?: "auto" | "manual"
     loadOp?: "clear" | "load"
+    samples?: 1 | 2 | 4 | 8
   } & CreateOptions &
     SamplerOptions,
 ): gpu.TextureId {
@@ -560,6 +568,7 @@ export function createPipelineTexture(
     clearColor?: [number, number, number, number]
     render?: "auto" | "manual"
     loadOp?: "clear" | "load"
+    samples?: 1 | 2 | 4 | 8
   } & (gpu.DrawRange | (gpu.IndexBinding & gpu.IndexRange)) &
     CreateOptions &
     SamplerOptions,

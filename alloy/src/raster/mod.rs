@@ -1420,6 +1420,7 @@ impl RasterState {
       buffers,
       spec.entry.draw,
       spec.target.clear_color,
+      spec.target.samples,
     )?;
     let mut shader =
       shader.with_sampler(spec.target.sampler).with_manual(spec.target.manual).with_load(spec.target.load);
@@ -1493,6 +1494,7 @@ impl RasterState {
       buffers,
       entry.draw,
       spec.clear_color,
+      spec.samples,
     )
     .map_err(|(_, e)| e)?
     .with_sampler(spec.sampler)
@@ -1507,7 +1509,7 @@ impl RasterState {
   /// flush-rendered draw target starts dirty (its first render is the clear);
   /// a manual one is cleared at registration like every manual target.
   fn create_draw_target(&mut self, id: u64, spec: TargetSpec, depth: bool) -> Result<Texture, String> {
-    let shader = ShaderTexture::new_draw_target(&self.gl, spec.width, spec.height, depth, spec.clear_color)?
+    let shader = ShaderTexture::new_draw_target(&self.gl, spec.width, spec.height, depth, spec.clear_color, spec.samples)?
       .with_sampler(spec.sampler)
       .with_manual(spec.manual)
       .with_load(spec.load);
@@ -1724,6 +1726,7 @@ impl RasterState {
           first_vertex: draw.map(|d| d.first_vertex),
           instance_count: draw.map(|d| d.instance_count),
           depth: shader.has_depth(),
+          samples: shader.samples(),
           depth_write: if flat { shader.depth_write() } else { None },
           blend: if flat { shader.blend_name() } else { None },
           cull: if flat { shader.cull_name() } else { None },

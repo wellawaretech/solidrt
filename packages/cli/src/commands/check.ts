@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, rmSync } from "node:fs"
+import { Glob } from "bun"
 import { dirname, join, resolve } from "node:path"
 import { source } from "../args"
 import { bundleWith, findIsolateModules } from "../bundler"
@@ -126,23 +127,14 @@ export function reportTypes(
   return false
 }
 
-export async function runCheckCommand() {
-  let entry = source!
-  if (!existsSync(entry)) {
-    // Without this, the missing file surfaces later as an internal ENOENT
-    // stack trace (scandir/Bun.build), which reads as a CLI bug - the common
-    // cause is just running from the wrong directory.
-    console.error(`No such entry: ${entry} (resolved from ${process.cwd()})`)
-    process.exit(1)
-  }
+// Check one entry: bundle in memory, then typecheck. Returns whether it passed.
+async function checkEntry(entry: string): Promise<boolean> {
   let failed = false
-
   let result = await bundleWith({ entry, dev: true, minify: false })
   if (!result) {
     // bundleWith already printed the compile errors.
     failed = true
   }
-
   let root = findProjectRoot(entry)
   if (!root) {
     console.warn("Typecheck skipped: no tsconfig.json or package.json above the entry")
@@ -150,8 +142,48 @@ export async function runCheckCommand() {
     let types = await typecheck(root, entry)
     if (types && reportTypes(types)) failed = true
   }
+  return !failed
+}
 
-  if (failed) process.exit(1)
-  console.log("Check passed")
+// The app entries a bare `srt check` covers, relative to the cwd: every
+// example app and every package example. The same set CI gates, so one call
+// here answers "did I break any example" before pushing.
+const CHECK_ALL_GLOBS = ["examples/*/src/index.tsx", "packages/*/examples/*.tsx"]
+function discoverEntries(): string[] {
+  let entries: string[] = []
+  for (let pattern of CHECK_ALL_GLOBS) entries.push(...new Glob(pattern).scanSync({ cwd: process.cwd() }))
+  return entries.sort()
+}
+
+export async function runCheckCommand() {
+  if (source) {
+    let entry = source
+    if (!existsSync(entry)) {
+      // Without this, the missing file surfaces later as an internal ENOENT
+      // stack trace (scandir/Bun.build), which reads as a CLI bug - the common
+      // cause is just running from the wrong directory.
+      console.error(`No such entry: ${entry} (resolved from ${process.cwd()})`)
+      process.exit(1)
+    }
+    if (!(await checkEntry(entry))) process.exit(1)
+    console.log("Check passed")
+    process.exit(0)
+  }
+
+  let entries = discoverEntries()
+  if (entries.length === 0) {
+    console.error(`No entries found under ${process.cwd()} (looked for ${CHECK_ALL_GLOBS.join(", ")})`)
+    process.exit(1)
+  }
+  let failures: string[] = []
+  for (let entry of entries) {
+    console.log(`== ${entry}`)
+    if (!(await checkEntry(entry))) failures.push(entry)
+  }
+  if (failures.length > 0) {
+    console.error(`${failures.length} of ${entries.length} entries failed:\n  ${failures.join("\n  ")}`)
+    process.exit(1)
+  }
+  console.log(`Check passed (${entries.length} entries)`)
   process.exit(0)
 }

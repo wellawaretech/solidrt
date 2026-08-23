@@ -62,11 +62,7 @@ jobs:
       # Every example app must bundle and typecheck: examples are consumed by
       # the documentation generator, so a broken example is a broken docs page.
       - name: Check examples
-        run: |
-          for app in examples/*/; do
-            echo "== $app"
-            bun packages/cli/src/main.ts check "$app"src/index.tsx
-          done
+        run: bun packages/cli/src/main.ts check
 
   # okf/index.md is generated, so it is a lie the moment a note is added or
   # moved by hand. This fails the build instead: stale index, missing

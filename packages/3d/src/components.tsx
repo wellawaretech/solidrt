@@ -103,6 +103,9 @@ export type SceneProps = {
    * `scene.background = color` is `clearColor` here. */
   background?: string
   label?: string
+  /** Multisample count (1, 2, 4 or 8; default 1): anti-aliased mesh edges.
+   * Fixed at creation. */
+  samples?: 1 | 2 | 4 | 8
   ref?: (scene: SceneHandle) => void
   /**
    * Compose the output yourself: called once (untracked) with the scene's
@@ -131,7 +134,7 @@ export type SceneProps = {
  */
 export let Scene: ParentComponent<SceneProps> = props => {
   let scene = untrack(() =>
-    createScene(props.width, props.height, { clearColor: props.clearColor, label: props.label }),
+    createScene(props.width, props.height, { clearColor: props.clearColor, label: props.label, samples: props.samples }),
   )
   createEffect(
     () => [props.width, props.height] as const,

@@ -143,7 +143,7 @@ So the do-order is spent, and what remains sorts into four groups.
   gave it a legal shape), the multi-pass chain example
   ([gpu-example-gaps](../backlog/gpu-example-gaps.md), unblocked since 07-29
   and still unwritten), float texture formats and sampleable depth, then MSAA
-  ([gpu-target-antialiasing](../backlog/gpu-target-antialiasing.md)). Lesson
+  ([gpu-target-antialiasing](../done/gpu-target-antialiasing.md)). Lesson
   7's pipeline-side format validation lands with whichever of the last two
   arrives first: that is the moment a pipeline and a target can first
   disagree invisibly.
@@ -518,7 +518,7 @@ boolean.
 That is the correct simplification *today* and it should not be pre-built.
 What is worth recording now: the moment float targets
 ([extensions](../done/gpu-pipeline-extensions.md)) or MSAA
-([target-antialiasing](../backlog/gpu-target-antialiasing.md)) land, a
+([target-antialiasing](../done/gpu-target-antialiasing.md)) land, a
 pipeline and a target can disagree, and the disagreement is invisible in GL
 (it renders wrong, or the FBO goes incomplete with a hex code). The lesson is
 the validation surface, not the fields: whatever format vocabulary arrives
@@ -815,7 +815,7 @@ name their blockers:
   unblocked by the object-model split. Mipmaps (lesson 15) and sampleable
   depth (lesson 16) join that list from the standards comparison. MSAA on
   pipeline targets is its own item
-  ([gpu-target-antialiasing](../backlog/gpu-target-antialiasing.md)):
+  ([gpu-target-antialiasing](../done/gpu-target-antialiasing.md)):
   single-sample targets make filled-triangle silhouettes the dominant
   artifact.
 - **First-person anything**: still blocked on relative mouse input before

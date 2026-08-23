@@ -675,12 +675,13 @@ async fn try_serve(
                 let node_id = json.get("nodeId").and_then(|n| n.as_u64()).unwrap_or(0);
                 let rect = query_rect(&json);
                 let scale = query_scale(&json);
+                let raw = query_raw(&json);
                 let exec = queries.exec.lock().expect("exec handle lock poisoned").clone();
                 match exec {
                   Some(eh) => {
                     let reply_tx = queries.outbound_tx.clone();
                     let frame_requested = flags.frame_requested.clone();
-                    eh.exec(move |ctx| request_snapshot(&ctx, node_id, id, rect, scale, reply_tx, frame_requested));
+                    eh.exec(move |ctx| request_snapshot(&ctx, node_id, id, rect, scale, raw, reply_tx, frame_requested));
                   }
                   None => {
                     let _ = client.send(tokio_websockets::Message::text(error_reply(id, "no running engine"))).await;
@@ -694,8 +695,9 @@ async fn try_serve(
                 match exec {
                   Some(eh) => {
                     let reply_tx = queries.outbound_tx.clone();
+                    let label = json.get("label").and_then(|l| l.as_str()).map(str::to_string);
                     eh.exec(move |ctx| {
-                      let _ = reply_tx.send(gpu_reply(&ctx, id));
+                      let _ = reply_tx.send(gpu_reply(&ctx, id, label.as_deref()));
                     });
                   }
                   None => {
@@ -710,12 +712,13 @@ async fn try_serve(
                 let texture_id = json.get("textureId").and_then(|n| n.as_u64()).unwrap_or(0);
                 let rect = query_rect(&json);
                 let scale = query_scale(&json);
+                let raw = query_raw(&json);
                 let exec = queries.exec.lock().expect("exec handle lock poisoned").clone();
                 match exec {
                   Some(eh) => {
                     let reply_tx = queries.outbound_tx.clone();
                     eh.exec(move |ctx| {
-                      let _ = reply_tx.send(texture_reply(&ctx, id, texture_id, rect, scale));
+                      let _ = reply_tx.send(texture_reply(&ctx, id, texture_id, rect, scale, raw));
                     });
                   }
                   None => {
@@ -1150,6 +1153,12 @@ fn query_scale(json: &serde_json::Value) -> u32 {
   json.get("scale").and_then(|s| s.as_u64()).unwrap_or(1) as u32
 }
 
+/// Whether a snapshot/texture query wants the pixels as they are
+/// (`format: "raw"`: base64 RGBA8, rows top-down) instead of a PNG.
+fn query_raw(json: &serde_json::Value) -> bool {
+  json.get("format").and_then(|f| f.as_str()) == Some("raw")
+}
+
 /// Cap on a scaled capture's side length: magnification multiplies the PNG
 /// encode input by scale^2, and that encode runs inline on the JS thread.
 const CAPTURE_OUT_MAX: u32 = 8192;
@@ -1220,6 +1229,7 @@ fn request_snapshot(
   id: u64,
   rect: Option<(u32, u32, u32, u32)>,
   scale: u32,
+  raw: bool,
   reply_tx: UnboundedSender<String>,
   frame_requested: Arc<AtomicBool>,
 ) {
@@ -1233,7 +1243,7 @@ fn request_snapshot(
     Box::new(move |result| {
       let reply = match result {
         Ok(info) => match crop_scale_rgba(info.pixels, info.width, info.height, rect, scale) {
-          Ok((pixels, width, height)) => snapshot_reply(id, width, height, pixels),
+          Ok((pixels, width, height)) => snapshot_reply(id, width, height, pixels, raw),
           Err(e) => error_reply(id, &e),
         },
         Err(e) => error_reply(id, &e),
@@ -1248,18 +1258,26 @@ fn request_snapshot(
   frame_requested.store(true, Ordering::Relaxed);
 }
 
-/// Encode a captured RGBA8 buffer as a base64 PNG reply. On-demand and rare (a
-/// dev-server query), so encoding inline on the JS thread is fine.
-fn snapshot_reply(id: u64, width: u32, height: u32, rgba: Vec<u8>) -> String {
-  let png = match forge::image::encode_png(&rgba, width, height) {
-    Ok(png) => png,
-    Err(e) => return error_reply(id, &format!("png encode failed: {e}")),
+/// Encode a captured RGBA8 buffer as a base64 PNG reply, or as the base64
+/// bytes themselves when `raw` (for pixel assertions without a decoder). On-
+/// demand and rare (a dev-server query), so encoding inline on the JS thread
+/// is fine.
+fn snapshot_reply(id: u64, width: u32, height: u32, rgba: Vec<u8>, raw: bool) -> String {
+  let data = if raw {
+    let b64 = base64::engine::general_purpose::STANDARD.encode(&rgba);
+    serde_json::json!({ "rgbaBase64": b64, "width": width, "height": height })
+  } else {
+    let png = match forge::image::encode_png(&rgba, width, height) {
+      Ok(png) => png,
+      Err(e) => return error_reply(id, &format!("png encode failed: {e}")),
+    };
+    let b64 = base64::engine::general_purpose::STANDARD.encode(&png);
+    serde_json::json!({ "pngBase64": b64, "width": width, "height": height })
   };
-  let b64 = base64::engine::general_purpose::STANDARD.encode(&png);
   serde_json::json!({
     "type": "result",
     "id": id,
-    "data": { "pngBase64": b64, "width": width, "height": height },
+    "data": data,
   })
   .to_string()
 }
@@ -1274,7 +1292,9 @@ fn insert_label(obj: &mut serde_json::Value, label: &Option<String>) {
 
 /// Inventory alloy's GPU bookkeeping (textures, buffers, pipelines, programs)
 /// and encode it. Runs on the JS thread (see the query handling above).
-fn gpu_reply(ctx: &flux::rquickjs::Ctx<'_>, id: u64) -> String {
+/// `label`, when given, keeps only the resources created with exactly that
+/// debug label (every list; the window shader has none and is dropped).
+fn gpu_reply(ctx: &flux::rquickjs::Ctx<'_>, id: u64, label: Option<&str>) -> String {
   let Some(atx) = ctx.userdata::<flux::gui::AlloyContext>() else {
     return error_reply(id, "no alloy context");
   };
@@ -1362,6 +1382,9 @@ fn gpu_reply(ctx: &flux::rquickjs::Ctx<'_>, id: u64) -> String {
       }
       if p.depth {
         map.insert("depth".into(), true.into());
+      }
+      if p.samples > 1 {
+        map.insert("samples".into(), p.samples.into());
       }
       // Reported only off their defaults, like depth: absent means the
       // ordinary opaque draw.
@@ -1501,11 +1524,17 @@ fn gpu_reply(ctx: &flux::rquickjs::Ctx<'_>, id: u64) -> String {
     })
     .collect();
 
+  let keep = |list: Vec<serde_json::Value>| -> Vec<serde_json::Value> {
+    match label {
+      None => list,
+      Some(label) => list.into_iter().filter(|obj| obj.get("label").and_then(|l| l.as_str()) == Some(label)).collect(),
+    }
+  };
   let mut data = serde_json::json!({
-    "textures": textures, "buffers": buffers, "pipelines": pipelines,
-    "renderPipelines": render_pipelines, "programs": programs,
+    "textures": keep(textures), "buffers": keep(buffers), "pipelines": keep(pipelines),
+    "renderPipelines": keep(render_pipelines), "programs": keep(programs),
   });
-  if let Some(ws) = &res.window_shader {
+  if let (Some(ws), None) = (&res.window_shader, label) {
     data["windowShader"] = serde_json::json!({
       "programId": ws.program_id, "layerWidth": ws.width, "layerHeight": ws.height,
       "previous": ws.previous, "passOnlyFrames": ws.pass_only_frames,
@@ -1528,6 +1557,7 @@ fn texture_reply(
   texture_id: u64,
   rect: Option<(u32, u32, u32, u32)>,
   scale: u32,
+  raw: bool,
 ) -> String {
   let Some(atx) = ctx.userdata::<flux::gui::AlloyContext>() else {
     return error_reply(id, "no alloy context");
@@ -1535,7 +1565,7 @@ fn texture_reply(
   match atx.0.read_texture_by_id(texture_id) {
     Err(e) => error_reply(id, &e),
     Ok((width, height, pixels)) => match crop_scale_rgba(pixels, width, height, rect, scale) {
-      Ok((pixels, width, height)) => snapshot_reply(id, width, height, pixels),
+      Ok((pixels, width, height)) => snapshot_reply(id, width, height, pixels, raw),
       Err(e) => error_reply(id, &e),
     },
   }

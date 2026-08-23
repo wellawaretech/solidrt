@@ -54,7 +54,7 @@ blendMode and pointer events like any element.
 
 | Component | Props |
 | --- | --- |
-| `Scene` | `width`, `height` (target pixels), `clearColor?`, `background?` (fragment GLSL), `label?`, `ref?(scene)`, `output?(texture)`, `events?` (mesh pointer events, default on) |
+| `Scene` | `width`, `height` (target pixels), `clearColor?`, `background?` (fragment GLSL), `samples?` (1/2/4/8 MSAA), `label?`, `ref?(scene)`, `output?(texture)`, `events?` (mesh pointer events, default on) |
 | `Group` | `position?`, `rotation?` (Euler radians, XYZ order), `quaternion?` (either, not both), `scale?` (number = uniform), `visible?`, pointer events (below), `ref?(node)` |
 | `Mesh` | `geometry`, `material`, transforms as Group, `params?` (per-mesh uniforms, merge semantics - no unset), pointer events (below), `ref?(mesh)` |
 | `InstancedMesh` | as Mesh, plus `records` (interleaved per-instance floats; buffer capacity starts at the first value and grows on larger rewrites), `count?` (records drawn, default all), `bounds?` (local [minX..maxZ] over the population - without it the mesh never picks); the record buffer is component-owned and freed on unmount |

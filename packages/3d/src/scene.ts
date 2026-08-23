@@ -231,6 +231,9 @@ export type SceneOptions = {
   autoFree?: boolean
   filter?: FilterMode
   wrap?: WrapMode
+  /** Multisample count of the target (1, 2, 4 or 8; default 1). Storage-only
+   * anti-aliasing of mesh edges; see createDrawTarget. */
+  samples?: 1 | 2 | 4 | 8
 }
 
 export type Scene = {
@@ -748,6 +751,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     clearColor: opts?.clearColor,
     filter: opts?.filter,
     wrap: opts?.wrap,
+    samples: opts?.samples,
     label: opts?.label ?? "scene",
     autoFree: false,
   })

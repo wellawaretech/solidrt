@@ -31,6 +31,15 @@ pub struct TargetSpec {
   /// scratch and always clears. Creation and resize still clear, so a load
   /// target starts (and restarts) at `clear_color`.
   pub load: bool,
+  /// Multisample count for the mesh-target creates (1 = single-sample, the
+  /// default). Storage only: the target texture stays single-sample and the
+  /// id keeps meaning the resolved output. Clamped to the device maximum;
+  /// a configuration the driver refuses falls back to single-sample with a
+  /// warning (see `ShaderTexture::samples` for the effective value).
+  /// Rejected together with `load`: ES 3.0 cannot blit single-sample
+  /// contents back into multisampled storage, so "draw over the previous
+  /// contents" has no implementation there.
+  pub samples: u32,
   /// Free-form debug name for the target's texture (WebGPU's label),
   /// surfaced in the resource inventory and raster-side messages.
   pub label: Option<String>,

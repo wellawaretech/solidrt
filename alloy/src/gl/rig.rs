@@ -99,14 +99,14 @@ void main() {
 /// (okf/backlog/android-surface-swap-latency.md). None when the extension is
 /// not advertised; desktop GL lacks it and its bandwidth does not miss it.
 /// Call on the raster thread with the GL context current.
-pub(super) struct MsrttFns {
-  pub(super) framebuffer_texture_2d_multisample:
+pub(crate) struct MsrttFns {
+  pub(crate) framebuffer_texture_2d_multisample:
     unsafe extern "C" fn(target: u32, attachment: u32, textarget: u32, texture: u32, level: i32, samples: i32),
-  pub(super) renderbuffer_storage_multisample:
+  pub(crate) renderbuffer_storage_multisample:
     unsafe extern "C" fn(target: u32, samples: i32, internalformat: u32, width: i32, height: i32),
 }
 
-pub(super) fn msrtt() -> Option<&'static MsrttFns> {
+pub(crate) fn msrtt() -> Option<&'static MsrttFns> {
   static FNS: std::sync::OnceLock<Option<MsrttFns>> = std::sync::OnceLock::new();
   FNS
     .get_or_init(|| unsafe {
@@ -115,7 +115,7 @@ pub(super) fn msrtt() -> Option<&'static MsrttFns> {
       }
       let ftm = sdl3::sys::video::SDL_GL_GetProcAddress(c"glFramebufferTexture2DMultisampleEXT".as_ptr())?;
       let rsm = sdl3::sys::video::SDL_GL_GetProcAddress(c"glRenderbufferStorageMultisampleEXT".as_ptr())?;
-      log::info!("[alloy] window MSAA uses EXT_multisampled_render_to_texture (in-tile resolve)");
+      log::info!("[alloy] MSAA uses EXT_multisampled_render_to_texture (in-tile resolve)");
       Some(MsrttFns {
         framebuffer_texture_2d_multisample: std::mem::transmute(ftm),
         renderbuffer_storage_multisample: std::mem::transmute(rsm),
@@ -288,7 +288,7 @@ pub(super) enum OffscreenDraw {
 /// glInvalidateFramebuffer is core in ES 3.0 (the platform minimum) but only
 /// reached desktop GL at 4.3, so a desktop context below that must skip the
 /// hint rather than call an unloaded function.
-pub(super) fn supports_invalidate(gl: &glow::Context) -> bool {
+pub(crate) fn supports_invalidate(gl: &glow::Context) -> bool {
   let v = gl.version();
   if v.is_embedded {
     v.major >= 3

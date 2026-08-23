@@ -68,7 +68,12 @@ Never use the built-in `run` skill here. Drive the app yourself:
   even though one is running. In that case talk to the control API
   directly with curl on `http://127.0.0.1:<port>/__control__/...`: `/clients`,
   `/logs`, `/tree?query=<text>`, `/snapshot?node=<id>` (JSON `{width, height,
-  pngBase64}`; decode the field for the PNG), `/stats`, and
+  pngBase64}`; decode the field for the PNG; add `&format=raw` for
+  `rgbaBase64` instead - RGBA8 bytes, no decoder needed for pixel
+  assertions), `/texture?id=<textureId>` (same shape and options, native
+  size; `/snapshot` is display-scaled), `/gpu?label=<text>` (resources
+  created with exactly that label; ids change on reload, labels do not),
+  `/stats`, and
   POST `/input` with `{"events":[...]}` (same event shape as
   `mcp__solidrt__send_input`), `/reload`, `/load` `{"entry":...}`. The
   bridge is a long-lived process: a change to `packages/cli/src/commands/mcp.ts`

@@ -1,10 +1,64 @@
 ---
 title: Anti-aliasing for GPU pipeline targets
-description: createPipeline targets are single-sample, so any filled geometry has hard jaggies; wanted a sample count (MSAA + resolve) or a documented supersample path with known-good minification.
+description: Mesh targets were single-sample, so any filled geometry had hard jaggies. Landed 2026-08-23 as a target-level `samples` option (createShaderTarget, createPipelineTexture, createDrawTarget, and `<Scene samples>` in @solidrt/3d) with two engine flavors - in-tile via EXT_multisampled_render_to_texture, explicit MSAA renderbuffer + resolve blit elsewhere - verified on Linux; the in-tile flavor awaits an Android run.
 created: 2026-07-27
+completed: 2026-08-23
 ---
 
 # Anti-aliasing for GPU pipeline targets
+
+## Landed 2026-08-23: `samples` on the target
+
+`samples?: 1 | 2 | 4 | 8` on the target half of every mesh-target create
+(`createShaderTarget`, `createPipelineTexture`, `createDrawTarget`) and
+forwarded as `<Scene samples>` / `SceneOptions.samples` in `@solidrt/3d`.
+Fragment targets (fullscreen, no silhouettes) do not take it.
+
+Placement differs from the PipelineDesc shape sketched below, deliberately:
+that sketch predates draw targets. One draw target holds entries with many
+pipelines, and multisampling is pure storage - it changes no program or
+raster state - so it follows depth's rule ("explicit on the draw target")
+and lives in `TargetSpec` next to `clear_color`/`sampler`. The
+mismatch-proof property the note wanted survives: storage derives from the
+one declaration, nothing can disagree with it.
+
+Engine (`alloy/src/gpu/target.rs`, `Msaa`): the target texture stays
+single-sample in both flavors, so the id keeps meaning the resolved output
+and display, sampling, `readTexture`, `copyTexture` and the dependency
+graph are untouched.
+
+- `InTile`: EXT_multisampled_render_to_texture, where advertised (tiled
+  mobile GPUs; the window path's `MsrttFns` is reused). The texture itself
+  is attached with a sample count and the driver resolves at tile
+  writeback; depth is allocated through the extension's storage call. No
+  extra color storage, no resolve pass.
+- `Explicit`: ES 3.0 core. A multisampled color renderbuffer in its own
+  FBO, resolved into the texture with one `glBlitFramebuffer` after every
+  pass and clear, then invalidated. Depth multisampled to match.
+
+Clamped to `MAX_SAMPLES`; a configuration the driver refuses falls back to
+single-sample with a warning rather than failing the create (the app asked
+for quality, not a requirement); the effective count is reported in the
+resource inventory (`/gpu` `samples`). Resize reallocates the multisample
+storage alongside the texture, with the same rollback. `loadOp: "load"` +
+`samples > 1` throws: ES 3.0 cannot blit single-sample contents into
+multisampled storage, and the extension defines the previous contents as
+undefined, so accumulation targets stay single-sample.
+
+Verified on Linux (explicit flavor) via the control API with a static tilted
+cube in two scenes: the single-sample readback has 2 gray levels, the 4x one
+5 (0, 1/4, 2/4, 3/4, 1) with ~450 coverage-weighted edge pixels at 256x256;
+after a resize to 320 the 4x target still reads 5 levels. Probe:
+`probes/msaa-probe.tsx`.
+
+Not done, on purpose: sharing multisample scratch across targets (the
+snapshot-rig pool idea below) - each target owns its storage, which is
+simple and only costs memory proportional to what the app asked for. The
+in-tile flavor has only been compiled, not run, on a device that has the
+extension; an Android run is the remaining verification.
+
+## Original item
+
 
 createPipeline renders into a plain single-sample texture. Nothing in the
 option bag (params, textures, attributes, buffer, topology, vertexCount,

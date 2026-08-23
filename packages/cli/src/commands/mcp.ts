@@ -322,8 +322,11 @@ let TOOLS: {
     name: "get_gpu_resources",
     readOnly: true,
     description:
-      "Inventory of a running app client's GPU resources: textures (id, size, whether a shader renders into it), vertex buffers (id, byteLength), and shader/pipeline targets (output textureId, kind, bufferId, topology, drawCount plus firstVertex/instanceCount when off their 0/1 defaults, depth, attribute layout, bound sampler texture ids, current uniform values - the most recent writes, which the next frame or readback draws with - plus passes/issueMs/execMs, cumulative per-target render count, raster-thread issue time and GPU-side execution time in whole ms: when get_stats shows gpuPasses or gpuPassExecMs running hot, these attribute the cost to the specific target). Use it when the render tree is just a <texture> leaf and the interesting state lives behind it; follow up with get_texture or get_buffer to see contents.",
-    inputSchema: { client: CLIENT_ARG },
+      "Inventory of a running app client's GPU resources: textures (id, size, whether a shader renders into it), vertex buffers (id, byteLength), and shader/pipeline targets (output textureId, kind, bufferId, topology, drawCount plus firstVertex/instanceCount when off their 0/1 defaults, depth, attribute layout, bound sampler texture ids, current uniform values - the most recent writes, which the next frame or readback draws with - plus passes/issueMs/execMs, cumulative per-target render count, raster-thread issue time and GPU-side execution time in whole ms: when get_stats shows gpuPasses or gpuPassExecMs running hot, these attribute the cost to the specific target). Use it when the render tree is just a <texture> leaf and the interesting state lives behind it; follow up with get_texture or get_buffer to see contents. Pass `label` to keep only the resources created with exactly that debug label (the create's `label` option) - the stable way to find a target again after a reload, since ids change.",
+    inputSchema: {
+      label: z.string().describe("Keep only resources whose create label equals this").optional(),
+      client: CLIENT_ARG,
+    },
   },
   {
     name: "get_texture",
@@ -534,8 +537,13 @@ async function callTool(name: string, args: any): Promise<ControlResult> {
         return { ok: false, message: "send_input requires a non-empty events array" }
       return control(`/input${clientParam(args)}`, "POST", { events: args.events })
     }
-    case "get_gpu_resources":
-      return control(`/gpu${clientParam(args)}`)
+    case "get_gpu_resources": {
+      let params = new URLSearchParams()
+      if (typeof args?.label === "string") params.set("label", args.label)
+      if (typeof args?.client === "number") params.set("client", String(args.client))
+      let qs = params.toString()
+      return control(`/gpu${qs ? `?${qs}` : ""}`)
+    }
     case "list_debug":
       return control(`/debug${clientParam(args)}`)
     case "call_debug": {

@@ -369,6 +369,18 @@ declare module "flux:gpu" {
    * read-modify-write of its own pixels (decay, blur, simulation) still
    * ping-pongs across two manual targets - a pass can never sample the
    * texture it writes.
+   *
+   * `samples` (1, 2, 4 or 8; default 1) multisamples the target's storage:
+   * edges of filled geometry get coverage-weighted AA instead of binary
+   * jaggies. Storage only - the texture id still names a single-sample
+   * image, so display, sampling, `readTexture` and `copyTexture` are
+   * unaffected. The count is clamped to the device maximum and a
+   * configuration the driver refuses falls back to single-sample with a
+   * warning (read the effective value off the resource inventory). Cannot
+   * combine with `loadOp: "load"` (throws): multisampled storage cannot
+   * load the previous contents. Tiled mobile GPUs resolve in-tile
+   * (EXT_multisampled_render_to_texture); everywhere else a resolve blit
+   * follows each pass.
    */
   export function createShaderTarget(
     pipeline: RenderPipelineId,
@@ -382,6 +394,7 @@ declare module "flux:gpu" {
       clearColor?: [number, number, number, number]
       render?: "auto" | "manual"
       loadOp?: "clear" | "load"
+      samples?: 1 | 2 | 4 | 8
     } & (DrawRange | (IndexBinding & IndexRange)) &
       SamplerOptions &
       LabelOption,
@@ -562,6 +575,7 @@ declare module "flux:gpu" {
       clearColor?: [number, number, number, number]
       render?: "auto" | "manual"
       loadOp?: "clear" | "load"
+      samples?: 1 | 2 | 4 | 8
     } & (DrawRange | (IndexBinding & IndexRange)) &
       SamplerOptions &
       LabelOption,
@@ -659,8 +673,9 @@ declare module "flux:gpu" {
    * "auto"` target re-renders exactly when its entries or their inputs
    * change - a static scene costs zero passes, however many entries it
    * holds, and one render is ONE pass however many entries it draws.
-   * `render: "manual"` and `loadOp: "load"` compose exactly as on
-   * {@link createShaderTarget}. With no entries a render is the clear alone.
+   * `render: "manual"`, `loadOp: "load"` and `samples` compose exactly as
+   * on {@link createShaderTarget}. With no entries a render is the clear
+   * alone.
    * Returns a texture id (display, resize, destroy like any target; entries
    * die with it).
    */
@@ -674,6 +689,7 @@ declare module "flux:gpu" {
       clearColor?: [number, number, number, number]
       render?: "auto" | "manual"
       loadOp?: "clear" | "load"
+      samples?: 1 | 2 | 4 | 8
     } & SamplerOptions &
       LabelOption,
   ): TextureId

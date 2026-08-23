@@ -139,6 +139,8 @@ pub struct GpuPipelineInfo {
   /// draws nothing).
   pub instance_count: Option<i32>,
   pub depth: bool,
+  /// Effective multisample count (1 = single-sample).
+  pub samples: u32,
   /// Whether the draw writes depth; None on a fragment-only target.
   pub depth_write: Option<bool>,
   /// "none", "add", "multiply" or "alpha"; None on a fragment-only target.

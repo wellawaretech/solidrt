@@ -184,7 +184,7 @@ Tier 2 - real models, lights, visual quality:
   owns draw order: opaque front-to-back, transparent back-to-front). So
   the blocker inverts: once the library exists the engine only needs the
   blend factor vocabulary (../backlog/gpu-pipeline-blend-modes.md).
-- **MSAA on pipeline targets** (../backlog/gpu-target-antialiasing.md):
+- **MSAA on pipeline targets** (../done/gpu-target-antialiasing.md):
   silhouette jaggies are the dominant artifact on filled geometry.
 
 Tier 3 - later features: **sampleable depth** (extensions file; shadow

@@ -1822,6 +1822,9 @@ fn validate_load(spec: &TargetSpec) -> Result<(), String> {
   if spec.load && !spec.manual {
     return Err("loadOp \"load\" requires render: \"manual\" (a runtime-rendered target must stay a pure function of its inputs)".to_string());
   }
+  if spec.load && spec.samples > 1 {
+    return Err("loadOp \"load\" cannot combine with samples > 1 (multisampled storage cannot load the previous contents)".to_string());
+  }
   Ok(())
 }
 

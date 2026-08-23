@@ -276,10 +276,6 @@ Shaped, not started.
   Answering "who else is burning the GPU" needs a different mechanism on every
   OS, so it wants a documented per-platform recipe or an srt doctor helper
   rather than an engine feature.
-- **[Anti-aliasing for GPU pipeline targets](backlog/gpu-target-antialiasing.md)** [2026-07-27]
-  createPipeline targets are single-sample, so any filled geometry has hard
-  jaggies; wanted a sample count (MSAA + resolve) or a documented supersample
-  path with known-good minification.
 - **[Color math is unreachable headless](backlog/headless-color-math.md)** [2026-08-19]
   parseColor/mixColors/brightness live only on flux:rendertree (gui feature),
   so site tooling, tests, and theme builders cannot call them; the components
@@ -817,6 +813,14 @@ Finished, kept for the reasoning.
   camera motion into O(scene) FFI crossings. Target-level params generalize
   what createShaderTarget already has for the single-draw case, and the GL
   layer's apply-if-declared semantics already do the hard part.
+- **[Anti-aliasing for GPU pipeline targets](done/gpu-target-antialiasing.md)** [2026-08-23]
+  Mesh targets were single-sample, so any filled geometry had hard jaggies.
+  Landed 2026-08-23 as a target-level `samples` option (createShaderTarget,
+  createPipelineTexture, createDrawTarget, and `<Scene samples>` in
+  @solidrt/3d) with two engine flavors - in-tile via
+  EXT_multisampled_render_to_texture, explicit MSAA renderbuffer + resolve
+  blit elsewhere - verified on Linux; the in-tile flavor awaits an Android
+  run.
 - **[Dependency propagation between GPU targets](done/gpu-target-dependency-propagation.md)** [2026-07-31]
   A target sampling another target keeps a stale frame forever unless its own
   params are written; the API accepts the binding and then quietly stops

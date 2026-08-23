@@ -13,7 +13,9 @@ use super::buffer::{release_buffer, GpuBuffer};
 use super::pass::{run_pass, PassDraw, PassInput, ResolvedDraw};
 use super::program::{release_pipeline, release_program, RenderPipeline, ShaderProgram};
 use super::resources::GpuDrawInfo;
-use super::vocab::{blend_name, cull_name, validate_order, AttrFormat, DrawRange, IndexFormat, ParamValue, PipelineDesc};
+use super::vocab::{
+  blend_name, cull_name, validate_order, AttrFormat, DrawRange, IndexFormat, ParamValue, PipelineDesc,
+};
 use super::{prev_buffer, prev_framebuffer, prev_texture, prev_vertex_array};
 
 /// The buffers one draw entry fetches through, resolved from registry ids to
@@ -92,6 +94,9 @@ pub(super) struct MeshState {
   /// single-draw creates. The renderbuffer stays private to the FBO (never
   /// adopted into Impeller).
   depth: Option<glow::Renderbuffer>,
+  /// Multisampled storage when the target was created with `samples >= 2`
+  /// and the device granted it; None = single-sample. See `Msaa`.
+  msaa: Option<Msaa>,
   pub(super) clear_color: [f32; 4],
   /// Color load op (see `TargetSpec::load`): true = draw over the previous
   /// contents instead of clearing. Only ever true on manual targets.
@@ -143,35 +148,38 @@ pub struct ShaderTexture {
   pass_exec_micros: Cell<u64>,
 }
 
-/// Target texture + FBO shared by both shader kinds. Returns (target, fbo)
-/// with the FBO left bound so the caller can attach more (depth) before the
-/// completeness check; the caller restores the previous FBO binding.
+/// How a mesh target multisamples. Both flavors keep the target texture
+/// single-sample - it stays the id everything else samples, displays, reads
+/// back and copies - and differ only in where the samples live:
+///
+/// - `InTile` (EXT_multisampled_render_to_texture): the texture itself is
+///   attached with a sample count and the driver resolves at tile writeback.
+///   No extra color storage, no resolve pass; the right answer on tiled
+///   mobile GPUs (see `gl::MsrttFns`).
+/// - `Explicit` (ES 3.0 core): a multisampled color renderbuffer in its own
+///   FBO, resolved into the texture with glBlitFramebuffer after every pass.
+///
+/// Depth, when the target owns it, is allocated multisampled to match
+/// (through the extension's or the core storage call respectively).
+pub(super) enum Msaa {
+  InTile { fns: &'static crate::gl::MsrttFns, samples: i32 },
+  Explicit { fbo: glow::Framebuffer, color: glow::Renderbuffer, samples: i32 },
+}
+
+impl Msaa {
+  fn samples(&self) -> i32 {
+    match self {
+      Msaa::InTile { samples, .. } | Msaa::Explicit { samples, .. } => *samples,
+    }
+  }
+}
+
+/// Target texture + FBO shared by every target kind: allocation only, nothing
+/// attached and no binding left behind. `attach_storage` wires and checks
+/// it; `create_mesh_storage` is the one-call form every create uses.
 fn create_target(gl: &glow::Context, width: u32, height: u32) -> Result<(glow::Texture, glow::Framebuffer), String> {
   unsafe {
-    let prev_tex = gl.get_parameter_i32(glow::TEXTURE_BINDING_2D);
-
-    let target = gl.create_texture().map_err(|e| format!("glGenTextures failed: {e}"))?;
-    gl.bind_texture(glow::TEXTURE_2D, Some(target));
-    gl.tex_image_2d(
-      glow::TEXTURE_2D,
-      0,
-      glow::RGBA8 as i32,
-      width as i32,
-      height as i32,
-      0,
-      glow::RGBA,
-      glow::UNSIGNED_BYTE,
-      glow::PixelUnpackData::Slice(None),
-    );
-    // No mips exist: the default MIN_FILTER references mipmaps, which would
-    // make the texture sampling-incomplete (reads as black) when Impeller
-    // samples it.
-    gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MIN_FILTER, glow::LINEAR as i32);
-    gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MAG_FILTER, glow::LINEAR as i32);
-    gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_WRAP_S, glow::CLAMP_TO_EDGE as i32);
-    gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_WRAP_T, glow::CLAMP_TO_EDGE as i32);
-    gl.bind_texture(glow::TEXTURE_2D, prev_texture(prev_tex));
-
+    let target = create_target_texture(gl, width, height)?;
     let fbo = match gl.create_framebuffer() {
       Ok(fbo) => fbo,
       Err(e) => {
@@ -179,29 +187,219 @@ fn create_target(gl: &glow::Context, width: u32, height: u32) -> Result<(glow::T
         return Err(format!("glGenFramebuffers failed: {e}"));
       }
     };
-    gl.bind_framebuffer(glow::FRAMEBUFFER, Some(fbo));
-    gl.framebuffer_texture_2d(glow::FRAMEBUFFER, glow::COLOR_ATTACHMENT0, glow::TEXTURE_2D, Some(target), 0);
     Ok((target, fbo))
   }
 }
 
-/// Attach a fresh DEPTH_COMPONENT24 renderbuffer to the currently bound FBO,
-/// restoring the renderbuffer binding it touches.
-unsafe fn attach_depth(gl: &glow::Context, width: u32, height: u32) -> Result<glow::Renderbuffer, String> {
+/// The target texture alone (creation and resize share it): LINEAR, clamp,
+/// no mips - the default MIN_FILTER references mipmaps, which would make the
+/// texture sampling-incomplete (reads as black) when Impeller samples it.
+/// Restores the texture binding it touches.
+unsafe fn create_target_texture(gl: &glow::Context, width: u32, height: u32) -> Result<glow::Texture, String> {
+  let prev_tex = gl.get_parameter_i32(glow::TEXTURE_BINDING_2D);
+  let target = gl.create_texture().map_err(|e| format!("glGenTextures failed: {e}"))?;
+  gl.bind_texture(glow::TEXTURE_2D, Some(target));
+  gl.tex_image_2d(
+    glow::TEXTURE_2D,
+    0,
+    glow::RGBA8 as i32,
+    width as i32,
+    height as i32,
+    0,
+    glow::RGBA,
+    glow::UNSIGNED_BYTE,
+    glow::PixelUnpackData::Slice(None),
+  );
+  gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MIN_FILTER, glow::LINEAR as i32);
+  gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MAG_FILTER, glow::LINEAR as i32);
+  gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_WRAP_S, glow::CLAMP_TO_EDGE as i32);
+  gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_WRAP_T, glow::CLAMP_TO_EDGE as i32);
+  gl.bind_texture(glow::TEXTURE_2D, prev_texture(prev_tex));
+  Ok(target)
+}
+
+/// Everything a mesh target draws into: the texture-owning FBO, optional
+/// depth storage, optional multisampling.
+struct MeshStorage {
+  target: glow::Texture,
+  fbo: glow::Framebuffer,
+  depth: Option<glow::Renderbuffer>,
+  msaa: Option<Msaa>,
+}
+
+impl MeshStorage {
+  /// Delete every GL name this storage owns (the create-path rollback; a
+  /// live target frees through `ShaderTexture::destroy` instead).
+  unsafe fn delete(self, gl: &glow::Context) {
+    if let Some(rb) = self.depth {
+      gl.delete_renderbuffer(rb);
+    }
+    if let Some(Msaa::Explicit { fbo, color, .. }) = self.msaa {
+      gl.delete_framebuffer(fbo);
+      gl.delete_renderbuffer(color);
+    }
+    gl.delete_framebuffer(self.fbo);
+    gl.delete_texture(self.target);
+  }
+}
+
+/// Create a target's storage at `samples`x (1 = single-sample; `depth` and
+/// `samples` are the mesh-only extras, the fragment and layer targets ask
+/// for neither and get the bare color FBO). A count
+/// above the device maximum is clamped; the in-tile flavor is tried first
+/// where the extension exists, then the explicit one, and a multisampled
+/// configuration the driver refuses (incomplete FBO) falls back to
+/// single-sample with a warning rather than failing the create - the app
+/// asked for quality, not for a hard requirement. Restores the framebuffer
+/// binding.
+fn create_mesh_storage(
+  gl: &glow::Context,
+  width: u32,
+  height: u32,
+  depth: bool,
+  samples: u32,
+) -> Result<MeshStorage, String> {
+  unsafe {
+    let prev_fbo = gl.get_parameter_i32(glow::FRAMEBUFFER_BINDING);
+    let (target, fbo) = create_target(gl, width, height)?;
+    let depth_rb = if depth {
+      match gl.create_renderbuffer() {
+        Ok(rb) => Some(rb),
+        Err(e) => {
+          gl.delete_framebuffer(fbo);
+          gl.delete_texture(target);
+          return Err(format!("glGenRenderbuffers failed: {e}"));
+        }
+      }
+    } else {
+      None
+    };
+    let mut storage = MeshStorage { target, fbo, depth: depth_rb, msaa: None };
+
+    let max_samples = gl.get_parameter_i32(glow::MAX_SAMPLES).max(1);
+    let samples = (samples as i32).min(max_samples);
+    if samples >= 2 {
+      storage.msaa = match crate::gl::msrtt() {
+        Some(fns) => Some(Msaa::InTile { fns, samples }),
+        None => match (gl.create_framebuffer(), gl.create_renderbuffer()) {
+          (Ok(msaa_fbo), Ok(color)) => Some(Msaa::Explicit { fbo: msaa_fbo, color, samples }),
+          (Ok(msaa_fbo), Err(e)) => {
+            gl.delete_framebuffer(msaa_fbo);
+            storage.delete(gl);
+            return Err(format!("glGenRenderbuffers failed: {e}"));
+          }
+          (Err(e), _) => {
+            storage.delete(gl);
+            return Err(format!("glGenFramebuffers failed: {e}"));
+          }
+        },
+      };
+      match attach_storage(gl, &storage, width, height) {
+        Ok(()) => {
+          gl.bind_framebuffer(glow::FRAMEBUFFER, prev_framebuffer(prev_fbo));
+          return Ok(storage);
+        }
+        Err(e) => {
+          log::warn!("[shader] {samples}x multisampling unavailable ({e}); target renders single-sample");
+          if let Some(Msaa::Explicit { fbo: msaa_fbo, color, .. }) = storage.msaa.take() {
+            gl.delete_framebuffer(msaa_fbo);
+            gl.delete_renderbuffer(color);
+          }
+        }
+      }
+    }
+    let result = attach_storage(gl, &storage, width, height);
+    gl.bind_framebuffer(glow::FRAMEBUFFER, prev_framebuffer(prev_fbo));
+    match result {
+      Ok(()) => Ok(storage),
+      Err(e) => {
+        storage.delete(gl);
+        Err(e)
+      }
+    }
+  }
+}
+
+/// (Re)attach and (re)size a mesh target's storage for `width` x `height`:
+/// the texture onto its FBO (multisampled through the extension for the
+/// in-tile flavor), the explicit flavor's color renderbuffer onto the draw
+/// FBO, and the depth renderbuffer onto whichever FBO draws. Creation and
+/// resize share it. Ends with the draw FBO's completeness check and leaves
+/// the framebuffer binding on it; the renderbuffer binding is restored.
+unsafe fn attach_storage(gl: &glow::Context, storage: &MeshStorage, width: u32, height: u32) -> Result<(), String> {
+  let (w, h) = (width as i32, height as i32);
   let prev_rb = gl.get_parameter_i32(glow::RENDERBUFFER_BINDING);
-  let rb = gl.create_renderbuffer().map_err(|e| format!("glGenRenderbuffers failed: {e}"))?;
-  gl.bind_renderbuffer(glow::RENDERBUFFER, Some(rb));
-  gl.renderbuffer_storage(glow::RENDERBUFFER, glow::DEPTH_COMPONENT24, width as i32, height as i32);
-  gl.bind_renderbuffer(glow::RENDERBUFFER, NonZeroU32::new(prev_rb as u32).map(glow::NativeRenderbuffer));
-  gl.framebuffer_renderbuffer(glow::FRAMEBUFFER, glow::DEPTH_ATTACHMENT, glow::RENDERBUFFER, Some(rb));
-  Ok(rb)
+  gl.bind_framebuffer(glow::FRAMEBUFFER, Some(storage.fbo));
+  let explicit = match &storage.msaa {
+    None => {
+      gl.framebuffer_texture_2d(glow::FRAMEBUFFER, glow::COLOR_ATTACHMENT0, glow::TEXTURE_2D, Some(storage.target), 0);
+      if let Some(rb) = storage.depth {
+        gl.bind_renderbuffer(glow::RENDERBUFFER, Some(rb));
+        gl.renderbuffer_storage(glow::RENDERBUFFER, glow::DEPTH_COMPONENT24, w, h);
+      }
+      false
+    }
+    Some(Msaa::InTile { fns, samples }) => {
+      (fns.framebuffer_texture_2d_multisample)(
+        glow::FRAMEBUFFER,
+        glow::COLOR_ATTACHMENT0,
+        glow::TEXTURE_2D,
+        storage.target.0.get(),
+        0,
+        *samples,
+      );
+      if let Some(rb) = storage.depth {
+        gl.bind_renderbuffer(glow::RENDERBUFFER, Some(rb));
+        (fns.renderbuffer_storage_multisample)(glow::RENDERBUFFER, *samples, glow::DEPTH_COMPONENT24, w, h);
+      }
+      false
+    }
+    Some(Msaa::Explicit { fbo, color, samples }) => {
+      // The texture FBO is the resolve destination and must be complete on
+      // its own.
+      gl.framebuffer_texture_2d(glow::FRAMEBUFFER, glow::COLOR_ATTACHMENT0, glow::TEXTURE_2D, Some(storage.target), 0);
+      let status = gl.check_framebuffer_status(glow::FRAMEBUFFER);
+      if status != glow::FRAMEBUFFER_COMPLETE {
+        gl.bind_renderbuffer(glow::RENDERBUFFER, prev_renderbuffer(prev_rb));
+        return Err(format!("target framebuffer incomplete: {status:#x}"));
+      }
+      gl.bind_framebuffer(glow::FRAMEBUFFER, Some(*fbo));
+      gl.bind_renderbuffer(glow::RENDERBUFFER, Some(*color));
+      gl.renderbuffer_storage_multisample(glow::RENDERBUFFER, *samples, glow::RGBA8, w, h);
+      gl.framebuffer_renderbuffer(glow::FRAMEBUFFER, glow::COLOR_ATTACHMENT0, glow::RENDERBUFFER, Some(*color));
+      if let Some(rb) = storage.depth {
+        gl.bind_renderbuffer(glow::RENDERBUFFER, Some(rb));
+        gl.renderbuffer_storage_multisample(glow::RENDERBUFFER, *samples, glow::DEPTH_COMPONENT24, w, h);
+      }
+      true
+    }
+  };
+  if let Some(rb) = storage.depth {
+    gl.framebuffer_renderbuffer(glow::FRAMEBUFFER, glow::DEPTH_ATTACHMENT, glow::RENDERBUFFER, Some(rb));
+  }
+  gl.bind_renderbuffer(glow::RENDERBUFFER, prev_renderbuffer(prev_rb));
+  let status = gl.check_framebuffer_status(glow::FRAMEBUFFER);
+  if status != glow::FRAMEBUFFER_COMPLETE {
+    let what = if explicit { "multisample" } else { "target" };
+    return Err(format!("{what} framebuffer incomplete: {status:#x}"));
+  }
+  Ok(())
+}
+
+fn prev_renderbuffer(prev: i32) -> Option<glow::Renderbuffer> {
+  NonZeroU32::new(prev as u32).map(glow::NativeRenderbuffer)
 }
 
 /// Record one interleaved attribute layout against the currently bound
 /// ARRAY_BUFFER into the current VAO. Attribute locations are looked up by
 /// name, so an attribute the shader does not use is skipped - its bytes
 /// still occupy the stride. `divisor` 0 advances per vertex, 1 per instance.
-unsafe fn record_layout(gl: &glow::Context, program: &ShaderProgram, attributes: &[(String, AttrFormat)], divisor: u32) {
+unsafe fn record_layout(
+  gl: &glow::Context,
+  program: &ShaderProgram,
+  attributes: &[(String, AttrFormat)],
+  divisor: u32,
+) {
   let stride = super::vocab::vertex_stride(attributes);
   let mut offset = 0i32;
   for (name, fmt) in attributes {
@@ -314,37 +512,29 @@ pub fn create_layer_target(
   height: u32,
   clear: [f32; 4],
 ) -> Result<(glow::Texture, glow::Framebuffer), String> {
+  let MeshStorage { target, fbo, .. } = create_mesh_storage(gl, width, height, false, 1)?;
   unsafe {
+    // Scissor, color mask, and clear color are Impeller-cached state on this
+    // shared context: force a full clear and put all three back.
     let prev_fbo = gl.get_parameter_i32(glow::FRAMEBUFFER_BINDING);
-    let result = create_target(gl, width, height).and_then(|(target, fbo)| {
-      let status = gl.check_framebuffer_status(glow::FRAMEBUFFER);
-      if status != glow::FRAMEBUFFER_COMPLETE {
-        gl.delete_framebuffer(fbo);
-        gl.delete_texture(target);
-        return Err(format!("layer framebuffer incomplete: {status:#x}"));
-      }
-      // The FBO is still bound from create_target. Scissor, color mask, and
-      // clear color are Impeller-cached state on this shared context: force
-      // a full clear and put all three back.
-      let scissor = gl.is_enabled(glow::SCISSOR_TEST);
-      let mut prev_mask = [0i32; 4];
-      gl.get_parameter_i32_slice(glow::COLOR_WRITEMASK, &mut prev_mask);
-      let mut prev_clear = [0f32; 4];
-      gl.get_parameter_f32_slice(glow::COLOR_CLEAR_VALUE, &mut prev_clear);
-      gl.disable(glow::SCISSOR_TEST);
-      gl.color_mask(true, true, true, true);
-      gl.clear_color(clear[0], clear[1], clear[2], clear[3]);
-      gl.clear(glow::COLOR_BUFFER_BIT);
-      gl.clear_color(prev_clear[0], prev_clear[1], prev_clear[2], prev_clear[3]);
-      gl.color_mask(prev_mask[0] != 0, prev_mask[1] != 0, prev_mask[2] != 0, prev_mask[3] != 0);
-      if scissor {
-        gl.enable(glow::SCISSOR_TEST);
-      }
-      Ok((target, fbo))
-    });
+    let scissor = gl.is_enabled(glow::SCISSOR_TEST);
+    let mut prev_mask = [0i32; 4];
+    gl.get_parameter_i32_slice(glow::COLOR_WRITEMASK, &mut prev_mask);
+    let mut prev_clear = [0f32; 4];
+    gl.get_parameter_f32_slice(glow::COLOR_CLEAR_VALUE, &mut prev_clear);
+    gl.bind_framebuffer(glow::FRAMEBUFFER, Some(fbo));
+    gl.disable(glow::SCISSOR_TEST);
+    gl.color_mask(true, true, true, true);
+    gl.clear_color(clear[0], clear[1], clear[2], clear[3]);
+    gl.clear(glow::COLOR_BUFFER_BIT);
+    gl.clear_color(prev_clear[0], prev_clear[1], prev_clear[2], prev_clear[3]);
+    gl.color_mask(prev_mask[0] != 0, prev_mask[1] != 0, prev_mask[2] != 0, prev_mask[3] != 0);
+    if scissor {
+      gl.enable(glow::SCISSOR_TEST);
+    }
     gl.bind_framebuffer(glow::FRAMEBUFFER, prev_framebuffer(prev_fbo));
-    result
   }
+  Ok((target, fbo))
 }
 
 impl ShaderTexture {
@@ -374,21 +564,11 @@ impl ShaderTexture {
     if program.is_pipeline() {
       return Err((program, "program is a pipeline; the target needs a render pipeline".to_string()));
     }
-    unsafe {
-      let prev_fbo = gl.get_parameter_i32(glow::FRAMEBUFFER_BINDING);
-      let (target, fbo) = match create_target(gl, width, height) {
-        Ok(pair) => pair,
-        Err(e) => return Err((program, e)),
-      };
-      let status = gl.check_framebuffer_status(glow::FRAMEBUFFER);
-      gl.bind_framebuffer(glow::FRAMEBUFFER, prev_framebuffer(prev_fbo));
-
-      if status != glow::FRAMEBUFFER_COMPLETE {
-        gl.delete_framebuffer(fbo);
-        gl.delete_texture(target);
-        return Err((program, format!("shader framebuffer incomplete: {status:#x}")));
-      }
-
+    let MeshStorage { target, fbo, .. } = match create_mesh_storage(gl, width, height, false, 1) {
+      Ok(storage) => storage,
+      Err(e) => return Err((program, e)),
+    };
+    {
       Ok(ShaderTexture {
         kind: TargetKind::Fragment { program, params: Vec::new(), bindings: sampler_bindings },
         fbo,
@@ -418,6 +598,7 @@ impl ShaderTexture {
     buffers: EntryBuffers,
     draw: DrawRange,
     clear_color: [f32; 4],
+    samples: u32,
   ) -> Result<Self, String> {
     let program = Rc::new(ShaderProgram::new_pipeline(gl, vertex_src, fragment_src)?);
     let pipeline = match RenderPipeline::new(program, None, desc) {
@@ -427,7 +608,7 @@ impl ShaderTexture {
         return Err(e);
       }
     };
-    Self::from_pipeline(gl, pipeline, None, width, height, sampler_bindings, buffers, draw, clear_color)
+    Self::from_pipeline(gl, pipeline, None, width, height, sampler_bindings, buffers, draw, clear_color, samples)
       .map_err(|(pipeline, e)| {
         release_pipeline(gl, pipeline);
         e
@@ -451,76 +632,35 @@ impl ShaderTexture {
     buffers: EntryBuffers,
     draw: DrawRange,
     clear_color: [f32; 4],
+    samples: u32,
   ) -> Result<Self, (Rc<RenderPipeline>, String)> {
     if let Err(e) = check_entry_buffers(&pipeline.desc, &buffers) {
       return Err((pipeline, e));
     }
-    let depth = pipeline.desc.depth.is_some();
+    let storage = match create_mesh_storage(gl, width, height, pipeline.desc.depth.is_some(), samples) {
+      Ok(storage) => storage,
+      Err(e) => return Err((pipeline, e)),
+    };
 
     unsafe {
-      let prev_fbo = gl.get_parameter_i32(glow::FRAMEBUFFER_BINDING);
-      let (target, fbo) = match create_target(gl, width, height) {
-        Ok(pair) => pair,
-        Err(e) => {
-          gl.bind_framebuffer(glow::FRAMEBUFFER, prev_framebuffer(prev_fbo));
-          return Err((pipeline, e));
-        }
-      };
-
-      // FBO is still bound; attach the private depth renderbuffer when asked.
-      let depth_rb = if depth {
-        match attach_depth(gl, width, height) {
-          Ok(rb) => Some(rb),
-          Err(e) => {
-            gl.bind_framebuffer(glow::FRAMEBUFFER, prev_framebuffer(prev_fbo));
-            gl.delete_framebuffer(fbo);
-            gl.delete_texture(target);
-            return Err((pipeline, e));
-          }
-        }
-      } else {
-        None
-      };
-
-      let status = gl.check_framebuffer_status(glow::FRAMEBUFFER);
-      gl.bind_framebuffer(glow::FRAMEBUFFER, prev_framebuffer(prev_fbo));
-      if status != glow::FRAMEBUFFER_COMPLETE {
-        if let Some(rb) = depth_rb {
-          gl.delete_renderbuffer(rb);
-        }
-        gl.delete_framebuffer(fbo);
-        gl.delete_texture(target);
-        return Err((pipeline, format!("pipeline framebuffer incomplete: {status:#x}")));
-      }
-
       let vao = match build_vao(gl, &pipeline.program, &pipeline.desc, &buffers) {
         Ok(vao) => vao,
         Err(e) => {
-          if let Some(rb) = depth_rb {
-            gl.delete_renderbuffer(rb);
-          }
-          gl.delete_framebuffer(fbo);
-          gl.delete_texture(target);
+          storage.delete(gl);
           return Err((pipeline, e));
         }
       };
+      let MeshStorage { target, fbo, depth, msaa } = storage;
 
-      let entry = DrawEntry {
-        id: 0,
-        pipeline,
-        pipeline_id,
-        vao,
-        buffers,
-        draw,
-        params: Vec::new(),
-        bindings: sampler_bindings,
-      };
+      let entry =
+        DrawEntry { id: 0, pipeline, pipeline_id, vao, buffers, draw, params: Vec::new(), bindings: sampler_bindings };
       Ok(ShaderTexture {
         kind: TargetKind::Mesh(MeshState {
           entries: vec![entry],
           shared_params: Vec::new(),
           shared_bindings: Vec::new(),
-          depth: depth_rb,
+          depth,
+          msaa,
           clear_color,
           load: false,
           fixed: true,
@@ -548,60 +688,30 @@ impl ShaderTexture {
     height: u32,
     depth: bool,
     clear_color: [f32; 4],
+    samples: u32,
   ) -> Result<Self, String> {
-    unsafe {
-      let prev_fbo = gl.get_parameter_i32(glow::FRAMEBUFFER_BINDING);
-      let (target, fbo) = match create_target(gl, width, height) {
-        Ok(pair) => pair,
-        Err(e) => {
-          gl.bind_framebuffer(glow::FRAMEBUFFER, prev_framebuffer(prev_fbo));
-          return Err(e);
-        }
-      };
-      let depth_rb = if depth {
-        match attach_depth(gl, width, height) {
-          Ok(rb) => Some(rb),
-          Err(e) => {
-            gl.bind_framebuffer(glow::FRAMEBUFFER, prev_framebuffer(prev_fbo));
-            gl.delete_framebuffer(fbo);
-            gl.delete_texture(target);
-            return Err(e);
-          }
-        }
-      } else {
-        None
-      };
-      let status = gl.check_framebuffer_status(glow::FRAMEBUFFER);
-      gl.bind_framebuffer(glow::FRAMEBUFFER, prev_framebuffer(prev_fbo));
-      if status != glow::FRAMEBUFFER_COMPLETE {
-        if let Some(rb) = depth_rb {
-          gl.delete_renderbuffer(rb);
-        }
-        gl.delete_framebuffer(fbo);
-        gl.delete_texture(target);
-        return Err(format!("draw target framebuffer incomplete: {status:#x}"));
-      }
-      Ok(ShaderTexture {
-        kind: TargetKind::Mesh(MeshState {
-          entries: Vec::new(),
-          shared_params: Vec::new(),
-          shared_bindings: Vec::new(),
-          depth: depth_rb,
-          clear_color,
-          load: false,
-          fixed: false,
-        }),
-        fbo,
-        target,
-        width,
-        height,
-        sampler: crate::texture::SamplerState::default(),
-        manual: false,
-        passes: Cell::new(0),
-        pass_issue_micros: Cell::new(0),
-        pass_exec_micros: Cell::new(0),
-      })
-    }
+    let MeshStorage { target, fbo, depth, msaa } = create_mesh_storage(gl, width, height, depth, samples)?;
+    Ok(ShaderTexture {
+      kind: TargetKind::Mesh(MeshState {
+        entries: Vec::new(),
+        shared_params: Vec::new(),
+        shared_bindings: Vec::new(),
+        depth,
+        msaa,
+        clear_color,
+        load: false,
+        fixed: false,
+      }),
+      fbo,
+      target,
+      width,
+      height,
+      sampler: crate::texture::SamplerState::default(),
+      manual: false,
+      passes: Cell::new(0),
+      pass_issue_micros: Cell::new(0),
+      pass_exec_micros: Cell::new(0),
+    })
   }
 
   /// Set the declared sampling for this target's output (builder-style, right
@@ -743,6 +853,55 @@ impl ShaderTexture {
     self.mesh().is_some_and(|m| m.depth.is_some())
   }
 
+  /// The effective multisample count (1 = single-sample), after clamping
+  /// and any fallback at creation.
+  pub fn samples(&self) -> u32 {
+    self.mesh().and_then(|m| m.msaa.as_ref()).map_or(1, |m| m.samples() as u32)
+  }
+
+  /// The FBO a mesh pass draws into: the explicit multisample FBO when the
+  /// target has one, else the texture's own.
+  fn draw_fbo(&self) -> glow::Framebuffer {
+    match self.mesh().and_then(|m| m.msaa.as_ref()) {
+      Some(Msaa::Explicit { fbo, .. }) => *fbo,
+      _ => self.fbo,
+    }
+  }
+
+  /// After a pass on an `Msaa::Explicit` target: blit the multisampled color
+  /// into the texture (the resolve), then drop the samples - they are dead
+  /// once resolved, and the invalidate keeps tilers from writing them back.
+  /// A no-op for the other flavors. Restores the framebuffer bindings.
+  fn resolve(&self, gl: &glow::Context) {
+    let Some(Msaa::Explicit { fbo: msaa_fbo, .. }) = self.mesh().and_then(|m| m.msaa.as_ref()) else {
+      return;
+    };
+    unsafe {
+      let prev_read = gl.get_parameter_i32(glow::READ_FRAMEBUFFER_BINDING);
+      let prev_draw = gl.get_parameter_i32(glow::DRAW_FRAMEBUFFER_BINDING);
+      let scissor = gl.is_enabled(glow::SCISSOR_TEST);
+      let (w, h) = (self.width as i32, self.height as i32);
+      // The blit honours the scissor, which Impeller may have left enabled.
+      gl.disable(glow::SCISSOR_TEST);
+      gl.bind_framebuffer(glow::READ_FRAMEBUFFER, Some(*msaa_fbo));
+      gl.bind_framebuffer(glow::DRAW_FRAMEBUFFER, Some(self.fbo));
+      gl.blit_framebuffer(0, 0, w, h, 0, 0, w, h, glow::COLOR_BUFFER_BIT, glow::NEAREST);
+      if crate::gl::supports_invalidate(gl) {
+        let attachments: &[u32] = if self.has_depth() {
+          &[glow::COLOR_ATTACHMENT0, glow::DEPTH_ATTACHMENT]
+        } else {
+          &[glow::COLOR_ATTACHMENT0]
+        };
+        gl.invalidate_framebuffer(glow::READ_FRAMEBUFFER, attachments);
+      }
+      if scissor {
+        gl.enable(glow::SCISSOR_TEST);
+      }
+      gl.bind_framebuffer(glow::READ_FRAMEBUFFER, prev_framebuffer(prev_read));
+      gl.bind_framebuffer(glow::DRAW_FRAMEBUFFER, prev_framebuffer(prev_draw));
+    }
+  }
+
   /// Whether the first entry's draw writes depth; None on a fragment-only
   /// shader.
   pub fn depth_write(&self) -> Option<bool> {
@@ -783,7 +942,12 @@ impl ShaderTexture {
   /// a swap is a rebuild - and the replaced buffers released (deleted when
   /// this was their last use). The entry's draw range is untouched; the UI
   /// side has already checked it against the new buffers.
-  pub fn set_entry_buffers(&mut self, gl: &glow::Context, draw: Option<u64>, buffers: EntryBuffers) -> Result<(), String> {
+  pub fn set_entry_buffers(
+    &mut self,
+    gl: &glow::Context,
+    draw: Option<u64>,
+    buffers: EntryBuffers,
+  ) -> Result<(), String> {
     let entry = match draw {
       Some(id) => self.entry_mut(id)?,
       None => match &mut self.kind {
@@ -823,7 +987,9 @@ impl ShaderTexture {
       return Err("target's draw list is fixed (created single-draw)".to_string());
     }
     if pipeline.desc.depth.is_some() && mesh.depth.is_none() {
-      return Err("pipeline tests depth but the target has no depth buffer (create the draw target with depth: true)".to_string());
+      return Err(
+        "pipeline tests depth but the target has no depth buffer (create the draw target with depth: true)".to_string(),
+      );
     }
     check_entry_buffers(&pipeline.desc, &buffers)?;
     let position = match before {
@@ -1005,60 +1171,35 @@ impl ShaderTexture {
   /// previous size.
   pub fn resize(&mut self, gl: &glow::Context, width: u32, height: u32) -> Result<(), String> {
     unsafe {
-      let prev_tex = gl.get_parameter_i32(glow::TEXTURE_BINDING_2D);
       let prev_fbo = gl.get_parameter_i32(glow::FRAMEBUFFER_BINDING);
-
-      let target = gl.create_texture().map_err(|e| format!("glGenTextures failed: {e}"))?;
-      gl.bind_texture(glow::TEXTURE_2D, Some(target));
-      gl.tex_image_2d(
-        glow::TEXTURE_2D,
-        0,
-        glow::RGBA8 as i32,
-        width as i32,
-        height as i32,
-        0,
-        glow::RGBA,
-        glow::UNSIGNED_BYTE,
-        glow::PixelUnpackData::Slice(None),
-      );
-      // Same sampling state as create_target: no mips exist, so the default
-      // MIN_FILTER would make the texture sampling-incomplete (reads black).
-      gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MIN_FILTER, glow::LINEAR as i32);
-      gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MAG_FILTER, glow::LINEAR as i32);
-      gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_WRAP_S, glow::CLAMP_TO_EDGE as i32);
-      gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_WRAP_T, glow::CLAMP_TO_EDGE as i32);
-      gl.bind_texture(glow::TEXTURE_2D, prev_texture(prev_tex));
-
-      gl.bind_framebuffer(glow::FRAMEBUFFER, Some(self.fbo));
-      gl.framebuffer_texture_2d(glow::FRAMEBUFFER, glow::COLOR_ATTACHMENT0, glow::TEXTURE_2D, Some(target), 0);
-
-      // The target's depth buffer must match the color target's size or the
-      // FBO goes incomplete.
-      let depth_rb = self.mesh().and_then(|m| m.depth);
-      if let Some(rb) = depth_rb {
-        let prev_rb = gl.get_parameter_i32(glow::RENDERBUFFER_BINDING);
-        gl.bind_renderbuffer(glow::RENDERBUFFER, Some(rb));
-        gl.renderbuffer_storage(glow::RENDERBUFFER, glow::DEPTH_COMPONENT24, width as i32, height as i32);
-        gl.bind_renderbuffer(glow::RENDERBUFFER, NonZeroU32::new(prev_rb as u32).map(glow::NativeRenderbuffer));
-      }
-
-      let status = gl.check_framebuffer_status(glow::FRAMEBUFFER);
-      if status != glow::FRAMEBUFFER_COMPLETE {
-        // Roll back to the old target (and depth storage) so the shader keeps
-        // rendering at its previous size.
-        gl.framebuffer_texture_2d(glow::FRAMEBUFFER, glow::COLOR_ATTACHMENT0, glow::TEXTURE_2D, Some(self.target), 0);
-        if let Some(rb) = depth_rb {
-          let prev_rb = gl.get_parameter_i32(glow::RENDERBUFFER_BINDING);
-          gl.bind_renderbuffer(glow::RENDERBUFFER, Some(rb));
-          gl.renderbuffer_storage(glow::RENDERBUFFER, glow::DEPTH_COMPONENT24, self.width as i32, self.height as i32);
-          gl.bind_renderbuffer(glow::RENDERBUFFER, NonZeroU32::new(prev_rb as u32).map(glow::NativeRenderbuffer));
+      let target = create_target_texture(gl, width, height)?;
+      // Color, depth and multisample storage must all match or the FBO goes
+      // incomplete; on failure size everything back to the old target so the
+      // shader keeps rendering at its previous size. The storage view borrows
+      // this target's GL names (no ownership: nothing is deleted through it).
+      let mesh = self.mesh();
+      let mut storage = MeshStorage {
+        target,
+        fbo: self.fbo,
+        depth: mesh.and_then(|m| m.depth),
+        msaa: mesh.and_then(|m| m.msaa.as_ref()).map(|m| match m {
+          Msaa::InTile { fns, samples } => Msaa::InTile { fns, samples: *samples },
+          Msaa::Explicit { fbo, color, samples } => Msaa::Explicit { fbo: *fbo, color: *color, samples: *samples },
+        }),
+      };
+      let result = attach_storage(gl, &storage, width, height);
+      if let Err(e) = &result {
+        storage.target = self.target;
+        if let Err(rollback) = attach_storage(gl, &storage, self.width, self.height) {
+          log::error!("[shader] resize rollback failed ({rollback}) after: {e}");
         }
-        gl.bind_framebuffer(glow::FRAMEBUFFER, prev_framebuffer(prev_fbo));
-        gl.delete_texture(target);
-        return Err(format!("shader framebuffer incomplete after resize: {status:#x}"));
       }
+      let result = result.map_err(|e| format!("shader framebuffer incomplete after resize: {e}"));
       gl.bind_framebuffer(glow::FRAMEBUFFER, prev_framebuffer(prev_fbo));
-
+      if let Err(e) = result {
+        gl.delete_texture(target);
+        return Err(e);
+      }
       self.target = target;
       self.width = width;
       self.height = height;
@@ -1084,6 +1225,12 @@ impl ShaderTexture {
         if let Some(rb) = mesh.depth {
           unsafe { gl.delete_renderbuffer(rb) };
         }
+        if let Some(Msaa::Explicit { fbo, color, .. }) = mesh.msaa {
+          unsafe {
+            gl.delete_framebuffer(fbo);
+            gl.delete_renderbuffer(color);
+          }
+        }
       }
     }
     unsafe { gl.delete_framebuffer(self.fbo) };
@@ -1095,9 +1242,7 @@ impl ShaderTexture {
   pub fn uniform_table(&self) -> super::vocab::UniformTable {
     match &self.kind {
       TargetKind::Fragment { program, .. } => program.uniform_table(),
-      TargetKind::Mesh(mesh) => {
-        mesh.entries.first().map(|e| e.pipeline.program.uniform_table()).unwrap_or_default()
-      }
+      TargetKind::Mesh(mesh) => mesh.entries.first().map(|e| e.pipeline.program.uniform_table()).unwrap_or_default(),
     }
   }
 
@@ -1120,14 +1265,12 @@ impl ShaderTexture {
   pub fn binding_sources(&self) -> Vec<u64> {
     match &self.kind {
       TargetKind::Fragment { bindings, .. } => bindings.iter().map(|(_, id)| *id).collect(),
-      TargetKind::Mesh(mesh) => {
-        mesh
-          .entries
-          .iter()
-          .flat_map(|e| e.bindings.iter().map(|(_, id)| *id))
-          .chain(mesh.shared_bindings.iter().map(|(_, id)| *id))
-          .collect()
-      }
+      TargetKind::Mesh(mesh) => mesh
+        .entries
+        .iter()
+        .flat_map(|e| e.bindings.iter().map(|(_, id)| *id))
+        .chain(mesh.shared_bindings.iter().map(|(_, id)| *id))
+        .collect(),
     }
   }
 
@@ -1184,9 +1327,7 @@ impl ShaderTexture {
     }
     let bindings = match &mut self.kind {
       TargetKind::Fragment { bindings, .. } => bindings,
-      TargetKind::Mesh(mesh) => {
-        &mut mesh.entries.first_mut().expect("entry checked above").bindings
-      }
+      TargetKind::Mesh(mesh) => &mut mesh.entries.first_mut().expect("entry checked above").bindings,
     };
     for (name, src_id) in updates {
       match bindings.iter_mut().find(|(n, _)| n == name) {
@@ -1223,7 +1364,8 @@ impl ShaderTexture {
     match &self.kind {
       TargetKind::Fragment { program, params, bindings } => {
         let inputs = resolve(bindings);
-        let draw = PassDraw::Fullscreen { program, params, textures: &inputs, vertex_count: 3, clear: None, blend: false };
+        let draw =
+          PassDraw::Fullscreen { program, params, textures: &inputs, vertex_count: 3, clear: None, blend: false };
         run_pass(gl, Some(self.fbo), (0, 0), self.width, self.height, draw);
       }
       TargetKind::Mesh(mesh) => {
@@ -1263,7 +1405,8 @@ impl ShaderTexture {
           shared: &mesh.shared_params,
           draws: &draws,
         };
-        run_pass(gl, Some(self.fbo), (0, 0), self.width, self.height, draw);
+        run_pass(gl, Some(self.draw_fbo()), (0, 0), self.width, self.height, draw);
+        self.resolve(gl);
       }
     }
   }
@@ -1293,7 +1436,7 @@ impl ShaderTexture {
       let mut prev_clear = [0f32; 4];
       gl.get_parameter_f32_slice(glow::COLOR_CLEAR_VALUE, &mut prev_clear);
 
-      gl.bind_framebuffer(glow::FRAMEBUFFER, Some(self.fbo));
+      gl.bind_framebuffer(glow::FRAMEBUFFER, Some(self.draw_fbo()));
       gl.disable(glow::SCISSOR_TEST);
       gl.color_mask(true, true, true, true);
       gl.clear_color(r, g, b, a);
@@ -1318,5 +1461,6 @@ impl ShaderTexture {
       }
       gl.bind_framebuffer(glow::FRAMEBUFFER, prev_framebuffer(prev_fbo));
     }
+    self.resolve(gl);
   }
 }

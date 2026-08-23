@@ -100,8 +100,8 @@ what it delivered is documented in `packages/3d/AGENTS.md`, not here.
 8. [ ] **Mipmaps.** Engine: [gpu-mipmaps](../backlog/gpu-mipmaps.md).
    Textured models alias immediately at minification; the one engine item
    staging step 3 (real models) still needs.
-9. [ ] **MSAA on pipeline targets.** Engine:
-   [gpu-target-antialiasing](../backlog/gpu-target-antialiasing.md).
+9. [x] **MSAA on pipeline targets.** Engine (landed 2026-08-23, `samples` on the target):
+   [gpu-target-antialiasing](../done/gpu-target-antialiasing.md).
    Silhouette jaggies are the dominant artifact on filled geometry.
 10. [ ] **Geometry breadth and the vertex-layout ceiling.** Library. Still
     demand-gated: closed sweep loops (twist reconciliation around a loop),
