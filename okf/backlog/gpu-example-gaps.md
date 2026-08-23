@@ -25,8 +25,8 @@ target as the cube pipeline's sampler input and drive only the plasma's
 uniforms. Unblocked and unwritten as of 2026-07-30 (no gpu-chain example in
 packages/core/examples). Worth writing as the demonstration that sampler
 bindings are live dependencies, the contract documented in flux-types
-gui/gpu.d.ts (the core prose lives under docs/20-core/, which has no GPU
-page yet).
+gui/gpu.d.ts and in the core GPU page (packages/core/docs/reference/gpu.md,
+"The model").
 
 ## Points topology / particle field
 

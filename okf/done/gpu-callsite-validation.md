@@ -15,7 +15,7 @@ sampler2Ds, `setDrawCount` rejects negative and out-of-bounds counts, and the
 flux marshal layer throws on non-numeric param/texture values. Decision: an
 absent uniform name always throws (strict); the two-tier
 declared-but-inactive distinction was deliberately not built - see
-[gpu-inactive-uniform-two-tier](../backlog/gpu-inactive-uniform-two-tier.md). The
+[gpu-inactive-uniform-two-tier](gpu-inactive-uniform-two-tier.md). The
 `params` prop stays warn-at-build (deferred apply; a call-site throw would
 break prop-order independence).
 

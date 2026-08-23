@@ -85,7 +85,7 @@ fn apply_uniform(gl: &glow::Context, name: &str, loc: &glow::UniformLocation, sl
       UniformKind::Vec4 => gl.uniform_4_f32_slice(Some(loc), c),
       UniformKind::Mat4 => gl.uniform_matrix_4_f32_slice(Some(loc), false, c),
       // No component count, so the guard above already returned.
-      UniformKind::Sampler2D | UniformKind::Other(_) => {}
+      UniformKind::Sampler2D | UniformKind::Inactive | UniformKind::Other(_) => {}
     }
   }
 }
@@ -95,7 +95,7 @@ fn apply_uniform(gl: &glow::Context, name: &str, loc: &glow::UniformLocation, sl
 /// whose program declares it).
 fn apply_params(gl: &glow::Context, program: &ShaderProgram, params: &[(String, ParamValue)]) {
   for (name, value) in params {
-    if let Some((loc, slot)) = program.uniforms.get(name) {
+    if let Some((loc, slot)) = program.uniform(name) {
       apply_uniform(gl, name, loc, *slot, value);
     }
   }
@@ -108,7 +108,7 @@ fn apply_params(gl: &glow::Context, program: &ShaderProgram, params: &[(String, 
 fn apply_program(gl: &glow::Context, program: &ShaderProgram, width: u32, height: u32, params: &[(String, ParamValue)]) {
   unsafe {
     gl.use_program(Some(program.program));
-    match program.uniforms.get("iResolution") {
+    match program.uniform("iResolution") {
       Some((loc, UniformSlot { kind: UniformKind::Vec2, .. })) => {
         gl.uniform_2_f32(Some(loc), width as f32, height as f32)
       }
@@ -147,7 +147,7 @@ fn bind_inputs(
         log::warn!("[shader] sampler input '{name}' exceeds this device's texture unit limit ({max_units} per pass); skipped");
         continue;
       }
-      let Some((loc, _)) = program.uniforms.get(name) else { continue };
+      let Some((loc, _)) = program.uniform(name) else { continue };
       let unit = unit as u32;
       gl.active_texture(glow::TEXTURE0 + unit);
       if !saved.iter().any(|(u, _, _)| *u == unit) {

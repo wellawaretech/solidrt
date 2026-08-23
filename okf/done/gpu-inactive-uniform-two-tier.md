@@ -1,8 +1,35 @@
 ---
 title: Two-tier handling for declared-but-inactive uniforms
-description: Uniform validation throws on any name absent from the reflected table, but GL reflection only sees active uniforms - a declared uniform the compiler optimized out counts as a typo. A compile-time scan of the source for declared uniform names would let that sub-case warn instead of throw.
+description: Uniform validation threw on any name absent from the reflected table, but GL reflection only sees active uniforms - a declared uniform the compiler optimized out counted as a typo. A compile-time scan of the source for declared uniform names now lets that sub-case warn instead of throw.
 created: 2026-07-30
+completed: 2026-08-23
 ---
+
+Done 2026-08-23: the two-tier scan. `declared_uniform_names` (alloy
+gpu/program.rs) strips comments and collects every `uniform` declarator
+name from the full source (preamble included, per stage on the raw path:
+`CompiledStage` carries the names since `linkProgram` never sees sources).
+Names declared but not reflected land in the `UniformTable` as
+`UniformKind::Inactive`, so the table that crosses to the UI-thread mirror
+is still the single validation currency. `validate_params` and
+`validate_texture_bindings` warn and skip an Inactive name; never-declared
+still throws, with the active list in the message. The raster-side rebind
+guards accept declared names too (`ShaderProgram::accepts_uniform`); the
+apply in pass.rs already skipped names with no location. Tests in
+alloy/src/tests/gpu_validate.rs cover both tiers and the scanner (comments,
+multi-declarator, arrays, interface blocks skipped).
+
+Not done, on purpose: "validate at creation" in `@solidrt/3d`. The uniform
+table never crosses to JS, so the library cannot check a material before
+`add()` without a new reflection API; with declared-but-inactive no longer
+throwing, the remaining failure is a genuine typo, which the existing
+message already names. The `optional: true` marker stays rejected.
+
+The 3d material variants that multiply an unused alpha in purely to keep the
+shared param object valid can drop that now.
+
+The record as filed follows.
+
 
 # Two-tier handling for declared-but-inactive uniforms
 

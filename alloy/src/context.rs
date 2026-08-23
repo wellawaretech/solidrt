@@ -1261,6 +1261,9 @@ impl Context {
       for (name, _) in textures {
         for entry in list.entries.values() {
           if let Some(slot) = entry.uniforms.get(name) {
+            if slot.kind == UniformKind::Inactive {
+              continue;
+            }
             if slot.kind != UniformKind::Sampler2D || slot.count > 1 {
               return Err(format!("uniform '{name}' is {}, not a sampler2D", slot.glsl_name()));
             }

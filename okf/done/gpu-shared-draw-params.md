@@ -108,7 +108,7 @@ bundled in.
   before any entry exists (nothing to validate against yet, so defer or
   accept), and an entry added later whose pipeline does not declare a name
   already set (must not retroactively error). Interacts with
-  [gpu-inactive-uniform-two-tier](../backlog/gpu-inactive-uniform-two-tier.md), which
+  [gpu-inactive-uniform-two-tier](gpu-inactive-uniform-two-tier.md), which
   is the same "declared but not reflected" question from the other side.
 - **Textures.** Whether shared *sampler* bindings come along at the same
   time (an environment map, a shadow map, a shared LUT) or wait for a
@@ -126,5 +126,5 @@ this up early rather than after the lit-material work.
 
 Related: [gpu-draw-list](gpu-draw-list.md) (the retained list this extends),
 [gpu-callsite-validation](gpu-callsite-validation.md),
-[gpu-inactive-uniform-two-tier](../backlog/gpu-inactive-uniform-two-tier.md),
+[gpu-inactive-uniform-two-tier](gpu-inactive-uniform-two-tier.md),
 ../notes/3d-differentiators.md, ../notes/scene-graph-3d.md.

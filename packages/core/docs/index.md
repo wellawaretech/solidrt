@@ -142,5 +142,5 @@ The same pattern covers `@solidrt/core/microphone`, `/sound`,
 
 The [reference](/core/reference/) covers the API by subject: the element
 vocabulary, drawing, text, detached elements, layout, transforms, input,
-shaders, and the shared types. It shows the shipped declarations themselves,
+shaders, the GPU module, and the shared types. It shows the shipped declarations themselves,
 so it says exactly what your editor says.

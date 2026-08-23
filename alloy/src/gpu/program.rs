@@ -3,7 +3,7 @@
 //! `RenderPipeline` (a pipeline-kind program paired with shared draw state).
 
 use glow::HasContext;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use super::vocab::{PipelineDesc, ShaderStage};
@@ -74,7 +74,7 @@ fn compile_shader(gl: &glow::Context, kind: u32, src: &str) -> Result<glow::Shad
 /// `#version 300 es`, highp float precision, the `iResolution` uniform, and
 /// for a fragment stage `out vec4 fragColor`. A source carrying its own
 /// `#version` must not also ask for the header.
-pub fn compile_stage(gl: &glow::Context, stage: ShaderStage, src: &str, header: bool) -> Result<glow::Shader, String> {
+pub fn compile_stage(gl: &glow::Context, stage: ShaderStage, src: &str, header: bool) -> Result<CompiledStage, String> {
   let full;
   let src = if header {
     let preamble = match stage {
@@ -86,7 +86,7 @@ pub fn compile_stage(gl: &glow::Context, stage: ShaderStage, src: &str, header: 
   } else {
     src
   };
-  compile_shader(gl, stage.gl_kind(), src).map_err(|e| {
+  let shader = compile_shader(gl, stage.gl_kind(), src).map_err(|e| {
     if header || src.trim_start().starts_with("#version") {
       format!("{} {e}", stage.name())
     } else {
@@ -95,7 +95,66 @@ pub fn compile_stage(gl: &glow::Context, stage: ShaderStage, src: &str, header: 
         stage.name()
       )
     }
-  })
+  })?;
+  Ok(CompiledStage { shader, declared: declared_uniform_names(src) })
+}
+
+/// A compiled stage with the uniform names its source declares, kept so a
+/// program linked from raw stages can tell declared-but-inactive uniforms
+/// from never-declared ones (`linkProgram` no longer sees sources).
+pub struct CompiledStage {
+  pub shader: glow::Shader,
+  pub declared: Vec<String>,
+}
+
+/// The uniform names a GLSL source declares, by text scan: comments are
+/// stripped, then every `uniform <type> a, b[N];` statement contributes its
+/// declarator names (array suffix dropped). GL reflection only reports
+/// ACTIVE uniforms, so this is the second tier that lets a declared uniform
+/// the compiler optimized out warn instead of throw when written. Accepted
+/// misses - names behind macros or `#if`, block members - only matter when
+/// the uniform is also inactive, where a warn-level miss is tolerable.
+pub fn declared_uniform_names(src: &str) -> Vec<String> {
+  let text = strip_comments(src);
+  let mut names = Vec::new();
+  for stmt in text.split(';') {
+    let mut words = stmt.split_whitespace();
+    // Skip qualifiers ahead of `uniform` (layout(...), precision), then the
+    // type; everything after is the declarator list.
+    let Some(_) = words.by_ref().find(|w| *w == "uniform") else { continue };
+    let Some(ty) = words.next() else { continue };
+    // An interface block (`uniform Block { ... }`) declares members, not a
+    // named uniform; skip it.
+    if ty == "{" || ty.contains('{') || stmt.contains('{') {
+      continue;
+    }
+    let rest: String = words.collect::<Vec<_>>().join(" ");
+    for decl in rest.split(',') {
+      let name: String = decl.trim().chars().take_while(|c| c.is_alphanumeric() || *c == '_').collect();
+      if !name.is_empty() && !names.contains(&name) {
+        names.push(name);
+      }
+    }
+  }
+  names
+}
+
+fn strip_comments(src: &str) -> String {
+  let mut out = String::with_capacity(src.len());
+  let mut rest = src;
+  while !rest.is_empty() {
+    if let Some(tail) = rest.strip_prefix("//") {
+      rest = tail.find('\n').map(|i| &tail[i..]).unwrap_or("");
+    } else if let Some(tail) = rest.strip_prefix("/*") {
+      rest = tail.find("*/").map(|i| &tail[i + 2..]).unwrap_or("");
+      out.push(' ');
+    } else {
+      let mut chars = rest.chars();
+      out.push(chars.next().expect("rest is non-empty"));
+      rest = chars.as_str();
+    }
+  }
+  out
 }
 
 /// Delete a compiled stage. Safe right after linking: a linked program keeps
@@ -152,7 +211,11 @@ pub struct ShaderProgram {
   /// slot (element kind + array size); iResolution is filled from the target
   /// size at render. Array uniforms are keyed by their bare name (GL's
   /// reported `[0]` suffix is stripped).
-  pub(super) uniforms: HashMap<String, (glow::UniformLocation, super::vocab::UniformSlot)>,
+  uniforms: HashMap<String, (glow::UniformLocation, super::vocab::UniformSlot)>,
+  /// Uniform names declared in the sources but absent from `uniforms`: the
+  /// compiler optimized them out. Writes to these are accepted and skipped
+  /// (warned at the call site) rather than rejected as unknown names.
+  inactive: HashSet<String>,
   /// Vertex+fragment pipeline (own vertex stage over a buffer) vs fullscreen
   /// fragment pass. Decides which target shape the program can back.
   pipeline: bool,
@@ -170,7 +233,8 @@ impl ShaderProgram {
     let fragment_full = with_preamble(fragment_src, FRAGMENT_PREAMBLE);
     let program = link_program(gl, VERTEX_SRC, &fragment_full)?;
     let uniforms = reflect_uniforms(gl, program);
-    Ok(ShaderProgram { program, uniforms, pipeline: false, label: None })
+    let inactive = inactive_names(&uniforms, declared_uniform_names(&fragment_full));
+    Ok(ShaderProgram { program, uniforms, inactive, pipeline: false, label: None })
   }
 
   /// Compile a vertex+fragment pipeline program. Attribute locations are
@@ -181,7 +245,10 @@ impl ShaderProgram {
     let fragment_full = with_preamble(fragment_src, PIPELINE_FRAGMENT_PREAMBLE);
     let program = link_program(gl, &vertex_full, &fragment_full)?;
     let uniforms = reflect_uniforms(gl, program);
-    Ok(ShaderProgram { program, uniforms, pipeline: true, label: None })
+    let mut declared = declared_uniform_names(&vertex_full);
+    declared.extend(declared_uniform_names(&fragment_full));
+    let inactive = inactive_names(&uniforms, declared);
+    Ok(ShaderProgram { program, uniforms, inactive, pipeline: true, label: None })
   }
 
   /// Link two already-compiled stages into a program: the raw path, no
@@ -189,7 +256,10 @@ impl ShaderProgram {
   /// detach), so they can back further links or be deleted independently. A
   /// raw-linked program carries its own vertex stage and is therefore
   /// pipeline-kind: targets built over it use the mesh draw path.
-  pub fn from_stages(gl: &glow::Context, vertex: glow::Shader, fragment: glow::Shader) -> Result<Self, String> {
+  pub fn from_stages(gl: &glow::Context, vertex: &CompiledStage, fragment: &CompiledStage) -> Result<Self, String> {
+    let mut declared = vertex.declared.clone();
+    declared.extend(fragment.declared.iter().cloned());
+    let (vertex, fragment) = (vertex.shader, fragment.shader);
     unsafe {
       let program = gl.create_program().map_err(|e| format!("glCreateProgram failed: {e}"))?;
       gl.attach_shader(program, vertex);
@@ -203,7 +273,8 @@ impl ShaderProgram {
         return Err(format!("program link failed: {log}"));
       }
       let uniforms = reflect_uniforms(gl, program);
-      Ok(ShaderProgram { program, uniforms, pipeline: true, label: None })
+      let inactive = inactive_names(&uniforms, declared);
+      Ok(ShaderProgram { program, uniforms, inactive, pipeline: true, label: None })
     }
   }
 
@@ -222,9 +293,31 @@ impl ShaderProgram {
   }
 
   /// The active uniforms as a plain-data table (name -> slot), for the
-  /// UI-side mirror and call-site validation (see `vocab::UniformTable`).
+  /// UI-side mirror and call-site validation (see `vocab::UniformTable`),
+  /// plus an `Inactive` slot per declared-but-optimized-out name.
   pub fn uniform_table(&self) -> super::vocab::UniformTable {
-    self.uniforms.iter().map(|(name, (_, slot))| (name.clone(), *slot)).collect()
+    let inactive = self.inactive.iter().map(|name| {
+      (name.clone(), super::vocab::UniformSlot { kind: super::vocab::UniformKind::Inactive, count: 1 })
+    });
+    self.uniforms.iter().map(|(name, (_, slot))| (name.clone(), *slot)).chain(inactive).collect()
+  }
+
+  /// Whether `name` may be written: active, or declared but inactive (the
+  /// write is then skipped at apply time).
+  pub fn accepts_uniform(&self, name: &str) -> bool {
+    self.is_active(name) || self.inactive.contains(name)
+  }
+
+  /// Whether `name` is an active uniform: one the linked program has a
+  /// location for, so a write reaches it (and a sampler binding takes a
+  /// texture unit).
+  pub fn is_active(&self, name: &str) -> bool {
+    self.uniforms.contains_key(name)
+  }
+
+  /// An active uniform's location and typed slot, for the apply path.
+  pub(super) fn uniform(&self, name: &str) -> Option<&(glow::UniformLocation, super::vocab::UniformSlot)> {
+    self.uniforms.get(name)
   }
 
   pub(crate) fn delete(self, gl: &glow::Context) {
@@ -259,6 +352,13 @@ fn reflect_uniforms(
     }
   }
   uniforms
+}
+
+fn inactive_names(
+  uniforms: &HashMap<String, (glow::UniformLocation, super::vocab::UniformSlot)>,
+  declared: Vec<String>,
+) -> HashSet<String> {
+  declared.into_iter().filter(|name| !uniforms.contains_key(name)).collect()
 }
 
 /// Drop a use of a shared program, deleting the GL program when this was the

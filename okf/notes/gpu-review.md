@@ -109,7 +109,7 @@ between 2026-07-29 and 07-31, and ranked lesson 1 (load-op) arrived with item
 5. **Call-site validation** - creates validate inside their blocking RPCs,
    fire-and-forget updates against UI-side mirrors; the
    strict-on-inactive-uniforms sub-case split out as
-   [gpu-inactive-uniform-two-tier](../backlog/gpu-inactive-uniform-two-tier.md).
+   [gpu-inactive-uniform-two-tier](../done/gpu-inactive-uniform-two-tier.md).
    [gpu-callsite-validation](../done/gpu-callsite-validation.md)
 6. **Draw range and instancing** - `setDrawCount` replaced by
    `setDraw({ firstVertex, vertexCount, instanceCount })`, drawn via

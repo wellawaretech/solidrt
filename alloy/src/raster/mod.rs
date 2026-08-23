@@ -244,7 +244,7 @@ pub(crate) struct RasterState {
   render_pipelines: HashMap<u64, Rc<RenderPipeline>>,
   // Raw compiled stages in their own id space, inputs to LinkProgram. The GL
   // shader object is deleted on DestroyStage; linked programs are unaffected.
-  stages: HashMap<u64, glow::Shader>,
+  stages: HashMap<u64, crate::gpu::CompiledStage>,
   // Vertex buffers pipelines draw from, in their own id space. Targets hold
   // their buffer by Rc, like programs and pipelines, so removal here only
   // deletes the GL buffer once no target draws from it (see
@@ -523,8 +523,8 @@ impl RasterState {
             reply(tx, self.link_program(id, vertex, fragment, label));
           }
           RasterCmd::DestroyStage { id } => {
-            if let Some(shader) = self.stages.remove(&id) {
-              crate::gpu::delete_stage(&self.gl, shader);
+            if let Some(stage) = self.stages.remove(&id) {
+              crate::gpu::delete_stage(&self.gl, stage.shader);
             }
           }
           RasterCmd::CreateRenderPipeline { id, program, desc, label, reply: tx } => {
@@ -1398,8 +1398,8 @@ impl RasterState {
   /// validation mirror. The UI side validated the ids and stage kinds against
   /// its mirror; a miss here means the mirrors diverged.
   fn link_program(&mut self, id: u64, vertex: u64, fragment: u64, label: Option<String>) -> Result<UniformTable, String> {
-    let vs = *self.stages.get(&vertex).ok_or_else(|| format!("shader {vertex} not found"))?;
-    let fs = *self.stages.get(&fragment).ok_or_else(|| format!("shader {fragment} not found"))?;
+    let vs = self.stages.get(&vertex).ok_or_else(|| format!("shader {vertex} not found"))?;
+    let fs = self.stages.get(&fragment).ok_or_else(|| format!("shader {fragment} not found"))?;
     let program = ShaderProgram::from_stages(&self.gl, vs, fs)?.with_label(label);
     let uniforms = program.uniform_table();
     self.programs.insert(id, Rc::new(program));

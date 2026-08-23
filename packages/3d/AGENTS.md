@@ -470,18 +470,19 @@ system.
   a cache. A class instance has no `dispose` of its own; disposing the
   class invalidates every instance.
 - A parameterised class whose variants (mapped/unmapped, ...) are SEPARATE
-  classes must have every variant reference every shared uniform it is
-  seeded with: a declared-but-unused per-entry name compiles out and
-  throws at add().
+  classes may seed every variant with one param/texture object: a uniform
+  a variant declares but does not use compiles out, and the engine then
+  accepts the write with a warning and skips it. A name no variant
+  DECLARES still throws at add().
 - The standard-set contract is checked TEXTUALLY at shaderMaterial()
   creation (uModel and uViewProj must appear in the vertex source) and
-  strictly at add() for the per-entry names: a uModel or uNormal that is
-  declared but never USED compiles out, and the scene's entry seed then
-  throws at attach (the engine rejects unknown entry uniform names). The
-  shared names have no such backstop - a declared-but-unused uViewProj or
-  uCamPos is skipped silently (shared params tolerate zero coverage), so
-  the symptom is an untransformed or unlit render, not an error. Use what
-  you declare.
+  at add() for the per-entry names: a uModel or uNormal that is declared
+  but never USED compiles out, and the scene's entry seed is then skipped
+  with an engine warning (the engine rejects only names the program never
+  declared). The shared names have no such backstop - a declared-but-unused
+  uViewProj or uCamPos is skipped silently (shared params tolerate zero
+  coverage), so the symptom is an untransformed or unlit render, not an
+  error. Use what you declare.
 - The layout scan is textual the same way: any `aColor` token in the
   vertex source - a comment counts - selects the "colored" layout, and
   the material then rejects standard geometry at add(). Do not mention

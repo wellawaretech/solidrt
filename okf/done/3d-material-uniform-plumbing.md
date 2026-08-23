@@ -22,7 +22,7 @@ All three landed in `packages/3d`, bare-minimum shape:
    so nothing changed for existing callers. Instances carry no `dispose`.
 
 The interaction with
-[gpu-inactive-uniform-two-tier](../backlog/gpu-inactive-uniform-two-tier.md)
+[gpu-inactive-uniform-two-tier](gpu-inactive-uniform-two-tier.md)
 stands as recorded there; a `Billboard` node stays with the instanced-mesh
 sugar. Both are open items, not leftovers of this one.
 
@@ -119,7 +119,7 @@ Explicitly NOT a content-keyed cache. The argument against hidden caches
 stands; this is an app-owned split.
 
 Interacts with
-[gpu-inactive-uniform-two-tier](../backlog/gpu-inactive-uniform-two-tier.md): a
+[gpu-inactive-uniform-two-tier](gpu-inactive-uniform-two-tier.md): a
 parameterised class wants one uniform set across several source variants, and
 any variant that happens not to reference one of them throws at `add()`. See
 that item for the fix.

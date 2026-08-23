@@ -24,6 +24,8 @@ interface a dozen times and still not say where a prop comes from.
 - [Input](/core/reference/input/) - handlers and the event objects they receive
 - [Shaders](/core/reference/shaders/) - the `shader` prop on `window` and
   `view`
+- [GPU](/core/reference/gpu/) - textures, shader targets, pipelines and the
+  draw list from `@solidrt/core/gpu`
 - [Types](/core/reference/types/) - the shared aliases
 
 ## The element vocabulary

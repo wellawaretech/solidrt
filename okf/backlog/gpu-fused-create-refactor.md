@@ -40,7 +40,7 @@ precedent):
   Examples now drive `uTime`, their own declaration.
 
 Touched: alloy gpu/program.rs preambles, flux plugin exports + error strings,
-flux-types, core gpu.ts, docs/20-core/ (GPU section, once it has one),
+flux-types, core gpu.ts, packages/core/docs/reference/gpu.md,
 both AGENTS.md files, all GPU
 examples, gpu_split.rs.
 

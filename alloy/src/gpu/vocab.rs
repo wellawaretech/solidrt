@@ -309,6 +309,10 @@ pub enum UniformKind {
   Mat4,
   /// Bound via texture bindings, never via params.
   Sampler2D,
+  /// Declared in the source but optimized out by the compiler, so GL
+  /// reflects nothing for it: writes are accepted and skipped (with a
+  /// warning) rather than rejected as unknown names.
+  Inactive,
   /// A reflected type outside the settable set (int vectors, matrices other
   /// than mat4, other sampler dimensions, ...), carrying the raw GL type
   /// enum for diagnostics.
@@ -339,7 +343,7 @@ impl UniformKind {
       UniformKind::Vec3 => Some(3),
       UniformKind::Vec4 => Some(4),
       UniformKind::Mat4 => Some(16),
-      UniformKind::Sampler2D | UniformKind::Other(_) => None,
+      UniformKind::Sampler2D | UniformKind::Inactive | UniformKind::Other(_) => None,
     }
   }
 
@@ -354,6 +358,7 @@ impl UniformKind {
       UniformKind::Vec4 => "vec4",
       UniformKind::Mat4 => "mat4",
       UniformKind::Sampler2D => "sampler2D",
+      UniformKind::Inactive => "declared but inactive",
       UniformKind::Other(_) => "an unsupported type",
     }
   }
@@ -393,13 +398,15 @@ impl UniformSlot {
 /// `ShaderProgram` holds, crossing to the UI thread in create/link replies so
 /// `Context` can validate uniform writes without an RPC. Array uniforms
 /// appear under their bare name (the reflected `[0]` suffix is stripped).
-/// Note the caveat this inherits from GL reflection: a uniform that is
-/// declared but optimized out (inactive) is absent here, so setting it
-/// reports "no active uniform" - remove the write or use the uniform.
+/// GL reflection only sees active uniforms, so a uniform that is declared
+/// but optimized out is listed here from a source scan instead, as an
+/// `Inactive` slot: writing it warns and is skipped, where a name that was
+/// never declared throws.
 pub type UniformTable = HashMap<String, UniformSlot>;
 
 fn unknown_uniform(uniforms: &UniformTable, name: &str) -> String {
-  let mut names: Vec<&str> = uniforms.keys().map(|s| s.as_str()).collect();
+  let mut names: Vec<&str> =
+    uniforms.iter().filter(|(_, slot)| slot.kind != UniformKind::Inactive).map(|(s, _)| s.as_str()).collect();
   names.sort_unstable();
   if names.is_empty() {
     format!("no active uniform named '{name}' (the program has none)")
@@ -416,6 +423,9 @@ fn unknown_uniform(uniforms: &UniformTable, name: &str) -> String {
 /// type dispatches on; Err when it is active but fails either check.
 pub fn validate_param_if_declared(uniforms: &UniformTable, name: &str, value: &ParamValue) -> Result<bool, String> {
   let Some(slot) = uniforms.get(name) else { return Ok(false) };
+  if slot.kind == UniformKind::Inactive {
+    return Ok(false);
+  }
   match slot.components() {
     Some(expected) => {
       let got = value.components().len();
@@ -436,18 +446,31 @@ pub fn validate_param_if_declared(uniforms: &UniformTable, name: &str, value: &P
   Ok(true)
 }
 
-/// Check a params list against a program's active uniforms: every name must
-/// pass `validate_param_if_declared`, and absence is an error too. Run at the
+/// Check a params list against a program's uniforms: every name must pass
+/// `validate_param_if_declared`, a declared-but-inactive name warns (the
+/// write is skipped at apply time), and absence is an error. Run at the
 /// call-site boundary (create RPCs raster-side, updates UI-side from the
 /// mirror), so a typo'd name or a wrong arity throws on the line that wrote
 /// it instead of warning on the raster thread.
 pub fn validate_params(uniforms: &UniformTable, params: &[(String, ParamValue)]) -> Result<(), String> {
   for (name, value) in params {
     if !validate_param_if_declared(uniforms, name, value)? {
+      if is_inactive(uniforms, name) {
+        warn_inactive(name);
+        continue;
+      }
       return Err(unknown_uniform(uniforms, name));
     }
   }
   Ok(())
+}
+
+fn is_inactive(uniforms: &UniformTable, name: &str) -> bool {
+  uniforms.get(name).is_some_and(|slot| slot.kind == UniformKind::Inactive)
+}
+
+fn warn_inactive(name: &str) {
+  log::warn!("[shader] uniform '{name}' is declared but inactive (optimized out); the write is ignored");
 }
 
 /// Check a sampler-binding list against a program's active uniforms: every
@@ -457,6 +480,10 @@ pub fn validate_params(uniforms: &UniformTable, params: &[(String, ParamValue)])
 pub fn validate_texture_bindings(uniforms: &UniformTable, textures: &[(String, u64)]) -> Result<(), String> {
   for (name, _) in textures {
     let slot = uniforms.get(name).ok_or_else(|| unknown_uniform(uniforms, name))?;
+    if slot.kind == UniformKind::Inactive {
+      warn_inactive(name);
+      continue;
+    }
     if slot.kind != UniformKind::Sampler2D || slot.count > 1 {
       return Err(format!("uniform '{name}' is {}, not a sampler2D", slot.glsl_name()));
     }

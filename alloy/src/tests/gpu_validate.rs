@@ -261,3 +261,37 @@ fn limits_vertex_attribs_names_the_limit() {
   let err = l.check_vertex_attribs(17).expect_err("over the attribute cap must error");
   assert!(err.contains("17 vertex attributes") && err.contains("(16)"), "{err}");
 }
+
+#[test]
+fn params_inactive_name_passes_and_is_not_listed_as_active() {
+  let t = array_table(&[("uTime", UniformKind::Float, 1), ("uAlpha", UniformKind::Inactive, 1)]);
+  assert_eq!(validate_params(&t, &[scalar("uAlpha", 0.5)]), Ok(()));
+  let err = validate_params(&t, &[scalar("uTypo", 1.0)]).expect_err("undeclared must error");
+  assert!(err.contains("(active: uTime)"), "{err}");
+}
+
+#[test]
+fn texture_bindings_inactive_name_passes() {
+  let t = table(&[("uMap", UniformKind::Inactive)]);
+  assert_eq!(validate_texture_bindings(&t, &[("uMap".to_string(), 7)]), Ok(()));
+}
+
+#[test]
+fn declared_uniform_names_scans_source() {
+  let src = r"#version 300 es
+precision highp float;
+// uniform float uCommented;
+/* uniform vec2 uBlock;
+   uniform vec2 uBlock2; */
+uniform vec2 iResolution;
+layout(std140) uniform vec4 uColor, uTint[4];
+uniform sampler2D
+  uMap;
+uniform Lights { vec3 dir; } uLights;
+void main() {}
+";
+  assert_eq!(
+    crate::gpu::program::declared_uniform_names(src),
+    vec!["iResolution", "uColor", "uTint", "uMap"].into_iter().map(String::from).collect::<Vec<_>>()
+  );
+}

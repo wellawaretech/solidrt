@@ -928,7 +928,7 @@ impl ShaderTexture {
   pub fn set_entry_bindings(&mut self, id: u64, updates: &[(String, u64)]) -> Result<(), String> {
     let entry = self.entry_mut(id)?;
     for (name, _) in updates {
-      if !entry.pipeline.program.uniforms.contains_key(name) {
+      if !entry.pipeline.program.accepts_uniform(name) {
         return Err(format!("no active uniform named '{name}'"));
       }
     }
@@ -1135,15 +1135,15 @@ impl ShaderTexture {
   /// failed call leaves all bindings intact. The caller re-renders afterwards.
   pub fn set_sampler_bindings(&mut self, updates: &[(String, u64)]) -> Result<(), String> {
     {
-      let uniforms = match &self.kind {
-        TargetKind::Fragment { program, .. } => &program.uniforms,
+      let program = match &self.kind {
+        TargetKind::Fragment { program, .. } => program,
         TargetKind::Mesh(mesh) => match mesh.entries.first() {
-          Some(e) => &e.pipeline.program.uniforms,
+          Some(e) => &e.pipeline.program,
           None => return Err("target has no draw entries".to_string()),
         },
       };
       for (name, _) in updates {
-        if !uniforms.contains_key(name) {
+        if !program.accepts_uniform(name) {
           return Err(format!("no active uniform named '{name}'"));
         }
       }
@@ -1206,7 +1206,7 @@ impl ShaderTexture {
             } else {
               let mut combined = e.bindings.clone();
               for (name, src_id) in &mesh.shared_bindings {
-                if e.pipeline.program.uniforms.contains_key(name) && !combined.iter().any(|(n, _)| n == name) {
+                if e.pipeline.program.is_active(name) && !combined.iter().any(|(n, _)| n == name) {
                   combined.push((name.clone(), *src_id));
                 }
               }

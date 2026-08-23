@@ -252,11 +252,6 @@ Shaped, not started.
   what the runtime fills). Still open - the composition questions - whether
   the fused paths become thin compositions of the raw layer, whether a
   mid-level program shorthand is wanted, and the two-dialect preamble story.
-- **[Two-tier handling for declared-but-inactive uniforms](backlog/gpu-inactive-uniform-two-tier.md)** [2026-07-30]
-  Uniform validation throws on any name absent from the reflected table, but
-  GL reflection only sees active uniforms - a declared uniform the compiler
-  optimized out counts as a typo. A compile-time scan of the source for
-  declared uniform names would let that sub-case warn instead of throw.
 - **[Mipmaps](backlog/gpu-mipmaps.md)** [2026-07-30]
   "No mipmaps exist" is a documented axiom, so any minified texture aliases
   (the Doom port's distant surfaces, 4x supersampled targets); GL gives
@@ -763,6 +758,11 @@ Finished, kept for the reasoning.
   Resize data textures and shader targets at a stable id so texture
   references, sampler bindings and owner-scoped auto-free survive; shipped, no
   GL-level test coverage.
+- **[Two-tier handling for declared-but-inactive uniforms](done/gpu-inactive-uniform-two-tier.md)** [2026-08-23]
+  Uniform validation threw on any name absent from the reflected table, but GL
+  reflection only sees active uniforms - a declared uniform the compiler
+  optimized out counted as a typo. A compile-time scan of the source for
+  declared uniform names now lets that sub-case warn instead of throw.
 - **[GPU object labels and device limits](done/gpu-labels-limits.md)** [2026-07-31]
   Debug labels on every GPU create (surfaced in get_gpu_resources and error
   strings) and a queryable gpu.limits with bounds checks at create, so

@@ -103,8 +103,9 @@ declare module "flux:gpu" {
    * call site: a name with no active uniform, a value whose length does not
    * fit the declared type, a `sampler2D` named here (samplers bind via
    * `textures`), or a value that is not a number / number array throws.
-   * Reflection only sees active uniforms, so a uniform that is declared but
-   * optimized out counts as unknown - remove the write (or use the uniform).
+   * A uniform that is declared but optimized out by the compiler is accepted
+   * with a warning and the write is skipped, so one param object can drive
+   * shader variants that do not all use every uniform.
    * An `undefined` value is skipped, so conditional spreads stay usable.
    */
   export type ShaderParams = Record<string, number | number[]>
