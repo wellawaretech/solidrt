@@ -1012,7 +1012,14 @@ fn stats_reply(id: u64, r: StatsReply<'_>) -> String {
     put("gpuPasses", rc.passes.into());
     // Integer ms: sub-ms increments accumulate in the microsecond counters
     // before this division, so the cumulative rounding loss stays under 1ms.
-    put("gpuPassMs", (rc.pass_micros / 1000).into());
+    put("gpuPassIssueMs", (rc.pass_issue_micros / 1000).into());
+    // Absent (not 0) when the context has no timer queries.
+    if let Some(exec) = rc.pass_exec_micros {
+      put("gpuPassExecMs", (exec / 1000).into());
+    }
+    if let Some(exec) = rc.frame_exec_micros {
+      put("gpuFrameExecMs", (exec / 1000).into());
+    }
     put("rasterCmdMs", (rc.cmd_micros / 1000).into());
   }
   serde_json::json!({"type": "result", "id": id, "data": data}).to_string()
@@ -1063,7 +1070,13 @@ fn window_json(window: Option<&crate::frame_history::WindowSummary>, now_ms: f64
   if let Some(r) = &w.raster_rates {
     put("fenceTimeoutsPerSec", round2(r.fence_timeouts_per_sec).into());
     put("gpuPassesPerFrame", round2(r.passes_per_frame).into());
-    put("gpuPassMsPerFrame", round2(r.pass_ms_per_frame).into());
+    put("gpuPassIssueMsPerFrame", round2(r.pass_issue_ms_per_frame).into());
+    if let Some(exec) = r.pass_exec_ms_per_frame {
+      put("gpuPassExecMsPerFrame", round2(exec).into());
+    }
+    if let Some(exec) = r.frame_exec_ms_per_frame {
+      put("gpuFrameExecMsPerFrame", round2(exec).into());
+    }
     put("rasterCmdMsPerSec", round2(r.cmd_ms_per_sec).into());
   }
   data.into()
@@ -1296,9 +1309,11 @@ fn gpu_reply(ctx: &flux::rquickjs::Ctx<'_>, id: u64) -> String {
         "manual": p.manual,
         "loadOp": if p.load { "load" } else { "clear" },
         // Cumulative like the get_stats aggregates (diff two queries for a
-        // rate); passMs is raster-thread occupancy, not GPU-side duration.
+        // rate); issueMs is raster-thread occupancy, execMs is GPU-side
+        // duration from timer queries (0 on a context without them).
         "passes": p.passes,
-        "passMs": p.pass_micros / 1000,
+        "issueMs": p.pass_issue_micros / 1000,
+        "execMs": p.pass_exec_micros / 1000,
         "textures": p.textures.iter().map(|(name, tex)| (name.clone(), serde_json::json!(tex))).collect::<serde_json::Map<_, _>>(),
         "params": p.params.iter().map(|(name, v)| {
           let v = match v {

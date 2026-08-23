@@ -52,6 +52,14 @@ pub fn build(s: &StatsSnapshot, typography: &TypographyContext, safe_area: Rect,
     pct(s.post_ms),
     pct(s.hover_ms),
   ));
+  // GPU execution per frame as a frame share (window draw plus shader
+  // passes, timer-queried on the raster thread): the one figure here that
+  // is not JS-thread work, so it does not sum with the phases above. Near
+  // 100% the GPU is the bottleneck whatever the phases say. Hidden when the
+  // context has no timer queries.
+  if let Some(gpu_ms) = s.gpu_ms {
+    text.push_str(&format!("\nGPU {:.0}%", pct(gpu_ms)));
+  }
   // Demand-gate savings/sec: frames served from the cached display list
   // (reuse) and frames skipped entirely (skip). Hidden when the gate saved
   // nothing this second - every frame a full rebuild, which FPS already shows.

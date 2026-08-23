@@ -12,7 +12,10 @@ Stage 1 landed 2026-07-30: raster counters consolidated into one shared
 and wall-timed, surfaced live in get_stats as `gpuPasses` / `gpuPassMs`
 (cumulative; diff two queries for a rate). The ms figure is raster-thread
 occupancy issuing the passes, not GPU-side duration (GL is async; true GPU
-time would need EXT_disjoint_timer_query).
+time would need EXT_disjoint_timer_query). Renamed 2026-08-23 to
+`gpuPassIssueMs` / per-target `issueMs` when timer queries landed beside it
+as `gpuPassExecMs` / `execMs`
+([gpu-timer-query-pass-timing](gpu-timer-query-pass-timing.md)).
 
 Stage 2 landed 2026-07-30: per-target attribution. Each ShaderTexture keeps
 cumulative pass count + micros (Cell fields, raster-thread only, survive

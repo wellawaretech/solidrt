@@ -23,4 +23,4 @@ The Linux half is already written up and usable today, including the caveats
 that make its absolute numbers untrustworthy:
 [measuring which process burns the GPU](../notes/gpu-burn-attribution-linux.md).
 The engine-side counterpart is
-[gpu-timer-query-pass-timing](gpu-timer-query-pass-timing.md).
+[gpu-timer-query-pass-timing](../done/gpu-timer-query-pass-timing.md).

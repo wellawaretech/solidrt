@@ -137,7 +137,10 @@ pub struct ShaderTexture {
   /// occupancy, not GPU-side duration; see raster::RasterStats). Survives
   /// resize, dies with the target. Cell because renders take &self.
   passes: Cell<u64>,
-  pass_micros: Cell<u64>,
+  pass_issue_micros: Cell<u64>,
+  /// GPU-side execution time of those passes, microseconds, credited by the
+  /// owner as timer queries retire (see gpu::PassTimer).
+  pass_exec_micros: Cell<u64>,
 }
 
 /// Target texture + FBO shared by both shader kinds. Returns (target, fbo)
@@ -395,7 +398,8 @@ impl ShaderTexture {
         sampler: crate::texture::SamplerState::default(),
         manual: false,
         passes: Cell::new(0),
-        pass_micros: Cell::new(0),
+        pass_issue_micros: Cell::new(0),
+        pass_exec_micros: Cell::new(0),
       })
     }
   }
@@ -528,7 +532,8 @@ impl ShaderTexture {
         sampler: crate::texture::SamplerState::default(),
         manual: false,
         passes: Cell::new(0),
-        pass_micros: Cell::new(0),
+        pass_issue_micros: Cell::new(0),
+        pass_exec_micros: Cell::new(0),
       })
     }
   }
@@ -593,7 +598,8 @@ impl ShaderTexture {
         sampler: crate::texture::SamplerState::default(),
         manual: false,
         passes: Cell::new(0),
-        pass_micros: Cell::new(0),
+        pass_issue_micros: Cell::new(0),
+        pass_exec_micros: Cell::new(0),
       })
     }
   }
@@ -953,13 +959,18 @@ impl ShaderTexture {
   /// Record one executed pass into this target (see the `passes` field).
   pub fn record_pass(&self, micros: u64) {
     self.passes.set(self.passes.get() + 1);
-    self.pass_micros.set(self.pass_micros.get() + micros);
+    self.pass_issue_micros.set(self.pass_issue_micros.get() + micros);
   }
 
-  /// (cumulative passes, cumulative microseconds) rendered into this target,
-  /// for resource introspection.
-  pub fn pass_stats(&self) -> (u64, u64) {
-    (self.passes.get(), self.pass_micros.get())
+  /// Credit GPU-side execution time for a retired pass into this target.
+  pub fn record_exec(&self, micros: u64) {
+    self.pass_exec_micros.set(self.pass_exec_micros.get() + micros);
+  }
+
+  /// (cumulative passes, issue microseconds, GPU execution microseconds)
+  /// rendered into this target, for resource introspection.
+  pub fn pass_stats(&self) -> (u64, u64, u64) {
+    (self.passes.get(), self.pass_issue_micros.get(), self.pass_exec_micros.get())
   }
 
   /// Recreate the render target at a new size, keeping the compiled programs,

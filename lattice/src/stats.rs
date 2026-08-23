@@ -50,6 +50,10 @@ pub struct StatsSnapshot {
   pub reused: u32,
   pub skipped: u32,
   pub textures: usize,
+  /// GPU-side execution time per frame (ms) over the last sample window:
+  /// window draws plus shader passes, from the raster thread's timer
+  /// queries. None when the client's context has none.
+  pub gpu_ms: Option<f32>,
   /// Layout-activity counters from the last full rebuild, raw (not smoothed):
   /// these are counts to reason about, not rates to watch. See
   /// alloy::rendertree::counters.
@@ -127,6 +131,13 @@ pub struct Stats {
   // layout activity: the overlay is built on its own cadence, usually on
   // frames with no paint walk.
   paint_stats: PaintStats,
+  // GPU execution accounting: the latest (frame, cumulative exec micros)
+  // the draw loop recorded, the mark the last sample took, and the
+  // per-frame figure computed between them. None while the raster thread
+  // reports no timer queries.
+  gpu_now: Option<(u64, u64)>,
+  gpu_mark: Option<(u64, u64)>,
+  gpu_ms: Option<f32>,
 }
 
 impl Stats {
@@ -154,6 +165,9 @@ impl Stats {
       node_count: 0,
       layout_counters: LayoutCounters::default(),
       paint_stats: PaintStats::default(),
+      gpu_now: None,
+      gpu_mark: None,
+      gpu_ms: None,
     };
     stats.sample();
     stats
@@ -206,6 +220,25 @@ impl Stats {
     self.skipped = self.skipped_acc;
     self.reused_acc = 0;
     self.skipped_acc = 0;
+
+    // GPU time per frame over the window just closed.
+    if let (Some((f0, us0)), Some((f1, us1))) = (self.gpu_mark, self.gpu_now) {
+      if f1 > f0 {
+        self.gpu_ms = Some(us1.saturating_sub(us0) as f32 / 1000.0 / (f1 - f0) as f32);
+      }
+    }
+    self.gpu_mark = self.gpu_now;
+  }
+
+  /// The raster thread's cumulative GPU execution counters as of `frame`
+  /// (window draws plus shader passes). Recorded every frame, before
+  /// `record_js` closes a sample window, so the per-frame figure spans
+  /// exactly the window's frames.
+  pub fn record_gpu(&mut self, frame: u64, raster: &alloy::RasterCounters) {
+    self.gpu_now = match (raster.frame_exec_micros, raster.pass_exec_micros) {
+      (Some(f), Some(p)) => Some((frame, f + p)),
+      _ => None,
+    };
   }
 
   /// JS render-handler time (onFrame + flush, ms) and setProperty count for the
@@ -269,6 +302,7 @@ impl Stats {
       reused: self.reused,
       skipped: self.skipped,
       textures,
+      gpu_ms: self.gpu_ms,
       node_count: self.node_count,
       measure_calls: self.layout_counters.measure_calls,
       para_shapes: self.layout_counters.para_shapes,

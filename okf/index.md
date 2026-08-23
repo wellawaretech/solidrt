@@ -285,10 +285,6 @@ Shaped, not started.
   createPipeline targets are single-sample, so any filled geometry has hard
   jaggies; wanted a sample count (MSAA + resolve) or a documented supersample
   path with known-good minification.
-- **[Report GPU-side pass duration, not raster-thread occupancy](backlog/gpu-timer-query-pass-timing.md)** [2026-08-13]
-  get_stats reports gpuPassMs as the raster thread's time issuing passes, so a
-  pass that is cheap to issue and expensive on the GPU reads as free; timer
-  queries would make the number mean what its name says.
 - **[Color math is unreachable headless](backlog/headless-color-math.md)** [2026-08-19]
   parseColor/mixColors/brightness live only on flux:rendertree (gui feature),
   so site tooling, tests, and theme builders cannot call them; the components
@@ -834,6 +830,10 @@ Finished, kept for the reasoning.
   and the prop warn-fails on them), and rename the lifetime `manual` option
   out of its collision with render: "manual". Cheapest now; more expensive
   with every app shipped.
+- **[Report GPU-side pass duration, not raster-thread occupancy](done/gpu-timer-query-pass-timing.md)** [2026-08-13]
+  get_stats reports gpuPassMs as the raster thread's time issuing passes, so a
+  pass that is cheap to issue and expensive on the GPU reads as free; timer
+  queries would make the number mean what its name says.
 - **[Uniform arrays (vecN[], mat4[])](done/gpu-uniform-arrays.md)** [2026-08-11]
   "Done 2026-08-11: a declared array uniform takes one flat count*components
   param under its bare name via the glUniform*v forms; reflection unified on

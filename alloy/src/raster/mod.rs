@@ -26,7 +26,7 @@ pub(crate) use cmd::RasterCmd;
 use impellers::{Context as ImpellerContext, DisplayList, ISize, Texture};
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{mpsc, Arc};
 
 use capture::flip_for_fbo;
@@ -35,7 +35,7 @@ use crate::gl;
 use crate::gpu::{
   release_buffer, release_pipeline, release_program, validate_params, validate_texture_bindings, DrawSpec,
   EntryBuffers, GpuBuffer, GpuBufferInfo, GpuLimits, GpuPipelineInfo, GpuProgramInfo, GpuRenderPipelineInfo,
-  GpuResources, GpuTextureInfo, GpuWindowShaderInfo, ParamValue, PassInput, PipelineDesc, PipelineSpec,
+  GpuResources, GpuTextureInfo, GpuWindowShaderInfo, ParamValue, PassInput, PassTimer, PipelineDesc, Timed, PipelineSpec,
   RenderPipeline, ShaderProgram, ShaderTexture, TargetSpec, UniformTable, WindowShader,
 };
 use crate::texture::{GpuTexture, SamplerCache, SamplerState, TextureFormat};
@@ -66,11 +66,26 @@ pub struct RasterStats {
   /// racing ahead of presented frames means redundant target re-renders
   /// (the ~900-passes-per-frame failure this counter exists to catch).
   pub(crate) passes: AtomicU64,
-  /// Wall time spent executing those passes, in microseconds. This is
+  /// Wall time spent issuing those passes, in microseconds. This is
   /// raster-thread occupancy (command issue plus any driver backpressure),
   /// not GPU-side duration - GL is asynchronous - but occupancy is the
   /// wedge signal: it is what starves presents.
-  pub(crate) pass_micros: AtomicU64,
+  pub(crate) pass_issue_micros: AtomicU64,
+  /// GPU-side execution time of those passes, in microseconds, from timer
+  /// queries (gpu::PassTimer); the number `pass_issue_micros` is not. Lags
+  /// the pass by a frame or two (results are harvested non-blocking) and
+  /// stays at zero with `timer_queries` false.
+  pub(crate) pass_exec_micros: AtomicU64,
+  /// GPU-side execution time of the window draw of each presented frame
+  /// (Impeller's display list plus the window shader composite, not the
+  /// pass flush before it and not the present), microseconds, from the same
+  /// timer queries. Per frame this is the number to hold against the
+  /// refresh period; it is what explains `fence_timeouts`.
+  pub(crate) frame_exec_micros: AtomicU64,
+  /// Whether the raster context supports timer queries; set once by the
+  /// raster thread at startup. False means `pass_exec_micros` is meaningless
+  /// and reports as absent.
+  pub(crate) timer_queries: AtomicBool,
   /// Wall time spent executing non-Frame raster commands, in microseconds:
   /// texture uploads, readbacks, offscreen rasterizations, compiles, param
   /// writes, and the pass flushes those commands trigger. This is the work
@@ -96,9 +111,15 @@ pub struct RasterCounters {
   pub fence_timeouts: u64,
   /// Shader/pipeline target passes executed on the raster thread.
   pub passes: u64,
-  /// Raster-thread wall time spent executing those passes, microseconds
+  /// Raster-thread wall time spent issuing those passes, microseconds
   /// (occupancy, not GPU-side duration).
-  pub pass_micros: u64,
+  pub pass_issue_micros: u64,
+  /// GPU-side execution time of those passes, microseconds, from timer
+  /// queries; None when the context has no timer queries.
+  pub pass_exec_micros: Option<u64>,
+  /// GPU-side execution time of the window draws, microseconds; None when
+  /// the context has no timer queries.
+  pub frame_exec_micros: Option<u64>,
   /// Raster-thread wall time spent executing non-Frame commands,
   /// microseconds - the work no frame-phase timing sees.
   pub cmd_micros: u64,
@@ -111,7 +132,15 @@ impl RasterStats {
       idle_ticks: self.idle_ticks.load(Ordering::Relaxed),
       fence_timeouts: self.fence_timeouts.load(Ordering::Relaxed),
       passes: self.passes.load(Ordering::Relaxed),
-      pass_micros: self.pass_micros.load(Ordering::Relaxed),
+      pass_issue_micros: self.pass_issue_micros.load(Ordering::Relaxed),
+      pass_exec_micros: self
+        .timer_queries
+        .load(Ordering::Relaxed)
+        .then(|| self.pass_exec_micros.load(Ordering::Relaxed)),
+      frame_exec_micros: self
+        .timer_queries
+        .load(Ordering::Relaxed)
+        .then(|| self.frame_exec_micros.load(Ordering::Relaxed)),
       cmd_micros: self.cmd_micros.load(Ordering::Relaxed),
     }
   }
@@ -122,7 +151,10 @@ impl RasterStats {
       idle_ticks: AtomicU64::new(0),
       fence_timeouts: AtomicU64::new(0),
       passes: AtomicU64::new(0),
-      pass_micros: AtomicU64::new(0),
+      pass_issue_micros: AtomicU64::new(0),
+      pass_exec_micros: AtomicU64::new(0),
+      frame_exec_micros: AtomicU64::new(0),
+      timer_queries: AtomicBool::new(false),
       cmd_micros: AtomicU64::new(0),
     }
   }
@@ -194,6 +226,10 @@ pub(crate) struct RasterState {
   // The four shared GL sampler objects alloy's passes bind per sampled input
   // (see SamplerCache for why texture-object state cannot carry this).
   samplers: SamplerCache,
+  /// Timer queries around every pass (see gpu::PassTimer); harvested at the
+  /// top of each raster command into `stats.pass_exec_micros` and the
+  /// per-target counters.
+  pass_timer: PassTimer,
   // The device ceilings, queried once at startup and served to the UI thread
   // over the Limits RPC (Context caches the reply for call-site validation).
   limits: GpuLimits,
@@ -390,12 +426,15 @@ impl RasterState {
   ) -> Self {
     let samplers = SamplerCache::new(&gl);
     let limits = GpuLimits::query(&gl);
+    let pass_timer = PassTimer::new(&gl);
+    stats.timer_queries.store(pass_timer.supported(), Ordering::Relaxed);
     RasterState {
       gl,
       impeller_ctx,
       binding,
       surface_size,
       samplers,
+      pass_timer,
       limits,
       offscreen_rig: gl::OffscreenRig::new(),
       last_size: ISize::new(0, 0),
@@ -458,6 +497,7 @@ impl RasterState {
         // else the loop executes is otherwise invisible to timing.
         let timed = !matches!(cmd, RasterCmd::Frame { .. });
         let cmd_start = std::time::Instant::now();
+        self.harvest_pass_timings();
         match cmd {
           RasterCmd::Frame { dl, tree_clean } => {
             // A load-shed frame that was not clean still changed the tree:
@@ -632,11 +672,13 @@ impl RasterState {
             match self.shaders.get(&id) {
               Some(shader) => {
                 let start = std::time::Instant::now();
+                self.pass_timer.begin(&self.gl);
                 shader.render(&self.gl, &|bindings| resolve_binding_list(&self.textures, &self.samplers, bindings));
+                self.pass_timer.end(&self.gl, Timed::Pass { target: id });
                 let micros = start.elapsed().as_micros() as u64;
                 shader.record_pass(micros);
                 self.stats.passes.fetch_add(1, Ordering::Relaxed);
-                self.stats.pass_micros.fetch_add(micros, Ordering::Relaxed);
+                self.stats.pass_issue_micros.fetch_add(micros, Ordering::Relaxed);
                 self.dirty.insert(id);
               }
               None => log::warn!("[alloy] render target failed: shader texture {id} not found"),
@@ -766,7 +808,9 @@ impl RasterState {
     self.await_present_fence();
     let wait_ms = wait_start.elapsed().as_secs_f32() * 1000.0;
     let draw_start = std::time::Instant::now();
+    self.pass_timer.begin(&self.gl);
     let drawn = self.draw_to_window(&dl, size);
+    self.pass_timer.end(&self.gl, Timed::Frame);
     let draw_ms = draw_start.elapsed().as_secs_f32() * 1000.0;
     // The stats overlay composites over the finished frame (shaded or not),
     // before the capture readback so playback frames carry it too. Excluded
@@ -1253,11 +1297,13 @@ impl RasterState {
     for id in order.iter().chain(cyclic.iter()) {
       if let Some(shader) = self.shaders.get(id) {
         let start = std::time::Instant::now();
+        self.pass_timer.begin(&self.gl);
         shader.render(&self.gl, &|bindings| resolve_binding_list(&self.textures, &self.samplers, bindings));
+        self.pass_timer.end(&self.gl, Timed::Pass { target: *id });
         let micros = start.elapsed().as_micros() as u64;
         shader.record_pass(micros);
         self.stats.passes.fetch_add(1, Ordering::Relaxed);
-        self.stats.pass_micros.fetch_add(micros, Ordering::Relaxed);
+        self.stats.pass_issue_micros.fetch_add(micros, Ordering::Relaxed);
       }
     }
     self.dirty.clear();
@@ -1556,6 +1602,25 @@ impl RasterState {
     }
   }
 
+  /// Drain retired timer queries into the cumulative GPU-side counters
+  /// (see gpu::PassTimer). A target destroyed before its result retired is
+  /// simply not credited; the total still is.
+  fn harvest_pass_timings(&mut self) {
+    for exec in self.pass_timer.poll(&self.gl) {
+      match exec.what {
+        Timed::Pass { target } => {
+          self.stats.pass_exec_micros.fetch_add(exec.micros, Ordering::Relaxed);
+          if let Some(shader) = self.shaders.get(&target) {
+            shader.record_exec(exec.micros);
+          }
+        }
+        Timed::Frame => {
+          self.stats.frame_exec_micros.fetch_add(exec.micros, Ordering::Relaxed);
+        }
+      }
+    }
+  }
+
   /// Overwrite manual target `dst` with texture `src`'s current pixels via
   /// the shared copy program - a fullscreen sampling draw into dst's FBO,
   /// never a blit. The UI side validated ids, sizes, and dst's manual mode;
@@ -1568,11 +1633,13 @@ impl RasterState {
     let shader = self.shaders.get(&dst).ok_or_else(|| format!("shader texture {dst} not found"))?;
     let input: PassInput = ("uSrc".to_string(), gpu.gl_texture, Some(self.samplers.get(gpu.sampler)));
     let start = std::time::Instant::now();
+    self.pass_timer.begin(&self.gl);
     shader.overwrite_with(&self.gl, &program, &[input]);
+    self.pass_timer.end(&self.gl, Timed::Pass { target: dst });
     let micros = start.elapsed().as_micros() as u64;
     shader.record_pass(micros);
     self.stats.passes.fetch_add(1, Ordering::Relaxed);
-    self.stats.pass_micros.fetch_add(micros, Ordering::Relaxed);
+    self.stats.pass_issue_micros.fetch_add(micros, Ordering::Relaxed);
     self.dirty.insert(dst);
     Ok(())
   }
@@ -1626,7 +1693,7 @@ impl RasterState {
       .shaders
       .iter()
       .map(|(texture_id, shader)| {
-        let (passes, pass_micros) = shader.pass_stats();
+        let (passes, pass_issue_micros, pass_exec_micros) = shader.pass_stats();
         // A draw target reports its entries in the `draws` list; the flat
         // single-pass fields stay for the fixed kinds, where they describe
         // the one pass.
@@ -1675,7 +1742,8 @@ impl RasterState {
           manual: shader.manual(),
           load: shader.load(),
           passes,
-          pass_micros,
+          pass_issue_micros,
+          pass_exec_micros,
         }
       })
       .collect();

@@ -75,7 +75,7 @@ Wanted, and it composes with the tracing above:
 
 1. Fix `rasterQueue`, or document what it counts while idle.
 2. Ship rates beside the cumulatives (`fenceTimeoutsPerSec`,
-   `gpuPassesPerFrame`, `gpuPassMsPerFrame`): every caller derives them the
+   `gpuPassesPerFrame`, `gpuPassIssueMsPerFrame`): every caller derives them the
    same way, and deriving them needs state the caller has to carry between
    calls.
 3. A timestamp and a frame counter in the payload, so two samples can be
@@ -101,7 +101,7 @@ restructured; the siblings are
   10000): frames, p50/p95/max of the critical path, slowFrames over the
   refresh period, `worst` with phase breakdown + counters + ageMs, and rates
   from the raster samples (fenceTimeoutsPerSec, gpuPassesPerFrame per
-  presented frame, gpuPassMsPerFrame, rasterCmdMsPerSec). Payload also
+  presented frame, gpuPassIssueMsPerFrame, gpuPassExecMsPerFrame, rasterCmdMsPerSec). Payload also
   carries `timeMs` (client monotonic) and `frame` (present index).
 - Throttled (1/s) "Slow frame: ..." warning through the engine logger when a
   rebuild exceeds the refresh period, same breakdown inline, so get_logs
@@ -112,7 +112,7 @@ restructured; the siblings are
 Not done, on purpose: the single derived verdict (the rates need to prove
 trustworthy first) and the Windows `rasterQueue` verification (needs a
 Windows client). GPU-side pass time is its own item,
-[gpu-timer-query-pass-timing](gpu-timer-query-pass-timing.md).
+[gpu-timer-query-pass-timing](../done/gpu-timer-query-pass-timing.md).
 
 First TV reading worth keeping: after a wheel burst, window p95 5.6 ms /
 max 13.8 ms against a 20 ms period, zero slow frames - yet fps 48. The

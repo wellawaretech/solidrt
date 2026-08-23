@@ -64,7 +64,10 @@ pub struct WindowSummary {
 pub struct RasterRates {
   pub fence_timeouts_per_sec: f32,
   pub passes_per_frame: f32,
-  pub pass_ms_per_frame: f32,
+  pub pass_issue_ms_per_frame: f32,
+  /// None when the client's GL context has no timer queries.
+  pub pass_exec_ms_per_frame: Option<f32>,
+  pub frame_exec_ms_per_frame: Option<f32>,
   pub cmd_ms_per_sec: f32,
 }
 
@@ -112,10 +115,16 @@ impl FrameHistory {
         let span_s = ((last.at_ms - first.at_ms) / 1000.0) as f32;
         let n = last.frame.saturating_sub(first.frame).max(1) as f32;
         let d = |a: u64, b: u64| b.saturating_sub(a) as f32;
+        let exec_per_frame = |a: Option<u64>, b: Option<u64>| match (a, b) {
+          (Some(a), Some(b)) => Some(d(a, b) / 1000.0 / n),
+          _ => None,
+        };
         Some(RasterRates {
           fence_timeouts_per_sec: d(first.raster.fence_timeouts, last.raster.fence_timeouts) / span_s,
           passes_per_frame: d(first.raster.passes, last.raster.passes) / n,
-          pass_ms_per_frame: d(first.raster.pass_micros, last.raster.pass_micros) / 1000.0 / n,
+          pass_issue_ms_per_frame: d(first.raster.pass_issue_micros, last.raster.pass_issue_micros) / 1000.0 / n,
+          pass_exec_ms_per_frame: exec_per_frame(first.raster.pass_exec_micros, last.raster.pass_exec_micros),
+          frame_exec_ms_per_frame: exec_per_frame(first.raster.frame_exec_micros, last.raster.frame_exec_micros),
           cmd_ms_per_sec: d(first.raster.cmd_micros, last.raster.cmd_micros) / 1000.0 / span_s,
         })
       }

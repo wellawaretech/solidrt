@@ -171,5 +171,8 @@ pub struct GpuPipelineInfo {
   pub passes: u64,
   /// Cumulative raster-thread wall time those passes took, in microseconds
   /// (occupancy, not GPU-side duration; see raster::RasterStats).
-  pub pass_micros: u64,
+  pub pass_issue_micros: u64,
+  /// Cumulative GPU-side execution time of those passes, in microseconds
+  /// (timer queries; 0 when the context has none).
+  pub pass_exec_micros: u64,
 }

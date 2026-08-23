@@ -160,9 +160,11 @@ impl RasterState {
     }
 
     let start = std::time::Instant::now();
+    self.pass_timer.begin(&self.gl);
     crate::gpu::render_program_to_fbo(&self.gl, &program, Some(fbo), width, height, &shader.params, &textures);
+    self.pass_timer.end(&self.gl, crate::gpu::Timed::Pass { target: 0 });
     self.stats.passes.fetch_add(1, Ordering::Relaxed);
-    self.stats.pass_micros.fetch_add(start.elapsed().as_micros() as u64, Ordering::Relaxed);
+    self.stats.pass_issue_micros.fetch_add(start.elapsed().as_micros() as u64, Ordering::Relaxed);
 
     unsafe { self.gl.delete_framebuffer(fbo) };
     match output {

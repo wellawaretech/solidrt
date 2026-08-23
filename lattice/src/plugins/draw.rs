@@ -164,6 +164,7 @@ impl RenderInner {
     // still ran), with the FFI prop writes that flush produced.
     let js_ms = render_frame.start.map(|t| t.elapsed().as_secs_f32() * 1000.0).unwrap_or(0.0);
     let set_count = flux::gui::tree::SETPROP_COUNT.with(|c| c.replace(0));
+    stats.borrow_mut().record_gpu(render_frame.frame, &atx.raster_counters());
     stats.borrow_mut().record_js(js_ms, set_count);
     // The figures as of this frame: published for out-of-loop readers on every
     // frame event, gated or not, so a query sees current numbers even while
