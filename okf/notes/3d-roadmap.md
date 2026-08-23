@@ -97,7 +97,7 @@ what it delivered is documented in `packages/3d/AGENTS.md`, not here.
    pre-interleaved buffers in the exact addDraw layout, so runtime loading is
    a buffer upload. Runtime-fetched user models stay a separate, later
    problem.
-8. [ ] **Mipmaps.** Engine: [gpu-mipmaps](../backlog/gpu-mipmaps.md).
+8. [x] **Mipmaps.** Engine: [gpu-mipmaps](../done/gpu-mipmaps.md) (landed 2026-08-23: `mipmap: true` on texture creation).
    Textured models alias immediately at minification; the one engine item
    staging step 3 (real models) still needs.
 9. [x] **MSAA on pipeline targets.** Engine (landed 2026-08-23, `samples` on the target):

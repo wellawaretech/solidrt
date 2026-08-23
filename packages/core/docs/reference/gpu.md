@@ -140,6 +140,13 @@ draw samples the full-size level only, so a supersampled target shown
 through `<texture>` should stay at 2x. Rebuilding is one GPU pass per
 upload or render; a per-frame texture pays it per frame.
 
+One binding can deviate: a `textures` value may be `{ id, filter?, wrap? }`
+instead of a bare id, sampling that texture with a different filter or
+wrap in this binding only - blur a `"nearest"` atlas linearly, tile a
+clamped target in one consumer. The texture's own state stays what
+`<texture>` paints and what every other binding uses. `mipmap` is not
+overridable: the chain either exists on the id or it does not.
+
 ## Blending
 
 Combining passes is a render-tree job: stack `<texture>` elements and set

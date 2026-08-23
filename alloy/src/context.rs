@@ -10,7 +10,7 @@ use crate::gpu::{
   resolve_draw_range, validate_draw_range, validate_order, validate_param_if_declared, validate_params,
   validate_texture_bindings, vertex_stride, BufferIds, DrawBounds, DrawRange, DrawSpec, DrawUpdate,
   GpuLimits, GpuResources,
-  NodeShader, ParamValue, PipelineDesc, PipelineSpec, ShaderStage, TargetSpec, UniformKind, UniformTable, WindowShader, AttributeTable,
+  NodeShader, ParamValue, PipelineDesc, PipelineSpec, ShaderStage, TargetSpec, TextureBinding, UniformKind, UniformTable, WindowShader, AttributeTable,
   WriteLeases,
 };
 use crate::microphone::MicrophoneRegistry;
@@ -556,7 +556,7 @@ impl Context {
     let result = match failure {
       Some(e) => Err(e),
       None => {
-        let bindings: Vec<(String, u64)> = sets[0].iter().map(|&(name, id, _)| (name.to_string(), id)).collect();
+        let bindings: Vec<TextureBinding> = sets[0].iter().map(|&(name, id, _)| TextureBinding::new(name, id)).collect();
         self.create_shader_texture(
           width,
           height,
@@ -601,7 +601,7 @@ impl Context {
       group.front = back;
       let set = &group.sets[back];
       let planes: Vec<(u64, usize)> = set.iter().map(|&(_, plane, offset)| (plane, offset)).collect();
-      let bindings: Vec<(String, u64)> = set.iter().map(|&(name, plane, _)| (name.to_string(), plane)).collect();
+      let bindings: Vec<TextureBinding> = set.iter().map(|&(name, plane, _)| TextureBinding::new(name, plane)).collect();
       (planes, bindings)
     };
     for &(plane, _) in &planes {
@@ -648,7 +648,7 @@ impl Context {
     height: u32,
     fragment_src: &str,
     params: &[(String, ParamValue)],
-    textures: &[(String, u64)],
+    textures: &[TextureBinding],
     sampler: SamplerState,
     label: Option<String>,
   ) -> Result<u64, String> {
@@ -675,7 +675,7 @@ impl Context {
     self
       .shader_sources
       .borrow_mut()
-      .insert(id, textures.iter().map(|(name, src)| ((0, name.clone()), *src)).collect());
+      .insert(id, textures.iter().map(|b| ((0, b.name.clone()), b.id)).collect());
     Ok(id)
   }
 
@@ -683,7 +683,7 @@ impl Context {
   /// target `id` (pass `entry` 0 for the fixed kinds' single pass): the
   /// merged per-pass count must fit the device's texture units, every source
   /// must exist, and no binding may close a flush-rendered sampling cycle.
-  fn validate_new_bindings(&self, id: u64, entry: u64, textures: &[(String, u64)]) -> Result<(), String> {
+  fn validate_new_bindings(&self, id: u64, entry: u64, textures: &[TextureBinding]) -> Result<(), String> {
     let limits = self.gpu_limits();
     let sources = self.shader_sources.borrow();
     let manual = self.manual_targets.borrow();
@@ -694,10 +694,10 @@ impl Context {
     let current_count = current.map_or(0, |c| c.keys().filter(|(e, _)| *e == entry).count());
     let added = textures
       .iter()
-      .filter(|(name, _)| current.is_none_or(|c| !c.contains_key(&(entry, name.clone()))))
+      .filter(|b| current.is_none_or(|c| !c.contains_key(&(entry, b.name.clone()))))
       .count();
     limits.check_texture_units(current_count + added)?;
-    for (name, src_id) in textures {
+    for TextureBinding { name, id: src_id, .. } in textures {
       if self.textures.get(*src_id).is_none() {
         return Err(format!("texture {src_id} (sampler '{name}') not found"));
       }
@@ -828,7 +828,7 @@ impl Context {
     let draw = spec.entry.draw;
     let buffers = spec.entry.buffer_ids();
     let sources: HashMap<(u64, String), u64> =
-      spec.entry.textures.iter().map(|(name, src)| ((0, name.clone()), *src)).collect();
+      spec.entry.textures.iter().map(|b| ((0, b.name.clone()), b.id)).collect();
     let (impeller, uniforms) = self.rpc(|reply| RasterCmd::CreatePipelineTexture { id, spec, reply })??;
     self.textures.insert(id, TextureEntry { impeller, width, height, sampler, format: TextureFormat::Rgba8 });
     self
@@ -1012,7 +1012,7 @@ impl Context {
     let draw = entry.draw;
     let buffers = entry.buffer_ids();
     let sources: HashMap<(u64, String), u64> =
-      entry.textures.iter().map(|(name, src)| ((0, name.clone()), *src)).collect();
+      entry.textures.iter().map(|b| ((0, b.name.clone()), b.id)).collect();
     let impeller = self.rpc(|reply| RasterCmd::CreateShaderTarget { id, spec, entry, reply })??;
     self.textures.insert(id, TextureEntry { impeller, width, height, sampler, format: TextureFormat::Rgba8 });
     self.targets.borrow_mut().insert(id, TargetMirror { uniforms, draw: Some(draw), bounds, buffers, entries: None });
@@ -1105,7 +1105,7 @@ impl Context {
           .filter(|(e, name)| {
             *e == 0
               && uniforms.get(name.as_str()).is_some_and(|s| s.kind == UniformKind::Sampler2D)
-              && !entry.textures.iter().any(|(n, _)| n == name)
+              && !entry.textures.iter().any(|b| b.name == *name)
           })
           .count()
       });
@@ -1116,8 +1116,8 @@ impl Context {
     drop(targets);
     let mut sources = self.shader_sources.borrow_mut();
     let record = sources.entry(target).or_default();
-    for (name, src) in &entry.textures {
-      record.insert((draw_id, name.clone()), *src);
+    for b in &entry.textures {
+      record.insert((draw_id, b.name.clone()), b.id);
     }
     drop(sources);
     self.send(RasterCmd::AddDraw { target, draw: draw_id, entry, before });
@@ -1255,7 +1255,7 @@ impl Context {
   /// own bindings plus the applicable merged shared set) must fit the
   /// device's texture units, and a shared edge counts for propagation and
   /// cycles even before any entry declares its name.
-  pub fn set_target_textures(&self, target: u64, textures: &[(String, u64)]) -> Result<(), String> {
+  pub fn set_target_textures(&self, target: u64, textures: &[TextureBinding]) -> Result<(), String> {
     {
       let targets = self.targets.borrow();
       let mirror = targets.get(&target).ok_or_else(|| format!("target {target} not found"))?;
@@ -1265,15 +1265,15 @@ impl Context {
         self.validate_new_bindings(target, 0, textures)?;
         let mut sources = self.shader_sources.borrow_mut();
         let record = sources.entry(target).or_default();
-        for (name, src_id) in textures {
-          record.insert((0, name.clone()), *src_id);
+        for b in textures {
+          record.insert((0, b.name.clone()), b.id);
         }
         drop(sources);
         self.send(RasterCmd::UpdateShaderTextures { id: target, textures: textures.to_vec() });
         self.note_target_content(target);
         return Ok(());
       };
-      for (name, _) in textures {
+      for TextureBinding { name, .. } in textures {
         for entry in list.entries.values() {
           if let Some(slot) = entry.uniforms.get(name) {
             if slot.kind == UniformKind::Inactive {
@@ -1292,7 +1292,7 @@ impl Context {
       let record = sources.get(&target);
       let mut shared: Vec<&str> =
         record.map(|c| c.keys().filter(|(e, _)| *e == 0).map(|(_, n)| n.as_str()).collect()).unwrap_or_default();
-      for (name, _) in textures {
+      for TextureBinding { name, .. } in textures {
         if !shared.contains(&name.as_str()) {
           shared.push(name);
         }
@@ -1313,8 +1313,8 @@ impl Context {
     self.validate_new_bindings(target, 0, textures)?;
     let mut sources = self.shader_sources.borrow_mut();
     let record = sources.entry(target).or_default();
-    for (name, src_id) in textures {
-      record.insert((0, name.clone()), *src_id);
+    for b in textures {
+      record.insert((0, b.name.clone()), b.id);
     }
     drop(sources);
     self.send(RasterCmd::UpdateTargetTextures { target, textures: textures.to_vec() });
@@ -1327,7 +1327,7 @@ impl Context {
   /// source. Same checks as every bind path: names against the entry's
   /// program, per-entry unit count, source existence, cycles. The caller
   /// must request a frame.
-  pub fn set_draw_textures(&self, target: u64, draw: u64, textures: &[(String, u64)]) -> Result<(), String> {
+  pub fn set_draw_textures(&self, target: u64, draw: u64, textures: &[TextureBinding]) -> Result<(), String> {
     let entry_uniforms = {
       let targets = self.targets.borrow();
       let entry = entry_mirror(&targets, target, draw)?;
@@ -1342,14 +1342,14 @@ impl Context {
       let sources = self.shader_sources.borrow();
       let record = sources.get(&target);
       let own = record.map_or(0, |c| c.keys().filter(|(e, _)| *e == draw).count())
-        + textures.iter().filter(|(name, _)| record.is_none_or(|c| !c.contains_key(&(draw, name.clone())))).count();
+        + textures.iter().filter(|b| record.is_none_or(|c| !c.contains_key(&(draw, b.name.clone())))).count();
       let shared_extra = record.map_or(0, |c| {
         c.keys()
           .filter(|(e, name)| {
             *e == 0
               && entry_uniforms.get(name.as_str()).is_some_and(|s| s.kind == UniformKind::Sampler2D)
               && !c.contains_key(&(draw, name.clone()))
-              && !textures.iter().any(|(n, _)| n == name)
+              && !textures.iter().any(|b| b.name == *name)
           })
           .count()
       });
@@ -1357,8 +1357,8 @@ impl Context {
     }
     let mut sources = self.shader_sources.borrow_mut();
     let record = sources.entry(target).or_default();
-    for (name, src_id) in textures {
-      record.insert((draw, name.clone()), *src_id);
+    for b in textures {
+      record.insert((draw, b.name.clone()), b.id);
     }
     drop(sources);
     self.send(RasterCmd::UpdateDrawTextures { target, draw, textures: textures.to_vec() });

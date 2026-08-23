@@ -988,7 +988,7 @@ impl RenderTree {
         // are irrelevant here.
         ElementKind::View(v) => {
           if matches!(element.repaint_boundary, BoundaryMode::Snapshot | BoundaryMode::SnapshotNoAa)
-            && v.shader.as_ref().is_some_and(|s| s.textures.iter().any(|(_, t)| ids.contains(t)))
+            && v.shader.as_ref().is_some_and(|s| s.textures.iter().any(|b| ids.contains(&b.id)))
           {
             shader_hits.push(*id);
           }

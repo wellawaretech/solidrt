@@ -242,17 +242,6 @@ Shaped, not started.
   what the runtime fills). Still open - the composition questions - whether
   the fused paths become thin compositions of the raw layer, whether a
   mid-level program shorthand is wanted, and the two-dialect preamble story.
-- **[Mipmaps](backlog/gpu-mipmaps.md)** [2026-07-30]
-  "No mipmaps exist" is a documented axiom, so any minified texture aliases
-  (the Doom port's distant surfaces, 4x supersampled targets); GL gives
-  generateMipmap for free and the dirty flush makes render-target regeneration
-  automatic, so the shape is a mipmap option on the sampler state.
-- **[Per-binding sampler override](backlog/gpu-per-binding-sampler.md)** [2026-07-31]
-  filter/wrap are fused into the texture id, which is the right default and
-  makes display and shader sampling agree by construction, but it leaves no
-  escape hatch - a nearest pixel-art atlas cannot be blurred linearly and a
-  clamped target cannot be tiled by one consumer; a per-binding override costs
-  little because the sampler cache is already keyed by state.
 - **[More pipeline blend modes](backlog/gpu-pipeline-blend-modes.md)** [2026-07-29]
   The blend vocabulary on createPipeline is "none", "add", "multiply" and
   "alpha"; the rest of GL's fixed-function space (screen, subtract, min/max)
@@ -761,11 +750,21 @@ Finished, kept for the reasoning.
   strings) and a queryable gpu.limits with bounds checks at create, so
   oversize targets fail as "exceeds this device's limit 8192" instead of
   "framebuffer incomplete 0x8cd6".
+- **[Mipmaps](done/gpu-mipmaps.md)** [2026-08-23]
+  "No mipmaps exist" was a documented axiom, so any minified texture aliased.
+  Landed 2026-08-23 as `mipmap` on the creation-time sampler options - id
+  state next to filter/wrap, regenerated after every upload and every target
+  render, minified through by shader sampling - verified on Linux by readback.
 - **[Time the GPU pass work](done/gpu-pass-timing.md)** [2026-07-31]
   Shader and pipeline passes execute in the raster command loop where nothing
   is timed, so a client can be tens of seconds per frame while the engine
   reports a healthy 40ms draw; per-pass duration is the one counter the
   2026-07-27 GPU investigation still lacked.
+- **[Per-binding sampler override](done/gpu-per-binding-sampler.md)** [2026-08-23]
+  filter/wrap are fused into the texture id, the right default, but it left no
+  escape hatch. Landed 2026-08-23 - a `textures` binding value may be `{ id,
+  filter?, wrap? }`, overriding the texture's declared sampling for that
+  binding only; mipmap stays id state. Verified on Linux by readback.
 - **[GPU pipeline extensions](done/gpu-pipeline-extensions.md)** [2026-08-11]
   "Done as a container 2026-08-11: every decided extension landed (typed
   uniforms + additive blend/depthWrite 2026-07-29, draw range + instancing

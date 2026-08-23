@@ -66,7 +66,7 @@ export type CreateOptions = { autoFree?: boolean; label?: string }
 // Sampling options every texture-producing create* helper accepts, applied at
 // creation as a property of the texture id (there is no set-sampler-later).
 export type SamplerOptions = { filter?: gpu.FilterMode; wrap?: gpu.WrapMode; mipmap?: boolean }
-export type { FilterMode, WrapMode } from "flux:gpu"
+export type { FilterMode, WrapMode, TextureBinding, TextureBindings } from "flux:gpu"
 
 // Pixel format option for the pixel-upload creates (createTexture,
 // createMutableTexture), fixed for the id's lifetime like the sampler state.
@@ -289,7 +289,7 @@ export function createShaderTexture(
   width: number,
   height: number,
   params?: gpu.ShaderParams | null,
-  opts?: CreateOptions & SamplerOptions & { textures?: Record<string, gpu.TextureId> },
+  opts?: CreateOptions & SamplerOptions & { textures?: gpu.TextureBindings },
 ): gpu.TextureId {
   let id = gpu.createShaderTexture(fragmentSrc, width, height, params, opts)
   if (opts?.autoFree !== false && getOwner()) onCleanup(() => gpu.destroyTexture(id))
@@ -339,7 +339,7 @@ export function createShaderTarget(
   height: number,
   params?: gpu.ShaderParams | null,
   opts?: {
-    textures?: Record<string, gpu.TextureId>
+    textures?: gpu.TextureBindings
     buffer?: gpu.BufferId
     instanceBuffer?: gpu.BufferId
     clearColor?: [number, number, number, number]
@@ -393,7 +393,7 @@ export function createDrawTarget(
   params?: gpu.ShaderParams | null,
   opts?: {
     depth?: boolean
-    textures?: Record<string, gpu.TextureId>
+    textures?: gpu.TextureBindings
     clearColor?: [number, number, number, number]
     render?: "auto" | "manual"
     loadOp?: "clear" | "load"
@@ -414,22 +414,24 @@ export type ShaderSpec = {
   width: number
   height: number
   params?: gpu.ShaderParams
-  textures?: Record<string, gpu.TextureId>
+  textures?: gpu.TextureBindings
 } & SamplerOptions
 
 // Shallow name->value equality for params/textures records; treats undefined
 // as the empty record. A param value may be a number or a flat number array
-// (typed uniforms), so arrays compare elementwise.
-function sameValue(a: number | number[] | undefined, b: number | number[] | undefined): boolean {
+// (typed uniforms), so arrays compare elementwise; a texture binding may be
+// an `{ id, filter?, wrap? }` override, compared field by field.
+type RecordValue = number | number[] | gpu.TextureBinding
+function sameValue(a: RecordValue | undefined, b: RecordValue | undefined): boolean {
   if (a === b) return true
-  if (!Array.isArray(a) || !Array.isArray(b)) return false
-  return a.length === b.length && a.every((v, i) => v === b[i])
+  if (Array.isArray(a) && Array.isArray(b)) return a.length === b.length && a.every((v, i) => v === b[i])
+  if (typeof a === "object" && typeof b === "object" && !Array.isArray(a) && !Array.isArray(b)) {
+    return a.id === b.id && a.filter === b.filter && a.wrap === b.wrap
+  }
+  return false
 }
 
-function sameRecord(
-  a: Record<string, number | number[]> | undefined,
-  b: Record<string, number | number[]> | undefined,
-): boolean {
+function sameRecord(a: Record<string, RecordValue> | undefined, b: Record<string, RecordValue> | undefined): boolean {
   if (a === b) return true
   let ka = a ? Object.keys(a) : []
   let kb = b ? Object.keys(b) : []
@@ -565,7 +567,7 @@ export function createPipelineTexture(
   height: number,
   params?: gpu.ShaderParams | null,
   opts?: {
-    textures?: Record<string, gpu.TextureId>
+    textures?: gpu.TextureBindings
     attributes?: gpu.VertexAttribute[]
     buffer?: gpu.BufferId
     instanceAttributes?: gpu.VertexAttribute[]

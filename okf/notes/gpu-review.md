@@ -153,7 +153,7 @@ So the do-order is spent, and what remains sorts into four groups.
 
 Two ranked lessons had no backlog home when the shortlist closed, and were
 filed on 07-31: lesson 8 as
-[gpu-per-binding-sampler](../backlog/gpu-per-binding-sampler.md) and lesson
+[gpu-per-binding-sampler](../done/gpu-per-binding-sampler.md) and lesson
 11 as
 [gpu-async-compile-readback](../backlog/gpu-async-compile-readback.md).
 
@@ -966,7 +966,7 @@ draw-range/instancing bullet in
 [gpu-file-reorg](../done/gpu-file-reorg.md); the naming decisions live in
 [gpu-fused-create-refactor](../backlog/gpu-fused-create-refactor.md), and
 mipmaps, compressed textures and sampleable depth in
-[gpu-mipmaps](../backlog/gpu-mipmaps.md),
+[gpu-mipmaps](../done/gpu-mipmaps.md),
 [gpu-compressed-textures](../backlog/gpu-compressed-textures.md) and the
 extensions file respectively.
 

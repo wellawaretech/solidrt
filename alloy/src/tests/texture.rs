@@ -127,3 +127,26 @@ fn sampler_state_parses_options_and_defaults() {
   assert!(SamplerState::parse(Some("bilinear"), None, None).expect_err("unknown filter rejected").contains("filter"));
   assert!(SamplerState::parse(None, Some("mirror"), None).expect_err("unknown wrap rejected").contains("wrap"));
 }
+
+// A per-binding override replaces only the fields it names; the mip flag is
+// id state and never moves. `merge_bindings` replaces a named binding whole,
+// so a rebind without an override drops the previous override.
+#[test]
+fn sampler_override_composes_and_merges() {
+  use crate::gpu::{merge_bindings, TextureBinding};
+  use crate::texture::{SamplerFilter, SamplerOverride, SamplerState, SamplerWrap};
+
+  let own = SamplerState { filter: SamplerFilter::Nearest, wrap: SamplerWrap::Clamp, mipmap: true };
+  let o = SamplerOverride::parse(Some("linear"), None).expect("filter-only override parses");
+  assert_eq!(o, SamplerOverride { filter: Some(SamplerFilter::Linear), wrap: None });
+  assert_eq!(own.overridden(&o), SamplerState { filter: SamplerFilter::Linear, wrap: SamplerWrap::Clamp, mipmap: true });
+  assert!(SamplerOverride::parse(None, None).expect("empty override parses").is_empty());
+  assert_eq!(own.overridden(&SamplerOverride::default()), own);
+  assert!(SamplerOverride::parse(Some("cubic"), None).expect_err("unknown filter rejected").contains("filter"));
+
+  let mut record = vec![TextureBinding::new("uA", 1), TextureBinding { name: "uB".into(), id: 2, sampler: o }];
+  merge_bindings(&mut record, &[TextureBinding::new("uB", 3), TextureBinding::new("uC", 4)]);
+  assert_eq!(record.len(), 3);
+  assert_eq!(record[1], TextureBinding::new("uB", 3));
+  assert_eq!(record[2], TextureBinding::new("uC", 4));
+}

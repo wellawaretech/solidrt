@@ -14,7 +14,7 @@ use super::pass::{run_pass, PassDraw, PassInput, ResolvedDraw};
 use super::program::{release_pipeline, release_program, RenderPipeline, ShaderProgram};
 use super::resources::GpuDrawInfo;
 use super::vocab::{
-  blend_name, cull_name, validate_order, AttrFormat, DrawRange, IndexFormat, ParamValue, PipelineDesc,
+  blend_name, cull_name, merge_bindings, validate_order, AttrFormat, DrawRange, IndexFormat, ParamValue, PipelineDesc, TextureBinding,
 };
 use super::{prev_buffer, prev_framebuffer, prev_texture, prev_vertex_array};
 
@@ -63,7 +63,7 @@ pub(super) struct DrawEntry {
   /// texture at each render by the owner (which holds the texture registry),
   /// so an input whose contents or registry entry changed is picked up
   /// automatically.
-  pub(super) bindings: Vec<(String, u64)>,
+  pub(super) bindings: Vec<TextureBinding>,
 }
 
 /// The mesh half of a target: the ordered draw list sharing this target's
@@ -88,7 +88,7 @@ pub(super) struct MeshState {
   /// coverage may be partial and an entry's own binding wins, mirroring
   /// `shared_params`. Target state; only draw targets write it (via
   /// `merge_shared_bindings`).
-  pub(super) shared_bindings: Vec<(String, u64)>,
+  pub(super) shared_bindings: Vec<TextureBinding>,
   /// Present when the target owns depth storage: explicit on a draw target
   /// (`create_draw_target`'s depth option), derived from the pipeline on the
   /// single-draw creates. The renderbuffer stays private to the FBO (never
@@ -112,7 +112,7 @@ pub(super) enum TargetKind {
   /// A fullscreen fragment pass: one program with target-level params and
   /// bindings. No clear, depth, or draw list - the covering triangle writes
   /// every pixel.
-  Fragment { program: Rc<ShaderProgram>, params: Vec<(String, ParamValue)>, bindings: Vec<(String, u64)> },
+  Fragment { program: Rc<ShaderProgram>, params: Vec<(String, ParamValue)>, bindings: Vec<TextureBinding> },
   /// A vertex+fragment mesh target: clear + the ordered draw list.
   Mesh(MeshState),
 }
@@ -543,7 +543,7 @@ impl ShaderTexture {
     width: u32,
     height: u32,
     fragment_src: &str,
-    sampler_bindings: Vec<(String, u64)>,
+    sampler_bindings: Vec<TextureBinding>,
   ) -> Result<Self, String> {
     let program = Rc::new(ShaderProgram::new_fragment(gl, fragment_src)?);
     Self::from_fragment_program(gl, program, width, height, sampler_bindings).map_err(|(program, e)| {
@@ -559,7 +559,7 @@ impl ShaderTexture {
     program: Rc<ShaderProgram>,
     width: u32,
     height: u32,
-    sampler_bindings: Vec<(String, u64)>,
+    sampler_bindings: Vec<TextureBinding>,
   ) -> Result<Self, (Rc<ShaderProgram>, String)> {
     if program.is_pipeline() {
       return Err((program, "program is a pipeline; the target needs a render pipeline".to_string()));
@@ -593,7 +593,7 @@ impl ShaderTexture {
     height: u32,
     vertex_src: &str,
     fragment_src: &str,
-    sampler_bindings: Vec<(String, u64)>,
+    sampler_bindings: Vec<TextureBinding>,
     desc: PipelineDesc,
     buffers: EntryBuffers,
     draw: DrawRange,
@@ -628,7 +628,7 @@ impl ShaderTexture {
     pipeline_id: Option<u64>,
     width: u32,
     height: u32,
-    sampler_bindings: Vec<(String, u64)>,
+    sampler_bindings: Vec<TextureBinding>,
     buffers: EntryBuffers,
     draw: DrawRange,
     clear_color: [f32; 4],
@@ -990,7 +990,7 @@ impl ShaderTexture {
     buffers: EntryBuffers,
     draw: DrawRange,
     params: Vec<(String, ParamValue)>,
-    bindings: Vec<(String, u64)>,
+    bindings: Vec<TextureBinding>,
     before: Option<u64>,
   ) -> Result<(), String> {
     let TargetKind::Mesh(mesh) = &mut self.kind else {
@@ -1099,25 +1099,20 @@ impl ShaderTexture {
   /// `MeshState::shared_bindings`; validated UI-side - names, sources, unit
   /// budget, cycles). Bindings not named keep their current source. Same
   /// gating as `merge_shared_params`.
-  pub fn merge_shared_bindings(&mut self, updates: &[(String, u64)]) -> Result<(), String> {
+  pub fn merge_shared_bindings(&mut self, updates: &[TextureBinding]) -> Result<(), String> {
     let TargetKind::Mesh(mesh) = &mut self.kind else {
       return Err("not a draw target".to_string());
     };
     if mesh.fixed {
       return Err("target's draw list is fixed (created single-draw)".to_string());
     }
-    for (name, src_id) in updates {
-      match mesh.shared_bindings.iter_mut().find(|(n, _)| n == name) {
-        Some(binding) => binding.1 = *src_id,
-        None => mesh.shared_bindings.push((name.clone(), *src_id)),
-      }
-    }
+    merge_bindings(&mut mesh.shared_bindings, updates);
     Ok(())
   }
 
   /// A draw target's current shared sampler bindings (empty for every other
   /// kind), for resource introspection.
-  pub fn shared_bindings(&self) -> &[(String, u64)] {
+  pub fn shared_bindings(&self) -> &[TextureBinding] {
     match &self.kind {
       TargetKind::Mesh(mesh) => &mesh.shared_bindings,
       TargetKind::Fragment { .. } => &[],
@@ -1133,19 +1128,14 @@ impl ShaderTexture {
   /// Rebind one entry's sampler2D inputs by uniform name; bindings not named
   /// keep their current source. Names are validated against the entry's
   /// program before anything changes.
-  pub fn set_entry_bindings(&mut self, id: u64, updates: &[(String, u64)]) -> Result<(), String> {
+  pub fn set_entry_bindings(&mut self, id: u64, updates: &[TextureBinding]) -> Result<(), String> {
     let entry = self.entry_mut(id)?;
-    for (name, _) in updates {
-      if !entry.pipeline.program.accepts_uniform(name) {
-        return Err(format!("no active uniform named '{name}'"));
+    for b in updates {
+      if !entry.pipeline.program.accepts_uniform(&b.name) {
+        return Err(format!("no active uniform named '{}'", b.name));
       }
     }
-    for (name, src_id) in updates {
-      match entry.bindings.iter_mut().find(|(n, _)| n == name) {
-        Some(binding) => binding.1 = *src_id,
-        None => entry.bindings.push((name.clone(), *src_id)),
-      }
-    }
+    merge_bindings(&mut entry.bindings, updates);
     Ok(())
   }
 
@@ -1262,7 +1252,7 @@ impl ShaderTexture {
   /// The sampler2D inputs of the first pass (fragment, or entry 0), as
   /// (uniform name, source texture id): the flat introspection view and the
   /// create-time validation input.
-  pub fn sampler_bindings(&self) -> &[(String, u64)] {
+  pub fn sampler_bindings(&self) -> &[TextureBinding] {
     match &self.kind {
       TargetKind::Fragment { bindings, .. } => bindings,
       TargetKind::Mesh(mesh) => mesh.entries.first().map(|e| e.bindings.as_slice()).unwrap_or(&[]),
@@ -1277,12 +1267,12 @@ impl ShaderTexture {
   /// matches the UI-side sampler-graph mirror.
   pub fn binding_sources(&self) -> Vec<u64> {
     match &self.kind {
-      TargetKind::Fragment { bindings, .. } => bindings.iter().map(|(_, id)| *id).collect(),
+      TargetKind::Fragment { bindings, .. } => bindings.iter().map(|b| b.id).collect(),
       TargetKind::Mesh(mesh) => mesh
         .entries
         .iter()
-        .flat_map(|e| e.bindings.iter().map(|(_, id)| *id))
-        .chain(mesh.shared_bindings.iter().map(|(_, id)| *id))
+        .flat_map(|e| e.bindings.iter().map(|b| b.id))
+        .chain(mesh.shared_bindings.iter().map(|b| b.id))
         .collect(),
     }
   }
@@ -1323,7 +1313,7 @@ impl ShaderTexture {
   /// declared sampler left unbound at creation). Every name is validated
   /// against the program's active uniforms before anything changes, so a
   /// failed call leaves all bindings intact. The caller re-renders afterwards.
-  pub fn set_sampler_bindings(&mut self, updates: &[(String, u64)]) -> Result<(), String> {
+  pub fn set_sampler_bindings(&mut self, updates: &[TextureBinding]) -> Result<(), String> {
     {
       let program = match &self.kind {
         TargetKind::Fragment { program, .. } => program,
@@ -1332,9 +1322,9 @@ impl ShaderTexture {
           None => return Err("target has no draw entries".to_string()),
         },
       };
-      for (name, _) in updates {
-        if !program.accepts_uniform(name) {
-          return Err(format!("no active uniform named '{name}'"));
+      for b in updates {
+        if !program.accepts_uniform(&b.name) {
+          return Err(format!("no active uniform named '{}'", b.name));
         }
       }
     }
@@ -1342,12 +1332,7 @@ impl ShaderTexture {
       TargetKind::Fragment { bindings, .. } => bindings,
       TargetKind::Mesh(mesh) => &mut mesh.entries.first_mut().expect("entry checked above").bindings,
     };
-    for (name, src_id) in updates {
-      match bindings.iter_mut().find(|(n, _)| n == name) {
-        Some(binding) => binding.1 = *src_id,
-        None => bindings.push((name.clone(), *src_id)),
-      }
-    }
+    merge_bindings(bindings, updates);
     Ok(())
   }
 
@@ -1373,7 +1358,7 @@ impl ShaderTexture {
   /// See `run_pass` for the GL state contract; Context::submit's per-frame
   /// fence orders the work ahead of the render thread sampling the target
   /// from its shared GL context, so no glFinish is needed here.
-  pub fn render(&self, gl: &glow::Context, resolve: &dyn Fn(&[(String, u64)]) -> Vec<PassInput>) {
+  pub fn render(&self, gl: &glow::Context, resolve: &dyn Fn(&[TextureBinding]) -> Vec<PassInput>) {
     match &self.kind {
       TargetKind::Fragment { program, params, bindings } => {
         let inputs = resolve(bindings);
@@ -1395,9 +1380,9 @@ impl ShaderTexture {
               resolve(&e.bindings)
             } else {
               let mut combined = e.bindings.clone();
-              for (name, src_id) in &mesh.shared_bindings {
-                if e.pipeline.program.is_active(name) && !combined.iter().any(|(n, _)| n == name) {
-                  combined.push((name.clone(), *src_id));
+              for b in &mesh.shared_bindings {
+                if e.pipeline.program.is_active(&b.name) && !combined.iter().any(|c| c.name == b.name) {
+                  combined.push(b.clone());
                 }
               }
               resolve(&combined)

@@ -152,10 +152,12 @@ impl RasterState {
     if let Some(history) = history {
       textures.push(("uPrevious".to_string(), gl_name(history)?, Some(self.samplers.get(SamplerState::default()))));
     }
-    for (name, id) in &shader.textures {
-      match self.textures.get(id) {
-        Some(gpu) => textures.push((name.clone(), gpu.gl_texture, Some(self.samplers.get(gpu.sampler)))),
-        None => log::warn!("[alloy] node shader input '{name}': texture {id} not found"),
+    for b in &shader.textures {
+      match self.textures.get(&b.id) {
+        Some(gpu) => {
+          textures.push((b.name.clone(), gpu.gl_texture, Some(self.samplers.get(gpu.sampler.overridden(&b.sampler)))))
+        }
+        None => log::warn!("[alloy] node shader input '{}': texture {} not found", b.name, b.id),
       }
     }
 

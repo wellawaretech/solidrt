@@ -8,7 +8,7 @@ use std::sync::mpsc;
 
 use crate::gpu::{
   BufferIds, DrawRange, DrawSpec, GpuLimits, GpuResources, NodeShader, ParamValue, PipelineDesc, PipelineSpec, ShaderStage,
-  TargetSpec, UniformTable, WindowShader, AttributeTable,
+  TargetSpec, TextureBinding, UniformTable, WindowShader, AttributeTable,
 };
 use crate::texture::{SamplerState, TextureFormat};
 
@@ -61,7 +61,7 @@ pub(crate) enum RasterCmd {
     height: u32,
     fragment_src: String,
     params: Vec<(String, ParamValue)>,
-    textures: Vec<(String, u64)>,
+    textures: Vec<TextureBinding>,
     sampler: SamplerState,
     label: Option<String>,
     reply: mpsc::Sender<Result<(Texture, UniformTable), String>>,
@@ -122,10 +122,10 @@ pub(crate) enum RasterCmd {
   /// and mark the target dirty. Each entry gets the shared names its program
   /// declares and its own bindings do not override; unnamed shared bindings
   /// keep their current source.
-  UpdateTargetTextures { target: u64, textures: Vec<(String, u64)> },
+  UpdateTargetTextures { target: u64, textures: Vec<TextureBinding> },
   /// Rebind one draw entry's sampler2D inputs by uniform name and mark the
   /// target dirty. Unnamed bindings keep their current source.
-  UpdateDrawTextures { target: u64, draw: u64, textures: Vec<(String, u64)> },
+  UpdateDrawTextures { target: u64, draw: u64, textures: Vec<TextureBinding> },
   /// Set one draw entry's range (resolved and validated UI-side) and mark
   /// the target dirty.
   SetDrawRange { target: u64, draw: u64, range: DrawRange },
@@ -161,7 +161,7 @@ pub(crate) enum RasterCmd {
   UpdateShaderParams { id: u64, params: Vec<(String, ParamValue)> },
   /// Rebind an existing shader/pipeline target's sampler2D inputs by uniform
   /// name and mark it dirty. Unnamed bindings keep their current source.
-  UpdateShaderTextures { id: u64, textures: Vec<(String, u64)> },
+  UpdateShaderTextures { id: u64, textures: Vec<TextureBinding> },
   /// Recreate a shader/pipeline target at a new size (same compiled program,
   /// params, and bindings) and adopt the new target; it re-renders at the
   /// next flush. Replies with the adopted handle so the UI side re-registers

@@ -36,7 +36,7 @@ use crate::gpu::{
   release_buffer, release_pipeline, release_program, validate_params, validate_texture_bindings, BufferIds, DrawSpec,
   AttributeTable, EntryBuffers, GpuBuffer, GpuBufferInfo, GpuLimits, GpuPipelineInfo, GpuProgramInfo, GpuRenderPipelineInfo,
   GpuResources, GpuTextureInfo, GpuWindowShaderInfo, ParamValue, PassInput, PassTimer, PipelineDesc, Timed, PipelineSpec,
-  RenderPipeline, ShaderProgram, ShaderTexture, TargetSpec, UniformTable, WindowShader,
+  RenderPipeline, ShaderProgram, ShaderTexture, TargetSpec, TextureBinding, UniformTable, WindowShader,
 };
 use crate::texture::{GpuTexture, SamplerCache, SamplerState, TextureFormat};
 
@@ -1016,10 +1016,12 @@ impl RasterState {
         textures.push(("uPrevious".to_string(), prev.tex, None));
       }
     }
-    for (name, id) in &state.spec.textures {
-      match self.textures.get(id) {
-        Some(gpu) => textures.push((name.clone(), gpu.gl_texture, Some(self.samplers.get(gpu.sampler)))),
-        None => log::warn!("[alloy] window shader input '{name}': texture {id} not found"),
+    for b in &state.spec.textures {
+      match self.textures.get(&b.id) {
+        Some(gpu) => {
+          textures.push((b.name.clone(), gpu.gl_texture, Some(self.samplers.get(gpu.sampler.overridden(&b.sampler)))))
+        }
+        None => log::warn!("[alloy] window shader input '{}': texture {} not found", b.name, b.id),
       }
     }
     crate::gpu::render_program_to_window(
@@ -1386,7 +1388,7 @@ impl RasterState {
     height: u32,
     fragment_src: &str,
     params: &[(String, ParamValue)],
-    textures: Vec<(String, u64)>,
+    textures: Vec<TextureBinding>,
     sampler: SamplerState,
     label: Option<String>,
   ) -> Result<(Texture, UniformTable), String> {
@@ -1883,19 +1885,20 @@ pub(crate) fn propagation_order(dirty: &HashSet<u64>, edges: &HashMap<u64, Vec<u
   (order, remaining.into_iter().collect())
 }
 
-/// Map a (name -> source texture id) binding list to live GL textures,
-/// dropping any id no longer registered (it samples as unbound/black). The
-/// resolver a target's render calls per pass - once for a fragment target,
-/// once per entry for a mesh target.
+/// Map a binding list to live GL textures, each with the sampler object for
+/// the source's declared state under the binding's override, dropping any
+/// id no longer registered (it samples as unbound/black). The resolver a
+/// target's render calls per pass - once for a fragment target, once per
+/// entry for a mesh target.
 fn resolve_binding_list(
   textures: &HashMap<u64, GpuTexture>,
   samplers: &SamplerCache,
-  bindings: &[(String, u64)],
+  bindings: &[TextureBinding],
 ) -> Vec<PassInput> {
   bindings
     .iter()
-    .filter_map(|(name, src_id)| {
-      textures.get(src_id).map(|gpu| (name.clone(), gpu.gl_texture, Some(samplers.get(gpu.sampler))))
+    .filter_map(|b| {
+      textures.get(&b.id).map(|gpu| (b.name.clone(), gpu.gl_texture, Some(samplers.get(gpu.sampler.overridden(&b.sampler)))))
     })
     .collect()
 }

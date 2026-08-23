@@ -309,10 +309,11 @@ pub(super) fn decode_params(value: &PropValue) -> Result<Vec<(String, alloy::Par
   Ok(out)
 }
 
-// { name: textureId } sampler bindings for a shader declaration, mapping
-// sampler2D uniform names to texture registry ids. Null clears; a non-numeric
-// entry is an error.
-pub(super) fn decode_texture_bindings(value: &PropValue) -> Result<Vec<(String, u64)>, String> {
+// { name: textureId | { id, filter?, wrap? } } sampler bindings for a shader
+// declaration, mapping sampler2D uniform names to texture registry ids with
+// an optional per-binding sampling override. Null clears; anything else is an
+// error.
+pub(super) fn decode_texture_bindings(value: &PropValue) -> Result<Vec<alloy::TextureBinding>, String> {
   if value.is_null() {
     return Ok(Vec::new());
   }
@@ -321,10 +322,30 @@ pub(super) fn decode_texture_bindings(value: &PropValue) -> Result<Vec<(String, 
   entries
     .iter()
     .map(|(k, t)| {
-      let id = t
-        .as_f64()
-        .ok_or_else(|| format!("Texture binding '{k}' must be a texture id (number), got {}", describe(t)))?;
-      Ok((k.clone(), id as u64))
+      if t.as_map().is_some() {
+        let id = t
+          .get("id")
+          .and_then(|v| v.as_f64())
+          .ok_or_else(|| format!("Texture binding '{k}': 'id' must be a texture id (number)"))?;
+        let text = |key: &str| -> Result<Option<String>, String> {
+          match t.get(key) {
+            None => Ok(None),
+            Some(v) if v.is_null() => Ok(None),
+            Some(v) => v
+              .as_str()
+              .map(|s| Some(s.to_string()))
+              .ok_or_else(|| format!("Texture binding '{k}': '{key}' must be a string, got {}", describe(v))),
+          }
+        };
+        let (filter, wrap) = (text("filter")?, text("wrap")?);
+        let sampler = alloy::SamplerOverride::parse(filter.as_deref(), wrap.as_deref())
+          .map_err(|e| format!("Texture binding '{k}': {e}"))?;
+        return Ok(alloy::TextureBinding { name: k.clone(), id: id as u64, sampler });
+      }
+      let id = t.as_f64().ok_or_else(|| {
+        format!("Texture binding '{k}' must be a texture id (number) or {{ id, filter?, wrap? }}, got {}", describe(t))
+      })?;
+      Ok(alloy::TextureBinding::new(k.clone(), id as u64))
     })
     .collect()
 }

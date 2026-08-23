@@ -87,7 +87,55 @@ impl TextureFormat {
   }
 }
 
+/// A per-binding deviation from a texture's declared sampling: the filter
+/// and/or wrap one pass samples it with (a nearest atlas blurred linearly by
+/// a blur pass, a clamped target tiled by one consumer). Never the mip
+/// flag: the chain either exists on the id or it does not. Empty means "the
+/// texture's own state", the default for every binding.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
+pub struct SamplerOverride {
+  pub filter: Option<SamplerFilter>,
+  pub wrap: Option<SamplerWrap>,
+}
+
+impl SamplerFilter {
+  pub fn name(self) -> &'static str {
+    match self {
+      SamplerFilter::Linear => "linear",
+      SamplerFilter::Nearest => "nearest",
+    }
+  }
+}
+
+impl SamplerWrap {
+  pub fn name(self) -> &'static str {
+    match self {
+      SamplerWrap::Clamp => "clamp",
+      SamplerWrap::Repeat => "repeat",
+    }
+  }
+}
+
+impl SamplerOverride {
+  /// Parse the app-facing override strings, same vocabulary as the
+  /// creation-time options.
+  pub fn parse(filter: Option<&str>, wrap: Option<&str>) -> Result<Self, String> {
+    let state = SamplerState::parse(filter, wrap, None)?;
+    Ok(SamplerOverride { filter: filter.map(|_| state.filter), wrap: wrap.map(|_| state.wrap) })
+  }
+
+  pub fn is_empty(&self) -> bool {
+    self.filter.is_none() && self.wrap.is_none()
+  }
+}
+
 impl SamplerState {
+  /// The state a binding samples with: the texture's own, with the
+  /// override's fields replacing it where set. The mip flag is untouched.
+  pub fn overridden(self, o: &SamplerOverride) -> SamplerState {
+    SamplerState { filter: o.filter.unwrap_or(self.filter), wrap: o.wrap.unwrap_or(self.wrap), mipmap: self.mipmap }
+  }
+
   /// Parse the app-facing options (each optional, defaulting to
   /// linear/clamp/no mips). Filter: "linear" | "nearest"; wrap: "clamp" |
   /// "repeat"; mipmap: bool.

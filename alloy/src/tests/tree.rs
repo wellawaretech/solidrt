@@ -734,7 +734,7 @@ fn shaded_boundary(tree: &mut RenderTree, id: u64, tex: u64) {
         v.shader = Some(NodeShader {
           program: 1,
           params: vec![],
-          textures: vec![("uLut".to_string(), tex)],
+          textures: vec![crate::gpu::TextureBinding::new("uLut", tex)],
           outset: 0.0,
           previous: false,
         });

@@ -2,7 +2,7 @@
 /// <reference path="./runtime-modules.d.ts" />
 
 import type { Gradient } from "./color"
-import type { ProgramId, TextureId } from "flux:gpu"
+import type { ProgramId, TextureBindings, TextureId } from "flux:gpu"
 import type { TextInputHints } from "flux:rendertree"
 import type { Element } from "solid-js"
 
@@ -570,8 +570,8 @@ export interface WindowShaderProps {
    * type: 2/3/4 for `vec2`/`vec3`/`vec4`, 16 (column-major) for `mat4`.
    */
   params?: Record<string, number | number[]>
-  /** Extra sampler2D inputs: uniform name to texture id. */
-  textures?: Record<string, TextureId>
+  /** Extra sampler2D inputs: uniform name to texture id, or `{ id, filter?, wrap? }` for a per-binding sampling override. */
+  textures?: TextureBindings
   /** Vertices drawn (attributeless triangles). Default 3, the covering triangle. */
   vertexCount?: number
   /**
@@ -665,8 +665,8 @@ export interface ViewShaderProps {
    * type: 2/3/4 for `vec2`/`vec3`/`vec4`, 16 (column-major) for `mat4`.
    */
   params?: Record<string, number | number[]>
-  /** Extra sampler2D inputs: uniform name to texture id. */
-  textures?: Record<string, TextureId>
+  /** Extra sampler2D inputs: uniform name to texture id, or `{ id, filter?, wrap? }` for a per-binding sampling override. */
+  textures?: TextureBindings
   /**
    * Transparent margin in logical px on every side of the layout box, for
    * the effect to write into - glow, drop shadow, blur that bleeds past the

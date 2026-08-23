@@ -2,7 +2,7 @@
 //! resource introspection (the dev server's gpu query). Plain data only, so
 //! consumers stay free of GL types.
 
-use super::vocab::ParamValue;
+use super::vocab::{ParamValue, TextureBinding};
 
 pub struct GpuResources {
   pub textures: Vec<GpuTextureInfo>,
@@ -102,7 +102,7 @@ pub struct GpuDrawInfo {
   /// The float uniforms applied on the entry's most recent render.
   pub params: Vec<(String, ParamValue)>,
   /// sampler2D uniform name -> source texture id.
-  pub textures: Vec<(String, u64)>,
+  pub textures: Vec<TextureBinding>,
 }
 
 pub struct GpuPipelineInfo {
@@ -155,7 +155,7 @@ pub struct GpuPipelineInfo {
   /// sampler2D uniform name -> source texture id; for a draw target (kind
   /// "draws"), its shared (target-level) bindings - per-entry bindings live
   /// in `draws`.
-  pub textures: Vec<(String, u64)>,
+  pub textures: Vec<TextureBinding>,
   /// The float uniforms applied on the most recent render; for a draw target
   /// (kind "draws"), its shared (target-level) params - per-entry params live
   /// in `draws`.

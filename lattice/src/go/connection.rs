@@ -804,6 +804,25 @@ async fn try_serve(
 
 /// Round to two decimals for the JSON payloads: raw f32s serialize with float
 /// noise (0.1 -> 0.10000000149...) that only bloats the wire format.
+// One sampler binding in the /gpu inventory: the bare source id, or
+// `{ id, filter?, wrap? }` when the binding carries a sampling override.
+fn binding_json(b: &alloy::TextureBinding) -> (String, serde_json::Value) {
+  let value = if b.sampler.is_empty() {
+    serde_json::json!(b.id)
+  } else {
+    let mut o = serde_json::Map::new();
+    o.insert("id".into(), serde_json::json!(b.id));
+    if let Some(f) = b.sampler.filter {
+      o.insert("filter".into(), serde_json::json!(f.name()));
+    }
+    if let Some(w) = b.sampler.wrap {
+      o.insert("wrap".into(), serde_json::json!(w.name()));
+    }
+    serde_json::Value::Object(o)
+  };
+  (b.name.clone(), value)
+}
+
 fn round2(v: f32) -> f64 {
   (v as f64 * 100.0).round() / 100.0
 }
@@ -1334,7 +1353,7 @@ fn gpu_reply(ctx: &flux::rquickjs::Ctx<'_>, id: u64, label: Option<&str>) -> Str
         "passes": p.passes,
         "issueMs": p.pass_issue_micros / 1000,
         "execMs": p.pass_exec_micros / 1000,
-        "textures": p.textures.iter().map(|(name, tex)| (name.clone(), serde_json::json!(tex))).collect::<serde_json::Map<_, _>>(),
+        "textures": p.textures.iter().map(binding_json).collect::<serde_json::Map<_, _>>(),
         "params": p.params.iter().map(|(name, v)| {
           let v = match v {
             alloy::ParamValue::Scalar(n) => serde_json::json!(n),
@@ -1419,7 +1438,7 @@ fn gpu_reply(ctx: &flux::rquickjs::Ctx<'_>, id: u64, label: Option<&str>) -> Str
           .map(|d| {
             let mut entry = serde_json::json!({
               "id": d.id,
-              "textures": d.textures.iter().map(|(name, tex)| (name.clone(), serde_json::json!(tex))).collect::<serde_json::Map<_, _>>(),
+              "textures": d.textures.iter().map(binding_json).collect::<serde_json::Map<_, _>>(),
               "params": d.params.iter().map(|(name, v)| {
                 let v = match v {
                   alloy::ParamValue::Scalar(n) => serde_json::json!(n),

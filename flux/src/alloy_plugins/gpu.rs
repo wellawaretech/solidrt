@@ -128,17 +128,40 @@ fn collect_params(ctx: &Ctx<'_>, obj: &Object<'_>, api: &str) -> rquickjs::Resul
 // validates against the program's sampler2D uniforms. A value that is not a
 // non-negative integral number throws at the call site; an `undefined` entry
 // is skipped, like params.
-fn collect_textures(ctx: &Ctx<'_>, obj: &Object<'_>, api: &str) -> rquickjs::Result<Vec<(String, u64)>> {
+// A binding value is a texture id, or `{ id, filter?, wrap? }` to sample
+// that id with a different filter/wrap in this binding only (the texture's
+// own state stays what `<texture>` paints and what other bindings use).
+fn collect_textures(ctx: &Ctx<'_>, obj: &Object<'_>, api: &str) -> rquickjs::Result<Vec<alloy::TextureBinding>> {
   let mut out = Vec::new();
   for entry in obj.props::<String, rquickjs::Value>() {
     let (name, value) = entry?;
     if value.is_undefined() {
       continue;
     }
-    match value.as_number() {
-      Some(n) if n >= 0.0 && n.fract() == 0.0 => out.push((name, n as u64)),
-      _ => return Err(throw_str(ctx, &format!("{api}: texture '{name}' must be a texture id (number)"))),
-    }
+    let id_of = |v: &rquickjs::Value<'_>| match v.as_number() {
+      Some(n) if n >= 0.0 && n.fract() == 0.0 => Some(n as u64),
+      _ => None,
+    };
+    let binding = if let Some(o) = value.as_object().filter(|o| !o.is_array()) {
+      let id = id_of(&o.get::<_, rquickjs::Value>("id")?)
+        .ok_or_else(|| throw_str(ctx, &format!("{api}: texture '{name}': 'id' must be a texture id (number)")))?;
+      let filter = o.get::<_, Option<String>>("filter")?;
+      let wrap = o.get::<_, Option<String>>("wrap")?;
+      let sampler = alloy::SamplerOverride::parse(filter.as_deref(), wrap.as_deref())
+        .map_err(|e| throw_str(ctx, &format!("{api}: texture '{name}': {e}")))?;
+      alloy::TextureBinding { name, id, sampler }
+    } else {
+      match id_of(&value) {
+        Some(id) => alloy::TextureBinding::new(name, id),
+        None => {
+          return Err(throw_str(
+            ctx,
+            &format!("{api}: texture '{name}' must be a texture id (number) or {{ id, filter?, wrap? }}"),
+          ))
+        }
+      }
+    };
+    out.push(binding);
   }
   Ok(out)
 }
@@ -430,7 +453,7 @@ fn collect_draw_target_spec(
   width: u32,
   height: u32,
   api: &str,
-) -> rquickjs::Result<(alloy::TargetSpec, bool, Vec<(String, u64)>)> {
+) -> rquickjs::Result<(alloy::TargetSpec, bool, Vec<alloy::TextureBinding>)> {
   if let Some(o) = opts {
     if o.get::<_, rquickjs::Value>("params").map(|v| !v.is_undefined()).unwrap_or(false) {
       return Err(throw_str(ctx, &format!("{api}: 'params' is not an option; pass it as its own argument before opts")));

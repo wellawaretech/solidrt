@@ -1,7 +1,8 @@
 ---
 title: Per-binding sampler override
-description: filter/wrap are fused into the texture id, which is the right default and makes display and shader sampling agree by construction, but it leaves no escape hatch - a nearest pixel-art atlas cannot be blurred linearly and a clamped target cannot be tiled by one consumer; a per-binding override costs little because the sampler cache is already keyed by state.
+description: filter/wrap are fused into the texture id, the right default, but it left no escape hatch. Landed 2026-08-23 - a `textures` binding value may be `{ id, filter?, wrap? }`, overriding the texture's declared sampling for that binding only; mipmap stays id state. Verified on Linux by readback.
 created: 2026-07-31
+completed: 2026-08-23
 ---
 
 # Per-binding sampler override
@@ -15,7 +16,7 @@ added sampler objects *specifically* to undo the WebGL1 fusion, and WebGPU
 never had it. Their reason is real: the same texture legitimately wants
 different sampling in different passes.
 
-[[gpu-sampler-state]] (2026-07-29) fused `filter`/`wrap` into the texture id
+[gpu-sampler-state](gpu-sampler-state.md) (2026-07-29) fused `filter`/`wrap` into the texture id
 - the WebGL1 model - while implementing it with the WebGL2 machinery (shared
 sampler objects in `SamplerCache`, bound per input unit in `run_pass`). The
 fusion is a deliberate solidrt-lens call and it is right for the common case:
@@ -47,10 +48,28 @@ Two things to keep straight when it lands:
   docs should say the texture's own state is what `<texture>` paints and what
   any binding without an override uses.
 - The binding marshal is the same site that call-site validation
-  ([[gpu-callsite-validation]]) checks names against the reflected uniform
-  table, and the same site branded ids ([[gpu-branded-ids]]) type. A widened
+  ([gpu-callsite-validation](gpu-callsite-validation.md)) checks names against the reflected uniform
+  table, and the same site branded ids ([gpu-branded-ids](gpu-branded-ids.md)) type. A widened
   value type touches both; neither changes shape.
 
-Demand-gated: no field report has asked, and the workaround (create the same
-image twice under two ids) is obvious if wasteful. Filed so the sampler
-design slot is used rather than rediscovered.
+## Landed 2026-08-23, with mipmaps
+
+Picked up together with [gpu-mipmaps](gpu-mipmaps.md) because both are the
+same mechanism (`SamplerCache` keyed by state, one sampler object per unit)
+and the rule that keeps them apart is only obvious when designed at once:
+**`mipmap` is id state and not overridable** - generation is a property of
+the texture, and a sampler asking for mip levels on a texture without a
+chain is sampling-incomplete. An override carries filter and/or wrap only.
+
+The binding tuple `(String, u64)` became `alloy::TextureBinding { name, id,
+sampler: SamplerOverride }` everywhere (spec, commands, target state, the
+UI-side sampler-graph mirror, inventory, both JS decoders - the `flux:gpu`
+calls and the JSX `shader.textures` prop). `merge_bindings` replaces a named
+binding whole, so a rebind without an override drops the old one. The
+resolver computes `texture.sampler.overridden(&binding.sampler)` and asks
+the cache; the graph mirror ignores overrides (they do not change edges).
+`/gpu` reports an overridden binding as `{ id, filter?, wrap? }`.
+
+Verified on Linux (probes/mipmap-probe.tsx): a nearest checker sampled
+minified reads a single texel (255) through a plain binding and the
+bilinear average (128) through `{ id, filter: "linear" }`.

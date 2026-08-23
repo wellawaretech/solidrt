@@ -34,7 +34,7 @@ Shape questions to settle when a consumer arrives, in rough order:
   want sampleable depth (extensions file). Static uploads first.
 - **Mipmaps.** Environment maps alias badly without minification control
   and IBL sampling wants the mip chain; this item leans on
-  [gpu-mipmaps](gpu-mipmaps.md) landing first or together.
+  [gpu-mipmaps](../done/gpu-mipmaps.md) (landed 2026-08-23).
 
 Filed 2026-08-04 from ../notes/scene-graph-3d.md (stage 5,
 demand-gated); no field report asks yet.

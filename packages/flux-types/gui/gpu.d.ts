@@ -132,6 +132,18 @@ declare module "flux:gpu" {
    */
   export type SamplerOptions = { filter?: FilterMode; wrap?: WrapMode; mipmap?: boolean }
   /**
+   * One `textures` binding value: a texture id, sampled with the texture's
+   * own declared state, or `{ id, filter?, wrap? }` to sample that id with a
+   * different filter and/or wrap in this binding only (blur a "nearest"
+   * atlas linearly; tile a clamped target in one consumer). The override is
+   * a per-pass deviation: the texture's own state stays what `<texture>`
+   * paints and what every binding without an override uses. `mipmap` is
+   * not overridable - the chain either exists on the id or it does not.
+   */
+  export type TextureBinding = TextureId | { id: TextureId; filter?: FilterMode; wrap?: WrapMode }
+  /** Sampler2D inputs by uniform name; see {@link TextureBinding}. */
+  export type TextureBindings = Record<string, TextureBinding>
+  /**
    * A free-form debug name every create accepts (WebGPU's label): surfaced by
    * the dev server's GPU inventory (get_gpu_resources) and in engine log
    * messages, so a chain of targets reads as "bloom-h samples particle-verts"
@@ -254,7 +266,7 @@ declare module "flux:gpu" {
     width: number,
     height: number,
     params?: ShaderParams | null,
-    opts?: { textures?: Record<string, TextureId> } & SamplerOptions & LabelOption,
+    opts?: { textures?: TextureBindings } & SamplerOptions & LabelOption,
   ): TextureId
   /**
    * Compile a single shader stage from raw GLSL ES: the primitive under
@@ -398,7 +410,7 @@ declare module "flux:gpu" {
     height: number,
     params?: ShaderParams | null,
     opts?: {
-      textures?: Record<string, TextureId>
+      textures?: TextureBindings
       buffer?: BufferId
       instanceBuffer?: BufferId
       clearColor?: [number, number, number, number]
@@ -581,7 +593,7 @@ declare module "flux:gpu" {
     height: number,
     params?: ShaderParams | null,
     opts?: {
-      textures?: Record<string, TextureId>
+      textures?: TextureBindings
       attributes?: VertexAttribute[]
       buffer?: BufferId
       /** See {@link createRenderPipeline}'s `instanceAttributes`. */
@@ -705,7 +717,7 @@ declare module "flux:gpu" {
     params?: ShaderParams | null,
     opts?: {
       depth?: boolean
-      textures?: Record<string, TextureId>
+      textures?: TextureBindings
       clearColor?: [number, number, number, number]
       render?: "auto" | "manual"
       loadOp?: "clear" | "load"
@@ -747,7 +759,7 @@ declare module "flux:gpu" {
     pipeline: RenderPipelineId,
     params?: ShaderParams | null,
     opts?: {
-      textures?: Record<string, TextureId>
+      textures?: TextureBindings
       buffer?: BufferId
       instanceBuffer?: BufferId
       before?: DrawId
@@ -817,7 +829,7 @@ declare module "flux:gpu" {
    * everywhere it is declared, and each entry's effective inputs (its own
    * plus the applicable shared ones) must fit the device's texture units.
    */
-  export function setTargetTextures(target: TextureId, textures: Record<string, TextureId>): void
+  export function setTargetTextures(target: TextureId, textures: TextureBindings): void
   /**
    * Resize a render target of any kind in place and re-render it: the id,
    * compiled programs, last-applied params, sampler bindings, and draw
@@ -832,7 +844,7 @@ declare module "flux:gpu" {
    * validation, and cycle rules. Entries bind independently - two entries
    * may bind the same uniform name to different sources.
    */
-  export function setDrawTextures(target: TextureId, draw: DrawId, textures: Record<string, TextureId>): void
+  export function setDrawTextures(target: TextureId, draw: DrawId, textures: TextureBindings): void
   /**
    * Update one draw entry's draw range: {@link setDraw} addressed to a
    * single entry, same partial merge, bounds validation, and vocabulary

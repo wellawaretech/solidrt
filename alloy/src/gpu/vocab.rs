@@ -490,12 +490,41 @@ fn warn_inactive(name: &str) {
   log::warn!("[shader] uniform '{name}' is declared but inactive (optimized out); the write is ignored");
 }
 
+
+/// One sampler2D input of a pass: the uniform name, the source texture id,
+/// and an optional per-binding sampling override (see `SamplerOverride`).
+/// The binding-list merge rule is by name (new names append, existing names
+/// are replaced whole, override included).
+#[derive(Clone, Debug, PartialEq)]
+pub struct TextureBinding {
+  pub name: String,
+  pub id: u64,
+  pub sampler: crate::texture::SamplerOverride,
+}
+
+impl TextureBinding {
+  pub fn new(name: impl Into<String>, id: u64) -> Self {
+    TextureBinding { name: name.into(), id, sampler: crate::texture::SamplerOverride::default() }
+  }
+}
+
+/// Fold a binding update into a record by name (new names append, existing
+/// names are replaced whole).
+pub fn merge_bindings(record: &mut Vec<TextureBinding>, updates: &[TextureBinding]) {
+  for b in updates {
+    match record.iter_mut().find(|r| r.name == b.name) {
+      Some(existing) => *existing = b.clone(),
+      None => record.push(b.clone()),
+    }
+  }
+}
+
 /// Check a sampler-binding list against a program's active uniforms: every
 /// name must be an active non-array `sampler2D` (a binding names one texture
 /// unit; sampler arrays are outside the settable set). Same boundary rule as
 /// `validate_params`.
-pub fn validate_texture_bindings(uniforms: &UniformTable, textures: &[(String, u64)]) -> Result<(), String> {
-  for (name, _) in textures {
+pub fn validate_texture_bindings(uniforms: &UniformTable, textures: &[TextureBinding]) -> Result<(), String> {
+  for TextureBinding { name, .. } in textures {
     let slot = uniforms.get(name).ok_or_else(|| unknown_uniform(uniforms, name))?;
     if slot.kind == UniformKind::Inactive {
       warn_inactive(name);

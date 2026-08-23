@@ -174,7 +174,7 @@ Tier 2 - real models, lights, visual quality:
   glTF entry ticket is paid.
 - **Per-instance attributes**: DONE 2026-08-04 (instanceAttributes +
   instanceBuffer, derived instanceCount).
-- **Mipmaps** (../backlog/gpu-mipmaps.md): textured materials alias
+- **Mipmaps** (../done/gpu-mipmaps.md, landed 2026-08-23): textured materials alias
   immediately at minification. Still deferred.
 - **Uniform arrays** (../backlog/gpu-uniform-arrays.md, filed
   2026-08-04 from this note): light lists without baking a count into

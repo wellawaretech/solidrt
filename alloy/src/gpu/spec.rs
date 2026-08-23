@@ -2,7 +2,7 @@
 //! to the raster thread in one owned value, serving both the public Context
 //! API and the RasterCmd payloads.
 
-use super::vocab::{BufferIds, DrawRange, IndexFormat, ParamValue, PipelineDesc};
+use super::vocab::{BufferIds, DrawRange, IndexFormat, ParamValue, PipelineDesc, TextureBinding};
 use crate::texture::SamplerState;
 
 /// The per-target half of a mesh target create: output size, clear, sampling,
@@ -75,7 +75,7 @@ pub struct DrawSpec {
   /// spec crosses to the raster thread.
   pub draw: DrawRange,
   pub params: Vec<(String, ParamValue)>,
-  pub textures: Vec<(String, u64)>,
+  pub textures: Vec<TextureBinding>,
 }
 
 impl DrawSpec {
@@ -110,7 +110,7 @@ pub struct WindowShader {
   /// Float uniforms filled by name.
   pub params: Vec<(String, ParamValue)>,
   /// Extra sampler2D inputs: uniform name -> texture registry id.
-  pub textures: Vec<(String, u64)>,
+  pub textures: Vec<TextureBinding>,
   pub vertex_count: i32,
   /// Retain a second layer holding the last resolved frame, exposed to the
   /// program as `uniform sampler2D uPrevious` (one-frame history: motion
@@ -134,7 +134,7 @@ pub struct NodeShader {
   /// Float uniforms filled by name.
   pub params: Vec<(String, ParamValue)>,
   /// Extra sampler2D inputs: uniform name -> texture registry id.
-  pub textures: Vec<(String, u64)>,
+  pub textures: Vec<TextureBinding>,
   /// Transparent margin in logical px on every side of the layout box, for
   /// the effect to write into (glow, shadow, bleeding blur). Composite-side
   /// geometry only: it grows the rasterized canvas and the composited quad,

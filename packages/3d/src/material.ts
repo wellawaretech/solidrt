@@ -36,6 +36,7 @@ import type {
   RenderPipelineId,
   ShaderParams,
   ShaderStageId,
+  TextureBindings,
   TextureId,
   Topology,
   VertexAttribute,
@@ -50,7 +51,7 @@ export type Material = {
   /** Per-entry uniform values this material contributes at addDraw. */
   params: ShaderParams
   /** Per-entry sampler bindings, when the material samples textures. */
-  textures?: Record<string, TextureId>
+  textures?: TextureBindings
   /** True when the vertex stage declares `uNormal`: the scene then writes
    * the world matrix's inverse-transpose alongside uModel for meshes using
    * this material (set automatically by shaderMaterial). */
@@ -298,7 +299,7 @@ export type ShaderMaterialInstanceOptions = {
   /** Uniform seeds beyond the standard set; update per mesh later with
    * setMeshParams. */
   params?: ShaderParams
-  textures?: Record<string, TextureId>
+  textures?: TextureBindings
 }
 
 export type ShaderMaterialOptions = ShaderMaterialClassOptions & ShaderMaterialInstanceOptions
