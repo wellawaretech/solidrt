@@ -67,6 +67,13 @@ Shaped, not started.
   a rotating tile map cannot follow - rotation must go in-shader with the
   inverse in pick and the handlers, keeping one camera vocabulary across both
   layers.
+- **[A <Sprite> outside a <Group> halts the app at mount](backlog/2d-sprite-layer-context-halt.md)** [2026-08-24]
+  The unchanged packages/2d/examples/pick.tsx (a <Sprite> directly under
+  <SpriteLayer>) throws "Context must either be created with a default value
+  or a value must be provided before accessing it" from
+  useContext(GroupContext) inside <Sprite>, halting the reactive system;
+  GroupContext is created without a default, which Solid 2 rc1 no longer
+  tolerates for an absent provider.
 - **[Sprite draw order is insertion order, so reordering means remove and re-add](backlog/2d-sprite-sort-key.md)** [2026-08-22]
   The sprite layer paints in record order with no sort key, so raising one
   sprite or depth-sorting a population by y - the ordinary case for a dense 2D
@@ -481,13 +488,6 @@ Shaped, not started.
   camera, no mesh, no lights) that the 3d package is the first consumer of;
   triangle-accurate picking (3d roadmap item 4) and the scene-walk descent
   (item 19) land together on it.
-- **[Route spatial transition settles to package-level handles](backlog/spatial-settled-event-routing.md)** [2026-08-24]
-  The "spatialTransitionEnd" engine event carries the raw core NodeId, so a
-  2d/3d app wanting an "arrived" callback per sprite or mesh must keep its own
-  node-to-handle map (the packages' maps are private). The element transitions
-  route settles to the target's onTransitionEnd handler; the packages should
-  offer the same - an onTransitionEnd per sprite handle / SceneNode - the
-  first thing anyone chaining animations will reach for.
 - **[Every widget hand-wires its own hover/pressed/disabled variants](backlog/state-variant-selection.md)** [2026-07-26]
   Button picks fill/hover/label with a switch over its variant and derives the
   background from press state by hand, and every other widget repeats the
@@ -1083,6 +1083,13 @@ Finished, kept for the reasoning.
   TRS in core (rendertree transition math reused, quaternion tracks the one
   new piece), making JS write targets once; the linchpin of
   2d-spatial-citizenship and the smaller sibling of animation-core.
+- **[Route spatial transition settles to package-level handles](done/spatial-settled-event-routing.md)** [2026-08-24]
+  The "spatialTransitionEnd" engine event carries the raw core NodeId, so a
+  2d/3d app wanting an "arrived" callback per sprite or mesh must keep its own
+  node-to-handle map (the packages' maps are private). The element transitions
+  route settles to the target's onTransitionEnd handler; the packages should
+  offer the same - an onTransitionEnd per sprite handle / SceneNode - the
+  first thing anyone chaining animations will reach for.
 - **[srt run exits immediately when stdin is not a terminal](done/srt-run-exits-on-stdin-eof.md)** [2026-08-20]
   The repl bound readline close to full shutdown, so any non-interactive
   launch (background shell, supervisor, CI) tore down the server, the client

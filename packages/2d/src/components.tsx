@@ -11,7 +11,7 @@ import type { Element, ParentComponent, TextureId, VoidComponent } from "@solidr
 import type { FilterMode } from "@solidrt/core/gpu"
 import { addGroup, addSprite, createSpriteLayer, removeGroup, removeSprite, setGroup, setGroupTransition, setSprite, setSpriteTransition } from "./layer.ts"
 import type { NodeTransition } from "flux:spatial"
-import type { CameraUpdate, Sprite as SpriteHandle, SpriteGroup, SpriteLayer as LayerHandle, SpriteOptions, SpritePointerEvent } from "./layer.ts"
+import type { CameraUpdate, Sprite as SpriteHandle, SpriteGroup, SpriteLayer as LayerHandle, SpriteOptions, SpritePointerEvent, TransitionEndEvent } from "./layer.ts"
 import { createTileLayer } from "./tiles.ts"
 import type { TileChunk, TileLayer as TileLayerHandle } from "./tiles.ts"
 
@@ -123,6 +123,8 @@ export type GroupProps = {
   /** How pose-prop changes animate (see setGroupTransition); the mount
    * pose always snaps. */
   transition?: NodeTransition | string | null
+  /** A declared transition settled on one component. */
+  onTransitionEnd?: (event: TransitionEndEvent) => void
   ref?: (group: SpriteGroup) => void
 }
 
@@ -146,6 +148,12 @@ export let Group: ParentComponent<GroupProps> = props => {
     () => props.transition,
     transition => setGroupTransition(group, transition ?? null),
   )
+  createEffect(
+    () => props.onTransitionEnd,
+    end => {
+      group.onTransitionEnd = end
+    },
+  )
   untrack(() => props.ref)?.(group)
   onCleanup(() => removeGroup(group))
   return <GroupContext value={group}>{props.children}</GroupContext>
@@ -156,6 +164,8 @@ export type SpriteProps = SpriteOptions &
     /** How pose-prop changes animate (see setSpriteTransition); the mount
      * pose always snaps. */
     transition?: NodeTransition | string | null
+    /** A declared transition settled on one component. */
+    onTransitionEnd?: (event: TransitionEndEvent) => void
     ref?: (sprite: SpriteHandle) => void
   }
 
@@ -175,13 +185,14 @@ export let Sprite: VoidComponent<SpriteProps> = props => {
     transition => setSpriteTransition(sprite, transition ?? null),
   )
   createEffect(
-    () => [props.onPointerDown, props.onPointerMove, props.onPointerUp, props.onPointerEnter, props.onPointerLeave] as const,
-    ([down, move, up, enter, leave]) => {
+    () => [props.onPointerDown, props.onPointerMove, props.onPointerUp, props.onPointerEnter, props.onPointerLeave, props.onTransitionEnd] as const,
+    ([down, move, up, enter, leave, end]) => {
       sprite.onPointerDown = down
       sprite.onPointerMove = move
       sprite.onPointerUp = up
       sprite.onPointerEnter = enter
       sprite.onPointerLeave = leave
+      sprite.onTransitionEnd = end
     },
   )
   untrack(() => props.ref)?.(sprite)

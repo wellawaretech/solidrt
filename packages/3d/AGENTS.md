@@ -37,8 +37,11 @@ blendMode and pointer events like any element.
   retargets), so a mesh gliding to a slot or a camera rig easing costs
   one JS write per target change, zero per frame. The declaration lives
   on the SceneNode and re-applies on every scene enter; the pose a node
-  enters with always snaps. Settles fire "spatialTransitionEnd" engine
-  events (srt:events) carrying the CORE node id (`_node`).
+  enters with always snaps. Each natural settle calls the node's
+  `onTransitionEnd` (plain field like the pointer handlers) with
+  `{ component }`; the raw "spatialTransitionEnd" engine event
+  (srt:events, carrying the CORE node id `_node`) stays for flux:spatial
+  consumers.
 - One interleaved vertex buffer per geometry, described by an open layout
   (`Geometry.layout`, absent = "standard"): an ordered attribute list that
   always starts with the standard prefix `aPos` vec3 + `aNormal` vec3 +

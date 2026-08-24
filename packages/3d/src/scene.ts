@@ -31,6 +31,7 @@
 import { addDraw, createBuffer, createDrawTarget, destroyBuffer, destroyProgram, destroyRenderPipeline, destroyTexture, removeDraw, setDrawBuffers, setDrawOrder, setDrawParams, setTargetParams, setTargetSize, writeBuffer } from "@solidrt/core/gpu"
 import * as spatial from "flux:spatial"
 import type { NodeId, NodeTransition } from "flux:spatial"
+import { on } from "srt:events"
 import type { BufferId, DrawId, FilterMode, ProgramId, RenderPipelineId, ShaderParams, TextureId, VertexAttribute, WrapMode } from "@solidrt/core/gpu"
 import { getOwner, onCleanup } from "@solidrt/core"
 import type { PointerEvent as ElementPointerEvent } from "@solidrt/core"
@@ -63,6 +64,29 @@ let localScratch = mat4()
 let rayOriginScratch = new Float32Array(3)
 let rayDirScratch = new Float32Array(3)
 let pointScratch: Vec4 = [0, 0, 0, 0]
+
+// Settle routing: the core's "spatialTransitionEnd" event carries the node
+// id, so nodes with a transition DECLARED (only those can settle) are
+// indexed by their core id while in a scene, and one lazy subscription,
+// started at the first declaration, routes to the node's onTransitionEnd.
+// Target-only, like the element transitions.
+let declared = new Map<NodeId, SceneNode>()
+let subscribed = false
+
+function declare(id: NodeId, node: SceneNode): void {
+  declared.set(id, node)
+  if (subscribed) return
+  subscribed = true
+  on("spatialTransitionEnd", (event: { node: NodeId; component: TransitionEndEvent["component"] }) => {
+    let node = declared.get(event.node)
+    if (!node) return
+    try {
+      node.onTransitionEnd?.({ component: event.component })
+    } catch (err) {
+      console.error("Error in onTransitionEnd handler:", err)
+    }
+  })
+}
 let aimScratch: Vec3 = [0, 0, 0]
 let upScratch: Vec3 = [0, 0, 0]
 // pick()'s camera-ray scratch.
@@ -116,6 +140,9 @@ export type SceneNode = {
   onPointerUp?: (event: ScenePointerEvent) => void
   onPointerEnter?: (event: ScenePointerEvent) => void
   onPointerLeave?: (event: ScenePointerEvent) => void
+  /** A declared transition (setTransition) settled naturally on one
+   * component; a cancel, snap or scene leave never fires. */
+  onTransitionEnd?: (event: TransitionEndEvent) => void
   /** The core node while in a scene (created at add, freed at remove). */
   _node: NodeId | null
   _moved: boolean
@@ -216,6 +243,11 @@ export type Hit = {
   normal?: Vec3
   face?: number
   uv?: [number, number]
+}
+
+/** The settled component of a node transition. */
+export type TransitionEndEvent = {
+  component: "position" | "rotation" | "scale"
 }
 
 /**
@@ -603,7 +635,10 @@ export function remove(child: SceneNode): void {
 function enterScene(node: SceneNode, scene: SceneHooks): void {
   node._scene = scene
   node._node = spatial.createNode(fillTransform(node), node.visible)
-  if (node._transition !== null) spatial.setTransition(node._node, node._transition)
+  if (node._transition !== null) {
+    spatial.setTransition(node._node, node._transition)
+    declare(node._node, node)
+  }
   // The parent is in the scene already (add() enters the child only then),
   // and the scene root is the one node without a parent.
   if (node.parent !== null && node.parent._node !== null) spatial.setParent(node._node, node.parent._node)
@@ -620,6 +655,7 @@ function leaveScene(node: SceneNode): void {
   node._scene = null
   for (let c of node.children) leaveScene(c)
   if (node._node !== null) {
+    declared.delete(node._node)
     spatial.destroyNode(node._node)
     node._node = null
   }
@@ -656,13 +692,17 @@ export type { TransformUpdate } from "./math.ts"
  * lives on the node and re-applies whenever it enters a scene; the pose
  * it enters with always snaps. Clearing cancels running tracks in place
  * (the node keeps its mid-flight transform) and later writes snap. Each
- * settled component fires one "spatialTransitionEnd" engine event
- * (srt:events), payload `{ node, component }` with `node` the CORE id
- * (`_node`).
+ * natural settle calls the node's `onTransitionEnd` with the component
+ * (the raw "spatialTransitionEnd" engine event on srt:events stays for
+ * flux:spatial consumers; it carries the core id, `_node`).
  */
 export function setTransition(node: SceneNode, transition: NodeTransition | string | null): void {
   node._transition = transition
-  if (node._node !== null) spatial.setTransition(node._node, transition)
+  if (node._node !== null) {
+    spatial.setTransition(node._node, transition)
+    if (transition === null) declared.delete(node._node)
+    else declare(node._node, node)
+  }
 }
 
 /**

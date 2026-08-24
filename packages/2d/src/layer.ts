@@ -37,6 +37,7 @@ import {
 import type { BufferId, TextureId } from "@solidrt/core/gpu"
 import * as spatial from "flux:spatial"
 import type { NodeId, NodeTransition } from "flux:spatial"
+import { on } from "srt:events"
 import type { Frame } from "./frames.ts"
 import { FULL_FRAME } from "./frames.ts"
 import type { RecordLayer } from "./records.ts"
@@ -55,6 +56,33 @@ const FLAT_BOUNDS = new Float32Array([-0.5, -0.5, 0, 0.5, 0.5, 0])
 const RAY_ORIGIN = new Float32Array(3)
 const RAY_DIR = new Float32Array([0, 0, 1])
 const BOX = new Float32Array(6)
+
+// Settle routing: the core's "spatialTransitionEnd" event carries the node
+// id, so the handles with a transition DECLARED are indexed by node (only
+// those can settle; adding a sprite costs nothing here) and one lazy
+// subscription, started at the first declaration, routes to the handle's
+// onTransitionEnd. Target-only, like the element transitions.
+let declared = new Map<NodeId, Sprite | SpriteGroup>()
+let subscribed = false
+
+function declare(node: NodeId, handle: Sprite | SpriteGroup, transition: NodeTransition | string | null): void {
+  if (transition === null) {
+    declared.delete(node)
+    return
+  }
+  declared.set(node, handle)
+  if (subscribed) return
+  subscribed = true
+  on("spatialTransitionEnd", (event: { node: NodeId; component: TransitionEndEvent["component"] }) => {
+    let handle = declared.get(event.node)
+    if (!handle) return
+    try {
+      handle.onTransitionEnd?.({ component: event.component })
+    } catch (err) {
+      console.error("Error in onTransitionEnd handler:", err)
+    }
+  })
+}
 
 /**
  * One sprite: a handle into its layer. Read via getSprite; write through
@@ -85,6 +113,15 @@ export type Sprite = {
   onPointerUp?: (event: SpritePointerEvent) => void
   onPointerEnter?: (event: SpritePointerEvent) => void
   onPointerLeave?: (event: SpritePointerEvent) => void
+  /** A declared transition (setSpriteTransition) settled naturally on
+   * one component; a cancel or snap never fires. */
+  onTransitionEnd?: (event: TransitionEndEvent) => void
+}
+
+/** The settled component of a node transition: `position` is x/y,
+ * `scale` w/h (a group's uniform scale). */
+export type TransitionEndEvent = {
+  component: "position" | "rotation" | "scale"
 }
 
 /** Sprite fields, all optional at every call site: absent keys keep values. */
@@ -169,6 +206,8 @@ export type SpriteGroup = {
   _y: number
   _rot: number
   _scale: number
+  /** See Sprite.onTransitionEnd. */
+  onTransitionEnd?: (event: TransitionEndEvent) => void
 }
 
 /** Group fields, all optional: absent keys keep values. */
@@ -521,11 +560,13 @@ export function createSpriteLayer(
       disposed = true
       for (let sprite of byNode.values()) {
         sprite.layer = null
+        declared.delete(sprite.node!)
         spatial.destroyNode(sprite.node!)
       }
       byNode.clear()
       for (let group of layer._groups) {
         group.layer = null
+        declared.delete(group.node)
         spatial.destroyNode(group.node)
       }
       layer._groups.clear()
@@ -593,6 +634,7 @@ export function createSpriteLayer(
       // Destroying the node zeroes its pose slot at the next core flush
       // (zero scale = nothing drawn); the slot then recycles.
       byNode.delete(sprite.node!)
+      declared.delete(sprite.node!)
       spatial.destroyNode(sprite.node!)
       freeSlots.push(sprite._slot)
       layer._schedule()
@@ -665,12 +707,15 @@ export function setSpriteParent(sprite: Sprite, parent: SpriteGroup | null): voi
  * `{ duration, bounce? }` (a spring, the retargeting-safe default) /
  * `{ duration, curve }` (a tween) / a shorthand string like
  * "300ms ease-out". Clearing cancels running tracks in place (the sprite
- * keeps its mid-flight pose) and later writes snap. Node layer only.
+ * keeps its mid-flight pose) and later writes snap. Each natural settle
+ * calls the sprite's `onTransitionEnd` with the component. Node layer
+ * only.
  */
 export function setSpriteTransition(sprite: Sprite, transition: NodeTransition | string | null): void {
   if (sprite.layer === null) return
   if (sprite.node === null) throw new Error("setSpriteTransition: record sprites have no node transitions")
   spatial.setTransition(sprite.node, transition)
+  declare(sprite.node, sprite, transition)
 }
 
 /** The group counterpart of setSpriteTransition (`scale` is the group's
@@ -678,6 +723,7 @@ export function setSpriteTransition(sprite: Sprite, transition: NodeTransition |
 export function setGroupTransition(group: SpriteGroup, transition: NodeTransition | string | null): void {
   if (group.layer === null) return
   spatial.setTransition(group.node, transition)
+  declare(group.node, group, transition)
 }
 
 /** Add a transform group (see SpriteGroup). */
@@ -736,6 +782,7 @@ export function removeGroup(group: SpriteGroup): void {
   if (!layer) return
   group.layer = null
   layer._groups.delete(group)
+  declared.delete(group.node)
   spatial.destroyNode(group.node)
   layer._schedule()
 }

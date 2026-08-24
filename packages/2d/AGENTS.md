@@ -71,9 +71,11 @@ moved subtrees in Rust, and picking walks the core BVH.
   nothing (bench: 400 retargets ~4ms, once a second - vs ~5ms per FRAME
   moving the same population imperatively). Mount poses always snap (the
   component declares the transition after the first pose sync; the
-  function face sets it after addSprite). Each settled component fires a
-  "spatialTransitionEnd" engine event (srt:events), node = sprite.node.
-  See examples/springs.tsx.
+  function face sets it after addSprite). Each natural settle calls the
+  handle's `onTransitionEnd` (plain field, or the `<Sprite>`/`<Group>` prop)
+  with `{ component }` - target-only, never on a cancel, snap or removal;
+  the raw "spatialTransitionEnd" engine event (srt:events, node =
+  sprite.node) stays for flux:spatial consumers. See examples/springs.tsx.
 - Frame-rate motion only JS can compute (physics, flocking) bypasses the
   declarative layer: `ref` the sprite, call `setSprite` from `onFrame` (a
   ~7us core transform write per moved sprite - fine to a few thousand;
