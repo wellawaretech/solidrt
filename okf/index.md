@@ -67,13 +67,6 @@ Shaped, not started.
   a rotating tile map cannot follow - rotation must go in-shader with the
   inverse in pick and the handlers, keeping one camera vocabulary across both
   layers.
-- **[A <Sprite> outside a <Group> halts the app at mount](backlog/2d-sprite-layer-context-halt.md)** [2026-08-24]
-  The unchanged packages/2d/examples/pick.tsx (a <Sprite> directly under
-  <SpriteLayer>) throws "Context must either be created with a default value
-  or a value must be provided before accessing it" from
-  useContext(GroupContext) inside <Sprite>, halting the reactive system;
-  GroupContext is created without a default, which Solid 2 rc1 no longer
-  tolerates for an absent provider.
 - **[Sprite draw order is insertion order, so reordering means remove and re-add](backlog/2d-sprite-sort-key.md)** [2026-08-22]
   The sprite layer paints in record order with no sort key, so raising one
   sprite or depth-sorting a population by y - the ordinary case for a dense 2D
@@ -589,6 +582,13 @@ Finished, kept for the reasoning.
   data-driven sprite count had to guess a maximum up front and crashed when it
   guessed low; resolved by a draw-entry buffer swap in core (setDraw buffer
   keys / setDrawBuffers) and doubling growth in the layer.
+- **[A <Sprite> outside a <Group> halts the app at mount](done/2d-sprite-layer-context-halt.md)** [2026-08-24]
+  The unchanged packages/2d/examples/pick.tsx (a <Sprite> directly under
+  <SpriteLayer>) threw "Context must either be created with a default value or
+  a value must be provided before accessing it" from useContext(GroupContext)
+  inside <Sprite>; GroupContext was created without a default, which Solid 2
+  rc1 no longer tolerates for an absent provider. Fixed with a null sentinel
+  default.
 - **[Colored geometry generates twice](done/3d-colored-generators.md)** [2026-08-19]
   Building coloured geometry generated twice (generate, then withColors
   repacked). Fixed in two stages 2026-08-23 - vertex layouts became open

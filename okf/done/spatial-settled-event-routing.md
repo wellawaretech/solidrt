@@ -65,9 +65,6 @@ settle. 2d function-face probe: a sprite (position + rotation) and a
 group (scale) settled in duration order; a sprite whose declaration was
 cleared mid-flight and one removed mid-flight never fired.
 
-Not verified: the `<Sprite onTransitionEnd>` prop, because the component
-face is broken independently of this item - the unchanged
-`packages/2d/examples/pick.tsx` halts at mount with "Context must either
-be created with a default value or a value must be provided before
-accessing it" from `useContext(LayerContext)` inside `<Sprite>`. Filed as
-[2d-sprite-layer-context-halt](../backlog/2d-sprite-layer-context-halt.md).
+The `<Sprite onTransitionEnd>` prop was verified once the component
+face mounted again, see
+[2d-sprite-layer-context-halt](2d-sprite-layer-context-halt.md).

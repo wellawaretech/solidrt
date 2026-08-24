@@ -127,6 +127,9 @@ carrying the layer's pointer handlers (opt out with `events={false}`; compose
 yourself with `output`, then spread `useSpriteLayer().handlers` onto your
 leaf). `Sprite` renders nothing - it allocates a record through context and
 syncs props into it.
+`GroupContext` is `createContext<SpriteGroup | null>(null)` on purpose: an
+optional parent needs a non-undefined default, since Solid 2 throws on a
+resolved `undefined` even when one was passed as the default.
 
 Pointer events: exact rotated-rect containment, topmost sprite first, capture
 per pointerId (a drag keeps delivering to the grabbed sprite with live

@@ -110,7 +110,7 @@ export let SpriteLayer: ParentComponent<SpriteLayerProps> = props => {
   )
 }
 
-let GroupContext = createContext<SpriteGroup | undefined>()
+let GroupContext = createContext<SpriteGroup | null>(null)
 
 export type GroupProps = {
   /** Position in the parent frame (layer pixels at the root). */
