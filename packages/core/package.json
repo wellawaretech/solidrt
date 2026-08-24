@@ -32,8 +32,8 @@
     "@solidrt/flux-types": "workspace:*"
   },
   "peerDependencies": {
-    "@solidjs/signals": "2.0.0-rc.0",
-    "@solidjs/universal": "2.0.0-rc.0",
-    "solid-js": "2.0.0-rc.0"
+    "@solidjs/signals": "2.0.0-rc.1",
+    "@solidjs/universal": "2.0.0-rc.1",
+    "solid-js": "2.0.0-rc.1"
   }
 }

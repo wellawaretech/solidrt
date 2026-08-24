@@ -1,4 +1,4 @@
-// node_modules/.bun/@solidjs+signals@2.0.0-rc.0/node_modules/@solidjs/signals/dist/prod/core/error.js
+// node_modules/.bun/@solidjs+signals@2.0.0-rc.1/node_modules/@solidjs/signals/dist/prod/core/error.js
 class NotReadyError extends Error {
   source;
   constructor(r) {
@@ -38,7 +38,7 @@ class ContextNotFoundError extends Error {
   }
 }
 
-// node_modules/.bun/@solidjs+signals@2.0.0-rc.0/node_modules/@solidjs/signals/dist/prod/core/constants.js
+// node_modules/.bun/@solidjs+signals@2.0.0-rc.1/node_modules/@solidjs/signals/dist/prod/core/constants.js
 var REACTIVE_NONE = 0;
 var REACTIVE_CHECK = 1 << 0;
 var REACTIVE_DIRTY = 1 << 1;
@@ -71,12 +71,11 @@ var OVERRIDE_UNDEFINED = {};
 function unwrapOverride(E) {
   return E === OVERRIDE_UNDEFINED ? undefined : E;
 }
-var STORE_SNAPSHOT_PROPS = "sp";
 var SUPPORTS_PROXY = typeof Proxy === "function";
 var defaultContext = {};
 var $REFRESH = Symbol("refresh");
 
-// node_modules/.bun/@solidjs+signals@2.0.0-rc.0/node_modules/@solidjs/signals/dist/prod/core/lanes.js
+// node_modules/.bun/@solidjs+signals@2.0.0-rc.1/node_modules/@solidjs/signals/dist/prod/core/lanes.js
 var signalLanes = new WeakMap;
 var activeLanes = new Set;
 function findLane(n) {
@@ -119,7 +118,7 @@ function resolveTransition(n) {
   return resolveLane(n)?.Ne ?? n.Ne;
 }
 function hasActiveOverride(n) {
-  return !!(n._e !== undefined && n._e !== NOT_PENDING);
+  return !!(n.De !== undefined && n.De !== NOT_PENDING);
 }
 function assignOrMergeLane(n, e) {
   const i = findLane(e);
@@ -145,7 +144,7 @@ function assignOrMergeLane(n, e) {
   n.Ke = e;
 }
 
-// node_modules/.bun/@solidjs+signals@2.0.0-rc.0/node_modules/@solidjs/signals/dist/prod/core/scheduler.js
+// node_modules/.bun/@solidjs+signals@2.0.0-rc.1/node_modules/@solidjs/signals/dist/prod/core/scheduler.js
 var transitions = new Set;
 var dirtyQueue = {
   eE: new Array(2000).fill(undefined),
@@ -175,12 +174,9 @@ var haltNotified = false;
 var syncDepth = 0;
 var projectionWriteActive = false;
 var transientStoreNodes = new Set;
-function registerTransientStoreNode(e) {
-  transientStoreNodes.add(e);
-}
 function canUseSimpleSyncFlush(e) {
   const t = e.m;
-  return transitions.size === 0 && activeLanes.size === 0 && e.vt.length === 0 && t.Me.length === 0 && t.A.length === 0 && t.cn.size === 0 && transientStoreNodes.size === 0;
+  return transitions.size === 0 && activeLanes.size === 0 && e.vt.length === 0 && t.Me.length === 0 && t.A.length === 0 && t.dn.size === 0 && transientStoreNodes.size === 0;
 }
 function sweepTransientStoreNodes() {
   if (transientStoreNodes.size === 0)
@@ -190,9 +186,9 @@ function sweepTransientStoreNodes() {
       transientStoreNodes.delete(e);
       continue;
     }
-    if (e.De !== NOT_PENDING)
+    if (e._e !== NOT_PENDING)
       continue;
-    if (e._e !== undefined && e._e !== NOT_PENDING)
+    if (e.De !== undefined && e.De !== NOT_PENDING)
       continue;
     if (e.t)
       continue;
@@ -210,7 +206,7 @@ function createBatch() {
     Ie: new Map,
     Me: [],
     A: [],
-    cn: new Set,
+    dn: new Set,
     ie: [],
     yt: {
       bt: [[], []],
@@ -234,8 +230,8 @@ function mergeTransitionState(e, t) {
     e.A.push(...t.A);
     t.A.length = 0;
   }
-  for (const i of t.cn)
-    e.cn.add(i);
+  for (const i of t.dn)
+    e.dn.add(i);
   for (const [i, n] of t.Ie) {
     let t2 = e.Ie.get(i);
     if (!t2)
@@ -254,7 +250,7 @@ function schedule() {
   if (scheduled)
     return;
   scheduled = true;
-  if (!syncDepth && !globalQueue.gt && !projectionWriteActive)
+  if (!syncDepth && !globalQueue.cn && !projectionWriteActive)
     queueMicrotask(flush);
 }
 function haltReactivity(e) {
@@ -273,25 +269,25 @@ function notifyHalted() {
 var queueRunToken = 0;
 
 class Queue {
-  ke = null;
+  Fe = null;
   bt = [[], []];
   vt = [];
   kt = 0;
   created = clock;
   addChild(e) {
     this.vt.push(e);
-    e.ke = this;
+    e.Fe = this;
   }
   removeChild(e) {
     const t = this.vt.indexOf(e);
     if (t >= 0) {
       this.vt.splice(t, 1);
-      e.ke = null;
+      e.Fe = null;
     }
   }
   notify(e, t, i, n) {
-    if (this.ke)
-      return this.ke.notify(e, t, i, n);
+    if (this.Fe)
+      return this.Fe.notify(e, t, i, n);
     return false;
   }
   run(e) {
@@ -356,44 +352,44 @@ class Queue {
 }
 
 class GlobalQueue extends Queue {
-  gt = false;
+  cn = false;
   m = createBatch();
   static Ce;
   static me;
   static et;
-  static Dt = null;
+  static gt = null;
   static p = null;
   static G = null;
   static M = null;
   static h = null;
-  static It = null;
+  static dt = null;
   static St = null;
   static Pe = null;
   static Se = null;
-  static Oe = null;
+  static Ge = null;
   static un = null;
   static At = null;
   static Ct = null;
-  static ht = null;
-  static Be = null;
+  static Pt = null;
+  static $e = null;
   static k = null;
   static Lt = null;
   static Gt = null;
   static En = null;
   static Tn = null;
-  static dn = null;
   static In = null;
+  static Nn = null;
   static Rt = null;
   static Ot = null;
-  static Pt = null;
+  static Dt = null;
   static je = null;
-  static $e = null;
   static ze = null;
-  static Nn = null;
+  static Be = null;
+  static Qn = null;
   flush() {
-    if (this.gt)
+    if (this.cn)
       return;
-    this.gt = true;
+    this.cn = true;
     try {
       if (false)
         ;
@@ -406,8 +402,8 @@ class GlobalQueue extends Queue {
           if (this.m === e2)
             currentBatch = this.m = createBatch();
           if (activeLanes.size) {
-            GlobalQueue.In(EFFECT_RENDER);
-            GlobalQueue.In(EFFECT_USER);
+            GlobalQueue.Nn(EFFECT_RENDER);
+            GlobalQueue.Nn(EFFECT_USER);
           }
           this.stashQueues(e2.yt);
           clock++;
@@ -430,7 +426,7 @@ class GlobalQueue extends Queue {
           e2.Qt = i.Qt;
           e2.Me = i.Me;
           e2.A = i.A;
-          e2.cn = i.cn;
+          e2.dn = i.dn;
           currentBatch = this.m = e2;
         }
       } else {
@@ -448,9 +444,9 @@ class GlobalQueue extends Queue {
       }
       clock++;
       scheduled = dirtyQueue.EE >= dirtyQueue.Ve;
-      activeLanes.size && GlobalQueue.In(EFFECT_RENDER);
+      activeLanes.size && GlobalQueue.Nn(EFFECT_RENDER);
       this.run(EFFECT_RENDER);
-      activeLanes.size && GlobalQueue.In(EFFECT_USER);
+      activeLanes.size && GlobalQueue.Nn(EFFECT_USER);
       this.run(EFFECT_USER);
       if (false)
         ;
@@ -459,7 +455,7 @@ class GlobalQueue extends Queue {
       if (false)
         ;
     } finally {
-      this.gt = false;
+      this.cn = false;
     }
   }
   notify(e, t, i, n) {
@@ -514,8 +510,8 @@ class GlobalQueue extends Queue {
       }
       if (t.A.length)
         activeTransition.A.push(...t.A);
-      for (const e2 of t.cn)
-        activeTransition.cn.add(e2);
+      for (const e2 of t.dn)
+        activeTransition.dn.add(e2);
       if (t.ln.size) {
         for (const e2 of t.ln)
           activeTransition.ln.add(e2);
@@ -535,9 +531,9 @@ function queuePendingNode(e) {
 var reaskArmed = false;
 function insertSubs(e, t = false) {
   const i = e.Ke || currentOptimisticLane;
-  const n = e.Le !== undefined;
+  const n = e.xe !== undefined;
   const s = reaskArmed;
-  for (let r = e.o;r !== null; r = r.le) {
+  for (let r = e.o;r !== null; r = r.ue) {
     if (s)
       r.fe.se &= ~REACTIVE_REASK;
     if (n && r.fe.T & CONFIG_IN_SNAPSHOT_SCOPE) {
@@ -557,17 +553,17 @@ function insertSubs(e, t = false) {
 function commitPendingNode(e) {
   const t = e;
   if (!t.ce) {
-    if (e.De !== NOT_PENDING) {
-      e.Ue = e.De;
-      e.De = NOT_PENDING;
+    if (e._e !== NOT_PENDING) {
+      e.be = e._e;
+      e._e = NOT_PENDING;
     }
-    if (e.ge || e.pe)
+    if (e.Oe || e.ge)
       GlobalQueue.un(e);
     return;
   }
-  if (e.De !== NOT_PENDING) {
-    e.Ue = e.De;
-    e.De = NOT_PENDING;
+  if (e._e !== NOT_PENDING) {
+    e.be = e._e;
+    e._e = NOT_PENDING;
     if (e.Re && e.Re !== EFFECT_TRACKED)
       e.Je = true;
   }
@@ -577,8 +573,12 @@ function commitPendingNode(e) {
     t.S &= ~STATUS_UNINITIALIZED;
   if (t.We !== null || t.Qe !== null)
     GlobalQueue.me(t, false, true);
-  if (e.ge || e.pe)
+  if (e.Oe || e.ge)
     GlobalQueue.un(e);
+}
+var storeCommitHook = null;
+function setStoreCommitHook(e) {
+  storeCommitHook = e;
 }
 function commitPendingNodes() {
   const e = currentBatch.Qt;
@@ -586,6 +586,7 @@ function commitPendingNodes() {
     commitPendingNode(e[t]);
   }
   e.length = 0;
+  storeCommitHook?.();
 }
 function finalizePureQueue(e = null, t = false) {
   const i = !t;
@@ -616,11 +617,11 @@ function finalizePureQueue(e = null, t = false) {
       if (globalQueue.vt.length)
         checkBoundaryChildren(globalQueue);
     }
-    if (t2.cn.size)
-      GlobalQueue.Dt(t2.cn, e);
+    if (t2.dn.size)
+      GlobalQueue.gt(t2.dn, e);
     sweepTransientStoreNodes();
     if (activeLanes.size)
-      GlobalQueue.dn(e);
+      GlobalQueue.In(e);
   }
 }
 function checkBoundaryChildren(e) {
@@ -649,7 +650,7 @@ function flush(e) {
       }
     }
   }
-  if (globalQueue.gt) {
+  if (globalQueue.cn) {
     return;
   }
   if (halted)
@@ -719,7 +720,7 @@ function runInTransition(e, t) {
   }
 }
 
-// node_modules/.bun/@solidjs+signals@2.0.0-rc.0/node_modules/@solidjs/signals/dist/prod/core/heap.js
+// node_modules/.bun/@solidjs+signals@2.0.0-rc.1/node_modules/@solidjs/signals/dist/prod/core/heap.js
 function queueFor(e) {
   return e.se & REACTIVE_ZOMBIE ? zombieQueue : dirtyQueue;
 }
@@ -728,28 +729,28 @@ function enqueueSub(e) {
     const E2 = e;
     if (!E2.Je) {
       E2.Je = true;
-      E2.C.enqueue(EFFECT_USER, E2.Ft);
+      E2.C.enqueue(EFFECT_USER, E2.ht);
     }
     return;
   }
   const E = queueFor(e);
-  if (E.Ve > e.xe)
-    E.Ve = e.xe;
+  if (E.Ve > e.Le)
+    E.Ve = e.Le;
   insertIntoHeap(e, E);
 }
 function actualInsertIntoHeap(e, E) {
-  const t = (e.ke?.Nt ? e.ke.dt?.xe : e.ke?.xe) ?? -1;
-  if (t >= e.xe)
-    e.xe = t + 1;
-  const n = e.xe;
+  const t = (e.Fe?.Tt ? e.Fe.It?.Le : e.Fe?.Le) ?? -1;
+  if (t >= e.Le)
+    e.Le = t + 1;
+  const n = e.Le;
   const I = E.eE[n];
   if (I === undefined)
     E.eE[n] = e;
   else {
-    const E2 = I.st;
-    E2.ot = e;
-    e.st = E2;
-    I.st = e;
+    const E2 = I.ot;
+    E2.st = e;
+    e.ot = E2;
+    I.ot = e;
   }
   if (n > E.EE)
     E.EE = n;
@@ -780,28 +781,28 @@ function deleteFromHeap(e, E) {
   if (!(t & (REACTIVE_IN_HEAP | REACTIVE_IN_HEAP_HEIGHT)))
     return;
   e.se = t & -25;
-  const n = e.xe;
-  if (e.st === e)
+  const n = e.Le;
+  if (e.ot === e)
     E.eE[n] = undefined;
   else {
-    const t2 = e.ot;
+    const t2 = e.st;
     const I = E.eE[n];
     const o = t2 ?? I;
     if (e === I)
       E.eE[n] = t2;
     else
-      e.st.ot = t2;
-    o.st = e.st;
+      e.ot.st = t2;
+    o.ot = e.ot;
   }
-  e.st = e;
-  e.ot = undefined;
+  e.ot = e;
+  e.st = undefined;
 }
 function markHeap(e) {
   if (e.tE)
     return;
   e.tE = true;
   for (let E = 0;E <= e.EE; E++) {
-    for (let t = e.eE[E];t !== undefined; t = t.ot) {
+    for (let t = e.eE[E];t !== undefined; t = t.st) {
       if (t.se & REACTIVE_IN_HEAP)
         markNode(t);
     }
@@ -812,12 +813,12 @@ function markNode(e, E = REACTIVE_DIRTY) {
   if ((t & (REACTIVE_CHECK | REACTIVE_DIRTY)) >= E)
     return;
   e.se = t & -4 | E;
-  for (let E2 = e.o;E2 !== null; E2 = E2.le) {
+  for (let E2 = e.o;E2 !== null; E2 = E2.ue) {
     markNode(E2.fe, REACTIVE_CHECK);
   }
   if (e.u !== null) {
     for (let E2 = e.u;E2 !== null; E2 = E2.ae) {
-      for (let e2 = E2.o;e2 !== null; e2 = e2.le) {
+      for (let e2 = E2.o;e2 !== null; e2 = e2.ue) {
         markNode(e2.fe, REACTIVE_CHECK);
       }
     }
@@ -839,25 +840,25 @@ function runHeap(e, E) {
 }
 function adjustHeight(e, E) {
   deleteFromHeap(e, E);
-  let t = e.xe;
+  let t = e.Le;
   for (let E2 = e.tt;E2; E2 = E2.nt) {
     const e2 = E2.it;
     const n = e2.lt || e2;
-    if (n.ce && n.xe >= t)
-      t = n.xe + 1;
+    if (n.ce && n.Le >= t)
+      t = n.Le + 1;
   }
-  if (e.xe !== t) {
-    e.xe = t;
-    for (let E2 = e.o;E2 !== null; E2 = E2.le) {
+  if (e.Le !== t) {
+    e.Le = t;
+    for (let E2 = e.o;E2 !== null; E2 = E2.ue) {
       insertIntoHeapHeight(E2.fe, queueFor(E2.fe));
     }
   }
 }
 
-// node_modules/.bun/@solidjs+signals@2.0.0-rc.0/node_modules/@solidjs/signals/dist/prod/core/owner.js
+// node_modules/.bun/@solidjs+signals@2.0.0-rc.1/node_modules/@solidjs/signals/dist/prod/core/owner.js
 var PENDING_OWNER = {};
 function markDisposal(e) {
-  let n = e.Fe;
+  let n = e.ke;
   while (n) {
     const e2 = n.se;
     n.se = e2 | REACTIVE_ZOMBIE;
@@ -879,12 +880,12 @@ function disposeChildren(e, n = false, t) {
   if (n) {
     e.se = i | REACTIVE_DISPOSED;
     const n2 = e;
-    if (n2.ge || n2.pe)
+    if (n2.Oe || n2.ge)
       GlobalQueue.un(n2);
   }
   if (n && e.ce)
     e.Te = null;
-  let l = t ? e.We : e.Fe;
+  let l = t ? e.We : e.ke;
   while (l) {
     const e2 = l.He;
     const n2 = l;
@@ -904,29 +905,29 @@ function disposeChildren(e, n = false, t) {
   if (t) {
     e.We = null;
   } else {
-    e.Fe = null;
+    e.ke = null;
     e.qe = 0;
   }
-  if (n && !t && !(i & REACTIVE_ZOMBIE) && e.ke !== null && !(e.ke.se & REACTIVE_DISPOSED)) {
+  if (n && !t && !(i & REACTIVE_ZOMBIE) && e.Fe !== null && !(e.Fe.se & REACTIVE_DISPOSED)) {
     const n2 = e.ct;
     const t2 = e.He;
     if (n2 !== null)
       n2.He = t2;
     else
-      e.ke.Fe = t2;
+      e.Fe.ke = t2;
     if (t2 !== null)
       t2.ct = n2;
     e.ct = null;
   }
   runDisposal(e, t);
-  if (n && e.Tt) {
-    const n2 = e.Tt;
-    e.Tt = undefined;
+  if (n && e.Nt) {
+    const n2 = e.Nt;
+    e.Nt = undefined;
     n2();
   }
 }
 function runDisposal(e, n) {
-  let t = n ? e.Qe : e.ye;
+  let t = n ? e.Qe : e.he;
   if (!t)
     return;
   if (Array.isArray(t)) {
@@ -937,12 +938,12 @@ function runDisposal(e, n) {
   } else {
     t.call(t);
   }
-  n ? e.Qe = null : e.ye = null;
+  n ? e.Qe = null : e.he = null;
 }
 function childId(e, n) {
   let t = e;
-  while (t.T & CONFIG_TRANSPARENT && t.ke)
-    t = t.ke;
+  while (t.T & CONFIG_TRANSPARENT && t.Fe)
+    t = t.Fe;
   if (t.id != null)
     return formatId(t.id, n ? t.qe++ : t.qe);
   throw new Error("");
@@ -968,12 +969,12 @@ function getOwner() {
 function cleanup(e) {
   if (!context)
     return e;
-  if (!context.ye)
-    context.ye = e;
-  else if (Array.isArray(context.ye))
-    context.ye.push(e);
+  if (!context.he)
+    context.he = e;
+  else if (Array.isArray(context.he))
+    context.he.push(e);
   else
-    context.ye = [context.ye, e];
+    context.he = [context.he, e];
   return e;
 }
 function disposeRootSelf(e = true) {
@@ -985,28 +986,28 @@ function createOwner(e) {
   const i = {
     id: inheritId(e, t, n),
     T: t ? CONFIG_TRANSPARENT : 0,
-    Nt: true,
-    dt: n?.Nt ? n.dt : n,
-    Fe: null,
+    Tt: true,
+    It: n?.Tt ? n.It : n,
+    ke: null,
     He: null,
     ct: null,
-    ye: null,
+    he: null,
     C: n?.C ?? globalQueue,
     we: n?.we || defaultContext,
     qe: 0,
     Qe: null,
     We: null,
-    ke: n,
+    Fe: n,
     dispose: disposeRootSelf
   };
   if (n) {
-    const e2 = n.Fe;
+    const e2 = n.ke;
     if (e2 === null) {
-      n.Fe = i;
+      n.ke = i;
     } else {
       i.He = e2;
       e2.ct = i;
-      n.Fe = i;
+      n.ke = i;
     }
   }
   return i;
@@ -1016,18 +1017,18 @@ function createRoot(e, n) {
   return runWithOwner(t, () => e(() => t.dispose()));
 }
 
-// node_modules/.bun/@solidjs+signals@2.0.0-rc.0/node_modules/@solidjs/signals/dist/prod/core/graph.js
+// node_modules/.bun/@solidjs+signals@2.0.0-rc.1/node_modules/@solidjs/signals/dist/prod/core/graph.js
 function unlinkSubs(l) {
   const n = l.it;
   const e = l.nt;
-  const u = l.le;
+  const u = l.ue;
   const s = l.ll;
   if (u !== null)
     u.ll = s;
   else
     n.rt = s;
   if (s !== null)
-    s.le = u;
+    s.ue = u;
   else {
     n.o = u;
     if (u === null) {
@@ -1064,7 +1065,7 @@ function unobserved(l) {
 function link(l, n, e = false) {
   const u = n.Ye;
   if (u !== null && u.it === l) {
-    u.Ge &&= e;
+    u.ye &&= e;
     return;
   }
   let s = null;
@@ -1074,16 +1075,16 @@ function link(l, n, e = false) {
     if (s !== null && s.it === l) {
       s.nl = n.Ze;
       n.Ye = s;
-      s.Ge = e;
+      s.ye = e;
       return;
     }
   }
   const i = l.rt;
   if (i !== null && i.fe === n && (!t || i.nl === n.Ze)) {
     if (t)
-      i.Ge &&= e;
+      i.ye &&= e;
     else
-      i.Ge = e;
+      i.ye = e;
     return;
   }
   const o = n.Ye = l.rt = {
@@ -1091,21 +1092,21 @@ function link(l, n, e = false) {
     fe: n,
     nt: s,
     ll: i,
-    le: null,
+    ue: null,
     nl: n.Ze,
-    Ge: e
+    ye: e
   };
   if (u !== null)
     u.nt = o;
   else
     n.tt = o;
   if (i !== null)
-    i.le = o;
+    i.ue = o;
   else
     l.o = o;
 }
 
-// node_modules/.bun/@solidjs+signals@2.0.0-rc.0/node_modules/@solidjs/signals/dist/prod/core/async.js
+// node_modules/.bun/@solidjs+signals@2.0.0-rc.1/node_modules/@solidjs/signals/dist/prod/core/async.js
 function addPendingSource(e, n) {
   if (e.oe?.has(n))
     return false;
@@ -1124,7 +1125,7 @@ function clearPendingSources(e) {
   e.oe = undefined;
 }
 function parkLoadingWindow(e, n) {
-  e.ue = true;
+  e.le = true;
   if (n.source)
     addPendingSource(e, n.source);
   if (!(e.S & STATUS_ERROR))
@@ -1145,10 +1146,10 @@ function setPendingError(e, n, t) {
   }
 }
 function forEachDependent(e, n) {
-  for (let t = e.o;t !== null; t = t.le)
+  for (let t = e.o;t !== null; t = t.ue)
     n(t.fe, t);
   for (let t = e.u ?? null;t !== null; t = t.ae) {
-    for (let e2 = t.o;e2 !== null; e2 = e2.le)
+    for (let e2 = t.o;e2 !== null; e2 = e2.ue)
       n(e2.fe, e2);
   }
 }
@@ -1193,31 +1194,31 @@ function settlePendingSource(e) {
   let t;
   const r = new Set;
   const o = GlobalQueue.Se;
-  const settle = (u) => {
-    if (r.has(u) || !removePendingSource(u, e))
+  const settle = (l) => {
+    if (r.has(l) || !removePendingSource(l, e))
       return;
-    r.add(u);
-    u.de = clock;
-    const i = u.oe?.values().next().value;
-    const l = u.S & STATUS_ERROR;
-    if (i) {
-      if (!l)
-        setPendingError(u, i);
-      o !== null && o(u);
+    r.add(l);
+    l.de = clock;
+    const u = l.oe?.values().next().value;
+    const i = l.S & STATUS_ERROR;
+    if (u) {
+      if (!i)
+        setPendingError(l, u);
+      o !== null && o(l);
     } else {
-      u.S &= ~STATUS_PENDING;
-      if (!l)
-        setPendingError(u);
-      o !== null && o(u);
-      if (u.ue) {
-        enqueueSub(u);
+      l.S &= ~STATUS_PENDING;
+      if (!i)
+        setPendingError(l);
+      o !== null && o(l);
+      if (l.le) {
+        enqueueSub(l);
         n = true;
       }
-      u.ue = false;
-      if (!u.o && u.T & CONFIG_AUTO_DISPOSE)
-        (t ??= []).push(u);
+      l.le = false;
+      if (!l.o && l.T & CONFIG_AUTO_DISPOSE)
+        (t ??= []).push(l);
     }
-    forEachDependent(u, settle);
+    forEachDependent(l, settle);
   };
   forEachDependent(e, settle);
   if (t)
@@ -1244,7 +1245,7 @@ function handleAsync(e, n, t) {
     return n;
   }
   e.Te = n;
-  let u;
+  let l;
   const settleTransition = () => {
     const n2 = resolveTransition(e);
     if (n2 && e.S & STATUS_UNINITIALIZED && !currentTransition(n2).Ie.has(e)) {
@@ -1275,31 +1276,31 @@ function handleAsync(e, n, t) {
     if (e.se & (REACTIVE_DIRTY | REACTIVE_OPTIMISTIC_DIRTY))
       return;
     settleTransition();
-    const u2 = !!(e.S & STATUS_UNINITIALIZED);
+    const l2 = !!(e.S & STATUS_UNINITIALIZED);
     trimStaleDeps(e);
     clearStatus(e);
-    const i = resolveLane(e);
-    if (i)
-      i.Ae.delete(e);
+    const u2 = resolveLane(e);
+    if (u2)
+      u2.Ae.delete(e);
     if (t) {
       t(r2);
-      if (u2)
+      if (l2)
         clearStatus(e, true);
-    } else if (e._e !== undefined) {
-      if (e.De === NOT_PENDING)
+    } else if (e.De !== undefined) {
+      if (e._e === NOT_PENDING)
         queuePendingNode(e);
-      e.De = r2;
+      e._e = r2;
       GlobalQueue.Pe !== null && GlobalQueue.Pe(e, r2);
       if (!hasActiveOverride(e))
         insertSubs(e);
       e.de = clock;
-    } else if (i) {
+    } else if (u2) {
       const n2 = e.Re;
-      const t2 = e.Ue;
-      const o3 = e.be;
+      const t2 = e.be;
+      const o3 = e.Ue;
       try {
-        if (!n2 && u2 || !o3 || !o3(r2, t2)) {
-          e.Ue = r2;
+        if (!n2 && l2 || !o3 || !o3(r2, t2)) {
+          e.be = r2;
           e.de = clock;
           GlobalQueue.Pe !== null && GlobalQueue.Pe(e, r2);
           insertSubs(e, true);
@@ -1314,7 +1315,7 @@ function handleAsync(e, n, t) {
         notifyStatus(e, STATUS_ERROR, n2);
       }
     }
-    if (e.De === NOT_PENDING)
+    if (e._e === NOT_PENDING)
       e.Ee = false;
     settlePendingSource(e);
     schedule();
@@ -1328,77 +1329,46 @@ function handleAsync(e, n, t) {
     }
     return false;
   };
-  if (o) {
-    let t2 = false, r2 = false, o2, i = true;
-    n.then((e2) => {
-      if (i) {
-        u = e2;
-        t2 = true;
-      } else {
-        asyncWrite(e2);
-        settleAutodispose();
-      }
-    }, (e2) => {
-      if (i) {
-        o2 = e2;
-        r2 = true;
-      } else {
-        handleError(e2);
-        settleAutodispose();
-      }
-    });
-    i = false;
-    if (r2) {
-      handleError(o2);
-      throw o2;
-    } else if (!t2) {
-      if (e.Ee)
-        return e.Ue;
-      globalQueue.initTransition(resolveTransition(e));
-      throw new NotReadyError(context);
-    } else {
-      e.Ee = false;
-    }
-  }
-  if (r) {
-    const t2 = n[Symbol.asyncIterator]();
-    let r2 = false;
-    let o2 = false;
-    let i = true;
-    cleanup(() => {
-      if (o2)
+  const consumeIterator = (t2, r2) => {
+    const o2 = t2[Symbol.asyncIterator]();
+    let u2 = false;
+    let i = false;
+    let s = !r2;
+    const close = () => {
+      if (i)
         return;
-      o2 = true;
+      i = true;
       try {
-        const e2 = t2.return?.();
+        const e2 = o2.return?.();
         if (isThenable(e2))
           e2.then(undefined, () => {});
       } catch {}
-    });
+    };
+    r2 ? r2(close) : cleanup(close);
     const iterateOrRelease = () => {
       if (!settleAutodispose())
         iterate();
     };
     const iterate = () => {
-      let l2, s, f = false, a = false, c = true;
-      const S = t2.next();
+      let t3, r3, f2 = false, a = false, c = true;
+      const S = o2.next();
       const d = isThenable(S) ? S : {
         then: (e2) => void e2(S)
       };
-      d.then((t3) => {
-        if (c && i) {
-          l2 = t3;
-          f = true;
-          if (t3.done)
-            o2 = true;
+      d.then((r4) => {
+        if (c && s) {
+          t3 = r4;
+          f2 = true;
+          if (r4.done)
+            i = true;
         } else if (e.Te !== n) {
           return;
-        } else if (!t3.done) {
-          r2 = true;
-          asyncWrite(t3.value, iterateOrRelease);
+        } else if (!r4.done) {
+          u2 = true;
+          asyncWrite(r4.value, iterateOrRelease);
         } else {
-          o2 = true;
-          if (r2) {
+          i = true;
+          if (u2) {
             schedule();
             flush();
           } else {
@@ -1406,85 +1376,147 @@ function handleAsync(e, n, t) {
           }
           settleAutodispose();
         }
-      }, (t3) => {
-        if (c) {
-          s = t3;
+      }, (t4) => {
+        if (c && s) {
+          r3 = t4;
           a = true;
         } else if (e.Te === n) {
-          o2 = true;
-          handleError(t3);
+          i = true;
+          handleError(t4);
           settleAutodispose();
         }
       });
       c = false;
       if (a) {
-        o2 = true;
-        handleError(s);
-        if (i)
-          throw s;
+        i = true;
+        handleError(r3);
+        if (s)
+          throw r3;
         return true;
       }
-      if (f && !l2.done) {
-        u = l2.value;
-        r2 = true;
+      if (f2 && !t3.done) {
+        l = t3.value;
+        u2 = true;
         return iterate();
       }
-      return f && l2.done;
+      return f2 && t3.done;
     };
-    const l = iterate();
-    i = false;
-    if (!r2 && !l) {
+    const f = iterate();
+    s = false;
+    return u2 || f;
+  };
+  let u = null;
+  const flattenIfIterable = (e2, n2) => {
+    let t2 = false;
+    if (typeof e2 === "object" && e2 !== null) {
+      untrack(() => {
+        t2 = e2[Symbol.asyncIterator];
+      });
+    }
+    if (!t2)
+      return false;
+    const r2 = consumeIterator(e2, n2);
+    if (!n2)
+      u = r2;
+    return true;
+  };
+  if (o) {
+    let t2 = false, r2 = false, o2, u2 = true;
+    const registerDeferredClose = (n2) => {
+      if (!e.he)
+        e.he = n2;
+      else if (Array.isArray(e.he))
+        e.he.push(n2);
+      else
+        e.he = [e.he, n2];
+    };
+    n.then((r3) => {
+      if (u2) {
+        l = r3;
+        t2 = true;
+      } else if (e.Te === n && !(e.se & REACTIVE_DISPOSED) && flattenIfIterable(r3, registerDeferredClose))
+        ;
+      else {
+        asyncWrite(r3);
+        settleAutodispose();
+      }
+    }, (e2) => {
+      if (u2) {
+        o2 = e2;
+        r2 = true;
+      } else {
+        handleError(e2);
+        settleAutodispose();
+      }
+    });
+    u2 = false;
+    if (r2) {
+      handleError(o2);
+      throw o2;
+    } else if (!t2) {
       if (e.Ee)
-        return e.Ue;
+        return e.be;
+      globalQueue.initTransition(resolveTransition(e));
+      throw new NotReadyError(context);
+    } else if (!flattenIfIterable(l)) {
+      e.Ee = false;
+    }
+  }
+  if (r)
+    flattenIfIterable(n);
+  if (u !== null) {
+    if (!u) {
+      if (e.Ee)
+        return e.be;
       globalQueue.initTransition(resolveTransition(e));
       throw new NotReadyError(context);
     }
     e.Ee = false;
   }
-  return u;
+  return l;
 }
 function clearStatus(e, n = false) {
   if (e.oe)
     clearPendingSources(e);
-  if (e.ue)
-    e.ue = false;
-  e.he = false;
+  if (e.le)
+    e.le = false;
+  e.pe = false;
   e.S = n ? 0 : e.S & STATUS_UNINITIALIZED;
   if (e._)
     setPendingError(e);
-  if (e.ge || e.pe)
+  if (e.Oe || e.ge)
     GlobalQueue.Se(e);
-  if (e.u && GlobalQueue.Oe !== null)
-    GlobalQueue.Oe(e);
+  if (e.u && GlobalQueue.Ge !== null)
+    GlobalQueue.Ge(e);
   if (e.i)
     e.i();
 }
 function notifyStatus(e, n, t, r, o) {
   if (n === STATUS_ERROR && !(t instanceof StatusError) && !(t instanceof NotReadyError))
     t = new StatusError(e, t);
-  const u = n === STATUS_PENDING && t instanceof NotReadyError ? t.source : undefined;
-  const i = u === e;
-  const l = n === STATUS_PENDING && e._e !== undefined && !i;
-  const s = l && hasActiveOverride(e);
+  const l = n === STATUS_PENDING && t instanceof NotReadyError ? t.source : undefined;
+  const u = l === e;
+  const i = n === STATUS_PENDING && e.De !== undefined && !u;
+  const s = i && hasActiveOverride(e);
   if (!r) {
-    if (n === STATUS_PENDING && u) {
-      addPendingSource(e, u);
+    if (n === STATUS_PENDING && l) {
+      addPendingSource(e, l);
       e.S = STATUS_PENDING | e.S & STATUS_UNINITIALIZED;
-      setPendingError(e, u, t);
+      setPendingError(e, l, t);
     } else {
       clearPendingSources(e);
       e.S = n | (n !== STATUS_ERROR ? e.S & STATUS_UNINITIALIZED : 0);
       e._ = t;
     }
     GlobalQueue.Se !== null && GlobalQueue.Se(e);
-    if (e.u && GlobalQueue.Oe !== null)
-      GlobalQueue.Oe(e);
+    if (e.u && GlobalQueue.Ge !== null)
+      GlobalQueue.Ge(e);
   }
   if (o && !r) {
     assignOrMergeLane(e, o);
   }
   const f = r || s;
-  const a = r || l ? undefined : o;
+  const a = r || i ? undefined : o;
   if (e.i) {
     if (r && n === STATUS_PENDING) {
       return;
@@ -1498,8 +1530,8 @@ function notifyStatus(e, n, t, r, o) {
   }
   forEachDependent(e, (e2, r2) => {
     e2.de = clock;
-    if (n === STATUS_PENDING && u && !e2.oe?.has(u) || n !== STATUS_PENDING && (e2._ !== t || e2.oe)) {
-      if (r2.Ge && n !== STATUS_PENDING && !(t instanceof NotReadyError)) {
+    if (n === STATUS_PENDING && l && !e2.oe?.has(l) || n !== STATUS_PENDING && (e2._ !== t || e2.oe)) {
+      if (r2.ye && n !== STATUS_PENDING && !(t instanceof NotReadyError)) {
         enqueueSub(e2);
         schedule();
         return;
@@ -1511,7 +1543,7 @@ function notifyStatus(e, n, t, r, o) {
   });
 }
 
-// node_modules/.bun/@solidjs+signals@2.0.0-rc.0/node_modules/@solidjs/signals/dist/prod/core/core.js
+// node_modules/.bun/@solidjs+signals@2.0.0-rc.1/node_modules/@solidjs/signals/dist/prod/core/core.js
 GlobalQueue.Ce = recompute;
 GlobalQueue.me = disposeChildren;
 var tracking = false;
@@ -1526,7 +1558,7 @@ function ownerInSnapshotScope(e) {
   while (e) {
     if (e.ve)
       return true;
-    e = e.ke;
+    e = e.Fe;
   }
   return false;
 }
@@ -1539,20 +1571,20 @@ function recompute(e, t = false) {
     e.Te = null;
     if (e.Ne || n === EFFECT_TRACKED)
       disposeChildren(e);
-    else if (e.Fe !== null || e.ye !== null) {
+    else if (e.ke !== null || e.he !== null) {
       markDisposal(e);
-      e.Qe = e.ye;
-      e.We = e.Fe;
-      e.ye = null;
-      e.Fe = null;
+      e.Qe = e.he;
+      e.We = e.ke;
+      e.he = null;
+      e.ke = null;
       e.qe = 0;
     }
   }
   let i = !!(e.se & REACTIVE_OPTIMISTIC_DIRTY);
-  const l = e._e !== undefined && e._e !== NOT_PENDING;
+  const l = e.De !== undefined && e.De !== NOT_PENDING;
   const u = !!(e.S & STATUS_UNINITIALIZED);
-  const o = e.S & STATUS_ERROR ? e._ : undefined;
-  const s = (e.se & REACTIVE_REASK) !== 0;
+  const s = e.S & STATUS_ERROR ? e._ : undefined;
+  const o = (e.se & REACTIVE_REASK) !== 0;
   const a = e.Ee;
   const r = context;
   context = e;
@@ -1560,17 +1592,19 @@ function recompute(e, t = false) {
   e.Ze++;
   e.se = REACTIVE_RECOMPUTING_DEPS;
   e.de = clock;
-  let c = e.De === NOT_PENDING ? e.Ue : e.De;
-  let _ = e.xe;
+  let c = e._e === NOT_PENDING ? e.be : e._e;
+  let _ = e.Le;
   let f = tracking;
   let E = currentOptimisticLane;
   tracking = true;
-  const T = latestReadActive;
+  const N = latestReadActive;
   latestReadActive = false;
   if (i) {
     const t2 = GlobalQueue.je(e, true);
     if (t2)
       currentOptimisticLane = t2;
+    else if (t2 === false)
+      i = false;
   } else if (activeTransition && !t && activeTransition.Me.length) {
     const t2 = GlobalQueue.je(e, false);
     if (t2) {
@@ -1578,9 +1612,9 @@ function recompute(e, t = false) {
       currentOptimisticLane = t2;
     }
   }
-  const N = n && n !== EFFECT_USER;
-  const d = stale;
-  if (N)
+  const T = n && n !== EFFECT_USER;
+  const I = stale;
+  if (T)
     stale = true;
   try {
     if (e.T & CONFIG_SYNC) {
@@ -1598,22 +1632,22 @@ function recompute(e, t = false) {
         e.Ee = false;
       }
     }
-    if (e.S !== 0 || e.i !== undefined || e._ || e.he || e.ue || e.oe !== undefined || e.ge !== undefined || e.pe !== undefined || e.u !== null)
+    if (e.S !== 0 || e.i !== undefined || e._ || e.pe || e.le || e.oe !== undefined || e.Oe !== undefined || e.ge !== undefined || e.u !== null)
       clearStatus(e, t);
     if (e.Ke)
-      GlobalQueue.ze(e);
+      GlobalQueue.Be(e);
   } catch (t2) {
     const n2 = t2 instanceof NotReadyError;
     if (n2 && e.Ee) {
       parkLoadingWindow(e, t2);
     } else {
       if (n2 && currentOptimisticLane)
-        GlobalQueue.$e(e);
+        GlobalQueue.ze(e);
       let i2 = false;
       if (n2) {
-        e.ue = true;
-        if (GlobalQueue.Be !== null)
-          i2 = GlobalQueue.Be(e, s);
+        e.le = true;
+        if (GlobalQueue.$e !== null)
+          i2 = GlobalQueue.$e(e, o);
       }
       notifyStatus(e, n2 ? STATUS_PENDING : STATUS_ERROR, t2, undefined, n2 ? e.Ke : undefined);
       if (i2)
@@ -1621,18 +1655,18 @@ function recompute(e, t = false) {
     }
   } finally {
     tracking = f;
-    latestReadActive = T;
-    if (N)
-      stale = d;
+    latestReadActive = N;
+    if (T)
+      stale = I;
     e.se = REACTIVE_NONE | (t ? e.se & REACTIVE_SNAPSHOT_STALE : 0);
     context = r;
   }
   if (!e._) {
     trimStaleDeps(e);
-    const s2 = l ? unwrapOverride(e._e) : e.De === NOT_PENDING ? e.Ue : e.De;
+    const o2 = l ? unwrapOverride(e.De) : e._e === NOT_PENDING ? e.be : e._e;
     let r2 = false;
     try {
-      r2 = !n && u || !e.be || !e.be(s2, c);
+      r2 = !n && u || !e.Ue || !e.Ue(o2, c);
     } catch (t2) {
       notifyStatus(e, STATUS_ERROR, t2);
     }
@@ -1644,39 +1678,39 @@ function recompute(e, t = false) {
     if (e._)
       ;
     else if (r2) {
-      const u2 = l ? e._e : undefined;
+      const u2 = l ? e.De : undefined;
       if (t || n && (activeTransition !== e.Ne || activeTransition === null) || i) {
-        e.Ue = c;
+        e.be = c;
         if (l && i) {
-          e._e = c === undefined ? OVERRIDE_UNDEFINED : c;
-          e.De = NOT_PENDING;
+          e.De = c === undefined ? OVERRIDE_UNDEFINED : c;
+          e._e = NOT_PENDING;
         }
       } else {
-        e.De = c;
+        e._e = c;
         if (a)
           e.Ee = true;
         if ((activeTransition || e.Ne) && GlobalQueue.Pe !== null)
           GlobalQueue.Pe(e, c);
       }
-      if (e.o !== null && (!l || i || e._e !== u2))
+      if (e.o !== null && (!l || i || e.De !== u2))
         insertSubs(e, i || l);
     } else if (l) {
-      if (e.De === NOT_PENDING)
+      if (e._e === NOT_PENDING)
         queuePendingNode(e);
-      e.De = c;
+      e._e = c;
       if (a)
         e.Ee = true;
-    } else if (e.xe != _) {
-      for (let t2 = e.o;t2 !== null; t2 = t2.le) {
+    } else if (e.Le != _) {
+      for (let t2 = e.o;t2 !== null; t2 = t2.ue) {
         insertIntoHeapHeight(t2.fe, queueFor(t2.fe));
       }
     }
-    if (o !== undefined && !r2 && !e._)
-      settleErroredDependents(e, o);
+    if (s !== undefined && !r2 && !e._)
+      settleErroredDependents(e, s);
   }
   currentOptimisticLane = E;
-  const I = e.De !== NOT_PENDING || e.We !== null || e.Qe !== null || (e.S & (STATUS_PENDING | STATUS_UNINITIALIZED)) !== 0;
-  I && (!t || e.S & STATUS_PENDING) && (!e.Ne || l) && queuePendingNode(e);
+  const d = e._e !== NOT_PENDING || e.We !== null || e.Qe !== null || (e.S & (STATUS_PENDING | STATUS_UNINITIALIZED)) !== 0;
+  d && (!t || e.S & STATUS_PENDING) && (!e.Ne || l) && queuePendingNode(e);
   e.Ne && n && activeTransition !== e.Ne && runInTransition(e.Ne, () => recompute(e));
 }
 function updateIfNecessary(e) {
@@ -1703,132 +1737,132 @@ function computed(e, t) {
   const l = {
     id: inheritId(t, n, context),
     T: (n ? CONFIG_TRANSPARENT : 0) | (t?.ownedWrite ? CONFIG_OWNED_WRITE : 0) | (!context || t?.lazy ? CONFIG_AUTO_DISPOSE : 0) | (t?.sync ? CONFIG_SYNC : 0) | (t?.V ? CONFIG_NO_SNAPSHOT : 0) | (snapshotCaptureActive && ownerInSnapshotScope(context) ? CONFIG_IN_SNAPSHOT_SCOPE : 0),
-    be: t?.equals != null ? t.equals : isEqual,
+    Ue: t?.equals != null ? t.equals : isEqual,
     ut: t?.unobserved,
-    ye: null,
+    he: null,
     C: context?.C ?? globalQueue,
     we: context?.we ?? defaultContext,
     qe: 0,
     ce: e,
-    Ue: i ? t.loadingValue : undefined,
-    xe: 0,
+    be: i ? t.loadingValue : undefined,
+    Le: 0,
     u: null,
-    ot: undefined,
-    st: null,
+    st: undefined,
+    ot: null,
     tt: null,
     Ye: null,
     Ze: 0,
     o: null,
     rt: null,
-    ke: context,
+    Fe: context,
     He: null,
     ct: null,
-    Fe: null,
+    ke: null,
     se: t?.lazy ? REACTIVE_LAZY : REACTIVE_NONE,
     S: i ? 0 : STATUS_UNINITIALIZED,
     de: clock,
-    De: NOT_PENDING,
+    _e: NOT_PENDING,
     Qe: null,
     We: null,
     Te: null,
     Ne: null,
-    he: false,
+    pe: false,
     Ee: i
   };
   setupComputedNode(l, t);
   return l;
 }
 function createEffectNode(e, t, n, i, l, u) {
-  const o = u?.transparent ?? false;
-  const s = {
-    id: inheritId(u, o, context),
-    T: (o ? CONFIG_TRANSPARENT : 0) | (u?.ownedWrite ? CONFIG_OWNED_WRITE : 0) | (u?.sync ? CONFIG_SYNC : 0) | (snapshotCaptureActive && ownerInSnapshotScope(context) ? CONFIG_IN_SNAPSHOT_SCOPE : 0),
-    be: false,
+  const s = u?.transparent ?? false;
+  const o = {
+    id: inheritId(u, s, context),
+    T: (s ? CONFIG_TRANSPARENT : 0) | (u?.ownedWrite ? CONFIG_OWNED_WRITE : 0) | (u?.sync ? CONFIG_SYNC : 0) | (snapshotCaptureActive && ownerInSnapshotScope(context) ? CONFIG_IN_SNAPSHOT_SCOPE : 0),
+    Ue: false,
     ut: u?.unobserved,
-    ye: null,
+    he: null,
     C: context?.C ?? globalQueue,
     we: context?.we ?? defaultContext,
     qe: 0,
     ce: e,
-    Ue: undefined,
-    xe: 0,
+    be: undefined,
+    Le: 0,
     u: null,
-    ot: undefined,
-    st: null,
+    st: undefined,
+    ot: null,
     tt: null,
     Ye: null,
     Ze: 0,
     o: null,
     rt: null,
-    ke: context,
+    Fe: context,
     He: null,
     ct: null,
-    Fe: null,
+    ke: null,
     se: REACTIVE_LAZY,
     S: STATUS_UNINITIALIZED,
     de: clock,
-    De: NOT_PENDING,
+    _e: NOT_PENDING,
     Qe: null,
     We: null,
     Te: null,
     Ne: null,
-    he: false,
+    pe: false,
     Ee: false,
     Je: false,
     _t: undefined,
     ft: t,
     Et: n,
-    Tt: undefined,
+    Nt: undefined,
     Re: i,
     i: l
   };
-  setupComputedNode(s, lazyOptions);
-  return s;
+  setupComputedNode(o, lazyOptions);
+  return o;
 }
 var lazyOptions = {
   lazy: true
 };
 function setupComputedNode(e, t) {
-  e.st = e;
-  const n = context?.Nt ? context.dt : context;
+  e.ot = e;
+  const n = context?.Tt ? context.It : context;
   if (context) {
-    const t2 = context.Fe;
+    const t2 = context.ke;
     if (t2 === null) {
-      context.Fe = e;
+      context.ke = e;
     } else {
       e.He = t2;
       t2.ct = e;
-      context.Fe = e;
+      context.ke = e;
     }
   }
   if (n)
-    e.xe = n.xe + 1;
-  if (GlobalQueue.It !== null)
-    GlobalQueue.It(e);
+    e.Le = n.Le + 1;
+  if (GlobalQueue.dt !== null)
+    GlobalQueue.dt(e);
   !t?.lazy && recompute(e, true);
   if (snapshotCaptureActive && !t?.lazy) {
     if (!(e.S & STATUS_PENDING) && !(e.T & CONFIG_NO_SNAPSHOT)) {
-      e.Le = e.Ue === undefined ? NO_SNAPSHOT : e.Ue;
+      e.xe = e.be === undefined ? NO_SNAPSHOT : e.be;
       snapshotSources.add(e);
     }
   }
 }
 function signal(e, t, n = null) {
   const i = {
-    be: t?.equals != null ? t.equals : isEqual,
+    Ue: t?.equals != null ? t.equals : isEqual,
     T: (t?.ownedWrite ? CONFIG_OWNED_WRITE : 0) | (t?.V ? CONFIG_NO_SNAPSHOT : 0),
     ut: t?.unobserved,
-    Ue: e,
+    be: e,
     o: null,
     rt: null,
     de: clock,
     lt: n,
     ae: n?.u || null,
-    De: NOT_PENDING
+    _e: NOT_PENDING
   };
   n && (n.u = i);
   if (snapshotCaptureActive && !(i.T & CONFIG_NO_SNAPSHOT) && !((n?.S ?? 0) & STATUS_PENDING)) {
-    i.Le = e === undefined ? NO_SNAPSHOT : e;
+    i.xe = e === undefined ? NO_SNAPSHOT : e;
     snapshotSources.add(i);
   }
   return i;
@@ -1861,21 +1895,21 @@ function prepareComputed(e, t) {
 }
 var READ_SLOW = Symbol("read-slow");
 function readNodeFast(e) {
-  if (latestReadActive || pendingCheckActive || e.ce || e.lt || e._e !== undefined || e.Le !== undefined || activeTransition !== null || currentOptimisticLane !== null || snapshotCaptureActive || false)
+  if (latestReadActive || pendingCheckActive || e.ce || e.lt || e.De !== undefined || e.xe !== undefined || activeTransition !== null || currentOptimisticLane !== null || snapshotCaptureActive || false)
     return READ_SLOW;
   let t = context;
-  if (t?.Nt)
-    t = t.dt;
+  if (t?.Tt)
+    t = t.It;
   if (t && tracking)
     link(e, t);
-  return !t || e.De === NOT_PENDING ? e.Ue : e.De;
+  return !t || e._e === NOT_PENDING || t.T & CONFIG_CHILDREN_FORBIDDEN ? e.be : e._e;
 }
 function read(e) {
   if (latestReadActive)
     return GlobalQueue.At(e);
   let t = context;
-  if (t?.Nt)
-    t = t.dt;
+  if (t?.Tt)
+    t = t.It;
   const n = e;
   const i = e.lt;
   const l = i || e;
@@ -1884,23 +1918,23 @@ function read(e) {
   } else if (typeof n.ce === "function") {
     prepareComputed(e, false);
   }
-  if (!n.ce && l === e && e._e === undefined && e.Le === undefined && activeTransition === null && currentOptimisticLane === null && !snapshotCaptureActive && true) {
+  if (!n.ce && l === e && e.De === undefined && e.xe === undefined && activeTransition === null && currentOptimisticLane === null && !snapshotCaptureActive && true) {
     if (t && tracking)
       link(e, t);
-    return !t || e.De === NOT_PENDING ? e.Ue : e.De;
+    return !t || e._e === NOT_PENDING || t.T & CONFIG_CHILDREN_FORBIDDEN ? e.be : e._e;
   }
   if (t && tracking) {
     link(e, t, pendingCheckActive);
     if (l.ce) {
       const n2 = queueFor(e);
-      if (l.xe >= n2.Ve) {
+      if (l.Le >= n2.Ve) {
         markNode(t);
         markHeap(n2);
         updateIfNecessary(l);
       }
-      const i2 = l.xe;
-      if (i2 >= t.xe && e.ke !== t) {
-        t.xe = i2 + 1;
+      const i2 = l.Le;
+      if (i2 >= t.Le && e.Fe !== t) {
+        t.Le = i2 + 1;
       }
     }
   }
@@ -1927,24 +1961,24 @@ function read(e) {
       throw l._;
   }
   if (snapshotCaptureActive && t && t.T & CONFIG_IN_SNAPSHOT_SCOPE) {
-    const n2 = e.Le;
+    const n2 = e.xe;
     if (n2 !== undefined) {
       const i2 = n2 === NO_SNAPSHOT ? undefined : n2;
-      const l2 = e.De !== NOT_PENDING ? e.De : e.Ue;
+      const l2 = e._e !== NOT_PENDING ? e._e : e.be;
       if (l2 !== i2)
         t.se |= REACTIVE_SNAPSHOT_STALE;
       return i2;
     }
   }
-  if (e._e !== undefined && e._e !== NOT_PENDING) {
-    return unwrapOverride(e._e);
+  if (e.De !== undefined && e.De !== NOT_PENDING) {
+    return unwrapOverride(e.De);
   }
   if (currentOptimisticLane !== null && activeTransition !== null && t !== null && GlobalQueue.Rt(e, l, t)) {
-    return e.Ue;
+    return e.be;
   }
-  const u = !t || currentOptimisticLane !== null && GlobalQueue.Pt(e, l, t) || e.De === NOT_PENDING || stale && e.Ne && activeTransition !== e.Ne ? e.Ue : e.De;
+  const u = !t || currentOptimisticLane !== null && GlobalQueue.Dt(e, l, t) || e._e === NOT_PENDING || t.T & CONFIG_CHILDREN_FORBIDDEN || stale && e.Ne && activeTransition !== e.Ne ? e.be : e._e;
   if (pendingCheckActive)
-    GlobalQueue.ht(e, u);
+    GlobalQueue.Pt(e, u);
   if (!t && l === e && typeof n.ce === "function" && e.T & CONFIG_AUTO_DISPOSE && !(l.S & STATUS_PENDING) && !e.o) {
     unobserved(e);
   }
@@ -1953,18 +1987,18 @@ function read(e) {
 function setSignal(e, t) {
   if (e.Ne && activeTransition !== e.Ne)
     globalQueue.initTransition(e.Ne);
-  if (e._e !== undefined && !projectionWriteActive)
+  if (e.De !== undefined && !projectionWriteActive)
     return GlobalQueue.Gt(e, t);
-  const n = e.De === NOT_PENDING ? e.Ue : e.De;
+  const n = e._e === NOT_PENDING ? e.be : e._e;
   if (typeof t === "function")
     t = t(n);
-  const i = !!(e.S & STATUS_UNINITIALIZED) || !e.be || !e.be(n, t);
+  const i = !!(e.S & STATUS_UNINITIALIZED) || !e.Ue || !e.Ue(n, t);
   if (!i)
     return t;
-  if (e.De === NOT_PENDING)
+  if (e._e === NOT_PENDING)
     queuePendingNode(e);
-  e.De = t;
-  (e.ge !== undefined || e.pe !== undefined) && GlobalQueue.Pe !== null && GlobalQueue.Pe(e, t);
+  e._e = t;
+  (e.Oe !== undefined || e.ge !== undefined) && GlobalQueue.Pe !== null && GlobalQueue.Pe(e, t);
   e.de = clock;
   insertSubs(e);
   schedule();
@@ -1972,7 +2006,7 @@ function setSignal(e, t) {
 }
 function suppressComputedRecompute(e) {
   deleteFromHeap(e, queueFor(e));
-  if (!(e.se & REACTIVE_MANUAL_WRITE) && e.De === NOT_PENDING) {
+  if (!(e.se & REACTIVE_MANUAL_WRITE) && e._e === NOT_PENDING) {
     queuePendingNode(e);
     schedule();
   }
@@ -2004,7 +2038,7 @@ function staleValues(e, t = true) {
     stale = n;
   }
 }
-// node_modules/.bun/@solidjs+signals@2.0.0-rc.0/node_modules/@solidjs/signals/dist/prod/core/context.js
+// node_modules/.bun/@solidjs+signals@2.0.0-rc.1/node_modules/@solidjs/signals/dist/prod/core/context.js
 function getContext(e, t = getOwner()) {
   if (!t) {
     throw new NoOwnerError;
@@ -2030,7 +2064,7 @@ function hasContext(e, t) {
 function isUndefined(e) {
   return typeof e === "undefined";
 }
-// node_modules/.bun/@solidjs+signals@2.0.0-rc.0/node_modules/@solidjs/signals/dist/prod/core/effect.js
+// node_modules/.bun/@solidjs+signals@2.0.0-rc.1/node_modules/@solidjs/signals/dist/prod/core/effect.js
 function effect(t, E, e, R) {
   const r = !!R?.user;
   const f = createEffectNode(t, E, e, r ? EFFECT_USER : EFFECT_RENDER, notifyEffectStatus, R);
@@ -2062,12 +2096,12 @@ function runEffect(t) {
     return;
   if (t.S & STATUS_ERROR && t.Re === EFFECT_USER) {
     const E2 = unwrapStatusError(t._);
-    t._t = t.Ue;
+    t._t = t.be;
     t.Je = false;
     try {
       t.Et ? t.Et(E2, () => {
-        const E3 = t.Tt;
-        t.Tt = undefined;
+        const E3 = t.Nt;
+        t.Nt = undefined;
         E3?.();
       }) : console.error(E2);
     } catch (E3) {
@@ -2078,14 +2112,14 @@ function runEffect(t) {
     }
     return;
   }
-  const E = t.Tt;
-  t.Tt = undefined;
+  const E = t.Nt;
+  t.Nt = undefined;
   try {
     E?.();
-    const e = t.ft(t.Ue, t._t);
+    const e = t.ft(t.be, t._t);
     if (false)
       ;
-    t.Tt = e;
+    t.Nt = e;
   } catch (E2) {
     t._ = new StatusError(t, E2);
     t.S |= STATUS_ERROR;
@@ -2094,7 +2128,7 @@ function runEffect(t) {
       throw E2;
     }
   } finally {
-    t._t = t.Ue;
+    t._t = t.be;
     t.Je = false;
   }
 }
@@ -2109,16 +2143,16 @@ function trackedEffect(t, E) {
     } finally {}
   };
   const e = computed(() => {
-    const E2 = e.Tt;
-    e.Tt = undefined;
+    const E2 = e.Nt;
+    e.Nt = undefined;
     E2?.();
     const R = staleValues(t);
-    e.Tt = R;
+    e.Nt = R;
   }, {
     ...E,
     lazy: true
   });
-  e.Tt = undefined;
+  e.Nt = undefined;
   e.T = e.T & ~CONFIG_AUTO_DISPOSE | CONFIG_CHILDREN_FORBIDDEN;
   e.Je = true;
   e.Re = EFFECT_TRACKED;
@@ -2133,11 +2167,11 @@ function trackedEffect(t, E) {
       }
     }
   };
-  e.Ft = run;
+  e.ht = run;
   e.C.enqueue(EFFECT_USER, run);
 }
 
-// node_modules/.bun/@solidjs+signals@2.0.0-rc.0/node_modules/@solidjs/signals/dist/prod/signals.js
+// node_modules/.bun/@solidjs+signals@2.0.0-rc.1/node_modules/@solidjs/signals/dist/prod/signals.js
 function onCleanup(e) {
   return cleanup(e);
 }
@@ -2176,749 +2210,21 @@ function onSettled(e) {
     e();
   });
 }
-// node_modules/.bun/@solidjs+signals@2.0.0-rc.0/node_modules/@solidjs/signals/dist/prod/store/reconcile.js
-function nodeKeys(e) {
-  const t = Object.keys(e);
-  if (symbolKeyedRecords.has(e)) {
-    const n = Object.getOwnPropertySymbols(e);
-    for (let e2 = 0, r = n.length;e2 < r; e2++) {
-      if (n[e2] !== $TRACK)
-        t.push(n[e2]);
-    }
-  }
-  return t;
+// node_modules/.bun/@solidjs+signals@2.0.0-rc.1/node_modules/@solidjs/signals/dist/prod/store/next/target.js
+var ownedRaw = new WeakSet;
+var storeNextLookup = new WeakMap;
+function devAssertNeverUserMutation(o) {
+  return;
 }
-function unwrap(e) {
-  if (e === null || typeof e !== "object")
-    return e;
-  return e[$TARGET]?.[STORE_VALUE] ?? e;
-}
-function getOverrideValue(e, t, n, r) {
-  if (r && n in r)
-    return r[n];
-  return t && n in t ? t[n] : e[n];
-}
-function addEnumSymbols(e, t, n) {
-  for (let r = 0, a = t.length;r < a; r++) {
-    if (Object.prototype.propertyIsEnumerable.call(e, t[r]))
-      n.add(t[r]);
-  }
-}
-function getAllKeys(e, t, n) {
-  const r = getKeys(e, t);
-  const a = Object.keys(n);
-  const i = e[$TARGET] ? untrack(() => Object.getOwnPropertySymbols(e)) : Object.getOwnPropertySymbols(e);
-  const l = Object.getOwnPropertySymbols(n);
-  if (i.length === 0 && l.length === 0) {
-    if (r.length === a.length) {
-      let e3 = true;
-      for (let t2 = 0;t2 < r.length; t2++) {
-        if (r[t2] !== a[t2]) {
-          e3 = false;
-          break;
-        }
-      }
-      if (e3)
-        return r;
-    }
-    const e2 = new Set(r);
-    for (let t2 = 0;t2 < a.length; t2++)
-      e2.add(a[t2]);
-    return Array.from(e2);
-  }
-  const s = new Set(r);
-  addEnumSymbols(e, i, s);
-  if (t) {
-    for (const e2 of Reflect.ownKeys(t)) {
-      t[e2] === $DELETED ? s.delete(e2) : s.add(e2);
-    }
-  }
-  for (let e2 = 0;e2 < a.length; e2++)
-    s.add(a[e2]);
-  addEnumSymbols(n, l, s);
-  return Array.from(s);
-}
-function wrapValue(e, t) {
-  return isWrappable(e) ? wrap(e, t) : e;
-}
-function itemKey(e, t) {
-  return isWrappable(e) ? t(e) : e;
-}
-function keyedMatch(e, t, n) {
-  return e === t || isWrappable(e) && isWrappable(t) && n(e) === n(t);
-}
-function recursablePair(e, t) {
-  return isWrappable(e) && isWrappable(t) && !(rawValuesUsed && (isRawValue(e) || isRawValue(t))) && Array.isArray(e) === Array.isArray(t);
-}
-function syncArrayNodeMembership(e, t) {
-  let n = e[STORE_NODE];
-  if (n) {
-    if (symbolKeyedRecords.has(n)) {
-      const e2 = nodeKeys(n);
-      for (let r = 0, a = e2.length;r < a; r++) {
-        e2[r] in t || setSignal(n[e2[r]], undefined);
-      }
-    } else {
-      for (const e2 in n) {
-        e2 in t || setSignal(n[e2], undefined);
-      }
-    }
-  }
-  if (n = e[STORE_HAS]) {
-    if (symbolKeyedRecords.has(n)) {
-      const e2 = nodeKeys(n);
-      for (let r = 0, a = e2.length;r < a; r++) {
-        setSignal(n[e2[r]], e2[r] in t);
-      }
-    } else {
-      for (const e2 in n) {
-        setSignal(n[e2], e2 in t);
-      }
-    }
-  }
-}
-function applyStateChild(e, t, n, r) {
-  if (n[STORE_WRAP] !== undefined) {
-    applyState(e, wrap(t, n), r);
-    return;
-  }
-  const a = t[$TARGET] ?? storeLookup.get(t);
-  if (a === undefined)
-    return;
-  e = unwrap(e);
-  if (a[STORE_SHALLOW]) {
-    applyStateShallow(e, a);
-  } else if (a[STORE_OVERRIDE] || a[STORE_OPTIMISTIC_OVERRIDE]) {
-    applyStateSlow(e, a, r);
-  } else {
-    applyStateFast(e, a, r);
-  }
-}
-function applyArrayItem(e, t, n, r, a) {
-  if (recursablePair(t, e)) {
-    const i = wrap(t, n);
-    r && setSignal(r, i);
-    applyState(e, i, a);
-  } else
-    r && setSignal(r, wrapValue(e, n));
-}
-function applyDescendants(e, t, n, r, a, i, l) {
-  const s = n[STORE_LOOKUP] || storeLookup;
-  if (i) {
-    const n2 = getKeys(e, i).concat(getStoreSymbols(e, i));
-    for (let o2 = 0, f = n2.length;o2 < f; o2++) {
-      const f2 = n2[o2];
-      if (r?.[f2])
-        continue;
-      const u = unwrap(getOverrideValue(e, i, f2, l));
-      if (!isWrappable(u))
-        continue;
-      descendInto(u, t[f2], s, a);
-    }
-    return;
-  }
-  for (const n2 in e) {
-    if (r?.[n2])
-      continue;
-    const i2 = unwrap(e[n2]);
-    if (!isWrappable(i2))
-      continue;
-    descendInto(i2, t[n2], s, a);
-  }
-  const o = Object.getOwnPropertySymbols(e);
-  for (let n2 = 0, i2 = o.length;n2 < i2; n2++) {
-    if (Object.prototype.propertyIsEnumerable.call(e, o[n2])) {
-      if (r?.[o[n2]])
-        continue;
-      const i3 = unwrap(e[o[n2]]);
-      if (!isWrappable(i3))
-        continue;
-      descendInto(i3, t[o[n2]], s, a);
-    }
-  }
-}
-function descendInto(e, t, n, r) {
-  const a = lookupTarget(e, n);
-  if (!a?.[STORE_DESC])
-    return;
-  const i = unwrap(t);
-  if (e === i || !isWrappable(i) || Array.isArray(e) !== Array.isArray(i) || r(e) != null && r(e) !== r(i))
-    return;
-  if (a[STORE_SHALLOW]) {
-    applyStateShallow(i, a);
-  } else if (a[STORE_OVERRIDE] || a[STORE_OPTIMISTIC_OVERRIDE]) {
-    applyStateSlow(i, a, r);
-  } else {
-    applyStateFast(i, a, r);
-  }
-}
-function applyState(e, t, n) {
-  e = unwrap(e);
-  const r = t?.[$TARGET];
-  if (!r)
-    return;
-  if (r[STORE_SHALLOW]) {
-    applyStateShallow(e, r);
-  } else if (r[STORE_OVERRIDE] || r[STORE_OPTIMISTIC_OVERRIDE]) {
-    applyStateSlow(e, r, n);
-  } else {
-    applyStateFast(e, r, n);
-  }
-}
-function shallowDiffNodes(e, t, n, r) {
-  let a = false;
-  for (const i in e) {
-    if (r && i === "length")
-      continue;
-    if (i in t) {
-      const r2 = t[i];
-      if (r2 !== n(i)) {
-        a = true;
-        setSignal(e[i], r2);
-      }
-    } else {
-      a = true;
-      setSignal(e[i], undefined);
-    }
-  }
-  return a;
-}
-function applyStateShallow(e, t, n) {
-  const r = t[STORE_VALUE];
-  const a = t[STORE_OVERRIDE];
-  const i = t[STORE_OPTIMISTIC_OVERRIDE];
-  if (e === r && !a && !i)
-    return;
-  const prevAt = (e2) => {
-    const t2 = getOverrideValue(r, a, e2, i);
-    return t2 === $DELETED ? undefined : t2;
-  };
-  t[STORE_OVERRIDE] = undefined;
-  const l = t[STORE_LOOKUP];
-  l !== undefined ? l.set(e, t[$PROXY]) : storeLookup.set(e, t);
-  t[STORE_VALUE] = e;
-  markRawIngest(e);
-  const s = t[STORE_NODE];
-  const o = s && s[$TRACK];
-  let f = false;
-  if (Array.isArray(r)) {
-    const n2 = a?.length ?? i?.length ?? r.length;
-    if (s) {
-      f = shallowDiffNodes(s, e, prevAt, true);
-      if (s.length && n2 !== e.length)
-        setSignal(s.length, e.length);
-    }
-    if (!f && (o || t[STORE_HAS])) {
-      if (n2 !== e.length)
-        f = true;
-      else {
-        for (let t2 = 0, n3 = e.length;t2 < n3; t2++) {
-          if (prevAt(t2) !== e[t2]) {
-            f = true;
-            break;
-          }
-        }
-      }
-    }
-  } else {
-    if (s) {
-      f = shallowDiffNodes(s, e, prevAt, false);
-    }
-    if (!f && (o || t[STORE_HAS]))
-      f = true;
-  }
-  let u = t[STORE_HAS];
-  if (u) {
-    for (const t2 in u) {
-      setSignal(u[t2], t2 in e);
-    }
-  }
-  f && notifySelf(t);
-}
-function applyStateFast(e, t, n) {
-  const r = t[STORE_VALUE];
-  if (e === r)
-    return;
-  const a = t[STORE_NODE];
-  {
-    const n2 = t[STORE_LOOKUP];
-    n2 !== undefined ? n2.set(e, t[$PROXY]) : storeLookup.set(e, t);
-  }
-  t[STORE_VALUE] = e;
-  if (Array.isArray(r)) {
-    let i2 = false;
-    const l2 = r.length;
-    if (e.length && l2 && isWrappable(e[0]) && n(e[0]) != null) {
-      let s, o, f, u, p, c, S, E;
-      for (f = 0, u = Math.min(l2, e.length);f < u && keyedMatch(c = r[f], e[f], n); f++) {
-        if (c !== e[f]) {
-          if (!recursablePair(c, e[f])) {
-            a?.[f] && setSignal(a[f], wrapValue(e[f], t));
-          } else
-            applyStateChild(e[f], c, t, n);
-        }
-      }
-      if (f === e.length && f === l2)
-        return;
-      const O = new Array(e.length), R = new Map;
-      for (u = l2 - 1, p = e.length - 1;u >= f && p >= f && keyedMatch(c = r[u], e[p], n); u--, p--) {
-        O[p] = c;
-      }
-      if (f > p || f > u) {
-        for (o = f;o <= p; o++) {
-          i2 = true;
-          a?.[o] && setSignal(a[o], wrapValue(e[o], t));
-        }
-        for (;o < e.length; o++) {
-          i2 = true;
-          applyArrayItem(e[o], O[o], t, a?.[o], n);
-        }
-        syncArrayNodeMembership(t, e);
-        (i2 || l2 !== e.length) && notifySelf(t);
-        l2 !== e.length && a?.length && setSignal(a.length, e.length);
-        return;
-      }
-      S = new Array(p + 1);
-      for (o = p;o >= f; o--) {
-        c = e[o];
-        E = itemKey(c, n);
-        s = R.get(E);
-        S[o] = s === undefined ? -1 : s;
-        R.set(E, o);
-      }
-      for (s = f;s <= u; s++) {
-        c = r[s];
-        E = itemKey(c, n);
-        o = R.get(E);
-        if (o !== undefined && o !== -1) {
-          O[o] = c;
-          o = S[o];
-          R.set(E, o);
-        }
-      }
-      for (o = f;o < e.length; o++) {
-        if (o in O) {
-          applyArrayItem(e[o], O[o], t, a?.[o], n);
-        } else
-          a?.[o] && setSignal(a[o], wrapValue(e[o], t));
-      }
-      if (f < e.length)
-        i2 = true;
-    } else if (e.length) {
-      for (let l3 = 0, s = e.length;l3 < s; l3++) {
-        const s2 = r[l3];
-        if (recursablePair(s2, e[l3])) {
-          if (s2 !== e[l3])
-            applyStateChild(e[l3], s2, t, n);
-        } else {
-          if (s2 !== e[l3])
-            i2 = true;
-          a?.[l3] && setSignal(a[l3], wrapValue(e[l3], t));
-        }
-      }
-    }
-    syncArrayNodeMembership(t, e);
-    if (l2 !== e.length) {
-      i2 = true;
-      a?.length && setSignal(a.length, e.length);
-    }
-    i2 && notifySelf(t);
-    return;
-  }
-  let i = t[STORE_NODE];
-  let l;
-  if (i) {
-    l = i[$TRACK];
-    if (l || symbolKeyedRecords.has(i)) {
-      const a2 = l ? getAllKeys(r, undefined, e) : nodeKeys(i);
-      for (let s = 0, o = a2.length;s < o; s++) {
-        const o2 = a2[s];
-        const f = i[o2];
-        const u = unwrap(r[o2]);
-        const p = unwrap(e[o2]);
-        if (u === p)
-          continue;
-        if (!u || !isWrappable(u) || !isWrappable(p) || rawValuesUsed && (isRawValue(u) || isRawValue(p)) || Array.isArray(u) !== Array.isArray(p) || n(u) != null && n(u) !== n(p)) {
-          l && setSignal(l, undefined);
-          f && setSignal(f, isWrappable(p) ? wrap(p, t) : p);
-        } else
-          applyStateChild(p, u, t, n);
-      }
-    } else {
-      for (const a2 in i) {
-        const s = i[a2];
-        const o = unwrap(r[a2]);
-        const f = unwrap(e[a2]);
-        if (o === f)
-          continue;
-        if (!o || !isWrappable(o) || !isWrappable(f) || rawValuesUsed && (isRawValue(o) || isRawValue(f)) || Array.isArray(o) !== Array.isArray(f) || n(o) != null && n(o) !== n(f)) {
-          l && setSignal(l, undefined);
-          s && setSignal(s, isWrappable(f) ? wrap(f, t) : f);
-        } else
-          applyStateChild(f, o, t, n);
-      }
-    }
-  }
-  if (!l && t[STORE_DESC])
-    applyDescendants(r, e, t, i, n);
-  if (i = t[STORE_HAS]) {
-    const t2 = nodeKeys(i);
-    for (let n2 = 0, r2 = t2.length;n2 < r2; n2++) {
-      const r3 = t2[n2];
-      setSignal(i[r3], r3 in e);
-    }
-  }
-}
-function applyStateSlow(e, t, n) {
-  const r = t[STORE_VALUE];
-  const a = t[STORE_OVERRIDE];
-  const i = t[STORE_OPTIMISTIC_OVERRIDE];
-  let l = t[STORE_NODE];
-  {
-    const n2 = t[STORE_LOOKUP];
-    n2 !== undefined ? n2.set(e, t[$PROXY]) : storeLookup.set(e, t);
-  }
-  t[STORE_VALUE] = e;
-  t[STORE_OVERRIDE] = undefined;
-  if (Array.isArray(r)) {
-    let s2 = false;
-    const o = getOverrideValue(r, a, "length", i);
-    if (e.length && o && isWrappable(e[0]) && n(e[0]) != null) {
-      let f2, u, p, c, S, E, O, R;
-      for (p = 0, c = Math.min(o, e.length);p < c && keyedMatch(E = getOverrideValue(r, a, p, i), e[p], n); p++) {
-        if (E !== e[p] && isWrappable(E) && isWrappable(e[p])) {
-          if (!recursablePair(E, e[p])) {
-            l?.[p] && setSignal(l[p], wrapValue(e[p], t));
-          } else
-            applyState(e[p], wrap(E, t), n);
-        }
-      }
-      const d = new Array(e.length), y = new Map;
-      for (c = o - 1, S = e.length - 1;c >= p && S >= p && keyedMatch(E = getOverrideValue(r, a, c, i), e[S], n); c--, S--) {
-        d[S] = E;
-      }
-      if (p > S || p > c) {
-        for (u = p;u <= S; u++) {
-          s2 = true;
-          l?.[u] && setSignal(l[u], wrapValue(e[u], t));
-        }
-        for (;u < e.length; u++) {
-          s2 = true;
-          applyArrayItem(e[u], d[u], t, l?.[u], n);
-        }
-        const r2 = e.length;
-        syncArrayNodeMembership(t, e);
-        (s2 || o !== r2) && notifySelf(t);
-        o !== r2 && l?.length && setSignal(l.length, r2);
-        return;
-      }
-      O = new Array(S + 1);
-      for (u = S;u >= p; u--) {
-        E = e[u];
-        R = itemKey(E, n);
-        f2 = y.get(R);
-        O[u] = f2 === undefined ? -1 : f2;
-        y.set(R, u);
-      }
-      for (f2 = p;f2 <= c; f2++) {
-        E = getOverrideValue(r, a, f2, i);
-        R = itemKey(E, n);
-        u = y.get(R);
-        if (u !== undefined && u !== -1) {
-          d[u] = E;
-          u = O[u];
-          y.set(R, u);
-        }
-      }
-      for (u = p;u < e.length; u++) {
-        if (u in d) {
-          applyArrayItem(e[u], d[u], t, l?.[u], n);
-        } else
-          l?.[u] && setSignal(l[u], wrapValue(e[u], t));
-      }
-      if (p < e.length)
-        s2 = true;
-    } else if (e.length) {
-      for (let o2 = 0, f2 = e.length;o2 < f2; o2++) {
-        const f3 = getOverrideValue(r, a, o2, i);
-        if (recursablePair(f3, e[o2])) {
-          if (f3 !== e[o2])
-            applyState(e[o2], wrap(f3, t), n);
-        } else {
-          if (f3 !== e[o2])
-            s2 = true;
-          l?.[o2] && setSignal(l[o2], wrapValue(e[o2], t));
-        }
-      }
-    }
-    const f = e.length;
-    syncArrayNodeMembership(t, e);
-    if (o !== f) {
-      s2 = true;
-      l?.length && setSignal(l.length, f);
-    }
-    s2 && notifySelf(t);
-    return;
-  }
-  let s;
-  if (l) {
-    s = l[$TRACK];
-    const o = s ? getAllKeys(r, a, e) : nodeKeys(l);
-    for (let f = 0, u = o.length;f < u; f++) {
-      const u2 = o[f];
-      const p = l[u2];
-      const c = unwrap(getOverrideValue(r, a, u2, i));
-      let S = unwrap(e[u2]);
-      if (c === S)
-        continue;
-      if (!c || !isWrappable(c) || !isWrappable(S) || rawValuesUsed && (isRawValue(c) || isRawValue(S)) || Array.isArray(c) !== Array.isArray(S) || n(c) != null && n(c) !== n(S)) {
-        s && setSignal(s, undefined);
-        p && setSignal(p, isWrappable(S) ? wrap(S, t) : S);
-      } else
-        applyState(S, wrap(c, t), n);
-    }
-  }
-  if (!s && t[STORE_DESC])
-    applyDescendants(r, e, t, l, n, a, i);
-  if (l = t[STORE_HAS]) {
-    const t2 = nodeKeys(l);
-    for (let n2 = 0, r2 = t2.length;n2 < r2; n2++) {
-      const r3 = t2[n2];
-      setSignal(l[r3], r3 in e);
-    }
-  }
-}
-var NOKEY = () => null;
-var IDENTITY = (e) => e;
-function reconcileState(e, t, n, r) {
-  if (t == null)
-    throw new Error("");
-  let a;
-  const i = r ? t[$TARGET] : undefined;
-  if (i !== undefined) {
-    if (e?.[$TARGET] !== undefined && e[$TARGET] !== i && !i[STORE_SHALLOW]) {
-      if (i[STORE_VALUE] === e)
-        return;
-      a = e;
-    }
-    while (i[STORE_VALUE]?.[$TARGET] !== undefined)
-      i[STORE_VALUE] = unwrap(i[STORE_VALUE]);
-  }
-  if (n === null)
-    applyState(e, t, NOKEY);
-  else {
-    let a2 = typeof n === "string" ? (e2) => e2[n] : n;
-    const i2 = a2(t);
-    if (i2 !== undefined && a2(e) !== i2) {
-      if (!r)
-        throw new Error("");
-      const n2 = t[$TARGET];
-      if (n2 && n2[STORE_VALUE] !== unwrap(e))
-        n2[STORE_LOOKUP]?.delete(n2[STORE_VALUE]);
-      a2 = IDENTITY;
-    }
-    applyState(e, t, a2);
-  }
-  if (a !== undefined)
-    i[STORE_VALUE] = a;
-}
+var optHooks = null;
 
-// node_modules/.bun/@solidjs+signals@2.0.0-rc.0/node_modules/@solidjs/signals/dist/prod/store/projection.js
-function createProjectionInternal(e, t, r) {
-  let o;
-  const n = new WeakMap;
-  const i = !!r?.shallow;
-  const wrapper = (e2) => {
-    e2[STORE_WRAP] = wrapProjection;
-    e2[STORE_LOOKUP] = n;
-    if (i) {
-      e2[STORE_SHALLOW] = true;
-      markRawIngest(e2[STORE_VALUE]);
-    }
-    Object.defineProperty(e2, STORE_FIREWALL, {
-      get() {
-        return o;
-      },
-      configurable: true
-    });
-  };
-  const wrapProjection = (e2) => {
-    if (n.has(e2))
-      return n.get(e2);
-    if (e2[$TARGET]?.[STORE_WRAP] === wrapProjection)
-      return e2;
-    const t2 = createStoreProxy(e2, storeTraps, wrapper);
-    n.set(e2, t2);
-    return t2;
-  };
-  const c = wrapProjection(t);
-  let s;
-  if (r?.seedLoadingValue)
-    s = {
-      loadingValue: undefined
-    };
-  o = computed(() => {
-    if (!o)
-      o = getOwner();
-    runProjectionComputed(c, e, r?.key === undefined ? "id" : r.key);
-  }, s);
-  o.T &= ~CONFIG_AUTO_DISPOSE;
-  return {
-    store: c,
-    node: o
-  };
-}
-function runProjectionComputed(e, t, r, o, n) {
-  const i = getOwner();
-  let c = false;
-  let s;
-  const u = i.Ee ? JSON.parse(JSON.stringify(e[$TARGET][STORE_VALUE])) : null;
-  const a = new Proxy(e, createWriteTraps(() => !c || i.Te === s, n));
-  storeSetter(a, (n2) => {
-    s = t(u ?? n2);
-    c = true;
-    const commit = (t2) => {
-      if (u && (t2 === undefined || t2 === u))
-        t2 = JSON.parse(JSON.stringify(u));
-      if (t2 === n2 || t2 === undefined)
-        return;
-      const write = () => storeSetter(e, (e2) => reconcileState(t2, e2, r, true));
-      o ? o(write) : write();
-    };
-    const a2 = handleAsync(i, s, commit);
-    if (!i.Ee)
-      commit(a2);
-  });
-  return i;
-}
-function createWriteTraps(e, t) {
-  const r = {
-    get(e2, t2) {
-      let o;
-      setWriteOverride(true);
-      setProjectionWriteActive(true);
-      try {
-        o = e2[t2];
-      } finally {
-        setWriteOverride(false);
-        setProjectionWriteActive(false);
-      }
-      if (t2 === $TARGET)
-        return o;
-      return typeof o === "object" && o !== null ? new Proxy(o, r) : o;
-    },
-    has(e2, t2) {
-      let r2;
-      setWriteOverride(true);
-      setProjectionWriteActive(true);
-      try {
-        r2 = t2 in e2;
-      } finally {
-        setWriteOverride(false);
-        setProjectionWriteActive(false);
-      }
-      return r2;
-    },
-    set(r2, o, n) {
-      if (e && !e())
-        return true;
-      setWriteOverride(true);
-      setProjectionWriteActive(true);
-      try {
-        r2[o] = n;
-        t?.();
-      } finally {
-        setWriteOverride(false);
-        setProjectionWriteActive(false);
-      }
-      return true;
-    },
-    deleteProperty(r2, o) {
-      if (e && !e())
-        return true;
-      setWriteOverride(true);
-      setProjectionWriteActive(true);
-      try {
-        delete r2[o];
-        t?.();
-      } finally {
-        setWriteOverride(false);
-        setProjectionWriteActive(false);
-      }
-      return true;
-    }
-  };
-  return r;
-}
-
-// node_modules/.bun/@solidjs+signals@2.0.0-rc.0/node_modules/@solidjs/signals/dist/prod/store/store.js
+// node_modules/.bun/@solidjs+signals@2.0.0-rc.1/node_modules/@solidjs/signals/dist/prod/store/store.js
 var $TRACK = Symbol(0);
 var $TARGET = Symbol(0);
 var $PROXY = Symbol(0);
-var $DELETED = Symbol(0);
 var $AFFECTS = Symbol(0);
 var STORE_VALUE = "v";
-var STORE_OVERRIDE = "o";
-var STORE_OPTIMISTIC_OVERRIDE = "x";
 var STORE_NODE = "n";
-var STORE_HAS = "h";
-var STORE_CUSTOM_PROTO = "c";
-var STORE_WRAP = "w";
-var STORE_LOOKUP = "l";
-var STORE_FIREWALL = "f";
-var STORE_OPTIMISTIC = "p";
-var STORE_OPTIMISTIC_OWNERS = "t";
-var STORE_PARENT = "u";
-var STORE_DESC = "d";
-var STORE_SHALLOW = "s";
-var STORE_SELF_PENDING = Symbol(0);
-function initStoreFields(e) {
-  e[STORE_OVERRIDE] = undefined;
-  e[STORE_OPTIMISTIC_OVERRIDE] = undefined;
-  e[STORE_OPTIMISTIC_OWNERS] = undefined;
-  e[STORE_NODE] = undefined;
-  e[STORE_HAS] = undefined;
-  e[STORE_CUSTOM_PROTO] = undefined;
-  e[STORE_WRAP] = undefined;
-  e[STORE_LOOKUP] = undefined;
-  e[STORE_FIREWALL] = undefined;
-  e[STORE_OPTIMISTIC] = undefined;
-  e[STORE_SNAPSHOT_PROPS] = undefined;
-  e[STORE_PARENT] = undefined;
-  e[STORE_DESC] = undefined;
-  e[STORE_SHALLOW] = undefined;
-  e[$PROXY] = null;
-}
-function createStoreProxy(e, t = storeTraps, r) {
-  let n;
-  if (Array.isArray(e)) {
-    n = [];
-    n[STORE_VALUE] = e;
-    initStoreFields(n);
-  } else {
-    n = {
-      [STORE_VALUE]: e
-    };
-    initStoreFields(n);
-    const t2 = e?.[$TARGET]?.[STORE_VALUE] ?? e;
-    const r2 = Object.getPrototypeOf(t2);
-    if (r2 !== null && r2 !== Object.prototype) {
-      n[STORE_CUSTOM_PROTO] = true;
-    }
-  }
-  r && r(n);
-  return n[$PROXY] = new Proxy(n, t);
-}
-var storeLookup = new WeakMap;
-var symbolKeyedRecords = new WeakSet;
-function lookupTarget(e, t) {
-  if (t !== undefined && t !== storeLookup) {
-    const r = t.get(e);
-    if (r !== undefined)
-      return r[$TARGET];
-  }
-  return storeLookup.get(e);
-}
 var rawValues = new WeakSet;
 var rawValuesUsed = false;
 function isRawValue(e) {
@@ -2934,48 +2240,12 @@ function markRawOne(e) {
 }
 function markRawIngest(e) {
   if (Array.isArray(e)) {
-    for (let t = 0, r = e.length;t < r; t++)
+    for (let t = 0, o = e.length;t < o; t++)
       markRawOne(e[t]);
   } else {
     for (const t in e)
       markRawOne(e[t]);
   }
-}
-function wrap(e, t) {
-  if (rawValuesUsed && rawValues.has(e))
-    return e;
-  if (t?.[STORE_WRAP]) {
-    const r2 = t[STORE_WRAP](e, t);
-    const n2 = r2[$TARGET];
-    if (n2 && !n2[STORE_PARENT] && n2 !== t)
-      n2[STORE_PARENT] = t;
-    return r2;
-  }
-  const r = storeLookup.get(e);
-  if (r !== undefined)
-    return r[$PROXY];
-  let n = e[$PROXY];
-  if (!n) {
-    n = createStoreProxy(e);
-    const r2 = n[$TARGET];
-    storeLookup.set(e, r2);
-    if (t)
-      r2[STORE_PARENT] = t;
-  }
-  return n;
-}
-function wrapShallow(e) {
-  const t = storeLookup.get(e);
-  if (t !== undefined) {
-    if (t[STORE_SHALLOW])
-      return t[$PROXY];
-  }
-  const r = createStoreProxy(e);
-  const n = r[$TARGET];
-  n[STORE_SHALLOW] = true;
-  storeLookup.set(e, n);
-  markRawIngest(e);
-  return r;
 }
 var OBJECT_PROTO = Object.prototype;
 var wrappableProtos = new WeakMap;
@@ -2987,612 +2257,881 @@ function isWrappable(e) {
     return true;
   if (Array.isArray(e))
     return true;
-  let r = wrappableProtos.get(t);
-  if (r === undefined) {
-    r = Object.prototype.toString.call(e) === "[object Object]" && (typeof Node === "undefined" || !(e instanceof Node));
-    wrappableProtos.set(t, r);
+  let o = wrappableProtos.get(t);
+  if (o === undefined) {
+    o = Object.prototype.toString.call(e) === "[object Object]" && (typeof Node === "undefined" || !(e instanceof Node));
+    wrappableProtos.set(t, o);
   }
-  return r;
+  return o;
 }
 var writeOverride = false;
 function setWriteOverride(e) {
   writeOverride = e;
 }
-function writeOnly(e) {
-  return writeOverride || !!Writing?.has(e);
-}
-function unwrapStoreValue(e, t, r) {
-  const n = e?.[$TARGET] || lookupTarget(e, r);
-  if (!n)
-    return e;
-  const o = n[STORE_OVERRIDE];
-  if (!o)
-    return n[STORE_VALUE];
-  if (!t)
-    t = new Map;
-  if (t.has(e))
-    return t.get(e);
-  const i = n[STORE_VALUE];
-  const O = Array.isArray(i);
-  const s = O ? [] : Object.create(Object.getPrototypeOf(i));
-  t.set(e, s);
-  r = n[STORE_LOOKUP] ?? storeLookup;
-  for (const e2 of getStoreKeys(i, o)) {
-    if (O && e2 === "length")
-      continue;
-    const n2 = e2 in o ? o[e2] : i[e2];
-    if (n2 !== $DELETED)
-      s[e2] = unwrapStoreValue(n2, t, r);
-  }
-  if (O)
-    s.length = o.length ?? i.length;
-  return s;
-}
-function isPrototypePollutionKey(e) {
-  return e === "__proto__" || e === "constructor" || e === "prototype";
+function getWriteOverride() {
+  return writeOverride;
 }
 function ownEnumerableKeys(e) {
   return Reflect.ownKeys(e).filter((t) => Object.prototype.propertyIsEnumerable.call(e, t));
 }
-function ownEnumerableSymbols(e) {
-  const t = Object.getOwnPropertySymbols(e);
-  const r = [];
-  for (let n = 0, o = t.length;n < o; n++) {
-    const o2 = t[n];
-    if (Object.prototype.propertyIsEnumerable.call(e, o2))
-      r.push(o2);
-  }
-  return r;
-}
-function ownEnumerableKeysPlain(e) {
-  return Object.keys(e).concat(ownEnumerableSymbols(e));
-}
-function getOverlayLayer(e, t) {
-  const r = e[STORE_OPTIMISTIC_OVERRIDE];
-  if (r && t in r)
-    return r;
-  const n = e[STORE_OVERRIDE];
-  if (n && t in n)
-    return n;
-  return;
-}
-function visibleNodeValue(e) {
-  return e._e !== undefined && e._e !== NOT_PENDING ? unwrapOverride(e._e) : e.De !== NOT_PENDING ? e.De : e.Ue;
-}
-function hasOwnStoreProperty(e, t) {
-  const r = getOverlayLayer(e, t);
-  if (r)
-    return r[t] !== $DELETED;
-  return Object.prototype.hasOwnProperty.call(unwrapStoreValue(e[STORE_VALUE]), t);
-}
-function hasInheritedAccessor(e, t) {
-  let r = Object.getPrototypeOf(e);
-  while (r && r !== Object.prototype) {
-    const e2 = Reflect.getOwnPropertyDescriptor(r, t);
-    if (e2)
-      return !!e2.get;
-    r = Object.getPrototypeOf(r);
-  }
-  return false;
-}
-function getNodes(e, t) {
-  let r = e[t];
-  if (!r)
-    e[t] = r = Object.create(null);
-  return r;
-}
-function getNode(e, t, r, n, o = isEqual, i) {
-  if (t[r])
-    return t[r];
-  const O = signal(n, {
-    equals: o,
-    unobserved() {
-      if (t[r] === O) {
-        delete t[r];
-        if (typeof r === "symbol" && r !== $TRACK && r !== $AFFECTS && symbolKeyedRecords.has(t)) {
-          const e2 = Object.getOwnPropertySymbols(t);
-          let r2 = false;
-          for (let t2 = 0, n2 = e2.length;t2 < n2; t2++) {
-            if (e2[t2] !== $TRACK && e2[t2] !== $AFFECTS) {
-              r2 = true;
-              break;
-            }
-          }
-          if (!r2)
-            symbolKeyedRecords.delete(t);
-        }
-      }
-    }
-  }, e[STORE_FIREWALL]);
-  if (e[STORE_OPTIMISTIC]) {
-    O._e = NOT_PENDING;
-  }
-  if (i && r in i) {
-    const e2 = i[r];
-    O.Le = e2 === undefined ? NO_SNAPSHOT : e2;
-    snapshotSources?.add(O);
-  }
-  if (typeof r === "symbol" && r !== $TRACK && r !== $AFFECTS)
-    symbolKeyedRecords.add(t);
-  if (r !== $AFFECTS && affectsScopes.size)
-    inheritAffectsMarks(O, e[STORE_VALUE], r);
-  let s = e;
-  while (s && !s[STORE_DESC]) {
-    s[STORE_DESC] = true;
-    s = s[STORE_PARENT];
-  }
-  return t[r] = O;
-}
-function inheritAffectsMarks(e, t, r) {
-  for (const [n, o] of affectsScopes) {
-    if (n.t && o.scope.has(t) && (o.key === undefined || o.key === r)) {
+function inheritAffectsMarks(e, t, o) {
+  for (const [r, s] of affectsScopes) {
+    if (r.t && s.scope.has(t) && (s.key === undefined || s.key === o)) {
       GlobalQueue.M(e);
-      o.inherited.push(e);
+      s.inherited.push(e);
     }
   }
 }
 var affectsScopes = new Map;
+var nextAffectsNodeResolver = null;
+function setNextAffectsNodeResolver(e) {
+  nextAffectsNodeResolver = e;
+}
+function affectsScopesLive() {
+  return affectsScopes.size > 0;
+}
 function witnessAffectsMark(e, t) {
-  const r = e[STORE_NODE]?.[$AFFECTS];
-  if (r?.t)
-    GlobalQueue.Lt(r);
+  const o = e[STORE_NODE]?.[$AFFECTS];
+  if (o?.t)
+    GlobalQueue.Lt(o);
   if (affectsScopes.size) {
-    const n = e[STORE_VALUE];
-    for (const [e2, o] of affectsScopes) {
-      if (e2 !== r && e2.t && o.scope.has(n) && (o.key === undefined || o.key === t))
-        GlobalQueue.Lt(e2);
+    let r = e[STORE_VALUE];
+    for (const [e2, s] of affectsScopes) {
+      if (e2 !== o && e2.t && (s.key === undefined || s.key === t)) {
+        let t2 = r;
+        for (;; ) {
+          if (s.scope.has(t2)) {
+            GlobalQueue.Lt(e2);
+            break;
+          }
+          const o2 = t2?.[$TARGET];
+          if (o2 === undefined)
+            break;
+          const r2 = o2.pb ?? o2[STORE_VALUE];
+          if (r2 === t2)
+            break;
+          t2 = r2;
+        }
+      }
     }
   }
 }
-function trackSelf(e, t = $TRACK) {
-  if (!getObserver())
+
+// node_modules/.bun/@solidjs+signals@2.0.0-rc.1/node_modules/@solidjs/signals/dist/prod/store/next/store.js
+function createTarget(e, t, n, r = t?.fam ?? null) {
+  const i = Array.isArray(e) ? [] : {};
+  i.v = e;
+  i.ch = e[$TARGET] !== undefined;
+  i.pb = null;
+  i.n = null;
+  i.h = null;
+  i.k = null;
+  i.dk = null;
+  i.u = t;
+  i.pk = n;
+  i.px = null;
+  i.d = false;
+  i.a = false;
+  i.sc = false;
+  i.nc = 0;
+  i.adopted = false;
+  i.fam = r;
+  i.s = false;
+  i.px = new Proxy(i, traps);
+  i[$PROXY] = i.px;
+  (r?.map ?? storeNextLookup).set(e, i);
+  return i;
+}
+function wrapNext(e, t = null, n = null, r = t?.fam ?? null) {
+  if (rawValuesUsed && isRawValue(e))
+    return e;
+  const i = (r?.map ?? storeNextLookup).get(e);
+  if (i !== undefined)
+    return i.px;
+  const o = e[$TARGET];
+  if (o !== undefined && o.px === e) {
+    if (r === null || o.fam === r)
+      return e;
+    return createTarget(e, t, n, r).px;
+  }
+  return createTarget(e, t, n, r).px;
+}
+function unwrapValue(e) {
+  if (e == null || typeof e !== "object")
+    return e;
+  const t = e[$TARGET];
+  if (t !== undefined && t.px === e && t.v !== undefined)
+    return t.pb ?? t.v;
+  return e;
+}
+function getNode(e, t, n) {
+  const r = e.n ??= Object.create(null);
+  let i = r[t];
+  if (i === undefined) {
+    const o = i = signal(n, {
+      equals: (t2, n2) => isEqual(t2, n2) || sameLogicalSlot(e, t2, n2),
+      unobserved() {
+        if (o.t)
+          return;
+        if (e.n && e.n[t] === o) {
+          delete e.n[t];
+          e.nc--;
+        }
+      }
+    }, e.fam?.node ?? undefined);
+    o.T |= CONFIG_OWNED_WRITE;
+    o.acc = isOwnAccessor(e.pb ?? e.v, t);
+    o.px = undefined;
+    o.pxv = undefined;
+    if (e.fam?.opt)
+      o.De = NOT_PENDING;
+    if (t !== $AFFECTS && affectsScopesLive())
+      inheritAffectsMarks(o, e.v, t);
+    r[t] = i;
+    e.nc++;
+    markDescendants(e);
+  }
+  return i;
+}
+function sameLogicalSlot(e, t, n) {
+  if (t === null || typeof t !== "object" || n === null || typeof n !== "object")
+    return false;
+  const r = e.fam?.map ?? storeNextLookup;
+  const i = r.get(t);
+  return i !== undefined && i === r.get(n);
+}
+function getHasNode(e, t, n) {
+  const r = e.h ??= Object.create(null);
+  let i = r[t];
+  if (i === undefined) {
+    const o = i = signal(n, {
+      equals: isEqual,
+      unobserved() {
+        if (o.t)
+          return;
+        if (e.h && e.h[t] === o)
+          delete e.h[t];
+      }
+    }, e.fam?.node ?? undefined);
+    o.T |= CONFIG_OWNED_WRITE;
+    if (e.fam?.opt)
+      o.De = NOT_PENDING;
+    if (affectsScopesLive())
+      inheritAffectsMarks(o, e.v, t);
+    r[t] = i;
+    markDescendants(e);
+  }
+  return i;
+}
+function getKeySetNode(e) {
+  let t = e.k;
+  if (t === null) {
+    const n = t = signal(0, {
+      equals: false,
+      unobserved() {
+        if (e.k === n)
+          e.k = null;
+      }
+    }, e.fam?.node ?? undefined);
+    n.T |= CONFIG_OWNED_WRITE;
+    if (e.fam?.opt)
+      n.De = NOT_PENDING;
+    e.k = t;
+    markDescendants(e);
+  }
+  return t;
+}
+function bumpDeep(e) {
+  if (e.dk !== null)
+    setSignal(e.dk, 1);
+}
+function markDescendants(e) {
+  let t = e;
+  while (t && !t.d) {
+    t.d = true;
+    t = t.u;
+  }
+}
+var foldOlds = new Map;
+var hookInstalled = false;
+function cloneRaw(e, t) {
+  const n = Object.getOwnPropertyDescriptors(e);
+  for (const r of Reflect.ownKeys(n)) {
+    const i = n[r];
+    if (r === "length" && Array.isArray(e))
+      continue;
+    i.configurable = true;
+    if (!i.get && !i.set)
+      i.writable = true;
+    else if (t)
+      t.a = true;
+  }
+  return Array.isArray(e) ? Object.defineProperties([], n) : Object.create(Object.getPrototypeOf(e), n);
+}
+function ensurePB(e) {
+  let t = e.pb;
+  if (t === null) {
+    t = e.pb = cloneRaw(e.v, e);
+    if (e.fam?.opt && !projectionWriteActive && !getWriteOverride()) {
+      const n = e.n;
+      if (n !== null) {
+        for (const e2 of Reflect.ownKeys(n)) {
+          const r2 = n[e2];
+          if (hasActiveOverride2(r2))
+            t[e2] = unwrapOverride(r2.De);
+        }
+      }
+      const r = e.h;
+      if (r !== null) {
+        for (const e2 of Reflect.ownKeys(r)) {
+          const n2 = r[e2];
+          if (hasActiveOverride2(n2) && !unwrapOverride(n2.De))
+            delete t[e2];
+        }
+      }
+    }
+    ownedRaw.add(t);
+    (e.fam?.map ?? storeNextLookup).set(t, e);
+    queueFold(e);
+  }
+  return t;
+}
+function adoptPB(e, t, n = false) {
+  if (!n) {
+    queueFold(e);
+    e.adopted = true;
+  }
+  e.pb = null;
+  e.v = t;
+  e.ch = t[$TARGET] !== undefined;
+  (e.fam?.map ?? storeNextLookup).set(t, e);
+}
+function queueFold(e) {
+  if (foldOlds.has(e))
     return;
-  read(getNode(e, getNodes(e, STORE_NODE), t, undefined, false));
-  if (t === $TRACK && !e[STORE_OVERRIDE] && !e[STORE_OPTIMISTIC_OVERRIDE] && e[STORE_VALUE][$TARGET])
-    e[STORE_VALUE][$TRACK];
-}
-function notifySelf(e) {
-  const t = e[STORE_NODE]?.[$TRACK];
-  t && setSignal(t, e[STORE_OPTIMISTIC] && !projectionWriteActive ? STORE_SELF_PENDING : undefined);
-}
-function getKeysImpl(e, t, r, n) {
-  const o = e[$TARGET] ? untrack(() => r ? n ? ownEnumerableKeys(e) : Object.keys(e) : Reflect.ownKeys(e)) : r ? n ? ownEnumerableKeysPlain(e) : Object.keys(e) : Reflect.ownKeys(e);
-  return t ? mergeOverrideKeys(o, t) : o;
-}
-function getKeys(e, t, r = true) {
-  return getKeysImpl(e, t, r, false);
-}
-function getStoreKeys(e, t) {
-  return getKeysImpl(e, t, true, true);
-}
-function getStoreSymbols(e, t) {
-  const r = e[$TARGET] ? untrack(() => ownEnumerableSymbols(e)) : ownEnumerableSymbols(e);
-  return t ? mergeOverrideKeys(r, t, true) : r;
-}
-function mergeOverrideKeys(e, t, r) {
-  const n = new Set(e);
-  const o = r ? Object.getOwnPropertySymbols(t) : Reflect.ownKeys(t);
-  for (const e2 of o) {
-    if (t[e2] !== $DELETED)
-      n.add(e2);
-    else
-      n.delete(e2);
+  if (foldOlds.size === 0) {
+    if (!hookInstalled) {
+      hookInstalled = true;
+      setStoreCommitHook(drainFolds);
+    }
+    schedule();
   }
-  return Array.from(n);
+  foldOlds.set(e, e.v);
 }
-function getPropertyDescriptor(e, t, r) {
-  if (t && r in t) {
-    if (t[r] === $DELETED)
+function privatizeCommitted(e) {
+  if (ownedRaw.has(e.v))
+    return;
+  const t = cloneRaw(e.v, e);
+  ownedRaw.add(t);
+  storeNextLookup.set(t, e);
+  e.v = t;
+  e.ch = false;
+  if (e.u) {
+    privatizeCommitted(e.u);
+    devAssertNeverUserMutation(e.u.v);
+    e.u.v[e.pk] = e.v;
+  }
+}
+function drainFolds() {
+  if (foldOlds.size === 0)
+    return;
+  const e = [...foldOlds];
+  foldOlds.clear();
+  for (const [t, n] of e) {
+    if (t.pb !== null) {
+      let e2 = false;
+      const r = t.pb;
+      const i = t.n;
+      if (i !== null) {
+        for (const t2 of Reflect.ownKeys(i)) {
+          const n2 = i[t2];
+          if (n2._e !== NOT_PENDING) {
+            e2 = true;
+            break;
+          }
+        }
+      }
+      if (e2) {
+        foldOlds.set(t, n);
+        continue;
+      }
+      t.v = r;
+      t.ch = false;
+      t.pb = null;
+    }
+    if (t.v === n)
+      continue;
+    if (t.u && t.u.v[t.pk] === n) {
+      privatizeCommitted(t.u);
+      devAssertNeverUserMutation(t.u.v);
+      t.u.v[t.pk] = t.v;
+    }
+    if (t.adopted) {
+      t.adopted = false;
+      notifyFold(t, n, t.v);
+    }
+  }
+}
+function notifyWrites(e) {
+  const t = e.pb;
+  if (t === null)
+    return;
+  if (e.fam?.opt) {
+    if (!projectionWriteActive && !getWriteOverride()) {
+      optHooks.notifyOptimisticWrites(e, t);
       return;
-    const n = Reflect.getOwnPropertyDescriptor(t, r);
-    if (n?.get || n?.set)
-      return n;
-    const o = Reflect.getOwnPropertyDescriptor(e, r);
-    if (!o)
-      return n;
-    if (o.get || o.set)
-      return o;
-    o.value = t[r];
-    return o;
-  }
-  return Reflect.getOwnPropertyDescriptor(e, r);
-}
-function prepareStoreWrite(e, t, r) {
-  if (e[STORE_OPTIMISTIC]) {
-    const t2 = e[STORE_FIREWALL];
-    if (t2?.Ne) {
-      globalQueue.initTransition(t2.Ne);
+    }
+    if (!projectionWriteActive) {
+      setProjectionWriteActive(true);
+      try {
+        notifyWrites(e);
+      } finally {
+        setProjectionWriteActive(false);
+      }
+      return;
     }
   }
-  const n = e[STORE_VALUE];
-  const o = n[r];
-  if (snapshotCaptureActive && typeof r !== "symbol" && !((e[STORE_FIREWALL]?.S ?? 0) & STATUS_PENDING)) {
-    if (!e[STORE_SNAPSHOT_PROPS]) {
-      e[STORE_SNAPSHOT_PROPS] = Object.create(null);
-      snapshotSources?.add(e);
-    }
-    if (!(r in e[STORE_SNAPSHOT_PROPS])) {
-      e[STORE_SNAPSHOT_PROPS][r] = o;
+  const n = e.v;
+  const r = e.n;
+  if (r !== null) {
+    for (const e2 of Reflect.ownKeys(r)) {
+      const i2 = r[e2];
+      if (i2.acc === true || hasOwn.call(t, e2) && lookupGetter.call(t, e2) !== undefined) {
+        i2.acc = isOwnAccessor(t, e2);
+        const r2 = Object.getOwnPropertyDescriptor(n, e2);
+        const o2 = Object.getOwnPropertyDescriptor(t, e2);
+        if (r2 && (r2.get || r2.set) || o2 && (o2.get || o2.set)) {
+          if (r2?.get !== o2?.get || r2?.set !== o2?.set || r2?.value !== o2?.value)
+            setSignal(i2, () => FORCE);
+          continue;
+        }
+        if (!isEqual(r2?.value, o2?.value))
+          setSignal(i2, () => o2?.value);
+        continue;
+      }
+      const o = t[e2];
+      setSignal(i2, () => o);
     }
   }
-  const i = e[STORE_OPTIMISTIC] && !projectionWriteActive;
-  const O = i ? STORE_OPTIMISTIC_OVERRIDE : STORE_OVERRIDE;
-  return {
-    base: o,
-    overrideKey: O,
-    state: n
-  };
-}
-function armOptimisticStoreWrite(e, t) {
-  if (e[STORE_OPTIMISTIC] && !projectionWriteActive) {
-    GlobalQueue.Nn(t);
+  const i = e.h;
+  if (i !== null) {
+    for (const e2 of Reflect.ownKeys(i))
+      setSignal(i[e2], e2 in t);
   }
-}
-function stampOptimisticOwner(e, t, r) {
-  if (t === STORE_OPTIMISTIC_OVERRIDE)
-    (e[STORE_OPTIMISTIC_OWNERS] ??= Object.create(null))[r] = activeTransition;
-}
-function upsertStoreNode(e, t, r, n, o) {
-  if (t[r])
-    return t[r];
-  const i = isWrappable(n) ? wrap(n, e) : n;
-  const O = getNode(e, t, r, i, isEqual, o);
-  registerTransientStoreNode(O);
-  return O;
-}
-function notifyStoreProperty(e, t, r, n, o, i) {
-  const O = projectionWriteActive || e[STORE_OPTIMISTIC];
-  const s = r !== "delete";
-  const E = e[STORE_HAS]?.[t];
-  if (E) {
-    setSignal(E, s);
-  } else if (!O && r !== "invalidate" && i !== s) {
-    const r2 = upsertStoreNode(e, getNodes(e, STORE_HAS), t, i);
-    setSignal(r2, s);
-  }
-  const S = getNodes(e, STORE_NODE);
-  if (r === "set") {
-    if (S[t]) {
-      setSignal(S[t], () => isWrappable(n) ? wrap(n, e) : n);
-    } else if (!O) {
-      const r2 = upsertStoreNode(e, S, t, o, e[STORE_SNAPSHOT_PROPS]);
-      setSignal(r2, () => isWrappable(n) ? wrap(n, e) : n);
+  if (e.dk !== null) {
+    for (const r2 of Reflect.ownKeys(t)) {
+      const i2 = t[r2];
+      const o = n[r2];
+      if (i2 !== null && typeof i2 === "object" ? !targetsEqual(o, i2) : !isEqual(o, i2)) {
+        bumpDeep(e);
+        break;
+      }
     }
-  } else if (r === "invalidate") {
-    if (S[t]) {
-      setSignal(S[t], {});
-      delete S[t];
+  }
+  if (e.k !== null) {
+    const r2 = Array.isArray(t) && Array.isArray(n) ? arrayStructureChanged(n, t) : membershipChanged(n, t);
+    if (r2)
+      setSignal(e.k, (e2) => e2 + 1);
+  }
+  if (e.fam !== null && e.pb !== null && getWriteOverride()) {
+    const n2 = e.v;
+    e.pb = null;
+    e.v = t;
+    e.ch = false;
+    if (e.u && e.u.v[e.pk] === n2) {
+      privatizeCommitted(e.u);
+      devAssertNeverUserMutation(e.u.v);
+      e.u.v[e.pk] = t;
+    }
+  }
+}
+var FORCE = Symbol();
+function targetsEqual(e, t) {
+  if (e === null || typeof e !== "object")
+    return false;
+  const n = storeNextLookup.get(e);
+  return n !== undefined && n === storeNextLookup.get(t);
+}
+function arrayStructureChanged(e, t) {
+  if (e.length !== t.length)
+    return true;
+  for (let n = 0;n < t.length; n++) {
+    const r = e[n];
+    const i = t[n];
+    if (!isEqual(r, i) && !targetsEqual(r, i))
+      return true;
+  }
+  return false;
+}
+function membershipChanged(e, t) {
+  const n = Reflect.ownKeys(t);
+  if (Reflect.ownKeys(e).length !== n.length)
+    return true;
+  for (const t2 of n)
+    if (!(t2 in e))
+      return true;
+  return false;
+}
+function notifyKeyDiff(e, t, n, r, i = true) {
+  if (e.acc === true || i && hasOwn.call(r, t) && lookupGetter.call(r, t) !== undefined) {
+    e.acc = isOwnAccessor(r, t);
+    const i2 = Object.getOwnPropertyDescriptor(n, t);
+    const o = Object.getOwnPropertyDescriptor(r, t);
+    if (i2 && (i2.get || i2.set) || o && (o.get || o.set)) {
+      if (i2?.get !== o?.get || i2?.set !== o?.set || i2?.value !== o?.value)
+        setSignal(e, () => FORCE);
+      return;
+    }
+    const f = i2?.value;
+    const u = o?.value;
+    if (!isEqual(f, u) && !targetsEqual(f, u))
+      setSignal(e, typeof u === "function" ? () => u : u);
+  } else {
+    const i2 = n[t];
+    const o = r[t];
+    if (!isEqual(i2, o) && !targetsEqual(i2, o))
+      setSignal(e, typeof o === "function" ? () => o : o);
+  }
+}
+function hasAccessorFlag(e) {
+  return e.acc === true;
+}
+function notifyKeyValue(e, t, n, r, i, o) {
+  if (e.acc === true) {
+    notifyKeyDiff(e, t, i, o, false);
+    return;
+  }
+  if (!isEqual(n, r) && !targetsEqual(n, r))
+    setSignal(e, typeof r === "function" ? () => r : r);
+}
+function notifyFoldTail(e, t, n) {
+  const r = e.h;
+  if (r !== null) {
+    for (const e2 of Reflect.ownKeys(r))
+      setSignal(r[e2], e2 in n);
+  }
+  if (e.k !== null) {
+    const r2 = Array.isArray(n) && Array.isArray(t) ? arrayStructureChanged(t, n) : membershipChanged(t, n);
+    if (r2)
+      setSignal(e.k, (e2) => e2 + 1);
+  }
+}
+function notifyFold(e, t, n) {
+  if (e.dk !== null && t !== n)
+    bumpDeep(e);
+  if (e.fam?.opt && !projectionWriteActive) {
+    setProjectionWriteActive(true);
+    try {
+      notifyFold(e, t, n);
+    } finally {
+      setProjectionWriteActive(false);
+    }
+    return;
+  }
+  const r = e.n;
+  if (r !== null) {
+    for (const e2 of Reflect.ownKeys(r)) {
+      notifyKeyDiff(r[e2], e2, t, n);
+    }
+  }
+  const i = e.h;
+  if (i !== null) {
+    for (const e2 of Reflect.ownKeys(i))
+      setSignal(i[e2], e2 in n);
+  }
+  if (e.k !== null) {
+    const r2 = Array.isArray(n) && Array.isArray(t) ? arrayStructureChanged(t, n) : membershipChanged(t, n);
+    if (r2)
+      setSignal(e.k, (e2) => e2 + 1);
+  }
+}
+var writing = 0;
+var writeScopes = null;
+function scopeKey(e) {
+  if (e.fam !== null)
+    return e.fam;
+  let t = e;
+  while (t.u !== null)
+    t = t.u;
+  return t;
+}
+function inDraft(e) {
+  return writeScopes !== null && writeScopes.has(scopeKey(e));
+}
+function serveShallow(e, t, n) {
+  if (n !== null && typeof n === "object" && n[$TARGET] !== undefined)
+    return draftServe(e, wrapNext(n, e, t));
+  return n;
+}
+function draftServe(e, t) {
+  if (writeScopes !== null && inDraft(e)) {
+    const e2 = t?.[$TARGET];
+    if (e2 !== undefined && e2.v !== undefined)
+      writeScopes.add(scopeKey(e2));
+  }
+  return t;
+}
+var pendingNotify = new Set;
+var UNSAFE_KEYS = new Set(["__proto__", "prototype", "constructor"]);
+function inOwnerContext() {
+  const e = getOwner();
+  if (e === null)
+    return false;
+  const t = e.Tt ? e.It : e;
+  return t != null && !(t.T & CONFIG_CHILDREN_FORBIDDEN);
+}
+function foldHeld(e) {
+  const t = e.n;
+  if (t === null)
+    return false;
+  for (const e2 of Reflect.ownKeys(t)) {
+    const n = t[e2];
+    if (n._e !== NOT_PENDING && n.Ne != null && n.Ne.fn !== true)
+      return true;
+  }
+  return false;
+}
+function readSource(e) {
+  if (e.pb !== null && (inDraft(e) || getWriteOverride() || inOwnerContext() || e.fam !== null && !foldHeld(e)))
+    return e.pb;
+  return e.v;
+}
+var hasOwn = Object.prototype.hasOwnProperty;
+var lookupGetter = Object.prototype.__lookupGetter__;
+var lookupSetter = Object.prototype.__lookupSetter__;
+function isOwnAccessor(e, t) {
+  return hasOwn.call(e, t) && (lookupGetter.call(e, t) !== undefined || lookupSetter.call(e, t) !== undefined);
+}
+function hasActiveOverride2(e) {
+  return e.De !== undefined && e.De !== NOT_PENDING;
+}
+function nodeValue(e, t) {
+  const n = hasActiveOverride2(e) ? unwrapOverride(e.De) : e._e !== NOT_PENDING && inOwnerContext() ? e._e : t;
+  return n === FORCE ? t : n;
+}
+function serveDataKey(e, t, n, r, i) {
+  const o = e.ch && r === e.v;
+  let f = n;
+  if (t === "length" && e.fam?.opt === true && !o && Array.isArray(r)) {
+    if (!inDraft(e)) {
+      const r2 = e.n?.length;
+      if (r2 !== undefined) {
+        if (getObserver() !== null)
+          read(r2);
+      } else if (getObserver() !== null) {
+        read(getNode(e, t, n));
+      }
+    }
+    return optHooks.optimisticView(e, r).length;
+  }
+  if (inDraft(e)) {
+    if (e.fam?.opt && e.pb === null) {
+      const n2 = e.n?.[t];
+      if (n2 !== undefined && hasActiveOverride2(n2))
+        f = unwrapOverride(n2.De);
     }
   } else {
-    if (S[t]) {
-      setSignal(S[t], undefined);
-    } else if (!O) {
-      const r2 = upsertStoreNode(e, S, t, o, e[STORE_SNAPSHOT_PROPS]);
-      setSignal(r2, undefined);
+    if (i !== undefined) {
+      if (getObserver() !== null) {
+        let e2 = readNodeFast(i);
+        if (e2 === READ_SLOW)
+          e2 = read(i);
+        if (!o || hasActiveOverride2(i))
+          f = e2 === FORCE ? n : e2;
+      } else if (!o || hasActiveOverride2(i)) {
+        f = nodeValue(i, n);
+      }
+    } else if (getObserver() !== null) {
+      read(getNode(e, t, n));
     }
   }
-  notifySelf(e);
+  if (e.s)
+    return serveShallow(e, t, f);
+  if (i !== undefined) {
+    if (i.pxv === f && f !== undefined)
+      return draftServe(e, i.px);
+    if (!isWrappable(f))
+      return f;
+    const n2 = wrapNext(f, e, t);
+    i.px = n2;
+    i.pxv = f;
+    return draftServe(e, n2);
+  }
+  if (!isWrappable(f))
+    return f;
+  return draftServe(e, wrapNext(f, e, t));
 }
-var Writing = null;
-function throwIfUnreadable(e) {
-  const t = e[STORE_FIREWALL];
-  if (!t)
-    return;
-  const r = t.S;
-  if (r & STATUS_ERROR || r & STATUS_UNINITIALIZED && r & STATUS_PENDING)
-    throw t._ ?? new NotReadyError(t);
+function firewallGate(e) {
+  const t = e.fam?.node;
+  if (t != null && t.S & (STATUS_UNINITIALIZED | STATUS_ERROR))
+    read(t);
 }
-var storeTraps = {
-  get(e, t, r) {
-    if (t === $TARGET)
-      return e;
-    if (t === $PROXY)
-      return r;
-    if (t === $REFRESH)
-      return e[STORE_FIREWALL];
+var traps = {
+  get(e, t, n) {
+    if (typeof t !== "string") {
+      if (t === $TARGET)
+        return e;
+      if (t === $PROXY)
+        return n;
+      if (t === $REFRESH)
+        return e.fam?.node ?? undefined;
+      if (t === $TRACK) {
+        if (pendingCheckActive)
+          witnessAffectsMark(e, t);
+        if (e.fam !== null && getObserver() === null && !inDraft(e))
+          firewallGate(e);
+        if (!inDraft(e) && getObserver() !== null) {
+          read(getKeySetNode(e));
+          const t2 = readSource(e);
+          if (t2[$TARGET] !== undefined)
+            t2[$TRACK];
+        }
+        return;
+      }
+    }
     if (pendingCheckActive)
       witnessAffectsMark(e, t);
-    if (t === $TRACK) {
-      trackSelf(e);
-      return r;
-    }
-    if (e[STORE_FIREWALL] === undefined && e[STORE_OVERRIDE] === undefined && e[STORE_OPTIMISTIC_OVERRIDE] === undefined && !writeOverride && (Writing === null || !Writing.has(r))) {
-      const r2 = e[STORE_NODE];
-      const n2 = r2 && r2[t];
-      if (n2 !== undefined && e[STORE_VALUE][$TARGET] === undefined) {
-        let t2 = readNodeFast(n2);
-        if (t2 === READ_SLOW)
-          t2 = read(n2);
-        if (t2 === $DELETED)
-          t2 = undefined;
-        if (!snapshotCaptureActive) {
-          return t2;
+    if (e.fam !== null && getObserver() === null && !inDraft(e))
+      firewallGate(e);
+    const r = readSource(e);
+    if (e.ch === false && writeScopes === null) {
+      const n2 = e.n?.[t];
+      if (n2 !== undefined && n2.acc !== true && getObserver() !== null) {
+        let r2 = readNodeFast(n2);
+        if (r2 === READ_SLOW)
+          r2 = read(n2);
+        if (r2 === null || typeof r2 !== "object")
+          return r2;
+        if (e.s)
+          return serveShallow(e, t, r2);
+        if (n2.pxv === r2)
+          return n2.px;
+        if (isWrappable(r2)) {
+          const i2 = wrapNext(r2, e, t);
+          n2.px = i2;
+          n2.pxv = r2;
+          return i2;
         }
-        return isWrappable(t2) ? wrap(t2, e) : t2;
+        return r2;
       }
     }
-    const n = getObserver() === e[STORE_FIREWALL];
-    const o = getNodes(e, STORE_NODE);
-    const i = n ? undefined : o[t];
-    const O = e[STORE_VALUE];
-    if (!i && !e[STORE_OVERRIDE] && !e[STORE_OPTIMISTIC_OVERRIDE] && !e[STORE_CUSTOM_PROTO] && !e[STORE_OPTIMISTIC] && !e[STORE_SNAPSHOT_PROPS] && !O[$TARGET] && !(t in O) && getObserver() && !n && !writeOnly(r)) {
-      return read(getNode(e, o, t, undefined));
+    const i = e.n?.[t];
+    {
+      const o2 = i !== undefined ? i.acc === true : !writing && getObserver() !== null && isOwnAccessor(r, t);
+      if (o2) {
+        if (!writing && getObserver() !== null)
+          read(i ?? getNode(e, t, undefined));
+        const o3 = Reflect.get(r, t, n);
+        if (e.s)
+          return serveShallow(e, t, o3);
+        return isWrappable(o3) ? draftServe(e, wrapNext(o3, e, t)) : o3;
+      }
     }
-    const s = getOverlayLayer(e, t);
-    const E = !!s;
-    const S = !!e[STORE_VALUE][$TARGET];
-    const T = s ?? e[STORE_VALUE];
-    if (!i) {
-      const n2 = Object.getOwnPropertyDescriptor(T, t);
-      if (n2 && n2.get)
-        return n2.get.call(r);
-      if (!n2 && !E && e[STORE_CUSTOM_PROTO]) {
-        const e2 = unwrapStoreValue(T);
-        if (hasInheritedAccessor(e2, t)) {
-          return Reflect.get(T, t, r);
+    if ((t === "constructor" || t === "__proto__" || t === "prototype") && !hasOwn.call(r, t))
+      return;
+    let o = r[t];
+    if (o === undefined ? !hasOwn.call(r, t) : false) {
+      o = Reflect.get(r, t, n);
+      if (typeof o === "function")
+        return o;
+      if (o === undefined && !writing) {
+        if (getObserver() !== null)
+          read(getNode(e, t, undefined));
+        const n2 = e.n?.[t];
+        if (n2) {
+          const r2 = nodeValue(n2, undefined);
+          if (e.s)
+            return serveShallow(e, t, r2);
+          return isWrappable(r2) ? draftServe(e, wrapNext(r2, e, t)) : r2;
         }
+      } else if (o === undefined && inDraft(e) && e.fam?.opt && e.pb === null) {
+        const n2 = e.n?.[t];
+        if (n2 !== undefined && hasActiveOverride2(n2))
+          o = unwrapOverride(n2.De);
       }
+      if (e.s)
+        return serveShallow(e, t, o);
+      return isWrappable(o) ? draftServe(e, wrapNext(o, e, t)) : o;
     }
-    if (writeOnly(r)) {
-      if (isPrototypePollutionKey(t) && !hasOwnStoreProperty(e, t))
-        return;
-      let r2 = i && (E || !S) ? visibleNodeValue(i) : T[t];
-      r2 === $DELETED && (r2 = undefined);
-      if (!isWrappable(r2))
-        return r2;
-      if (e[STORE_SHALLOW])
-        return r2;
-      const n2 = wrap(r2, e);
-      Writing?.add(n2);
-      return n2;
-    }
-    let c = i ? E || !S ? read(o[t]) : (read(o[t]), T[t]) : T[t];
-    c === $DELETED && (c = undefined);
-    if (!i) {
-      if (!E && typeof c === "function" && !Object.prototype.hasOwnProperty.call(T, t)) {
-        let t2;
-        return !Array.isArray(e[STORE_VALUE]) && (t2 = Object.getPrototypeOf(e[STORE_VALUE])) && t2 !== Object.prototype ? c.bind(T) : c;
-      } else if (getObserver() && !n) {
-        return read(getNode(e, o, t, isWrappable(c) ? wrap(c, e) : c, isEqual, e[STORE_SNAPSHOT_PROPS]));
-      }
-    }
-    if (!n && !getObserver())
-      throwIfUnreadable(e);
-    return isWrappable(c) ? wrap(c, e) : c;
+    if (typeof o === "function" && !hasOwn.call(r, t))
+      return o;
+    return serveDataKey(e, t, o, r, i);
   },
   has(e, t) {
-    if (t === $PROXY || t === $TRACK || t === "__proto__")
+    if (t === $TARGET || t === $PROXY || t === $TRACK)
       return true;
     if (pendingCheckActive)
       witnessAffectsMark(e, t);
-    const r = getOverlayLayer(e, t);
-    const n = r ? r[t] !== $DELETED : (t in e[STORE_VALUE]);
-    if (writeOnly(e[$PROXY]) || getObserver() === e[STORE_FIREWALL])
-      return n;
-    const o = getNodes(e, STORE_HAS);
-    if (o[t])
-      return read(o[t]);
-    if (getObserver()) {
-      return read(getNode(e, o, t, n));
+    if (e.fam !== null && getObserver() === null && !inDraft(e))
+      firewallGate(e);
+    const n = readSource(e);
+    let r = t in n;
+    if (!inDraft(e)) {
+      if (getObserver() !== null) {
+        const n2 = getHasNode(e, t, r);
+        const i = read(n2);
+        if (hasActiveOverride2(n2))
+          r = !!i;
+      } else {
+        const n2 = e.h?.[t];
+        if (n2 !== undefined && hasActiveOverride2(n2))
+          r = !!unwrapOverride(n2.De);
+      }
+    } else if (e.fam?.opt && e.pb === null) {
+      const n2 = e.h?.[t];
+      if (n2 !== undefined && hasActiveOverride2(n2))
+        r = !!unwrapOverride(n2.De);
     }
-    throwIfUnreadable(e);
-    return n;
-  },
-  set(e, t, r) {
-    if (t === "__proto__")
-      return true;
-    const n = e[$PROXY];
-    if (writeOnly(n)) {
-      untrack(() => {
-        const { base: o, overrideKey: i, state: O } = prepareStoreWrite(e, n, t);
-        const s = getOverlayLayer(e, t);
-        const E = s ? s[t] : o;
-        const S = s ? s[t] !== $DELETED : (t in e[STORE_VALUE]);
-        const T = !!e[STORE_SHALLOW] && r?.[$TARGET] !== undefined;
-        const c = T ? r : unwrapStoreValue(r);
-        if (e[STORE_SHALLOW] && !T && isWrappable(c)) {
-          rawValuesUsed = true;
-          rawValues.add(c);
-        }
-        const f = typeof t === "string" ? Number(t) : -1;
-        const R = Array.isArray(O) && Number.isInteger(f) && f >= 0 && f < 4294967295 && String(f) === t;
-        const u = R ? f + 1 : 0;
-        const a = R && (getOverlayLayer(e, "length") ?? O).length;
-        const l = R && u > a ? u : undefined;
-        if (E === c && l === undefined)
-          return true;
-        armOptimisticStoreWrite(e, n);
-        if (c !== undefined && c === o && l === undefined) {
-          delete e[i]?.[t];
-          if (i === STORE_OPTIMISTIC_OVERRIDE)
-            delete e[STORE_OPTIMISTIC_OWNERS]?.[t];
-        } else {
-          const r2 = e[i] || (e[i] = Object.create(null));
-          r2[t] = c;
-          stampOptimisticOwner(e, i, t);
-          if (l !== undefined) {
-            r2.length = l;
-            stampOptimisticOwner(e, i, "length");
-          }
-        }
-        notifyStoreProperty(e, t, "set", c, E, S);
-        if (Array.isArray(O) && t === "length" && typeof c === "number" && typeof E === "number" && c < E) {
-          const t2 = e[i] || (e[i] = Object.create(null));
-          for (let r2 = c;r2 < E; r2++) {
-            if (t2[r2] === $DELETED)
-              continue;
-            const n2 = r2 in t2 ? t2[r2] : O[r2];
-            if (!(r2 in t2) && !(r2 in O))
-              continue;
-            t2[r2] = $DELETED;
-            stampOptimisticOwner(e, i, r2);
-            notifyStoreProperty(e, r2, "delete", undefined, n2, true);
-          }
-        }
-        if (Array.isArray(O) && t !== "length" && l !== undefined) {
-          const t2 = getNodes(e, STORE_NODE);
-          if (t2.length) {
-            setSignal(t2.length, l);
-          } else if (!projectionWriteActive && !e[STORE_OPTIMISTIC]) {
-            const r2 = upsertStoreNode(e, t2, "length", a, e[STORE_SNAPSHOT_PROPS]);
-            setSignal(r2, l);
-          }
-        }
-        if (false)
-          ;
-      });
-    }
-    return true;
-  },
-  defineProperty(e, t, r) {
-    if (t === "__proto__")
-      return true;
-    const n = e[$PROXY];
-    if (writeOnly(n)) {
-      untrack(() => {
-        const { base: o, overrideKey: i } = prepareStoreWrite(e, n, t);
-        armOptimisticStoreWrite(e, n);
-        const O = "value" in r ? {
-          ...r,
-          value: unwrapStoreValue(r.value)
-        } : r;
-        Object.defineProperty(e[i] || (e[i] = Object.create(null)), t, O);
-        stampOptimisticOwner(e, i, t);
-        notifyStoreProperty(e, t, "invalidate");
-        if (false)
-          ;
-      });
-    }
-    return true;
-  },
-  deleteProperty(e, t) {
-    if (t === "__proto__")
-      return true;
-    const r = e[STORE_OPTIMISTIC_OVERRIDE]?.[t] === $DELETED;
-    const n = e[STORE_OVERRIDE]?.[t] === $DELETED;
-    if (writeOnly(e[$PROXY]) && !r && !n) {
-      untrack(() => {
-        const r2 = e[STORE_OPTIMISTIC] && !projectionWriteActive;
-        const n2 = r2 ? STORE_OPTIMISTIC_OVERRIDE : STORE_OVERRIDE;
-        const o = getOverlayLayer(e, t);
-        const i = o ? o[t] : e[STORE_VALUE][t];
-        if (t in e[STORE_VALUE] || e[STORE_OVERRIDE] && t in e[STORE_OVERRIDE]) {
-          armOptimisticStoreWrite(e, e[$PROXY]);
-          (e[n2] || (e[n2] = Object.create(null)))[t] = $DELETED;
-          stampOptimisticOwner(e, n2, t);
-        } else if (e[n2] && t in e[n2]) {
-          armOptimisticStoreWrite(e, e[$PROXY]);
-          delete e[n2][t];
-          if (n2 === STORE_OPTIMISTIC_OVERRIDE)
-            delete e[STORE_OPTIMISTIC_OWNERS]?.[t];
-        } else
-          return true;
-        notifyStoreProperty(e, t, "delete", undefined, i, true);
-      });
-    }
-    return true;
+    return r;
   },
   ownKeys(e) {
     if (pendingCheckActive)
       witnessAffectsMark(e);
-    if (getObserver() !== e[STORE_FIREWALL]) {
-      trackSelf(e);
-      if (!getObserver() && !writeOnly(e[$PROXY]))
-        throwIfUnreadable(e);
-    }
-    let t = getKeys(e[STORE_VALUE], e[STORE_OVERRIDE], false);
-    if (e[STORE_OPTIMISTIC_OVERRIDE]) {
-      const r = new Set(t);
-      for (const t2 of Reflect.ownKeys(e[STORE_OPTIMISTIC_OVERRIDE])) {
-        if (e[STORE_OPTIMISTIC_OVERRIDE][t2] !== $DELETED)
-          r.add(t2);
+    if (e.fam !== null && getObserver() === null && !inDraft(e))
+      firewallGate(e);
+    if (!inDraft(e) && getObserver() !== null)
+      read(getKeySetNode(e));
+    const t = Reflect.ownKeys(readSource(e));
+    if (e.fam?.opt && e.h !== null && (!inDraft(e) || e.pb === null)) {
+      let n = null;
+      for (const r of Reflect.ownKeys(e.h)) {
+        const i = e.h[r];
+        if (!hasActiveOverride2(i))
+          continue;
+        n ??= new Set(t);
+        if (unwrapOverride(i.De))
+          n.add(r);
         else
-          r.delete(t2);
+          n.delete(r);
       }
-      t = Array.from(r);
+      if (n !== null)
+        return [...n];
     }
     return t;
   },
   getOwnPropertyDescriptor(e, t) {
-    if (t === $PROXY)
-      return {
-        value: e[$PROXY],
-        writable: true,
-        configurable: true
-      };
-    if (e[STORE_OPTIMISTIC_OVERRIDE] && t in e[STORE_OPTIMISTIC_OVERRIDE]) {
-      if (e[STORE_OPTIMISTIC_OVERRIDE][t] === $DELETED)
-        return;
-      const r2 = Reflect.getOwnPropertyDescriptor(e[STORE_OPTIMISTIC_OVERRIDE], t);
-      if (r2?.get || r2?.set || !(t in e[STORE_VALUE]))
-        return r2;
-      const n = getPropertyDescriptor(e[STORE_VALUE], e[STORE_OVERRIDE], t);
-      if (n) {
-        const r3 = Reflect.getOwnPropertyDescriptor(e, t);
-        const o = !r3 || r3.configurable ? true : n.configurable;
-        return {
-          ...n,
-          configurable: o,
-          value: e[STORE_OPTIMISTIC_OVERRIDE][t]
-        };
+    const n = Object.getOwnPropertyDescriptor(readSource(e), t);
+    if (e.fam?.opt && !inDraft(e)) {
+      const r = e.h?.[t];
+      if (r !== undefined && hasActiveOverride2(r)) {
+        if (!unwrapOverride(r.De))
+          return;
+        if (n === undefined) {
+          const n2 = e.n?.[t];
+          return {
+            value: n2 !== undefined ? nodeValue(n2, undefined) : undefined,
+            writable: true,
+            enumerable: true,
+            configurable: true
+          };
+        }
       }
-      return {
-        value: e[STORE_OPTIMISTIC_OVERRIDE][t],
+    }
+    if (n === undefined)
+      return;
+    if (!(t === "length" && Array.isArray(e)))
+      n.configurable = true;
+    return n;
+  },
+  set(e, t, n) {
+    const r = inDraft(e);
+    const i = !r && getWriteOverride();
+    if (!r && !i)
+      return true;
+    if (t === "__proto__")
+      return true;
+    const o = ensurePB(e);
+    pendingNotify.add(e);
+    if (UNSAFE_KEYS.has(t)) {
+      Object.defineProperty(o, t, {
+        value: unwrapValue(n),
         writable: true,
         enumerable: true,
         configurable: true
-      };
+      });
+      return true;
     }
-    const r = getPropertyDescriptor(e[STORE_VALUE], e[STORE_OVERRIDE], t);
-    if (r && !r.configurable) {
-      const n = Reflect.getOwnPropertyDescriptor(e, t);
-      if (!n || n.configurable)
-        return {
-          ...r,
-          configurable: true
-        };
-    }
-    return r;
+    const f = e.s ? n : unwrapValue(n);
+    o[t] = f;
+    if (e.s && f !== null && typeof f === "object")
+      markRawOne(f);
+    if (i)
+      notifyWrites(e);
+    return true;
   },
-  getPrototypeOf(e) {
-    return Object.getPrototypeOf(e[STORE_VALUE]);
+  defineProperty(e, t, n) {
+    const r = inDraft(e);
+    const i = !r && getWriteOverride();
+    if (!r && !i)
+      return true;
+    if (t === "__proto__")
+      return true;
+    if (n.get || n.set)
+      e.a = true;
+    const o = ensurePB(e);
+    pendingNotify.add(e);
+    if ("value" in n)
+      n = {
+        ...n,
+        value: unwrapValue(n.value)
+      };
+    Object.defineProperty(o, t, n);
+    if (i)
+      notifyWrites(e);
+    return true;
+  },
+  deleteProperty(e, t) {
+    const n = inDraft(e);
+    const r = !n && getWriteOverride();
+    if (!n && !r)
+      return true;
+    const i = ensurePB(e);
+    pendingNotify.add(e);
+    delete i[t];
+    if (r)
+      notifyWrites(e);
+    return true;
   }
 };
-function storeSetter(e, t) {
-  const r = Writing;
-  Writing = new Set;
-  Writing.add(e);
+function storeSetterNext(e, t, n = true) {
+  const r = e[$TARGET];
+  const i = writeScopes;
+  writeScopes = new Set;
+  writeScopes.add(scopeKey(r));
+  writing++;
+  let o;
   try {
-    const r2 = t(e);
-    if (r2 !== e && r2 !== undefined) {
-      if (Array.isArray(r2)) {
-        for (let t2 = 0, n = r2.length;t2 < n; t2++)
-          e[t2] = r2[t2];
-        e.length = r2.length;
-      } else {
-        const t2 = new Set([...ownEnumerableKeys(e), ...ownEnumerableKeys(r2)]);
-        t2.forEach((t3) => {
-          if (t3 in r2)
-            e[t3] = r2[t3];
-          else
-            delete e[t3];
-        });
-      }
-    }
+    o = t(e);
   } finally {
-    Writing.clear();
-    Writing = r;
+    writing--;
+    writeScopes = i;
+    if (writing === 0 && pendingNotify.size) {
+      const e2 = [...pendingNotify];
+      pendingNotify.clear();
+      for (const t2 of e2)
+        notifyWrites(t2);
+    }
+  }
+  if (o !== undefined && o !== e && isWrappable(o)) {
+    if (r.fam?.opt && !projectionWriteActive && !getWriteOverride()) {
+      optHooks.notifyOptimisticWrites(r, unwrapValue(o));
+    } else {
+      adoptPB(r, unwrapValue(o));
+    }
   }
 }
-function createStore(e, t, r) {
-  const n = typeof e === "function", o = n ? createProjectionInternal(e, t, r).store : t?.shallow ? wrapShallow(e) : wrap(e);
-  return [o, n ? (e2) => {
-    suppressComputedRecompute(o[$REFRESH]);
-    storeSetter(o, e2);
-  } : (e2) => storeSetter(o, e2)];
+setNextAffectsNodeResolver((e, t) => t === $AFFECTS ? getNode(e, $AFFECTS, undefined) : getNode(e, t, (e.pb ?? e.v)[t]));
+function createStoreNext(e, t = false) {
+  const n = wrapNext(e);
+  if (t) {
+    n[$TARGET].s = true;
+    markRawIngest(e);
+  }
+  const setter = (e2) => storeSetterNext(n, e2);
+  return [n, setter];
 }
 
-// node_modules/.bun/@solidjs+signals@2.0.0-rc.0/node_modules/@solidjs/signals/dist/prod/map.js
+// node_modules/.bun/@solidjs+signals@2.0.0-rc.1/node_modules/@solidjs/signals/dist/prod/map.js
 function mapArray(t, s, i) {
   const e = typeof i?.keyed === "function" ? i.keyed : undefined;
   const r = s.length > 1;
@@ -3602,17 +3141,17 @@ function mapArray(t, s, i) {
     jt: 0,
     Wt: t,
     Mt: [],
-    Kt: n,
-    xt: [],
-    Ut: [],
-    $t: e,
-    qt: e || i?.keyed === false ? [] : undefined,
-    zt: r && i?.keyed !== false ? [] : undefined,
-    Bt: i?.keyed === false,
-    Ht: i?.fallback
+    xt: n,
+    Kt: [],
+    Ft: [],
+    Ut: e,
+    $t: e || i?.keyed === false ? [] : undefined,
+    qt: r && i?.keyed !== false ? [] : undefined,
+    zt: i?.keyed === false,
+    Bt: i?.fallback
   };
   const o = computed(updateKeyedMap.bind(h));
-  h.wt.dt = o;
+  h.wt.It = o;
   o.T &= ~CONFIG_AUTO_DISPOSE;
   return accessor(o);
 }
@@ -3623,40 +3162,40 @@ function updateKeyedMap() {
   const t = this.Wt() || [], s = t.length;
   t[$TRACK];
   runWithOwner(this.wt, () => {
-    let i, e, r, n, h = this.qt ? this.Bt ? () => {
+    let i, e, r, n, h = this.$t ? this.zt ? () => {
       r[e] = signal(t[e], pureOptions);
-      return this.Kt(accessor(r[e]), e);
+      return this.xt(accessor(r[e]), e);
     } : () => {
       r[e] = signal(t[e], pureOptions);
       n && (n[e] = signal(e, pureOptions));
-      return this.Kt(accessor(r[e]), n ? accessor(n[e]) : undefined);
-    } : this.zt ? () => {
+      return this.xt(accessor(r[e]), n ? accessor(n[e]) : undefined);
+    } : this.qt ? () => {
       const s2 = t[e];
       n[e] = signal(e, pureOptions);
-      return this.Kt(s2, accessor(n[e]));
+      return this.xt(s2, accessor(n[e]));
     } : () => {
       const s2 = t[e];
-      return this.Kt(s2);
+      return this.xt(s2);
     };
     if (s === 0) {
       if (this.jt !== 0) {
         this.wt.dispose(false);
-        this.Ut = [];
+        this.Ft = [];
         this.Mt = [];
-        this.xt = [];
+        this.Kt = [];
         this.jt = 0;
+        this.$t && (this.$t = []);
         this.qt && (this.qt = []);
-        this.zt && (this.zt = []);
       }
-      if (this.Ht && !this.xt[0]) {
-        this.Ut[0]?.dispose();
-        this.xt[0] = runWithOwner(this.Ut[0] = createOwner(), this.Ht);
+      if (this.Bt && !this.Kt[0]) {
+        this.Ft[0]?.dispose();
+        this.Kt[0] = runWithOwner(this.Ft[0] = createOwner(), this.Bt);
       }
     } else if (this.jt === 0) {
       const o = new Array(s);
       const c = new Array(s);
-      r = this.qt && new Array(s);
-      n = this.zt && new Array(s);
+      r = this.$t && new Array(s);
+      n = this.qt && new Array(s);
       try {
         for (e = 0;e < s; e++)
           o[e] = runWithOwner(c[e] = createOwner(), h);
@@ -3665,21 +3204,21 @@ function updateKeyedMap() {
           c[i]?.dispose();
         throw t2;
       }
-      if (this.Ut[0])
-        this.Ut[0].dispose();
-      this.xt = o;
-      this.Ut = c;
-      r && (this.qt = r);
-      n && (this.zt = n);
+      if (this.Ft[0])
+        this.Ft[0].dispose();
+      this.Kt = o;
+      this.Ft = c;
+      r && (this.$t = r);
+      n && (this.qt = n);
       this.Mt = t.slice(0);
       this.jt = s;
     } else {
       let o, c, a, f, u, p, w, l, d;
-      for (o = 0, c = Math.min(this.jt, s);o < c && (this.Mt[o] === t[o] || this.qt && compare(this.$t, this.Mt[o], t[o])); o++) {
-        if (this.qt)
-          setSignal(this.qt[o], t[o]);
+      for (o = 0, c = Math.min(this.jt, s);o < c && (this.Mt[o] === t[o] || this.$t && compare(this.Ut, this.Mt[o], t[o])); o++) {
+        if (this.$t)
+          setSignal(this.$t[o], t[o]);
       }
-      for (c = this.jt - 1, a = s - 1;c >= o && a >= o && (this.Mt[c] === t[a] || this.qt && compare(this.$t, this.Mt[c], t[a])); c--, a--)
+      for (c = this.jt - 1, a = s - 1;c >= o && a >= o && (this.Mt[c] === t[a] || this.$t && compare(this.Ut, this.Mt[c], t[a])); c--, a--)
         ;
       if (o === s && this.jt === s) {
         this.Mt = t.slice(0);
@@ -3688,30 +3227,30 @@ function updateKeyedMap() {
       const O = s - this.jt;
       const m = new Array(s);
       const _ = new Array(s);
-      r = this.qt ? new Array(s) : undefined;
-      n = this.zt ? new Array(s) : undefined;
+      r = this.$t ? new Array(s) : undefined;
+      n = this.qt ? new Array(s) : undefined;
       p = new Map;
       w = new Array(a + 1);
       for (e = a;e >= o; e--) {
         f = t[e];
-        u = this.$t ? this.$t(f) : f;
+        u = this.Ut ? this.Ut(f) : f;
         i = p.get(u);
         w[e] = i === undefined ? -1 : i;
         p.set(u, e);
       }
       for (i = o;i <= c; i++) {
         f = this.Mt[i];
-        u = this.$t ? this.$t(f) : f;
+        u = this.Ut ? this.Ut(f) : f;
         e = p.get(u);
         if (e !== undefined && e !== -1) {
-          m[e] = this.xt[i];
-          _[e] = this.Ut[i];
-          r && (r[e] = this.qt[i]);
-          n && (n[e] = this.zt[i]);
+          m[e] = this.Kt[i];
+          _[e] = this.Ft[i];
+          r && (r[e] = this.$t[i]);
+          n && (n[e] = this.qt[i]);
           e = w[e];
           p.set(u, e);
         } else
-          (l ??= []).push(this.Ut[i]);
+          (l ??= []).push(this.Ft[i]);
       }
       try {
         for (e = o;e <= a; e++) {
@@ -3727,10 +3266,10 @@ function updateKeyedMap() {
         throw t2;
       }
       for (i = 0;i < o; i++) {
-        m[i] = this.xt[i];
-        _[i] = this.Ut[i];
-        r && (r[i] = this.qt[i]);
-        n && (n[i] = this.zt[i]);
+        m[i] = this.Kt[i];
+        _[i] = this.Ft[i];
+        r && (r[i] = this.$t[i]);
+        n && (n[i] = this.qt[i]);
       }
       for (e = o;e <= a; e++) {
         if (r)
@@ -3739,22 +3278,22 @@ function updateKeyedMap() {
           setSignal(n[e], e);
       }
       for (e = a + 1;e < s; e++) {
-        m[e] = this.xt[e - O];
-        _[e] = this.Ut[e - O];
+        m[e] = this.Kt[e - O];
+        _[e] = this.Ft[e - O];
         if (r) {
-          r[e] = this.qt[e - O];
+          r[e] = this.$t[e - O];
           setSignal(r[e], t[e]);
         }
         if (n) {
-          n[e] = this.zt[e - O];
+          n[e] = this.qt[e - O];
           if (O !== 0)
             setSignal(n[e], e);
         }
       }
-      this.xt = m;
-      this.Ut = _;
-      r && (this.qt = r);
-      n && (this.zt = n);
+      this.Kt = m;
+      this.Ft = _;
+      r && (this.$t = r);
+      n && (this.qt = n);
       this.jt = s;
       this.Mt = t.slice(0);
       if (l)
@@ -3762,131 +3301,365 @@ function updateKeyedMap() {
           l[i].dispose();
     }
   });
-  return this.xt;
+  return this.Kt;
 }
 function compare(t, s, i) {
   return t ? t(s) === t(i) : true;
 }
-// node_modules/.bun/@solidjs+signals@2.0.0-rc.0/node_modules/@solidjs/signals/dist/prod/store/utils.js
-function trueFn() {
-  return true;
-}
-var propTraps = {
-  get(e, t, r) {
-    if (t === $PROXY)
-      return r;
-    return e.get(t);
-  },
-  has(e, t) {
-    if (t === $PROXY)
-      return true;
-    return e.has(t);
-  },
-  set: trueFn,
-  deleteProperty: trueFn,
-  getOwnPropertyDescriptor(e, t) {
-    return {
-      configurable: true,
-      enumerable: true,
-      get() {
-        return e.get(t);
-      },
-      set: trueFn,
-      deleteProperty: trueFn
-    };
-  },
-  ownKeys(e) {
-    return e.keys();
+// node_modules/.bun/@solidjs+signals@2.0.0-rc.1/node_modules/@solidjs/signals/dist/prod/store/next/reconcile.js
+function reconcileNextState(e, t, n, o = false) {
+  if (t == null)
+    throw new Error("");
+  const f = t?.[$TARGET];
+  if (f === undefined || f.px !== t)
+    throw new Error("");
+  let l = n === null ? null : typeof n === "string" ? (e2) => e2?.[n] : n;
+  if (o && e !== t && e?.[$TARGET] !== undefined) {
+    const t2 = f.pb ?? f.v;
+    if (t2 === e)
+      return;
+    adoptPB(f, e);
+    return;
   }
-};
-function resolveSource(e) {
-  return !(e = typeof e === "function" ? e() : e) ? {} : e;
-}
-var $SOURCES = Symbol(0);
-function merge(...e) {
-  if (e.length === 1 && typeof e[0] !== "function")
-    return e[0];
-  let t = false;
-  const r = [];
-  for (let n2 = 0;n2 < e.length; n2++) {
-    const o2 = e[n2];
-    t = t || !!o2 && $PROXY in o2;
-    const s2 = !!o2 && o2[$SOURCES];
-    if (s2) {
-      for (let e2 = 0;e2 < s2.length; e2++)
-        r.push(s2[e2]);
-    } else
-      r.push(typeof o2 === "function" ? (t = true, createMemo(o2)) : o2);
-  }
-  if (SUPPORTS_PROXY && t) {
-    return new Proxy({
-      get(e2) {
-        if (e2 === $SOURCES)
-          return r;
-        for (let t2 = r.length - 1;t2 >= 0; t2--) {
-          const n2 = resolveSource(r[t2]);
-          if (e2 in n2)
-            return n2[e2];
-        }
-      },
-      has(e2) {
-        for (let t2 = r.length - 1;t2 >= 0; t2--) {
-          if (e2 in resolveSource(r[t2]))
-            return true;
-        }
-        return false;
-      },
-      keys() {
-        const e2 = new Set;
-        for (let t2 = 0;t2 < r.length; t2++) {
-          const n2 = ownEnumerableKeys(resolveSource(r[t2]));
-          for (let t3 = 0;t3 < n2.length; t3++)
-            e2.add(n2[t3]);
-        }
-        return [...e2];
-      }
-    }, propTraps);
-  }
-  const n = Object.create(null);
-  let o = false;
-  let s = r.length - 1;
-  for (let e2 = s;e2 >= 0; e2--) {
-    const t2 = r[e2];
-    if (!t2) {
-      e2 === s && s--;
-      continue;
+  const i = unwrapValue(e);
+  if (l) {
+    const e2 = f.pb ?? f.v;
+    const t2 = l(e2);
+    if (t2 !== undefined && l(i) !== t2) {
+      if (!o)
+        throw new Error("");
+      (f.fam?.map ?? storeNextLookup).delete(f.pb ?? f.v);
+      adoptPB(f, i);
+      return;
     }
-    const i2 = Object.getOwnPropertyNames(t2);
-    for (let r2 = i2.length - 1;r2 >= 0; r2--) {
-      const c2 = i2[r2];
-      if (c2 === "__proto__" || c2 === "constructor")
+  }
+  if (f.fam?.opt === true && !projectionWriteActive && !getWriteOverride()) {
+    optHooks.applyTentative(f, i, l);
+    return;
+  }
+  applyAdopt(f, i, l, o);
+}
+function applyAdopt(e, t, n, o = false) {
+  const f = e.pb ?? e.v;
+  if (t === f && !ownedRaw.has(f))
+    return;
+  const l = e.fam;
+  const i = l?.opt === true ? optHooks.optimisticView(e, f) : f;
+  const r = Array.isArray(t);
+  const u = l === null;
+  const s = e.s === true;
+  const c = e.v;
+  adoptPB(e, t, u);
+  if (s)
+    markRawIngest(t);
+  if (Array.isArray(i) !== r) {
+    if (u)
+      notifyFold(e, c, t);
+    return;
+  }
+  if (r) {
+    const f2 = i;
+    const r2 = t;
+    const a = u ? e.n : null;
+    let p = 0;
+    if (n && !s) {
+      const i2 = f2.length;
+      const u2 = r2.length;
+      let s2 = false;
+      let d = 0;
+      for (const y2 = Math.min(i2, u2);d < y2; d++) {
+        const i3 = r2[d];
+        const u3 = f2[d];
+        if (u3 !== i3 && !(u3 !== null && typeof u3 === "object" && i3 !== null && typeof i3 === "object" && n(u3) === n(i3)))
+          break;
+        if ((u3 !== i3 || i3 !== null && typeof i3 === "object" && ownedRaw.has(i3)) && i3 !== null && typeof i3 === "object")
+          descend(unwrapValue(u3), i3, n, l, o);
+        if (e.dk !== null && !s2 && !(i3 !== null && typeof i3 === "object" ? targetsEqual(u3, i3) : isEqual(u3, i3))) {
+          bumpDeep(e);
+          s2 = true;
+        }
+        if (a !== null) {
+          const e2 = a[d];
+          if (e2 !== undefined) {
+            p++;
+            notifyKeyValue(e2, d, c[d], i3, c, t);
+          }
+        }
+      }
+      if (e.dk !== null && !s2 && d < r2.length)
+        bumpDeep(e);
+      let y = null;
+      for (;d < r2.length; d++) {
+        const e2 = r2[d];
+        if (e2 !== null && typeof e2 === "object") {
+          const t2 = n(e2);
+          let i3;
+          if (t2 !== undefined) {
+            if (y === null) {
+              y = new Map;
+              for (let e3 = 0;e3 < f2.length; e3++) {
+                const t3 = unwrapValue(f2[e3]);
+                if (t3 !== null && typeof t3 === "object") {
+                  const e4 = n(t3);
+                  if (e4 !== undefined && !y.has(e4))
+                    y.set(e4, t3);
+                }
+              }
+            }
+            i3 = y.get(t2);
+          } else {
+            i3 = unwrapValue(f2[d]);
+          }
+          descend(i3, e2, n, l, o);
+        }
+        if (a !== null) {
+          const e3 = a[d];
+          if (e3 !== undefined) {
+            p++;
+            notifyKeyDiff(e3, d, c, t, false);
+          }
+        }
+      }
+    } else {
+      const i2 = Math.min(f2.length, r2.length);
+      const u2 = r2.length;
+      let d = false;
+      for (let y = 0;y < u2; y++) {
+        const u3 = r2[y];
+        if (!s && y < i2 && u3 !== null && typeof u3 === "object")
+          descend(unwrapValue(f2[y]), u3, n, l, o);
+        if (e.dk !== null && !d && !(u3 !== null && typeof u3 === "object" ? targetsEqual(f2[y], u3) : isEqual(f2[y], u3))) {
+          bumpDeep(e);
+          d = true;
+        }
+        if (a !== null) {
+          const e2 = a[y];
+          if (e2 !== undefined) {
+            p++;
+            notifyKeyDiff(e2, y, c, t, false);
+          }
+        }
+      }
+    }
+    if (u) {
+      if (a !== null && p < e.nc) {
+        for (const e2 of Reflect.ownKeys(a)) {
+          const n2 = typeof e2 === "string" ? +e2 : NaN;
+          if (!(n2 >= 0 && n2 < r2.length))
+            notifyKeyDiff(a[e2], e2, c, t, false);
+        }
+      }
+      notifyFoldTail(e, c, t);
+    }
+    return;
+  } else {
+    const f2 = u ? e.n : null;
+    let r2 = 0;
+    let a = false;
+    for (const u2 in t) {
+      const p2 = t[u2];
+      const d = c[u2];
+      const y = p2 !== null && typeof p2 === "object";
+      if (d === p2 && (!y || !ownedRaw.has(p2)) && (f2 === null || f2[u2] === undefined || !hasAccessorFlag(f2[u2]))) {
+        if (f2 !== null && f2[u2] !== undefined)
+          r2++;
         continue;
-      if (!n[c2]) {
-        o = o || e2 !== s;
-        const r3 = Object.getOwnPropertyDescriptor(t2, c2);
-        n[c2] = r3.get ? {
-          enumerable: true,
-          configurable: true,
-          get: r3.get.bind(t2)
-        } : r3;
+      }
+      if (y && !s)
+        descend(unwrapValue(i[u2]), p2, n, l, o);
+      if (e.dk !== null && !a && !(y ? targetsEqual(d, p2) : isEqual(d, p2))) {
+        bumpDeep(e);
+        a = true;
+      }
+      if (f2 !== null) {
+        const e2 = f2[u2];
+        if (e2 !== undefined) {
+          r2++;
+          notifyKeyValue(e2, u2, d, p2, c, t);
+        }
       }
     }
+    const p = Object.getOwnPropertySymbols(t);
+    for (let e2 = 0;e2 < p.length; e2++) {
+      const u2 = p[e2];
+      const a2 = t[u2];
+      if (!s && a2 !== null && typeof a2 === "object")
+        descend(unwrapValue(i[u2]), a2, n, l, o);
+      if (f2 !== null) {
+        const e3 = f2[u2];
+        if (e3 !== undefined) {
+          r2++;
+          notifyKeyValue(e3, u2, c[u2], a2, c, t);
+        }
+      }
+    }
+    if (u) {
+      if (f2 !== null && r2 < e.nc) {
+        for (const e2 of Reflect.ownKeys(f2)) {
+          if (!hasOwnP.call(t, e2))
+            notifyKeyDiff(f2[e2], e2, c, t, false);
+        }
+      }
+      notifyFoldTail(e, c, t);
+    }
+    return;
   }
-  if (!o)
-    return r[s];
-  const i = {};
-  const c = Object.keys(n);
-  for (let e2 = c.length - 1;e2 >= 0; e2--) {
-    const t2 = c[e2], r2 = n[t2];
-    if (r2.get)
-      Object.defineProperty(i, t2, r2);
-    else
-      i[t2] = r2.value;
-  }
-  i[$SOURCES] = r;
-  return i;
 }
-// node_modules/.bun/@solidjs+signals@2.0.0-rc.0/node_modules/@solidjs/signals/dist/prod/boundaries.js
+var hasOwnP = Object.prototype.hasOwnProperty;
+function descend(e, t, n, o, f = false) {
+  if (e === null || typeof e !== "object" || t === null || typeof t !== "object")
+    return;
+  const l = (o?.map ?? storeNextLookup).get(e);
+  if (l === undefined)
+    return;
+  if (!isWrappable(t))
+    return;
+  if (rawValuesUsed && isRawValue(t))
+    return;
+  t = unwrapValue(t);
+  if (Array.isArray(e) !== Array.isArray(t))
+    return;
+  if (n) {
+    const o2 = n(e);
+    const f2 = n(t);
+    if (o2 !== undefined && f2 !== undefined && o2 !== f2)
+      return;
+  }
+  if (!f && n !== null && !l.d)
+    return;
+  applyAdopt(l, t, n, f);
+}
+
+// node_modules/.bun/@solidjs+signals@2.0.0-rc.1/node_modules/@solidjs/signals/dist/prod/store/next/projection.js
+function createWriteTraps(e, t) {
+  const r = {
+    get(e2, t2) {
+      let o;
+      const i = projectionWriteActive;
+      setWriteOverride(true);
+      setProjectionWriteActive(true);
+      try {
+        o = e2[t2];
+      } finally {
+        setWriteOverride(false);
+        setProjectionWriteActive(i);
+      }
+      if (t2 === $TARGET)
+        return o;
+      return typeof o === "object" && o !== null ? new Proxy(o, r) : o;
+    },
+    has(e2, t2) {
+      let r2;
+      const o = projectionWriteActive;
+      setWriteOverride(true);
+      setProjectionWriteActive(true);
+      try {
+        r2 = t2 in e2;
+      } finally {
+        setWriteOverride(false);
+        setProjectionWriteActive(o);
+      }
+      return r2;
+    },
+    set(r2, o, i) {
+      if (e && !e())
+        return true;
+      const n = projectionWriteActive;
+      setWriteOverride(true);
+      setProjectionWriteActive(true);
+      try {
+        r2[o] = i;
+        t?.();
+      } finally {
+        setWriteOverride(false);
+        setProjectionWriteActive(n);
+      }
+      return true;
+    },
+    deleteProperty(r2, o) {
+      if (e && !e())
+        return true;
+      const i = projectionWriteActive;
+      setWriteOverride(true);
+      setProjectionWriteActive(true);
+      try {
+        delete r2[o];
+        t?.();
+      } finally {
+        setWriteOverride(false);
+        setProjectionWriteActive(i);
+      }
+      return true;
+    }
+  };
+  return r;
+}
+function createProjectionNextInternal(e, t, r) {
+  const o = {
+    map: new WeakMap,
+    node: null,
+    shallow: !!r?.shallow
+  };
+  const i = wrapNext(t, null, null, o);
+  if (o.shallow) {
+    i[$TARGET].s = true;
+    markRawIngest(t);
+  }
+  let n;
+  if (r?.seedLoadingValue)
+    n = {
+      loadingValue: undefined
+    };
+  const c = computed(() => {
+    if (!o.node)
+      o.node = getOwner();
+    runProjectionComputedNext(i, e, r?.key === undefined ? "id" : r.key);
+  }, n);
+  c.T &= ~CONFIG_AUTO_DISPOSE;
+  o.node = c;
+  return {
+    store: i,
+    node: c
+  };
+}
+function createStoreDerivedNext(e, t, r) {
+  const { store: o, node: i } = createProjectionNextInternal(e, t, r);
+  return [o, (e2) => {
+    suppressComputedRecompute(i);
+    storeSetterNext(o, e2);
+  }];
+}
+function runProjectionComputedNext(e, t, r, o, i) {
+  const n = getOwner();
+  let c = false;
+  let s;
+  const u = n.Ee ? JSON.parse(JSON.stringify(e[$TARGET][STORE_VALUE])) : null;
+  const l = new Proxy(e, createWriteTraps(() => !c || n.Te === s, i));
+  storeSetterNext(l, (i2) => {
+    s = t(u ?? i2);
+    c = true;
+    const commit = (t2) => {
+      if (u && (t2 === undefined || t2 === u))
+        t2 = JSON.parse(JSON.stringify(u));
+      if (t2 === i2 || t2 === undefined)
+        return;
+      const write = () => storeSetterNext(e, (e2) => reconcileNextState(t2, e2, r, true), false);
+      o ? o(write) : write();
+    };
+    const l2 = handleAsync(n, s, commit);
+    if (!n.Ee)
+      commit(l2);
+  }, false);
+  return n;
+}
+
+// node_modules/.bun/@solidjs+signals@2.0.0-rc.1/node_modules/@solidjs/signals/dist/prod/store/index.js
+function createStore(e, t, r) {
+  if (typeof e === "function")
+    return createStoreDerivedNext(e, t, r);
+  return createStoreNext(e, !!t?.shallow);
+}
+// node_modules/.bun/@solidjs+signals@2.0.0-rc.1/node_modules/@solidjs/signals/dist/prod/boundaries.js
 var ON_INIT = Symbol();
 var _revealUsed = false;
 function isRevealController(e) {
@@ -4172,7 +3945,126 @@ function flattenArray(e, t = [], r) {
     throw n;
   return s;
 }
-// node_modules/.bun/solid-js@2.0.0-rc.0/node_modules/solid-js/dist/solid.js
+// node_modules/.bun/@solidjs+signals@2.0.0-rc.1/node_modules/@solidjs/signals/dist/prod/store/utils.js
+function trueFn() {
+  return true;
+}
+var propTraps = {
+  get(e, r, t) {
+    if (r === $PROXY)
+      return t;
+    return e.get(r);
+  },
+  has(e, r) {
+    if (r === $PROXY)
+      return true;
+    return e.has(r);
+  },
+  set: trueFn,
+  deleteProperty: trueFn,
+  getOwnPropertyDescriptor(e, r) {
+    return {
+      configurable: true,
+      enumerable: true,
+      get() {
+        return e.get(r);
+      },
+      set: trueFn,
+      deleteProperty: trueFn
+    };
+  },
+  ownKeys(e) {
+    return e.keys();
+  }
+};
+function resolveSource(e) {
+  return !(e = typeof e === "function" ? e() : e) ? {} : e;
+}
+var $SOURCES = Symbol(0);
+function merge(...e) {
+  if (e.length === 1 && typeof e[0] !== "function")
+    return e[0];
+  let r = false;
+  const t = [];
+  for (let n2 = 0;n2 < e.length; n2++) {
+    const o2 = e[n2];
+    r = r || !!o2 && $PROXY in o2;
+    const s2 = !!o2 && o2[$SOURCES];
+    if (s2) {
+      for (let e2 = 0;e2 < s2.length; e2++)
+        t.push(s2[e2]);
+    } else
+      t.push(typeof o2 === "function" ? (r = true, createMemo(o2)) : o2);
+  }
+  if (SUPPORTS_PROXY && r) {
+    return new Proxy({
+      get(e2) {
+        if (e2 === $SOURCES)
+          return t;
+        for (let r2 = t.length - 1;r2 >= 0; r2--) {
+          const n2 = resolveSource(t[r2]);
+          if (e2 in n2)
+            return n2[e2];
+        }
+      },
+      has(e2) {
+        for (let r2 = t.length - 1;r2 >= 0; r2--) {
+          if (e2 in resolveSource(t[r2]))
+            return true;
+        }
+        return false;
+      },
+      keys() {
+        const e2 = new Set;
+        for (let r2 = 0;r2 < t.length; r2++) {
+          const n2 = ownEnumerableKeys(resolveSource(t[r2]));
+          for (let r3 = 0;r3 < n2.length; r3++)
+            e2.add(n2[r3]);
+        }
+        return [...e2];
+      }
+    }, propTraps);
+  }
+  const n = Object.create(null);
+  let o = false;
+  let s = t.length - 1;
+  for (let e2 = s;e2 >= 0; e2--) {
+    const r2 = t[e2];
+    if (!r2) {
+      e2 === s && s--;
+      continue;
+    }
+    const u2 = Object.getOwnPropertyNames(r2);
+    for (let t2 = u2.length - 1;t2 >= 0; t2--) {
+      const c2 = u2[t2];
+      if (c2 === "__proto__" || c2 === "constructor")
+        continue;
+      if (!n[c2]) {
+        o = o || e2 !== s;
+        const t3 = Object.getOwnPropertyDescriptor(r2, c2);
+        n[c2] = t3.get ? {
+          enumerable: true,
+          configurable: true,
+          get: t3.get.bind(r2)
+        } : t3;
+      }
+    }
+  }
+  if (!o)
+    return t[s];
+  const u = {};
+  const c = Object.keys(n);
+  for (let e2 = c.length - 1;e2 >= 0; e2--) {
+    const r2 = c[e2], t2 = n[r2];
+    if (t2.get)
+      Object.defineProperty(u, r2, t2);
+    else
+      u[r2] = t2.value;
+  }
+  u[$SOURCES] = t;
+  return u;
+}
+// node_modules/.bun/solid-js@2.0.0-rc.1/node_modules/solid-js/dist/solid.js
 var IS_DEV = false;
 var $DEVCOMP = Symbol(0);
 function createContext2(defaultValue, options) {
@@ -4210,6 +4102,7 @@ var NoHydrateContext = {
 };
 var _createMemo;
 var _createRenderEffect;
+var LIVE_SOURCE = Symbol.for("solid.LiveSource");
 var createMemo2 = (...args) => {
   return (_createMemo || createMemo)(...args);
 };
@@ -4304,7 +4197,7 @@ function Match(props) {
   return props;
 }
 
-// node_modules/.bun/@solidjs+universal@2.0.0-rc.0+6b48b9f3356e564b/node_modules/@solidjs/universal/dist/universal.js
+// node_modules/.bun/@solidjs+universal@2.0.0-rc.1+8dd5f48cc8d92621/node_modules/@solidjs/universal/dist/universal.js
 var transparentOptions = {
   transparent: true,
   sync: true
@@ -5030,8 +4923,8 @@ function attachWindow(nodeId) {
   let unsubKeyboardVisibility = null;
   let unsubRefreshRate = null;
   let unsubFirstResize = null;
-  function runFrame(t, frame) {
-    if (animationFrames.size > 0) {
+  function runFrame(t, frame, bootstrap = false) {
+    if (!bootstrap && animationFrames.size > 0) {
       let frames = animationFrames;
       animationFrames = new Map;
       for (let fn of frames.values())
@@ -5169,7 +5062,7 @@ function attachWindow(nodeId) {
         setFocus(null);
     });
     unsubFirstResize = once("resize", () => {
-      queueMicrotask(() => runFrame(0, 0));
+      queueMicrotask(() => runFrame(0, 0, true));
     });
   });
   onCleanup(() => {
@@ -5364,8 +5257,6 @@ var {
       tree2.createNode(proxy.id, elementType);
     if (props) {
       for (let name in props) {
-        if (name === "children" || name === "ref")
-          continue;
         applyProp(proxy, name, props[name]);
       }
     }
@@ -5421,6 +5312,9 @@ var {
 });
 var windowRoot;
 function render(code) {
+  if (windowRoot) {
+    throw new Error("render() already called; an app has exactly one render()");
+  }
   createRoot(() => {
     let root = code();
     if (!root || root.elementType !== "window") {
@@ -5440,7 +5334,10 @@ function createPortal(node, mount) {
     throw new Error("createPortal: node must be a single built element");
   }
   insertNode2(target, node);
-  onCleanup(() => removeNode(target, node));
+  onCleanup(() => {
+    if (nodes.has(node.id))
+      removeNode(target, node);
+  });
   return null;
 }
 // packages/core/src/color.ts
@@ -5657,9 +5554,9 @@ var capabilities = {
 import * as gpu from "flux:gpu";
 import { destroyTexture as destroyTexture2, endBufferWrite, resizeTexture, setTargetParams as setTargetParams2, setTargetSize as setTargetSize2, setTargetTextures, uploadTexture } from "flux:gpu";
 import { copyTexture, destroyBuffer as destroyBuffer2, renderTarget, setDraw } from "flux:gpu";
-import { addDraw, removeDraw, setDrawOrder, setDrawParams, setDrawRange, setDrawTextures } from "flux:gpu";
+import { addDraw, removeDraw, setDrawBuffers, setDrawOrder, setDrawParams, setDrawRange, setDrawTextures } from "flux:gpu";
 import { limits } from "flux:gpu";
-import { compileShader, createRenderPipeline, destroyProgram, destroyRenderPipeline, destroyShader, linkProgram } from "flux:gpu";
+import { compileShader, createRenderPipeline, destroyProgram, destroyRenderPipeline, destroyShader, linkProgram, programAttributes } from "flux:gpu";
 import { captureSnapshot, readTexture } from "flux:gpu";
 var glsl = String.raw;
 // packages/core/src/image.ts
@@ -5908,14 +5805,78 @@ function Window(props) {
   insert(_el$, () => props.children, null);
   return _el$;
 }
+// packages/components/src/types.ts
+var STYLE_TO_BACKGROUND = {
+  backgroundColor: "color",
+  borderRadius: "radius"
+};
+var STYLE_TO_BORDER = {
+  borderColor: "color",
+  borderWidth: "strokeWidth",
+  borderRadius: "radius"
+};
+function splitTransition(t) {
+  if (t == null || typeof t === "string")
+    return {
+      root: t,
+      background: t,
+      border: t
+    };
+  let root = {};
+  let background = {};
+  let border = {};
+  for (let [key, value] of Object.entries(t)) {
+    if (key === "all" || key === "stagger") {
+      root[key] = value;
+      background[key] = value;
+      border[key] = value;
+    } else if (key in STYLE_TO_BACKGROUND || key in STYLE_TO_BORDER) {
+      if (key in STYLE_TO_BACKGROUND)
+        background[STYLE_TO_BACKGROUND[key]] = value;
+      if (key in STYLE_TO_BORDER)
+        border[STYLE_TO_BORDER[key]] = value;
+    } else {
+      root[key] = value;
+    }
+  }
+  let pick = (o) => Object.keys(o).length ? o : undefined;
+  return {
+    root: pick(root),
+    background: pick(background),
+    border: pick(border)
+  };
+}
+function transitionEndFor(node, handler) {
+  if (!handler)
+    return;
+  return (e) => {
+    let name = e.property;
+    if (node === "background")
+      name = e.property === "color" ? "backgroundColor" : "borderRadius";
+    if (node === "border")
+      name = e.property === "color" ? "borderColor" : e.property === "strokeWidth" ? "borderWidth" : "borderRadius";
+    handler({
+      property: name
+    });
+  };
+}
+
 // packages/components/src/view.tsx
 function View(props) {
   let hasBackground = () => props.style?.backgroundColor != null || props.style?.borderRadius != null;
   let hasBorder = () => (props.style?.borderWidth ?? 0) > 0;
+  let split = () => splitTransition(props.transition);
   var _el$ = createElement("view");
   var _ref$ = props.ref;
   typeof _ref$ === "function" || Array.isArray(_ref$) ? ref(() => _ref$, _el$) : props.ref = _el$;
-  spread(_el$, mergeProps(() => props.layout, {
+  spread(_el$, mergeProps({
+    get transition() {
+      return split().root;
+    },
+    get onTransitionEnd() {
+      return transitionEndFor("root", props.onTransitionEnd);
+    }
+  }, () => props.layout, {
     get x() {
       return props.style?.x;
     },
@@ -5997,14 +5958,20 @@ function View(props) {
     return () => _c$() ? (() => {
       var _el$2 = createElement("d-rect");
       effect3(() => ({
-        e: props.style?.backgroundColor ?? "transparent",
-        t: props.style?.borderRadius
+        e: split().background,
+        t: transitionEndFor("background", props.onTransitionEnd),
+        a: props.style?.backgroundColor ?? "transparent",
+        o: props.style?.borderRadius
       }), ({
         e,
-        t
+        t,
+        a,
+        o
       }, _p$) => {
-        e !== _p$?.e && setProp(_el$2, "color", e, _p$?.e);
-        t !== _p$?.t && setProp(_el$2, "radius", t, _p$?.t);
+        e !== _p$?.e && setProp(_el$2, "transition", e, _p$?.e);
+        t !== _p$?.t && setProp(_el$2, "onTransitionEnd", t, _p$?.t);
+        a !== _p$?.a && setProp(_el$2, "color", a, _p$?.a);
+        o !== _p$?.o && setProp(_el$2, "radius", o, _p$?.o);
       });
       return _el$2;
     })() : null;
@@ -6017,17 +5984,23 @@ function View(props) {
         drawStyle: "stroke"
       });
       effect3(() => ({
-        e: props.style?.borderColor ?? "transparent",
-        t: props.style?.borderWidth,
-        a: props.style?.borderRadius
+        e: split().border,
+        t: transitionEndFor("border", props.onTransitionEnd),
+        a: props.style?.borderColor ?? "transparent",
+        o: props.style?.borderWidth,
+        i: props.style?.borderRadius
       }), ({
         e,
         t,
-        a
+        a,
+        o,
+        i
       }, _p$) => {
-        e !== _p$?.e && setProp(_el$3, "color", e, _p$?.e);
-        t !== _p$?.t && setProp(_el$3, "strokeWidth", t, _p$?.t);
-        a !== _p$?.a && setProp(_el$3, "radius", a, _p$?.a);
+        e !== _p$?.e && setProp(_el$3, "transition", e, _p$?.e);
+        t !== _p$?.t && setProp(_el$3, "onTransitionEnd", t, _p$?.t);
+        a !== _p$?.a && setProp(_el$3, "color", a, _p$?.a);
+        o !== _p$?.o && setProp(_el$3, "strokeWidth", o, _p$?.o);
+        i !== _p$?.i && setProp(_el$3, "radius", i, _p$?.i);
       });
       return _el$3;
     })() : null;
@@ -6258,11 +6231,39 @@ function Text(props) {
     }
     return out;
   });
+  let split = () => {
+    let t = splitTransition(props.transition);
+    if (t.root == null || typeof t.root === "string")
+      return {
+        root: t.root,
+        text: t.root
+      };
+    let {
+      color: color2,
+      ...rest
+    } = t.root;
+    let text = {};
+    if (color2 !== undefined)
+      text.color = color2;
+    if (rest.all !== undefined)
+      text.all = rest.all;
+    return {
+      root: Object.keys(rest).length ? rest : undefined,
+      text: Object.keys(text).length ? text : undefined
+    };
+  };
   var _el$ = createElement("view"), _el$2 = createElement("text");
   insertNode2(_el$, _el$2);
   var _ref$ = props.ref;
   typeof _ref$ === "function" || Array.isArray(_ref$) ? ref(() => _ref$, _el$) : props.ref = _el$;
-  spread(_el$, mergeProps(box, {
+  spread(_el$, mergeProps({
+    get transition() {
+      return split().root;
+    },
+    get onTransitionEnd() {
+      return transitionEndFor("root", props.onTransitionEnd);
+    }
+  }, box, {
     get x() {
       return props.style?.x;
     },
@@ -6317,14 +6318,16 @@ function Text(props) {
   }), true);
   insert(_el$2, () => props.children);
   effect3(() => ({
-    e: color(),
-    t: props.layout?.fontFamily ?? theme.text.fontFamily,
-    a: size(),
-    o: props.layout?.lineHeight ?? role().lineHeight,
-    i: props.layout?.fontStyle,
-    n: typeWeight(props.layout?.fontWeight ?? role().weight, size()),
-    s: props.layout?.textAlign,
-    h: props.layout?.maxLines
+    e: split().text,
+    t: transitionEndFor("root", props.onTransitionEnd),
+    a: color(),
+    o: props.layout?.fontFamily ?? theme.text.fontFamily,
+    i: size(),
+    n: props.layout?.lineHeight ?? role().lineHeight,
+    s: props.layout?.fontStyle,
+    h: typeWeight(props.layout?.fontWeight ?? role().weight, size()),
+    r: props.layout?.textAlign,
+    d: props.layout?.maxLines
   }), ({
     e,
     t,
@@ -6333,16 +6336,20 @@ function Text(props) {
     i,
     n,
     s,
-    h
+    h,
+    r,
+    d
   }, _p$) => {
-    e !== _p$?.e && setProp(_el$2, "color", e, _p$?.e);
-    t !== _p$?.t && setProp(_el$2, "fontFamily", t, _p$?.t);
-    a !== _p$?.a && setProp(_el$2, "fontSize", a, _p$?.a);
-    o !== _p$?.o && setProp(_el$2, "lineHeight", o, _p$?.o);
-    i !== _p$?.i && setProp(_el$2, "fontStyle", i, _p$?.i);
-    n !== _p$?.n && setProp(_el$2, "fontWeight", n, _p$?.n);
-    s !== _p$?.s && setProp(_el$2, "textAlign", s, _p$?.s);
-    h !== _p$?.h && setProp(_el$2, "maxLines", h, _p$?.h);
+    e !== _p$?.e && setProp(_el$2, "transition", e, _p$?.e);
+    t !== _p$?.t && setProp(_el$2, "onTransitionEnd", t, _p$?.t);
+    a !== _p$?.a && setProp(_el$2, "color", a, _p$?.a);
+    o !== _p$?.o && setProp(_el$2, "fontFamily", o, _p$?.o);
+    i !== _p$?.i && setProp(_el$2, "fontSize", i, _p$?.i);
+    n !== _p$?.n && setProp(_el$2, "lineHeight", n, _p$?.n);
+    s !== _p$?.s && setProp(_el$2, "fontStyle", s, _p$?.s);
+    h !== _p$?.h && setProp(_el$2, "fontWeight", h, _p$?.h);
+    r !== _p$?.r && setProp(_el$2, "textAlign", r, _p$?.r);
+    d !== _p$?.d && setProp(_el$2, "maxLines", d, _p$?.d);
   });
   return _el$;
 }
@@ -6517,11 +6524,11 @@ function createTextEditorLayout(viewport, input) {
     let {
       text,
       font,
-      wrap: wrap2,
+      wrap,
       caretWidth = 0
     } = input();
-    let width = wrap2 ? Math.max(0, viewportSize().width - caretWidth) : Infinity;
-    let units = wrap2 ? splitWide(prepared(), width) : prepared();
+    let width = wrap ? Math.max(0, viewportSize().width - caretWidth) : Infinity;
+    let units = wrap ? splitWide(prepared(), width) : prepared();
     let out = [];
     let y = 0;
     let cursor = 0;
@@ -6680,14 +6687,14 @@ function createTextEditorLayout(viewport, input) {
     } = viewportSize();
     let {
       caretWidth = 0,
-      wrap: wrap2
+      wrap
     } = input();
     let ls = lines();
     let contentWidth = ls.reduce((w, l) => Math.max(w, l.width), 0);
     let last = ls[ls.length - 1];
     let contentHeight = last.y + last.height;
     let c = caret();
-    setScrollX(wrap2 ? 0 : follow(scrollX(), c.x, caretWidth, vw, contentWidth + caretWidth));
+    setScrollX(wrap ? 0 : follow(scrollX(), c.x, caretWidth, vw, contentWidth + caretWidth));
     setScrollY(follow(scrollY(), c.y, c.height, vh, contentHeight));
     flush();
   });
@@ -7114,6 +7121,7 @@ function EditorField(props) {
     let max = props.maxRows != null ? props.maxRows * rowHeight() : Infinity;
     return Math.max(rowHeight(), Math.min(content, max));
   };
+  let split = () => splitTransition(props.transition);
   var _el$ = createElement("view"), _el$2 = createElement("d-rect"), _el$3 = createElement("d-rect", {
     drawStyle: "stroke"
   }), _el$4 = createElement("view", {
@@ -7134,6 +7142,12 @@ function EditorField(props) {
   setProp(_el$, "flexDirection", "row");
   setProp(_el$, "alignItems", "center");
   spread(_el$, mergeProps({
+    get transition() {
+      return split().root;
+    },
+    get onTransitionEnd() {
+      return transitionEndFor("root", props.onTransitionEnd);
+    },
     get textInputHints() {
       return memo2(() => !!props.multiline)() ? {
         multiline: true,
@@ -7222,15 +7236,19 @@ function EditorField(props) {
     })() : null)];
   })());
   effect3(() => ({
-    e: surfaceColor(),
-    t: borderRadius(),
-    a: borderColor(),
-    o: borderWidth(),
-    i: borderRadius(),
-    n: viewportHeight(),
-    s: props.multiline ? "stretch" : undefined,
-    h: editor.scrollX(),
-    r: editor.scrollY()
+    e: split().background,
+    t: transitionEndFor("background", props.onTransitionEnd),
+    a: surfaceColor(),
+    o: borderRadius(),
+    i: split().border,
+    n: transitionEndFor("border", props.onTransitionEnd),
+    s: borderColor(),
+    h: borderWidth(),
+    r: borderRadius(),
+    d: viewportHeight(),
+    l: props.multiline ? "stretch" : undefined,
+    u: editor.scrollX(),
+    c: editor.scrollY()
   }), ({
     e,
     t,
@@ -7240,17 +7258,25 @@ function EditorField(props) {
     n,
     s,
     h,
-    r
+    r,
+    d,
+    l,
+    u,
+    c
   }, _p$) => {
-    e !== _p$?.e && setProp(_el$2, "color", e, _p$?.e);
-    t !== _p$?.t && setProp(_el$2, "radius", t, _p$?.t);
-    a !== _p$?.a && setProp(_el$3, "color", a, _p$?.a);
-    o !== _p$?.o && setProp(_el$3, "strokeWidth", o, _p$?.o);
-    i !== _p$?.i && setProp(_el$3, "radius", i, _p$?.i);
-    n !== _p$?.n && setProp(_el$4, "height", n, _p$?.n);
-    s !== _p$?.s && setProp(_el$4, "alignSelf", s, _p$?.s);
-    h !== _p$?.h && setProp(_el$4, "scrollX", h, _p$?.h);
-    r !== _p$?.r && setProp(_el$4, "scrollY", r, _p$?.r);
+    e !== _p$?.e && setProp(_el$2, "transition", e, _p$?.e);
+    t !== _p$?.t && setProp(_el$2, "onTransitionEnd", t, _p$?.t);
+    a !== _p$?.a && setProp(_el$2, "color", a, _p$?.a);
+    o !== _p$?.o && setProp(_el$2, "radius", o, _p$?.o);
+    i !== _p$?.i && setProp(_el$3, "transition", i, _p$?.i);
+    n !== _p$?.n && setProp(_el$3, "onTransitionEnd", n, _p$?.n);
+    s !== _p$?.s && setProp(_el$3, "color", s, _p$?.s);
+    h !== _p$?.h && setProp(_el$3, "strokeWidth", h, _p$?.h);
+    r !== _p$?.r && setProp(_el$3, "radius", r, _p$?.r);
+    d !== _p$?.d && setProp(_el$4, "height", d, _p$?.d);
+    l !== _p$?.l && setProp(_el$4, "alignSelf", l, _p$?.l);
+    u !== _p$?.u && setProp(_el$4, "scrollX", u, _p$?.u);
+    c !== _p$?.c && setProp(_el$4, "scrollY", c, _p$?.c);
   });
   return _el$;
 }
@@ -7259,6 +7285,12 @@ function EditorField(props) {
 function TextInput(props) {
   let value = () => "";
   return createComponent2(EditorField, {
+    get transition() {
+      return props.transition;
+    },
+    get onTransitionEnd() {
+      return props.onTransitionEnd;
+    },
     buffer: (step) => {
       let buffer = createTextBuffer({
         value: () => props.value,
@@ -7351,6 +7383,31 @@ function ScrollView(props) {
     else
       scroll.scrollBy(e.deltaX, e.deltaY);
   };
+  let split = () => {
+    let t = splitTransition(props.transition);
+    if (t.root == null || typeof t.root === "string")
+      return {
+        ...t,
+        viewport: t.root
+      };
+    let {
+      scrollX,
+      scrollY,
+      ...rest
+    } = t.root;
+    let viewport2 = {};
+    if (scrollX !== undefined)
+      viewport2.scrollX = scrollX;
+    if (scrollY !== undefined)
+      viewport2.scrollY = scrollY;
+    if (rest.all !== undefined)
+      viewport2.all = rest.all;
+    return {
+      ...t,
+      root: Object.keys(rest).length ? rest : undefined,
+      viewport: Object.keys(viewport2).length ? viewport2 : undefined
+    };
+  };
   let direction = () => props.horizontal ? "row" : "column";
   let hasBackground = () => props.style?.backgroundColor != null || props.style?.borderRadius != null;
   let hasBorder = () => (props.style?.borderWidth ?? 0) > 0;
@@ -7360,7 +7417,14 @@ function ScrollView(props) {
   insertNode2(_el$, _el$2);
   var _ref$ = props.ref;
   typeof _ref$ === "function" || Array.isArray(_ref$) ? ref(() => _ref$, _el$) : props.ref = _el$;
-  spread(_el$, mergeProps(() => props.layout, {
+  spread(_el$, mergeProps({
+    get transition() {
+      return split().root;
+    },
+    get onTransitionEnd() {
+      return transitionEndFor("root", props.onTransitionEnd);
+    }
+  }, () => props.layout, {
     get x() {
       return props.style?.x;
     },
@@ -7403,14 +7467,20 @@ function ScrollView(props) {
     return () => _c$() ? (() => {
       var _el$4 = createElement("d-rect");
       effect3(() => ({
-        e: props.style?.backgroundColor ?? "transparent",
-        t: props.style?.borderRadius
+        e: split().background,
+        t: transitionEndFor("background", props.onTransitionEnd),
+        a: props.style?.backgroundColor ?? "transparent",
+        o: props.style?.borderRadius
       }), ({
         e,
-        t
+        t,
+        a,
+        o
       }, _p$) => {
-        e !== _p$?.e && setProp(_el$4, "color", e, _p$?.e);
-        t !== _p$?.t && setProp(_el$4, "radius", t, _p$?.t);
+        e !== _p$?.e && setProp(_el$4, "transition", e, _p$?.e);
+        t !== _p$?.t && setProp(_el$4, "onTransitionEnd", t, _p$?.t);
+        a !== _p$?.a && setProp(_el$4, "color", a, _p$?.a);
+        o !== _p$?.o && setProp(_el$4, "radius", o, _p$?.o);
       });
       return _el$4;
     })() : null;
@@ -7431,6 +7501,12 @@ function ScrollView(props) {
     },
     get scrollY() {
       return scroll.offset().y;
+    },
+    get transition() {
+      return split().viewport;
+    },
+    get onTransitionEnd() {
+      return transitionEndFor("root", props.onTransitionEnd);
     }
   }, () => pan.handlers, {
     onWheel
@@ -7444,17 +7520,23 @@ function ScrollView(props) {
         drawStyle: "stroke"
       });
       effect3(() => ({
-        e: props.style?.borderColor ?? "transparent",
-        t: props.style?.borderWidth,
-        a: props.style?.borderRadius
+        e: split().border,
+        t: transitionEndFor("border", props.onTransitionEnd),
+        a: props.style?.borderColor ?? "transparent",
+        o: props.style?.borderWidth,
+        i: props.style?.borderRadius
       }), ({
         e,
         t,
-        a
+        a,
+        o,
+        i
       }, _p$) => {
-        e !== _p$?.e && setProp(_el$5, "color", e, _p$?.e);
-        t !== _p$?.t && setProp(_el$5, "strokeWidth", t, _p$?.t);
-        a !== _p$?.a && setProp(_el$5, "radius", a, _p$?.a);
+        e !== _p$?.e && setProp(_el$5, "transition", e, _p$?.e);
+        t !== _p$?.t && setProp(_el$5, "onTransitionEnd", t, _p$?.t);
+        a !== _p$?.a && setProp(_el$5, "color", a, _p$?.a);
+        o !== _p$?.o && setProp(_el$5, "strokeWidth", o, _p$?.o);
+        i !== _p$?.i && setProp(_el$5, "radius", i, _p$?.i);
       });
       return _el$5;
     })() : null;
@@ -7606,13 +7688,21 @@ function Pressable(props) {
   };
   let hasBackground = () => style()?.backgroundColor != null || style()?.borderRadius != null;
   let hasBorder = () => (style()?.borderWidth ?? 0) > 0;
+  let split = () => splitTransition(props.transition);
   var _el$ = createElement("view");
   ref(() => (n) => {
     press.ref(n);
     props.ref?.(n);
   }, _el$);
   setProp(_el$, "repaintBoundary", true);
-  spread(_el$, mergeProps(() => props.layout, {
+  spread(_el$, mergeProps({
+    get transition() {
+      return split().root;
+    },
+    get onTransitionEnd() {
+      return transitionEndFor("root", props.onTransitionEnd);
+    }
+  }, () => props.layout, {
     get x() {
       return style()?.x;
     },
@@ -7673,14 +7763,20 @@ function Pressable(props) {
     return () => _c$() ? (() => {
       var _el$2 = createElement("d-rect");
       effect3(() => ({
-        e: style()?.backgroundColor ?? "transparent",
-        t: style()?.borderRadius
+        e: split().background,
+        t: transitionEndFor("background", props.onTransitionEnd),
+        a: style()?.backgroundColor ?? "transparent",
+        o: style()?.borderRadius
       }), ({
         e,
-        t
+        t,
+        a,
+        o
       }, _p$) => {
-        e !== _p$?.e && setProp(_el$2, "color", e, _p$?.e);
-        t !== _p$?.t && setProp(_el$2, "radius", t, _p$?.t);
+        e !== _p$?.e && setProp(_el$2, "transition", e, _p$?.e);
+        t !== _p$?.t && setProp(_el$2, "onTransitionEnd", t, _p$?.t);
+        a !== _p$?.a && setProp(_el$2, "color", a, _p$?.a);
+        o !== _p$?.o && setProp(_el$2, "radius", o, _p$?.o);
       });
       return _el$2;
     })() : null;
@@ -7693,17 +7789,23 @@ function Pressable(props) {
         drawStyle: "stroke"
       });
       effect3(() => ({
-        e: style()?.borderColor ?? "transparent",
-        t: style()?.borderWidth,
-        a: style()?.borderRadius
+        e: split().border,
+        t: transitionEndFor("border", props.onTransitionEnd),
+        a: style()?.borderColor ?? "transparent",
+        o: style()?.borderWidth,
+        i: style()?.borderRadius
       }), ({
         e,
         t,
-        a
+        a,
+        o,
+        i
       }, _p$) => {
-        e !== _p$?.e && setProp(_el$3, "color", e, _p$?.e);
-        t !== _p$?.t && setProp(_el$3, "strokeWidth", t, _p$?.t);
-        a !== _p$?.a && setProp(_el$3, "radius", a, _p$?.a);
+        e !== _p$?.e && setProp(_el$3, "transition", e, _p$?.e);
+        t !== _p$?.t && setProp(_el$3, "onTransitionEnd", t, _p$?.t);
+        a !== _p$?.a && setProp(_el$3, "color", a, _p$?.a);
+        o !== _p$?.o && setProp(_el$3, "strokeWidth", o, _p$?.o);
+        i !== _p$?.i && setProp(_el$3, "radius", i, _p$?.i);
       });
       return _el$3;
     })() : null;
@@ -7739,6 +7841,12 @@ function Spinner(props) {
   });
   insertNode2(_el$, _el$2);
   spread(_el$, mergeProps({
+    get transition() {
+      return splitTransition(props.transition).root;
+    },
+    get onTransitionEnd() {
+      return transitionEndFor("root", props.onTransitionEnd);
+    },
     get width() {
       return size();
     },
@@ -7838,6 +7946,7 @@ function Button(props) {
     borderRadius: radius(),
     scale: (styled().scale ?? 1) * (press.pressed() && policy.motion !== "none" ? 0.97 : 1)
   });
+  let split = () => splitTransition(props.transition);
   var _el$ = createElement("view"), _el$2 = createElement("d-rect"), _el$3 = createElement("d-rect");
   insertNode2(_el$, _el$2);
   insertNode2(_el$, _el$3);
@@ -7851,6 +7960,12 @@ function Button(props) {
   setProp(_el$, "justifyContent", "center");
   setProp(_el$, "position", "relative");
   spread(_el$, mergeProps({
+    get transition() {
+      return split().root;
+    },
+    get onTransitionEnd() {
+      return transitionEndFor("root", props.onTransitionEnd);
+    },
     get paddingTop() {
       return space("md");
     },
@@ -7944,36 +8059,48 @@ function Button(props) {
         drawStyle: "stroke"
       });
       effect3(() => ({
-        e: style().borderColor ?? "transparent",
-        t: style().borderWidth,
-        a: style().borderRadius
+        e: split().border,
+        t: transitionEndFor("border", props.onTransitionEnd),
+        a: style().borderColor ?? "transparent",
+        o: style().borderWidth,
+        i: style().borderRadius
       }), ({
         e,
         t,
-        a
+        a,
+        o,
+        i
       }, _p$) => {
-        e !== _p$?.e && setProp(_el$6, "color", e, _p$?.e);
-        t !== _p$?.t && setProp(_el$6, "strokeWidth", t, _p$?.t);
-        a !== _p$?.a && setProp(_el$6, "radius", a, _p$?.a);
+        e !== _p$?.e && setProp(_el$6, "transition", e, _p$?.e);
+        t !== _p$?.t && setProp(_el$6, "onTransitionEnd", t, _p$?.t);
+        a !== _p$?.a && setProp(_el$6, "color", a, _p$?.a);
+        o !== _p$?.o && setProp(_el$6, "strokeWidth", o, _p$?.o);
+        i !== _p$?.i && setProp(_el$6, "radius", i, _p$?.i);
       });
       return _el$6;
     }
   }), null);
   effect3(() => ({
-    e: style().backgroundColor ?? "transparent",
-    t: style().borderRadius,
-    a: overlay(press.state()),
-    o: style().borderRadius
+    e: split().background,
+    t: transitionEndFor("background", props.onTransitionEnd),
+    a: style().backgroundColor ?? "transparent",
+    o: style().borderRadius,
+    i: overlay(press.state()),
+    n: style().borderRadius
   }), ({
     e,
     t,
     a,
-    o
+    o,
+    i,
+    n
   }, _p$) => {
-    e !== _p$?.e && setProp(_el$2, "color", e, _p$?.e);
-    t !== _p$?.t && setProp(_el$2, "radius", t, _p$?.t);
-    a !== _p$?.a && setProp(_el$3, "color", a, _p$?.a);
-    o !== _p$?.o && setProp(_el$3, "radius", o, _p$?.o);
+    e !== _p$?.e && setProp(_el$2, "transition", e, _p$?.e);
+    t !== _p$?.t && setProp(_el$2, "onTransitionEnd", t, _p$?.t);
+    a !== _p$?.a && setProp(_el$2, "color", a, _p$?.a);
+    o !== _p$?.o && setProp(_el$2, "radius", o, _p$?.o);
+    i !== _p$?.i && setProp(_el$3, "color", i, _p$?.i);
+    n !== _p$?.n && setProp(_el$3, "radius", n, _p$?.n);
   });
   return _el$;
 }
@@ -7988,6 +8115,12 @@ function Icon(props) {
   setProp(_el$, "repaintBoundary", true);
   setProp(_el$, "pointerEvents", "all");
   spread(_el$, mergeProps({
+    get transition() {
+      return splitTransition(props.transition).root;
+    },
+    get onTransitionEnd() {
+      return transitionEndFor("root", props.onTransitionEnd);
+    },
     get width() {
       return size();
     },
@@ -8021,6 +8154,7 @@ function Card(props) {
   let bg = () => styled().backgroundColor ?? theme.color.surface;
   let radius = () => styled().borderRadius ?? theme.radius.lg;
   let hasBorder = () => styled().borderWidth != null || styled().borderColor != null;
+  let split = () => splitTransition(props.transition);
   var _el$ = createElement("view"), _el$2 = createElement("d-rect");
   insertNode2(_el$, _el$2);
   var _ref$ = props.ref;
@@ -8028,6 +8162,12 @@ function Card(props) {
   setProp(_el$, "repaintBoundary", true);
   setProp(_el$, "flexDirection", "column");
   spread(_el$, mergeProps({
+    get transition() {
+      return split().root;
+    },
+    get onTransitionEnd() {
+      return transitionEndFor("root", props.onTransitionEnd);
+    },
     get gap() {
       return space("lg");
     },
@@ -8076,30 +8216,42 @@ function Card(props) {
         drawStyle: "stroke"
       });
       effect3(() => ({
-        e: styled().borderColor ?? theme.color.border,
-        t: styled().borderWidth ?? theme.borderWidth.sm,
-        a: radius()
+        e: split().border,
+        t: transitionEndFor("border", props.onTransitionEnd),
+        a: styled().borderColor ?? theme.color.border,
+        o: styled().borderWidth ?? theme.borderWidth.sm,
+        i: radius()
       }), ({
         e,
         t,
-        a
+        a,
+        o,
+        i
       }, _p$) => {
-        e !== _p$?.e && setProp(_el$4, "color", e, _p$?.e);
-        t !== _p$?.t && setProp(_el$4, "strokeWidth", t, _p$?.t);
-        a !== _p$?.a && setProp(_el$4, "radius", a, _p$?.a);
+        e !== _p$?.e && setProp(_el$4, "transition", e, _p$?.e);
+        t !== _p$?.t && setProp(_el$4, "onTransitionEnd", t, _p$?.t);
+        a !== _p$?.a && setProp(_el$4, "color", a, _p$?.a);
+        o !== _p$?.o && setProp(_el$4, "strokeWidth", o, _p$?.o);
+        i !== _p$?.i && setProp(_el$4, "radius", i, _p$?.i);
       });
       return _el$4;
     }
   }), null);
   effect3(() => ({
-    e: bg(),
-    t: radius()
+    e: split().background,
+    t: transitionEndFor("background", props.onTransitionEnd),
+    a: bg(),
+    o: radius()
   }), ({
     e,
-    t
+    t,
+    a,
+    o
   }, _p$) => {
-    e !== _p$?.e && setProp(_el$2, "color", e, _p$?.e);
-    t !== _p$?.t && setProp(_el$2, "radius", t, _p$?.t);
+    e !== _p$?.e && setProp(_el$2, "transition", e, _p$?.e);
+    t !== _p$?.t && setProp(_el$2, "onTransitionEnd", t, _p$?.t);
+    a !== _p$?.a && setProp(_el$2, "color", a, _p$?.a);
+    o !== _p$?.o && setProp(_el$2, "radius", o, _p$?.o);
   });
   return _el$;
 }
@@ -8171,11 +8323,19 @@ function SegmentedControl(props) {
   let idleFill = () => styled().backgroundColor ?? theme.color.surfaceAlt;
   let activeFill = () => props.disabled ? theme.color.surface : theme.color.primary;
   let label = (active) => props.disabled ? theme.color.textMuted : active ? theme.color.onPrimary : theme.color.text;
+  let split = () => splitTransition(props.transition);
   var _el$ = createElement("view"), _el$2 = createElement("d-rect");
   insertNode2(_el$, _el$2);
   setProp(_el$, "flexDirection", "row");
   setProp(_el$, "gap", 0);
-  spread(_el$, mergeProps(() => props.layout, {
+  spread(_el$, mergeProps({
+    get transition() {
+      return split().root;
+    },
+    get onTransitionEnd() {
+      return transitionEndFor("root", props.onTransitionEnd);
+    }
+  }, () => props.layout, {
     get x() {
       return styled().x;
     },
@@ -8257,14 +8417,20 @@ function SegmentedControl(props) {
     }
   }), null);
   effect3(() => ({
-    e: theme.color.border,
-    t: radius()
+    e: split().background,
+    t: transitionEndFor("background", props.onTransitionEnd),
+    a: theme.color.border,
+    o: radius()
   }), ({
     e,
-    t
+    t,
+    a,
+    o
   }, _p$) => {
-    e !== _p$?.e && setProp(_el$2, "color", e, _p$?.e);
-    t !== _p$?.t && setProp(_el$2, "radius", t, _p$?.t);
+    e !== _p$?.e && setProp(_el$2, "transition", e, _p$?.e);
+    t !== _p$?.t && setProp(_el$2, "onTransitionEnd", t, _p$?.t);
+    a !== _p$?.a && setProp(_el$2, "color", a, _p$?.a);
+    o !== _p$?.o && setProp(_el$2, "radius", o, _p$?.o);
   });
   return _el$;
 }

@@ -50,11 +50,11 @@ SRT_HOME ?= $(abspath $(CURDIR)/..)
 # them (include_str! in src/lib.rs).
 LAUNCHER_DIR = $(SRT_HOME)/apps/launcher
 LAUNCHER_SRC = $(LAUNCHER_DIR)/src/index.tsx
-LAUNCHER_JS  = $(CURDIR)/resources/launcher.srt.js
+LAUNCHER_JS  = $(CURDIR)/resources/launcher/index.srt.js
 
 # The BSOD screen shown when an app fails to start.
 BSOD_SRC = $(LAUNCHER_DIR)/src/bsod.tsx
-BSOD_JS  = $(CURDIR)/resources/bsod.srt.js
+BSOD_JS  = $(CURDIR)/resources/bsod/bsod.srt.js
 
 include $(SRT_HOME)/platform.mk
 
@@ -80,12 +80,12 @@ all: client runtime
 BUNDLE_DEPS = $(wildcard $(SRT_HOME)/packages/core/src/*.ts*) $(wildcard $(SRT_HOME)/packages/components/src/*.ts*)
 
 $(LAUNCHER_JS): $(wildcard $(LAUNCHER_DIR)/src/*.tsx) $(wildcard $(LAUNCHER_DIR)/src/parts/*.tsx) $(BUNDLE_DEPS)
-	@echo "Bundling launcher (index.tsx -> resources/launcher.srt.js)..."
-	cd $(CURDIR)/.. && bunx srt bundle $(LAUNCHER_SRC) -o $(LAUNCHER_JS:.srt.js=)
+	@echo "Bundling launcher (index.tsx -> resources/launcher/)..."
+	cd $(CURDIR)/.. && bunx srt bundle $(LAUNCHER_SRC) -o $(dir $(LAUNCHER_JS))
 
 $(BSOD_JS): $(BSOD_SRC) $(BUNDLE_DEPS)
-	@echo "Bundling BSOD screen (bsod.tsx -> resources/bsod.srt.js)..."
-	cd $(CURDIR)/.. && bunx srt bundle $(BSOD_SRC) -o $(BSOD_JS:.srt.js=)
+	@echo "Bundling BSOD screen (bsod.tsx -> resources/bsod/)..."
+	cd $(CURDIR)/.. && bunx srt bundle $(BSOD_SRC) -o $(dir $(BSOD_JS))
 
 help:
 	@echo "Host ($(HOST_TARGET)):"
@@ -119,7 +119,7 @@ help:
 
 # -- Launcher -----------------------------------------
 #
-# SolidRT Go embeds resources/launcher.srt.js at compile time via
+# SolidRT Go embeds resources/launcher/index.srt.js at compile time via
 # include_str!. The file target rebuilds it when any .tsx source in
 # apps/launcher changes. Run `make launcher-bundle` to force a rebuild.
 

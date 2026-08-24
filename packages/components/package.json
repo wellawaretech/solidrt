@@ -21,6 +21,6 @@
   },
   "peerDependencies": {
     "@solidrt/core": "workspace:*",
-    "@solidjs/signals": "2.0.0-rc.0"
+    "@solidjs/signals": "2.0.0-rc.1"
   }
 }
