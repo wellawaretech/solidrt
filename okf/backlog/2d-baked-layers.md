@@ -56,4 +56,100 @@ spatial decomposition.
 If [2d-spatial-citizenship](2d-spatial-citizenship.md) lands, the core BVH
 covers culling and picking for the live layer and this JS grid is not
 needed; the chunking above (static arithmetic over tiles) is unaffected
-either way.
+either way. The spatial-index stage therefore WAITS on that decision
+rather than being built here.
+
+## Findings
+
+Stage A landed 2026-08-24 (uncommitted): `packages/2d/src/tiles.ts`
+(`createTileLayer(cols, rows, tileW, tileH, atlas)`), `<TileLayer>` in
+components.tsx, the sprite shaders factored into `shaders.ts` (shared
+verbatim - the vertex stage's uCamera doubles as the chunk-rect bake
+mechanism stage B needs), example `examples/tiles.tsx`. Verified live via
+the control API: tree shape, two viewport snapshots showing pan + zoom +
+tile edits.
+
+- The tile-grid open question resolved grid-first: `setTile(col, row,
+  frame | null)` with FIXED record slots (record `row * cols + col`,
+  empty = zero-size quad, instance count constant `cols * rows`). No
+  draw-order maintenance, no growth, no "records you bake" API - that
+  vocabulary stays the sprite layer's.
+- Bake = lease publish + `renderTarget()` from the microtask flush; one
+  bake at creation so an untouched layer composites as its clear color,
+  never undefined target contents.
+- Camera is a transform on the composited leaf (`<view x y scale>` around
+  origin 0,0: `x = -camX * zoom`, `scale = zoom`), not a second render
+  pass - `<texture>` takes no TransformProps, hence the view wrapper. The
+  leaf is world-sized; the app clips. Same numbers as the sprite-layer
+  camera, so one signal drives both.
+- Tile-layer zoom scales the BAKED texture at composite (the sprite layer
+  re-samples the atlas in-shader), so pixel art needs `filter: "nearest"`
+  on the tile layer's own sampler on top of the atlas's - two different
+  samplers.
+- Records are the full 13-float sprite layout with rot/tint at defaults:
+  52 bytes per cell CPU + GPU (10k tiles = ~1 MB total). Accepted for
+  shader reuse; a lean 8-float tile record needs its own vertex stage and
+  was not worth it at stage A.
+
+Stage B1 landed 2026-08-24 (uncommitted): chunking inside the same
+`createTileLayer` API, plus the camera gaining rotation + pivot
+(`TileCamera`). Verified live: 128x128 world (6144px, past maxTextureSize),
+129 of 169 chunks resident, snapshots showing rotation about a
+bottom-of-viewport pivot with seamless chunk boundaries.
+
+- Per-chunk BUFFERS, not the sketched shared records buffer: GLES 3.0 has
+  no base-instance draw (`DrawRange` carries no firstInstance), so a
+  shared buffer would vertex-process the whole world per chunk bake. Each
+  chunk is a small stage-A layer - own records, own instance buffer, own
+  manual target - with records in WORLD coordinates and `uCamera` at the
+  chunk's pixel origin; a chunk bake costs exactly its own tiles.
+- Lazy = allocate-on-first-content: an empty chunk is nothing (no records,
+  no texture), so sparse worlds are bounded by content with zero camera
+  coupling. Clearing a cell in an unallocated chunk is a no-op, not an
+  allocation. `clearColor` became per-chunk - never-written regions render
+  nothing, the ground color belongs behind the layer.
+- Composition: the component `<For>`s `d-texture` leaves at chunk world
+  rects (chunk growth reaches it through an `onChunk` hook feeding a
+  signal), inside the one camera-transformed world view - which is why
+  whole-world ROTATION fell out free: rotate the container, chunks are
+  rigid inside it. Camera formula: origin at the camera world point,
+  rotate + scale there, translate that point onto the screen pivot;
+  pivot (0,0) degenerates to stage A's top-left anchoring exactly.
+- The stage-A `output` prop was dropped: with chunks there is no single
+  texture to hand out; `layer.chunks` + `onChunk` is the compose-yourself
+  surface.
+- Default chunk edge ~512px of tiles (`chunkTiles` to tune); chunk size
+  is validated against maxTextureSize instead of the world size.
+
+Remaining here - stage B2, streaming worlds. Today's contract is bounded
+worlds with memory proportional to the TOUCHED area (allocation is
+monotonic, nothing evicts): sparse worlds are fine, a fully-painted
+1024x1024-tile world at 480px chunks is ~10k chunks x ~920KB of texture -
+far past reasonable. Deferred until a real world exceeds texture memory;
+when it lands, it is four things that belong together, not just eviction:
+
+1. **A view-rect input into the core layer** - the one signal driving
+   everything below (the component's camera already knows it; the core
+   layer does not).
+2. **Residency**: evict far chunks' textures, keep the ~5KB CPU records
+   (~180x cheaper than the texture), re-bake on approach. For truly
+   unbounded roaming even records can go: an app-provided re-fill callback
+   regenerates a chunk's cells on approach (the procedural-world shape)
+   instead of retaining them.
+3. **Composition pruning**: `<TileLayer>` currently mounts a `d-texture`
+   leaf per RESIDENT chunk, unconditionally - fully-clipped leaves are
+   cheap but O(resident). The same view rect prunes the `<For>` to
+   camera-intersecting chunks.
+4. **Unbounded coordinates**: the fixed `cols x rows` grid caps the world
+   at creation (the sparse chunk map inside is already shape-ready), and -
+   subtler - records store WORLD pixel coordinates in float32, so past a
+   few million pixels from origin subpixel precision erodes and tiles
+   shimmer against their chunk rects. The fix is chunk-LOCAL record
+   coordinates with the existing per-chunk `uCamera` origin doing the
+   placement; a record-layout decision that must land WITH the
+   unbounded-world work, not after it.
+
+Bitmap-font runs ride the same machinery. The spatial index waits on
+[2d-spatial-citizenship](2d-spatial-citizenship.md), per above. The
+rotating-camera parity gap for the LIVE layer is filed as
+[2d-sprite-camera-rotation](2d-sprite-camera-rotation.md).

@@ -22,7 +22,6 @@ import {
   destroyBuffer,
   destroyTexture,
   endBufferWrite,
-  glsl,
   setDraw,
   setTargetParams,
   setTargetSize,
@@ -31,46 +30,13 @@ import type { BufferId, TextureId } from "@solidrt/core/gpu"
 import type { Frame } from "./frames.ts"
 import { FULL_FRAME } from "./frames.ts"
 import { pointInSprite } from "./pick.ts"
+import { FRAGMENT, INSTANCE_ATTRIBUTES, VERTEX } from "./shaders.ts"
 
 // Floats per instance record:
 // [cx, cy, w, h, u0, v0, u1, v1, rot, tintR, tintG, tintB, tintA]
 export const FLOATS_PER_SPRITE = 13
 
 const RESOLVED = Promise.resolve()
-
-let VERTEX = glsl`
-  in vec2 aPos;
-  in vec2 iCenter;
-  in vec2 iSize;
-  in vec4 iUv;
-  in float iRot;
-  in vec4 iTint;
-  out vec2 vUv;
-  out vec4 vTint;
-  uniform vec2 uViewport;
-  uniform vec4 uCamera;
-
-  void main() {
-    vec2 corner = aPos * iSize;
-    float c = cos(iRot), s = sin(iRot);
-    vec2 world = iCenter + vec2(corner.x * c - corner.y * s, corner.x * s + corner.y * c);
-    vec2 screen = (world - uCamera.xy) * uCamera.zw;
-    // World and clip are both y-down, so the mapping carries no flip.
-    gl_Position = vec4(screen / uViewport * 2.0 - 1.0, 0.0, 1.0);
-    vUv = mix(iUv.xy, iUv.zw, aPos + 0.5);
-    vTint = iTint;
-  }
-`
-
-let FRAGMENT = glsl`
-  in vec2 vUv;
-  in vec4 vTint;
-  uniform sampler2D uAtlas;
-
-  void main() {
-    fragColor = texture(uAtlas, vUv) * vTint;
-  }
-`
 
 /**
  * One sprite: a handle into its layer's record array. Read via getSprite;
@@ -221,13 +187,7 @@ export function createSpriteLayer(
       vertexCount: 4,
       attributes: [{ name: "aPos", format: "vec2" }],
       buffer: quad,
-      instanceAttributes: [
-        { name: "iCenter", format: "vec2" },
-        { name: "iSize", format: "vec2" },
-        { name: "iUv", format: "vec4" },
-        { name: "iRot", format: "f32" },
-        { name: "iTint", format: "vec4" },
-      ],
+      instanceAttributes: INSTANCE_ATTRIBUTES,
       instanceBuffer: records,
       instanceCount: 0,
       blend: "alpha",

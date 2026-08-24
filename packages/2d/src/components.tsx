@@ -6,10 +6,13 @@
 // sprite with `ref` and call setSprite from onFrame - signals carry
 // structure and slow state, per-frame motion goes straight to the layer.
 // The same split, with the same reasoning, as @solidrt/3d's components.
-import { createContext, createEffect, onCleanup, untrack, useContext } from "@solidrt/core"
+import { createContext, createEffect, createSignal, For, onCleanup, untrack, useContext } from "@solidrt/core"
 import type { Element, ParentComponent, TextureId, VoidComponent } from "@solidrt/core"
+import type { FilterMode } from "@solidrt/core/gpu"
 import { addSprite, createSpriteLayer, removeSprite, setSprite } from "./layer.ts"
 import type { CameraUpdate, Sprite as SpriteHandle, SpriteLayer as LayerHandle, SpriteOptions, SpritePointerEvent } from "./layer.ts"
+import { createTileLayer } from "./tiles.ts"
+import type { TileChunk, TileLayer as TileLayerHandle } from "./tiles.ts"
 
 let LayerContext = createContext<LayerHandle>()
 
@@ -132,4 +135,90 @@ export let Sprite: VoidComponent<SpriteProps> = props => {
   untrack(() => props.ref)?.(sprite)
   onCleanup(() => removeSprite(sprite))
   return null
+}
+
+/**
+ * The tile layer's camera: the world point (`x`, `y`) is shown at the
+ * viewport point (`pivotX`, `pivotY`), the world scaled by `zoom` and
+ * rotated by `rotation` (radians, clockwise) ABOUT that pivot. The pivot
+ * defaults to (0, 0), which makes `{ x, y, zoom }` mean exactly what the
+ * sprite layer's camera means (world at the viewport top-left) - one
+ * signal drives both. The whole thing is a transform on the composited
+ * world, never a re-bake. (The sprite layer's camera cannot rotate yet -
+ * okf/backlog/2d-sprite-camera-rotation.md.)
+ */
+export type TileCamera = CameraUpdate & {
+  rotation?: number
+  pivotX?: number
+  pivotY?: number
+}
+
+export type TileLayerProps = {
+  /** Grid shape and tile pixel size - creation-fixed (recreate to resize). */
+  cols: number
+  rows: number
+  tileW: number
+  tileH: number
+  /** The atlas texture every tile samples (create with createAtlas). */
+  atlas: TextureId
+  /** Per-chunk clear color; never-written regions render nothing, so a
+   * full-bleed ground color belongs on the container behind the layer. */
+  clearColor?: [number, number, number, number]
+  /** Sampler filter for the baked chunk textures; "nearest" for pixel art. */
+  filter?: FilterMode
+  /** Chunk edge in tiles (default ~512px worth); see TileLayerOptions. */
+  chunkTiles?: number
+  /**
+   * Pan/zoom/rotate over the world - a transform on the composited world
+   * view, never a re-bake. The world view is WORLD sized; put the layer
+   * inside a clipping container (`overflow="clip"`) sized to the viewport.
+   */
+  camera?: TileCamera
+  label?: string
+  ref?: (layer: TileLayerHandle) => void
+}
+
+/**
+ * Owns a baked tile layer (createTileLayer) and composites its chunks as
+ * `d-texture` leaves at their world rects inside a `<view>` carrying the
+ * camera transform - a handful of quads however many tiles exist. Tiles
+ * are data, not children: write them through `ref` with `setTile` - there
+ * is no `<Tile>` component on purpose (a component per tile would
+ * re-introduce the per-element cost the bake removes).
+ */
+export let TileLayer: VoidComponent<TileLayerProps> = props => {
+  let layer = untrack(() =>
+    createTileLayer(props.cols, props.rows, props.tileW, props.tileH, props.atlas, {
+      clearColor: props.clearColor,
+      filter: props.filter,
+      chunkTiles: props.chunkTiles,
+      label: props.label,
+    }),
+  )
+  untrack(() => props.ref)?.(layer)
+  // Chunk allocations arrive through the layer's hook; the signal carries a
+  // fresh array so <For> sees the growth.
+  let [chunks, setChunks] = createSignal<TileChunk[]>(layer.chunks.slice())
+  layer.onChunk = () => setChunks(layer.chunks.slice())
+  // World -> screen: p maps to pivot + R(rotation) * zoom * (p - camera),
+  // spelled with element transforms as origin at the camera point, rotate +
+  // scale there, then translate the camera point onto the pivot.
+  let camX = () => props.camera?.x ?? 0
+  let camY = () => props.camera?.y ?? 0
+  return (
+    <view
+      width={layer.width}
+      height={layer.height}
+      originX={camX()}
+      originY={camY()}
+      rotate={props.camera?.rotation ?? 0}
+      scale={props.camera?.zoom ?? 1}
+      x={(props.camera?.pivotX ?? 0) - camX()}
+      y={(props.camera?.pivotY ?? 0) - camY()}
+    >
+      <For each={chunks()}>
+        {chunk => <d-texture src={chunk.texture} x={chunk.x} y={chunk.y} w={chunk.width} h={chunk.height} />}
+      </For>
+    </view>
+  )
 }

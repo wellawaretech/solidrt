@@ -105,8 +105,9 @@ the instance buffer:
    an ordering hazard. GL binds multiple VBOs trivially.
 4. **Rect/point overlap queries** on the BVH - already listed as a future
    consumer in spatial-core; small.
-5. **Native transitions on node transforms** - its own item (the smaller
-   sibling of animation-core) and the LINCHPIN, see below.
+5. **Native transitions on node transforms** - its own item,
+   [spatial-node-transitions](spatial-node-transitions.md) (the smaller
+   sibling of animation-core), and the LINCHPIN, see below.
 
 ## The honest cost
 

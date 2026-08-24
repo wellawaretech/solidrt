@@ -23,7 +23,8 @@ walk: O(per-frame) work at rung 1 of the escape ladder
 ([3d-differentiators](../notes/3d-differentiators.md)). The spatial-core
 note already anticipates the two hooks this item consumes: "native
 transitions on node transforms, the spatial analogue of the 2D tree's
-shipped native transitions" (the smaller sibling of this item), and the
+shipped native transitions" (the smaller sibling of this item,
+[spatial-node-transitions](spatial-node-transitions.md)), and the
 `TextureSlot` sink row ("skeleton bones for skinning").
 
 ## Shape: a producer into the arena, not a sink

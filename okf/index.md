@@ -61,6 +61,12 @@ Shaped, not started.
   walk; make each live sprite a spatial arena node whose InstanceRecord sink
   writes its instance-buffer slot, connecting 2d to the whole producer stack
   while rendering stays one instanced draw.
+- **[The sprite layer's camera cannot rotate, so sprites cannot ride a rotating world](backlog/2d-sprite-camera-rotation.md)** [2026-08-24]
+  TileCamera rotates the baked world about a pivot, but the sprite layer's
+  uCamera is offset + zoom only, so the ship and enemies drawn as sprites over
+  a rotating tile map cannot follow - rotation must go in-shader with the
+  inverse in pick and the handlers, keeping one camera vocabulary across both
+  layers.
 - **[Sprite draw order is insertion order, so reordering means remove and re-add](backlog/2d-sprite-sort-key.md)** [2026-08-22]
   The sprite layer paints in record order with no sort key, so raising one
   sprite or depth-sorting a population by y - the ordinary case for a dense 2D
@@ -475,6 +481,14 @@ Shaped, not started.
   camera, no mesh, no lights) that the 3d package is the first consumer of;
   triangle-accurate picking (3d roadmap item 4) and the scene-walk descent
   (item 19) land together on it.
+- **[Native transitions on spatial node transforms](backlog/spatial-node-transitions.md)** [2026-08-24]
+  A spatial arena node moves only when something writes its local TRS every
+  frame, so a mesh gliding somewhere or a sprite springing to its square costs
+  per-frame JS plus an FFI write per node - the rendertree's shipped native
+  transitions have no spatial analogue. Build the producer that animates node
+  TRS in core (rendertree transition math reused, quaternion tracks the one
+  new piece), making JS write targets once; the linchpin of
+  2d-spatial-citizenship and the smaller sibling of animation-core.
 - **[Every widget hand-wires its own hover/pressed/disabled variants](backlog/state-variant-selection.md)** [2026-07-26]
   Button picks fill/hover/label with a switch over its variant and derives the
   background from press state by hand, and every other widget repeats the
