@@ -24,8 +24,50 @@ declare module "flux:spatial" {
   /** Re-parent (null = make a root). Throws on a cycle. */
   export function setParent(node: NodeId, parent: NodeId | null): void
   /** Replace the local transform (compare before calling; an unchanged
-   * write still queues the node). */
+   * write still queues the node). Never consults or cancels transition
+   * tracks: a running track overwrites a raw write at the next frame
+   * (last write wins - the producer rule). */
   export function setTransform(node: NodeId, transform: Float32Array): void
+  /**
+   * One node-transition spec, the element `transition` vocabulary minus
+   * the lifecycle conveniences: `{ duration }` / `{ duration, bounce }`
+   * is a spring (the default kind; retargets keep position and velocity,
+   * rotation springs keep angular velocity along the geodesic),
+   * `{ duration, curve }` a tween (rotation tweens slerp the geodesic;
+   * retargets restart from the current value), or the shorthand string
+   * `"<duration>ms [curve]"`. Durations in ms; no delay, from or exit.
+   */
+  export type NodeTransitionSpec =
+    | { duration: number; bounce?: number }
+    | { duration: number; curve: "linear" | "ease" | "ease-in" | "ease-out" | "ease-in-out" | [number, number, number, number] }
+    | string
+  /** The declaration setTransition takes: a spec per transform component
+   * plus `all` as a catch-all (per-component entries win). */
+  export interface NodeTransition {
+    position?: NodeTransitionSpec
+    rotation?: NodeTransitionSpec
+    scale?: NodeTransitionSpec
+    all?: NodeTransitionSpec
+  }
+  /**
+   * Declare (or with null clear) the node's transitions: with a config
+   * set, writeTransform animates instead of snapping. A bare string is
+   * the `all` catch-all. Clearing cancels the node's running tracks in
+   * place - it keeps its mid-flight transform, no settled events fire,
+   * and later writes snap. Replacing a config affects future writes only.
+   */
+  export function setTransition(node: NodeId, transition: NodeTransition | string | null): void
+  /**
+   * Replace the local transform THROUGH the transition declaration: a
+   * declared component animates toward the written value (the write is a
+   * target), an undeclared one snaps. Without a declaration this is
+   * setTransform. A component matching its running track's target is
+   * left alone, so rewriting the whole array to move one component never
+   * restarts the others. Each settled component fires one
+   * "spatialTransitionEnd" engine event (srt:events), payload
+   * `{ node, component: "position" | "rotation" | "scale" }`.
+   */
+  export function writeTransform(node: NodeId, transform: Float32Array): void
   export function setVisible(node: NodeId, visible: boolean): void
   /**
    * Route the node's world matrix to one draw entry's `uModel` (and

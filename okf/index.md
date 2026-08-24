@@ -481,14 +481,13 @@ Shaped, not started.
   camera, no mesh, no lights) that the 3d package is the first consumer of;
   triangle-accurate picking (3d roadmap item 4) and the scene-walk descent
   (item 19) land together on it.
-- **[Native transitions on spatial node transforms](backlog/spatial-node-transitions.md)** [2026-08-24]
-  A spatial arena node moves only when something writes its local TRS every
-  frame, so a mesh gliding somewhere or a sprite springing to its square costs
-  per-frame JS plus an FFI write per node - the rendertree's shipped native
-  transitions have no spatial analogue. Build the producer that animates node
-  TRS in core (rendertree transition math reused, quaternion tracks the one
-  new piece), making JS write targets once; the linchpin of
-  2d-spatial-citizenship and the smaller sibling of animation-core.
+- **[Route spatial transition settles to package-level handles](backlog/spatial-settled-event-routing.md)** [2026-08-24]
+  The "spatialTransitionEnd" engine event carries the raw core NodeId, so a
+  2d/3d app wanting an "arrived" callback per sprite or mesh must keep its own
+  node-to-handle map (the packages' maps are private). The element transitions
+  route settles to the target's onTransitionEnd handler; the packages should
+  offer the same - an onTransitionEnd per sprite handle / SceneNode - the
+  first thing anyone chaining animations will reach for.
 - **[Every widget hand-wires its own hover/pressed/disabled variants](backlog/state-variant-selection.md)** [2026-07-26]
   Button picks fill/hover/label with a switch over its variant and derives the
   background from press state by hand, and every other widget repeats the
@@ -539,6 +538,14 @@ Shaped, not started.
   own; CSS gives per-axis tuples for scale and translate but nothing for
   rotation, so the set should be settled together rather than one prop at a
   time.
+- **[Transition writes before the first frame anchor at clock 0](backlog/transition-clock-startup-anchor.md)** [2026-08-24]
+  The animation clock is stamped once per frame, so a transition target
+  written at module-eval time (before any frame ran) starts its track at clock
+  0 and the first stamped advance fast-forwards the whole startup latency - a
+  300ms spring can be most of the way done when the first frame paints.
+  Element and node transitions share the artifact; spatial is more exposed
+  because writing initial targets during scene setup is a natural pattern. An
+  install-time (or first-JS-entry) clock stamp is the likely few-line fix.
 - **[Video playback](backlog/video-playback.md)** [2026-08-12]
   One decode-to-YUV pipeline on every platform (software decoders on desktop,
   MediaCodec buffer mode on Android), planar YUV textures + shader conversion
@@ -1068,6 +1075,14 @@ Finished, kept for the reasoning.
   captureSnapshot and get_snapshot latch a frame request but do not wake the
   render loop, so a truly idle client never services the capture and the query
   times out.
+- **[Native transitions on spatial node transforms](done/spatial-node-transitions.md)** [2026-08-24]
+  A spatial arena node moves only when something writes its local TRS every
+  frame, so a mesh gliding somewhere or a sprite springing to its square costs
+  per-frame JS plus an FFI write per node - the rendertree's shipped native
+  transitions have no spatial analogue. Build the producer that animates node
+  TRS in core (rendertree transition math reused, quaternion tracks the one
+  new piece), making JS write targets once; the linchpin of
+  2d-spatial-citizenship and the smaller sibling of animation-core.
 - **[srt run exits immediately when stdin is not a terminal](done/srt-run-exits-on-stdin-eof.md)** [2026-08-20]
   The repl bound readline close to full shutdown, so any non-interactive
   launch (background shell, supervisor, CI) tore down the server, the client

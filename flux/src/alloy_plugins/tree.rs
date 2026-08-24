@@ -27,7 +27,9 @@ thread_local! {
 // rendertree setters consume. This is the FFI boundary: rquickjs types stay on
 // this side of it. Errors are real JS exceptions raised while reading the
 // value (e.g. a Proxy getter throwing) and propagate to the caller unchanged.
-fn to_prop_value(value: &Value<'_>) -> rquickjs::Result<PropValue> {
+// Shared with the spatial plugin, whose setTransition speaks the same
+// transition vocabulary.
+pub(crate) fn to_prop_value(value: &Value<'_>) -> rquickjs::Result<PropValue> {
   Ok(if value.is_null() || value.is_undefined() {
     PropValue::Null
   } else if let Some(b) = value.as_bool() {

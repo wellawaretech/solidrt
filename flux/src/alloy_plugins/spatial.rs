@@ -11,9 +11,14 @@ use rquickjs::module::{Declarations, Exports, ModuleDef};
 use rquickjs::{Array, Ctx, Function, JsLifetime, Object, TypedArray, Value};
 
 use super::AlloyContext;
+use crate::alloy_plugins::properties::transition::decode_spec;
+use crate::alloy_plugins::value::PropValue;
 use crate::plugins::marshal::OptArg;
 use alloy::rendertree::PlatformContext;
-use alloy::spatial::{DrawSink, InstanceProjection, InstanceRecordSink, Projection, Shape, SharedSlotSink};
+use alloy::spatial::{
+  Component, DrawSink, InstanceProjection, InstanceRecordSink, NodeTransitionConfig, Projection, Shape,
+  SharedSlotSink,
+};
 
 fn throw_str(ctx: &Ctx<'_>, msg: &str) -> rquickjs::Error {
   rquickjs::Exception::throw_message(ctx, msg)
@@ -56,6 +61,8 @@ impl ModuleDef for SpatialModule {
     decl.declare("destroyNode")?;
     decl.declare("setParent")?;
     decl.declare("setTransform")?;
+    decl.declare("setTransition")?;
+    decl.declare("writeTransform")?;
     decl.declare("setVisible")?;
     decl.declare("bindDraw")?;
     decl.declare("unbindDraw")?;
@@ -82,6 +89,8 @@ impl ModuleDef for SpatialModule {
     exports.export("destroyNode", Function::new(ctx.clone(), destroy_node)?)?;
     exports.export("setParent", Function::new(ctx.clone(), set_parent)?)?;
     exports.export("setTransform", Function::new(ctx.clone(), set_transform)?)?;
+    exports.export("setTransition", Function::new(ctx.clone(), set_transition)?)?;
+    exports.export("writeTransform", Function::new(ctx.clone(), write_transform)?)?;
     exports.export("setVisible", Function::new(ctx.clone(), set_visible)?)?;
     exports.export("bindDraw", Function::new(ctx.clone(), bind_draw)?)?;
     exports.export("unbindDraw", Function::new(ctx.clone(), unbind_draw)?)?;
@@ -120,6 +129,64 @@ fn set_parent(ctx: Ctx<'_>, id: u64, parent: OptArg<u64>) -> rquickjs::Result<()
 fn set_transform(ctx: Ctx<'_>, id: u64, data: TypedArray<'_, f32>) -> rquickjs::Result<()> {
   let (p, q, s) = transform(&ctx, &data, "setTransform")?;
   state(&ctx).atx.spatial().set_transform(id, p, q, s).map_err(|e| throw_str(&ctx, &format!("setTransform: {e}")))
+}
+
+/// The node transition declaration: an object keyed by transform component
+/// (position, rotation, scale, plus `all` as a catch-all) whose values
+/// speak the element transition vocabulary minus the lifecycle
+/// conveniences, or a bare shorthand string as the `all` catch-all.
+fn decode_node_transition(value: &PropValue) -> Result<NodeTransitionConfig, String> {
+  if value.as_str().is_some() {
+    return Ok(NodeTransitionConfig { all: Some(decode_spec("transition", value)?), ..Default::default() });
+  }
+  let entries = value.as_map().ok_or_else(|| {
+    "transition must be a shorthand string or an object keyed by component (position, rotation, scale, all)"
+      .to_string()
+  })?;
+  let mut config = NodeTransitionConfig::default();
+  for (key, entry) in entries {
+    let spec = Some(decode_spec(&format!("transition.{key}"), entry)?);
+    match key.as_str() {
+      "position" => config.position = spec,
+      "rotation" => config.rotation = spec,
+      "scale" => config.scale = spec,
+      "all" => config.all = spec,
+      other => {
+        return Err(format!(
+          "transition.{other}: '{other}' is not a transform component (expected position, rotation, scale or all)"
+        ))
+      }
+    }
+  }
+  Ok(config)
+}
+
+/// Declare (or with null clear) the node's transition config; with one set,
+/// writeTransform animates instead of snapping. Clearing cancels running
+/// tracks in place (no settled events) and later writes snap.
+fn set_transition<'js>(ctx: Ctx<'js>, id: u64, value: Value<'js>) -> rquickjs::Result<()> {
+  let config = if value.is_null() || value.is_undefined() {
+    None
+  } else {
+    let pv = super::tree::to_prop_value(&value)?;
+    Some(decode_node_transition(&pv).map_err(|e| throw_str(&ctx, &format!("setTransition: {e}")))?)
+  };
+  state(&ctx).atx.spatial().set_node_transition(id, config).map_err(|e| throw_str(&ctx, &format!("setTransition: {e}")))
+}
+
+/// Replace the local transform through the transition declaration: declared
+/// components animate toward the written value, undeclared ones snap;
+/// without a declaration this is setTransform. A started or retargeted
+/// track (or a snap that moved the node) requests a frame.
+fn write_transform(ctx: Ctx<'_>, id: u64, data: TypedArray<'_, f32>) -> rquickjs::Result<()> {
+  let (p, q, s) = transform(&ctx, &data, "writeTransform")?;
+  let st = state(&ctx);
+  let changed =
+    st.atx.spatial().write_transform(id, p, q, s).map_err(|e| throw_str(&ctx, &format!("writeTransform: {e}")))?;
+  if changed {
+    st.platform.request_frame();
+  }
+  Ok(())
 }
 
 fn set_visible(ctx: Ctx<'_>, id: u64, visible: bool) -> rquickjs::Result<()> {
@@ -332,4 +399,49 @@ fn unbind_record(ctx: Ctx<'_>, id: u64) -> rquickjs::Result<()> {
 /// swap: one call and one bulk republish instead of a rebind per node.
 fn retarget_records(ctx: Ctx<'_>, old: u64, new: u64) -> rquickjs::Result<()> {
   state(&ctx).atx.spatial_retarget_records(old, new).map_err(|e| throw_str(&ctx, &format!("retargetRecords: {e}")))
+}
+
+/// Stamp the node-transition animation clock (the runner, once per frame
+/// with the app timeline before the frame's JS runs, beside the render
+/// tree's stamp). No-op before the GUI is installed.
+pub fn stamp_clock(ctx: &Ctx<'_>, now_ms: f64) {
+  if let Some(st) = ctx.userdata::<SpatialState>() {
+    st.0.atx.spatial().set_transition_now(now_ms);
+  }
+}
+
+/// What a frame's node-transition tick produced (see `tick`).
+pub struct SpatialTick {
+  /// Tracks still run: the runner's signal to keep requesting frames.
+  pub active: bool,
+  /// The flush sent sink writes: this frame must paint.
+  pub wrote: bool,
+}
+
+/// Advance the node transitions to the stamped clock and publish what
+/// moved: steps every running track (writing node TRS through the arena's
+/// ordinary snap path), flushes the arena when anything was written, and
+/// emits one "spatialTransitionEnd" engine event per settled track,
+/// payload `{ node, component }`. The runner calls this beside the render
+/// tree's transition advance, before the frame's demand gate.
+pub fn tick(ctx: &Ctx<'_>) -> SpatialTick {
+  let Some(st) = ctx.userdata::<SpatialState>() else {
+    return SpatialTick { active: false, wrote: false };
+  };
+  let st = st.0.clone();
+  let active = st.atx.spatial().advance_transitions();
+  let settled = st.atx.spatial().take_settled_transitions();
+  let wrote = (active || !settled.is_empty()) && st.atx.spatial_flush();
+  for (node, component) in settled {
+    let obj = Object::new(ctx.clone()).expect("create spatialTransitionEnd object");
+    obj.set("node", node).expect("set node");
+    let name = match component {
+      Component::Position => "position",
+      Component::Rotation => "rotation",
+      Component::Scale => "scale",
+    };
+    obj.set("component", name).expect("set component");
+    crate::emit_event(ctx, "spatialTransitionEnd", obj);
+  }
+  SpatialTick { active, wrote }
 }

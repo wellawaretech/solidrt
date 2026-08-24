@@ -9,7 +9,8 @@
 import { createContext, createEffect, createSignal, For, onCleanup, untrack, useContext } from "@solidrt/core"
 import type { Element, ParentComponent, TextureId, VoidComponent } from "@solidrt/core"
 import type { FilterMode } from "@solidrt/core/gpu"
-import { addGroup, addSprite, createSpriteLayer, removeGroup, removeSprite, setGroup, setSprite } from "./layer.ts"
+import { addGroup, addSprite, createSpriteLayer, removeGroup, removeSprite, setGroup, setGroupTransition, setSprite, setSpriteTransition } from "./layer.ts"
+import type { NodeTransition } from "flux:spatial"
 import type { CameraUpdate, Sprite as SpriteHandle, SpriteGroup, SpriteLayer as LayerHandle, SpriteOptions, SpritePointerEvent } from "./layer.ts"
 import { createTileLayer } from "./tiles.ts"
 import type { TileChunk, TileLayer as TileLayerHandle } from "./tiles.ts"
@@ -119,6 +120,9 @@ export type GroupProps = {
   rotation?: number
   /** Uniform scale on the whole subtree (child sprites scale with it). */
   scale?: number
+  /** How pose-prop changes animate (see setGroupTransition); the mount
+   * pose always snaps. */
+  transition?: NodeTransition | string | null
   ref?: (group: SpriteGroup) => void
 }
 
@@ -137,6 +141,11 @@ export let Group: ParentComponent<GroupProps> = props => {
     () => [props.x, props.y, props.rotation, props.scale] as const,
     ([x, y, rotation, scale]) => setGroup(group, { x, y, rotation, scale }),
   )
+  // After the pose effect, so the mount pose snaps before writes animate.
+  createEffect(
+    () => props.transition,
+    transition => setGroupTransition(group, transition ?? null),
+  )
   untrack(() => props.ref)?.(group)
   onCleanup(() => removeGroup(group))
   return <GroupContext value={group}>{props.children}</GroupContext>
@@ -144,6 +153,9 @@ export let Group: ParentComponent<GroupProps> = props => {
 
 export type SpriteProps = SpriteOptions &
   SpritePointerProps & {
+    /** How pose-prop changes animate (see setSpriteTransition); the mount
+     * pose always snaps. */
+    transition?: NodeTransition | string | null
     ref?: (sprite: SpriteHandle) => void
   }
 
@@ -156,6 +168,11 @@ export let Sprite: VoidComponent<SpriteProps> = props => {
   createEffect(
     () => [props.x, props.y, props.w, props.h, props.frame, props.rotation, props.tint] as const,
     ([x, y, w, h, frame, rotation, tint]) => setSprite(sprite, { x, y, w, h, frame, rotation, tint }),
+  )
+  // After the pose effect, so the mount pose snaps before writes animate.
+  createEffect(
+    () => props.transition,
+    transition => setSpriteTransition(sprite, transition ?? null),
   )
   createEffect(
     () => [props.onPointerDown, props.onPointerMove, props.onPointerUp, props.onPointerEnter, props.onPointerLeave] as const,

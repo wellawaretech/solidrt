@@ -15,14 +15,17 @@
 mod bvh;
 mod math;
 mod pick;
+mod transitions;
 
 use std::collections::HashMap;
 
 pub use bvh::{ray_box_distance, Box3};
 pub use math::{compose, invert_affine, multiply, normal_matrix, transform_point, transform_vector, IDENTITY};
 pub use pick::{Hit, Shape, ShapeId};
+pub use transitions::{Component, NodeTransitionConfig};
 
 use bvh::Bvh;
+use transitions::NodeTransitions;
 
 pub type Mat4 = [f32; 16];
 
@@ -206,6 +209,7 @@ pub struct Spatial {
   pub(crate) shapes: pick::Shapes,
   shared: HashMap<(u64, String), SharedGroup>,
   instances: HashMap<u64, InstanceGroup>,
+  transitions: NodeTransitions,
 }
 
 fn index(id: NodeId) -> usize {
@@ -302,6 +306,8 @@ impl Spatial {
     if let Some(record) = self.nodes[i as usize].record.take() {
       self.release_record(&record);
     }
+    self.transitions.configs.remove(&id);
+    self.transitions.cancel_node(id);
     let n = &mut self.nodes[i as usize];
     n.alive = false;
     n.parent = None;
@@ -660,6 +666,168 @@ impl Spatial {
     n.local_dirty = true;
     self.enqueue(i);
     Ok(())
+  }
+
+  /// Declare (or with None clear) the node's transition config. With one
+  /// set, `write_transform` animates instead of snapping. Clearing cancels
+  /// the node's running tracks in place: it keeps its mid-flight transform,
+  /// no settled events fire, and later writes snap. Replacing a config does
+  /// not retroactively affect running tracks (element semantics).
+  pub fn set_node_transition(&mut self, id: NodeId, config: Option<NodeTransitionConfig>) -> Result<(), String> {
+    self.resolve(id)?;
+    match config {
+      Some(c) => {
+        self.transitions.configs.insert(id, c);
+      }
+      None => {
+        self.transitions.configs.remove(&id);
+        self.transitions.cancel_node(id);
+      }
+    }
+    Ok(())
+  }
+
+  /// Replace the local transform THROUGH the node's transition declaration:
+  /// a component with a declared spec animates toward the written value
+  /// (the write is a target), one without snaps. Without a declaration the
+  /// whole write snaps, exactly `set_transform`. A component matching its
+  /// running track's target (or its resting value) is left alone - the
+  /// full-TRS write shape re-sends unchanged components on every call.
+  /// Returns whether anything changed (a track started or retargeted, or a
+  /// snap moved the node) - the caller's frame-demand signal. A raw
+  /// `set_transform` never consults or cancels tracks: a running track
+  /// overwrites it at the next advance (last write wins, the producer
+  /// rule).
+  pub fn write_transform(
+    &mut self,
+    id: NodeId,
+    position: [f32; 3],
+    rotation: [f32; 4],
+    scale: [f32; 3],
+  ) -> Result<bool, String> {
+    let i = self.resolve(id)?;
+    let Some(config) = self.transitions.configs.get(&id).copied() else {
+      let n = &self.nodes[i as usize];
+      if n.position == position && n.rotation == rotation && n.scale == scale {
+        return Ok(false);
+      }
+      self.set_transform(id, position, rotation, scale)?;
+      return Ok(true);
+    };
+    let n = &self.nodes[i as usize];
+    let (cur_p, cur_q, cur_s) = (n.position, n.rotation, n.scale);
+    let mut animated = false;
+    let mut snapped = false;
+    match config.entry_for(Component::Position) {
+      Some(spec) => animated |= self.transitions.retarget_linear(id, Component::Position, cur_p, position, spec),
+      None => {
+        if cur_p != position {
+          self.nodes[i as usize].position = position;
+          snapped = true;
+        }
+      }
+    }
+    match config.entry_for(Component::Scale) {
+      Some(spec) => animated |= self.transitions.retarget_linear(id, Component::Scale, cur_s, scale, spec),
+      None => {
+        if cur_s != scale {
+          self.nodes[i as usize].scale = scale;
+          snapped = true;
+        }
+      }
+    }
+    match config.entry_for(Component::Rotation) {
+      Some(spec) => animated |= self.transitions.retarget_rotation(id, cur_q, rotation, spec),
+      None => {
+        if cur_q != rotation {
+          self.nodes[i as usize].rotation = rotation;
+          snapped = true;
+        }
+      }
+    }
+    if snapped {
+      let n = &mut self.nodes[i as usize];
+      n.local_dirty = true;
+      self.enqueue(i);
+    }
+    Ok(animated || snapped)
+  }
+
+  /// Stamp the animation clock (app-time ms, the paced timeline). Stamped
+  /// once per frame before any frame work runs, so writes and the advance
+  /// agree on time; pause/scale/step semantics ride in with the stamp.
+  pub fn set_transition_now(&mut self, now_ms: f64) {
+    self.transitions.now_ms = now_ms;
+  }
+
+  /// Advance every running track to the stamped clock, writing the
+  /// interpolated TRS through the ordinary snap path (nodes queue; the
+  /// next flush propagates). Settled tracks land the target exactly and
+  /// report via `take_settled_transitions`; tracks of freed nodes drop
+  /// silently. Returns whether any track still runs - the embedder's
+  /// signal to keep requesting frames. A repeated call at an unchanged
+  /// clock (the paused path) writes nothing.
+  pub fn advance_transitions(&mut self) -> bool {
+    let now = self.transitions.now_ms;
+    if self.transitions.is_empty() {
+      self.transitions.last_ms = now;
+      return false;
+    }
+    let dt = (now - self.transitions.last_ms).max(0.0);
+    self.transitions.last_ms = now;
+    let mut linear = std::mem::take(&mut self.transitions.linear);
+    linear.retain_mut(|track| {
+      let Ok(i) = self.resolve(track.node) else {
+        return false;
+      };
+      let (value, settled) = track.advance(now, dt);
+      let n = &mut self.nodes[i as usize];
+      let slot = match track.component {
+        Component::Position => &mut n.position,
+        Component::Scale => &mut n.scale,
+        // Rotation tracks live in their own list.
+        Component::Rotation => unreachable!("rotation track in the linear list"),
+      };
+      if *slot != value {
+        *slot = value;
+        n.local_dirty = true;
+        self.enqueue(i);
+      }
+      if settled {
+        self.transitions.settled.push((track.node, track.component));
+        return false;
+      }
+      true
+    });
+    linear.append(&mut self.transitions.linear);
+    self.transitions.linear = linear;
+    let mut rotation = std::mem::take(&mut self.transitions.rotation);
+    rotation.retain_mut(|track| {
+      let Ok(i) = self.resolve(track.node) else {
+        return false;
+      };
+      let (value, settled) = track.advance(now, dt);
+      let n = &mut self.nodes[i as usize];
+      if n.rotation != value {
+        n.rotation = value;
+        n.local_dirty = true;
+        self.enqueue(i);
+      }
+      if settled {
+        self.transitions.settled.push((track.node, Component::Rotation));
+        return false;
+      }
+      true
+    });
+    rotation.append(&mut self.transitions.rotation);
+    self.transitions.rotation = rotation;
+    !self.transitions.is_empty()
+  }
+
+  /// The (node, component) pairs whose tracks settled since the last drain
+  /// (the onTransitionEnd feed). Cancelled tracks never appear.
+  pub fn take_settled_transitions(&mut self) -> Vec<(NodeId, Component)> {
+    std::mem::take(&mut self.transitions.settled)
   }
 
   pub fn set_visible(&mut self, id: NodeId, visible: bool) -> Result<(), String> {

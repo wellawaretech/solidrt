@@ -146,32 +146,7 @@ fn decode_entry(key: &str, value: &PropValue, prop: Option<AnimProp>) -> Result<
       return Err(format!("{at}: unknown key '{k}' (expected duration, bounce, curve, delay, from or exit)"));
     }
   }
-  let duration = match value.get("duration") {
-    None => return Err(format!("{at}: duration (ms) is required")),
-    Some(v) => {
-      let n = v.as_f64().ok_or_else(|| format!("{at}: duration must be a number of ms, got {}", describe(v)))? as f32;
-      if !(n > 0.0 && n.is_finite()) {
-        return Err(format!("{at}: duration must be a positive number of ms, got {n}"));
-      }
-      n
-    }
-  };
-  // The kind is inferred: a `curve` makes it a tween, otherwise it is a
-  // spring (`bounce` defaults to 0, critically damped). The two never mix.
-  let spec = match (value.get("curve"), value.get("bounce")) {
-    (Some(_), Some(_)) => return Err(format!("{at}: curve (tween) and bounce (spring) are mutually exclusive")),
-    (Some(c), None) => TransitionSpec::Tween { duration_ms: duration, curve: decode_curve(&at, c)? },
-    (None, bounce) => {
-      let bounce = match bounce {
-        None => 0.0,
-        Some(v) => v.as_f64().ok_or_else(|| format!("{at}: bounce must be a number, got {}", describe(v)))? as f32,
-      };
-      if !(bounce > -1.0 && bounce <= 1.0) {
-        return Err(format!("{at}: bounce must be in (-1, 1], got {bounce}"));
-      }
-      TransitionSpec::spring(duration, bounce)
-    }
-  };
+  let spec = decode_duration_spec(&at, value)?;
   let delay_ms = decode_delay(&at, value.get("delay"))?;
   let endpoint = |key: &str| -> Result<Option<AnimValue>, String> {
     match value.get(key) {
@@ -187,6 +162,58 @@ fn decode_entry(key: &str, value: &PropValue, prop: Option<AnimProp>) -> Result<
   let from = endpoint("from")?;
   let exit = endpoint("exit")?;
   Ok(TransitionEntry { spec, delay_ms, from, exit })
+}
+
+/// The duration + kind core of an entry object: `duration` (ms) required,
+/// a `curve` makes it a tween, otherwise it is a spring (`bounce` defaults
+/// to 0, critically damped). The two never mix.
+fn decode_duration_spec(at: &str, value: &PropValue) -> Result<TransitionSpec, String> {
+  let duration = match value.get("duration") {
+    None => return Err(format!("{at}: duration (ms) is required")),
+    Some(v) => {
+      let n = v.as_f64().ok_or_else(|| format!("{at}: duration must be a number of ms, got {}", describe(v)))? as f32;
+      if !(n > 0.0 && n.is_finite()) {
+        return Err(format!("{at}: duration must be a positive number of ms, got {n}"));
+      }
+      n
+    }
+  };
+  match (value.get("curve"), value.get("bounce")) {
+    (Some(_), Some(_)) => Err(format!("{at}: curve (tween) and bounce (spring) are mutually exclusive")),
+    (Some(c), None) => Ok(TransitionSpec::Tween { duration_ms: duration, curve: decode_curve(at, c)? }),
+    (None, bounce) => {
+      let bounce = match bounce {
+        None => 0.0,
+        Some(v) => v.as_f64().ok_or_else(|| format!("{at}: bounce must be a number, got {}", describe(v)))? as f32,
+      };
+      if !(bounce > -1.0 && bounce <= 1.0) {
+        return Err(format!("{at}: bounce must be in (-1, 1], got {bounce}"));
+      }
+      Ok(TransitionSpec::spring(duration, bounce))
+    }
+  }
+}
+
+/// One spec of the shared vocabulary WITHOUT the element lifecycle
+/// conveniences: `{ duration, bounce? }` (a spring), `{ duration, curve }`
+/// (a tween) or the shorthand string - no delay, from or exit. The node
+/// transitions (flux:spatial setTransition) speak exactly this subset.
+pub fn decode_spec(at: &str, value: &PropValue) -> Result<TransitionSpec, String> {
+  if let Some(s) = value.as_str() {
+    let entry = parse_shorthand(at, s)?;
+    if entry.delay_ms != 0.0 {
+      return Err(format!("{at}: delay does not apply to node transitions"));
+    }
+    return Ok(entry.spec);
+  }
+  let map =
+    value.as_map().ok_or_else(|| format!("{at} must be an object or a shorthand string, got {}", describe(value)))?;
+  for (k, _) in map {
+    if !matches!(k.as_str(), "duration" | "curve" | "bounce") {
+      return Err(format!("{at}: unknown key '{k}' (expected duration, bounce or curve)"));
+    }
+  }
+  decode_duration_spec(at, value)
 }
 
 fn decode_delay(at: &str, value: Option<&PropValue>) -> Result<f32, String> {

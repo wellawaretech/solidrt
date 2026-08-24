@@ -30,7 +30,7 @@
 
 import { addDraw, createBuffer, createDrawTarget, destroyBuffer, destroyProgram, destroyRenderPipeline, destroyTexture, removeDraw, setDrawBuffers, setDrawOrder, setDrawParams, setTargetParams, setTargetSize, writeBuffer } from "@solidrt/core/gpu"
 import * as spatial from "flux:spatial"
-import type { NodeId } from "flux:spatial"
+import type { NodeId, NodeTransition } from "flux:spatial"
 import type { BufferId, DrawId, FilterMode, ProgramId, RenderPipelineId, ShaderParams, TextureId, VertexAttribute, WrapMode } from "@solidrt/core/gpu"
 import { getOwner, onCleanup } from "@solidrt/core"
 import type { PointerEvent as ElementPointerEvent } from "@solidrt/core"
@@ -120,6 +120,8 @@ export type SceneNode = {
   _node: NodeId | null
   _moved: boolean
   _scene: SceneHooks | null
+  /** The declared transition, re-applied on every scene enter. */
+  _transition: NodeTransition | string | null
 }
 
 /** A directional light node: parallel rays travelling along `direction`
@@ -383,6 +385,7 @@ function makeNode(kind: SceneNode["kind"]): SceneNode {
     _node: null,
     _moved: false,
     _scene: null,
+    _transition: null,
   }
 }
 
@@ -600,6 +603,7 @@ export function remove(child: SceneNode): void {
 function enterScene(node: SceneNode, scene: SceneHooks): void {
   node._scene = scene
   node._node = spatial.createNode(fillTransform(node), node.visible)
+  if (node._transition !== null) spatial.setTransition(node._node, node._transition)
   // The parent is in the scene already (add() enters the child only then),
   // and the scene root is the one node without a parent.
   if (node.parent !== null && node.parent._node !== null) spatial.setParent(node._node, node.parent._node)
@@ -634,11 +638,32 @@ function fillTransform(node: SceneNode): Float32Array {
  * entering pushes the whole transform). */
 function pushTransform(node: SceneNode): void {
   if (node._node === null || node._scene === null) return
-  spatial.setTransform(node._node, fillTransform(node))
+  spatial.writeTransform(node._node, fillTransform(node))
   node._scene._moved(node)
 }
 
 export type { TransformUpdate } from "./math.ts"
+
+/**
+ * Declare (or with null clear) how the node's transform writes animate:
+ * once set, setTransform writes are TARGETS the core animates toward
+ * (position/scale per lane, rotation along the quaternion geodesic - a
+ * spring keeps its velocity through retargets, the pursuit-safe shape),
+ * so JS writes once per target change instead of once per frame. A spec
+ * per component (position, rotation, scale) plus `all`; each
+ * `{ duration, bounce? }` (a spring, the default) / `{ duration, curve }`
+ * (a tween) / a shorthand string like "300ms ease-out". The declaration
+ * lives on the node and re-applies whenever it enters a scene; the pose
+ * it enters with always snaps. Clearing cancels running tracks in place
+ * (the node keeps its mid-flight transform) and later writes snap. Each
+ * settled component fires one "spatialTransitionEnd" engine event
+ * (srt:events), payload `{ node, component }` with `node` the CORE id
+ * (`_node`).
+ */
+export function setTransition(node: SceneNode, transition: NodeTransition | string | null): void {
+  node._transition = transition
+  if (node._node !== null) spatial.setTransition(node._node, transition)
+}
 
 /**
  * The one write path for node transforms (so the scene knows to sync).

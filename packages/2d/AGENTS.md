@@ -14,10 +14,11 @@ moved subtrees in Rust, and picking walks the core BVH.
 
 - THREE faces, layered: the node-backed live layer (layer.ts:
   `createSpriteLayer`/`addSprite`/`setSprite`/`removeSprite` plus
-  `addGroup`/`setGroup`/`setSpriteParent` - plain objects, no signals,
-  usable without components), the records layer (records.ts:
-  `createRecordLayer` - the raw escape hatch, below), and the component
-  face (components.tsx: `SpriteLayer`/`Sprite`/`Group` over context).
+  `addGroup`/`setGroup`/`setSpriteParent`/`setSpriteTransition`/
+  `setGroupTransition` - plain objects, no signals, usable without
+  components), the records layer (records.ts: `createRecordLayer` - the
+  raw escape hatch, below), and the component face (components.tsx:
+  `SpriteLayer`/`Sprite`/`Group` over context).
 - Node layer ownership split, two instance-buffer slots on one pipeline:
   slot 0 is the POSE buffer `[x, y, angle, sx, sy]` written ONLY by the
   core (each sprite node's Pose2D record sink; one coalesced buffer write
@@ -60,12 +61,25 @@ moved subtrees in Rust, and picking walks the core BVH.
 - The camera (`setCamera`/the `camera` prop) is a shared-params write
   (`uCamera`: offset + zoom), one call however many sprites exist. Picking
   undoes it, so events arrive in world (layer) pixels.
-- Frame-rate motion bypasses the declarative layer: `ref` the sprite, call
-  `setSprite` from `onFrame`. Signals carry structure and slow state - a
-  `<Sprite x={sig()}>` re-running 60 times a second works but re-runs an
-  effect per sprite per frame for nothing. (Until native node transitions
-  land, a JS-driven node-layer move is a ~7us core transform write per
-  sprite - fine to a few thousand; past that use the records layer.)
+- Retargeted motion is NATIVE: `setSpriteTransition(sprite, { position:
+  { duration: 700, bounce: 0.3 }, ... })` (or the `transition` prop) makes
+  setSprite writes TARGETS the core animates toward - position/scale
+  (w/h) on the shared spring/tween math, rotation along the quaternion
+  geodesic (always the short arc; a spring keeps its velocity through
+  retargets). JS costs one write per target CHANGE, zero per frame; the
+  running tracks drive frame demand themselves, and settled sprites cost
+  nothing (bench: 400 retargets ~4ms, once a second - vs ~5ms per FRAME
+  moving the same population imperatively). Mount poses always snap (the
+  component declares the transition after the first pose sync; the
+  function face sets it after addSprite). Each settled component fires a
+  "spatialTransitionEnd" engine event (srt:events), node = sprite.node.
+  See examples/springs.tsx.
+- Frame-rate motion only JS can compute (physics, flocking) bypasses the
+  declarative layer: `ref` the sprite, call `setSprite` from `onFrame` (a
+  ~7us core transform write per moved sprite - fine to a few thousand;
+  past that use the records layer). Signals carry structure and slow
+  state - a `<Sprite x={sig()}>` re-running 60 times a second works but
+  re-runs an effect per sprite per frame for nothing.
 - frames.ts and pick.ts are pure (no GPU imports) BY DESIGN so they can be
   checked headless; keep them that way.
 
@@ -102,8 +116,8 @@ chunks on approach, evict) - okf/backlog/2d-baked-layers.md.
 | Component | Props |
 |---|---|
 | `SpriteLayer` | width, height (layer pixels), atlas (TextureId), capacity?, clearColor?, camera?, label?, ref?, output?, events? |
-| `Sprite` | x, y (center; local to the enclosing `<Group>`), w, h, frame?, rotation? (radians, clockwise), tint? ([r,g,b,a] 0..1), onPointer{Down,Move,Up,Enter,Leave}?, ref? |
-| `Group` | x?, y?, rotation?, scale? (uniform, scales the subtree), ref? |
+| `Sprite` | x, y (center; local to the enclosing `<Group>`), w, h, frame?, rotation? (radians, clockwise), tint? ([r,g,b,a] 0..1), transition?, onPointer{Down,Move,Up,Enter,Leave}?, ref? |
+| `Group` | x?, y?, rotation?, scale? (uniform, scales the subtree), transition?, ref? |
 | `TileLayer` | cols, rows, tileW, tileH, atlas (TextureId), clearColor?, filter?, chunkTiles?, camera? (TileCamera: x, y, zoom, rotation, pivotX, pivotY), label?, ref? |
 
 `SpriteLayer` owns the layer and renders the built-in `<texture>` leaf
@@ -130,6 +144,13 @@ is flat. Event x/y are layer pixels with the camera undone.
   a transform written through flux:spatial directly bypasses the sprite's
   pose mirror, so a later setSprite with the old x wins (its compare sees
   no change to skip, but partial writes compose from the mirror).
+- With a transition set, the sprite's fields (and getSprite) read the
+  TARGET, not the mid-flight pose - the JS mirror is what setSprite
+  composes partial writes from, and targets are the right thing to
+  compose. Picking and the pose buffer see the actual mid-flight pose
+  (what is on screen). Clearing the transition (null) keeps the
+  mid-flight pose on the node while the mirror still holds the old
+  target: the next setSprite write snaps to whatever it says.
 - Node layer picking reads the index as of the last core flush; `pick`/
   `pickRect` run the layer's pending batch first, so write-then-pick in
   one tick is coherent. Producers moving nodes between flushes are one

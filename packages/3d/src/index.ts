@@ -5,8 +5,9 @@
 // without Solid components) and the component face (Scene/Mesh/Group/
 // PerspectiveCamera) on top. See AGENTS.md for the model and the traps.
 
-export { add, createDirectionalLight, createGroup, createHemisphereLight, createInstancedMesh, createMesh, createScene, setLight, disposeInstances, getRotation, lookAt, remove, setGeometry, setInstanceCount, setInstances, setMaterial, setMeshParams, setRenderOrder, setTransform, setVisible, worldPosition } from "./scene.ts"
+export { add, createDirectionalLight, createGroup, createHemisphereLight, createInstancedMesh, createMesh, createScene, setLight, disposeInstances, getRotation, lookAt, remove, setGeometry, setInstanceCount, setInstances, setMaterial, setMeshParams, setRenderOrder, setTransform, setTransition, setVisible, worldPosition } from "./scene.ts"
 export type { CameraUpdate, DirectionalLight as DirectionalLightNode, DirectionalLightOptions, HemisphereLight as HemisphereLightNode, HemisphereLightOptions, Hit, Light, InstancedMesh as InstancedMeshNode, InstancedMeshOptions, Mesh as MeshNode, MeshInstances, Scene as SceneHandle, SceneHandlers, SceneNode, SceneOptions, ScenePointerEvent, TransformUpdate } from "./scene.ts"
+export type { NodeTransition, NodeTransitionSpec } from "flux:spatial"
 export { disposeGeometry } from "./geometry-gpu.ts"
 export { box, circle, cone, cylinder, fillAttribute, fillColors, geometryBounds, layoutAttributes, layoutKey, layoutSlot, layoutStride, mergeGeometries, packGeometry, plane, ring, sphere, torus, torusKnot, transformGeometry, validateGeometry, withAttribute, withColors, STANDARD_FLOATS, VERTEX_LAYOUTS } from "./geometry.ts"
 export type { AttributeFill, BoxOptions, CircleOptions, ColorFill, ConeOptions, CylinderOptions, Geometry, GeometryOptions, PlaneOptions, RingOptions, SphereOptions, TorusKnotOptions, TorusOptions, VertexLayout } from "./geometry.ts"

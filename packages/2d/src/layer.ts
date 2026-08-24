@@ -36,7 +36,7 @@ import {
 } from "@solidrt/core/gpu"
 import type { BufferId, TextureId } from "@solidrt/core/gpu"
 import * as spatial from "flux:spatial"
-import type { NodeId } from "flux:spatial"
+import type { NodeId, NodeTransition } from "flux:spatial"
 import type { Frame } from "./frames.ts"
 import { FULL_FRAME } from "./frames.ts"
 import type { RecordLayer } from "./records.ts"
@@ -325,10 +325,12 @@ function fillTransform(x: number, y: number, rot: number, sx: number, sy: number
   TRANSFORM[9] = 1
 }
 
-/** Compose and push a node-backed sprite's local transform. */
+/** Compose and push a node-backed sprite's local transform - through the
+ * node's transition declaration, so with one set (setSpriteTransition)
+ * the write is a target the core animates toward. */
 function writeTransform(sprite: Sprite): void {
   fillTransform(sprite._x, sprite._y, sprite._rot, sprite._w, sprite._h)
-  spatial.setTransform(sprite.node!, TRANSFORM)
+  spatial.writeTransform(sprite.node!, TRANSFORM)
 }
 
 /**
@@ -653,6 +655,31 @@ export function setSpriteParent(sprite: Sprite, parent: SpriteGroup | null): voi
   layer._schedule()
 }
 
+/**
+ * Declare (or with null clear) how the sprite's pose writes animate: once
+ * set, setSprite writes are TARGETS the core animates toward - JS writes
+ * once per target change, the core interpolates every frame, and a
+ * settled sprite costs nothing. The spatial vocabulary: a spec per
+ * component plus `all`, where `position` is x/y, `rotation` the sprite's
+ * rotation (always the short arc) and `scale` its w/h; each spec is
+ * `{ duration, bounce? }` (a spring, the retargeting-safe default) /
+ * `{ duration, curve }` (a tween) / a shorthand string like
+ * "300ms ease-out". Clearing cancels running tracks in place (the sprite
+ * keeps its mid-flight pose) and later writes snap. Node layer only.
+ */
+export function setSpriteTransition(sprite: Sprite, transition: NodeTransition | string | null): void {
+  if (sprite.layer === null) return
+  if (sprite.node === null) throw new Error("setSpriteTransition: record sprites have no node transitions")
+  spatial.setTransition(sprite.node, transition)
+}
+
+/** The group counterpart of setSpriteTransition (`scale` is the group's
+ * uniform scale). */
+export function setGroupTransition(group: SpriteGroup, transition: NodeTransition | string | null): void {
+  if (group.layer === null) return
+  spatial.setTransition(group.node, transition)
+}
+
 /** Add a transform group (see SpriteGroup). */
 export function addGroup(layer: SpriteLayer, opts?: GroupOptions): SpriteGroup {
   let group = {
@@ -688,7 +715,7 @@ export function setGroup(group: SpriteGroup, opts: GroupOptions): void {
   if (opts.scale !== undefined && opts.scale !== group._scale) (group._scale = opts.scale), (moved = true)
   if (moved) {
     writeGroupTransform(group)
-    spatial.setTransform(group.node, TRANSFORM)
+    spatial.writeTransform(group.node, TRANSFORM)
   }
   if (opts.parent !== undefined) {
     if (opts.parent && opts.parent.layer !== layer) throw new Error("setGroup: parent group belongs to another layer")

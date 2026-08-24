@@ -409,6 +409,8 @@ impl UiRuntime for FluxRuntime {
       if let Some(tree) = ctx.userdata::<flux::gui::tree::SharedRenderTree>() {
         tree.0.borrow_mut().set_transition_now(ts);
       }
+      // The spatial arena's node-transition clock rides the same stamp.
+      flux::gui::spatial::stamp_clock(&ctx, ts);
       if flux::gui::camera::tick(&ctx) {
         // A camera frame landed in its texture; the screen content changed
         // even though the tree did not.

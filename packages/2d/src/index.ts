@@ -12,13 +12,15 @@
 // without Solid components) and the components (SpriteLayer/Sprite/Group/
 // TileLayer) on top. See AGENTS.md for the model and the traps.
 
-export { addGroup, addSprite, createSpriteLayer, getSprite, removeGroup, removeSprite, setGroup, setSprite, setSpriteParent, POSE_FLOATS, STYLE_FLOATS } from "./layer.ts"
+export { addGroup, addSprite, createSpriteLayer, getSprite, removeGroup, removeSprite, setGroup, setGroupTransition, setSprite, setSpriteParent, setSpriteTransition, POSE_FLOATS, STYLE_FLOATS } from "./layer.ts"
 export { createRecordLayer, FLOATS_PER_SPRITE } from "./records.ts"
 export type { RecordLayer as RecordLayerHandle } from "./records.ts"
 export { pointInSprite } from "./pick.ts"
 export type { AddSpriteOptions, CameraUpdate, GroupOptions, Sprite as SpriteHandle, SpriteGroup, SpriteHandlers, SpriteLayer as SpriteLayerHandle, SpriteLayerOptions, SpriteOptions, SpritePointerEvent } from "./layer.ts"
 export { createTileLayer } from "./tiles.ts"
 export type { TileChunk, TileLayer as TileLayerHandle, TileLayerOptions } from "./tiles.ts"
+
+export type { NodeTransition, NodeTransitionSpec } from "flux:spatial"
 export { grid, namedFrames, FULL_FRAME } from "./frames.ts"
 export type { Frame, GridOptions } from "./frames.ts"
 export { createAtlas } from "./atlas.ts"

@@ -15,6 +15,7 @@ mod present;
 mod resample;
 mod router;
 mod spatial;
+mod spatial_transitions;
 mod text_layout;
 mod texture;
 mod transitions;

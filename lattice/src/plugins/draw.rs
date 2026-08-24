@@ -186,6 +186,13 @@ impl RenderInner {
     if !settled.is_empty() {
       flux::gui::tree::emit_transition_ends(qtx, &settled);
     }
+    // The spatial arena's node transitions, the same slot in the frame:
+    // the advance writes node TRS on the animation clock, the flush
+    // publishes what moved through the sinks, and settles reach JS as
+    // "spatialTransitionEnd" engine events. `wrote` is this frame's
+    // reason to paint (sink writes changed content); `active` is demand
+    // for the next one.
+    let spatial = flux::gui::spatial::tick(qtx);
 
     // Demand-driven gate: when nothing requested a frame, skip it entirely
     // (layout, paint, submit, hover refresh - elements only move when a frame
@@ -194,11 +201,12 @@ impl RenderInner {
     // transitions are demand too, and re-request below after `begin`
     // consumed the latch, so the loop keeps ticking until they settle.
     let mut driver = self.driver.borrow_mut();
-    let Some(frame) = driver.begin(platform, overlay_refresh || overlay_clear || anim_active) else {
+    let demand = overlay_refresh || overlay_clear || anim_active || spatial.active || spatial.wrote;
+    let Some(frame) = driver.begin(platform, demand) else {
       stats.borrow_mut().note_skipped();
       return;
     };
-    if anim_active {
+    if anim_active || spatial.active {
       platform.request_frame();
     }
 

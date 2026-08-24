@@ -18,6 +18,7 @@ mod liveness;
 mod logging;
 pub mod microphone;
 mod mode;
+pub mod motion;
 mod playback;
 mod present;
 mod raster;

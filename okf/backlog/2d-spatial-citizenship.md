@@ -264,6 +264,13 @@ Overlap queries (item 4) and the package re-founding landed 2026-08-24
   readTexture-comparing the two layer outputs in-app is the strongest
   parity check and needs no snapshot plumbing.
 
+The linchpin landed 2026-08-24: native node transitions
+([done](../done/spatial-node-transitions.md)) invert the motion cost -
+setSpriteTransition makes setSprite writes targets, a 400-sprite retarget
+burst is ~4 ms once per target change instead of ~5 ms per frame
+(examples/springs.tsx is the living bench). The motion story stands
+without the regression caveat.
+
 ## Not in this item
 
 Baked/tile layers ([2d-baked-layers](2d-baked-layers.md) stages A/B) are

@@ -30,6 +30,15 @@ blendMode and pointer events like any element.
   own `onFrame` writing a signal (declarative) or `setTransform` on a
   `ref`-grabbed node (the frame-rate escape hatch - signals carry
   structure, per-frame motion goes straight to the scene).
+- RETARGETED motion is native: `setTransition(node, { position:
+  { duration: 400 }, ... })` makes setTransform writes TARGETS the core
+  animates toward every frame (position/scale per lane, rotation along
+  the quaternion geodesic - a spring keeps its velocity through
+  retargets), so a mesh gliding to a slot or a camera rig easing costs
+  one JS write per target change, zero per frame. The declaration lives
+  on the SceneNode and re-applies on every scene enter; the pose a node
+  enters with always snaps. Settles fire "spatialTransitionEnd" engine
+  events (srt:events) carrying the CORE node id (`_node`).
 - One interleaved vertex buffer per geometry, described by an open layout
   (`Geometry.layout`, absent = "standard"): an ordered attribute list that
   always starts with the standard prefix `aPos` vec3 + `aNormal` vec3 +
