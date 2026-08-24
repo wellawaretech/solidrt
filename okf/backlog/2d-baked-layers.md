@@ -52,3 +52,8 @@ visible set to compact into the instance buffer, and a point query gives
 picking its candidates. Build it here rather than as its own item - alone it
 optimizes a case nobody has hit, and the chunking this item needs is the same
 spatial decomposition.
+
+If [2d-spatial-citizenship](2d-spatial-citizenship.md) lands, the core BVH
+covers culling and picking for the live layer and this JS grid is not
+needed; the chunking above (static arithmetic over tiles) is unaffected
+either way.

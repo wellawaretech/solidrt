@@ -42,12 +42,15 @@ are, and give the flush an order to walk.
   other field. Same key falls back to insertion sequence, so the current
   behaviour is what you get when nobody sets one - and painter's order stays
   the documented model.
-- The flush publishes in key order rather than record order. Either sort an
-  index array and gather into the lease buffer (one indirection per sprite
-  during the copy, no extra allocation once the index array is reused), or
-  keep records physically sorted and pay the moves at mutation time. The
-  gather is the better default: it makes the sort cost proportional to
-  changed keys, not to the population.
+- The flush publishes in key order rather than record order. The ordering
+  itself should come from [gpu-instance-order](gpu-instance-order.md)
+  (field-key mode, gather-at-publish shape): core applies the permutation
+  during the lease copy the flush already pays for, so a moving y-sorted
+  crowd costs no per-element JS at all. Gaussian splats are the primitive's
+  other consumer, which is why it is its own item. The JS fallback (sort an
+  index array, gather into the lease buffer during the copy) remains the
+  shape if this item is wanted before the core primitive exists - it is
+  correct, just O(population) interpreted work per changed frame.
 - With records no longer required to be contiguous in draw order, removal can
   become a free-list release rather than a shift - a second win falling out
   of the same change.

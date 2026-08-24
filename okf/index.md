@@ -55,6 +55,12 @@ Shaped, not started.
   The pixel-art identity kit - fixed logical resolution with integer nearest
   scaling, palette LUT, and scanline/CRT passes - as thin layers over what
   already exists
+- **[Sprites as spatial-core citizens](backlog/2d-spatial-citizenship.md)** [2026-08-24]
+  Sprite poses are JS-owned floats, so no core producer (native transitions,
+  animation clips, physics) can ever move a sprite and picking is an O(n) JS
+  walk; make each live sprite a spatial arena node whose InstanceRecord sink
+  writes its instance-buffer slot, connecting 2d to the whole producer stack
+  while rendering stays one instanced draw.
 - **[Sprite draw order is insertion order, so reordering means remove and re-add](backlog/2d-sprite-sort-key.md)** [2026-08-22]
   The sprite layer paints in record order with no sort key, so raising one
   sprite or depth-sorting a population by y - the ordinary case for a dense 2D
@@ -84,6 +90,14 @@ Shaped, not started.
   depth-capped present pacing degrades to check-and-proceed there; a
   GetSynciv-spin fallback would restore blocking pacing if Windows drag
   latency ever shows a real problem. macOS (ANGLE-Metal) unmeasured.
+- **[Animation core - clip sampling and blending as a producer into the spatial arena](backlog/animation-core.md)** [2026-08-24]
+  There is no animation system; per-frame clip sampling is O(animated nodes)
+  interpreted work and skinning is O(vertices), both below the interpreter
+  line, so character-driven apps are blocked. Build a core evaluator that
+  samples baked keyframe tracks and writes node TRS into the spatial arena
+  each frame, with JS keeping the O(changes) policy (play, stop, crossfade,
+  state machines); skinning follows as bone palettes through the planned
+  TextureSlot sink.
 - **[App icons](backlog/app-icons.md)** [2026-07-27]
   Stages 1+2 done (SVG icon from package.json/convention through the manifest
   to the launcher, monogram fallback; dev-client window icon via go-gated
@@ -192,6 +206,13 @@ Shaped, not started.
   deadline, so an overrunning critical path jitters between 1 and 2 vsyncs
   instead of degrading to a stable cadence. Harness first, then
   deadline-scheduled frames.
+- **[Gaussian splat rendering](backlog/gaussian-splats.md)** [2026-08-24]
+  Captured 3DGS scenes (phone scans, photogrammetry successors) are a growing
+  content class nothing here can display; the render path is instanced
+  camera-facing quads with alpha blending, which the stack already has, plus a
+  strict back-to-front instance order per camera move, which is the one real
+  gap and lands as the projected-key mode of gpu-instance-order. Staged so a
+  demo-tier viewer is library-only work today.
 - **[Shader compile errors on .tsx lines via #line injection](backlog/glsl-line-injection.md)** [2026-07-30]
   A shader compile error reports the line inside the string plus the injected
   preamble (offset 19 in the trails example), leaving the author to
@@ -242,6 +263,14 @@ Shaped, not started.
   what the runtime fills). Still open - the composition questions - whether
   the fused paths become thin compositions of the raw layer, whether a
   mid-level program shorthand is wanted, and the two-dialect preamble story.
+- **[Instance draw order within one entry, produced in core](backlog/gpu-instance-order.md)** [2026-08-24]
+  Two populations need the draw order of one entry's instance records to
+  change without record churn - sprite raise/y-sort reorders by
+  remove-and-re-add today, and gaussian splats need a back-to-front order over
+  hundreds of thousands of records per camera move, which is O(N) work no rung
+  above core can pay. One core primitive orders an entry's records by a key (a
+  record field, or view-projected depth) so record slots stay stable and JS
+  never touches the order.
 - **[More pipeline blend modes](backlog/gpu-pipeline-blend-modes.md)** [2026-07-29]
   The blend vocabulary on createPipeline is "none", "add", "multiply" and
   "alpha"; the rest of GL's fixed-function space (screen, subtract, min/max)
@@ -286,6 +315,13 @@ Shaped, not started.
   @solidrt/core subpath modules but has no geolocation API, so apps fall back
   to a coarse IP lookup over fetch; add flux:location and
   @solidrt/core/location in the established device-module shape.
+- **[MCP bridge - match dev servers in subdirectories of the bridge's project](backlog/mcp-bridge-workspace-project-match.md)** [2026-08-24]
+  The bridge resolves a dev server by exact projectDir equality, so a
+  workspace-root bridge reports "No dev server" for an entry served from
+  packages/*/examples/ (its nearest package.json makes THAT directory the
+  projectDir). Accept servers whose projectDir sits under the bridge's
+  project, preferring an exact match, so MCP tools work in a monorepo without
+  new CLI surface.
 - **[get_render_tree reports useless boxes for detached nodes](backlog/mcp-detached-node-bounds.md)** [2026-08-02]
   A d-* node has no layout entry, so the tree reports the box it inherits from
   its nearest layout ancestor - a d-line spanning (10,120)-(200,120) came back
@@ -333,6 +369,14 @@ Shaped, not started.
   seen, so paint cost is O(mounted content) - ~7 us/node, ~155 ms/frame at 17k
   nodes; add a cull rect to the walk and a conservative per-subtree paint
   envelope so off-screen subtrees are skipped before build().
+- **[Physics core - an embedded engine as a producer into the spatial arena](backlog/physics-core.md)** [2026-08-24]
+  Rigid-body physics is per-body-per-frame and per-contact work, below the
+  interpreter line, and nothing provides it, so games needing dynamics are
+  blocked or hand-roll it badly. Embed a proven Rust engine (Rapier) behind a
+  thin core module that steps on a fixed timestep and writes body poses into
+  spatial nodes, with JS sending intent (bodies, impulses, joints) and
+  collision events returning frame-batched; learn the API shape in a real game
+  at rung 2/3 first.
 - **[srt render is never headless on ANGLE](backlog/playback-headless-angle.md)** [2026-08-17]
   On Windows the offscreen video driver fails every time (SDL's offscreen path
   needs EGL_EXT_device_enumeration, which ANGLE does not implement) and
