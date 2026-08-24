@@ -3,7 +3,7 @@
 // and indices, shared by every node referencing it, so the memory cost is
 // one copy per distinct geometry, not per node.
 
-use super::NodeId;
+use super::{transform_point, Box3, Mat4, NodeId};
 
 /// Generation-tagged like NodeId; a destroyed shape's id never resolves.
 pub type ShapeId = u64;
@@ -144,6 +144,39 @@ pub fn ray_shape(shape: &Shape, o: [f32; 3], d: [f32; 3]) -> Option<(f32, u32, O
     [w * a[0] + u * b[0] + v * c[0], w * a[1] + u * b[1] + v * c[1]]
   });
   Some((t, face, uv, normal))
+}
+
+/// Does the node's LOCAL box, carried through its world matrix, overlap
+/// the world-axis box `query` (touching counts)? Separating axes of both
+/// boxes - the three world axes and the three transformed local axes
+/// (kept unnormalized, which stays valid under scale and shear). Exact
+/// for a rotated flat rect, the 2d picking case; a genuinely 3D pair can
+/// only err conservative on the edge-edge cross axes this skips.
+pub fn box_overlap(m: &Mat4, local: &Box3, query: &Box3) -> bool {
+  let lc = [(local[0] + local[3]) / 2.0, (local[1] + local[4]) / 2.0, (local[2] + local[5]) / 2.0];
+  let le = [(local[3] - local[0]) / 2.0, (local[4] - local[1]) / 2.0, (local[5] - local[2]) / 2.0];
+  let qc = [(query[0] + query[3]) / 2.0, (query[1] + query[4]) / 2.0, (query[2] + query[5]) / 2.0];
+  let qe = [(query[3] - query[0]) / 2.0, (query[4] - query[1]) / 2.0, (query[5] - query[2]) / 2.0];
+  let c = transform_point(m, lc);
+  let d = [c[0] - qc[0], c[1] - qc[1], c[2] - qc[2]];
+  let u = |j: usize| -> [f32; 3] { [m[j * 4], m[j * 4 + 1], m[j * 4 + 2]] };
+  for i in 0..3 {
+    let reach = qe[i] + (0..3).map(|j| le[j] * u(j)[i].abs()).sum::<f32>();
+    if d[i].abs() > reach {
+      return false;
+    }
+  }
+  for j in 0..3 {
+    let a = u(j);
+    let reach = (0..3).map(|k| le[k] * dot(u(k), a).abs()).sum::<f32>()
+      + qe[0] * a[0].abs()
+      + qe[1] * a[1].abs()
+      + qe[2] * a[2].abs();
+    if dot(d, a).abs() > reach {
+      return false;
+    }
+  }
+  true
 }
 
 fn cross(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {

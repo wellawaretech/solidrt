@@ -313,13 +313,12 @@ fn collect_entry_half(
     }
     (None, Some(_)) => return Err(throw_str(ctx, &format!("{api}: indexFormat requires indexBuffer"))),
   };
-  // The per-instance buffer, fetched through the pipeline's
+  // The per-instance buffers, fetched through the pipeline's
   // instanceAttributes; that pairing is validated in alloy against the
   // pipeline mirror (the desc is not in this bag on the split paths).
-  let instance_buffer = match opts {
-    Some(o) => o.get::<_, Option<u64>>("instanceBuffer")?.unwrap_or(0),
-    None => 0,
-  };
+  // `instanceBuffer` is the single-slot spelling, `instanceBuffers` the
+  // per-slot list (index = the attributes' `slot`).
+  let instance_buffers = collect_instance_buffers(ctx, opts, api)?;
   // The draw range, in the entry's vocabulary: firstVertex + vertexCount
   // pick the vertices on a plain entry, firstIndex + indexCount pick the
   // indices on an indexed one (WebGPU's spellings for both draw calls);
@@ -385,7 +384,37 @@ fn collect_entry_half(
     vertex_count: count.unwrap_or(-1),
     instance_count: instances.unwrap_or(-1),
   };
-  Ok(alloy::DrawSpec { pipeline, buffer, index, instance_buffer, draw, params, textures })
+  Ok(alloy::DrawSpec { pipeline, buffer, index, instance_buffers, draw, params, textures })
+}
+
+// The instanceBuffer / instanceBuffers pair at create: one buffer id for
+// slot 0, or the per-slot list (index = the attributes' `slot`). Both at
+// once contradict each other and throw; neither = no instance buffers.
+fn collect_instance_buffers(
+  ctx: &Ctx<'_>,
+  opts: &Option<Object<'_>>,
+  api: &str,
+) -> rquickjs::Result<[u64; alloy::MAX_INSTANCE_SLOTS]> {
+  let (single, list) = match opts {
+    Some(o) => (o.get::<_, Option<u64>>("instanceBuffer")?, o.get::<_, Option<Vec<u64>>>("instanceBuffers")?),
+    None => (None, None),
+  };
+  match (single, list) {
+    (Some(_), Some(_)) => Err(throw_str(ctx, &format!("{api}: pass instanceBuffer or instanceBuffers, not both"))),
+    (Some(id), None) => Ok([id, 0, 0, 0]),
+    (None, Some(list)) => {
+      if list.len() > alloy::MAX_INSTANCE_SLOTS {
+        return Err(throw_str(
+          ctx,
+          &format!("{api}: instanceBuffers holds {} buffers; slots are 0..{}", list.len(), alloy::MAX_INSTANCE_SLOTS),
+        ));
+      }
+      let mut ids = [0u64; alloy::MAX_INSTANCE_SLOTS];
+      ids[..list.len()].copy_from_slice(&list);
+      Ok(ids)
+    }
+    (None, None) => Ok([0; alloy::MAX_INSTANCE_SLOTS]),
+  }
 }
 
 fn collect_target_spec(
@@ -432,10 +461,29 @@ fn collect_buffer_update(ctx: &Ctx<'_>, update: &Object<'_>, api: &str) -> rquic
     }
     (None, Some(_)) => return Err(throw_str(ctx, &format!("{api}: indexFormat requires indexBuffer"))),
   };
+  let instance_buffer = update.get::<_, Option<u64>>("instanceBuffer")?;
+  let instance_buffers = match update.get::<_, Option<Vec<u64>>>("instanceBuffers")? {
+    Some(list) => {
+      if instance_buffer.is_some() {
+        return Err(throw_str(ctx, &format!("{api}: pass instanceBuffer or instanceBuffers, not both")));
+      }
+      if list.len() > alloy::MAX_INSTANCE_SLOTS {
+        return Err(throw_str(
+          ctx,
+          &format!("{api}: instanceBuffers holds {} buffers; slots are 0..{}", list.len(), alloy::MAX_INSTANCE_SLOTS),
+        ));
+      }
+      let mut ids = [0u64; alloy::MAX_INSTANCE_SLOTS];
+      ids[..list.len()].copy_from_slice(&list);
+      Some(ids)
+    }
+    None => None,
+  };
   Ok(alloy::BufferUpdate {
     buffer: update.get::<_, Option<u64>>("buffer")?,
     index,
-    instance_buffer: update.get::<_, Option<u64>>("instanceBuffer")?,
+    instance_buffer,
+    instance_buffers,
   })
 }
 
@@ -459,7 +507,7 @@ fn collect_draw_target_spec(
       return Err(throw_str(ctx, &format!("{api}: 'params' is not an option; pass it as its own argument before opts")));
     }
     for key in [
-      "buffer", "indexBuffer", "indexFormat", "instanceBuffer", "firstVertex", "vertexCount",
+      "buffer", "indexBuffer", "indexFormat", "instanceBuffer", "instanceBuffers", "firstVertex", "vertexCount",
       "firstIndex", "indexCount", "instanceCount",
     ] {
       if o.get::<_, rquickjs::Value>(key).map(|v| !v.is_undefined()).unwrap_or(false) {
@@ -510,7 +558,26 @@ fn collect_pipeline_desc(ctx: &Ctx<'_>, opts: &Option<Object<'_>>, api: &str) ->
     Ok(attributes)
   };
   let attributes = collect_layout("attributes")?;
-  let instance_attributes = collect_layout("instanceAttributes")?;
+  // Instance attributes additionally take `slot` (default 0): which entry
+  // of the entry's instanceBuffers list the attribute fetches from.
+  // Attributes sharing a slot interleave into one record; slot density and
+  // the cap are validated in alloy.
+  let mut instance_attributes: Vec<(String, alloy::AttrFormat, u32)> = Vec::new();
+  if let Some(o) = opts {
+    if let Some(arr) = o.get::<_, Option<Array>>("instanceAttributes")? {
+      for item in arr.iter::<Object>() {
+        let entry = item?;
+        let name: String = entry.get("name")?;
+        let format: String = entry.get("format")?;
+        let format = alloy::AttrFormat::parse(&format).map_err(|e| throw_str(ctx, &format!("{api}: {e}")))?;
+        let slot = entry.get::<_, Option<i32>>("slot")?.unwrap_or(0);
+        if slot < 0 {
+          return Err(throw_str(ctx, &format!("{api}: instance attribute '{name}' slot must be >= 0, got {slot}")));
+        }
+        instance_attributes.push((name, format, slot as u32));
+      }
+    }
+  }
   let topology = match opts {
     Some(o) => match o.get::<_, Option<String>>("topology")? {
       Some(s) => alloy::Topology::parse(&s).map_err(|e| throw_str(ctx, &format!("{api}: {e}")))?,

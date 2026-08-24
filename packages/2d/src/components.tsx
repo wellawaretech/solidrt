@@ -9,8 +9,8 @@
 import { createContext, createEffect, createSignal, For, onCleanup, untrack, useContext } from "@solidrt/core"
 import type { Element, ParentComponent, TextureId, VoidComponent } from "@solidrt/core"
 import type { FilterMode } from "@solidrt/core/gpu"
-import { addSprite, createSpriteLayer, removeSprite, setSprite } from "./layer.ts"
-import type { CameraUpdate, Sprite as SpriteHandle, SpriteLayer as LayerHandle, SpriteOptions, SpritePointerEvent } from "./layer.ts"
+import { addGroup, addSprite, createSpriteLayer, removeGroup, removeSprite, setGroup, setSprite } from "./layer.ts"
+import type { CameraUpdate, Sprite as SpriteHandle, SpriteGroup, SpriteLayer as LayerHandle, SpriteOptions, SpritePointerEvent } from "./layer.ts"
 import { createTileLayer } from "./tiles.ts"
 import type { TileChunk, TileLayer as TileLayerHandle } from "./tiles.ts"
 
@@ -109,15 +109,50 @@ export let SpriteLayer: ParentComponent<SpriteLayerProps> = props => {
   )
 }
 
+let GroupContext = createContext<SpriteGroup | undefined>()
+
+export type GroupProps = {
+  /** Position in the parent frame (layer pixels at the root). */
+  x?: number
+  y?: number
+  /** Rotation, radians, clockwise. */
+  rotation?: number
+  /** Uniform scale on the whole subtree (child sprites scale with it). */
+  scale?: number
+  ref?: (group: SpriteGroup) => void
+}
+
+/**
+ * A transform group: `<Sprite>` (and nested `<Group>`) children mount under
+ * its spatial arena node, so their pose props read in the group's frame and
+ * moving the group moves the subtree in one native recompute - a ship with
+ * turrets is one `<Group>` with the hull and turret sprites inside. Renders
+ * nothing itself.
+ */
+export let Group: ParentComponent<GroupProps> = props => {
+  let layer = useContext(LayerContext)
+  let parent = useContext(GroupContext)
+  let group = untrack(() => addGroup(layer, { parent }))
+  createEffect(
+    () => [props.x, props.y, props.rotation, props.scale] as const,
+    ([x, y, rotation, scale]) => setGroup(group, { x, y, rotation, scale }),
+  )
+  untrack(() => props.ref)?.(group)
+  onCleanup(() => removeGroup(group))
+  return <GroupContext value={group}>{props.children}</GroupContext>
+}
+
 export type SpriteProps = SpriteOptions &
   SpritePointerProps & {
     ref?: (sprite: SpriteHandle) => void
   }
 
-/** One sprite: a frame drawn at a position, top of the draw order at mount. */
+/** One sprite: a frame drawn at a position (in the enclosing `<Group>`'s
+ * frame when there is one). */
 export let Sprite: VoidComponent<SpriteProps> = props => {
   let layer = useContext(LayerContext)
-  let sprite = untrack(() => addSprite(layer))
+  let parent = useContext(GroupContext)
+  let sprite = untrack(() => addSprite(layer, parent ? { parent } : undefined))
   createEffect(
     () => [props.x, props.y, props.w, props.h, props.frame, props.rotation, props.tint] as const,
     ([x, y, w, h, frame, rotation, tint]) => setSprite(sprite, { x, y, w, h, frame, rotation, tint }),

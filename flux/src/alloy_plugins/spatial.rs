@@ -13,7 +13,7 @@ use rquickjs::{Array, Ctx, Function, JsLifetime, Object, TypedArray, Value};
 use super::AlloyContext;
 use crate::plugins::marshal::OptArg;
 use alloy::rendertree::PlatformContext;
-use alloy::spatial::{DrawSink, Projection, Shape, SharedSlotSink};
+use alloy::spatial::{DrawSink, InstanceProjection, InstanceRecordSink, Projection, Shape, SharedSlotSink};
 
 fn throw_str(ctx: &Ctx<'_>, msg: &str) -> rquickjs::Error {
   rquickjs::Exception::throw_message(ctx, msg)
@@ -68,8 +68,12 @@ impl ModuleDef for SpatialModule {
     decl.declare("destroyShape")?;
     decl.declare("setShape")?;
     decl.declare("raycast")?;
+    decl.declare("overlap")?;
     decl.declare("bindDirectionSlot")?;
     decl.declare("unbindSlot")?;
+    decl.declare("bindPoseRecord")?;
+    decl.declare("unbindRecord")?;
+    decl.declare("retargetRecords")?;
     Ok(())
   }
 
@@ -90,8 +94,12 @@ impl ModuleDef for SpatialModule {
     exports.export("destroyShape", Function::new(ctx.clone(), destroy_shape)?)?;
     exports.export("setShape", Function::new(ctx.clone(), set_shape)?)?;
     exports.export("raycast", Function::new(ctx.clone(), raycast)?)?;
+    exports.export("overlap", Function::new(ctx.clone(), overlap)?)?;
     exports.export("bindDirectionSlot", Function::new(ctx.clone(), bind_direction_slot)?)?;
     exports.export("unbindSlot", Function::new(ctx.clone(), unbind_slot)?)?;
+    exports.export("bindPoseRecord", Function::new(ctx.clone(), bind_pose_record)?)?;
+    exports.export("unbindRecord", Function::new(ctx.clone(), unbind_record)?)?;
+    exports.export("retargetRecords", Function::new(ctx.clone(), retarget_records)?)?;
     Ok(())
   }
 }
@@ -269,6 +277,21 @@ fn raycast<'js>(ctx: Ctx<'js>, origin: TypedArray<'js, f32>, direction: TypedArr
   Ok(arr)
 }
 
+/// Every shown node with bounds whose transformed local box overlaps the
+/// world-axis box, as an array of node ids (unordered).
+fn overlap<'js>(ctx: Ctx<'js>, bounds: TypedArray<'js, f32>) -> rquickjs::Result<Array<'js>> {
+  let b = floats(&ctx, &bounds, "overlap")?;
+  if b.len() != 6 {
+    return Err(throw_str(&ctx, "overlap: bounds must be a Float32Array of 6 (minX..maxZ)"));
+  }
+  let nodes = state(&ctx).atx.spatial().overlap([b[0], b[1], b[2], b[3], b[4], b[5]]);
+  let arr = Array::new(ctx.clone())?;
+  for (i, id) in nodes.iter().enumerate() {
+    arr.set(i, *id)?;
+  }
+  Ok(arr)
+}
+
 /// Bind the node's shared-slot sink with the direction projection: slot
 /// `index` of the `len`-float shared array param `name` on `target`
 /// follows the world direction of the LOCAL vector (a Float32Array of 3).
@@ -291,4 +314,22 @@ fn bind_direction_slot(
 
 fn unbind_slot(ctx: Ctx<'_>, id: u64) -> rquickjs::Result<()> {
   state(&ctx).atx.spatial_bind_slot(id, None).map_err(|e| throw_str(&ctx, &format!("unbindSlot: {e}")))
+}
+
+/// Bind the node's instance-record sink with the 2D pose projection: the
+/// flush writes [x, y, angle, sx, sy] to record slot `index` of vertex
+/// buffer `buffer`, batched into one buffer write per flush.
+fn bind_pose_record(ctx: Ctx<'_>, id: u64, buffer: u64, index: u32) -> rquickjs::Result<()> {
+  let sink = InstanceRecordSink { buffer, index, projection: InstanceProjection::Pose2D };
+  state(&ctx).atx.spatial_bind_record(id, Some(sink)).map_err(|e| throw_str(&ctx, &format!("bindPoseRecord: {e}")))
+}
+
+fn unbind_record(ctx: Ctx<'_>, id: u64) -> rquickjs::Result<()> {
+  state(&ctx).atx.spatial_bind_record(id, None).map_err(|e| throw_str(&ctx, &format!("unbindRecord: {e}")))
+}
+
+/// Move every record sink on buffer `old` to buffer `new` - the growth
+/// swap: one call and one bulk republish instead of a rebind per node.
+fn retarget_records(ctx: Ctx<'_>, old: u64, new: u64) -> rquickjs::Result<()> {
+  state(&ctx).atx.spatial_retarget_records(old, new).map_err(|e| throw_str(&ctx, &format!("retargetRecords: {e}")))
 }

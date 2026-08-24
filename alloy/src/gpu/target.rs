@@ -31,9 +31,10 @@ pub struct EntryBuffers {
   /// Index binding: present = the entry draws indexed; the buffer's
   /// ELEMENT_ARRAY binding is captured in the entry's VAO at build time.
   pub index: Option<(Rc<GpuBuffer>, u64, IndexFormat)>,
-  /// The per-instance buffer the pipeline's `instance_attributes` describe,
-  /// captured in the VAO at divisor 1; None when it declares none.
-  pub instance: Option<(Rc<GpuBuffer>, u64)>,
+  /// The per-instance buffers, one per instance slot the pipeline's
+  /// `instance_attributes` declare (dense from 0), each captured in the
+  /// VAO at divisor 1; empty when it declares none.
+  pub instances: Vec<(Rc<GpuBuffer>, u64)>,
 }
 
 /// One draw of a mesh target's ordered list: the pipeline it draws with
@@ -440,9 +441,15 @@ fn build_vao(
       gl.bind_buffer(glow::ARRAY_BUFFER, Some(buffer.vbo));
       record_layout(gl, program, &desc.attributes, 0);
     }
-    if let Some((buffer, _)) = &buffers.instance {
+    for (slot, (buffer, _)) in buffers.instances.iter().enumerate() {
+      let layout: Vec<(String, AttrFormat)> = desc
+        .instance_attributes
+        .iter()
+        .filter(|(_, _, s)| *s as usize == slot)
+        .map(|(n, f, _)| (n.clone(), *f))
+        .collect();
       gl.bind_buffer(glow::ARRAY_BUFFER, Some(buffer.vbo));
-      record_layout(gl, program, &desc.instance_attributes, 1);
+      record_layout(gl, program, &layout, 1);
     }
     if let Some((index, _, _)) = &buffers.index {
       gl.bind_buffer(glow::ELEMENT_ARRAY_BUFFER, Some(index.vbo));
@@ -461,10 +468,11 @@ fn check_entry_buffers(desc: &PipelineDesc, buffers: &EntryBuffers) -> Result<()
   if !desc.attributes.is_empty() && buffers.vertex.is_none() {
     return Err("pipeline declares attributes but no vertex buffer".to_string());
   }
-  if !desc.instance_attributes.is_empty() && buffers.instance.is_none() {
+  let slots = desc.instance_attributes.iter().map(|(_, _, s)| *s as usize + 1).max().unwrap_or(0);
+  if slots > buffers.instances.len() {
     return Err("pipeline declares instanceAttributes but no instance buffer".to_string());
   }
-  if desc.instance_attributes.is_empty() && buffers.instance.is_some() {
+  if slots < buffers.instances.len() {
     return Err("pipeline declares no instanceAttributes; the instance buffer would never be read".to_string());
   }
   Ok(())
@@ -479,7 +487,7 @@ fn release_entry_buffers(gl: &glow::Context, buffers: EntryBuffers) {
   if let Some((buffer, _, _)) = buffers.index {
     release_buffer(gl, buffer);
   }
-  if let Some((buffer, _)) = buffers.instance {
+  for (buffer, _) in buffers.instances {
     release_buffer(gl, buffer);
   }
 }
@@ -796,9 +804,10 @@ impl ShaderTexture {
     self.entry0().and_then(|e| e.buffers.index.as_ref().map(|(_, _, fmt)| fmt.name()))
   }
 
-  /// Registry id of the first entry's per-instance buffer, if it binds one.
-  pub fn instance_buffer_id(&self) -> Option<u64> {
-    self.entry0().and_then(|e| e.buffers.instance.as_ref().map(|(_, id)| *id))
+  /// Registry ids of the first entry's per-instance buffers, in slot
+  /// order; empty when it binds none.
+  pub fn instance_buffer_ids(&self) -> Vec<u64> {
+    self.entry0().map(|e| e.buffers.instances.iter().map(|(_, id)| *id).collect()).unwrap_or_default()
   }
 
   /// Whether this is a mesh target (vs a fullscreen fragment pass).
@@ -820,7 +829,7 @@ impl ShaderTexture {
       m.entries.iter().any(|e| {
         e.buffers.vertex.as_ref().is_some_and(|(_, bid)| *bid == id)
           || e.buffers.index.as_ref().is_some_and(|(_, iid, _)| *iid == id)
-          || e.buffers.instance.as_ref().is_some_and(|(_, iid)| *iid == id)
+          || e.buffers.instances.iter().any(|(_, iid)| *iid == id)
       })
     })
   }
@@ -844,7 +853,7 @@ impl ShaderTexture {
 
   /// The first entry's declared per-instance layout; empty when its
   /// pipeline declares none (and for fragment-only shaders).
-  pub fn instance_attributes(&self) -> &[(String, AttrFormat)] {
+  pub fn instance_attributes(&self) -> &[(String, AttrFormat, u32)] {
     self.entry0().map(|e| e.pipeline.desc.instance_attributes.as_slice()).unwrap_or(&[])
   }
 
@@ -1291,7 +1300,7 @@ impl ShaderTexture {
             buffer_id: e.buffers.vertex.as_ref().map(|(_, id)| *id),
             index_buffer_id: e.buffers.index.as_ref().map(|(_, iid, _)| *iid),
             index_format: e.buffers.index.as_ref().map(|(_, _, fmt)| fmt.name()),
-            instance_buffer_id: e.buffers.instance.as_ref().map(|(_, id)| *id),
+            instance_buffer_ids: e.buffers.instances.iter().map(|(_, id)| *id).collect(),
             topology: e.pipeline.desc.topology.name(),
             blend: blend_name(e.pipeline.desc.blend),
             cull: cull_name(e.pipeline.desc.cull),

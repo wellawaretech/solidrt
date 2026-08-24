@@ -34,10 +34,11 @@ pub use texture::{
 };
 pub use timing::{PassTimer, Timed};
 pub use vocab::{
-  blend_name, cull_name, parse_blend, parse_cull, resolve_draw_range, validate_draw_range, validate_order,
+  blend_name, cull_name, instance_strides, parse_blend, parse_cull, resolve_draw_range, validate_draw_range,
+  validate_instance_slots, validate_order,
   validate_param_if_declared, validate_params, validate_texture_bindings, vertex_stride, merge_bindings, TextureBinding, AttrFormat, AttributeTable, BlendMode,
   BufferIds, BufferUpdate, CullMode, DepthState, DrawBounds, DrawRange, DrawUpdate, IndexFormat, ParamValue, PipelineDesc, ShaderStage,
-  Topology, UniformKind, UniformSlot, UniformTable,
+  Topology, UniformKind, UniformSlot, UniformTable, MAX_INSTANCE_SLOTS,
 };
 
 use std::num::NonZeroU32;

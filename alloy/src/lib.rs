@@ -42,7 +42,7 @@ pub use context::{CaptureDone, CaptureInfo, Context, StatsOverlay};
 pub use gpu::{
   parse_blend, parse_cull, AttrFormat, BlendMode, BufferIds, BufferUpdate, CullMode, DepthState, DrawBounds, DrawRange,
   DrawSpec, DrawUpdate, GpuLimits, IndexFormat, ParamValue, PipelineDesc, NodeShader, PipelineSpec, ShaderStage, TargetSpec, TextureBinding, Topology,
-  UniformKind, UniformSlot, UniformTable, WindowShader,
+  UniformKind, UniformSlot, UniformTable, WindowShader, MAX_INSTANCE_SLOTS,
 };
 pub use event::{
   AlloyCommand, AlloyEvent, GamepadState, Modifiers, PointerType, TextCapitalization, TextInputOptions, TextInputType,

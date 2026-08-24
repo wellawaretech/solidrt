@@ -1,6 +1,6 @@
 use std::rc::Rc;
 
-use crate::gpu::{vertex_stride, AttributeTable, PipelineDesc, ShaderStage};
+use crate::gpu::{instance_strides, validate_instance_slots, vertex_stride, AttributeTable, PipelineDesc, ShaderStage};
 use crate::raster::RasterCmd;
 
 use super::mirror::PipelineMirror;
@@ -68,17 +68,18 @@ impl Context {
   /// one compiles nothing. Free with `destroy_render_pipeline`.
   pub fn create_render_pipeline(&self, program: u64, desc: PipelineDesc, label: Option<String>) -> Result<u64, String> {
     self.gpu_limits().check_vertex_attribs(desc.attributes.len() + desc.instance_attributes.len())?;
+    validate_instance_slots(&desc.instance_attributes)?;
     let uniforms = match self.program_uniforms.borrow().get(&program) {
       Some(uniforms) => uniforms.clone(),
       None => return Err(format!("program {program} not found")),
     };
     let stride = vertex_stride(&desc.attributes) as usize;
-    let instance_stride = vertex_stride(&desc.instance_attributes) as usize;
+    let instance_strides = instance_strides(&desc.instance_attributes);
     let depth = desc.depth.is_some();
     let id = self.next_pipeline_id.get();
     self.rpc(|reply| RasterCmd::CreateRenderPipeline { id, program, desc, label, reply })??;
     self.next_pipeline_id.set(id + 1);
-    self.pipeline_mirrors.borrow_mut().insert(id, PipelineMirror { uniforms, stride, instance_stride, depth });
+    self.pipeline_mirrors.borrow_mut().insert(id, PipelineMirror { uniforms, stride, instance_strides, depth });
     Ok(id)
   }
 

@@ -12,7 +12,7 @@
 // GPU until flush(). worldMatrix() reads through pending writes.
 
 declare module "flux:spatial" {
-  import type { DrawId, TextureId } from "flux:gpu"
+  import type { BufferId, DrawId, TextureId } from "flux:gpu"
 
   export type NodeId = number & { readonly __spatialNode: unique symbol }
 
@@ -84,6 +84,15 @@ declare module "flux:spatial" {
    * direction need not be normalized; distances are world units. Reads
    * the index as of the last flush. */
   export function raycast(origin: Float32Array, direction: Float32Array): Hit[]
+  /**
+   * Every shown node with bounds whose local box, carried through its
+   * world transform, overlaps the world-axis box `bounds` (a Float32Array
+   * of 6: [minX, minY, minZ, maxX, maxY, maxZ]; touching counts, a point
+   * is min == max). Tested by separating axes, so a rotated flat rect -
+   * the 2d marquee case - tests exactly, never by its world AABB.
+   * Unordered; reads the index as of the last flush, like raycast.
+   */
+  export function overlap(bounds: Float32Array): NodeId[]
 
   /**
    * Route the world DIRECTION of the node's local `vector` (a
@@ -99,4 +108,32 @@ declare module "flux:spatial" {
   export function bindDirectionSlot(node: NodeId, target: TextureId, name: string, len: number, index: number, vector: Float32Array): void
   /** Remove the node's slot sink (its slot zeroes at the next flush). */
   export function unbindSlot(node: NodeId): void
+
+  /**
+   * Route the node's world pose to record slot `index` of vertex buffer
+   * `buffer` used as an instance buffer: the flush writes the 5 floats
+   * [x, y, angle, sx, sy] (world xy translation, rotation of the local x
+   * axis in the world xy plane, xy scale with sy negated when the matrix
+   * mirrors) at float offset index * 5. Writes batch: however many bound
+   * nodes moved, each flush issues at most one coalesced write per
+   * buffer, so producer-driven populations cost one buffer write per
+   * frame. A hidden node's slot zeroes (zero scale collapses the
+   * instance); so does an unbound or destroyed node's. Validated at bind
+   * time: the buffer must exist and the slot must fit its byte size.
+   * Rebinding replaces the node's record sink; the abandoned slot zeroes.
+   */
+  export function bindPoseRecord(node: NodeId, buffer: BufferId, index: number): void
+  /** Remove the node's record sink (its slot zeroes at the next flush). */
+  export function unbindRecord(node: NodeId): void
+  /**
+   * Move every record sink on buffer `old` to buffer `new`, slot indices
+   * untouched: the growth swap. The whole used range republishes into
+   * `new` at the next flush, so a population outgrowing its buffer swaps
+   * in a larger one with one call and one bulk write instead of a
+   * bindPoseRecord per node (pair it with the draw entry's own buffer
+   * swap, setDraw's `instanceBuffers`). Throws when nothing is bound to
+   * `old`, when `new` does not exist or cannot hold every bound slot, or
+   * when `new` already carries record sinks.
+   */
+  export function retargetRecords(old: BufferId, next: BufferId): void
 }

@@ -127,7 +127,7 @@ export {
 // GPU-side (exact, same size): seed a loadOp "load" accumulator, snapshot a
 // ping-pong buffer, reset state to a known image.
 export { copyTexture, destroyBuffer, renderTarget, setDraw } from "flux:gpu"
-export type { BlendMode, BufferUpdate, CullMode, DrawRange, IndexBinding, IndexFormat, IndexRange, ShaderParams, Topology, VertexAttribute } from "flux:gpu"
+export type { BlendMode, BufferUpdate, CullMode, DrawRange, IndexBinding, IndexFormat, IndexRange, InstanceAttribute, ShaderParams, Topology, VertexAttribute } from "flux:gpu"
 
 // The draw-list verbs, re-exported raw: entries live and die with their draw
 // target (see createDrawTarget below), so there is no per-entry lifetime to
@@ -342,6 +342,9 @@ export function createShaderTarget(
     textures?: gpu.TextureBindings
     buffer?: gpu.BufferId
     instanceBuffer?: gpu.BufferId
+    /** One buffer per instance slot of the pipeline (index = the
+     * attributes' `slot`); pass this OR `instanceBuffer`, not both. */
+    instanceBuffers?: gpu.BufferId[]
     clearColor?: [number, number, number, number]
     render?: "auto" | "manual"
     loadOp?: "clear" | "load"
@@ -570,8 +573,11 @@ export function createPipelineTexture(
     textures?: gpu.TextureBindings
     attributes?: gpu.VertexAttribute[]
     buffer?: gpu.BufferId
-    instanceAttributes?: gpu.VertexAttribute[]
+    instanceAttributes?: gpu.InstanceAttribute[]
     instanceBuffer?: gpu.BufferId
+    /** One buffer per instance slot (index = the attributes' `slot`);
+     * pass this OR `instanceBuffer`, not both. */
+    instanceBuffers?: gpu.BufferId[]
     topology?: gpu.Topology
     depth?: boolean
     depthWrite?: boolean

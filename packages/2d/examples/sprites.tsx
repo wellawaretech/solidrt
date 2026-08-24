@@ -3,8 +3,9 @@
 // motion loop grabs sprite handles via addSprite and rewrites positions with
 // setSprite from onFrame - signals carry structure, per-frame motion goes
 // straight to the layer (the same split as @solidrt/3d). Whatever moves, the
-// tree holds ONE texture leaf; the runtime publishes the record buffer
-// through the zero-copy write lease once per dirty frame.
+// tree holds ONE texture leaf; each setSprite writes the sprite's arena
+// node, and the core flush publishes every moved pose as one coalesced
+// instance-buffer write per frame.
 //
 // The atlas is a real image (core's logo) sliced 2x2 by grid(): four frames,
 // each sprite drawing one quarter. An atlas from raw pixel bytes would use

@@ -271,14 +271,20 @@ pub struct PipelineDesc {
   /// One interleaved float vertex, in buffer order: (attribute name, format).
   /// Empty for attributeless rendering driven by gl_VertexID.
   pub attributes: Vec<(String, AttrFormat)>,
-  /// One interleaved per-INSTANCE record, in buffer order (WebGPU's stepMode
-  /// "instance"): fetched from the entry's instance buffer with vertex
-  /// divisor 1, so every vertex of an instance reads the same record and the
-  /// record advances per instance. Names share the vertex-attribute
-  /// namespace (each is one `in` of the vertex stage), so a name in both
-  /// lists is rejected at pipeline creation. Empty = no per-instance fetch;
-  /// instances then differ only through gl_InstanceID.
-  pub instance_attributes: Vec<(String, AttrFormat)>,
+  /// The per-INSTANCE attributes as (name, format, buffer slot): fetched
+  /// from the entry's instance buffer for that slot with vertex divisor 1,
+  /// so every vertex of an instance reads the same record and the record
+  /// advances per instance. Attributes sharing a slot interleave into one
+  /// record in declaration order (WebGPU's stepMode "instance"); distinct
+  /// slots are distinct buffers with their own strides, which is what lets
+  /// two writers own instance data independently (a core-written pose
+  /// buffer beside a JS-written style buffer). Slots must be dense from 0
+  /// and below `MAX_INSTANCE_SLOTS` (`validate_instance_slots`). Names
+  /// share the vertex-attribute namespace (each is one `in` of the vertex
+  /// stage), so a name in both lists is rejected at pipeline creation.
+  /// Empty = no per-instance fetch; instances then differ only through
+  /// gl_InstanceID.
+  pub instance_attributes: Vec<(String, AttrFormat, u32)>,
   pub topology: Topology,
   /// None = overwrite (the default); see `BlendMode`.
   pub blend: Option<BlendMode>,
@@ -304,6 +310,46 @@ impl Default for PipelineDesc {
 /// vertex of `attributes`, or an instance record of `instance_attributes`.
 pub fn vertex_stride(attributes: &[(String, AttrFormat)]) -> i32 {
   attributes.iter().map(|(_, f)| f.components() * 4).sum()
+}
+
+/// The most instance buffer slots a pipeline may declare. A hard engine
+/// cap so per-slot state stays fixed-size (and `Copy`) everywhere; two is
+/// the designed-for case (a core-owned pose buffer beside a JS-owned
+/// style buffer), four leaves headroom.
+pub const MAX_INSTANCE_SLOTS: usize = 4;
+
+/// Per-slot byte strides of a pipeline's instance attributes (0 = the slot
+/// is unused). Callers index it by an entry's instance-buffer slot.
+pub fn instance_strides(attributes: &[(String, AttrFormat, u32)]) -> [usize; MAX_INSTANCE_SLOTS] {
+  let mut strides = [0usize; MAX_INSTANCE_SLOTS];
+  for (_, f, slot) in attributes {
+    if let Some(s) = strides.get_mut(*slot as usize) {
+      *s += f.components() as usize * 4;
+    }
+  }
+  strides
+}
+
+/// The slot contract of `PipelineDesc::instance_attributes`: every slot
+/// below `MAX_INSTANCE_SLOTS`, and the used slots dense from 0 (a gap
+/// would be an entry buffer nothing reads). Checked at both pipeline
+/// creates, so a bad layout throws at its call site.
+pub fn validate_instance_slots(attributes: &[(String, AttrFormat, u32)]) -> Result<(), String> {
+  let mut used = [false; MAX_INSTANCE_SLOTS];
+  for (name, _, slot) in attributes {
+    let i = *slot as usize;
+    if i >= MAX_INSTANCE_SLOTS {
+      return Err(format!("instance attribute '{name}' uses buffer slot {slot}; slots are 0..{MAX_INSTANCE_SLOTS}"));
+    }
+    used[i] = true;
+  }
+  let count = used.iter().rposition(|&u| u).map_or(0, |p| p + 1);
+  for (i, &u) in used[..count].iter().enumerate() {
+    if !u {
+      return Err(format!("instance buffer slots must be dense from 0: slot {i} has no attributes"));
+    }
+  }
+  Ok(())
 }
 
 /// The GLSL element type of one active uniform, reflected once at link time
@@ -620,7 +666,9 @@ pub struct DrawUpdate {
 pub struct BufferIds {
   pub buffer: u64,
   pub index: Option<(u64, IndexFormat)>,
-  pub instance_buffer: u64,
+  /// One buffer per instance slot of the pipeline (0 = the slot is unused;
+  /// used slots are dense from 0, mirroring the layout contract).
+  pub instance_buffers: [u64; MAX_INSTANCE_SLOTS],
 }
 
 impl BufferIds {
@@ -650,20 +698,32 @@ impl BufferIds {
       next.index = Some((id, format));
     }
     if let Some(id) = update.instance_buffer {
-      if self.instance_buffer == 0 {
+      if self.instance_buffers[0] == 0 {
         return Err("the entry has no instance buffer (the pipeline declares no instanceAttributes)".to_string());
       }
       if id == 0 {
         return Err("instanceBuffer must be a buffer id".to_string());
       }
-      next.instance_buffer = id;
+      next.instance_buffers[0] = id;
+    }
+    if let Some(ids) = update.instance_buffers {
+      for (slot, (&cur, &id)) in self.instance_buffers.iter().zip(ids.iter()).enumerate() {
+        if (cur == 0) != (id == 0) {
+          return Err(format!(
+            "instanceBuffers must cover exactly the pipeline's instance slots; slot {slot} {}",
+            if cur == 0 { "is not declared" } else { "cannot be dropped" }
+          ));
+        }
+      }
+      next.instance_buffers = ids;
     }
     Ok(next)
   }
 
   /// The nonzero ids, for "which targets read this buffer" bookkeeping.
   pub fn reads(&self, id: u64) -> bool {
-    id != 0 && (self.buffer == id || self.instance_buffer == id || self.index.is_some_and(|(i, _)| i == id))
+    id != 0
+      && (self.buffer == id || self.instance_buffers.contains(&id) || self.index.is_some_and(|(i, _)| i == id))
   }
 }
 
@@ -674,7 +734,12 @@ impl BufferIds {
 pub struct BufferUpdate {
   pub buffer: Option<u64>,
   pub index: Option<(u64, IndexFormat)>,
+  /// Swap the slot-0 instance buffer (the single-slot common case).
   pub instance_buffer: Option<u64>,
+  /// Swap every instance slot at once; must fill exactly the slots the
+  /// entry fills (see `BufferIds::merged`). Applied after
+  /// `instance_buffer` when both are present, so pass one or the other.
+  pub instance_buffers: Option<[u64; MAX_INSTANCE_SLOTS]>,
 }
 
 /// The unit nouns of a fetch bound: what the range counts. Vertices through
@@ -706,11 +771,21 @@ pub struct DrawBounds {
   /// paths accept (firstIndex/indexCount vs firstVertex/vertexCount) and
   /// the fetch bound's error nouns.
   pub indexed: bool,
-  /// The per-instance fetch as (record stride, buffer byte size), present
-  /// when the entry binds an instance buffer. Instances `[0,
-  /// instance_count)` fetch one record each - there is no base instance -
-  /// so `instance_count` bounds against this.
-  pub instance: Option<(usize, usize)>,
+  /// The per-instance fetch as (record stride, buffer byte size) per
+  /// instance slot (stride 0 = the slot is unused). Instances `[0,
+  /// instance_count)` fetch one record from EVERY slot - there is no base
+  /// instance - so `instance_count` bounds against the tightest slot
+  /// (`instance_limit`).
+  pub instances: [(usize, usize); MAX_INSTANCE_SLOTS],
+}
+
+impl DrawBounds {
+  /// The binding slot with the fewest whole records - what the instance
+  /// count derives from and validates against - as (stride, byte size).
+  /// None when the entry fetches nothing per instance.
+  pub fn instance_limit(&self) -> Option<(usize, usize)> {
+    self.instances.iter().filter(|(stride, _)| *stride > 0).min_by_key(|(stride, size)| size / stride).copied()
+  }
 }
 
 /// Check a resolved draw range against the buffers it fetches from: every
@@ -744,7 +819,7 @@ pub fn validate_draw_range(range: DrawRange, bounds: DrawBounds) -> Result<(), S
       ));
     }
   }
-  if let Some((stride, size)) = bounds.instance {
+  if let Some((stride, size)) = bounds.instance_limit() {
     let need = range.instance_count as usize * stride;
     if need > size {
       let capacity = size / stride;
@@ -782,7 +857,7 @@ pub fn resolve_draw_range(mut range: DrawRange, bounds: DrawBounds) -> Result<Dr
     };
   }
   if range.instance_count < 0 {
-    range.instance_count = match bounds.instance {
+    range.instance_count = match bounds.instance_limit() {
       Some((stride, size)) => (size / stride) as i32,
       None => 1,
     };

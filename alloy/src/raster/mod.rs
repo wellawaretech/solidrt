@@ -1739,7 +1739,7 @@ impl RasterState {
           buffer_id: if flat { shader.buffer_id() } else { None },
           index_buffer_id: if flat { shader.index_buffer_id() } else { None },
           index_format: if flat { shader.index_format_name() } else { None },
-          instance_buffer_id: if flat { shader.instance_buffer_id() } else { None },
+          instance_buffer_ids: if flat { shader.instance_buffer_ids() } else { Vec::new() },
           topology: if flat { shader.topology_name() } else { None },
           draw_count: draw.map(|d| d.vertex_count),
           first_vertex: draw.map(|d| d.first_vertex),
@@ -1755,7 +1755,11 @@ impl RasterState {
             Vec::new()
           },
           instance_attributes: if flat {
-            shader.instance_attributes().iter().map(|(name, fmt)| (name.clone(), fmt.name().to_string())).collect()
+            shader
+              .instance_attributes()
+              .iter()
+              .map(|(name, fmt, slot)| (name.clone(), fmt.name().to_string(), *slot))
+              .collect()
           } else {
             Vec::new()
           },
@@ -1793,7 +1797,7 @@ impl RasterState {
           instance_attributes: desc
             .instance_attributes
             .iter()
-            .map(|(name, fmt)| (name.clone(), fmt.name().to_string()))
+            .map(|(name, fmt, slot)| (name.clone(), fmt.name().to_string(), *slot))
             .collect(),
         }
       })
@@ -1845,11 +1849,11 @@ fn resolve_entry_buffers(buffers: &HashMap<u64, Rc<GpuBuffer>>, ids: BufferIds) 
     Some((id, format)) => Some((lookup(id, "index buffer")?, id, format)),
     None => None,
   };
-  let instance = match ids.instance_buffer {
-    0 => None,
-    id => Some((lookup(id, "instance buffer")?, id)),
-  };
-  Ok(EntryBuffers { vertex, index, instance })
+  let mut instances = Vec::new();
+  for &id in ids.instance_buffers.iter().take_while(|&&id| id != 0) {
+    instances.push((lookup(id, "instance buffer")?, id));
+  }
+  Ok(EntryBuffers { vertex, index, instances })
 }
 
 /// Which shader targets need re-rendering after the contents of the `dirty`

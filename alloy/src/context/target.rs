@@ -2,9 +2,11 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use crate::gpu::{
-  resolve_draw_range, validate_draw_range, validate_order, validate_param_if_declared, validate_params,
+  instance_strides, resolve_draw_range, validate_draw_range, validate_instance_slots, validate_order,
+  validate_param_if_declared, validate_params,
   validate_texture_bindings, vertex_stride, BufferIds, DrawBounds, DrawSpec, DrawUpdate, ParamValue, PipelineSpec,
   SamplerState, TargetSpec, TextureBinding, TextureEntry, TextureFormat, UniformKind, UniformTable, WindowShader,
+  MAX_INSTANCE_SLOTS,
 };
 use crate::raster::RasterCmd;
 
@@ -109,10 +111,11 @@ impl Context {
     limits.check_texture_size(spec.target.width, spec.target.height)?;
     limits.check_texture_units(spec.entry.textures.len())?;
     limits.check_vertex_attribs(spec.pipeline.attributes.len() + spec.pipeline.instance_attributes.len())?;
+    validate_instance_slots(&spec.pipeline.instance_attributes)?;
     validate_load(&spec.target)?;
     let stride = vertex_stride(&spec.pipeline.attributes) as usize;
-    let instance_stride = vertex_stride(&spec.pipeline.instance_attributes) as usize;
-    let bounds = self.resolve_entry_range(&mut spec.entry, stride, instance_stride)?;
+    let instance_strides = instance_strides(&spec.pipeline.instance_attributes);
+    let bounds = self.resolve_entry_range(&mut spec.entry, stride, instance_strides)?;
     let id = self.textures.allocate_id();
     let (width, height, sampler) = (spec.target.width, spec.target.height, spec.target.sampler);
     let manual = spec.target.manual;
@@ -146,23 +149,40 @@ impl Context {
     &self,
     entry: &mut DrawSpec,
     stride: usize,
-    instance_stride: usize,
+    instance_strides: [usize; MAX_INSTANCE_SLOTS],
   ) -> Result<DrawBounds, String> {
     let size = self.buffer_size(entry.buffer)?;
     if stride > 0 && size.is_none() {
       return Err("pipeline declares attributes but no vertex buffer".to_string());
     }
-    let instance_size = match entry.instance_buffer {
-      0 => None,
-      id => {
-        Some(self.buffer_sizes.borrow().get(&id).copied().ok_or_else(|| format!("instance buffer {id} not found"))?)
+    let mut instances = [(0usize, 0usize); MAX_INSTANCE_SLOTS];
+    for (slot, (&slot_stride, &id)) in instance_strides.iter().zip(entry.instance_buffers.iter()).enumerate() {
+      match (slot_stride, id) {
+        (0, 0) => {}
+        (0, _) => {
+          return Err(if slot == 0 {
+            "pipeline declares no instanceAttributes; the instance buffer would never be read".to_string()
+          } else {
+            format!("pipeline declares no instance attributes in buffer slot {slot}; the instance buffer would never be read")
+          })
+        }
+        (_, 0) => {
+          return Err(if slot == 0 {
+            "pipeline declares instanceAttributes but no instance buffer".to_string()
+          } else {
+            format!("pipeline declares instance attributes in buffer slot {slot} but the entry binds no instance buffer there")
+          })
+        }
+        (slot_stride, id) => {
+          let size = self
+            .buffer_sizes
+            .borrow()
+            .get(&id)
+            .copied()
+            .ok_or_else(|| format!("instance buffer {id} not found"))?;
+          instances[slot] = (slot_stride, size);
+        }
       }
-    };
-    if instance_stride > 0 && instance_size.is_none() {
-      return Err("pipeline declares instanceAttributes but no instance buffer".to_string());
-    }
-    if instance_stride == 0 && instance_size.is_some() {
-      return Err("pipeline declares no instanceAttributes; the instance buffer would never be read".to_string());
     }
     let (fetch, indexed) = match entry.index {
       Some((index_buffer, format)) => {
@@ -175,7 +195,7 @@ impl Context {
       }
       None => (size.filter(|_| stride > 0).map(|size| (stride, size)), false),
     };
-    let bounds = DrawBounds { fetch, indexed, instance: instance_size.map(|size| (instance_stride, size)) };
+    let bounds = DrawBounds { fetch, indexed, instances };
     entry.draw = resolve_draw_range(entry.draw, bounds)?;
     Ok(bounds)
   }
@@ -189,13 +209,13 @@ impl Context {
     let limits = self.gpu_limits();
     limits.check_texture_size(spec.width, spec.height)?;
     limits.check_texture_units(entry.textures.len())?;
-    let (uniforms, stride, instance_stride) = match self.pipeline_mirrors.borrow().get(&pipeline) {
-      Some(mirror) => (mirror.uniforms.clone(), mirror.stride, mirror.instance_stride),
+    let (uniforms, stride, instance_strides) = match self.pipeline_mirrors.borrow().get(&pipeline) {
+      Some(mirror) => (mirror.uniforms.clone(), mirror.stride, mirror.instance_strides),
       None => return Err(format!("pipeline {pipeline} not found")),
     };
     validate_load(&spec)?;
     entry.pipeline = pipeline;
-    let bounds = self.resolve_entry_range(&mut entry, stride, instance_stride)?;
+    let bounds = self.resolve_entry_range(&mut entry, stride, instance_strides)?;
     let id = self.textures.allocate_id();
     let (width, height, sampler) = (spec.width, spec.height, spec.sampler);
     let manual = spec.manual;
@@ -267,8 +287,8 @@ impl Context {
         return Err(format!("draw {before_id} (before) not found on target {target}"));
       }
     }
-    let (uniforms, stride, instance_stride, depth) = match self.pipeline_mirrors.borrow().get(&entry.pipeline) {
-      Some(pm) => (pm.uniforms.clone(), pm.stride, pm.instance_stride, pm.depth),
+    let (uniforms, stride, instance_strides, depth) = match self.pipeline_mirrors.borrow().get(&entry.pipeline) {
+      Some(pm) => (pm.uniforms.clone(), pm.stride, pm.instance_strides, pm.depth),
       None => return Err(format!("pipeline {} not found", entry.pipeline)),
     };
     if depth && !list.depth {
@@ -277,7 +297,7 @@ impl Context {
         entry.pipeline
       ));
     }
-    let bounds = self.resolve_entry_range(&mut entry, stride, instance_stride)?;
+    let bounds = self.resolve_entry_range(&mut entry, stride, instance_strides)?;
     validate_params(&uniforms, &entry.params)?;
     validate_texture_bindings(&uniforms, &entry.textures)?;
     let draw_id = list.next_draw;
@@ -628,11 +648,13 @@ impl Context {
         None => (stride, size_of(ids.buffer, "buffer")?),
       }),
     };
-    let instance = match bounds.instance {
-      None => None,
-      Some((stride, _)) => Some((stride, size_of(ids.instance_buffer, "instance buffer")?)),
-    };
-    Ok(DrawBounds { fetch, indexed: bounds.indexed, instance })
+    let mut instances = bounds.instances;
+    for (slot, pair) in instances.iter_mut().enumerate() {
+      if pair.0 > 0 {
+        pair.1 = size_of(ids.instance_buffers[slot], "instance buffer")?;
+      }
+    }
+    Ok(DrawBounds { fetch, indexed: bounds.indexed, instances })
   }
 
   /// Update a pipeline texture's draw range - which vertices are drawn

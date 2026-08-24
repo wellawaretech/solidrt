@@ -1,6 +1,6 @@
 use crate::gpu::{validate_params, DrawUpdate, ParamValue};
 use crate::raster::RasterCmd;
-use crate::spatial::{DrawSink, Mat4, NodeId, SharedSlotSink, SinkWriter, Spatial};
+use crate::spatial::{DrawSink, InstanceRecordSink, Mat4, NodeId, SharedSlotSink, SinkWriter, Spatial};
 
 use super::mirror::entry_mirror;
 use super::Context;
@@ -50,6 +50,17 @@ impl SinkWriter for Writer<'_> {
     self.wrote = true;
     Self::dropped(self.ctx.set_target_params(target, &[(name.to_string(), ParamValue::Array(values.to_vec()))]));
   }
+
+  // An instance-record dirty range, through the ordinary partial buffer
+  // write (bounds-checked there against the buffer's size).
+  fn write_instances(&mut self, buffer: u64, first: u32, values: &[f32]) {
+    self.wrote = true;
+    let mut data = Vec::with_capacity(values.len() * 4);
+    for v in values {
+      data.extend_from_slice(&v.to_ne_bytes());
+    }
+    Self::dropped(self.ctx.write_gpu_buffer(buffer, &data, first as usize * 4));
+  }
 }
 
 impl Context {
@@ -90,6 +101,40 @@ impl Context {
       }
     }
     self.spatial.borrow_mut().set_shared_slot(node, sink)
+  }
+
+  /// Bind (or with None unbind) a node's instance-record sink. Validated
+  /// at bind time like the draw path: the buffer must exist and the slot
+  /// must fit its byte size, so a bad binding throws at its call site.
+  pub fn spatial_bind_record(&self, node: NodeId, sink: Option<InstanceRecordSink>) -> Result<(), String> {
+    if let Some(sink) = &sink {
+      let size = self.gpu_buffer_len(sink.buffer)?;
+      let stride = sink.projection.floats() as usize;
+      let need = (sink.index as usize + 1) * stride * 4;
+      if need > size {
+        return Err(format!(
+          "instance record slot {} ends at byte {need}, buffer {} has {size}",
+          sink.index, sink.buffer
+        ));
+      }
+    }
+    self.spatial.borrow_mut().set_instance_record(node, sink)
+  }
+
+  /// Move every record sink on buffer `old` to buffer `new` (the growth
+  /// swap; see `Spatial::retarget_records`). Validated here: `new` must
+  /// exist and hold every bound slot. The republish lands at the next
+  /// flush, which requests the frame.
+  pub fn spatial_retarget_records(&self, old: u64, new: u64) -> Result<(), String> {
+    let mut spatial = self.spatial.borrow_mut();
+    let Some(extent) = spatial.records_extent(old) else {
+      return Err(format!("no instance records are bound to buffer {old}"));
+    };
+    let size = self.gpu_buffer_len(new)?;
+    if extent * 4 > size {
+      return Err(format!("instance records need {} bytes, buffer {new} has {size}", extent * 4));
+    }
+    spatial.retarget_records(old, new)
   }
 
   /// Change a sink's "on" instance count; written at once if the entry is

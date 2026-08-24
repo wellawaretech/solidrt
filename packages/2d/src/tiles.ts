@@ -33,7 +33,7 @@ import {
 } from "@solidrt/core/gpu"
 import type { BufferId, FilterMode, TextureId } from "@solidrt/core/gpu"
 import type { Frame } from "./frames.ts"
-import { FLOATS_PER_SPRITE } from "./layer.ts"
+import { FLOATS_PER_SPRITE } from "./records.ts"
 import { FRAGMENT, INSTANCE_ATTRIBUTES, VERTEX } from "./shaders.ts"
 
 const RESOLVED = Promise.resolve()

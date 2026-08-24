@@ -120,6 +120,150 @@ land: retained and produced motion costs zero JS and zero FFI per frame.
 Sequencing follows: this item lands with or after native node transitions,
 and the records path stays for genuine JS-computed swarms either way.
 
+## Findings
+
+Decisions 2026-08-24: build order is citizenship plumbing first, native
+node transitions immediately after (the records path stays untouched
+throughout, so nothing regresses while the tier is incomplete); and
+`addSprite` itself becomes node-backed when the package rewires - the
+node tier is the live layer, not a parallel opt-in, with `records` +
+`touch()` remaining the raw escape hatch.
+
+Core stage (item 1 + 2 of the list, the sink and the batched publish)
+landed 2026-08-24 (uncommitted):
+
+- `alloy/src/spatial/mod.rs`: `InstanceProjection::Pose2D` (world matrix
+  -> `[x, y, angle, sx, sy]`; angle is `atan2(m[1], m[0])`, sy negates
+  when the 2x2 determinant is negative so mirroring survives),
+  `InstanceRecordSink { buffer, index, projection }`, and per-buffer
+  `InstanceGroup` staging mirrors. The flush stages slot writes and
+  publishes ONE coalesced dirty range per buffer through the new
+  `SinkWriter::write_instances(buffer, first, values)` - however many
+  nodes moved, one buffer write per flush. A staged write equal to the
+  slot's current floats publishes nothing.
+- Slot lifecycle: hidden node = zeroed slot (zero scale collapses the
+  instance; per-instance visibility without touching the draw's count),
+  unhide rewrites even when the matrix never changed (`record_on` flag),
+  unbind/rebind/destroy zero the abandoned slot, groups refcount and
+  drop with their last write. One stride per buffer (projection
+  mismatch errors at bind).
+- `Context::spatial_bind_record` validates at bind time (buffer exists,
+  slot fits its byte size); the writer maps `write_instances` onto the
+  existing `write_gpu_buffer` partial write (one `WriteBuffer` raster
+  cmd + `note_buffer_content`, so target dependency propagation sees it).
+- `flux:spatial` gains `bindPoseRecord(node, buffer, index)` /
+  `unbindRecord(node)` (projection named in the function like
+  `bindDirectionSlot`); flux-types updated.
+- Tests in `alloy/src/tests/spatial.rs`: decomposition incl. mirroring,
+  coalescing across sparse slots (unbound gap slots ship as zeros -
+  fine, the buffer is wholly core-owned), no-op suppression, hide/show,
+  unbind/destroy zeroing, group drop.
+
+Live verification waits for the package rewiring stage: binding needs a
+GPU buffer, which a headless flux check cannot create. Remaining: item 4
+(overlap queries), the package rewiring, then
+[spatial-node-transitions](spatial-node-transitions.md).
+
+Growth swap settled and landed 2026-08-24 (uncommitted): sinks store the
+raw buffer id, so a doubled pose buffer would have cost one rebind FFI
+call per node. `retargetRecords(old, new)` on `flux:spatial`
+(`Spatial::retarget_records` + `records_extent`) moves the staging group
+and every sink in one call and marks the whole used range dirty - the
+next flush republishes everything into the new buffer as one bulk write,
+slot indices untouched. Layer growth flow: create zeroed doubled buffer
+-> retargetRecords -> setDraw `instanceBuffers` swap -> destroy old.
+Validated at the call site (source has records, destination exists, fits
+every bound slot, and does not already carry records - checked in that
+order); old==new is a no-op; the freed old id may later carry a fresh
+independent group. Considered and rejected: a logical group-id
+indirection (a new id space for one rare event) and accepting the O(N)
+rebind hitch.
+
+Per-attribute instance buffers (item 3) landed 2026-08-24 (uncommitted),
+as instance buffer SLOTS - the pipeline/entry split forbids buffer ids in
+the pipeline desc, so the layout side declares slots and the entry binds
+one buffer per slot (WebGPU's vertex-buffer-layout model):
+
+- JS surface, additive: an instance attribute takes `slot` (default 0,
+  slots dense from 0, at most `MAX_INSTANCE_SLOTS` = 4); the entry passes
+  `instanceBuffers: [a, b]` (or the existing `instanceBuffer` for the
+  single-slot case - both together throw). `setDraw` buffers update:
+  `instanceBuffer` swaps slot 0, `instanceBuffers` swaps all slots and
+  must fill exactly the slots the entry fills. flux-types + core gpu.ts
+  updated; existing single-slot callers (layer.ts, tiles.ts, scene.ts)
+  unchanged.
+- alloy: `PipelineDesc.instance_attributes` is (name, format, slot);
+  `DrawSpec`/`BufferIds` carry `instance_buffers: [u64; 4]` (fixed array
+  keeps Copy); `DrawBounds.instances` is per-slot (stride, size) with
+  `instance_limit()` = the tightest slot, so the DERIVED INSTANCE COUNT
+  IS THE MIN CAPACITY ACROSS SLOTS and bounds errors cite the limiting
+  slot. VAO build binds each slot's buffer and records its group at
+  divisor 1 (divisor still VAO state, pass.rs untouched). Introspection:
+  `instance_buffer_ids` list; attributes carry `slot`; the go connection
+  emits `instanceBuffer` (single) / `instanceBuffers` (plural) and
+  `slot` only off default.
+- Verified: alloy/examples/draw_instanced.rs grew a two-slot section
+  (split fetch, tightest-slot derivation, slot-1 write re-renders, full
+  swap, density + missing-slot errors) - all pass on real GL; flux
+  gpu_split.rs likewise (slot render + both-keys / gap throws),
+  GPU-SPLIT-OK; alloy tests 271 green; srt check green.
+- Traps: `SDL_VIDEO_DRIVER=offscreen` runs the alloy/flux examples with
+  NO window (Mesa EGL pbuffer) - always use it, a bare run opens a
+  window on the user's desktop. Both example files were STALE from
+  earlier committed API changes (draw_instanced.rs predated the
+  program-coverage check, so its plain pipeline needed its own
+  pos-only program; gpu_split.rs predated positional params, so every
+  create passed opts in the params slot) - fixed in passing; an example
+  panic in the app.run closure leaves the SDL loop polling forever, so
+  a "hung" example usually means a failed assertion.
+
+Overlap queries (item 4) and the package re-founding landed 2026-08-24
+(uncommitted):
+
+- Core: `Bvh::query` (box walk over the fat boxes) + `Spatial::overlap`
+  with an exact narrowphase - `pick::box_overlap` runs separating axes of
+  both boxes (the three world axes and the three transformed local axes,
+  unnormalized so scale and shear stay valid), so a rotated flat rect
+  tests exactly, never by its world AABB; only genuinely 3D edge-edge
+  poses can err conservative. `overlap(bounds)` on `flux:spatial` returns
+  unordered node ids; reads the index as of the last flush like raycast.
+- `@solidrt/2d` re-founded: `addSprite` creates a spatial arena node
+  (scale = w/h, unit-quad bounds `[-0.5,-0.5,0, 0.5,0.5,0]`), binds its
+  Pose2D record into the POSE buffer (instance slot 0, core-written);
+  style `[uv frame, tint]` is a second JS-written buffer in slot 1.
+  Sprites hold FIXED slots (free-list recycle; draw order = slot order,
+  no painter-order guarantee across removals). Growth doubles both
+  buffers with one `retargetRecords` + one `setDraw({ instanceBuffers })`.
+  `pick` = core raycast at [x, y, -1] along +z (the local-box test IS the
+  exact rotated-rect, no Shape needed), topmost = highest slot, filtered
+  to the layer's own nodes (the arena is shared with 3d scenes);
+  `pickRect` = the overlap query. Hierarchy: `addGroup`/`setGroup`/
+  `setSpriteParent` + a `<Group>` component - groups are plain nodes
+  (x, y, rotation, UNIFORM scale); sprites never parent sprites, because
+  a sprite node's scale IS its pixel size and would multiply into
+  children. The records path moved whole to records.ts as
+  `createRecordLayer` (13-float layout, records + touch(), JS pick walk) -
+  it cannot share the node layer's buffers because the core staging
+  mirror owns the pose buffer and republishes gap slots as zeros. One
+  sprite-function surface (addSprite/setSprite/getSprite/removeSprite)
+  dispatches over both layer kinds via internal layer methods.
+- Verified live (examples/parity.tsx, srt run + release go client): the
+  same 200-sprite population through both layers is PIXEL-IDENTICAL
+  (0/129600 off after the pose round-trips the core decomposition), pick
+  agrees at 200 random points, pickRect exact on the left-half marquee,
+  group rotation carries children, slots recycle. Bench there: addSprite
+  x200 11.5ms nodes vs 7.3ms records; move-all x200 2.6ms vs 1.3ms - the
+  known ~7us-per-transform-write gap that native node transitions (the
+  linchpin, next) invert.
+- Traps: the dev client is dist/linux-x64-gnu/solidrt-go and STALE dist
+  binaries fail with pre-slot errors ("declares instanceAttributes but
+  no instance buffer") - `make client` after alloy/flux GPU-surface
+  changes before srt-run verification. The node layer must
+  `spatial.flush()` in dispose BEFORE destroying its pose buffer, or the
+  core's final slot-zeroing writes land on a dead buffer id and warn.
+  readTexture-comparing the two layer outputs in-app is the strongest
+  parity check and needs no snapshot plumbing.
+
 ## Not in this item
 
 Baked/tile layers ([2d-baked-layers](2d-baked-layers.md) stages A/B) are

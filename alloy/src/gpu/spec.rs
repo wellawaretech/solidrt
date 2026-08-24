@@ -64,11 +64,11 @@ pub struct DrawSpec {
   /// buffer kind serves both roles (as in WebGPU and WebGL) - any
   /// `create_gpu_buffer` result works here.
   pub index: Option<(u64, IndexFormat)>,
-  /// Registry id of the per-instance buffer the pipeline's
-  /// `instance_attributes` describe (fetched at vertex divisor 1: one record
-  /// per instance); 0 = none. Required exactly when the pipeline declares
-  /// instance attributes; the same one-buffer kind as the other two roles.
-  pub instance_buffer: u64,
+  /// Registry ids of the per-instance buffers, one per instance slot the
+  /// pipeline's `instance_attributes` declare (fetched at vertex divisor 1:
+  /// one record per instance; 0 = the slot is unused). Required exactly for
+  /// the declared slots; the same one-buffer kind as the other two roles.
+  pub instance_buffers: [u64; super::vocab::MAX_INSTANCE_SLOTS],
   /// Which vertices (or, indexed, which indices) to draw and how many
   /// instances (see `DrawRange`). A negative count here means "the rest of
   /// the buffer"; Context resolves it (`resolve_draw_range`) before the
@@ -81,7 +81,7 @@ pub struct DrawSpec {
 impl DrawSpec {
   /// The entry's buffer ids by role (see `BufferIds`).
   pub fn buffer_ids(&self) -> BufferIds {
-    BufferIds { buffer: self.buffer, index: self.index, instance_buffer: self.instance_buffer }
+    BufferIds { buffer: self.buffer, index: self.index, instance_buffers: self.instance_buffers }
   }
 }
 

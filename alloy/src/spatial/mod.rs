@@ -58,6 +58,10 @@ pub trait SinkWriter {
   /// A shared-slot group's array param, rewritten whole (slot sinks share
   /// one array value; see `SharedSlotSink`).
   fn write_shared(&mut self, target: u64, name: &str, values: &[f32]);
+  /// A coalesced run of instance-record floats: `values` lands at float
+  /// offset `first` of vertex buffer `buffer`. At most one write per
+  /// buffer per flush, however many nodes moved (see `InstanceRecordSink`).
+  fn write_instances(&mut self, buffer: u64, first: u32, values: &[f32]);
 }
 
 /// How a shared-slot sink projects the node's world transform into its
@@ -95,6 +99,69 @@ struct SharedGroup {
   dirty: bool,
 }
 
+/// How an instance-record sink projects the node's world transform into
+/// its slot's floats. `Pose2D` is `[x, y, angle, sx, sy]`: world xy
+/// translation, the rotation of the local x axis in the world xy plane
+/// (`atan2(m[1], m[0])`), and the xy scale, `sy` negated when the matrix
+/// mirrors (negative 2x2 determinant) so handedness survives the round
+/// trip. A full-matrix projection is the anticipated 3d sibling.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InstanceProjection {
+  Pose2D,
+}
+
+impl InstanceProjection {
+  /// Floats per record slot.
+  pub fn floats(&self) -> u32 {
+    match self {
+      InstanceProjection::Pose2D => 5,
+    }
+  }
+}
+
+/// Routes a projection of the node's world transform to slot `index` of a
+/// vertex buffer used as an instance buffer: floats [index*stride,
+/// (index+1)*stride) where stride is the projection's float count. The
+/// bridge between the transform hierarchy and instanced rendering - one
+/// node per drawn instance, the draw itself untouched. Writes batch: the
+/// flush accumulates every slot into a staging mirror and publishes one
+/// coalesced dirty range per buffer, so a thousand nodes moved by one
+/// producer step cost one buffer write. A hidden node's slot zeroes
+/// (zero scale collapses the instance); so does an unbound or destroyed
+/// node's.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct InstanceRecordSink {
+  pub buffer: u64,
+  pub index: u32,
+  pub projection: InstanceProjection,
+}
+
+/// One instance buffer's staging mirror and the sinks feeding it.
+struct InstanceGroup {
+  stride: u32,
+  values: Vec<f32>,
+  refs: u32,
+  /// Dirty float range [lo, hi) into `values`; None = clean.
+  dirty: Option<(usize, usize)>,
+}
+
+impl InstanceGroup {
+  fn mark(&mut self, lo: usize, hi: usize) {
+    self.dirty = match self.dirty {
+      Some((a, b)) => Some((a.min(lo), b.max(hi))),
+      None => Some((lo, hi)),
+    };
+  }
+}
+
+/// The `Pose2D` decomposition of a world matrix (see `InstanceProjection`).
+fn pose2d(m: &Mat4) -> [f32; 5] {
+  let sx = (m[0] * m[0] + m[1] * m[1]).sqrt();
+  let sy = (m[4] * m[4] + m[5] * m[5]).sqrt();
+  let mirrored = m[0] * m[5] - m[1] * m[4] < 0.0;
+  [m[12], m[13], m[1].atan2(m[0]), sx, if mirrored { -sy } else { sy }]
+}
+
 struct Node {
   generation: u32,
   alive: bool,
@@ -124,6 +191,10 @@ struct Node {
   /// Triangle data for the picking narrowphase; None = box only.
   shape: Option<ShapeId>,
   slot: Option<SharedSlotSink>,
+  record: Option<InstanceRecordSink>,
+  /// The record slot holds this node's shown pose (false = zeroed or
+  /// never written; the next shown flush writes it).
+  record_on: bool,
 }
 
 #[derive(Default)]
@@ -134,6 +205,7 @@ pub struct Spatial {
   bvh: Bvh,
   pub(crate) shapes: pick::Shapes,
   shared: HashMap<(u64, String), SharedGroup>,
+  instances: HashMap<u64, InstanceGroup>,
 }
 
 fn index(id: NodeId) -> usize {
@@ -189,6 +261,8 @@ impl Spatial {
       leaf: None,
       shape: None,
       slot: None,
+      record: None,
+      record_on: false,
     };
     let i = match self.free.pop() {
       Some(i) => {
@@ -224,6 +298,9 @@ impl Spatial {
     }
     if let Some(slot) = self.nodes[i as usize].slot.take() {
       self.release_slot(&slot);
+    }
+    if let Some(record) = self.nodes[i as usize].record.take() {
+      self.release_record(&record);
     }
     let n = &mut self.nodes[i as usize];
     n.alive = false;
@@ -300,6 +377,106 @@ impl Spatial {
     self.nodes[i as usize].slot = sink;
     self.enqueue(i);
     Ok(())
+  }
+
+  /// Bind (or with None unbind) the node's instance-record sink. Binding
+  /// writes the slot at the next flush; unbinding zeroes it there. Every
+  /// sink on one buffer must carry the same projection (one stride per
+  /// buffer). Slot fit against the actual GPU buffer is the caller's
+  /// check (Context validates at bind); the staging mirror grows to the
+  /// highest bound slot.
+  pub fn set_instance_record(&mut self, id: NodeId, sink: Option<InstanceRecordSink>) -> Result<(), String> {
+    let i = self.resolve(id)?;
+    if let Some(sink) = &sink {
+      let stride = sink.projection.floats();
+      let group = self
+        .instances
+        .entry(sink.buffer)
+        .or_insert_with(|| InstanceGroup { stride, values: Vec::new(), refs: 0, dirty: None });
+      if group.stride != stride {
+        return Err(format!(
+          "instance buffer {} carries {}-float records, not {}",
+          sink.buffer, group.stride, stride
+        ));
+      }
+      let need = (sink.index as usize + 1) * stride as usize;
+      if group.values.len() < need {
+        group.values.resize(need, 0.0);
+      }
+      group.refs += 1;
+    }
+    if let Some(old) = self.nodes[i as usize].record.take() {
+      self.release_record(&old);
+    }
+    let n = &mut self.nodes[i as usize];
+    n.record = sink;
+    n.record_on = false;
+    self.enqueue(i);
+    Ok(())
+  }
+
+  /// The floats the record sinks on `buffer` occupy (through the highest
+  /// bound slot); None when no sink names the buffer. What the caller
+  /// checks a retarget destination's size against.
+  pub fn records_extent(&self, buffer: u64) -> Option<usize> {
+    self.instances.get(&buffer).map(|group| group.values.len())
+  }
+
+  /// Move every record sink on buffer `old` to buffer `new`: the staging
+  /// mirror moves with them and the whole used range republishes at the
+  /// next flush, so a population outgrowing its buffer swaps in a larger
+  /// one with ONE call and ONE bulk write instead of a rebind per node.
+  /// Slot indices are untouched. The caller validates that `new` exists
+  /// and fits (`records_extent`); `new` must not already carry records.
+  pub fn retarget_records(&mut self, old: u64, new: u64) -> Result<(), String> {
+    if old == new {
+      return Ok(());
+    }
+    if !self.instances.contains_key(&old) {
+      return Err(format!("no instance records are bound to buffer {old}"));
+    }
+    if self.instances.contains_key(&new) {
+      return Err(format!("buffer {new} already carries instance records"));
+    }
+    let mut group = self.instances.remove(&old).expect("source group checked above");
+    if !group.values.is_empty() {
+      group.dirty = Some((0, group.values.len()));
+    }
+    self.instances.insert(new, group);
+    for n in self.nodes.iter_mut() {
+      if let Some(record) = n.record.as_mut() {
+        if record.buffer == old {
+          record.buffer = new;
+        }
+      }
+    }
+    Ok(())
+  }
+
+  /// Drop one record sink's claim on its group: the slot zeroes at the
+  /// next flush, and the group itself is dropped there once unreferenced.
+  fn release_record(&mut self, sink: &InstanceRecordSink) {
+    if let Some(group) = self.instances.get_mut(&sink.buffer) {
+      let stride = group.stride as usize;
+      let at = sink.index as usize * stride;
+      if group.values[at..at + stride].iter().any(|&v| v != 0.0) {
+        group.values[at..at + stride].fill(0.0);
+        group.mark(at, at + stride);
+      }
+      group.refs = group.refs.saturating_sub(1);
+    }
+  }
+
+  /// Stage one record slot's fresh values; a no-op when they are unchanged.
+  fn stage_record(&mut self, sink: &InstanceRecordSink, values: &[f32]) {
+    if let Some(group) = self.instances.get_mut(&sink.buffer) {
+      let at = sink.index as usize * group.stride as usize;
+      let slot = &mut group.values[at..at + values.len()];
+      if slot != values {
+        slot.copy_from_slice(values);
+        group.mark(at, at + values.len());
+      }
+    }
   }
 
   /// Drop one sink's claim on its group: the slot zeroes at the next
@@ -409,6 +586,31 @@ impl Spatial {
     }
     hits.sort_by(|a, b| a.distance.partial_cmp(&b.distance).unwrap_or(std::cmp::Ordering::Equal));
     hits
+  }
+
+  /// Every shown node with bounds whose local box, carried through its
+  /// world matrix, overlaps the world-axis box `bounds` (touching counts;
+  /// a point is min == max). Broadphase through the index, narrowphase by
+  /// separating axes (`pick::box_overlap`), so a rotated flat rect tests
+  /// exactly, never by its world AABB. Unordered; reads the index as of
+  /// the last flush, like `raycast`.
+  pub fn overlap(&mut self, bounds: Box3) -> Vec<NodeId> {
+    let mut candidates = Vec::new();
+    self.bvh.query(&bounds, &mut |i| candidates.push(i));
+    let mut out = Vec::new();
+    for i in candidates {
+      let n = &self.nodes[i as usize];
+      if !n.alive || !n.shown {
+        continue;
+      }
+      let Some(local) = n.bounds else {
+        continue;
+      };
+      if pick::box_overlap(&n.world, &local, &bounds) {
+        out.push(self.id_of(i));
+      }
+    }
+    out
   }
 
   /// Re-parent a node (None = make it a root). Errs on a cycle.
@@ -570,6 +772,14 @@ impl Spatial {
       }
       group.refs > 0
     });
+    // Instance staging publishes the same way: one coalesced dirty range
+    // per buffer per flush, a group dropping with its last write.
+    self.instances.retain(|buffer, group| {
+      if let Some((lo, hi)) = group.dirty.take() {
+        out.write_instances(*buffer, lo as u32, &group.values[lo..hi]);
+      }
+      group.refs > 0
+    });
   }
 
   fn has_queued_ancestor(&self, i: u32) -> bool {
@@ -647,7 +857,22 @@ impl Spatial {
         n.fresh = true;
       }
     }
+    let record = n.record;
+    let record_on = n.record_on;
     let world = n.world;
+    if let Some(rec) = record {
+      match rec.projection {
+        InstanceProjection::Pose2D => {
+          if shown && (changed || !record_on) {
+            self.stage_record(&rec, &pose2d(&world));
+            self.nodes[i as usize].record_on = true;
+          } else if !shown && record_on {
+            self.stage_record(&rec, &[0.0; 5]);
+            self.nodes[i as usize].record_on = false;
+          }
+        }
+      }
+    }
     if refit {
       self.refit_leaf(i);
     }

@@ -277,6 +277,31 @@ impl Bvh {
     self.free.push(leaf as i32);
   }
 
+  /// Visit every item whose FAT box overlaps `b` (touching counts).
+  /// Broadphase only: the caller narrowphases against its own tight
+  /// volumes.
+  pub fn query(&mut self, b: &Box3, visit: &mut dyn FnMut(u32)) {
+    if self.root == -1 {
+      return;
+    }
+    let mut stack = std::mem::take(&mut self.stack);
+    stack.clear();
+    stack.push(self.root);
+    while let Some(n) = stack.pop() {
+      let nb = &self.bounds[n as usize];
+      if nb[0] > b[3] || nb[1] > b[4] || nb[2] > b[5] || nb[3] < b[0] || nb[4] < b[1] || nb[5] < b[2] {
+        continue;
+      }
+      if self.child1[n as usize] == -1 {
+        visit(self.items[n as usize]);
+      } else {
+        stack.push(self.child1[n as usize]);
+        stack.push(self.child2[n as usize]);
+      }
+    }
+    self.stack = stack;
+  }
+
   /// Visit every item whose FAT box the ray hits. Broadphase only: the
   /// caller narrowphases against its own tight volumes.
   pub fn raycast(&mut self, o: [f32; 3], d: [f32; 3], visit: &mut dyn FnMut(u32)) {

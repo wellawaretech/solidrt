@@ -110,12 +110,12 @@ fn range(first: i32, count: i32, instances: i32) -> DrawRange {
 
 /// A plain vertex fetch bound: `size` bytes at `stride` bytes/vertex.
 fn vbounds(stride: usize, size: usize) -> DrawBounds {
-  DrawBounds { fetch: Some((stride, size)), indexed: false, instance: None }
+  DrawBounds { fetch: Some((stride, size)), indexed: false, instances: [(0, 0); 4] }
 }
 
 /// An index fetch bound: `size` bytes at `elem` bytes/index.
 fn ibounds(elem: usize, size: usize) -> DrawBounds {
-  DrawBounds { fetch: Some((elem, size)), indexed: true, instance: None }
+  DrawBounds { fetch: Some((elem, size)), indexed: true, instances: [(0, 0); 4] }
 }
 
 #[test]
@@ -175,7 +175,7 @@ fn resolve_rejects_bad_ranges() {
 #[test]
 fn instance_ranges_bound_and_derive() {
   // 8 instance records at 12 bytes each in a 96-byte instance buffer.
-  let b = DrawBounds { instance: Some((12, 96)), ..vbounds(20, 2000) };
+  let b = DrawBounds { instances: [(12, 96), (0, 0), (0, 0), (0, 0)], ..vbounds(20, 2000) };
   assert_eq!(validate_draw_range(range(0, 100, 8), b), Ok(()));
   assert_eq!(validate_draw_range(range(0, 100, 0), b), Ok(()));
   let err = validate_draw_range(range(0, 100, 9), b).expect_err("one instance past the end must error");
@@ -184,7 +184,7 @@ fn instance_ranges_bound_and_derive() {
   // and stays 1 without one (the plain draw, covered above).
   assert_eq!(resolve_draw_range(DrawRange::default(), b), Ok(range(0, 100, 8)));
   // The instance bound also holds on an attributeless entry.
-  let b = DrawBounds { instance: Some((12, 96)), ..DrawBounds::default() };
+  let b = DrawBounds { instances: [(12, 96), (0, 0), (0, 0), (0, 0)], ..DrawBounds::default() };
   assert_eq!(resolve_draw_range(DrawRange::default(), b), Ok(range(0, 0, 8)));
   let err = validate_draw_range(range(0, 0, 100), b).expect_err("instance bound must hold without vertices");
   assert!(err.contains("instance buffer holds 96 bytes"), "{err}");
@@ -298,17 +298,17 @@ void main() {}
 
 #[test]
 fn buffer_swap_replaces_filled_roles() {
-  let ids = BufferIds { buffer: 1, index: Some((2, IndexFormat::U16)), instance_buffer: 3 };
+  let ids = BufferIds { buffer: 1, index: Some((2, IndexFormat::U16)), instance_buffers: [3, 0, 0, 0] };
   let next = ids
-    .merged(BufferUpdate { buffer: None, index: Some((7, IndexFormat::U32)), instance_buffer: Some(9) })
+    .merged(BufferUpdate { buffer: None, index: Some((7, IndexFormat::U32)), instance_buffer: Some(9), ..Default::default() })
     .expect("swap filled roles");
-  assert_eq!(next, BufferIds { buffer: 1, index: Some((7, IndexFormat::U32)), instance_buffer: 9 });
+  assert_eq!(next, BufferIds { buffer: 1, index: Some((7, IndexFormat::U32)), instance_buffers: [9, 0, 0, 0] });
   assert!(next.reads(9) && next.reads(7) && !next.reads(3) && !next.reads(0));
 }
 
 #[test]
 fn buffer_swap_rejects_new_roles_and_zero_ids() {
-  let plain = BufferIds { buffer: 1, index: None, instance_buffer: 0 };
+  let plain = BufferIds { buffer: 1, index: None, instance_buffers: [0; 4] };
   let err = plain.merged(BufferUpdate { instance_buffer: Some(5), ..Default::default() }).expect_err("no instance role");
   assert!(err.contains("instanceAttributes"), "{err}");
   let err = plain
@@ -320,4 +320,52 @@ fn buffer_swap_rejects_new_roles_and_zero_ids() {
   let attributeless = BufferIds::default();
   let err = attributeless.merged(BufferUpdate { buffer: Some(4), ..Default::default() }).expect_err("no vertex role");
   assert!(err.contains("no attributes"), "{err}");
+}
+
+#[test]
+fn instance_slots_stride_density_and_limit() {
+  use crate::gpu::{instance_strides, validate_instance_slots, AttrFormat};
+  let attrs = vec![
+    ("iOffset".to_string(), AttrFormat::Vec2, 0),
+    ("iRot".to_string(), AttrFormat::F32, 0),
+    ("iColor".to_string(), AttrFormat::Vec3, 1),
+  ];
+  assert_eq!(validate_instance_slots(&attrs), Ok(()));
+  // Per-slot strides: slot 0 interleaves vec2 + f32 (12 bytes), slot 1 is
+  // the vec3 alone (12 bytes), the rest unused.
+  assert_eq!(instance_strides(&attrs), [12, 12, 0, 0]);
+  let gap = vec![("a".to_string(), AttrFormat::Vec2, 0), ("b".to_string(), AttrFormat::Vec2, 2)];
+  let err = validate_instance_slots(&gap).expect_err("a slot gap must error");
+  assert!(err.contains("dense") && err.contains("slot 1"), "{err}");
+  let high = vec![("a".to_string(), AttrFormat::Vec2, 9)];
+  let err = validate_instance_slots(&high).expect_err("a slot past the cap must error");
+  assert!(err.contains("slots are 0..4"), "{err}");
+  // The draw bound derives from the tightest slot: 96 bytes of 12-byte
+  // records (8) beside 60 bytes of 12-byte records (5).
+  let b = DrawBounds { instances: [(12, 96), (12, 60), (0, 0), (0, 0)], ..DrawBounds::default() };
+  assert_eq!(b.instance_limit(), Some((12, 60)));
+  assert_eq!(resolve_draw_range(range(0, 0, -1), b), Ok(range(0, 0, 5)));
+  let err = validate_draw_range(range(0, 0, 6), b).expect_err("past the tightest slot must error");
+  assert!(err.contains("60 bytes") && err.contains("5 instances"), "{err}");
+}
+
+#[test]
+fn instance_buffers_full_swap_preserves_slot_shape() {
+  let two = BufferIds { buffer: 1, index: None, instance_buffers: [3, 4, 0, 0] };
+  let next =
+    two.merged(BufferUpdate { instance_buffers: Some([5, 6, 0, 0]), ..Default::default() }).expect("full swap");
+  assert_eq!(next.instance_buffers, [5, 6, 0, 0]);
+  assert!(next.reads(6) && !next.reads(4));
+  // slot-0 spelling still works on a multi-slot entry and touches only slot 0.
+  let next = two.merged(BufferUpdate { instance_buffer: Some(9), ..Default::default() }).expect("slot-0 swap");
+  assert_eq!(next.instance_buffers, [9, 4, 0, 0]);
+  // Dropping or adding a slot through the full swap errors.
+  let err = two
+    .merged(BufferUpdate { instance_buffers: Some([5, 0, 0, 0]), ..Default::default() })
+    .expect_err("dropping a slot must error");
+  assert!(err.contains("slot 1") && err.contains("dropped"), "{err}");
+  let err = two
+    .merged(BufferUpdate { instance_buffers: Some([5, 6, 7, 0]), ..Default::default() })
+    .expect_err("adding a slot must error");
+  assert!(err.contains("slot 2") && err.contains("not declared"), "{err}");
 }

@@ -10,6 +10,7 @@ enum Write {
   Params { target: u64, draw: u64, model: Mat4, normal: Option<Mat4> },
   Count { target: u64, draw: u64, count: u32 },
   Shared { target: u64, name: String, values: Vec<f32> },
+  Instances { buffer: u64, first: u32, values: Vec<f32> },
 }
 
 struct Recorder(Vec<Write>);
@@ -23,6 +24,9 @@ impl SinkWriter for Recorder {
   }
   fn write_shared(&mut self, target: u64, name: &str, values: &[f32]) {
     self.0.push(Write::Shared { target, name: name.to_string(), values: values.to_vec() });
+  }
+  fn write_instances(&mut self, buffer: u64, first: u32, values: &[f32]) {
+    self.0.push(Write::Instances { buffer, first, values: values.to_vec() });
   }
 }
 
@@ -80,7 +84,7 @@ fn moving_a_node_writes_only_its_subtree() {
     .map(|w| match w {
       Write::Params { draw, .. } => *draw,
       Write::Count { draw, .. } => *draw,
-      Write::Shared { .. } => panic!("no shared sinks here"),
+      other => panic!("no slot or record sinks here, got {other:?}"),
     })
     .collect();
   assert_eq!(draws, vec![1, 3], "sibling b untouched");
@@ -197,6 +201,39 @@ fn box_hits_sorted_and_hidden_skipped() {
   s.set_bounds(far, None).expect("clear");
   flush(&mut s);
   assert!(s.raycast([0.0, 0.0, 0.0], [0.0, 0.0, -1.0]).is_empty());
+}
+
+#[test]
+fn overlap_is_exact_for_rotated_rects_and_skips_hidden() {
+  let mut s = Spatial::new();
+  let half = std::f32::consts::FRAC_PI_4 / 2.0;
+  let q45 = [0.0, 0.0, half.sin(), half.cos()];
+  let flat = [-0.5, -0.5, 0.0, 0.5, 0.5, 0.0];
+  let spun = s.create([0.0; 3], q45, ONE, true);
+  let off = s.create([10.0, 0.0, 0.0], Q, ONE, true);
+  let hidden = s.create([10.0, 0.0, 0.0], Q, ONE, false);
+  for n in [spun, off, hidden] {
+    s.set_bounds(n, Some(flat)).expect("bounds");
+  }
+  flush(&mut s);
+  let mut all = s.overlap([-1.0, -1.0, -1.0, 11.0, 1.0, 1.0]);
+  all.sort_unstable();
+  let mut expect = vec![spun, off];
+  expect.sort_unstable();
+  assert_eq!(all, expect, "hidden nodes never report");
+  // Inside the rotated square's world AABB but outside the square itself
+  // (the 45-degree diamond ends at |x| + |y| = sqrt(0.5)): the separating
+  // axes make the test exact, never AABB-conservative.
+  assert!(s.overlap([0.55, 0.55, -1.0, 0.8, 0.8, 1.0]).is_empty());
+  // A point query is the degenerate box, same edge.
+  assert_eq!(s.overlap([0.6, 0.0, 0.0, 0.6, 0.0, 0.0]), vec![spun]);
+  assert!(s.overlap([0.6, 0.6, 0.0, 0.6, 0.6, 0.0]).is_empty());
+  // Moves land at the flush, like raycast.
+  s.set_transform(off, [20.0, 0.0, 0.0], Q, ONE).expect("move");
+  assert_eq!(s.overlap([9.0, -1.0, -1.0, 11.0, 1.0, 1.0]), vec![off], "pre-flush query sees the old pose");
+  flush(&mut s);
+  assert!(s.overlap([9.0, -1.0, -1.0, 11.0, 1.0, 1.0]).is_empty());
+  assert_eq!(s.overlap([19.0, -1.0, -1.0, 21.0, 1.0, 1.0]), vec![off]);
 }
 
 #[test]
@@ -342,4 +379,130 @@ fn shared_slots_follow_rotation_zero_on_unbind_and_drop_their_group() {
   let writes = flush(&mut s);
   assert_eq!(writes, vec![Write::Shared { target: 9, name: "uLightDir".to_string(), values: vec![0.0; 6] }]);
   assert!(flush(&mut s).is_empty());
+}
+
+use crate::spatial::{InstanceProjection, InstanceRecordSink};
+
+fn record(buffer: u64, index: u32) -> Option<InstanceRecordSink> {
+  Some(InstanceRecordSink { buffer, index, projection: InstanceProjection::Pose2D })
+}
+
+#[test]
+fn pose_records_decompose_world_and_preserve_mirroring() {
+  let mut s = Spatial::new();
+  let root = s.create([10.0, 20.0, 0.0], Q, ONE, true);
+  let child = s.create([0.0; 3], [0.0, 0.0, (0.5f32).sqrt(), (0.5f32).sqrt()], [2.0, 3.0, 1.0], true);
+  s.set_parent(child, Some(root)).expect("parent");
+  s.set_instance_record(child, record(4, 0)).expect("bind");
+  let writes = flush(&mut s);
+  assert_eq!(writes.len(), 1);
+  let Write::Instances { buffer: 4, first: 0, values } = &writes[0] else { panic!("expected instances") };
+  assert!((values[0] - 10.0).abs() < 1e-5 && (values[1] - 20.0).abs() < 1e-5, "translation {values:?}");
+  assert!((values[2] - std::f32::consts::FRAC_PI_2).abs() < 1e-5, "angle {values:?}");
+  assert!((values[3] - 2.0).abs() < 1e-5 && (values[4] - 3.0).abs() < 1e-5, "scale {values:?}");
+  // A mirroring matrix keeps positive sx and carries the flip in sy.
+  s.set_transform(child, [0.0; 3], Q, [-2.0, 3.0, 1.0]).expect("mirror");
+  let writes = flush(&mut s);
+  let Write::Instances { values, .. } = &writes[0] else { panic!("expected instances") };
+  assert!((values[2] - std::f32::consts::PI).abs() < 1e-5, "mirror angle {values:?}");
+  assert!((values[3] - 2.0).abs() < 1e-5 && (values[4] + 3.0).abs() < 1e-5, "mirror scale {values:?}");
+}
+
+#[test]
+fn pose_records_batch_into_one_coalesced_write() {
+  let mut s = Spatial::new();
+  let a = s.create([1.0, 0.0, 0.0], Q, ONE, true);
+  let b = s.create([2.0, 0.0, 0.0], Q, ONE, true);
+  s.set_instance_record(a, record(4, 0)).expect("bind");
+  s.set_instance_record(b, record(4, 3)).expect("bind");
+  // Both slots dirty: ONE write spanning them, unbound slots 1-2 zeros.
+  let writes = flush(&mut s);
+  assert_eq!(writes.len(), 1);
+  let Write::Instances { buffer: 4, first: 0, values } = &writes[0] else { panic!("expected instances") };
+  assert_eq!(values.len(), 20);
+  assert_eq!(values[0..5], [1.0, 0.0, 0.0, 1.0, 1.0]);
+  assert_eq!(values[5..15], [0.0; 10]);
+  assert_eq!(values[15..20], [2.0, 0.0, 0.0, 1.0, 1.0]);
+  // Only b moves: the write shrinks to its slot.
+  s.set_transform(b, [5.0, 6.0, 0.0], Q, ONE).expect("move");
+  let writes = flush(&mut s);
+  assert_eq!(writes, vec![Write::Instances { buffer: 4, first: 15, values: vec![5.0, 6.0, 0.0, 1.0, 1.0] }]);
+  // A write landing on the identical pose publishes nothing.
+  s.set_transform(b, [5.0, 6.0, 0.0], Q, ONE).expect("rewrite");
+  assert!(flush(&mut s).is_empty());
+}
+
+#[test]
+fn hidden_record_slots_zero_and_the_group_drops_with_its_last_sink() {
+  let mut s = Spatial::new();
+  let a = s.create([1.0, 2.0, 0.0], Q, ONE, true);
+  s.set_instance_record(a, record(4, 0)).expect("bind");
+  flush(&mut s);
+  // Hiding zeroes the slot (zero scale collapses the instance).
+  s.set_visible(a, false).expect("hide");
+  let writes = flush(&mut s);
+  assert_eq!(writes, vec![Write::Instances { buffer: 4, first: 0, values: vec![0.0; 5] }]);
+  // Unhiding rewrites the pose even though the matrix never changed.
+  s.set_visible(a, true).expect("show");
+  let writes = flush(&mut s);
+  assert_eq!(writes, vec![Write::Instances { buffer: 4, first: 0, values: vec![1.0, 2.0, 0.0, 1.0, 1.0] }]);
+  // Unbinding zeroes and drops the group with the final write: a later
+  // move of the node publishes nothing.
+  s.set_instance_record(a, None).expect("unbind");
+  let writes = flush(&mut s);
+  assert_eq!(writes, vec![Write::Instances { buffer: 4, first: 0, values: vec![0.0; 5] }]);
+  s.set_transform(a, [9.0, 9.0, 0.0], Q, ONE).expect("move");
+  assert!(flush(&mut s).is_empty());
+}
+
+#[test]
+fn retargeting_records_republishes_whole_to_the_new_buffer() {
+  let mut s = Spatial::new();
+  let a = s.create([1.0, 2.0, 0.0], Q, ONE, true);
+  let b = s.create([3.0, 4.0, 0.0], Q, ONE, true);
+  s.set_instance_record(a, record(4, 0)).expect("bind");
+  s.set_instance_record(b, record(4, 1)).expect("bind");
+  flush(&mut s);
+  assert_eq!(s.records_extent(4), Some(10));
+  assert_eq!(s.records_extent(9), None);
+  // The growth swap: everything republishes into the new buffer at the
+  // next flush, slots unchanged, even though no node moved.
+  s.retarget_records(4, 9).expect("retarget");
+  assert_eq!(s.records_extent(9), Some(10));
+  let writes = flush(&mut s);
+  assert_eq!(
+    writes,
+    vec![Write::Instances { buffer: 9, first: 0, values: vec![1.0, 2.0, 0.0, 1.0, 1.0, 3.0, 4.0, 0.0, 1.0, 1.0] }]
+  );
+  // Later writes follow the sinks to the new buffer; the old id is inert
+  // and free for an unrelated fresh group.
+  s.set_transform(b, [5.0, 6.0, 0.0], Q, ONE).expect("move");
+  let writes = flush(&mut s);
+  assert_eq!(writes, vec![Write::Instances { buffer: 9, first: 5, values: vec![5.0, 6.0, 0.0, 1.0, 1.0] }]);
+  let c = s.create([7.0, 0.0, 0.0], Q, ONE, true);
+  s.set_instance_record(c, record(4, 0)).expect("rebind old id");
+  let writes = flush(&mut s);
+  assert_eq!(writes, vec![Write::Instances { buffer: 4, first: 0, values: vec![7.0, 0.0, 0.0, 1.0, 1.0] }]);
+  // Errors: no records on the source; a destination already carrying some.
+  let err = s.retarget_records(77, 9).expect_err("empty source must error");
+  assert!(err.contains("no instance records"), "{err}");
+  let err = s.retarget_records(4, 9).expect_err("occupied destination must error");
+  assert!(err.contains("already carries"), "{err}");
+}
+
+#[test]
+fn destroying_a_bound_node_zeroes_its_slot() {
+  let mut s = Spatial::new();
+  let a = s.create([1.0, 2.0, 0.0], Q, ONE, true);
+  let b = s.create([3.0, 4.0, 0.0], Q, ONE, true);
+  s.set_instance_record(a, record(4, 0)).expect("bind");
+  s.set_instance_record(b, record(4, 1)).expect("bind");
+  flush(&mut s);
+  s.destroy(a).expect("destroy");
+  let writes = flush(&mut s);
+  assert_eq!(writes, vec![Write::Instances { buffer: 4, first: 0, values: vec![0.0; 5] }]);
+  // The surviving sink keeps the group alive.
+  s.set_transform(b, [7.0, 8.0, 0.0], Q, ONE).expect("move");
+  let writes = flush(&mut s);
+  assert_eq!(writes, vec![Write::Instances { buffer: 4, first: 5, values: vec![7.0, 8.0, 0.0, 1.0, 1.0] }]);
 }

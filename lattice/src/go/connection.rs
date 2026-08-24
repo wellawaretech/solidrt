@@ -1382,8 +1382,14 @@ fn gpu_reply(ctx: &flux::rquickjs::Ctx<'_>, id: u64, label: Option<&str>) -> Str
       if let Some(index_format) = p.index_format {
         map.insert("indexFormat".into(), index_format.into());
       }
-      if let Some(instance_buffer_id) = p.instance_buffer_id {
-        map.insert("instanceBuffer".into(), instance_buffer_id.into());
+      match p.instance_buffer_ids.as_slice() {
+        [] => {}
+        [id] => {
+          map.insert("instanceBuffer".into(), (*id).into());
+        }
+        ids => {
+          map.insert("instanceBuffers".into(), ids.to_vec().into());
+        }
       }
       if let Some(topology) = p.topology {
         map.insert("topology".into(), topology.into());
@@ -1422,10 +1428,18 @@ fn gpu_reply(ctx: &flux::rquickjs::Ctx<'_>, id: u64, label: Option<&str>) -> Str
         map.insert("attributes".into(), attrs.into());
       }
       if !p.instance_attributes.is_empty() {
+        // The buffer slot is reported only off its default, like the draw
+        // state fields: absent means slot 0.
         let attrs: Vec<serde_json::Value> = p
           .instance_attributes
           .iter()
-          .map(|(name, format)| serde_json::json!({"name": name, "format": format}))
+          .map(|(name, format, slot)| {
+            if *slot == 0 {
+              serde_json::json!({"name": name, "format": format})
+            } else {
+              serde_json::json!({"name": name, "format": format, "slot": slot})
+            }
+          })
           .collect();
         map.insert("instanceAttributes".into(), attrs.into());
       }
@@ -1464,8 +1478,14 @@ fn gpu_reply(ctx: &flux::rquickjs::Ctx<'_>, id: u64, label: Option<&str>) -> Str
             if let Some(index_format) = d.index_format {
               map.insert("indexFormat".into(), index_format.into());
             }
-            if let Some(instance_buffer_id) = d.instance_buffer_id {
-              map.insert("instanceBuffer".into(), instance_buffer_id.into());
+            match d.instance_buffer_ids.as_slice() {
+              [] => {}
+              [id] => {
+                map.insert("instanceBuffer".into(), (*id).into());
+              }
+              ids => {
+                map.insert("instanceBuffers".into(), ids.to_vec().into());
+              }
             }
             map.insert("topology".into(), d.topology.into());
             map.insert(if indexed { "indexCount".into() } else { "vertexCount".into() }, d.vertex_count.into());
@@ -1522,10 +1542,18 @@ fn gpu_reply(ctx: &flux::rquickjs::Ctx<'_>, id: u64, label: Option<&str>) -> Str
         map.insert("attributes".into(), attrs.into());
       }
       if !p.instance_attributes.is_empty() {
+        // The buffer slot is reported only off its default, like the draw
+        // state fields: absent means slot 0.
         let attrs: Vec<serde_json::Value> = p
           .instance_attributes
           .iter()
-          .map(|(name, format)| serde_json::json!({"name": name, "format": format}))
+          .map(|(name, format, slot)| {
+            if *slot == 0 {
+              serde_json::json!({"name": name, "format": format})
+            } else {
+              serde_json::json!({"name": name, "format": format, "slot": slot})
+            }
+          })
           .collect();
         map.insert("instanceAttributes".into(), attrs.into());
       }

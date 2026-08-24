@@ -337,9 +337,12 @@ declare module "flux:gpu" {
        * entry's buffer, from record 0 (ES 3.0 has no base instance), so
        * several independently culled groups cannot share one buffer as
        * sub-ranges: give each group its own `instanceBuffer` and entry, and
-       * cull it by `instanceCount`.
+       * cull it by `instanceCount`. Each attribute's `slot` (default 0)
+       * picks a buffer of the entry's `instanceBuffers` list (see
+       * {@link InstanceAttribute}); a pipeline using only slot 0 binds via
+       * the plain `instanceBuffer` key.
        */
-      instanceAttributes?: VertexAttribute[]
+      instanceAttributes?: InstanceAttribute[]
       topology?: Topology
       blend?: BlendMode
       cull?: CullMode
@@ -413,6 +416,9 @@ declare module "flux:gpu" {
       textures?: TextureBindings
       buffer?: BufferId
       instanceBuffer?: BufferId
+      /** One buffer per instance slot of the pipeline (index = the
+       * attributes' `slot`); pass this OR `instanceBuffer`, not both. */
+      instanceBuffers?: BufferId[]
       clearColor?: [number, number, number, number]
       render?: "auto" | "manual"
       loadOp?: "clear" | "load"
@@ -490,6 +496,17 @@ declare module "flux:gpu" {
    */
   export type VertexAttribute = { name: string; format: "f32" | "vec2" | "vec3" | "vec4" }
   /**
+   * One float attribute of a per-instance record. `slot` (default 0) picks
+   * which buffer of the entry's `instanceBuffers` list the attribute
+   * fetches from: attributes sharing a slot interleave into one record in
+   * list order, distinct slots are distinct buffers with their own strides
+   * - which is what lets two writers own instance data independently (a
+   * core-written pose buffer beside an app-written style buffer). Slots
+   * must be dense from 0, at most 4; a single-slot pipeline (every `slot`
+   * omitted) binds via the plain `instanceBuffer` key.
+   */
+  export type InstanceAttribute = VertexAttribute & { slot?: number }
+  /**
    * A pipeline target's draw as data, WebGPU-style: `firstVertex` +
    * `vertexCount` pick the vertex range `[firstVertex, firstVertex +
    * vertexCount)` of the buffer, `instanceCount` draws that range as N
@@ -551,9 +568,15 @@ declare module "flux:gpu" {
    * never does. This is the growth primitive: a population outgrowing its
    * instance buffer creates a larger one, writes it, swaps, and destroys
    * the old (the entry holds the old buffer alive until the swap lands, so
-   * either order is safe).
+   * either order is safe). `instanceBuffer` swaps slot 0;
+   * `instanceBuffers` swaps every slot at once and must fill exactly the
+   * slots the entry fills (pass one spelling or the other).
    */
-  export type BufferUpdate = { buffer?: BufferId; instanceBuffer?: BufferId } & ({} | IndexBinding)
+  export type BufferUpdate = {
+    buffer?: BufferId
+    instanceBuffer?: BufferId
+    instanceBuffers?: BufferId[]
+  } & ({} | IndexBinding)
 
   /**
    * Compile a GLSL ES vertex+fragment pipeline into an offscreen texture of
@@ -597,8 +620,11 @@ declare module "flux:gpu" {
       attributes?: VertexAttribute[]
       buffer?: BufferId
       /** See {@link createRenderPipeline}'s `instanceAttributes`. */
-      instanceAttributes?: VertexAttribute[]
+      instanceAttributes?: InstanceAttribute[]
       instanceBuffer?: BufferId
+      /** One buffer per instance slot (index = the attributes' `slot`);
+       * pass this OR `instanceBuffer`, not both. */
+      instanceBuffers?: BufferId[]
       topology?: Topology
       depth?: boolean
       depthWrite?: boolean
@@ -762,6 +788,9 @@ declare module "flux:gpu" {
       textures?: TextureBindings
       buffer?: BufferId
       instanceBuffer?: BufferId
+      /** One buffer per instance slot of the pipeline (index = the
+       * attributes' `slot`); pass this OR `instanceBuffer`, not both. */
+      instanceBuffers?: BufferId[]
       before?: DrawId
     } & (DrawRange | (IndexBinding & IndexRange)),
   ): DrawId

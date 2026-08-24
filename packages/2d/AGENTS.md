@@ -1,32 +1,59 @@
 # @solidrt/2d - agent notes
 
-An instanced sprite layer above `@solidrt/core/gpu`: one atlas texture, one
-instance buffer, N quads in ONE draw call, composited into the app as an
-ordinary `<texture>` leaf. Sprite records publish through the zero-copy
-buffer write lease (`beginBufferWrite`/`endBufferWrite`), so per-frame motion
-costs float stores plus one bulk publish - never per-sprite property writes,
-which is the whole reason this package exists (rendertree `d-texture` sprites
-are the right tool up to the low thousands; measured ~0.65us paint and ~15KB
-memory per NODE, and every moved node is two setProperty FFI calls per
-frame).
+An instanced sprite layer above `@solidrt/core/gpu`: one atlas texture, N
+quads in ONE draw call, composited into the app as an ordinary `<texture>`
+leaf. The live layer backs every sprite with a SPATIAL ARENA node (never a
+rendertree element - `d-texture` sprites are the right tool up to the low
+thousands; measured ~0.65us paint and ~15KB memory per NODE, and every
+moved node is two setProperty FFI calls per frame). The node makes sprites
+citizens of the spatial core: native producers (node transitions, animation
+clips, physics) reach them through `sprite.node`, hierarchy recomputes
+moved subtrees in Rust, and picking walks the core BVH.
 
 ## The model
 
-- Two layers, the @solidrt/3d split verbatim: the imperative core (layer.ts:
-  `createSpriteLayer`/`addSprite`/`setSprite`/`removeSprite` - plain objects,
-  dirty flags, no signals, usable without components) and the component face
-  (components.tsx: `SpriteLayer`/`Sprite` over context, effects syncing props
-  into the retained records, no new intrinsic elements).
-- A sprite is 13 floats in the layer's canonical Float32Array:
-  `[cx, cy, w, h, u0, v0, u1, v1, rot, tintR, tintG, tintB, tintA]`
-  (`FLOATS_PER_SPRITE`). Draw order IS record order IS insertion order -
-  painter's algorithm, later over earlier. There is no z field in v1;
-  reorder by remove/re-add, or wait for the z pass (see Traps).
-- Mutations batch to a microtask. The flush does
-  `beginBufferWrite` -> bulk `.set` of the live prefix -> `endBufferWrite`
-  -> `setDraw({ instanceCount })` when the count changed. No mutation, no
-  publish, no frame: a static layer costs zero, the same demand-gate story
-  as the rest of the platform.
+- THREE faces, layered: the node-backed live layer (layer.ts:
+  `createSpriteLayer`/`addSprite`/`setSprite`/`removeSprite` plus
+  `addGroup`/`setGroup`/`setSpriteParent` - plain objects, no signals,
+  usable without components), the records layer (records.ts:
+  `createRecordLayer` - the raw escape hatch, below), and the component
+  face (components.tsx: `SpriteLayer`/`Sprite`/`Group` over context).
+- Node layer ownership split, two instance-buffer slots on one pipeline:
+  slot 0 is the POSE buffer `[x, y, angle, sx, sy]` written ONLY by the
+  core (each sprite node's Pose2D record sink; one coalesced buffer write
+  per flush however many nodes moved), slot 1 the STYLE buffer
+  `[u0, v0, u1, v1, tint rgba]`, JS-owned, published through the zero-copy
+  write lease. NEVER write the pose buffer from JS - the core's staging
+  mirror owns it and will overwrite.
+- Sprites hold FIXED instance slots: draw order is slot order, removal
+  zeroes the pose (zero scale = nothing drawn) and recycles the slot to
+  the next add. No painter's-insertion-order guarantee across removals;
+  opaque-or-transparent pixel art never notices, z-ordered translucency is
+  the sort-key backlog item (okf/backlog/2d-sprite-sort-key.md).
+- Growth (past `capacity`, doubling): pose sinks move in ONE core
+  `retargetRecords` call (full republish next flush), style re-uploads,
+  `setDraw({ instanceBuffers })` swaps both, old buffers destroyed.
+- Picking is the core index: `pick` raycasts [x, y, -1] along +z (exact
+  rotated-rect via the node's local box), topmost = highest slot;
+  `pickRect` is the BVH overlap query (exact for rotated sprites, the
+  marquee). Both filter to the layer's own nodes - the arena is shared
+  with e.g. a 3d scene.
+- Groups (`addGroup`/`<Group>`) are plain arena nodes (x, y, rotation,
+  UNIFORM scale - a group is a frame, never a sprite size; sprite w/h
+  lives in the sprite node's scale, which is why sprites cannot parent
+  sprites). Child sprite pose fields are local to the group.
+- Mutations batch to a microtask: style lease publish + count setDraw +
+  `spatial.flush()`. No mutation, no publish, no frame: a static layer
+  costs zero, the same demand-gate story as the rest of the platform.
+- The records layer (`createRecordLayer`) keeps the old model whole: 13
+  JS-owned floats per sprite `[cx, cy, w, h, u0, v0, u1, v1, rot, tint
+  rgba]` (`FLOATS_PER_SPRITE`), draw order = insertion order, remove
+  shifts, `layer.records` + `touch()` raw writes, JS pick walk. It is the
+  escape hatch for motion only JS can compute at scale (measured 30k
+  sprites: 12.9ms raw records vs 30.8ms via setSprite) - the axis is
+  WHERE MOTION IS COMPUTED, not retained-vs-dynamic. The sprite functions
+  (addSprite/setSprite/getSprite/removeSprite) work on both layer kinds;
+  record sprites have `node: null` and no groups.
 - Layer space is pixels, top-left origin, y-down - the render tree's frame.
   The pipeline's clip space is y-down too (core gpu.ts pixel contract), so
   the vertex stage carries NO flip anywhere. Do not add one.
@@ -36,12 +63,9 @@ frame).
 - Frame-rate motion bypasses the declarative layer: `ref` the sprite, call
   `setSprite` from `onFrame`. Signals carry structure and slow state - a
   `<Sprite x={sig()}>` re-running 60 times a second works but re-runs an
-  effect per sprite per frame for nothing.
-- Above ~10k moving sprites, setSprite's call overhead dominates (measured
-  30k sprites fullscreen on a desktop RTX machine: 30.8ms via setSprite,
-  12.9ms writing `layer.records` directly + one `layer.touch()`). The raw
-  path is public for exactly this; the record layout is documented on the
-  type and `FLOATS_PER_SPRITE` is exported.
+  effect per sprite per frame for nothing. (Until native node transitions
+  land, a JS-driven node-layer move is a ~7us core transform write per
+  sprite - fine to a few thousand; past that use the records layer.)
 - frames.ts and pick.ts are pure (no GPU imports) BY DESIGN so they can be
   checked headless; keep them that way.
 
@@ -78,7 +102,8 @@ chunks on approach, evict) - okf/backlog/2d-baked-layers.md.
 | Component | Props |
 |---|---|
 | `SpriteLayer` | width, height (layer pixels), atlas (TextureId), capacity?, clearColor?, camera?, label?, ref?, output?, events? |
-| `Sprite` | x, y (center), w, h, frame?, rotation? (radians, clockwise), tint? ([r,g,b,a] 0..1), onPointer{Down,Move,Up,Enter,Leave}?, ref? |
+| `Sprite` | x, y (center; local to the enclosing `<Group>`), w, h, frame?, rotation? (radians, clockwise), tint? ([r,g,b,a] 0..1), onPointer{Down,Move,Up,Enter,Leave}?, ref? |
+| `Group` | x?, y?, rotation?, scale? (uniform, scales the subtree), ref? |
 | `TileLayer` | cols, rows, tileW, tileH, atlas (TextureId), clearColor?, filter?, chunkTiles?, camera? (TileCamera: x, y, zoom, rotation, pivotX, pivotY), label?, ref? |
 
 `SpriteLayer` owns the layer and renders the built-in `<texture>` leaf
@@ -97,20 +122,29 @@ is flat. Event x/y are layer pixels with the camera undone.
 - The atlas is NOT owned by the layer: layers come and go, atlases usually
   live app-long. Dispose atlases yourself (or let the reactive owner do it -
   createAtlas registers with the owning scope like every core texture).
-- `capacity` is a reservation, not a limit: `addSprite` past it doubles the
-  canonical array, and the next publish creates a larger GPU buffer, writes
-  it, swaps it in with `setDraw({ instanceBuffer })` and destroys the old
-  one. Records are 52 bytes each; reserve realistically to skip the copies.
-  Do not cache `layer.records` across addSprite - growth replaces the array.
-- Record order is draw order: `removeSprite` shifts every later sprite down
-  one slot (copyWithin + index fixup, O(later sprites)). Cheap in practice;
-  do not remove thousands per frame and expect it free.
-- The flush publishes the WHOLE live prefix, not a dirty range: one moved
-  sprite re-publishes count x 52 bytes. That is a single memcpy plus the
-  lease message - at 10k sprites ~520KB, microseconds - and keeps the write
-  path one code path. A dirty-range optimization is possible (writeBuffer
-  takes byteOffset) but was deliberately not built until a measurement asks
-  for it.
+- `capacity` is a reservation, not a limit, on both layer kinds; reserve
+  realistically to skip the growth copies. On the records layer, do not
+  cache `layer.records` across addSprite - growth replaces the array.
+- Node layer: `sprite.node` is public FOR BINDING PRODUCERS, not for
+  lifecycle - never destroyNode it yourself (removeSprite owns that), and
+  a transform written through flux:spatial directly bypasses the sprite's
+  pose mirror, so a later setSprite with the old x wins (its compare sees
+  no change to skip, but partial writes compose from the mirror).
+- Node layer picking reads the index as of the last core flush; `pick`/
+  `pickRect` run the layer's pending batch first, so write-then-pick in
+  one tick is coherent. Producers moving nodes between flushes are one
+  frame stale to picking, like every query.
+- Records layer: record order is draw order: `removeSprite` shifts every
+  later sprite down one slot (copyWithin + index fixup, O(later
+  sprites)). Its flush publishes the WHOLE live prefix, not a dirty
+  range: one moved sprite re-publishes count x 52 bytes - a single
+  memcpy, microseconds at 10k; the node layer's style publish is the same
+  whole-prefix shape. Dirty ranges were deliberately not built until a
+  measurement asks.
+- The node layer's STYLE slots are not compacted: a removed sprite leaves
+  its style floats in place (invisible - the pose is zeroed) until the
+  slot recycles. Do not read style truth from the buffer; getSprite reads
+  the JS mirror.
 - `createImage` is the wrong loader for pixel-art atlases: it never forwards
   sampler options, so it is always `filter: "linear"`. `createAtlas` decodes
   bytes and passes `filter: "nearest"` through - use it, or `decodeImage` +

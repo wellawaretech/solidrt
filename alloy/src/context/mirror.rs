@@ -63,7 +63,7 @@ pub(super) struct EntryMirror {
 pub(super) struct PipelineMirror {
   pub(super) uniforms: Rc<UniformTable>,
   pub(super) stride: usize,
-  pub(super) instance_stride: usize,
+  pub(super) instance_strides: [usize; crate::gpu::MAX_INSTANCE_SLOTS],
   pub(super) depth: bool,
 }
 

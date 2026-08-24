@@ -4,9 +4,9 @@
 // sprite first. Drag a sprite to move it - the layer captures the pointer on
 // down, so the drag keeps delivering to the grabbed sprite even when the
 // pointer outruns it. A click (press and release without moving) cycles the
-// tint. Shift-click removes the sprite, exercising the order-preserving
-// record shift; structure lives in a signal, so <For> unmounts the removed
-// <Sprite> and the layer compacts.
+// tint. Shift-click removes the sprite, exercising slot recycling (the
+// freed pose slot zeroes and waits for the next add); structure lives in a
+// signal, so <For> unmounts the removed <Sprite>.
 import { createSignal, render, For } from "@solidrt/core"
 import { createAtlas, grid, setSprite, Sprite, SpriteLayer } from "@solidrt/2d"
 import type { Frame, SpriteHandle } from "@solidrt/2d"

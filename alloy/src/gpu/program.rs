@@ -444,7 +444,7 @@ impl RenderPipeline {
     if !program.is_pipeline() {
       return Err((program, "program is a fragment shader, not a pipeline".to_string()));
     }
-    for (name, _) in &desc.instance_attributes {
+    for (name, _, _) in &desc.instance_attributes {
       if desc.attributes.iter().any(|(n, _)| n == name) {
         return Err((program, format!("attribute '{name}' appears in both attributes and instanceAttributes")));
       }
@@ -454,7 +454,12 @@ impl RenderPipeline {
     // nothing (GL feeds a constant and the draw shows garbage), and a
     // format mismatch would stride the fetch wrong.
     let uncovered = program.attributes.iter().find_map(|(name, format)| {
-      let found = desc.attributes.iter().chain(desc.instance_attributes.iter()).find(|(n, _)| n == name);
+      let found = desc
+        .attributes
+        .iter()
+        .map(|(n, f)| (n, f))
+        .chain(desc.instance_attributes.iter().map(|(n, f, _)| (n, f)))
+        .find(|(n, _)| *n == name);
       match found {
         None => Some(format!(
           "program reads vertex attribute '{name}' ({}) which neither attributes nor instanceAttributes declares",
