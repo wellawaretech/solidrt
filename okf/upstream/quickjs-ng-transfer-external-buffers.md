@@ -2,7 +2,7 @@
 title: quickjs-ng ArrayBuffer.prototype.transfer mishandles external buffers
 description: transfer() on a JS_NewArrayBuffer-backed (external) buffer calls js_realloc on a pointer the JS allocator does not own when the length changes (heap corruption), and re-homes the pointer with a NULL opaque when it does not (breaks the free-callback contract, escapes embedder invalidation). resize() guards external buffers; transfer() lacks the same guard.
 project: quickjs-ng (github.com/quickjs-ng/quickjs)
-versions: quickjs-ng 0.15.1 (as vendored by rquickjs-sys 0.12.1)
+versions: quickjs-ng 0.15.1 (as vendored by rquickjs-sys 0.12.2)
 status: fixed-upstream
 link: https://github.com/quickjs-ng/quickjs/pull/1594
 created: 2026-08-03
@@ -23,9 +23,11 @@ via the richer alternative: `JS_NewArrayBuffer` now takes `max_len` plus a
 transfer/resize carry the callback and opaque through to the new buffer,
 so external buffers transfer and resize correctly. The old free-func
 signature is gone. Not in our tree: rquickjs still vendors 0.15.1; its
-sync PR is DelSkayn/rquickjs#723 (open since 2026-08-07). On resolve here,
-revisit the context-setup deletion of `prototype.transfer*` (only the
-flux:isolate vocabulary argument remains for it, not soundness).
+sync PR is DelSkayn/rquickjs#723 (still open, re-checked 2026-08-25 on the
+rquickjs 0.12.2 bump - that release does not carry it, and `quickjs.h` in
+rquickjs-sys 0.12.2 still declares the old free-func `JS_NewArrayBuffer`).
+On resolve here, revisit the context-setup deletion of `prototype.transfer*`
+(only the flux:isolate vocabulary argument remains for it, not soundness).
 
 ## Draft report
 

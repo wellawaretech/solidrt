@@ -2,7 +2,7 @@
 title: rquickjs external ArrayBuffer callbacks double-invoked on detach
 description: QuickJS invokes an external ArrayBuffer's free callback on detach AND again at finalization (with data == NULL); rquickjs's shims ignore the data pointer and consume their opaque unconditionally, so safe from_source + detach() - or pure JS transfer(0) on any Rust-minted buffer - is a double free.
 project: rquickjs (github.com/DelSkayn/rquickjs)
-versions: rquickjs 0.12.1 (rquickjs-core 0.12.1, rquickjs-sys 0.12.1 vendoring quickjs-ng 0.15.1)
+versions: rquickjs 0.12.2 (rquickjs-core 0.12.2, rquickjs-sys 0.12.2 vendoring quickjs-ng 0.15.1)
 status: fixed-upstream
 link: https://github.com/DelSkayn/rquickjs/pull/723
 created: 2026-08-03
@@ -25,6 +25,13 @@ realloc-callback `JS_NewArrayBuffer` signature is PR #723 (open since
 2026-08-07, supersedes #722; dependabot bump #725 was closed unmerged in
 its favor). Nothing for us to file; watch #723 and the next rquickjs
 release.
+
+Re-checked 2026-08-25 on the 0.12.2 bump: #723 is still open (last touched
+2026-08-24, no review comments), and rquickjs 0.12.2 (2026-07-27, the only
+release since) is a `TypedArray<U8Clamped>` addition only - its sys crate
+still vendors quickjs-ng 0.15.1, whose `JS_DetachArrayBuffer` still leaves
+`free_func`/`opaque` set after invoking them. Both bugs remain live in our
+tree; every workaround below stays load-bearing.
 
 ## Draft report
 

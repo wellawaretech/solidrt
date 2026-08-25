@@ -47,7 +47,7 @@ alloy = { workspace = true, optional = true }
 # across the crate boundary.
 taffy = { version = "0.12.1", optional = true }
 log = { workspace = true }
-rquickjs = { version = "0.12.0", features = ["rust-alloc", "futures", "macro", "loader"] }
+rquickjs = { version = "0.12.2", features = ["rust-alloc", "futures", "macro", "loader"] }
 tokio = { workspace = true, features = ["sync", "time", "fs", "io-util", "macros", "rt", "net", "signal", "process"] }
 # The capability cores (and their reqwest/hyper/rusqlite/iroh/... deps) live in
 # forge now; flux keeps only what the marshalling layer names directly.
