@@ -116,12 +116,15 @@ const SPACING = { sm: 4, md: 8, lg: 16, xl: 20 }
 const RADIUS = { sm: 4, md: 8, lg: 12 }
 const BORDER_WIDTH = { sm: 1 }
 
-// Line height and weight per role; body is the base text, caption and label
-// sit under it (secondary and emphasized small text), title and heading
-// above it (card and page headings).
+// Line height and weight per role; body is the base text, label is body at
+// an emphasized weight (form labels, key/value keys, tags), caption the one
+// small role (badges, tab labels, timestamps), title and heading sit above
+// body (card and page headings). De-emphasis is a color (textMuted), not a
+// size: caption is small text to be glanced at, so keep it in the full text
+// color rather than stacking small and muted.
 const ROLE_DEFAULTS: { [K in TextVariant]: { step: number; lineHeight: number; weight: TextStyle["weight"] } } = {
-  caption: { step: -2, lineHeight: 1.3, weight: 400 },
-  label: { step: -1, lineHeight: 1.3, weight: 600 },
+  caption: { step: -1, lineHeight: 1.3, weight: 400 },
+  label: { step: 0, lineHeight: 1.5, weight: 600 },
   body: { step: 0, lineHeight: 1.5, weight: 400 },
   title: { step: 1, lineHeight: 1.4, weight: 700 },
   heading: { step: 2, lineHeight: 1.3, weight: 700 },
@@ -180,7 +183,10 @@ const DEFAULT: ThemeDefinition = {
     background: ["#ffffff", "#0b0f17"],
     surface: ["#f6f8fa", "#161b22"],
     surfaceAlt: ["#eaeef2", "#21262d"],
-    text: ["#1f2328", "#e6edf3"],
+    // Dark body text sits well under white (about 10:1 on the background,
+    // tuned by eye on a low-DPI display): full brightness glares on a dark
+    // ground, and the low-DPI weight compensation thickens it further.
+    text: ["#1f2328", "#b1bac4"],
     // Muted is an opaque tone between text and background, mixed in oklab
     // (like Material 3's tonal colors, not an alpha overlay): alpha text
     // renders thin on low-DPI and its contrast depends on what sits behind
@@ -188,7 +194,10 @@ const DEFAULT: ThemeDefinition = {
     // preset is data that must not need the render engine at import time
     // (the website token build imports this module headless). If text or
     // background changes, recompute: mixColors(text, background, 0.4).
-    textMuted: ["#707376", "#848b92"],
+    // The dark tone sits a step above the 4.5:1 AA floor (about 5.4:1)
+    // instead of at the mix: the body text already sits low, and the
+    // strict mix falls under it.
+    textMuted: ["#707376", "#828993"],
     border: ["rgba(0,0,0,0.15)", "rgba(255,255,255,0.14)"],
     // Accent tuned to the puzzle mark's mid blue.
     primary: "#547ebf",
@@ -202,9 +211,10 @@ const DEFAULT: ThemeDefinition = {
     overlayHover: ["rgba(0,0,0,0.08)", "rgba(255,255,255,0.08)"],
     overlayPressed: ["rgba(0,0,0,0.14)", "rgba(255,255,255,0.14)"],
   },
-  // base 14 and ratio 1.26 derive title 18 and heading 22; the two small
-  // roles sit tighter than the ratio, so they are pinned.
-  text: { roles: { caption: { size: 11 }, label: { size: 12 } } },
+  // base 14 and ratio 1.26 derive title 18 and heading 22; caption sits
+  // one step under body but the ratio lands on 11, too small to read on a
+  // low-DPI display or at TV distance, so it is pinned.
+  text: { roles: { caption: { size: 12 } } },
 }
 
 export let darkTheme: Theme = defineTheme(DEFAULT, "dark")

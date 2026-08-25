@@ -29,7 +29,7 @@ let def = {
 setTheme(defineTheme(def, "dark"))
 ```
 
-The type scale derives from `text.base` (the body size, default 14) and `text.ratio` (default 1.26): caption, label, body, title, heading sit at `base * ratio^(-2..2)`, rounded to whole pixels, with per-role `text.roles` overrides for sizes, line heights, and weights.
+The type scale derives from `text.base` (the body size, default 14) and `text.ratio` (default 1.26): caption sits one step under body, label is body at an emphasized weight, title and heading sit one and two steps above, rounded to whole pixels, with per-role `text.roles` overrides for sizes, line heights, and weights. De-emphasis is a color (`textMuted`), not a size: caption is for small glanceable text (badges, tab labels, timestamps) and stays in the full text color.
 
 ## Tokens
 

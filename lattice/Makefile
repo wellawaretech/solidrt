@@ -76,8 +76,10 @@ all: client runtime
 
 # The monorepo packages both bundles bake in. Without these prerequisites a
 # core/components surface change leaves a stale bundle importing a runtime
-# export that no longer exists, failing at module link on engine start.
-BUNDLE_DEPS = $(wildcard $(SRT_HOME)/packages/core/src/*.ts*) $(wildcard $(SRT_HOME)/packages/components/src/*.ts*)
+# export that no longer exists, failing at module link on engine start. The
+# root bun.lock stands in for the inlined third-party deps (solid-js): a
+# version bump rewrites it, so both bundles pick up the new runtime.
+BUNDLE_DEPS = $(wildcard $(SRT_HOME)/packages/core/src/*.ts*) $(wildcard $(SRT_HOME)/packages/components/src/*.ts*) $(wildcard $(SRT_HOME)/bun.lock)
 
 $(LAUNCHER_JS): $(wildcard $(LAUNCHER_DIR)/src/*.tsx) $(wildcard $(LAUNCHER_DIR)/src/parts/*.tsx) $(BUNDLE_DEPS)
 	@echo "Bundling launcher (index.tsx -> resources/launcher/)..."

@@ -53,7 +53,7 @@ define stage-darwin
 	@echo "Staged $(3) into $(HOST_DIST)/"
 endef
 
-client: $(LAUNCHER_JS) angle-darwin
+client: $(LAUNCHER_JS) $(BSOD_JS) angle-darwin
 	@echo "Building SOLIDRT-GO macOS ($(PROFILE)) $(VERSION)"
 	$(SOLIDRT_VERSION) $(DARWIN_RUSTFLAGS) cargo build $(CARGO_PROFILE_FLAG) $(GO_FEATURES) --bin solidrt-go --target-dir target/go
 	$(call stage-darwin,go,$(PROFILE),solidrt-go)

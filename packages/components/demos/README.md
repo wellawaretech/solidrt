@@ -16,6 +16,9 @@ Two rules hold it together:
   own.
 
 ## Demos
-- `gallery.tsx` - every component on one scrolling wall of cards, recoloring
-  live on theme toggle, with the environment -> capabilities -> policies
-  cascade exposed as overrides to watch each control adapt.
+- `gallery.tsx` - every component (the rich text editor excepted, until it is
+  finished), grouped: a SplitView whose list pane picks a group and whose
+  detail pane shows its cards (two-pane wide, one pane at a time with a back
+  arrow narrow). The sun/moon icon recolors everything live; the Environment
+  group exposes the environment -> capabilities -> policies cascade as
+  overrides to watch each control adapt.

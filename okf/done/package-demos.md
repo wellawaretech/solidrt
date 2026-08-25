@@ -77,6 +77,8 @@ It looks in the cwd and nowhere above it - the same never-search-upward rule
 - No demo menu. `srt demo 3d` lists that package's demos; it does not launch
   a picker that navigates between them, which would mean in-app routing
   across demos that deliberately do not share a package boundary.
+- Identity is per project, so the launcher shows a demo under the project's
+  `displayName`; see okf/backlog/demo-identity-per-demo.md.
 
 ## Rules the demos folders keep
 

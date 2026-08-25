@@ -15,7 +15,7 @@ export interface ItemProps extends TransitionProps {
   // as-is.
   label: any
   // Secondary line under the label. A string/number renders as themed muted
-  // caption text; anything else as-is.
+  // body text; anything else as-is.
   description?: any
   // Trailing content: a badge, timestamp, chevron, action, ...
   endContent?: any
@@ -106,7 +106,7 @@ export function Item(props: ItemProps) {
         </Show>
         <Show when={props.description != null}>
           <Show when={descriptionIsText()} fallback={description()}>
-            <text color={theme.color.textMuted} {...typeStyle("caption")} maxLines={1}>
+            <text color={theme.color.textMuted} {...typeStyle("body")} maxLines={1}>
               {description()}
             </text>
           </Show>

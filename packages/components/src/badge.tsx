@@ -1,7 +1,8 @@
 import { Show, children } from "@solidrt/core"
 import type { LayoutProps } from "@solidrt/core"
 import { theme } from "./theme"
-import { typeStyle, lightOnDark } from "./typography"
+import { typeStyle, typeWeight, lightOnDark } from "./typography"
+import { policy } from "./policy"
 import type { StyleProps, TransitionProps } from "./types"
 import { splitTransition, transitionEndFor } from "./types"
 
@@ -69,7 +70,11 @@ export function Badge(props: BadgeProps) {
     >
       <d-rect transition={split().background} onTransitionEnd={transitionEndFor("background", props.onTransitionEnd)} color={bg()} radius={radius()} />
       <Show when={isText()} fallback={resolved()}>
-        <text color={fg()} {...typeStyle("label", labelOnDark())}>
+        <text
+          color={fg()}
+          {...typeStyle("caption", labelOnDark())}
+          fontWeight={typeWeight(600, theme.text.caption.size * policy.textScale, labelOnDark())}
+        >
           {resolved()}
         </text>
       </Show>

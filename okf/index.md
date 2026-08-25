@@ -164,6 +164,11 @@ Shaped, not started.
   "Opening the app at a URL from outside: an OS registration half (scheme
   declaration in srt pack and the Android manifest) and an app half that is
   just onOpenUrl."
+- **[A demo shows up in the launcher under its project's name, not its own](backlog/demo-identity-per-demo.md)** [2026-08-26]
+  srt demo serves demos/ as one project, so the launcher entry, appId and
+  storage are the project's; the gallery appeared as "SolidRT components
+  demos". Renamed for now (one demo per package); a second demo in a package
+  needs per-demo identity derived from the slug.
 - **[Statically detect layout elements inside detached views](backlog/detached-nesting-static-check.md)** [2026-08-02]
   A <view> nested inside a <d-view> typechecks and fails only at runtime, and
   TypeScript cannot catch it (every JSX expression is the one Element type, so

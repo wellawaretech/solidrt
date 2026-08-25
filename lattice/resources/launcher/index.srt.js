@@ -6243,13 +6243,13 @@ var BORDER_WIDTH = {
 };
 var ROLE_DEFAULTS = {
   caption: {
-    step: -2,
+    step: -1,
     lineHeight: 1.3,
     weight: 400
   },
   label: {
-    step: -1,
-    lineHeight: 1.3,
+    step: 0,
+    lineHeight: 1.5,
     weight: 600
   },
   body: {
@@ -6322,8 +6322,8 @@ var DEFAULT = {
     background: ["#ffffff", "#0b0f17"],
     surface: ["#f6f8fa", "#161b22"],
     surfaceAlt: ["#eaeef2", "#21262d"],
-    text: ["#1f2328", "#e6edf3"],
-    textMuted: ["#707376", "#848b92"],
+    text: ["#1f2328", "#b1bac4"],
+    textMuted: ["#707376", "#828993"],
     border: ["rgba(0,0,0,0.15)", "rgba(255,255,255,0.14)"],
     primary: "#547ebf",
     onPrimary: "#ffffff",
@@ -6337,9 +6337,6 @@ var DEFAULT = {
   text: {
     roles: {
       caption: {
-        size: 11
-      },
-      label: {
         size: 12
       }
     }
