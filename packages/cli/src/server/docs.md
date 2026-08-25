@@ -12,9 +12,13 @@ is ambiguous, so it takes `--project` (the project, with this entry) or
 `--file` (the file alone). Nothing searches upward for a package.json.
 
 The server pushes the bundle to every connected client, so one server can
-drive a desktop window and a phone at the same time; edits reach them on an
-explicit reload (the MCP `reload` tool, or `POST /__control__/reload`),
-there is no reload-on-save.
+drive a desktop window and a phone at the same time. A save reaches them on
+its own: the server watches every file the running bundle was built from
+(the app's modules, the dependencies it bundles in, inlined files,
+package.json and tsconfig.json) plus the `assets/` tree, so a file the app
+does not import never triggers a rebuild, while an edit to a workspace
+package it does import does. A coding agent pauses this while it edits
+(`pause_watch`) and pushes with the MCP `reload` tool instead.
 
 `server` is the same without the local client, for clients on other devices
 (see [srt client](../client/docs.md)):

@@ -395,3 +395,106 @@ fn mtime_ms(meta: &std::fs::Metadata) -> Option<i64> {
   let dur = mtime.duration_since(std::time::SystemTime::UNIX_EPOCH).ok()?;
   i64::try_from(dur.as_millis()).ok()
 }
+
+/// What happened to `WatchEvent::path`. `Rename` names the path a file now
+/// has (the target of a rename: an editor's atomic save shows up as one); the
+/// old name of a rename arrives as `Remove`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WatchKind {
+  Create,
+  Modify,
+  Remove,
+  Rename,
+}
+
+impl WatchKind {
+  /// The kind's name as the marshalling layers spell it.
+  pub fn as_str(self) -> &'static str {
+    match self {
+      WatchKind::Create => "create",
+      WatchKind::Modify => "modify",
+      WatchKind::Remove => "remove",
+      WatchKind::Rename => "rename",
+    }
+  }
+}
+
+/// One change under a watched directory: the absolute path of the entry and
+/// what happened to it. Raw and undebounced; a save typically arrives as
+/// several events, and coalescing is the caller's job.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WatchEvent {
+  pub kind: WatchKind,
+  pub path: String,
+}
+
+/// A directory watch: OS change notifications (notify) for one directory,
+/// optionally its whole tree, delivered as `WatchEvent`s through `recv`.
+/// Dropping the watcher stops the watch.
+pub struct DirWatcher {
+  _watcher: notify::RecommendedWatcher,
+  rx: tokio::sync::mpsc::UnboundedReceiver<WatchEvent>,
+}
+
+impl DirWatcher {
+  /// Start watching `path` (`recursive`: the tree below it too). `Err` if the
+  /// directory does not exist or the OS watch could not be installed.
+  pub fn open(path: &str, recursive: bool) -> Result<DirWatcher, String> {
+    use notify::Watcher;
+
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    let watched = path.to_string();
+    let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| match res {
+      Ok(event) => {
+        for out in translate(event) {
+          if tx.send(out).is_err() {
+            break;
+          }
+        }
+      }
+      Err(e) => log::warn!("Watch {watched}: {e}"),
+    })
+    .map_err(|e| format!("watch {path}: {e}"))?;
+    let mode = if recursive { notify::RecursiveMode::Recursive } else { notify::RecursiveMode::NonRecursive };
+    watcher.watch(std::path::Path::new(path), mode).map_err(|e| format!("watch {path}: {e}"))?;
+    Ok(DirWatcher { _watcher: watcher, rx })
+  }
+
+  /// The next change; `None` once the watch is gone.
+  pub async fn recv(&mut self) -> Option<WatchEvent> {
+    self.rx.recv().await
+  }
+}
+
+// Flatten a notify event into our kinds, one per path. Access events are
+// noise; a rename's two halves become a Remove of the old name and a Rename
+// of the new one, so every event names a path that exists after it (except
+// Remove). Anything notify cannot classify is a Modify.
+fn translate(event: notify::Event) -> Vec<WatchEvent> {
+  use notify::event::{ModifyKind, RenameMode};
+  use notify::EventKind;
+
+  let as_string = |p: &PathBuf| p.to_string_lossy().into_owned();
+  let all = |kind: WatchKind| -> Vec<WatchEvent> {
+    event.paths.iter().map(|p| WatchEvent { kind, path: as_string(p) }).collect()
+  };
+  match event.kind {
+    EventKind::Access(_) => Vec::new(),
+    EventKind::Create(_) => all(WatchKind::Create),
+    EventKind::Remove(_) => all(WatchKind::Remove),
+    EventKind::Modify(ModifyKind::Name(RenameMode::From)) => all(WatchKind::Remove),
+    EventKind::Modify(ModifyKind::Name(RenameMode::To)) => all(WatchKind::Rename),
+    EventKind::Modify(ModifyKind::Name(RenameMode::Both)) => {
+      let mut out = Vec::new();
+      if let Some(from) = event.paths.first() {
+        out.push(WatchEvent { kind: WatchKind::Remove, path: as_string(from) });
+      }
+      if let Some(to) = event.paths.get(1) {
+        out.push(WatchEvent { kind: WatchKind::Rename, path: as_string(to) });
+      }
+      out
+    }
+    EventKind::Modify(ModifyKind::Name(_)) => all(WatchKind::Rename),
+    EventKind::Modify(_) | EventKind::Any | EventKind::Other => all(WatchKind::Modify),
+  }
+}

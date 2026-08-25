@@ -127,7 +127,13 @@ export async function main() {
     if (mode.entry.endsWith(".srt.js")) {
       let code = await Bun.file(mode.entry).text()
       let isolates = readPrebuiltIsolates(mode.entry).map((i) => ({ ...i, map: null }))
-      result = { code, map: null, manifest: buildManifest(code, mode.entry, isolateManifestAssets(isolates), mode.projectDir), isolates }
+      result = {
+        code,
+        map: null,
+        manifest: buildManifest(code, mode.entry, isolateManifestAssets(isolates), mode.projectDir),
+        isolates,
+        inputs: [mode.entry],
+      }
     } else {
       result = await bundleWith({
         entry: mode.entry,

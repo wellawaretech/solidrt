@@ -1,12 +1,14 @@
 import { command } from "flux:subprocess"
 import { dir, file } from "flux:fs"
 import { state } from "./state"
+import { armWatcher } from "./watcher"
 import type { BundleOutput } from "../types/bundle"
 
-// The single rebuild-and-push path: the initial bundle at start and every
-// MCP reload go through here. The bundle itself runs in a bun subprocess
-// (`srt bundle --json`, the one thing only bun can do); this side latches
-// the result for late-joining clients and broadcasts it.
+// The single rebuild-and-push path: the initial bundle at start, every
+// MCP reload and every reload-on-save go through here. The bundle itself
+// runs in a bun subprocess (`srt bundle --json`, the one thing only bun can
+// do); this side latches the result for late-joining clients, broadcasts
+// it, and re-arms the watcher from the bundle's inputs (watcher.ts).
 
 // Build the reload message for the client protocol. `manifest` is the
 // bundle's version manifest JSON string; when present, clients install the
@@ -56,6 +58,7 @@ export async function rebuildAndBroadcast(): Promise<string | null> {
   let result = await command(config.srt[0]!, args, { cwd: config.cwd }).output()
   if (!result.success) {
     let stderr = typeof result.stderr === "string" ? result.stderr : ""
+    armWatcher(null)
     return `Rebuild failed:\n${stderr.trim()}`
   }
 
@@ -64,8 +67,10 @@ export async function rebuildAndBroadcast(): Promise<string | null> {
   try {
     bundle = JSON.parse(typeof result.stdout === "string" ? result.stdout : "")
   } catch {
+    armWatcher(null)
     return "Rebuild failed: unreadable bundler output"
   }
+  armWatcher(bundle.inputs ?? null)
   // Isolate bundles are manifest assets clients fetch from our /isolates/
   // route (served from cacheDir), so they must be on disk before the push.
   let maps: Record<string, string> = {}

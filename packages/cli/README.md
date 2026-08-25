@@ -40,7 +40,7 @@ srt run
 Starts the dev server and a local client window against it. The server
 pushes the bundle to every connected client, so one server can drive a
 desktop window and a phone at the same time; edits reach them on an
-explicit reload (the MCP `reload` tool), there is no reload-on-save.
+explicit reload (the MCP `reload` tool) or on save.
 
 Split them when you need to:
 

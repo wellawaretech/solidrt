@@ -969,6 +969,10 @@ Finished, kept for the reasoning.
   Synthetic key and pointer events to clients, plus a snapshot-diff helper, so
   an agent can navigate and verify visuals without a human ferrying the app
   around.
+- **[MCP load and user-input mute](done/mcp-load-and-user-input-mute.md)** [2026-08-25]
+  Bring back the MCP load tool under the mode table, and give agents a mute on
+  the user's own input on every client while they measure or test; named for
+  the mechanism, not for a session.
 - **[The MCP verification surface - input, clock, crop, props](done/mcp-verification-surface.md)** [2026-08-08]
   Four gaps that recur across every external agent-built app report; together
   they are the difference between an agent verifying an app and guessing at
@@ -1044,6 +1048,11 @@ Finished, kept for the reasoning.
   No pointer-lock / relative-motion path exists anywhere in the surface, so
   first-person control is impossible however good the GPU gets; SDL already
   has the capability and alloy already drops the deltas on the floor.
+- **[Reload-on-save from the bundle's inputs, paused by the agent](done/reload-on-save.md)** [2026-08-25]
+  The dev server watches the files the running bundle was built from
+  (dependencies included) and the assets tree, rebuilding through the one
+  reload path; an MCP pause_watch/resume_watch pair holds it while an agent
+  edits, restored when the bridge exits.
 - **[srt render should be headless, unscaled and able to choose its output folder](done/render-headless-determinism.md)** [2026-08-05]
   Playback mode opened a hidden SDL window on the real display, laid out at
   the host's display scale, and wrote frames into the data sandbox; closed by

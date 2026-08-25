@@ -119,7 +119,7 @@ let TOOLS: {
     name: "list_clients",
     readOnly: true,
     description:
-      "List the app clients connected to the SolidRT dev server. Returns `generation` (identity of this server run: client ids and log cursors are only valid within one generation, so if it changed since your last call, re-fetch ids and cursors), `key` and `mode` (the project root, or the single file, this server serves - check it is the app you intend to drive before acting), `entry` (the app source file it rebuilds; `load` moves it), `projectDir` (null for a file served on its own), `userInputMuted` (whether the user's own input is muted on the clients: see mute_user_input), and `clients`. Each entry has id (pass it as `client` to the other tools), platform, runtime version (git describe; a -dirty suffix means the binary was built from uncommitted engine changes), build profile (debug/release), and the capability names compiled into that client's runtime, and `queries` - the dev-tool query kinds that client's runtime answers (clock, input, snapshot, tree, ...). Check `queries` before planning a verification strategy: a client whose list lacks \"input\" predates send_input, one that lacks \"clock\" predates set_time_scale/step_frames (an empty list means the runtime predates the advertisement itself). Use version/profile to check whether a connected binary contains a given engine change before debugging against it.",
+      "List the app clients connected to the SolidRT dev server. Returns `generation` (identity of this server run: client ids and log cursors are only valid within one generation, so if it changed since your last call, re-fetch ids and cursors), `key` and `mode` (the project root, or the single file, this server serves - check it is the app you intend to drive before acting), `entry` (the app source file it rebuilds; `load` moves it), `projectDir` (null for a file served on its own), `userInputMuted` (whether the user's own input is muted on the clients: see mute_user_input), `watchPaused` (whether reload-on-save is paused: see pause_watch), and `clients`. Each entry has id (pass it as `client` to the other tools), platform, runtime version (git describe; a -dirty suffix means the binary was built from uncommitted engine changes), build profile (debug/release), and the capability names compiled into that client's runtime, and `queries` - the dev-tool query kinds that client's runtime answers (clock, input, snapshot, tree, ...). Check `queries` before planning a verification strategy: a client whose list lacks \"input\" predates send_input, one that lacks \"clock\" predates set_time_scale/step_frames (an empty list means the runtime predates the advertisement itself). Use version/profile to check whether a connected binary contains a given engine change before debugging against it.",
     inputSchema: {},
   },
   {
@@ -295,7 +295,7 @@ let TOOLS: {
   {
     name: "reload",
     description:
-      "Rebuild the app from source and push it to every connected client. Call this after editing the app's .tsx/.jsx source to apply the changes: it bundles once and reloads all clients, so a burst of edits becomes a single explicit reload. Returns the number of clients reloaded, or a build error if the source failed to compile. There is no reload-on-save: nothing reaches the clients until you call this. Follow with get_logs to see runtime output from the reloaded app.",
+      "Rebuild the app from source and push it to every connected client. Call this after editing the app's .tsx/.jsx source to apply the changes: it bundles once and reloads all clients, so a burst of edits becomes a single explicit reload. Returns the number of clients reloaded, or a build error if the source failed to compile. The server also reloads on save (every file the running bundle was built from, and the assets/ tree); pause_watch before an edit burst so half-finished saves are not pushed to the user's screens, then reload, then resume_watch. Follow with get_logs to see runtime output from the reloaded app.",
     inputSchema: {},
   },
   {
@@ -318,6 +318,20 @@ let TOOLS: {
     annotations: { destructiveHint: false, idempotentHint: true },
     description:
       "Lift the mute set by mute_user_input: the user's input reaches every client again. Call it as soon as your measurement or test is done, whenever the human needs to interact, and always before you stop working.",
+    inputSchema: {},
+  },
+  {
+    name: "pause_watch",
+    annotations: { destructiveHint: false, idempotentHint: true },
+    description:
+      "Pause the dev server's reload-on-save until resume_watch, so your half-finished saves are not pushed to the user's screens while you edit; your explicit reload still is. Call it before an edit burst; when the edits are done, reload, then resume_watch. Changes saved while paused are not replayed on resume: reload is what pushes them. The pause lifts on resume_watch, when the dev server goes away, or when this bridge exits. ALWAYS resume when you are done: while paused, the human's own saves reach nothing.",
+    inputSchema: {},
+  },
+  {
+    name: "resume_watch",
+    annotations: { destructiveHint: false, idempotentHint: true },
+    description:
+      "Lift the pause set by pause_watch: saves push again, the human's included. Call it after your reload, and always before you stop working.",
     inputSchema: {},
   },
   {
@@ -427,6 +441,13 @@ async function callTool(name: string, args: any): Promise<ControlResult> {
       if (result.ok) muted = active
       return result
     }
+    case "pause_watch":
+    case "resume_watch": {
+      let paused = name === "pause_watch"
+      let result = await control(`/watch?active=${!paused}`, "POST")
+      if (result.ok) watchPaused = paused
+      return result
+    }
     case "get_snapshot": {
       if (typeof args?.nodeId !== "number") return { ok: false, message: "get_snapshot requires a numeric nodeId" }
       let params = new URLSearchParams({ node: String(args.nodeId) })
@@ -525,15 +546,23 @@ async function toContent(name: string, result: ControlResult, args?: any): Promi
   return { content: [{ type: "text", text: JSON.stringify(result.body, null, 2) }] }
 }
 
-// Whether this bridge muted the user's input and has not unmuted. A mute
-// outliving the bridge would leave the user locked out of their own client,
-// so the bridge lifts it when the agent host closes the pipe or kills it.
+// Whether this bridge muted the user's input and has not unmuted, and
+// whether it paused reload-on-save and has not resumed. Either outliving the
+// bridge would leave the user locked out of their own client, or saving into
+// nothing, so the bridge lifts both when the agent host closes the pipe or
+// kills it.
 let muted = false
+let watchPaused = false
 
-async function unmuteOnExit() {
-  if (!muted) return
-  muted = false
-  await control("/mute?active=false", "POST")
+async function restoreOnExit() {
+  if (muted) {
+    muted = false
+    await control("/mute?active=false", "POST")
+  }
+  if (watchPaused) {
+    watchPaused = false
+    await control("/watch?active=true", "POST")
+  }
 }
 
 export async function main() {
@@ -551,12 +580,12 @@ export async function main() {
     )
   }
 
-  process.stdin.on("end", () => void unmuteOnExit().finally(() => process.exit(0)))
+  process.stdin.on("end", () => void restoreOnExit().finally(() => process.exit(0)))
   for (let signal of ["SIGTERM", "SIGINT", "SIGHUP"] as const) {
-    process.on(signal, () => void unmuteOnExit().finally(() => process.exit(0)))
+    process.on(signal, () => void restoreOnExit().finally(() => process.exit(0)))
   }
 
   // The stdin read keeps the process alive; it exits when the agent host
-  // closes the pipe (after lifting any mute it set, see above).
+  // closes the pipe (after lifting any mute or watch pause it set, see above).
   await server.connect(new StdioServerTransport())
 }

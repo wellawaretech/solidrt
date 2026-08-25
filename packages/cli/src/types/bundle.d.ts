@@ -13,4 +13,12 @@ export type BundleOutput = {
   manifest: string
   /** The app's isolate bundles, one per "use isolate" module, in id order; maps dev builds only. */
   isolates: { id: string; code: string; map: string | null }[]
+  /**
+   * Every file this bundle was built from, absolute and sorted: the app's
+   * modules, the dependency modules bundled in, files inlined by import
+   * attribute, and the project's package.json / tsconfig.json. The assets/
+   * tree is not listed (the manifest carries it). What the dev server
+   * watches for reload-on-save.
+   */
+  inputs: string[]
 }

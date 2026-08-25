@@ -23,8 +23,10 @@ import { buildManifest, manifestAssetFor, type ManifestAsset } from "../lib/proj
 // attribute-free path later. Both attributes work on any extension, so shader
 // and other text sources inline by attribute the same way bytes do; `.svg` is
 // additionally text-loaded without an attribute (see Bun's `loader` below).
-function inlineImport({ types: t }: { types: any }) {
-  return {
+// Inlined files leave no trace in the module graph, so the plugin records
+// each one in `inputs` (see `BundleOutput.inputs`).
+function inlineImport(inputs: Set<string>) {
+  return ({ types: t }: { types: any }) => ({
     visitor: {
       ImportDeclaration(path: any, pluginState: any) {
         let attrs = path.node.attributes ?? path.node.assertions
@@ -40,6 +42,7 @@ function inlineImport({ types: t }: { types: any }) {
 
         let importer = pluginState.file.opts.filename as string
         let abs = resolvePath(dirname(importer), path.node.source.value)
+        inputs.add(abs)
 
         // text: var <local> = "<contents>"
         // binary: var <local> = Uint8Array.from(atob("<b64>"), c => c.charCodeAt(0))
@@ -58,7 +61,7 @@ function inlineImport({ types: t }: { types: any }) {
         path.replaceWith(t.variableDeclaration("var", [t.variableDeclarator(t.identifier(def.local.name), expr)]))
       },
     },
-  }
+  })
 }
 
 // Concatenate only the JS outputs (entry point plus any code-split chunks) of a
@@ -86,13 +89,15 @@ async function codeFromOutputs(outputs: BuildArtifact[]): Promise<string> {
 // collected there, keyed by absolute path, for sourcemap composition later.
 // `isolateEntry` is the one "use isolate" module this build may load (its own
 // entry); loading any other one means a by-value import of an isolate module,
-// which is a build error (see isolate modules below).
-function solidPlugin(babelMaps?: Map<string, object>, isolateEntry?: string): BunPlugin {
+// which is a build error (see isolate modules below). Every file the plugin
+// loads or inlines is recorded in `inputs`.
+function solidPlugin(inputs: Set<string>, babelMaps?: Map<string, object>, isolateEntry?: string): BunPlugin {
   return {
     name: "bun-plugin-solid",
     setup: (build) => {
       build.onLoad({ filter: /\.(js|ts)x?$/ }, async (args) => {
         if (!/\.(js|ts)x$/.test(args.path) && args.path.includes("node_modules")) return
+        inputs.add(args.path)
         let file = Bun.file(args.path)
         let code = await file.text()
         if (args.path !== isolateEntry && hasIsolateDirective(code)) {
@@ -104,7 +109,7 @@ function solidPlugin(babelMaps?: Map<string, object>, isolateEntry?: string): Bu
           filename: args.path,
           sourceMaps: !!babelMaps,
           presets: [[solid, { moduleName: "@solidrt/core", generate: "universal" }], [ts]],
-          plugins: [jsx, inlineImport],
+          plugins: [jsx, inlineImport(inputs)],
         })
         if (babelMaps && transforms?.map) babelMaps.set(args.path, transforms.map)
         return { contents: transforms?.code ?? "", loader: "js" }
@@ -214,6 +219,10 @@ export async function bundleWith(opts: BundleOptions): Promise<BundleResult | nu
   // self-contained bundle (splitting is off, so a helper both import gets
   // duplicated rather than shared). In dev every build gets a composed
   // sourcemap, keyed downstream by its module name.
+  // Every file the bundle depends on (BundleOutput.inputs): what the plugin
+  // loaded or inlined, plus every module in the build's sourcemap, which is
+  // where dependency code (node_modules, workspace packages) shows up.
+  let inputs = new Set<string>()
   let build = async (entry: string, babelMaps?: Map<string, object>, isolateEntry?: string) => {
     let result = null
     try {
@@ -226,7 +235,7 @@ export async function bundleWith(opts: BundleOptions): Promise<BundleResult | nu
         define,
         loader: { ".svg": "text" },
         sourcemap: babelMaps ? "external" : "none",
-        plugins: [solidPlugin(babelMaps, isolateEntry)],
+        plugins: [solidPlugin(inputs, babelMaps, isolateEntry)],
       })
     } catch (e) {
       console.error("[cli] compile error:\n", e)
@@ -236,6 +245,7 @@ export async function bundleWith(opts: BundleOptions): Promise<BundleResult | nu
       for (let msg of result.logs) console.error(msg)
       return null
     }
+    for (let source of await mapSources(result.outputs)) inputs.add(source)
     return result
   }
 
@@ -257,12 +267,34 @@ export async function bundleWith(opts: BundleOptions): Promise<BundleResult | nu
     })
   }
 
+  // The project files the manifest and the build read: package.json (app
+  // identity, icon, fonts) and tsconfig.json (resolution, JSX).
+  if (opts.project !== null) {
+    for (let name of ["package.json", "tsconfig.json"]) {
+      let abs = join(opts.project, name)
+      if (existsSync(abs)) inputs.add(abs)
+    }
+  }
+
   return {
     code,
     map: await composeMap(main.outputs, babelMaps),
     manifest: buildManifest(code, opts.entry, isolateManifestAssets(isolates), opts.project),
     isolates,
+    inputs: [...inputs].sort(),
   }
+}
+
+// The source files a build's sourcemap cites, as absolute paths (Bun writes
+// them cwd-relative). Empty for a build without a map.
+async function mapSources(outputs: BuildArtifact[]): Promise<string[]> {
+  let out: string[] = []
+  for (let o of outputs) {
+    if ((o.kind !== "entry-point" && o.kind !== "chunk") || !o.sourcemap) continue
+    let map = JSON.parse(await o.sourcemap.text())
+    for (let source of map.sources ?? []) out.push(resolvePath(source))
+  }
+  return out
 }
 
 /** The manifest assets for a set of isolate bundles (dev form: isolates/<id>.js). */

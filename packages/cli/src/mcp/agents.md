@@ -34,6 +34,13 @@ at its arguments. What the individual descriptions cannot tell you:
   are done, or whenever you need the human to press something: they see an
   unresponsive client meanwhile. The bridge unmutes when it exits, the
   server when it stops, but neither is a reason to leave a mute on.
+- Editing? `pause_watch` first: the server reloads on save, and a
+  half-finished save would land on the user's screens as a build error or
+  a broken app. Edit, `reload`, then `resume_watch`. The two holds are
+  separate on purpose: the mute keeps the human out while you measure, the
+  pause keeps your own saves out while you edit, and a human editing next
+  to you keeps auto-reload unless you hold it. The bridge resumes when it
+  exits, but do not rely on that.
 - A `shader` on `<window>` runs on the finished frame past the point every
   capture reads: `get_snapshot` returns the UNSHADED content (window node
   included), `get_texture` has no id for the shaded layer, and

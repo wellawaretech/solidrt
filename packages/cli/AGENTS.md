@@ -30,8 +30,9 @@ matches the work before starting it:
 - `bunx srt run` - dev server + a local client window, from the project root
   (entry `solidrt.entry` in package.json, default src/index.tsx); `bunx srt run
   <file>` serves a single file outside a project. NEEDS A DISPLAY (opens a GUI
-  window). Not usable headless. No reload-on-save: push edits with the MCP
-  `reload` tool.
+  window). Not usable headless. Reloads on save (the bundle's inputs and
+  `assets/`); an agent pauses that with `pause_watch` and pushes its edits
+  with the MCP `reload` tool.
 - `bunx srt bundle` - bundle the project into `dist/bundle/` (or
   `--output <dir>`): `<name>.srt.js` plus the app's isolate modules as
   `isolates/<id>.js`. With `--compile`, bytecode (`.srt.bin`/`.bin`)

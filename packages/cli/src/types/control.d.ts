@@ -26,6 +26,8 @@ export type ClientsResponse = {
   projectDir: string | null
   /** Whether the user's own input is muted on every client (see /mute). */
   userInputMuted: boolean
+  /** Whether reload-on-save is paused (see /watch). */
+  watchPaused: boolean
   clients: ClientEntry[]
 }
 
@@ -48,6 +50,9 @@ export type LoadResponse = { ok: true; entry: string; clients: number }
 
 /** POST /mute: the mute state now in force and the clients told. */
 export type MuteResponse = { ok: true; active: boolean; clients: number }
+
+/** POST /watch: whether reload-on-save is now active. */
+export type WatchResponse = { ok: true; active: boolean }
 
 /** GET /snapshot and /texture: png by default, RGBA8 bytes with format=raw. */
 export type ImageResponse = { width: number; height: number; pngBase64?: string; rgbaBase64?: string }

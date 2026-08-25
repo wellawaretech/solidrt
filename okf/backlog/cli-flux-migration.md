@@ -197,12 +197,10 @@ Checked 2026-08-25; each is its own small item and useful on its own:
 - **Bound port introspection.** DONE 2026-08-25 (uncommitted): `port` is
   optional in `serve()` (default 0) and `Server.port`/`url` report the
   address actually bound.
-- **Directory watch.** `flux:fs` has no watch. Skipped for now (decided
-  2026-08-25): the flux-hosted srt runs without auto-reload until one
-  lands; agents use `reload` already, and the repl `reload` covers humans.
-  When it comes: notify-backed, recursive, debounced by the caller, and
-  the filter must look at the rename target (atomic writes show up as the
-  temp name).
+- **Directory watch.** DONE 2026-08-25 (uncommitted): `dir(path).watch()`
+  in `flux:fs` (notify-backed, recursive optional, undebounced, rename
+  target reported), and reload-on-save on top of it from the bundle's
+  inputs: [done/reload-on-save.md](../done/reload-on-save.md).
 - **stdin/tty**: [stdin-tty-support.md](stdin-tty-support.md). The repl is
   the only consumer; the rest of the migration does not wait on it (the
   no-tty path already runs without a repl).

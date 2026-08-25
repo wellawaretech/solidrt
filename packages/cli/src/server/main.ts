@@ -27,6 +27,7 @@ import { appendLog, handleControl, resolveQuery } from "./control"
 import { printQr } from "./qr"
 import { createTunnelEndpoint, TUNNEL_PROTOCOL } from "./tunnel"
 import { rebuildAndBroadcast, showBuildFailure } from "./rebuild"
+import { stopWatcher } from "./watcher"
 import { devDir, rememberedPort, removeRecord, runningFor, serverDirFor, writeRecord } from "./registry"
 
 let args = parseArgs()
@@ -372,6 +373,7 @@ async function shutdown() {
   shuttingDown = true
   clearInterval(keepalive)
   for (let off of signalOffs) off()
+  stopWatcher()
   await removeRecord(config.serverDir)
   if (localClient) localClient.kill()
   server.close()
@@ -392,13 +394,15 @@ async function pump(stream: AsyncIterable<Uint8Array>, print: (line: string) => 
 }
 
 // The initial bundle, latched for the clients about to connect. A failed
-// build shows the BSOD rather than nothing; the next reload retries.
+// build shows the BSOD rather than nothing; the next reload retries. The
+// rebuild arms reload-on-save from the bundle's inputs (watcher.ts).
 console.log("[cli] Bundling (development)")
 let buildError = await rebuildAndBroadcast()
 if (buildError) {
   console.error(buildError)
   showBuildFailure()
 }
+console.log("[cli] Reload on save is on (pause it with the MCP pause_watch tool)")
 
 // Startup typecheck (`srt check <entry>`), deliberately not awaited: the
 // report prints when tsc finishes, and a type error never gates the boot

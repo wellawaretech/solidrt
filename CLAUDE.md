@@ -8,6 +8,8 @@ Prefer `let` over `const`. Use `const` only for "real" constants of a single val
 
 This project uses SolidJS 2.0. For the reactivity, control-flow, and props model (props are reactive values not accessors, no destructuring, no top-level reactive reads, etc.) consult `node_modules/solid-js/CHEATSHEET.md` - it is the authoritative reference.
 
+When writing solidrt application code (examples, scratch apps, repo tools, scaffolded projects), follow the instructions in the scaffold template `packages/cli/src/init/scaffold/AGENTS.md`. Read it before writing app code: it is the authoritative model for host elements, props, reactivity traps, assets, and headless verification.
+
 ## Rust
 Never only use `.unwrap()`; use `.expect(..)` or `.unwrap_or(..)` or something similar to explicitly handle the scenario where the result is not Ok.
 

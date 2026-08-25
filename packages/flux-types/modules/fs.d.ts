@@ -38,6 +38,22 @@ declare module "flux:fs" {
     remove(): Promise<void>
   }
 
+  /**
+   * One change under a watched directory. `path` is the absolute path of the
+   * entry. `rename` names the path a file now has (the target of a rename:
+   * an editor's atomic save shows up as one); the old name of a rename
+   * arrives as `remove`.
+   */
+  type WatchEvent = {
+    kind: "create" | "modify" | "remove" | "rename"
+    path: string
+  }
+
+  type WatchOptions = {
+    /** Watch the whole tree below the directory too. Default false. */
+    recursive?: boolean
+  }
+
   type FluxDir = {
     path: string
     /** List the directory's immediate entries (non-recursive). */
@@ -49,6 +65,13 @@ declare module "flux:fs" {
      * already exists.
      */
     create(): Promise<void>
+    /**
+     * Watch the directory for changes, calling `callback` for each one.
+     * Events are raw and undebounced: one save usually arrives as several,
+     * so coalesce them yourself. The watch keeps the process alive until the
+     * returned function is called. Throws if the directory does not exist.
+     */
+    watch(callback: (event: WatchEvent) => void, options?: WatchOptions): () => void
   }
 
   /**

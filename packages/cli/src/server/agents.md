@@ -23,8 +23,13 @@ debugging lessons, see src/mcp/agents.md.
   (src/server/args.ts). It finds the platform binaries, bun and srt through
   `SRT_PLATFORM_DIR`, `SRT_BUN` and `SRT_CLI`, which `srt` sets; started by
   hand in a checkout it needs only `SRT_HOME`.
-- There is no reload-on-save: `POST /__control__/reload` (or the MCP
-  `reload` tool) is the only push.
+- Reload-on-save watches the bundle's inputs (every file the running
+  bundle was built from, dependencies included) and the `assets/` tree, not
+  a directory: a file the app does not import never triggers a rebuild.
+  While the last build failed, the source tree is watched as a whole until
+  a build succeeds. `POST /__control__/watch?active=false` pauses it (the
+  MCP `pause_watch` tool) while an agent edits; `POST /__control__/reload`
+  (the `reload` tool) is the agent's push.
 
 ## The control API without MCP
 
@@ -68,7 +73,7 @@ every endpoint answers JSON and an error is `{ "error": "..." }` with a
   coordinates read from `/tree`).
 - POST `/clock?scale=<x>` (0 pauses) / `?step=<n>` frames while paused.
 - POST `/reload` - rebuild and push to every client; `{ ok, clients }` or
-  the build error. There is no reload-on-save: this is the only push.
+  the build error.
 - POST `/load` with `{ "entry": "<path>" }` - switch the entry and push it;
   `{ ok, entry, clients }` or the build error. Relative paths resolve
   against the project root (file mode: the served file's directory). A
@@ -77,6 +82,10 @@ every endpoint answers JSON and an error is `{ "error": "..." }` with a
   every client, gamepads included (synthetic `/input` still goes through;
   resize and close cannot be muted). `{ ok, active, clients }`. The mute
   lifts when the server stops; unmute yourself when done.
+- POST `/watch?active=true|false` - resume/pause reload-on-save (`active`
+  is whether it watches). `{ ok, active }`. Paused, saves push nothing
+  until `/reload`; changes made meanwhile are not replayed on resume. The
+  pause lifts when the server stops; resume yourself when done.
 
 The loop is the same as over MCP: `/reload`, then `/logs?since=`, then
 `/tree` for coordinates and `/snapshot` of the smallest relevant node.

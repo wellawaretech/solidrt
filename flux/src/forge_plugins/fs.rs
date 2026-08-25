@@ -25,6 +25,7 @@ impl ModuleDef for FsModule {
   }
 
   fn evaluate<'js>(ctx: &Ctx<'js>, exports: &Exports<'js>) -> rquickjs::Result<()> {
+    let _ = ctx.store_userdata(dir::InstalledWatches::default());
     exports.export("file", file::file_fn(ctx))?;
     exports.export("dir", dir::dir_fn(ctx))?;
     exports.export("realpath", Function::new(ctx.clone(), realpath)?)?;

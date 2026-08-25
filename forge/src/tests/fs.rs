@@ -71,3 +71,36 @@ async fn realpath_resolves_symlinks_and_dots() {
   assert!(missing.is_err(), "a missing path errors");
   let _ = std::fs::remove_dir_all(&dir);
 }
+
+// A directory watch reports a created file and the target name of a rename
+// (an editor's atomic save), and refuses a directory that does not exist.
+#[tokio::test]
+async fn dir_watcher_reports_create_and_rename_target() {
+  use crate::fs::{DirWatcher, WatchKind};
+  use std::time::Duration;
+
+  let dir = std::env::temp_dir().join(format!("forge-fs-watch-{}", std::process::id()));
+  let _ = std::fs::remove_dir_all(&dir);
+  std::fs::create_dir_all(&dir).expect("create temp dir");
+  let mut watcher = DirWatcher::open(&dir.to_string_lossy(), false).expect("open watcher");
+
+  std::fs::write(dir.join("a.tmp"), "x").expect("write a.tmp");
+  std::fs::rename(dir.join("a.tmp"), dir.join("a.txt")).expect("rename a.tmp");
+
+  let mut seen = Vec::new();
+  let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+  while tokio::time::Instant::now() < deadline {
+    let next = tokio::time::timeout_at(deadline, watcher.recv()).await;
+    let Ok(Some(event)) = next else { break };
+    seen.push(event);
+    if seen.iter().any(|e| e.kind == WatchKind::Rename && e.path.ends_with("a.txt")) {
+      break;
+    }
+  }
+  assert!(seen.iter().any(|e| e.kind == WatchKind::Create && e.path.ends_with("a.tmp")), "no create: {seen:?}");
+  assert!(seen.iter().any(|e| e.kind == WatchKind::Rename && e.path.ends_with("a.txt")), "no rename target: {seen:?}");
+
+  let missing = dir.join("no-such-dir");
+  assert!(DirWatcher::open(&missing.to_string_lossy(), false).is_err());
+  let _ = std::fs::remove_dir_all(&dir);
+}

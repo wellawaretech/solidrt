@@ -35,9 +35,15 @@ export let state = {
   /**
    * Whether the user's own input is muted on every client, for an agent
    * measuring or testing (the `mute` message; `welcome` carries it to a client
-   * joining while muted). Set by /mute; a file watcher would read it.
+   * joining while muted). Set by /mute.
    */
   userInputMuted: false,
+  /**
+   * Whether reload-on-save is paused (the /watch endpoint, srt mcp's
+   * pause_watch), so an agent's half-finished saves are not pushed to the
+   * user's screens while it edits; its explicit reload still is.
+   */
+  watchPaused: false,
   // Capture events from all connected clients share one clock (captureStartMs,
   // integer milliseconds) so they merge into one coherent timeline, tagged by
   // `device`. Streamed to disk as JSON Lines - see main.ts's "capture" handling.

@@ -40,6 +40,10 @@ serde_json = "1"
 percent-encoding = "2"
 rusqlite = { version = "0.40", features = ["bundled", "hooks"] }
 path-clean = "1"
+# Directory change notifications for forge::fs::DirWatcher (flux:fs dir().watch):
+# inotify / FSEvents / ReadDirectoryChangesW behind one API. No crossbeam
+# channel feature: events cross to the caller on a tokio channel.
+notify = { version = "8", default-features = false, features = ["macos_fsevent"] }
 # Current-process stats for flux:process (memoryUsage rss).
 sysinfo = { version = "0.39", default-features = false, features = ["system"] }
 fastwebsockets = { version = "0.10.0", features = ["upgrade", "unstable-split"] }

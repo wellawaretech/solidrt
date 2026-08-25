@@ -4,7 +4,16 @@ import { remapPositions } from "./remap"
 import { ENTRY_EXTENSIONS, absolute, dirname } from "./mode"
 import { file, realpath } from "flux:fs"
 import type { ServerWebSocket } from "flux:http"
-import type { ClientEntry, ClientsResponse, LoadResponse, LogEntry, LogsResponse, MuteResponse, ReloadResponse } from "../types/control"
+import type {
+  ClientEntry,
+  ClientsResponse,
+  LoadResponse,
+  LogEntry,
+  LogsResponse,
+  MuteResponse,
+  ReloadResponse,
+  WatchResponse,
+} from "../types/control"
 
 // The control API under /__control__/: read-only introspection of connected
 // app clients, served next to the file routes. The MCP bridge (srt mcp) is the
@@ -229,6 +238,7 @@ export async function handleControl(req: Request, path: string, query: Map<strin
         entry: state.config.entry,
         projectDir: state.config.projectDir,
         userInputMuted: state.userInputMuted,
+        watchPaused: state.watchPaused,
         clients: clientList(),
       }
       return Response.json(body)
@@ -369,8 +379,8 @@ export async function handleControl(req: Request, path: string, query: Map<strin
     }
     case "/__control__/reload": {
       // Explicit rebuild-and-push, the way a coding agent applies its edits
-      // (srt mcp's reload tool). On demand, so a burst of edits collapses
-      // into one reload; there is no file watcher.
+      // (srt mcp's reload tool): a burst of edits collapses into one reload,
+      // with reload-on-save paused meanwhile (/watch).
       if (req.method !== "POST") return Response.json({ error: "Reload requires POST" }, { status: 405 })
       let error = await rebuildAndBroadcast()
       if (error) return Response.json({ error }, { status: 502 })
@@ -438,6 +448,23 @@ export async function handleControl(req: Request, path: string, query: Map<strin
       let text = JSON.stringify({ type: "mute", active: on })
       for (let ws of state.clients.keys()) ws.send(text)
       let body: MuteResponse = { ok: true, active: on, clients: state.clients.size }
+      return Response.json(body)
+    }
+    case "/__control__/watch": {
+      // Pause or resume reload-on-save (srt mcp's pause_watch/resume_watch):
+      // paused, an agent's saves are not pushed while it edits; its explicit
+      // /reload is. Changes made while paused are not replayed on resume.
+      if (req.method !== "POST") return Response.json({ error: "Watch requires POST" }, { status: 405 })
+      let active = query.get("active")
+      if (active !== "true" && active !== "false") {
+        return Response.json({ error: "Watch requires ?active=true or ?active=false" }, { status: 400 })
+      }
+      let on = active === "true"
+      if (on === state.watchPaused) {
+        console.log(on ? "[cli] Reload on save resumed" : "[cli] Reload on save paused")
+      }
+      state.watchPaused = !on
+      let body: WatchResponse = { ok: true, active: on }
       return Response.json(body)
     }
     default:
