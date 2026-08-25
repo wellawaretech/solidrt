@@ -12,7 +12,8 @@
 import { dir, file } from "flux:fs"
 import { join } from "flux:path"
 import { pid } from "flux:process"
-import type { Config } from "./state"
+import type { ServerConfig } from "../shared/config"
+import type { LiveRecord } from "../shared/registry"
 
 const RECORD_FILE = "live.json"
 const PORT_FILE = "port"
@@ -27,9 +28,9 @@ export async function rememberedPort(serverDir: string): Promise<number | null> 
 }
 
 /** Write the record and remember the port. */
-export async function writeRecord(config: Config, port: number, address: string) {
+export async function writeRecord(config: ServerConfig, port: number, address: string) {
   await dir(config.serverDir).create()
-  let record = {
+  let record: LiveRecord = {
     pid,
     port,
     address,

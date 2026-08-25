@@ -1,7 +1,6 @@
 import { values, source, isPrebuilt } from "../args"
 import {
   bundleFlux,
-  bundleIsolatesDir,
   bundleSolid,
   compileToBytecode,
   findFluxIsolates,
@@ -28,8 +27,8 @@ function writeStdout(data: string): Promise<void> {
 // own builds where it is run from. Only reused when it is empty or already a
 // bundle output (a *.srt.* or *.flux.* bundle at top level) - the
 // writePackFolder rule - so it never writes into an unrelated directory.
-function ensureOutDir(): string {
-  let outDir = values.output ?? join("dist", "bundle")
+function ensureOutDir(defaultDir = join("dist", "bundle")): string {
+  let outDir = values.output ?? defaultDir
   let existing = existsSync(outDir) ? readdirSync(outDir) : null
   if (existing && existing.length > 0 && !existing.some((name) => /\.(srt|flux)\.(js|bin)$/.test(name))) {
     console.error(`${resolve(outDir)} exists and is not a bundle output; choose another --output`)
@@ -111,18 +110,23 @@ export async function runBundleCommand() {
     process.exit()
   }
 
+  // A prebuilt .srt.js (validateArgs admits no other prebuilt form) is
+  // compiled to bytecode: the only step left, so --compile is implied. The
+  // output lands in the bundle's own dir unless --output says otherwise; its
+  // isolate bundles compile along into the output's isolates/ (the ids match,
+  // the extension picks the form).
   if (isPrebuilt) {
-    if (!source!.endsWith(".srt.js")) {
-      console.error("Can only compile .srt.js files. .srt.bin is already compiled.")
+    let jsFile = resolve(source!)
+    if (!existsSync(jsFile)) {
+      console.error(`Entry not found: ${source}`)
       process.exit(1)
     }
-    let jsFile = resolve(source!)
-    let binOut = jsFile.replace(/\.srt\.js$/, ".srt.bin").replace(/\.js$/, ".bin")
-    await writeBytecode(await Bun.file(jsFile).text(), binOut)
-    // The isolate bundles compile along, .bin beside .js in the output's
-    // isolates/ dir (the ids match, the extension picks the form).
+    let outDir = ensureOutDir(dirname(jsFile))
+    await writeBytecode(await Bun.file(jsFile).text(), join(outDir, basename(jsFile).replace(/\.js$/, ".bin")))
+    let isolatesDir = join(outDir, "isolates")
+    clearIsolates(isolatesDir, ".bin")
     for (let isolate of readPrebuiltIsolates(jsFile)) {
-      await writeIsolateBytecode(bundleIsolatesDir(jsFile), isolate)
+      await writeIsolateBytecode(isolatesDir, isolate)
     }
     process.exit()
   }

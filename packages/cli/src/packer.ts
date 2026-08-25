@@ -1,5 +1,5 @@
-import { existsSync, readFileSync } from "node:fs"
-import { dirname, join } from "node:path"
+import { readFileSync } from "node:fs"
+import { runnerGlLibs } from "./artifacts"
 import { requireBinary } from "./util"
 import type { PackFolder } from "./pack-folder"
 
@@ -16,32 +16,6 @@ const MAGIC = {
 const SECTION_MANIFEST = 1
 const SECTION_FILE = 2
 const SECTION_GL_LIB = 3
-
-// The GL libraries the runner needs next to it (or, single-file, embedded as
-// kind-3 sections it extracts at boot): ANGLE's libraries on Windows and
-// macOS, nothing on platforms with a system GL. Order matters and the runner
-// preloads in section order: libGLESv2 must load before libEGL so libEGL's
-// import of it resolves against the already-loaded module instead of a
-// directory search.
-const GL_LIB_NAMES: Partial<Record<NodeJS.Platform, string[]>> = {
-  win32: ["libGLESv2.dll", "libEGL.dll"],
-  darwin: ["libGLESv2.dylib", "libEGL.dylib"],
-}
-
-// The GL libraries shipped next to the runner binary, resolved to their paths.
-// Missing files are fatal: a pack without them cannot create a window.
-export function runnerGlLibs(runnerPath: string): Array<{ name: string; path: string }> {
-  let names = GL_LIB_NAMES[process.platform] ?? []
-  let dir = dirname(runnerPath)
-  return names.map((name) => {
-    let path = join(dir, name)
-    if (!existsSync(path)) {
-      console.error(`Could not find ${name} next to the runner (${dir}); the packed app needs it to create a GL context.`)
-      process.exit(1)
-    }
-    return { name, path }
-  })
-}
 
 type Section = { kind: number; bytes: Buffer; name?: string }
 

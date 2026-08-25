@@ -1,6 +1,12 @@
 import { resolveBinary } from "./artifacts"
-import { existsSync } from "node:fs"
-import { resolve } from "node:path"
+
+// A fatal usage or configuration error: the message, then exit. The
+// throw-in-dev policy (CLAUDE.md, "API design"): a bad value fails the
+// command instead of being papered over.
+export function fail(message: string): never {
+  console.error(message)
+  process.exit(1)
+}
 
 // Build target per binary, for the "not found" hint. Run from the repo root.
 let BUILD_HINTS: Record<string, string> = {
@@ -24,36 +30,7 @@ export function requireBinary(name: string) {
   process.exit(1)
 }
 
-// adb is a system tool (Android Platform Tools), never bundled. Look on PATH
-// first, then the standard SDK location.
-export function resolveAdb() {
-  let exe = process.platform === "win32" ? "adb.exe" : "adb"
-  let onPath = Bun.which(exe)
-  if (onPath) return onPath
-  for (let root of [process.env.ANDROID_HOME, process.env.ANDROID_SDK_ROOT]) {
-    if (!root) continue
-    let candidate = resolve(root, "platform-tools", exe)
-    if (existsSync(candidate)) return candidate
-  }
-  return null
-}
-
-export function requireAdb() {
-  let path = resolveAdb()
-  if (path) return path
-  console.error("Could not find adb (Android Platform Tools).")
-  console.error("Install it:")
-  console.error("  Windows: winget install Google.PlatformTools")
-  console.error("  macOS:   brew install android-platform-tools")
-  console.error("  Linux:   install your distro's android-tools / adb package")
-  process.exit(1)
-}
-
 export async function run(binary: string, args: string[]) {
   let proc = Bun.spawn([binary, ...args], { stdio: ["inherit", "inherit", "inherit"] })
   return proc.exited
-}
-
-export function print(...args: any[]) {
-  console.log(...args)
 }

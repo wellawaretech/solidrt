@@ -8,6 +8,7 @@ import { resolveMode, sourceDirOf } from "../mode"
 import { liveRecords, sameKey } from "../registry"
 import { serverDir } from "../dev-dir"
 import { buildServerBundle } from "../server-bundle"
+import type { ServerConfig } from "../../shared/config"
 
 // `run` and `server`: decide what is served, resolve the binaries, and hand
 // everything to the dev server, a flux process (packages/cli/server/) that
@@ -49,16 +50,16 @@ export async function runServerCommand(withClient: boolean) {
 
   // How the server rebuilds and typechecks: it cannot call Bun.build or the
   // project's tsc itself (it is a flux process), so it spawns srt's own bun
-  // on the standalone bundle-cli and typecheck-cli entries. A prebuilt
+  // on the standalone bundle-cli and typecheck-cli entries (entries/). A prebuilt
   // .srt.js has no checkable program.
-  let bundleCli = fileURLToPath(new URL("../bundle-cli.ts", import.meta.url))
-  let typecheckCli = fileURLToPath(new URL("../typecheck-cli.ts", import.meta.url))
+  let bundleCli = fileURLToPath(new URL("../entries/bundle-cli.ts", import.meta.url))
+  let typecheckCli = fileURLToPath(new URL("../entries/typecheck-cli.ts", import.meta.url))
   let typecheckCmd = mode.entry.endsWith(".srt.js") ? null : [process.execPath, typecheckCli, mode.entry]
 
   let clientArgs = [...clientStorageArgs()]
   if (values.size) clientArgs.push("--size", values.size)
 
-  let config = {
+  let config: ServerConfig = {
     mode: mode.mode,
     key: mode.key,
     serverDir: dir,

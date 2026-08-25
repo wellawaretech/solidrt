@@ -1,11 +1,42 @@
+import { existsSync } from "node:fs"
 import { networkInterfaces } from "node:os"
-import { print, requireAdb } from "./util"
+import { resolve } from "node:path"
 import { resolveApk, ANDROID_PKG_MAP } from "./artifacts"
 import { values, port } from "./args"
-import { liveRecords, resolveFromCwd, type LiveRecord } from "./registry"
+import { liveRecords, resolveFromCwd } from "./registry"
+import type { LiveRecord } from "../shared/registry"
+
+// The Android client flow of `srt client --android`: find the device over
+// adb, install the APK that matches its ABI, and launch it pointed at the
+// dev server.
 
 // Launch component of the "go" dev-client flavor (see lattice/Makefile.android).
 let PACKAGE_ACTIVITY = "com.solidrt.go/com.solidrt.app.MainActivity"
+
+// adb is a system tool (Android Platform Tools), never bundled. Look on PATH
+// first, then the standard SDK location.
+function resolveAdb() {
+  let exe = process.platform === "win32" ? "adb.exe" : "adb"
+  let onPath = Bun.which(exe)
+  if (onPath) return onPath
+  for (let root of [process.env.ANDROID_HOME, process.env.ANDROID_SDK_ROOT]) {
+    if (!root) continue
+    let candidate = resolve(root, "platform-tools", exe)
+    if (existsSync(candidate)) return candidate
+  }
+  return null
+}
+
+function requireAdb() {
+  let path = resolveAdb()
+  if (path) return path
+  console.error("Could not find adb (Android Platform Tools).")
+  console.error("Install it:")
+  console.error("  Windows: winget install Google.PlatformTools")
+  console.error("  macOS:   brew install android-platform-tools")
+  console.error("  Linux:   install your distro's android-tools / adb package")
+  process.exit(1)
+}
 
 let ipToInt = (ip: string) => ip.split(".").reduce((acc, o) => (acc << 8) + (parseInt(o, 10) & 255), 0) >>> 0
 
@@ -48,7 +79,7 @@ function devServerAddress(adb: string, target: string, server: LiveRecord): stri
   // server is fine there; a real device needs a server started with --lan.
   if (target.startsWith("emulator-")) return `10.0.2.2:${server.port}`
   if (server.address === "127.0.0.1") {
-    print("[cli] The dev server is loopback-only; restart it with --lan so the device can reach it")
+    console.log("[cli] The dev server is loopback-only; restart it with --lan so the device can reach it")
     return null
   }
   let dip = deviceIp(adb, target)
@@ -110,11 +141,11 @@ function printDeviceStatus(adb: string, devices: string[]): Map<string, string> 
   for (let d of devices) {
     let abi = deviceAbi(adb, d)
     abiByDevice.set(d, abi)
-    print(`${d} - ${abi}`)
+    console.log(`${d} - ${abi}`)
     if (!resolveApk(abi)) missingAbis.add(abi)
   }
   let missingPkgs = [...missingAbis].map((abi) => ANDROID_PKG_MAP[abi]).filter((pkg): pkg is string => Boolean(pkg))
-  if (missingPkgs.length > 0) print(`Add dev dependencies with: bun add -d ${missingPkgs.join(" ")}`)
+  if (missingPkgs.length > 0) console.log(`Add dev dependencies with: bun add -d ${missingPkgs.join(" ")}`)
   return abiByDevice
 }
 
@@ -171,7 +202,7 @@ export async function spawnAndroidClient() {
     process.exit(1)
   }
 
-  print(`[cli] Installing SolidRT-Go on ${target}`)
+  console.log(`[cli] Installing SolidRT-Go on ${target}`)
   let install = Bun.spawn([adb, "-s", target, "install", "-r", apk], { stdout: "pipe", stderr: "pipe" })
   if ((await install.exited) !== 0) {
     console.error("adb install failed:\n" + (await new Response(install.stderr).text()))
@@ -184,10 +215,10 @@ export async function spawnAndroidClient() {
   let devServer = devServerAddress(adb, target, server)
   let launchArgs = [adb, "-s", target, "shell", "am", "start", "-n", PACKAGE_ACTIVITY]
   if (devServer) {
-    print(`[cli] Client will dial dev server at ${devServer}`)
+    console.log(`[cli] Client will dial dev server at ${devServer}`)
     launchArgs.push("--es", "srt_dev_server", devServer)
   } else {
-    print("[cli] Could not resolve a host address for the device; client will need a manual/QR connect")
+    console.log("[cli] Could not resolve a host address for the device; client will need a manual/QR connect")
   }
 
   let start = Bun.spawn(launchArgs, { stdout: "pipe", stderr: "pipe" })
@@ -196,5 +227,5 @@ export async function spawnAndroidClient() {
     process.exit(1)
   }
 
-  print(`[cli] Launched SolidRT-Go on ${target}; waiting for it to connect to the dev server...`)
+  console.log(`[cli] Launched SolidRT-Go on ${target}; waiting for it to connect to the dev server...`)
 }

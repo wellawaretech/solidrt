@@ -8,9 +8,13 @@
   "bin": {
     "srt": "./bin/srt"
   },
+  "scripts": {
+    "build-server": "bun scripts/build-server.ts"
+  },
   "files": [
     "bin/",
     "src/",
+    "shared/",
     "server/",
     "dist/",
     "scaffold/",

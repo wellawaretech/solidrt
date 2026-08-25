@@ -1,5 +1,7 @@
-import { existsSync, readFileSync } from "node:fs"
+import { existsSync } from "node:fs"
 import { resolve } from "node:path"
+import { loadProject } from "./project"
+import { fail } from "./util"
 
 // The fonts `srt pack` appends to a solidrt binary (see
 // okf/plans/packaged-fonts.md). By default the three Noto role defaults;
@@ -37,41 +39,23 @@ function defaultFontsDir(): string | null {
   return null
 }
 
-// The project's font map, or null in file mode (defaults only).
-function findProjectConfig(projectDir: string | null): { dir: string; fonts: unknown } | null {
-  if (projectDir === null) return null
-  let pkgPath = resolve(projectDir, "package.json")
-  let pkg = existsSync(pkgPath) ? JSON.parse(readFileSync(pkgPath, "utf8")) : {}
-  return { dir: projectDir, fonts: pkg.solidrt?.fonts }
-}
-
-function fail(message: string): never {
-  console.error(message)
-  process.exit(1)
-}
-
 // Resolve the font set for a pack as file paths: role defaults merged with the
-// project's `solidrt.fonts` map. Order is roles first (sans, serif, mono),
+// project's `solidrt.fonts` map (shape-checked by loadProject; file mode has
+// no project, so defaults only). Order is roles first (sans, serif, mono),
 // then added aliases in config order.
 export function resolvePackFonts(projectDir: string | null): ResolvedFont[] {
-  let config = findProjectConfig(projectDir)
-  let overrides = config?.fonts ?? {}
-  if (typeof overrides !== "object" || overrides === null || Array.isArray(overrides)) {
-    fail('The "solidrt.fonts" key in package.json must be a map of alias to font file path (or false)')
-  }
+  let project = loadProject(projectDir)
+  let overrides = project?.config.fonts ?? {}
 
-  // alias -> path relative to the config dir, or null for a role default.
+  // alias -> path relative to the project dir, or null for a role default.
   let selected = new Map<string, string | null>()
   for (let role of Object.keys(DEFAULT_FONTS)) selected.set(role, null)
   for (let [alias, value] of Object.entries(overrides)) {
     if (value === false) {
       if (!(alias in DEFAULT_FONTS)) fail(`"solidrt.fonts": "${alias}": false drops a default, but "${alias}" is not one of ${Object.keys(DEFAULT_FONTS).join("/")}`)
       selected.delete(alias)
-    } else if (typeof value === "string") {
-      if (Buffer.byteLength(alias, "utf8") > 255) fail(`"solidrt.fonts": alias "${alias}" is too long (max 255 bytes)`)
-      selected.set(alias, resolve(config!.dir, value))
     } else {
-      fail(`"solidrt.fonts": "${alias}" must be a font file path or false, got ${JSON.stringify(value)}`)
+      selected.set(alias, resolve(project!.dir, value))
     }
   }
 

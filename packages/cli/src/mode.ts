@@ -14,20 +14,17 @@
 // key (the canonical project root, or the canonical file path) is what the
 // dev server registry and every control response name.
 
-import { existsSync, readFileSync, realpathSync } from "node:fs"
+import { existsSync, realpathSync } from "node:fs"
 import { dirname, resolve } from "node:path"
 import { values, source, isSource, isPrebuilt } from "./args"
+import { loadProject } from "./project"
+import { fail } from "./util"
 
 export type Mode =
   | { mode: "project"; key: string; projectDir: string; entry: string }
   | { mode: "file"; key: string; projectDir: null; entry: string }
 
 const DEFAULT_ENTRY = "src/index.tsx"
-
-function fail(message: string): never {
-  console.error(message)
-  process.exit(1)
-}
 
 function canonical(path: string): string {
   try {
@@ -51,9 +48,7 @@ export function resolveMode(): Mode {
   if (source === undefined) {
     if (values.file || values.project) fail("--file and --project need an entry file")
     if (!hasPkg) fail(`No package.json in ${cwd}. Run from the project root, or pass a file to use on its own.`)
-    let pkg = JSON.parse(readFileSync(pkgPath, "utf8"))
-    let declared = pkg.solidrt?.entry
-    if (declared !== undefined && typeof declared !== "string") fail('"solidrt": "entry" must be a string path')
+    let declared = loadProject(cwd)!.config.entry
     let entry = resolve(cwd, declared ?? DEFAULT_ENTRY)
     if (!existsSync(entry)) {
       fail(`Entry not found: ${entry}${declared ? "" : ' (set "solidrt": { "entry": ... } in package.json)'}`)

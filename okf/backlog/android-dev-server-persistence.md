@@ -8,7 +8,7 @@ created: 2026-07-27
 
 Split out of idle-tick-gpu-backlog-runaway.md.
 
-`spawnAndroidClient` (packages/cli/src/dev-android.ts) hands the client the
+`spawnAndroidClient` (packages/cli/src/android.ts) hands the client the
 dev-server address as the `srt_dev_server` launch-intent extra, which
 MainActivity forwards to native argv as `--dev-server`. Nothing persists it. So
 the address survives exactly as long as that process does.

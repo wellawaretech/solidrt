@@ -8,5 +8,5 @@
     "noUncheckedIndexedAccess": true,
     "types": ["@solidrt/flux-types"]
   },
-  "include": ["."]
+  "include": [".", "../shared"]
 }

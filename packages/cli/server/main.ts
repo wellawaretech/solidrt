@@ -14,7 +14,8 @@ import { resolveWithin } from "flux:path"
 import { command } from "flux:subprocess"
 import { probe } from "flux:net"
 import type { Child } from "flux:subprocess"
-import { state, type Config } from "./state"
+import { state } from "./state"
+import type { ServerConfig } from "../shared/config"
 import * as cache from "./cache"
 import { handleProxy } from "./proxy"
 import { appendLog, handleControl, resolveQuery } from "./control"
@@ -23,7 +24,7 @@ import { createTunnelEndpoint, TUNNEL_PROTOCOL } from "./tunnel"
 import { rebuildAndBroadcast, showBuildFailure } from "./rebuild"
 import { rememberedPort, removeRecord, writeRecord } from "./registry"
 
-let config: Config = JSON.parse(argv[0]!)
+let config: ServerConfig = JSON.parse(argv[0]!)
 state.config = config
 state.stats = config.stats
 

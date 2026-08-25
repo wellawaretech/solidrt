@@ -2,14 +2,13 @@ import { state } from "./state"
 import { rebuildAndBroadcast } from "./rebuild"
 import { remapPositions } from "./remap"
 import type { ServerWebSocket } from "flux:http"
+import type { ClientEntry, ClientsResponse, LogEntry, LogsResponse, ReloadResponse } from "../shared/control"
 
 // The control API under /__control__/: read-only introspection of connected
 // app clients, served next to the file routes. The MCP bridge (srt mcp) is the
 // primary consumer. Two shapes: server-held data answered directly (clients,
 // logs) and queries forwarded to a client over its websocket and correlated
 // back by id (tree, stats).
-
-export type LogEntry = { seq: number; at: number; client: number; level: string; text: string }
 
 // Ring buffer of forwarded client logs. Capped so a chatty app cannot grow the
 // server without bound; readers page through it with the `since` cursor.
@@ -53,7 +52,7 @@ export function resolveQuery(msg: { id?: number }) {
 // The connected-client list. `withAddress` adds each socket's peer address for
 // the internal API (the repl `list` display); the public control shape stays
 // without it.
-export function clientList(withAddress = false) {
+export function clientList(withAddress = false): (ClientEntry & { address?: string | null })[] {
   return [...state.clients.entries()].map(([ws, info]) => ({
     id: info.id,
     platform: info.platform,
@@ -207,7 +206,8 @@ async function handleLogs(query: Map<string, string>): Promise<Response> {
     })
     entries = select()
   }
-  return Response.json({ entries: collapseRepeats(entries), latest: logSeq, generation: state.generation })
+  let body: LogsResponse = { entries: collapseRepeats(entries), latest: logSeq, generation: state.generation }
+  return Response.json(body)
 }
 
 export async function handleControl(req: Request, path: string, query: Map<string, string>): Promise<Response> {
@@ -215,14 +215,15 @@ export async function handleControl(req: Request, path: string, query: Map<strin
     case "/__control__/clients":
       // `key`/`mode`/`entry` identify what this server serves, for a caller
       // that resolved it from the registry and wants to confirm the match.
-      return Response.json({
+      let body: ClientsResponse = {
         generation: state.generation,
         key: state.config.key,
         mode: state.config.mode,
         entry: state.config.entry,
         projectDir: state.config.projectDir,
         clients: clientList(),
-      })
+      }
+      return Response.json(body)
     case "/__control__/logs":
       return handleLogs(query)
     case "/__control__/tree": {
@@ -365,7 +366,8 @@ export async function handleControl(req: Request, path: string, query: Map<strin
       if (req.method !== "POST") return Response.json({ error: "Reload requires POST" }, { status: 405 })
       let error = await rebuildAndBroadcast()
       if (error) return Response.json({ error }, { status: 502 })
-      return Response.json({ ok: true, clients: state.clients.size })
+      let body: ReloadResponse = { ok: true, clients: state.clients.size }
+      return Response.json(body)
     }
     default:
       return Response.json({ error: "Unknown control endpoint" }, { status: 404 })

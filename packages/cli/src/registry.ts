@@ -9,17 +9,7 @@
 import { readdirSync, readFileSync, realpathSync } from "node:fs"
 import { join } from "node:path"
 import { serversRoot } from "./dev-dir"
-
-export type LiveRecord = {
-  pid: number
-  port: number
-  address: string
-  key: string
-  mode: "project" | "file"
-  entry: string
-  projectDir: string | null
-  started: string
-}
+import type { LiveRecord } from "../shared/registry"
 
 // Only ESRCH means the process is gone. EPERM is a live process this bridge
 // may not signal (Windows reports it for other users' processes), and a

@@ -2,6 +2,7 @@ import { existsSync, statSync } from "node:fs"
 import { parseArgs } from "node:util"
 import { resolve } from "node:path"
 import { clientsRoot } from "./dev-dir"
+import { hint } from "./usage"
 
 // Everything after a bare "--" is the app's argument vector, kept out of
 // parseArgs (which would fold it into positionals) and forwarded verbatim to
@@ -11,9 +12,23 @@ let rawArgs = process.argv.slice(2)
 let appArgsSep = rawArgs.indexOf("--")
 export let appArgs = appArgsSep === -1 ? [] : rawArgs.slice(appArgsSep + 1)
 
-export let { values, positionals } = parseArgs({
-  args: appArgsSep === -1 ? rawArgs : rawArgs.slice(0, appArgsSep),
-  options: {
+// A parse failure (unknown flag, missing value) is a usage error, not a
+// crash: the parser's first sentence names it, the hint says where to look.
+function parse() {
+  try {
+    return parseArgs({
+      args: appArgsSep === -1 ? rawArgs : rawArgs.slice(0, appArgsSep),
+      options: OPTIONS,
+      allowPositionals: true,
+    })
+  } catch (e: any) {
+    hint(String(e?.message ?? e).split(". ")[0])
+  }
+}
+
+const OPTIONS = {
+    help: { type: "boolean", default: false },
+    version: { type: "boolean", default: false },
     dev: { type: "boolean", short: "d", default: false },
     minify: { type: "boolean", short: "m", default: false },
     compile: { type: "boolean", default: false },
@@ -38,9 +53,9 @@ export let { values, positionals } = parseArgs({
     port: { type: "string" },
     android: { type: "boolean", default: false },
     device: { type: "string" },
-  },
-  allowPositionals: true,
-})
+} as const
+
+export let { values, positionals } = parse()
 
 // An explicit --port: the dev server binds it (run, server), or the caller
 // picks the server on it (client, mcp). Without it the server binds its
@@ -97,10 +112,12 @@ function usage(line: string): never {
 export function validateArgs() {
   switch (command) {
     case "bundle":
+      // A prebuilt .srt.js compiles to bytecode (bundle.ts); a .srt.bin
+      // already is bytecode, so there is nothing to do with it.
       if (values.flux) {
         if (!source || !isTs) usage("srt bundle --flux [options] <entry.[ts|js]>")
-      } else if (source && !isSource && !isPrebuilt) {
-        usage("srt bundle [options] [entry.[tsx|jsx|ts|js|srt.js|srt.bin]]")
+      } else if (source && !isSource && !source.endsWith(".srt.js")) {
+        usage("srt bundle [options] [entry.[tsx|jsx|ts|js|srt.js]]")
       }
       break
     case "check":
@@ -146,79 +163,4 @@ export function validateArgs() {
   if (values.lan && !serves) {
     usage("srt <run|server> --lan  (--lan is only valid with the run and server commands)")
   }
-}
-
-export function printUsage() {
-  console.error(`Usage: srt <command> [options] [file]
-
-Commands:
-  init <dir>             Scaffold a new SolidRT project into a new (empty) folder
-  run [file]             Start dev server + local solidrt-go client
-  server [file]          Start dev server only
-  client                 Start solidrt-go client only
-  bundle [file]          Transpile TS/JS/TSX/JSX to JS or bytecode
-  check [file]           Verify the app builds and typechecks, without writing anything
-                         (no file: every examples/*/src/index.tsx and packages/*/examples/*.tsx)
-  render [file]          Replay a script (optional) and render frames for video generation
-  pack [file]            Bundle + compile to a standalone executable (experimental)
-  mcp                    MCP server (stdio) exposing the running dev server to coding agents
-
-run/server/bundle/pack/render: what the command works on
-  srt run                In a project root (package.json): the project, entry from
-                         "solidrt": { "entry" } (default src/index.tsx)
-  srt run <file>         Outside a project: the file on its own (no assets, no isolates)
-  srt run <file> --project   In a project root: the project, with this entry
-  srt run <file> --file      In a project root: the file on its own, ignoring the project
-  Build outputs land under dist/ in the current directory.
-  One server per project or file; each keeps the port it had last time,
-  else the first free one from 34884 up (see the startup line). Loopback only unless --lan.
-
-run/server options:
-      --port <N>         Bind this port instead of the remembered/next free one
-      --lan              Bind every interface and announce the LAN address (QR)
-      --proxy-http       Route fetch calls through the dev server (HTTP cache enabled)
-      --capture <file>   Record connected clients' key events to a script file
-      --tunnel           Accept ticket-paired clients through the p2p tunnel
-      -- <args...>       Everything after -- reaches the app on every client (flux:process argv)
-
-run/client options:
-      --size <WxH>       Window size (default: 1280x720)
-      --stats            Show the debug stats overlay (FPS, memory, frame timings)
-      --data-root <dir>  Client data root (default: ~/.solidrt/clients)
-  -c, --client <N>       Client number: its own data tree under the data root (default: 0)
-
-client options:
-  (no flags)             Connect to the dev server of the project (or file) in the current directory
-      --port <N>         Connect to the local dev server on this port
-      --server <host:port>  Connect to a dev server at this address
-      --android          Install and launch the client on a connected Android device
-                         (the server must run with --lan, or be reached from an emulator)
-      --device <serial>  Target a specific adb device by serial or unique prefix
-
-mcp options:
-      --port <N>         Attach to the dev server on this port (default: resolve by project)
-
-bundle options:
-  -f, --flux             Bundle for the bare Flux runtime, without SolidJS (entry must be .ts|.js)
-  -d, --dev              Use development build of SolidJS (default: production)
-  -m, --minify           Minify the output
-      --compile          Compile to bytecode
-  -o, --output <dir>     Output directory (default: dist/bundle)
-      --stdout           Write bundle to stdout
-
-pack options:
-      --folder           Write the flat app folder (runner + manifest + bundle + assets)
-                         instead of the single-file executable
-  -f, --flux             Pack for the bare Flux runtime instead of SolidRT (entry must be .ts|.js)
-  -m, --minify           Minify the output
-  -o, --output <name>    Output filename
-
-render options:
-      --script <file>    Script file to replay (default: no scripted input)
-      --fps <N>          Frames per second (default: 60)
-      --duration <N>     Duration in seconds, fractions allowed (default: 1)
-      --size <WxH>       Frame size in physical pixels (default: 1280x720)
-  -o, --output <path>    Where frames land: a directory (frame-NNNNNN.png inside it)
-                         or a path prefix (default: the current directory)
-      -- <args...>       Everything after -- is passed to the app (flux:process argv)`)
 }

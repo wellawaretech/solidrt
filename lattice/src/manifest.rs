@@ -24,9 +24,9 @@ pub struct Manifest {
   // none.
   #[serde(default)]
   pub icon: Option<String>,
-  // Provenance: the CLI release that built this version ("unknown" from an
-  // in-repo CLI, and defaulted for manifests from CLIs that predate the
-  // field). Informational, unlike runtimeVersion's compat gate.
+  // Provenance: the CLI release (or git describe of the checkout) that built
+  // this version; "unknown" only for manifests from CLIs that predate the
+  // field. Informational, unlike runtimeVersion's compat gate.
   #[serde(default = "unknown_version", rename = "solidrtVersion")]
   pub solidrt_version: String,
   pub bundle: ManifestBundle,

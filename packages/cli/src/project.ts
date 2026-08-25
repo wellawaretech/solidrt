@@ -1,5 +1,6 @@
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs"
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path"
+import { fail } from "./util"
 
 // Project configuration lives in the `solidrt` key of the project's
 // package.json (okf/plans/client-storage-updates.md):
@@ -18,36 +19,72 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "nod
 // is no project) so a dev project needs zero config; `srt pack` warns
 // when appId is defaulted, since a distributed app should pin its identity.
 //
+// The key is read in one place, loadProject, which checks every field's
+// shape (throw-in-dev policy: a bad value fails the command); the readers
+// (mode.ts, fonts.ts, and the identity and asset collectors below) take
+// their fields from the result and only check what is specific to them.
+//
 // Which project an entry belongs to is the caller's decision (mode.ts: the
 // cwd, never a search); the one exception is `srt check`, which verifies
-// trees of entries from one cwd and walks up from each.
+// trees of entries from one cwd and walks up from each (findProject).
 
-export function findProjectPackage(sourcePath: string): { dir: string; pkg: any } | null {
+/** The `solidrt` key: every field optional, every present field shape-checked. */
+export type ProjectConfig = {
+  entry?: string
+  appId?: string
+  org?: string
+  displayName?: string
+  /** alias -> font file path, or false to drop a role default (fonts.ts). */
+  fonts?: Record<string, string | false>
+  icon?: string
+}
+
+export type Project = { dir: string; name: string | undefined; config: ProjectConfig }
+
+function parseProjectConfig(raw: unknown): ProjectConfig {
+  if (raw === undefined) return {}
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) fail('"solidrt" in package.json must be an object')
+  let config = raw as Record<string, unknown>
+  for (let key of ["entry", "appId", "org", "displayName", "icon"]) {
+    if (key in config && typeof config[key] !== "string") fail(`"solidrt": "${key}" must be a string`)
+  }
+  if ("fonts" in config) {
+    let fonts = config.fonts
+    if (typeof fonts !== "object" || fonts === null || Array.isArray(fonts)) {
+      fail('The "solidrt.fonts" key in package.json must be a map of alias to font file path (or false)')
+    }
+    for (let [alias, value] of Object.entries(fonts)) {
+      if (value !== false && typeof value !== "string") {
+        fail(`"solidrt.fonts": "${alias}" must be a font file path or false, got ${JSON.stringify(value)}`)
+      }
+      if (Buffer.byteLength(alias, "utf8") > 255) fail(`"solidrt.fonts": alias "${alias}" is too long (max 255 bytes)`)
+    }
+  }
+  return config as ProjectConfig
+}
+
+// The project at `dir`: its package name and validated `solidrt` config. A
+// dir without a package.json is an empty project; null (file mode: the entry
+// stands alone) stays null.
+export function loadProject(dir: string | null): Project | null {
+  if (dir === null) return null
+  let pkgPath = resolve(dir, "package.json")
+  let pkg = existsSync(pkgPath) ? JSON.parse(readFileSync(pkgPath, "utf8")) : {}
+  return { dir, name: typeof pkg.name === "string" ? pkg.name : undefined, config: parseProjectConfig(pkg.solidrt) }
+}
+
+// The nearest project above a source file (see the note on searching above).
+export function findProject(sourcePath: string): Project | null {
   let dir = resolve(dirname(sourcePath))
   while (true) {
-    let pkgPath = resolve(dir, "package.json")
-    if (existsSync(pkgPath)) {
-      return { dir, pkg: JSON.parse(readFileSync(pkgPath, "utf8")) }
-    }
+    if (existsSync(resolve(dir, "package.json"))) return loadProject(dir)
     let parent = dirname(dir)
     if (parent === dir) return null
     dir = parent
   }
 }
 
-// The project at `projectDir`, or null in file mode (the entry stands alone).
-function projectFor(projectDir: string | null): { dir: string; pkg: any } | null {
-  if (projectDir === null) return null
-  let pkgPath = resolve(projectDir, "package.json")
-  return { dir: projectDir, pkg: existsSync(pkgPath) ? JSON.parse(readFileSync(pkgPath, "utf8")) : {} }
-}
-
 export type AppIdentity = { appId: string; org: string; displayName: string; defaulted: boolean }
-
-function fail(message: string): never {
-  console.error(message)
-  process.exit(1)
-}
 
 // Storage directory component (matches the runtime's safe_component check).
 let APP_ID_PATTERN = /^[A-Za-z0-9._-]+$/
@@ -75,12 +112,28 @@ function checkField(value: string, what: string) {
 // derivation question is settled (see plan).
 export const RUNTIME_VERSION = 1
 
+// This CLI's version, the one value every "which srt is this" answer comes
+// from (--version, the manifest stamp, the MCP server). A published CLI
+// carries the real version in its package.json; in-repo that is the 0.0.0
+// placeholder (see CLAUDE.md, "Versioning"), so a checkout reports the same
+// git describe the runtime builds stamp themselves with (lattice/Makefile,
+// flux/build.rs). Falls back to the placeholder when git cannot answer.
+function cliVersion(): string {
+  let pkgVersion = JSON.parse(readFileSync(join(import.meta.dir, "..", "package.json"), "utf8")).version
+  if (pkgVersion !== "0.0.0") return pkgVersion
+  let git = Bun.spawnSync({
+    cmd: ["git", "describe", "--tags", "--always", "--dirty"],
+    cwd: import.meta.dir,
+    stdout: "pipe",
+    stderr: "ignore",
+  })
+  return git.success ? git.stdout.toString().trim().replace(/^v/, "") : pkgVersion
+}
+export const CLI_VERSION: string = cliVersion()
+
 // The manifest's solidrtVersion: provenance, not a compat gate like
-// runtimeVersion - the CLI release that built the version. Published CLIs
-// carry the real version in their package.json; the in-repo 0.0.0
-// placeholder stamps "unknown".
-let pkgVersion = JSON.parse(readFileSync(join(import.meta.dir, "..", "package.json"), "utf8")).version
-export const SOLIDRT_VERSION: string = pkgVersion === "0.0.0" ? "unknown" : pkgVersion
+// runtimeVersion - the CLI release (or checkout) that built the version.
+export const SOLIDRT_VERSION: string = CLI_VERSION
 
 // `extra` are build outputs that ship as assets too (isolate bundles); they
 // follow the assets/ tree in the list, in the order given.
@@ -147,7 +200,7 @@ export function collectAssets(dir: string | null): {
   fonts: ManifestFont[]
   icon: string | null
 } {
-  let project = projectFor(dir)
+  let project = loadProject(dir)
   // No project (file mode): the entry stands alone, so no assets at all.
   if (!project) return { assets: [], fonts: [], icon: null }
   let projectDir = project.dir
@@ -160,25 +213,21 @@ export function collectAssets(dir: string | null): {
   }
 
   let fonts: ManifestFont[] = []
-  let map = project?.pkg.solidrt?.fonts
-  if (map && typeof map === "object" && !Array.isArray(map)) {
-    for (let [alias, value] of Object.entries(map)) {
-      if (typeof value !== "string") continue
-      let path = assetPathFor(projectDir, resolve(projectDir, value))
-      if (!path) {
-        fail(`"solidrt.fonts": "${alias}": ${value} must live under assets/ (fonts ship as version assets)`)
-      }
-      if (!assets.some((a) => a.path === path)) {
-        fail(`"solidrt.fonts": "${alias}": no such file: ${resolve(projectDir, value)}`)
-      }
-      fonts.push({ path, alias })
+  for (let [alias, value] of Object.entries(project.config.fonts ?? {})) {
+    if (value === false) continue
+    let path = assetPathFor(projectDir, resolve(projectDir, value))
+    if (!path) {
+      fail(`"solidrt.fonts": "${alias}": ${value} must live under assets/ (fonts ship as version assets)`)
     }
+    if (!assets.some((a) => a.path === path)) {
+      fail(`"solidrt.fonts": "${alias}": no such file: ${resolve(projectDir, value)}`)
+    }
+    fonts.push({ path, alias })
   }
 
   let icon: string | null = null
-  let declared = project?.pkg.solidrt?.icon
+  let declared = project.config.icon
   if (declared !== undefined) {
-    if (typeof declared !== "string") fail('"solidrt": "icon" must be a string path')
     let path = assetPathFor(projectDir, resolve(projectDir, declared))
     if (!path) {
       fail(`"solidrt.icon": ${declared} must live under assets/ (the icon ships as a version asset)`)
@@ -200,25 +249,16 @@ export function collectAssets(dir: string | null): {
 // Resolve the app identity for a pack. All three fields are guaranteed
 // non-empty and 255 bytes max (the trailer encoding's length prefix).
 export function loadAppIdentity(sourcePath: string, projectDir: string | null): AppIdentity {
-  let project = projectFor(projectDir)
-  let config = project?.pkg.solidrt ?? {}
+  let project = loadProject(projectDir)
+  let config = project?.config ?? {}
   // A scoped package name (@org/name) defaults to its last segment: identity
   // fields reject path separators, and derived defaults must never fail that.
-  let fallbackName = (project?.pkg.name ?? basename(sourcePath).replace(/\.[jt]sx?$/, "")).split("/").pop()!
+  let fallbackName = (project?.name ?? basename(sourcePath).replace(/\.[jt]sx?$/, "")).split("/").pop()!
 
-  for (let key of ["appId", "org", "displayName"]) {
-    if (key in config && typeof config[key] !== "string") fail(`"solidrt": "${key}" must be a string`)
-  }
-
-  let appId: string
-  let defaulted = typeof config.appId !== "string"
-  if (defaulted) {
-    appId = sanitizeAppId(fallbackName)
-  } else {
-    appId = config.appId
-    if (!APP_ID_PATTERN.test(appId) || appId === "." || appId === "..") {
-      fail(`"solidrt": "appId" must match ${APP_ID_PATTERN} (reverse-DNS recommended, e.g. "com.example.app")`)
-    }
+  let defaulted = config.appId === undefined
+  let appId = config.appId ?? sanitizeAppId(fallbackName)
+  if (!defaulted && (!APP_ID_PATTERN.test(appId) || appId === "." || appId === "..")) {
+    fail(`"solidrt": "appId" must match ${APP_ID_PATTERN} (reverse-DNS recommended, e.g. "com.example.app")`)
   }
   let displayName = config.displayName ?? fallbackName
   let org = config.org ?? displayName

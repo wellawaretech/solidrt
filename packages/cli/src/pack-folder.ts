@@ -3,7 +3,8 @@ import { basename, dirname, join, resolve } from "node:path"
 import { assetPathFor, collectAssets, loadAppIdentity, RUNTIME_VERSION, SOLIDRT_VERSION, type ManifestFont } from "./project"
 import { resolvePackFonts } from "./fonts"
 import type { Mode } from "./mode"
-import { runnerGlLibs } from "./packer"
+import { runnerGlLibs } from "./artifacts"
+import { fail } from "./util"
 import { isolateAssetPath } from "./bundler"
 
 // The canonical flat pack folder (okf/plans/client-storage-updates.md, Pack
@@ -12,11 +13,6 @@ import { isolateAssetPath } from "./bundler"
 // deliberately unlisted - and, unlike dev manifests, carries the full app
 // identity (org, displayName) and the complete font set with the default
 // fonts materialized under assets/fonts/.
-
-function fail(message: string): never {
-  console.error(message)
-  process.exit(1)
-}
 
 function hashHex(bytes: Uint8Array): string {
   return new Bun.CryptoHasher("sha256").update(bytes).digest("hex")

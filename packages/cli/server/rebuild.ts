@@ -1,6 +1,7 @@
 import { command } from "flux:subprocess"
 import { dir, file } from "flux:fs"
 import { state } from "./state"
+import type { BundleOutput } from "../shared/bundle"
 
 // The single rebuild-and-push path: the initial bundle at start and every
 // MCP reload go through here. The bundle itself runs in a bun subprocess
@@ -61,13 +62,8 @@ export async function rebuildAndBroadcast(): Promise<string | null> {
     return `Rebuild failed:\n${stderr.trim()}`
   }
 
-  // bundle-cli writes one JSON object { code, map, manifest, isolates } to stdout.
-  let bundle: {
-    code?: string
-    map?: string | null
-    manifest?: string
-    isolates?: { id: string; code: string; map?: string | null }[]
-  }
+  // bundle-cli writes one JSON object to stdout (shared/bundle.ts).
+  let bundle: BundleOutput
   try {
     bundle = JSON.parse(typeof result.stdout === "string" ? result.stdout : "")
   } catch {

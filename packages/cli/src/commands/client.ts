@@ -1,6 +1,6 @@
 import { values, port, clientStorageArgs } from "../args"
 import { requireBinary, run } from "../util"
-import { spawnAndroidClient } from "../dev-android"
+import { spawnAndroidClient } from "../android"
 import { resolveFromCwd } from "../registry"
 
 // Standalone solidrt-go client (no dev server of its own). Without flags it

@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 
-import { values, command, validateArgs, printUsage } from "./args"
+import { values, command, validateArgs } from "./args"
+import { printUsage, printVersion, hint } from "./usage"
 import { runInitCommand } from "./commands/init"
 import { runBundleCommand } from "./commands/bundle"
 import { runCheckCommand } from "./commands/check"
@@ -9,6 +10,19 @@ import { runRenderCommand } from "./commands/render"
 import { runServerCommand } from "./commands/server"
 import { runClientCommand } from "./commands/client"
 import { runMcpCommand } from "./commands/mcp"
+
+// -- Help and version --
+
+// Answered before anything else: neither takes a command, so they must not
+// fall through to the usage error.
+if (values.help) {
+  printUsage()
+  process.exit(0)
+}
+if (values.version) {
+  printVersion()
+  process.exit(0)
+}
 
 // -- Validate args --
 
@@ -56,6 +70,5 @@ if (command === "init") {
 } else if (command === "mcp") {
   await runMcpCommand()
 } else {
-  printUsage()
-  process.exit(1)
+  hint(command === undefined ? undefined : `Unknown command "${command}"`)
 }

@@ -4,7 +4,8 @@
   // flux-targeted package may share a program with them). The scaffold/
   // subtree has its own tsconfig (shipped to scaffolded apps), and server/
   // is the flux dev server with its own flux-targeted tsconfig; neither is
-  // part of this program.
+  // part of this program. shared/ (type-only contracts between the two) is
+  // in both.
   "compilerOptions": {
     "lib": ["ESNext"],
     "target": "ESNext",
@@ -21,5 +22,5 @@
     "noImplicitOverride": true,
     "types": ["bun"]
   },
-  "include": ["src"]
+  "include": ["src", "shared"]
 }

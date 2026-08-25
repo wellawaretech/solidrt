@@ -11,7 +11,9 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js"
 import { resolve } from "node:path"
 import { port as FIXED_PORT } from "../args"
+import { CLI_VERSION } from "../project"
 import { resolveFromCwd, sameKey } from "../registry"
+import type { ImageResponse } from "../../shared/control"
 
 // An explicit --port pins the port for the bridge's lifetime. Otherwise the
 // server is resolved from the registry by the bridge's cwd (once, then again
@@ -457,8 +459,11 @@ async function callTool(name: string, args: any): Promise<ControlResult> {
 
 async function toContent(name: string, result: ControlResult, args?: any): Promise<CallToolResult> {
   if (!result.ok) return { content: [{ type: "text", text: result.message }], isError: true }
-  if (name === "get_snapshot" || name === "get_texture") {
-    let { pngBase64, width, height } = result.body
+  // The bridge never asks for format=raw, so the reply carries the PNG; a
+  // reply without one is left as JSON rather than passed off as an image.
+  let image = name === "get_snapshot" || name === "get_texture" ? (result.body as ImageResponse) : null
+  if (image?.pngBase64) {
+    let { pngBase64, width, height } = image
     let label = name === "get_snapshot" ? "Captured node snapshot" : "Texture contents"
     let text = `${label}: ${width}x${height} px`
     // save_to is handled here in the bridge, not by the dev server: this
@@ -485,7 +490,7 @@ async function toContent(name: string, result: ControlResult, args?: any): Promi
 }
 
 export async function runMcpCommand() {
-  let server = new McpServer({ name: "solidrt", version: "0.0.0" })
+  let server = new McpServer({ name: "solidrt", version: CLI_VERSION })
 
   for (let tool of TOOLS) {
     server.registerTool(

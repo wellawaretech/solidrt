@@ -8,7 +8,8 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 
 import { dirname, join, relative, resolve as resolvePath, sep } from "node:path"
 import { values } from "./args"
 import type { Mode } from "./mode"
-import { print, requireBinary } from "./util"
+import { requireBinary } from "./util"
+import type { BundleOutput } from "../shared/bundle"
 import { buildManifest, manifestAssetFor, type ManifestAsset } from "./project"
 
 // Babel plugin: rewrite `import data from "./x" with { type: "binary" }` into an
@@ -177,15 +178,8 @@ export function isolateAssetPath(id: string, ext: "js" | "bin"): string {
 // modules (isolates are a project feature).
 export type BundleOptions = { entry: string; devBase?: string; dev: boolean; minify: boolean; project: string | null }
 
-export type BundleResult = {
-  code: string
-  /** Composed sourcemap JSON (bundle -> original .tsx sources), dev builds only. */
-  map: string | null
-  /** Version manifest JSON for this bundle; clients install pushes under its hash. */
-  manifest: string
-  /** The app's isolate bundles, one per "use isolate" module, in id order; maps dev builds only. */
-  isolates: { id: string; code: string; map: string | null }[]
-}
+// The bundle-cli stdout contract doubles as the in-process result.
+export type BundleResult = BundleOutput
 
 /**
  * The bundle's sourcemaps keyed by the module name stack frames cite ("main"
@@ -313,7 +307,7 @@ async function composeMap(outputs: BuildArtifact[], babelMaps?: Map<string, obje
 export async function bundle(mode: Mode) {
   let dev = values.dev
   // Keep stdout clean when the bundle itself is written to stdout.
-  if (!values.stdout) print(`[cli] Bundling (${dev ? "development" : "production"})`)
+  if (!values.stdout) console.log(`[cli] Bundling (${dev ? "development" : "production"})`)
   return bundleWith({ entry: mode.entry, dev, minify: values.minify, project: mode.projectDir })
 }
 
