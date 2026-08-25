@@ -200,7 +200,12 @@ serve({
       return handleProxy(req)
     }
     if (path.startsWith("/__control__/")) {
-      return handleControl(req, path, query)
+      // Every control response names the project this server serves: the
+      // fixed dev port means a bridge that resolved a port once can find
+      // another project's server there later, and this is how it notices.
+      let resp = await handleControl(req, path, query)
+      resp.headers.set("x-solidrt-project", state.projectDir)
+      return resp
     }
     if (path.startsWith("/__internal__/")) {
       return handleInternal(req, server, path)

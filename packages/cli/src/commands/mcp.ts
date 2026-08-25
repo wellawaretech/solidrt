@@ -16,10 +16,11 @@ import { DEV_PORT } from "../dev-server"
 import { devDir } from "../dev-dir"
 
 // An explicit -s/--port pins the port for the bridge's lifetime. Otherwise
-// the port is resolved per tool call from the server registry, so one bridge
-// (started when the workspace opens, kept alive across server restarts)
-// follows whichever server is currently serving this project - and the
-// scaffold's mcp.json never carries a port.
+// the port is resolved from the server registry (once, then again whenever
+// the server it found stops serving this project - see control()), so one
+// bridge (started when the workspace opens, kept alive across server
+// restarts) follows whichever server is currently serving this project - and
+// the scaffold's mcp.json never carries a port.
 const FIXED_PORT = values.port !== undefined || values.session !== undefined ? DEV_PORT : null
 
 // The projectDir the bridge is working in: the nearest package.json above its
@@ -87,10 +88,11 @@ function liveRecords(): LiveRecord[] {
   return records
 }
 
-type PortResult = { ok: true; port: number } | { ok: false; message: string }
+// A pinned port carries no project: the user chose it, so nothing is checked.
+type PortResult = { ok: true; port: number; project: string | null } | { ok: false; message: string }
 
 async function resolvePort(): Promise<PortResult> {
-  if (FIXED_PORT !== null) return { ok: true, port: FIXED_PORT }
+  if (FIXED_PORT !== null) return { ok: true, port: FIXED_PORT, project: null }
   let project = findProjectDir()
   if (!project) {
     return {
@@ -128,54 +130,63 @@ async function resolvePort(): Promise<PortResult> {
       message: `No dev server for ${project}.\n${listing}\nStart one with srt run, or pin one of the servers above by passing its flag to srt mcp.`,
     }
   }
-  let port = matches[0]!.port
-  // The record is a hint; the server is authoritative. The probe catches a
-  // stale record whose pid was reused by an unrelated process.
-  try {
-    let probe = await fetch(`http://127.0.0.1:${port}/__control__/clients`)
-    let body: any = await probe.json().catch(() => null)
-    if (!probe.ok || typeof body?.projectDir !== "string" || !sameDir(body.projectDir, project)) {
-      return {
-        ok: false,
-        message: `The server on port ${port} is not serving ${project}${
-          typeof body?.projectDir === "string" ? ` (it serves ${body.projectDir})` : ""
-        }. Start one with srt run, or pass -s <N> to srt mcp.`,
-      }
-    }
-  } catch {
-    return {
-      ok: false,
-      message: `No dev server for ${project}: the registry lists port ${port} but nothing answers there. Start one with srt run.`,
-    }
-  }
-  return { ok: true, port }
+  // The record is a hint; the server is authoritative. A stale record (a pid
+  // reused by an unrelated process, a port taken over by another project's
+  // server) shows on the first call: every control response names the project
+  // it serves, and control() checks it.
+  return { ok: true, port: matches[0]!.port, project }
 }
 
 type ControlResult = { ok: true; body: any } | { ok: false; message: string }
 
+// The resolved server, kept across calls: a server's port never changes while
+// it runs, so the registry is read once and again only when the port stops
+// answering or answers for another project (every project defaults to the
+// same port, so a server that died can be replaced by one serving something
+// else). Each response's x-solidrt-project header is that check, so a
+// takeover shows on the next call at no extra cost.
+let cached: { port: number; project: string | null } | null = null
+
 async function control(path: string, method: "GET" | "POST" = "GET", payload?: unknown): Promise<ControlResult> {
-  let resolved = await resolvePort()
-  if (!resolved.ok) return resolved
-  let resp
-  try {
-    let init: RequestInit = { method }
-    if (payload !== undefined) {
-      init.headers = { "content-type": "application/json" }
-      init.body = JSON.stringify(payload)
+  for (let attempt = 0; ; attempt++) {
+    if (!cached) {
+      let resolved = await resolvePort()
+      if (!resolved.ok) return resolved
+      cached = { port: resolved.port, project: resolved.project }
     }
-    resp = await fetch(`http://127.0.0.1:${resolved.port}/__control__${path}`, init)
-  } catch {
-    return {
-      ok: false,
-      message: "Dev server not running. Start it in the project first: srt run src/index.tsx (or srt server)",
+    let { port, project } = cached
+    let resp
+    try {
+      let init: RequestInit = { method }
+      if (payload !== undefined) {
+        init.headers = { "content-type": "application/json" }
+        init.body = JSON.stringify(payload)
+      }
+      resp = await fetch(`http://127.0.0.1:${port}/__control__${path}`, init)
+    } catch {
+      cached = null
+      if (attempt === 0) continue
+      return {
+        ok: false,
+        message: `No dev server answers on port ${port}${project ? ` for ${project}` : ""}. Start one with srt run.`,
+      }
     }
+    let served = resp.headers.get("x-solidrt-project")
+    if (project !== null && (served === null || !sameDir(served, project))) {
+      cached = null
+      if (attempt === 0) continue
+      return {
+        ok: false,
+        message: `The server on port ${port} is not serving ${project}${served ? ` (it serves ${served})` : ""}. Start one with srt run, or pass -s <N> to srt mcp.`,
+      }
+    }
+    let body: any = null
+    try {
+      body = await resp.json()
+    } catch {}
+    if (!resp.ok) return { ok: false, message: String(body?.error ?? `Dev server responded with HTTP ${resp.status}`) }
+    return { ok: true, body }
   }
-  let body: any = null
-  try {
-    body = await resp.json()
-  } catch {}
-  if (!resp.ok) return { ok: false, message: String(body?.error ?? `Dev server responded with HTTP ${resp.status}`) }
-  return { ok: true, body }
 }
 
 let CLIENT_ARG = z

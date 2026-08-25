@@ -13,9 +13,10 @@ at its arguments. What the individual descriptions cannot tell you:
 
 - If `list_clients` is empty, no app is running: ask the user to start
   `bunx srt run src/index.tsx` rather than starting a second one yourself.
-  The bridge needs no port: each call resolves the server currently serving
-  this project, whatever `-s`/`--port` it was started with. Passing the flag
-  to `srt mcp` pins the bridge to that one server instead.
+  The bridge needs no port: it resolves the server currently serving this
+  project, whatever `-s`/`--port` it was started with, and re-resolves when
+  that server goes away or a different project's server takes its port.
+  Passing the flag to `srt mcp` pins the bridge to that one server instead.
 - Several clients may be attached at once (desktop window, phone, tablet)
   with different sizes, display scales and safe areas. `reload` pushes to all
   of them, but `call_debug` / `send_input` / `get_snapshot` / log cursors are
