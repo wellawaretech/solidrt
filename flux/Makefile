@@ -16,7 +16,7 @@ include $(SRT_HOME)/platform.mk
 # $(1) = binary name (no extension)
 define stage-bin
 	@mkdir -p $(HOST_DIST)
-	@cp $(WORKSPACE_ROOT)/target/$(PROFILE)/$(1)$(HOST_EXT) $(HOST_DIST)/
+	$(call replace-bin,$(WORKSPACE_ROOT)/target/$(PROFILE)/$(1)$(HOST_EXT),$(HOST_DIST)/$(1)$(HOST_EXT))
 	@echo "Staged $(1)$(HOST_EXT) into $(HOST_DIST)/"
 endef
 

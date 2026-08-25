@@ -47,8 +47,9 @@ angle-darwin:
 # $(1) = target subdir (go|runtime), $(2) = profile (release|debug), $(3) = binary name
 define stage-darwin
 	@mkdir -p $(HOST_DIST)
-	@cp target/$(1)/$(2)/$(3) $(HOST_DIST)/
-	@codesign --force --sign - $(HOST_DIST)/$(3)
+	@cp target/$(1)/$(2)/$(3) $(HOST_DIST)/$(3).tmp
+	@codesign --force --sign - $(HOST_DIST)/$(3).tmp
+	@mv -f $(HOST_DIST)/$(3).tmp $(HOST_DIST)/$(3)
 	@echo "Staged $(3) into $(HOST_DIST)/"
 endef
 

@@ -53,7 +53,7 @@ angle-windows:
 # $(1)=target subdir (go|runtime), $(2)=profile (release|debug), $(3)=binary name (no .exe)
 define stage-windows
 	@mkdir -p $(HOST_DIST)
-	@cp target/$(1)/$(2)/$(3).exe $(HOST_DIST)/
+	$(call replace-bin,target/$(1)/$(2)/$(3).exe,$(HOST_DIST)/$(3).exe)
 	@echo "Staged $(3).exe into $(HOST_DIST)/"
 endef
 
