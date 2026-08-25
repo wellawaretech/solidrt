@@ -43,6 +43,8 @@ declare module "flux:net" {
     mac: string | null
     /** Whether the interface is up. */
     up: boolean
+    /** Whether it holds the default route (the interface other hosts reach). */
+    default: boolean
     /** Whether it is a loopback interface. */
     loopback: boolean
     /** Whether it supports multicast. */

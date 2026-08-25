@@ -45,7 +45,7 @@ let def = {
 setTheme(defineTheme(def, "dark"))
 ```
 
-The type scale derives from `text.base` (the body size, default 14) and `text.ratio` (default 1.26): caption, label, body, title, heading sit at `base * ratio^(-2..2)`, rounded to whole pixels, with per-role `text.roles` overrides for sizes, line heights, and weights.
+The type scale derives from `text.base` (the body size, default 14) and `text.ratio` (default 1.26): caption sits one step under body, label is body at an emphasized weight, title and heading sit one and two steps above, rounded to whole pixels, with per-role `text.roles` overrides for sizes, line heights, and weights. De-emphasis is a color (`textMuted`), not a size: caption is for small glanceable text (badges, tab labels, timestamps) and stays in the full text color.
 
 ### Tokens
 
@@ -438,7 +438,7 @@ API: `Card`, `CardProps` - typed and commented in [src/card.tsx](./src/card.tsx)
 
 ### Item
 
-A list row: `startContent` (icon, avatar, checkbox), a `label` with an optional `description` under it, and `endContent` (badge, timestamp, action) pushed to the end. String/number label and description render as themed body and muted caption text; anything else as-is. The dense-data workhorse: rows compose with `<For>` inside a plain column view or `ScrollView` - there is no List wrapper, because a column IS the list. Paddings and gaps are density-scaled, so a `<Density>` region compacts rows wholesale.
+A list row: `startContent` (icon, avatar, checkbox), a `label` with an optional `description` under it, and `endContent` (badge, timestamp, action) pushed to the end. String/number label and description render as themed body and muted body text; anything else as-is. The dense-data workhorse: rows compose with `<For>` inside a plain column view or `ScrollView` - there is no List wrapper, because a column IS the list. Paddings and gaps are density-scaled, so a `<Density>` region compacts rows wholesale.
 
 ```jsx
 import { Item, Badge, Icon } from "@solidrt/components"

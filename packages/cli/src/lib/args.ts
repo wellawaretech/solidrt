@@ -144,9 +144,10 @@ export function validateArgs() {
       break
   }
 
-  let serves = command === "run" || command === "server"
+  // The commands that start a dev server; `demo` resolves its own project.
+  let serves = command === "run" || command === "server" || command === "demo"
   // The commands that work on a project or a file (mode.ts).
-  let onApp = serves || command === "bundle" || command === "pack" || command === "render"
+  let onApp = command === "run" || command === "server" || command === "bundle" || command === "pack" || command === "render"
   // --device picks the adb device `android` installs on.
   if (values.device && command !== "android") {
     usage("srt android --device <serial>  (--device is only valid with the android command)")
@@ -164,7 +165,7 @@ export function validateArgs() {
   // --port binds the dev server (`run`, `server`) or picks one (`client`,
   // `android`, `mcp`).
   if (port !== undefined && !serves && command !== "client" && command !== "android" && command !== "mcp") {
-    usage("srt <run|server|client|android|mcp> --port <N>  (--port is only valid with the run, server, client, android and mcp commands)")
+    usage("srt <run|server|demo|client|android|mcp> --port <N>  (--port is only valid with the run, server, demo, client, android and mcp commands)")
   }
   // --file/--project resolve a file argument in a project directory.
   if ((values.file || values.project) && !onApp) {
@@ -172,6 +173,6 @@ export function validateArgs() {
   }
   // --lan binds every interface of a server being started.
   if (values.lan && !serves) {
-    usage("srt <run|server> --lan  (--lan is only valid with the run and server commands)")
+    usage("srt <run|server|demo> --lan  (--lan is only valid with the run, server and demo commands)")
   }
 }

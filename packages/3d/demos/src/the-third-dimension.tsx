@@ -13,12 +13,14 @@
 // shading is a constant baked into the GLSL, and lights cost no extra pass.
 // There are no shadows - the library has no shadow-map support, and this
 // demo does not fake one. An orbit
-// camera (createOrbitCamera) owns the pose: drag to rotate, wheel to zoom,
-// and an auto-orbit that pauses while dragging. Per-frame JS cost is
+// camera (createOrbitCamera) owns the pose: drag to rotate, wheel or pinch
+// to zoom, and an auto-orbit that pauses while dragging (a tap, click or
+// space toggles it). Per-frame JS cost is
 // constant no matter how many triangles the pass covers - one update(dt),
 // and the scene's own single shared camera write when the pose changed.
 
 import {
+  capabilities,
   createEffect,
   createMemo,
   createSignal,
@@ -274,6 +276,14 @@ let orbit!: OrbitCamera
 // Distance the wheel is steering toward, or null when nothing is in flight.
 let zoomTarget: number | null = null
 
+// A tap toggles the auto-orbit, so tablets have a pause too. A tap is one
+// pointer that goes down and up within TAP_SLOP and TAP_MS without a second
+// finger joining: crossing the slop is what makes an orbit drag, so the two
+// never overlap. Mouse clicks qualify as taps as well.
+const TAP_SLOP = 8
+const TAP_MS = 300
+let tap: { id: number; x: number; y: number; at: number } | null = null
+
 let clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v))
 
 function App() {
@@ -428,7 +438,16 @@ function App() {
       // fight over the pose.
       onPointerDown={e => {
         zoomTarget = null
+        tap = tap === null ? { id: e.pointerId, x: e.clientX, y: e.clientY, at: performance.now() } : null
         orbit.handlers.onPointerDown(e)
+      }}
+      onPointerUp={e => {
+        orbit.handlers.onPointerUp(e)
+        if (tap === null || tap.id !== e.pointerId) return
+        let moved = Math.hypot(e.clientX - tap.x, e.clientY - tap.y)
+        let held = performance.now() - tap.at
+        tap = null
+        if (moved < TAP_SLOP && held < TAP_MS) orbit.set({ orbiting: !orbit.orbiting() })
       }}
       onKeyDown={e => {
         if (e.code === "Space" || e.key === " ") orbit.set({ orbiting: !orbit.orbiting() })
@@ -451,7 +470,13 @@ function App() {
           </text>
         </view>
           <text color="#a9bcd6" fontSize={16} fontWeight={600}>
-          {orbit.orbiting() ? "drag to orbit - wheel to zoom - space to pause" : "orbit paused - space resumes"}
+          {orbit.orbiting()
+            ? capabilities.touch
+              ? "drag to orbit - pinch to zoom - tap to pause"
+              : "drag to orbit - wheel to zoom - click or space to pause"
+            : capabilities.touch
+              ? "orbit paused - tap resumes"
+              : "orbit paused - click or space resumes"}
         </text>
       </view>
     </window>

@@ -52,7 +52,7 @@ run/server/bundle/pack/render: what the command works on
   One server per project or file; each keeps the port it had last time,
   else the first free one from 34884 up (see the startup line). Loopback only unless --lan.
 
-run/server options:
+run/server/demo options:
       --port <N>         Bind this port instead of the remembered/next free one
       --lan              Bind every interface and announce the LAN address (QR)
       --proxy-http       Route fetch calls through the dev server (HTTP cache enabled)

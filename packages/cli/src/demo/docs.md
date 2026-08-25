@@ -10,7 +10,8 @@ argument it lists them, numbered:
 ```
 
 `srt demo 1` runs that one, exactly as [srt run](../server/docs.md) runs any
-project: a dev server, a local client window, reload on save. The qualified
+project: a dev server, a local client window, reload on save, and the same
+server options (`--lan` to reach it from a device, `--port`, `--tunnel`). The qualified
 name works too (`srt demo 3d/the-third-dimension`), which is the stable way to
 name one in a script - the numbers follow the list, and the list follows what
 is installed.

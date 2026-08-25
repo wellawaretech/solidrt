@@ -1,0 +1,9 @@
+{
+  "name": "solidrt-components-demos",
+  "type": "module",
+  "private": true,
+  "solidrt": {
+    "appId": "dev.solidrt.demos.components",
+    "displayName": "SolidRT components demos"
+  }
+}

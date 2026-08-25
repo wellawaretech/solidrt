@@ -141,7 +141,7 @@ fn net_icmp_echo<'js>(
   }))
 }
 
-/// `interfaces()` -> array of `{ name, mac, up, loopback, multicast, addrs }`.
+/// `interfaces()` -> array of `{ name, mac, up, default, loopback, multicast, addrs }`.
 /// Synchronous: `netdev` reads the OS directly and returns quickly.
 fn net_interfaces<'js>(ctx: Ctx<'js>) -> rquickjs::Result<Array<'js>> {
   let arr = Array::new(ctx.clone())?;
@@ -423,7 +423,7 @@ impl ModuleDef for NetModule {
   }
 }
 
-/// Encode a `forge::net::NetInterface` to `{ name, mac, up, loopback, multicast,
+/// Encode a `forge::net::NetInterface` to `{ name, mac, up, default, loopback, multicast,
 /// addrs: [{ ip, prefix, family }] }`.
 fn iface_to_js<'js>(ctx: &Ctx<'js>, iface: forge::net::NetInterface) -> rquickjs::Result<Object<'js>> {
   let obj = Object::new(ctx.clone())?;
@@ -433,6 +433,7 @@ fn iface_to_js<'js>(ctx: &Ctx<'js>, iface: forge::net::NetInterface) -> rquickjs
     None => obj.set("mac", Value::new_null(ctx.clone()))?,
   }
   obj.set("up", iface.up)?;
+  obj.set("default", iface.default)?;
   obj.set("loopback", iface.loopback)?;
   obj.set("multicast", iface.multicast)?;
   let addrs = Array::new(ctx.clone())?;

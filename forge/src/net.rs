@@ -478,6 +478,8 @@ pub struct NetInterface {
   pub name: String,
   pub mac: Option<String>,
   pub up: bool,
+  /// Holds the default route: the interface other hosts on the LAN reach.
+  pub default: bool,
   pub loopback: bool,
   pub multicast: bool,
   pub addrs: Vec<IfAddr>,
@@ -501,6 +503,7 @@ pub fn interfaces() -> Vec<NetInterface> {
         name: iface.name.clone(),
         mac: iface.mac_addr.as_ref().map(|m| m.to_string()),
         up: iface.is_up(),
+        default: iface.default,
         loopback: iface.is_loopback(),
         multicast: iface.is_multicast(),
         addrs,

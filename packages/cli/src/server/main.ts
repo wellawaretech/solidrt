@@ -44,13 +44,16 @@ let srt = srtCommand()
 let runner = args.client !== null ? await requireBinary("solidrt-go") : null
 let serverDir = await serverDirFor(mode.key)
 
-// The LAN address (for --lan): the first up, non-loopback IPv4.
-let lanAddress = args.lan
-  ? interfaces()
-      .filter((i) => i.up && !i.loopback)
-      .flatMap((i) => i.addrs)
-      .find((a) => a.family === "v4")?.ip
-  : undefined
+// The LAN address (for --lan): the IPv4 of the interface holding the default
+// route, which is the one other hosts reach; VPN and bridge interfaces (wg0,
+// docker0) are up too, so first-up would announce them at random. Without a
+// default route, the first up, non-loopback IPv4.
+let lanAddress = args.lan ? lanAddressOf(interfaces()) : undefined
+function lanAddressOf(ifaces: ReturnType<typeof interfaces>): string | undefined {
+  let v4 = (list: typeof ifaces) => list.flatMap((i) => i.addrs).find((a) => a.family === "v4")?.ip
+  let reachable = ifaces.filter((i) => i.up && !i.loopback)
+  return v4(reachable.filter((i) => i.default)) ?? v4(reachable)
+}
 
 // Storage flags for the local client: dev client trees live under
 // ~/.solidrt/clients/client<N>/ (an explicit --data-root wins), passed
