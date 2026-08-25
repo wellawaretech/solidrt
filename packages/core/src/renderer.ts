@@ -1,8 +1,9 @@
-import { createRoot, onCleanup } from "@solidjs/signals"
+import { createRoot, onCleanup, NotReadyError } from "@solidjs/signals"
 import { createRenderer } from "@solidjs/universal"
+import { createErrorBoundary } from "solid-js"
 import type { Element } from "solid-js"
 import * as tree from "flux:rendertree"
-import { attachWindow } from "./window"
+import { attachWindow, setWindowRoot } from "./window"
 import { setEventHandler, setFocusable, setTextInputHints, cleanupNode, focusedNode, setFocus } from "./core"
 
 export { getEventHandler } from "./core"
@@ -213,20 +214,7 @@ function applyProp<T>(node: ProxyNode, name: string, value: T): void {
   setTreeProperty(node, name, value)
 }
 
-export let {
-  effect,
-  memo,
-  createComponent,
-  createElement,
-  createTextNode,
-  insertNode,
-  insert,
-  spread,
-  setProp,
-  mergeProps,
-  applyRef,
-  ref,
-} = createRenderer<ProxyNode>({
+let renderer = createRenderer<ProxyNode>({
   createElement: (elementType: string, props?: Record<string, any>): ProxyNode => {
     let proxy = createProxyNode(elementType)
 
@@ -311,32 +299,177 @@ export let {
   },
 })
 
-// The app's single <window> node, set by render(). Serves as the default mount
-// target for createPortal (single window by design, so one ambient ref).
+export let { memo, createComponent, createElement, createTextNode, insertNode, spread, setProp, mergeProps, applyRef, ref } =
+  renderer
+let { effect: rawEffect, insert: rawInsert } = renderer
+
+// ------ Per-node error containment --------
+//
+// Every reactive write into the tree goes through two exports the compiled
+// JSX calls: `effect` (an element's dynamic props) and `insert` (a child
+// expression). An error thrown while computing either is contained right
+// there: the props or children keep their last good value, the effect stays
+// subscribed (the throwing read is tracked, so fixing it recomputes and the
+// node recovers on its own), and the rest of the app keeps running. Without
+// this one unclaimed error halts the whole reactive system. A NotReadyError
+// is not an error but a pending async read on its way to the nearest
+// <Loading>, so it passes through. Reported once per site until it recovers,
+// not once per run. What escapes these two (a user createEffect that throws)
+// still reaches render()'s root boundary.
+const SKIP = Symbol("skip")
+
+function guard<T>(fn: (prev?: T) => T, describe: () => string, nested: boolean, empty: T): (prev?: T) => T {
+  let last = empty
+  let failing = false
+  return (prev?: T) => {
+    try {
+      let value = fn(prev === SKIP ? undefined : prev)
+      if (failing) {
+        failing = false
+        console.warn(`Recovered: ${describe()} computes again`)
+      }
+      // A child expression resolving to a function is read by an inner
+      // effect (universal's insert); that read gets the same containment.
+      if (nested && typeof value === "function") value = guard(value as any, describe, true, empty) as any
+      last = value
+      return value
+    } catch (e) {
+      if (e instanceof NotReadyError) throw e
+      if (!failing) {
+        failing = true
+        console.error(`Contained error: ${describe()} threw and keeps its last value until it computes again.`, e)
+      }
+      return last
+    }
+  }
+}
+
+// Universal's declarations trail its runtime (effect takes options, insert
+// takes initial and options), so the wrappers carry the runtime signatures.
+type EffectFn = <T>(fn: (prev?: T) => T, effectFn?: (value: T, prev?: T) => void, options?: unknown) => void
+type InsertFn = (parent: ProxyNode, accessor: unknown, marker?: unknown, initial?: unknown, options?: unknown) => ProxyNode
+let effectRaw = rawEffect as unknown as EffectFn
+let insertRaw = rawInsert as unknown as InsertFn
+
+export let effect: EffectFn = (fn, effectFn, options) =>
+  effectRaw<any>(
+    guard<any>(fn, () => "an element's prop expression", false, SKIP),
+    effectFn && ((value, prev) => (value === SKIP ? undefined : effectFn(value, prev === SKIP ? undefined : prev))),
+    options,
+  )
+
+export let insert: InsertFn = (parent, accessor, marker, initial, options) =>
+  insertRaw(
+    parent,
+    typeof accessor === "function"
+      ? guard(accessor as any, () => `a child expression of <${parent.elementType}> ${getNodePath(parent.id).join("/")}`, true, undefined)
+      : accessor,
+    marker,
+    initial,
+    options,
+  )
+
+// The current <window> node: the app's, or the error window standing in for
+// it. Serves as the default mount target for createPortal (single window by
+// design, so one ambient ref).
 let windowRoot: ProxyNode | undefined
+let rendered = false
+// Ids of error windows built by the root boundary, alive only while shown.
+let errorWindows = new Set<number>()
 
 /**
  * Mounts a SolidRT app. Call once at the top level: `render(() => <App />)`.
  * The element returned by `code` MUST be a `<window>` (it becomes the native
  * window and root of the render tree); anything else throws. Runs inside a
  * reactive root, so the whole tree is disposed together on engine reload.
+ *
+ * The whole app, window included, sits inside an error boundary: an error no
+ * <Errored> claims replaces the app's window with an error window (message,
+ * stack, a reset button) instead of halting the reactive system for good.
+ * The app's subtree stays alive behind it - the boundary keeps it and marks
+ * only the failed computations - so reset recomputes those in place and the
+ * same window node comes back.
  */
 export function render(code: () => any) {
-  // Once per app: the native side would silently swap its root (leaking the
-  // first window subtree) and a second attachWindow would double-run every
-  // frame. There is no unmount; teardown is engine teardown.
-  if (windowRoot) {
+  // Once per app: there is no unmount; teardown is engine teardown.
+  if (rendered) {
     throw new Error("render() already called; an app has exactly one render()")
   }
+  rendered = true
   createRoot(() => {
-    let root = code()
-    if (!root || root.elementType !== "window") {
-      throw new Error("render() root must be a <window> element")
-    }
-    windowRoot = root
-    attachWindow(root.id)
-    insert(null, root)
+    let root = createErrorBoundary(
+      () => {
+        let win = code()
+        if (!win || win.elementType !== "window") {
+          throw new Error("render() root must be a <window> element")
+        }
+        return win
+      },
+      (error, reset) => {
+        // The boundary hands the error as an accessor.
+        let err = error()
+        console.error("Uncaught error: the app is replaced by the error window until reset or reload.", err)
+        let win = errorWindow(err, reset)
+        errorWindows.add(win.id)
+        return win
+      },
+    )
+    rawEffect(
+      () => root() as ProxyNode,
+      (win, prev) => swapRoot(win, prev),
+    )
   })
+}
+
+// The boundary's value changed: the app's window on mount and after a
+// successful reset, an error window after an error. Creating a window already
+// made it the native root; setRoot is the way back to an existing one.
+function swapRoot(win: ProxyNode, prev?: ProxyNode) {
+  windowRoot = win
+  if (prev === undefined) {
+    attachWindow(win.id)
+    return
+  }
+  // Creating the error window made it the native root; the app's window
+  // coming back is the case that needs the explicit way back.
+  if (!errorWindows.has(win.id)) tree.setRoot(win.id)
+  setWindowRoot(win.id)
+  // Keys route to the focused node; one inside the hidden window must not
+  // keep hearing them.
+  setFocus(null)
+  // The app's window survives behind an error window (the boundary keeps its
+  // subtree for reset); an error window replaced by anything is dead.
+  if (errorWindows.has(prev.id) || !errorWindows.has(win.id)) {
+    errorWindows.delete(prev.id)
+    destroyNode(prev)
+  }
+}
+
+// The error window: the in-app sibling of the runtime's startup BSOD, built
+// from the primitives directly (no JSX in core). Static content; the reset
+// button recomputes the failed sources, and a reload replaces everything.
+function errorWindow(err: unknown, reset: () => void): ProxyNode {
+  let message = err instanceof Error ? err.message : String(err)
+  let stack = err instanceof Error && err.stack ? err.stack : ""
+  let text = (content: string, props: Record<string, any>) => {
+    let node = createElement("text", props)
+    insertNode(node, createTextNode(content))
+    return node
+  }
+  let win = createElement("window", { title: "Application error" })
+  insertNode(win, createElement("d-rect", { color: "#1144bb" }))
+  let column = createElement("view", { flexGrow: 1, flexDirection: "column", padding: 40, gap: 12 })
+  insertNode(column, text(":(", { color: "white", fontSize: 64, fontWeight: 700 }))
+  insertNode(column, text("Something went wrong", { color: "white", fontSize: 22 }))
+  insertNode(column, text(message, { color: "white", fontSize: 16 }))
+  if (stack) insertNode(column, text(stack, { color: "#aac2ff", fontSize: 12, fontFamily: "mono" }))
+  insertNode(column, text("Fix the error and save to reload, or reset to retry the failed computations.", { color: "#aac2ff", fontSize: 14 }))
+  let button = createElement("view", { alignSelf: "flex-start", padding: 12, onPointerDown: () => reset() })
+  insertNode(button, createElement("d-rect", { color: "white", radius: 6 }))
+  insertNode(button, text("Reset", { color: "#1144bb", fontSize: 16, fontWeight: 600 }))
+  insertNode(column, button)
+  insertNode(win, column)
+  return win
 }
 
 /**

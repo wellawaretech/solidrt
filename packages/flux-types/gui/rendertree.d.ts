@@ -78,6 +78,13 @@ declare module "flux:rendertree" {
 
   /** Create the window root node with the given id. */
   export function createRoot(id: number): void
+  /**
+   * Make `id`, an existing window node, the root again. Creating a window
+   * takes the root over, so this is the way back to an earlier window without
+   * recreating it (render()'s error boundary swapping the app's window back
+   * in on reset). No-op for the current root or an unknown id.
+   */
+  export function setRoot(id: number): void
   /** Create a node of `kind` (the primitive element name) with the given id. Throws an `Error` for a name that is not an element. */
   export function createNode(id: number, kind: string): void
   /** Insert `nodeId` under `parentId`, before `anchorId` if given (else appended). */

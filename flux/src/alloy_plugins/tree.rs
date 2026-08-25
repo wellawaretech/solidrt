@@ -226,6 +226,7 @@ pub struct RenderTreeModule;
 impl ModuleDef for RenderTreeModule {
   fn declare<'js>(decl: &Declarations<'js>) -> rquickjs::Result<()> {
     decl.declare("createRoot")?;
+    decl.declare("setRoot")?;
     decl.declare("createNode")?;
     decl.declare("detachNode")?;
     decl.declare("destroyNode")?;
@@ -260,6 +261,13 @@ impl ModuleDef for RenderTreeModule {
       let mut tree = tree_ref.borrow_mut();
       tree.create_node(id, Window::default().with_layout());
       tree.root = Some(id);
+      platform_ref.request_frame();
+    })?;
+
+    let tree_ref = tree.clone();
+    let platform_ref = platform.clone();
+    let set_root = Function::new(ctx.clone(), move |id: u64| {
+      tree_ref.borrow_mut().set_root(id);
       platform_ref.request_frame();
     })?;
 
@@ -524,6 +532,7 @@ impl ModuleDef for RenderTreeModule {
     )?;
 
     exports.export("createRoot", create_root)?;
+    exports.export("setRoot", set_root)?;
     exports.export("createNode", create_node)?;
     exports.export("detachNode", detach_node)?;
     exports.export("destroyNode", destroy_node)?;

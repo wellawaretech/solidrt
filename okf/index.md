@@ -28,6 +28,11 @@ Decided and being worked on now. A plan nobody is working on goes back to backlo
   The solidrt runtime goes font-free and srt pack appends fonts as trailer
   sections, with the three Noto role defaults declared through the
   package.json solidrt fonts key.
+- **[Reactivity halt containment](plans/reactivity-halt-containment.md)** [2026-07-17]
+  One unclaimed error used to halt the whole app for good; decided and built
+  as a root error boundary around the app's window (error window with reset)
+  plus per-node containment in the renderer's effect/insert exports, with the
+  verified mechanics and the measured cost.
 - **[Documentation website](plans/website.md)** [2026-07-16]
   "A monorepo website/ generated statically by a flux script: section nav, a
   Core-first Start page, and generate-what-we-can content (API reference from
@@ -418,15 +423,6 @@ Shaped, not started.
 - **[Production diagnostics surface](backlog/production-diagnostics-surface.md)** [2026-07-17]
   Layout counters are latched into Stats but only dev-client queries read
   them; wanted a production consumer so field bug reports carry the numbers.
-- **[A reactive halt wedges the control API queries](backlog/reactive-halt-wedges-control-api.md)** [2026-08-19]
-  After REACTIVITY_HALTED (an uncaught error in the reactive system) the
-  client keeps running but tree/snapshot control queries time out, so the
-  tooling reports "JS thread busy or app wedged" instead of showing the error;
-  queries should keep answering from the last good tree.
-- **[Reactivity halt containment](backlog/reactivity-halt-containment.md)** [2026-07-17]
-  One unclaimed error permanently halts the whole app; verified halt
-  mechanics, a failure taxonomy, four candidate directions, and loudness as
-  the central tension.
 - **[Guard that every referenced example ships](backlog/release-example-parity-check.md)** [2026-07-29]
   A committed examples README can name an example file that is untracked, so
   the doc ships and the file does not; a release-time parity check would catch
@@ -1037,6 +1033,11 @@ Finished, kept for the reasoning.
   A portal visible at first mount throws "no mount target" because windowRoot
   is set only after the initial build; decided as by design, documented with a
   clearer error.
+- **[A reactive halt wedges the control API queries](done/reactive-halt-wedges-control-api.md)** [2026-08-23]
+  After an uncaught error at mount, /snapshot timed out while /tree and /stats
+  kept answering, because the render subscription lives in onSettled and a
+  halted mount never settles; closed by render()'s root error boundary, which
+  settles the mount and shows the error window instead of halting.
 - **[Relative mouse input (mouse look)](done/relative-mouse-input.md)** [2026-07-31]
   No pointer-lock / relative-motion path exists anywhere in the surface, so
   first-person control is impossible however good the GPU gets; SDL already

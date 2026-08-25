@@ -274,10 +274,20 @@ export function onBack(fn: (e: BackEvent) => void) {
 
 // ------ Window ----------------
 
-export function attachWindow(nodeId: number) {
+// The window root's id: the key-routing fallback target and the pointer
+// interest root. Set by attachWindow, moved by setWindowRoot when render()'s
+// error boundary swaps the app's window for the error window and back.
+let windowRootId = 0
+
+export function setWindowRoot(nodeId: number) {
+  windowRootId = nodeId
   // The root carries the ambient move-interest bit for global onPointerMove
   // subscribers (it is on every hit path); see core.setInterestRoot.
   setInterestRoot(nodeId)
+}
+
+export function attachWindow(nodeId: number) {
+  setWindowRoot(nodeId)
   let unsubscribe: () => void = null!
   let unsubDown: () => void = null!
   let unsubUp: () => void = null!
@@ -426,13 +436,13 @@ export function attachWindow(nodeId: number) {
     // at dispatch time from current focus (nothing to freeze: keyup follows
     // focus, as in the DOM).
     let dispatchKey = (raw: any, handler: string) => {
-      let target = focusedNode() ?? nodeId
+      let target = focusedNode() ?? windowRootId
       let stopped = false
       let e = { ...raw, target, stopPropagation: () => (stopped = true) }
       let path = getNodePath(target)
       // A focused node detached this tick has no chain to the root; the
       // window root must still hear the key.
-      if (path[path.length - 1] !== nodeId) path.push(nodeId)
+      if (path[path.length - 1] !== windowRootId) path.push(windowRootId)
       for (let id of path) {
         e.currentTarget = id
         getEventHandler(id, handler)?.(e)

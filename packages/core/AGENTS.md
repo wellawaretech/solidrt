@@ -111,6 +111,16 @@ Peer deps @solidjs/signals and @solidjs/universal must match (currently
 - `render(() => <App />)`. The returned root MUST be a `<window>` or it throws.
   Call render once, at the top level.
 
+- Errors never halt the app. One thrown while computing an element's props or
+  a child expression is contained at that element: it keeps its last good
+  value, one `Contained error` log line names the node and the .tsx line,
+  and it recovers when the expression computes again. Anything unclaimed
+  beyond that (a throwing `createEffect`, an error while mounting) reaches
+  render()'s root boundary, which replaces the app's window with an error
+  window (message, stack, a Reset button that retries the failed
+  computations) and logs `Uncaught error`. `<Errored>` gives a subtree its
+  own in-place fallback.
+
 - Two kinds of element:
   - Containers - `<window>`, `<view>`. Do layout + transform + pointer events.
     THEY DO NOT PAINT. A `<view>` has no background/fill prop.

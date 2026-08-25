@@ -61,6 +61,14 @@ Because props are values rather than accessors, the usual Solid rules apply:
 do not destructure props, and read reactive values inside the expression
 that uses them.
 
+An error thrown while computing an element's props or a child expression is
+contained at that element: it keeps its last good value, the error is logged
+once with the node and source line, and the element recovers when the
+expression computes again. An error nothing claims (a throwing effect, an
+error during mount) replaces the app's window with an error window showing
+the message and stack, with a Reset that retries; the reactive system keeps
+running either way. `<Errored>` gives a subtree its own fallback.
+
 ## Layout
 
 Layout is flexbox, plus a line-based subset of CSS grid, over the whole

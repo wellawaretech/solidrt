@@ -60,6 +60,21 @@ impl RenderTree {
     id
   }
 
+  /// Make `id`, an existing window node, the root. Creating a window sets
+  /// the root as a side effect, so a second window (an error window
+  /// replacing the app's) takes it over; this is the way back to the first
+  /// without recreating it, same node and subtree. Layout reads the window
+  /// size from the platform each frame, so a re-rooted window needs nothing
+  /// else; the paint invalidation and revision bump force a fresh frame.
+  pub fn set_root(&mut self, id: u64) {
+    if self.root == Some(id) || !self.nodes.contains_key(&id) {
+      return;
+    }
+    self.root = Some(id);
+    self.invalidate_paint(id);
+    self.bump_revision();
+  }
+
   pub fn insert_node(&mut self, parent_id: u64, node_id: u64, anchor_id: Option<u64>) {
     // A re-insert of an exiting node is a move (Solid detaches before
     // re-inserting), not a removal: abandon the exit and carry on.
