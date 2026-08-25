@@ -28,6 +28,12 @@ at its arguments. What the individual descriptions cannot tell you:
   are using); and before calling a visual change done, snapshot each distinct
   form factor at least once - a layout that fits one window can clip or
   overflow another.
+- Measuring or testing? `mute_user_input` first: it mutes the user's own
+  input on every client (a stray click or keypress mid-measurement corrupts
+  the result); `send_input` still works. `unmute_user_input` the moment you
+  are done, or whenever you need the human to press something: they see an
+  unresponsive client meanwhile. The bridge unmutes when it exits, the
+  server when it stops, but neither is a reason to leave a mute on.
 - A `shader` on `<window>` runs on the finished frame past the point every
   capture reads: `get_snapshot` returns the UNSHADED content (window node
   included), `get_texture` has no id for the shaded layer, and

@@ -1,8 +1,10 @@
 import { state } from "./state"
 import { rebuildAndBroadcast } from "./rebuild"
 import { remapPositions } from "./remap"
+import { ENTRY_EXTENSIONS, absolute, dirname } from "./mode"
+import { file, realpath } from "flux:fs"
 import type { ServerWebSocket } from "flux:http"
-import type { ClientEntry, ClientsResponse, LogEntry, LogsResponse, ReloadResponse } from "../types/control"
+import type { ClientEntry, ClientsResponse, LoadResponse, LogEntry, LogsResponse, MuteResponse, ReloadResponse } from "../types/control"
 
 // The control API under /__control__/: read-only introspection of connected
 // app clients, served next to the file routes. The MCP bridge (srt mcp) is the
@@ -210,6 +212,11 @@ async function handleLogs(query: Map<string, string>): Promise<Response> {
   return Response.json(body)
 }
 
+// Whether `path` lies under `root` (both canonical), never equal to it.
+function isUnder(path: string, root: string): boolean {
+  return path.length > root.length && path.startsWith(root) && (path[root.length] === "/" || path[root.length] === "\\")
+}
+
 export async function handleControl(req: Request, path: string, query: Map<string, string>): Promise<Response> {
   switch (path) {
     case "/__control__/clients":
@@ -221,6 +228,7 @@ export async function handleControl(req: Request, path: string, query: Map<strin
         mode: state.config.mode,
         entry: state.config.entry,
         projectDir: state.config.projectDir,
+        userInputMuted: state.userInputMuted,
         clients: clientList(),
       }
       return Response.json(body)
@@ -367,6 +375,69 @@ export async function handleControl(req: Request, path: string, query: Map<strin
       let error = await rebuildAndBroadcast()
       if (error) return Response.json({ error }, { status: 502 })
       let body: ReloadResponse = { ok: true, clients: state.clients.size }
+      return Response.json(body)
+    }
+    case "/__control__/load": {
+      // Load (or switch) the app entry and push it: srt mcp's load tool.
+      // Moves the rebuild entry, then reuses the reload path, so later
+      // reloads rebuild the new file. A project server stays inside its
+      // project (the bundle resolves the project's dependencies and assets,
+      // and the key keeps naming the project); a file server takes any
+      // file, moving the file routes and the bundler's cwd along with the
+      // entry. The key never moves: it names what the server was started
+      // for, and /clients reports the entry next to it.
+      if (req.method !== "POST") return Response.json({ error: "Load requires POST" }, { status: 405 })
+      let requested = (await req.json().catch(() => null))?.entry
+      if (typeof requested !== "string" || !requested) {
+        return Response.json({ error: "Load requires { entry: <source path> }" }, { status: 400 })
+      }
+      if (!ENTRY_EXTENSIONS.some((ext) => requested.endsWith(ext))) {
+        return Response.json({ error: `Not an app entry: ${requested} (expected .tsx, .jsx, .ts, .js or .srt.js)` }, { status: 400 })
+      }
+      let config = state.config
+      let path = absolute(requested, config.projectDir ?? config.sourceDir)
+      if (!(await file(path).exists())) return Response.json({ error: `Entry not found: ${path}` }, { status: 400 })
+      let entry = await realpath(path)
+      if (config.projectDir && !isUnder(entry, config.projectDir)) {
+        return Response.json(
+          {
+            error: `Entry is outside the project: ${entry} is not under ${config.projectDir}. A project server only bundles sources inside its project; start srt for that file on its own.`,
+          },
+          { status: 400 },
+        )
+      }
+      config.entry = entry
+      config.entryArgs[0] = entry
+      if (!config.projectDir) {
+        config.sourceDir = dirname(entry)
+        config.cwd = config.sourceDir
+      }
+      console.log(`[cli] Loading ${entry}`)
+      let error = await rebuildAndBroadcast()
+      if (error) return Response.json({ error }, { status: 502 })
+      let body: LoadResponse = { ok: true, entry, clients: state.clients.size }
+      return Response.json(body)
+    }
+    case "/__control__/mute": {
+      // Mute or unmute the user's own input on every client (srt mcp's
+      // mute_user_input/unmute_user_input): while muted, a measurement or an
+      // interaction test is not disturbed by a stray click; synthetic /input
+      // still goes through. Latched for clients joining while muted (the
+      // welcome message) and broadcast to the connected ones; no ack, the
+      // mute takes effect on arrival.
+      if (req.method !== "POST") return Response.json({ error: "Mute requires POST" }, { status: 405 })
+      let active = query.get("active")
+      if (active !== "true" && active !== "false") {
+        return Response.json({ error: "Mute requires ?active=true or ?active=false" }, { status: 400 })
+      }
+      let on = active === "true"
+      if (on !== state.userInputMuted) {
+        console.log(on ? "[cli] User input muted on every client" : "[cli] User input unmuted")
+      }
+      state.userInputMuted = on
+      let text = JSON.stringify({ type: "mute", active: on })
+      for (let ws of state.clients.keys()) ws.send(text)
+      let body: MuteResponse = { ok: true, active: on, clients: state.clients.size }
       return Response.json(body)
     }
     default:

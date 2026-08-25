@@ -44,6 +44,24 @@ pub struct DevFlags {
   /// moves are consumed into it (never sent as events), downs seed and ups
   /// drop the history before their events travel (see alloy's resample.rs).
   pub resampler: alloy::resample::SharedResampler,
+  /// The alloy run loop's user-input mute (App::user_input_mute), set by
+  /// the dev tools while an agent measures or tests: the server's `mute`
+  /// message (and `welcome`, for a client joining while muted) flips it; a
+  /// lost connection clears it, so a dead server never leaves the user
+  /// locked out. It survives reload: a mute spans the agent's rebuilds.
+  pub user_input_muted: Arc<AtomicBool>,
+}
+
+/// Apply the server's mute state to the user-input mute, logging the
+/// transition so the human at the client can tell why input stopped.
+fn set_mute(flags: &DevFlags, active: bool) {
+  if flags.user_input_muted.swap(active, Ordering::Relaxed) != active {
+    if active {
+      log::info!("[sgo] User input muted by the dev tools until unmuted");
+    } else {
+      log::info!("[sgo] User input unmuted");
+    }
+  }
 }
 
 /// Send-safe handles the connection answers dev-server queries from, without a
@@ -501,6 +519,18 @@ async fn try_serve(
             if let Some(capture) = json.get("capture").and_then(|c| c.as_bool()) {
               flags.capture_enabled.store(capture, Ordering::Relaxed);
             }
+            // The server's mute state, for a client joining while muted
+            // (see DevFlags::user_input_muted).
+            if let Some(active) = json.get("mute").and_then(|m| m.as_bool()) {
+              set_mute(&flags, active);
+            }
+          }
+          Some("mute") => {
+            // The user-input mute going on or off: the server's /mute
+            // control endpoint, broadcast to every client.
+            if let Some(active) = json.get("active").and_then(|a| a.as_bool()) {
+              set_mute(&flags, active);
+            }
           }
           Some("reload") => {
             // A fresh push must not start under a stale dev-tool pause: an
@@ -798,6 +828,7 @@ async fn try_serve(
   }
 
   flags.connected.store(false, Ordering::Relaxed);
+  set_mute(&flags, false);
   log::warn!("[sgo] Connection to ws://{addr} lost");
   true
 }

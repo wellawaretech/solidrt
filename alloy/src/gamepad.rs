@@ -217,6 +217,13 @@ pub(crate) struct Gamepads {
   slots: Vec<Option<Pad>>,
   dirty: bool,
   back_down: bool,
+  // The dev-tool user-input mute (an agent measuring or testing; see the
+  // mute site in app.rs). Pad state is level-read, so the mute cannot drop events the
+  // way the key/pointer path does: instead, entering it emits one neutral
+  // state (every pad still listed, nothing pressed, sticks at rest) - the
+  // pad version of "releases still pass" - and nothing more until it lifts,
+  // when the real state goes out again. No back edge while muted.
+  muted: bool,
 }
 
 impl Gamepads {
@@ -235,7 +242,7 @@ impl Gamepads {
         return None;
       }
     };
-    Some(Gamepads { gamepad, joystick, slots: Vec::new(), dirty: false, back_down: false })
+    Some(Gamepads { gamepad, joystick, slots: Vec::new(), dirty: false, back_down: false, muted: false })
   }
 
   // Track connection changes and mark state dirty on any pad activity. The
@@ -284,7 +291,10 @@ impl Gamepads {
       | SdlEvent::JoyButtonUp { .. }
       | SdlEvent::JoyAxisMotion { .. }
       | SdlEvent::JoyHatMotion { .. } => {
-        self.dirty = true;
+        // Muted, activity is not news: the neutral state already went out.
+        if !self.muted {
+          self.dirty = true;
+        }
       }
       _ => {}
     }
@@ -298,7 +308,28 @@ impl Gamepads {
       return None;
     }
     self.dirty = false;
-    Some(self.snapshot_event())
+    let mut event = self.snapshot_event();
+    if self.muted {
+      if let AlloyEvent::Gamepads { pads } = &mut event {
+        for pad in pads.iter_mut().flatten() {
+          pad.buttons.clear();
+          for axis in &mut pad.axes {
+            axis.1 = 0.0;
+          }
+        }
+      }
+    }
+    Some(event)
+  }
+
+  /// Apply the user-input mute (see `muted`). A change in either direction
+  /// marks the state dirty: entering sends the neutral state, leaving the
+  /// real one.
+  pub fn set_muted(&mut self, muted: bool) {
+    if muted != self.muted {
+      self.muted = muted;
+      self.dirty = true;
+    }
   }
 
   pub fn snapshot_event(&self) -> AlloyEvent {
@@ -335,8 +366,10 @@ impl Gamepads {
       Pad::Raw(_) => false,
     });
     let edge = down && !self.back_down;
+    // Level tracking continues while muted, so a press held across the mute
+    // is still one request, never an edge on the way out.
     self.back_down = down;
-    edge
+    edge && !self.muted
   }
 
   fn slot_of(&self, id: u32) -> Option<usize> {

@@ -1,4 +1,4 @@
-// node_modules/.bun/@solidjs+signals@2.0.0-rc.1/node_modules/@solidjs/signals/dist/prod/core/error.js
+// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.1/node_modules/@solidjs/signals/dist/prod/core/error.js
 class NotReadyError extends Error {
   source;
   constructor(r) {
@@ -37,8 +37,7 @@ class ContextNotFoundError extends Error {
     super("");
   }
 }
-
-// node_modules/.bun/@solidjs+signals@2.0.0-rc.1/node_modules/@solidjs/signals/dist/prod/core/constants.js
+// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.1/node_modules/@solidjs/signals/dist/prod/core/constants.js
 var REACTIVE_NONE = 0;
 var REACTIVE_CHECK = 1 << 0;
 var REACTIVE_DIRTY = 1 << 1;
@@ -75,7 +74,7 @@ var SUPPORTS_PROXY = typeof Proxy === "function";
 var defaultContext = {};
 var $REFRESH = Symbol("refresh");
 
-// node_modules/.bun/@solidjs+signals@2.0.0-rc.1/node_modules/@solidjs/signals/dist/prod/core/lanes.js
+// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.1/node_modules/@solidjs/signals/dist/prod/core/lanes.js
 var signalLanes = new WeakMap;
 var activeLanes = new Set;
 function findLane(n) {
@@ -144,7 +143,7 @@ function assignOrMergeLane(n, e) {
   n.Ke = e;
 }
 
-// node_modules/.bun/@solidjs+signals@2.0.0-rc.1/node_modules/@solidjs/signals/dist/prod/core/scheduler.js
+// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.1/node_modules/@solidjs/signals/dist/prod/core/scheduler.js
 var transitions = new Set;
 var dirtyQueue = {
   eE: new Array(2000).fill(undefined),
@@ -720,7 +719,7 @@ function runInTransition(e, t) {
   }
 }
 
-// node_modules/.bun/@solidjs+signals@2.0.0-rc.1/node_modules/@solidjs/signals/dist/prod/core/heap.js
+// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.1/node_modules/@solidjs/signals/dist/prod/core/heap.js
 function queueFor(e) {
   return e.se & REACTIVE_ZOMBIE ? zombieQueue : dirtyQueue;
 }
@@ -855,7 +854,7 @@ function adjustHeight(e, E) {
   }
 }
 
-// node_modules/.bun/@solidjs+signals@2.0.0-rc.1/node_modules/@solidjs/signals/dist/prod/core/owner.js
+// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.1/node_modules/@solidjs/signals/dist/prod/core/owner.js
 var PENDING_OWNER = {};
 function markDisposal(e) {
   let n = e.ke;
@@ -1017,7 +1016,7 @@ function createRoot(e, n) {
   return runWithOwner(t, () => e(() => t.dispose()));
 }
 
-// node_modules/.bun/@solidjs+signals@2.0.0-rc.1/node_modules/@solidjs/signals/dist/prod/core/graph.js
+// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.1/node_modules/@solidjs/signals/dist/prod/core/graph.js
 function unlinkSubs(l) {
   const n = l.it;
   const e = l.nt;
@@ -1106,7 +1105,7 @@ function link(l, n, e = false) {
     l.o = o;
 }
 
-// node_modules/.bun/@solidjs+signals@2.0.0-rc.1/node_modules/@solidjs/signals/dist/prod/core/async.js
+// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.1/node_modules/@solidjs/signals/dist/prod/core/async.js
 function addPendingSource(e, n) {
   if (e.oe?.has(n))
     return false;
@@ -1543,7 +1542,7 @@ function notifyStatus(e, n, t, r, o) {
   });
 }
 
-// node_modules/.bun/@solidjs+signals@2.0.0-rc.1/node_modules/@solidjs/signals/dist/prod/core/core.js
+// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.1/node_modules/@solidjs/signals/dist/prod/core/core.js
 GlobalQueue.Ce = recompute;
 GlobalQueue.me = disposeChildren;
 var tracking = false;
@@ -2038,7 +2037,13 @@ function staleValues(e, t = true) {
     stale = n;
   }
 }
-// node_modules/.bun/@solidjs+signals@2.0.0-rc.1/node_modules/@solidjs/signals/dist/prod/core/context.js
+// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.1/node_modules/@solidjs/signals/dist/prod/core/context.js
+function createContext(e, t) {
+  return {
+    id: Symbol(t),
+    defaultValue: e
+  };
+}
 function getContext(e, t = getOwner()) {
   if (!t) {
     throw new NoOwnerError;
@@ -2064,7 +2069,7 @@ function hasContext(e, t) {
 function isUndefined(e) {
   return typeof e === "undefined";
 }
-// node_modules/.bun/@solidjs+signals@2.0.0-rc.1/node_modules/@solidjs/signals/dist/prod/core/effect.js
+// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.1/node_modules/@solidjs/signals/dist/prod/core/effect.js
 function effect(t, E, e, R) {
   const r = !!R?.user;
   const f = createEffectNode(t, E, e, r ? EFFECT_USER : EFFECT_RENDER, notifyEffectStatus, R);
@@ -2171,7 +2176,7 @@ function trackedEffect(t, E) {
   e.C.enqueue(EFFECT_USER, run);
 }
 
-// node_modules/.bun/@solidjs+signals@2.0.0-rc.1/node_modules/@solidjs/signals/dist/prod/signals.js
+// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.1/node_modules/@solidjs/signals/dist/prod/signals.js
 function onCleanup(e) {
   return cleanup(e);
 }
@@ -2210,7 +2215,7 @@ function onSettled(e) {
     e();
   });
 }
-// node_modules/.bun/@solidjs+signals@2.0.0-rc.1/node_modules/@solidjs/signals/dist/prod/store/next/target.js
+// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.1/node_modules/@solidjs/signals/dist/prod/store/next/target.js
 var ownedRaw = new WeakSet;
 var storeNextLookup = new WeakMap;
 function devAssertNeverUserMutation(o) {
@@ -2218,7 +2223,7 @@ function devAssertNeverUserMutation(o) {
 }
 var optHooks = null;
 
-// node_modules/.bun/@solidjs+signals@2.0.0-rc.1/node_modules/@solidjs/signals/dist/prod/store/store.js
+// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.1/node_modules/@solidjs/signals/dist/prod/store/store.js
 var $TRACK = Symbol(0);
 var $TARGET = Symbol(0);
 var $PROXY = Symbol(0);
@@ -2317,7 +2322,7 @@ function witnessAffectsMark(e, t) {
   }
 }
 
-// node_modules/.bun/@solidjs+signals@2.0.0-rc.1/node_modules/@solidjs/signals/dist/prod/store/next/store.js
+// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.1/node_modules/@solidjs/signals/dist/prod/store/next/store.js
 function createTarget(e, t, n, r = t?.fam ?? null) {
   const i = Array.isArray(e) ? [] : {};
   i.v = e;
@@ -3131,7 +3136,7 @@ function createStoreNext(e, t = false) {
   return [n, setter];
 }
 
-// node_modules/.bun/@solidjs+signals@2.0.0-rc.1/node_modules/@solidjs/signals/dist/prod/map.js
+// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.1/node_modules/@solidjs/signals/dist/prod/map.js
 function mapArray(t, s, i) {
   const e = typeof i?.keyed === "function" ? i.keyed : undefined;
   const r = s.length > 1;
@@ -3306,7 +3311,7 @@ function updateKeyedMap() {
 function compare(t, s, i) {
   return t ? t(s) === t(i) : true;
 }
-// node_modules/.bun/@solidjs+signals@2.0.0-rc.1/node_modules/@solidjs/signals/dist/prod/store/next/reconcile.js
+// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.1/node_modules/@solidjs/signals/dist/prod/store/next/reconcile.js
 function reconcileNextState(e, t, n, o = false) {
   if (t == null)
     throw new Error("");
@@ -3530,7 +3535,7 @@ function descend(e, t, n, o, f = false) {
   applyAdopt(l, t, n, f);
 }
 
-// node_modules/.bun/@solidjs+signals@2.0.0-rc.1/node_modules/@solidjs/signals/dist/prod/store/next/projection.js
+// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.1/node_modules/@solidjs/signals/dist/prod/store/next/projection.js
 function createWriteTraps(e, t) {
   const r = {
     get(e2, t2) {
@@ -3653,14 +3658,49 @@ function runProjectionComputedNext(e, t, r, o, i) {
   return n;
 }
 
-// node_modules/.bun/@solidjs+signals@2.0.0-rc.1/node_modules/@solidjs/signals/dist/prod/store/index.js
+// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.1/node_modules/@solidjs/signals/dist/prod/store/index.js
 function createStore(e, t, r) {
   if (typeof e === "function")
     return createStoreDerivedNext(e, t, r);
   return createStoreNext(e, !!t?.shallow);
 }
-// node_modules/.bun/@solidjs+signals@2.0.0-rc.1/node_modules/@solidjs/signals/dist/prod/boundaries.js
+// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.1/node_modules/@solidjs/signals/dist/prod/boundaries.js
+function boundaryComputed(e, t) {
+  const r = computed(e, {
+    lazy: true
+  });
+  r.i = (e2, t2) => {
+    const n = e2 !== undefined ? e2 : r.S;
+    const s = t2 !== undefined ? t2 : r._;
+    r.S &= ~r.R;
+    const i = r.C.notify(r, STATUS_PENDING | STATUS_ERROR, n, s);
+    const o = n & ~r.R & (STATUS_PENDING | STATUS_ERROR);
+    if (o) {
+      r.S &= ~o;
+      if (r._ === s && !(r.S & (STATUS_PENDING | STATUS_ERROR)))
+        r._ = undefined;
+    }
+    if (!i && n & STATUS_ERROR) {
+      haltReactivity(unwrapStatusError(s));
+      throw s;
+    }
+  };
+  r.R = t;
+  r.T &= ~CONFIG_AUTO_DISPOSE;
+  recompute(r, true);
+  return r;
+}
+function createBoundChildren(e, t, r, n) {
+  const s = e.C;
+  s.addChild(e.C = r);
+  cleanup(() => s.removeChild(e.C));
+  return runWithOwner(e, () => {
+    const e2 = computed(t);
+    return boundaryComputed(() => flatten(read(e2)), n);
+  });
+}
 var ON_INIT = Symbol();
+var RevealControllerContext = /* @__PURE__ */ createContext(null);
 var _revealUsed = false;
 function isRevealController(e) {
   return e instanceof RevealController;
@@ -3889,6 +3929,57 @@ class CollectionQueue extends Queue {
       this.B?.j();
   }
 }
+function createCollectionBoundary(e, t, r, n) {
+  const s = createOwner();
+  if (_revealUsed)
+    setContext(RevealControllerContext, null, s);
+  const i = new CollectionQueue(e);
+  if (e === STATUS_ERROR)
+    i._ = signal(undefined, {
+      ownedWrite: true,
+      V: true
+    });
+  if (n)
+    i.te = n;
+  const o = i.ee = createBoundChildren(s, t, i, e);
+  untrack(() => {
+    let t2 = false;
+    try {
+      read(o);
+    } catch (e2) {
+      if (e2 instanceof NotReadyError)
+        t2 = true;
+      else
+        throw e2;
+    }
+    i.N = t2 || !!(o.S & e) || o._ instanceof NotReadyError;
+  });
+  const l = _revealUsed && e === STATUS_PENDING ? getContext(RevealControllerContext) : null;
+  if (l) {
+    i.B = l;
+    l.Y(i);
+    cleanup(() => l.Z(i));
+  }
+  return accessor(computed(() => {
+    if (!read(i.I)) {
+      const e2 = read(o);
+      if (!untrack(() => read(i.I)))
+        return i.W = true, e2;
+    }
+    if (_revealUsed && read(i.D))
+      return;
+    return r(i);
+  }, {
+    V: true
+  }));
+}
+function createErrorBoundary(e, t) {
+  return createCollectionBoundary(STATUS_ERROR, e, (e2) => t(accessor(e2._), () => {
+    for (const t2 of e2.v)
+      recompute(t2);
+    schedule();
+  }));
+}
 function flatten(e, t) {
   if (typeof e === "function" && !e.length) {
     if (t?.doNotUnwrap)
@@ -3945,7 +4036,7 @@ function flattenArray(e, t = [], r) {
     throw n;
   return s;
 }
-// node_modules/.bun/@solidjs+signals@2.0.0-rc.1/node_modules/@solidjs/signals/dist/prod/store/utils.js
+// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.1/node_modules/@solidjs/signals/dist/prod/store/utils.js
 function trueFn() {
   return true;
 }
@@ -4064,7 +4155,7 @@ function merge(...e) {
   u[$SOURCES] = t;
   return u;
 }
-// node_modules/.bun/solid-js@2.0.0-rc.1/node_modules/solid-js/dist/solid.js
+// ../../node_modules/.bun/solid-js@2.0.0-rc.1/node_modules/solid-js/dist/solid.js
 var IS_DEV = false;
 var $DEVCOMP = Symbol(0);
 function createContext2(defaultValue, options) {
@@ -4101,11 +4192,13 @@ var NoHydrateContext = {
   defaultValue: false
 };
 var _createMemo;
+var _createErrorBoundary;
 var _createRenderEffect;
 var LIVE_SOURCE = Symbol.for("solid.LiveSource");
 var createMemo2 = (...args) => {
   return (_createMemo || createMemo)(...args);
 };
+var createErrorBoundary2 = (...args) => (_createErrorBoundary || createErrorBoundary)(...args);
 var createRenderEffect2 = (...args) => (_createRenderEffect || createRenderEffect)(...args);
 var _fragments = new Map;
 var _truncated = new Set;
@@ -4197,7 +4290,7 @@ function Match(props) {
   return props;
 }
 
-// node_modules/.bun/@solidjs+universal@2.0.0-rc.1+8dd5f48cc8d92621/node_modules/@solidjs/universal/dist/universal.js
+// ../../node_modules/.bun/@solidjs+universal@2.0.0-rc.1+8dd5f48cc8d92621/node_modules/@solidjs/universal/dist/universal.js
 var transparentOptions = {
   transparent: true,
   sync: true
@@ -4551,16 +4644,16 @@ function createRenderer(options) {
   };
 }
 
-// packages/core/src/renderer.ts
+// ../../packages/core/src/renderer.ts
 import * as tree2 from "flux:rendertree";
 
-// packages/core/src/window.ts
+// ../../packages/core/src/window.ts
 import { requestFrame, setPointerLock } from "flux:rendertree";
 import { renderFrame } from "srt:render";
 import { on as on2, once } from "srt:events";
 import { exit } from "srt:app";
 
-// packages/core/src/core.ts
+// ../../packages/core/src/core.ts
 import * as tree from "flux:rendertree";
 import { on } from "srt:events";
 var handlers = new Map;
@@ -4793,7 +4886,7 @@ function layoutNextLine(prepared, cursor, width) {
   };
 }
 
-// packages/core/src/window.ts
+// ../../packages/core/src/window.ts
 var nextFrameId = 1;
 var animationFrames = new Map;
 var refreshRate = 60;
@@ -4906,8 +4999,13 @@ function onBack(fn) {
   onCleanup(cleanup2);
   return cleanup2;
 }
-function attachWindow(nodeId) {
+var windowRootId = 0;
+function setWindowRoot(nodeId) {
+  windowRootId = nodeId;
   setInterestRoot(nodeId);
+}
+function attachWindow(nodeId) {
+  setWindowRoot(nodeId);
   let unsubscribe = null;
   let unsubDown = null;
   let unsubUp = null;
@@ -5017,7 +5115,7 @@ function attachWindow(nodeId) {
       }
     });
     let dispatchKey = (raw, handler) => {
-      let target = focusedNode() ?? nodeId;
+      let target = focusedNode() ?? windowRootId;
       let stopped = false;
       let e = {
         ...raw,
@@ -5025,8 +5123,8 @@ function attachWindow(nodeId) {
         stopPropagation: () => stopped = true
       };
       let path = getNodePath(target);
-      if (path[path.length - 1] !== nodeId)
-        path.push(nodeId);
+      if (path[path.length - 1] !== windowRootId)
+        path.push(windowRootId);
       for (let id of path) {
         e.currentTarget = id;
         getEventHandler(id, handler)?.(e);
@@ -5100,7 +5198,7 @@ function attachWindow(nodeId) {
   });
 }
 
-// packages/core/src/renderer.ts
+// ../../packages/core/src/renderer.ts
 var nodes = new Map;
 var id = 1;
 function createProxyNode(elementType) {
@@ -5235,20 +5333,7 @@ function applyProp(node, name, value) {
   }
   setTreeProperty(node, name, value);
 }
-var {
-  effect: effect3,
-  memo: memo2,
-  createComponent: createComponent2,
-  createElement,
-  createTextNode,
-  insertNode: insertNode2,
-  insert,
-  spread,
-  setProp,
-  mergeProps,
-  applyRef,
-  ref
-} = createRenderer({
+var renderer = createRenderer({
   createElement: (elementType, props) => {
     let proxy = createProxyNode(elementType);
     if (elementType === "window")
@@ -5310,20 +5395,154 @@ var {
     return parent.children[index + 1];
   }
 });
+var {
+  memo: memo2,
+  createComponent: createComponent2,
+  createElement,
+  createTextNode,
+  insertNode: insertNode2,
+  spread,
+  setProp,
+  mergeProps,
+  applyRef,
+  ref
+} = renderer;
+var {
+  effect: rawEffect,
+  insert: rawInsert
+} = renderer;
+var SKIP = Symbol("skip");
+function guard(fn, describe, nested, empty) {
+  let last = empty;
+  let failing = false;
+  return (prev) => {
+    try {
+      let value = fn(prev === SKIP ? undefined : prev);
+      if (failing) {
+        failing = false;
+        console.warn(`Recovered: ${describe()} computes again`);
+      }
+      if (nested && typeof value === "function" && value.length === 0) {
+        let inner = guard(value, describe, true, empty);
+        value = () => inner();
+      }
+      last = value;
+      return value;
+    } catch (e) {
+      if (e instanceof NotReadyError)
+        throw e;
+      if (!failing) {
+        failing = true;
+        console.error(`Contained error: ${describe()} threw and keeps its last value until it computes again.`, e);
+      }
+      return last;
+    }
+  };
+}
+var effectRaw = rawEffect;
+var insertRaw = rawInsert;
+var effect3 = (fn, effectFn, options) => effectRaw(guard(fn, () => "an element's prop expression", false, SKIP), effectFn && ((value, prev) => value === SKIP ? undefined : effectFn(value, prev === SKIP ? undefined : prev)), options);
+var insert = (parent, accessor2, marker, initial, options) => insertRaw(parent, typeof accessor2 === "function" ? guard(accessor2, () => `a child expression of <${parent.elementType}> ${getNodePath(parent.id).join("/")}`, true, undefined) : accessor2, marker, initial, options);
 var windowRoot;
+var rendered = false;
+var errorWindows = new Set;
 function render(code) {
-  if (windowRoot) {
+  if (rendered) {
     throw new Error("render() already called; an app has exactly one render()");
   }
+  rendered = true;
   createRoot(() => {
-    let root = code();
-    if (!root || root.elementType !== "window") {
-      throw new Error("render() root must be a <window> element");
-    }
-    windowRoot = root;
-    attachWindow(root.id);
-    insert(null, root);
+    let root = createErrorBoundary2(() => {
+      let win = code();
+      if (!win || win.elementType !== "window") {
+        throw new Error("render() root must be a <window> element");
+      }
+      return win;
+    }, (error, reset) => {
+      let err = error();
+      console.error("Uncaught error: the app is replaced by the error window until reset or reload.", err);
+      let win = errorWindow(err, reset);
+      errorWindows.add(win.id);
+      return win;
+    });
+    rawEffect(() => root(), (win, prev) => swapRoot(win, prev));
   });
+}
+function swapRoot(win, prev) {
+  windowRoot = win;
+  if (prev === undefined) {
+    attachWindow(win.id);
+    return;
+  }
+  if (!errorWindows.has(win.id))
+    tree2.setRoot(win.id);
+  setWindowRoot(win.id);
+  setFocus(null);
+  if (errorWindows.has(prev.id) || !errorWindows.has(win.id)) {
+    errorWindows.delete(prev.id);
+    destroyNode2(prev);
+  }
+}
+function errorWindow(err, reset) {
+  let message = err instanceof Error ? err.message : String(err);
+  let stack = err instanceof Error && err.stack ? err.stack : "";
+  let text = (content, props) => {
+    let node = createElement("text", props);
+    insertNode2(node, createTextNode(content));
+    return node;
+  };
+  let win = createElement("window", {
+    title: "Application error"
+  });
+  insertNode2(win, createElement("d-rect", {
+    color: "#1144bb"
+  }));
+  let column = createElement("view", {
+    flexGrow: 1,
+    flexDirection: "column",
+    padding: 40,
+    gap: 12
+  });
+  insertNode2(column, text(":(", {
+    color: "white",
+    fontSize: 64,
+    fontWeight: 700
+  }));
+  insertNode2(column, text("Something went wrong", {
+    color: "white",
+    fontSize: 22
+  }));
+  insertNode2(column, text(message, {
+    color: "white",
+    fontSize: 16
+  }));
+  if (stack)
+    insertNode2(column, text(stack, {
+      color: "#aac2ff",
+      fontSize: 12,
+      fontFamily: "mono"
+    }));
+  insertNode2(column, text("Fix the error and save to reload, or reset to retry the failed computations.", {
+    color: "#aac2ff",
+    fontSize: 14
+  }));
+  let button = createElement("view", {
+    alignSelf: "flex-start",
+    padding: 12,
+    onPointerDown: () => reset()
+  });
+  insertNode2(button, createElement("d-rect", {
+    color: "white",
+    radius: 6
+  }));
+  insertNode2(button, text("Reset", {
+    color: "#1144bb",
+    fontSize: 16,
+    fontWeight: 600
+  }));
+  insertNode2(column, button);
+  insertNode2(win, column);
+  return win;
 }
 function createPortal(node, mount) {
   let target = mount ?? windowRoot;
@@ -5340,7 +5559,7 @@ function createPortal(node, mount) {
   });
   return null;
 }
-// packages/core/src/color.ts
+// ../../packages/core/src/color.ts
 import * as tree3 from "flux:rendertree";
 function parseColor2(color) {
   return tree3.parseColor(color);
@@ -5364,7 +5583,7 @@ function parseStops(stops) {
     color: parseColor2(s.color)
   }));
 }
-// packages/core/src/environment.ts
+// ../../packages/core/src/environment.ts
 import { on as on3 } from "srt:events";
 var devicesAccessor;
 function ensureDevicesState() {
@@ -5516,7 +5735,7 @@ var env = {
     return keyboardSeenAccessor();
   }
 };
-// packages/core/src/gamepad.ts
+// ../../packages/core/src/gamepad.ts
 import { on as on4 } from "srt:events";
 var gamepadsAccessor;
 function gamepads() {
@@ -5529,7 +5748,7 @@ function gamepads() {
   }
   return gamepadsAccessor();
 }
-// packages/core/src/capabilities.ts
+// ../../packages/core/src/capabilities.ts
 var MEDIUM_MIN_WIDTH = 600;
 var EXPANDED_MIN_WIDTH = 840;
 var capabilities = {
@@ -5550,7 +5769,7 @@ var capabilities = {
     return w >= EXPANDED_MIN_WIDTH ? "expanded" : w >= MEDIUM_MIN_WIDTH ? "medium" : "compact";
   }
 };
-// packages/core/src/gpu.ts
+// ../../packages/core/src/gpu.ts
 import * as gpu from "flux:gpu";
 import { destroyTexture as destroyTexture2, endBufferWrite, resizeTexture, setTargetParams as setTargetParams2, setTargetSize as setTargetSize2, setTargetTextures, uploadTexture } from "flux:gpu";
 import { copyTexture, destroyBuffer as destroyBuffer2, renderTarget, setDraw } from "flux:gpu";
@@ -5559,11 +5778,11 @@ import { limits } from "flux:gpu";
 import { compileShader, createRenderPipeline, destroyProgram, destroyRenderPipeline, destroyShader, linkProgram, programAttributes } from "flux:gpu";
 import { captureSnapshot, readTexture } from "flux:gpu";
 var glsl = String.raw;
-// packages/core/src/image.ts
+// ../../packages/core/src/image.ts
 import { decodeImage } from "flux:image";
 import { decodeImage as decodeImage2, encodeImage } from "flux:image";
 var imageCache = new Map;
-// packages/core/src/svg.ts
+// ../../packages/core/src/svg.ts
 import { parseSvg as fluxParseSvg } from "flux:svg";
 var svg = String.raw;
 function parseSvg(src, opts) {
@@ -5573,7 +5792,7 @@ function parseSvg(src, opts) {
     });
   return fluxParseSvg(src);
 }
-// packages/core/src/scroll.ts
+// ../../packages/core/src/scroll.ts
 function createScroll(viewport, content, options = {}) {
   let axis = options.axis ?? "vertical";
   let canX = axis === "horizontal" || axis === "both";
@@ -5633,7 +5852,7 @@ ${origin}`);
     scrollTo: (x, y) => set(x, y)
   };
 }
-// packages/core/src/arena.ts
+// ../../packages/core/src/arena.ts
 var claims = new Map;
 var arena = {
   claim(pointerId, owner) {
@@ -5663,7 +5882,7 @@ var arena = {
       claims.delete(pointerId);
   }
 };
-// packages/core/src/pan.ts
+// ../../packages/core/src/pan.ts
 var PAN_SLOP = 8;
 function createPan(options) {
   let origin = null;
@@ -5743,9 +5962,9 @@ function createPan(options) {
     cancel
   };
 }
-// packages/core/src/transform.ts
+// ../../packages/core/src/transform.ts
 import { on as on5 } from "srt:events";
-// packages/components/src/window.tsx
+// ../../packages/components/src/window.tsx
 function Window(props) {
   var _el$ = createElement("window");
   spread(_el$, mergeProps(() => props.layout, {
@@ -5805,7 +6024,7 @@ function Window(props) {
   insert(_el$, () => props.children, null);
   return _el$;
 }
-// packages/components/src/types.ts
+// ../../packages/components/src/types.ts
 var STYLE_TO_BACKGROUND = {
   backgroundColor: "color",
   borderRadius: "radius"
@@ -5861,7 +6080,7 @@ function transitionEndFor(node, handler) {
   };
 }
 
-// packages/components/src/view.tsx
+// ../../packages/components/src/view.tsx
 function View(props) {
   let hasBackground = () => props.style?.backgroundColor != null || props.style?.borderRadius != null;
   let hasBorder = () => (props.style?.borderWidth ?? 0) > 0;
@@ -6007,7 +6226,7 @@ function View(props) {
   })(), null);
   return _el$;
 }
-// packages/components/src/theme.ts
+// ../../packages/components/src/theme.ts
 var SPACING = {
   sm: 4,
   md: 8,
@@ -6141,7 +6360,7 @@ function setTheme(partial) {
   });
 }
 
-// packages/components/src/policy.ts
+// ../../packages/components/src/policy.ts
 function defaultPolicyResolver(caps) {
   let interaction = caps.touch && caps.precisePointer ? "hybrid" : caps.touch ? "touch" : caps.precisePointer ? "desktop" : "hybrid";
   return {
@@ -6187,7 +6406,7 @@ var policy = {
   }
 };
 
-// packages/components/src/typography.ts
+// ../../packages/components/src/typography.ts
 var SMALL_TEXT = 16;
 function lightOnDark(text, fill) {
   if (typeof text !== "string" || typeof fill !== "string" || fill === "transparent")
@@ -6214,7 +6433,7 @@ function typeStyle(variant, onDark) {
   };
 }
 
-// packages/components/src/text.tsx
+// ../../packages/components/src/text.tsx
 var FONT_KEYS = ["fontFamily", "fontSize", "lineHeight", "fontStyle", "fontWeight", "textAlign", "maxLines"];
 function Text(props) {
   let role = () => theme.text[props.variant ?? "body"];
@@ -6353,7 +6572,7 @@ function Text(props) {
   });
   return _el$;
 }
-// packages/components/src/safe-area.tsx
+// ../../packages/components/src/safe-area.tsx
 function SafeArea(props) {
   let pad = (edge) => {
     let defaultOn = edge === "top" || edge === "bottom";
@@ -6390,7 +6609,7 @@ function SafeArea(props) {
   });
   return _el$;
 }
-// packages/core/src/text-input.ts
+// ../../packages/core/src/text-input.ts
 function createTextBuffer(options = {}) {
   let initial = options.defaultValue ?? "";
   let [internalValue, setInternalValue] = createSignal(initial);
@@ -6766,7 +6985,7 @@ function follow(current, pos, size, extent, content) {
   return Math.max(0, Math.min(next, Math.max(0, content - extent)));
 }
 
-// packages/components/src/focus-nav.ts
+// ../../packages/components/src/focus-nav.ts
 var navActions = new Map;
 function registerNavAction(nodeId, action2) {
   navActions.set(nodeId, action2);
@@ -6955,7 +7174,7 @@ function createFocusNav(options) {
   };
 }
 
-// packages/components/src/density.tsx
+// ../../packages/components/src/density.tsx
 var DensityContext = createContext2(() => {
   return;
 });
@@ -6968,12 +7187,12 @@ function densityScale() {
   return DENSITY_SCALE[useContext(DensityContext)() ?? policy.density];
 }
 
-// packages/components/src/spacing.ts
+// ../../packages/components/src/spacing.ts
 function space(token) {
   return Math.round(theme.spacing[token] * densityScale());
 }
 
-// packages/components/src/editor-field.tsx
+// ../../packages/components/src/editor-field.tsx
 var CARET_WIDTH = 1;
 function EditorField(props) {
   let [caretOn, setCaretOn] = createSignal(true);
@@ -7281,7 +7500,7 @@ function EditorField(props) {
   return _el$;
 }
 
-// packages/components/src/text-input.tsx
+// ../../packages/components/src/text-input.tsx
 function TextInput(props) {
   let value = () => "";
   return createComponent2(EditorField, {
@@ -7366,7 +7585,7 @@ function TextInput(props) {
     }
   });
 }
-// packages/components/src/scroll-view.tsx
+// ../../packages/components/src/scroll-view.tsx
 function ScrollView(props) {
   let viewport;
   let content;
@@ -7546,7 +7765,7 @@ function ScrollView(props) {
   });
   return _el$;
 }
-// packages/components/src/press.ts
+// ../../packages/components/src/press.ts
 function createPress(options) {
   let [pressed, setPressed] = createSignal(false);
   let [hovered, setHovered] = createSignal(false);
@@ -7677,7 +7896,7 @@ function createPress(options) {
   };
 }
 
-// packages/components/src/pressable.tsx
+// ../../packages/components/src/pressable.tsx
 function Pressable(props) {
   let press = createPress(props);
   let style = () => typeof props.style === "function" ? props.style(press.state()) : props.style;
@@ -7812,7 +8031,7 @@ function Pressable(props) {
   })(), null);
   return _el$;
 }
-// packages/components/src/spinner.tsx
+// ../../packages/components/src/spinner.tsx
 var SIZE = 24;
 var THICKNESS = 3;
 function Spinner(props) {
@@ -7891,7 +8110,7 @@ function Spinner(props) {
   return _el$;
 }
 
-// packages/components/src/button.tsx
+// ../../packages/components/src/button.tsx
 var SIZE_WIDTH = {
   sm: 88,
   md: 120,
@@ -8104,7 +8323,7 @@ function Button(props) {
   });
   return _el$;
 }
-// packages/components/src/icon.tsx
+// ../../packages/components/src/icon.tsx
 var SIZE2 = 24;
 function Icon(props) {
   let size = () => props.size ?? SIZE2;
@@ -8143,9 +8362,9 @@ function Icon(props) {
   }));
   return _el$;
 }
-// packages/components/src/radio.tsx
+// ../../packages/components/src/radio.tsx
 var RadioContext = createContext2();
-// packages/components/src/card.tsx
+// ../../packages/components/src/card.tsx
 function Card(props) {
   let styled = () => ({
     ...theme.components.card,
@@ -8255,7 +8474,7 @@ function Card(props) {
   });
   return _el$;
 }
-// packages/components/src/modal.tsx
+// ../../packages/components/src/modal.tsx
 function Modal(props) {
   let dismiss = (_e) => {
     if (props.dismissable !== false)
@@ -8292,7 +8511,7 @@ function Modal(props) {
     return _el$;
   })());
 }
-// packages/components/src/segmented-control.tsx
+// ../../packages/components/src/segmented-control.tsx
 function SegmentedControl(props) {
   let [internal, setInternal] = createSignal(props.defaultValue);
   let value = () => props.value !== undefined ? props.value : internal();
@@ -8434,7 +8653,7 @@ function SegmentedControl(props) {
   });
   return _el$;
 }
-// packages/components/src/split-view.tsx
+// ../../packages/components/src/split-view.tsx
 var LIST_WIDTH = 320;
 function SplitView(props) {
   return createComponent2(Show, {
@@ -8478,7 +8697,7 @@ function SplitView(props) {
     }
   });
 }
-// node_modules/.bun/qrcode-generator@2.0.4/node_modules/qrcode-generator/dist/qrcode.mjs
+// ../../node_modules/.bun/qrcode-generator@2.0.4/node_modules/qrcode-generator/dist/qrcode.mjs
 var qrcode = function(typeNumber, errorCorrectionLevel) {
   const PAD0 = 236;
   const PAD1 = 17;
@@ -10073,10 +10292,10 @@ var createDataURL = function(width, height, getPixel) {
   return "data:image/gif;base64," + base64;
 };
 var stringToBytes = qrcode.stringToBytes;
-// apps/launcher/src/parts/home-screen.tsx
+// src/parts/home-screen.tsx
 import { stop } from "srt:dev";
 
-// packages/core/src/camera.ts
+// ../../packages/core/src/camera.ts
 import { listCameras, open } from "flux:camera";
 import { on as on6 } from "srt:events";
 var devicesAccessor2;
@@ -10124,10 +10343,10 @@ function createCamera(options = {}) {
   };
 }
 
-// apps/launcher/src/parts/home-screen.tsx
+// src/parts/home-screen.tsx
 import { available as appsAvailable, list, launch, remove, info, clearCache } from "srt:apps";
 
-// apps/launcher/src/parts/puzzle.tsx
+// src/parts/puzzle.tsx
 var PUZZLE_SEGMENTS = [{
   light: "#3f5494",
   dark: "#162b6c",
@@ -10200,7 +10419,7 @@ function PuzzleMark(props) {
   });
 }
 
-// apps/launcher/src/parts/app-icon.tsx
+// src/parts/app-icon.tsx
 function AppIcon(props) {
   let doc = createMemo2(() => {
     let src = props.app.icon;
@@ -10290,7 +10509,7 @@ function AppIcon(props) {
   });
 }
 
-// apps/launcher/src/parts/detail-card.tsx
+// src/parts/detail-card.tsx
 function DetailRow(props) {
   return createComponent2(View, {
     get layout() {
@@ -10339,7 +10558,7 @@ function DetailCard(props) {
   });
 }
 
-// apps/launcher/src/parts/types.ts
+// src/parts/types.ts
 function focusRing(focused, radius) {
   if (!focused || !policy.focusRing)
     return {};
@@ -10363,7 +10582,7 @@ function normalizeAddress(raw) {
   return raw.trim().replace(/^(ws|http):\/\//, "").replace(/\/+$/, "");
 }
 
-// apps/launcher/src/parts/back-button.tsx
+// src/parts/back-button.tsx
 var ARROW_LEFT_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 19-7-7 7-7"/><path d="M19 12h-14"/></svg>`;
 function BackButton(props) {
   return createComponent2(Pressable, {
@@ -10391,7 +10610,7 @@ function BackButton(props) {
   });
 }
 
-// apps/launcher/src/parts/scan-button.tsx
+// src/parts/scan-button.tsx
 var QR_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="5" height="5" x="3" y="3" rx="1"/><rect width="5" height="5" x="16" y="3" rx="1"/><rect width="5" height="5" x="3" y="16" rx="1"/><path d="M21 16h-3a2 2 0 0 0-2 2v3"/><path d="M21 21v.01"/><path d="M12 7v3a2 2 0 0 1-2 2H7"/><path d="M3 12h.01"/><path d="M12 3h.01"/><path d="M12 16v.01"/><path d="M16 12h1"/><path d="M21 12v.01"/><path d="M12 21v-1"/></svg>`;
 function ScanButton(props) {
   return createComponent2(Pressable, {
@@ -10419,7 +10638,7 @@ function ScanButton(props) {
   });
 }
 
-// apps/launcher/src/parts/settings-panel.tsx
+// src/parts/settings-panel.tsx
 import { version as buildVersion, profile as buildProfile, platform as buildPlatform } from "srt:apps";
 var MAXIMIZE_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></svg>`;
 var MINIMIZE_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3v3a2 2 0 0 1-2 2H3"/><path d="M21 8h-3a2 2 0 0 1-2-2V3"/><path d="M3 16h3a2 2 0 0 1 2 2v3"/><path d="M16 21v-3a2 2 0 0 1 2-2h3"/></svg>`;
@@ -10604,7 +10823,7 @@ function SettingsPanel(props) {
   });
 }
 
-// apps/launcher/src/parts/dev-connection.ts
+// src/parts/dev-connection.ts
 import { on as on7 } from "srt:events";
 import { available as devAvailable, connect as devConnect, launchAddress } from "srt:dev";
 var available = devAvailable;
@@ -10634,7 +10853,7 @@ function connect(addr) {
   devConnect(normalizeAddress(addr));
 }
 
-// apps/launcher/src/parts/connect-panel.tsx
+// src/parts/connect-panel.tsx
 var DEFAULT_PORT = "34884";
 function recentLabel(entry) {
   if (!entry.includes("|"))
@@ -10791,7 +11010,7 @@ function ConnectPanel(props) {
   });
 }
 
-// apps/launcher/src/parts/home-screen.tsx
+// src/parts/home-screen.tsx
 var GEAR_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2Z"/><circle cx="12" cy="12" r="3"/></svg>`;
 var PLAY_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="6 3 20 12 6 21 6 3"/></svg>`;
 function formatStamp(ms) {
@@ -11664,7 +11883,7 @@ function HomeScreen(props) {
   });
 }
 
-// apps/launcher/src/parts/scan-screen.tsx
+// src/parts/scan-screen.tsx
 var RETICLE_STROKE = 10;
 var RETICLE_RADIUS = 20;
 var CLOSE_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>`;
@@ -11850,7 +12069,7 @@ function ScanScreen(props) {
   });
 }
 
-// apps/launcher/src/index.tsx
+// src/index.tsx
 function App() {
   let [themeMode, setThemeMode] = createSignal("system");
   let dark = () => {

@@ -78,7 +78,7 @@ use flux::{ExecHandle, FluxEngine};
 use runtime::UiRuntime;
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
 // --- Start Android entry point ------------------------------
@@ -293,12 +293,15 @@ fn ui_thread(
   alloy_cmd_tx: std::sync::mpsc::Sender<alloy::AlloyCommand>,
   event_rx: std::sync::mpsc::Receiver<alloy::AlloyEvent>,
   resampler: alloy::resample::SharedResampler,
+  user_input_muted: Arc<AtomicBool>,
   opts: RunOptions,
 ) {
   let RunOptions { app, playback_fps, stats, dev_server, fonts, storage: storage_spec, args } = opts;
   // Only the go dev client consumes the launch dev-server address.
   #[cfg(not(feature = "go"))]
   let _ = dev_server;
+  #[cfg(not(feature = "go"))]
+  let _ = user_input_muted;
   // Resolve the client storage tree, then anchor the process to the app's
   // data sandbox before any app code runs, so relative paths (e.g. a
   // flux:sqlite database) resolve to persistent per-app storage. The launch
@@ -631,6 +634,7 @@ fn ui_thread(
       clock_control.clone(),
       input_inject_tx,
       resampler.clone(),
+      user_input_muted,
       outbound_rx,
       go::QueryHandles {
         stats: stats_snapshot.clone(),
@@ -958,7 +962,8 @@ pub fn start(
 
   let opts = RunOptions { app: app_source, playback_fps, stats, dev_server, fonts, storage, args };
   let resampler = app.resampler();
+  let user_input_muted = app.user_input_mute();
   app.run(move |atx, alloy_cmd_tx, event_rx| {
-    ui_thread(handle, atx, alloy_cmd_tx, event_rx, resampler, opts);
+    ui_thread(handle, atx, alloy_cmd_tx, event_rx, resampler, user_input_muted, opts);
   });
 }

@@ -315,6 +315,21 @@ fn is_back_trigger(scancode: Option<Scancode>, keymod: sdl3::keyboard::Mod) -> b
   chord_mod && m.shift && scancode == Some(Scancode::Backspace)
 }
 
+/// The user-originated input a dev-tool mute drops (see the mute site in
+/// app.rs): presses, moves, wheel, text and back. Releases are left out on
+/// purpose - a button or key held when the mute began must still let go.
+pub(crate) fn is_muted_input(event: &AlloyEvent) -> bool {
+  match event {
+    AlloyEvent::PointerMove { .. }
+    | AlloyEvent::PointerDown { .. }
+    | AlloyEvent::Wheel { .. }
+    | AlloyEvent::TextInput { .. }
+    | AlloyEvent::Back => true,
+    AlloyEvent::Key { down, .. } => *down,
+    _ => false,
+  }
+}
+
 pub(crate) fn translate_event(sdl_event: SdlEvent, window: &sdl3::video::Window) -> Option<AlloyEvent> {
   match sdl_event {
     SdlEvent::Quit { .. } => Some(AlloyEvent::Quit),

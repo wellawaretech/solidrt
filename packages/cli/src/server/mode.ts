@@ -24,7 +24,7 @@ export type Mode =
 
 const DEFAULT_ENTRY = "src/index.tsx"
 // A prebuilt .srt.js ends with .js, so it is admitted by the same list.
-const ENTRY_EXTENSIONS = [".tsx", ".jsx", ".ts", ".js"]
+export const ENTRY_EXTENSIONS = [".tsx", ".jsx", ".ts", ".js"]
 
 export async function resolveMode(args: { entry: string | undefined; project: boolean; file: boolean }): Promise<Mode> {
   let cwd = await realpath(".")

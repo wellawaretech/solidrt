@@ -1,5 +1,5 @@
 use impellers::ISize;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{mpsc, Arc};
 use std::time::{Duration, Instant};
 
@@ -24,6 +24,11 @@ pub struct App {
   // consumed into it at the pump and never travel as events. The embedder
   // grabs a handle before run() to sample per frame slot.
   resampler: crate::resample::SharedResampler,
+  // Dev-tool mute for the user's own input (an agent measuring or testing;
+  // see lattice's dev connection): the run loop drops muted input before the resampler and
+  // the event channel. Arc'd for the same reason as the resampler: the
+  // embedder grabs a handle before run() and flips it from another thread.
+  user_input_muted: Arc<AtomicBool>,
 }
 
 pub fn setup(title: &str, size: ISize, mode: Mode) -> App {
@@ -59,15 +64,16 @@ pub fn setup(title: &str, size: ISize, mode: Mode) -> App {
   // failed attempt dropped its video subsystem handles, so setting the hint
   // and re-entering setup re-initializes video on the next driver.
   let resampler = crate::resample::SharedResampler::new();
+  let user_input_muted = Arc::new(AtomicBool::new(false));
   if mode.is_playback() {
     sdl3::hint::set("SDL_VIDEO_DRIVER", "offscreen");
     match setup_video(&sdl_context, title, (width, height), &mode) {
-      Ok((window, platform)) => return App { sdl_context, window, platform, mode, resampler },
+      Ok((window, platform)) => return App { sdl_context, window, platform, mode, resampler, user_input_muted },
       Err(e) if e.contains("EXT_device_enumeration") || e.contains("eglQueryDevicesEXT") => {
         log::info!("[alloy] offscreen video driver needs EGL device enumeration, which this GL stack (ANGLE) does not provide; using a headless EGL context");
         sdl3::hint::set("SDL_VIDEO_DRIVER", "dummy");
         match setup_headless(&sdl_context, title, (width, height)) {
-          Ok((window, platform)) => return App { sdl_context, window, platform, mode, resampler },
+          Ok((window, platform)) => return App { sdl_context, window, platform, mode, resampler, user_input_muted },
           Err(e) => log::warn!("[alloy] headless EGL context unavailable ({e}); falling back to a hidden window"),
         }
       }
@@ -77,7 +83,7 @@ pub fn setup(title: &str, size: ISize, mode: Mode) -> App {
   }
 
   let (window, platform) = setup_video(&sdl_context, title, (width, height), &mode).expect("Failed to set up video");
-  App { sdl_context, window, platform, mode, resampler }
+  App { sdl_context, window, platform, mode, resampler, user_input_muted }
 }
 
 // On platforms where GLES comes from ANGLE's shipped libraries, SDL's "Could
@@ -185,11 +191,17 @@ impl App {
     self.resampler.clone()
   }
 
+  /// Handle onto the user-input mute the run loop honors (see
+  /// `user_input_muted`). Grab a clone before run() consumes the App.
+  pub fn user_input_mute(&self) -> Arc<AtomicBool> {
+    self.user_input_muted.clone()
+  }
+
   pub fn run(
     self,
     dl_producer: impl FnOnce(Arc<Context>, mpsc::Sender<AlloyCommand>, mpsc::Receiver<AlloyEvent>) + Send + 'static,
   ) {
-    let App { sdl_context, mut window, platform, mode, resampler } = self;
+    let App { sdl_context, mut window, platform, mode, resampler, user_input_muted } = self;
     let surface_size = platform.surface_size_handle();
 
     let (tx, rx) = mpsc::channel::<FrameOutput>();
@@ -457,6 +469,14 @@ impl App {
         }
         last_frame_signal = Instant::now();
       }
+      // The dev-tool user-input mute (user_input_muted), read once per
+      // iteration: the translated-event path below drops muted input
+      // (is_muted_input); the level-read pads apply it themselves
+      // (Gamepads::set_muted).
+      let muted = user_input_muted.load(Ordering::Relaxed);
+      if let Some(g) = gamepads.as_mut() {
+        g.set_muted(muted);
+      }
       liveness.begin_pump();
       for sdl_event in first_event.into_iter().chain(event_pump.poll_iter()) {
         if let sdl3::event::Event::Display { display_event, .. } = &sdl_event {
@@ -493,6 +513,15 @@ impl App {
           apply_main_thread_effects(&e, &surface_size, &mode);
           if liveness.on_event(&e, Instant::now()) {
             raster.send(RasterCmd::RebindWindowSurface).ok();
+          }
+          // The mute: while the dev tools hold it, the user's own input ends
+          // here, ahead of the resampler and the channel, so the app sees
+          // only the synthetic input injected past this pump. Releases still
+          // pass (is_muted_input), so a button or key held when the mute
+          // began cannot stay stuck; window and display facts (resize,
+          // visibility, quit) are not input.
+          if muted && crate::event::is_muted_input(&e) {
+            continue;
           }
           // Producer-side resampler feed (see resample.rs): moves are
           // consumed here - the UI side samples one position per pointer

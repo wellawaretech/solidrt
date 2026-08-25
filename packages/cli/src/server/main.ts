@@ -228,7 +228,7 @@ function onOpen(ws: ServerWebSocket) {
   console.log(`[cli] Client connected ${ws.remoteAddr ?? "unknown"}`)
   // Advertise the address we are reachable on, so clients dialed over a
   // loopback hop can show/remember it (see connection.rs).
-  ws.send(JSON.stringify({ type: "welcome", address: state.serverUrl, stats: state.stats, capture: !!config.capture }))
+  ws.send(JSON.stringify({ type: "welcome", address: state.serverUrl, stats: state.stats, capture: !!config.capture, mute: state.userInputMuted }))
   if (state.currentReload) {
     ws.send(state.currentReload)
   }

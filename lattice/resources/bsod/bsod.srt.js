@@ -1,4 +1,4 @@
-// node_modules/.bun/@solidjs+signals@2.0.0-rc.1/node_modules/@solidjs/signals/dist/prod/core/error.js
+// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.1/node_modules/@solidjs/signals/dist/prod/core/error.js
 class NotReadyError extends Error {
   source;
   constructor(r) {
@@ -26,7 +26,19 @@ function unwrapStatusError(r) {
   return r instanceof StatusError ? r.cause : r;
 }
 
-// node_modules/.bun/@solidjs+signals@2.0.0-rc.1/node_modules/@solidjs/signals/dist/prod/core/constants.js
+class NoOwnerError extends Error {
+  constructor() {
+    super("");
+  }
+}
+
+class ContextNotFoundError extends Error {
+  constructor() {
+    super("");
+  }
+}
+
+// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.1/node_modules/@solidjs/signals/dist/prod/core/constants.js
 var REACTIVE_NONE = 0;
 var REACTIVE_CHECK = 1 << 0;
 var REACTIVE_DIRTY = 1 << 1;
@@ -63,7 +75,7 @@ var SUPPORTS_PROXY = typeof Proxy === "function";
 var defaultContext = {};
 var $REFRESH = Symbol("refresh");
 
-// node_modules/.bun/@solidjs+signals@2.0.0-rc.1/node_modules/@solidjs/signals/dist/prod/core/lanes.js
+// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.1/node_modules/@solidjs/signals/dist/prod/core/lanes.js
 var signalLanes = new WeakMap;
 var activeLanes = new Set;
 function findLane(n) {
@@ -132,7 +144,7 @@ function assignOrMergeLane(n, e) {
   n.Ke = e;
 }
 
-// node_modules/.bun/@solidjs+signals@2.0.0-rc.1/node_modules/@solidjs/signals/dist/prod/core/scheduler.js
+// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.1/node_modules/@solidjs/signals/dist/prod/core/scheduler.js
 var transitions = new Set;
 var dirtyQueue = {
   eE: new Array(2000).fill(undefined),
@@ -702,7 +714,7 @@ function runInTransition(e, t) {
   }
 }
 
-// node_modules/.bun/@solidjs+signals@2.0.0-rc.1/node_modules/@solidjs/signals/dist/prod/core/heap.js
+// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.1/node_modules/@solidjs/signals/dist/prod/core/heap.js
 function queueFor(e) {
   return e.se & REACTIVE_ZOMBIE ? zombieQueue : dirtyQueue;
 }
@@ -837,7 +849,7 @@ function adjustHeight(e, E) {
   }
 }
 
-// node_modules/.bun/@solidjs+signals@2.0.0-rc.1/node_modules/@solidjs/signals/dist/prod/core/owner.js
+// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.1/node_modules/@solidjs/signals/dist/prod/core/owner.js
 function markDisposal(e) {
   let n = e.ke;
   while (n) {
@@ -993,7 +1005,7 @@ function createRoot(e, n) {
   return runWithOwner(t, () => e(() => t.dispose()));
 }
 
-// node_modules/.bun/@solidjs+signals@2.0.0-rc.1/node_modules/@solidjs/signals/dist/prod/core/graph.js
+// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.1/node_modules/@solidjs/signals/dist/prod/core/graph.js
 function unlinkSubs(l) {
   const n = l.it;
   const e = l.nt;
@@ -1082,7 +1094,7 @@ function link(l, n, e = false) {
     l.o = o;
 }
 
-// node_modules/.bun/@solidjs+signals@2.0.0-rc.1/node_modules/@solidjs/signals/dist/prod/core/async.js
+// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.1/node_modules/@solidjs/signals/dist/prod/core/async.js
 function addPendingSource(e, n) {
   if (e.oe?.has(n))
     return false;
@@ -1519,7 +1531,7 @@ function notifyStatus(e, n, t, r, o) {
   });
 }
 
-// node_modules/.bun/@solidjs+signals@2.0.0-rc.1/node_modules/@solidjs/signals/dist/prod/core/core.js
+// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.1/node_modules/@solidjs/signals/dist/prod/core/core.js
 GlobalQueue.Ce = recompute;
 GlobalQueue.me = disposeChildren;
 var tracking = false;
@@ -2004,7 +2016,39 @@ function staleValues(e, t = true) {
     stale = n;
   }
 }
-// node_modules/.bun/@solidjs+signals@2.0.0-rc.1/node_modules/@solidjs/signals/dist/prod/core/effect.js
+// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.1/node_modules/@solidjs/signals/dist/prod/core/context.js
+function createContext(e, t) {
+  return {
+    id: Symbol(t),
+    defaultValue: e
+  };
+}
+function getContext(e, t = getOwner()) {
+  if (!t) {
+    throw new NoOwnerError;
+  }
+  const n = hasContext(e, t) ? t.we[e.id] : e.defaultValue;
+  if (isUndefined(n)) {
+    throw new ContextNotFoundError;
+  }
+  return n;
+}
+function setContext(e, t, n = getOwner()) {
+  if (!n) {
+    throw new NoOwnerError;
+  }
+  n.we = {
+    ...n.we,
+    [e.id]: isUndefined(t) ? e.defaultValue : t
+  };
+}
+function hasContext(e, t) {
+  return !isUndefined(t?.we[e.id]);
+}
+function isUndefined(e) {
+  return typeof e === "undefined";
+}
+// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.1/node_modules/@solidjs/signals/dist/prod/core/effect.js
 function effect(t, E, e, R) {
   const r = !!R?.user;
   const f = createEffectNode(t, E, e, r ? EFFECT_USER : EFFECT_RENDER, notifyEffectStatus, R);
@@ -2111,7 +2155,7 @@ function trackedEffect(t, E) {
   e.C.enqueue(EFFECT_USER, run);
 }
 
-// node_modules/.bun/@solidjs+signals@2.0.0-rc.1/node_modules/@solidjs/signals/dist/prod/signals.js
+// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.1/node_modules/@solidjs/signals/dist/prod/signals.js
 function onCleanup(e) {
   return cleanup(e);
 }
@@ -2144,7 +2188,7 @@ function onSettled(e) {
     e();
   });
 }
-// node_modules/.bun/@solidjs+signals@2.0.0-rc.1/node_modules/@solidjs/signals/dist/prod/store/store.js
+// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.1/node_modules/@solidjs/signals/dist/prod/store/store.js
 var $TRACK = Symbol(0);
 var $TARGET = Symbol(0);
 var $PROXY = Symbol(0);
@@ -2157,8 +2201,43 @@ function ownEnumerableKeys(e) {
 }
 var affectsScopes = new Map;
 
-// node_modules/.bun/@solidjs+signals@2.0.0-rc.1/node_modules/@solidjs/signals/dist/prod/boundaries.js
+// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.1/node_modules/@solidjs/signals/dist/prod/boundaries.js
+function boundaryComputed(e, t) {
+  const r = computed(e, {
+    lazy: true
+  });
+  r.i = (e2, t2) => {
+    const n = e2 !== undefined ? e2 : r.S;
+    const s = t2 !== undefined ? t2 : r._;
+    r.S &= ~r.R;
+    const i = r.C.notify(r, STATUS_PENDING | STATUS_ERROR, n, s);
+    const o = n & ~r.R & (STATUS_PENDING | STATUS_ERROR);
+    if (o) {
+      r.S &= ~o;
+      if (r._ === s && !(r.S & (STATUS_PENDING | STATUS_ERROR)))
+        r._ = undefined;
+    }
+    if (!i && n & STATUS_ERROR) {
+      haltReactivity(unwrapStatusError(s));
+      throw s;
+    }
+  };
+  r.R = t;
+  r.T &= ~CONFIG_AUTO_DISPOSE;
+  recompute(r, true);
+  return r;
+}
+function createBoundChildren(e, t, r, n) {
+  const s = e.C;
+  s.addChild(e.C = r);
+  cleanup(() => s.removeChild(e.C));
+  return runWithOwner(e, () => {
+    const e2 = computed(t);
+    return boundaryComputed(() => flatten(read(e2)), n);
+  });
+}
 var ON_INIT = Symbol();
+var RevealControllerContext = /* @__PURE__ */ createContext(null);
 var _revealUsed = false;
 function isRevealController(e) {
   return e instanceof RevealController;
@@ -2387,6 +2466,57 @@ class CollectionQueue extends Queue {
       this.B?.j();
   }
 }
+function createCollectionBoundary(e, t, r, n) {
+  const s = createOwner();
+  if (_revealUsed)
+    setContext(RevealControllerContext, null, s);
+  const i = new CollectionQueue(e);
+  if (e === STATUS_ERROR)
+    i._ = signal(undefined, {
+      ownedWrite: true,
+      V: true
+    });
+  if (n)
+    i.te = n;
+  const o = i.ee = createBoundChildren(s, t, i, e);
+  untrack(() => {
+    let t2 = false;
+    try {
+      read(o);
+    } catch (e2) {
+      if (e2 instanceof NotReadyError)
+        t2 = true;
+      else
+        throw e2;
+    }
+    i.N = t2 || !!(o.S & e) || o._ instanceof NotReadyError;
+  });
+  const l = _revealUsed && e === STATUS_PENDING ? getContext(RevealControllerContext) : null;
+  if (l) {
+    i.B = l;
+    l.Y(i);
+    cleanup(() => l.Z(i));
+  }
+  return accessor(computed(() => {
+    if (!read(i.I)) {
+      const e2 = read(o);
+      if (!untrack(() => read(i.I)))
+        return i.W = true, e2;
+    }
+    if (_revealUsed && read(i.D))
+      return;
+    return r(i);
+  }, {
+    V: true
+  }));
+}
+function createErrorBoundary(e, t) {
+  return createCollectionBoundary(STATUS_ERROR, e, (e2) => t(accessor(e2._), () => {
+    for (const t2 of e2.v)
+      recompute(t2);
+    schedule();
+  }));
+}
 function flatten(e, t) {
   if (typeof e === "function" && !e.length) {
     if (t?.doNotUnwrap)
@@ -2443,7 +2573,7 @@ function flattenArray(e, t = [], r) {
     throw n;
   return s;
 }
-// node_modules/.bun/@solidjs+signals@2.0.0-rc.1/node_modules/@solidjs/signals/dist/prod/store/utils.js
+// ../../node_modules/.bun/@solidjs+signals@2.0.0-rc.1/node_modules/@solidjs/signals/dist/prod/store/utils.js
 function trueFn() {
   return true;
 }
@@ -2562,18 +2692,20 @@ function merge(...e) {
   u[$SOURCES] = t;
   return u;
 }
-// node_modules/.bun/solid-js@2.0.0-rc.1/node_modules/solid-js/dist/solid.js
+// ../../node_modules/.bun/solid-js@2.0.0-rc.1/node_modules/solid-js/dist/solid.js
 var $DEVCOMP = Symbol(0);
 var NoHydrateContext = {
   id: Symbol("NoHydrateContext"),
   defaultValue: false
 };
 var _createMemo;
+var _createErrorBoundary;
 var _createRenderEffect;
 var LIVE_SOURCE = Symbol.for("solid.LiveSource");
 var createMemo2 = (...args) => {
   return (_createMemo || createMemo)(...args);
 };
+var createErrorBoundary2 = (...args) => (_createErrorBoundary || createErrorBoundary)(...args);
 var createRenderEffect2 = (...args) => (_createRenderEffect || createRenderEffect)(...args);
 var _fragments = new Map;
 var _truncated = new Set;
@@ -2583,7 +2715,7 @@ function createComponent(Comp, props) {
   return untrack(() => Comp(props || {}));
 }
 
-// node_modules/.bun/@solidjs+universal@2.0.0-rc.1+8dd5f48cc8d92621/node_modules/@solidjs/universal/dist/universal.js
+// ../../node_modules/.bun/@solidjs+universal@2.0.0-rc.1+8dd5f48cc8d92621/node_modules/@solidjs/universal/dist/universal.js
 var transparentOptions = {
   transparent: true,
   sync: true
@@ -2937,16 +3069,16 @@ function createRenderer(options) {
   };
 }
 
-// packages/core/src/renderer.ts
+// ../../packages/core/src/renderer.ts
 import * as tree2 from "flux:rendertree";
 
-// packages/core/src/window.ts
+// ../../packages/core/src/window.ts
 import { requestFrame, setPointerLock } from "flux:rendertree";
 import { renderFrame } from "srt:render";
 import { on as on2, once } from "srt:events";
 import { exit } from "srt:app";
 
-// packages/core/src/core.ts
+// ../../packages/core/src/core.ts
 import * as tree from "flux:rendertree";
 import { on } from "srt:events";
 var handlers = new Map;
@@ -3080,12 +3212,17 @@ function activateTextInput() {
     syncTextInput(true);
 }
 
-// packages/core/src/window.ts
+// ../../packages/core/src/window.ts
 var animationFrames = new Map;
 var refreshRate = 60;
 var backHandlers = [];
-function attachWindow(nodeId) {
+var windowRootId = 0;
+function setWindowRoot(nodeId) {
+  windowRootId = nodeId;
   setInterestRoot(nodeId);
+}
+function attachWindow(nodeId) {
+  setWindowRoot(nodeId);
   let unsubscribe = null;
   let unsubDown = null;
   let unsubUp = null;
@@ -3195,7 +3332,7 @@ function attachWindow(nodeId) {
       }
     });
     let dispatchKey = (raw, handler) => {
-      let target = focusedNode() ?? nodeId;
+      let target = focusedNode() ?? windowRootId;
       let stopped = false;
       let e = {
         ...raw,
@@ -3203,8 +3340,8 @@ function attachWindow(nodeId) {
         stopPropagation: () => stopped = true
       };
       let path = getNodePath(target);
-      if (path[path.length - 1] !== nodeId)
-        path.push(nodeId);
+      if (path[path.length - 1] !== windowRootId)
+        path.push(windowRootId);
       for (let id of path) {
         e.currentTarget = id;
         getEventHandler(id, handler)?.(e);
@@ -3278,7 +3415,7 @@ function attachWindow(nodeId) {
   });
 }
 
-// packages/core/src/renderer.ts
+// ../../packages/core/src/renderer.ts
 var nodes = new Map;
 var id = 1;
 function createProxyNode(elementType) {
@@ -3413,20 +3550,7 @@ function applyProp(node, name, value) {
   }
   setTreeProperty(node, name, value);
 }
-var {
-  effect: effect3,
-  memo: memo2,
-  createComponent: createComponent2,
-  createElement,
-  createTextNode,
-  insertNode: insertNode2,
-  insert,
-  spread,
-  setProp,
-  mergeProps,
-  applyRef,
-  ref
-} = createRenderer({
+var renderer = createRenderer({
   createElement: (elementType, props) => {
     let proxy = createProxyNode(elementType);
     if (elementType === "window")
@@ -3488,28 +3612,131 @@ var {
     return parent.children[index + 1];
   }
 });
+var {
+  memo: memo2,
+  createComponent: createComponent2,
+  createElement,
+  createTextNode,
+  insertNode: insertNode2,
+  spread,
+  setProp,
+  mergeProps,
+  applyRef,
+  ref
+} = renderer;
+var {
+  effect: rawEffect,
+  insert: rawInsert
+} = renderer;
+var SKIP = Symbol("skip");
 var windowRoot;
+var rendered = false;
+var errorWindows = new Set;
 function render(code) {
-  if (windowRoot) {
+  if (rendered) {
     throw new Error("render() already called; an app has exactly one render()");
   }
+  rendered = true;
   createRoot(() => {
-    let root = code();
-    if (!root || root.elementType !== "window") {
-      throw new Error("render() root must be a <window> element");
-    }
-    windowRoot = root;
-    attachWindow(root.id);
-    insert(null, root);
+    let root = createErrorBoundary2(() => {
+      let win = code();
+      if (!win || win.elementType !== "window") {
+        throw new Error("render() root must be a <window> element");
+      }
+      return win;
+    }, (error, reset) => {
+      let err = error();
+      console.error("Uncaught error: the app is replaced by the error window until reset or reload.", err);
+      let win = errorWindow(err, reset);
+      errorWindows.add(win.id);
+      return win;
+    });
+    rawEffect(() => root(), (win, prev) => swapRoot(win, prev));
   });
 }
-// packages/core/src/color.ts
+function swapRoot(win, prev) {
+  windowRoot = win;
+  if (prev === undefined) {
+    attachWindow(win.id);
+    return;
+  }
+  if (!errorWindows.has(win.id))
+    tree2.setRoot(win.id);
+  setWindowRoot(win.id);
+  setFocus(null);
+  if (errorWindows.has(prev.id) || !errorWindows.has(win.id)) {
+    errorWindows.delete(prev.id);
+    destroyNode2(prev);
+  }
+}
+function errorWindow(err, reset) {
+  let message = err instanceof Error ? err.message : String(err);
+  let stack = err instanceof Error && err.stack ? err.stack : "";
+  let text = (content, props) => {
+    let node = createElement("text", props);
+    insertNode2(node, createTextNode(content));
+    return node;
+  };
+  let win = createElement("window", {
+    title: "Application error"
+  });
+  insertNode2(win, createElement("d-rect", {
+    color: "#1144bb"
+  }));
+  let column = createElement("view", {
+    flexGrow: 1,
+    flexDirection: "column",
+    padding: 40,
+    gap: 12
+  });
+  insertNode2(column, text(":(", {
+    color: "white",
+    fontSize: 64,
+    fontWeight: 700
+  }));
+  insertNode2(column, text("Something went wrong", {
+    color: "white",
+    fontSize: 22
+  }));
+  insertNode2(column, text(message, {
+    color: "white",
+    fontSize: 16
+  }));
+  if (stack)
+    insertNode2(column, text(stack, {
+      color: "#aac2ff",
+      fontSize: 12,
+      fontFamily: "mono"
+    }));
+  insertNode2(column, text("Fix the error and save to reload, or reset to retry the failed computations.", {
+    color: "#aac2ff",
+    fontSize: 14
+  }));
+  let button = createElement("view", {
+    alignSelf: "flex-start",
+    padding: 12,
+    onPointerDown: () => reset()
+  });
+  insertNode2(button, createElement("d-rect", {
+    color: "white",
+    radius: 6
+  }));
+  insertNode2(button, text("Reset", {
+    color: "#1144bb",
+    fontSize: 16,
+    fontWeight: 600
+  }));
+  insertNode2(column, button);
+  insertNode2(win, column);
+  return win;
+}
+// ../../packages/core/src/color.ts
 import * as tree3 from "flux:rendertree";
-// packages/core/src/environment.ts
+// ../../packages/core/src/environment.ts
 import { on as on3 } from "srt:events";
-// packages/core/src/gamepad.ts
+// ../../packages/core/src/gamepad.ts
 import { on as on4 } from "srt:events";
-// packages/core/src/gpu.ts
+// ../../packages/core/src/gpu.ts
 import * as gpu from "flux:gpu";
 import { destroyTexture as destroyTexture2, endBufferWrite, resizeTexture, setTargetParams as setTargetParams2, setTargetSize as setTargetSize2, setTargetTextures, uploadTexture } from "flux:gpu";
 import { copyTexture, destroyBuffer as destroyBuffer2, renderTarget, setDraw } from "flux:gpu";
@@ -3518,18 +3745,18 @@ import { limits } from "flux:gpu";
 import { compileShader, createRenderPipeline, destroyProgram, destroyRenderPipeline, destroyShader, linkProgram, programAttributes } from "flux:gpu";
 import { captureSnapshot, readTexture } from "flux:gpu";
 var glsl = String.raw;
-// packages/core/src/image.ts
+// ../../packages/core/src/image.ts
 import { decodeImage } from "flux:image";
 import { decodeImage as decodeImage2, encodeImage } from "flux:image";
 var imageCache = new Map;
-// packages/core/src/svg.ts
+// ../../packages/core/src/svg.ts
 import { parseSvg as fluxParseSvg } from "flux:svg";
 var svg = String.raw;
-// packages/core/src/arena.ts
+// ../../packages/core/src/arena.ts
 var claims = new Map;
-// packages/core/src/transform.ts
+// ../../packages/core/src/transform.ts
 import { on as on5 } from "srt:events";
-// apps/launcher/src/bsod.tsx
+// src/bsod.tsx
 function Bsod() {
   var _el$ = createElement("window", {
     title: "solidrt"

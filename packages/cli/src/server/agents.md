@@ -69,6 +69,14 @@ every endpoint answers JSON and an error is `{ "error": "..." }` with a
 - POST `/clock?scale=<x>` (0 pauses) / `?step=<n>` frames while paused.
 - POST `/reload` - rebuild and push to every client; `{ ok, clients }` or
   the build error. There is no reload-on-save: this is the only push.
+- POST `/load` with `{ "entry": "<path>" }` - switch the entry and push it;
+  `{ ok, entry, clients }` or the build error. Relative paths resolve
+  against the project root (file mode: the served file's directory). A
+  project server only loads files inside its project.
+- POST `/mute?active=true|false` - mute/unmute the user's own input on
+  every client, gamepads included (synthetic `/input` still goes through;
+  resize and close cannot be muted). `{ ok, active, clients }`. The mute
+  lifts when the server stops; unmute yourself when done.
 
 The loop is the same as over MCP: `/reload`, then `/logs?since=`, then
 `/tree` for coordinates and `/snapshot` of the smallest relevant node.

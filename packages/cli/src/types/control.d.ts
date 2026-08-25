@@ -24,6 +24,8 @@ export type ClientsResponse = {
   mode: "project" | "file"
   entry: string
   projectDir: string | null
+  /** Whether the user's own input is muted on every client (see /mute). */
+  userInputMuted: boolean
   clients: ClientEntry[]
 }
 
@@ -40,6 +42,12 @@ export type LogsResponse = {
 
 /** POST /reload */
 export type ReloadResponse = { ok: true; clients: number }
+
+/** POST /load: the canonical entry now served. */
+export type LoadResponse = { ok: true; entry: string; clients: number }
+
+/** POST /mute: the mute state now in force and the clients told. */
+export type MuteResponse = { ok: true; active: boolean; clients: number }
 
 /** GET /snapshot and /texture: png by default, RGBA8 bytes with format=raw. */
 export type ImageResponse = { width: number; height: number; pngBase64?: string; rgbaBase64?: string }

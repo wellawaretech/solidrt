@@ -330,7 +330,13 @@ function guard<T>(fn: (prev?: T) => T, describe: () => string, nested: boolean, 
       }
       // A child expression resolving to a function is read by an inner
       // effect (universal's insert); that read gets the same containment.
-      if (nested && typeof value === "function") value = guard(value as any, describe, true, empty) as any
+      // Solid's flatten only unwraps zero-arity functions and inserts any
+      // other function as a node, so only accessors are wrapped, and the
+      // wrapper keeps arity 0.
+      if (nested && typeof value === "function" && value.length === 0) {
+        let inner = guard(value as any, describe, true, empty)
+        value = (() => inner()) as any
+      }
       last = value
       return value
     } catch (e) {

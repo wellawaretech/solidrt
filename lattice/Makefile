@@ -81,11 +81,11 @@ BUNDLE_DEPS = $(wildcard $(SRT_HOME)/packages/core/src/*.ts*) $(wildcard $(SRT_H
 
 $(LAUNCHER_JS): $(wildcard $(LAUNCHER_DIR)/src/*.tsx) $(wildcard $(LAUNCHER_DIR)/src/parts/*.tsx) $(BUNDLE_DEPS)
 	@echo "Bundling launcher (index.tsx -> resources/launcher/)..."
-	cd $(CURDIR)/.. && bunx srt bundle $(LAUNCHER_SRC) -o $(dir $(LAUNCHER_JS))
+	cd $(LAUNCHER_DIR) && bunx srt bundle $(LAUNCHER_SRC) --project -o $(dir $(LAUNCHER_JS))
 
 $(BSOD_JS): $(BSOD_SRC) $(BUNDLE_DEPS)
 	@echo "Bundling BSOD screen (bsod.tsx -> resources/bsod/)..."
-	cd $(CURDIR)/.. && bunx srt bundle $(BSOD_SRC) -o $(dir $(BSOD_JS))
+	cd $(LAUNCHER_DIR) && bunx srt bundle $(BSOD_SRC) --project -o $(dir $(BSOD_JS))
 
 help:
 	@echo "Host ($(HOST_TARGET)):"

@@ -103,7 +103,7 @@ let SAVE_TO_ARG = z
 
 // readOnly marks tools that only inspect state; it is surfaced as the
 // MCP-standard readOnlyHint annotation so agent harnesses that honor it can
-// auto-approve the inspection majority. reload, call_debug, and send_input
+// auto-approve the inspection majority. reload, load, call_debug, and send_input
 // mutate the running app and keep the default hints (destructive, not
 // idempotent); `annotations` overrides those defaults where a mutating tool
 // is benign. Every tool gets openWorldHint: false - the bridge only ever
@@ -119,7 +119,7 @@ let TOOLS: {
     name: "list_clients",
     readOnly: true,
     description:
-      "List the app clients connected to the SolidRT dev server. Returns `generation` (identity of this server run: client ids and log cursors are only valid within one generation, so if it changed since your last call, re-fetch ids and cursors), `key` and `mode` (the project root, or the single file, this server serves - check it is the app you intend to drive before acting), `entry` (the app source file it rebuilds), `projectDir` (null for a file served on its own), and `clients`. Each entry has id (pass it as `client` to the other tools), platform, runtime version (git describe; a -dirty suffix means the binary was built from uncommitted engine changes), build profile (debug/release), and the capability names compiled into that client's runtime, and `queries` - the dev-tool query kinds that client's runtime answers (clock, input, snapshot, tree, ...). Check `queries` before planning a verification strategy: a client whose list lacks \"input\" predates send_input, one that lacks \"clock\" predates set_time_scale/step_frames (an empty list means the runtime predates the advertisement itself). Use version/profile to check whether a connected binary contains a given engine change before debugging against it.",
+      "List the app clients connected to the SolidRT dev server. Returns `generation` (identity of this server run: client ids and log cursors are only valid within one generation, so if it changed since your last call, re-fetch ids and cursors), `key` and `mode` (the project root, or the single file, this server serves - check it is the app you intend to drive before acting), `entry` (the app source file it rebuilds; `load` moves it), `projectDir` (null for a file served on its own), `userInputMuted` (whether the user's own input is muted on the clients: see mute_user_input), and `clients`. Each entry has id (pass it as `client` to the other tools), platform, runtime version (git describe; a -dirty suffix means the binary was built from uncommitted engine changes), build profile (debug/release), and the capability names compiled into that client's runtime, and `queries` - the dev-tool query kinds that client's runtime answers (clock, input, snapshot, tree, ...). Check `queries` before planning a verification strategy: a client whose list lacks \"input\" predates send_input, one that lacks \"clock\" predates set_time_scale/step_frames (an empty list means the runtime predates the advertisement itself). Use version/profile to check whether a connected binary contains a given engine change before debugging against it.",
     inputSchema: {},
   },
   {
@@ -299,6 +299,28 @@ let TOOLS: {
     inputSchema: {},
   },
   {
+    name: "load",
+    description:
+      "Switch the app entry: bundle the given .tsx/.jsx source file and push it to every connected client, replacing whatever is running; later reload calls rebuild this entry. A server started for a project (list_clients: mode 'project') only loads files inside that project; one started for a single file (mode 'file') loads any file. Returns the entry now served and the number of clients loaded, or a build error if the source failed to compile.",
+    inputSchema: {
+      entry: z.string().describe("App entry source file to load (relative paths resolve against the bridge's working directory, normally the project root)"),
+    },
+  },
+  {
+    name: "mute_user_input",
+    annotations: { destructiveHint: false, idempotentHint: true },
+    description:
+      "Mute the user's own input (pointer, keyboard, text, wheel, gamepads, back) on every connected client until unmute_user_input, so a measurement or an interaction test is not disturbed by a stray click or keypress. send_input still goes through; window events (resize, close) cannot be muted. Call it the moment you start measuring or testing, before the first send_input or get_stats, and keep it short: the human sees an unresponsive client meanwhile. The mute survives reload; it lifts on unmute_user_input, when the dev server goes away, or when this bridge exits. ALWAYS unmute when you are done, and whenever you need the human to press something themselves.",
+    inputSchema: {},
+  },
+  {
+    name: "unmute_user_input",
+    annotations: { destructiveHint: false, idempotentHint: true },
+    description:
+      "Lift the mute set by mute_user_input: the user's input reaches every client again. Call it as soon as your measurement or test is done, whenever the human needs to interact, and always before you stop working.",
+    inputSchema: {},
+  },
+  {
     name: "set_time_scale",
     annotations: { destructiveHint: false, idempotentHint: true },
     description:
@@ -391,6 +413,20 @@ async function callTool(name: string, args: any): Promise<ControlResult> {
     }
     case "reload":
       return control("/reload", "POST")
+    case "load": {
+      if (typeof args?.entry !== "string" || !args.entry) return { ok: false, message: "load requires an entry path" }
+      // Resolved here, against the bridge's cwd: the server would resolve
+      // against the project root (or the served file's directory), which
+      // the agent may not be sitting in.
+      return control("/load", "POST", { entry: resolve(args.entry) })
+    }
+    case "mute_user_input":
+    case "unmute_user_input": {
+      let active = name === "mute_user_input"
+      let result = await control(`/mute?active=${active}`, "POST")
+      if (result.ok) muted = active
+      return result
+    }
     case "get_snapshot": {
       if (typeof args?.nodeId !== "number") return { ok: false, message: "get_snapshot requires a numeric nodeId" }
       let params = new URLSearchParams({ node: String(args.nodeId) })
@@ -489,6 +525,17 @@ async function toContent(name: string, result: ControlResult, args?: any): Promi
   return { content: [{ type: "text", text: JSON.stringify(result.body, null, 2) }] }
 }
 
+// Whether this bridge muted the user's input and has not unmuted. A mute
+// outliving the bridge would leave the user locked out of their own client,
+// so the bridge lifts it when the agent host closes the pipe or kills it.
+let muted = false
+
+async function unmuteOnExit() {
+  if (!muted) return
+  muted = false
+  await control("/mute?active=false", "POST")
+}
+
 export async function main() {
   let server = new McpServer({ name: "solidrt", version: CLI_VERSION })
 
@@ -504,7 +551,12 @@ export async function main() {
     )
   }
 
+  process.stdin.on("end", () => void unmuteOnExit().finally(() => process.exit(0)))
+  for (let signal of ["SIGTERM", "SIGINT", "SIGHUP"] as const) {
+    process.on(signal, () => void unmuteOnExit().finally(() => process.exit(0)))
+  }
+
   // The stdin read keeps the process alive; it exits when the agent host
-  // closes the pipe.
+  // closes the pipe (after lifting any mute it set, see above).
   await server.connect(new StdioServerTransport())
 }
