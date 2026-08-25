@@ -88,15 +88,11 @@ platform-wide and bite in every app:
 
 ## Run / verify
 
-- FIRST check whether a dev server and a client are already running (the MCP
-  list_clients tool) and build against those: `reload` pushes your edits to
-  the live app, get_logs and get_snapshot verify them. Do not start a second
-  `srt run` when one is already up.
-- The dev loop is edit -> reload -> get_logs -> get_snapshot. `reload`
-  surfaces build errors but not type errors; run `bunx srt check src/index.tsx`
-  for those (it builds in memory and never triggers a reload); `bunx srt
-  check .` covers the app and its examples/ entries in one go.
-- Commands, headless rendering, and the MCP tools are documented in
-  node_modules/@solidrt/cli/AGENTS.md and its agents/debugging.md. The
-  `.mcp.json` here is Claude Code's convention; if your client lists no
-  `solidrt` tools, debugging.md has the entry to add to its own config.
+- FIRST check whether a dev server and a client are already running and
+  build against those; do not start a second `srt run` when one is up.
+- The dev loop (reload, logs, snapshots, the holds on reload-on-save and on
+  the user's input), typechecking, headless rendering and the MCP tools:
+  node_modules/@solidrt/cli/AGENTS.md and its agents/debugging.md. Read it
+  before the first reload. The `.mcp.json` here is Claude Code's convention;
+  if your client lists no `solidrt` tools, debugging.md has the entry to add
+  to its own config.

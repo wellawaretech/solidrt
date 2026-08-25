@@ -53,7 +53,10 @@ bytecode and never mentions `fluxc`.
 packages/cli/
   Makefile            dist/server.js (release prebuild of the flux server), nothing else yet
   README.md           the overview: what srt is, the command list, a link per command's docs.md
-  AGENTS.md           the agent quickstart, a link per command's agents.md
+  AGENTS.md           the agent quickstart, a link per file in agents/
+  agents/             debugging.md (MCP, dev server, control API, lessons), assets.md
+                      (assets, fonts, identity, distribution): agent depth stays in
+                      agents/ as in the other packages
   package.json  tsconfig.json (the bun folders + src/types/)  src/server/tsconfig.json (server/ + types/)
   bin/srt             bun. Parses the command word only:
                         init|mcp|check|bundle|pack|render|android|client -> import ../src/<cmd>/main.ts
@@ -61,17 +64,17 @@ packages/cli/
                                                                            (env: platform dir, bun, cli root)
   src/
     init/     main.ts  scaffold/  docs.md        bun   scaffold + bun install (prompts)
-    mcp/      main.ts  docs.md  agents.md        bun   stdio MCP bridge over the control API
+    mcp/      main.ts  docs.md                   bun   stdio MCP bridge over the control API
     check/    main.ts  docs.md                   bun   bundle in memory (imports bundle/) + tsc
-    bundle/   main.ts  docs.md  agents.md        bun   Bun.build + Solid plugin, isolates, sourcemaps;
+    bundle/   main.ts  docs.md                   bun   Bun.build + Solid plugin, isolates, sourcemaps;
                                                        --compile via fluxc; --json for the server
-    pack/     main.ts  layout.ts  trailer.ts  docs.md  agents.md
+    pack/     main.ts  layout.ts  trailer.ts  docs.md
                                                bun   imports bundle/ (compiled), then layout + trailer
     render/   main.ts  docs.md                   bun   imports bundle/, stages dist/render, spawns solidrt-go --playback
     android/  main.ts  docs.md                   bun   adb: device, APK install, launch against a server
     client/   main.ts  docs.md                   bun   spawn solidrt-go against a server (registry / --port / --server)
     server/   main.ts args.ts mode.ts binaries.ts registry.ts control.ts rebuild.ts remap.ts
-              tunnel.ts qr.ts cache.ts proxy.ts state.ts config.ts docs.md agents.md tsconfig.json
+              tunnel.ts qr.ts cache.ts proxy.ts state.ts config.ts docs.md tsconfig.json
                                                  flux  the dev server, in-process. run = server --client N.
                                                        Rebuild spawns `bun bundle/main.ts --json`,
                                                        startup typecheck spawns `bun check/main.ts`.
@@ -111,14 +114,16 @@ srt pack     bin/srt -> pack (bun) -> fluxc
   root or of the file" is stated in one place and referenced by the other.
 - **Servers spawned by the console are detached**: a server's lifetime
   belongs to the registry, not to whoever started it.
-- **`scaffold/` moves into `src/init/`.** `docs/` and `agents/` dissolve into
-  per-command `docs.md` / `agents.md`: today's `agents/debugging.md` splits
-  between `mcp/` and `server/` (the control API without MCP), `agents/assets.md`
-  goes to `pack/` (identity, fonts, distribution) with the asset facts in
-  `bundle/`. `README.md` is the single overview; `docs/index.md` goes.
-  The website mounts `README.md` + `*/docs.md` instead of the `docs/` folder
-  (`website/src/build.ts`). `package.json` `files` and the root `CLAUDE.md`
-  pointer to `agents/debugging.md` follow.
+- **`scaffold/` moves into `src/init/`.** `docs/` dissolves into per-command
+  `docs.md`; `agents/` stays at the package root (`debugging.md`: MCP, the
+  dev server, the control API without MCP, lessons; `assets.md`: assets,
+  fonts, identity, distribution), the layout every other package uses and
+  the paths the scaffold AGENTS.md links. A first cut split the agent docs
+  into per-command `agents.md` files too; that broke the cross-package
+  convention and the scaffold links, so it was folded back. `README.md` is
+  the single overview; `docs/index.md` goes. The website mounts `README.md`
+  + `*/docs.md` instead of the `docs/` folder (`website/src/build.ts`).
+  `package.json` `files` ships `agents/`.
 - **`scripts/build-server.ts` becomes a Makefile target**:
   `bun build src/server/main.ts --target=browser --format=esm --external 'flux:*'
   --outfile dist/server.js` (verify the CLI accepts the `flux:*` pattern);

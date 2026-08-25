@@ -91,4 +91,5 @@ of each says its runtime. `src/server/` is the dev server, a flux script
 (`bun`-free at runtime, its own tsconfig); every other command runs on bun.
 `src/lib/` is what the bun commands share, `src/types/` the type-only
 contracts between the two runtimes. Each command folder carries its
-`docs.md` (this site) and, where agents need depth, an `agents.md`.
+`docs.md` (this site); the depth agents need lives in `agents/` at the
+package root, as in the other packages.

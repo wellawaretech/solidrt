@@ -70,7 +70,7 @@ Never use the built-in `run` skill here. Drive the app yourself:
   even though one is running. In that case talk to the control API
   directly with curl on `http://127.0.0.1:<port>/__control__/...`; the
   endpoints and response shapes are documented in
-  `packages/cli/src/server/agents.md` ("The control API without MCP"). The
+  `packages/cli/agents/debugging.md` ("The control API without MCP"). The
   bridge is a long-lived process: a change to `packages/cli/src/mcp/main.ts`
   only takes effect in a re-spawned bridge.
 - Verify through the tree, not by eye: `send_input`/`/input` tap real

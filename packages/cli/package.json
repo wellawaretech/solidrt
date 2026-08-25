@@ -13,7 +13,8 @@
     "src/",
     "dist/",
     "fonts/",
-    "AGENTS.md"
+    "AGENTS.md",
+    "agents/"
   ],
   "dependencies": {
     "@babel/core": "^7.0.0",

@@ -8,18 +8,22 @@ AGENTS.md).
 `srt` is the dev tool. Bun is a dev prerequisite only; SolidRT apps run on the
 bundled `flux` runtime, not on Bun. Invoke via `bunx srt <command>`.
 
-The command folders carry the depth this one leaves out; read the one that
-matches the work before starting it:
-- src/mcp/agents.md - driving a running app over MCP, pointing an agent
-  client at the `srt mcp` server, and the debugging lessons that cost real
-  time. Read before investigating a bug or verifying a change against the
-  live app.
-- src/server/agents.md - what the dev server serves and the control API
-  without MCP (a shell, a CI step). Read before scripting against a server.
-- src/bundle/agents.md - the assets/ folder, inlined imports and the bundle
-  output. Read before adding an asset.
-- src/pack/agents.md - fonts, the `solidrt` package.json identity key, and
-  distribution builds. Read before adding a font or building to distribute.
+The dev loop against a running app is pause_watch -> edit -> reload ->
+resume_watch -> get_logs -> get_snapshot, with mute_user_input while you
+measure or test and unmute_user_input after; agents/debugging.md has the
+why of each hold. `reload` surfaces build errors but not type errors:
+`bunx srt check` is for those.
+
+agents/ carries the depth this one leaves out; read the one that matches
+the work before starting it:
+- agents/debugging.md - driving a running app over MCP, pointing an agent
+  client at the `srt mcp` server, what the dev server serves and its control
+  API without MCP (a shell, a CI step), and the debugging lessons that cost
+  real time. Read before investigating a bug, verifying a change against the
+  live app, or scripting against a server.
+- agents/assets.md - the assets/ folder, inlined imports and the bundle
+  output; fonts, the `solidrt` package.json identity key, and distribution
+  builds. Read before adding an asset or a font, or building to distribute.
 
 ## Commands
 
@@ -33,6 +37,10 @@ matches the work before starting it:
   window). Not usable headless. Reloads on save (the bundle's inputs and
   `assets/`); an agent pauses that with `pause_watch` and pushes its edits
   with the MCP `reload` tool.
+- `bunx srt check [file|dir]` - build in memory and typecheck, no output
+  and no reload. With a folder it covers every entry under it (src/index.tsx
+  and examples/*), so `bunx srt check .` answers "did I break any example"
+  in one call. The dev server runs it once at startup without gating on it.
 - `bunx srt bundle` - bundle the project into `dist/bundle/` (or
   `--output <dir>`): `<name>.srt.js` plus the app's isolate modules as
   `isolates/<id>.js`. With `--compile`, bytecode (`.srt.bin`/`.bin`)

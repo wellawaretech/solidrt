@@ -1,7 +1,9 @@
-# Assets and inlined imports
+# Assets, fonts, identity and distribution
 
-Read this before adding an asset to an app. Fonts, the app identity and
-distribution builds are in src/pack/agents.md.
+Read this before adding an asset or a font, setting the app's identity, or
+preparing a build for distribution.
+
+## Assets and inlined imports
 
 - Everything under `assets/` ships with the app: the folder is collected
   wholesale into each build's version manifest (no bundler analysis, no
@@ -24,3 +26,21 @@ distribution builds are in src/pack/agents.md.
   exist in projects only, not for a file served on its own.
 - `bunx srt bundle --json` is the dev server's rebuild contract: one JSON
   object (code, sourcemap, manifest, isolates) on stdout. Not for humans.
+
+## Fonts, identity and distribution
+
+- Custom fonts go in `assets/fonts/` and are declared in the `solidrt.fonts`
+  map in package.json (alias -> file path; role aliases `sans`/`serif`/`mono`
+  replace the built-in defaults, `false` drops one, other keys add fonts
+  selectable via fontFamily). A newly added font shows after restarting the
+  client.
+- The `solidrt` key in package.json is the app's identity: set a stable
+  reverse-DNS `appId` before distributing - it keys the app's storage
+  folder, defaults from the package name in dev, and `srt pack` warns
+  while defaulted. `org` and `displayName` are optional display metadata
+  (future launcher/window naming) with no storage meaning.
+- `bunx srt pack` builds a single-file executable (the runner with the
+  bytecode, manifest, assets and fonts appended as a trailer);
+  `bunx srt pack --folder` writes the flat app folder
+  (runner + manifest.json + bundle + assets/, plus the runner's GL
+  libraries on Windows and macOS) to `dist/pack/`.
