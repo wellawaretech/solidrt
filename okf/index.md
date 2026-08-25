@@ -139,9 +139,11 @@ Shaped, not started.
   Give dev, render and pack one gitignored output root (dist/) with a subdir
   per flow, fixing render's missing isolate support and clearing the ground
   for pack formats and asset pre-processing.
-- **[Move the srt CLI fully into flux](backlog/cli-flux-migration.md)** [2026-07-13]
-  Collapse the repl/dev-server split into one flux process so there is exactly
-  one rebuild-and-push path, leaving Bun only as a bundler subprocess.
+- **[Move the srt dev flow into flux and make ports an output](backlog/cli-flux-migration.md)** [2026-07-13]
+  Host run/server/client/mcp in one flux process that binds its own port, owns
+  the server registry, and shells out to bun for bundling and typechecking
+  only; a server starts in its project root or on a single file (never by
+  searching up), one server per key, never identified by port.
 - **[Component transitions cannot reach a control's internal paint](backlog/component-transitions-internal-paint.md)** [2026-08-22]
   The components forward `transition` to their root view and to the
   background/border rects drawn for `style`, but a control's own parts - the

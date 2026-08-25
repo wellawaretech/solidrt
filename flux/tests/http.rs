@@ -182,6 +182,28 @@ fn serve_returns_handle_and_stops() {
 }
 
 #[test]
+fn serve_picks_free_port_when_omitted() {
+  let code = r#"
+        import { serve } from "flux:http";
+        let server = serve({
+            host: "127.0.0.1",
+            fetch(req) { return "up"; },
+        });
+        // No port given: the OS picks one, and the handle reports the real one.
+        console.log("assigned", server.port !== 0, server.url === `http://127.0.0.1:${server.port}/`);
+
+        (async () => {
+            let r = await fetch(server.url);
+            console.log("body", r.status, await r.text());
+            server.close();
+        })().catch(e => console.error("test error: " + (e && e.message || e)));
+        "#;
+
+  let lines = serve_and_capture(code);
+  assert_eq!(lines, vec!["assigned true true".to_string(), "body 200 up".to_string()]);
+}
+
+#[test]
 fn serve_honors_host() {
   let port = free_port();
   let code = format!(

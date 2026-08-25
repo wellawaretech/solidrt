@@ -7,6 +7,7 @@
 pub mod abort;
 pub mod body;
 pub mod console;
+pub mod crypto;
 pub mod fetch;
 pub mod headers;
 pub mod http;

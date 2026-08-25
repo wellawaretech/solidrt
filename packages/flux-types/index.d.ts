@@ -15,7 +15,7 @@
 
 // Web-standard globals. The runtime is QuickJS, not a browser or Node, so it
 // ships no lib.dom / @types/bun: these declarations are the sole source for
-// console, fetch, the Fetch types, timers, WebSocket, and the encoders.
+// console, fetch, the Fetch types, timers, WebSocket, the encoders, and crypto.
 /// <reference path="./standards/console.d.ts" />
 /// <reference path="./standards/time.d.ts" />
 /// <reference path="./standards/text.d.ts" />
@@ -23,6 +23,7 @@
 /// <reference path="./standards/fetch.d.ts" />
 /// <reference path="./standards/websocket.d.ts" />
 /// <reference path="./standards/abort.d.ts" />
+/// <reference path="./standards/crypto.d.ts" />
 
 // GUI capabilities (present only on a gui-enabled runtime). rendertree/camera/
 // microphone/gpu are flux:* modules like the rest; requestAnimationFrame stays a

@@ -503,7 +503,9 @@ fn connection_service<'js>(
 /// A free function (not a closure) so its `'js` is properly higher-ranked, which
 /// the invariant `Class<'js, Server>` return type requires.
 fn serve_impl<'js>(ctx: Ctx<'js>, opts: Object<'js>) -> rquickjs::Result<Class<'js, Server>> {
-  let port: u16 = opts.get("port")?;
+  // `port` 0 (or omitted) asks the OS for a free port; the bound one is
+  // read back from the listener below, so `server.port` is always real.
+  let port: u16 = opts.get::<_, Option<u16>>("port")?.unwrap_or(0);
   let fetch_fn: Option<Function<'js>> = opts.get("fetch").ok();
   let error_fn: Option<Function<'js>> = opts.get("error").ok();
   let pending = ctx.userdata::<PendingOps>().expect("pending ops").clone();
@@ -528,6 +530,10 @@ fn serve_impl<'js>(ctx: Ctx<'js>, opts: Object<'js>) -> rquickjs::Result<Class<'
   let host: Option<String> = opts.get("host")?;
   let host = host.unwrap_or_else(|| "0.0.0.0".to_string());
   let listener = bind_listener(&host, port).map_err(|e| Exception::throw_message(&ctx, &e))?;
+  let port = listener
+    .local_addr()
+    .map_err(|e| Exception::throw_message(&ctx, &format!("serve: failed to read the bound address: {e}")))?
+    .port();
 
   let shared = ServerShared::new();
 

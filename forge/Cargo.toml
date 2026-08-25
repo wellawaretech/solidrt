@@ -21,6 +21,8 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 hyper = { version = "1", features = ["server", "http1"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
 http-body-util = "0.1"
+# The digest core behind crypto.subtle.digest.
+sha2 = "0.10"
 bytes = "1"
 futures-core = "0.3"
 # Jitter for the fetch 429 backoff. Already in the tree (tokio and others

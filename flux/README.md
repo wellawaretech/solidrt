@@ -53,6 +53,7 @@ echo 'console.log("hello")' | fluxc > app.bin
 | `fetch(url, opts?)`                | returns a `Response`                                          |
 | `Request` / `Response` / `Headers` | web-standard                                                  |
 | `TextEncoder` / `TextDecoder`      |                                                               |
+| `crypto.subtle.digest(alg, data)`  | SHA-256/384/512 only; resolves to an `ArrayBuffer`            |
 
 ### `Flux` global
 
@@ -64,7 +65,7 @@ echo 'console.log("hello")' | fluxc > app.bin
 import { serve } from "flux:http"
 
 let server = serve({
-  port: 3000,
+  port: 3000, // 0 or omitted: the OS picks one, read it back from server.port
   fetch(req) {
     return new Response("ok")
   },

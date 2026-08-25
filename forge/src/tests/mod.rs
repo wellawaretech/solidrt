@@ -1,4 +1,5 @@
 mod cache;
+mod crypto;
 mod fetch;
 mod fs;
 mod image;

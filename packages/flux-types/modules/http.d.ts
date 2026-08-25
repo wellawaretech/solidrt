@@ -149,7 +149,7 @@ declare module "flux:http" {
   }
 
   type Server = {
-    /** The bound port. */
+    /** The bound port (the OS-assigned one when `port` was 0 or omitted). */
     readonly port: number
     /** The bound host/interface. */
     readonly host: string
@@ -191,8 +191,8 @@ declare module "flux:http" {
   }
 
   type ServeOptions = {
-    /** Port to listen on. */
-    port: number
+    /** Port to listen on. 0 or omitted picks a free port; read it back from `server.port`. */
+    port?: number
     /** Hostname/interface to bind. Defaults to "0.0.0.0" (all interfaces). */
     host?: string
     /**
