@@ -60,6 +60,41 @@ pub use gpu::{GpuTexture, SamplerOverride, SamplerState, TextureEntry, TextureFo
 pub use yuv::{YuvLayout, YuvMatrix, YuvRange};
 
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+use std::sync::OnceLock;
+
+/// The GPU behind the process's GL context, as GL names it.
+#[derive(Clone, Debug)]
+pub struct GpuInfo {
+  pub vendor: String,
+  pub renderer: String,
+  pub version: String,
+}
+
+// Platform facts fixed at startup, for a dev tool asking what machine it is
+// looking at: the SDL video driver (set by setup_video) and the GL strings
+// (set by the raster thread once its context exists). Each is set once and
+// read from any thread; a reader that comes first sees None.
+static VIDEO_DRIVER: OnceLock<String> = OnceLock::new();
+static GPU_INFO: OnceLock<GpuInfo> = OnceLock::new();
+
+pub(crate) fn set_video_driver(name: String) {
+  let _ = VIDEO_DRIVER.set(name);
+}
+
+/// The SDL video driver in use ("wayland", "x11", "android", ...), once the
+/// window exists.
+pub fn video_driver() -> Option<&'static str> {
+  VIDEO_DRIVER.get().map(String::as_str)
+}
+
+pub(crate) fn set_gpu_info(info: GpuInfo) {
+  let _ = GPU_INFO.set(info);
+}
+
+/// The GPU strings, once the raster thread has its GL context.
+pub fn gpu_info() -> Option<&'static GpuInfo> {
+  GPU_INFO.get()
+}
 
 // Soft-keyboard (IME) inset height in raw pixels. On Android the platform
 // reports it via JNI (the cdylib re-exports a symbol that calls the setter);

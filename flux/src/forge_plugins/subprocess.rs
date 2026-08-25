@@ -31,12 +31,16 @@ use forge::subprocess::{self, CommandSpec, Spawned};
 // Arguments are always passed as an array and never through a shell, so there is
 // no per-platform shell or quoting to reason about (and no shell injection).
 //
-// opts: { cwd, env, stdin, timeoutMs, encoding }
+// opts: { cwd, env, stdin, timeoutMs, encoding, detached }
 //   cwd       working directory for the child
 //   env       object of extra env vars, added to / overriding the inherited env
 //   stdin     string | Uint8Array written to the child's stdin, then closed
 //   timeoutMs kill the child if it has not exited within this many ms
 //   encoding  "buffer" -> stdout/stderr as Uint8Array; default utf8 strings
+//   detached  spawn() only: the child outlives this engine and process (null
+//             stdio, own process group, never killed on drop); its supervisor
+//             runs on the process runtime so it is still reaped. stdin and
+//             detached together is an error: there is no pipe to write.
 
 fn parse_spec<'js>(
   ctx: &Ctx<'js>,
@@ -52,6 +56,7 @@ fn parse_spec<'js>(
     stdin: None,
     timeout_ms: None,
     as_bytes: false,
+    detached: false,
   };
   if let Some(opts) = opts {
     if let Some(cwd) = opts.get::<_, Option<String>>("cwd")? {
@@ -72,6 +77,12 @@ fn parse_spec<'js>(
     if let Some(enc) = opts.get::<_, Option<String>>("encoding")? {
       spec.as_bytes = enc == "buffer";
     }
+    if let Some(detached) = opts.get::<_, Option<bool>>("detached")? {
+      spec.detached = detached;
+    }
+  }
+  if spec.detached && spec.stdin.is_some() {
+    return Err(Exception::throw_message(ctx, "A detached child has no stdin pipe; drop the stdin option"));
   }
   Ok(spec)
 }
@@ -158,8 +169,14 @@ fn build_child<'js>(ctx: Ctx<'js>, spec: &Rc<CommandSpec>) -> rquickjs::Result<O
 
   // The supervisor owns the child and waits for exit (or a kill request),
   // publishing the status. Holds a pending op for the child's lifetime so the
-  // engine stays alive until it exits.
-  {
+  // engine stays alive until it exits. A detached child is the opposite on
+  // both counts: its supervisor runs on the process runtime, which outlives
+  // this context (an engine rebuild drops every ctx.spawn task, and with it
+  // a kill-on-drop child), and it holds nothing, so the engine may idle or
+  // exit with the child still running.
+  if spec.detached {
+    tokio::spawn(supervisor.run());
+  } else {
     let pending = pending.clone();
     ctx.spawn(async move {
       pending.hold();
@@ -168,10 +185,19 @@ fn build_child<'js>(ctx: Ctx<'js>, spec: &Rc<CommandSpec>) -> rquickjs::Result<O
     });
   }
 
+  // A detached child has null stdio; its streams iterate to nothing.
+  let stdout = match stdout {
+    Some(stdout) => to_byte_stream(ReaderStream::new(stdout)),
+    None => to_byte_stream(ReaderStream::new(tokio::io::empty())),
+  };
+  let stderr = match stderr {
+    Some(stderr) => to_byte_stream(ReaderStream::new(stderr)),
+    None => to_byte_stream(ReaderStream::new(tokio::io::empty())),
+  };
   let obj = Object::new(ctx.clone())?;
   obj.set("pid", child.pid())?;
-  obj.set("stdout", byte_stream_iterable(&ctx, to_byte_stream(ReaderStream::new(stdout)), pending.clone())?)?;
-  obj.set("stderr", byte_stream_iterable(&ctx, to_byte_stream(ReaderStream::new(stderr)), pending.clone())?)?;
+  obj.set("stdout", byte_stream_iterable(&ctx, stdout, pending.clone())?)?;
+  obj.set("stderr", byte_stream_iterable(&ctx, stderr, pending.clone())?)?;
 
   // write(data) -> Promise: serialized behind the stdin lock.
   let write_fn = Function::new(

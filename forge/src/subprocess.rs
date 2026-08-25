@@ -13,11 +13,16 @@
 //! Arguments are always an array, never a shell, so there is no per-platform
 //! shell/quoting and no injection. `kill_on_drop(true)` reaps a timed-out or
 //! abandoned child: dropping the future that owns it (or the `Supervisor`) kills
-//! it.
+//! it. A `detached` spawn opts out of that tie: no pipes, its own process
+//! group, never killed on drop, so it outlives the engine that started it
+//! (a dev tool launching another runtime instance); the host runs its
+//! `Supervisor` somewhere that outlives the engine too, or the child is
+//! never reaped.
 
 use std::io;
 use std::process::Stdio;
 use std::rc::Rc;
+use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::io::AsyncWriteExt;
@@ -36,6 +41,8 @@ pub struct CommandSpec {
   pub stdin: Option<Vec<u8>>,
   pub timeout_ms: Option<u64>,
   pub as_bytes: bool,
+  /// Outlive the spawner: null stdio, own process group, no kill on drop.
+  pub detached: bool,
 }
 
 /// The buffered result of a finished child (`output()`).
@@ -134,17 +141,29 @@ impl CommandSpec {
 
   /// Spawn the child with piped stdio and set up its supervisor. Returns the
   /// engine-free `Child` handle, the raw stdout/stderr (the caller wraps them in
-  /// its own stream type), the `Supervisor` (the caller spawns `run()`), and any
-  /// initial stdin to write (the caller spawns a `write_stdin`). A failure to
-  /// launch is a plain message string. Spawning the tasks is host-specific, so it
-  /// stays with the caller.
+  /// its own stream type; `None` for a detached child, whose stdio is null), the
+  /// `Supervisor` (the caller spawns `run()`), and any initial stdin to write
+  /// (the caller spawns a `write_stdin`). A failure to launch is a plain message
+  /// string. Spawning the tasks is host-specific, so it stays with the caller.
   pub fn spawn(&self) -> Result<Spawned, String> {
     let mut command = TokioCommand::new(&self.cmd);
     command.args(&self.args);
-    command.kill_on_drop(true);
-    command.stdin(Stdio::piped());
-    command.stdout(Stdio::piped());
-    command.stderr(Stdio::piped());
+    if self.detached {
+      command.kill_on_drop(false);
+      command.stdin(Stdio::null());
+      command.stdout(Stdio::null());
+      command.stderr(Stdio::null());
+      // Its own group, so a Ctrl+C aimed at the spawner's terminal stops here.
+      #[cfg(unix)]
+      command.process_group(0);
+      #[cfg(windows)]
+      command.creation_flags(CREATE_NEW_PROCESS_GROUP);
+    } else {
+      command.kill_on_drop(true);
+      command.stdin(Stdio::piped());
+      command.stdout(Stdio::piped());
+      command.stderr(Stdio::piped());
+    }
     if let Some(cwd) = &self.cwd {
       command.current_dir(cwd);
     }
@@ -154,14 +173,14 @@ impl CommandSpec {
 
     let mut child = command.spawn().map_err(|e| spawn_err(&self.cmd, e))?;
     let pid = child.id();
-    let stdout = child.stdout.take().expect("child stdout piped");
-    let stderr = child.stderr.take().expect("child stderr piped");
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
 
     // stdin is behind an async Mutex so write()/endStdin() serialize: a write
     // holds the lock across its (backpressure-respecting) write_all, so concurrent
     // writes queue instead of racing.
     let stdin = Rc::new(Mutex::new(child.stdin.take()));
-    let kill_notify = Rc::new(Notify::new());
+    let kill_notify = Arc::new(Notify::new());
     let (status_tx, status_rx) = watch::channel(None::<StatusData>);
 
     let handle = Child { pid, stdin, kill_notify: kill_notify.clone(), status_rx };
@@ -170,13 +189,16 @@ impl CommandSpec {
   }
 }
 
+#[cfg(windows)]
+const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+
 /// The pieces of a freshly spawned child the caller wires up: the `Child` handle,
 /// its stdout/stderr (to wrap in the host's stream type), the `Supervisor` (to
 /// spawn), and any initial stdin (to write on a spawned task).
 pub struct Spawned {
   pub child: Child,
-  pub stdout: ChildStdout,
-  pub stderr: ChildStderr,
+  pub stdout: Option<ChildStdout>,
+  pub stderr: Option<ChildStderr>,
   pub supervisor: Supervisor,
   pub initial_stdin: Option<Vec<u8>>,
 }
@@ -188,7 +210,7 @@ pub struct Spawned {
 pub struct Child {
   pid: Option<u32>,
   stdin: Rc<Mutex<Option<ChildStdin>>>,
-  kill_notify: Rc<Notify>,
+  kill_notify: Arc<Notify>,
   status_rx: watch::Receiver<Option<StatusData>>,
 }
 
@@ -236,10 +258,11 @@ impl Child {
 
 /// Owns the OS child for its whole life: waits for exit (or a kill request) and
 /// publishes the exit status over a watch channel. The caller spawns `run()` and
-/// holds the engine alive for its duration.
+/// holds the engine alive for its duration; for a detached child it runs it
+/// where the engine's teardown cannot reach (the supervisor is `Send` for that).
 pub struct Supervisor {
   child: TokioChild,
-  kill_notify: Rc<Notify>,
+  kill_notify: Arc<Notify>,
   status_tx: watch::Sender<Option<StatusData>>,
 }
 

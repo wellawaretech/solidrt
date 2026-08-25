@@ -51,7 +51,7 @@ serve({
 | `flux:mdns` | Local network service discovery. |
 | `flux:sqlite` | SQLite, on a dedicated thread. |
 | `flux:subprocess` | Spawn and drive processes. |
-| `flux:process` | Arguments, environment, platform, memory usage, signal handlers, process liveness. |
+| `flux:process` | Arguments, environment, platform, executable path, memory usage, signal handlers, process liveness. |
 | `flux:wasm` | Run WebAssembly modules, interpreted. Portable across every target; a small constant factor over JavaScript on tight compute, nowhere near browser wasm speed. |
 | `flux:ffi` | Call into native libraries. |
 | `flux:isolate` | Run a module on its own thread and call it like an object. |

@@ -14,6 +14,15 @@ declare module "flux:subprocess" {
      * as UTF-8 strings.
      */
     encoding?: "buffer" | "utf8"
+    /**
+     * `spawn()` only: the child outlives this engine and this process. It is
+     * never killed on drop or reload, has no stdin/stdout/stderr pipes (all
+     * null: `stdout`/`stderr` iterate to nothing, `write` fails) and runs in
+     * its own process group, so a Ctrl+C to the parent does not reach it.
+     * `pid`, `kill()` and `status()` still work. Cannot combine with `stdin`.
+     * What a dev tool uses to launch another runtime instance.
+     */
+    detached?: boolean
   }
 
   /** The buffered result of a child run to completion via {@link Command.output}. */

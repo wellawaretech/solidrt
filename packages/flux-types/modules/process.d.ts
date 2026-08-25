@@ -24,6 +24,14 @@ declare module "flux:process" {
    */
   export function homedir(): string | null
   /**
+   * The path of the running executable, or `null` when the OS cannot name it
+   * (Node's is always a string). What a dev tool spawns through
+   * `flux:subprocess` to start another instance of the runtime it runs in.
+   * In a packed app this is the app itself: spawning it launches that app,
+   * not a bare runtime.
+   */
+  export let execPath: string | null
+  /**
    * Terminate another process. Portable (SIGKILL / TerminateProcess), so
    * there is no signal argument, unlike Node's `process.kill(pid, signal)`.
    *

@@ -14,7 +14,28 @@ export type ClientEntry = {
   /** Query kinds this client's runtime answers (empty on runtimes that predate
    * the advertisement); dev tools plan their verification surface from it. */
   queries: string[]
+  /** The client's storage tree on its own machine (`<data-root>/client<N>`
+   * for a dev client, the install folder for the launcher or a packed app),
+   * or null when it runs without writable storage or predates the field. */
+  clientDir: string | null
+  /** The client's process id on its own machine. */
+  pid: number | null
+  /** The runtime binary it runs. */
+  execPath: string | null
+  /** Its machine's hostname. */
+  host: string | null
+  /** The OS as a person names it ("Linux (Ubuntu 24.04)", "Android 15 on Pixel 9 Pro"). */
+  os: string | null
+  /** The kernel version. */
+  kernel: string | null
+  /** The SDL video driver ("wayland", "x11", "android", "offscreen", ...). */
+  videoDriver: string | null
+  /** The GPU strings as GL reports them; null on a client that connected
+   * before its GL context existed (a reconnect fills it in). */
+  gpu: GpuInfo | null
 }
+
+export type GpuInfo = { vendor: string; renderer: string; version: string }
 
 /** GET /clients */
 export type ClientsResponse = {

@@ -9,7 +9,7 @@ use tokio::sync::Notify;
 
 use super::events::{add_listener, emit_event, has_listeners, remove_listener};
 use crate::logger::CtxLogger;
-use forge::process::{alive, arch, env_vars, home_dir, kill, pid, platform, rss, SignalStream};
+use forge::process::{alive, arch, env_vars, exec_path, home_dir, kill, pid, platform, rss, SignalStream};
 
 // flux:process - process-level events. The first such surface flux owns on top
 // of its own event bus (register_listener + emit_event), separate from the UI
@@ -54,16 +54,21 @@ fn memory_usage(ctx: Ctx<'_>) -> rquickjs::Result<Object<'_>> {
   Ok(obj)
 }
 
-// flux:process also exposes the user's home directory, a portable kill and a
-// liveness probe:
+// flux:process also exposes the user's home directory, the running
+// executable, a portable kill and a liveness probe:
 //
-//   import { homedir, kill, alive } from "flux:process"
+//   import { homedir, execPath, kill, alive } from "flux:process"
 //   homedir()  // "/home/me", or null when the environment names none
+//   execPath   // "/opt/solidrt/solidrt-go", or null when the OS cannot say
 //   kill(pid)  // true when the process was terminated (SIGKILL / TerminateProcess)
 //   alive(pid) // true while a process with that id exists
 //
 // homedir names the one path a tool needs first (the machine-wide ~/.solidrt
-// state) without spelling the HOME/USERPROFILE split. kill takes a pid only - no signal argument - matching the portable
+// state) without spelling the HOME/USERPROFILE split. execPath is what a dev
+// tool spawns to get another instance of the runtime it runs in (a value,
+// snapshotted at evaluation like pid: the executable does not move). In a
+// packed app it is the app itself, so spawning it launches that app, not a
+// bare runtime. kill takes a pid only - no signal argument - matching the portable
 // contract of Child.kill in flux:subprocess. alive is the "signal 0" idiom
 // with its own name: a registry reader asks it before trusting a record.
 fn homedir_impl() -> Option<String> {
@@ -113,6 +118,7 @@ impl ModuleDef for ProcessModule {
     decl.declare("memoryUsage")?;
     decl.declare("pid")?;
     decl.declare("homedir")?;
+    decl.declare("execPath")?;
     decl.declare("kill")?;
     decl.declare("alive")?;
     decl.declare("env")?;
@@ -136,6 +142,7 @@ impl ModuleDef for ProcessModule {
     exports.export("memoryUsage", Function::new(ctx.clone(), memory_usage)?)?;
     exports.export("pid", pid())?;
     exports.export("homedir", Function::new(ctx.clone(), homedir_impl)?)?;
+    exports.export("execPath", exec_path())?;
     exports.export("kill", Function::new(ctx.clone(), kill_impl)?)?;
     exports.export("alive", Function::new(ctx.clone(), alive_impl)?)?;
     exports.export("env", env_object(ctx)?)?;

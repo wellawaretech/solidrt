@@ -473,6 +473,13 @@ async fn try_serve(
   // previous address so reconnecting to a different server repoints the proxy.
   *dev_server.lock().expect("dev_server lock poisoned") = Some(addr.to_string());
 
+  // What this client already knows about itself and never changes, told
+  // once so a dev tool can tell clients apart and see what machine each one
+  // is: its storage tree (<data-root>/client<N>, or the launcher/packed
+  // folder; null without writable storage), pid and executable, the host
+  // and OS, the SDL video driver and the GPU strings. The GPU strings come
+  // from the raster thread's context; a connect that wins that race sends
+  // null, which a reconnect corrects.
   let info = serde_json::json!({
     "type": "info",
     "platform": flux::platform(),
@@ -480,6 +487,18 @@ async fn try_serve(
     "profile": crate::PROFILE,
     "capabilities": flux::capabilities(),
     "queries": QUERY_KINDS,
+    "clientDir": crate::storage::get().map(|store| store.client_dir.to_string_lossy().into_owned()),
+    "pid": std::process::id(),
+    "execPath": forge::process::exec_path(),
+    "host": forge::process::host_name(),
+    "os": forge::process::os_description(),
+    "kernel": forge::process::kernel_version(),
+    "videoDriver": alloy::video_driver(),
+    "gpu": alloy::gpu_info().map(|gpu| serde_json::json!({
+      "vendor": gpu.vendor,
+      "renderer": gpu.renderer,
+      "version": gpu.version,
+    })),
   });
   let _ = client.send(tokio_websockets::Message::text(info.to_string())).await;
 

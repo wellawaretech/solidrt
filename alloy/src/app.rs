@@ -125,6 +125,7 @@ fn setup_video(
   // Platform fact worth having in every log: input behavior (pointer lock,
   // warp, coordinate spaces) differs per driver (wayland vs x11/XWayland).
   log::info!("[alloy] video driver: {}", video.current_video_driver());
+  crate::set_video_driver(video.current_video_driver().to_string());
 
   gl::configure_opengl(&video);
 

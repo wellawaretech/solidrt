@@ -71,6 +71,14 @@ export function clientList(withAddress = false): (ClientEntry & { address?: stri
     profile: info.profile,
     capabilities: info.capabilities,
     queries: info.queries,
+    clientDir: info.clientDir,
+    pid: info.pid,
+    execPath: info.execPath,
+    host: info.host,
+    os: info.os,
+    kernel: info.kernel,
+    videoDriver: info.videoDriver,
+    gpu: info.gpu,
     ...(withAddress ? { address: ws.remoteAddr ?? null } : {}),
   }))
 }

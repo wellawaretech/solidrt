@@ -62,12 +62,11 @@ pub(crate) fn run_context(
     let gl = crate::gl::create_gl_context(&*binding);
     let impeller_ctx = crate::gl::create_impeller_context(&*binding);
     unsafe {
-      log::info!(
-        "[alloy] GPU ready: {} | {} | {}",
-        gl.get_parameter_string(glow::VENDOR),
-        gl.get_parameter_string(glow::RENDERER),
-        gl.get_parameter_string(glow::VERSION)
-      );
+      let vendor = gl.get_parameter_string(glow::VENDOR);
+      let renderer = gl.get_parameter_string(glow::RENDERER);
+      let version = gl.get_parameter_string(glow::VERSION);
+      log::info!("[alloy] GPU ready: {vendor} | {renderer} | {version}");
+      crate::set_gpu_info(crate::GpuInfo { vendor, renderer, version });
     }
 
     let state = RasterState::new(gl, impeller_ctx, binding, surface_size, capture_frames, raster_stats, tx, wake);

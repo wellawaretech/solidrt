@@ -216,6 +216,12 @@ async function handleRequest(req: FluxRequest, server: Server): Promise<Response
   return handleFiles(req, path, config.sourceDir)
 }
 
+// A string field of a client's `info`, or null when absent or malformed
+// (an older runtime, or one without the fact).
+function text(value: unknown): string | null {
+  return typeof value === "string" ? value : null
+}
+
 function onOpen(ws: ServerWebSocket) {
   let id = state.nextClientId++
   state.clients.set(ws, {
@@ -225,6 +231,14 @@ function onOpen(ws: ServerWebSocket) {
     id,
     capabilities: [],
     queries: [],
+    clientDir: null,
+    pid: null,
+    execPath: null,
+    host: null,
+    os: null,
+    kernel: null,
+    videoDriver: null,
+    gpu: null,
   })
   console.log(`[cli] Client connected ${ws.remoteAddr ?? "unknown"}`)
   // Advertise the address we are reachable on, so clients dialed over a
@@ -257,6 +271,17 @@ function onMessage(ws: ServerWebSocket, msg: string | Uint8Array) {
         id: existing?.id ?? state.nextClientId++,
         capabilities: Array.isArray(data.capabilities) ? data.capabilities.map(String) : [],
         queries: Array.isArray(data.queries) ? data.queries.map(String) : [],
+        clientDir: text(data.clientDir),
+        pid: typeof data.pid === "number" ? data.pid : null,
+        execPath: text(data.execPath),
+        host: text(data.host),
+        os: text(data.os),
+        kernel: text(data.kernel),
+        videoDriver: text(data.videoDriver),
+        gpu:
+          data.gpu && typeof data.gpu === "object"
+            ? { vendor: text(data.gpu.vendor) ?? "", renderer: text(data.gpu.renderer) ?? "", version: text(data.gpu.version) ?? "" }
+            : null,
       })
       console.log(`[cli] Client info ${ws.remoteAddr ?? "unknown"} ${data.platform} (${data.version})`)
     } else if (data.type === "log") {

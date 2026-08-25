@@ -3,7 +3,8 @@
 //! Names no scripting-engine types. The marshalling layer
 //! (`plugins/flux/process.rs`) owns the event-bus wiring (`ctx.spawn`,
 //! emit/has-listeners, the per-context dedup) and forwards to the pieces here:
-//! host metadata (`platform`/`arch`/`rss`/`home_dir`/`env_vars`), `kill`/`alive`, and `SignalStream`, which hides the
+//! host metadata (`platform`/`arch`/`rss`/`home_dir`/`exec_path`/`env_vars`, the OS and host
+//! names), `kill`/`alive`, and `SignalStream`, which hides the
 //! unix vs non-unix OS signal split behind one async source.
 
 use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, RefreshKind, System};
@@ -51,6 +52,31 @@ pub fn rss() -> u64 {
 pub fn home_dir() -> Option<String> {
   let var = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
   std::env::var(var).ok().filter(|v| !v.is_empty())
+}
+
+/// The path of the running executable, or `None` when the OS cannot name it
+/// (a deleted or unlinked binary, a platform without the query). What a tool
+/// passes to spawn another instance of itself.
+pub fn exec_path() -> Option<String> {
+  std::env::current_exe().ok().and_then(|path| path.to_str().map(String::from))
+}
+
+/// The OS as a person names it: "Linux (Arch Linux)", "Android 15 on Pixel 9
+/// Pro" (sysinfo folds the device model in), "macOS 15.2", "Windows 11 Pro".
+/// `None` when the platform does not say.
+pub fn os_description() -> Option<String> {
+  System::long_os_version()
+}
+
+/// The kernel version ("7.1.4-arch1-1", a Darwin or NT build), or `None`.
+pub fn kernel_version() -> Option<String> {
+  System::kernel_version()
+}
+
+/// The machine's hostname, or `None`. What tells one client's machine from
+/// another's once clients connect over the network.
+pub fn host_name() -> Option<String> {
+  System::host_name()
 }
 
 /// The process environment as name/value pairs (non-UTF-8 entries skipped).
