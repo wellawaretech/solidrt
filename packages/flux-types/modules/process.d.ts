@@ -6,6 +6,8 @@ declare module "flux:process" {
    * argument.
    */
   export let argv: string[]
+  /** The OS process id of this process (what a registry record or a `kill` names). */
+  export let pid: number
   /** The host OS: "darwin", "win32", "linux", "android", ... */
   export let platform: string
   /** The CPU architecture: "x64", "arm64", ... */

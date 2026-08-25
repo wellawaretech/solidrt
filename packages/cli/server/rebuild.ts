@@ -2,16 +2,16 @@ import { command } from "flux:subprocess"
 import { dir, file } from "flux:fs"
 import { state } from "./state"
 
-// Server-owned "rebuild and push": the single place the running app is rebuilt
-// from source on demand (an MCP reload). The srt repl still bundles in-process
-// for its own keystroke reloads, but both routes call the same bundle-cli, so
-// the bundling logic cannot drift. Making the server the rebuild authority is
-// the interim step toward folding the whole CLI into flux (see
-// okf/backlog/cli-flux-migration.md).
+// The single rebuild-and-push path: the initial bundle at start and every
+// MCP reload go through here. The bundle itself runs in a bun subprocess
+// (bundle-cli, the one thing only bun can do); this side latches the result
+// for late-joining clients and broadcasts it.
 
-// Build the reload message the same way srt's buildReload does, so a
-// server-triggered reload is indistinguishable from a repl-triggered one to
-// clients. proxyHttp is a message flag, not a build input.
+// Build the reload message for the client protocol. `manifest` is the
+// bundle's version manifest JSON string; when present, clients install the
+// push into their version store before applying it (absent for the
+// build-failure trigger, which must never be installed). proxyHttp is a
+// message flag, not a build input.
 function buildReload(code: string, manifest?: string) {
   let config = state.config
   return {
@@ -23,18 +23,33 @@ function buildReload(code: string, manifest?: string) {
   }
 }
 
-// Rebuild from state.config.entry via the external bundle-cli subprocess, then
+// Reload code that fails to start the engine on purpose. The runtime treats a
+// startup error like any app that never called render() and falls back to its
+// baked-in BSOD screen, so a build that doesn't compile shows the BSOD instead
+// of leaving the previous app frozen on screen.
+const BSOD_TRIGGER = `throw new Error("SolidRT: build failed")`
+
+function latchAndSend(text: string) {
+  state.currentReload = text
+  for (let ws of state.clients.keys()) ws.send(text)
+}
+
+/** Latch the build-failure trigger and push it, so every client (and any
+ * that connects later) shows the BSOD instead of a stale app. */
+export function showBuildFailure() {
+  state.currentMaps = null
+  latchAndSend(JSON.stringify(buildReload(BSOD_TRIGGER)))
+}
+
+// Rebuild from config.entry via the external bundle-cli subprocess, then
 // latch (for late-joining clients) and broadcast the reload to every connected
-// client. Resolves with an error message on failure (no entry configured, or a
-// build error), or null on success.
+// client. Resolves with an error message on failure (a build error), or null
+// on success.
 export async function rebuildAndBroadcast(): Promise<string | null> {
   let config = state.config
-  if (!config.entry) {
-    return "No app entry to rebuild. Start srt with a source file (srt run src/index.tsx)."
-  }
-
   let params = JSON.stringify({
     entry: config.entry,
+    project: config.projectDir,
     devBase: state.serverUrl,
     dev: true,
     minify: config.minify,
@@ -69,8 +84,6 @@ export async function rebuildAndBroadcast(): Promise<string | null> {
     if (isolate.map) maps[isolate.id] = isolate.map
   }
   state.currentMaps = Object.keys(maps).length ? maps : null
-  let text = JSON.stringify(buildReload(bundle.code ?? "", bundle.manifest))
-  state.currentReload = text
-  for (let ws of state.clients.keys()) ws.send(text)
+  latchAndSend(JSON.stringify(buildReload(bundle.code ?? "", bundle.manifest)))
   return null
 }

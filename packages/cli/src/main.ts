@@ -9,7 +9,6 @@ import { runRenderCommand } from "./commands/render"
 import { runServerCommand } from "./commands/server"
 import { runClientCommand } from "./commands/client"
 import { runMcpCommand } from "./commands/mcp"
-import { spawnClient } from "./dev-client"
 
 // -- Validate args --
 
@@ -51,10 +50,9 @@ if (command === "init") {
 } else if (command === "client") {
   await runClientCommand()
 } else if (command === "server") {
-  await runServerCommand()
+  await runServerCommand(false)
 } else if (command === "run") {
-  await runServerCommand()
-  spawnClient()
+  await runServerCommand(true)
 } else if (command === "mcp") {
   await runMcpCommand()
 } else {

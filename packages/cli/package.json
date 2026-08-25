@@ -12,6 +12,7 @@
     "bin/",
     "src/",
     "server/",
+    "dist/",
     "scaffold/",
     "fonts/",
     "agents/",

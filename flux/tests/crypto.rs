@@ -23,11 +23,7 @@ async fn subtle_digest_sha256() {
   assert!(out.errors().is_empty(), "stderr: {}", out.errors());
   assert_eq!(
     out.lines_at(flux::LogLevel::Log),
-    vec![
-      "true ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
-      "64 ddaf35a193617aba",
-      "48",
-    ]
+    vec!["true ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", "64 ddaf35a193617aba", "48",]
   );
 }
 

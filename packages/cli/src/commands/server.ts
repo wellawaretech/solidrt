@@ -1,73 +1,101 @@
-import pkg from "../../package.json"
-import { source, isSource, isPrebuilt, values } from "../args"
-import { state, shutdown, print, printErr } from "../util"
-import { findProjectRoot, typecheck, reportTypes } from "./check"
-import { bundle, bundleMaps, prebuiltManifest } from "../bundler"
-import { projectDirFor } from "../project"
-import { startServer, buildReload, sendReload, showBuildFailure } from "../dev-server"
-import { startRepl } from "../repl"
-import { startWatcher } from "../watcher"
-import { resolve, dirname } from "path"
+import { fileURLToPath } from "node:url"
+import { existsSync, unlinkSync } from "node:fs"
+import { networkInterfaces, tmpdir } from "node:os"
+import { resolve } from "node:path"
+import { values, port, appArgs, clientStorageArgs } from "../args"
+import { requireBinary } from "../util"
+import { resolveMode, sourceDirOf } from "../mode"
+import { liveRecords, sameKey } from "../registry"
+import { serverDir } from "../dev-dir"
+import { buildServerBundle } from "../server-bundle"
 
-// Brings up the dev server (a spawned flux script serving HTTP/WS) plus the
-// initial bundle, repl, and watcher in this process. The `run` command spawns
-// a local client on top of this from main.ts.
-export async function runServerCommand() {
-  // Initialize state from args
-  state.source = source
-  state.sourceDir = source ? dirname(resolve(source)) : process.cwd()
-  // With no entry the project is wherever srt was started: walk up to the
-  // nearest package.json exactly like an entry would, so the projectDir the
-  // MCP bridge derives for its registry match agrees with ours.
-  state.projectDir = projectDirFor(source ? resolve(source) : resolve("package.json"))
-  state.stats = values.stats
-  state.capture = values.capture ? resolve(values.capture) : undefined
+// `run` and `server`: decide what is served, resolve the binaries, and hand
+// everything to the dev server, a flux process (packages/cli/server/) that
+// owns the port, the registry record, the local client and the bundle from
+// there. This process only launches it and relays the signals that end it.
 
-  // Spawns the server process and waits until it answers; it owns the QR and
-  // address announcements, the capture file, and the proxy cache.
-  await startServer()
-
-  // Bundle initial code if source file given (after server start so the
-  // dev base URL is available to the bundler), and latch it on the server
-  // for the clients about to connect.
-  if (source && isSource) {
-    let initialResult = await bundle()
-    if (initialResult) {
-      state.currentCode = initialResult.code
-      state.currentMaps = bundleMaps(initialResult)
-      state.currentManifest = initialResult.manifest
-      await sendReload(buildReload({ code: state.currentCode, manifest: state.currentManifest }), {
-        latch: true,
-        maps: state.currentMaps,
-      })
-    } else {
-      await showBuildFailure()
-    }
-  } else if (source && isPrebuilt && source.endsWith(".srt.js")) {
-    let path = resolve(source)
-    state.currentCode = await Bun.file(path).text()
-    state.currentManifest = prebuiltManifest(state.currentCode, path, state.projectDir)
-    await sendReload(buildReload({ code: state.currentCode, manifest: state.currentManifest }), { latch: true })
-  }
-
-  process.on("SIGINT", shutdown)
-  process.on("SIGTERM", shutdown)
-
-  let version = pkg.version === "0.0.0" ? "" : " version " + pkg.version
-  console.log(`[cli] Welcome to SolidRT${version}!`)
-  startRepl()
-  startWatcher()
-
-  // Startup typecheck, deliberately not awaited: diagnostics print over the
-  // repl when tsc finishes, and a type error never gates the boot (srt check
-  // is the hard gate). Once per server lifetime; hot reloads never typecheck.
-  // Source builds only: a prebuilt .srt.js has no checkable project here.
-  if (source && isSource) startupTypecheck(source)
+// The server script the flux binary runs: the prebuilt bundle a published
+// CLI ships, or (in a checkout) one built now into a temp file, removed on
+// exit.
+async function serverScript(): Promise<{ path: string; temp: boolean }> {
+  let prebuilt = fileURLToPath(new URL("../../dist/server.js", import.meta.url))
+  if (existsSync(prebuilt)) return { path: prebuilt, temp: false }
+  let outfile = resolve(tmpdir(), `srt-dev-server-${process.pid}.js`)
+  await buildServerBundle(outfile)
+  return { path: outfile, temp: true }
 }
 
-async function startupTypecheck(entry: string) {
-  let root = findProjectRoot(entry)
-  if (!root) return
-  let types = await typecheck(root, entry)
-  if (types) reportTypes(types, print, printErr)
+export async function runServerCommand(withClient: boolean) {
+  let mode = resolveMode()
+
+  // One server per key: a second run in the same project (or on the same
+  // file) points at the running one instead of racing it.
+  let running = liveRecords().find((r) => sameKey(r.key, mode.key))
+  if (running) {
+    console.error(`A dev server already serves ${mode.key} on port ${running.port} (pid ${running.pid}). Stop it first, or attach a client with srt client.`)
+    process.exit(1)
+  }
+
+  let flux = requireBinary("flux")
+  let runner = withClient ? requireBinary("solidrt-go") : null
+  let script = await serverScript()
+  let dir = serverDir(mode.key)
+
+  // The LAN address (for --lan): the server has no OS module, so it is
+  // computed here and passed down.
+  let lanAddress = Object.values(networkInterfaces())
+    .flat()
+    .find((i) => i?.family === "IPv4" && !i.internal)?.address
+
+  // How the server rebuilds and typechecks: it cannot call Bun.build or the
+  // project's tsc itself (it is a flux process), so it spawns srt's own bun
+  // on the standalone bundle-cli and typecheck-cli entries. A prebuilt
+  // .srt.js has no checkable program.
+  let bundleCli = fileURLToPath(new URL("../bundle-cli.ts", import.meta.url))
+  let typecheckCli = fileURLToPath(new URL("../typecheck-cli.ts", import.meta.url))
+  let typecheckCmd = mode.entry.endsWith(".srt.js") ? null : [process.execPath, typecheckCli, mode.entry]
+
+  let clientArgs = [...clientStorageArgs()]
+  if (values.size) clientArgs.push("--size", values.size)
+
+  let config = {
+    mode: mode.mode,
+    key: mode.key,
+    serverDir: dir,
+    entry: mode.entry,
+    sourceDir: sourceDirOf(mode),
+    projectDir: mode.projectDir,
+    port,
+    lan: values.lan,
+    address: lanAddress ?? "127.0.0.1",
+    proxyHttp: values["proxy-http"],
+    args: appArgs,
+    minify: values.minify,
+    bundlerCmd: [process.execPath, bundleCli],
+    typecheckCmd,
+    cache: values["proxy-http"],
+    // Build outputs and the proxy cache: the project's .srt-data, or the
+    // server folder for a file served on its own (nothing else owns it).
+    cacheDir: mode.projectDir ? resolve(mode.projectDir, ".srt-data") : resolve(dir, "data"),
+    capture: values.capture ? resolve(values.capture) : undefined,
+    stats: values.stats,
+    tunnel: values.tunnel,
+    client: runner ? { cmd: runner, args: clientArgs } : null,
+  }
+
+  let proc = Bun.spawn([flux, script.path, JSON.stringify(config)], {
+    stdio: ["ignore", "inherit", "inherit"],
+  })
+  // The server ends itself on these (drops its record, stops the client);
+  // this process just relays them and waits.
+  let relay = () => proc.kill("SIGTERM")
+  process.on("SIGINT", relay)
+  process.on("SIGTERM", relay)
+  let code = await proc.exited
+  if (script.temp) {
+    try {
+      unlinkSync(script.path)
+    } catch {}
+  }
+  process.exit(code)
 }

@@ -1,4 +1,3 @@
-import { file } from "flux:fs"
 import { state } from "./state"
 import { rebuildAndBroadcast } from "./rebuild"
 import { remapPositions } from "./remap"
@@ -214,13 +213,14 @@ async function handleLogs(query: Map<string, string>): Promise<Response> {
 export async function handleControl(req: Request, path: string, query: Map<string, string>): Promise<Response> {
   switch (path) {
     case "/__control__/clients":
-      // `entry`/`projectDir` identify which app this server is serving: the
-      // fixed dev port means an agent can reach a different project's server
-      // than it thinks, and a repl/MCP `load` moves the entry mid-session.
+      // `key`/`mode`/`entry` identify what this server serves, for a caller
+      // that resolved it from the registry and wants to confirm the match.
       return Response.json({
         generation: state.generation,
-        entry: state.config.entry ?? null,
-        projectDir: state.projectDir,
+        key: state.config.key,
+        mode: state.config.mode,
+        entry: state.config.entry,
+        projectDir: state.config.projectDir,
         clients: clientList(),
       })
     case "/__control__/logs":
@@ -359,69 +359,13 @@ export async function handleControl(req: Request, path: string, query: Map<strin
       return handleQuery(query, "buffer", extra)
     }
     case "/__control__/reload": {
-      // Explicit rebuild-and-push, the primary way a coding agent applies its
-      // edits (srt mcp's reload tool). Unlike the repl's file watcher this is
-      // on demand, so a burst of edits collapses into one reload.
+      // Explicit rebuild-and-push, the way a coding agent applies its edits
+      // (srt mcp's reload tool). On demand, so a burst of edits collapses
+      // into one reload; there is no file watcher.
       if (req.method !== "POST") return Response.json({ error: "Reload requires POST" }, { status: 405 })
       let error = await rebuildAndBroadcast()
       if (error) return Response.json({ error }, { status: 502 })
-      state.watch = true
       return Response.json({ ok: true, clients: state.clients.size })
-    }
-    case "/__control__/load": {
-      // Load (or switch) the app entry and push it: srt mcp's load tool.
-      // Moves the rebuild entry and the file-serving root like the repl's
-      // `load` command, then reuses the reload path, so a later /reload
-      // rebuilds the newly loaded file. The srt process is not told: a
-      // watcher started on the launch-time source keeps watching that file.
-      if (req.method !== "POST") return Response.json({ error: "Load requires POST" }, { status: 405 })
-      let entry = (await req.json().catch(() => null))?.entry
-      if (typeof entry !== "string" || !entry) {
-        return Response.json({ error: "Load requires { entry: <absolute source path> }" }, { status: 400 })
-      }
-      if (!(await file(entry).exists())) {
-        return Response.json({ error: `Entry not found: ${entry}` }, { status: 400 })
-      }
-      // An entry outside the project root cannot resolve the project's
-      // dependencies, so the bundler would fail with misleading "bun install"
-      // advice; name the real constraint instead.
-      // Windows paths are case-insensitive and the same drive shows up as both
-      // `c:` and `C:` (an editor-spawned bridge keeps its parent's spelling), so a
-      // drive-letter path folds case; a POSIX path stays exact.
-      let norm = (p: string) => {
-        let s = p.replace(/\\/g, "/")
-        return /^[a-zA-Z]:\//.test(s) ? s.toLowerCase() : s
-      }
-      let root = norm(state.projectDir).replace(/\/+$/, "") + "/"
-      if (!norm(entry).startsWith(root)) {
-        return Response.json(
-          {
-            error: `Entry is outside the project root: ${entry} is not under ${state.projectDir}. The dev server can only bundle sources inside the project it was started in - move the file into the project or start srt there.`,
-          },
-          { status: 400 },
-        )
-      }
-      state.config.entry = entry
-      let cut = Math.max(entry.lastIndexOf("/"), entry.lastIndexOf("\\"))
-      if (cut > 0) state.sourceDir = entry.slice(0, cut)
-      let error = await rebuildAndBroadcast()
-      if (error) return Response.json({ error }, { status: 502 })
-      state.watch = true
-      return Response.json({ ok: true, entry, clients: state.clients.size })
-    }
-    case "/__control__/watch": {
-      // Pause/resume srt's auto-reload-on-save: the MCP watch tool. Latched
-      // here because the watcher lives in the srt process; it reads the flag
-      // via /__internal__/watch before acting on a change event. An agent
-      // pauses while creating or editing files so half-finished work is not
-      // pushed; a successful /reload or /load turns it back on.
-      if (req.method !== "POST") return Response.json({ error: "Watch requires POST" }, { status: 405 })
-      let enabled = (await req.json().catch(() => null))?.enabled
-      if (typeof enabled !== "boolean") {
-        return Response.json({ error: "Watch requires { enabled: <boolean> }" }, { status: 400 })
-      }
-      state.watch = enabled
-      return Response.json({ ok: true, enabled })
     }
     default:
       return Response.json({ error: "Unknown control endpoint" }, { status: 404 })

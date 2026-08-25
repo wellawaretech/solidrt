@@ -6,8 +6,9 @@ import solid from "babel-preset-solid"
 import { type BunPlugin, type BuildArtifact } from "bun"
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs"
 import { dirname, join, relative, resolve as resolvePath, sep } from "node:path"
-import { values, source } from "./args"
-import { state, print, requireBinary } from "./util"
+import { values } from "./args"
+import type { Mode } from "./mode"
+import { print, requireBinary } from "./util"
 import { buildManifest, manifestAssetFor, type ManifestAsset } from "./project"
 
 // Babel plugin: rewrite `import data from "./x" with { type: "binary" }` into an
@@ -171,7 +172,10 @@ export function isolateAssetPath(id: string, ext: "js" | "bin"): string {
   return `isolates/${id}.${ext}`
 }
 
-export type BundleOptions = { entry: string; devBase?: string; dev: boolean; minify: boolean }
+// `project` is the project root (mode.ts decides it, never a search), or
+// null for a file on its own: no assets in the manifest and no isolate
+// modules (isolates are a project feature).
+export type BundleOptions = { entry: string; devBase?: string; dev: boolean; minify: boolean; project: string | null }
 
 export type BundleResult = {
   code: string
@@ -247,7 +251,8 @@ export async function bundleWith(opts: BundleOptions): Promise<BundleResult | nu
   let code = await codeFromOutputs(main.outputs)
 
   let isolates: { id: string; code: string; map: string | null }[] = []
-  for (let module of findIsolateModules(dirname(resolvePath(opts.entry)))) {
+  let modules = opts.project === null ? [] : findIsolateModules(dirname(resolvePath(opts.entry)))
+  for (let module of modules) {
     let moduleMaps = opts.dev ? new Map<string, object>() : undefined
     let result = await build(module.path, moduleMaps, module.path)
     if (!result) return null
@@ -261,7 +266,7 @@ export async function bundleWith(opts: BundleOptions): Promise<BundleResult | nu
   return {
     code,
     map: await composeMap(main.outputs, babelMaps),
-    manifest: buildManifest(code, opts.entry, isolateManifestAssets(isolates)),
+    manifest: buildManifest(code, opts.entry, isolateManifestAssets(isolates), opts.project),
     isolates,
   }
 }
@@ -271,10 +276,8 @@ export function isolateManifestAssets(isolates: { id: string; code: string }[]):
   return isolates.map((i) => manifestAssetFor(isolateAssetPath(i.id, "js"), Buffer.from(i.code, "utf8")))
 }
 
-// Write dev isolate bundles where the dev server serves /isolates/ from
-// (<project>/.srt-data/isolates/<id>.js), so clients can fetch the manifest
-// assets the bundle lists. Stale files from removed modules stay behind
-// unlisted, which is harmless.
+// Write isolate bundles as `<dir>/<id>.js`, the shape the manifest lists and
+// a prebuilt bundle's sibling isolates/ dir carries.
 export function writeIsolates(dir: string, isolates: { id: string; code: string }[]) {
   for (let i of isolates) {
     let file = join(dir, `${i.id}.js`)
@@ -305,20 +308,13 @@ async function composeMap(outputs: BuildArtifact[], babelMaps?: Map<string, obje
   return composed.toString()
 }
 
-export async function bundle(entry = source) {
-  let devBase = state.serverUrl ?? undefined
-  let dev = !!devBase || values.dev
+// The one-shot commands' bundle (bundle, pack, render): production unless
+// --dev, on what the cwd and the argument decide (mode.ts).
+export async function bundle(mode: Mode) {
+  let dev = values.dev
   // Keep stdout clean when the bundle itself is written to stdout.
   if (!values.stdout) print(`[cli] Bundling (${dev ? "development" : "production"})`)
-  let result = await bundleWith({ entry: entry!, devBase, dev, minify: values.minify })
-  // With a server running, its /isolates/ route serves what we write here.
-  if (result && devBase) writeIsolates(devIsolatesDir(state.projectDir), result.isolates)
-  return result
-}
-
-/** Where a project's dev isolate bundles are written and served from. */
-export function devIsolatesDir(projectDir: string): string {
-  return join(projectDir, ".srt-data", "isolates")
+  return bundleWith({ entry: mode.entry, dev, minify: values.minify, project: mode.projectDir })
 }
 
 // A flux entry's isolate modules: everything under its isolates/ dir, id =
@@ -360,15 +356,6 @@ export function readPrebuiltIsolates(bundlePath: string): { id: string; code: st
   return out
 }
 
-// Loading a prebuilt .srt.js re-publishes its sibling isolate bundles through
-// the dev flow - written where the server's /isolates/ route serves from,
-// listed in the manifest - so isolate() works as it does from a source build.
-export function prebuiltManifest(code: string, path: string, projectDir: string): string {
-  let isolates = readPrebuiltIsolates(path)
-  writeIsolates(devIsolatesDir(projectDir), isolates)
-  return buildManifest(code, path, isolateManifestAssets(isolates))
-}
-
 // Bundle for the bare Flux runtime: no Solid plugin, flux: modules stay external.
 export async function bundleFlux(entry: string): Promise<string> {
   let result = await Bun.build({
@@ -388,8 +375,8 @@ export async function bundleFlux(entry: string): Promise<string> {
 
 // Bundle for the SolidRT runtime via the standard Solid-aware bundler, or
 // exit the command on a failed build.
-export async function bundleSolid(): Promise<BundleResult> {
-  let result = await bundle()
+export async function bundleSolid(mode: Mode): Promise<BundleResult> {
+  let result = await bundle(mode)
   if (!result) {
     console.error("Build failed")
     process.exit(1)

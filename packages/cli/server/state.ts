@@ -1,22 +1,31 @@
-// Server-side state shared by the route handlers. The srt process keeps the
-// bundler, watcher, and repl; this state is only what the protocol needs.
+// Server-side state shared by the route handlers: what the protocol needs,
+// plus the launch config srt (bun) handed over.
 
 import type { ServerWebSocket } from "flux:http"
 
 export type Config = {
-  port: number
-  /** Directory served by the file routes (updatable via /__internal__/reload). */
+  /** Project mode serves the project at its root; file mode serves one file. */
+  mode: "project" | "file"
+  /** The canonical project root (project mode) or file path (file mode): the
+   * registry key, and what every control response names. */
+  key: string
+  /** This server's folder under ~/.solidrt/servers/: the registry record,
+   * the remembered port, the tunnel key. */
+  serverDir: string
+  /** The app entry (absolute path) rebuilt on a reload. */
+  entry: string
+  /** Directory served by the file routes (the entry's directory). */
   sourceDir: string
-  /** Project root whose assets/ folder the /assets/ route serves (updatable
-   * via /__internal__/reload, moves with the repl `load`). */
-  projectDir: string
-  /** The address clients can reach this machine on (LAN IP or 127.0.0.1). */
+  /** Project root whose assets/ folder the /assets/ route serves; null in
+   * file mode (no assets). */
+  projectDir: string | null
+  /** An explicit --port; otherwise the remembered port is tried, then 0. */
+  port?: number
+  /** Bind every interface (and announce the LAN address); default loopback. */
+  lan: boolean
+  /** This machine's LAN IPv4 (srt computes it; the server has no OS module). */
   address: string
   proxyHttp: boolean
-  /** The app entry (absolute .tsx/.jsx path) the server rebuilds on an
-   * MCP-triggered reload, or undefined when srt was started without a source.
-   * Moved by the repl `load` command via /__internal__/reload. */
-  entry?: string
   /** The session's app arguments (the srt command-line tail after a bare
    * "--"), included in every reload push as flux:process argv. */
   args: string[]
@@ -25,17 +34,22 @@ export type Config = {
   /** How the server invokes the external bundler: [bunPath, bundleCliPath],
    * spawned with a JSON params argument appended (see rebuild.ts). */
   bundlerCmd: string[]
+  /** The startup typecheck: [bunPath, typecheckCliPath, entry], or null when
+   * the entry has no checkable program (a prebuilt bundle). */
+  typecheckCmd: string[] | null
   /** Enable the sqlite-backed proxy cache. */
   cache: boolean
-  /** Directory holding the proxy cache db (the project-local .srt-data). */
+  /** Build outputs and the proxy cache: the project's .srt-data, or the
+   * server folder in file mode. */
   cacheDir: string
-  /** Directory holding tunnel.key (the server's ~/.solidrt/servers/<port>/ folder). */
-  keyDir: string
   /** Destination for captured key events, or unset when off. */
   capture?: string
   stats: boolean
   /** Accept ticket-paired clients through the p2p tunnel. */
   tunnel: boolean
+  /** The local client to spawn once the port is bound (`srt run`), or null
+   * (`srt server`). */
+  client: { cmd: string; args: string[] } | null
 }
 
 export type ClientInfo = {
@@ -62,7 +76,7 @@ export let state = {
   generation: Date.now(),
   /**
    * The latched reload message (JSON text), replayed to late-joining clients.
-   * Set by /__internal__/reload posts with `latch`, cleared by a broadcast stop.
+   * Set by a successful rebuild (and the build-failure trigger).
    */
   currentReload: null as string | null,
   /**
@@ -73,17 +87,9 @@ export let state = {
    * maps clears them so frames are never remapped against a stale map.
    */
   currentMaps: null as Record<string, string> | null,
-  sourceDir: "",
-  projectDir: "",
+  /** The address clients reach this server on (host:port), set once bound. */
   serverUrl: "",
   stats: false,
-  /**
-   * Whether srt's file watcher may auto-reload on source changes. Agents
-   * pause it (MCP watch tool -> /__control__/watch) while creating or
-   * editing files; a successful /reload or /load re-enables it. srt reads
-   * it via /__internal__/watch before acting on a change event.
-   */
-  watch: true,
   // Capture events from all connected clients share one clock (captureStartMs,
   // integer milliseconds) so they merge into one coherent timeline, tagged by
   // `device`. Streamed to disk as JSON Lines - see main.ts's "capture" handling.

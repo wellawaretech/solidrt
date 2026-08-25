@@ -4,8 +4,8 @@ use std::rc::Rc;
 use crate::pending::PendingOps;
 use crate::plugins::marshal::with_pending;
 use crate::plugins::seekable::SeekableSource;
-use crate::standards_plugins::body::{attach_body, JsBytes};
 use crate::plugins::value::Neutral;
+use crate::standards_plugins::body::{attach_body, JsBytes};
 use forge::fs;
 
 // Marshalling for the `file()` reference: forward to the engine-free
@@ -106,6 +106,19 @@ fn build_file<'js>(ctx: Ctx<'js>, path: String) -> rquickjs::Result<Object<'js>>
   )
   .expect("create write function");
   obj.set("write", write_fn)?;
+
+  let remove_fn = Function::new(
+    ctx.clone(),
+    MutFn::from({
+      let path = path.clone();
+      move |ctx: Ctx<'_>| -> rquickjs::Result<Promised<_>> {
+        let path = path.clone();
+        Ok(with_pending(&ctx, async move { fs::remove(&path).await }))
+      }
+    }),
+  )
+  .expect("create remove function");
+  obj.set("remove", remove_fn)?;
 
   let append_fn = Function::new(
     ctx.clone(),

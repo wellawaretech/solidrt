@@ -11,32 +11,33 @@ the rest).
 ## Develop
 
 ```sh
-srt run src/index.tsx
+srt run
 ```
 
-Starts the dev server and a local client window against it. The server
-watches your sources and assets and pushes changes to every connected
-client, so one server can drive a desktop window and a phone at the same
-time.
+Starts the dev server and a local client window against it, from the
+project root (the entry is `solidrt.entry` in package.json, default
+`src/index.tsx`); `srt run <file>` serves a single file outside a project.
+The server pushes the bundle to every connected client, so one server can
+drive a desktop window and a phone at the same time; edits reach them on an
+explicit reload (the MCP `reload` tool).
 
 Split them when you need to:
 
 ```sh
-srt server src/index.tsx        # server only
-srt client --server 192.168.1.5 # client only, pointed at that server
-srt client --android            # install and launch on a connected device
+srt server                        # server only
+srt client                        # client only, the project's server (from its root)
+srt client --server 192.168.1.5:34884  # client only, pointed at that address
+srt client --android              # install and launch on a connected device
 ```
 
 Useful flags: `--size WxH` for the window, `--stats` for the FPS and memory
 overlay, `--tunnel` for the server to accept clients over a peer-to-peer
 connection instead of the local network, `--proxy-http` to route the app's
-`fetch` calls through the dev server, `--port N` to move the server off its
-default 34884 so a second project can run beside the first, and `-- <args>`
-to hand the app its own arguments (`flux:process` argv).
-
-`run` and `server` also leave you in a small REPL on stdin: `load` another
-entry, `reload`, `list` the connected clients, `stats` to toggle the overlay,
-`quit`.
+`fetch` calls through the dev server, `--lan` to reach the server from other
+devices (loopback only by default), `--port N` to pin the port (otherwise
+the server keeps the one it had, else takes the first free one from 34884
+up, so projects run side by side without any numbering), and `-- <args>` to hand the app its own arguments
+(`flux:process` argv).
 
 ## Inspect
 
@@ -61,8 +62,8 @@ doing, not just at the source.
 ## Record and replay
 
 ```sh
-srt run src/index.tsx --capture session.json
-srt render src/index.tsx --script session.json --fps 60 --duration 5
+srt run --capture session.json
+srt render --script session.json --fps 60 --duration 5
 ```
 
 `--capture` records key events from connected clients to a script (pointer
@@ -75,8 +76,8 @@ a video.
 ```sh
 srt check src/index.tsx    # build and typecheck, no build output
 srt check .                # every entry under a folder (src/index.tsx, examples/*)
-srt bundle src/index.tsx   # transpile to JS or bytecode
-srt pack src/index.tsx     # standalone executable (experimental)
+srt bundle                 # transpile to JS or bytecode
+srt pack                   # standalone executable (experimental)
 ```
 
 `srt bundle --flux` and `srt pack --flux` target the bare

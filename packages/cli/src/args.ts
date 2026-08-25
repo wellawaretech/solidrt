@@ -18,7 +18,9 @@ export let { values, positionals } = parseArgs({
     minify: { type: "boolean", short: "m", default: false },
     compile: { type: "boolean", default: false },
     flux: { type: "boolean", short: "f", default: false },
-    session: { type: "string", short: "s" },
+    file: { type: "boolean", default: false },
+    project: { type: "boolean", default: false },
+    lan: { type: "boolean", default: false },
     folder: { type: "boolean", default: false },
     stdout: { type: "boolean", default: false },
     output: { type: "string", short: "o" },
@@ -40,36 +42,33 @@ export let { values, positionals } = parseArgs({
   allowPositionals: true,
 })
 
-export const DEFAULT_DEV_PORT = 0x8844
-
-// The session number: -s/--session <N> selects the dev server (port
-// DEFAULT_DEV_PORT + N, see dev-server.ts resolveDevPort) and the default
-// client slot. Resolved at load, like the port.
-function resolveSession(): number {
-  let raw = values.session
-  if (raw === undefined) return 0
-  let n = Number(raw)
-  if (!/^\d+$/.test(raw) || DEFAULT_DEV_PORT + n > 65535) {
-    console.error(
-      `Invalid --session value "${raw}": expected a non-negative integer with ${DEFAULT_DEV_PORT} + N at most 65535`,
-    )
+// An explicit --port: the dev server binds it (run, server), or the caller
+// picks the server on it (client, mcp). Without it the server binds its
+// remembered port or a free one, and callers resolve by project (mode.ts,
+// registry.ts).
+function resolvePort(): number | undefined {
+  let raw = values.port
+  if (raw === undefined) return undefined
+  let port = Number(raw)
+  if (!/^\d+$/.test(raw) || port < 1 || port > 65535) {
+    console.error(`Invalid --port value "${raw}": expected a port number between 1 and 65535`)
     process.exit(1)
   }
-  return n
+  return port
 }
-export let session = resolveSession()
+export let port = resolvePort()
 
 // Storage flags for a locally spawned client. Dev client trees live in
 // ~/.solidrt/clients/client<M>/, reached through --data-root so the client
 // runtime keeps its single pref-path default rule (see lattice/src/storage.rs
-// and okf/backlog/parallel-dev-servers.md); an explicit --data-root wins. The
-// client slot defaults to the session number, so each session gets its own
-// tree with a single flag. Roots are passed absolute because the client
-// chdirs into its app sandbox at startup.
+// and okf/backlog/cli-flux-migration.md); an explicit --data-root wins.
+// Storage is per app under a tree, so two projects share client 0 without
+// colliding; only two clients of the same app need distinct slots. Roots are
+// passed absolute because the client chdirs into its app sandbox at startup.
 export function clientStorageArgs(): string[] {
   let root = values["data-root"]
   let args = ["--data-root", root ? resolve(root) : clientsRoot()]
-  let client = values.client ?? String(session)
+  let client = values.client ?? "0"
   if (!/^\d+$/.test(client)) {
     console.error(`Invalid --client value "${client}": expected a non-negative integer`)
     process.exit(1)
@@ -92,14 +91,16 @@ function usage(line: string): never {
   process.exit(1)
 }
 
-// Per-command argument requirements. Called once before dispatch.
+// Per-command argument requirements. Called once before dispatch. The app
+// commands take an optional entry: none means the project at the cwd
+// (mode.ts decides, and reports a missing or wrong entry itself).
 export function validateArgs() {
   switch (command) {
     case "bundle":
       if (values.flux) {
         if (!source || !isTs) usage("srt bundle --flux [options] <entry.[ts|js]>")
-      } else if (!source || (!isSource && !isPrebuilt)) {
-        usage("srt bundle [options] <entry.[tsx|jsx|ts|js|srt.js|srt.bin]>")
+      } else if (source && !isSource && !isPrebuilt) {
+        usage("srt bundle [options] [entry.[tsx|jsx|ts|js|srt.js|srt.bin]]")
       }
       break
     case "check":
@@ -109,17 +110,20 @@ export function validateArgs() {
       }
       break
     case "render":
-      if (!source || !isTsx) usage("srt render <entry.[tsx|jsx]>")
+      if (source && !isTsx) usage("srt render [entry.[tsx|jsx]]")
       break
     case "pack":
       if (values.flux) {
         if (!source || !isTs) usage("srt pack --flux [options] <entry.[ts|js]>")
-      } else if (!source || !isSource) {
-        usage("srt pack [options] <entry.[tsx|jsx|ts|js]>")
+      } else if (source && !isSource) {
+        usage("srt pack [options] [entry.[tsx|jsx|ts|js]]")
       }
       break
   }
 
+  let serves = command === "run" || command === "server"
+  // The commands that work on a project or a file (mode.ts).
+  let onApp = serves || command === "bundle" || command === "pack" || command === "render"
   // --android installs/launches the client on a device; it is a client action,
   // so it is only valid for `client`.
   if (values.android && command !== "client") {
@@ -128,24 +132,19 @@ export function validateArgs() {
   // --server points a standalone client at a dev server; `run` and `server`
   // own their server side, so it is only valid for `client`.
   if (values.server && command !== "client") {
-    usage("srt client --server <host[:port]>  (--server is only valid with the client command)")
+    usage("srt client --server <host:port>  (--server is only valid with the client command)")
   }
-  // --port moves the dev server off its default port, so it belongs to the
-  // commands that start one (`run`, `server`) or attach to one (`mcp`). A
-  // standalone client carries the port in --server <host:port> instead.
-  if (values.port !== undefined && command !== "run" && command !== "server" && command !== "mcp") {
-    usage("srt <run|server|mcp> --port <N>  (--port is only valid with the run, server and mcp commands)")
+  // --port binds the dev server (`run`, `server`) or picks one (`client`, `mcp`).
+  if (port !== undefined && !serves && command !== "client" && command !== "mcp") {
+    usage("srt <run|server|client|mcp> --port <N>  (--port is only valid with the run, server, client and mcp commands)")
   }
-  // --session selects a dev server (and the default client slot), so it is
-  // valid wherever a dev server is started, attached to, or resolved.
-  if (
-    values.session !== undefined &&
-    command !== "run" &&
-    command !== "server" &&
-    command !== "client" &&
-    command !== "mcp"
-  ) {
-    usage("srt <run|server|client|mcp> -s <N>  (--session is only valid with the run, server, client and mcp commands)")
+  // --file/--project resolve a file argument in a project directory.
+  if ((values.file || values.project) && !onApp) {
+    usage("srt <run|server|bundle|pack|render> <file> [--file|--project]  (only valid with the run, server, bundle, pack and render commands)")
+  }
+  // --lan binds every interface of a server being started.
+  if (values.lan && !serves) {
+    usage("srt <run|server> --lan  (--lan is only valid with the run and server commands)")
   }
 }
 
@@ -157,16 +156,26 @@ Commands:
   run [file]             Start dev server + local solidrt-go client
   server [file]          Start dev server only
   client                 Start solidrt-go client only
-  bundle <file>          Transpile TS/JS/TSX/JSX to JS or bytecode
+  bundle [file]          Transpile TS/JS/TSX/JSX to JS or bytecode
   check [file]           Verify the app builds and typechecks, without writing anything
                          (no file: every examples/*/src/index.tsx and packages/*/examples/*.tsx)
-  render <file.tsx|jsx>  Replay a script (optional) and render frames for video generation
-  pack <file>            Bundle + compile to a standalone executable (experimental)
+  render [file]          Replay a script (optional) and render frames for video generation
+  pack [file]            Bundle + compile to a standalone executable (experimental)
   mcp                    MCP server (stdio) exposing the running dev server to coding agents
 
+run/server/bundle/pack/render: what the command works on
+  srt run                In a project root (package.json): the project, entry from
+                         "solidrt": { "entry" } (default src/index.tsx)
+  srt run <file>         Outside a project: the file on its own (no assets, no isolates)
+  srt run <file> --project   In a project root: the project, with this entry
+  srt run <file> --file      In a project root: the file on its own, ignoring the project
+  Build outputs land under dist/ in the current directory.
+  One server per project or file; each keeps the port it had last time,
+  else the first free one from 34884 up (see the startup line). Loopback only unless --lan.
+
 run/server options:
-  -s, --session <N>      Session number: dev server on port 34884+N, client slot N (default: 0)
-      --port <N>         Dev server port (default: 34884 + session)
+      --port <N>         Bind this port instead of the remembered/next free one
+      --lan              Bind every interface and announce the LAN address (QR)
       --proxy-http       Route fetch calls through the dev server (HTTP cache enabled)
       --capture <file>   Record connected clients' key events to a script file
       --tunnel           Accept ticket-paired clients through the p2p tunnel
@@ -176,25 +185,25 @@ run/client options:
       --size <WxH>       Window size (default: 1280x720)
       --stats            Show the debug stats overlay (FPS, memory, frame timings)
       --data-root <dir>  Client data root (default: ~/.solidrt/clients)
-  -c, --client <N>       Client number: its own data tree under the data root (default: the session)
+  -c, --client <N>       Client number: its own data tree under the data root (default: 0)
 
 client options:
-  -s, --session <N>      Connect to this session's dev server on this machine
-                         (127.0.0.1:34884+N); without it, start on the connect screen
-      --server <host[:port]>  Connect to a dev server at this address (default port: 34884 + session)
+  (no flags)             Connect to the dev server of the project (or file) in the current directory
+      --port <N>         Connect to the local dev server on this port
+      --server <host:port>  Connect to a dev server at this address
       --android          Install and launch the client on a connected Android device
+                         (the server must run with --lan, or be reached from an emulator)
       --device <serial>  Target a specific adb device by serial or unique prefix
 
 mcp options:
-  -s, --session <N>      Attach to the dev server of this session (default: resolve by project)
-      --port <N>         Port of the dev server to attach to (default: resolve by project)
+      --port <N>         Attach to the dev server on this port (default: resolve by project)
 
 bundle options:
   -f, --flux             Bundle for the bare Flux runtime, without SolidJS (entry must be .ts|.js)
   -d, --dev              Use development build of SolidJS (default: production)
   -m, --minify           Minify the output
       --compile          Compile to bytecode
-  -o, --output <dir>     Output directory (default: <project>/dist/bundle)
+  -o, --output <dir>     Output directory (default: dist/bundle)
       --stdout           Write bundle to stdout
 
 pack options:

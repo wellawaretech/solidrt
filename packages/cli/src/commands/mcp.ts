@@ -9,152 +9,49 @@ import { z } from "zod"
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js"
-import { dirname, join, resolve } from "node:path"
-import { existsSync, readdirSync, readFileSync, realpathSync } from "node:fs"
-import { values, DEFAULT_DEV_PORT } from "../args"
-import { DEV_PORT } from "../dev-server"
-import { devDir } from "../dev-dir"
+import { resolve } from "node:path"
+import { port as FIXED_PORT } from "../args"
+import { resolveFromCwd, sameKey } from "../registry"
 
-// An explicit -s/--port pins the port for the bridge's lifetime. Otherwise
-// the port is resolved from the server registry (once, then again whenever
-// the server it found stops serving this project - see control()), so one
-// bridge (started when the workspace opens, kept alive across server
+// An explicit --port pins the port for the bridge's lifetime. Otherwise the
+// server is resolved from the registry by the bridge's cwd (once, then again
+// whenever the server it found stops serving that key - see control()), so
+// one bridge (started when the workspace opens, kept alive across server
 // restarts) follows whichever server is currently serving this project - and
 // the scaffold's mcp.json never carries a port.
-const FIXED_PORT = values.port !== undefined || values.session !== undefined ? DEV_PORT : null
 
-// The projectDir the bridge is working in: the nearest package.json above its
-// own cwd, the same rule srt applies to an entry (project.ts projectDirFor),
-// so both sides derive the same string.
-function findProjectDir(): string | null {
-  let dir = process.cwd()
-  while (true) {
-    if (existsSync(join(dir, "package.json"))) return dir
-    let parent = dirname(dir)
-    if (parent === dir) return null
-    dir = parent
-  }
-}
+// A pinned port carries no key: the user chose it, so nothing is checked.
+type PortResult = { ok: true; port: number; key: string | null } | { ok: false; message: string }
 
-// The two sides of a projectDir comparison come from different processes
-// (the server's entry path, the bridge's cwd) and only agree by construction
-// on the directory, not the spelling: an editor-spawned bridge on Windows
-// keeps its parent's lower-case drive letter while a shell writes it upper
-// case, and 8.3 names, symlinks and subst drives are the same class. Compare
-// the canonical path, so the spelling never decides.
-function sameDir(a: string, b: string): boolean {
-  if (a === b) return true
-  try {
-    return realpathSync.native(a) === realpathSync.native(b)
-  } catch {
-    return false
-  }
-}
-
-// Only ESRCH means the process is gone. EPERM is a live process this bridge
-// may not signal (Windows reports it for other users' processes), and a
-// bare try/catch would drop that healthy server from the registry.
-function pidAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0)
-    return true
-  } catch (e: any) {
-    return e?.code === "EPERM"
-  }
-}
-
-type LiveRecord = { pid: number; port: number; projectDir: string }
-
-// The global server registry: every running dev server keeps a live.json in
-// ~/.solidrt/servers/<port>/ (see dev-server.ts writeLiveRecord). Unreadable or
-// malformed records are skipped, not fatal - the registry is a hint.
-function liveRecords(): LiveRecord[] {
-  let root = devDir("servers")
-  let names: string[]
-  try {
-    names = readdirSync(root)
-  } catch {
-    return []
-  }
-  let records: LiveRecord[] = []
-  for (let name of names) {
-    try {
-      let record = JSON.parse(readFileSync(join(root, name, "live.json"), "utf8"))
-      if (typeof record?.pid === "number" && typeof record?.port === "number" && typeof record?.projectDir === "string") {
-        records.push(record)
-      }
-    } catch {}
-  }
-  return records
-}
-
-// A pinned port carries no project: the user chose it, so nothing is checked.
-type PortResult = { ok: true; port: number; project: string | null } | { ok: false; message: string }
-
-async function resolvePort(): Promise<PortResult> {
-  if (FIXED_PORT !== null) return { ok: true, port: FIXED_PORT, project: null }
-  let project = findProjectDir()
-  if (!project) {
-    return {
-      ok: false,
-      message: `No package.json found above ${process.cwd()}, so no dev server can be resolved by project. Pass -s <N> or --port <N> to srt mcp.`,
-    }
-  }
-  let records = liveRecords()
-  let matches = records.filter((r) => sameDir(r.projectDir, project) && pidAlive(r.pid))
-  if (matches.length > 1) {
-    let ports = matches
-      .map((r) => r.port)
-      .sort((a, b) => a - b)
-      .join(", ")
-    return { ok: false, message: `${matches.length} dev servers are serving this project (ports ${ports}); pass -s <N> to srt mcp` }
-  }
-  if (matches.length === 0) {
-    // A lookup by key that fails against a small table prints the table: an
-    // empty registry, a dead pid and a record for another project are three
-    // different problems, and the reader can only tell them apart if the
-    // candidates are listed next to the key that was looked up.
-    let listing =
-      records.length === 0
-        ? `Registry ${devDir("servers")}: no records.`
-        : `Registry ${devDir("servers")}: ${records.length} record(s).\n` +
-          records
-            .map((r) => {
-              let session = r.port - DEFAULT_DEV_PORT
-              let flag = session >= 0 && session < 100 ? `-s ${session}` : `--port ${r.port}`
-              return `  port ${r.port} (${flag})  pid ${r.pid} (${pidAlive(r.pid) ? "alive" : "dead"})  serving ${r.projectDir}`
-            })
-            .join("\n")
-    return {
-      ok: false,
-      message: `No dev server for ${project}.\n${listing}\nStart one with srt run, or pin one of the servers above by passing its flag to srt mcp.`,
-    }
-  }
+function resolvePort(): PortResult {
+  if (FIXED_PORT !== undefined) return { ok: true, port: FIXED_PORT, key: null }
+  let resolved = resolveFromCwd(process.cwd())
+  if (!resolved.ok) return resolved
   // The record is a hint; the server is authoritative. A stale record (a pid
-  // reused by an unrelated process, a port taken over by another project's
-  // server) shows on the first call: every control response names the project
-  // it serves, and control() checks it.
-  return { ok: true, port: matches[0]!.port, project }
+  // reused by an unrelated process, a port taken over by another server)
+  // shows on the first call: every control response names the key it
+  // serves, and control() checks it.
+  return { ok: true, port: resolved.record.port, key: resolved.record.key }
 }
 
 type ControlResult = { ok: true; body: any } | { ok: false; message: string }
 
 // The resolved server, kept across calls: a server's port never changes while
 // it runs, so the registry is read once and again only when the port stops
-// answering or answers for another project (every project defaults to the
-// same port, so a server that died can be replaced by one serving something
-// else). Each response's x-solidrt-project header is that check, so a
-// takeover shows on the next call at no extra cost.
-let cached: { port: number; project: string | null } | null = null
+// answering or answers for another key (a server that died can be replaced
+// by one serving something else on the port it remembered). Each response's
+// x-solidrt-project header is that check, so a takeover shows on the next
+// call at no extra cost.
+let cached: { port: number; key: string | null } | null = null
 
 async function control(path: string, method: "GET" | "POST" = "GET", payload?: unknown): Promise<ControlResult> {
   for (let attempt = 0; ; attempt++) {
     if (!cached) {
-      let resolved = await resolvePort()
+      let resolved = resolvePort()
       if (!resolved.ok) return resolved
-      cached = { port: resolved.port, project: resolved.project }
+      cached = { port: resolved.port, key: resolved.key }
     }
-    let { port, project } = cached
+    let { port, key } = cached
     let resp
     try {
       let init: RequestInit = { method }
@@ -168,16 +65,16 @@ async function control(path: string, method: "GET" | "POST" = "GET", payload?: u
       if (attempt === 0) continue
       return {
         ok: false,
-        message: `No dev server answers on port ${port}${project ? ` for ${project}` : ""}. Start one with srt run.`,
+        message: `No dev server answers on port ${port}${key ? ` for ${key}` : ""}. Start one with srt run.`,
       }
     }
     let served = resp.headers.get("x-solidrt-project")
-    if (project !== null && (served === null || !sameDir(served, project))) {
+    if (key !== null && (served === null || !sameKey(served, key))) {
       cached = null
       if (attempt === 0) continue
       return {
         ok: false,
-        message: `The server on port ${port} is not serving ${project}${served ? ` (it serves ${served})` : ""}. Start one with srt run, or pass -s <N> to srt mcp.`,
+        message: `The server on port ${port} is not serving ${key}${served ? ` (it serves ${served})` : ""}. Start one with srt run, or pass --port <N> to srt mcp.`,
       }
     }
     let body: any = null
@@ -204,12 +101,11 @@ let SAVE_TO_ARG = z
 
 // readOnly marks tools that only inspect state; it is surfaced as the
 // MCP-standard readOnlyHint annotation so agent harnesses that honor it can
-// auto-approve the inspection majority. load, reload, call_debug, and
-// send_input mutate the running app and keep the default hints (destructive,
-// not idempotent);
-// `annotations` overrides those defaults where a mutating tool is benign
-// (watch: a reversible, idempotent toggle). Every tool gets
-// openWorldHint: false - the bridge only ever talks to the local dev server.
+// auto-approve the inspection majority. reload, call_debug, and send_input
+// mutate the running app and keep the default hints (destructive, not
+// idempotent); `annotations` overrides those defaults where a mutating tool
+// is benign. Every tool gets openWorldHint: false - the bridge only ever
+// talks to the local dev server.
 let TOOLS: {
   name: string
   description: string
@@ -221,7 +117,7 @@ let TOOLS: {
     name: "list_clients",
     readOnly: true,
     description:
-      "List the app clients connected to the SolidRT dev server. Returns `generation` (identity of this server run: client ids and log cursors are only valid within one generation, so if it changed since your last call, re-fetch ids and cursors), `entry` (the app source file this server currently serves and rebuilds - check it matches the app you intend to drive before acting, since the dev port is fixed and a `load` moves the entry mid-session), `projectDir` (the project root the server was started in), and `clients`. Each entry has id (pass it as `client` to the other tools), platform, runtime version (git describe; a -dirty suffix means the binary was built from uncommitted engine changes), build profile (debug/release), and the capability names compiled into that client's runtime, and `queries` - the dev-tool query kinds that client's runtime answers (clock, input, snapshot, tree, ...). Check `queries` before planning a verification strategy: a client whose list lacks \"input\" predates send_input, one that lacks \"clock\" predates set_time_scale/step_frames (an empty list means the runtime predates the advertisement itself). Use version/profile to check whether a connected binary contains a given engine change before debugging against it.",
+      "List the app clients connected to the SolidRT dev server. Returns `generation` (identity of this server run: client ids and log cursors are only valid within one generation, so if it changed since your last call, re-fetch ids and cursors), `key` and `mode` (the project root, or the single file, this server serves - check it is the app you intend to drive before acting), `entry` (the app source file it rebuilds), `projectDir` (null for a file served on its own), and `clients`. Each entry has id (pass it as `client` to the other tools), platform, runtime version (git describe; a -dirty suffix means the binary was built from uncommitted engine changes), build profile (debug/release), and the capability names compiled into that client's runtime, and `queries` - the dev-tool query kinds that client's runtime answers (clock, input, snapshot, tree, ...). Check `queries` before planning a verification strategy: a client whose list lacks \"input\" predates send_input, one that lacks \"clock\" predates set_time_scale/step_frames (an empty list means the runtime predates the advertisement itself). Use version/profile to check whether a connected binary contains a given engine change before debugging against it.",
     inputSchema: {},
   },
   {
@@ -397,22 +293,14 @@ let TOOLS: {
   {
     name: "reload",
     description:
-      "Rebuild the app from source and push it to every connected client. Call this after editing the app's .tsx/.jsx source to apply the changes: it bundles once and reloads all clients, so a burst of edits becomes a single explicit reload. Returns the number of clients reloaded, or a build error if the source failed to compile. A successful reload re-enables the file watcher if you paused it with the watch tool. Follow with get_logs to see runtime output from the reloaded app.",
+      "Rebuild the app from source and push it to every connected client. Call this after editing the app's .tsx/.jsx source to apply the changes: it bundles once and reloads all clients, so a burst of edits becomes a single explicit reload. Returns the number of clients reloaded, or a build error if the source failed to compile. There is no reload-on-save: nothing reaches the clients until you call this. Follow with get_logs to see runtime output from the reloaded app.",
     inputSchema: {},
-  },
-  {
-    name: "load",
-    description:
-      "Load an app entry: bundle the given .tsx/.jsx source file and push it to every connected client, replacing whatever is running. Use it when the dev server has no app loaded yet, or to switch to a different app; later reload calls rebuild this entry. Returns the number of clients loaded, or a build error if the source failed to compile. A successful load re-enables the file watcher if you paused it with the watch tool.",
-    inputSchema: {
-      entry: z.string().describe("App entry source file to load (relative paths resolve against the project root)"),
-    },
   },
   {
     name: "set_time_scale",
     annotations: { destructiveHint: false, idempotentHint: true },
     description:
-      "Control a running app client's clock. scale=0 freezes app time: onFrame/requestAnimationFrame stop being delivered, setTimeout/setInterval freeze, and the picture stops (performance.now() and Date.now() keep running: they are real time, not the frame timeline, so only animations driven off the onFrame tick pause) - so get_snapshot can capture an exact frame of any animation instead of racing it (tool round trips are usually slower than the animation). Combine with a registerDebug command that sets up the state to photograph: set state, pause, snapshot. Other values scale time for dt-driven apps (0.5 = half speed, 2 = double); apps that advance a fixed amount per onFrame call only respond to 0 and 1. The scale is client runtime state: it survives across your snapshots but resets to 1 on reload/load and on client restart. ALWAYS set it back to 1 when you are done - a paused client looks wedged to the human watching the screen.",
+      "Control a running app client's clock. scale=0 freezes app time: onFrame/requestAnimationFrame stop being delivered, setTimeout/setInterval freeze, and the picture stops (performance.now() and Date.now() keep running: they are real time, not the frame timeline, so only animations driven off the onFrame tick pause) - so get_snapshot can capture an exact frame of any animation instead of racing it (tool round trips are usually slower than the animation). Combine with a registerDebug command that sets up the state to photograph: set state, pause, snapshot. Other values scale time for dt-driven apps (0.5 = half speed, 2 = double); apps that advance a fixed amount per onFrame call only respond to 0 and 1. The scale is client runtime state: it survives across your snapshots but resets to 1 on reload and on client restart. ALWAYS set it back to 1 when you are done - a paused client looks wedged to the human watching the screen.",
     inputSchema: {
       scale: z
         .number()
@@ -463,15 +351,6 @@ let TOOLS: {
       client: CLIENT_ARG,
     },
   },
-  {
-    name: "watch",
-    annotations: { destructiveHint: false, idempotentHint: true },
-    description:
-      "Pause or resume the dev server's automatic reload-on-save. The srt file watcher pushes a rebuild whenever app source changes on disk; call watch with enabled: false BEFORE creating or editing source files so your half-finished work is not pushed to the user's screens mid-burst, then apply everything with one explicit reload (a successful reload or load re-enables the watcher, so pause again before the next burst of file changes). The human's own saves auto-reload only while the watcher is enabled, so do not leave it paused when you stop working.",
-    inputSchema: {
-      enabled: z.boolean().describe("false pauses auto-reload-on-save, true resumes it"),
-    },
-  },
 ]
 
 function clientParam(args: any): string {
@@ -510,16 +389,6 @@ async function callTool(name: string, args: any): Promise<ControlResult> {
     }
     case "reload":
       return control("/reload", "POST")
-    case "load": {
-      if (typeof args?.entry !== "string" || !args.entry) return { ok: false, message: "load requires an entry path" }
-      // Resolved here in the bridge: this process runs at the project root,
-      // the dev server may not.
-      return control("/load", "POST", { entry: resolve(args.entry) })
-    }
-    case "watch": {
-      if (typeof args?.enabled !== "boolean") return { ok: false, message: "watch requires enabled: true or false" }
-      return control("/watch", "POST", { enabled: args.enabled })
-    }
     case "get_snapshot": {
       if (typeof args?.nodeId !== "number") return { ok: false, message: "get_snapshot requires a numeric nodeId" }
       let params = new URLSearchParams({ node: String(args.nodeId) })

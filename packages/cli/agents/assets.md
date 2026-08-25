@@ -26,7 +26,7 @@ distribution.
   folder, defaults from the package name in dev, and `srt pack` warns
   while defaulted. `org` and `displayName` are optional display metadata
   (future launcher/window naming) with no storage meaning.
-- `bunx srt pack src/index.tsx` builds a single-file executable;
-  `bunx srt pack --folder src/index.tsx` writes the flat app folder
+- `bunx srt pack` builds a single-file executable;
+  `bunx srt pack --folder` writes the flat app folder
   (runner + manifest.json + bundle + assets/, plus the runner's GL
   libraries on Windows and macOS) to `dist/pack/`.

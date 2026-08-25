@@ -1,8 +1,8 @@
 import { networkInterfaces } from "node:os"
 import { print, requireAdb } from "./util"
 import { resolveApk, ANDROID_PKG_MAP } from "./artifacts"
-import { values } from "./args"
-import { DEV_PORT } from "./dev-server"
+import { values, port } from "./args"
+import { liveRecords, resolveFromCwd, type LiveRecord } from "./registry"
 
 // Launch component of the "go" dev-client flavor (see lattice/Makefile.android).
 let PACKAGE_ACTIVITY = "com.solidrt.go/com.solidrt.app.MainActivity"
@@ -43,12 +43,35 @@ function deviceIp(adb: string, target: string): string | null {
 // device's IP to the host interface on its subnet. Replaces the old adb-reverse
 // loopback tunnel, which never worked over wireless adb. Returns null when the
 // address cannot be resolved (the client then falls back to QR/recents).
-function devServerAddress(adb: string, target: string): string | null {
-  if (target.startsWith("emulator-")) return `10.0.2.2:${DEV_PORT}`
+function devServerAddress(adb: string, target: string, server: LiveRecord): string | null {
+  // The emulator's host alias reaches the host's loopback, so a loopback-only
+  // server is fine there; a real device needs a server started with --lan.
+  if (target.startsWith("emulator-")) return `10.0.2.2:${server.port}`
+  if (server.address === "127.0.0.1") {
+    print("[cli] The dev server is loopback-only; restart it with --lan so the device can reach it")
+    return null
+  }
   let dip = deviceIp(adb, target)
   if (!dip) return null
   let host = hostIpFor(dip)
-  return host ? `${host}:${DEV_PORT}` : null
+  return host ? `${host}:${server.port}` : null
+}
+
+// The dev server the device should dial: --port picks a local server by
+// port, otherwise the project (or file) in the current directory.
+function resolveServer(): LiveRecord {
+  if (port !== undefined) {
+    let record = liveRecords().find((r) => r.port === port)
+    if (record) return record
+    console.error(`No dev server on port ${port}`)
+    process.exit(1)
+  }
+  let resolved = resolveFromCwd(process.cwd())
+  if (!resolved.ok) {
+    console.error(resolved.message)
+    process.exit(1)
+  }
+  return resolved.record
 }
 
 // Serials of connected, authorized devices (excludes offline/unauthorized).
@@ -132,9 +155,10 @@ function resolveTarget(adb: string): { target: string; abi: string } {
 
 // Install + launch the Android client on a connected device over adb, passing it
 // the dev-server address to dial as a launch-intent extra (see devServerAddress).
-// Fire-and-forget: the client's lifecycle is tracked via WS connect/disconnect in
-// dev-server.ts, not as a child process here.
+// Fire-and-forget: the client's lifecycle is tracked via WS connect/disconnect on
+// the dev server, not as a child process here.
 export async function spawnAndroidClient() {
+  let server = resolveServer()
   let adb = requireAdb()
 
   let { target, abi } = resolveTarget(adb)
@@ -157,7 +181,7 @@ export async function spawnAndroidClient() {
   // Hand the client the dev-server address to dial, as a launch-intent extra that
   // MainActivity forwards to native argv (--dev-server); the client auto-connects
   // to it. Replaces adb reverse, which never worked over wireless adb.
-  let devServer = devServerAddress(adb, target)
+  let devServer = devServerAddress(adb, target, server)
   let launchArgs = [adb, "-s", target, "shell", "am", "start", "-n", PACKAGE_ACTIVITY]
   if (devServer) {
     print(`[cli] Client will dial dev server at ${devServer}`)

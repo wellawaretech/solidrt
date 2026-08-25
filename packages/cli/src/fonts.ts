@@ -1,6 +1,5 @@
 import { existsSync, readFileSync } from "node:fs"
 import { resolve } from "node:path"
-import { findProjectPackage } from "./project"
 
 // The fonts `srt pack` appends to a solidrt binary (see
 // okf/plans/packaged-fonts.md). By default the three Noto role defaults;
@@ -38,9 +37,12 @@ function defaultFontsDir(): string | null {
   return null
 }
 
-function findProjectConfig(sourcePath: string): { dir: string; fonts: unknown } | null {
-  let project = findProjectPackage(sourcePath)
-  return project && { dir: project.dir, fonts: project.pkg.solidrt?.fonts }
+// The project's font map, or null in file mode (defaults only).
+function findProjectConfig(projectDir: string | null): { dir: string; fonts: unknown } | null {
+  if (projectDir === null) return null
+  let pkgPath = resolve(projectDir, "package.json")
+  let pkg = existsSync(pkgPath) ? JSON.parse(readFileSync(pkgPath, "utf8")) : {}
+  return { dir: projectDir, fonts: pkg.solidrt?.fonts }
 }
 
 function fail(message: string): never {
@@ -51,8 +53,8 @@ function fail(message: string): never {
 // Resolve the font set for a pack as file paths: role defaults merged with the
 // project's `solidrt.fonts` map. Order is roles first (sans, serif, mono),
 // then added aliases in config order.
-export function resolvePackFonts(sourcePath: string): ResolvedFont[] {
-  let config = findProjectConfig(sourcePath)
+export function resolvePackFonts(projectDir: string | null): ResolvedFont[] {
+  let config = findProjectConfig(projectDir)
   let overrides = config?.fonts ?? {}
   if (typeof overrides !== "object" || overrides === null || Array.isArray(overrides)) {
     fail('The "solidrt.fonts" key in package.json must be a map of alias to font file path (or false)')

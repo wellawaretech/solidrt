@@ -23,13 +23,13 @@ const KEY_FILE = "tunnel.key"
 /**
  * Bind the tunnel endpoint and print its ticket (text + QR). The endpoint is
  * kept stable across restarts so a paired client can re-dial the old ticket
- * without re-scanning: the UDP port is pinned to the dev server's port, and the
- * secret key is persisted in <keyDir>/tunnel.key (generated on first
- * run). Both are needed - a moving port or a fresh key each start would change
- * the ticket. Stable across restarts on the same network only; a new machine IP
+ * without re-scanning: the UDP port follows the dev server's remembered port
+ * (ephemeral on a first run), and the secret key is persisted in
+ * <keyDir>/tunnel.key (generated on first run). Both are needed - a moving
+ * port or a fresh key each start would change the ticket. Stable across restarts on the same network only; a new machine IP
  * still stales the ticket's addresses (that is the discovery/off-LAN story).
  */
-export async function createTunnelEndpoint(port: number, keyDir: string): Promise<Endpoint> {
+export async function createTunnelEndpoint(port: number | null, keyDir: string): Promise<Endpoint> {
   let keyPath = join(keyDir, KEY_FILE)
 
   let secretKey: string | undefined
@@ -39,7 +39,7 @@ export async function createTunnelEndpoint(port: number, keyDir: string): Promis
     if (saved.length === 64) secretKey = saved
   }
 
-  let endpoint = await Endpoint.create({ local: true, protocols: [TUNNEL_PROTOCOL], port, secretKey })
+  let endpoint = await Endpoint.create({ local: true, protocols: [TUNNEL_PROTOCOL], ...(port !== null ? { port } : {}), secretKey })
 
   // First run (no saved key): persist the freshly generated one so the next run
   // reuses it and the ticket stays the same.

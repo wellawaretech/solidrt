@@ -1,27 +1,31 @@
-// The srt dev server as a flux script. srt (Bun) spawns this with one JSON
-// config argument; bundling, file watching, and the repl stay in srt, which
-// drives this process over the loopback-only /__internal__/ routes. The
-// shutdown-when-empty policy also lives in srt (it polls /__internal__/clients);
-// this process runs until srt kills it.
+// The srt dev server as a flux script. srt (bun) is a launcher: it decides
+// the mode and the key, resolves the binaries, and spawns this process with
+// one JSON config argument. From there this process owns everything with a
+// lifetime: the port (bound here: remembered, given, or the first free one),
+// the registry record, the local client, the latched bundle, and the control
+// API. Only the bundle and the typecheck run in bun, as the bundle-cli (see
+// rebuild.ts) and typecheck-cli subprocesses.
 
 import { serve } from "flux:http"
-import type { FluxRequest, Server } from "flux:http"
+import type { FluxRequest, Server, ServerWebSocket } from "flux:http"
 import { file } from "flux:fs"
-import { argv } from "flux:process"
+import { argv, on as onSignal } from "flux:process"
 import { resolveWithin } from "flux:path"
+import { command } from "flux:subprocess"
+import { probe } from "flux:net"
+import type { Child } from "flux:subprocess"
 import { state, type Config } from "./state"
 import * as cache from "./cache"
 import { handleProxy } from "./proxy"
-import { appendLog, clientList, handleControl, resolveQuery } from "./control"
+import { appendLog, handleControl, resolveQuery } from "./control"
 import { printQr } from "./qr"
 import { createTunnelEndpoint, TUNNEL_PROTOCOL } from "./tunnel"
+import { rebuildAndBroadcast, showBuildFailure } from "./rebuild"
+import { rememberedPort, removeRecord, writeRecord } from "./registry"
 
 let config: Config = JSON.parse(argv[0]!)
 state.config = config
-state.sourceDir = config.sourceDir
-state.projectDir = config.projectDir
 state.stats = config.stats
-state.serverUrl = `${config.address}:${config.port}`
 
 if (config.cache) {
   await cache.initCache({ dir: config.cacheDir })
@@ -51,74 +55,6 @@ function splitQuery(url: string): { path: string; query: Map<string, string> } {
     }
   }
   return { path: decodeURIComponent(path), query }
-}
-
-// Send `text` to the clients with the given ids, or to every client when
-// `ids` is omitted.
-function sendTo(ids: number[] | undefined, text: string) {
-  for (let [ws, info] of state.clients) {
-    if (!ids || ids.includes(info.id)) ws.send(text)
-  }
-}
-
-// The srt -> server IPC under /__internal__/: only the srt process on this
-// machine may drive it, so reject any peer that is not loopback.
-async function handleInternal(req: FluxRequest, server: Server, path: string): Promise<Response> {
-  let ip = server.requestIP(req)
-  let loopback = ip && (ip.address === "127.0.0.1" || ip.address === "::1" || ip.address === "::ffff:127.0.0.1")
-  if (!loopback) return new Response("Forbidden", { status: 403 })
-
-  if (path === "/__internal__/clients") return Response.json(clientList(true))
-  if (path === "/__internal__/watch" && req.method === "GET") return Response.json({ enabled: state.watch })
-  if (req.method !== "POST") return new Response("Method not allowed", { status: 405 })
-
-  switch (path) {
-    case "/__internal__/reload": {
-      // { message, clients?, latch?, sourceDir?, maps? }: send `message` (a
-      // full client-protocol message, built by srt) to the listed client ids,
-      // or to all when omitted. `latch` keeps it for late-joining clients
-      // (code reloads latch, one-shot bytecode loads do not); `sourceDir`
-      // moves the file-serving root (repl `load`; the project root - and with
-      // it the /assets/ root - is fixed for the life of the run); `maps` is
-      // the bundle's sourcemaps keyed by module name for log remapping,
-      // replaced on every reload (absent means none).
-      let body = await req.json()
-      if (typeof body.sourceDir === "string") state.sourceDir = body.sourceDir
-      // Keep the rebuild entry in sync when `load` moves it, so a later MCP
-      // reload bundles the newly loaded file, not the launch-time one.
-      if (typeof body.entry === "string") state.config.entry = body.entry
-      state.currentMaps = body.maps && typeof body.maps === "object" ? body.maps : null
-      let text = JSON.stringify(body.message)
-      if (body.latch) state.currentReload = text
-      sendTo(body.clients, text)
-      return new Response("", { status: 204 })
-    }
-    case "/__internal__/stop": {
-      let body = await req.json()
-      // A broadcast stop also forgets the latched reload, so a client that
-      // connects afterwards starts clean.
-      if (!body.clients) {
-        state.currentReload = null
-        state.currentMaps = null
-      }
-      sendTo(body.clients, JSON.stringify({ type: "stop" }))
-      return new Response("", { status: 204 })
-    }
-    case "/__internal__/watch": {
-      // The repl's `watch on|off`; agents use /__control__/watch instead.
-      let body = await req.json()
-      state.watch = !!body.enabled
-      return new Response("", { status: 204 })
-    }
-    case "/__internal__/stats": {
-      let body = await req.json()
-      state.stats = !!body.stats
-      sendTo(undefined, JSON.stringify({ type: "stats", stats: state.stats }))
-      return new Response("", { status: 204 })
-    }
-    default:
-      return Response.json({ error: "Unknown internal endpoint" }, { status: 404 })
-  }
 }
 
 // The file routes: GET file with single-range 206 support. All paths are
@@ -184,130 +120,247 @@ async function handleFiles(req: FluxRequest, path: string, root: string): Promis
   return new Response(await file(filePath).bytes(), { headers: baseHeaders })
 }
 
-// Ticket-paired clients connect through this endpoint; serve() accepts its
-// connections directly alongside the TCP listener.
-let tunnel = config.tunnel ? await createTunnelEndpoint(config.port, config.keyDir) : null
+async function handleRequest(req: FluxRequest, server: Server): Promise<Response | undefined> {
+  if (server.upgrade(req)) return
 
-serve({
-  port: config.port,
-  p2p: tunnel ? { endpoint: tunnel, protocol: TUNNEL_PROTOCOL } : undefined,
-  async fetch(req, server) {
-    if (server.upgrade(req)) return
+  let { path, query } = splitQuery(req.url)
 
-    let { path, query } = splitQuery(req.url)
+  if (path === "/__proxy__") {
+    return handleProxy(req)
+  }
+  if (path.startsWith("/__control__/")) {
+    // Every control response names the key this server serves, so a caller
+    // that resolved the port from the registry can confirm it reached the
+    // server it meant.
+    let resp = await handleControl(req, path, query)
+    resp.headers.set("x-solidrt-project", config.key)
+    return resp
+  }
+  // The assets/ convention roots at the project dir (package.json), which is
+  // not necessarily the entry's dir the file routes serve; clients fetch
+  // manifest asset paths here (live proxy reads and store installs alike).
+  // File mode has no project and so no assets.
+  if (path === "/assets" || path.startsWith("/assets/")) {
+    if (!config.projectDir) return new Response("Not found", { status: 404 })
+    return handleFiles(req, path, config.projectDir)
+  }
+  // Isolate bundles are build outputs, not project files: the rebuild writes
+  // them under <cacheDir>/isolates/, and the manifest lists them as
+  // isolates/<id>.js.
+  if (path.startsWith("/isolates/")) {
+    return handleFiles(req, path, config.cacheDir)
+  }
+  return handleFiles(req, path, config.sourceDir)
+}
 
-    if (path === "/__proxy__") {
-      return handleProxy(req)
-    }
-    if (path.startsWith("/__control__/")) {
-      // Every control response names the project this server serves: the
-      // fixed dev port means a bridge that resolved a port once can find
-      // another project's server there later, and this is how it notices.
-      let resp = await handleControl(req, path, query)
-      resp.headers.set("x-solidrt-project", state.projectDir)
-      return resp
-    }
-    if (path.startsWith("/__internal__/")) {
-      return handleInternal(req, server, path)
-    }
-    // The assets/ convention roots at the project dir (package.json), which is
-    // not necessarily the entry's dir the file routes serve; clients fetch
-    // manifest asset paths here (live proxy reads and store installs alike).
-    if (path === "/assets" || path.startsWith("/assets/")) {
-      return handleFiles(req, path, state.projectDir)
-    }
-    // Isolate bundles are build outputs, not project files: srt (and the
-    // rebuild here) write them under .srt-data/isolates/, and the manifest
-    // lists them as isolates/<id>.js.
-    if (path.startsWith("/isolates/")) {
-      return handleFiles(req, path, config.cacheDir)
-    }
-    return handleFiles(req, path, state.sourceDir)
-  },
-  websocket: {
-    open(ws) {
-      let id = state.nextClientId++
+function onOpen(ws: ServerWebSocket) {
+  let id = state.nextClientId++
+  state.clients.set(ws, {
+    platform: "unknown",
+    version: "unknown",
+    profile: "unknown",
+    id,
+    capabilities: [],
+    queries: [],
+  })
+  console.log(`[cli] Client connected ${ws.remoteAddr ?? "unknown"}`)
+  // Advertise the address we are reachable on, so clients dialed over a
+  // loopback hop can show/remember it (see connection.rs).
+  ws.send(JSON.stringify({ type: "welcome", address: state.serverUrl, stats: state.stats, capture: !!config.capture }))
+  if (state.currentReload) {
+    ws.send(state.currentReload)
+  }
+}
+
+function onClose(ws: ServerWebSocket) {
+  let info = state.clients.get(ws)
+  state.clients.delete(ws)
+  console.log(`[cli] Client disconnected: ${info?.platform ?? "unknown"}`)
+  // `srt run` lives as long as its clients: once the local client is gone,
+  // the last remote disconnect ends the server. `srt server` runs until
+  // stopped.
+  if (config.client && localClientExited && state.clients.size === 0) shutdown()
+}
+
+function onMessage(ws: ServerWebSocket, msg: string | Uint8Array) {
+  try {
+    let data = JSON.parse(typeof msg === "string" ? msg : new TextDecoder().decode(msg))
+    if (data.type === "info") {
+      let existing = state.clients.get(ws)
       state.clients.set(ws, {
-        platform: "unknown",
-        version: "unknown",
-        profile: "unknown",
-        id,
-        capabilities: [],
-        queries: [],
+        platform: data.platform ?? "unknown",
+        version: data.version ?? "unknown",
+        profile: data.profile ?? "unknown",
+        id: existing?.id ?? state.nextClientId++,
+        capabilities: Array.isArray(data.capabilities) ? data.capabilities.map(String) : [],
+        queries: Array.isArray(data.queries) ? data.queries.map(String) : [],
       })
-      console.log(`[cli] Client connected ${ws.remoteAddr ?? "unknown"}`)
-      // Advertise our real LAN address so clients dialed over a loopback hop
-      // can show/remember the directly reachable address (see connection.rs).
-      ws.send(
-        JSON.stringify({ type: "welcome", address: state.serverUrl, stats: state.stats, capture: !!config.capture }),
-      )
-      if (state.currentReload) {
-        ws.send(state.currentReload)
-      }
-    },
-    close(ws) {
-      let info = state.clients.get(ws)
-      state.clients.delete(ws)
-      console.log(`[cli] Client disconnected: ${info?.platform ?? "unknown"}`)
-    },
-    message(ws, msg) {
-      try {
-        let data = JSON.parse(typeof msg === "string" ? msg : new TextDecoder().decode(msg))
-        if (data.type === "info") {
-          let existing = state.clients.get(ws)
-          state.clients.set(ws, {
-            platform: data.platform ?? "unknown",
-            version: data.version ?? "unknown",
-            profile: data.profile ?? "unknown",
-            id: existing?.id ?? state.nextClientId++,
-            capabilities: Array.isArray(data.capabilities) ? data.capabilities.map(String) : [],
-            queries: Array.isArray(data.queries) ? data.queries.map(String) : [],
-          })
-          console.log(`[cli] Client info ${ws.remoteAddr ?? "unknown"} ${data.platform} (${data.version})`)
-        } else if (data.type === "log") {
-          // Forwarded console output / runtime errors from the client's
-          // engine logger, buffered for the control API (see control.ts).
-          // Not printed here: the local client already writes to this
-          // terminal, so echoing would duplicate every line.
-          let device = state.clients.get(ws)?.id ?? -1
-          appendLog(device, String(data.level ?? "log"), String(data.text ?? ""))
-        } else if (data.type === "result") {
-          // Reply to a query the control API forwarded to this client.
-          resolveQuery(data)
-        } else if (data.type === "capture" && config.capture) {
-          let device = state.clients.get(ws)?.id ?? -1
-          // Milliseconds, integer: Date.now() is already integer ms, so the
-          // delta needs no rounding.
-          let at = Date.now() - state.captureStartMs
-          let after = at - state.captureLastAt
-          state.captureLastAt = at
-          // JSON Lines: one event object per line, streamed to disk as it
-          // arrives rather than buffered - no in-memory growth for a long
-          // capture, and the file is always complete on disk mid-session.
-          // Appends are chained so events land in arrival order.
-          let line = JSON.stringify({ after, type: data.kind, key: data.key, device }) + "\n"
-          state.captureChain = state.captureChain.then(() => file(config.capture!).append(line))
-        }
-      } catch {}
-    },
-  },
-})
+      console.log(`[cli] Client info ${ws.remoteAddr ?? "unknown"} ${data.platform} (${data.version})`)
+    } else if (data.type === "log") {
+      // Forwarded console output / runtime errors from the client's engine
+      // logger, buffered for the control API (see control.ts). Not printed
+      // here: the local client already writes to this terminal, so echoing
+      // would duplicate every line.
+      let device = state.clients.get(ws)?.id ?? -1
+      appendLog(device, String(data.level ?? "log"), String(data.text ?? ""))
+    } else if (data.type === "result") {
+      // Reply to a query the control API forwarded to this client.
+      resolveQuery(data)
+    } else if (data.type === "capture" && config.capture) {
+      let device = state.clients.get(ws)?.id ?? -1
+      // Milliseconds, integer: Date.now() is already integer ms, so the
+      // delta needs no rounding.
+      let at = Date.now() - state.captureStartMs
+      let after = at - state.captureLastAt
+      state.captureLastAt = at
+      // JSON Lines: one event object per line, streamed to disk as it
+      // arrives rather than buffered - no in-memory growth for a long
+      // capture, and the file is always complete on disk mid-session.
+      // Appends are chained so events land in arrival order.
+      let line = JSON.stringify({ after, type: data.kind, key: data.key, device }) + "\n"
+      state.captureChain = state.captureChain.then(() => file(config.capture!).append(line))
+    }
+  } catch {}
+}
+
+// The port: an explicit --port, else the one this server bound last time
+// (so a project keeps its port in practice), else the first free one from
+// DEFAULT_PORT upward, so servers on one machine read as 34884, 34885, ...
+// A remembered or default port that is taken is skipped; an explicit one
+// that is taken is the user's problem to see.
+const DEFAULT_PORT = 0x8844
+const PORT_TRIES = 100
+let host = config.lan ? "0.0.0.0" : "127.0.0.1"
+let remembered = config.port ?? (await rememberedPort(config.serverDir))
+
+// Ticket-paired clients connect through this endpoint; serve() accepts its
+// connections directly alongside the TCP listener. Its UDP port follows the
+// remembered port so a ticket stays stable across restarts.
+let tunnel = config.tunnel ? await createTunnelEndpoint(remembered, config.serverDir) : null
+
+function bind(port: number): Server {
+  return serve({
+    host,
+    port,
+    p2p: tunnel ? { endpoint: tunnel, protocol: TUNNEL_PROTOCOL } : undefined,
+    fetch: handleRequest,
+    websocket: { open: onOpen, close: onClose, message: onMessage },
+  })
+}
+
+// A bind alone does not prove a port free: with SO_REUSEADDR (the default
+// on a listener) Linux lets a loopback bind coexist with another process's
+// all-interfaces listener on the same port, and the newcomer then silently
+// takes the loopback traffic. So each candidate is dialed first; only a
+// refusal means free.
+async function bindFirstFree(): Promise<Server> {
+  if (config.port !== undefined) return bind(config.port)
+  let candidates: number[] = remembered !== null ? [remembered] : []
+  for (let p = DEFAULT_PORT; p < DEFAULT_PORT + PORT_TRIES; p++) candidates.push(p)
+  let last: unknown = null
+  for (let port of candidates) {
+    if ((await probe("127.0.0.1", port, { timeoutMs: 200 })) !== "closed") continue
+    try {
+      return bind(port)
+    } catch (e) {
+      last = e
+    }
+  }
+  throw last ?? new Error(`No free port between ${DEFAULT_PORT} and ${DEFAULT_PORT + PORT_TRIES - 1}`)
+}
+
+let server = await bindFirstFree()
+
+let address = config.lan ? config.address : "127.0.0.1"
+state.serverUrl = `${address}:${server.port}`
+await writeRecord(config, server.port, address)
 
 // One QR on screen: with the tunnel on, the ticket QR (printed by
 // createTunnelEndpoint) is the pairing story and the address stays text-only;
-// without it, the address QR is the scan target as before.
-if (!config.tunnel) {
+// on the LAN without it, the address QR is the scan target. Loopback-only has
+// nothing to scan.
+if (config.lan && !config.tunnel) {
   console.log("")
   printQr(state.serverUrl)
   console.log("")
 }
-console.log(`[cli] WebSocket server on ws://${state.serverUrl}`)
-// mDNS advertise is intentionally not implemented here: the p2p ticket is the
-// cross-device connect story (see okf/backlog/mdns-discovery.md).
+console.log(`[cli] Dev server on http://${state.serverUrl} serving ${config.mode} ${config.key}`)
 
 // Keepalive
-setInterval(() => {
+let keepalive = setInterval(() => {
   for (let ws of state.clients.keys()) {
     ws.ping()
   }
 }, 5000)
+
+let shuttingDown = false
+let localClient: Child | null = null
+let localClientExited = false
+let signalOffs = ["SIGINT", "SIGTERM"].map((signal) =>
+  onSignal(signal, () => {
+    shutdown()
+  }),
+)
+
+// Orderly exit: drop the record, stop the client, close the listeners and
+// release every handle that keeps the loop alive, so the process ends on
+// its own (flux has no exit call; an idle loop is the exit).
+async function shutdown() {
+  if (shuttingDown) return
+  shuttingDown = true
+  clearInterval(keepalive)
+  for (let off of signalOffs) off()
+  await removeRecord(config.serverDir)
+  if (localClient) localClient.kill()
+  server.close()
+  if (tunnel) await tunnel.close()
+}
+
+// Print a child's output line by line as it arrives.
+async function pump(stream: AsyncIterable<Uint8Array>, print: (line: string) => void) {
+  let decoder = new TextDecoder()
+  let rest = ""
+  for await (let chunk of stream) {
+    rest += decoder.decode(chunk, { stream: true })
+    let lines = rest.split("\n")
+    rest = lines.pop() ?? ""
+    for (let line of lines) print(line)
+  }
+  if (rest) print(rest)
+}
+
+// The initial bundle, latched for the clients about to connect. A failed
+// build shows the BSOD rather than nothing; the next reload retries.
+console.log("[cli] Bundling (development)")
+let buildError = await rebuildAndBroadcast()
+if (buildError) {
+  console.error(buildError)
+  showBuildFailure()
+}
+
+// Startup typecheck, deliberately not awaited: the report prints when tsc
+// finishes, and a type error never gates the boot (srt check is the hard
+// gate). Once per server lifetime; reloads never typecheck.
+if (config.typecheckCmd) {
+  let check = command(config.typecheckCmd[0]!, config.typecheckCmd.slice(1)).spawn()
+  pump(check.stdout, (line) => console.log(line))
+  pump(check.stderr, (line) => console.error(line))
+}
+
+if (config.client) {
+  // The local client dials the port bound above; srt could not know it.
+  let child = command(config.client.cmd, [...config.client.args, "--dev-server", `127.0.0.1:${server.port}`]).spawn()
+  localClient = child
+  pump(child.stdout, (line) => console.log(line))
+  pump(child.stderr, (line) => console.error(line))
+  child.status().then(() => {
+    localClient = null
+    localClientExited = true
+    if (shuttingDown) return
+    if (state.clients.size === 0) {
+      shutdown()
+    } else {
+      console.log(`[cli] Local client exited, ${state.clients.size} remote client(s) still connected`)
+    }
+  })
+}

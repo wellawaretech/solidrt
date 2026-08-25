@@ -1,38 +1,6 @@
 import { resolveBinary } from "./artifacts"
 import { existsSync } from "node:fs"
 import { resolve } from "node:path"
-import type { Interface as ReadlineInterface } from "node:readline"
-// import type { Bonjour } from "bonjour-service"  (mDNS advertise, kept - see dev-server.ts)
-
-export let state = {
-  // What srt believes the current bundle is; the server process keeps its own
-  // latched copy for late-joining clients (see packages/cli/server/).
-  currentCode: null as string | null,
-  // The bundle's composed sourcemaps (dev builds), keyed by module name
-  // ("main", each isolate id), sent to the server alongside reloads so it can
-  // remap logged stack traces to .tsx positions.
-  currentMaps: null as Record<string, string> | null,
-  // The bundle's version manifest (canonical JSON string, see buildManifest);
-  // travels with code reloads so clients install the push as a version.
-  currentManifest: null as string | null,
-  source: undefined as string | undefined,
-  sourceDir: process.cwd(),
-  // The project root the assets/ convention hangs off (see project.ts
-  // projectDirFor); the server's /assets/ route serves from under it.
-  projectDir: process.cwd(),
-  child: null as ReturnType<typeof Bun.spawn> | null,
-  // The spawned flux dev-server process (see dev-server.ts startServer).
-  serverProc: null as ReturnType<typeof Bun.spawn> | null,
-  shuttingDown: false,
-  serverUrl: null as string | null,
-  rl: null as ReadlineInterface | null,
-  // bonjour: null as Bonjour | null,  (mDNS advertise, kept - see dev-server.ts)
-  stats: false,
-  // --capture <file>: destination for captured key events, or undefined when
-  // off; the server process owns the capture file and clock (see
-  // packages/cli/server/main.ts's "capture" message handling).
-  capture: undefined as string | undefined,
-}
 
 // Build target per binary, for the "not found" hint. Run from the repo root.
 let BUILD_HINTS: Record<string, string> = {
@@ -87,36 +55,5 @@ export async function run(binary: string, args: string[]) {
 }
 
 export function print(...args: any[]) {
-  process.stdout.write("\r\x1b[K")
   console.log(...args)
-  state.rl?.prompt(true)
-}
-
-export function printErr(...args: any[]) {
-  process.stdout.write("\r\x1b[K")
-  console.error(...args)
-  state.rl?.prompt(true)
-}
-
-// Pipe a child stream to `out` without mangling the repl prompt: clear the
-// prompt line, write the chunk, redraw the prompt.
-export function pipeAbovePrompt(stream: ReadableStream<Uint8Array>, out: NodeJS.WriteStream) {
-  let reader = stream.getReader()
-  ;(async () => {
-    while (true) {
-      let { done, value } = await reader.read()
-      if (done || !value) break
-      process.stdout.write("\r\x1b[K")
-      out.write(value)
-      state.rl?.prompt(true)
-    }
-  })()
-}
-
-export function shutdown() {
-  state.shuttingDown = true
-  if (state.child) state.child.kill()
-  if (state.serverProc) state.serverProc.kill()
-  // if (state.bonjour) state.bonjour.destroy()  (mDNS advertise, kept - see dev-server.ts)
-  process.exit(0)
 }

@@ -3,6 +3,7 @@ import { Glob } from "bun"
 import { dirname, join, resolve } from "node:path"
 import { source } from "../args"
 import { bundleWith, findIsolateModules } from "../bundler"
+import { findProjectPackage } from "../project"
 
 // srt check: verify the app without side effects. Bundles in memory (nothing
 // written, so no dev-server reload fires and no build outputs land in the
@@ -130,7 +131,9 @@ export function reportTypes(
 // Check one entry: bundle in memory, then typecheck. Returns whether it passed.
 async function checkEntry(entry: string): Promise<boolean> {
   let failed = false
-  let result = await bundleWith({ entry, dev: true, minify: false })
+  // check verifies trees of entries from one cwd, so it is the one command
+  // that walks up from each entry to its project.
+  let result = await bundleWith({ entry, dev: true, minify: false, project: findProjectPackage(entry)?.dir ?? null })
   if (!result) {
     // bundleWith already printed the compile errors.
     failed = true

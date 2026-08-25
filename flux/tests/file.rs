@@ -120,6 +120,26 @@ async fn text_is_rereadable() {
 }
 
 #[tokio::test]
+async fn remove_deletes_and_tolerates_missing() {
+  let dir = TempDir::new();
+  let file = dir.join("gone.txt");
+  let code = r#"
+            import { file } from "flux:fs";
+            let f = file("__FILE__");
+            await f.write("bye");
+            await f.remove();
+            console.log(await f.exists());
+            await f.remove();
+            console.log("twice ok");
+            "#
+  .replace("__FILE__", &file);
+
+  let out = run_source(&code).await;
+  assert!(out.errors().is_empty(), "stderr: {}", out.errors());
+  assert_eq!(out.log(), "false\ntwice ok");
+}
+
+#[tokio::test]
 async fn stat_on_missing_rejects() {
   let dir = TempDir::new();
   let missing = dir.join("nope.txt");

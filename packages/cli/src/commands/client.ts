@@ -1,13 +1,12 @@
-import { values, clientStorageArgs } from "../args"
+import { values, port, clientStorageArgs } from "../args"
 import { requireBinary, run } from "../util"
 import { spawnAndroidClient } from "../dev-android"
-import { DEV_HOST, DEV_PORT } from "../dev-server"
+import { resolveFromCwd } from "../registry"
 
-// Standalone solidrt-go client (no dev server). The `run` command instead uses
-// spawnClient() to launch a client tied to the dev-server lifecycle. --server
-// auto-connects to a dev server at the given address, and -s <N> is its
-// shorthand for the session's server on this machine; without either, the
-// client starts on the connect screen. With --android it is installed and
+// Standalone solidrt-go client (no dev server of its own). Without flags it
+// attaches to the dev server of the project (or file) in the current
+// directory, resolved from the registry; --port picks a local server by port
+// and --server names any address. With --android it is installed and
 // launched on a connected Android device instead of run locally.
 export async function runClientCommand() {
   if (values.android) {
@@ -18,17 +17,24 @@ export async function runClientCommand() {
   let runner = requireBinary("solidrt-go")
   let args: string[] = [...clientStorageArgs()]
   if (values.size) args.push("--size", values.size)
-  // Both flags resolve to the one address the client understands. --server
-  // wins: an explicit host is never overridden by a session number, which
-  // only ever names a loopback port.
-  let address = values.server
-    ? values.server.includes(":")
-      ? values.server
-      : `${values.server}:${DEV_PORT}`
-    : values.session !== undefined
-      ? `${DEV_HOST}:${DEV_PORT}`
-      : null
-  if (address) args.push("--dev-server", address)
+  let address: string
+  if (values.server) {
+    if (!values.server.includes(":")) {
+      console.error(`--server needs host:port (got "${values.server}"); dev servers have no fixed port`)
+      process.exit(1)
+    }
+    address = values.server
+  } else if (port !== undefined) {
+    address = `127.0.0.1:${port}`
+  } else {
+    let resolved = resolveFromCwd(process.cwd())
+    if (!resolved.ok) {
+      console.error(resolved.message)
+      process.exit(1)
+    }
+    address = `127.0.0.1:${resolved.record.port}`
+  }
+  args.push("--dev-server", address)
   let exit = await run(runner, args)
   process.exit(exit)
 }

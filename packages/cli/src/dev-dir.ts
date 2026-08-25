@@ -6,17 +6,25 @@ import { join } from "node:path"
 const DEV_DIR_NAME = ".solidrt"
 
 // All dev-tooling state lives in one home dotdir, one rule on every platform
-// (okf/backlog/parallel-dev-servers.md): servers/<port>/ holds a dev server's
-// identity (tunnel.key) and its registry record (live.json), clients/ is the
-// data root srt passes for every locally spawned client, so dev client trees
-// land in clients/client<M>/. Deleting the dir resets every bit of dev state.
+// (okf/backlog/cli-flux-migration.md): servers/<key hash>/ holds a dev
+// server's registry record (live.json, written by the server itself), its
+// remembered port and its tunnel key; clients/ is the data root srt passes
+// for every locally spawned client, so dev client trees land in
+// clients/client<M>/. Deleting the dir resets every bit of dev state.
 export function devDir(...parts: string[]): string {
   return join(homedir(), DEV_DIR_NAME, ...parts)
 }
 
-/** `servers/<port>/` under the dev dir - a dev server's identity and registry record, keyed by port. */
-export function serverDir(port: number): string {
-  return devDir("servers", String(port))
+/** `servers/` under the dev dir: one folder per server key. */
+export function serversRoot(): string {
+  return devDir("servers")
+}
+
+/** A server's folder: `servers/<sha256 of its canonical key, truncated>/`.
+ * The name is never parsed back; live.json inside is the record. */
+export function serverDir(key: string): string {
+  let hash = new Bun.CryptoHasher("sha256").update(key).digest("hex").slice(0, 16)
+  return devDir("servers", hash)
 }
 
 /** `clients/` under the dev dir - the --data-root for locally spawned dev clients. */

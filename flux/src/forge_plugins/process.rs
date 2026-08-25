@@ -1,12 +1,15 @@
+use rquickjs::function::MutFn;
 use rquickjs::module::{Declarations, Exports, ModuleDef};
 use rquickjs::{Array, Ctx, Function, JsLifetime, Object};
 use std::cell::RefCell;
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::rc::Rc;
+use std::sync::Arc;
+use tokio::sync::Notify;
 
-use super::events::{emit_event, has_listeners, register_listener};
+use super::events::{add_listener, emit_event, has_listeners, remove_listener};
 use crate::logger::CtxLogger;
-use forge::process::{arch, home_dir, kill, platform, rss, SignalStream};
+use forge::process::{arch, home_dir, kill, pid, platform, rss, SignalStream};
 
 // flux:process - process-level events. The first such surface flux owns on top
 // of its own event bus (register_listener + emit_event), separate from the UI
@@ -70,10 +73,11 @@ fn kill_impl(pid: u32) -> bool {
 }
 
 // Signals that already have an OS watcher installed for this context, so
-// repeated on()/once() calls do not spawn duplicate watchers. A watcher removes
-// its own entry when it stops, so a later subscribe reinstalls it.
+// repeated on()/once() calls do not spawn duplicate watchers, each with the
+// wakeup that tells the watcher to stop. A watcher removes its own entry when
+// it stops, so a later subscribe reinstalls it.
 #[derive(Clone, rquickjs::JsLifetime, Default)]
-struct InstalledSignals(#[qjs(skip_trace)] Rc<RefCell<HashSet<String>>>);
+struct InstalledSignals(#[qjs(skip_trace)] Rc<RefCell<HashMap<String, Arc<Notify>>>>);
 
 pub struct ProcessModule;
 
@@ -85,6 +89,7 @@ impl ModuleDef for ProcessModule {
     decl.declare("platform")?;
     decl.declare("arch")?;
     decl.declare("memoryUsage")?;
+    decl.declare("pid")?;
     decl.declare("homedir")?;
     decl.declare("kill")?;
     Ok(())
@@ -105,6 +110,7 @@ impl ModuleDef for ProcessModule {
     exports.export("platform", platform())?;
     exports.export("arch", arch())?;
     exports.export("memoryUsage", Function::new(ctx.clone(), memory_usage)?)?;
+    exports.export("pid", pid())?;
     exports.export("homedir", Function::new(ctx.clone(), homedir_impl)?)?;
     exports.export("kill", Function::new(ctx.clone(), kill_impl)?)?;
     Ok(())
@@ -112,13 +118,44 @@ impl ModuleDef for ProcessModule {
 }
 
 fn on_impl<'js>(ctx: Ctx<'js>, signal: String, callback: Function<'js>) -> rquickjs::Result<Function<'js>> {
-  ensure_watcher(&ctx, &signal);
-  register_listener(&ctx, signal, callback, false)
+  subscribe(ctx, signal, callback, false)
 }
 
 fn once_impl<'js>(ctx: Ctx<'js>, signal: String, callback: Function<'js>) -> rquickjs::Result<Function<'js>> {
+  subscribe(ctx, signal, callback, true)
+}
+
+// Register on the bus and hand JS an unsubscribe that captures only the
+// signal name and the listener id (never a JS value: one captured in a native
+// closure still alive at teardown is never released, and the runtime asserts
+// on it). Removing the last listener wakes the watcher so it stops and an
+// engine whose only remaining work was the watcher can go idle; without that
+// wakeup the watcher would only notice on the signal's next delivery.
+fn subscribe<'js>(
+  ctx: Ctx<'js>,
+  signal: String,
+  callback: Function<'js>,
+  once: bool,
+) -> rquickjs::Result<Function<'js>> {
   ensure_watcher(&ctx, &signal);
-  register_listener(&ctx, signal, callback, true)
+  let id = add_listener(&ctx, signal.clone(), callback, once);
+  Function::new(
+    ctx,
+    MutFn::from(move |ctx: Ctx<'_>| {
+      if remove_listener(&ctx, &signal, id) {
+        stop_watcher(&ctx, &signal);
+      }
+    }),
+  )
+}
+
+// Wake the watcher for `signal` so it stops; a no-op when none is installed.
+fn stop_watcher(ctx: &Ctx<'_>, signal: &str) {
+  let installed = ctx.userdata::<InstalledSignals>().expect("installed signals userdata");
+  let notify = installed.0.borrow().get(signal).cloned();
+  if let Some(notify) = notify {
+    notify.notify_one();
+  }
 }
 
 // Installs a once-per-context OS watcher for `signal` that emits the signal name
@@ -128,7 +165,7 @@ fn once_impl<'js>(ctx: Ctx<'js>, signal: String, callback: Function<'js>) -> rqu
 // on this platform, install failure) logs and installs nothing.
 fn ensure_watcher(ctx: &Ctx<'_>, signal: &str) {
   let installed = ctx.userdata::<InstalledSignals>().expect("installed signals userdata");
-  if installed.0.borrow().contains(signal) {
+  if installed.0.borrow().contains_key(signal) {
     return;
   }
   let mut stream = match SignalStream::open(signal) {
@@ -138,12 +175,22 @@ fn ensure_watcher(ctx: &Ctx<'_>, signal: &str) {
       return;
     }
   };
-  installed.0.borrow_mut().insert(signal.to_string());
+  let stop = Arc::new(Notify::new());
+  installed.0.borrow_mut().insert(signal.to_string(), stop.clone());
 
   let name = signal.to_string();
   let ctx_cb = ctx.clone();
   ctx.spawn(async move {
-    while stream.recv().await {
+    loop {
+      // Deliveries and the last unsubscribe both end the wait; only the
+      // former dispatches.
+      let delivered = tokio::select! {
+        got = stream.recv() => got,
+        _ = stop.notified() => false,
+      };
+      if !delivered {
+        break;
+      }
       emit_event(&ctx_cb, &name, name.clone());
       // A fired once() listener is pruned by the bus; if no listeners remain,
       // stop watching so the engine can go idle.

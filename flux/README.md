@@ -89,6 +89,7 @@ import { file, dir } from "flux:fs"
 let text = await file("data.txt").text()
 let bytes = await file("img.png").bytes()
 await file("out.txt").write("hello")
+await file("out.txt").remove()
 let stat = await file("data.txt").stat()
 
 let entries = await dir("./src").list()

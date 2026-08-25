@@ -27,6 +27,11 @@ pub fn arch() -> &'static str {
   }
 }
 
+/// The OS process id of the current process.
+pub fn pid() -> u32 {
+  std::process::id()
+}
+
 /// Resident set size of the current process in bytes (0 if unavailable).
 pub fn rss() -> u64 {
   let mut system = System::new_with_specifics(RefreshKind::nothing());

@@ -34,6 +34,8 @@ declare module "flux:fs" {
     write(data: string | Uint8Array): Promise<void>
     /** Append `data` to the end of the file, creating it if missing. */
     append(data: string | Uint8Array): Promise<void>
+    /** Remove the file. A missing file is not an error. */
+    remove(): Promise<void>
   }
 
   type FluxDir = {

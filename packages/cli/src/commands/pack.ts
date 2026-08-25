@@ -2,6 +2,7 @@ import { values, source } from "../args"
 import { bundleFlux, bundleSolid, compileToBytecode, findFluxIsolates } from "../bundler"
 import { resolvePackFonts } from "../fonts"
 import { loadAppIdentity } from "../project"
+import { resolveMode } from "../mode"
 import { packFlux, packSolid } from "../packer"
 import { buildPackFolder, writePackFolder } from "../pack-folder"
 import { requireBinary } from "../util"
@@ -43,20 +44,21 @@ export async function runPackCommand() {
   // Both solidrt outputs are the same canonical pack: manifest + bundle.bin +
   // assets (fonts included). --folder writes it as a flat folder next to a
   // bare runner; the default single-file exe carries it as trailer sections.
-  let identity = loadAppIdentity(source!)
+  let mode = resolveMode()
+  let identity = loadAppIdentity(mode.entry, mode.projectDir)
   console.log(`>> app: ${identity.appId} (${identity.org} / ${identity.displayName})`)
   if (identity.defaulted) {
     console.warn('>> warning: no "solidrt.appId" in package.json; set a stable reverse-DNS id before distributing')
   }
-  let fonts = resolvePackFonts(source!)
+  let fonts = resolvePackFonts(mode.projectDir)
   console.log(`>> fonts: ${fonts.length ? fonts.map((f) => f.alias).join(", ") : "none"}`)
 
-  let bundled = await bundleSolid()
+  let bundled = await bundleSolid(mode)
   let bytecode = await compileToBytecode(bundled.code)
   let isolates = []
   for (let i of bundled.isolates) isolates.push({ id: i.id, bytecode: await compileToBytecode(i.code, i.id) })
   if (isolates.length) console.log(`>> isolates: ${isolates.map((i) => i.id).join(", ")}`)
-  let folder = buildPackFolder(source!, bytecode, isolates)
+  let folder = buildPackFolder(mode, bytecode, isolates)
 
   if (values.folder) {
     let outDir = values.output ?? join("dist", "pack")
@@ -65,7 +67,7 @@ export async function runPackCommand() {
     process.exit()
   }
 
-  let outfile = values.output ?? source!.replace(/\.[jt]sx?$/, "")
+  let outfile = values.output ?? mode.entry.replace(/\.[jt]sx?$/, "")
   // On Windows the packed image is a PE executable; it needs a .exe name to run.
   if (process.platform === "win32" && !outfile.toLowerCase().endsWith(".exe")) {
     outfile += ".exe"

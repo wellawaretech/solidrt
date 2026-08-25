@@ -73,12 +73,14 @@ call one in-process `rebuildAndBroadcast()`.
 
 ## Ports
 
-The server binds `port: 0` unless `--port` is given, and the bound port is an
-output: written to the registry, passed to the spawned client, printed with
+The server binds its remembered port, else the first free port from 34884
+upward (never an OS-assigned one: servers on a machine should read as
+34884, 34885, ...; decided 2026-08-25), unless `--port` is given. The bound
+port is an output: written to the registry, passed to the spawned client, printed with
 the QR. `-s` goes away. `-c` stays for the client data tree.
 
 Stability: the server folder persists the last bound port and tries it first,
-falling back to 0 when taken. In practice a project keeps its port across
+falling back to the scan when taken. In practice a project keeps its port across
 restarts, so tunnel tickets (UDP port pinned to the dev port) and client
 `recents` stay valid, without anyone choosing a number.
 
@@ -168,17 +170,25 @@ humans restart.
 
 ## Packaging
 
-`bin/srt` is a bun shim today (`#!/usr/bin/env bun` importing `src/main.ts`).
-It becomes a shim that execs the platform package's `flux` binary on a
-prebuilt `srt.js`; `.mcp.json` follows the same command. The prebuilt is
-produced by bun at release time (the treatment `bundleServer()` gives the
-server per launch today, moved to build time), and by a `make`/script step
-when developing srt itself. Long term `srt pack --flux` packs srt: the CLI
-is a flux app like any other.
+`bin/srt` is a bun shim (`#!/usr/bin/env bun` importing `src/main.ts`) and
+stays one: resolving the platform package's binaries is node module
+resolution, which is bun's job, and the launcher already does nothing but
+resolve, build the config and spawn `flux`. The server bundle is prebuilt
+at release time (`scripts/build-server.ts` -> `dist/server.js`, shipped in
+the package; a checkout builds it per launch into a temp file when the
+prebuilt is absent), so an installed srt never bundles the server.
 
-`bundle`, `check`, `pack`, `render`, `init` can stay bun-hosted until it
-matters; they are one-shot commands with no server state. Splitting the bin
-by command is a detail of the shim.
+The shim exec'ing `flux` directly, and `srt pack --flux` packing srt as a
+flux app, wait for a flux-side story for finding `solidrt-go`, `bun` and
+the platform package; until then the extra move buys nothing.
+
+`bundle`, `pack` and `render` are one-shot bun commands under the same mode
+table as `run`: `srt bundle` builds the project at the cwd, `srt bundle
+<file>` a file on its own, `--project`/`--file` resolve a file in a project
+root. The build root is the cwd (`dist/bundle`, `dist/render`, `dist/pack`
+under it). `check` is the one command that walks up from each entry: it
+verifies trees of entries from one cwd. Isolate modules are a project
+feature: a file on its own bundles none (decided 2026-08-25).
 
 # Flux gaps to close first
 
@@ -198,7 +208,7 @@ Checked 2026-08-25; each is its own small item and useful on its own:
   no-tty path already runs without a repl).
 - **sha256.** DONE 2026-08-25 (uncommitted): `crypto.subtle.digest`
   (SHA-256/384/512): core in `forge/src/crypto.rs`, marshalling in
-  `flux/src/forge_plugins/crypto.rs`,
+  `flux/src/standards_plugins/crypto.rs`,
   replacing `Bun.CryptoHasher` for manifest and asset hashing once the CLI
   moves.
 
@@ -206,12 +216,29 @@ Checked 2026-08-25; each is its own small item and useful on its own:
 
 1. Flux gaps: bound port and `crypto.subtle.digest` (both done); fs watch
    deferred, see above.
-2. Move `run`/`server`/`client`/`mcp` into one flux-hosted `srt`, with
-   port 0 + project-keyed registry in the same move (the registry ownership
-   is what changes; doing it twice is waste). `-s` removed, `--file`,
-   `--project` and `--lan` added, `--port` kept; loopback bind by default. Repl ported when stdin lands; until then the flux srt runs
-   repl-less, which is what agents use anyway.
-3. Remaining one-shot commands and the `srt pack --flux` self-pack.
+2. DONE 2026-08-25 (uncommitted): the dev server (`packages/cli/server/`)
+   owns port (remembered, else first free from 34884, or `--port`), record, local client and
+   bundle; bun is a launcher (`commands/server.ts`: mode, binaries, config,
+   signal relay) plus the registry readers (`client`, `mcp`, `--android`)
+   and the bundle-cli subprocess. `-s` removed, `--file`, `--project`,
+   `--lan` added, `--port` kept; loopback bind by default; `/__internal__/`,
+   repl, watcher, `load` and `watch` gone. `srt mcp` stays bun for good: it
+   is a stdio JSON-RPC server on the MCP SDK, and flux has no stdin.
+   Verified: file mode on a root probe (OS port, record, reload, MCP
+   resolution from the repo root, duplicate refused, SIGTERM drops the
+   record), project mode in examples/hello-world (assets route, `srt client`
+   from the root, ambiguity error). Found and fixed on the way: `flux:process`
+   `on()` unsubscribe never stopped the OS signal watcher, so a server that
+   unsubscribed at shutdown never went idle (`flux/tests/process.rs`).
+   Also added: `flux:process.pid`, `flux:fs` `file().remove()`.
+3. DONE 2026-08-25 (uncommitted): `dist/server.js` prebuilt at release
+   (`scripts/build-server.ts`, release.yml step, `files` entry), used when
+   present; `typecheck-cli.ts` restores the startup typecheck (spawned by
+   the server after the initial bundle, not awaited, prebuilt entries
+   skipped); `bundle`/`pack`/`render` under the mode table, build root =
+   cwd, `projectDirFor` and the upward walk gone except in `check`; file
+   mode bundles no isolates. Scaffold scripts follow (`srt run`, `srt pack
+   -o out`). Open: the shim exec'ing flux and the self-pack, see Packaging.
 
 # Deliberately not in scope
 

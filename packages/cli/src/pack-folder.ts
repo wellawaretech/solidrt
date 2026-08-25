@@ -1,15 +1,8 @@
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs"
 import { basename, dirname, join, resolve } from "node:path"
-import {
-  assetPathFor,
-  collectAssets,
-  loadAppIdentity,
-  projectDirFor,
-  RUNTIME_VERSION,
-  SOLIDRT_VERSION,
-  type ManifestFont,
-} from "./project"
+import { assetPathFor, collectAssets, loadAppIdentity, RUNTIME_VERSION, SOLIDRT_VERSION, type ManifestFont } from "./project"
 import { resolvePackFonts } from "./fonts"
+import type { Mode } from "./mode"
 import { runnerGlLibs } from "./packer"
 import { isolateAssetPath } from "./bundler"
 
@@ -41,10 +34,12 @@ export type PackFolder = {
 // `isolates` are the app's isolate bundles compiled to bytecode; they ship as
 // the manifest assets isolates/<id>.bin (the production runtime has no
 // compiler, so pack never ships isolate source).
-export function buildPackFolder(entry: string, bytecode: Buffer, isolates: { id: string; bytecode: Buffer }[]): PackFolder {
-  let identity = loadAppIdentity(entry)
-  let projectDir = projectDirFor(resolve(entry))
-  let { assets, icon } = collectAssets(entry)
+export function buildPackFolder(mode: Mode, bytecode: Buffer, isolates: { id: string; bytecode: Buffer }[]): PackFolder {
+  let identity = loadAppIdentity(mode.entry, mode.projectDir)
+  // File mode collects no assets, so the dir is only ever joined in project
+  // mode; the entry's dir stands in to keep the paths absolute.
+  let projectDir = mode.projectDir ?? dirname(mode.entry)
+  let { assets, icon } = collectAssets(mode.projectDir)
   let copies = assets.map((a) => ({ from: join(projectDir, a.path), to: a.path }))
   let files = isolates.map((i) => ({ to: isolateAssetPath(i.id, "bin"), bytes: i.bytecode }))
   for (let f of files) assets.push({ path: f.to, sha256: hashHex(f.bytes), size: f.bytes.length })
@@ -53,7 +48,7 @@ export function buildPackFolder(entry: string, bytecode: Buffer, isolates: { id:
   // defaults materialize under assets/fonts/ (a user file already at that
   // path must be the same bytes, otherwise the layout is ambiguous).
   let fonts: ManifestFont[] = []
-  for (let font of resolvePackFonts(entry)) {
+  for (let font of resolvePackFonts(mode.projectDir)) {
     if (font.isDefault) {
       let path = "assets/fonts/" + basename(font.path)
       let bytes = readFileSync(font.path)

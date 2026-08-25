@@ -12,7 +12,7 @@ tool documents itself in full - read the tool description rather than guessing
 at its arguments. What the individual descriptions cannot tell you:
 
 - If `list_clients` is empty, no app is running: ask the user to start
-  `bunx srt run src/index.tsx` rather than starting a second one yourself.
+  `bunx srt run` rather than starting a second one yourself.
   The bridge needs no port: it resolves the server currently serving this
   project, whatever `-s`/`--port` it was started with, and re-resolves when
   that server goes away or a different project's server takes its port.
@@ -80,13 +80,15 @@ client itself was launched from the project root (or the client supports a
 Every MCP tool is a thin wrapper over the dev server's HTTP control API, so
 a shell script, a CI step, or an agent with no MCP bridge can drive the app
 the same way. Base: `http://127.0.0.1:<port>/__control__/`, where `<port>`
-is 34884 plus the `-s` offset `srt run` was started with. GET unless noted;
+is the one `srt run` printed at startup (also in the server's
+`~/.solidrt/servers/*/live.json` record). GET unless noted;
 every endpoint answers JSON and an error is `{ "error": "..." }` with a
 4xx/5xx status. Endpoints that talk to a client take `?client=<id>` (from
 `/clients`); it may be omitted when exactly one client is connected.
 
-- `/clients` - `{ generation, entry, projectDir, clients: [{ id, ... }] }`.
-  Check `entry` is the app you mean: the port is fixed, a `load` moves it.
+- `/clients` - `{ generation, key, mode, entry, projectDir, clients: [{ id,
+  ... }] }`. Check `key` (the project root or single file served) is the app
+  you mean.
 - `/logs?since=<seq>&level=<lvl>&contains=<text>&wait=<ms>` - `{ entries:
   [{ seq, at, client, level, text, repeats? }], latest, generation }`. Pass
   the previous `latest` as `since` to read only new output; a changed
@@ -115,9 +117,7 @@ every endpoint answers JSON and an error is `{ "error": "..." }` with a
   coordinates read from `/tree`).
 - POST `/clock?scale=<x>` (0 pauses) / `?step=<n>` frames while paused.
 - POST `/reload` - rebuild and push to every client; `{ ok, clients }` or
-  the build error. POST `/load` `{ "entry": "<absolute path>" }` switches
-  the served entry (must be inside the project). POST `/watch`
-  `{ "enabled": bool }` pauses or resumes reload-on-save.
+  the build error. There is no reload-on-save: this is the only push.
 
 The loop is the same as over MCP: `/reload`, then `/logs?since=`, then
 `/tree` for coordinates and `/snapshot` of the smallest relevant node.

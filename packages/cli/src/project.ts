@@ -1,8 +1,8 @@
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs"
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path"
 
-// Project configuration lives in the `solidrt` key of the nearest package.json
-// above the entry file (okf/plans/client-storage-updates.md):
+// Project configuration lives in the `solidrt` key of the project's
+// package.json (okf/plans/client-storage-updates.md):
 //
 //   "solidrt": {
 //     "appId": "com.example.app",   // stable identity: storage dir, Android package id
@@ -15,8 +15,12 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "nod
 //   }
 //
 // Everything defaults from the package name (or the entry filename when there
-// is no package.json) so a dev project needs zero config; `srt pack` warns
+// is no project) so a dev project needs zero config; `srt pack` warns
 // when appId is defaulted, since a distributed app should pin its identity.
+//
+// Which project an entry belongs to is the caller's decision (mode.ts: the
+// cwd, never a search); the one exception is `srt check`, which verifies
+// trees of entries from one cwd and walks up from each.
 
 export function findProjectPackage(sourcePath: string): { dir: string; pkg: any } | null {
   let dir = resolve(dirname(sourcePath))
@@ -29,6 +33,13 @@ export function findProjectPackage(sourcePath: string): { dir: string; pkg: any 
     if (parent === dir) return null
     dir = parent
   }
+}
+
+// The project at `projectDir`, or null in file mode (the entry stands alone).
+function projectFor(projectDir: string | null): { dir: string; pkg: any } | null {
+  if (projectDir === null) return null
+  let pkgPath = resolve(projectDir, "package.json")
+  return { dir: projectDir, pkg: existsSync(pkgPath) ? JSON.parse(readFileSync(pkgPath, "utf8")) : {} }
 }
 
 export type AppIdentity = { appId: string; org: string; displayName: string; defaulted: boolean }
@@ -73,10 +84,10 @@ export const SOLIDRT_VERSION: string = pkgVersion === "0.0.0" ? "unknown" : pkgV
 
 // `extra` are build outputs that ship as assets too (isolate bundles); they
 // follow the assets/ tree in the list, in the order given.
-export function buildManifest(code: string, entry: string, extra: ManifestAsset[] = []): string {
-  let identity = loadAppIdentity(entry)
+export function buildManifest(code: string, entry: string, extra: ManifestAsset[], projectDir: string | null): string {
+  let identity = loadAppIdentity(entry, projectDir)
   let sha256 = new Bun.CryptoHasher("sha256").update(code).digest("hex")
-  let { assets, fonts, icon } = collectAssets(entry)
+  let { assets, fonts, icon } = collectAssets(projectDir)
   assets.push(...extra)
   return JSON.stringify({
     appId: identity.appId,
@@ -96,12 +107,6 @@ export type ManifestFont = { path: string; alias: string }
 /** The manifest entry for in-memory asset bytes at `path`. */
 export function manifestAssetFor(path: string, bytes: Uint8Array): ManifestAsset {
   return { path, sha256: new Bun.CryptoHasher("sha256").update(bytes).digest("hex"), size: bytes.length }
-}
-
-// The project root the assets/ convention hangs off: the nearest package.json
-// dir, or the entry's own dir when there is none.
-export function projectDirFor(sourcePath: string): string {
-  return findProjectPackage(sourcePath)?.dir ?? resolve(dirname(sourcePath))
 }
 
 // The manifest asset path for an absolute file inside the project's assets/
@@ -137,13 +142,15 @@ function walkAssets(assetsDir: string, dir: string, out: ManifestAsset[]) {
 // and the raster surfaces (window icon, OS embedding) come with later stages
 // (okf/backlog/app-icons.md). An undeclared assets/icon.svg is picked up by
 // convention.
-export function collectAssets(entry: string): {
+export function collectAssets(dir: string | null): {
   assets: ManifestAsset[]
   fonts: ManifestFont[]
   icon: string | null
 } {
-  let project = findProjectPackage(entry)
-  let projectDir = projectDirFor(entry)
+  let project = projectFor(dir)
+  // No project (file mode): the entry stands alone, so no assets at all.
+  if (!project) return { assets: [], fonts: [], icon: null }
+  let projectDir = project.dir
   let assetsDir = resolve(projectDir, "assets")
 
   let assets: ManifestAsset[] = []
@@ -192,8 +199,8 @@ export function collectAssets(entry: string): {
 
 // Resolve the app identity for a pack. All three fields are guaranteed
 // non-empty and 255 bytes max (the trailer encoding's length prefix).
-export function loadAppIdentity(sourcePath: string): AppIdentity {
-  let project = findProjectPackage(sourcePath)
+export function loadAppIdentity(sourcePath: string, projectDir: string | null): AppIdentity {
+  let project = projectFor(projectDir)
   let config = project?.pkg.solidrt ?? {}
   // A scoped package name (@org/name) defaults to its last segment: identity
   // fields reject path separators, and derived defaults must never fail that.

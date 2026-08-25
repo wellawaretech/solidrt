@@ -23,19 +23,22 @@ matches the work before starting it:
   folder: package.json, tsconfig.json, AGENTS.md, a starter src/index.tsx, an
   empty assets/ (everything in it ships with the app), then installs deps. Greenfield shortcut (no install needed first):
   `bun create solidrt <dir>`.
-- `bunx srt run src/index.tsx` - dev server + a local client window, watches and
-  hot-reloads. NEEDS A DISPLAY (opens a GUI window). Not usable headless.
-- `bunx srt bundle src/index.tsx` - bundle into `dist/bundle/` (or
+- `bunx srt run` - dev server + a local client window, from the project root
+  (entry `solidrt.entry` in package.json, default src/index.tsx); `bunx srt run
+  <file>` serves a single file outside a project. NEEDS A DISPLAY (opens a GUI
+  window). Not usable headless. No reload-on-save: push edits with the MCP
+  `reload` tool.
+- `bunx srt bundle` - bundle the project into `dist/bundle/` (or
   `--output <dir>`): `<name>.srt.js` plus the app's isolate modules as
   `isolates/<id>.js`. With `--compile`, bytecode (`.srt.bin`/`.bin`)
   instead. Move the dir, not the bare file - a bundle loaded without its
   isolates/ dir loses them (`--stdout` cannot carry them at all).
   `--minify`, `--dev` also available.
-- `bunx srt render src/index.tsx [flags]` - render OFFSCREEN to PNG frames,
+- `bunx srt render [flags]` - render the project OFFSCREEN to PNG frames,
   optionally replaying a `--script` file recorded via `--capture`.
 - `bunx srt server [file]` / `bunx srt client` - the two halves of `run`
   separately (server distributes code; clients on other devices connect to it).
-- `bunx srt run src/index.tsx --capture out.script.json` - records keydown/keyup
+- `bunx srt run --capture out.script.json` - records keydown/keyup
   from every connected client into one script file (written on client
   disconnect), for replaying later with `render --script`. The file is JSON
   Lines and hand-authorable: one object per line,
@@ -48,8 +51,8 @@ matches the work before starting it:
 
 Two reliable checks that need no GUI:
 
-1. `bunx srt bundle src/index.tsx` - exit 0 means the app compiles. Fast.
-2. `bunx srt render src/index.tsx --size 480x640 --duration 1 --fps 2` -
+1. `bunx srt bundle` - exit 0 means the app compiles. Fast.
+2. `bunx srt render --size 480x640 --duration 1 --fps 2` -
    renders offscreen via EGL and writes `frame-NNNNNN.png`. This actually
    proves the app renders. Combine with `--fps`/`--duration` (defaults
    1280x720, 60fps, 1s). No display needed: rendering uses SDL's offscreen
@@ -77,29 +80,32 @@ behavior in isolation.
   (Wayland) and the pbuffer path on Windows from a desktop session; a
   non-interactive Windows session and macOS are unverified.
 
-## Sessions (parallel dev servers on one machine)
+## Servers (what is served, and finding it again)
 
-- `-s <N>` / `--session <N>` (default 0) picks the dev server: port
-  `34884 + N`. Valid on `run`, `server`, `client`, `mcp`. `srt run -s1` is a
-  second, fully independent dev setup; `srt client -s1 -c2` attaches another
-  client to it.
-- `-c <N>` / `--client <N>` picks the client data tree, defaulting to the
-  session number. (`--compile` gave its short to `--client`.)
-- Dev state lives in `~/.solidrt/`: `servers/<port>/` holds each server's tunnel
-  key and `live.json` (the registry record MCP resolution reads, removed at
-  exit), `clients/client<M>/` the client trees (srt passes
-  `--data-root ~/.solidrt/clients` to every locally spawned client).
-- A server run serves the project it was started in; `load` outside the
-  project root is refused. Restart the server in another project to switch.
-- `srt mcp` needs no port: each tool call resolves the server serving the
-  project the bridge runs in (registry match + probe); `-s`/`--port` pin it.
+- A dev server serves a project (started in its root: the cwd must hold the
+  package.json) or a single file (`srt run <file>` outside a project). Both
+  in one place is ambiguous, so `srt run <file>` in a project root needs
+  `--project` (the project, with this entry) or `--file` (the file alone).
+  Nothing searches upward for a package.json.
+- One server per project or file. The server binds the port it had last
+  time, else the first free one from 34884 up, and prints it; `--port <N>`
+  pins it. Loopback only
+  unless `--lan`, which is what phones and other devices (and `srt client
+  --android` on a real device) need; `--tunnel` works without it.
+- `-c <N>` / `--client <N>` picks the client data tree (default 0). Storage
+  is per app inside a tree, so two projects share client 0; only two clients
+  of the same app need distinct slots.
+- Dev state lives in `~/.solidrt/`: `servers/<key hash>/` holds each server's
+  `live.json` (the registry record, written by the server and removed at
+  exit), its remembered `port` and tunnel key; `clients/client<M>/` the
+  client trees (srt passes `--data-root ~/.solidrt/clients` to every locally
+  spawned client).
+- `srt client` and `srt mcp` need no port: run from the project root (or the
+  directory of a served file) they resolve the server from the registry;
+  `--port` pins one.
 
 ## Dev server proxies (when clients on other devices need your machine's data)
 
 - `--proxy-http` - route `fetch` through the dev server; responses cached in
   `.srt-data/http-cache.db` in the project root (delete the file to clear).
 
-## REPL (opened by `run`/`server`)
-
-`load <file>`, `reload [n]`, `stop [n]`, `list`, `!<cmd>`, `quit`/`exit`.
-`load` is bound to the project root the server was started in.

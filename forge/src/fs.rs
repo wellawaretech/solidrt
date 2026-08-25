@@ -186,6 +186,17 @@ pub async fn write(path: &str, bytes: &[u8]) -> Result<(), String> {
   tokio::fs::write(path, bytes).await.map_err(|e| format!("write {path}: {e}"))
 }
 
+/// Remove a file. Missing is not an error: the caller wants it gone, and it
+/// is (a record dropped twice, a cleanup after a crash).
+pub async fn remove(path: &str) -> Result<(), String> {
+  check_writable(path, "remove")?;
+  match tokio::fs::remove_file(path).await {
+    Ok(()) => Ok(()),
+    Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+    Err(e) => Err(format!("remove {path}: {e}")),
+  }
+}
+
 /// Append bytes to a file, creating it if missing.
 pub async fn append(path: &str, bytes: &[u8]) -> Result<(), String> {
   use tokio::io::AsyncWriteExt;

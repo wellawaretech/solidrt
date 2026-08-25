@@ -328,6 +328,13 @@ jobs:
               packages/$d/flux packages/$d/fluxc packages/$d/fluxrt
           done
 
+      # The CLI package ships the dev server as one prebuilt bundle
+      # (dist/server.js, see packages/cli/src/server-bundle.ts), so an
+      # installed srt runs it on the platform package's flux without
+      # bundling per launch.
+      - name: Build the CLI dev server bundle
+        run: bun packages/cli/scripts/build-server.ts
+
       # The CLI package ships its own copy of the default fonts: `srt pack`
       # appends them to packed solidrt binaries (see packages/cli/src/fonts.ts).
       # They are platform-independent, so the CLI package is the channel, not

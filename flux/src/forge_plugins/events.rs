@@ -46,42 +46,50 @@ pub(crate) fn init(ctx: &Ctx<'_>) {
   ctx.store_userdata(StickyMap::default()).expect("store sticky cache");
 }
 
+// Adds a listener for `event` and returns its integer id. The first listener
+// for an event name calls pending.hold() so the engine loop does not exit
+// while there are active listeners to service; the last removal releases it.
+// once=true removes the listener after its first invocation.
+pub fn add_listener<'js>(ctx: &Ctx<'js>, event: String, callback: Function<'js>, once: bool) -> u32 {
+  let persistent = Persistent::save(ctx, callback);
+  let store = ctx.userdata::<ListenerMap>().unwrap();
+  let pending = ctx.userdata::<PendingOps>().unwrap();
+  let (id, is_first) = store.0.borrow_mut().insert(event, persistent, once);
+  if is_first {
+    pending.hold();
+  }
+  id
+}
+
+// Removes listener `id` of `event`. Returns true when that was the event's
+// last listener (the hold is released then); false for an unknown id, so a
+// second removal is a no-op.
+pub fn remove_listener(ctx: &Ctx<'_>, event: &str, id: u32) -> bool {
+  let store = ctx.userdata::<ListenerMap>().unwrap();
+  let pending = ctx.userdata::<PendingOps>().unwrap();
+  let was_last = store.0.borrow_mut().remove(event, id);
+  if was_last {
+    pending.release();
+  }
+  was_last
+}
+
 // Registers a listener for `event`, returning an unsubscribe function that
 // captures only the event name and integer ID, so it cannot keep a JS function
-// rooted past listener removal. Safe to call multiple times (second call is a
-// no-op).
-//
-// The first listener for an event name calls pending.hold() so the engine loop
-// does not exit while there are active listeners to service; the last removal
-// releases it. once=true removes the listener after its first invocation.
+// rooted past listener removal (a JS value captured in a native closure that
+// is still alive at teardown is never released, and the runtime asserts on
+// it). Safe to call multiple times (second call is a no-op).
 pub fn register_listener<'js>(
   ctx: &Ctx<'js>,
   event: String,
   callback: Function<'js>,
   once: bool,
 ) -> rquickjs::Result<Function<'js>> {
-  let persistent = Persistent::save(ctx, callback);
-  let id: u32;
-
-  // Scope the userdata borrows so ctx is free to move into Function::new below.
-  {
-    let store = ctx.userdata::<ListenerMap>().unwrap();
-    let pending = ctx.userdata::<PendingOps>().unwrap();
-    let (new_id, is_first) = store.0.borrow_mut().insert(event.clone(), persistent, once);
-    id = new_id;
-    if is_first {
-      pending.hold();
-    }
-  }
-
+  let id = add_listener(ctx, event.clone(), callback, once);
   Function::new(
     ctx.clone(),
     MutFn::from(move |ctx: Ctx<'_>| {
-      let store = ctx.userdata::<ListenerMap>().unwrap();
-      let pending = ctx.userdata::<PendingOps>().unwrap();
-      if store.0.borrow_mut().remove(&event, id) {
-        pending.release();
-      }
+      remove_listener(&ctx, &event, id);
     }),
   )
 }
