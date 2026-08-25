@@ -1,0 +1,9 @@
+{
+  "name": "solidrt-3d-demos",
+  "type": "module",
+  "private": true,
+  "solidrt": {
+    "appId": "dev.solidrt.demos.3d",
+    "displayName": "SolidRT 3D demos"
+  }
+}

@@ -1007,6 +1007,11 @@ Finished, kept for the reasoning.
   now. Fixed 2026-08-08 - the clip is emitted in box space, under the user
   chain before the fit, on both the paint and hit paths, pinned at both
   scales.
+- **[Demos a user can run, shipped inside the packages](done/package-demos.md)** [2026-08-25]
+  Done 2026-08-25 - a package's demos/ folder is one project (shared
+  package.json, tsconfig and assets/, one src/*.tsx per demo); srt demo lists
+  them numbered and runs one by number or qualified name, by starting the
+  ordinary dev server with its cwd set to that project.
 - **[Padding makes paint and hit size against different boxes](done/padding-box-divergence.md)** [2026-08-21]
   Paint used to hand every laid-out element its content box as ctx.size while
   hit testing passed the border box, so padding made the two sides size

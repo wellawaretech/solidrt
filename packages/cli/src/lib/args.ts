@@ -126,6 +126,12 @@ export function validateArgs() {
         usage("srt check [entry.[tsx|jsx|ts|js] | folder]")
       }
       break
+    case "demo":
+      // A number from the printed list, or the qualified name beside it.
+      if (source && !/^\d+$/.test(source) && !/^[\w.-]+\/[\w.-]+$/.test(source)) {
+        usage("srt demo [<number> | <package>/<demo>]")
+      }
+      break
     case "render":
       if (source && !isTsx) usage("srt render [entry.[tsx|jsx]]")
       break

@@ -27,11 +27,13 @@ Commands:
   run [file]             Start dev server + local solidrt-go client
   server [file]          Start dev server only
   client                 Start solidrt-go client only
+  demo [<number>]        List the demos the installed packages ship, or run one
   android                Install and launch the client on a connected Android device
   bundle [file]          Transpile TS/JS/TSX/JSX to JS or bytecode
                          (a prebuilt <name>.srt.js: compile it to bytecode)
   check [file]           Verify the app builds and typechecks, without writing anything
-                         (no file: every examples/*/src/index.tsx and packages/*/examples/*.tsx)
+                         (no file: every examples/*/src/index.tsx, packages/*/examples/*.tsx
+                         and packages/*/demos/src/*.tsx)
   render [file]          Replay a script (optional) and render frames for video generation
   pack [file]            Bundle + compile to a standalone executable (experimental)
   mcp                    MCP server (stdio) exposing the running dev server to coding agents

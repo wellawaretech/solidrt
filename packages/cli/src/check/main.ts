@@ -32,11 +32,17 @@ async function checkEntry(entry: string): Promise<boolean> {
 
 // The entries `srt check <folder>` covers, relative to the folder (a bare
 // `srt check` is `srt check .`): the app itself, its own examples, and in
-// a monorepo every example app and package example. The same set CI
-// gates, so one call at the repo root answers "did I break any example"
-// before pushing. Entries, not files: a source no entry imports is not
-// checked.
-const CHECK_ALL_GLOBS = ["src/index.tsx", "examples/*.tsx", "examples/*/src/index.tsx", "packages/*/examples/*.tsx"]
+// a monorepo every example app, package example and package demo. The same
+// set CI gates, so one call at the repo root answers "did I break any
+// example" before pushing. Entries, not files: a source no entry imports is
+// not checked.
+const CHECK_ALL_GLOBS = [
+  "src/index.tsx",
+  "examples/*.tsx",
+  "examples/*/src/index.tsx",
+  "packages/*/examples/*.tsx",
+  "packages/*/demos/src/*.tsx",
+]
 function discoverEntries(root: string): string[] {
   let entries: string[] = []
   for (let pattern of CHECK_ALL_GLOBS) {

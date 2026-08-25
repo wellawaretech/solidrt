@@ -66,14 +66,22 @@ async function serverScript(): Promise<{ path: string; temp: boolean }> {
   return { path: outfile, temp: true }
 }
 
-async function launchServer(withClient: boolean) {
+// `demo` serves a demos project the same way `run` serves any other one:
+// the entry is resolved for the caller (src/demo/main.ts) and the server is
+// started IN that project, so mode.ts resolves it as a project and its
+// assets/ folder is served like any app's.
+async function launchServer(withClient: boolean, demo?: { cwd: string; entry: string }) {
   let flux = requireBinary("flux")
   let script = await serverScript()
 
   let args: string[] = []
-  if (source !== undefined) args.push(source)
-  if (values.project) args.push("--project")
-  if (values.file) args.push("--file")
+  if (demo) {
+    args.push(demo.entry, "--project")
+  } else {
+    if (source !== undefined) args.push(source)
+    if (values.project) args.push("--project")
+    if (values.file) args.push("--file")
+  }
   if (port !== undefined) args.push("--port", String(port))
   for (let flag of ["lan", "proxy-http", "tunnel", "stats", "minify"] as const) {
     if (values[flag]) args.push(`--${flag}`)
@@ -87,6 +95,7 @@ async function launchServer(withClient: boolean) {
   if (appArgs.length) args.push("--", ...appArgs)
 
   let proc = Bun.spawn([flux, script.path, ...args], {
+    cwd: demo?.cwd,
     stdio: ["ignore", "inherit", "inherit"],
     env: {
       ...process.env,
@@ -118,6 +127,10 @@ if (command === "server") {
   await launchServer(false)
 } else if (command === "run") {
   await launchServer(true)
+} else if (command === "demo") {
+  let { main } = await import("./demo/main")
+  let target = await main()
+  if (target) await launchServer(true, target)
 } else if (command !== undefined && (COMMANDS as readonly string[]).includes(command)) {
   let { main } = await import(`./${command as Command}/main`)
   await main()
