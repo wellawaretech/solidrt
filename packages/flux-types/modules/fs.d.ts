@@ -68,4 +68,12 @@ declare module "flux:fs" {
    * @param path  Path to the directory.
    */
   export function dir(path: string): FluxDir
+  /**
+   * The canonical absolute path: symlinks resolved, `.`/`..` collapsed, the
+   * spelling the OS reports (no `\\?\` prefix on Windows). Rejects if the
+   * path does not exist.
+   *
+   * @param path  Path to a file or directory.
+   */
+  export function realpath(path: string): Promise<string>
 }

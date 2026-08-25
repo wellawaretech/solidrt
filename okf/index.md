@@ -479,11 +479,6 @@ Shaped, not started.
   camera, no mesh, no lights) that the 3d package is the first consumer of;
   triangle-accurate picking (3d roadmap item 4) and the scene-walk descent
   (item 19) land together on it.
-- **[Give srt one folder per command, split by runtime](backlog/srt-command-folders.md)** [2026-08-25]
-  Restructure packages/cli so every command is a top-level folder whose first
-  line says its runtime (bun for node-ecosystem adapters, flux for the dev
-  server), bin/srt only routes, and a server is one process the console can
-  spawn or embed directly.
 - **[Every widget hand-wires its own hover/pressed/disabled variants](backlog/state-variant-selection.md)** [2026-07-26]
   Button picks fill/hover/label with a switch over its variant and derives the
   background from press state by hand, and every other widget repeats the
@@ -1098,6 +1093,11 @@ Finished, kept for the reasoning.
   route settles to the target's onTransitionEnd handler; the packages should
   offer the same - an onTransitionEnd per sprite handle / SceneNode - the
   first thing anyone chaining animations will reach for.
+- **[Give srt one folder per command, split by runtime](done/srt-command-folders.md)** [2026-08-25]
+  Restructure packages/cli so every command is a top-level folder whose first
+  line says its runtime (bun for node-ecosystem adapters, flux for the dev
+  server), bin/srt only routes, and a server is one process the console can
+  spawn or embed directly.
 - **[srt run exits immediately when stdin is not a terminal](done/srt-run-exits-on-stdin-eof.md)** [2026-08-20]
   The repl bound readline close to full shutdown, so any non-interactive
   launch (background shell, supervisor, CI) tore down the server, the client

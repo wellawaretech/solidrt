@@ -1,11 +1,11 @@
 {
   // Bun-targeted: the cli runs under Bun, so bun types belong here (and only
   // here - their global process/Bun declarations leak program-wide, so no
-  // flux-targeted package may share a program with them). The scaffold/
-  // subtree has its own tsconfig (shipped to scaffolded apps), and server/
-  // is the flux dev server with its own flux-targeted tsconfig; neither is
-  // part of this program. shared/ (type-only contracts between the two) is
-  // in both.
+  // flux-targeted package may share a program with them). Two subtrees are
+  // not part of this program: src/server/ is the flux dev server with its
+  // own flux-targeted tsconfig, and src/init/scaffold/ ships to scaffolded
+  // apps with its own. src/types/ (type-only contracts between the two
+  // runtimes) is in both.
   "compilerOptions": {
     "lib": ["ESNext"],
     "target": "ESNext",
@@ -22,5 +22,6 @@
     "noImplicitOverride": true,
     "types": ["bun"]
   },
-  "include": ["src", "shared"]
+  "include": ["src"],
+  "exclude": ["src/server", "src/init/scaffold"]
 }

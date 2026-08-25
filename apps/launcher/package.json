@@ -7,7 +7,7 @@
     "pack": "srt pack -o out src/index.tsx",
     "server": "srt server",
     "client": "srt client",
-    "android": "srt client --android"
+    "android": "srt android"
   },
   "dependencies": {
     "@solidrt/core": "workspace:*",

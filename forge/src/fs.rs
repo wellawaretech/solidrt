@@ -271,6 +271,24 @@ pub async fn dir_exists(path: &str) -> bool {
   }
 }
 
+/// The canonical absolute path: symlinks resolved, `.`/`..` collapsed, the
+/// spelling the OS reports. Errors if the path does not exist. What a registry
+/// keys on, so two processes agree on a path and not on its spelling.
+pub async fn realpath(path: &str) -> Result<String, String> {
+  let canonical = tokio::fs::canonicalize(path).await.map_err(|e| format!("realpath {path}: {e}"))?;
+  Ok(strip_verbatim(canonical))
+}
+
+// Windows canonicalize yields verbatim (`\\?\C:\...`) paths; strip the prefix so
+// the result matches what everything else (node's realpath, the shell) prints.
+fn strip_verbatim(path: PathBuf) -> String {
+  let s = path.to_string_lossy().into_owned();
+  if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
+    return format!(r"\\{rest}");
+  }
+  s.strip_prefix(r"\\?\").map(str::to_string).unwrap_or(s)
+}
+
 /// List a directory's entries; `DirEntry::kind` is the same set as
 /// `StatInfo::file_type`.
 pub async fn read_dir(path: &str) -> Result<Vec<DirEntry>, String> {

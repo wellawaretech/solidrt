@@ -28,11 +28,15 @@ import { tokensCss } from "./tokens.ts";
 const COVERED = "packages/core/src/types.d.ts";
 
 const DOCS_DIR = "../docs";
-// Sections whose pages live with the package they document (shipped in its
-// docs/), mounted into the tree at the given section path.
-const MOUNTS: Record<string, string> = {
-  "/core": "../packages/core/docs",
-  "/tools": "../packages/cli/docs",
+// Sections whose pages live with the package they document, mounted into
+// the tree at the given section path: a docs/ folder shipped as is, or a
+// composed section whose index is the package README and whose pages are
+// the `docs.md` of each folder under `pages` (one per srt command), with
+// their relative `<name>/docs.md` links rewritten to section URLs.
+type Mount = { dir: string } | { index: string; pages: string; label: string };
+const MOUNTS: Record<string, Mount> = {
+  "/core": { dir: "../packages/core/docs" },
+  "/tools": { index: "../packages/cli/README.md", pages: "../packages/cli/src", label: "Tools" },
 };
 const ASSETS_DIR = "assets";
 const OUT_DIR = "dist";
@@ -76,8 +80,8 @@ function urlOf(rel: string): string {
 // The order a directory's index.md gives its children, by URL segment: the
 // frontmatter `order` list, else the order of its first links to them.
 async function orderOf(rel: string): Promise<string[]> {
-  let source = await file(sourceDir(rel + "/index.md")).text().catch(() => "");
-  let { front, body } = frontmatter(source);
+  let source = await file(sourceFile(rel + "/index.md")).text().catch(() => "");
+  let { front, body } = frontmatter(rewriteLinks(rel + "/index.md", source));
   if (front.order) return front.order.split(/\s+/);
   let here = rel + "/";
   let names: string[] = [];
@@ -90,13 +94,47 @@ async function orderOf(rel: string): Promise<string[]> {
   return names;
 }
 
-// The directory a tree-relative path (with leading "/") is read from: a
-// mounted section resolves into its package, everything else into docs/.
-function sourceDir(rel: string): string {
-  for (let [section, base] of Object.entries(MOUNTS)) {
-    if (rel === section || rel.startsWith(section + "/")) return base + rel.slice(section.length);
+// The mount a tree-relative path (with leading "/") falls under, if any.
+function mountOf(rel: string): [string, Mount] | undefined {
+  return Object.entries(MOUNTS).find(([section]) => rel === section || rel.startsWith(section + "/"));
+}
+
+// The file a page path is read from: a mounted section resolves into its
+// package (a composed one: the README for its index, `<name>/docs.md` under
+// `pages` for `<name>.md`), everything else into docs/.
+function sourceFile(rel: string): string {
+  let mount = mountOf(rel);
+  if (!mount) return DOCS_DIR + rel;
+  let [section, m] = mount;
+  let inner = rel.slice(section.length);
+  if ("dir" in m) return m.dir + inner;
+  return inner === "/index.md" ? m.index : m.pages + inner.replace(/\.md$/, "/docs.md");
+}
+
+// A directory's entries as the tree sees them: a composed section lists its
+// index and one page per folder under `pages` that carries a docs.md.
+async function entriesOf(rel: string): Promise<{ name: string; type: string }[]> {
+  let mount = mountOf(rel);
+  if (!mount) return dir(DOCS_DIR + rel).entries();
+  let [section, m] = mount;
+  if ("dir" in m) return dir(m.dir + rel.slice(section.length)).entries();
+  if (rel !== section) return [];
+  let entries = [{ name: "index.md", type: "file" }];
+  for (let e of await dir(m.pages).entries()) {
+    if (e.type === "directory" && (await file(`${m.pages}/${e.name}/docs.md`).exists())) {
+      entries.push({ name: e.name + ".md", type: "file" });
+    }
   }
-  return DOCS_DIR + rel;
+  return entries;
+}
+
+// In a composed section the sources link each other as files
+// (`src/<name>/docs.md` from the README, `../<name>/docs.md` between pages)
+// so they read on GitHub and npm too; on the site those are the pages.
+function rewriteLinks(rel: string, body: string): string {
+  let mount = mountOf(rel);
+  if (!mount || "dir" in mount[1]) return body;
+  return body.replace(/\]\((?:\.\.?\/)?(?:src\/)?([\w-]+)\/docs\.md\)/g, `](${mount[0]}/$1/)`);
 }
 
 // Relative file paths (with leading "/") of the page tree, recursively, each
@@ -104,7 +142,7 @@ function sourceDir(rel: string): string {
 // name. The mounted sections join the top level like any directory.
 async function walk(rel: string): Promise<string[]> {
   let files: string[] = [];
-  let entries = await dir(sourceDir(rel)).entries();
+  let entries = await entriesOf(rel);
   let names = entries.filter((e) => e.type === "directory" || e.name.endsWith(".md")).map((e) => e.name);
   if (rel === "") names.push(...Object.keys(MOUNTS).map((s) => s.slice(1)));
   let order = await orderOf(rel);
@@ -143,15 +181,19 @@ type Source = { url: string; body: string; own?: string; label: string };
 let sources: Source[] = [];
 let authored: string[] = [];
 for (let rel of await walk("")) {
-  let { front, body } = frontmatter(await file(sourceDir(rel)).text());
+  let { front, body } = frontmatter(rewriteLinks(rel, await file(sourceFile(rel)).text()));
   let url = urlOf(rel);
   let own = h1Of(body);
   authored.push(body);
+  // A composed section's index is a package README; the section label is
+  // the mount's, not the README's h1.
+  let mount = mountOf(rel);
+  let sectionLabel = mount && !("dir" in mount[1]) && rel === mount[0] + "/index.md" ? mount[1].label : undefined;
   sources.push({
     url,
     body: await resolveDirectives(body, "docs" + rel),
     own,
-    label: front.nav ?? own ?? url.slice(url.lastIndexOf("/") + 1),
+    label: front.nav ?? sectionLabel ?? own ?? url.slice(url.lastIndexOf("/") + 1),
   });
 }
 let generated = await referencePages();

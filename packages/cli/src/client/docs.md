@@ -1,0 +1,9 @@
+# srt client
+
+{{ usage client }}
+
+The client half of [srt run](../server/docs.md), on its own. Without flags
+it attaches to the dev server of the project (or file) in the current
+directory; `--port` picks a local server by port and `--server` names any
+address, which is how a second machine joins a server started with `--lan`.
+A phone or tablet is [srt android](../android/docs.md).

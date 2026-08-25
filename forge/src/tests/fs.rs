@@ -47,3 +47,27 @@ fn window_seeks_are_window_relative() {
   assert_eq!(w.read(&mut buf).expect("read past end"), 0);
   assert!(w.seek(SeekFrom::End(-11)).is_err());
 }
+
+#[tokio::test]
+async fn realpath_resolves_symlinks_and_dots() {
+  let dir = std::env::temp_dir().join(format!("forge-fs-realpath-{}", std::process::id()));
+  let _ = std::fs::remove_dir_all(&dir);
+  std::fs::create_dir_all(dir.join("real")).expect("create real dir");
+  let real = std::fs::canonicalize(dir.join("real")).expect("canonical real dir");
+
+  // ".." and "." collapse to the real directory.
+  let dotted = dir.join("real").join("..").join(".").join("real");
+  let resolved = crate::fs::realpath(&dotted.to_string_lossy()).await.expect("realpath of dotted path");
+  assert_eq!(resolved, real.to_string_lossy());
+
+  #[cfg(unix)]
+  {
+    std::os::unix::fs::symlink(&real, dir.join("link")).expect("create symlink");
+    let via_link = crate::fs::realpath(&dir.join("link").to_string_lossy()).await.expect("realpath of symlink");
+    assert_eq!(via_link, real.to_string_lossy());
+  }
+
+  let missing = crate::fs::realpath(&dir.join("missing").to_string_lossy()).await;
+  assert!(missing.is_err(), "a missing path errors");
+  let _ = std::fs::remove_dir_all(&dir);
+}

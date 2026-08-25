@@ -31,10 +31,10 @@ function code(source: string): string {
 
 // -- The CLI's usage text ---------------------------------------------------
 
-// The CLI keeps its whole usage text in printUsage() (args.ts): a "Commands:"
-// table, then "<name>[/<name>] options:" blocks. That text is the source, so a
-// command documents itself the moment it is added there.
-const CLI_ARGS = "packages/cli/src/args.ts";
+// The CLI keeps its whole usage text in one template (src/lib/usage.ts): a
+// "Commands:" table, then "<name>[/<name>] options:" blocks. That text is the
+// source, so a command documents itself the moment it is added there.
+const CLI_ARGS = "packages/cli/src/lib/usage.ts";
 
 type Command = { name: string; args: string; summary: string; options: { heading: string; text: string }[] };
 
@@ -42,7 +42,7 @@ let commands: Map<string, Command> | undefined;
 async function commandsOf(): Promise<Map<string, Command>> {
   if (commands) return commands;
   let source = await file(ROOT + "/" + CLI_ARGS).text();
-  let usage = source.match(/console\.error\(`Usage: srt[^`]*`\)/)?.[0].slice("console.error(`".length, -2) ?? "";
+  let usage = source.match(/const USAGE = `Usage: srt[^`]*`/)?.[0].slice("const USAGE = `".length, -1) ?? "";
   let [, commandsText = "", optionsText = ""] = usage.match(/Commands:\n([\s\S]*?)\n\n([\s\S]*)/) ?? [];
   let blocks = optionsText
     .split("\n\n")

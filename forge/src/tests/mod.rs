@@ -6,6 +6,7 @@ mod image;
 mod isolate;
 mod mdns;
 mod net;
+mod process;
 mod sqlite;
 mod svg;
 mod trailer;

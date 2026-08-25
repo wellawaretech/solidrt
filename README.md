@@ -28,7 +28,7 @@ To preview the same app on another machine or device, install the tooling there 
 srt client --server <host>
 ```
 
-For a connected Android device, `srt client --android` installs and launches the client for you. Run `srt` without arguments for the full command list.
+For a connected Android device, `srt android` installs and launches the client for you. Run `srt` without arguments for the full command list.
 
 ## How it works
 

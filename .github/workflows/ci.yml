@@ -54,7 +54,7 @@ jobs:
 
       - name: Typecheck packages
         run: |
-          for config in packages/core packages/components packages/2d packages/3d packages/cli packages/cli/server apps/launcher; do
+          for config in packages/core packages/components packages/2d packages/3d packages/cli packages/cli/src/server apps/launcher; do
             echo "== $config"
             node_modules/.bin/tsc -p "$config/tsconfig.json" --noEmit --pretty false
           done

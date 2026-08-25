@@ -72,3 +72,29 @@ async fn entries_on_missing_rejects() {
   let out = run_source(&code).await;
   assert_eq!(out.log(), "rejected");
 }
+
+#[tokio::test]
+async fn realpath_resolves_and_rejects_missing() {
+  let dir = TempDir::new();
+  std::fs::create_dir(dir.as_path().join("sub")).expect("create sub");
+  let expected = std::fs::canonicalize(dir.as_path().join("sub")).expect("canonical sub");
+  let dotted = dir.join("sub/../sub");
+  let missing = dir.join("nope");
+
+  let code = r#"
+            import { realpath } from "flux:fs";
+            console.log(await realpath("__DOTTED__"));
+            try {
+                await realpath("__MISSING__");
+                console.log("no error");
+            } catch (e) {
+                console.log("rejected");
+            }
+            "#
+  .replace("__DOTTED__", &dotted)
+  .replace("__MISSING__", &missing);
+
+  let out = run_source(&code).await;
+  assert!(out.errors().is_empty(), "stderr: {}", out.errors());
+  assert_eq!(out.log(), format!("{}\nrejected", expected.to_string_lossy()));
+}

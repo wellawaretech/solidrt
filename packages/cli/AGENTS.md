@@ -1,21 +1,25 @@
 # @solidrt/cli - agent notes
 
 Dense, self-contained facts for running and verifying a SolidRT app. The
-prose lives in docs/ (also the website). For the authoring model (elements,
-props, reactivity), see @solidrt/core (its AGENTS.md).
+prose lives in README.md and src/<command>/docs.md (also the website). For
+the authoring model (elements, props, reactivity), see @solidrt/core (its
+AGENTS.md).
 
 `srt` is the dev tool. Bun is a dev prerequisite only; SolidRT apps run on the
 bundled `flux` runtime, not on Bun. Invoke via `bunx srt <command>`.
 
-Two companion files carry the depth this one leaves out; read the one that
+The command folders carry the depth this one leaves out; read the one that
 matches the work before starting it:
-- agents/debugging.md - driving a running app over MCP, pointing an agent
+- src/mcp/agents.md - driving a running app over MCP, pointing an agent
   client at the `srt mcp` server, and the debugging lessons that cost real
   time. Read before investigating a bug or verifying a change against the
   live app.
-- agents/assets.md - the assets/ folder, inlined imports, fonts, and the
-  `solidrt` package.json key. Read before adding an asset or font, or
-  building for distribution.
+- src/server/agents.md - what the dev server serves and the control API
+  without MCP (a shell, a CI step). Read before scripting against a server.
+- src/bundle/agents.md - the assets/ folder, inlined imports and the bundle
+  output. Read before adding an asset.
+- src/pack/agents.md - fonts, the `solidrt` package.json identity key, and
+  distribution builds. Read before adding a font or building to distribute.
 
 ## Commands
 
@@ -90,8 +94,8 @@ behavior in isolation.
 - One server per project or file. The server binds the port it had last
   time, else the first free one from 34884 up, and prints it; `--port <N>`
   pins it. Loopback only
-  unless `--lan`, which is what phones and other devices (and `srt client
-  --android` on a real device) need; `--tunnel` works without it.
+  unless `--lan`, which is what phones and other devices (and `srt android`
+  on a real device) need; `--tunnel` works without it.
 - `-c <N>` / `--client <N>` picks the client data tree (default 0). Storage
   is per app inside a tree, so two projects share client 0; only two clients
   of the same app need distinct slots.

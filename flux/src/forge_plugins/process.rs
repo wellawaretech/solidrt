@@ -9,7 +9,7 @@ use tokio::sync::Notify;
 
 use super::events::{add_listener, emit_event, has_listeners, remove_listener};
 use crate::logger::CtxLogger;
-use forge::process::{arch, home_dir, kill, pid, platform, rss, SignalStream};
+use forge::process::{alive, arch, env_vars, home_dir, kill, pid, platform, rss, SignalStream};
 
 // flux:process - process-level events. The first such surface flux owns on top
 // of its own event bus (register_listener + emit_event), separate from the UI
@@ -54,22 +54,44 @@ fn memory_usage(ctx: Ctx<'_>) -> rquickjs::Result<Object<'_>> {
   Ok(obj)
 }
 
-// flux:process also exposes the user's home directory and a portable kill:
+// flux:process also exposes the user's home directory, a portable kill and a
+// liveness probe:
 //
-//   import { homedir, kill } from "flux:process"
+//   import { homedir, kill, alive } from "flux:process"
 //   homedir()  // "/home/me", or null when the environment names none
 //   kill(pid)  // true when the process was terminated (SIGKILL / TerminateProcess)
+//   alive(pid) // true while a process with that id exists
 //
-// homedir is the one path an app cannot derive otherwise: flux exposes no
-// environment, and a dev tool needs it to find the machine-wide ~/.solidrt
-// state. kill takes a pid only - no signal argument - matching the portable
-// contract of Child.kill in flux:subprocess.
+// homedir names the one path a tool needs first (the machine-wide ~/.solidrt
+// state) without spelling the HOME/USERPROFILE split. kill takes a pid only - no signal argument - matching the portable
+// contract of Child.kill in flux:subprocess. alive is the "signal 0" idiom
+// with its own name: a registry reader asks it before trusting a record.
 fn homedir_impl() -> Option<String> {
   home_dir()
 }
 
 fn kill_impl(pid: u32) -> bool {
   kill(pid)
+}
+
+fn alive_impl(pid: u32) -> bool {
+  alive(pid)
+}
+
+// flux:process also exposes the environment:
+//
+//   import { env } from "flux:process"
+//   env.SRT_HOME  // the value, or undefined
+//
+// A plain object snapshotted when the module is evaluated (Node's process.env
+// is live and writable; a dev tool reads its environment once at startup, so
+// the snapshot is the whole contract).
+fn env_object<'js>(ctx: &Ctx<'js>) -> rquickjs::Result<Object<'js>> {
+  let env = Object::new(ctx.clone())?;
+  for (name, value) in env_vars() {
+    env.set(name.as_str(), value.as_str())?;
+  }
+  Ok(env)
 }
 
 // Signals that already have an OS watcher installed for this context, so
@@ -92,6 +114,8 @@ impl ModuleDef for ProcessModule {
     decl.declare("pid")?;
     decl.declare("homedir")?;
     decl.declare("kill")?;
+    decl.declare("alive")?;
+    decl.declare("env")?;
     Ok(())
   }
 
@@ -113,6 +137,8 @@ impl ModuleDef for ProcessModule {
     exports.export("pid", pid())?;
     exports.export("homedir", Function::new(ctx.clone(), homedir_impl)?)?;
     exports.export("kill", Function::new(ctx.clone(), kill_impl)?)?;
+    exports.export("alive", Function::new(ctx.clone(), alive_impl)?)?;
+    exports.export("env", env_object(ctx)?)?;
     Ok(())
   }
 }

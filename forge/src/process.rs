@@ -3,7 +3,7 @@
 //! Names no scripting-engine types. The marshalling layer
 //! (`plugins/flux/process.rs`) owns the event-bus wiring (`ctx.spawn`,
 //! emit/has-listeners, the per-context dedup) and forwards to the pieces here:
-//! host metadata (`platform`/`arch`/`rss`/`home_dir`), `kill`, and `SignalStream`, which hides the
+//! host metadata (`platform`/`arch`/`rss`/`home_dir`/`env_vars`), `kill`/`alive`, and `SignalStream`, which hides the
 //! unix vs non-unix OS signal split behind one async source.
 
 use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, RefreshKind, System};
@@ -53,6 +53,11 @@ pub fn home_dir() -> Option<String> {
   std::env::var(var).ok().filter(|v| !v.is_empty())
 }
 
+/// The process environment as name/value pairs (non-UTF-8 entries skipped).
+pub fn env_vars() -> Vec<(String, String)> {
+  std::env::vars().collect()
+}
+
 /// Terminate the process with id `pid`. `false` when no such process exists or
 /// the OS refused (permissions). SIGKILL / TerminateProcess, like `Child::kill`.
 pub fn kill(pid: u32) -> bool {
@@ -60,6 +65,16 @@ pub fn kill(pid: u32) -> bool {
   let mut system = System::new_with_specifics(RefreshKind::nothing());
   system.refresh_processes_specifics(ProcessesToUpdate::Some(&[pid]), true, ProcessRefreshKind::nothing());
   system.process(pid).map(|proc| proc.kill()).unwrap_or(false)
+}
+
+/// Whether a process with id `pid` exists. A zombie (exited, not yet reaped)
+/// counts as gone: it holds no port and serves nothing. What a registry reader
+/// asks before trusting a record.
+pub fn alive(pid: u32) -> bool {
+  let pid = sysinfo::Pid::from_u32(pid);
+  let mut system = System::new_with_specifics(RefreshKind::nothing());
+  system.refresh_processes_specifics(ProcessesToUpdate::Some(&[pid]), true, ProcessRefreshKind::nothing());
+  system.process(pid).is_some_and(|proc| !matches!(proc.status(), sysinfo::ProcessStatus::Zombie))
 }
 
 /// Signal names with an OS watcher. Unknown names install no watcher (their

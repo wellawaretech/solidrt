@@ -33,6 +33,18 @@ declare module "flux:process" {
    */
   export function kill(pid: number): boolean
   /**
+   * Whether a process with `pid` exists. The `process.kill(pid, 0)` idiom
+   * under its own name. A zombie (exited, not yet reaped) counts as gone.
+   *
+   * @param pid  The OS process id.
+   */
+  export function alive(pid: number): boolean
+  /**
+   * The process environment, snapshotted when the module is evaluated: a
+   * plain object, not Node's live and writable `process.env`.
+   */
+  export let env: Record<string, string | undefined>
+  /**
    * Listen for an OS signal. The callback receives the signal name. Returns an
    * unsubscribe function. Unix only; a no-op elsewhere.
    *

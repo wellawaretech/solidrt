@@ -329,11 +329,10 @@ jobs:
           done
 
       # The CLI package ships the dev server as one prebuilt bundle
-      # (dist/server.js, see packages/cli/src/server-bundle.ts), so an
-      # installed srt runs it on the platform package's flux without
-      # bundling per launch.
+      # (dist/server.js, see packages/cli/Makefile), so an installed srt
+      # runs it on the platform package's flux without bundling per launch.
       - name: Build the CLI dev server bundle
-        run: bun packages/cli/scripts/build-server.ts
+        run: make -C packages/cli dist/server.js
 
       # The CLI package ships its own copy of the default fonts: `srt pack`
       # appends them to packed solidrt binaries (see packages/cli/src/fonts.ts).
@@ -372,7 +371,7 @@ jobs:
             const fs = require("fs");
             const VERSION = process.env.VERSION;
             const files = process.env.PUBLISH_DIRS.trim().split(/\s+/).map(d => d + "/package.json");
-            files.push("packages/cli/scaffold/package.json");
+            files.push("packages/cli/src/init/scaffold/package.json");
             for (const file of files) {
               const pkg = JSON.parse(fs.readFileSync(file, "utf8"));
               for (const field of ["dependencies", "optionalDependencies", "peerDependencies", "devDependencies"]) {

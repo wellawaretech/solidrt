@@ -238,7 +238,11 @@ Checked 2026-08-25; each is its own small item and useful on its own:
    skipped); `bundle`/`pack`/`render` under the mode table, build root =
    cwd, `projectDirFor` and the upward walk gone except in `check`; file
    mode bundles no isolates. Scaffold scripts follow (`srt run`, `srt pack
-   -o out`). Open: the shim exec'ing flux and the self-pack, see Packaging.
+   -o out`). Open: the self-pack, see Packaging. The shim exec'ing flux is
+   settled by [done/srt-command-folders.md](../done/srt-command-folders.md):
+   `bin/srt` stays a bun launcher that spawns the flux server (one process,
+   complete on its own, that the console spawns directly), and the layout
+   named under Related there has been regrouped into `src/<command>/`.
 
 # Deliberately not in scope
 
