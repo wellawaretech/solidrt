@@ -309,8 +309,8 @@ export function EditorField(props: EditorFieldProps) {
       alignItems="center"
       paddingLeft={space("md")}
       paddingRight={space("md")}
-      paddingTop={space("sm")}
-      paddingBottom={space("sm")}
+      paddingTop={space("md")}
+      paddingBottom={space("md")}
       {...props.layout}
       x={props.style?.x}
       y={props.style?.y}

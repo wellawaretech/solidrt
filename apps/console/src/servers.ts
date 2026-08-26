@@ -69,6 +69,13 @@ export function serverLabel(server: Server): string {
   return `${name} :${server.port}`
 }
 
+/** The entry, relative to what the server serves: the absolute path is the
+ * same prefix for every row, so only the tail tells them apart. */
+export function entryLabel(server: Server): string {
+  let key = server.key.replace(/[\\/]+$/, "")
+  return server.entry.startsWith(`${key}/`) ? server.entry.slice(key.length + 1) : server.entry
+}
+
 // A record is only a record: anything missing means a folder we do not
 // understand, not a server.
 function toServer(record: any): Server | null {

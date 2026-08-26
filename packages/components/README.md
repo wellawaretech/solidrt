@@ -85,7 +85,7 @@ The fields:
 - `focusRing` (`boolean`) - whether focused controls draw a visible focus indicator (true when a keyboard or gamepad/remote is present).
 - `textScale` (`number`) - multiplier on type-scale font sizes; defaults to the OS text-scale preference.
 - `textWeightDelta` (`number`) - weight compensation (steps of 100) for light-on-dark text on low-DPI displays.
-- `navigation` (`"bottomTabs" | "rail" | "sidebar"`) - recommended nav layout, derived from the window size class. `NavShell` follows it.
+- `navigation` (`"bottomTabs" | "rail" | "sidebar"`) - recommended nav layout, derived from the pane count: `sidebar` beside a two-pane layout, `bottomTabs` under a single pane (a side strip spends the width a narrow window is short of). `rail` is never derived; set it for a content-dense two-pane app. `NavShell` follows it.
 - `layout` (`"singlePane" | "twoPane"`) - recommended pane count, derived from the window size class. `SplitView` follows it.
 
 ```jsx

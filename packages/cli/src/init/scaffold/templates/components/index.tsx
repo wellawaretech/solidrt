@@ -1,7 +1,6 @@
 // Components template: built with the @solidrt/components framework.
-import { render, createLinearGradient } from "@solidrt/core"
+import { render, createLinearGradient, Logo } from "@solidrt/core"
 import { Window, SafeArea, View, Text } from "@solidrt/components"
-import { Icon } from "./icon"
 
 function App() {
   let backgroundColor = createLinearGradient(0, 0, 1, 1, [
@@ -13,7 +12,7 @@ function App() {
     <Window title="The Solid Runtime" style={{ backgroundColor }}>
       <SafeArea>
         <View layout={{ flex: 1, gap: 20, alignItems: "center", justifyContent: "center" }}>
-          <Icon />
+          <Logo size={300} animation="loop" />
           <Text layout={{ fontSize: 40 }} style={{ color: "#ccc" }}>
             The Solid Runtime
           </Text>

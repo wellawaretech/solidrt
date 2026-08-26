@@ -29,7 +29,8 @@ export type Policies = {
   // only (per-run polarity, or the theme's palette polarity as the default),
   // with one extra step for small font sizes; see typography.ts.
   textWeightDelta: number
-  // Application policies: recommendations derived from the window size class.
+  // Application policies: recommendations derived from the window size class
+  // (layout), and from the resulting pane count (navigation).
   // The application owns the final decision; accept them by consuming
   // policy.navigation / policy.layout, or override via setPolicy.
   navigation: NavigationPolicy
@@ -52,6 +53,7 @@ export function defaultPolicyResolver(caps: Capabilities): Policies {
         : caps.precisePointer
           ? "desktop"
           : "hybrid"
+  let layout: LayoutPolicy = caps.windowSizeClass === "expanded" ? "twoPane" : "singlePane"
   return {
     interaction,
     density: interaction === "desktop" ? "compact" : "comfortable",
@@ -62,9 +64,12 @@ export function defaultPolicyResolver(caps: Capabilities): Policies {
     focusRing: caps.keyboardNav || gamepads().some((p) => p != null),
     textScale: env.textScale,
     textWeightDelta: env.displayScale < 1.5 ? 100 : 0,
-    navigation:
-      caps.windowSizeClass === "expanded" ? "sidebar" : caps.windowSizeClass === "medium" ? "rail" : "bottomTabs",
-    layout: caps.windowSizeClass === "expanded" ? "twoPane" : "singlePane",
+    // Navigation follows the pane count, not its own breakpoint: a side strip
+    // spends width, which a single-pane window is short of, so only a
+    // two-pane layout earns one. "rail" is never a default output; it is the
+    // narrow side nav an app can pick for a content-dense two-pane layout.
+    navigation: layout === "twoPane" ? "sidebar" : "bottomTabs",
+    layout,
   }
 }
 

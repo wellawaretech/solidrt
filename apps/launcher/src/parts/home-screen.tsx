@@ -3,7 +3,7 @@
 // control surface. Wide windows show a WhatsApp-style split (list left,
 // details right); narrow ones navigate between the list and a detail screen.
 // All connection/selection state is owned by App and threaded in as props.
-import { createSignal, createEffect, onBack } from "@solidrt/core"
+import { createSignal, createEffect, onBack, Logo } from "@solidrt/core"
 import { For, Show, createMemo } from "solid-js"
 import {
   View,
@@ -33,7 +33,6 @@ import {
   type AppCacheEntry,
   type InstalledApp,
 } from "srt:apps"
-import { PuzzleMark } from "./puzzle"
 import { AppIcon } from "./app-icon"
 import { DetailCard, DetailRow } from "./detail-card"
 import { BackButton } from "./back-button"
@@ -567,7 +566,7 @@ export function HomeScreen(props: {
                 }}
               >
                 <View layout={{ flexDirection: "row", alignItems: "center", gap: space("md") }}>
-                  <PuzzleMark size={40} />
+                  <Logo size={40} />
                   <Text variant="heading">SolidRT</Text>
                 </View>
                 <View layout={{ flexDirection: "row", alignItems: "center" }}>
@@ -648,7 +647,7 @@ export function HomeScreen(props: {
                   gap: space("lg"),
                 }}
               >
-                <PuzzleMark size={360} />
+                <Logo size={360} />
               </View>
             }
           >

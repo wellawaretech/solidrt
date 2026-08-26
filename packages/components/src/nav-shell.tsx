@@ -79,15 +79,8 @@ export function NavShell(props: NavShellProps) {
     )
   }
 
-  let Hairline = (p: { vertical?: boolean }) => (
-    <view width={p.vertical ? 1 : undefined} height={p.vertical ? undefined : 1}>
-      <d-rect color={theme.color.border} />
-    </view>
-  )
-
   let Tabs = () => (
     <view flexDirection="column" flexShrink={0}>
-      <Hairline />
       <view flexDirection="row">
         <d-rect color={theme.color.surface} />
         <For each={props.items}>
@@ -103,7 +96,6 @@ export function NavShell(props: NavShellProps) {
         <d-rect color={theme.color.surface} />
         <For each={props.items}>{(item: NavItem) => <StackedItem item={item} padY={theme.spacing.md} />}</For>
       </view>
-      <Hairline vertical />
     </view>
   )
 
@@ -142,7 +134,6 @@ export function NavShell(props: NavShellProps) {
           }}
         </For>
       </view>
-      <Hairline vertical />
     </view>
   )
 

@@ -186,8 +186,8 @@ export function Select(props: SelectProps) {
       alignItems="center"
       justifyContent="space-between"
       gap={theme.spacing.md}
-      paddingTop={space("sm")}
-      paddingBottom={space("sm")}
+      paddingTop={space("md")}
+      paddingBottom={space("md")}
       paddingLeft={space("md")}
       paddingRight={space("md")}
       {...props.layout}

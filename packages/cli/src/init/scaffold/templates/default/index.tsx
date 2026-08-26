@@ -1,5 +1,4 @@
-import { render, createLinearGradient, safeArea } from "@solidrt/core"
-import { Icon } from "./icon"
+import { render, createLinearGradient, safeArea, Logo } from "@solidrt/core"
 
 function App() {
   let backgroundColor = createLinearGradient(0, 0, 1, 1, [
@@ -18,7 +17,7 @@ function App() {
         paddingTop={safeArea().top}
         paddingBottom={safeArea().bottom}
       >
-        <Icon />
+        <Logo size={300} animation="loop" />
         <text fontSize={40} color="#ccc">The Solid Runtime</text>
       </view>
     </window>

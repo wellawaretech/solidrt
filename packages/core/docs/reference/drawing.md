@@ -56,3 +56,16 @@ render target. `src` is a texture id, never a URL, which keeps one currency
 for every pixel source in the engine.
 
 {{ decl packages/core/src/types.d.ts TextureProps }}
+
+## Logo
+
+The SolidRT brand mark, the same seven-segment puzzle the scaffold's welcome
+screen and the launcher draw, as a component: a square `view` of `size`
+pixels with the segments as gradient-filled `d-path`s.
+
+{{ decl packages/core/src/logo.tsx LogoProps }}
+
+The default is static and requests no frames; `"once"` and `"loop"` drive a
+staggered per-segment fade through `onFrame`, so the animated forms hold a
+frame request only while they run (`"once"` releases it when the last
+segment is in).
