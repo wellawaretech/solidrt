@@ -860,6 +860,9 @@ fn record_node<'a>(
 
   for &child_id in &element.children {
     let child = scene.node(child_id);
+    if child.is_hidden() {
+      continue;
+    }
     if let Some(atoms) = text_atoms {
       if !atoms || !child.has_layout() {
         continue;

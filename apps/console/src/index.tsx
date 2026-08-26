@@ -128,78 +128,81 @@ function ServerList(props: {
 }) {
   return (
     <View layout={{ flexDirection: "row", flexGrow: 1 }}>
-      <Show
-        when={!props.collapsed}
-        fallback={
-          <View
-            layout={{
-              flexDirection: "column",
-              alignItems: "center",
-              flexGrow: 1,
-              paddingTop: space("lg"),
-            }}
-          >
-            <IconButton icon={EXPAND_ICON} onPress={props.onExpand} />
-          </View>
-        }
+      <View
+        layout={{
+          display: props.collapsed ? "none" : "flex",
+          flexDirection: "column",
+          flexGrow: 1,
+          flexBasis: 0,
+        }}
       >
-        <View layout={{ flexDirection: "column", flexGrow: 1, flexBasis: 0 }}>
-          <View
-            layout={{
-              flexDirection: "row",
-              alignItems: "center",
-              gap: space("md"),
-              padding: space("lg"),
-            }}
-          >
-            <Logo size={22} />
-            <Text variant="heading">Console</Text>
-            <View layout={{ flexGrow: 1 }} />
-            <Show when={policy.layout === "twoPane"}>
-              <IconButton icon={COLLAPSE_ICON} onPress={props.onCollapse} />
-            </Show>
-          </View>
-          <Show when={props.failure}>
-            {(message) => (
-              <View layout={{ paddingLeft: space("lg"), paddingRight: space("lg") }}>
-                <Text color="danger">{message()}</Text>
-              </View>
-            )}
+        <View
+          layout={{
+            flexDirection: "row",
+            alignItems: "center",
+            gap: space("md"),
+            padding: space("lg"),
+          }}
+        >
+          <Logo size={22} />
+          <Text variant="heading">Console</Text>
+          <View layout={{ flexGrow: 1 }} />
+          <Show when={policy.layout === "twoPane"}>
+            <IconButton icon={COLLAPSE_ICON} onPress={props.onCollapse} />
           </Show>
-          <ScrollView layout={{ flexGrow: 1, flexBasis: 0 }}>
-            <View layout={{ flexDirection: "column", padding: space("sm") }}>
-              <For
-                each={props.servers}
-                keyed={(server: Server) => server.port}
-                fallback={
-                  <View layout={{ padding: space("lg") }}>
-                    <Text muted>No dev servers running.</Text>
-                  </View>
-                }
-              >
-                {(server) => (
-                  <Item
-                    label={serverLabel(server())}
-                    description={entryLabel(server())}
-                    selected={server().port === props.selected}
-                    onPress={() => props.onOpen(server().port)}
-                    endContent={
-                      <Show
-                        when={clientCount(server())}
-                        fallback={
-                          <Show when={server().clients} fallback={<Text color="danger">?</Text>}>
-                            <Text muted>0</Text>
-                          </Show>
-                        }
-                      >
-                        {(count) => <Badge>{count()}</Badge>}
-                      </Show>
-                    }
-                  />
-                )}
-              </For>
+        </View>
+        <Show when={props.failure}>
+          {(message) => (
+            <View layout={{ paddingLeft: space("lg"), paddingRight: space("lg") }}>
+              <Text color="danger">{message()}</Text>
             </View>
-          </ScrollView>
+          )}
+        </Show>
+        <ScrollView layout={{ flexGrow: 1, flexBasis: 0 }}>
+          <View layout={{ flexDirection: "column", padding: space("sm") }}>
+            <For
+              each={props.servers}
+              keyed={(server: Server) => server.port}
+              fallback={
+                <View layout={{ padding: space("lg") }}>
+                  <Text muted>No dev servers running.</Text>
+                </View>
+              }
+            >
+              {(server) => (
+                <Item
+                  label={serverLabel(server())}
+                  description={entryLabel(server())}
+                  selected={server().port === props.selected}
+                  onPress={() => props.onOpen(server().port)}
+                  endContent={
+                    <Show
+                      when={clientCount(server())}
+                      fallback={
+                        <Show when={server().clients} fallback={<Text color="danger">?</Text>}>
+                          <Text muted>0</Text>
+                        </Show>
+                      }
+                    >
+                      {(count) => <Badge>{count()}</Badge>}
+                    </Show>
+                  }
+                />
+              )}
+            </For>
+          </View>
+        </ScrollView>
+      </View>
+      <Show when={props.collapsed}>
+        <View
+          layout={{
+            flexDirection: "column",
+            alignItems: "center",
+            flexGrow: 1,
+            paddingTop: space("lg"),
+          }}
+        >
+          <IconButton icon={EXPAND_ICON} onPress={props.onExpand} />
         </View>
       </Show>
     </View>

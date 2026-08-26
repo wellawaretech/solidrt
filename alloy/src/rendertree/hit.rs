@@ -273,6 +273,9 @@ fn hit_recursive(
   // view, matching the paint-time walk in composite.rs.
   for &child_id in element.children.iter().rev() {
     let child = tree.node(child_id);
+    if child.is_hidden() {
+      continue;
+    }
     if let Some(t) = text {
       if t.paragraph_engine || !child.has_layout() {
         continue;

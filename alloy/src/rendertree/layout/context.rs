@@ -1,7 +1,8 @@
 use taffy::prelude::*;
 use taffy::tree::LayoutInput;
 use taffy::{
-  compute_block_layout, compute_cached_layout, compute_flexbox_layout, compute_grid_layout, compute_leaf_layout,
+  compute_block_layout, compute_cached_layout, compute_flexbox_layout, compute_grid_layout, compute_hidden_layout,
+  compute_leaf_layout,
   CacheTree, CoreStyle, LayoutBlockContainer, LayoutFlexboxContainer, LayoutGridContainer, RequestedAxis,
   ResolveOrZero, RunMode, SizingMode,
 };
@@ -199,6 +200,12 @@ impl<'a> LayoutPartialTree for LayoutContext<'a> {
   }
 
   fn compute_child_layout(&mut self, node_id: NodeId, inputs: LayoutInput) -> taffy::LayoutOutput {
+    // An ancestor is display none: the hidden pass zeroes this node and
+    // recurses into its children whatever its own display says. Ahead of the
+    // leaf branch as well, since compute_leaf_layout has no hidden arm.
+    if inputs.run_mode == RunMode::PerformHiddenLayout {
+      return compute_hidden_layout(self, node_id);
+    }
     compute_cached_layout(self, node_id, inputs, |tree, node_id, inputs| {
       let id = u64::from(node_id);
       // A Text's computed_text and runs are kept current eagerly by
@@ -249,7 +256,7 @@ impl<'a> LayoutPartialTree for LayoutContext<'a> {
           Display::Flex => compute_flexbox_layout(tree, node_id, inputs),
           Display::Block => compute_block_layout(tree, node_id, inputs, None),
           Display::Grid => compute_grid_layout(tree, node_id, inputs),
-          Display::None => taffy::LayoutOutput::HIDDEN,
+          Display::None => compute_hidden_layout(tree, node_id),
         }
       }
     })

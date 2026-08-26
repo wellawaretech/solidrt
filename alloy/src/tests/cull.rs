@@ -222,3 +222,25 @@ fn text_painted_extent_starts_at_the_content_origin() {
   assert!((inset.origin.y - full.origin.y - 5.0).abs() < 1e-3);
   assert!((full.size.width - inset.size.width - 20.0).abs() < 1e-3);
 }
+
+// A display none subtree is left out of the envelope
+// (okf/done/display-none-subtree.md): a huge stale box under the hidden
+// pane does not grow the parent's envelope past its own box.
+#[test]
+fn hidden_subtree_leaves_the_envelope() {
+  let mut tree = RenderTree::new();
+  tree.create_node(1, attached());
+  tree.create_node(2, attached());
+  tree.create_node(3, Rectangle::default().with_layout());
+  tree.insert_node(1, 2, None);
+  tree.insert_node(2, 3, None);
+  tree.root = Some(1);
+  place(&mut tree, 1, 0.0, 0.0, 400.0, 300.0);
+  place(&mut tree, 2, 0.0, 0.0, 0.0, 0.0);
+  place(&mut tree, 3, 0.0, 0.0, 5000.0, 5000.0);
+  tree.node_mut(2).style_mut().expect("pane").display = taffy::style::Display::None;
+
+  let platform = PlatformContext::new(Vec::new());
+  let env = bounded(envelope(&tree, 1, &platform, Size::new(400.0, 300.0)));
+  assert!(close(env, rect(0.0, 0.0, 400.0, 300.0)), "{env:?}");
+}

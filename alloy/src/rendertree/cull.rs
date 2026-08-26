@@ -169,6 +169,9 @@ fn compute_envelope(scene: &RenderTree, element: &Element, platform: &PlatformCo
     let frame = child_frame(element, inherited);
     for &child_id in &element.children {
       let child = scene.node(child_id);
+      if child.is_hidden() {
+        continue;
+      }
       if let Some(atoms) = text_atoms {
         if !atoms || !child.has_layout() {
           continue;

@@ -1,5 +1,6 @@
 mod audio;
 mod color;
+mod composite;
 mod cull;
 mod fonts;
 mod frame;
@@ -8,6 +9,7 @@ mod gpu_lease;
 mod gpu_validate;
 mod hit;
 mod keymap;
+mod layout;
 mod layout_cache;
 mod liveness;
 mod paint;

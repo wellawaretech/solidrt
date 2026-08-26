@@ -430,6 +430,14 @@ impl Element {
     self.layout.is_some()
   }
 
+  /// `display: none`: the subtree generates no box. Layout zeroes it (taffy's
+  /// hidden pass) and the paint, hit and envelope walks never enter it, so a
+  /// zero-frame text, an unbounded path or a detached child under it cannot
+  /// draw or be hit. Detached elements have no style and are never hidden.
+  pub fn is_hidden(&self) -> bool {
+    self.layout.as_ref().is_some_and(|l| l.style.display == taffy::style::Display::None)
+  }
+
   /// The style this element's kind starts layout with; a null layout-prop
   /// write resets the named field from here (each kind seeds its own
   /// defaults - a view's column direction, a texture's align-self). None for

@@ -190,10 +190,6 @@ Shaped, not started.
   get_stats/get_snapshot need a JS-thread slice, so they time out on a busy
   (healthy) app with a message that says "wedged"; serve inventory and stats
   off published state, and name the real timeout.
-- **[display "none" hides a node but not its subtree](backlog/display-none-subtree.md)** [2026-08-26]
-  Display::None returns LayoutOutput::HIDDEN without running taffy's
-  hidden-layout pass, so descendants keep their last boxes and keep painting,
-  leaving display "none" usable only on a leaf.
 - **[Default font weight should follow display scale](backlog/dpi-aware-default-font-weight.md)** [2026-08-14]
   Text defaults to Medium so that small type stays readable on 1x desktop
   displays, which over-thickens every label on the 2-3x phone screens that
@@ -690,6 +686,11 @@ Finished, kept for the reasoning.
   mid-range mobile but is wrong by ~8x on TV-class hardware, where the
   compositor can set the frame budget outright; the scaffold AGENTS.md now
   carries the device spread and how to find your own numbers.
+- **[display "none" hides a node but not its subtree](done/display-none-subtree.md)** [2026-08-26]
+  Display::None returned LayoutOutput::HIDDEN without taffy's hidden-layout
+  pass, so descendants kept their last boxes and kept painting; now the pass
+  runs, and paint, hit and envelope walks skip hidden subtrees through one
+  Element::is_hidden gate.
 - **[Engine-side HTTP disk cache](done/engine-http-cache.md)** [2026-07-27]
   Explicit opt-in disk cache in the forge fetch layer, needed by a production
   app doing many image fetches; designed and shipped as

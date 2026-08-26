@@ -4192,11 +4192,15 @@ var NoHydrateContext = {
   defaultValue: false
 };
 var _createMemo;
+var _createSignal;
 var _createErrorBoundary;
 var _createRenderEffect;
 var LIVE_SOURCE = Symbol.for("solid.LiveSource");
 var createMemo2 = (...args) => {
   return (_createMemo || createMemo)(...args);
+};
+var createSignal2 = (...args) => {
+  return (_createSignal || createSignal)(...args);
 };
 var createErrorBoundary2 = (...args) => (_createErrorBoundary || createErrorBoundary)(...args);
 var createRenderEffect2 = (...args) => (_createRenderEffect || createRenderEffect)(...args);
@@ -5792,6 +5796,135 @@ function parseSvg(src, opts) {
     });
   return fluxParseSvg(src);
 }
+// ../../packages/core/src/logo.tsx
+var SEGMENTS = [{
+  base: 0,
+  light: "#3f5494",
+  dark: "#162b6c",
+  d: "M50.000 50.000 L28.330 50.000 C28.330 48.810 27.695 47.711 26.665 47.116 C25.635 46.521 24.365 46.521 23.335 47.116 C22.305 47.711 21.670 48.810 21.670 50.000 L0.000 50.000 L50.000 0.000 L50.000 9.170 C48.810 9.170 47.711 9.805 47.116 10.835 C46.521 11.865 46.521 13.135 47.116 14.165 C47.711 15.195 48.810 15.830 50.000 15.830 L50.000 25.000 L50.000 34.170 C48.810 34.170 47.711 34.805 47.116 35.835 C46.521 36.865 46.521 38.135 47.116 39.165 C47.711 40.195 48.810 40.830 50.000 40.830 L50.000 50.000 Z"
+}, {
+  base: 90,
+  light: "#547ebf",
+  dark: "#2b5696",
+  d: "M50.000 50.000 L50.000 59.170 C48.810 59.170 47.711 59.805 47.116 60.835 C46.521 61.865 46.521 63.135 47.116 64.165 C47.711 65.195 48.810 65.830 50.000 65.830 L50.000 75.000 L50.000 84.170 C48.810 84.170 47.711 84.805 47.116 85.835 C46.521 86.865 46.521 88.135 47.116 89.165 C47.711 90.195 48.810 90.830 50.000 90.830 L50.000 100.000 L0.000 50.000 L21.670 50.000 C21.670 48.810 22.305 47.711 23.335 47.116 C24.365 46.521 25.635 46.521 26.665 47.116 C27.695 47.711 28.330 48.810 28.330 50.000 L50.000 50.000 Z"
+}, {
+  base: 180,
+  light: "#7ea9ea",
+  dark: "#5681c1",
+  d: "M50.000 25.000 L50.000 15.830 C48.810 15.830 47.711 15.195 47.116 14.165 C46.521 13.135 46.521 11.865 47.116 10.835 C47.711 9.805 48.810 9.170 50.000 9.170 L50.000 0.000 L75.000 25.000 L65.830 25.000 C65.830 26.190 65.195 27.289 64.165 27.884 C63.135 28.479 61.865 28.479 60.835 27.884 C59.805 27.289 59.170 26.190 59.170 25.000 L50.000 25.000 Z"
+}, {
+  base: 270,
+  light: "#547ebf",
+  dark: "#2b5696",
+  d: "M50.000 25.000 L59.170 25.000 C59.170 26.190 59.805 27.289 60.835 27.884 C61.865 28.479 63.135 28.479 64.165 27.884 C65.195 27.289 65.830 26.190 65.830 25.000 L75.000 25.000 L75.000 34.170 C73.810 34.170 72.711 34.805 72.116 35.835 C71.521 36.865 71.521 38.135 72.116 39.165 C72.711 40.195 73.810 40.830 75.000 40.830 L75.000 50.000 L65.830 50.000 C65.830 48.810 65.195 47.711 64.165 47.116 C63.135 46.521 61.865 46.521 60.835 47.116 C59.805 47.711 59.170 48.810 59.170 50.000 L50.000 50.000 L50.000 40.830 C48.810 40.830 47.711 40.195 47.116 39.165 C46.521 38.135 46.521 36.865 47.116 35.835 C47.711 34.805 48.810 34.170 50.000 34.170 L50.000 25.000 Z"
+}, {
+  base: 360,
+  light: "#7ea9ea",
+  dark: "#5681c1",
+  d: "M50.000 50.000 L59.170 50.000 C59.170 48.810 59.805 47.711 60.835 47.116 C61.865 46.521 63.135 46.521 64.165 47.116 C65.195 47.711 65.830 48.810 65.830 50.000 L75.000 50.000 L64.855 60.145 C64.013 59.304 62.787 58.976 61.638 59.283 C60.489 59.591 59.591 60.489 59.283 61.638 C58.976 62.787 59.304 64.013 60.145 64.855 L50.000 75.000 L50.000 65.830 C48.810 65.830 47.711 65.195 47.116 64.165 C46.521 63.135 46.521 61.865 47.116 60.835 C47.711 59.805 48.810 59.170 50.000 59.170 L50.000 50.000 Z"
+}, {
+  base: 450,
+  light: "#3f5494",
+  dark: "#162b6c",
+  d: "M75.000 50.000 L75.000 59.170 C73.810 59.170 72.711 59.805 72.116 60.835 C71.521 61.865 71.521 63.135 72.116 64.165 C72.711 65.195 73.810 65.830 75.000 65.830 L75.000 75.000 L50.000 100.000 L50.000 90.830 C48.810 90.830 47.711 90.195 47.116 89.165 C46.521 88.135 46.521 86.865 47.116 85.835 C47.711 84.805 48.810 84.170 50.000 84.170 L50.000 75.000 L60.145 64.855 C59.304 64.013 58.976 62.787 59.283 61.638 C59.591 60.489 60.489 59.591 61.638 59.283 C62.787 58.976 64.013 59.304 64.855 60.145 L75.000 50.000 Z"
+}, {
+  base: 540,
+  light: "#7ea9ea",
+  dark: "#5681c1",
+  d: "M100.000 50.000 L75.000 75.000 L75.000 65.830 C73.810 65.830 72.711 65.195 72.116 64.165 C71.521 63.135 71.521 61.865 72.116 60.835 C72.711 59.805 73.810 59.170 75.000 59.170 L75.000 50.000 L75.000 40.830 C73.810 40.830 72.711 40.195 72.116 39.165 C71.521 38.135 71.521 36.865 72.116 35.835 C72.711 34.805 73.810 34.170 75.000 34.170 L75.000 25.000 L100.000 50.000 Z"
+}];
+var FADE = 360;
+var LAST = SEGMENTS[SEGMENTS.length - 1].base;
+var IN_DONE = LAST + FADE;
+var CYCLE = IN_DONE + LAST + FADE;
+var clamp = (x) => x < 0 ? 0 : x > 1 ? 1 : x;
+var ease = (t) => 1 - (1 - t) * (1 - t);
+var byte = (x) => Math.round(clamp(x) * 255).toString(16).padStart(2, "0");
+function Logo(props) {
+  let size = () => props.size ?? 100;
+  let mode = () => props.animation ?? "none";
+  let [clock2, setClock] = createSignal2(0);
+  let Animate = () => {
+    let start = -1;
+    let stop = onFrame((tick) => {
+      if (start < 0)
+        start = tick;
+      let t = tick - start;
+      if (mode() === "loop")
+        setClock(t % CYCLE);
+      else if (t < IN_DONE)
+        setClock(t);
+      else {
+        setClock(IN_DONE);
+        stop();
+      }
+    });
+    return null;
+  };
+  let alpha = (seg) => {
+    if (mode() === "none")
+      return 1;
+    let t = clock2();
+    if (t < seg.base)
+      return 0;
+    let fadeIn = clamp((t - seg.base) / FADE);
+    if (mode() === "once")
+      return ease(fadeIn);
+    let end = IN_DONE + seg.base + FADE;
+    if (t >= end)
+      return 0;
+    return ease(Math.min(fadeIn, clamp((end - t) / FADE)));
+  };
+  let fill = (seg) => {
+    let a = byte(alpha(seg));
+    return createLinearGradient(0, 0, 1, 1, [{
+      offset: 0,
+      color: seg.light + a
+    }, {
+      offset: 1,
+      color: seg.dark + a
+    }]);
+  };
+  var _el$ = createElement("view", {
+    viewBox: [100, 100]
+  });
+  insert(_el$, createComponent2(Show, {
+    get when() {
+      return mode() !== "none";
+    },
+    get children() {
+      return createComponent2(Animate, {});
+    }
+  }), null);
+  insert(_el$, createComponent2(For, {
+    each: SEGMENTS,
+    children: (seg) => (() => {
+      var _el$2 = createElement("d-path");
+      effect3(() => ({
+        e: seg.d,
+        t: fill(seg)
+      }), ({
+        e,
+        t
+      }, _p$) => {
+        e !== _p$?.e && setProp(_el$2, "d", e, _p$?.e);
+        t !== _p$?.t && setProp(_el$2, "color", t, _p$?.t);
+      });
+      return _el$2;
+    })()
+  }), null);
+  effect3(() => ({
+    e: size(),
+    t: size()
+  }), ({
+    e,
+    t
+  }, _p$) => {
+    e !== _p$?.e && setProp(_el$, "width", e, _p$?.e);
+    t !== _p$?.t && setProp(_el$, "height", t, _p$?.t);
+  });
+  return _el$;
+}
 // ../../packages/core/src/scroll.ts
 function createScroll(viewport, content, options = {}) {
   let axis = options.axis ?? "vertical";
@@ -5805,13 +5938,13 @@ function createScroll(viewport, content, options = {}) {
   let warnedCollapsed = false;
   let maxX = 0;
   let maxY = 0;
-  let clamp = (x, y) => ({
+  let clamp2 = (x, y) => ({
     x: canX ? Math.max(0, Math.min(x, maxX)) : 0,
     y: canY ? Math.max(0, Math.min(y, maxY)) : 0
   });
   let set = (x, y) => {
     let cur = offset();
-    let next = clamp(x, y);
+    let next = clamp2(x, y);
     if (next.x !== cur.x || next.y !== cur.y)
       setOffset(next);
   };
@@ -5837,7 +5970,7 @@ ${origin}`);
     maxX = Math.max(0, cb.width - vb.width);
     maxY = Math.max(0, cb.height - vb.height);
     let cur = offset();
-    let next = clamp(cur.x, cur.y);
+    let next = clamp2(cur.x, cur.y);
     if (next.x !== cur.x || next.y !== cur.y) {
       setOffset(next);
       flush();
@@ -6360,6 +6493,7 @@ function setTheme(partial) {
 // ../../packages/components/src/policy.ts
 function defaultPolicyResolver(caps) {
   let interaction = caps.touch && caps.precisePointer ? "hybrid" : caps.touch ? "touch" : caps.precisePointer ? "desktop" : "hybrid";
+  let layout = caps.windowSizeClass === "expanded" ? "twoPane" : "singlePane";
   return {
     interaction,
     density: interaction === "desktop" ? "compact" : "comfortable",
@@ -6367,8 +6501,8 @@ function defaultPolicyResolver(caps) {
     focusRing: caps.keyboardNav || gamepads().some((p) => p != null),
     textScale: env.textScale,
     textWeightDelta: env.displayScale < 1.5 ? 100 : 0,
-    navigation: caps.windowSizeClass === "expanded" ? "sidebar" : caps.windowSizeClass === "medium" ? "rail" : "bottomTabs",
-    layout: caps.windowSizeClass === "expanded" ? "twoPane" : "singlePane"
+    navigation: layout === "twoPane" ? "sidebar" : "bottomTabs",
+    layout
   };
 }
 var [resolverBox, setResolverBox] = createSignal({
@@ -7377,10 +7511,10 @@ function EditorField(props) {
       return space("md");
     },
     get paddingTop() {
-      return space("sm");
+      return space("md");
     },
     get paddingBottom() {
-      return space("sm");
+      return space("md");
     }
   }, () => props.layout, {
     get x() {
@@ -10373,79 +10507,6 @@ function createCamera(options = {}) {
 // src/parts/home-screen.tsx
 import { available as appsAvailable, list, launch, remove, info, clearCache } from "srt:apps";
 
-// src/parts/puzzle.tsx
-var PUZZLE_SEGMENTS = [{
-  light: "#3f5494",
-  dark: "#162b6c",
-  d: "M50.000 50.000 L28.330 50.000 C28.330 48.810 27.695 47.711 26.665 47.116 C25.635 46.521 24.365 46.521 23.335 47.116 C22.305 47.711 21.670 48.810 21.670 50.000 L0.000 50.000 L50.000 0.000 L50.000 9.170 C48.810 9.170 47.711 9.805 47.116 10.835 C46.521 11.865 46.521 13.135 47.116 14.165 C47.711 15.195 48.810 15.830 50.000 15.830 L50.000 25.000 L50.000 34.170 C48.810 34.170 47.711 34.805 47.116 35.835 C46.521 36.865 46.521 38.135 47.116 39.165 C47.711 40.195 48.810 40.830 50.000 40.830 L50.000 50.000 Z"
-}, {
-  light: "#547ebf",
-  dark: "#2b5696",
-  d: "M50.000 50.000 L50.000 59.170 C48.810 59.170 47.711 59.805 47.116 60.835 C46.521 61.865 46.521 63.135 47.116 64.165 C47.711 65.195 48.810 65.830 50.000 65.830 L50.000 75.000 L50.000 84.170 C48.810 84.170 47.711 84.805 47.116 85.835 C46.521 86.865 46.521 88.135 47.116 89.165 C47.711 90.195 48.810 90.830 50.000 90.830 L50.000 100.000 L0.000 50.000 L21.670 50.000 C21.670 48.810 22.305 47.711 23.335 47.116 C24.365 46.521 25.635 46.521 26.665 47.116 C27.695 47.711 28.330 48.810 28.330 50.000 L50.000 50.000 Z"
-}, {
-  light: "#7ea9ea",
-  dark: "#5681c1",
-  d: "M50.000 25.000 L50.000 15.830 C48.810 15.830 47.711 15.195 47.116 14.165 C46.521 13.135 46.521 11.865 47.116 10.835 C47.711 9.805 48.810 9.170 50.000 9.170 L50.000 0.000 L75.000 25.000 L65.830 25.000 C65.830 26.190 65.195 27.289 64.165 27.884 C63.135 28.479 61.865 28.479 60.835 27.884 C59.805 27.289 59.170 26.190 59.170 25.000 L50.000 25.000 Z"
-}, {
-  light: "#547ebf",
-  dark: "#2b5696",
-  d: "M50.000 25.000 L59.170 25.000 C59.170 26.190 59.805 27.289 60.835 27.884 C61.865 28.479 63.135 28.479 64.165 27.884 C65.195 27.289 65.830 26.190 65.830 25.000 L75.000 25.000 L75.000 34.170 C73.810 34.170 72.711 34.805 72.116 35.835 C71.521 36.865 71.521 38.135 72.116 39.165 C72.711 40.195 73.810 40.830 75.000 40.830 L75.000 50.000 L65.830 50.000 C65.830 48.810 65.195 47.711 64.165 47.116 C63.135 46.521 61.865 46.521 60.835 47.116 C59.805 47.711 59.170 48.810 59.170 50.000 L50.000 50.000 L50.000 40.830 C48.810 40.830 47.711 40.195 47.116 39.165 C46.521 38.135 46.521 36.865 47.116 35.835 C47.711 34.805 48.810 34.170 50.000 34.170 L50.000 25.000 Z"
-}, {
-  light: "#7ea9ea",
-  dark: "#5681c1",
-  d: "M50.000 50.000 L59.170 50.000 C59.170 48.810 59.805 47.711 60.835 47.116 C61.865 46.521 63.135 46.521 64.165 47.116 C65.195 47.711 65.830 48.810 65.830 50.000 L75.000 50.000 L64.855 60.145 C64.013 59.304 62.787 58.976 61.638 59.283 C60.489 59.591 59.591 60.489 59.283 61.638 C58.976 62.787 59.304 64.013 60.145 64.855 L50.000 75.000 L50.000 65.830 C48.810 65.830 47.711 65.195 47.116 64.165 C46.521 63.135 46.521 61.865 47.116 60.835 C47.711 59.805 48.810 59.170 50.000 59.170 L50.000 50.000 Z"
-}, {
-  light: "#3f5494",
-  dark: "#162b6c",
-  d: "M75.000 50.000 L75.000 59.170 C73.810 59.170 72.711 59.805 72.116 60.835 C71.521 61.865 71.521 63.135 72.116 64.165 C72.711 65.195 73.810 65.830 75.000 65.830 L75.000 75.000 L50.000 100.000 L50.000 90.830 C48.810 90.830 47.711 90.195 47.116 89.165 C46.521 88.135 46.521 86.865 47.116 85.835 C47.711 84.805 48.810 84.170 50.000 84.170 L50.000 75.000 L60.145 64.855 C59.304 64.013 58.976 62.787 59.283 61.638 C59.591 60.489 60.489 59.591 61.638 59.283 C62.787 58.976 64.013 59.304 64.855 60.145 L75.000 50.000 Z"
-}, {
-  light: "#7ea9ea",
-  dark: "#5681c1",
-  d: "M100.000 50.000 L75.000 75.000 L75.000 65.830 C73.810 65.830 72.711 65.195 72.116 64.165 C71.521 63.135 71.521 61.865 72.116 60.835 C72.711 59.805 73.810 59.170 75.000 59.170 L75.000 50.000 L75.000 40.830 C73.810 40.830 72.711 40.195 72.116 39.165 C71.521 38.135 71.521 36.865 72.116 35.835 C72.711 34.805 73.810 34.170 75.000 34.170 L75.000 25.000 L100.000 50.000 Z"
-}];
-function PuzzleMark(props) {
-  return createComponent2(View, {
-    get layout() {
-      return {
-        width: props.size,
-        height: props.size
-      };
-    },
-    get style() {
-      return {
-        scale: props.size / 100,
-        originX: 0,
-        originY: 0
-      };
-    },
-    get children() {
-      return createComponent2(For, {
-        each: PUZZLE_SEGMENTS,
-        children: (seg) => (() => {
-          var _el$ = createElement("d-path");
-          effect3(() => ({
-            e: seg.d,
-            t: createLinearGradient(0, 0, 1, 1, [{
-              offset: 0,
-              color: seg.light
-            }, {
-              offset: 1,
-              color: seg.dark
-            }])
-          }), ({
-            e,
-            t
-          }, _p$) => {
-            e !== _p$?.e && setProp(_el$, "d", e, _p$?.e);
-            t !== _p$?.t && setProp(_el$, "color", t, _p$?.t);
-          });
-          return _el$;
-        })()
-      });
-    }
-  });
-}
-
 // src/parts/app-icon.tsx
 function AppIcon(props) {
   let doc = createMemo2(() => {
@@ -11744,7 +11805,7 @@ function HomeScreen(props) {
                           };
                         },
                         get children() {
-                          return [createComponent2(PuzzleMark, {
+                          return [createComponent2(Logo, {
                             size: 40
                           }), createComponent2(Text, {
                             variant: "heading",
@@ -11889,7 +11950,7 @@ function HomeScreen(props) {
                   };
                 },
                 get children() {
-                  return createComponent2(PuzzleMark, {
+                  return createComponent2(Logo, {
                     size: 360
                   });
                 }
