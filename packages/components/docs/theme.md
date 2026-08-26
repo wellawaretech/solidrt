@@ -35,6 +35,14 @@ The type scale derives from `text.base` (the body size, default 14) and `text.ra
 
 The color tokens are `background` (window fill), `surface` (control/card fill), `surfaceAlt` (subtle raised/track fill), `text`, `textMuted`, `border`, `primary`/`onPrimary`, `secondary`/`onSecondary` (lower-emphasis accent), `danger` (validation/destructive), `scrim` (modal dim), and the feedback pair `overlayHover`/`overlayPressed`: translucent tints components draw OVER a control's own fill, so one token pair gives hover/pressed feedback on every fill color, including caller-set ones. Non-color tokens are `spacing`, `radius`, `borderWidth`, and `text` (the type scale: `caption`/`label`/`body`/`title`/`heading` roles, each `{ size, lineHeight, weight }`, plus `fontFamily`).
 
+## Radius
+
+Corner radius is set once: `radius` in a theme definition is a single number, the control radius (default 8), and the scale derives from it: `md` is the base (Button, TextInput, RichTextEditor, Select, SegmentedControl, QrCode), `sm` half of it (Checkbox, Item, NavShell items, Select and ContextMenu popups, Tooltip), `lg` one and a half (Card), and `full` the pill (Badge). Set `radius: 0` for a square theme, `radius: 12` for a soft one; buttons and inputs always match. Shapes derived from a control's own height (Switch, Slider, ProgressBar, Radio) are not on the scale. Pass an object (`radius: { sm, md, lg, full }`, any subset) to pin individual steps instead.
+
+```jsx
+setTheme({ radius: 4 })   // sm 2, md 4, lg 6
+```
+
 ## Per-component overrides
 
 `theme.components` restyles a component everywhere without wrapping it: a `StyleProps` object per component name, merged between the component's themed defaults and each instance's `style` prop (instance style still wins).

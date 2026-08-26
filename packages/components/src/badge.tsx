@@ -18,10 +18,6 @@ export interface BadgeProps extends TransitionProps {
   style?: StyleProps
 }
 
-// A rounded radius large enough to fully pill any typical badge height; the
-// renderer clamps it to half the box, so both ends stay round.
-const RADIUS = 999
-
 // A small rounded pill for counts, labels, and status. Accent fill with
 // onPrimary text by default; override the fill via style.backgroundColor and the
 // label color via style.color.
@@ -41,7 +37,7 @@ export function Badge(props: BadgeProps) {
   let styled = () => ({ ...theme.components.badge, ...props.style })
   let bg = () => styled().backgroundColor ?? colors().bg
   let fg = () => styled().color ?? colors().fg
-  let radius = () => styled().borderRadius ?? RADIUS
+  let radius = () => styled().borderRadius ?? theme.radius.full
   // Resolved once via children(): the typeof probe and the mount sites must
   // share one build - reading the raw getter again would orphan native nodes.
   let resolved = children(() => props.children)

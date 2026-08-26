@@ -242,7 +242,7 @@ export function EditorField(props: EditorFieldProps) {
   let borderColor = () =>
     props.style?.borderColor ?? (focused() && policy.focusRing ? theme.color.primary : theme.color.border)
   let borderWidth = () => props.style?.borderWidth ?? theme.borderWidth.sm
-  let borderRadius = () => props.style?.borderRadius ?? theme.radius.sm
+  let borderRadius = () => props.style?.borderRadius ?? theme.radius.md
 
   let showPlaceholder = () => !focused() && value().length === 0 && (props.placeholder ?? "").length > 0
   let showCaret = () => focused() && caretOn() && !showPlaceholder()

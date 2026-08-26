@@ -1,6 +1,7 @@
 import { createMemo } from "@solidrt/core"
 import type { LayoutProps } from "@solidrt/core"
 import qrcode from "qrcode-generator"
+import { theme } from "./theme"
 import type { TransitionProps } from "./types"
 import { splitTransition, transitionEndFor } from "./types"
 
@@ -20,14 +21,13 @@ export interface QrCodeProps extends TransitionProps {
   // Error-correction level: higher tolerates more damage but packs denser and
   // caps the data length sooner.
   level?: "L" | "M" | "Q" | "H"
-  // Corner radius of the background panel.
+  // Corner radius of the background panel; defaults to the theme control radius.
   radius?: number
   layout?: LayoutProps
 }
 
 const MODULE_SIZE = 6
 const MARGIN = 16
-const RADIUS = 8
 
 // Render a QR for `data` as primitives: merge horizontal runs of dark modules
 // per row into a single d-rect, placed at explicit coordinates on a light
@@ -65,7 +65,7 @@ export function QrCode(props: QrCodeProps) {
 
   return (
     <view repaintBoundary width={side()} height={side()} transition={splitTransition(props.transition).root} onTransitionEnd={transitionEndFor("root", props.onTransitionEnd)} {...props.layout}>
-      <d-rect color={props.background ?? "#ffffff"} radius={props.radius ?? RADIUS} />
+      <d-rect color={props.background ?? "#ffffff"} radius={props.radius ?? theme.radius.md} />
       {grid().runs.map((run) => (
         <d-rect
           x={margin() + run.x * size()}

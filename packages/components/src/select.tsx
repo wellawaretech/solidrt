@@ -159,7 +159,7 @@ export function Select(props: SelectProps) {
   let style = () => ({
     borderColor: theme.color.border,
     borderWidth: theme.borderWidth.sm,
-    borderRadius: theme.radius.sm,
+    borderRadius: theme.radius.md,
     backgroundColor: theme.color.surface,
     ...theme.components.select,
     ...props.style,

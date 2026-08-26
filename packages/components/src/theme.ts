@@ -71,7 +71,10 @@ export type Theme = {
     overlayPressed: string
   }
   spacing: { sm: number; md: number; lg: number; xl: number }
-  radius: { sm: number; md: number; lg: number }
+  // Corner radii. md is THE control radius (Button, TextInput, Select,
+  // SegmentedControl); sm is one step under it (Checkbox, Item, menus,
+  // Tooltip), lg one step over (Card), full is the pill.
+  radius: { sm: number; md: number; lg: number; full: number }
   borderWidth: { sm: number }
   // Semantic control glyphs, as SVG document strings (the Icon currency).
   // Components draw their built-in vector paths by default; a theme that sets
@@ -106,14 +109,22 @@ export type ThemeDefinition = {
     roles?: { [K in TextVariant]?: Partial<TextStyle> }
   }
   spacing?: Partial<Theme["spacing"]>
-  radius?: Partial<Theme["radius"]>
+  // One base (the control radius; the steps derive from it, see
+  // deriveRadius) or explicit steps. Default 8.
+  radius?: number | Partial<Theme["radius"]>
   borderWidth?: Partial<Theme["borderWidth"]>
   icons?: Theme["icons"]
   components?: Theme["components"]
 }
 
 const SPACING = { sm: 4, md: 8, lg: 16, xl: 20 }
-const RADIUS = { sm: 4, md: 8, lg: 12 }
+const RADIUS_BASE = 8
+const RADIUS_FULL = 9999
+
+// The radius scale from its base: sm half, lg one and a half, full the pill.
+function deriveRadius(base: number): Theme["radius"] {
+  return { sm: Math.round(base / 2), md: base, lg: Math.round(base * 1.5), full: RADIUS_FULL }
+}
 const BORDER_WIDTH = { sm: 1 }
 
 // Line height and weight per role; body is the base text, label is body at
@@ -169,7 +180,8 @@ export function defineTheme(def: ThemeDefinition, scheme?: "light" | "dark"): Th
     },
     color,
     spacing: { ...SPACING, ...def.spacing },
-    radius: { ...RADIUS, ...def.radius },
+    radius:
+      typeof def.radius === "number" ? deriveRadius(def.radius) : { ...deriveRadius(RADIUS_BASE), ...def.radius },
     borderWidth: { ...BORDER_WIDTH, ...def.borderWidth },
     icons: def.icons ?? {},
     components: def.components ?? {},
