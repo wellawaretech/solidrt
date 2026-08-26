@@ -1,6 +1,7 @@
 import { Show, children } from "@solidrt/core"
 import type { LayoutProps } from "@solidrt/core"
 import { theme } from "./theme"
+import { space } from "./spacing"
 import { typeStyle, typeWeight, lightOnDark } from "./typography"
 import { policy } from "./policy"
 import type { StyleProps, TransitionProps } from "./types"
@@ -53,10 +54,10 @@ export function Badge(props: BadgeProps) {
       flexDirection="row"
       alignItems="center"
       justifyContent="center"
-      paddingLeft={8}
-      paddingRight={8}
-      paddingTop={2}
-      paddingBottom={2}
+      paddingLeft={space("md")}
+      paddingRight={space("md")}
+      paddingTop={Math.round(space("sm") / 2)}
+      paddingBottom={Math.round(space("sm") / 2)}
       {...props.layout}
       x={styled().x}
       y={styled().y}

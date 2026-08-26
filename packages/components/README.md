@@ -49,7 +49,11 @@ The type scale derives from `text.base` (the body size, default 14) and `text.ra
 
 ### Tokens
 
-The color tokens are `background` (window fill), `surface` (control/card fill), `surfaceAlt` (subtle raised/track fill), `text`, `textMuted`, `border`, `primary`/`onPrimary`, `secondary`/`onSecondary` (lower-emphasis accent), `danger` (validation/destructive), `scrim` (modal dim), and the feedback pair `overlayHover`/`overlayPressed`: translucent tints components draw OVER a control's own fill, so one token pair gives hover/pressed feedback on every fill color, including caller-set ones. Non-color tokens are `spacing`, `radius`, `borderWidth`, and `text` (the type scale: `caption`/`label`/`body`/`title`/`heading` roles, each `{ size, lineHeight, weight }`, plus `fontFamily`).
+The color tokens are `background` (window fill), `surface` (control/card fill), `surfaceAlt` (subtle raised/track fill), `text`, `textMuted`, `border`, `primary`/`onPrimary`, `secondary`/`onSecondary` (lower-emphasis accent), `danger` (validation/destructive), `scrim` (modal dim), `ring` (the focus ring; defaults to `text` so it stays visible on primary fills), and the feedback pair `overlayHover`/`overlayPressed`: translucent tints components draw OVER a control's own fill, so one token pair gives hover/pressed feedback on every fill color, including caller-set ones. Non-color tokens are `spacing`, `radius`, `borderWidth` (`sm` for borders, `focus` for the ring), `size` (app-wide default extents: `navRail` 72, `navSidebar` 220, `splitViewList` 320, `menuMinWidth` 120, `slider` 200; each overridable per instance through its layout or prop), and `text` (the type scale: `caption`/`label`/`body`/`title`/`heading` roles, each `{ size, lineHeight, weight }`, plus `fontFamily` and `monoFamily` for code).
+
+### Spacing
+
+Spacing is one base unit: `spacing` in a theme definition is a number (default 4) and the steps are multiples of it (`sm` 1x, `md` 2x, `lg` 4x, `xl` 5x). Components read them through `space()`, which applies the density policy on top, so a theme sets the rhythm and density tightens it. Pass an object (`spacing: { sm, md, lg, xl }`, any subset) to pin individual steps.
 
 ### Radius
 
@@ -349,13 +353,13 @@ An `onPress` returning a promise makes the button an async action: while it is u
 <Button onPress={async () => { await save() }}>Save</Button>
 ```
 
-A focused Button (see `createFocusNav`) draws a text-colored ring under the `focusRing` policy - text-colored rather than primary so it stays visible on primary-filled buttons - and activates on Enter, Space, or a remote's center key. `focusable` (default true) opts out of focus-navigation candidacy; disabled buttons are never candidates.
+A focused Button (see `createFocusNav`) draws a ring in the theme `ring` color under the `focusRing` policy (text-colored by default so it stays visible on primary-filled buttons) and activates on Enter, Space, or a remote's center key. `focusable` (default true) opts out of focus-navigation candidacy; disabled buttons are never candidates.
 
 API: `Button`, `ButtonProps`, `ButtonVariant` - typed and commented in [src/button.tsx](./src/button.tsx).
 
 ### createFocusNav
 
-Focus navigation for pointer-free control (TV remote, keyboard, gamepad), moving real focus across the elements declaring `focusable`. Two movement types over the same candidates: spatial (arrow keys, dpad) picks the nearest candidate in the pressed direction by on-screen boxes, and sequential (Tab / Shift+Tab) walks visual reading order - rows top to bottom, left to right - wrapping at the ends. Enter / remote center / gamepad south activates the focused control. Nothing is focused until the first navigation press; pointer input works unchanged throughout.
+Focus navigation for pointer-free control (TV remote, keyboard, gamepad), moving real focus across the elements declaring `focusable`. Two movement types over the same candidates: spatial (arrow keys, dpad) picks the nearest candidate in the pressed direction by on-screen boxes, and sequential (Tab / Shift+Tab) walks visual reading order - rows top to bottom, left to right - wrapping at the ends. Enter / remote center / gamepad south activates the focused control. Nothing is focused until the first navigation press; pointer input works unchanged throughout. Every interactive control (Button, Item, TextInput, RichTextEditor, Checkbox, Radio, Switch, Select and its options, SegmentedControl segments, Slider) is a candidate unless disabled, and draws the theme's `ring` color at `borderWidth.focus` while focused under the `focusRing` policy; the Slider steps its value with the arrow keys.
 
 ```jsx
 import { createFocusNav } from "@solidrt/components"
@@ -665,7 +669,7 @@ API: `NavShell`, `NavShellProps`, `NavItem` - typed and commented in [src/nav-sh
 
 ### SplitView
 
-A list-detail container driven by `policy.layout`: `twoPane` shows the `list` pane (width `listWidth`, default 320) beside the `detail` pane, `singlePane` shows one at a time per `showDetail`. Keep pane state (selection, scroll) in the app, not in the panes: crossing a breakpoint re-arranges and can remount them. It draws no chrome and adds no padding; a back affordance in the single-pane detail is the app's to render (fork on `policy.layout`).
+A list-detail container driven by `policy.layout`: `twoPane` shows the `list` pane (width `listWidth`, default `theme.size.splitViewList`) beside the `detail` pane, `singlePane` shows one at a time per `showDetail`. Keep pane state (selection, scroll) in the app, not in the panes: crossing a breakpoint re-arranges and can remount them. It draws no chrome and adds no padding; a back affordance in the single-pane detail is the app's to render (fork on `policy.layout`).
 
 ```jsx
 import { SplitView } from "@solidrt/components"

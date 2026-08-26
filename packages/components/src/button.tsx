@@ -48,9 +48,8 @@ const SIZE_WIDTH: Record<ButtonSize, number> = { sm: 88, md: 120, lg: 160 }
 // box via style and the padding/sizing via layout; because hover is an
 // overlay, it composes over a caller-set backgroundColor too. When disabled,
 // it takes no pointer events at all. Focus (spatial nav) draws a ring under
-// the focusRing policy, text-colored rather than primary so it stays visible
-// on primary-filled buttons; Enter/Space/remote-select activates (handled by
-// createPress).
+// the focusRing policy in the theme's ring color; Enter/Space/remote-select
+// activates (handled by createPress).
 export function Button(props: ButtonProps) {
   // Fill and label color per variant, read reactively from the theme. No
   // variant draws a border.
@@ -96,7 +95,7 @@ export function Button(props: ButtonProps) {
   let press = createPress(props)
   let style = () => ({
     ...styled(),
-    ...(press.focused() && policy.focusRing ? { borderWidth: 2, borderColor: theme.color.text } : {}),
+    ...(press.focused() && policy.focusRing ? { borderWidth: theme.borderWidth.focus, borderColor: theme.color.ring } : {}),
     backgroundColor: bg(),
     borderRadius: radius(),
     // Always a number: a scale that flips from a number back to undefined

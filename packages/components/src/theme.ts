@@ -38,6 +38,8 @@ export type Theme = {
   text: {
     // Passed through to the core font stack: "sans" | "mono" | a family name.
     fontFamily: string
+    // The monospace family for code (RichTextEditor inline code).
+    monoFamily: string
     caption: TextStyle
     label: TextStyle
     body: TextStyle
@@ -69,13 +71,24 @@ export type Theme = {
     // caller-set style.backgroundColor. Non-touch interaction policies only.
     overlayHover: string
     overlayPressed: string
+    // The focus ring (spatial nav under the focusRing policy), drawn at
+    // borderWidth.focus by every focusable control. Defaults to text so it
+    // stays visible on primary-filled controls.
+    ring: string
   }
+  // Gaps and paddings, multiples of one base unit (sm 1x, md 2x, lg 4x,
+  // xl 5x); read through space() where density should apply.
   spacing: { sm: number; md: number; lg: number; xl: number }
   // Corner radii. md is THE control radius (Button, TextInput, Select,
   // SegmentedControl); sm is one step under it (Checkbox, Item, menus,
   // Tooltip), lg one step over (Card), full is the pill.
   radius: { sm: number; md: number; lg: number; full: number }
-  borderWidth: { sm: number }
+  borderWidth: { sm: number; focus: number }
+  // Default extents of the components that have one: the panes and rails an
+  // app lays its screens around, and the smallest sensible popup/track. Each
+  // is a per-instance layout override away (listWidth, layout.width, ...);
+  // the theme sets the app-wide default.
+  size: { navRail: number; navSidebar: number; splitViewList: number; menuMinWidth: number; slider: number }
   // Semantic control glyphs, as SVG document strings (the Icon currency).
   // Components draw their built-in vector paths by default; a theme that sets
   // a slot swaps that glyph everywhere it appears. The package still bundles
@@ -96,9 +109,10 @@ export type Theme = {
 export type ThemeColor = string | [light: string, dark: string]
 
 export type ThemeDefinition = {
-  color: { [K in keyof Theme["color"]]: ThemeColor }
+  color: { [K in Exclude<keyof Theme["color"], "ring">]: ThemeColor } & { ring?: ThemeColor }
   text?: {
     fontFamily?: string
+    monoFamily?: string
     // The body font size; the other roles derive from it. Default 14.
     base?: number
     // The step between adjacent roles (caption, label, body, title, heading
@@ -108,16 +122,24 @@ export type ThemeDefinition = {
     // and weights.
     roles?: { [K in TextVariant]?: Partial<TextStyle> }
   }
-  spacing?: Partial<Theme["spacing"]>
+  // One base unit (the steps derive from it, see deriveSpacing) or explicit
+  // steps. Default 4.
+  spacing?: number | Partial<Theme["spacing"]>
   // One base (the control radius; the steps derive from it, see
   // deriveRadius) or explicit steps. Default 8.
   radius?: number | Partial<Theme["radius"]>
   borderWidth?: Partial<Theme["borderWidth"]>
+  size?: Partial<Theme["size"]>
   icons?: Theme["icons"]
   components?: Theme["components"]
 }
 
-const SPACING = { sm: 4, md: 8, lg: 16, xl: 20 }
+const SPACING_BASE = 4
+
+// The spacing scale from its base unit.
+function deriveSpacing(base: number): Theme["spacing"] {
+  return { sm: base, md: base * 2, lg: base * 4, xl: base * 5 }
+}
 const RADIUS_BASE = 8
 const RADIUS_FULL = 9999
 
@@ -125,7 +147,8 @@ const RADIUS_FULL = 9999
 function deriveRadius(base: number): Theme["radius"] {
   return { sm: Math.round(base / 2), md: base, lg: Math.round(base * 1.5), full: RADIUS_FULL }
 }
-const BORDER_WIDTH = { sm: 1 }
+const BORDER_WIDTH = { sm: 1, focus: 2 }
+const SIZE = { navRail: 72, navSidebar: 220, splitViewList: 320, menuMinWidth: 120, slider: 200 }
 
 // Line height and weight per role; body is the base text, label is body at
 // an emphasized weight (form labels, key/value keys, tags), caption the one
@@ -153,11 +176,13 @@ export function defineTheme(def: ThemeDefinition, scheme?: "light" | "dark"): Th
   for (let key in def.color) {
     let k = key as keyof Theme["color"]
     let value = def.color[k]
+    if (value == null) continue
     if (Array.isArray(value)) {
       if (!scheme) throw new Error(`Theme color "${key}" is a [light, dark] pair; pass a scheme to defineTheme`)
       color[k] = value[scheme === "light" ? 0 : 1]
     } else color[k] = value
   }
+  if (def.color.ring == null) color.ring = color.text
   let base = def.text?.base ?? 14
   let ratio = def.text?.ratio ?? 1.26
   let role = (name: TextVariant): TextStyle => {
@@ -172,6 +197,7 @@ export function defineTheme(def: ThemeDefinition, scheme?: "light" | "dark"): Th
   return {
     text: {
       fontFamily: def.text?.fontFamily ?? "sans",
+      monoFamily: def.text?.monoFamily ?? "mono",
       caption: role("caption"),
       label: role("label"),
       body: role("body"),
@@ -179,10 +205,14 @@ export function defineTheme(def: ThemeDefinition, scheme?: "light" | "dark"): Th
       heading: role("heading"),
     },
     color,
-    spacing: { ...SPACING, ...def.spacing },
+    spacing:
+      typeof def.spacing === "number"
+        ? deriveSpacing(def.spacing)
+        : { ...deriveSpacing(SPACING_BASE), ...def.spacing },
     radius:
       typeof def.radius === "number" ? deriveRadius(def.radius) : { ...deriveRadius(RADIUS_BASE), ...def.radius },
     borderWidth: { ...BORDER_WIDTH, ...def.borderWidth },
+    size: { ...SIZE, ...def.size },
     icons: def.icons ?? {},
     components: def.components ?? {},
   }

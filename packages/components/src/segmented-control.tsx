@@ -1,4 +1,4 @@
-import { createSignal, For } from "@solidrt/core"
+import { createSignal, For, Show } from "@solidrt/core"
 import type { LayoutProps } from "@solidrt/core"
 import { createPress } from "./press"
 import { theme } from "./theme"
@@ -98,10 +98,14 @@ export function SegmentedControl(props: SegmentedControlProps) {
               paddingLeft={space("md")}
               paddingRight={space("md")}
               {...press.handlers}
+              focusable={!props.disabled}
               pointerEvents={props.disabled ? "none" : undefined}
             >
               <d-rect color={fill()} radius={corners(i())} />
               <d-rect color={overlay()} radius={corners(i())} />
+              <Show when={press.focused() && policy.focusRing}>
+                <d-rect drawStyle="stroke" color={theme.color.ring} strokeWidth={theme.borderWidth.focus} radius={corners(i())} />
+              </Show>
               <text
                 color={label(active())}
                 {...typeStyle("body", active() ? lightOnDark(label(true), activeFill()) : undefined)}

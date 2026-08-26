@@ -25,8 +25,7 @@ const LONG_PRESS_MS = 500
 // Finger travel (window px) that cancels a pending long-press.
 const MOVE_SLOP = 8
 // Minimum distance kept between the menu and the window edges.
-const MARGIN = 4
-const MIN_WIDTH = 120
+let margin = () => theme.spacing.sm
 
 /**
  * Secondary actions on the wrapped content. The opening gesture follows the
@@ -115,9 +114,9 @@ export function ContextMenu(props: ContextMenuProps) {
       let b = menu && getBoundingBox(menu)
       if (!b) return
       let p = point()
-      let x = Math.round(Math.min(Math.max(p.x, MARGIN), env.windowSize.width - b.width - MARGIN))
+      let x = Math.round(Math.min(Math.max(p.x, margin()), env.windowSize.width - b.width - margin()))
       let y = Math.round(
-        Math.max(p.y + b.height > env.windowSize.height - MARGIN ? p.y - b.height : p.y, MARGIN),
+        Math.max(p.y + b.height > env.windowSize.height - margin() ? p.y - b.height : p.y, margin()),
       )
       let cur = pos()
       if (!cur || cur.x !== x || cur.y !== y) setPos({ x, y })
@@ -132,7 +131,7 @@ export function ContextMenu(props: ContextMenuProps) {
           left={0}
           x={pos()?.x ?? -10000}
           y={pos()?.y ?? 0}
-          minWidth={MIN_WIDTH}
+          minWidth={theme.size.menuMinWidth}
           flexDirection="column"
           paddingTop={theme.spacing.sm}
           paddingBottom={theme.spacing.sm}

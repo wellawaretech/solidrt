@@ -235,13 +235,13 @@ export function EditorField(props: EditorFieldProps) {
   })
 
   // Style overrides fall back to theme defaults. The border doubles as the
-  // focus ring: primary while focused, when the focus-ring policy asks for a
-  // visible indicator.
+  // focus ring (ring color at the focus width) while focused, when the
+  // focus-ring policy asks for a visible indicator.
   let textColor = () => props.style?.color ?? theme.color.text
   let surfaceColor = () => props.style?.backgroundColor ?? theme.color.surface
-  let borderColor = () =>
-    props.style?.borderColor ?? (focused() && policy.focusRing ? theme.color.primary : theme.color.border)
-  let borderWidth = () => props.style?.borderWidth ?? theme.borderWidth.sm
+  let ring = () => focused() && policy.focusRing
+  let borderColor = () => props.style?.borderColor ?? (ring() ? theme.color.ring : theme.color.border)
+  let borderWidth = () => props.style?.borderWidth ?? (ring() ? theme.borderWidth.focus : theme.borderWidth.sm)
   let borderRadius = () => props.style?.borderRadius ?? theme.radius.md
 
   let showPlaceholder = () => !focused() && value().length === 0 && (props.placeholder ?? "").length > 0

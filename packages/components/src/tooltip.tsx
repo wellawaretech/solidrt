@@ -21,9 +21,10 @@ export interface TooltipProps extends TransitionProps {
 }
 
 const DELAY = 500
-const GAP = 6
+// Distance between the anchor and the bubble.
+let gap = () => theme.spacing.sm
 // Minimum distance kept between the bubble and the window edges.
-const MARGIN = 4
+let margin = () => theme.spacing.sm
 
 /**
  * A hover-only affordance: under desktop/hybrid interaction policies, resting a
@@ -63,8 +64,8 @@ export function Tooltip(props: TooltipProps) {
       let b = bubble && getBoundingBox(bubble)
       if (!a || !b) return
       let x = a.x + a.width / 2 - b.width / 2
-      x = Math.round(Math.min(Math.max(x, MARGIN), env.windowSize.width - b.width - MARGIN))
-      let y = Math.round(props.placement === "bottom" ? a.y + a.height + GAP : a.y - b.height - GAP)
+      x = Math.round(Math.min(Math.max(x, margin()), env.windowSize.width - b.width - margin()))
+      let y = Math.round(props.placement === "bottom" ? a.y + a.height + gap() : a.y - b.height - gap())
       let cur = pos()
       if (!cur || cur.x !== x || cur.y !== y) setPos({ x, y })
     })

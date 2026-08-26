@@ -22,9 +22,10 @@ export interface SelectProps extends TransitionProps {
   style?: StyleProps
 }
 
-const GAP = 4
+// Distance between the trigger and the dropdown.
+let gap = () => theme.spacing.sm
 // Minimum distance kept between the dropdown and the window edges.
-const MARGIN = 4
+let margin = () => theme.spacing.sm
 
 /**
  * A single-choice picker whose presentation forks on the interaction policy:
@@ -63,12 +64,13 @@ export function Select(props: SelectProps) {
         paddingLeft={space("md")}
         paddingRight={space("md")}
         {...press.handlers}
+        focusable
       >
         <d-rect
           color={
             press.pressed()
               ? theme.color.overlayPressed
-              : press.hovered() && policy.interaction !== "touch"
+              : (press.hovered() && policy.interaction !== "touch") || (press.focused() && policy.focusRing)
                 ? theme.color.overlayHover
                 : "transparent"
           }
@@ -90,9 +92,9 @@ export function Select(props: SelectProps) {
       let b = menu && getBoundingBox(menu)
       if (!a || !b) return
       if (a.width !== minWidth()) setMinWidth(a.width)
-      let x = Math.round(Math.min(Math.max(a.x, MARGIN), env.windowSize.width - b.width - MARGIN))
-      let below = a.y + a.height + GAP
-      let y = Math.round(below + b.height > env.windowSize.height - MARGIN ? a.y - b.height - GAP : below)
+      let x = Math.round(Math.min(Math.max(a.x, margin()), env.windowSize.width - b.width - margin()))
+      let below = a.y + a.height + gap()
+      let y = Math.round(below + b.height > env.windowSize.height - margin() ? a.y - b.height - gap() : below)
       let cur = pos()
       if (!cur || cur.x !== x || cur.y !== y) setPos({ x, y })
     })
@@ -163,6 +165,7 @@ export function Select(props: SelectProps) {
     backgroundColor: theme.color.surface,
     ...theme.components.select,
     ...props.style,
+    ...(press.focused() && policy.focusRing ? { borderWidth: theme.borderWidth.focus, borderColor: theme.color.ring } : {}),
   })
   // Hover feedback: the theme overlay tint drawn over the trigger fill.
   let overlay = () =>
@@ -197,6 +200,7 @@ export function Select(props: SelectProps) {
       rotate={style().rotate}
       opacity={style().opacity}
       {...press.handlers}
+      focusable={!props.disabled}
       pointerEvents={props.disabled ? "none" : undefined}
     >
       <d-rect transition={split().background} onTransitionEnd={transitionEndFor("background", props.onTransitionEnd)} color={style().backgroundColor ?? "transparent"} radius={style().borderRadius} />

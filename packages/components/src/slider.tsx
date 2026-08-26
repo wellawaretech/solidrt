@@ -1,6 +1,7 @@
-import { arena, createSignal, getBoundingBox, onLayout, onSettled } from "@solidrt/core"
-import type { LayoutProps, PointerEvent } from "@solidrt/core"
+import { arena, createMemo, createSignal, focusedNode, getBoundingBox, onLayout, onSettled, Show } from "@solidrt/core"
+import type { KeyEvent, LayoutProps, PointerEvent } from "@solidrt/core"
 import { theme } from "./theme"
+import { policy } from "./policy"
 import { densityScale } from "./density"
 import type { StyleProps, TransitionProps } from "./types"
 import { splitTransition, transitionEndFor } from "./types"
@@ -28,6 +29,8 @@ let clamp = (x: number, lo: number, hi: number) => (x < lo ? lo : x > hi ? hi : 
 // A horizontal slider. The groove fills up to the thumb; dragging or pressing
 // the track sets the value from the pointer x. Moves arrive on the frozen down
 // path, so a drag keeps updating when the pointer drifts off the track.
+// Focused (spatial nav), arrow keys step the value (by `step`, else 1% of the
+// range) and the thumb draws the focus ring under the focusRing policy.
 // Controlled via value/onChange, or uncontrolled via defaultValue.
 export function Slider(props: SliderProps) {
   let min = () => props.min ?? 0
@@ -96,6 +99,21 @@ export function Slider(props: SliderProps) {
     if (active === e.pointerId) endDrag()
   }
 
+  // focusedNode() is read first, unconditionally, so the memo depends on it
+  // even when the ref has not set `track` yet (see createPress).
+  let focused = createMemo(() => {
+    let id = focusedNode()
+    return id != null && id === track?.id
+  })
+  let handleKeyDown = (e: KeyEvent) => {
+    if (props.disabled) return
+    let dir = e.key === "ArrowRight" || e.key === "ArrowUp" ? 1 : e.key === "ArrowLeft" || e.key === "ArrowDown" ? -1 : 0
+    if (dir === 0) return
+    e.stopPropagation()
+    let inc = props.step ?? (max() - min()) / 100
+    commit(clamp(value() + dir * inc, min(), max()))
+  }
+
   return (
     <view
       transition={splitTransition(props.transition).root}
@@ -105,7 +123,7 @@ export function Slider(props: SliderProps) {
       flexDirection="row"
       alignItems="center"
       height={height()}
-      width={200}
+      width={theme.size.slider}
       {...props.layout}
       x={props.style?.x}
       y={props.style?.y}
@@ -113,15 +131,20 @@ export function Slider(props: SliderProps) {
       rotate={props.style?.rotate}
       opacity={props.style?.opacity}
       pointerEvents={props.disabled ? "none" : "auto"}
+      focusable={!props.disabled}
       onPointerDown={handleDown}
       onPointerMove={handleMove}
       onPointerUp={handleUp}
+      onKeyDown={handleKeyDown}
     >
       <view ref={(n: { id: number }) => (groove = n)} position="relative" flex={1} height={GROOVE}>
         <d-rect color={theme.color.surfaceAlt} radius={GROOVE / 2} />
         <d-rect color={theme.color.primary} w={fillPx()} h={GROOVE} radius={GROOVE / 2} />
         <view position="absolute" left={0} top={(GROOVE - thumb()) / 2} x={fillPx() - thumb() / 2}>
           <d-oval w={thumb()} h={thumb()} color={theme.color.primary} />
+          <Show when={focused() && policy.focusRing}>
+            <d-oval drawStyle="stroke" w={thumb()} h={thumb()} color={theme.color.ring} strokeWidth={theme.borderWidth.focus} />
+          </Show>
         </view>
       </view>
     </view>

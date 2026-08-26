@@ -98,7 +98,7 @@ export function Item(props: ItemProps) {
       <d-rect transition={split().background} onTransitionEnd={transitionEndFor("background", props.onTransitionEnd)} color={bg()} radius={radius()} />
       <d-rect color={overlay(press.state())} radius={radius()} />
       {props.startContent}
-      <view flexDirection="column" flexGrow={1} flexShrink={1} gap={2}>
+      <view flexDirection="column" flexGrow={1} flexShrink={1} gap={Math.round(space("sm") / 2)}>
         <Show when={labelIsText()} fallback={label()}>
           <text color={theme.color.text} {...typeStyle("body")} maxLines={1}>
             {label()}
@@ -114,7 +114,7 @@ export function Item(props: ItemProps) {
       </view>
       {props.endContent}
       <Show when={press.focused() && policy.focusRing}>
-        <d-rect drawStyle="stroke" color={theme.color.text} strokeWidth={2} radius={radius()} />
+        <d-rect drawStyle="stroke" color={theme.color.ring} strokeWidth={theme.borderWidth.focus} radius={radius()} />
       </Show>
     </view>
   )

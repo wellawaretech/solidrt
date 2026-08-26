@@ -1,5 +1,6 @@
-// Dev console: the dev servers running on this machine, read from the
-// registry. A NavShell holds the pages; the servers page is a SplitView whose
+// Dev console: the dev servers this console can reach - the ones on this
+// machine, read from the registry, plus any remote address typed into
+// Connect. A NavShell holds the pages; the servers page is a SplitView whose
 // list pane is the servers and whose detail pane is the selected server's
 // clients. Built on @solidrt/components, so colors, type scale and spacing
 // come from the shared theme (see theme.ts) and the dense policy - no styling
@@ -9,6 +10,7 @@ import {
   Badge,
   Button,
   Card,
+  Field,
   Icon,
   Item,
   NavShell,
@@ -17,6 +19,7 @@ import {
   ScrollView,
   SplitView,
   Text,
+  TextInput,
   View,
   Window,
   defaultPolicyResolver,
@@ -35,10 +38,13 @@ import {
   clientLabel,
   entryLabel,
   listServers,
+  parseAddress,
+  probeRemote,
+  serverId,
   serverLabel,
+  serverWhere,
   serversDir,
   spawnClient,
-  uptime,
   type Client,
   type Server,
 } from "./servers"
@@ -171,6 +177,11 @@ function ServerCard(props: { server: Server; active: boolean; onPress: () => voi
               {entryLabel(props.server)}
             </Text>
           </View>
+          <Show when={props.server.remote}>
+            <Text variant="caption" muted>
+              remote
+            </Text>
+          </Show>
           <Show
             when={clientCount(props.server)}
             fallback={
@@ -184,6 +195,46 @@ function ServerCard(props: { server: Server; active: boolean; onPress: () => voi
         </Card>
       )}
     </Pressable>
+  )
+}
+
+// The first thing in the list pane: a server this machine's registry cannot
+// know about, reached by typing its address. Always up rather than hidden
+// behind a disclosure - it is one of the two ways a server gets into the
+// list, so it reads as part of the list's frame. Held for the session only:
+// nothing is remembered across a restart yet.
+function ConnectRemote(props: { onConnect: (address: string) => Promise<string | null> }) {
+  let [address, setAddress] = createSignal("")
+  let [error, setError] = createSignal<string | null>(null)
+  // Button treats a pending promise as the action running, so the field stays
+  // put and un-pressable until the probe comes back.
+  let connect = async () => {
+    let failure = await props.onConnect(address())
+    if (failure) {
+      setError(failure)
+      return
+    }
+    setAddress("")
+    setError(null)
+  }
+  return (
+    <Card layout={{ flexDirection: "column", gap: space("md") }}>
+      <Field error={error() ?? undefined}>
+        <TextInput
+          value={address()}
+          onInput={(value) => {
+            setAddress(value)
+            setError(null)
+          }}
+          onSubmit={connect}
+          placeholder="host:port"
+          hints={{ capitalize: "none", autocorrect: false }}
+        />
+      </Field>
+      <Button size="sm" onPress={connect}>
+        Connect remote server
+      </Button>
+    </Card>
   )
 }
 
@@ -206,10 +257,11 @@ function NoServers() {
 
 function ServerList(props: {
   servers: Server[]
-  selected: number | undefined
+  selected: string | undefined
   failure: string | null
   collapsed: boolean
-  onOpen: (port: number) => void
+  onOpen: (id: string) => void
+  onConnect: (address: string) => Promise<string | null>
   onCollapse: () => void
   onExpand: () => void
 }) {
@@ -249,18 +301,19 @@ function ServerList(props: {
               <IconButton icon={COLLAPSE_ICON} onPress={props.onCollapse} />
             </Show>
           </View>
+          <ConnectRemote onConnect={props.onConnect} />
           <Show when={props.failure}>{(message) => <Text color="danger">{message()}</Text>}</Show>
           <Show when={props.servers.length > 0} fallback={<NoServers />}>
             <ScrollView layout={{ flexGrow: 1 }}>
               <View
                 layout={{ flexDirection: "column", gap: space("md"), padding: LIST_GUTTER }}
               >
-                <For each={props.servers} keyed={(server: Server) => server.port}>
+                <For each={props.servers} keyed={(server: Server) => serverId(server)}>
                   {(server) => (
                     <ServerCard
                       server={server()}
-                      active={server().port === props.selected}
-                      onPress={() => props.onOpen(server().port)}
+                      active={serverId(server()) === props.selected}
+                      onPress={() => props.onOpen(serverId(server()))}
                     />
                   )}
                 </For>
@@ -334,11 +387,9 @@ function ServerDetail(props: { server: Server | undefined; onBack: () => void })
           <ScrollView layout={{ flexGrow: 1, flexBasis: 0 }}>
             <View layout={{ flexDirection: "column", gap: space("lg"), padding: space("lg") }}>
               <View layout={{ flexDirection: "column", gap: space("sm") }}>
-                <Text>{`${server().mode} ${server().key}`}</Text>
-                <Text muted>{server().entry}</Text>
-                <Text muted>
-                  {`pid ${server().pid} on ${server().address}:${server().port}, up ${uptime(server())}`}
-                </Text>
+                <Text>{`${server().mode} ${server().key || "unknown"}`}</Text>
+                <Text muted>{server().entry || "Not answering"}</Text>
+                <Text muted>{serverWhere(server())}</Text>
               </View>
               <Show
                 when={server().clients}
@@ -415,23 +466,47 @@ function App() {
   // Selection is the port, not the record: a poll replaces every record, and
   // the port is what survives it. It also survives a breakpoint crossing,
   // which remounts both panes.
-  let [selected, setSelected] = createSignal<number | undefined>(undefined)
+  let [selected, setSelected] = createSignal<string | undefined>(undefined)
+  // Remote addresses typed into Connect, for this run of the console only:
+  // the registry holds the local servers, and nothing holds these.
+  let [remotes, setRemotes] = createSignal<string[]>([])
   let [showDetail, setShowDetail] = createSignal(false)
   // Collapsing only means anything while both panes are up: a single-pane
   // window already shows one pane at a time, so a narrowed window restores
   // the full list rather than leaving a strip with nothing beside it.
   let [collapsed, setCollapsed] = createSignal(false)
   let listCollapsed = () => collapsed() && policy.layout === "twoPane"
-  let open = (port: number) => {
-    setSelected(port)
+  let open = (id: string) => {
+    setSelected(id)
     setShowDetail(true)
   }
-  let server = () => servers().find((s) => s.port === selected())
+  let server = () => servers().find((s) => serverId(s) === selected())
+
+  // Connect: validate, then ask the address itself. A silent address is a
+  // typo or an unreachable machine, so it is reported rather than kept - the
+  // list is not the place to keep guesses. Resolves with the message to show,
+  // or null when the row is up.
+  let connect = async (input: string): Promise<string | null> => {
+    let parsed = parseAddress(input)
+    if (!parsed) return `Needs host:port (got "${input.trim()}")`
+    let address = `${parsed.host}:${parsed.port}`
+    let known = servers().find((s) => serverId(s) === address)
+    if (known) {
+      open(address)
+      return null
+    }
+    let probed = await probeRemote(parsed.host, parsed.port)
+    if (!probed.clients) return `No dev server answered at ${address}`
+    setRemotes([...remotes(), address])
+    setServers([...servers(), probed])
+    open(address)
+    return null
+  }
 
   let stopped = false
   let refresh = async () => {
     try {
-      let next = await listServers()
+      let next = await listServers(remotes())
       if (stopped) return
       setServers(next)
       setFailure(null)
@@ -444,7 +519,9 @@ function App() {
   // appearing or dying leaves no signal behind.
   onSettled(() => {
     if (!serversDir())
-      setFailure("The runtime reports no home directory, so the server registry cannot be found.")
+      setFailure(
+        "The runtime reports no home directory, so there is no local registry to read. Connect a remote server by address.",
+      )
     refresh()
     let timer = setInterval(refresh, POLL_MS)
     return () => {
@@ -473,6 +550,7 @@ function App() {
                   failure={failure()}
                   collapsed={listCollapsed()}
                   onOpen={open}
+                  onConnect={connect}
                   onCollapse={() => setCollapsed(true)}
                   onExpand={() => setCollapsed(false)}
                 />

@@ -5,7 +5,7 @@
 // server (it keeps the tunnel key and the remembered port), so the only thing
 // left to establish is whether the process that wrote the record still runs.
 import { dir, file } from "flux:fs"
-import { alive, homedir } from "flux:process"
+import { alive, execPath, homedir, platform } from "flux:process"
 import { command } from "flux:subprocess"
 
 /** A client connected to a dev server, as the server reports it. */
@@ -33,20 +33,28 @@ export type Client = {
 }
 
 /** A running dev server: its registry record, plus whatever its control API
- * added. `clients` is null when the port did not answer: the process is alive
- * (or the record would be gone), so that is a busy or wedged server, not an
- * absent one. */
+ * added. `clients` is null when the port did not answer: for a local server
+ * the process is alive (or the record would be gone), so that is a busy or
+ * wedged one, not an absent one; for a remote it is the only thing the
+ * address ever tells us. */
 export type Server = {
-  pid: number
+  /** Null for a remote server: a pid on another machine is not ours to ask
+   * about. */
+  pid: number | null
   port: number
   address: string
-  /** The project root, or the single file, this server serves. */
+  /** The project root, or the single file, this server serves. Empty for a
+   * remote that has not answered yet. */
   key: string
   mode: "project" | "file"
   entry: string
   projectDir: string | null
-  /** ISO timestamp of the bind. */
+  /** ISO timestamp of the bind. Empty for a remote: the control API does not
+   * report it, only the registry record does. */
   started: string
+  /** Typed in as host:port rather than found in this machine's registry.
+   * Read-only: everything that starts or stops a process is local. */
+  remote: boolean
   clients: Client[] | null
 }
 
@@ -63,17 +71,45 @@ export function clientsDir(): string | null {
   return home ? `${home}/.solidrt/clients` : null
 }
 
-/** How a server reads in the UI: what it serves, then its port. */
+/** What identifies a server in the UI: its address and port. Not the port
+ * alone - a remote may run on the same port as a local one. */
+export function serverId(server: Server): string {
+  return `${server.address}:${server.port}`
+}
+
+/** A typed-in remote address as host and port, or null when it is not one.
+ * A port is required: dev servers have no fixed one, so a bare host is a
+ * guess we refuse to make (the CLI's --server takes the same line). */
+export function parseAddress(input: string): { host: string; port: number } | null {
+  let value = input.trim().replace(/^https?:\/\//, "").replace(/\/+$/, "")
+  let colon = value.lastIndexOf(":")
+  if (colon <= 0) return null
+  let host = value.slice(0, colon)
+  let port = Number(value.slice(colon + 1))
+  if (!Number.isInteger(port) || port <= 0 || port > 65535) return null
+  return { host, port }
+}
+
+/** How a server reads in the UI: what it serves, then its port. A remote that
+ * has not answered has said nothing to name it by, so it reads as its host. */
 export function serverLabel(server: Server): string {
-  let name = server.key.split(/[\\/]/).pop() || server.key
+  let name = server.key.split(/[\\/]/).pop() || server.address
   return `${name} :${server.port}`
 }
 
 /** The entry, relative to what the server serves: the absolute path is the
  * same prefix for every row, so only the tail tells them apart. */
 export function entryLabel(server: Server): string {
+  if (!server.entry) return "Not answering"
   let key = server.key.replace(/[\\/]+$/, "")
   return server.entry.startsWith(`${key}/`) ? server.entry.slice(key.length + 1) : server.entry
+}
+
+/** Where a server runs, for its detail line. The same line for every server:
+ * a remote reports no pid and no bind time, so those read as "?" rather than
+ * turning the pane into a different pane. */
+export function serverWhere(server: Server): string {
+  return `pid ${server.pid ?? "?"} on ${server.address}:${server.port}, up ${uptime(server)}`
 }
 
 // A record is only a record: anything missing means a folder we do not
@@ -90,14 +126,34 @@ function toServer(record: any): Server | null {
     entry: record.entry,
     projectDir: typeof record.projectDir === "string" ? record.projectDir : null,
     started: typeof record.started === "string" ? record.started : "",
+    remote: false,
+    clients: null,
+  }
+}
+
+// A typed-in address, before anything has answered on it. Everything a
+// registry record would have told us is left empty until the control call
+// fills it in.
+function remoteServer(host: string, port: number): Server {
+  return {
+    pid: null,
+    port,
+    address: host,
+    key: "",
+    mode: "project",
+    entry: "",
+    projectDir: null,
+    started: "",
+    remote: true,
     clients: null,
   }
 }
 
 // The process that owns the port owns the record, so a dead pid is a stale
-// folder and nothing else.
+// folder and nothing else. Registry records only: a remote has no pid, and a
+// pid on another machine would not be this one's to look up anyway.
 function dead(server: Server): boolean {
-  return !alive(server.pid)
+  return server.pid === null || !alive(server.pid)
 }
 
 function text(value: unknown): string | null {
@@ -106,13 +162,21 @@ function text(value: unknown): string | null {
 
 // One control call, the same one the MCP list_clients tool makes. It decorates
 // a server the registry already established; a port that stays silent leaves
-// `clients` null rather than dropping the server.
+// `clients` null rather than dropping the server. For a remote the same call
+// is also the introduction: there is no record on this machine, so what it
+// serves comes from the answer or not at all.
 async function withClients(server: Server): Promise<Server> {
   try {
     let resp = await fetch(`http://${server.address}:${server.port}/__control__/clients`)
     if (!resp.ok) return server
     let body = await resp.json()
     if (!Array.isArray(body?.clients)) return server
+    if (server.remote) {
+      server.key = text(body.key) ?? ""
+      server.mode = body.mode === "file" ? "file" : "project"
+      server.entry = text(body.entry) ?? ""
+      server.projectDir = text(body.projectDir)
+    }
     server.clients = body.clients.map((client: any) => ({
       id: client.id,
       platform: client.platform ?? "unknown",
@@ -164,13 +228,24 @@ export function clientFacts(client: Client): string[] {
 }
 
 
-/** Every registry record whose server is still running. */
-export async function listServers(): Promise<Server[]> {
+/** Ask a typed-in address what it serves. A server comes back either way:
+ * `clients` null means nothing answered there, which is all the caller needs
+ * to decide whether it is worth keeping. */
+export async function probeRemote(host: string, port: number): Promise<Server> {
+  return withClients(remoteServer(host, port))
+}
+
+/** Every registry record whose server is still running, followed by the
+ * remote addresses the caller is holding. A remote that duplicates a local
+ * record is dropped: the registry already has the better answer, and two rows
+ * for one server is a lie. */
+export async function listServers(remotes: string[] = []): Promise<Server[]> {
   let root = serversDir()
-  if (!root) return []
-  let entries = await dir(root)
-    .entries()
-    .catch(() => [])
+  let entries = root
+    ? await dir(root)
+        .entries()
+        .catch(() => [])
+    : []
   let servers: Server[] = []
   for (let entry of entries) {
     if (entry.type !== "directory") continue
@@ -181,7 +256,16 @@ export async function listServers(): Promise<Server[]> {
     if (server && !dead(server)) servers.push(server)
   }
   servers.sort((a, b) => a.port - b.port)
-  return Promise.all(servers.map(withClients))
+  let local = await Promise.all(servers.map(withClients))
+  let taken = new Set(local.map(serverId))
+  let remote = await Promise.all(
+    remotes.flatMap((address) => {
+      let parsed = parseAddress(address)
+      if (!parsed || taken.has(`${parsed.host}:${parsed.port}`)) return []
+      return [probeRemote(parsed.host, parsed.port)]
+    }),
+  )
+  return [...local, ...remote]
 }
 
 // Client numbers this console has spawned into, until those clients exit. A
@@ -191,25 +275,24 @@ export async function listServers(): Promise<Server[]> {
 // never holds a handle it would lose.
 let spawned = new Set<number>()
 
-/** Whether this console can start a local client: a desktop with the dev
- * dotdir (mobile has neither that nor a toolchain). Whether the server's
- * project has a CLI to run is checked per spawn, since it is per project. */
+/** Whether this console can start a client here: a machine with the dev
+ * dotdir to keep its tree in, and a runtime that can name its own
+ * executable, next to which the client binary is looked for. Whether it is
+ * actually there is checked per spawn. */
 export function canSpawnClient(): boolean {
-  return clientsDir() !== null
+  return clientsDir() !== null && execPath !== null
 }
 
-// The project's installed CLI: node_modules/@solidrt/cli/bin/srt in the
-// project dir or the nearest ancestor holding one, the way a module resolver
-// finds it (a workspace hoists the package to the root).
-async function findSrt(projectDir: string): Promise<string | null> {
-  let cursor = projectDir
-  while (true) {
-    let srt = `${cursor}/node_modules/@solidrt/cli/bin/srt`
-    if (await file(srt).exists()) return srt
-    let slash = cursor.lastIndexOf("/")
-    if (slash <= 0) return null
-    cursor = cursor.slice(0, slash)
-  }
+// The dev client binary: the solidrt-go next to the executable this console
+// runs in. Under `srt run` that executable IS solidrt-go; under `srt console`
+// it is the plain solidrt runner, whose build discards --dev-server, and
+// solidrt-go ships beside it in the checkout and the platform package alike.
+// A console packed with its runner embedded has no sibling, so null then.
+async function clientBinary(): Promise<string | null> {
+  if (!execPath) return null
+  let dir = execPath.slice(0, Math.max(execPath.lastIndexOf("/"), execPath.lastIndexOf("\\")))
+  let bin = `${dir}/solidrt-go${platform === "win32" ? ".exe" : ""}`
+  return (await file(bin).exists()) ? bin : null
 }
 
 // The lowest client number whose tree no live client holds. The OS lock on
@@ -227,25 +310,29 @@ async function freeClientIndex(root: string): Promise<number> {
   }
 }
 
-/** Start a local client attached to `server` through that server's own CLI
- * (`srt client`, run with bun from PATH in the served project), so the
- * console does not depend on the runner it runs in: a dev client under
- * `srt run`, the plain runner under `srt console`. The client slot is the
- * lowest free one; the data root is the CLI's default, the tree this console
- * reads. Detached: the client keeps running when this console reloads or
- * exits. Resolves with the client number once the process is launched; the
- * client itself shows in the server's list a poll later. */
+/** Start a client on THIS machine attached to `server`, wherever the server
+ * runs: the dev client binary beside this console's own (what `srt client`
+ * would have resolved) pointed at the server's address. The served project
+ * has nothing to do with it, and for a remote it is not on this machine
+ * anyway. The client slot is the lowest free one and the data root is the
+ * tree this console reads, the same two the CLI would have passed. Detached:
+ * the client keeps running when this console reloads or exits. Resolves with
+ * the client number once the process is launched; the client itself shows in
+ * the server's list a poll later. */
 export async function spawnClient(server: Server): Promise<{ client: number; pid: number | undefined }> {
   let root = clientsDir()
   if (!root) throw new Error("This machine has no dev client storage, so the console cannot start a client")
-  let projectDir = server.projectDir ?? server.entry.slice(0, server.entry.lastIndexOf("/"))
-  let srt = await findSrt(projectDir)
-  if (!srt) throw new Error(`No @solidrt/cli installed above ${projectDir}`)
+  let bin = await clientBinary()
+  if (!bin) throw new Error(`No solidrt-go next to ${execPath ?? "this runtime"}, so there is no client to start`)
   let client = await freeClientIndex(root)
-  let child = command("bun", [srt, "client", "--port", String(server.port), "--client", String(client)], {
-    cwd: projectDir,
-    detached: true,
-  }).spawn()
+  let child = command(bin, [
+    "--data-root",
+    root,
+    "--client",
+    String(client),
+    "--dev-server",
+    `${server.address}:${server.port}`,
+  ], { detached: true }).spawn()
   spawned.add(client)
   child.status().then(() => spawned.delete(client))
   return { client, pid: child.pid }

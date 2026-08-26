@@ -2,6 +2,7 @@ import { createSignal, Show } from "@solidrt/core"
 import type { LayoutProps } from "@solidrt/core"
 import { createPress } from "./press"
 import { theme } from "./theme"
+import { policy } from "./policy"
 import { densityScale } from "./density"
 import type { StyleProps, TransitionProps } from "./types"
 import { splitTransition, transitionEndFor } from "./types"
@@ -46,6 +47,7 @@ export function Switch(props: SwitchProps) {
     borderRadius: h() / 2,
     ...theme.components.switch,
     ...props.style,
+    ...(press.focused() && policy.focusRing ? { borderWidth: theme.borderWidth.focus, borderColor: theme.color.ring } : {}),
   })
 
   return (
@@ -63,6 +65,7 @@ export function Switch(props: SwitchProps) {
       rotate={style().rotate}
       opacity={style().opacity}
       {...press.handlers}
+      focusable={!props.disabled}
       pointerEvents={props.disabled ? "none" : undefined}
     >
       <d-rect color={style().backgroundColor ?? "transparent"} radius={style().borderRadius} />

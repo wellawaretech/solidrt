@@ -2,6 +2,7 @@ import { createSignal, Show } from "@solidrt/core"
 import type { LayoutProps } from "@solidrt/core"
 import { createPress } from "./press"
 import { theme } from "./theme"
+import { policy } from "./policy"
 import { densityScale } from "./density"
 import { Icon } from "./icon"
 import type { StyleProps, TransitionProps } from "./types"
@@ -47,6 +48,7 @@ export function Checkbox(props: CheckboxProps) {
     borderRadius: theme.radius.sm,
     ...theme.components.checkbox,
     ...props.style,
+    ...(press.focused() && policy.focusRing ? { borderWidth: theme.borderWidth.focus, borderColor: theme.color.ring } : {}),
   })
 
   return (
@@ -65,6 +67,7 @@ export function Checkbox(props: CheckboxProps) {
       rotate={style().rotate}
       opacity={style().opacity}
       {...press.handlers}
+      focusable={!props.disabled}
       pointerEvents={props.disabled ? "none" : undefined}
     >
       <d-rect color={style().backgroundColor ?? "transparent"} radius={style().borderRadius} />

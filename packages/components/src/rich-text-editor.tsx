@@ -48,7 +48,7 @@ function fontOf(inline: Attributes, block: Attributes, base: number): Font {
   else if (heading === 3) font.fontSize = base
   if (heading === 1 || heading === 2 || heading === 3 || inline.bold) font.fontWeight = 700
   if (inline.italic) font.fontStyle = "italic"
-  if (inline.code) font.fontFamily = "mono"
+  if (inline.code) font.fontFamily = theme.text.monoFamily
   return font
 }
 

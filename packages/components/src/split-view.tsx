@@ -1,6 +1,7 @@
 import { Show } from "@solidrt/core"
 import type { LayoutProps } from "@solidrt/core"
 import { policy } from "./policy"
+import { theme } from "./theme"
 
 export interface SplitViewProps {
   // The list (or primary) pane.
@@ -10,12 +11,10 @@ export interface SplitViewProps {
   // Single-pane mode only: show the detail instead of the list. The app owns
   // this navigation state; two-pane mode ignores it.
   showDetail?: boolean
-  // Width of the list pane in two-pane mode.
+  // Width of the list pane in two-pane mode; defaults to theme.size.splitViewList.
   listWidth?: number
   layout?: LayoutProps
 }
-
-const LIST_WIDTH = 320
 
 /**
  * A list-detail container driven by the layout policy: two-pane shows the list
@@ -45,7 +44,7 @@ export function SplitView(props: SplitViewProps) {
       }
     >
       <view flexDirection="row" {...props.layout}>
-        <view width={props.listWidth ?? LIST_WIDTH} flexDirection="column">
+        <view width={props.listWidth ?? theme.size.splitViewList} flexDirection="column">
           {props.list}
         </view>
         <view flex={1} flexDirection="column">

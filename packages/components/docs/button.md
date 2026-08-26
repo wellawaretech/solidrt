@@ -18,4 +18,4 @@ An `onPress` returning a promise makes the button an async action: while it is u
 <Button onPress={async () => { await save() }}>Save</Button>
 ```
 
-A focused Button (see `createFocusNav`) draws a text-colored ring under the `focusRing` policy - text-colored rather than primary so it stays visible on primary-filled buttons - and activates on Enter, Space, or a remote's center key. `focusable` (default true) opts out of focus-navigation candidacy; disabled buttons are never candidates.
+A focused Button (see `createFocusNav`) draws a ring in the theme `ring` color under the `focusRing` policy (text-colored by default so it stays visible on primary-filled buttons) and activates on Enter, Space, or a remote's center key. `focusable` (default true) opts out of focus-navigation candidacy; disabled buttons are never candidates.

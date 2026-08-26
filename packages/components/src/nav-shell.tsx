@@ -27,9 +27,6 @@ export interface NavShellProps extends TransitionProps {
   layout?: LayoutProps
 }
 
-const RAIL_WIDTH = 72
-const SIDEBAR_WIDTH = 220
-
 /**
  * An app shell that arranges primary navigation around the content per the
  * navigation policy: bottom tabs under it, a narrow rail or a wide sidebar
@@ -92,7 +89,7 @@ export function NavShell(props: NavShellProps) {
 
   let Rail = () => (
     <view flexDirection="row" flexShrink={0}>
-      <view flexDirection="column" width={RAIL_WIDTH} gap={theme.spacing.sm} paddingTop={theme.spacing.md}>
+      <view flexDirection="column" width={theme.size.navRail} gap={theme.spacing.sm} paddingTop={theme.spacing.md}>
         <d-rect color={theme.color.surface} />
         <For each={props.items}>{(item: NavItem) => <StackedItem item={item} padY={theme.spacing.md} />}</For>
       </view>
@@ -101,7 +98,7 @@ export function NavShell(props: NavShellProps) {
 
   let Sidebar = () => (
     <view flexDirection="row" flexShrink={0}>
-      <view flexDirection="column" width={SIDEBAR_WIDTH} gap={theme.spacing.sm} paddingTop={theme.spacing.md}>
+      <view flexDirection="column" width={theme.size.navSidebar} gap={theme.spacing.sm} paddingTop={theme.spacing.md}>
         <d-rect color={theme.color.surface} />
         <For each={props.items}>
           {(item: NavItem) => {

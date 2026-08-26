@@ -2,6 +2,7 @@ import { createSignal, createContext, useContext, Show, children } from "@solidr
 import type { LayoutProps } from "@solidrt/core"
 import { createPress } from "./press"
 import { theme } from "./theme"
+import { policy } from "./policy"
 import { densityScale } from "./density"
 import { typeStyle } from "./typography"
 import type { StyleProps, TransitionProps } from "./types"
@@ -72,7 +73,6 @@ export function Radio(props: RadioProps) {
   let ctx = useContext(RadioContext)
   let selected = () => ctx.value() === props.value
   let disabled = () => props.disabled || ctx.disabled()
-  let ringColor = () => (selected() ? theme.color.primary : theme.color.border)
   // Resolved once via children(): the typeof probe and the mount sites must
   // share one build - reading the raw getter again would orphan native nodes.
   let resolved = children(() => props.children)
@@ -85,6 +85,10 @@ export function Radio(props: RadioProps) {
   // Theme-level per-component overrides merged under the instance style.
   let styled = () => ({ ...theme.components.radio, ...props.style })
   let press = createPress({ onPress: () => ctx.select(props.value) })
+  // The circle doubles as the focus ring: ring color at the focus width.
+  let focusRing = () => press.focused() && policy.focusRing
+  let ringColor = () => (focusRing() ? theme.color.ring : selected() ? theme.color.primary : theme.color.border)
+  let ringWidth = () => (focusRing() ? theme.borderWidth.focus : 2)
 
   return (
     <view
@@ -102,13 +106,14 @@ export function Radio(props: RadioProps) {
       rotate={styled().rotate}
       opacity={styled().opacity}
       {...press.handlers}
+      focusable={!disabled()}
       pointerEvents={disabled() ? "none" : undefined}
     >
       <Show when={styled().backgroundColor != null || styled().borderRadius != null}>
         <d-rect color={styled().backgroundColor ?? "transparent"} radius={styled().borderRadius} />
       </Show>
       <view width={ring()} height={ring()}>
-        <d-oval drawStyle="stroke" color={ringColor()} strokeWidth={2} />
+        <d-oval drawStyle="stroke" color={ringColor()} strokeWidth={ringWidth()} />
         <Show when={selected()}>
           <d-oval x={inset()} y={inset()} w={ring() - inset() * 2} h={ring() - inset() * 2} color={theme.color.primary} />
         </Show>
