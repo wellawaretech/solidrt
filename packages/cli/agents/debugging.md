@@ -154,7 +154,10 @@ every endpoint answers JSON and an error is `{ "error": "..." }` with a
   do not).
 - `/buffer?id=<bufferId>&offset=<n>&length=<n>&as=<f32|u8|...>` - vertex
   buffer contents.
-- `/stats?window=<ms>` - the performance statistics.
+- `/stats?window=<ms>` - the performance statistics. POST
+  `/stats?active=true|false` switches the on-screen stats overlay instead:
+  one client with `&client=<id>`, every client (and the setting new clients
+  join with) without; `/clients` reports each client's `stats`.
 - `/debug` - the app's registered debug commands; POST
   `/debug?name=<cmd>` with a JSON body as its args to call one.
 - POST `/input` with `{ "events": [...] }` - synthetic input through the

@@ -18,6 +18,8 @@ export type ClientEntry = {
    * for a dev client, the install folder for the launcher or a packed app),
    * or null when it runs without writable storage or predates the field. */
   clientDir: string | null
+  /** Whether its stats overlay is drawn (see POST /stats). */
+  stats: boolean
   /** The client's process id on its own machine. */
   pid: number | null
   /** The runtime binary it runs. */
@@ -71,6 +73,9 @@ export type LoadResponse = { ok: true; entry: string; clients: number }
 
 /** POST /mute: the mute state now in force and the clients told. */
 export type MuteResponse = { ok: true; active: boolean; clients: number }
+
+/** POST /stats: whether the overlay is now on, and on how many clients. */
+export type StatsResponse = { ok: true; active: boolean; clients: number }
 
 /** POST /watch: whether reload-on-save is now active. */
 export type WatchResponse = { ok: true; active: boolean }

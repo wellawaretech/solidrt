@@ -12,6 +12,7 @@ import type {
   LogsResponse,
   MuteResponse,
   ReloadResponse,
+  StatsResponse,
   WatchResponse,
 } from "../types/control"
 
@@ -71,6 +72,7 @@ export function clientList(withAddress = false): (ClientEntry & { address?: stri
     profile: info.profile,
     capabilities: info.capabilities,
     queries: info.queries,
+    stats: info.stats,
     clientDir: info.clientDir,
     pid: info.pid,
     execPath: info.execPath,
@@ -295,12 +297,20 @@ export function setWatchActive(on: boolean) {
   state.watchPaused = !on
 }
 
-// Toggle the stats overlay on every client (the repl's `stats`); the welcome
-// message carries it to clients joining later.
-export function setStats(on: boolean) {
-  state.stats = on
+// Toggle the stats overlay on one client, or on every client (the repl's
+// `stats`) - then it is also the server's setting, which the welcome message
+// carries to clients joining later. Each client's entry remembers its own
+// state, so /clients reports what is actually drawn where.
+export function setStats(on: boolean, ws?: ServerWebSocket) {
   let text = JSON.stringify({ type: "stats", stats: on })
-  for (let ws of state.clients.keys()) ws.send(text)
+  let targets = ws ? [ws] : [...state.clients.keys()]
+  if (!ws) state.stats = on
+  for (let target of targets) {
+    let info = state.clients.get(target)
+    if (info) info.stats = on
+    target.send(text)
+  }
+  return targets.length
 }
 
 export async function handleControl(req: Request, path: string, query: Map<string, string>): Promise<Response> {
@@ -333,6 +343,24 @@ export async function handleControl(req: Request, path: string, query: Map<strin
       return handleQuery(query, "tree", extra)
     }
     case "/__control__/stats": {
+      // GET reads one client's statistics; POST switches the overlay, on one
+      // client with ?client=<id> or on all of them without.
+      if (req.method === "POST") {
+        let active = query.get("active")
+        if (active !== "true" && active !== "false") {
+          return Response.json({ error: "Stats requires ?active=true or ?active=false" }, { status: 400 })
+        }
+        let on = active === "true"
+        let target = query.get("client")
+        let ws: ServerWebSocket | undefined
+        if (target !== undefined) {
+          let found = findClient(target)
+          if ("error" in found) return found.error
+          ws = found.ws
+        }
+        let body: StatsResponse = { ok: true, active: on, clients: setStats(on, ws) }
+        return Response.json(body)
+      }
       let extra: Record<string, unknown> = {}
       let windowMs = parseInt(query.get("window") ?? "", 10)
       if (Number.isFinite(windowMs)) extra.windowMs = windowMs

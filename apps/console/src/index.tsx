@@ -12,6 +12,7 @@ import {
   Card,
   Field,
   Icon,
+  Image,
   Item,
   NavShell,
   Pressable,
@@ -44,9 +45,13 @@ import {
   serverLabel,
   serverWhere,
   serversDir,
+  listSlots,
+  setClientStats,
+  snapshotClient,
   spawnClient,
   type Client,
   type Server,
+  type Slot,
 } from "./servers"
 
 // Slow enough to stay out of the way, fast enough that a server coming up
@@ -338,23 +343,64 @@ function ServerList(props: {
   )
 }
 
-function ClientCard(props: { client: Client }) {
+// Width a client's screenshot is shown at; the height follows the picture.
+const SHOT_WIDTH = 320
+
+function ClientCard(props: { server: Server; client: Client }) {
+  // The last screenshot taken of this client, and what the last action on
+  // it came to.
+  let [shot, setShot] = createSignal<{ png: Uint8Array; width: number; height: number } | null>(null)
+  let [error, setError] = createSignal<string | null>(null)
+  let attempt = async (action: () => Promise<void>) => {
+    try {
+      await action()
+      setError(null)
+    } catch (e) {
+      setError(String(e))
+    }
+  }
+  let screenshot = () =>
+    attempt(async () => {
+      setShot(await snapshotClient(props.server, props.client))
+    })
+  let toggleStats = () => attempt(() => setClientStats(props.server, props.client, !props.client.stats))
   return (
     <View layout={{ flexDirection: "column", gap: space("sm") }}>
       <Text>{clientLabel(props.client)}</Text>
       <For each={clientFacts(props.client)}>{(line) => <Text muted>{line}</Text>}</For>
+      <View layout={{ flexDirection: "row", gap: space("sm"), alignItems: "center" }}>
+        <Button size="sm" onPress={screenshot}>
+          Screenshot
+        </Button>
+        <Button size="sm" variant="secondary" onPress={toggleStats}>
+          {props.client.stats ? "Stats off" : "Stats on"}
+        </Button>
+        <Show when={error()}>{(text) => <Text color="danger">{text()}</Text>}</Show>
+      </View>
+      <Show when={shot()}>
+        {(shot) => (
+          <Image
+            src={shot().png}
+            fit="contain"
+            layout={{
+              width: SHOT_WIDTH,
+              height: Math.round((SHOT_WIDTH * shot().height) / shot().width),
+            }}
+          />
+        )}
+      </Show>
     </View>
   )
 }
 
-function ServerDetail(props: { server: Server | undefined; onBack: () => void }) {
-  // What the last "Start client" press came to, until the next press.
+function ServerDetail(props: { server: Server | undefined; slots: Slot[]; onBack: () => void }) {
+  // What the last slot press came to, until the next press.
   let [note, setNote] = createSignal<string | null>(null)
-  let start = async () => {
+  let start = async (slot: number) => {
     if (!props.server) return
     try {
-      let started = await spawnClient(props.server)
-      setNote(`Started client ${started.client} (pid ${started.pid ?? "unknown"})`)
+      let started = await spawnClient(props.server, slot)
+      setNote(`Started client ${slot} (pid ${started.pid ?? "unknown"})`)
     } catch (e) {
       setNote(String(e))
     }
@@ -386,11 +432,38 @@ function ServerDetail(props: { server: Server | undefined; onBack: () => void })
           </View>
           <ScrollView layout={{ flexGrow: 1, flexBasis: 0 }}>
             <View layout={{ flexDirection: "column", gap: space("lg"), padding: space("lg") }}>
-              <View layout={{ flexDirection: "column", gap: space("sm") }}>
-                <Text>{`${server().mode} ${server().key || "unknown"}`}</Text>
-                <Text muted>{server().entry || "Not answering"}</Text>
-                <Text muted>{serverWhere(server())}</Text>
-              </View>
+              <Card layout={{ flexDirection: "column", gap: space("md") }}>
+                <View layout={{ flexDirection: "column", gap: space("sm") }}>
+                  <Text>{`${server().mode} ${server().key || "unknown"}`}</Text>
+                  <Text muted>{server().entry || "Not answering"}</Text>
+                  <Text muted>{serverWhere(server())}</Text>
+                </View>
+                <Show when={canSpawnClient()}>
+                  <View layout={{ flexDirection: "column", gap: space("md") }}>
+                    <Text variant="title">Start client in slot</Text>
+                    {/* One small button per slot, its fill the state: accent free,
+                        danger in use. A held slot still spawns: the runtime, not
+                        the console, decides what two clients on one tree means.
+                        Sized (not stretched) but pinned to the tap target rather
+                        than the size preset, so ten still fit a row. */}
+                    <View layout={{ flexDirection: "row", gap: space("sm"), flexWrap: "wrap" }}>
+                      <For each={props.slots} keyed={(slot: Slot) => slot.index}>
+                        {(slot) => (
+                          <Button
+                            size="sm"
+                            variant={slot().held ? "danger" : "primary"}
+                            layout={{ minWidth: TAP_TARGET }}
+                            onPress={() => start(slot().index)}
+                          >
+                            {String(slot().index)}
+                          </Button>
+                        )}
+                      </For>
+                    </View>
+                    <Show when={note()}>{(text) => <Text muted>{text()}</Text>}</Show>
+                  </View>
+                </Show>
+              </Card>
               <Show
                 when={server().clients}
                 fallback={<Text color="danger">Not answering on its port</Text>}
@@ -403,18 +476,10 @@ function ServerDetail(props: { server: Server | undefined; onBack: () => void })
                       keyed={(client: Client) => client.id}
                       fallback={<Text muted>No clients connected</Text>}
                     >
-                      {(client) => <ClientCard client={client()} />}
+                      {(client) => <ClientCard server={server()} client={client()} />}
                     </For>
                   </View>
                 )}
-              </Show>
-              <Show when={canSpawnClient()}>
-                <View layout={{ flexDirection: "row", gap: space("md"), alignItems: "center" }}>
-                  <Button size="sm" onPress={start}>
-                    Start client
-                  </Button>
-                  <Show when={note()}>{(text) => <Text muted>{text()}</Text>}</Show>
-                </View>
               </Show>
             </View>
           </ScrollView>
@@ -461,6 +526,9 @@ function AllClients(props: { servers: Server[] }) {
 
 function App() {
   let [servers, setServers] = createSignal<Server[]>([])
+  // The client slots on this machine, polled with the servers: a slot fills
+  // or frees without leaving a signal behind, same as a server.
+  let [slots, setSlots] = createSignal<Slot[]>([])
   let [failure, setFailure] = createSignal<string | null>(null)
   let [page, setPage] = createSignal("servers")
   // Selection is the port, not the record: a poll replaces every record, and
@@ -506,9 +574,10 @@ function App() {
   let stopped = false
   let refresh = async () => {
     try {
-      let next = await listServers(remotes())
+      let [next, nextSlots] = await Promise.all([listServers(remotes()), listSlots()])
       if (stopped) return
       setServers(next)
+      setSlots(nextSlots)
       setFailure(null)
     } catch (e) {
       if (!stopped) setFailure(String(e))
@@ -555,7 +624,13 @@ function App() {
                   onExpand={() => setCollapsed(false)}
                 />
               }
-              detail={<ServerDetail server={server()} onBack={() => setShowDetail(false)} />}
+              detail={
+                <ServerDetail
+                  server={server()}
+                  slots={slots()}
+                  onBack={() => setShowDetail(false)}
+                />
+              }
               showDetail={showDetail()}
             />
           </Show>

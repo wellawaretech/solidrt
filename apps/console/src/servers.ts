@@ -21,6 +21,8 @@ export type Client = {
   /** Control queries this client answers (empty on runtimes that predate the
    * advertisement). */
   queries: string[]
+  /** Whether its stats overlay is drawn. */
+  stats: boolean
   /** Its storage tree on its own machine, or null when it did not say. */
   clientDir: string | null
   pid: number | null
@@ -184,6 +186,7 @@ async function withClients(server: Server): Promise<Server> {
       profile: client.profile ?? "unknown",
       capabilities: Array.isArray(client.capabilities) ? client.capabilities : [],
       queries: Array.isArray(client.queries) ? client.queries : [],
+      stats: client.stats === true,
       clientDir: text(client.clientDir),
       pid: typeof client.pid === "number" ? client.pid : null,
       execPath: text(client.execPath),
@@ -228,6 +231,32 @@ export function clientFacts(client: Client): string[] {
 }
 
 
+/** Switch one client's stats overlay on or off. The server records the
+ * state per client, so the next poll shows it. */
+export async function setClientStats(server: Server, client: Client, on: boolean): Promise<void> {
+  let resp = await fetch(
+    `http://${server.address}:${server.port}/__control__/stats?client=${client.id}&active=${on}`,
+    { method: "POST" },
+  )
+  if (!resp.ok) throw new Error((await resp.json().catch(() => null))?.error ?? `Stats toggle failed (${resp.status})`)
+}
+
+/** A picture of one client's window right now, as the server's snapshot
+ * query returns it: the PNG bytes and the size they are. The root node's id
+ * is per client and changes on reload, so it is read fresh each time. */
+export async function snapshotClient(
+  server: Server,
+  client: Client,
+): Promise<{ png: Uint8Array; width: number; height: number }> {
+  let base = `http://${server.address}:${server.port}/__control__`
+  let root = await (await fetch(`${base}/tree?client=${client.id}&depth=0`)).json()
+  if (typeof root?.id !== "number") throw new Error(root?.error ?? "The client reported no window")
+  let shot = await (await fetch(`${base}/snapshot?client=${client.id}&node=${root.id}`)).json()
+  if (typeof shot?.pngBase64 !== "string") throw new Error(shot?.error ?? "The client sent no picture")
+  let png = Uint8Array.from(atob(shot.pngBase64), (c) => c.charCodeAt(0))
+  return { png, width: shot.width, height: shot.height }
+}
+
 /** Ask a typed-in address what it serves. A server comes back either way:
  * `clients` null means nothing answered there, which is all the caller needs
  * to decide whether it is worth keeping. */
@@ -268,11 +297,11 @@ export async function listServers(remotes: string[] = []): Promise<Server[]> {
   return [...local, ...remote]
 }
 
-// Client numbers this console has spawned into, until those clients exit. A
-// number is taken from the moment of the spawn, before the child has claimed
-// its tree, so two quick presses never pick the same one. Only numbers: the
-// clients are detached and outlive this console (and its reloads), so it
-// never holds a handle it would lose.
+// Slots this console has spawned into, until those clients exit. A slot is
+// taken from the moment of the spawn, before the child has claimed its tree,
+// so two quick presses never pick the same one. Only numbers: the clients are
+// detached and outlive this console (and its reloads), so it never holds a
+// handle it would lose.
 let spawned = new Set<number>()
 
 /** Whether this console can start a client here: a machine with the dev
@@ -295,45 +324,63 @@ async function clientBinary(): Promise<string | null> {
   return (await file(bin).exists()) ? bin : null
 }
 
-// The lowest client number whose tree no live client holds. The OS lock on
-// run.pid is the real claim (lattice storage.rs); the pid written inside plus
-// alive() is as close as flux:fs gets, and a wrong guess costs that client a
-// warning in its log, never data.
-async function freeClientIndex(root: string): Promise<number> {
-  for (let n = 0; ; n++) {
-    if (spawned.has(n)) continue
-    let text = await file(`${root}/client${n}/run.pid`)
-      .text()
-      .catch(() => "")
-    let pid = Number(text.trim())
-    if (!Number.isInteger(pid) || pid <= 0 || !alive(pid)) return n
+/** How many client slots the console offers. A slot is a client number: the
+ * tree ~/.solidrt/clients/client<N> that `--client N` puts a client in. Trees
+ * beyond this count may exist (the CLI takes any number) but are not offered. */
+export const SLOT_COUNT = 4
+
+/** One client slot: its number, and whether a client holds it. */
+export type Slot = { index: number; held: boolean }
+
+// Whether a live client holds a client tree. The OS lock on run.pid is the
+// real claim (lattice storage.rs); the pid written inside plus alive() is as
+// close as flux:fs gets, and a wrong guess costs that client a warning in
+// its log, never data.
+async function slotHeld(root: string, index: number): Promise<boolean> {
+  let text = await file(`${root}/client${index}/run.pid`)
+    .text()
+    .catch(() => "")
+  let pid = Number(text.trim())
+  return Number.isInteger(pid) && pid > 0 && alive(pid)
+}
+
+/** Every slot and whether it is held. A slot this console just spawned into
+ * reads as held even before the child has claimed its tree, so two quick
+ * presses never pick the same one. Empty when this machine has no client
+ * storage. */
+export async function listSlots(): Promise<Slot[]> {
+  let root = clientsDir()
+  if (!root) return []
+  let slots: Slot[] = []
+  for (let index = 0; index < SLOT_COUNT; index++) {
+    slots.push({ index, held: spawned.has(index) || (await slotHeld(root, index)) })
   }
+  return slots
 }
 
 /** Start a client on THIS machine attached to `server`, wherever the server
  * runs: the dev client binary beside this console's own (what `srt client`
  * would have resolved) pointed at the server's address. The served project
  * has nothing to do with it, and for a remote it is not on this machine
- * anyway. The client slot is the lowest free one and the data root is the
- * tree this console reads, the same two the CLI would have passed. Detached:
- * the client keeps running when this console reloads or exits. Resolves with
- * the client number once the process is launched; the client itself shows in
- * the server's list a poll later. */
-export async function spawnClient(server: Server): Promise<{ client: number; pid: number | undefined }> {
+ * anyway. The client slot is the caller's pick (see listSlots) and the data
+ * root is the tree this console reads, the same two the CLI would have
+ * passed. Detached: the client keeps running when this console reloads or
+ * exits. Resolves with the pid once the process is launched; the client
+ * itself shows in the server's list a poll later. */
+export async function spawnClient(server: Server, slot: number): Promise<{ pid: number | undefined }> {
   let root = clientsDir()
   if (!root) throw new Error("This machine has no dev client storage, so the console cannot start a client")
   let bin = await clientBinary()
   if (!bin) throw new Error(`No solidrt-go next to ${execPath ?? "this runtime"}, so there is no client to start`)
-  let client = await freeClientIndex(root)
   let child = command(bin, [
     "--data-root",
     root,
     "--client",
-    String(client),
+    String(slot),
     "--dev-server",
     `${server.address}:${server.port}`,
   ], { detached: true }).spawn()
-  spawned.add(client)
-  child.status().then(() => spawned.delete(client))
-  return { client, pid: child.pid }
+  spawned.add(slot)
+  child.status().then(() => spawned.delete(slot))
+  return { pid: child.pid }
 }
