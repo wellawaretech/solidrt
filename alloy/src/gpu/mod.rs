@@ -40,6 +40,8 @@ pub use vocab::{
   BufferIds, BufferUpdate, CullMode, DepthState, DrawBounds, DrawRange, DrawUpdate, IndexFormat, ParamValue, PipelineDesc, ShaderStage,
   Topology, UniformKind, UniformSlot, UniformTable, MAX_INSTANCE_SLOTS,
 };
+#[cfg(test)]
+pub use vocab::merge_bindings;
 
 use std::num::NonZeroU32;
 

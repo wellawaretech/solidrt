@@ -425,7 +425,6 @@ function App() {
 
   return (
     <window
-      fullscreen
       {...orbit.handlers}
       // Compounding from the pending distance, not the current one, so a
       // fast scroll accumulates its notches instead of each one restarting

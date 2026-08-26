@@ -141,7 +141,12 @@ function IconButton(props: { src: string; onPress: () => void }) {
 // two-pane shows the selection - single-pane shows the list without the
 // detail, and a highlighted row with nothing selected on screen reads as a
 // stray highlight.
-function GroupCard(props: { label: string; description: string; active: boolean; onPress: () => void }) {
+function GroupCard(props: {
+  label: string
+  description: string
+  active: boolean
+  onPress: () => void
+}) {
   return (
     <Pressable focusable onPress={props.onPress}>
       {(s: PressState) => (
@@ -523,10 +528,21 @@ function App() {
     },
     {
       value: "text",
-      label: "Text and QR",
-      description: "Text fields and a QR code",
+      label: "Text",
+      description: "A formatted paragraph and text fields",
       content: () => (
         <>
+          <Card title="Paragraph">
+            <Text>
+              Lorem ipsum dolor sit amet,{" "}
+              <span textDecoration="underline">consectetur adipiscing elit</span>, sed do eiusmod
+              tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis
+              nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis
+              aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat
+              nulla pariatur. Excepteur sint occaecat cupidatat non proident, <span fontStyle="italic">sunt in culpa qui
+              officia deserunt mollit anim id est laborum</span>.
+            </Text>
+          </Card>
           <Card title="Text input">
             <Field label="Single line" description="Enter submits.">
               <TextInput
@@ -537,7 +553,10 @@ function App() {
                 layout={{ width: pct(100) }}
               />
             </Field>
-            <Field label="Multiline" description="A layout.height pins the box; it scrolls to the caret.">
+            <Field
+              label="Multiline"
+              description="A layout.height pins the box; it scrolls to the caret."
+            >
               <TextInput
                 multiline
                 value={fixedNotes()}
@@ -546,7 +565,10 @@ function App() {
                 layout={{ width: pct(100), height: 72 }}
               />
             </Field>
-            <Field label="Multiline, auto-grow" description="Grows with the text up to 4 rows, then scrolls.">
+            <Field
+              label="Multiline, auto-grow"
+              description="Grows with the text up to 4 rows, then scrolls."
+            >
               <TextInput
                 multiline
                 maxRows={4}
@@ -556,12 +578,6 @@ function App() {
                 layout={{ width: pct(100) }}
               />
             </Field>
-          </Card>
-          <Card title="QR code">
-            <Text muted>Encodes your name, or a link if the field is empty.</Text>
-            <View layout={{ alignItems: "center" }}>
-              <QrCode data={qrData() || "https://solidjs.com"} />
-            </View>
           </Card>
         </>
       ),
@@ -642,8 +658,8 @@ function App() {
           </Card>
           <Card title="Tooltip">
             <Text muted>
-              Rest the mouse on a button. Shows under desktop and hybrid interaction policies,
-              never under touch.
+              Rest the mouse on a button. Shows under desktop and hybrid interaction policies, never
+              under touch.
             </Text>
             <View layout={{ flexDirection: "row", gap: space("md") }}>
               <Tooltip content="Saves your changes">
@@ -691,7 +707,12 @@ function App() {
                     />
                   )}
                 </For>
-                <Item label="Disabled row" description="Takes no pointer events" disabled onPress={() => {}} />
+                <Item
+                  label="Disabled row"
+                  description="Takes no pointer events"
+                  disabled
+                  onPress={() => {}}
+                />
               </View>
             </Density>
           </Card>
@@ -699,15 +720,20 @@ function App() {
       ),
     },
     {
-      value: "image",
-      label: "Image",
-      description: "An asset as a GPU texture",
+      value: "misc",
+      label: "Misc",
+      description: "QR code and image",
       content: () => (
         <>
+          <Card title="QR code">
+            <View layout={{ alignItems: "center" }}>
+              <QrCode data="https://solidjs.com" />
+            </View>
+          </Card>
           <Card title="Image">
             <Text muted>
-              Fetches, decodes, and uploads an image, then shows it as a GPU texture. Rounded via
-              a clipping border radius.
+              Fetches, decodes, and uploads an image, then shows it as a GPU texture. Rounded via a
+              clipping border radius.
             </Text>
             <View layout={{ alignItems: "center" }}>
               <Image src={icon} style={{ borderRadius: theme.radius.md }} />
@@ -770,7 +796,9 @@ function App() {
                   </Tooltip>
                 </View>
                 <ScrollView layout={{ flexGrow: 1 }}>
-                  <View layout={{ flexDirection: "column", gap: space("md"), padding: LIST_GUTTER }}>
+                  <View
+                    layout={{ flexDirection: "column", gap: space("md"), padding: LIST_GUTTER }}
+                  >
                     <For each={sections}>
                       {(s) => (
                         <GroupCard
@@ -809,7 +837,9 @@ function App() {
                         padding: space("xl"),
                       }}
                     >
-                      <View layout={{ flexDirection: "row", alignItems: "center", gap: space("md") }}>
+                      <View
+                        layout={{ flexDirection: "row", alignItems: "center", gap: space("md") }}
+                      >
                         <Show when={!twoPane()}>
                           <IconButton src={ARROW_LEFT} onPress={() => setShowDetail(false)} />
                         </Show>

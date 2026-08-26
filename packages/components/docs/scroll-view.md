@@ -1,6 +1,6 @@
 # ScrollView
 
-A scrollable region; vertical by default, `horizontal` to flip. Both the wheel and dragging scroll the content: the drag activates after a small movement threshold along the scroll axis, also when it starts on a pressable (the press is cancelled and its feedback retracts), and keeps scrolling when the pointer leaves the box. No momentum/fling yet.
+A scrollable region; vertical by default, `horizontal` to flip. Both the wheel and dragging scroll the content: the drag activates after a small movement threshold along the scroll axis, also when it starts on a pressable (the press is cancelled and its feedback retracts), and keeps scrolling when the pointer leaves the box. Scrolling glides: the offset springs to each new target (250 ms, critically damped), so a wheel notch never jumps and a burst of notches reads as one motion; a dragging finger is tracked exactly, without the spring. No momentum/fling yet.
 
 ```jsx
 import { ScrollView, Text } from "@solidrt/components"
@@ -11,6 +11,6 @@ import { For } from "@solidrt/core"
 </ScrollView>
 ```
 
-`transition` goes to the viewport, so a scroll offset can spring instead of jump: `transition={{ scrollY: { duration: 250 } }}` makes every wheel notch and `scrollTo` retarget a spring toward the new offset (a spring rather than a tween, because the wheel retargets mid-flight).
+A `scrollX`/`scrollY` entry in `transition` replaces the default spring: `transition={{ scrollY: { duration: 400, bounce: 0.2 } }}` (keep it a spring rather than a tween, because the wheel retargets mid-flight). The other entries animate the box itself and its background/border as on any component.
 
 The underlying geometry primitive `createScroll` is available from `@solidrt/core` for building custom scrollers.

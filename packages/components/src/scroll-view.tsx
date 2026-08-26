@@ -1,4 +1,4 @@
-import { createPan, createScroll } from "@solidrt/core"
+import { createPan, createScroll, createSignal } from "@solidrt/core"
 import type { LayoutProps, PointerProps, WheelEvent } from "@solidrt/core"
 import type { StyleProps, TransitionProps, TransitionScrollProp, TransitionStyleProp, TransitionViewProp } from "./types"
 import { splitTransition, transitionEndFor } from "./types"
@@ -24,9 +24,19 @@ export interface ScrollViewProps
 // stealing the pointer from a pressable the drag started on (its press
 // feedback retracts), and keeps scrolling when the pointer leaves the box.
 // There is no momentum yet; a fling stops when the finger lifts.
+//
+// Motion: the offset is written as a target and the runtime springs to it,
+// so a wheel tick glides instead of jumping and a burst of ticks retargets
+// one continuous motion. While a finger drags, the spring is withdrawn from
+// the viewport declaration so the content tracks the finger exactly; the
+// first drag write cancels any spring still in flight. A `scrollX`/`scrollY`
+// entry in the `transition` prop replaces the default.
+const SCROLL_SPRING = { duration: 250 }
+
 export function ScrollView(props: ScrollViewProps) {
   let viewport: { id: number } | undefined
   let content: { id: number } | undefined
+  let [dragging, setDragging] = createSignal(false)
 
   let scroll = createScroll(
     () => viewport,
@@ -38,7 +48,9 @@ export function ScrollView(props: ScrollViewProps) {
   // grow toward the bottom/right.
   let pan = createPan({
     axis: props.horizontal ? "horizontal" : "vertical",
+    onPanStart: () => setDragging(true),
     onPanMove: (dx, dy) => scroll.scrollBy(-dx, -dy),
+    onPanEnd: () => setDragging(false),
   })
 
   let onWheel = (e: WheelEvent) => {
@@ -65,6 +77,20 @@ export function ScrollView(props: ScrollViewProps) {
       root: Object.keys(rest).length ? (rest as typeof t.root) : undefined,
       viewport: Object.keys(viewport).length ? (viewport as typeof t.root) : undefined,
     }
+  }
+  // The viewport's declaration: the user's scroll entries over the default
+  // spring. During a drag the scroll entries go, and a user `all` narrows to
+  // the one other property the viewport writes (clipRadius) so it cannot
+  // put a spring back under the finger.
+  let viewportTransition = () => {
+    let user = split().viewport
+    let entries: Record<string, unknown> = typeof user === "string" ? { all: user } : { ...(user ?? {}) }
+    if (dragging()) {
+      let { scrollX, scrollY, all, ...rest } = entries
+      if (all !== undefined) rest.clipRadius = all
+      return Object.keys(rest).length ? rest : null
+    }
+    return { scrollX: SCROLL_SPRING, scrollY: SCROLL_SPRING, ...entries }
   }
   let direction = () => (props.horizontal ? "row" : "column")
   let hasBackground = () =>
@@ -106,7 +132,7 @@ export function ScrollView(props: ScrollViewProps) {
         flexDirection={direction()}
         scrollX={scroll.offset().x}
         scrollY={scroll.offset().y}
-        transition={split().viewport}
+        transition={viewportTransition()}
         onTransitionEnd={transitionEndFor("root", props.onTransitionEnd)}
         {...pan.handlers}
         onWheel={onWheel}
