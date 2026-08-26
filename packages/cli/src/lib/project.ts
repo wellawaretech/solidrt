@@ -132,7 +132,8 @@ function cliVersion(): string {
 export const CLI_VERSION: string = cliVersion()
 
 // The manifest's solidrtVersion: provenance, not a compat gate like
-// runtimeVersion - the CLI release (or checkout) that built the version.
+// runtimeVersion - the CLI release (or checkout) that built the version. The
+// packed runner warns when it differs from its own (lattice/src/main.rs).
 export const SOLIDRT_VERSION: string = CLI_VERSION
 
 // `extra` are build outputs that ship as assets too (isolate bundles); they

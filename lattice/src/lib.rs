@@ -182,7 +182,7 @@ pub fn embedded_fonts() -> Vec<FontPayload> {
   ]
 }
 
-pub(crate) const VERSION: &str = match option_env!("SOLIDRT_VERSION") {
+pub const VERSION: &str = match option_env!("SOLIDRT_VERSION") {
   Some(v) => v,
   None => "0.0.0-dev",
 };

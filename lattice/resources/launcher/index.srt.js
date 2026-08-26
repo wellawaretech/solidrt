@@ -7583,15 +7583,21 @@ function TextInput(props) {
   });
 }
 // ../../packages/components/src/scroll-view.tsx
+var SCROLL_SPRING = {
+  duration: 250
+};
 function ScrollView(props) {
   let viewport;
   let content;
+  let [dragging, setDragging] = createSignal(false);
   let scroll = createScroll(() => viewport, () => content, {
     axis: props.horizontal ? "horizontal" : "vertical"
   });
   let pan = createPan({
     axis: props.horizontal ? "horizontal" : "vertical",
-    onPanMove: (dx, dy) => scroll.scrollBy(-dx, -dy)
+    onPanStart: () => setDragging(true),
+    onPanMove: (dx, dy) => scroll.scrollBy(-dx, -dy),
+    onPanEnd: () => setDragging(false)
   });
   let onWheel = (e) => {
     if (props.horizontal)
@@ -7622,6 +7628,30 @@ function ScrollView(props) {
       ...t,
       root: Object.keys(rest).length ? rest : undefined,
       viewport: Object.keys(viewport2).length ? viewport2 : undefined
+    };
+  };
+  let viewportTransition = () => {
+    let user = split().viewport;
+    let entries = typeof user === "string" ? {
+      all: user
+    } : {
+      ...user ?? {}
+    };
+    if (dragging()) {
+      let {
+        scrollX,
+        scrollY,
+        all,
+        ...rest
+      } = entries;
+      if (all !== undefined)
+        rest.clipRadius = all;
+      return Object.keys(rest).length ? rest : null;
+    }
+    return {
+      scrollX: SCROLL_SPRING,
+      scrollY: SCROLL_SPRING,
+      ...entries
     };
   };
   let direction = () => props.horizontal ? "row" : "column";
@@ -7719,7 +7749,7 @@ function ScrollView(props) {
       return scroll.offset().y;
     },
     get transition() {
-      return split().viewport;
+      return viewportTransition();
     },
     get onTransitionEnd() {
       return transitionEndFor("root", props.onTransitionEnd);

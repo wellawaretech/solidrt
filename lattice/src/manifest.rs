@@ -26,7 +26,8 @@ pub struct Manifest {
   pub icon: Option<String>,
   // Provenance: the CLI release (or git describe of the checkout) that built
   // this version; "unknown" only for manifests from CLIs that predate the
-  // field. Informational, unlike runtimeVersion's compat gate.
+  // field. The packed runner warns when it differs from its own version
+  // (src/main.rs); runtimeVersion remains the compat gate proper.
   #[serde(default = "unknown_version", rename = "solidrtVersion")]
   pub solidrt_version: String,
   pub bundle: ManifestBundle,

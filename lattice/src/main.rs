@@ -27,6 +27,19 @@ struct FactoryPayload {
   gl_libs: Vec<(String, Vec<u8>)>,
 }
 
+// The app was built by one SolidRT version and runs on another. A warning,
+// not a refusal: most differences (a checkout commit apart, a patch release)
+// run fine, and one that does not (a bytecode format change) fails to load
+// with QuickJS's own "invalid version" error right after this line, which
+// then explains it. Same version: silent. Printed directly: payloads load
+// before lattice::start installs the logger.
+#[cfg(not(feature = "go"))]
+fn warn_version_mismatch(manifest: &lattice::manifest::Manifest) {
+  if manifest.solidrt_version != lattice::VERSION {
+    eprintln!("[srt] app built by SolidRT {}, runner is {}", manifest.solidrt_version, lattice::VERSION);
+  }
+}
+
 // A plain filename, as the manifest's bundle entry must be: it cannot reach
 // outside its distribution.
 #[cfg(not(feature = "go"))]
@@ -55,6 +68,7 @@ fn load_payload(path: std::path::PathBuf) -> Option<FactoryPayload> {
   let manifest = trailer.sections.iter().find(|s| s.kind == forge::trailer::SECTION_MANIFEST)?;
   let manifest = String::from_utf8(trailer.section_bytes(manifest).ok()?).ok()?;
   let manifest = lattice::manifest::Manifest::parse(&manifest).ok()?;
+  warn_version_mismatch(&manifest);
   let index = trailer.file_index();
   let read_file = |name: &str| {
     let &(offset, len) = index.get(name)?;
@@ -87,6 +101,7 @@ fn load_payload(path: std::path::PathBuf) -> Option<FactoryPayload> {
 fn load_adjacent_folder() -> Option<FactoryPayload> {
   let dir = std::env::current_exe().ok()?.parent()?.to_path_buf();
   let manifest = lattice::manifest::Manifest::load(&dir)?;
+  warn_version_mismatch(&manifest);
   let bundle_name = plain_bundle_name(&manifest)?;
   let app = app_from_bundle(bundle_name, std::fs::read(dir.join(bundle_name)).ok()?)?;
   let fonts = manifest
