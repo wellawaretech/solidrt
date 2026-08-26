@@ -37,6 +37,7 @@ const OPTIONS = {
     project: { type: "boolean", default: false },
     lan: { type: "boolean", default: false },
     folder: { type: "boolean", default: false },
+    app: { type: "boolean", default: false },
     stdout: { type: "boolean", default: false },
     json: { type: "boolean", default: false },
     output: { type: "string", short: "o" },
@@ -148,6 +149,11 @@ export function validateArgs() {
   let serves = command === "run" || command === "server" || command === "demo"
   // The commands that work on a project or a file (mode.ts).
   let onApp = command === "run" || command === "server" || command === "bundle" || command === "pack" || command === "render"
+  // --folder and --app pick a pack output shape.
+  if ((values.folder || values.app) && command !== "pack") {
+    usage("srt pack --folder|--app  (--folder and --app are only valid with the pack command)")
+  }
+  if (values.folder && values.app) usage("srt pack --folder|--app  (--folder and --app exclude each other)")
   // --device picks the adb device `android` installs on.
   if (values.device && command !== "android") {
     usage("srt android --device <serial>  (--device is only valid with the android command)")

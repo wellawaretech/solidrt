@@ -46,24 +46,40 @@ function packSections(runnerBytes: Buffer, sections: Section[], magic: Buffer): 
   return Buffer.concat([...parts, ...entries, tail, magic])
 }
 
-// The single-file solidrt executable: the runner image plus the pack folder in
-// section form - the canonical manifest verbatim, then every manifest-listed
-// file named by its manifest path. Bundle, fonts, and identity all come from
-// the manifest; assets are read in place via ranged reads at their section
-// offsets, so nothing is unpacked at runtime. GL libraries ride along as
-// kind-3 sections (runtime freight, deliberately outside the manifest); the
-// runner extracts those to its cache and preloads them before window setup.
-export function packSolid(folder: PackFolder, bytecode: Buffer): Buffer {
-  let runnerPath = requireBinary("solidrt")
-  let runnerBytes = readFileSync(runnerPath)
-  let sections: Section[] = [
+// The pack folder in section form - the canonical manifest verbatim, then
+// every manifest-listed file named by its manifest path. Bundle, fonts, and
+// identity all come from the manifest; assets are read in place via ranged
+// reads at their section offsets, so nothing is unpacked at runtime.
+function appSections(folder: PackFolder, bytecode: Buffer): Section[] {
+  return [
     { kind: SECTION_MANIFEST, bytes: Buffer.from(folder.manifest, "utf8") },
     { kind: SECTION_FILE, bytes: bytecode, name: "bundle.bin" },
     ...folder.copies.map((c) => ({ kind: SECTION_FILE, bytes: readFileSync(c.from), name: c.to })),
     ...folder.files.map((f) => ({ kind: SECTION_FILE, bytes: f.bytes, name: f.to })),
+  ]
+}
+
+// The single-file solidrt executable: the runner image plus the app sections.
+// GL libraries ride along as kind-3 sections (runtime freight, deliberately
+// outside the manifest); the runner extracts those to its cache and preloads
+// them before window setup.
+export function packSolid(folder: PackFolder, bytecode: Buffer): Buffer {
+  let runnerPath = requireBinary("solidrt")
+  let sections: Section[] = [
+    ...appSections(folder, bytecode),
     ...runnerGlLibs(runnerPath).map((lib) => ({ kind: SECTION_GL_LIB, bytes: readFileSync(lib.path), name: lib.name })),
   ]
-  return packSections(runnerBytes, sections, MAGIC.solidrt)
+  return packSections(readFileSync(runnerPath), sections, MAGIC.solidrt)
+}
+
+// A standalone .srtapp: the app sections alone, no runner in front and no GL
+// libraries (the runner that loads it brings its own). The runner parses it
+// exactly as it parses its own image (lattice/src/main.rs, load_payload), so
+// `solidrt <file>.srtapp` runs it with the runner used in place - nothing is
+// copied or appended to, and a signed runner stays signed. The extension is
+// a convention; the magic is the contract.
+export function packApp(folder: PackFolder, bytecode: Buffer): Buffer {
+  return packSections(Buffer.alloc(0), appSections(folder, bytecode), MAGIC.solidrt)
 }
 
 // The single-file flux executable: the fluxrt runner plus the program in the

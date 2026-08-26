@@ -21,6 +21,7 @@ android` (and `server`, `client`, `pack` for the rest).
 | [`srt client`](src/client/docs.md) | client only, attached to the project's dev server |
 | [`srt android`](src/android/docs.md) | install and launch the client on a connected Android device |
 | [`srt demo [n]`](src/demo/docs.md) | list the demos the installed packages ship, or run one |
+| [`srt console`](src/console/docs.md) | start the dev console: the dev servers on this machine and their clients |
 | [`srt check [file]`](src/check/docs.md) | build and typecheck, writing nothing |
 | [`srt bundle [file]`](src/bundle/docs.md) | transpile to JS or bytecode (dist/bundle/) |
 | [`srt render [file]`](src/render/docs.md) | render frames offscreen, optionally replaying a script |

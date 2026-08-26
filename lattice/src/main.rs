@@ -1,7 +1,8 @@
-// The factory payload a packed distribution boots: either the single-file
-// trailer (the pack folder in section form, appended to this binary by
-// `srt pack`) or a folder next to the runner (`srt pack --folder`). One shape
-// behind both (okf/plans/client-storage-updates.md, stage 3): the manifest
+// The factory payload a packed distribution boots: the single-file trailer
+// (the pack folder in section form, appended to this binary by `srt pack`), a
+// standalone .srtapp (the same sections on their own, `srt pack --app`, named
+// on the command line), or a folder next to the runner (`srt pack --folder`).
+// One shape behind all (okf/plans/client-storage-updates.md, stage 3): the manifest
 // defines the version's file set (the runner is deliberately unlisted) and
 // carries the app identity; a .js bundle is JS source, anything else QuickJS
 // bytecode; fonts come from the manifest annotations; assets resolve through
@@ -43,12 +44,14 @@ fn app_from_bundle(name: &str, bytes: Vec<u8>) -> Option<lattice::AppSource> {
   }
 }
 
-// Read the sections appended to our own image by `srt pack`, if any. Only the
+// Read the pack sections at the end of `path`: our own image when `srt pack`
+// appended them (the single-file executable), or a standalone .srtapp file
+// (`srt pack --app`: the same sections without a runner in front). Only the
 // boot files (manifest, bundle, fonts, GL libraries) are read here, each as a
 // ranged read; everything else stays in place behind the assets mount.
 #[cfg(not(feature = "go"))]
-fn load_embedded_payload() -> Option<FactoryPayload> {
-  let trailer = forge::trailer::read_own(EMBED_MAGIC)?;
+fn load_payload(path: std::path::PathBuf) -> Option<FactoryPayload> {
+  let trailer = forge::trailer::read(path, EMBED_MAGIC)?;
   let manifest = trailer.sections.iter().find(|s| s.kind == forge::trailer::SECTION_MANIFEST)?;
   let manifest = String::from_utf8(trailer.section_bytes(manifest).ok()?).ok()?;
   let manifest = lattice::manifest::Manifest::parse(&manifest).ok()?;
@@ -108,7 +111,7 @@ fn main() {
   // the runner flags below apply. Those are dev tooling for the source-path
   // shape.
   #[cfg(not(feature = "go"))]
-  if let Some(payload) = load_embedded_payload().or_else(load_adjacent_folder) {
+  if let Some(payload) = std::env::current_exe().ok().and_then(load_payload).or_else(load_adjacent_folder) {
     // Before lattice::start: alloy's window setup runs inside it, and the GL
     // libraries must be loaded by then.
     lattice::gl_libs::provision(&payload.app_id, &payload.gl_libs);
@@ -193,16 +196,32 @@ fn main() {
     let src = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("Failed to read '{path}': {e}"));
     lattice::AppSource::Text(src)
   };
-  // Payloads were handled above, so this is the bare runtime: no fonts
-  // either; text falls back to the platform font manager.
+  // A source path ending in the pack magic is a .srtapp (the extension is a
+  // convention, the magic is the contract): identity, fonts and assets come
+  // from the file, and the flags above still apply, so `srt console` runs a
+  // packed app under the dev runner's controls. Anything else is JS source on
+  // the bare runtime: no fonts (text falls back to the platform font
+  // manager), no identity.
   #[cfg(not(feature = "go"))]
   let (app, fonts, app_id): (_, Vec<alloy::rendertree::FontPayload>, Option<String>) =
-    (source_path.map(path_app), Vec::new(), None);
+    match source_path.as_deref().and_then(|p| load_payload(std::path::PathBuf::from(p))) {
+      Some(payload) => {
+        lattice::gl_libs::provision(&payload.app_id, &payload.gl_libs);
+        forge::fs::set_assets_base(Some(payload.base));
+        (Some(payload.app), payload.fonts, Some(payload.app_id))
+      }
+      None => {
+        if let Some(p) = source_path.as_deref().filter(|p| p.ends_with(".srtapp")) {
+          usage(&format!("'{p}' is not a SolidRT app pack (no valid payload at its end)"));
+        }
+        (source_path.map(path_app), Vec::new(), None)
+      }
+    };
   // The runtime has no built-in screen to fall back to (the launcher is
   // go-only); without an app there is nothing to run.
   #[cfg(not(feature = "go"))]
   if app.is_none() {
-    eprintln!("No app to run: expected a packed payload, an app folder, or a source path argument");
+    eprintln!("No app to run: expected a packed payload, an app folder, or a .srtapp or source path argument");
     std::process::exit(2);
   }
   #[cfg(feature = "go")]

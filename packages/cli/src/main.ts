@@ -120,7 +120,7 @@ async function launchServer(withClient: boolean, demo?: { cwd: string; entry: st
 
 // -- Dispatch --
 
-const COMMANDS = ["init", "bundle", "check", "pack", "render", "client", "android", "mcp"] as const
+const COMMANDS = ["init", "bundle", "check", "pack", "render", "client", "console", "android", "mcp"] as const
 type Command = (typeof COMMANDS)[number]
 
 if (command === "server") {

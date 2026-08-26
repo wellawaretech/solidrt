@@ -1,0 +1,25 @@
+{
+  "name": "console",
+  "type": "module",
+  "private": true,
+  "solidrt": {
+    "appId": "com.solidrt.console",
+    "displayName": "Console"
+  },
+  "scripts": {
+    "dev": "srt run",
+    "pack": "srt pack -o out src/index.tsx",
+    "server": "srt server",
+    "client": "srt client",
+    "android": "srt android"
+  },
+  "dependencies": {
+    "@solidrt/core": "workspace:*",
+    "@solidrt/components": "workspace:*"
+  },
+  "devDependencies": {
+    "@solidrt/cli": "workspace:*",
+    "@solidrt/flux-types": "workspace:*",
+    "typescript": "^7"
+  }
+}

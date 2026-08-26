@@ -3,7 +3,7 @@ import { bundleFlux, bundleSolid, compileToBytecode, findFluxIsolates } from "..
 import { resolvePackFonts } from "../lib/fonts"
 import { loadAppIdentity } from "../lib/project"
 import { resolveMode } from "../lib/mode"
-import { packFlux, packSolid } from "./trailer"
+import { packApp, packFlux, packSolid } from "./trailer"
 import { buildPackFolder, writePackFolder } from "./layout"
 import { requireBinary } from "../lib/util"
 import { dirname, join, resolve } from "node:path"
@@ -25,8 +25,8 @@ async function writeExecutable(packed: Buffer, outfile: string) {
 
 export async function main() {
   if (values.flux) {
-    if (values.folder) {
-      console.error("--folder is for app packs; flux scripts have no folder output")
+    if (values.folder || values.app) {
+      console.error("--folder and --app are for app packs; flux scripts have no folder or .srtapp output")
       process.exit(1)
     }
     let outfile = exeName(values.output ?? source!.replace(/\.[jt]s$/, ""))
@@ -41,9 +41,10 @@ export async function main() {
     process.exit()
   }
 
-  // Both solidrt outputs are the same canonical pack: manifest + bundle.bin +
+  // All solidrt outputs are the same canonical pack: manifest + bundle.bin +
   // assets (fonts included). --folder writes it as a flat folder next to a
-  // bare runner; the default single-file exe carries it as trailer sections.
+  // bare runner; --app writes it alone as one .srtapp for a runner to load;
+  // the default single-file exe carries it as trailer sections.
   let mode = resolveMode()
   let identity = loadAppIdentity(mode.entry, mode.projectDir)
   console.log(`>> app: ${identity.appId} (${identity.org} / ${identity.displayName})`)
@@ -64,6 +65,14 @@ export async function main() {
     let outDir = values.output ?? join("dist", "pack")
     writePackFolder(outDir, requireBinary("solidrt"), bytecode, folder)
     console.log(`>> wrote pack folder to ${resolve(outDir)}`)
+    process.exit()
+  }
+
+  if (values.app) {
+    let outfile = values.output ?? mode.entry.replace(/\.[jt]sx?$/, ".srtapp")
+    let packed = packApp(folder, bytecode)
+    await Bun.write(outfile, packed)
+    console.log(`>> wrote ${packed.length} bytes to ${outfile}`)
     process.exit()
   }
 

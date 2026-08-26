@@ -28,6 +28,7 @@ Commands:
   server [file]          Start dev server only
   client                 Start solidrt-go client only
   demo [<number>]        List the demos the installed packages ship, or run one
+  console                Start the dev console: the dev servers on this machine and their clients
   android                Install and launch the client on a connected Android device
   bundle [file]          Transpile TS/JS/TSX/JSX to JS or bytecode
                          (a prebuilt <name>.srt.js: compile it to bytecode)
@@ -91,9 +92,14 @@ bundle options:
       --json             Write the bundle, its manifest and its isolates as one JSON object
                          to stdout (the dev server's rebuild; --server <host:port> names it)
 
+console options:
+      -- <args...>       Everything after -- reaches the console (flux:process argv)
+
 pack options:
       --folder           Write the flat app folder (runner + manifest + bundle + assets)
                          instead of the single-file executable
+      --app              Write the app alone as one <entry>.srtapp (manifest + bundle + assets,
+                         no runner), for a runner to load: solidrt <file>.srtapp
   -f, --flux             Pack for the bare Flux runtime instead of SolidRT (entry must be .ts|.js)
   -m, --minify           Minify the output
   -o, --output <name>    Output filename
