@@ -8,7 +8,7 @@ import { render, createSignal, onSettled, For, Show, Logo } from "@solidrt/core"
 import {
   Badge,
   Button,
-  Divider,
+  Card,
   Icon,
   Item,
   NavShell,
@@ -25,6 +25,8 @@ import {
   setPolicyResolver,
   space,
   theme,
+  type PressState,
+  type StyleProps,
 } from "@solidrt/components"
 import { consoleTheme } from "./theme"
 import {
@@ -57,6 +59,7 @@ const SERVER_ICON = LUCIDE(
 const CLIENT_ICON = LUCIDE(
   `<rect x="2" y="4" width="20" height="13" rx="2"/><path d="M8 21h8M12 17v4"/>`,
 )
+const BACK_ICON = LUCIDE(`<path d="m12 19-7-7 7-7"/><path d="M19 12h-14"/>`)
 const COLLAPSE_ICON = LUCIDE(
   `<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/><path d="m16 15-3-3 3-3"/>`,
 )
@@ -67,6 +70,9 @@ const EXPAND_ICON = LUCIDE(
 // The list pane while collapsed: wide enough for the expand button and
 // nothing else.
 const STRIP_WIDTH = 44
+
+// The list pane's width in two-pane, matching the launcher's.
+const LIST_WIDTH = 380
 
 // setTheme(consoleTheme)
 // Rows over air: the dashboard is a list of facts, not a touch surface.
@@ -87,17 +93,49 @@ const NAV = [
   { value: "clients", label: "Clients", icon: <Icon src={CLIENT_ICON} /> },
 ]
 
+// Edge of an icon button's press box: the glyphs are small, so these boxes are
+// sized rather than padded. Not density-scaled - a finger is the same size at
+// every density.
+const TAP_TARGET = 44
+
+// Breathing room between the scrolling rows and the viewport's clip edge: a
+// focus ring is drawn on the row's own box edge, so a row that fills the
+// viewport exactly would leave the ring flush against the clip.
+const LIST_GUTTER = 2
+
+// Reading width of the list column when it is the whole screen. Two-pane
+// already bounds the column with the pane, so it only applies single-pane.
+const COLUMN_MAX_WIDTH = 440
+
+// The focus-navigation ring for this app's own pressables (Button draws its
+// own), spread into a style. Text-colored so it stays visible on any fill.
+function focusRing(focused: boolean, radius?: number): StyleProps {
+  if (!focused || !policy.focusRing) return {}
+  return {
+    borderWidth: 2,
+    borderColor: theme.color.text,
+    borderRadius: radius ?? theme.radius.md,
+  }
+}
+
 function IconButton(props: { icon: string; onPress: () => void }) {
   return (
     <Pressable
+      focusable
       onPress={props.onPress}
-      layout={{ padding: space("sm") }}
-      style={(state) => ({
+      layout={{
+        width: TAP_TARGET,
+        height: TAP_TARGET,
+        alignItems: "center",
+        justifyContent: "center",
+      }}
+      style={(state: PressState) => ({
         backgroundColor: state.hovered ? theme.color.overlayHover : "transparent",
-        borderRadius: theme.radius.sm,
+        borderRadius: theme.radius.md,
+        ...focusRing(state.focused),
       })}
     >
-      <Icon src={props.icon} size={18} color={theme.color.textMuted} />
+      <Icon src={props.icon} size={22} />
     </Pressable>
   )
 }
@@ -108,11 +146,60 @@ function clientCount(server: Server): number | null {
   return server.clients ? server.clients.length : null
 }
 
-function ClientCard(props: { client: Client }) {
+// One server as a row: what it serves and where, with its client count. A port
+// that never answered shows a danger mark instead of a count, so a wedged
+// server reads from the list rather than only after opening it.
+function ServerCard(props: { server: Server; active: boolean; onPress: () => void }) {
   return (
-    <View layout={{ flexDirection: "column", gap: space("sm") }}>
-      <Text>{clientLabel(props.client)}</Text>
-      <For each={clientFacts(props.client)}>{(line) => <Text muted>{line}</Text>}</For>
+    <Pressable
+      focusable
+      onPress={props.onPress}
+      style={(state: PressState) => focusRing(state.focused, theme.radius.lg)}
+    >
+      {(state: PressState) => (
+        <Card
+          layout={{ flexDirection: "row", alignItems: "center", gap: space("lg") }}
+          style={{
+            backgroundColor:
+              props.active || state.hovered ? theme.color.surfaceAlt : theme.color.surface,
+          }}
+        >
+          <Icon src={SERVER_ICON} size={24} color={theme.color.textMuted} />
+          <View layout={{ flexDirection: "column", flexGrow: 1, gap: 2 }}>
+            <Text variant="title">{serverLabel(props.server)}</Text>
+            <Text variant="body" muted>
+              {entryLabel(props.server)}
+            </Text>
+          </View>
+          <Show
+            when={clientCount(props.server)}
+            fallback={
+              <Show when={props.server.clients} fallback={<Text color="danger">?</Text>}>
+                <Text muted>0</Text>
+              </Show>
+            }
+          >
+            {(count) => <Badge>{count()}</Badge>}
+          </Show>
+        </Card>
+      )}
+    </Pressable>
+  )
+}
+
+function NoServers() {
+  return (
+    <View
+      layout={{
+        flexGrow: 1,
+        flexDirection: "column",
+        justifyContent: "center",
+        alignItems: "center",
+        gap: space("md"),
+      }}
+    >
+      <Text variant="title">No dev servers</Text>
+      <Text muted>Start one with srt run</Text>
     </View>
   )
 }
@@ -134,64 +221,53 @@ function ServerList(props: {
           flexDirection: "column",
           flexGrow: 1,
           flexBasis: 0,
+          alignItems: "center",
         }}
       >
         <View
           layout={{
-            flexDirection: "row",
-            alignItems: "center",
-            gap: space("md"),
-            padding: space("lg"),
+            flexDirection: "column",
+            flexGrow: 1,
+            width: "100%",
+            maxWidth: policy.layout === "twoPane" ? undefined : COLUMN_MAX_WIDTH,
+            padding: space("xl"),
+            gap: space("xl"),
           }}
         >
-          <Logo size={22} />
-          <Text variant="heading">Console</Text>
-          <View layout={{ flexGrow: 1 }} />
-          <Show when={policy.layout === "twoPane"}>
-            <IconButton icon={COLLAPSE_ICON} onPress={props.onCollapse} />
+          <View
+            layout={{
+              flexDirection: "row",
+              justifyContent: "space-between",
+              alignItems: "center",
+            }}
+          >
+            <View layout={{ flexDirection: "row", alignItems: "center", gap: space("md") }}>
+              <Logo size={40} />
+              <Text variant="heading">Console</Text>
+            </View>
+            <Show when={policy.layout === "twoPane"}>
+              <IconButton icon={COLLAPSE_ICON} onPress={props.onCollapse} />
+            </Show>
+          </View>
+          <Show when={props.failure}>{(message) => <Text color="danger">{message()}</Text>}</Show>
+          <Show when={props.servers.length > 0} fallback={<NoServers />}>
+            <ScrollView layout={{ flexGrow: 1 }}>
+              <View
+                layout={{ flexDirection: "column", gap: space("md"), padding: LIST_GUTTER }}
+              >
+                <For each={props.servers} keyed={(server: Server) => server.port}>
+                  {(server) => (
+                    <ServerCard
+                      server={server()}
+                      active={server().port === props.selected}
+                      onPress={() => props.onOpen(server().port)}
+                    />
+                  )}
+                </For>
+              </View>
+            </ScrollView>
           </Show>
         </View>
-        <Show when={props.failure}>
-          {(message) => (
-            <View layout={{ paddingLeft: space("lg"), paddingRight: space("lg") }}>
-              <Text color="danger">{message()}</Text>
-            </View>
-          )}
-        </Show>
-        <ScrollView layout={{ flexGrow: 1, flexBasis: 0 }}>
-          <View layout={{ flexDirection: "column", padding: space("sm") }}>
-            <For
-              each={props.servers}
-              keyed={(server: Server) => server.port}
-              fallback={
-                <View layout={{ padding: space("lg") }}>
-                  <Text muted>No dev servers running.</Text>
-                </View>
-              }
-            >
-              {(server) => (
-                <Item
-                  label={serverLabel(server())}
-                  description={entryLabel(server())}
-                  selected={server().port === props.selected}
-                  onPress={() => props.onOpen(server().port)}
-                  endContent={
-                    <Show
-                      when={clientCount(server())}
-                      fallback={
-                        <Show when={server().clients} fallback={<Text color="danger">?</Text>}>
-                          <Text muted>0</Text>
-                        </Show>
-                      }
-                    >
-                      {(count) => <Badge>{count()}</Badge>}
-                    </Show>
-                  }
-                />
-              )}
-            </For>
-          </View>
-        </ScrollView>
       </View>
       <Show when={props.collapsed}>
         <View
@@ -205,6 +281,15 @@ function ServerList(props: {
           <IconButton icon={EXPAND_ICON} onPress={props.onExpand} />
         </View>
       </Show>
+    </View>
+  )
+}
+
+function ClientCard(props: { client: Client }) {
+  return (
+    <View layout={{ flexDirection: "column", gap: space("sm") }}>
+      <Text>{clientLabel(props.client)}</Text>
+      <For each={clientFacts(props.client)}>{(line) => <Text muted>{line}</Text>}</For>
     </View>
   )
 }
@@ -242,9 +327,7 @@ function ServerDetail(props: { server: Server | undefined; onBack: () => void })
             }}
           >
             <Show when={policy.layout === "singlePane"}>
-              <Button variant="ghost" size="sm" onPress={props.onBack}>
-                Back
-              </Button>
+              <IconButton icon={BACK_ICON} onPress={props.onBack} />
             </Show>
             <Text variant="heading">{serverLabel(server())}</Text>
           </View>
@@ -382,7 +465,7 @@ function App() {
           <Show when={page() === "servers"} fallback={<AllClients servers={servers()} />}>
             <SplitView
               layout={{ flex: 1 }}
-              listWidth={listCollapsed() ? STRIP_WIDTH : undefined}
+              listWidth={listCollapsed() ? STRIP_WIDTH : LIST_WIDTH}
               list={
                 <ServerList
                   servers={servers()}

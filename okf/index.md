@@ -333,6 +333,10 @@ Shaped, not started.
   @solidrt/core subpath modules but has no geolocation API, so apps fall back
   to a coarse IP lookup over fetch; add flux:location and
   @solidrt/core/location in the established device-module shape.
+- **[Make the build goals mean what they say](backlog/make-goals-and-dist-profile.md)** [2026-08-26]
+  The root make all builds only lattice, dist has three OS-suffixed names for
+  one host goal, and the publish path ships half its binaries unstripped; fix
+  the goal names and split the dev profile from the publish profile.
 - **[MCP bridge - match dev servers in subdirectories of the bridge's project](backlog/mcp-bridge-workspace-project-match.md)** [2026-08-24]
   The bridge resolves a dev server by exact projectDir equality, so a
   workspace-root bridge reports "No dev server" for an entry served from
