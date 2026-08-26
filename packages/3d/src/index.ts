@@ -19,6 +19,11 @@ export { lit, shaderMaterial, shaderMaterialClass, sprite, unlit } from "./mater
 export type { LitOptions, Material, ShaderMaterialClass, ShaderMaterialClassOptions, ShaderMaterialInstanceOptions, ShaderMaterialOptions, SpriteOptions, UnlitOptions } from "./material.ts"
 export { DirectionalLight, Group, HemisphereLight, InstancedMesh, Mesh, PerspectiveCamera, Scene, Sprite, useScene } from "./components.tsx"
 export type { DirectionalLightProps, HemisphereLightProps, InstancedMeshProps, MeshProps, PerspectiveCameraProps, PointerEventProps, SceneProps, SpriteProps, TransformProps } from "./components.tsx"
+export { gltfExternalUris, isGlb, parseGltf } from "./gltf.ts"
+export type { ModelData, ModelMaterial, ModelPart, UriResolver } from "./gltf.ts"
+export { decodeModel, encodeModel } from "./model-file.ts"
+export { createModel, loadGltf, loadModel } from "./model.ts"
+export type { Model, ModelOptions } from "./model.ts"
 export { createOrbitCamera } from "./orbit.ts"
 export type { OrbitCamera, OrbitCameraOptions, OrbitPose } from "./orbit.ts"
 // math's lookAt (the camera view matrix) stays on the /math subpath: the

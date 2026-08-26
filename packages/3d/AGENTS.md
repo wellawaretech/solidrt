@@ -80,9 +80,12 @@ blendMode and pointer events like any element.
   `cull: "back"`; an instance is
   just per-entry uniforms (`uColor`) and bindings (`uMap`).
 - The pure pieces (`math.ts`, `order.ts`, `geometry.ts`,
-  `profile.ts`, `sweep.ts`) are Solid-free and GPU-free BY DESIGN so they
-  can be checked headless; keep them that way. The rigs under `checks/`
-  (`geometry-check`, `sweep-check`, `pick-check`, `order-check`) run on
+  `profile.ts`, `sweep.ts`, `gltf.ts`, `model-file.ts`) are Solid-free and
+  GPU-free BY DESIGN so they can be checked headless (and, for the two
+  model modules, run under bun in `tools/model.ts`); keep them that way.
+  The rigs under `checks/`
+  (`geometry-check`, `sweep-check`, `pick-check`, `order-check`,
+  `gltf-check`) run on
   flux from the repo root: `bunx srt bundle -f --stdout
   packages/3d/checks/<name>.ts | target/release/flux -`. Run the ones
   touching what you changed.
@@ -408,8 +411,62 @@ meshes share one program. The view vector comes from the shared uCamPos;
 `uTriplanar` is declared only by the triplanar classes so the other
 classes do not warn about an inactive uniform.
 
+## Models
+
+Authored models come in as glTF 2.0 (.gltf with its .bin and image files
+next to it, or single-file .glb) and become a Group of meshes, Three's
+`gltf.scene`. Three layers, use the lowest that fits:
+
+- `parseGltf(bytes, resolve?)` - the pure parser (no engine, runs under
+  bun and on flux): `ModelData` = `parts` (one per mesh node, its NAME
+  kept, vertices in the standard layout with the node's WORLD transform
+  baked in), `materials` (base color factor, `map` = index into `images`,
+  `doubleSided`, `transparent` = alphaMode BLEND), `images` (the encoded
+  PNG/JPEG bytes, undecoded) and `bounds`. A .gltf's external files come
+  through `resolve(uri)` (uri as written, still percent-encoded;
+  `gltfExternalUris(bytes)` lists them so an async caller can read them
+  first); .glb and data: uris need none. Missing normals produce FLAT
+  shading (the spec's rule): the primitive is un-indexed, one vertex per
+  corner. A mirroring node flips the winding so `cull: "back"` still
+  keeps the outside. Non-triangle primitives are skipped; a required
+  extension the parser does not implement throws naming it, and Draco or
+  meshopt compression throws "re-export without mesh compression" -
+  Blender exports Draco by DEFAULT, so that is the first error a real
+  file hits.
+- `createModel(data, { material?, label? })` - uploads the images (repeat
+  wrap, mipmapped), makes one material per glTF material (default `lit({
+  color, map, transparent })`; pass `material(m, map)` for anything else,
+  it is called once per material and shared), one mesh per part, all
+  children of the returned `Model` (a Group): `add(scene.root, model)`,
+  place it with `setTransform`, find parts by name in `model.parts`
+  (`{ name, mesh }`), `model.bounds` for framing a camera. `dispose()`
+  detaches it and frees the geometry buffers and textures - the model owns
+  them, nothing else frees them.
+- `loadGltf(path)` / `loadModel(path)` - read from `assets/` with flux:fs
+  and build. `loadModel` reads the baked `.srtm` written by `srt tool
+  3d/model <in.gltf|glb> -o assets/<name>.srtm`: the same parse run once
+  under bun, stored in the GPU layout, so loading is views onto the file's
+  bytes plus the image decodes. Numbers from a 32k-vertex, 6-texture model
+  on a release client: `parseGltf` 124 ms on flux (22 ms under bun) against
+  40 ms for the whole baked load - the runtime parse is fine for small
+  models and a binary import (`import bytes from "./x.glb" with { type:
+  "binary" }` then `createModel(parseGltf(bytes))`, see
+  `examples/model.tsx`); bake anything big.
+
+Not in the subset, reported or dropped: `doubleSided` is reported and NOT
+applied (the standard materials cull back faces); vertex colors, tangents
+and further UV sets are dropped; samplers are ignored (every texture
+repeats); alphaMode MASK draws opaque; emissive/additive parts of a model
+draw as their base color (a model's "glow" cards come out as dark wedges).
+The follow-ups are filed in okf/backlog/3d-model-loader.md.
+
 ## Traps
 
+- A model's vertices are in WORLD space at parse time (node transforms
+  baked), so `model.bounds` and each part's geometry already include the
+  file's placement; the Model group starts at identity and `setTransform`
+  on it moves the whole thing. Parts cannot be moved relative to their
+  glTF parent - that is the retained-hierarchy follow-up, not a bug.
 - The y-down clip flip is baked into `perspective()`; scene code and
   geometry are plain y-up right-handed, and CCW-outward winding culls
   correctly with `cull: "back"`. Do NOT negate y anywhere else, and do not

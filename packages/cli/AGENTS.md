@@ -37,6 +37,13 @@ the work before starting it:
   window). Not usable headless. Reloads on save (the bundle's inputs and
   `assets/`); an agent pauses that with `pause_watch` and pushes its edits
   with the MCP `reload` tool.
+- `bunx srt tool` - list the build-time tools the installed `@solidrt/*`
+  packages ship (`<package>/tools/<name>.ts`, named `<package>/<name>`);
+  `bunx srt tool <package>/<name> [arguments]` runs one under bun in the
+  project, everything after the name passed through as the tool's own
+  arguments (each tool prints its own usage on `--help`). What a tool does
+  is the package's business (e.g. `3d/model` bakes a glTF into a model
+  file); srt only finds and runs them.
 - `bunx srt check [file|dir]` - build in memory and typecheck, no output
   and no reload. With a folder it covers every entry under it (src/index.tsx
   and examples/*), so `bunx srt check .` answers "did I break any example"

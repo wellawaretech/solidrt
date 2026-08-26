@@ -20,5 +20,9 @@
     "noImplicitOverride": true,
     "types": ["@solidrt/flux-types"]
   },
-  "include": ["."]
+  // tools/ runs under bun (srt tool), not flux: it is not part of this
+  // program, the way the cli keeps its flux-targeted subtrees out of its
+  // bun-typed one.
+  "include": ["."],
+  "exclude": ["tools"]
 }

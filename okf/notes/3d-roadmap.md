@@ -73,12 +73,16 @@ what it delivered is documented in `packages/3d/AGENTS.md`, not here.
    library `transparent: true` materials + scene-owned back-to-front sort +
    `renderOrder` ([gpu-alpha-translucency](../done/gpu-alpha-translucency.md)).
    Premultiplied settled by the pixel contract.
-7. [ ] **Real models: a glTF subset loader.** Library + CLI; the engine entry
-   ticket (index buffers) is paid. Direction per the differentiators note:
-   run the mature loaders under Bun in the CLI at build/pack time and ship
-   pre-interleaved buffers in the exact addDraw layout, so runtime loading is
-   a buffer upload. Runtime-fetched user models stay a separate, later
-   problem.
+7. [x] **Real models: a glTF subset loader.** Shipped 2026-08-26 as two
+   layers, both in the package (the CLI gained only the generic `srt tool`
+   runner): the runtime primitive `parseGltf` + `createModel`, and the bake
+   `srt tool 3d/model` writing the same parse as a `.srtm` for `loadModel`.
+   The bake exists because of a measurement, not a principle: 124 ms of
+   interpreter time per 32k vertices against 40 ms for the whole baked load.
+   Left, demand-gated, in [3d-model-loader](../backlog/3d-model-loader.md):
+   Draco/meshopt and KTX2 decoding in the bake, a retained node hierarchy
+   (item 16's prerequisite), merge-by-material, a cull option for
+   double-sided materials, vertex colors.
 8. [x] **Mipmaps.** Engine: [gpu-mipmaps](../done/gpu-mipmaps.md) (landed 2026-08-23: `mipmap: true` on texture creation).
    Textured models alias immediately at minification; the one engine item
    staging step 3 (real models) still needs.

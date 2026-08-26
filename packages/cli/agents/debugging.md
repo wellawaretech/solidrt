@@ -134,11 +134,12 @@ every endpoint answers JSON and an error is `{ "error": "..." }` with a
 - `/clients` - `{ generation, key, mode, entry, projectDir, clients: [{ id,
   ... }] }`. Check `key` (the project root or single file served) is the app
   you mean.
-- `/logs?since=<seq>&level=<lvl>&contains=<text>&wait=<ms>` - `{ entries:
-  [{ seq, at, client, level, text, repeats? }], latest, generation }`. Pass
-  the previous `latest` as `since` to read only new output; a changed
-  `generation` means the server restarted and cursors and client ids are
-  stale.
+- `/logs?since=<seq>&level=<lvl>&contains=<text>&wait=<ms>&client=<id>` -
+  `{ entries: [{ seq, at, client, level, text, repeats? }], latest,
+  generation }`. Pass the previous `latest` as `since` to read only new
+  output; `client` keeps one client's entries (all clients without); a
+  changed `generation` means the server restarted and cursors and client
+  ids are stale.
 - `/tree?query=<text>&root=<id>&depth=<n>&props=true` - `{ limit, matches:
   [{ id, kind, path, x, y, width, height }] }` for a query, the nested tree
   otherwise. Node ids are per client and change on reload; re-query after

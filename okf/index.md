@@ -77,6 +77,13 @@ Shaped, not started.
   sprite or depth-sorting a population by y - the ordinary case for a dense 2D
   scene - costs a record shift and an index fixup per element instead of a
   sort of an index array.
+- **[Model loader follow-ups](backlog/3d-model-loader.md)** [2026-08-26]
+  The glTF subset loader (roadmap item 7, shipped 2026-08-26 as
+  parseGltf/createModel at runtime plus the srt tool 3d/model bake) covers
+  uncompressed triangles with base color; still open are the compressed
+  real-world files (Draco/meshopt, KTX2), a retained node hierarchy,
+  merge-by-material, a cull option for double-sided materials and vertex
+  colors, each demand-gated.
 - **[Adaptive present-fence depth](backlog/adaptive-present-fence-depth.md)** [2026-07-27]
   Fallback design if unconditional two-deep present fencing ever shows up as
   desktop drag latency - allow the second in-flight frame only when observed

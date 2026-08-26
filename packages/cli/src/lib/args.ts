@@ -12,12 +12,18 @@ let rawArgs = process.argv.slice(2)
 let appArgsSep = rawArgs.indexOf("--")
 export let appArgs = appArgsSep === -1 ? [] : rawArgs.slice(appArgsSep + 1)
 
+// `srt tool <package>/<name> ...`: everything after the tool name belongs to
+// the tool (its own flags, its own usage), so only the command and the tool
+// name go through parseArgs and the rest is forwarded verbatim (tool/main.ts).
+let isTool = rawArgs[0] === "tool"
+export let toolArgs = isTool ? rawArgs.slice(2) : []
+
 // A parse failure (unknown flag, missing value) is a usage error, not a
 // crash: the parser's first sentence names it, the hint says where to look.
 function parse() {
   try {
     return parseArgs({
-      args: appArgsSep === -1 ? rawArgs : rawArgs.slice(0, appArgsSep),
+      args: isTool ? rawArgs.slice(0, 2) : appArgsSep === -1 ? rawArgs : rawArgs.slice(0, appArgsSep),
       options: OPTIONS,
       allowPositionals: true,
     })

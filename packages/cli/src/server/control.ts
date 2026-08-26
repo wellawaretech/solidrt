@@ -190,9 +190,10 @@ function collapseRepeats(entries: LogEntry[]): (LogEntry & { repeats?: number })
   return out
 }
 
-// GET /__control__/logs?since=N&wait=MS&level=L1,L2&contains=TEXT: entries with
-// seq > since, plus the latest seq as the next cursor and the server
-// generation. `level` keeps only the listed levels; `contains` keeps entries
+// GET /__control__/logs?since=N&wait=MS&level=L1,L2&contains=TEXT&client=ID:
+// entries with seq > since, plus the latest seq as the next cursor and the
+// server generation. `client` keeps one client's entries (every client's
+// without); `level` keeps only the listed levels; `contains` keeps entries
 // whose text has the substring (case-insensitive). Consecutive identical
 // entries come back collapsed with a `repeats` count. With `wait`, holds the
 // response until an entry passes the filters or the timeout expires
@@ -206,10 +207,12 @@ async function handleLogs(query: Map<string, string>): Promise<Response> {
     .map((l) => l.trim())
     .filter(Boolean)
   let contains = query.get("contains")?.toLowerCase()
+  let client = parseInt(query.get("client") ?? "", 10)
   let select = () =>
     logs.filter(
       (e) =>
         e.seq > since &&
+        (!Number.isFinite(client) || e.client === client) &&
         (!levels || levels.length === 0 || levels.includes(e.level)) &&
         (!contains || e.text.toLowerCase().includes(contains)),
     )

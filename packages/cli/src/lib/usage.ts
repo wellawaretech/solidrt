@@ -28,6 +28,8 @@ Commands:
   server [file]          Start dev server only
   client                 Start solidrt-go client only
   demo [<number>]        List the demos the installed packages ship, or run one
+  tool [<pkg>/<name>]    List the tools the installed packages ship, or run one
+                         (everything after the tool name is the tool's own arguments)
   console                Start the dev console: the dev servers on this machine and their clients
   android                Install and launch the client on a connected Android device
   bundle [file]          Transpile TS/JS/TSX/JSX to JS or bytecode

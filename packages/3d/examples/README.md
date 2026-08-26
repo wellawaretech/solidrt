@@ -38,3 +38,8 @@ depends on `@solidrt/3d` (or in-repo from the package directory).
   rocks, a ring of pines) each ONE draw entry and ONE uModel, a spinning
   group moving both with two matrix writes, and `setInstanceCount` from
   onFrame breathing the pine population.
+- `model.tsx` - a model from a file: `model.glb` (a small rover with
+  nested node transforms, a mirrored node, a textured material, a
+  transparent dome and a mesh without normals) parsed with `parseGltf`
+  from a binary import and built by `createModel` into a Group of named
+  parts; clicking a part hides it, clicking the body restores all.
