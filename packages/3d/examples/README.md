@@ -38,16 +38,18 @@ depends on `@solidrt/3d` (or in-repo from the package directory).
   rocks, a ring of pines) each ONE draw entry and ONE uModel, a spinning
   group moving both with two matrix writes, and `setInstanceCount` from
   onFrame breathing the pine population.
-- `split-screen.tsx` - scene views: one scene rendered three times, the
+- `scene-views.tsx` - scene views: one scene rendered three times, the
   built-in perspective leaf plus two `scene.createView` targets - a
   top-down ORTHOGRAPHIC map (`ortho` on setCamera) and a side silhouette
   drawn with an `overrideMaterial`; one spinning group, one signal, every
   target fed by the core's one flush.
-- `shadows.tsx` - directional shadow maps: a `castShadow` sun swinging
-  through its arc (one setTransform per frame on the light node),
-  `castShadow` meshes turning in a group, the ground and the casters
-  receiving through plain `lit` (the default); the shadow camera follows
-  the light's world matrix, the map is rendered by an internal view.
+- `shadows.tsx` - directional shadow maps from three casting lights: a
+  `castShadow` sun swinging through its arc (one setTransform per frame
+  on the light node), a fixed cool fill and a low rim light, `castShadow`
+  meshes turning in a group throwing three crossing shadows each, the
+  ground and the casters receiving through plain `lit` (the default);
+  each shadow camera follows its light's world matrix, each map is
+  rendered by an internal view.
 - `model.tsx` - a model from a file: `model.glb` (a small rover with
   nested node transforms, a mirrored node, a textured material, a
   transparent dome and a mesh without normals) parsed with `parseGltf`

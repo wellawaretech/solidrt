@@ -119,16 +119,36 @@ export const FRESNEL = glsl`
 `
 
 /**
+ * The scene's shadow set as a receiving program declares it, one slot per
+ * directional light index: `uShadowMap0..N-1` (each light's depth map, a
+ * white texel when it does not cast), `uShadowMatrix[N]` (its light-space
+ * viewProj), `uShadowCast[N]` (1 when light i casts), `uShadowBias[N]` and
+ * `uShadowNormalBias[N]`. The scene binds and writes all of it on every
+ * target a receiving material can draw into; a custom material composes
+ * this, then SHADOW, then SHADOW_LOOKUP (in that order) and multiplies
+ * light i's term by `lightShadow(i, worldPos, n)` - `lit` is the shape.
+ * A material that does not receive composes none of it, so it declares
+ * no samplers for nothing.
+ */
+export const SHADOW_SLOTS = glsl`
+  ${Array.from({ length: MAX_LIGHTS }, (_, i) => `uniform sampler2D uShadowMap${i};`).join("\n  ")}
+  uniform mat4 uShadowMatrix[${MAX_LIGHTS}];
+  uniform int uShadowCast[${MAX_LIGHTS}];
+  uniform float uShadowBias[${MAX_LIGHTS}];
+  uniform float uShadowNormalBias[${MAX_LIGHTS}];
+`
+
+/**
  * `float shadow(sampler2D map, vec4 coord, float bias)` - the directional
- * shadow factor (1 lit, 0 shadowed) for a world point carried into the
- * light's clip space by the scene's `uShadowMatrix`:
- * `shadow(uShadowMap, uShadowMatrix * vec4(vWorldPos, 1.0), uShadowBias)`.
+ * shadow factor (1 lit, 0 shadowed) for a world point carried into a
+ * casting light's clip space by its `uShadowMatrix[i]`:
+ * `shadow(uShadowMap0, uShadowMatrix[0] * vec4(vWorldPos, 1.0), uShadowBias[0])`.
  * Perspective divide, 0..1 remap, out-of-frustum returns 1 (lit), then a
  * 3x3 PCF over texel neighbours comparing the map's `.r` (a stage-1 depth
  * texture samples nearest, so the softness is this loop, not the sampler).
- * `bias` is subtracted from the point's depth against acne; the receiving
- * `lit` variant also offsets the point along its normal by
- * `uShadowNormalBias` before the transform.
+ * `bias` is subtracted from the point's depth against acne; SHADOW_LOOKUP
+ * also offsets the point along its normal by `uShadowNormalBias[i]`
+ * before the transform.
  */
 export const SHADOW = glsl`
   float shadow(sampler2D map, vec4 coord, float bias) {
@@ -143,5 +163,30 @@ export const SHADOW = glsl`
       }
     }
     return lit / 9.0;
+  }
+`
+
+/**
+ * The step from a light index to its shadow factor, over SHADOW_SLOTS and
+ * SHADOW (compose both first). `float shadowAt(int i, vec4 coord, float
+ * bias)` picks light i's map - an if-chain over the slots, because GLSL
+ * ES 3.00 only indexes a sampler array by a constant - and samples it
+ * with `shadow`. `float lightShadow(int i, vec3 worldPos, vec3 n)` is
+ * the one to call per light: 1 for a light that does not cast, else the
+ * factor for `worldPos` pushed along its normal `n` by
+ * `uShadowNormalBias[i]` (the acne knob to reach for first) and carried
+ * through `uShadowMatrix[i]` with `uShadowBias[i]`. Position and normal
+ * are arguments, so no varying name is pinned and a custom vertex stage
+ * composes freely.
+ */
+export const SHADOW_LOOKUP = glsl`
+  float shadowAt(int i, vec4 coord, float bias) {
+    ${Array.from({ length: MAX_LIGHTS }, (_, i) => `if (i == ${i}) return shadow(uShadowMap${i}, coord, bias);`).join("\n    ")}
+    return 1.0;
+  }
+
+  float lightShadow(int i, vec3 worldPos, vec3 n) {
+    if (uShadowCast[i] != 1) return 1.0;
+    return shadowAt(i, uShadowMatrix[i] * vec4(worldPos + n * uShadowNormalBias[i], 1.0), uShadowBias[i]);
   }
 `

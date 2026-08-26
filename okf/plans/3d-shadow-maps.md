@@ -131,7 +131,7 @@ spatial core (`bind_sink`/`unbind_sink`, `bind_shared_slot`/
 `unbind_shared_slot`; `unbindDraw(node, target?)` / `unbindSlot(node,
 target?)` in `flux:spatial`), `scene.createView(opts)` with
 `overrideMaterial` and `depth: "texture"`, `ortho` on `CameraUpdate`
-(`orthographic()` in math.ts), `packages/3d/examples/split-screen.tsx`
+(`orthographic()` in math.ts), `packages/3d/examples/scene-views.tsx`
 as the demonstration. Deviations from the shape below, all in Findings:
 the per-entry flush state is a private `BoundSink` wrapper rather than
 fields on `DrawSink`; an overridden view is not sorted; `ortho: null`
@@ -212,7 +212,7 @@ scene.createView(opts): View
   `view.handlers` (a picking view needs its camera in the ray; the code
   is a parameterization of the scene's), a `<View>` component.
 
-Verification: `examples/split-screen.tsx` - one scene, the built-in leaf
+Verification: `examples/scene-views.tsx` - one scene, the built-in leaf
 plus a `createView` leaf with a second camera (one orthographic top-down),
 a moving group visible in both from ONE `setTransform` per frame, checked
 through snapshots of the two leaves. This also proves the view shape on a
@@ -304,9 +304,10 @@ instanced-caster gap.
   id -> `sampler2DShadow`, which unlocks LINEAR filtering (hardware 2x2
   PCF) at one tap instead of nine. Pure quality, no API change for apps
   using `lit`.
-- Several casting lights (the array form above); spot lights (a
-  perspective shadow camera, otherwise identical); point lights (cube
-  maps, [gpu-cube-maps](gpu-cube-maps.md)).
+- Several casting lights: LANDED 2026-08-27 (stage 4a, demand: a demo
+  with three lights); see Findings. Spot lights (a perspective shadow
+  camera, otherwise identical) and point lights (cube maps,
+  [gpu-cube-maps](gpu-cube-maps.md)) stay deferred.
 - Cascaded shadow maps for large outdoor scenes; a `shadow.camera` box
   is the honest tier until a scene outgrows it.
 - Instanced casters via a per-class `shadowVertex`.
@@ -427,3 +428,27 @@ same view primitive. The roadmap checks item 15 and its item 13 half
 - Stage 3: `_shadowChanged` on a size change resizes the shadow view in
   place (`setTargetSize`; the depth id survives, stage 1's rule), so
   `setLight(light, { shadow: { mapSize } })` never rebinds the map.
+- Stage 4a (several casters): the shadow slot IS the directional light
+  index - `uShadowMap0..3`, `uShadowMatrix[4]`, `uShadowCast[4]`,
+  `uShadowBias[4]`, `uShadowNormalBias[4]` (`SHADOW_SLOTS` in glsl),
+  `MAX_SHADOWS = MAX_LIGHTS`, no light-to-shadow mapping array and no
+  attach-time cap beyond the light cap. The maps are separate sampler
+  uniforms picked by an if-chain (`shadowAt(i, ...)`) because GLSL ES
+  3.00 only indexes sampler arrays by constant expressions; the chain
+  and the per-light step (`lightShadow(i, worldPos, n)`) are exported
+  as `SHADOW_LOOKUP`, composed by `lit` and by the one custom receiver
+  (the-third-dimension demo) alike, so there is one generator to touch
+  when MAX_LIGHTS moves (was a backlog item for a few hours). The light
+  rewrite (`writeLights`) owns the whole slot set - casts, biases, the
+  four sampler binds on every receiving target - so a reorder or a
+  detach re-slots everything in one rewrite, and a new view is seeded
+  by the same `lightsDirty`. The matrices are ONE 64-float
+  `uShadowMatrix` param (the engine writes whole arrays), identity in
+  non-casting slots, rewritten when any shadow camera is pending or the
+  slots changed: one moving sun costs one 64-float write per frame
+  instead of one mat4, cheap next to the pass it drives. Every receiving
+  program now binds four sampler units (placeholders included), `uMap`
+  making five, against a minimum of sixteen. Verified on the Linux GL
+  path with `examples/shadows.tsx` (sun + fill + rim): three crossing
+  shadows per caster, the sun's pair moving between snapshots while the
+  fixed two hold, no shader or binding warnings.

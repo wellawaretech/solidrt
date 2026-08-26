@@ -43,7 +43,7 @@ import type {
 } from "@solidrt/core/gpu"
 import { layoutAttributes, layoutKey, layoutSlot } from "./geometry.ts"
 import type { VertexLayout } from "./geometry.ts"
-import { BLINN_SPECULAR, HEMISPHERE, LAMBERT, LIT_VERTEX, LIT_VERTEX_COLORED, MAX_LIGHTS, SHADOW } from "./glsl.ts"
+import { BLINN_SPECULAR, HEMISPHERE, LAMBERT, LIT_VERTEX, LIT_VERTEX_COLORED, MAX_LIGHTS, SHADOW, SHADOW_LOOKUP, SHADOW_SLOTS } from "./glsl.ts"
 
 export type Material = {
   /** The pipeline this material draws with for geometry of `layout`
@@ -198,15 +198,16 @@ export type LitOptions = UnlitOptions & {
    * `wrap: "repeat"`. */
   triplanar?: number
   /**
-   * Receive the scene's directional shadow (default true, like Godot and
-   * Three): the casting light's term is multiplied by the shadow-map
+   * Receive the scene's directional shadows (default true, like Godot and
+   * Three): each casting light's term is multiplied by its shadow-map
    * factor (SHADOW in `@solidrt/3d/glsl`). `false` opts out - a material
    * that must never darken (an emissive surface, a far skybox) - and
    * drops the map sample from its program. A material option, not a
    * node flag as in Three, because the material picks the program (like
    * vertexColors and triplanar; Godot's `disable_receive_shadows`); in a
    * scene with no `castShadow` light the receiving variant draws exactly
-   * like the opted-out one.
+   * like the opted-out one. Custom materials receive by declaring the
+   * scene's shadow set (see SHADOW's doc) and composing `shadow` per light.
    */
   receiveShadow?: boolean
 }
@@ -215,8 +216,10 @@ export type LitOptions = UnlitOptions & {
 // composes by hand, per flag: map x vertexColors x triplanar x shadow x
 // transparent. Lights arrive through the scene's shared params
 // (light nodes); the base color, map and highlight are per entry. The
-// shadow set is shared too: the map and matrix are target-level (bound by
-// the scene), uShadowLight is the casting light's index or -1.
+// shadow set is shared too and indexed like the lights: slot i is
+// directional light i's map, matrix and biases (target-level, bound by
+// the scene), uShadowCast[i] says whether it casts; SHADOW_LOOKUP turns
+// the index into the factor.
 function litFragment(map: boolean, vertexColors: boolean, triplanar: boolean, shadow: boolean): string {
   return glsl`
     in vec3 vWorldPos;
@@ -236,12 +239,9 @@ function litFragment(map: boolean, vertexColors: boolean, triplanar: boolean, sh
     uniform vec3 uLightColor[${MAX_LIGHTS}];
     ${
       shadow
-        ? `uniform sampler2D uShadowMap;
-    uniform mat4 uShadowMatrix;
-    uniform float uShadowBias;
-    uniform float uShadowNormalBias;
-    uniform int uShadowLight;
-    ${SHADOW}`
+        ? `${SHADOW_SLOTS}
+    ${SHADOW}
+    ${SHADOW_LOOKUP}`
         : ""
     }
     ${HEMISPHERE}
@@ -269,11 +269,7 @@ function litFragment(map: boolean, vertexColors: boolean, triplanar: boolean, sh
         if (i >= uLightCount) break;
         vec3 l = uLightDir[i];
         ${
-          shadow
-            ? `float s = i == uShadowLight
-          ? shadow(uShadowMap, uShadowMatrix * vec4(vWorldPos + n * uShadowNormalBias, 1.0), uShadowBias)
-          : 1.0;`
-            : "float s = 1.0;"
+          shadow ? "float s = lightShadow(i, vWorldPos, n);" : "float s = 1.0;"
         }
         light += uLightColor[i] * lambert(n, l) * s;
         spec += uLightColor[i] * blinnSpecular(n, v, l, uShininess) * s;

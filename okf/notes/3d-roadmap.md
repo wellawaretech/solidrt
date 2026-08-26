@@ -150,9 +150,10 @@ what it delivered is documented in `packages/3d/AGENTS.md`, not here.
 15. [x] **Shadow maps.** Landed 2026-08-26 (uncommitted) through stage 3
     of [3d-shadow-maps](../plans/3d-shadow-maps.md): `castShadow` on
     `DirectionalLight` and `Mesh`, `lit` receiving by default, the
-    `SHADOW` GLSL, one casting light per scene; the multi-view shape
-    below became `scene.createView` on the way (split-screen, minimaps,
-    override-material passes). Stage 4 (comparison sampling, several or
+    `SHADOW` GLSL; every directional light may cast since 2026-08-27
+    (stage 4a, slot = light index); the multi-view shape below became
+    `scene.createView` on the way (split-screen, minimaps,
+    override-material passes). The rest of stage 4 (comparison sampling,
     spot/point casters, cascades, instanced casters) stays demand-gated.
     Shaped 2026-08-26 as engine sampleable
     depth ([gpu-sampleable-depth](../backlog/gpu-sampleable-depth.md)),

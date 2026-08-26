@@ -626,6 +626,10 @@ Finished, kept for the reasoning.
   static scene authored as data has to become one Mesh node per part;
   transformGeometry and mergeGeometries are pure array math with no runtime
   dependency, and geometryBounds plus rayBoxDistance already exist unexported.
+- **[Export the shadow lookup from @solidrt/3d/glsl](done/3d-glsl-shadow-lookup.md)** [2026-08-27]
+  SHADOW_LOOKUP (shadowAt + lightShadow) joined SHADOW_SLOTS and SHADOW in
+  @solidrt/3d/glsl on 2026-08-27; lit and the one custom receiver compose it,
+  so the sampler if-chain has one generator.
 - **[Scene uniform channel, camera basis, material class/instance split](done/3d-material-uniform-plumbing.md)** [2026-08-17]
   The three ways an app talks to the shared uniform set and to a pipeline all
   have a gap: a Scene has no app-writable shared params (the workaround goes

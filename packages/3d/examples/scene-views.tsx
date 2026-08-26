@@ -31,7 +31,7 @@ function App() {
           width={MAIN}
           height={MAIN}
           clearColor={[0.07, 0.07, 0.1, 1]}
-          label="split-screen"
+          label="scene-views"
           ref={s => (scene = s)}
           output={tex => {
             // The map: straight down from y = 10, world -z toward the top of

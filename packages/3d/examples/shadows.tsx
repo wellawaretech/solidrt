@@ -1,9 +1,12 @@
-// Directional shadow maps: a `castShadow` sun, `castShadow` meshes and
-// `lit` materials, which receive shadows by default. The sun swings
-// through its arc from onFrame - ONE setTransform on the light node per
-// frame; the scene re-places the shadow camera from the light's world
-// matrix, so the shadows sweep across the ground while the casters turn
-// inside their group. Three's vocabulary throughout: `castShadow` on the
+// Directional shadow maps: three `castShadow` lights, `castShadow` meshes
+// and `lit` materials, which receive shadows by default. The warm sun
+// swings through its arc from onFrame - ONE setTransform on the light
+// node per frame; the scene re-places its shadow camera from the light's
+// world matrix, so its shadows sweep across the ground while the casters
+// turn inside their group. A cool fill from the opposite side and a low
+// rim light stand still, so every caster throws three shadows that cross
+// as the sun moves (each casting light is its own map and pass, capped
+// by MAX_LIGHTS). Three's vocabulary throughout: `castShadow` on the
 // light and on meshes, `shadow.mapSize/bias/normalBias/camera` on the
 // light; the one divergence is that opting OUT of receiving is a material
 // option (`lit({ receiveShadow: false })`, Godot's split), because the
@@ -47,9 +50,25 @@ function App() {
           <DirectionalLight
             ref={l => (sun = l)}
             color={[1, 0.95, 0.85]}
-            intensity={1}
+            intensity={0.8}
             castShadow
             shadow={{ mapSize: 1024, normalBias: 0.02, camera: { near: 1, far: 20 } }}
+          />
+          <DirectionalLight
+            color={[0.45, 0.6, 0.9]}
+            intensity={0.5}
+            position={[-5, 5, -4]}
+            direction={[5, -5, 4]}
+            castShadow
+            shadow={{ normalBias: 0.02, camera: { near: 1, far: 20 } }}
+          />
+          <DirectionalLight
+            color={[0.9, 0.5, 0.35]}
+            intensity={0.45}
+            position={[5, 2, -5]}
+            direction={[-5, -2, 5]}
+            castShadow
+            shadow={{ mapSize: 512, normalBias: 0.03, camera: { near: 1, far: 20 } }}
           />
           <Mesh geometry={plane({ width: 10, height: 10 })} material={ground} rotation={[-Math.PI / 2, 0, 0]} />
           <Group rotation={[0, t() / 3, 0]}>

@@ -375,9 +375,9 @@ export type DirectionalLightProps = TransformProps & {
   direction?: Vec3
   color?: Vec3
   intensity?: number
-  /** Render the scene's shadow map from this light (one per scene). Its
-   * shadow camera sits at the light's WORLD position, so give a casting
-   * light a `position` above the scene. */
+  /** Render a shadow map from this light (any directional light may;
+   * each is a pass). Its shadow camera sits at the light's WORLD
+   * position, so give a casting light a `position` above the scene. */
   castShadow?: boolean
   /** Shadow-map options (mapSize, bias, normalBias, camera frustum),
    * merged key by key. */

@@ -186,9 +186,10 @@ export type DirectionalLight = SceneNode & {
   /** Linear [r, g, b] 0..1. */
   color: Vec3
   intensity: number
-  /** Render a shadow map from this light (one per scene, MAX_SHADOWS);
-   * meshes with `castShadow` draw into it, `lit` materials read it
-   * (unless `receiveShadow: false`). */
+  /** Render a shadow map from this light (any directional light may;
+   * each map is a full extra pass over the casting meshes); meshes with
+   * `castShadow` draw into it, `lit` materials read it (unless
+   * `receiveShadow: false`). */
   castShadow: boolean
   /** The resolved shadow options (read; write through setLight). */
   shadow: { mapSize: number; bias: number; normalBias: number; camera: ShadowCamera }
@@ -602,7 +603,7 @@ function entrySeed(material: Material, params: ShaderParams | null): ShaderParam
     : { uModel: IDENTITY, ...material.params, ...params }
 }
 
-// The uShadowMap binding of a scene with no casting light: one white
+// The uShadowMap<i> binding of a light slot that does not cast: one white
 // texel (depth 1, never shadowed), shared by every scene for the app.
 let placeholder: TextureId | undefined
 
@@ -643,9 +644,9 @@ export type DirectionalLightOptions = {
 }
 export type HemisphereLightOptions = { sky?: Vec3; ground?: Vec3; intensity?: number }
 
-/** One shadow-casting directional light per scene; the array form is the
- * additive follow-up (each map is a sampler unit and a full extra pass). */
-export const MAX_SHADOWS = 1
+/** Every directional light may cast: shadow slot i is light i's, so the
+ * cap is MAX_LIGHTS (each map is a sampler unit and a full extra pass). */
+export const MAX_SHADOWS = MAX_LIGHTS
 
 function mergeShadow(into: DirectionalLight["shadow"], update: ShadowOptions): void {
   if (update.mapSize !== undefined) into.mapSize = update.mapSize
@@ -1260,19 +1261,47 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       count++
     }
     for (let i = count; i < MAX_LIGHTS; i++) colors.push(0, 0, 0)
-    // The shadow set rides with the lights: which directional index casts
-    // (-1 = none, so a receiving material draws plain) and its biases.
+    // The shadow set rides with the lights, slot i = directional light i:
+    // whether it casts (0 = a receiving material draws that light plain),
+    // its biases, and its map bound as uShadowMap<i> - the light's depth
+    // id when it casts, else the white placeholder, so every receiving
+    // target always has all MAX_LIGHTS samplers bound.
+    let cast: number[] = []
+    let bias: number[] = []
+    let normalBias: number[] = []
+    let maps: Record<string, TextureId> = {}
+    let i = 0
+    for (let light of lights) {
+      if (light.type !== "directional") continue
+      let shadow = shadows.get(light)
+      cast.push(shadow !== undefined ? 1 : 0)
+      bias.push(light.shadow.bias)
+      normalBias.push(light.shadow.normalBias)
+      maps["uShadowMap" + i] = shadow !== undefined ? depthTexture(shadow.view.texture) : shadowPlaceholder()
+      i++
+    }
+    for (; i < MAX_LIGHTS; i++) {
+      cast.push(0)
+      bias.push(0)
+      normalBias.push(0)
+      maps["uShadowMap" + i] = shadowPlaceholder()
+    }
     let params: ShaderParams = {
       uHemiSky: sky,
       uHemiGround: ground,
       uLightCount: count,
       uLightColor: colors,
-      uShadowLight: shadow !== null ? lights.filter(l => l.type === "directional").indexOf(shadow.light) : -1,
-      uShadowBias: shadow !== null ? shadow.light.shadow.bias : 0,
-      uShadowNormalBias: shadow !== null ? shadow.light.shadow.normalBias : 0,
+      uShadowCast: cast,
+      uShadowBias: bias,
+      uShadowNormalBias: normalBias,
     }
-    setTargetParams(texture, params)
-    for (let v of views) setTargetParams(v.texture, params)
+    receivingTargets(t => {
+      setTargetParams(t, params)
+      setTargetTextures(t, maps)
+    })
+    // A slot change (a light attached, detached or reordered) moves every
+    // matrix too: rewrite the whole array once.
+    shadowMatricesDirty = true
   }
   let orderDirty = false
   // The order last handed to the engine: a resort that lands on the same
@@ -1334,27 +1363,24 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
   let views: ViewRecord[] = []
   // Every name scene.setParams has merged so far, replayed on a new view.
   let sceneParams: ShaderParams = {}
-  // The shadow: the casting light and the internal view rendering its map
-  // (depth texture, depth override, casting meshes only). `lastWorld` is
-  // the light's world matrix the shadow camera was last placed from.
-  type Shadow = { light: DirectionalLight; view: ViewRecord; lastWorld: Mat4 }
-  let shadow: Shadow | null = null
-  let shadowDirty = false
+  // The shadows, one per casting directional light: the internal view
+  // rendering its map (depth texture, depth override, casting meshes
+  // only). `lastWorld` is the light's world matrix the shadow camera was
+  // last placed from; `dirty` forces a re-place (options changed).
+  type Shadow = { light: DirectionalLight; view: ViewRecord; lastWorld: Mat4; dirty: boolean }
+  let shadows = new Map<DirectionalLight, Shadow>()
   let shadowDir: Vec3 = [0, 0, 0]
-  // The current uShadowMap source for every receiving target: the shadow
-  // view's depth id, or the 1x1 white placeholder (depth 1 = never
-  // shadowed) so the binding is always deterministic.
-  let shadowMap = () => (shadow !== null ? depthTexture(shadow.view.texture) : shadowPlaceholder())
+  // uShadowMatrix is one array param (the engine writes whole arrays), so
+  // any shadow camera move rewrites all MAX_LIGHTS matrices, identity in
+  // the slots that do not cast.
+  let shadowMatrices: number[] = new Array(MAX_LIGHTS * 16).fill(0)
+  let shadowMatricesDirty = false
   // Every target a receiving material can draw into: the scene's and each
-  // view's but the shadow view itself (binding a target's own depth into
-  // it would be same-pass feedback).
+  // view's but the shadow views (binding a target's own depth into it
+  // would be same-pass feedback).
   let receivingTargets = (fn: (target: TextureId) => void) => {
     fn(texture)
-    for (let v of views) if (shadow === null || v !== shadow.view) fn(v.texture)
-  }
-  let bindShadowMap = () => {
-    let map = shadowMap()
-    receivingTargets(t => setTargetTextures(t, { uShadowMap: map }))
+    for (let v of views) if (v.filter === null) fn(v.texture)
   }
   let attachView = (v: ViewRecord, mesh: Mesh) => {
     let inst = mesh._instances
@@ -1432,21 +1458,18 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       disposed: false,
     }
     views.push(v)
+    // The light rewrite seeds the shadow set (maps, casts, biases,
+    // matrices) on the new target too.
     lightsDirty = true
     setTargetParams(v.texture, sceneParams)
-    if (filter === null) setTargetTextures(v.texture, { uShadowMap: shadowMap() })
     for (let mesh of meshes) attachView(v, mesh)
     hooks._schedule()
     return v
   }
-  // The shadow view: a square depth-texture target drawing the casting
-  // meshes with the depth override from the light's frustum. Its map
-  // replaces the placeholder on every receiving target; the light params
-  // rewrite carries uShadowLight.
+  // A shadow view: a square depth-texture target drawing the casting
+  // meshes with the depth override from the light's frustum. The light
+  // rewrite binds its map in the light's slot on every receiving target.
   let createShadow = (light: DirectionalLight) => {
-    if (shadow !== null) {
-      throw new Error("A scene takes at most " + MAX_SHADOWS + " shadow-casting directional light (castShadow)")
-    }
     let size = light.shadow.mapSize
     let view = makeView(
       {
@@ -1459,30 +1482,26 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       },
       m => m.castShadow,
     )
-    shadow = { light, view, lastWorld: mat4() }
-    shadowDirty = true
+    shadows.set(light, { light, view, lastWorld: mat4(), dirty: true })
     lightsDirty = true
-    bindShadowMap()
   }
-  let destroyShadow = () => {
-    if (shadow === null) return
-    let view = shadow.view
-    shadow = null
-    disposeView(view)
+  let destroyShadow = (light: DirectionalLight) => {
+    let shadow = shadows.get(light)
+    if (shadow === undefined) return
+    shadows.delete(light)
+    disposeView(shadow.view)
     lightsDirty = true
-    bindShadowMap()
     hooks._schedule()
   }
-  // Place the shadow camera from the light's world matrix: at its world
+  // Place a shadow camera from its light's world matrix: at its world
   // position, looking along its world direction, the light frustum as the
   // orthographic extents. Compared against the matrix it was last placed
   // from, so a scene animating elsewhere rewrites nothing here.
-  let placeShadowCamera = () => {
-    if (shadow === null) return
+  let placeShadowCamera = (shadow: Shadow) => {
     let light = shadow.light
     let m = worldInto(worldScratch, light)
-    if (!shadowDirty && m.every((x, i) => x === shadow!.lastWorld[i])) return
-    shadowDirty = false
+    if (!shadow.dirty && m.every((x, i) => x === shadow.lastWorld[i])) return
+    shadow.dirty = false
     copy(shadow.lastWorld, m)
     transformVector(shadowDir, m, light.direction)
     let len = Math.hypot(shadowDir[0], shadowDir[1], shadowDir[2]) || 1
@@ -1509,24 +1528,35 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       setTargetParams(texture, cameraParams(camera))
       if (transparentCount > 1) orderDirty = true
     }
-    placeShadowCamera()
+    for (let shadow of shadows.values()) placeShadowCamera(shadow)
     for (let v of views) {
       ensureCamera(v.camera, v.width, v.height)
       if (v.camera.pending) {
         v.camera.pending = false
         setTargetParams(v.texture, cameraParams(v.camera))
         if (transparentCount > 1) v.orderDirty = true
-        // The matrix that renders the map is the one receivers look up
-        // with: one mat4 to every receiving target per shadow-camera move.
-        if (shadow !== null && v === shadow.view) {
-          let params: ShaderParams = { uShadowMatrix: v.camera.viewProj }
-          receivingTargets(t => setTargetParams(t, params))
-        }
+        if (v.filter !== null) shadowMatricesDirty = true
       }
     }
     // Light bookkeeping first, so a fresh direction-slot bind is seeded
     // by the flush below in the same sync.
     if (lightsDirty) writeLights()
+    // The matrices that render the maps are the ones receivers look up
+    // with: one array to every receiving target per shadow-camera move.
+    if (shadowMatricesDirty) {
+      shadowMatricesDirty = false
+      let i = 0
+      for (let light of lights) {
+        if (light.type !== "directional") continue
+        let shadow = shadows.get(light)
+        let m = shadow !== undefined ? shadow.view.camera.viewProj : IDENTITY
+        for (let k = 0; k < 16; k++) shadowMatrices[i * 16 + k] = m[k]!
+        i++
+      }
+      for (; i < MAX_LIGHTS; i++) for (let k = 0; k < 16; k++) shadowMatrices[i * 16 + k] = IDENTITY[k]!
+      let params: ShaderParams = { uShadowMatrix: shadowMatrices }
+      receivingTargets(t => setTargetParams(t, params))
+    }
     // The core recomputes the moved subtrees and writes every entry's
     // uModel/uNormal, visibility switch and direction slots.
     spatial.flush()
@@ -1567,14 +1597,15 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       let i = lights.indexOf(light)
       if (i >= 0) lights.splice(i, 1)
       lightsDirty = true
-      if (shadow !== null && shadow.light === light) destroyShadow()
+      if (light.type === "directional") destroyShadow(light)
       hooks._schedule()
     },
     _shadowChanged(light) {
       if (disposed) return
-      if (shadow !== null && shadow.light === light) {
+      let shadow = shadows.get(light)
+      if (shadow !== undefined) {
         if (!light.castShadow) {
-          destroyShadow()
+          destroyShadow(light)
           return
         }
         let size = light.shadow.mapSize
@@ -1583,7 +1614,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
           shadow.view.height = size
           setTargetSize(shadow.view.texture, size, size)
         }
-        shadowDirty = true
+        shadow.dirty = true
         lightsDirty = true
         hooks._schedule()
       } else if (light.castShadow) {
@@ -1732,8 +1763,11 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
   let root = makeNode("group")
   root._scene = hooks
   root._node = spatial.createNode(fillTransform(root), true)
-  // No casting light yet: receivers read the never-shadowed placeholder.
-  bindShadowMap()
+  // The first light rewrite seeds the (empty) light set and the shadow
+  // slots - placeholders, no casts - so receivers draw plain from the
+  // first frame.
+  lightsDirty = true
+  hooks._schedule()
 
   // --- Pointer event dispatch (behind scene.handlers) ---
 
@@ -2007,7 +2041,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       // targets still exist; afterwards their groups are gone.
       spatial.flush()
       destroyTexture(texture)
-      shadow = null
+      shadows.clear()
       for (let v of views.slice()) disposeView(v)
       if (background !== null) {
         // The entry died with the target; the pipeline and program are the

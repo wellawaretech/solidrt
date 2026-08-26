@@ -5,19 +5,29 @@
 //
 // The scene is two meshes - a stock torusKnot() placed by transform and a
 // stock plane() rotated flat - each drawn by its own shaderMaterial (custom
-// GLSL), depth tested and back-face culled in the scene's single GPU pass,
+// GLSL), depth tested and back-face culled in the scene's own GPU pass,
 // over a backdrop shader drawn as that pass's first entry. Three real
 // directional lights (red, green and blue, evenly spaced in azimuth) plus a
 // hemisphere ambient are scene light NODES: the custom shaders read them
 // through @solidrt/3d's standard light uniforms, so nothing about the
-// shading is a constant baked into the GLSL, and lights cost no extra pass.
-// There are no shadows - the library has no shadow-map support, and this
-// demo does not fake one. An orbit
+// shading is a constant baked into the GLSL, and the lights themselves cost
+// no pass. All three CAST (castShadow), which a scene allows up to
+// MAX_SHADOWS = MAX_LIGHTS: each owns a depth texture drawn from its own
+// orthographic frustum, and both custom fragments read the whole set back
+// with SHADOW_SLOTS, SHADOW and SHADOW_LOOKUP from @solidrt/3d/glsl - the
+// same three constants the lit material composes. A shadow is therefore
+// the COMPLEMENT of the light it blocks - red's is cyan - where two cross
+// only the third light survives and the colour goes pure, and where all
+// three cross the floor falls to the ambient alone. The rig hangs off one
+// Group that turns slowly, so the three shadows sweep and cross from a
+// single setTransform per frame.
+// An orbit
 // camera (createOrbitCamera) owns the pose: drag to rotate, wheel or pinch
 // to zoom, and an auto-orbit that pauses while dragging (a tap, click or
-// space toggles it). Per-frame JS cost is
-// constant no matter how many triangles the pass covers - one update(dt),
-// and the scene's own single shared camera write when the pose changed.
+// space toggles it) and freezes the light rig with it. Per-frame JS cost is
+// constant no matter how many triangles the passes cover - one update(dt),
+// one setTransform on the rig, and the scene's own shared camera writes
+// when a pose changed.
 
 import {
   capabilities,
@@ -36,18 +46,21 @@ import { glsl, limits } from "@solidrt/core/gpu"
 import {
   add,
   createDirectionalLight,
+  createGroup,
   createHemisphereLight,
   createMesh,
   createOrbitCamera,
   createScene,
   plane,
+  setCastShadow,
+  setLight,
   setTransform,
   shaderMaterial,
   torusKnot,
   STANDARD_FLOATS,
 } from "@solidrt/3d"
-import type { OrbitCamera, Vec3 } from "@solidrt/3d"
-import { BLINN_SPECULAR, HEMISPHERE, LAMBERT, LIT_VERTEX, MAX_LIGHTS } from "@solidrt/3d/glsl"
+import type { DirectionalLightNode, OrbitCamera, SceneNode, Vec3 } from "@solidrt/3d"
+import { BLINN_SPECULAR, HEMISPHERE, LAMBERT, LIT_VERTEX, MAX_LIGHTS, SHADOW, SHADOW_LOOKUP, SHADOW_SLOTS } from "@solidrt/3d/glsl"
 import { registerDebug } from "srt:dev"
 
 const KNOT_P = 2
@@ -56,7 +69,7 @@ const KNOT_Q = 3
 const KNOT_CENTER: Vec3 = [0, 1.4, 0]
 const FLOOR_SIZE = 36 // world units across; GROUND_FRAGMENT interpolates it
 const FOV = 0.85 // vertical field of view, radians (the scene camera speaks degrees)
-const ORBIT_PERIOD = 20 // seconds for one full revolution
+const ORBIT_PERIOD = 34 // seconds for one full revolution
 const MIN_DISTANCE = 2.6
 const MAX_DISTANCE = 14
 // Wheel zoom is eased by the app, not taken from orbit.handlers: a notch
@@ -94,6 +107,31 @@ const LIGHT_INTENSITY = 0.72
 // Where the triangle starts, so a light is not aimed straight down the
 // camera's opening azimuth.
 const LIGHT_PHASE = 0.6
+// How far back up its own ray each light NODE sits. A directional light
+// needs no position to shine, but a casting one renders its shadow map from
+// a camera placed at the node's world position, so it has to stand off the
+// scene. They are one rig, so all three get the same placement.
+const LIGHT_DISTANCE = 10
+// Seconds for one full turn of the light rig - slower than the camera
+// orbit, so the two motions stay legible as two.
+const RIG_PERIOD = 60
+// Every light casts. A scene takes MAX_SHADOWS = MAX_LIGHTS casting
+// directional lights, so all three corners of the triangle get a map and a
+// depth pass of their own, and each shadow is the COMPLEMENT of the light
+// it blocks. The `shadow` debug command switches individual casters off to
+// take the effect apart.
+// The light frustum, world units either side of the light ray. The knot's
+// bounding sphere is radius 2.18 (torusKnot's radius * 1.5, plus tube), and
+// the frustum is a prism along the light direction, so a box that holds the
+// caster also holds everywhere its shadow can land. Tight matters: the
+// map's texels spread over this box, and 5.2 world units across 1024 of
+// them is about 0.005 each.
+const SHADOW_EXTENT = 2.6
+const SHADOW_MAP = 1024
+// Depth range along the light ray: the caster sits at LIGHT_DISTANCE and
+// its shadow reaches the floor a few units past it.
+const SHADOW_NEAR = 2
+const SHADOW_FAR = 22
 // Floor under the display's own scale: on a 1x display there is no downscale
 // to soften polygon edges (targets have no MSAA), so render the scene larger
 // than the box it is drawn into and let the texture filter resolve it.
@@ -127,9 +165,20 @@ const LIGHTING = glsl`
   uniform vec3 uLightDir[${MAX_LIGHTS}];
   uniform vec3 uLightColor[${MAX_LIGHTS}];
 
+  // The shadow set: one slot per directional light, all of it written by
+  // the scene at target level. uShadowMap<i> is light i's depth map (a
+  // white texel when it does not cast), uShadowMatrix[i] the light-space
+  // view-projection that rendered it, uShadowCast[i] whether it casts, and
+  // the two bias knobs are per light as well.
+  ${SHADOW_SLOTS}
+
   ${HEMISPHERE}
   ${LAMBERT}
   ${BLINN_SPECULAR}
+  ${SHADOW}
+  // lightShadow(i, worldPos, n): light i's factor, 1 when it does not
+  // cast - the same lookup the lit material composes.
+  ${SHADOW_LOOKUP}
 `
 
 /**
@@ -172,8 +221,12 @@ let KNOT_FRAGMENT = glsl`
     for (int i = 0; i < ${MAX_LIGHTS}; i++) {
       if (i >= uLightCount) break;
       vec3 l = uLightDir[i];
-      light += uLightColor[i] * lambert(n, l);
-      spec += uLightColor[i] * blinnSpecular(n, view, l, 64.0);
+      // The knot draws into every map, so it also self-shadows: a stretch
+      // of tube in the lee of another loses that light and keeps the rest,
+      // which is where the colour separation gets its hardest edge.
+      float s = lightShadow(i, vWorldPos, n);
+      light += uLightColor[i] * lambert(n, l) * s;
+      spec += uLightColor[i] * blinnSpecular(n, view, l, 64.0) * s;
     }
 
     vec3 lit = base * light + spec * 0.45;
@@ -189,8 +242,8 @@ let KNOT_FRAGMENT = glsl`
 `
 
 /**
- * Ground fragment stage: a distance-faded checkerboard plus a soft
- * contact-shadow disc, over the plane's own UVs scaled to its world
+ * Ground fragment stage: a distance-faded checkerboard, lit by the scene's
+ * lights and the shadow map, over the plane's own UVs scaled to its world
  * footprint (FLOOR_SIZE, interpolated), so the mesh can be a stock plane()
  * under any transform. Output is premultiplied
  * alpha - the ground fades to fully transparent so the scene's background
@@ -199,6 +252,7 @@ let KNOT_FRAGMENT = glsl`
 let GROUND_FRAGMENT = glsl`
   in vec2 vUv;
   in vec3 vNormal;
+  in vec3 vWorldPos;
 
   ${LIGHTING}
 
@@ -231,14 +285,17 @@ let GROUND_FRAGMENT = glsl`
     vec3 tile = mix(vec3(0.16, 0.18, 0.22), vec3(0.52, 0.55, 0.60), checker(p / TILE));
 
     // The same real lights the knot uses. The floor's normal is constant, so
-    // this resolves to one flat term across the plane - which is exactly
-    // right for an unshadowed plane under directional lights, and is why the
-    // interest here is the checker and the fade rather than the shading.
+    // every directional term is flat across the whole plane and the three
+    // tints sum back to neutral - until the maps take them away one at a
+    // time. That is the picture here: three shadows, each keeping the two
+    // lights it does not block, crossing into pure primaries where two
+    // overlap and into the ambient alone where all three do. A flat plane
+    // is the only place the rig's tints separate this cleanly.
     vec3 n = normalize(vNormal);
     vec3 light = hemisphere(n, uHemiSky, uHemiGround);
     for (int i = 0; i < ${MAX_LIGHTS}; i++) {
       if (i >= uLightCount) break;
-      light += uLightColor[i] * lambert(n, uLightDir[i]);
+      light += uLightColor[i] * lambert(n, uLightDir[i]) * lightShadow(i, vWorldPos, n);
     }
     tile *= light;
 
@@ -271,8 +328,17 @@ let BACKDROP_FRAGMENT = glsl`
 
 // Pixels per logical unit the scene renders at; 0 means "follow the display".
 let [renderScale, setRenderScale] = createSignal(0)
+// How many lights currently cast: the subtitle reads it, the `shadow`
+// debug command writes it.
+let [casters, setCasters] = createSignal(LIGHT_TINTS.length)
 // Assigned in App; the debug commands below only run once the app is up.
 let orbit!: OrbitCamera
+let lights: DirectionalLightNode[] = []
+// The light rig and where it has turned to. Module scope so the `rig` debug
+// command can park it: the spin pauses with the orbit, so a parked pose and
+// a parked rig together are one repeatable frame.
+let rig!: SceneNode
+let rigAngle = 0
 // Distance the wheel is steering toward, or null when nothing is in flight.
 let zoomTarget: number | null = null
 
@@ -342,27 +408,63 @@ function App() {
     orbitSpeed: (Math.PI * 2) / ORBIT_PERIOD,
   })
   // The rig: direction is the way each light SHINES (down and inward), which
-  // the scene negates into the uLightDir the shaders read. A hemisphere light
-  // supplies the ambient the fragments used to hard-code.
+  // the scene negates into the uLightDir the shaders read. The hemisphere
+  // light is the floor under all of it: with three shadows crossing, the
+  // patch where all three lights are blocked would otherwise be pure black,
+  // and this is what it falls to instead.
   add(
     scene.root,
     createHemisphereLight({ sky: [0.42, 0.48, 0.60], ground: [0.14, 0.15, 0.19], intensity: 1 }),
   )
+  // The three lights hang off ONE Group, so the slow turn in the frame loop
+  // stays a single setTransform however many corners the triangle grows. A
+  // parent rotation carries both halves of a light: the direction it shines
+  // and the position its shadow camera is placed at.
+  rig = createGroup()
+  add(scene.root, rig)
+  lights = []
   for (let i = 0; i < LIGHT_TINTS.length; i++) {
     let azimuth = LIGHT_PHASE + (i / LIGHT_TINTS.length) * Math.PI * 2
     let horizontal = Math.cos(LIGHT_ELEVATION)
-    add(
-      scene.root,
-      createDirectionalLight({
-        direction: [
-          -horizontal * Math.cos(azimuth),
-          -Math.sin(LIGHT_ELEVATION),
-          -horizontal * Math.sin(azimuth),
-        ],
-        color: LIGHT_TINTS[i]!,
-        intensity: LIGHT_INTENSITY,
-      }),
-    )
+    let direction: Vec3 = [
+      -horizontal * Math.cos(azimuth),
+      -Math.sin(LIGHT_ELEVATION),
+      -horizontal * Math.sin(azimuth),
+    ]
+    let light = createDirectionalLight({
+      direction,
+      color: LIGHT_TINTS[i]!,
+      intensity: LIGHT_INTENSITY,
+      castShadow: true,
+      shadow: {
+        mapSize: SHADOW_MAP,
+        // Along the receiving surface's own normal, the knob to reach for
+        // first. The depth pass culls FRONT faces, so a closed caster like
+        // the knot needs no depth bias at all on top of it.
+        normalBias: 0.02,
+        camera: {
+          left: -SHADOW_EXTENT,
+          right: SHADOW_EXTENT,
+          top: SHADOW_EXTENT,
+          bottom: -SHADOW_EXTENT,
+          near: SHADOW_NEAR,
+          far: SHADOW_FAR,
+        },
+      },
+    })
+    // Each casting light's shadow camera sits AT its node's world position
+    // (Three's rule), so back the light up its own ray from the knot: at
+    // the origin it would render its map from inside the caster and shadow
+    // nothing.
+    setTransform(light, {
+      position: [
+        KNOT_CENTER[0] - direction[0] * LIGHT_DISTANCE,
+        KNOT_CENTER[1] - direction[1] * LIGHT_DISTANCE,
+        KNOT_CENTER[2] - direction[2] * LIGHT_DISTANCE,
+      ],
+    })
+    add(rig, light)
+    lights.push(light)
   }
 
   // The ground writes premultiplied alpha and fades to clear, so it is a
@@ -388,6 +490,10 @@ function App() {
   add(scene.root, knot)
   setTransform(ground, { rotation: [-Math.PI / 2, 0, 0] })
   setTransform(knot, { position: KNOT_CENTER })
+  // Only the knot casts. The ground is one single-sided quad and the depth
+  // pass culls front faces, so it would draw nothing into the map anyway -
+  // and its entry in the shadow view would cost a draw for nothing.
+  setCastShadow(knot, true)
 
   // The target follows the window; the id is stable across a resize, so the
   // <d-texture src> binding and the owner-scoped auto-free keep working.
@@ -418,6 +524,15 @@ function App() {
     let pose = orbit.pose()
     let minElevation = Math.asin(clamp((EYE_MIN_Y - KNOT_CENTER[1]) / pose.distance, -1, 1))
     if (pose.elevation < minElevation) orbit.set({ elevation: minElevation })
+    // Turn the light rig, on the same pause as the orbit so a parked scene
+    // is a still frame end to end and snapshots of one pose repeat. This
+    // single write moves three lights, their direction slots and the shadow
+    // camera; the map is then re-rendered for the frame, which is what
+    // pausing buys back.
+    if (orbit.orbiting()) {
+      rigAngle = (rigAngle + (dt * Math.PI * 2) / RIG_PERIOD) % (Math.PI * 2)
+      setTransform(rig, { rotation: [0, rigAngle, 0] })
+    }
     // The scene writes uViewProj/uCamPos itself on a pose change; there is
     // no per-mesh uniform left for the app to keep in step.
     orbit.update(dt)
@@ -465,7 +580,11 @@ function App() {
             The Third Dimension
           </text>
           <text color="#a9bcd6" fontSize={16} fontWeight={600}>
-            {`(${KNOT_P},${KNOT_Q}) torus knot - ${triangles.toLocaleString()} triangles - one GPU pass`}
+            {`(${KNOT_P},${KNOT_Q}) torus knot - ${triangles.toLocaleString()} triangles - ${
+              casters() > 0
+                ? `${casters()} shadow map${casters() === 1 ? "" : "s"} + one pass`
+                : "one GPU pass"
+            }`}
           </text>
         </view>
           <text color="#a9bcd6" fontSize={16} fontWeight={600}>
@@ -501,6 +620,31 @@ registerDebug("camera", (args?: Record<string, unknown>) => {
 })
 
 registerDebug("vertexLayout", () => ({ floatsPerVertex: STANDARD_FLOATS }))
+
+// Where the light rig has turned to, radians. Its spin is paused with the
+// orbit, so parking both is what makes a snapshot repeat.
+registerDebug("rig", (args?: Record<string, unknown>) => {
+  if (typeof args?.angle === "number") {
+    rigAngle = args.angle % (Math.PI * 2)
+    setTransform(rig, { rotation: [0, rigAngle, 0] })
+  }
+  flush()
+  return { angle: rigAngle, period: RIG_PERIOD }
+})
+
+// Switch one light's shadow off or on: `{ light: 1, cast: false }`. Every
+// light casts by default now that a scene takes MAX_SHADOWS = MAX_LIGHTS of
+// them, so this is how the effect comes apart - leave one caster and its
+// shadow is a plain complement, leave none and the floor is flat again.
+registerDebug("shadow", (args?: Record<string, unknown>) => {
+  if (typeof args?.light === "number" && typeof args?.cast === "boolean") {
+    let i = clamp(Math.round(args.light), 0, lights.length - 1)
+    setLight(lights[i]!, { castShadow: args.cast })
+    setCasters(lights.filter(l => l.castShadow).length)
+  }
+  flush()
+  return { casting: lights.map(l => l.castShadow), tints: LIGHT_TINTS }
+})
 
 // Pixels per logical unit the scene renders at (0 follows the display): the
 // quality/throughput knob, and the A/B for "is this pass fill-bound?".
