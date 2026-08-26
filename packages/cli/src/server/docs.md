@@ -40,3 +40,11 @@ Dev state lives in `~/.solidrt/`: `servers/<key hash>/` holds each server's
 registry record, remembered port and tunnel key; `clients/client<N>/` the
 data tree of a locally spawned client (`-c <N>` picks it, default 0;
 storage is per app inside a tree, so two projects share client 0).
+
+With a terminal on stdin, `run` and `server` take commands at the `srt>`
+prompt: `reload` and `stop` (every client, or the ids `list` prints),
+`load <file>` (switch the entry, same rules as the MCP `load` tool),
+`stats`, `watch on|off` (reload on save), `mute on|off` (the user's own
+input on the clients), `quit`. Without a terminal (a supervisor, the
+console, a background `&`) the server runs without the prompt and stops on
+a signal.

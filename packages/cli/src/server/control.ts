@@ -234,6 +234,75 @@ function isUnder(path: string, root: string): boolean {
   return path.length > root.length && path.startsWith(root) && (path[root.length] === "/" || path[root.length] === "\\")
 }
 
+// Load (or switch) the app entry and push it: the /load route (srt mcp's
+// load tool) and the repl's `load`. Moves the rebuild entry, then reuses the
+// reload path, so later reloads rebuild the new file. A project server stays
+// inside its project (the bundle resolves the project's dependencies and
+// assets, and the key keeps naming the project); a file server takes any
+// file, moving the file routes and the bundler's cwd along with the entry.
+// The key never moves: it names what the server was started for, and
+// /clients reports the entry next to it. `status` is the HTTP status the
+// error maps to (400 for a bad request, 502 for a failed build).
+export async function loadEntry(requested: string): Promise<{ entry: string } | { error: string; status: number }> {
+  if (!ENTRY_EXTENSIONS.some((ext) => requested.endsWith(ext))) {
+    return { error: `Not an app entry: ${requested} (expected .tsx, .jsx, .ts, .js or .srt.js)`, status: 400 }
+  }
+  let config = state.config
+  let path = absolute(requested, config.projectDir ?? config.sourceDir)
+  if (!(await file(path).exists())) return { error: `Entry not found: ${path}`, status: 400 }
+  let entry = await realpath(path)
+  if (config.projectDir && !isUnder(entry, config.projectDir)) {
+    return {
+      error: `Entry is outside the project: ${entry} is not under ${config.projectDir}. A project server only bundles sources inside its project; start srt for that file on its own.`,
+      status: 400,
+    }
+  }
+  config.entry = entry
+  config.entryArgs[0] = entry
+  if (!config.projectDir) {
+    config.sourceDir = dirname(entry)
+    config.cwd = config.sourceDir
+  }
+  console.log(`[cli] Loading ${entry}`)
+  let error = await rebuildAndBroadcast()
+  if (error) return { error, status: 502 }
+  return { entry }
+}
+
+// Mute or unmute the user's own input on every client (srt mcp's
+// mute_user_input/unmute_user_input, the repl's `mute`): while muted, a
+// measurement or an interaction test is not disturbed by a stray click;
+// synthetic /input still goes through. Latched for clients joining while
+// muted (the welcome message) and broadcast to the connected ones; no ack,
+// the mute takes effect on arrival.
+export function setUserInputMuted(on: boolean) {
+  if (on !== state.userInputMuted) {
+    console.log(on ? "[cli] User input muted on every client" : "[cli] User input unmuted")
+  }
+  state.userInputMuted = on
+  let text = JSON.stringify({ type: "mute", active: on })
+  for (let ws of state.clients.keys()) ws.send(text)
+}
+
+// Pause or resume reload-on-save (srt mcp's pause_watch/resume_watch, the
+// repl's `watch`): paused, an agent's saves are not pushed while it edits;
+// its explicit /reload is. Changes made while paused are not replayed on
+// resume.
+export function setWatchActive(on: boolean) {
+  if (on === state.watchPaused) {
+    console.log(on ? "[cli] Reload on save resumed" : "[cli] Reload on save paused")
+  }
+  state.watchPaused = !on
+}
+
+// Toggle the stats overlay on every client (the repl's `stats`); the welcome
+// message carries it to clients joining later.
+export function setStats(on: boolean) {
+  state.stats = on
+  let text = JSON.stringify({ type: "stats", stats: on })
+  for (let ws of state.clients.keys()) ws.send(text)
+}
+
 export async function handleControl(req: Request, path: string, query: Map<string, string>): Promise<Response> {
   switch (path) {
     case "/__control__/clients":
@@ -396,82 +465,35 @@ export async function handleControl(req: Request, path: string, query: Map<strin
       return Response.json(body)
     }
     case "/__control__/load": {
-      // Load (or switch) the app entry and push it: srt mcp's load tool.
-      // Moves the rebuild entry, then reuses the reload path, so later
-      // reloads rebuild the new file. A project server stays inside its
-      // project (the bundle resolves the project's dependencies and assets,
-      // and the key keeps naming the project); a file server takes any
-      // file, moving the file routes and the bundler's cwd along with the
-      // entry. The key never moves: it names what the server was started
-      // for, and /clients reports the entry next to it.
       if (req.method !== "POST") return Response.json({ error: "Load requires POST" }, { status: 405 })
       let requested = (await req.json().catch(() => null))?.entry
       if (typeof requested !== "string" || !requested) {
         return Response.json({ error: "Load requires { entry: <source path> }" }, { status: 400 })
       }
-      if (!ENTRY_EXTENSIONS.some((ext) => requested.endsWith(ext))) {
-        return Response.json({ error: `Not an app entry: ${requested} (expected .tsx, .jsx, .ts, .js or .srt.js)` }, { status: 400 })
-      }
-      let config = state.config
-      let path = absolute(requested, config.projectDir ?? config.sourceDir)
-      if (!(await file(path).exists())) return Response.json({ error: `Entry not found: ${path}` }, { status: 400 })
-      let entry = await realpath(path)
-      if (config.projectDir && !isUnder(entry, config.projectDir)) {
-        return Response.json(
-          {
-            error: `Entry is outside the project: ${entry} is not under ${config.projectDir}. A project server only bundles sources inside its project; start srt for that file on its own.`,
-          },
-          { status: 400 },
-        )
-      }
-      config.entry = entry
-      config.entryArgs[0] = entry
-      if (!config.projectDir) {
-        config.sourceDir = dirname(entry)
-        config.cwd = config.sourceDir
-      }
-      console.log(`[cli] Loading ${entry}`)
-      let error = await rebuildAndBroadcast()
-      if (error) return Response.json({ error }, { status: 502 })
-      let body: LoadResponse = { ok: true, entry, clients: state.clients.size }
+      let result = await loadEntry(requested)
+      if ("error" in result) return Response.json({ error: result.error }, { status: result.status })
+      let body: LoadResponse = { ok: true, entry: result.entry, clients: state.clients.size }
       return Response.json(body)
     }
     case "/__control__/mute": {
-      // Mute or unmute the user's own input on every client (srt mcp's
-      // mute_user_input/unmute_user_input): while muted, a measurement or an
-      // interaction test is not disturbed by a stray click; synthetic /input
-      // still goes through. Latched for clients joining while muted (the
-      // welcome message) and broadcast to the connected ones; no ack, the
-      // mute takes effect on arrival.
       if (req.method !== "POST") return Response.json({ error: "Mute requires POST" }, { status: 405 })
       let active = query.get("active")
       if (active !== "true" && active !== "false") {
         return Response.json({ error: "Mute requires ?active=true or ?active=false" }, { status: 400 })
       }
       let on = active === "true"
-      if (on !== state.userInputMuted) {
-        console.log(on ? "[cli] User input muted on every client" : "[cli] User input unmuted")
-      }
-      state.userInputMuted = on
-      let text = JSON.stringify({ type: "mute", active: on })
-      for (let ws of state.clients.keys()) ws.send(text)
+      setUserInputMuted(on)
       let body: MuteResponse = { ok: true, active: on, clients: state.clients.size }
       return Response.json(body)
     }
     case "/__control__/watch": {
-      // Pause or resume reload-on-save (srt mcp's pause_watch/resume_watch):
-      // paused, an agent's saves are not pushed while it edits; its explicit
-      // /reload is. Changes made while paused are not replayed on resume.
       if (req.method !== "POST") return Response.json({ error: "Watch requires POST" }, { status: 405 })
       let active = query.get("active")
       if (active !== "true" && active !== "false") {
         return Response.json({ error: "Watch requires ?active=true or ?active=false" }, { status: 400 })
       }
       let on = active === "true"
-      if (on === state.watchPaused) {
-        console.log(on ? "[cli] Reload on save resumed" : "[cli] Reload on save paused")
-      }
-      state.watchPaused = !on
+      setWatchActive(on)
       let body: WatchResponse = { ok: true, active: on }
       return Response.json(body)
     }

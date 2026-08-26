@@ -96,7 +96,9 @@ async function launchServer(withClient: boolean, demo?: { cwd: string; entry: st
 
   let proc = Bun.spawn([flux, script.path, ...args], {
     cwd: demo?.cwd,
-    stdio: ["ignore", "inherit", "inherit"],
+    // stdin is passed through for the server's repl (flux:tty): with no
+    // terminal there the server runs without one.
+    stdio: ["inherit", "inherit", "inherit"],
     env: {
       ...process.env,
       SRT_PLATFORM_DIR: dirname(flux),

@@ -56,6 +56,14 @@ impl<F: Clone> ListenerRegistry<F> {
     false
   }
 
+  /// Drop every listener of `event`. Returns true when there were any (the
+  /// entry existed), so the host can `release` the matching hold. For a source
+  /// that has ended for good: no listener can fire again, so none may keep
+  /// the host alive.
+  pub fn clear(&mut self, event: &str) -> bool {
+    self.map.remove(event).is_some()
+  }
+
   /// Whether `event` currently has any listeners.
   pub fn has_listeners(&self, event: &str) -> bool {
     self.map.get(event).is_some_and(|cbs| !cbs.is_empty())

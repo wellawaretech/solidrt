@@ -1,4 +1,5 @@
 /// <reference path="./modules/process.d.ts" />
+/// <reference path="./modules/tty.d.ts" />
 /// <reference path="./modules/path.d.ts" />
 /// <reference path="./modules/http.d.ts" />
 /// <reference path="./modules/fs.d.ts" />

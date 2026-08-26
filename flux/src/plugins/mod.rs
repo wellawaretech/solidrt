@@ -125,6 +125,9 @@ pub(crate) async fn init_context(
   resolver.add_module("flux:process");
   loader.add_module("flux:process", crate::forge_plugins::process::ProcessModule);
 
+  resolver.add_module("flux:tty");
+  loader.add_module("flux:tty", crate::forge_plugins::tty::TtyModule);
+
   resolver.add_module("flux:path");
   loader.add_module("flux:path", crate::forge_plugins::path::PathModule);
 
@@ -216,7 +219,7 @@ fn remove_array_buffer_transfer(ctx: &Ctx<'_>) {
 /// rather than on the OS. A conditionally-compiled feature would be added under
 /// its own cfg, so it only appears when actually present.
 pub const BASE_CAPABILITIES: &[&str] =
-  &["sqlite", "fs", "http", "p2p", "process", "path", "subprocess", "svg", "image", "wasm", "ffi", "isolate"];
+  &["sqlite", "fs", "http", "p2p", "process", "path", "subprocess", "svg", "image", "wasm", "ffi", "isolate", "tty"];
 
 fn build_capabilities<'js>(ctx: &Ctx<'js>) -> Array<'js> {
   let arr = Array::new(ctx.clone()).expect("create capabilities array");

@@ -74,6 +74,17 @@ pub fn remove_listener(ctx: &Ctx<'_>, event: &str, id: u32) -> bool {
   was_last
 }
 
+// Drops every listener of `event`, releasing its hold if it had any. For a
+// source that has ended for good (stdin at EOF): nothing can fire again, so
+// nothing may keep the loop alive.
+pub fn clear_listeners(ctx: &Ctx<'_>, event: &str) {
+  let store = ctx.userdata::<ListenerMap>().unwrap();
+  let pending = ctx.userdata::<PendingOps>().unwrap();
+  if store.0.borrow_mut().clear(event) {
+    pending.release();
+  }
+}
+
 // Registers a listener for `event`, returning an unsubscribe function that
 // captures only the event name and integer ID, so it cannot keep a JS function
 // rooted past listener removal (a JS value captured in a native closure that

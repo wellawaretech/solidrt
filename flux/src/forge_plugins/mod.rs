@@ -14,5 +14,6 @@ pub mod serve;
 pub mod sqlite;
 pub mod subprocess;
 pub mod svg;
+pub mod tty;
 pub mod wasm;
 pub mod websocket;

@@ -28,6 +28,7 @@ import { printQr } from "./qr"
 import { createTunnelEndpoint, TUNNEL_PROTOCOL } from "./tunnel"
 import { rebuildAndBroadcast, showBuildFailure } from "./rebuild"
 import { stopWatcher } from "./watcher"
+import { startRepl } from "./repl"
 import { devDir, rememberedPort, removeRecord, runningFor, serverDirFor, writeRecord } from "./registry"
 
 let args = parseArgs()
@@ -385,6 +386,7 @@ let keepalive = setInterval(() => {
 }, 5000)
 
 let shuttingDown = false
+let stopRepl = () => {}
 let localClient: Child | null = null
 let localClientExited = false
 let signalOffs = ["SIGINT", "SIGTERM"].map((signal) =>
@@ -401,6 +403,7 @@ async function shutdown() {
   shuttingDown = true
   clearInterval(keepalive)
   for (let off of signalOffs) off()
+  stopRepl()
   stopWatcher()
   await removeRecord(config.serverDir)
   if (localClient) localClient.kill()
@@ -431,6 +434,7 @@ if (buildError) {
   showBuildFailure()
 }
 console.log("[cli] Reload on save is on (pause it with the MCP pause_watch tool)")
+stopRepl = startRepl(shutdown)
 
 // Startup typecheck (`srt check <entry>`), deliberately not awaited: the
 // report prints when tsc finishes, and a type error never gates the boot

@@ -33,6 +33,10 @@ Decided and being worked on now. A plan nobody is working on goes back to backlo
   as a root error boundary around the app's window (error window with reset)
   plus per-node containment in the renderer's effect/insert exports, with the
   verified mechanics and the measured cost.
+- **[stdin/tty support in flux](plans/stdin-tty-support.md)** [2026-07-13]
+  A flux:tty module (terminal check, line input, raw stdout write) bringing
+  the srt dev-server repl back, staged from cooked-mode lines to raw-mode line
+  editing.
 - **[Documentation website](plans/website.md)** [2026-07-16]
   "A monorepo website/ generated statically by a flux script: section nav, a
   Core-first Start page, and generate-what-we-can content (API reference from
@@ -186,6 +190,10 @@ Shaped, not started.
   get_stats/get_snapshot need a JS-thread slice, so they time out on a busy
   (healthy) app with a message that says "wedged"; serve inventory and stats
   off published state, and name the real timeout.
+- **[display "none" hides a node but not its subtree](backlog/display-none-subtree.md)** [2026-08-26]
+  Display::None returns LayoutOutput::HIDDEN without running taffy's
+  hidden-layout pass, so descendants keep their last boxes and keep painting,
+  leaving display "none" usable only on a leaf.
 - **[Default font weight should follow display scale](backlog/dpi-aware-default-font-weight.md)** [2026-08-14]
   Text defaults to Medium so that small type stays readable on 1x desktop
   displays, which over-thickens every label on the 2-3x phone screens that
@@ -488,10 +496,6 @@ Shaped, not started.
   Button picks fill/hover/label with a switch over its variant and derives the
   background from press state by hand, and every other widget repeats the
   pattern; a helper that selects a prop bundle from state would collapse it.
-- **[stdin/tty support in flux](backlog/stdin-tty-support.md)** [2026-07-13]
-  A flux:stdin (or flux:tty) module for cross-platform raw-mode keystroke
-  reading, the missing piece for any interactive terminal UI under flux, not
-  just the CLI repl.
 - **[Bidirectional text in the owned layout](backlog/text-bidi.md)** [2026-08-17]
   The owned text engine places wrap units on a line in logical order and
   treats "start" as left, so RTL rich text spanning styled runs on one line,
@@ -1077,6 +1081,10 @@ Finished, kept for the reasoning.
   magnified inspection; a ~15-line viewBox-shrinking registerDebug("zoom")
   turns "look closely at X" into one call, worth shipping in the
   create-solidrt scaffold.
+- **[Shell layout fixes found rendering NavShell beside SplitView](done/shell-layout-fixes.md)** [2026-08-26]
+  Navigation follows the pane count instead of its own breakpoint, and
+  TextInput/Select share Button's vertical padding so controls in a row are
+  one height.
 - **[A snapshot boundary's retained texture as a texture id](done/snapshot-boundary-texture-id.md)** [2026-08-23]
   repaintBoundary="snapshot" kept its subtree's rasterization in an adopted
   texture only the boundary shader could sample. Landed 2026-08-23 as
