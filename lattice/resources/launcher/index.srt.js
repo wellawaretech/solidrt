@@ -10455,56 +10455,6 @@ var createDataURL = function(width, height, getPixel) {
 var stringToBytes = qrcode.stringToBytes;
 // src/parts/home-screen.tsx
 import { stop } from "srt:dev";
-
-// ../../packages/core/src/camera.ts
-import { listCameras, open } from "flux:camera";
-import { on as on6 } from "srt:events";
-var devicesAccessor2;
-function cameraDevices() {
-  if (!devicesAccessor2) {
-    let [devices, setDevices] = createSignal(listCameras());
-    on6("cameraDeviceChange", () => setDevices(listCameras()));
-    devicesAccessor2 = devices;
-  }
-  return devicesAccessor2();
-}
-function createCamera(options = {}) {
-  let [texture, setTexture] = createSignal(undefined);
-  let [width, setWidth] = createSignal(undefined);
-  let [height, setHeight] = createSignal(undefined);
-  let [barcode, setBarcode] = createSignal(undefined);
-  let [error, setError] = createSignal(undefined);
-  let session;
-  let disposed = false;
-  open(options).then((cam) => {
-    if (disposed) {
-      cam.close();
-      return;
-    }
-    session = cam;
-    if (options.scan)
-      cam.onBarcode((result) => setBarcode(result));
-    setTexture(cam.texture);
-    setWidth(cam.width);
-    setHeight(cam.height);
-  }).catch((e) => setError(e instanceof Error ? e : new Error(String(e))));
-  onCleanup(() => {
-    disposed = true;
-    if (session) {
-      session.close();
-      session = undefined;
-    }
-  });
-  return {
-    texture,
-    width,
-    height,
-    barcode,
-    error
-  };
-}
-
-// src/parts/home-screen.tsx
 import { available as appsAvailable, list, launch, remove, info, clearCache } from "srt:apps";
 
 // src/parts/app-icon.tsx
@@ -10912,7 +10862,7 @@ function SettingsPanel(props) {
 }
 
 // src/parts/dev-connection.ts
-import { on as on7 } from "srt:events";
+import { on as on6 } from "srt:events";
 import { available as devAvailable, connect as devConnect, launchAddress } from "srt:dev";
 var available = devAvailable;
 var [state, setState] = createSignal("idle");
@@ -10920,7 +10870,7 @@ var [address, setAddress] = createSignal(null);
 var [tunneled, setTunneled] = createSignal(false);
 var [recents, setRecents] = createSignal([]);
 if (available) {
-  on7("dev", (e) => {
+  on6("dev", (e) => {
     setState(e.state);
     setAddress(e.address);
     setTunneled(e.tunneled);
@@ -10951,7 +10901,6 @@ function recentLabel(entry) {
 function ConnectPanel(props) {
   let hostDraft = "";
   let portDraft = DEFAULT_PORT;
-  let hasCamera = () => cameraDevices().length > 0;
   let submit = () => {
     let host = hostDraft.trim();
     if (!host)
@@ -10995,16 +10944,9 @@ function ConnectPanel(props) {
                   flexGrow: 1
                 },
                 children: "Connect"
-              }), createComponent2(Show, {
-                get when() {
-                  return hasCamera();
-                },
-                get children() {
-                  return createComponent2(ScanButton, {
-                    get onPress() {
-                      return props.onScan;
-                    }
-                  });
+              }), createComponent2(ScanButton, {
+                get onPress() {
+                  return props.onScan;
                 }
               })];
             }
@@ -11842,7 +11784,7 @@ function HomeScreen(props) {
                             }
                           }), createComponent2(Show, {
                             get when() {
-                              return memo2(() => !!(available && cameraDevices().length > 0))() ? !isConnected() : available && cameraDevices().length > 0;
+                              return available && !isConnected();
                             },
                             get children() {
                               return createComponent2(ScanButton, {
@@ -11969,6 +11911,45 @@ function HomeScreen(props) {
       });
     }
   });
+}
+
+// ../../packages/core/src/camera.ts
+import { listCameras, open } from "flux:camera";
+import { on as on7 } from "srt:events";
+function createCamera(options = {}) {
+  let [texture, setTexture] = createSignal(undefined);
+  let [width, setWidth] = createSignal(undefined);
+  let [height, setHeight] = createSignal(undefined);
+  let [barcode, setBarcode] = createSignal(undefined);
+  let [error, setError] = createSignal(undefined);
+  let session;
+  let disposed = false;
+  open(options).then((cam) => {
+    if (disposed) {
+      cam.close();
+      return;
+    }
+    session = cam;
+    if (options.scan)
+      cam.onBarcode((result) => setBarcode(result));
+    setTexture(cam.texture);
+    setWidth(cam.width);
+    setHeight(cam.height);
+  }).catch((e) => setError(e instanceof Error ? e : new Error(String(e))));
+  onCleanup(() => {
+    disposed = true;
+    if (session) {
+      session.close();
+      session = undefined;
+    }
+  });
+  return {
+    texture,
+    width,
+    height,
+    barcode,
+    error
+  };
 }
 
 // src/parts/scan-screen.tsx

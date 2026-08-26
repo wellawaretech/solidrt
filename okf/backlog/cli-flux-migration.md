@@ -164,9 +164,12 @@ server folder `~/.solidrt/servers/<key hash>/`, not in a `.srt-data/` next
 to the file: nothing owns that directory. Project mode keeps
 `<project>/.srt-data/`.
 
-The repl `load <file>` command is dropped: it moved the entry mid-session,
-which under one-server-per-key would change the key. Agents use `reload`;
-humans restart.
+The repl `load <file>` command was dropped here (it moved the entry
+mid-session, which under one-server-per-key would change the key), then
+came back 2026-08-26 as `/__control__/load` for the MCP `load` tool and the
+repl again ([stdin-tty-support](../done/stdin-tty-support.md)): the entry
+moves, the key never does. It names what the server was started for, and
+`/clients` reports the entry next to it.
 
 ## Packaging
 
@@ -201,7 +204,7 @@ Checked 2026-08-25; each is its own small item and useful on its own:
   in `flux:fs` (notify-backed, recursive optional, undebounced, rename
   target reported), and reload-on-save on top of it from the bundle's
   inputs: [done/reload-on-save.md](../done/reload-on-save.md).
-- **stdin/tty**: [stdin-tty-support.md](../plans/stdin-tty-support.md). The repl is
+- **stdin/tty**: [stdin-tty-support.md](../done/stdin-tty-support.md). The repl is
   the only consumer; the rest of the migration does not wait on it (the
   no-tty path already runs without a repl).
 - **sha256.** DONE 2026-08-25 (uncommitted): `crypto.subtle.digest`

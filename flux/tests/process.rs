@@ -50,3 +50,24 @@ async fn env_is_a_snapshot_of_the_environment() {
   assert!(out.errors().is_empty(), "stderr: {}", out.errors());
   assert_eq!(out.log(), "yes true");
 }
+
+// off() then on() in one tick must keep the OS watcher: the wakeup from the
+// unsubscribe finds a listener again and reads on, so the next delivery
+// still reaches JS.
+#[cfg(unix)]
+#[tokio::test]
+async fn resubscribe_in_one_tick_keeps_the_watcher() {
+  let run = run_source(
+    r#"
+      import { on, once, pid } from "flux:process"
+      import { command } from "flux:subprocess"
+      let off = on("SIGUSR1", () => {})
+      off()
+      once("SIGUSR1", (sig) => console.log("got", sig))
+      command("kill", ["-USR1", String(pid)]).output()
+    "#,
+  );
+  let out = tokio::time::timeout(Duration::from_secs(5), run).await.expect("the resubscribed listener never fired");
+  assert!(out.errors().is_empty(), "stderr: {}", out.errors());
+  assert_eq!(out.log(), "got SIGUSR1");
+}

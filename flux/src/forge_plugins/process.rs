@@ -216,10 +216,17 @@ fn ensure_watcher(ctx: &Ctx<'_>, signal: &str) {
   ctx.spawn(async move {
     loop {
       // Deliveries and the last unsubscribe both end the wait; only the
-      // former dispatches.
+      // former dispatches. A listener added since the wakeup (off() then
+      // on() in one tick) keeps the watcher: it is the one ensure_watcher
+      // saw as installed.
       let delivered = tokio::select! {
         got = stream.recv() => got,
-        _ = stop.notified() => false,
+        _ = stop.notified() => {
+          if has_listeners(&ctx_cb, &name) {
+            continue;
+          }
+          false
+        }
       };
       if !delivered {
         break;

@@ -7,8 +7,10 @@ use flux::{FluxEngine, LogLevel, ProcessArgs};
 
 const MAGIC: &[u8; 8] = b"FLUXRT\x88\x44";
 
+// Through forge::tty so a line breaks correctly while the terminal is in raw
+// mode (flux:tty setRawMode), where a bare "\n" would not return the carriage.
 fn log_fn(_level: LogLevel, msg: &str) {
-  println!("{msg}");
+  forge::tty::write_line(msg);
 }
 
 #[tokio::main(flavor = "current_thread")]

@@ -38,6 +38,14 @@ tokio-util = { version = "0.7", features = ["io"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 percent-encoding = "2"
+# Raw terminal mode and key events for forge::tty (a safe binding crate:
+# termios on unix, the Console API on Windows). No event-stream: keys are
+# read blocking on the stdin reader thread.
+crossterm = { version = "0.27", default-features = false, features = ["windows", "events"] }
+# The foreground-job check behind forge::tty::is_terminal (tcgetpgrp /
+# getpgrp, safe wrappers). Already in the tree (which depends on it).
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "1", features = ["termios", "process"] }
 rusqlite = { version = "0.40", features = ["bundled", "hooks"] }
 path-clean = "1"
 # Directory change notifications for forge::fs::DirWatcher (flux:fs dir().watch):

@@ -6,8 +6,10 @@ use std::sync::Arc;
 
 use flux::{FluxEngine, LogLevel, ModuleCode, ProcessArgs};
 
+// Through forge::tty so a line breaks correctly while the terminal is in raw
+// mode (flux:tty setRawMode), where a bare "\n" would not return the carriage.
 fn log_fn(_level: LogLevel, msg: &str) {
-  println!("{msg}");
+  forge::tty::write_line(msg);
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -15,6 +17,14 @@ async fn main() {
   // The first argument is the script path ("-" or absent: stdin); everything
   // after it is the program's argument vector, forwarded to JS through
   // flux:process (which exposes app arguments only, no executable/script).
+  // Raw terminal mode is process-wide state the terminal keeps after we are
+  // gone: put it back on every way out, the panic path included.
+  let default_panic = std::panic::take_hook();
+  std::panic::set_hook(Box::new(move |info| {
+    forge::tty::restore();
+    default_panic(info);
+  }));
+
   let mut args = std::env::args().skip(1);
   let path = args.next();
   let argv: Vec<String> = args.collect();
@@ -63,6 +73,7 @@ async fn main() {
     })
     .build();
   engine.eval_source(&source).await;
+  forge::tty::restore();
   if failed.load(Ordering::Relaxed) {
     std::process::exit(1);
   }

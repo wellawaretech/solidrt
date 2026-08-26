@@ -118,9 +118,8 @@ export async function main() {
   // project root or the entry's directory with the entry and --project or
   // --file, so the mode resolves the same). One BundleOutput object on
   // stdout (types/bundle.d.ts), diagnostics on stderr, exit 1 with an empty
-  // stdout on a build failure. --server names the dev server the bundle is
-  // built for. A prebuilt .srt.js is read as-is with its sibling isolate
-  // bundles.
+  // stdout on a build failure. A prebuilt .srt.js is read as-is with its
+  // sibling isolate bundles.
   if (values.json) {
     let mode = resolveMode()
     let result: BundleOutput | null
@@ -138,7 +137,6 @@ export async function main() {
       result = await bundleWith({
         entry: mode.entry,
         project: mode.projectDir,
-        devBase: values.server,
         dev: values.dev,
         minify: values.minify,
       })

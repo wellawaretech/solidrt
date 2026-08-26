@@ -65,9 +65,10 @@ declare module "flux:camera" {
    * if permission is denied, and resolves once the first frame is ready. On
    * Linux a session that delivers neither within 10 seconds rejects with a
    * timeout error and releases the device (a wedged capture backend would
-   * otherwise hold it and never settle). Rejects with "camera subsystem is
-   * starting" while the subsystem is still coming up - wait for listCameras
-   * to report a device before opening.
+   * otherwise hold it and never settle). The first open also starts the
+   * camera subsystem and waits for it (on every platform, up to 10 seconds,
+   * then rejects with a timeout), so there is no need to poll listCameras
+   * before opening.
    */
   export function open(options?: CameraOpenOptions): Promise<CameraSession>
   /**

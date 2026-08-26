@@ -46,13 +46,12 @@ export function showBuildFailure() {
 
 // Rebuild from config.entry via `srt bundle --json` (a bun subprocess run
 // in config.cwd with config.entryArgs, so it resolves the mode this server
-// did; --server names this server for the bundle's dev base), then latch
-// (for late-joining clients) and broadcast the reload to every connected
-// client. Resolves with an error message on failure (a build error), or null
-// on success.
+// did), then latch (for late-joining clients) and broadcast the reload to
+// every connected client. Resolves with an error message on failure (a build
+// error), or null on success.
 export async function rebuildAndBroadcast(): Promise<string | null> {
   let config = state.config
-  let args = [...config.srt.slice(1), "bundle", "--json", "--dev", ...config.entryArgs, "--server", state.serverUrl]
+  let args = [...config.srt.slice(1), "bundle", "--json", "--dev", ...config.entryArgs]
   if (config.minify) args.push("--minify")
 
   let result = await command(config.srt[0]!, args, { cwd: config.cwd }).output()

@@ -158,11 +158,10 @@ export function validateArgs() {
   if (values.device && command !== "android") {
     usage("srt android --device <serial>  (--device is only valid with the android command)")
   }
-  // --server points a standalone client at a dev server, or names the dev
-  // server a --json bundle is built for; `run` and `server` own their server
-  // side, so it is valid nowhere else.
-  if (values.server && command !== "client" && !(command === "bundle" && values.json)) {
-    usage("srt client --server <host:port>  (--server is only valid with the client command, or bundle --json)")
+  // --server points a standalone client at a dev server; `run` and `server`
+  // own their server side, so it is valid nowhere else.
+  if (values.server && command !== "client") {
+    usage("srt client --server <host:port>  (--server is only valid with the client command)")
   }
   // --json is the dev server's rebuild contract (bundle.ts).
   if (values.json && command !== "bundle") {

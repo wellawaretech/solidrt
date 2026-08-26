@@ -5,10 +5,12 @@
 //! them through a registry texture (see `Context::pump_cameras`), so a camera
 //! view is just a texture draw for whatever sits on top. Opening triggers the
 //! OS permission prompt; sessions start `Pending` and become `Ready` (texture
-//! created at the delivered format), `Denied`, or `Failed` (Linux deadline,
-//! see `PENDING_DEADLINE`). The pump is driven once per frame from the UI
-//! thread; `SDL_AcquireCameraFrame` is non-blocking, so no camera thread is
-//! needed.
+//! created at the delivered format), `Denied`, or `Failed` (deadlines, see
+//! `INIT_DEADLINE` and `PENDING_DEADLINE`). A session opened while the camera
+//! subsystem is still starting waits for it first: the pump opens the device
+//! once the subsystem reports in. The pump is driven once per frame from the
+//! UI thread; `SDL_AcquireCameraFrame` is non-blocking, so no camera thread
+//! is needed.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -34,7 +36,8 @@ pub struct CameraInfo {
 
 #[derive(Clone)]
 pub enum CameraStatus {
-  /// Waiting for the OS permission prompt.
+  /// Waiting for the OS permission prompt (or, before that, for the camera
+  /// subsystem to start).
   Pending,
   /// Streaming into `texture_id` at the delivered size.
   Ready {
@@ -43,16 +46,29 @@ pub enum CameraStatus {
     height: u32,
   },
   Denied,
-  /// The backend never started the stream (see `PENDING_DEADLINE`); the
-  /// device is released and the message explains what happened.
+  /// The subsystem or the stream never started (see `INIT_DEADLINE` and
+  /// `PENDING_DEADLINE`); the device is released and the message explains
+  /// what happened.
   Failed(String),
 }
 
+/// A deferred open: the device is chosen and opened by the pump once the
+/// subsystem is up (see `INIT_DEADLINE`).
+struct OpenRequest {
+  device: Option<u32>,
+  facing: Option<CameraFacing>,
+  size: Option<(u32, u32)>,
+}
+
 struct Session {
+  /// Null while `request` is pending.
   camera: *mut SDL_Camera,
   status: CameraStatus,
-  /// When the session was opened; drives the Linux `PENDING_DEADLINE`.
-  #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+  /// The open still to perform, for a session opened while the subsystem was
+  /// starting.
+  request: Option<OpenRequest>,
+  /// When the session was opened (restarted when a deferred open gets its
+  /// device); drives `INIT_DEADLINE` and the Linux `PENDING_DEADLINE`.
   opened_at: std::time::Instant,
   /// Permission granted; streaming starts and the texture is created on the
   /// first frame, since the upright size depends on the per-frame rotation.
@@ -95,6 +111,25 @@ const SCAN_INTERVAL_FRAMES: u32 = 10;
 #[cfg(target_os = "linux")]
 const PENDING_DEADLINE: std::time::Duration = std::time::Duration::from_secs(10);
 
+/// How long an open may wait for the camera subsystem to come up before the
+/// session is failed. Every platform, unlike `PENDING_DEADLINE`: init never
+/// waits on the user (no platform prompts at init, only at open), so past
+/// this it is a wedged backend - on a Raspberry Pi 4 the v4l2 backend never
+/// returns (see `sdl_utils::camera_subsystem_init`). A healthy init takes
+/// well under a second, so on every other machine the first open simply
+/// works instead of failing with "starting" and needing a retry.
+const INIT_DEADLINE: std::time::Duration = std::time::Duration::from_secs(10);
+
+impl Session {
+  /// Release the device; a deferred open that never got one has nothing to
+  /// close.
+  fn close_device(&self) {
+    if !self.camera.is_null() {
+      sdl_utils::camera_close(self.camera);
+    }
+  }
+}
+
 #[derive(Default)]
 pub struct CameraRegistry {
   sessions: RefCell<HashMap<u64, Session>>,
@@ -109,25 +144,41 @@ enum InitState {
 
 static INIT_STATE: Mutex<InitState> = Mutex::new(InitState::NotStarted);
 
+/// What `ensure_init` reports. `Starting` is the normal first-call state.
+enum InitStatus {
+  Ready,
+  Starting,
+  Failed(String),
+}
+
 /// Lazy one-time SDL camera subsystem init (first list/open call). Never
-/// blocks: the first call spawns a worker and reports "starting"; callers
-/// treat that as "no cameras yet". When the worker finishes, the devices it
-/// found arrive as SDL CAMERA_DEVICE_ADDED events through the normal hotplug
-/// path (translate_event -> CameraDeviceChange), so listeners re-enumerate
+/// blocks: the first call spawns a worker and reports `Starting`; a list
+/// treats that as "no cameras yet", an open waits for it (`pump_init`). When
+/// the worker finishes, the devices it found arrive as SDL
+/// CAMERA_DEVICE_ADDED events through the normal hotplug path
+/// (translate_event -> CameraDeviceChange), so listeners re-enumerate
 /// without polling.
 ///
 /// The worker exists because SDL_INIT_CAMERA probes devices synchronously and
 /// can wedge outright - on a Raspberry Pi 4 the v4l2 backend never returns
 /// from the bcm2835 codec/isp/rpivid /dev/videoN nodes - and this used to run
 /// on the UI thread inside the app's first render, where a wedge meant the
-/// first frame was never built and (on Wayland) no window ever appeared. A
-/// wedged worker leaks one parked thread and cameras simply stay absent.
+/// first frame was never built and (on Wayland) no window ever appeared.
+///
+/// The worker does NOT contain such a wedge, so do not treat it as the
+/// answer to one (established on a Pi 4, 2026-08-26): SDL_UDEV_Scan's device
+/// callbacks are process-global, so a camera backend stuck enumerating
+/// formats also captures the main thread's gamepad init, which walks the
+/// same scan. Both threads then spin at 100% CPU and the client never draws
+/// a frame. A backend that can wedge must be kept from initializing at all
+/// until an app actually wants a camera - which is why the launcher no longer
+/// enumerates cameras to decide whether to show its scan button.
 ///
 /// No other SDL_InitSubSystem call may race this one (SDL's init refcounting
-/// is not thread-safe): the video/gamepad subsystems are initialized at
-/// startup, before any script runs, so by the time a camera call can happen
-/// they are long done.
-fn ensure_init() -> Result<(), String> {
+/// is not thread-safe). Startup order is not the guarantee it looks like:
+/// gamepad init is itself a udev scan and can still be running when the
+/// first script calls in, which is exactly the overlap above.
+fn ensure_init() -> InitStatus {
   let mut state = INIT_STATE.lock().expect("camera init state poisoned");
   match &*state {
     InitState::NotStarted => {
@@ -147,17 +198,18 @@ fn ensure_init() -> Result<(), String> {
       match spawned {
         Ok(_) => {
           *state = InitState::Starting;
-          Err("camera subsystem is starting".to_string())
+          InitStatus::Starting
         }
         Err(e) => {
           let msg = format!("camera init thread failed to spawn: {e}");
           *state = InitState::Done(Err(msg.clone()));
-          Err(msg)
+          InitStatus::Failed(msg)
         }
       }
     }
-    InitState::Starting => Err("camera subsystem is starting".to_string()),
-    InitState::Done(result) => result.clone(),
+    InitState::Starting => InitStatus::Starting,
+    InitState::Done(Ok(())) => InitStatus::Ready,
+    InitState::Done(Err(e)) => InitStatus::Failed(e.clone()),
   }
 }
 
@@ -188,9 +240,13 @@ pub fn list_cameras() -> Vec<CameraInfo> {
   // "Starting" is the normal first-call state (a real failure already warned
   // from the init worker); the list refreshes via CameraDeviceChange when the
   // subsystem comes up.
-  if let Err(e) = ensure_init() {
-    log::debug!("[camera] list unavailable: {e}");
-    return Vec::new();
+  match ensure_init() {
+    InitStatus::Ready => {}
+    InitStatus::Starting => return Vec::new(),
+    InitStatus::Failed(e) => {
+      log::debug!("[camera] list unavailable: {e}");
+      return Vec::new();
+    }
   }
   sdl_utils::camera_ids()
     .into_iter()
@@ -198,10 +254,51 @@ pub fn list_cameras() -> Vec<CameraInfo> {
     .collect()
 }
 
+/// Choose the device for `req` and open it: an explicit camera id, otherwise
+/// the first camera matching `facing` (or simply the first one). The
+/// subsystem must be up.
+fn open_device(req: &OpenRequest) -> Result<*mut SDL_Camera, String> {
+  let id = match req.device {
+    Some(d) => d,
+    None => {
+      let cams = list_cameras();
+      // Default to the back camera: viewfinders and scanning overwhelmingly
+      // want it on phones, and desktop webcams (facing Unknown) fall through
+      // to "first camera" either way.
+      let want = req.facing.unwrap_or(CameraFacing::Back);
+      let preferred = cams.iter().find(|c| c.facing == want);
+      preferred.or_else(|| cams.first()).map(|c| c.id).ok_or_else(|| "no cameras available".to_string())?
+    }
+  };
+
+  // Prefer an uncompressed native spec near the requested size; the pump
+  // converts frames to RGBA32. Asking SDL for RGBA32 lets it pick the
+  // native format itself, and that choice can land on MJPG, whose
+  // stb-based decode emits green/grey garbage for the table-less MJPEG
+  // many UVC cameras produce. Only fall back to SDL-converted RGBA32 when
+  // the camera offers nothing but compressed formats.
+  let (width, height) = req.size.unwrap_or((640, 480));
+  let spec = native_spec(id, width, height).unwrap_or(SDL_CameraSpec {
+    format: SDL_PIXELFORMAT_RGBA32,
+    colorspace: SDL_COLORSPACE_SRGB,
+    width: width as i32,
+    height: height as i32,
+    framerate_numerator: 30,
+    framerate_denominator: 1,
+  });
+  let camera = sdl_utils::camera_open(id, &spec);
+  if camera.is_null() {
+    return Err(format!("failed to open camera {id}: {}", sdl_utils::sdl_error()));
+  }
+  Ok(camera)
+}
+
 impl crate::context::Context {
-  /// Open a camera session. `device` picks an explicit camera id, otherwise
-  /// the first camera matching `facing` (or simply the first one). Returns the
-  /// session id; the session is `Pending` until the OS permission resolves.
+  /// Open a camera session (see `open_device` for the device choice). Returns
+  /// the session id; the session is `Pending` until the OS permission
+  /// resolves. While the subsystem is still starting the open is deferred:
+  /// the pump performs it once the subsystem reports in, or fails the session
+  /// at `INIT_DEADLINE`, so a first open never has to be retried.
   pub fn open_camera(
     &self,
     device: Option<u32>,
@@ -209,39 +306,12 @@ impl crate::context::Context {
     size: Option<(u32, u32)>,
     scan_qr: bool,
   ) -> Result<u64, String> {
-    ensure_init()?;
-    let id = match device {
-      Some(d) => d,
-      None => {
-        let cams = list_cameras();
-        // Default to the back camera: viewfinders and scanning overwhelmingly
-        // want it on phones, and desktop webcams (facing Unknown) fall through
-        // to "first camera" either way.
-        let want = facing.unwrap_or(CameraFacing::Back);
-        let preferred = cams.iter().find(|c| c.facing == want);
-        preferred.or_else(|| cams.first()).map(|c| c.id).ok_or_else(|| "no cameras available".to_string())?
-      }
+    let request = OpenRequest { device, facing, size };
+    let (camera, request) = match ensure_init() {
+      InitStatus::Ready => (open_device(&request)?, None),
+      InitStatus::Starting => (std::ptr::null_mut(), Some(request)),
+      InitStatus::Failed(e) => return Err(e),
     };
-
-    // Prefer an uncompressed native spec near the requested size; the pump
-    // converts frames to RGBA32. Asking SDL for RGBA32 lets it pick the
-    // native format itself, and that choice can land on MJPG, whose
-    // stb-based decode emits green/grey garbage for the table-less MJPEG
-    // many UVC cameras produce. Only fall back to SDL-converted RGBA32 when
-    // the camera offers nothing but compressed formats.
-    let (width, height) = size.unwrap_or((640, 480));
-    let spec = native_spec(id, width, height).unwrap_or(SDL_CameraSpec {
-      format: SDL_PIXELFORMAT_RGBA32,
-      colorspace: SDL_COLORSPACE_SRGB,
-      width: width as i32,
-      height: height as i32,
-      framerate_numerator: 30,
-      framerate_denominator: 1,
-    });
-    let camera = sdl_utils::camera_open(id, &spec);
-    if camera.is_null() {
-      return Err(format!("failed to open camera {id}: {}", sdl_utils::sdl_error()));
-    }
 
     let sid = {
       let mut next = self.cameras.next_id.borrow_mut();
@@ -253,6 +323,7 @@ impl crate::context::Context {
       Session {
         camera,
         status: CameraStatus::Pending,
+        request,
         opened_at: std::time::Instant::now(),
         approved: false,
         texture_id: self.borrow_texture_id(),
@@ -285,7 +356,7 @@ impl crate::context::Context {
   /// keeps the last frame until it lets go.
   pub fn close_camera(&self, sid: u64) {
     if let Some(session) = self.cameras.sessions.borrow_mut().remove(&sid) {
-      sdl_utils::camera_close(session.camera);
+      session.close_device();
       self.release_borrowed(session.texture_id);
     }
   }
@@ -294,7 +365,7 @@ impl crate::context::Context {
   /// never inherits (or leaks) a live capture device.
   pub fn close_all_cameras(&self) {
     for (_, session) in self.cameras.sessions.borrow_mut().drain() {
-      sdl_utils::camera_close(session.camera);
+      session.close_device();
       self.release_borrowed(session.texture_id);
     }
   }
@@ -309,6 +380,7 @@ impl crate::context::Context {
     let mut uploaded = false;
     for session in sessions.values_mut() {
       match session.status {
+        CameraStatus::Pending if session.request.is_some() => Self::pump_init(session),
         CameraStatus::Pending => {
           if !session.approved {
             Self::pump_permission(session);
@@ -333,6 +405,33 @@ impl crate::context::Context {
       }
     }
     uploaded
+  }
+
+  /// Finish a deferred open: once the subsystem is up, choose and open the
+  /// device (the session then proceeds like a direct open, its `opened_at`
+  /// restarted for `PENDING_DEADLINE`). An init failure, an open failure or
+  /// `INIT_DEADLINE` fails the session instead.
+  fn pump_init(session: &mut Session) {
+    let Some(request) = &session.request else {
+      return;
+    };
+    let outcome = match ensure_init() {
+      InitStatus::Ready => open_device(request),
+      InitStatus::Failed(e) => Err(e),
+      InitStatus::Starting if session.opened_at.elapsed() >= INIT_DEADLINE => {
+        log::warn!("[camera] subsystem did not start within {}s; failing the open", INIT_DEADLINE.as_secs());
+        Err(format!("camera subsystem did not start within {}s", INIT_DEADLINE.as_secs()))
+      }
+      InitStatus::Starting => return,
+    };
+    session.request = None;
+    match outcome {
+      Ok(camera) => {
+        session.camera = camera;
+        session.opened_at = std::time::Instant::now();
+      }
+      Err(e) => session.status = CameraStatus::Failed(e),
+    }
   }
 
   fn pump_permission(session: &mut Session) {

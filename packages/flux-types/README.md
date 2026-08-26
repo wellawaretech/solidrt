@@ -46,7 +46,7 @@ rely on must be named.
 
 - `Flux` global (`version`, `capabilities`).
 - `flux:*` modules: `flux:http`, `flux:fs`, `flux:sqlite`, `flux:subprocess`,
-  `flux:p2p`, `flux:net`, `flux:mdns`, `flux:process`, `flux:path`, `flux:wasm`, `flux:ffi`,
+  `flux:p2p`, `flux:net`, `flux:mdns`, `flux:process`, `flux:tty`, `flux:path`, `flux:wasm`, `flux:ffi`,
   and (on a gui-enabled runtime)
   `flux:camera`, `flux:microphone`, `flux:audio`, `flux:gpu`, `flux:spatial`.
 - Web-standard globals: `console`, `fetch` + `Headers`/`Request`/`Response`,

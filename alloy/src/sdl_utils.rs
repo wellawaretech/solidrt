@@ -210,29 +210,39 @@ use sdl3::sys::stdinc::SDL_free;
 use sdl3::sys::surface::{SDL_ConvertPixels, SDL_Surface};
 
 pub fn camera_subsystem_init() -> bool {
-  // No driver hint: SDL's own Linux order is v4l2 first, pipewire second, and
-  // that is what we want. v4l2 is the proven backend (the MJPG format
-  // workaround and hotplug-add were verified against it, and our one-line
-  // device-removal fix targets it - written up in okf/upstream/, not filed
-  // upstream yet - so the default preference picks it up if SDL takes the
-  // fix). SDL's pipewire camera backend is not trustworthy today: it targets
-  // nodes by node.description (target.object matches node.name/object.serial,
-  // so the target never resolves), it ignores the stream ERROR state so a
-  // failed start reports permission PENDING forever, and upstream has an open
-  // never-acquires-a-frame issue (libsdl-org/SDL#11473) - all observed here
-  // on desktop, 2026-08-01. It stays as SDL's fallback for v4l2-less systems,
-  // nothing more.
+  // No driver hint by default: SDL's own Linux order is v4l2 first, pipewire
+  // second, and that is what we want. v4l2 is the proven backend (the MJPG
+  // format workaround and hotplug-add were verified against it, and our
+  // one-line device-removal fix targets it - written up in okf/upstream/, not
+  // filed upstream yet - so the default preference picks it up if SDL takes
+  // the fix). SDL's pipewire camera backend is not trustworthy today: it
+  // targets nodes by node.description (target.object matches
+  // node.name/object.serial, so the target never resolves), it ignores the
+  // stream ERROR state so a failed start reports permission PENDING forever,
+  // and upstream has an open never-acquires-a-frame issue
+  // (libsdl-org/SDL#11473) - all observed here on desktop, 2026-08-01. It
+  // stays as SDL's fallback for v4l2-less systems, nothing more.
   //
-  // On a Raspberry Pi 4 (fresh Raspberry Pi OS, no camera attached) v4l2's
-  // init never returns - it wedges probing the Pi's bcm2835 codec/isp/rpivid
-  // /dev/videoN nodes - so THIS CALL CAN BLOCK FOREVER. That is why it runs
-  // on the dedicated init worker (see camera::ensure_init), never on the UI
-  // thread: a wedged init costs one parked thread and cameras stay absent,
-  // not the window. Until upstream fixes a backend, the Pi simply has no
-  // SDL-visible camera (CSI ribbon cameras are not plain V4L2 capture
-  // devices anyway; only USB UVC ones would appear).
+  // THIS CALL CAN BURN TWO CORES FOREVER, so nothing may call it
+  // speculatively - only an app actually opening a camera. v4l2's enumeration
+  // does not terminate on hardware that exposes stepwise frame-size ranges
+  // (Raspberry Pi 4, 2026-08-26): the bcm2835 codec/isp /dev/videoN nodes
+  // advertise "32x32 - 16384x16384 with step 2/2" for ~20 formats each, and
+  // SDL walks every size in that range - ~67 million VIDIOC_ENUM_FRAMEINTERVALS
+  // calls per format, measured at ~38k/s, all failing. That is not slow, it is
+  // unbounded (libsdl-org/SDL#15085, open, milestoned 3.6.0; the same loop OOMs
+  // instead where the interval ioctl succeeds).
   //
-  // SDL_CAMERA_DRIVER in the environment still selects a backend explicitly.
+  // Running it off the UI thread does not contain it. SDL_UDEV_Scan matches the
+  // input, sound AND video4linux subsystems and hands every device to every
+  // registered callback, so once the camera subsystem registers its callback
+  // the MAIN thread's gamepad init (LINUX_JoystickInit -> SDL_UDEV_Scan ->
+  // MaybeAddDevice -> AddCameraFormat) enters the same loop and never reaches
+  // the event pump: no ticks, no frames, a black window, both threads at 100%.
+  //
+  // Hence the launcher shows its scan button without enumerating cameras
+  // first (apps/launcher/src/parts/home-screen.tsx): a machine whose backend
+  // cannot enumerate stays fully usable as long as nothing asks it to.
   unsafe { SDL_InitSubSystem(SDL_INIT_CAMERA) }
 }
 

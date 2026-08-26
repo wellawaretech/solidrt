@@ -45,6 +45,7 @@ With a terminal on stdin, `run` and `server` take commands at the `srt>`
 prompt: `reload` and `stop` (every client, or the ids `list` prints),
 `load <file>` (switch the entry, same rules as the MCP `load` tool),
 `stats`, `watch on|off` (reload on save), `mute on|off` (the user's own
-input on the clients), `quit`. Without a terminal (a supervisor, the
-console, a background `&`) the server runs without the prompt and stops on
-a signal.
+input on the clients), `quit`. Tab completes commands and `load` paths,
+Up/Down recall earlier lines, Ctrl-C (or Ctrl-D on an empty line) quits.
+Without a terminal (a supervisor, the console, a background `&`) the
+server runs without the prompt and stops on a signal.

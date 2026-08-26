@@ -1,18 +1,24 @@
 import { isTTY, on, write } from "flux:tty"
+import { dir } from "flux:fs"
 import type { ServerWebSocket } from "flux:http"
 import { state } from "./state"
 import { rebuildAndBroadcast, showBuildFailure } from "./rebuild"
 import { clientList, loadEntry, setStats, setUserInputMuted, setWatchActive } from "./control"
+import { ENTRY_EXTENSIONS, absolute } from "./mode"
+import { startLineEditor } from "./line-editor"
+import type { Completion } from "./line-editor"
 
 // The repl on the server's own terminal: the same actions the control API
-// offers a coding agent, typed by hand. Cooked-mode lines from flux:tty (the
-// terminal does the editing; history and completion are a later stage). Only
-// with a terminal on stdin: a server started by a supervisor, the console or
-// a background `&` has none, runs without a prompt, and stops on a signal.
-// Server log lines interleave with the prompt line; accepted for now.
+// offers a coding agent, typed by hand. A line editor over flux:tty raw mode
+// (line-editor.ts: history, Tab completion of commands and `load` paths);
+// where raw mode is refused, cooked lines from the terminal's own line
+// discipline. Only with a terminal on stdin: a server started by a
+// supervisor, the console or a background `&` has none, runs without a
+// prompt, and stops on a signal.
 
 const PROMPT = "srt> "
 const HELP = "Commands: load <file>, reload [id...], stop [id...], list, stats [on|off], watch on|off, mute on|off, quit, help"
+const COMMANDS = ["load ", "reload", "stop", "list", "stats", "watch ", "mute ", "quit", "exit", "help"]
 
 // The clients named by a list of ids ("0 2", as `list` prints them), or
 // every client for no ids. Unknown ids are reported and skipped.
@@ -152,17 +158,50 @@ async function dispatch(line: string, quit: () => void): Promise<void> {
   }
 }
 
+// Tab completion: a command name, or for `load` a path relative to what
+// loadEntry resolves against (the project dir, or the served file's dir):
+// directories and app entries only.
+async function complete(line: string): Promise<Completion> {
+  if (!line.startsWith("load ")) {
+    return { matches: COMMANDS.filter((c) => c.startsWith(line)), replace: line }
+  }
+  let partial = line.slice(5)
+  let slash = partial.lastIndexOf("/")
+  let dirPart = slash < 0 ? "" : partial.slice(0, slash + 1)
+  let prefix = partial.slice(dirPart.length)
+  let base = state.config.projectDir ?? state.config.sourceDir
+  let matches: string[] = []
+  try {
+    for (let entry of await dir(absolute(dirPart || ".", base)).entries()) {
+      if (!entry.name.startsWith(prefix)) continue
+      if (entry.type === "directory") matches.push(entry.name + "/")
+      else if (ENTRY_EXTENSIONS.some((ext) => entry.name.endsWith(ext))) matches.push(entry.name)
+    }
+  } catch {}
+  return { matches, replace: prefix }
+}
+
 // Start the repl when a terminal is attached; `quit` ends the server (the
-// quit command, or stdin closing on Ctrl-D). Returns the function that
+// quit command, Ctrl-C, or stdin closing). Returns the function that
 // detaches it, for the server's shutdown.
 export function startRepl(quit: () => void): () => void {
   if (!isTTY) {
     console.log("[cli] No terminal on stdin, running without the repl")
     return () => {}
   }
-  // Commands run one at a time: a line typed while one runs waits for it, so
-  // its output and the next prompt keep their order. No prompt once the
-  // server is shutting down (quit, or a signal mid-command).
+  try {
+    return startLineEditor({ prompt: PROMPT, onLine: (line) => dispatch(line, quit), onQuit: quit, complete })
+  } catch (e) {
+    console.log(`[cli] ${String(e)}; using plain line input`)
+    return startLineInput(quit)
+  }
+}
+
+// Cooked-mode fallback: the terminal edits the line, this side prompts.
+// Commands run one at a time: a line typed while one runs waits for it, so
+// its output and the next prompt keep their order. No prompt once the
+// server is shutting down (quit, or a signal mid-command).
+function startLineInput(quit: () => void): () => void {
   let attached = true
   let prompt = () => {
     if (attached) write(PROMPT)

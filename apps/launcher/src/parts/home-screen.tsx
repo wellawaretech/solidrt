@@ -22,7 +22,6 @@ import {
   policy,
 } from "@solidrt/components"
 import { stop } from "srt:dev"
-import { cameraDevices } from "@solidrt/core/camera"
 import {
   available as appsAvailable,
   list,
@@ -589,8 +588,14 @@ export function HomeScreen(props: {
                   </Pressable>
                   {/* The scan icon is a connect shortcut, so it hides while
                       connected; the dev card's Disconnect is the affordance
-                      then. */}
-                  <Show when={available && cameraDevices().length > 0 && !isConnected()}>
+                      then. No camera pre-check: enumerating cameras starts the
+                      platform's capture backend, and doing that on every
+                      launcher start is what a wedged backend turns into a dead
+                      client (Raspberry Pi; see sdl_utils::camera_subsystem_init).
+                      The subsystem starts when the scan screen opens a camera,
+                      and a machine without one gets the scan screen's error
+                      notice. */}
+                  <Show when={available && !isConnected()}>
                     <ScanButton onPress={props.onScan} />
                   </Show>
                 </View>

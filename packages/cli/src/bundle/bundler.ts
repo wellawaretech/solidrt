@@ -181,7 +181,7 @@ export function isolateAssetPath(id: string, ext: "js" | "bin"): string {
 // `project` is the project root (mode.ts decides it, never a search), or
 // null for a file on its own: no assets in the manifest and no isolate
 // modules (isolates are a project feature).
-export type BundleOptions = { entry: string; devBase?: string; dev: boolean; minify: boolean; project: string | null }
+export type BundleOptions = { entry: string; dev: boolean; minify: boolean; project: string | null }
 
 // The `srt bundle --json` stdout contract doubles as the in-process result.
 export type BundleResult = BundleOutput
@@ -213,7 +213,6 @@ export async function bundleWith(opts: BundleOptions): Promise<BundleResult | nu
     "import.meta.env.DEV": opts.dev ? "true" : "false",
     "process.env.NODE_ENV": opts.dev ? '"development"' : '"production"',
   }
-  if (opts.devBase) define.__SRT_DEV_BASE__ = opts.devBase
 
   // One Bun.build per entry: the app, then each isolate module as its own
   // self-contained bundle (splitting is off, so a helper both import gets

@@ -13,7 +13,6 @@
 import { Show, For } from "solid-js"
 import { View, Card, Text, TextInput, Button, space } from "@solidrt/components"
 import { canDiscover, discover } from "srt:dev"
-import { cameraDevices } from "@solidrt/core/camera"
 import { BackButton } from "./back-button"
 import { ScanButton } from "./scan-button"
 import { recentAddresses } from "./dev-connection"
@@ -38,7 +37,6 @@ export function ConnectPanel(props: {
 }) {
   let hostDraft = ""
   let portDraft = DEFAULT_PORT
-  let hasCamera = () => cameraDevices().length > 0
 
   // Dial host:port; a blank port falls back to whatever the host holds (so a
   // pasted host:port still works). Host is required.
@@ -65,9 +63,9 @@ export function ConnectPanel(props: {
           <Text variant="heading" layout={{ flexGrow: 1 }}>
             Connect
           </Text>
-          <Show when={hasCamera()}>
-            <ScanButton onPress={props.onScan} />
-          </Show>
+          {/* Shown unconditionally: see home-screen.tsx on why the launcher
+              does not enumerate cameras to decide. */}
+          <ScanButton onPress={props.onScan} />
         </View>
         {/* Parked: the client-side mDNS browse works, but the CLI no longer
         advertises _solidrt._tcp (dropped for the p2p ticket flow, see

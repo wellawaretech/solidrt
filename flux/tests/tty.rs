@@ -12,13 +12,13 @@ use common::run_source;
 async fn exposes_the_terminal_surface() {
   let out = run_source(
     r#"
-      import { isTTY, on, once, write } from "flux:tty"
-      console.log(typeof isTTY, typeof on, typeof once, typeof write)
+      import { isTTY, on, once, setRawMode, write } from "flux:tty"
+      console.log(typeof isTTY, typeof on, typeof once, typeof setRawMode, typeof write)
     "#,
   )
   .await;
   assert!(out.errors().is_empty(), "stderr: {}", out.errors());
-  assert_eq!(out.log(), "boolean function function function");
+  assert_eq!(out.log(), "boolean function function function function");
 }
 
 #[tokio::test]
@@ -35,5 +35,5 @@ async fn rejects_an_unknown_event() {
   )
   .await;
   assert!(out.errors().is_empty(), "stderr: {}", out.errors());
-  assert_eq!(out.log(), "Unknown tty event: keypress (expected \"line\" or \"close\")");
+  assert_eq!(out.log(), "Unknown tty event: keypress (expected \"line\", \"key\" or \"close\")");
 }

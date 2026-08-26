@@ -33,10 +33,6 @@ Decided and being worked on now. A plan nobody is working on goes back to backlo
   as a root error boundary around the app's window (error window with reset)
   plus per-node containment in the renderer's effect/insert exports, with the
   verified mechanics and the measured cost.
-- **[stdin/tty support in flux](plans/stdin-tty-support.md)** [2026-07-13]
-  A flux:tty module (terminal check, line input, raw stdout write) bringing
-  the srt dev-server repl back, staged from cooked-mode lines to raw-mode line
-  editing.
 - **[Documentation website](plans/website.md)** [2026-07-16]
   "A monorepo website/ generated statically by a flux script: section nav, a
   Core-first Start page, and generate-what-we-can content (API reference from
@@ -542,6 +538,10 @@ Shaped, not started.
   Element and node transitions share the artifact; spatial is more exposed
   because writing initial targets during scene setup is a natural pattern. An
   install-time (or first-JS-entry) clock stamp is the likely few-line fix.
+- **[The dev-server repl has only run on Linux](backlog/tty-repl-platform-runs.md)** [2026-08-26]
+  flux:tty raw mode and the srt repl are crossterm-backed and compile for
+  Windows and Android, but neither has been run there - the Windows console
+  ANSI path and Android termios from a terminal emulator are unverified.
 - **[Video playback](backlog/video-playback.md)** [2026-08-12]
   One decode-to-YUV pipeline on every platform (software decoders on desktop,
   MediaCodec buffer mode on Android), planar YUV textures + shader conversion
@@ -1137,6 +1137,10 @@ Finished, kept for the reasoning.
   Both halves fixed and verified 2026-08-09 - freeze was a dead overlay_due
   demand source; overlay now retained raster-side, rasterized to a small layer
   and blended over every frame post-pass.
+- **[stdin/tty support in flux](done/stdin-tty-support.md)** [2026-07-13]
+  A flux:tty module (terminal check, cooked lines or raw-mode keys, stdout
+  write) bringing the srt dev-server repl back with history and Tab
+  completion; both stages done, Windows and Android runs pending.
 - **[Shader effects on a subtree](done/subtree-effects.md)** [2026-08-04]
   A snapshot boundary already rasterizes a subtree into a texture; a shader
   prop runs one pass over that texture and composites the result. Plan decided
@@ -1304,6 +1308,12 @@ Knowledge. No lifecycle - true or wrong, not open or closed.
   stylesheet question asks, and the constraint on anything more is fixed - no
   cascade, no selectors, or the reactive seam and repaint-boundary model stop
   holding.
+- **[Terminal input and raw mode under flux](notes/terminal-raw-mode.md)** [2026-08-26]
+  What a process that reads its own terminal has to know - crossterm's raw
+  mode clears output post-processing on Unix (bare newlines staircase), stdin
+  must be read on a plain OS thread rather than tokio's blocking pool, and a
+  scripted pty test must not feed control bytes before the process has
+  switched to raw mode.
 - **[Text shaping and layout costs, measured](notes/text-shaping-costs.md)** [2026-08-17]
   What one Impeller paragraph per wrap unit costs against one paragraph per
   width, and what the shared word cache changes; the numbers under the owned
@@ -1340,6 +1350,12 @@ Bugs in our dependencies. Status here is the dependency's, not ours.
   (ordinary JS for "not given", and what any wrapper forwarding its own
   optional parameter produces) is still converted into T and fails. Proposal
   is an undefined/null-tolerant optional param type, or Opt doing it natively.
+- **[SDL v4l2 camera enumeration does not terminate on stepwise frame-size ranges](upstream/sdl-v4l2-camera-stepwise-enumeration.md)** [2026-08-26]
+  SDL's V4L2 camera backend expands a stepwise frame-size range one step at a
+  time, so a device advertising 32x32-16384x16384 step 2 costs ~67 million
+  probes per format; on a Raspberry Pi 4 SDL_InitSubSystem(SDL_INIT_CAMERA)
+  never returns, and because SDL_UDEV_Scan shares its callback list the main
+  thread's gamepad init is dragged into the same loop.
 - **[taffy measure cache evicts entries it can still hit](upstream/taffy-measure-cache-clobber.md)** [2026-08-03]
   Cache::store picks a slot from the input shape alone (9 slots) while
   Cache::get matches on shape AND parent width, so the
