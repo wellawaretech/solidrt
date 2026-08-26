@@ -40,7 +40,7 @@ import type { PointerEvent as ElementPointerEvent } from "@solidrt/core"
 import { compose, copy, eulerFromQuat, identity, lookAt as lookAtMatrix, mat4, multiply, perspective, quat, quatFromFrame, transformPoint, updateRotation, updateScale } from "./math.ts"
 import type { Mat4, Quat, TransformUpdate, Vec3, Vec4 } from "./math.ts"
 import { MAX_LIGHTS } from "./glsl.ts"
-import { geometryBounds, layoutKey, validateGeometry } from "./geometry.ts"
+import { geometryBounds, layoutKey, plane, validateGeometry } from "./geometry.ts"
 import { acquireGeometryBuffers, releaseGeometryBuffers } from "./geometry-gpu.ts"
 import type { GeometryBuffers } from "./geometry-gpu.ts"
 import type { Geometry } from "./geometry.ts"
@@ -201,6 +201,9 @@ export type Mesh = SceneNode & {
   /** Instance state when the mesh was made by createInstancedMesh; null on
    * an ordinary mesh. */
   _instances: MeshInstances | null
+  /** True for a createSprite mesh: its quad faces the camera in the
+   * vertex stage, so it picks by a unit box instead of its flat triangles. */
+  _sprite: boolean
 }
 
 /** The per-mesh half of instancing: the record buffer and its bookkeeping.
@@ -234,8 +237,9 @@ export type InstancedMesh = Mesh & { _instances: MeshInstances }
  * triangle hit (every ordinary mesh - the test is per triangle, so a ray
  * through a knot's hole misses) the world-space geometric `normal` facing
  * the ray, the triangle index `face` and the interpolated texture `uv`.
- * An instanced mesh is picked by its explicit population box, so those
- * three are absent on its hits. */
+ * An instanced mesh is picked by its explicit population box and a sprite
+ * by a unit box around its center, so those three are absent on their
+ * hits. */
 export type Hit = {
   mesh: Mesh
   distance: number
@@ -474,14 +478,38 @@ export function createMesh(geometry: Geometry, material: Material): Mesh {
   mesh._center = [0, 0, 0]
   mesh._params = null
   mesh._instances = null
+  mesh._sprite = false
+  return mesh
+}
+
+// Every sprite draws the same unit quad, built once: geometry is data
+// and its GPU buffers are acquired per mesh, so one shared value is the
+// normal sharing story. The box is the quad's extent at any facing.
+let spriteQuad: Geometry | undefined
+const SPRITE_BOUNDS = new Float32Array([-0.5, -0.5, -0.5, 0.5, 0.5, 0.5])
+
+/**
+ * A camera-facing quad, Three's `Sprite`: a unit plane drawn with a
+ * `sprite()` material (any material works, but only a sprite material
+ * turns the quad; there is no `geometry` argument). Size it with `scale` -
+ * a scale of [2, 1, 1] is a 2 x 1 world-unit quad - and place it like any
+ * mesh; its rotation is ignored, the camera decides the facing. Picking
+ * is by a unit box around the center (the quad's reach at any facing, an
+ * approximation), so hits carry no normal/face/uv.
+ */
+export function createSprite(material: Material): Mesh {
+  if (spriteQuad === undefined) spriteQuad = plane({ label: "sprite" })
+  let mesh = createMesh(spriteQuad, material)
+  mesh._sprite = true
   return mesh
 }
 
 /** The local box picking and sorting work from: explicit instance bounds
  * when the mesh is instanced (null without them - no leaf, no hits), the
- * geometry's own bounds otherwise. */
+ * unit box for a sprite, the geometry's own bounds otherwise. */
 function localBounds(mesh: Mesh): Float32Array | null {
-  return mesh._instances !== null ? mesh._instances.bounds : geometryBounds(mesh.geometry)
+  if (mesh._instances !== null) return mesh._instances.bounds
+  return mesh._sprite ? SPRITE_BOUNDS : geometryBounds(mesh.geometry)
 }
 
 const ATTRIBUTE_FLOATS: Record<VertexAttribute["format"], number> = { f32: 1, vec2: 2, vec3: 3, vec4: 4 }
@@ -879,6 +907,7 @@ export function setRenderOrder(mesh: Mesh, order: number): void {
 /** Swap a mesh's geometry: its draw entry is rebuilt (the scene re-sorts
  * the list, so the mesh keeps its place). */
 export function setGeometry(mesh: Mesh, geometry: Geometry): void {
+  if (mesh._sprite) throw new Error("setGeometry: a sprite draws the shared unit quad and takes no geometry")
   if (mesh.geometry === geometry) return
   mesh.geometry = geometry
   rebuildEntry(mesh)
@@ -1172,9 +1201,10 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       // Picking: the local box puts the node in the core index; an
       // ordinary mesh also gets its geometry's triangle shape, an
       // instanced one is box-only (records are opaque, and without
-      // explicit bounds it is not picked at all).
+      // explicit bounds it is not picked at all), as is a sprite (its
+      // triangles lie wherever the camera is, not where the geometry says).
       spatial.setBounds(mesh._node!, localBounds(mesh))
-      spatial.setShape(mesh._node!, inst === null ? bufs.shape : null)
+      spatial.setShape(mesh._node!, inst === null && !mesh._sprite ? bufs.shape : null)
       byNode.set(mesh._node!, mesh)
       meshes.push(mesh)
       mesh._transparent = mesh.material.transparent === true

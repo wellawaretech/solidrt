@@ -16,6 +16,7 @@ import {
   createInstancedMesh,
   createMesh,
   createScene,
+  createSprite,
   disposeInstances,
   remove,
   setGeometry,
@@ -195,16 +196,8 @@ export type MeshProps = TransformProps & PointerEventProps & {
   ref?: (mesh: MeshNode) => void
 }
 
-/** One draw entry: geometry drawn with a material at a transform. */
-export let Mesh: VoidComponent<MeshProps> = props => {
-  let ctx = useContext(SceneContext)
-  let mesh = untrack(() => createMesh(props.geometry, props.material))
-  add(ctx.parent, mesh)
-  createEffect(
-    () => props.geometry,
-    g => setGeometry(mesh, g),
-    { defer: true },
-  )
+// The mesh-side props Mesh and Sprite share (Sprite has no geometry).
+function syncMesh(mesh: MeshNode, props: SpriteProps): void {
   createEffect(
     () => props.material,
     m => setMaterial(mesh, m),
@@ -223,6 +216,39 @@ export let Mesh: VoidComponent<MeshProps> = props => {
   syncNode(mesh, props)
   untrack(() => props.ref)?.(mesh)
   onCleanup(() => remove(mesh))
+}
+
+/** One draw entry: geometry drawn with a material at a transform. */
+export let Mesh: VoidComponent<MeshProps> = props => {
+  let ctx = useContext(SceneContext)
+  let mesh = untrack(() => createMesh(props.geometry, props.material))
+  add(ctx.parent, mesh)
+  createEffect(
+    () => props.geometry,
+    g => setGeometry(mesh, g),
+    { defer: true },
+  )
+  syncMesh(mesh, props)
+  return null
+}
+
+export type SpriteProps = TransformProps & PointerEventProps & {
+  /** A `sprite()` material (any material draws, only a sprite one turns). */
+  material: Material
+  /** Per-mesh uniforms, merge semantics - as on Mesh. */
+  params?: ShaderParams
+  /** Explicit draw-order key (setRenderOrder as a prop); default 0. */
+  renderOrder?: number
+  ref?: (mesh: MeshNode) => void
+}
+
+/** A camera-facing unit quad (createSprite as a component): no geometry
+ * prop, `scale` is its world size, rotation is ignored. */
+export let Sprite: VoidComponent<SpriteProps> = props => {
+  let ctx = useContext(SceneContext)
+  let mesh = untrack(() => createSprite(props.material))
+  add(ctx.parent, mesh)
+  syncMesh(mesh, props)
   return null
 }
 

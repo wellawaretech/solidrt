@@ -94,6 +94,7 @@ blendMode and pointer events like any element.
 | `Scene` | `width`, `height` (target pixels), `clearColor?`, `background?` (fragment GLSL), `samples?` (1/2/4/8 MSAA), `label?`, `ref?(scene)`, `output?(texture)`, `events?` (mesh pointer events, default on) |
 | `Group` | `position?`, `rotation?` (Euler radians, XYZ order), `quaternion?` (either, not both), `scale?` (number = uniform), `visible?`, pointer events (below), `ref?(node)` |
 | `Mesh` | `geometry`, `material`, transforms as Group, `params?` (per-mesh uniforms, merge semantics - no unset), pointer events (below), `ref?(mesh)` |
+| `Sprite` | as Mesh minus `geometry`: a camera-facing unit quad, `scale` is its world size, rotation is ignored; pair with a `sprite()` material |
 | `InstancedMesh` | as Mesh, plus `records` (interleaved per-instance floats; buffer capacity starts at the first value and grows on larger rewrites), `count?` (records drawn, default all), `bounds?` (local [minX..maxZ] over the population - without it the mesh never picks); the record buffer is component-owned and freed on unmount |
 | `PerspectiveCamera` | `fov?` (vertical DEGREES, default 60), `near?`, `far?`, `position?`, `lookAt?`, `up?` |
 
@@ -261,6 +262,17 @@ Materials:
 
 - `unlit({ color?, map? })` - straight `[r, g, b, a?]` 0..1, premultiplied
   internally.
+- `sprite({ color?, map?, transparent?, billboard? })` - unlit on a quad
+  that turns to face the camera IN THE VERTEX STAGE (off the shared
+  uCamRight/uCamUp, or uCamPos for `billboard: "fixed-y"`, which yaws
+  only and stays upright on world y - Godot's BILLBOARD_FIXED_Y, the
+  tree/character sprite; the default `"full"` is Three's Sprite, flat to
+  the screen). No per-frame JS however many sprites. `transparent`
+  defaults to TRUE here (cutouts; Three's SpriteMaterial default), cull is
+  off. Draw with `createSprite(material)` / `<Sprite>`: a Mesh over a
+  shared unit plane, no geometry argument, `scale` = world size, rotation
+  ignored. Picks by a unit box around its center (its reach at any
+  facing), so hits carry no normal/face/uv. `examples/sprites.tsx`.
 - `shaderMaterial({ vertex, fragment, params?, textures?, depth?,
   depthWrite?, blend?, cull?, topology?, label? })` - your own GLSL, the
   custom-look escape hatch. The STANDARD UNIFORM SET: the vertex stage

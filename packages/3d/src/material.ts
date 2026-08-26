@@ -292,6 +292,95 @@ export function lit(opts: LitOptions = {}): Material {
   return material
 }
 
+export type SpriteOptions = UnlitOptions & {
+  /** Which way the quad turns to face the camera. `"full"` (default,
+   * Three's Sprite): both axes follow the view, the quad is always flat
+   * to the screen. `"fixed-y"` (Godot's BILLBOARD_FIXED_Y): only the yaw
+   * follows the camera, the quad stays upright on world y - trees and
+   * standing characters, the classic sprite. */
+  billboard?: "full" | "fixed-y"
+}
+
+// The billboard vertex stages: the unit quad's corners placed along the
+// camera axes at the mesh's world position, with the quad's size read
+// off uModel's column lengths so `scale` sizes the sprite like any mesh.
+// The rotation part of uModel is otherwise ignored (the camera decides
+// the facing). Fixed-y takes the yaw from the camera-to-center direction
+// flattened onto XZ; straight above or below there is no yaw to take, so
+// the quad falls back to facing +z rather than dividing by zero.
+const SPRITE_VERTEX_SRC = glsl`
+  in vec3 aPos;
+  in vec2 aUV;
+  out vec2 vUv;
+  uniform mat4 uModel;
+  uniform mat4 uViewProj;
+  uniform vec3 uCamRight;
+  uniform vec3 uCamUp;
+
+  void main() {
+    vec3 center = uModel[3].xyz;
+    vec2 size = vec2(length(uModel[0].xyz), length(uModel[1].xyz));
+    vec3 world = center + uCamRight * (aPos.x * size.x) + uCamUp * (aPos.y * size.y);
+    gl_Position = uViewProj * vec4(world, 1.0);
+    vUv = aUV;
+  }
+`
+
+const SPRITE_FIXED_Y_VERTEX_SRC = glsl`
+  in vec3 aPos;
+  in vec2 aUV;
+  out vec2 vUv;
+  uniform mat4 uModel;
+  uniform mat4 uViewProj;
+  uniform vec3 uCamPos;
+
+  void main() {
+    vec3 center = uModel[3].xyz;
+    vec2 size = vec2(length(uModel[0].xyz), length(uModel[1].xyz));
+    vec3 toCam = uCamPos - center;
+    toCam.y = 0.0;
+    float len = length(toCam);
+    vec3 right = len > 1e-6 ? vec3(toCam.z, 0.0, -toCam.x) / len : vec3(1.0, 0.0, 0.0);
+    vec3 world = center + right * (aPos.x * size.x) + vec3(0.0, aPos.y * size.y, 0.0);
+    gl_Position = uViewProj * vec4(world, 1.0);
+    vUv = aUV;
+  }
+`
+
+let spriteClasses = new Map<string, ShaderMaterialClass>()
+
+/**
+ * A sprite material: unlit color/map on a quad that turns to face the
+ * camera in the vertex stage (the shared uCamRight/uCamUp basis, or
+ * uCamPos for fixed-y), so a thousand sprites cost no per-frame JS. Draw
+ * it with createSprite / `<Sprite>`, which supply the unit quad; on other
+ * geometry the vertex stage still flattens every vertex onto the camera
+ * plane. Unlike unlit, `transparent` defaults to TRUE - sprites are cutouts
+ * far more often than not (Three's SpriteMaterial default) - pass false
+ * for an opaque one. Culling is off: a camera-facing quad has no back.
+ */
+export function sprite(opts: SpriteOptions = {}): Material {
+  let color = opts.color ?? [1, 1, 1]
+  let a = color.length === 4 ? color[3] : 1
+  let uColor = [color[0] * a, color[1] * a, color[2] * a, a]
+  let map = opts.map !== undefined
+  let transparent = opts.transparent !== false
+  let fixedY = opts.billboard === "fixed-y"
+  let key = [map, transparent, fixedY].join("|")
+  let cls = spriteClasses.get(key)
+  if (cls === undefined) {
+    cls = shaderMaterialClass({
+      vertex: fixedY ? SPRITE_FIXED_Y_VERTEX_SRC : SPRITE_VERTEX_SRC,
+      fragment: map ? FRAGMENT_MAP_SRC : FRAGMENT_COLOR_SRC,
+      transparent,
+      cull: "none",
+      label: "scene-sprite-" + key,
+    })
+    spriteClasses.set(key, cls)
+  }
+  return cls.instance({ params: { uColor }, textures: map ? { uMap: opts.map! } : undefined })
+}
+
 /** The attributes `material` reads that `layout` does not carry (name and
  * format) - empty when the pair is drawable. */
 export function missingAttributes(material: Material, layout: VertexLayout | undefined): VertexAttribute[] {

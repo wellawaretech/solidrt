@@ -5,7 +5,7 @@
 // without Solid components) and the component face (Scene/Mesh/Group/
 // PerspectiveCamera) on top. See AGENTS.md for the model and the traps.
 
-export { add, createDirectionalLight, createGroup, createHemisphereLight, createInstancedMesh, createMesh, createScene, setLight, disposeInstances, getRotation, lookAt, remove, setGeometry, setInstanceCount, setInstances, setMaterial, setMeshParams, setRenderOrder, setTransform, setTransition, setVisible, worldPosition } from "./scene.ts"
+export { add, createDirectionalLight, createGroup, createHemisphereLight, createInstancedMesh, createMesh, createScene, createSprite, setLight, disposeInstances, getRotation, lookAt, remove, setGeometry, setInstanceCount, setInstances, setMaterial, setMeshParams, setRenderOrder, setTransform, setTransition, setVisible, worldPosition } from "./scene.ts"
 export type { CameraUpdate, DirectionalLight as DirectionalLightNode, DirectionalLightOptions, HemisphereLight as HemisphereLightNode, HemisphereLightOptions, Hit, Light, InstancedMesh as InstancedMeshNode, InstancedMeshOptions, Mesh as MeshNode, MeshInstances, Scene as SceneHandle, SceneHandlers, SceneNode, SceneOptions, ScenePointerEvent, TransformUpdate, TransitionEndEvent } from "./scene.ts"
 export type { NodeTransition, NodeTransitionSpec } from "flux:spatial"
 export { disposeGeometry } from "./geometry-gpu.ts"
@@ -15,10 +15,10 @@ export { fillet, roundRect, shape, triangulate } from "./profile.ts"
 export type { Profile, ProfilePoint } from "./profile.ts"
 export { extrude, lathe, pathFrames, sweep, tube } from "./sweep.ts"
 export type { ExtrudeOptions, LatheOptions, PathFrames, PathPoint, SweepPath, TubeOptions } from "./sweep.ts"
-export { lit, shaderMaterial, shaderMaterialClass, unlit } from "./material.ts"
-export type { LitOptions, Material, ShaderMaterialClass, ShaderMaterialClassOptions, ShaderMaterialInstanceOptions, ShaderMaterialOptions, UnlitOptions } from "./material.ts"
-export { DirectionalLight, Group, HemisphereLight, InstancedMesh, Mesh, PerspectiveCamera, Scene, useScene } from "./components.tsx"
-export type { DirectionalLightProps, HemisphereLightProps, InstancedMeshProps, MeshProps, PerspectiveCameraProps, PointerEventProps, SceneProps, TransformProps } from "./components.tsx"
+export { lit, shaderMaterial, shaderMaterialClass, sprite, unlit } from "./material.ts"
+export type { LitOptions, Material, ShaderMaterialClass, ShaderMaterialClassOptions, ShaderMaterialInstanceOptions, ShaderMaterialOptions, SpriteOptions, UnlitOptions } from "./material.ts"
+export { DirectionalLight, Group, HemisphereLight, InstancedMesh, Mesh, PerspectiveCamera, Scene, Sprite, useScene } from "./components.tsx"
+export type { DirectionalLightProps, HemisphereLightProps, InstancedMeshProps, MeshProps, PerspectiveCameraProps, PointerEventProps, SceneProps, SpriteProps, TransformProps } from "./components.tsx"
 export { createOrbitCamera } from "./orbit.ts"
 export type { OrbitCamera, OrbitCameraOptions, OrbitPose } from "./orbit.ts"
 // math's lookAt (the camera view matrix) stays on the /math subpath: the

@@ -112,7 +112,7 @@ what it delivered is documented in `packages/3d/AGENTS.md`, not here.
     local matrix bypasses `compose()`, so it needs either a lossy decompose or
     a second matrix-mode node path beside the position/rotation/scale
     dirty-flag model.
-12. [ ] **Instanced mesh sugar, and billboards.** The instancing half
+12. [x] **Instanced mesh sugar, and billboards.** The instancing half
     shipped 2026-08-19: `shaderMaterialClass({ instanceAttributes })` makes
     an instanced material, `createInstancedMesh(geometry, material,
     records, count?, { bounds? })` carries the record buffer (plus
@@ -124,10 +124,16 @@ what it delivered is documented in `packages/3d/AGENTS.md`, not here.
     standing answer to the churn workloads (particles, projectiles,
     streamed scatter - a chunk-streamed forest at hundreds of instances
     per chunk was the demand evidence, previously only possible by
-    shimming the entry swap by hand). Still open: a `Billboard` node. The camera
-    basis it needs (uCamRight/uCamUp) is in the shared set since
-    2026-08-17, so it is unblocked - a camera-facing quad (or instanced
-    quad fleet) off those axes is now library-only work.
+    shimming the entry swap by hand). The billboard half shipped
+    2026-08-26 as Three's vocabulary, not drei's: `sprite()` material +
+    `createSprite` / `<Sprite>`, the facing done in the vertex stage off
+    the shared camera basis (`billboard: "full"` default, or `"fixed-y"` -
+    yaw only, the upright tree/character sprite every engine but Three
+    has). `transparent` defaults to true on sprites (Three's SpriteMaterial
+    default). Deferred to demand: `rotation`/`center`, constant screen
+    size (`sizeAttenuation: false`), and an instanced sprite fleet -
+    `shaderMaterialClass({ instanceAttributes })` plus the AGENTS.md
+    billboard recipe already covers the last.
 13. [ ] **Camera and control breadth.** OrthographicCamera is small library
     work. First-person controls were blocked on engine
     [relative-mouse-input](../done/relative-mouse-input.md) - pointer

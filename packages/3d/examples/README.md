@@ -29,6 +29,10 @@ depends on `@solidrt/3d` (or in-repo from the package directory).
   scene's own pass (`<Scene background>`): one target, no stacked
   backdrop texture, no resize plumbing; the source is shader-target
   compatible verbatim.
+- `sprites.tsx` - sprites: a ring of `"full"` billboard glows that stay
+  flat to the screen and `"fixed-y"` cutout trees that only yaw toward
+  the camera and stay upright as it climbs, both turned in the vertex
+  stage while the camera circles - no per-sprite JS per frame.
 - `instanced.tsx` - instanced meshes: one material class declaring
   `instanceAttributes`, two `<InstancedMesh>` fleets (400 scattered
   rocks, a ring of pines) each ONE draw entry and ONE uModel, a spinning

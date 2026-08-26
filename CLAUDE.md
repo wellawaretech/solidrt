@@ -53,21 +53,31 @@ and other behavioral measurements are profile-independent.
 # Running an app for verification (dev server + MCP)
 Never use the built-in `run` skill here. Drive the app yourself:
 
-- Start: `(bunx srt run <entry.tsx> > <scratchpad>/run.log 2>&1 &)` from repo
-  root. `srt run` starts the dev server AND a local client; with no terminal
-  on stdin it runs without the repl and stays up on its own (it logs "No
-  terminal on stdin"). Give it ~10 s, then check
-  `~/.solidrt/servers/34884/live.json` exists (default port 0x8844;
-  `-s <N>` = port + N).
+- Start: `(bunx srt run <entry.tsx> --project --port <N> > <scratchpad>/run.log 2>&1 &)`
+  from repo root. The repo root is itself a project, so a bare file path is
+  refused: `--project` serves the entry as the repo-root project (assets,
+  isolates, MCP resolution), `--file` serves the file on its own. Pick a
+  `--port` well above 34884 (say 34899) so it cannot collide with the
+  user's own servers, which take the first free port from 34884 up. `srt
+  run` starts the dev server AND a local client; with no terminal on stdin
+  it runs without the repl and stays up on its own. Give it ~10 s, then
+  check the log for `Connected to ws://127.0.0.1:<port>`. The registry is
+  keyed by project, not port: the record is
+  `~/.solidrt/servers/<key hash>/live.json` (fields: pid, port, key, mode,
+  entry, projectDir); `cat ~/.solidrt/servers/*/live.json` lists every
+  server with its port. One server per project: a second `--project` run
+  while the user's repo-root server is up is a clash, not a second server.
 - Stop: signal the srt process by pid. `pkill -f "srt run <entry.tsx>"` also
   matches the shell that ran it, so `pgrep -af "<entry.tsx>"`, pick the
   `bun`/`bunx` pid, and `kill` that - it tears down the server and the
   client. The live.json is removed on exit; a leftover record means a crash.
+  Never kill a server the user started (their `srt run` shows up in `pgrep`
+  too, e.g. `apps/console`).
 - MCP tools (`mcp__solidrt__*`) resolve the server by PROJECT: the bridge's
-  cwd (repo root here) must match the served entry's nearest package.json.
-  An entry under `packages/<pkg>/` or `examples/<x>/` registers THAT
-  directory as projectDir, so the repo-root bridge reports "No dev server"
-  even though one is running. In that case talk to the control API
+  cwd (repo root here) must match the record's projectDir, which a
+  `--project` run sets to the repo root. A `--file` run has no projectDir,
+  so the bridge reports "No dev server" even though one is running. In
+  that case (or whenever the bridge is not wired) talk to the control API
   directly with curl on `http://127.0.0.1:<port>/__control__/...`; the
   endpoints and response shapes are documented in
   `packages/cli/agents/debugging.md` ("The control API without MCP"). The
