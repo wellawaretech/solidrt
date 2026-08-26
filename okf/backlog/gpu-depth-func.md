@@ -19,7 +19,9 @@ stays `"less"`.
 Likely first consumer: shadow maps (roadmap item 15 in
 [3d-roadmap](../notes/3d-roadmap.md)) name it together with
 [gpu-sampleable-depth](gpu-sampleable-depth.md); depth-func alone is not
-the blocker there.
+the blocker there. The shaped plan ([3d-shadow-maps](../plans/3d-shadow-maps.md))
+does not depend on it at all: `LESS` serves both the depth pass and the
+main pass, so this stays demand-gated on its own.
 
 History: deferred raster-state remainder of
 [gpu-pipeline-extensions](../done/gpu-pipeline-extensions.md) (cull mode landed

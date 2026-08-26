@@ -33,7 +33,8 @@ pub struct GpuTextureInfo {
   pub height: u32,
   /// A shader or pipeline renders into this texture (vs a sampled upload).
   pub target: bool,
-  /// Pixel format name ("rgba8" or "r8"; targets are always rgba8).
+  /// Pixel format name: "rgba8" or "r8" for uploads, "rgba8" for a target's
+  /// color, "depth24" for a draw target's depth texture id.
   pub format: &'static str,
   /// The create's debug label, when one was given.
   pub label: Option<String>,

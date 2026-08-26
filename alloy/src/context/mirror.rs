@@ -37,6 +37,10 @@ pub(super) struct DrawListMirror {
   /// Whether the target owns depth storage (the addDraw depth-compatibility
   /// check reads this against the pipeline's declared depth state).
   pub(super) depth: bool,
+  /// The registry id of the target's depth texture when it was created
+  /// with `DepthStorage::Texture` (what `depth_texture` answers, and what
+  /// reclaiming the target takes with it).
+  pub(super) depth_texture: Option<u64>,
   pub(super) next_draw: u64,
   pub(super) entries: HashMap<u64, EntryMirror>,
 }

@@ -147,9 +147,13 @@ what it delivered is documented in `packages/3d/AGENTS.md`, not here.
     side is already paid: a shared target-level sampler (`setTargetTextures`)
     binds an environment map once per scene target; cube maps are the
     remaining engine gap.
-15. [ ] **Shadow maps.** Engine: sampleable depth
-    ([gpu-sampleable-depth](../backlog/gpu-sampleable-depth.md)) and a
-    depth-func option ([gpu-depth-func](../backlog/gpu-depth-func.md)); the
+15. [ ] **Shadow maps.** Shaped 2026-08-26 as
+    [3d-shadow-maps](../plans/3d-shadow-maps.md): engine sampleable
+    depth ([gpu-sampleable-depth](../backlog/gpu-sampleable-depth.md)),
+    per-target draw sinks in the spatial core, then scene VIEWS, then the
+    shadow itself; the depth-func option
+    ([gpu-depth-func](../backlog/gpu-depth-func.md)) turned out not to be
+    a dependency. The
     map itself binds through the shared target-level sampler channel.
     **Library prerequisite, and it is the bigger half: a `Scene` is
     hardwired to one camera and one target.** There is no way to render the

@@ -5,6 +5,28 @@
 use super::vocab::{BufferIds, DrawRange, IndexFormat, ParamValue, PipelineDesc, TextureBinding};
 use crate::gpu::SamplerState;
 
+/// What depth storage a draw target owns (`create_draw_target`'s `depth`
+/// option). `Buffer` is a private renderbuffer: tested and written by the
+/// entries, sampleable by nothing. `Texture` is a depth texture with a
+/// registry id of its own (`Context::depth_texture`), so another pass can
+/// sample the target's depth - shadow maps, depth-of-field, SSAO. Both are
+/// cleared once per render; the choice is creation state like `samples`,
+/// and `Texture` is rejected with `samples >= 2` (a multisampled depth
+/// texture is not sampleable, and a resolve would be a blit).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum DepthStorage {
+  #[default]
+  None,
+  Buffer,
+  Texture,
+}
+
+impl DepthStorage {
+  pub fn is_some(self) -> bool {
+    self != DepthStorage::None
+  }
+}
+
 /// The per-target half of a mesh target create: output size, clear, sampling,
 /// render mode, load op. What is drawn into the target is the entry half
 /// (`DrawSpec`) - one entry for the single-draw creates, a mutable ordered

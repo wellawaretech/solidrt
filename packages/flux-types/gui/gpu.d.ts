@@ -716,6 +716,10 @@ declare module "flux:gpu" {
    * occlusion work. It is the storage half of the depth story; whether an
    * entry tests/writes depth is its pipeline's `depth`/`depthWrite` state,
    * and adding a depth-testing pipeline to a target without storage throws.
+   * `depth: "texture"` is the same storage as a SAMPLEABLE depth texture
+   * with an id of its own - {@link depthTexture} - for shadow maps,
+   * depth-of-field, SSAO; it cannot combine with `samples` (a multisampled
+   * depth texture is not sampleable; the create throws).
    *
    * `params` seeds the target's SHARED params - the target-level values
    * every entry reads, the same live channel {@link setTargetParams} drives
@@ -742,7 +746,7 @@ declare module "flux:gpu" {
     height: number,
     params?: ShaderParams | null,
     opts?: {
-      depth?: boolean
+      depth?: boolean | "texture"
       textures?: TextureBindings
       clearColor?: [number, number, number, number]
       render?: "auto" | "manual"
@@ -751,6 +755,25 @@ declare module "flux:gpu" {
     } & SamplerOptions &
       LabelOption,
   ): TextureId
+  /**
+   * The depth texture of a draw target created with `depth: "texture"`: a
+   * texture id of its own, stable for the target's life (a
+   * {@link setTargetSize} follows the color), holding the target's depth
+   * after every render - 24-bit window depth in 0..1, read as `.r` from a
+   * `sampler2D`. Bind it anywhere a texture binds ({@link setTargetTextures}
+   * for a whole scene target, an entry's `textures`, a fragment target's
+   * inputs); the dependency graph treats a binding to it as a binding to its
+   * target, so the depth pass renders first and a target sampling its own
+   * depth throws. SAMPLER-ONLY: it is not an upload texture and not a
+   * readback source (`readTexture`/`copyTexture` throw - render it through a
+   * pass to read it), its sampling is fixed at `nearest`/`clamp` (a depth
+   * texture is only complete at nearest without a comparison mode - filter
+   * in the shader, e.g. a PCF loop), and it dies with its target
+   * (`destroyTexture` on it throws). Displaying it via `<texture src>`
+   * shows the depth in the red channel. Throws for a target without texture
+   * depth.
+   */
+  export function depthTexture(target: TextureId): TextureId
   /**
    * Append a draw entry to a draw target: `pipeline` draws `opts.buffer`
    * (required when the pipeline declares attributes) with its own `params`

@@ -26,6 +26,14 @@ pub struct SamplerState {
   pub mipmap: bool,
 }
 
+impl SamplerState {
+  /// The fixed sampling of a depth texture id: NEAREST (the only complete
+  /// filter without a comparison mode), clamped, no chain. Overrides on a
+  /// binding may still ask for linear; they get an incomplete sample, so
+  /// consumers filter in the shader (PCF).
+  pub const DEPTH: SamplerState = SamplerState { filter: SamplerFilter::Nearest, wrap: SamplerWrap::Clamp, mipmap: false };
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
 pub enum SamplerFilter {
   #[default]
@@ -57,6 +65,12 @@ pub enum TextureFormat {
   /// interleaved UV plane of NV12 YUV textures (see `yuv`); not offered in
   /// the app-facing `parse` until an app-level consumer exists.
   Rg8,
+  /// A draw target's depth texture (`DepthStorage::Texture`), registered
+  /// under its own id: 24-bit window depth in 0..1, sampled as `(d, 0, 0,
+  /// 1)` (read `.r`). Render-written only - never uploadable (`parse`
+  /// refuses it), never read back or copied - and sampling-complete only at
+  /// NEAREST without a comparison mode, which its registry entry declares.
+  Depth24,
 }
 
 impl TextureFormat {
@@ -74,6 +88,7 @@ impl TextureFormat {
       TextureFormat::Rgba8 => 4,
       TextureFormat::R8 => 1,
       TextureFormat::Rg8 => 2,
+      TextureFormat::Depth24 => 4,
     }
   }
 
@@ -83,6 +98,7 @@ impl TextureFormat {
       TextureFormat::Rgba8 => "rgba8",
       TextureFormat::R8 => "r8",
       TextureFormat::Rg8 => "rg8",
+      TextureFormat::Depth24 => "depth24",
     }
   }
 }
@@ -334,10 +350,11 @@ pub fn generate_mipmap(gl: &glow::Context, texture: glow::Texture) {
 impl GpuTexture {
   pub fn new(gl: &glow::Context, size: ISize, sampler: SamplerState, format: TextureFormat) -> Self {
     let (width, height) = (size.width as u32, size.height as u32);
-    let internal = match format {
-      TextureFormat::Rgba8 => glow::RGBA8,
-      TextureFormat::R8 => glow::R8,
-      TextureFormat::Rg8 => glow::RG8,
+    let (internal, layout, ty) = match format {
+      TextureFormat::Rgba8 => (glow::RGBA8, glow::RGBA, glow::UNSIGNED_BYTE),
+      TextureFormat::R8 => (glow::R8, glow::RED, glow::UNSIGNED_BYTE),
+      TextureFormat::Rg8 => (glow::RG8, glow::RG, glow::UNSIGNED_BYTE),
+      TextureFormat::Depth24 => (glow::DEPTH_COMPONENT24, glow::DEPTH_COMPONENT, glow::UNSIGNED_INT),
     };
     unsafe {
       let prev = gl.get_parameter_i32(glow::TEXTURE_BINDING_2D);
@@ -350,12 +367,8 @@ impl GpuTexture {
         width as i32,
         height as i32,
         0,
-        match format {
-          TextureFormat::Rgba8 => glow::RGBA,
-          TextureFormat::R8 => glow::RED,
-          TextureFormat::Rg8 => glow::RG,
-        },
-        glow::UNSIGNED_BYTE,
+        layout,
+        ty,
         glow::PixelUnpackData::Slice(None),
       );
       // No mips exist: the default MIN_FILTER references mipmaps, which would
@@ -363,9 +376,11 @@ impl GpuTexture {
       // samples it. Completeness fallback only - the declared SamplerState is
       // applied via sampler objects in alloy's passes and via per-draw
       // sampling in Impeller, never through these parameters (Impeller
-      // rewrites them on every draw of the texture).
-      gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MIN_FILTER, glow::LINEAR as i32);
-      gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MAG_FILTER, glow::LINEAR as i32);
+      // rewrites them on every draw of the texture). A depth texture is only
+      // complete at NEAREST.
+      let filter = if format == TextureFormat::Depth24 { glow::NEAREST } else { glow::LINEAR };
+      gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MIN_FILTER, filter as i32);
+      gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MAG_FILTER, filter as i32);
       gl.bind_texture(glow::TEXTURE_2D, NonZeroU32::new(prev as u32).map(glow::NativeTexture));
       GpuTexture { gl_texture, width, height, sampler, format, label: None }
     }
@@ -382,6 +397,11 @@ impl GpuTexture {
       TextureFormat::Rgba8 => (glow::RGBA, 4),
       TextureFormat::R8 => (glow::RED, 1),
       TextureFormat::Rg8 => (glow::RG, 1),
+      TextureFormat::Depth24 => {
+        // Gated UI-side (a depth id is not an upload texture); backstop.
+        log::warn!("[alloy] upload into a depth texture ignored: depth is render-written");
+        return;
+      }
     };
     unsafe {
       let prev = gl.get_parameter_i32(glow::TEXTURE_BINDING_2D);

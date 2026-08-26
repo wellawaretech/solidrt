@@ -7,9 +7,17 @@ use impellers::{DisplayList, Texture};
 use std::sync::mpsc;
 
 use crate::gpu::{
-  BufferIds, DrawRange, DrawSpec, GpuLimits, GpuResources, NodeShader, ParamValue, PipelineDesc, PipelineSpec, ShaderStage,
+  BufferIds, DepthStorage, DrawRange, DrawSpec, GpuLimits, GpuResources, NodeShader, ParamValue, PipelineDesc, PipelineSpec, ShaderStage,
   TargetSpec, TextureBinding, UniformTable, WindowShader, AttributeTable,
 };
+
+/// The adopted handles a draw target create or resize replies with: the
+/// color output, and the depth texture when the target has one
+/// (`DepthStorage::Texture`). The UI side registers each under its own id.
+pub struct TargetHandles {
+  pub color: Texture,
+  pub depth: Option<Texture>,
+}
 use crate::gpu::{SamplerState, TextureFormat};
 
 pub(crate) enum RasterCmd {
@@ -101,7 +109,15 @@ pub(crate) enum RasterCmd {
   /// Create a draw target - a mesh target with an empty, mutable ordered
   /// draw list and optional target-owned depth storage - and adopt it.
   /// Entries arrive via AddDraw; a render is clear + entries in list order.
-  CreateDrawTarget { id: u64, spec: TargetSpec, depth: bool, reply: mpsc::Sender<Result<Texture, String>> },
+  /// `depth_id` is the UI-allocated id for the depth texture, present
+  /// exactly when `depth` is `Texture`.
+  CreateDrawTarget {
+    id: u64,
+    depth_id: Option<u64>,
+    spec: TargetSpec,
+    depth: DepthStorage,
+    reply: mpsc::Sender<Result<TargetHandles, String>>,
+  },
   /// Add entry `draw` (a UI-allocated, target-scoped id) to a draw target's
   /// list: appended, or inserted immediately before entry `before` when
   /// given. Validated UI-side against the mirrors, so this is
@@ -164,9 +180,10 @@ pub(crate) enum RasterCmd {
   UpdateShaderTextures { id: u64, textures: Vec<TextureBinding> },
   /// Recreate a shader/pipeline target at a new size (same compiled program,
   /// params, and bindings) and adopt the new target; it re-renders at the
-  /// next flush. Replies with the adopted handle so the UI side re-registers
-  /// it under the same id.
-  ResizeShaderTexture { id: u64, width: u32, height: u32, reply: mpsc::Sender<Result<Texture, String>> },
+  /// next flush. Replies with the adopted handle(s) so the UI side
+  /// re-registers them under the same ids (the depth texture, when the
+  /// target has one, gets a fresh name too).
+  ResizeShaderTexture { id: u64, width: u32, height: u32, reply: mpsc::Sender<Result<TargetHandles, String>> },
   /// Set a pipeline target's draw range (resolved and validated UI-side, see
   /// `Context::set_draw`) and mark it dirty.
   SetDraw { id: u64, range: DrawRange },

@@ -33,7 +33,7 @@ use capture::flip_for_fbo;
 use crate::backend::{FrameOutput, GlBinding};
 use crate::gl;
 use crate::gpu::{
-  release_buffer, release_pipeline, release_program, validate_params, validate_texture_bindings, BufferIds, DrawSpec,
+  release_buffer, release_pipeline, release_program, validate_params, validate_texture_bindings, BufferIds, DepthStorage, DrawSpec,
   AttributeTable, EntryBuffers, GpuBuffer, GpuBufferInfo, GpuLimits, GpuPipelineInfo, GpuProgramInfo, GpuRenderPipelineInfo,
   GpuResources, GpuTextureInfo, GpuWindowShaderInfo, ParamValue, PassInput, PassTimer, PipelineDesc, Timed, PipelineSpec,
   RenderPipeline, ShaderProgram, ShaderTexture, TargetSpec, TextureBinding, UniformTable, WindowShader,
@@ -271,6 +271,12 @@ pub(crate) struct RasterState {
   // Compiled shader targets keyed by the texture id their output is
   // registered under.
   shaders: HashMap<u64, ShaderTexture>,
+  // Draw targets with a depth texture: target id -> the depth's registry
+  // id (its GL name lives in `textures` like any other), and the reverse
+  // for the flush graph, where a binding to a depth id is an edge to the
+  // target that renders it.
+  target_depths: HashMap<u64, u64>,
+  depth_owners: HashMap<u64, u64>,
   // Shared shader/pipeline programs in their own id space. Pipelines and
   // targets hold their program by Rc, so removal here only deletes the GL
   // program once no user is left (see gpu::release_program).
@@ -447,6 +453,8 @@ impl RasterState {
       present_fences: std::collections::VecDeque::new(),
       textures: HashMap::new(),
       shaders: HashMap::new(),
+      target_depths: HashMap::new(),
+      depth_owners: HashMap::new(),
       programs: HashMap::new(),
       render_pipelines: HashMap::new(),
       stages: HashMap::new(),
@@ -578,8 +586,8 @@ impl RasterState {
           RasterCmd::CreateShaderTarget { id, spec, entry, reply: tx } => {
             reply(tx, self.create_shader_target(id, spec, entry));
           }
-          RasterCmd::CreateDrawTarget { id, spec, depth, reply: tx } => {
-            reply(tx, self.create_draw_target(id, spec, depth));
+          RasterCmd::CreateDrawTarget { id, depth_id, spec, depth, reply: tx } => {
+            reply(tx, self.create_draw_target(id, depth_id, spec, depth));
           }
           RasterCmd::AddDraw { target, draw, entry, before } => {
             if let Err(e) = self.add_draw(target, draw, entry, before) {
@@ -711,6 +719,12 @@ impl RasterState {
           RasterCmd::DestroyTexture { id } => {
             self.textures.remove(&id);
             self.dirty.remove(&id);
+            // The depth texture goes with its target (its name is
+            // Impeller-owned like the color, so removal is bookkeeping).
+            if let Some(depth_id) = self.target_depths.remove(&id) {
+              self.textures.remove(&depth_id);
+              self.depth_owners.remove(&depth_id);
+            }
             if let Some(shader) = self.shaders.remove(&id) {
               shader.destroy(&self.gl);
             }
@@ -1297,11 +1311,16 @@ impl RasterState {
     if self.dirty.is_empty() {
       return;
     }
+    // A binding to a depth id is an edge to the target that renders it.
     let edges: HashMap<u64, Vec<u64>> = self
       .shaders
       .iter()
       .filter(|(_, shader)| !shader.manual())
-      .map(|(id, shader)| (*id, shader.binding_sources()))
+      .map(|(id, shader)| {
+        let sources =
+          shader.binding_sources().into_iter().map(|s| self.depth_owners.get(&s).copied().unwrap_or(s)).collect();
+        (*id, sources)
+      })
       .collect();
     let (order, cyclic) = propagation_order(&self.dirty, &edges);
     if !cyclic.is_empty() {
@@ -1332,7 +1351,7 @@ impl RasterState {
   /// runs on RenderTarget), then adopted into Impeller. Replies with the new
   /// handle so the UI side re-registers it under the same id; the old handle
   /// keeps the old GL name alive until in-flight display lists drop it.
-  fn resize_shader_texture(&mut self, id: u64, width: u32, height: u32) -> Result<Texture, String> {
+  fn resize_shader_texture(&mut self, id: u64, width: u32, height: u32) -> Result<cmd::TargetHandles, String> {
     let shader = self.shaders.get_mut(&id).ok_or_else(|| format!("shader texture {id} not found"))?;
     shader.resize(&self.gl, width, height)?;
     let shader = self.shaders.get(&id).expect("shader present after resize");
@@ -1346,6 +1365,20 @@ impl RasterState {
       // The id-stable resize keeps the create's label, like create_texture's
       // replace-at-id path.
       label: self.textures.get(&id).and_then(|old| old.label.clone()),
+    };
+    // The depth texture got a fresh name too (see ShaderTexture::resize):
+    // re-adopt and re-register it at its own id.
+    let depth = match (shader.depth_texture(), self.target_depths.get(&id).copied()) {
+      (Some(gl_texture), Some(depth_id)) => {
+        let label = self.textures.get(&depth_id).and_then(|old| old.label.clone());
+        let depth_gpu =
+          GpuTexture { gl_texture, width, height, sampler: SamplerState::DEPTH, format: TextureFormat::Depth24, label };
+        let impeller =
+          gl::adopt_texture(&depth_gpu, &self.impeller_ctx, size).ok_or("adopt resized depth texture failed")?;
+        self.textures.insert(depth_id, depth_gpu);
+        Some(impeller)
+      }
+      _ => None,
     };
     match gl::adopt_texture(&gpu, &self.impeller_ctx, size) {
       Some(impeller) => {
@@ -1362,7 +1395,7 @@ impl RasterState {
         // flush, before anything observes it; for a manual target the dirty
         // seed only re-renders its samplers against the new (cleared) name.
         self.dirty.insert(id);
-        Ok(impeller)
+        Ok(cmd::TargetHandles { color: impeller, depth })
       }
       // Should-not-happen path (adoption of a valid GL name): the shader keeps
       // rendering into the new target, but the registry entry still shows the
@@ -1527,12 +1560,69 @@ impl RasterState {
   /// target-owned depth storage - and adopt it under texture id `id`. A
   /// flush-rendered draw target starts dirty (its first render is the clear);
   /// a manual one is cleared at registration like every manual target.
-  fn create_draw_target(&mut self, id: u64, spec: TargetSpec, depth: bool) -> Result<Texture, String> {
-    let shader = ShaderTexture::new_draw_target(&self.gl, spec.width, spec.height, depth, spec.clear_color, spec.samples)?
+  ///
+  /// With `DepthStorage::Texture` the depth texture is adopted and
+  /// registered under `depth_id` beside the color: the same ownership as
+  /// the color (Impeller deletes the name when the handle drops), and the
+  /// same fixed sampling its id declares (`SamplerState::DEPTH`).
+  fn create_draw_target(
+    &mut self,
+    id: u64,
+    depth_id: Option<u64>,
+    spec: TargetSpec,
+    depth: DepthStorage,
+  ) -> Result<cmd::TargetHandles, String> {
+    let (width, height) = (spec.width, spec.height);
+    let shader = ShaderTexture::new_draw_target(&self.gl, width, height, depth, spec.clear_color, spec.samples)?
       .with_sampler(spec.sampler)
       .with_manual(spec.manual)
       .with_load(spec.load);
-    self.register_shader_target(id, shader, spec.width, spec.height, spec.label, "adopt draw target failed")
+    let depth_texture = shader.depth_texture();
+    let depth_label = spec.label.as_ref().map(|l| format!("{l}.depth"));
+    let color = match self.register_shader_target(id, shader, width, height, spec.label, "adopt draw target failed") {
+      Ok(color) => color,
+      Err(e) => {
+        // register deleted the color name; the depth texture is ours until
+        // adopted.
+        if let Some(tex) = depth_texture {
+          unsafe { glow::HasContext::delete_texture(&self.gl, tex) };
+        }
+        return Err(e);
+      }
+    };
+    let depth = match (depth_texture, depth_id) {
+      (Some(gl_texture), Some(depth_id)) => {
+        let gpu = GpuTexture {
+          gl_texture,
+          width,
+          height,
+          sampler: SamplerState::DEPTH,
+          format: TextureFormat::Depth24,
+          label: depth_label,
+        };
+        match gl::adopt_texture(&gpu, &self.impeller_ctx, ISize::new(width as i64, height as i64)) {
+          Some(impeller) => {
+            self.textures.insert(depth_id, gpu);
+            self.target_depths.insert(id, depth_id);
+            self.depth_owners.insert(depth_id, id);
+            Some(impeller)
+          }
+          None => {
+            // Roll the color registration back: dropping `color` lets
+            // Impeller delete that name; the depth name is still ours.
+            self.textures.remove(&id);
+            self.dirty.remove(&id);
+            if let Some(shader) = self.shaders.remove(&id) {
+              shader.destroy(&self.gl);
+            }
+            unsafe { glow::HasContext::delete_texture(&self.gl, gl_texture) };
+            return Err("adopt depth texture failed (depth \"texture\" is unavailable on this device)".to_string());
+          }
+        }
+      }
+      _ => None,
+    };
+    Ok(cmd::TargetHandles { color, depth })
   }
 
   /// Add a draw entry to a draw target (see `RasterCmd::AddDraw`). The UI

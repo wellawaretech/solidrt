@@ -41,7 +41,7 @@ pub use app::{setup, App};
 pub use backend::DisplayContext;
 pub use context::{CaptureDone, CaptureInfo, Context, StatsOverlay};
 pub use gpu::{
-  parse_blend, parse_cull, AttrFormat, BlendMode, BufferIds, BufferUpdate, CullMode, DepthState, DrawBounds, DrawRange,
+  parse_blend, parse_cull, AttrFormat, BlendMode, BufferIds, BufferUpdate, CullMode, DepthState, DepthStorage, DrawBounds, DrawRange,
   DrawSpec, DrawUpdate, GpuLimits, IndexFormat, ParamValue, PipelineDesc, NodeShader, PipelineSpec, ShaderStage, TargetSpec, TextureBinding, Topology,
   UniformKind, UniformSlot, UniformTable, WindowShader, MAX_INSTANCE_SLOTS,
 };
@@ -56,7 +56,7 @@ pub use mode::Mode;
 pub use playback::PlaybackConfig;
 pub use present::PresentClock;
 pub use script::{ScriptEvent, ScriptPlayer, ScriptedAction};
-pub use gpu::{GpuTexture, SamplerOverride, SamplerState, TextureEntry, TextureFormat, TextureRegistry};
+pub use gpu::{GpuTexture, SamplerFilter, SamplerOverride, SamplerState, TextureEntry, TextureFormat, TextureRegistry};
 pub use yuv::{YuvLayout, YuvMatrix, YuvRange};
 
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};

@@ -501,7 +501,7 @@ fn collect_draw_target_spec(
   width: u32,
   height: u32,
   api: &str,
-) -> rquickjs::Result<(alloy::TargetSpec, bool, Vec<alloy::TextureBinding>)> {
+) -> rquickjs::Result<(alloy::TargetSpec, alloy::DepthStorage, Vec<alloy::TextureBinding>)> {
   if let Some(o) = opts {
     if o.get::<_, rquickjs::Value>("params").map(|v| !v.is_undefined()).unwrap_or(false) {
       return Err(throw_str(ctx, &format!("{api}: 'params' is not an option; pass it as its own argument before opts")));
@@ -520,9 +520,31 @@ fn collect_draw_target_spec(
       }
     }
   }
+  // depth: false (default) | true (a private depth buffer) | "texture" (a
+  // sampleable depth texture, reachable through depthTexture(target)).
   let depth = match opts {
-    Some(o) => o.get::<_, Option<bool>>("depth")?.unwrap_or(false),
-    None => false,
+    Some(o) => {
+      let v: rquickjs::Value<'_> = o.get("depth")?;
+      if v.is_undefined() || v.is_null() {
+        alloy::DepthStorage::None
+      } else if let Some(b) = v.as_bool() {
+        if b {
+          alloy::DepthStorage::Buffer
+        } else {
+          alloy::DepthStorage::None
+        }
+      } else if let Some(s) = v.as_string() {
+        match s.to_string()?.as_str() {
+          "texture" => alloy::DepthStorage::Texture,
+          other => {
+            return Err(throw_str(ctx, &format!("{api}: depth must be a boolean or \"texture\", got \"{other}\"")));
+          }
+        }
+      } else {
+        return Err(throw_str(ctx, &format!("{api}: depth must be a boolean or \"texture\"")));
+      }
+    }
+    None => alloy::DepthStorage::None,
   };
   let textures = match opts {
     Some(o) => match o.get::<_, Option<Object<'_>>>("textures")? {
@@ -678,6 +700,7 @@ impl ModuleDef for GpuModule {
     decl.declare("destroyBuffer")?;
     decl.declare("setDraw")?;
     decl.declare("createDrawTarget")?;
+    decl.declare("depthTexture")?;
     decl.declare("addDraw")?;
     decl.declare("removeDraw")?;
     decl.declare("setDrawParams")?;
@@ -1132,6 +1155,15 @@ impl ModuleDef for GpuModule {
     )
     .expect("create createDrawTarget");
 
+    // depthTexture(target) -> texture id: the depth texture of a draw target
+    // created with depth: "texture" - a sampler-only id (bind it anywhere a
+    // texture binds; it dies with its target, destroyTexture on it throws).
+    let depth_texture_atx = atx.clone();
+    let depth_texture = Function::new(ctx.clone(), move |ctx: Ctx<'_>, target: u64| -> rquickjs::Result<u64> {
+      depth_texture_atx.depth_texture(target).map_err(|e| throw_str(&ctx, &format!("depthTexture: {e}")))
+    })
+    .expect("create depthTexture");
+
     // addDraw(target, pipeline, params?, opts?) -> draw id: add a draw
     // entry (same shape as createShaderTarget's per-entry arguments),
     // appended, or inserted via opts.before. The returned id is stable
@@ -1346,6 +1378,13 @@ impl ModuleDef for GpuModule {
       if destroy_atx.is_borrowed(id) {
         return Err(rquickjs::Exception::throw_message(&ctx, &format!("Texture {id} is owned by the runtime (a snapshot boundary, camera or video) and is released by its owner")));
       }
+      // A depth texture id is the target's storage, reclaimed with it.
+      if let Some(owner) = destroy_atx.depth_owner(id) {
+        return Err(throw_str(
+          &ctx,
+          &format!("destroyTexture: texture {id} is the depth texture of target {owner} and dies with it"),
+        ));
+      }
       state.0.created.borrow_mut().remove(&id);
       destroy_atx.destroy_texture(id);
       // Destruction is deferred to the paint loop's reclamation sweep, which
@@ -1378,6 +1417,7 @@ impl ModuleDef for GpuModule {
     exports.export("destroyBuffer", destroy_buffer)?;
     exports.export("setDraw", set_draw)?;
     exports.export("createDrawTarget", create_draw_target)?;
+    exports.export("depthTexture", depth_texture)?;
     exports.export("addDraw", add_draw)?;
     exports.export("removeDraw", remove_draw)?;
     exports.export("setDrawParams", set_draw_params)?;

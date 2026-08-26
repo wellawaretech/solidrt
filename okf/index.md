@@ -16,6 +16,12 @@ Decided and being worked on now. A plan nobody is working on goes back to backlo
   An instanced sprite layer as the third extension, built on a new zero-copy
   GPU buffer write lease in core; tiers, measurements, and the design
   decisions
+- **[Shadow maps and their dependencies](plans/3d-shadow-maps.md)** [2026-08-26]
+  Directional shadow maps for @solidrt/3d, staged over the three things they
+  need - a sampleable depth id in the engine, per-target draw sinks in the
+  spatial core, and a scene VIEW (render this scene into that target from this
+  camera) in the library - with the view settled first because split-screen,
+  minimaps and reflections hit the same wall.
 - **[Client storage and bundle updates](plans/client-storage-updates.md)** [2026-07-20]
   "Implements the update-mechanism research: data-root resolution, a
   hardlinked version store with dev-push-as-install and offline relaunch,

@@ -5775,7 +5775,7 @@ var capabilities = {
 };
 // ../../packages/core/src/gpu.ts
 import * as gpu from "flux:gpu";
-import { destroyTexture as destroyTexture2, endBufferWrite, resizeTexture, setTargetParams as setTargetParams2, setTargetSize as setTargetSize2, setTargetTextures, uploadTexture } from "flux:gpu";
+import { depthTexture, destroyTexture as destroyTexture2, endBufferWrite, resizeTexture, setTargetParams as setTargetParams2, setTargetSize as setTargetSize2, setTargetTextures, uploadTexture } from "flux:gpu";
 import { copyTexture, destroyBuffer as destroyBuffer2, renderTarget, setDraw } from "flux:gpu";
 import { addDraw, removeDraw, setDrawBuffers, setDrawOrder, setDrawParams, setDrawRange, setDrawTextures } from "flux:gpu";
 import { limits } from "flux:gpu";
@@ -6360,19 +6360,35 @@ function View(props) {
   return _el$;
 }
 // ../../packages/components/src/theme.ts
-var SPACING = {
-  sm: 4,
-  md: 8,
-  lg: 16,
-  xl: 20
-};
-var RADIUS = {
-  sm: 4,
-  md: 8,
-  lg: 12
-};
+var SPACING_BASE = 4;
+function deriveSpacing(base) {
+  return {
+    sm: base,
+    md: base * 2,
+    lg: base * 4,
+    xl: base * 5
+  };
+}
+var RADIUS_BASE = 8;
+var RADIUS_FULL = 9999;
+function deriveRadius(base) {
+  return {
+    sm: Math.round(base / 2),
+    md: base,
+    lg: Math.round(base * 1.5),
+    full: RADIUS_FULL
+  };
+}
 var BORDER_WIDTH = {
-  sm: 1
+  sm: 1,
+  focus: 2
+};
+var SIZE = {
+  navRail: 72,
+  navSidebar: 220,
+  splitViewList: 320,
+  menuMinWidth: 120,
+  slider: 200
 };
 var ROLE_DEFAULTS = {
   caption: {
@@ -6406,6 +6422,8 @@ function defineTheme(def, scheme) {
   for (let key in def.color) {
     let k = key;
     let value = def.color[k];
+    if (value == null)
+      continue;
     if (Array.isArray(value)) {
       if (!scheme)
         throw new Error(`Theme color "${key}" is a [light, dark] pair; pass a scheme to defineTheme`);
@@ -6413,6 +6431,8 @@ function defineTheme(def, scheme) {
     } else
       color[k] = value;
   }
+  if (def.color.ring == null)
+    color.ring = color.text;
   let base = def.text?.base ?? 14;
   let ratio = def.text?.ratio ?? 1.26;
   let role = (name) => {
@@ -6427,6 +6447,7 @@ function defineTheme(def, scheme) {
   return {
     text: {
       fontFamily: def.text?.fontFamily ?? "sans",
+      monoFamily: def.text?.monoFamily ?? "mono",
       caption: role("caption"),
       label: role("label"),
       body: role("body"),
@@ -6434,17 +6455,21 @@ function defineTheme(def, scheme) {
       heading: role("heading")
     },
     color,
-    spacing: {
-      ...SPACING,
+    spacing: typeof def.spacing === "number" ? deriveSpacing(def.spacing) : {
+      ...deriveSpacing(SPACING_BASE),
       ...def.spacing
     },
-    radius: {
-      ...RADIUS,
+    radius: typeof def.radius === "number" ? deriveRadius(def.radius) : {
+      ...deriveRadius(RADIUS_BASE),
       ...def.radius
     },
     borderWidth: {
       ...BORDER_WIDTH,
       ...def.borderWidth
+    },
+    size: {
+      ...SIZE,
+      ...def.size
     },
     icons: def.icons ?? {},
     components: def.components ?? {}
@@ -7440,9 +7465,10 @@ function EditorField(props) {
   });
   let textColor = () => props.style?.color ?? theme.color.text;
   let surfaceColor = () => props.style?.backgroundColor ?? theme.color.surface;
-  let borderColor = () => props.style?.borderColor ?? (focused() && policy.focusRing ? theme.color.primary : theme.color.border);
-  let borderWidth = () => props.style?.borderWidth ?? theme.borderWidth.sm;
-  let borderRadius = () => props.style?.borderRadius ?? theme.radius.sm;
+  let ring = () => focused() && policy.focusRing;
+  let borderColor = () => props.style?.borderColor ?? (ring() ? theme.color.ring : theme.color.border);
+  let borderWidth = () => props.style?.borderWidth ?? (ring() ? theme.borderWidth.focus : theme.borderWidth.sm);
+  let borderRadius = () => props.style?.borderRadius ?? theme.radius.md;
   let showPlaceholder = () => !focused() && value().length === 0 && (props.placeholder ?? "").length > 0;
   let showCaret = () => focused() && caretOn() && !showPlaceholder();
   let fontSize = () => theme.text.body.size * policy.textScale;
@@ -8193,10 +8219,10 @@ function Pressable(props) {
   return _el$;
 }
 // ../../packages/components/src/spinner.tsx
-var SIZE = 24;
+var SIZE2 = 24;
 var THICKNESS = 3;
 function Spinner(props) {
-  let size = () => props.size ?? SIZE;
+  let size = () => props.size ?? SIZE2;
   let thickness = () => props.thickness ?? THICKNESS;
   let styled = () => ({
     ...theme.components.spinner,
@@ -8319,8 +8345,8 @@ function Button(props) {
   let style = () => ({
     ...styled(),
     ...press.focused() && policy.focusRing ? {
-      borderWidth: 2,
-      borderColor: theme.color.text
+      borderWidth: theme.borderWidth.focus,
+      borderColor: theme.color.ring
     } : {},
     backgroundColor: bg(),
     borderRadius: radius(),
@@ -8485,9 +8511,9 @@ function Button(props) {
   return _el$;
 }
 // ../../packages/components/src/icon.tsx
-var SIZE2 = 24;
+var SIZE3 = 24;
 function Icon(props) {
-  let size = () => props.size ?? SIZE2;
+  let size = () => props.size ?? SIZE3;
   let doc = createMemo(() => parseSvg(props.src, {
     color: props.color ?? theme.color.text
   }));
@@ -8743,10 +8769,10 @@ function SegmentedControl(props) {
       });
       let fill = () => active() ? activeFill() : idleFill();
       let overlay = () => press.hovered() && !props.disabled && policy.interaction !== "touch" ? theme.color.overlayHover : "transparent";
-      var _el$3 = createElement("view"), _el$4 = createElement("d-rect"), _el$5 = createElement("d-rect"), _el$6 = createElement("text");
+      var _el$3 = createElement("view"), _el$4 = createElement("d-rect"), _el$5 = createElement("d-rect"), _el$7 = createElement("text");
       insertNode2(_el$3, _el$4);
       insertNode2(_el$3, _el$5);
-      insertNode2(_el$3, _el$6);
+      insertNode2(_el$3, _el$7);
       var _ref$ = press.ref;
       typeof _ref$ === "function" || Array.isArray(_ref$) ? ref(() => _ref$, _el$3) : press.ref = _el$3;
       setProp(_el$3, "repaintBoundary", true);
@@ -8767,16 +8793,43 @@ function SegmentedControl(props) {
           return space("md");
         }
       }, () => press.handlers, {
+        get focusable() {
+          return !props.disabled;
+        },
         get pointerEvents() {
           return props.disabled ? "none" : undefined;
         }
       }), true);
-      spread(_el$6, mergeProps({
+      insert(_el$3, createComponent2(Show, {
+        get when() {
+          return memo2(() => !!press.focused())() ? policy.focusRing : press.focused();
+        },
+        get children() {
+          var _el$6 = createElement("d-rect", {
+            drawStyle: "stroke"
+          });
+          effect3(() => ({
+            e: theme.color.ring,
+            t: theme.borderWidth.focus,
+            a: corners(i())
+          }), ({
+            e,
+            t,
+            a
+          }, _p$) => {
+            e !== _p$?.e && setProp(_el$6, "color", e, _p$?.e);
+            t !== _p$?.t && setProp(_el$6, "strokeWidth", t, _p$?.t);
+            a !== _p$?.a && setProp(_el$6, "radius", a, _p$?.a);
+          });
+          return _el$6;
+        }
+      }), _el$7);
+      spread(_el$7, mergeProps({
         get color() {
           return label(active());
         }
       }, () => typeStyle("body", active() ? lightOnDark(label(true), activeFill()) : undefined)), true);
-      insert(_el$6, () => opt.label);
+      insert(_el$7, () => opt.label);
       effect3(() => ({
         e: fill(),
         t: corners(i()),
@@ -8815,7 +8868,6 @@ function SegmentedControl(props) {
   return _el$;
 }
 // ../../packages/components/src/split-view.tsx
-var LIST_WIDTH = 320;
 function SplitView(props) {
   return createComponent2(Show, {
     get when() {
@@ -8851,7 +8903,7 @@ function SplitView(props) {
       spread(_el$, mergeProps(() => props.layout), true);
       insert(_el$2, () => props.list);
       insert(_el$3, () => props.detail);
-      effect3(() => props.listWidth ?? LIST_WIDTH, (_v$, _$p) => {
+      effect3(() => props.listWidth ?? theme.size.splitViewList, (_v$, _$p) => {
         setProp(_el$2, "width", _v$, _$p);
       });
       return _el$;

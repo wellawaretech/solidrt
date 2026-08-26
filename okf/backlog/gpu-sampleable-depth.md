@@ -24,5 +24,12 @@ First consumer: shadow maps, named as roadmap item 15 in
 ([gpu-depth-func](gpu-depth-func.md)); the map itself binds through the
 shared target-level sampler channel (landed 2026-08-06).
 
+The shape is settled in [3d-shadow-maps](../plans/3d-shadow-maps.md), stage 1:
+`depth: "texture"` on `createDrawTarget` (the renderbuffer form stays
+`depth: true`), `depthTexture(target)` returning the depth's own
+sampler-only id (nearest/clamp, dies with the target, aliases to its
+owner in the dependency graph), rejected with `samples >= 2`. Comparison
+sampling is a later, additive sampler state.
+
 History: deferred bullet of [gpu-pipeline-extensions](../done/gpu-pipeline-extensions.md)
 since 2026-07-15; split out 2026-08-11.

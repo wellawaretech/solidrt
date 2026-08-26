@@ -14,6 +14,11 @@ impl Context {
     if !changes.insert(id) {
       return;
     }
+    // A draw target's depth texture changes with its color: the same
+    // render writes both.
+    if let Some(depth) = self.depth_of(id) {
+      changes.insert(depth);
+    }
     content_closure(&self.shader_sources.borrow(), &self.manual_targets.borrow(), id, &mut changes);
   }
 

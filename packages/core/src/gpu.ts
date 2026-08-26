@@ -101,7 +101,11 @@ export type { BufferId, DrawId, ProgramId, RenderPipelineId, ShaderStageId, Text
 // resize in place at a stable id (so `<texture src>` and sampler bindings
 // stay valid); because the id survives, the owner-scoped auto-free
 // registered at creation keeps working and no re-registration is needed.
+// depthTexture(target) names a draw target's sampleable depth (created with
+// `depth: "texture"`): a sampler-only id bound like any texture, owned by
+// the target - no auto-free of its own, it dies with the target's.
 export {
+  depthTexture,
   destroyTexture,
   endBufferWrite,
   resizeTexture,
@@ -368,7 +372,10 @@ export function createShaderTarget(
  * `setDrawParams` / `setDrawTextures` / `setDrawRange`. `depth: true` gives
  * the target the depth storage all entries share (cross-entry occlusion);
  * whether an entry tests/writes it stays pipeline state, and a depth-testing
- * pipeline into a depthless target throws at `addDraw`.
+ * pipeline into a depthless target throws at `addDraw`. `depth: "texture"`
+ * makes that storage a sampleable depth texture with its own id,
+ * `depthTexture(target)` - the shadow-map / depth-effect input; not with
+ * `samples`.
  *
  * `params` seeds the target's SHARED params - values every entry reads,
  * written once per target instead of once per entry (a camera's
@@ -395,7 +402,7 @@ export function createDrawTarget(
   height: number,
   params?: gpu.ShaderParams | null,
   opts?: {
-    depth?: boolean
+    depth?: boolean | "texture"
     textures?: gpu.TextureBindings
     clearColor?: [number, number, number, number]
     render?: "auto" | "manual"

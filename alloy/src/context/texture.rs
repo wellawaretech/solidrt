@@ -132,6 +132,9 @@ impl Context {
   /// larger buffer holding multiple frames; `offset` selects the frame start.
   /// The frame must match the texture's dimensions exactly.
   pub fn update_texture(&self, id: u64, pixels: &[u8], offset: usize) -> Result<(), String> {
+    if let Some(owner) = self.depth_owner(id) {
+      return Err(format!("texture {id} is target {owner}'s depth texture: render-written, not uploadable"));
+    }
     let entry = self.textures.get(id).ok_or_else(|| format!("texture {id} not found"))?;
     let (width, height, format) = (entry.width(), entry.height(), entry.format);
     let frame_size = (width as usize) * (height as usize) * format.bytes_per_pixel();
@@ -162,6 +165,9 @@ impl Context {
     };
     if self.targets.borrow().contains_key(&id) {
       return Err(format!("texture {id} is a render target; resize it with setTargetSize"));
+    }
+    if let Some(owner) = self.depth_owner(id) {
+      return Err(format!("texture {id} is target {owner}'s depth texture; it resizes with the target (setTargetSize)"));
     }
     // Sampling and format are properties of the id and survive the id-stable
     // resize, as does the label (None here = keep, applied raster-side).
@@ -305,9 +311,17 @@ impl Context {
       return Err(format!("target {id} not found"));
     }
     self.gpu_limits().check_texture_size(width, height)?;
-    let impeller = self.rpc(|reply| RasterCmd::ResizeShaderTexture { id, width, height, reply })??;
+    let handles = self.rpc(|reply| RasterCmd::ResizeShaderTexture { id, width, height, reply })??;
     let sampler = self.textures.get(id).map(|e| e.sampler()).unwrap_or_default();
-    self.textures.insert(id, TextureEntry { impeller, width, height, sampler, format: TextureFormat::Rgba8 });
+    self.textures.insert(id, TextureEntry { impeller: handles.color, width, height, sampler, format: TextureFormat::Rgba8 });
+    // A depth texture is re-registered at its own stable id with the fresh
+    // name the resize allocated (the color rule, applied to depth).
+    if let (Some(depth_id), Some(impeller)) = (self.depth_of(id), handles.depth) {
+      self.textures.insert(
+        depth_id,
+        TextureEntry { impeller, width, height, sampler: SamplerState::DEPTH, format: TextureFormat::Depth24 },
+      );
+    }
     // The storage is regenerated whatever the kind, manual included, so this
     // notes unconditionally (unlike the pure-mutation paths).
     self.note_content(id);
@@ -323,6 +337,9 @@ impl Context {
   /// non-manual destination (the flush owns those contents), a size
   /// mismatch, or src == dst.
   pub fn copy_texture(&self, src: u64, dst: u64) -> Result<(), String> {
+    if let Some(owner) = self.depth_owner(src) {
+      return Err(format!("texture {src} is target {owner}'s depth texture: sampler-only, sample it from a pass instead"));
+    }
     let src_entry = self.textures.get(src).ok_or_else(|| format!("texture {src} not found"))?;
     let dst_entry = self.textures.get(dst).ok_or_else(|| format!("texture {dst} not found"))?;
     if !self.manual_targets.borrow().contains(&dst) {
@@ -406,6 +423,12 @@ impl Context {
   /// raster-side resources (for shaders: GL program and FBO) are gone, while
   /// in-flight display lists keep the Impeller texture alive until they drop.
   pub fn destroy_texture(&self, id: u64) {
+    // A depth id is owned by its target and reclaimed with it (gated
+    // app-side too; backstop).
+    if let Some(owner) = self.depth_owner(id) {
+      log::warn!("[alloy] destroy of depth texture {id} ignored: it dies with target {owner}");
+      return;
+    }
     let mut pending = self.pending_destroys.borrow_mut();
     if !pending.contains(&id) {
       pending.push(id);
@@ -447,8 +470,16 @@ impl Context {
       let bound = bound_sources(&self.shader_sources.borrow());
       let before = pending.len();
       pending.retain(|&id| {
-        if referenced.contains(&id) || bound.contains(&id) {
+        // A displayed or bound depth texture keeps its owner alive: the
+        // depth is the target's storage, not a texture of its own (bindings
+        // already record the owner, see source_of).
+        let depth = self.depth_of(id);
+        if referenced.contains(&id) || bound.contains(&id) || depth.is_some_and(|d| referenced.contains(&d)) {
           return true;
+        }
+        if let Some(d) = depth {
+          self.textures.remove(d);
+          self.depth_ids.borrow_mut().remove(&d);
         }
         self.textures.remove(id);
         self.targets.borrow_mut().remove(&id);

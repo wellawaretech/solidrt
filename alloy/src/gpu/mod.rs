@@ -26,7 +26,7 @@ pub use resources::{
   GpuBufferInfo, GpuPipelineInfo, GpuProgramInfo, GpuRenderPipelineInfo, GpuResources, GpuTextureInfo,
   GpuWindowShaderInfo,
 };
-pub use spec::{DrawSpec, NodeShader, PipelineSpec, TargetSpec, WindowShader};
+pub use spec::{DepthStorage, DrawSpec, NodeShader, PipelineSpec, TargetSpec, WindowShader};
 pub use target::{create_layer_target, EntryBuffers, ShaderTexture};
 pub use texture::{
   generate_mipmap, GpuTexture, SamplerCache, SamplerFilter, SamplerOverride, SamplerState, TextureEntry,

@@ -13,6 +13,7 @@ use super::buffer::{release_buffer, GpuBuffer};
 use super::pass::{run_pass, PassDraw, PassInput, ResolvedDraw};
 use super::program::{release_pipeline, release_program, RenderPipeline, ShaderProgram};
 use super::resources::GpuDrawInfo;
+use super::spec::DepthStorage;
 use super::vocab::{
   blend_name, cull_name, merge_bindings, validate_order, AttrFormat, DrawRange, IndexFormat, ParamValue, PipelineDesc, TextureBinding,
 };
@@ -92,9 +93,10 @@ pub(super) struct MeshState {
   pub(super) shared_bindings: Vec<TextureBinding>,
   /// Present when the target owns depth storage: explicit on a draw target
   /// (`create_draw_target`'s depth option), derived from the pipeline on the
-  /// single-draw creates. The renderbuffer stays private to the FBO (never
-  /// adopted into Impeller).
-  depth: Option<glow::Renderbuffer>,
+  /// single-draw creates. A renderbuffer stays private to the FBO; a depth
+  /// texture is registered under its own id by the owner (see
+  /// `DepthAttachment`).
+  depth: Option<DepthAttachment>,
   /// Multisampled storage when the target was created with `samples >= 2`
   /// and the device granted it; None = single-sample. See `Msaa`.
   msaa: Option<Msaa>,
@@ -219,21 +221,65 @@ unsafe fn create_target_texture(gl: &glow::Context, width: u32, height: u32) -> 
   Ok(target)
 }
 
+/// A mesh target's depth storage (see `DepthStorage`). `Buffer` is the
+/// private renderbuffer, deleted with the target. `Texture` is a
+/// `DEPTH_COMPONENT24` texture that the owner adopts into Impeller under its
+/// own registry id exactly like the color target, so it follows the color
+/// target's ownership rule: never deleted here once registered (Impeller
+/// deletes the name when the adopted handle drops), and replaced by a fresh
+/// name on resize so in-flight users of the old one stay valid.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum DepthAttachment {
+  Buffer(glow::Renderbuffer),
+  Texture(glow::Texture),
+}
+
+/// A depth texture at `width` x `height`: `DEPTH_COMPONENT24`, NEAREST and
+/// clamped - a depth texture without a comparison mode is only
+/// sampling-complete at NEAREST (ES 3.0), and its registry entry declares
+/// the same, so the sampler object a pass binds agrees with these. Restores
+/// the texture binding it touches.
+unsafe fn create_depth_texture(gl: &glow::Context, width: u32, height: u32) -> Result<glow::Texture, String> {
+  let prev_tex = gl.get_parameter_i32(glow::TEXTURE_BINDING_2D);
+  let tex = gl.create_texture().map_err(|e| format!("glGenTextures (depth) failed: {e}"))?;
+  gl.bind_texture(glow::TEXTURE_2D, Some(tex));
+  gl.tex_image_2d(
+    glow::TEXTURE_2D,
+    0,
+    glow::DEPTH_COMPONENT24 as i32,
+    width as i32,
+    height as i32,
+    0,
+    glow::DEPTH_COMPONENT,
+    glow::UNSIGNED_INT,
+    glow::PixelUnpackData::Slice(None),
+  );
+  gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MIN_FILTER, glow::NEAREST as i32);
+  gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MAG_FILTER, glow::NEAREST as i32);
+  gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_WRAP_S, glow::CLAMP_TO_EDGE as i32);
+  gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_WRAP_T, glow::CLAMP_TO_EDGE as i32);
+  gl.bind_texture(glow::TEXTURE_2D, prev_texture(prev_tex));
+  Ok(tex)
+}
+
 /// Everything a mesh target draws into: the texture-owning FBO, optional
 /// depth storage, optional multisampling.
 struct MeshStorage {
   target: glow::Texture,
   fbo: glow::Framebuffer,
-  depth: Option<glow::Renderbuffer>,
+  depth: Option<DepthAttachment>,
   msaa: Option<Msaa>,
 }
 
 impl MeshStorage {
   /// Delete every GL name this storage owns (the create-path rollback; a
-  /// live target frees through `ShaderTexture::destroy` instead).
+  /// live target frees through `ShaderTexture::destroy` instead). The depth
+  /// texture is not yet adopted on this path, so it is ours to delete.
   unsafe fn delete(self, gl: &glow::Context) {
-    if let Some(rb) = self.depth {
-      gl.delete_renderbuffer(rb);
+    match self.depth {
+      Some(DepthAttachment::Buffer(rb)) => gl.delete_renderbuffer(rb),
+      Some(DepthAttachment::Texture(tex)) => gl.delete_texture(tex),
+      None => {}
     }
     if let Some(Msaa::Explicit { fbo, color, .. }) = self.msaa {
       gl.delete_framebuffer(fbo);
@@ -257,25 +303,37 @@ fn create_mesh_storage(
   gl: &glow::Context,
   width: u32,
   height: u32,
-  depth: bool,
+  depth: DepthStorage,
   samples: u32,
 ) -> Result<MeshStorage, String> {
+  if depth == DepthStorage::Texture && samples >= 2 {
+    // Gated UI-side; backstopped here because a multisampled depth texture
+    // would silently be unsampleable.
+    return Err("a depth texture cannot be multisampled (samples must be 1 with depth \"texture\")".to_string());
+  }
   unsafe {
     let prev_fbo = gl.get_parameter_i32(glow::FRAMEBUFFER_BINDING);
     let (target, fbo) = create_target(gl, width, height)?;
-    let depth_rb = if depth {
-      match gl.create_renderbuffer() {
-        Ok(rb) => Some(rb),
+    let depth = match depth {
+      DepthStorage::None => None,
+      DepthStorage::Buffer => match gl.create_renderbuffer() {
+        Ok(rb) => Some(DepthAttachment::Buffer(rb)),
         Err(e) => {
           gl.delete_framebuffer(fbo);
           gl.delete_texture(target);
           return Err(format!("glGenRenderbuffers failed: {e}"));
         }
-      }
-    } else {
-      None
+      },
+      DepthStorage::Texture => match create_depth_texture(gl, width, height) {
+        Ok(tex) => Some(DepthAttachment::Texture(tex)),
+        Err(e) => {
+          gl.delete_framebuffer(fbo);
+          gl.delete_texture(target);
+          return Err(e);
+        }
+      },
     };
-    let mut storage = MeshStorage { target, fbo, depth: depth_rb, msaa: None };
+    let mut storage = MeshStorage { target, fbo, depth, msaa: None };
 
     let max_samples = gl.get_parameter_i32(glow::MAX_SAMPLES).max(1);
     let samples = (samples as i32).min(max_samples);
@@ -334,7 +392,7 @@ unsafe fn attach_storage(gl: &glow::Context, storage: &MeshStorage, width: u32, 
   let explicit = match &storage.msaa {
     None => {
       gl.framebuffer_texture_2d(glow::FRAMEBUFFER, glow::COLOR_ATTACHMENT0, glow::TEXTURE_2D, Some(storage.target), 0);
-      if let Some(rb) = storage.depth {
+      if let Some(DepthAttachment::Buffer(rb)) = storage.depth {
         gl.bind_renderbuffer(glow::RENDERBUFFER, Some(rb));
         gl.renderbuffer_storage(glow::RENDERBUFFER, glow::DEPTH_COMPONENT24, w, h);
       }
@@ -349,7 +407,7 @@ unsafe fn attach_storage(gl: &glow::Context, storage: &MeshStorage, width: u32, 
         0,
         *samples,
       );
-      if let Some(rb) = storage.depth {
+      if let Some(DepthAttachment::Buffer(rb)) = storage.depth {
         gl.bind_renderbuffer(glow::RENDERBUFFER, Some(rb));
         (fns.renderbuffer_storage_multisample)(glow::RENDERBUFFER, *samples, glow::DEPTH_COMPONENT24, w, h);
       }
@@ -368,15 +426,23 @@ unsafe fn attach_storage(gl: &glow::Context, storage: &MeshStorage, width: u32, 
       gl.bind_renderbuffer(glow::RENDERBUFFER, Some(*color));
       gl.renderbuffer_storage_multisample(glow::RENDERBUFFER, *samples, glow::RGBA8, w, h);
       gl.framebuffer_renderbuffer(glow::FRAMEBUFFER, glow::COLOR_ATTACHMENT0, glow::RENDERBUFFER, Some(*color));
-      if let Some(rb) = storage.depth {
+      if let Some(DepthAttachment::Buffer(rb)) = storage.depth {
         gl.bind_renderbuffer(glow::RENDERBUFFER, Some(rb));
         gl.renderbuffer_storage_multisample(glow::RENDERBUFFER, *samples, glow::DEPTH_COMPONENT24, w, h);
       }
       true
     }
   };
-  if let Some(rb) = storage.depth {
-    gl.framebuffer_renderbuffer(glow::FRAMEBUFFER, glow::DEPTH_ATTACHMENT, glow::RENDERBUFFER, Some(rb));
+  match storage.depth {
+    Some(DepthAttachment::Buffer(rb)) => {
+      gl.framebuffer_renderbuffer(glow::FRAMEBUFFER, glow::DEPTH_ATTACHMENT, glow::RENDERBUFFER, Some(rb));
+    }
+    // Sized at creation (never respecified: a resize brings a new name), so
+    // attaching is all there is to do.
+    Some(DepthAttachment::Texture(tex)) => {
+      gl.framebuffer_texture_2d(glow::FRAMEBUFFER, glow::DEPTH_ATTACHMENT, glow::TEXTURE_2D, Some(tex), 0);
+    }
+    None => {}
   }
   gl.bind_renderbuffer(glow::RENDERBUFFER, prev_renderbuffer(prev_rb));
   let status = gl.check_framebuffer_status(glow::FRAMEBUFFER);
@@ -520,7 +586,7 @@ pub fn create_layer_target(
   height: u32,
   clear: [f32; 4],
 ) -> Result<(glow::Texture, glow::Framebuffer), String> {
-  let MeshStorage { target, fbo, .. } = create_mesh_storage(gl, width, height, false, 1)?;
+  let MeshStorage { target, fbo, .. } = create_mesh_storage(gl, width, height, DepthStorage::None, 1)?;
   unsafe {
     // Scissor, color mask, and clear color are Impeller-cached state on this
     // shared context: force a full clear and put all three back.
@@ -572,7 +638,7 @@ impl ShaderTexture {
     if program.is_pipeline() {
       return Err((program, "program is a pipeline; the target needs a render pipeline".to_string()));
     }
-    let MeshStorage { target, fbo, .. } = match create_mesh_storage(gl, width, height, false, 1) {
+    let MeshStorage { target, fbo, .. } = match create_mesh_storage(gl, width, height, DepthStorage::None, 1) {
       Ok(storage) => storage,
       Err(e) => return Err((program, e)),
     };
@@ -645,7 +711,8 @@ impl ShaderTexture {
     if let Err(e) = check_entry_buffers(&pipeline.desc, &buffers) {
       return Err((pipeline, e));
     }
-    let storage = match create_mesh_storage(gl, width, height, pipeline.desc.depth.is_some(), samples) {
+    let depth = if pipeline.desc.depth.is_some() { DepthStorage::Buffer } else { DepthStorage::None };
+    let storage = match create_mesh_storage(gl, width, height, depth, samples) {
       Ok(storage) => storage,
       Err(e) => return Err((pipeline, e)),
     };
@@ -694,7 +761,7 @@ impl ShaderTexture {
     gl: &glow::Context,
     width: u32,
     height: u32,
-    depth: bool,
+    depth: DepthStorage,
     clear_color: [f32; 4],
     samples: u32,
   ) -> Result<Self, String> {
@@ -860,6 +927,17 @@ impl ShaderTexture {
   /// Whether the target owns depth storage.
   pub fn has_depth(&self) -> bool {
     self.mesh().is_some_and(|m| m.depth.is_some())
+  }
+
+  /// The GL name of the target's depth TEXTURE (`DepthStorage::Texture`);
+  /// None for renderbuffer depth and depthless targets. What the owner
+  /// registers under the depth id, and re-registers after every resize (a
+  /// resize allocates a fresh name, see `resize`).
+  pub fn depth_texture(&self) -> Option<glow::Texture> {
+    match self.mesh().and_then(|m| m.depth) {
+      Some(DepthAttachment::Texture(tex)) => Some(tex),
+      _ => None,
+    }
   }
 
   /// The effective multisample count (1 = single-sample), after clamping
@@ -1190,10 +1268,25 @@ impl ShaderTexture {
       // shader keeps rendering at its previous size. The storage view borrows
       // this target's GL names (no ownership: nothing is deleted through it).
       let mesh = self.mesh();
+      let old_depth = mesh.and_then(|m| m.depth);
+      // A depth texture follows the color target's rule: a fresh name at the
+      // new size (the old one is Impeller-owned once adopted, so it is
+      // neither respecified nor deleted here). Renderbuffer depth is resized
+      // in place by attach_storage.
+      let depth = match old_depth {
+        Some(DepthAttachment::Texture(_)) => match create_depth_texture(gl, width, height) {
+          Ok(tex) => Some(DepthAttachment::Texture(tex)),
+          Err(e) => {
+            gl.delete_texture(target);
+            return Err(e);
+          }
+        },
+        other => other,
+      };
       let mut storage = MeshStorage {
         target,
         fbo: self.fbo,
-        depth: mesh.and_then(|m| m.depth),
+        depth,
         msaa: mesh.and_then(|m| m.msaa.as_ref()).map(|m| match m {
           Msaa::InTile { fns, samples } => Msaa::InTile { fns, samples: *samples },
           Msaa::Explicit { fbo, color, samples } => Msaa::Explicit { fbo: *fbo, color: *color, samples: *samples },
@@ -1202,6 +1295,7 @@ impl ShaderTexture {
       let result = attach_storage(gl, &storage, width, height);
       if let Err(e) = &result {
         storage.target = self.target;
+        storage.depth = old_depth;
         if let Err(rollback) = attach_storage(gl, &storage, self.width, self.height) {
           log::error!("[shader] resize rollback failed ({rollback}) after: {e}");
         }
@@ -1210,11 +1304,17 @@ impl ShaderTexture {
       gl.bind_framebuffer(glow::FRAMEBUFFER, prev_framebuffer(prev_fbo));
       if let Err(e) = result {
         gl.delete_texture(target);
+        if let (Some(DepthAttachment::Texture(tex)), true) = (depth, depth != old_depth) {
+          gl.delete_texture(tex);
+        }
         return Err(e);
       }
       self.target = target;
       self.width = width;
       self.height = height;
+      if let TargetKind::Mesh(m) = &mut self.kind {
+        m.depth = depth;
+      }
       Ok(())
     }
   }
@@ -1223,8 +1323,10 @@ impl ShaderTexture {
   /// every entry's VAO), and drop its uses of pipelines, programs, and vertex
   /// buffers - which delete the underlying GL objects only when nothing else
   /// (a registry, another target) still holds them. The target texture is NOT
-  /// deleted here: Impeller owns it via the adopted Texture handle in the
-  /// TextureRegistry, and that handle is responsible for deletion.
+  /// deleted here, and neither is a depth texture: Impeller owns both via
+  /// the adopted Texture handles in the TextureRegistry, and those handles
+  /// are responsible for deletion (a registration that never adopted the
+  /// depth texture deletes it itself, see the raster owner).
   pub fn destroy(self, gl: &glow::Context) {
     match self.kind {
       TargetKind::Fragment { program, .. } => release_program(gl, program),
@@ -1234,7 +1336,7 @@ impl ShaderTexture {
           release_pipeline(gl, entry.pipeline);
           release_entry_buffers(gl, entry.buffers);
         }
-        if let Some(rb) = mesh.depth {
+        if let Some(DepthAttachment::Buffer(rb)) = mesh.depth {
           unsafe { gl.delete_renderbuffer(rb) };
         }
         if let Some(Msaa::Explicit { fbo, color, .. }) = mesh.msaa {

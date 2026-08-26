@@ -73,6 +73,13 @@ pub struct Context {
   // test - the flush never renders a manual target, so a cycle is only a
   // hazard when every member is flush-rendered (see set_target_textures).
   manual_targets: RefCell<HashSet<u64>>,
+  // Depth texture id -> the draw target owning it (create_draw_target with
+  // DepthStorage::Texture). A depth id is a registered, sampler-only id:
+  // for every graph question (edges, cycles, content propagation,
+  // reclamation) it stands for its owner (see source_of), and the paths
+  // that would treat it as a texture of its own (destroy, readback, copy)
+  // consult this map to refuse.
+  depth_ids: RefCell<HashMap<u64, u64>>,
   // Texture ids whose pixels changed (or will, at the next dirty flush)
   // behind an unchanged id since the last drain: target mutations, uploads,
   // copies, and everything downstream through the sampler graph (see
@@ -172,6 +179,7 @@ impl Context {
       targets: RefCell::new(HashMap::new()),
       shader_sources: RefCell::new(HashMap::new()),
       manual_targets: RefCell::new(HashSet::new()),
+      depth_ids: RefCell::new(HashMap::new()),
       content_changes: RefCell::new(HashSet::new()),
       program_uniforms: RefCell::new(HashMap::new()),
       program_attributes: RefCell::new(HashMap::new()),
@@ -281,6 +289,40 @@ impl Context {
   /// bookkeeping (draw state, layout, bindings, current params - the most
   /// recent writes, which the next flush renders with). Sorted by id for
   /// stable output.
+  pub fn depth_owner(&self, id: u64) -> Option<u64> {
+    self.depth_ids.borrow().get(&id).copied()
+  }
+
+  /// The depth texture id of draw target `target`, when it has one.
+  pub(super) fn depth_of(&self, target: u64) -> Option<u64> {
+    self.targets.borrow().get(&target).and_then(|m| m.entries.as_ref()).and_then(|l| l.depth_texture)
+  }
+
+  /// What the sampler graph records for a binding to `id`: a depth id
+  /// stands for its owner, the target whose render writes it, so every
+  /// UI-side walk sees target-to-target edges. The binding itself keeps the
+  /// raw id - the raster side resolves that to the depth GL name.
+  pub(super) fn source_of(&self, id: u64) -> u64 {
+    self.depth_owner(id).unwrap_or(id)
+  }
+
+  /// A binding to a depth id may not ask for linear filtering: without a
+  /// comparison mode a depth texture is only sampling-complete at NEAREST
+  /// (ES 3.0), so the override would read zero everywhere - a silent
+  /// all-lit shadow map. Rejected here, at the call site, on every bind
+  /// path.
+  pub(super) fn check_depth_binding(&self, binding: &crate::gpu::TextureBinding) -> Result<(), String> {
+    if binding.sampler.filter == Some(crate::gpu::SamplerFilter::Linear) {
+      if let Some(owner) = self.depth_owner(binding.id) {
+        return Err(format!(
+          "sampler '{}' binds target {owner}'s depth texture with filter \"linear\": depth samples only at nearest (filter in the shader instead)",
+          binding.name
+        ));
+      }
+    }
+    Ok(())
+  }
+
   pub fn gpu_resources(&self) -> GpuResources {
     self.rpc(|reply| RasterCmd::Resources { reply }).unwrap_or_else(|_| GpuResources {
       textures: Vec::new(),

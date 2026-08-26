@@ -4,7 +4,7 @@ use std::rc::Rc;
 use crate::gpu::{
   instance_strides, resolve_draw_range, validate_draw_range, validate_instance_slots, validate_order,
   validate_param_if_declared, validate_params,
-  validate_texture_bindings, vertex_stride, BufferIds, DrawBounds, DrawSpec, DrawUpdate, ParamValue, PipelineSpec,
+  validate_texture_bindings, vertex_stride, BufferIds, DepthStorage, DrawBounds, DrawSpec, DrawUpdate, ParamValue, PipelineSpec,
   SamplerState, TargetSpec, TextureBinding, TextureEntry, TextureFormat, UniformKind, UniformTable, WindowShader,
   MAX_INSTANCE_SLOTS,
 };
@@ -36,6 +36,9 @@ impl Context {
     let limits = self.gpu_limits();
     limits.check_texture_size(width, height)?;
     limits.check_texture_units(textures.len())?;
+    for b in textures {
+      self.check_depth_binding(b)?;
+    }
     let id = self.textures.allocate_id();
     let (impeller, uniforms) = self.rpc(|reply| RasterCmd::CreateShaderTexture {
       id,
@@ -59,7 +62,7 @@ impl Context {
         entries: None,
       },
     );
-    self.shader_sources.borrow_mut().insert(id, textures.iter().map(|b| ((0, b.name.clone()), b.id)).collect());
+    self.shader_sources.borrow_mut().insert(id, textures.iter().map(|b| ((0, b.name.clone()), self.source_of(b.id))).collect());
     Ok(id)
   }
 
@@ -78,11 +81,16 @@ impl Context {
     let current_count = current.map_or(0, |c| c.keys().filter(|(e, _)| *e == entry).count());
     let added = textures.iter().filter(|b| current.is_none_or(|c| !c.contains_key(&(entry, b.name.clone())))).count();
     limits.check_texture_units(current_count + added)?;
-    for TextureBinding { name, id: src_id, .. } in textures {
+    for binding in textures {
+      let TextureBinding { name, id: src_id, .. } = binding;
       if self.textures.get(*src_id).is_none() {
         return Err(format!("texture {src_id} (sampler '{name}') not found"));
       }
-      if *src_id == id {
+      self.check_depth_binding(binding)?;
+      // A depth id stands for its owner in every graph question: binding a
+      // target's own depth is the same feedback as binding its color.
+      let src = self.source_of(*src_id);
+      if src == id {
         return Err(format!("sampler '{name}' binds shader texture {id} to its own target (same-pass feedback)"));
       }
       // The flush-rendered subgraph is acyclic, and this call only changes
@@ -93,7 +101,7 @@ impl Context {
       // through it has a manual member (its direct self-bind was rejected
       // above). The walk never needs `id`'s own edges (it stops on reaching
       // `id`), so the pre-update graph is the right one.
-      if !manual.contains(&id) && samples_transitively(&sources, &manual, *src_id, id) {
+      if !manual.contains(&id) && samples_transitively(&sources, &manual, src, id) {
         return Err(format!("sampler '{name}' would create a sampling cycle back to shader texture {id}"));
       }
     }
@@ -110,6 +118,9 @@ impl Context {
     let limits = self.gpu_limits();
     limits.check_texture_size(spec.target.width, spec.target.height)?;
     limits.check_texture_units(spec.entry.textures.len())?;
+    for b in &spec.entry.textures {
+      self.check_depth_binding(b)?;
+    }
     limits.check_vertex_attribs(spec.pipeline.attributes.len() + spec.pipeline.instance_attributes.len())?;
     validate_instance_slots(&spec.pipeline.instance_attributes)?;
     validate_load(&spec.target)?;
@@ -122,7 +133,7 @@ impl Context {
     let draw = spec.entry.draw;
     let buffers = spec.entry.buffer_ids();
     let sources: HashMap<(u64, String), u64> =
-      spec.entry.textures.iter().map(|b| ((0, b.name.clone()), b.id)).collect();
+      spec.entry.textures.iter().map(|b| ((0, b.name.clone()), self.source_of(b.id))).collect();
     let (impeller, uniforms) = self.rpc(|reply| RasterCmd::CreatePipelineTexture { id, spec, reply })??;
     self.textures.insert(id, TextureEntry { impeller, width, height, sampler, format: TextureFormat::Rgba8 });
     self
@@ -209,6 +220,9 @@ impl Context {
     let limits = self.gpu_limits();
     limits.check_texture_size(spec.width, spec.height)?;
     limits.check_texture_units(entry.textures.len())?;
+    for b in &entry.textures {
+      self.check_depth_binding(b)?;
+    }
     let (uniforms, stride, instance_strides) = match self.pipeline_mirrors.borrow().get(&pipeline) {
       Some(mirror) => (mirror.uniforms.clone(), mirror.stride, mirror.instance_strides),
       None => return Err(format!("pipeline {pipeline} not found")),
@@ -221,7 +235,7 @@ impl Context {
     let manual = spec.manual;
     let draw = entry.draw;
     let buffers = entry.buffer_ids();
-    let sources: HashMap<(u64, String), u64> = entry.textures.iter().map(|b| ((0, b.name.clone()), b.id)).collect();
+    let sources: HashMap<(u64, String), u64> = entry.textures.iter().map(|b| ((0, b.name.clone()), self.source_of(b.id))).collect();
     let impeller = self.rpc(|reply| RasterCmd::CreateShaderTarget { id, spec, entry, reply })??;
     self.textures.insert(id, TextureEntry { impeller, width, height, sampler, format: TextureFormat::Rgba8 });
     self.targets.borrow_mut().insert(id, TargetMirror { uniforms, draw: Some(draw), bounds, buffers, entries: None });
@@ -240,14 +254,32 @@ impl Context {
   /// a render is the clear alone. Entry order is draw order; the purity
   /// contract is unchanged - the list is input data, so a flush-rendered
   /// draw target re-renders whenever its entries or their inputs change.
-  pub fn create_draw_target(&self, spec: TargetSpec, depth: bool) -> Result<u64, String> {
+  ///
+  /// `DepthStorage::Texture` registers the depth under an id of its own
+  /// (see `depth_texture`), allocated here beside the color id and adopted
+  /// with it; the two live and die together.
+  pub fn create_draw_target(&self, spec: TargetSpec, depth: DepthStorage) -> Result<u64, String> {
     self.gpu_limits().check_texture_size(spec.width, spec.height)?;
     validate_load(&spec)?;
+    if depth == DepthStorage::Texture && spec.samples >= 2 {
+      return Err(
+        "depth \"texture\" cannot be multisampled (a multisampled depth texture is not sampleable); use samples 1"
+          .to_string(),
+      );
+    }
     let id = self.textures.allocate_id();
+    let depth_id = (depth == DepthStorage::Texture).then(|| self.textures.allocate_id());
     let (width, height, sampler) = (spec.width, spec.height, spec.sampler);
     let manual = spec.manual;
-    let impeller = self.rpc(|reply| RasterCmd::CreateDrawTarget { id, spec, depth, reply })??;
-    self.textures.insert(id, TextureEntry { impeller, width, height, sampler, format: TextureFormat::Rgba8 });
+    let handles = self.rpc(|reply| RasterCmd::CreateDrawTarget { id, depth_id, spec, depth, reply })??;
+    self.textures.insert(id, TextureEntry { impeller: handles.color, width, height, sampler, format: TextureFormat::Rgba8 });
+    if let (Some(depth_id), Some(impeller)) = (depth_id, handles.depth) {
+      self.textures.insert(
+        depth_id,
+        TextureEntry { impeller, width, height, sampler: SamplerState::DEPTH, format: TextureFormat::Depth24 },
+      );
+      self.depth_ids.borrow_mut().insert(depth_id, id);
+    }
     self.targets.borrow_mut().insert(
       id,
       TargetMirror {
@@ -255,7 +287,7 @@ impl Context {
         draw: None,
         bounds: DrawBounds::default(),
         buffers: BufferIds::default(),
-        entries: Some(DrawListMirror { depth, next_draw: 1, entries: HashMap::new() }),
+        entries: Some(DrawListMirror { depth: depth.is_some(), depth_texture: depth_id, next_draw: 1, entries: HashMap::new() }),
       },
     );
     self.shader_sources.borrow_mut().insert(id, HashMap::new());
@@ -263,6 +295,20 @@ impl Context {
       self.manual_targets.borrow_mut().insert(id);
     }
     Ok(id)
+  }
+
+  /// The depth texture id of draw target `target` (created with
+  /// `DepthStorage::Texture`): a sampler-only id, stable for the target's
+  /// life (resizes follow the color). Bind it like any texture; it samples
+  /// as window depth in `.r`. Errs for a non-draw target and for a target
+  /// without texture depth.
+  pub fn depth_texture(&self, target: u64) -> Result<u64, String> {
+    let targets = self.targets.borrow();
+    let mirror = targets.get(&target).ok_or_else(|| format!("target {target} not found"))?;
+    let Some(list) = mirror.entries.as_ref() else {
+      return Err(format!("target {target} is not a draw target (create it with createDrawTarget)"));
+    };
+    list.depth_texture.ok_or_else(|| format!("target {target} has no depth texture (create it with depth: \"texture\")"))
   }
 
   /// Add a draw entry to a draw target: `entry.pipeline` draws
@@ -326,7 +372,7 @@ impl Context {
     let mut sources = self.shader_sources.borrow_mut();
     let record = sources.entry(target).or_default();
     for b in &entry.textures {
-      record.insert((draw_id, b.name.clone()), b.id);
+      record.insert((draw_id, b.name.clone()), self.source_of(b.id));
     }
     drop(sources);
     self.send(RasterCmd::AddDraw { target, draw: draw_id, entry, before });
@@ -475,7 +521,7 @@ impl Context {
         let mut sources = self.shader_sources.borrow_mut();
         let record = sources.entry(target).or_default();
         for b in textures {
-          record.insert((0, b.name.clone()), b.id);
+          record.insert((0, b.name.clone()), self.source_of(b.id));
         }
         drop(sources);
         self.send(RasterCmd::UpdateShaderTextures { id: target, textures: textures.to_vec() });
@@ -523,7 +569,7 @@ impl Context {
     let mut sources = self.shader_sources.borrow_mut();
     let record = sources.entry(target).or_default();
     for b in textures {
-      record.insert((0, b.name.clone()), b.id);
+      record.insert((0, b.name.clone()), self.source_of(b.id));
     }
     drop(sources);
     self.send(RasterCmd::UpdateTargetTextures { target, textures: textures.to_vec() });
@@ -567,7 +613,7 @@ impl Context {
     let mut sources = self.shader_sources.borrow_mut();
     let record = sources.entry(target).or_default();
     for b in textures {
-      record.insert((draw, b.name.clone()), b.id);
+      record.insert((draw, b.name.clone()), self.source_of(b.id));
     }
     drop(sources);
     self.send(RasterCmd::UpdateDrawTextures { target, draw, textures: textures.to_vec() });
@@ -714,6 +760,9 @@ impl Context {
       let uniforms = programs.get(&ws.program).ok_or_else(|| format!("program {} not found", ws.program))?;
       validate_params(uniforms, &ws.params)?;
       validate_texture_bindings(uniforms, &ws.textures)?;
+      for binding in &ws.textures {
+        self.check_depth_binding(binding)?;
+      }
     }
     self.send(RasterCmd::SetWindowShader { shader });
     Ok(())
