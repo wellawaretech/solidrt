@@ -71,12 +71,13 @@ impl Context {
     self.spatial.borrow_mut()
   }
 
-  /// Bind (or with None unbind) a node's draw sink. Validated like the
-  /// entry path: the target/draw must exist and the entry's program must
-  /// take `uModel` (and `uNormal` when `normal`), so a bad binding throws
-  /// at its call site instead of failing silently at every flush.
-  pub fn spatial_bind(&self, node: NodeId, sink: Option<DrawSink>) -> Result<(), String> {
-    if let Some(sink) = sink {
+  /// Bind a node's draw sink on the sink's target (replacing the one it
+  /// had there). Validated like the entry path: the target/draw must
+  /// exist and the entry's program must take `uModel` (and `uNormal` when
+  /// `normal`), so a bad binding throws at its call site instead of
+  /// failing silently at every flush.
+  pub fn spatial_bind(&self, node: NodeId, sink: DrawSink) -> Result<(), String> {
+    {
       let targets = self.targets.borrow();
       let entry = entry_mirror(&targets, sink.target, sink.draw)?;
       let identity = ParamValue::Array(crate::spatial::IDENTITY.to_vec());
@@ -86,21 +87,31 @@ impl Context {
       }
       validate_params(&entry.uniforms, &probe)?;
     }
-    self.spatial.borrow_mut().set_sink(node, sink)
+    self.spatial.borrow_mut().bind_sink(node, sink)
   }
 
-  /// Bind (or with None unbind) a node's shared-slot sink; validated
+  /// Remove a node's draw sink on `target`, or every draw sink with None.
+  pub fn spatial_unbind(&self, node: NodeId, target: Option<u64>) -> Result<(), String> {
+    self.spatial.borrow_mut().unbind_sink(node, target)
+  }
+
+  /// Bind a node's shared-slot sink on the sink's target; validated
   /// against the target (it must exist and be a draw target, whose shared
   /// params accept any name).
-  pub fn spatial_bind_slot(&self, node: NodeId, sink: Option<SharedSlotSink>) -> Result<(), String> {
-    if let Some(sink) = &sink {
+  pub fn spatial_bind_slot(&self, node: NodeId, sink: SharedSlotSink) -> Result<(), String> {
+    {
       let targets = self.targets.borrow();
       let mirror = targets.get(&sink.target).ok_or_else(|| format!("shader texture {} not found", sink.target))?;
       if mirror.entries.is_none() {
         return Err(format!("target {} is not a draw target (create it with createDrawTarget)", sink.target));
       }
     }
-    self.spatial.borrow_mut().set_shared_slot(node, sink)
+    self.spatial.borrow_mut().bind_shared_slot(node, sink)
+  }
+
+  /// Remove a node's slot sink on `target`, or every slot sink with None.
+  pub fn spatial_unbind_slot(&self, node: NodeId, target: Option<u64>) -> Result<(), String> {
+    self.spatial.borrow_mut().unbind_shared_slot(node, target)
   }
 
   /// Bind (or with None unbind) a node's instance-record sink. Validated

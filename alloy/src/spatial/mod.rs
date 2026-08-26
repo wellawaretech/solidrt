@@ -36,13 +36,26 @@ pub type NodeId = u64;
 /// Where a node's fresh world matrix goes: the `uModel` (+ `uNormal`) params
 /// of one draw entry, plus the entry's instance count as its visibility
 /// switch (`count` is what "shown" restores: 1 for a plain mesh, the record
-/// count for an instanced one).
+/// count for an instanced one). A node carries one draw sink PER TARGET
+/// (a mesh drawn by the scene and by each of its views), all fed by the
+/// same flush.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct DrawSink {
   pub target: u64,
   pub draw: u64,
   pub normal: bool,
   pub count: u32,
+}
+
+/// A bound draw sink and its per-entry flush state.
+#[derive(Clone, Copy)]
+struct BoundSink {
+  sink: DrawSink,
+  /// The entry is switched on (instance count = `sink.count`).
+  entry_on: bool,
+  /// The entry owes a params write at the next shown flush: newly bound,
+  /// or the node moved while hidden.
+  fresh: bool,
 }
 
 /// The consumer of sink writes, one method per write kind, called in flush
@@ -83,7 +96,8 @@ pub enum Projection {
 /// is one param value, re-sent when any slot changes, absent slots zero.
 /// The generic form of "a scene's light directions follow the node tree":
 /// the consumer picks the param name and packs non-spatial data (colors,
-/// counts) itself - core never learns what the slots mean.
+/// counts) itself - core never learns what the slots mean. Like draw
+/// sinks, a node carries one slot sink per target.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SharedSlotSink {
   pub target: u64,
@@ -182,18 +196,15 @@ struct Node {
   visible: bool,
   /// Effective visibility as of the last flush (every ancestor visible too).
   shown: bool,
-  sink: Option<DrawSink>,
-  /// The sink's entry is switched on (instance count = `sink.count`).
-  entry_on: bool,
-  /// The sink owes a params write at the next shown flush: a new or
-  /// re-bound sink, or a move while hidden.
-  fresh: bool,
+  /// One per target.
+  sinks: Vec<BoundSink>,
   /// Local-space tight box; with one the node has a leaf in the index.
   bounds: Option<Box3>,
   leaf: Option<u32>,
   /// Triangle data for the picking narrowphase; None = box only.
   shape: Option<ShapeId>,
-  slot: Option<SharedSlotSink>,
+  /// One per target.
+  slots: Vec<SharedSlotSink>,
   record: Option<InstanceRecordSink>,
   /// The record slot holds this node's shown pose (false = zeroed or
   /// never written; the next shown flush writes it).
@@ -258,13 +269,11 @@ impl Spatial {
       queued: false,
       visible,
       shown: false,
-      sink: None,
-      entry_on: false,
-      fresh: false,
+      sinks: Vec::new(),
       bounds: None,
       leaf: None,
       shape: None,
-      slot: None,
+      slots: Vec::new(),
       record: None,
       record_on: false,
     };
@@ -284,9 +293,9 @@ impl Spatial {
   }
 
   /// Free a node. Its children become roots (the consumer tears a subtree
-  /// down node by node, so they are usually gone in the same batch). A sink
-  /// on it is dropped without a write: the entry it pointed at is the
-  /// consumer's to remove.
+  /// down node by node, so they are usually gone in the same batch). Its
+  /// draw sinks are dropped without a write: the entries they pointed at
+  /// are the consumer's to remove.
   pub fn destroy(&mut self, id: NodeId) -> Result<(), String> {
     let i = self.resolve(id)?;
     if let Some(p) = self.nodes[i as usize].parent {
@@ -300,7 +309,7 @@ impl Spatial {
     if let Some(leaf) = self.nodes[i as usize].leaf.take() {
       self.bvh.remove(leaf);
     }
-    if let Some(slot) = self.nodes[i as usize].slot.take() {
+    for slot in std::mem::take(&mut self.nodes[i as usize].slots) {
       self.release_slot(&slot);
     }
     if let Some(record) = self.nodes[i as usize].record.take() {
@@ -311,7 +320,7 @@ impl Spatial {
     let n = &mut self.nodes[i as usize];
     n.alive = false;
     n.parent = None;
-    n.sink = None;
+    n.sinks.clear();
     n.bounds = None;
     n.shape = None;
     self.free.push(i);
@@ -349,38 +358,55 @@ impl Spatial {
     Ok(())
   }
 
-  /// Bind (or with None unbind) the node's shared-slot sink. Binding
-  /// seeds the slot at the next flush; unbinding zeroes it there. The
-  /// caller flushes afterwards (the JS scheduler always does).
-  pub fn set_shared_slot(&mut self, id: NodeId, sink: Option<SharedSlotSink>) -> Result<(), String> {
+  /// Bind the node's shared-slot sink on the sink's target, replacing the
+  /// one it had there (the abandoned slot zeroes). Binding seeds the slot
+  /// at the next flush. The caller flushes afterwards (the JS scheduler
+  /// always does).
+  pub fn bind_shared_slot(&mut self, id: NodeId, sink: SharedSlotSink) -> Result<(), String> {
     let i = self.resolve(id)?;
-    if let Some(sink) = &sink {
-      if sink.len == 0 || sink.len % 3 != 0 {
-        return Err(format!("shared-slot sink len {} is not a multiple of 3", sink.len));
-      }
-      if (sink.index + 1) * 3 > sink.len {
-        return Err(format!("shared-slot sink slot {} does not fit {} floats", sink.index, sink.len));
-      }
-      let group = self.shared.entry((sink.target, sink.name.clone())).or_insert_with(|| SharedGroup {
-        values: vec![0.0; sink.len as usize],
-        refs: 0,
-        dirty: false,
-      });
-      if group.values.len() != sink.len as usize {
-        return Err(format!(
-          "shared param '{}' on target {} is {} floats, not {}",
-          sink.name,
-          sink.target,
-          group.values.len(),
-          sink.len
-        ));
-      }
-      group.refs += 1;
+    if sink.len == 0 || sink.len % 3 != 0 {
+      return Err(format!("shared-slot sink len {} is not a multiple of 3", sink.len));
     }
-    if let Some(old) = self.nodes[i as usize].slot.take() {
-      self.release_slot(&old);
+    if (sink.index + 1) * 3 > sink.len {
+      return Err(format!("shared-slot sink slot {} does not fit {} floats", sink.index, sink.len));
     }
-    self.nodes[i as usize].slot = sink;
+    let group = self.shared.entry((sink.target, sink.name.clone())).or_insert_with(|| SharedGroup {
+      values: vec![0.0; sink.len as usize],
+      refs: 0,
+      dirty: false,
+    });
+    if group.values.len() != sink.len as usize {
+      return Err(format!(
+        "shared param '{}' on target {} is {} floats, not {}",
+        sink.name,
+        sink.target,
+        group.values.len(),
+        sink.len
+      ));
+    }
+    group.refs += 1;
+    self.unbind_shared_slot(id, Some(sink.target))?;
+    self.nodes[i as usize].slots.push(sink);
+    self.enqueue(i);
+    Ok(())
+  }
+
+  /// Remove the node's slot sink on `target` (or every slot sink with
+  /// None); the abandoned slots zero at the next flush.
+  pub fn unbind_shared_slot(&mut self, id: NodeId, target: Option<u64>) -> Result<(), String> {
+    let i = self.resolve(id)?;
+    let slots = &mut self.nodes[i as usize].slots;
+    let mut released = Vec::new();
+    slots.retain(|s| {
+      let keep = target.is_some_and(|t| t != s.target);
+      if !keep {
+        released.push(s.clone());
+      }
+      keep
+    });
+    for slot in &released {
+      self.release_slot(slot);
+    }
     self.enqueue(i);
     Ok(())
   }
@@ -840,39 +866,48 @@ impl Spatial {
     Ok(())
   }
 
-  /// Attach (or replace, or with None remove) the node's draw sink. A new
-  /// sink's entry is assumed switched OFF (instance count 0, how the 3d
-  /// package adds entries); the next flush turns it on with a params write
-  /// if the node is shown. Removing a sink issues no write.
-  pub fn set_sink(&mut self, id: NodeId, sink: Option<DrawSink>) -> Result<(), String> {
+  /// Attach the node's draw sink on the sink's target, replacing the one
+  /// it had there. A new sink's entry is assumed switched OFF (instance
+  /// count 0, how the 3d package adds entries); the next flush turns it on
+  /// with a params write if the node is shown. The node re-queues, so its
+  /// other sinks get a params rewrite in that flush too (a queued node
+  /// recomputes unconditionally, the reparent rule).
+  pub fn bind_sink(&mut self, id: NodeId, sink: DrawSink) -> Result<(), String> {
     let i = self.resolve(id)?;
-    let n = &mut self.nodes[i as usize];
-    n.sink = sink;
-    n.entry_on = false;
-    n.fresh = sink.is_some();
+    let sinks = &mut self.nodes[i as usize].sinks;
+    sinks.retain(|b| b.sink.target != sink.target);
+    sinks.push(BoundSink { sink, entry_on: false, fresh: true });
     self.enqueue(i);
     Ok(())
   }
 
-  /// Change the sink's "on" count (an instanced mesh's record count). If
-  /// the entry is currently on, the new count goes to `out` at once;
-  /// returns whether it did.
+  /// Remove the node's draw sink on `target` (or every draw sink with
+  /// None). Issues no write: the entries are the consumer's to remove.
+  pub fn unbind_sink(&mut self, id: NodeId, target: Option<u64>) -> Result<(), String> {
+    let i = self.resolve(id)?;
+    self.nodes[i as usize].sinks.retain(|b| target.is_some_and(|t| t != b.sink.target));
+    self.enqueue(i);
+    Ok(())
+  }
+
+  /// Change the "on" count of every draw sink (an instanced mesh's record
+  /// count). Entries currently on get the new count through `out` at once;
+  /// returns whether any did.
   pub fn set_sink_count(&mut self, id: NodeId, count: u32, out: &mut dyn SinkWriter) -> Result<bool, String> {
     let i = self.resolve(id)?;
     let n = &mut self.nodes[i as usize];
-    let Some(sink) = n.sink.as_mut() else {
-      return Err(format!("spatial node {id} has no sink"));
-    };
-    sink.count = count;
-    if n.entry_on {
-      out.write_count(sink.target, sink.draw, count);
-      return Ok(true);
+    if n.sinks.is_empty() {
+      return Err(format!("spatial node {id} has no draw sink"));
     }
-    Ok(false)
-  }
-
-  pub fn sink(&self, id: NodeId) -> Result<Option<DrawSink>, String> {
-    Ok(self.nodes[self.resolve(id)? as usize].sink)
+    let mut wrote = false;
+    for b in n.sinks.iter_mut() {
+      b.sink.count = count;
+      if b.entry_on {
+        out.write_count(b.sink.target, b.sink.draw, count);
+        wrote = true;
+      }
+    }
+    Ok(wrote)
   }
 
   /// Effective visibility as of the last flush.
@@ -987,7 +1022,9 @@ impl Spatial {
     n.shown = shown;
     let refit = n.bounds.is_some() && (changed || n.leaf.is_none());
     if changed {
-      if let Some(slot) = n.slot.clone() {
+      // Disjoint borrows: the node's slots read, the shared groups written.
+      let shared = &mut self.shared;
+      for slot in &n.slots {
         let v = match slot.projection {
           Projection::Direction(local) => {
             let v = transform_vector(&n.world, local);
@@ -1000,7 +1037,7 @@ impl Spatial {
           }
         };
         let at = slot.index as usize * 3;
-        if let Some(group) = self.shared.get_mut(&(slot.target, slot.name)) {
+        if let Some(group) = shared.get_mut(&(slot.target, slot.name.clone())) {
           if group.values[at..at + 3] != v {
             group.values[at..at + 3].copy_from_slice(&v);
             group.dirty = true;
@@ -1009,20 +1046,25 @@ impl Spatial {
       }
     }
     let n = &mut self.nodes[i as usize];
-    if let Some(sink) = n.sink {
-      if shown != n.entry_on {
-        n.entry_on = shown;
+    // The inverse-transpose is one matrix however many sinks ask for it.
+    let mut normal: Option<Mat4> = None;
+    for b in n.sinks.iter_mut() {
+      let sink = b.sink;
+      if shown != b.entry_on {
+        b.entry_on = shown;
         out.write_count(sink.target, sink.draw, if shown { sink.count } else { 0 });
         if shown {
-          n.fresh = true;
+          b.fresh = true;
         }
       }
-      if shown && (changed || n.fresh) {
-        let normal = if sink.normal { Some(normal_matrix(&n.world)) } else { None };
-        out.write_params(sink.target, sink.draw, &n.world, normal.as_ref());
-        n.fresh = false;
+      if shown && (changed || b.fresh) {
+        if sink.normal && normal.is_none() {
+          normal = Some(normal_matrix(&n.world));
+        }
+        out.write_params(sink.target, sink.draw, &n.world, if sink.normal { normal.as_ref() } else { None });
+        b.fresh = false;
       } else if changed {
-        n.fresh = true;
+        b.fresh = true;
       }
     }
     let record = n.record;

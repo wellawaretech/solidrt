@@ -98,7 +98,9 @@ makes every read a crossing.
   TRS, set visible. Dirty flags on local and on world; a set marks the
   subtree world-dirty without visiting it (the visit is the flush's job,
   and it stops at clean subtrees).
-- `DrawParams` sink, one per node: on a fresh world matrix the flush writes
+- `DrawParams` sink, one per node per TARGET (a scene's own target and
+  each of its views; see plans/3d-shadow-maps.md stage 2): on a fresh
+  world matrix the flush writes
   `uModel` and, when asked, `uNormal` (the inverse-transpose the JS
   `normalMatrix` computes now); on a visibility change it flips the
   entry's instance count (0 / the node's "on" count, which an instanced

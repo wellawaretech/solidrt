@@ -147,8 +147,14 @@ what it delivered is documented in `packages/3d/AGENTS.md`, not here.
     side is already paid: a shared target-level sampler (`setTargetTextures`)
     binds an environment map once per scene target; cube maps are the
     remaining engine gap.
-15. [ ] **Shadow maps.** Shaped 2026-08-26 as
-    [3d-shadow-maps](../plans/3d-shadow-maps.md): engine sampleable
+15. [x] **Shadow maps.** Landed 2026-08-26 (uncommitted) through stage 3
+    of [3d-shadow-maps](../plans/3d-shadow-maps.md): `castShadow` on
+    `DirectionalLight` and `Mesh`, `lit` receiving by default, the
+    `SHADOW` GLSL, one casting light per scene; the multi-view shape
+    below became `scene.createView` on the way (split-screen, minimaps,
+    override-material passes). Stage 4 (comparison sampling, several or
+    spot/point casters, cascades, instanced casters) stays demand-gated.
+    Shaped 2026-08-26 as engine sampleable
     depth ([gpu-sampleable-depth](../backlog/gpu-sampleable-depth.md)),
     per-target draw sinks in the spatial core, then scene VIEWS, then the
     shadow itself; the depth-func option

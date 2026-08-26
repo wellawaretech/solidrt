@@ -75,11 +75,16 @@ declare module "flux:spatial" {
    * setDrawParams: the entry must exist and declare those uniforms. The
    * entry is assumed switched off (instanceCount 0); the next flush turns it
    * on with `count` when the node is shown, and off again when hidden.
+   * One draw sink PER TARGET: binding on a target the node already draws
+   * into replaces that sink, binding on another target adds one - a mesh
+   * drawn by a scene and by each of its views is one node with one flush.
    */
   export function bindDraw(node: NodeId, target: TextureId, draw: DrawId, normal: boolean, count: number): void
-  export function unbindDraw(node: NodeId): void
-  /** Change the bound entry's "on" count (an instanced mesh's record count);
-   * written at once if the entry is currently on. */
+  /** Remove the node's draw sink on `target`, or every draw sink without
+   * one. Issues no write: the entries are the caller's to remove. */
+  export function unbindDraw(node: NodeId, target?: TextureId): void
+  /** Change every bound entry's "on" count (an instanced mesh's record
+   * count); written at once to the entries currently on. */
   export function setDrawCount(node: NodeId, count: number): void
   /** Fill `out` (a Float32Array of 16, column-major) with the node's world
    * matrix as the tree stands now, pending writes included. */
@@ -145,11 +150,13 @@ declare module "flux:spatial" {
    * zeros. Every sink naming the same param shares one array (`len` must
    * agree); what the slots mean - light directions, an emitter axis - is
    * the caller's business, packed alongside its own non-spatial params.
-   * Rebinding replaces the node's slot sink; the abandoned slot zeroes.
+   * One slot sink per target, like bindDraw: rebinding on the same target
+   * replaces that sink (the abandoned slot zeroes), another target adds one.
    */
   export function bindDirectionSlot(node: NodeId, target: TextureId, name: string, len: number, index: number, vector: Float32Array): void
-  /** Remove the node's slot sink (its slot zeroes at the next flush). */
-  export function unbindSlot(node: NodeId): void
+  /** Remove the node's slot sink on `target`, or every slot sink without
+   * one (the abandoned slots zero at the next flush). */
+  export function unbindSlot(node: NodeId, target?: TextureId): void
 
   /**
    * Route the node's world pose to record slot `index` of vertex buffer

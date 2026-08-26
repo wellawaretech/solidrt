@@ -23,6 +23,7 @@ import {
   setInstanceCount,
   setInstances,
   setLight,
+  setCastShadow,
   setMaterial,
   setMeshParams,
   setRenderOrder,
@@ -30,7 +31,7 @@ import {
   setVisible,
 } from "./scene.ts"
 import type { ShaderParams } from "@solidrt/core/gpu"
-import type { DirectionalLight as DirectionalLightNode, HemisphereLight as HemisphereLightNode, InstancedMesh as InstancedMeshNode, Mesh as MeshNode, Scene as SceneHandle, SceneNode, ScenePointerEvent } from "./scene.ts"
+import type { DirectionalLight as DirectionalLightNode, HemisphereLight as HemisphereLightNode, InstancedMesh as InstancedMeshNode, Mesh as MeshNode, Scene as SceneHandle, SceneNode, ScenePointerEvent, ShadowOptions } from "./scene.ts"
 import type { Geometry } from "./geometry.ts"
 import type { Material } from "./material.ts"
 import type { Quat, Vec3 } from "./math.ts"
@@ -193,6 +194,9 @@ export type MeshProps = TransformProps & PointerEventProps & {
   params?: ShaderParams
   /** Explicit draw-order key (setRenderOrder as a prop); default 0. */
   renderOrder?: number
+  /** Draw into the scene's shadow map (setCastShadow as a prop); default
+   * false. Needs a `castShadow` DirectionalLight to show. */
+  castShadow?: boolean
   ref?: (mesh: MeshNode) => void
 }
 
@@ -227,6 +231,10 @@ export let Mesh: VoidComponent<MeshProps> = props => {
     () => props.geometry,
     g => setGeometry(mesh, g),
     { defer: true },
+  )
+  createEffect(
+    () => props.castShadow,
+    c => setCastShadow(mesh, c === true),
   )
   syncMesh(mesh, props)
   return null
@@ -367,6 +375,13 @@ export type DirectionalLightProps = TransformProps & {
   direction?: Vec3
   color?: Vec3
   intensity?: number
+  /** Render the scene's shadow map from this light (one per scene). Its
+   * shadow camera sits at the light's WORLD position, so give a casting
+   * light a `position` above the scene. */
+  castShadow?: boolean
+  /** Shadow-map options (mapSize, bias, normalBias, camera frustum),
+   * merged key by key. */
+  shadow?: ShadowOptions
   ref?: (light: DirectionalLightNode) => void
 }
 
@@ -374,12 +389,20 @@ export type DirectionalLightProps = TransformProps & {
  * rotation turns it; up to MAX_LIGHTS per scene, in mount order. */
 export let DirectionalLight: VoidComponent<DirectionalLightProps> = props => {
   let ctx = useContext(SceneContext)
-  let light = untrack(() => createDirectionalLight({ direction: props.direction, color: props.color, intensity: props.intensity }))
+  let light = untrack(() =>
+    createDirectionalLight({
+      direction: props.direction,
+      color: props.color,
+      intensity: props.intensity,
+      castShadow: props.castShadow,
+      shadow: props.shadow,
+    }),
+  )
   add(ctx.parent, light)
   syncNode(light, props)
   createEffect(
-    () => [props.direction, props.color, props.intensity] as const,
-    ([direction, color, intensity]) => setLight(light, { direction, color, intensity }),
+    () => [props.direction, props.color, props.intensity, props.castShadow, props.shadow] as const,
+    ([direction, color, intensity, castShadow, shadow]) => setLight(light, { direction, color, intensity, castShadow, shadow }),
   )
   untrack(() => props.ref)?.(light)
   onCleanup(() => remove(light))

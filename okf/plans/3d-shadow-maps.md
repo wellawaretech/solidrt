@@ -126,6 +126,19 @@ compared against a snapshot; the display probe result recorded in
 
 ### Stage 2 - core + library: scene views
 
+Landed 2026-08-26 (uncommitted): per-target draw and slot sinks in the
+spatial core (`bind_sink`/`unbind_sink`, `bind_shared_slot`/
+`unbind_shared_slot`; `unbindDraw(node, target?)` / `unbindSlot(node,
+target?)` in `flux:spatial`), `scene.createView(opts)` with
+`overrideMaterial` and `depth: "texture"`, `ortho` on `CameraUpdate`
+(`orthographic()` in math.ts), `packages/3d/examples/split-screen.tsx`
+as the demonstration. Deviations from the shape below, all in Findings:
+the per-entry flush state is a private `BoundSink` wrapper rather than
+fields on `DrawSink`; an overridden view is not sorted; `ortho: null`
+returns to perspective; the scene's merged `setParams` names replay on a
+new view. Verification through the JS surface (snapshots of the three
+leaves) waits for a client rebuild.
+
 **Spatial core.** `Node.sink` becomes `sinks: Vec<DrawSink>` and
 `Node.slot` becomes `slots: Vec<SharedSlotSink>`, both keyed by target
 (`bind_draw` replaces the sink with the same target, else appends;
@@ -206,6 +219,15 @@ through snapshots of the two leaves. This also proves the view shape on a
 consumer that is not shadows.
 
 ### Stage 3 - library: directional shadow maps
+
+Landed 2026-08-26 (uncommitted), library only as designed: `castShadow` +
+`shadow` on `DirectionalLight` (options, `setLight`, the component
+props), `castShadow` on `Mesh` (`setCastShadow`, `<Mesh castShadow>`),
+`lit` receiving by default (`receiveShadow: false` opts out), `SHADOW` in `@solidrt/3d/glsl`,
+`shadowDepthMaterial()` (internal, material.ts), `MAX_SHADOWS = 1`, and
+`packages/3d/examples/shadows.tsx`. Verified on screen (Linux GL): the
+shadows land on the far side of the casters and sweep with the sun, the
+knot self-shadows the cube, no log entries. Deviations in Findings.
 
 Built entirely on stages 1 and 2; no engine change.
 
@@ -337,3 +359,71 @@ same view primitive. The roadmap checks item 15 and its item 13 half
   thread) leaves the main thread pumping the SDL window: a black window
   that never closes. `depth_texture.rs` installs a panic hook that exits;
   the other examples do not (ideas.md).
+- Stage 2, core: `entry_on`/`fresh` stayed OFF the public `DrawSink`
+  (which is the caller's bind spec, Copy, compared in tests) and live in
+  a private `BoundSink { sink, entry_on, fresh }` on the node - the
+  flush state is the core's, not the binder's. Sinks and slots are keyed
+  by target only (one entry per mesh per target is the 3d package's
+  invariant; a (target, name) key for slots is the additive widening if
+  a node ever feeds two arrays of one target). `uNormal` is computed once
+  per node per flush however many sinks ask.
+- Stage 2, core: a rebind (bind on a target the node already draws into)
+  re-queues the node, and a queued node recomputes as changed (the
+  reparent rule), so the node's OTHER sinks get a params rewrite in that
+  flush. Pre-existing for the single sink (set_bounds does the same);
+  rebinds are rebuildEntry-rare, so it stays. Splitting "queued for
+  structure" from "queued for bookkeeping" is the fix if it ever shows in
+  a profile.
+- Stage 2, library: an `overrideMaterial` view draws in add order - no
+  renderOrder, no transparent sort. The sort reads `mesh._transparent`
+  (the mesh's own material), which says nothing about the override; for
+  the depth pass order is irrelevant, and a transparent override is a
+  visualizer's problem, not a shadow's. `orderEntries` grew an `entry`
+  accessor so a non-overridden view sorts with its own camera's view
+  matrix and its own per-mesh entries; the world-space centers refresh
+  once per sync for every sort.
+- Stage 2, library: `pick()` handles `ortho` (rays along the camera
+  forward axis from a point on the camera plane), since the scene's own
+  camera takes the option; `project()` under ortho has w = 1 everywhere,
+  so its behind-the-camera null never fires there. A view has no pick.
+- Stage 2, library: the light set is rewritten for EVERY target whenever
+  it changes or a view is created (`writeLights` rebinds each light's
+  direction slot per target - the slot re-seeds at the flush); the merged
+  `scene.setParams` names are kept in `sceneParams` and replayed on a new
+  view, because a view created after a `setParams({ uTime })` would
+  otherwise never see the name. `view.setParams` is the view's own
+  channel and is not replayed anywhere.
+- Stage 3: the y orientation of target-to-target depth sampling needed
+  no correction on the GL path: the receiver looks up with the very
+  matrix that rendered the map and raw texture coordinates
+  (`ndc * 0.5 + 0.5`), and GL stores the map in the same convention it
+  rasterized it in, so the flip cancels. The ANGLE/D3D path is still
+  unverified (impeller-texture-inversion territory).
+- Stage 3: the view "entry filter" stayed INTERNAL (`ViewRecord.filter`,
+  re-evaluated per mesh by `_setCast`); a public `ViewOptions.filter`
+  would need a re-evaluation trigger the app controls, so it waits for a
+  consumer.
+- Stage 3: every receiving target carries a `uShadowMap` binding at all
+  times - a 1x1 white placeholder (depth 1, never shadowed) when no light
+  casts, the shadow view's depth id otherwise - so the no-shadow state is
+  deterministic rather than "whatever unit 0 holds" (the engine does
+  accept a declared-but-unbound sampler at entry creation). The shadow
+  view itself is excluded from the binding (same-pass feedback).
+- Stage 3: the shadow camera is re-placed by comparing the light's
+  world matrix against the one it was last placed from (16 compares per
+  sync while a shadow exists), not by scanning the `moved` list for the
+  light or its ancestors; a core-driven transition on the light is
+  followed only when some sync runs, since a transition alone schedules
+  none - the same limit picking's sort keys have.
+- Stage 3: `receiveShadow` DEFAULTS TO TRUE (flipped after landing). The
+  plan had it opt-in; Godot and Three both receive by default, and the
+  opt-in shape meant an app had to know the flag existed before any
+  shadow showed on its ground. The cost of the default is one sampler
+  bind and a per-light branch in every lit fragment, paid even in
+  unshadowed scenes; `receiveShadow: false` opts a material out and
+  drops the sample. The placement (material, not object) is Godot's
+  `disable_receive_shadows` / URP's material toggle, not Three's object
+  flag - the program is the material's.
+- Stage 3: `_shadowChanged` on a size change resizes the shadow view in
+  place (`setTargetSize`; the depth id survives, stage 1's rule), so
+  `setLight(light, { shadow: { mapSize } })` never rebinds the map.

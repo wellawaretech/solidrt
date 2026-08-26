@@ -196,12 +196,13 @@ fn set_visible(ctx: Ctx<'_>, id: u64, visible: bool) -> rquickjs::Result<()> {
 fn bind_draw(ctx: Ctx<'_>, id: u64, target: u64, draw: u64, normal: bool, count: u32) -> rquickjs::Result<()> {
   state(&ctx)
     .atx
-    .spatial_bind(id, Some(DrawSink { target, draw, normal, count }))
+    .spatial_bind(id, DrawSink { target, draw, normal, count })
     .map_err(|e| throw_str(&ctx, &format!("bindDraw: {e}")))
 }
 
-fn unbind_draw(ctx: Ctx<'_>, id: u64) -> rquickjs::Result<()> {
-  state(&ctx).atx.spatial_bind(id, None).map_err(|e| throw_str(&ctx, &format!("unbindDraw: {e}")))
+/// Remove the node's draw sink on `target`, or every draw sink without one.
+fn unbind_draw(ctx: Ctx<'_>, id: u64, target: OptArg<u64>) -> rquickjs::Result<()> {
+  state(&ctx).atx.spatial_unbind(id, target.0).map_err(|e| throw_str(&ctx, &format!("unbindDraw: {e}")))
 }
 
 fn set_draw_count(ctx: Ctx<'_>, id: u64, count: u32) -> rquickjs::Result<()> {
@@ -376,11 +377,12 @@ fn bind_direction_slot(
     return Err(throw_str(&ctx, "bindDirectionSlot: vector must be a Float32Array of 3"));
   }
   let sink = SharedSlotSink { target, name, len, index, projection: Projection::Direction([v[0], v[1], v[2]]) };
-  state(&ctx).atx.spatial_bind_slot(id, Some(sink)).map_err(|e| throw_str(&ctx, &format!("bindDirectionSlot: {e}")))
+  state(&ctx).atx.spatial_bind_slot(id, sink).map_err(|e| throw_str(&ctx, &format!("bindDirectionSlot: {e}")))
 }
 
-fn unbind_slot(ctx: Ctx<'_>, id: u64) -> rquickjs::Result<()> {
-  state(&ctx).atx.spatial_bind_slot(id, None).map_err(|e| throw_str(&ctx, &format!("unbindSlot: {e}")))
+/// Remove the node's slot sink on `target`, or every slot sink without one.
+fn unbind_slot(ctx: Ctx<'_>, id: u64, target: OptArg<u64>) -> rquickjs::Result<()> {
+  state(&ctx).atx.spatial_unbind_slot(id, target.0).map_err(|e| throw_str(&ctx, &format!("unbindSlot: {e}")))
 }
 
 /// Bind the node's instance-record sink with the 2D pose projection: the

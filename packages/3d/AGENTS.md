@@ -30,6 +30,40 @@ blendMode and pointer events like any element.
   own `onFrame` writing a signal (declarative) or `setTransform` on a
   `ref`-grabbed node (the frame-rate escape hatch - signals carry
   structure, per-frame motion goes straight to the scene).
+- VIEWS: `scene.createView({ width, height, overrideMaterial?, depth?,
+  clearColor?, ... })` renders the same scene into a second target from
+  its own camera (`view.setCamera`, the scene's CameraUpdate shape). Each
+  mesh gets one entry in the view's target bound as one more draw sink of
+  its CORE node, so the one flush writes every target - the app writes
+  nothing per view. Geometry buffers and (without an override) materials
+  are shared; the light set and `scene.setParams` names fan out to every
+  view, `view.setParams` is the view's own channel; the scene background
+  is not mirrored; a view has no picking. `overrideMaterial` (Three's
+  `scene.overrideMaterial`, scoped to the view) draws every mesh with one
+  material - a depth pass, a normal/id visualizer - skips instanced
+  meshes (the override cannot know their record layout) and draws in add
+  order. `depth: "texture"` exposes `view.depthTexture`, the shadow-map
+  input. `ortho: { left, right, top, bottom }` on any camera swaps
+  perspective for `orthographic()` (`fov` ignored; `ortho: null` returns);
+  the scene's own camera takes it too, and pick() follows.
+  `examples/split-screen.tsx` is the shape.
+- SHADOWS are a view: `<DirectionalLight castShadow shadow={{ mapSize?,
+  bias?, normalBias?, camera? }}>` (`createDirectionalLight({ castShadow,
+  shadow })`, `setLight`) makes the scene own an internal
+  `createView({ depth: "texture", overrideMaterial: depth pass })` drawing
+  the `castShadow` meshes (`<Mesh castShadow>`, `setCastShadow`) from an
+  orthographic camera at the light's WORLD position along its world
+  direction, `shadow.camera` (+-5, 0.5..500 by default) as the frustum.
+  The map's depth id binds as the target-level `uShadowMap` of the scene
+  and every other view, `uShadowMatrix` is the view's own view-projection
+  (one mat4 write per light move), `uShadowLight` the casting light's
+  index (-1 without one). Every `lit` material RECEIVES by default
+  (Godot's and Three's default); `lit({ receiveShadow: false })` opts a
+  material out and drops the map from its program - a material option,
+  as with vertexColors/triplanar, because the material picks the program
+  (Godot's `disable_receive_shadows`). The factor is `SHADOW`'s 3x3 PCF
+  on the casting light's term only. One casting light per scene (MAX_SHADOWS; a
+  second throws at attach). `examples/shadows.tsx` is the shape.
 - RETARGETED motion is native: `setTransition(node, { position:
   { duration: 400 }, ... })` makes setTransform writes TARGETS the core
   animates toward every frame (position/scale per lane, rotation along
@@ -366,7 +400,11 @@ plus the colored layout's aColor forwarded raw as vColor - using it makes
 the material need that channel) and the pure functions `HEMISPHERE`
 (`hemisphere(n, sky, ground)`), `LAMBERT` (`lambert(n, l)`),
 `BLINN_SPECULAR` (`blinnSpecular(n, v, l, shininess)`), `FRESNEL`
-(`fresnel(n, v, power)`). Lights, colors and exponents are arguments, so
+(`fresnel(n, v, power)`), `SHADOW` (`shadow(map, coord, bias)` - the
+directional shadow factor from the scene's `uShadowMap`/`uShadowMatrix`,
+3x3 PCF; a custom fragment declares those two plus `uShadowBias`,
+`uShadowNormalBias`, `uShadowLight` and multiplies light `uShadowLight`'s
+term by it). Lights, colors and exponents are arguments, so
 nothing is pinned but the function names; `lit` is composed from these
 same constants - customizing never means leaving the system.
 
@@ -589,7 +627,31 @@ The follow-ups are filed in okf/backlog/3d-model-loader.md.
   target state), independent of mesh count - never reintroduce per-mesh
   camera writes (uEye-style per-mesh params are exactly the O(scene) cost
   the shared channel removed). Scene scale honestly: hundreds to a
-  few thousand objects, bounded by the interpreter, not the GPU.
+  few thousand objects, bounded by the interpreter, not the GPU. A view
+  is one more such write per camera change and one more entry per mesh
+  at attach; a view's per-frame cost is the core's (one params write per
+  sink per moved node), never JS.
+- A CASTING light's position matters (nothing else about a directional
+  light's position does): the shadow camera is placed AT the light node's
+  world position, Three's rule, so a `castShadow` sun at the origin
+  pointing down shadows nothing above it - give it a `position` above the
+  scene and a frustum (`shadow.camera`) that covers the casters. Acne
+  knobs are Three's: `shadow.bias` (map depth units) and
+  `shadow.normalBias` (world units along the receiver normal, the one to
+  reach for first, ~0.02); the depth pass culls FRONT faces (Three's
+  shadowSide default), so closed casters need little bias but a
+  single-sided plane casts nothing. Opting out of receiving is on the
+  MATERIAL here (`receiveShadow: false`), not the object (Three's
+  `mesh.receiveShadow`) - Godot's split, and URP's - and instanced
+  meshes never cast (the depth override cannot know their records) - the
+  additive follow-up is a per-class `shadowVertex`.
+- A mesh's entries are mirrored into every view at attach and dropped at
+  detach; `setGeometry`/`setMaterial` rebuild them everywhere. An
+  `overrideMaterial` is validated against every mesh's layout (at
+  createView for the meshes present, at add() for later ones) exactly like
+  a mesh's own material, so an override reading `aColor` throws for a
+  standard-layout mesh. Views are disposed by the scene; `view.dispose()`
+  only for dropping one early.
 - SCENE-WIDE uniforms go through that same shared channel via
   `scene.setParams({ uTime })`, and this is the single highest-leverage
   pattern in the library. It merges an app-owned name in beside

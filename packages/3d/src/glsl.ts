@@ -117,3 +117,31 @@ export const FRESNEL = glsl`
     return pow(1.0 - max(dot(n, v), 0.0), power);
   }
 `
+
+/**
+ * `float shadow(sampler2D map, vec4 coord, float bias)` - the directional
+ * shadow factor (1 lit, 0 shadowed) for a world point carried into the
+ * light's clip space by the scene's `uShadowMatrix`:
+ * `shadow(uShadowMap, uShadowMatrix * vec4(vWorldPos, 1.0), uShadowBias)`.
+ * Perspective divide, 0..1 remap, out-of-frustum returns 1 (lit), then a
+ * 3x3 PCF over texel neighbours comparing the map's `.r` (a stage-1 depth
+ * texture samples nearest, so the softness is this loop, not the sampler).
+ * `bias` is subtracted from the point's depth against acne; the receiving
+ * `lit` variant also offsets the point along its normal by
+ * `uShadowNormalBias` before the transform.
+ */
+export const SHADOW = glsl`
+  float shadow(sampler2D map, vec4 coord, float bias) {
+    vec3 p = coord.xyz / coord.w * 0.5 + 0.5;
+    if (p.x < 0.0 || p.x > 1.0 || p.y < 0.0 || p.y > 1.0 || p.z > 1.0) return 1.0;
+    vec2 texel = 1.0 / vec2(textureSize(map, 0));
+    float lit = 0.0;
+    for (int y = -1; y <= 1; y++) {
+      for (int x = -1; x <= 1; x++) {
+        float d = texture(map, p.xy + vec2(float(x), float(y)) * texel).r;
+        lit += p.z - bias <= d ? 1.0 : 0.0;
+      }
+    }
+    return lit / 9.0;
+  }
+`

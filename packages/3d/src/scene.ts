@@ -28,7 +28,7 @@
 // params. They read world matrices back from the core, and only for the
 // subtrees that moved since they last looked.
 
-import { addDraw, createBuffer, createDrawTarget, destroyBuffer, destroyProgram, destroyRenderPipeline, destroyTexture, removeDraw, setDrawBuffers, setDrawOrder, setDrawParams, setTargetParams, setTargetSize, writeBuffer } from "@solidrt/core/gpu"
+import { addDraw, createBuffer, createDrawTarget, createTexture, depthTexture, destroyBuffer, destroyProgram, destroyRenderPipeline, destroyTexture, removeDraw, setDrawBuffers, setDrawOrder, setDrawParams, setTargetParams, setTargetSize, setTargetTextures, writeBuffer } from "@solidrt/core/gpu"
 import * as spatial from "flux:spatial"
 import type { NodeId, NodeTransition } from "flux:spatial"
 import { on } from "srt:events"
@@ -37,14 +37,14 @@ import { getOwner, onCleanup } from "@solidrt/core"
 import type { PointerEvent as ElementPointerEvent } from "@solidrt/core"
 // The scene's lookAt() aims a node; math's builds a camera's view matrix -
 // the same pairing (and the same name) as Three's Object3D/Matrix4.
-import { compose, copy, eulerFromQuat, identity, lookAt as lookAtMatrix, mat4, multiply, perspective, quat, quatFromFrame, transformPoint, updateRotation, updateScale } from "./math.ts"
+import { compose, copy, eulerFromQuat, identity, lookAt as lookAtMatrix, mat4, multiply, orthographic, perspective, quat, quatFromFrame, transformPoint, transformVector, updateRotation, updateScale } from "./math.ts"
 import type { Mat4, Quat, TransformUpdate, Vec3, Vec4 } from "./math.ts"
 import { MAX_LIGHTS } from "./glsl.ts"
 import { geometryBounds, layoutKey, plane, validateGeometry } from "./geometry.ts"
 import { acquireGeometryBuffers, releaseGeometryBuffers } from "./geometry-gpu.ts"
 import type { GeometryBuffers } from "./geometry-gpu.ts"
 import type { Geometry } from "./geometry.ts"
-import { backgroundPipeline, missingAttributes } from "./material.ts"
+import { backgroundPipeline, missingAttributes, shadowDepthMaterial } from "./material.ts"
 import { orderEntries } from "./order.ts"
 import type { Material } from "./material.ts"
 
@@ -112,6 +112,10 @@ type SceneHooks = {
   _setCount(mesh: Mesh): void
   /** Re-point the mesh's entry at its (replaced) instance buffer. */
   _setBuffer(mesh: Mesh): void
+  /** The mesh's castShadow flag changed: re-evaluate the filtered views. */
+  _setCast(mesh: Mesh): void
+  /** A light's castShadow/shadow options changed. */
+  _shadowChanged(light: DirectionalLight): void
   _reorder(): void
   /** The node's transform changed (for the sort and light bookkeeping). */
   _moved(node: SceneNode): void
@@ -151,10 +155,30 @@ export type SceneNode = {
   _transition: NodeTransition | string | null
 }
 
+/** The orthographic frustum a casting light renders its shadow map from,
+ * in the light's own space (x right, y up, looking along its direction),
+ * Three's DirectionalLightShadow camera. Everything outside it is lit. */
+export type ShadowCamera = { left: number; right: number; top: number; bottom: number; near: number; far: number }
+
+export type ShadowOptions = {
+  /** Shadow map resolution in texels, square (default 1024). */
+  mapSize?: number
+  /** Depth bias against acne, in the map's 0..1 depth (default 0). */
+  bias?: number
+  /** Offset a receiving point along its normal before the lookup, in
+   * world units (default 0) - the acne fix that keeps contact shadows. */
+  normalBias?: number
+  /** The light frustum; absent keys keep the defaults +-5, 0.5..500. */
+  camera?: Partial<ShadowCamera>
+}
+
 /** A directional light node: parallel rays travelling along `direction`
  * in the node's LOCAL space, so a parent's rotation turns the light with
  * it (the default `[0, -1, 0]` is a sun straight overhead; the length is
- * ignored). Position and scale do not affect it. Write through setLight. */
+ * ignored). Scale does not affect it, and neither does position UNLESS
+ * it casts: a casting light's shadow camera sits at its WORLD position
+ * looking along its world direction (Three's rule), so place a casting
+ * sun above the scene. Write through setLight. */
 export type DirectionalLight = SceneNode & {
   kind: "light"
   type: "directional"
@@ -162,6 +186,12 @@ export type DirectionalLight = SceneNode & {
   /** Linear [r, g, b] 0..1. */
   color: Vec3
   intensity: number
+  /** Render a shadow map from this light (one per scene, MAX_SHADOWS);
+   * meshes with `castShadow` draw into it, `lit` materials read it
+   * (unless `receiveShadow: false`). */
+  castShadow: boolean
+  /** The resolved shadow options (read; write through setLight). */
+  shadow: { mapSize: number; bias: number; normalBias: number; camera: ShadowCamera }
 }
 
 /** The ambient term: a sky/ground gradient by the WORLD normal's
@@ -185,6 +215,10 @@ export type Mesh = SceneNode & {
    * Sorts within the opaque group and within the transparent group; the
    * transparent group always follows the opaque one. Set with setRenderOrder. */
   renderOrder: number
+  /** Draw into the scene's shadow map (default false, Three's default).
+   * Set with setCastShadow. A casting instanced mesh is skipped (the
+   * depth pass cannot know its record layout). */
+  castShadow: boolean
   _entry: DrawId | null
   /** The geometry-buffer reference the entry was built from, acquired at
    * attach and what _detach releases - like _transparent, a snapshot,
@@ -295,6 +329,10 @@ export type SceneHandlers = {
   onPointerLeave(event: ElementPointerEvent): void
 }
 
+/** An orthographic projection's view-space extents, in world units (the
+ * same box at every depth). */
+export type OrthoExtent = { left: number; right: number; top: number; bottom: number }
+
 export type CameraUpdate = {
   /** Vertical field of view in DEGREES (default 60). */
   fov?: number
@@ -303,6 +341,11 @@ export type CameraUpdate = {
   position?: Vec3
   target?: Vec3
   up?: Vec3
+  /** An orthographic projection with these extents (`fov` is then
+   * ignored); null returns to perspective. Three's OrthographicCamera as
+   * a camera option: a top-down map, an isometric view, a shadow-map
+   * light. */
+  ortho?: OrthoExtent | null
 }
 
 export type SceneOptions = {
@@ -318,6 +361,46 @@ export type SceneOptions = {
   /** Multisample count of the target (1, 2, 4 or 8; default 1). Storage-only
    * anti-aliasing of mesh edges; see createDrawTarget. */
   samples?: 1 | 2 | 4 | 8
+}
+
+export type ViewOptions = {
+  width: number
+  height: number
+  /**
+   * Every mesh draws with this material instead of its own (Three's
+   * `scene.overrideMaterial`, scoped to the view): a depth pass, a normal
+   * or id visualizer. The view then carries none of the meshes' own
+   * bindings or params, and instanced meshes are skipped (the override's
+   * vertex stage cannot know their record layout). An overridden view
+   * draws in add order (no renderOrder or transparent sort).
+   */
+  overrideMaterial?: Material
+  /** The view target's depth storage: true (default) for a buffer,
+   * "texture" for a sampleable one exposed as `view.depthTexture`. */
+  depth?: true | "texture"
+  clearColor?: [number, number, number, number]
+  samples?: 1 | 2 | 4 | 8
+  filter?: FilterMode
+  wrap?: WrapMode
+  label?: string
+}
+
+/** A second rendering of a scene from its own camera; see Scene.createView. */
+export type View = {
+  /** The view's output, an ordinary texture id. */
+  texture: TextureId
+  /** The view target's depth as a sampler-only texture id when created
+   * with `depth: "texture"` (the shadow-map input), else null. */
+  depthTexture: TextureId | null
+  /** Partial camera update, exactly scene.setCamera. */
+  setCamera(update: CameraUpdate): void
+  setSize(width: number, height: number): void
+  /** View-owned shared params on the view's target (the scene's own
+   * setParams names fan out to every view already). */
+  setParams(params: ShaderParams): void
+  /** Destroy the view's target (its entries die with it). Idempotent;
+   * views also die with their scene. */
+  dispose(): void
 }
 
 export type Scene = {
@@ -402,11 +485,132 @@ export type Scene = {
    * layout just works: `scene.handlersFor(() => ({ width: w(), height:
    * h() }))`. */
   handlersFor(layout: () => { width: number; height: number }): SceneHandlers
+  /**
+   * A second rendering of this scene: its own draw target and camera,
+   * the same meshes and lights. Each mesh gets one entry in the view's
+   * target, bound as one more draw sink of the mesh's core node, so a
+   * move feeds every target from the one flush and the app writes
+   * nothing per view. Views share the scene's geometry buffers and
+   * (unless `overrideMaterial`) its materials; the light set and
+   * scene.setParams names fan out to every view, view.setParams is the
+   * view's own channel. The scene's background is not mirrored (a view's
+   * backdrop is its clearColor), and a view has no picking or pointer
+   * events. Views die with the scene; `view.dispose()` drops one early.
+   */
+  createView(opts: ViewOptions): View
   /** Destroy the target (entries die with it). Idempotent. Material
    * pipelines are shared and survive (app-lifetime, see material.ts);
    * geometry buffers are reference-counted and freed with their last
    * entry (see geometry-gpu.ts). */
   dispose(): void
+}
+
+// A camera: the scene's own and one per view, the same state and the same
+// one-shared-write contract. `dirty` = the matrices need recomputing (a
+// setCamera or a resize), `pending` = the GPU write is owed to the next
+// sync. The recompute is split from the sync so project()/viewProj() see a
+// fresh matrix right after setCamera, before the microtask runs.
+type Camera = {
+  fov: number
+  near: number
+  far: number
+  eye: Vec3
+  target: Vec3
+  up: Vec3
+  ortho: OrthoExtent | null
+  dirty: boolean
+  pending: boolean
+  proj: Mat4
+  view: Mat4
+  viewProj: Mat4
+}
+
+function makeCamera(): Camera {
+  return {
+    fov: 60,
+    near: 0.1,
+    far: 100,
+    eye: [0, 0, 3],
+    target: [0, 0, 0],
+    up: [0, 1, 0],
+    ortho: null,
+    dirty: true,
+    pending: false,
+    proj: mat4(),
+    view: mat4(),
+    viewProj: mat4(),
+  }
+}
+
+function updateCamera(cam: Camera, update: CameraUpdate): void {
+  if (update.fov !== undefined) cam.fov = update.fov
+  if (update.near !== undefined) cam.near = update.near
+  if (update.far !== undefined) cam.far = update.far
+  if (update.position) cam.eye = [update.position[0], update.position[1], update.position[2]]
+  if (update.target) cam.target = [update.target[0], update.target[1], update.target[2]]
+  if (update.up) cam.up = [update.up[0], update.up[1], update.up[2]]
+  if (update.ortho !== undefined) {
+    let o = update.ortho
+    cam.ortho = o === null ? null : { left: o.left, right: o.right, top: o.top, bottom: o.bottom }
+  }
+  cam.dirty = true
+}
+
+function ensureCamera(cam: Camera, width: number, height: number): void {
+  if (!cam.dirty) return
+  cam.dirty = false
+  cam.pending = true
+  let o = cam.ortho
+  if (o === null) perspective(cam.proj, (cam.fov * Math.PI) / 180, width / height, cam.near, cam.far)
+  else orthographic(cam.proj, o.left, o.right, o.top, o.bottom, cam.near, cam.far)
+  lookAtMatrix(cam.view, cam.eye, cam.target, cam.up)
+  multiply(cam.viewProj, cam.proj, cam.view)
+}
+
+// The camera is target state: one shared write, whatever the target holds.
+// Entries are untouched - uModel is camera-independent, and uCamPos is
+// stored even when no current material declares it. The camera basis rides
+// along: the view matrix's first two rows are the camera's world-space
+// right and up (no clip flip - that lives in the projection), so a
+// billboard needs no reconstruction from uViewProj.
+function cameraParams(cam: Camera): ShaderParams {
+  let v = cam.view
+  return { uViewProj: cam.viewProj, uCamPos: cam.eye, uCamRight: [v[0], v[4], v[8]], uCamUp: [v[1], v[5], v[9]] }
+}
+
+// A material reads attributes by name; the geometry's layout must carry
+// every one it declares (the pipeline is built for that layout, so a
+// missing channel would have no home) - an error, like the rest of the
+// strict entry path. Extra channels are fine.
+function checkLayout(material: Material, geometry: Geometry, what: string): void {
+  let missing = missingAttributes(material, geometry.layout)
+  if (missing.length > 0) {
+    throw new Error(
+      what + " reads attributes the geometry layout (" + layoutKey(geometry.layout) + ") lacks: " +
+        missing.map(a => a.name + " " + a.format).join(", ") +
+        " - add the channel with withAttribute()/withColors(), or use a material that does not read it",
+    )
+  }
+}
+
+// An entry's initial params. The uNormal seed keys off the material flag
+// because entry params validate strictly - and a material declaring
+// uNormal without using it therefore throws right here, at add().
+function entrySeed(material: Material, params: ShaderParams | null): ShaderParams {
+  return material.normalMatrix
+    ? { uModel: IDENTITY, uNormal: IDENTITY, ...material.params, ...params }
+    : { uModel: IDENTITY, ...material.params, ...params }
+}
+
+// The uShadowMap binding of a scene with no casting light: one white
+// texel (depth 1, never shadowed), shared by every scene for the app.
+let placeholder: TextureId | undefined
+
+function shadowPlaceholder(): TextureId {
+  if (placeholder === undefined) {
+    placeholder = createTexture(new Uint8Array([255, 255, 255, 255]), 1, 1, { autoFree: false, label: "scene-shadow-none" })
+  }
+  return placeholder
 }
 
 function makeNode(kind: SceneNode["kind"]): SceneNode {
@@ -429,8 +633,26 @@ export function createGroup(): SceneNode {
   return makeNode("group")
 }
 
-export type DirectionalLightOptions = { direction?: Vec3; color?: Vec3; intensity?: number }
+export type DirectionalLightOptions = {
+  direction?: Vec3
+  color?: Vec3
+  intensity?: number
+  castShadow?: boolean
+  /** Shadow-map options, merged key by key (setLight keeps unmentioned ones). */
+  shadow?: ShadowOptions
+}
 export type HemisphereLightOptions = { sky?: Vec3; ground?: Vec3; intensity?: number }
+
+/** One shadow-casting directional light per scene; the array form is the
+ * additive follow-up (each map is a sampler unit and a full extra pass). */
+export const MAX_SHADOWS = 1
+
+function mergeShadow(into: DirectionalLight["shadow"], update: ShadowOptions): void {
+  if (update.mapSize !== undefined) into.mapSize = update.mapSize
+  if (update.bias !== undefined) into.bias = update.bias
+  if (update.normalBias !== undefined) into.normalBias = update.normalBias
+  if (update.camera !== undefined) Object.assign(into.camera, update.camera)
+}
 
 export function createDirectionalLight(opts: DirectionalLightOptions = {}): DirectionalLight {
   let light = makeNode("light") as DirectionalLight
@@ -438,6 +660,9 @@ export function createDirectionalLight(opts: DirectionalLightOptions = {}): Dire
   light.direction = [...(opts.direction ?? [0, -1, 0])] as Vec3
   light.color = [...(opts.color ?? [1, 1, 1])] as Vec3
   light.intensity = opts.intensity ?? 1
+  light.castShadow = opts.castShadow === true
+  light.shadow = { mapSize: 1024, bias: 0, normalBias: 0, camera: { left: -5, right: 5, top: 5, bottom: -5, near: 0.5, far: 500 } }
+  if (opts.shadow !== undefined) mergeShadow(light.shadow, opts.shadow)
   return light
 }
 
@@ -460,6 +685,16 @@ export function setLight(light: Light, update: DirectionalLightOptions & Hemisph
   if (light.type === "directional") {
     if (update.direction !== undefined) light.direction = [...update.direction] as Vec3
     if (update.color !== undefined) light.color = [...update.color] as Vec3
+    let shadowChanged = false
+    if (update.castShadow !== undefined && update.castShadow !== light.castShadow) {
+      light.castShadow = update.castShadow
+      shadowChanged = true
+    }
+    if (update.shadow !== undefined) {
+      mergeShadow(light.shadow, update.shadow)
+      shadowChanged = true
+    }
+    if (shadowChanged) light._scene?._shadowChanged(light)
   } else {
     if (update.sky !== undefined) light.sky = [...update.sky] as Vec3
     if (update.ground !== undefined) light.ground = [...update.ground] as Vec3
@@ -472,6 +707,7 @@ export function createMesh(geometry: Geometry, material: Material): Mesh {
   mesh.geometry = geometry
   mesh.material = material
   mesh.renderOrder = 0
+  mesh.castShadow = false
   mesh._entry = null
   mesh._buffers = null
   mesh._transparent = false
@@ -904,6 +1140,13 @@ export function setRenderOrder(mesh: Mesh, order: number): void {
   mesh._scene?._reorder()
 }
 
+/** Draw the mesh into the scene's shadow map, or stop (see Mesh.castShadow). */
+export function setCastShadow(mesh: Mesh, cast: boolean): void {
+  if (mesh.castShadow === cast) return
+  mesh.castShadow = cast
+  mesh._scene?._setCast(mesh)
+}
+
 /** Swap a mesh's geometry: its draw entry is rebuilt (the scene re-sorts
  * the list, so the mesh keeps its place). */
 export function setGeometry(mesh: Mesh, geometry: Geometry): void {
@@ -989,8 +1232,9 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
   // shared-slot sink (bindDirectionSlot) following the node's world
   // rotation, with -direction as the local vector (the shader wants the
   // vector TOWARD the light) - so a light that merely moves costs no JS.
-  // This rewrite runs on attach/detach/field changes only and owns the
-  // rest: colors, count, hemisphere.
+  // This rewrite runs on attach/detach/field changes (and a new view)
+  // only and owns the rest: colors, count, hemisphere. The light set is
+  // scene state, so it lands on the scene target and every view target.
   let vecScratch = new Float32Array(3)
   let writeLights = () => {
     lightsDirty = false
@@ -1009,13 +1253,26 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       vecScratch[1] = -light.direction[1]
       vecScratch[2] = -light.direction[2]
       spatial.bindDirectionSlot(light._node!, texture, "uLightDir", MAX_LIGHTS * 3, count, vecScratch)
+      for (let v of views) spatial.bindDirectionSlot(light._node!, v.texture, "uLightDir", MAX_LIGHTS * 3, count, vecScratch)
       let c = light.color
       let k = light.intensity
       colors.push(c[0] * k, c[1] * k, c[2] * k)
       count++
     }
     for (let i = count; i < MAX_LIGHTS; i++) colors.push(0, 0, 0)
-    setTargetParams(texture, { uHemiSky: sky, uHemiGround: ground, uLightCount: count, uLightColor: colors })
+    // The shadow set rides with the lights: which directional index casts
+    // (-1 = none, so a receiving material draws plain) and its biases.
+    let params: ShaderParams = {
+      uHemiSky: sky,
+      uHemiGround: ground,
+      uLightCount: count,
+      uLightColor: colors,
+      uShadowLight: shadow !== null ? lights.filter(l => l.type === "directional").indexOf(shadow.light) : -1,
+      uShadowBias: shadow !== null ? shadow.light.shadow.bias : 0,
+      uShadowNormalBias: shadow !== null ? shadow.light.shadow.normalBias : 0,
+    }
+    setTargetParams(texture, params)
+    for (let v of views) setTargetParams(v.texture, params)
   }
   let orderDirty = false
   // The order last handed to the engine: a resort that lands on the same
@@ -1024,8 +1281,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
   let background: { entry: DrawId; pipeline: RenderPipelineId; program: ProgramId } | null = null
   let sortEntries = () => {
     orderDirty = false
-    refreshCenters()
-    let order = orderEntries(meshes, view, background?.entry)
+    let order = orderEntries(meshes, camera.view, background?.entry)
     if (order.length === lastOrder.length && order.every((id, i) => id === lastOrder[i])) return
     lastOrder = order
     setDrawOrder(texture, order)
@@ -1051,50 +1307,222 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       mesh._center[2] = m[2] * cx + m[6] * cy + m[10] * cz + m[14]
     }
   }
-  let fov = 60
-  let near = 0.1
-  let far = 100
-  let eye: Vec3 = [0, 0, 3]
-  let target: Vec3 = [0, 0, 0]
-  let up: Vec3 = [0, 1, 0]
-  let cameraDirty = true
-  let cameraPending = false
-  let proj = mat4()
-  let view = mat4()
-  let viewProj = mat4()
+  let camera = makeCamera()
   let clip: Vec4 = [0, 0, 0, 0]
+  let pickOrigin: Vec3 = [0, 0, 0]
 
-  // Matrix recompute, split from sync so project()/viewProj() see a fresh
-  // matrix right after setCamera, before the microtask runs. cameraPending
-  // keeps the GPU write owed to the next sync.
-  let ensureCamera = () => {
-    if (!cameraDirty) return
-    cameraDirty = false
-    cameraPending = true
-    perspective(proj, (fov * Math.PI) / 180, width / height, near, far)
-    lookAtMatrix(view, eye, target, up)
-    multiply(viewProj, proj, view)
+  // Views (scene.createView): more targets drawing the same meshes from
+  // their own cameras. A view holds one entry per mesh in its target,
+  // bound as one more draw sink of the mesh's core node, so the flush
+  // that writes the scene's entry writes the view's too. Sorted like the
+  // scene (view-space keys from the view's own camera); an overridden
+  // view is not sorted at all.
+  type ViewRecord = {
+    texture: TextureId
+    width: number
+    height: number
+    override: Material | null
+    /** Which meshes the view draws (null = all): the shadow view's
+     * caster set. Re-evaluated per mesh by _setCast. */
+    filter: ((mesh: Mesh) => boolean) | null
+    camera: Camera
+    entries: Map<Mesh, DrawId>
+    orderDirty: boolean
+    lastOrder: DrawId[]
+    disposed: boolean
+  }
+  let views: ViewRecord[] = []
+  // Every name scene.setParams has merged so far, replayed on a new view.
+  let sceneParams: ShaderParams = {}
+  // The shadow: the casting light and the internal view rendering its map
+  // (depth texture, depth override, casting meshes only). `lastWorld` is
+  // the light's world matrix the shadow camera was last placed from.
+  type Shadow = { light: DirectionalLight; view: ViewRecord; lastWorld: Mat4 }
+  let shadow: Shadow | null = null
+  let shadowDirty = false
+  let shadowDir: Vec3 = [0, 0, 0]
+  // The current uShadowMap source for every receiving target: the shadow
+  // view's depth id, or the 1x1 white placeholder (depth 1 = never
+  // shadowed) so the binding is always deterministic.
+  let shadowMap = () => (shadow !== null ? depthTexture(shadow.view.texture) : shadowPlaceholder())
+  // Every target a receiving material can draw into: the scene's and each
+  // view's but the shadow view itself (binding a target's own depth into
+  // it would be same-pass feedback).
+  let receivingTargets = (fn: (target: TextureId) => void) => {
+    fn(texture)
+    for (let v of views) if (shadow === null || v !== shadow.view) fn(v.texture)
+  }
+  let bindShadowMap = () => {
+    let map = shadowMap()
+    receivingTargets(t => setTargetTextures(t, { uShadowMap: map }))
+  }
+  let attachView = (v: ViewRecord, mesh: Mesh) => {
+    let inst = mesh._instances
+    if (v.override !== null && inst !== null) return
+    if (v.filter !== null && !v.filter(mesh)) return
+    let material = v.override ?? mesh.material
+    let bufs = mesh._buffers!
+    let entry = addDraw(v.texture, material.pipeline(mesh.geometry.layout), entrySeed(material, v.override !== null ? null : mesh._params), {
+      buffer: bufs.buffer,
+      indexBuffer: bufs.index,
+      indexFormat: bufs.indexFormat,
+      textures: material.textures,
+      instanceBuffer: inst !== null ? inst.buffer : undefined,
+      instanceCount: 0,
+    })
+    spatial.bindDraw(mesh._node!, v.texture, entry, material.normalMatrix === true, inst !== null ? inst.count : 1)
+    v.entries.set(mesh, entry)
+    v.orderDirty = true
+  }
+  let detachView = (v: ViewRecord, mesh: Mesh) => {
+    let entry = v.entries.get(mesh)
+    if (entry === undefined) return
+    v.entries.delete(mesh)
+    if (mesh._node !== null) spatial.unbindDraw(mesh._node, v.texture)
+    if (!v.disposed) removeDraw(v.texture, entry)
+    v.orderDirty = true
+  }
+  let sortView = (v: ViewRecord) => {
+    v.orderDirty = false
+    if (v.override !== null) return
+    let order = orderEntries(meshes, v.camera.view, undefined, m => v.entries.get(m as Mesh) ?? null)
+    if (order.length === v.lastOrder.length && order.every((id, i) => id === v.lastOrder[i])) return
+    v.lastOrder = order
+    setDrawOrder(v.texture, order)
+  }
+  let disposeView = (v: ViewRecord) => {
+    if (v.disposed) return
+    v.disposed = true
+    for (let mesh of v.entries.keys()) if (mesh._node !== null) spatial.unbindDraw(mesh._node, v.texture)
+    v.entries.clear()
+    for (let light of lights) if (light.type === "directional" && light._node !== null) spatial.unbindSlot(light._node, v.texture)
+    // Drain the zeroed direction slots while the target still exists.
+    spatial.flush()
+    destroyTexture(v.texture)
+    let i = views.indexOf(v)
+    if (i >= 0) views.splice(i, 1)
+  }
+  // A view record: the target, seeded with everything the scene target
+  // already holds (the light set - rewritten for every target, the simple
+  // write - the merged scene params, the shadow map binding), then one
+  // entry per mesh the filter admits.
+  let makeView = (vopts: ViewOptions, filter: ((mesh: Mesh) => boolean) | null): ViewRecord => {
+    let override = vopts.overrideMaterial ?? null
+    if (override !== null) {
+      for (let mesh of meshes) if (mesh._instances === null) checkLayout(override, mesh.geometry, "View override material")
+    }
+    let v: ViewRecord = {
+      texture: createDrawTarget(vopts.width, vopts.height, null, {
+        depth: vopts.depth ?? true,
+        clearColor: vopts.clearColor,
+        filter: vopts.filter,
+        wrap: vopts.wrap,
+        samples: vopts.samples,
+        label: vopts.label ?? (opts?.label ?? "scene") + "-view",
+        autoFree: false,
+      }),
+      width: vopts.width,
+      height: vopts.height,
+      override,
+      filter,
+      camera: makeCamera(),
+      entries: new Map(),
+      orderDirty: true,
+      lastOrder: [],
+      disposed: false,
+    }
+    views.push(v)
+    lightsDirty = true
+    setTargetParams(v.texture, sceneParams)
+    if (filter === null) setTargetTextures(v.texture, { uShadowMap: shadowMap() })
+    for (let mesh of meshes) attachView(v, mesh)
+    hooks._schedule()
+    return v
+  }
+  // The shadow view: a square depth-texture target drawing the casting
+  // meshes with the depth override from the light's frustum. Its map
+  // replaces the placeholder on every receiving target; the light params
+  // rewrite carries uShadowLight.
+  let createShadow = (light: DirectionalLight) => {
+    if (shadow !== null) {
+      throw new Error("A scene takes at most " + MAX_SHADOWS + " shadow-casting directional light (castShadow)")
+    }
+    let size = light.shadow.mapSize
+    let view = makeView(
+      {
+        width: size,
+        height: size,
+        depth: "texture",
+        overrideMaterial: shadowDepthMaterial(),
+        clearColor: [1, 1, 1, 1],
+        label: (opts?.label ?? "scene") + "-shadow",
+      },
+      m => m.castShadow,
+    )
+    shadow = { light, view, lastWorld: mat4() }
+    shadowDirty = true
+    lightsDirty = true
+    bindShadowMap()
+  }
+  let destroyShadow = () => {
+    if (shadow === null) return
+    let view = shadow.view
+    shadow = null
+    disposeView(view)
+    lightsDirty = true
+    bindShadowMap()
+    hooks._schedule()
+  }
+  // Place the shadow camera from the light's world matrix: at its world
+  // position, looking along its world direction, the light frustum as the
+  // orthographic extents. Compared against the matrix it was last placed
+  // from, so a scene animating elsewhere rewrites nothing here.
+  let placeShadowCamera = () => {
+    if (shadow === null) return
+    let light = shadow.light
+    let m = worldInto(worldScratch, light)
+    if (!shadowDirty && m.every((x, i) => x === shadow!.lastWorld[i])) return
+    shadowDirty = false
+    copy(shadow.lastWorld, m)
+    transformVector(shadowDir, m, light.direction)
+    let len = Math.hypot(shadowDir[0], shadowDir[1], shadowDir[2]) || 1
+    let d: Vec3 = [shadowDir[0] / len, shadowDir[1] / len, shadowDir[2] / len]
+    let c = light.shadow.camera
+    updateCamera(shadow.view.camera, {
+      position: [m[12], m[13], m[14]],
+      target: [m[12] + d[0], m[13] + d[1], m[14] + d[2]],
+      // A sun straight down is the common case and the degenerate one for
+      // world up: roll about z then (the map's orientation is invisible).
+      up: Math.abs(d[1]) > 0.99 ? [0, 0, 1] : [0, 1, 0],
+      ortho: { left: c.left, right: c.right, top: c.top, bottom: c.bottom },
+      near: c.near,
+      far: c.far,
+    })
   }
 
   let sync = () => {
     scheduled = false
     if (disposed) return
-    ensureCamera()
-    if (cameraPending) {
-      // The camera is target state: one shared write, whatever the scene
-      // holds. Entries are untouched - uModel is camera-independent, and
-      // uCamPos is stored even when no current material declares it.
-      cameraPending = false
-      // The camera basis rides along: the view matrix's first two rows are
-      // the camera's world-space right and up (no clip flip - that lives in
-      // the projection), so a billboard needs no reconstruction from uViewProj.
-      setTargetParams(texture, {
-        uViewProj: viewProj,
-        uCamPos: eye,
-        uCamRight: [view[0], view[4], view[8]],
-        uCamUp: [view[1], view[5], view[9]],
-      })
+    ensureCamera(camera, width, height)
+    if (camera.pending) {
+      camera.pending = false
+      setTargetParams(texture, cameraParams(camera))
       if (transparentCount > 1) orderDirty = true
+    }
+    placeShadowCamera()
+    for (let v of views) {
+      ensureCamera(v.camera, v.width, v.height)
+      if (v.camera.pending) {
+        v.camera.pending = false
+        setTargetParams(v.texture, cameraParams(v.camera))
+        if (transparentCount > 1) v.orderDirty = true
+        // The matrix that renders the map is the one receivers look up
+        // with: one mat4 to every receiving target per shadow-camera move.
+        if (shadow !== null && v === shadow.view) {
+          let params: ShaderParams = { uShadowMatrix: v.camera.viewProj }
+          receivingTargets(t => setTargetParams(t, params))
+        }
+      }
     }
     // Light bookkeeping first, so a fresh direction-slot bind is seeded
     // by the flush below in the same sync.
@@ -1106,11 +1534,18 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       // Which meshes moved is the core's knowledge now, so any move with
       // two or more transparent meshes re-sorts (sortEntries issues nothing
       // when the permutation is unchanged).
-      if (transparentCount > 1) orderDirty = true
+      if (transparentCount > 1) {
+        orderDirty = true
+        for (let v of views) v.orderDirty = true
+      }
       for (let n of moved) n._moved = false
       moved.length = 0
     }
+    // The sort keys are world-space and camera-independent: refreshed once
+    // for every sort this sync.
+    if (orderDirty || views.some(v => v.orderDirty)) refreshCenters()
     if (orderDirty) sortEntries()
+    for (let v of views) if (v.orderDirty) sortView(v)
   }
 
   let hooks: SceneHooks = {
@@ -1126,11 +1561,42 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       }
       lights.push(light)
       lightsDirty = true
+      if (light.type === "directional" && light.castShadow) createShadow(light)
     },
     _detachLight(light) {
       let i = lights.indexOf(light)
       if (i >= 0) lights.splice(i, 1)
       lightsDirty = true
+      if (shadow !== null && shadow.light === light) destroyShadow()
+      hooks._schedule()
+    },
+    _shadowChanged(light) {
+      if (disposed) return
+      if (shadow !== null && shadow.light === light) {
+        if (!light.castShadow) {
+          destroyShadow()
+          return
+        }
+        let size = light.shadow.mapSize
+        if (size !== shadow.view.width) {
+          shadow.view.width = size
+          shadow.view.height = size
+          setTargetSize(shadow.view.texture, size, size)
+        }
+        shadowDirty = true
+        lightsDirty = true
+        hooks._schedule()
+      } else if (light.castShadow) {
+        createShadow(light)
+      }
+    },
+    _setCast(mesh) {
+      if (mesh._entry === null || disposed) return
+      for (let v of views) {
+        if (v.filter === null) continue
+        if (v.filter(mesh)) attachView(v, mesh)
+        else detachView(v, mesh)
+      }
       hooks._schedule()
     },
     _lightChanged() {
@@ -1139,18 +1605,12 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     },
     _attach(mesh) {
       if (disposed) return
-      // A material reads attributes by name; the geometry's layout must
-      // carry every one it declares (the pipeline is built for that layout,
-      // so a missing channel would have no home) - an error here, like the
-      // rest of the strict entry path. Extra channels are fine.
       validateGeometry(mesh.geometry)
-      let missing = missingAttributes(mesh.material, mesh.geometry.layout)
-      if (missing.length > 0) {
-        throw new Error(
-          "Mesh geometry layout (" + layoutKey(mesh.geometry.layout) + ") lacks attributes its material reads: " +
-            missing.map(a => a.name + " " + a.format).join(", ") +
-            " - add the channel with withAttribute()/withColors(), or use a material that does not read it",
-        )
+      checkLayout(mesh.material, mesh.geometry, "Mesh material")
+      // Every check before any mutation, so a rejected mesh is attached
+      // nowhere - the views' override materials included.
+      for (let v of views) {
+        if (v.override !== null && mesh._instances === null) checkLayout(v.override, mesh.geometry, "View override material")
       }
       // Instancing pairs the same way layout does: the pipeline's instance
       // attributes describe the mesh's record buffer, so one without the
@@ -1176,18 +1636,12 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       }
       let bufs = acquireGeometryBuffers(mesh.geometry)
       mesh._buffers = bufs
-      // The uNormal seed keys off the material flag because entry params
-      // validate strictly - and a material declaring uNormal without using
-      // it therefore throws right here, at add().
-      let seed: ShaderParams = mesh.material.normalMatrix
-        ? { uModel: IDENTITY, uNormal: IDENTITY, ...mesh.material.params, ...mesh._params }
-        : { uModel: IDENTITY, ...mesh.material.params, ...mesh._params }
       // The entry starts switched off: it has no world matrix yet - the walk
       // in sync() computes one - and _schedule() defers that to a microtask,
       // so added live it would draw at the seeded identity until then. The
       // mismatch branch in sync() turns it on in the same pass that writes
       // uModel.
-      mesh._entry = addDraw(texture, mesh.material.pipeline(mesh.geometry.layout), seed, {
+      mesh._entry = addDraw(texture, mesh.material.pipeline(mesh.geometry.layout), entrySeed(mesh.material, mesh._params), {
         buffer: bufs.buffer,
         indexBuffer: bufs.index,
         indexFormat: bufs.indexFormat,
@@ -1198,6 +1652,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       // The core turns the entry on (with the world matrix) at the next
       // flush, and off again whenever the node or an ancestor hides.
       spatial.bindDraw(mesh._node!, texture, mesh._entry, mesh.material.normalMatrix === true, inst !== null ? inst.count : 1)
+      for (let v of views) attachView(v, mesh)
       // Picking: the local box puts the node in the core index; an
       // ordinary mesh also gets its geometry's triangle shape, an
       // instanced one is box-only (records are opaque, and without
@@ -1214,10 +1669,11 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     },
     _detach(mesh) {
       if (mesh._entry !== null) {
+        for (let v of views) detachView(v, mesh)
         if (mesh._node !== null) {
           spatial.setShape(mesh._node, null)
           spatial.setBounds(mesh._node, null)
-          spatial.unbindDraw(mesh._node)
+          spatial.unbindDraw(mesh._node, texture)
           byNode.delete(mesh._node)
         }
         if (!disposed) removeDraw(texture, mesh._entry)
@@ -1231,7 +1687,14 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       mesh._entry = null
     },
     _setParams(mesh, params) {
-      if (mesh._entry !== null && !disposed) setDrawParams(texture, mesh._entry, params)
+      if (mesh._entry === null || disposed) return
+      setDrawParams(texture, mesh._entry, params)
+      // A view drawing the mesh's own material carries its params too; an
+      // overridden view has none of them.
+      for (let v of views) {
+        let entry = v.entries.get(mesh)
+        if (entry !== undefined && v.override === null) setDrawParams(v.texture, entry, params)
+      }
     },
     _setCount(mesh) {
       // The core composes the count with the visibility switch: a hidden
@@ -1246,10 +1709,15 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       // the old buffer after this, which the entry held alive until now.
       if (mesh._entry !== null && !disposed && mesh._instances !== null) {
         setDrawBuffers(texture, mesh._entry, { instanceBuffer: mesh._instances.buffer })
+        for (let v of views) {
+          let entry = v.entries.get(mesh)
+          if (entry !== undefined) setDrawBuffers(v.texture, entry, { instanceBuffer: mesh._instances.buffer })
+        }
       }
     },
     _reorder() {
       orderDirty = true
+      for (let v of views) v.orderDirty = true
       this._schedule()
     },
     _moved(node) {
@@ -1264,6 +1732,8 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
   let root = makeNode("group")
   root._scene = hooks
   root._node = spatial.createNode(fillTransform(root), true)
+  // No casting light yet: receivers read the never-shadowed placeholder.
+  bindShadowMap()
 
   // --- Pointer event dispatch (behind scene.handlers) ---
 
@@ -1390,13 +1860,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     texture,
     root,
     setCamera(update) {
-      if (update.fov !== undefined) fov = update.fov
-      if (update.near !== undefined) near = update.near
-      if (update.far !== undefined) far = update.far
-      if (update.position) eye = [update.position[0], update.position[1], update.position[2]]
-      if (update.target) target = [update.target[0], update.target[1], update.target[2]]
-      if (update.up) up = [update.up[0], update.up[1], update.up[2]]
-      cameraDirty = true
+      updateCamera(camera, update)
       hooks._schedule()
     },
     setSize(w, h) {
@@ -1404,11 +1868,14 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       width = w
       height = h
       setTargetSize(texture, w, h)
-      cameraDirty = true
+      camera.dirty = true
       hooks._schedule()
     },
     setParams(params) {
-      if (!disposed) setTargetParams(texture, params)
+      if (disposed) return
+      Object.assign(sceneParams, params)
+      setTargetParams(texture, params)
+      for (let v of views) setTargetParams(v.texture, params)
     },
     setBackground(source) {
       if (disposed) return
@@ -1426,32 +1893,48 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       background = { entry, pipeline: built.pipeline, program: built.program }
     },
     project(point) {
-      ensureCamera()
-      transformPoint(clip, viewProj, point)
+      ensureCamera(camera, width, height)
+      transformPoint(clip, camera.viewProj, point)
       let w = clip[3]
       if (w < 1e-6) return null
       // perspective() bakes the y-down clip flip, so NDC maps straight to
-      // top-left-origin pixels with no negation here.
+      // top-left-origin pixels with no negation here. (An orthographic
+      // camera has w = 1 everywhere: every point projects.)
       return { x: ((clip[0] / w) * 0.5 + 0.5) * width, y: ((clip[1] / w) * 0.5 + 0.5) * height, w }
     },
     viewProj(out) {
-      ensureCamera()
-      return copy(out ?? mat4(), viewProj)
+      ensureCamera(camera, width, height)
+      return copy(out ?? mat4(), camera.viewProj)
     },
     pick(x, y) {
-      ensureCamera()
-      // The camera-frame ray through the pixel, inverting project()'s
-      // mapping: the baked y-down clip flip is why pixel y converts with
-      // no negation there and one here.
-      let f = 1 / Math.tan(((fov * Math.PI) / 180) / 2)
-      let cx = (((x / width) * 2 - 1) * (width / height)) / f
-      let cy = -((y / height) * 2 - 1) / f
-      // The view's upper 3x3 rows are the camera axes, so its transpose
-      // carries the camera-space direction (cx, cy, -1) to world.
-      pickDir[0] = cx * view[0] + cy * view[1] - view[2]
-      pickDir[1] = cx * view[4] + cy * view[5] - view[6]
-      pickDir[2] = cx * view[8] + cy * view[9] - view[10]
-      return scene.raycast(eye, pickDir)
+      ensureCamera(camera, width, height)
+      let v = camera.view
+      let o = camera.ortho
+      if (o === null) {
+        // The camera-frame ray through the pixel, inverting project()'s
+        // mapping: the baked y-down clip flip is why pixel y converts with
+        // no negation there and one here.
+        let f = 1 / Math.tan(((camera.fov * Math.PI) / 180) / 2)
+        let cx = (((x / width) * 2 - 1) * (width / height)) / f
+        let cy = -((y / height) * 2 - 1) / f
+        // The view's upper 3x3 rows are the camera axes, so its transpose
+        // carries the camera-space direction (cx, cy, -1) to world.
+        pickDir[0] = cx * v[0] + cy * v[1] - v[2]
+        pickDir[1] = cx * v[4] + cy * v[5] - v[6]
+        pickDir[2] = cx * v[8] + cy * v[9] - v[10]
+        return scene.raycast(camera.eye, pickDir)
+      }
+      // Orthographic: every ray runs along the camera's forward axis; the
+      // pixel picks where on the camera plane it starts (top row = top).
+      let cx = o.left + (x / width) * (o.right - o.left)
+      let cy = o.top + (y / height) * (o.bottom - o.top)
+      pickOrigin[0] = camera.eye[0] + cx * v[0] + cy * v[1]
+      pickOrigin[1] = camera.eye[1] + cx * v[4] + cy * v[5]
+      pickOrigin[2] = camera.eye[2] + cx * v[8] + cy * v[9]
+      pickDir[0] = -v[2]
+      pickDir[1] = -v[6]
+      pickDir[2] = -v[10]
+      return scene.raycast(pickOrigin, pickDir)
     },
     raycast(origin, direction) {
       // Flush pending writes: picking sees the tree as the app just wrote
@@ -1481,6 +1964,32 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     handlersFor(layout) {
       return makeHandlers(layout)
     },
+    createView(vopts) {
+      if (disposed) throw new Error("createView: the scene is disposed")
+      let v = makeView(vopts, null)
+      return {
+        texture: v.texture,
+        depthTexture: vopts.depth === "texture" ? depthTexture(v.texture) : null,
+        setCamera(update) {
+          updateCamera(v.camera, update)
+          hooks._schedule()
+        },
+        setSize(w, h) {
+          if (v.disposed || (w === v.width && h === v.height)) return
+          v.width = w
+          v.height = h
+          setTargetSize(v.texture, w, h)
+          v.camera.dirty = true
+          hooks._schedule()
+        },
+        setParams(params) {
+          if (!v.disposed) setTargetParams(v.texture, params)
+        },
+        dispose() {
+          disposeView(v)
+        },
+      }
+    },
     dispose() {
       if (disposed) return
       disposed = true
@@ -1495,9 +2004,11 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
         root._node = null
       }
       // Drain the zeroed direction slots the teardown queued while the
-      // target still exists; afterwards their groups are gone.
+      // targets still exist; afterwards their groups are gone.
       spatial.flush()
       destroyTexture(texture)
+      shadow = null
+      for (let v of views.slice()) disposeView(v)
       if (background !== null) {
         // The entry died with the target; the pipeline and program are the
         // scene's own (unlike shared material pipelines), so they go too.

@@ -30,8 +30,8 @@ impl SinkWriter for Recorder {
   }
 }
 
-fn sink(draw: u64) -> Option<DrawSink> {
-  Some(DrawSink { target: 1, draw, normal: false, count: 1 })
+fn sink(draw: u64) -> DrawSink {
+  DrawSink { target: 1, draw, normal: false, count: 1 }
 }
 
 fn flush(s: &mut Spatial) -> Vec<Write> {
@@ -53,7 +53,7 @@ fn first_flush_switches_entry_on_and_writes_world() {
   let root = s.create([1.0, 0.0, 0.0], Q, ONE, true);
   let child = s.create([0.0, 2.0, 0.0], Q, [2.0, 2.0, 2.0], true);
   s.set_parent(child, Some(root)).expect("parent");
-  s.set_sink(child, sink(7)).expect("sink");
+  s.bind_sink(child, sink(7)).expect("sink");
   let writes = flush(&mut s);
   assert_eq!(writes.len(), 2);
   assert_eq!(writes[0], Write::Count { target: 1, draw: 7, count: 1 });
@@ -74,7 +74,7 @@ fn moving_a_node_writes_only_its_subtree() {
   s.set_parent(b, Some(root)).expect("parent");
   s.set_parent(a_child, Some(a)).expect("parent");
   for (n, d) in [(a, 1), (b, 2), (a_child, 3)] {
-    s.set_sink(n, sink(d)).expect("sink");
+    s.bind_sink(n, sink(d)).expect("sink");
   }
   flush(&mut s);
   s.set_transform(a, [5.0, 0.0, 0.0], Q, ONE).expect("move");
@@ -97,7 +97,7 @@ fn hiding_flips_counts_and_unhide_rewrites_params() {
   let root = s.create([0.0; 3], Q, ONE, true);
   let m = s.create([0.0; 3], Q, ONE, true);
   s.set_parent(m, Some(root)).expect("parent");
-  s.set_sink(m, Some(DrawSink { target: 1, draw: 9, normal: false, count: 4 })).expect("sink");
+  s.bind_sink(m, DrawSink { target: 1, draw: 9, normal: false, count: 4 }).expect("sink");
   flush(&mut s);
   s.set_visible(root, false).expect("hide");
   assert_eq!(flush(&mut s), vec![Write::Count { target: 1, draw: 9, count: 0 }]);
@@ -112,6 +112,71 @@ fn hiding_flips_counts_and_unhide_rewrites_params() {
 }
 
 #[test]
+fn sinks_are_per_target_and_one_move_feeds_them_all() {
+  let mut s = Spatial::new();
+  let m = s.create([0.0; 3], Q, ONE, true);
+  s.bind_sink(m, DrawSink { target: 1, draw: 7, normal: false, count: 1 }).expect("sink");
+  s.bind_sink(m, DrawSink { target: 2, draw: 8, normal: true, count: 1 }).expect("sink");
+  let writes = flush(&mut s);
+  assert_eq!(writes.len(), 4, "count + params per sink: {writes:?}");
+  assert_eq!(writes[0], Write::Count { target: 1, draw: 7, count: 1 });
+  assert_eq!(writes[2], Write::Count { target: 2, draw: 8, count: 1 });
+  // Rebinding on a target replaces that sink; the other stays (and, the
+  // node being re-queued, gets a params rewrite - the reparent rule).
+  s.bind_sink(m, DrawSink { target: 1, draw: 9, normal: false, count: 1 }).expect("rebind");
+  let writes = flush(&mut s);
+  assert!(writes.contains(&Write::Count { target: 1, draw: 9, count: 1 }));
+  assert!(writes.contains(&Write::Params { target: 1, draw: 9, model: IDENTITY, normal: None }));
+  assert!(!writes.iter().any(|w| matches!(w, Write::Count { target: 2, .. })));
+  // One move, one params write per sink; uNormal only where asked.
+  s.set_transform(m, [2.0, 0.0, 0.0], Q, ONE).expect("move");
+  let writes = flush(&mut s);
+  assert_eq!(writes.len(), 2);
+  assert_eq!(model(&writes[0])[12], 2.0);
+  assert_eq!(model(&writes[1])[12], 2.0);
+  assert!(writes.iter().any(|w| matches!(w, Write::Params { target: 1, draw: 9, normal: None, .. })));
+  assert!(writes.iter().any(|w| matches!(w, Write::Params { target: 2, draw: 8, normal: Some(_), .. })));
+  // The count write fans out to every entry that is on.
+  let mut out = Recorder(Vec::new());
+  assert!(s.set_sink_count(m, 5, &mut out).expect("count"));
+  assert_eq!(out.0.len(), 2);
+  assert!(out.0.contains(&Write::Count { target: 1, draw: 9, count: 5 }));
+  assert!(out.0.contains(&Write::Count { target: 2, draw: 8, count: 5 }));
+  // Unbinding one target leaves the other; hiding then writes one count.
+  s.unbind_sink(m, Some(1)).expect("unbind");
+  flush(&mut s);
+  s.set_visible(m, false).expect("hide");
+  assert_eq!(flush(&mut s), vec![Write::Count { target: 2, draw: 8, count: 0 }]);
+  s.unbind_sink(m, None).expect("unbind all");
+  assert!(s.set_sink_count(m, 1, &mut out).is_err());
+}
+
+#[test]
+fn slot_sinks_are_per_target() {
+  let mut s = Spatial::new();
+  let a = s.create([0.0; 3], Q, ONE, true);
+  let sink = |target: u64| SharedSlotSink {
+    target,
+    name: "uLightDir".to_string(),
+    len: 3,
+    index: 0,
+    projection: Projection::Direction([0.0, -1.0, 0.0]),
+  };
+  s.bind_shared_slot(a, sink(1)).expect("bind");
+  s.bind_shared_slot(a, sink(2)).expect("bind");
+  let writes = flush(&mut s);
+  assert_eq!(writes.len(), 2, "one array per target: {writes:?}");
+  // Rebinding on target 1 replaces (no leaked group); unbinding target 2
+  // zeroes only its array.
+  s.bind_shared_slot(a, sink(1)).expect("rebind");
+  s.unbind_shared_slot(a, Some(2)).expect("unbind");
+  let writes = flush(&mut s);
+  assert!(writes.contains(&Write::Shared { target: 2, name: "uLightDir".to_string(), values: vec![0.0; 3] }));
+  assert!(writes.contains(&Write::Shared { target: 1, name: "uLightDir".to_string(), values: vec![0.0, -1.0, 0.0] }));
+  assert!(flush(&mut s).is_empty());
+}
+
+#[test]
 fn world_reads_through_pending_writes() {
   let mut s = Spatial::new();
   let root = s.create([1.0, 0.0, 0.0], Q, ONE, true);
@@ -122,7 +187,7 @@ fn world_reads_through_pending_writes() {
   s.set_transform(root, [10.0, 0.0, 0.0], Q, ONE).expect("move");
   assert_eq!(s.world(m).expect("world")[12..15], [10.0, 1.0, 0.0]);
   // The read cleared nothing: the flush still sees the move.
-  s.set_sink(m, sink(1)).expect("sink");
+  s.bind_sink(m, sink(1)).expect("sink");
   assert_eq!(model(&flush(&mut s)[1])[12..15], [10.0, 1.0, 0.0]);
 }
 
@@ -350,7 +415,7 @@ fn shared_slots_follow_rotation_zero_on_unbind_and_drop_their_group() {
     projection: Projection::Direction(v),
   };
   // The scaled local vector normalizes away; slot 1 starts as zeros.
-  s.set_shared_slot(a, Some(sink(0, [0.0, -2.0, 0.0]))).expect("bind");
+  s.bind_shared_slot(a, sink(0, [0.0, -2.0, 0.0])).expect("bind");
   let writes = flush(&mut s);
   assert_eq!(
     writes,
@@ -366,12 +431,12 @@ fn shared_slots_follow_rotation_zero_on_unbind_and_drop_their_group() {
   s.set_transform(b, [5.0, 0.0, 0.0], [0.0, 0.0, half, half], ONE).expect("move");
   assert!(flush(&mut s).is_empty(), "translation changes no direction");
   // A second sink shares the group; slot len mismatch is rejected.
-  s.set_shared_slot(b, Some(sink(1, [0.0, 0.0, 1.0]))).expect("bind");
-  assert!(s.set_shared_slot(b, Some(SharedSlotSink { len: 9, ..sink(1, [0.0, 0.0, 1.0]) })).is_err());
+  s.bind_shared_slot(b, sink(1, [0.0, 0.0, 1.0])).expect("bind");
+  assert!(s.bind_shared_slot(b, SharedSlotSink { len: 9, ..sink(1, [0.0, 0.0, 1.0]) }).is_err());
   flush(&mut s);
   // Unbind zeroes the slot; destroying the last holder emits the final
   // zeroed array and drops the group (no further writes).
-  s.set_shared_slot(b, None).expect("unbind");
+  s.unbind_shared_slot(b, None).expect("unbind");
   let writes = flush(&mut s);
   let Write::Shared { values, .. } = &writes[0] else { panic!("expected shared write") };
   assert_eq!(values[3..6], [0.0, 0.0, 0.0]);

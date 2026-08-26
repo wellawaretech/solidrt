@@ -191,6 +191,24 @@ export function perspective(out: Mat4, fovy: number, aspect: number, near: numbe
   return out
 }
 
+/**
+ * Orthographic projection with the same y-down clip flip BAKED IN as
+ * perspective() (row two negated): view-space x in [left, right] and y in
+ * [bottom, top] fill the target at any depth, [near, far] maps to depth
+ * like perspective. The camera's `ortho` option; the flip lives here for
+ * the reason given at perspective().
+ */
+export function orthographic(out: Mat4, left: number, right: number, top: number, bottom: number, near: number, far: number): Mat4 {
+  let lr = 1 / (left - right)
+  let bt = 1 / (bottom - top)
+  let nf = 1 / (near - far)
+  out[0] = -2 * lr; out[1] = 0; out[2] = 0; out[3] = 0
+  out[4] = 0; out[5] = 2 * bt; out[6] = 0; out[7] = 0
+  out[8] = 0; out[9] = 0; out[10] = 2 * nf; out[11] = 0
+  out[12] = (left + right) * lr; out[13] = -(top + bottom) * bt; out[14] = (far + near) * nf; out[15] = 1
+  return out
+}
+
 // Quaternions, the rotation the scene actually stores. Euler triples are a
 // boundary format only - authoring (setTransform's `rotation`, the
 // components' `rotation` prop) and reading back (getRotation) - so the order

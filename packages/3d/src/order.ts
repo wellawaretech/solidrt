@@ -22,13 +22,20 @@ export type Orderable<T> = {
  * center. The center, not the origin (Three's key), so geometry built
  * off-origin sorts by where it is; and not the nearest bounds point, which
  * would draw a large translucent ground plane over the small translucents
- * resting on it. Per-mesh only: no per-triangle sort, no OIT.
+ * resting on it. Per-mesh only: no per-triangle sort, no OIT. `entry`
+ * picks the id ordered for each mesh (default its own `_entry`; a view
+ * passes its per-mesh entries in its target).
  */
-export function orderEntries<T>(meshes: readonly Orderable<T>[], view: Mat4, first?: T): T[] {
+export function orderEntries<T>(
+  meshes: readonly Orderable<T>[],
+  view: Mat4,
+  first?: T,
+  entry: (m: Orderable<T>) => T | null = m => m._entry,
+): T[] {
   let opaque: Orderable<T>[] = []
   let transparent: Orderable<T>[] = []
   for (let m of meshes) {
-    if (m._entry === null) continue
+    if (entry(m) === null) continue
     ;(m._transparent ? transparent : opaque).push(m)
   }
   // Array sort is stable, so equal keys keep add order.
@@ -45,7 +52,7 @@ export function orderEntries<T>(meshes: readonly Orderable<T>[], view: Mat4, fir
   }
   let order: T[] = []
   if (first !== undefined) order.push(first)
-  for (let m of opaque) order.push(m._entry!)
-  for (let m of transparent) order.push(m._entry!)
+  for (let m of opaque) order.push(entry(m)!)
+  for (let m of transparent) order.push(entry(m)!)
   return order
 }

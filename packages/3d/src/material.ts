@@ -43,7 +43,7 @@ import type {
 } from "@solidrt/core/gpu"
 import { layoutAttributes, layoutKey, layoutSlot } from "./geometry.ts"
 import type { VertexLayout } from "./geometry.ts"
-import { BLINN_SPECULAR, HEMISPHERE, LAMBERT, LIT_VERTEX, LIT_VERTEX_COLORED, MAX_LIGHTS } from "./glsl.ts"
+import { BLINN_SPECULAR, HEMISPHERE, LAMBERT, LIT_VERTEX, LIT_VERTEX_COLORED, MAX_LIGHTS, SHADOW } from "./glsl.ts"
 
 export type Material = {
   /** The pipeline this material draws with for geometry of `layout`
@@ -197,13 +197,27 @@ export type LitOptions = UnlitOptions & {
    * each part's size or UVs; the map must be created with
    * `wrap: "repeat"`. */
   triplanar?: number
+  /**
+   * Receive the scene's directional shadow (default true, like Godot and
+   * Three): the casting light's term is multiplied by the shadow-map
+   * factor (SHADOW in `@solidrt/3d/glsl`). `false` opts out - a material
+   * that must never darken (an emissive surface, a far skybox) - and
+   * drops the map sample from its program. A material option, not a
+   * node flag as in Three, because the material picks the program (like
+   * vertexColors and triplanar; Godot's `disable_receive_shadows`); in a
+   * scene with no `castShadow` light the receiving variant draws exactly
+   * like the opted-out one.
+   */
+  receiveShadow?: boolean
 }
 
 // The lit fragment is composed from the same exported pieces an app
-// composes by hand, per flag: map x vertexColors x triplanar x
+// composes by hand, per flag: map x vertexColors x triplanar x shadow x
 // transparent. Lights arrive through the scene's shared params
-// (light nodes); the base color, map and highlight are per entry.
-function litFragment(map: boolean, vertexColors: boolean, triplanar: boolean): string {
+// (light nodes); the base color, map and highlight are per entry. The
+// shadow set is shared too: the map and matrix are target-level (bound by
+// the scene), uShadowLight is the casting light's index or -1.
+function litFragment(map: boolean, vertexColors: boolean, triplanar: boolean, shadow: boolean): string {
   return glsl`
     in vec3 vWorldPos;
     in vec3 vNormal;
@@ -220,6 +234,16 @@ function litFragment(map: boolean, vertexColors: boolean, triplanar: boolean): s
     uniform int uLightCount;
     uniform vec3 uLightDir[${MAX_LIGHTS}];
     uniform vec3 uLightColor[${MAX_LIGHTS}];
+    ${
+      shadow
+        ? `uniform sampler2D uShadowMap;
+    uniform mat4 uShadowMatrix;
+    uniform float uShadowBias;
+    uniform float uShadowNormalBias;
+    uniform int uShadowLight;
+    ${SHADOW}`
+        : ""
+    }
     ${HEMISPHERE}
     ${LAMBERT}
     ${BLINN_SPECULAR}
@@ -244,8 +268,15 @@ function litFragment(map: boolean, vertexColors: boolean, triplanar: boolean): s
       for (int i = 0; i < ${MAX_LIGHTS}; i++) {
         if (i >= uLightCount) break;
         vec3 l = uLightDir[i];
-        light += uLightColor[i] * lambert(n, l);
-        spec += uLightColor[i] * blinnSpecular(n, v, l, uShininess);
+        ${
+          shadow
+            ? `float s = i == uShadowLight
+          ? shadow(uShadowMap, uShadowMatrix * vec4(vWorldPos + n * uShadowNormalBias, 1.0), uShadowBias)
+          : 1.0;`
+            : "float s = 1.0;"
+        }
+        light += uLightColor[i] * lambert(n, l) * s;
+        spec += uLightColor[i] * blinnSpecular(n, v, l, uShininess) * s;
       }
       fragColor = vec4(base.rgb * light + spec * uSpecular * base.a, base.a);
     }
@@ -272,12 +303,13 @@ export function lit(opts: LitOptions = {}): Material {
   let vertexColors = opts.vertexColors === true
   let triplanar = map && opts.triplanar !== undefined
   let transparent = opts.transparent === true
-  let key = [map, vertexColors, triplanar, transparent].join("|")
+  let shadow = opts.receiveShadow !== false
+  let key = [map, vertexColors, triplanar, transparent, shadow].join("|")
   let cls = litClasses.get(key)
   if (cls === undefined) {
     cls = shaderMaterialClass({
       vertex: vertexColors ? LIT_VERTEX_COLORED : LIT_VERTEX,
-      fragment: litFragment(map, vertexColors, triplanar),
+      fragment: litFragment(map, vertexColors, triplanar, shadow),
       transparent,
       label: "scene-lit-" + key,
     })
@@ -290,6 +322,42 @@ export function lit(opts: LitOptions = {}): Material {
     textures: map ? { uMap: opts.map! } : undefined,
   })
   return material
+}
+
+// The shadow depth pass: position only, no color of interest (the target's
+// depth texture is the output; the color write is the pipeline's minimum).
+// Front faces culled, Three's shadowSide default: the map holds each
+// caster's BACK surface, so a receiving front face at the same depth
+// compares lit without a bias and acne needs no fighting on closed meshes.
+const SHADOW_DEPTH_VERTEX = glsl`
+  in vec3 aPos;
+  uniform mat4 uModel;
+  uniform mat4 uViewProj;
+  void main() {
+    gl_Position = uViewProj * uModel * vec4(aPos, 1.0);
+  }
+`
+
+const SHADOW_DEPTH_FRAGMENT = glsl`
+  void main() {
+    fragColor = vec4(1.0);
+  }
+`
+
+let shadowDepth: Material | undefined
+
+/** The override material of a scene's shadow view (internal): one class
+ * for the app, built on first use. */
+export function shadowDepthMaterial(): Material {
+  if (shadowDepth === undefined) {
+    shadowDepth = shaderMaterialClass({
+      vertex: SHADOW_DEPTH_VERTEX,
+      fragment: SHADOW_DEPTH_FRAGMENT,
+      cull: "front",
+      label: "scene-shadow-depth",
+    }).instance()
+  }
+  return shadowDepth
 }
 
 export type SpriteOptions = UnlitOptions & {
