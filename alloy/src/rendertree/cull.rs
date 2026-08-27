@@ -95,7 +95,7 @@ impl EnvelopeCache {
 pub(crate) fn child_frame(element: &Element, inherited: Size) -> Size {
   let mut frame = element.layout.as_ref().map(|l| l.size()).unwrap_or(inherited);
   if let ElementKind::View(v) = &element.kind {
-    if let Some(vb) = v.view_box {
+    if let Some(vb) = v.design_size() {
       frame = vb;
     }
   }

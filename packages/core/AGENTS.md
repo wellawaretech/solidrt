@@ -38,9 +38,16 @@ Exception - fixed-aspect content. For content with fixed internal geometry
 at all: author everything in one design space and let `viewBox` fit it.
 `<view flex={1} viewBox={[1280, 800]}>` uniformly scales and centers the
 children (letterboxed), pointer events on them arrive in design coordinates,
-and the same code runs unchanged from a desktop window to a phone. Reach for
-`windowSizeClass` branching only when the layout genuinely reflows across form
-factors.
+and the same code runs unchanged from a desktop window to a phone. Laid-out
+children (flex, percentages, text wrap) resolve against the design size too,
+so a whole panel scales into a smaller box without reflowing; the view itself
+sizes like a replaced element whose intrinsic size is the design size. One
+trap from flexbox, not from viewBox: in a flex row a width-only viewBox view
+is stretched to the line's height under the default alignment, so give the
+view `alignSelf="flex-start"` (or the row a non-stretch `alignItems`) to get
+the design aspect - `aspectRatio` does not override stretch. Reach for
+`windowSizeClass` branching only when the layout genuinely reflows across
+form factors.
 
 `env` and `capabilities` (both exported from `@solidrt/core`) are the two
 objects that expose this. They are plain objects with REACTIVE GETTERS, not

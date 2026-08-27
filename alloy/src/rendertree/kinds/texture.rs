@@ -2,7 +2,9 @@ use super::PaintState;
 use crate::impellers::{DisplayListBuilder, Point, Rect, Size, TextureSampling};
 use crate::rendertree::hit::{HitContext, Hittable};
 use crate::rendertree::Damage;
-use crate::rendertree::{Bounded, BuildContext, Buildable, Element, ElementKind, Measurable, MeasureContext};
+use crate::rendertree::{
+  replaced_size, Bounded, BuildContext, Buildable, Element, ElementKind, Measurable, MeasureContext,
+};
 use taffy::{AlignSelf, Display, Style};
 
 // CSS object-fit semantics: how the source pixels map to the element box.
@@ -134,32 +136,17 @@ impl Bounded for Texture {
   }
 }
 
-// HTML <img> sizing rules:
-//   neither known  -> intrinsic w/h
-//   one known      -> derive other from intrinsic aspect ratio
-//   both known     -> honor both (explicit override)
-// Intrinsic size honors src_* crop when set, else falls back to texture dims.
-// `fit` is paint-only (see fit_rects) and never enters measurement.
+// HTML <img> sizing rules (rendertree::replaced_size). Intrinsic size honors
+// src_* crop when set, else falls back to texture dims. `fit` is paint-only
+// (see fit_rects) and never enters measurement.
 impl Measurable for Texture {
   fn measure(&self, ctx: &MeasureContext) -> Size {
     let (tex_w, tex_h) = self
       .texture_id
       .and_then(|id| ctx.alloy.textures.get(id).map(|e| (e.width() as f32, e.height() as f32)))
       .unwrap_or((0.0, 0.0));
-    let iw = self.src_w.unwrap_or(tex_w);
-    let ih = self.src_h.unwrap_or(tex_h);
-    match (ctx.known.width, ctx.known.height) {
-      (Some(w), Some(h)) => Size::new(w, h),
-      (Some(w), None) => {
-        let h = if iw > 0.0 { w * ih / iw } else { ih };
-        Size::new(w, h)
-      }
-      (None, Some(h)) => {
-        let w = if ih > 0.0 { h * iw / ih } else { iw };
-        Size::new(w, h)
-      }
-      (None, None) => Size::new(iw, ih),
-    }
+    let intrinsic = Size::new(self.src_w.unwrap_or(tex_w), self.src_h.unwrap_or(tex_h));
+    replaced_size(ctx.known, intrinsic)
   }
 }
 

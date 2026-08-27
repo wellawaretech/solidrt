@@ -102,6 +102,21 @@ pub trait Measurable {
   fn measure(&self, ctx: &MeasureContext) -> Size;
 }
 
+/// A replaced element's box from its intrinsic size and what layout already
+/// knows - HTML's `<img>` rules, shared by the texture and the viewBox view:
+/// neither axis known -> the intrinsic size; one known -> the other follows
+/// the intrinsic aspect ratio (the intrinsic extent when the ratio is
+/// degenerate); both known -> both honored, the explicit override.
+pub fn replaced_size(known: taffy::Size<Option<f32>>, intrinsic: Size) -> Size {
+  let (iw, ih) = (intrinsic.width, intrinsic.height);
+  match (known.width, known.height) {
+    (Some(w), Some(h)) => Size::new(w, h),
+    (Some(w), None) => Size::new(w, if iw > 0.0 { w * ih / iw } else { ih }),
+    (None, Some(h)) => Size::new(if ih > 0.0 { h * iw / ih } else { iw }, h),
+    (None, None) => Size::new(iw, ih),
+  }
+}
+
 /// A kind's painted box relative to its own origin: the rect's origin is the
 /// paint offset, its size the painted size. `fallback` supplies the size when
 /// the kind carries no explicit `w`/`h`.

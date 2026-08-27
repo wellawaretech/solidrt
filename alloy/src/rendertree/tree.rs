@@ -834,7 +834,7 @@ impl RenderTree {
       // apply to itself (its own box is its layout box).
       if cur != id {
         if let ElementKind::View(v) = &node.kind {
-          if let Some(vb) = v.view_box {
+          if let Some(vb) = v.design_size() {
             return Some(vb);
           }
         }

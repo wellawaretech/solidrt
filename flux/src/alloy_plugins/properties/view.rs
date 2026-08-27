@@ -38,7 +38,14 @@ pub fn apply(view: &mut View, name: &str, value: &PropValue) -> Result<Option<Da
       if list.len() != 2 {
         return Err(format!("viewBox must have exactly [w, h], got {} entries", list.len()));
       }
-      view.set_view_box(Some((f32_of(&list[0], "viewBox w")?, f32_of(&list[1], "viewBox h")?)))
+      let (w, h) = (f32_of(&list[0], "viewBox w")?, f32_of(&list[1], "viewBox h")?);
+      // A design space needs a positive, finite extent on both axes: anything
+      // else has no fit scale and would hand the children a degenerate frame
+      // (View::design_size).
+      if !(w > 0.0 && h > 0.0 && w.is_finite() && h.is_finite()) {
+        return Err(format!("viewBox must be a positive, finite [w, h], got [{w}, {h}]"));
+      }
+      view.set_view_box(Some((w, h)))
     }
     "shader" => view.set_shader(decode_shader(value)?),
     _ => return Ok(None),

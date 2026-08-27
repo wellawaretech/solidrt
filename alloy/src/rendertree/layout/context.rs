@@ -2,14 +2,13 @@ use taffy::prelude::*;
 use taffy::tree::LayoutInput;
 use taffy::{
   compute_block_layout, compute_cached_layout, compute_flexbox_layout, compute_grid_layout, compute_hidden_layout,
-  compute_leaf_layout,
-  CacheTree, CoreStyle, LayoutBlockContainer, LayoutFlexboxContainer, LayoutGridContainer, RequestedAxis,
-  ResolveOrZero, RunMode, SizingMode,
+  compute_leaf_layout, CacheTree, CoreStyle, LayoutBlockContainer, LayoutFlexboxContainer, LayoutGridContainer,
+  RequestedAxis, ResolveOrZero, RunMode, SizingMode,
 };
 
 use super::super::tree::RenderTree;
 use super::cache::LayoutCache;
-use crate::rendertree::{Measurable, MeasureContext, PlatformContext};
+use crate::rendertree::{replaced_size, ElementKind, Measurable, MeasureContext, PlatformContext};
 
 pub struct LayoutData {
   pub style: Style,
@@ -176,6 +175,75 @@ impl<'a> CacheTree for LayoutContext<'a> {
   }
 }
 
+impl<'a> LayoutContext<'a> {
+  // taffy's container algorithm for a display.
+  fn container_layout(&mut self, node_id: NodeId, display: Display, inputs: LayoutInput) -> taffy::LayoutOutput {
+    match display {
+      Display::Flex => compute_flexbox_layout(self, node_id, inputs),
+      Display::Block => compute_block_layout(self, node_id, inputs, None),
+      Display::Grid => compute_grid_layout(self, node_id, inputs),
+      Display::None => compute_hidden_layout(self, node_id),
+    }
+  }
+
+  // A viewBox view lays out on both sides of its fit
+  // (okf/done/viewbox-layout-space.md).
+  //
+  // Outside, it is a replaced element with the design size as intrinsic size
+  // (the texture's <img> rules), except that it compresses: a min-content
+  // query gets zero, since a design has no size it cannot scale below - a
+  // `flex={1}` viewBox view fits a window smaller than its design instead of
+  // overflowing it the way a texture would.
+  //
+  // Inside, the children are their own root at the design size, whatever box
+  // the outside settled on: the space paint, hit testing, culling and
+  // bounding boxes already hand them, which the fit maps onto the box. The
+  // view's own size styles belong to the outer box, so the inner pass runs in
+  // ContentSize mode, where only the known dimensions count. Its output (the
+  // design size) is not what the parent sees; the children's placements are
+  // the point. The inner input is constant, so a resize re-solves nothing
+  // below the view: the children's caches answer.
+  fn view_box_layout(
+    &mut self,
+    node_id: NodeId,
+    inputs: LayoutInput,
+    design: crate::impellers::Size,
+    display: Display,
+  ) -> taffy::LayoutOutput {
+    let style = &self.render_tree.node(u64::from(node_id)).layout_data().style;
+    let output = compute_leaf_layout(
+      inputs,
+      style,
+      |_, _| 0.0,
+      |known, available| {
+        let min_content = |a: AvailableSpace| matches!(a, AvailableSpace::MinContent);
+        if min_content(available.width) || min_content(available.height) {
+          return Size::ZERO;
+        }
+        let size = replaced_size(known, design);
+        Size { width: size.width, height: size.height }
+      },
+    );
+    if inputs.run_mode == RunMode::PerformLayout {
+      let known = Size { width: Some(design.width), height: Some(design.height) };
+      let inner = LayoutInput {
+        run_mode: RunMode::PerformLayout,
+        sizing_mode: SizingMode::ContentSize,
+        axis: RequestedAxis::Both,
+        known_dimensions: known,
+        parent_size: known,
+        available_space: Size {
+          width: AvailableSpace::Definite(design.width),
+          height: AvailableSpace::Definite(design.height),
+        },
+        vertical_margins_are_collapsible: Line::FALSE,
+      };
+      self.container_layout(node_id, display, inner);
+    }
+    output
+  }
+}
+
 impl<'a> LayoutPartialTree for LayoutContext<'a> {
   type CustomIdent = String;
   type CoreContainerStyle<'b>
@@ -252,11 +320,16 @@ impl<'a> LayoutPartialTree for LayoutContext<'a> {
         }
         output
       } else {
-        match element.layout_data().style.display {
-          Display::Flex => compute_flexbox_layout(tree, node_id, inputs),
-          Display::Block => compute_block_layout(tree, node_id, inputs, None),
-          Display::Grid => compute_grid_layout(tree, node_id, inputs),
-          Display::None => compute_hidden_layout(tree, node_id),
+        let display = element.layout_data().style.display;
+        // A viewBox view is a layout boundary (view_box_layout); a hidden one
+        // is hidden first.
+        let design = match &element.kind {
+          ElementKind::View(v) if display != Display::None => v.design_size(),
+          _ => None,
+        };
+        match design {
+          Some(design) => tree.view_box_layout(node_id, inputs, design, display),
+          None => tree.container_layout(node_id, display, inputs),
         }
       }
     })

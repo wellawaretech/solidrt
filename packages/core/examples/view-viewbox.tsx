@@ -4,16 +4,20 @@
 // subtree, not an SVG-only thing.
 //
 // Four facts, each demonstrated below:
-// 1. It NEVER sizes the element. `viewBox` is a pure fit transform; the box
-//    still takes its size from layout (here `flex={1}`). A view with only a
-//    viewBox and no layout size is zero-sized and paints nothing.
+// 1. The view sizes like a REPLACED element (think <img>): its intrinsic size
+//    is the design size, one sized axis derives the other from the design
+//    aspect, and layout props override it as usual - here `flex={1}` takes
+//    the whole window. It never refuses to shrink: a design has no size it
+//    cannot scale below.
 // 2. It fits UNIFORMLY and centers - one scale for both axes, SVG's default
 //    preserveAspectRatio. Content never stretches; the leftover on the loose
 //    axis is letterbox, showing the window background through it.
-// 3. Children live in DESIGN space. Their x/y, w/h, fontSize, stroke widths -
-//    everything resolves against the design size, not the box. The box a child
-//    inherits IS the design size, so a bare `d-rect` fills the design space
-//    and detached text wraps at its width.
+// 3. Children live in DESIGN space, laid-out ones included. x/y, w/h,
+//    fontSize, stroke widths, flex, percentages, text wrapping - everything
+//    resolves against the design size, not the box. The box a child inherits
+//    IS the design size, so a bare `d-rect` fills the design space, detached
+//    text wraps at its width, and a flex row is laid out at the design width
+//    whatever the window - nothing reflows on resize, the fit does the work.
 // 4. Pointer coordinates arrive in design space too. localX/localY on the
 //    viewBox view (and on anything under it) read in design units, so no
 //    scale factor is threaded through the app's hit math.
@@ -44,7 +48,8 @@ function App() {
     <window>
       <d-rect color="#0b0f17" />
 
-      {/* flex={1} sizes the box; viewBox only maps content into it (fact 1). */}
+      {/* flex={1} overrides the intrinsic design size: the box is the whole
+          window, and the fit maps the design into it (fact 1). */}
       <view
         flex={1}
         viewBox={[DESIGN_W, DESIGN_H]}
@@ -78,6 +83,18 @@ function App() {
         <Show when={at()}>
           {(a) => <d-oval x={a().x - 8} y={a().y - 8} w={16} h={16} color="#f85149" />}
         </Show>
+
+        {/* A laid-out row under the viewBox (fact 3): positioned and sized in
+            design units, the bar flexing against the design width. Resize the
+            window: it scales with the scene instead of reflowing. */}
+        <view position="absolute" left={40} right={40} top={364} flexDirection="row" alignItems="center" gap={12}>
+          <text fontSize={16} color="#8b949e">
+            flex row, laid out in design units
+          </text>
+          <view flex={1} height={10}>
+            <d-rect radius={5} color="#1f6feb" />
+          </view>
+        </view>
       </view>
     </window>
   )

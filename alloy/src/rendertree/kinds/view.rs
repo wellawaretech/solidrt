@@ -76,11 +76,13 @@ pub struct View {
   // Corner radii [top-left, top-right, bottom-right, bottom-left] for the
   // clip applied when overflow is non-visible. None clips to a plain rect.
   pub clip_radius: Option<[f32; 4]>,
-  // Design-space size for the children: content drawn in this w x h coordinate
-  // space is uniformly scaled to fit and centered in the element's box (SVG's
-  // default preserveAspectRatio, generalized). A pure fit transform - it never
-  // sizes the element - composed innermost, so the user transform props still
-  // operate in box space.
+  // Design-space size for the children: everything under the view - layout,
+  // paint, hit testing - happens in this w x h coordinate space, which is
+  // uniformly scaled to fit and centered in the element's box (SVG's default
+  // preserveAspectRatio, generalized). From the outside the view sizes like a
+  // replaced element whose intrinsic size is the design size
+  // (LayoutContext::view_box_layout). The fit is composed innermost, so the
+  // user transform props still operate in box space.
   pub view_box: Option<Size>,
   // The shader declared on this view's snapshot boundary (see
   // composite::snapshot_node): one pass over the rasterized subtree,
@@ -144,13 +146,17 @@ impl View {
     Some(Matrix::new_2d(s, 0.0, 0.0, s, tx, ty))
   }
 
+  // The design size the children live in: the view_box when set and
+  // non-degenerate. Layout's inner root (LayoutContext::view_box_layout) and
+  // the fit both come from here, so they cannot disagree.
+  pub(crate) fn design_size(&self) -> Option<Size> {
+    self.view_box.filter(|vb| vb.width > 0.0 && vb.height > 0.0)
+  }
+
   // The uniform viewBox fit scale `box / design`; None without a
   // (non-degenerate) view_box.
   pub(crate) fn fit_scale(&self, size: Size) -> Option<f32> {
-    let vb = self.view_box?;
-    if vb.width <= 0.0 || vb.height <= 0.0 {
-      return None;
-    }
+    let vb = self.design_size()?;
     Some((size.width / vb.width).min(size.height / vb.height))
   }
 
@@ -435,13 +441,15 @@ impl View {
     self.shader_dirty.replace(false)
   }
 
-  // Paint, not Transform: the fit is recorded into boundary caches and
-  // snapshot textures (unlike the hoisted user chain), so changing it must
-  // re-record the content.
+  // Layout, not Paint: the design size is the children's layout space and the
+  // view's intrinsic size (LayoutContext::view_box_layout), so changing it
+  // re-solves the subtree. Layout damage re-records the content as well,
+  // which the fit is part of (recorded into boundary caches and snapshot
+  // textures, unlike the hoisted user chain).
   pub fn set_view_box(&mut self, size: Option<(f32, f32)>) -> Damage {
     self.view_box = size.map(|(w, h)| Size::new(w, h));
     self.invalidate();
-    Damage::Paint
+    Damage::Layout
   }
 
   // The style a layout view starts with; layout-prop resets restore fields

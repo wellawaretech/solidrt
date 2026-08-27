@@ -8,7 +8,7 @@ for the element/prop model see `@solidrt/core/AGENTS.md`.
 ## Host elements and layout
 - `window-root.tsx` - the minimal app; the root must be `<window>`.
 - `view-layout.tsx` - `<view>` as a flex container; containers do not paint.
-- `view-viewbox.tsx` - `viewBox` on a `<view>`: author a scene once in fixed design units and let the view uniformly scale-and-center (letterbox) that space into its box. A pure fit transform - it never sizes the element (layout still does); children live in design space (the box they inherit IS the design size, so a bare `d-rect` fills it); pointer `localX`/`localY` arrive in design units. The fixed-aspect alternative to `windowSizeClass` reflow for diagrams, slides, dashboards, game boards.
+- `view-viewbox.tsx` - `viewBox` on a `<view>`: author a scene once in fixed design units and let the view uniformly scale-and-center (letterbox) that space into its box. Children live in design space for layout as well as paint (the box they inherit IS the design size, so a bare `d-rect` fills it and a flex row lays out against the design width, never reflowing on resize); the view itself sizes like a replaced element whose intrinsic size is the design size; pointer `localX`/`localY` arrive in design units. The fixed-aspect alternative to `windowSizeClass` reflow for diagrams, slides, dashboards, game boards, scaled panels.
 - `background-rect.tsx` - a `d-rect` filling its parent as a background.
 - `detached-positioning.tsx` - the `d-` prefix: x/y placement, no reflow, detached-only children.
 - `text-paint-styling.tsx` - the uniform `color` prop; `drawStyle="stroke"` vs fill.

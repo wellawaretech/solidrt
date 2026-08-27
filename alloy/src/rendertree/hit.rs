@@ -139,7 +139,7 @@ pub fn locals_along_path(tree: &RenderTree, chain: &[u64], point: Point) -> Vec<
     // A viewBox view hands its children the design-space size, matching
     // hit_recursive and the paint-time walk.
     parent_size = match &element.kind {
-      ElementKind::View(v) => v.view_box.unwrap_or(size),
+      ElementKind::View(v) => v.design_size().unwrap_or(size),
       _ => size,
     };
     // In the children's frame, like hit_recursive (box pixels divided by any
@@ -205,7 +205,7 @@ fn hit_recursive(
   // design space wider than its box would reject its own overflowing part, and
   // a rejected view takes its whole subtree with it.
   let local_size = match &element.kind {
-    ElementKind::View(v) => v.view_box.unwrap_or(size),
+    ElementKind::View(v) => v.design_size().unwrap_or(size),
     _ => size,
   };
   let local_ctx = HitContext { size: local_size, content };

@@ -260,6 +260,18 @@ Shaped, not started.
   hand-count; a bundler pass that injects a #line directive into glsl-tagged
   template literals would make the driver report the .tsx line itself, closing
   the last unmapped diagnostic in the dev loop.
+- **[loadGltf reads every image a .gltf names, not the ones the parser opens](backlog/gltf-image-prefetch-overreads.md)** [2026-08-27]
+  parseGltf's resolver is synchronous so loadGltf prefetches everything
+  gltfExternalUris lists, which is all of gltf.images, while the parser only
+  ever opens an image through the baseColorTexture branch - so on a fully
+  textured model the normal, metallic-roughness, occlusion and emissive maps
+  are read off disk, held for the length of the parse and discarded.
+- **[A glTF with no scenes array emits every child mesh twice](backlog/gltf-sceneless-duplicate-parts.md)** [2026-08-27]
+  parseGltf falls back to treating every node index as a root when the
+  document declares no scenes, but the walk still recurses children, so any
+  non-root mesh is emitted once with its composed world matrix and once
+  against the identity - duplicate parts, one at the wrong transform, and
+  bounds covering both.
 - **[Async shader compile and readback](backlog/gpu-async-compile-readback.md)** [2026-07-31]
   Compile/link and readTexture are the two GPU calls whose cost class differs
   from everything else on the surface - both block the JS thread and the
@@ -1248,6 +1260,12 @@ Finished, kept for the reasoning.
   Element-valued props built a native subtree on every read, so typeof probes
   orphaned unmounted builds forever; fixed by resolving once through
   children(), with orphan stats.
+- **[viewBox as layout space](done/viewbox-layout-space.md)** [2026-08-27]
+  Children of a viewBox view are laid out at the design size, not the real
+  box, so a laid-out subtree scales into any box without reflowing; from the
+  outside the view sizes like a replaced element (the texture's rules, but
+  compressible) with the design size as its intrinsic size. Decided 2026-08-27
+  as one rule, no opt-in.
 
 ## Notes
 

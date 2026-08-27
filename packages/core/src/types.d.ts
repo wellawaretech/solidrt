@@ -592,16 +592,26 @@ export interface ViewOwnProps extends TransformProps, PointerProps {
   children?: Children
   trace?: boolean
   /**
-   * Design-space size `[w, h]` for the children: content drawn in that
-   * coordinate space is uniformly scaled to fit and centered in the element's
-   * box (SVG's default preserveAspectRatio, generalized). A pure fit
-   * transform - it never sizes the element, so give the box its size with
-   * layout props. Composed innermost: the transform props still operate in
-   * box space, and pointer events on children arrive in design coordinates.
-   * The overflow clip and scrollX/scrollY stay box properties too: the clip
-   * rect is the layout box and scroll offsets are box pixels, regardless of
-   * fit scale. The natural wrapper for parseSvg draws, or any d-* subtree
-   * authored in fixed design units.
+   * Design-space size `[w, h]` (both positive) for the children: everything
+   * under the view -
+   * layout, paint, input - happens in that coordinate space, which is
+   * uniformly scaled to fit and centered in the element's box (SVG's default
+   * preserveAspectRatio, generalized). Laid-out children resolve flex,
+   * percentages and text wrapping against the design size, so a subtree
+   * scales into any box without reflowing. The view itself sizes like a
+   * replaced element: its intrinsic size is the design size, one sized axis
+   * derives the other from the design aspect, layout props override, and it
+   * always shrinks to fit (its min-content size is zero). As a flex item it
+   * still stretches like any other under the default alignment: a width-only
+   * viewBox view in a row takes the line's height, not the design height,
+   * unless the row's alignItems or its own alignSelf is not "stretch" (CSS's
+   * rule for an <img> in a flex row). Composed innermost:
+   * the transform props still operate in box space, and pointer events on
+   * children arrive in design coordinates. The overflow clip and
+   * scrollX/scrollY stay box properties: the clip rect is the layout box and
+   * scroll offsets are box pixels, regardless of fit scale. The natural
+   * wrapper for parseSvg draws, any d-* subtree authored in fixed design
+   * units, or a whole panel that should scale rather than reflow.
    */
   viewBox?: [number, number]
   /**
