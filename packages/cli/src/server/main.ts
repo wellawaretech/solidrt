@@ -204,6 +204,7 @@ async function handleRequest(req: FluxRequest, server: Server): Promise<Response
     // server it meant.
     let resp = await handleControl(req, path, query)
     resp.headers.set("x-solidrt-project", config.key)
+    resp.headers.set("x-solidrt-generation", String(state.generation))
     return resp
   }
   // The assets/ convention roots at the project dir (package.json), which is
