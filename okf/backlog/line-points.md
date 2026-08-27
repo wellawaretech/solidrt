@@ -1,6 +1,6 @@
 ---
 title: Line takes a points array (polyline)
-description: `<line>`/`<d-line>` grow a `points` prop - a flat [x0, y0, x1, y1, ...] number array - and a `closed` flag, making line the numeric polyline primitive between d-line's two endpoints and d-path's string DSL; then line implements Bounded so culling, capture and getBoundingBox see what it paints instead of the inherited box. Endpoints, dash, caps and joins stay as they are.
+description: `<line>`/`<d-line>` grow a `points` prop - a flat [x0, y0, x1, y1, ...] number array - and a `closed` flag, making line the numeric polyline primitive between d-line's two endpoints and d-path's string DSL; then line implements Bounded so culling, capture and getBoundingBox see what it paints instead of the inherited box. Dashing becomes our own walker (continuous through vertices, animatable with `dashOffset`); endpoints, caps and joins stay as they are.
 created: 2026-08-27
 ---
 
@@ -65,7 +65,7 @@ and join plumbing for no gain).
   (`x1`..`y2`) keep working on the two-point form.
 - Everything else on line applies unchanged: `strokeCap`, `strokeJoin`,
   `strokeMiter`, `drawStyle`, gradients, pointer props, `onLength`/`offLength`
-  (see dashing below).
+  (see dashing below, which also adds `dashOffset`).
 
 Validation, per the throw-in-dev policy: a non-list, a non-number entry, or
 an odd length is an `Err` naming the property and the offending value.
@@ -136,7 +136,7 @@ Done looks like: a `d-line` with 4,000 points animating at 60 fps writes one
 array per frame and parses nothing; a closed triangle strokes three sides
 with joins; the tree shows `points`.
 
-## Stage 2 - continuous-phase dashing
+## Stage 2 - continuous-phase dashing, and `dashOffset`
 
 Replace the per-segment fallback with a walker that carries the dash phase
 across vertices: iterate the segments, keep the remaining on/off length,
@@ -147,6 +147,33 @@ to do; it is a ~30-line loop with no allocation beyond the path. A dense
 polyline (segments shorter than `onLength`) is where stage 1's per-segment
 restart shows: every segment is fully "on" and the dash pattern disappears.
 That is the trigger for stage 2, and the reason it is not a maybe.
+
+- A run that crosses a vertex keeps its subpath (`line_to` through the
+  vertex), so the join style applies inside a dash the way it does on a
+  solid stroke; a run that ends mid-segment is capped. `closed` walks the
+  closing segment too, so the pattern continues around the ring.
+- The two-point form goes through the same walker (a two-vertex polyline)
+  instead of `DrawDashedLine`, so everything below applies to both forms and
+  `DrawDashedLine` drops out of the build.
+- Degenerate patterns: a non-positive `offLength` has no gap and draws solid;
+  a zero `onLength` emits zero-length runs (dots under round/square caps, as
+  in SVG); negative lengths clamp to zero. No validation beyond the
+  existing number check: these are the SVG/Canvas semantics, not errors.
+- `dashOffset?: number` (SVG `stroke-dashoffset`, Canvas `lineDashOffset`):
+  the distance into the pattern at which the stroke starts, in local units,
+  wrapping around the period and accepting negatives, default 0. Impeller's
+  `DrawDashedLine` has no phase parameter, so the offset only exists once
+  the walker is ours; it is the same state the walker needs to carry the
+  phase across a vertex, applied once at the start. Raising it marches the
+  dashes toward the line's start (marching ants). It is paint state
+  (`Damage::Paint`, the path is rebuilt on the Rust side; a few hundred
+  subpaths for a 200-point line with 10 px dashes) and a scalar, so it joins
+  `AnimProp` next to `onLength`/`offLength` for one-shot tweens; a
+  continuous march is an `onFrame` write. Dashes never affect hit testing:
+  the whole stroke hits, as today.
+- Tests: the walker against a recording pen (runs continue across a vertex,
+  the offset shifts and wraps, the closing segment is walked, off <= 0 is
+  solid); the property decodes, reads back and maps to its `AnimProp`.
 
 ## Stage 3 - line implements Bounded
 
@@ -219,3 +246,24 @@ dashing.
 - A `Float32Array` is an object to rquickjs, so `to_prop_value` needs an
   explicit typed-array branch ahead of the Map case. `as_bytes()` is the
   safe accessor; `AsRef<[T]>` panics on a detached buffer.
+
+Stage 2 landed 2026-08-27 (uncommitted): `walk_dashes` in `kinds/line.rs`
+emits the on runs of `segments(points, closed)` into one `PathBuilder`
+through a `Pen` trait (the tests record into a Vec); both forms stroke that
+path, so `draw_dashed_line` is gone from the build. `dashOffset` is line
+state next to `onLength`/`offLength`, reads back, and is `AnimProp::DashOffset`.
+Verified on the rebuilt client through the control API: the example's
+marching-ants row (a 48-point ring, 6 px segments under 12/8 dashes) reads
+back `dashOffset` climbing per frame and two snapshots a moment apart show
+the pattern shifted; the two-point line with `onLength` 0 and round caps
+renders as dots (Impeller strokes a zero-length subpath as a cap). Steady
+state with the trace and both animated offsets: 61 fps, 3 prop writes per
+frame, 1.0 ms JS, 0.6 ms paint, p95 1.9 ms, no slow frames.
+
+- The pattern must open with the on run even when it has zero length, or a
+  dotted line loses its first dot: the start state is `phase == 0 || phase <
+  on`, not `phase < on`. Runs toggle strictly inside a segment, so a boundary
+  landing exactly on the end never opens one more (empty) run.
+- A non-positive `offLength` short-circuits to solid before the walker: a
+  zero period would loop forever, and a zero gap split into subpaths would
+  show caps at every break.

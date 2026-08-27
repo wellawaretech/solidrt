@@ -482,6 +482,7 @@ export type TransitionPropName =
   | "srcH"
   | "onLength"
   | "offLength"
+  | "dashOffset"
   | "rotate"
   | "rotateX"
   | "rotateY"
@@ -754,10 +755,18 @@ export interface LineProps extends PaintProps, PointerProps {
    * implicitly), so this is a stroke distinction. Default false.
    */
   closed?: boolean
-  /** Dash pattern in local units: the drawn segment length. Both onLength and offLength must be set to dash; with either unset the line is solid. On a polyline the pattern restarts at every vertex. */
+  /** Dash pattern in local units: the drawn length. Both onLength and offLength must be set to dash; with either unset the line is solid. The pattern runs continuously along a polyline, through its vertices; 0 draws a dot per period (given round or square caps). */
   onLength?: number
-  /** Dash pattern in local units: the gap length. Both onLength and offLength must be set to dash; with either unset the line is solid. */
+  /** Dash pattern in local units: the gap length. Both onLength and offLength must be set to dash; with either unset, or a gap of 0, the line is solid. */
   offLength?: number
+  /**
+   * Distance into the dash pattern at which the stroke starts, in local
+   * units (SVG stroke-dashoffset). Wraps around the pattern's period;
+   * negative values allowed. Raising it marches the dashes toward the
+   * line's start: write it every frame for marching ants, or transition
+   * it for a one-shot slide. Default 0.
+   */
+  dashOffset?: number
 }
 
 export interface PathProps extends PaintProps, PointerProps {

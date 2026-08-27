@@ -7,7 +7,7 @@ use std::sync::mpsc::channel;
 
 use crate::alloy_plugins::properties::apply_jsx;
 use crate::alloy_plugins::value::PropValue;
-use alloy::rendertree::{AnimValue, Damage, Element, TransitionEntry, TransitionSpec};
+use alloy::rendertree::{AnimProp, AnimValue, Damage, Element, ElementKind, TransitionEntry, TransitionSpec};
 
 fn apply(kind: &str, name: &str, value: PropValue) -> Result<Damage, String> {
   let mut el = Element::from_kind(kind).expect("known kind");
@@ -560,4 +560,22 @@ fn line_draw_style_null_resets_to_stroke() {
   let mut rect = Element::from_kind("d-rect").expect("known kind");
   assert_eq!(apply_el(&mut rect, "drawStyle", PropValue::Null), Ok(Damage::Paint));
   assert_eq!(style(&rect), DrawStyle::Fill);
+}
+
+#[test]
+fn line_dash_offset_applies_and_transitions() {
+  let mut el = Element::from_kind("d-line").expect("known kind");
+  let offset = |el: &Element| match &el.kind {
+    ElementKind::Line(l) => l.dash_offset,
+    _ => unreachable!(),
+  };
+  assert_eq!(apply_el(&mut el, "dashOffset", num(12.5)), Ok(Damage::Paint));
+  assert_eq!(offset(&el), Some(12.5));
+  assert_eq!(apply_el(&mut el, "dashOffset", PropValue::Null), Ok(Damage::Paint));
+  assert_eq!(offset(&el), None);
+  let err = apply_el(&mut el, "dashOffset", text("far")).unwrap_err();
+  assert!(err.contains("dashOffset"), "{err}");
+  let cfg = map(&[("dashOffset", map(&[("duration", num(1.0))]))]);
+  assert_eq!(apply_el(&mut el, "transition", cfg), Ok(Damage::None));
+  assert_eq!(el.transitions.as_ref().expect("config set").props[0].0, AnimProp::DashOffset);
 }

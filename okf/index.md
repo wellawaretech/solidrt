@@ -378,8 +378,9 @@ Shaped, not started.
   number array - and a `closed` flag, making line the numeric polyline
   primitive between d-line's two endpoints and d-path's string DSL; then line
   implements Bounded so culling, capture and getBoundingBox see what it paints
-  instead of the inherited box. Endpoints, dash, caps and joins stay as they
-  are.
+  instead of the inherited box. Dashing becomes our own walker (continuous
+  through vertices, animatable with `dashOffset`); endpoints, caps and joins
+  stay as they are.
 - **[Location module (geolocation)](backlog/location-module.md)** [2026-08-15]
   The runtime exposes camera, microphone, speech-recognition and sound as
   @solidrt/core subpath modules but has no geolocation API, so apps fall back

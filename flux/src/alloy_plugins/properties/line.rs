@@ -20,6 +20,7 @@ pub fn apply(line: &mut Line, name: &str, value: &PropValue) -> Result<Option<Da
     }),
     "onLength" => line.set_on_length(opt_f32(value, "onLength")?),
     "offLength" => line.set_off_length(opt_f32(value, "offLength")?),
+    "dashOffset" => line.set_dash_offset(opt_f32(value, "dashOffset")?),
     _ => return Ok(None),
   }))
 }

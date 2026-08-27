@@ -43,7 +43,9 @@ detached-only concept, so arbitrary angles and connectors want `d-line`.
 `points` makes either form a polyline - a flat `[x0, y0, x1, y1, ...]` array
 (or a `Float32Array`), optionally `closed` - the numeric middle ground between
 a segment and a path: animate it by writing a new array, nothing is parsed.
-Curves want a path.
+Curves want a path. Dashing (`onLength`/`offLength`) runs continuously along
+the whole polyline, and `dashOffset` slides the pattern: write it every frame
+for marching ants.
 
 ## path
 

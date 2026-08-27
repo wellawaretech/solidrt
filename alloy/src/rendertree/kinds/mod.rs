@@ -1,5 +1,5 @@
 // mod audio;
-mod line;
+pub(crate) mod line;
 mod oval;
 mod paint;
 mod path;

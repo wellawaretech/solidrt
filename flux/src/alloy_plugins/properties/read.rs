@@ -74,6 +74,7 @@ pub fn read_jsx(element: &Element) -> Vec<(&'static str, ReadValue)> {
       }
       num(&mut out, "onLength", line.on_length);
       num(&mut out, "offLength", line.off_length);
+      num(&mut out, "dashOffset", line.dash_offset);
     }
     ElementKind::Path(path) => {
       if !path.d.is_empty() {

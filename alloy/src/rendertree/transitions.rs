@@ -51,6 +51,7 @@ pub enum AnimProp {
   // Line dash pattern.
   OnLength,
   OffLength,
+  DashOffset,
   Rotate,
   RotateX,
   RotateY,
@@ -445,6 +446,7 @@ impl Element {
       (ElementKind::Texture(t), SrcH) => t.src_h,
       (ElementKind::Line(l), OnLength) => Some(l.on_length.unwrap_or(0.0)),
       (ElementKind::Line(l), OffLength) => Some(l.off_length.unwrap_or(0.0)),
+      (ElementKind::Line(l), DashOffset) => Some(l.dash_offset.unwrap_or(0.0)),
       (ElementKind::View(v), Rotate) => Some(v.rotate.unwrap_or(0.0)),
       (ElementKind::View(v), RotateX) => Some(v.rotate_x.unwrap_or(0.0)),
       (ElementKind::View(v), RotateY) => Some(v.rotate_y.unwrap_or(0.0)),
@@ -526,6 +528,7 @@ impl Element {
       (ElementKind::Texture(t), SrcH) => t.set_src_h(Some(v)),
       (ElementKind::Line(l), OnLength) => l.set_on_length(Some(v)),
       (ElementKind::Line(l), OffLength) => l.set_off_length(Some(v)),
+      (ElementKind::Line(l), DashOffset) => l.set_dash_offset(Some(v)),
       (ElementKind::View(view), Rotate) => view.set_rotate(Some(v)),
       (ElementKind::View(view), RotateX) => view.set_rotate_x(Some(v)),
       (ElementKind::View(view), RotateY) => view.set_rotate_y(Some(v)),

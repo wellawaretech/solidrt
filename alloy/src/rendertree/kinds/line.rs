@@ -1,5 +1,5 @@
 use super::PaintState;
-use crate::impellers::{DisplayListBuilder, DrawStyle, FillType, PathBuilder, Point, Rect, Size};
+use crate::impellers::{DisplayListBuilder, DrawStyle, FillType, Path, PathBuilder, Point, Rect, Size};
 use crate::rendertree::hit::{HitContext, Hittable};
 use crate::rendertree::Damage;
 use crate::rendertree::{BuildContext, Buildable, Element, ElementKind, Measurable, MeasureContext};
@@ -25,6 +25,7 @@ pub struct Line {
   pub closed: bool,
   pub on_length: Option<f32>,
   pub off_length: Option<f32>,
+  pub dash_offset: Option<f32>,
   pub paint: PaintState,
 }
 
@@ -39,6 +40,7 @@ impl Default for Line {
       closed: false,
       on_length: None,
       off_length: None,
+      dash_offset: None,
       paint: PaintState { draw_style: Self::DEFAULT_DRAW_STYLE, ..PaintState::default() },
     }
   }
@@ -51,7 +53,7 @@ fn vertex(points: &[f32], i: usize) -> Point {
 // The polyline's segments as consecutive vertex pairs, plus the closing pair
 // when closed. A trailing odd number (the decoder rejects one, but the kind
 // does not depend on that) is ignored.
-fn segments(points: &[f32], closed: bool) -> impl Iterator<Item = (Point, Point)> + '_ {
+pub(crate) fn segments(points: &[f32], closed: bool) -> impl Iterator<Item = (Point, Point)> + '_ {
   let n = points.len() / 2;
   let open = (1..n).map(move |i| (vertex(points, i - 1), vertex(points, i)));
   let closing = (closed && n >= 2).then(|| (vertex(points, n - 1), vertex(points, 0)));
@@ -94,7 +96,7 @@ fn winding(points: &[f32], p: Point) -> i32 {
   wn
 }
 
-fn polyline_path(points: &[f32], closed: bool) -> crate::impellers::Path {
+fn polyline_path(points: &[f32], closed: bool) -> Path {
   let mut path = PathBuilder::default();
   path.move_to(vertex(points, 0));
   for i in 1..points.len() / 2 {
@@ -103,6 +105,77 @@ fn polyline_path(points: &[f32], closed: bool) -> crate::impellers::Path {
   if closed {
     path.close();
   }
+  path.take_path_new(FillType::NonZero)
+}
+
+// A dash pattern in local units: `on` drawn, `off` skipped, starting
+// `offset` into the pattern (SVG stroke-dashoffset).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Dash {
+  pub on: f32,
+  pub off: f32,
+  pub offset: f32,
+}
+
+// Where the dash walker draws: the PathBuilder in a build, a recording pen
+// in the tests.
+pub(crate) trait Pen {
+  fn move_to(&mut self, p: Point);
+  fn line_to(&mut self, p: Point);
+}
+
+impl Pen for PathBuilder {
+  fn move_to(&mut self, p: Point) {
+    PathBuilder::move_to(self, p);
+  }
+  fn line_to(&mut self, p: Point) {
+    PathBuilder::line_to(self, p);
+  }
+}
+
+// Emits every "on" run of the pattern as one subpath, carrying the phase
+// across vertices: a run that crosses a vertex keeps its subpath (so the
+// join applies inside it), a run that ends mid-segment is capped. Impeller
+// dashes single segments only, so this is ours. Requires a positive period
+// (see `Line::dash`).
+pub(crate) fn walk_dashes(segments: impl Iterator<Item = (Point, Point)>, dash: Dash, pen: &mut impl Pen) {
+  let period = dash.on + dash.off;
+  let phase = dash.offset.rem_euclid(period);
+  // The pattern opens with the on run, even a zero-length one (a dot).
+  let mut drawing = phase == 0.0 || phase < dash.on;
+  let mut remaining = if drawing { dash.on - phase } else { period - phase };
+  let mut pen_down = false;
+  for (a, b) in segments {
+    let (dx, dy) = (b.x - a.x, b.y - a.y);
+    let len = (dx * dx + dy * dy).sqrt();
+    if drawing && !pen_down {
+      pen.move_to(a);
+      pen_down = true;
+    }
+    let mut at = 0.0;
+    while at + remaining < len {
+      at += remaining;
+      let p = Point::new(a.x + dx * at / len, a.y + dy * at / len);
+      if drawing {
+        pen.line_to(p);
+        remaining = dash.off;
+      } else {
+        pen.move_to(p);
+        remaining = dash.on;
+      }
+      pen_down = !drawing;
+      drawing = !drawing;
+    }
+    remaining -= len - at;
+    if drawing {
+      pen.line_to(b);
+    }
+  }
+}
+
+fn dashed_path(points: &[f32], closed: bool, dash: Dash) -> Path {
+  let mut path = PathBuilder::default();
+  walk_dashes(segments(points, closed), dash, &mut path);
   path.take_path_new(FillType::NonZero)
 }
 
@@ -142,11 +215,12 @@ impl Line {
     )
   }
 
-  fn dash(&self) -> Option<(f32, f32)> {
-    match (self.on_length, self.off_length) {
-      (Some(on), Some(off)) => Some((on, off)),
-      _ => None,
-    }
+  // Both lengths set and a positive gap; a non-positive gap has nothing to
+  // skip and draws solid. A zero `on` is a dot per period (caps permitting),
+  // as in SVG.
+  pub(crate) fn dash(&self) -> Option<Dash> {
+    let (Some(on), Some(off)) = (self.on_length, self.off_length) else { return None };
+    (off > 0.0).then(|| Dash { on: on.max(0.0), off, offset: self.dash_offset.unwrap_or(0.0) })
   }
 
   // A box-relative gradient resolves against the points' extent, as a
@@ -161,20 +235,11 @@ impl Line {
     if self.strokes() {
       let mut paint = self.paint.to_paint_in(&bounds);
       paint.set_draw_style(DrawStyle::Stroke);
-      match self.dash() {
-        // Impeller dashes a segment, not a path, so a dashed polyline is
-        // dashed per segment: the pattern restarts at every vertex. Carrying
-        // the phase across vertices is the follow-up in
-        // okf/backlog/line-points.md.
-        Some((on, off)) => {
-          for (from, to) in segments(points, self.closed) {
-            builder.draw_dashed_line(from, to, on, off, &paint);
-          }
-        }
-        None => {
-          builder.draw_path(&polyline_path(points, self.closed), &paint);
-        }
-      }
+      let path = match self.dash() {
+        Some(dash) => dashed_path(points, self.closed, dash),
+        None => polyline_path(points, self.closed),
+      };
+      builder.draw_path(&path, &paint);
     }
   }
 }
@@ -186,10 +251,13 @@ impl Buildable for Line {
       return;
     }
     let (from, to) = self.endpoints(ctx.size.width, ctx.size.height);
-    let paint = self.paint.to_paint();
+    let mut paint = self.paint.to_paint();
     match self.dash() {
-      Some((on, off)) => {
-        builder.draw_dashed_line(from, to, on, off, &paint);
+      // Through the same walker as a polyline (dashOffset, phase); stroked
+      // regardless of the style, like draw_line.
+      Some(dash) => {
+        paint.set_draw_style(DrawStyle::Stroke);
+        builder.draw_path(&dashed_path(&[from.x, from.y, to.x, to.y], false, dash), &paint);
       }
       None => {
         builder.draw_line(from, to, &paint);
@@ -245,6 +313,10 @@ impl Line {
   }
   pub fn set_off_length(&mut self, v: Option<f32>) -> Damage {
     self.off_length = v;
+    Damage::Paint
+  }
+  pub fn set_dash_offset(&mut self, v: Option<f32>) -> Damage {
+    self.dash_offset = v;
     Damage::Paint
   }
 
