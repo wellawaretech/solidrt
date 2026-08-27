@@ -85,4 +85,4 @@ and raising `MAX_LIGHTS` touches one generator.
 No behaviour change and no new uniforms - the scene already writes every
 name involved. Comparison sampling (`sampler2DShadow`, hardware PCF)
 would change what the lookup's body does but not its signature, and stays
-in [3d-shadow-maps](../plans/3d-shadow-maps.md) stage 4.
+is [gpu-depth-compare-sampling](../backlog/gpu-depth-compare-sampling.md).

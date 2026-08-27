@@ -16,12 +16,6 @@ Decided and being worked on now. A plan nobody is working on goes back to backlo
   An instanced sprite layer as the third extension, built on a new zero-copy
   GPU buffer write lease in core; tiers, measurements, and the design
   decisions
-- **[Shadow maps and their dependencies](plans/3d-shadow-maps.md)** [2026-08-26]
-  Directional shadow maps for @solidrt/3d, staged over the three things they
-  need - a sampleable depth id in the engine, per-target draw sinks in the
-  spatial core, and a scene VIEW (render this scene into that target from this
-  camera) in the library - with the view settled first because split-screen,
-  minimaps and reflections hit the same wall.
 - **[Client storage and bundle updates](plans/client-storage-updates.md)** [2026-07-20]
   "Implements the update-mechanism research: data-root resolution, a
   hardlinked version store with dev-push-as-install and offline relaunch,
@@ -83,6 +77,12 @@ Shaped, not started.
   sprite or depth-sorting a population by y - the ordinary case for a dense 2D
   scene - costs a record shift and an index fixup per element instead of a
   sort of an index array.
+- **[Instanced meshes cast no shadow](backlog/3d-instanced-shadow-casters.md)** [2026-08-27]
+  The scene's shadow view draws casters with a position-only depth override
+  that knows uModel and nothing else, so an instanced mesh's per-record
+  transforms are invisible to it and `castShadow` on an InstancedMesh is
+  skipped. The additive fix is a per-class `shadowVertex` the override
+  borrows.
 - **[Model loader follow-ups](backlog/3d-model-loader.md)** [2026-08-26]
   The glTF subset loader (roadmap item 7, shipped 2026-08-26 as
   parseGltf/createModel at runtime plus the srt tool 3d/model bake) covers
@@ -90,6 +90,16 @@ Shaped, not started.
   real-world files (Draco/meshopt, KTX2), a retained node hierarchy,
   merge-by-material, a cull option for double-sided materials and vertex
   colors, each demand-gated.
+- **[Cascaded shadow maps](backlog/3d-shadow-cascades.md)** [2026-08-27]
+  One shadow.camera box per casting light: a large outdoor scene either blurs
+  (the box covers everything at one map's resolution) or clips (the box covers
+  the near part and the far part is lit). Cascades split the view frustum into
+  N maps; demand-gated on a scene that outgrows the box.
+- **[Spot and point light shadows](backlog/3d-spot-point-shadows.md)** [2026-08-27]
+  Only DirectionalLight casts. A spot light would be the same shadow view with
+  a perspective camera; a point light needs a cube-map target and six faces,
+  which the engine has no path for (gpu-cube-maps). Demand-gated - no spot or
+  point light NODE exists yet either.
 - **[Adaptive present-fence depth](backlog/adaptive-present-fence-depth.md)** [2026-07-27]
   Fallback design if unconditional two-deep present fencing ever shows up as
   desktop drag latency - allow the second in-flight frame only when observed
@@ -270,6 +280,11 @@ Shaped, not started.
   so environment/reflection mapping, skyboxes and cube shadow maps have no
   path; ES 3.0 has cube maps in core, seamless filtering included.
   Demand-gated on the scene-graph environment tier.
+- **[Depth comparison sampling](backlog/gpu-depth-compare-sampling.md)** [2026-08-27]
+  A depth id samples NEAREST with the compare done in GLSL, so a shadow lookup
+  pays nine taps for a 3x3 PCF; ES 3.0's sampler2DShadow compares in hardware
+  at one LINEAR tap (2x2 PCF). Additive sampler state on the depth id; changes
+  SHADOW's body, not its signature.
 - **[Depth func option](backlog/gpu-depth-func.md)** [2026-08-11]
   The depth comparison is fixed at LESS with no override, which blocks
   equal-depth multi-pass tricks (LEQUAL) and reversed-z; a depthCompare option
@@ -306,12 +321,6 @@ Shaped, not started.
   The blend vocabulary on createPipeline is "none", "add", "multiply" and
   "alpha"; the rest of GL's fixed-function space (screen, subtract, min/max)
   is unexposed, demand-driven.
-- **[Sampleable depth](backlog/gpu-sampleable-depth.md)** [2026-08-11]
-  A pipeline target's depth is a private renderbuffer, unsampleable by
-  construction, so shadow maps, depth-of-field and SSAO have no path; ES 3.0
-  has depth textures and sampler2DShadow in core. The storage swap is small;
-  the open question is naming - a target's id names its color, so depth needs
-  an id of its own. Split from gpu-pipeline-extensions 2026-08-11.
 - **[Streaming GPU buffers sampled at frame time](backlog/gpu-stream-buffers.md)** [2026-08-19]
   A no-publish-call shared-memory buffer - a persistent JS view the raster
   thread samples during Frame handling - as the follow-on to the begin/end
@@ -636,6 +645,12 @@ Finished, kept for the reasoning.
   through scene.texture), the standard set carries no camera basis so
   billboards reconstruct it from uViewProj rows, and shaderMaterial cannot
   express one program with many parameterisations.
+- **[Shadow maps and their dependencies](done/3d-shadow-maps.md)** [2026-08-26]
+  Directional shadow maps for @solidrt/3d, staged over the three things they
+  need - a sampleable depth id in the engine, per-target draw sinks in the
+  spatial core, and a scene VIEW (render this scene into that target from this
+  camera) in the library - with the view settled first because split-screen,
+  minimaps and reflections hit the same wall.
 - **[Android surface swap blocks four vsyncs](done/android-surface-swap-latency.md)** [2026-07-28]
   SOLVED, it was our 4x MSAA all along, the ~80 ms swap block was the GPU
   draining full off-tile multisample resolve traffic every frame. Fixed via a
@@ -895,6 +910,12 @@ Finished, kept for the reasoning.
   target model stays pure and documented, and one imperative escape hatch
   (render "manual" targets stepped by renderTarget) legalizes the
   accumulation/feedback class without infecting pure targets.
+- **[Sampleable depth](done/gpu-sampleable-depth.md)** [2026-08-11]
+  A pipeline target's depth is a private renderbuffer, unsampleable by
+  construction, so shadow maps, depth-of-field and SSAO have no path; ES 3.0
+  has depth textures and sampler2DShadow in core. The storage swap is small;
+  the open question is naming - a target's id names its color, so depth needs
+  an id of its own. Split from gpu-pipeline-extensions 2026-08-11.
 - **[setShaderTextures - rebind sampler inputs](done/gpu-sampler-rebinding.md)** [2026-07-30]
   setShaderTextures rebinds sampler2D inputs on a live shader, enabling
   retargeting and ping-pong without recompiling; shipped ahead of a real use
@@ -1271,6 +1292,10 @@ Knowledge. No lifecycle - true or wrong, not open or closed.
   Survey of declarative GPU prior art against the current texture/gpu API;
   conclusion is a Shader component as sugar, subtree effects as the real gap,
   and keeping the manual path imperative.
+- **[Depth ids, scene views and shadow maps](notes/depth-ids-views-shadows.md)** [2026-08-27]
+  What is true about sampleable depth, per-target sinks, scene views and the
+  shadow set regardless of how they were built - cut from the shadow-maps
+  plan's Findings on close.
 - **[FFI crossing costs, measured](notes/ffi-crossing-costs.md)** [2026-08-18]
   What one JS-to-Rust property write costs on the release runtime (about 0.25
   us including decode, string dispatch and apply), what share of a 3000-node

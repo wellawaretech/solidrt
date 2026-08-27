@@ -42,10 +42,6 @@ percent-encoding = "2"
 # termios on unix, the Console API on Windows). No event-stream: keys are
 # read blocking on the stdin reader thread.
 crossterm = { version = "0.27", default-features = false, features = ["windows", "events"] }
-# The foreground-job check behind forge::tty::is_terminal (tcgetpgrp /
-# getpgrp, safe wrappers). Already in the tree (which depends on it).
-[target.'cfg(unix)'.dependencies]
-rustix = { version = "1", features = ["termios", "process"] }
 rusqlite = { version = "0.40", features = ["bundled", "hooks"] }
 path-clean = "1"
 # Directory change notifications for forge::fs::DirWatcher (flux:fs dir().watch):
@@ -66,7 +62,7 @@ socket2 = "0.6"
 # so this adds zero new crates; default features (std only) cover build + parse.
 hickory-proto = "0.26"
 # Cross-platform interface enumeration (name / IPv4+prefix / MAC / flags) for
-# flux:net interfaces() — the no-subprocess replacement for parsing `ip addr`.
+# flux:net interfaces() - the no-subprocess replacement for parsing `ip addr`.
 # Already in the tree (iroh depends on it).
 netdev = "0.45"
 # Pure-Rust, no-JIT wasm interpreter behind forge::wasm (flux:wasm). No
@@ -110,6 +106,11 @@ openh264 = { version = "0.9", optional = true }
 [target.'cfg(target_os = "android")'.dependencies]
 ndk = { version = "0.9", default-features = false, features = ["media", "api-level-26"], optional = true }
 ndk-sys = { version = "0.6", optional = true }
+
+# The foreground-job check behind forge::tty::is_terminal (tcgetpgrp /
+# getpgrp, safe wrappers). Already in the tree (which depends on it).
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "1", features = ["termios", "process"] }
 
 [build-dependencies]
 # Locates the target C compiler (respecting cargo-ndk's CC_<target>) so the

@@ -99,7 +99,7 @@ makes every read a crossing.
   subtree world-dirty without visiting it (the visit is the flush's job,
   and it stops at clean subtrees).
 - `DrawParams` sink, one per node per TARGET (a scene's own target and
-  each of its views; see plans/3d-shadow-maps.md stage 2): on a fresh
+  each of its views; see done/3d-shadow-maps.md stage 2): on a fresh
   world matrix the flush writes
   `uModel` and, when asked, `uNormal` (the inverse-transpose the JS
   `normalMatrix` computes now); on a visibility change it flips the

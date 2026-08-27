@@ -72,7 +72,7 @@ talk to the driver, on a GLES 3.0 floor that can probe upward per device.
   on desktop, float targets, depth textures, MRT - instead of the WebGL2
   lowest common denominator (../backlog/gpu-compressed-textures.md,
   ../backlog/gpu-float-texture-formats.md,
-  ../backlog/gpu-sampleable-depth.md).
+  ../done/gpu-sampleable-depth.md).
 - **No context-loss theater**, no per-tab context limit, no conservative
   texture-unit floor, and the device's real VRAM budget rather than a tab
   quota.

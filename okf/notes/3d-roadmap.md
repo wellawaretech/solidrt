@@ -148,7 +148,7 @@ what it delivered is documented in `packages/3d/AGENTS.md`, not here.
     binds an environment map once per scene target; cube maps are the
     remaining engine gap.
 15. [x] **Shadow maps.** Landed 2026-08-26 (uncommitted) through stage 3
-    of [3d-shadow-maps](../plans/3d-shadow-maps.md): `castShadow` on
+    of [3d-shadow-maps](../done/3d-shadow-maps.md): `castShadow` on
     `DirectionalLight` and `Mesh`, `lit` receiving by default, the
     `SHADOW` GLSL; every directional light may cast since 2026-08-27
     (stage 4a, slot = light index); the multi-view shape below became
@@ -156,7 +156,7 @@ what it delivered is documented in `packages/3d/AGENTS.md`, not here.
     override-material passes). The rest of stage 4 (comparison sampling,
     spot/point casters, cascades, instanced casters) stays demand-gated.
     Shaped 2026-08-26 as engine sampleable
-    depth ([gpu-sampleable-depth](../backlog/gpu-sampleable-depth.md)),
+    depth ([gpu-sampleable-depth](../done/gpu-sampleable-depth.md)),
     per-target draw sinks in the spatial core, then scene VIEWS, then the
     shadow itself; the depth-func option
     ([gpu-depth-func](../backlog/gpu-depth-func.md)) turned out not to be

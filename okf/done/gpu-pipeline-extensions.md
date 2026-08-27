@@ -17,7 +17,7 @@ destination for unrelated asks:
 
 - [gpu-float-texture-formats](../backlog/gpu-float-texture-formats.md) - R32F/RGBA32F
   data textures (was the float-formats bullet).
-- [gpu-sampleable-depth](../backlog/gpu-sampleable-depth.md) - depth as a sampleable,
+- [gpu-sampleable-depth](../done/gpu-sampleable-depth.md) - depth as a sampleable,
   nameable texture (was the sampleable-depth bullet).
 - [gpu-alpha-translucency](gpu-alpha-translucency.md) - sorted alpha
   blending (was the open half of the blending bullet).

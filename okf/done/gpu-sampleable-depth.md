@@ -21,15 +21,26 @@ sampler binding (source re-renders propagate, cycles throw).
 
 First consumer: shadow maps, named as roadmap item 15 in
 [3d-roadmap](../notes/3d-roadmap.md) together with a depth-func option
-([gpu-depth-func](gpu-depth-func.md)); the map itself binds through the
+([gpu-depth-func](../backlog/gpu-depth-func.md)); the map itself binds through the
 shared target-level sampler channel (landed 2026-08-06).
 
-The shape is settled in [3d-shadow-maps](../plans/3d-shadow-maps.md), stage 1:
+The shape is settled in [3d-shadow-maps](3d-shadow-maps.md), stage 1:
 `depth: "texture"` on `createDrawTarget` (the renderbuffer form stays
 `depth: true`), `depthTexture(target)` returning the depth's own
 sampler-only id (nearest/clamp, dies with the target, aliases to its
 owner in the dependency graph), rejected with `samples >= 2`. Comparison
 sampling is a later, additive sampler state.
+
+## Landed 2026-08-26
+
+Stage 1 of the plan, exactly as shaped: `DepthStorage { None, Buffer,
+Texture }` in alloy, `createDrawTarget(..., { depth: "texture" })` and
+`depthTexture(target)` in flux:gpu and `@solidrt/core/gpu`, the depth id
+sampler-only (nearest/clamp fixed; readback, copy and destroy refuse;
+dies with the target; MSAA refused) and an alias of its owner in every
+graph question. Assertion: `cargo run -p alloy --example depth_texture`.
+First consumer: the scene's shadow view. Comparison sampling is
+[gpu-depth-compare-sampling](../backlog/gpu-depth-compare-sampling.md).
 
 History: deferred bullet of [gpu-pipeline-extensions](../done/gpu-pipeline-extensions.md)
 since 2026-07-15; split out 2026-08-11.
