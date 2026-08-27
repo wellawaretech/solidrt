@@ -1,4 +1,4 @@
-use super::dash::{walk_dashes, Dash};
+use super::dash::{walk_dashes, walked_length, Dash};
 use super::PaintState;
 use crate::impellers::{DisplayListBuilder, DrawStyle, FillType, Path, PathBuilder, Point, Rect, Size};
 use crate::rendertree::hit::{HitContext, Hittable};
@@ -27,6 +27,7 @@ pub struct Line {
   pub on_length: Option<f32>,
   pub off_length: Option<f32>,
   pub dash_offset: Option<f32>,
+  pub path_length: Option<f32>,
   pub paint: PaintState,
 }
 
@@ -42,6 +43,7 @@ impl Default for Line {
       on_length: None,
       off_length: None,
       dash_offset: None,
+      path_length: None,
       paint: PaintState { draw_style: Self::DEFAULT_DRAW_STYLE, ..PaintState::default() },
     }
   }
@@ -151,8 +153,18 @@ impl Line {
     )
   }
 
-  pub(crate) fn dash(&self) -> Option<Dash> {
-    Dash::new(self.on_length, self.off_length, self.dash_offset)
+  fn dashed(&self) -> bool {
+    Dash::new(self.on_length, self.off_length, self.dash_offset).is_some()
+  }
+
+  // The pattern in local units for the geometry being dashed; a declared
+  // `pathLength` (SVG) maps the author's units onto its walked length.
+  pub(crate) fn dash(&self, points: &[f32], closed: bool) -> Option<Dash> {
+    let dash = Dash::new(self.on_length, self.off_length, self.dash_offset)?;
+    match self.path_length.filter(|declared| *declared > 0.0) {
+      Some(declared) => dash.scaled(walked_length(segments(points, closed)) / declared),
+      None => Some(dash),
+    }
   }
 
   // The geometry the build draws, as an AABB in local space: the points, or
@@ -172,7 +184,7 @@ impl Line {
   // dash's; joins need a vertex between two segments.
   fn stroke_outset(&self) -> f32 {
     let vertices = self.points.as_ref().map_or(2, |p| p.len() / 2);
-    let capped = self.points.is_none() || !self.closed || self.dash().is_some();
+    let capped = self.points.is_none() || !self.closed || self.dashed();
     let joined = self.points.is_some() && (vertices >= 3 || (self.closed && vertices >= 2));
     self.paint.stroke_outset(capped, joined)
   }
@@ -189,7 +201,7 @@ impl Line {
     if self.strokes() {
       let mut paint = self.paint.to_paint_in(&bounds);
       paint.set_draw_style(DrawStyle::Stroke);
-      let path = match self.dash() {
+      let path = match self.dash(points, self.closed) {
         Some(dash) => dashed_path(points, self.closed, dash),
         None => polyline_path(points, self.closed),
       };
@@ -206,12 +218,13 @@ impl Buildable for Line {
     }
     let (from, to) = self.endpoints(ctx.size.width, ctx.size.height);
     let mut paint = self.paint.to_paint();
-    match self.dash() {
+    let points = [from.x, from.y, to.x, to.y];
+    match self.dash(&points, false) {
       // Through the same walker as a polyline (dashOffset, phase); stroked
       // regardless of the style, like draw_line.
       Some(dash) => {
         paint.set_draw_style(DrawStyle::Stroke);
-        builder.draw_path(&dashed_path(&[from.x, from.y, to.x, to.y], false, dash), &paint);
+        builder.draw_path(&dashed_path(&points, false, dash), &paint);
       }
       None => {
         builder.draw_line(from, to, &paint);
@@ -287,6 +300,10 @@ impl Line {
   }
   pub fn set_dash_offset(&mut self, v: Option<f32>) -> Damage {
     self.dash_offset = v;
+    Damage::Paint
+  }
+  pub fn set_path_length(&mut self, v: Option<f32>) -> Damage {
+    self.path_length = v;
     Damage::Paint
   }
 

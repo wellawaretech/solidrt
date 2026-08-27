@@ -13,7 +13,11 @@
 //    12 px dashes), which only works because the phase carries across
 //    vertices; the two-point d-line and the d-path go through the same
 //    walker (a path's curves are flattened for it).
-// 4. A laid-out <line points>: the points are content (like a path's `d`), so
+// 4. Partial draw: `pathLength={1}` makes the dash units fractions of the
+//    geometry's length, so `onLength={0.77} offLength={1}` draws the first
+//    77% and an `onLength` written from 0 to 1 draws the geometry on, without
+//    knowing its length.
+// 5. A laid-out <line points>: the points are content (like a path's `d`), so
 //    the box measures from their extent and takes part in the row.
 // The two-endpoint form (x1..y2, on d-line only) is unchanged; while `points`
 // is set it takes precedence over the endpoints.
@@ -27,6 +31,7 @@ const ZIGZAG = [0, 0, 30, 24, 60, 0, 90, 24, 120, 0]
 const RING = ring(70, 60, 45, 48)
 const CURVE = "M20 60 C 60 0, 100 120, 140 60 S 200 20, 200 60"
 const ANTS_SPEED = 40 // local units per second
+const DRAW_PERIOD = 3 // seconds per draw-on cycle
 
 function ring(cx: number, cy: number, r: number, n: number): number[] {
   let pts: number[] = []
@@ -51,9 +56,11 @@ function wave(t: number): Float32Array {
 function App() {
   let [trace, setTrace] = createSignal<Float32Array>(wave(0))
   let [ants, setAnts] = createSignal(0)
+  let [drawn, setDrawn] = createSignal(0)
   onFrame((tick) => {
     setTrace(wave(tick / 1000))
     setAnts((tick / 1000) * ANTS_SPEED)
+    setDrawn(((tick / 1000) % DRAW_PERIOD) / DRAW_PERIOD)
   })
 
   return (
@@ -71,7 +78,7 @@ function App() {
       <text fontSize={16} color="#8b949e">
         closed (round join), open (round caps), filled, stroke-and-fill dashed
       </text>
-      <view flexDirection="row" gap={20}>
+      <view flexDirection="row" flexWrap="wrap" gap={20}>
         <view width={140} height={120}>
           <d-rect radius={8} color="#151b28" />
           <d-line points={TRIANGLE} closed color="#e3b341" strokeWidth={8} strokeJoin="round" />
@@ -93,7 +100,7 @@ function App() {
       <text fontSize={16} color="#8b949e">
         marching ants: dashOffset written every frame, on a dense ring, a segment and a path
       </text>
-      <view flexDirection="row" gap={20}>
+      <view flexDirection="row" flexWrap="wrap" gap={20}>
         <view width={140} height={120}>
           <d-rect radius={8} color="#151b28" />
           <d-line points={RING} closed onLength={12} offLength={8} dashOffset={ants()} color="#e3b341" strokeWidth={3} />
@@ -105,6 +112,20 @@ function App() {
         <view width={220} height={120}>
           <d-rect radius={8} color="#151b28" />
           <d-path d={CURVE} drawStyle="stroke" onLength={10} offLength={6} dashOffset={ants()} color="#f778ba" strokeWidth={3} strokeCap="round" />
+        </view>
+      </view>
+
+      <text fontSize={16} color="#8b949e">
+        partial draw: pathLength=1 makes the pattern fractional, 77% of the curve and a triangle drawing on
+      </text>
+      <view flexDirection="row" flexWrap="wrap" gap={20}>
+        <view width={220} height={120}>
+          <d-rect radius={8} color="#151b28" />
+          <d-path d={CURVE} drawStyle="stroke" pathLength={1} onLength={0.77} offLength={1} color="#3fb950" strokeWidth={4} strokeCap="round" />
+        </view>
+        <view width={140} height={120}>
+          <d-rect radius={8} color="#151b28" />
+          <d-line points={TRIANGLE} closed pathLength={1} onLength={drawn()} offLength={1} color="#79c0ff" strokeWidth={4} strokeCap="round" strokeJoin="round" />
         </view>
       </view>
 

@@ -37,6 +37,12 @@ vertices and along a path's curves, restarting at each subpath of a path.
 transition it for a one-shot slide. A dashed stroke keeps its caps on every
 dash, and a stroke-and-fill path dashes only the stroke.
 
+`pathLength` declares what the geometry's length counts as, so the pattern
+can be written in fractions of it: with `pathLength={1}`, `onLength={0.77}
+offLength={1}` draws the first 77%, and transitioning `onLength` from 0 to
+1 draws the geometry on (the SVG line-drawing trick, without having to know
+the length).
+
 ## rect
 
 {{ decl packages/core/src/types.d.ts RectProps }}

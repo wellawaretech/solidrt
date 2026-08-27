@@ -112,9 +112,13 @@ belongs in the library:
    `sampler2DShadow` with a hardware 2x2 comparison in one instruction. That
    is a better default everywhere, not only on weak hardware, and the tap
    count wants to be a knob rather than a constant.
-3. **Shadow atlas** (~4.3 ms; library). Three casters means three render
-   passes into three targets. Packing them into one target at 2.15 ms per
-   pass saved is the only structural fix here, and it composes with
+3. **Shadow atlas, and fewer passes generally** (~6.5 ms; runtime plus
+   library). Three casters means three passes, and the two view panels are
+   two more. Both collapse to one pass each once a draw can name a
+   sub-rectangle of its target, which is runtime work with several
+   consumers and is written up separately in
+   [gpu-subrect-draws.md](gpu-subrect-draws.md). The only structural fix
+   here, it costs no visual quality, and it composes with
    [3d-shadow-cascades.md](3d-shadow-cascades.md), which would otherwise
    multiply the pass count again.
 4. **The ground and backdrop fragment shaders** (part of the ~17 ms; demo).

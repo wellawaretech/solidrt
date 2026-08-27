@@ -146,17 +146,40 @@ fn a_zero_on_length_is_a_dot_per_period() {
 
 #[test]
 fn dash_needs_both_lengths_and_a_positive_gap() {
-  let mut line = polyline(&[0.0, 0.0, 10.0, 0.0], false);
-  assert_eq!(line.dash(), None);
+  let points = [0.0, 0.0, 10.0, 0.0];
+  let mut line = polyline(&points, false);
+  assert_eq!(line.dash(&points, false), None);
   line.set_on_length(Some(4.0));
-  assert_eq!(line.dash(), None);
+  assert_eq!(line.dash(&points, false), None);
   line.set_off_length(Some(0.0));
-  assert_eq!(line.dash(), None, "no gap is solid");
+  assert_eq!(line.dash(&points, false), None, "no gap is solid");
   line.set_off_length(Some(2.0));
-  assert_eq!(line.dash(), Some(Dash { on: 4.0, off: 2.0, offset: 0.0 }));
+  assert_eq!(line.dash(&points, false), Some(Dash { on: 4.0, off: 2.0, offset: 0.0 }));
   line.set_dash_offset(Some(-3.0));
   line.set_on_length(Some(-1.0));
-  assert_eq!(line.dash(), Some(Dash { on: 0.0, off: 2.0, offset: -3.0 }), "a negative on clamps to zero");
+  let clamped = Dash { on: 0.0, off: 2.0, offset: -3.0 };
+  assert_eq!(line.dash(&points, false), Some(clamped), "a negative on clamps to zero");
+}
+
+#[test]
+fn path_length_makes_the_pattern_fractional() {
+  // 70 long, declared as 1: 0.5 on is the first 35, so the run turns the
+  // corner and ends 5 into the second segment, and the gap covers the rest.
+  let points = [0.0, 0.0, 30.0, 0.0, 30.0, 40.0];
+  let mut line = polyline(&points, false);
+  line.set_on_length(Some(0.5));
+  line.set_off_length(Some(1.0));
+  line.set_path_length(Some(1.0));
+  let dash = line.dash(&points, false).expect("a dash pattern");
+  assert_eq!(dash, Dash { on: 35.0, off: 70.0, offset: 0.0 });
+  let mut pen = Trace::default();
+  walk_dashes(segments(&points, false), dash, &mut pen);
+  assert_eq!(pen.0.join(" "), "M0,0 L30,0 L30,5");
+  // Closing adds the hypotenuse (50) to what a unit stands for.
+  assert_eq!(line.dash(&points, true).expect("a dash pattern").on, 60.0);
+  // A non-positive declaration is no declaration.
+  line.set_path_length(Some(0.0));
+  assert_eq!(line.dash(&points, true).expect("a dash pattern").on, 0.5);
 }
 
 // Painted bounds: geometry AABB plus the stroke outset.

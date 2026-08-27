@@ -752,6 +752,15 @@ export interface DashProps {
    * it for a one-shot slide. Default 0.
    */
   dashOffset?: number
+  /**
+   * What the geometry's length counts as, in the pattern's units (SVG
+   * pathLength): when set, `onLength`, `offLength` and `dashOffset` are
+   * scaled by the actual length over it. `pathLength={1}` makes them
+   * fractions: `onLength={0.77} offLength={1}` draws the first 77%, and
+   * transitioning `onLength` from 0 to 1 draws the geometry on. Must be
+   * positive; unset, the pattern is in local units.
+   */
+  pathLength?: number
 }
 
 // A line's geometry is numbers, not a path string: the primitive to reach

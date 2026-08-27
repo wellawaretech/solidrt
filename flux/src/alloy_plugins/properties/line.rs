@@ -1,4 +1,4 @@
-use super::{describe, f32_of, opt, opt_f32};
+use super::{describe, f32_of, opt, opt_f32, opt_positive_f32};
 use crate::alloy_plugins::value::PropValue;
 use alloy::rendertree::Damage;
 use alloy::rendertree::Line;
@@ -21,6 +21,7 @@ pub fn apply(line: &mut Line, name: &str, value: &PropValue) -> Result<Option<Da
     "onLength" => line.set_on_length(opt_f32(value, "onLength")?),
     "offLength" => line.set_off_length(opt_f32(value, "offLength")?),
     "dashOffset" => line.set_dash_offset(opt_f32(value, "dashOffset")?),
+    "pathLength" => line.set_path_length(opt_positive_f32(value, "pathLength")?),
     _ => return Ok(None),
   }))
 }

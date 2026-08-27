@@ -75,6 +75,7 @@ pub fn read_jsx(element: &Element) -> Vec<(&'static str, ReadValue)> {
       num(&mut out, "onLength", line.on_length);
       num(&mut out, "offLength", line.off_length);
       num(&mut out, "dashOffset", line.dash_offset);
+      num(&mut out, "pathLength", line.path_length);
     }
     ElementKind::Path(path) => {
       if !path.d.is_empty() {
@@ -88,6 +89,7 @@ pub fn read_jsx(element: &Element) -> Vec<(&'static str, ReadValue)> {
       num(&mut out, "onLength", path.on_length);
       num(&mut out, "offLength", path.off_length);
       num(&mut out, "dashOffset", path.dash_offset);
+      num(&mut out, "pathLength", path.path_length);
     }
     ElementKind::Text(text) => {
       // `computed_text` itself already rides the snapshot as `text`.

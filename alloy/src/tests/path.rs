@@ -157,6 +157,45 @@ fn dashes_follow_the_curve() {
 }
 
 #[test]
+fn path_length_makes_the_pattern_fractional() {
+  let mut path = stroked("M0 0 L100 0", 1.0);
+  path.set_on_length(Some(0.75));
+  path.set_off_length(Some(1.0));
+  path.set_path_length(Some(1.0));
+  let mut trace = Trace(Vec::new());
+  path.walk_dashed(path.dash().expect("a dash pattern"), &mut trace);
+  assert_eq!(trace.0.join(" "), "M0,0 L75,0");
+  // A new `d` is measured again: twice the length, twice the dash.
+  path.set_d("M0 0 L200 0".into());
+  assert_eq!(path.dash().expect("a dash pattern").on, 150.0);
+}
+
+#[test]
+fn path_length_measures_the_walked_curve() {
+  // Declared as 1 and drawn to 1: the whole curve in one run, so the length
+  // is the walked one, not an estimate short of it (a sliver missing at the
+  // end) or past it.
+  let mut path = stroked("M0 0 Q50 50 100 0", 1.0);
+  path.set_on_length(Some(1.0));
+  path.set_off_length(Some(1.0));
+  path.set_path_length(Some(1.0));
+  let end = |path: &Path| {
+    let mut trace = Trace(Vec::new());
+    path.walk_dashed(path.dash().expect("a dash pattern"), &mut trace);
+    assert_eq!(trace.0.iter().filter(|w| w.starts_with('M')).count(), 1, "{:?}", trace.0);
+    let last = trace.0.last().expect("a run");
+    let (x, y) = last[1..].split_once(',').expect("x,y");
+    (x.parse::<f32>().expect("x"), y.parse::<f32>().expect("y"))
+  };
+  let (x, y) = end(&path);
+  assert!((x - 100.0).abs() < 0.01 && y.abs() < 0.01, "ends at {x},{y}");
+  // Half of it ends at the apex of this symmetric curve.
+  path.set_on_length(Some(0.5));
+  let (x, y) = end(&path);
+  assert!((x - 50.0).abs() < 0.5 && (y - 25.0).abs() < 0.5, "half ends at {x},{y}");
+}
+
+#[test]
 fn a_solid_path_needs_no_walk() {
   let path = stroked("M0 0 L10 0", 1.0);
   assert!(path.dash().is_none());

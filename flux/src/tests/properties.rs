@@ -583,6 +583,25 @@ fn path_dash_props_apply_and_transition() {
 }
 
 #[test]
+fn path_length_applies_on_both_kinds_and_must_be_positive() {
+  for kind in ["d-path", "d-line"] {
+    let mut el = Element::from_kind(kind).expect("known kind");
+    let declared = |el: &Element| match &el.kind {
+      ElementKind::Path(p) => p.path_length,
+      ElementKind::Line(l) => l.path_length,
+      _ => unreachable!(),
+    };
+    assert_eq!(apply_el(&mut el, "pathLength", num(1.0)), Ok(Damage::Paint));
+    assert_eq!(declared(&el), Some(1.0));
+    let err = apply_el(&mut el, "pathLength", num(0.0)).unwrap_err();
+    assert!(err.contains("pathLength") && err.contains("positive"), "{err}");
+    assert_eq!(declared(&el), Some(1.0), "{kind}: a rejected write changes nothing");
+    assert_eq!(apply_el(&mut el, "pathLength", PropValue::Null), Ok(Damage::Paint));
+    assert_eq!(declared(&el), None);
+  }
+}
+
+#[test]
 fn line_dash_offset_applies_and_transitions() {
   let mut el = Element::from_kind("d-line").expect("known kind");
   let offset = |el: &Element| match &el.kind {

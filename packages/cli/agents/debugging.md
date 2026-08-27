@@ -130,8 +130,11 @@ the same way. Base: `http://127.0.0.1:<port>/__control__/`, where `<port>`
 is the one `srt run` printed at startup (also in the server's
 `~/.solidrt/servers/*/live.json` record). GET unless noted;
 every endpoint answers JSON and an error is `{ "error": "..." }` with a
-4xx/5xx status. Endpoints that talk to a client take `?client=<id>` (from
-`/clients`); it may be omitted when exactly one client is connected.
+4xx/5xx status, and every response carries `x-solidrt-project` (the key
+served) and `x-solidrt-generation` (the server run) headers, so a caller can
+confirm it reached the server it meant and notice a restart. Endpoints that
+talk to a client take `?client=<id>` (from `/clients`); it may be omitted
+when exactly one client is connected.
 
 - `/clients` - `{ generation, key, mode, entry, projectDir, userInputMuted,
   watchPaused, clients: [{ id, ... }] }`. Check `key` (the project root or

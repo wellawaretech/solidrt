@@ -349,6 +349,12 @@ Shaped, not started.
   A no-publish-call shared-memory buffer - a persistent JS view the raster
   thread samples during Frame handling - as the follow-on to the begin/end
   write lease
+- **[A draw cannot name a sub-rectangle, so every render region costs a whole pass](backlog/gpu-subrect-draws.md)** [2026-08-27]
+  run_pass sets one viewport for the whole pass, so N logical render regions
+  means N targets and N passes. A pass costs 2.15 ms flat on an Adreno 610
+  regardless of size or content, which makes this a real budget item on
+  mobile. An optional per-entry viewport unlocks shadow atlases, cascades and
+  multi-view rendering at one pass each.
 - **[Whole-system GPU attribution, per platform](backlog/gpu-system-attribution.md)** [2026-08-13]
   Answering "who else is burning the GPU" needs a different mechanism on every
   OS, so it wants a documented per-platform recipe or an srt doctor helper
@@ -454,7 +460,8 @@ Shaped, not started.
   <path>/<d-path> take onLength/offLength/dashOffset with line's semantics -
   the stroke walks the lyon-flattened subpaths through the walker shared with
   line (kinds/dash.rs), the fill keeps the true curve, the pattern restarts at
-  each subpath, and a d-path's bounds count dashes as caps.
+  each subpath, and a d-path's bounds count dashes as caps; pathLength (SVG)
+  on both kinds makes the pattern fractional for partial draws.
 - **[Physics core - an embedded engine as a producer into the spatial arena](backlog/physics-core.md)** [2026-08-24]
   Rigid-body physics is per-body-per-frame and per-contact work, below the
   interpreter line, and nothing provides it, so games needing dynamics are

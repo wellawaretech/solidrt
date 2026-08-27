@@ -1,4 +1,4 @@
-use super::dash::{walk_dashes, Dash, Pen};
+use super::dash::{walk_dashes, walked_length, Dash, Pen};
 use super::PaintState;
 use crate::impellers::{DisplayListBuilder, DrawStyle, FillType, Path as ImpPath, PathBuilder, Point, Rect, Size};
 use crate::rendertree::hit::{HitContext, Hittable};
@@ -50,11 +50,15 @@ pub struct Path {
   pub on_length: Option<f32>,
   pub off_length: Option<f32>,
   pub dash_offset: Option<f32>,
+  pub path_length: Option<f32>,
   path: RefCell<Option<ImpPath>>,
   // The geometry's tight extent (curve extrema, not control points), in the
   // path's own space before the x/y translate; None while nothing is drawn.
   bounds: RefCell<Option<Rect>>,
   shape: Cell<StrokeShape>,
+  // The walked (flattened) length, for a declared `pathLength`; computed on
+  // demand and kept with the geometry.
+  length: Cell<Option<f32>>,
   lyon_path: RefCell<Option<lyon_path::Path>>,
 }
 
@@ -69,9 +73,11 @@ impl Default for Path {
       on_length: None,
       off_length: None,
       dash_offset: None,
+      path_length: None,
       path: RefCell::new(None),
       bounds: RefCell::new(None),
       shape: Cell::new(StrokeShape::default()),
+      length: Cell::new(None),
       lyon_path: RefCell::new(None),
     }
   }
@@ -88,9 +94,11 @@ impl Clone for Path {
       on_length: self.on_length,
       off_length: self.off_length,
       dash_offset: self.dash_offset,
+      path_length: self.path_length,
       path: RefCell::new(None),
       bounds: RefCell::new(None),
       shape: Cell::new(StrokeShape::default()),
+      length: Cell::new(None),
       lyon_path: RefCell::new(None),
     }
   }
@@ -289,6 +297,7 @@ impl Path {
     *self.path.borrow_mut() = None;
     *self.bounds.borrow_mut() = None;
     self.shape.set(StrokeShape::default());
+    self.length.set(None);
     *self.lyon_path.borrow_mut() = None;
   }
 
@@ -328,6 +337,10 @@ impl Path {
     self.dash_offset = v;
     Damage::Paint
   }
+  pub fn set_path_length(&mut self, v: Option<f32>) -> Damage {
+    self.path_length = v;
+    Damage::Paint
+  }
 
   fn fills(&self) -> bool {
     matches!(self.paint.draw_style, DrawStyle::Fill | DrawStyle::StrokeAndFill)
@@ -337,18 +350,25 @@ impl Path {
     matches!(self.paint.draw_style, DrawStyle::Stroke | DrawStyle::StrokeAndFill)
   }
 
+  // The pattern in local units; a declared `pathLength` (SVG) maps the
+  // author's units onto the walked length.
   pub(crate) fn dash(&self) -> Option<Dash> {
-    Dash::new(self.on_length, self.off_length, self.dash_offset)
+    let dash = Dash::new(self.on_length, self.off_length, self.dash_offset)?;
+    match self.path_length.filter(|declared| *declared > 0.0) {
+      Some(declared) => dash.scaled(self.length() / declared),
+      None => Some(dash),
+    }
   }
 
-  // The dashed stroke: every subpath flattened (curves become segments
-  // within DASH_TOLERANCE) and walked on its own, since a dash pattern
-  // restarts at each subpath, as SVG's does.
-  pub(crate) fn walk_dashed(&self, dash: Dash, pen: &mut impl Pen) {
+  // Every subpath flattened (curves become segments within DASH_TOLERANCE),
+  // a close adding its closing segment: what the dash walker travels and
+  // what `length` measures, so the two agree exactly.
+  fn flattened_subpaths(&self) -> Vec<Vec<(Point, Point)>> {
     self.ensure_built();
     let lyon = self.lyon_path.borrow();
-    let Some(lyon) = lyon.as_ref() else { return };
+    let Some(lyon) = lyon.as_ref() else { return Vec::new() };
     let pt = |p: lyon_path::geom::Point<f32>| Point::new(p.x, p.y);
+    let mut subpaths = Vec::new();
     let mut segments = Vec::new();
     for evt in lyon.iter().flattened(DASH_TOLERANCE) {
       match evt {
@@ -358,10 +378,28 @@ impl Path {
           if close {
             segments.push((pt(last), pt(first)));
           }
-          walk_dashes(segments.drain(..), dash, pen);
+          subpaths.push(std::mem::take(&mut segments));
         }
         _ => {}
       }
+    }
+    subpaths
+  }
+
+  fn length(&self) -> f32 {
+    if let Some(length) = self.length.get() {
+      return length;
+    }
+    let total = walked_length(self.flattened_subpaths().into_iter().flatten());
+    self.length.set(Some(total));
+    total
+  }
+
+  // The dashed stroke: each subpath walked on its own, since a dash pattern
+  // restarts at each subpath, as SVG's does.
+  pub(crate) fn walk_dashed(&self, dash: Dash, pen: &mut impl Pen) {
+    for subpath in self.flattened_subpaths() {
+      walk_dashes(subpath.into_iter(), dash, pen);
     }
   }
 
@@ -431,8 +469,7 @@ impl Buildable for Path {
 impl Bounded for Path {
   fn local_bounds(&self, _fallback: Size) -> Rect {
     self.ensure_built();
-    let bounds = self.bounds.borrow();
-    let Some(rect) = *bounds else {
+    let Some(rect) = *self.bounds.borrow() else {
       return Rect::zero();
     };
     let StrokeShape { capped, joined } = self.shape.get();

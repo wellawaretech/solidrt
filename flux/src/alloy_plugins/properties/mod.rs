@@ -245,6 +245,14 @@ pub(super) fn opt_f32(value: &PropValue, what: &str) -> Result<Option<f32>, Stri
   f32_of(value, what).map(Some)
 }
 
+// A declared length or scale: null resets, anything else must be positive.
+pub(super) fn opt_positive_f32(value: &PropValue, what: &str) -> Result<Option<f32>, String> {
+  match opt_f32(value, what)? {
+    Some(v) if v <= 0.0 => Err(format!("{what} must be positive, got {v}")),
+    v => Ok(v),
+  }
+}
+
 pub(super) fn opt_radius(value: &PropValue, what: &str) -> Result<Option<[f32; 4]>, String> {
   if value.is_null() {
     return Ok(None);
