@@ -31,7 +31,7 @@ Commands:
   tool [<pkg>/<name>]    List the tools the installed packages ship, or run one
                          (everything after the tool name is the tool's own arguments)
   console                Start the dev console: the dev servers on this machine and their clients
-  android                Install and launch the client on a connected Android device
+  android                Launch the client on a connected Android device (--install to install it first)
   bundle [file]          Transpile TS/JS/TSX/JSX to JS or bytecode
                          (a prebuilt <name>.srt.js: compile it to bytecode)
   check [file]           Verify the app builds and typechecks, without writing anything
@@ -75,8 +75,9 @@ client options:
       --server <host:port>  Connect to a dev server at this address
 
 android options:
-  (no flags)             Point the device at the dev server of the project (or file) in the current directory
-                         (the server must run with --lan, or be reached from an emulator)
+  (no flags)             Launch the installed client, pointed at the dev server of the project (or file)
+                         in the current directory (the server must run with --lan, or be reached from an emulator)
+      --install          Install or update the client first, from the project's @solidrt/android-<abi> package
       --port <N>         Point it at the local dev server on this port
       --device <serial>  Target a specific adb device by serial or unique prefix
 

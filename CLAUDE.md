@@ -70,7 +70,9 @@ Never use the built-in `run` skill here. Drive the app yourself:
 - Stop: signal the srt process by pid. `pkill -f "srt run <entry.tsx>"` also
   matches the shell that ran it, so `pgrep -af "<entry.tsx>"`, pick the
   `bun`/`bunx` pid, and `kill` that - it tears down the server and the
-  client. The live.json is removed on exit; a leftover record means a crash.
+  client. The live.json is removed on exit; a leftover record means a crash
+  (the next server start prunes it, and resolvers confirm a record against
+  the server before using it).
   Never kill a server the user started (their `srt run` shows up in `pgrep`
   too, e.g. `apps/console`).
 - MCP tools (`mcp__solidrt__*`) resolve the server by PROJECT: the bridge's

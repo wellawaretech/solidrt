@@ -1,19 +1,25 @@
 import { existsSync } from "node:fs"
 import { networkInterfaces } from "node:os"
 import { resolve } from "node:path"
-import { resolveApk, ANDROID_PKG_MAP } from "../lib/artifacts"
+import { androidPackageVersion, resolveApk, ANDROID_PKG_MAP } from "../lib/artifacts"
 import { values, port } from "../lib/args"
 import { resolveByPort, resolveFromCwd } from "../lib/registry"
 import type { LiveRecord } from "../types/registry"
 
 // `srt android`: the Android client flow, decoupled from `srt client` (a
-// local process) because a device is a different thing: find it over adb,
-// install the APK that matches its ABI, and launch it pointed at the dev
-// server, which is resolved like `srt client` does (the project at the cwd,
-// or --port).
+// local process) because a device is a different thing: find it over adb and
+// launch the client installed there pointed at the dev server, which is
+// resolved like `srt client` does (the project at the cwd, or --port). The
+// APK is only touched on --install (from the @solidrt/android-<abi> package
+// matching the device's ABI), so a client built and installed by hand stays;
+// without --install the command just notes when the installed version is not
+// the one the project's package carries.
 
 // Launch component of the "go" dev-client flavor (see lattice/Makefile.android).
 let PACKAGE_ACTIVITY = "com.solidrt.go/com.solidrt.app.MainActivity"
+let PACKAGE = "com.solidrt.go"
+
+let sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
 // adb is a system tool (Android Platform Tools), never bundled. Look on PATH
 // first, then the standard SDK location.
@@ -128,9 +134,9 @@ function deviceAbi(adb: string, target: string): string {
 
 // Always shown up front, regardless of how many devices are connected or
 // whether --device narrows it down: one line per device with the ABI its APK
-// build would target, then a dev-dependency hint for each ABI that isn't
-// resolvable locally yet. Returns the device->abi map so callers don't have
-// to re-query it.
+// build would target, then (with --install) a dev-dependency hint for each
+// ABI that isn't resolvable locally yet. Returns the device->abi map so
+// callers don't have to re-query it.
 function printDeviceStatus(adb: string, devices: string[]): Map<string, string> {
   let abiByDevice = new Map<string, string>()
   let missingAbis = new Set<string>()
@@ -141,8 +147,38 @@ function printDeviceStatus(adb: string, devices: string[]): Map<string, string> 
     if (!resolveApk(abi)) missingAbis.add(abi)
   }
   let missingPkgs = [...missingAbis].map((abi) => ANDROID_PKG_MAP[abi]).filter((pkg): pkg is string => Boolean(pkg))
-  if (missingPkgs.length > 0) console.log(`Add dev dependencies with: bun add -d ${missingPkgs.join(" ")}`)
+  if (values.install && missingPkgs.length > 0) {
+    console.log(`Add dev dependencies with: bun add -d ${missingPkgs.join(" ")}`)
+  }
   return abiByDevice
+}
+
+// The versionName of the client installed on `target`, null when none is.
+function installedVersion(adb: string, target: string): string | null {
+  let res = Bun.spawnSync([adb, "-s", target, "shell", "dumpsys", "package", PACKAGE], { stdout: "pipe", stderr: "pipe" })
+  return res.stdout.toString().match(/versionName=(\S+)/)?.[1] ?? null
+}
+
+type Client = { id: number; platform: string; version: string }
+
+// The clients the dev server currently lists (empty when it cannot be asked).
+async function connectedClients(server: LiveRecord): Promise<Client[]> {
+  try {
+    let resp = await fetch(`http://127.0.0.1:${server.port}/__control__/clients`, { signal: AbortSignal.timeout(1000) })
+    return ((await resp.json()) as { clients?: Client[] }).clients ?? []
+  } catch {
+    return []
+  }
+}
+
+// The first Android client that appears beyond `before`, or null after ~10 s.
+async function waitForClient(server: LiveRecord, before: Set<number>): Promise<Client | null> {
+  for (let attempt = 0; attempt < 20; attempt++) {
+    await sleep(500)
+    let fresh = (await connectedClients(server)).find((c) => c.platform === "android" && !before.has(c.id))
+    if (fresh) return fresh
+  }
+  return null
 }
 
 // Resolve the target device serial (and its ABI). With --device, treat the
@@ -180,36 +216,53 @@ function resolveTarget(adb: string): { target: string; abi: string } {
   return { target: only, abi: abiByDevice.get(only)! }
 }
 
-// Install + launch the Android client on a connected device over adb, passing it
-// the dev-server address to dial as a launch-intent extra (see devServerAddress).
-// Fire-and-forget: the client's lifecycle is tracked via WS connect/disconnect on
-// the dev server, not as a child process here.
+// Launch the Android client on a connected device over adb (installing it
+// first on --install), passing it the dev-server address to dial as a
+// launch-intent extra (see devServerAddress), then wait briefly for it to show
+// up on the dev server. The client is not a child process here: its lifecycle
+// is the WS connect/disconnect the server sees.
 export async function main() {
   let server = await resolveServer()
   let adb = requireAdb()
 
   let { target, abi } = resolveTarget(adb)
 
-  let apk = resolveApk(abi)
-  if (!apk) {
-    console.error(`Could not find a SolidRT-Go APK for ABI "${abi}".`)
-    let pkg = ANDROID_PKG_MAP[abi]
-    if (pkg) console.error(`Add it with: bun add -d ${pkg}`)
-    process.exit(1)
-  }
-
-  console.log(`[cli] Installing SolidRT-Go on ${target}`)
-  let install = Bun.spawn([adb, "-s", target, "install", "-r", apk], { stdout: "pipe", stderr: "pipe" })
-  if ((await install.exited) !== 0) {
-    console.error("adb install failed:\n" + (await new Response(install.stderr).text()))
-    process.exit(1)
+  if (values.install) {
+    let apk = resolveApk(abi)
+    if (!apk) {
+      console.error(`Could not find a SolidRT-Go APK for ABI "${abi}".`)
+      let pkg = ANDROID_PKG_MAP[abi]
+      if (pkg) console.error(`Add it with: bun add -d ${pkg}`)
+      process.exit(1)
+    }
+    console.log(`[cli] Installing SolidRT-Go on ${target}`)
+    let install = Bun.spawn([adb, "-s", target, "install", "-r", apk], { stdout: "pipe", stderr: "pipe" })
+    if ((await install.exited) !== 0) {
+      console.error("adb install failed:\n" + (await new Response(install.stderr).text()))
+      process.exit(1)
+    }
+  } else {
+    let installed = installedVersion(adb, target)
+    if (installed === null) {
+      console.error(`No SolidRT-Go client on ${target}; install one with srt android --install`)
+      process.exit(1)
+    }
+    let expected = androidPackageVersion(abi)
+    if (expected !== null && expected !== installed) {
+      console.log(
+        `[cli] Installed client is ${installed}; the project's ${ANDROID_PKG_MAP[abi]} is ${expected} (srt android --install updates it)`,
+      )
+    }
   }
 
   // Hand the client the dev-server address to dial, as a launch-intent extra that
   // MainActivity forwards to native argv (--dev-server); the client auto-connects
-  // to it. Replaces adb reverse, which never worked over wireless adb.
+  // to it. Replaces adb reverse, which never worked over wireless adb. -S stops
+  // a running instance first: a delivered intent does not reach one, so without
+  // it the client would keep whatever server it had.
+  let before = new Set((await connectedClients(server)).map((c) => c.id))
   let devServer = devServerAddress(adb, target, server)
-  let launchArgs = [adb, "-s", target, "shell", "am", "start", "-n", PACKAGE_ACTIVITY]
+  let launchArgs = [adb, "-s", target, "shell", "am", "start", "-S", "-n", PACKAGE_ACTIVITY]
   if (devServer) {
     console.log(`[cli] Client will dial dev server at ${devServer}`)
     launchArgs.push("--es", "srt_dev_server", devServer)
@@ -224,4 +277,10 @@ export async function main() {
   }
 
   console.log(`[cli] Launched SolidRT-Go on ${target}; waiting for it to connect to the dev server...`)
+  let client = await waitForClient(server, before)
+  if (client) {
+    console.log(`[cli] Client ${client.id} connected (${client.platform}, ${client.version})`)
+  } else {
+    console.log(`[cli] No connection after 10 s. The server must run with --lan and the device must reach this machine.`)
+  }
 }

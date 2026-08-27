@@ -60,6 +60,7 @@ const OPTIONS = {
     server: { type: "string" },
     port: { type: "string" },
     device: { type: "string" },
+    install: { type: "boolean" },
 } as const
 
 export let { values, positionals } = parse()
@@ -160,6 +161,10 @@ export function validateArgs() {
     usage("srt pack --folder|--app  (--folder and --app are only valid with the pack command)")
   }
   if (values.folder && values.app) usage("srt pack --folder|--app  (--folder and --app exclude each other)")
+  // --install is the android command's APK install step.
+  if (values.install && command !== "android") {
+    usage("srt android --install  (--install is only valid with the android command)")
+  }
   // --device picks the adb device `android` installs on.
   if (values.device && command !== "android") {
     usage("srt android --device <serial>  (--device is only valid with the android command)")

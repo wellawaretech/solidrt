@@ -104,14 +104,19 @@ client-android: $(LAUNCHER_JS) $(BSOD_JS)
 $(GRADLE_WRAPPER_JAR):
 	cd android && gradle wrapper
 
-# Build APK, install, launch, and stream logcat.
+# Build APK, stage it into dist/android/<abi>/ next to its .so files, install
+# that staged copy, launch, and stream logcat. Staging keeps dist/android
+# current with what the device runs, so `srt android --install` (which takes
+# the APK from there in a checkout) installs this build, not an older one.
 # $(1) = profile (release|debug) matching the staged .so
 define android-run
 	$(call ndk-stage,$(1))
 	# -PsrtAbi keeps a leftover ABI staged under dist/android out of this APK,
 	# so the dev loop stays single-ABI (same reason as dist-android).
 	cd android && ./gradlew assembleGoDebug -PsrtAbi=$(ANDROID_ABI)
-	adb install -r $(APK_GO_DEBUG)
+	cp $(APK_GO_DEBUG) $(ANDROID_DIST)/solidrt-go.apk
+	@echo "Staged solidrt-go.apk ($(ANDROID_ABI)) into $(ANDROID_DIST)/"
+	adb install -r $(ANDROID_DIST)/solidrt-go.apk
 	adb logcat -c
 	@echo "Launching with dev server: $(if $(DEV_SERVER),$(DEV_SERVER),none (manual/QR connect))"
 	adb shell am start -n com.solidrt.go/com.solidrt.app.MainActivity $(if $(DEV_SERVER),--es srt_dev_server $(DEV_SERVER))

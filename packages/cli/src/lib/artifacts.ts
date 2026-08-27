@@ -83,6 +83,20 @@ export let ANDROID_PKG_MAP: Record<string, string> = {
   "armeabi-v7a": "@solidrt/android-armeabi-v7a",
 }
 
+// The client version the project expects on an `abi` device: the version of
+// its @solidrt/android-<abi> dev dependency (the release action pins it to the
+// runtime version). Null when the package is not installed.
+export function androidPackageVersion(abi: string): string | null {
+  let pkg = ANDROID_PKG_MAP[abi]
+  if (!pkg) return null
+  try {
+    let version = require(`${pkg}/package.json`).version
+    return typeof version === "string" ? version : null
+  } catch {
+    return null
+  }
+}
+
 export function resolveApk(abi: string = DEFAULT_ANDROID_ABI) {
   // 1. SRT_HOME: contributor checkout, where `make dist-android` stages the APK
   //    under dist/android/<abi>/.
