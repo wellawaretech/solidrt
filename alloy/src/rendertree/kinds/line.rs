@@ -1,7 +1,6 @@
+use super::dash::{walk_dashes, Dash};
 use super::PaintState;
-use crate::impellers::{
-  DisplayListBuilder, DrawStyle, FillType, Path, PathBuilder, Point, Rect, Size, StrokeCap, StrokeJoin,
-};
+use crate::impellers::{DisplayListBuilder, DrawStyle, FillType, Path, PathBuilder, Point, Rect, Size};
 use crate::rendertree::hit::{HitContext, Hittable};
 use crate::rendertree::Damage;
 use crate::rendertree::{Bounded, BuildContext, Buildable, Element, ElementKind, Measurable, MeasureContext};
@@ -110,71 +109,6 @@ fn polyline_path(points: &[f32], closed: bool) -> Path {
   path.take_path_new(FillType::NonZero)
 }
 
-// A dash pattern in local units: `on` drawn, `off` skipped, starting
-// `offset` into the pattern (SVG stroke-dashoffset).
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) struct Dash {
-  pub on: f32,
-  pub off: f32,
-  pub offset: f32,
-}
-
-// Where the dash walker draws: the PathBuilder in a build, a recording pen
-// in the tests.
-pub(crate) trait Pen {
-  fn move_to(&mut self, p: Point);
-  fn line_to(&mut self, p: Point);
-}
-
-impl Pen for PathBuilder {
-  fn move_to(&mut self, p: Point) {
-    PathBuilder::move_to(self, p);
-  }
-  fn line_to(&mut self, p: Point) {
-    PathBuilder::line_to(self, p);
-  }
-}
-
-// Emits every "on" run of the pattern as one subpath, carrying the phase
-// across vertices: a run that crosses a vertex keeps its subpath (so the
-// join applies inside it), a run that ends mid-segment is capped. Impeller
-// dashes single segments only, so this is ours. Requires a positive period
-// (see `Line::dash`).
-pub(crate) fn walk_dashes(segments: impl Iterator<Item = (Point, Point)>, dash: Dash, pen: &mut impl Pen) {
-  let period = dash.on + dash.off;
-  let phase = dash.offset.rem_euclid(period);
-  // The pattern opens with the on run, even a zero-length one (a dot).
-  let mut drawing = phase == 0.0 || phase < dash.on;
-  let mut remaining = if drawing { dash.on - phase } else { period - phase };
-  let mut pen_down = false;
-  for (a, b) in segments {
-    let (dx, dy) = (b.x - a.x, b.y - a.y);
-    let len = (dx * dx + dy * dy).sqrt();
-    if drawing && !pen_down {
-      pen.move_to(a);
-      pen_down = true;
-    }
-    let mut at = 0.0;
-    while at + remaining < len {
-      at += remaining;
-      let p = Point::new(a.x + dx * at / len, a.y + dy * at / len);
-      if drawing {
-        pen.line_to(p);
-        remaining = dash.off;
-      } else {
-        pen.move_to(p);
-        remaining = dash.on;
-      }
-      pen_down = !drawing;
-      drawing = !drawing;
-    }
-    remaining -= len - at;
-    if drawing {
-      pen.line_to(b);
-    }
-  }
-}
-
 fn dashed_path(points: &[f32], closed: bool, dash: Dash) -> Path {
   let mut path = PathBuilder::default();
   walk_dashes(segments(points, closed), dash, &mut path);
@@ -217,12 +151,8 @@ impl Line {
     )
   }
 
-  // Both lengths set and a positive gap; a non-positive gap has nothing to
-  // skip and draws solid. A zero `on` is a dot per period (caps permitting),
-  // as in SVG.
   pub(crate) fn dash(&self) -> Option<Dash> {
-    let (Some(on), Some(off)) = (self.on_length, self.off_length) else { return None };
-    (off > 0.0).then(|| Dash { on: on.max(0.0), off, offset: self.dash_offset.unwrap_or(0.0) })
+    Dash::new(self.on_length, self.off_length, self.dash_offset)
   }
 
   // The geometry the build draws, as an AABB in local space: the points, or
@@ -238,27 +168,13 @@ impl Line {
     }
   }
 
-  // How far the stroke reaches past the geometry: half the width, and more
-  // where a square cap (* sqrt 2, its corner on a diagonal) or a miter join
-  // (* strokeMiter, the tip's limit) pokes out. Caps sit on open ends: an
-  // open polyline's two, the segment's, and every dash's; joins need a
-  // vertex between two segments. A fill-only style has no stroke.
+  // Caps sit on open ends: an open polyline's two, the segment's, and every
+  // dash's; joins need a vertex between two segments.
   fn stroke_outset(&self) -> f32 {
-    if !self.strokes() {
-      return 0.0;
-    }
     let vertices = self.points.as_ref().map_or(2, |p| p.len() / 2);
     let capped = self.points.is_none() || !self.closed || self.dash().is_some();
     let joined = self.points.is_some() && (vertices >= 3 || (self.closed && vertices >= 2));
-    let cap = match self.paint.stroke_cap {
-      StrokeCap::Square if capped => std::f32::consts::SQRT_2,
-      _ => 1.0,
-    };
-    let join = match self.paint.stroke_join {
-      StrokeJoin::Miter if joined => self.paint.stroke_miter.max(1.0),
-      _ => 1.0,
-    };
-    self.paint.stroke_width / 2.0 * cap.max(join)
+    self.paint.stroke_outset(capped, joined)
   }
 
   // A box-relative gradient resolves against the points' extent, as a

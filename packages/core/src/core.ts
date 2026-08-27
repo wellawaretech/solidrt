@@ -312,8 +312,7 @@ export interface BoundingBox {
  * the current frame. Transforms anywhere in the chain (including the node's
  * own) compose fully; the box is the axis-aligned bounds of the transformed
  * quad. A detached node reports its painted box: its own w/h (or the
- * inherited box), a `d-line`'s geometry plus its stroke; `d-path` still
- * reports the inherited box.
+ * inherited box), or for `d-line` and `d-path` the geometry plus its stroke.
  */
 export function getBoundingBox(node: { id: number }): BoundingBox | null {
   return tree.getBoundingBox(node.id)

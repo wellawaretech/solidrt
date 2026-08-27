@@ -168,6 +168,12 @@ Shaped, not started.
   Give dev, render and pack one gitignored output root (dist/) with a subdir
   per flow, fixing render's missing isolate support and clearing the ground
   for pack formats and asset pre-processing.
+- **[captureSnapshot fails inside a clean repaint boundary](backlog/capture-inside-clean-boundary.md)** [2026-08-27]
+  A capture (captureSnapshot, /snapshot) of a node under a repaintBoundary
+  view whose recording is being reused fails with "capture node is not in the
+  live render tree", because the Recording branch replays the cached display
+  list without descending, so the paint walk that services captures never
+  reaches the node.
 - **[Move the srt dev flow into flux and make ports an output](backlog/cli-flux-migration.md)** [2026-07-13]
   Host run/server/client/mcp in one flux process that binds its own port, owns
   the server registry, and shells out to bun for bundling and typechecking
@@ -444,6 +450,11 @@ Shaped, not started.
   seen, so paint cost is O(mounted content) - ~7 us/node, ~155 ms/frame at 17k
   nodes; add a cull rect to the walk and a conservative per-subtree paint
   envelope so off-screen subtrees are skipped before build().
+- **[Path dashing through the shared dash walker](backlog/path-dashing.md)** [2026-08-27]
+  <path>/<d-path> take onLength/offLength/dashOffset with line's semantics -
+  the stroke walks the lyon-flattened subpaths through the walker shared with
+  line (kinds/dash.rs), the fill keeps the true curve, the pattern restarts at
+  each subpath, and a d-path's bounds count dashes as caps.
 - **[Physics core - an embedded engine as a producer into the spatial arena](backlog/physics-core.md)** [2026-08-24]
   Rigid-body physics is per-body-per-frame and per-contact work, below the
   interpreter line, and nothing provides it, so games needing dynamics are

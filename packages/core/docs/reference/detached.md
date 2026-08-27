@@ -70,9 +70,9 @@ since a paragraph's height always falls out of the text itself:
 `d-path` takes only a position, since its size is whatever its `d` string
 draws. `d-line` has no width and height either: its geometry is its two
 endpoints (or, as a polyline, its `points`), which is what makes it the
-primitive to reach for when the geometry moves. Its bounds (getBoundingBox,
-the tree, a capture) are that geometry plus the stroke, where `d-path` still
-reports the inherited box:
+primitive to reach for when the geometry moves. Both report their bounds
+(getBoundingBox, the tree, a capture) as that geometry plus the stroke, not
+the inherited box:
 
 {{ decl packages/core/src/types.d.ts LineGeometryProps }}
 

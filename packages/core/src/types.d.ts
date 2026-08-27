@@ -730,6 +730,30 @@ export interface RectProps extends PaintProps, PointerProps {
 // Strokes paint inside the box, same as `RectProps`.
 export interface OvalProps extends PaintProps, PointerProps {}
 
+/**
+ * A stroke's dash pattern, on `line` and `path`. Both lengths must be set
+ * to dash; with either unset, or a gap of 0, the stroke is solid.
+ */
+export interface DashProps {
+  /**
+   * The drawn length, in local units. The pattern runs continuously along
+   * the geometry - through a polyline's vertices and along a path's curves,
+   * restarting at each subpath of a path; 0 draws a dot per period (given
+   * round or square caps).
+   */
+  onLength?: number
+  /** The gap length, in local units. */
+  offLength?: number
+  /**
+   * Distance into the dash pattern at which the stroke starts, in local
+   * units (SVG stroke-dashoffset). Wraps around the pattern's period;
+   * negative values allowed. Raising it marches the dashes toward the
+   * geometry's start: write it every frame for marching ants, or transition
+   * it for a one-shot slide. Default 0.
+   */
+  dashOffset?: number
+}
+
 // A line's geometry is numbers, not a path string: the primitive to reach
 // for when the geometry moves (each endpoint is one property write, a
 // polyline is one array write; a path animates by rebuilding its `d` string).
@@ -746,7 +770,7 @@ export interface OvalProps extends PaintProps, PointerProps {}
 // fill). On a polyline "fill" and "stroke-and-fill" fill the polygon
 // (nonzero, implicitly closed) and hit-test its interior; on the two-point
 // form fill has no effect, a segment has no interior.
-export interface LineProps extends PaintProps, PointerProps {
+export interface LineProps extends PaintProps, PointerProps, DashProps {
   /**
    * Polyline vertices as a flat [x0, y0, x1, y1, ...] in the element's local
    * space (the space x1..y2 use). Takes precedence over the endpoints while
@@ -762,21 +786,16 @@ export interface LineProps extends PaintProps, PointerProps {
    * implicitly), so this is a stroke distinction. Default false.
    */
   closed?: boolean
-  /** Dash pattern in local units: the drawn length. Both onLength and offLength must be set to dash; with either unset the line is solid. The pattern runs continuously along a polyline, through its vertices; 0 draws a dot per period (given round or square caps). */
-  onLength?: number
-  /** Dash pattern in local units: the gap length. Both onLength and offLength must be set to dash; with either unset, or a gap of 0, the line is solid. */
-  offLength?: number
-  /**
-   * Distance into the dash pattern at which the stroke starts, in local
-   * units (SVG stroke-dashoffset). Wraps around the pattern's period;
-   * negative values allowed. Raising it marches the dashes toward the
-   * line's start: write it every frame for marching ants, or transition
-   * it for a one-shot slide. Default 0.
-   */
-  dashOffset?: number
 }
 
-export interface PathProps extends PaintProps, PointerProps {
+/**
+ * `d` is an SVG path string; the stroke is centered on the geometry. The
+ * bounds a path reports (getBoundingBox, the tree, a detached capture) are
+ * its painted box: the geometry's tight extent (curve extrema, not control
+ * points) plus the stroke's reach, at a `d-path`'s x/y - not its layout box
+ * or the inherited one.
+ */
+export interface PathProps extends PaintProps, PointerProps, DashProps {
   d?: string
   fillRule?: "nonzero" | "evenodd"
 }

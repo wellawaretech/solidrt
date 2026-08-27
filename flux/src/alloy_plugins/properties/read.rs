@@ -85,6 +85,9 @@ pub fn read_jsx(element: &Element) -> Vec<(&'static str, ReadValue)> {
       if path.fill_rule != FillType::NonZero {
         out.push(("fillRule", ReadValue::Str("evenodd".into())));
       }
+      num(&mut out, "onLength", path.on_length);
+      num(&mut out, "offLength", path.off_length);
+      num(&mut out, "dashOffset", path.dash_offset);
     }
     ElementKind::Text(text) => {
       // `computed_text` itself already rides the snapshot as `text`.

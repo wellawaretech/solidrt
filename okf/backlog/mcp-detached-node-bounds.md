@@ -24,8 +24,11 @@ agent dev-loop feedback item when okf was restructured; the siblings are
 [mcp-multi-client-ergonomics](mcp-multi-client-ergonomics.md) and
 [mcp-interaction-perf-visibility](mcp-interaction-perf-visibility.md).
 
-Update 2026-08-27: the `d-line` case is covered by
-[line-points](line-points.md) stage 3 - `Line` implements `Bounded`, so
-`bounding_box_viewport` (what the tree box, `getBoundingBox` and a detached
-capture read) reports its geometry plus stroke. `d-path` still reports the
-inherited box; a `drawn` box, or `Bounded` for path, remains this item.
+Resolved 2026-08-27, without a separate `drawn` box: `Line` (with
+[line-points](line-points.md) stage 3) and `Path` implement `Bounded`, so
+`bounding_box_viewport` - what the tree box, `getBoundingBox` and a detached
+capture read - reports the geometry plus the stroke's reach for `d-line` and
+`d-path`. A path's extent is the tight one (curve extrema, via lyon's
+`bounding_box`) at the node's x/y, and both kinds are now culled by that box
+where path used to be unbounded. The other d-* kinds already reported their
+own w/h.

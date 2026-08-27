@@ -25,6 +25,18 @@ border, so nothing bleeds past the box for a clip to cut, while `line` and
 `path` strokes stay centered on their geometry, where the geometry is the
 stroke rather than a box.
 
+## Dashing
+
+A stroke's dash pattern, on `line` and `path`:
+
+{{ decl packages/core/src/types.d.ts DashProps }}
+
+The pattern is walked along the geometry itself: through a polyline's
+vertices and along a path's curves, restarting at each subpath of a path.
+`dashOffset` slides it - write it every frame for marching ants, or
+transition it for a one-shot slide. A dashed stroke keeps its caps on every
+dash, and a stroke-and-fill path dashes only the stroke.
+
 ## rect
 
 {{ decl packages/core/src/types.d.ts RectProps }}
@@ -43,9 +55,7 @@ detached-only concept, so arbitrary angles and connectors want `d-line`.
 `points` makes either form a polyline - a flat `[x0, y0, x1, y1, ...]` array
 (or a `Float32Array`), optionally `closed` - the numeric middle ground between
 a segment and a path: animate it by writing a new array, nothing is parsed.
-Curves want a path. Dashing (`onLength`/`offLength`) runs continuously along
-the whole polyline, and `dashOffset` slides the pattern: write it every frame
-for marching ants.
+Curves want a path.
 
 ## path
 
@@ -54,6 +64,8 @@ for marching ants.
 `d` is an SVG path string. Reach for `line` instead when the geometry is
 numbers that animate (endpoints, or a polyline's `points`): a path animates
 by rebuilding its `d` string, where a line moves one number or one array.
+A path dashes like a line (see Dashing above), the pattern restarting at
+each subpath; the dash props are paint-only writes, the `d` is not re-parsed.
 
 ## texture
 

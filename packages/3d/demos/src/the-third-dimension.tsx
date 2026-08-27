@@ -749,7 +749,6 @@ function App() {
 
   return (
     <window
-      fullscreen
       onKeyDown={e => {
         // Keyboard-only, and global: the large view leads, the small ones
         // take whatever it just became.

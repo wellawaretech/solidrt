@@ -563,6 +563,26 @@ fn line_draw_style_null_resets_to_stroke() {
 }
 
 #[test]
+fn path_dash_props_apply_and_transition() {
+  let mut el = Element::from_kind("d-path").expect("known kind");
+  let dash = |el: &Element| match &el.kind {
+    ElementKind::Path(p) => (p.on_length, p.off_length, p.dash_offset),
+    _ => unreachable!(),
+  };
+  assert_eq!(apply_el(&mut el, "onLength", num(12.0)), Ok(Damage::Paint));
+  assert_eq!(apply_el(&mut el, "offLength", num(8.0)), Ok(Damage::Paint));
+  assert_eq!(apply_el(&mut el, "dashOffset", num(3.5)), Ok(Damage::Paint));
+  assert_eq!(dash(&el), (Some(12.0), Some(8.0), Some(3.5)));
+  assert_eq!(apply_el(&mut el, "offLength", PropValue::Null), Ok(Damage::Paint));
+  assert_eq!(dash(&el), (Some(12.0), None, Some(3.5)));
+  let err = apply_el(&mut el, "onLength", text("far")).unwrap_err();
+  assert!(err.contains("onLength"), "{err}");
+  let cfg = map(&[("dashOffset", map(&[("duration", num(1.0))]))]);
+  assert_eq!(apply_el(&mut el, "transition", cfg), Ok(Damage::None));
+  assert_eq!(el.transitions.as_ref().expect("config set").props[0].0, AnimProp::DashOffset);
+}
+
+#[test]
 fn line_dash_offset_applies_and_transitions() {
   let mut el = Element::from_kind("d-line").expect("known kind");
   let offset = |el: &Element| match &el.kind {

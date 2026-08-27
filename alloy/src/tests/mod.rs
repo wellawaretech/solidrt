@@ -14,6 +14,7 @@ mod layout_cache;
 mod line;
 mod liveness;
 mod paint;
+mod path;
 mod present;
 mod resample;
 mod router;

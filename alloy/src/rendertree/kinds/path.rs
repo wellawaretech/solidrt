@@ -1,13 +1,45 @@
+use super::dash::{walk_dashes, Dash, Pen};
 use super::PaintState;
 use crate::impellers::{DisplayListBuilder, DrawStyle, FillType, Path as ImpPath, PathBuilder, Point, Rect, Size};
 use crate::rendertree::hit::{HitContext, Hittable};
 use crate::rendertree::Damage;
-use crate::rendertree::{BuildContext, Buildable, Element, ElementKind, Measurable, MeasureContext};
+use crate::rendertree::{Bounded, BuildContext, Buildable, Element, ElementKind, Measurable, MeasureContext};
+use lyon_algorithms::aabb::bounding_box;
 use lyon_algorithms::hit_test::hit_test_path;
 use lyon_path::geom::{point, vector, Angle, ArcFlags, CubicBezierSegment, SvgArc};
 use lyon_path::iterator::PathIterator;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use svgtypes::{PathParser, PathSegment};
+
+// How far a flattened curve may stray from the true one, in local units,
+// when the dash walker needs segments. A quarter pixel is invisible at 1x;
+// a d-path under a large scale transform would show facets on its dashes.
+const DASH_TOLERANCE: f32 = 0.25;
+
+// What the stroke's reach past the geometry depends on, read off the parsed
+// path: a subpath left open (with a segment) takes caps, one with two or
+// more segments, or a close, takes joins.
+#[derive(Clone, Copy, Debug, Default)]
+struct StrokeShape {
+  capped: bool,
+  joined: bool,
+}
+
+fn stroke_shape(path: &lyon_path::Path) -> StrokeShape {
+  let mut shape = StrokeShape::default();
+  let mut segments = 0;
+  for evt in path.iter() {
+    match evt {
+      lyon_path::Event::Begin { .. } => segments = 0,
+      lyon_path::Event::End { close, .. } => {
+        shape.capped |= !close && segments >= 1;
+        shape.joined |= segments >= 2 || (close && segments >= 1);
+      }
+      _ => segments += 1,
+    }
+  }
+  shape
+}
 
 pub struct Path {
   pub d: String,
@@ -15,8 +47,14 @@ pub struct Path {
   pub y: Option<f32>,
   pub paint: PaintState,
   pub fill_rule: FillType,
+  pub on_length: Option<f32>,
+  pub off_length: Option<f32>,
+  pub dash_offset: Option<f32>,
   path: RefCell<Option<ImpPath>>,
+  // The geometry's tight extent (curve extrema, not control points), in the
+  // path's own space before the x/y translate; None while nothing is drawn.
   bounds: RefCell<Option<Rect>>,
+  shape: Cell<StrokeShape>,
   lyon_path: RefCell<Option<lyon_path::Path>>,
 }
 
@@ -28,8 +66,12 @@ impl Default for Path {
       y: None,
       paint: PaintState::default(),
       fill_rule: FillType::NonZero,
+      on_length: None,
+      off_length: None,
+      dash_offset: None,
       path: RefCell::new(None),
       bounds: RefCell::new(None),
+      shape: Cell::new(StrokeShape::default()),
       lyon_path: RefCell::new(None),
     }
   }
@@ -43,8 +85,12 @@ impl Clone for Path {
       y: self.y,
       paint: self.paint.clone(),
       fill_rule: self.fill_rule,
+      on_length: self.on_length,
+      off_length: self.off_length,
+      dash_offset: self.dash_offset,
       path: RefCell::new(None),
       bounds: RefCell::new(None),
+      shape: Cell::new(StrokeShape::default()),
       lyon_path: RefCell::new(None),
     }
   }
@@ -69,28 +115,12 @@ impl Path {
     let mut lyon_builder = lyon_path::Path::builder();
     let mut cursor = (0.0f32, 0.0f32);
     let mut subpath_start = cursor;
-    let mut bb = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
 
     let resolve = |abs: bool, x: f64, y: f64, cursor: &(f32, f32)| -> Point {
       if abs {
         Point::new(x as f32, y as f32)
       } else {
         Point::new(cursor.0 + x as f32, cursor.1 + y as f32)
-      }
-    };
-
-    let include = |bb: &mut (f32, f32, f32, f32), pt: &Point| {
-      if pt.x < bb.0 {
-        bb.0 = pt.x;
-      }
-      if pt.y < bb.1 {
-        bb.1 = pt.y;
-      }
-      if pt.x > bb.2 {
-        bb.2 = pt.x;
-      }
-      if pt.y > bb.3 {
-        bb.3 = pt.y;
       }
     };
 
@@ -115,7 +145,6 @@ impl Path {
             lyon_builder.end(false);
           }
           let pt = resolve(abs, x, y, &cursor);
-          include(&mut bb, &pt);
           path_builder.move_to(pt);
           lyon_builder.begin(point(pt.x, pt.y));
           lyon_open = true;
@@ -127,7 +156,6 @@ impl Path {
         PathSegment::LineTo { abs, x, y } => {
           ensure_lyon_begun(&mut lyon_builder, cursor.0, cursor.1, &mut lyon_open);
           let pt = resolve(abs, x, y, &cursor);
-          include(&mut bb, &pt);
           path_builder.line_to(pt);
           lyon_builder.line_to(point(pt.x, pt.y));
           cursor = (pt.x, pt.y);
@@ -138,7 +166,6 @@ impl Path {
           ensure_lyon_begun(&mut lyon_builder, cursor.0, cursor.1, &mut lyon_open);
           let pt = resolve(abs, x, 0.0, &cursor);
           let pt = Point::new(pt.x, cursor.1);
-          include(&mut bb, &pt);
           path_builder.line_to(pt);
           lyon_builder.line_to(point(pt.x, pt.y));
           cursor = (pt.x, pt.y);
@@ -149,7 +176,6 @@ impl Path {
           ensure_lyon_begun(&mut lyon_builder, cursor.0, cursor.1, &mut lyon_open);
           let pt = resolve(abs, 0.0, y, &cursor);
           let pt = Point::new(cursor.0, pt.y);
-          include(&mut bb, &pt);
           path_builder.line_to(pt);
           lyon_builder.line_to(point(pt.x, pt.y));
           cursor = (pt.x, pt.y);
@@ -161,9 +187,6 @@ impl Path {
           let cp1 = resolve(abs, x1, y1, &cursor);
           let cp2 = resolve(abs, x2, y2, &cursor);
           let end = resolve(abs, x, y, &cursor);
-          include(&mut bb, &cp1);
-          include(&mut bb, &cp2);
-          include(&mut bb, &end);
           path_builder.cubic_curve_to(cp1, cp2, end);
           lyon_builder.cubic_bezier_to(point(cp1.x, cp1.y), point(cp2.x, cp2.y), point(end.x, end.y));
           cursor = (end.x, end.y);
@@ -179,9 +202,6 @@ impl Path {
           };
           let cp2 = resolve(abs, x2, y2, &cursor);
           let end = resolve(abs, x, y, &cursor);
-          include(&mut bb, &cp1);
-          include(&mut bb, &cp2);
-          include(&mut bb, &end);
           path_builder.cubic_curve_to(cp1, cp2, end);
           lyon_builder.cubic_bezier_to(point(cp1.x, cp1.y), point(cp2.x, cp2.y), point(end.x, end.y));
           cursor = (end.x, end.y);
@@ -192,8 +212,6 @@ impl Path {
           ensure_lyon_begun(&mut lyon_builder, cursor.0, cursor.1, &mut lyon_open);
           let cp = resolve(abs, x1, y1, &cursor);
           let end = resolve(abs, x, y, &cursor);
-          include(&mut bb, &cp);
-          include(&mut bb, &end);
           path_builder.quadratic_curve_to(cp, end);
           lyon_builder.quadratic_bezier_to(point(cp.x, cp.y), point(end.x, end.y));
           cursor = (end.x, end.y);
@@ -208,8 +226,6 @@ impl Path {
             None => Point::new(cursor.0, cursor.1),
           };
           let end = resolve(abs, x, y, &cursor);
-          include(&mut bb, &cp);
-          include(&mut bb, &end);
           path_builder.quadratic_curve_to(cp, end);
           lyon_builder.quadratic_bezier_to(point(cp.x, cp.y), point(end.x, end.y));
           cursor = (end.x, end.y);
@@ -234,9 +250,6 @@ impl Path {
             let cp1 = Point::new(cb.ctrl1.x, cb.ctrl1.y);
             let cp2 = Point::new(cb.ctrl2.x, cb.ctrl2.y);
             let end_pt = Point::new(cb.to.x, cb.to.y);
-            include(&mut bb, &cp1);
-            include(&mut bb, &cp2);
-            include(&mut bb, &end_pt);
             path_builder.cubic_curve_to(cp1, cp2, end_pt);
             lyon_builder.cubic_bezier_to(point(cp1.x, cp1.y), point(cp2.x, cp2.y), point(end_pt.x, end_pt.y));
           }
@@ -261,17 +274,21 @@ impl Path {
       lyon_builder.end(false);
     }
 
-    *self.path.borrow_mut() = Some(path_builder.take_path_new(self.fill_rule));
-    *self.lyon_path.borrow_mut() = Some(lyon_builder.build());
-
-    if bb.0 <= bb.2 {
-      *self.bounds.borrow_mut() = Some(Rect::new(Point::new(bb.0, bb.1), Size::new(bb.2 - bb.0, bb.3 - bb.1)));
+    let lyon = lyon_builder.build();
+    if lyon.iter().next().is_some() {
+      let bb = bounding_box(lyon.iter());
+      let size = Size::new(bb.max.x - bb.min.x, bb.max.y - bb.min.y);
+      *self.bounds.borrow_mut() = Some(Rect::new(Point::new(bb.min.x, bb.min.y), size));
     }
+    self.shape.set(stroke_shape(&lyon));
+    *self.path.borrow_mut() = Some(path_builder.take_path_new(self.fill_rule));
+    *self.lyon_path.borrow_mut() = Some(lyon);
   }
 
   pub fn invalidate(&self) {
     *self.path.borrow_mut() = None;
     *self.bounds.borrow_mut() = None;
+    self.shape.set(StrokeShape::default());
     *self.lyon_path.borrow_mut() = None;
   }
 
@@ -297,6 +314,70 @@ impl Path {
     self.invalidate();
     Damage::Paint
   }
+  // The dashed stroke is walked at build time from the cached geometry, so
+  // the pattern props cost a repaint, not a rebuild.
+  pub fn set_on_length(&mut self, v: Option<f32>) -> Damage {
+    self.on_length = v;
+    Damage::Paint
+  }
+  pub fn set_off_length(&mut self, v: Option<f32>) -> Damage {
+    self.off_length = v;
+    Damage::Paint
+  }
+  pub fn set_dash_offset(&mut self, v: Option<f32>) -> Damage {
+    self.dash_offset = v;
+    Damage::Paint
+  }
+
+  fn fills(&self) -> bool {
+    matches!(self.paint.draw_style, DrawStyle::Fill | DrawStyle::StrokeAndFill)
+  }
+
+  fn strokes(&self) -> bool {
+    matches!(self.paint.draw_style, DrawStyle::Stroke | DrawStyle::StrokeAndFill)
+  }
+
+  pub(crate) fn dash(&self) -> Option<Dash> {
+    Dash::new(self.on_length, self.off_length, self.dash_offset)
+  }
+
+  // The dashed stroke: every subpath flattened (curves become segments
+  // within DASH_TOLERANCE) and walked on its own, since a dash pattern
+  // restarts at each subpath, as SVG's does.
+  pub(crate) fn walk_dashed(&self, dash: Dash, pen: &mut impl Pen) {
+    self.ensure_built();
+    let lyon = self.lyon_path.borrow();
+    let Some(lyon) = lyon.as_ref() else { return };
+    let pt = |p: lyon_path::geom::Point<f32>| Point::new(p.x, p.y);
+    let mut segments = Vec::new();
+    for evt in lyon.iter().flattened(DASH_TOLERANCE) {
+      match evt {
+        lyon_path::Event::Begin { .. } => segments.clear(),
+        lyon_path::Event::Line { from, to } => segments.push((pt(from), pt(to))),
+        lyon_path::Event::End { last, first, close } => {
+          if close {
+            segments.push((pt(last), pt(first)));
+          }
+          walk_dashes(segments.drain(..), dash, pen);
+        }
+        _ => {}
+      }
+    }
+  }
+
+  fn dashed_path(&self, dash: Dash) -> ImpPath {
+    let mut out = PathBuilder::default();
+    self.walk_dashed(dash, &mut out);
+    out.take_path_new(FillType::NonZero)
+  }
+
+  // A box-relative gradient resolves against the path's bounding box.
+  fn paint_in_bounds(&self) -> crate::impellers::Paint {
+    match *self.bounds.borrow() {
+      Some(rect) => self.paint.to_paint_in(&rect),
+      None => self.paint.to_paint(),
+    }
+  }
 
   pub fn initial_style() -> taffy::Style {
     taffy::Style { display: taffy::Display::Block, ..Default::default() }
@@ -316,20 +397,50 @@ impl Buildable for Path {
     self.ensure_built();
     let path = self.path.borrow();
     let Some(path) = path.as_ref() else { return };
-    // A box-relative gradient resolves against the path's bounding box.
-    let paint = match *self.bounds.borrow() {
-      Some(rect) => self.paint.to_paint_in(&rect),
-      None => self.paint.to_paint(),
-    };
     let (dx, dy) = (self.x.unwrap_or(0.0), self.y.unwrap_or(0.0));
-    if dx != 0.0 || dy != 0.0 {
+    let translated = dx != 0.0 || dy != 0.0;
+    if translated {
       builder.save();
       builder.translate(dx, dy);
-      builder.draw_path(path, &paint);
-      builder.restore();
-    } else {
-      builder.draw_path(path, &paint);
     }
+    match self.dash().filter(|_| self.strokes()) {
+      // Dashing is a stroke property: the fill keeps the true curve, the
+      // stroke walks the flattened one.
+      Some(dash) => {
+        if self.fills() {
+          let mut fill = self.paint_in_bounds();
+          fill.set_draw_style(DrawStyle::Fill);
+          builder.draw_path(path, &fill);
+        }
+        let mut stroke = self.paint_in_bounds();
+        stroke.set_draw_style(DrawStyle::Stroke);
+        builder.draw_path(&self.dashed_path(dash), &stroke);
+      }
+      None => {
+        builder.draw_path(path, &self.paint_in_bounds());
+      }
+    }
+    if translated {
+      builder.restore();
+    }
+  }
+}
+
+// The painted box: the geometry's extent plus the stroke's reach, at the
+// draw-time offset. Nothing drawn (no `d`) is an empty rect at the origin.
+impl Bounded for Path {
+  fn local_bounds(&self, _fallback: Size) -> Rect {
+    self.ensure_built();
+    let bounds = self.bounds.borrow();
+    let Some(rect) = *bounds else {
+      return Rect::zero();
+    };
+    let StrokeShape { capped, joined } = self.shape.get();
+    // Every dash has open ends, whatever the subpaths do.
+    let capped = capped || self.dash().is_some();
+    let outset = self.paint.stroke_outset(capped, joined);
+    let origin = Point::new(rect.origin.x + self.x.unwrap_or(0.0), rect.origin.y + self.y.unwrap_or(0.0));
+    Rect::new(origin, rect.size).inflate(outset, outset)
   }
 }
 

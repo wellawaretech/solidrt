@@ -10,6 +10,9 @@ pub fn apply(path: &mut Path, name: &str, value: &PropValue) -> Result<Option<Da
     "d" => path.set_d(str_of(value, "d")?.to_string()),
     "x" => path.set_x(opt_f32(value, "x")?),
     "y" => path.set_y(opt_f32(value, "y")?),
+    "onLength" => path.set_on_length(opt_f32(value, "onLength")?),
+    "offLength" => path.set_off_length(opt_f32(value, "offLength")?),
+    "dashOffset" => path.set_dash_offset(opt_f32(value, "dashOffset")?),
     "fillRule" => path.set_fill_rule(opt(value, |v| {
       Ok(match str_of(v, "fillRule")? {
         "nonzero" => FillType::NonZero,

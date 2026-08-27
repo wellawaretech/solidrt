@@ -294,6 +294,26 @@ impl PaintState {
     self.build_paint(Some((bounds.origin.x, bounds.origin.y, bounds.size.width, bounds.size.height)))
   }
 
+  // How far a stroke centered on its geometry (line, path) reaches past it:
+  // half the width, and more where a square cap (* sqrt 2, its corner on a
+  // diagonal) or a miter join (* stroke_miter, the tip's limit) pokes out.
+  // `capped`: the geometry has open ends; `joined`: it has a vertex between
+  // two segments. Zero for a plain fill.
+  pub fn stroke_outset(&self, capped: bool, joined: bool) -> f32 {
+    if !matches!(self.draw_style, DrawStyle::Stroke | DrawStyle::StrokeAndFill) {
+      return 0.0;
+    }
+    let cap = match self.stroke_cap {
+      StrokeCap::Square if capped => std::f32::consts::SQRT_2,
+      _ => 1.0,
+    };
+    let join = match self.stroke_join {
+      StrokeJoin::Miter if joined => self.stroke_miter.max(1.0),
+      _ => 1.0,
+    };
+    self.stroke_width / 2.0 * cap.max(join)
+  }
+
   // Half the stroke width for the stroked draw styles, 0 for a plain fill.
   // Rect and oval inset their geometry by this so a stroke paints inside its
   // bounds (CSS border semantics) instead of straddling them; see

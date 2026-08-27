@@ -11,7 +11,8 @@
 // 3. Marching ants: `dashOffset` slides the dash pattern, so writing it every
 //    frame animates the dashes. The ring is dense (6 px segments under
 //    12 px dashes), which only works because the phase carries across
-//    vertices; the two-point d-line goes through the same walker.
+//    vertices; the two-point d-line and the d-path go through the same
+//    walker (a path's curves are flattened for it).
 // 4. A laid-out <line points>: the points are content (like a path's `d`), so
 //    the box measures from their extent and takes part in the row.
 // The two-endpoint form (x1..y2, on d-line only) is unchanged; while `points`
@@ -24,6 +25,7 @@ const TRACE_H = 160
 const TRIANGLE = [20, 100, 70, 20, 120, 100]
 const ZIGZAG = [0, 0, 30, 24, 60, 0, 90, 24, 120, 0]
 const RING = ring(70, 60, 45, 48)
+const CURVE = "M20 60 C 60 0, 100 120, 140 60 S 200 20, 200 60"
 const ANTS_SPEED = 40 // local units per second
 
 function ring(cx: number, cy: number, r: number, n: number): number[] {
@@ -89,7 +91,7 @@ function App() {
       </view>
 
       <text fontSize={16} color="#8b949e">
-        marching ants: dashOffset written every frame, on a dense ring and a segment
+        marching ants: dashOffset written every frame, on a dense ring, a segment and a path
       </text>
       <view flexDirection="row" gap={20}>
         <view width={140} height={120}>
@@ -99,6 +101,10 @@ function App() {
         <view width={300} height={120}>
           <d-rect radius={8} color="#151b28" />
           <d-line x1={20} y1={60} x2={280} y2={60} onLength={0} offLength={14} dashOffset={-ants()} color="#79c0ff" strokeWidth={6} strokeCap="round" />
+        </view>
+        <view width={220} height={120}>
+          <d-rect radius={8} color="#151b28" />
+          <d-path d={CURVE} drawStyle="stroke" onLength={10} offLength={6} dashOffset={ants()} color="#f778ba" strokeWidth={3} strokeCap="round" />
         </view>
       </view>
 

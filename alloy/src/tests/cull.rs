@@ -1,4 +1,4 @@
-use crate::impellers::{Matrix, Point, Rect, Size};
+use crate::impellers::{DrawStyle, Matrix, Point, Rect, Size};
 use crate::rendertree::cull::{envelope, CullRect, Extent};
 use crate::rendertree::*;
 use taffy::style::Overflow;
@@ -81,11 +81,17 @@ fn overflowing_child_grows_parent_envelope() {
 }
 
 #[test]
-fn unbounded_kind_propagates_up_to_the_clipper() {
+fn unbounded_extent_propagates_up_to_the_clipper() {
   let (mut tree, platform) = scroller_tree();
-  tree.create_node(6, Path::default().with_layout());
+  let mut v = View::default();
+  v.set_rotate_y(Some(0.5));
+  v.set_perspective(Some(400.0));
+  tree.create_node(6, v.with_layout());
+  tree.create_node(7, Rectangle::default().with_layout());
   tree.insert_node(4, 6, None);
+  tree.insert_node(6, 7, None);
   place(&mut tree, 6, 0.0, 0.0, 10.0, 10.0);
+  place(&mut tree, 7, 0.0, 0.0, 10.0, 10.0);
   let frame = Size::new(400.0, 300.0);
   assert_eq!(envelope(&tree, 4, &platform, frame), Extent::Unbounded);
   assert_eq!(envelope(&tree, 3, &platform, frame), Extent::Unbounded);
@@ -245,11 +251,10 @@ fn hidden_subtree_leaves_the_envelope() {
   assert!(close(env, rect(0.0, 0.0, 400.0, 300.0)), "{env:?}");
 }
 
-// A detached line is bounded by what it paints, so a line entirely outside
-// the cull rect is culled and one crossing it is not (line-points stage 3;
-// path stays unbounded).
+// A detached line or path is bounded by what it paints, so one entirely
+// outside the cull rect is culled and one crossing it is not.
 #[test]
-fn detached_line_extent_is_its_painted_box() {
+fn detached_line_and_path_extents_are_their_painted_boxes() {
   let mut tree = RenderTree::new();
   tree.create_node(1, attached());
   let mut far = Line::default();
@@ -262,7 +267,11 @@ fn detached_line_extent_is_its_painted_box() {
   crossing.set_x2(Some(600.0));
   crossing.set_y2(Some(650.0));
   tree.create_node(3, crossing.no_layout());
-  tree.create_node(4, Path::default().no_layout());
+  let mut far_path = Path::default();
+  far_path.set_d("M500 500 L600 650".into());
+  far_path.paint.draw_style = DrawStyle::Stroke;
+  far_path.paint.stroke_width = 4.0;
+  tree.create_node(4, far_path.no_layout());
   tree.insert_node(1, 2, None);
   tree.insert_node(1, 3, None);
   tree.insert_node(1, 4, None);
@@ -276,5 +285,7 @@ fn detached_line_extent_is_its_painted_box() {
   assert!(close(bounded(far), rect(497.0, 497.0, 106.0, 156.0)), "{far:?}");
   assert!(!far.may_intersect(&cull));
   assert!(envelope(&tree, 3, &platform, frame).may_intersect(&cull));
-  assert_eq!(envelope(&tree, 4, &platform, frame), Extent::Unbounded);
+  let far_path = envelope(&tree, 4, &platform, frame);
+  assert!(close(bounded(far_path), rect(497.0, 497.0, 106.0, 156.0)), "{far_path:?}");
+  assert!(!far_path.may_intersect(&cull));
 }

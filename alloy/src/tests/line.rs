@@ -4,7 +4,8 @@
 
 use crate::impellers::{DrawStyle, Point, Rect, Size, StrokeCap, StrokeJoin};
 use crate::rendertree::hit::{HitContext, Hittable};
-use crate::rendertree::kinds::line::{segments, walk_dashes, Dash, Pen};
+use crate::rendertree::kinds::dash::{walk_dashes, Dash, Pen};
+use crate::rendertree::kinds::line::segments;
 use crate::rendertree::{Bounded, Line};
 
 fn ctx() -> HitContext {

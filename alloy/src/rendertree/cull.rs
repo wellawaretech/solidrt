@@ -105,10 +105,9 @@ pub(crate) fn child_frame(element: &Element, inherited: Size) -> Size {
 // What the node's own build() paints, in its box frame. Kinds default their
 // geometry to the border box (`inherited` for a detached node), text to the
 // content box - the same frames the paint walk hands BuildContext
-// (okf/done/padding-box-divergence.md). A line's bounds already hold its
-// stroke (the outset is geometry-dependent), so only AA is added. Path draws
-// in its own coordinate space without a bounds impl; it and text the extent
-// cannot be read from are unbounded.
+// (okf/done/padding-box-divergence.md). A line's and a path's bounds already
+// hold their stroke (the outset is geometry-dependent), so only AA is added.
+// Text the extent cannot be read from is unbounded.
 fn own_extent(element: &Element, platform: &PlatformContext, inherited: Size) -> Extent {
   let frame = element.layout.as_ref().map(|l| l.size()).unwrap_or(inherited);
   let content = element.layout.as_ref().map(|l| l.content_box()).unwrap_or(Rect::new(Point::zero(), frame));
@@ -123,7 +122,7 @@ fn own_extent(element: &Element, platform: &PlatformContext, inherited: Size) ->
       None => Extent::Unbounded,
     },
     ElementKind::Line(l) => inflate(l.local_bounds(frame), AA_OUTSET),
-    ElementKind::Path(_) => Extent::Unbounded,
+    ElementKind::Path(p) => inflate(p.local_bounds(frame), AA_OUTSET),
   };
   // A laid-out node's box is a harmless superset of what its own build draws
   // inside it, and it is what everything else (clip, hit) already means by

@@ -1,4 +1,5 @@
 // mod audio;
+pub(crate) mod dash;
 pub(crate) mod line;
 mod oval;
 mod paint;

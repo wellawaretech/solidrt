@@ -279,7 +279,8 @@ miter limit = 102x102 inside its 140x120 tile; the two-point dotted line
 `captureSnapshot` of a d-line now crops to that box instead of the tile.
 Tests: local_bounds for both forms, caps/miter/closed-pair/fill-only outsets,
 a cull test (a far d-line's extent misses the cull rect, a crossing one
-hits, d-path stays unbounded).
+hits). Path followed the same day (mcp-detached-node-bounds): the outset
+formula moved to `PaintState::stroke_outset(capped, joined)`, shared by both.
 
 - The miter outset is the limit (`strokeMiter * strokeWidth / 2`), not the
   actual join angles, so an acute open polyline with the default limit 4
