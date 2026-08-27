@@ -20,14 +20,14 @@ at its arguments. What the individual descriptions cannot tell you:
   Passing the flag to `srt mcp` pins the bridge to that one server instead.
 - Several clients may be attached at once (desktop window, phone, tablet)
   with different sizes, display scales and safe areas. `reload` pushes to all
-  of them, but `call_debug` / `send_input` / `get_snapshot` / log cursors are
-  per client, and interactive state does NOT sync - a flow driven on one
-  client leaves the others sitting on the initial screen, which reads as a
-  crash to a human holding that device. So: when driving state via
-  `call_debug`, send the same call to every client (or say which client you
-  are using); and before calling a visual change done, snapshot each distinct
-  form factor at least once - a layout that fits one window can clip or
-  overflow another.
+  of them, but `call_debug` / `send_input` / `get_snapshot` are per client
+  (`get_logs` takes a `client` filter), and interactive state does NOT sync
+  - a flow driven on one client leaves the others sitting on the initial
+  screen, which reads as a crash to a human holding that device. So: when
+  driving state via `call_debug`, send the same call to every client (or say
+  which client you are using); and before calling a visual change done,
+  snapshot each distinct form factor at least once - a layout that fits one
+  window can clip or overflow another.
 - Measuring or testing? `mute_user_input` first: it mutes the user's own
   input on every client (a stray click or keypress mid-measurement corrupts
   the result); `send_input` still works. `unmute_user_input` the moment you
@@ -106,6 +106,8 @@ What the dev server (`srt run` / `srt server`) is and what it serves.
   exit), its remembered `port` and tunnel key; `clients/client<N>/` the
   client trees. `srt client` and `srt mcp` resolve the server from the
   registry by the project (or served file) at their cwd; `--port` pins one.
+  A record whose process died is pruned when the next server starts, and
+  resolution confirms a record against the server before using it.
 - The server is one flux process, complete on its own:
   `flux dist/server.js [file] [--project|--file] [--port N] [--lan]
   [--proxy-http] [--capture f] [--tunnel] [--stats] [--client N ...] [-- args]`
@@ -131,9 +133,9 @@ every endpoint answers JSON and an error is `{ "error": "..." }` with a
 4xx/5xx status. Endpoints that talk to a client take `?client=<id>` (from
 `/clients`); it may be omitted when exactly one client is connected.
 
-- `/clients` - `{ generation, key, mode, entry, projectDir, clients: [{ id,
-  ... }] }`. Check `key` (the project root or single file served) is the app
-  you mean.
+- `/clients` - `{ generation, key, mode, entry, projectDir, userInputMuted,
+  watchPaused, clients: [{ id, ... }] }`. Check `key` (the project root or
+  single file served) is the app you mean.
 - `/logs?since=<seq>&level=<lvl>&contains=<text>&wait=<ms>&client=<id>` -
   `{ entries: [{ seq, at, client, level, text, repeats? }], latest,
   generation }`. Pass the previous `latest` as `since` to read only new
@@ -146,19 +148,21 @@ every endpoint answers JSON and an error is `{ "error": "..." }` with a
   `/reload`.
 - `/snapshot?node=<id>` - `{ width, height, pngBase64 }`, display-scaled;
   add `&format=raw` for `rgbaBase64` (RGBA8 bytes, no decoder needed for
-  pixel assertions), `&rect=x,y,w,h` to crop, `&scale=<x>`. Snapshot the
-  smallest node that shows the change, not the window root.
+  pixel assertions), `&x=&y=&width=&height=` (all four) to crop,
+  `&scale=<1-8>`. Snapshot the smallest node that shows the change, not the
+  window root.
 - `/texture?id=<textureId>` - same shape and options as `/snapshot`, at the
   texture's native size (a scene or shader target behind a `<texture>` leaf).
 - `/gpu?label=<text>` - the GPU resource inventory; `label` keeps only the
   resources created with exactly that label (ids change on reload, labels
   do not).
-- `/buffer?id=<bufferId>&offset=<n>&length=<n>&as=<f32|u8|...>` - vertex
-  buffer contents.
+- `/buffer?id=<bufferId>&offset=<n>&length=<n>&as=<f32|u16|u8>` - vertex
+  buffer contents (default f32; reads cap at 64 KiB).
 - `/stats?window=<ms>` - the performance statistics. POST
-  `/stats?active=true|false` switches the on-screen stats overlay instead:
-  one client with `&client=<id>`, every client (and the setting new clients
-  join with) without; `/clients` reports each client's `stats`.
+  `/stats?active=true|false` switches the on-screen stats overlay instead
+  (the `set_stats_overlay` tool): one client with `&client=<id>`, every
+  client (and the setting new clients join with) without; `/clients`
+  reports each client's `stats`.
 - `/debug` - the app's registered debug commands; POST
   `/debug?name=<cmd>` with a JSON body as its args to call one.
 - POST `/input` with `{ "events": [...] }` - synthetic input through the

@@ -29,10 +29,13 @@ import { createTunnelEndpoint, TUNNEL_PROTOCOL } from "./tunnel"
 import { rebuildAndBroadcast, showBuildFailure } from "./rebuild"
 import { stopWatcher } from "./watcher"
 import { startRepl } from "./repl"
-import { devDir, rememberedPort, removeRecord, runningFor, serverDirFor, writeRecord } from "./registry"
+import { devDir, pruneDeadRecords, rememberedPort, removeRecord, runningFor, serverDirFor, writeRecord } from "./registry"
 
 let args = parseArgs()
 let mode = await resolveMode(args)
+
+// Records left behind by crashed servers are fossils; clear them first.
+await pruneDeadRecords()
 
 // One server per key: a second run in the same project (or on the same
 // file) points at the running one instead of racing it.

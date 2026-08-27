@@ -20,7 +20,7 @@ export async function main() {
   } else if (port !== undefined) {
     address = `127.0.0.1:${port}`
   } else {
-    let resolved = resolveFromCwd(process.cwd())
+    let resolved = await resolveFromCwd(process.cwd())
     if (!resolved.ok) {
       console.error(resolved.message)
       process.exit(1)

@@ -3,7 +3,7 @@ import { networkInterfaces } from "node:os"
 import { resolve } from "node:path"
 import { resolveApk, ANDROID_PKG_MAP } from "../lib/artifacts"
 import { values, port } from "../lib/args"
-import { liveRecords, resolveFromCwd } from "../lib/registry"
+import { resolveByPort, resolveFromCwd } from "../lib/registry"
 import type { LiveRecord } from "../types/registry"
 
 // `srt android`: the Android client flow, decoupled from `srt client` (a
@@ -92,14 +92,8 @@ function devServerAddress(adb: string, target: string, server: LiveRecord): stri
 
 // The dev server the device should dial: --port picks a local server by
 // port, otherwise the project (or file) in the current directory.
-function resolveServer(): LiveRecord {
-  if (port !== undefined) {
-    let record = liveRecords().find((r) => r.port === port)
-    if (record) return record
-    console.error(`No dev server on port ${port}`)
-    process.exit(1)
-  }
-  let resolved = resolveFromCwd(process.cwd())
+async function resolveServer(): Promise<LiveRecord> {
+  let resolved = port !== undefined ? await resolveByPort(port) : await resolveFromCwd(process.cwd())
   if (!resolved.ok) {
     console.error(resolved.message)
     process.exit(1)
@@ -191,7 +185,7 @@ function resolveTarget(adb: string): { target: string; abi: string } {
 // Fire-and-forget: the client's lifecycle is tracked via WS connect/disconnect on
 // the dev server, not as a child process here.
 export async function main() {
-  let server = resolveServer()
+  let server = await resolveServer()
   let adb = requireAdb()
 
   let { target, abi } = resolveTarget(adb)

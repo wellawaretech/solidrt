@@ -36,36 +36,70 @@ export async function serverDirFor(key: string): Promise<string> {
   return devDir("servers", hex.slice(0, 16))
 }
 
-/** Every readable record whose process is alive. Malformed records are
- * skipped, not fatal. */
-export async function liveRecords(): Promise<LiveRecord[]> {
+type Entry = { path: string; record: LiveRecord }
+
+// Every well-formed record on disk, alive or not, with its file path.
+// Malformed records are skipped, not fatal.
+async function records(): Promise<Entry[]> {
   let root = devDir("servers")
   let entries = await dir(root)
     .entries()
     .catch(() => [])
-  let records: LiveRecord[] = []
+  let found: Entry[] = []
   for (let entry of entries) {
     if (entry.type !== "directory") continue
-    let record = await file(join(root, entry.name, RECORD_FILE))
+    let path = join(root, entry.name, RECORD_FILE)
+    let record = await file(path)
       .json()
       .catch(() => null)
-    if (
-      typeof record?.pid === "number" &&
-      typeof record?.port === "number" &&
-      typeof record?.key === "string" &&
-      alive(record.pid)
-    ) {
-      records.push(record)
+    if (typeof record?.pid === "number" && typeof record?.port === "number" && typeof record?.key === "string") {
+      found.push({ path, record })
     }
   }
-  return records
+  return found
+}
+
+/** Every readable record whose process is alive. */
+export async function liveRecords(): Promise<LiveRecord[]> {
+  return (await records()).filter((e) => alive(e.record.pid)).map((e) => e.record)
+}
+
+/** Drop every record whose process is gone. A server removes its own record
+ * on exit, so one left behind is a crash's fossil. Runs at server start, the
+ * one moment every registry user passes through, so readers never write. */
+export async function pruneDeadRecords() {
+  for (let { path, record } of await records()) {
+    if (!alive(record.pid)) await file(path).remove().catch(() => {})
+  }
+}
+
+// Whether the control API on the record's port answers for the record's key:
+// every control response names the key it serves.
+async function serves(record: LiveRecord): Promise<boolean> {
+  let control = new AbortController()
+  let timer = setTimeout(() => control.abort(), 1000)
+  try {
+    let resp = await fetch(`http://127.0.0.1:${record.port}/__control__/clients`, { signal: control.signal })
+    return resp.headers.get("x-solidrt-project") === record.key
+  } catch {
+    return false
+  } finally {
+    clearTimeout(timer)
+  }
 }
 
 /** The running server for the canonical `key`, if any. Keys from different
- * processes agree on the path, not the spelling, so compare canonical. */
+ * processes agree on the path, not the spelling, so compare canonical. The
+ * record is a hint and the server is authoritative: a candidate whose server
+ * does not answer for the key is a pid reused by an unrelated process, and
+ * is dropped instead of reported as a clash. */
 export async function runningFor(key: string): Promise<LiveRecord | undefined> {
-  for (let record of await liveRecords()) {
-    if (record.key === key || (await realpath(record.key).catch(() => null)) === key) return record
+  for (let { path, record } of await records()) {
+    if (!alive(record.pid)) continue
+    if (record.key === key || (await realpath(record.key).catch(() => null)) === key) {
+      if (await serves(record)) return record
+      await file(path).remove().catch(() => {})
+    }
   }
   return undefined
 }

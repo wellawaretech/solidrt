@@ -25,9 +25,9 @@ import type { ImageResponse } from "../types/control"
 // A pinned port carries no key: the user chose it, so nothing is checked.
 type PortResult = { ok: true; port: number; key: string | null } | { ok: false; message: string }
 
-function resolvePort(): PortResult {
+async function resolvePort(): Promise<PortResult> {
   if (FIXED_PORT !== undefined) return { ok: true, port: FIXED_PORT, key: null }
-  let resolved = resolveFromCwd(process.cwd())
+  let resolved = await resolveFromCwd(process.cwd())
   if (!resolved.ok) return resolved
   // The record is a hint; the server is authoritative. A stale record (a pid
   // reused by an unrelated process, a port taken over by another server)
@@ -49,7 +49,7 @@ let cached: { port: number; key: string | null } | null = null
 async function control(path: string, method: "GET" | "POST" = "GET", payload?: unknown): Promise<ControlResult> {
   for (let attempt = 0; ; attempt++) {
     if (!cached) {
-      let resolved = resolvePort()
+      let resolved = await resolvePort()
       if (!resolved.ok) return resolved
       cached = { port: resolved.port, key: resolved.key }
     }
@@ -126,7 +126,7 @@ let TOOLS: {
     name: "get_logs",
     readOnly: true,
     description:
-      "Read console output and runtime errors from connected app clients. Returns entries (seq, at, client, level, text; consecutive identical entries are collapsed into one with a `repeats` count and the run's last seq), plus `latest` (the newest seq) and `generation` (identity of this server run; if it changed since your last call, your seq cursor and client ids are stale - start over from since 0). Pass `since` (a seq or `latest` from a previous call) to only get newer entries; pass `wait_ms` to hold the call until new output arrives, e.g. right after triggering a reload; pass `level`/`contains` to filter, e.g. level \"error\" to skip chatty output.",
+      "Read console output and runtime errors from connected app clients. Returns entries (seq, at, client, level, text; consecutive identical entries are collapsed into one with a `repeats` count and the run's last seq), plus `latest` (the newest seq) and `generation` (identity of this server run; if it changed since your last call, your seq cursor and client ids are stale - start over from since 0). Pass `since` (a seq or `latest` from a previous call) to only get newer entries; pass `wait_ms` to hold the call until new output arrives, e.g. right after triggering a reload; pass `level`/`contains`/`client` to filter, e.g. level \"error\" to skip chatty output, or one client's id when several are connected (entries carry `client` either way; the seq cursor is shared by all).",
     inputSchema: {
       since: z
         .number()
@@ -136,6 +136,8 @@ let TOOLS: {
       wait_ms: z
         .number()
         .int()
+        .min(0)
+        .max(30000)
         .describe("If nothing matches newer than `since`, wait up to this many milliseconds for new output (max 30000)")
         .optional(),
       level: z
@@ -146,13 +148,18 @@ let TOOLS: {
         .string()
         .describe("Only return entries whose text contains this substring (case-insensitive)")
         .optional(),
+      client: z
+        .number()
+        .int()
+        .describe("Only return entries from this client id (default: every client's)")
+        .optional(),
     },
   },
   {
     name: "get_stats",
     readOnly: true,
     description:
-      "Performance statistics from a running app client. Start with `window`: a summary of the frames rebuilt in the last window_ms (default 5000, max 10000) - frames, p50Ms/p95Ms/maxMs of the JS-thread critical path per frame (render handler + layout + postLayout + paint + hover), slowFrames (frames over the refresh period, periodMs), and `worst`, the single most expensive frame with its ageMs, phase breakdown (jsMs/layoutMs/postLayoutMs/paintMs/hoverMs) and that frame's own layout activity (paraShapes, measureCalls, dirtiedNodes, cacheGets/cacheHits, nodesPainted). This is where jank shows: the smoothed figures below average a one-frame hitch away, the window keeps it. Typical flow: send_input a burst (typing, a drag), then get_stats - `frames: 0` means nothing was rebuilt in the window (idle app), which is different from all-fast. The window also carries rates for the GPU counters when it spans 2+ frames: fenceTimeoutsPerSec, gpuPassesPerFrame (per presented frame), gpuPassIssueMsPerFrame, gpuPassExecMsPerFrame, gpuFrameExecMsPerFrame, rasterCmdMsPerSec - read these instead of differencing the cumulatives yourself. timeMs (client monotonic clock) and frame (present index) stamp the payload so two samples can be differenced. Then the smoothed figures: fps, CPU%, memory, smoothed JS/layout/paint/hover frame times (ms), setProperty writes per frame, demand-gate reuse/skip counts per second, and live texture count. Layout-activity counters cover the last full rebuild, raw: nodes (live node count, mounted AND detached), mountedNodes/orphanNodes (live at query time: nodes reachable from the root vs not - orphans growing at a stable tree shape mean an unmount leak; absent when no engine is running), measureCalls (text measures; mostly cache hits, cheap), paraShapes (paragraphs actually shaped, i.e. words the shared word cache did not have; the expensive signal - high layoutMs with near-zero paraShapes means the cost is not text shaping), wordHits (words answered from the shared word cache; hits high and paraShapes near zero on a text change means only the changed words were reshaped), dirtiedNodes (layout caches cleared by property writes since the previous rebuild; how much of the tree a write burst invalidated), cacheGets/cacheHits (layout-cache lookups during the rebuild; a hit on a container skips its whole subtree, so a healthy incremental rebuild shows a near-100% hit rate - a low rate at scale means the layout cache is being defeated), nodesPainted (nodes the last paint walk entered; mountedNodes minus this is what viewport culling skipped - a long scroller should paint a near-constant number of nodes however long its content). GPU-side health, read live at query time (absent when no engine is running): rasterQueue (raster commands sent but not yet executed at the instant of the query, including the one executing; the frame command blocks on vsync in it, so 1 while frames flow is normal - it is a backlog signal only when it climbs across queries while fps drops; a persistently high idle reading has been seen once on a Windows client and is unexplained, so do not conclude from this field alone), idleTicks (cumulative idle frame signals emitted while the GPU had nothing queued; idleTicks racing while rasterQueue sits nonzero would mean the idle-tick gate is broken), fenceTimeouts (cumulative present-fence waits that expired instead of signaling - each one is a frame where the GPU was over budget for 100ms+ and one-frame-in-flight pacing was lost; zero on a healthy machine, climbing means the GPU is the bottleneck right now), gpuPasses/gpuPassIssueMs/gpuPassExecMs (cumulative shader/pipeline target renders on the raster thread, the wall time the raster thread spent issuing them, and the GPU-side time executing them, all in whole ms - diff two queries to get a rate; passes racing far ahead of frames means redundant target re-renders, the failure mode where fps and frameMs look healthy while the raster thread drowns; issue and exec are different clocks: a pass with a heavy fragment shader is cheap to issue and expensive to execute, so a busy GPU with a small issue figure is normal, and gpuPassExecMs is the number to compare against the refresh period. gpuPassExecMs comes from GL timer queries and lags the pass by a frame or two; it is absent, not 0, when the client's context has none), gpuFrameExecMs (cumulative GPU-side time executing the window draw of each presented frame - the display list plus any window shader, excluding the pass flush and the present - from the same timer queries, same absence rule; gpuFrameExecMsPerFrame in the window is the number to hold against periodMs: near or above it, the GPU is the bottleneck and fenceTimeouts follow, while a healthy jsMs says nothing about it), rasterCmdMs (cumulative wall time in whole ms the raster thread spent executing non-frame commands - texture uploads, readbacks, offscreen rasterizations, shader compiles, param writes and the target re-renders they trigger; the work frameMs never sees, so rasterCmdMs growing much faster than frames are presented means the raster thread is drowning in side work even if every counter above looks calm).",
+      "Performance statistics from a running app client. Start with `window`: a summary of the frames rebuilt in the last window_ms (default 5000, max 10000) - frames, p50Ms/p95Ms/maxMs of the JS-thread critical path per frame (render handler + layout + postLayout + paint + hover), slowFrames (frames over the refresh period, periodMs), and `worst`, the single most expensive frame with its ageMs, phase breakdown (jsMs/layoutMs/postLayoutMs/paintMs/hoverMs) and that frame's own layout activity (paraShapes, measureCalls, dirtiedNodes, cacheGets/cacheHits, nodesPainted). This is where jank shows: the smoothed figures below average a one-frame hitch away, the window keeps it. Typical flow: send_input a burst (typing, a drag), then get_stats - `frames: 0` means nothing was rebuilt in the window (idle app), which is different from all-fast. The window also carries rates for the GPU counters when it spans 2+ frames: fenceTimeoutsPerSec, gpuPassesPerFrame (per presented frame), gpuPassIssueMsPerFrame, gpuPassExecMsPerFrame, gpuFrameExecMsPerFrame, rasterCmdMsPerSec - read these instead of differencing the cumulatives yourself. timeMs (client monotonic clock) and frame (present index) stamp the payload so two samples can be differenced. Then the smoothed figures: fps, CPU%, memory, smoothed JS/layout/paint/hover frame times (ms), setProperty writes per frame, demand-gate reuse/skip counts per second, and live texture count. Layout-activity counters cover the last full rebuild, raw: nodes (live node count, mounted AND detached), mountedNodes/orphanNodes (live at query time: nodes reachable from the root vs not - orphans growing at a stable tree shape mean an unmount leak; absent when no engine is running), measureCalls (text measures; mostly cache hits, cheap), paraShapes (paragraphs actually shaped, i.e. words the shared word cache did not have; the expensive signal - high layoutMs with near-zero paraShapes means the cost is not text shaping), wordHits (words answered from the shared word cache; hits high and paraShapes near zero on a text change means only the changed words were reshaped), dirtiedNodes (layout caches cleared by property writes since the previous rebuild; how much of the tree a write burst invalidated), cacheGets/cacheHits (layout-cache lookups during the rebuild; a hit on a container skips its whole subtree, so a healthy incremental rebuild shows a near-100% hit rate - a low rate at scale means the layout cache is being defeated), nodesPainted (nodes the latest frame's paint walk entered, 0 when that frame reused the display list - the last rebuild's count is in `window.worst`; mountedNodes minus this is what viewport culling skipped - a long scroller should paint a near-constant number of nodes however long its content). GPU-side health, read live at query time (absent when no engine is running): rasterQueue (raster commands sent but not yet executed at the instant of the query, including the one executing; the frame command blocks on vsync in it, so 1 while frames flow is normal - it is a backlog signal only when it climbs across queries while fps drops; a persistently high idle reading has been seen once on a Windows client and is unexplained, so do not conclude from this field alone), idleTicks (cumulative idle frame signals emitted while the GPU had nothing queued; idleTicks racing while rasterQueue sits nonzero would mean the idle-tick gate is broken), fenceTimeouts (cumulative present-fence waits that expired instead of signaling - each one is a frame where the GPU was over budget for 100ms+ and one-frame-in-flight pacing was lost; zero on a healthy machine, climbing means the GPU is the bottleneck right now), gpuPasses/gpuPassIssueMs/gpuPassExecMs (cumulative shader/pipeline target renders on the raster thread, the wall time the raster thread spent issuing them, and the GPU-side time executing them, all in whole ms - diff two queries to get a rate; passes racing far ahead of frames means redundant target re-renders, the failure mode where fps and frameMs look healthy while the raster thread drowns; issue and exec are different clocks: a pass with a heavy fragment shader is cheap to issue and expensive to execute, so a busy GPU with a small issue figure is normal, and gpuPassExecMs is the number to compare against the refresh period. gpuPassExecMs comes from GL timer queries and lags the pass by a frame or two; it is absent, not 0, when the client's context has none), gpuFrameExecMs (cumulative GPU-side time executing the window draw of each presented frame - the display list plus any window shader, excluding the pass flush and the present - from the same timer queries, same absence rule; gpuFrameExecMsPerFrame in the window is the number to hold against periodMs: near or above it, the GPU is the bottleneck and fenceTimeouts follow, while a healthy jsMs says nothing about it), rasterCmdMs (cumulative wall time in whole ms the raster thread spent executing non-frame commands - texture uploads, readbacks, offscreen rasterizations, shader compiles, param writes and the target re-renders they trigger; the work frameMs never sees, so rasterCmdMs growing much faster than frames are presented means the raster thread is drowning in side work even if every counter above looks calm).",
     inputSchema: {
       window_ms: z
         .number()
@@ -161,6 +168,16 @@ let TOOLS: {
         .max(10000)
         .describe("How far back the window summary looks, in ms (default 5000, max 10000)")
         .optional(),
+      client: CLIENT_ARG,
+    },
+  },
+  {
+    name: "set_stats_overlay",
+    annotations: { destructiveHint: false, idempotentHint: true },
+    description:
+      "Switch the on-screen stats overlay (fps, frame times, memory, drawn in a corner of the app window) on or off. With `client` it applies to that one client; without, to every connected client and to clients joining later. Use it when the human at a device should read the figures live, e.g. while reproducing a stutter on a phone; for your own measurements, get_stats reads the same numbers without changing the picture. Returns the state now in force and the number of clients told; list_clients reports each client's `stats`.",
+    inputSchema: {
+      active: z.boolean().describe("true draws the overlay, false hides it"),
       client: CLIENT_ARG,
     },
   },
@@ -405,6 +422,7 @@ async function callTool(name: string, args: any): Promise<ControlResult> {
       if (typeof args?.wait_ms === "number") params.set("wait", String(args.wait_ms))
       if (typeof args?.level === "string") params.set("level", args.level)
       if (typeof args?.contains === "string") params.set("contains", args.contains)
+      if (typeof args?.client === "number") params.set("client", String(args.client))
       let qs = params.toString()
       return control(qs ? `/logs?${qs}` : "/logs")
     }
@@ -414,6 +432,12 @@ async function callTool(name: string, args: any): Promise<ControlResult> {
       if (typeof args?.client === "number") params.set("client", String(args.client))
       let qs = params.toString()
       return control(qs ? `/stats?${qs}` : "/stats")
+    }
+    case "set_stats_overlay": {
+      if (typeof args?.active !== "boolean") return { ok: false, message: "set_stats_overlay requires active: true|false" }
+      let params = new URLSearchParams({ active: String(args.active) })
+      if (typeof args?.client === "number") params.set("client", String(args.client))
+      return control(`/stats?${params.toString()}`, "POST")
     }
     case "get_render_tree": {
       let params = new URLSearchParams()

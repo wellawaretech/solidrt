@@ -63,18 +63,53 @@ export function liveRecords(): LiveRecord[] {
 
 export type Resolution = { ok: true; record: LiveRecord } | { ok: false; message: string }
 
+/** Whether the server a record names is really there: its control API
+ * answers on the port and names the record's key. A pid reused by an
+ * unrelated process, or a port taken over by another server, fails here. */
+export async function confirmed(record: LiveRecord): Promise<boolean> {
+  try {
+    let resp = await fetch(`http://127.0.0.1:${record.port}/__control__/clients`, {
+      signal: AbortSignal.timeout(1000),
+    })
+    let served = resp.headers.get("x-solidrt-project")
+    return served !== null && sameKey(served, record.key)
+  } catch {
+    return false
+  }
+}
+
+// The one record the registry offered was a fossil (its pid lives on in an
+// unrelated process); the next server start prunes it.
+function stale(record: LiveRecord): string {
+  return (
+    `The registry names port ${record.port} (pid ${record.pid}) for ${record.key}, ` +
+    `but no dev server answers there: the record is stale. Start one with srt run.`
+  )
+}
+
+async function confirm(record: LiveRecord): Promise<Resolution> {
+  return (await confirmed(record)) ? { ok: true, record } : { ok: false, message: stale(record) }
+}
+
+/** The server on `port`, if the registry names one there. */
+export async function resolveByPort(port: number): Promise<Resolution> {
+  let record = liveRecords().find((r) => r.port === port)
+  return record ? confirm(record) : { ok: false, message: `No dev server on port ${port}.` }
+}
+
 /**
  * The server for `cwd`: the project server keyed by cwd itself; otherwise
  * the one file server whose file lies under cwd; otherwise an error that
- * lists the candidates.
+ * lists the candidates. The record is a hint and the server is
+ * authoritative, so the chosen record is confirmed before it is returned.
  */
-export function resolveFromCwd(cwd: string): Resolution {
+export async function resolveFromCwd(cwd: string): Promise<Resolution> {
   let records = liveRecords()
   let project = records.find((r) => r.mode === "project" && sameKey(r.key, cwd))
-  if (project) return { ok: true, record: project }
+  if (project) return confirm(project)
   let prefix = cwd.replace(/[\\/]+$/, "") + "/"
   let files = records.filter((r) => r.mode === "file" && r.key.replace(/\\/g, "/").startsWith(prefix.replace(/\\/g, "/")))
-  if (files.length === 1) return { ok: true, record: files[0]! }
+  if (files.length === 1) return confirm(files[0]!)
   let listing =
     records.length === 0
       ? `Registry ${serversRoot()}: no running servers.`

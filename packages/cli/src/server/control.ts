@@ -207,12 +207,20 @@ async function handleLogs(query: Map<string, string>): Promise<Response> {
     .map((l) => l.trim())
     .filter(Boolean)
   let contains = query.get("contains")?.toLowerCase()
-  let client = parseInt(query.get("client") ?? "", 10)
+  // The client filter takes any id, connected or not: a client that crashed
+  // is gone from /clients but its output is what the caller wants to read.
+  // Only a malformed id is refused, instead of silently disabling the filter.
+  let client: number | undefined
+  let clientParam = query.get("client")
+  if (clientParam !== undefined) {
+    client = parseInt(clientParam, 10)
+    if (!Number.isFinite(client)) return Response.json({ error: "Client must be a numeric id" }, { status: 400 })
+  }
   let select = () =>
     logs.filter(
       (e) =>
         e.seq > since &&
-        (!Number.isFinite(client) || e.client === client) &&
+        (client === undefined || e.client === client) &&
         (!levels || levels.length === 0 || levels.includes(e.level)) &&
         (!contains || e.text.toLowerCase().includes(contains)),
     )

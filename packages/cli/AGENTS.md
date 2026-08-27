@@ -119,7 +119,10 @@ behavior in isolation.
   `live.json` (the registry record, written by the server and removed at
   exit), its remembered `port` and tunnel key; `clients/client<M>/` the
   client trees (srt passes `--data-root ~/.solidrt/clients` to every locally
-  spawned client).
+  spawned client). A record left behind by a crash is pruned when the next
+  server starts, and `srt client`, `srt mcp` and `srt android` confirm a
+  record against the server (its control API names the key it serves)
+  before using it.
 - `srt client` and `srt mcp` need no port: run from the project root (or the
   directory of a served file) they resolve the server from the registry;
   `--port` pins one.
