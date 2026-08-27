@@ -34,12 +34,15 @@ pub fn build(s: &StatsSnapshot, typography: &TypographyContext, safe_area: Rect,
   pb.push_style(&style);
 
   let mut text = format!("{:.0}% CPU {:.0} MEM {} FPS", s.cpu_pct, s.mem_bytes as f32 / MIB, s.fps);
-  // Each timing is shown as a share of the measured frame period (js_ms and
-  // frame_ms are smoothed the same way on the JS thread, so a share stays
-  // within 100%). Shares sum to ~100% when CPU-bound; less means idle or
-  // GPU-bound headroom. A share is relative to the current frame, so one phase
-  // shrinks when another grows. JS = onFrame + flush; LAY/PNT/PST/HOV = native
-  // draw phases. SET is a raw count (setProperty writes/frame), not a share.
+  // Each timing is shown as a share of the measured frame period. Every
+  // figure and frame_ms are smoothed the same way on the same cadence (the
+  // phases record zero on reused and skipped frames, see Stats::record_frame),
+  // so a share stays within 100%. Shares sum to ~100% when CPU-bound; less
+  // means idle or GPU-bound headroom. A share is relative to the current
+  // frame, so one phase shrinks when another grows. JS = onFrame + flush;
+  // LAY/PNT/PST/HOV = native draw phases; all four read 0% for an app whose
+  // tree is static, however much its pixels change. SET is a raw count
+  // (setProperty writes/frame), not a share.
   let frame_ms = s.frame_ms;
   let pct = |ms: f32| if frame_ms > 0.0 { ms / frame_ms * 100.0 } else { 0.0 };
   text.push_str(&format!("\nJS {:.0}% SET {:.0}", pct(s.js_ms), s.set_count));
@@ -67,7 +70,8 @@ pub fn build(s: &StatsSnapshot, typography: &TypographyContext, safe_area: Rect,
     text.push_str(&format!("\n{} reuse {} skip", s.reused, s.skipped));
   }
   // Repaint boundaries this frame: reused+recorded. Hidden when the app
-  // declares none.
+  // declares none, and on frames with no paint walk (display-list reuse),
+  // since the counts are the frame's own.
   if paint_stats.boundaries_reused + paint_stats.boundaries_recorded > 0 {
     text.push_str(&format!("\n{}+{} BND", paint_stats.boundaries_reused, paint_stats.boundaries_recorded));
   }

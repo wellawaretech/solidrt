@@ -1158,6 +1158,11 @@ Finished, kept for the reasoning.
   Both halves fixed and verified 2026-08-09 - freeze was a dead overlay_due
   demand source; overlay now retained raster-side, rasterized to a small layer
   and blended over every frame post-pass.
+- **[Stats overlay phase shares go stale when frames are reused](done/stats-overlay-stale-phase-shares.md)** [2026-08-27]
+  LAY/PNT/PST/HOV divide a phase average that only updates on a full rebuild
+  by a frame period that updates every frame, so an app in steady-state
+  display-list reuse shows a frozen number as a live share (PNT 350% in
+  the-third-dimension); the same stale figures are served over /stats.
 - **[stdin/tty support in flux](done/stdin-tty-support.md)** [2026-07-13]
   A flux:tty module (terminal check, cooked lines or raw-mode keys, stdout
   write) bringing the srt dev-server repl back with history and Tab

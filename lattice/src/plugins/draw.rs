@@ -203,7 +203,10 @@ impl RenderInner {
     let mut driver = self.driver.borrow_mut();
     let demand = overlay_refresh || overlay_clear || anim_active || spatial.active || spatial.wrote;
     let Some(frame) = driver.begin(platform, demand) else {
-      stats.borrow_mut().note_skipped();
+      let mut s = stats.borrow_mut();
+      s.note_skipped();
+      s.record_frame(stats::FramePhases::default());
+      s.record_paint(rendertree::composite::PaintStats::default());
       return;
     };
     if anim_active || spatial.active {
@@ -227,13 +230,24 @@ impl RenderInner {
     // Content damage, then present-only reuse or the build handle: the
     // driver's interlocks (captures, deferred destroys, the window-shader
     // flush) run on whichever path resolves. On reuse, layout, postLayout and
-    // hover refresh are skipped too - the tree and window are unchanged.
+    // hover refresh are skipped too - the tree and window are unchanged. The
+    // phases and paint counts are still recorded, as zero: the skip path
+    // above does the same, so the smoothed phase figures track every frame
+    // the JS thread sees and decay when nothing rebuilds, and the paint walk
+    // counts describe this frame (no walk) rather than the last one that had
+    // one. A tree that never rebuilds otherwise presents one stale rebuild's
+    // cost as a live share of a moving frame period (an app reusing its
+    // display list at 60 Hz showed PNT 350%) and its boundary counts as
+    // current.
     let mut b = match frame
       .commit(&mut tree.0.borrow_mut(), platform, atx)
       .expect("Failed to submit display list")
     {
       Commit::Reused => {
-        stats.borrow_mut().note_reused();
+        let mut s = stats.borrow_mut();
+        s.note_reused();
+        s.record_frame(stats::FramePhases::default());
+        s.record_paint(rendertree::composite::PaintStats::default());
         return;
       }
       Commit::Build(b) => b,

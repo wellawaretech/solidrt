@@ -7,8 +7,8 @@ use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, RefreshKind, System};
 
 const REFRESH_INTERVAL: f32 = 1.0;
 
-/// Wall-clock duration of each phase of one fully rebuilt frame, handed from
-/// the draw loop to the overlay.
+/// Wall-clock duration of each phase of one frame, handed from the draw loop
+/// to the overlay; all zero for a frame that was reused or skipped.
 #[derive(Clone, Copy, Default)]
 pub struct FramePhases {
   pub layout: Duration,
@@ -64,9 +64,10 @@ pub struct StatsSnapshot {
   pub dirtied: u32,
   pub cache_gets: u32,
   pub cache_hits: u32,
-  /// The last paint walk's counts: nodes entered (the mounted count minus
-  /// this is what viewport culling skipped, alloy::rendertree::cull) and the
-  /// repaint/snapshot boundary figures.
+  /// The latest frame's paint walk counts: nodes entered (the mounted count
+  /// minus this is what viewport culling skipped, alloy::rendertree::cull)
+  /// and the repaint/snapshot boundary figures. All zero when that frame was
+  /// reused or skipped; the last rebuild's figures live in frame_history.
   pub paint: PaintStats,
 }
 
@@ -127,9 +128,10 @@ pub struct Stats {
   // raw so an idle app keeps reporting its last rebuild's figures.
   node_count: usize,
   layout_counters: LayoutCounters,
-  // Boundary/snapshot counts of the last full rebuild, latched like the
-  // layout activity: the overlay is built on its own cadence, usually on
-  // frames with no paint walk.
+  // Boundary/snapshot counts of the latest frame's paint walk; all zero when
+  // that frame was reused or skipped (no walk). Not latched like the layout
+  // activity: the overlay presents these as what the current frame did, so
+  // a stale rebuild's counts would read as live.
   paint_stats: PaintStats,
   // GPU execution accounting: the latest (frame, cumulative exec micros)
   // the draw loop recorded, the mark the last sample took, and the
@@ -257,9 +259,14 @@ impl Stats {
     self.frame_ms = smooth(self.frame_ms, dt * 1000.0, dt);
   }
 
-  /// Fold one rebuilt frame's phase timings into the moving averages, weighted
-  /// by the gap since the last rebuild (time-aware smoothing, see smooth).
-  /// Called on every full rebuild, whether or not the overlay draws.
+  /// Fold one frame's phase timings into the moving averages, weighted by the
+  /// gap since the previous call (time-aware smoothing, see smooth). Called on
+  /// every frame the draw loop sees, whether or not the overlay draws: the
+  /// rebuild's measured phases, or all zero when the frame was reused or
+  /// skipped. Recording the zeros is what keeps these on the same cadence as
+  /// frame_ms, so a share of it means something; without them a static tree
+  /// (display-list reuse forever) would hold its last rebuild's phases as if
+  /// live. The cost of a rare rebuild is kept by frame_history, not here.
   pub fn record_frame(&mut self, phases: FramePhases) {
     let now = Instant::now();
     let dt = (now - self.last_draw).as_secs_f32();
@@ -278,7 +285,8 @@ impl Stats {
     self.layout_counters = counters;
   }
 
-  /// Latch one rebuild's boundary/snapshot counts (see the field).
+  /// Record the frame's paint walk counts (see the field): the rebuild's, or
+  /// zero for a reused or skipped frame.
   pub fn record_paint(&mut self, paint_stats: PaintStats) {
     self.paint_stats = paint_stats;
   }
