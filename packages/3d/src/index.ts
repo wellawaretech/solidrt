@@ -25,7 +25,7 @@ export { decodeModel, encodeModel } from "./model-file.ts"
 export { createModel, loadGltf, loadModel } from "./model.ts"
 export type { Model, ModelOptions } from "./model.ts"
 export { createOrbitCamera } from "./orbit.ts"
-export type { OrbitCamera, OrbitCameraOptions, OrbitPose } from "./orbit.ts"
+export type { OrbitCamera, OrbitCameraOptions, OrbitPose, OrbitTarget } from "./orbit.ts"
 // math's lookAt (the camera view matrix) stays on the /math subpath: the
 // root's lookAt is the scene verb, the same split as `add`.
 export { rayBoxDistance, compose, copy, eulerFromQuat, identity, mat4, multiply, normalMatrix, orthographic, perspective, quat, quatFromAxisAngle, quatFromEuler, quatFromFrame, quatFromTo, quatMultiply, quatNormalize, quatSlerp } from "./math.ts"

@@ -48,7 +48,7 @@
 import { createSignal } from "@solidjs/signals"
 import { createTransform } from "@solidrt/core"
 import type { PointerEvent } from "@solidrt/core"
-import type { Scene } from "./scene.ts"
+import type { CameraUpdate } from "./scene.ts"
 import type { Vec3 } from "./math.ts"
 
 // Baseline sensitivities at rotateSpeed/zoomSpeed 1, in radians per dragged
@@ -56,6 +56,9 @@ import type { Vec3 } from "./math.ts"
 const DRAG_AZIMUTH = 0.008
 const DRAG_ELEVATION = 0.006
 const WHEEL_ZOOM = 0.0015
+
+/** What an orbit camera drives: a Scene, or one of its Views. */
+export type OrbitTarget = { setCamera(update: CameraUpdate): void }
 
 export type OrbitCameraOptions = {
   /** The point the camera orbits and looks at (default origin). */
@@ -123,7 +126,7 @@ export type OrbitCamera = {
   /** Whether the auto-orbit is running. Reactive (signal-backed), so HUD
    * text can read it. */
   orbiting(): boolean
-  /** Advance the auto-orbit and push any pose change to the scene camera.
+  /** Advance the auto-orbit and push any pose change to the driven camera.
    * Call from onFrame with the frame's dt in seconds; returns whether the
    * pose changed. */
   update(dt: number): boolean
@@ -142,12 +145,13 @@ export type OrbitCamera = {
 let clampNum = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v))
 
 /**
- * Create an orbit camera driving `scene`'s camera position and target (fov,
- * near, and far stay yours via scene.setCamera). The initial pose applies
- * immediately. In a component tree, reach the scene via `<Scene ref>` or
- * useScene() and hand the handlers to whichever element owns input.
+ * Create an orbit camera driving `camera`'s position and target, where
+ * `camera` is a Scene or one of its Views (fov, near, and far stay yours via
+ * its setCamera). The initial pose applies immediately. In a component tree,
+ * reach the scene via `<Scene ref>` or useScene() (a view via `<View ref>`)
+ * and hand the handlers to whichever element owns input.
  */
-export function createOrbitCamera(scene: Scene, options: OrbitCameraOptions = {}): OrbitCamera {
+export function createOrbitCamera(camera: OrbitTarget, options: OrbitCameraOptions = {}): OrbitCamera {
   let target: Vec3 = options.target ? [options.target[0], options.target[1], options.target[2]] : [0, 0, 0]
   let azimuth = options.azimuth ?? 0
   let elevation = options.elevation ?? 0
@@ -197,7 +201,7 @@ export function createOrbitCamera(scene: Scene, options: OrbitCameraOptions = {}
       target[2] + distance * ce * Math.cos(azimuth),
     ]
   }
-  let apply = () => scene.setCamera({ position: eye(), target })
+  let apply = () => camera.setCamera({ position: eye(), target })
 
   // Zoom by `ratio` (new distance over old, before clamping) about a world
   // anchor (null zooms toward the target). Scaling eye and target about the

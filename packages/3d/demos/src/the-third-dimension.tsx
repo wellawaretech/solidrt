@@ -21,10 +21,21 @@
 // three cross the floor falls to the ambient alone. The rig hangs off one
 // Group that turns slowly, so the three shadows sweep and cross from a
 // single setTransform per frame.
+//
+// The window is a split of THREE renderings of that one scene: the scene's
+// own target on the left, plus two scene.createView panels on the right - a
+// side view, where the knot's weave reads because it lies flat, and straight
+// down from above, where the three shadows cross. All three are draggable
+// orbits with poses of their own. A view shares the scene's geometry, materials, lights and
+// shadow maps; it is another target, another camera and one entry per mesh,
+// and one core flush writes every entry's world matrix, so two more panels
+// cost no per-frame JS. All three keep the scene's perspective projection.
 // An orbit
-// camera (createOrbitCamera) owns the pose: drag to rotate, wheel or pinch
-// to zoom, and an auto-orbit that pauses while dragging (a tap, click or
-// space toggles it) and freezes the light rig with it. Per-frame JS cost is
+// camera (createOrbitCamera) per panel owns its pose: drag to rotate, wheel
+// or pinch to zoom, and an auto-orbit that pauses while dragging. A click or
+// tap pauses the panel it lands on and only that one; space is the keyboard
+// form and is global, the large view leading and the small ones taking its
+// new state. The light rig follows the large view. Per-frame JS cost is
 // constant no matter how many triangles the passes cover - one update(dt),
 // one setTransform on the rig, and the scene's own shared camera writes
 // when a pose changed.
@@ -42,6 +53,7 @@ import {
   untrack,
   windowSize,
 } from "@solidrt/core"
+import type { PointerEvent, WheelEvent } from "@solidrt/core"
 import { glsl, limits } from "@solidrt/core/gpu"
 import {
   add,
@@ -69,7 +81,7 @@ const KNOT_Q = 3
 const KNOT_CENTER: Vec3 = [0, 1.4, 0]
 const FLOOR_SIZE = 36 // world units across; GROUND_FRAGMENT interpolates it
 const FOV = 0.85 // vertical field of view, radians (the scene camera speaks degrees)
-const ORBIT_PERIOD = 34 // seconds for one full revolution
+const ORBIT_PERIOD = 68 // seconds for one full revolution
 const MIN_DISTANCE = 2.6
 const MAX_DISTANCE = 14
 // Wheel zoom is eased by the app, not taken from orbit.handlers: a notch
@@ -114,7 +126,7 @@ const LIGHT_PHASE = 0.6
 const LIGHT_DISTANCE = 10
 // Seconds for one full turn of the light rig - slower than the camera
 // orbit, so the two motions stay legible as two.
-const RIG_PERIOD = 60
+const RIG_PERIOD = 120
 // Every light casts. A scene takes MAX_SHADOWS = MAX_LIGHTS casting
 // directional lights, so all three corners of the triangle get a map and a
 // depth pass of their own, and each shadow is the COMPLEMENT of the light
@@ -132,6 +144,38 @@ const SHADOW_MAP = 1024
 // its shadow reaches the floor a few units past it.
 const SHADOW_NEAR = 2
 const SHADOW_FAR = 22
+// The split: one large panel on the left, two stacked on the right, sharing
+// edges with no gap between them - the rounding leftovers go to the right
+// column and the lower panel, so the three tile the window exactly.
+const SPLIT = 0.66
+// Where the lower-right panel opens: all but straight down (1.55 is the
+// library's own pole guard), far enough back that the vertical FOV covers
+// the whole shadow spread, about +-4 world units at the floor.
+const TOP_DOWN_ELEVATION = 1.5
+const TOP_DOWN_DISTANCE = 11.6
+// The hero panel's opening azimuth. The side panel is placed RELATIVE to it
+// rather than in world terms: every panel sweeps at the same rate, so what
+// stays visible between two of them is how far apart they sit, never where
+// either happens to point at t = 0.
+const HERO_AZIMUTH = 0.9
+// Where the upper-right panel opens, tuned on screen. The knot is a flat
+// disc in the xz plane, so a side view catches it edge-on and its weave -
+// which loop passes over which - reads there and nowhere else. The eye sits
+// just BELOW the knot's centre (about y = 0.73 at this distance) looking
+// slightly up at it, which stands the knot clear of the floor instead of
+// laying it into the checker. Well inside the floor clamp: at this distance
+// holdAboveFloor would not bite until about -0.124.
+const SIDE_OFFSET = -3.096 // radians round from the hero
+const SIDE_AZIMUTH = HERO_AZIMUTH + SIDE_OFFSET
+const SIDE_ELEVATION = -0.079
+const SIDE_DISTANCE = 8.5
+// How far the two right-hand panels may be pushed and pulled.
+const PANEL_MIN_DISTANCE = 3.5
+const PANEL_MAX_DISTANCE = 30
+// The extra views get no background entry of their own (a view mirrors the
+// scene's meshes, not its backdrop), so this stands in for the backdrop
+// shader's outer tone where the ground has faded away.
+const VIEW_CLEAR: [number, number, number, number] = [0.02, 0.028, 0.048, 1]
 // Floor under the display's own scale: on a 1x display there is no downscale
 // to soften polygon edges (targets have no MSAA), so render the scene larger
 // than the box it is drawn into and let the texture filter resolve it.
@@ -332,15 +376,22 @@ let [renderScale, setRenderScale] = createSignal(0)
 // debug command writes it.
 let [casters, setCasters] = createSignal(LIGHT_TINTS.length)
 // Assigned in App; the debug commands below only run once the app is up.
+// One orbit camera per panel: the large one on the left, then the two on
+// the right. Only the left one auto-orbits.
 let orbit!: OrbitCamera
+let topOrbit!: OrbitCamera
+let bottomOrbit!: OrbitCamera
 let lights: DirectionalLightNode[] = []
 // The light rig and where it has turned to. Module scope so the `rig` debug
 // command can park it: the spin pauses with the orbit, so a parked pose and
 // a parked rig together are one repeatable frame.
 let rig!: SceneNode
 let rigAngle = 0
-// Distance the wheel is steering toward, or null when nothing is in flight.
-let zoomTarget: number | null = null
+// A panel as input and the frame loop see it: its camera, the distance range
+// its wheel may steer within, and the eased zoom in flight (null when there
+// is none). Assigned in App, in left-then-right order.
+type PanelCamera = { cam: OrbitCamera; minDistance: number; maxDistance: number; zoom: number | null }
+let cameras: PanelCamera[] = []
 
 // A tap toggles the auto-orbit, so tablets have a pause too. A tap is one
 // pointer that goes down and up within TAP_SLOP and TAP_MS without a second
@@ -351,6 +402,26 @@ const TAP_MS = 300
 let tap: { id: number; x: number; y: number; at: number } | null = null
 
 let clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v))
+
+// The keyboard's pause, and the only global one: the LARGE view leads and
+// the two small ones are handed its new state, so one key puts the whole
+// window in step and a paused scene is a still frame end to end. A click or
+// tap is local to the panel it lands on (see panelInput). The large view's
+// signal is what the hint text reads, and what the light rig follows.
+let setAllOrbiting = (orbiting: boolean) => {
+  orbit.set({ orbiting })
+  topOrbit.set({ orbiting })
+  bottomOrbit.set({ orbiting })
+}
+
+// Hold one camera's eye above the floor (see the EYE_MIN_Y note): the
+// elevation floor is a function of the distance, so it has to be re-derived
+// every frame rather than fixed once as a minElevation.
+let holdAboveFloor = (cam: OrbitCamera) => {
+  let pose = cam.pose()
+  let minElevation = Math.asin(clamp((EYE_MIN_Y - KNOT_CENTER[1]) / pose.distance, -1, 1))
+  if (pose.elevation < minElevation) cam.set({ elevation: minElevation })
+}
 
 function App() {
   let knotGeometry = torusKnot({
@@ -376,29 +447,50 @@ function App() {
       `${(bytes / 1024 / 1024).toFixed(2)} MiB`,
   )
 
-  // Render at device pixels so the knot's silhouette stays crisp on hi-DPI,
-  // clamped to what the device can actually allocate.
-  let targetSize = createMemo(() => {
+  // The three panel boxes in logical units, tiling the window exactly: the
+  // leftovers of the rounding go to the right column and the bottom panel,
+  // so no seam ever opens up at the far edge.
+  let panels = createMemo(() => {
     let size = windowSize()
-    let scale = renderScale() || Math.max(env.displayScale, MIN_RENDER_SCALE)
+    let left = Math.round(size.width * SPLIT)
+    let right = size.width - left
+    let top = Math.round(size.height / 2)
+    // x/y/w/h is the DETACHED box vocabulary (d-* only) - a d-texture takes
+    // no layout width/height and would silently fall back to the inherited
+    // window box, drawing all three panels on top of each other.
     return {
-      width: clamp(Math.round(size.width * scale), 1, limits.maxTextureSize),
-      height: clamp(Math.round(size.height * scale), 1, limits.maxTextureSize),
+      main: { x: 0, y: 0, w: left, h: size.height },
+      top: { x: left, y: 0, w: right, h: top },
+      bottom: { x: left, y: top, w: right, h: size.height - top },
     }
+  })
+  // Render at device pixels so the knot's silhouette stays crisp on hi-DPI,
+  // clamped to what the device can actually allocate. Every panel is its own
+  // target now, each sized from its own box - a small panel costs a small
+  // texture, and the three together cover about the pixels one full-window
+  // view used to.
+  let targetSize = createMemo(() => {
+    let box = panels()
+    let scale = renderScale() || Math.max(env.displayScale, MIN_RENDER_SCALE)
+    let pixels = (b: { w: number; h: number }) => ({
+      width: clamp(Math.round(b.w * scale), 1, limits.maxTextureSize),
+      height: clamp(Math.round(b.h * scale), 1, limits.maxTextureSize),
+    })
+    return { main: pixels(box.main), top: pixels(box.top), bottom: pixels(box.bottom) }
   })
   let initial = untrack(targetSize)
 
   // The backdrop is the scene pass's first entry (depth off, covering the
   // target), so there is no second texture layer and no resize plumbing of
   // its own - the ground's fade blends straight onto it.
-  let scene = createScene(initial.width, initial.height, {
+  let scene = createScene(initial.main.width, initial.main.height, {
     label: "scene",
     background: BACKDROP_FRAGMENT,
   })
   scene.setCamera({ fov: (FOV * 180) / Math.PI, near: 0.1, far: 80 })
   orbit = createOrbitCamera(scene, {
     target: KNOT_CENTER,
-    azimuth: 0.9,
+    azimuth: HERO_AZIMUTH,
     elevation: 0.34,
     distance: 5.4,
     minDistance: MIN_DISTANCE,
@@ -495,9 +587,106 @@ function App() {
   // and its entry in the shadow view would cost a draw for nothing.
   setCastShadow(knot, true)
 
-  // The target follows the window; the id is stable across a resize, so the
-  // <d-texture src> binding and the owner-scoped auto-free keep working.
-  createEffect(targetSize, size => scene.setSize(size.width, size.height))
+  // The three renderings of ONE scene. A view shares the scene's geometry,
+  // materials, lights and shadow maps - it is another target, another camera
+  // and one entry per mesh, and the core's flush writes every entry's world
+  // matrix at once, so the extra panels cost the app nothing per frame.
+  let topView = scene.createView({
+    width: initial.top.width,
+    height: initial.top.height,
+    clearColor: VIEW_CLEAR,
+    label: "top-right",
+  })
+  topView.setCamera({ fov: (FOV * 180) / Math.PI, near: 0.1, far: 80 })
+  let bottomView = scene.createView({
+    width: initial.bottom.width,
+    height: initial.bottom.height,
+    clearColor: VIEW_CLEAR,
+    label: "bottom-right",
+  })
+  bottomView.setCamera({ fov: (FOV * 180) / Math.PI, near: 0.1, far: 80 })
+  // A view has the same setCamera as a scene, which is all an orbit camera
+  // ever touches, so each panel gets a real one: drag, pinch and wheel, and
+  // a pose of its own. The upper panel opens from the side and the lower one
+  // all but straight down - the two orthogonal readings a single orbiting
+  // hero shot keeps sweeping past. All three auto-orbit at the same rate, so
+  // they hold their phase offsets and read as three cameras on one
+  // turntable. Each pauses on its own click; space stops all three.
+  topOrbit = createOrbitCamera(topView, {
+    target: KNOT_CENTER,
+    azimuth: SIDE_AZIMUTH,
+    elevation: SIDE_ELEVATION,
+    distance: SIDE_DISTANCE,
+    minDistance: PANEL_MIN_DISTANCE,
+    maxDistance: PANEL_MAX_DISTANCE,
+    minElevation: -0.15,
+    maxElevation: 1.55,
+    orbitSpeed: (Math.PI * 2) / ORBIT_PERIOD,
+  })
+  bottomOrbit = createOrbitCamera(bottomView, {
+    target: KNOT_CENTER,
+    azimuth: HERO_AZIMUTH,
+    elevation: TOP_DOWN_ELEVATION,
+    distance: TOP_DOWN_DISTANCE,
+    minDistance: PANEL_MIN_DISTANCE,
+    maxDistance: PANEL_MAX_DISTANCE,
+    minElevation: -0.15,
+    maxElevation: 1.55,
+    orbitSpeed: (Math.PI * 2) / ORBIT_PERIOD,
+  })
+  cameras = [
+    { cam: orbit, minDistance: MIN_DISTANCE, maxDistance: MAX_DISTANCE, zoom: null },
+    { cam: topOrbit, minDistance: PANEL_MIN_DISTANCE, maxDistance: PANEL_MAX_DISTANCE, zoom: null },
+    { cam: bottomOrbit, minDistance: PANEL_MIN_DISTANCE, maxDistance: PANEL_MAX_DISTANCE, zoom: null },
+  ]
+
+  // Every target follows its own panel; the ids are stable across a resize,
+  // so the <d-texture src> bindings and the owner-scoped auto-free keep
+  // working.
+  createEffect(targetSize, size => {
+    scene.setSize(size.main.width, size.main.height)
+    topView.setSize(size.top.width, size.top.height)
+    bottomView.setSize(size.bottom.width, size.bottom.height)
+  })
+
+  // One panel's input, spread onto its own texture leaf: that camera's drag
+  // and pinch, an eased wheel, and the tap that toggles the global pause.
+  // Which panel a gesture belongs to is the ENGINE's answer, not the app's -
+  // the runtime freezes each pointer's hit path at the down and delivers
+  // every later event along it, so a drag that runs off its panel keeps
+  // arriving here with no capture to arrange, and two fingers on one panel
+  // both land on it, which is what makes the pinch work.
+  let panelInput = (panel: PanelCamera) => ({
+    onPointerDown: (e: PointerEvent) => {
+      // A pinch drives distance directly; drop this panel's glide so the two
+      // do not fight over the pose.
+      panel.zoom = null
+      tap = tap === null ? { id: e.pointerId, x: e.clientX, y: e.clientY, at: performance.now() } : null
+      panel.cam.handlers.onPointerDown(e)
+    },
+    onPointerMove: (e: PointerEvent) => panel.cam.handlers.onPointerMove(e),
+    onPointerUp: (e: PointerEvent) => {
+      panel.cam.handlers.onPointerUp(e)
+      if (tap === null || tap.id !== e.pointerId) return
+      let moved = Math.hypot(e.clientX - tap.x, e.clientY - tap.y)
+      let held = performance.now() - tap.at
+      tap = null
+      // A tap pauses THIS panel and nothing else - the other two keep
+      // sweeping, so one view can be held still to study while the rest of
+      // the window carries on. Space is the global form.
+      if (moved < TAP_SLOP && held < TAP_MS) panel.cam.set({ orbiting: !panel.cam.orbiting() })
+    },
+    // A notch retargets this panel's distance and the camera glides there
+    // over the next few frames, so a scroll reads as one continuous push
+    // instead of a staircase. Compounding from the PENDING distance rather
+    // than the current one, so a fast scroll accumulates its notches instead
+    // of each one restarting the glide from wherever the last had reached.
+    onWheel: (e: WheelEvent) => {
+      let from = panel.zoom ?? panel.cam.pose().distance
+      panel.zoom = clamp(from * Math.exp(e.deltaY * WHEEL_ZOOM), panel.minDistance, panel.maxDistance)
+    },
+  })
+  let input = cameras.map(panelInput)
 
   let last = 0
   onFrame(tick => {
@@ -506,24 +695,28 @@ function App() {
     // which makes exactly one frame's delta hugely negative.
     let dt = clamp(now - last, 0, 0.1)
     last = now
-    // Glide the pending wheel zoom in: an exponential ease, framerate
-    // independent because the step is 1 - e^(-rate*dt) rather than a fixed
-    // fraction. It writes the pose, which orbit.update() then pushes once.
-    if (zoomTarget !== null) {
-      let distance = orbit.pose().distance
-      let next = distance + (zoomTarget - distance) * (1 - Math.exp(-ZOOM_EASE * dt))
-      if (Math.abs(zoomTarget - next) < ZOOM_EPSILON) {
-        next = zoomTarget
-        zoomTarget = null
+    // Every panel in turn: glide its pending wheel zoom, then hold its eye
+    // above the floor.
+    for (let panel of cameras) {
+      // The glide is an exponential ease, framerate independent because the
+      // step is 1 - e^(-rate*dt) rather than a fixed fraction. It writes the
+      // pose, which the camera's own update() then pushes once.
+      if (panel.zoom !== null) {
+        let distance = panel.cam.pose().distance
+        let next = distance + (panel.zoom - distance) * (1 - Math.exp(-ZOOM_EASE * dt))
+        if (Math.abs(panel.zoom - next) < ZOOM_EPSILON) {
+          next = panel.zoom
+          panel.zoom = null
+        }
+        panel.cam.set({ distance: next })
       }
-      orbit.set({ distance: next })
+      // Keep the eye above the floor: the lowest elevation that still clears
+      // EYE_MIN_Y at this camera's distance. It tightens as the zoom pulls
+      // out, so a camera slides up along the limit instead of sinking through
+      // the ground - and the ground is one back-face-culled quad, so under it
+      // the floor and its shadows simply vanish.
+      holdAboveFloor(panel.cam)
     }
-    // Keep the eye above the floor: the lowest elevation that still clears
-    // EYE_MIN_Y at this distance. It tightens as the zoom pulls out, so the
-    // camera slides up along the limit instead of sinking through the ground.
-    let pose = orbit.pose()
-    let minElevation = Math.asin(clamp((EYE_MIN_Y - KNOT_CENTER[1]) / pose.distance, -1, 1))
-    if (pose.elevation < minElevation) orbit.set({ elevation: minElevation })
     // Turn the light rig, on the same pause as the orbit so a parked scene
     // is a still frame end to end and snapshots of one pose repeat. This
     // single write moves three lights, their direction slots and the shadow
@@ -533,43 +726,29 @@ function App() {
       rigAngle = (rigAngle + (dt * Math.PI * 2) / RIG_PERIOD) % (Math.PI * 2)
       setTransform(rig, { rotation: [0, rigAngle, 0] })
     }
-    // The scene writes uViewProj/uCamPos itself on a pose change; there is
-    // no per-mesh uniform left for the app to keep in step.
-    orbit.update(dt)
+    // Each panel's target gets its own uViewProj/uCamPos write, and only
+    // when that pose actually changed - update() reports it and skips.
+    for (let panel of cameras) panel.cam.update(dt)
   })
 
   return (
     <window
-      {...orbit.handlers}
-      // Compounding from the pending distance, not the current one, so a
-      // fast scroll accumulates its notches instead of each one restarting
-      // the glide from wherever the last had reached.
-      onWheel={e => {
-        let from = zoomTarget ?? orbit.pose().distance
-        zoomTarget = clamp(from * Math.exp(e.deltaY * WHEEL_ZOOM), MIN_DISTANCE, MAX_DISTANCE)
-      }}
-      // A pinch drives distance directly; drop the glide so the two do not
-      // fight over the pose.
-      onPointerDown={e => {
-        zoomTarget = null
-        tap = tap === null ? { id: e.pointerId, x: e.clientX, y: e.clientY, at: performance.now() } : null
-        orbit.handlers.onPointerDown(e)
-      }}
-      onPointerUp={e => {
-        orbit.handlers.onPointerUp(e)
-        if (tap === null || tap.id !== e.pointerId) return
-        let moved = Math.hypot(e.clientX - tap.x, e.clientY - tap.y)
-        let held = performance.now() - tap.at
-        tap = null
-        if (moved < TAP_SLOP && held < TAP_MS) orbit.set({ orbiting: !orbit.orbiting() })
-      }}
       onKeyDown={e => {
-        if (e.code === "Space" || e.key === " ") orbit.set({ orbiting: !orbit.orbiting() })
+        // Keyboard-only, and global: the large view leads, the small ones
+        // take whatever it just became.
+        if (e.code === "Space" || e.key === " ") setAllOrbiting(!orbit.orbiting())
       }}
     >
-      <d-texture src={scene.texture} />
+      <d-texture src={scene.texture} {...panels().main} {...input[0]} />
+      <d-texture src={topView.texture} {...panels().top} {...input[1]} />
+      <d-texture src={bottomView.texture} {...panels().bottom} {...input[2]} />
       <view
         flex={1}
+        width={panels().main.w}
+        // Decoration only: it covers the whole left panel, so without this a
+        // drag anywhere over the title or the hint would hit the overlay and
+        // never reach the texture leaf behind it.
+        pointerEvents="none"
         justifyContent="space-between"
         padding={28}
         paddingTop={safeArea().top + 28}
@@ -581,20 +760,18 @@ function App() {
           </text>
           <text color="#a9bcd6" fontSize={16} fontWeight={600}>
             {`(${KNOT_P},${KNOT_Q}) torus knot - ${triangles.toLocaleString()} triangles - ${
-              casters() > 0
-                ? `${casters()} shadow map${casters() === 1 ? "" : "s"} + one pass`
-                : "one GPU pass"
-            }`}
+              casters() > 0 ? `${casters()} shadow map${casters() === 1 ? "" : "s"} - ` : ""
+            }3 views of one scene`}
           </text>
         </view>
           <text color="#a9bcd6" fontSize={16} fontWeight={600}>
           {orbit.orbiting()
             ? capabilities.touch
-              ? "drag to orbit - pinch to zoom - tap to pause"
-              : "drag to orbit - wheel to zoom - click or space to pause"
+              ? "drag a panel to orbit it - pinch to zoom - tap one to pause it"
+              : "drag a panel to orbit it - wheel to zoom - click one to pause it, space for all"
             : capabilities.touch
-              ? "orbit paused - tap resumes"
-              : "orbit paused - click or space resumes"}
+              ? "paused - tap a panel to resume it"
+              : "paused - click a panel to resume it, space for all"}
         </text>
       </view>
     </window>
@@ -608,15 +785,28 @@ function App() {
 // sequence sees the parked pose. flush() applies the orbiting signal write
 // before the command returns its result.
 registerDebug("camera", (args?: Record<string, unknown>) => {
-  if (typeof args?.distance === "number") zoomTarget = null
-  orbit.set({
+  // Which panel to park: "top" or "bottom" for the right-hand pair, the
+  // large one otherwise. A pose is always one panel's; `orbiting` follows the
+  // app's own split - named panel, that panel alone (a click), no panel, all
+  // three (space). A parked distance also drops that panel's pending wheel
+  // glide, which would otherwise slide it straight back off.
+  let panel = args?.panel === "top" || args?.panel === "bottom" ? args.panel : "main"
+  let cam = panel === "top" ? topOrbit : panel === "bottom" ? bottomOrbit : orbit
+  if (typeof args?.distance === "number") {
+    let entry = cameras.find(p => p.cam === cam)
+    if (entry !== undefined) entry.zoom = null
+  }
+  if (typeof args?.orbiting === "boolean") {
+    if (args.panel === undefined) setAllOrbiting(args.orbiting)
+    else cam.set({ orbiting: args.orbiting })
+  }
+  cam.set({
     azimuth: typeof args?.azimuth === "number" ? args.azimuth : undefined,
     elevation: typeof args?.elevation === "number" ? args.elevation : undefined,
     distance: typeof args?.distance === "number" ? args.distance : undefined,
-    orbiting: typeof args?.orbiting === "boolean" ? args.orbiting : undefined,
   })
   flush()
-  return { ...orbit.pose(), orbiting: orbit.orbiting() }
+  return { panel, ...cam.pose(), orbiting: cam.orbiting() }
 })
 
 registerDebug("vertexLayout", () => ({ floatsPerVertex: STANDARD_FLOATS }))

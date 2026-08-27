@@ -155,8 +155,11 @@ Camera control: `createOrbitCamera(scene, { target?, azimuth?, elevation?,
 distance?, min/maxDistance?, min/maxElevation?, orbitSpeed?, rotateSpeed?,
 zoomSpeed?, zoomAnchor?, rotateAnchor?, panSpeed?, viewport?, clampTarget? })`
 - drag-to-rotate, pinch- and wheel-to-zoom, two-finger pan, optional
-auto-orbit. Input runs on core's `createTransform` recognizer, so drag and
-pinch arbitrate in the app-wide gesture arena (a viewport inside a scroller
+auto-orbit. The first argument is anything with the scene's `setCamera`: a
+Scene, or a View to drive one view's camera independently (one orbit per
+view, each handed the handlers of its own viewport element). Input runs on
+core's `createTransform` recognizer, so drag and pinch arbitrate in the
+app-wide gesture arena (a viewport inside a scroller
 does not double-handle) and rotation starts after the recognizer's slop;
 `zoomSpeed` weights both wheel and pinch. Two-finger translation pans (the
 scene tracks the fingers 1:1 at target depth, weighted by `panSpeed`) when
