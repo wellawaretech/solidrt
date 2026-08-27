@@ -29,16 +29,17 @@ use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{mpsc, Arc};
 
-use capture::flip_for_fbo;
 use crate::backend::{FrameOutput, GlBinding};
 use crate::gl;
 use crate::gpu::{
-  release_buffer, release_pipeline, release_program, validate_params, validate_texture_bindings, BufferIds, DepthStorage, DrawSpec,
-  AttributeTable, EntryBuffers, GpuBuffer, GpuBufferInfo, GpuLimits, GpuPipelineInfo, GpuProgramInfo, GpuRenderPipelineInfo,
-  GpuResources, GpuTextureInfo, GpuWindowShaderInfo, ParamValue, PassInput, PassTimer, PipelineDesc, Timed, PipelineSpec,
-  RenderPipeline, ShaderProgram, ShaderTexture, TargetSpec, TextureBinding, UniformTable, WindowShader,
+  release_buffer, release_pipeline, release_program, validate_params, validate_texture_bindings, AttributeTable,
+  BufferIds, DepthStorage, DrawSpec, EntryBuffers, GpuBuffer, GpuBufferInfo, GpuLimits, GpuPipelineInfo,
+  GpuProgramInfo, GpuRenderPipelineInfo, GpuResources, GpuTextureInfo, GpuWindowShaderInfo, ParamValue, PassInput,
+  PassTimer, PipelineDesc, PipelineSpec, RenderPipeline, ShaderProgram, ShaderTexture, TargetSpec, TextureBinding,
+  Timed, UniformTable, WindowShader,
 };
 use crate::gpu::{GpuTexture, SamplerCache, SamplerState, TextureFormat};
+use capture::flip_for_fbo;
 
 /// Counters shared between the raster thread, the frame loop, and the UI
 /// thread's Context, one allocation for all of them. Diagnostics (get_stats)
@@ -482,11 +483,8 @@ impl RasterState {
         Err(_) => break,
       };
       let batch: Vec<RasterCmd> = std::iter::once(first).chain(rx.try_iter()).collect();
-      let last_frame = if self.capture_frames {
-        None
-      } else {
-        batch.iter().rposition(|cmd| matches!(cmd, RasterCmd::Frame { .. }))
-      };
+      let last_frame =
+        if self.capture_frames { None } else { batch.iter().rposition(|cmd| matches!(cmd, RasterCmd::Frame { .. })) };
       for (i, cmd) in batch.into_iter().enumerate() {
         // Any command that can change what a frame samples (texture uploads,
         // target renders, program changes, ...) invalidates the clean-tree
@@ -555,7 +553,17 @@ impl RasterState {
               }
             }
           }
-          RasterCmd::CreateShaderTexture { id, width, height, fragment_src, params, textures, sampler, label, reply: tx } => {
+          RasterCmd::CreateShaderTexture {
+            id,
+            width,
+            height,
+            fragment_src,
+            params,
+            textures,
+            sampler,
+            label,
+            reply: tx,
+          } => {
             reply(tx, self.create_shader_texture(id, width, height, &fragment_src, &params, textures, sampler, label));
           }
           RasterCmd::CreatePipelineTexture { id, spec, reply: tx } => {
@@ -710,7 +718,14 @@ impl RasterState {
               let label = Some("snapshot".to_string());
               self.textures.insert(
                 id,
-                GpuTexture { gl_texture, width, height, sampler: SamplerState::default(), format: TextureFormat::Rgba8, label },
+                GpuTexture {
+                  gl_texture,
+                  width,
+                  height,
+                  sampler: SamplerState::default(),
+                  format: TextureFormat::Rgba8,
+                  label,
+                },
               );
               self.dirty.insert(id);
             }
@@ -1024,7 +1039,14 @@ impl RasterState {
       }
       let layer = state.layer.as_ref().expect("layer allocated above");
 
-      gl::render_display_list_to_layer(&self.gl, &mut self.impeller_ctx, &mut self.offscreen_rig, &flipped, size, layer.fbo)?;
+      gl::render_display_list_to_layer(
+        &self.gl,
+        &mut self.impeller_ctx,
+        &mut self.offscreen_rig,
+        &flipped,
+        size,
+        layer.fbo,
+      )?;
       self.content_dirty = false;
     }
     let layer = state.layer.as_ref().expect("resolved or retained above");
@@ -1112,9 +1134,14 @@ impl RasterState {
       }
       let layer = ov.layer.as_ref().expect("layer ensured above");
       let size = ISize::new(width as i64, height as i64);
-      if let Err(e) =
-        gl::render_display_list_to_layer(&self.gl, &mut self.impeller_ctx, &mut self.offscreen_rig, &ov.decl.dl, size, layer.fbo)
-      {
+      if let Err(e) = gl::render_display_list_to_layer(
+        &self.gl,
+        &mut self.impeller_ctx,
+        &mut self.offscreen_rig,
+        &ov.decl.dl,
+        size,
+        layer.fbo,
+      ) {
         log::warn!("[alloy] stats overlay rasterize failed: {e}");
         return;
       }
@@ -1629,8 +1656,11 @@ impl RasterState {
   /// side validated everything against its mirrors; a failure here means the
   /// mirrors diverged.
   fn add_draw(&mut self, target: u64, draw: u64, entry: DrawSpec, before: Option<u64>) -> Result<(), String> {
-    let pipeline =
-      self.render_pipelines.get(&entry.pipeline).ok_or_else(|| format!("pipeline {} not found", entry.pipeline))?.clone();
+    let pipeline = self
+      .render_pipelines
+      .get(&entry.pipeline)
+      .ok_or_else(|| format!("pipeline {} not found", entry.pipeline))?
+      .clone();
     let buffers = resolve_entry_buffers(&self.buffers, entry.buffer_ids())?;
     let shader = self.shaders.get_mut(&target).ok_or_else(|| format!("shader texture {target} not found"))?;
     shader.add_entry(
@@ -1894,11 +1924,8 @@ impl RasterState {
       .collect();
     render_pipelines.sort_by_key(|p| p.id);
 
-    let mut programs: Vec<GpuProgramInfo> = self
-      .programs
-      .iter()
-      .map(|(id, p)| GpuProgramInfo { id: *id, label: p.label().map(str::to_string) })
-      .collect();
+    let mut programs: Vec<GpuProgramInfo> =
+      self.programs.iter().map(|(id, p)| GpuProgramInfo { id: *id, label: p.label().map(str::to_string) }).collect();
     programs.sort_by_key(|p| p.id);
 
     let window_shader = self.window_shader.as_ref().map(|state| GpuWindowShaderInfo {
@@ -2003,7 +2030,9 @@ fn resolve_binding_list(
   bindings
     .iter()
     .filter_map(|b| {
-      textures.get(&b.id).map(|gpu| (b.name.clone(), gpu.gl_texture, Some(samplers.get(gpu.sampler.overridden(&b.sampler)))))
+      textures
+        .get(&b.id)
+        .map(|gpu| (b.name.clone(), gpu.gl_texture, Some(samplers.get(gpu.sampler.overridden(&b.sampler)))))
     })
     .collect()
 }

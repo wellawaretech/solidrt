@@ -65,7 +65,14 @@ fn down_freezes_routing_until_up() {
 
   let events = router.dispatch(
     &tree,
-    InputEvent::PointerDown { pointer_id: 0, pointer_type: PointerType::Mouse, button: 0, x: 50.0, y: 50.0, modifiers: m },
+    InputEvent::PointerDown {
+      pointer_id: 0,
+      pointer_type: PointerType::Mouse,
+      button: 0,
+      x: 50.0,
+      y: 50.0,
+      modifiers: m,
+    },
   );
   assert_eq!(events.len(), 1);
   assert!(matches!(events[0].kind, RoutedKind::Down { button: 0 }));
@@ -86,7 +93,14 @@ fn down_freezes_routing_until_up() {
   // The up routes along the frozen path too, and unfreezes.
   let events = router.dispatch(
     &tree,
-    InputEvent::PointerUp { pointer_id: 0, pointer_type: PointerType::Mouse, button: 0, x: 150.0, y: 50.0, modifiers: m },
+    InputEvent::PointerUp {
+      pointer_id: 0,
+      pointer_type: PointerType::Mouse,
+      button: 0,
+      x: 150.0,
+      y: 50.0,
+      modifiers: m,
+    },
   );
   assert_eq!(events.len(), 1);
   assert!(matches!(events[0].kind, RoutedKind::Up { button: 0 }));
@@ -148,7 +162,14 @@ fn touch_up_synthesizes_leave_and_clears_hover() {
 
   let events = router.dispatch(
     &tree,
-    InputEvent::PointerUp { pointer_id: 7, pointer_type: PointerType::Touch, button: 0, x: 50.0, y: 50.0, modifiers: m },
+    InputEvent::PointerUp {
+      pointer_id: 7,
+      pointer_type: PointerType::Touch,
+      button: 0,
+      x: 50.0,
+      y: 50.0,
+      modifiers: m,
+    },
   );
   assert_eq!(events.len(), 2);
   assert!(matches!(events[0].kind, RoutedKind::Up { .. }));
@@ -191,7 +212,14 @@ fn ancestor_interest_keeps_gesture_moves_flowing() {
 
   let events = router.dispatch(
     &tree,
-    InputEvent::PointerDown { pointer_id: 0, pointer_type: PointerType::Mouse, button: 0, x: 50.0, y: 50.0, modifiers: m },
+    InputEvent::PointerDown {
+      pointer_id: 0,
+      pointer_type: PointerType::Mouse,
+      button: 0,
+      x: 50.0,
+      y: 50.0,
+      modifiers: m,
+    },
   );
   assert_eq!(events.len(), 1, "down always delivers, even with no interest bits");
 
@@ -228,7 +256,14 @@ fn wheel_and_up_gating() {
   // Up always delivers, like down.
   let events = router.dispatch(
     &tree,
-    InputEvent::PointerUp { pointer_id: 0, pointer_type: PointerType::Mouse, button: 0, x: 50.0, y: 50.0, modifiers: m },
+    InputEvent::PointerUp {
+      pointer_id: 0,
+      pointer_type: PointerType::Mouse,
+      button: 0,
+      x: 50.0,
+      y: 50.0,
+      modifiers: m,
+    },
   );
   assert_eq!(events.len(), 1);
   assert!(matches!(events[0].kind, RoutedKind::Up { .. }));

@@ -15,7 +15,8 @@ use super::program::{release_pipeline, release_program, RenderPipeline, ShaderPr
 use super::resources::GpuDrawInfo;
 use super::spec::DepthStorage;
 use super::vocab::{
-  blend_name, cull_name, merge_bindings, validate_order, AttrFormat, DrawRange, IndexFormat, ParamValue, PipelineDesc, TextureBinding,
+  blend_name, cull_name, merge_bindings, validate_order, AttrFormat, DrawRange, IndexFormat, ParamValue, PipelineDesc,
+  TextureBinding,
 };
 use super::{prev_buffer, prev_framebuffer, prev_texture, prev_vertex_array};
 

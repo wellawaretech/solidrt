@@ -133,8 +133,7 @@ fn view_box_bounds_measured_in_design_space() {
 // layout plugin would; unit tests write the style directly.
 fn hide_overflow(tree: &mut RenderTree, id: u64) {
   let l = tree.node_mut(id).layout_data_mut();
-  l.style.overflow =
-    taffy::Point { x: taffy::style::Overflow::Hidden, y: taffy::style::Overflow::Hidden };
+  l.style.overflow = taffy::Point { x: taffy::style::Overflow::Hidden, y: taffy::style::Overflow::Hidden };
 }
 
 #[test]

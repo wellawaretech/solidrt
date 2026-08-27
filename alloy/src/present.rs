@@ -53,10 +53,7 @@ pub struct PresentClock {
 
 impl PresentClock {
   pub fn new() -> Self {
-    Self {
-      now_ms: Arc::new(AtomicU64::new(0.0f64.to_bits())),
-      hz: Arc::new(AtomicU64::new(DEFAULT_HZ.to_bits())),
-    }
+    Self { now_ms: Arc::new(AtomicU64::new(0.0f64.to_bits())), hz: Arc::new(AtomicU64::new(DEFAULT_HZ.to_bits())) }
   }
 
   // Update the refresh rate used to derive the per-present period. Ignored if

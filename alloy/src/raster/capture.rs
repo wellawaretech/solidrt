@@ -10,8 +10,8 @@ use impellers::{DisplayList, ISize, Texture};
 
 use super::RasterState;
 use crate::gl;
-use crate::gpu::{NodeShader, PassInput};
 use crate::gpu::SamplerState;
+use crate::gpu::{NodeShader, PassInput};
 
 impl RasterState {
   /// Rasterize a display list into a new adopted texture of the given pixel
@@ -130,11 +130,8 @@ impl RasterState {
     width: u32,
     height: u32,
   ) -> Result<Texture, String> {
-    let program = self
-      .programs
-      .get(&shader.program)
-      .ok_or_else(|| format!("program {} not found", shader.program))?
-      .clone();
+    let program =
+      self.programs.get(&shader.program).ok_or_else(|| format!("program {} not found", shader.program))?.clone();
     let source_name = gl_name(source)?;
 
     // Reused output: wrap the existing name in a scratch framebuffer for the

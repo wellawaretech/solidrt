@@ -133,13 +133,16 @@ fn sampler_state_parses_options_and_defaults() {
 // so a rebind without an override drops the previous override.
 #[test]
 fn sampler_override_composes_and_merges() {
-  use crate::gpu::{merge_bindings, TextureBinding};
   use crate::gpu::texture::{SamplerFilter, SamplerOverride, SamplerState, SamplerWrap};
+  use crate::gpu::{merge_bindings, TextureBinding};
 
   let own = SamplerState { filter: SamplerFilter::Nearest, wrap: SamplerWrap::Clamp, mipmap: true };
   let o = SamplerOverride::parse(Some("linear"), None).expect("filter-only override parses");
   assert_eq!(o, SamplerOverride { filter: Some(SamplerFilter::Linear), wrap: None });
-  assert_eq!(own.overridden(&o), SamplerState { filter: SamplerFilter::Linear, wrap: SamplerWrap::Clamp, mipmap: true });
+  assert_eq!(
+    own.overridden(&o),
+    SamplerState { filter: SamplerFilter::Linear, wrap: SamplerWrap::Clamp, mipmap: true }
+  );
   assert!(SamplerOverride::parse(None, None).expect("empty override parses").is_empty());
   assert_eq!(own.overridden(&SamplerOverride::default()), own);
   assert!(SamplerOverride::parse(Some("cubic"), None).expect_err("unknown filter rejected").contains("filter"));

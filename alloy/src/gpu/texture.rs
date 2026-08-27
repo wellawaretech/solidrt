@@ -31,7 +31,8 @@ impl SamplerState {
   /// filter without a comparison mode), clamped, no chain. Overrides on a
   /// binding may still ask for linear; they get an incomplete sample, so
   /// consumers filter in the shader (PCF).
-  pub const DEPTH: SamplerState = SamplerState { filter: SamplerFilter::Nearest, wrap: SamplerWrap::Clamp, mipmap: false };
+  pub const DEPTH: SamplerState =
+    SamplerState { filter: SamplerFilter::Nearest, wrap: SamplerWrap::Clamp, mipmap: false };
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]

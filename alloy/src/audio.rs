@@ -362,13 +362,8 @@ impl AudioRegistry {
   /// fire-and-forget sound. A track that is playing or paused is kept. Ramp
   /// entries are purged FIRST: the ramp thread must never see a dropped track.
   fn sweep_finished(&self) {
-    let finished: Vec<u64> = self
-      .tracks
-      .borrow()
-      .iter()
-      .filter(|(_, t)| !t.is_playing() && !t.is_paused())
-      .map(|(id, _)| *id)
-      .collect();
+    let finished: Vec<u64> =
+      self.tracks.borrow().iter().filter(|(_, t)| !t.is_playing() && !t.is_paused()).map(|(id, _)| *id).collect();
     if finished.is_empty() {
       return;
     }
@@ -484,7 +479,13 @@ impl crate::context::Context {
   /// `load_sound`. No decoding happens: `spec` metadata is all SDL needs to play
   /// the bytes directly. The data is copied, so `bytes` need not outlive the call.
   /// Non-finite f32 samples are rejected: they are synthesis bugs, not audio.
-  pub fn load_pcm_sound(&self, bytes: &[u8], sample_rate: i32, channels: i32, format: PcmFormat) -> Result<u64, String> {
+  pub fn load_pcm_sound(
+    &self,
+    bytes: &[u8],
+    sample_rate: i32,
+    channels: i32,
+    format: PcmFormat,
+  ) -> Result<u64, String> {
     if format == PcmFormat::F32 && !pcm_f32_all_finite(bytes) {
       return Err("samples must be finite (found NaN or infinity)".into());
     }
@@ -518,7 +519,14 @@ impl crate::context::Context {
   pub fn set_audio_gain(&self, id: u64, gain: f32, ramp_ms: f64) -> Result<(), String> {
     match self.audio.tracks.borrow().get(&id) {
       Some(track) if ramp_ms > 0.0 => {
-        self.audio.ramps.start(id, RampParam::Gain, track.raw() as usize, gain.max(0.0), ms_duration(ramp_ms), track.gain());
+        self.audio.ramps.start(
+          id,
+          RampParam::Gain,
+          track.raw() as usize,
+          gain.max(0.0),
+          ms_duration(ramp_ms),
+          track.gain(),
+        );
         Ok(())
       }
       Some(track) => {
@@ -553,7 +561,14 @@ impl crate::context::Context {
   pub fn set_audio_rate(&self, id: u64, rate: f32, ramp_ms: f64) -> Result<(), String> {
     match self.audio.tracks.borrow().get(&id) {
       Some(track) if ramp_ms > 0.0 => {
-        self.audio.ramps.start(id, RampParam::Rate, track.raw() as usize, clamp_rate(rate), ms_duration(ramp_ms), track.frequency_ratio());
+        self.audio.ramps.start(
+          id,
+          RampParam::Rate,
+          track.raw() as usize,
+          clamp_rate(rate),
+          ms_duration(ramp_ms),
+          track.frequency_ratio(),
+        );
         Ok(())
       }
       Some(track) => {
@@ -571,7 +586,14 @@ impl crate::context::Context {
   pub fn set_master_gain(&self, gain: f32, ramp_ms: f64) -> Result<(), String> {
     let mixer = self.audio.mixer()?;
     if ramp_ms > 0.0 {
-      self.audio.ramps.start(MASTER, RampParam::Gain, mixer.raw() as usize, gain.max(0.0), ms_duration(ramp_ms), mixer.gain());
+      self.audio.ramps.start(
+        MASTER,
+        RampParam::Gain,
+        mixer.raw() as usize,
+        gain.max(0.0),
+        ms_duration(ramp_ms),
+        mixer.gain(),
+      );
       Ok(())
     } else {
       self.audio.ramps.cancel(MASTER, RampParam::Gain);

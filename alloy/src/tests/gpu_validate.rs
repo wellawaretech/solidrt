@@ -2,7 +2,8 @@ use std::collections::HashMap;
 
 use crate::gpu::{
   resolve_draw_range, validate_draw_range, validate_params, validate_texture_bindings, BufferIds, BufferUpdate,
-  DrawBounds, DrawRange, DrawUpdate, GpuLimits, IndexFormat, ParamValue, TextureBinding, UniformKind, UniformSlot, UniformTable,
+  DrawBounds, DrawRange, DrawUpdate, GpuLimits, IndexFormat, ParamValue, TextureBinding, UniformKind, UniformSlot,
+  UniformTable,
 };
 
 fn table(entries: &[(&str, UniformKind)]) -> UniformTable {
@@ -138,7 +139,8 @@ fn draw_range_past_buffer_end_errors() {
   let err = validate_draw_range(range(0, 101, 1), vbounds(20, 2000)).expect_err("one vertex past the end must error");
   assert!(err.contains("0..101") && err.contains("2020 bytes") && err.contains("100 vertices"), "{err}");
   // first shifts the fetch window even when the count alone would fit.
-  let err = validate_draw_range(range(60, 41, 1), vbounds(20, 2000)).expect_err("first + count past the end must error");
+  let err =
+    validate_draw_range(range(60, 41, 1), vbounds(20, 2000)).expect_err("first + count past the end must error");
   assert!(err.contains("60..101"), "{err}");
 }
 
@@ -168,7 +170,8 @@ fn resolve_derives_whole_buffer_and_tail() {
 fn resolve_rejects_bad_ranges() {
   let err = resolve_draw_range(range(101, -1, 1), vbounds(20, 2000)).expect_err("first past the end must error");
   assert!(err.contains("past the end") && err.contains("100 vertices"), "{err}");
-  let err = resolve_draw_range(range(0, 101, 1), vbounds(20, 2000)).expect_err("explicit count past the end must error");
+  let err =
+    resolve_draw_range(range(0, 101, 1), vbounds(20, 2000)).expect_err("explicit count past the end must error");
   assert!(err.contains("2020 bytes"), "{err}");
 }
 
@@ -196,7 +199,8 @@ fn draw_update_merges_present_fields() {
   let update = DrawUpdate { vertex_count: Some(25), ..DrawUpdate::default() };
   assert_eq!(current.merged(update, false), Ok(range(10, 25, 30)));
   assert_eq!(current.merged(DrawUpdate::default(), false), Ok(current));
-  let all = DrawUpdate { first_vertex: Some(1), vertex_count: Some(2), instance_count: Some(3), ..DrawUpdate::default() };
+  let all =
+    DrawUpdate { first_vertex: Some(1), vertex_count: Some(2), instance_count: Some(3), ..DrawUpdate::default() };
   assert_eq!(current.merged(all, false), Ok(range(1, 2, 3)));
 }
 
@@ -300,7 +304,12 @@ void main() {}
 fn buffer_swap_replaces_filled_roles() {
   let ids = BufferIds { buffer: 1, index: Some((2, IndexFormat::U16)), instance_buffers: [3, 0, 0, 0] };
   let next = ids
-    .merged(BufferUpdate { buffer: None, index: Some((7, IndexFormat::U32)), instance_buffer: Some(9), ..Default::default() })
+    .merged(BufferUpdate {
+      buffer: None,
+      index: Some((7, IndexFormat::U32)),
+      instance_buffer: Some(9),
+      ..Default::default()
+    })
     .expect("swap filled roles");
   assert_eq!(next, BufferIds { buffer: 1, index: Some((7, IndexFormat::U32)), instance_buffers: [9, 0, 0, 0] });
   assert!(next.reads(9) && next.reads(7) && !next.reads(3) && !next.reads(0));
@@ -309,11 +318,11 @@ fn buffer_swap_replaces_filled_roles() {
 #[test]
 fn buffer_swap_rejects_new_roles_and_zero_ids() {
   let plain = BufferIds { buffer: 1, index: None, instance_buffers: [0; 4] };
-  let err = plain.merged(BufferUpdate { instance_buffer: Some(5), ..Default::default() }).expect_err("no instance role");
+  let err =
+    plain.merged(BufferUpdate { instance_buffer: Some(5), ..Default::default() }).expect_err("no instance role");
   assert!(err.contains("instanceAttributes"), "{err}");
-  let err = plain
-    .merged(BufferUpdate { index: Some((5, IndexFormat::U16)), ..Default::default() })
-    .expect_err("not indexed");
+  let err =
+    plain.merged(BufferUpdate { index: Some((5, IndexFormat::U16)), ..Default::default() }).expect_err("not indexed");
   assert!(err.contains("not indexed"), "{err}");
   let err = plain.merged(BufferUpdate { buffer: Some(0), ..Default::default() }).expect_err("zero id");
   assert!(err.contains("buffer id"), "{err}");

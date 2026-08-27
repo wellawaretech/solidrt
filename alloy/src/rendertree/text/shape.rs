@@ -6,8 +6,8 @@ use crate::impellers::{FontStyle, FontWeight, Size, TextAlignment};
 use crate::rendertree::text::layout::{self, Align, Layout, LineCursor, LineExtent, Run, RunMetrics, Wrap};
 use crate::rendertree::text::CaretStop;
 use crate::rendertree::text::RunStyle;
-use std::rc::Rc;
 use crate::rendertree::{PaintState, PlatformContext};
+use std::rc::Rc;
 
 // Snapshot of every input that feeds paragraph shaping; the cache is valid
 // only while the owning Text still matches it.

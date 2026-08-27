@@ -94,8 +94,8 @@ const RAW_BUTTONS: [&str; 17] = [
 
 // Overflow names for raw button indices past the standard layout.
 const RAW_EXTRA_BUTTONS: [&str; 15] = [
-  "button17", "button18", "button19", "button20", "button21", "button22", "button23", "button24",
-  "button25", "button26", "button27", "button28", "button29", "button30", "button31",
+  "button17", "button18", "button19", "button20", "button21", "button22", "button23", "button24", "button25",
+  "button26", "button27", "button28", "button29", "button30", "button31",
 ];
 
 fn raw_button_name(index: u32) -> Option<&'static str> {
@@ -103,8 +103,7 @@ fn raw_button_name(index: u32) -> Option<&'static str> {
   RAW_BUTTONS.get(i).or_else(|| RAW_EXTRA_BUTTONS.get(i - RAW_BUTTONS.len())).copied()
 }
 
-const RAW_AXES: [&str; 8] =
-  ["leftX", "leftY", "rightX", "rightY", "axis4", "axis5", "axis6", "axis7"];
+const RAW_AXES: [&str; 8] = ["leftX", "leftY", "rightX", "rightY", "axis4", "axis5", "axis6", "axis7"];
 
 // Retro sticks and arcade adapters often report their d-pad as a hat rather
 // than buttons; fold hat 0 into the dpad names so consumers see one shape.

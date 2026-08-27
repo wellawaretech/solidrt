@@ -41,17 +41,13 @@ pub fn fit_rects(fit: TextureFit, src: Rect, dst: Rect) -> (Rect, Rect) {
   // the source itself (the axis that fits entirely keeps its full extent).
   let vw = (dw / scale).min(sw);
   let vh = (dh / scale).min(sh);
-  let src_out = Rect::new(
-    Point::new(src.origin.x + (sw - vw) / 2.0, src.origin.y + (sh - vh) / 2.0),
-    Size::new(vw, vh),
-  );
+  let src_out =
+    Rect::new(Point::new(src.origin.x + (sw - vw) / 2.0, src.origin.y + (sh - vh) / 2.0), Size::new(vw, vh));
   // Destination extent of that portion, centered; never larger than the box.
   let ow = (vw * scale).min(dw);
   let oh = (vh * scale).min(dh);
-  let dst_out = Rect::new(
-    Point::new(dst.origin.x + (dw - ow) / 2.0, dst.origin.y + (dh - oh) / 2.0),
-    Size::new(ow, oh),
-  );
+  let dst_out =
+    Rect::new(Point::new(dst.origin.x + (dw - ow) / 2.0, dst.origin.y + (dh - oh) / 2.0), Size::new(ow, oh));
   (src_out, dst_out)
 }
 

@@ -58,9 +58,15 @@ fn eps_for(d: f32) -> f32 {
 /// Interpolation state of a position/scale track: three independent lanes.
 #[derive(Clone, Copy, Debug)]
 pub(super) enum LinearState {
-  Tween { from: [f32; 3], start_ms: f64 },
+  Tween {
+    from: [f32; 3],
+    start_ms: f64,
+  },
   /// Position and velocity (units/s), integrated each frame.
-  Spring { pos: [f32; 3], vel: [f32; 3] },
+  Spring {
+    pos: [f32; 3],
+    vel: [f32; 3],
+  },
 }
 
 pub(super) struct LinearTrack {
@@ -219,8 +225,7 @@ impl NodeTransitions {
       }
       t.to = to;
       t.eps = eps_for(d);
-      let keep_spring_state =
-        matches!((&t.state, spec), (LinearState::Spring { .. }, TransitionSpec::Spring { .. }));
+      let keep_spring_state = matches!((&t.state, spec), (LinearState::Spring { .. }, TransitionSpec::Spring { .. }));
       t.spec = spec;
       if !keep_spring_state {
         t.state = match spec {
@@ -260,8 +265,7 @@ impl NodeTransitions {
       };
       t.to = near_hemisphere(to, anchor);
       t.eps = eps_for(angle_between(anchor, to));
-      let keep_spring_state =
-        matches!((&t.state, spec), (RotationState::Spring { .. }, TransitionSpec::Spring { .. }));
+      let keep_spring_state = matches!((&t.state, spec), (RotationState::Spring { .. }, TransitionSpec::Spring { .. }));
       t.spec = spec;
       if !keep_spring_state {
         t.state = match spec {
@@ -391,10 +395,5 @@ fn slerp(a: [f32; 4], b: [f32; 4], t: f32) -> [f32; 4] {
   let sin_theta = theta.sin();
   let wa = ((1.0 - t) * theta).sin() / sin_theta;
   let wb = (t * theta).sin() / sin_theta;
-  [
-    a[0] * wa + b[0] * wb,
-    a[1] * wa + b[1] * wb,
-    a[2] * wa + b[2] * wb,
-    a[3] * wa + b[3] * wb,
-  ]
+  [a[0] * wa + b[0] * wb, a[1] * wa + b[1] * wb, a[2] * wa + b[2] * wb, a[3] * wa + b[3] * wb]
 }

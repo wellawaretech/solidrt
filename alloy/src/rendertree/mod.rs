@@ -13,14 +13,14 @@ mod tree;
 
 pub use frame::{Commit, FrameBuilder, FrameDriver, PendingFrame};
 pub use hit::{EventInterest, HitConfig, PointerEvents};
-pub use router::{InputEvent, PointerKey, PointerRouter, RoutedKind, RoutedPointer};
 pub use kinds::{
   fit_rects, Gradient, GradientStop, GradientUnits, Line, OriginCoord, Oval, PaintState, Path, Rectangle, Texture,
   TextureFit, View, Window,
 };
-pub use text::{OverflowWrap, RunOverrides, RunStyle, Span, Text, TextOverflow, TextRun, ATOM_CHAR};
 pub use layout::{LayoutCache, LayoutContext, LayoutData};
 pub use platform::{FontPayload, PlatformContext};
+pub use router::{InputEvent, PointerKey, PointerRouter, RoutedKind, RoutedPointer};
+pub use text::{OverflowWrap, RunOverrides, RunStyle, Span, Text, TextOverflow, TextRun, ATOM_CHAR};
 pub use transitions::{AnimProp, AnimValue, Curve, TransitionConfig, TransitionEntry, TransitionSpec};
 pub use tree::{NodeMatch, NodeSnapshot, RenderTree};
 

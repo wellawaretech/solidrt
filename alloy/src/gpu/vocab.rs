@@ -536,7 +536,6 @@ fn warn_inactive(name: &str) {
   log::warn!("[shader] uniform '{name}' is declared but inactive (optimized out); the write is ignored");
 }
 
-
 /// One sampler2D input of a pass: the uniform name, the source texture id,
 /// and an optional per-binding sampling override (see `SamplerOverride`).
 /// The binding-list merge rule is by name (new names append, existing names
@@ -722,8 +721,7 @@ impl BufferIds {
 
   /// The nonzero ids, for "which targets read this buffer" bookkeeping.
   pub fn reads(&self, id: u64) -> bool {
-    id != 0
-      && (self.buffer == id || self.instance_buffers.contains(&id) || self.index.is_some_and(|(i, _)| i == id))
+    id != 0 && (self.buffer == id || self.instance_buffers.contains(&id) || self.index.is_some_and(|(i, _)| i == id))
   }
 }
 

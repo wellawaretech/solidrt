@@ -312,9 +312,10 @@ impl ShaderProgram {
   /// UI-side mirror and call-site validation (see `vocab::UniformTable`),
   /// plus an `Inactive` slot per declared-but-optimized-out name.
   pub fn uniform_table(&self) -> super::vocab::UniformTable {
-    let inactive = self.inactive.iter().map(|name| {
-      (name.clone(), super::vocab::UniformSlot { kind: super::vocab::UniformKind::Inactive, count: 1 })
-    });
+    let inactive = self
+      .inactive
+      .iter()
+      .map(|name| (name.clone(), super::vocab::UniformSlot { kind: super::vocab::UniformKind::Inactive, count: 1 }));
     self.uniforms.iter().map(|(name, (_, slot))| (name.clone(), *slot)).chain(inactive).collect()
   }
 
@@ -384,8 +385,12 @@ fn reflect_attributes(gl: &glow::Context, program: glow::Program) -> Result<supe
         if a.name.starts_with("gl_") {
           continue;
         }
-        let format = super::vocab::AttrFormat::from_gl(a.atype)
-          .ok_or_else(|| format!("vertex attribute '{}' has type {:#x}, which no pipeline layout can feed (use float, vec2, vec3 or vec4)", a.name, a.atype))?;
+        let format = super::vocab::AttrFormat::from_gl(a.atype).ok_or_else(|| {
+          format!(
+            "vertex attribute '{}' has type {:#x}, which no pipeline layout can feed (use float, vec2, vec3 or vec4)",
+            a.name, a.atype
+          )
+        })?;
         attributes.push((a.name, format));
       }
     }

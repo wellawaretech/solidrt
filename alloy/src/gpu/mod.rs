@@ -21,7 +21,9 @@ pub use buffer::{release_buffer, GpuBuffer};
 pub use lease::WriteLeases;
 pub use limits::GpuLimits;
 pub use pass::{composite_program_over_window, render_program_to_fbo, render_program_to_window, PassInput};
-pub use program::{compile_stage, delete_stage, CompiledStage, release_pipeline, release_program, RenderPipeline, ShaderProgram};
+pub use program::{
+  compile_stage, delete_stage, release_pipeline, release_program, CompiledStage, RenderPipeline, ShaderProgram,
+};
 pub use resources::{
   GpuBufferInfo, GpuPipelineInfo, GpuProgramInfo, GpuRenderPipelineInfo, GpuResources, GpuTextureInfo,
   GpuWindowShaderInfo,
@@ -29,19 +31,19 @@ pub use resources::{
 pub use spec::{DepthStorage, DrawSpec, NodeShader, PipelineSpec, TargetSpec, WindowShader};
 pub use target::{create_layer_target, EntryBuffers, ShaderTexture};
 pub use texture::{
-  generate_mipmap, GpuTexture, SamplerCache, SamplerFilter, SamplerOverride, SamplerState, TextureEntry,
-  TextureFormat, TextureRegistry,
+  generate_mipmap, GpuTexture, SamplerCache, SamplerFilter, SamplerOverride, SamplerState, TextureEntry, TextureFormat,
+  TextureRegistry,
 };
 pub use timing::{PassTimer, Timed};
-pub use vocab::{
-  blend_name, cull_name, instance_strides, parse_blend, parse_cull, resolve_draw_range, validate_draw_range,
-  validate_instance_slots, validate_order,
-  validate_param_if_declared, validate_params, validate_texture_bindings, vertex_stride, TextureBinding, AttrFormat, AttributeTable, BlendMode,
-  BufferIds, BufferUpdate, CullMode, DepthState, DrawBounds, DrawRange, DrawUpdate, IndexFormat, ParamValue, PipelineDesc, ShaderStage,
-  Topology, UniformKind, UniformSlot, UniformTable, MAX_INSTANCE_SLOTS,
-};
 #[cfg(test)]
 pub use vocab::merge_bindings;
+pub use vocab::{
+  blend_name, cull_name, instance_strides, parse_blend, parse_cull, resolve_draw_range, validate_draw_range,
+  validate_instance_slots, validate_order, validate_param_if_declared, validate_params, validate_texture_bindings,
+  vertex_stride, AttrFormat, AttributeTable, BlendMode, BufferIds, BufferUpdate, CullMode, DepthState, DrawBounds,
+  DrawRange, DrawUpdate, IndexFormat, ParamValue, PipelineDesc, ShaderStage, TextureBinding, Topology, UniformKind,
+  UniformSlot, UniformTable, MAX_INSTANCE_SLOTS,
+};
 
 use std::num::NonZeroU32;
 

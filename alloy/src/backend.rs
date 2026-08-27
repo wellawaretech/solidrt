@@ -64,10 +64,7 @@ pub enum DisplayContext {
   /// Headless playback: an EGL pbuffer context created without SDL's video
   /// subsystem. Shared with the raster thread, which binds and draws to it;
   /// FBO 0 is the pbuffer, so capture reads back exactly as from a window.
-  EglPbuffer {
-    egl: Arc<crate::egl_headless::HeadlessEgl>,
-    surface_size: Arc<AtomicU64>,
-  },
+  EglPbuffer { egl: Arc<crate::egl_headless::HeadlessEgl>, surface_size: Arc<AtomicU64> },
 }
 
 impl DisplayContext {

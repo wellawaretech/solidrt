@@ -288,8 +288,7 @@ impl Text {
     if self.paragraph_engine {
       return None;
     }
-    let origin =
-      Point::new(content.origin.x + self.x.unwrap_or(0.0), content.origin.y + self.y.unwrap_or(0.0));
+    let origin = Point::new(content.origin.x + self.x.unwrap_or(0.0), content.origin.y + self.y.unwrap_or(0.0));
     let width = self.w.unwrap_or(content.size.width);
     let mut owned = self.owned.borrow_mut();
     self.prepare_owned(platform, &mut owned);

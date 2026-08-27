@@ -1,6 +1,6 @@
+pub mod color;
 mod gl;
 pub mod sdl_utils;
-pub mod color;
 
 mod app;
 pub mod audio;
@@ -24,9 +24,9 @@ mod present;
 mod raster;
 pub use raster::RasterCounters;
 pub mod rendertree;
-pub mod spatial;
 pub mod resample;
 mod script;
+pub mod spatial;
 mod threads;
 mod vsync;
 pub mod yuv;
@@ -40,15 +40,16 @@ pub use sdl3;
 pub use app::{setup, App};
 pub use backend::DisplayContext;
 pub use context::{CaptureDone, CaptureInfo, Context, StatsOverlay};
-pub use gpu::{
-  parse_blend, parse_cull, AttrFormat, BlendMode, BufferIds, BufferUpdate, CullMode, DepthState, DepthStorage, DrawBounds, DrawRange,
-  DrawSpec, DrawUpdate, GpuLimits, IndexFormat, ParamValue, PipelineDesc, NodeShader, PipelineSpec, ShaderStage, TargetSpec, TextureBinding, Topology,
-  UniformKind, UniformSlot, UniformTable, WindowShader, MAX_INSTANCE_SLOTS,
-};
 pub use event::{
   AlloyCommand, AlloyEvent, GamepadState, Modifiers, PointerType, TextCapitalization, TextInputOptions, TextInputType,
 };
-pub use vsync::FramePacing;
+pub use gpu::{
+  parse_blend, parse_cull, AttrFormat, BlendMode, BufferIds, BufferUpdate, CullMode, DepthState, DepthStorage,
+  DrawBounds, DrawRange, DrawSpec, DrawUpdate, GpuLimits, IndexFormat, NodeShader, ParamValue, PipelineDesc,
+  PipelineSpec, ShaderStage, TargetSpec, TextureBinding, Topology, UniformKind, UniformSlot, UniformTable,
+  WindowShader, MAX_INSTANCE_SLOTS,
+};
+pub use gpu::{GpuTexture, SamplerFilter, SamplerOverride, SamplerState, TextureEntry, TextureFormat, TextureRegistry};
 pub use input::InputState;
 pub use keymap::w3c_code_for_key;
 pub use logging::install_logger;
@@ -56,7 +57,7 @@ pub use mode::Mode;
 pub use playback::PlaybackConfig;
 pub use present::PresentClock;
 pub use script::{ScriptEvent, ScriptPlayer, ScriptedAction};
-pub use gpu::{GpuTexture, SamplerFilter, SamplerOverride, SamplerState, TextureEntry, TextureFormat, TextureRegistry};
+pub use vsync::FramePacing;
 pub use yuv::{YuvLayout, YuvMatrix, YuvRange};
 
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};

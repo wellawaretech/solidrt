@@ -32,6 +32,7 @@ fn odd_sizes_round_chroma_up() {
   assert_eq!((p[1].width, p[1].height), (3, 2));
   assert_eq!(frame_size(YuvLayout::Nv12, 5, 3), 5 * 3 + 3 * 2 * 2);
   let p = planes(YuvLayout::I420, 5, 3);
+  assert_eq!((p[1].width, p[1].height, p[2].width, p[2].height), (3, 2, 3, 2));
   assert_eq!(frame_size(YuvLayout::I420, 5, 3), 5 * 3 + 3 * 2 * 2);
 }
 

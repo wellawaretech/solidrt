@@ -7,8 +7,8 @@ use impellers::{DisplayList, Texture};
 use std::sync::mpsc;
 
 use crate::gpu::{
-  BufferIds, DepthStorage, DrawRange, DrawSpec, GpuLimits, GpuResources, NodeShader, ParamValue, PipelineDesc, PipelineSpec, ShaderStage,
-  TargetSpec, TextureBinding, UniformTable, WindowShader, AttributeTable,
+  AttributeTable, BufferIds, DepthStorage, DrawRange, DrawSpec, GpuLimits, GpuResources, NodeShader, ParamValue,
+  PipelineDesc, PipelineSpec, ShaderStage, TargetSpec, TextureBinding, UniformTable, WindowShader,
 };
 
 /// The adopted handles a draw target create or resize replies with: the
@@ -86,7 +86,13 @@ pub(crate) enum RasterCmd {
   /// stages remain usable for further links. Link errors reach JS via the
   /// reply; success carries the reflected uniform table for the UI-side
   /// validation mirror.
-  LinkProgram { id: u64, vertex: u64, fragment: u64, label: Option<String>, reply: mpsc::Sender<Result<(UniformTable, AttributeTable), String>> },
+  LinkProgram {
+    id: u64,
+    vertex: u64,
+    fragment: u64,
+    label: Option<String>,
+    reply: mpsc::Sender<Result<(UniformTable, AttributeTable), String>>,
+  },
   /// Delete a compiled stage. Programs linked from it are unaffected (a
   /// linked program keeps its own compiled copies).
   DestroyStage { id: u64 },

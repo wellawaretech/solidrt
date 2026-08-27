@@ -421,15 +421,14 @@ impl Spatial {
     let i = self.resolve(id)?;
     if let Some(sink) = &sink {
       let stride = sink.projection.floats();
-      let group = self
-        .instances
-        .entry(sink.buffer)
-        .or_insert_with(|| InstanceGroup { stride, values: Vec::new(), refs: 0, dirty: None });
+      let group = self.instances.entry(sink.buffer).or_insert_with(|| InstanceGroup {
+        stride,
+        values: Vec::new(),
+        refs: 0,
+        dirty: None,
+      });
       if group.stride != stride {
-        return Err(format!(
-          "instance buffer {} carries {}-float records, not {}",
-          sink.buffer, group.stride, stride
-        ));
+        return Err(format!("instance buffer {} carries {}-float records, not {}", sink.buffer, group.stride, stride));
       }
       let need = (sink.index as usize + 1) * stride as usize;
       if group.values.len() < need {

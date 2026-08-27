@@ -256,14 +256,13 @@ impl App {
     // resume; consumers tolerate the repeat (see AlloyEvent::Visibility).
     // The binding must outlive the loop: dropping an EventWatch removes it.
     let watch_event_tx = event_tx.clone();
-    let _event_watch = sdl_context
-      .event()
-      .expect("Failed to get SDL event subsystem")
-      .add_event_watch(move |event: sdl3::event::Event| {
+    let _event_watch = sdl_context.event().expect("Failed to get SDL event subsystem").add_event_watch(
+      move |event: sdl3::event::Event| {
         if matches!(event, sdl3::event::Event::AppDidEnterBackground { .. }) {
           watch_event_tx.send(AlloyEvent::Visibility { visible: false }).ok();
         }
-      });
+      },
+    );
 
     // Where a platform vsync backend exists (Android today), FrameRendered is
     // deferred to the display's vsync (see vsync.rs) so frame production

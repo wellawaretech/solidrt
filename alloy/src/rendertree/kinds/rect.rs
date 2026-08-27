@@ -40,12 +40,8 @@ impl Buildable for Rectangle {
 
     if let Some([tl, tr, br, bl]) = self.radius {
       let inner = |r: f32| Point::new((r - d).max(0.0), (r - d).max(0.0));
-      let radii = RoundingRadii {
-        top_left: inner(tl),
-        top_right: inner(tr),
-        bottom_right: inner(br),
-        bottom_left: inner(bl),
-      };
+      let radii =
+        RoundingRadii { top_left: inner(tl), top_right: inner(tr), bottom_right: inner(br), bottom_left: inner(bl) };
       builder.draw_rounded_rect(&path, &radii, &paint);
     } else {
       builder.draw_rect(&path, &paint);

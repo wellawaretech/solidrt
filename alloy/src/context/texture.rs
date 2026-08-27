@@ -167,7 +167,9 @@ impl Context {
       return Err(format!("texture {id} is a render target; resize it with setTargetSize"));
     }
     if let Some(owner) = self.depth_owner(id) {
-      return Err(format!("texture {id} is target {owner}'s depth texture; it resizes with the target (setTargetSize)"));
+      return Err(format!(
+        "texture {id} is target {owner}'s depth texture; it resizes with the target (setTargetSize)"
+      ));
     }
     // Sampling and format are properties of the id and survive the id-stable
     // resize, as does the label (None here = keep, applied raster-side).
@@ -313,7 +315,9 @@ impl Context {
     self.gpu_limits().check_texture_size(width, height)?;
     let handles = self.rpc(|reply| RasterCmd::ResizeShaderTexture { id, width, height, reply })??;
     let sampler = self.textures.get(id).map(|e| e.sampler()).unwrap_or_default();
-    self.textures.insert(id, TextureEntry { impeller: handles.color, width, height, sampler, format: TextureFormat::Rgba8 });
+    self
+      .textures
+      .insert(id, TextureEntry { impeller: handles.color, width, height, sampler, format: TextureFormat::Rgba8 });
     // A depth texture is re-registered at its own stable id with the fresh
     // name the resize allocated (the color rule, applied to depth).
     if let (Some(depth_id), Some(impeller)) = (self.depth_of(id), handles.depth) {
@@ -338,7 +342,9 @@ impl Context {
   /// mismatch, or src == dst.
   pub fn copy_texture(&self, src: u64, dst: u64) -> Result<(), String> {
     if let Some(owner) = self.depth_owner(src) {
-      return Err(format!("texture {src} is target {owner}'s depth texture: sampler-only, sample it from a pass instead"));
+      return Err(format!(
+        "texture {src} is target {owner}'s depth texture: sampler-only, sample it from a pass instead"
+      ));
     }
     let src_entry = self.textures.get(src).ok_or_else(|| format!("texture {src} not found"))?;
     let dst_entry = self.textures.get(dst).ok_or_else(|| format!("texture {dst} not found"))?;

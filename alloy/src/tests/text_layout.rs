@@ -8,7 +8,13 @@ fn full(width: f32) -> impl Fn(LineCursor) -> Vec<LineExtent> {
 }
 
 fn word(advance: f32, ink: f32) -> Run {
-  Run { metrics: RunMetrics { advance, ink_width: ink, ascent: 8.0, descent: 2.0 }, hard_break: false, glue: false, float: None, clear: None }
+  Run {
+    metrics: RunMetrics { advance, ink_width: ink, ascent: 8.0, descent: 2.0 },
+    hard_break: false,
+    glue: false,
+    float: None,
+    clear: None,
+  }
 }
 
 fn glued(advance: f32, ink: f32) -> Run {
@@ -281,7 +287,12 @@ fn floats_leave_the_flow_and_cut_the_lines_they_overlap() {
 
   // Two left floats on one line top sit beside each other; a line with no
   // room between them and a right float is skipped past the shorter one.
-  let runs = [floated(20.0, 20.0, Side::Left), floated(20.0, 10.0, Side::Left), floated(30.0, 10.0, Side::Right), word(12.0, 10.0)];
+  let runs = [
+    floated(20.0, 20.0, Side::Left),
+    floated(20.0, 10.0, Side::Left),
+    floated(30.0, 10.0, Side::Right),
+    word(12.0, 10.0),
+  ];
   let l = layout(&runs, &full(70.0), Align::Left, 0, None);
   assert_eq!(l.floats[1].x, 20.0);
   assert_eq!(l.floats[2].x, 40.0);

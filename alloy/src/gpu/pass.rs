@@ -105,7 +105,13 @@ fn apply_params(gl: &glow::Context, program: &ShaderProgram, params: &[(String, 
 /// name. The preambles declare iResolution as vec2; a raw source may declare
 /// it vec3 (a common convention in ported shaders), which gets the size with
 /// z = 1.
-fn apply_program(gl: &glow::Context, program: &ShaderProgram, width: u32, height: u32, params: &[(String, ParamValue)]) {
+fn apply_program(
+  gl: &glow::Context,
+  program: &ShaderProgram,
+  width: u32,
+  height: u32,
+  params: &[(String, ParamValue)],
+) {
   unsafe {
     gl.use_program(Some(program.program));
     match program.uniform("iResolution") {
@@ -144,18 +150,16 @@ fn bind_inputs(
   unsafe {
     for (unit, (name, tex, sampler)) in inputs.iter().enumerate() {
       if unit >= max_units {
-        log::warn!("[shader] sampler input '{name}' exceeds this device's texture unit limit ({max_units} per pass); skipped");
+        log::warn!(
+          "[shader] sampler input '{name}' exceeds this device's texture unit limit ({max_units} per pass); skipped"
+        );
         continue;
       }
       let Some((loc, _)) = program.uniform(name) else { continue };
       let unit = unit as u32;
       gl.active_texture(glow::TEXTURE0 + unit);
       if !saved.iter().any(|(u, _, _)| *u == unit) {
-        saved.push((
-          unit,
-          gl.get_parameter_i32(glow::TEXTURE_BINDING_2D),
-          gl.get_parameter_i32(glow::SAMPLER_BINDING),
-        ));
+        saved.push((unit, gl.get_parameter_i32(glow::TEXTURE_BINDING_2D), gl.get_parameter_i32(glow::SAMPLER_BINDING)));
       }
       gl.bind_texture(glow::TEXTURE_2D, Some(*tex));
       gl.bind_sampler(unit, *sampler);
@@ -179,7 +183,8 @@ pub fn render_program_to_window(
   textures: &[PassInput],
   vertex_count: i32,
 ) {
-  let draw = PassDraw::Fullscreen { program, params, textures, vertex_count, clear: Some([0.0, 0.0, 0.0, 1.0]), blend: false };
+  let draw =
+    PassDraw::Fullscreen { program, params, textures, vertex_count, clear: Some([0.0, 0.0, 0.0, 1.0]), blend: false };
   run_pass(gl, None, (0, 0), width, height, draw);
 }
 
@@ -418,14 +423,25 @@ pub(super) fn run_pass(
               if d.range.instance_count == 1 {
                 gl.draw_elements(d.desc.topology.gl(), d.range.vertex_count, fmt.gl(), offset);
               } else {
-                gl.draw_elements_instanced(d.desc.topology.gl(), d.range.vertex_count, fmt.gl(), offset, d.range.instance_count);
+                gl.draw_elements_instanced(
+                  d.desc.topology.gl(),
+                  d.range.vertex_count,
+                  fmt.gl(),
+                  offset,
+                  d.range.instance_count,
+                );
               }
             }
             None => {
               if d.range.instance_count == 1 {
                 gl.draw_arrays(d.desc.topology.gl(), d.range.first_vertex, d.range.vertex_count);
               } else {
-                gl.draw_arrays_instanced(d.desc.topology.gl(), d.range.first_vertex, d.range.vertex_count, d.range.instance_count);
+                gl.draw_arrays_instanced(
+                  d.desc.topology.gl(),
+                  d.range.first_vertex,
+                  d.range.vertex_count,
+                  d.range.instance_count,
+                );
               }
             }
           }

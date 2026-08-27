@@ -1,8 +1,8 @@
 use sdl3::sys::keyboard::{SDL_GetModState, SDL_HasKeyboard};
 use sdl3::sys::mouse::SDL_HasMouse;
+use sdl3::sys::pixels::SDL_PixelFormat;
 use sdl3::sys::power::{SDL_GetPowerInfo, SDL_PowerState};
 use sdl3::sys::rect::SDL_Rect;
-use sdl3::sys::pixels::SDL_PixelFormat;
 use sdl3::sys::surface::{SDL_CreateSurfaceFrom, SDL_DestroySurface};
 use sdl3::sys::video::{
   SDL_GetSystemTheme, SDL_GetWindowDisplayScale, SDL_GetWindowSafeArea, SDL_SetWindowIcon, SDL_SystemTheme,
@@ -131,12 +131,7 @@ pub fn start_text_input_with_options(window: &sdl3::video::Window, opts: &crate:
 // pixels into the surface's own representation on SetWindowIcon platforms and
 // the surface only borrows `rgba`, so it is created, applied and destroyed
 // within the call. Platforms without window icons (macOS) return Err.
-pub fn set_window_icon(
-  window: &sdl3::video::Window,
-  width: u32,
-  height: u32,
-  rgba: &[u8],
-) -> Result<(), String> {
+pub fn set_window_icon(window: &sdl3::video::Window, width: u32, height: u32, rgba: &[u8]) -> Result<(), String> {
   if rgba.len() != (width * height * 4) as usize {
     return Err(format!("icon pixel buffer is {} bytes, expected {}x{}x4", rgba.len(), width, height));
   }
@@ -384,8 +379,11 @@ pub fn audio_open_recording_stream(device: Option<u32>, sample_rate: u32) -> *mu
 /// device format and mixes all bound streams natively). The stream starts
 /// paused; destroying it also closes the device it opened.
 pub fn audio_open_playback_stream(sample_rate: u32, channels: u16) -> *mut SDL_AudioStream {
-  let spec =
-    SDL_AudioSpec { format: SDL_AUDIO_F32, channels: channels as std::ffi::c_int, freq: sample_rate as std::ffi::c_int };
+  let spec = SDL_AudioSpec {
+    format: SDL_AUDIO_F32,
+    channels: channels as std::ffi::c_int,
+    freq: sample_rate as std::ffi::c_int,
+  };
   unsafe { SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, None, std::ptr::null_mut()) }
 }
 
@@ -399,7 +397,9 @@ pub fn audio_stream_pause(stream: *mut SDL_AudioStream) -> bool {
 
 /// Queue interleaved f32 samples for playback (non-blocking; SDL buffers).
 pub fn audio_stream_put_f32(stream: *mut SDL_AudioStream, samples: &[f32]) -> bool {
-  unsafe { SDL_PutAudioStreamData(stream, samples.as_ptr() as *const std::ffi::c_void, (samples.len() * 4) as std::ffi::c_int) }
+  unsafe {
+    SDL_PutAudioStreamData(stream, samples.as_ptr() as *const std::ffi::c_void, (samples.len() * 4) as std::ffi::c_int)
+  }
 }
 
 /// Bytes queued on the stream's input side, not yet consumed by the device
@@ -462,14 +462,20 @@ pub fn frame_thread_priority(critical: bool) {
   }
   #[cfg(target_os = "macos")]
   unsafe {
-    let class = if critical { libc::qos_class_t::QOS_CLASS_USER_INTERACTIVE } else { libc::qos_class_t::QOS_CLASS_USER_INITIATED };
+    let class = if critical {
+      libc::qos_class_t::QOS_CLASS_USER_INTERACTIVE
+    } else {
+      libc::qos_class_t::QOS_CLASS_USER_INITIATED
+    };
     if libc::pthread_set_qos_class_self_np(class, 0) != 0 {
       log::debug!("[alloy] pthread_set_qos_class_self_np failed");
     }
   }
   #[cfg(target_os = "windows")]
   unsafe {
-    use windows_sys::Win32::System::Threading::{GetCurrentThread, SetThreadPriority, THREAD_PRIORITY_ABOVE_NORMAL, THREAD_PRIORITY_HIGHEST};
+    use windows_sys::Win32::System::Threading::{
+      GetCurrentThread, SetThreadPriority, THREAD_PRIORITY_ABOVE_NORMAL, THREAD_PRIORITY_HIGHEST,
+    };
     let priority = if critical { THREAD_PRIORITY_HIGHEST } else { THREAD_PRIORITY_ABOVE_NORMAL };
     if SetThreadPriority(GetCurrentThread(), priority) == 0 {
       log::debug!("[alloy] SetThreadPriority({priority}) failed");

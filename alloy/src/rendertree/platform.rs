@@ -19,10 +19,7 @@ pub struct FontPayload {
 // Build a context with `fonts` registered in order, plus the metrics table
 // read from the same bytes; `on_error` decides what a font that fails to
 // register costs (panic at startup, a warning mid-session).
-fn build_typography(
-  fonts: Vec<FontPayload>,
-  on_error: impl Fn(&str, &str),
-) -> (TypographyContext, FontMetricsTable) {
+fn build_typography(fonts: Vec<FontPayload>, on_error: impl Fn(&str, &str)) -> (TypographyContext, FontMetricsTable) {
   let mut typography = TypographyContext::default();
   let mut metrics = FontMetricsTable::default();
   for FontPayload { alias, bytes } in fonts {

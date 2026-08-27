@@ -148,11 +148,15 @@ pub enum AlloyEvent {
   // back. State transitions only, never damage (that is Exposed); platforms
   // may report the same transition through both the app and window paths, so
   // consumers must tolerate repeats of the same value.
-  Visibility { visible: bool },
+  Visibility {
+    visible: bool,
+  },
   // Relative mouse mode (pointer lock) state as applied by the loop: the
   // answer to SetPointerLock, and the hook for platform-initiated drops if
   // one ever surfaces. Sticky window fact downstream.
-  PointerLock { locked: bool },
+  PointerLock {
+    locked: bool,
+  },
   // The window surface needs a repaint without any visibility change: SDL
   // WINDOW_EXPOSED (damage, or a recreated swapchain surface whose contents
   // are undefined). Repaint trigger only; never surfaces to JS.
@@ -161,58 +165,124 @@ pub enum AlloyEvent {
   // (see `crate::keymap`): `key` is the logical value ("a", "!", "Enter"),
   // `code` the physical key ("KeyA", "NumpadEnter"). SDL's keycodes and
   // scancodes never leave this crate.
-  Key { down: bool, key: String, code: &'static str, modifiers: Modifiers, repeat: bool },
-  Resize { size: ISize, safe_area: Rect, display_scale: f32 },
+  Key {
+    down: bool,
+    key: String,
+    code: &'static str,
+    modifiers: Modifiers,
+    repeat: bool,
+  },
+  Resize {
+    size: ISize,
+    safe_area: Rect,
+    display_scale: f32,
+  },
   // `time` is raw wall-clock seconds since render-thread start, sampled right
   // after present. Intentionally unsmoothed: pacing is userspace policy.
-  FrameRendered { frame: u64, fps: u32, time: f64 },
+  FrameRendered {
+    frame: u64,
+    fps: u32,
+    time: f64,
+  },
   // Idle tick: emitted at the refresh cadence when no display list has arrived
   // for a full refresh period, so the UI thread keeps running its per-frame
   // logic (timers, signal flush, camera pump) while nothing is presented.
   // `frame` is the present counter, i.e. one past the last FrameRendered's
   // frame: the index the next present will get.
-  Tick { frame: u64, fps: u32 },
+  Tick {
+    frame: u64,
+    fps: u32,
+  },
   // Display refresh rate in Hz. Its own event (independent of frames): emitted
   // at startup and whenever the rate changes (e.g. Android 90 <-> 60Hz).
-  DisplayRefreshRate { hz: f32 },
+  DisplayRefreshRate {
+    hz: f32,
+  },
   // Never emitted by the run loop: the pump consumes moves into the
   // resampler at translation (see resample.rs), and every other producer of
   // pointer events must do the same at its send site. `rel` is the hardware
   // motion delta when the device reports one (mouse `xrel`/`yrel`, in the
   // same logical units as `x`/`y`); None for producers without one (touch,
   // synthetic input), whose movement is derived from positions instead.
-  PointerMove { pointer_id: u64, pointer_type: PointerType, x: f32, y: f32, rel: Option<(f32, f32)>, modifiers: Modifiers },
-  PointerDown { pointer_id: u64, pointer_type: PointerType, button: u8, x: f32, y: f32, modifiers: Modifiers },
-  PointerUp { pointer_id: u64, pointer_type: PointerType, button: u8, x: f32, y: f32, modifiers: Modifiers },
-  TextInput { text: String },
-  PowerStatus { info: sdl_utils::PowerInfo },
+  PointerMove {
+    pointer_id: u64,
+    pointer_type: PointerType,
+    x: f32,
+    y: f32,
+    rel: Option<(f32, f32)>,
+    modifiers: Modifiers,
+  },
+  PointerDown {
+    pointer_id: u64,
+    pointer_type: PointerType,
+    button: u8,
+    x: f32,
+    y: f32,
+    modifiers: Modifiers,
+  },
+  PointerUp {
+    pointer_id: u64,
+    pointer_type: PointerType,
+    button: u8,
+    x: f32,
+    y: f32,
+    modifiers: Modifiers,
+  },
+  TextInput {
+    text: String,
+  },
+  PowerStatus {
+    info: sdl_utils::PowerInfo,
+  },
   // Emitted when the on-screen keyboard visibility or size changes. SDL does
   // not provide an event for this, so it is detected by polling
   // SDL_ScreenKeyboardShown and the platform-reported IME inset each loop
   // iteration. `height` is the keyboard's overlap with the window in logical
   // pixels (0 when hidden or unsupported); the window is fullscreen so it is
   // not resized for the keyboard, and the app uses this to lift its content.
-  KeyboardVisibility { shown: bool, height: f32 },
+  KeyboardVisibility {
+    shown: bool,
+    height: f32,
+  },
   // delta_x / delta_y use browser convention: positive delta_y means
   // content should scroll down (wheel rolled toward the user). SDL's
   // direction=Flipped is normalized away at translation time.
-  Wheel { pointer_id: u64, pointer_type: PointerType, x: f32, y: f32, delta_x: f32, delta_y: f32, modifiers: Modifiers },
+  Wheel {
+    pointer_id: u64,
+    pointer_type: PointerType,
+    x: f32,
+    y: f32,
+    delta_x: f32,
+    delta_y: f32,
+    modifiers: Modifiers,
+  },
   // OS-level dark/light preference. Emitted at init and whenever the OS theme
   // changes; Unknown on platforms that do not report one.
-  SystemTheme { theme: sdl_utils::SystemTheme },
+  SystemTheme {
+    theme: sdl_utils::SystemTheme,
+  },
   // Connected input device classes. Presence, not traffic: a connected mouse
   // that never moves still reports true. Emitted at init and on keyboard/mouse
   // hotplug; SDL has no touch hotplug events, so touch is re-queried on those
   // same occasions.
-  InputDevices { keyboard: bool, mouse: bool, touch: bool, screen_keyboard: bool },
+  InputDevices {
+    keyboard: bool,
+    mouse: bool,
+    touch: bool,
+    screen_keyboard: bool,
+  },
   // Orientation of the display the window is on. Emitted at init and on
   // rotation.
-  DisplayOrientation { orientation: sdl3::video::Orientation },
+  DisplayOrientation {
+    orientation: sdl3::video::Orientation,
+  },
   // Full connected-gamepad state, emitted whenever any pad connects,
   // disconnects, or changes a button/axis (coalesced to at most one per main
   // loop iteration), plus once at init. Slots are stable for a pad's whole
   // connection; a disconnect leaves a None hole that the next connect reuses.
-  Gamepads { pads: Vec<Option<GamepadState>> },
+  Gamepads {
+    pads: Vec<Option<GamepadState>>,
+  },
   // Camera hotplug. Carries no device id (subscribers re-enumerate via
   // camera::list_cameras()). SDL only delivers these once the camera
   // subsystem is initialized, i.e. after the first list/open call.
@@ -227,7 +297,9 @@ pub enum AlloyEvent {
   //     and pipewire as its fallback: see camera_subsystem_init.
   //   - macOS/Windows: no camera hotplug at all (upstream FIXMEs, not wired),
   //     so neither add nor remove arrives.
-  CameraDeviceChange { added: bool },
+  CameraDeviceChange {
+    added: bool,
+  },
 }
 
 pub(crate) fn current_system_theme_event() -> AlloyEvent {

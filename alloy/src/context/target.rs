@@ -3,10 +3,9 @@ use std::rc::Rc;
 
 use crate::gpu::{
   instance_strides, resolve_draw_range, validate_draw_range, validate_instance_slots, validate_order,
-  validate_param_if_declared, validate_params,
-  validate_texture_bindings, vertex_stride, BufferIds, DepthStorage, DrawBounds, DrawSpec, DrawUpdate, ParamValue, PipelineSpec,
-  SamplerState, TargetSpec, TextureBinding, TextureEntry, TextureFormat, UniformKind, UniformTable, WindowShader,
-  MAX_INSTANCE_SLOTS,
+  validate_param_if_declared, validate_params, validate_texture_bindings, vertex_stride, BufferIds, DepthStorage,
+  DrawBounds, DrawSpec, DrawUpdate, ParamValue, PipelineSpec, SamplerState, TargetSpec, TextureBinding, TextureEntry,
+  TextureFormat, UniformKind, UniformTable, WindowShader, MAX_INSTANCE_SLOTS,
 };
 use crate::raster::RasterCmd;
 
@@ -62,7 +61,10 @@ impl Context {
         entries: None,
       },
     );
-    self.shader_sources.borrow_mut().insert(id, textures.iter().map(|b| ((0, b.name.clone()), self.source_of(b.id))).collect());
+    self
+      .shader_sources
+      .borrow_mut()
+      .insert(id, textures.iter().map(|b| ((0, b.name.clone()), self.source_of(b.id))).collect());
     Ok(id)
   }
 
@@ -174,7 +176,9 @@ impl Context {
           return Err(if slot == 0 {
             "pipeline declares no instanceAttributes; the instance buffer would never be read".to_string()
           } else {
-            format!("pipeline declares no instance attributes in buffer slot {slot}; the instance buffer would never be read")
+            format!(
+              "pipeline declares no instance attributes in buffer slot {slot}; the instance buffer would never be read"
+            )
           })
         }
         (_, 0) => {
@@ -185,12 +189,8 @@ impl Context {
           })
         }
         (slot_stride, id) => {
-          let size = self
-            .buffer_sizes
-            .borrow()
-            .get(&id)
-            .copied()
-            .ok_or_else(|| format!("instance buffer {id} not found"))?;
+          let size =
+            self.buffer_sizes.borrow().get(&id).copied().ok_or_else(|| format!("instance buffer {id} not found"))?;
           instances[slot] = (slot_stride, size);
         }
       }
@@ -235,7 +235,8 @@ impl Context {
     let manual = spec.manual;
     let draw = entry.draw;
     let buffers = entry.buffer_ids();
-    let sources: HashMap<(u64, String), u64> = entry.textures.iter().map(|b| ((0, b.name.clone()), self.source_of(b.id))).collect();
+    let sources: HashMap<(u64, String), u64> =
+      entry.textures.iter().map(|b| ((0, b.name.clone()), self.source_of(b.id))).collect();
     let impeller = self.rpc(|reply| RasterCmd::CreateShaderTarget { id, spec, entry, reply })??;
     self.textures.insert(id, TextureEntry { impeller, width, height, sampler, format: TextureFormat::Rgba8 });
     self.targets.borrow_mut().insert(id, TargetMirror { uniforms, draw: Some(draw), bounds, buffers, entries: None });
@@ -272,7 +273,9 @@ impl Context {
     let (width, height, sampler) = (spec.width, spec.height, spec.sampler);
     let manual = spec.manual;
     let handles = self.rpc(|reply| RasterCmd::CreateDrawTarget { id, depth_id, spec, depth, reply })??;
-    self.textures.insert(id, TextureEntry { impeller: handles.color, width, height, sampler, format: TextureFormat::Rgba8 });
+    self
+      .textures
+      .insert(id, TextureEntry { impeller: handles.color, width, height, sampler, format: TextureFormat::Rgba8 });
     if let (Some(depth_id), Some(impeller)) = (depth_id, handles.depth) {
       self.textures.insert(
         depth_id,
@@ -287,7 +290,12 @@ impl Context {
         draw: None,
         bounds: DrawBounds::default(),
         buffers: BufferIds::default(),
-        entries: Some(DrawListMirror { depth: depth.is_some(), depth_texture: depth_id, next_draw: 1, entries: HashMap::new() }),
+        entries: Some(DrawListMirror {
+          depth: depth.is_some(),
+          depth_texture: depth_id,
+          next_draw: 1,
+          entries: HashMap::new(),
+        }),
       },
     );
     self.shader_sources.borrow_mut().insert(id, HashMap::new());
@@ -308,7 +316,9 @@ impl Context {
     let Some(list) = mirror.entries.as_ref() else {
       return Err(format!("target {target} is not a draw target (create it with createDrawTarget)"));
     };
-    list.depth_texture.ok_or_else(|| format!("target {target} has no depth texture (create it with depth: \"texture\")"))
+    list
+      .depth_texture
+      .ok_or_else(|| format!("target {target} has no depth texture (create it with depth: \"texture\")"))
   }
 
   /// Add a draw entry to a draw target: `entry.pipeline` draws

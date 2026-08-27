@@ -191,7 +191,9 @@ impl Context {
   /// own dimensions. Errors if the id is not in the registry.
   pub fn read_texture_by_id(&self, id: u64) -> Result<(u32, u32, Vec<u8>), String> {
     if let Some(owner) = self.depth_owner(id) {
-      return Err(format!("texture {id} is target {owner}'s depth texture: sampler-only, render it through a pass to read it"));
+      return Err(format!(
+        "texture {id} is target {owner}'s depth texture: sampler-only, render it through a pass to read it"
+      ));
     }
     let entry = self.textures.get(id).ok_or_else(|| format!("texture {id} not found"))?;
     let (width, height) = (entry.width(), entry.height());
