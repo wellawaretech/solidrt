@@ -204,6 +204,12 @@ Shaped, not started.
   storage are the project's; the gallery appeared as "SolidRT components
   demos". Renamed for now (one demo per package); a second demo in a package
   needs per-demo identity derived from the slug.
+- **[Desktop MSAA at 8x](backlog/desktop-msaa-8x.md)** [2026-08-27]
+  Edges are quantised to 4 coverage levels (4x MSAA on every rig
+  rasterization; Impeller GL has no analytic AA), which reads as slight
+  jaggies on thick diagonal strokes at 1x; desktop could run the offscreen rig
+  at 8x (one constant, already clamped to GL_MAX_SAMPLES) while Android must
+  stay at 4x. Parked 2026-08-27.
 - **[Statically detect layout elements inside detached views](backlog/detached-nesting-static-check.md)** [2026-08-02]
   A <view> nested inside a <d-view> typechecks and fails only at runtime, and
   TypeScript cannot catch it (every JSX expression is the one Element type, so

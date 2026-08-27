@@ -118,6 +118,19 @@ impl Pen for Trace {
   fn line_to(&mut self, p: Point) {
     self.0.push(format!("L{},{}", p.x, p.y));
   }
+  fn quadratic_to(&mut self, ctrl: Point, p: Point) {
+    self.0.push(format!("Q{},{} {},{}", ctrl.x, ctrl.y, p.x, p.y));
+  }
+  fn cubic_to(&mut self, c1: Point, c2: Point, p: Point) {
+    self.0.push(format!("C{},{} {},{} {},{}", c1.x, c1.y, c2.x, c2.y, p.x, p.y));
+  }
+}
+
+// Where a traced word ends: its last x,y.
+fn end(word: &str) -> (f32, f32) {
+  let last = word.rsplit(' ').next().expect("a point").trim_start_matches(|c: char| c.is_ascii_alphabetic());
+  let (x, y) = last.split_once(',').expect("x,y");
+  (x.parse().expect("x"), y.parse().expect("y"))
 }
 
 fn dashes(d: &str, on: f32, off: f32) -> String {
@@ -141,8 +154,9 @@ fn a_closed_subpath_is_walked_through_its_closing_segment() {
 }
 
 #[test]
-fn dashes_follow_the_curve() {
-  // y = x (100 - x) / 100 along this quadratic; every run endpoint sits on it.
+fn dashes_on_a_curve_are_pieces_of_it() {
+  // y = x (100 - x) / 100 along this quadratic: every run is a Q piece of
+  // it (nothing flattened into lines) and every run boundary sits on it.
   let mut path = stroked("M0 0 Q50 50 100 0", 5.0);
   path.set_on_length(Some(5.0));
   path.set_off_length(Some(5.0));
@@ -150,10 +164,23 @@ fn dashes_follow_the_curve() {
   path.walk_dashed(path.dash().expect("a dash pattern"), &mut trace);
   assert!(trace.0.len() > 10, "{:?}", trace.0);
   for word in &trace.0 {
-    let (x, y) = word[1..].split_once(',').expect("x,y");
-    let (x, y): (f32, f32) = (x.parse().expect("x"), y.parse().expect("y"));
-    assert!((y - x * (100.0 - x) / 100.0).abs() < 0.5, "{word} is off the curve");
+    assert!(word.starts_with('M') || word.starts_with('Q'), "{word} is not a curve piece");
+    let (x, y) = end(word);
+    assert!((y - x * (100.0 - x) / 100.0).abs() < 0.01, "{word} is off the curve");
   }
+}
+
+#[test]
+fn a_whole_curve_dashes_as_itself() {
+  assert_eq!(dashes("M0 0 C0 100 100 100 100 0", 1000.0, 1.0), "M0,0 C0,100 100,100 100,0");
+}
+
+#[test]
+fn a_run_continues_from_a_segment_into_a_curve() {
+  // One subpath: the segment, then 5 along the curve as a piece of it.
+  let trace = dashes("M0 0 L10 0 Q20 10 30 0", 15.0, 100.0);
+  assert!(trace.starts_with("M0,0 L10,0 Q"), "{trace}");
+  assert_eq!(trace.matches('M').count(), 1, "{trace}");
 }
 
 #[test]
@@ -179,19 +206,17 @@ fn path_length_measures_the_walked_curve() {
   path.set_on_length(Some(1.0));
   path.set_off_length(Some(1.0));
   path.set_path_length(Some(1.0));
-  let end = |path: &Path| {
+  let last_point = |path: &Path| {
     let mut trace = Trace(Vec::new());
     path.walk_dashed(path.dash().expect("a dash pattern"), &mut trace);
     assert_eq!(trace.0.iter().filter(|w| w.starts_with('M')).count(), 1, "{:?}", trace.0);
-    let last = trace.0.last().expect("a run");
-    let (x, y) = last[1..].split_once(',').expect("x,y");
-    (x.parse::<f32>().expect("x"), y.parse::<f32>().expect("y"))
+    end(trace.0.last().expect("a run"))
   };
-  let (x, y) = end(&path);
+  let (x, y) = last_point(&path);
   assert!((x - 100.0).abs() < 0.01 && y.abs() < 0.01, "ends at {x},{y}");
   // Half of it ends at the apex of this symmetric curve.
   path.set_on_length(Some(0.5));
-  let (x, y) = end(&path);
+  let (x, y) = last_point(&path);
   assert!((x - 50.0).abs() < 0.5 && (y - 25.0).abs() < 0.5, "half ends at {x},{y}");
 }
 

@@ -5,7 +5,7 @@
 use crate::impellers::{DrawStyle, Point, Rect, Size, StrokeCap, StrokeJoin};
 use crate::rendertree::hit::{HitContext, Hittable};
 use crate::rendertree::kinds::dash::{walk_dashes, Dash, Pen};
-use crate::rendertree::kinds::line::segments;
+use crate::rendertree::kinds::line::pieces;
 use crate::rendertree::{Bounded, Line};
 
 fn ctx() -> HitContext {
@@ -102,11 +102,17 @@ impl Pen for Trace {
   fn line_to(&mut self, p: Point) {
     self.0.push(format!("L{},{}", p.x, p.y));
   }
+  fn quadratic_to(&mut self, ctrl: Point, p: Point) {
+    self.0.push(format!("Q{},{} {},{}", ctrl.x, ctrl.y, p.x, p.y));
+  }
+  fn cubic_to(&mut self, c1: Point, c2: Point, p: Point) {
+    self.0.push(format!("C{},{} {},{} {},{}", c1.x, c1.y, c2.x, c2.y, p.x, p.y));
+  }
 }
 
 fn dashes(points: &[f32], closed: bool, on: f32, off: f32, offset: f32) -> String {
   let mut pen = Trace::default();
-  walk_dashes(segments(points, closed), Dash { on, off, offset }, &mut pen);
+  walk_dashes(pieces(points, closed), Dash { on, off, offset }, &mut pen);
   pen.0.join(" ")
 }
 
@@ -173,7 +179,7 @@ fn path_length_makes_the_pattern_fractional() {
   let dash = line.dash(&points, false).expect("a dash pattern");
   assert_eq!(dash, Dash { on: 35.0, off: 70.0, offset: 0.0 });
   let mut pen = Trace::default();
-  walk_dashes(segments(&points, false), dash, &mut pen);
+  walk_dashes(pieces(&points, false), dash, &mut pen);
   assert_eq!(pen.0.join(" "), "M0,0 L30,0 L30,5");
   // Closing adds the hypotenuse (50) to what a unit stands for.
   assert_eq!(line.dash(&points, true).expect("a dash pattern").on, 60.0);

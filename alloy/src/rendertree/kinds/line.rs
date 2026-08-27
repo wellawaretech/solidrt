@@ -1,4 +1,4 @@
-use super::dash::{walk_dashes, walked_length, Dash};
+use super::dash::{walk_dashes, walked_length, Dash, Piece};
 use super::PaintState;
 use crate::impellers::{DisplayListBuilder, DrawStyle, FillType, Path, PathBuilder, Point, Rect, Size};
 use crate::rendertree::hit::{HitContext, Hittable};
@@ -111,9 +111,14 @@ fn polyline_path(points: &[f32], closed: bool) -> Path {
   path.take_path_new(FillType::NonZero)
 }
 
+// The polyline's segments as walker pieces.
+pub(crate) fn pieces(points: &[f32], closed: bool) -> impl Iterator<Item = Piece> + '_ {
+  segments(points, closed).map(|(a, b)| Piece::line(a, b))
+}
+
 fn dashed_path(points: &[f32], closed: bool, dash: Dash) -> Path {
   let mut path = PathBuilder::default();
-  walk_dashes(segments(points, closed), dash, &mut path);
+  walk_dashes(pieces(points, closed), dash, &mut path);
   path.take_path_new(FillType::NonZero)
 }
 
@@ -162,7 +167,7 @@ impl Line {
   pub(crate) fn dash(&self, points: &[f32], closed: bool) -> Option<Dash> {
     let dash = Dash::new(self.on_length, self.off_length, self.dash_offset)?;
     match self.path_length.filter(|declared| *declared > 0.0) {
-      Some(declared) => dash.scaled(walked_length(segments(points, closed)) / declared),
+      Some(declared) => dash.scaled(walked_length(pieces(points, closed)) / declared),
       None => Some(dash),
     }
   }

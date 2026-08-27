@@ -1,4 +1,4 @@
-use super::dash::{walk_dashes, walked_length, Dash, Pen};
+use super::dash::{walk_dashes, walked_length, Dash, Pen, Piece};
 use super::PaintState;
 use crate::impellers::{DisplayListBuilder, DrawStyle, FillType, Path as ImpPath, PathBuilder, Point, Rect, Size};
 use crate::rendertree::hit::{HitContext, Hittable};
@@ -6,14 +6,16 @@ use crate::rendertree::Damage;
 use crate::rendertree::{Bounded, BuildContext, Buildable, Element, ElementKind, Measurable, MeasureContext};
 use lyon_algorithms::aabb::bounding_box;
 use lyon_algorithms::hit_test::hit_test_path;
-use lyon_path::geom::{point, vector, Angle, ArcFlags, CubicBezierSegment, SvgArc};
+use lyon_path::geom::{point, vector, Angle, ArcFlags, CubicBezierSegment, QuadraticBezierSegment, SvgArc};
 use lyon_path::iterator::PathIterator;
 use std::cell::{Cell, RefCell};
 use svgtypes::{PathParser, PathSegment};
 
-// How far a flattened curve may stray from the true one, in local units,
-// when the dash walker needs segments. A quarter pixel is invisible at 1x;
-// a d-path under a large scale transform would show facets on its dashes.
+// How far the flattening the dash walker measures arc length with may
+// stray from the curve, in local units. It only places the dash boundaries
+// along a curve (the dashes drawn are pieces of the curve itself), so it
+// never shows as facets; a quarter unit keeps the pattern where a polyline
+// of the curve would have it.
 const DASH_TOLERANCE: f32 = 0.25;
 
 // What the stroke's reach past the geometry depends on, read off the parsed
@@ -360,27 +362,33 @@ impl Path {
     }
   }
 
-  // Every subpath flattened (curves become segments within DASH_TOLERANCE),
-  // a close adding its closing segment: what the dash walker travels and
-  // what `length` measures, so the two agree exactly.
-  fn flattened_subpaths(&self) -> Vec<Vec<(Point, Point)>> {
+  // Every subpath as walker pieces, its segments and its curves (measured
+  // by their flattening within DASH_TOLERANCE), a close adding its closing
+  // segment: what the dash walker travels and what `length` measures, so
+  // the two agree exactly.
+  fn pieces(&self) -> Vec<Vec<Piece>> {
     self.ensure_built();
     let lyon = self.lyon_path.borrow();
     let Some(lyon) = lyon.as_ref() else { return Vec::new() };
     let pt = |p: lyon_path::geom::Point<f32>| Point::new(p.x, p.y);
     let mut subpaths = Vec::new();
-    let mut segments = Vec::new();
-    for evt in lyon.iter().flattened(DASH_TOLERANCE) {
+    let mut pieces = Vec::new();
+    for evt in lyon.iter() {
       match evt {
-        lyon_path::Event::Begin { .. } => segments.clear(),
-        lyon_path::Event::Line { from, to } => segments.push((pt(from), pt(to))),
+        lyon_path::Event::Begin { .. } => pieces.clear(),
+        lyon_path::Event::Line { from, to } => pieces.push(Piece::line(pt(from), pt(to))),
+        lyon_path::Event::Quadratic { from, ctrl, to } => {
+          pieces.push(Piece::quadratic(QuadraticBezierSegment { from, ctrl, to }, DASH_TOLERANCE));
+        }
+        lyon_path::Event::Cubic { from, ctrl1, ctrl2, to } => {
+          pieces.push(Piece::cubic(CubicBezierSegment { from, ctrl1, ctrl2, to }, DASH_TOLERANCE));
+        }
         lyon_path::Event::End { last, first, close } => {
           if close {
-            segments.push((pt(last), pt(first)));
+            pieces.push(Piece::line(pt(last), pt(first)));
           }
-          subpaths.push(std::mem::take(&mut segments));
+          subpaths.push(std::mem::take(&mut pieces));
         }
-        _ => {}
       }
     }
     subpaths
@@ -390,15 +398,16 @@ impl Path {
     if let Some(length) = self.length.get() {
       return length;
     }
-    let total = walked_length(self.flattened_subpaths().into_iter().flatten());
+    let total = walked_length(self.pieces().into_iter().flatten());
     self.length.set(Some(total));
     total
   }
 
   // The dashed stroke: each subpath walked on its own, since a dash pattern
-  // restarts at each subpath, as SVG's does.
+  // restarts at each subpath, as SVG's does. A curve's dashes are pieces of
+  // the curve, so Impeller strokes them as it strokes the solid path.
   pub(crate) fn walk_dashed(&self, dash: Dash, pen: &mut impl Pen) {
-    for subpath in self.flattened_subpaths() {
+    for subpath in self.pieces() {
       walk_dashes(subpath.into_iter(), dash, pen);
     }
   }
@@ -442,8 +451,8 @@ impl Buildable for Path {
       builder.translate(dx, dy);
     }
     match self.dash().filter(|_| self.strokes()) {
-      // Dashing is a stroke property: the fill keeps the true curve, the
-      // stroke walks the flattened one.
+      // Dashing is a stroke property: the fill keeps the whole path, the
+      // stroke gets its dashed pieces.
       Some(dash) => {
         if self.fills() {
           let mut fill = self.paint_in_bounds();

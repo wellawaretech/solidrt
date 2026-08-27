@@ -37,10 +37,17 @@ Contract, in `DashProps` (shared by `LineProps` and `PathProps`):
   Non-positive declarations are rejected by the property layer and ignored
   by the kinds. Not animatable: it is a unit declaration.
 
-Deferred until measured: caching the flattened segments across
-`dashOffset` writes (marching ants re-flatten every frame), and a
-scale-aware tolerance (`DASH_TOLERANCE` is 0.25 local units, so a d-path
-under a large scale transform shows facets on its dashes).
+The walker's pieces (`kinds/dash.rs` `Piece`): a segment, or a curve with
+its arc length tabulated from lyon's flattening (`for_each_flattened_with_t`,
+`DASH_TOLERANCE` 0.25 local units). The pattern is measured along that
+table and each run is emitted as the curve split at the matching `t`
+(`split_range`), so Impeller strokes real quadratics and cubics and
+tessellates them in screen space like the solid stroke: no facets at any
+display scale or transform. The tolerance only places the boundaries along
+the curve, within a quarter unit of where a polyline of it would.
+
+Deferred until measured: caching the pieces across `dashOffset` writes
+(marching ants rebuild the tables every frame).
 
 ## Findings (2026-08-27, implemented and verified)
 
@@ -83,6 +90,30 @@ under a large scale transform shows facets on its dashes).
   cap's 2), the curve's true end is unpainted, and two captures of the
   triangle a moment apart show different amounts drawn. 60 fps, JS 1.0 ms,
   paint 0.6 ms, p95 1.9 ms with the extra row.
+- Curve pieces followed the same day after "the dashed curve looks a bit
+  jagged": the dashes were a polyline flattened at 0.25 local units, which
+  facets under a designSize fit, a scale transform or HiDPI while the solid
+  path (Impeller's own screen-space tessellation) stays smooth. The walker
+  now walks pieces and emits curve splits (see above); the flattening only
+  measures. The jaggies actually seen turned out to be something else, see
+  the MSAA finding below. Tests:
+  `dashes_on_a_curve_are_pieces_of_it` (every run a Q piece, boundaries on
+  the curve within 0.01), `a_whole_curve_dashes_as_itself`,
+  `a_run_continues_from_a_segment_into_a_curve`. On the rebuilt client the
+  scale-4 captures look smooth, the scale-2 capture of the 77% curve diffs
+  from the polyline form by 40 of 2800 pixels with the drawn end unmoved,
+  and boxes/stats are unchanged (paint 0.9 ms). A pixel metric (stroke
+  edge midpoint vs the analytic cubic at 4x) stays within +-0.6 px on
+  gentle slopes, which is that estimator's floor for a 16 px AA stroke, so
+  it neither shows facets nor rules out sub-pixel ones.
+- The jaggies reported were on a 1x display and showed on the SOLID
+  yellow triangles as well: a scale-1 capture holds exactly five colours
+  (background, stroke, 25/50/75% coverage), i.e. the 4x MSAA every rig
+  rasterization runs at (`MSAA_SAMPLES` in gl/rig.rs; Impeller GL has no
+  analytic AA). Edge quality is the sample count, not the dash geometry:
+  [desktop-msaa-8x](desktop-msaa-8x.md). Lesson kept in memory: ask the
+  human about the display and what exactly looks wrong before building
+  measurements.
 - Example layout fix found in the same run: the tile rows were wider than
   the window (626 wide, sized by the window manager while the client asks
   for 1280x720), so the tiles flex-shrank and their box-filling d-rects

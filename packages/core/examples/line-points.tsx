@@ -12,7 +12,7 @@
 //    frame animates the dashes. The ring is dense (6 px segments under
 //    12 px dashes), which only works because the phase carries across
 //    vertices; the two-point d-line and the d-path go through the same
-//    walker (a path's curves are flattened for it).
+//    walker (a path's dashes are pieces of its curves, stroked as curves).
 // 4. Partial draw: `pathLength={1}` makes the dash units fractions of the
 //    geometry's length, so `onLength={0.77} offLength={1}` draws the first
 //    77% and an `onLength` written from 0 to 1 draws the geometry on, without
