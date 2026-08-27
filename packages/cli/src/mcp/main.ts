@@ -8,7 +8,7 @@
 import { z } from "zod"
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
-import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js"
+import type { CallToolResult, JSONRPCMessage } from "@modelcontextprotocol/sdk/types.js"
 import { resolve } from "node:path"
 import { port as FIXED_PORT } from "../lib/args"
 import { CLI_VERSION } from "../lib/project"
@@ -652,6 +652,31 @@ async function restoreOnExit() {
   }
 }
 
+// Requests the host sent that have no answer yet, by id. The host closing
+// stdin is its "done", but a request already read still owes its answer and
+// stdout stays open, so exit waits for those first. Counted at the transport
+// (entering onmessage, leaving with the response write) rather than in the
+// tool handler: a request read from the pipe can sit undispatched when the
+// pipe closes right behind it. Capped, so a wedged dev server cannot keep a
+// closed bridge alive.
+let pending = new Set<string | number>()
+let drained: Array<() => void> = []
+const EXIT_GRACE_MS = 5000
+
+let exiting = false
+async function shutdown() {
+  if (exiting) return
+  exiting = true
+  if (pending.size > 0) {
+    await Promise.race([
+      new Promise<void>((resolve) => drained.push(resolve)),
+      new Promise<void>((resolve) => setTimeout(resolve, EXIT_GRACE_MS)),
+    ])
+  }
+  await restoreOnExit()
+  process.exit(0)
+}
+
 export async function main() {
   let server = new McpServer({ name: "solidrt", version: CLI_VERSION })
 
@@ -667,12 +692,28 @@ export async function main() {
     )
   }
 
-  process.stdin.on("end", () => void restoreOnExit().finally(() => process.exit(0)))
-  for (let signal of ["SIGTERM", "SIGINT", "SIGHUP"] as const) {
-    process.on(signal, () => void restoreOnExit().finally(() => process.exit(0)))
+  let transport = new StdioServerTransport()
+  let send = transport.send.bind(transport)
+  transport.send = async (message: JSONRPCMessage) => {
+    await send(message)
+    if ("id" in message && message.id !== undefined && !("method" in message)) {
+      pending.delete(message.id)
+      if (pending.size === 0) for (let wake of drained.splice(0)) wake()
+    }
+  }
+  // connect() installs the dispatching onmessage; the count wraps it.
+  await server.connect(transport)
+  let dispatch = transport.onmessage
+  transport.onmessage = (message: JSONRPCMessage) => {
+    if ("id" in message && "method" in message) pending.add(message.id)
+    dispatch?.(message)
   }
 
+  process.stdin.on("end", () => void shutdown())
+  for (let signal of ["SIGTERM", "SIGINT", "SIGHUP"] as const) {
+    process.on(signal, () => void shutdown())
+  }
   // The stdin read keeps the process alive; it exits when the agent host
-  // closes the pipe (after lifting any mute or watch pause it set, see above).
-  await server.connect(new StdioServerTransport())
+  // closes the pipe (after answering the requests still pending and lifting
+  // any mute or watch pause it set, see above).
 }
