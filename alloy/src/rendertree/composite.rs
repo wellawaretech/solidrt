@@ -133,7 +133,7 @@ pub fn render(tree: &mut RenderTree, platform: &PlatformContext, alloy: &crate::
 // clip, scroll, fit, children; a hoist always covers a prefix of the first
 // three (a hoisted scroll requires a hoisted clip, otherwise the
 // composite-time scroll translate would move a recorded clip that must stay
-// put in viewport space; a viewBox fit is never hoisted - it is content).
+// put in viewport space; a design-size fit is never hoisted - it is content).
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Hoist {
   /// Record everything (non-boundary nodes, non-View boundaries).
@@ -148,7 +148,7 @@ enum Hoist {
   Full,
 }
 
-// A View's own box transform: the user chain only, no viewBox fit (the fit
+// A View's own box transform: the user chain only, no design-size fit (the fit
 // maps children into the box, it never moves the box itself, and it is
 // content - recorded by record_node so caches and captures hold fitted,
 // box-sized output). Resolved against the view's border box - the same frame
@@ -180,7 +180,7 @@ fn overflow_clips(element: &Element) -> (bool, bool) {
 
 // Emits the element's overflow clip (rounded when a View clips both axes) in
 // node-local, pre-scroll BOX space: the rect is the layout box, so it must be
-// applied under the user chain but before any viewBox fit (a box-sized rect
+// applied under the user chain but before any design-size fit (a box-sized rect
 // emitted in design space clips the wrong rectangle in both fit directions -
 // okf/backlog/overflow-viewbox-clip.md). Shared by record_node and the
 // Recording boundary composite path so the two cannot diverge. No-op without
@@ -219,7 +219,7 @@ fn apply_clip(builder: &mut DisplayListBuilder, element: &Element) {
 }
 
 // Scroll offset, in box pixels: applied after the clip (the clip box stays
-// put in viewport space while children slide under it) and before any viewBox
+// put in viewport space while children slide under it) and before any design size
 // fit, so one scroll pixel is one box pixel regardless of fit scale - the hit
 // side divides by the fit scale instead (View::content_scroll). Positive
 // scroll shifts content leftward/upward. No-op for non-Views and unscrolled
@@ -770,7 +770,7 @@ fn record_node<'a>(
   // A save is only needed for ops this recording itself carries: a recorded
   // clip, or a View's matrix/scroll (child translates below are undone
   // explicitly). Under Hoist::Full there is normally nothing to restore - a
-  // viewBox fit is the exception, recorded below even when hoisted.
+  // design-size fit is the exception, recorded below even when hoisted.
   let view_fit = match &element.kind {
     // The fit resolves against the border box, like own_matrix; detached
     // views fall back to the inherited frame in ctx.size.
@@ -788,7 +788,7 @@ fn record_node<'a>(
   // fit+children recording, so the paths cannot diverge. The clip and scroll
   // both mean the layout BOX - the clip rect in box space, the scroll offset
   // in box pixels - which is why they sit under the user chain and before any
-  // viewBox fit (okf/backlog/overflow-viewbox-clip.md).
+  // design-size fit (okf/backlog/overflow-viewbox-clip.md).
   if hoist == Hoist::None {
     if let Some(own) = own_matrix(element, ctx.size) {
       builder.transform(&own);
@@ -805,7 +805,7 @@ fn record_node<'a>(
   if let Some(fit) = &view_fit {
     // The fit belongs to the CONTENT, recorded at every hoist level, so
     // boundary caches, snapshot textures, and captures hold fitted content
-    // and the composited recording stays box-sized. set_view_box reports
+    // and the composited recording stays box-sized. set_design_size reports
     // Paint damage to match.
     builder.transform(fit);
   }
@@ -899,7 +899,7 @@ fn record_node<'a>(
       build_recursive(scene, child_id, ctx, builder);
     } else {
       // A detached child inherits the frame whole (the design size under a
-      // viewBox view, so a d-text wraps and a d-rect fills in design units);
+      // design-size view, so a d-text wraps and a d-rect fills in design units);
       // no layout means no padding, so content covers the frame.
       ctx.size = child_frame;
       ctx.content = Rect::new(Point::zero(), child_frame);

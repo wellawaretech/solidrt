@@ -56,7 +56,7 @@ impl Default for HitConfig {
 
 pub struct HitContext {
   /// The element's border box (for a detached node, the inherited frame; for
-  /// a viewBox view's own bounds, the design size). The box kinds default
+  /// a design-size view's own bounds, the design size). The box kinds default
   /// their hit extent to.
   pub size: Size,
   /// The element's content box in its own frame (LayoutData::content_box);
@@ -136,14 +136,14 @@ pub fn locals_along_path(tree: &RenderTree, chain: &[u64], point: Point) -> Vec<
     let local = element.kind.transform_to_local(point, &HitContext { size, content });
     locals.push(local);
     point = local;
-    // A viewBox view hands its children the design-space size, matching
+    // A design-size view hands its children the design-space size, matching
     // hit_recursive and the paint-time walk.
     parent_size = match &element.kind {
-      ElementKind::View(v) => v.design_size().unwrap_or(size),
+      ElementKind::View(v) => v.design_space().unwrap_or(size),
       _ => size,
     };
     // In the children's frame, like hit_recursive (box pixels divided by any
-    // viewBox fit scale).
+    // design-size fit scale).
     parent_scroll = match &element.kind {
       ElementKind::View(v) => v.content_scroll(size),
       _ => Vector::default(),
@@ -200,19 +200,19 @@ fn hit_recursive(
   let local = element.kind.transform_to_local(point, &ctx);
 
   // `local` lives in the frame the element's transform maps INTO, which for a
-  // viewBox view is the design space, not the layout box (the inverse includes
+  // design-size view is the design space, not the layout box (the inverse includes
   // the fit). Bounds have to be measured in that same frame: against the box a
   // design space wider than its box would reject its own overflowing part, and
   // a rejected view takes its whole subtree with it.
   let local_size = match &element.kind {
-    ElementKind::View(v) => v.design_size().unwrap_or(size),
+    ElementKind::View(v) => v.design_space().unwrap_or(size),
     _ => size,
   };
   let local_ctx = HitContext { size: local_size, content };
 
   // Overflow gate: when an axis has non-visible overflow, the layout box clips
   // both self and any descendants on that axis. The clip means the BOX, so the
-  // gate measures in box space: on a viewBox view `local` is design-space and
+  // gate measures in box space: on a design-size view `local` is design-space and
   // is mapped forward through the fit first - mirroring record_node, which
   // emits the clip under the user chain before the fit
   // (okf/backlog/overflow-viewbox-clip.md).
@@ -254,7 +254,7 @@ fn hit_recursive(
   // Scroll offset on a View shifts its children's apparent positions by
   // -scroll (box pixels) in viewport space, so to map a viewport-local point
   // into a child's frame we add scroll back - expressed in the children's
-  // frame, which under a viewBox fit divides the offset by the fit scale
+  // frame, which under a design-size fit divides the offset by the fit scale
   // (View::content_scroll), mirroring the paint side's box-space translate.
   let scroll = match &element.kind {
     ElementKind::View(v) => v.content_scroll(size),
@@ -269,7 +269,7 @@ fn hit_recursive(
     _ => None,
   };
 
-  // Children inherit the frame `local` is in - the design size under a viewBox
+  // Children inherit the frame `local` is in - the design size under a design size
   // view, matching the paint-time walk in composite.rs.
   for &child_id in element.children.iter().rev() {
     let child = tree.node(child_id);

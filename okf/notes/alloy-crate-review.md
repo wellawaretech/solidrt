@@ -157,7 +157,7 @@ The July priorities were delivered:
   cache survival across the Recording/Snapshot distinction, GPU content
   writes as snapshot damage, and the detach/destroy lifecycle.
 - **Hit testing and routing**: tests/hit.rs (14 tests) covers local-point
-  composition, overflow gating and scroll compensation under viewBox
+  composition, overflow gating and scroll compensation under design-size
   transforms; tests/router.rs covers hover-diff ordering (deepest-first
   leaves), capture freezing routing until pointer-up, touch leave synthesis,
   and wheel/up gating.

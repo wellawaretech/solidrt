@@ -30,22 +30,22 @@ pub fn apply(view: &mut View, name: &str, value: &PropValue) -> Result<Option<Da
     "scrollX" => view.set_scroll_x(opt_f32(value, "scrollX")?),
     "scrollY" => view.set_scroll_y(opt_f32(value, "scrollY")?),
     "clipRadius" => view.set_clip_radius(opt_radius(value, "clipRadius")?),
-    "viewBox" => {
+    "designSize" => {
       if value.is_null() {
-        return Ok(Some(view.set_view_box(None)));
+        return Ok(Some(view.set_design_size(None)));
       }
-      let list = value.as_list().ok_or_else(|| format!("viewBox must be a [w, h] list, got {}", describe(value)))?;
+      let list = value.as_list().ok_or_else(|| format!("designSize must be a [w, h] list, got {}", describe(value)))?;
       if list.len() != 2 {
-        return Err(format!("viewBox must have exactly [w, h], got {} entries", list.len()));
+        return Err(format!("designSize must have exactly [w, h], got {} entries", list.len()));
       }
-      let (w, h) = (f32_of(&list[0], "viewBox w")?, f32_of(&list[1], "viewBox h")?);
+      let (w, h) = (f32_of(&list[0], "designSize w")?, f32_of(&list[1], "designSize h")?);
       // A design space needs a positive, finite extent on both axes: anything
       // else has no fit scale and would hand the children a degenerate frame
-      // (View::design_size).
+      // (View::design_space).
       if !(w > 0.0 && h > 0.0 && w.is_finite() && h.is_finite()) {
-        return Err(format!("viewBox must be a positive, finite [w, h], got [{w}, {h}]"));
+        return Err(format!("designSize must be a positive, finite [w, h], got [{w}, {h}]"));
       }
-      view.set_view_box(Some((w, h)))
+      view.set_design_size(Some((w, h)))
     }
     "shader" => view.set_shader(decode_shader(value)?),
     _ => return Ok(None),

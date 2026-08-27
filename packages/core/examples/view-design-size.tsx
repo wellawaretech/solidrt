@@ -1,7 +1,8 @@
-// `viewBox` on a <view> is the fixed-aspect answer to "many screen sizes": you
-// author the whole scene once, in your own made-up design units, and the view
-// scales that space to fit its box. It is SVG's viewBox generalized to any
-// subtree, not an SVG-only thing.
+// `designSize` on a <view> is the fixed-aspect answer to "many screen sizes":
+// you author the whole scene once, in your own made-up design units, and the
+// view scales that space to fit its box. It is SVG's viewBox generalized off
+// the graphics format and onto a layout element - the design size is the only
+// irreducible half of it, since a transform already does what min-x/min-y did.
 //
 // Four facts, each demonstrated below:
 // 1. The view sizes like a REPLACED element (think <img>): its intrinsic size
@@ -19,7 +20,7 @@
 //    text wraps at its width, and a flex row is laid out at the design width
 //    whatever the window - nothing reflows on resize, the fit does the work.
 // 4. Pointer coordinates arrive in design space too. localX/localY on the
-//    viewBox view (and on anything under it) read in design units, so no
+//    design-size view (and on anything under it) read in design units, so no
 //    scale factor is threaded through the app's hit math.
 //
 // The payoff: no `windowSizeClass` branching, no per-breakpoint sizes, no
@@ -52,11 +53,11 @@ function App() {
           window, and the fit maps the design into it (fact 1). */}
       <view
         flex={1}
-        viewBox={[DESIGN_W, DESIGN_H]}
+        designSize={[DESIGN_W, DESIGN_H]}
         onPointerMove={(e) => setAt({ x: e.localX, y: e.localY })}
         onPointerLeave={() => setAt(null)}
       >
-        {/* No w/h, so it fills the box it inherits - which under a viewBox is
+        {/* No w/h, so it fills the box it inherits - which under a design size is
             the design space (fact 3). Its edges are the letterbox edges. */}
         <d-rect color="#151b28" />
 
@@ -84,7 +85,7 @@ function App() {
           {(a) => <d-oval x={a().x - 8} y={a().y - 8} w={16} h={16} color="#f85149" />}
         </Show>
 
-        {/* A laid-out row under the viewBox (fact 3): positioned and sized in
+        {/* A laid-out row under the design size (fact 3): positioned and sized in
             design units, the bar flexing against the design width. Resize the
             window: it scales with the scene instead of reflowing. */}
         <view position="absolute" left={40} right={40} top={364} flexDirection="row" alignItems="center" gap={12}>

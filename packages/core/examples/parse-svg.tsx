@@ -3,7 +3,7 @@
 // it the source text (a string you import, fetch, or inline) and get back the
 // document's intrinsic size plus a flat list of draws whose keys match the
 // path element's props - so rendering is a map to <d-path>, wrapped in a view
-// whose `viewBox` fits the document's coordinate space into the box.
+// whose `designSize` fits the document's coordinate space into the box.
 //
 // The point of draws-as-data over an opaque document element: every shape is
 // a real node you own. Below, the house highlights the shape under the
@@ -28,7 +28,7 @@ import { render, parseSvg, svg, createMemo, createSignal, For } from "@solidrt/c
 // the string unchanged; it exists so editors highlight the markup (like `glsl`
 // for shader sources).
 const HOUSE = svg`
-<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+<svg designSize="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
   <rect x="20" y="45" width="60" height="45" fill="#457b9d"/>
   <path d="M10 50 L50 15 L90 50 Z" fill="#e63946"/>
   <rect x="42" y="62" width="16" height="28" fill="#f1faee"/>
@@ -37,7 +37,7 @@ const HOUSE = svg`
 
 // Monochrome icon (Lucide arrow-right) drawn with currentColor, recolored below.
 const ARROW = svg`
-<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+<svg designSize="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
      stroke-linecap="round" stroke-linejoin="round">
   <path d="M5 12h14"/>
   <path d="M12 5l7 7-7 7"/>
@@ -54,7 +54,7 @@ function InteractiveHouse() {
   // re-records only when a draw inside it changes (hover), never because a
   // sibling elsewhere on the screen did.
   return (
-    <view repaintBoundary width={240} height={240} viewBox={[doc().width, doc().height]}>
+    <view repaintBoundary width={240} height={240} designSize={[doc().width, doc().height]}>
       <For each={doc().draws}>
         {(draw, i) => (
           <d-path
@@ -69,14 +69,14 @@ function InteractiveHouse() {
   )
 }
 
-// The plain pattern: memoized parse, viewBox-fitted box, draws mapped to
+// The plain pattern: memoized parse, designSize-fitted box, draws mapped to
 // <d-path>, and a plain repaintBoundary (the DL-reuse tier, not "snapshot")
 // so the static subtree never re-records alongside animating siblings. The
 // components-package Icon is this plus theming.
 function Svg(props: { src: string; size: number; color?: string }) {
   let doc = createMemo(() => parseSvg(props.src, { color: props.color }))
   return (
-    <view repaintBoundary width={props.size} height={props.size} viewBox={[doc().width, doc().height]}>
+    <view repaintBoundary width={props.size} height={props.size} designSize={[doc().width, doc().height]}>
       <For each={doc().draws}>{(draw) => <d-path {...draw} />}</For>
     </view>
   )

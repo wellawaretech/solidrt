@@ -476,7 +476,7 @@ export type Scene = {
    *
    * Coordinates assume the leaf is LAID OUT at the target size - true for
    * the built-in leaf and a d-texture at natural size, under any ancestor
-   * transforms or viewBox fits (the hit test undoes them). A leaf laid out
+   * transforms or design-size fits (the hit test undoes them). A leaf laid out
    * at a different size needs handlersFor instead.
    */
   handlers: SceneHandlers
@@ -1814,7 +1814,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
   }
 
   // localX/localY arrive in the leaf's LAYOUT frame (the hit test undoes
-  // every transform above it, viewBox fits included), so a leaf laid out at
+  // every transform above it, design-size fits included), so a leaf laid out at
   // the target size - the built-in <Scene> leaf, a d-texture at natural
   // size - is already in scene pixels. Only a leaf deliberately laid out at
   // a DIFFERENT size (the supersampling pattern) needs the ratio, and only

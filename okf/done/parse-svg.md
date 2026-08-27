@@ -10,7 +10,7 @@ DONE 2026-07-31, as a single sweep rather than the stages below (no
 backwards-compatibility requirement, so no coexistence period). Decisions
 made at pickup:
 
-- Fluid boxes: option (a) - a `viewBox={[w, h]}` prop on view/d-view, the
+- Fluid boxes: option (a) - a `designSize={[w, h]}` prop on view/d-view, the
   innermost step of the memoized View matrix (paint + hit share it, so
   per-path hit-testing works in design coordinates under fluid scaling).
   Pure fit only, NO intrinsic measure: the box comes from layout props.

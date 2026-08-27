@@ -42,7 +42,7 @@ The laid-out `view` is that plus the layout props:
 
 Three of those props are worth knowing before you need them:
 
-- `viewBox` fits a design-space coordinate system into the element's box,
+- `designSize` fits a design-space coordinate system into the element's box,
   scaled uniformly and centered. Everything under the view - layout, paint,
   input - happens in design units, and the view itself sizes like a
   replaced element whose intrinsic size is the design size. It is the

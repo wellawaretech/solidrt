@@ -26,7 +26,7 @@ function App() {
 
   return (
     <window>
-      <view width={pct(100)} height={pct(100)} viewBox={[MAIN + SIDE, MAIN]}>
+      <view width={pct(100)} height={pct(100)} designSize={[MAIN + SIDE, MAIN]}>
         <Scene
           width={MAIN}
           height={MAIN}

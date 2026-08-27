@@ -46,7 +46,7 @@ export type SvgDocument = {
  * that fits the document's coordinate space into its box:
  *
  *     let doc = createMemo(() => parseSvg(src))
- *     <view repaintBoundary viewBox={[doc().width, doc().height]} width={48} height={48}>
+ *     <view repaintBoundary designSize={[doc().width, doc().height]} width={48} height={48}>
  *       {doc().draws.map((draw) => <d-path {...draw} />)}
  *     </view>
  *

@@ -8,7 +8,7 @@ for the element/prop model see `@solidrt/core/AGENTS.md`.
 ## Host elements and layout
 - `window-root.tsx` - the minimal app; the root must be `<window>`.
 - `view-layout.tsx` - `<view>` as a flex container; containers do not paint.
-- `view-viewbox.tsx` - `viewBox` on a `<view>`: author a scene once in fixed design units and let the view uniformly scale-and-center (letterbox) that space into its box. Children live in design space for layout as well as paint (the box they inherit IS the design size, so a bare `d-rect` fills it and a flex row lays out against the design width, never reflowing on resize); the view itself sizes like a replaced element whose intrinsic size is the design size; pointer `localX`/`localY` arrive in design units. The fixed-aspect alternative to `windowSizeClass` reflow for diagrams, slides, dashboards, game boards, scaled panels.
+- `view-design-size.tsx` - `designSize` on a `<view>`: author a scene once in fixed design units and let the view uniformly scale-and-center (letterbox) that space into its box. Children live in design space for layout as well as paint (the box they inherit IS the design size, so a bare `d-rect` fills it and a flex row lays out against the design width, never reflowing on resize); the view itself sizes like a replaced element whose intrinsic size is the design size; pointer `localX`/`localY` arrive in design units. The fixed-aspect alternative to `windowSizeClass` reflow for diagrams, slides, dashboards, game boards, scaled panels.
 - `background-rect.tsx` - a `d-rect` filling its parent as a background.
 - `detached-positioning.tsx` - the `d-` prefix: x/y placement, no reflow, detached-only children.
 - `text-paint-styling.tsx` - the uniform `color` prop; `drawStyle="stroke"` vs fill.
@@ -29,7 +29,7 @@ for the element/prop model see `@solidrt/core/AGENTS.md`.
 
 ## Window state
 - `window-signals.tsx` - reactive `windowSize()` / `safeArea()` accessors (prefer over `onResize`).
-- `responsive-grid.tsx` - one app across phone/tablet/desktop: `capabilities.windowSizeClass` (Material 3 breakpoints, a reactive getter) drives the column count and `windowSize()` sizes each card; reflows on resize. The reflow answer; for fixed-aspect content use `view-viewbox.tsx` instead.
+- `responsive-grid.tsx` - one app across phone/tablet/desktop: `capabilities.windowSizeClass` (Material 3 breakpoints, a reactive getter) drives the column count and `windowSize()` sizes each card; reflows on resize. The reflow answer; for fixed-aspect content use `view-design-size.tsx` instead.
 
 ## Overlays
 - `portal.tsx` - `createPortal` relocating content to the window root to escape clipping.
@@ -52,7 +52,7 @@ for the element/prop model see `@solidrt/core/AGENTS.md`.
 - `audio.tsx` - `createSound`: decode a clip once from bytes (here a binary import), replay cheaply; `overlap` stacking vs single-voice, `playing()` signal, release on unmount. `createPcmSound` for a synthesised clip from raw samples (a generated sine sweep). Points to `createSoundStream` for long tracks streamed from a path.
 
 ## Vector graphics
-- `parse-svg.tsx` - `parseSvg` turns a whole SVG *document string* (not HTML/JSX children) into plain draw data mapped to `<d-path>` inside a `viewBox`-fitted view; per-shape hover highlighting shows the payoff (exact-outline hit testing, recolor without re-parse), plus a `currentColor` icon recolored via the `color` option. This is how to use existing icon libraries (Lucide, Heroicons, etc.) - hand their SVG source to `parseSvg`.
+- `parse-svg.tsx` - `parseSvg` turns a whole SVG *document string* (not HTML/JSX children) into plain draw data mapped to `<d-path>` inside a `designSize`-fitted view; per-shape hover highlighting shows the payoff (exact-outline hit testing, recolor without re-parse), plus a `currentColor` icon recolored via the `color` option. This is how to use existing icon libraries (Lucide, Heroicons, etc.) - hand their SVG source to `parseSvg`.
 
 ## Bundling assets
 - `binary-import.tsx` - `import bytes from "./file" with { type: "binary" }` inlines a file's bytes into the bundle as a `Uint8Array` (the bytes are in memory, so `inline-image.tsx` displays them with the synchronous `decodeImage` + `createTexture` path).

@@ -41,7 +41,7 @@ function App() {
 
   return (
     <window>
-      <view width={pct(100)} height={pct(100)} viewBox={[SIZE, SIZE]}>
+      <view width={pct(100)} height={pct(100)} designSize={[SIZE, SIZE]}>
         <Scene width={SIZE} height={SIZE} clearColor={[0.07, 0.07, 0.1, 1]} samples={4} label="lit">
           <PerspectiveCamera fov={50} position={[0, 2.6, 5]} lookAt={[0, 0.4, 0]} />
           <HemisphereLight sky={[0.35, 0.38, 0.45]} ground={[0.12, 0.1, 0.08]} />

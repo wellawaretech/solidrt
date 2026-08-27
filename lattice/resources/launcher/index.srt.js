@@ -5886,7 +5886,7 @@ function Logo(props) {
     }]);
   };
   var _el$ = createElement("view", {
-    viewBox: [100, 100]
+    designSize: [100, 100]
   });
   insert(_el$, createComponent2(Show, {
     get when() {
@@ -8533,7 +8533,7 @@ function Icon(props) {
     get height() {
       return size();
     },
-    get viewBox() {
+    get designSize() {
       return [doc().width, doc().height];
     }
   }, () => props.layout), true);
@@ -10592,7 +10592,7 @@ function AppIcon(props) {
       }, _p$) => {
         e !== _p$?.e && setProp(_el$2, "width", e, _p$?.e);
         t !== _p$?.t && setProp(_el$2, "height", t, _p$?.t);
-        a !== _p$?.a && setProp(_el$2, "viewBox", a, _p$?.a);
+        a !== _p$?.a && setProp(_el$2, "designSize", a, _p$?.a);
       });
       return _el$2;
     })()

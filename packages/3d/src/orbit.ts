@@ -22,7 +22,7 @@
 // about that point instead - the spot under the fingers stays under the
 // fingers, with the target sliding toward it. Only the app can own that
 // mapping: screen-to-ray needs the projection and the element's placement
-// (fov, aspect, viewBox scaling), which live in the app's camera and layout,
+// (fov, aspect, designSize scaling), which live in the app's camera and layout,
 // not here.
 //
 // Anchored zoom leaves the target wherever the zoom carried it - possibly a

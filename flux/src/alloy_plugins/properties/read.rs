@@ -218,8 +218,8 @@ fn read_view(view: &View, out: &mut Vec<(&'static str, ReadValue)>) {
   if let Some(r) = view.clip_radius {
     out.push(("clipRadius", ReadValue::Nums(r.iter().map(|v| *v as f64).collect())));
   }
-  if let Some(vb) = view.view_box {
-    out.push(("viewBox", ReadValue::Nums(vec![vb.width as f64, vb.height as f64])));
+  if let Some(vb) = view.design_size {
+    out.push(("designSize", ReadValue::Nums(vec![vb.width as f64, vb.height as f64])));
   }
   if let Some(shader) = &view.shader {
     out.push(("shader", ReadValue::Int(shader.program as i64)));

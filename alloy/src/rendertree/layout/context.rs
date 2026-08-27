@@ -186,13 +186,13 @@ impl<'a> LayoutContext<'a> {
     }
   }
 
-  // A viewBox view lays out on both sides of its fit
+  // A design-size view lays out on both sides of its fit
   // (okf/done/viewbox-layout-space.md).
   //
   // Outside, it is a replaced element with the design size as intrinsic size
   // (the texture's <img> rules), except that it compresses: a min-content
   // query gets zero, since a design has no size it cannot scale below - a
-  // `flex={1}` viewBox view fits a window smaller than its design instead of
+  // `flex={1}` design-size view fits a window smaller than its design instead of
   // overflowing it the way a texture would.
   //
   // Inside, the children are their own root at the design size, whatever box
@@ -203,7 +203,7 @@ impl<'a> LayoutContext<'a> {
   // design size) is not what the parent sees; the children's placements are
   // the point. The inner input is constant, so a resize re-solves nothing
   // below the view: the children's caches answer.
-  fn view_box_layout(
+  fn design_size_layout(
     &mut self,
     node_id: NodeId,
     inputs: LayoutInput,
@@ -321,14 +321,14 @@ impl<'a> LayoutPartialTree for LayoutContext<'a> {
         output
       } else {
         let display = element.layout_data().style.display;
-        // A viewBox view is a layout boundary (view_box_layout); a hidden one
+        // A design-size view is a layout boundary (design_size_layout); a hidden one
         // is hidden first.
         let design = match &element.kind {
-          ElementKind::View(v) if display != Display::None => v.design_size(),
+          ElementKind::View(v) if display != Display::None => v.design_space(),
           _ => None,
         };
         match design {
-          Some(design) => tree.view_box_layout(node_id, inputs, design, display),
+          Some(design) => tree.design_size_layout(node_id, inputs, design, display),
           None => tree.container_layout(node_id, display, inputs),
         }
       }

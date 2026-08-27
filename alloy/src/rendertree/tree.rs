@@ -747,7 +747,7 @@ impl RenderTree {
     // local_bounds reports as its origin), so the matrix path starts from the
     // plain layout box and applies the matrix instead; every other case keeps
     // the kind's local offset. The view's OWN box transforms by the user chain
-    // only (box_matrix): a viewBox fit maps children into the box, it never
+    // only (box_matrix): a design-size fit maps children into the box, it never
     // moves the box itself.
     let mut corners = match &node.kind {
       ElementKind::View(v) if v.needs_matrix() => {
@@ -789,7 +789,7 @@ impl RenderTree {
           let size =
             parent.layout.as_ref().map(|l| l.size()).or_else(|| self.content_fallback(parent_id)).unwrap_or_default();
           // Scroll means box pixels; these corners are in the parent's child
-          // frame (design space under a viewBox fit), so the offset divides
+          // frame (design space under a design-size fit), so the offset divides
           // by the fit scale, matching the hit descent and the paint order.
           let s = v.content_scroll(size);
           for p in corners.iter_mut() {
@@ -828,13 +828,13 @@ impl RenderTree {
     let mut cur = id;
     loop {
       let node = self.try_node(cur)?;
-      // A viewBox ANCESTOR redefines the space its children draw in: the box
+      // A design-size ANCESTOR redefines the space its children draw in: the box
       // they inherit is the design size, which the fit matrix maps onto the
-      // layout box during the ancestor walk. The node's own view_box does not
+      // layout box during the ancestor walk. The node's own design_size does not
       // apply to itself (its own box is its layout box).
       if cur != id {
         if let ElementKind::View(v) = &node.kind {
-          if let Some(vb) = v.design_size() {
+          if let Some(vb) = v.design_space() {
             return Some(vb);
           }
         }

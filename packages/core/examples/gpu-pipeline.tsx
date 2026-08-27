@@ -101,11 +101,11 @@ function App() {
   let [time, setTime] = createSignal(0)
   onFrame((tick) => setTime(tick / 1000))
 
-  // Fill the window: the viewBox fits and centers the square content into
+  // Fill the window: the design-size fits and centers the square content into
   // the full-window view, so the projection is never stretched.
   return (
     <window>
-      <view width={pct(100)} height={pct(100)} viewBox={[1024, 1024]}>
+      <view width={pct(100)} height={pct(100)} designSize={[1024, 1024]}>
         <texture src={id} params={{ uTime: time() }} width={1024} height={1024} />
       </view>
     </window>

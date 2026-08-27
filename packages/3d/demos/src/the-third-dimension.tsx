@@ -23,9 +23,11 @@
 // single setTransform per frame.
 //
 // The window is a split of THREE renderings of that one scene: the scene's
-// own target on the left, plus two scene.createView panels on the right - a
-// side view, where the knot's weave reads because it lies flat, and straight
-// down from above, where the three shadows cross. All three are draggable
+// own target taking the larger share, plus two scene.createView panels
+// beside it - a side view, where the knot's weave reads because it lies
+// flat, and straight down from above, where the three shadows cross. The
+// split follows the window: the two panels stack down the right in
+// landscape and sit side by side along the bottom in portrait. All three are draggable
 // orbits with poses of their own. A view shares the scene's geometry, materials, lights and
 // shadow maps; it is another target, another camera and one entry per mesh,
 // and one core flush writes every entry's world matrix, so two more panels
@@ -144,9 +146,11 @@ const SHADOW_MAP = 1024
 // its shadow reaches the floor a few units past it.
 const SHADOW_NEAR = 2
 const SHADOW_FAR = 22
-// The split: one large panel on the left, two stacked on the right, sharing
-// edges with no gap between them - the rounding leftovers go to the right
-// column and the lower panel, so the three tile the window exactly.
+// The split: one large panel taking SPLIT of the window's long axis, the
+// two others sharing what is left across the short one - stacked down the
+// right in landscape, side by side along the bottom in portrait. They share
+// edges with no gap: the rounding leftovers go to the two small panels, so
+// the three tile the window exactly whichever way it turns.
 const SPLIT = 0.66
 // Where the lower-right panel opens: all but straight down (1.55 is the
 // library's own pole guard), far enough back that the vertical FOV covers
@@ -427,8 +431,8 @@ function App() {
   let knotGeometry = torusKnot({
     radius: 1.25,
     tube: 0.3,
-    tubularSegments: 320,
-    radialSegments: 26,
+    tubularSegments: 24,
+    radialSegments: 6,
     p: KNOT_P,
     q: KNOT_Q,
     label: "knot",
@@ -448,16 +452,28 @@ function App() {
   )
 
   // The three panel boxes in logical units, tiling the window exactly: the
-  // leftovers of the rounding go to the right column and the bottom panel,
-  // so no seam ever opens up at the far edge.
+  // leftovers of the rounding go to the two small panels, so no seam ever
+  // opens up at the far edge. `top` and `bottom` name the two VIEWS, not
+  // where they land - in portrait they are the bottom-left and bottom-right
+  // of the row under the hero panel.
   let panels = createMemo(() => {
     let size = windowSize()
-    let left = Math.round(size.width * SPLIT)
-    let right = size.width - left
-    let top = Math.round(size.height / 2)
     // x/y/w/h is the DETACHED box vocabulary (d-* only) - a d-texture takes
     // no layout width/height and would silently fall back to the inherited
     // window box, drawing all three panels on top of each other.
+    if (size.height > size.width) {
+      let hero = Math.round(size.height * SPLIT)
+      let rest = size.height - hero
+      let half = Math.round(size.width / 2)
+      return {
+        main: { x: 0, y: 0, w: size.width, h: hero },
+        top: { x: 0, y: hero, w: half, h: rest },
+        bottom: { x: half, y: hero, w: size.width - half, h: rest },
+      }
+    }
+    let left = Math.round(size.width * SPLIT)
+    let right = size.width - left
+    let top = Math.round(size.height / 2)
     return {
       main: { x: 0, y: 0, w: left, h: size.height },
       top: { x: left, y: 0, w: right, h: top },
@@ -733,6 +749,7 @@ function App() {
 
   return (
     <window
+      fullscreen
       onKeyDown={e => {
         // Keyboard-only, and global: the large view leads, the small ones
         // take whatever it just became.
@@ -743,16 +760,19 @@ function App() {
       <d-texture src={topView.texture} {...panels().top} {...input[1]} />
       <d-texture src={bottomView.texture} {...panels().bottom} {...input[2]} />
       <view
-        flex={1}
         width={panels().main.w}
-        // Decoration only: it covers the whole left panel, so without this a
+        height={panels().main.h}
+        // Decoration only: it covers the whole hero panel, so without this a
         // drag anywhere over the title or the hint would hit the overlay and
         // never reach the texture leaf behind it.
         pointerEvents="none"
         justifyContent="space-between"
         padding={28}
         paddingTop={safeArea().top + 28}
-        paddingBottom={safeArea().bottom + 28}
+        // The hero panel only reaches the window's bottom edge in landscape;
+        // in portrait the two small panels sit under it and the inset there
+        // belongs to them.
+        paddingBottom={panels().main.h === windowSize().height ? safeArea().bottom + 28 : 28}
       >
         <view gap={6}>
           <text color="#eef4ff" fontSize={30} fontWeight={700}>

@@ -9,7 +9,7 @@
 // child frame, translated to the node's location; the node's own matrix has
 // not been applied), its BOX frame (after the own matrix; the layout box, the
 // overflow clip and the scroll offset live here), and its CHILD frame (after
-// scroll and viewBox fit; children are placed here). Envelopes are stated in
+// scroll and design-size fit; children are placed here). Envelopes are stated in
 // the slot frame so a parent can test them directly; the cull rect is carried
 // in whichever frame the walk is currently in.
 use std::cell::Cell;
@@ -90,12 +90,12 @@ impl EnvelopeCache {
 }
 
 // The frame a node's detached children inherit: its own layout box (design
-// size under a viewBox), else what it inherited itself. Mirrors the child
+// size under a design size), else what it inherited itself. Mirrors the child
 // walk in composite::record_node.
 pub(crate) fn child_frame(element: &Element, inherited: Size) -> Size {
   let mut frame = element.layout.as_ref().map(|l| l.size()).unwrap_or(inherited);
   if let ElementKind::View(v) = &element.kind {
-    if let Some(vb) = v.design_size() {
+    if let Some(vb) = v.design_space() {
       frame = vb;
     }
   }
@@ -220,7 +220,7 @@ fn compute_envelope(scene: &RenderTree, element: &Element, platform: &PlatformCo
 pub trait CullRect {
   /// Into a child placed at `pos` (the walk's per-child translate).
   fn into_child(&self, pos: Point) -> Self;
-  /// Through a matrix the walk applies (own matrix, viewBox fit): the rect is
+  /// Through a matrix the walk applies (own matrix, design-size fit): the rect is
   /// mapped by the inverse; a non-invertible or non-2D matrix means unknown.
   fn through(&self, m: &Matrix) -> Self;
   /// Under an overflow clip on the given axes of a `size` box.

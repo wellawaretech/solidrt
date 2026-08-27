@@ -12,7 +12,7 @@
 // This is the REFLOW answer, for layouts that genuinely rearrange across form
 // factors. For content with fixed internal geometry (diagrams, slides,
 // dashboards, game boards) do not branch on window size at all: author one
-// design space and let `viewBox` scale it to fit - see view-viewbox.tsx.
+// design space and let `designSize` scale it to fit - see view-design-size.tsx.
 import { render, capabilities, windowSize, createMemo, For } from "@solidrt/core"
 
 const GAP = 16

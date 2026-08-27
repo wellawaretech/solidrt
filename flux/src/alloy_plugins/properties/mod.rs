@@ -236,7 +236,7 @@ pub(super) fn f32_of(value: &PropValue, what: &str) -> Result<f32, String> {
 
 // The resettable variant: null (a cleared JS binding) decodes to None, which
 // the rendertree setters take as "back to the default". Used by every numeric
-// prop; f32_of stays for required interior numbers (gradient fields, viewBox
+// prop; f32_of stays for required interior numbers (gradient fields, designSize
 // entries) where null is still an error.
 pub(super) fn opt_f32(value: &PropValue, what: &str) -> Result<Option<f32>, String> {
   if value.is_null() {

@@ -28,7 +28,7 @@ let BACKDROP = glsl`
 function App() {
   return (
     <window>
-      <view width={pct(100)} height={pct(100)} viewBox={[SIZE, SIZE]}>
+      <view width={pct(100)} height={pct(100)} designSize={[SIZE, SIZE]}>
         <Scene width={SIZE} height={SIZE} background={BACKDROP} label="backdrop-demo">
           <PerspectiveCamera fov={55} position={[0, 1.8, 4.4]} lookAt={[0, 0.4, 0]} />
           <Mesh geometry={torusKnot({ radius: 0.7, tube: 0.2, tubularSegments: 128, radialSegments: 16 })} material={unlit({ color: [0.85, 0.55, 0.25] })} position={[0, 0.9, 0]} />

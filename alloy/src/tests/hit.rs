@@ -93,8 +93,8 @@ fn locals_match_live_hit_test() {
 }
 
 #[test]
-fn view_box_bounds_measured_in_design_space() {
-  // The recommended fixed-aspect pattern (`<view flex={1} viewBox={[W, H]}>`)
+fn design_size_bounds_measured_in_design_space() {
+  // The recommended fixed-aspect pattern (`<view flex={1} designSize={[W, H]}>`)
   // routinely has a design space wider than its box. The view's local point is
   // in design units, so testing it against the BOX numbers used to reject
   // everything past design x = box width - and a rejected view drops its whole
@@ -102,7 +102,7 @@ fn view_box_bounds_measured_in_design_space() {
   let mut tree = RenderTree::new();
   tree.create_node(1, attached());
   let mut v = View::default();
-  v.set_view_box(Some((800.0, 500.0)));
+  v.set_design_size(Some((800.0, 500.0)));
   tree.create_node(2, v.with_layout());
   tree.create_node(3, attached());
   tree.insert_node(1, 2, None);
@@ -137,8 +137,8 @@ fn hide_overflow(tree: &mut RenderTree, id: u64) {
 }
 
 #[test]
-fn overflow_gate_is_box_space_under_minifying_view_box() {
-  // overflow + viewBox on one view, design LARGER than the box (fit scale
+fn overflow_gate_is_box_space_under_minifying_design_size() {
+  // overflow + designSize on one view, design LARGER than the box (fit scale
   // 0.5). The overflow clip means the layout box; measured in design units it
   // would cut at half the box and reject content in the visible bottom-right
   // quadrant (okf/backlog/overflow-viewbox-clip.md, the paper-crane/unimog
@@ -146,7 +146,7 @@ fn overflow_gate_is_box_space_under_minifying_view_box() {
   let mut tree = RenderTree::new();
   tree.create_node(1, attached());
   let mut v = View::default();
-  v.set_view_box(Some((200.0, 200.0)));
+  v.set_design_size(Some((200.0, 200.0)));
   tree.create_node(2, v.with_layout());
   tree.create_node(3, attached());
   tree.insert_node(1, 2, None);
@@ -168,14 +168,14 @@ fn overflow_gate_is_box_space_under_minifying_view_box() {
 }
 
 #[test]
-fn overflow_gate_is_box_space_under_magnifying_view_box() {
+fn overflow_gate_is_box_space_under_magnifying_design_size() {
   // The opposite direction: design SMALLER than the box (fit scale 2). A
   // design-unit gate compares against the box number 100 and lets content a
   // whole box-width past the clip edge stay hittable.
   let mut tree = RenderTree::new();
   tree.create_node(1, attached());
   let mut v = View::default();
-  v.set_view_box(Some((50.0, 50.0)));
+  v.set_design_size(Some((50.0, 50.0)));
   tree.create_node(2, v.with_layout());
   tree.create_node(3, attached());
   tree.insert_node(1, 2, None);
@@ -200,8 +200,8 @@ fn overflow_gate_is_box_space_under_magnifying_view_box() {
 }
 
 #[test]
-fn scroll_is_box_pixels_under_minifying_view_box() {
-  // scroll + viewBox: the offset means box pixels on every path, settled with
+fn scroll_is_box_pixels_under_minifying_design_size() {
+  // scroll + designSize: the offset means box pixels on every path, settled with
   // the box-space overflow clip (okf/backlog/overflow-viewbox-clip.md). Fit
   // scale 0.5, scroll 10 box px = 20 design units: the child's design edge at
   // 100 lands at window x = 40. An offset added raw in design units would
@@ -209,7 +209,7 @@ fn scroll_is_box_pixels_under_minifying_view_box() {
   let mut tree = RenderTree::new();
   tree.create_node(1, attached());
   let mut v = View::default();
-  v.set_view_box(Some((200.0, 200.0)));
+  v.set_design_size(Some((200.0, 200.0)));
   v.set_scroll_x(Some(10.0));
   tree.create_node(2, v.with_layout());
   tree.create_node(3, attached());
@@ -235,14 +235,14 @@ fn scroll_is_box_pixels_under_minifying_view_box() {
 }
 
 #[test]
-fn scroll_is_box_pixels_under_magnifying_view_box() {
+fn scroll_is_box_pixels_under_magnifying_design_size() {
   // The opposite direction: fit scale 2, scroll 10 box px = 5 design units.
   // A raw design-unit offset overshoots by double, dropping content that is
   // still on screen.
   let mut tree = RenderTree::new();
   tree.create_node(1, attached());
   let mut v = View::default();
-  v.set_view_box(Some((50.0, 50.0)));
+  v.set_design_size(Some((50.0, 50.0)));
   v.set_scroll_x(Some(10.0));
   tree.create_node(2, v.with_layout());
   tree.create_node(3, attached());
@@ -267,8 +267,8 @@ fn scroll_is_box_pixels_under_magnifying_view_box() {
 }
 
 #[test]
-fn view_box_fit_resolves_against_the_border_box_when_padded() {
-  // A View's matrices (viewBox fit, transform center) resolve against its
+fn design_size_fit_resolves_against_the_border_box_when_padded() {
+  // A View's matrices (design-size fit, transform center) resolve against its
   // BORDER box on both the paint and hit paths; padding shrinks the content
   // box that kinds size against, never the fit
   // (okf/done/padding-box-divergence.md). Border box 100 wide with design
@@ -277,7 +277,7 @@ fn view_box_fit_resolves_against_the_border_box_when_padded() {
   let mut tree = RenderTree::new();
   tree.create_node(1, attached());
   let mut v = View::default();
-  v.set_view_box(Some((200.0, 200.0)));
+  v.set_design_size(Some((200.0, 200.0)));
   tree.create_node(2, v.with_layout());
   tree.create_node(3, attached());
   tree.insert_node(1, 2, None);

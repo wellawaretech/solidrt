@@ -103,7 +103,7 @@ pub trait Measurable {
 }
 
 /// A replaced element's box from its intrinsic size and what layout already
-/// knows - HTML's `<img>` rules, shared by the texture and the viewBox view:
+/// knows - HTML's `<img>` rules, shared by the texture and the design-size view:
 /// neither axis known -> the intrinsic size; one known -> the other follows
 /// the intrinsic aspect ratio (the intrinsic extent when the ratio is
 /// degenerate); both known -> both honored, the explicit override.

@@ -34,7 +34,7 @@ Two pieces, no API surface.
 space; `None` means "unknown, cull nothing". Root: the window box. Into a
 child: translate by `-location`. At an overflow-clipping node: intersect
 with the box per clipped axis (mirroring `apply_clip`), then translate by
-`+scroll`, then map through the inverse viewBox fit. At a node with an own
+`+scroll`, then map through the inverse design-size fit. At a node with an own
 matrix: bounding box of the rect through the inverse (a superset, still
 conservative); non-affine or singular -> `None` for the subtree. Same
 order as the record order (matrix, clip, scroll, fit) so it cannot drift
@@ -78,7 +78,7 @@ unbounded, never to a wrong skip.
    boundaries, captures reset to `None`. Envelopes as above. A
    `nodesPainted` per-frame counter in `PaintStats` so the effect is
    visible in `get_stats`.
-2. Inverse-map the cull through affine own matrices and viewBox fits.
+2. Inverse-map the cull through affine own matrices and design-size fits.
 3. (Maybe never) a Recording boundary remembers the cull it was recorded
    with and re-records when the new cull is not a subset - only if a real
    app needs a boundary inside a long scroller.

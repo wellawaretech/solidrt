@@ -35,14 +35,14 @@ hardcode desktop pixels.
 
 Exception - fixed-aspect content. For content with fixed internal geometry
 (diagrams, slides, dashboards, games, emulators), do not branch on window size
-at all: author everything in one design space and let `viewBox` fit it.
-`<view flex={1} viewBox={[1280, 800]}>` uniformly scales and centers the
+at all: author everything in one design space and let `designSize` fit it.
+`<view flex={1} designSize={[1280, 800]}>` uniformly scales and centers the
 children (letterboxed), pointer events on them arrive in design coordinates,
 and the same code runs unchanged from a desktop window to a phone. Laid-out
 children (flex, percentages, text wrap) resolve against the design size too,
 so a whole panel scales into a smaller box without reflowing; the view itself
 sizes like a replaced element whose intrinsic size is the design size. One
-trap from flexbox, not from viewBox: in a flex row a width-only viewBox view
+trap from flexbox, not from designSize: in a flex row a width-only design-size view
 is stretched to the line's height under the default alignment, so give the
 view `alignSelf="flex-start"` (or the row a non-stretch `alignItems`) to get
 the design aspect - `aspectRatio` does not override stretch. Reach for
@@ -80,7 +80,7 @@ you need the raw fact (e.g. `env.displayScale` for asset sizing below).
 Because the drawn size is fluid and the display DPI varies, asset format is a
 real design decision, not an afterthought:
 
-- Prefer VECTORS (`parseSvg` draws mapped to `<d-path>` in a `viewBox` view)
+- Prefer VECTORS (`parseSvg` draws mapped to `<d-path>` in a `designSize` view)
   whenever the render size is fluid or DPI varies - they stay crisp at any
   size x `displayScale()`.
 - RASTER (`<texture>` / `createImage`) needs source resolution >= displayed size

@@ -222,7 +222,7 @@ automatically (opt out: `events={false}`); an `output` leaf or
 imperative composition spreads `{...scene.handlers}` onto the element
 showing the texture. `scene.handlers` assumes that leaf is LAID OUT at
 the target size - true for the built-in leaf and a d-texture at natural
-size, under any ancestor transforms or viewBox fits (the hit test
+size, under any ancestor transforms or design-size fits (the hit test
 undoes them; localX/localY arrive in the leaf's layout frame). A leaf
 laid out at a different size (the supersampling pattern) uses
 `scene.handlersFor(() => ({ width, height }))` with its layout size.
@@ -737,11 +737,11 @@ The follow-ups are filed in okf/backlog/3d-model-loader.md.
   interpreter-hostile; that tier is core work (BVH descent per the
   differentiators ladder).
 - `scene.handlers` vs `handlersFor`: localX/localY arrive in the leaf's
-  LAYOUT frame (every ancestor transform and viewBox fit is already
+  LAYOUT frame (every ancestor transform and design-size fit is already
   undone by the element hit test). `handlers` therefore assumes leaf
   layout == target pixels; scaling by `getBoundingBox` would be WRONG -
   the box composes transforms, and it would double-correct the built-in
-  leaf under a viewBox. Only a leaf whose layout size deliberately
+  leaf under a design size. Only a leaf whose layout size deliberately
   differs from the target (supersampling) needs `handlersFor`, fed the
   layout size the app itself set.
 - Hover (enter/leave) reacts to pointer MOTION only: a mesh animating

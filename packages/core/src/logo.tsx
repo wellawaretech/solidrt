@@ -82,7 +82,7 @@ export function Logo(props: LogoProps) {
   }
 
   return (
-    <view width={size()} height={size()} viewBox={[100, 100]}>
+    <view width={size()} height={size()} designSize={[100, 100]}>
       <Show when={mode() !== "none"}>
         <Animate />
       </Show>

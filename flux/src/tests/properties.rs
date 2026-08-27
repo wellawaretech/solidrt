@@ -38,7 +38,7 @@ fn valid_values_apply() {
   assert_eq!(apply("view", "width", num(100.0)), Ok(Damage::Layout));
   assert_eq!(apply("view", "flexDirection", text("row")), Ok(Damage::Layout));
   // The design size is the children's layout space, not just a paint fit.
-  assert_eq!(apply("view", "viewBox", PropValue::List(vec![num(100.0), num(40.0)])), Ok(Damage::Layout));
+  assert_eq!(apply("view", "designSize", PropValue::List(vec![num(100.0), num(40.0)])), Ok(Damage::Layout));
   assert!(apply("view", "rotate", num(0.5)).is_ok());
   assert!(apply("rect", "radius", num(4.0)).is_ok());
   assert!(apply("text", "fontStyle", text("normal")).is_ok());
@@ -46,12 +46,12 @@ fn valid_values_apply() {
 }
 
 #[test]
-fn view_box_rejects_a_degenerate_design_space() {
+fn design_size_rejects_a_degenerate_design_space() {
   // A zero, negative or non-finite extent has no fit scale; throw in dev
   // (okf/backlog/dev-prod-validation-policy.md).
   for bad in [[0.0, 40.0], [100.0, -1.0], [f64::NAN, 40.0], [f64::INFINITY, 40.0]] {
     let value = PropValue::List(vec![num(bad[0]), num(bad[1])]);
-    assert!(apply("view", "viewBox", value).is_err(), "{bad:?} must be rejected");
+    assert!(apply("view", "designSize", value).is_err(), "{bad:?} must be rejected");
   }
 }
 
@@ -195,7 +195,7 @@ fn overflow_reads_back_including_with_viewbox() {
   use crate::alloy_plugins::properties::{read_jsx, ReadValue};
   let mut el = Element::from_kind("view").expect("known kind");
   apply_el(&mut el, "overflow", text("hidden")).expect("overflow applies");
-  apply_el(&mut el, "viewBox", PropValue::List(vec![num(100.0), num(40.0)])).expect("viewBox applies");
+  apply_el(&mut el, "designSize", PropValue::List(vec![num(100.0), num(40.0)])).expect("designSize applies");
   let props = read_jsx(&el);
   assert!(
     props.iter().any(|(n, v)| *n == "overflow" && matches!(v, ReadValue::Str(s) if s == "hidden")),

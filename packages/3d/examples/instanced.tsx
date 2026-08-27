@@ -117,7 +117,7 @@ function App() {
 
   return (
     <window>
-      <view width={pct(100)} height={pct(100)} viewBox={[SIZE, SIZE]}>
+      <view width={pct(100)} height={pct(100)} designSize={[SIZE, SIZE]}>
         <Scene width={SIZE} height={SIZE} clearColor={[0.07, 0.08, 0.1, 1]} label="instanced">
           <PerspectiveCamera fov={55} position={[0, 3.2, 5.4]} lookAt={[0, 0.2, 0]} />
           <Mesh geometry={plane({ width: 9, height: 9, label: "meadow" })} material={unlit({ color: [0.16, 0.18, 0.16] })} rotation={[-Math.PI / 2, 0, 0]} />

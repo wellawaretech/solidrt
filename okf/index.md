@@ -715,6 +715,12 @@ Finished, kept for the reasoning.
   reporting both sides of the dependency graph; forge/flux carry the
   framework-neutral primitives and @solidrt/core/data is the thin Solid
   binding.
+- **[designSize as layout space](done/design-size-layout-space.md)** [2026-08-27]
+  Children of a design-size view are laid out at the design size, not the real
+  box, so a laid-out subtree scales into any box without reflowing; from the
+  outside the view sizes like a replaced element (the texture's rules, but
+  compressible) with the design size as its intrinsic size. Decided 2026-08-27
+  as one rule, no opt-in.
 - **[Detached-view transform origin pivots around the inherited box](done/detached-view-transform-origin.md)** [2026-08-03]
   Fixed 2026-08-03 - a d-view's unset transform origin now defaults to its
   local (0,0), the point its children's coordinates are authored against,
@@ -1260,12 +1266,6 @@ Finished, kept for the reasoning.
   Element-valued props built a native subtree on every read, so typeof probes
   orphaned unmounted builds forever; fixed by resolving once through
   children(), with orphan stats.
-- **[viewBox as layout space](done/viewbox-layout-space.md)** [2026-08-27]
-  Children of a viewBox view are laid out at the design size, not the real
-  box, so a laid-out subtree scales into any box without reflowing; from the
-  outside the view sizes like a replaced element (the texture's rules, but
-  compressible) with the design size as its intrinsic size. Decided 2026-08-27
-  as one rule, no opt-in.
 
 ## Notes
 

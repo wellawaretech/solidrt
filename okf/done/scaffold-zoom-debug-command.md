@@ -26,7 +26,7 @@ box to the region and translate the content so the region starts at the
 origin - the scale falls out.
 
 ```tsx
-<view flex={1} viewBox={[zoom()?.w ?? DESIGN_W, zoom()?.h ?? DESIGN_H]}>
+<view flex={1} designSize={[zoom()?.w ?? DESIGN_W, zoom()?.h ?? DESIGN_H]}>
   <d-view x={-(zoom()?.x ?? 0)} y={-(zoom()?.y ?? 0)}>
     ...
   </d-view>

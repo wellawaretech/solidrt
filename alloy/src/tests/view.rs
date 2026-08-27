@@ -85,9 +85,9 @@ fn map(m: &crate::impellers::Matrix, x: f32, y: f32) -> (f32, f32) {
 }
 
 #[test]
-fn view_box_fits_and_centers() {
+fn design_size_fits_and_centers() {
   let mut v = View::default();
-  v.set_view_box(Some((100.0, 50.0)));
+  v.set_design_size(Some((100.0, 50.0)));
   // Wide design in a square box: scale by the tighter axis (200/100 = 2),
   // centered vertically ((200 - 50*2) / 2 = 50).
   let m = v.paint_matrix(Size::new(200.0, 200.0));
@@ -96,9 +96,9 @@ fn view_box_fits_and_centers() {
 }
 
 #[test]
-fn view_box_stays_out_of_box_matrix() {
+fn design_size_stays_out_of_box_matrix() {
   let mut v = View::default();
-  v.set_view_box(Some((100.0, 100.0)));
+  v.set_design_size(Some((100.0, 100.0)));
   v.set_x(Some(10.0));
   let size = Size::new(200.0, 200.0);
   // The full matrix carries fit and translate; the box matrix only the user
@@ -108,9 +108,9 @@ fn view_box_stays_out_of_box_matrix() {
 }
 
 #[test]
-fn view_box_composes_inside_user_transforms() {
+fn design_size_composes_inside_user_transforms() {
   let mut v = View::default();
-  v.set_view_box(Some((100.0, 100.0)));
+  v.set_design_size(Some((100.0, 100.0)));
   v.set_scale_x(Some(2.0));
   v.set_scale_y(Some(2.0));
   let size = Size::new(100.0, 100.0);
@@ -131,12 +131,12 @@ fn none_resets_transform_props_to_unset() {
   v.set_scale_x(Some(2.0));
   v.set_scale_y(Some(2.0));
   v.set_rotate(Some(1.0));
-  v.set_view_box(Some((100.0, 50.0)));
+  v.set_design_size(Some((100.0, 50.0)));
   assert!(v.needs_matrix());
   v.set_scale_x(None);
   v.set_scale_y(None);
   v.set_rotate(None);
-  v.set_view_box(None);
+  v.set_design_size(None);
   assert!(!v.needs_matrix());
 
   // x/y reset the translate component; the identity map comes back.

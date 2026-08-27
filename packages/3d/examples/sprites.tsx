@@ -68,7 +68,7 @@ function App() {
 
   return (
     <window>
-      <view width={pct(100)} height={pct(100)} viewBox={[SIZE, SIZE]}>
+      <view width={pct(100)} height={pct(100)} designSize={[SIZE, SIZE]}>
         <Scene width={SIZE} height={SIZE} clearColor={[0.07, 0.07, 0.1, 1]} label="sprites">
           <PerspectiveCamera fov={50} position={eye()} lookAt={[0, 0.6, 0]} />
           <Mesh
