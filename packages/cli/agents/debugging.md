@@ -171,7 +171,9 @@ when exactly one client is connected.
 - POST `/input` with `{ "events": [...] }` - synthetic input through the
   real pipeline, same event shape as the `send_input` tool (tap real
   coordinates read from `/tree`).
-- POST `/clock?scale=<x>` (0 pauses) / `?step=<n>` frames while paused.
+- POST `/clock?scale=<x>` (0 pauses) / `?step=<n>` frames while paused;
+  `{ scale, pendingSteps }` back. `/clients` reports each client's `timeScale`,
+  reset to 1 by every push.
 - POST `/reload` - rebuild and push to every client; `{ ok, clients }` or
   the build error.
 - POST `/load` with `{ "entry": "<path>" }` - switch the entry and push it;

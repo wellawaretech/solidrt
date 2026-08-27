@@ -397,7 +397,6 @@ export function createTextEditorLayout(
 
     setScrollX(wrap ? 0 : follow(scrollX(), c.x, caretWidth, vw, contentWidth + caretWidth))
     setScrollY(follow(scrollY(), c.y, c.height, vh, contentHeight))
-    flush()
   })
 
   return { lines, caret, caretLine, offsetAtX, lineAtY, step, scrollX, scrollY }

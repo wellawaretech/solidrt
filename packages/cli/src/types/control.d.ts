@@ -20,6 +20,9 @@ export type ClientEntry = {
   clientDir: string | null
   /** Whether its stats overlay is drawn (see POST /stats). */
   stats: boolean
+  /** Its time scale as the client last reported it to POST /clock: 0 paused,
+   * 1 real time. Back to 1 on every push (a reload restarts the clock). */
+  timeScale: number
   /** The client's process id on its own machine. */
   pid: number | null
   /** The runtime binary it runs. */

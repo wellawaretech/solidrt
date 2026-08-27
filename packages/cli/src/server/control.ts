@@ -73,6 +73,7 @@ export function clientList(withAddress = false): (ClientEntry & { address?: stri
     capabilities: info.capabilities,
     queries: info.queries,
     stats: info.stats,
+    timeScale: info.timeScale,
     clientDir: info.clientDir,
     pid: info.pid,
     execPath: info.execPath,
@@ -146,6 +147,36 @@ function parseScale(query: Map<string, string>): number | Response | undefined {
   return scale === 1 ? undefined : scale
 }
 
+// Forward a query to one client and wait for its answer: the data it
+// replied with, or the error Response to send instead (no such client, a
+// timeout, or the client's own error).
+async function queryClient(
+  ws: ServerWebSocket,
+  kind: string,
+  extra?: Record<string, unknown>,
+  timeoutMs: number = QUERY_TIMEOUT_MS,
+): Promise<{ data: any } | { error: Response }> {
+  let id = nextQueryId++
+  let reply = new Promise<any>((resolve) => {
+    pendingQueries.set(id, resolve)
+  })
+  ws.send(JSON.stringify({ type: "query", kind, id, ...extra }))
+  let msg = await Promise.race([reply, sleep(timeoutMs)])
+  pendingQueries.delete(id)
+  if (!msg)
+    return {
+      error: Response.json(
+        { error: "Query timed out: the client is connected but did not answer (JS thread busy or app wedged?)" },
+        { status: 504 },
+      ),
+    }
+  // Error strings may carry stack traces (e.g. a debug command threw); remap
+  // bundle positions to .tsx sources like appendLog does for forwarded logs.
+  if (msg.error)
+    return { error: Response.json({ error: remapPositions(String(msg.error), state.currentMaps) }, { status: 502 }) }
+  return { data: msg.data }
+}
+
 async function handleQuery(
   query: Map<string, string>,
   kind: string,
@@ -154,22 +185,8 @@ async function handleQuery(
 ): Promise<Response> {
   let target = findClient(query.get("client"))
   if ("error" in target) return target.error
-  let id = nextQueryId++
-  let reply = new Promise<any>((resolve) => {
-    pendingQueries.set(id, resolve)
-  })
-  target.ws.send(JSON.stringify({ type: "query", kind, id, ...extra }))
-  let msg = await Promise.race([reply, sleep(timeoutMs)])
-  pendingQueries.delete(id)
-  if (!msg)
-    return Response.json(
-      { error: "Query timed out: the client is connected but did not answer (JS thread busy or app wedged?)" },
-      { status: 504 },
-    )
-  // Error strings may carry stack traces (e.g. a debug command threw); remap
-  // bundle positions to .tsx sources like appendLog does for forwarded logs.
-  if (msg.error) return Response.json({ error: remapPositions(String(msg.error), state.currentMaps) }, { status: 502 })
-  return Response.json(msg.data)
+  let result = await queryClient(target.ws, kind, extra, timeoutMs)
+  return "error" in result ? result.error : Response.json(result.data)
 }
 
 // Merge runs of consecutive identical entries (same client, level, text) into
@@ -446,7 +463,15 @@ export async function handleControl(req: Request, path: string, query: Map<strin
       }
       if (!("scale" in extra) && !("step" in extra))
         return Response.json({ error: "Clock requires ?scale=<x> or ?step=<n>" }, { status: 400 })
-      return handleQuery(query, "clock", extra)
+      // The reply is the clock as the client now has it; its scale is kept
+      // on the client's entry so /clients reports it (a push resets it).
+      let target = findClient(query.get("client"))
+      if ("error" in target) return target.error
+      let result = await queryClient(target.ws, "clock", extra)
+      if ("error" in result) return result.error
+      let info = state.clients.get(target.ws)
+      if (info && typeof result.data?.scale === "number") info.timeScale = result.data.scale
+      return Response.json(result.data)
     }
     case "/__control__/input": {
       // Synthetic input injection: POST {events: [...]} forwards a timed

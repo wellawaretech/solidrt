@@ -34,7 +34,11 @@ const BSOD_TRIGGER = `throw new Error("SolidRT: build failed")`
 
 function latchAndSend(text: string) {
   state.currentReload = text
-  for (let ws of state.clients.keys()) ws.send(text)
+  for (let [ws, info] of state.clients) {
+    // The runtime restarts the app's clock with the app.
+    info.timeScale = 1
+    ws.send(text)
+  }
 }
 
 /** Latch the build-failure trigger and push it, so every client (and any

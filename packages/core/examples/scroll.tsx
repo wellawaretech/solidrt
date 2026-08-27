@@ -11,7 +11,7 @@
 // Capture both with refs, pass their accessors to createScroll, then apply the
 // returned offset to the viewport's scrollX/scrollY. createScroll does no input,
 // so wire an event (here onWheel) to scroll.scrollBy - positive dy moves content
-// up. scrollTo(x, y) jumps to an absolute, clamped offset.
+// up. scrollTo({ x, y }) jumps to an absolute, clamped offset.
 import { render, For, createScroll } from "@solidrt/core"
 import type { WheelEvent } from "@solidrt/core"
 
@@ -22,7 +22,7 @@ function App() {
   // Default axis is "vertical"; pass { axis: "horizontal" } or "both" for others.
   let scroll = createScroll(() => viewport, () => content)
 
-  let onWheel = (e: WheelEvent) => scroll.scrollBy(e.deltaX, e.deltaY)
+  let onWheel = (e: WheelEvent) => scroll.scrollBy({ x: e.deltaX, y: e.deltaY })
 
   let rows = Array.from({ length: 30 }, (_, i) => i)
 

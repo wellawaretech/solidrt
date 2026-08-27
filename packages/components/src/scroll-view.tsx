@@ -1,5 +1,5 @@
-import { createPan, createScroll, createSignal } from "@solidrt/core"
-import type { LayoutProps, PointerProps, WheelEvent } from "@solidrt/core"
+import { createPan, createScroll, createSignal, onSettled, untrack } from "@solidrt/core"
+import type { LayoutProps, PointerProps, Scroll, WheelEvent } from "@solidrt/core"
 import type { StyleProps, TransitionProps, TransitionScrollProp, TransitionStyleProp, TransitionViewProp } from "./types"
 import { splitTransition, transitionEndFor } from "./types"
 
@@ -12,6 +12,11 @@ export interface ScrollViewProps
   style?: StyleProps
   /** Scroll the horizontal axis instead of the vertical one. */
   horizontal?: boolean
+  /** Receives the scroll handle (offset, range, scrollTo) for driving the view
+   * from app code; scroll policies such as following a growing log are written
+   * against it. Called once the component has settled, outside any reactive
+   * scope, so a signal setter can be passed directly. */
+  scrollRef?: (scroll: Scroll) => void
 }
 
 // A scrollable region. The outer box carries layout/style/transform and the
@@ -43,13 +48,18 @@ export function ScrollView(props: ScrollViewProps) {
     () => content,
     { axis: props.horizontal ? "horizontal" : "vertical" },
   )
+  // Handed out from onSettled rather than the body: the body is an owned
+  // scope, where a signal write (an app passing its setter) is refused.
+  onSettled(() => {
+    untrack(() => props.scrollRef)?.(scroll)
+  })
 
   // Content follows the finger: it moves opposite to scroll offsets, which
   // grow toward the bottom/right.
   let pan = createPan({
     axis: props.horizontal ? "horizontal" : "vertical",
     onPanStart: () => setDragging(true),
-    onPanMove: (dx, dy) => scroll.scrollBy(-dx, -dy),
+    onPanMove: (dx, dy) => scroll.scrollBy({ x: -dx, y: -dy }),
     onPanEnd: () => setDragging(false),
   })
 
@@ -57,8 +67,8 @@ export function ScrollView(props: ScrollViewProps) {
     // A plain mouse wheel only emits deltaY. On a horizontal scroller, route that
     // vertical delta to the x axis so the wheel still scrolls it (trackpads that
     // emit deltaX take precedence).
-    if (props.horizontal) scroll.scrollBy(e.deltaX || e.deltaY, 0)
-    else scroll.scrollBy(e.deltaX, e.deltaY)
+    if (props.horizontal) scroll.scrollBy({ x: e.deltaX || e.deltaY })
+    else scroll.scrollBy({ x: e.deltaX, y: e.deltaY })
   }
 
   // The viewport owns the scroll offset, the outer box everything else: a
@@ -79,13 +89,15 @@ export function ScrollView(props: ScrollViewProps) {
     }
   }
   // The viewport's declaration: the user's scroll entries over the default
-  // spring. During a drag the scroll entries go, and a user `all` narrows to
-  // the one other property the viewport writes (clipRadius) so it cannot
-  // put a spring back under the finger.
+  // spring. During a drag, and while the latest programmatic write asked for
+  // no motion (scrollTo behavior "instant"), the scroll entries go, and a
+  // user `all` narrows to the one other property the viewport writes
+  // (clipRadius) so it cannot put a spring back under the finger or the
+  // instant write.
   let viewportTransition = () => {
     let user = split().viewport
     let entries: Record<string, unknown> = typeof user === "string" ? { all: user } : { ...(user ?? {}) }
-    if (dragging()) {
+    if (dragging() || scroll.behavior() === "instant") {
       let { scrollX, scrollY, all, ...rest } = entries
       if (all !== undefined) rest.clipRadius = all
       return Object.keys(rest).length ? rest : null
@@ -124,16 +136,19 @@ export function ScrollView(props: ScrollViewProps) {
           radius={props.style?.borderRadius}
         />
       ) : null}
+      {/* transition before scrollX/scrollY: props apply in source order, and
+          an instant write needs the withdrawn declaration to land before the
+          value in the same flush, or the value starts a spring anyway. */}
       <view
         ref={(n: { id: number }) => (viewport = n)}
         flex={1}
         overflow="hidden"
         clipRadius={props.style?.borderRadius}
         flexDirection={direction()}
-        scrollX={scroll.offset().x}
-        scrollY={scroll.offset().y}
         transition={viewportTransition()}
         onTransitionEnd={transitionEndFor("root", props.onTransitionEnd)}
+        scrollX={scroll.offset().x}
+        scrollY={scroll.offset().y}
         {...pan.handlers}
         onWheel={onWheel}
       >

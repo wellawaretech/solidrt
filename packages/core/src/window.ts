@@ -208,14 +208,49 @@ export function keyboardHeight(): number {
   return keyboardHeightAccessor()
 }
 
+// Post-layout handlers run in registration order from one bus subscription,
+// then pending reactive writes are flushed once. The postLayout emit is a JS
+// entry inside the frame (layout has run, paint has not), and the runtime's
+// microtask checkpoint only comes after the whole frame closure, so a signal
+// write made by a handler would otherwise reach its node a frame late. The
+// drain lives here, the way runFrame drains before renderFrame, so that no
+// handler has to flush for itself. A throwing handler skips neither the
+// handlers after it nor the flush.
+let layoutHandlers: (() => void)[] = []
+let layoutSubscribed = false
+
+function runLayoutHandlers() {
+  for (let fn of [...layoutHandlers]) {
+    try {
+      fn()
+    } catch (err) {
+      console.error("Error in onLayout handler:", err)
+    }
+  }
+  try {
+    flush()
+  } catch (err) {
+    console.error("Error in reactive flush:", err)
+  }
+}
+
 /**
  * Fires after layout has been computed for the current frame but before paint.
- * Setting properties that affect layout from this callback will be picked up
- * by a re-layout pass before painting (one extra pass; cascades beyond that
- * paint stale).
+ * Property writes made from this callback, direct or through signals (pending
+ * reactive writes are flushed once every handler has run), are picked up by a
+ * re-layout pass before painting (one extra pass; cascades beyond that paint
+ * stale).
  */
 export function onLayout(fn: () => void) {
-  let unsubscribe = on("postLayout", fn)
+  if (!layoutSubscribed) {
+    layoutSubscribed = true
+    on("postLayout", runLayoutHandlers)
+  }
+  layoutHandlers.push(fn)
+  let unsubscribe = () => {
+    let i = layoutHandlers.indexOf(fn)
+    if (i >= 0) layoutHandlers.splice(i, 1)
+  }
   onCleanup(unsubscribe)
   return unsubscribe
 }
