@@ -155,6 +155,7 @@ export interface PaintProps {
   // A solid color, or a gradient from createLinearGradient/createRadialGradient.
   color?: Color | Gradient
   blendMode?: "clear" | "source" | "destination" | "source-over" | "destination-over" | "source-in" | "destination-in" | "source-out" | "destination-out" | "source-atop" | "destination-atop" | "xor" | "plus" | "modulate" | "screen" | "overlay" | "darken" | "lighten" | "color-dodge" | "color-burn" | "hard-light" | "soft-light" | "difference" | "exclusion" | "multiply" | "hue" | "saturation" | "color" | "luminosity"
+  /** Default "fill"; "stroke" on line, whose segment has no interior (see LineProps). */
   drawStyle?: "fill" | "stroke" | "stroke-and-fill"
   strokeCap?: "butt" | "round" | "square"
   strokeJoin?: "miter" | "round" | "bevel"
@@ -723,15 +724,37 @@ export interface RectProps extends PaintProps, PointerProps {
 // Strokes paint inside the box, same as `RectProps`.
 export interface OvalProps extends PaintProps, PointerProps {}
 
-// A line's geometry is numbers, not a path string: the segment primitive to
-// reach for when endpoints move (each endpoint is one property write; a path
-// animates by rebuilding its `d` string). Endpoints (x1/y1/x2/y2) exist on
-// the detached `d-line` only. A laid-out `<line>` is practically a rule -
-// give it a thin box (length x strokeWidth); in general it draws its layout
-// box's top-left-to-bottom-right diagonal. For arbitrary angles and
-// connectors use `d-line`; for polylines and curves, a path.
+// A line's geometry is numbers, not a path string: the primitive to reach
+// for when the geometry moves (each endpoint is one property write, a
+// polyline is one array write; a path animates by rebuilding its `d` string).
+// Two forms: the segment, whose endpoints (x1/y1/x2/y2) exist on the
+// detached `d-line` only, and the polyline (`points`), which exists on both.
+// A laid-out `<line>` without points is practically a rule - give it a thin
+// box (length x strokeWidth); in general it draws its layout box's
+// top-left-to-bottom-right diagonal. For arbitrary angles and connectors use
+// `d-line`; for curves, a path.
+//
+// The paint defaults to `drawStyle="stroke"` (the box primitives default to
+// fill). On a polyline "fill" and "stroke-and-fill" fill the polygon
+// (nonzero, implicitly closed) and hit-test its interior; on the two-point
+// form fill has no effect, a segment has no interior.
 export interface LineProps extends PaintProps, PointerProps {
-  /** Dash pattern in local units: the drawn segment length. Both onLength and offLength must be set to dash; with either unset the line is solid. */
+  /**
+   * Polyline vertices as a flat [x0, y0, x1, y1, ...] in the element's local
+   * space (the space x1..y2 use). Takes precedence over the endpoints while
+   * set. Content, not box geometry: a laid-out <line points> measures its
+   * box from the points' extent, like a <path> from `d`, and draws them
+   * unscaled. Fewer than two points draws nothing; an odd count throws. Not
+   * covered by transitions: animate by writing a new array.
+   */
+  points?: number[] | Float32Array | Float64Array
+  /**
+   * Close the polyline's stroke: the segment back to the first point, joined
+   * there instead of capped. A fill always covers the polygon (closed
+   * implicitly), so this is a stroke distinction. Default false.
+   */
+  closed?: boolean
+  /** Dash pattern in local units: the drawn segment length. Both onLength and offLength must be set to dash; with either unset the line is solid. On a polyline the pattern restarts at every vertex. */
   onLength?: number
   /** Dash pattern in local units: the gap length. Both onLength and offLength must be set to dash; with either unset the line is solid. */
   offLength?: number

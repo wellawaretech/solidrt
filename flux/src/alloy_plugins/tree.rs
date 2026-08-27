@@ -61,6 +61,8 @@ pub(crate) fn to_prop_value(value: &Value<'_>) -> rquickjs::Result<PropValue> {
     // Functions (event handlers) are bound in the JS renderer, not marshalled as
     // data; ignore any that reach here.
     PropValue::Null
+  } else if let Some(items) = float_array_items(value) {
+    PropValue::List(items)
   } else if let Some(obj) = value.as_object() {
     // Arrays and functions are already handled above, so this is a plain object:
     // marshal its own enumerable keys into a Map, recursing on each value.
@@ -75,6 +77,32 @@ pub(crate) fn to_prop_value(value: &Value<'_>) -> rquickjs::Result<PropValue> {
   } else {
     PropValue::Null
   })
+}
+
+// A Float32Array/Float64Array marshals as a list of numbers, so the flat
+// coordinate props (line `points`) take either. Typed arrays are objects, not
+// arrays, so without this they would fall into the Map branch as index-keyed
+// entries. The bytes are read through as_bytes (None for a detached buffer,
+// which marshals as an empty list) rather than AsRef<[T]>, which panics on
+// one. Other typed arrays keep falling through.
+fn float_array_items(value: &Value<'_>) -> Option<Vec<PropValue>> {
+  let obj = value.as_object()?;
+  if let Some(ta) = obj.as_typed_array::<f32>() {
+    let bytes = ta.as_bytes().unwrap_or(&[]);
+    return Some(
+      bytes.chunks_exact(4).map(|c| PropValue::Number(f32::from_ne_bytes([c[0], c[1], c[2], c[3]]) as f64)).collect(),
+    );
+  }
+  if let Some(ta) = obj.as_typed_array::<f64>() {
+    let bytes = ta.as_bytes().unwrap_or(&[]);
+    return Some(
+      bytes
+        .chunks_exact(8)
+        .map(|c| PropValue::Number(f64::from_ne_bytes([c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7]])))
+        .collect(),
+    );
+  }
+  None
 }
 
 // The font options measureText and prepareText share, onto a Text, through

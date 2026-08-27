@@ -431,8 +431,8 @@ function App() {
   let knotGeometry = torusKnot({
     radius: 1.25,
     tube: 0.3,
-    tubularSegments: 24,
-    radialSegments: 6,
+    tubularSegments: 320,
+    radialSegments: 26,
     p: KNOT_P,
     q: KNOT_Q,
     label: "knot",

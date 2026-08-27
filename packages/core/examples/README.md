@@ -52,6 +52,7 @@ for the element/prop model see `@solidrt/core/AGENTS.md`.
 - `audio.tsx` - `createSound`: decode a clip once from bytes (here a binary import), replay cheaply; `overlap` stacking vs single-voice, `playing()` signal, release on unmount. `createPcmSound` for a synthesised clip from raw samples (a generated sine sweep). Points to `createSoundStream` for long tracks streamed from a path.
 
 ## Vector graphics
+- `line-points.tsx` - `points` on `line`/`d-line`: a flat `[x0, y0, x1, y1, ...]` array (or `Float32Array`) makes the polyline whose geometry is numbers - a live trace rewritten every frame with no `d` string to parse, `closed` outlines, `drawStyle="fill"` polygons (a line's paint defaults to stroke), per-segment dashing, and a laid-out `<line points>` measuring its box from the points.
 - `parse-svg.tsx` - `parseSvg` turns a whole SVG *document string* (not HTML/JSX children) into plain draw data mapped to `<d-path>` inside a `designSize`-fitted view; per-shape hover highlighting shows the payoff (exact-outline hit testing, recolor without re-parse), plus a `currentColor` icon recolored via the `color` option. This is how to use existing icon libraries (Lucide, Heroicons, etc.) - hand their SVG source to `parseSvg`.
 
 ## Bundling assets

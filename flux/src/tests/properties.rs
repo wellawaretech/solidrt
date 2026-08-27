@@ -502,3 +502,62 @@ fn null_resets_props_to_defaults() {
   let err = apply("view", "colr", PropValue::Null).unwrap_err();
   assert!(err.starts_with("Unknown property"), "{err}");
 }
+
+#[test]
+fn line_points_decode_and_reject() {
+  let pts = |v: &[f64]| PropValue::List(v.iter().map(|n| num(*n)).collect());
+  // Content, not box geometry: allowed on the layout form too, and sizes it.
+  assert_eq!(apply("d-line", "points", pts(&[0.0, 0.0, 10.0, 5.0])), Ok(Damage::Layout));
+  assert_eq!(apply("line", "points", pts(&[0.0, 0.0, 10.0, 5.0])), Ok(Damage::Layout));
+  assert_eq!(apply("d-line", "points", PropValue::Null), Ok(Damage::Layout));
+  assert_eq!(apply("d-line", "closed", PropValue::Bool(true)), Ok(Damage::Paint));
+  assert_eq!(apply("d-line", "closed", PropValue::Null), Ok(Damage::Paint));
+
+  let odd = apply("d-line", "points", pts(&[0.0, 0.0, 10.0])).expect_err("odd count");
+  assert!(odd.contains("points") && odd.contains("even"), "{odd}");
+  let bad = apply("d-line", "points", PropValue::List(vec![num(0.0), text("x")])).expect_err("non-number");
+  assert!(bad.contains("points[1]"), "{bad}");
+  let not_list = apply("d-line", "points", num(3.0)).expect_err("not a list");
+  assert!(not_list.contains("points must be an array"), "{not_list}");
+  let bad_closed = apply("d-line", "closed", num(1.0)).expect_err("closed");
+  assert!(bad_closed.contains("closed must be a boolean"), "{bad_closed}");
+}
+
+// A Float32Array/Float64Array is an object, not an array, to the marshaller;
+// the typed-array branch turns it into the same list a number[] gives, so the
+// `points` decoder sees one shape.
+#[test]
+fn float_typed_arrays_marshal_as_number_lists() {
+  let rt = rquickjs::Runtime::new().expect("js runtime");
+  let context = rquickjs::Context::full(&rt).expect("js context");
+  context.with(|ctx| {
+    let marshal = |src: &str| -> PropValue {
+      let v: rquickjs::Value = ctx.eval(src).expect("eval");
+      crate::alloy_plugins::tree::to_prop_value(&v).expect("marshal")
+    };
+    let nums = |v: &PropValue| -> Option<Vec<f64>> { v.as_list()?.iter().map(|x| x.as_f64()).collect() };
+    assert_eq!(nums(&marshal("new Float32Array([1.5, -2, 3, 4])")), Some(vec![1.5, -2.0, 3.0, 4.0]));
+    assert_eq!(nums(&marshal("new Float64Array([1.5, -2, 3, 4])")), Some(vec![1.5, -2.0, 3.0, 4.0]));
+    assert_eq!(nums(&marshal("new Float32Array([1, 2, 3, 4]).subarray(1, 3)")), Some(vec![2.0, 3.0]));
+    assert_eq!(nums(&marshal("new Float32Array(0)")), Some(vec![]));
+    assert_eq!(apply("d-line", "points", marshal("new Float32Array([0, 0, 10, 5])")), Ok(Damage::Layout));
+  });
+}
+
+// PaintState's null reset is fill; a line's is stroke, and the adapter keeps
+// it that way (a component forwarding an unset drawStyle must not turn a
+// line into a polygon).
+#[test]
+fn line_draw_style_null_resets_to_stroke() {
+  use alloy::impellers::DrawStyle;
+  let style = |el: &Element| el.kind.paint().expect("line has paint").draw_style;
+  let mut el = Element::from_kind("d-line").expect("known kind");
+  assert_eq!(style(&el), DrawStyle::Stroke);
+  assert_eq!(apply_el(&mut el, "drawStyle", text("fill")), Ok(Damage::Paint));
+  assert_eq!(style(&el), DrawStyle::Fill);
+  assert_eq!(apply_el(&mut el, "drawStyle", PropValue::Null), Ok(Damage::Paint));
+  assert_eq!(style(&el), DrawStyle::Stroke);
+  let mut rect = Element::from_kind("d-rect").expect("known kind");
+  assert_eq!(apply_el(&mut rect, "drawStyle", PropValue::Null), Ok(Damage::Paint));
+  assert_eq!(style(&rect), DrawStyle::Fill);
+}

@@ -83,6 +83,12 @@ Shaped, not started.
   transforms are invisible to it and `castShadow` on an InstancedMesh is
   skipped. The additive fix is a per-class `shadowVertex` the override
   borrows.
+- **[3D fill and pass count put low-end Android GPUs far off 60 fps](backlog/3d-low-end-gpu-performance.md)** [2026-08-27]
+  The third-dimension demo runs at 13 fps on an Adreno 610 tablet. Measured
+  budget: ~44 ms fragment work, ~13 ms of flat per-pass overhead, ~2 ms
+  composite. The levers are per-pixel (shadow taps, render scale) plus one
+  structural fix (shadow atlas); the compositing path, geometry, shadow map
+  resolution and the stats overlay are all measured non-factors.
 - **[Model loader follow-ups](backlog/3d-model-loader.md)** [2026-08-26]
   The glTF subset loader (roadmap item 7, shipped 2026-08-26 as
   parseGltf/createModel at runtime plus the srt tool 3d/model bake) covers
@@ -341,6 +347,11 @@ Shaped, not started.
   Answering "who else is burning the GPU" needs a different mechanism on every
   OS, so it wants a documented per-platform recipe or an srt doctor helper
   rather than an engine feature.
+- **[GPU timer stats are unusable on tiled GPUs, and gpuFrameExecMs can return garbage](backlog/gpu-timer-attribution.md)** [2026-08-27]
+  On Adreno the per-pass execMs and gpuFrameExecMs figures move with unrelated
+  state, invert against ground truth, and on a frame with no passes report 401
+  ms of GPU time in a 17 ms frame, so anyone optimising from them is led the
+  wrong way.
 - **[Color math is unreachable headless](backlog/headless-color-math.md)** [2026-08-19]
   parseColor/mixColors/brightness live only on flux:rendertree (gui feature),
   so site tooling, tests, and theme builders cannot call them; the components
@@ -362,6 +373,13 @@ Shaped, not started.
   discovery, no CI step. Decide the runner (flux, not bun, is the runtime
   under test), the file convention, and the CI hook, then fold the existing
   rigs into it.
+- **[Line takes a points array (polyline)](backlog/line-points.md)** [2026-08-27]
+  `<line>`/`<d-line>` grow a `points` prop - a flat [x0, y0, x1, y1, ...]
+  number array - and a `closed` flag, making line the numeric polyline
+  primitive between d-line's two endpoints and d-path's string DSL; then line
+  implements Bounded so culling, capture and getBoundingBox see what it paints
+  instead of the inherited box. Endpoints, dash, caps and joins stay as they
+  are.
 - **[Location module (geolocation)](backlog/location-module.md)** [2026-08-15]
   The runtime exposes camera, microphone, speech-recognition and sound as
   @solidrt/core subpath modules but has no geolocation API, so apps fall back

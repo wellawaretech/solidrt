@@ -12,7 +12,7 @@
 use alloy::impellers::{
   BlendMode, Color, DrawStyle, FillType, FontStyle, FontWeight, StrokeCap, StrokeJoin, TextAlignment,
 };
-use alloy::rendertree::{Element, ElementKind, Gradient, OriginCoord, PaintState, TextureFit, View};
+use alloy::rendertree::{Element, ElementKind, Gradient, Line, OriginCoord, PaintState, TextureFit, View};
 
 /// A read-back property value, kept engine- and serializer-free: the caller
 /// (the dev connection) maps these onto its own JSON.
@@ -66,6 +66,12 @@ pub fn read_jsx(element: &Element) -> Vec<(&'static str, ReadValue)> {
       num(&mut out, "y1", line.y1);
       num(&mut out, "x2", line.x2);
       num(&mut out, "y2", line.y2);
+      if let Some(points) = &line.points {
+        out.push(("points", ReadValue::Nums(points.iter().map(|v| *v as f64).collect())));
+      }
+      if line.closed {
+        out.push(("closed", ReadValue::Bool(true)));
+      }
       num(&mut out, "onLength", line.on_length);
       num(&mut out, "offLength", line.off_length);
     }
@@ -181,7 +187,11 @@ pub fn read_jsx(element: &Element) -> Vec<(&'static str, ReadValue)> {
     }
   }
   if let Some(paint) = element.kind.paint() {
-    read_paint(paint, &mut out);
+    let default_style = match &element.kind {
+      ElementKind::Line(_) => Line::DEFAULT_DRAW_STYLE,
+      _ => DrawStyle::Fill,
+    };
+    read_paint(paint, default_style, &mut out);
   }
   out
 }
@@ -235,7 +245,7 @@ fn origin_value(o: OriginCoord) -> ReadValue {
   }
 }
 
-fn read_paint(paint: &PaintState, out: &mut Vec<(&'static str, ReadValue)>) {
+fn read_paint(paint: &PaintState, default_style: DrawStyle, out: &mut Vec<(&'static str, ReadValue)>) {
   if paint.gradient.is_some() {
     let kind = match paint.gradient {
       Some(Gradient::Linear { .. }) => "linear",
@@ -249,7 +259,7 @@ fn read_paint(paint: &PaintState, out: &mut Vec<(&'static str, ReadValue)>) {
       out.push(("color", ReadValue::Str(color_hex(paint.color))));
     }
   }
-  if paint.draw_style != DrawStyle::Fill {
+  if paint.draw_style != default_style {
     out.push((
       "drawStyle",
       ReadValue::Str(

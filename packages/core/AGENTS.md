@@ -144,7 +144,9 @@ Peer deps @solidjs/signals and @solidjs/universal must match (currently
   `line`, `path`, `texture`, `audio`, plus the `d-` variants `d-view`, `d-rect`,
   `d-oval`, `d-line`, `d-path`, `d-texture`, `d-text`. Line endpoints
   (`x1`/`y1`/`x2`/`y2`) exist only on `d-line`; a laid-out `<line>` has no
-  endpoint props and spans its layout box corner to corner.
+  endpoint props and spans its layout box corner to corner. `points` (a flat
+  `[x0, y0, x1, y1, ...]` array, plus `closed`) turns either form into a
+  polyline and wins over the endpoints while set.
 
 - Plain vs `d-` variant (the `d-` prefix means "detached" - detached from the
   layout engine, Taffy): a plain element (e.g. `rect`) is `RectProps &

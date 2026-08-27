@@ -37,17 +37,21 @@ stroke rather than a box.
 
 {{ decl packages/core/src/types.d.ts LineProps }}
 
-A laid-out `<line>` draws its box's top-left-to-bottom-right diagonal, so in
-practice it is a rule: give it a thin box. Endpoints are a detached-only
-concept, so arbitrary angles and connectors want `d-line`, and polylines or
-curves want a path.
+A laid-out `<line>` without `points` draws its box's top-left-to-bottom-right
+diagonal, so in practice it is a rule: give it a thin box. Endpoints are a
+detached-only concept, so arbitrary angles and connectors want `d-line`.
+`points` makes either form a polyline - a flat `[x0, y0, x1, y1, ...]` array
+(or a `Float32Array`), optionally `closed` - the numeric middle ground between
+a segment and a path: animate it by writing a new array, nothing is parsed.
+Curves want a path.
 
 ## path
 
 {{ decl packages/core/src/types.d.ts PathProps }}
 
-`d` is an SVG path string. Reach for `line` instead when endpoints animate: a
-path animates by rebuilding its `d` string, where a line moves one number.
+`d` is an SVG path string. Reach for `line` instead when the geometry is
+numbers that animate (endpoints, or a polyline's `points`): a path animates
+by rebuilding its `d` string, where a line moves one number or one array.
 
 ## texture
 
