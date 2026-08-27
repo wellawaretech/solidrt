@@ -1,8 +1,10 @@
 use super::PaintState;
-use crate::impellers::{DisplayListBuilder, DrawStyle, FillType, Path, PathBuilder, Point, Rect, Size};
+use crate::impellers::{
+  DisplayListBuilder, DrawStyle, FillType, Path, PathBuilder, Point, Rect, Size, StrokeCap, StrokeJoin,
+};
 use crate::rendertree::hit::{HitContext, Hittable};
 use crate::rendertree::Damage;
-use crate::rendertree::{BuildContext, Buildable, Element, ElementKind, Measurable, MeasureContext};
+use crate::rendertree::{Bounded, BuildContext, Buildable, Element, ElementKind, Measurable, MeasureContext};
 
 // Endpoints default to spanning the box: (0,0) to (box.w, box.h), matching how
 // a rect with unset w/h fills its box. Explicit endpoints are detached-only.
@@ -223,6 +225,42 @@ impl Line {
     (off > 0.0).then(|| Dash { on: on.max(0.0), off, offset: self.dash_offset.unwrap_or(0.0) })
   }
 
+  // The geometry the build draws, as an AABB in local space: the points, or
+  // the endpoints with their box defaults resolved against `fallback`. None
+  // when nothing is drawn (fewer than two points).
+  fn geometry(&self, fallback: Size) -> Option<Rect> {
+    match &self.points {
+      Some(points) => (points.len() >= 4).then(|| extent(points)).flatten(),
+      None => {
+        let (a, b) = self.endpoints(fallback.width, fallback.height);
+        extent(&[a.x, a.y, b.x, b.y])
+      }
+    }
+  }
+
+  // How far the stroke reaches past the geometry: half the width, and more
+  // where a square cap (* sqrt 2, its corner on a diagonal) or a miter join
+  // (* strokeMiter, the tip's limit) pokes out. Caps sit on open ends: an
+  // open polyline's two, the segment's, and every dash's; joins need a
+  // vertex between two segments. A fill-only style has no stroke.
+  fn stroke_outset(&self) -> f32 {
+    if !self.strokes() {
+      return 0.0;
+    }
+    let vertices = self.points.as_ref().map_or(2, |p| p.len() / 2);
+    let capped = self.points.is_none() || !self.closed || self.dash().is_some();
+    let joined = self.points.is_some() && (vertices >= 3 || (self.closed && vertices >= 2));
+    let cap = match self.paint.stroke_cap {
+      StrokeCap::Square if capped => std::f32::consts::SQRT_2,
+      _ => 1.0,
+    };
+    let join = match self.paint.stroke_join {
+      StrokeJoin::Miter if joined => self.paint.stroke_miter.max(1.0),
+      _ => 1.0,
+    };
+    self.paint.stroke_width / 2.0 * cap.max(join)
+  }
+
   // A box-relative gradient resolves against the points' extent, as a
   // path's does against its bounds.
   fn build_polyline(&self, points: &[f32], builder: &mut DisplayListBuilder) {
@@ -262,6 +300,22 @@ impl Buildable for Line {
       None => {
         builder.draw_line(from, to, &paint);
       }
+    }
+  }
+}
+
+// The painted box: the geometry's AABB plus the stroke outset. A line's
+// stroke is centered on its geometry, so unlike a rect's (painted inside the
+// box) it straddles the box; the bounds say where the pixels are, which is
+// what culling, a detached capture and getBoundingBox want.
+impl Bounded for Line {
+  fn local_bounds(&self, fallback: Size) -> Rect {
+    match self.geometry(fallback) {
+      Some(geometry) => {
+        let outset = self.stroke_outset();
+        geometry.inflate(outset, outset)
+      }
+      None => Rect::zero(),
     }
   }
 }

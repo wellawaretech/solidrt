@@ -366,7 +366,12 @@ export interface TextGeometryProps extends PositionProps {
   h?: number
 }
 
-/** See {@link PositionProps}: detached-only, never affects layout. */
+/**
+ * See {@link PositionProps}: detached-only, never affects layout. A line's
+ * reported bounds (getBoundingBox, the tree, a detached capture) are its
+ * painted box: the geometry's extent plus the stroke's reach, not the
+ * inherited box.
+ */
 export interface LineGeometryProps {
   /** Endpoints default to spanning the box: (0,0) to (box width, box height). */
   x1?: number
@@ -733,7 +738,9 @@ export interface OvalProps extends PaintProps, PointerProps {}
 // A laid-out `<line>` without points is practically a rule - give it a thin
 // box (length x strokeWidth); in general it draws its layout box's
 // top-left-to-bottom-right diagonal. For arbitrary angles and connectors use
-// `d-line`; for curves, a path.
+// `d-line`; for curves, a path. A line's stroke is centered on its geometry,
+// so it straddles the box (a rect's paints inside), and the bounds it
+// reports are the painted box: geometry plus stroke, on both forms.
 //
 // The paint defaults to `drawStyle="stroke"` (the box primitives default to
 // fill). On a polyline "fill" and "stroke-and-fill" fill the polygon

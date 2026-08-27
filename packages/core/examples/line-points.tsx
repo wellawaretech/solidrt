@@ -61,7 +61,7 @@ function App() {
       <text fontSize={16} color="#8b949e">
         live trace: a Float32Array of {SAMPLES} points written every frame
       </text>
-      <view width={TRACE_W} height={TRACE_H}>
+      <view width={TRACE_W} height={TRACE_H} flexShrink={0}>
         <d-rect radius={8} color="#151b28" />
         <d-line points={trace()} color="#3fb950" strokeWidth={3} strokeJoin="round" />
       </view>

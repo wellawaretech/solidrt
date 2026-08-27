@@ -2,10 +2,10 @@
 // segment, precedence over the endpoints. Hit testing is the observable that
 // needs no platform; build and measure walk the same segments/extent.
 
-use crate::impellers::{DrawStyle, Point, Rect, Size};
+use crate::impellers::{DrawStyle, Point, Rect, Size, StrokeCap, StrokeJoin};
 use crate::rendertree::hit::{HitContext, Hittable};
 use crate::rendertree::kinds::line::{segments, walk_dashes, Dash, Pen};
-use crate::rendertree::Line;
+use crate::rendertree::{Bounded, Line};
 
 fn ctx() -> HitContext {
   let size = Size::new(100.0, 100.0);
@@ -156,4 +156,78 @@ fn dash_needs_both_lengths_and_a_positive_gap() {
   line.set_dash_offset(Some(-3.0));
   line.set_on_length(Some(-1.0));
   assert_eq!(line.dash(), Some(Dash { on: 0.0, off: 2.0, offset: -3.0 }), "a negative on clamps to zero");
+}
+
+// Painted bounds: geometry AABB plus the stroke outset.
+fn close(a: Rect, b: Rect) -> bool {
+  let eps = 1e-3;
+  (a.origin.x - b.origin.x).abs() < eps
+    && (a.origin.y - b.origin.y).abs() < eps
+    && (a.size.width - b.size.width).abs() < eps
+    && (a.size.height - b.size.height).abs() < eps
+}
+
+fn rect(x: f32, y: f32, w: f32, h: f32) -> Rect {
+  Rect::new(Point::new(x, y), Size::new(w, h))
+}
+
+fn bounds(line: &Line) -> Rect {
+  line.local_bounds(Size::new(100.0, 50.0))
+}
+
+#[test]
+fn endpoint_form_bounds_resolve_defaults_against_the_fallback() {
+  let mut line = Line::default();
+  line.paint.stroke_width = 4.0;
+  // Defaults span the box; butt caps reach half the width past it.
+  assert!(close(bounds(&line), rect(-2.0, -2.0, 104.0, 54.0)), "{:?}", bounds(&line));
+  line.set_x1(Some(30.0));
+  line.set_y1(Some(10.0));
+  line.set_x2(Some(10.0));
+  line.set_y2(Some(40.0));
+  assert!(close(bounds(&line), rect(8.0, 8.0, 24.0, 34.0)), "{:?}", bounds(&line));
+}
+
+#[test]
+fn polyline_bounds_are_the_points_extent_plus_the_stroke() {
+  let line = polyline(&[10.0, 20.0, 60.0, 20.0, 60.0, 50.0], false);
+  // Round joins and butt caps: half the 4 px stroke all round.
+  let mut round = line.clone();
+  round.paint.stroke_join = StrokeJoin::Round;
+  assert!(close(bounds(&round), rect(8.0, 18.0, 54.0, 34.0)), "{:?}", bounds(&round));
+  // Fewer than two points paint nothing.
+  assert!(close(bounds(&polyline(&[5.0, 5.0], false)), Rect::zero()));
+  assert!(close(bounds(&polyline(&[], true)), Rect::zero()));
+}
+
+#[test]
+fn caps_and_miter_joins_grow_the_outset() {
+  let segment = polyline(&[0.0, 0.0, 100.0, 0.0], false);
+  let mut square = segment.clone();
+  square.paint.stroke_cap = StrokeCap::Square;
+  let half = 2.0;
+  assert!(close(bounds(&segment), rect(-half, -half, 100.0 + 2.0 * half, 2.0 * half)));
+  let sq = half * std::f32::consts::SQRT_2;
+  assert!(close(bounds(&square), rect(-sq, -sq, 100.0 + 2.0 * sq, 2.0 * sq)), "{:?}", bounds(&square));
+
+  // Miter joins need a vertex: two points have none, three do, and a closed
+  // pair does. The outset is half the width times the miter limit (4).
+  let mut miter = segment.clone();
+  miter.paint.stroke_join = StrokeJoin::Miter;
+  assert!(close(bounds(&miter), rect(-half, -half, 104.0, 4.0)), "{:?}", bounds(&miter));
+  let corner = polyline(&[0.0, 0.0, 100.0, 0.0, 100.0, 50.0], false);
+  let m = half * 4.0;
+  assert!(close(bounds(&corner), rect(-m, -m, 100.0 + 2.0 * m, 50.0 + 2.0 * m)), "{:?}", bounds(&corner));
+  let closed_pair = polyline(&[0.0, 0.0, 100.0, 0.0], true);
+  assert!(close(bounds(&closed_pair), rect(-m, -m, 100.0 + 2.0 * m, 2.0 * m)), "{:?}", bounds(&closed_pair));
+}
+
+#[test]
+fn fill_only_has_no_stroke_outset() {
+  let mut line = polyline(&[20.0, 100.0, 70.0, 20.0, 120.0, 100.0], false);
+  line.paint.draw_style = DrawStyle::Fill;
+  assert!(close(bounds(&line), rect(20.0, 20.0, 100.0, 80.0)), "{:?}", bounds(&line));
+  line.paint.draw_style = DrawStyle::StrokeAndFill;
+  line.paint.stroke_join = StrokeJoin::Bevel;
+  assert!(close(bounds(&line), rect(18.0, 18.0, 104.0, 84.0)), "{:?}", bounds(&line));
 }

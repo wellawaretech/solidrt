@@ -196,8 +196,8 @@ impl ElementKind {
   }
 
   /// Dispatches to each kind's `Bounded` impl; kinds without one default to
-  /// `fallback`. For Line and Path that is a known approximation, since they
-  /// paint in their own coordinate space.
+  /// `fallback`. For Path that is a known approximation, since it paints in
+  /// its own coordinate space.
   pub fn local_bounds(&self, fallback: Size) -> Rect {
     match self {
       ElementKind::Rectangle(n) => n.local_bounds(fallback),
@@ -205,6 +205,7 @@ impl ElementKind {
       ElementKind::View(n) => n.local_bounds(fallback),
       ElementKind::Text(n) => n.local_bounds(fallback),
       ElementKind::Texture(n) => n.local_bounds(fallback),
+      ElementKind::Line(n) => n.local_bounds(fallback),
       _ => Rect::new(Point::zero(), fallback),
     }
   }

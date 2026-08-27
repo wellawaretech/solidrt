@@ -244,3 +244,37 @@ fn hidden_subtree_leaves_the_envelope() {
   let env = bounded(envelope(&tree, 1, &platform, Size::new(400.0, 300.0)));
   assert!(close(env, rect(0.0, 0.0, 400.0, 300.0)), "{env:?}");
 }
+
+// A detached line is bounded by what it paints, so a line entirely outside
+// the cull rect is culled and one crossing it is not (line-points stage 3;
+// path stays unbounded).
+#[test]
+fn detached_line_extent_is_its_painted_box() {
+  let mut tree = RenderTree::new();
+  tree.create_node(1, attached());
+  let mut far = Line::default();
+  far.set_points(Some(vec![500.0, 500.0, 600.0, 650.0]));
+  far.paint.stroke_width = 4.0;
+  tree.create_node(2, far.no_layout());
+  let mut crossing = Line::default();
+  crossing.set_x1(Some(390.0));
+  crossing.set_y1(Some(290.0));
+  crossing.set_x2(Some(600.0));
+  crossing.set_y2(Some(650.0));
+  tree.create_node(3, crossing.no_layout());
+  tree.create_node(4, Path::default().no_layout());
+  tree.insert_node(1, 2, None);
+  tree.insert_node(1, 3, None);
+  tree.insert_node(1, 4, None);
+  tree.root = Some(1);
+  place(&mut tree, 1, 0.0, 0.0, 400.0, 300.0);
+  let platform = PlatformContext::new(Vec::new());
+  let frame = Size::new(400.0, 300.0);
+  let cull = rect(0.0, 0.0, 400.0, 300.0);
+
+  let far = envelope(&tree, 2, &platform, frame);
+  assert!(close(bounded(far), rect(497.0, 497.0, 106.0, 156.0)), "{far:?}");
+  assert!(!far.may_intersect(&cull));
+  assert!(envelope(&tree, 3, &platform, frame).may_intersect(&cull));
+  assert_eq!(envelope(&tree, 4, &platform, frame), Extent::Unbounded);
+}

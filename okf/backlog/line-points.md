@@ -267,3 +267,28 @@ frame, 1.0 ms JS, 0.6 ms paint, p95 1.9 ms, no slow frames.
 - A non-positive `offLength` short-circuits to solid before the walker: a
   zero period would loop forever, and a zero gap split into subpaths would
   show caps at every break.
+
+Stage 3 landed 2026-08-27 (uncommitted): `impl Bounded for Line` in
+`kinds/line.rs` (`geometry(fallback)` + `stroke_outset()`), wired into
+`ElementKind::local_bounds` and `cull.rs` (`inflate(local_bounds, AA_OUTSET)`;
+path stays unbounded). Verified on the rebuilt client through `/tree`, whose
+boxes come from `bounding_box_viewport` -> `local_bounds`: every d-line in
+the example reports its painted box (the 48-point ring 90x90 + 6 for the
+miter limit = 102x102 inside its 140x120 tile; the two-point dotted line
+260x0 + 3 for round caps = 266x6; the laid-out zigzag 120x24 + 1.5), and a
+`captureSnapshot` of a d-line now crops to that box instead of the tile.
+Tests: local_bounds for both forms, caps/miter/closed-pair/fill-only outsets,
+a cull test (a far d-line's extent misses the cull rect, a crossing one
+hits, d-path stays unbounded).
+
+- The miter outset is the limit (`strokeMiter * strokeWidth / 2`), not the
+  actual join angles, so an acute open polyline with the default limit 4
+  reports up to 4x the half width around it (the example's open triangle:
+  16 px for an 8 px stroke where the apex really reaches 7.5 px). Exact per
+  vertex would need the join angles; cheap to add if a design asks for a
+  tighter box.
+- Not this item: the example's trace tile lost its height under a small
+  window (a tiling WM sized my client 626x334): a view whose children are
+  all detached has no min-content size, so the flex column shrank it to 0
+  while the tile rows held their 120 px. `flexShrink={0}` on the tile is the
+  example's fix; worth remembering for any d-*-only container.

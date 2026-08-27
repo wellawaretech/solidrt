@@ -23,3 +23,9 @@ From the animated-explainer demo feedback. Split out of a five-part round-2
 agent dev-loop feedback item when okf was restructured; the siblings are
 [mcp-multi-client-ergonomics](mcp-multi-client-ergonomics.md) and
 [mcp-interaction-perf-visibility](mcp-interaction-perf-visibility.md).
+
+Update 2026-08-27: the `d-line` case is covered by
+[line-points](line-points.md) stage 3 - `Line` implements `Bounded`, so
+`bounding_box_viewport` (what the tree box, `getBoundingBox` and a detached
+capture read) reports its geometry plus stroke. `d-path` still reports the
+inherited box; a `drawn` box, or `Bounded` for path, remains this item.
