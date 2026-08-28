@@ -30,8 +30,8 @@ import {
   setTargetSize,
 } from "@solidrt/core/gpu"
 import type { BufferId, TextureId } from "@solidrt/core/gpu"
-import { FULL_FRAME } from "./frames.ts"
-import { spriteDispatch } from "./layer.ts"
+import { FULL_FRAME, writeFrame } from "./frames.ts"
+import { readFrame, spriteDispatch } from "./layer.ts"
 import type { LayerBase, Sprite, SpriteHandlers, SpriteLayerOptions, SpriteOptions } from "./layer.ts"
 import { pointInSprite } from "./pick.ts"
 import { FRAGMENT, INSTANCE_ATTRIBUTES, VERTEX } from "./shaders.ts"
@@ -154,11 +154,16 @@ export function createRecordLayer(
     if (opts.y !== undefined) r[at + 1] = opts.y
     if (opts.w !== undefined) r[at + 2] = opts.w
     if (opts.h !== undefined) r[at + 3] = opts.h
+    let flipX = opts.flipX !== undefined && opts.flipX !== sprite._flipX
+    let flipY = opts.flipY !== undefined && opts.flipY !== sprite._flipY
+    if (flipX) sprite._flipX = !sprite._flipX
+    if (flipY) sprite._flipY = !sprite._flipY
     if (opts.frame !== undefined) {
-      r[at + 4] = opts.frame.u0
-      r[at + 5] = opts.frame.v0
-      r[at + 6] = opts.frame.u1
-      r[at + 7] = opts.frame.v1
+      let f = opts.frame
+      writeFrame(r, at + 4, f.u0, f.v0, f.u1, f.v1, sprite._flipX, sprite._flipY)
+    } else if (flipX || flipY) {
+      // No new frame: toggle the changed axes on the stored UVs.
+      writeFrame(r, at + 4, r[at + 4]!, r[at + 5]!, r[at + 6]!, r[at + 7]!, flipX, flipY)
     }
     if (opts.rotation !== undefined) r[at + 8] = opts.rotation
     if (opts.tint !== undefined) {
@@ -231,7 +236,7 @@ export function createRecordLayer(
         next.set(layer.records)
         layer.records = next
       }
-      let sprite: Sprite = { layer, node: null, _slot: index, _x: 0, _y: 0, _w: 0, _h: 0, _rot: 0 }
+      let sprite: Sprite = { layer, node: null, _slot: index, _x: 0, _y: 0, _w: 0, _h: 0, _rot: 0, _flipX: false, _flipY: false }
       layer._order.push(sprite)
       writeRecord(sprite, {
         x: 0,
@@ -258,7 +263,9 @@ export function createRecordLayer(
         y: r[at + 1]!,
         w: r[at + 2]!,
         h: r[at + 3]!,
-        frame: { u0: r[at + 4]!, v0: r[at + 5]!, u1: r[at + 6]!, v1: r[at + 7]! },
+        frame: readFrame(r, at + 4, sprite),
+        flipX: sprite._flipX,
+        flipY: sprite._flipY,
         rotation: r[at + 8]!,
         tint: [r[at + 9]!, r[at + 10]!, r[at + 11]!, r[at + 12]!],
       }

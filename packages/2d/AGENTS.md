@@ -43,6 +43,12 @@ moved subtrees in Rust, and picking walks the core BVH.
   UNIFORM scale - a group is a frame, never a sprite size; sprite w/h
   lives in the sprite node's scale, which is why sprites cannot parent
   sprites). Child sprite pose fields are local to the group.
+- `flipX`/`flipY` mirror on the UV SIDE: the style/record write swaps
+  u0/u1 (v0/v1), so w/h stay the drawn size, a scale transition never sees
+  a flip, and picking is unchanged (the vertex stage still carries no
+  flip). The flags live on the Sprite and re-apply to every later frame
+  write; `getSprite` returns the frame un-mirrored plus the flags. Raw
+  `records` writers swap u0/u1 themselves.
 - Mutations batch to a microtask: style lease publish + count setDraw +
   `spatial.flush()`. No mutation, no publish, no frame: a static layer
   costs zero, the same demand-gate story as the rest of the platform.

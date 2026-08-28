@@ -10,7 +10,7 @@
 // regardless, so read the output, not the exit code.
 
 import { argv } from "flux:process"
-import { grid, namedFrames, FULL_FRAME } from "../src/frames.ts"
+import { grid, namedFrames, writeFrame, FULL_FRAME } from "../src/frames.ts"
 
 let seed = Number(argv[0] ?? Math.floor(Math.random() * 0xffffffff))
 console.log("seed", seed)
@@ -118,6 +118,34 @@ for (let i = 0; i < SWEEPS; i++) {
     )
   }
   checked++
+}
+
+// writeFrame: the UV-side mirror. flipX swaps u0/u1, flipY v0/v1, both is
+// both, and toggling the changed axes on the stored floats undoes it (an
+// involution), which is what a flip write without a new frame relies on.
+{
+  let data = new Float32Array(8)
+  let f = { u0: 0.1, v0: 0.2, u1: 0.3, v1: 0.4 }
+  let expect = (what: string, u0: number, v0: number, u1: number, v1: number) => {
+    let same = (i: number, v: number) => data[i] === Math.fround(v)
+    if (!(same(4, u0) && same(5, v0) && same(6, u1) && same(7, v1))) {
+      fail(`writeFrame ${what}: got [${data[4]}, ${data[5]}, ${data[6]}, ${data[7]}], expected [${u0}, ${v0}, ${u1}, ${v1}]`)
+    }
+  }
+  writeFrame(data, 4, f.u0, f.v0, f.u1, f.v1, false, false)
+  expect("plain", 0.1, 0.2, 0.3, 0.4)
+  writeFrame(data, 4, f.u0, f.v0, f.u1, f.v1, true, false)
+  expect("flipX", 0.3, 0.2, 0.1, 0.4)
+  writeFrame(data, 4, f.u0, f.v0, f.u1, f.v1, false, true)
+  expect("flipY", 0.1, 0.4, 0.3, 0.2)
+  writeFrame(data, 4, f.u0, f.v0, f.u1, f.v1, true, true)
+  expect("flipXY", 0.3, 0.4, 0.1, 0.2)
+  // Toggle in place: X off again, then Y off again -> back to plain.
+  writeFrame(data, 4, data[4]!, data[5]!, data[6]!, data[7]!, true, false)
+  expect("toggle X back", 0.1, 0.4, 0.3, 0.2)
+  writeFrame(data, 4, data[4]!, data[5]!, data[6]!, data[7]!, false, true)
+  expect("toggle Y back", 0.1, 0.2, 0.3, 0.4)
+  if (data[0] !== 0 || data[3] !== 0) fail("writeFrame wrote outside its four floats")
 }
 
 if (failures === 0) console.log(`PASS: ${checked} random grids + edge cases`)

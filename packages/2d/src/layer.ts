@@ -39,7 +39,7 @@ import * as spatial from "flux:spatial"
 import type { NodeId, NodeTransition } from "flux:spatial"
 import { on } from "srt:events"
 import type { Frame } from "./frames.ts"
-import { FULL_FRAME } from "./frames.ts"
+import { FULL_FRAME, writeFrame } from "./frames.ts"
 import type { RecordLayer } from "./records.ts"
 import { FRAGMENT, INSTANCE_ATTRIBUTES_SPLIT, VERTEX_SPLIT } from "./shaders.ts"
 
@@ -108,6 +108,9 @@ export type Sprite = {
   _w: number
   _h: number
   _rot: number
+  /** Mirror flags (both layer kinds): re-applied to every frame write. */
+  _flipX: boolean
+  _flipY: boolean
   onPointerDown?: (event: SpritePointerEvent) => void
   onPointerMove?: (event: SpritePointerEvent) => void
   onPointerUp?: (event: SpritePointerEvent) => void
@@ -135,6 +138,11 @@ export type SpriteOptions = {
   h?: number
   /** Atlas frame (normalized UVs); default the whole atlas. */
   frame?: Frame
+  /** Mirror the frame horizontally / vertically about the sprite's center.
+   * A UV-side mirror: w/h stay the drawn size, a scale transition never
+   * sees it, picking is unchanged. Default false. */
+  flipX?: boolean
+  flipY?: boolean
   /** Rotation about the center, radians, clockwise (y-down space). */
   rotation?: number
   /** RGBA multiplier 0..1 each; default opaque white (the texture as-is). */
@@ -348,6 +356,15 @@ export function spriteDispatch(state: {
   }
 }
 
+/** The stored UVs at `at` un-mirrored by the sprite's flags: the frame as
+ * the caller gave it. Internal - records.ts reads through it too. */
+export function readFrame(data: Float32Array, at: number, sprite: Sprite): Frame {
+  let u0 = data[at]!, v0 = data[at + 1]!, u1 = data[at + 2]!, v1 = data[at + 3]!
+  return sprite._flipX || sprite._flipY
+    ? { u0: sprite._flipX ? u1 : u0, v0: sprite._flipY ? v1 : v0, u1: sprite._flipX ? u0 : u1, v1: sprite._flipY ? v0 : v1 }
+    : { u0, v0, u1, v1 }
+}
+
 /** Fill the shared transform scratch: xy translation, z rotation, xy scale
  * (a sprite's scale is its w/h - every sprite is a scaled unit quad). */
 function fillTransform(x: number, y: number, rot: number, sx: number, sy: number): void {
@@ -475,21 +492,28 @@ export function createSpriteLayer(
     styleDirty = true
   }
 
-  let writeStyle = (slot: number, opts: SpriteOptions) => {
-    let at = slot * STYLE_FLOATS
+  let writeStyle = (sprite: Sprite, opts: SpriteOptions) => {
+    let at = sprite._slot * STYLE_FLOATS
+    let flipX = opts.flipX !== undefined && opts.flipX !== sprite._flipX
+    let flipY = opts.flipY !== undefined && opts.flipY !== sprite._flipY
+    if (flipX) sprite._flipX = !sprite._flipX
+    if (flipY) sprite._flipY = !sprite._flipY
     if (opts.frame !== undefined) {
-      styleData[at] = opts.frame.u0
-      styleData[at + 1] = opts.frame.v0
-      styleData[at + 2] = opts.frame.u1
-      styleData[at + 3] = opts.frame.v1
+      let f = opts.frame
+      writeFrame(styleData, at, f.u0, f.v0, f.u1, f.v1, sprite._flipX, sprite._flipY)
+      styleDirty = true
+    } else if (flipX || flipY) {
+      // No new frame: toggle the changed axes on the stored UVs.
+      writeFrame(styleData, at, styleData[at]!, styleData[at + 1]!, styleData[at + 2]!, styleData[at + 3]!, flipX, flipY)
+      styleDirty = true
     }
     if (opts.tint !== undefined) {
       styleData[at + 4] = opts.tint[0]
       styleData[at + 5] = opts.tint[1]
       styleData[at + 6] = opts.tint[2]
       styleData[at + 7] = opts.tint[3]
+      styleDirty = true
     }
-    styleDirty = true
   }
 
   let dispatch = spriteDispatch({
@@ -591,6 +615,8 @@ export function createSpriteLayer(
         _w: opts?.w ?? 0,
         _h: opts?.h ?? 0,
         _rot: opts?.rotation ?? 0,
+        _flipX: false,
+        _flipY: false,
       }
       fillTransform(sprite._x, sprite._y, sprite._rot, sprite._w, sprite._h)
       let node = spatial.createNode(TRANSFORM, true)
@@ -602,7 +628,7 @@ export function createSpriteLayer(
       spatial.setBounds(node, FLAT_BOUNDS)
       spatial.bindPoseRecord(node, pose, slot)
       byNode.set(node, sprite)
-      writeStyle(slot, { frame: FULL_FRAME, tint: [1, 1, 1, 1], ...opts })
+      writeStyle(sprite, { frame: FULL_FRAME, tint: [1, 1, 1, 1], ...opts })
       layer._schedule()
       return sprite
     },
@@ -614,7 +640,9 @@ export function createSpriteLayer(
       if (opts.h !== undefined && opts.h !== sprite._h) (sprite._h = opts.h), (moved = true)
       if (opts.rotation !== undefined && opts.rotation !== sprite._rot) (sprite._rot = opts.rotation), (moved = true)
       if (moved) writeTransform(sprite)
-      if (opts.frame !== undefined || opts.tint !== undefined) writeStyle(sprite._slot, opts)
+      if (opts.frame !== undefined || opts.tint !== undefined || opts.flipX !== undefined || opts.flipY !== undefined) {
+        writeStyle(sprite, opts)
+      }
       if (moved || styleDirty) layer._schedule()
     },
     _read(sprite) {
@@ -624,7 +652,9 @@ export function createSpriteLayer(
         y: sprite._y,
         w: sprite._w,
         h: sprite._h,
-        frame: { u0: styleData[at]!, v0: styleData[at + 1]!, u1: styleData[at + 2]!, v1: styleData[at + 3]! },
+        frame: readFrame(styleData, at, sprite),
+        flipX: sprite._flipX,
+        flipY: sprite._flipY,
         rotation: sprite._rot,
         tint: [styleData[at + 4]!, styleData[at + 5]!, styleData[at + 6]!, styleData[at + 7]!],
       }

@@ -48,6 +48,10 @@ function App() {
       h: SPRITE,
       frame: frames[i % 4],
       rotation: Math.random() * Math.PI * 2,
+      // A sprite faces its motion: mirrored on the UV side, so the flip is
+      // free of the pose and instant under any transition.
+      flipX: vx[i]! < 0,
+      flipY: vy[i]! < 0,
     })
   }
 
@@ -55,10 +59,14 @@ function App() {
     for (let i = 0; i < COUNT; i++) {
       let nx = x[i]! + vx[i]!
       let ny = y[i]! + vy[i]!
-      if (nx < SPRITE / 2 || nx > W - SPRITE / 2) vx[i] = -vx[i]!
-      else x[i] = nx
-      if (ny < SPRITE / 2 || ny > H - SPRITE / 2) vy[i] = -vy[i]!
-      else y[i] = ny
+      if (nx < SPRITE / 2 || nx > W - SPRITE / 2) {
+        vx[i] = -vx[i]!
+        setSprite(sprites[i]!, { flipX: vx[i]! < 0 })
+      } else x[i] = nx
+      if (ny < SPRITE / 2 || ny > H - SPRITE / 2) {
+        vy[i] = -vy[i]!
+        setSprite(sprites[i]!, { flipY: vy[i]! < 0 })
+      } else y[i] = ny
       setSprite(sprites[i]!, { x: x[i]!, y: y[i]!, rotation: tick / 1000 + i })
     }
   })

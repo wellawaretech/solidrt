@@ -8,6 +8,29 @@
  */
 export type Frame = { u0: number; v0: number; u1: number; v1: number }
 
+/**
+ * Write a frame's four UVs at `at`, mirrored on the UV side when flipped:
+ * `flipX` swaps u0/u1, `flipY` swaps v0/v1. A flip is an involution, so the
+ * same call with the stored floats and only the CHANGED axes set toggles a
+ * flip in place, and reading back through it recovers the frame. Positional
+ * floats so the write allocates nothing.
+ */
+export function writeFrame(
+  data: Float32Array,
+  at: number,
+  u0: number,
+  v0: number,
+  u1: number,
+  v1: number,
+  flipX: boolean,
+  flipY: boolean,
+): void {
+  data[at] = flipX ? u1 : u0
+  data[at + 1] = flipY ? v1 : v0
+  data[at + 2] = flipX ? u0 : u1
+  data[at + 3] = flipY ? v0 : v1
+}
+
 export type GridOptions = {
   /** Pixel size of the atlas the pixel-space options below refer to. */
   width: number

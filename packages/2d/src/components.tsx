@@ -176,8 +176,8 @@ export let Sprite: VoidComponent<SpriteProps> = props => {
   let parent = useContext(GroupContext)
   let sprite = untrack(() => addSprite(layer, parent ? { parent } : undefined))
   createEffect(
-    () => [props.x, props.y, props.w, props.h, props.frame, props.rotation, props.tint] as const,
-    ([x, y, w, h, frame, rotation, tint]) => setSprite(sprite, { x, y, w, h, frame, rotation, tint }),
+    () => [props.x, props.y, props.w, props.h, props.frame, props.flipX, props.flipY, props.rotation, props.tint] as const,
+    ([x, y, w, h, frame, flipX, flipY, rotation, tint]) => setSprite(sprite, { x, y, w, h, frame, flipX, flipY, rotation, tint }),
   )
   // After the pose effect, so the mount pose snaps before writes animate.
   createEffect(
