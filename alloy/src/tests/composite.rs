@@ -31,10 +31,10 @@ fn split() -> RenderTree {
   tree.create_node(3, attached());
   tree.create_node(4, Rectangle::default().with_layout());
   tree.create_node(5, attached());
-  tree.insert_node(1, 2, None);
-  tree.insert_node(2, 3, None);
-  tree.insert_node(2, 4, None);
-  tree.insert_node(1, 5, None);
+  tree.insert_node(1, 2, None).expect("insert");
+  tree.insert_node(2, 3, None).expect("insert");
+  tree.insert_node(2, 4, None).expect("insert");
+  tree.insert_node(1, 5, None).expect("insert");
   tree.root = Some(1);
   tree.node_mut(1).style_mut().expect("root").flex_direction = FlexDirection::Row;
   size(&mut tree, 1, 400.0, 300.0);

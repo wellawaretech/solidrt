@@ -74,6 +74,8 @@ export type SpriteLayerProps = {
  * Owns a sprite layer and composites it as an ordinary `<texture>` leaf, so
  * the output takes layout, transforms, blendMode, and pointer events like
  * any element - or hand `output` the texture id and compose it yourself.
+ * A layout component: it cannot sit inside a d-* subtree; `output` with a
+ * `<d-texture>` is the detached form.
  * Children (`<Sprite>`) render nothing themselves - they populate the
  * retained layer through context.
  */
@@ -282,7 +284,9 @@ export type TileLayerProps = {
 /**
  * Owns a baked tile layer (createTileLayer) and composites its chunks as
  * `d-texture` leaves at their world rects inside a `<view>` carrying the
- * camera transform - a handful of quads however many tiles exist. Tiles
+ * camera transform - a handful of quads however many tiles exist. A layout
+ * component: the world view is laid out, so it cannot sit inside a d-*
+ * subtree. Tiles
  * are data, not children: write them through `ref` with `setTile` - there
  * is no `<Tile>` component on purpose (a component per tile would
  * re-introduce the per-element cost the bake removes).

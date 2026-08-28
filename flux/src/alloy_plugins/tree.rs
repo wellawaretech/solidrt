@@ -326,10 +326,17 @@ impl ModuleDef for RenderTreeModule {
 
     let tree_ref = tree.clone();
     let platform_ref = platform.clone();
-    let insert_node = Function::new(ctx.clone(), move |parent_id: u64, node_id: u64, anchor_id: OptArg<u64>| {
-      tree_ref.borrow_mut().insert_node(parent_id, node_id, anchor_id.0);
-      platform_ref.request_frame();
-    })?;
+    let insert_node = Function::new(
+      ctx.clone(),
+      move |ctx: Ctx<'_>, parent_id: u64, node_id: u64, anchor_id: OptArg<u64>| -> rquickjs::Result<()> {
+        tree_ref
+          .borrow_mut()
+          .insert_node(parent_id, node_id, anchor_id.0)
+          .map_err(|msg| rquickjs::Exception::throw_message(&ctx, &msg))?;
+        platform_ref.request_frame();
+        Ok(())
+      },
+    )?;
 
     let tree_ref = tree.clone();
     let platform_ref = platform.clone();

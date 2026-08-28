@@ -24,8 +24,8 @@ fn locals_compose_translations() {
   tree.create_node(1, attached());
   tree.create_node(2, attached());
   tree.create_node(3, attached());
-  tree.insert_node(1, 2, None);
-  tree.insert_node(2, 3, None);
+  tree.insert_node(1, 2, None).expect("insert");
+  tree.insert_node(2, 3, None).expect("insert");
   tree.root = Some(1);
   place(&mut tree, 1, 0.0, 0.0, 200.0, 200.0);
   place(&mut tree, 2, 10.0, 20.0, 100.0, 100.0);
@@ -47,7 +47,7 @@ fn locals_exact_outside_bounds() {
   v.set_scale_x(Some(0.5));
   v.set_scale_y(Some(0.5));
   tree.create_node(2, v.with_layout());
-  tree.insert_node(1, 2, None);
+  tree.insert_node(1, 2, None).expect("insert");
   tree.root = Some(1);
   place(&mut tree, 1, 0.0, 0.0, 200.0, 200.0);
   place(&mut tree, 2, 50.0, 50.0, 100.0, 100.0);
@@ -72,8 +72,8 @@ fn locals_match_live_hit_test() {
   v.set_scale_y(Some(2.0));
   tree.create_node(2, v.with_layout());
   tree.create_node(3, attached());
-  tree.insert_node(1, 2, None);
-  tree.insert_node(2, 3, None);
+  tree.insert_node(1, 2, None).expect("insert");
+  tree.insert_node(2, 3, None).expect("insert");
   tree.root = Some(1);
   place(&mut tree, 1, 0.0, 0.0, 200.0, 200.0);
   place(&mut tree, 2, 40.0, 40.0, 100.0, 100.0);
@@ -105,8 +105,8 @@ fn design_size_bounds_measured_in_design_space() {
   v.set_design_size(Some((800.0, 500.0)));
   tree.create_node(2, v.with_layout());
   tree.create_node(3, attached());
-  tree.insert_node(1, 2, None);
-  tree.insert_node(2, 3, None);
+  tree.insert_node(1, 2, None).expect("insert");
+  tree.insert_node(2, 3, None).expect("insert");
   tree.root = Some(1);
   place(&mut tree, 1, 0.0, 0.0, 400.0, 300.0);
   place(&mut tree, 2, 0.0, 0.0, 400.0, 300.0);
@@ -149,8 +149,8 @@ fn overflow_gate_is_box_space_under_minifying_design_size() {
   v.set_design_size(Some((200.0, 200.0)));
   tree.create_node(2, v.with_layout());
   tree.create_node(3, attached());
-  tree.insert_node(1, 2, None);
-  tree.insert_node(2, 3, None);
+  tree.insert_node(1, 2, None).expect("insert");
+  tree.insert_node(2, 3, None).expect("insert");
   tree.root = Some(1);
   place(&mut tree, 1, 0.0, 0.0, 200.0, 200.0);
   place(&mut tree, 2, 0.0, 0.0, 100.0, 100.0);
@@ -178,8 +178,8 @@ fn overflow_gate_is_box_space_under_magnifying_design_size() {
   v.set_design_size(Some((50.0, 50.0)));
   tree.create_node(2, v.with_layout());
   tree.create_node(3, attached());
-  tree.insert_node(1, 2, None);
-  tree.insert_node(2, 3, None);
+  tree.insert_node(1, 2, None).expect("insert");
+  tree.insert_node(2, 3, None).expect("insert");
   tree.root = Some(1);
   place(&mut tree, 1, 0.0, 0.0, 200.0, 200.0);
   place(&mut tree, 2, 0.0, 0.0, 100.0, 100.0);
@@ -213,8 +213,8 @@ fn scroll_is_box_pixels_under_minifying_design_size() {
   v.set_scroll_x(Some(10.0));
   tree.create_node(2, v.with_layout());
   tree.create_node(3, attached());
-  tree.insert_node(1, 2, None);
-  tree.insert_node(2, 3, None);
+  tree.insert_node(1, 2, None).expect("insert");
+  tree.insert_node(2, 3, None).expect("insert");
   tree.root = Some(1);
   place(&mut tree, 1, 0.0, 0.0, 200.0, 200.0);
   place(&mut tree, 2, 0.0, 0.0, 100.0, 100.0);
@@ -246,8 +246,8 @@ fn scroll_is_box_pixels_under_magnifying_design_size() {
   v.set_scroll_x(Some(10.0));
   tree.create_node(2, v.with_layout());
   tree.create_node(3, attached());
-  tree.insert_node(1, 2, None);
-  tree.insert_node(2, 3, None);
+  tree.insert_node(1, 2, None).expect("insert");
+  tree.insert_node(2, 3, None).expect("insert");
   tree.root = Some(1);
   place(&mut tree, 1, 0.0, 0.0, 200.0, 200.0);
   place(&mut tree, 2, 0.0, 0.0, 100.0, 100.0);
@@ -280,8 +280,8 @@ fn design_size_fit_resolves_against_the_border_box_when_padded() {
   v.set_design_size(Some((200.0, 200.0)));
   tree.create_node(2, v.with_layout());
   tree.create_node(3, attached());
-  tree.insert_node(1, 2, None);
-  tree.insert_node(2, 3, None);
+  tree.insert_node(1, 2, None).expect("insert");
+  tree.insert_node(2, 3, None).expect("insert");
   tree.root = Some(1);
   place(&mut tree, 1, 0.0, 0.0, 200.0, 200.0);
   place(&mut tree, 2, 0.0, 0.0, 100.0, 100.0);
@@ -318,7 +318,7 @@ fn padded_rect_hits_its_border_box() {
   let mut tree = RenderTree::new();
   tree.create_node(1, attached());
   tree.create_node(2, Rectangle::default().with_layout());
-  tree.insert_node(1, 2, None);
+  tree.insert_node(1, 2, None).expect("insert");
   tree.root = Some(1);
   place(&mut tree, 1, 0.0, 0.0, 200.0, 200.0);
   place(&mut tree, 2, 0.0, 0.0, 100.0, 100.0);
@@ -341,7 +341,7 @@ fn locals_truncate_at_missing_node() {
   let mut tree = RenderTree::new();
   tree.create_node(1, attached());
   tree.create_node(2, attached());
-  tree.insert_node(1, 2, None);
+  tree.insert_node(1, 2, None).expect("insert");
   tree.root = Some(1);
   place(&mut tree, 1, 0.0, 0.0, 200.0, 200.0);
   place(&mut tree, 2, 10.0, 10.0, 100.0, 100.0);
@@ -357,7 +357,7 @@ fn oval_hits_as_ellipse_not_box() {
   let mut tree = RenderTree::new();
   tree.create_node(1, attached());
   tree.create_node(2, Oval::default().with_layout());
-  tree.insert_node(1, 2, None);
+  tree.insert_node(1, 2, None).expect("insert");
   tree.root = Some(1);
   place(&mut tree, 1, 0.0, 0.0, 200.0, 200.0);
   place(&mut tree, 2, 50.0, 50.0, 100.0, 100.0);
@@ -383,9 +383,9 @@ fn hidden_subtree_is_not_hit() {
   tree.create_node(2, attached());
   tree.create_node(3, attached());
   tree.create_node(4, attached());
-  tree.insert_node(1, 2, None);
-  tree.insert_node(2, 3, None);
-  tree.insert_node(1, 4, None);
+  tree.insert_node(1, 2, None).expect("insert");
+  tree.insert_node(2, 3, None).expect("insert");
+  tree.insert_node(1, 4, None).expect("insert");
   tree.root = Some(1);
   place(&mut tree, 1, 0.0, 0.0, 400.0, 300.0);
   place(&mut tree, 2, 0.0, 0.0, 0.0, 0.0);

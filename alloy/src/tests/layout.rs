@@ -52,10 +52,10 @@ fn split() -> RenderTree {
   tree.create_node(3, attached());
   tree.create_node(4, Rectangle::default().with_layout());
   tree.create_node(5, attached());
-  tree.insert_node(1, 2, None);
-  tree.insert_node(2, 3, None);
-  tree.insert_node(2, 4, None);
-  tree.insert_node(1, 5, None);
+  tree.insert_node(1, 2, None).expect("insert");
+  tree.insert_node(2, 3, None).expect("insert");
+  tree.insert_node(2, 4, None).expect("insert");
+  tree.insert_node(1, 5, None).expect("insert");
   tree.root = Some(1);
   tree.node_mut(1).style_mut().expect("root").flex_direction = FlexDirection::Row;
   size(&mut tree, 1, 400.0, 300.0);
@@ -132,10 +132,10 @@ fn design_size_children_lay_out_in_design_space() {
   tree.create_node(3, attached());
   tree.create_node(4, design_size(50.0, 50.0));
   tree.create_node(5, Rectangle::default().with_layout());
-  tree.insert_node(1, 2, None);
-  tree.insert_node(2, 3, None);
-  tree.insert_node(1, 4, None);
-  tree.insert_node(4, 5, None);
+  tree.insert_node(1, 2, None).expect("insert");
+  tree.insert_node(2, 3, None).expect("insert");
+  tree.insert_node(1, 4, None).expect("insert");
+  tree.insert_node(4, 5, None).expect("insert");
   tree.root = Some(1);
   size(&mut tree, 1, 400.0, 300.0);
   size(&mut tree, 2, 100.0, 100.0);
@@ -165,8 +165,8 @@ fn design_size_view_sizes_like_a_replaced_element() {
   tree.create_node(1, attached());
   tree.create_node(2, design_size(200.0, 100.0));
   tree.create_node(3, design_size(200.0, 100.0));
-  tree.insert_node(1, 2, None);
-  tree.insert_node(1, 3, None);
+  tree.insert_node(1, 2, None).expect("insert");
+  tree.insert_node(1, 3, None).expect("insert");
   tree.root = Some(1);
   size(&mut tree, 1, 400.0, 300.0);
   tree.node_mut(3).style_mut().expect("sized").size.width = length(100.0);
@@ -188,7 +188,7 @@ fn design_size_view_compresses_below_its_design() {
   let mut tree = RenderTree::new();
   tree.create_node(1, attached());
   tree.create_node(2, design_size(800.0, 1280.0));
-  tree.insert_node(1, 2, None);
+  tree.insert_node(1, 2, None).expect("insert");
   tree.root = Some(1);
   size(&mut tree, 1, 400.0, 300.0);
   tree.node_mut(2).style_mut().expect("view").flex_grow = 1.0;
@@ -208,8 +208,8 @@ fn design_size_children_survive_a_resize_from_cache() {
   tree.create_node(1, attached());
   tree.create_node(2, design_size(200.0, 200.0));
   tree.create_node(3, attached());
-  tree.insert_node(1, 2, None);
-  tree.insert_node(2, 3, None);
+  tree.insert_node(1, 2, None).expect("insert");
+  tree.insert_node(2, 3, None).expect("insert");
   tree.root = Some(1);
   // The window root's own sizing (Window::initial_style).
   tree.node_mut(1).style_mut().expect("root").size = taffy::Size { width: percent(1.0), height: percent(1.0) };
@@ -244,12 +244,12 @@ fn design_size_laid_out_children_hit_in_design_space() {
   tree.create_node(5, design_size(50.0, 50.0));
   tree.create_node(6, attached());
   tree.create_node(7, attached());
-  tree.insert_node(1, 2, None);
-  tree.insert_node(2, 3, None);
-  tree.insert_node(2, 4, None);
-  tree.insert_node(1, 5, None);
-  tree.insert_node(5, 6, None);
-  tree.insert_node(5, 7, None);
+  tree.insert_node(1, 2, None).expect("insert");
+  tree.insert_node(2, 3, None).expect("insert");
+  tree.insert_node(2, 4, None).expect("insert");
+  tree.insert_node(1, 5, None).expect("insert");
+  tree.insert_node(5, 6, None).expect("insert");
+  tree.insert_node(5, 7, None).expect("insert");
   tree.root = Some(1);
   size(&mut tree, 1, 400.0, 300.0);
   size(&mut tree, 2, 100.0, 100.0);
@@ -288,7 +288,7 @@ fn design_size_view_in_a_row_stretches_unless_aligned() {
   tree.create_node(1, attached());
   for id in [2, 3, 4] {
     tree.create_node(id, design_size(200.0, 100.0));
-    tree.insert_node(1, id, None);
+    tree.insert_node(1, id, None).expect("insert");
     tree.node_mut(id).style_mut().expect("tile").size.width = length(100.0);
   }
   tree.root = Some(1);

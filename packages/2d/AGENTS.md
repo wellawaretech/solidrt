@@ -206,6 +206,9 @@ is flat. Event x/y are layer pixels with the camera undone.
   overlay sprites on tiles wrap each in a `<view position="absolute">`
   inside that container - as plain flex siblings they stack side by side
   instead.
+  Both are LAYOUT components: neither can live inside a d-* subtree (the
+  insert throws); for a detached parent, `<SpriteLayer output>` hands out
+  the texture id for a `<d-texture>` of your own.
 - `clearColor` is PER CHUNK: never-written regions have no chunk and render
   nothing, so a full-bleed ground color belongs on the container behind the
   layer (a `d-rect` under it), not on clearColor.

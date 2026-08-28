@@ -266,6 +266,14 @@ let renderer = createRenderer<ProxyNode>({
     pendingDestroy.delete(node.id)
 
     if (parent) {
+      // console.debug("[srt] insertNode", parent.id, node.id, anchor?.id ?? "")
+
+      // Native first: the tree refuses a laid-out element under a d-* parent
+      // (it throws, naming both tags), and the mirror must not record a child
+      // the tree does not have.
+      if (anchor) tree.insertNode(parent.id, node.id, anchor.id)
+      else tree.insertNode(parent.id, node.id)
+
       node.parent = parent
 
       if (!anchor) {
@@ -278,11 +286,6 @@ let renderer = createRenderer<ProxyNode>({
           parent.children.splice(index, 0, node)
         }
       }
-
-      // console.debug("[srt] insertNode", parent.id, node.id, anchor?.id ?? "")
-
-      if (anchor) tree.insertNode(parent.id, node.id, anchor.id)
-      else tree.insertNode(parent.id, node.id)
     }
   },
 

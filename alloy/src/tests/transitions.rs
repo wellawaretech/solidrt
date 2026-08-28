@@ -10,7 +10,7 @@ fn tree_with_entry(entry: TransitionEntry) -> RenderTree {
   let mut tree = RenderTree::new();
   tree.create_node(1, View::default().with_layout());
   tree.create_node(2, Rectangle::default().no_layout());
-  tree.insert_node(1, 2, None);
+  tree.insert_node(1, 2, None).expect("insert");
   tree.edit(2, |el| {
     el.transitions = Some(Box::new(TransitionConfig { props: vec![], all: Some(entry), stagger_ms: None }));
     Damage::None
@@ -166,7 +166,7 @@ fn undeclared_property_is_not_consumed() {
   let mut tree = RenderTree::new();
   tree.create_node(1, View::default().with_layout());
   tree.create_node(2, Rectangle::default().no_layout());
-  tree.insert_node(1, 2, None);
+  tree.insert_node(1, 2, None).expect("insert");
   assert!(!tree.transition_write(2, AnimProp::X, Some(scalar(80.0))), "no transition declared");
 }
 
@@ -177,7 +177,7 @@ fn attached_geometry_is_not_animatable() {
   let mut tree = RenderTree::new();
   tree.create_node(1, View::default().with_layout());
   tree.create_node(2, Rectangle::default().with_layout());
-  tree.insert_node(1, 2, None);
+  tree.insert_node(1, 2, None).expect("insert");
   tree.edit(2, |el| {
     el.transitions = Some(Box::new(TransitionConfig { props: vec![], all: Some(LINEAR_100.into()), stagger_ms: None }));
     Damage::None
@@ -292,7 +292,7 @@ fn oklab_roundtrip_is_exact_enough() {
 fn batched_advance_bumps_revision_once() {
   let mut tree = tree_with_animated_rect(LINEAR_100);
   tree.create_node(3, Rectangle::default().no_layout());
-  tree.insert_node(1, 3, None);
+  tree.insert_node(1, 3, None).expect("insert");
   tree.edit(3, |el| {
     el.transitions = Some(Box::new(TransitionConfig { props: vec![], all: Some(LINEAR_100.into()), stagger_ms: None }));
     Damage::None
@@ -390,7 +390,7 @@ fn enter_from_animates_first_attach_only() {
       _ => unreachable!(),
     }
   });
-  tree.insert_node(1, 2, None);
+  tree.insert_node(1, 2, None).expect("insert");
   assert_eq!(rect_x(&tree, 2), 100.0, "attach snaps to from");
   tree.set_transition_now(50.0);
   assert!(tree.advance_transitions());
@@ -402,7 +402,7 @@ fn enter_from_animates_first_attach_only() {
 
   // A move re-runs no enter animation.
   tree.detach_node(1, 2);
-  tree.insert_node(1, 2, None);
+  tree.insert_node(1, 2, None).expect("insert");
   assert_eq!(rect_x(&tree, 2), 40.0);
   tree.set_transition_now(150.0);
   assert!(!tree.advance_transitions(), "no track after a re-insert");
@@ -428,7 +428,7 @@ fn enter_from_with_delay_holds_at_from() {
       _ => unreachable!(),
     }
   });
-  tree.insert_node(1, 2, None);
+  tree.insert_node(1, 2, None).expect("insert");
   tree.set_transition_now(30.0);
   assert!(tree.advance_transitions(), "active during the hold");
   assert_eq!(rect_x(&tree, 2), 100.0, "sits at from until the hold expires");
@@ -447,7 +447,7 @@ fn tree_with_exit_rect(entry: TransitionEntry) -> RenderTree {
   tree.set_transition_now(0.0);
   tree.create_node(1, View::default().with_layout());
   tree.create_node(2, Rectangle::default().no_layout());
-  tree.insert_node(1, 2, None);
+  tree.insert_node(1, 2, None).expect("insert");
   tree.edit(2, |el| {
     el.transitions =
       Some(Box::new(TransitionConfig { props: vec![(AnimProp::X, entry)], all: None, stagger_ms: None }));
@@ -484,7 +484,7 @@ fn exit_reinsert_is_a_move() {
   let mut tree = tree_with_exit_rect(EXIT_200);
   tree.detach_node(1, 2);
   // Solid re-inserts the same node: a move, not a removal.
-  tree.insert_node(1, 2, None);
+  tree.insert_node(1, 2, None).expect("insert");
   tree.set_transition_now(100.0);
   assert!(!tree.advance_transitions(), "abandoned exit leaves no track");
   assert_eq!(rect_x(&tree, 2), 0.0, "value untouched");
@@ -570,7 +570,7 @@ fn tree_with_stagger_group(n: u64) -> RenderTree {
         _ => unreachable!(),
       }
     });
-    tree.insert_node(1, id, None);
+    tree.insert_node(1, id, None).expect("insert");
   }
   tree
 }
@@ -623,7 +623,7 @@ fn stagger_counts_per_frame() {
       _ => unreachable!(),
     }
   });
-  tree.insert_node(1, 20, None);
+  tree.insert_node(1, 20, None).expect("insert");
   tree.set_transition_now(30.0);
   tree.advance_transitions();
   assert!(rect_x(&tree, 20) < 100.0, "index restarted at 0: moves without a held delay");
@@ -645,7 +645,7 @@ fn stagger_spreads_group_exits() {
         Some(Box::new(TransitionConfig { props: vec![(AnimProp::X, EXIT_200)], all: None, stagger_ms: None }));
       Damage::None
     });
-    tree.insert_node(1, id, None);
+    tree.insert_node(1, id, None).expect("insert");
   }
   // Remove all three in one tick (a list teardown).
   tree.set_transition_now(1000.0);

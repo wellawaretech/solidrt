@@ -33,7 +33,7 @@ fn insert_node_links_parent_and_children() {
   let mut tree = RenderTree::new();
   tree.create_node(1, attached());
   tree.create_node(2, attached());
-  tree.insert_node(1, 2, None);
+  tree.insert_node(1, 2, None).expect("insert");
 
   assert_eq!(tree.node(2).parent, Some(1));
   assert_eq!(tree.node(1).children, vec![2]);
@@ -46,8 +46,8 @@ fn insert_node_with_anchor_inserts_before() {
   tree.create_node(1, attached());
   tree.create_node(2, attached());
   tree.create_node(3, attached());
-  tree.insert_node(1, 2, None);
-  tree.insert_node(1, 3, Some(2));
+  tree.insert_node(1, 2, None).expect("insert");
+  tree.insert_node(1, 3, Some(2)).expect("insert");
 
   assert_eq!(tree.node(1).children, vec![3, 2]);
   assert_eq!(tree.node(1).layout_data().layout_children, vec![NodeId::from(3u64), NodeId::from(2u64)]);
@@ -59,8 +59,8 @@ fn insert_node_with_unknown_anchor_appends() {
   tree.create_node(1, attached());
   tree.create_node(2, attached());
   tree.create_node(3, attached());
-  tree.insert_node(1, 2, None);
-  tree.insert_node(1, 3, Some(99));
+  tree.insert_node(1, 2, None).expect("insert");
+  tree.insert_node(1, 3, Some(99)).expect("insert");
 
   assert_eq!(tree.node(1).children, vec![2, 3]);
 }
@@ -70,20 +70,22 @@ fn reinserting_child_does_not_duplicate() {
   let mut tree = RenderTree::new();
   tree.create_node(1, attached());
   tree.create_node(2, attached());
-  tree.insert_node(1, 2, None);
-  tree.insert_node(1, 2, None);
+  tree.insert_node(1, 2, None).expect("insert");
+  tree.insert_node(1, 2, None).expect("insert");
 
   assert_eq!(tree.node(1).children, vec![2]);
   assert_eq!(tree.node(1).layout_data().layout_children, vec![NodeId::from(2u64)]);
 }
 
 #[test]
-#[should_panic(expected = "detached subtrees must be entirely detached")]
-fn attached_under_detached_panics() {
+fn attached_under_detached_is_refused_and_leaves_tree_untouched() {
   let mut tree = RenderTree::new();
   tree.create_node(1, detached());
   tree.create_node(2, attached());
-  tree.insert_node(1, 2, None);
+  let err = tree.insert_node(1, 2, None).expect_err("laid-out under detached must be refused");
+  assert!(err.starts_with("<view> cannot be a child of <d-view>"), "{err}");
+  assert!(tree.node(1).children.is_empty());
+  assert_eq!(tree.node(2).parent, None);
 }
 
 #[test]
@@ -91,7 +93,7 @@ fn detached_child_not_in_layout_children() {
   let mut tree = RenderTree::new();
   tree.create_node(1, attached());
   tree.create_node(2, detached());
-  tree.insert_node(1, 2, None);
+  tree.insert_node(1, 2, None).expect("insert");
 
   assert_eq!(tree.node(1).children, vec![2]);
   assert!(tree.node(1).layout_data().layout_children.is_empty());
@@ -103,8 +105,8 @@ fn detach_node_keeps_subtree_alive() {
   tree.create_node(1, attached());
   tree.create_node(2, attached());
   tree.create_node(3, attached());
-  tree.insert_node(1, 2, None);
-  tree.insert_node(2, 3, None);
+  tree.insert_node(1, 2, None).expect("insert");
+  tree.insert_node(2, 3, None).expect("insert");
 
   tree.detach_node(1, 2);
 
@@ -123,11 +125,11 @@ fn reinsert_detached_node_moves_it() {
   tree.create_node(1, attached());
   tree.create_node(2, attached());
   tree.create_node(3, attached());
-  tree.insert_node(1, 2, None);
-  tree.insert_node(1, 3, None);
+  tree.insert_node(1, 2, None).expect("insert");
+  tree.insert_node(1, 3, None).expect("insert");
 
   // Move node 3 from under 1 to under 2 without an explicit detach first.
-  tree.insert_node(2, 3, None);
+  tree.insert_node(2, 3, None).expect("insert");
 
   assert_eq!(tree.node(1).children, vec![2]);
   assert_eq!(tree.node(2).children, vec![3]);
@@ -141,8 +143,8 @@ fn destroy_node_frees_detached_subtree() {
   tree.create_node(1, attached());
   tree.create_node(2, attached());
   tree.create_node(3, attached());
-  tree.insert_node(1, 2, None);
-  tree.insert_node(2, 3, None);
+  tree.insert_node(1, 2, None).expect("insert");
+  tree.insert_node(2, 3, None).expect("insert");
 
   tree.detach_node(1, 2);
   tree.destroy_node(2);
@@ -158,8 +160,8 @@ fn mounted_count_excludes_orphans() {
   tree.root = Some(1);
   tree.create_node(2, attached());
   tree.create_node(3, attached());
-  tree.insert_node(1, 2, None);
-  tree.insert_node(2, 3, None);
+  tree.insert_node(1, 2, None).expect("insert");
+  tree.insert_node(2, 3, None).expect("insert");
   // A node created but never inserted is live but not mounted.
   tree.create_node(4, attached());
   assert_eq!(tree.node_count(), 4);
@@ -182,8 +184,8 @@ fn delete_node_removes_subtree() {
   tree.create_node(1, attached());
   tree.create_node(2, attached());
   tree.create_node(3, attached());
-  tree.insert_node(1, 2, None);
-  tree.insert_node(2, 3, None);
+  tree.insert_node(1, 2, None).expect("insert");
+  tree.insert_node(2, 3, None).expect("insert");
 
   tree.delete_node(1, 2);
 
@@ -215,10 +217,10 @@ fn text_collects_styled_runs_from_nested_spans() {
   inner.set_font_size(Some(30.0));
   tree.create_node(4, inner.no_layout());
   tree.create_node(5, Span { text: "world".into(), ..Default::default() }.no_layout());
-  tree.insert_node(1, 2, None);
-  tree.insert_node(1, 3, None);
-  tree.insert_node(3, 4, None);
-  tree.insert_node(4, 5, None);
+  tree.insert_node(1, 2, None).expect("insert");
+  tree.insert_node(1, 3, None).expect("insert");
+  tree.insert_node(3, 4, None).expect("insert");
+  tree.insert_node(4, 5, None).expect("insert");
 
   let runs = runs_of(&tree, 1);
   assert_eq!(runs.len(), 2);
@@ -266,9 +268,9 @@ fn text_collects_atom_runs_and_keeps_their_size() {
   tree.create_node(2, Span { text: "Rated ".into(), ..Default::default() }.no_layout());
   tree.create_node(3, View::default().with_layout());
   tree.create_node(4, Span { text: " stars".into(), ..Default::default() }.no_layout());
-  tree.insert_node(1, 2, None);
-  tree.insert_node(1, 3, None);
-  tree.insert_node(1, 4, None);
+  tree.insert_node(1, 2, None).expect("insert");
+  tree.insert_node(1, 3, None).expect("insert");
+  tree.insert_node(1, 4, None).expect("insert");
 
   let runs = runs_of(&tree, 1);
   assert_eq!(runs.len(), 3);
@@ -312,8 +314,8 @@ fn snapshot_from_caps_depth_and_reports_child_count() {
   tree.create_node(1, attached());
   tree.create_node(2, attached());
   tree.create_node(3, attached());
-  tree.insert_node(1, 2, None);
-  tree.insert_node(2, 3, None);
+  tree.insert_node(1, 2, None).expect("insert");
+  tree.insert_node(2, 3, None).expect("insert");
   tree.root = Some(1);
 
   let full = tree.snapshot().expect("full snapshot");
@@ -340,9 +342,9 @@ fn snapshot_matches_finds_kind_and_text_with_paths() {
   tree.create_node(2, text("Alpha Heading"));
   tree.create_node(3, attached());
   tree.create_node(4, text("beta"));
-  tree.insert_node(1, 2, None);
-  tree.insert_node(1, 3, None);
-  tree.insert_node(3, 4, None);
+  tree.insert_node(1, 2, None).expect("insert");
+  tree.insert_node(1, 3, None).expect("insert");
+  tree.insert_node(3, 4, None).expect("insert");
   tree.root = Some(1);
 
   // Case-insensitive text substring, path from the root down to the match.
@@ -376,7 +378,7 @@ fn referenced_texture_ids_covers_attached_and_detached() {
   let mut tex = Texture::default();
   tex.texture_id = Some(10);
   tree.create_node(2, tex.with_layout());
-  tree.insert_node(1, 2, None);
+  tree.insert_node(1, 2, None).expect("insert");
 
   // Detached (d-texture) element referencing id 20: still live, still counts.
   let mut dtex = Texture::default();
@@ -385,7 +387,7 @@ fn referenced_texture_ids_covers_attached_and_detached() {
 
   // Texture element with no src, and a non-texture node: neither contributes.
   tree.create_node(4, Texture::default().with_layout());
-  tree.insert_node(1, 4, None);
+  tree.insert_node(1, 4, None).expect("insert");
 
   let ids = tree.referenced_texture_ids();
   assert!(ids.contains(&10));
@@ -463,8 +465,8 @@ fn bounding_box_composes_translations() {
   tree.create_node(1, attached());
   tree.create_node(2, attached());
   tree.create_node(3, attached());
-  tree.insert_node(1, 2, None);
-  tree.insert_node(2, 3, None);
+  tree.insert_node(1, 2, None).expect("insert");
+  tree.insert_node(2, 3, None).expect("insert");
   place(&mut tree, 1, 0.0, 0.0, 200.0, 200.0);
   place(&mut tree, 2, 10.0, 20.0, 100.0, 100.0);
   place(&mut tree, 3, 5.0, 5.0, 20.0, 20.0);
@@ -482,8 +484,8 @@ fn bounding_box_scaled_ancestor() {
   v.set_scale_y(Some(0.5));
   tree.create_node(2, v.with_layout());
   tree.create_node(3, attached());
-  tree.insert_node(1, 2, None);
-  tree.insert_node(2, 3, None);
+  tree.insert_node(1, 2, None).expect("insert");
+  tree.insert_node(2, 3, None).expect("insert");
   place(&mut tree, 1, 0.0, 0.0, 200.0, 200.0);
   place(&mut tree, 2, 50.0, 50.0, 100.0, 100.0);
   place(&mut tree, 3, 10.0, 10.0, 20.0, 20.0);
@@ -507,8 +509,8 @@ fn bounding_box_scrolled_design_size_ancestor() {
   v.set_scroll_x(Some(10.0));
   tree.create_node(2, v.with_layout());
   tree.create_node(3, attached());
-  tree.insert_node(1, 2, None);
-  tree.insert_node(2, 3, None);
+  tree.insert_node(1, 2, None).expect("insert");
+  tree.insert_node(2, 3, None).expect("insert");
   place(&mut tree, 1, 0.0, 0.0, 200.0, 200.0);
   place(&mut tree, 2, 0.0, 0.0, 100.0, 100.0);
   place(&mut tree, 3, 100.0, 100.0, 50.0, 50.0);
@@ -527,8 +529,8 @@ fn bounding_box_rotated_ancestor() {
   v.set_rotate(Some(std::f32::consts::FRAC_PI_2));
   tree.create_node(2, v.with_layout());
   tree.create_node(3, attached());
-  tree.insert_node(1, 2, None);
-  tree.insert_node(2, 3, None);
+  tree.insert_node(1, 2, None).expect("insert");
+  tree.insert_node(2, 3, None).expect("insert");
   place(&mut tree, 1, 0.0, 0.0, 200.0, 200.0);
   place(&mut tree, 2, 0.0, 0.0, 100.0, 100.0);
   place(&mut tree, 3, 0.0, 0.0, 100.0, 20.0);
@@ -547,7 +549,7 @@ fn bounding_box_own_scale() {
   v.set_scale_x(Some(2.0));
   v.set_scale_y(Some(2.0));
   tree.create_node(2, v.with_layout());
-  tree.insert_node(1, 2, None);
+  tree.insert_node(1, 2, None).expect("insert");
   place(&mut tree, 1, 0.0, 0.0, 200.0, 200.0);
   place(&mut tree, 2, 0.0, 0.0, 50.0, 50.0);
 
@@ -567,7 +569,7 @@ fn painted_quad_untransformed_is_box_corners() {
   let mut tree = RenderTree::new();
   tree.create_node(1, attached());
   tree.create_node(2, attached());
-  tree.insert_node(1, 2, None);
+  tree.insert_node(1, 2, None).expect("insert");
   place(&mut tree, 1, 0.0, 0.0, 200.0, 200.0);
   place(&mut tree, 2, 10.0, 20.0, 100.0, 50.0);
 
@@ -589,8 +591,8 @@ fn painted_quad_rotated_ancestor_carries_corners() {
   v.set_rotate(Some(std::f32::consts::FRAC_PI_2));
   tree.create_node(2, v.with_layout());
   tree.create_node(3, attached());
-  tree.insert_node(1, 2, None);
-  tree.insert_node(2, 3, None);
+  tree.insert_node(1, 2, None).expect("insert");
+  tree.insert_node(2, 3, None).expect("insert");
   place(&mut tree, 1, 0.0, 0.0, 200.0, 200.0);
   place(&mut tree, 2, 0.0, 0.0, 100.0, 100.0);
   place(&mut tree, 3, 0.0, 0.0, 100.0, 20.0);
@@ -617,8 +619,8 @@ fn bounding_box_translate_and_scroll_fast_path() {
   v.set_scroll_y(Some(10.0));
   tree.create_node(2, v.with_layout());
   tree.create_node(3, attached());
-  tree.insert_node(1, 2, None);
-  tree.insert_node(2, 3, None);
+  tree.insert_node(1, 2, None).expect("insert");
+  tree.insert_node(2, 3, None).expect("insert");
   place(&mut tree, 1, 0.0, 0.0, 200.0, 200.0);
   place(&mut tree, 2, 20.0, 20.0, 100.0, 100.0);
   place(&mut tree, 3, 0.0, 0.0, 10.0, 10.0);
@@ -642,7 +644,7 @@ fn ids(list: &[u64]) -> HashSet<u64> {
 fn snapshot_over_texture(tree: &mut RenderTree, tex: u64) {
   tree.create_node(1, attached());
   tree.create_node(2, Texture::default().with_layout());
-  tree.insert_node(1, 2, None);
+  tree.insert_node(1, 2, None).expect("insert");
   tree.edit(1, |el| {
     el.repaint_boundary = BoundaryMode::Snapshot;
     Damage::None
@@ -680,7 +682,7 @@ fn own_snapshot_texture_change_does_not_invalidate_boundary() {
 
   tree.create_node(3, attached());
   tree.create_node(4, Texture::default().with_layout());
-  tree.insert_node(3, 4, None);
+  tree.insert_node(3, 4, None).expect("insert");
   tree.edit(3, |el| {
     el.repaint_boundary = BoundaryMode::Snapshot;
     Damage::None
@@ -705,7 +707,7 @@ fn content_change_without_snapshot_is_ignored() {
   let mut tree = RenderTree::new();
   tree.create_node(1, attached());
   tree.create_node(2, Texture::default().with_layout());
-  tree.insert_node(1, 2, None);
+  tree.insert_node(1, 2, None).expect("insert");
   tree.edit(2, |el| match &mut el.kind {
     ElementKind::Texture(t) => t.set_src(Some(7)),
     _ => unreachable!(),
@@ -765,8 +767,8 @@ fn boundary_above_the_boundary_still_hits() {
   tree.create_node(1, attached());
   tree.create_node(2, attached());
   tree.create_node(3, Texture::default().with_layout());
-  tree.insert_node(1, 2, None);
-  tree.insert_node(2, 3, None);
+  tree.insert_node(1, 2, None).expect("insert");
+  tree.insert_node(2, 3, None).expect("insert");
   tree.edit(1, |el| {
     el.repaint_boundary = BoundaryMode::Snapshot;
     Damage::None
@@ -826,7 +828,7 @@ fn boundary_shader_input_hit_keeps_the_bake() {
   let mut tree = RenderTree::new();
   tree.create_node(0, attached());
   shaded_boundary(&mut tree, 1, 9);
-  tree.insert_node(0, 1, None);
+  tree.insert_node(0, 1, None).expect("insert");
   let dl = || crate::impellers::DisplayListBuilder::new(None).build().expect("build empty display list");
   *tree.node(0).paint_cache.borrow_mut() = Some(PaintCache::Recording(dl()));
   *tree.node(1).paint_cache.borrow_mut() = Some(PaintCache::Recording(dl()));
@@ -855,7 +857,7 @@ fn content_hit_invalidates_the_boundary_cache_path() {
   let mut tree = RenderTree::new();
   tree.create_node(0, attached());
   snapshot_over_texture(&mut tree, 7);
-  tree.insert_node(0, 1, None);
+  tree.insert_node(0, 1, None).expect("insert");
   tree.edit(0, |el| {
     el.repaint_boundary = BoundaryMode::Recording;
     Damage::None

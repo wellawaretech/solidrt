@@ -147,6 +147,13 @@ Peer deps @solidjs/signals and @solidjs/universal must match (currently
   endpoint props and spans its layout box corner to corner. `points` (a flat
   `[x0, y0, x1, y1, ...]` array, plus `closed`) turns either form into a
   polyline and wins over the endpoints while set.
+- Nesting rule: d-* elements go under anything; laid-out elements only under
+  laid-out parents. A detached subtree is entirely detached, and the insert
+  throws otherwise (`<view> cannot be a child of <d-view>: ...`). So a
+  component that renders any laid-out element is a LAYOUT component and
+  cannot be used inside a d-* subtree, and a component meant for d-* trees
+  renders d-* only. Say which in the component's doc comment: the types
+  cannot tell (every JSX expression is the same `Element`).
 
 - Plain vs `d-` variant (the `d-` prefix means "detached" - detached from the
   layout engine, Taffy): a plain element (e.g. `rect`) is `RectProps &

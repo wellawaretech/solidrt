@@ -75,7 +75,22 @@ impl RenderTree {
     self.bump_revision();
   }
 
-  pub fn insert_node(&mut self, parent_id: u64, node_id: u64, anchor_id: Option<u64>) {
+  /// Insert `node_id` under `parent_id` (before `anchor_id`, else last). Refused,
+  /// with the tree untouched, when a laid-out node would land under a detached
+  /// parent: a detached subtree must stay entirely detached so a detached
+  /// node's inherited position and size resolve to a single laid-out ancestor.
+  /// The message names the kinds as JSX tags, since that is where the mistake
+  /// is made.
+  pub fn insert_node(&mut self, parent_id: u64, node_id: u64, anchor_id: Option<u64>) -> Result<(), String> {
+    let child_has_layout = self.node(node_id).has_layout();
+    if child_has_layout && !self.node(parent_id).has_layout() {
+      return Err(format!(
+        "<{}> cannot be a child of <d-{}>: a detached subtree must be entirely detached (d-* elements only)",
+        self.node(node_id).kind.name(),
+        self.node(parent_id).kind.name()
+      ));
+    }
+
     // A re-insert of an exiting node is a move (Solid detaches before
     // re-inserting), not a removal: abandon the exit and carry on.
     self.abandon_exit(node_id);
@@ -90,20 +105,7 @@ impl RenderTree {
       }
     }
 
-    let child_has_layout = {
-      let child = self.node_mut(node_id);
-      child.parent = Some(parent_id);
-      child.has_layout()
-    };
-
-    // Detached subtrees must stay entirely detached so a detached node's
-    // inherited position and size resolve to a single laid-out ancestor.
-    if child_has_layout && !self.node(parent_id).has_layout() {
-      panic!(
-        "attached node {node_id} cannot be inserted under detached node {parent_id}; \
-         detached subtrees must be entirely detached"
-      );
-    }
+    self.node_mut(node_id).parent = Some(parent_id);
 
     let parent = self.node_mut(parent_id);
     parent.children.retain(|&id| id != node_id);
@@ -151,6 +153,7 @@ impl RenderTree {
     self.bump_revision();
 
     self.apply_enter_transitions(node_id);
+    Ok(())
   }
 
   /// Mount-time enter animations: a per-property `from` in the node's

@@ -9,8 +9,8 @@ fn scene() -> RenderTree {
   tree.create_node(1, View::default().with_layout());
   tree.create_node(2, View::default().with_layout());
   tree.create_node(3, View::default().with_layout());
-  tree.insert_node(1, 2, None);
-  tree.insert_node(1, 3, None);
+  tree.insert_node(1, 2, None).expect("insert");
+  tree.insert_node(1, 3, None).expect("insert");
   tree.root = Some(1);
   place(&mut tree, 1, 0.0, 0.0, 200.0, 200.0);
   place(&mut tree, 2, 10.0, 20.0, 100.0, 100.0);

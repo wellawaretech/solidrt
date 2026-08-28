@@ -87,7 +87,11 @@ declare module "flux:rendertree" {
   export function setRoot(id: number): void
   /** Create a node of `kind` (the primitive element name) with the given id. Throws an `Error` for a name that is not an element. */
   export function createNode(id: number, kind: string): void
-  /** Insert `nodeId` under `parentId`, before `anchorId` if given (else appended). */
+  /**
+   * Insert `nodeId` under `parentId`, before `anchorId` if given (else appended).
+   * Throws an `Error` when a laid-out node would land under a detached (d-*)
+   * parent: a detached subtree is entirely detached. The tree is left untouched.
+   */
   export function insertNode(parentId: number, nodeId: number, anchorId?: number): void
   /**
    * Unlink `nodeId` from `parentId` but keep its subtree alive, so it can be
