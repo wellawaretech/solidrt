@@ -34,6 +34,7 @@ import { FULL_FRAME, writeFrame } from "./frames.ts"
 import { readFrame, spriteDispatch } from "./layer.ts"
 import type { LayerBase, Sprite, SpriteHandlers, SpriteLayerOptions, SpriteOptions } from "./layer.ts"
 import { pointInSprite } from "./pick.ts"
+import { checkOversample } from "./oversample.ts"
 import { FRAGMENT, INSTANCE_ATTRIBUTES, VERTEX } from "./shaders.ts"
 
 // Floats per instance record:
@@ -84,11 +85,13 @@ export function createRecordLayer(
     label: `${label}-records`,
     autoFree: false,
   })
+  let oversample = opts?.oversample ?? 1
+  checkOversample("createRecordLayer", oversample, width, height)
   let texture = createPipelineTexture(
     VERTEX,
     FRAGMENT,
-    width,
-    height,
+    width * oversample,
+    height * oversample,
     { uViewport: [width, height], uCamera: [0, 0, 1, 1] },
     {
       label,
@@ -188,10 +191,20 @@ export function createRecordLayer(
     },
     setSize(w, h) {
       if (disposed || (w === width && h === height)) return
+      checkOversample("setSize", oversample, w, h)
       width = w
       height = h
-      setTargetSize(texture, w, h)
+      setTargetSize(texture, w * oversample, h * oversample)
       setTargetParams(texture, { uViewport: [w, h] })
+    },
+    get oversample() {
+      return oversample
+    },
+    setOversample(n) {
+      if (disposed || n === oversample) return
+      checkOversample("setOversample", n, width, height)
+      oversample = n
+      setTargetSize(texture, width * n, height * n)
     },
     setCamera(update) {
       if (disposed) return

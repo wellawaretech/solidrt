@@ -51,11 +51,12 @@ Shaped, not started.
   Static 2D bulk (tile worlds, backgrounds) rendered once into a texture and
   drawn as ONE quad, with incremental re-bake - the primitive-count answer for
   tiled GPUs
-- **[A sprite layer has no display-scale story, so it is soft on a HiDPI screen](backlog/2d-layer-display-scale.md)** [2026-08-22]
-  createSpriteLayer renders into a texture sized in the numbers the app
-  passed, and the composited leaf scales that to its layout box, so on a 2x
-  display the whole layer is upsampled unless the app doubles the size and the
-  camera zoom itself.
+- **[2D layers render at layer resolution, so they are soft on HiDPI and shimmer at a fractional designSize fit](backlog/2d-layer-display-scale.md)** [2026-08-22]
+  A sprite or tile layer draws into a texture sized in the numbers the app
+  passed and is composited at whatever scale its box ends up at, with one
+  sampler doing the whole resample - nearest snaps pixels to uneven widths and
+  boils under motion, linear blurs. Render the layer at an integer oversample
+  of its own resolution, composite linear.
 - **[Retro presets for @solidrt/2d](backlog/2d-retro-presets.md)** [2026-08-19]
   The pixel-art identity kit - fixed logical resolution with integer nearest
   scaling, palette LUT, and scanline/CRT passes - as thin layers over what

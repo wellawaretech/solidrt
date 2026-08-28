@@ -38,6 +38,7 @@ import type { BufferId, TextureId } from "@solidrt/core/gpu"
 import * as spatial from "flux:spatial"
 import type { NodeId, NodeTransition } from "flux:spatial"
 import { on } from "srt:events"
+import { checkOversample } from "./oversample.ts"
 import type { Frame } from "./frames.ts"
 import { FULL_FRAME, writeFrame } from "./frames.ts"
 import type { RecordLayer } from "./records.ts"
@@ -194,6 +195,15 @@ export type SpriteLayerOptions = {
   capacity?: number
   clearColor?: [number, number, number, number]
   label?: string
+  /**
+   * Target texels per layer pixel (positive integer, default 1). The layer
+   * renders at `oversample` times its size and is composited down, so a
+   * fractional or HiDPI display scale resamples properly instead of snapping
+   * (nearest) or smearing (linear); see setOversample. The components pick
+   * it from the leaf's on-screen size - set it here when composing the
+   * output yourself.
+   */
+  oversample?: number
   /** Skip the owner-scoped auto-dispose (see createSpriteLayer). */
   autoFree?: boolean
 }
@@ -241,6 +251,16 @@ export type LayerBase = {
   /** Live sprite count. */
   readonly count: number
   setSize(width: number, height: number): void
+  /** Target texels per layer pixel; see setOversample. */
+  readonly oversample: number
+  /**
+   * Re-render at `n` target texels per layer pixel (positive integer): the
+   * target resizes in place at its stable id, layer pixels, records, camera
+   * and picking are untouched. Pick `n` as the ceiling of the device pixels
+   * one layer pixel covers on screen (display scale times any designSize
+   * fit or layout scaling), which the components do in onLayout.
+   */
+  setOversample(n: number): void
   setCamera(update: CameraUpdate): void
   /** Topmost sprite whose rotated rect contains the layer-pixel point. */
   pick(x: number, y: number): Sprite | null
@@ -406,6 +426,8 @@ export function createSpriteLayer(
     throw new Error(`createSpriteLayer: capacity must be a positive integer, got ${capacity}`)
   }
   let label = opts?.label ?? "sprites"
+  let oversample = opts?.oversample ?? 1
+  checkOversample("createSpriteLayer", oversample, width, height)
   // One unit quad (triangle strip), reused by every instance.
   let quad = createBuffer(new Float32Array([-0.5, -0.5, 0.5, -0.5, -0.5, 0.5, 0.5, 0.5]), {
     label: `${label}-quad`,
@@ -416,8 +438,8 @@ export function createSpriteLayer(
   let texture = createPipelineTexture(
     VERTEX_SPLIT,
     FRAGMENT,
-    width,
-    height,
+    width * oversample,
+    height * oversample,
     { uViewport: [width, height], uCamera: [0, 0, 1, 1] },
     {
       label,
@@ -530,10 +552,20 @@ export function createSpriteLayer(
     },
     setSize(w, h) {
       if (disposed || (w === width && h === height)) return
+      checkOversample("setSize", oversample, w, h)
       width = w
       height = h
-      setTargetSize(texture, w, h)
+      setTargetSize(texture, w * oversample, h * oversample)
       setTargetParams(texture, { uViewport: [w, h] })
+    },
+    get oversample() {
+      return oversample
+    },
+    setOversample(n) {
+      if (disposed || n === oversample) return
+      checkOversample("setOversample", n, width, height)
+      oversample = n
+      setTargetSize(texture, width * n, height * n)
     },
     setCamera(update) {
       if (disposed) return

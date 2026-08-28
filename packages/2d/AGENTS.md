@@ -123,10 +123,10 @@ chunks on approach, evict) - okf/backlog/2d-baked-layers.md.
 
 | Component | Props |
 |---|---|
-| `SpriteLayer` | width, height (layer pixels), atlas (TextureId), capacity?, clearColor?, camera?, label?, ref?, output?, events? |
+| `SpriteLayer` | width, height (layer pixels), atlas (TextureId), capacity?, clearColor?, camera?, oversample?, label?, ref?, output?, events? |
 | `Sprite` | x, y (center; local to the enclosing `<Group>`), w, h, frame?, rotation? (radians, clockwise), tint? ([r,g,b,a] 0..1), transition?, onPointer{Down,Move,Up,Enter,Leave}?, ref? |
 | `Group` | x?, y?, rotation?, scale? (uniform, scales the subtree), transition?, ref? |
-| `TileLayer` | cols, rows, tileW, tileH, atlas (TextureId), clearColor?, filter?, chunkTiles?, camera? (TileCamera: x, y, zoom, rotation, pivotX, pivotY), label?, ref? |
+| `TileLayer` | cols, rows, tileW, tileH, atlas (TextureId), clearColor?, filter?, chunkTiles?, oversample?, camera? (TileCamera: x, y, zoom, rotation, pivotX, pivotY), label?, ref? |
 
 `SpriteLayer` owns the layer and renders the built-in `<texture>` leaf
 carrying the layer's pointer handlers (opt out with `events={false}`; compose
@@ -202,16 +202,34 @@ is flat. Event x/y are layer pixels with the camera undone.
   much layout space: put it inside a clipping container (`overflow="clip"`)
   sized to the viewport, or camera panning shows the world hanging out of
   the box. Both layers render LAID-OUT elements (`<TileLayer>` a `<view>`,
-  `<SpriteLayer>` a `<texture>` leaf), so to overlay sprites on tiles make
-  both `position="absolute"` children of that container - as plain flex
-  siblings they stack side by side instead.
+  `<SpriteLayer>` a `<texture>` leaf) and take no position props, so to
+  overlay sprites on tiles wrap each in a `<view position="absolute">`
+  inside that container - as plain flex siblings they stack side by side
+  instead.
 - `clearColor` is PER CHUNK: never-written regions have no chunk and render
   nothing, so a full-bleed ground color belongs on the container behind the
   layer (a `d-rect` under it), not on clearColor.
-- Tile layer zoom/rotation scale the BAKED chunk textures at composite time
-  (the sprite layer's zoom re-samples the atlas in-shader), so the tile
-  layer's `filter` option is what pixel art must set to "nearest" - on top
-  of the atlas's own nearest from createAtlas; they are different samplers.
+- Two samplers, two jobs. The ATLAS sampler (createAtlas `filter`) decides
+  whether texels are hard blocks ("nearest", pixel art) or smooth
+  ("linear"). The LAYER's output sampler (the sprite layer's target, the
+  tile layer's `filter` option, default "linear") does the composite
+  resample to the box, and stays linear: "nearest" there snaps texels to
+  uneven widths at any fractional scale (a 3.6x designSize fit draws
+  source pixels 3 or 4 device pixels wide - shimmer standing still, boil
+  when scrolling). Proper resampling at a fractional or HiDPI scale is the
+  `oversample` factor: the layer renders at n texels per layer pixel
+  (nearest inside keeps blocks square), the linear composite spreads the
+  fraction over one device pixel at block edges. The components pick n
+  every layout from their leaf's window box (`getBoundingBoxViewport` x
+  `displayScale()`, which composes designSize fits and camera zoom); the
+  primitives default to 1 and take `{ oversample }` / `setOversample(n)`
+  - with `output` on `<SpriteLayer>` there is no built-in leaf, so set it
+  yourself. Never fix a shimmer by snapping the fit to an integer: the
+  scene should fill its box at any ratio.
+- Retro scrolling habits are the app's, not the layer's: keep the camera
+  fractional (rounding it to design pixels makes motion step at the
+  rounding rate, not the frame rate), and a game that wants whole-pixel
+  scrolling snaps its own camera.
 - A dirty chunk flush publishes and re-bakes that chunk in full. Fine on
   change-only cadence; per-frame setTile churn re-bakes chunks per frame -
   that is sprite-layer work, not tile work.

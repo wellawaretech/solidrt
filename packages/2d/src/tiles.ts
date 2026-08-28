@@ -30,9 +30,11 @@ import {
   endBufferWrite,
   limits,
   renderTarget,
+  setTargetSize,
 } from "@solidrt/core/gpu"
 import type { BufferId, FilterMode, TextureId } from "@solidrt/core/gpu"
 import type { Frame } from "./frames.ts"
+import { checkOversample } from "./oversample.ts"
 import { FLOATS_PER_SPRITE } from "./records.ts"
 import { FRAGMENT, INSTANCE_ATTRIBUTES, VERTEX } from "./shaders.ts"
 
@@ -45,11 +47,19 @@ export type TileLayerOptions = {
   /** Per-chunk clear color; empty (never-written) chunks render nothing. */
   clearColor?: [number, number, number, number]
   /**
-   * Sampler filter for the baked chunk textures (what the camera zoom
-   * scales at composite time); default "linear". Pixel art wants "nearest"
-   * - hard pixels under integer upscales.
+   * Sampler filter for the baked chunk textures at composite time; default
+   * "linear", which with `oversample` is the proper resample at any scale.
+   * Hard pixels belong to the ATLAS sampler (createAtlas `filter:
+   * "nearest"`), not here: "nearest" on the chunks snaps texels to uneven
+   * widths at a fractional scale.
    */
   filter?: FilterMode
+  /**
+   * Target texels per world pixel in the baked chunks (positive integer,
+   * default 1); see TileLayer.setOversample. `<TileLayer>` picks it from
+   * the world view's on-screen size.
+   */
+  oversample?: number
   /**
    * Chunk edge in TILES; default sized so a chunk is ~512px. The tuning
    * knob between re-bake granularity (smaller = finer dirty regions) and
@@ -80,6 +90,20 @@ export type TileLayer = {
   /** World size in pixels: cols * tileW x rows * tileH. */
   width: number
   height: number
+  /** Chunk size in world pixels (chunkTiles * tile size): the target a
+   * chunk bakes into, before `oversample`. */
+  chunkW: number
+  chunkH: number
+  /** Target texels per world pixel; see setOversample. */
+  readonly oversample: number
+  /**
+   * Re-bake at `n` target texels per world pixel (positive integer): every
+   * resident chunk resizes in place and re-bakes once; world pixels, records
+   * and the camera are untouched. Pick `n` as the ceiling of the device
+   * pixels one world pixel covers on screen (display scale times camera
+   * zoom times any designSize fit), which `<TileLayer>` does in onLayout.
+   */
+  setOversample(n: number): void
   /**
    * The resident chunks, in allocation order - the layer's output.
    * Composite each as a texture leaf at its world rect (`<TileLayer>` does
@@ -140,6 +164,8 @@ export function createTileLayer(
     )
   }
   let label = opts?.label ?? "tiles"
+  let oversample = opts?.oversample ?? 1
+  checkOversample("createTileLayer", oversample, chunkW, chunkH)
   let chunkCols = Math.ceil(cols / chunkTiles)
   let perChunk = chunkTiles * chunkTiles
   // One unit quad (triangle strip), shared by every chunk's pipeline.
@@ -185,8 +211,8 @@ export function createTileLayer(
     let texture = createPipelineTexture(
       VERTEX,
       FRAGMENT,
-      chunkW,
-      chunkH,
+      chunkW * oversample,
+      chunkH * oversample,
       { uViewport: [chunkW, chunkH], uCamera: [x, y, 1, 1] },
       {
         label: `${label}-chunk`,
@@ -228,7 +254,23 @@ export function createTileLayer(
     tileH,
     width: cols * tileW,
     height: rows * tileH,
+    chunkW,
+    chunkH,
     chunks: [],
+    get oversample() {
+      return oversample
+    },
+    setOversample(n) {
+      if (disposed || n === oversample) return
+      checkOversample("setOversample", n, chunkW, chunkH)
+      oversample = n
+      // Resizing a target re-renders it, but a manual target's content is
+      // its last bake: mark every chunk so the flush bakes it at the new size.
+      for (let chunk of resident.values()) {
+        setTargetSize(chunk.texture, chunkW * n, chunkH * n)
+        touch(chunk)
+      }
+    },
     setTile(col, row, frame) {
       if (disposed) return
       let [index, at] = locate(col, row, "setTile")

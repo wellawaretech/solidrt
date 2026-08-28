@@ -11,12 +11,15 @@ aesthetic constraint, not an architecture: everything here is a thin preset
 over existing machinery, and its value is identity (demos, docs, the
 showcase) as much as function.
 
-- **Pixel canvas**: a fixed logical resolution (e.g. 320x180) rendered
-  small and displayed big with hard pixels. The platform path already
-  exists - `filter: "nearest"` textures upscale hard everywhere (core
-  gpu.ts documents this as THE retro path) - so this is a component:
-  a sprite/baked layer at logical size, an integer scale factor chosen from
-  the window size, letterboxed centering.
+- **Pixel canvas**: a fixed logical resolution (e.g. 320x180) displayed
+  big and sharp. With layer oversampling
+  (okf/backlog/2d-layer-display-scale.md) this is nothing but `<view
+  designSize>` around the layers: the fit fills the window at any ratio and
+  the layers resample properly, so motion is fluent at every size. The
+  hard-pixel variant (integer scale, letterboxed remainder) needs no feature
+  either: size the design-size view's box to `k * design` and it fits at
+  exactly `k` - a docs recipe, and at most a `fit` option on a canvas
+  component, never a mode on `designSize`.
 - **Palette LUT**: a fragment pass mapping the layer's output through an
   N-color palette texture. A `<texture>` post-chain via the layer's
   `output` prop, or a view/window `shader` - both exist; ship the shader
@@ -25,9 +28,9 @@ showcase) as much as function.
   treatment or a per-layer pass; the classic barrel + mask + vignette
   shader is ~50 lines of GLSL.
 
-Do these only after baked layers (okf/backlog/2d-baked-layers.md): the
-flagship retro demo is a scrolling tile world, which tier 2 alone renders
-the expensive way.
+The tile layer these build on ships (`createTileLayer` / `<TileLayer>`);
+only its streaming-worlds stage B2 is still open in
+okf/backlog/2d-baked-layers.md, and nothing here needs it.
 
 ## What is actually package work here
 

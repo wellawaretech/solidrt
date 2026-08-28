@@ -6,12 +6,13 @@
 // sprite with `ref` and call setSprite from onFrame - signals carry
 // structure and slow state, per-frame motion goes straight to the layer.
 // The same split, with the same reasoning, as @solidrt/3d's components.
-import { createContext, createEffect, createSignal, For, onCleanup, untrack, useContext } from "@solidrt/core"
+import { createContext, createEffect, createSignal, displayScale, For, getBoundingBoxViewport, onCleanup, onLayout, untrack, useContext } from "@solidrt/core"
 import type { Element, ParentComponent, TextureId, VoidComponent } from "@solidrt/core"
 import type { FilterMode } from "@solidrt/core/gpu"
 import { addGroup, addSprite, createSpriteLayer, removeGroup, removeSprite, setGroup, setGroupTransition, setSprite, setSpriteTransition } from "./layer.ts"
 import type { NodeTransition } from "flux:spatial"
 import type { CameraUpdate, Sprite as SpriteHandle, SpriteGroup, SpriteLayer as LayerHandle, SpriteOptions, SpritePointerEvent, TransitionEndEvent } from "./layer.ts"
+import { fitOversample } from "./oversample.ts"
 import { createTileLayer } from "./tiles.ts"
 import type { TileChunk, TileLayer as TileLayerHandle } from "./tiles.ts"
 
@@ -45,6 +46,13 @@ export type SpriteLayerProps = {
   clearColor?: [number, number, number, number]
   /** Pan/zoom over the world; a shared-params write, never per-sprite. */
   camera?: CameraUpdate
+  /**
+   * Target texels per layer pixel. Absent, the component picks it every
+   * layout from the built-in leaf's on-screen size (display scale, any
+   * designSize fit, layout scaling), so the layer resamples properly at any
+   * scale; with `output` there is no built-in leaf, so set it yourself.
+   */
+  oversample?: number
   label?: string
   ref?: (layer: LayerHandle) => void
   /**
@@ -87,15 +95,37 @@ export let SpriteLayer: ParentComponent<SpriteLayerProps> = props => {
       if (camera) layer.setCamera(camera)
     },
   )
+  createEffect(
+    () => props.oversample,
+    n => {
+      if (n !== undefined) layer.setOversample(n)
+    },
+  )
   untrack(() => props.ref)?.(layer)
   let output = untrack(() => props.output)
   let events = untrack(() => props.events) !== false
+  // Auto oversample: the built-in leaf's window box, in device pixels, per
+  // layer pixel. Picked after every layout, and again when the display scale
+  // changes: the first layout runs before the resize event that reports the
+  // scale, and a scale change alone lays nothing out. onLayout is not a
+  // tracking scope; the reads there are plain.
+  let leaf: { id: number } | undefined
+  let pick = () => {
+    if (!leaf || props.oversample !== undefined) return
+    let box = getBoundingBoxViewport(leaf)
+    if (!box) return
+    let scale = displayScale() * Math.max(box.width / props.width, box.height / props.height)
+    layer.setOversample(fitOversample(scale, props.width, props.height))
+  }
+  onLayout(pick)
+  createEffect(() => displayScale(), pick)
   return (
     <LayerContext value={layer}>
       {output ? (
         untrack(() => output(layer.texture))
       ) : (
         <texture
+          ref={(n: { id: number }) => (leaf = n)}
           src={layer.texture}
           width={props.width}
           height={props.height}
@@ -227,8 +257,16 @@ export type TileLayerProps = {
   /** Per-chunk clear color; never-written regions render nothing, so a
    * full-bleed ground color belongs on the container behind the layer. */
   clearColor?: [number, number, number, number]
-  /** Sampler filter for the baked chunk textures; "nearest" for pixel art. */
+  /** Sampler filter for the baked chunk textures at composite time; default
+   * "linear" (hard pixels belong to the atlas sampler, see TileLayerOptions). */
   filter?: FilterMode
+  /**
+   * Target texels per world pixel in the baked chunks. Absent, the component
+   * picks it every layout from the world view's on-screen size (display
+   * scale, camera zoom, any designSize fit), so tiles resample properly at
+   * any scale.
+   */
+  oversample?: number
   /** Chunk edge in tiles (default ~512px worth); see TileLayerOptions. */
   chunkTiles?: number
   /**
@@ -259,6 +297,25 @@ export let TileLayer: VoidComponent<TileLayerProps> = props => {
     }),
   )
   untrack(() => props.ref)?.(layer)
+  createEffect(
+    () => props.oversample,
+    n => {
+      if (n !== undefined) layer.setOversample(n)
+    },
+  )
+  // Auto oversample: the world view's window box (camera zoom and rotation
+  // included - a rotated world's AABB over-estimates, which only rounds up),
+  // in device pixels, per world pixel.
+  let world: { id: number } | undefined
+  let pick = () => {
+    if (!world || props.oversample !== undefined) return
+    let box = getBoundingBoxViewport(world)
+    if (!box) return
+    let scale = displayScale() * Math.max(box.width / layer.width, box.height / layer.height)
+    layer.setOversample(fitOversample(scale, layer.chunkW, layer.chunkH))
+  }
+  onLayout(pick)
+  createEffect(() => displayScale(), pick)
   // Chunk allocations arrive through the layer's hook; the signal carries a
   // fresh array so <For> sees the growth.
   let [chunks, setChunks] = createSignal<TileChunk[]>(layer.chunks.slice())
@@ -270,6 +327,7 @@ export let TileLayer: VoidComponent<TileLayerProps> = props => {
   let camY = () => props.camera?.y ?? 0
   return (
     <view
+      ref={(n: { id: number }) => (world = n)}
       width={layer.width}
       height={layer.height}
       originX={camX()}
