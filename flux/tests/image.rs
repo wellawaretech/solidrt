@@ -2,14 +2,32 @@ mod common;
 
 use common::run_source;
 
+// Both calls default to premultiplied alpha, so the pixels handed in must be
+// valid premultiplied ones (no channel above its alpha) to survive the trip.
 #[tokio::test]
-async fn png_round_trips_pixels() {
+async fn png_round_trips_premultiplied_pixels() {
+  let captured = run_source(
+    r#"
+      import { decodeImage, encodeImage } from "flux:image"
+      let pixels = new Uint8Array([255, 0, 0, 255, 0, 128, 0, 128])
+      let png = encodeImage({ data: pixels, width: 2, height: 1 })
+      let back = decodeImage(png)
+      console.log(`${back.width}x${back.height} ${Array.from(back.data).join(",")}`)
+    "#,
+  )
+  .await;
+  assert_eq!(captured.log(), "2x1 255,0,0,255,0,128,0,128");
+}
+
+// Straight alpha on both ends is what a PNG file stores, so it is byte-exact.
+#[tokio::test]
+async fn png_round_trips_straight_pixels() {
   let captured = run_source(
     r#"
       import { decodeImage, encodeImage } from "flux:image"
       let pixels = new Uint8Array([255, 0, 0, 255, 0, 255, 0, 128])
-      let png = encodeImage({ data: pixels, width: 2, height: 1 })
-      let back = decodeImage(png)
+      let png = encodeImage({ data: pixels, width: 2, height: 1 }, { alpha: "straight" })
+      let back = decodeImage(png, { alpha: "straight" })
       console.log(`${back.width}x${back.height} ${Array.from(back.data).join(",")}`)
     "#,
   )
