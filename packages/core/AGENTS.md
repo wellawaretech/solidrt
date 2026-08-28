@@ -267,6 +267,11 @@ Peer deps @solidjs/signals and @solidjs/universal must match (currently
   `children()` helper (re-exported from @solidrt/core) and probe the resolved
   memo - never `typeof props.children` on the raw prop.
 
+- Keep the simulation out of the renderer: app or game state as plain
+  TypeScript with no @solidrt imports, with the JSX reading it and the
+  per-frame hook doing one state step plus a handful of property writes.
+  That shape runs under bun with no window (tests, audits, replaying a whole
+  session in seconds) and it is what keeps per-frame work cheap.
 - Animation is target-shaped first: declare `transition` on the element and
   write targets, and the runtime animates natively with no per-frame JS.
   Reach for per-frame work only for genuinely procedural motion:

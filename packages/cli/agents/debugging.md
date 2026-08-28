@@ -165,7 +165,11 @@ when exactly one client is connected.
   `/stats?active=true|false` switches the on-screen stats overlay instead
   (the `set_stats_overlay` tool): one client with `&client=<id>`, every
   client (and the setting new clients join with) without; `/clients`
-  reports each client's `stats`.
+  reports each client's `stats`. `frames` counts the frames actually
+  rebuilt in the window, `fps` the refresh rate presented at: when motion
+  looks wrong and `fps` looks fine, `frames` is the number to read - a
+  picture that only changes 26 times a second shows 26 there, and the
+  stutter is the app's update cadence, not the engine's.
 - `/debug` - the app's registered debug commands; POST
   `/debug?name=<cmd>` with a JSON body as its args to call one.
 - POST `/input` with `{ "events": [...] }` - synthetic input through the

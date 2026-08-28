@@ -201,7 +201,10 @@ is flat. Event x/y are layer pixels with the camera undone.
 - `<TileLayer>`'s world view is WORLD sized (cols * tileW) and takes that
   much layout space: put it inside a clipping container (`overflow="clip"`)
   sized to the viewport, or camera panning shows the world hanging out of
-  the box.
+  the box. Both layers render LAID-OUT elements (`<TileLayer>` a `<view>`,
+  `<SpriteLayer>` a `<texture>` leaf), so to overlay sprites on tiles make
+  both `position="absolute"` children of that container - as plain flex
+  siblings they stack side by side instead.
 - `clearColor` is PER CHUNK: never-written regions have no chunk and render
   nothing, so a full-bleed ground color belongs on the container behind the
   layer (a `d-rect` under it), not on clearColor.
