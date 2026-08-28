@@ -4,7 +4,8 @@
   "private": true,
   "solidrt": {
     "appId": "com.solidrt.console",
-    "displayName": "Console"
+    "displayName": "Console",
+    "fonts": { "serif": false }
   },
   "scripts": {
     "dev": "srt run",

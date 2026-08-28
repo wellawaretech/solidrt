@@ -4,8 +4,12 @@ Demos to run, not snippets to copy - `examples/` next door is the one-feature
 set. List them with `bunx srt demo` and start one by its number.
 
 This folder is ONE project: the demos share this package.json, this
-tsconfig.json and this `assets/` folder, and `srt demo` serves the project
-with the chosen `src/*.tsx` as its entry.
+tsconfig.json and this `assets/` folder. It does not ship with the package:
+the CLI carries it pre-bundled (`make -C packages/cli demos` writes
+`packages/cli/dist/demos/<package>/`), and `srt demo` serves that copy with
+the chosen demo's bundle as its entry, on a dev server with a client. To
+work on a demo here, `srt run src/<name>.tsx --project` from this folder,
+and rebuild the shipped bundles when done.
 
 Two rules hold it together:
 

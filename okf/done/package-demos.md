@@ -87,3 +87,32 @@ its own package plus @solidrt/core and nothing else, so it shows what that
 package is for on its own. Both are stated in each `demos/README.md` and are
 conventions, not enforcement: a reviewer catches them for free, and an import
 check in the bundler would be machinery for one rule.
+
+## Distributed with the CLI, pre-bundled (2026-08-28)
+
+The demos no longer ship as source inside their packages (`demos/` left the
+packages' `files`). The CLI carries them instead: `make -C packages/cli
+demos` (a step of the release workflow, next to the console pack) writes
+`packages/cli/dist/demos/<package>/` - the demos project's package.json and
+`assets/`, plus `<slug>/<slug>.srt.js` per demo from `srt bundle --project`
+(a dir per demo, because a bundle run owns its output's `isolates/`). So
+every CLI install has every demo, without installing the packages, and a
+user with only `@solidrt/cli` sees what `@solidrt/3d` can do.
+
+The run path did not change: `srt demo` discovers `dist/demos/` relative to
+the CLI instead of `node_modules/@solidrt/*/demos/`, and hands the same
+`{ cwd, entry }` to the same `launchServer`. The dev server already served a
+prebuilt `.srt.js` entry as-is (no rebuild, no typecheck), so a demo is
+still a dev server plus a client, in the registry - the console picks it up
+like any app, with tree, stats and control API. That was the point of not
+packing demos as `.srtapp` runtime apps: a sealed app shows the picture, a
+dev-served one shows the tooling around it too.
+
+Given up: reload on save under `srt demo` (the bundle is what runs; a
+checkout works on a demo with `srt run src/<name>.tsx --project` from the
+package's `demos/` and rebuilds), and the demos build being optional - a
+checkout without `dist/demos/` gets "Demos not built: run make -C
+packages/cli demos", the same trade `srt console` makes. `.srt-data` now
+lands in `dist/demos/<package>/` inside the CLI package, as it did inside
+`node_modules` before. Identity is still per project
+(okf/backlog/demo-identity-per-demo.md applies unchanged).

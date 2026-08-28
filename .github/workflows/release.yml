@@ -348,8 +348,9 @@ jobs:
       # The CLI package also ships the dev console pre-compiled
       # (dist/console.srtapp, see packages/cli/Makefile): `srt pack --app`
       # needs the platform fluxc and the staged fonts, so it runs after both.
-      - name: Build the console app pack
-        run: make -C packages/cli dist/console.srtapp
+      # The package demos ride along pre-bundled (dist/demos/, `srt demo`).
+      - name: Build the console app pack and the demos
+        run: make -C packages/cli dist/console.srtapp demos
 
       # Pin every intra-monorepo (@solidrt/*) dependency specifier to the release
       # version before publishing. Source uses `workspace:*`; `bun publish` would
