@@ -81,6 +81,7 @@ export function clientList(withAddress = false): (ClientEntry & { address?: stri
     os: info.os,
     kernel: info.kernel,
     videoDriver: info.videoDriver,
+    refreshRate: info.refreshRate,
     gpu: info.gpu,
     ...(withAddress ? { address: ws.remoteAddr ?? null } : {}),
   }))

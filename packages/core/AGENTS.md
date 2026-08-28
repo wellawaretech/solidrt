@@ -111,7 +111,12 @@ tsconfig.json - the two load-bearing lines are jsx + jsxImportSource:
 ```
 
 Peer deps @solidjs/signals and @solidjs/universal must match (currently
-2.0.0-rc.3); bun resolves them from peerDependencies.
+2.0.0-rc.3); bun resolves them from peerDependencies. On a version bump,
+`bun install` only warns ("incorrect peer dependency") and keeps the old
+ones, and `bun update solid-js @solidjs/signals @solidjs/universal` does
+not read the pin either: it adds all three to package.json at registry
+latest (solid-js 1.x, off Solid 2.0 entirely). The recipe that works is
+`rm -rf bun.lock node_modules/solid-js node_modules/@solidjs && bun install`.
 
 ## Element model (the parts that are easy to get wrong)
 
@@ -282,8 +287,10 @@ Peer deps @solidjs/signals and @solidjs/universal must match (currently
 - Animation is target-shaped first: declare `transition` on the element and
   write targets, and the runtime animates natively with no per-frame JS.
   Reach for per-frame work only for genuinely procedural motion:
-  `onFrame((tick, frame) => {})` is the native hook (runtime-paced, returns a
-  cleanup, auto-cleaned inside a reactive scope); `requestAnimationFrame`
+  `onFrame((tick, frame, rate) => {})` is the native hook (runtime-paced,
+  returns a cleanup, auto-cleaned inside a reactive scope); `rate` is the
+  display's nominal refresh rate in Hz, which a fixed-timestep loop needs
+  (see @solidrt/cli agents/debugging.md on stepping); `requestAnimationFrame`
   exists as a web-standard one-shot but is not the preferred driver. A JS
   tween loop or an animation library pushing interpolated values through
   signals is the single most expensive mistake available here - read

@@ -224,7 +224,8 @@ is flat. Event x/y are layer pixels with the camera undone.
   (nearest inside keeps blocks square), the linear composite spreads the
   fraction over one device pixel at block edges. The components pick n
   every layout from their leaf's window box (`getBoundingBoxViewport` x
-  `displayScale()`, which composes designSize fits and camera zoom); the
+  `displayScale()`, which composes designSize fits and camera zoom), within
+  a budget of the window's own device pixel count; the
   primitives default to 1 and take `{ oversample }` / `setOversample(n)`
   - with `output` on `<SpriteLayer>` there is no built-in leaf, so set it
   yourself. Never fix a shimmer by snapping the fit to an integer: the

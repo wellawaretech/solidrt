@@ -117,7 +117,7 @@ impl<'d> PendingFrame<'d> {
           if alloy.has_pending_destroys() {
             alloy.reclaim_destroyed(&tree.referenced_texture_ids());
           }
-          return Ok(Commit::Reused);
+          return Ok(Commit::Reused { content_changed: !content.is_empty() });
         }
       }
     }
@@ -132,7 +132,10 @@ impl<'d> PendingFrame<'d> {
 /// How `commit` resolved the frame.
 pub enum Commit<'d> {
   /// The retained display list was resubmitted; the frame is done.
-  Reused,
+  /// `content_changed` says whether GPU writes since the last frame changed
+  /// pixels behind it (a layer or shader app's every frame): the picture
+  /// moved even though the tree did not.
+  Reused { content_changed: bool },
   /// Something changed: sequence the builder to produce the frame.
   Build(FrameBuilder<'d>),
 }

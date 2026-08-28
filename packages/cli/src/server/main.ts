@@ -248,6 +248,7 @@ function onOpen(ws: ServerWebSocket) {
     os: null,
     kernel: null,
     videoDriver: null,
+    refreshRate: null,
     gpu: null,
   })
   console.log(`[cli] Client connected ${ws.remoteAddr ?? "unknown"}`)
@@ -290,6 +291,7 @@ function onMessage(ws: ServerWebSocket, msg: string | Uint8Array) {
         os: text(data.os),
         kernel: text(data.kernel),
         videoDriver: text(data.videoDriver),
+        refreshRate: typeof data.refreshRate === "number" ? data.refreshRate : null,
         gpu:
           data.gpu && typeof data.gpu === "object"
             ? { vendor: text(data.gpu.vendor) ?? "", renderer: text(data.gpu.renderer) ?? "", version: text(data.gpu.version) ?? "" }

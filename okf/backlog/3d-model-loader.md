@@ -1,6 +1,6 @@
 ---
 title: Model loader follow-ups
-description: The glTF subset loader (roadmap item 7, shipped 2026-08-26 as parseGltf/createModel at runtime plus the srt tool 3d/model bake) covers uncompressed triangles with base color; still open are the compressed real-world files (Draco/meshopt, KTX2), a retained node hierarchy, merge-by-material, a cull option for double-sided materials and vertex colors, each demand-gated.
+description: The glTF subset loader (roadmap item 7, shipped 2026-08-26 as parseGltf/createModel at runtime plus the srt tool 3d/model bake) covers uncompressed triangles with base color; still open are the compressed real-world files (Draco/meshopt, KTX2), a retained node hierarchy, merge-by-material, a cull option for double-sided materials, an alpha test for MASK materials (which ModelMaterial does not even report) and vertex colors, each demand-gated.
 created: 2026-08-26
 ---
 
@@ -9,7 +9,7 @@ created: 2026-08-26
 What shipped (documented in `packages/3d/AGENTS.md`, "Models"): a pure
 glTF 2.0 subset parser (`parseGltf`: .gltf/.glb, world transforms baked,
 one part per mesh node, flat normals generated, base color factor/texture,
-doubleSided and BLEND reported), `createModel` (a Group of meshes, one
+doubleSided applied as `cull: "none"`, MASK as `alphaTest`, BLEND reported), `createModel` (a Group of meshes, one
 `lit` per material, textures uploaded, `dispose()`), the read conveniences
 `loadGltf`/`loadModel`, and the bake: `srt tool 3d/model` writes the same
 parse as a `.srtm` container whose payload is the GPU layout.
@@ -42,13 +42,32 @@ was added: the bake already removes the cost where it matters.
   option collapsing parts by material is the roadmap's one-draw-per-material
   leverage for static scenes; `mergeGeometries` covers it at runtime
   meanwhile.
-- **Double-sided materials.** `ModelMaterial.doubleSided` is reported but
-  the standard materials cull back faces; unimog's glass and the body demo's
-  mirrored bones both need a cull option on `lit`/`unlit` (also body
-  feedback item 2). One more class-key dimension when it lands.
 - **Vertex colors, tangents, second UV set.** Dropped; the open layout
   (`withAttribute`) has the slots, the parser would emit a wider layout per
   primitive and the container already records the layout key.
-- **Samplers and alpha mask.** Every texture uploads repeat-wrapped and
-  mipmapped; per-material wrap/filter and `alphaMode: "MASK"` (an alpha
-  test in the fragment) are ignored.
+- **Alpha mask.** `alphaMode: "MASK"` (with `alphaCutoff`, default 0.5)
+  is common in real scenes: foliage, fences, chains, hair, any texture
+  with cut-away regions, usually paired with `doubleSided`. Drawn opaque
+  the cut-away texels show as solid cards, so a model with masked
+  materials looks broken out of the box. Two gaps, in fix order:
+  1. `ModelMaterial` drops the information: the parser reads `alphaMode`
+     and keeps only `transparent = alphaMode === "BLEND"`, so the
+     `material` callback of `createModel`, the documented escape hatch,
+     cannot tell a MASK material from an OPAQUE one. The only workaround
+     is re-reading the glTF JSON and matching materials by callback
+     order, which leans on the undocumented fact that `data.materials`
+     is in file order. Add `alphaMode: "OPAQUE" | "MASK" | "BLEND"` and
+     `alphaCutoff` to `ModelMaterial` (keep `transparent` as the BLEND
+     shorthand); document that `materials` is in file order.
+  2. `lit`/`unlit` have no alpha test, so even a callback that knows
+     cannot act without dropping to `shaderMaterial` and reimplementing
+     the standard fragment. An `alphaTest?: number` option: one
+     `discard` below the cutoff in the fragment, one more class-key
+     dimension (like the double-sided cull above, which the same
+     materials need). `createModel`'s default material then maps
+     MASK to `alphaTest: alphaCutoff`.
+  The shadow depth override is position-only, so a masked caster casts
+  its whole quad; that is the fragment half of
+  [3d-instanced-shadow-casters](3d-instanced-shadow-casters.md).
+- **Samplers.** Every texture uploads repeat-wrapped and mipmapped;
+  per-material wrap/filter is ignored.

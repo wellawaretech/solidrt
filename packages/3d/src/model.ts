@@ -58,7 +58,13 @@ export function createModel(data: ModelData, opts: ModelOptions = {}): Model {
       label: label ? label + "-image" + i : undefined,
     })
   })
-  let make = opts.material ?? ((m: ModelMaterial, map: TextureId | null): Material => lit({ color: m.color, map: map ?? undefined, transparent: m.transparent }))
+  let make = opts.material ?? ((m: ModelMaterial, map: TextureId | null): Material => lit({
+        color: m.color,
+        map: map ?? undefined,
+        transparent: m.transparent,
+        cull: m.doubleSided ? "none" : "back",
+        alphaTest: m.alphaMode === "MASK" ? m.alphaCutoff : undefined,
+      }))
   let materials = data.materials.map((m) => make(m, m.map === null ? null : textures[m.map]!))
 
   let model = createGroup() as Model

@@ -30,11 +30,16 @@ export type ModelMaterial = {
   color: [number, number, number, number]
   /** Index into ModelData.images (the base color texture), or null. */
   map: number | null
-  /** glTF doubleSided. Reported, not applied: the standard materials cull
-   * back faces. */
+  /** glTF doubleSided; createModel's default material draws it with
+   * `cull: "none"`. */
   doubleSided: boolean
-  /** alphaMode BLEND. MASK draws opaque (no alpha test). */
+  /** alphaMode BLEND; createModel's default material blends it. */
   transparent: boolean
+  /** glTF alphaMode as written (default OPAQUE). MASK is a cutout:
+   * createModel's default material draws it with `alphaTest: alphaCutoff`. */
+  alphaMode: "OPAQUE" | "MASK" | "BLEND"
+  /** glTF alphaCutoff (default 0.5); meaningful for MASK only. */
+  alphaCutoff: number
 }
 
 /** One drawable: a mesh node's primitive, vertices in WORLD space. */
@@ -67,10 +72,21 @@ const CHUNK_JSON = 0x4e4f534a
 const CHUNK_BIN = 0x004e4942
 const MODE_TRIANGLES = 4
 
+// The spec's alphaCutoff when a MASK material leaves it out.
+const GLTF_ALPHA_CUTOFF = 0.5
+
 const COMPONENT_BYTES: Record<number, number> = { 5120: 1, 5121: 1, 5122: 2, 5123: 2, 5125: 4, 5126: 4 }
 const TYPE_ELEMENTS: Record<string, number> = { SCALAR: 1, VEC2: 2, VEC3: 3, VEC4: 4, MAT2: 4, MAT3: 9, MAT4: 16 }
 
-const DEFAULT_MATERIAL: ModelMaterial = { name: "default", color: [1, 1, 1, 1], map: null, doubleSided: false, transparent: false }
+const DEFAULT_MATERIAL: ModelMaterial = {
+  name: "default",
+  color: [1, 1, 1, 1],
+  map: null,
+  doubleSided: false,
+  transparent: false,
+  alphaMode: "OPAQUE",
+  alphaCutoff: GLTF_ALPHA_CUTOFF,
+}
 
 /** True when the bytes are a .glb container (the "glTF" magic). */
 export function isGlb(bytes: Uint8Array): boolean {
@@ -171,6 +187,8 @@ export function parseGltf(bytes: Uint8Array, resolve?: UriResolver): ModelData {
       map,
       doubleSided: m.doubleSided === true,
       transparent: m.alphaMode === "BLEND",
+      alphaMode: m.alphaMode === "MASK" || m.alphaMode === "BLEND" ? m.alphaMode : "OPAQUE",
+      alphaCutoff: typeof m.alphaCutoff === "number" ? m.alphaCutoff : GLTF_ALPHA_CUTOFF,
     }
   })
   // Primitives without a material draw the spec's default; it is appended

@@ -35,7 +35,6 @@ import type {
   ProgramId,
   RenderPipelineId,
   ShaderParams,
-  ShaderStageId,
   TextureBindings,
   TextureId,
   Topology,
@@ -73,18 +72,27 @@ export type Material = {
    * instanced meshes only - createInstancedMesh supplies the record buffer,
    * and createMesh meshes are rejected at add(). */
   instanceAttributes?: VertexAttribute[]
+  /** What a shadow view draws this material's meshes with instead of its
+   * default depth override: the depth pass culling the side this material
+   * culls (Three's shadowSide rule, Godot's shadow pass), so a `cull:
+   * "none"` caster casts from both faces, and for a cutout (lit
+   * alphaTest with a map) the same discard, so a plant casts leaves and
+   * not rectangles. Absent = the default (a back-culling material casts
+   * from its back faces). A shaderMaterial supplies its own through the
+   * instance option of the same name. */
+  shadow?: Material
   /** Present on materials that own their pipeline (shaderMaterial). */
   dispose?(): void
 }
 
-// One vertex stage serves every unlit class: model then view-projection,
-// plus the UV varying. uModel is per-entry (the scene writes it when the
-// mesh moves), uViewProj is target-shared (one write per camera move) - the
-// split is what keeps camera motion O(1) instead of O(meshes), and the
-// extra per-vertex mat4 multiply is free on the GPU. aNormal from the
-// shared layout is deliberately not declared - inactive attributes are
-// skipped and only the stride accounts for them.
-const VERTEX_SRC = glsl`
+// The unlit vertex stage: model then view-projection, plus the UV
+// varying. uModel is per-entry (the scene writes it when the mesh moves),
+// uViewProj is target-shared (one write per camera move) - the split is
+// what keeps camera motion O(1) instead of O(meshes), and the extra
+// per-vertex mat4 multiply is free on the GPU. aNormal from the shared
+// layout is deliberately not declared - inactive attributes are skipped
+// and only the stride accounts for them.
+const UNLIT_VERTEX = glsl`
   in vec3 aPos;
   in vec2 aUV;
   out vec2 vUv;
@@ -97,61 +105,28 @@ const VERTEX_SRC = glsl`
   }
 `
 
-const FRAGMENT_COLOR_SRC = glsl`
-  uniform vec4 uColor;
-  void main() {
-    fragColor = uColor;
-  }
-`
-
-const FRAGMENT_MAP_SRC = glsl`
-  in vec2 vUv;
-  uniform sampler2D uMap;
-  uniform vec4 uColor;
-  void main() {
-    fragColor = texture(uMap, vUv) * uColor;
-  }
-`
-
-let sharedVertex: ShaderStageId | undefined
-let programs: Partial<Record<UnlitClass, ProgramId>> = {}
-let pipelines = new Map<string, RenderPipelineId>()
-
-// One program per unlit CLASS: fragment kind x transparency. Blend state is
-// pipeline state and so is the attribute list, so the pipeline is keyed by
-// class and vertex layout.
-type UnlitClass = "color" | "map" | "color-transparent" | "map-transparent"
-
-function programFor(cls: UnlitClass): ProgramId {
-  let program = programs[cls]
-  if (program === undefined) {
-    if (sharedVertex === undefined) sharedVertex = compileShader("vertex", VERTEX_SRC, { header: true })
-    let fragment = compileShader("fragment", cls.startsWith("color") ? FRAGMENT_COLOR_SRC : FRAGMENT_MAP_SRC, {
-      header: true,
-    })
-    program = linkProgram(sharedVertex, fragment, { label: "scene-unlit-" + cls })
-    programs[cls] = program
-  }
-  return program
+// The unlit fragment (sprites share it): the color, times the map when
+// there is one, with the alphaTest discard when asked for. An opaque
+// class writes alpha 1: the scene target is composited premultiplied, so
+// a leaked texel alpha would punch a hole through an opaque draw.
+function unlitFragment(map: boolean, alphaTest: boolean, transparent: boolean): string {
+  return glsl`
+    ${map ? "in vec2 vUv;" : ""}
+    ${map ? "uniform sampler2D uMap;" : ""}
+    uniform vec4 uColor;
+    ${alphaTest ? "uniform float uAlphaTest;" : ""}
+    void main() {
+      vec4 base = ${map ? "texture(uMap, vUv) * uColor" : "uColor"};
+      ${alphaTest ? "if (base.a < uAlphaTest) discard;" : ""}
+      fragColor = ${transparent ? "base" : "vec4(base.rgb, 1.0)"};
+    }
+  `
 }
 
-function pipelineFor(cls: UnlitClass, layout: VertexLayout | undefined): RenderPipelineId {
-  let key = cls + "|" + layoutKey(layout)
-  let existing = pipelines.get(key)
-  if (existing !== undefined) return existing
-  let program = programFor(cls)
-  let transparent = cls.endsWith("-transparent")
-  let pipeline = createRenderPipeline(program, {
-    attributes: layoutAttributes(layout),
-    depth: true,
-    depthWrite: transparent ? false : undefined,
-    blend: transparent ? "alpha" : undefined,
-    cull: "back",
-    label: "scene-unlit-" + cls,
-  })
-  pipelines.set(key, pipeline)
-  return pipeline
-}
+// One shaderMaterialClass per unlit option combination (map x transparent
+// x cull x alphaTest), cached for the app's lifetime like lit's; one
+// pipeline per vertex layout inside each.
+let unlitClasses = new Map<string, ShaderMaterialClass>()
 
 export type UnlitOptions = {
   /** Straight [r, g, b] or [r, g, b, a], 0..1. Default white. */
@@ -161,6 +136,18 @@ export type UnlitOptions = {
   /** Blend over what is behind (color alpha and map alpha both count).
    * Without it an alpha below 1 still draws opaque. See Material.transparent. */
   transparent?: boolean
+  /** Which faces to drop; default "back". "none" draws both sides of
+   * single-layer geometry (foliage cards, glass, a mirrored part), and
+   * lit materials then light a back face with its normal flipped, as
+   * Three's DoubleSide and Godot's CULL_DISABLED do. */
+  cull?: CullMode
+  /** Cutout: drop a fragment whose final alpha (color x map, and for lit
+   * the vertex color too) is below this, 0..1 (Three's alphaTest, glTF
+   * alphaMode MASK with its alphaCutoff). Opaque otherwise:
+   * depth-written, not sorted, unlike `transparent`. Foliage cards and
+   * fences want it with `cull: "none"`; a mapped cutout casts its cutout
+   * (Material.shadow). */
+  alphaTest?: number
 }
 
 /**
@@ -172,15 +159,29 @@ export function unlit(opts: UnlitOptions = {}): Material {
   let color = opts.color ?? [1, 1, 1]
   let a = color.length === 4 ? color[3] : 1
   let uColor = [color[0] * a, color[1] * a, color[2] * a, a]
+  let map = opts.map !== undefined
   let transparent = opts.transparent === true
-  let cls: UnlitClass = opts.map !== undefined ? (transparent ? "map-transparent" : "map") : transparent ? "color-transparent" : "color"
-  return {
-    pipeline: layout => pipelineFor(cls, layout),
-    attributes: () => programAttributes(programFor(cls)),
-    params: { uColor },
-    textures: opts.map !== undefined ? { uMap: opts.map } : undefined,
-    transparent,
+  let cull = opts.cull ?? "back"
+  let alphaTest = opts.alphaTest !== undefined
+  let key = [map, transparent, cull, alphaTest].join("|")
+  let cls = unlitClasses.get(key)
+  if (cls === undefined) {
+    cls = shaderMaterialClass({
+      vertex: UNLIT_VERTEX,
+      fragment: unlitFragment(map, alphaTest, transparent),
+      transparent,
+      cull,
+      label: "scene-unlit-" + key,
+    })
+    unlitClasses.set(key, cls)
   }
+  let params: ShaderParams = { uColor }
+  if (alphaTest) params.uAlphaTest = opts.alphaTest!
+  return cls.instance({
+    params,
+    textures: map ? { uMap: opts.map! } : undefined,
+    shadow: alphaTest && map ? shadowCutoutMaterial(shadowCull(cull), uColor, opts.alphaTest!, opts.map!) : undefined,
+  })
 }
 
 export type LitOptions = UnlitOptions & {
@@ -214,14 +215,37 @@ export type LitOptions = UnlitOptions & {
 
 // The lit fragment is composed from the same exported pieces an app
 // composes by hand, per flag: map x vertexColors x triplanar x shadow x
-// transparent. Lights arrive through the scene's shared params
-// (light nodes); the base color, map and highlight are per entry. The
+// transparent x cull (a class that shows back faces lights them with the
+// normal flipped, else a double-sided leaf's back is black) x alphaTest
+// (the cutoff itself is a per-entry uniform, one class for every value).
+// An opaque class writes alpha 1 (see unlitFragment). Lights arrive
+// through the scene's shared params (light nodes); the base color, map
+// and highlight are per entry. The
 // shadow set is shared too and indexed like the lights: one atlas sampler,
 // directional light i's maps (one, or its cascades) as map slots
 // uShadowFirst[i] .. + uShadowCount[i] with a tile rect and a matrix
 // each, and its biases (target-level, bound by the scene); uShadowCount
 // 0 means it does not cast; SHADOW_LOOKUP turns the index into the factor.
-function litFragment(map: boolean, vertexColors: boolean, triplanar: boolean, shadow: boolean): string {
+// The option combination that picks a lit class: the class-cache key is
+// its values in this order, and the fragment builder reads the same
+// object, so the two cannot drift apart.
+type LitClass = {
+  map: boolean
+  vertexColors: boolean
+  triplanar: boolean
+  transparent: boolean
+  shadow: boolean
+  cull: CullMode
+  alphaTest: boolean
+}
+
+function litClassKey(c: LitClass): string {
+  return Object.values(c).join("|")
+}
+
+function litFragment(c: LitClass): string {
+  let { map, vertexColors, triplanar, shadow, alphaTest } = c
+  let backFaces = c.cull !== "back"
   return glsl`
     in vec3 vWorldPos;
     in vec3 vNormal;
@@ -232,6 +256,7 @@ function litFragment(map: boolean, vertexColors: boolean, triplanar: boolean, sh
     uniform float uSpecular;
     uniform float uShininess;
     ${triplanar ? "uniform float uTriplanar;" : ""}
+    ${alphaTest ? "uniform float uAlphaTest;" : ""}
     uniform vec3 uCamPos;
     uniform vec3 uHemiSky;
     uniform vec3 uHemiGround;
@@ -251,6 +276,7 @@ function litFragment(map: boolean, vertexColors: boolean, triplanar: boolean, sh
 
     void main() {
       vec3 n = normalize(vNormal);
+      ${backFaces ? "if (!gl_FrontFacing) n = -n;" : ""}
       vec4 base = uColor;
       ${
         map
@@ -263,6 +289,7 @@ function litFragment(map: boolean, vertexColors: boolean, triplanar: boolean, sh
           : ""
       }
       ${vertexColors ? "base *= vColor;" : ""}
+      ${alphaTest ? "if (base.a < uAlphaTest) discard;" : ""}
       vec3 v = normalize(uCamPos - vWorldPos);
       vec3 light = hemisphere(n, uHemiSky, uHemiGround);
       vec3 spec = vec3(0.0);
@@ -275,7 +302,7 @@ function litFragment(map: boolean, vertexColors: boolean, triplanar: boolean, sh
         light += uLightColor[i] * lambert(n, l) * s;
         spec += uLightColor[i] * blinnSpecular(n, v, l, uShininess) * s;
       }
-      fragColor = vec4(base.rgb * light + spec * uSpecular * base.a, base.a);
+      fragColor = vec4(base.rgb * light + spec * uSpecular * base.a, ${c.transparent ? "base.a" : "1.0"});
     }
   `
 }
@@ -285,8 +312,8 @@ let litClasses = new Map<string, ShaderMaterialClass>()
 /**
  * A lit material: hemisphere ambient plus the scene's directional lights
  * (DirectionalLight nodes), Lambert diffuse, optional
- * Blinn-Phong highlight. Same options as unlit (color, map, transparent)
- * plus vertexColors, specular/shininess and triplanar mapping. One program
+ * Blinn-Phong highlight. Same options as unlit (color, map, transparent,
+ * cull, alphaTest) plus vertexColors, specular/shininess and triplanar mapping. One program
  * per option combination, one pipeline per vertex layout met, shared by
  * every instance - a thousand lit meshes still share one pipeline. No
  * lights set means black except for the hemisphere term, which also
@@ -297,26 +324,40 @@ export function lit(opts: LitOptions = {}): Material {
   let a = color.length === 4 ? color[3] : 1
   let uColor = [color[0] * a, color[1] * a, color[2] * a, a]
   let map = opts.map !== undefined
-  let vertexColors = opts.vertexColors === true
   let triplanar = map && opts.triplanar !== undefined
-  let transparent = opts.transparent === true
-  let shadow = opts.receiveShadow !== false
-  let key = [map, vertexColors, triplanar, transparent, shadow].join("|")
+  let alphaTest = opts.alphaTest !== undefined
+  let cull = opts.cull ?? "back"
+  let flags: LitClass = {
+    map,
+    vertexColors: opts.vertexColors === true,
+    triplanar,
+    transparent: opts.transparent === true,
+    shadow: opts.receiveShadow !== false,
+    cull,
+    alphaTest,
+  }
+  let key = litClassKey(flags)
   let cls = litClasses.get(key)
   if (cls === undefined) {
     cls = shaderMaterialClass({
-      vertex: vertexColors ? LIT_VERTEX_COLORED : LIT_VERTEX,
-      fragment: litFragment(map, vertexColors, triplanar, shadow),
-      transparent,
+      vertex: flags.vertexColors ? LIT_VERTEX_COLORED : LIT_VERTEX,
+      fragment: litFragment(flags),
+      transparent: flags.transparent,
+      cull,
       label: "scene-lit-" + key,
     })
     litClasses.set(key, cls)
   }
+  let params: ShaderParams = { uColor, uSpecular: opts.specular ?? 0, uShininess: opts.shininess ?? 30 }
+  if (triplanar) params.uTriplanar = opts.triplanar!
+  if (alphaTest) params.uAlphaTest = opts.alphaTest!
+  // A UV-mapped cutout casts its cutout; a color-only or triplanar
+  // alphaTest keeps the plain (cull-only) variant.
+  let cutout = alphaTest && map && !triplanar
   let material = cls.instance({
-    params: triplanar
-      ? { uColor, uSpecular: opts.specular ?? 0, uShininess: opts.shininess ?? 30, uTriplanar: opts.triplanar! }
-      : { uColor, uSpecular: opts.specular ?? 0, uShininess: opts.shininess ?? 30 },
+    params,
     textures: map ? { uMap: opts.map! } : undefined,
+    shadow: cutout ? shadowCutoutMaterial(shadowCull(cull), uColor, opts.alphaTest!, opts.map!) : undefined,
   })
   return material
 }
@@ -341,20 +382,79 @@ const SHADOW_DEPTH_FRAGMENT = glsl`
   }
 `
 
-let shadowDepth: Material | undefined
+let shadowDepth = new Map<CullMode, Material>()
 
 /** The override material of a scene's shadow view (internal): one class
- * for the app, built on first use. */
-export function shadowDepthMaterial(): Material {
-  if (shadowDepth === undefined) {
-    shadowDepth = shaderMaterialClass({
+ * per cull mode for the app, built on first use. The default, "front",
+ * is the caster's back surface (see above); a material culling
+ * otherwise carries its own variant as Material.shadow. */
+export function shadowDepthMaterial(cull: CullMode = "front"): Material {
+  let material = shadowDepth.get(cull)
+  if (material === undefined) {
+    material = shaderMaterialClass({
       vertex: SHADOW_DEPTH_VERTEX,
       fragment: SHADOW_DEPTH_FRAGMENT,
-      cull: "front",
-      label: "scene-shadow-depth",
+      cull,
+      label: "scene-shadow-depth-" + cull,
     }).instance()
+    shadowDepth.set(cull, material)
   }
-  return shadowDepth
+  return material
+}
+
+/** The shadow pass's cull for a material's cull: the opposite side
+ * (Three's shadowSide default), none stays none. */
+function shadowCull(cull: CullMode): CullMode {
+  return cull === "none" ? "none" : cull === "back" ? "front" : "back"
+}
+
+/** "back" maps to the default depth material, so its variant is
+ * undefined. */
+function shadowVariant(cull: CullMode): Material | undefined {
+  return cull === "back" ? undefined : shadowDepthMaterial(shadowCull(cull))
+}
+
+// The cutout depth pass: the caster's map alpha (times its color alpha)
+// against its alphaTest, the lit fragment's test minus everything else.
+const SHADOW_CUTOUT_VERTEX = glsl`
+  in vec3 aPos;
+  in vec2 aUV;
+  out vec2 vUv;
+  uniform mat4 uModel;
+  uniform mat4 uViewProj;
+  void main() {
+    gl_Position = uViewProj * uModel * vec4(aPos, 1.0);
+    vUv = aUV;
+  }
+`
+
+const SHADOW_CUTOUT_FRAGMENT = glsl`
+  in vec2 vUv;
+  uniform sampler2D uMap;
+  uniform vec4 uColor;
+  uniform float uAlphaTest;
+  void main() {
+    if (texture(uMap, vUv).a * uColor.a < uAlphaTest) discard;
+    fragColor = vec4(1.0);
+  }
+`
+
+let shadowCutout = new Map<CullMode, ShaderMaterialClass>()
+
+/** The shadow variant of a UV-mapped cutout material: one class per
+ * shadow cull mode, an instance per material (its map, color, cutoff). */
+function shadowCutoutMaterial(cull: CullMode, uColor: number[], uAlphaTest: number, uMap: TextureId): Material {
+  let cls = shadowCutout.get(cull)
+  if (cls === undefined) {
+    cls = shaderMaterialClass({
+      vertex: SHADOW_CUTOUT_VERTEX,
+      fragment: SHADOW_CUTOUT_FRAGMENT,
+      cull,
+      label: "scene-shadow-cutout-" + cull,
+    })
+    shadowCutout.set(cull, cls)
+  }
+  return cls.instance({ params: { uColor, uAlphaTest }, textures: { uMap } })
 }
 
 export type SpriteOptions = UnlitOptions & {
@@ -436,7 +536,7 @@ export function sprite(opts: SpriteOptions = {}): Material {
   if (cls === undefined) {
     cls = shaderMaterialClass({
       vertex: fixedY ? SPRITE_FIXED_Y_VERTEX_SRC : SPRITE_VERTEX_SRC,
-      fragment: map ? FRAGMENT_MAP_SRC : FRAGMENT_COLOR_SRC,
+      fragment: unlitFragment(map, false, transparent),
       transparent,
       cull: "none",
       label: "scene-sprite-" + key,
@@ -564,6 +664,10 @@ export type ShaderMaterialInstanceOptions = {
    * setMeshParams. */
   params?: ShaderParams
   textures?: TextureBindings
+  /** The depth variant a shadow view draws this instance with (see
+   * Material.shadow): a cutout's discard, an instanced class's vertex
+   * placement. Default: the depth pass with this class's cull side. */
+  shadow?: Material
 }
 
 export type ShaderMaterialOptions = ShaderMaterialClassOptions & ShaderMaterialInstanceOptions
@@ -610,6 +714,7 @@ export function shaderMaterialClass(opts: ShaderMaterialClassOptions): ShaderMat
   let normalMatrix = /\buNormal\b/.test(opts.vertex) || /\buNormal\b/.test(opts.fragment)
   let transparent = opts.transparent ?? (opts.blend !== undefined && opts.blend !== "none")
   let depth = opts.depth ?? true
+  let cull = opts.cull ?? "back"
   // An empty list declares nothing - same as absent (the engine requires an
   // instance buffer exactly when attributes are declared).
   let instanceAttributes = opts.instanceAttributes?.length ? opts.instanceAttributes.map(a => ({ ...a })) : undefined
@@ -640,7 +745,7 @@ export function shaderMaterialClass(opts: ShaderMaterialClassOptions): ShaderMat
         // only applies when there is one.
         depthWrite: opts.depthWrite ?? (transparent && depth ? false : undefined),
         blend: opts.blend ?? (transparent ? "alpha" : undefined),
-        cull: opts.cull ?? "back",
+        cull,
         topology: opts.topology,
         label: opts.label,
       })
@@ -650,7 +755,20 @@ export function shaderMaterialClass(opts: ShaderMaterialClassOptions): ShaderMat
   }
   return {
     instance(inst = {}) {
-      return { normalMatrix, attributes, transparent, instanceAttributes, pipeline: pipelineFor, params: inst.params ?? {}, textures: inst.textures }
+      return {
+        normalMatrix,
+        attributes,
+        transparent,
+        instanceAttributes,
+        pipeline: pipelineFor,
+        params: inst.params ?? {},
+        textures: inst.textures,
+        // Lazy: the depth materials are shaderMaterialClass instances
+        // themselves, so an eager variant would recurse into its own cache.
+        get shadow() {
+          return inst.shadow ?? shadowVariant(cull)
+        },
+      }
     },
     dispose() {
       for (let pipeline of pipelines.values()) destroyRenderPipeline(pipeline)

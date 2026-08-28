@@ -174,7 +174,10 @@ fn apply_main_thread_effects(event: &AlloyEvent, surface_size: &Arc<AtomicU64>, 
 
 // Refresh rate in Hz of the window's current display, with a 60Hz fallback.
 fn display_refresh_rate(window: &sdl3::video::Window) -> f32 {
-  window.get_display().and_then(|d| d.get_mode()).map(|m| m.refresh_rate).ok().filter(|&hz| hz > 0.0).unwrap_or(60.0)
+  let hz = window.get_display().and_then(|d| d.get_mode()).map(|m| m.refresh_rate).ok().filter(|&hz| hz > 0.0).unwrap_or(60.0);
+  // Every query publishes the fact for out-of-loop readers (crate::refresh_rate).
+  crate::set_refresh_rate(hz);
+  hz
 }
 
 // Payload-less user event the raster thread pushes onto the SDL queue after

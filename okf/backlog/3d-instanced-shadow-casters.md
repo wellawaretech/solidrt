@@ -30,3 +30,10 @@ per casting instanced class, cached like the others. Materials without
 one keep today's behaviour (plain meshes use the shared depth stage,
 instanced ones are skipped with the documented warning). Additive: no
 existing material changes.
+
+The seam exists since 2026-08-28: `Material.shadow`, the depth variant a
+shadow view draws a caster with instead of its default override, also
+settable per instance (`shaderMaterialClass().instance({ shadow })`).
+It carries the cull side (a `cull: "none"` material casts from both
+faces, Three's `shadowSide` rule) and, for a UV-mapped `lit({ alphaTest
+})`, the cutout discard; `shadowVertex` populates the same field.

@@ -165,11 +165,15 @@ when exactly one client is connected.
   `/stats?active=true|false` switches the on-screen stats overlay instead
   (the `set_stats_overlay` tool): one client with `&client=<id>`, every
   client (and the setting new clients join with) without; `/clients`
-  reports each client's `stats`. `frames` counts the frames actually
-  rebuilt in the window, `fps` the refresh rate presented at: when motion
-  looks wrong and `fps` looks fine, `frames` is the number to read - a
-  picture that only changes 26 times a second shows 26 there, and the
-  stutter is the app's update cadence, not the engine's.
+  reports each client's `stats`. `frames` counts the frames that changed
+  the picture: tree rebuilds, plus GPU content changes presented without
+  one (a layer write, a shader param, an upload - a sprite or shader app
+  rebuilds nothing, every frame of it is one of these).
+  `fps` is the refresh rate presented at: when motion looks wrong and `fps`
+  looks fine, `frames` is the number to read - a picture that only changes
+  26 times a second shows 26 there, and the stutter is the app's update
+  cadence, not the engine's. `frames: 0` means the picture did not change
+  at all in the window.
 - `/debug` - the app's registered debug commands; POST
   `/debug?name=<cmd>` with a JSON body as its args to call one.
 - POST `/input` with `{ "events": [...] }` - synthetic input through the
@@ -263,6 +267,21 @@ The loop is the same as over MCP: `/reload`, then `/logs?since=`, then
   Math.min(dt, cap) lets it through, and one bad frame can corrupt anything
   integrated from dt (positions fly off, accumulators go so negative they
   never recover). Math.max(0, Math.min(dt, cap)) costs nothing.
+- A fixed-timestep simulation on that clamped dt still drifts: no panel
+  presents at exactly its nominal rate (a "60 Hz" panel measured 60.3) and
+  the paced tick tracks the real cadence, so a 16.667 ms step against a
+  16.59 ms average dt comes up one step short every few seconds - one frame
+  runs no step (freeze), the next runs two (jump), and frame jitter
+  scatters which frame it lands on, so it reads as random stutter. The
+  runtime hands every callback the refresh rate,
+  `onFrame((tick, frame, rate) => ...)` (SDL's nominal Hz): when the step is
+  within a few percent of `1000 / rate`, run whole steps per frame
+  (`Math.round(dt / STEP_MS)`, clamped to [0, cap]) so the world rides the
+  refresh; only accumulate (`acc += dt; while (acc >= STEP_MS) ...`) when
+  the display is genuinely off-rate (50, 120, 144 Hz), or interpolate the
+  render by `acc / STEP_MS` if the game does not snap to whole pixels. It
+  is invisible in a five-second look and survives every renderer
+  optimisation; measure it with a steps-per-frame histogram, not by eye.
 - A registered onFrame is a standing request, not demand-gated: it re-requests
   the next frame every time it runs, so the runtime keeps calling it - and
   presents - every frame at the refresh rate until you deregister it (fps

@@ -131,9 +131,12 @@ blendMode and pointer events like any element.
   the upload), so swapping `<Mesh geometry>` reactively never accumulates
   old generations. `disposeGeometry` is the immediate explicit free.
 - Materials dedupe hard: one program + one pipeline per material CLASS
-  (unlit color, unlit map, each opaque or transparent), `depth: true` +
-  `cull: "back"`; an instance is
-  just per-entry uniforms (`uColor`) and bindings (`uMap`).
+  (a `shaderMaterialClass` per option combination for unlit, lit and
+  sprite alike: map x transparent x cull x alphaTest, lit's extras on
+  top), `depth: true` + `cull: "back"` unless the material says otherwise
+  (`cull: "none"` for double-sided geometry; lit flips the normal on back
+  faces); an instance is just per-entry uniforms (`uColor`) and bindings
+  (`uMap`).
 - The pure pieces (`math.ts`, `order.ts`, `geometry.ts`,
   `profile.ts`, `sweep.ts`, `gltf.ts`, `model-file.ts`) are Solid-free and
   GPU-free BY DESIGN so they can be checked headless (and, for the two
@@ -346,8 +349,9 @@ uint16/uint32 indices by vertex count automatically.
 
 Materials:
 
-- `unlit({ color?, map? })` - straight `[r, g, b, a?]` 0..1, premultiplied
-  internally.
+- `unlit({ color?, map?, transparent?, cull?, alphaTest? })` - straight
+  `[r, g, b, a?]` 0..1, premultiplied internally; `cull` and `alphaTest`
+  as on lit (a mapped cutout casts its cutout).
 - `sprite({ color?, map?, transparent?, billboard? })` - unlit on a quad
   that turns to face the camera IN THE VERTEX STAGE (off the shared
   uCamRight/uCamUp, or uCamPos for `billboard: "fixed-y"`, which yaws
@@ -497,17 +501,22 @@ the directional list, Lambert diffuse, Blinn-Phong highlight when
 `specular` (0..1 strength) is set with `shininess` (default 30), the
 same `color`/`map`/`transparent` as unlit, `vertexColors: true` to
 multiply by the colored layout's aColor (so the geometry must carry it),
-and `triplanar: n` to sample `map` by world position at `n` repeats per
-world unit, blended across the three axis planes by the normal. Triplanar
+`triplanar: n` to sample `map` by world position at `n` repeats per
+world unit, blended across the three axis planes by the normal, and
+`alphaTest: t` for a cutout (a fragment whose final alpha is below `t`
+is discarded; Three's alphaTest, glTF MASK): opaque, depth-written, no
+sorting, usually with `cull: "none"` for cards. Triplanar
 is an OPTION, not the default: generators emit 0..1 UVs per face, so a
 map on a plane is a decal (UV) while a map on generated scenery wants one
 density across parts of any size (triplanar); the map must be created
 with `wrap: "repeat"`. Internally one `shaderMaterialClass` per option
-combination (map x vertexColors x triplanar x transparent), cached for
-the app's lifetime, one pipeline per vertex layout - a thousand lit
-meshes share one program. The view vector comes from the shared uCamPos;
-`uTriplanar` is declared only by the triplanar classes so the other
-classes do not warn about an inactive uniform.
+combination (map x vertexColors x triplanar x transparent x cull x
+alphaTest), cached for the app's lifetime, one pipeline per vertex layout
+- a thousand lit meshes share one program. The view vector comes from the
+shared uCamPos; `uTriplanar` and `uAlphaTest` are declared only by the
+classes that use them (the cutoff is a per-entry value, so every
+alphaTest material shares one class) so the other classes do not warn
+about an inactive uniform.
 
 ## Models
 
@@ -519,7 +528,8 @@ next to it, or single-file .glb) and become a Group of meshes, Three's
   bun and on flux): `ModelData` = `parts` (one per mesh node, its NAME
   kept, vertices in the standard layout with the node's WORLD transform
   baked in), `materials` (base color factor, `map` = index into `images`,
-  `doubleSided`, `transparent` = alphaMode BLEND), `images` (the encoded
+  `doubleSided`, `transparent` = alphaMode BLEND, `alphaMode` as written
+  and `alphaCutoff`, spec default 0.5), `images` (the encoded
   PNG/JPEG bytes, undecoded) and `bounds`. A .gltf's external files come
   through `resolve(uri)` (uri as written, still percent-encoded;
   `gltfExternalUris(bytes)` lists them so an async caller can read them
@@ -551,10 +561,10 @@ next to it, or single-file .glb) and become a Group of meshes, Three's
   "binary" }` then `createModel(parseGltf(bytes))`, see
   `examples/model.tsx`); bake anything big.
 
-Not in the subset, reported or dropped: `doubleSided` is reported and NOT
-applied (the standard materials cull back faces); vertex colors, tangents
-and further UV sets are dropped; samplers are ignored (every texture
-repeats); alphaMode MASK draws opaque; emissive/additive parts of a model
+Applied: `doubleSided` (the default material draws it with `cull:
+"none"`) and alphaMode MASK (`alphaTest: alphaCutoff`). Not in the
+subset, dropped: vertex colors, tangents and further UV sets; samplers
+are ignored (every texture repeats); emissive/additive parts of a model
 draw as their base color (a model's "glow" cards come out as dark wedges).
 The follow-ups are filed in okf/backlog/3d-model-loader.md.
 
@@ -593,7 +603,13 @@ The follow-ups are filed in okf/backlog/3d-model-loader.md.
   are opaque to the library, so any inferred box would be a guess. Supply
   `bounds` for anything pickable or transparent.
 - Transparency is an EXPLICIT material flag, Three's rule: `unlit({ color:
-  [r, g, b, 0.5] })` still draws opaque; `unlit({ ..., transparent: true })`
+  [r, g, b, 0.5] })` still draws opaque, and opaque means it: the standard
+  classes write alpha 1 when not `transparent` (the scene target is
+  composited premultiplied, so a leaked texel or color alpha would punch
+  a see-through hole in an opaque draw - the source of "white cutouts"
+  on an alpha-mapped model drawn without alphaTest). A `shaderMaterial`
+  writes its own fragColor: give an opaque look alpha 1 too.
+  `unlit({ ..., transparent: true })`
   (or `shaderMaterial({ transparent: true })`) builds the pipeline with
   `blend: "alpha"` and `depthWrite: false` (depth test stays on, so it hides
   behind opaques without occluding other translucents). The one inference:
@@ -700,7 +716,14 @@ The follow-ups are filed in okf/backlog/3d-model-loader.md.
   `shadow.normalBias` (world units along the receiver normal, the one to
   reach for first, ~0.02); the depth pass culls FRONT faces (Three's
   shadowSide default), so closed casters need little bias but a
-  single-sided plane casts nothing. Opting out of receiving is on the
+  back-culling plane casts only from its back. The shadow side follows
+  the material's `cull` (Three's shadowSide rule, Godot's shadow pass):
+  a `cull: "none"` foliage card or pane casts from both faces, and a
+  UV-mapped `alphaTest` material casts its cutout (leaves, not
+  rectangles), through the `Material.shadow` variant the standard
+  classes carry (a `shaderMaterial` gets the cull side from its `cull`
+  and supplies its own cutout variant as the `shadow` instance option).
+  Opting out of receiving is on the
   MATERIAL here (`receiveShadow: false`), not the object (Three's
   `mesh.receiveShadow`) - Godot's split, and URP's - and instanced
   meshes never cast (the depth override cannot know their records) - the

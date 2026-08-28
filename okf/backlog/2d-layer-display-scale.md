@@ -89,8 +89,11 @@ Staged, primitive first:
    Validation: positive integer, `n * size` within `maxTextureSize` (the tile
    layer already checks chunk size against it; the bound now includes n). The
    tile layer's `filter` option stays as an override but its default flips to
-   linear, and its doc says nearest belongs to the atlas now. A named
-   `MAX_OVERSAMPLE` caps runaway factors from a tiny layer in a huge box.
+   linear, and its doc says nearest belongs to the atlas now. The auto-pick
+   is bounded by a texel budget, the window's own device pixel count (a
+   fixed factor cap of 8 was reached by a 320 x 200 design at 1440p and
+   under-sampled it at 4K; the budget caps the scale before the ceiling, so
+   a fit that fills the window still rounds up).
 2. **The components pick n themselves.** `<SpriteLayer>` and `<TileLayer>`
    read their leaf's on-screen size in `onLayout` (`getBoundingBoxViewport` on
    the leaf, times `displayScale()`), take `n = ceil(device px / layer px)`,

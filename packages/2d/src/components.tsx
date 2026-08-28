@@ -6,13 +6,21 @@
 // sprite with `ref` and call setSprite from onFrame - signals carry
 // structure and slow state, per-frame motion goes straight to the layer.
 // The same split, with the same reasoning, as @solidrt/3d's components.
-import { createContext, createEffect, createSignal, displayScale, For, getBoundingBoxViewport, onCleanup, onLayout, untrack, useContext } from "@solidrt/core"
+import { createContext, createEffect, createSignal, displayScale, For, getBoundingBoxViewport, onCleanup, onLayout, untrack, useContext, windowSize } from "@solidrt/core"
 import type { Element, ParentComponent, TextureId, VoidComponent } from "@solidrt/core"
 import type { FilterMode } from "@solidrt/core/gpu"
 import { addGroup, addSprite, createSpriteLayer, removeGroup, removeSprite, setGroup, setGroupTransition, setSprite, setSpriteTransition } from "./layer.ts"
 import type { NodeTransition } from "flux:spatial"
 import type { CameraUpdate, Sprite as SpriteHandle, SpriteGroup, SpriteLayer as LayerHandle, SpriteOptions, SpritePointerEvent, TransitionEndEvent } from "./layer.ts"
 import { fitOversample } from "./oversample.ts"
+
+// The window's device pixel count: the texel budget an auto-picked
+// oversample target stays within (see fitOversample).
+function windowTexels(): number {
+  let win = windowSize()
+  let scale = displayScale()
+  return win.width * scale * (win.height * scale)
+}
 import { createTileLayer } from "./tiles.ts"
 import type { TileChunk, TileLayer as TileLayerHandle } from "./tiles.ts"
 
@@ -117,7 +125,7 @@ export let SpriteLayer: ParentComponent<SpriteLayerProps> = props => {
     let box = getBoundingBoxViewport(leaf)
     if (!box) return
     let scale = displayScale() * Math.max(box.width / props.width, box.height / props.height)
-    layer.setOversample(fitOversample(scale, props.width, props.height))
+    layer.setOversample(fitOversample(scale, props.width, props.height, windowTexels()))
   }
   onLayout(pick)
   createEffect(() => displayScale(), pick)
@@ -316,7 +324,7 @@ export let TileLayer: VoidComponent<TileLayerProps> = props => {
     let box = getBoundingBoxViewport(world)
     if (!box) return
     let scale = displayScale() * Math.max(box.width / layer.width, box.height / layer.height)
-    layer.setOversample(fitOversample(scale, layer.chunkW, layer.chunkH))
+    layer.setOversample(fitOversample(scale, layer.chunkW, layer.chunkH, windowTexels()))
   }
   onLayout(pick)
   createEffect(() => displayScale(), pick)

@@ -60,7 +60,7 @@ pub use script::{ScriptEvent, ScriptPlayer, ScriptedAction};
 pub use vsync::FramePacing;
 pub use yuv::{YuvLayout, YuvMatrix, YuvRange};
 
-use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, Ordering};
 use std::sync::OnceLock;
 
 /// The GPU behind the process's GL context, as GL names it.
@@ -95,6 +95,22 @@ pub(crate) fn set_gpu_info(info: GpuInfo) {
 /// The GPU strings, once the raster thread has its GL context.
 pub fn gpu_info() -> Option<&'static GpuInfo> {
   GPU_INFO.get()
+}
+
+// The display's nominal refresh rate (f32 bits), published by the event
+// loop each time it queries the display mode, so an out-of-loop reader (the
+// dev-server client info) can report it; 0 until the window exists.
+static REFRESH_RATE: AtomicU32 = AtomicU32::new(0);
+
+pub(crate) fn set_refresh_rate(hz: f32) {
+  REFRESH_RATE.store(hz.to_bits(), Ordering::Relaxed);
+}
+
+/// The display's nominal refresh rate in Hz as SDL reports the mode, once
+/// the window exists.
+pub fn refresh_rate() -> Option<f32> {
+  let hz = f32::from_bits(REFRESH_RATE.load(Ordering::Relaxed));
+  (hz > 0.0).then_some(hz)
 }
 
 // Soft-keyboard (IME) inset height in raw pixels. On Android the platform

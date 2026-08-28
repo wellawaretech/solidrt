@@ -35,6 +35,11 @@ export type ClientEntry = {
   kernel: string | null
   /** The SDL video driver ("wayland", "x11", "android", "offscreen", ...). */
   videoDriver: string | null
+  /** The display's nominal refresh rate in Hz as SDL reported it when the
+   * client connected (what `onFrame`'s `rate` argument carries); null on a
+   * runtime that predates it, or on a client that connected before its
+   * window existed (a reconnect fills it in). */
+  refreshRate: number | null
   /** The GPU strings as GL reports them; null on a client that connected
    * before its GL context existed (a reconnect fills it in). */
   gpu: GpuInfo | null

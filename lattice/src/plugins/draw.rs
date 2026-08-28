@@ -243,11 +243,27 @@ impl RenderInner {
       .commit(&mut tree.0.borrow_mut(), platform, atx)
       .expect("Failed to submit display list")
     {
-      Commit::Reused => {
+      Commit::Reused { content_changed } => {
         let mut s = stats.borrow_mut();
         s.note_reused();
         s.record_frame(stats::FramePhases::default());
         s.record_paint(rendertree::composite::PaintStats::default());
+        // GPU content presented through the reused display list (a layer
+        // write, a shader param, an upload) still changed the picture - a
+        // sprite app's every frame is one. Record it, with the render
+        // handler as its whole critical path, or the frame window reads
+        // `frames: 0` for exactly the apps that animate every frame.
+        if content_changed {
+          self.history.lock().expect("frame history lock poisoned").push(FrameRecord {
+            at_ms: crate::frame_history::now_ms(),
+            frame: render_frame.frame,
+            period_ms: render_frame.period_ms,
+            js_ms,
+            total_ms: js_ms,
+            raster: atx.raster_counters(),
+            ..FrameRecord::default()
+          });
+        }
         return;
       }
       Commit::Build(b) => b,

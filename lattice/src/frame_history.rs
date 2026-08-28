@@ -71,9 +71,11 @@ pub struct RasterRates {
   pub cmd_ms_per_sec: f32,
 }
 
-/// Bounded ring of the most recent rebuilt frames, written once per rebuild
-/// by the draw loop and read by the stats query. Cheap on the hot path: one
-/// fixed-size push under a lock nobody else contends for.
+/// Bounded ring of the most recent frames that changed the picture (a tree
+/// rebuild, or GPU content presented through a reused display list),
+/// written once per such frame by the draw loop and read by the stats
+/// query. Cheap on the hot path: one fixed-size push under a lock
+/// nobody else contends for.
 pub struct FrameHistory {
   ring: VecDeque<FrameRecord>,
 }
@@ -92,7 +94,7 @@ impl FrameHistory {
 
   /// Summarize the frames recorded in the last `window_ms` (clamped to
   /// WINDOW_MAX_MS) before `now_ms`. None when no frame falls inside it: an
-  /// idle app rebuilds nothing, and "no frames" must read differently from
+  /// idle app changes nothing, and "no frames" must read differently from
   /// "frames, all fast".
   pub fn summarize(&self, window_ms: f64, now_ms: f64) -> Option<WindowSummary> {
     let window_ms = window_ms.clamp(0.0, WINDOW_MAX_MS);

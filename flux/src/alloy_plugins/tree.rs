@@ -422,7 +422,7 @@ impl ModuleDef for RenderTreeModule {
       let Some(frame) = driver.begin(&render_platform, true) else { return };
       match frame.commit(&mut tree_ref.borrow_mut(), &render_platform, &render_atx) {
         Err(()) => log::warn!("render: render thread unavailable, dropping frame"),
-        Ok(Commit::Reused) => {}
+        Ok(Commit::Reused { .. }) => {}
         Ok(Commit::Build(mut b)) => {
           // The paint phase runs layout itself; the direct path has no
           // between-phase hooks to sequence.

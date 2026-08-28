@@ -1537,7 +1537,10 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     let inst = mesh._instances
     if (v.override !== null && inst !== null) return
     if (v.filter !== null && !v.filter(mesh)) return
-    let material = v.override ?? mesh.material
+    // A shadow view (the filtered kind) lets a caster's material pick its
+    // own depth variant (its cull side); any other override view draws
+    // exactly what it was given.
+    let material = v.override !== null ? (v.filter !== null ? (mesh.material.shadow ?? v.override) : v.override) : mesh.material
     let bufs = mesh._buffers!
     let entry = addDraw(v.texture, material.pipeline(mesh.geometry.layout), entrySeed(material, v.override !== null ? null : mesh._params), {
       buffer: bufs.buffer,

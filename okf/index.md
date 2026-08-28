@@ -95,7 +95,8 @@ Shaped, not started.
   parseGltf/createModel at runtime plus the srt tool 3d/model bake) covers
   uncompressed triangles with base color; still open are the compressed
   real-world files (Draco/meshopt, KTX2), a retained node hierarchy,
-  merge-by-material, a cull option for double-sided materials and vertex
+  merge-by-material, a cull option for double-sided materials, an alpha test
+  for MASK materials (which ModelMaterial does not even report) and vertex
   colors, each demand-gated.
 - **[Cascaded shadow maps](backlog/3d-shadow-cascades.md)** [2026-08-27]
   One shadow.camera box per casting light: a large outdoor scene either blurs
@@ -407,9 +408,9 @@ Shaped, not started.
   to a coarse IP lookup over fetch; add flux:location and
   @solidrt/core/location in the established device-module shape.
 - **[Make the build goals mean what they say](backlog/make-goals-and-dist-profile.md)** [2026-08-26]
-  The root make all builds only lattice, dist has three OS-suffixed names for
-  one host goal, and the publish path ships half its binaries unstripped; fix
-  the goal names and split the dev profile from the publish profile.
+  The publish path ships half its binaries unstripped because dist hardcodes
+  release for some and release-opt for others; make the publish profile one
+  knob. Goal-name cleanup landed 2026-08-28.
 - **[MCP bridge - match dev servers in subdirectories of the bridge's project](backlog/mcp-bridge-workspace-project-match.md)** [2026-08-24]
   The bridge resolves a dev server by exact projectDir equality, so a
   workspace-root bridge reports "No dev server" for an entry served from

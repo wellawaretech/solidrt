@@ -103,6 +103,8 @@ let document = {
   materials: [
     { name: "red", pbrMetallicRoughness: { baseColorFactor: [1, 0, 0, 1] } },
     { name: "glass", alphaMode: "BLEND", doubleSided: true, pbrMetallicRoughness: { baseColorFactor: [1, 1, 1, 0.5], baseColorTexture: { index: 0 } } },
+    { name: "leaf", alphaMode: "MASK", alphaCutoff: 0.3, doubleSided: true, pbrMetallicRoughness: { baseColorTexture: { index: 0 } } },
+    { name: "cutout-default", alphaMode: "MASK" },
   ],
   textures: [{ source: 0 }],
   images: [{ bufferView: pngView, mimeType: "image/png" }],
@@ -141,7 +143,7 @@ let model = parseGltf(file)
 for (let part of model.parts) validateGeometry(part.geometry)
 if (model.parts.length !== 3) fail(`parts: ${model.parts.length}, expected 3`)
 if (model.parts.map((p) => p.name).join() !== "shifted,mirrored,flat") fail(`part names: ${model.parts.map((p) => p.name).join()}`)
-if (model.materials.length !== 2) fail(`materials: ${model.materials.length}, expected 2`)
+if (model.materials.length !== 4) fail(`materials: ${model.materials.length}, expected 4`)
 if (model.images.length !== 1 || model.images[0]!.join() !== fakePng.join()) fail("images: the png bytes did not come through")
 
 let shifted = model.parts[0]!.geometry
@@ -210,6 +212,11 @@ let red = model.materials[0]!
 let glass = model.materials[1]!
 if (red.color.join() !== "1,0,0,1" || red.map !== null || red.transparent || red.doubleSided) fail(`red material: ${JSON.stringify(red)}`)
 if (glass.color.join() !== "1,1,1,0.5" || glass.map !== 0 || !glass.transparent || !glass.doubleSided) fail(`glass material: ${JSON.stringify(glass)}`)
+if (red.alphaMode !== "OPAQUE" || glass.alphaMode !== "BLEND") fail("alphaMode: OPAQUE/BLEND")
+let leaf = model.materials[2]!
+let cutout = model.materials[3]!
+if (leaf.alphaMode !== "MASK" || leaf.alphaCutoff !== 0.3 || leaf.transparent) fail(`leaf material: ${JSON.stringify(leaf)}`)
+if (cutout.alphaMode !== "MASK" || cutout.alphaCutoff !== 0.5) fail(`cutout default: ${JSON.stringify(cutout)}`)
 if (model.parts[0]!.material !== 0 || model.parts[2]!.material !== 1) fail("parts: material indices")
 
 let b = model.bounds
