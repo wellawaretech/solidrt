@@ -168,6 +168,31 @@ elsewhere. Called once, untracked, inside the scene context. Scene
 layout, so render and display size separate - render at 2x and display
 smaller for supersampling.
 
+Filling the window: `width`/`height` are DEVICE pixels, the leaf's layout
+is LOGICAL. A `designSize` view fits the leaf to the window but never
+changes the target, so on a HiDPI display a 720-pixel scene is stretched
+across ~1100 device pixels and looks soft, and nothing warns (the
+examples' `SIZE = 720` is a verification convenience, not a sizing
+model). Render at the window's device size and lay the leaf out at its
+logical size:
+
+```tsx
+let target = createMemo(() => {
+  let { width, height } = windowSize()
+  let scale = displayScale()
+  return { w: Math.round(width * scale), h: Math.round(height * scale) }
+})
+<Scene width={target().w} height={target().h}
+       output={t => <texture src={t} width={windowSize().width}
+                             height={windowSize().height}
+                             {...useScene().scene.handlersFor(windowSize)} />}>
+```
+
+`windowSize` and `displayScale` come from `@solidrt/core`. The leaf's
+layout differs from the target, so it takes `handlersFor` (below), not
+`handlers`; `useScene()` works inside `output` because it runs in the
+scene context.
+
 Camera control: `createOrbitCamera(scene, { target?, azimuth?, elevation?,
 distance?, min/maxDistance?, min/maxElevation?, orbitSpeed?, rotateSpeed?,
 zoomSpeed?, zoomAnchor?, rotateAnchor?, panSpeed?, viewport?, clampTarget? })`
@@ -752,12 +777,13 @@ The follow-ups are filed in okf/backlog/3d-model-loader.md.
   vertex source - a comment counts - selects the "colored" layout, and
   the material then rejects standard geometry at add(). Do not mention
   aColor you do not read.
-- Picking is the VOLUME tier: a hit means the ray crossed the mesh's
-  transformed bounding box, not its surface. Never present `point` as a
-  surface point (it is the box-entry point), and never add a
-  triangle-accurate path in JS - per-triangle rays at mesh scale are
-  interpreter-hostile; that tier is core work (BVH descent per the
-  differentiators ladder).
+- Picking is triangle-accurate for ordinary meshes (`point` is a surface
+  point, hits carry `face`/`uv`/`normal`) but box-only for instanced
+  meshes: there `point` is the entry point of the population `bounds`
+  box, and `face`/`uv`/`normal` are absent. Never present an instanced
+  hit as a surface hit. Both tiers run in the spatial core (Rust); never
+  add a per-triangle path in JS - rays at mesh scale are
+  interpreter-hostile, and the core already does it.
 - `scene.handlers` vs `handlersFor`: localX/localY arrive in the leaf's
   LAYOUT frame (every ancestor transform and design-size fit is already
   undone by the element hit test). `handlers` therefore assumes leaf
