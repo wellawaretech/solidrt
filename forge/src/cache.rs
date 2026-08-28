@@ -56,7 +56,10 @@ impl Cache {
   /// same handle then converts to a tokio file for the streamed body.
   pub async fn lookup(&self, key: &str) -> Option<(Vec<u8>, ByteStream)> {
     let path = self.entry_path(key);
-    let mut file = std::fs::File::open(&path).ok()?;
+    // Opened writable only for the mtime bump: Windows refuses to set times
+    // on a read-only handle (silently, through the `let _`), which turned the
+    // LRU clock into write order there. Nothing writes through the handle.
+    let mut file = std::fs::OpenOptions::new().read(true).write(true).open(&path).ok()?;
     match read_header(&mut file) {
       Ok(meta) => {
         let _ = file.set_modified(std::time::SystemTime::now());

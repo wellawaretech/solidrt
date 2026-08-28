@@ -53,18 +53,23 @@ async fn realpath_resolves_symlinks_and_dots() {
   let dir = std::env::temp_dir().join(format!("forge-fs-realpath-{}", std::process::id()));
   let _ = std::fs::remove_dir_all(&dir);
   std::fs::create_dir_all(dir.join("real")).expect("create real dir");
-  let real = std::fs::canonicalize(dir.join("real")).expect("canonical real dir");
+  // The reference is realpath's own spelling of the plain path: canonical,
+  // but without the verbatim `\\?\` prefix std's canonicalize keeps on
+  // Windows (realpath strips it so registries key on what the shell prints).
+  let real = crate::fs::realpath(&dir.join("real").to_string_lossy()).await.expect("realpath of real dir");
+  assert!(!real.starts_with(r"\\?\"), "verbatim prefix leaked: {real}");
+  assert!(std::path::Path::new(&real).is_absolute());
 
   // ".." and "." collapse to the real directory.
   let dotted = dir.join("real").join("..").join(".").join("real");
   let resolved = crate::fs::realpath(&dotted.to_string_lossy()).await.expect("realpath of dotted path");
-  assert_eq!(resolved, real.to_string_lossy());
+  assert_eq!(resolved, real);
 
   #[cfg(unix)]
   {
     std::os::unix::fs::symlink(&real, dir.join("link")).expect("create symlink");
     let via_link = crate::fs::realpath(&dir.join("link").to_string_lossy()).await.expect("realpath of symlink");
-    assert_eq!(via_link, real.to_string_lossy());
+    assert_eq!(via_link, real);
   }
 
   let missing = crate::fs::realpath(&dir.join("missing").to_string_lossy()).await;

@@ -1407,6 +1407,12 @@ Knowledge. No lifecycle - true or wrong, not open or closed.
   Positions collapse to the latest sample safely; deltas do not, ordering
   around down/up does not, and hit testing must consume the batch's final
   position rather than each sample.
+- **[Port probing and bind coexistence per platform](notes/port-probe-platform-facts.md)** [2026-08-28]
+  Measured facts behind the dev server's free-port search - Windows reports a
+  refused TCP connect only after ~2 s of SYN retries, so short probe budgets
+  read refused as filtered there; loopback and wildcard listeners coexist
+  under SO_REUSEADDR on macOS only, so a bind failure is the whole truth on
+  Linux and Windows but not on a Mac.
 - **[A 3D scene graph above the pipeline](notes/scene-graph-3d.md)** [2026-08-03]
   How a Three.js-in-spirit retained scene graph (meshes, materials, cameras,
   lights) would be built over flux:gpu as a sibling library with a Solid
