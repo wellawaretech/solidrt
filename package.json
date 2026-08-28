@@ -15,9 +15,9 @@
     "@solidrt/core": "workspace:*",
     "@solidrt/3d": "workspace:*",
     "@solidrt/flux-types": "workspace:*",
-    "@solidjs/signals": "2.0.0-rc.1",
-    "@solidjs/universal": "2.0.0-rc.1",
-    "solid-js": "2.0.0-rc.1",
+    "@solidjs/signals": "2.0.0-rc.3",
+    "@solidjs/universal": "2.0.0-rc.3",
+    "solid-js": "2.0.0-rc.3",
     "typescript": "^7"
   }
 }

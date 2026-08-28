@@ -2,7 +2,7 @@ import { transformAsync } from "@babel/core"
 import jsx from "@babel/plugin-syntax-jsx"
 import ts from "@babel/preset-typescript"
 import remapping from "@jridgewell/remapping"
-import solid from "babel-preset-solid"
+import solid from "@solidjs/babel-plugin"
 import { type BunPlugin, type BuildArtifact } from "bun"
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs"
 import { dirname, join, relative, resolve as resolvePath, sep } from "node:path"
@@ -76,7 +76,7 @@ async function codeFromOutputs(outputs: BuildArtifact[]): Promise<string> {
   return code
 }
 
-// Bun build plugin that runs JSX/TSX through babel-preset-solid (universal
+// Bun build plugin that runs JSX/TSX through @solidjs/babel-plugin (universal
 // generate, targeting @solidrt/core) plus the TS preset. `moduleName` only ends
 // up as an import specifier in the emitted code, resolved from the app's tree at
 // bundle time; the CLI itself never loads core, so core is deliberately neither
@@ -108,8 +108,8 @@ function solidPlugin(inputs: Set<string>, babelMaps?: Map<string, object>, isola
         let transforms = await transformAsync(code, {
           filename: args.path,
           sourceMaps: !!babelMaps,
-          presets: [[solid, { moduleName: "@solidrt/core", generate: "universal" }], [ts]],
-          plugins: [jsx, inlineImport(inputs)],
+          presets: [[ts]],
+          plugins: [jsx, [solid, { moduleName: "@solidrt/core", generate: "universal" }], inlineImport(inputs)],
         })
         if (babelMaps && transforms?.map) babelMaps.set(args.path, transforms.map)
         return { contents: transforms?.code ?? "", loader: "js" }

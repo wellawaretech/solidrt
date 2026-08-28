@@ -20,7 +20,7 @@ about 0.25 us). This note is the map for measuring the update path.
 
 ## 0. Compiled shape
 
-babel-preset-solid (universal generate) emits one render effect per JSX
+@solidjs/babel-plugin (universal generate) emits one render effect per JSX
 element covering all of that element's dynamic props; static props go to
 `createElement` once:
 
@@ -192,7 +192,7 @@ What this means for the update path: the cost is per dirty element
 effect, dominated by Solid's generic machinery (read/link/recompute), in
 an interpreter. Options, unranked: fewer reads per effect (the compiled
 shape reads each bound signal per run; memoizing or reading once is in
-babel-preset-solid's hands), a leaner effect kind for renderer bindings
+@solidjs/babel-plugin's hands), a leaner effect kind for renderer bindings
 (upstream), or moving animation-frequency motion out of signals entirely
 (compositor-side animation / detached primitives written directly:
 `direct` mode is 2.35 ms where signals cost 9.8 ms for the same writes,

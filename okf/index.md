@@ -444,6 +444,11 @@ Shaped, not started.
   dropped, so Discover searches forever; restoring it means a forge::mdns
   responder (advertise) exposed as a flux capability, and its feasibility next
   to system responders is unproven.
+- **[Move JSX compilation to the native Oxc compiler](backlog/native-jsx-compiler.md)** [2026-08-28]
+  Solid 2.0 ships @solidjs/compiler (native, ~30x faster than Babel) alongside
+  the Babel plugin, but it only lowers JSX, so adopting it means finding new
+  homes for TypeScript stripping and the binary/text import inlining that live
+  in our Babel pipeline.
 - **[Children drawn outside their parent's box are not hit-testable](backlog/overflow-visible-hit-testing.md)** [2026-08-14]
   A parent's bounds check gates descent into its children as well as its own
   hit, so a child painted outside the parent's layout box under overflow

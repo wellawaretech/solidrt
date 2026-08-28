@@ -11,8 +11,8 @@ declare module "@babel/preset-typescript" {
   let preset: PluginItem
   export default preset
 }
-declare module "babel-preset-solid" {
+declare module "@solidjs/babel-plugin" {
   import { type PluginItem } from "@babel/core"
-  let preset: PluginItem
-  export default preset
+  let plugin: PluginItem
+  export default plugin
 }
