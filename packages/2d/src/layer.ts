@@ -65,7 +65,7 @@ const BOX = new Float32Array(6)
 let declared = new Map<NodeId, Sprite | SpriteGroup>()
 let subscribed = false
 
-function declare(node: NodeId, handle: Sprite | SpriteGroup, transition: NodeTransition | string | null): void {
+function declareTransition(node: NodeId, handle: Sprite | SpriteGroup, transition: NodeTransition | string | null): void {
   if (transition === null) {
     declared.delete(node)
     return
@@ -715,7 +715,7 @@ export function setSpriteTransition(sprite: Sprite, transition: NodeTransition |
   if (sprite.layer === null) return
   if (sprite.node === null) throw new Error("setSpriteTransition: record sprites have no node transitions")
   spatial.setTransition(sprite.node, transition)
-  declare(sprite.node, sprite, transition)
+  declareTransition(sprite.node, sprite, transition)
 }
 
 /** The group counterpart of setSpriteTransition (`scale` is the group's
@@ -723,7 +723,7 @@ export function setSpriteTransition(sprite: Sprite, transition: NodeTransition |
 export function setGroupTransition(group: SpriteGroup, transition: NodeTransition | string | null): void {
   if (group.layer === null) return
   spatial.setTransition(group.node, transition)
-  declare(group.node, group, transition)
+  declareTransition(group.node, group, transition)
 }
 
 /** Add a transform group (see SpriteGroup). */

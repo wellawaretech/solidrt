@@ -80,7 +80,7 @@ let pointScratch: Vec4 = [0, 0, 0, 0]
 let declared = new Map<NodeId, SceneNode>()
 let subscribed = false
 
-function declare(id: NodeId, node: SceneNode): void {
+function declareTransition(id: NodeId, node: SceneNode): void {
   declared.set(id, node)
   if (subscribed) return
   subscribed = true
@@ -951,7 +951,7 @@ function enterScene(node: SceneNode, scene: SceneHooks): void {
   node._node = spatial.createNode(fillTransform(node), node.visible)
   if (node._transition !== null) {
     spatial.setTransition(node._node, node._transition)
-    declare(node._node, node)
+    declareTransition(node._node, node)
   }
   // The parent is in the scene already (add() enters the child only then),
   // and the scene root is the one node without a parent.
@@ -1015,7 +1015,7 @@ export function setTransition(node: SceneNode, transition: NodeTransition | stri
   if (node._node !== null) {
     spatial.setTransition(node._node, transition)
     if (transition === null) declared.delete(node._node)
-    else declare(node._node, node)
+    else declareTransition(node._node, node)
   }
 }
 

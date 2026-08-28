@@ -64,6 +64,20 @@ jobs:
       - name: Check examples
         run: bun packages/cli/src/main.ts check
 
+      # In a real install the bundler hands a package's plain .ts under
+      # node_modules to bun's own loader; in this repo the workspace symlinks
+      # resolve to packages/*, so everything above goes through babel and tsc,
+      # which both accept what bun's parser rejects (a call to a function
+      # named `declare`, say). This is the only check that parses shipped
+      # sources the way a user's bundle does.
+      - name: Parse shipped sources with bun
+        run: |
+          status=0
+          for f in $(find packages/*/src -name "*.ts" -not -name "*.d.ts"); do
+            bun build --no-bundle "$f" --outfile /dev/null > /dev/null 2>&1 || { echo "bun cannot parse $f"; status=1; }
+          done
+          exit $status
+
   # okf/index.md is generated, so it is a lie the moment a note is added or
   # moved by hand. This fails the build instead: stale index, missing
   # title/description/created, or a status field outside upstream/ (state is
