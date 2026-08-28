@@ -740,6 +740,22 @@ declare module "flux:gpu" {
    * alone.
    * Returns a texture id (display, resize, destroy like any target; entries
    * die with it).
+   *
+   * `into` makes a SUB-TARGET: a draw target that renders into the `width`
+   * x `height` rectangle at `x`/`y` (top-left origin, the texture leaf's
+   * `srcX`/`srcY` space; default 0) of draw target `into`'s storage instead
+   * of owning any. It is a draw target to every verb - entries, shared
+   * params and bindings, order, `setTargetSize` - with dirty state of its
+   * own, and the parent renders ALL its tiles in ONE pass: a changed tile
+   * redraws over its own rectangle (the rest keeps its pixels), a changed
+   * parent redraws everything. That is what makes N views or N shadow maps
+   * cost one pass instead of N. The returned id is not a texture: sample,
+   * display (`<d-texture src={parent} srcX srcY srcW srcH>`), read back and
+   * copy the PARENT; `depthTexture(parent)` is the tile's depth too. Depth,
+   * `samples`, `render` and `loadOp` are the parent's (passing them
+   * throws), `clearColor` is the tile's own. A rectangle partly outside the
+   * parent is clipped; {@link setTargetRect} moves it. Tiles do not nest.
+   * Destroying the parent destroys its tiles.
    */
   export function createDrawTarget(
     width: number,
@@ -752,6 +768,9 @@ declare module "flux:gpu" {
       render?: "auto" | "manual"
       loadOp?: "clear" | "load"
       samples?: 1 | 2 | 4 | 8
+      into?: TextureId
+      x?: number
+      y?: number
     } & SamplerOptions &
       LabelOption,
   ): TextureId
@@ -890,6 +909,14 @@ declare module "flux:gpu" {
    * which carries seed pixels instead.)
    */
   export function setTargetSize(id: TextureId, width: number, height: number): void
+  /**
+   * Move and resize a sub-target's rectangle in its parent (top-left
+   * origin; every key required). The parent re-renders in full at the next
+   * flush. Throws for anything but a sub-target (see `into` on
+   * {@link createDrawTarget}); `setTargetSize` on a tile is this with the
+   * origin kept.
+   */
+  export function setTargetRect(id: TextureId, rect: { x: number; y: number; width: number; height: number }): void
   /**
    * Rebind one draw entry's sampler2D inputs by uniform name:
    * {@link setTargetTextures} addressed to a single entry, same merge,

@@ -22,7 +22,7 @@ mod texture;
 
 pub use capture::{CaptureDone, CaptureInfo};
 
-use mirror::{PipelineMirror, TargetMirror};
+use mirror::{PipelineMirror, SubTargetMirror, TargetMirror};
 use texture::YuvGroup;
 
 // All GL work - texture uploads, shader passes, offscreen rasterization,
@@ -73,6 +73,10 @@ pub struct Context {
   // test - the flush never renders a manual target, so a cycle is only a
   // hazard when every member is flush-rendered (see set_target_textures).
   manual_targets: RefCell<HashSet<u64>>,
+  // Sub-target id -> its parent and rectangle (see `SubTargetMirror`); a
+  // tile is in `targets` like any draw target but never in the texture
+  // registry.
+  sub_targets: RefCell<HashMap<u64, SubTargetMirror>>,
   // Depth texture id -> the draw target owning it (create_draw_target with
   // DepthStorage::Texture). A depth id is a registered, sampler-only id:
   // for every graph question (edges, cycles, content propagation,
@@ -179,6 +183,7 @@ impl Context {
       targets: RefCell::new(HashMap::new()),
       shader_sources: RefCell::new(HashMap::new()),
       manual_targets: RefCell::new(HashSet::new()),
+      sub_targets: RefCell::new(HashMap::new()),
       depth_ids: RefCell::new(HashMap::new()),
       content_changes: RefCell::new(HashSet::new()),
       program_uniforms: RefCell::new(HashMap::new()),

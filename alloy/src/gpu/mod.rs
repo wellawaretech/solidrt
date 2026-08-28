@@ -20,13 +20,13 @@ mod vocab;
 pub use buffer::{release_buffer, GpuBuffer};
 pub use lease::WriteLeases;
 pub use limits::GpuLimits;
-pub use pass::{composite_program_over_window, render_program_to_fbo, render_program_to_window, PassInput};
+pub use pass::{composite_program_over_window, render_program_to_fbo, render_program_to_window, PassInput, TILE_CLEAR_FRAGMENT};
 pub use program::{
   compile_stage, delete_stage, release_pipeline, release_program, CompiledStage, RenderPipeline, ShaderProgram,
 };
 pub use resources::{
   GpuBufferInfo, GpuPipelineInfo, GpuProgramInfo, GpuRenderPipelineInfo, GpuResources, GpuTextureInfo,
-  GpuWindowShaderInfo,
+  GpuWindowShaderInfo, GpuRegionInfo,
 };
 pub use spec::{DepthStorage, DrawSpec, NodeShader, PipelineSpec, TargetSpec, WindowShader};
 pub use target::{create_layer_target, EntryBuffers, ShaderTexture};

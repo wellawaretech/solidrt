@@ -3738,7 +3738,7 @@ import { on as on3 } from "srt:events";
 import { on as on4 } from "srt:events";
 // ../../packages/core/src/gpu.ts
 import * as gpu from "flux:gpu";
-import { depthTexture, destroyTexture as destroyTexture2, endBufferWrite, resizeTexture, setTargetParams as setTargetParams2, setTargetSize as setTargetSize2, setTargetTextures, uploadTexture } from "flux:gpu";
+import { depthTexture, destroyTexture as destroyTexture2, endBufferWrite, resizeTexture, setTargetParams as setTargetParams2, setTargetRect, setTargetSize as setTargetSize2, setTargetTextures, uploadTexture } from "flux:gpu";
 import { copyTexture, destroyBuffer as destroyBuffer2, renderTarget, setDraw } from "flux:gpu";
 import { addDraw, removeDraw, setDrawBuffers, setDrawOrder, setDrawParams, setDrawRange, setDrawTextures } from "flux:gpu";
 import { limits } from "flux:gpu";

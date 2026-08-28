@@ -30,6 +30,18 @@ pub(super) struct TargetMirror {
   pub(super) entries: Option<DrawListMirror>,
 }
 
+// UI-side mirror of a sub-target (a draw target created `into` another):
+// the parent and the rectangle it renders into (top-left origin). What
+// binding validation reads to keep a tile out of the sampler graph and to
+// treat parent and tiles as one target for feedback and cycle questions.
+pub(super) struct SubTargetMirror {
+  pub(super) parent: u64,
+  pub(super) x: i32,
+  pub(super) y: i32,
+  pub(super) width: u32,
+  pub(super) height: u32,
+}
+
 // UI-side mirror of a draw target's entry list: stable id allocation plus
 // per-entry validation state. Entry ids are target-scoped and never reused,
 // so a stale id from a removed entry errors instead of aliasing.

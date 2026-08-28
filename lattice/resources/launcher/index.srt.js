@@ -4987,8 +4987,33 @@ function keyboardHeight() {
   }
   return keyboardHeightAccessor();
 }
+var layoutHandlers = [];
+var layoutSubscribed = false;
+function runLayoutHandlers() {
+  for (let fn of [...layoutHandlers]) {
+    try {
+      fn();
+    } catch (err) {
+      console.error("Error in onLayout handler:", err);
+    }
+  }
+  try {
+    flush();
+  } catch (err) {
+    console.error("Error in reactive flush:", err);
+  }
+}
 function onLayout(fn) {
-  let unsubscribe = on2("postLayout", fn);
+  if (!layoutSubscribed) {
+    layoutSubscribed = true;
+    on2("postLayout", runLayoutHandlers);
+  }
+  layoutHandlers.push(fn);
+  let unsubscribe = () => {
+    let i = layoutHandlers.indexOf(fn);
+    if (i >= 0)
+      layoutHandlers.splice(i, 1);
+  };
   onCleanup(unsubscribe);
   return unsubscribe;
 }
@@ -5775,7 +5800,7 @@ var capabilities = {
 };
 // ../../packages/core/src/gpu.ts
 import * as gpu from "flux:gpu";
-import { depthTexture, destroyTexture as destroyTexture2, endBufferWrite, resizeTexture, setTargetParams as setTargetParams2, setTargetSize as setTargetSize2, setTargetTextures, uploadTexture } from "flux:gpu";
+import { depthTexture, destroyTexture as destroyTexture2, endBufferWrite, resizeTexture, setTargetParams as setTargetParams2, setTargetRect, setTargetSize as setTargetSize2, setTargetTextures, uploadTexture } from "flux:gpu";
 import { copyTexture, destroyBuffer as destroyBuffer2, renderTarget, setDraw } from "flux:gpu";
 import { addDraw, removeDraw, setDrawBuffers, setDrawOrder, setDrawParams, setDrawRange, setDrawTextures } from "flux:gpu";
 import { limits } from "flux:gpu";
@@ -5934,6 +5959,12 @@ function createScroll(viewport, content, options = {}) {
     x: 0,
     y: 0
   });
+  let [range, setRange] = createSignal({
+    x: 0,
+    y: 0
+  });
+  let [behavior, setBehavior] = createSignal("auto");
+  let lastBehavior = "auto";
   let origin = new Error().stack ?? "";
   let warnedCollapsed = false;
   let maxX = 0;
@@ -5942,11 +5973,15 @@ function createScroll(viewport, content, options = {}) {
     x: canX ? Math.max(0, Math.min(x, maxX)) : 0,
     y: canY ? Math.max(0, Math.min(y, maxY)) : 0
   });
-  let set = (x, y) => {
+  let set = (x, y, b = "auto") => {
     let cur = offset();
     let next = clamp2(x, y);
     if (next.x !== cur.x || next.y !== cur.y)
       setOffset(next);
+    if (b !== lastBehavior) {
+      lastBehavior = b;
+      setBehavior(b);
+    }
   };
   onLayout(() => {
     let vp = viewport();
@@ -5969,20 +6004,31 @@ ${origin}`);
     }
     maxX = Math.max(0, cb.width - vb.width);
     maxY = Math.max(0, cb.height - vb.height);
+    let r = range();
+    let rx = canX ? maxX : 0;
+    let ry = canY ? maxY : 0;
+    if (r.x !== rx || r.y !== ry)
+      setRange({
+        x: rx,
+        y: ry
+      });
     let cur = offset();
     let next = clamp2(cur.x, cur.y);
-    if (next.x !== cur.x || next.y !== cur.y) {
+    if (next.x !== cur.x || next.y !== cur.y)
       setOffset(next);
-      flush();
-    }
   });
   return {
     offset,
-    scrollBy: (dx, dy) => {
+    range,
+    behavior,
+    scrollTo: (o) => {
       let cur = offset();
-      set(cur.x + dx, cur.y + dy);
+      set(o.x ?? cur.x, o.y ?? cur.y, o.behavior);
     },
-    scrollTo: (x, y) => set(x, y)
+    scrollBy: (o) => {
+      let cur = offset();
+      set(cur.x + (o.x ?? 0), cur.y + (o.y ?? 0), o.behavior);
+    }
   };
 }
 // ../../packages/core/src/arena.ts
@@ -7071,7 +7117,6 @@ function createTextEditorLayout(viewport, input) {
     let c = caret();
     setScrollX(wrap ? 0 : follow(scrollX(), c.x, caretWidth, vw, contentWidth + caretWidth));
     setScrollY(follow(scrollY(), c.y, c.height, vh, contentHeight));
-    flush();
   });
   return {
     lines,
@@ -7753,17 +7798,28 @@ function ScrollView(props) {
   let scroll = createScroll(() => viewport, () => content, {
     axis: props.horizontal ? "horizontal" : "vertical"
   });
+  onSettled(() => {
+    untrack(() => props.scrollRef)?.(scroll);
+  });
   let pan = createPan({
     axis: props.horizontal ? "horizontal" : "vertical",
     onPanStart: () => setDragging(true),
-    onPanMove: (dx, dy) => scroll.scrollBy(-dx, -dy),
+    onPanMove: (dx, dy) => scroll.scrollBy({
+      x: -dx,
+      y: -dy
+    }),
     onPanEnd: () => setDragging(false)
   });
   let onWheel = (e) => {
     if (props.horizontal)
-      scroll.scrollBy(e.deltaX || e.deltaY, 0);
+      scroll.scrollBy({
+        x: e.deltaX || e.deltaY
+      });
     else
-      scroll.scrollBy(e.deltaX, e.deltaY);
+      scroll.scrollBy({
+        x: e.deltaX,
+        y: e.deltaY
+      });
   };
   let split = () => {
     let t = splitTransition(props.transition);
@@ -7797,7 +7853,7 @@ function ScrollView(props) {
     } : {
       ...user ?? {}
     };
-    if (dragging()) {
+    if (dragging() || scroll.behavior() === "instant") {
       let {
         scrollX,
         scrollY,
@@ -7902,17 +7958,17 @@ function ScrollView(props) {
     get flexDirection() {
       return direction();
     },
-    get scrollX() {
-      return scroll.offset().x;
-    },
-    get scrollY() {
-      return scroll.offset().y;
-    },
     get transition() {
       return viewportTransition();
     },
     get onTransitionEnd() {
       return transitionEndFor("root", props.onTransitionEnd);
+    },
+    get scrollX() {
+      return scroll.offset().x;
+    },
+    get scrollY() {
+      return scroll.offset().y;
     }
   }, () => pan.handlers, {
     onWheel

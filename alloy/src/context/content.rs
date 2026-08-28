@@ -10,6 +10,8 @@ impl Context {
   /// per-frame write burst on one target costs one closure walk. Drained by
   /// `take_content_changes`.
   pub(super) fn note_content(&self, id: u64) {
+    // A sub-target's pixels are its parent's.
+    let id = self.parent_of(id).unwrap_or(id);
     let mut changes = self.content_changes.borrow_mut();
     if !changes.insert(id) {
       return;
@@ -70,10 +72,13 @@ impl Context {
 /// `barriers`: the sampling-cycle test behind every bind path. Barriers are
 /// the manual targets - the flush never renders one, so a path through one
 /// can never be part of a flush-ordered feedback loop and does not count.
-/// Pure over the id graph, so it unit-tests without a Context.
+/// `tiles` (parent -> its sub-targets) folds a tile's edges into its
+/// parent's: the parent's pass draws what the tiles bind. Pure over the id
+/// graph, so it unit-tests without a Context.
 pub(crate) fn samples_transitively(
   sources: &HashMap<u64, HashMap<(u64, String), u64>>,
   barriers: &HashSet<u64>,
+  tiles: &HashMap<u64, Vec<u64>>,
   from: u64,
   to: u64,
 ) -> bool {
@@ -84,8 +89,10 @@ pub(crate) fn samples_transitively(
       return true;
     }
     if visited.insert(node) && !barriers.contains(&node) {
-      if let Some(srcs) = sources.get(&node) {
-        stack.extend(srcs.values().copied());
+      for member in std::iter::once(&node).chain(tiles.get(&node).into_iter().flatten()) {
+        if let Some(srcs) = sources.get(member) {
+          stack.extend(srcs.values().copied());
+        }
       }
     }
   }

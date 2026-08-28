@@ -108,10 +108,13 @@ belongs in the library:
    `@solidrt/3d` default, or a runtime policy keyed on the GPU.
 2. **Cheaper shadow filtering** (~12 ms; library). `SHADOW` in
    [packages/3d/src/glsl.ts](../../packages/3d/src/glsl.ts) is a hand-rolled
-   3x3 PCF loop, 9 fetches per caster per fragment. GLES 3.0 has
-   `sampler2DShadow` with a hardware 2x2 comparison in one instruction. That
-   is a better default everywhere, not only on weak hardware, and the tap
-   count wants to be a knob rather than a constant.
+   3x3 PCF loop, 9 fetches per caster per fragment, and the taps are the
+   single largest fragment cost measured here. The fix is already shaped in
+   [gpu-depth-compare-sampling.md](gpu-depth-compare-sampling.md): ES 3.0's
+   `sampler2DShadow` does the comparison in hardware at one LINEAR tap, four
+   taps' worth of work in one, with better quality than the loop can reach.
+   That item is the way to spend this budget; a plain tap-count knob is the
+   fallback if it stalls.
 3. **Shadow atlas, and fewer passes generally** (~6.5 ms; runtime plus
    library). Three casters means three passes, and the two view panels are
    two more. Both collapse to one pass each once a draw can name a

@@ -12,7 +12,8 @@
 // through @solidrt/3d's standard light uniforms, so nothing about the
 // shading is a constant baked into the GLSL, and the lights themselves cost
 // no pass. All three CAST (castShadow), which a scene allows up to
-// MAX_SHADOWS = MAX_LIGHTS: each owns a depth texture drawn from its own
+// MAX_SHADOWS = MAX_LIGHTS: each owns a tile of the scene's shadow atlas
+// (one depth texture, ONE pass for all three maps) drawn from its own
 // orthographic frustum, and both custom fragments read the whole set back
 // with SHADOW_SLOTS, SHADOW and SHADOW_LOOKUP from @solidrt/3d/glsl - the
 // same three constants the lit material composes. A shadow is therefore
@@ -56,7 +57,7 @@ import {
   windowSize,
 } from "@solidrt/core"
 import type { PointerEvent, WheelEvent } from "@solidrt/core"
-import { glsl, limits } from "@solidrt/core/gpu"
+import { createDrawTarget, glsl, limits, setTargetSize } from "@solidrt/core/gpu"
 import {
   add,
   createDirectionalLight,
@@ -213,11 +214,12 @@ const LIGHTING = glsl`
   uniform vec3 uLightDir[${MAX_LIGHTS}];
   uniform vec3 uLightColor[${MAX_LIGHTS}];
 
-  // The shadow set: one slot per directional light, all of it written by
-  // the scene at target level. uShadowMap<i> is light i's depth map (a
-  // white texel when it does not cast), uShadowMatrix[i] the light-space
-  // view-projection that rendered it, uShadowCast[i] whether it casts, and
-  // the two bias knobs are per light as well.
+  // The shadow set, all of it written by the scene at target level.
+  // uShadowAtlas holds every light's depth maps as tiles; light i's maps
+  // are map slots uShadowFirst[i] .. + uShadowCount[i] (0 when it does
+  // not cast; more than one for a cascaded light), each with its tile
+  // uShadowRect[j] and the light-space view-projection uShadowMatrix[j]
+  // that rendered it; the two bias knobs are per light.
   ${SHADOW_SLOTS}
 
   ${HEMISPHERE}
@@ -481,9 +483,10 @@ function App() {
     }
   })
   // Render at device pixels so the knot's silhouette stays crisp on hi-DPI,
-  // clamped to what the device can actually allocate. Every panel is its own
-  // target now, each sized from its own box - a small panel costs a small
-  // texture, and the three together cover about the pixels one full-window
+  // clamped to what the device can actually allocate. The hero panel is its
+  // own target; the two side panels are tiles of ONE atlas target, stacked
+  // (top above bottom), so they cost one render pass between them instead
+  // of two - and the three together cover about the pixels one full-window
   // view used to.
   let targetSize = createMemo(() => {
     let box = panels()
@@ -492,7 +495,13 @@ function App() {
       width: clamp(Math.round(b.w * scale), 1, limits.maxTextureSize),
       height: clamp(Math.round(b.h * scale), 1, limits.maxTextureSize),
     })
-    return { main: pixels(box.main), top: pixels(box.top), bottom: pixels(box.bottom) }
+    let top = pixels(box.top)
+    let bottom = pixels(box.bottom)
+    let atlas = {
+      width: Math.max(top.width, bottom.width),
+      height: Math.min(top.height + bottom.height, limits.maxTextureSize),
+    }
+    return { main: pixels(box.main), top, bottom, atlas }
   })
   let initial = untrack(targetSize)
 
@@ -604,14 +613,22 @@ function App() {
   setCastShadow(knot, true)
 
   // The three renderings of ONE scene. A view shares the scene's geometry,
-  // materials, lights and shadow maps - it is another target, another camera
-  // and one entry per mesh, and the core's flush writes every entry's world
-  // matrix at once, so the extra panels cost the app nothing per frame.
+  // materials, lights and shadow maps - it is another camera and one entry
+  // per mesh, and the core's flush writes every entry's world matrix at
+  // once, so the extra panels cost the app nothing per frame. Both side
+  // views render `into` one atlas target as tiles: one pass for the pair,
+  // each panel's <d-texture> showing its tile through srcX/srcY.
+  let atlas = createDrawTarget(initial.atlas.width, initial.atlas.height, null, {
+    depth: true,
+    clearColor: VIEW_CLEAR,
+    label: "side-atlas",
+  })
   let topView = scene.createView({
     width: initial.top.width,
     height: initial.top.height,
     clearColor: VIEW_CLEAR,
     label: "top-right",
+    into: atlas,
   })
   topView.setCamera({ fov: (FOV * 180) / Math.PI, near: 0.1, far: 80 })
   let bottomView = scene.createView({
@@ -619,6 +636,8 @@ function App() {
     height: initial.bottom.height,
     clearColor: VIEW_CLEAR,
     label: "bottom-right",
+    into: atlas,
+    y: initial.top.height,
   })
   bottomView.setCamera({ fov: (FOV * 180) / Math.PI, near: 0.1, far: 80 })
   // A view has the same setCamera as a scene, which is all an orbit camera
@@ -661,8 +680,9 @@ function App() {
   // working.
   createEffect(targetSize, size => {
     scene.setSize(size.main.width, size.main.height)
-    topView.setSize(size.top.width, size.top.height)
-    bottomView.setSize(size.bottom.width, size.bottom.height)
+    setTargetSize(atlas, size.atlas.width, size.atlas.height)
+    topView.setRect({ x: 0, y: 0, width: size.top.width, height: size.top.height })
+    bottomView.setRect({ x: 0, y: size.top.height, width: size.bottom.width, height: size.bottom.height })
   })
 
   // One panel's input, spread onto its own texture leaf: that camera's drag
@@ -756,8 +776,24 @@ function App() {
       }}
     >
       <d-texture src={scene.texture} {...panels().main} {...input[0]} />
-      <d-texture src={topView.texture} {...panels().top} {...input[1]} />
-      <d-texture src={bottomView.texture} {...panels().bottom} {...input[2]} />
+      <d-texture
+        src={atlas}
+        srcX={0}
+        srcY={0}
+        srcW={targetSize().top.width}
+        srcH={targetSize().top.height}
+        {...panels().top}
+        {...input[1]}
+      />
+      <d-texture
+        src={atlas}
+        srcX={0}
+        srcY={targetSize().top.height}
+        srcW={targetSize().bottom.width}
+        srcH={targetSize().bottom.height}
+        {...panels().bottom}
+        {...input[2]}
+      />
       <view
         width={panels().main.w}
         height={panels().main.h}

@@ -10,7 +10,7 @@ use crate::gpu::{
 use crate::raster::RasterCmd;
 
 use super::content::samples_transitively;
-use super::mirror::{entry_mirror, DrawListMirror, EntryMirror, TargetMirror};
+use super::mirror::{entry_mirror, DrawListMirror, EntryMirror, SubTargetMirror, TargetMirror};
 use super::Context;
 
 impl Context {
@@ -83,27 +83,44 @@ impl Context {
     let current_count = current.map_or(0, |c| c.keys().filter(|(e, _)| *e == entry).count());
     let added = textures.iter().filter(|b| current.is_none_or(|c| !c.contains_key(&(entry, b.name.clone())))).count();
     limits.check_texture_units(current_count + added)?;
+    // A parent and its sub-targets render in one pass over one storage, so
+    // for feedback and cycle questions they are one target: the family of
+    // `id` is itself, its parent and its parent's tiles (or its own tiles).
+    let tiles = self.tiles_by_parent();
+    let mut family = vec![id];
+    if let Some(parent) = self.parent_of(id) {
+      family.push(parent);
+      family.extend(tiles.get(&parent).into_iter().flatten().copied());
+    } else {
+      family.extend(tiles.get(&id).into_iter().flatten().copied());
+    }
     for binding in textures {
       let TextureBinding { name, id: src_id, .. } = binding;
       if self.textures.get(*src_id).is_none() {
+        if let Some(parent) = self.parent_of(*src_id) {
+          return Err(format!(
+            "sampler '{name}' binds target {src_id}, a sub-target with no texture of its own; bind its parent {parent}"
+          ));
+        }
         return Err(format!("texture {src_id} (sampler '{name}') not found"));
       }
       self.check_depth_binding(binding)?;
       // A depth id stands for its owner in every graph question: binding a
       // target's own depth is the same feedback as binding its color.
       let src = self.source_of(*src_id);
-      if src == id {
+      if family.contains(&src) {
         return Err(format!("sampler '{name}' binds shader texture {id} to its own target (same-pass feedback)"));
       }
       // The flush-rendered subgraph is acyclic, and this call only changes
       // `id`'s own outgoing edges, so any new all-pure cycle runs through
-      // one of the updated bindings: per binding, reject if the target can
-      // already be reached from the new source without passing through a
-      // manual target. A manual `id` needs no walk at all - every cycle
-      // through it has a manual member (its direct self-bind was rejected
-      // above). The walk never needs `id`'s own edges (it stops on reaching
-      // `id`), so the pre-update graph is the right one.
-      if !manual.contains(&id) && samples_transitively(&sources, &manual, src, id) {
+      // one of the updated bindings: per binding, reject if the target (or
+      // a member of its family) can already be reached from the new source
+      // without passing through a manual target. A manual `id` needs no
+      // walk at all - every cycle through it has a manual member (its
+      // direct self-bind was rejected above). The walk never needs `id`'s
+      // own edges (it stops on reaching `id`), so the pre-update graph is
+      // the right one.
+      if !manual.contains(&id) && family.iter().any(|to| samples_transitively(&sources, &manual, &tiles, src, *to)) {
         return Err(format!("sampler '{name}' would create a sampling cycle back to shader texture {id}"));
       }
     }
@@ -305,12 +322,102 @@ impl Context {
     Ok(id)
   }
 
+  /// Create a sub-target: a draw target that renders into the
+  /// `spec`-sized rectangle at `(x, y)` (top-left origin, the texture
+  /// leaf's `srcX`/`srcY` space) of draw target `parent`'s storage instead
+  /// of owning any. It is a draw target to every verb (entries, shared
+  /// params and bindings, order, size via `set_target_rect`) with its own
+  /// dirty state, and the parent renders all its tiles in ONE pass: a
+  /// changed tile redraws over its rectangle alone, a changed parent
+  /// redraws everything. The id is not a texture: nothing can sample,
+  /// display, read back or copy it - those name the parent, whose depth is
+  /// the tile's too. A rectangle partly outside the parent is clipped.
+  /// Errs when `parent` is not a flush-rendered draw target that owns its
+  /// storage, or when `spec` asks for a render mode, load op or sample
+  /// count of its own (the parent's apply).
+  pub fn create_sub_target(&self, parent: u64, x: i32, y: i32, spec: TargetSpec) -> Result<u64, String> {
+    self.gpu_limits().check_texture_size(spec.width, spec.height)?;
+    if spec.manual || spec.load {
+      return Err("a sub-target has no render mode or loadOp of its own; it renders with its parent".to_string());
+    }
+    if spec.samples > 1 {
+      return Err("a sub-target has no samples of its own; the parent's multisampling covers it".to_string());
+    }
+    if self.sub_targets.borrow().contains_key(&parent) {
+      return Err(format!("target {parent} is itself a sub-target; tiles do not nest"));
+    }
+    if self.manual_targets.borrow().contains(&parent) {
+      return Err(format!("target {parent} is a manual target; a sub-target needs a flush-rendered parent"));
+    }
+    let depth = {
+      let targets = self.targets.borrow();
+      let mirror = targets.get(&parent).ok_or_else(|| format!("target {parent} not found"))?;
+      let Some(list) = mirror.entries.as_ref() else {
+        return Err(format!("target {parent} is not a draw target (create it with createDrawTarget)"));
+      };
+      list.depth
+    };
+    let id = self.textures.allocate_id();
+    let (width, height) = (spec.width, spec.height);
+    self.rpc(|reply| RasterCmd::CreateSubTarget { id, parent, x, y, spec, reply })??;
+    self.targets.borrow_mut().insert(
+      id,
+      TargetMirror {
+        uniforms: Rc::new(UniformTable::default()),
+        draw: None,
+        bounds: DrawBounds::default(),
+        buffers: BufferIds::default(),
+        entries: Some(DrawListMirror { depth, depth_texture: None, next_draw: 1, entries: HashMap::new() }),
+      },
+    );
+    self.shader_sources.borrow_mut().insert(id, HashMap::new());
+    self.sub_targets.borrow_mut().insert(id, SubTargetMirror { parent, x, y, width, height });
+    Ok(id)
+  }
+
+  /// Move and resize sub-target `id`'s rectangle in its parent (top-left
+  /// origin; a rectangle partly outside the parent is clipped, so a parent
+  /// resize and its tiles' rectangles can land in any order). The parent
+  /// re-renders in full at the next flush. Errs for anything but a
+  /// sub-target. The caller must request a frame.
+  pub fn set_target_rect(&self, id: u64, x: i32, y: i32, width: u32, height: u32) -> Result<(), String> {
+    self.gpu_limits().check_texture_size(width, height)?;
+    let mut tiles = self.sub_targets.borrow_mut();
+    let tile = tiles.get_mut(&id).ok_or_else(|| format!("target {id} is not a sub-target"))?;
+    tile.x = x;
+    tile.y = y;
+    tile.width = width;
+    tile.height = height;
+    drop(tiles);
+    self.send(RasterCmd::SetTargetRect { id, x, y, width, height });
+    self.note_content(id);
+    Ok(())
+  }
+
+  /// The sub-target `id` is a tile of, when it is one.
+  pub(super) fn parent_of(&self, id: u64) -> Option<u64> {
+    self.sub_targets.borrow().get(&id).map(|t| t.parent)
+  }
+
+  /// Parent -> its sub-targets, for the graph walks that must see a tile's
+  /// bindings as its parent's.
+  pub(super) fn tiles_by_parent(&self) -> HashMap<u64, Vec<u64>> {
+    let mut map: HashMap<u64, Vec<u64>> = HashMap::new();
+    for (id, tile) in self.sub_targets.borrow().iter() {
+      map.entry(tile.parent).or_default().push(*id);
+    }
+    map
+  }
+
   /// The depth texture id of draw target `target` (created with
   /// `DepthStorage::Texture`): a sampler-only id, stable for the target's
   /// life (resizes follow the color). Bind it like any texture; it samples
   /// as window depth in `.r`. Errs for a non-draw target and for a target
   /// without texture depth.
   pub fn depth_texture(&self, target: u64) -> Result<u64, String> {
+    if let Some(parent) = self.parent_of(target) {
+      return Err(format!("target {target} is a sub-target; its depth is its parent's (depthTexture({parent}))"));
+    }
     let targets = self.targets.borrow();
     let mirror = targets.get(&target).ok_or_else(|| format!("target {target} not found"))?;
     let Some(list) = mirror.entries.as_ref() else {

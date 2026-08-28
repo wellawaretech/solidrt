@@ -110,6 +110,7 @@ export {
   endBufferWrite,
   resizeTexture,
   setTargetParams,
+  setTargetRect,
   setTargetSize,
   setTargetTextures,
   uploadTexture,
@@ -389,6 +390,13 @@ export function createShaderTarget(
  * driven later with `setTargetTextures`, same precedence and coverage
  * rules.
  *
+ * `into` makes a sub-target: a draw target rendering into the rectangle at
+ * `x`/`y` (top-left origin) of draw target `into`'s storage, so N views or
+ * N shadow maps share one texture and ONE pass; the id is a draw target to
+ * every verb but not a texture (display and sample the parent, with
+ * `srcX`/`srcY` on the leaf), and `setTargetRect` moves it. Auto-free works
+ * the same way; destroying the parent takes its tiles.
+ *
  * The render contract is unchanged: the list is input data, so an ordinary
  * (`render: "auto"`) draw target re-renders exactly when its entries or
  * their inputs change - a static scene costs zero passes, and one render is
@@ -408,6 +416,9 @@ export function createDrawTarget(
     render?: "auto" | "manual"
     loadOp?: "clear" | "load"
     samples?: 1 | 2 | 4 | 8
+    into?: gpu.TextureId
+    x?: number
+    y?: number
   } & CreateOptions &
     SamplerOptions,
 ): gpu.TextureId {

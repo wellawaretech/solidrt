@@ -312,6 +312,11 @@ impl Context {
     if !self.targets.borrow().contains_key(&id) {
       return Err(format!("target {id} not found"));
     }
+    // A sub-target's size is its rectangle's; the origin stays.
+    let tile = self.sub_targets.borrow().get(&id).map(|t| (t.x, t.y));
+    if let Some((x, y)) = tile {
+      return self.set_target_rect(id, x, y, width, height);
+    }
     self.gpu_limits().check_texture_size(width, height)?;
     let handles = self.rpc(|reply| RasterCmd::ResizeShaderTexture { id, width, height, reply })??;
     let sampler = self.textures.get(id).map(|e| e.sampler()).unwrap_or_default();
@@ -439,6 +444,13 @@ impl Context {
     if !pending.contains(&id) {
       pending.push(id);
     }
+    // A draw target takes its sub-targets with it: they render into its
+    // storage and have no texture entry, so nothing else keeps them.
+    for (tile, mirror) in self.sub_targets.borrow().iter() {
+      if mirror.parent == id && !pending.contains(tile) {
+        pending.push(*tile);
+      }
+    }
     // A YUV output takes its planes with it. They are never referenced by
     // the render tree, so they reclaim at the next sweep; the group is
     // removed now, so a late update_yuv errs instead of dirtying a target
@@ -491,6 +503,7 @@ impl Context {
         self.targets.borrow_mut().remove(&id);
         self.shader_sources.borrow_mut().remove(&id);
         self.manual_targets.borrow_mut().remove(&id);
+        self.sub_targets.borrow_mut().remove(&id);
         self.send(RasterCmd::DestroyTexture { id });
         false
       });

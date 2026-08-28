@@ -359,8 +359,9 @@ Shaped, not started.
   run_pass sets one viewport for the whole pass, so N logical render regions
   means N targets and N passes. A pass costs 2.15 ms flat on an Adreno 610
   regardless of size or content, which makes this a real budget item on
-  mobile. An optional per-entry viewport unlocks shadow atlases, cascades and
-  multi-view rendering at one pass each.
+  mobile. Sub-targets (a draw target rendering into a rect of another's
+  storage) unlock shadow atlases, cascades and multi-view rendering at one
+  pass each.
 - **[Whole-system GPU attribution, per platform](backlog/gpu-system-attribution.md)** [2026-08-13]
   Answering "who else is burning the GPU" needs a different mechanism on every
   OS, so it wants a documented per-platform recipe or an srt doctor helper
@@ -462,6 +463,11 @@ Shaped, not started.
   seen, so paint cost is O(mounted content) - ~7 us/node, ~155 ms/frame at 17k
   nodes; add a cull rect to the walk and a conservative per-subtree paint
   envelope so off-screen subtrees are skipped before build().
+- **[parseSvg tree output](backlog/parse-svg-tree.md)** [2026-08-28]
+  parseSvg flattens usvg's group tree into one draw list, losing group ids,
+  group opacity and group transforms; add an opt-in tree output (groups with
+  id/opacity/transform, paths in local space) backed by a `transform` matrix
+  prop on views, keeping the flat list as the default.
 - **[Path dashing through the shared dash walker](backlog/path-dashing.md)** [2026-08-27]
   <path>/<d-path> take onLength/offLength/dashOffset with line's semantics -
   the stroke walks the lyon-flattened subpaths through the walker shared with

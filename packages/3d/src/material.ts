@@ -216,10 +216,11 @@ export type LitOptions = UnlitOptions & {
 // composes by hand, per flag: map x vertexColors x triplanar x shadow x
 // transparent. Lights arrive through the scene's shared params
 // (light nodes); the base color, map and highlight are per entry. The
-// shadow set is shared too and indexed like the lights: slot i is
-// directional light i's map, matrix and biases (target-level, bound by
-// the scene), uShadowCast[i] says whether it casts; SHADOW_LOOKUP turns
-// the index into the factor.
+// shadow set is shared too and indexed like the lights: one atlas sampler,
+// directional light i's maps (one, or its cascades) as map slots
+// uShadowFirst[i] .. + uShadowCount[i] with a tile rect and a matrix
+// each, and its biases (target-level, bound by the scene); uShadowCount
+// 0 means it does not cast; SHADOW_LOOKUP turns the index into the factor.
 function litFragment(map: boolean, vertexColors: boolean, triplanar: boolean, shadow: boolean): string {
   return glsl`
     in vec3 vWorldPos;

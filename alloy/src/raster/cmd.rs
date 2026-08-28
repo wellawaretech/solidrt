@@ -124,6 +124,16 @@ pub(crate) enum RasterCmd {
     depth: DepthStorage,
     reply: mpsc::Sender<Result<TargetHandles, String>>,
   },
+  /// Create a sub-target: a draw target rendering into the `spec`-sized
+  /// rectangle at `(x, y)` (top-left origin) of draw target `parent`'s
+  /// storage, registered under `id` in the shader map only (it has no
+  /// texture of its own). Validated UI-side (parent kind and mode, tile
+  /// options); the reply carries a raster-side failure.
+  CreateSubTarget { id: u64, parent: u64, x: i32, y: i32, spec: TargetSpec, reply: mpsc::Sender<Result<(), String>> },
+  /// Move and resize sub-target `id`'s rectangle (top-left origin,
+  /// validated UI-side). Marks the parent dirty: its next render is a full
+  /// one, which is what clears the rectangle the tile left.
+  SetTargetRect { id: u64, x: i32, y: i32, width: u32, height: u32 },
   /// Add entry `draw` (a UI-allocated, target-scoped id) to a draw target's
   /// list: appended, or inserted immediately before entry `before` when
   /// given. Validated UI-side against the mirrors, so this is

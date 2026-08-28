@@ -31,6 +31,33 @@ pub(super) struct ResolvedDraw<'a> {
   pub(super) inputs: Vec<PassInput>,
 }
 
+/// One group of a mesh pass: an ordered run of draws sharing a viewport, a
+/// clear and the shared params. A pass has one group when a target renders
+/// its own entries over its whole storage (`rect` None: the pass viewport,
+/// no clear of its own - the pass-level clear covers it) and one more per
+/// sub-target drawn into a rectangle of that storage (`rect` Some, in
+/// viewport pixels - which for a target is image space, row 0 = top:
+/// viewport and scissor are set to it, and the rectangle is wiped before
+/// the group's draws - `clear` the color when given, `clear_depth` the
+/// depth to the far plane). The wipe is a covering-triangle DRAW through
+/// the pass's `tile_clear` program, never a scissored glClear: on a tiled
+/// GPU a glClear mid-pass ends the pass and restarts it with a full
+/// load/store of the whole surface, which cost more than the passes the
+/// tiles were merged to save (measured on an Adreno 610). `iResolution`
+/// is the group's size.
+pub(super) struct DrawGroup<'a> {
+  pub(super) rect: Option<(i32, i32, u32, u32)>,
+  pub(super) clear: Option<[f32; 4]>,
+  pub(super) clear_depth: bool,
+  pub(super) shared: &'a [(String, ParamValue)],
+  pub(super) draws: &'a [ResolvedDraw<'a>],
+}
+
+/// The tile-clear program's fragment stage (over the fullscreen vertex
+/// stage `ShaderProgram::new_fragment` supplies): the clear color, and the
+/// far plane into depth. Compiled once per raster thread by the owner.
+pub const TILE_CLEAR_FRAGMENT: &str = "uniform vec4 uColor;\nvoid main() { fragColor = uColor; gl_FragDepth = 1.0; }";
+
 /// What a `run_pass` invocation executes.
 pub(super) enum PassDraw<'a> {
   /// Attributeless triangles (vertex fetch via gl_VertexID): the fragment
@@ -46,13 +73,24 @@ pub(super) enum PassDraw<'a> {
     clear: Option<[f32; 4]>,
     blend: bool,
   },
-  /// A mesh target's pass: clear once (color unless loadOp "load"; depth
-  /// always, when the target owns storage), then the draw entries in list
-  /// order, each with its own program, uniforms, inputs, VAO, and its
-  /// pipeline's blend/depth state. `shared` carries the target-level params
-  /// every entry gets, applied before the entry's own so an entry naming the
-  /// same uniform overrides the shared value.
-  Draws { clear: Option<[f32; 4]>, depth: bool, shared: &'a [(String, ParamValue)], draws: &'a [ResolvedDraw<'a>] },
+  /// A mesh target's pass: the pass-level clear once (`clear` = the color,
+  /// absent under loadOp "load" or on a partial render; `clear_depth` = the
+  /// depth buffer too), then the groups in order, each group's draw entries
+  /// in list order with their own program, uniforms, inputs, VAO, and
+  /// pipeline blend/depth state. `depth` says the target owns depth storage
+  /// (entries may test against it). Each group's `shared` carries the
+  /// target-level params every entry of the group gets, applied before the
+  /// entry's own so an entry naming the same uniform overrides the shared
+  /// value. `tile_clear` is the program the groups' rectangle wipes draw
+  /// with (see `DrawGroup`); None skips those wipes (the owner failed to
+  /// compile it, already logged).
+  Draws {
+    clear: Option<[f32; 4]>,
+    clear_depth: bool,
+    depth: bool,
+    groups: &'a [DrawGroup<'a>],
+    tile_clear: Option<&'a ShaderProgram>,
+  },
 }
 
 /// Set one uniform from a param value, dispatching on the reflected slot
@@ -246,6 +284,8 @@ pub(super) fn run_pass(
     let prev_active = gl.get_parameter_i32(glow::ACTIVE_TEXTURE);
     let mut prev_vp = [0i32; 4];
     gl.get_parameter_i32_slice(glow::VIEWPORT, &mut prev_vp);
+    let mut prev_scissor_box = [0i32; 4];
+    gl.get_parameter_i32_slice(glow::SCISSOR_BOX, &mut prev_scissor_box);
     let blend = gl.is_enabled(glow::BLEND);
     let depth = gl.is_enabled(glow::DEPTH_TEST);
     let scissor = gl.is_enabled(glow::SCISSOR_TEST);
@@ -321,15 +361,18 @@ pub(super) fn run_pass(
           gl.draw_arrays(glow::TRIANGLES, 0, vertex_count);
         }
       }
-      PassDraw::Draws { clear, depth: has_depth, shared, draws } => {
+      PassDraw::Draws { clear, clear_depth, depth: has_depth, groups, tile_clear } => {
         // Mesh pass: geometry does not cover the target, so clear first -
         // once, at the top; every entry then draws over the shared result.
         // Clear color, depth mask, depth func, clear-depth value, the blend
-        // func, and the cull face/winding are Impeller-cached state: save
-        // all of them here and restore after the list. With loadOp "load"
-        // (manual targets only) the color buffer keeps its previous contents
-        // - the accumulation unlock - while depth stays per-render scratch
-        // and always clears.
+        // func, the scissor box and the cull face/winding are
+        // Impeller-cached state: save all of them here and restore after
+        // the list. With loadOp "load" (manual targets only) the color
+        // buffer keeps its previous contents - the accumulation unlock -
+        // while depth stays per-render scratch and clears with every full
+        // render. A partial render (only some sub-targets redrawn) clears
+        // nothing at the pass level: each group wipes its own rectangle
+        // with a covering draw and the rest of the storage keeps its pixels.
         let prev_vao = gl.get_parameter_i32(glow::VERTEX_ARRAY_BINDING);
         let mut prev_clear = [0f32; 4];
         gl.get_parameter_f32_slice(glow::COLOR_CLEAR_VALUE, &mut prev_clear);
@@ -345,103 +388,148 @@ pub(super) fn run_pass(
         let prev_cull_face = gl.get_parameter_i32(glow::CULL_FACE_MODE) as u32;
         let prev_front_face = gl.get_parameter_i32(glow::FRONT_FACE) as u32;
 
-        let color_bit = match clear {
-          Some([r, g, b, a]) => {
-            gl.clear_color(r, g, b, a);
-            glow::COLOR_BUFFER_BIT
-          }
-          None => 0,
+        // The clear always writes depth (glClear honors the write mask).
+        // Impeller's clip-culling passes set their own depth-clear value
+        // (0.0) on this context; clearing with that inverts the test and
+        // silently discards every fragment. Always clear to the far plane.
+        gl.depth_mask(true);
+        gl.clear_depth_f32(1.0);
+        let clear_bits = |color: Option<[f32; 4]>, depth: bool| -> u32 {
+          let color_bit = match color {
+            Some([r, g, b, a]) => {
+              gl.clear_color(r, g, b, a);
+              glow::COLOR_BUFFER_BIT
+            }
+            None => 0,
+          };
+          color_bit | if depth { glow::DEPTH_BUFFER_BIT } else { 0 }
         };
-        if has_depth {
-          // The clear always writes depth (glClear honors the write mask).
-          gl.depth_mask(true);
-          // Impeller's clip-culling passes set their own depth-clear value
-          // (0.0) on this context; clearing with that inverts the test and
-          // silently discards every fragment. Always clear to the far plane.
-          gl.clear_depth_f32(1.0);
-          gl.clear(color_bit | glow::DEPTH_BUFFER_BIT);
-        } else if color_bit != 0 {
-          gl.clear(color_bit);
+        let bits = clear_bits(clear, clear_depth && has_depth);
+        if bits != 0 {
+          gl.clear(bits);
         }
 
-        for d in draws {
-          // Shared params first, the entry's own second: an entry naming the
-          // same uniform overwrites the shared value (specific beats general).
-          apply_program(gl, d.program, width, height, shared);
-          apply_params(gl, d.program, d.params);
-          bind_inputs(gl, d.program, &d.inputs, &mut saved_units, max_units);
-          // Depth test and write per entry: the pipeline's declared depth
-          // state, against the target-owned storage.
-          match (has_depth, d.desc.depth) {
-            (true, Some(state)) => {
-              gl.enable(glow::DEPTH_TEST);
-              gl.depth_func(glow::LESS);
-              gl.depth_mask(state.write);
-            }
-            _ => gl.disable(glow::DEPTH_TEST),
-          }
-          match d.desc.blend {
-            Some(BlendMode::Add) => {
-              gl.enable(glow::BLEND);
-              gl.blend_func(glow::ONE, glow::ONE);
-            }
-            Some(BlendMode::Multiply) => {
-              gl.enable(glow::BLEND);
-              gl.blend_func(glow::DST_COLOR, glow::ZERO);
-            }
-            Some(BlendMode::Alpha) => {
-              gl.enable(glow::BLEND);
-              gl.blend_func(glow::ONE, glow::ONE_MINUS_SRC_ALPHA);
-            }
-            None => gl.disable(glow::BLEND),
-          }
-          // Face culling per entry: winding is pinned (Impeller may have
-          // left either behind) to CW - which is counter-clockwise AS
-          // DISPLAYED, because the displayed image is the y flip of GL
-          // window space. That makes "front" mean what WebGPU's
-          // framebuffer-space rule means: counter-clockwise on screen, so
-          // standard meshes drawn with the usual y negation cull the
-          // intuitive way.
-          match d.desc.cull {
-            Some(mode) => {
-              gl.enable(glow::CULL_FACE);
-              gl.cull_face(mode.gl());
-              gl.front_face(glow::CW);
-            }
-            None => gl.disable(glow::CULL_FACE),
-          }
-          gl.bind_vertex_array(Some(d.vao));
-          // instance_count 1 keeps the plain draw - bit-identical to the
-          // non-instanced path (gl_InstanceID reads 0 either way); 0 draws
-          // nothing. gl_VertexID includes first_vertex, as in WebGPU (on an
-          // indexed draw it reads the index value). An indexed entry's
-          // element buffer is VAO state, bound since build_vao; the byte
-          // offset positions the range within it.
-          match d.index {
-            Some(fmt) => {
-              let offset = d.range.first_vertex * fmt.size();
-              if d.range.instance_count == 1 {
-                gl.draw_elements(d.desc.topology.gl(), d.range.vertex_count, fmt.gl(), offset);
-              } else {
-                gl.draw_elements_instanced(
-                  d.desc.topology.gl(),
-                  d.range.vertex_count,
-                  fmt.gl(),
-                  offset,
-                  d.range.instance_count,
-                );
+        for group in groups {
+          // A sub-target's group: viewport and scissor to its rectangle (the
+          // scissor is what confines the clear; the viewport transforms the
+          // draws), then wipe the rectangle. The whole-target group runs at
+          // the pass viewport with the scissor off.
+          let (gw, gh) = match group.rect {
+            Some((x, y, w, h)) => {
+              gl.viewport(x, y, w as i32, h as i32);
+              gl.scissor(x, y, w as i32, h as i32);
+              gl.enable(glow::SCISSOR_TEST);
+              // The rectangle wipe: a covering triangle writing the clear
+              // color (masked off when only depth clears) and the far plane
+              // (depth test ALWAYS so every fragment lands; skipped when
+              // depth does not clear). A draw, not a glClear - see DrawGroup.
+              let clear_depth = group.clear_depth && has_depth;
+              if let (Some(program), true) = (tile_clear, group.clear.is_some() || clear_depth) {
+                let color = group.clear.unwrap_or([0.0; 4]);
+                let params = [("uColor".to_string(), ParamValue::Array(color.to_vec()))];
+                apply_program(gl, program, w, h, &params);
+                gl.color_mask(group.clear.is_some(), group.clear.is_some(), group.clear.is_some(), group.clear.is_some());
+                if clear_depth {
+                  gl.enable(glow::DEPTH_TEST);
+                  gl.depth_func(glow::ALWAYS);
+                  gl.depth_mask(true);
+                } else {
+                  gl.disable(glow::DEPTH_TEST);
+                }
+                gl.disable(glow::BLEND);
+                gl.disable(glow::CULL_FACE);
+                gl.bind_vertex_array(None);
+                gl.draw_arrays(glow::TRIANGLES, 0, 3);
+                gl.color_mask(true, true, true, true);
+                gl.depth_func(glow::LESS);
               }
+              (w, h)
             }
             None => {
-              if d.range.instance_count == 1 {
-                gl.draw_arrays(d.desc.topology.gl(), d.range.first_vertex, d.range.vertex_count);
-              } else {
-                gl.draw_arrays_instanced(
-                  d.desc.topology.gl(),
-                  d.range.first_vertex,
-                  d.range.vertex_count,
-                  d.range.instance_count,
-                );
+              gl.viewport(origin.0, origin.1, width as i32, height as i32);
+              gl.disable(glow::SCISSOR_TEST);
+              (width, height)
+            }
+          };
+          for d in group.draws {
+            // Shared params first, the entry's own second: an entry naming the
+            // same uniform overwrites the shared value (specific beats general).
+            apply_program(gl, d.program, gw, gh, group.shared);
+            apply_params(gl, d.program, d.params);
+            bind_inputs(gl, d.program, &d.inputs, &mut saved_units, max_units);
+            // Depth test and write per entry: the pipeline's declared depth
+            // state, against the target-owned storage.
+            match (has_depth, d.desc.depth) {
+              (true, Some(state)) => {
+                gl.enable(glow::DEPTH_TEST);
+                gl.depth_func(glow::LESS);
+                gl.depth_mask(state.write);
+              }
+              _ => gl.disable(glow::DEPTH_TEST),
+            }
+            match d.desc.blend {
+              Some(BlendMode::Add) => {
+                gl.enable(glow::BLEND);
+                gl.blend_func(glow::ONE, glow::ONE);
+              }
+              Some(BlendMode::Multiply) => {
+                gl.enable(glow::BLEND);
+                gl.blend_func(glow::DST_COLOR, glow::ZERO);
+              }
+              Some(BlendMode::Alpha) => {
+                gl.enable(glow::BLEND);
+                gl.blend_func(glow::ONE, glow::ONE_MINUS_SRC_ALPHA);
+              }
+              None => gl.disable(glow::BLEND),
+            }
+            // Face culling per entry: winding is pinned (Impeller may have
+            // left either behind) to CW - which is counter-clockwise AS
+            // DISPLAYED, because the displayed image is the y flip of GL
+            // window space. That makes "front" mean what WebGPU's
+            // framebuffer-space rule means: counter-clockwise on screen, so
+            // standard meshes drawn with the usual y negation cull the
+            // intuitive way.
+            match d.desc.cull {
+              Some(mode) => {
+                gl.enable(glow::CULL_FACE);
+                gl.cull_face(mode.gl());
+                gl.front_face(glow::CW);
+              }
+              None => gl.disable(glow::CULL_FACE),
+            }
+            gl.bind_vertex_array(Some(d.vao));
+            // instance_count 1 keeps the plain draw - bit-identical to the
+            // non-instanced path (gl_InstanceID reads 0 either way); 0 draws
+            // nothing. gl_VertexID includes first_vertex, as in WebGPU (on an
+            // indexed draw it reads the index value). An indexed entry's
+            // element buffer is VAO state, bound since build_vao; the byte
+            // offset positions the range within it.
+            match d.index {
+              Some(fmt) => {
+                let offset = d.range.first_vertex * fmt.size();
+                if d.range.instance_count == 1 {
+                  gl.draw_elements(d.desc.topology.gl(), d.range.vertex_count, fmt.gl(), offset);
+                } else {
+                  gl.draw_elements_instanced(
+                    d.desc.topology.gl(),
+                    d.range.vertex_count,
+                    fmt.gl(),
+                    offset,
+                    d.range.instance_count,
+                  );
+                }
+              }
+              None => {
+                if d.range.instance_count == 1 {
+                  gl.draw_arrays(d.desc.topology.gl(), d.range.first_vertex, d.range.vertex_count);
+                } else {
+                  gl.draw_arrays_instanced(
+                    d.desc.topology.gl(),
+                    d.range.first_vertex,
+                    d.range.vertex_count,
+                    d.range.instance_count,
+                  );
+                }
               }
             }
           }
@@ -452,6 +540,8 @@ pub(super) fn run_pass(
         gl.disable(glow::BLEND);
         gl.disable(glow::DEPTH_TEST);
         gl.disable(glow::CULL_FACE);
+        gl.disable(glow::SCISSOR_TEST);
+        gl.scissor(prev_scissor_box[0], prev_scissor_box[1], prev_scissor_box[2], prev_scissor_box[3]);
         gl.blend_func_separate(prev_blend_func[0], prev_blend_func[1], prev_blend_func[2], prev_blend_func[3]);
         gl.cull_face(prev_cull_face);
         gl.front_face(prev_front_face);

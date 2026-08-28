@@ -379,8 +379,8 @@ export type DirectionalLightProps = TransformProps & {
    * each is a pass). Its shadow camera sits at the light's WORLD
    * position, so give a casting light a `position` above the scene. */
   castShadow?: boolean
-  /** Shadow-map options (mapSize, bias, normalBias, camera frustum),
-   * merged key by key. */
+  /** Shadow-map options (mapSize, bias, normalBias, camera frustum,
+   * cascades, distance), merged key by key. */
   shadow?: ShadowOptions
   ref?: (light: DirectionalLightNode) => void
 }

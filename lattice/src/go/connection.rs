@@ -1461,6 +1461,15 @@ fn gpu_reply(ctx: &flux::rquickjs::Ctx<'_>, id: u64, label: Option<&str>) -> Str
       if p.samples > 1 {
         map.insert("samples".into(), p.samples.into());
       }
+      // A sub-target: where it renders (its parent) and its rectangle
+      // there, top-left origin like the texture leaf's srcX/srcY.
+      if let Some(r) = &p.region {
+        map.insert("into".into(), r.parent.into());
+        map.insert("x".into(), r.x.into());
+        map.insert("y".into(), r.y.into());
+        map.insert("width".into(), r.width.into());
+        map.insert("height".into(), r.height.into());
+      }
       // Reported only off their defaults, like depth: absent means the
       // ordinary opaque draw.
       if p.depth_write == Some(false) {

@@ -34,7 +34,7 @@ use crate::gl;
 use crate::gpu::{
   release_buffer, release_pipeline, release_program, validate_params, validate_texture_bindings, AttributeTable,
   BufferIds, DepthStorage, DrawSpec, EntryBuffers, GpuBuffer, GpuBufferInfo, GpuLimits, GpuPipelineInfo,
-  GpuProgramInfo, GpuRenderPipelineInfo, GpuResources, GpuTextureInfo, GpuWindowShaderInfo, ParamValue, PassInput,
+  GpuProgramInfo, GpuRegionInfo, GpuRenderPipelineInfo, GpuResources, GpuTextureInfo, GpuWindowShaderInfo, ParamValue, PassInput,
   PassTimer, PipelineDesc, PipelineSpec, RenderPipeline, ShaderProgram, ShaderTexture, TargetSpec, TextureBinding,
   Timed, UniformTable, WindowShader,
 };
@@ -272,6 +272,11 @@ pub(crate) struct RasterState {
   // Compiled shader targets keyed by the texture id their output is
   // registered under.
   shaders: HashMap<u64, ShaderTexture>,
+  // Draw target id -> its sub-targets in creation order (the group order of
+  // its pass). A sub-target is in `shaders` (every per-target command
+  // routes to it unchanged) but never in `textures`: it has no texture of
+  // its own, the parent's is what everything samples.
+  regions: HashMap<u64, Vec<u64>>,
   // Draw targets with a depth texture: target id -> the depth's registry
   // id (its GL name lives in `textures` like any other), and the reverse
   // for the flush graph, where a binding to a depth id is an edge to the
@@ -304,6 +309,9 @@ pub(crate) struct RasterState {
   // texture(uSrc, vUV)), compiled on first use and kept for the thread's
   // life. Rc because ShaderProgram release goes through release_program.
   copy_program: Option<Rc<ShaderProgram>>,
+  // The tile-clear program (see pass::DrawGroup), compiled on first use by
+  // a parent render with sub-targets.
+  tile_clear_program: Option<Rc<ShaderProgram>>,
   // Texture ids whose content changed (or, for shader targets, whose own
   // params/bindings/geometry changed) since the last dirty flush. Writes only
   // mark; flush_dirty renders the affected shader targets in dependency order
@@ -377,6 +385,19 @@ fn ensure_copy_program(gl: &glow::Context, slot: &mut Option<Rc<ShaderProgram>>)
     *slot = Some(Rc::new(program));
   }
   Ok(slot.as_ref().expect("copy program just ensured").clone())
+}
+
+/// Get (compiling on first use) the tile-clear program (see
+/// `pass::TILE_CLEAR_FRAGMENT`); a compile failure is logged once and the
+/// slot stays empty, so parents render their tiles without the wipe.
+fn ensure_tile_clear_program(gl: &glow::Context, slot: &mut Option<Rc<ShaderProgram>>) -> Option<Rc<ShaderProgram>> {
+  if slot.is_none() {
+    match ShaderProgram::new_fragment(gl, crate::gpu::TILE_CLEAR_FRAGMENT) {
+      Ok(program) => *slot = Some(Rc::new(program)),
+      Err(e) => log::error!("[alloy] tile clear program failed to compile: {e}"),
+    }
+  }
+  slot.clone()
 }
 
 /// Rolling once-per-second trace of the interactive frame's native phases
@@ -461,9 +482,11 @@ impl RasterState {
       stages: HashMap::new(),
       buffers: HashMap::new(),
       dirty: HashSet::new(),
+      regions: HashMap::new(),
       window_shader: None,
       stats_overlay: None,
       copy_program: None,
+      tile_clear_program: None,
       content_dirty: true,
       pass_only_frames: 0,
       tx,
@@ -596,6 +619,21 @@ impl RasterState {
           }
           RasterCmd::CreateDrawTarget { id, depth_id, spec, depth, reply: tx } => {
             reply(tx, self.create_draw_target(id, depth_id, spec, depth));
+          }
+          RasterCmd::CreateSubTarget { id, parent, x, y, spec, reply: tx } => {
+            reply(tx, self.create_sub_target(id, parent, x, y, spec));
+          }
+          RasterCmd::SetTargetRect { id, x, y, width, height } => {
+            let parent = self.shaders.get(&id).and_then(|s| s.region().map(|r| r.parent));
+            match (self.shaders.get_mut(&id), parent) {
+              (Some(shader), Some(parent)) => {
+                if let Err(e) = shader.set_region_rect(x, y, width, height) {
+                  log::warn!("[alloy] set target rect failed: {e}");
+                }
+                self.dirty.insert(parent);
+              }
+              _ => log::warn!("[alloy] set target rect failed: target {id} is not a sub-target"),
+            }
           }
           RasterCmd::AddDraw { target, draw, entry, before } => {
             if let Err(e) = self.add_draw(target, draw, entry, before) {
@@ -740,7 +778,22 @@ impl RasterState {
               self.textures.remove(&depth_id);
               self.depth_owners.remove(&depth_id);
             }
+            // A parent takes its sub-targets with it; a sub-target leaves
+            // its parent's group list and dirties the parent, whose next
+            // full render clears the rectangle it drew.
+            for tile in self.regions.remove(&id).unwrap_or_default() {
+              self.dirty.remove(&tile);
+              if let Some(shader) = self.shaders.remove(&tile) {
+                shader.destroy(&self.gl);
+              }
+            }
             if let Some(shader) = self.shaders.remove(&id) {
+              if let Some(region) = shader.region() {
+                if let Some(tiles) = self.regions.get_mut(&region.parent) {
+                  tiles.retain(|t| *t != id);
+                }
+                self.dirty.insert(region.parent);
+              }
               shader.destroy(&self.gl);
             }
           }
@@ -1338,8 +1391,11 @@ impl RasterState {
     if self.dirty.is_empty() {
       return;
     }
-    // A binding to a depth id is an edge to the target that renders it.
-    let edges: HashMap<u64, Vec<u64>> = self
+    // A binding to a depth id is an edge to the target that renders it. A
+    // sub-target is an edge from its parent: a dirty tile makes the parent
+    // affected and orders it after the tile's own sources, and the parent
+    // renders the one pass for all of them below.
+    let own_sources: HashMap<u64, Vec<u64>> = self
       .shaders
       .iter()
       .filter(|(_, shader)| !shader.manual())
@@ -1349,6 +1405,12 @@ impl RasterState {
         (*id, sources)
       })
       .collect();
+    let mut edges = own_sources.clone();
+    for (parent, tiles) in &self.regions {
+      if let Some(sources) = edges.get_mut(parent) {
+        sources.extend(tiles.iter().copied());
+      }
+    }
     let (order, cyclic) = propagation_order(&self.dirty, &edges);
     if !cyclic.is_empty() {
       // The UI side rejects sampling cycles at bind time, so reaching this
@@ -1357,17 +1419,43 @@ impl RasterState {
       let members: Vec<String> = cyclic.iter().map(|id| self.texture_desc(*id)).collect();
       log::warn!("[alloy] sampling cycle between shader targets [{}]; rendering each once", members.join(", "));
     }
+    let affected: HashSet<u64> = order.iter().chain(cyclic.iter()).copied().collect();
+    let changed = |id: &u64| self.dirty.contains(id) || affected.contains(id);
+    let tile_clear = if self.regions.is_empty() {
+      None
+    } else {
+      ensure_tile_clear_program(&self.gl, &mut self.tile_clear_program)
+    };
     for id in order.iter().chain(cyclic.iter()) {
-      if let Some(shader) = self.shaders.get(id) {
-        let start = std::time::Instant::now();
-        self.pass_timer.begin(&self.gl);
-        shader.render(&self.gl, &|bindings| resolve_binding_list(&self.textures, &self.samplers, bindings));
-        self.pass_timer.end(&self.gl, Timed::Pass { target: *id });
-        let micros = start.elapsed().as_micros() as u64;
-        shader.record_pass(micros);
-        self.stats.passes.fetch_add(1, Ordering::Relaxed);
-        self.stats.pass_issue_micros.fetch_add(micros, Ordering::Relaxed);
+      let Some(shader) = self.shaders.get(id) else { continue };
+      // A tile renders as a group of its parent's pass, never alone.
+      if shader.region().is_some() {
+        continue;
       }
+      let start = std::time::Instant::now();
+      self.pass_timer.begin(&self.gl);
+      let resolve = |bindings: &[TextureBinding]| resolve_binding_list(&self.textures, &self.samplers, bindings);
+      match self.regions.get(id) {
+        None => shader.render(&self.gl, &resolve),
+        Some(tiles) => {
+          // Full when the parent's own state or inputs changed (its clear
+          // wipes every tile, so every tile redraws), or when every tile
+          // changed anyway (a pass-level clear is cheaper on a tiler than
+          // the full-surface load a no-clear pass implies); otherwise only
+          // the changed tiles, each over its own rectangle.
+          let full = self.dirty.contains(id)
+            || own_sources.get(id).is_some_and(|s| s.iter().any(changed))
+            || tiles.iter().all(changed);
+          let tiles: Vec<&ShaderTexture> =
+            tiles.iter().filter(|t| full || changed(t)).filter_map(|t| self.shaders.get(t)).collect();
+          shader.render_groups(&self.gl, &resolve, full, &tiles, tile_clear.as_deref());
+        }
+      }
+      self.pass_timer.end(&self.gl, Timed::Pass { target: *id });
+      let micros = start.elapsed().as_micros() as u64;
+      shader.record_pass(micros);
+      self.stats.passes.fetch_add(1, Ordering::Relaxed);
+      self.stats.pass_issue_micros.fetch_add(micros, Ordering::Relaxed);
     }
     self.dirty.clear();
   }
@@ -1652,6 +1740,20 @@ impl RasterState {
     Ok(cmd::TargetHandles { color, depth })
   }
 
+  /// Create a sub-target of draw target `parent` under `id` (see
+  /// `RasterCmd::CreateSubTarget`): in the shader map and the parent's
+  /// group list, never in the texture map. Starts dirty like every
+  /// flush-rendered target; the parent renders it at the next flush.
+  fn create_sub_target(&mut self, id: u64, parent: u64, x: i32, y: i32, spec: TargetSpec) -> Result<(), String> {
+    let parent_shader = self.shaders.get(&parent).ok_or_else(|| format!("target {parent} not found"))?;
+    let shader =
+      ShaderTexture::new_sub_target(parent_shader, parent, x, y, spec.width, spec.height, spec.clear_color, spec.label)?;
+    self.shaders.insert(id, shader);
+    self.regions.entry(parent).or_default().push(id);
+    self.dirty.insert(id);
+    Ok(())
+  }
+
   /// Add a draw entry to a draw target (see `RasterCmd::AddDraw`). The UI
   /// side validated everything against its mirrors; a failure here means the
   /// mirrors diverged.
@@ -1844,9 +1946,16 @@ impl RasterState {
         // the one pass.
         let flat = !shader.is_draw_list();
         let draw = if flat { shader.draw_range() } else { None };
+        let (width, height) = shader.size();
+        let region = shader.region().map(|r| GpuRegionInfo { parent: r.parent, x: r.x, y: r.y, width, height });
         GpuPipelineInfo {
           texture_id: *texture_id,
-          label: self.textures.get(texture_id).and_then(|t| t.label.clone()),
+          label: self
+            .textures
+            .get(texture_id)
+            .and_then(|t| t.label.clone())
+            .or_else(|| shader.region().and_then(|r| r.label.clone())),
+          region,
           kind: if shader.is_draw_list() {
             "draws"
           } else if shader.is_pipeline() {

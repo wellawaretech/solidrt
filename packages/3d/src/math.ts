@@ -648,3 +648,79 @@ export function rayBoxDistance(
   }
   return tFar >= tNear ? tNear : -1
 }
+
+/**
+ * The far bound of slice `index` of `count` when a range near..far is
+ * split for shadow cascades: `lambda` 0 slices it uniformly, 1
+ * logarithmically (equal texel density per unit of view depth, which
+ * starves the far slices), between the two in between. The last slice
+ * ends at `far`; a near of 0 has no logarithm and slices uniformly.
+ */
+export function cascadeSplit(near: number, far: number, index: number, count: number, lambda: number): number {
+  if (index >= count - 1) return far
+  let t = (index + 1) / count
+  let uniform = near + (far - near) * t
+  if (!(near > 0)) return uniform
+  let log = near * Math.pow(far / near, t)
+  return uniform + (log - uniform) * lambda
+}
+
+/** The camera facts a frustum slice depends on: its view matrix (rows are
+ * its right, up and back axes), eye, vertical fov in degrees and, for an
+ * orthographic camera, the extents (fov ignored then). */
+export type FrustumSpec = { view: Mat4; eye: Vec3; fov: number; ortho: { left: number; right: number; top: number; bottom: number } | null }
+
+/**
+ * The bounding sphere of the slice zn..zf of a camera's view frustum
+ * (`aspect` = width / height): writes the centre to `out`, returns the
+ * radius. Perspective: the centre sits on the view axis where the near
+ * and far corner rings are equidistant, clamped into the slice, so it
+ * is the tightest sphere on the axis; orthographic: the slice box's
+ * centre and half-diagonal. A sphere rather than the slice's own corners
+ * so a shadow box fitted to it keeps its size while the camera turns.
+ */
+export function frustumSliceSphere(out: Vec3, cam: FrustumSpec, aspect: number, zn: number, zf: number): number {
+  let v = cam.view
+  let fx = -v[2]
+  let fy = -v[6]
+  let fz = -v[10]
+  let o = cam.ortho
+  if (o === null) {
+    // Corner distance from the axis per unit of depth.
+    let k = Math.tan((cam.fov * Math.PI) / 360) * Math.hypot(1, aspect)
+    let rn = zn * k
+    let rf = zf * k
+    let zc = zf > zn ? Math.min(zf, Math.max(zn, (zf * zf + rf * rf - zn * zn - rn * rn) / (2 * (zf - zn)))) : zn
+    out[0] = cam.eye[0] + fx * zc
+    out[1] = cam.eye[1] + fy * zc
+    out[2] = cam.eye[2] + fz * zc
+    return Math.hypot(zf - zc, rf)
+  }
+  let zc = 0.5 * (zn + zf)
+  let cx = 0.5 * (o.left + o.right)
+  let cy = 0.5 * (o.top + o.bottom)
+  out[0] = cam.eye[0] + fx * zc + v[0] * cx + v[1] * cy
+  out[1] = cam.eye[1] + fy * zc + v[4] * cx + v[5] * cy
+  out[2] = cam.eye[2] + fz * zc + v[8] * cx + v[9] * cy
+  return Math.hypot(0.5 * (o.right - o.left), 0.5 * (o.top - o.bottom), 0.5 * (zf - zn))
+}
+
+/**
+ * Snap `p`'s coordinates along the first two axes of `basis` (a rotation
+ * matrix whose rows are the frame's axes - `lookAt([0, 0, 0], dir, up)`
+ * for a light) to multiples of `step`, leaving the third as it is;
+ * writes to `out`, which may be `p`. A shadow box centred on the result
+ * moves by whole texels only, so its shadows do not swim as the camera
+ * creeps.
+ */
+export function snapToGrid(out: Vec3, p: Vec3, basis: Mat4, step: number): Vec3 {
+  let x = basis[0] * p[0] + basis[4] * p[1] + basis[8] * p[2]
+  let y = basis[1] * p[0] + basis[5] * p[1] + basis[9] * p[2]
+  let z = basis[2] * p[0] + basis[6] * p[1] + basis[10] * p[2]
+  x = Math.round(x / step) * step
+  y = Math.round(y / step) * step
+  out[0] = basis[0] * x + basis[1] * y + basis[2] * z
+  out[1] = basis[4] * x + basis[5] * y + basis[6] * z
+  out[2] = basis[8] * x + basis[9] * y + basis[10] * z
+  return out
+}

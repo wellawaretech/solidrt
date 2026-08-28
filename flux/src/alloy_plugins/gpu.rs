@@ -501,7 +501,24 @@ fn collect_draw_target_spec(
   width: u32,
   height: u32,
   api: &str,
-) -> rquickjs::Result<(alloy::TargetSpec, alloy::DepthStorage, Vec<alloy::TextureBinding>)> {
+) -> rquickjs::Result<(alloy::TargetSpec, alloy::DepthStorage, Vec<alloy::TextureBinding>, Option<(u64, i32, i32)>)> {
+  // `into` makes a sub-target: the parent's id plus the tile's top-left
+  // origin `x`/`y` (default 0). Depth is the parent's, so the key is
+  // rejected here; render/loadOp/samples are alloy's to reject.
+  let into = match opts {
+    Some(o) => match o.get::<_, Option<f64>>("into")? {
+      Some(parent) => {
+        if o.get::<_, rquickjs::Value>("depth").map(|v| !v.is_undefined()).unwrap_or(false) {
+          return Err(throw_str(ctx, &format!("{api}: 'depth' is the parent's on a sub-target; create the parent with it")));
+        }
+        let x = o.get::<_, Option<f64>>("x")?.unwrap_or(0.0);
+        let y = o.get::<_, Option<f64>>("y")?.unwrap_or(0.0);
+        Some((parent as u64, x as i32, y as i32))
+      }
+      None => None,
+    },
+    None => None,
+  };
   if let Some(o) = opts {
     if o.get::<_, rquickjs::Value>("params").map(|v| !v.is_undefined()).unwrap_or(false) {
       return Err(throw_str(ctx, &format!("{api}: 'params' is not an option; pass it as its own argument before opts")));
@@ -553,7 +570,7 @@ fn collect_draw_target_spec(
     },
     None => Vec::new(),
   };
-  Ok((collect_target_half(ctx, opts, width, height, api)?, depth, textures))
+  Ok((collect_target_half(ctx, opts, width, height, api)?, depth, textures, into))
 }
 
 // Decode the draw-state options of createRenderPipeline and
@@ -707,6 +724,7 @@ impl ModuleDef for GpuModule {
     decl.declare("setTargetParams")?;
     decl.declare("setTargetTextures")?;
     decl.declare("setTargetSize")?;
+    decl.declare("setTargetRect")?;
     decl.declare("setDrawTextures")?;
     decl.declare("setDrawRange")?;
     decl.declare("setDrawBuffers")?;
@@ -1130,14 +1148,16 @@ impl ModuleDef for GpuModule {
             params: Option<Object<'_>>,
             opts: OptArg<Object<'_>>|
             -> rquickjs::Result<u64> {
-        let (spec, depth, textures) = collect_draw_target_spec(&ctx, &opts.0, width, height, "createDrawTarget")?;
+        let (spec, depth, textures, into) = collect_draw_target_spec(&ctx, &opts.0, width, height, "createDrawTarget")?;
         let params = match &params {
           Some(o) => collect_params(&ctx, o, "createDrawTarget")?,
           None => Vec::new(),
         };
-        let id = create_draw_target_atx
-          .create_draw_target(spec, depth)
-          .map_err(|e| throw_str(&ctx, &format!("createDrawTarget: {e}")))?;
+        let id = match into {
+          Some((parent, x, y)) => create_draw_target_atx.create_sub_target(parent, x, y, spec),
+          None => create_draw_target_atx.create_draw_target(spec, depth),
+        }
+        .map_err(|e| throw_str(&ctx, &format!("createDrawTarget: {e}")))?;
         if !params.is_empty() {
           create_draw_target_atx
             .set_target_params(id, &params)
@@ -1292,6 +1312,31 @@ impl ModuleDef for GpuModule {
       })
       .expect("create setTargetSize");
 
+    // setTargetRect(id, { x, y, width, height }): move and resize a
+    // sub-target's rectangle in its parent (top-left origin). Every key is
+    // required; the parent re-renders in full.
+    let target_rect_atx = atx.clone();
+    let target_rect_platform = platform.clone();
+    let set_target_rect =
+      Function::new(ctx.clone(), move |ctx: Ctx<'_>, id: u64, rect: Object<'_>| -> rquickjs::Result<()> {
+        let mut values = [0f64; 4];
+        for (slot, key) in values.iter_mut().zip(["x", "y", "width", "height"]) {
+          *slot = rect
+            .get::<_, Option<f64>>(key)?
+            .ok_or_else(|| throw_str(&ctx, &format!("setTargetRect: '{key}' is required")))?;
+        }
+        let [x, y, width, height] = values;
+        if width < 1.0 || height < 1.0 {
+          return Err(throw_str(&ctx, "setTargetRect: width and height must be at least 1"));
+        }
+        target_rect_atx
+          .set_target_rect(id, x as i32, y as i32, width as u32, height as u32)
+          .map_err(|e| throw_str(&ctx, &format!("setTargetRect: {e}")))?;
+        target_rect_platform.request_frame();
+        Ok(())
+      })
+      .expect("create setTargetRect");
+
     // Per-entry sampler rebind: setTargetTextures addressed to one draw entry.
     let set_draw_textures_atx = atx.clone();
     let set_draw_textures_platform = platform.clone();
@@ -1424,6 +1469,7 @@ impl ModuleDef for GpuModule {
     exports.export("setTargetParams", set_target_params)?;
     exports.export("setTargetTextures", set_target_textures)?;
     exports.export("setTargetSize", set_target_size)?;
+    exports.export("setTargetRect", set_target_rect)?;
     exports.export("setDrawTextures", set_draw_textures)?;
     exports.export("setDrawRange", set_draw_range)?;
     exports.export("setDrawBuffers", set_draw_buffers)?;

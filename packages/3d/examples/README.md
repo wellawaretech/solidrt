@@ -50,6 +50,14 @@ depends on `@solidrt/3d` (or in-repo from the package directory).
   ground and the casters receiving through plain `lit` (the default);
   each shadow camera follows its light's world matrix, each map is
   rendered by an internal view.
+- `cascades.tsx` - cascaded shadow maps: a sun with `shadow: { cascades:
+  3 }` over a field of pillars to the horizon under a slowly flying
+  camera; three maps fitted to slices of the camera frustum, sampled
+  tightest-first, so the shadows are sharp at the camera's feet and still
+  there at the far edge of the ground. A click cycles 1..4 cascades (1 is
+  the plain box widened to cover the field: one map's texels spread over
+  it, blocky everywhere) and the `cascades`/`fly` debug commands set the
+  count and the shadow distance and park the flight.
 - `model.tsx` - a model from a file: `model.glb` (a small rover with
   nested node transforms, a mirrored node, a textured material, a
   transparent dome and a mesh without normals) parsed with `parseGltf`

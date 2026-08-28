@@ -10,7 +10,7 @@ use std::num::NonZeroU32;
 use std::rc::Rc;
 
 use super::buffer::{release_buffer, GpuBuffer};
-use super::pass::{run_pass, PassDraw, PassInput, ResolvedDraw};
+use super::pass::{run_pass, DrawGroup, PassDraw, PassInput, ResolvedDraw};
 use super::program::{release_pipeline, release_program, RenderPipeline, ShaderProgram};
 use super::resources::GpuDrawInfo;
 use super::spec::DepthStorage;
@@ -111,6 +111,21 @@ pub(super) struct MeshState {
   fixed: bool,
 }
 
+/// A sub-target's place in its parent: a draw target created with
+/// `into` renders into a rectangle of `parent`'s storage instead of owning
+/// any. `x`/`y` are the tile's top-left origin in the parent, in the
+/// parent's image space (row 0 = top, like `srcX`/`srcY` on the texture
+/// leaf). That is GL's viewport space unflipped: a target's memory row 0 is
+/// its displayed top (see the readback contract), which is exactly why
+/// meshes draw with y negated. `label` is the create's debug name (a tile
+/// has no texture entry to hold one).
+pub struct Region {
+  pub parent: u64,
+  pub x: i32,
+  pub y: i32,
+  pub label: Option<String>,
+}
+
 /// Which kind of pass renders this target.
 pub(super) enum TargetKind {
   /// A fullscreen fragment pass: one program with target-level params and
@@ -119,6 +134,41 @@ pub(super) enum TargetKind {
   Fragment { program: Rc<ShaderProgram>, params: Vec<(String, ParamValue)>, bindings: Vec<TextureBinding> },
   /// A vertex+fragment mesh target: clear + the ordered draw list.
   Mesh(MeshState),
+}
+
+impl MeshState {
+  /// The entry list resolved for a pass, in list order. An entry's inputs
+  /// are its own bindings plus the shared ones its program declares and
+  /// does not bind itself (entry overrides shared, and an undeclared shared
+  /// name must not eat a texture unit on this entry).
+  fn resolved_draws(&self, resolve: &dyn Fn(&[TextureBinding]) -> Vec<PassInput>) -> Vec<ResolvedDraw<'_>> {
+    self
+      .entries
+      .iter()
+      .map(|e| {
+        let inputs = if self.shared_bindings.is_empty() {
+          resolve(&e.bindings)
+        } else {
+          let mut combined = e.bindings.clone();
+          for b in &self.shared_bindings {
+            if e.pipeline.program.is_active(&b.name) && !combined.iter().any(|c| c.name == b.name) {
+              combined.push(b.clone());
+            }
+          }
+          resolve(&combined)
+        };
+        ResolvedDraw {
+          program: &e.pipeline.program,
+          desc: &e.pipeline.desc,
+          vao: e.vao,
+          range: e.draw,
+          index: e.buffers.index.as_ref().map(|(_, _, fmt)| *fmt),
+          params: &e.params,
+          inputs,
+        }
+      })
+      .collect()
+  }
 }
 
 /// An FBO-backed RGBA8 target texture rendered by shader passes: either a
@@ -150,6 +200,11 @@ pub struct ShaderTexture {
   /// GPU-side execution time of those passes, microseconds, credited by the
   /// owner as timer queries retire (see gpu::PassTimer).
   pass_exec_micros: Cell<u64>,
+  /// Some = a sub-target (see `Region`): `fbo` and `target` are the
+  /// parent's names, borrowed for bookkeeping only - never rendered through
+  /// here (the parent renders the tile as a group of its own pass) and
+  /// never deleted here. `width`/`height` are the tile's size.
+  region: Option<Region>,
 }
 
 /// How a mesh target multisamples. Both flavors keep the target texture
@@ -655,6 +710,7 @@ impl ShaderTexture {
         passes: Cell::new(0),
         pass_issue_micros: Cell::new(0),
         pass_exec_micros: Cell::new(0),
+        region: None,
       })
     }
   }
@@ -750,6 +806,7 @@ impl ShaderTexture {
         passes: Cell::new(0),
         pass_issue_micros: Cell::new(0),
         pass_exec_micros: Cell::new(0),
+        region: None,
       })
     }
   }
@@ -787,7 +844,75 @@ impl ShaderTexture {
       passes: Cell::new(0),
       pass_issue_micros: Cell::new(0),
       pass_exec_micros: Cell::new(0),
+      region: None,
     })
+  }
+
+  /// A sub-target: a draw target with an empty, mutable draw list that
+  /// renders into the `width` x `height` rectangle at `(x, y)` (top-left
+  /// origin) of `parent`'s storage. It shares the parent's depth storage
+  /// (entries test against it, and the tile's clear wipes its rectangle of
+  /// it) and multisampling (the parent's resolve covers the whole storage),
+  /// and allocates nothing of its own: the parent's GL names are copied for
+  /// bookkeeping only (see `region`). Errs when the parent is not a mesh
+  /// target or is itself a sub-target.
+  pub fn new_sub_target(
+    parent: &ShaderTexture,
+    parent_id: u64,
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+    clear_color: [f32; 4],
+    label: Option<String>,
+  ) -> Result<Self, String> {
+    if parent.region.is_some() {
+      return Err(format!("target {parent_id} is itself a sub-target; tiles do not nest"));
+    }
+    let Some(parent_mesh) = parent.mesh() else {
+      return Err(format!("target {parent_id} is not a draw target"));
+    };
+    Ok(ShaderTexture {
+      kind: TargetKind::Mesh(MeshState {
+        entries: Vec::new(),
+        shared_params: Vec::new(),
+        shared_bindings: Vec::new(),
+        depth: parent_mesh.depth,
+        msaa: None,
+        clear_color,
+        load: false,
+        fixed: false,
+      }),
+      fbo: parent.fbo,
+      target: parent.target,
+      width,
+      height,
+      sampler: parent.sampler,
+      manual: false,
+      passes: Cell::new(0),
+      pass_issue_micros: Cell::new(0),
+      pass_exec_micros: Cell::new(0),
+      region: Some(Region { parent: parent_id, x, y, label }),
+    })
+  }
+
+  /// The sub-target marker: Some when this target renders into a rectangle
+  /// of another's storage.
+  pub fn region(&self) -> Option<&Region> {
+    self.region.as_ref()
+  }
+
+  /// Move and resize a sub-target's rectangle (top-left origin). Errs on a
+  /// target that owns its storage - those resize through `resize`.
+  pub fn set_region_rect(&mut self, x: i32, y: i32, width: u32, height: u32) -> Result<(), String> {
+    let Some(region) = self.region.as_mut() else {
+      return Err("target is not a sub-target".to_string());
+    };
+    region.x = x;
+    region.y = y;
+    self.width = width;
+    self.height = height;
+    Ok(())
   }
 
   /// Set the declared sampling for this target's output (builder-style, right
@@ -841,6 +966,11 @@ impl ShaderTexture {
 
   pub fn gl_texture(&self) -> glow::Texture {
     self.target
+  }
+
+  /// The target's output size (a sub-target's: its rectangle's).
+  pub fn size(&self) -> (u32, u32) {
+    (self.width, self.height)
   }
 
   /// Registry id of the shared program behind the first entry's pipeline;
@@ -1261,6 +1391,9 @@ impl ShaderTexture {
   /// the old target is left attached and the shader stays usable at its
   /// previous size.
   pub fn resize(&mut self, gl: &glow::Context, width: u32, height: u32) -> Result<(), String> {
+    if self.region.is_some() {
+      return Err("sub-targets resize through set_region_rect".to_string());
+    }
     unsafe {
       let prev_fbo = gl.get_parameter_i32(glow::FRAMEBUFFER_BINDING);
       let target = create_target_texture(gl, width, height)?;
@@ -1329,6 +1462,7 @@ impl ShaderTexture {
   /// are responsible for deletion (a registration that never adopted the
   /// depth texture deletes it itself, see the raster owner).
   pub fn destroy(self, gl: &glow::Context) {
+    let tile = self.region.is_some();
     match self.kind {
       TargetKind::Fragment { program, .. } => release_program(gl, program),
       TargetKind::Mesh(mesh) => {
@@ -1336,6 +1470,10 @@ impl ShaderTexture {
           unsafe { gl.delete_vertex_array(entry.vao) };
           release_pipeline(gl, entry.pipeline);
           release_entry_buffers(gl, entry.buffers);
+        }
+        // A sub-target's storage names are the parent's (see `region`).
+        if tile {
+          return;
         }
         if let Some(DepthAttachment::Buffer(rb)) = mesh.depth {
           unsafe { gl.delete_renderbuffer(rb) };
@@ -1479,47 +1617,60 @@ impl ShaderTexture {
         run_pass(gl, Some(self.fbo), (0, 0), self.width, self.height, draw);
         self.resolve(gl);
       }
-      TargetKind::Mesh(mesh) => {
-        let draws: Vec<ResolvedDraw> = mesh
-          .entries
-          .iter()
-          .map(|e| {
-            // An entry's inputs are its own bindings plus the shared ones its
-            // program declares and does not bind itself (entry overrides
-            // shared, and an undeclared shared name must not eat a texture
-            // unit on this entry).
-            let inputs = if mesh.shared_bindings.is_empty() {
-              resolve(&e.bindings)
-            } else {
-              let mut combined = e.bindings.clone();
-              for b in &mesh.shared_bindings {
-                if e.pipeline.program.is_active(&b.name) && !combined.iter().any(|c| c.name == b.name) {
-                  combined.push(b.clone());
-                }
-              }
-              resolve(&combined)
-            };
-            ResolvedDraw {
-              program: &e.pipeline.program,
-              desc: &e.pipeline.desc,
-              vao: e.vao,
-              range: e.draw,
-              index: e.buffers.index.as_ref().map(|(_, _, fmt)| *fmt),
-              params: &e.params,
-              inputs,
-            }
-          })
-          .collect();
-        let draw = PassDraw::Draws {
-          clear: (!mesh.load).then_some(mesh.clear_color),
-          depth: mesh.depth.is_some(),
-          shared: &mesh.shared_params,
-          draws: &draws,
-        };
-        run_pass(gl, Some(self.draw_fbo()), (0, 0), self.width, self.height, draw);
-        self.resolve(gl);
-      }
+      TargetKind::Mesh(_) => self.render_groups(gl, resolve, true, &[], None),
     }
+  }
+
+  /// Render a mesh target's pass with its sub-targets as groups (see
+  /// `DrawGroup`): with `full`, the pass-level clear, the target's own
+  /// entries over the whole storage, then every tile in `tiles`; without
+  /// it, only the tiles in `tiles`, each clearing its own rectangle, and
+  /// nothing else touched - the partial render that keeps clean tiles'
+  /// pixels. One pass either way. `tiles` are this target's sub-targets
+  /// (`region().parent` = this target); the owner picks which.
+  pub fn render_groups(
+    &self,
+    gl: &glow::Context,
+    resolve: &dyn Fn(&[TextureBinding]) -> Vec<PassInput>,
+    full: bool,
+    tiles: &[&ShaderTexture],
+    tile_clear: Option<&ShaderProgram>,
+  ) {
+    let Some(mesh) = self.mesh() else { return };
+    let own: Vec<ResolvedDraw> = if full { mesh.resolved_draws(resolve) } else { Vec::new() };
+    let tile_draws: Vec<Vec<ResolvedDraw>> =
+      tiles.iter().map(|t| t.mesh().map(|m| m.resolved_draws(resolve)).unwrap_or_default()).collect();
+    let mut groups: Vec<DrawGroup> = Vec::with_capacity(tiles.len() + 1);
+    if full {
+      groups.push(DrawGroup { rect: None, clear: None, clear_depth: false, shared: &mesh.shared_params, draws: &own });
+    }
+    for (tile, draws) in tiles.iter().zip(tile_draws.iter()) {
+      let (Some(region), Some(tile_mesh)) = (tile.region(), tile.mesh()) else { continue };
+      // Image space is viewport space here (row 0 = top, see `Region`): no
+      // flip. In a full render of a parent with no entries of its own the
+      // pass-level clear already wiped the rectangle (depth included), so
+      // the tile only re-clears when its color differs from the parent's;
+      // otherwise (a partial render, or own entries that may have painted
+      // and depth-written the rectangle) the tile wipes both.
+      let covered = full && own.is_empty();
+      let same_color = mesh.clear_color == tile_mesh.clear_color;
+      groups.push(DrawGroup {
+        rect: Some((region.x, region.y, tile.width, tile.height)),
+        clear: (!covered || !same_color).then_some(tile_mesh.clear_color),
+        clear_depth: !covered,
+        shared: &tile_mesh.shared_params,
+        draws,
+      });
+    }
+    let draw = PassDraw::Draws {
+      clear: (full && !mesh.load).then_some(mesh.clear_color),
+      clear_depth: full,
+      depth: mesh.depth.is_some(),
+      groups: &groups,
+      tile_clear,
+    };
+    run_pass(gl, Some(self.draw_fbo()), (0, 0), self.width, self.height, draw);
+    self.resolve(gl);
   }
 
   /// Draw the resolved inputs over this target's full contents via `program`

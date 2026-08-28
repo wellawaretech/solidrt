@@ -74,6 +74,16 @@ pub struct GpuRenderPipelineInfo {
   pub instance_attributes: Vec<(String, String, u32)>,
 }
 
+/// A sub-target's place, as reported in `GpuPipelineInfo::region`: the
+/// parent it renders into and its rectangle there (top-left origin).
+pub struct GpuRegionInfo {
+  pub parent: u64,
+  pub x: i32,
+  pub y: i32,
+  pub width: u32,
+  pub height: u32,
+}
+
 /// One entry of a draw target's ordered list, as reported in
 /// `GpuPipelineInfo::draws`.
 pub struct GpuDrawInfo {
@@ -178,4 +188,8 @@ pub struct GpuPipelineInfo {
   /// Cumulative GPU-side execution time of those passes, in microseconds
   /// (timer queries; 0 when the context has none).
   pub pass_exec_micros: u64,
+  /// Some = a sub-target: it renders into a rectangle of another draw
+  /// target's storage and has no texture entry of its own (its passes are
+  /// counted on the parent).
+  pub region: Option<GpuRegionInfo>,
 }

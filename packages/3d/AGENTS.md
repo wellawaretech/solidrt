@@ -54,20 +54,37 @@ blendMode and pointer events like any element.
   the `castShadow` meshes (`<Mesh castShadow>`, `setCastShadow`) from an
   orthographic camera at the light's WORLD position along its world
   direction, `shadow.camera` (+-5, 0.5..500 by default) as the frustum.
-  Any directional light may cast (each map is a pass, capped by
-  MAX_LIGHTS = MAX_SHADOWS): shadow slot i is directional light i's -
-  the map's depth id binds as the target-level `uShadowMap<i>` of the
-  scene and every non-shadow view (a white texel when light i does not
-  cast), `uShadowMatrix[i]` is its view's own view-projection (the whole
-  array is one write per shadow-camera move), `uShadowCast[i]` says
-  whether it casts, `uShadowBias[i]`/`uShadowNormalBias[i]` its knobs;
-  `SHADOW_SLOTS` in glsl declares the set. Every `lit` material RECEIVES by default
+  Any directional light may cast (capped by MAX_LIGHTS = MAX_SHADOWS).
+  `shadow: { cascades: N }` (1..MAX_CASCADES = 4) replaces the box with
+  N maps fitted to slices of the SCENE camera's frustum (near ..
+  `shadow.distance`, default the camera far; the practical split; each
+  slice's bounding sphere as an ortho box along the light, its centre
+  snapped to the map's texel grid so edges do not swim; re-fitted
+  whenever the scene camera or the light moves) - a receiver samples the
+  tightest map that covers the point, fading into the next over the
+  map's outer 10% (`SHADOW_BLEND`) so the hand-over is a band, not a
+  seam; contact shadows stay sharp near the camera while the horizon
+  still has coarse ones, and pulling `distance` in sharpens all of them.
+  The box is the honest tier for a bounded scene; cascades are for a
+  scene that outgrows it, at N times the shadow fill. Every map is a
+  TILE of the scene's one shadow atlas (a `depth: "texture"` draw target,
+  a grid of cells the largest `mapSize` wide, scaled down uniformly
+  against `limits.maxTextureSize`), so N maps are ONE pass: the atlas
+  depth binds as the target-level `uShadowAtlas` of the scene and every
+  non-shadow view (a white texel when nothing casts); maps are MAP slots
+  dealt in light order, a light's cascades consecutive and tightest
+  first - `uShadowRect[j]` slot j's tile in atlas UV, `uShadowMatrix[j]`
+  its view's own view-projection (the whole array is one write per
+  shadow-camera move) - and per light i `uShadowFirst[i]`/`uShadowCount[i]`
+  name its slots (count 0 = it does not cast) with
+  `uShadowBias[i]`/`uShadowNormalBias[i]` its knobs; `SHADOW_SLOTS` in
+  glsl declares the set. Every `lit` material RECEIVES by default
   (Godot's and Three's default); `lit({ receiveShadow: false })` opts a
   material out and drops the map from its program - a material option,
   as with vertexColors/triplanar, because the material picks the program
   (Godot's `disable_receive_shadows`). The factor is `SHADOW`'s 3x3 PCF
   on each casting light's own term. `examples/shadows.tsx` (three
-  casting lights) is the shape.
+  casting lights) is the shape; `examples/cascades.tsx` the cascaded sun.
 - RETARGETED motion is native: `setTransition(node, { position:
   { duration: 400 }, ... })` makes setTransform writes TARGETS the core
   animates toward every frame (position/scale per lane, rotation along
@@ -408,13 +425,18 @@ the material need that channel) and the pure functions `HEMISPHERE`
 (`hemisphere(n, sky, ground)`), `LAMBERT` (`lambert(n, l)`),
 `BLINN_SPECULAR` (`blinnSpecular(n, v, l, shininess)`), `FRESNEL`
 (`fresnel(n, v, power)`), and the shadow trio composed IN ORDER:
-`SHADOW_SLOTS` (the scene's shadow set: `uShadowMap0..N-1`,
-`uShadowMatrix[N]`, `uShadowCast[N]`, `uShadowBias[N]`,
-`uShadowNormalBias[N]`, slot i = directional light i), `SHADOW`
-(`shadow(map, coord, bias)` - one map's 3x3 PCF factor) and
-`SHADOW_LOOKUP` (`lightShadow(i, worldPos, n)` - light i's factor, 1
-when it does not cast; it hides the if-chain that picks the map, since
-GLSL ES 3.00 forbids dynamic sampler indexing). A receiving fragment
+`SHADOW_SLOTS` (the scene's shadow set: `uShadowAtlas`, per map slot
+`uShadowRect[M]`/`uShadowMatrix[M]`, per directional light
+`uShadowFirst[N]`/`uShadowCount[N]` (its slots; a cascaded light has
+several, tightest first), `uShadowBias[N]`, `uShadowNormalBias[N]`),
+`SHADOW` (`shadowPoint(coord)` - clip to map point, `shadowInside(p)` -
+does the map have it, `shadowSample(map, rect, p, bias)` - one tile's
+3x3 PCF factor, and `shadow(map, rect, coord, bias)` composing the
+three) and `SHADOW_LOOKUP`
+(`lightShadow(i, worldPos, n)` - light i's factor, 1 when it does not
+cast; it walks the light's slots and samples the first map that covers
+the point, which is the cascade select, blended into the next map over
+the outer `SHADOW_BLEND` of the map). A receiving fragment
 multiplies light i's term by `lightShadow(i, ...)`, exactly what `lit`
 composes; a non-receiving one composes none of the three and declares no
 samplers. Lights, colors and exponents are arguments, so
