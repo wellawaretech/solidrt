@@ -13,6 +13,7 @@
   },
   "files": [
     "src/",
+    "tools/",
     "examples/",
     "AGENTS.md"
   ],
