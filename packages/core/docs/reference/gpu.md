@@ -167,7 +167,10 @@ Three facts hold for every texture and target:
   a top-left origin.
 - **Color is premultiplied alpha.** A target's RGB is already multiplied by
   its A: write `vec4(rgb * a, a)`. `vec4(rgb, a)` composites as opaque.
-  `clearColor` is premultiplied too.
+  `clearColor` is premultiplied too, and so are uploaded pixels:
+  `decodeImage` premultiplies at the codec boundary (image files store
+  straight alpha) and `encodeImage` converts back, so pixels inside the app
+  are premultiplied everywhere.
 - **Values are non-linear RGBA8** (or `"r8"` for single-channel data), with
   no color-space conversion anywhere. Filtering and blending operate on the
   stored values.

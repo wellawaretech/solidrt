@@ -42,7 +42,10 @@
 //   multiplied by its A - `vec4(rgb * a, a)`, not `vec4(rgb, a)`, which
 //   composites as opaque. That is what Impeller composites and what
 //   `<texture blendMode>` blends; `clearColor` is premultiplied too, so the
-//   default transparent black needs no thought.
+//   default transparent black needs no thought. Uploaded pixels follow the
+//   same rule: `decodeImage` premultiplies at the codec boundary (image
+//   files store straight alpha) and `encodeImage` undoes it, so pixels
+//   inside the app are premultiplied everywhere.
 // - Values are non-linear RGBA8, with no color-space concept. Every texture
 //   and target holds 8-bit RGBA UNORM exactly as written; nothing converts to
 //   or from linear light. `filter: "linear"` averages and the `blend` modes
@@ -214,7 +217,9 @@ export { captureSnapshot, readTexture } from "flux:gpu"
  * Uploads raw pixels to an immutable GPU texture and returns its id (use it
  * as `<texture src={id} />`). `data` must be exactly `width * height` pixels
  * at the declared format's size (`* 4` bytes for the default "rgba8", `* 1`
- * for "r8"); a mismatch throws. For pixels you intend to mutate and
+ * for "r8"); a mismatch throws. RGBA data is uploaded verbatim and composited
+ * as premultiplied alpha, like every texture: `decodeImage` and the readback
+ * calls already deliver that, and hand-built pixels must too (`rgb * a`). For pixels you intend to mutate and
  * re-upload, use `createMutableTexture` instead. When called inside a
  * reactive scope the texture is freed automatically once that owner is
  * disposed; when called outside one (e.g. after an `await`, where the owner

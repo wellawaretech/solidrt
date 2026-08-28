@@ -294,7 +294,10 @@ Peer deps @solidjs/signals and @solidjs/universal must match (currently
 
 - Device/GPU access via subpath imports: @solidrt/core/camera, /microphone,
   /speech, /gpu. Image flow: `decodeImage(bytes)` ->
-  `createTexture(data,w,h)` -> `<texture src={id} />`.
+  `createTexture(data,w,h)` -> `<texture src={id} />`. Pixels are
+  premultiplied alpha from decode onward (the GPU contract); `decodeImage(bytes,
+  { alpha: "straight" })` keeps the file's color under transparent pixels for
+  CPU work, and `encodeImage` converts back to straight for the file.
 
 ## Minimal app, core primitives only (verified to render)
 

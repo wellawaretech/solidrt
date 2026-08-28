@@ -1336,7 +1336,8 @@ fn snapshot_reply(id: u64, width: u32, height: u32, rgba: Vec<u8>, raw: bool) ->
     let b64 = base64::engine::general_purpose::STANDARD.encode(&rgba);
     serde_json::json!({ "rgbaBase64": b64, "width": width, "height": height })
   } else {
-    let png = match forge::image::encode_png(&rgba, width, height) {
+    // The capture is premultiplied like every target; PNG stores straight.
+    let png = match forge::image::encode_png(&rgba, width, height, true) {
       Ok(png) => png,
       Err(e) => return error_reply(id, &format!("png encode failed: {e}")),
     };

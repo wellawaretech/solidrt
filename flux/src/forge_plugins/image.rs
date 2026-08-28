@@ -5,7 +5,9 @@ use crate::plugins::marshal::OptArg;
 
 // Marshalling for `flux:image`: adapt JS typed arrays and the options object
 // to the engine-free `forge::image` codec. Quality is web-style 0..1 on this
-// surface and mapped to the encoder's 1..=100.
+// surface and mapped to the encoder's 1..=100. `alpha` names the pixel
+// convention on the JS side of each call: "premultiplied" (default, what the
+// GPU holds) or "straight" (the file's bytes verbatim).
 
 pub struct ImageModule;
 
@@ -23,11 +25,33 @@ impl ModuleDef for ImageModule {
   }
 }
 
-fn decode_image<'js>(ctx: Ctx<'js>, bytes: TypedArray<'js, u8>) -> rquickjs::Result<Object<'js>> {
+/// `{ alpha?: "premultiplied" | "straight" }` -> true when premultiplied.
+fn premultiplied_opt<'js>(ctx: &Ctx<'js>, opts: &OptArg<Object<'js>>, fname: &str) -> rquickjs::Result<bool> {
+  let Some(o) = &opts.0 else { return Ok(true) };
+  let v: Value = o.get("alpha")?;
+  if v.is_undefined() || v.is_null() {
+    return Ok(true);
+  }
+  let Some(s) = v.as_string() else {
+    return Err(Exception::throw_message(ctx, &format!("{fname}: alpha must be a string")));
+  };
+  match s.to_string()?.as_str() {
+    "premultiplied" => Ok(true),
+    "straight" => Ok(false),
+    other => Err(Exception::throw_message(ctx, &format!("{fname}: unknown alpha \"{other}\""))),
+  }
+}
+
+fn decode_image<'js>(
+  ctx: Ctx<'js>,
+  bytes: TypedArray<'js, u8>,
+  opts: OptArg<Object<'js>>,
+) -> rquickjs::Result<Object<'js>> {
+  let premultiply = premultiplied_opt(&ctx, &opts, "decodeImage")?;
   let raw = bytes.as_raw().ok_or_else(|| Exception::throw_message(&ctx, "decodeImage: detached buffer"))?;
   let bytes = unsafe { std::slice::from_raw_parts(raw.ptr.as_ptr(), raw.len) };
-  let decoded =
-    forge::image::decode(bytes).map_err(|e| Exception::throw_message(&ctx, &format!("decodeImage: {e}")))?;
+  let decoded = forge::image::decode(bytes, premultiply)
+    .map_err(|e| Exception::throw_message(&ctx, &format!("decodeImage: {e}")))?;
   let result = Object::new(ctx.clone())?;
   result.set("data", TypedArray::<u8>::new(ctx.clone(), decoded.data)?)?;
   result.set("width", decoded.width)?;
@@ -40,14 +64,14 @@ fn encode_image<'js>(
   img: Object<'js>,
   opts: OptArg<Object<'js>>,
 ) -> rquickjs::Result<TypedArray<'js, u8>> {
-  let data: TypedArray<'js, u8> = img
-    .get("data")
-    .map_err(|_| Exception::throw_message(&ctx, "encodeImage: img.data must be a Uint8Array"))?;
+  let data: TypedArray<'js, u8> =
+    img.get("data").map_err(|_| Exception::throw_message(&ctx, "encodeImage: img.data must be a Uint8Array"))?;
   let width: u32 =
     img.get("width").map_err(|_| Exception::throw_message(&ctx, "encodeImage: img.width must be a number"))?;
   let height: u32 =
     img.get("height").map_err(|_| Exception::throw_message(&ctx, "encodeImage: img.height must be a number"))?;
 
+  let unpremultiply = premultiplied_opt(&ctx, &opts, "encodeImage")?;
   let mut format = String::from("png");
   let mut quality = 0.9f64;
   if let Some(o) = opts.0 {
@@ -73,7 +97,7 @@ fn encode_image<'js>(
   let raw = data.as_raw().ok_or_else(|| Exception::throw_message(&ctx, "encodeImage: detached buffer"))?;
   let pixels = unsafe { std::slice::from_raw_parts(raw.ptr.as_ptr(), raw.len) };
   let out = match format.as_str() {
-    "png" => forge::image::encode_png(pixels, width, height),
+    "png" => forge::image::encode_png(pixels, width, height, unpremultiply),
     "jpeg" => forge::image::encode_jpeg(pixels, width, height, (quality * 100.0).round() as u8),
     other => return Err(Exception::throw_message(&ctx, &format!("encodeImage: unknown format \"{other}\""))),
   }

@@ -176,12 +176,11 @@ is flat. Event x/y are layer pixels with the camera undone.
   bytes and passes `filter: "nearest"` through - use it, or `decodeImage` +
   `createTexture` directly.
 - Tint multiplies the sampled texel (`texture * tint`) and the pipeline
-  blends with `blend: "alpha"` in record order. The layer's OUTPUT obeys the
-  premultiplied-alpha contract to the extent the atlas does: PNG decode
-  yields straight alpha, and a translucent texel tinted translucent can
-  composite slightly wrong at the edges. Opaque-or-transparent pixel art
-  (the overwhelming case) is exact. A premultiply-on-decode option is the
-  fix if it ever matters; note it, do not silently add it.
+  blends with `blend: "alpha"` in record order, the premultiplied composite.
+  The atlas is premultiplied because `decodeImage` premultiplies by default;
+  an atlas uploaded from straight-alpha pixels (`decodeImage(bytes, { alpha:
+  "straight" })` + `createTexture`) draws color under transparent texels
+  as opaque - the classic "keyed-out backdrop becomes a wash" symptom.
 - `pointInSprite` in pick.ts and the vertex stage's rotation must agree on
   direction (clockwise, y-down). The differential check (pick-check.ts)
   guards the math against an oracle but NOT against the shader - if you
