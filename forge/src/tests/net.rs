@@ -4,15 +4,20 @@ use tokio::net::TcpListener;
 
 use crate::net::*;
 
+/// Probe budget wide enough for a loopback refusal on every platform: Windows
+/// retries the SYN for ~2 s before reporting the RST, so anything tighter
+/// reads a refused port as Filtered there.
+const PROBE_BUDGET_MS: u64 = 3000;
+
 #[tokio::test]
 async fn probe_open_then_closed() {
   let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
   let port = listener.local_addr().unwrap().port();
-  assert_eq!(probe("127.0.0.1", port, 1000).await, Liveness::Open);
+  assert_eq!(probe("127.0.0.1", port, PROBE_BUDGET_MS).await, Liveness::Open);
   drop(listener);
   // Nothing listening on a loopback port -> the kernel refuses (RST) -> Closed,
   // which still means "host up". This is the distinction the sweep relies on.
-  assert_eq!(probe("127.0.0.1", port, 1000).await, Liveness::Closed);
+  assert_eq!(probe("127.0.0.1", port, PROBE_BUDGET_MS).await, Liveness::Closed);
 }
 
 #[tokio::test]

@@ -22,6 +22,10 @@ declare module "flux:net" {
   /**
    * Outcome of a {@link probe}. `closed` (a refusal) still means the host is up —
    * something answered; only `filtered` (a timeout/unreachable) is no evidence.
+   *
+   * Windows reports a refusal only after ~2 s of SYN retries, so a `timeoutMs`
+   * under that reads a refused port as `filtered` there; `open` is instant
+   * everywhere.
    */
   type Liveness = "open" | "closed" | "filtered"
 

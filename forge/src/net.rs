@@ -55,6 +55,10 @@ const UDP_RECV_MAX: usize = 64 * 1024;
 /// is **up**, because something answered. Only `Filtered` (a timeout, or an
 /// unreachable / other error) is no evidence of life. So a sweep counts both
 /// `Open` and `Closed` as a live host, and only `Filtered` as absent.
+///
+/// Platform note: Windows retries the SYN for ~2 s before it reports a refusal,
+/// so a timeout under that reads a refused port as `Filtered` there. `Open`
+/// resolves in well under a millisecond everywhere.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Liveness {
   Open,

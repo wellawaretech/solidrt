@@ -348,18 +348,21 @@ function bind(port: number): Server {
   })
 }
 
-// A bind alone does not prove a port free: with SO_REUSEADDR (the default
-// on a listener) Linux lets a loopback bind coexist with another process's
+// A bind alone does not prove a port free: on macOS (BSD SO_REUSEADDR, the
+// default on a listener) a loopback bind coexists with another process's
 // all-interfaces listener on the same port, and the newcomer then silently
-// takes the loopback traffic. So each candidate is dialed first; only a
-// refusal means free.
+// takes the loopback traffic; Linux and Windows refuse the second bind. So
+// each candidate is dialed first, and an answer means taken. Anything else
+// is left to the bind: a refusal cannot be waited for, because Windows only
+// reports one after ~2 s of SYN retries, so it reads as filtered within the
+// probe budget and the bind is the truth.
 async function bindFirstFree(): Promise<Server> {
   if (config.port !== undefined) return bind(config.port)
   let candidates: number[] = remembered !== null ? [remembered] : []
   for (let p = DEFAULT_PORT; p < DEFAULT_PORT + PORT_TRIES; p++) candidates.push(p)
   let last: unknown = null
   for (let port of candidates) {
-    if ((await probe("127.0.0.1", port, { timeoutMs: 200 })) !== "closed") continue
+    if ((await probe("127.0.0.1", port, { timeoutMs: 200 })) === "open") continue
     try {
       return bind(port)
     } catch (e) {
