@@ -217,6 +217,11 @@ Shaped, not started.
   TypeScript cannot catch it (every JSX expression is the one Element type, so
   children cannot be constrained per tag); the place to prevent this coding
   error is the bundler's JSX pass, where tags are static.
+- **[Client badge for dev-server control and input mute](backlog/dev-overlays.md)** [2026-08-29]
+  A device connected to a dev server is controlled by it, and a muted client
+  ignores the person holding it; neither is visible on the client today. One
+  always-on line in the existing overlay says CONN or MUTED plus FPS; the
+  stats HUD unfolds under it when toggled.
 - **[Dev/prod signal for validation](backlog/dev-prod-validation-policy.md)** [2026-07-17]
   The missing runtime signal and shared helper behind the agreed convention of
   throwing in dev and warning in prod; today everything is dev, so validation
