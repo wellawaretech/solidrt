@@ -13,9 +13,10 @@ else
 endif
 
 # Dist (production) builds are always speech-free. This is the single source
-# of truth: any dist-* goal sets DIST=1, exports it to the recursive client/
-# runtime makes, and the override beats even a command-line SPEECH=1.
-ifneq ($(filter dist-%,$(MAKECMDGOALS)),)
+# of truth: any packaging goal sets DIST=1, exports it to the recursive client/
+# runtime makes, and the override beats even a command-line SPEECH=1. The
+# goals are spelled out (not `dist-%`) so `dist` itself is covered.
+ifneq ($(filter dist dist-android dist-android-armeabi-v7a,$(MAKECMDGOALS)),)
 DIST = 1
 endif
 export DIST
@@ -27,7 +28,7 @@ endif
 # lattice's `default`), so a plain `cargo build` stays voice-free. The same
 # holds for every Makefile target: speech is off unless explicitly requested
 # with SPEECH=1 (no whisper-rs / livekit-wakeword / ort-tract otherwise), and
-# dist-* builds force it off regardless (see DIST above). GO_FEATURES /
+# dist builds force it off regardless (see DIST above). GO_FEATURES /
 # RUNTIME_FEATURES are the resulting cargo feature flags for the two binaries
 # (go = client, which already pulls flux/compile; runtime = default minus go).
 #
@@ -69,10 +70,11 @@ endif
 
 .DEFAULT_GOAL := client
 
-.PHONY: all help launcher-bundle dist-clean clean
+.PHONY: lattice help launcher-bundle dist-clean clean
 
-# Build both host binaries (client + runtime).
-all: client runtime
+# Build both lattice host binaries (client + runtime). The root `make all`
+# adds the flux binaries on top.
+lattice: client runtime
 
 # The monorepo packages both bundles bake in. Without these prerequisites a
 # core/components surface change leaves a stale bundle importing a runtime
@@ -93,8 +95,8 @@ help:
 	@echo "Host ($(HOST_TARGET)):"
 	@echo "  client               Build the client (default)"
 	@echo "  runtime              Build production runtime"
-	@echo "  all                  Build both client and runtime"
-	@echo "  dist-linux           Build both into packages/$(HOST_PLATFORM)/"
+	@echo "  lattice              Build both client and runtime"
+	@echo "  dist                 Build both plus the flux binaries into packages/$(HOST_PLATFORM)/"
 	@echo ""
 	@echo "Android dev (single ABI=$(ANDROID_ABI)):"
 	@echo "  client-android       Build the client .so"
@@ -110,7 +112,7 @@ help:
 	@echo ""
 	@echo "Pass PROFILE=debug for a debug build (default: release)."
 	@echo "Pass SPEECH=1 to build with speech recognition (default: off)."
-	@echo "dist-* targets always build speech-free; solidrt and fluxrt use release-opt."
+	@echo "dist targets always build speech-free; solidrt and fluxrt use release-opt."
 	@echo ""
 	@echo "Launcher:"
 	@echo "  launcher-bundle      Regenerate the launcher and BSOD bundles"

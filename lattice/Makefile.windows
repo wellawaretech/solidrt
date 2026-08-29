@@ -33,7 +33,7 @@ WIN_RUSTFLAGS := -Ctarget-feature=+crt-static
 WIN_CMAKE_ENV := CMAKE_POLICY_DEFAULT_CMP0091=NEW CMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded \
   CMAKE_TOOLCHAIN_FILE=$(shell cygpath -m $(CURDIR))/msvc-static-crt.cmake
 
-.PHONY: client runtime dist-windows angle-windows
+.PHONY: client runtime dist angle-windows
 
 angle-windows:
 	@mkdir -p $(HOST_DIST)
@@ -69,7 +69,7 @@ runtime: angle-windows
 	$(SOLIDRT_VERSION) cargo build $(CARGO_PROFILE_FLAG) $(RUNTIME_FEATURES) --bin solidrt --target-dir target/runtime
 	$(call stage-windows,runtime,$(PROFILE),solidrt)
 
-dist-windows:
+dist:
 	$(MAKE) client
 	cp $(HOST_DIST)/solidrt-go.exe $(PKG_WIN)/solidrt-go.exe
 	cp $(ANGLE_EGL) $(ANGLE_GLES) $(PKG_WIN)/

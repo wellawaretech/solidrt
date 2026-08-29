@@ -1,10 +1,10 @@
 # lattice/Makefile.linux
 
-# Host-native: dist-linux stages into the package matching the build host
+# Host-native: dist stages into the package matching the build host
 # (linux-x64-gnu on x86_64, linux-arm64-gnu on aarch64).
 PKG_LINUX := $(CURDIR)/../packages/$(HOST_PLATFORM)
 
-.PHONY: client runtime dist-linux
+.PHONY: client runtime dist
 
 # Stage a binary into dist/<host-platform>/.
 # $(1) = target subdir (go|runtime), $(2) = profile (release|debug), $(3) = binary name
@@ -24,7 +24,7 @@ runtime:
 	$(SOLIDRT_VERSION) cargo build $(CARGO_PROFILE_FLAG) $(RUNTIME_FEATURES) --bin solidrt --target-dir target/runtime
 	$(call stage-bin,runtime,$(PROFILE),solidrt)
 
-dist-linux:
+dist:
 	$(MAKE) client
 	cp $(HOST_DIST)/solidrt-go $(PKG_LINUX)/solidrt-go
 	$(MAKE) -C $(SRT_HOME)/flux flux fluxc

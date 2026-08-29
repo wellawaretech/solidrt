@@ -31,10 +31,14 @@ jobs:
       - name: Check
         run: cargo check --workspace --all-targets
 
-      # Every crate: alloy and forge hold the bulk of the suite (hit testing,
-      # routing, layout cache, GPU graph propagation, cache/fetch/net).
+      # The Linux-only suites: alloy (hit testing, routing, layout cache, GPU
+      # graph propagation), flux with the gui feature (unified in through
+      # lattice; its property tests exist only here) and lattice. forge is
+      # excluded because test-forge below runs it on every platform, this one
+      # included; flux stays because its headless half is what test-flux runs
+      # elsewhere and the gui half has no other home.
       - name: Test
-        run: cargo test --workspace
+        run: cargo test --workspace --exclude forge
 
       # `go` is not a default feature, so the step above compiles none of the
       # client-only code - including lattice's app-store and dev-server-tunnel
@@ -42,15 +46,16 @@ jobs:
       - name: Test go client
         run: cargo test -p lattice --features go
 
-  # The engine-free cores on every platform we ship to. `check` above runs the
-  # whole workspace on Linux x64 only; anything OS-specific in forge (sockets,
-  # fs, subprocess, sqlite) is otherwise never exercised before a release.
-  # The first Windows run caught three: a probe budget that passes on Linux
-  # but reads a refused connect as "filtered" there (Windows retries the SYN
-  # for ~2 s first, okf/notes/port-probe-platform-facts.md), a realpath test
-  # expecting the verbatim prefix, and the cache's LRU touch failing on a
-  # read-only handle. forge alone needs no system packages, so the job is
-  # toolchain + cache + test.
+  # The engine-free cores, one job, the same command on every platform we
+  # ship to (Linux x64 included, so forge is tested exactly once per
+  # platform and never through `check`). Anything OS-specific in forge
+  # (sockets, fs, subprocess, sqlite) was otherwise never exercised before a
+  # release: the first Windows run caught three - a probe budget that passes
+  # on Linux but reads a refused connect as "filtered" there (Windows retries
+  # the SYN for ~2 s first, okf/notes/port-probe-platform-facts.md), a
+  # realpath test expecting the verbatim prefix, and the cache's LRU touch
+  # failing on a read-only handle. forge needs no system packages, so the
+  # job is toolchain + cache + test.
   test-forge:
     name: test-forge (${{ matrix.platform }})
     runs-on: ${{ matrix.runner }}
@@ -59,12 +64,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - platform: windows
-            runner: windows-latest
-          - platform: darwin
-            runner: macos-14
+          - platform: linux
+            runner: ubuntu-24.04
           - platform: linux-arm
             runner: ubuntu-22.04-arm
+          - platform: darwin
+            runner: macos-14
+          - platform: windows
+            runner: windows-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
@@ -76,6 +83,44 @@ jobs:
 
       - name: Test forge
         run: cargo test -p forge
+
+  # The headless flux runtime (QuickJS + the forge marshalling: value, time,
+  # marshal, intrinsics) on the same four platforms, same principle as
+  # test-forge. `--lib` with default features: the gui half needs alloy (SDL,
+  # Impeller) and lives in `check` on Linux. QuickJS builds through bindgen,
+  # so libclang must be present: the macOS and Windows images ship it (the
+  # client builds there with no setup), the Ubuntu images need the package.
+  test-flux:
+    name: test-flux (${{ matrix.platform }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux
+            runner: ubuntu-24.04
+          - platform: linux-arm
+            runner: ubuntu-22.04-arm
+          - platform: darwin
+            runner: macos-14
+          - platform: windows
+            runner: windows-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2.9.1
+        with:
+          key: test-flux-${{ matrix.platform }}
+
+      - name: Install libclang
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libclang-dev clang
+
+      - name: Test flux
+        run: cargo test -p flux --lib
 
   types:
     runs-on: ubuntu-24.04

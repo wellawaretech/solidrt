@@ -58,7 +58,7 @@ jobs:
       - uses: ./.github/actions/js-install
 
       - name: Build
-        run: make dist-linux VERSION="${GITHUB_REF_NAME#v}"
+        run: make dist VERSION="${GITHUB_REF_NAME#v}"
 
       - name: Upload binaries
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -94,7 +94,7 @@ jobs:
       - uses: ./.github/actions/js-install
 
       - name: Build
-        run: make dist-linux VERSION="${GITHUB_REF_NAME#v}"
+        run: make dist VERSION="${GITHUB_REF_NAME#v}"
 
       - name: Upload binaries
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -124,7 +124,7 @@ jobs:
       - uses: ./.github/actions/js-install
 
       - name: Build
-        run: make dist-darwin VERSION="${GITHUB_REF_NAME#v}"
+        run: make dist VERSION="${GITHUB_REF_NAME#v}"
 
       - name: Upload binaries
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -216,7 +216,7 @@ jobs:
       - uses: ./.github/actions/js-install
 
       - name: Build
-        run: make dist-windows VERSION="${GITHUB_REF_NAME#v}"
+        run: make dist VERSION="${GITHUB_REF_NAME#v}"
 
       - name: Upload binaries
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

@@ -24,7 +24,7 @@ PKG_DARWIN := $(CURDIR)/../packages/darwin-$(DARWIN_ARCH)
 CLANG_RT_OSX   := $(shell clang -print-resource-dir)/lib/darwin/libclang_rt.osx.a
 DARWIN_RUSTFLAGS = RUSTFLAGS="-C link-arg=-Wl,-rpath,@executable_path -C link-arg=$(CLANG_RT_OSX)"
 
-.PHONY: client runtime dist-darwin angle-darwin
+.PHONY: client runtime dist angle-darwin
 
 angle-darwin:
 	@mkdir -p $(DARWIN_DIST)
@@ -63,7 +63,7 @@ runtime: angle-darwin
 	$(SOLIDRT_VERSION) $(DARWIN_RUSTFLAGS) cargo build $(CARGO_PROFILE_FLAG) $(RUNTIME_FEATURES) --bin solidrt --target-dir target/runtime
 	$(call stage-darwin,runtime,$(PROFILE),solidrt)
 
-dist-darwin:
+dist:
 	$(MAKE) client
 	cp $(HOST_DIST)/solidrt-go $(PKG_DARWIN)/solidrt-go
 	cp $(HOST_DIST)/libEGL.dylib $(HOST_DIST)/libGLESv2.dylib $(PKG_DARWIN)/
