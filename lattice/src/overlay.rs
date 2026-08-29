@@ -6,18 +6,39 @@ use alloy::impellers::{
 use crate::stats::StatsSnapshot;
 
 const MIB: f32 = 1024.0 * 1024.0;
-const PARA_WIDTH: f32 = 200.0;
+// Wrap width of the paragraph, logical px: wide enough that the longest first
+// line (badge + headline figures + FPS, e.g. "MUTED 100% CPU 1024 MEM 120 FPS"
+// in 14 px bold mono) never wraps. The backdrop is sized from the measured
+// longest line, not this.
+const PARA_WIDTH: f32 = 300.0;
+
+/// The dev-session fact shown on the overlay's first line: the client is
+/// connected to a dev server (which controls it), or its user input is muted
+/// by that server (a mute implies the connection: it clears on disconnect).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Badge {
+  Connected,
+  Muted,
+}
 
 /// Build the overlay declaration the raster thread composites over every
-/// finished frame (after any window shader pass): a display list with the
-/// HUD drawn at the origin, plus the window-space rectangle it belongs in
-/// (physical pixels - `scale` is the display scale the app's own lists are
-/// built with, so the HUD lays out in the same logical coordinates
-/// `safe_area` is in). None when a paragraph cannot be built.
-pub fn build(s: &StatsSnapshot, typography: &TypographyContext, safe_area: Rect, scale: f32) -> Option<alloy::StatsOverlay> {
+/// finished frame (after any window shader pass): a display list drawn at
+/// the origin, plus the window-space rectangle it belongs in (physical
+/// pixels - `scale` is the display scale the app's own lists are built
+/// with, so the text lays out in the same logical coordinates `safe_area`
+/// is in). The first line is the badge (if any) and, with `hud` on, the
+/// stats HUD's headline figures, FPS last; the rest of the HUD follows only
+/// with `hud` on. None when a paragraph cannot be built.
+pub fn build(
+  s: &StatsSnapshot,
+  hud: bool,
+  badge: Option<Badge>,
+  typography: &TypographyContext,
+  safe_area: Rect,
+  scale: f32,
+) -> Option<alloy::Overlay> {
   let mut b = DisplayListBuilder::new(None);
   b.scale(scale, scale);
-  let paint_stats = s.paint;
   let mut paint = Paint::default();
   paint.set_color(Color::new_srgba(1.0, 1.0, 1.0, 1.0));
 
@@ -33,7 +54,57 @@ pub fn build(s: &StatsSnapshot, typography: &TypographyContext, safe_area: Rect,
   };
   pb.push_style(&style);
 
-  let mut text = format!("{:.0}% CPU {:.0} MEM {} FPS", s.cpu_pct, s.mem_bytes as f32 / MIB, s.fps);
+  let mut text = String::new();
+  match badge {
+    Some(Badge::Connected) => text.push_str("CONN "),
+    Some(Badge::Muted) => text.push_str("MUTED "),
+    None => {}
+  }
+  if hud {
+    text.push_str(&format!("{:.0}% CPU {:.0} MEM ", s.cpu_pct, s.mem_bytes as f32 / MIB));
+  }
+  text.push_str(&format!("{} FPS", s.fps));
+  if hud {
+    push_hud_lines(&mut text, s);
+  }
+
+  pb.add_text(&text);
+  let Some(paragraph) = pb.build(PARA_WIDTH) else {
+    return None;
+  };
+
+  // Darkening backdrop so the white text stays legible over light content,
+  // drawn at the origin: placement travels as the declaration's rectangle.
+  let pad = 10.0;
+  let text_w = paragraph.get_longest_line_width();
+  let text_h = paragraph.get_height();
+  let w = text_w + pad * 2.0;
+  let h = text_h + pad * 2.0;
+  let mut bg_paint = Paint::default();
+  bg_paint.set_color(Color::new_srgba(0.0, 0.0, 0.0, 0.7));
+  b.draw_rect(&Rect::new(Point::new(0.0, 0.0), Size::new(w, h)), &bg_paint);
+  // The paragraph is right-aligned in PARA_WIDTH: place it so its right
+  // edge sits one pad inside the backdrop's right edge.
+  b.draw_paragraph(&paragraph, Point::new(pad + text_w - PARA_WIDTH, pad));
+
+  // Same anchor the in-tree overlay drew at: the backdrop's right edge 10
+  // logical px inside the safe area's top-right corner, its top flush with
+  // the safe area's top.
+  let win_x = safe_area.origin.x + safe_area.size.width - 10.0 - text_w - pad;
+  let win_y = safe_area.origin.y + 10.0 - pad;
+  let dl = b.build()?;
+  Some(alloy::Overlay {
+    dl,
+    x: (win_x * scale).round() as i32,
+    y: (win_y * scale).round() as i32,
+    width: (w * scale).ceil() as u32,
+    height: (h * scale).ceil() as u32,
+  })
+}
+
+/// The stats HUD's remaining lines, appended under the first line.
+fn push_hud_lines(text: &mut String, s: &StatsSnapshot) {
+  let paint_stats = s.paint;
   // Each timing is shown as a share of the measured frame period. Every
   // figure and frame_ms are smoothed the same way on the same cadence (the
   // phases record zero on reused and skipped frames, see Stats::record_frame),
@@ -88,38 +159,4 @@ pub fn build(s: &StatsSnapshot, typography: &TypographyContext, safe_area: Rect,
   if s.textures > 0 {
     text.push_str(&format!("\n{} TEX", s.textures));
   }
-
-  pb.add_text(&text);
-
-  let Some(paragraph) = pb.build(PARA_WIDTH) else {
-    return None;
-  };
-
-  // Darkening backdrop so the white text stays legible over light content,
-  // drawn at the origin: placement travels as the declaration's rectangle.
-  let pad = 10.0;
-  let text_w = paragraph.get_longest_line_width();
-  let text_h = paragraph.get_height();
-  let w = text_w + pad * 2.0;
-  let h = text_h + pad * 2.0;
-  let mut bg_paint = Paint::default();
-  bg_paint.set_color(Color::new_srgba(0.0, 0.0, 0.0, 0.7));
-  b.draw_rect(&Rect::new(Point::new(0.0, 0.0), Size::new(w, h)), &bg_paint);
-  // The paragraph is right-aligned in PARA_WIDTH: place it so its right
-  // edge sits one pad inside the backdrop's right edge.
-  b.draw_paragraph(&paragraph, Point::new(pad + text_w - PARA_WIDTH, pad));
-
-  // Same anchor the in-tree overlay drew at: the backdrop's right edge 10
-  // logical px inside the safe area's top-right corner, its top flush with
-  // the safe area's top.
-  let win_x = safe_area.origin.x + safe_area.size.width - 10.0 - text_w - pad;
-  let win_y = safe_area.origin.y + 10.0 - pad;
-  let dl = b.build()?;
-  Some(alloy::StatsOverlay {
-    dl,
-    x: (win_x * scale).round() as i32,
-    y: (win_y * scale).round() as i32,
-    width: (w * scale).ceil() as u32,
-    height: (h * scale).ceil() as u32,
-  })
 }

@@ -1,6 +1,6 @@
 ---
 title: Compressed texture uploads (ETC2)
-description: ES 3.0 mandates ETC2/EAC in core, a free 4-8x texture memory cut on every GL target, but uploadTexture is RGBA8-only; demand-gated, with the honest caveat that ANGLE on Windows may software-expand it - the same split that made both web standards gate the feature.
+description: ES 3.0 mandates ETC2/EAC in core, a free 4-8x texture memory cut on every GL target, but createTexture is RGBA8-only, so a 25-map glTF scene (Sponza) holds ~182 MB of texture for ~18 MB of source; with the honest caveat that ANGLE on Windows may software-expand it - the same split that made both web standards gate the feature.
 created: 2026-07-30
 ---
 
@@ -22,7 +22,23 @@ under it; `Flux.capabilities` (or [[gpu-labels-limits]]'s limits object)
 answers whether the device takes it natively. Mutable/resize paths and the
 `<texture>` display draw are unaffected (a texture id is a texture id).
 
-Demand-gated: no field report asks, and the workload that would (large
-game texture sets) has not appeared. Filed so the platform caveat is
-recorded with it: guaranteed native on the GL targets (Linux, Android),
-possibly software-expanded under ANGLE on Windows.
+The platform caveat is the reason this is filed with care: guaranteed
+native on the GL targets (Linux, Android), possibly software-expanded
+under ANGLE on Windows.
+
+## Field report: Sponza (2026-08-28)
+
+The workload has appeared. The Khronos glTF sample Sponza (25 materials,
+69 images of which the parser opens the 25 base-color maps, 1024^2 to
+2048^2 JPEGs, ~18 MB of source) lands as 136.5 MB of RGBA8 base level and
+~182 MB with the mip chain; client RSS sat at ~235 MB. Nothing broke and
+the scene ran at 60 fps, but a texture-heavy model has no lever other than
+shipping smaller images: no `format` option on createTexture, no KTX2 /
+basis path. [[3d-model-loader]] lists KTX2 images among the compressed
+real-world glTF inputs still open; that is the bake-side half of this
+item (transcode at `srt tool 3d/model` time, upload compressed at load),
+and the runtime half is the `format` option above. Measured on Windows
+(ANGLE / D3D11, RTX 3070), so the very platform where ETC2 may be
+software-expanded; a desktop format (BC7 / S3TC via extension) or a
+basis-universal transcode to whatever the device reports is the shape that
+holds on both sides of the split.

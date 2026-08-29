@@ -11,7 +11,9 @@ bundled `flux` runtime, not on Bun. Invoke via `bunx srt <command>`.
 The dev loop against a running app is pause_watch -> edit -> reload ->
 resume_watch -> get_logs -> get_snapshot, with mute_user_input while you
 measure or test and unmute_user_input after; agents/debugging.md has the
-why of each hold. `reload` surfaces build errors but not type errors:
+why of each hold. Several clients may be attached at once: `reload` reaches
+all of them, while call_debug / send_input / get_snapshot are per client
+(debugging.md). `reload` surfaces build errors but not type errors:
 `bunx srt check` is for those.
 
 agents/ carries the depth this one leaves out; read the one that matches

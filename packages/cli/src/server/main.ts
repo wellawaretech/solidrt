@@ -264,10 +264,6 @@ function onClose(ws: ServerWebSocket) {
   let info = state.clients.get(ws)
   state.clients.delete(ws)
   console.log(`[cli] Client disconnected: ${info?.platform ?? "unknown"}`)
-  // `srt run` lives as long as its clients: once the local client is gone,
-  // the last remote disconnect ends the server. `srt server` runs until
-  // stopped.
-  if (config.client && localClientExited && state.clients.size === 0) shutdown()
 }
 
 function onMessage(ws: ServerWebSocket, msg: string | Uint8Array) {
@@ -401,7 +397,6 @@ let keepalive = setInterval(() => {
 let shuttingDown = false
 let stopRepl = () => {}
 let localClient: Child | null = null
-let localClientExited = false
 let signalOffs = ["SIGINT", "SIGTERM"].map((signal) =>
   onSignal(signal, () => {
     shutdown()
@@ -465,14 +460,11 @@ if (config.client) {
   localClient = child
   pump(child.stdout, (line) => console.log(line))
   pump(child.stderr, (line) => console.error(line))
+  // The server outlives its client: a wedged or crashed client is restarted
+  // with `srt client` (it reattaches by cwd) without losing the server, its
+  // bundle, the watcher or the MCP session. The server stops on quit/signal.
   child.status().then(() => {
     localClient = null
-    localClientExited = true
-    if (shuttingDown) return
-    if (state.clients.size === 0) {
-      shutdown()
-    } else {
-      console.log(`[cli] Local client exited, ${state.clients.size} remote client(s) still connected`)
-    }
+    if (!shuttingDown) console.log("[cli] Local client exited; the server keeps running (srt client reattaches)")
   })
 }

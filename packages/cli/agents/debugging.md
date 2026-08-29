@@ -156,9 +156,11 @@ when exactly one client is connected.
   window root.
 - `/texture?id=<textureId>` - same shape and options as `/snapshot`, at the
   texture's native size (a scene or shader target behind a `<texture>` leaf).
-- `/gpu?label=<text>` - the GPU resource inventory; `label` keeps only the
-  resources created with exactly that label (ids change on reload, labels
-  do not).
+- `/gpu?label=<text>&draw=<id>` - the GPU resource inventory; `label` keeps
+  only the resources created with exactly that label (ids change on reload,
+  labels do not). A draw target's entries report uniforms wider than a vec4
+  (matrices) as their length, `"[16]"`; `draw` names the one entry (ids are
+  per target, so pair it with `label`) reported in full.
 - `/buffer?id=<bufferId>&offset=<n>&length=<n>&as=<f32|u16|u8>` - vertex
   buffer contents (default f32; reads cap at 64 KiB).
 - `/stats?window=<ms>` - the performance statistics. POST

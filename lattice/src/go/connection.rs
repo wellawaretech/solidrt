@@ -53,14 +53,32 @@ pub struct DevFlags {
 }
 
 /// Apply the server's mute state to the user-input mute, logging the
-/// transition so the human at the client can tell why input stopped.
+/// transition so the human at the client can tell why input stopped, and
+/// requesting a frame so the overlay badge shows it on an idle app.
 fn set_mute(flags: &DevFlags, active: bool) {
   if flags.user_input_muted.swap(active, Ordering::Relaxed) != active {
+    flags.frame_requested.store(true, Ordering::Relaxed);
     if active {
       log::info!("[sgo] User input muted by the dev tools until unmuted");
     } else {
       log::info!("[sgo] User input unmuted");
     }
+  }
+}
+
+/// Clears what a live session set, the moment the session ends: the
+/// connected flag and the mute must drop with the connection however it
+/// ends - lost (try_serve's loop breaks) or cancelled by a dev command (the
+/// caller's select drops the try_serve future mid-await, so no code after
+/// its loop runs). The frame request draws the change on an idle app (the
+/// overlay badge).
+struct SessionGuard<'a>(&'a DevFlags);
+
+impl Drop for SessionGuard<'_> {
+  fn drop(&mut self) {
+    self.0.connected.store(false, Ordering::Relaxed);
+    self.0.frame_requested.store(true, Ordering::Relaxed);
+    set_mute(self.0, false);
   }
 }
 
@@ -467,6 +485,11 @@ async fn try_serve(
   log::info!("[sgo] Connected to ws://{addr}");
   let _ = state_tx.send(ConnState::Connected { addr: addr.to_string(), recent: recent_key.map(str::to_string) });
   flags.connected.store(true, Ordering::Relaxed);
+  // Drawn as the overlay badge (see lattice's overlay::Badge): request a
+  // frame so an idle app shows the edge. The guard undoes both when this
+  // session ends, by any path.
+  flags.frame_requested.store(true, Ordering::Relaxed);
+  let _session = SessionGuard(flags);
 
   // Publish the dialed dev server address so the next engine build installs the
   // file/dir proxy against the server we are actually talking to. Overwrites any
@@ -670,7 +693,8 @@ async fn try_serve(
                 let window_ms = json
                   .get("windowMs")
                   .and_then(|w| w.as_f64())
-                  .unwrap_or(STATS_WINDOW_DEFAULT_MS);
+                  .unwrap_or(STATS_WINDOW_DEFAULT_MS)
+                  .clamp(0.0, crate::frame_history::WINDOW_MAX_MS);
                 let now_ms = crate::frame_history::now_ms();
                 let window = queries.history.lock().expect("frame history lock poisoned").summarize(window_ms, now_ms);
                 let exec = queries.exec.lock().expect("exec handle lock poisoned").clone();
@@ -686,12 +710,13 @@ async fn try_serve(
                       // backlogged raster thread produces no frames, so the
                       // latch goes stale exactly when these matter.
                       let raster = ctx.userdata::<flux::gui::AlloyContext>().map(|atx| atx.raster_counters());
-                      let reply = StatsReply { snap, time_ms: now_ms, window: window.as_ref(), counts, raster };
+                      let reply = StatsReply { snap, time_ms: now_ms, window_ms, window: window.as_ref(), counts, raster };
                       let _ = reply_tx.send(stats_reply(id, reply));
                     });
                   }
                   None => {
-                    let reply = StatsReply { snap, time_ms: now_ms, window: window.as_ref(), counts: None, raster: None };
+                    let reply =
+                      StatsReply { snap, time_ms: now_ms, window_ms, window: window.as_ref(), counts: None, raster: None };
                     let _ = client.send(tokio_websockets::Message::text(stats_reply(id, reply))).await;
                   }
                 }
@@ -747,8 +772,9 @@ async fn try_serve(
                   Some(eh) => {
                     let reply_tx = queries.outbound_tx.clone();
                     let label = json.get("label").and_then(|l| l.as_str()).map(str::to_string);
+                    let draw = json.get("draw").and_then(|d| d.as_u64());
                     eh.exec(move |ctx| {
-                      let _ = reply_tx.send(gpu_reply(&ctx, id, label.as_deref()));
+                      let _ = reply_tx.send(gpu_reply(&ctx, id, label.as_deref(), draw));
                     });
                   }
                   None => {
@@ -848,8 +874,6 @@ async fn try_serve(
     }
   }
 
-  flags.connected.store(false, Ordering::Relaxed);
-  set_mute(&flags, false);
   log::warn!("[sgo] Connection to ws://{addr} lost");
   true
 }
@@ -1026,8 +1050,9 @@ const STATS_WINDOW_DEFAULT_MS: f64 = 5000.0;
 /// Everything a stats reply is built from. `snap` is the draw loop's latched
 /// figures; `clock` the client's own clock at query time (`timeMs` on its
 /// monotonic origin, the latest present index) so two samples can be
-/// differenced; `window` the frame-history summary (None when no frame was
-/// rebuilt inside the window; the reply then says so with `frames: 0`);
+/// differenced; `window_ms` the (clamped) span the query asked for and
+/// `window` the frame-history summary over it (None when no frame changed
+/// the picture inside it; the reply then says so with `frames: 0`);
 /// `counts` (mounted, total) from the live tree when the query could run on
 /// the JS thread - the reply then carries mountedNodes and orphanNodes
 /// (total - mounted: nodes unreachable from the root, i.e. leaked or
@@ -1036,6 +1061,7 @@ const STATS_WINDOW_DEFAULT_MS: f64 = 5000.0;
 struct StatsReply<'a> {
   snap: crate::stats::StatsSnapshot,
   time_ms: f64,
+  window_ms: f64,
   window: Option<&'a crate::frame_history::WindowSummary>,
   counts: Option<(usize, usize)>,
   raster: Option<alloy::RasterCounters>,
@@ -1074,7 +1100,7 @@ fn stats_reply(id: u64, r: StatsReply<'_>) -> String {
   put("cacheGets", s.cache_gets.into());
   put("cacheHits", s.cache_hits.into());
   put("nodesPainted", s.paint.nodes_painted.into());
-  put("window", window_json(r.window, r.time_ms));
+  put("window", window_json(r.window, r.time_ms, r.window_ms));
   if let Some((mounted, total)) = r.counts {
     put("mountedNodes", mounted.into());
     put("orphanNodes", total.saturating_sub(mounted).into());
@@ -1104,10 +1130,15 @@ fn stats_reply(id: u64, r: StatsReply<'_>) -> String {
 /// worst frame with its phase breakdown and layout activity - the frame the
 /// smoothed figures average away. Raster rates ride along when the window
 /// spans two or more frames. `now_ms` is the query instant the worst frame's
-/// age is measured from.
-fn window_json(window: Option<&crate::frame_history::WindowSummary>, now_ms: f64) -> serde_json::Value {
+/// age is measured from; `window_ms` the span asked for, echoed even when no
+/// frame fell inside it (the summary then has no window of its own).
+fn window_json(
+  window: Option<&crate::frame_history::WindowSummary>,
+  now_ms: f64,
+  window_ms: f64,
+) -> serde_json::Value {
   let Some(w) = window else {
-    return serde_json::json!({ "windowMs": STATS_WINDOW_DEFAULT_MS, "frames": 0 });
+    return serde_json::json!({ "windowMs": window_ms, "frames": 0 });
   };
   let worst = &w.worst;
   let mut data = serde_json::Map::new();
@@ -1366,7 +1397,28 @@ fn insert_label(obj: &mut serde_json::Value, label: &Option<String>) {
 /// and encode it. Runs on the JS thread (see the query handling above).
 /// `label`, when given, keeps only the resources created with exactly that
 /// debug label (every list; the window shader has none and is dropped).
-fn gpu_reply(ctx: &flux::rquickjs::Ctx<'_>, id: u64, label: Option<&str>) -> String {
+/// Uniform values with more components than this are elided from a draw
+/// entry's `params` (reported as their length, "[16]"), so a model's hundred
+/// entries do not each carry two matrices; `draw` names the one entry
+/// reported in full. Vectors up to a vec4 (colors, offsets) stay inline.
+const PARAM_INLINE_COMPONENTS: usize = 4;
+
+/// One uniform value for the gpu reply: the numbers, or with `elide` the
+/// length marker for anything wider than `PARAM_INLINE_COMPONENTS`.
+fn param_json(v: &alloy::ParamValue, elide: bool) -> serde_json::Value {
+  match v {
+    alloy::ParamValue::Scalar(n) => serde_json::json!(n),
+    alloy::ParamValue::Array(a) if elide && a.len() > PARAM_INLINE_COMPONENTS => {
+      serde_json::json!(format!("[{}]", a.len()))
+    }
+    alloy::ParamValue::Array(a) => serde_json::json!(a),
+  }
+}
+
+/// `label` keeps only the resources created with that label; `draw` is the
+/// draw entry id (target-scoped, so pair it with `label` to pin one target)
+/// whose params are reported in full instead of elided.
+fn gpu_reply(ctx: &flux::rquickjs::Ctx<'_>, id: u64, label: Option<&str>, draw: Option<u64>) -> String {
   let Some(atx) = ctx.userdata::<flux::gui::AlloyContext>() else {
     return error_reply(id, "no alloy context");
   };
@@ -1407,13 +1459,9 @@ fn gpu_reply(ctx: &flux::rquickjs::Ctx<'_>, id: u64, label: Option<&str>) -> Str
         "issueMs": p.pass_issue_micros / 1000,
         "execMs": p.pass_exec_micros / 1000,
         "textures": p.textures.iter().map(binding_json).collect::<serde_json::Map<_, _>>(),
-        "params": p.params.iter().map(|(name, v)| {
-          let v = match v {
-            alloy::ParamValue::Scalar(n) => serde_json::json!(n),
-            alloy::ParamValue::Array(a) => serde_json::json!(a),
-          };
-          (name.clone(), v)
-        }).collect::<serde_json::Map<_, _>>(),
+        // Target-level params are one set per target (the camera, the
+        // shadow matrices): always in full.
+        "params": p.params.iter().map(|(name, v)| (name.clone(), param_json(v, false))).collect::<serde_json::Map<_, _>>(),
       });
       insert_label(&mut obj, &p.label);
       let map = obj.as_object_mut().expect("pipeline json is an object");
@@ -1512,16 +1560,11 @@ fn gpu_reply(ctx: &flux::rquickjs::Ctx<'_>, id: u64, label: Option<&str>) -> Str
           .draws
           .iter()
           .map(|d| {
+            let elide = draw != Some(d.id);
             let mut entry = serde_json::json!({
               "id": d.id,
               "textures": d.textures.iter().map(binding_json).collect::<serde_json::Map<_, _>>(),
-              "params": d.params.iter().map(|(name, v)| {
-                let v = match v {
-                  alloy::ParamValue::Scalar(n) => serde_json::json!(n),
-                  alloy::ParamValue::Array(a) => serde_json::json!(a),
-                };
-                (name.clone(), v)
-              }).collect::<serde_json::Map<_, _>>(),
+              "params": d.params.iter().map(|(name, v)| (name.clone(), param_json(v, elide))).collect::<serde_json::Map<_, _>>(),
             });
             let map = entry.as_object_mut().expect("draw json is an object");
             if let Some(pipeline_id) = d.pipeline_id {

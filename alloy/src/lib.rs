@@ -39,7 +39,7 @@ pub use sdl3;
 
 pub use app::{setup, App};
 pub use backend::DisplayContext;
-pub use context::{CaptureDone, CaptureInfo, Context, StatsOverlay};
+pub use context::{CaptureDone, CaptureInfo, Context, Overlay};
 pub use event::{
   AlloyCommand, AlloyEvent, GamepadState, Modifiers, PointerType, TextCapitalization, TextInputOptions, TextInputType,
 };

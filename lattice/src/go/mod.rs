@@ -8,7 +8,7 @@ pub(crate) mod store;
 pub(crate) mod tunnel;
 
 pub use connection::QueryHandles;
-pub use session::DevSession;
+pub use session::{DevExitHandle, DevSession};
 #[cfg(test)]
 pub(crate) use connection::parse_input_events;
 

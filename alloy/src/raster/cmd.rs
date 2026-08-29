@@ -179,7 +179,7 @@ pub(crate) enum RasterCmd {
   /// declared program is held by Rc while active; the layer texture is
   /// allocated lazily by the first shaded frame and freed on clear.
   SetWindowShader { shader: Option<WindowShader> },
-  /// Install (Some) or clear (None) the stats overlay: a small diagnostics
+  /// Install (Some) or clear (None) the overlay: a small diagnostics
   /// quad composited over every subsequent frame, after the window shader
   /// pass. The declaration's display list is rasterized into a small
   /// retained layer (an Impeller surface draw always clears its target, so
@@ -187,7 +187,7 @@ pub(crate) enum RasterCmd {
   /// FBO 0 each frame. Retained here because it changes on its own cadence
   /// (once per second), decoupled from frames; fire-and-forget on this
   /// ordered channel, so an update shows from exactly the next frame.
-  SetStatsOverlay { overlay: Option<crate::context::StatsOverlay> },
+  SetOverlay { overlay: Option<crate::context::Overlay> },
   /// Fold new params into an existing shader/pipeline target's record and
   /// mark it dirty; it re-renders at the next flush.
   UpdateShaderParams { id: u64, params: Vec<(String, ParamValue)> },

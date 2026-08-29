@@ -154,11 +154,11 @@ pub struct Context {
   spatial: RefCell<Spatial>,
 }
 
-/// A stats-overlay declaration (see `Context::set_stats_overlay`): the
+/// An overlay declaration (see `Context::set_overlay`): the
 /// overlay's display list, drawn with its content at the origin, plus the
 /// window-space rectangle it composites into - physical pixels, top-left
 /// origin, `width` x `height` also being the rasterized layer's size.
-pub struct StatsOverlay {
+pub struct Overlay {
   pub dl: DisplayList,
   pub x: i32,
   pub y: i32,
@@ -276,7 +276,7 @@ impl Context {
     self.send(RasterCmd::RebindWindowSurface);
   }
 
-  /// Install (Some) or clear (None) the stats overlay: a small diagnostics
+  /// Install (Some) or clear (None) the overlay: a small diagnostics
   /// quad the raster thread composites over every frame, after the window
   /// shader pass. Never part of the app's display list, so a window shader
   /// cannot warp it and updating it invalidates no retained frame state
@@ -285,8 +285,8 @@ impl Context {
   /// over FBO 0 as a blended copy pass each frame). Retained raster-side;
   /// send again to refresh the figures. The caller must request a frame for
   /// a visible change.
-  pub fn set_stats_overlay(&self, overlay: Option<StatsOverlay>) {
-    self.send(RasterCmd::SetStatsOverlay { overlay });
+  pub fn set_overlay(&self, overlay: Option<Overlay>) {
+    self.send(RasterCmd::SetOverlay { overlay });
   }
 
   /// Inventory the GPU resources the raster thread tracks: registered

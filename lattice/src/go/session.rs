@@ -7,7 +7,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use flux::rquickjs;
 use flux::{ExecHandle, FluxEngineBuilder};
@@ -35,8 +35,30 @@ pub struct DevSession {
   // srt.dev plugin.
   dev_cmd_tx: UnboundedSender<DevCmd>,
   // Dev-server address delivered at launch (srt client --android), exposed to JS
-  // as srt:dev launchAddress so the launcher can auto-connect.
-  launch_address: Option<String>,
+  // as srt:dev launchAddress so the launcher can auto-connect. Consumed by a
+  // user exit (see DevExitHandle), since the launcher re-dials it on every
+  // mount.
+  launch_address: Arc<Mutex<Option<String>>>,
+}
+
+/// What a user exit does to the dev session (see ExitPolicy in lib.rs): drop
+/// the connection and forget the launch address, so the launcher the exit
+/// returns to sits idle instead of re-dialing and taking the server's
+/// latched push straight back into the app. A device on a dev leash that
+/// exits its app is done with the leash too; the address stays one tap away
+/// in the launcher.
+#[derive(Clone)]
+pub struct DevExitHandle {
+  cmd_tx: UnboundedSender<DevCmd>,
+  launch_address: Arc<Mutex<Option<String>>>,
+}
+
+impl DevExitHandle {
+  pub fn disconnect(&self) {
+    self.launch_address.lock().expect("launch_address lock poisoned").take();
+    // A failed send means the supervisor is gone; nothing left to drop.
+    let _ = self.cmd_tx.send(DevCmd::Stop);
+  }
 }
 
 impl DevSession {
@@ -106,7 +128,14 @@ impl DevSession {
       }
     });
 
-    Some(DevSession { flags, dev_server, dev_state, dev_recents, dev_cmd_tx, launch_address })
+    Some(DevSession {
+      flags,
+      dev_server,
+      dev_state,
+      dev_recents,
+      dev_cmd_tx,
+      launch_address: Arc::new(Mutex::new(launch_address)),
+    })
   }
 
   /// Install the dev-server control surface and, when the server has requested
@@ -119,8 +148,12 @@ impl DevSession {
     }
     let dev_cmd_tx = self.dev_cmd_tx.clone();
     let recents = self.dev_recents.borrow().clone();
-    let launch_address = self.launch_address.clone();
+    let launch_address = self.launch_address.lock().expect("launch_address lock poisoned").clone();
     builder.plugin(move |ctx| install_dev_control(ctx, dev_cmd_tx, recents, launch_address))
+  }
+
+  pub fn exit_handle(&self) -> DevExitHandle {
+    DevExitHandle { cmd_tx: self.dev_cmd_tx.clone(), launch_address: self.launch_address.clone() }
   }
 
   /// Replay the latest connection state into a freshly built engine so a reload

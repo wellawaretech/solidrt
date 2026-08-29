@@ -4,13 +4,14 @@ import { resolveFromCwd } from "../lib/registry"
 
 // Standalone solidrt-go client (no dev server of its own). Without flags it
 // attaches to the dev server of the project (or file) in the current
-// directory, resolved from the registry; --port picks a local server by port
-// and --server names any address. A device is `srt android`.
+// directory, resolved from the registry, and starts on its own (into the
+// launcher) when there is none; --port picks a local server by port and
+// --server names any address, and those must exist. A device is `srt android`.
 export async function main() {
   let runner = requireBinary("solidrt-go")
   let args: string[] = [...clientStorageArgs()]
   if (values.size) args.push("--size", values.size)
-  let address: string
+  let address: string | null
   if (values.server) {
     if (!values.server.includes(":")) {
       console.error(`--server needs host:port (got "${values.server}"); dev servers have no fixed port`)
@@ -21,13 +22,9 @@ export async function main() {
     address = `127.0.0.1:${port}`
   } else {
     let resolved = await resolveFromCwd(process.cwd())
-    if (!resolved.ok) {
-      console.error(resolved.message)
-      process.exit(1)
-    }
-    address = `127.0.0.1:${resolved.record.port}`
+    address = resolved.ok ? `127.0.0.1:${resolved.record.port}` : null
   }
-  args.push("--dev-server", address)
+  if (address) args.push("--dev-server", address)
   let exit = await run(runner, args)
   process.exit(exit)
 }

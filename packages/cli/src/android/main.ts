@@ -3,6 +3,8 @@ import { networkInterfaces } from "node:os"
 import { resolve } from "node:path"
 import { androidPackageVersion, resolveApk, ANDROID_PKG_MAP } from "../lib/artifacts"
 import { values, port } from "../lib/args"
+import { CLI_VERSION } from "../lib/project"
+import { multiselect } from "../lib/prompt"
 import { resolveByPort, resolveFromCwd } from "../lib/registry"
 import type { LiveRecord } from "../types/registry"
 
@@ -97,14 +99,19 @@ function devServerAddress(adb: string, target: string, server: LiveRecord): stri
 }
 
 // The dev server the device should dial: --port picks a local server by
-// port, otherwise the project (or file) in the current directory.
-async function resolveServer(): Promise<LiveRecord> {
-  let resolved = port !== undefined ? await resolveByPort(port) : await resolveFromCwd(process.cwd())
-  if (!resolved.ok) {
-    console.error(resolved.message)
-    process.exit(1)
+// port (and must exist), otherwise the project (or file) in the current
+// directory, or none: the client then starts on its own, into the launcher.
+async function resolveServer(): Promise<LiveRecord | null> {
+  if (port !== undefined) {
+    let resolved = await resolveByPort(port)
+    if (!resolved.ok) {
+      console.error(resolved.message)
+      process.exit(1)
+    }
+    return resolved.record
   }
-  return resolved.record
+  let resolved = await resolveFromCwd(process.cwd())
+  return resolved.ok ? resolved.record : null
 }
 
 // Serials of connected, authorized devices (excludes offline/unauthorized).
@@ -132,25 +139,39 @@ function deviceAbi(adb: string, target: string): string {
   return res.stdout.toString().trim()
 }
 
-// Always shown up front, regardless of how many devices are connected or
-// whether --device narrows it down: one line per device with the ABI its APK
-// build would target, then (with --install) a dev-dependency hint for each
-// ABI that isn't resolvable locally yet. Returns the device->abi map so
-// callers don't have to re-query it.
-function printDeviceStatus(adb: string, devices: string[]): Map<string, string> {
-  let abiByDevice = new Map<string, string>()
-  let missingAbis = new Set<string>()
-  for (let d of devices) {
-    let abi = deviceAbi(adb, d)
-    abiByDevice.set(d, abi)
-    console.log(`${d} - ${abi}`)
-    if (!resolveApk(abi)) missingAbis.add(abi)
+// One line per connected device with the ABI its APK build would target;
+// the picker shows the same lines, so this is for the cases without one.
+function printDeviceStatus(devices: string[], abiByDevice: Map<string, string>) {
+  for (let d of devices) console.log(`${d} - ${abiByDevice.get(d)}`)
+}
+
+// A published CLI version (x.y.z): the release action publishes the CLI and
+// the android packages at one version, so that is the one to pin. A checkout
+// reports a git describe (or the 0.0.0 placeholder), which npm does not have.
+let RELEASE_VERSION = /^\d+\.\d+\.\d+$/
+
+// The APK for `abi`, adding the project's @solidrt/android-<abi> dev
+// dependency in the cwd first when it is not installed. ABIs without a
+// published package (e.g. x86) only resolve through SRT_HOME.
+function ensureApk(abi: string): string {
+  let apk = resolveApk(abi)
+  if (apk) return apk
+  let pkg = ANDROID_PKG_MAP[abi]
+  if (!pkg) {
+    console.error(`Could not find a SolidRT-Go APK for ABI "${abi}".`)
+    process.exit(1)
   }
-  let missingPkgs = [...missingAbis].map((abi) => ANDROID_PKG_MAP[abi]).filter((pkg): pkg is string => Boolean(pkg))
-  if (values.install && missingPkgs.length > 0) {
-    console.log(`Add dev dependencies with: bun add -d ${missingPkgs.join(" ")}`)
+  let spec = RELEASE_VERSION.test(CLI_VERSION) && CLI_VERSION !== "0.0.0" ? `${pkg}@${CLI_VERSION}` : pkg
+  console.log(`[cli] Adding dev dependency ${spec}`)
+  let add = Bun.spawnSync(["bun", "add", "-d", spec], { cwd: process.cwd(), stdout: "inherit", stderr: "inherit" })
+  if (add.exitCode !== 0) {
+    console.error(`Could not add ${spec}; retry with bun add -d ${spec}`)
+    process.exit(1)
   }
-  return abiByDevice
+  apk = resolveApk(abi)
+  if (apk) return apk
+  console.error(`${pkg} is installed but carries no solidrt-go.apk for ABI "${abi}".`)
+  process.exit(1)
 }
 
 // The versionName of the client installed on `target`, null when none is.
@@ -171,25 +192,31 @@ async function connectedClients(server: LiveRecord): Promise<Client[]> {
   }
 }
 
-// The first Android client that appears beyond `before`, or null after ~10 s.
-async function waitForClient(server: LiveRecord, before: Set<number>): Promise<Client | null> {
-  for (let attempt = 0; attempt < 20; attempt++) {
+// The Android clients that appear beyond `before`: all of them once `count`
+// have, else whatever showed up within ~10 s.
+async function waitForClients(server: LiveRecord, before: Set<number>, count: number): Promise<Client[]> {
+  let fresh: Client[] = []
+  for (let attempt = 0; attempt < 20 && fresh.length < count; attempt++) {
     await sleep(500)
-    let fresh = (await connectedClients(server)).find((c) => c.platform === "android" && !before.has(c.id))
-    if (fresh) return fresh
+    fresh = (await connectedClients(server)).filter((c) => c.platform === "android" && !before.has(c.id))
   }
-  return null
+  return fresh
 }
 
-// Resolve the target device serial (and its ABI). With --device, treat the
+type Device = { target: string; abi: string }
+
+// Resolve the target devices (serial and ABI). With --device, treat the
 // value as a serial prefix and require it to match exactly one connected
-// device; without it, use the sole connected device. Exits with a clear
-// message on any ambiguity.
-function resolveTarget(adb: string): { target: string; abi: string } {
+// device; without it, use the sole connected device, or pick any number of
+// several on a terminal (all preselected: enter means every device). Exits
+// with a clear message on any ambiguity.
+async function resolveTargets(adb: string): Promise<Device[]> {
   let devices = listDevices(adb)
-  let abiByDevice = printDeviceStatus(adb, devices)
+  let abiByDevice = new Map(devices.map((d) => [d, deviceAbi(adb, d)]))
+  let device = (target: string): Device => ({ target, abi: abiByDevice.get(target)! })
 
   if (values.device) {
+    printDeviceStatus(devices, abiByDevice)
     let prefix = values.device
     let matches = devices.filter((d) => d.startsWith(prefix))
     if (matches.length > 1) {
@@ -201,86 +228,108 @@ function resolveTarget(adb: string): { target: string; abi: string } {
       console.error(`No connected device matches --device "${prefix}".`)
       process.exit(1)
     }
-    return { target: match, abi: abiByDevice.get(match)! }
+    return [device(match)]
   }
 
   if (devices.length > 1) {
-    console.error("Pick one with --device <serial or prefix>.")
-    process.exit(1)
+    // The prompt's non-TTY default is no way to pick devices, so a script has
+    // to say which.
+    if (!process.stdin.isTTY) {
+      printDeviceStatus(devices, abiByDevice)
+      console.error("Pick one with --device <serial or prefix>.")
+      process.exit(1)
+    }
+    let picked = await multiselect(
+      "Pick devices",
+      devices.map((d) => ({ label: `${d} - ${abiByDevice.get(d)}`, value: d, checked: true })),
+    )
+    if (picked.length === 0) {
+      console.error("No device picked.")
+      process.exit(1)
+    }
+    return picked.map(device)
   }
+  printDeviceStatus(devices, abiByDevice)
   let [only] = devices
   if (!only) {
     console.error("No authorized Android device found. Enable USB debugging and check `adb devices`.")
     process.exit(1)
   }
-  return { target: only, abi: abiByDevice.get(only)! }
+  return [device(only)]
 }
 
-// Launch the Android client on a connected device over adb (installing it
-// first on --install), passing it the dev-server address to dial as a
-// launch-intent extra (see devServerAddress), then wait briefly for it to show
-// up on the dev server. The client is not a child process here: its lifecycle
-// is the WS connect/disconnect the server sees.
-export async function main() {
-  let server = await resolveServer()
-  let adb = requireAdb()
-
-  let { target, abi } = resolveTarget(adb)
-
+// Install the client on `target` (on --install), else check that one is there
+// and note when its version is not the one the project's package carries.
+async function prepare(adb: string, { target, abi }: Device) {
   if (values.install) {
-    let apk = resolveApk(abi)
-    if (!apk) {
-      console.error(`Could not find a SolidRT-Go APK for ABI "${abi}".`)
-      let pkg = ANDROID_PKG_MAP[abi]
-      if (pkg) console.error(`Add it with: bun add -d ${pkg}`)
-      process.exit(1)
-    }
+    let apk = ensureApk(abi)
     console.log(`[cli] Installing SolidRT-Go on ${target}`)
     let install = Bun.spawn([adb, "-s", target, "install", "-r", apk], { stdout: "pipe", stderr: "pipe" })
     if ((await install.exited) !== 0) {
       console.error("adb install failed:\n" + (await new Response(install.stderr).text()))
       process.exit(1)
     }
-  } else {
-    let installed = installedVersion(adb, target)
-    if (installed === null) {
-      console.error(`No SolidRT-Go client on ${target}; install one with srt android --install`)
-      process.exit(1)
-    }
-    let expected = androidPackageVersion(abi)
-    if (expected !== null && expected !== installed) {
-      console.log(
-        `[cli] Installed client is ${installed}; the project's ${ANDROID_PKG_MAP[abi]} is ${expected} (srt android --install updates it)`,
-      )
-    }
+    return
   }
+  let installed = installedVersion(adb, target)
+  if (installed === null) {
+    console.error(`No SolidRT-Go client on ${target}; install one with srt android --install`)
+    process.exit(1)
+  }
+  let expected = androidPackageVersion(abi)
+  if (expected !== null && expected !== installed) {
+    console.log(
+      `[cli] Installed client is ${installed}; the project's ${ANDROID_PKG_MAP[abi]} is ${expected} (srt android --install updates it)`,
+    )
+  }
+}
 
-  // Hand the client the dev-server address to dial, as a launch-intent extra that
-  // MainActivity forwards to native argv (--dev-server); the client auto-connects
-  // to it. Replaces adb reverse, which never worked over wireless adb. -S stops
-  // a running instance first: a delivered intent does not reach one, so without
-  // it the client would keep whatever server it had.
-  let before = new Set((await connectedClients(server)).map((c) => c.id))
-  let devServer = devServerAddress(adb, target, server)
+// Launch the client on `target`, handing it the dev-server address to dial as
+// a launch-intent extra that MainActivity forwards to native argv
+// (--dev-server); the client auto-connects to it. Replaces adb reverse, which
+// never worked over wireless adb. -S stops a running instance first: a
+// delivered intent does not reach one, so without it the client would keep
+// whatever server it had. With no server there is no extra to pass.
+async function launch(adb: string, { target }: Device, server: LiveRecord | null) {
+  let devServer = server ? devServerAddress(adb, target, server) : null
   let launchArgs = [adb, "-s", target, "shell", "am", "start", "-S", "-n", PACKAGE_ACTIVITY]
   if (devServer) {
-    console.log(`[cli] Client will dial dev server at ${devServer}`)
+    console.log(`[cli] Client on ${target} will dial dev server at ${devServer}`)
     launchArgs.push("--es", "srt_dev_server", devServer)
-  } else {
-    console.log("[cli] Could not resolve a host address for the device; client will need a manual/QR connect")
+  } else if (server) {
+    console.log(`[cli] Could not resolve a host address for ${target}; client will need a manual/QR connect`)
   }
-
   let start = Bun.spawn(launchArgs, { stdout: "pipe", stderr: "pipe" })
   if ((await start.exited) !== 0) {
     console.error("adb start failed:\n" + (await new Response(start.stderr).text()))
     process.exit(1)
   }
+  console.log(`[cli] Launched SolidRT-Go on ${target}`)
+}
 
-  console.log(`[cli] Launched SolidRT-Go on ${target}; waiting for it to connect to the dev server...`)
-  let client = await waitForClient(server, before)
-  if (client) {
+// Launch the Android client on the connected devices over adb (installing it
+// first on --install), then wait briefly for them to show up on the dev
+// server. The clients are not child processes here: their lifecycle is the
+// WS connect/disconnect the server sees.
+export async function main() {
+  let server = await resolveServer()
+  let adb = requireAdb()
+
+  let devices = await resolveTargets(adb)
+  for (let device of devices) await prepare(adb, device)
+
+  let before = new Set(server ? (await connectedClients(server)).map((c) => c.id) : [])
+  for (let device of devices) await launch(adb, device, server)
+  if (!server) return
+
+  console.log("[cli] Waiting for the client(s) to connect to the dev server...")
+  let clients = await waitForClients(server, before, devices.length)
+  for (let client of clients) {
     console.log(`[cli] Client ${client.id} connected (${client.platform}, ${client.version})`)
-  } else {
-    console.log(`[cli] No connection after 10 s. The server must run with --lan and the device must reach this machine.`)
+  }
+  if (clients.length < devices.length) {
+    console.log(
+      `[cli] ${devices.length - clients.length} of ${devices.length} not connected after 10 s. The server must run with --lan and the device must reach this machine.`,
+    )
   }
 }

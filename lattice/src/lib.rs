@@ -33,7 +33,8 @@ enum EngineCmd {
 
 // What "exit the current app" means, decided by host context (see
 // okf/plans/exit-to-launcher.md): with the launcher hosting an app (or the
-// BSOD), Stop returns to the launcher; at the launcher root, and always in
+// BSOD), Stop returns to the launcher, dropping the dev connection on the
+// way (see DevExitHandle); at the launcher root, and always in
 // launcher-less runtime builds, the client quits - process exit on desktop,
 // backgrounding the activity on Android (the platform's back-at-root
 // convention). Backs the srt:app exit() verb, which is core's default action
@@ -47,6 +48,8 @@ struct ExitPolicy {
   launcher_active: Arc<std::sync::atomic::AtomicBool>,
   #[cfg(feature = "go")]
   engine_tx: tokio::sync::mpsc::UnboundedSender<EngineCmd>,
+  #[cfg(feature = "go")]
+  dev: Option<go::DevExitHandle>,
   alloy_cmd_tx: std::sync::mpsc::Sender<alloy::AlloyCommand>,
 }
 
@@ -57,6 +60,9 @@ impl ExitPolicy {
     }
     #[cfg(feature = "go")]
     if !self.launcher_active.load(Ordering::Relaxed) {
+      if let Some(dev) = &self.dev {
+        dev.disconnect();
+      }
       // A failed send means the engine loop is already shutting down; there
       // is nothing left to stop.
       let _ = self.engine_tx.send(EngineCmd::Stop);
@@ -300,8 +306,6 @@ fn ui_thread(
   // Only the go dev client consumes the launch dev-server address.
   #[cfg(not(feature = "go"))]
   let _ = dev_server;
-  #[cfg(not(feature = "go"))]
-  let _ = user_input_muted;
   // Resolve the client storage tree, then anchor the process to the app's
   // data sandbox before any app code runs, so relative paths (e.g. a
   // flux:sqlite database) resolve to persistent per-app storage. The launch
@@ -610,14 +614,6 @@ fn ui_thread(
     // engine build); exit() at the launcher root quits instead of Stop-ing.
     #[cfg(feature = "go")]
     let launcher_active = Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let exit_policy = ExitPolicy {
-      playback: playback_fps.is_some(),
-      #[cfg(feature = "go")]
-      launcher_active: launcher_active.clone(),
-      #[cfg(feature = "go")]
-      engine_tx: cmd_tx.clone(),
-      alloy_cmd_tx: alloy_cmd_tx.clone(),
-    };
     // The dev-server client: connection supervisor, recents, proxy state and the
     // srt.dev surface. None in playback mode (and entirely absent without the
     // `go` feature). This is the runtime's only seam to the dev client.
@@ -634,7 +630,7 @@ fn ui_thread(
       clock_control.clone(),
       input_inject_tx,
       resampler.clone(),
-      user_input_muted,
+      user_input_muted.clone(),
       outbound_rx,
       go::QueryHandles {
         stats: stats_snapshot.clone(),
@@ -644,6 +640,16 @@ fn ui_thread(
       },
       dev_server,
     );
+    let exit_policy = ExitPolicy {
+      playback: playback_fps.is_some(),
+      #[cfg(feature = "go")]
+      launcher_active: launcher_active.clone(),
+      #[cfg(feature = "go")]
+      engine_tx: cmd_tx.clone(),
+      #[cfg(feature = "go")]
+      dev: dev_session.as_ref().map(|d| d.exit_handle()),
+      alloy_cmd_tx: alloy_cmd_tx.clone(),
+    };
 
     // flux::Timeline is the frame timeline the rAF/render timestamps march
     // on - frame-stepped, pausable by the dev clock control - for native
@@ -735,9 +741,20 @@ fn ui_thread(
       );
       let draw_stats = stats_snapshot.clone();
       let draw_history = frame_history.clone();
+      let draw_connected = dev_connected.clone();
+      let draw_muted = user_input_muted.clone();
       let builder = builder
         .plugin(move |ctx| {
-          plugins::draw::store_state(&ctx, draw_platform, AlloyContext(draw_atx), input_state, draw_stats, draw_history)
+          plugins::draw::store_state(
+            &ctx,
+            draw_platform,
+            AlloyContext(draw_atx),
+            input_state,
+            draw_stats,
+            draw_history,
+            draw_connected,
+            draw_muted,
+          )
         })
         .module_override("srt:render", plugins::draw::SrtRenderModule)
         .module_override("srt:events", plugins::events::SrtEventsModule)

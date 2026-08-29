@@ -11,9 +11,21 @@ sandbox/*
 # bundles srt writes next to a script it renders.
 scripts/personal/
 scripts/**/*.srt.js
-# srt render writes the bundle next to the entry and PNG frames into the cwd.
+# Strays from when srt bundle/render wrote bundles next to the entry; srt
+# render still writes PNG frames into the cwd.
 examples/**/*.srt.js
 examples/**/frame-*.png
 # Default fonts staged into the CLI package at release time (release.yml);
 # in-repo the CLI resolves them from alloy/assets/fonts instead.
 packages/cli/fonts/
+probes/
+scratchpad/
+tmp/
+spikes/
+
+# make dist / dist-android output staged into the platform packages
+packages/*/solidrt*
+packages/*/flux*
+packages/*/*.dll
+packages/*/*.dylib
+packages/*/*.apk

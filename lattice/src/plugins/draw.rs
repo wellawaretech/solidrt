@@ -13,6 +13,7 @@ use flux::{
 };
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -43,19 +44,26 @@ struct RenderInner {
   // capture/destroy/content interlocks) lives in alloy; this bridge sequences
   // it and runs the JS hooks between the phases.
   driver: RefCell<FrameDriver>,
+  // The dev-session facts the overlay's badge shows (see overlay::Badge):
+  // written by the dev connection (go/connection.rs), which latches a frame
+  // request on every edge so the change is drawn on an idle app.
+  dev_connected: Arc<AtomicBool>,
+  user_input_muted: Arc<AtomicBool>,
   // Whether an overlay display list is currently installed on the raster
-  // thread (see Context::set_stats_overlay): drives the enable/disable edges
+  // thread (see Context::set_overlay): drives the enable/disable edges
   // and the teardown clear in Drop.
   overlay_installed: Cell<bool>,
   // Last slow-frame warning: one line per second at most, so a sustained
   // storm reads as one warning per second in the logs, not one per frame.
   last_slow_warn: Cell<Option<Instant>>,
-  // The window geometry the installed overlay was placed against: window
-  // size, display scale, safe area. The overlay is positioned in window
-  // space raster-side, so a geometry change refreshes it immediately rather
-  // than waiting out the once-per-second cadence.
-  overlay_key: Cell<(f32, f32, f32, f32, f32, f32, f32)>,
+  // What the installed overlay was built against: window geometry (size,
+  // display scale, safe area - the overlay is positioned in window space
+  // raster-side) and what it shows (HUD on, badge). A change refreshes it
+  // immediately rather than waiting out the once-per-second cadence.
+  overlay_key: Cell<OverlayKey>,
 }
+
+type OverlayKey = (f32, f32, f32, f32, f32, f32, f32, bool, Option<overlay::Badge>);
 
 impl Drop for RenderInner {
   fn drop(&mut self) {
@@ -63,7 +71,7 @@ impl Drop for RenderInner {
     // with the engine, or an app switch leaves a stale HUD over the next
     // app's frames.
     if self.overlay_installed.get() {
-      self.atx.set_stats_overlay(None);
+      self.atx.set_overlay(None);
     }
   }
 }
@@ -77,6 +85,8 @@ pub fn store_state(
   input_state: Arc<InputState>,
   stats_snapshot: Arc<Mutex<stats::StatsSnapshot>>,
   history: Arc<Mutex<FrameHistory>>,
+  dev_connected: Arc<AtomicBool>,
+  user_input_muted: Arc<AtomicBool>,
 ) {
   ctx
     .store_userdata(RenderState(Rc::new(RenderInner {
@@ -87,9 +97,11 @@ pub fn store_state(
       stats: RefCell::new(stats::Stats::new()),
       history,
       driver: RefCell::new(FrameDriver::new()),
+      dev_connected,
+      user_input_muted,
       overlay_installed: Cell::new(false),
       last_slow_warn: Cell::new(None),
-      overlay_key: Cell::new((0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)),
+      overlay_key: Cell::new((0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, false, None)),
     })))
     .expect("store render state");
 }
@@ -134,21 +146,39 @@ impl RenderInner {
     let stats_snapshot = &self.stats_snapshot;
     let stats = &self.stats;
 
-    // The stats overlay is its own demand source: its per-second figures keep
-    // changing while the app is idle, so a due refresh forces a frame so the
-    // HUD stays live, and an enable/disable edge forces one to show or clear
-    // it. Refreshing costs no rebuild: the overlay is retained raster-side
-    // and drawn over the finished frame (see Context::set_stats_overlay).
-    // Latched before record_js below: its refresh() resets the same
-    // once-per-second timer, so a read after it would never see a due
-    // overlay.
+    // The overlay (the dev-session badge, the stats HUD when toggled on) is
+    // its own demand source: its per-second figures keep changing while the
+    // app is idle, so a due refresh forces a frame so the line stays live,
+    // and an edge (show/clear, badge change) forces one to draw it.
+    // Refreshing costs no rebuild: the overlay is retained raster-side and
+    // drawn over the finished frame (see Context::set_overlay). Latched
+    // before record_js below: its refresh() resets the same once-per-second
+    // timer, so a read after it would never see a due overlay.
     let stats_on = platform.stats_enabled();
+    let badge = if self.user_input_muted.load(Ordering::Relaxed) {
+      Some(overlay::Badge::Muted)
+    } else if self.dev_connected.load(Ordering::Relaxed) {
+      Some(overlay::Badge::Connected)
+    } else {
+      None
+    };
+    let overlay_on = stats_on || badge.is_some();
     let win = platform.window_size();
     let sa = platform.safe_area();
-    let overlay_key = (win.0, win.1, platform.display_scale(), sa.origin.x, sa.origin.y, sa.size.width, sa.size.height);
-    let overlay_refresh = stats_on
+    let overlay_key: OverlayKey = (
+      win.0,
+      win.1,
+      platform.display_scale(),
+      sa.origin.x,
+      sa.origin.y,
+      sa.size.width,
+      sa.size.height,
+      stats_on,
+      badge,
+    );
+    let overlay_refresh = overlay_on
       && (!self.overlay_installed.get() || self.overlay_key.get() != overlay_key || stats.borrow().overlay_due());
-    let overlay_clear = !stats_on && self.overlay_installed.get();
+    let overlay_clear = !overlay_on && self.overlay_installed.get();
     // The frame the runtime stamped for us (see frame::RenderFrame). Its
     // start is consumed here, so a native call with no render event (the
     // paused path) reads a zero JS cost instead of the stale stamp of the
@@ -218,12 +248,13 @@ impl RenderInner {
     // frame. Built from the figures record_js just sampled; the raster
     // thread retains the list, so nothing is sent while the figures stand.
     if overlay_refresh {
-      let overlay = overlay::build(&snap, &platform.typography(), platform.safe_area(), platform.display_scale());
+      let overlay =
+        overlay::build(&snap, stats_on, badge, &platform.typography(), platform.safe_area(), platform.display_scale());
       self.overlay_installed.set(overlay.is_some());
       self.overlay_key.set(overlay_key);
-      atx.set_stats_overlay(overlay);
+      atx.set_overlay(overlay);
     } else if overlay_clear {
-      atx.set_stats_overlay(None);
+      atx.set_overlay(None);
       self.overlay_installed.set(false);
     }
 

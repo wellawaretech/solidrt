@@ -2,6 +2,8 @@
 
 `run` is the everyday command: it starts the dev server and a local client
 window together, and it is what `bun run dev` calls in a scaffolded project.
+The server outlives the client: closing (or killing) a wedged client keeps
+the server up, and `srt client` reattaches a new one.
 
 {{ usage run }}
 

@@ -300,9 +300,10 @@ Shaped, not started.
   startup, real for live-coding and any per-frame readback consumer.
 - **[Compressed texture uploads (ETC2)](backlog/gpu-compressed-textures.md)** [2026-07-30]
   ES 3.0 mandates ETC2/EAC in core, a free 4-8x texture memory cut on every GL
-  target, but uploadTexture is RGBA8-only; demand-gated, with the honest
-  caveat that ANGLE on Windows may software-expand it - the same split that
-  made both web standards gate the feature.
+  target, but createTexture is RGBA8-only, so a 25-map glTF scene (Sponza)
+  holds ~182 MB of texture for ~18 MB of source; with the honest caveat that
+  ANGLE on Windows may software-expand it - the same split that made both web
+  standards gate the feature.
 - **[GPU context loss](backlog/gpu-context-loss.md)** [2026-07-27]
   A lost GL context used to leave the app running against a dead swapchain;
   swap-result checking and exit after two failed presents shipped, real

@@ -90,8 +90,10 @@ platform-wide and bite in every app:
 
 ## Run / verify
 
-- FIRST check whether a dev server and a client are already running and
-  build against those; do not start a second `srt run` when one is up.
+- FIRST check whether a dev server and its clients (possibly several) are
+  already running and build against those; do not start a second `srt run`
+  when one is up. `reload` reaches every connected client; the per-client
+  tools are listed in debugging.md.
 - The dev loop (reload, logs, snapshots, the holds on reload-on-save and on
   the user's input), typechecking, headless rendering and the MCP tools:
   node_modules/@solidrt/cli/AGENTS.md and its agents/debugging.md. Read it

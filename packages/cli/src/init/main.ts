@@ -1,7 +1,7 @@
 import { cp, mkdir, readFile, readdir, writeFile } from "node:fs/promises"
 import { basename, dirname, join, resolve } from "node:path"
 import { source, values } from "../lib/args"
-import { multiselect, note, text } from "./prompt"
+import { multiselect, note, text } from "../lib/prompt"
 
 const DEFAULT_NAME = "solidrt-app"
 

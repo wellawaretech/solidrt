@@ -411,9 +411,15 @@ export async function handleControl(req: Request, path: string, query: Map<strin
       return handleQuery(query, "snapshot", extra)
     }
     case "/__control__/gpu": {
-      // ?label=<text> keeps only resources created with exactly that label.
+      // ?label=<text> keeps only resources created with exactly that label;
+      // ?draw=<id> reports that draw entry's params in full (matrix-valued
+      // params are elided everywhere else).
+      let extra: Record<string, unknown> = {}
       let label = query.get("label")
-      return handleQuery(query, "gpu", label === undefined ? undefined : { label })
+      if (label !== undefined) extra.label = label
+      let draw = parseInt(query.get("draw") ?? "", 10)
+      if (Number.isFinite(draw)) extra.draw = draw
+      return handleQuery(query, "gpu", extra)
     }
     case "/__control__/debug": {
       // GET lists the app's registered debug commands; POST calls one, with
