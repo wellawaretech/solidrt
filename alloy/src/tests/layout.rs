@@ -304,3 +304,30 @@ fn design_size_view_in_a_row_stretches_unless_aligned() {
   assert_eq!(box_of(&tree, 3), Size::new(100.0, 300.0));
   assert_eq!(box_of(&tree, 4), Size::new(100.0, 50.0));
 }
+
+// A span has no layout of its own but feeds its text's measure: inserting or
+// detaching one invalidates the text's cache like a text write does. (A text
+// laid out empty, then given a span, otherwise keeps its 0-wide box.)
+#[test]
+fn span_insert_and_detach_invalidate_the_text_layout() {
+  let mut tree = RenderTree::new();
+  tree.create_node(1, attached());
+  tree.create_node(2, Text::default().with_layout());
+  tree.create_node(3, Span { text: "NITRO!".into(), ..Default::default() }.no_layout());
+  tree.insert_node(1, 2, None).expect("insert");
+  tree.root = Some(1);
+  size(&mut tree, 1, 400.0, 300.0);
+  let platform = PlatformContext::new(Vec::new());
+  let alloy = headless();
+  let cached = |tree: &RenderTree| !tree.node(2).layout_data().cache.is_empty();
+
+  layout(&mut tree, &platform, &alloy);
+  assert!(cached(&tree));
+  tree.insert_node(2, 3, None).expect("insert");
+  assert!(!cached(&tree));
+
+  layout(&mut tree, &platform, &alloy);
+  assert!(cached(&tree));
+  tree.detach_node(2, 3);
+  assert!(!cached(&tree));
+}

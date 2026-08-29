@@ -447,14 +447,17 @@ impl Breaker<'_> {
   // `extent` with the opening run's `height`, places the floats waiting for
   // this line top against the answer's outer edges, cuts the answer around
   // every float overlapping the line's top band, and skips down past lines
-  // with no room.
+  // with no room: an empty answer, or one a float covers whole. An answer
+  // of zero-width extents with no float in the band is taken as it is,
+  // since nothing further down can open room and the descent would never
+  // end (a text with content laid out against a 0-wide box).
   fn open(&mut self, height: f32) -> f32 {
     if self.extents.is_empty() {
       let mut segments = loop {
         let extents = (self.extent)(LineCursor { index: self.out.lines.len(), y: self.y, height });
         self.place_pending(&extents);
         let segments = self.cut(&extents, height);
-        if !segments.is_empty() || height <= 0.0 {
+        if !segments.is_empty() || height <= 0.0 || (!extents.is_empty() && !self.blocked(height)) {
           break segments;
         }
         self.y += height;
@@ -469,6 +472,12 @@ impl Breaker<'_> {
       self.pen = 0.0;
     }
     self.extents[self.seg].width
+  }
+
+  // Whether a float overlaps the open line's band at the current y.
+  fn blocked(&self, height: f32) -> bool {
+    let (top, bottom) = (self.y, self.y + height);
+    self.exclusions.iter().any(|e| e.top < bottom && e.bottom > top)
   }
 
   // Whether an ink edge at `pen` in the current segment is left of the break

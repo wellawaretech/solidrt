@@ -358,3 +358,17 @@ fn balance_evens_lines_and_pretty_rescues_a_lone_last_word() {
   assert!(t.truncated);
   assert_eq!(t.lines[0].end, 6);
 }
+
+#[test]
+fn zero_width_line_terminates_with_the_unit_overflowing() {
+  // A text laid out against a 0-wide box (its box was measured empty, then
+  // it got content): no float can open room further down, so the line takes
+  // the unit as overflowing instead of descending forever.
+  let runs = [word(12.0, 10.0), word(12.0, 10.0)];
+  let l = layout(&runs, &full(0.0), Align::Left, 0, None);
+  assert_eq!(l.lines.len(), 2);
+  assert_eq!(l.overflowing, vec![0, 1]);
+  assert_eq!(l.height, 20.0);
+  let balanced = layout_wrap(&runs, &full(0.0), Align::Left, 0, None, Wrap::Balance);
+  assert_eq!(balanced.lines.len(), 2);
+}

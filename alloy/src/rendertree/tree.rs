@@ -83,6 +83,7 @@ impl RenderTree {
   /// is made.
   pub fn insert_node(&mut self, parent_id: u64, node_id: u64, anchor_id: Option<u64>) -> Result<(), String> {
     let child_has_layout = self.node(node_id).has_layout();
+    let child_is_span = matches!(self.node(node_id).kind, ElementKind::Span(_));
     if child_has_layout && !self.node(parent_id).has_layout() {
       return Err(format!(
         "<{}> cannot be a child of <d-{}>: a detached subtree must be entirely detached (d-* elements only)",
@@ -145,8 +146,9 @@ impl RenderTree {
     self.sync_text(parent_id);
 
     // A detached child is not in layout_children, so inserting it cannot
-    // change layout; only paint needs to catch up.
-    if child_has_layout {
+    // change layout and only paint needs to catch up - except a span, whose
+    // text feeds its paragraph's measure (invalidate_cache walks it up).
+    if child_has_layout || child_is_span {
       self.invalidate_cache(parent_id);
     }
     self.invalidate_paint(parent_id);
@@ -219,6 +221,7 @@ impl RenderTree {
 
   fn detach_node_now(&mut self, parent_id: u64, node_id: u64) {
     let child_has_layout = self.try_node(node_id).map(|n| n.has_layout()).unwrap_or(false);
+    let child_is_span = self.try_node(node_id).map(|n| matches!(n.kind, ElementKind::Span(_))).unwrap_or(false);
     let parent = self.node_mut(parent_id);
     parent.children.retain(|&id| id != node_id);
     if let Some(layout) = &mut parent.layout {
@@ -228,7 +231,7 @@ impl RenderTree {
       node.parent = None;
     }
     self.sync_text(parent_id);
-    if child_has_layout {
+    if child_has_layout || child_is_span {
       self.invalidate_cache(parent_id);
     }
     self.invalidate_paint(parent_id);
