@@ -52,8 +52,20 @@ depth?: true | "texture"` and expose `scene.depthTexture`, the view
 shape exactly; the roadmap's "post-processing is `output` + shader
 chains" stance holds only once this exists.
 
+Third, on the same `ViewOptions`: `fog`. The scene's fog is a
+`setParams` fan-out, so every view inherits it - a top-down minimap or
+an override-material debug view is fogged like the main camera. Today
+`view.setParams({ uFogInv: 0, uFogDensity: 0, uFogHeightFalloff: 0 })`
+clears it, but the next `scene.setFog` writes over the view (same
+target, last write wins). Two additive pieces: `fog?: FogOptions | null`
+on `ViewOptions` (null = an unfogged view; absent = follow the scene),
+and the rule that a view's OWN params win over the scene fan-out - the
+scene replays its names to a view only for names the view has not set
+itself. State that ordering in the `setParams` docs either way.
+
 ## Done looks like
 
 `examples/scene-views.tsx` grows a minimap view with `include` admitting
-marker meshes only; an SSAO or depth-fog post effect in `output` samples
-`scene.depthTexture` with no second pass.
+marker meshes only, `fog: null` on it while the scene is fogged; an SSAO
+or depth-fog post effect in `output` samples `scene.depthTexture` with no
+second pass.

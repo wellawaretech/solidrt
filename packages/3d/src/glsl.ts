@@ -128,6 +128,53 @@ export const FRESNEL = glsl`
 `
 
 /**
+ * The scene's fog (`scene.setFog`): the uniform set it writes - `uFogColor`,
+ * the linear band `uFogNear` / `uFogInv` (1 / (far - near)), the exp2
+ * `uFogDensity`, and the height attenuation `uFogHeight` /
+ * `uFogHeightFalloff`; the form not in use is 0, a fogless scene writes
+ * every rate 0, so the factor is 0 with no branch and no enable flag -
+ * plus `vec3 fog(vec3 rgb, float alpha, vec3 worldPos, vec3 camPos)`: the
+ * factor by the RADIAL distance from the camera (the larger of the two
+ * forms), thinned by `exp(-(y - height) * falloff)` above the fog height,
+ * mixing toward the fog color at the fragment's written alpha
+ * (premultiplied output stays premultiplied). Compose it last, after the
+ * alphaTest discard, with the alpha you are about to write:
+ *
+ *   fragColor = vec4(fog(rgb, a, vWorldPos, uCamPos), a);
+ *
+ * The standard materials compose exactly this; `fog: false` on one drops
+ * it (a sky sphere, a far backdrop). The background is not fogged.
+ *
+ * An ADDITIVE blend (`blend: "add"`) must not fade toward the fog color
+ * - a distant glow would brighten into a sky-colored halo - so it uses
+ * `vec3 fogAdditive(vec3 rgb, vec3 worldPos, vec3 camPos)`, the same
+ * factor fading toward black.
+ *
+ * Only what composes one of these is fogged: a shaderMaterial that does
+ * not - and so every instanced mesh, whose material is always custom -
+ * stays crisp in a fogged scene. The engine cannot inject it for you.
+ */
+export const FOG = glsl`
+  uniform vec3 uFogColor;
+  uniform float uFogNear;
+  uniform float uFogInv;
+  uniform float uFogDensity;
+  uniform float uFogHeight;
+  uniform float uFogHeightFalloff;
+  vec3 fog(vec3 rgb, float alpha, vec3 worldPos, vec3 camPos) {
+    float d = distance(worldPos, camPos);
+    float linear = clamp((d - uFogNear) * uFogInv, 0.0, 1.0);
+    float dd = d * uFogDensity;
+    float exp2 = 1.0 - exp(-dd * dd);
+    float h = exp(-max(worldPos.y - uFogHeight, 0.0) * uFogHeightFalloff);
+    return mix(rgb, uFogColor * alpha, max(linear, exp2) * h);
+  }
+  vec3 fogAdditive(vec3 rgb, vec3 worldPos, vec3 camPos) {
+    return fog(rgb, 0.0, worldPos, camPos);
+  }
+`
+
+/**
  * The scene's shadow set as a receiving program declares it: ONE
  * `uShadowAtlas` (every casting light's depth map is a tile of it, so N
  * maps render as one pass; a white texel when nothing casts), a MAP slot

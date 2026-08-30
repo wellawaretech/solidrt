@@ -45,6 +45,18 @@ PBR, and it must not wait on the color-space decision.
 
 ## Shape
 
+Prerequisite, a measurement before a design: `lit` already keys its
+class cache on seven booleans plus cull (map, vertexColors, triplanar,
+transparent, shadow, alphaTest, fog - fog was the 2026-08-30 addition),
+and this item adds four or five more. Before that doubling, count how
+many distinct classes a real scene (a Sponza-scale model, the demos)
+actually instantiates. The expectation is under ten, in which case the
+boolean tuple stays and this paragraph is deleted; if it is dozens, the
+key becomes a feature set with the fragment assembled from optional
+blocks and the standard classes share programs across option values that
+compile to the same source. Decide from the number, not from the
+combinatorics.
+
 Additive options on `lit`, each one more class-key dimension exactly like
 `map`/`triplanar`/`alphaTest` today (one program per option combination,
 cached; the combinatorics stay bounded because most scenes use two or

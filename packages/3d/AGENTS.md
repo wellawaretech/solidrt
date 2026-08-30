@@ -152,7 +152,7 @@ blendMode and pointer events like any element.
 
 | Component | Props |
 | --- | --- |
-| `Scene` | `width`, `height` (target pixels), `clearColor?`, `background?` (fragment GLSL), `samples?` (1/2/4/8 MSAA), `label?`, `ref?(scene)`, `output?(texture)`, `events?` (mesh pointer events, default on) |
+| `Scene` | `width`, `height` (target pixels), `clearColor?`, `background?` (fragment GLSL), `fog?` (`{ color, near, far }`, linear by camera distance), `samples?` (1/2/4/8 MSAA), `label?`, `ref?(scene)`, `output?(texture)`, `events?` (mesh pointer events, default on) |
 | `Group` | `position?`, `rotation?` (Euler radians, XYZ order), `quaternion?` (either, not both), `scale?` (number = uniform), `visible?`, pointer events (below), `ref?(node)` |
 | `Mesh` | `geometry`, `material`, transforms as Group, `params?` (per-mesh uniforms, merge semantics - no unset), pointer events (below), `ref?(mesh)` |
 | `Sprite` | as Mesh minus `geometry`: a camera-facing unit quad, `scale` is its world size, rotation is ignored; pair with a `sprite()` material |
@@ -349,9 +349,10 @@ uint16/uint32 indices by vertex count automatically.
 
 Materials:
 
-- `unlit({ color?, map?, transparent?, cull?, alphaTest? })` - straight
-  `[r, g, b, a?]` 0..1, premultiplied internally; `cull` and `alphaTest`
-  as on lit (a mapped cutout casts its cutout).
+- `unlit({ color?, map?, transparent?, cull?, alphaTest?, fog? })` -
+  straight `[r, g, b, a?]` 0..1, premultiplied internally; `cull` and
+  `alphaTest` as on lit (a mapped cutout casts its cutout); `fog: false`
+  opts out of the scene's fog (all three standard materials take it).
 - `sprite({ color?, map?, transparent?, billboard? })` - unlit on a quad
   that turns to face the camera IN THE VERTEX STAGE (off the shared
   uCamRight/uCamUp, or uCamPos for `billboard: "fixed-y"`, which yaws
@@ -444,6 +445,37 @@ widen the signature later (a branded TextureId is a number, so
 a background is static art - anything animated is a mesh's own
 shaderMaterial (or, until blend factors land, a separate shader texture
 underneath, which translucent grounds also still need).
+
+Fog: `scene.setFog(fog | null)`, the `fog` option on createScene and
+the reactive `Scene` prop, in Three's two shapes: linear `{ color, near,
+far }` (`Fog`; fades from near to far, fully fogged past far) or exp2
+`{ color, density }` (`FogExp2`, Unity's default; `1 - exp(-(d *
+density)^2)`, no start band, never quite opaque - 0.01 is ~63% at 100
+units). Either form takes `height` + `heightFalloff` (Godot's fog
+height, Unreal's height falloff): full fog at and below `height` (world
+y, default 0), thinning by `exp(-(y - height) * heightFalloff)` above -
+a valley fills, the hilltops and the sky stay clear; per fragment
+height, not integrated along the ray, the cheap tier every engine ships
+first. A fragment fades toward `color` by its RADIAL distance from
+`uCamPos` (not view depth). It is ONE shared-params write (`uFogColor`,
+`uFogNear`, `uFogInv` = 1/(far-near), `uFogDensity`, `uFogHeight`,
+`uFogHeightFalloff`; the form not in use is 0, "no fog" is every rate
+0, which the scene seeds at creation so there is no enable flag and no
+branch - the shader takes the larger of the two distance factors times
+the height term), fanned out to every view, so fogging costs nothing
+per frame however many meshes. Every standard material (unlit,
+lit, sprite) composes it after its alphaTest discard, mixed at the alpha
+it writes (premultiplied stays premultiplied); `fog: false` on the
+material drops the code from the program (Three's `material.fog`) - a
+sky sphere, a far backdrop. A shaderMaterial opts in by composing `FOG`
+from `/glsl` (declares the set; `fog(rgb, alpha, worldPos, camPos)`, or
+`fogAdditive(rgb, worldPos, camPos)` for a `blend: "add"` look, which
+fades toward black instead of the fog color).
+The BACKGROUND is not fogged: it is entry zero with no depth or
+distance, so match the fog color to `clearColor` or the background's
+horizon, and put `far` at or inside the camera's far plane to hide the
+clip. `examples/fog.tsx` cycles the forms over a valley;
+`examples/cascades.tsx` fogs its field to the sky.
 
 Lighting GLSL (`@solidrt/3d/glsl`): exported string constants composed
 into shaderMaterial sources with plain template literals - `LIT_VERTEX`
@@ -820,6 +852,13 @@ The follow-ups are filed in okf/backlog/3d-model-loader.md.
   leaf under a design size. Only a leaf whose layout size deliberately
   differs from the target (supersampling) needs `handlersFor`, fed the
   layout size the app itself set.
+- Scene-wide effects reach a custom material ONLY by composition: a
+  `shaderMaterial` that does not compose `FOG` is unfogged, one that does
+  not compose the `SHADOW_*` trio is unshadowed, and since every
+  instanced mesh has a custom material, an instanced forest stays crisp
+  in a fogged scene until its fragment calls `fog()`. The engine cannot
+  inject it (what you declare is what runs); check both when a custom
+  look sits beside standard ones and reads wrong at distance.
 - Hover (enter/leave) reacts to pointer MOTION only: a mesh animating
   under a still pointer fires nothing until the next move - the same
   limit the element hit test has (hit-test-per-frame is an open platform

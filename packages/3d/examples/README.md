@@ -58,6 +58,13 @@ depends on `@solidrt/3d` (or in-repo from the package directory).
   the plain box widened to cover the field: one map's texels spread over
   it, blocky everywhere) and the `cascades`/`fly` debug commands set the
   count and the shadow distance and park the flight.
+- `fog.tsx` - scene fog over a valley of pines between two ridges: a
+  click cycles LINEAR (`{ near, far }`, a clear band then a fade to the
+  far plane), EXP2 (`{ density }`, thickening from the first metre) and
+  HEIGHT (`heightFalloff`: the valley floor fills, the hilltops and sky
+  stay clear), then off; two suns show the material opt-out (`unlit({
+  fog: false })` stays bright, its twin fogs). The `fog` debug command
+  sets the mode and its knobs and `pan` parks the camera.
 - `model.tsx` - a model from a file: `model.glb` (a small rover with
   nested node transforms, a mirrored node, a textured material, a
   transparent dome and a mesh without normals) parsed with `parseGltf`

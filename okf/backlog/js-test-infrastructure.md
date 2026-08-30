@@ -62,6 +62,14 @@ What exists today, none of it structural:
   bodies).
 - The first tests from the review notes' candidate lists exist in core and
   cli, and `flux/examples/*_test.js` are either promoted or deleted.
+- One CAPTURE-based check exists for `@solidrt/3d`, the tier the pure
+  rigs cannot reach (GLSL plus a scene write): `packages/3d/examples/
+  fog.tsx` is the first candidate - its `pan`/`fog` debug commands park
+  the camera and pick a mode deterministically, so a headless render
+  (`bunx srt render`, or the control API's `/snapshot`) plus a pixel
+  assertion at two coordinates (a valley pine fogged, the `fog: false`
+  sun not) is the whole test. Fog shipped 2026-08-30 verified by eye
+  only; this is what would catch a regression in `FOG`.
 
 ## Not this item
 

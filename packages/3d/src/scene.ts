@@ -373,8 +373,50 @@ export type CameraUpdate = {
   ortho?: OrthoExtent | null
 }
 
+/**
+ * Scene fog, by RADIAL distance from the camera, in one of two forms:
+ * linear (Three's `Fog`, Unity's linear mode) fades toward `color` from
+ * `near` to `far` world units and is fully fogged past `far`; exp2
+ * (Three's `FogExp2`, Unity's default) thickens as
+ * `1 - exp(-(distance * density)^2)`, no start band, never quite opaque
+ * - `density` 0.01 is about 63% fog at 100 units, 98% at 200. Either
+ * form takes the height attenuation (Godot's fog height, Unreal's
+ * height falloff): the fog is full at and below `height` (world y) and
+ * thins above it by `exp(-(y - height) * heightFalloff)` - a valley
+ * fills while the hilltops and the sky stay clear; `heightFalloff` 0.1
+ * halves the fog every ~7 units of climb. Match
+ * `color` to the clearColor or background - the background is not
+ * fogged, so a mismatch shows as a band at the horizon - and, for the
+ * linear form, set `far` at or inside the camera's far plane to hide
+ * the clip.
+ */
+export type FogOptions = (
+  | {
+      /** Distance where the fade starts, world units; negative puts the
+       * camera itself part-way into the fog (Three allows the same). */
+      near: number
+      /** Distance where the fade completes, world units; must exceed near. */
+      far: number
+    }
+  | {
+      /** Exp2 thickness per world unit, > 0 (0.005 haze .. 0.05 pea soup). */
+      density: number
+    }
+) & {
+  /** Straight [r, g, b], 0..1. */
+  color: [number, number, number]
+  /** World y at and below which the fog is full; default 0. Only acts
+   * with a `heightFalloff`. */
+  height?: number
+  /** How fast the fog thins above `height`, per world unit (e-fold rate,
+   * >= 0); default 0, no height attenuation. */
+  heightFalloff?: number
+}
+
 export type SceneOptions = {
   clearColor?: [number, number, number, number]
+  /** Scene-wide fog; see setFog. */
+  fog?: FogOptions
   /** Fragment GLSL drawn behind the meshes, inside the scene's own pass -
    * see setBackground. */
   background?: string
@@ -458,6 +500,19 @@ export type Scene = {
    * declare a name simply skips it. Frame-rate-safe like setTransform.
    */
   setParams(params: ShaderParams): void
+  /**
+   * Set, replace, or remove (null) the scene's fog, linear
+   * (`{ color, near, far }`) or exp2 (`{ color, density }`), either with
+   * the optional `height`/`heightFalloff`. One shared-params write
+   * (`uFogColor`, `uFogNear`, `uFogInv`, `uFogDensity`, `uFogHeight`,
+   * `uFogHeightFalloff` - the set FOG in `@solidrt/3d/glsl` declares;
+   * the form not in use is written 0), fanned out to every view like
+   * setParams, so however many meshes fog it costs nothing per frame.
+   * Every standard material (unlit, lit, sprite) composes it unless
+   * created with `fog: false`; a shaderMaterial opts in by composing FOG.
+   * The background is not fogged: match colors (see FogOptions).
+   */
+  setFog(fog: FogOptions | null): void
   /**
    * Set, replace, or remove (null) the scene's background: fragment GLSL
    * drawn as the FIRST entry of the scene's own pass - one target, no
@@ -2119,6 +2174,32 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       setTargetParams(texture, params)
       for (let v of views) setTargetParams(v.texture, params)
     },
+    setFog(fog) {
+      if (fog === null) {
+        scene.setParams({ uFogInv: 0, uFogDensity: 0, uFogHeightFalloff: 0 })
+        return
+      }
+      let color = [fog.color[0], fog.color[1], fog.color[2]]
+      let height = fog.height ?? 0
+      let falloff = fog.heightFalloff ?? 0
+      if (!Number.isFinite(height) || !Number.isFinite(falloff) || falloff < 0) {
+        throw new Error(`setFog: height must be finite and heightFalloff finite and >= 0, got ${height} / ${falloff}`)
+      }
+      let params: ShaderParams = { uFogColor: color, uFogHeight: height, uFogHeightFalloff: falloff }
+      if ("density" in fog) {
+        let { density } = fog
+        if (!Number.isFinite(density) || density <= 0) {
+          throw new Error(`setFog: density must be finite and > 0, got ${density}`)
+        }
+        scene.setParams({ ...params, uFogInv: 0, uFogDensity: density })
+        return
+      }
+      let { near, far } = fog
+      if (!(Number.isFinite(near) && Number.isFinite(far)) || far <= near) {
+        throw new Error(`setFog: near/far must be finite with near < far, got ${near}..${far}`)
+      }
+      scene.setParams({ ...params, uFogNear: near, uFogInv: 1 / (far - near), uFogDensity: 0 })
+    },
     setBackground(source) {
       if (disposed) return
       if (background !== null) {
@@ -2273,6 +2354,12 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       }
     },
   }
+  // The fog set starts at "none" (uFogInv and uFogDensity 0 are factor 0,
+  // uFogHeightFalloff 0 is no attenuation) so every material that declares
+  // it has coverage from the first frame; a target tolerates the names
+  // when nothing declares them.
+  scene.setParams({ uFogColor: [0, 0, 0], uFogNear: 0, uFogInv: 0, uFogDensity: 0, uFogHeight: 0, uFogHeightFalloff: 0 })
+  if (opts?.fog !== undefined) scene.setFog(opts.fog)
   if (opts?.background !== undefined) scene.setBackground(opts.background)
   if (opts?.autoFree !== false && getOwner()) onCleanup(() => scene.dispose())
   return scene

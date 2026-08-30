@@ -42,7 +42,7 @@ import type {
 } from "@solidrt/core/gpu"
 import { layoutAttributes, layoutKey, layoutSlot } from "./geometry.ts"
 import type { VertexLayout } from "./geometry.ts"
-import { BLINN_SPECULAR, HEMISPHERE, LAMBERT, LIT_VERTEX, LIT_VERTEX_COLORED, MAX_LIGHTS, SHADOW, SHADOW_LOOKUP, SHADOW_SLOTS } from "./glsl.ts"
+import { BLINN_SPECULAR, FOG, HEMISPHERE, LAMBERT, LIT_VERTEX, LIT_VERTEX_COLORED, MAX_LIGHTS, SHADOW, SHADOW_LOOKUP, SHADOW_SLOTS } from "./glsl.ts"
 
 export type Material = {
   /** The pipeline this material draws with for geometry of `layout`
@@ -91,34 +91,46 @@ export type Material = {
 // what keeps camera motion O(1) instead of O(meshes), and the extra
 // per-vertex mat4 multiply is free on the GPU. aNormal from the shared
 // layout is deliberately not declared - inactive attributes are skipped
-// and only the stride accounts for them.
+// and only the stride accounts for them. vWorldPos is the fog distance
+// input; a fragment that does not read it (fog: false) leaves the out
+// unmatched, which links fine.
 const UNLIT_VERTEX = glsl`
   in vec3 aPos;
   in vec2 aUV;
   out vec2 vUv;
+  out vec3 vWorldPos;
   uniform mat4 uModel;
   uniform mat4 uViewProj;
 
   void main() {
-    gl_Position = uViewProj * uModel * vec4(aPos, 1.0);
+    vec4 world = uModel * vec4(aPos, 1.0);
+    vWorldPos = world.xyz;
+    gl_Position = uViewProj * world;
     vUv = aUV;
   }
 `
 
 // The unlit fragment (sprites share it): the color, times the map when
-// there is one, with the alphaTest discard when asked for. An opaque
+// there is one, with the alphaTest discard when asked for, then the
+// scene's fog (FOG from ./glsl, mixed at the alpha about to be written)
+// unless the material opted out. An opaque
 // class writes alpha 1: the scene target is composited premultiplied, so
 // a leaked texel alpha would punch a hole through an opaque draw.
-function unlitFragment(map: boolean, alphaTest: boolean, transparent: boolean): string {
+function unlitFragment(map: boolean, alphaTest: boolean, transparent: boolean, fog: boolean): string {
+  let alpha = transparent ? "base.a" : "1.0"
   return glsl`
     ${map ? "in vec2 vUv;" : ""}
+    ${fog ? "in vec3 vWorldPos;" : ""}
     ${map ? "uniform sampler2D uMap;" : ""}
     uniform vec4 uColor;
     ${alphaTest ? "uniform float uAlphaTest;" : ""}
+    ${fog ? "uniform vec3 uCamPos;" : ""}
+    ${fog ? FOG : ""}
     void main() {
       vec4 base = ${map ? "texture(uMap, vUv) * uColor" : "uColor"};
       ${alphaTest ? "if (base.a < uAlphaTest) discard;" : ""}
-      fragColor = ${transparent ? "base" : "vec4(base.rgb, 1.0)"};
+      ${fog ? `base.rgb = fog(base.rgb, ${alpha}, vWorldPos, uCamPos);` : ""}
+      fragColor = vec4(base.rgb, ${alpha});
     }
   `
 }
@@ -148,6 +160,12 @@ export type UnlitOptions = {
    * fences want it with `cull: "none"`; a mapped cutout casts its cutout
    * (Material.shadow). */
   alphaTest?: number
+  /** Take the scene's fog (default true, Three's `material.fog`): the
+   * fragment fades toward the fog color with its distance from the
+   * camera once `scene.setFog` is set. `false` drops the fog code from
+   * the program - a sky sphere or a far backdrop that must keep its
+   * color, an emissive marker. */
+  fog?: boolean
 }
 
 /**
@@ -163,12 +181,13 @@ export function unlit(opts: UnlitOptions = {}): Material {
   let transparent = opts.transparent === true
   let cull = opts.cull ?? "back"
   let alphaTest = opts.alphaTest !== undefined
-  let key = [map, transparent, cull, alphaTest].join("|")
+  let fog = opts.fog !== false
+  let key = [map, transparent, cull, alphaTest, fog].join("|")
   let cls = unlitClasses.get(key)
   if (cls === undefined) {
     cls = shaderMaterialClass({
       vertex: UNLIT_VERTEX,
-      fragment: unlitFragment(map, alphaTest, transparent),
+      fragment: unlitFragment(map, alphaTest, transparent, fog),
       transparent,
       cull,
       label: "scene-unlit-" + key,
@@ -217,7 +236,8 @@ export type LitOptions = UnlitOptions & {
 // composes by hand, per flag: map x vertexColors x triplanar x shadow x
 // transparent x cull (a class that shows back faces lights them with the
 // normal flipped, else a double-sided leaf's back is black) x alphaTest
-// (the cutoff itself is a per-entry uniform, one class for every value).
+// (the cutoff itself is a per-entry uniform, one class for every value)
+// x fog (the scene's fog composed last, or left out of the program).
 // An opaque class writes alpha 1 (see unlitFragment). Lights arrive
 // through the scene's shared params (light nodes); the base color, map
 // and highlight are per entry. The
@@ -237,6 +257,7 @@ type LitClass = {
   shadow: boolean
   cull: CullMode
   alphaTest: boolean
+  fog: boolean
 }
 
 function litClassKey(c: LitClass): string {
@@ -244,8 +265,9 @@ function litClassKey(c: LitClass): string {
 }
 
 function litFragment(c: LitClass): string {
-  let { map, vertexColors, triplanar, shadow, alphaTest } = c
+  let { map, vertexColors, triplanar, shadow, alphaTest, fog } = c
   let backFaces = c.cull !== "back"
+  let alpha = c.transparent ? "base.a" : "1.0"
   return glsl`
     in vec3 vWorldPos;
     in vec3 vNormal;
@@ -273,6 +295,7 @@ function litFragment(c: LitClass): string {
     ${HEMISPHERE}
     ${LAMBERT}
     ${BLINN_SPECULAR}
+    ${fog ? FOG : ""}
 
     void main() {
       vec3 n = normalize(vNormal);
@@ -302,7 +325,9 @@ function litFragment(c: LitClass): string {
         light += uLightColor[i] * lambert(n, l) * s;
         spec += uLightColor[i] * blinnSpecular(n, v, l, uShininess) * s;
       }
-      fragColor = vec4(base.rgb * light + spec * uSpecular * base.a, ${c.transparent ? "base.a" : "1.0"});
+      vec3 rgb = base.rgb * light + spec * uSpecular * base.a;
+      ${fog ? `rgb = fog(rgb, ${alpha}, vWorldPos, uCamPos);` : ""}
+      fragColor = vec4(rgb, ${alpha});
     }
   `
 }
@@ -335,6 +360,7 @@ export function lit(opts: LitOptions = {}): Material {
     shadow: opts.receiveShadow !== false,
     cull,
     alphaTest,
+    fog: opts.fog !== false,
   }
   let key = litClassKey(flags)
   let cls = litClasses.get(key)
@@ -477,6 +503,7 @@ const SPRITE_VERTEX_SRC = glsl`
   in vec3 aPos;
   in vec2 aUV;
   out vec2 vUv;
+  out vec3 vWorldPos;
   uniform mat4 uModel;
   uniform mat4 uViewProj;
   uniform vec3 uCamRight;
@@ -486,6 +513,7 @@ const SPRITE_VERTEX_SRC = glsl`
     vec3 center = uModel[3].xyz;
     vec2 size = vec2(length(uModel[0].xyz), length(uModel[1].xyz));
     vec3 world = center + uCamRight * (aPos.x * size.x) + uCamUp * (aPos.y * size.y);
+    vWorldPos = world;
     gl_Position = uViewProj * vec4(world, 1.0);
     vUv = aUV;
   }
@@ -495,6 +523,7 @@ const SPRITE_FIXED_Y_VERTEX_SRC = glsl`
   in vec3 aPos;
   in vec2 aUV;
   out vec2 vUv;
+  out vec3 vWorldPos;
   uniform mat4 uModel;
   uniform mat4 uViewProj;
   uniform vec3 uCamPos;
@@ -507,6 +536,7 @@ const SPRITE_FIXED_Y_VERTEX_SRC = glsl`
     float len = length(toCam);
     vec3 right = len > 1e-6 ? vec3(toCam.z, 0.0, -toCam.x) / len : vec3(1.0, 0.0, 0.0);
     vec3 world = center + right * (aPos.x * size.x) + vec3(0.0, aPos.y * size.y, 0.0);
+    vWorldPos = world;
     gl_Position = uViewProj * vec4(world, 1.0);
     vUv = aUV;
   }
@@ -531,12 +561,13 @@ export function sprite(opts: SpriteOptions = {}): Material {
   let map = opts.map !== undefined
   let transparent = opts.transparent !== false
   let fixedY = opts.billboard === "fixed-y"
-  let key = [map, transparent, fixedY].join("|")
+  let fog = opts.fog !== false
+  let key = [map, transparent, fixedY, fog].join("|")
   let cls = spriteClasses.get(key)
   if (cls === undefined) {
     cls = shaderMaterialClass({
       vertex: fixedY ? SPRITE_FIXED_Y_VERTEX_SRC : SPRITE_VERTEX_SRC,
-      fragment: unlitFragment(map, false, transparent),
+      fragment: unlitFragment(map, false, transparent, fog),
       transparent,
       cull: "none",
       label: "scene-sprite-" + key,

@@ -14,8 +14,11 @@
 // The `cascades` debug command sets the count and the shadow distance
 // (`{ count, distance }`; the range the cascades split, the camera's far
 // by default - pulling it in sharpens every cascade) and `fly` parks the
-// flight (`{ t: seconds }`), so a capture repeats.
-import { createSignal, onFrame, pct, render } from "@solidrt/core"
+// flight (`{ t: seconds }`), so a capture repeats. The field is fogged
+// toward the sky color from FOG_NEAR to FOG_FAR, inside the camera's far
+// plane, so the far pillars sink into the horizon instead of clipping
+// (`examples/fog.tsx` is the fog tour).
+import { createSignal, flush, onFrame, pct, render } from "@solidrt/core"
 import { registerDebug } from "srt:dev"
 import { box, DirectionalLight, HemisphereLight, lit, Mesh, PerspectiveCamera, plane, Scene, sphere } from "@solidrt/3d"
 import type { Geometry, Vec3 } from "@solidrt/3d"
@@ -27,6 +30,12 @@ const FAR = 200
 const RADIUS = 50
 const HEIGHT = 5
 const PERIOD = 90
+// The sky, shared by the clear and the fog so the horizon has no band.
+const SKY: [number, number, number] = [0.6, 0.72, 0.88]
+// The fog band: clear up to FOG_NEAR, fully sky at FOG_FAR (the far edge
+// of the field is about 150 units out at the flight's radius).
+const FOG_NEAR = 30
+const FOG_FAR = 150
 
 let [cascades, setCascades] = createSignal(3)
 let [distance, setDistance] = createSignal<number | null>(null)
@@ -37,6 +46,7 @@ let parked: number | null = null
 registerDebug("cascades", (args?: Record<string, unknown>) => {
   if (typeof args?.count === "number") setCascades(args.count)
   if (typeof args?.distance === "number" || args?.distance === null) setDistance(args.distance)
+  flush()
   return { cascades: cascades(), distance: distance() }
 })
 registerDebug("fly", (args?: Record<string, unknown>) => {
@@ -46,6 +56,7 @@ registerDebug("fly", (args?: Record<string, unknown>) => {
   } else if (args?.t === null) {
     parked = null
   }
+  flush()
   return { t: time(), parked: parked !== null }
 })
 
@@ -87,7 +98,14 @@ function App() {
   return (
     <window>
       <view width={pct(100)} height={pct(100)} designSize={[SIZE, SIZE]} onPointerDown={() => setCascades(c => (c % 4) + 1)}>
-        <Scene width={SIZE} height={SIZE} clearColor={[0.6, 0.72, 0.88, 1]} samples={4} label="cascades">
+        <Scene
+          width={SIZE}
+          height={SIZE}
+          clearColor={[SKY[0], SKY[1], SKY[2], 1]}
+          fog={{ color: SKY, near: FOG_NEAR, far: FOG_FAR }}
+          samples={4}
+          label="cascades"
+        >
           <PerspectiveCamera fov={50} near={0.5} far={FAR} position={eye()} lookAt={ahead()} />
           <HemisphereLight sky={[0.5, 0.58, 0.7]} ground={[0.25, 0.22, 0.18]} />
           <DirectionalLight

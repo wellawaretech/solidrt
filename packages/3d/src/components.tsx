@@ -31,7 +31,7 @@ import {
   setVisible,
 } from "./scene.ts"
 import type { ShaderParams } from "@solidrt/core/gpu"
-import type { DirectionalLight as DirectionalLightNode, HemisphereLight as HemisphereLightNode, InstancedMesh as InstancedMeshNode, Mesh as MeshNode, Scene as SceneHandle, SceneNode, ScenePointerEvent, ShadowOptions } from "./scene.ts"
+import type { DirectionalLight as DirectionalLightNode, FogOptions, HemisphereLight as HemisphereLightNode, InstancedMesh as InstancedMeshNode, Mesh as MeshNode, Scene as SceneHandle, SceneNode, ScenePointerEvent, ShadowOptions } from "./scene.ts"
 import type { Geometry } from "./geometry.ts"
 import type { Material } from "./material.ts"
 import type { Quat, Vec3 } from "./math.ts"
@@ -107,6 +107,12 @@ export type SceneProps = {
    * source replaces the background; undefined removes it. Three's
    * `scene.background = color` is `clearColor` here. */
   background?: string
+  /** Scene-wide fog (scene.setFog): linear `{ color, near, far }` or exp2
+   * `{ color, density }`, optionally thinning above `height` by
+   * `heightFalloff`; every standard material fades toward `color` by
+   * distance from the camera. Reactive; undefined removes it. Match
+   * `color` to clearColor or the background, which is not fogged. */
+  fog?: FogOptions
   label?: string
   /** Multisample count (1, 2, 4 or 8; default 1): anti-aliased mesh edges.
    * Fixed at creation. */
@@ -148,6 +154,10 @@ export let Scene: ParentComponent<SceneProps> = props => {
   createEffect(
     () => props.background,
     b => scene.setBackground(b ?? null),
+  )
+  createEffect(
+    () => props.fog,
+    f => scene.setFog(f ?? null),
   )
   untrack(() => props.ref)?.(scene)
   let output = untrack(() => props.output)

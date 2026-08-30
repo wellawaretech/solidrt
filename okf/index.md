@@ -99,6 +99,13 @@ Shaped, not started.
   at defaults, but neither the tile nor the layer exposes it, so day/night,
   damage states, team colours, biome shifts and fog-of-war dimming all fall
   back to atlas duplication or an overlay rect.
+- **[Scene-wide effects on custom materials - one answer for fog, shadows and what comes next](backlog/3d-custom-material-scene-effects.md)** [2026-08-30]
+  A shaderMaterial gets the scene's fog and shadows only by composing FOG and
+  the SHADOW trio itself, and every instanced mesh has a custom material, so
+  an instanced forest stays crisp and unshadowed in a fogged, shadowed scene
+  with no error. Decide once between injecting the standard tail at the
+  fragColor write and exporting one composed function the author calls, before
+  the next scene-wide effect adds a third thing to forget.
 - **[Instanced meshes cast no shadow](backlog/3d-instanced-shadow-casters.md)** [2026-08-27]
   The scene's shadow view draws casters with a position-only depth override
   that knows uModel and nothing else, so an instanced mesh's per-record

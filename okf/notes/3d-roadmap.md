@@ -62,8 +62,8 @@ what it delivered is documented in `packages/3d/AGENTS.md`, not here.
    [gpu-uniform-arrays](../done/gpu-uniform-arrays.md). Library landed
    2026-08-23 (`lit`, light NODES with transform inheritance, triplanar
    as an option - see `packages/3d/AGENTS.md`). Left for later, on
-   demand: fog (`scene.setFog`, shared `uFogColor`/`uFogDensity`),
-   `emissive`, a fresnel rim option, and point/spot lights (a position
+   demand: `emissive`, a fresnel rim option, and point/spot lights (a
+   position
    list beside the direction list; the node shape already carries the
    world matrix they need). The cap `MAX_LIGHTS`
    is an app-level tunable candidate in
