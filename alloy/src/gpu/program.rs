@@ -87,7 +87,13 @@ pub fn compile_stage(gl: &glow::Context, stage: ShaderStage, src: &str, header: 
     src
   };
   let shader = compile_shader(gl, stage.gl_kind(), src).map_err(|e| {
-    if header || src.trim_start().starts_with("#version") {
+    // A redefinition under the header is the source declaring a name the
+    // header already declared (iResolution from a ported shader, mostly);
+    // the GL log names the symbol but not where the other declaration is.
+    // ANGLE says "redefinition", Mesa says "redeclared".
+    if header && (e.contains("redefinition") || e.contains("redeclared")) {
+      format!("{} {e} (declared by the standard header: remove your declaration, or drop header: true)", stage.name())
+    } else if header || src.trim_start().starts_with("#version") {
       format!("{} {e}", stage.name())
     } else {
       format!(

@@ -294,6 +294,10 @@ export function createMutableTexture(
  * `in vec2 vUV;` yourself to read it. One naming trap: GLSL ES reserves
  * `packed` as a keyword, so `vec4 packed = texture(...)` fails with a syntax
  * error that does not name the identifier - pick another name.
+ *
+ * A bad source is a runtime failure, not one `srt check` catches: the compile
+ * throws at this call, so a shader created in a component body takes the app
+ * to the error window unless an `<Errored>` closer in the tree claims it.
  */
 export function createShaderTexture(
   fragmentSrc: string,

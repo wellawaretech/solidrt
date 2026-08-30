@@ -3,8 +3,8 @@ title: Solid babel plugin HTML-escapes text in universal mode
 description: With generate universal, static string children are passed through escapeHTML ("<" becomes "&lt;", "&" becomes "&amp;", ">" untouched) and JSX text entities are never decoded, so createTextNode receives HTML-escaped strings that no parser will ever unescape; the universal renderer has no HTML downstream and must emit text verbatim.
 project: "@solidjs/babel-plugin" (github.com/solidjs/solid, packages/babel-plugin)
 versions: "@solidjs/babel-plugin 2.0.0-rc.3 (also rc.4 and next HEAD as of 2026-08-30)"
-status: unfiled
-link:
+status: filed
+link: https://github.com/solidjs/solid/issues/3127
 created: 2026-08-30
 ---
 
@@ -81,7 +81,7 @@ DOM and SSR generators keep their current behaviour.
 
 ## Upstream status
 
-Checked 2026-08-30: not known. No issue, PR or discussion on solidjs/solid or
+Filed 2026-08-30 as solidjs/solid#3127. Checked the same day before filing: not known. No issue, PR or discussion on solidjs/solid or
 ryansolid/dom-expressions mentions it (searched escape, escapeHTML, entity,
 universal, createTextNode, doNotEscape, custom renderer). Nearest neighbours,
 all different bugs: dom-expressions #155 (universal static text dropped to an

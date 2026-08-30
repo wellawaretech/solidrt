@@ -296,7 +296,14 @@ declare module "flux:gpu" {
    * 300 es`, `precision highp float;`, `uniform vec2 iResolution;`, plus
    * `out vec4 fragColor;` for a fragment stage (the same text
    * {@link createPipelineTexture} injects). Do not combine `header` with your
-   * own `#version` line. Returns a shader (stage) id in its own id space;
+   * own `#version` line. The header declares those names rather than only
+   * filling them, so a source compiled with `header: true` must not declare
+   * them again: `uniform vec3 iResolution;` carried over from a ported shader
+   * is the usual mistake and fails as a redefinition (under the header
+   * iResolution is vec2; only a complete source may declare it vec3 and get
+   * `(w, h, 1.0)`). Everything else - samplers, app-driven uniforms,
+   * varyings (no `vUV` here) - is the source's own declaration.
+   * Returns a shader (stage) id in its own id space;
    * compile errors throw here, synchronously, at a call site the app chose.
    * Free with {@link destroyShader}.
    *

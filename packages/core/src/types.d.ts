@@ -571,10 +571,11 @@ export interface WindowProps extends LayoutProps, PointerProps, TransitionProps 
  * `uniform sampler2D uSource` (top-left origin, like every sampled texture -
  * so a vertex stage mapping it onto the window flips the v coordinate) and
  * is drawn attributeless as triangles, `vertexCount` vertices fetched via
- * gl_VertexID. `iResolution`, filled by name, is the window size in physical
- * pixels (the pass covers exactly that). The window is cleared to opaque
- * black first, so geometry that does not cover it still presents a defined
- * frame.
+ * gl_VertexID. `iResolution`, the window size in physical pixels (the pass
+ * covers exactly that), is filled by name into a uniform the program declares
+ * itself or gets from compileShader's `header` option. The window is cleared
+ * to opaque black first, so geometry that does not cover it still presents a
+ * defined frame.
  */
 export interface WindowShaderProps {
   /** Linked program handle from linkProgram. */
@@ -681,8 +682,9 @@ export interface ViewOwnProps extends TransformProps, PointerProps {
  * A boundary shader declaration. The program contract matches shader targets,
  * not the window pass: the subtree's rasterization binds as
  * `uniform sampler2D uSource` (top-left origin, like every sampled texture)
- * and the pass draws the covering triangle attributeless. `iResolution`,
- * filled by name, is the boundary in physical pixels.
+ * and the pass draws the covering triangle attributeless. `iResolution`, the
+ * boundary in physical pixels, is filled by name into a uniform the program
+ * declares itself or gets from compileShader's `header` option.
  */
 export interface ViewShaderProps {
   /** Linked program handle from linkProgram. */
