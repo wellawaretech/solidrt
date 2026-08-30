@@ -8,7 +8,10 @@ box-shadow, no keyframes, no canvas. The visual range a web app gets from CSS
 comes from the tiers below instead, and reaching past tier 1 is ordinary
 app-building here, not optimization - a screen built only from view
 backgrounds and text is using a fraction of the runtime. Pick the tier the
-CONTENT calls for, not the one that looks safest.
+CONTENT calls for, not the one that looks safest. The tiers compose per
+ELEMENT, not per screen: a dashboard's cards, rows and labels stay tier-1
+laid-out structure even when every card holds a tier-2 chart or a tier-3
+shader. Escalate the element the content calls for, never the whole screen.
 
 1. Laid-out elements - `<view>`/`<text>`, with `<rect>` (or a filling
    `<d-rect>` child) for background, border, radius. The structure of a
@@ -63,6 +66,12 @@ no matter how complex the effect, which is why the performance model
   uniform when the animation is continuous and visual
 - `<canvas>` 2D -> `d-*` primitives (rebuild one `d-path` string per frame
   rather than animating N elements)
+- leader lines, connectors, an annotation or badge hugging an element, any
+  drawing that must align with laid-out content -> measure, do not
+  calculate: read the boxes with `getBoundingBox` inside `onLayout` and
+  drive the `d-*` overlay from the result (core AGENTS.md "Measuring
+  layout", examples/on-layout-connect.tsx). Mirroring the layout math in JS
+  to predict where an element ends up is always wrong somewhere
 - `<canvas>` WebGL, three.js -> `createPipelineTexture`, or `@solidrt/3d`
 - video background, animated hero, particle field -> a shader texture; this
   is the case the runtime is built for

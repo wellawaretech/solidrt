@@ -2,7 +2,9 @@
 // you place it yourself with x/y. Because a detached node does not participate in
 // layout, moving it (animating x/y) does not reflow its siblings - which makes
 // d- elements the right choice for overlays, badges, and anything that moves
-// independently. The rule: a detached node can only contain other detached
+// independently. They are the exception, not the default: screen structure
+// (panels, cards, labels) stays laid out with <view>/<text>; a d- subtree is
+// for drawn or moving content. The rule: a detached node can only contain other detached
 // nodes. Everything under a d- element must itself be a d- element (here d-rect +
 // d-text) - nesting a plain <view> or <text> inside a d- element is an error.
 import { render } from "@solidrt/core"

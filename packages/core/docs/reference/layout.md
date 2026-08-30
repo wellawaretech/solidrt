@@ -42,3 +42,31 @@ wrap around.
 ## Grid
 
 {{ decl packages/core/src/types.d.ts GridProps }}
+
+## Measuring
+
+Positions come from the engine, not from arithmetic mirrored in app code.
+`getBoundingBox(node)` returns the box from the most recently computed layout
+as `{ x, y, width, height }`, transforms composed, relative to the nearest
+`position="relative"` ancestor (falling back to the window), or `null` before
+the first layout. `getBoundingBoxViewport(node)` is the same box always
+window-relative, the space pointer `clientX`/`clientY` report in. Both are
+snapshot reads, not reactive.
+
+The moment to read them is `onLayout(fn)`: it fires after layout is computed
+but before paint, so a measurement can still shape what the current frame
+draws - the pattern for a connector between two laid-out cards, or an
+annotation pinned to a bar the layout placed. Write the result to something
+that does not affect layout (detached geometry, a `d` string, a transform)
+and call `flush()` so the write lands before the display list is built;
+writing a layout prop from `onLayout` costs an extra layout pass.
+
+```tsx
+onLayout(() => {
+  let a = getBoundingBox(boxA)
+  let b = getBoundingBox(boxB)
+  if (!a || !b) return
+  setD(`M ${a.x + a.width / 2} ${a.y + a.height / 2} L ${b.x} ${b.y}`)
+  flush()
+})
+```

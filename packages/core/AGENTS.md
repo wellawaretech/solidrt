@@ -165,10 +165,19 @@ latest (solid-js 1.x, off Solid 2.0 entirely). The recipe that works is
   LayoutProps`, so it draws AND is laid out by Taffy. The detached variant
   (`d-rect`) is `RectProps` only - it draws but is NOT in the layout pass; you
   place it yourself with `x`/`y` (omit them and it fills the parent, which is
-  how backgrounds work). Reach for `d-` whenever you want explicit coordinate
-  positioning instead of layout. It is also a performance lever: for many
-  directly-positioned, often-animating elements (e.g. hundreds of balls), `d-`
-  skips the per-element layout that plain elements would incur.
+  how backgrounds work). Laid-out elements are the DEFAULT for building a
+  screen: structure, cards, panels, labels - anything flex/gap/padding
+  should place - is `<view>`/`<text>` and plain primitives. Reach for `d-`
+  only with a concrete reason: a background/underlay, free-form drawn
+  geometry (a chart's marks, a diagram, vector art), an overlay pinned at
+  coordinates, or as a performance lever for many directly-positioned,
+  often-animating elements (e.g. hundreds of balls), where `d-` skips the
+  per-element layout plain elements would incur. Hand-positioning what flex
+  would place - a card built from d-rects and d-texts at computed offsets -
+  forfeits wrapping, sizing and resize behavior for nothing: inside a chart
+  the marks and axis labels are d-*, but the card around it is a `<view>`.
+  A `designSize` view is NOT a reason to go detached - laid-out children
+  resolve in design units too.
 
 - Transform origin on a `d-view`: with `originX`/`originY` unset, scale/rotate
   pivot at the view's local (0,0) - the origin its children's coordinates are
@@ -212,6 +221,22 @@ latest (solid-js 1.x, off Solid 2.0 entirely). The recipe that works is
   frame reflows the tree. Anchor the element once with layout (e.g.
   `position:absolute` at `left:0,top:0`, or just let normal flow place it) and
   then translate it with `x`/`y`.
+
+- Measuring layout: never re-derive an element's position with your own
+  arithmetic - the layout engine already knows, so ask it.
+  `getBoundingBox(ref)` returns the node's laid-out box
+  ({x, y, width, height}, transforms composed, relative to the nearest
+  `position="relative"` ancestor, else the window);
+  `getBoundingBoxViewport(ref)` is always window-relative (the space pointer
+  `clientX`/`clientY` report in). Both are snapshot reads of the last
+  computed layout, not reactive - read them in `onLayout(fn)` (fires after
+  layout, before paint) or in an event handler. The canonical shape: let
+  flex place the boxes, measure them in onLayout, and drive DETACHED drawing
+  from the result - a d-path connector between two cards, a badge pinned to
+  a bar. Two rules keep it one pass: write the measurement only to props
+  that do not affect layout (a `d` string, a d-* position, a transform), and
+  call `flush()` after the write so it lands in this frame's display list.
+  See examples/on-layout-connect.tsx.
 
 - Text `lineHeight` is a MULTIPLIER of fontSize (1.3-1.6 is typical), not
   pixels. A CSS-reflex value like 22 makes each line box 22x the font size:
@@ -340,10 +365,11 @@ latest (solid-js 1.x, off Solid 2.0 entirely). The recipe that works is
   Window state: onResize, onLayout, onWindowFocus, onWindowBlur exist, but
   prefer the reactive reads (`env`/`capabilities` above, or the accessors
   `windowSize()`, `safeArea()`, `displayScale()`, `windowFocused()`,
-  `keyboardHeight()`, `pointerLocked()`) for reading layout and window
-  state. For mouse look, `lockPointer(true)` enters relative mouse mode
-  (cursor hidden and confined, positions freeze) and pointer events keep
-  reporting motion through `movementX`/`movementY`.
+  `keyboardHeight()`, `pointerLocked()`) for reading window state;
+  onLayout's real job is the measure-then-draw pattern above. For mouse
+  look, `lockPointer(true)` enters relative mouse mode (cursor hidden and
+  confined, positions freeze) and pointer events keep reporting motion
+  through `movementX`/`movementY`.
 
 - `createPortal` cannot mount during the app's initial render (it throws
   "no mount target"): gate portal content behind a signal that starts false

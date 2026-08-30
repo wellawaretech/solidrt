@@ -21,11 +21,14 @@ because there is nothing in the layout to reflow. The same content as a
 laid-out `<rect>` with `left={x()}` would put the layout engine on the path of
 every frame.
 
-**Reach for the detached form first for anything that moves at animation
-frequency**, and for content authored in fixed design units - a chart, a
-diagram, an svg drawing, a particle field. Reach for the layout form when you
-want the element to participate in a flex or grid arrangement, which is most
-static UI.
+**The layout form is the default: most of a screen - structure, panels,
+labels, anything a flex or grid arrangement should place - is laid-out
+elements.** Reach for the detached form for anything that moves at animation
+frequency, and for free-form geometry drawn at coordinates - a chart's marks,
+a diagram, an svg drawing, a particle field. A `designSize` view is not such
+a reason: laid-out children resolve in design units too, so even a
+fixed-design screen is built from laid-out elements, with detached geometry
+only where content is genuinely drawn rather than arranged.
 
 ## What changes
 

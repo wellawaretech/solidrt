@@ -30,6 +30,11 @@
 // geometry - diagrams, slides, dashboards, game boards, emulator screens - fit
 // one design space instead.
 //
+// Design space changes the units, not the element choice: laid-out views and
+// text stay the default under a designSize (fact 3). The d-* scene below is
+// free-form drawn geometry; panels, cards and labels would still be built
+// from laid-out elements, as the flex row at the bottom shows.
+//
 // Resize the window and watch: the scene keeps its aspect ratio, everything
 // including text scales together, and the readout reports the same design
 // coordinates for the same spot on the scene at any window size.

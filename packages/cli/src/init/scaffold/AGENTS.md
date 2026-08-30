@@ -11,7 +11,10 @@ should open whenever the work matches its trigger.
 - @solidrt/core is the low-level foundation: host intrinsics (`<window>`,
   `<view>`, `<text>`, the detached `d-*` drawing primitives) with flat props
   that feed the layout and paint engine directly. An app can be written
-  entirely at this level. d-* elements go under anything; laid-out elements
+  entirely at this level. Laid-out `<view>`/`<text>` are the default
+  building blocks for a screen; the detached `d-*` forms are for drawn
+  geometry and animation hot spots, not general structure (core's AGENTS.md
+  has the rule). d-* elements go under anything; laid-out elements
   only under laid-out parents (a `<view>` inside a `<d-view>` throws), so a
   component's doc comment says which kind it renders.
 - Extensions build on core. The first-party ones are @solidrt/components
