@@ -1,5 +1,10 @@
 # SolidRT
 
+[![CI](https://github.com/wellawaretech/solidrt/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/wellawaretech/solidrt/actions/workflows/ci.yml)
+[![version](https://img.shields.io/npm/v/@solidrt/cli?label=version)](https://www.npmjs.com/package/@solidrt/cli)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+[![Platforms](https://img.shields.io/badge/platforms-Linux%20%7C%20macOS%20%7C%20Windows%20%7C%20Android-informational)](#project-status)
+
 The Solid Runtime - a modern toolkit for building cross-platform applications with SolidJS.
 
 What if you want to build an application that runs everywhere? The options thin out fast. React Native is primarily iOS and Android. Electron is desktop only, and ships a browser to get there. Flutter runs everywhere, but you write Dart and buy into Google's ecosystem to do it. Most of the remaining options hand rendering to the system webview, which is a browser again: a different one on every operating system, and a different one after the next OS update.
