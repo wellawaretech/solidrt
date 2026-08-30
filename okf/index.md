@@ -563,10 +563,10 @@ Shaped, not started.
   there; the ANGLE that ships already advertises the extensions a real
   headless path needs.
 - **[Intermittent SIGABRT at headless playback shutdown](backlog/playback-shutdown-sigabrt.md)** [2026-08-06]
-  One changelog-shot run exited 134 with no stderr and has not reproduced in
-  22 runs since; the suspicion is a shutdown race in the
-  exit()-during-playback path tearing down while the raster thread still holds
-  GL state.
+  Headless playback exits the process while the raster thread is still drawing
+  the frame after the last recorded one; Impeller's encoder then hits a FATAL
+  check (captured 2026-08-30 on animating examples), which is the SIGABRT one
+  changelog-shot run died of.
 - **[Playback's first frame does not reflect app state](backlog/playback-window-size-zero.md)** [2026-08-06]
   Two ways the first headless capture shows something the app never intended -
   windowSize() reads 0x0 because playback's synthesised Resize never reaches
@@ -1565,6 +1565,11 @@ Bugs in our dependencies. Status here is the dependency's, not ours.
   probes per format; on a Raspberry Pi 4 SDL_InitSubSystem(SDL_INIT_CAMERA)
   never returns, and because SDL_UDEV_Scan shares its callback list the main
   thread's gamepad init is dragged into the same loop.
+- **[Solid 2 cheatsheet does not say the For child body is untracked](upstream/solid-cheatsheet-for-child-body-untracked.md)** [2026-08-30]
+  CHEATSHEET.md documents the accessor/plain-value flip between keyed and
+  non-keyed For, but not that the child function's body is an untracked scope,
+  so the default "destructure at the top, use below" style silently freezes;
+  the trap should sit next to For keyed={false}.
 - **[taffy measure cache evicts entries it can still hit](upstream/taffy-measure-cache-clobber.md)** [2026-08-03]
   Cache::store picks a slot from the input shape alone (9 slots) while
   Cache::get matches on shape AND parent width, so the

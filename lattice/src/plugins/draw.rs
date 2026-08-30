@@ -56,6 +56,10 @@ struct RenderInner {
   // Last slow-frame warning: one line per second at most, so a sustained
   // storm reads as one warning per second in the logs, not one per frame.
   last_slow_warn: Cell<Option<Instant>>,
+  // Node count at the previous frame: the delta is what a slow-frame line
+  // reports as nodesAdded, so a mount frame's honest build cost can be told
+  // from steady-state jank.
+  last_node_count: Cell<usize>,
   // What the installed overlay was built against: window geometry (size,
   // display scale, safe area - the overlay is positioned in window space
   // raster-side) and what it shows (HUD on, badge). A change refreshes it
@@ -101,6 +105,7 @@ pub fn store_state(
       user_input_muted,
       overlay_installed: Cell::new(false),
       last_slow_warn: Cell::new(None),
+      last_node_count: Cell::new(0),
       overlay_key: Cell::new((0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, false, None)),
     })))
     .expect("store render state");
@@ -332,7 +337,9 @@ impl RenderInner {
       // Taken after paint so the counters cover the whole rebuild (paint
       // shapes paragraphs too), plus the writes that led into it.
       let counters = rendertree::counters::take();
-      s.record_layout_activity(tree.0.borrow().node_count(), counters);
+      let nodes = tree.0.borrow().node_count();
+      let nodes_added = nodes.saturating_sub(self.last_node_count.replace(nodes));
+      s.record_layout_activity(nodes, counters);
       s.record_paint(paint_stats);
       let ms = |d: std::time::Duration| d.as_secs_f32() * 1000.0;
       let record = FrameRecord {
@@ -357,7 +364,7 @@ impl RenderInner {
         if due {
           self.last_slow_warn.set(Some(Instant::now()));
           qtx.logger().warn(&format!(
-            "Slow frame: {:.1} ms (budget {:.1}): js {:.1}, layout {:.1}, postLayout {:.1}, paint {:.1}, hover {:.1}; paraShapes {}, measureCalls {}, dirtiedNodes {}, cacheHits {}/{}, nodesPainted {}",
+            "Slow frame: {:.1} ms (budget {:.1}): js {:.1}, layout {:.1}, postLayout {:.1}, paint {:.1}, hover {:.1}; paraShapes {}, measureCalls {}, dirtiedNodes {}, nodesAdded {}, cacheHits {}/{}, nodesPainted {}",
             record.total_ms,
             record.period_ms,
             record.js_ms,
@@ -368,6 +375,7 @@ impl RenderInner {
             counters.para_shapes,
             counters.measure_calls,
             counters.dirtied,
+            nodes_added,
             counters.cache_hits,
             counters.cache_gets,
             paint_stats.nodes_painted,

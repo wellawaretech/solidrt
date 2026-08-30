@@ -1,6 +1,6 @@
 ---
 title: Intermittent SIGABRT at headless playback shutdown
-description: One changelog-shot run exited 134 with no stderr and has not reproduced in 22 runs since; the suspicion is a shutdown race in the exit()-during-playback path tearing down while the raster thread still holds GL state.
+description: Headless playback exits the process while the raster thread is still drawing the frame after the last recorded one; Impeller's encoder then hits a FATAL check (captured 2026-08-30 on animating examples), which is the SIGABRT one changelog-shot run died of.
 created: 2026-08-06
 ---
 
@@ -28,3 +28,33 @@ produce the message or set an upper bound on the rate.
 Split out of a two-item "headless render loose ends" file when okf was
 restructured; the other half is
 [playback-window-size-zero](playback-window-size-zero.md).
+
+## Captured (2026-08-30)
+
+The stderr the note asked for. `srt render --file packages/core/examples/
+frame-animation.tsx --duration 0.2` (and `stagger.tsx`; any example that
+keeps requesting frames) prints, after `recording complete (12 of 12
+frames)`:
+
+```
+[ERROR:flutter/impeller/renderer/backend/gles/buffer_bindings_gles.cc(365)] Break on 'ImpellerValidationBreak' to inspect point of failure: Uniform buffer had no members. This is currently unsupported in the OpenGL ES backend. Use a uniform buffer block.
+[FATAL:flutter/impeller/renderer/backend/gles/render_pass_gles.cc(750)] Check failed: result. Must be able to encode GL commands without error.
+```
+
+Not every run: the same command at `--duration 0.1` was clean, and a static
+`window-root.tsx` never shows it. All frames are on disk either way, and the
+exit code was 0 in the runs seen - the abort from the FATAL races
+`std::process::exit(0)` and usually loses; when it wins, that is the 134.
+
+Mechanism, from `alloy/src/playback.rs`: after the last frame's readback the
+loop still sends `FrameRendered` for it, which makes the UI thread build the
+next frame and the raster thread start drawing it; the loop then reaches
+"recording complete" and calls `process::exit(0)` with that draw in flight.
+Impeller's GL encoder finds its state torn down under it and fails the check.
+A static app has no pending frame request, so nothing is drawing at exit.
+
+Done looks like: nothing is drawing when the process exits - do not send the
+final `FrameRendered`, or stop the raster thread (drain its queue and join)
+before `exit`. The exit-code gate is the reason it matters: a 134 on a
+complete capture reads as a failed verification.
+

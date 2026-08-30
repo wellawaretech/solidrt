@@ -303,6 +303,15 @@ latest (solid-js 1.x, off Solid 2.0 entirely). The recipe that works is
   session in seconds) and it is what keeps per-frame work cheap.
 - Animation is target-shaped first: declare `transition` on the element and
   write targets, and the runtime animates natively with no per-frame JS.
+  Enter and exit are per-property entries on that same spec: `from` is the
+  value the property animates in from at first attach, `exit` the value it
+  animates to on removal (the node stays painted until it settles, then
+  frees - no AnimatePresence equivalent needed). `stagger` (ms) goes on an
+  ANCESTOR, never on the animating elements: it delays each descendant's
+  enter/exit by `index * stagger`, and cascades nothing unless the
+  descendants declare `from`/`exit`. An enter plays once per mount; to
+  replay it, remount the subtree (`<Show when={epoch()} keyed>` around it,
+  then bump `epoch`). See examples/stagger.tsx.
   Reach for per-frame work only for genuinely procedural motion:
   `onFrame((tick, frame, rate) => {})` is the native hook (runtime-paced,
   returns a cleanup, auto-cleaned inside a reactive scope); `rate` is the

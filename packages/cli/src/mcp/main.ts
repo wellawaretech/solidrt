@@ -416,14 +416,14 @@ let TOOLS: {
     name: "pause_watch",
     annotations: SETS_STATE,
     description:
-      "Pause the dev server's reload-on-save until resume_watch, so your half-finished saves are not pushed to the user's screens while you edit; your explicit reload still is. Call it before an edit burst; when the edits are done, reload, then resume_watch. Changes saved while paused are not replayed on resume: reload is what pushes them. The pause lifts on resume_watch, when the dev server goes away, or when this bridge exits. ALWAYS resume when you are done: while paused, the human's own saves reach nothing.",
+      "Pause the dev server's reload-on-save until resume_watch, so your half-finished saves are not pushed to the user's screens while you edit; your explicit reload still is. Call it before an edit burst; when the edits are done, reload, then resume_watch. Changes saved while paused are not replayed on resume: reload is what pushes them. The pause lifts on resume_watch, when the dev server goes away, or when this bridge exits. ALWAYS resume when you are done: while paused, the human's own saves reach nothing. Returns `{ ok, watchPaused }`.",
     inputSchema: {},
   },
   {
     name: "resume_watch",
     annotations: SETS_STATE,
     description:
-      "Lift the pause set by pause_watch: saves push again, the human's included. Call it after your reload, and always before you stop working.",
+      "Lift the pause set by pause_watch: saves push again, the human's included. Call it after your reload, and always before you stop working. Returns `{ ok, watchPaused }`.",
     inputSchema: {},
   },
   {
@@ -530,8 +530,12 @@ async function callTool(name: string, args: any): Promise<ControlResult> {
     case "resume_watch": {
       let paused = name === "pause_watch"
       let result = await control(`/watch?active=${!paused}`, "POST")
-      if (result.ok) watchPaused = paused
-      return result
+      if (!result.ok) return result
+      watchPaused = paused
+      // The control API answers in its uniform `active` (whether it watches);
+      // name the state as list_clients does, so an `active: false` cannot be
+      // read as "the pause is not active".
+      return { ...result, body: { ok: true, watchPaused } }
     }
     case "get_snapshot": {
       if (typeof args?.nodeId !== "number") return { ok: false, message: "get_snapshot requires a numeric nodeId" }

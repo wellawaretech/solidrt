@@ -526,7 +526,9 @@ export interface TransitionProps {
    * its transform); the initial value never animates unless the entry sets
    * `from` (an enter animation), and a non-numeric write (e.g. null)
    * cancels the running animation and snaps. `null` clears the
-   * declaration; already-running animations finish.
+   * declaration; already-running animations finish. A spec built in a
+   * conditional widens `curve` to `string` for TypeScript; write
+   * `satisfies Transition` on the branch.
    */
   transition?:
     | ({
@@ -549,7 +551,7 @@ export interface TransitionProps {
 
 // Primitives
 
-export interface WindowProps extends LayoutProps, PointerProps {
+export interface WindowProps extends LayoutProps, PointerProps, TransitionProps {
   children?: Children
   title?: string
   fullscreen?: boolean

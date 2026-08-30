@@ -20,6 +20,7 @@ for the element/prop model see `@solidrt/core/AGENTS.md`.
 ## Frame and lifecycle
 - `frame-animation.tsx` - `onFrame` driving a transform animation each frame.
 - `on-layout-connect.tsx` - `onLayout` + `getBoundingBox` connecting laid-out boxes with a `d-path`.
+- `stagger.tsx` - enter/exit/stagger with no per-frame JS: `from` and `exit` per property on each row's own `transition`, `stagger` on the ANCESTOR cascading them in occurrence order, and the replay idiom - a keyed `<Show>` remounts the subtree when its `when` value changes, so bumping an epoch replays the whole cascade. Exiting rows stay painted until they settle.
 
 ## Pointer input
 - `pointer-local-coords.tsx` - the three pointer coordinate frames (`clientX` window, `localX` the handling node's own frame, `parentX` its path-parent's frame - where the node's x/y live) and the transform-proof drag idiom: grab offset from `localX` at down, place with `parentX - offset` on moves. Exact inside rotated/scaled ancestors and when the pointer leaves the node mid-drag.
