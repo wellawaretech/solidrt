@@ -65,6 +65,17 @@ Deviations from the shape above, both deliberate:
   hardware quantizes anyway. Below 1 or non-finite is the one throw.
 - `createModel` uploads at a fixed `MODEL_ANISOTROPY` (4); no
   per-model option until someone needs one.
+- Postmortem additions the same day: the probe accepts the GL 4.6
+  `GL_ARB_texture_filter_anisotropic` spelling beside the EXT one (a
+  desktop core profile may list only the ARB name, same enums); a
+  create with `anisotropy > 1` and no `mipmap` logs a warning (legal, but
+  nearly always a forgotten flag); the sampler cache's index is tested as
+  a bijection over all 40 states, since a collision would be silent.
+  For the next sampling axis: `SamplerState::parse` takes a
+  `SamplerOptions` struct (one field here, one read in the plugin, no
+  signature change at callers), and the inventory's JSON spelling of a
+  SamplerState lives in one `sampler_json` helper in
+  `lattice/src/go/connection.rs`.
 
 Non-goals, standing: the per-binding `{ id, filter, wrap }` override does
 not take `anisotropy` (it is id state like the mip chain); a core default

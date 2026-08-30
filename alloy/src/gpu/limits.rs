@@ -49,8 +49,13 @@ impl GpuLimits {
       let attribs = gl.get_parameter_i32(glow::MAX_VERTEX_ATTRIBS);
       // An extension, never core at any GL level, but present on practically
       // every ES 3.0 device and on ANGLE over D3D11/Metal; absence is a fact
-      // to report, not an error. The parameter is a float in the spec.
-      let anisotropy = if gl.supported_extensions().contains("GL_EXT_texture_filter_anisotropic") {
+      // to report, not an error. A desktop core profile may list only the
+      // GL 4.6 spelling (ARB), same enums. The parameter is a float in the
+      // spec.
+      let ext = gl.supported_extensions();
+      let anisotropy = if ext.contains("GL_EXT_texture_filter_anisotropic")
+        || ext.contains("GL_ARB_texture_filter_anisotropic")
+      {
         gl.get_parameter_f32(glow::MAX_TEXTURE_MAX_ANISOTROPY_EXT) as i32
       } else {
         1

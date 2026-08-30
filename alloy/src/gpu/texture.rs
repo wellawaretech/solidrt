@@ -133,6 +133,19 @@ impl TextureFormat {
   }
 }
 
+/// The app-facing sampling options as written at a create call, before
+/// validation: every field optional, absent = the default. One struct
+/// rather than positional arguments so a new sampling axis is one field
+/// here and one read in the plugin, not a signature change at every
+/// caller.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct SamplerOptions<'a> {
+  pub filter: Option<&'a str>,
+  pub wrap: Option<&'a str>,
+  pub mipmap: Option<bool>,
+  pub anisotropy: Option<f64>,
+}
+
 /// A per-binding deviation from a texture's declared sampling: the filter
 /// and/or wrap one pass samples it with (a nearest atlas blurred linearly by
 /// a blur pass, a clamped target tiled by one consumer). Never the mip
@@ -166,7 +179,7 @@ impl SamplerOverride {
   /// Parse the app-facing override strings, same vocabulary as the
   /// creation-time options.
   pub fn parse(filter: Option<&str>, wrap: Option<&str>) -> Result<Self, String> {
-    let state = SamplerState::parse(filter, wrap, None, None)?;
+    let state = SamplerState::parse(&SamplerOptions { filter, wrap, ..SamplerOptions::default() })?;
     Ok(SamplerOverride { filter: filter.map(|_| state.filter), wrap: wrap.map(|_| state.wrap) })
   }
 
@@ -193,12 +206,8 @@ impl SamplerState {
   /// rounded down to a power of two and capped at MAX_ANISOTROPY (the
   /// engines' clamp-not-error semantics: a level is a wish, the hardware
   /// quantizes it anyway). Below 1 or non-finite is the one error.
-  pub fn parse(
-    filter: Option<&str>,
-    wrap: Option<&str>,
-    mipmap: Option<bool>,
-    anisotropy: Option<f64>,
-  ) -> Result<Self, String> {
+  pub fn parse(opts: &SamplerOptions<'_>) -> Result<Self, String> {
+    let SamplerOptions { filter, wrap, mipmap, anisotropy } = *opts;
     let filter = match filter {
       None | Some("linear") => SamplerFilter::Linear,
       Some("nearest") => SamplerFilter::Nearest,
@@ -238,7 +247,7 @@ pub struct SamplerCache {
 }
 
 impl SamplerCache {
-  const COUNT: usize = 2 * 2 * 2 * ANISOTROPY_LEVELS;
+  pub(crate) const COUNT: usize = 2 * 2 * 2 * ANISOTROPY_LEVELS;
 
   pub fn new(gl: &glow::Context, max_anisotropy: u32) -> Self {
     let mut samplers = [None; Self::COUNT];
@@ -288,7 +297,7 @@ impl SamplerCache {
     self.samplers[Self::index(state)]
   }
 
-  fn index(state: SamplerState) -> usize {
+  pub(crate) fn index(state: SamplerState) -> usize {
     let base = (state.filter as usize) * 4 + (state.wrap as usize) * 2 + (state.mipmap as usize);
     base * ANISOTROPY_LEVELS + SamplerState::anisotropy_slot(state.anisotropy)
   }

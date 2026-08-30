@@ -31,7 +31,8 @@ pub use resources::{
 pub use spec::{DepthStorage, DrawSpec, NodeShader, PipelineSpec, TargetSpec, WindowShader};
 pub use target::{create_layer_target, EntryBuffers, ShaderTexture};
 pub use texture::{
-  generate_mipmap, GpuTexture, SamplerCache, SamplerFilter, SamplerOverride, SamplerState, TextureEntry, TextureFormat,
+  generate_mipmap, GpuTexture, SamplerCache, SamplerFilter, SamplerOptions, SamplerOverride, SamplerState, TextureEntry,
+  TextureFormat,
   TextureRegistry,
 };
 pub use timing::{PassTimer, Timed};

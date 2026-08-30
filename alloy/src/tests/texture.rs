@@ -113,19 +113,20 @@ fn texture_exposes_its_paint() {
 // strings; defaults are linear + clamp on every creation path.
 #[test]
 fn sampler_state_parses_options_and_defaults() {
-  use crate::gpu::texture::{SamplerFilter, SamplerState, SamplerWrap};
+  use crate::gpu::texture::{SamplerFilter, SamplerOptions, SamplerState, SamplerWrap};
 
-  let state = SamplerState::parse(None, None, None, None).expect("defaults parse");
+  let parse = |filter, wrap, mipmap, anisotropy| SamplerState::parse(&SamplerOptions { filter, wrap, mipmap, anisotropy });
+  let state = parse(None, None, None, None).expect("defaults parse");
   assert_eq!(state, SamplerState { filter: SamplerFilter::Linear, wrap: SamplerWrap::Clamp, mipmap: false, anisotropy: 1 });
 
-  let state = SamplerState::parse(Some("nearest"), Some("repeat"), Some(true), Some(8.0)).expect("explicit values parse");
+  let state = parse(Some("nearest"), Some("repeat"), Some(true), Some(8.0)).expect("explicit values parse");
   assert_eq!(state, SamplerState { filter: SamplerFilter::Nearest, wrap: SamplerWrap::Repeat, mipmap: true, anisotropy: 8 });
 
-  let state = SamplerState::parse(Some("linear"), None, Some(false), None).expect("partial options parse");
+  let state = parse(Some("linear"), None, Some(false), None).expect("partial options parse");
   assert_eq!(state, SamplerState::default());
 
-  assert!(SamplerState::parse(Some("bilinear"), None, None, None).expect_err("unknown filter rejected").contains("filter"));
-  assert!(SamplerState::parse(None, Some("mirror"), None, None).expect_err("unknown wrap rejected").contains("wrap"));
+  assert!(parse(Some("bilinear"), None, None, None).expect_err("unknown filter rejected").contains("filter"));
+  assert!(parse(None, Some("mirror"), None, None).expect_err("unknown wrap rejected").contains("wrap"));
 }
 
 // The anisotropy level is a wish the hardware quantizes: any number >= 1
@@ -133,9 +134,10 @@ fn sampler_state_parses_options_and_defaults() {
 // semantics; below 1 or non-finite is the one rejected input.
 #[test]
 fn sampler_state_anisotropy_rounds_and_caps() {
-  use crate::gpu::texture::SamplerState;
+  use crate::gpu::texture::{SamplerOptions, SamplerState};
 
-  let level = |a: f64| SamplerState::parse(None, None, None, Some(a)).expect("level parses").anisotropy;
+  let parse = |a: f64| SamplerState::parse(&SamplerOptions { anisotropy: Some(a), ..SamplerOptions::default() });
+  let level = |a: f64| parse(a).expect("level parses").anisotropy;
   assert_eq!(level(1.0), 1);
   assert_eq!(level(2.0), 2);
   assert_eq!(level(3.0), 2);
@@ -145,8 +147,34 @@ fn sampler_state_anisotropy_rounds_and_caps() {
   assert_eq!(level(1.5), 1);
 
   for bad in [0.0, 0.5, -4.0, f64::NAN, f64::INFINITY] {
-    assert!(SamplerState::parse(None, None, None, Some(bad)).expect_err("rejected").contains("anisotropy"));
+    assert!(parse(bad).expect_err("rejected").contains("anisotropy"));
   }
+}
+
+// Every SamplerState maps to its own cache slot: a collision would hand two
+// states one GL sampler object and silently sample one of them wrong. No GL
+// needed - the index is pure arithmetic over the enumeration `new` walks.
+#[test]
+fn sampler_cache_index_is_a_bijection() {
+  use crate::gpu::texture::{
+    SamplerCache, SamplerFilter, SamplerState, SamplerWrap, ANISOTROPY_LEVELS, MIN_ANISOTROPY,
+  };
+
+  let mut seen = vec![false; SamplerCache::COUNT];
+  for filter in [SamplerFilter::Linear, SamplerFilter::Nearest] {
+    for wrap in [SamplerWrap::Clamp, SamplerWrap::Repeat] {
+      for mipmap in [false, true] {
+        for slot in 0..ANISOTROPY_LEVELS {
+          let state = SamplerState { filter, wrap, mipmap, anisotropy: MIN_ANISOTROPY << slot };
+          let i = SamplerCache::index(state);
+          assert!(i < SamplerCache::COUNT, "{state:?} indexes past the cache");
+          assert!(!seen[i], "{state:?} collides with an earlier state at slot {i}");
+          seen[i] = true;
+        }
+      }
+    }
+  }
+  assert!(seen.iter().all(|s| *s), "every slot is claimed exactly once");
 }
 
 // A per-binding override replaces only the fields it names; the mip flag is

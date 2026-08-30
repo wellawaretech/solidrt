@@ -1387,6 +1387,19 @@ fn snapshot_reply(id: u64, width: u32, height: u32, rgba: Vec<u8>, raw: bool) ->
 
 /// Add the create's debug label to a resource object, when one was given
 /// (absent otherwise, like the other off-default keys).
+/// A texture's declared sampling in the create option's own vocabulary
+/// (`{ filter, wrap, mipmap, anisotropy }`), the one place the JSON spelling
+/// of a SamplerState lives: every inventory site that reports one calls
+/// this, so a new sampling axis is added here once.
+fn sampler_json(s: &alloy::SamplerState) -> serde_json::Value {
+  serde_json::json!({
+    "filter": s.filter.name(),
+    "wrap": s.wrap.name(),
+    "mipmap": s.mipmap,
+    "anisotropy": s.anisotropy,
+  })
+}
+
 fn insert_label(obj: &mut serde_json::Value, label: &Option<String>) {
   if let Some(label) = label {
     obj.as_object_mut().expect("resource json is an object").insert("label".into(), label.clone().into());
@@ -1434,13 +1447,7 @@ fn gpu_reply(ctx: &flux::rquickjs::Ctx<'_>, id: u64, label: Option<&str>, draw: 
         "height": t.height,
         "target": t.target,
         "format": t.format,
-        // The declared sampling, in the create option's own vocabulary.
-        "sampler": {
-          "filter": t.sampler.filter.name(),
-          "wrap": t.sampler.wrap.name(),
-          "mipmap": t.sampler.mipmap,
-          "anisotropy": t.sampler.anisotropy,
-        },
+        "sampler": sampler_json(&t.sampler),
       });
       insert_label(&mut obj, &t.label);
       obj

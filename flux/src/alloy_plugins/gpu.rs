@@ -180,8 +180,20 @@ fn collect_sampler(ctx: &Ctx<'_>, opts: &Option<Object<'_>>, api: &str) -> rquic
     ),
     None => (None, None, None, None),
   };
-  alloy::SamplerState::parse(filter.as_deref(), wrap.as_deref(), mipmap, anisotropy)
-    .map_err(|e| throw_str(ctx, &format!("{api}: {e}")))
+  let state = alloy::SamplerState::parse(&alloy::SamplerOptions {
+    filter: filter.as_deref(),
+    wrap: wrap.as_deref(),
+    mipmap,
+    anisotropy,
+  })
+  .map_err(|e| throw_str(ctx, &format!("{api}: {e}")))?;
+  // Not invalid (GL accepts it), but almost always a forgotten flag: the
+  // level filters through the mip chain, and without one it does next to
+  // nothing at the grazing angles it is set for.
+  if state.anisotropy > 1 && !state.mipmap {
+    log::warn!("[gpu] {api}: anisotropy {} without mipmap: true has little effect - set both", state.anisotropy);
+  }
+  Ok(state)
 }
 
 // Decode the { label? } debug name every create path accepts: free-form, not
