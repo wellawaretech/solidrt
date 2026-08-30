@@ -38,3 +38,9 @@ output is the WORLD, not a viewport of it.
 
 Small and well-contained, but it touches the shader + inverse pair, which
 is why it did not ride along with stage B1 silently.
+
+Until this lands, the interim for world-space things over a rotating tile
+world is projecting in JS - which today means copying the tile camera's
+mapping by hand; [2d-tile-camera-projection](2d-tile-camera-projection.md)
+exports it so the copy goes away, and is the vocabulary this item's
+in-shader rotation then consumes.

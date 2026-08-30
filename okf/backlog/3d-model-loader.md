@@ -71,3 +71,23 @@ was added: the bake already removes the cost where it matters.
   [3d-instanced-shadow-casters](3d-instanced-shadow-casters.md).
 - **Samplers.** Every texture uploads repeat-wrapped and mipmapped;
   per-material wrap/filter is ignored.
+- **Skins and animation channels through the parse and the bake.** A
+  glTF `skins` block (joints, inverse bind matrices, `JOINTS_0`/
+  `WEIGHTS_0` vertex channels) and `animations` (sampler tracks, TRS
+  channels targeting nodes) are ignored. [animation-core](animation-core.md)
+  assumes baked track buffers arrive "from the mature loaders at pack
+  time" and names no loader; this is that loader. Depends on the node
+  hierarchy above (tracks target nodes) and widens the `.srtm` container
+  (a version bump: joints, bind matrices, a "skinned" named layout,
+  clips). Runtime `parseGltf` gets the same subset so a small rigged
+  model can be imported binary like an unrigged one.
+- **Runtime-fetched content.** The bake tool runs under bun on the
+  developer's machine, so a model the APP downloads (user-made tracks and
+  karts, a mod browser, a level editor's exports) meets the runtime
+  parser as-is: Draco/meshopt/KTX2 files bounce with the clear error, and
+  large ones pay the 4 us-per-vertex interleave in the interpreter.
+  Either a runtime decode path for the common compressions (native, in the
+  loader's Rust side - the interpreter rules out a JS Draco) or a
+  documented publisher-side rule ("bake with `srt tool 3d/model` before
+  upload", the `.srtm` as the exchange format). Decide when a consumer
+  ships user content; do not build both.

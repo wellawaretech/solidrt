@@ -62,3 +62,10 @@ raw-records power path (documented on `SpriteLayer.records`) survives, since
 "record i is draw slot i" is currently part of its contract - it likely
 becomes "record i is a stable slot, order is separate", which needs the
 AGENTS.md note updated with it.
+
+A trap this makes, seen in the wild: a selection marquee drawn as a sprite
+had to be added in `onSettled`, AFTER a `<For>` of sprites mounted, so it
+took the higher slots and painted on top. A load-bearing ordering
+dependency that the API cannot express and the code does not show; moving
+the `addSprite` earlier breaks the visuals with no error. The sort key is
+what makes that intent statable.

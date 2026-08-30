@@ -313,10 +313,13 @@ latest (solid-js 1.x, off Solid 2.0 entirely). The recipe that works is
 
 - Device/GPU access via subpath imports: @solidrt/core/camera, /microphone,
   /speech, /gpu. Image flow: `decodeImage(bytes)` ->
-  `createTexture(data,w,h)` -> `<texture src={id} />`. Pixels are
-  premultiplied alpha from decode onward (the GPU contract); `decodeImage(bytes,
-  { alpha: "straight" })` keeps the file's color under transparent pixels for
-  CPU work, and `encodeImage` converts back to straight for the file.
+  `createTexture(data,w,h)` -> `<texture src={id} />`. Sampling (`filter`,
+  `wrap`, `mipmap`) is fixed at creation on every create* helper and follows
+  the id everywhere; agents/performance.md rule 2 says when to set which.
+  Pixels are premultiplied alpha from decode onward (the GPU contract);
+  `decodeImage(bytes, { alpha: "straight" })` keeps the file's color under
+  transparent pixels for CPU work, and `encodeImage` converts back to
+  straight for the file.
 
 ## Minimal app, core primitives only (verified to render)
 

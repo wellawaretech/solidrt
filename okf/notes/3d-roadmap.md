@@ -138,10 +138,13 @@ what it delivered is documented in `packages/3d/AGENTS.md`, not here.
     size (`sizeAttenuation: false`), and an instanced sprite fleet -
     `shaderMaterialClass({ instanceAttributes })` plus the AGENTS.md
     billboard recipe already covers the last.
-13. [ ] **Camera and control breadth.** OrthographicCamera is small library
-    work. First-person controls were blocked on engine
+13. [ ] **Camera and control breadth.** The orthographic camera landed
+    (`ortho: { left, right, top, bottom }` on any camera, scene and view
+    alike - see `packages/3d/AGENTS.md`). First-person controls were
+    blocked on engine
     [relative-mouse-input](../done/relative-mouse-input.md) - pointer
     lock/relative motion - which landed, so they are library-only now.
+    A chase/follow camera rig is app code over `setTransition`.
 14. [ ] **Environment tier: skybox, reflection/environment maps.** Engine:
     [gpu-cube-maps](../backlog/gpu-cube-maps.md). Demand-gated. The binding
     side is already paid: a shared target-level sampler (`setTargetTextures`)
@@ -162,6 +165,12 @@ what it delivered is documented in `packages/3d/AGENTS.md`, not here.
     ([gpu-depth-func](../backlog/gpu-depth-func.md)) turned out not to be
     a dependency. The
     map itself binds through the shared target-level sampler channel.
+    Two small follow-ups on the view shape, filed together in
+    [3d-view-mesh-selection](../backlog/3d-view-mesh-selection.md): the
+    mesh filter shadow views use internally is not public (a minimap or
+    mirror cannot choose its meshes), and `depth: "texture"` exists on
+    views but not on the scene's own target (a depth-reading post effect
+    has no input without a second full pass).
     **Library prerequisite, and it is the bigger half: a `Scene` is
     hardwired to one camera and one target.** There is no way to render the
     same scene twice from a different viewpoint, so even with sampleable
@@ -210,6 +219,21 @@ what it delivered is documented in `packages/3d/AGENTS.md`, not here.
     testing every node per frame is exactly the O(scene) loop the design
     avoids. Both land with no app-facing API change, the reason the draw
     list was shaped as it was.
+21. [ ] **Surface maps on `lit`: normal, emissive, specular, light maps,
+    UV transform.** Library, plus the tangent and second-UV named layouts
+    from item 10 and the loader emitting them (item 7's open list).
+    The pre-PBR tier every engine shipped for a decade - Blinn-Phong with
+    a normal map is what authored track and vehicle assets are made for -
+    and it deliberately does not wait on item 17's lighting model or
+    color-space decision. Shaped in
+    [3d-surface-maps](../backlog/3d-surface-maps.md).
+22. [ ] **Level of detail.** Core, a sink beside item 19's culling: a
+    LOD group's level is picked by distance from a reference node after
+    the flush and drives the variants' visibility switches, so a
+    thousand-tree scene costs no per-frame JS; a JS distance loop is the
+    O(scene) walk item 19 rules out. Shaped in
+    [3d-lod](../backlog/3d-lod.md). Mesh simplification stays a bake-tool
+    job.
 
 ## Not in scope
 

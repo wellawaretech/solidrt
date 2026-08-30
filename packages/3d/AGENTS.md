@@ -509,7 +509,9 @@ sorting, usually with `cull: "none"` for cards. Triplanar
 is an OPTION, not the default: generators emit 0..1 UVs per face, so a
 map on a plane is a decal (UV) while a map on generated scenery wants one
 density across parts of any size (triplanar); the map must be created
-with `wrap: "repeat"`. Internally one `shaderMaterialClass` per option
+with `wrap: "repeat"`. Any `map` on a surface seen at distance also wants
+`mipmap: true` at creation, or it aliases as it recedes (`createModel`
+uploads its images that way). Internally one `shaderMaterialClass` per option
 combination (map x vertexColors x triplanar x transparent x cull x
 alphaTest), cached for the app's lifetime, one pipeline per vertex layout
 - a thousand lit meshes share one program. The view vector comes from the

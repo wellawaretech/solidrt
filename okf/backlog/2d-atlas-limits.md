@@ -58,3 +58,10 @@ re-emit frames - which invalidates every `Frame` an app is holding) or simply
 fails, and whether frames should therefore be handles rather than plain UV
 rects. That question is worth settling before the packer exists, because it
 decides the public type.
+
+**Smaller, and independent of both:** `createAtlas` accepts encoded bytes
+only, so a procedurally generated atlas - pixels already in hand - cannot
+use it at all and drops to `createTexture` + `grid()`, losing the frames
+table and the `filter` plumbing for no reason. An overload taking raw RGBA
+plus dimensions (`createAtlas({ data, width, height }, opts)`) is a few
+lines and worth doing ahead of the packer.

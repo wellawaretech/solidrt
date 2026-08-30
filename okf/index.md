@@ -47,6 +47,12 @@ Shaped, not started.
   createAtlas only decodes an already-packed sheet, so a second sheet costs a
   second full-size render target and runtime-supplied images have no way in at
   all.
+- **[The tile layer's auto-oversample thrashes under a rotating camera and has no total ceiling](backlog/2d-auto-oversample-rotating-camera.md)** [2026-08-29]
+  TileLayer picks its oversample from the world view's rotated AABB, which
+  swells up to 1.41x as the camera turns and crosses an integer boundary
+  forever, re-baking every resident chunk on each flip; the window-texel
+  budget is per target so it never binds for chunk-sized targets, the explicit
+  prop is read untracked, and fitOversample is not exported.
 - **[Baked layers and tilemaps for @solidrt/2d](backlog/2d-baked-layers.md)** [2026-08-19]
   Static 2D bulk (tile worlds, backgrounds) rendered once into a texture and
   drawn as ONE quad, with incremental re-bake - the primitive-count answer for
@@ -78,12 +84,33 @@ Shaped, not started.
   sprite or depth-sorting a population by y - the ordinary case for a dense 2D
   scene - costs a record shift and an index fixup per element instead of a
   sort of an index array.
+- **[Seeding a tile world is one setTile call per cell](backlog/2d-tile-bulk-writes.md)** [2026-08-29]
+  There is no bulk write, so an 18k-cell seed is 18k setTile calls each paying
+  locate() and a frame copy; fine today because the flush batches to a
+  microtask, but a larger world or a procedural refill on approach wants a
+  rect write from a typed array.
+- **[The tile camera's world-to-screen mapping is not exported, and its rotation convention is stated nowhere](backlog/2d-tile-camera-projection.md)** [2026-08-29]
+  Anything drawn in world space over a rotating tile world (shadows, parallax
+  motes, sprites until the sprite camera rotates) re-implements TileCamera's
+  projection by hand from the component source, and the tiles example rotates
+  a quarter turn off from the "heading renders upward" it claims.
+- **[A tile is a frame and nothing else, so tinting a tile world means duplicating cells in the atlas](backlog/2d-tile-tint.md)** [2026-08-29]
+  setTile takes a Frame or null; the baked chunk records already carry a tint
+  at defaults, but neither the tile nor the layer exposes it, so day/night,
+  damage states, team colours, biome shifts and fog-of-war dimming all fall
+  back to atlas duplication or an overlay rect.
 - **[Instanced meshes cast no shadow](backlog/3d-instanced-shadow-casters.md)** [2026-08-27]
   The scene's shadow view draws casters with a position-only depth override
   that knows uModel and nothing else, so an instanced mesh's per-record
   transforms are invisible to it and `castShadow` on an InstancedMesh is
   skipped. The additive fix is a per-class `shadowVertex` the override
   borrows.
+- **[Level of detail - distance-selected mesh variants as a core sink](backlog/3d-lod.md)** [2026-08-30]
+  A large scene ships every object at one triangle count; a track with a
+  thousand trees either draws full-detail foliage at the horizon or nothing. A
+  per-frame JS distance test over every LOD group is the O(scene) loop roadmap
+  item 19 rules out, so the level select is a spatial-core sink - distance
+  from a camera node picks which variant's visibility switch is on.
 - **[3D fill and pass count put low-end Android GPUs far off 60 fps](backlog/3d-low-end-gpu-performance.md)** [2026-08-27]
   The third-dimension demo runs at 13 fps on an Adreno 610 tablet. Measured
   budget: ~44 ms fragment work, ~13 ms of flat per-pass overhead, ~2 ms
@@ -108,6 +135,19 @@ Shaped, not started.
   a perspective camera; a point light needs a cube-map target and six faces,
   which the engine has no path for (gpu-cube-maps). Demand-gated - no spot or
   point light NODE exists yet either.
+- **[Surface maps on lit - normal, emissive, specular and light maps, plus a UV transform](backlog/3d-surface-maps.md)** [2026-08-30]
+  lit takes ONE map, the base color; a track surface with a normal map, a
+  glowing sign, a glossy-versus-matte mask or a baked lightmap all have to
+  leave the standard material for a hand-written shaderMaterial. Add the
+  pre-PBR map slots to lit as class-key options, with the tangent layout from
+  roadmap item 10 as the prerequisite and a UV offset/repeat for scrolling
+  surfaces.
+- **[Per-view mesh selection (Three's layers) and the scene's own depth texture](backlog/3d-view-mesh-selection.md)** [2026-08-30]
+  createView mirrors EVERY mesh, so a minimap cannot show markers only, a
+  rear-view mirror cannot leave out the HUD meshes and a reflection view draws
+  the reflector itself; the mesh filter exists internally for shadow views and
+  is not public. Expose it on ViewOptions, and widen depth "texture" to the
+  scene's own target so a depth-reading post effect has an input.
 - **[Adaptive present-fence depth](backlog/adaptive-present-fence-depth.md)** [2026-07-27]
   Fallback design if unconditional two-deep present fencing ever shows up as
   desktop drag latency - allow the second in-flight frame only when observed
@@ -272,6 +312,12 @@ Shaped, not started.
   deadline, so an overrunning critical path jitters between 1 and 2 vsyncs
   instead of degrading to a stable cadence. Harness first, then
   deadline-scheduled frames.
+- **[Gamepad rumble](backlog/gamepad-haptics.md)** [2026-08-30]
+  gamepads() is a read-only snapshot; there is no path from the app back to
+  the pad, so a collision, a landing or an engine can be seen and heard but
+  not felt. SDL3 has SDL_RumbleGamepad (low/high frequency motors, duration)
+  and trigger rumble on pads that support it; one call to plumb, keyed by the
+  pad's slot.
 - **[Gaussian splat rendering](backlog/gaussian-splats.md)** [2026-08-24]
   Captured 3DGS scenes (phone scans, photogrammetry successors) are a growing
   content class nothing here can display; the render path is instanced
@@ -297,6 +343,11 @@ Shaped, not started.
   non-root mesh is emitted once with its composed world matrix and once
   against the identity - duplicate parts, one at the wrong transform, and
   bounds covering both.
+- **[Anisotropic texture filtering](backlog/gpu-anisotropic-filtering.md)** [2026-08-30]
+  Sampling is filter/wrap/mipmap only, so a textured ground plane at a grazing
+  angle - a road ahead of the camera - smears into a mip blur that trilinear
+  filtering cannot fix; EXT_texture_filter_anisotropic is on practically every
+  ES 3.0 device and is one sampler parameter.
 - **[Async shader compile and readback](backlog/gpu-async-compile-readback.md)** [2026-07-31]
   Compile/link and readTexture are the two GPU calls whose cost class differs
   from everything else on the surface - both block the JS thread and the
@@ -495,6 +546,13 @@ Shaped, not started.
   spatial nodes, with JS sending intent (bodies, impulses, joints) and
   collision events returning frame-batched; learn the API shape in a real game
   at rung 2/3 first.
+- **[Vehicle controller on the physics core](backlog/physics-vehicle-controller.md)** [2026-08-30]
+  physics-core stops at rigid bodies, primitive colliders and (stage 2) a
+  character controller; a driving game needs a raycast vehicle - a chassis
+  body with wheel rays, suspension springs, engine and brake forces and tyre
+  friction stepped inside the solver, which is per-wheel-per-substep work no
+  app can do in JS. Rapier has no vehicle module of its own; shape it as the
+  physics core's first higher-level controller after the core lands.
 - **[srt render is never headless on ANGLE](backlog/playback-headless-angle.md)** [2026-08-17]
   On Windows the offscreen video driver fails every time (SDL's offscreen path
   needs EGL_EXT_device_enumeration, which ANGLE does not implement) and
@@ -576,6 +634,13 @@ Shaped, not started.
   A numeric pixel-delta mode on get_snapshot against the previous capture of
   the same node, so "does it still render the same" is one call with a number
   instead of two images an agent has to eyeball.
+- **[Spatial audio - emitter and listener nodes on the spatial core](backlog/spatial-audio-emitters.md)** [2026-08-30]
+  Every voice knob a positional sound needs exists (pan, gain, rate, all
+  ramped) but nothing places a sound in the world, so an engine note or a
+  passing kart is per-voice-per-frame JS - compute the relative position and
+  velocity from the camera and write three setters. Bind a playback to a
+  spatial node and name a listener node, and the core writes pan/gain/rate
+  from the flushed world matrices; the JS pattern stays valid.
 - **[Spatial core - transform hierarchy, spatial index and queries in alloy](backlog/spatial-core.md)** [2026-08-23]
   The @solidrt/3d sync walk recurses the whole node tree in QuickJS on every
   change (one moved node = O(scene)), picking is a JS box-only test, and both

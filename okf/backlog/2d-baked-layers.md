@@ -153,3 +153,12 @@ Bitmap-font runs ride the same machinery. The spatial index waits on
 [2d-spatial-citizenship](2d-spatial-citizenship.md), per above. The
 rotating-camera parity gap for the LIVE layer is filed as
 [2d-sprite-camera-rotation](2d-sprite-camera-rotation.md).
+
+Restating how hard the B2 bound binds, from a demo that leaned on it: two
+worlds of 1.18M cells sat at ~260 MB across 152 chunk textures, memory
+proportional to WRITTEN area and monotonic, so world size in practice is
+capped by content, not by the grid. The chunking removes the
+`maxTextureSize` ceiling (a 24,576 px world renders fine) and replaces it
+with a memory ceiling that has no back pressure and no diagnostic - at
+minimum, `get_gpu_resources` should make the per-layer total legible
+before eviction exists.
