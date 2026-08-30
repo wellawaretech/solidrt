@@ -1565,6 +1565,11 @@ Bugs in our dependencies. Status here is the dependency's, not ours.
   probes per format; on a Raspberry Pi 4 SDL_InitSubSystem(SDL_INIT_CAMERA)
   never returns, and because SDL_UDEV_Scan shares its callback list the main
   thread's gamepad init is dragged into the same loop.
+- **[flattenArray drops needsUnwrap when a fragment follows an accessor](upstream/signals-flatten-array-clobbers-needs-unwrap.md)** [2026-08-30]
+  In @solidjs/signals flattenArray assigns the nested call's result to
+  needsUnwrap instead of OR-ing it, so an accessor followed by a function-free
+  array child is returned raw; the DOM renderer tolerates it, a universal
+  renderer passes the memo to insertNode and crashes.
 - **[Solid babel plugin HTML-escapes text in universal mode](upstream/solid-babel-plugin-universal-escapes-text.md)** [2026-08-30]
   With generate universal, static string children are passed through
   escapeHTML ("<" becomes "&lt;", "&" becomes "&amp;", ">" untouched) and JSX

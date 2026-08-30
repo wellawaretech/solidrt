@@ -26,6 +26,23 @@ export function mixColors(a: string, b: string, t: number): string {
   return tree.mixColors(a, b, t)
 }
 
+// Alpha byte range of the packed 0xRRGGBBAA color.
+const ALPHA_MAX = 255
+
+/**
+ * The same CSS color at opacity `alpha` (0 = transparent, 1 = opaque),
+ * replacing whatever alpha the input carried. Returns `#rrggbbaa`. Accepts
+ * any color `parseColor` does, so a named color or an `rgb()` is fine. For a
+ * transparent variant of a theme color prefer this over an `rgba()` literal
+ * rebuilt by hand; for a tone that must not depend on what is drawn beneath,
+ * `mixColors` against the backdrop.
+ */
+export function withAlpha(color: string, alpha: number): string {
+  let rgb = parseColor(color) >>> 8
+  let a = Math.round(Math.min(1, Math.max(0, alpha)) * ALPHA_MAX)
+  return "#" + rgb.toString(16).padStart(6, "0") + a.toString(16).padStart(2, "0")
+}
+
 /**
  * Perceived brightness of a CSS color, 0 (black) to 1 (white), YIQ-weighted.
  * Compare a text color against its backdrop to decide rendering polarity,

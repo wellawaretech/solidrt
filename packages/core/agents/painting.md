@@ -42,7 +42,9 @@ no matter how complex the effect, which is why the performance model
   `rgb()`, `hsl()`, `hwb()`, named colors only; the prop throws `Invalid
   color` otherwise). Mix in JS with `mixColors(a, b, t)` from @solidrt/core
   (oklab, so a ramp between two colors stays perceptually even) and pass
-  the result; `brightness(color)` picks readable text over any fill.
+  the result; `withAlpha(color, a)` gives any color at an opacity (do not
+  rebuild `rgba()` strings by hand from a hex); `brightness(color)` picks
+  readable text over any fill.
 - gradient background -> a gradient `color` on a `d-rect` (gradients are
   paint values, usable anywhere a color is)
 - `filter: blur/grayscale/hue-rotate`, and any "make this look processed" ->

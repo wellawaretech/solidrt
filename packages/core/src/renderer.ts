@@ -125,16 +125,18 @@ export function scanForOrphans(now: number): void {
     counts.set(node.elementType, (counts.get(node.elementType) ?? 0) + 1)
   }
   if (total === 0) return
+  // Warn only when a new element type joins the orphans, but list every type
+  // with its count so the breakdown always adds up to the total.
   let fresh = [...counts].filter(([type]) => !warnedLeakTypes.has(type))
   if (fresh.length === 0) return
   for (let [type] of fresh) warnedLeakTypes.add(type)
-  let list = fresh.map(([type, n]) => `<${type}> x${n}`).join(", ")
+  let list = [...counts].map(([type, n]) => `<${type}> x${n}`).join(", ")
   console.warn(
     `Leak sentinel: ${total} nodes are unreachable and will never be freed: ${list}. ` +
       `The usual cause is reading an element-valued prop more than once (every read ` +
       `builds a new subtree); read it once where it mounts, or resolve it with ` +
       `children(). If these nodes are intentionally kept for later mounting, ignore ` +
-      `this. Element types already reported are not reported again.`,
+      `this. The next warning comes when a new element type joins the list.`,
   )
 }
 
@@ -260,6 +262,18 @@ let renderer = createRenderer<ProxyNode>({
 
   insertNode: (parent: ProxyNode, node: ProxyNode, anchor?: ProxyNode): void => {
     if (!node) return
+
+    // A value without an id is not a node: a signal accessor (<For>, <Repeat>,
+    // a memo) that reached the renderer unresolved. Without this check it
+    // surfaces as an FFI type error on node.id, which names nothing. Known
+    // cause: okf/upstream/signals-flatten-array-clobbers-needs-unwrap.md.
+    if (typeof node !== "object" || node.id === undefined) {
+      let what = typeof node === "function" ? "a signal accessor" : `a ${typeof node}`
+      throw new Error(
+        `insertNode received ${what} instead of an element under <${parent?.elementType ?? "?"}>; ` +
+          `resolve the children with children() or return one root element from the component.`,
+      )
+    }
 
     // A re-inserted node is being moved, not destroyed: cancel its pending
     // destroy so the end-of-tick sweep leaves it (and its subtree) alone.

@@ -153,7 +153,8 @@ export interface LayoutProps extends FlexboxProps, GridProps {
  * `hsl()`/`hsla()`, `hwb()`, or a named color. The CSS Color 4 functions -
  * `color-mix()`, `oklch()`, `lab()`, `color()` - are not parsed and throw
  * `Invalid color`. To mix two colors, `mixColors(a, b, t)` (oklab, returns
- * hex); `parseColor` gives the packed u32 the prop also accepts.
+ * hex); for a color at a given opacity, `withAlpha(color, a)` (returns
+ * `#rrggbbaa`); `parseColor` gives the packed u32 the prop also accepts.
  */
 export type Color = string
 
