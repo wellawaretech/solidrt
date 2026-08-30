@@ -20,6 +20,12 @@ import type { Material } from "./material.ts"
 import { add, createGroup, createMesh, remove } from "./scene.ts"
 import type { Mesh, SceneNode } from "./scene.ts"
 
+/** Anisotropic filtering level for a model's textures: the engines' usual
+ * default (Godot ships 2x, Unity's quality presets 2-8x) - enough to keep a
+ * tiled surface legible at a grazing angle, cheap on every GPU. Clamped to
+ * the device by the runtime. */
+const MODEL_ANISOTROPY = 4
+
 export type ModelOptions = {
   /** The material for each glTF material (default: `lit` with its color,
    * map and transparency). `map` is the uploaded base color texture, or
@@ -44,8 +50,9 @@ export type Model = SceneNode & {
 
 /**
  * Build the scene object for parsed model data: upload its images (repeat
- * wrap, mipmapped), make a material per glTF material, a mesh per part,
- * all under one Group. Synchronous - the data is already in memory.
+ * wrap, mipmapped, MODEL_ANISOTROPY), make a material per glTF material, a
+ * mesh per part, all under one Group. Synchronous - the data is already in
+ * memory.
  */
 export function createModel(data: ModelData, opts: ModelOptions = {}): Model {
   let label = opts.label
@@ -54,6 +61,7 @@ export function createModel(data: ModelData, opts: ModelOptions = {}): Model {
     return createTexture(image.data, image.width, image.height, {
       wrap: "repeat",
       mipmap: true,
+      anisotropy: MODEL_ANISOTROPY,
       autoFree: false,
       label: label ? label + "-image" + i : undefined,
     })

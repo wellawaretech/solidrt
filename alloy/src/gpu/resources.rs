@@ -3,6 +3,7 @@
 //! consumers stay free of GL types.
 
 use super::vocab::{ParamValue, TextureBinding};
+use super::SamplerState;
 
 pub struct GpuResources {
   pub textures: Vec<GpuTextureInfo>,
@@ -36,6 +37,10 @@ pub struct GpuTextureInfo {
   /// Pixel format name: "rgba8" or "r8" for uploads, "rgba8" for a target's
   /// color, "depth24" for a draw target's depth texture id.
   pub format: &'static str,
+  /// The id's declared sampling (filter, wrap, mip chain, anisotropy): the
+  /// other creation-time state beside `format`, so a soft or aliased map
+  /// can be diagnosed from the inventory instead of the create call.
+  pub sampler: SamplerState,
   /// The create's debug label, when one was given.
   pub label: Option<String>,
 }

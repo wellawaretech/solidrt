@@ -21,13 +21,20 @@ pub struct GpuLimits {
   pub max_texture_units: u32,
   /// Vertex attributes one pipeline may declare (GL_MAX_VERTEX_ATTRIBS).
   pub max_vertex_attribs: u32,
+  /// Highest anisotropic filtering level the device samples at
+  /// (GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT), 1 when
+  /// `GL_EXT_texture_filter_anisotropic` is absent. A report, not a
+  /// validation ceiling: a requested level above it is clamped silently at
+  /// sampler creation, the way every engine treats the level.
+  pub max_anisotropy: u32,
 }
 
 impl GpuLimits {
   /// The GLES 3.0 guaranteed minimums: the fallback when the raster thread is
   /// gone (engine shutdown) and nothing can be queried, and the clamp floor
   /// for a driver reporting nonsense.
-  pub const FLOOR: GpuLimits = GpuLimits { max_texture_size: 2048, max_texture_units: 16, max_vertex_attribs: 16 };
+  pub const FLOOR: GpuLimits =
+    GpuLimits { max_texture_size: 2048, max_texture_units: 16, max_vertex_attribs: 16, max_anisotropy: 1 };
 
   /// Query the ceilings from the live context (raster thread, the one place
   /// GL exists). Values are clamped up to the ES 3.0 floors: a context this
@@ -40,10 +47,19 @@ impl GpuLimits {
       let rb = gl.get_parameter_i32(glow::MAX_RENDERBUFFER_SIZE);
       let units = gl.get_parameter_i32(glow::MAX_TEXTURE_IMAGE_UNITS);
       let attribs = gl.get_parameter_i32(glow::MAX_VERTEX_ATTRIBS);
+      // An extension, never core at any GL level, but present on practically
+      // every ES 3.0 device and on ANGLE over D3D11/Metal; absence is a fact
+      // to report, not an error. The parameter is a float in the spec.
+      let anisotropy = if gl.supported_extensions().contains("GL_EXT_texture_filter_anisotropic") {
+        gl.get_parameter_f32(glow::MAX_TEXTURE_MAX_ANISOTROPY_EXT) as i32
+      } else {
+        1
+      };
       GpuLimits {
         max_texture_size: tex.min(rb).max(floor.max_texture_size as i32) as u32,
         max_texture_units: units.max(floor.max_texture_units as i32) as u32,
         max_vertex_attribs: attribs.max(floor.max_vertex_attribs as i32) as u32,
+        max_anisotropy: anisotropy.max(floor.max_anisotropy as i32) as u32,
       }
     }
   }

@@ -166,19 +166,21 @@ fn collect_textures(ctx: &Ctx<'_>, obj: &Object<'_>, api: &str) -> rquickjs::Res
   Ok(out)
 }
 
-// Decode the { filter?, wrap?, mipmap? } sampling options every create path
-// accepts ("linear"/"nearest", "clamp"/"repeat", bool; defaults
-// linear/clamp/false); an unknown value throws at the create call site.
+// Decode the { filter?, wrap?, mipmap?, anisotropy? } sampling options every
+// create path accepts ("linear"/"nearest", "clamp"/"repeat", bool, number >= 1;
+// defaults linear/clamp/false/1); an unknown value throws at the create call
+// site.
 fn collect_sampler(ctx: &Ctx<'_>, opts: &Option<Object<'_>>, api: &str) -> rquickjs::Result<alloy::SamplerState> {
-  let (filter, wrap, mipmap) = match opts {
+  let (filter, wrap, mipmap, anisotropy) = match opts {
     Some(o) => (
       o.get::<_, Option<String>>("filter")?,
       o.get::<_, Option<String>>("wrap")?,
       o.get::<_, Option<bool>>("mipmap")?,
+      o.get::<_, Option<f64>>("anisotropy")?,
     ),
-    None => (None, None, None),
+    None => (None, None, None, None),
   };
-  alloy::SamplerState::parse(filter.as_deref(), wrap.as_deref(), mipmap)
+  alloy::SamplerState::parse(filter.as_deref(), wrap.as_deref(), mipmap, anisotropy)
     .map_err(|e| throw_str(ctx, &format!("{api}: {e}")))
 }
 
@@ -1492,6 +1494,7 @@ impl ModuleDef for GpuModule {
     limits_obj.set("maxTextureSize", limits.max_texture_size)?;
     limits_obj.set("maxTextureUnits", limits.max_texture_units)?;
     limits_obj.set("maxVertexAttribs", limits.max_vertex_attribs)?;
+    limits_obj.set("maxAnisotropy", limits.max_anisotropy)?;
     exports.export("limits", limits_obj)?;
     Ok(())
   }

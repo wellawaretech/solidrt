@@ -1428,7 +1428,20 @@ fn gpu_reply(ctx: &flux::rquickjs::Ctx<'_>, id: u64, label: Option<&str>, draw: 
     .textures
     .iter()
     .map(|t| {
-      let mut obj = serde_json::json!({"id": t.id, "width": t.width, "height": t.height, "target": t.target, "format": t.format});
+      let mut obj = serde_json::json!({
+        "id": t.id,
+        "width": t.width,
+        "height": t.height,
+        "target": t.target,
+        "format": t.format,
+        // The declared sampling, in the create option's own vocabulary.
+        "sampler": {
+          "filter": t.sampler.filter.name(),
+          "wrap": t.sampler.wrap.name(),
+          "mipmap": t.sampler.mipmap,
+          "anisotropy": t.sampler.anisotropy,
+        },
+      });
       insert_label(&mut obj, &t.label);
       obj
     })

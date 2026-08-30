@@ -452,8 +452,13 @@ impl RasterState {
     tx: mpsc::Sender<FrameOutput>,
     wake: Option<Box<dyn Fn() + Send + Sync>>,
   ) -> Self {
-    let samplers = SamplerCache::new(&gl);
     let limits = GpuLimits::query(&gl);
+    let samplers = SamplerCache::new(&gl, limits.max_anisotropy);
+    if limits.max_anisotropy > 1 {
+      log::info!("[alloy] anisotropic filtering up to {}x (EXT_texture_filter_anisotropic)", limits.max_anisotropy);
+    } else {
+      log::info!("[alloy] anisotropic filtering unavailable (no EXT_texture_filter_anisotropic)");
+    }
     let pass_timer = PassTimer::new(&gl);
     stats.timer_queries.store(pass_timer.supported(), Ordering::Relaxed);
     RasterState {
@@ -1921,6 +1926,7 @@ impl RasterState {
         height: gpu.height,
         target: self.shaders.contains_key(id),
         format: gpu.format.name(),
+        sampler: gpu.sampler,
         label: gpu.label.clone(),
       })
       .collect();

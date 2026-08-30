@@ -69,8 +69,8 @@ was added: the bake already removes the cost where it matters.
   The shadow depth override is position-only, so a masked caster casts
   its whole quad; that is the fragment half of
   [3d-instanced-shadow-casters](3d-instanced-shadow-casters.md).
-- **Samplers.** Every texture uploads repeat-wrapped and mipmapped;
-  per-material wrap/filter is ignored.
+- **Samplers.** Every texture uploads repeat-wrapped, mipmapped and 4x
+  anisotropic; per-material wrap/filter is ignored.
 - **Skins and animation channels through the parse and the bake.** A
   glTF `skins` block (joints, inverse bind matrices, `JOINTS_0`/
   `WEIGHTS_0` vertex channels) and `animations` (sampler tracks, TRS

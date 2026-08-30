@@ -343,11 +343,6 @@ Shaped, not started.
   non-root mesh is emitted once with its composed world matrix and once
   against the identity - duplicate parts, one at the wrong transform, and
   bounds covering both.
-- **[Anisotropic texture filtering](backlog/gpu-anisotropic-filtering.md)** [2026-08-30]
-  Sampling is filter/wrap/mipmap only, so a textured ground plane at a grazing
-  angle - a road ahead of the camera - smears into a mip blur that trilinear
-  filtering cannot fix; EXT_texture_filter_anisotropic is on practically every
-  ES 3.0 device and is one sampler parameter.
 - **[Async shader compile and readback](backlog/gpu-async-compile-readback.md)** [2026-07-31]
   Compile/link and readTexture are the two GPU calls whose cost class differs
   from everything else on the surface - both block the JS thread and the
@@ -963,6 +958,11 @@ Finished, kept for the reasoning.
   order-dependent) and the @solidrt/3d library half (transparent materials,
   back-to-front per-mesh sort owned by the scene, renderOrder). Split from
   gpu-pipeline-extensions 2026-08-11.
+- **[Anisotropic texture filtering](done/gpu-anisotropic-filtering.md)** [2026-08-30]
+  Sampling is filter/wrap/mipmap only, so a textured ground plane at a grazing
+  angle - a road ahead of the camera - smears into a mip blur that trilinear
+  filtering cannot fix; EXT_texture_filter_anisotropic is on practically every
+  ES 3.0 device and is one sampler parameter.
 - **[Branded GPU id types](done/gpu-branded-ids.md)** [2026-07-30]
   Every GPU handle is a plain number across five id spaces, so cross-space
   slips like destroyBuffer(textureId) typecheck and usually hit a valid id in

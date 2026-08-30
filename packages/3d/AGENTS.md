@@ -510,8 +510,11 @@ is an OPTION, not the default: generators emit 0..1 UVs per face, so a
 map on a plane is a decal (UV) while a map on generated scenery wants one
 density across parts of any size (triplanar); the map must be created
 with `wrap: "repeat"`. Any `map` on a surface seen at distance also wants
-`mipmap: true` at creation, or it aliases as it recedes (`createModel`
-uploads its images that way). Internally one `shaderMaterialClass` per option
+`mipmap: true` at creation, or it aliases as it recedes, and a tiled
+surface seen at a grazing angle (a floor, a road) wants `anisotropy: 4`
+or more beside it, or trilinear smears the far half into the mip its long
+axis picked (`createModel` uploads its images with both; the device clamps
+the level, `limits.maxAnisotropy` reports it). Internally one `shaderMaterialClass` per option
 combination (map x vertexColors x triplanar x transparent x cull x
 alphaTest), cached for the app's lifetime, one pipeline per vertex layout
 - a thousand lit meshes share one program. The view vector comes from the
@@ -544,7 +547,7 @@ next to it, or single-file .glb) and become a Group of meshes, Three's
   Blender exports Draco by DEFAULT, so that is the first error a real
   file hits.
 - `createModel(data, { material?, label? })` - uploads the images (repeat
-  wrap, mipmapped), makes one material per glTF material (default `lit({
+  wrap, mipmapped, 4x anisotropic), makes one material per glTF material (default `lit({
   color, map, transparent })`; pass `material(m, map)` for anything else,
   it is called once per material and shared), one mesh per part, all
   children of the returned `Model` (a Group): `add(scene.root, model)`,

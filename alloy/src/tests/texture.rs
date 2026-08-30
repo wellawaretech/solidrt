@@ -115,17 +115,38 @@ fn texture_exposes_its_paint() {
 fn sampler_state_parses_options_and_defaults() {
   use crate::gpu::texture::{SamplerFilter, SamplerState, SamplerWrap};
 
-  let state = SamplerState::parse(None, None, None).expect("defaults parse");
-  assert_eq!(state, SamplerState { filter: SamplerFilter::Linear, wrap: SamplerWrap::Clamp, mipmap: false });
+  let state = SamplerState::parse(None, None, None, None).expect("defaults parse");
+  assert_eq!(state, SamplerState { filter: SamplerFilter::Linear, wrap: SamplerWrap::Clamp, mipmap: false, anisotropy: 1 });
 
-  let state = SamplerState::parse(Some("nearest"), Some("repeat"), Some(true)).expect("explicit values parse");
-  assert_eq!(state, SamplerState { filter: SamplerFilter::Nearest, wrap: SamplerWrap::Repeat, mipmap: true });
+  let state = SamplerState::parse(Some("nearest"), Some("repeat"), Some(true), Some(8.0)).expect("explicit values parse");
+  assert_eq!(state, SamplerState { filter: SamplerFilter::Nearest, wrap: SamplerWrap::Repeat, mipmap: true, anisotropy: 8 });
 
-  let state = SamplerState::parse(Some("linear"), None, Some(false)).expect("partial options parse");
+  let state = SamplerState::parse(Some("linear"), None, Some(false), None).expect("partial options parse");
   assert_eq!(state, SamplerState::default());
 
-  assert!(SamplerState::parse(Some("bilinear"), None, None).expect_err("unknown filter rejected").contains("filter"));
-  assert!(SamplerState::parse(None, Some("mirror"), None).expect_err("unknown wrap rejected").contains("wrap"));
+  assert!(SamplerState::parse(Some("bilinear"), None, None, None).expect_err("unknown filter rejected").contains("filter"));
+  assert!(SamplerState::parse(None, Some("mirror"), None, None).expect_err("unknown wrap rejected").contains("wrap"));
+}
+
+// The anisotropy level is a wish the hardware quantizes: any number >= 1
+// rounds down to a power of two and caps at 16, the engines' clamp-not-error
+// semantics; below 1 or non-finite is the one rejected input.
+#[test]
+fn sampler_state_anisotropy_rounds_and_caps() {
+  use crate::gpu::texture::SamplerState;
+
+  let level = |a: f64| SamplerState::parse(None, None, None, Some(a)).expect("level parses").anisotropy;
+  assert_eq!(level(1.0), 1);
+  assert_eq!(level(2.0), 2);
+  assert_eq!(level(3.0), 2);
+  assert_eq!(level(7.9), 4);
+  assert_eq!(level(16.0), 16);
+  assert_eq!(level(64.0), 16);
+  assert_eq!(level(1.5), 1);
+
+  for bad in [0.0, 0.5, -4.0, f64::NAN, f64::INFINITY] {
+    assert!(SamplerState::parse(None, None, None, Some(bad)).expect_err("rejected").contains("anisotropy"));
+  }
 }
 
 // A per-binding override replaces only the fields it names; the mip flag is
@@ -136,12 +157,12 @@ fn sampler_override_composes_and_merges() {
   use crate::gpu::texture::{SamplerFilter, SamplerOverride, SamplerState, SamplerWrap};
   use crate::gpu::{merge_bindings, TextureBinding};
 
-  let own = SamplerState { filter: SamplerFilter::Nearest, wrap: SamplerWrap::Clamp, mipmap: true };
+  let own = SamplerState { filter: SamplerFilter::Nearest, wrap: SamplerWrap::Clamp, mipmap: true, anisotropy: 4 };
   let o = SamplerOverride::parse(Some("linear"), None).expect("filter-only override parses");
   assert_eq!(o, SamplerOverride { filter: Some(SamplerFilter::Linear), wrap: None });
   assert_eq!(
     own.overridden(&o),
-    SamplerState { filter: SamplerFilter::Linear, wrap: SamplerWrap::Clamp, mipmap: true }
+    SamplerState { filter: SamplerFilter::Linear, wrap: SamplerWrap::Clamp, mipmap: true, anisotropy: 4 }
   );
   assert!(SamplerOverride::parse(None, None).expect("empty override parses").is_empty());
   assert_eq!(own.overridden(&SamplerOverride::default()), own);

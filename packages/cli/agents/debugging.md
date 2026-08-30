@@ -158,7 +158,9 @@ when exactly one client is connected.
   texture's native size (a scene or shader target behind a `<texture>` leaf).
 - `/gpu?label=<text>&draw=<id>` - the GPU resource inventory; `label` keeps
   only the resources created with exactly that label (ids change on reload,
-  labels do not). A draw target's entries report uniforms wider than a vec4
+  labels do not). Each texture carries its `format` and declared `sampler`
+  (`filter`/`wrap`/`mipmap`/`anisotropy`), the creation-time state a soft
+  or aliased map is usually missing. A draw target's entries report uniforms wider than a vec4
   (matrices) as their length, `"[16]"`; `draw` names the one entry (ids are
   per target, so pair it with `label`) reported in full.
 - `/buffer?id=<bufferId>&offset=<n>&length=<n>&as=<f32|u16|u8>` - vertex

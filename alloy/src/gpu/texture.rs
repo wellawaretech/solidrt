@@ -13,7 +13,7 @@ use std::rc::Rc;
 /// sampling). Never stored as GL texture-object state: Impeller configures
 /// sampling by mutating the parameters of whatever texture it draws, so
 /// object state on a displayed texture does not survive a frame.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct SamplerState {
   pub filter: SamplerFilter,
   pub wrap: SamplerWrap,
@@ -24,7 +24,25 @@ pub struct SamplerState {
   /// sampling). Id state, not overridable per binding: a sampler asking for
   /// mip levels on a texture without a chain is sampling-incomplete.
   pub mipmap: bool,
+  /// Anisotropic filtering level (Three's `texture.anisotropy`): the most
+  /// taps a shader sample may take along the axis a surface is foreshortened
+  /// on, so a ground plane seen at a grazing angle stays sharp instead of
+  /// smearing into the mip level its long axis picks. Always a power of two
+  /// in `MIN_ANISOTROPY..=MAX_ANISOTROPY`, 1 = off (the default). Id state
+  /// like the mip flag (not overridable per binding), only meaningful with a
+  /// chain to minify through, ignored by the `<texture>` display draw. The
+  /// device clamp lives where the sampler objects are built: without
+  /// `GL_EXT_texture_filter_anisotropic` every level samples as 1.
+  pub anisotropy: u8,
 }
+
+/// The anisotropy level range: 1 is off, 16 is the most any GL exposes
+/// (`MAX_TEXTURE_MAX_ANISOTROPY_EXT` never exceeds it in practice).
+pub const MIN_ANISOTROPY: u8 = 1;
+pub const MAX_ANISOTROPY: u8 = 16;
+/// The distinct levels a SamplerState may carry (1, 2, 4, 8, 16): the
+/// sampler cache enumerates one object per level.
+pub const ANISOTROPY_LEVELS: usize = 5;
 
 impl SamplerState {
   /// The fixed sampling of a depth texture id: NEAREST (the only complete
@@ -32,7 +50,18 @@ impl SamplerState {
   /// binding may still ask for linear; they get an incomplete sample, so
   /// consumers filter in the shader (PCF).
   pub const DEPTH: SamplerState =
-    SamplerState { filter: SamplerFilter::Nearest, wrap: SamplerWrap::Clamp, mipmap: false };
+    SamplerState { filter: SamplerFilter::Nearest, wrap: SamplerWrap::Clamp, mipmap: false, anisotropy: MIN_ANISOTROPY };
+
+  /// The cache slot of an anisotropy level: log2 of the (power-of-two) level.
+  fn anisotropy_slot(anisotropy: u8) -> usize {
+    anisotropy.max(MIN_ANISOTROPY).trailing_zeros() as usize
+  }
+}
+
+impl Default for SamplerState {
+  fn default() -> Self {
+    SamplerState { filter: SamplerFilter::default(), wrap: SamplerWrap::default(), mipmap: false, anisotropy: MIN_ANISOTROPY }
+  }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
@@ -137,7 +166,7 @@ impl SamplerOverride {
   /// Parse the app-facing override strings, same vocabulary as the
   /// creation-time options.
   pub fn parse(filter: Option<&str>, wrap: Option<&str>) -> Result<Self, String> {
-    let state = SamplerState::parse(filter, wrap, None)?;
+    let state = SamplerState::parse(filter, wrap, None, None)?;
     Ok(SamplerOverride { filter: filter.map(|_| state.filter), wrap: wrap.map(|_| state.wrap) })
   }
 
@@ -150,13 +179,26 @@ impl SamplerState {
   /// The state a binding samples with: the texture's own, with the
   /// override's fields replacing it where set. The mip flag is untouched.
   pub fn overridden(self, o: &SamplerOverride) -> SamplerState {
-    SamplerState { filter: o.filter.unwrap_or(self.filter), wrap: o.wrap.unwrap_or(self.wrap), mipmap: self.mipmap }
+    SamplerState {
+      filter: o.filter.unwrap_or(self.filter),
+      wrap: o.wrap.unwrap_or(self.wrap),
+      mipmap: self.mipmap,
+      anisotropy: self.anisotropy,
+    }
   }
 
   /// Parse the app-facing options (each optional, defaulting to
-  /// linear/clamp/no mips). Filter: "linear" | "nearest"; wrap: "clamp" |
-  /// "repeat"; mipmap: bool.
-  pub fn parse(filter: Option<&str>, wrap: Option<&str>, mipmap: Option<bool>) -> Result<Self, String> {
+  /// linear/clamp/no mips/no anisotropy). Filter: "linear" | "nearest";
+  /// wrap: "clamp" | "repeat"; mipmap: bool; anisotropy: a number >= 1,
+  /// rounded down to a power of two and capped at MAX_ANISOTROPY (the
+  /// engines' clamp-not-error semantics: a level is a wish, the hardware
+  /// quantizes it anyway). Below 1 or non-finite is the one error.
+  pub fn parse(
+    filter: Option<&str>,
+    wrap: Option<&str>,
+    mipmap: Option<bool>,
+    anisotropy: Option<f64>,
+  ) -> Result<Self, String> {
     let filter = match filter {
       None | Some("linear") => SamplerFilter::Linear,
       Some("nearest") => SamplerFilter::Nearest,
@@ -167,55 +209,79 @@ impl SamplerState {
       Some("repeat") => SamplerWrap::Repeat,
       Some(other) => return Err(format!("unknown wrap '{other}' (expected \"clamp\" or \"repeat\")")),
     };
-    Ok(SamplerState { filter, wrap, mipmap: mipmap.unwrap_or(false) })
+    let anisotropy = match anisotropy {
+      None => MIN_ANISOTROPY,
+      Some(a) if a.is_finite() && a >= f64::from(MIN_ANISOTROPY) => {
+        // Round down to the power of two at or below, capped at the ceiling.
+        let level = a.min(f64::from(MAX_ANISOTROPY)) as u8;
+        1 << (u8::BITS - 1 - level.leading_zeros())
+      }
+      Some(a) => return Err(format!("anisotropy {a} must be a number >= 1 (1 = off, up to 16)")),
+    };
+    Ok(SamplerState { filter, wrap, mipmap: mipmap.unwrap_or(false), anisotropy })
   }
 }
 
-/// The eight GL sampler objects covering every SamplerState combination,
-/// created once on the raster thread and never freed (process-lifetime).
-/// Alloy's own passes bind one of these alongside each sampled texture unit:
-/// a bound sampler object overrides texture-object parameters, so per-texture
-/// sampling state holds regardless of what Impeller writes into the texture
-/// objects it draws, and nothing alloy sets leaks into Impeller's own draws
-/// (the pass unbinds on exit).
+/// The GL sampler objects covering every SamplerState combination (filter x
+/// wrap x mipmap x anisotropy level), created once on the raster thread and
+/// never freed (process-lifetime). Alloy's own passes bind one of these
+/// alongside each sampled texture unit: a bound sampler object overrides
+/// texture-object parameters, so per-texture sampling state holds
+/// regardless of what Impeller writes into the texture objects it draws,
+/// and nothing alloy sets leaks into Impeller's own draws (the pass unbinds
+/// on exit). The anisotropy levels are clamped to the device maximum here,
+/// the one place GL exists: a state keeps the app's requested level, the
+/// object behind it samples at what the device can do (1 without
+/// `GL_EXT_texture_filter_anisotropic`).
 pub struct SamplerCache {
-  samplers: [glow::Sampler; 8],
+  samplers: [glow::Sampler; SamplerCache::COUNT],
 }
 
 impl SamplerCache {
-  pub fn new(gl: &glow::Context) -> Self {
-    let mut samplers = [None; 8];
+  const COUNT: usize = 2 * 2 * 2 * ANISOTROPY_LEVELS;
+
+  pub fn new(gl: &glow::Context, max_anisotropy: u32) -> Self {
+    let mut samplers = [None; Self::COUNT];
     for filter in [SamplerFilter::Linear, SamplerFilter::Nearest] {
       for wrap in [SamplerWrap::Clamp, SamplerWrap::Repeat] {
         for mipmap in [false, true] {
-          let state = SamplerState { filter, wrap, mipmap };
-          let mag = match filter {
-            SamplerFilter::Linear => glow::LINEAR,
-            SamplerFilter::Nearest => glow::NEAREST,
-          };
-          // Minification through the chain picks the nearer two levels and
-          // blends them; within a level the declared filter applies.
-          let min = match (filter, mipmap) {
-            (_, false) => mag,
-            (SamplerFilter::Linear, true) => glow::LINEAR_MIPMAP_LINEAR,
-            (SamplerFilter::Nearest, true) => glow::NEAREST_MIPMAP_LINEAR,
-          };
-          let wrap_st = match wrap {
-            SamplerWrap::Clamp => glow::CLAMP_TO_EDGE,
-            SamplerWrap::Repeat => glow::REPEAT,
-          };
-          unsafe {
-            let sampler = gl.create_sampler().expect("glGenSamplers failed");
-            gl.sampler_parameter_i32(sampler, glow::TEXTURE_MIN_FILTER, min as i32);
-            gl.sampler_parameter_i32(sampler, glow::TEXTURE_MAG_FILTER, mag as i32);
-            gl.sampler_parameter_i32(sampler, glow::TEXTURE_WRAP_S, wrap_st as i32);
-            gl.sampler_parameter_i32(sampler, glow::TEXTURE_WRAP_T, wrap_st as i32);
-            samplers[Self::index(state)] = Some(sampler);
+          for slot in 0..ANISOTROPY_LEVELS {
+            let anisotropy = MIN_ANISOTROPY << slot;
+            let state = SamplerState { filter, wrap, mipmap, anisotropy };
+            let mag = match filter {
+              SamplerFilter::Linear => glow::LINEAR,
+              SamplerFilter::Nearest => glow::NEAREST,
+            };
+            // Minification through the chain picks the nearer two levels and
+            // blends them; within a level the declared filter applies.
+            let min = match (filter, mipmap) {
+              (_, false) => mag,
+              (SamplerFilter::Linear, true) => glow::LINEAR_MIPMAP_LINEAR,
+              (SamplerFilter::Nearest, true) => glow::NEAREST_MIPMAP_LINEAR,
+            };
+            let wrap_st = match wrap {
+              SamplerWrap::Clamp => glow::CLAMP_TO_EDGE,
+              SamplerWrap::Repeat => glow::REPEAT,
+            };
+            let device_level = u32::from(anisotropy).min(max_anisotropy);
+            unsafe {
+              let sampler = gl.create_sampler().expect("glGenSamplers failed");
+              gl.sampler_parameter_i32(sampler, glow::TEXTURE_MIN_FILTER, min as i32);
+              gl.sampler_parameter_i32(sampler, glow::TEXTURE_MAG_FILTER, mag as i32);
+              gl.sampler_parameter_i32(sampler, glow::TEXTURE_WRAP_S, wrap_st as i32);
+              gl.sampler_parameter_i32(sampler, glow::TEXTURE_WRAP_T, wrap_st as i32);
+              // The parameter is only legal with the extension; a device
+              // without it reports a maximum of 1 and the write is skipped.
+              if device_level > 1 {
+                gl.sampler_parameter_f32(sampler, glow::TEXTURE_MAX_ANISOTROPY_EXT, device_level as f32);
+              }
+              samplers[Self::index(state)] = Some(sampler);
+            }
           }
         }
       }
     }
-    SamplerCache { samplers: samplers.map(|s| s.expect("all eight sampler states populated")) }
+    SamplerCache { samplers: samplers.map(|s| s.expect("all sampler states populated")) }
   }
 
   pub fn get(&self, state: SamplerState) -> glow::Sampler {
@@ -223,7 +289,8 @@ impl SamplerCache {
   }
 
   fn index(state: SamplerState) -> usize {
-    (state.filter as usize) * 4 + (state.wrap as usize) * 2 + (state.mipmap as usize)
+    let base = (state.filter as usize) * 4 + (state.wrap as usize) * 2 + (state.mipmap as usize);
+    base * ANISOTROPY_LEVELS + SamplerState::anisotropy_slot(state.anisotropy)
   }
 }
 

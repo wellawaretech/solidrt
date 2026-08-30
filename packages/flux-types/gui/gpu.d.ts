@@ -129,8 +129,19 @@ declare module "flux:gpu" {
    * shader sampling minifies through the chain; the `<texture>` display
    * draw samples the full-size level. Regeneration is one GPU pass per
    * upload or render, so a per-frame texture pays it per frame.
+   *
+   * `anisotropy` (default 1 = off) is the anisotropic filtering level, Three's
+   * `texture.anisotropy`: the most taps a shader sample may take along the
+   * axis a surface is foreshortened on, so a tiled ground plane seen at a
+   * grazing angle stays sharp to the horizon instead of smearing into the
+   * mip level its long axis picks. Any number >= 1; rounded down to a power
+   * of two, capped at 16 and then at the device's `limits.maxAnisotropy`
+   * (1 on a device without the extension - the texture then samples as
+   * today, no error). Only meaningful with `mipmap: true` (it filters
+   * through the chain), ignored by the `<texture>` display draw like the
+   * chain itself. Below 1 or non-finite throws.
    */
-  export type SamplerOptions = { filter?: FilterMode; wrap?: WrapMode; mipmap?: boolean }
+  export type SamplerOptions = { filter?: FilterMode; wrap?: WrapMode; mipmap?: boolean; anisotropy?: number }
   /**
    * One `textures` binding value: a texture id, sampled with the texture's
    * own declared state, or `{ id, filter?, wrap? }` to sample that id with a
@@ -186,6 +197,14 @@ declare module "flux:gpu" {
     maxTextureUnits: number
     /** Vertex attributes one pipeline may declare (>= 16). */
     maxVertexAttribs: number
+    /**
+     * Highest `anisotropy` level the device samples at (a power of two, 1
+     * when the device has no anisotropic filtering). A report, not a
+     * ceiling: a higher requested level is clamped to it silently, so
+     * `anisotropy: limits.maxAnisotropy` is the "as sharp as this device
+     * goes" spelling.
+     */
+    maxAnisotropy: number
   }
   /**
    * Create an immutable texture from a pixel buffer (exactly
