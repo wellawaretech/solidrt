@@ -161,4 +161,7 @@ capped by content, not by the grid. The chunking removes the
 `maxTextureSize` ceiling (a 24,576 px world renders fine) and replaces it
 with a memory ceiling that has no back pressure and no diagnostic - at
 minimum, `get_gpu_resources` should make the per-layer total legible
-before eviction exists.
+before eviction exists. The oversample side of that memory is bounded
+since `maxOversample` (total is resident chunks x n squared; the window
+texel budget stays per target by design - a layer-total budget would
+shrink quality as content fills in, which is worse than a cap).

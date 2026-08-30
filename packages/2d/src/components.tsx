@@ -34,9 +34,20 @@ function applyOversample(
   scale: number,
   targetW: number,
   targetH: number,
+  max: number | undefined,
 ): void {
+  if (max !== undefined && !(Number.isInteger(max) && max >= 1)) {
+    throw new Error(`maxOversample must be a positive integer, got ${max}`)
+  }
   let n = fitOversample(scale, targetW, targetH, windowTexels())
-  if (n < layer.oversample && scale > layer.oversample - 1 - OVERSAMPLE_SHRINK_MARGIN) return
+  // The cap overrides the shrink hysteresis: lowering maxOversample below
+  // the current factor is an explicit ask, not measurement noise.
+  let capped = false
+  if (max !== undefined && n > max) {
+    n = max
+    capped = true
+  }
+  if (!capped && n < layer.oversample && scale > layer.oversample - 1 - OVERSAMPLE_SHRINK_MARGIN) return
   layer.setOversample(n)
 }
 import { createTileLayer } from "./tiles.ts"
@@ -79,6 +90,13 @@ export type SpriteLayerProps = {
    * scale; with `output` there is no built-in leaf, so set it yourself.
    */
   oversample?: number
+  /**
+   * Cap on the auto-picked oversample (integer >= 1): the layer stays
+   * adaptive up to it, never above - the lever that bounds target memory on
+   * high-scale displays without giving up adaptivity. Ignored when
+   * `oversample` is set (explicit already opts out of the pick).
+   */
+  maxOversample?: number
   label?: string
   ref?: (layer: LayerHandle) => void
   /**
@@ -145,10 +163,10 @@ export let SpriteLayer: ParentComponent<SpriteLayerProps> = props => {
       let box = getBoundingBoxViewport(leaf)
       if (!box) return
       let scale = displayScale() * Math.max(box.width / props.width, box.height / props.height)
-      applyOversample(layer, scale, props.width, props.height)
+      applyOversample(layer, scale, props.width, props.height, props.maxOversample)
     })
   onLayout(pick)
-  createEffect(() => displayScale(), pick)
+  createEffect(() => [displayScale(), props.maxOversample], pick)
   return (
     <LayerContext value={layer}>
       {output ? (
@@ -297,6 +315,13 @@ export type TileLayerProps = {
    * any scale.
    */
   oversample?: number
+  /**
+   * Cap on the auto-picked oversample (integer >= 1): tiles stay adaptive
+   * up to it, never above. A tile world's texture memory is resident chunks
+   * x n squared, so this is the lever that bounds it on high-scale displays
+   * without giving up adaptivity. Ignored when `oversample` is set.
+   */
+  maxOversample?: number
   /** Chunk edge in tiles (default ~512px worth); see TileLayerOptions. */
   chunkTiles?: number
   /**
@@ -361,10 +386,10 @@ export let TileLayer: VoidComponent<TileLayerProps> = props => {
       let rotW = layer.width * cos + layer.height * sin
       let rotH = layer.width * sin + layer.height * cos
       let scale = displayScale() * Math.max(box.width / rotW, box.height / rotH)
-      applyOversample(layer, scale, layer.chunkW, layer.chunkH)
+      applyOversample(layer, scale, layer.chunkW, layer.chunkH, props.maxOversample)
     })
   onLayout(pick)
-  createEffect(() => displayScale(), pick)
+  createEffect(() => [displayScale(), props.maxOversample], pick)
   // Chunk allocations arrive through the layer's hook; the signal carries a
   // fresh array so <For> sees the growth.
   let [chunks, setChunks] = createSignal<TileChunk[]>(layer.chunks.slice())

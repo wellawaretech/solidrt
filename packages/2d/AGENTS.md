@@ -123,10 +123,10 @@ chunks on approach, evict) - okf/backlog/2d-baked-layers.md.
 
 | Component | Props |
 |---|---|
-| `SpriteLayer` | width, height (layer pixels), atlas (TextureId), capacity?, clearColor?, camera?, oversample?, label?, ref?, output?, events? |
+| `SpriteLayer` | width, height (layer pixels), atlas (TextureId), capacity?, clearColor?, camera?, oversample?, maxOversample?, label?, ref?, output?, events? |
 | `Sprite` | x, y (center; local to the enclosing `<Group>`), w, h, frame?, rotation? (radians, clockwise), tint? ([r,g,b,a] 0..1), transition?, onPointer{Down,Move,Up,Enter,Leave}?, ref? |
 | `Group` | x?, y?, rotation?, scale? (uniform, scales the subtree), transition?, ref? |
-| `TileLayer` | cols, rows, tileW, tileH, atlas (TextureId), clearColor?, filter?, chunkTiles?, oversample?, camera? (TileCamera: x, y, zoom, rotation, pivotX, pivotY), label?, ref? |
+| `TileLayer` | cols, rows, tileW, tileH, atlas (TextureId), clearColor?, filter?, chunkTiles?, oversample?, maxOversample?, camera? (TileCamera: x, y, zoom, rotation, pivotX, pivotY), label?, ref? |
 
 `SpriteLayer` owns the layer and renders the built-in `<texture>` leaf
 carrying the layer's pointer handlers (opt out with `events={false}`; compose
@@ -231,7 +231,11 @@ is flat. Event x/y are layer pixels with the camera undone.
   a budget of the window's own device pixel count; the
   primitives default to 1 and take `{ oversample }` / `setOversample(n)`
   - with `output` on `<SpriteLayer>` there is no built-in leaf, so set it
-  yourself with the exported `fitOversample`. Never fix a shimmer by snapping the fit to an integer: the
+  yourself with the exported `fitOversample`. The window budget bounds one
+  TARGET, which never binds for chunk-sized tile targets: a tile world's
+  texture memory is resident chunks x n squared, and `maxOversample` is
+  the cap that bounds it (auto-pick only; a 2x display otherwise picks 16x
+  the memory of n = 1, silently). Never fix a shimmer by snapping the fit to an integer: the
   scene should fill its box at any ratio.
 - Retro scrolling habits are the app's, not the layer's: keep the camera
   fractional (rounding it to design pixels makes motion step at the

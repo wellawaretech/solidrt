@@ -88,12 +88,6 @@ Shaped, not started.
   motes, sprites until the sprite camera rotates) re-implements TileCamera's
   projection by hand from the component source, and the tiles example rotates
   a quarter turn off from the "heading renders upward" it claims.
-- **[The tile layer's texel budget is per target, so a chunked layer has no total memory ceiling](backlog/2d-tile-oversample-ceiling.md)** [2026-08-29]
-  fitOversample bounds one target by the window's device pixel count, and a
-  chunk is tiny against any window, so the budget never binds for TileLayer;
-  total tile-layer texture memory is resident chunks x n squared with nothing
-  bounding n but maxTextureSize, and a 2x display silently multiplies it by 16
-  over oversample 1.
 - **[A tile is a frame and nothing else, so tinting a tile world means duplicating cells in the atlas](backlog/2d-tile-tint.md)** [2026-08-29]
   setTile takes a Frame or null; the baked chunk records already carry a tint
   at defaults, but neither the tile nor the layer exposes it, so day/night,
@@ -745,6 +739,12 @@ Finished, kept for the reasoning.
   inside <Sprite>; GroupContext was created without a default, which Solid 2
   rc1 no longer tolerates for an absent provider. Fixed with a null sentinel
   default.
+- **[maxOversample bounds the auto-picked oversample; the texel budget stays per target](done/2d-tile-oversample-ceiling.md)** [2026-08-29]
+  SpriteLayer and TileLayer take maxOversample (integer >= 1, auto-pick only,
+  explicit oversample already opts out), the cap that bounds tile-world
+  texture memory (resident chunks x n squared) on high-scale displays without
+  giving up adaptivity; the window texel budget stays per target by design - a
+  layer-total budget would shrink quality as chunks allocate.
 - **[Colored geometry generates twice](done/3d-colored-generators.md)** [2026-08-19]
   Building coloured geometry generated twice (generate, then withColors
   repacked). Fixed in two stages 2026-08-23 - vertex layouts became open

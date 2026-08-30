@@ -13,7 +13,7 @@
 //
 // The atlas is the core logo sliced 2x2 by grid(); a real game would slice
 // a tileset sheet the same way.
-import { createSignal, onFrame, render } from "@solidrt/core"
+import { createSignal, onFrame, pct, render, windowSize } from "@solidrt/core"
 import { createAtlas, grid, TileLayer } from "@solidrt/2d"
 import type { TileCamera, TileLayerHandle } from "@solidrt/2d"
 import logoBytes from "./logo.png" with { type: "binary" }
@@ -21,7 +21,6 @@ import logoBytes from "./logo.png" with { type: "binary" }
 const COLS = 128
 const ROWS = 128
 const TILE = 48
-const VIEW = 720
 const WORLD = COLS * TILE
 
 function App() {
@@ -56,7 +55,10 @@ function App() {
   // near the viewport bottom. Per-frame camera motion is one signal write
   // feeding the transform - never a re-bake.
   let [camera, setCamera] = createSignal<TileCamera>({})
+  let lastTick = 0
   onFrame(tick => {
+    if (lastTick && tick - lastTick > 25) console.log(`[hitch] ${(tick - lastTick).toFixed(1)}ms frame gap`)
+    lastTick = tick
     let t = tick / 6000
     let radius = 46 * TILE
     setCamera({
@@ -65,8 +67,8 @@ function App() {
       // Circle tangent heading, rotated so "forward" renders upward.
       rotation: -(t + Math.PI / 2),
       zoom: 0.9,
-      pivotX: VIEW / 2,
-      pivotY: VIEW * 0.78,
+      pivotX: windowSize().width / 2,
+      pivotY: windowSize().height * 0.78,
     })
   })
 
@@ -79,11 +81,11 @@ function App() {
   }, 500)
 
   return (
-    <window alignItems="center" justifyContent="center">
-      <view width={VIEW} height={VIEW} overflow="clip">
+    <window fullscreen>
+      <view width={pct(100)} height={pct(100)} overflow="clip">
         {/* Ground color: never-written regions render nothing, so the
             full-bleed backdrop is the container's, not the layer's. */}
-        <d-rect x={0} y={0} w={VIEW} h={VIEW} color="#0d0d17" />
+        <d-rect x={0} y={0} w={windowSize().width} h={windowSize().height} color="#0d0d17" />
         <TileLayer
           cols={COLS}
           rows={ROWS}
