@@ -148,7 +148,13 @@ export interface LayoutProps extends FlexboxProps, GridProps {
   clear?: "left" | "right" | "both"
 }
 
-/** Colors are CSS color strings, parsed to a packed u32 by `parseColor`. */
+/**
+ * A CSS color string: hex (`#rgb`, `#rrggbb`, `#rrggbbaa`), `rgb()`/`rgba()`,
+ * `hsl()`/`hsla()`, `hwb()`, or a named color. The CSS Color 4 functions -
+ * `color-mix()`, `oklch()`, `lab()`, `color()` - are not parsed and throw
+ * `Invalid color`. To mix two colors, `mixColors(a, b, t)` (oklab, returns
+ * hex); `parseColor` gives the packed u32 the prop also accepts.
+ */
 export type Color = string
 
 export interface PaintProps {

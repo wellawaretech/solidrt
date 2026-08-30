@@ -218,6 +218,23 @@ latest (solid-js 1.x, off Solid 2.0 entirely). The recipe that works is
   inline atom flowing with the words as one unbreakable box on the baseline;
   give it margins for spacing, since JSX trims the whitespace around it.
 
+- App-side line breaking, for text a `<text>` box cannot express: text
+  poured into a shape, parting around an obstacle that is not in the flow,
+  continued across columns, fitted to a box by size, or placed glyph by
+  glyph. `prepareText(text, font)` shapes the words once (through the
+  shared word cache) into `units` carrying advance, ink width, ascent and
+  descent; `layoutNextLine(prepared, cursor, width)` is the greedy breaker,
+  returning one line and the `cursor` for the next, at whatever width you
+  hand it per call (a chord of a circle, a slot beside an obstacle, the next
+  column). Draw each line as a `<d-text>` of exactly its text with the same
+  font. Re-breaking every frame is arithmetic plus cache hits, so a moving
+  or breathing shape re-flows at frame rate; only the first shaping cost
+  anything. `carets: true` adds each unit's per-grapheme x positions - the
+  ONLY kerned per-glyph source; per-character `measureText` drops kerning
+  and visibly drifts on pairs like AV/TA. Styled runs come from `runs` (draw
+  such a line with a `<span>` per run). See examples/text-flow.tsx and
+  examples/text-glyphs.tsx.
+
 - Events: there is NO `onClick`/`onPress`. A "button" is a `<view>`/`<rect>`
   with `onPointerDown`. Handlers: onPointerDown/Up/Move/Enter/Leave, onWheel,
   onKeyDown/Up, onTextInput, onFocus/onBlur. Text entry: focus a node with an

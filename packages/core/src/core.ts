@@ -352,11 +352,19 @@ export function measureText(text: string, options?: tree.MeasureTextOptions): { 
 }
 
 /**
- * Segments `text` into wrap units (words with their trailing whitespace) and
- * shapes each in the given font, once, for laying lines out in app code with
- * layoutNextLine or arithmetic of your own over `units`. For the non-standard
- * case (text into a shape, around a moving obstacle, handed between columns,
- * fitted by size); regular text of any length is a <text>.
+ * App-side line breaking. Segments `text` into wrap units (words with their
+ * trailing whitespace) and shapes each in the given font, once, through the
+ * shared word cache; laying lines out is then arithmetic over `units`, with
+ * layoutNextLine or a loop of your own. This is how text goes into a shape,
+ * parts around an obstacle that is not in the flow, pours across columns
+ * (layoutNextLine's `cursor` continues a paragraph in the next box), fits a
+ * box by trying sizes, and gets per-glyph positions (`carets: true`; the
+ * only kerned source, see TextUnit.carets). Draw each line as a d-text of
+ * exactly its own text. Re-breaking every frame is cheap - the words are
+ * shaped already and the lines' d-texts hit the same cache - so a shape
+ * that moves or breathes can re-flow at frame rate. A paragraph that just
+ * wraps in a box is a <text>, which also does floats, balancing and
+ * ellipsis.
  */
 export function prepareText(text: string, options?: tree.MeasureTextOptions): tree.PreparedText {
   return tree.prepareText(text, options)

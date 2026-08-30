@@ -152,6 +152,13 @@ Rules, in order of leverage:
    platform the app targets. Use it when the app must call a native
    library that already exists and already ships for those targets; for
    speed, everything above comes first.
+10. Text costs shaping, once per word per style, through a shared word cache;
+   line breaking is arithmetic over the shaped words. So re-breaking text
+   every frame with prepareText + layoutNextLine (a shape that breathes, an
+   obstacle that moves, an editor on every keystroke) is cheap - the lines'
+   d-texts hit the same cache - while changing a text's font, size or
+   weight re-shapes it. Animate text with transforms and paint (rule 5), or
+   by re-breaking; not by resizing it per frame.
 
 ## Isolates: heavy work off the JS thread
 

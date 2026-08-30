@@ -15,7 +15,7 @@ declare module "flux:rendertree" {
     lineHeight?: number
     /** measureText only. */
     maxLines?: number
-    /** prepareText only: also report each unit's {@link TextUnit.carets}. */
+    /** prepareText only: also report each unit's {@link TextUnit.carets} (kerned per-glyph positions). */
     carets?: boolean
     /**
      * prepareText only: styled ranges over the text, in JS string offsets,
@@ -65,7 +65,11 @@ declare module "flux:rendertree" {
      * With `carets`: the caret positions inside the unit, one per grapheme
      * cluster boundary from its start (`offset` = start, x 0) to the end of
      * its shaped text (before any break characters), in order. `offset` is
-     * into the prepared text, `x` from the unit's pen position.
+     * into the prepared text, `x` from the unit's pen position. These are
+     * the per-glyph x positions of the shaping that is drawn, kerning
+     * included: for placing or animating single glyphs, use them rather
+     * than measuring characters one at a time with measureText, which sees
+     * no neighbors and drifts on every kerning pair.
      */
     carets?: { offset: number, x: number }[]
   }
@@ -165,8 +169,11 @@ declare module "flux:rendertree" {
   export function measureText(text: string, options?: MeasureTextOptions): { width: number, height: number }
   /**
    * Segment `text` into wrap units and shape each in the given font (through
-   * the shared word cache), for laying lines out in app code; see
-   * layoutNextLine in @solidrt/core. Single style; `maxLines` is ignored.
+   * the shared word cache, so a text already drawn or prepared costs no
+   * shaping), for app-side line breaking - text into a shape, around an
+   * obstacle, across columns, fitted by size, per glyph; see layoutNextLine
+   * in @solidrt/core. `runs` restyle ranges, `carets` adds glyph positions;
+   * `maxLines` is ignored.
    */
   export function prepareText(text: string, options?: MeasureTextOptions): PreparedText
   /**

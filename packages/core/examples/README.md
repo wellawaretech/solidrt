@@ -13,6 +13,10 @@ for the element/prop model see `@solidrt/core/AGENTS.md`.
 - `detached-positioning.tsx` - the `d-` prefix: x/y placement, no reflow, detached-only children.
 - `text-paint-styling.tsx` - the uniform `color` prop; `drawStyle="stroke"` vs fill.
 
+## Text
+- `text-flow.tsx` - app-side line breaking: `prepareText` shapes a paragraph's words once, `layoutNextLine` breaks one line per call at any width. Poured band by band into a circle (each band the chord at its height), then the cursor continues in a column beside it; every line is a `d-text` of its own text. Re-breaks fully on resize for arithmetic plus word-cache hits.
+- `text-glyphs.tsx` - per-glyph positions: `prepareText(text, { carets: true })` reports each unit's kerned grapheme x positions from the shaping that is drawn. One `d-text` per glyph placed from carets sits exactly on the whole headline; the same glyphs placed by per-character `measureText` drift on every kerning pair.
+
 ## Frame and lifecycle
 - `frame-animation.tsx` - `onFrame` driving a transform animation each frame.
 - `on-layout-connect.tsx` - `onLayout` + `getBoundingBox` connecting laid-out boxes with a `d-path`.
