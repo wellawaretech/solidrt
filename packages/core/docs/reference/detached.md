@@ -62,15 +62,19 @@ ancestor, so a `d-rect` with only `x`/`y` still has something to draw:
 
 {{ decl packages/core/src/types.d.ts OvalGeometryProps }}
 
-For `d-text`, width is the shaping width and height is reported bounds only,
-since a paragraph's height always falls out of the text itself:
+`d-text` is boxed or anchored. Boxed, it wraps at `w` or at the inherited
+box, and `textAlign` aligns lines inside that width. Anchored, `x` is a point
+on the line (SVG's `text-anchor`) and the text does not wrap unless given a
+`w`; that is the form for labels. Its reported bounds are the laid-out
+paragraph, with `w`/`h` overriding a side each:
 
 {{ decl packages/core/src/types.d.ts TextGeometryProps }}
 
 `d-path` takes only a position, since its size is whatever its `d` string
 draws. `d-line` has no width and height either: its geometry is its two
-endpoints (or, as a polyline, its `points`), which is what makes it the
-primitive to reach for when the geometry moves. Both report their bounds
+endpoints (or, as a polyline, its `points`), offset as a whole by `x`/`y`,
+which is what makes it the primitive to reach for when the geometry moves.
+Both report their bounds
 (getBoundingBox, the tree, a capture) as that geometry plus the stroke, not
 the inherited box:
 

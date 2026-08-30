@@ -179,6 +179,22 @@ latest (solid-js 1.x, off Solid 2.0 entirely). The recipe that works is
   Avoid pct()/keyword origins on a d-view - they resolve against the box
   inherited from the nearest laid-out ancestor.
 
+- Transforms live on views only. A draw primitive (`d-rect`, `d-text`,
+  `d-path`, ...) paints in its parent's space and has no `rotate`, `scale`
+  or origin of its own; to spin or scale one in place, wrap it in a `d-view`
+  carrying the transform, with the origin set in pixels as above. So a
+  rotating glyph is two nodes, the view at the pivot and the text placed
+  around it - `<d-view x={cx} y={cy} rotate={r}><d-text anchor="middle"
+  y={-h / 2}>{ch}</d-text></d-view>`.
+
+- A `d-text` label is anchored, not boxed: `anchor="start" | "middle" |
+  "end"` makes `x` a point on the line (SVG's text-anchor), the text shapes
+  at its natural width (no wrap) and its lines align to the anchor's side.
+  Without `anchor` a d-text is a paragraph box wrapping at `w` or at the
+  inherited box, and `textAlign` aligns inside that width - so
+  `textAlign="right"` on a `w`-less d-text aligns to the ancestor's right
+  edge, not to `x`. Reach for `anchor` on chart, axis and diagram labels.
+
 - Layout-affecting vs not (this matters for per-frame work). Props fall in three
   buckets, split by where they take effect:
   - `LayoutProps` - width/height, min/max sizes, margin, padding, `position` and

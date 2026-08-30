@@ -5,6 +5,8 @@ use alloy::rendertree::Line;
 
 pub fn apply(line: &mut Line, name: &str, value: &PropValue) -> Result<Option<Damage>, String> {
   Ok(Some(match name {
+    "x" => line.set_x(opt_f32(value, "x")?),
+    "y" => line.set_y(opt_f32(value, "y")?),
     "x1" => line.set_x1(opt_f32(value, "x1")?),
     "y1" => line.set_y1(opt_f32(value, "y1")?),
     "x2" => line.set_x2(opt_f32(value, "x2")?),

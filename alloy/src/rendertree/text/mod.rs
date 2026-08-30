@@ -46,6 +46,37 @@ pub enum OverflowWrap {
   Anywhere,
 }
 
+/// Where a detached text's `x` sits on its lines (SVG text-anchor). Anchored
+/// text is point-placed rather than boxed: with no `w` it shapes at its
+/// natural width (no wrap), its lines align to the anchor's side unless
+/// textAlign says otherwise, and the extent is shifted so the anchor lands
+/// on `x`. Owned path only.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TextAnchor {
+  Start,
+  Middle,
+  End,
+}
+
+impl TextAnchor {
+  // The share of the extent that sits left of x.
+  fn fraction(self) -> f32 {
+    match self {
+      TextAnchor::Start => 0.0,
+      TextAnchor::Middle => 0.5,
+      TextAnchor::End => 1.0,
+    }
+  }
+
+  fn alignment(self) -> TextAlignment {
+    match self {
+      TextAnchor::Start => TextAlignment::Left,
+      TextAnchor::Middle => TextAlignment::Center,
+      TextAnchor::End => TextAlignment::Right,
+    }
+  }
+}
+
 // The engine text defaults, shared by Default and the null-reset paths in
 // set_font_size / set_font_weight. Weight is Medium, not Regular: Impeller
 // antialiases text in grayscale only, so small type on a 1x desktop display
@@ -71,7 +102,10 @@ pub struct Text {
   pub font_size: f32,
   pub font_style: FontStyle,
   pub font_weight: FontWeight,
-  pub text_alignment: TextAlignment,
+  // None takes the anchor's side, else left (see alignment()).
+  pub text_alignment: Option<TextAlignment>,
+  // Detached-only: point-places the text at x instead of boxing it.
+  pub anchor: Option<TextAnchor>,
   // 0 = unlimited.
   pub max_lines: u32,
   pub text_overflow: TextOverflow,
@@ -121,7 +155,8 @@ impl Default for Text {
       font_size: DEFAULT_FONT_SIZE,
       font_style: FontStyle::Normal,
       font_weight: DEFAULT_FONT_WEIGHT,
-      text_alignment: TextAlignment::Left,
+      text_alignment: None,
+      anchor: None,
       max_lines: 0,
       text_overflow: TextOverflow::default(),
       overflow_wrap: OverflowWrap::default(),
@@ -148,11 +183,13 @@ impl Buildable for Text {
     // the text against, and the inset place_atoms already applies to inline
     // atoms (okf/done/padding-box-divergence.md). x/y are detached-only
     // geometry, where the content box is the whole frame at origin zero.
-    let origin = Point::new(ctx.content.origin.x + self.x.unwrap_or(0.0), ctx.content.origin.y + self.y.unwrap_or(0.0));
-    let width = self.w.unwrap_or(ctx.content.size.width);
+    let mut origin =
+      Point::new(ctx.content.origin.x + self.x.unwrap_or(0.0), ctx.content.origin.y + self.y.unwrap_or(0.0));
     if !self.paragraph_engine {
       let mut owned = self.owned.borrow_mut();
       self.prepare_owned(ctx.platform, &mut owned);
+      let width = self.shaping_width(&owned, ctx.content.size.width);
+      origin.x += self.anchor_shift(width);
       let index = self.owned_layout(ctx.platform, &mut owned, width);
       let owned = &*owned;
       let runs = owned.runs_for(index);
@@ -227,7 +264,7 @@ impl Buildable for Text {
       }
       return;
     }
-    self.build_paragraph(ctx.platform, builder, origin, width);
+    self.build_paragraph(ctx.platform, builder, origin, self.w.unwrap_or(ctx.content.size.width));
   }
 }
 
@@ -246,21 +283,79 @@ impl Measurable for Text {
 
 impl Bounded for Text {
   // A box-level answer on purpose: `fallback` is taken raw, with no content
-  // inset. Both callers pass a frame where that is the right box - the
-  // bounding-box path (tree::compute_corners) passes the layout box and wants
-  // the element's box, and the detached capture path passes the inherited
-  // frame, which IS the content box for a node with no layout. Line-level ink
-  // (content origin, wrap width) is painted_extent's job
+  // inset. The bounding-box path (tree::compute_corners) passes the layout box
+  // and wants the element's box for laid-out text; a detached text, which has
+  // no box, answers with detached_bounds instead. Line-level ink (content
+  // origin, wrap width) is painted_extent's job
   // (okf/done/padding-box-divergence.md).
   fn local_bounds(&self, fallback: Size) -> Rect {
     Rect::new(
-      Point::new(self.x.unwrap_or(0.0), self.y.unwrap_or(0.0)),
+      Point::new(self.x.unwrap_or(0.0) + self.w.map_or(0.0, |w| self.anchor_shift(w)), self.y.unwrap_or(0.0)),
       Size::new(self.w.unwrap_or(fallback.width), self.h.unwrap_or(fallback.height)),
     )
   }
 }
 
 impl Text {
+  /// Bounds of a detached text in its own frame (`frame` is the box it
+  /// inherits): the laid-out paragraph from the layout the last paint used -
+  /// widest line by line stack - with `w`/`h` overriding a side each. Before
+  /// a first paint (nothing laid out yet) or under the paragraph engine it is
+  /// the box answer of local_bounds.
+  pub fn detached_bounds(&self, frame: Size) -> Rect {
+    let owned = self.owned.borrow();
+    if self.paragraph_engine || !owned.key.as_ref().is_some_and(|k| k.matches(self)) {
+      return self.local_bounds(frame);
+    }
+    let width = self.shaping_width(&owned, frame.width);
+    let Some(index) = owned.layouts.iter().position(|l| l.width == width) else {
+      return self.local_bounds(frame);
+    };
+    let layout = &owned.layouts[index].layout;
+    let runs = owned.runs_for(index);
+    // The placed ink, not the extent: alignment moves lines within the wrap
+    // width (Layout::width is measured from the extent's start, before that
+    // offset), so a right-aligned boxed text reports where its ink landed.
+    // `w` names the box itself and wins over the ink on that axis.
+    let (left, right) = layout
+      .runs
+      .iter()
+      .chain(&layout.floats)
+      .fold((f32::MAX, f32::MIN), |(l, r), p| (l.min(p.x), r.max(p.x + runs[p.run].run.metrics.ink_width)));
+    let (left, ink_width) = if left <= right { (left, right - left) } else { (0.0, 0.0) };
+    let x = self.x.unwrap_or(0.0) + self.anchor_shift(width);
+    Rect::new(
+      Point::new(x + if self.w.is_some() { 0.0 } else { left }, self.y.unwrap_or(0.0)),
+      Size::new(self.w.unwrap_or(ink_width), self.h.unwrap_or(layout.height)),
+    )
+  }
+
+  /// The alignment lines are laid out with: textAlign, else the anchor's
+  /// side, else left.
+  pub fn alignment(&self) -> TextAlignment {
+    self.text_alignment.or_else(|| self.anchor.map(TextAnchor::alignment)).unwrap_or(TextAlignment::Left)
+  }
+
+  // The width lines wrap at, shared by paint, bounds and hit testing: `w`,
+  // else the natural (unwrapped) width for anchored text, else the content
+  // width the text inherits. `owned` must be prepared.
+  fn shaping_width(&self, owned: &OwnedCache, content_width: f32) -> f32 {
+    if let Some(w) = self.w {
+      return w;
+    }
+    if self.anchor.is_none() {
+      return content_width;
+    }
+    let runs: Vec<Run> = owned.runs.iter().map(|r| r.run).collect();
+    layout::max_intrinsic_width(&runs) + self.text_indent.abs()
+  }
+
+  // Where the extent's left edge sits relative to x: the anchor's share of
+  // the width, leftward. Zero without an anchor.
+  fn anchor_shift(&self, width: f32) -> f32 {
+    -width * self.anchor.map_or(0.0, TextAnchor::fraction)
+  }
+
   fn measure_owned(&self, ctx: &MeasureContext) -> Size {
     let mut owned = self.owned.borrow_mut();
     self.prepare_owned(ctx.platform, &mut owned);
@@ -288,10 +383,13 @@ impl Text {
     if self.paragraph_engine {
       return None;
     }
-    let origin = Point::new(content.origin.x + self.x.unwrap_or(0.0), content.origin.y + self.y.unwrap_or(0.0));
-    let width = self.w.unwrap_or(content.size.width);
     let mut owned = self.owned.borrow_mut();
     self.prepare_owned(platform, &mut owned);
+    let width = self.shaping_width(&owned, content.size.width);
+    let origin = Point::new(
+      content.origin.x + self.x.unwrap_or(0.0) + self.anchor_shift(width),
+      content.origin.y + self.y.unwrap_or(0.0),
+    );
     let index = self.owned_layout(platform, &mut owned, width);
     let layout = &owned.layouts[index].layout;
     // Ink overhangs its line box (italics, descenders, an underline pushed
@@ -375,7 +473,7 @@ impl Text {
     // content width and drawn from the content origin, so the lookup and the
     // point both resolve against that box, not the border box
     // (okf/done/padding-box-divergence.md).
-    let width = self.w.unwrap_or(content.size.width);
+    let width = self.shaping_width(&owned, content.size.width);
     // Paint and hit derive the width from the same content_box() arithmetic,
     // so the nearest layout is normally an exact match; the tolerance keeps
     // span hits alive should a caller ever round differently, and a wrap half
@@ -392,7 +490,11 @@ impl Text {
     let runs = owned.runs_for(index);
     let layout = &owned.layouts[index].layout;
     let local = point
-      - Point::new(content.origin.x + self.x.unwrap_or(0.0), content.origin.y + self.y.unwrap_or(0.0)).to_vector();
+      - Point::new(
+        content.origin.x + self.x.unwrap_or(0.0) + self.anchor_shift(width),
+        content.origin.y + self.y.unwrap_or(0.0),
+      )
+      .to_vector();
     let line = layout.lines.iter().find(|l| local.y >= l.y && local.y < l.y + l.height)?;
     layout.runs[line.first..line.end]
       .iter()
@@ -485,8 +587,13 @@ impl Text {
     Damage::Layout
   }
   pub fn set_text_alignment(&mut self, alignment: Option<TextAlignment>) -> Damage {
-    self.text_alignment = alignment.unwrap_or(TextAlignment::Left);
+    self.text_alignment = alignment;
     Damage::Layout
+  }
+  // Detached-only, so paint damage is enough; the shaping key carries it.
+  pub fn set_anchor(&mut self, anchor: Option<TextAnchor>) -> Damage {
+    self.anchor = anchor;
+    Damage::Paint
   }
 
   pub fn initial_style() -> Style {

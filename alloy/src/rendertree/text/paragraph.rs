@@ -83,7 +83,7 @@ impl Text {
     for run in self.runs.iter().filter(|r| r.atom.is_none()) {
       let run_style = run.overrides.resolve(self);
       let mut style = paragraph_style(&run_style);
-      style.set_text_alignment(self.text_alignment);
+      style.set_text_alignment(self.alignment());
       // Impeller draws the font's own underline per run; its knobs are the
       // color and a thickness multiplier, so underline_offset does not apply
       // on this path and underline_thickness scales the font's thickness.

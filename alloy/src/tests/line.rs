@@ -261,3 +261,32 @@ fn fill_only_has_no_stroke_outset() {
   line.paint.stroke_join = StrokeJoin::Bevel;
   assert!(close(bounds(&line), rect(18.0, 18.0, 104.0, 84.0)), "{:?}", bounds(&line));
 }
+
+// x/y move the whole geometry - endpoints or points - at paint time, and the
+// bounds and hit test follow, the way a path's x/y work.
+#[test]
+fn x_y_offset_endpoints_and_points_alike() {
+  let mut line = Line::default();
+  line.paint.stroke_width = 4.0;
+  line.set_x1(Some(0.0));
+  line.set_y1(Some(0.0));
+  line.set_x2(Some(50.0));
+  line.set_y2(Some(0.0));
+  line.set_x(Some(20.0));
+  line.set_y(Some(30.0));
+  assert!(close(bounds(&line), rect(18.0, 28.0, 54.0, 4.0)), "{:?}", bounds(&line));
+  assert!(hits(&line, 45.0, 30.0));
+  assert!(!hits(&line, 25.0, 0.0), "the un-offset position no longer hits");
+
+  let mut poly = polyline(&[0.0, 0.0, 50.0, 0.0, 50.0, 50.0], false);
+  let unmoved = bounds(&poly);
+  poly.set_x(Some(20.0));
+  poly.set_y(Some(30.0));
+  let moved = bounds(&poly);
+  assert!(
+    close(moved, rect(unmoved.origin.x + 20.0, unmoved.origin.y + 30.0, unmoved.size.width, unmoved.size.height)),
+    "{moved:?}"
+  );
+  assert!(hits(&poly, 70.0, 60.0));
+  assert!(!hits(&poly, 50.0, 25.0));
+}

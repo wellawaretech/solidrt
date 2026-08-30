@@ -747,7 +747,13 @@ impl RenderTree {
 
   fn compute_corners(&self, id: u64, stop_at_context: bool) -> Option<[Point; 4]> {
     let node = self.try_node(id)?;
-    let local = node.kind.local_bounds(self.content_fallback(id)?);
+    let fallback = self.content_fallback(id)?;
+    let local = match &node.kind {
+      // A detached text has no box of its own: its bounds are the laid-out
+      // paragraph. A laid-out text keeps the box answer (its element box).
+      ElementKind::Text(t) if node.layout.is_none() => t.detached_bounds(fallback),
+      _ => node.kind.local_bounds(fallback),
+    };
 
     // A View's own paint matrix already contains its translate (which is what
     // local_bounds reports as its origin), so the matrix path starts from the

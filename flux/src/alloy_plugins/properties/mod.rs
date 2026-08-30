@@ -207,11 +207,12 @@ pub fn apply_jsx(
 
 fn detached_only_geometry(kind: &ElementKind, name: &str) -> bool {
   match kind {
-    ElementKind::Rectangle(_) | ElementKind::Oval(_) | ElementKind::Text(_) | ElementKind::Texture(_) => {
+    ElementKind::Rectangle(_) | ElementKind::Oval(_) | ElementKind::Texture(_) => {
       matches!(name, "x" | "y" | "w" | "h")
     }
+    ElementKind::Text(_) => matches!(name, "x" | "y" | "w" | "h" | "anchor"),
     ElementKind::Path(_) => matches!(name, "x" | "y"),
-    ElementKind::Line(_) => matches!(name, "x1" | "y1" | "x2" | "y2"),
+    ElementKind::Line(_) => matches!(name, "x" | "y" | "x1" | "y1" | "x2" | "y2"),
     _ => false,
   }
 }

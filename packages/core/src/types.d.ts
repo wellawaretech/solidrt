@@ -363,22 +363,41 @@ export interface OvalGeometryProps extends PositionProps {
   h?: number
 }
 
-/** See {@link PositionProps}: detached-only, never affects layout. */
+/**
+ * See {@link PositionProps}: detached-only, never affects layout. A d-text
+ * is boxed or anchored. Boxed (no `anchor`): it wraps at `w`, or at the box
+ * inherited from the nearest laid-out ancestor, and `textAlign` aligns
+ * lines inside that width - so a right-aligned label needs a `w`. Anchored:
+ * `x` is a point on the line (SVG's text-anchor), which is what a label on a
+ * chart, an axis or a diagram wants. Either way the reported bounds
+ * (getBoundingBox, the tree) are the laid-out paragraph - widest line by
+ * line stack - unless `w`/`h` override a side.
+ */
 export interface TextGeometryProps extends PositionProps {
-  // Shaping (wrap) width. Detached text wraps at the inherited ancestor size
-  // by default; set w for an unwrapped natural line or an explicit wrap width.
+  /**
+   * Where `x` sits on each line: its start, middle or end. With `w` unset
+   * the text shapes at its natural width (no wrap; `\n` still breaks), and
+   * `textAlign` defaults to the anchor's side. With `w` set, the `w`-wide
+   * box is what gets anchored at `x`.
+   */
+  anchor?: "start" | "middle" | "end"
+  // Shaping (wrap) width; unset, boxed text wraps at the inherited box and
+  // anchored text does not wrap.
   w?: number
-  // Reported-bounds height only; paragraph height always falls out of the text.
+  // Reported-bounds height override only; paragraph height always falls out
+  // of the text.
   h?: number
 }
 
 /**
- * See {@link PositionProps}: detached-only, never affects layout. A line's
- * reported bounds (getBoundingBox, the tree, a detached capture) are its
- * painted box: the geometry's extent plus the stroke's reach, not the
+ * See {@link PositionProps}: detached-only, never affects layout. The
+ * endpoints (or `points`) are the line's own geometry; `x`/`y` offset all of
+ * it, the way a `d-path`'s offset its `d`, so one write moves a polyline. A
+ * line's reported bounds (getBoundingBox, the tree, a detached capture) are
+ * its painted box: the geometry's extent plus the stroke's reach, not the
  * inherited box.
  */
-export interface LineGeometryProps {
+export interface LineGeometryProps extends PositionProps {
   /** Endpoints default to spanning the box: (0,0) to (box width, box height). */
   x1?: number
   y1?: number

@@ -12,7 +12,7 @@
 use alloy::impellers::{
   BlendMode, Color, DrawStyle, FillType, FontStyle, FontWeight, StrokeCap, StrokeJoin, TextAlignment,
 };
-use alloy::rendertree::{Element, ElementKind, Gradient, Line, OriginCoord, PaintState, TextureFit, View};
+use alloy::rendertree::{Element, ElementKind, Gradient, Line, OriginCoord, PaintState, TextAnchor, TextureFit, View};
 
 /// A read-back property value, kept engine- and serializer-free: the caller
 /// (the dev connection) maps these onto its own JSON.
@@ -62,6 +62,8 @@ pub fn read_jsx(element: &Element) -> Vec<(&'static str, ReadValue)> {
       num(&mut out, "h", oval.h);
     }
     ElementKind::Line(line) => {
+      num(&mut out, "x", line.x);
+      num(&mut out, "y", line.y);
       num(&mut out, "x1", line.x1);
       num(&mut out, "y1", line.y1);
       num(&mut out, "x2", line.x2);
@@ -97,6 +99,19 @@ pub fn read_jsx(element: &Element) -> Vec<(&'static str, ReadValue)> {
       num(&mut out, "y", text.y);
       num(&mut out, "w", text.w);
       num(&mut out, "h", text.h);
+      if let Some(anchor) = text.anchor {
+        out.push((
+          "anchor",
+          ReadValue::Str(
+            match anchor {
+              TextAnchor::Start => "start",
+              TextAnchor::Middle => "middle",
+              TextAnchor::End => "end",
+            }
+            .into(),
+          ),
+        ));
+      }
       if text.font_family != "sans" {
         out.push(("fontFamily", ReadValue::Str(text.font_family.clone())));
       }
@@ -109,11 +124,11 @@ pub fn read_jsx(element: &Element) -> Vec<(&'static str, ReadValue)> {
       if text.font_weight != FontWeight::Medium {
         out.push(("fontWeight", ReadValue::Int(font_weight_number(text.font_weight))));
       }
-      if text.text_alignment != TextAlignment::Left {
+      if let Some(alignment) = text.text_alignment {
         out.push((
           "textAlign",
           ReadValue::Str(
-            match text.text_alignment {
+            match alignment {
               TextAlignment::Left => "left",
               TextAlignment::Right => "right",
               TextAlignment::Center => "center",

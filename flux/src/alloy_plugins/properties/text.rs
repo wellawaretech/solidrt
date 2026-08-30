@@ -4,7 +4,7 @@ use super::{opt, opt_f32, paint, str_of};
 use crate::alloy_plugins::value::PropValue;
 use alloy::rendertree::Damage;
 use alloy::rendertree::text::layout::Wrap;
-use alloy::rendertree::{OverflowWrap, Span, Text, TextOverflow};
+use alloy::rendertree::{OverflowWrap, Span, Text, TextAnchor, TextOverflow};
 
 pub fn apply(text: &mut Text, name: &str, value: &PropValue) -> Result<Option<Damage>, String> {
   Ok(Some(match name {
@@ -12,6 +12,14 @@ pub fn apply(text: &mut Text, name: &str, value: &PropValue) -> Result<Option<Da
     "y" => text.set_y(opt_f32(value, "y")?),
     "w" => text.set_w(opt_f32(value, "w")?),
     "h" => text.set_h(opt_f32(value, "h")?),
+    "anchor" => text.set_anchor(opt(value, |v| {
+      Ok(match str_of(v, "anchor")? {
+        "start" => TextAnchor::Start,
+        "middle" => TextAnchor::Middle,
+        "end" => TextAnchor::End,
+        v => return Err(format!("Unknown anchor value \"{v}\"; expected start, middle or end")),
+      })
+    })?),
     // Role names ("sans", "serif", "mono") are registered font aliases; every
     // family name passes through to the typographer as-is.
     "fontFamily" => text.set_font_family(opt(value, |v| Ok(str_of(v, "fontFamily")?.to_string()))?),

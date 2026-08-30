@@ -1,7 +1,7 @@
 // Owned shaping: every wrap unit of the text as its own single-line Impeller
 // paragraph, cached per input fingerprint (ParaKey), plus the line layouts
 // derived from them per width. The breaking itself is text::layout.
-use super::{OverflowWrap, Text, TextOverflow, TextRun, ATOM_CHAR, MAX_CACHED_WIDTHS};
+use super::{OverflowWrap, Text, TextAnchor, TextOverflow, TextRun, ATOM_CHAR, MAX_CACHED_WIDTHS};
 use crate::impellers::{FontStyle, FontWeight, Size, TextAlignment};
 use crate::rendertree::text::layout::{self, Align, Layout, LineCursor, LineExtent, Run, RunMetrics, Wrap};
 use crate::rendertree::text::CaretStop;
@@ -18,7 +18,8 @@ pub(super) struct ParaKey {
   font_size: f32,
   font_style: FontStyle,
   font_weight: FontWeight,
-  text_alignment: TextAlignment,
+  text_alignment: Option<TextAlignment>,
+  anchor: Option<TextAnchor>,
   max_lines: u32,
   text_overflow: TextOverflow,
   overflow_wrap: OverflowWrap,
@@ -37,6 +38,7 @@ impl ParaKey {
       && self.font_style == t.font_style
       && self.font_weight == t.font_weight
       && self.text_alignment == t.text_alignment
+      && self.anchor == t.anchor
       && self.max_lines == t.max_lines
       && self.text_overflow == t.text_overflow
       && self.overflow_wrap == t.overflow_wrap
@@ -55,6 +57,7 @@ impl ParaKey {
       font_style: t.font_style,
       font_weight: t.font_weight,
       text_alignment: t.text_alignment,
+      anchor: t.anchor,
       max_lines: t.max_lines,
       text_overflow: t.text_overflow.clone(),
       overflow_wrap: t.overflow_wrap,
@@ -399,7 +402,7 @@ impl Text {
     if let Some(i) = owned.layouts.iter().position(|l| l.width == width) {
       return i;
     }
-    let align = match self.text_alignment {
+    let align = match self.alignment() {
       TextAlignment::Center => Align::Center,
       TextAlignment::Right => Align::Right,
       TextAlignment::Justify => Align::Justify,

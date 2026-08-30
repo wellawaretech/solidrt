@@ -13,11 +13,16 @@ use crate::rendertree::{Bounded, BuildContext, Buildable, Element, ElementKind, 
 // rather than box geometry (like a path's `d`), so it exists on the layout
 // form too and drives that form's measure.
 //
+// x/y offset the whole geometry (endpoints or points) at paint time, the way
+// a path's x/y offset its `d`: one write moves a polyline. Detached-only.
+//
 // The paint defaults to stroke (DEFAULT_DRAW_STYLE), unlike the box kinds: a
 // segment has no interior. A polyline honours the draw style, so "fill" or
 // "stroke-and-fill" makes it a polygon (nonzero, implicitly closed).
 #[derive(Clone, Debug)]
 pub struct Line {
+  pub x: Option<f32>,
+  pub y: Option<f32>,
   pub x1: Option<f32>,
   pub y1: Option<f32>,
   pub x2: Option<f32>,
@@ -34,6 +39,8 @@ pub struct Line {
 impl Default for Line {
   fn default() -> Self {
     Self {
+      x: None,
+      y: None,
       x1: None,
       y1: None,
       x2: None,
@@ -217,11 +224,27 @@ impl Line {
 
 impl Buildable for Line {
   fn build<'a>(&'a self, ctx: &mut BuildContext<'a>, builder: &mut DisplayListBuilder) {
+    let (dx, dy) = (self.x.unwrap_or(0.0), self.y.unwrap_or(0.0));
+    let translated = dx != 0.0 || dy != 0.0;
+    if translated {
+      builder.save();
+      builder.translate(dx, dy);
+    }
+    self.build_geometry(ctx.size, builder);
+    if translated {
+      builder.restore();
+    }
+  }
+}
+
+impl Line {
+  // The geometry in its own (un-offset) space.
+  fn build_geometry(&self, size: Size, builder: &mut DisplayListBuilder) {
     if let Some(points) = &self.points {
       self.build_polyline(points, builder);
       return;
     }
-    let (from, to) = self.endpoints(ctx.size.width, ctx.size.height);
+    let (from, to) = self.endpoints(size.width, size.height);
     let mut paint = self.paint.to_paint();
     let points = [from.x, from.y, to.x, to.y];
     match self.dash(&points, false) {
@@ -247,7 +270,8 @@ impl Bounded for Line {
     match self.geometry(fallback) {
       Some(geometry) => {
         let outset = self.stroke_outset();
-        geometry.inflate(outset, outset)
+        let origin = Point::new(geometry.origin.x + self.x.unwrap_or(0.0), geometry.origin.y + self.y.unwrap_or(0.0));
+        Rect::new(origin, geometry.size).inflate(outset, outset)
       }
       None => Rect::zero(),
     }
@@ -269,6 +293,14 @@ impl Measurable for Line {
 }
 
 impl Line {
+  pub fn set_x(&mut self, v: Option<f32>) -> Damage {
+    self.x = v;
+    Damage::Paint
+  }
+  pub fn set_y(&mut self, v: Option<f32>) -> Damage {
+    self.y = v;
+    Damage::Paint
+  }
   pub fn set_x1(&mut self, v: Option<f32>) -> Damage {
     self.x1 = v;
     Damage::Paint
@@ -327,6 +359,8 @@ impl Line {
 
 impl Hittable for Line {
   fn is_in_bounds(&self, pt: Point, ctx: &HitContext) -> bool {
+    // The geometry is offset-independent; undo the draw-time translate.
+    let pt = Point::new(pt.x - self.x.unwrap_or(0.0), pt.y - self.y.unwrap_or(0.0));
     let half_sw = (self.paint.stroke_width / 2.0).max(2.0);
     let max_sq = half_sw * half_sw;
     match &self.points {

@@ -868,3 +868,100 @@ fn content_hit_invalidates_the_boundary_cache_path() {
   assert!(tree.texture_content_changed(&ids(&[7])));
   assert!(tree.node(0).paint_cache.borrow().is_none());
 }
+
+fn frame(w: f32, h: f32) -> crate::impellers::Rect {
+  crate::impellers::Rect::new(crate::impellers::Point::zero(), crate::impellers::Size::new(w, h))
+}
+
+// A detached text painted once (painted_extent lays it out like build does)
+// with the given text, x and anchor, and its bounds in the frame.
+fn painted_text(
+  platform: &PlatformContext,
+  frame: crate::impellers::Rect,
+  content: &str,
+  x: f32,
+  anchor: Option<TextAnchor>,
+  w: Option<f32>,
+) -> (Text, crate::impellers::Rect) {
+  let mut t = Text::default();
+  t.set_plain_text(content.to_string());
+  t.set_x(Some(x));
+  t.set_anchor(anchor);
+  t.set_w(w);
+  t.painted_extent(platform, frame);
+  let bounds = t.detached_bounds(frame.size);
+  (t, bounds)
+}
+
+// The bounds of a detached text are the laid-out paragraph, not the frame it
+// inherits: a one-line label under a stage-sized ancestor reports its own
+// width and line height, through the tree as well.
+#[test]
+fn detached_text_bounds_are_the_laid_out_paragraph() {
+  let platform = PlatformContext::new(Vec::new());
+  let (mut t, paragraph) = painted_text(&platform, frame(400.0, 300.0), "hello", 10.0, None, None);
+  t.set_y(Some(20.0));
+  assert!(paragraph.size.width > 0.0 && paragraph.size.width < 400.0, "{paragraph:?}");
+  assert!(paragraph.size.height > 0.0 && paragraph.size.height < 300.0, "{paragraph:?}");
+
+  let mut tree = RenderTree::new();
+  tree.create_node(1, attached());
+  tree.create_node(2, t.no_layout());
+  tree.insert_node(1, 2, None).expect("insert");
+  place(&mut tree, 1, 0.0, 0.0, 400.0, 300.0);
+  let b = tree.bounding_box_viewport(2).expect("laid out");
+  assert_box(b, 10.0, 20.0, paragraph.size.width, paragraph.size.height);
+}
+
+// Anchored text is point-placed: the extent's start, middle or end lands on
+// x, at the natural (unwrapped) width, the same for every anchor.
+#[test]
+fn anchored_text_lands_its_anchor_on_x_at_natural_width() {
+  let platform = PlatformContext::new(Vec::new());
+  let bounds = |anchor| painted_text(&platform, frame(400.0, 300.0), "hello world", 100.0, Some(anchor), None).1;
+  let start = bounds(TextAnchor::Start);
+  let middle = bounds(TextAnchor::Middle);
+  let end = bounds(TextAnchor::End);
+  let w = start.size.width;
+  let eps = 1e-3;
+  assert!(w > 0.0 && w < 400.0, "{start:?}");
+  assert!((middle.size.width - w).abs() < eps && (end.size.width - w).abs() < eps);
+  assert!((start.origin.x - 100.0).abs() < eps, "{start:?}");
+  assert!((middle.origin.x + w / 2.0 - 100.0).abs() < eps, "{middle:?}");
+  assert!((end.origin.x + w - 100.0).abs() < eps, "{end:?}");
+}
+
+// Without a w an anchored text does not wrap at the inherited box, where a
+// boxed one does; a w wins over the anchor and wraps, with the w-wide box
+// anchored at x.
+#[test]
+fn anchored_text_wraps_only_at_an_explicit_w() {
+  let platform = PlatformContext::new(Vec::new());
+  let narrow = frame(60.0, 300.0);
+  let text = "hello world hello world";
+  let boxed = painted_text(&platform, narrow, text, 100.0, None, None).1;
+  let anchored = painted_text(&platform, narrow, text, 100.0, Some(TextAnchor::Start), None).1;
+  assert!(anchored.size.height < boxed.size.height, "{anchored:?} vs {boxed:?}");
+  assert!(anchored.size.width > boxed.size.width, "{anchored:?} vs {boxed:?}");
+
+  let wide = painted_text(&platform, narrow, text, 100.0, Some(TextAnchor::End), Some(60.0)).1;
+  assert_box(wide, 40.0, 0.0, 60.0, boxed.size.height);
+}
+
+// A boxed text's bounds follow its placed ink: right-aligned inside the
+// inherited box, the label sits at the box's far edge, and that is what the
+// tree must say (it is the trap `anchor` exists to replace).
+#[test]
+fn boxed_text_bounds_follow_the_aligned_ink() {
+  let platform = PlatformContext::new(Vec::new());
+  let wide = frame(400.0, 300.0);
+  let mut t = Text::default();
+  t.set_plain_text("hello".to_string());
+  t.set_x(Some(50.0));
+  t.set_text_alignment(Some(crate::impellers::TextAlignment::Right));
+  t.painted_extent(&platform, wide);
+  let b = t.detached_bounds(wide.size);
+  let eps = 1e-3;
+  assert!(b.size.width > 0.0 && b.size.width < 400.0, "{b:?}");
+  assert!((b.origin.x + b.size.width - 450.0).abs() < eps, "{b:?}");
+}
