@@ -1,3 +1,4 @@
+use super::dash::{dashed_path, oval_outline, walked_length, Dash, Piece};
 use super::PaintState;
 use crate::impellers::{DisplayListBuilder, DrawStyle, Point, Rect, Size};
 use crate::rendertree::hit::{HitContext, Hittable};
@@ -10,6 +11,10 @@ pub struct Oval {
   pub y: Option<f32>,
   pub w: Option<f32>,
   pub h: Option<f32>,
+  pub on_length: Option<f32>,
+  pub off_length: Option<f32>,
+  pub dash_offset: Option<f32>,
+  pub path_length: Option<f32>,
   pub paint: PaintState,
 }
 
@@ -18,19 +23,72 @@ impl Buildable for Oval {
   // the drawn oval is the box inset by half the stroke width, so the stroke's
   // outer edge lands on the box edge instead of straddling it.
   fn build<'a>(&'a self, ctx: &mut BuildContext<'a>, builder: &mut DisplayListBuilder) {
-    let x = self.x.unwrap_or(0.0);
-    let y = self.y.unwrap_or(0.0);
-    let w = self.w.unwrap_or(ctx.size.width);
-    let h = self.h.unwrap_or(ctx.size.height);
+    let rect = self.geometry(ctx.size);
+    let path = self.stroke_path(ctx.size);
+    match self.dashed_outline(ctx.size) {
+      // Dashing is a stroke property: the fill keeps the whole inset oval,
+      // the stroke gets its dashed pieces. Both paints are built from the
+      // authored box, so a box-relative gradient stays anchored to the
+      // element rather than to the inset stroke path.
+      Some((outline, dash)) => {
+        if self.fills() {
+          let mut fill = self.paint.to_paint_in(&rect);
+          fill.set_draw_style(DrawStyle::Fill);
+          builder.draw_oval(&path, &fill);
+        }
+        let mut stroke = self.paint.to_paint_in(&rect);
+        stroke.set_draw_style(DrawStyle::Stroke);
+        builder.draw_path(&dashed_path(outline.into_iter(), dash), &stroke);
+      }
+      None => {
+        builder.draw_oval(&path, &self.paint.to_paint_in(&rect));
+      }
+    }
+  }
+}
 
-    let rect = Rect::new(Point::new(x, y), Size::new(w, h));
-    // Built from the authored box, so a box-relative gradient stays anchored
-    // to the element rather than to the inset stroke path.
-    let paint = self.paint.to_paint_in(&rect);
+impl Oval {
+  fn fills(&self) -> bool {
+    matches!(self.paint.draw_style, DrawStyle::Fill | DrawStyle::StrokeAndFill)
+  }
 
-    let d = self.paint.stroke_inset(w, h);
-    let path = Rect::new(Point::new(x + d, y + d), Size::new(w - d * 2.0, h - d * 2.0));
-    builder.draw_oval(&path, &paint);
+  fn strokes(&self) -> bool {
+    matches!(self.paint.draw_style, DrawStyle::Stroke | DrawStyle::StrokeAndFill)
+  }
+
+  // The authored box, its x/y/w/h resolved against the layout size.
+  fn geometry(&self, size: Size) -> Rect {
+    Rect::new(
+      Point::new(self.x.unwrap_or(0.0), self.y.unwrap_or(0.0)),
+      Size::new(self.w.unwrap_or(size.width), self.h.unwrap_or(size.height)),
+    )
+  }
+
+  // The drawn oval: the box inset by the stroke inset.
+  fn stroke_path(&self, size: Size) -> Rect {
+    let rect = self.geometry(size);
+    let d = self.paint.stroke_inset(rect.size.width, rect.size.height);
+    Rect::new(
+      Point::new(rect.origin.x + d, rect.origin.y + d),
+      Size::new(rect.size.width - d * 2.0, rect.size.height - d * 2.0),
+    )
+  }
+
+  // The dashed stroke, when the paint strokes and dashes: the inset outline
+  // as walker pieces (four quarter arcs), and the pattern in local units,
+  // a declared `pathLength` (SVG) mapping the author's units onto the
+  // outline's length. As on `Rectangle`, a dash's cap never leaves the box.
+  pub(crate) fn dashed_outline(&self, size: Size) -> Option<(Vec<Piece>, Dash)> {
+    if !self.strokes() {
+      return None;
+    }
+    let dash = Dash::new(self.on_length, self.off_length, self.dash_offset)?;
+    let outline = oval_outline(self.stroke_path(size));
+    let dash = match self.path_length.filter(|declared| *declared > 0.0) {
+      Some(declared) => dash.scaled(walked_length(outline.iter().cloned()) / declared)?,
+      None => dash,
+    };
+    Some((outline, dash))
   }
 }
 
@@ -66,6 +124,23 @@ impl Oval {
   }
   pub fn set_h(&mut self, v: Option<f32>) -> Damage {
     self.h = v;
+    Damage::Paint
+  }
+  // The dash props are paint-only: the outline is walked again at build.
+  pub fn set_on_length(&mut self, v: Option<f32>) -> Damage {
+    self.on_length = v;
+    Damage::Paint
+  }
+  pub fn set_off_length(&mut self, v: Option<f32>) -> Damage {
+    self.off_length = v;
+    Damage::Paint
+  }
+  pub fn set_dash_offset(&mut self, v: Option<f32>) -> Damage {
+    self.dash_offset = v;
+    Damage::Paint
+  }
+  pub fn set_path_length(&mut self, v: Option<f32>) -> Damage {
+    self.path_length = v;
     Damage::Paint
   }
 

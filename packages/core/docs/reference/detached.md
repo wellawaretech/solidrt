@@ -49,7 +49,10 @@ to detach from.
 
 ## Geometry
 
-Detached geometry is paint-space pixels and never affects layout.
+Detached geometry is paint-space pixels and never affects layout. The
+reverse holds too: a laid-out tile holding only detached geometry must not
+be allowed to flex-shrink (wrap the row, or give it `flexShrink={0}`),
+since the box shrinks and the geometry does not.
 
 {{ decl packages/core/src/types.d.ts PositionProps }}
 

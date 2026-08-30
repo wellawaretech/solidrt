@@ -25,7 +25,7 @@ agent dev-loop feedback item when okf was restructured; the siblings are
 [mcp-interaction-perf-visibility](mcp-interaction-perf-visibility.md).
 
 Resolved 2026-08-27, without a separate `drawn` box: `Line` (with
-[line-points](line-points.md) stage 3) and `Path` implement `Bounded`, so
+[line-points](../done/line-points.md) stage 3) and `Path` implement `Bounded`, so
 `bounding_box_viewport` - what the tree box, `getBoundingBox` and a detached
 capture read - reports the geometry plus the stroke's reach for `d-line` and
 `d-path`. A path's extent is the tight one (curve extrema, via lyon's

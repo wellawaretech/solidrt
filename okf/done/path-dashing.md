@@ -46,8 +46,12 @@ tessellates them in screen space like the solid stroke: no facets at any
 display scale or transform. The tolerance only places the boundaries along
 the curve, within a quarter unit of where a polyline of it would.
 
-Deferred until measured: caching the pieces across `dashOffset` writes
-(marching ants rebuild the tables every frame).
+Not done on purpose: caching the pieces across `dashOffset` writes.
+Marching ants rebuild the tables every frame, and measured that is noise
+(paint 0.9 ms steady with three dashed nodes plus a 200-point trace, see
+Findings; the three dashed boxes added 2026-08-30 did not move it). A
+cache would only pay for itself on a path with thousands of curve pieces
+re-phased every frame, which nothing asks for.
 
 ## Findings (2026-08-27, implemented and verified)
 
@@ -111,7 +115,7 @@ Deferred until measured: caching the pieces across `dashOffset` writes
   (background, stroke, 25/50/75% coverage), i.e. the 4x MSAA every rig
   rasterization runs at (`MSAA_SAMPLES` in gl/rig.rs; Impeller GL has no
   analytic AA). Edge quality is the sample count, not the dash geometry:
-  [desktop-msaa-8x](desktop-msaa-8x.md). Lesson kept in memory: ask the
+  [desktop-msaa-8x](../backlog/desktop-msaa-8x.md). Lesson kept in memory: ask the
   human about the display and what exactly looks wrong before building
   measurements.
 - Example layout fix found in the same run: the tile rows were wider than
@@ -121,3 +125,31 @@ Deferred until measured: caching the pieces across `dashOffset` writes
   dashed strokes outside their rects. The rows now `flexWrap="wrap"` so a
   tile keeps its design size. A tile holding only detached geometry must
   never be allowed to shrink: wrap the row or give it `flexShrink={0}`.
+
+## Box primitives (2026-08-30)
+
+`rect` and `oval` take the same `DashProps`, prompted by external feedback
+("a dashed selection rect is a stock UI element", and rebuilding it as a
+96-point `d-line` ring loses the inside-the-box stroke rule).
+
+- The walker's pieces are the inset stroke path itself: `box_outline` in
+  `kinds/dash.rs` (edges plus kappa-cubic quarter arcs for the radii, each
+  clamped to the half box) and `oval_outline` (four quarter arcs). Both
+  start where SVG's `rect`/`ellipse` do (top edge after the top-left
+  corner; 3 o'clock) and run clockwise, so `dashOffset` phases match.
+- The inside-stroke rule does not conflict with dashing: the outline is
+  inset by half the stroke width and a dash's cap reaches along the
+  outline by that same half width, so the box still contains every pixel.
+  `local_bounds` stays the box; no outset, unlike path's "dashes count as
+  caps".
+- Stroke-and-fill fills the inset shape through Impeller's own
+  `draw_rect`/`draw_rounded_rect`/`draw_oval` and strokes the walked
+  dashes via `draw_path`, the split `path.rs` makes. Solid strokes are
+  untouched.
+- Hit testing stays the solid ring, as on line and path.
+- The oval's fill (Impeller's oval) and its dashed stroke (four kappa
+  cubics) are different geometry; the cubic strays at most 0.027% of the
+  radius, under a pixel at any drawn size.
+- `DASH_TOLERANCE` and `dashed_path` moved to `kinds/dash.rs`, shared by
+  all four kinds. Tests: alloy `tests/box_dash.rs`, flux
+  `box_dash_props_apply_and_transition`.

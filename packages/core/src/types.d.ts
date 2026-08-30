@@ -753,8 +753,9 @@ export interface ViewProps extends ViewOwnProps, LayoutProps {}
 // A stroked rect paints inside its box, like a CSS border: the stroke's outer
 // edge sits on the box edge rather than straddling it, so nothing bleeds past
 // the box for a clip to cut. `path` and `line` strokes stay centered on their
-// geometry - there the geometry is the stroke, not a box.
-export interface RectProps extends PaintProps, PointerProps {
+// geometry - there the geometry is the stroke, not a box. A dashed stroke
+// dashes that same inset outline (see DashProps).
+export interface RectProps extends PaintProps, PointerProps, DashProps {
   // Corner radius, measured on the box (the stroke's outer edge). A single
   // number applies to all four corners; an array is [top-left, top-right,
   // bottom-right, bottom-left] (CSS border-radius order).
@@ -762,11 +763,15 @@ export interface RectProps extends PaintProps, PointerProps {
 }
 
 // Strokes paint inside the box, same as `RectProps`.
-export interface OvalProps extends PaintProps, PointerProps {}
+export interface OvalProps extends PaintProps, PointerProps, DashProps {}
 
 /**
- * A stroke's dash pattern, on `line` and `path`. Both lengths must be set
- * to dash; with either unset, or a gap of 0, the stroke is solid.
+ * A stroke's dash pattern, on every stroked primitive (`rect`, `oval`,
+ * `line`, `path`). Both lengths must be set to dash; with either unset, or
+ * a gap of 0, the stroke is solid. A box primitive dashes its inset
+ * outline, the pattern starting where SVG's does (a rect on the top edge
+ * after the top-left corner, an oval at 3 o'clock) and running clockwise;
+ * its dashes stay inside the box like the solid stroke.
  */
 export interface DashProps {
   /**

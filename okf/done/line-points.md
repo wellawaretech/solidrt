@@ -15,7 +15,7 @@ and having the runtime parse them back, per frame. The external report
 [velvet-acre](../feedback/velvet-acre.md) item 4 measured exactly this
 (~4,000 numbers per frame) and asked for a numeric points primitive between
 `d-line` and `d-path`. The line-vs-path decision
-([line-layout-endpoints](../done/line-layout-endpoints.md)) already recorded
+([line-layout-endpoints](line-layout-endpoints.md)) already recorded
 "a polyline points array - the numbers-not-string middle ground" as line's
 natural growth direction, to be opened when a design asks. This is that item.
 
@@ -186,7 +186,7 @@ the whole subtree uncullable up to the nearest clipping ancestor),
 `captureSnapshot` of a detached node (`composite.rs` sizes the capture from
 `local_bounds`), and `getBoundingBox` / the tree's box (`tree.rs`
 `compute_corners`). The last one is the d-line case of
-[mcp-detached-node-bounds](mcp-detached-node-bounds.md) (a 190 px line
+[mcp-detached-node-bounds](../backlog/mcp-detached-node-bounds.md) (a 190 px line
 reported as 1692x1128).
 
 - `impl Bounded for Line`: the AABB of the geometry - the points, or the two
@@ -224,7 +224,7 @@ item; not part of this one.
 ## Not in this item
 
 - Arrowhead markers and per-vertex creasing: the other growth direction from
-  [line-layout-endpoints](../done/line-layout-endpoints.md), unchanged.
+  [line-layout-endpoints](line-layout-endpoints.md), unchanged.
 - Curves stay a path's job; a numeric curve primitive is a different item.
 - `Bounded` for path (see stage 3).
 

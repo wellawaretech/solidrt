@@ -1,4 +1,4 @@
-use super::dash::{walk_dashes, walked_length, Dash, Piece};
+use super::dash::{dashed_path as dashed, walked_length, Dash, Piece};
 use super::PaintState;
 use crate::impellers::{DisplayListBuilder, DrawStyle, FillType, Path, PathBuilder, Point, Rect, Size};
 use crate::rendertree::hit::{HitContext, Hittable};
@@ -124,9 +124,7 @@ pub(crate) fn pieces(points: &[f32], closed: bool) -> impl Iterator<Item = Piece
 }
 
 fn dashed_path(points: &[f32], closed: bool, dash: Dash) -> Path {
-  let mut path = PathBuilder::default();
-  walk_dashes(pieces(points, closed), dash, &mut path);
-  path.take_path_new(FillType::NonZero)
+  dashed(pieces(points, closed), dash)
 }
 
 fn dist_sq_to_segment(p: Point, a: Point, b: Point) -> f32 {

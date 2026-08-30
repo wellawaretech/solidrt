@@ -19,6 +19,9 @@
 //    knowing its length.
 // 5. A laid-out <line points>: the points are content (like a path's `d`), so
 //    the box measures from their extent and takes part in the row.
+// 6. Dashed boxes: the same props on d-rect and d-oval dash the inset
+//    outline the solid stroke draws, so a marquee or a drop zone is one
+//    element and its dashes never leave the box.
 // The two-endpoint form (x1..y2, on d-line only) is unchanged; while `points`
 // is set it takes precedence over the endpoints.
 import { render, onFrame, createSignal } from "@solidrt/core"
@@ -112,6 +115,24 @@ function App() {
         <view width={220} height={120}>
           <d-rect radius={8} color="#151b28" />
           <d-path d={CURVE} drawStyle="stroke" onLength={10} offLength={6} dashOffset={ants()} color="#f778ba" strokeWidth={3} strokeCap="round" />
+        </view>
+      </view>
+
+      <text fontSize={16} color="#8b949e">
+        dashed boxes: a rounded marquee, a stroke-and-fill rect, an oval drawing on
+      </text>
+      <view flexDirection="row" flexWrap="wrap" gap={20}>
+        <view width={140} height={120}>
+          <d-rect radius={8} color="#151b28" />
+          <d-rect x={20} y={20} w={100} h={80} radius={12} drawStyle="stroke" onLength={8} offLength={6} dashOffset={-ants()} color="#e3b341" strokeWidth={3} />
+        </view>
+        <view width={140} height={120}>
+          <d-rect radius={8} color="#151b28" />
+          <d-rect x={20} y={20} w={100} h={80} drawStyle="stroke-and-fill" onLength={10} offLength={6} color="#f8514966" strokeWidth={6} strokeCap="round" />
+        </view>
+        <view width={140} height={120}>
+          <d-rect radius={8} color="#151b28" />
+          <d-oval x={20} y={20} w={100} h={80} drawStyle="stroke" pathLength={1} onLength={drawn()} offLength={1} color="#3fb950" strokeWidth={4} strokeCap="round" />
         </view>
       </view>
 

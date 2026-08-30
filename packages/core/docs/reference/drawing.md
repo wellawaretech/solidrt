@@ -27,12 +27,13 @@ stroke rather than a box.
 
 ## Dashing
 
-A stroke's dash pattern, on `line` and `path`:
+A stroke's dash pattern, on every stroked primitive:
 
 {{ decl packages/core/src/types.d.ts DashProps }}
 
 The pattern is walked along the geometry itself: through a polyline's
-vertices and along a path's curves, restarting at each subpath of a path.
+vertices, along a path's curves (restarting at each subpath), and around a
+rect's or oval's inset outline (inside the box, like the solid stroke).
 `dashOffset` slides it - write it every frame for marching ants, or
 transition it for a one-shot slide. A dashed stroke keeps its caps on every
 dash, and a stroke-and-fill path dashes only the stroke.
@@ -47,9 +48,15 @@ the length).
 
 {{ decl packages/core/src/types.d.ts RectProps }}
 
+A dashed rect (a selection marquee, a drop zone) is the dash props on the
+rect itself; see Dashing above. The pattern starts on the top edge after
+the top-left corner and runs clockwise.
+
 ## oval
 
 {{ decl packages/core/src/types.d.ts OvalProps }}
+
+Dashes like a rect; the pattern starts at 3 o'clock and runs clockwise.
 
 ## line
 

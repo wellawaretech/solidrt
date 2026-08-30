@@ -1,9 +1,26 @@
 // The dash walker shared by line and path: a pattern in local units, the
 // pieces of geometry it walks, and the pen it draws every "on" run into.
 
-use crate::impellers::{PathBuilder, Point};
+use crate::impellers::{FillType, Path as ImpPath, PathBuilder, Point, Rect};
 use lyon_path::geom::{point, CubicBezierSegment, LineSegment, QuadraticBezierSegment};
 use std::ops::Range;
+
+// How far the flattening the dash walker measures arc length with may
+// stray from the curve, in local units. It only places the dash boundaries
+// along a curve (the dashes drawn are pieces of the curve itself), so it
+// never shows as facets; a quarter unit keeps the pattern where a polyline
+// of the curve would have it.
+pub const DASH_TOLERANCE: f32 = 0.25;
+
+// The cubic Bezier control distance, as a fraction of the radius, that fits
+// a quarter circle: 4/3 (sqrt 2 - 1). The curve strays at most 0.027% of
+// the radius from the true arc, far under a pixel at any drawn size.
+const QUARTER_ARC_KAPPA: f32 = 0.552_284_8;
+
+// A box outline's corners in CSS order (top-left, top-right, bottom-right,
+// bottom-left) as the (cos, sin) where each corner's arc starts, y down;
+// the arc sweeps a clockwise quarter turn on screen to the next entry.
+const CORNER_START: [(f32, f32); 4] = [(-1.0, 0.0), (0.0, -1.0), (1.0, 0.0), (0.0, 1.0)];
 
 // A dash pattern in local units: `on` drawn, `off` skipped, starting
 // `offset` into the pattern (SVG stroke-dashoffset).
@@ -167,6 +184,71 @@ impl Piece {
       }
     }
   }
+}
+
+// The quarter ellipse of `corner` around `center`, clockwise on screen.
+fn quarter_arc(center: Point, rx: f32, ry: f32, corner: usize) -> Piece {
+  let (c0, s0) = CORNER_START[corner];
+  let (c1, s1) = CORNER_START[(corner + 1) % 4];
+  let k = QUARTER_ARC_KAPPA;
+  // The tangent at (cos a, sin a) along the sweep is (-sin a, cos a).
+  let seg = CubicBezierSegment {
+    from: point(center.x + rx * c0, center.y + ry * s0),
+    ctrl1: point(center.x + rx * (c0 - k * s0), center.y + ry * (s0 + k * c0)),
+    ctrl2: point(center.x + rx * (c1 + k * s1), center.y + ry * (s1 - k * c1)),
+    to: point(center.x + rx * c1, center.y + ry * s1),
+  };
+  Piece::cubic(seg, DASH_TOLERANCE)
+}
+
+fn push_line(pieces: &mut Vec<Piece>, a: Point, b: Point) {
+  if a != b {
+    pieces.push(Piece::line(a, b));
+  }
+}
+
+// A rounded box's outline as walker pieces: the edges and the corner arcs
+// for `radii` (CSS order, each clamped to the half box), starting where
+// SVG's rect does, on the top edge after the top-left corner, and running
+// clockwise. This is the box primitives' inset stroke path, so a dashed
+// rect dashes exactly the outline its solid stroke draws.
+pub fn box_outline(rect: Rect, radii: [f32; 4]) -> Vec<Piece> {
+  let (x, y, w, h) = (rect.origin.x, rect.origin.y, rect.size.width, rect.size.height);
+  let limit = (w / 2.0).min(h / 2.0).max(0.0);
+  let [tl, tr, br, bl] = radii.map(|r| r.clamp(0.0, limit));
+  let mut pieces = Vec::new();
+  let corner = |pieces: &mut Vec<Piece>, center: Point, r: f32, corner: usize| {
+    if r > 0.0 {
+      pieces.push(quarter_arc(center, r, r, corner));
+    }
+  };
+  push_line(&mut pieces, Point::new(x + tl, y), Point::new(x + w - tr, y));
+  corner(&mut pieces, Point::new(x + w - tr, y + tr), tr, 1);
+  push_line(&mut pieces, Point::new(x + w, y + tr), Point::new(x + w, y + h - br));
+  corner(&mut pieces, Point::new(x + w - br, y + h - br), br, 2);
+  push_line(&mut pieces, Point::new(x + w - br, y + h), Point::new(x + bl, y + h));
+  corner(&mut pieces, Point::new(x + bl, y + h - bl), bl, 3);
+  push_line(&mut pieces, Point::new(x, y + h - bl), Point::new(x, y + tl));
+  corner(&mut pieces, Point::new(x + tl, y + tl), tl, 0);
+  pieces
+}
+
+// An oval's outline as four quarter arcs, starting where SVG's ellipse
+// does (3 o'clock) and running clockwise. Empty for a box without area.
+pub fn oval_outline(rect: Rect) -> Vec<Piece> {
+  let (rx, ry) = (rect.size.width / 2.0, rect.size.height / 2.0);
+  if rx <= 0.0 || ry <= 0.0 {
+    return Vec::new();
+  }
+  let center = Point::new(rect.origin.x + rx, rect.origin.y + ry);
+  [2, 3, 0, 1].into_iter().map(|corner| quarter_arc(center, rx, ry, corner)).collect()
+}
+
+// The dashed stroke of `pieces` as one path for Impeller to stroke.
+pub fn dashed_path(pieces: impl Iterator<Item = Piece>, dash: Dash) -> ImpPath {
+  let mut out = PathBuilder::default();
+  walk_dashes(pieces, dash, &mut out);
+  out.take_path_new(FillType::NonZero)
 }
 
 // The length the walker travels over `pieces`.

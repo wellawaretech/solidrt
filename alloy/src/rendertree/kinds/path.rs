@@ -1,4 +1,4 @@
-use super::dash::{walk_dashes, walked_length, Dash, Pen, Piece};
+use super::dash::{walk_dashes, walked_length, Dash, Pen, Piece, DASH_TOLERANCE};
 use super::PaintState;
 use crate::impellers::{DisplayListBuilder, DrawStyle, FillType, Path as ImpPath, PathBuilder, Point, Rect, Size};
 use crate::rendertree::hit::{HitContext, Hittable};
@@ -10,13 +10,6 @@ use lyon_path::geom::{point, vector, Angle, ArcFlags, CubicBezierSegment, Quadra
 use lyon_path::iterator::PathIterator;
 use std::cell::{Cell, RefCell};
 use svgtypes::{PathParser, PathSegment};
-
-// How far the flattening the dash walker measures arc length with may
-// stray from the curve, in local units. It only places the dash boundaries
-// along a curve (the dashes drawn are pieces of the curve itself), so it
-// never shows as facets; a quarter unit keeps the pattern where a polyline
-// of the curve would have it.
-const DASH_TOLERANCE: f32 = 0.25;
 
 // What the stroke's reach past the geometry depends on, read off the parsed
 // path: a subpath left open (with a segment) takes caps, one with two or

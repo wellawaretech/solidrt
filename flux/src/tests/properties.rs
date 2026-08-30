@@ -583,12 +583,35 @@ fn path_dash_props_apply_and_transition() {
 }
 
 #[test]
-fn path_length_applies_on_both_kinds_and_must_be_positive() {
-  for kind in ["d-path", "d-line"] {
+fn box_dash_props_apply_and_transition() {
+  for kind in ["d-rect", "d-oval"] {
+    let mut el = Element::from_kind(kind).expect("known kind");
+    let dash = |el: &Element| match &el.kind {
+      ElementKind::Rectangle(r) => (r.on_length, r.off_length, r.dash_offset),
+      ElementKind::Oval(o) => (o.on_length, o.off_length, o.dash_offset),
+      _ => unreachable!(),
+    };
+    assert_eq!(apply_el(&mut el, "onLength", num(12.0)), Ok(Damage::Paint));
+    assert_eq!(apply_el(&mut el, "offLength", num(8.0)), Ok(Damage::Paint));
+    assert_eq!(apply_el(&mut el, "dashOffset", num(3.5)), Ok(Damage::Paint));
+    assert_eq!(dash(&el), (Some(12.0), Some(8.0), Some(3.5)), "{kind}");
+    assert_eq!(apply_el(&mut el, "offLength", PropValue::Null), Ok(Damage::Paint));
+    assert_eq!(dash(&el), (Some(12.0), None, Some(3.5)), "{kind}");
+    let cfg = map(&[("dashOffset", map(&[("duration", num(1.0))]))]);
+    assert_eq!(apply_el(&mut el, "transition", cfg), Ok(Damage::None));
+    assert_eq!(el.transitions.as_ref().expect("config set").props[0].0, AnimProp::DashOffset);
+  }
+}
+
+#[test]
+fn path_length_applies_on_every_stroked_kind_and_must_be_positive() {
+  for kind in ["d-path", "d-line", "d-rect", "d-oval"] {
     let mut el = Element::from_kind(kind).expect("known kind");
     let declared = |el: &Element| match &el.kind {
       ElementKind::Path(p) => p.path_length,
       ElementKind::Line(l) => l.path_length,
+      ElementKind::Rectangle(r) => r.path_length,
+      ElementKind::Oval(o) => o.path_length,
       _ => unreachable!(),
     };
     assert_eq!(apply_el(&mut el, "pathLength", num(1.0)), Ok(Damage::Paint));

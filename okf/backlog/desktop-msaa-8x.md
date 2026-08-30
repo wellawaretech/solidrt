@@ -14,7 +14,7 @@ runs at (`MSAA_SAMPLES = 4`, alloy/src/gl/rig.rs); Impeller's GL backend has
 no analytic path anti-aliasing and relies on the multisampled target, so
 an edge pixel takes at most four intermediate values. It applies to fills,
 solid strokes and dashes alike (the dash walker's curve pieces are not
-involved, see [path-dashing](path-dashing.md)).
+involved, see [path-dashing](../done/path-dashing.md)).
 
 Lever: the sample count. On desktop the window is single-sample and each
 frame rasterizes into the multisampled offscreen rig, resolved into FBO 0

@@ -453,14 +453,6 @@ Shaped, not started.
   discovery, no CI step. Decide the runner (flux, not bun, is the runtime
   under test), the file convention, and the CI hook, then fold the existing
   rigs into it.
-- **[Line takes a points array (polyline)](backlog/line-points.md)** [2026-08-27]
-  `<line>`/`<d-line>` grow a `points` prop - a flat [x0, y0, x1, y1, ...]
-  number array - and a `closed` flag, making line the numeric polyline
-  primitive between d-line's two endpoints and d-path's string DSL; then line
-  implements Bounded so culling, capture and getBoundingBox see what it paints
-  instead of the inherited box. Dashing becomes our own walker (continuous
-  through vertices, animatable with `dashOffset`); endpoints, caps and joins
-  stay as they are.
 - **[Location module (geolocation)](backlog/location-module.md)** [2026-08-15]
   The runtime exposes camera, microphone, speech-recognition and sound as
   @solidrt/core subpath modules but has no geolocation API, so apps fall back
@@ -534,12 +526,6 @@ Shaped, not started.
   group opacity and group transforms; add an opt-in tree output (groups with
   id/opacity/transform, paths in local space) backed by a `transform` matrix
   prop on views, keeping the flat list as the default.
-- **[Path dashing through the shared dash walker](backlog/path-dashing.md)** [2026-08-27]
-  <path>/<d-path> take onLength/offLength/dashOffset with line's semantics -
-  the stroke walks the lyon-flattened subpaths through the walker shared with
-  line (kinds/dash.rs), the fill keeps the true curve, the pattern restarts at
-  each subpath, and a d-path's bounds count dashes as caps; pathLength (SVG)
-  on both kinds makes the pattern fractional for partial draws.
 - **[Physics core - an embedded engine as a producer into the spatial arena](backlog/physics-core.md)** [2026-08-24]
   Rigid-body physics is per-body-per-frame and per-contact work, below the
   interpreter line, and nothing provides it, so games needing dynamics are
@@ -1157,6 +1143,14 @@ Finished, kept for the reasoning.
   rule (thin box; in general the box's top-left-to-bottom-right diagonal), no
   mirror prop; growth direction is caps and arrowhead markers, added when a
   design asks.
+- **[Line takes a points array (polyline)](done/line-points.md)** [2026-08-27]
+  `<line>`/`<d-line>` grow a `points` prop - a flat [x0, y0, x1, y1, ...]
+  number array - and a `closed` flag, making line the numeric polyline
+  primitive between d-line's two endpoints and d-path's string DSL; then line
+  implements Bounded so culling, capture and getBoundingBox see what it paints
+  instead of the inherited box. Dashing becomes our own walker (continuous
+  through vertices, animatable with `dashOffset`); endpoints, caps and joins
+  stay as they are.
 - **[Local pointer coordinates](done/local-pointer-coords.md)** [2026-07-25]
   Reintroduce per-node localX/localY on pointer events (already carried
   through hit testing, dropped in flux marshalling), and cap move hit-tests to
@@ -1244,6 +1238,12 @@ Finished, kept for the reasoning.
   core, flux:svg module) returning plain draw data that JS maps to d-path
   subtrees; vector currency becomes path data, matching the texture-id rule
   that rejected <image>.
+- **[Path dashing through the shared dash walker](done/path-dashing.md)** [2026-08-27]
+  <path>/<d-path> take onLength/offLength/dashOffset with line's semantics -
+  the stroke walks the lyon-flattened subpaths through the walker shared with
+  line (kinds/dash.rs), the fill keeps the true curve, the pattern restarts at
+  each subpath, and a d-path's bounds count dashes as caps; pathLength (SVG)
+  on both kinds makes the pattern fractional for partial draws.
 - **[Portals cannot mount at initial render](done/portal-initial-mount.md)** [2026-07-27]
   A portal visible at first mount throws "no mount target" because windowRoot
   is set only after the initial build; decided as by design, documented with a
