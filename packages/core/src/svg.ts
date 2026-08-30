@@ -6,6 +6,7 @@
 
 import { parseSvg as fluxParseSvg } from "flux:svg"
 import { parseColor, type Gradient } from "./color"
+import type { StrokeCap, StrokeJoin } from "./types"
 
 /**
  * Tags an inline SVG source, returning it unchanged. Documents small enough to
@@ -27,8 +28,8 @@ export type SvgDraw = {
   drawStyle: "fill" | "stroke"
   fillRule?: "nonzero" | "evenodd"
   strokeWidth?: number
-  strokeCap?: "butt" | "round" | "square"
-  strokeJoin?: "miter" | "round" | "bevel"
+  strokeCap?: StrokeCap
+  strokeJoin?: StrokeJoin
 }
 
 /** A parsed document: intrinsic size (viewBox/width-height) plus the flat draw list. */

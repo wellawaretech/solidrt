@@ -1,7 +1,11 @@
 import type {
   Color,
+  FontFamily,
+  FontStyle,
+  FontWeight,
   Gradient,
   LayoutProps,
+  TextAlign,
   Transition,
   TransitionEndEvent,
   TransitionPropName,
@@ -166,11 +170,11 @@ export interface Option {
 // than style. These end up on the inner <text> node, while the box layout
 // fields go on the wrapping <view>.
 export interface TextLayoutProps extends LayoutProps {
-  fontFamily?: "sans" | "mono" | (string & {})
+  fontFamily?: FontFamily
   fontSize?: number
   lineHeight?: number
-  fontStyle?: "normal" | "italic"
-  fontWeight?: 100 | 200 | 300 | 400 | 500 | 600 | 700 | 800 | 900
-  textAlign?: "left" | "right" | "center" | "justify"
+  fontStyle?: FontStyle
+  fontWeight?: FontWeight
+  textAlign?: TextAlign
   maxLines?: number
 }

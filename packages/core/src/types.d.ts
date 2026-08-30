@@ -157,14 +157,19 @@ export interface LayoutProps extends FlexboxProps, GridProps {
  */
 export type Color = string
 
+export type BlendMode = "clear" | "source" | "destination" | "source-over" | "destination-over" | "source-in" | "destination-in" | "source-out" | "destination-out" | "source-atop" | "destination-atop" | "xor" | "plus" | "modulate" | "screen" | "overlay" | "darken" | "lighten" | "color-dodge" | "color-burn" | "hard-light" | "soft-light" | "difference" | "exclusion" | "multiply" | "hue" | "saturation" | "color" | "luminosity"
+export type DrawStyle = "fill" | "stroke" | "stroke-and-fill"
+export type StrokeCap = "butt" | "round" | "square"
+export type StrokeJoin = "miter" | "round" | "bevel"
+
 export interface PaintProps {
   // A solid color, or a gradient from createLinearGradient/createRadialGradient.
   color?: Color | Gradient
-  blendMode?: "clear" | "source" | "destination" | "source-over" | "destination-over" | "source-in" | "destination-in" | "source-out" | "destination-out" | "source-atop" | "destination-atop" | "xor" | "plus" | "modulate" | "screen" | "overlay" | "darken" | "lighten" | "color-dodge" | "color-burn" | "hard-light" | "soft-light" | "difference" | "exclusion" | "multiply" | "hue" | "saturation" | "color" | "luminosity"
+  blendMode?: BlendMode
   /** Default "fill"; "stroke" on line, whose segment has no interior (see LineProps). */
-  drawStyle?: "fill" | "stroke" | "stroke-and-fill"
-  strokeCap?: "butt" | "round" | "square"
-  strokeJoin?: "miter" | "round" | "bevel"
+  drawStyle?: DrawStyle
+  strokeCap?: StrokeCap
+  strokeJoin?: StrokeJoin
   strokeMiter?: number
   strokeWidth?: number
 }
@@ -838,13 +843,20 @@ export interface PathProps extends PaintProps, PointerProps, DashProps {
   fillRule?: "nonzero" | "evenodd"
 }
 
+export type FontFamily = "sans" | "serif" | "mono" | (string & {})
+export type FontStyle = "normal" | "italic"
+export type FontWeight = 100 | 200 | 300 | 400 | 500 | 600 | 700 | 800 | 900
+export type TextDecoration = "none" | "underline"
+export type TextAlign = "left" | "right" | "center" | "justify"
+export type TextOverflow = "clip" | "ellipsis" | (string & {})
+
 /**
  * Per-run text style: the paragraph default on <text>, an override on <span>.
  * The cascade is intra-paragraph only: a span inherits from its enclosing
  * span, then from the <text>; nothing inherits across the tree.
  */
 export interface TextRunProps {
-  fontFamily?: "sans" | "serif" | "mono" | (string & {})
+  fontFamily?: FontFamily
   fontSize?: number
   /**
    * Line height as a MULTIPLIER of fontSize, not pixels (the theme uses
@@ -852,15 +864,15 @@ export interface TextRunProps {
    * font size, rendering the text as blank space.
    */
   lineHeight?: number
-  fontStyle?: "normal" | "italic"
-  fontWeight?: 100 | 200 | 300 | 400 | 500 | 600 | 700 | 800 | 900
+  fontStyle?: FontStyle
+  fontWeight?: FontWeight
   /**
    * Underline in the run's own color, drawn straight through descenders
    * (no skip-ink). Position and thickness come from the font's own metrics
    * unless overridden; a font Impeller resolves through the system fallback
    * gets the shipped Noto values.
    */
-  textDecoration?: "none" | "underline"
+  textDecoration?: TextDecoration
   /** Pixels from the baseline to the top of the underline. */
   textUnderlineOffset?: number
   /** Underline thickness in pixels. */
@@ -880,14 +892,14 @@ export interface SpanProps extends TextRunProps, PointerProps {
 
 export interface TextProps extends PaintProps, PointerProps, TextRunProps {
   children?: Children
-  textAlign?: "left" | "right" | "center" | "justify"
+  textAlign?: TextAlign
   maxLines?: number
   /**
    * What happens to text cut off by maxLines: "clip" (default), "ellipsis"
    * (a U+2026 at the end of the last line), or any other string to use as
    * the ellipsis. Drawn in the paragraph's default style.
    */
-  textOverflow?: "clip" | "ellipsis" | (string & {})
+  textOverflow?: TextOverflow
   /**
    * A word (wrap unit) wider than the line: "anywhere" (default) splits it
    * at grapheme boundaries so it stays inside the box, "normal" keeps it

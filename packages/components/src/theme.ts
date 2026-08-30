@@ -1,10 +1,11 @@
 import { createStore } from "@solidjs/signals"
+import type { FontWeight } from "@solidrt/core"
 import type { StyleProps } from "./types"
 
 export type TextStyle = {
   size: number
   lineHeight: number
-  weight: 100 | 200 | 300 | 400 | 500 | 600 | 700 | 800 | 900
+  weight: FontWeight
 }
 
 // The type scale's role names. <Text variant> and theme.text are keyed by these.
