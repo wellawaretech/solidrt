@@ -1565,6 +1565,12 @@ Bugs in our dependencies. Status here is the dependency's, not ours.
   probes per format; on a Raspberry Pi 4 SDL_InitSubSystem(SDL_INIT_CAMERA)
   never returns, and because SDL_UDEV_Scan shares its callback list the main
   thread's gamepad init is dragged into the same loop.
+- **[Solid babel plugin HTML-escapes text in universal mode](upstream/solid-babel-plugin-universal-escapes-text.md)** [2026-08-30]
+  With generate universal, static string children are passed through
+  escapeHTML ("<" becomes "&lt;", "&" becomes "&amp;", ">" untouched) and JSX
+  text entities are never decoded, so createTextNode receives HTML-escaped
+  strings that no parser will ever unescape; the universal renderer has no
+  HTML downstream and must emit text verbatim.
 - **[Solid 2 cheatsheet does not say the For child body is untracked](upstream/solid-cheatsheet-for-child-body-untracked.md)** [2026-08-30]
   CHEATSHEET.md documents the accessor/plain-value flip between keyed and
   non-keyed For, but not that the child function's body is an untracked scope,
