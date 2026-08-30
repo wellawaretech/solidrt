@@ -2,7 +2,7 @@
 title: Solid 2 cheatsheet does not say the For child body is untracked
 description: CHEATSHEET.md documents the accessor/plain-value flip between keyed and non-keyed For, but not that the child function's body is an untracked scope, so the default "destructure at the top, use below" style silently freezes; the trap should sit next to For keyed={false}.
 project: solid-js CHEATSHEET.md (github.com/solidjs/solid)
-versions: solid-js 2.0.0-rc.3
+versions: solid-js 2.0.0-rc.3 (also rc.4, checked 2026-08-30)
 status: filed
 link: https://github.com/solidjs/solid/issues/3126
 created: 2026-08-30

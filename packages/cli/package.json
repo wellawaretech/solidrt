@@ -24,7 +24,7 @@
     "@jridgewell/remapping": "^2.3.0",
     "@jridgewell/trace-mapping": "^0.3.25",
     "@modelcontextprotocol/sdk": "^1.29.0",
-    "@solidjs/babel-plugin": "2.0.0-rc.3",
+    "@solidjs/babel-plugin": "2.0.0-rc.4",
     "bonjour-service": "^1.4.0",
     "qrcode-generator": "^2.0.4",
     "zod": "^4.4.3"
