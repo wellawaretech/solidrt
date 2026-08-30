@@ -12,6 +12,7 @@ import type {
   LogsResponse,
   MuteResponse,
   ReloadResponse,
+  ShutdownResponse,
   StatsResponse,
   WatchResponse,
 } from "../types/control"
@@ -27,6 +28,9 @@ import type {
 const LOG_CAP = 2000
 const QUERY_TIMEOUT_MS = 5000
 const MAX_WAIT_MS = 30000
+// Delay between acking POST /shutdown and running the shutdown, so the
+// response reaches the caller before the listener closes.
+const SHUTDOWN_ACK_MS = 100
 
 let logs: LogEntry[] = []
 let logSeq = 0
@@ -319,6 +323,14 @@ export function setUserInputMuted(on: boolean) {
 // repl's `watch`): paused, an agent's saves are not pushed while it edits;
 // its explicit /reload is. Changes made while paused are not replayed on
 // resume.
+// The server's orderly shutdown, registered by main.ts where it lives next
+// to the handles it releases (registry record, local client, listeners).
+let shutdownHook: (() => void) | null = null
+
+export function onShutdownRequest(fn: () => void) {
+  shutdownHook = fn
+}
+
 export function setWatchActive(on: boolean) {
   if (on === state.watchPaused) {
     console.log(on ? "[cli] Reload on save resumed" : "[cli] Reload on save paused")
@@ -566,6 +578,19 @@ export async function handleControl(req: Request, path: string, query: Map<strin
       let on = active === "true"
       setWatchActive(on)
       let body: WatchResponse = { ok: true, active: on }
+      return Response.json(body)
+    }
+    case "/__control__/shutdown": {
+      // Orderly server exit over the wire, the counterpart of the repl's
+      // `quit`: acks first, then triggers the shutdown after a short delay
+      // so the response gets out. Address by port: this only ever reaches
+      // the server whose port the caller was given.
+      if (req.method !== "POST") return Response.json({ error: "Shutdown requires POST" }, { status: 405 })
+      if (!shutdownHook) return Response.json({ error: "Shutdown is not available on this server" }, { status: 503 })
+      console.log("[cli] Shutdown requested over the control API")
+      let fn = shutdownHook
+      setTimeout(fn, SHUTDOWN_ACK_MS)
+      let body: ShutdownResponse = { ok: true }
       return Response.json(body)
     }
     default:

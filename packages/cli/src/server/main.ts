@@ -23,7 +23,7 @@ import { absolute, resolveMode, sourceDirOf } from "./mode"
 import { requireBinary, srtCommand } from "./binaries"
 import * as cache from "./cache"
 import { handleProxy } from "./proxy"
-import { appendLog, handleControl, resolveQuery } from "./control"
+import { appendLog, handleControl, onShutdownRequest, resolveQuery } from "./control"
 import { printQr } from "./qr"
 import { createTunnelEndpoint, TUNNEL_PROTOCOL } from "./tunnel"
 import { rebuildAndBroadcast, showBuildFailure } from "./rebuild"
@@ -418,6 +418,7 @@ async function shutdown() {
   server.close()
   if (tunnel) await tunnel.close()
 }
+onShutdownRequest(shutdown)
 
 // Print a child's output line by line as it arrives.
 async function pump(stream: AsyncIterable<Uint8Array>, print: (line: string) => void) {

@@ -88,6 +88,9 @@ export type StatsResponse = { ok: true; active: boolean; clients: number }
 /** POST /watch: whether reload-on-save is now active. */
 export type WatchResponse = { ok: true; active: boolean }
 
+/** POST /shutdown: the ack, sent just before the server exits. */
+export type ShutdownResponse = { ok: true }
+
 /** GET /snapshot and /texture: png by default, RGBA8 bytes with format=raw. */
 export type ImageResponse = { width: number; height: number; pngBase64?: string; rgbaBase64?: string }
 
