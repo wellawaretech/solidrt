@@ -302,9 +302,10 @@ export type TileLayerProps = {
   tileH: number
   /** The atlas texture every tile samples (create with createAtlas). */
   atlas: TextureId
-  /** Per-chunk clear color; never-written regions render nothing, so a
-   * full-bleed ground color belongs on the container behind the layer. */
-  clearColor?: [number, number, number, number]
+  /** Per-chunk clear color (the name says the scope: never-written regions
+   * have no chunk and render nothing, so a full-bleed ground color belongs
+   * on the container behind the layer). */
+  chunkClearColor?: [number, number, number, number]
   /** Sampler filter for the baked chunk textures at composite time; default
    * "linear" (hard pixels belong to the atlas sampler, see TileLayerOptions). */
   filter?: FilterMode
@@ -347,7 +348,7 @@ export type TileLayerProps = {
 export let TileLayer: VoidComponent<TileLayerProps> = props => {
   let layer = untrack(() =>
     createTileLayer(props.cols, props.rows, props.tileW, props.tileH, props.atlas, {
-      clearColor: props.clearColor,
+      chunkClearColor: props.chunkClearColor,
       filter: props.filter,
       chunkTiles: props.chunkTiles,
       label: props.label,

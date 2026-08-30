@@ -44,8 +44,9 @@ const RESOLVED = Promise.resolve()
 const CHUNK_TARGET_PX = 512
 
 export type TileLayerOptions = {
-  /** Per-chunk clear color; empty (never-written) chunks render nothing. */
-  clearColor?: [number, number, number, number]
+  /** Per-chunk clear color (the name says the scope: chunks that never
+   * allocate render nothing, so this is not a layer background). */
+  chunkClearColor?: [number, number, number, number]
   /**
    * Sampler filter for the baked chunk textures at composite time; default
    * "linear", which with `oversample` is the proper resample at any scale.
@@ -225,7 +226,7 @@ export function createTileLayer(
         instanceCount: perChunk,
         blend: "alpha",
         textures: { uAtlas: atlas },
-        clearColor: opts?.clearColor ?? [0, 0, 0, 0],
+        clearColor: opts?.chunkClearColor ?? [0, 0, 0, 0],
         filter: opts?.filter,
         render: "manual",
         autoFree: false,

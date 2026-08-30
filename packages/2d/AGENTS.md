@@ -57,7 +57,10 @@ moved subtrees in Rust, and picking walks the core BVH.
   rgba]` (`FLOATS_PER_SPRITE`), draw order = insertion order, remove
   shifts, `layer.records` + `touch()` raw writes, JS pick walk. It is the
   escape hatch for motion only JS can compute at scale (measured 30k
-  sprites: 12.9ms raw records vs 30.8ms via setSprite) - the axis is
+  sprites: 12.9ms raw records vs 30.8ms via setSprite; both figures are
+  the WRITE path only - whatever computes the motion is excluded and is
+  usually the dominant cost, e.g. a 24k-particle sim measured ~25ms with
+  a near-free publish) - the axis is
   WHERE MOTION IS COMPUTED, not retained-vs-dynamic. The sprite functions
   (addSprite/setSprite/getSprite/removeSprite) work on both layer kinds;
   record sprites have `node: null` and no groups.
@@ -75,7 +78,11 @@ moved subtrees in Rust, and picking walks the core BVH.
   retargets). JS costs one write per target CHANGE, zero per frame; the
   running tracks drive frame demand themselves, and settled sprites cost
   nothing (bench: 400 retargets ~4ms, once a second - vs ~5ms per FRAME
-  moving the same population imperatively). Mount poses always snap (the
+  moving the same population imperatively). Retargeting every frame is
+  also a legitimate pattern, not an abuse: rewriting a spring's TARGET
+  each frame to chase a moving point (a follow-camera trailing a moving
+  sprite) rides the spring's smoothing for free - a spring keeps its
+  velocity through retargets, so the chase stays fluid. Mount poses always snap (the
   component declares the transition after the first pose sync; the
   function face sets it after addSprite). Each natural settle calls the
   handle's `onTransitionEnd` (plain field, or the `<Sprite>`/`<Group>` prop)
@@ -126,7 +133,7 @@ chunks on approach, evict) - okf/backlog/2d-baked-layers.md.
 | `SpriteLayer` | width, height (layer pixels), atlas (TextureId), capacity?, clearColor?, camera?, oversample?, maxOversample?, label?, ref?, output?, events? |
 | `Sprite` | x, y (center; local to the enclosing `<Group>`), w, h, frame?, rotation? (radians, clockwise), tint? ([r,g,b,a] 0..1), transition?, onPointer{Down,Move,Up,Enter,Leave}?, ref? |
 | `Group` | x?, y?, rotation?, scale? (uniform, scales the subtree), transition?, ref? |
-| `TileLayer` | cols, rows, tileW, tileH, atlas (TextureId), clearColor?, filter?, chunkTiles?, oversample?, maxOversample?, camera? (TileCamera: x, y, zoom, rotation, pivotX, pivotY), label?, ref? |
+| `TileLayer` | cols, rows, tileW, tileH, atlas (TextureId), chunkClearColor?, filter?, chunkTiles?, oversample?, maxOversample?, camera? (TileCamera: x, y, zoom, rotation, pivotX, pivotY), label?, ref? |
 
 `SpriteLayer` owns the layer and renders the built-in `<texture>` leaf
 carrying the layer's pointer handlers (opt out with `events={false}`; compose
@@ -149,7 +156,10 @@ is flat. Event x/y are layer pixels with the camera undone.
   createAtlas registers with the owning scope like every core texture).
 - `capacity` is a reservation, not a limit, on both layer kinds; reserve
   realistically to skip the growth copies. On the records layer, do not
-  cache `layer.records` across addSprite - growth replaces the array.
+  cache `layer.records` across addSprite - growth replaces the array and
+  a hoisted reference becomes a dead copy whose writes publish nothing.
+  `layer.withRecords(fn)` is the hoist-proof read; a bare `layer.records`
+  at use time is equally live.
 - Node layer: `sprite.node` is public FOR BINDING PRODUCERS, not for
   lifecycle - never destroyNode it yourself (removeSprite owns that), and
   a transform written through flux:spatial directly bypasses the sprite's
@@ -209,9 +219,14 @@ is flat. Event x/y are layer pixels with the camera undone.
   Both are LAYOUT components: neither can live inside a d-* subtree (the
   insert throws); for a detached parent, `<SpriteLayer output>` hands out
   the texture id for a `<d-texture>` of your own.
-- `clearColor` is PER CHUNK: never-written regions have no chunk and render
-  nothing, so a full-bleed ground color belongs on the container behind the
-  layer (a `d-rect` under it), not on clearColor.
+- `chunkClearColor` is PER CHUNK, as named: never-written regions have no
+  chunk and render nothing, so a full-bleed ground color belongs on the
+  container behind the layer (a `d-rect` under it), not here. The flip side is FREE
+  TRANSPARENCY: with the default `[0,0,0,0]` clear, a mostly-unwritten
+  tile layer stacked over another composites with no mask, no alpha pass,
+  no shader - a sparse upper world (floating clouds over a sea) just
+  works, and per-cell alpha in the written cells carries through the
+  chunk (transparent clear + alpha blend).
 - Two samplers, two jobs. The ATLAS sampler (createAtlas `filter`) decides
   whether texels are hard blocks ("nearest", pixel art) or smooth
   ("linear"). The LAYER's output sampler (the sprite layer's target, the

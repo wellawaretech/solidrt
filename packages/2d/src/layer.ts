@@ -101,17 +101,22 @@ export type Sprite = {
    */
   node: NodeId | null
   /** Instance slot: fixed for the sprite's life on the node layer, the
-   * shifting draw-order index on a record layer. */
-  _slot: number
-  /** Pose mirror (node layer): what setSprite composes transforms from. */
-  _x: number
-  _y: number
-  _w: number
-  _h: number
-  _rot: number
-  /** Mirror flags (both layer kinds): re-applied to every frame write. */
-  _flipX: boolean
-  _flipY: boolean
+   * shifting draw-order index on a record layer. Readable (readonly, like
+   * the other underscore fields: cheap reads without getSprite's
+   * allocation); writes go through setSprite. */
+  readonly _slot: number
+  /** Pose mirror (node layer): what setSprite composes transforms from.
+   * On a RECORD layer this mirror goes stale once records are written
+   * raw - there the records array is the truth. */
+  readonly _x: number
+  readonly _y: number
+  readonly _w: number
+  readonly _h: number
+  readonly _rot: number
+  /** Mirror flags (both layer kinds): re-applied to every frame write.
+   * The cheap way to read flip state. */
+  readonly _flipX: boolean
+  readonly _flipY: boolean
   onPointerDown?: (event: SpritePointerEvent) => void
   onPointerMove?: (event: SpritePointerEvent) => void
   onPointerUp?: (event: SpritePointerEvent) => void
@@ -121,6 +126,12 @@ export type Sprite = {
    * one component; a cancel or snap never fires. */
   onTransitionEnd?: (event: TransitionEndEvent) => void
 }
+
+/** The layer-internal mutable view of a Sprite: the readonly on the
+ * underscore fields is for the public surface; internal write sites
+ * annotate with this (readonly does not affect assignability, so the two
+ * types flow into each other freely). */
+export type SpriteState = { -readonly [K in keyof Sprite]: Sprite[K] }
 
 /** The settled component of a node transition: `position` is x/y,
  * `scale` w/h (a group's uniform scale). */
@@ -272,7 +283,7 @@ export type LayerBase = {
   handlersFor(layout: (() => { width: number; height: number } | null) | null): SpriteHandlers
   dispose(): void
   _add(opts?: AddSpriteOptions): Sprite
-  _write(sprite: Sprite, opts: SpriteOptions): void
+  _write(sprite: SpriteState, opts: SpriteOptions): void
   _read(sprite: Sprite): Required<SpriteOptions>
   _remove(sprite: Sprite): void
   _schedule(): void
@@ -514,7 +525,7 @@ export function createSpriteLayer(
     styleDirty = true
   }
 
-  let writeStyle = (sprite: Sprite, opts: SpriteOptions) => {
+  let writeStyle = (sprite: SpriteState, opts: SpriteOptions) => {
     let at = sprite._slot * STYLE_FLOATS
     let flipX = opts.flipX !== undefined && opts.flipX !== sprite._flipX
     let flipY = opts.flipY !== undefined && opts.flipY !== sprite._flipY
@@ -638,7 +649,7 @@ export function createSpriteLayer(
       if (disposed) throw new Error("addSprite: layer is disposed")
       let slot = freeSlots.pop() ?? highWater++
       if (slot >= gpuCapacity) grow(gpuCapacity * 2)
-      let sprite: Sprite = {
+      let sprite: SpriteState = {
         layer,
         node: null,
         _slot: slot,

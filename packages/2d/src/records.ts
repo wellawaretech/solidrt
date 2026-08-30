@@ -32,7 +32,7 @@ import {
 import type { BufferId, TextureId } from "@solidrt/core/gpu"
 import { FULL_FRAME, writeFrame } from "./frames.ts"
 import { readFrame, spriteDispatch } from "./layer.ts"
-import type { LayerBase, Sprite, SpriteHandlers, SpriteLayerOptions, SpriteOptions } from "./layer.ts"
+import type { LayerBase, Sprite, SpriteHandlers, SpriteLayerOptions, SpriteOptions, SpriteState } from "./layer.ts"
 import { pointInSprite } from "./pick.ts"
 import { checkOversample } from "./oversample.ts"
 import { FRAGMENT, INSTANCE_ATTRIBUTES, VERTEX } from "./shaders.ts"
@@ -54,9 +54,16 @@ export type RecordLayer = LayerBase & {
    * it.
    */
   records: Float32Array
+  /**
+   * Run `fn` with the CURRENT record array and return its result - the
+   * hoist-proof form of `records`. A cached array reference silently
+   * becomes a dead copy after growth (writes publish nothing); reading
+   * through withRecords at use time always hits the live array.
+   */
+  withRecords<T>(fn: (records: Float32Array) => T): T
   /** Mark the records dirty and schedule the publish (the raw-path commit). */
   touch(): void
-  _order: Sprite[]
+  _order: SpriteState[]
 }
 
 /**
@@ -150,7 +157,7 @@ export function createRecordLayer(
   }
 
   // Record layout: [cx, cy, w, h, u0, v0, u1, v1, rot, tintR, tintG, tintB, tintA]
-  let writeRecord = (sprite: Sprite, opts: SpriteOptions) => {
+  let writeRecord = (sprite: SpriteState, opts: SpriteOptions) => {
     let at = sprite._slot * FLOATS_PER_SPRITE
     let r = layer.records
     if (opts.x !== undefined) r[at] = opts.x
@@ -249,7 +256,7 @@ export function createRecordLayer(
         next.set(layer.records)
         layer.records = next
       }
-      let sprite: Sprite = { layer, node: null, _slot: index, _x: 0, _y: 0, _w: 0, _h: 0, _rot: 0, _flipX: false, _flipY: false }
+      let sprite: SpriteState = { layer, node: null, _slot: index, _x: 0, _y: 0, _w: 0, _h: 0, _rot: 0, _flipX: false, _flipY: false }
       layer._order.push(sprite)
       writeRecord(sprite, {
         x: 0,
@@ -302,6 +309,9 @@ export function createRecordLayer(
       RESOLVED.then(flush)
     },
     records: new Float32Array(capacity * FLOATS_PER_SPRITE),
+    withRecords(fn) {
+      return fn(layer.records)
+    },
     touch() {
       layer._schedule()
     },
