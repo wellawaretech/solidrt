@@ -47,12 +47,6 @@ Shaped, not started.
   createAtlas only decodes an already-packed sheet, so a second sheet costs a
   second full-size render target and runtime-supplied images have no way in at
   all.
-- **[The tile layer's auto-oversample thrashes under a rotating camera and has no total ceiling](backlog/2d-auto-oversample-rotating-camera.md)** [2026-08-29]
-  TileLayer picks its oversample from the world view's rotated AABB, which
-  swells up to 1.41x as the camera turns and crosses an integer boundary
-  forever, re-baking every resident chunk on each flip; the window-texel
-  budget is per target so it never binds for chunk-sized targets, the explicit
-  prop is read untracked, and fitOversample is not exported.
 - **[Baked layers and tilemaps for @solidrt/2d](backlog/2d-baked-layers.md)** [2026-08-19]
   Static 2D bulk (tile worlds, backgrounds) rendered once into a texture and
   drawn as ONE quad, with incremental re-bake - the primitive-count answer for
@@ -94,6 +88,12 @@ Shaped, not started.
   motes, sprites until the sprite camera rotates) re-implements TileCamera's
   projection by hand from the component source, and the tiles example rotates
   a quarter turn off from the "heading renders upward" it claims.
+- **[The tile layer's texel budget is per target, so a chunked layer has no total memory ceiling](backlog/2d-tile-oversample-ceiling.md)** [2026-08-29]
+  fitOversample bounds one target by the window's device pixel count, and a
+  chunk is tiny against any window, so the budget never binds for TileLayer;
+  total tile-layer texture memory is resident chunks x n squared with nothing
+  bounding n but maxTextureSize, and a 2x display silently multiplies it by 16
+  over oversample 1.
 - **[A tile is a frame and nothing else, so tinting a tile world means duplicating cells in the atlas](backlog/2d-tile-tint.md)** [2026-08-29]
   setTile takes a Frame or null; the baked chunk records already carry a tint
   at defaults, but neither the tile nor the layer exposes it, so day/night,

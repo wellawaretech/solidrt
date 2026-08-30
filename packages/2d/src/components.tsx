@@ -21,6 +21,24 @@ function windowTexels(): number {
   let scale = displayScale()
   return win.width * scale * (win.height * scale)
 }
+
+/** How far below the current factor's lower boundary the scale must fall
+ * before an auto-picked oversample shrinks. Growth is immediate (an
+ * undersampled layer is visibly soft); the margin keeps a scale
+ * oscillating around an integer (a breathing ancestor transform, float
+ * noise in a measured box) from re-baking the layer on every swing. */
+const OVERSAMPLE_SHRINK_MARGIN = 0.25
+
+function applyOversample(
+  layer: { readonly oversample: number; setOversample(n: number): void },
+  scale: number,
+  targetW: number,
+  targetH: number,
+): void {
+  let n = fitOversample(scale, targetW, targetH, windowTexels())
+  if (n < layer.oversample && scale > layer.oversample - 1 - OVERSAMPLE_SHRINK_MARGIN) return
+  layer.setOversample(n)
+}
 import { createTileLayer } from "./tiles.ts"
 import type { TileChunk, TileLayer as TileLayerHandle } from "./tiles.ts"
 
@@ -117,16 +135,18 @@ export let SpriteLayer: ParentComponent<SpriteLayerProps> = props => {
   // Auto oversample: the built-in leaf's window box, in device pixels, per
   // layer pixel. Picked after every layout, and again when the display scale
   // changes: the first layout runs before the resize event that reports the
-  // scale, and a scale change alone lays nothing out. onLayout is not a
-  // tracking scope; the reads there are plain.
+  // scale, and a scale change alone lays nothing out. pick runs as an
+  // onLayout handler and as an effect apply, both untracked scopes, so its
+  // prop reads are wrapped in an explicit untrack.
   let leaf: { id: number } | undefined
-  let pick = () => {
-    if (!leaf || props.oversample !== undefined) return
-    let box = getBoundingBoxViewport(leaf)
-    if (!box) return
-    let scale = displayScale() * Math.max(box.width / props.width, box.height / props.height)
-    layer.setOversample(fitOversample(scale, props.width, props.height, windowTexels()))
-  }
+  let pick = () =>
+    untrack(() => {
+      if (!leaf || props.oversample !== undefined) return
+      let box = getBoundingBoxViewport(leaf)
+      if (!box) return
+      let scale = displayScale() * Math.max(box.width / props.width, box.height / props.height)
+      applyOversample(layer, scale, props.width, props.height)
+    })
   onLayout(pick)
   createEffect(() => displayScale(), pick)
   return (
@@ -315,17 +335,34 @@ export let TileLayer: VoidComponent<TileLayerProps> = props => {
       if (n !== undefined) layer.setOversample(n)
     },
   )
-  // Auto oversample: the world view's window box (camera zoom and rotation
-  // included - a rotated world's AABB over-estimates, which only rounds up),
-  // in device pixels, per world pixel.
+  // Auto oversample: the world view's window box, in device pixels, per
+  // world pixel. Rotation is not a resolution factor - texels per world
+  // pixel do not change as the camera turns - but the measured box is the
+  // AABB of the ROTATED view, which swells by up to sqrt(2) and under an
+  // animated rotation would sweep the scale across an integer boundary,
+  // re-baking every resident chunk on each flip. So the swell is divided
+  // back out for the known camera rotation, leaving displayScale, the
+  // ancestor fit and the camera zoom. The divide-out's basis is the view's
+  // laid-out box, which flexShrink 0 below pins to layer.width x
+  // layer.height: a flex container would otherwise compress the box (the
+  // chunks are detached and draw at world coordinates either way) and the
+  // measurement would mix layout compression into the scale. pick runs
+  // untracked (onLayout handler / effect apply), so its prop reads are
+  // wrapped explicitly.
   let world: { id: number } | undefined
-  let pick = () => {
-    if (!world || props.oversample !== undefined) return
-    let box = getBoundingBoxViewport(world)
-    if (!box) return
-    let scale = displayScale() * Math.max(box.width / layer.width, box.height / layer.height)
-    layer.setOversample(fitOversample(scale, layer.chunkW, layer.chunkH, windowTexels()))
-  }
+  let pick = () =>
+    untrack(() => {
+      if (!world || props.oversample !== undefined) return
+      let box = getBoundingBoxViewport(world)
+      if (!box) return
+      let r = props.camera?.rotation ?? 0
+      let cos = Math.abs(Math.cos(r))
+      let sin = Math.abs(Math.sin(r))
+      let rotW = layer.width * cos + layer.height * sin
+      let rotH = layer.width * sin + layer.height * cos
+      let scale = displayScale() * Math.max(box.width / rotW, box.height / rotH)
+      applyOversample(layer, scale, layer.chunkW, layer.chunkH)
+    })
   onLayout(pick)
   createEffect(() => displayScale(), pick)
   // Chunk allocations arrive through the layer's hook; the signal carries a
@@ -342,6 +379,7 @@ export let TileLayer: VoidComponent<TileLayerProps> = props => {
       ref={(n: { id: number }) => (world = n)}
       width={layer.width}
       height={layer.height}
+      flexShrink={0}
       originX={camX()}
       originY={camY()}
       rotate={props.camera?.rotation ?? 0}

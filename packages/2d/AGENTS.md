@@ -224,11 +224,14 @@ is flat. Event x/y are layer pixels with the camera undone.
   (nearest inside keeps blocks square), the linear composite spreads the
   fraction over one device pixel at block edges. The components pick n
   every layout from their leaf's window box (`getBoundingBoxViewport` x
-  `displayScale()`, which composes designSize fits and camera zoom), within
+  `displayScale()`, which composes designSize fits and camera zoom; the
+  tile layer divides its camera rotation's AABB swell back out - rotation
+  is not a resolution factor - and shrinks only past a margin so an
+  oscillating measurement cannot re-bake in a loop), within
   a budget of the window's own device pixel count; the
   primitives default to 1 and take `{ oversample }` / `setOversample(n)`
   - with `output` on `<SpriteLayer>` there is no built-in leaf, so set it
-  yourself. Never fix a shimmer by snapping the fit to an integer: the
+  yourself with the exported `fitOversample`. Never fix a shimmer by snapping the fit to an integer: the
   scene should fill its box at any ratio.
 - Retro scrolling habits are the app's, not the layer's: keep the camera
   fractional (rounding it to design pixels makes motion step at the
