@@ -539,6 +539,30 @@ samplers. Lights, colors and exponents are arguments, so
 nothing is pinned but the function names; `lit` is composed from these
 same constants - customizing never means leaving the system.
 
+Own GLSL inside `lit` without re-typing its assembly: `litFragment(options)`
+(also `/glsl`) builds the exact fragment `lit` compiles - the same option
+names and defaults as LitOptions with boolean `map`/`triplanar`/`alphaTest` -
+and `litVertex(options)` the vertex stage it pairs with. Two slots splice
+app GLSL in: `prelude` (file scope - uniforms and helpers; a uniform it
+declares is an ordinary `instance()` param) and `discardIf` (a bool
+EXPRESSION evaluated beside the alphaTest discard; it can read the
+varyings, the declared uniforms, and prelude's names). Slots are
+expressions on purpose: no local of the generated program is part of the
+contract, and colors are premultiplied throughout, so no slot touches
+them - reach past the slots by composing the constants above.
+`litShadowFragment(options)` is the depth-pass twin (same base and
+discards, nothing after them), so a discarding material casts what it
+draws: build it on `litVertex(options)` with the OPPOSITE cull, instance
+it with only the uniform values its source declares (per-entry params
+reject unknown names), and pass it as the main instance's `shadow`.
+It returns undefined when the options cannot discard - the scene's
+default depth override is then already right, carry no `shadow`.
+`UNLIT_VERTEX` / `unlitFragment` / `unlitShadowFragment` are the unlit
+twins (no lighting flags, no cull; varyings vUv/vWorldPos only). TRAP:
+a shadow program that never reads `n` (no triplanar, no discardIf using
+it) reflects `uNormal` inactive - set `normalMatrix: false` on that
+instance or every caster move warns about the skipped write.
+
 Lights and `lit`: lights are graph NODES, like Three. `createDirectionalLight({
 direction?, color?, intensity? })` / `<DirectionalLight>` is parallel light
 travelling along `direction` in the node's LOCAL space (default `[0, -1,

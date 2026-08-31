@@ -14,7 +14,12 @@
 // every function returns its raw term, weighting and color belong to the
 // caller.
 
-import { glsl } from "@solidrt/core/gpu"
+import type { CullMode } from "@solidrt/core/gpu"
+
+// core/gpu's glsl tag, aliased locally (it is String.raw) so this module
+// stays runtime-pure: no flux:gpu import, so the checks/ rigs and any
+// bake-time tool can run it headless on bare flux.
+let glsl = String.raw
 
 /** The directional-light cap of the scene's light list (DirectionalLight nodes)
  * and of the `lit` fragment; a custom fragment declares
@@ -292,3 +297,361 @@ export const SHADOW_LOOKUP = glsl`
     return 1.0;
   }
 `
+
+/**
+ * The option set the lit program builders take: the flags that pick the
+ * program - the same names and defaults as LitOptions, minus the values
+ * (`map: true` says the fragment samples uMap, not which texture) - plus
+ * two slots an app splices its own GLSL into.
+ *
+ * The slots are deliberately narrow: `prelude` adds declarations,
+ * `discardIf` is a bool EXPRESSION, spliced at a fixed point - not a
+ * statement block against named locals, so no local of the generated
+ * program is part of the contract and restructuring it stays an internal
+ * change. A slot can read the varyings (vWorldPos, vNormal, vUv, and
+ * vColor with vertexColors), the uniforms the flags declare, and whatever
+ * `prelude` declares; a uniform `prelude` declares is an ordinary
+ * per-entry param, passed to instance() like uColor. Colors in this
+ * program are PREMULTIPLIED (the engine's pixel contract), which is why
+ * no slot touches them.
+ *
+ * Reach past the slots - a tint, a normal perturbation, a different light
+ * model - by composing a fragment from LIT_VERTEX and the pure functions
+ * above. That is the same import list, not a lower tier.
+ */
+export type LitSourceOptions = {
+  /** The fragment samples a `uniform sampler2D uMap`, tinted by uColor. */
+  map?: boolean
+  /** Multiply the base by the colored layout's per-vertex vColor; pairs
+   * with LIT_VERTEX_COLORED (litVertex picks it). */
+  vertexColors?: boolean
+  /** Sample uMap by world position blended across the three axis planes,
+   * at `uniform float uTriplanar` repeats per world unit, instead of by
+   * UV. Needs `map`. */
+  triplanar?: boolean
+  /** Write the base alpha through and blend; opaque (the default) writes
+   * alpha 1, so a leaked texel alpha cannot punch through it. */
+  transparent?: boolean
+  /** Compose the scene's shadow set and multiply each light's term by its
+   * factor (default true). False declares no shadow sampler at all. */
+  receiveShadow?: boolean
+  /** Which faces the material's own pipeline drops (default "back"). The
+   * fragment's business because a program that shows back faces lights
+   * them with the normal flipped, else a double-sided leaf's back is
+   * black. */
+  cull?: CullMode
+  /** Declare `uniform float uAlphaTest` and discard a fragment whose base
+   * alpha falls below it (the cutoff is a per-entry uniform, so one
+   * program serves every value). */
+  alphaTest?: boolean
+  /** Compose the scene's fog over the result (default true). */
+  fog?: boolean
+  /** GLSL spliced at file scope, before main: the uniforms, constants and
+   * helper functions `discardIf` calls. */
+  prelude?: string
+  /** A `bool` expression: true discards the fragment. Runs where the
+   * alphaTest discard runs, after the base color is resolved. Splices
+   * into the SHADOW source too, so what it discards casts no shadow. */
+  discardIf?: string
+}
+
+// The resolved option set: every flag concrete, every slot a string, so
+// the builders below never re-apply a default and `lit`'s class key and
+// its program cannot drift apart.
+type LitSource = {
+  map: boolean
+  vertexColors: boolean
+  triplanar: boolean
+  transparent: boolean
+  receiveShadow: boolean
+  cull: CullMode
+  alphaTest: boolean
+  fog: boolean
+  prelude: string
+  discardIf: string
+}
+
+function resolveLit(o: LitSourceOptions): LitSource {
+  return {
+    map: o.map === true,
+    vertexColors: o.vertexColors === true,
+    triplanar: o.triplanar === true && o.map === true,
+    transparent: o.transparent === true,
+    receiveShadow: o.receiveShadow !== false,
+    cull: o.cull ?? "back",
+    alphaTest: o.alphaTest === true,
+    fog: o.fog !== false,
+    prelude: o.prelude ?? "",
+    discardIf: o.discardIf ?? "",
+  }
+}
+
+// The varyings both lit sources read. The shadow source declares the same
+// set even where it uses none of them, so a discardIf written against the
+// main pass compiles unchanged there.
+function litVaryings(c: LitSource): string {
+  return glsl`
+    in vec3 vWorldPos;
+    in vec3 vNormal;
+    in vec2 vUv;
+    ${c.vertexColors ? "in vec4 vColor;" : ""}
+  `
+}
+
+// Base color to discard decision, shared by the main and shadow sources:
+// uColor, the map (by UV or triplanar), the vertex color, then the cutout
+// and the app's own discard. `n` is the surface normal the sampling and
+// discardIf see: flipped toward the viewer in the main pass of a program
+// that shows back faces, the plain geometric normal in the shadow pass
+// (which draws the other side of the surface; triplanar weights are
+// abs(n), so the sample is the same either way).
+function litBase(c: LitSource, flip: boolean): string {
+  return glsl`
+    vec3 n = normalize(vNormal);
+    ${flip ? "if (!gl_FrontFacing) n = -n;" : ""}
+    vec4 base = uColor;
+    ${
+      c.map
+        ? c.triplanar
+          ? `vec3 w = pow(abs(n), vec3(4.0));
+    w /= w.x + w.y + w.z;
+    vec3 p = vWorldPos * uTriplanar;
+    base *= texture(uMap, p.yz) * w.x + texture(uMap, p.xz) * w.y + texture(uMap, p.xy) * w.z;`
+          : "base *= texture(uMap, vUv);"
+        : ""
+    }
+    ${c.vertexColors ? "base *= vColor;" : ""}
+    ${c.alphaTest ? "if (base.a < uAlphaTest) discard;" : ""}
+    ${c.discardIf ? `if (${c.discardIf}) discard;` : ""}
+  `
+}
+
+/**
+ * The vertex stage `lit` pairs with a given option set: LIT_VERTEX, or
+ * LIT_VERTEX_COLORED when the fragment reads vColor. The shadow source
+ * takes this same stage, which is what lets a discardIf read the same
+ * varyings in both passes.
+ */
+export function litVertex(o: LitSourceOptions = {}): string {
+  return o.vertexColors === true ? LIT_VERTEX_COLORED : LIT_VERTEX
+}
+
+/**
+ * The `lit` fragment source for an option set - the exact program `lit`
+ * itself builds, composed from the constants above. Pair it with
+ * litVertex(o) in a shaderMaterialClass to get a lit material with your
+ * own GLSL in it, and pass litShadowFragment(o) alongside when it can
+ * discard.
+ *
+ * Per-entry uniforms to supply on instance(): `uColor` (premultiplied
+ * vec4), `uSpecular`, `uShininess`, plus `uMap`/`uTriplanar`/`uAlphaTest`
+ * for the options that declare them, plus whatever `prelude` declares.
+ * Everything else - the lights, the hemisphere, the camera position, the
+ * shadow set, the fog - is written by the scene.
+ */
+export function litFragment(o: LitSourceOptions = {}): string {
+  let c = resolveLit(o)
+  let alpha = c.transparent ? "base.a" : "1.0"
+  return glsl`
+    ${litVaryings(c)}
+    uniform vec4 uColor;
+    ${c.map ? "uniform sampler2D uMap;" : ""}
+    uniform float uSpecular;
+    uniform float uShininess;
+    ${c.triplanar ? "uniform float uTriplanar;" : ""}
+    ${c.alphaTest ? "uniform float uAlphaTest;" : ""}
+    uniform vec3 uCamPos;
+    uniform vec3 uHemiSky;
+    uniform vec3 uHemiGround;
+    uniform int uLightCount;
+    uniform vec3 uLightDir[${MAX_LIGHTS}];
+    uniform vec3 uLightColor[${MAX_LIGHTS}];
+    ${
+      c.receiveShadow
+        ? `${SHADOW_SLOTS}
+    ${SHADOW}
+    ${SHADOW_LOOKUP}`
+        : ""
+    }
+    ${HEMISPHERE}
+    ${LAMBERT}
+    ${BLINN_SPECULAR}
+    ${c.fog ? FOG : ""}
+    ${c.prelude}
+
+    void main() {
+      ${litBase(c, c.cull !== "back")}
+      vec3 v = normalize(uCamPos - vWorldPos);
+      vec3 light = hemisphere(n, uHemiSky, uHemiGround);
+      vec3 spec = vec3(0.0);
+      for (int i = 0; i < ${MAX_LIGHTS}; i++) {
+        if (i >= uLightCount) break;
+        vec3 l = uLightDir[i];
+        ${c.receiveShadow ? "float s = lightShadow(i, vWorldPos, n);" : "float s = 1.0;"}
+        light += uLightColor[i] * lambert(n, l) * s;
+        spec += uLightColor[i] * blinnSpecular(n, v, l, uShininess) * s;
+      }
+      vec3 rgb = base.rgb * light + spec * uSpecular * base.a;
+      ${c.fog ? `rgb = fog(rgb, ${alpha}, vWorldPos, uCamPos);` : ""}
+      fragColor = vec4(rgb, ${alpha});
+    }
+  `
+}
+
+/**
+ * The depth-pass source that makes a discarding lit material cast what it
+ * actually draws: the same base, cutout and discardIf as litFragment(o),
+ * and nothing after them (no lighting, no fog - a shadow has neither).
+ * Undefined when the option set cannot discard, which means the scene's
+ * default depth material is already right and the material should carry
+ * no `shadow` of its own.
+ *
+ * Use it as a second shaderMaterialClass on litVertex(o) with the
+ * OPPOSITE cull (Three's shadowSide rule: `cull: "back"` casts from
+ * "front"), instanced with the uniforms this source declares - uColor,
+ * plus uMap/uTriplanar/uAlphaTest/prelude's as opted into - and passed as
+ * the main instance's `shadow`.
+ */
+export function litShadowFragment(o: LitSourceOptions = {}): string | undefined {
+  let c = resolveLit(o)
+  if (!c.alphaTest && !c.discardIf) return undefined
+  return glsl`
+    ${litVaryings(c)}
+    uniform vec4 uColor;
+    ${c.map ? "uniform sampler2D uMap;" : ""}
+    ${c.triplanar ? "uniform float uTriplanar;" : ""}
+    ${c.alphaTest ? "uniform float uAlphaTest;" : ""}
+    ${c.prelude}
+
+    void main() {
+      ${litBase(c, false)}
+      fragColor = vec4(1.0);
+    }
+  `
+}
+
+/**
+ * The unlit vertex stage: model then view-projection, with UV and world
+ * position as varyings (vWorldPos is the fog distance input; a fragment
+ * that reads neither leaves the outs unmatched, which links fine).
+ * aNormal from the shared layout is deliberately not declared - inactive
+ * attributes are skipped and only the stride accounts for them.
+ */
+export const UNLIT_VERTEX = glsl`
+  in vec3 aPos;
+  in vec2 aUV;
+  out vec2 vUv;
+  out vec3 vWorldPos;
+  uniform mat4 uModel;
+  uniform mat4 uViewProj;
+
+  void main() {
+    vec4 world = uModel * vec4(aPos, 1.0);
+    vWorldPos = world.xyz;
+    gl_Position = uViewProj * world;
+    vUv = aUV;
+  }
+`
+
+/**
+ * The option set the unlit builders take: LitSourceOptions minus
+ * everything lighting decides (no vertexColors, triplanar, receiveShadow)
+ * and minus cull (the unlit fragment has no facing-dependent code - cull
+ * is pure pipeline state, passed to shaderMaterialClass directly). The
+ * slots follow the lit contract; the varyings here are vUv and vWorldPos
+ * only.
+ */
+export type UnlitSourceOptions = {
+  /** The fragment samples a `uniform sampler2D uMap`, tinted by uColor. */
+  map?: boolean
+  /** Write the base alpha through and blend; opaque (the default) writes
+   * alpha 1. */
+  transparent?: boolean
+  /** Declare `uniform float uAlphaTest` and discard below it. */
+  alphaTest?: boolean
+  /** Compose the scene's fog over the result (default true). */
+  fog?: boolean
+  /** GLSL spliced at file scope, before main. */
+  prelude?: string
+  /** A `bool` expression: true discards the fragment; splices into the
+   * shadow source too. */
+  discardIf?: string
+}
+
+type UnlitSource = {
+  map: boolean
+  transparent: boolean
+  alphaTest: boolean
+  fog: boolean
+  prelude: string
+  discardIf: string
+}
+
+function resolveUnlit(o: UnlitSourceOptions): UnlitSource {
+  return {
+    map: o.map === true,
+    transparent: o.transparent === true,
+    alphaTest: o.alphaTest === true,
+    fog: o.fog !== false,
+    prelude: o.prelude ?? "",
+    discardIf: o.discardIf ?? "",
+  }
+}
+
+/**
+ * The `unlit` fragment source for an option set (sprite shares it): the
+ * color, times the map when there is one, the discards, then the scene's
+ * fog unless opted out. An opaque program writes alpha 1: the scene
+ * target is composited premultiplied, so a leaked texel alpha would punch
+ * a hole through an opaque draw. Pair with UNLIT_VERTEX (or a custom
+ * vertex stage writing vUv/vWorldPos, as sprite does).
+ *
+ * Per-entry uniforms on instance(): `uColor` (premultiplied vec4), plus
+ * `uMap`/`uAlphaTest` for the options that declare them, plus whatever
+ * `prelude` declares.
+ */
+export function unlitFragment(o: UnlitSourceOptions = {}): string {
+  let c = resolveUnlit(o)
+  let alpha = c.transparent ? "base.a" : "1.0"
+  return glsl`
+    ${c.map ? "in vec2 vUv;" : ""}
+    ${c.fog ? "in vec3 vWorldPos;" : ""}
+    ${c.map ? "uniform sampler2D uMap;" : ""}
+    uniform vec4 uColor;
+    ${c.alphaTest ? "uniform float uAlphaTest;" : ""}
+    ${c.fog ? "uniform vec3 uCamPos;" : ""}
+    ${c.fog ? FOG : ""}
+    ${c.prelude}
+    void main() {
+      vec4 base = ${c.map ? "texture(uMap, vUv) * uColor" : "uColor"};
+      ${c.alphaTest ? "if (base.a < uAlphaTest) discard;" : ""}
+      ${c.discardIf ? `if (${c.discardIf}) discard;` : ""}
+      ${c.fog ? `base.rgb = fog(base.rgb, ${alpha}, vWorldPos, uCamPos);` : ""}
+      fragColor = vec4(base.rgb, ${alpha});
+    }
+  `
+}
+
+/**
+ * The depth-pass source for a discarding unlit material, litShadowFragment's
+ * unlit twin: the same base and discards, nothing else. Undefined when
+ * the option set cannot discard. Pair with UNLIT_VERTEX and the opposite
+ * cull, instanced with the uniforms it declares.
+ */
+export function unlitShadowFragment(o: UnlitSourceOptions = {}): string | undefined {
+  let c = resolveUnlit(o)
+  if (!c.alphaTest && !c.discardIf) return undefined
+  return glsl`
+    ${c.map ? "in vec2 vUv;" : ""}
+    uniform vec4 uColor;
+    ${c.map ? "uniform sampler2D uMap;" : ""}
+    ${c.alphaTest ? "uniform float uAlphaTest;" : ""}
+    ${c.prelude}
+    void main() {
+      vec4 base = ${c.map ? "texture(uMap, vUv) * uColor" : "uColor"};
+      ${c.alphaTest ? "if (base.a < uAlphaTest) discard;" : ""}
+      ${c.discardIf ? `if (${c.discardIf}) discard;` : ""}
+      fragColor = vec4(1.0);
+    }
+  `
+}
