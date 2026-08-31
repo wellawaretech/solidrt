@@ -125,7 +125,8 @@ makes every read a crossing.
   offset, indices)` registers CPU copies (memory only for what is picked or
   collided against). Narrowphase is Moller-Trumbore over the candidates
   the tree returns; a per-geometry triangle BVH only if a real model shows
-  it is needed.
+  it is needed. (A real model did - a merged static scene put a single
+  ray at ~20 ms - so the per-shape BVH landed 2026-08-31, see below.)
 - `raycast(origin, dir)` returns `(node, t, point, normal, face, uv)`; box
   fallback for nodes without triangles. Hits gain `face`/`uv`, concave
   silhouettes become correct, `bvh.ts` is deleted. Pointer capture/hover
@@ -141,7 +142,7 @@ JS until node counts make them matter.
 
 ## Findings
 
-Stage 1 landed 2026-08-23 (uncommitted): `alloy/src/spatial/`,
+Stage 1 landed 2026-08-23: `alloy/src/spatial/`,
 `Context::spatial*`, `flux:spatial`, `scene.ts` rewired, unit tests in
 `alloy/src/tests/spatial.rs`, bench `probes/scene-walk-bench.tsx`. All
 3d examples verified live (scene-basic, lit, pick with real taps,
@@ -183,7 +184,7 @@ instanced).
   (created at add, freed at remove/dispose), so nothing needs a
   finalizer; outside a scene `worldInto` composes the chain in JS.
 
-Stage 2 landed 2026-08-23 (uncommitted): `alloy/src/spatial/bvh.rs`
+Stage 2 landed 2026-08-23: `alloy/src/spatial/bvh.rs`
 (the JS tree ported), `pick.rs` (shapes + Moller-Trumbore), `setBounds`/
 `createShape`/`setShape`/`raycast` on `flux:spatial`; `bvh.ts` deleted,
 `rayBoxDistance` moved to `math.ts`, the JS differential rig replaced by
@@ -207,7 +208,7 @@ example taps (hit points now on the sphere surface), lit, bench.
   faces in the surface-area heuristic, so a 2D sprite scene or 2D
   overlap queries use it unchanged.
 
-Follow-ups landed 2026-08-23 (uncommitted):
+Follow-ups landed 2026-08-23:
 
 - SAH rotations (Box2D lineage: child/grandchild swaps along both refit
   walks) in `bvh.rs`: a 3025-leaf grid inserted in row order stays <= 40
@@ -249,6 +250,33 @@ Follow-ups landed 2026-08-23 (uncommitted):
   slot vector, ray); scalars only for genuine scalars (ids, counts,
   offsets). The rquickjs ~8-arg cap forces this shape anyway once a call
   carries ids plus options.
+
+Per-shape triangle BVH landed 2026-08-31, demand shown by a
+real app whose merged static scene put a single ground ray at ~20 ms (the
+narrowphase was linear in the hit geometry's triangles, so the merge
+advice and the raycast advice worked against each other):
+
+- `TriBvh` in `pick.rs`: static (shapes are immutable, no refit), median
+  split on the widest centroid axis, flat nodes, leaves of up to 8
+  triangles, faces permuted so leaves own contiguous runs. Traversal is
+  nearest-child-first with the far child pruned against the best hit.
+  The dynamic scene `Bvh` in `bvh.rs` is untouched.
+- Built LAZILY by the first ray that reaches the shape (`Shapes::ray`),
+  never at `create_shape`: shapes exist for every distinct geometry, and
+  an app that never raycasts pays nothing (Unity/Godot cook eagerly at
+  load; three-mesh-bvh is explicit opt-in; lazy is the no-knob middle).
+  An app that minds the first-ray spike fires a warm-up ray at load.
+- `BVH_MIN_TRIANGLES = 64`: smaller shapes stay brute-force (the flat
+  loop beats traversal there, and prop-heavy scenes skip thousands of
+  tiny trees). `ray_shape` stays as the linear path and the test oracle
+  (`shape_bvh_matches_the_linear_oracle`, plus slot-reuse and
+  equal-centroid degenerate tests).
+- Same pass, JS side: `scene.raycast(origin, direction, opts?)` grew
+  `{ layers }` (Unity's layerMask - replaces the scene mask for the
+  query, so a mesh on an undrawn layer is a ray-only collision mesh) and
+  `{ meshes }` (Three's intersectObjects include-list). No flux:spatial
+  surface change - both filters are scene.ts-side. The stale "volume
+  tier" pick() doc comment in scene.ts died in the same pass.
 
 Considered and rejected (2026-08-23): collapsing the picking shape into a
 retained `createBuffer` CPU copy. The ledger says no: a shape stores only

@@ -354,6 +354,29 @@ export function setStats(on: boolean, ws?: ServerWebSocket) {
   return targets.length
 }
 
+// Every endpoint the switch below handles, kept in step with its cases:
+// the 404 lists them so a caller with a wrong path (or a guessed shape
+// like /debug/<name> for /debug?name=<name>) learns the real surface
+// from the error instead of the docs. Per-endpoint 400s teach the args.
+const CONTROL_ENDPOINTS = [
+  "/__control__/clients",
+  "/__control__/logs",
+  "/__control__/tree",
+  "/__control__/stats",
+  "/__control__/snapshot",
+  "/__control__/gpu",
+  "/__control__/debug",
+  "/__control__/texture",
+  "/__control__/clock",
+  "/__control__/input",
+  "/__control__/buffer",
+  "/__control__/reload",
+  "/__control__/load",
+  "/__control__/mute",
+  "/__control__/watch",
+  "/__control__/shutdown",
+]
+
 export async function handleControl(req: Request, path: string, query: Map<string, string>): Promise<Response> {
   switch (path) {
     case "/__control__/clients":
@@ -594,6 +617,6 @@ export async function handleControl(req: Request, path: string, query: Map<strin
       return Response.json(body)
     }
     default:
-      return Response.json({ error: "Unknown control endpoint" }, { status: 404 })
+      return Response.json({ error: "Unknown control endpoint " + path, endpoints: CONTROL_ENDPOINTS }, { status: 404 })
   }
 }

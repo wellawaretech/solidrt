@@ -22,6 +22,10 @@ use std::collections::HashMap;
 pub use bvh::{ray_box_distance, Box3};
 pub use math::{compose, invert_affine, multiply, normal_matrix, transform_point, transform_vector, IDENTITY};
 pub use pick::{Hit, Shape, ShapeId};
+// The linear narrowphase and the indexing threshold, for tests: the
+// brute-force path is the oracle the BVH path is checked against.
+#[cfg(test)]
+pub(crate) use pick::{ray_shape, BVH_MIN_TRIANGLES};
 pub use transitions::{Component, NodeTransitionConfig};
 
 use bvh::Bvh;
@@ -568,7 +572,9 @@ impl Spatial {
   /// Every shown node with bounds the ray strikes, nearest first. A node
   /// with a shape is tested per triangle (hit carries `face`, `uv` when the
   /// shape has UVs, and the world-space geometric `normal`); without one
-  /// its local box is the volume. `direction` need not be normalized;
+  /// its local box is the volume. The first ray reaching a large shape
+  /// builds its triangle BVH (see pick.rs), so repeated rays against a
+  /// merged scene stay log-cost. `direction` need not be normalized;
   /// distances are world units.
   pub fn raycast(&mut self, origin: [f32; 3], direction: [f32; 3]) -> Vec<Hit> {
     let len = (direction[0] * direction[0] + direction[1] * direction[1] + direction[2] * direction[2]).sqrt();
@@ -587,16 +593,19 @@ impl Spatial {
       let Some(bounds) = n.bounds else {
         continue;
       };
+      let world = n.world;
+      // A shape id that no longer resolves (destroyed) falls back to the
+      // box, like a node that never had one.
+      let shape = n.shape.filter(|&sid| self.shapes.get(sid).is_some());
       // The ray in the node's local frame: an affine map preserves the
       // ray parameter, so with the local direction left unnormalized t
       // stays in world units.
-      let inv = invert_affine(&n.world);
+      let inv = invert_affine(&world);
       let lo = transform_point(&inv, origin);
       let ld = transform_vector(&inv, d);
-      let shape = n.shape.and_then(|sid| self.shapes.get(sid));
       let found = match shape {
-        Some(shape) => pick::ray_shape(shape, lo, ld).map(|(t, face, uv, local_normal)| {
-          let nm = normal_matrix(&n.world);
+        Some(sid) => self.shapes.ray(sid, lo, ld).map(|(t, face, uv, local_normal)| {
+          let nm = normal_matrix(&world);
           let wn = transform_vector(&nm, local_normal);
           let l = (wn[0] * wn[0] + wn[1] * wn[1] + wn[2] * wn[2]).sqrt();
           let mut normal = if l > 0.0 { [wn[0] / l, wn[1] / l, wn[2] / l] } else { wn };

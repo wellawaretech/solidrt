@@ -57,7 +57,10 @@ blendMode and pointer events like any element.
   marker meshes live on bit 2: invisible in the main render, drawn by
   the map view whose mask admits them. Shadow views follow the SCENE's
   mask (what the scene cannot see must not darken it), and
-  pick()/raycast() skip scene-masked-out meshes like invisible ones.
+  pick()/raycast() skip scene-masked-out meshes like invisible ones -
+  unless the raycast passes its own `{ layers }`, which is how a low-poly
+  collision mesh lives undrawn in the scene yet answers ground queries
+  (the physics-collider pattern).
   Per-view fog: `fog: FogOptions | null` on createView overrides the
   scene's fog for that view (null = unfogged - the clear minimap over a
   fogged scene); absent follows the scene. `overrideMaterial` (Three's
@@ -170,7 +173,13 @@ blendMode and pointer events like any element.
   `gltf-check`) run on
   flux from the repo root: `bunx srt bundle -f --stdout
   packages/3d/checks/<name>.ts | target/release/flux -`. Run the ones
-  touching what you changed.
+  touching what you changed. `raycast-check.tsx` is the exception: it
+  asserts the documented picking contract (triangle accuracy, the box
+  tier, pick/raycast parity, layer masks, the `{ meshes }` filter)
+  against a real scene, so it runs on the playback client instead:
+  `bunx srt render packages/3d/checks/raycast-check.tsx --project
+  --duration 3 --size 128x128`. Run it whenever a doc edit touches
+  picking claims - two copies of this contract have drifted before.
 
 ## Components
 
@@ -269,19 +278,26 @@ HUD.
 Picking: `scene.pick(x, y)` is project()'s inverse - the camera ray
 through a scene pixel, returning `Hit[]` (`{ mesh, distance, point }`,
 world units, nearest first; every hit along the ray, not just the front
-one). `scene.raycast(origin, direction)` is the world-space primitive
-under it, and `scene.screenRay(x, y)` the ray itself (`{ origin,
-direction }`; direction's camera-forward component is 1, so
+one). `scene.raycast(origin, direction, opts?)` is the world-space
+primitive under it, and `scene.screenRay(x, y)` the ray itself
+(`{ origin, direction }`; direction's camera-forward component is 1, so
 `origin + w * direction` = unproject) for intersection work pick cannot
 do - drag planes, ground grids, filtered raycasts. All three cast
-exactly the same ray.
+exactly the same ray. raycast's `opts` filters the query:
+`{ layers }` (Unity's layerMask) replaces the scene's mask for this ray,
+and `{ meshes }` (Three's intersectObjects) is an include-list; a
+per-frame ground query passes one or the other instead of skipping
+skyboxes and actors by hand.
 The index and the narrowphase live in the spatial core: every attached
 mesh's local box is a leaf in a dynamic AABB tree the flush refits from
 the fresh world matrices (O(moved) per frame, a query O(log meshes)), and
 an ordinary mesh is then tested per triangle against its geometry's
 shape (one CPU copy per distinct geometry, created with its GPU buffers),
 so hits carry `face`, `uv` and a world-space `normal` facing the ray, and
-a ray through a knot's hole misses. An instanced mesh is box-only (its
+a ray through a knot's hole misses. A large geometry's triangles are
+BVH-indexed too - built by the first ray that reaches the shape, log-cost
+after - so raycasting a merged static scene stays cheap (see the batching
+advice). An instanced mesh is box-only (its
 explicit population bounds; records are opaque), so its hits have none of
 the three. Both methods
 flush pending writes first (the lookAt/project immediacy contract), and
@@ -348,7 +364,10 @@ concatenates parts into one geometry with offset indices (uint32 past 64k
 vertices); parts must share one layout, a mixed list throws. Together
 they collapse a static scene to one mesh per material - transform each
 part into place, merge, draw once - so only what actually moves keeps a
-node, a draw entry and a per-frame `uModel` write of its own. Both are
+node, a draw entry and a per-frame `uModel` write of its own. Merging
+does not tax picking: a merged geometry's raycast narrowphase runs
+through its triangle BVH (built on the first ray), so merge for draw
+count without giving up ground queries. Both are
 pure array math (Three's `applyMatrix4` + `mergeGeometries`), no GPU
 call, and the source geometries are untouched. `geometryBounds(geometry)`
 returns the cached local AABB `[minX, minY, minZ, maxX, maxY, maxZ]`, and

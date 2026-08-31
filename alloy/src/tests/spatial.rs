@@ -219,7 +219,7 @@ fn reparent_rejects_cycles() {
 
 // --- stage 2: index and picking ---
 
-use crate::spatial::{ray_box_distance, NodeId, Shape};
+use crate::spatial::{ray_box_distance, ray_shape, NodeId, Shape, BVH_MIN_TRIANGLES};
 
 fn quad_shape(uvs: bool) -> Shape {
   // Unit quad in the xy plane at z = 0, two triangles.
@@ -329,6 +329,128 @@ fn triangle_hit_carries_face_uv_and_normal() {
   assert!(s.set_shape(n, Some(shape)).is_err());
   // A node whose shape is gone falls back to its box.
   assert_eq!(s.raycast([0.0, 0.0, 0.0], [0.0, 0.0, -1.0])[0].face, None);
+}
+
+// A heightfield over x/z, `side` cells square, two triangles per cell:
+// vertex heights vary so faces are not coplanar, UVs span 0..1.
+fn grid_shape(side: usize) -> Shape {
+  let verts = side + 1;
+  let mut positions = Vec::with_capacity(verts * verts * 3);
+  let mut uvs = Vec::with_capacity(verts * verts * 2);
+  for z in 0..verts {
+    for x in 0..verts {
+      let h = ((x * 3 + z * 5) % 7) as f32 * 0.1;
+      positions.extend_from_slice(&[x as f32, h, z as f32]);
+      uvs.extend_from_slice(&[x as f32 / side as f32, z as f32 / side as f32]);
+    }
+  }
+  let mut indices = Vec::with_capacity(side * side * 6);
+  for z in 0..side {
+    for x in 0..side {
+      let a = (z * verts + x) as u32;
+      let b = a + 1;
+      let c = a + verts as u32;
+      let d = c + 1;
+      indices.extend_from_slice(&[a, b, c, b, d, c]);
+    }
+  }
+  Shape { positions, uvs: Some(uvs), indices }
+}
+
+#[test]
+fn shape_bvh_matches_the_linear_oracle() {
+  // A heightfield well over the indexing threshold: the first ray builds
+  // the shape's triangle BVH, and every later hit must match the
+  // brute-force path exactly.
+  let side = 24;
+  let shape = grid_shape(side);
+  assert!(shape.indices.len() / 3 >= BVH_MIN_TRIANGLES * 2, "the grid must be big enough to index");
+  let oracle = grid_shape(side);
+  let mut s = Spatial::new();
+  let n = s.create([0.0; 3], Q, ONE, true);
+  let sid = s.create_shape(shape).expect("shape");
+  s.set_bounds(n, Some([0.0, 0.0, 0.0, side as f32, 1.0, side as f32])).expect("bounds");
+  s.set_shape(n, Some(sid)).expect("set shape");
+  flush(&mut s);
+  let mut state: u32 = 99;
+  let mut rand = move || {
+    state = state.wrapping_mul(1664525).wrapping_add(1013904223);
+    (state >> 8) as f32 / (1u32 << 24) as f32
+  };
+  let mut hit_count = 0;
+  for _ in 0..200 {
+    let o = [rand() * (side as f32 + 4.0) - 2.0, 5.0, rand() * (side as f32 + 4.0) - 2.0];
+    // Near-vertical rays land in triangle interiors (an exact edge is
+    // measure-zero), so face ids compare exactly.
+    let d = [rand() * 0.2 - 0.1, -1.0, rand() * 0.2 - 0.1];
+    let len = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt();
+    let dn = [d[0] / len, d[1] / len, d[2] / len];
+    let got = s.raycast(o, d);
+    match ray_shape(&oracle, o, dn) {
+      Some((t, face, uv, _)) => {
+        hit_count += 1;
+        assert_eq!(got.len(), 1, "one hit for a ray the oracle hits");
+        let h = &got[0];
+        assert!((h.distance - t).abs() < 1e-3, "distance {} vs oracle {t}", h.distance);
+        assert_eq!(h.face, Some(face));
+        let (gu, wu) = (h.uv.expect("uv"), uv.expect("oracle uv"));
+        assert!((gu[0] - wu[0]).abs() < 1e-3 && (gu[1] - wu[1]).abs() < 1e-3, "uv {gu:?} vs {wu:?}");
+        let normal = h.normal.expect("normal");
+        assert!(normal[1] > 0.0, "a downward ray sees the up-facing side");
+      }
+      None => assert!(got.is_empty(), "the index must not invent hits"),
+    }
+  }
+  assert!(hit_count > 100, "the sweep must mostly hit the grid ({hit_count} of 200)");
+}
+
+#[test]
+fn shape_slots_rebuild_their_index_on_reuse() {
+  let mut s = Spatial::new();
+  let n = s.create([0.0; 3], Q, ONE, true);
+  let big = s.create_shape(grid_shape(12)).expect("shape");
+  s.set_bounds(n, Some([0.0, 0.0, 0.0, 12.0, 1.0, 12.0])).expect("bounds");
+  s.set_shape(n, Some(big)).expect("set shape");
+  flush(&mut s);
+  assert!(!s.raycast([6.0, 5.0, 6.0], [0.0, -1.0, 0.0]).is_empty(), "the first ray builds the index and hits");
+  // Destroying frees the slot; the next create reuses it, and a stale
+  // index from the old geometry must not survive into the new shape.
+  s.set_shape(n, None).expect("clear shape");
+  s.destroy_shape(big).expect("destroy");
+  let mut moved = grid_shape(12);
+  for p in moved.positions.chunks_exact_mut(3) {
+    p[0] += 20.0;
+  }
+  let again = s.create_shape(moved).expect("reused slot");
+  s.set_bounds(n, Some([20.0, 0.0, 0.0, 32.0, 1.0, 12.0])).expect("bounds 2");
+  s.set_shape(n, Some(again)).expect("set shape 2");
+  flush(&mut s);
+  assert!(s.raycast([6.0, 5.0, 6.0], [0.0, -1.0, 0.0]).is_empty(), "the old geometry is gone");
+  assert!(!s.raycast([26.0, 5.0, 6.0], [0.0, -1.0, 0.0]).is_empty(), "the reused slot indexes the new shape");
+}
+
+#[test]
+fn identical_centroids_still_split_and_hit() {
+  // Coincident quads, every centroid equal: the worst case for a median
+  // split. The build must terminate (the median splits by count) and the
+  // ray still reports the shared plane.
+  let mut positions = Vec::new();
+  let mut indices = Vec::new();
+  for k in 0..BVH_MIN_TRIANGLES as u32 {
+    let b = k * 4;
+    positions.extend_from_slice(&[-1.0, -1.0, 0.0, 1.0, -1.0, 0.0, 1.0, 1.0, 0.0, -1.0, 1.0, 0.0]);
+    indices.extend_from_slice(&[b, b + 1, b + 2, b, b + 2, b + 3]);
+  }
+  let mut s = Spatial::new();
+  let n = s.create([0.0, 0.0, -3.0], Q, ONE, true);
+  let sid = s.create_shape(Shape { positions, uvs: None, indices }).expect("shape");
+  s.set_bounds(n, Some([-1.0, -1.0, 0.0, 1.0, 1.0, 0.0])).expect("bounds");
+  s.set_shape(n, Some(sid)).expect("set shape");
+  flush(&mut s);
+  let hits = s.raycast([0.0, 0.0, 0.0], [0.0, 0.0, -1.0]);
+  assert_eq!(hits.len(), 1);
+  assert!((hits[0].distance - 3.0).abs() < 1e-5);
+  assert!(hits[0].face.is_some());
 }
 
 #[test]

@@ -319,6 +319,21 @@ export type Hit = {
  * point at camera-forward distance `w` (unproject's mapping). */
 export type ScreenRay = { origin: Vec3; direction: Vec3 }
 
+/** Filters for one raycast query. */
+export type RaycastOptions = {
+  /**
+   * Layer mask replacing the scene's for this query (Unity's layerMask,
+   * Three's raycaster.layers): hits come from meshes whose `layers`
+   * intersect it, wherever the scene mask would look. A mask the scene
+   * excludes makes a ray-only mesh - a low-poly collision mesh living
+   * undrawn in the same scene, the physics-collider pattern.
+   */
+  layers?: number
+  /** Only these meshes report hits (Three's intersectObjects, an
+   * include-list); composes with `layers`. */
+  meshes?: Mesh[]
+}
+
 /** The settled component of a node transition. */
 export type TransitionEndEvent = {
   component: "position" | "rotation" | "scale"
@@ -649,17 +664,19 @@ export type Scene = {
   /**
    * Cast the camera ray through a scene pixel (top-left origin, y down -
    * project()'s space, the inverse direction) and return every visible
-   * mesh it hits, nearest first. The volume tier: hits test the mesh's
-   * bounding box, transformed exactly (any node transform, including
-   * non-uniform scale), so a hit through a concave gap - a knot's hole -
-   * still reports. Broadphase runs over a BVH kept in step by the sync
-   * walk: a query costs O(log meshes), not O(meshes). Reflects pending
-   * setTransform/add writes immediately (the sync is flushed).
+   * mesh it hits, nearest first. An ordinary mesh tests per triangle
+   * against its geometry (hits carry `face`, `uv`, a world-space `normal`
+   * facing the ray, and a ray through a knot's hole misses); an instanced
+   * mesh or sprite is box-only. Broadphase runs over a BVH kept in step
+   * by the sync walk, and a large geometry's triangles are BVH-indexed
+   * too (built by the first ray that reaches it), so merged static
+   * geometry stays cheap to query. Reflects pending setTransform/add
+   * writes immediately (the sync is flushed).
    */
   pick(x: number, y: number): Hit[]
   /** pick()'s world-space half: the same query along an arbitrary ray.
    * `direction` need not be normalized; distances are world units. */
-  raycast(origin: Vec3, direction: Vec3): Hit[]
+  raycast(origin: Vec3, direction: Vec3, opts?: RaycastOptions): Hit[]
   /**
    * pick()'s ray half (Unity's ScreenPointToRay, Godot's
    * project_ray_origin/normal): the camera ray through a scene pixel,
@@ -1369,8 +1386,10 @@ export function setRenderOrder(mesh: Mesh, order: number): void {
  * mesh when its mask intersects this: the scene's own mask (`layers` on
  * createScene, `scene.setLayers`), each view's (`layers` on createView,
  * `view.setLayers`); shadow views follow the scene's. A mesh masked out of
- * the scene is also skipped by pick()/raycast(), like an invisible one.
- * `layers: 0` draws nowhere. Not inherited from ancestor Groups.
+ * the scene is also skipped by pick()/raycast(), like an invisible one -
+ * unless a raycast passes its own mask (RaycastOptions.layers), which is
+ * how an undrawn collision-only mesh stays queryable. `layers: 0` draws
+ * nowhere. Not inherited from ancestor Groups.
  */
 export function setLayers(mesh: Mesh, layers: number): void {
   checkMask(layers, "setLayers")
@@ -2485,12 +2504,14 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
         direction: [pickDir[0], pickDir[1], pickDir[2]],
       }
     },
-    raycast(origin, direction) {
+    raycast(origin, direction, rayOpts) {
       // Flush pending writes: picking sees the tree as the app just wrote
       // it, the same immediacy contract as lookAt()/project(). (The queued
       // microtask still runs and finds nothing dirty - harmless.)
       if (scheduled) sync()
       if (disposed) return []
+      let mask = rayOpts?.layers !== undefined ? checkMask(rayOpts.layers, "raycast") : sceneMask
+      let include = rayOpts?.meshes !== undefined ? new Set(rayOpts.meshes) : null
       let hits: Hit[] = []
       rayOriginScratch[0] = origin[0]
       rayOriginScratch[1] = origin[1]
@@ -2501,8 +2522,11 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       for (let h of spatial.raycast(rayOriginScratch, rayDirScratch)) {
         let mesh = byNode.get(h.node)
         if (mesh === undefined) continue
-        // A mesh the scene mask excludes is skipped like an invisible one.
-        if ((mesh.layers & sceneMask) === 0) continue
+        // A mesh the query mask excludes is skipped like an invisible one;
+        // the mask defaults to the scene's, so an undrawn layer needs an
+        // explicit opts.layers to report.
+        if ((mesh.layers & mask) === 0) continue
+        if (include !== null && !include.has(mesh)) continue
         let hit: Hit = { mesh, distance: h.distance, point: h.point }
         if (h.normal !== undefined) hit.normal = h.normal
         if (h.face !== undefined) hit.face = h.face
