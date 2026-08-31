@@ -44,8 +44,10 @@ that matches the work; do not work from memory of what a web framework does.
   node_modules/@solidrt/core/src/types.d.ts + jsx-runtime.d.ts (source of truth)
 - style a screen: a background, a gradient, a shadow, an effect, vector art,
   a chart -> node_modules/@solidrt/core/agents/painting.md
-- write per-frame code, an animation, or anything writing properties in a
-  loop -> node_modules/@solidrt/core/agents/performance.md
+- write per-frame code, an animation, synchronous work heavy enough to
+  freeze the UI (a big parse, a simulation step - isolates take it off
+  the thread), or anything writing properties in a loop ->
+  node_modules/@solidrt/core/agents/performance.md
 - use an installed extension (UI components, 2D, 3D) ->
   node_modules/@solidrt/<name>/AGENTS.md and its examples/
 - debug a running app, or drive it over MCP to verify a change ->

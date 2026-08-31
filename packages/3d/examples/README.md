@@ -70,3 +70,10 @@ depends on `@solidrt/3d` (or in-repo from the package directory).
   transparent dome and a mesh without normals) parsed with `parseGltf`
   from a binary import and built by `createModel` into a Group of named
   parts; clicking a part hides it, clicking the body restores all.
+- `model-load.tsx` - the same rover loaded ASYNC with `loadModel` from
+  `assets/` under a `<Loading>` boundary: the async read lives in a memo,
+  a second memo derives the scene JSX after that read, and the shell
+  stays above the boundary - the two rules that avoid
+  PENDING_ASYNC_UNTRACKED_READ and the suspend-retry element leak. Needs
+  the asset baked into the running app:
+  `bunx srt tool 3d/model examples/model.glb -o assets/model.srtm`.

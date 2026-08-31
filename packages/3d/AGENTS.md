@@ -732,6 +732,41 @@ fits:
   "binary" }` then `createModel(parseGltf(bytes))`, see
   `examples/model.tsx`); bake anything big.
 
+Loading is async everywhere but the binary import: loadGltf/loadModel
+return promises, and the async value must be read the way Solid 2 async
+works - inside a tracking scope whose result the JSX reads back, under a
+`<Loading>` boundary. The worked shape is `examples/model-load.tsx`: the
+component keeps the async read in a memo (`let loaded = createMemo(() =>
+loadModel(path))`), derives everything - framing, mounting - in a second
+memo that reads `loaded()` FIRST and returns the scene JSX, and returns
+only that memo read; the window/view shell lives in the parent, above the
+boundary. Reading the value in the component body instead throws
+PENDING_ASYNC_UNTRACKED_READ, and any element the component builds before
+the suspending read is orphaned on the boundary's retry and never freed
+(the dev leak sentinel reports it) - so the suspending component creates
+no elements of its own. Async here means the file read: the parse and
+createModel run synchronously on main. Bake anything big to .srtm; when
+a source glTF must be parsed at runtime, do the parse in an isolate
+(parseGltf's result is plain data and copies across) and keep
+createModel on main.
+
+Placement: pieces of one authored set (a body and its fitted cosmetics)
+export in one world space, so composing them is `add(group, model)` per
+piece and nothing else - no placement math. SOCKETED items (a weapon in
+a hand) are different: they bind to a joint, so they only land once a
+skeleton exists (a rig-less export cannot place them at all). The joint
+is an ordinary Group in `model.nodes` - find it by name and `add()` the
+item under it; it then follows the pose, mixer-driven or hand-posed,
+like any child transform. Two authoring cases (verified in
+`probes/joint-cap-probe.tsx`): an item authored about its own socket
+origin needs the plain `add()` and nothing more; one authored in the
+RIG'S model space needs a socket Group between joint and item carrying
+the joint's rest-pose inverse (at rest the item then sits exactly where
+authored, posed it follows), since parenting stacks the joint's
+transform on top of the authored placement. Skinned PARTS are the one
+thing that never needs this: they hang off the model root and the
+palette places them.
+
 Applied: `doubleSided` (the default material draws it with `cull:
 "none"`), alphaMode MASK (`alphaTest: alphaCutoff`), `normalTexture`
 (+ scale; the derivative frame needs no tangents), `emissiveFactor` x
