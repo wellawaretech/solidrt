@@ -161,7 +161,7 @@ function App() {
     let hit = got as SpritePointerEvent | null
     check(hit !== null && hit.sprite === probe, "pointer at the projected pixel hits the probe")
     check(hit !== null && Math.abs(hit.x - 320) < 1e-6 && Math.abs(hit.y - 320) < 1e-6, `pointer event carries world coords (${hit ? `${hit.x.toFixed(3)}, ${hit.y.toFixed(3)}` : "none"})`)
-    check(nodes.pick(320, 320) === probe, "pick in world space still hits the probe")
+    check(nodes.pick(320, 320)[0] === probe, "pick in world space still hits the probe")
   }
 
   let tileBake = () => {

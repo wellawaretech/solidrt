@@ -28,10 +28,12 @@ import {
   setMeshParams,
   setRenderOrder,
   setTransform,
+  setTransition,
   setVisible,
 } from "./scene.ts"
 import type { ShaderParams } from "@solidrt/core/gpu"
-import type { DirectionalLight as DirectionalLightNode, FogOptions, HemisphereLight as HemisphereLightNode, InstancedMesh as InstancedMeshNode, Mesh as MeshNode, Scene as SceneHandle, SceneNode, ScenePointerEvent, ShadowOptions } from "./scene.ts"
+import type { CameraUpdate, DirectionalLight as DirectionalLightNode, FogOptions, HemisphereLight as HemisphereLightNode, InstancedMesh as InstancedMeshNode, Mesh as MeshNode, Scene as SceneHandle, SceneNode, ScenePointerEvent, ShadowOptions, TransitionEndEvent } from "./scene.ts"
+import type { NodeTransition } from "flux:spatial"
 import type { Geometry } from "./geometry.ts"
 import type { Material } from "./material.ts"
 import type { Quat, Vec3 } from "./math.ts"
@@ -56,6 +58,11 @@ export type TransformProps = {
   quaternion?: Quat
   scale?: Vec3 | number
   visible?: boolean
+  /** How transform-prop changes animate (see setTransition); the mount
+   * transform always snaps. */
+  transition?: NodeTransition | string | null
+  /** A declared transition settled on one component. */
+  onTransitionEnd?: (event: TransitionEndEvent) => void
 }
 
 /**
@@ -83,14 +90,21 @@ function syncNode(node: SceneNode, props: TransformProps & PointerEventProps): v
       setVisible(node, visible !== false)
     },
   )
+  // After the transform effect, so the mount transform snaps before writes
+  // animate.
   createEffect(
-    () => [props.onPointerDown, props.onPointerMove, props.onPointerUp, props.onPointerEnter, props.onPointerLeave] as const,
-    ([down, move, up, enter, leave]) => {
+    () => props.transition,
+    transition => setTransition(node, transition ?? null),
+  )
+  createEffect(
+    () => [props.onPointerDown, props.onPointerMove, props.onPointerUp, props.onPointerEnter, props.onPointerLeave, props.onTransitionEnd] as const,
+    ([down, move, up, enter, leave, end]) => {
       node.onPointerDown = down
       node.onPointerMove = move
       node.onPointerUp = up
       node.onPointerEnter = enter
       node.onPointerLeave = leave
+      node.onTransitionEnd = end
     },
   )
 }
@@ -101,6 +115,15 @@ export type SceneProps = {
   width: number
   height: number
   clearColor?: [number, number, number, number]
+  /**
+   * Drive the scene camera declaratively (scene.setCamera as a prop): a
+   * partial CameraUpdate, absent keys keep their values - `ortho` included,
+   * which `<PerspectiveCamera>` by its name never sets. The prop and the
+   * `<PerspectiveCamera>` child write the same scene state, so use one
+   * form, not both (last write wins). The 2d layers' `camera` prop, one
+   * dimension up.
+   */
+  camera?: CameraUpdate
   /** Fragment GLSL drawn behind the meshes, inside the scene's own pass
    * (scene.setBackground): vUV/iResolution/fragColor contract, so a
    * createShaderTexture backdrop ports verbatim. Reactive - swapping the
@@ -150,6 +173,12 @@ export let Scene: ParentComponent<SceneProps> = props => {
   createEffect(
     () => [props.width, props.height] as const,
     ([w, h]) => scene.setSize(w, h),
+  )
+  createEffect(
+    () => props.camera,
+    camera => {
+      if (camera) scene.setCamera(camera)
+    },
   )
   createEffect(
     () => props.background,
@@ -351,7 +380,9 @@ export type PerspectiveCameraProps = {
 /**
  * Drives the scene's camera from props (the scene has a default camera, so
  * this component is optional). The camera is scene state, not a tree node:
- * to orbit it, update `position`/`lookAt`.
+ * to orbit it, update `position`/`lookAt`. The Scene `camera` prop drives
+ * the same state (a partial CameraUpdate, ortho included) - use one form,
+ * not both.
  */
 export let PerspectiveCamera: VoidComponent<PerspectiveCameraProps> = props => {
   let ctx = useContext(SceneContext)

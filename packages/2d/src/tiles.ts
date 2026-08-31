@@ -35,6 +35,7 @@ import {
 } from "@solidrt/core/gpu"
 import type { BufferId, FilterMode, TextureId } from "@solidrt/core/gpu"
 import type { Frame } from "./frames.ts"
+import { checkTint } from "./layer.ts"
 import { checkOversample, thrashSentinel } from "./oversample.ts"
 import { FLOATS_PER_SPRITE } from "./records.ts"
 import { FRAGMENT, INSTANCE_ATTRIBUTES, VERTEX } from "./shaders.ts"
@@ -146,12 +147,6 @@ type Chunk = TileChunk & {
   /** Records changed since the last flush (a tint-only or resize re-bake
    * renders without re-uploading them). */
   wrote: boolean
-}
-
-function checkTint(verb: string, tint: [number, number, number, number]): void {
-  if (!(Array.isArray(tint) && tint.length === 4 && tint.every(Number.isFinite))) {
-    throw new Error(`${verb}: tint must be [r, g, b, a], got ${JSON.stringify(tint)}`)
-  }
 }
 
 /**

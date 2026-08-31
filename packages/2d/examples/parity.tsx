@@ -119,8 +119,8 @@ function App() {
     for (let i = 0; i < 200; i++) {
       let x = r() * W
       let y = r() * H
-      let a = nodes.pick(x, y)
-      let b = records.pick(x, y)
+      let a = nodes.pick(x, y)[0] ?? null
+      let b = records.pick(x, y)[0] ?? null
       let ai = a ? byNode.get(a) : null
       let bi = b ? byRec.get(b) : null
       if (ai !== bi) mismatches++
@@ -152,8 +152,8 @@ function App() {
     let child = addSprite(nodes, { parent: g, x: 50, y: 0, w: 10, h: 10 })
     setGroup(g, { rotation: Math.PI / 2 })
     queueMicrotask(() => {
-      check(nodes.pick(100, 150) === child, "group rotation carries the child sprite")
-      check(nodes.pick(150, 100) !== child, "the ungrouped position no longer hits")
+      check(nodes.pick(100, 150)[0] === child, "group rotation carries the child sprite")
+      check(nodes.pick(150, 100)[0] !== child, "the ungrouped position no longer hits")
       let f = getSprite(child)!
       check(f.x === 50 && f.y === 0, "getSprite reads the local pose")
       removeSprite(child)

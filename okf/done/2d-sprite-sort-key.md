@@ -97,7 +97,10 @@ this; findings there):
   Requires a rebuilt client (`make client`) - a stale binary REJECTS the
   node layer's multi-buffer instanceOrder at create.
 
-The raise half landed 2026-08-31 (uncommitted), closing the item:
+The raise half landed 2026-08-31 (uncommitted), closing the item.
+Naming: the key shipped as `sortKey` and was renamed `renderOrder` the
+same day, before commit - @solidrt/3d already used Three's name for the
+identical knob, and the packages keep one vocabulary.
 
 - Core: `InstanceOrder` gained the `slot` key designation (which instance
   slot's records hold the key, default 0, parse-validated) - the additive
@@ -110,19 +113,19 @@ The raise half landed 2026-08-31 (uncommitted), closing the item:
   (record_layout skips attributes the shader does not use; their bytes
   pad the stride), exercised on real GL.
 - Node layer: style record grew a 9th float
-  (`[uv, tint rgba, sortKey]`), `iSortKey` declared in the pipeline but
-  never read by the shader; `orderBy: "sortKey"` maps to
-  `instanceOrder { field: 8, slot: 1 }`. `sortKey` on
+  (`[uv, tint rgba, renderOrder]`), `iRenderOrder` declared in the
+  pipeline but never read by the shader; `orderBy: "renderOrder"` maps to
+  `instanceOrder { field: 8, slot: 1 }`. `renderOrder` on
   SpriteOptions/`<Sprite>` (default 0 - ties keep slot order, and adds
   zero it explicitly so recycled slots cannot leak the previous
   occupant's key), returned by getSprite. On a record-layer sprite it
   throws (13-float record has no key field; `orderBy: { field }` is that
   layer's vocabulary). The raise idiom is in the docs:
-  `setSprite(hit, { sortKey: ++top })`, back to 0 to restore.
+  `setSprite(hit, { renderOrder: ++top })`, back to 0 to restore.
 - Trap fixed in passing: `_write`'s style guard must list EVERY
-  style-side option - a sortKey-only setSprite silently published
-  nothing until `opts.sortKey !== undefined` joined the guard. The probe
-  caught it (KEY-ORDER-FAIL on the raise, initial order fine).
+  style-side option - a key-only setSprite silently published
+  nothing until `opts.renderOrder !== undefined` joined the guard. The
+  probe caught it (KEY-ORDER-FAIL on the raise, initial order fine).
 - Verified end to end: probes/order-probe.tsx (ORDER-OK, NODE-ORDER-OK,
   KEY-ORDER-OK - scrambled keys beat insertion order, then a raise flips
   the topmost through the style-slot key with the core republishing the
@@ -135,7 +138,7 @@ The raise half landed 2026-08-31 (uncommitted), closing the item:
   mirror republish asserted by pixel pairing, and six guards throwing at
   the JS call site.
 
-Not taken, deliberately: a record-layer sortKey field (the 13-float
+Not taken, deliberately: a record-layer renderOrder field (the 13-float
 layout is a documented raw contract; `orderBy: { field }` covers it),
 free-list removal on the record layer (its contiguous-prefix flush is
 its identity), and visual-order picking under a key (both layers

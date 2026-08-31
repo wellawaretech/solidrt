@@ -12,7 +12,7 @@
 // Two instance-buffer slots split ownership: slot 0 is the pose buffer,
 // written ONLY by the core (one coalesced write per flush however many
 // nodes moved); slot 1 is the style buffer [u0, v0, u1, v1, tint rgba,
-// sortKey], JS-owned and published through the zero-copy write lease. Never write
+// renderOrder], JS-owned and published through the zero-copy write lease. Never write
 // the pose buffer from JS - the core's staging mirror is the owner and
 // will overwrite. For motion only JS can compute at large populations, the
 // records layer (records.ts) is the escape hatch.
@@ -54,10 +54,10 @@ export const POSE_FLOATS = 5
 // Float offset of world y in a pose record - what `orderBy: "y"` keys on.
 const POSE_Y_FIELD = 1
 /** Floats per style record:
- * [u0, v0, u1, v1, tintR, tintG, tintB, tintA, sortKey]. */
+ * [u0, v0, u1, v1, tintR, tintG, tintB, tintA, renderOrder]. */
 export const STYLE_FLOATS = 9
 
-// Float offset of sortKey in a style record - what `orderBy: "sortKey"`
+// Float offset of renderOrder in a style record - what `orderBy: "renderOrder"`
 // keys on.
 const STYLE_KEY_FIELD = 8
 
@@ -129,6 +129,13 @@ export type Sprite = {
    * The cheap way to read flip state. */
   readonly _flipX: boolean
   readonly _flipY: boolean
+  /** Visibility mirror (node layer; always true on a record layer's
+   * sprites). The cheap read; writes go through setSprite. */
+  readonly _visible: boolean
+  /** The enclosing group (null at the layer root, always null on a record
+   * layer's sprites) - the bubble path; writes go through
+   * setSpriteParent/addSprite's `parent`. */
+  readonly _parent: SpriteGroup | null
   onPointerDown?: (event: SpritePointerEvent) => void
   onPointerMove?: (event: SpritePointerEvent) => void
   onPointerUp?: (event: SpritePointerEvent) => void
@@ -173,24 +180,38 @@ export type SpriteOptions = {
   tint?: [number, number, number, number]
   /**
    * Explicit draw-order key, read only by a layer created with `orderBy:
-   * "sortKey"` (default 0; ties keep slot order, so untouched sprites draw
-   * as without one). The raise idiom: `setSprite(hit, { sortKey: ++top })`
+   * "renderOrder"` (default 0; ties keep slot order, so untouched sprites draw
+   * as without one). The raise idiom: `setSprite(hit, { renderOrder: ++top })`
    * on interaction, back to 0 to restore. Node layer only - a record
    * layer's 13-float record has no key field (order it by one of its own
    * fields with `orderBy: { field }`); setting this there throws.
    */
-  sortKey?: number
+  renderOrder?: number
+  /**
+   * Show or hide the sprite (default true), @solidrt/3d's setVisible in
+   * the setSprite bag: hidden, its pose slot zeroes (nothing drawn) and
+   * pick/pickRect skip it; the handle, slot, style records and any
+   * running transition state stay, so showing again restores the sprite
+   * as it was. Node layer only - a record sprite has no node (hide it by
+   * zeroing w or h); setting this there throws.
+   */
+  visible?: boolean
 }
 
 export type AddSpriteOptions = SpriteOptions & {
-  /** Mount under this group (node layer only); pose fields are then local
-   * to it. Reparent later with setSpriteParent. */
-  parent?: SpriteGroup
+  /** Mount under this group (node layer only; null = the layer root, the
+   * default); pose fields are then local to it. Reparent later with
+   * setSpriteParent. */
+  parent?: SpriteGroup | null
 }
 
 export type SpritePointerEvent = {
-  /** The sprite hit (the topmost at the point), constant while captured. */
+  /** The sprite the event is about (the topmost hit at the point, or the
+   * captured sprite during a drag) - constant while the event bubbles. */
   sprite: Sprite
+  /** The sprite or group whose handler is running; changes as the event
+   * bubbles from the hit sprite through its enclosing groups. */
+  currentTarget: Sprite | SpriteGroup
   /** Pointer position in LAYER pixels (the camera mapping undone). */
   x: number
   y: number
@@ -201,6 +222,8 @@ export type SpritePointerEvent = {
   ctrlKey: boolean
   altKey: boolean
   metaKey: boolean
+  /** Stops the bubble walk after the current handler. */
+  stopPropagation(): void
 }
 
 export type SpriteHandlers = {
@@ -208,6 +231,14 @@ export type SpriteHandlers = {
   onPointerMove: (event: ElementPointerEvent) => void
   onPointerUp: (event: ElementPointerEvent) => void
   onPointerLeave: (event: ElementPointerEvent) => void
+}
+
+/** Validate an [r, g, b, a] tint (throws - the dev validation policy).
+ * Internal - every layer kind (sprite, record, tile) calls it. */
+export function checkTint(verb: string, tint: [number, number, number, number]): void {
+  if (!(Array.isArray(tint) && tint.length === 4 && tint.every(Number.isFinite))) {
+    throw new Error(`${verb}: tint must be [r, g, b, a], got ${JSON.stringify(tint)}`)
+  }
 }
 
 export type SpriteLayerOptions = {
@@ -218,6 +249,9 @@ export type SpriteLayerOptions = {
    */
   capacity?: number
   clearColor?: [number, number, number, number]
+  /** Layer tint, [r, g, b, a] in 0..1, multiplied over every sprite's own
+   * tint; default opaque white (sprites as-is). See setTint. */
+  tint?: [number, number, number, number]
   label?: string
   /**
    * Target texels per layer pixel (positive integer, default 1). The layer
@@ -242,7 +276,7 @@ export type SpriteLayerOptions = {
    * untouched, only the draw order changes - and ties keep slot order, so
    * sprites at equal y draw exactly as without it.
    *
-   * `"sortKey"` keys on the app-owned per-sprite `sortKey` field instead
+   * `"renderOrder"` keys on the app-owned per-sprite `renderOrder` field instead
    * (setSprite, default 0): explicit layering for painter-order scenes -
    * raise a dragged piece, click-to-front, hover emphasis - with stable
    * handles and no record churn.
@@ -253,7 +287,7 @@ export type SpriteLayerOptions = {
    * into its own records; pose records are core-owned, so the node layer
    * names its keys.)
    */
-  orderBy?: "y" | "sortKey"
+  orderBy?: "y" | "renderOrder"
 }
 
 /**
@@ -261,7 +295,9 @@ export type SpriteLayerOptions = {
  * uniform scale - never a sprite size) that sprites and other groups
  * parent under, so a ship with turrets or a dragged stack moves as one
  * subtree recomputed in native code. Groups render nothing and cannot be
- * picked; sprites are always the leaves.
+ * picked - sprites are always the leaves - but down/move/up events bubble
+ * from a hit child sprite through its enclosing groups (enter/leave pair
+ * on the sprite alone), so one group handler covers a whole assembly.
  */
 export type SpriteGroup = {
   /** The owning layer, null after removeGroup (which owns the write). */
@@ -274,6 +310,20 @@ export type SpriteGroup = {
   readonly _y: number
   readonly _rot: number
   readonly _scale: number
+  /** Visibility mirror; writes go through setGroup. */
+  readonly _visible: boolean
+  /** See Sprite._parent. */
+  readonly _parent: SpriteGroup | null
+  /** The handles parented here (removeGroup removes them with it);
+   * internal -
+   * membership writes go through addSprite/addGroup/setSpriteParent/
+   * setGroup. */
+  readonly _children: Set<SpriteState | GroupState>
+  /** Bubbled from a hit child sprite; see SpritePointerEvent. A group
+   * never receives enter/leave (hover pairs on the sprite alone). */
+  onPointerDown?: (event: SpritePointerEvent) => void
+  onPointerMove?: (event: SpritePointerEvent) => void
+  onPointerUp?: (event: SpritePointerEvent) => void
   /** See Sprite.onTransitionEnd. */
   onTransitionEnd?: (event: TransitionEndEvent) => void
 }
@@ -291,6 +341,10 @@ export type GroupOptions = {
   /** Uniform scale on the whole subtree (this one scales child sprites -
    * a group is a frame, not a sprite size). */
   scale?: number
+  /** Show or hide the group's WHOLE subtree (default true); each child
+   * keeps its own `visible`, so showing the group again restores the
+   * subtree as it was. See SpriteOptions.visible. */
+  visible?: boolean
   /** Reparent (null = make the group a root). */
   parent?: SpriteGroup | null
 }
@@ -315,14 +369,28 @@ export type LayerBase = {
    */
   setOversample(n: number): void
   setCamera(update: CameraUpdate): void
-  /** Topmost sprite whose rotated rect contains the layer-pixel point. */
-  pick(x: number, y: number): Sprite | null
   /**
-   * Handlers for a leaf whose LAYOUT size differs from the layer size
-   * (events scale by layer/layout; null layout means "already layer pixels",
-   * which is what the built-in leaf uses).
+   * Tint the whole layer, [r, g, b, a] in 0..1: a uniform multiplied over
+   * every sprite's own tint (day/night, a dimmed parallax plane, a
+   * fade-in). One shared-params write - no record touches, cheap to
+   * animate - and the same contract as TileLayer.setTint, so one signal
+   * drives a whole scene across layer kinds.
    */
-  handlersFor(layout: (() => { width: number; height: number } | null) | null): SpriteHandlers
+  setTint(tint: [number, number, number, number]): void
+  /** Every shown sprite whose rotated rect contains the layer-pixel point
+   * (a hidden sprite or subtree is never hit), topmost first - the
+   * all-hits shape of @solidrt/3d's pick; `pick(x, y)[0]` is the topmost.
+   * Topmost means draw order (highest slot on the node layer, last added
+   * on a record layer); an `orderBy` key is not consulted (see
+   * SpriteLayerOptions.orderBy's known limitation). */
+  pick(x: number, y: number): Sprite[]
+  /**
+   * handlers for a leaf whose LAYOUT size differs from the layer size
+   * (events scale by layer/layout; a leaf laid out AT layer size just uses
+   * `handlers`). `layout` is read per event, so a resize-reactive layout
+   * just works - @solidrt/3d's handlersFor, one dimension down.
+   */
+  handlersFor(layout: () => { width: number; height: number }): SpriteHandlers
   dispose(): void
   _add(opts?: AddSpriteOptions): Sprite
   _write(sprite: SpriteState, opts: SpriteOptions): void
@@ -333,9 +401,9 @@ export type LayerBase = {
 
 export type SpriteLayer = LayerBase & {
   /**
-   * Every sprite whose rotated rect overlaps the layer-pixel rect (the
-   * core BVH overlap query, exact for rotated sprites), unordered - the
-   * marquee query. Node layer only.
+   * Every shown sprite whose rotated rect overlaps the layer-pixel rect
+   * (the core BVH overlap query, exact for rotated sprites), unordered -
+   * the marquee query. Node layer only.
    */
   pickRect(x: number, y: number, w: number, h: number): Sprite[]
   _groups: Set<GroupState>
@@ -343,7 +411,11 @@ export type SpriteLayer = LayerBase & {
 
 /**
  * Pointer dispatch shared by both layer kinds: capture per pointer, hover
- * pairing, no bubbling (the sprite list is flat). Layout null = the leaf is
+ * pairing, and the element bubbling rule one tree deeper - down/move/up
+ * dispatch on the hit sprite and bubble through its enclosing groups
+ * (stopPropagation stops the walk; a record layer has no groups, so the
+ * walk ends at the sprite), enter/leave pair on the sprite alone, the
+ * same model as @solidrt/3d's scene dispatch. Layout null = the leaf is
  * laid out at layer size, so localX/localY are layer pixels already (the
  * element hit test undid every ancestor transform - never getBoundingBox
  * here). Internal - layers expose the result as handlers/handlersFor.
@@ -351,10 +423,21 @@ export type SpriteLayer = LayerBase & {
 export function spriteDispatch(state: {
   size: () => [number, number]
   camera: () => CameraUpdate
-  pick: (x: number, y: number) => Sprite | null
-}): (layout: (() => { width: number; height: number } | null) | null) => SpriteHandlers {
+  pick: (x: number, y: number) => Sprite[]
+}): (layout: (() => { width: number; height: number }) | null) => SpriteHandlers {
   let capture = new Map<number, Sprite>()
   let hover = new Map<number, Sprite>()
+  type BubbleName = "onPointerDown" | "onPointerMove" | "onPointerUp"
+  type InternalEvent = SpritePointerEvent & { _stopped: boolean }
+  let bubble = (name: BubbleName, event: InternalEvent): void => {
+    for (let n: Sprite | SpriteGroup | null = event.sprite; n !== null && !event._stopped; n = n._parent) {
+      let handler = n[name]
+      if (handler) {
+        event.currentTarget = n
+        handler(event)
+      }
+    }
+  }
   return layout => {
     let toLayer = (e: ElementPointerEvent): [number, number] => {
       let x = e.localX
@@ -368,34 +451,42 @@ export function spriteDispatch(state: {
       // Undo the camera: screen -> world.
       return unprojectCamera(state.camera(), x, y)
     }
-    let makeEvent = (sprite: Sprite, x: number, y: number, e: ElementPointerEvent): SpritePointerEvent => ({
-      sprite,
-      x,
-      y,
-      pointerId: e.pointerId,
-      pointerType: e.pointerType,
-      button: e.button,
-      shiftKey: e.shiftKey,
-      ctrlKey: e.ctrlKey,
-      altKey: e.altKey,
-      metaKey: e.metaKey,
-    })
+    let makeEvent = (sprite: Sprite, x: number, y: number, e: ElementPointerEvent): InternalEvent => {
+      let event: InternalEvent = {
+        sprite,
+        currentTarget: sprite,
+        x,
+        y,
+        pointerId: e.pointerId,
+        pointerType: e.pointerType,
+        button: e.button,
+        shiftKey: e.shiftKey,
+        ctrlKey: e.ctrlKey,
+        altKey: e.altKey,
+        metaKey: e.metaKey,
+        _stopped: false,
+        stopPropagation() {
+          event._stopped = true
+        },
+      }
+      return event
+    }
     return {
       onPointerDown(e) {
         let [x, y] = toLayer(e)
-        let hit = state.pick(x, y)
+        let hit = state.pick(x, y)[0] ?? null
         if (!hit) return
         capture.set(e.pointerId, hit)
-        hit.onPointerDown?.(makeEvent(hit, x, y, e))
+        bubble("onPointerDown", makeEvent(hit, x, y, e))
       },
       onPointerMove(e) {
         let [x, y] = toLayer(e)
         let captured = capture.get(e.pointerId)
         if (captured) {
-          if (captured.layer) captured.onPointerMove?.(makeEvent(captured, x, y, e))
+          if (captured.layer) bubble("onPointerMove", makeEvent(captured, x, y, e))
           return
         }
-        let hit = state.pick(x, y)
+        let hit = state.pick(x, y)[0] ?? null
         let prev = hover.get(e.pointerId) ?? null
         if (prev !== hit) {
           if (prev && prev.layer) prev.onPointerLeave?.(makeEvent(prev, x, y, e))
@@ -403,18 +494,18 @@ export function spriteDispatch(state: {
           if (hit) hover.set(e.pointerId, hit)
           else hover.delete(e.pointerId)
         }
-        hit?.onPointerMove?.(makeEvent(hit, x, y, e))
+        if (hit) bubble("onPointerMove", makeEvent(hit, x, y, e))
       },
       onPointerUp(e) {
         let [x, y] = toLayer(e)
         let captured = capture.get(e.pointerId)
         if (captured) {
           capture.delete(e.pointerId)
-          if (captured.layer) captured.onPointerUp?.(makeEvent(captured, x, y, e))
+          if (captured.layer) bubble("onPointerUp", makeEvent(captured, x, y, e))
           return
         }
-        let hit = state.pick(x, y)
-        hit?.onPointerUp?.(makeEvent(hit, x, y, e))
+        let hit = state.pick(x, y)[0] ?? null
+        if (hit) bubble("onPointerUp", makeEvent(hit, x, y, e))
       },
       onPointerLeave(e) {
         let [x, y] = toLayer(e)
@@ -480,6 +571,8 @@ export function createSpriteLayer(
   let label = opts?.label ?? "sprites"
   let oversample = opts?.oversample ?? 1
   checkOversample("createSpriteLayer", oversample, width, height)
+  let tint = opts?.tint ?? [1, 1, 1, 1]
+  checkTint("createSpriteLayer", tint)
   let thrash = thrashSentinel(`sprite layer "${label}"`)
   // One unit quad (triangle strip), reused by every instance.
   let quad = createBuffer(new Float32Array([-0.5, -0.5, 0.5, -0.5, -0.5, 0.5, 0.5, 0.5]), {
@@ -493,7 +586,7 @@ export function createSpriteLayer(
     FRAGMENT,
     width * oversample,
     height * oversample,
-    { uViewport: [width, height], uCamera: [0, 0, 1, 1], uCameraRot: [1, 0, 0, 0], uTint: [1, 1, 1, 1] },
+    { uViewport: [width, height], uCamera: [0, 0, 1, 1], uCameraRot: [1, 0, 0, 0], uTint: tint },
     {
       label,
       topology: "triangle-strip",
@@ -502,14 +595,14 @@ export function createSpriteLayer(
       buffer: quad,
       instanceAttributes: INSTANCE_ATTRIBUTES_SPLIT,
       instanceBuffers: [pose, style],
-      // "y" keys on world y in the pose record (slot 0), "sortKey" on the
+      // "y" keys on world y in the pose record (slot 0), "renderOrder" on the
       // app-owned key in the style record (slot 1); either way the core
       // gathers BOTH buffers under the one permutation at every publish
       // and republishes the sibling itself when the key buffer re-orders.
       instanceOrder:
         opts?.orderBy === "y"
           ? { field: POSE_Y_FIELD }
-          : opts?.orderBy === "sortKey"
+          : opts?.orderBy === "renderOrder"
             ? { field: STYLE_KEY_FIELD, slot: 1 }
             : undefined,
       instanceCount: 0,
@@ -602,8 +695,8 @@ export function createSpriteLayer(
       styleData[at + 7] = opts.tint[3]
       styleDirty = true
     }
-    if (opts.sortKey !== undefined) {
-      styleData[at + STYLE_KEY_FIELD] = opts.sortKey
+    if (opts.renderOrder !== undefined) {
+      styleData[at + STYLE_KEY_FIELD] = opts.renderOrder
       styleDirty = true
     }
   }
@@ -652,6 +745,11 @@ export function createSpriteLayer(
         uCameraRot: [Math.cos(camRot), Math.sin(camRot), camPivotX, camPivotY],
       })
     },
+    setTint(next) {
+      if (disposed) return
+      checkTint("setTint", next)
+      setTargetParams(texture, { uTint: next })
+    },
     pick(x, y) {
       // The index reads as of the last core flush; run any pending batch
       // first so a write followed by a pick sees the write.
@@ -659,14 +757,15 @@ export function createSpriteLayer(
       RAY_ORIGIN[0] = x
       RAY_ORIGIN[1] = y
       RAY_ORIGIN[2] = -1
-      let best: Sprite | null = null
+      let out: Sprite[] = []
       for (let hit of spatial.raycast(RAY_ORIGIN, RAY_DIR)) {
         // The arena is shared (a 3d scene lives in the same index): only
-        // this layer's nodes count. Topmost = highest slot (draw order).
+        // this layer's nodes count.
         let sprite = byNode.get(hit.node)
-        if (sprite && (best === null || sprite._slot > best._slot)) best = sprite
+        if (sprite) out.push(sprite)
       }
-      return best
+      // Topmost first: higher slot = drawn later = on top.
+      return out.sort((a, b) => b._slot - a._slot)
     },
     pickRect(x, y, w, h) {
       if (scheduled) flush()
@@ -724,20 +823,23 @@ export function createSpriteLayer(
         _rot: opts?.rotation ?? 0,
         _flipX: false,
         _flipY: false,
+        _visible: opts?.visible ?? true,
+        _parent: opts?.parent ?? null,
       }
       fillTransform(sprite._x, sprite._y, sprite._rot, sprite._w, sprite._h)
-      let node = spatial.createNode(TRANSFORM, true)
+      let node = spatial.createNode(TRANSFORM, sprite._visible)
       sprite.node = node
       if (opts?.parent) {
         if (opts.parent.layer !== layer) throw new Error("addSprite: parent group belongs to another layer")
         spatial.setParent(node, opts.parent.node)
+        opts.parent._children.add(sprite)
       }
       spatial.setBounds(node, FLAT_BOUNDS)
       spatial.bindPoseRecord(node, pose, slot)
       byNode.set(node, sprite)
-      // sortKey defaults to 0 explicitly: a recycled slot holds the
+      // renderOrder defaults to 0 explicitly: a recycled slot holds the
       // previous occupant's key otherwise.
-      writeStyle(sprite, { frame: FULL_FRAME, tint: [1, 1, 1, 1], sortKey: 0, ...opts })
+      writeStyle(sprite, { frame: FULL_FRAME, tint: [1, 1, 1, 1], renderOrder: 0, ...opts })
       layer._schedule()
       return sprite
     },
@@ -749,12 +851,17 @@ export function createSpriteLayer(
       if (opts.h !== undefined && opts.h !== sprite._h) (sprite._h = opts.h), (moved = true)
       if (opts.rotation !== undefined && opts.rotation !== sprite._rot) (sprite._rot = opts.rotation), (moved = true)
       if (moved) writeTransform(sprite)
+      if (opts.visible !== undefined && opts.visible !== sprite._visible) {
+        sprite._visible = opts.visible
+        spatial.setVisible(sprite.node!, opts.visible)
+        moved = true
+      }
       if (
         opts.frame !== undefined ||
         opts.tint !== undefined ||
         opts.flipX !== undefined ||
         opts.flipY !== undefined ||
-        opts.sortKey !== undefined
+        opts.renderOrder !== undefined
       ) {
         writeStyle(sprite, opts)
       }
@@ -772,11 +879,16 @@ export function createSpriteLayer(
         flipY: sprite._flipY,
         rotation: sprite._rot,
         tint: [styleData[at + 4]!, styleData[at + 5]!, styleData[at + 6]!, styleData[at + 7]!],
-        sortKey: styleData[at + STYLE_KEY_FIELD]!,
+        renderOrder: styleData[at + STYLE_KEY_FIELD]!,
+        visible: sprite._visible,
       }
     },
     _remove(sprite) {
       sprite.layer = null
+      if (sprite._parent) {
+        sprite._parent._children.delete(sprite)
+        sprite._parent = null
+      }
       // Destroying the node zeroes its pose slot at the next core flush
       // (zero scale = nothing drawn); the slot then recycles.
       byNode.delete(sprite.node!)
@@ -841,6 +953,10 @@ export function setSpriteParent(sprite: Sprite, parent: SpriteGroup | null): voi
   if (sprite.node === null) throw new Error("setSpriteParent: record layers have no groups")
   if (parent && parent.layer !== layer) throw new Error("setSpriteParent: group belongs to another layer")
   spatial.setParent(sprite.node, parent ? parent.node : null)
+  let s: SpriteState = sprite
+  if (s._parent) s._parent._children.delete(s)
+  s._parent = parent
+  if (parent) parent._children.add(s)
   layer._schedule()
 }
 
@@ -881,12 +997,16 @@ export function addGroup(layer: SpriteLayer, opts?: GroupOptions): SpriteGroup {
     _y: opts?.y ?? 0,
     _rot: opts?.rotation ?? 0,
     _scale: opts?.scale ?? 1,
+    _visible: opts?.visible ?? true,
+    _parent: opts?.parent ?? null,
+    _children: new Set(),
   } as GroupState
   writeGroupTransform(group)
-  group.node = spatial.createNode(TRANSFORM, true)
+  group.node = spatial.createNode(TRANSFORM, group._visible)
   if (opts?.parent) {
     if (opts.parent.layer !== layer) throw new Error("addGroup: parent group belongs to another layer")
     spatial.setParent(group.node, opts.parent.node)
+    opts.parent._children.add(group)
   }
   layer._groups.add(group)
   layer._schedule()
@@ -911,25 +1031,47 @@ export function setGroup(group: SpriteGroup, opts: GroupOptions): void {
     writeGroupTransform(group)
     spatial.writeTransform(group.node, TRANSFORM)
   }
+  if (opts.visible !== undefined && opts.visible !== g._visible) {
+    g._visible = opts.visible
+    spatial.setVisible(group.node, opts.visible)
+    moved = true
+  }
   if (opts.parent !== undefined) {
     if (opts.parent && opts.parent.layer !== layer) throw new Error("setGroup: parent group belongs to another layer")
     spatial.setParent(group.node, opts.parent ? opts.parent.node : null)
+    if (g._parent) g._parent._children.delete(g)
+    g._parent = opts.parent
+    if (opts.parent) opts.parent._children.add(g)
     moved = true
   }
   if (moved) layer._schedule()
 }
 
 /**
- * Remove a group: its children (sprites and groups) become layer roots and
- * KEEP THEIR LOCAL POSE, so they jump to root frame unless the caller
- * removes or re-parents them too (a component tree unmounts children first
- * and never sees this). The handle goes inert.
+ * Remove a group AND everything under it: child sprites and groups are
+ * removed with it - Unity's Destroy, Godot's free, the subtree form of
+ * removeSprite. To keep a child, re-parent it out first (setSpriteParent /
+ * setGroup's `parent`). Every removed handle goes inert. A component tree
+ * unmounts children first and never sees the recursion. (@solidrt/3d's
+ * `remove` DETACHES a re-addable subtree instead - its nodes exist outside
+ * a scene; a sprite cannot exist outside its layer, so here remove means
+ * destroy, exactly as it does for removeSprite.)
  */
 export function removeGroup(group: SpriteGroup): void {
   let layer = group.layer
   if (!layer) return
   let g: GroupState = group
+  // Children first, over a snapshot (each removal edits _children); the
+  // set only groups carry tells the two handle kinds apart.
+  for (let child of [...g._children]) {
+    if ("_children" in child) removeGroup(child)
+    else removeSprite(child)
+  }
   g.layer = null
+  if (g._parent) {
+    g._parent._children.delete(g)
+    g._parent = null
+  }
   layer._groups.delete(group)
   declared.delete(group.node)
   spatial.destroyNode(group.node)

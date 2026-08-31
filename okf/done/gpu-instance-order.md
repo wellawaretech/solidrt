@@ -42,7 +42,7 @@ An opt-in ordering stage on one draw entry, owned by core, between the
 app's records and what the draw consumes. Two key modes, fixed at setup:
 
 - **Field key**: the float at a given offset in each record (sprite y, or
-  an explicit sortKey field an app writes). Re-orders when records
+  an explicit renderOrder field an app writes). Re-orders when records
   holding keys change.
 - **Projected key**: dot(position-at-offset, direction) - view depth from
   a camera the consumer updates on camera move (the `SharedSlot`
@@ -164,7 +164,7 @@ The `slot` key designation landed 2026-08-31 too (uncommitted):
 registry keys on it everywhere, and draw_ordered.rs covers the
 lease-written-key / sink-written-sibling direction plus the
 declared-but-unconsumed key attribute. Its consumer is the node layer's
-`orderBy: "sortKey"` (style-slot key, the raise case) - which closed
+`orderBy: "renderOrder"` (style-slot key, the raise case) - which closed
 2d-sprite-sort-key.
 
 Stage 2 (retained-copy strategy) landed 2026-08-31 (uncommitted):

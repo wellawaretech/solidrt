@@ -40,19 +40,34 @@ import { createTileLayer } from "./tiles.ts"
 import type { TileChunk, TileLayer as TileLayerHandle } from "./tiles.ts"
 
 let LayerContext = createContext<LayerHandle>()
+let GroupContext = createContext<SpriteGroup | null>(null)
+
+type LayerCtx = { layer: LayerHandle; parent: SpriteGroup | null }
 
 /**
- * The enclosing layer - the imperative escape hatch inside a component
- * subtree (throws outside a `<SpriteLayer>`).
+ * The enclosing layer and parent group - the imperative escape hatch
+ * inside a component subtree (throws outside a `<SpriteLayer>`), the same
+ * shape as @solidrt/3d's useScene. `parent` is the enclosing `<Group>`'s
+ * handle (null at the layer root); pass it on to addSprite/addGroup so
+ * imperative sprites mount where the JSX sits.
  */
-export function useSpriteLayer(): LayerHandle {
-  return useContext(LayerContext)
+export function useSpriteLayer(): LayerCtx {
+  return { layer: useContext(LayerContext), parent: useContext(GroupContext) }
 }
 
+/**
+ * Sprite pointer events, the element vocabulary one tree deeper: the
+ * topmost hit sprite receives the event, down/move/up bubble to enclosing
+ * Groups (stopPropagation stops the walk), enter/leave pair on the sprite
+ * alone. Events flow while the element showing the layer carries
+ * layer.handlers - the built-in `<SpriteLayer>` leaf does (opt out with
+ * events={false}); an `output` leaf spreads them itself.
+ */
 export type SpritePointerProps = {
   onPointerDown?: (event: SpritePointerEvent) => void
   onPointerMove?: (event: SpritePointerEvent) => void
   onPointerUp?: (event: SpritePointerEvent) => void
+  /** Sprites only: a Group never receives enter/leave. */
   onPointerEnter?: (event: SpritePointerEvent) => void
   onPointerLeave?: (event: SpritePointerEvent) => void
 }
@@ -71,6 +86,12 @@ export type SpriteLayerProps = {
    * never per-sprite. */
   camera?: CameraUpdate
   /**
+   * Layer tint, [r, g, b, a] in 0..1, multiplied over every sprite's own
+   * tint (day/night, a dimmed parallax plane, a fade-in). One shared
+   * uniform write, cheap to animate - unlike TileLayer's, which re-bakes.
+   */
+  tint?: [number, number, number, number]
+  /**
    * Target texels per layer pixel. Absent, the component picks it every
    * layout from the built-in leaf's on-screen size (display scale, any
    * designSize fit, layout scaling), so the layer resamples properly at any
@@ -88,18 +109,18 @@ export type SpriteLayerProps = {
    * Draw sprites in key order instead of slot order, produced by core at
    * every publish: `"y"` orders by world y (back-to-front for a
    * perspective scene, zero JS per frame even under native transitions),
-   * `"sortKey"` by the per-sprite `sortKey` field (explicit layering:
+   * `"renderOrder"` by the per-sprite `renderOrder` field (explicit layering:
    * raise-on-drag, click-to-front). Creation-fixed (see
    * SpriteLayerOptions.orderBy).
    */
-  orderBy?: "y" | "sortKey"
+  orderBy?: "y" | "renderOrder"
   label?: string
   ref?: (layer: LayerHandle) => void
   /**
    * Compose the output yourself: called once (untracked) with the layer's
    * texture id, and its return renders in place of the built-in `<texture>`
    * leaf. Sprite pointer events then need the layer's handlers on your
-   * leaf: `<texture src={texture} {...useSpriteLayer().handlers} />`.
+   * leaf: `<texture src={texture} {...useSpriteLayer().layer.handlers} />`.
    */
   output?: (texture: TextureId) => Element
   /**
@@ -124,6 +145,7 @@ export let SpriteLayer: ParentComponent<SpriteLayerProps> = props => {
     createSpriteLayer(props.width, props.height, props.atlas, {
       capacity: props.capacity,
       clearColor: props.clearColor,
+      tint: props.tint,
       orderBy: props.orderBy,
       label: props.label,
     }),
@@ -142,6 +164,12 @@ export let SpriteLayer: ParentComponent<SpriteLayerProps> = props => {
     () => props.oversample,
     n => {
       if (n !== undefined) layer.setOversample(n)
+    },
+  )
+  createEffect(
+    () => props.tint,
+    tint => {
+      if (tint !== undefined) layer.setTint(tint)
     },
   )
   untrack(() => props.ref)?.(layer)
@@ -185,8 +213,6 @@ export let SpriteLayer: ParentComponent<SpriteLayerProps> = props => {
   )
 }
 
-let GroupContext = createContext<SpriteGroup | null>(null)
-
 export type GroupProps = {
   /** Position in the parent frame (layer pixels at the root). */
   x?: number
@@ -195,6 +221,14 @@ export type GroupProps = {
   rotation?: number
   /** Uniform scale on the whole subtree (child sprites scale with it). */
   scale?: number
+  /** Show or hide the whole subtree (default true); see
+   * GroupOptions.visible. */
+  visible?: boolean
+  /** Bubbled from a hit child sprite (see SpritePointerProps); a group
+   * never receives enter/leave. */
+  onPointerDown?: (event: SpritePointerEvent) => void
+  onPointerMove?: (event: SpritePointerEvent) => void
+  onPointerUp?: (event: SpritePointerEvent) => void
   /** How pose-prop changes animate (see setGroupTransition); the mount
    * pose always snaps. */
   transition?: NodeTransition | string | null
@@ -215,8 +249,8 @@ export let Group: ParentComponent<GroupProps> = props => {
   let parent = useContext(GroupContext)
   let group = untrack(() => addGroup(layer, { parent }))
   createEffect(
-    () => [props.x, props.y, props.rotation, props.scale] as const,
-    ([x, y, rotation, scale]) => setGroup(group, { x, y, rotation, scale }),
+    () => [props.x, props.y, props.rotation, props.scale, props.visible] as const,
+    ([x, y, rotation, scale, visible]) => setGroup(group, { x, y, rotation, scale, visible: visible !== false }),
   )
   // After the pose effect, so the mount pose snaps before writes animate.
   createEffect(
@@ -224,8 +258,11 @@ export let Group: ParentComponent<GroupProps> = props => {
     transition => setGroupTransition(group, transition ?? null),
   )
   createEffect(
-    () => props.onTransitionEnd,
-    end => {
+    () => [props.onPointerDown, props.onPointerMove, props.onPointerUp, props.onTransitionEnd] as const,
+    ([down, move, up, end]) => {
+      group.onPointerDown = down
+      group.onPointerMove = move
+      group.onPointerUp = up
       group.onTransitionEnd = end
     },
   )
@@ -249,10 +286,11 @@ export type SpriteProps = SpriteOptions &
 export let Sprite: VoidComponent<SpriteProps> = props => {
   let layer = useContext(LayerContext)
   let parent = useContext(GroupContext)
-  let sprite = untrack(() => addSprite(layer, parent ? { parent } : undefined))
+  let sprite = untrack(() => addSprite(layer, { parent }))
   createEffect(
-    () => [props.x, props.y, props.w, props.h, props.frame, props.flipX, props.flipY, props.rotation, props.tint, props.sortKey] as const,
-    ([x, y, w, h, frame, flipX, flipY, rotation, tint, sortKey]) => setSprite(sprite, { x, y, w, h, frame, flipX, flipY, rotation, tint, sortKey }),
+    () => [props.x, props.y, props.w, props.h, props.frame, props.flipX, props.flipY, props.rotation, props.tint, props.renderOrder, props.visible] as const,
+    ([x, y, w, h, frame, flipX, flipY, rotation, tint, renderOrder, visible]) =>
+      setSprite(sprite, { x, y, w, h, frame, flipX, flipY, rotation, tint, renderOrder, visible: visible !== false }),
   )
   // After the pose effect, so the mount pose snaps before writes animate.
   createEffect(

@@ -34,7 +34,7 @@ import {
 import type { BufferId, TextureId } from "@solidrt/core/gpu"
 import { checkCamera } from "./camera.ts"
 import { FULL_FRAME, writeFrame } from "./frames.ts"
-import { readFrame, spriteDispatch } from "./layer.ts"
+import { checkTint, readFrame, spriteDispatch } from "./layer.ts"
 import type { LayerBase, Sprite, SpriteHandlers, SpriteLayerOptions, SpriteOptions, SpriteState } from "./layer.ts"
 import { pointInSprite } from "./pick.ts"
 import { checkOversample, thrashSentinel } from "./oversample.ts"
@@ -118,6 +118,8 @@ export function createRecordLayer(
   })
   let oversample = opts?.oversample ?? 1
   checkOversample("createRecordLayer", oversample, width, height)
+  let tint = opts?.tint ?? [1, 1, 1, 1]
+  checkTint("createRecordLayer", tint)
   let orderBy = opts?.orderBy
   let instanceOrder =
     orderBy === undefined
@@ -131,7 +133,7 @@ export function createRecordLayer(
     FRAGMENT,
     width * oversample,
     height * oversample,
-    { uViewport: [width, height], uCamera: [0, 0, 1, 1], uCameraRot: [1, 0, 0, 0], uTint: [1, 1, 1, 1] },
+    { uViewport: [width, height], uCamera: [0, 0, 1, 1], uCameraRot: [1, 0, 0, 0], uTint: tint },
     {
       label,
       topology: "triangle-strip",
@@ -204,8 +206,11 @@ export function createRecordLayer(
 
   // Record layout: [cx, cy, w, h, u0, v0, u1, v1, rot, tintR, tintG, tintB, tintA]
   let writeRecord = (sprite: SpriteState, opts: SpriteOptions) => {
-    if (opts.sortKey !== undefined) {
-      throw new Error("setSprite: record layers have no sortKey field; order by a record field with orderBy { field }")
+    if (opts.renderOrder !== undefined) {
+      throw new Error("setSprite: record layers have no renderOrder field; order by a record field with orderBy { field }")
+    }
+    if (opts.visible !== undefined) {
+      throw new Error("setSprite: record sprites have no visibility; hide by zeroing w or h")
     }
     let at = sprite._slot * FLOATS_PER_SPRITE
     let r = layer.records
@@ -277,16 +282,22 @@ export function createRecordLayer(
         uCameraRot: [Math.cos(camRot), Math.sin(camRot), camPivotX, camPivotY],
       })
     },
+    setTint(next) {
+      if (disposed) return
+      checkTint("setTint", next)
+      setTargetParams(texture, { uTint: next })
+    },
     pick(x, y) {
       // Topmost first: reverse draw order, exact rotated-rect containment.
+      let out: Sprite[] = []
       let r = layer.records
       for (let i = layer._order.length - 1; i >= 0; i--) {
         let at = i * FLOATS_PER_SPRITE
         if (pointInSprite(x, y, r[at]!, r[at + 1]!, r[at + 2]!, r[at + 3]!, r[at + 8]!)) {
-          return layer._order[i]!
+          out.push(layer._order[i]!)
         }
       }
-      return null
+      return out
     },
     handlersFor(layout) {
       return dispatch(layout)
@@ -310,7 +321,7 @@ export function createRecordLayer(
         next.set(layer.records)
         layer.records = next
       }
-      let sprite: SpriteState = { layer, node: null, _slot: index, _x: 0, _y: 0, _w: 0, _h: 0, _rot: 0, _flipX: false, _flipY: false }
+      let sprite: SpriteState = { layer, node: null, _slot: index, _x: 0, _y: 0, _w: 0, _h: 0, _rot: 0, _flipX: false, _flipY: false, _visible: true, _parent: null }
       layer._order.push(sprite)
       writeRecord(sprite, {
         x: 0,
@@ -342,8 +353,10 @@ export function createRecordLayer(
         flipY: sprite._flipY,
         rotation: r[at + 8]!,
         tint: [r[at + 9]!, r[at + 10]!, r[at + 11]!, r[at + 12]!],
-        // Record sprites have no key field (see writeRecord's throw).
-        sortKey: 0,
+        // Record sprites have no key field and no visibility (see
+        // writeRecord's throws).
+        renderOrder: 0,
+        visible: true,
       }
     },
     _remove(sprite) {

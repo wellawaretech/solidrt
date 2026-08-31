@@ -23,26 +23,38 @@ moved subtrees in Rust, and picking walks the core BVH.
   slot 0 is the POSE buffer `[x, y, angle, sx, sy]` written ONLY by the
   core (each sprite node's Pose2D record sink; one coalesced buffer write
   per flush however many nodes moved), slot 1 the STYLE buffer
-  `[u0, v0, u1, v1, tint rgba, sortKey]`, JS-owned, published through the
+  `[u0, v0, u1, v1, tint rgba, renderOrder]`, JS-owned, published through the
   zero-copy write lease. NEVER write the pose buffer from JS - the core's
   staging mirror owns it and will overwrite.
 - Sprites hold FIXED instance slots: draw order is slot order, removal
   zeroes the pose (zero scale = nothing drawn) and recycles the slot to
   the next add. No painter's-insertion-order guarantee across removals;
   opaque-or-transparent pixel art never notices, and a scene that needs a
-  real draw order says so with `orderBy` ("y" or "sortKey" - see below).
+  real draw order says so with `orderBy` ("y" or "renderOrder" - see below).
 - Growth (past `capacity`, doubling): pose sinks move in ONE core
   `retargetRecords` call (full republish next flush), style re-uploads,
   `setDraw({ instanceBuffers })` swaps both, old buffers destroyed.
 - Picking is the core index: `pick` raycasts [x, y, -1] along +z (exact
-  rotated-rect via the node's local box), topmost = highest slot;
-  `pickRect` is the BVH overlap query (exact for rotated sprites, the
-  marquee). Both filter to the layer's own nodes - the arena is shared
-  with e.g. a 3d scene.
+  rotated-rect via the node's local box) and returns ALL hits topmost
+  first (highest slot) - the all-hits shape of @solidrt/3d's pick, so
+  `pick(x, y)[0]` is the topmost; `pickRect` is the BVH overlap query
+  (exact for rotated sprites, the marquee), unordered. Both filter to the
+  layer's own nodes - the arena is shared with e.g. a 3d scene.
 - Groups (`addGroup`/`<Group>`) are plain arena nodes (x, y, rotation,
   UNIFORM scale - a group is a frame, never a sprite size; sprite w/h
   lives in the sprite node's scale, which is why sprites cannot parent
-  sprites). Child sprite pose fields are local to the group.
+  sprites). Child sprite pose fields are local to the group. `removeGroup`
+  removes the SUBTREE: child sprites and groups die with it (remove means
+  destroy here, as for removeSprite; re-parent a child out first to keep
+  it). @solidrt/3d's `remove` instead DETACHES a re-addable subtree - its
+  nodes exist outside a scene, sprites cannot exist outside their layer.
+- `visible` (@solidrt/3d's setVisible, in the setSprite/setGroup bag;
+  default true) is core node visibility: hidden, the pose slot zeroes
+  (nothing drawn) and pick/pickRect skip the node; a group's flag hides
+  its WHOLE subtree while each child keeps its own. Handle, slot, style
+  records and transition state stay, so showing restores the sprite as
+  it was. Node layer only - on a record sprite it throws (hide those by
+  zeroing w or h).
 - `flipX`/`flipY` mirror on the UV SIDE: the style/record write swaps
   u0/u1 (v0/v1), so w/h stay the drawn size, a scale transition never sees
   a flip, and picking is unchanged (the vertex stage still carries no
@@ -77,6 +89,12 @@ moved subtrees in Rust, and picking walks the core BVH.
   the world <-> screen mapping as pure functions, and pointer dispatch
   undoes the camera with the latter, so events arrive in world (layer)
   pixels. Picking itself works in world space and never sees the camera.
+- Layer tint (`setTint(rgba)`/the `tint` option and prop, both layer
+  kinds): one `uTint` shared-params write multiplied over every sprite's
+  own tint - day/night, a dimmed parallax plane, a fade-in. Cheap to
+  animate (no record touches), unlike TileLayer's, which re-renders
+  resident chunks. The same contract as TileLayer.setTint, so one signal
+  drives a whole scene across layer kinds.
 - Retargeted motion is NATIVE: `setSpriteTransition(sprite, { position:
   { duration: 700, bounce: 0.3 }, ... })` (or the `transition` prop) makes
   setSprite writes TARGETS the core animates toward - position/scale
@@ -162,24 +180,32 @@ on approach, evict) - okf/backlog/2d-baked-layers.md.
 
 | Component | Props |
 |---|---|
-| `SpriteLayer` | width, height (layer pixels), atlas (TextureId), capacity?, clearColor?, camera?, oversample?, maxOversample?, label?, ref?, output?, events? |
-| `Sprite` | x, y (center; local to the enclosing `<Group>`), w, h, frame?, rotation? (radians, clockwise), tint? ([r,g,b,a] 0..1), transition?, onPointer{Down,Move,Up,Enter,Leave}?, ref? |
-| `Group` | x?, y?, rotation?, scale? (uniform, scales the subtree), transition?, ref? |
+| `SpriteLayer` | width, height (layer pixels), atlas (TextureId), capacity?, clearColor?, camera?, tint? ([r,g,b,a] 0..1, over the whole layer), oversample?, maxOversample?, label?, ref?, output?, events? |
+| `Sprite` | x, y (center; local to the enclosing `<Group>`), w, h, frame?, rotation? (radians, clockwise), tint? ([r,g,b,a] 0..1), visible?, transition?, onPointer{Down,Move,Up,Enter,Leave}?, ref? |
+| `Group` | x?, y?, rotation?, scale? (uniform, scales the subtree), visible? (the whole subtree), transition?, onPointer{Down,Move,Up}? (bubbled from hit child sprites), ref? |
 | `TileLayer` | cols, rows, tileW, tileH, atlas (TextureId), chunkClearColor?, filter?, chunkTiles?, tint? ([r,g,b,a] 0..1, over the whole layer), oversample?, maxOversample?, camera? (TileCamera: x, y, zoom, rotation, pivotX, pivotY), label?, ref? |
 
 `SpriteLayer` owns the layer and renders the built-in `<texture>` leaf
 carrying the layer's pointer handlers (opt out with `events={false}`; compose
-yourself with `output`, then spread `useSpriteLayer().handlers` onto your
-leaf). `Sprite` renders nothing - it allocates a record through context and
-syncs props into it.
+yourself with `output`, then spread `useSpriteLayer().layer.handlers` onto
+your leaf). `useSpriteLayer()` returns `{ layer, parent }` - the same shape
+as `useScene()` in `@solidrt/3d` - where `parent` is the enclosing
+`<Group>`'s handle (null at the layer root), so imperative
+`addSprite(layer, { parent })` mounts where the JSX sits. `Sprite` renders
+nothing - it allocates a record through context and syncs props into it.
 `GroupContext` is `createContext<SpriteGroup | null>(null)` on purpose: an
 optional parent needs a non-undefined default, since Solid 2 throws on a
 resolved `undefined` even when one was passed as the default.
 
 Pointer events: exact rotated-rect containment, topmost sprite first, capture
 per pointerId (a drag keeps delivering to the grabbed sprite with live
-coordinates), enter/leave paired per pointer. No bubbling - the sprite list
-is flat. Event x/y are layer pixels with the camera undone.
+coordinates), enter/leave paired per pointer. Down/move/up bubble from the
+hit sprite through its enclosing groups - `event.sprite` stays the hit,
+`currentTarget` the handle whose handler runs, `stopPropagation()` stops
+the walk (the same model as @solidrt/3d's scene dispatch; a record layer
+has no groups, so the walk ends at the sprite). Enter/leave fire on the
+sprite alone - a group never receives them. Event x/y are layer pixels
+with the camera undone.
 
 ## Traps
 
@@ -223,14 +249,15 @@ is flat. Event x/y are layer pixels with the camera undone.
   `{ field, descending? }` offset into the 13-float record. Node layer
   keys: `"y"` - WORLD y from the core-written pose buffer, so sprites
   moved by native transitions (or any core producer) re-sort with zero JS
-  per frame - or `"sortKey"` - the app-owned per-sprite `sortKey` field
-  (style record float 8, default 0), the explicit-layering key for
-  painter-order scenes: raise a dragged piece with `setSprite(hit,
-  { sortKey: ++top })`, back to 0 to restore. Either way the core gathers
+  per frame - or `"renderOrder"` - the app-owned per-sprite `renderOrder`
+  field (style record float 8, default 0; @solidrt/3d's name for the same
+  knob), the explicit-layering key for painter-order scenes: raise a
+  dragged piece with `setSprite(hit, { renderOrder: ++top })`, back to 0
+  to restore. Either way the core gathers
   pose AND style under ONE permutation and republishes the sibling buffer
   itself when the key buffer re-orders (the multi-buffer stage of
-  okf/backlog/gpu-instance-order.md). `sortKey` on a record-layer sprite
-  throws - its 13-float record has no key field.
+  okf/backlog/gpu-instance-order.md). `renderOrder` on a record-layer
+  sprite throws - its 13-float record has no key field.
 - The node layer's STYLE slots are not compacted: a removed sprite leaves
   its style floats in place (invisible - the pose is zeroed) until the
   slot recycles. Do not read style truth from the buffer; getSprite reads

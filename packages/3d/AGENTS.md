@@ -24,6 +24,13 @@ blendMode and pointer events like any element.
   in JS and why. The component face (`Scene`/`Group`/`Mesh`/
   `PerspectiveCamera`) syncs props into that core over context and renders
   nothing itself.
+- Node lifecycle: `add(parent, child)` attaches (re-parenting detaches
+  first), `remove(child)` DETACHES an intact subtree - children stay
+  under the removed node, core nodes free on leave and recreate on
+  re-enter, so a removed subtree re-adds cleanly. Nothing is destroyed
+  except instance record buffers (`disposeInstances`) and the scene
+  itself. (@solidrt/2d's `removeGroup` DESTROYS its subtree instead - a
+  sprite cannot exist outside its layer, so there remove means destroy.)
 - Rendering is the runtime's. The target is `render: "auto"`: it
   re-renders when entries change, so a STATIC scene costs zero passes and
   the library registers no frame loop. Continuous animation is the app's
@@ -152,12 +159,12 @@ blendMode and pointer events like any element.
 
 | Component | Props |
 | --- | --- |
-| `Scene` | `width`, `height` (target pixels), `clearColor?`, `background?` (fragment GLSL), `fog?` (`{ color, near, far }`, linear by camera distance), `samples?` (1/2/4/8 MSAA), `label?`, `ref?(scene)`, `output?(texture)`, `events?` (mesh pointer events, default on) |
+| `Scene` | `width`, `height` (target pixels), `clearColor?`, `camera?` (partial CameraUpdate, `ortho` included - the declarative scene.setCamera; same state as `PerspectiveCamera`, use one form), `background?` (fragment GLSL), `fog?` (`{ color, near, far }`, linear by camera distance), `samples?` (1/2/4/8 MSAA), `label?`, `ref?(scene)`, `output?(texture)`, `events?` (mesh pointer events, default on) |
 | `Group` | `position?`, `rotation?` (Euler radians, XYZ order), `quaternion?` (either, not both), `scale?` (number = uniform), `visible?`, pointer events (below), `ref?(node)` |
 | `Mesh` | `geometry`, `material`, transforms as Group, `params?` (per-mesh uniforms, merge semantics - no unset), pointer events (below), `ref?(mesh)` |
 | `Sprite` | as Mesh minus `geometry`: a camera-facing unit quad, `scale` is its world size, rotation is ignored; pair with a `sprite()` material |
 | `InstancedMesh` | as Mesh, plus `records` (interleaved per-instance floats; buffer capacity starts at the first value and grows on larger rewrites), `count?` (records drawn, default all), `bounds?` (local [minX..maxZ] over the population - without it the mesh never picks); the record buffer is component-owned and freed on unmount |
-| `PerspectiveCamera` | `fov?` (vertical DEGREES, default 60), `near?`, `far?`, `position?`, `lookAt?`, `up?` |
+| `PerspectiveCamera` | `fov?` (vertical DEGREES, default 60), `near?`, `far?`, `position?`, `lookAt?`, `up?` - or the Scene `camera` prop, the same state (last write wins) |
 
 Output composition: without `output`, `Scene` emits a minimal
 `<texture width height>` leaf and nothing else is forwarded - anything
@@ -224,22 +231,33 @@ from your onFrame (no frame loop of its own), and use its return - true
 when the pose changed - to gate per-frame dependents like reprojecting
 HUD overlays. `orbiting()` is reactive (HUD-safe); the pose is plain state via
 `pose()`/`set()` (also the debug-command shape). It drives position and
-target only; fov/near/far stay on scene.setCamera. In a component tree,
-reach the scene via `<Scene ref>` or useScene().
+target only; fov/near/far stay on scene.setCamera (or the Scene `camera`
+prop). In a component tree, reach the scene via `<Scene ref>` or
+useScene().
 
 Overlay projection: `scene.project(point)` maps a world point to scene
 pixels (top-left origin, y down - the output texture's own space; `w` is
-clip-space w, the camera-forward distance) and returns null for a point
-at or behind the camera plane. It reflects a pending `setCamera`
-immediately, so set-then-project in one tick is exact. `scene.viewProj(out?)`
-copies the view-projection matrix for batch work. Never rebuild the
-camera matrices by hand for a HUD.
+the camera-forward distance in world units under either projection) and
+returns null for a point at or behind a PERSPECTIVE camera's plane; an
+ortho camera places every point (`w` may be <= 0 there - negative near
+is legal ortho). It reflects a pending `setCamera` immediately, so
+set-then-project in one tick is exact. `scene.unproject(x, y, w, out?)`
+is its exact inverse: the world point at that pixel and camera-forward
+distance `w` - project()'s `w` round-trips in both modes (the
+drag-at-depth recipe: project the grabbed point once, keep its `w`,
+unproject each move). `scene.viewProj(out?)` copies the view-projection
+matrix for batch work. Never rebuild the camera matrices by hand for a
+HUD.
 
 Picking: `scene.pick(x, y)` is project()'s inverse - the camera ray
 through a scene pixel, returning `Hit[]` (`{ mesh, distance, point }`,
 world units, nearest first; every hit along the ray, not just the front
 one). `scene.raycast(origin, direction)` is the world-space primitive
-under it.
+under it, and `scene.screenRay(x, y)` the ray itself (`{ origin,
+direction }`; direction's camera-forward component is 1, so
+`origin + w * direction` = unproject) for intersection work pick cannot
+do - drag planes, ground grids, filtered raycasts. All three cast
+exactly the same ray.
 The index and the narrowphase live in the spatial core: every attached
 mesh's local box is a leaf in a dynamic AABB tree the flush refits from
 the fresh world matrices (O(moved) per frame, a query O(log meshes)), and

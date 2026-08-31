@@ -308,6 +308,11 @@ export type Hit = {
   uv?: [number, number]
 }
 
+/** A pixel's camera ray (screenRay): `direction` is NOT normalized - its
+ * camera-forward component is 1, so `origin + w * direction` is the world
+ * point at camera-forward distance `w` (unproject's mapping). */
+export type ScreenRay = { origin: Vec3; direction: Vec3 }
+
 /** The settled component of a node transition. */
 export type TransitionEndEvent = {
   component: "position" | "rotation" | "scale"
@@ -530,12 +535,26 @@ export type Scene = {
   /**
    * Project a world point to scene pixels: origin top-left, y down - the
    * output texture's own coordinate space, ready for overlay layout (HUD
-   * markers, labels). `w` is the clip-space w, the point's camera-forward
-   * distance (useful for depth-ordering or distance-scaling markers).
-   * Returns null for a point at or behind the camera plane - such a point
-   * has no place on screen. Reflects a pending setCamera immediately.
+   * markers, labels). `w` is the point's camera-forward distance in world
+   * units under either projection (useful for depth-ordering or
+   * distance-scaling markers, and unproject's exact input). Returns null
+   * for a point at or behind a PERSPECTIVE camera's plane - such a point
+   * has no place on screen; a parallel projection places every point, so
+   * an orthographic camera never returns null and `w` may be zero or
+   * negative there (negative near is legal ortho). Reflects a pending
+   * setCamera immediately.
    */
   project(point: Vec3): { x: number; y: number; w: number } | null
+  /**
+   * project()'s exact inverse (Unity's ScreenToWorldPoint, Godot's
+   * project_position): the world point at scene pixel (`x`, `y`) and
+   * camera-forward distance `w`, copied into `out` (or a fresh Vec3).
+   * project()'s `w` round-trips under either projection - the
+   * drag-at-depth recipe: project the grabbed point once, keep its `w`,
+   * unproject each pointer move to slide the object at its original
+   * depth. Reflects a pending setCamera immediately, like project().
+   */
+  unproject(x: number, y: number, w: number, out?: Vec3): Vec3
   /** The camera's view-projection matrix, copied into `out` (or a fresh
    * mat4). The batch escape hatch; for single points use project(). */
   viewProj(out?: Mat4): Mat4
@@ -553,6 +572,16 @@ export type Scene = {
   /** pick()'s world-space half: the same query along an arbitrary ray.
    * `direction` need not be normalized; distances are world units. */
   raycast(origin: Vec3, direction: Vec3): Hit[]
+  /**
+   * pick()'s ray half (Unity's ScreenPointToRay, Godot's
+   * project_ray_origin/normal): the camera ray through a scene pixel,
+   * fresh arrays each call, for intersection work pick() cannot do - a
+   * drag plane, a ground grid, a raycast with the hits filtered
+   * yourself. `direction`'s camera-forward component is 1 (see
+   * ScreenRay), and raycast() takes it as-is. Reflects a pending
+   * setCamera immediately.
+   */
+  screenRay(x: number, y: number): ScreenRay
   /**
    * Element pointer handlers driving the mesh event fields
    * (onPointerDown/Move/Up/Enter/Leave on nodes): spread onto the element
@@ -1449,6 +1478,45 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
   let clip: Vec4 = [0, 0, 0, 0]
   let pickOrigin: Vec3 = [0, 0, 0]
 
+  // The camera ray through a scene pixel, into the pickOrigin/pickDir
+  // scratches. The direction keeps a camera-forward component of 1
+  // (perspective: (cx, cy, -1) in the camera frame; ortho: unit forward),
+  // so origin + w * direction is the world point at camera-forward
+  // distance w - what unproject() banks on. pick()/screenRay()/
+  // unproject() all cast exactly this ray.
+  let pixelRay = (x: number, y: number): void => {
+    ensureCamera(camera, width, height)
+    let v = camera.view
+    let o = camera.ortho
+    if (o === null) {
+      // The camera-frame ray through the pixel, inverting project()'s
+      // mapping: the baked y-down clip flip is why pixel y converts with
+      // no negation there and one here.
+      let f = 1 / Math.tan(((camera.fov * Math.PI) / 180) / 2)
+      let cx = (((x / width) * 2 - 1) * (width / height)) / f
+      let cy = -((y / height) * 2 - 1) / f
+      // The view's upper 3x3 rows are the camera axes, so its transpose
+      // carries the camera-space direction (cx, cy, -1) to world.
+      pickDir[0] = cx * v[0] + cy * v[1] - v[2]
+      pickDir[1] = cx * v[4] + cy * v[5] - v[6]
+      pickDir[2] = cx * v[8] + cy * v[9] - v[10]
+      pickOrigin[0] = camera.eye[0]
+      pickOrigin[1] = camera.eye[1]
+      pickOrigin[2] = camera.eye[2]
+      return
+    }
+    // Orthographic: every ray runs along the camera's forward axis; the
+    // pixel picks where on the camera plane it starts (top row = top).
+    let cx = o.left + (x / width) * (o.right - o.left)
+    let cy = o.top + (y / height) * (o.bottom - o.top)
+    pickOrigin[0] = camera.eye[0] + cx * v[0] + cy * v[1]
+    pickOrigin[1] = camera.eye[1] + cx * v[4] + cy * v[5]
+    pickOrigin[2] = camera.eye[2] + cx * v[8] + cy * v[9]
+    pickDir[0] = -v[2]
+    pickDir[1] = -v[6]
+    pickDir[2] = -v[10]
+  }
+
   // Views (scene.createView): more targets drawing the same meshes from
   // their own cameras. A view holds one entry per mesh in its target,
   // bound as one more draw sink of the mesh's core node, so the flush
@@ -2221,43 +2289,40 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       let w = clip[3]
       if (w < 1e-6) return null
       // perspective() bakes the y-down clip flip, so NDC maps straight to
-      // top-left-origin pixels with no negation here. (An orthographic
-      // camera has w = 1 everywhere: every point projects.)
-      return { x: ((clip[0] / w) * 0.5 + 0.5) * width, y: ((clip[1] / w) * 0.5 + 0.5) * height, w }
+      // top-left-origin pixels with no negation here.
+      let x = ((clip[0] / w) * 0.5 + 0.5) * width
+      let y = ((clip[1] / w) * 0.5 + 0.5) * height
+      if (camera.ortho !== null) {
+        // An orthographic clip w is 1 everywhere (every point projects, the
+        // divides above are no-ops) and carries no depth, so `w` reports
+        // the camera-forward distance off the view row instead - the same
+        // meaning as the perspective clip w, and unproject's exact input.
+        let v = camera.view
+        w = -(v[2] * point[0] + v[6] * point[1] + v[10] * point[2] + v[14])
+      }
+      return { x, y, w }
     },
     viewProj(out) {
       ensureCamera(camera, width, height)
       return copy(out ?? mat4(), camera.viewProj)
     },
     pick(x, y) {
-      ensureCamera(camera, width, height)
-      let v = camera.view
-      let o = camera.ortho
-      if (o === null) {
-        // The camera-frame ray through the pixel, inverting project()'s
-        // mapping: the baked y-down clip flip is why pixel y converts with
-        // no negation there and one here.
-        let f = 1 / Math.tan(((camera.fov * Math.PI) / 180) / 2)
-        let cx = (((x / width) * 2 - 1) * (width / height)) / f
-        let cy = -((y / height) * 2 - 1) / f
-        // The view's upper 3x3 rows are the camera axes, so its transpose
-        // carries the camera-space direction (cx, cy, -1) to world.
-        pickDir[0] = cx * v[0] + cy * v[1] - v[2]
-        pickDir[1] = cx * v[4] + cy * v[5] - v[6]
-        pickDir[2] = cx * v[8] + cy * v[9] - v[10]
-        return scene.raycast(camera.eye, pickDir)
-      }
-      // Orthographic: every ray runs along the camera's forward axis; the
-      // pixel picks where on the camera plane it starts (top row = top).
-      let cx = o.left + (x / width) * (o.right - o.left)
-      let cy = o.top + (y / height) * (o.bottom - o.top)
-      pickOrigin[0] = camera.eye[0] + cx * v[0] + cy * v[1]
-      pickOrigin[1] = camera.eye[1] + cx * v[4] + cy * v[5]
-      pickOrigin[2] = camera.eye[2] + cx * v[8] + cy * v[9]
-      pickDir[0] = -v[2]
-      pickDir[1] = -v[6]
-      pickDir[2] = -v[10]
+      pixelRay(x, y)
       return scene.raycast(pickOrigin, pickDir)
+    },
+    unproject(x, y, w, out = [0, 0, 0]) {
+      pixelRay(x, y)
+      out[0] = pickOrigin[0] + w * pickDir[0]
+      out[1] = pickOrigin[1] + w * pickDir[1]
+      out[2] = pickOrigin[2] + w * pickDir[2]
+      return out
+    },
+    screenRay(x, y) {
+      pixelRay(x, y)
+      return {
+        origin: [pickOrigin[0], pickOrigin[1], pickOrigin[2]],
+        direction: [pickDir[0], pickDir[1], pickDir[2]],
+      }
     },
     raycast(origin, direction) {
       // Flush pending writes: picking sees the tree as the app just wrote
