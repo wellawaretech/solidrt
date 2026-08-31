@@ -11,7 +11,7 @@
 
 import { file } from "flux:fs"
 import { decodeImage } from "@solidrt/core"
-import { createTexture, destroyTexture } from "@solidrt/core/gpu"
+import { createTexture, destroyTexture, limits } from "@solidrt/core/gpu"
 import type { TextureId } from "@solidrt/core/gpu"
 import { gltfExternalUris, parseGltf } from "./gltf.ts"
 import type { ModelClip, ModelData, ModelMaterial } from "./gltf.ts"
@@ -20,7 +20,7 @@ import type { Mat4 } from "./math.ts"
 import { MAX_JOINTS } from "./glsl.ts"
 import { decodeModel } from "./model-file.ts"
 import { disposeGeometry } from "./geometry-gpu.ts"
-import { lit } from "./material.ts"
+import { jointCap, lit } from "./material.ts"
 import type { Material } from "./material.ts"
 import { add, createGroup, createMesh, remove, setMeshParams, setTransform } from "./scene.ts"
 import type { Mesh, SceneNode } from "./scene.ts"
@@ -149,11 +149,18 @@ export function createModel(data: ModelData, opts: ModelOptions = {}): Model {
   data.nodes.forEach((n, i) => add(n.parent === null ? model : groups[n.parent]!, groups[i]!))
   model.nodes = data.nodes.map((n, i) => ({ name: n.name, node: groups[i]! }))
   model._parents = data.nodes.map((n) => n.parent)
+  // Palettes are allocated at the device's joint cap, not the rig's size:
+  // the raster side validates uBones against the declared array length
+  // exactly, so a shorter rig uploads a zero-padded tail.
+  let cap = jointCap()
   model._skins = data.skins.map((skin, i) => {
-    if (skin.joints.length > MAX_JOINTS) {
-      throw new Error("createModel: skin " + i + " has " + skin.joints.length + " joints; MAX_JOINTS is " + MAX_JOINTS + " (float-texture palettes are the planned scale-out)")
+    if (skin.joints.length > cap) {
+      let bound = cap < MAX_JOINTS
+        ? "the cap on this device is " + cap + " (" + limits.maxVertexUniformVectors + " vertex uniform vectors)"
+        : "the cap is " + cap + " (MAX_JOINTS)"
+      throw new Error("createModel: skin " + i + " has " + skin.joints.length + " joints; " + bound + "; float-texture palettes are the planned scale-out")
     }
-    return { joints: skin.joints, inverseBind: skin.inverseBind, palette: new Array(MAX_JOINTS * 16).fill(0), meshes: [] }
+    return { joints: skin.joints, inverseBind: skin.inverseBind, palette: new Array(cap * 16).fill(0), meshes: [] }
   })
   model._worlds = []
   model.parts = data.parts.map((part) => {

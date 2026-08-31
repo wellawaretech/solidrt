@@ -183,7 +183,8 @@ what it delivered is documented in `packages/3d/AGENTS.md`, not here.
     blob, which also wants item 6's blend factors to avoid dithering.
 16. [ ] **Skinning and morph targets.** Skinning shipped 2026-08-31 at
     the uniform-array tier with the model loader's skins and the JS
-    mixer (`uBones` mat4 array, MAX_JOINTS = 32, palettes composed in
+    mixer (`uBones` mat4 array sized to jointCap() - MAX_JOINTS = 64,
+    device-shrunk to the vertex uniform budget - palettes composed in
     JS - see `packages/3d/AGENTS.md`); what keeps the box open: morph
     targets, and palettes past the cap - the engine half stays float
     texture formats (same extensions file), bone matrices sampled in

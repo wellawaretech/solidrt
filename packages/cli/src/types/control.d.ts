@@ -40,12 +40,22 @@ export type ClientEntry = {
    * runtime that predates it, or on a client that connected before its
    * window existed (a reconnect fills it in). */
   refreshRate: number | null
-  /** The GPU strings as GL reports them; null on a client that connected
-   * before its GL context existed (a reconnect fills it in). */
+  /** The GPU strings as GL reports them, with the device ceilings that
+   * client validates creates against (spelled like flux:gpu's `limits`
+   * export); null on a client that connected before its GL context existed
+   * (a reconnect fills it in). */
   gpu: GpuInfo | null
 }
 
-export type GpuInfo = { vendor: string; renderer: string; version: string }
+export type GpuInfo = { vendor: string; renderer: string; version: string; limits: GpuDeviceLimits | null }
+
+export type GpuDeviceLimits = {
+  maxTextureSize: number
+  maxTextureUnits: number
+  maxVertexAttribs: number
+  maxAnisotropy: number
+  maxVertexUniformVectors: number
+}
 
 /** GET /clients */
 export type ClientsResponse = {

@@ -21,6 +21,12 @@ pub struct GpuLimits {
   pub max_texture_units: u32,
   /// Vertex attributes one pipeline may declare (GL_MAX_VERTEX_ATTRIBS).
   pub max_vertex_attribs: u32,
+  /// vec4 uniform slots a vertex stage may declare
+  /// (GL_MAX_VERTEX_UNIFORM_VECTORS): a mat4 costs 4, a mat4[N] array 4N.
+  /// What sizes a bone palette - a `uniform mat4 uBones[J]` under dynamic
+  /// indexing keeps all J elements active, so the declaration itself must
+  /// fit this budget or the program fails to link.
+  pub max_vertex_uniform_vectors: u32,
   /// Highest anisotropic filtering level the device samples at
   /// (GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT), 1 when
   /// `GL_EXT_texture_filter_anisotropic` is absent. A report, not a
@@ -33,8 +39,13 @@ impl GpuLimits {
   /// The GLES 3.0 guaranteed minimums: the fallback when the raster thread is
   /// gone (engine shutdown) and nothing can be queried, and the clamp floor
   /// for a driver reporting nonsense.
-  pub const FLOOR: GpuLimits =
-    GpuLimits { max_texture_size: 2048, max_texture_units: 16, max_vertex_attribs: 16, max_anisotropy: 1 };
+  pub const FLOOR: GpuLimits = GpuLimits {
+    max_texture_size: 2048,
+    max_texture_units: 16,
+    max_vertex_attribs: 16,
+    max_anisotropy: 1,
+    max_vertex_uniform_vectors: 256,
+  };
 
   /// Query the ceilings from the live context (raster thread, the one place
   /// GL exists). Values are clamped up to the ES 3.0 floors: a context this
@@ -47,6 +58,7 @@ impl GpuLimits {
       let rb = gl.get_parameter_i32(glow::MAX_RENDERBUFFER_SIZE);
       let units = gl.get_parameter_i32(glow::MAX_TEXTURE_IMAGE_UNITS);
       let attribs = gl.get_parameter_i32(glow::MAX_VERTEX_ATTRIBS);
+      let vertex_vectors = gl.get_parameter_i32(glow::MAX_VERTEX_UNIFORM_VECTORS);
       // An extension, never core at any GL level, but present on practically
       // every ES 3.0 device and on ANGLE over D3D11/Metal; absence is a fact
       // to report, not an error. A desktop core profile may list only the
@@ -65,6 +77,7 @@ impl GpuLimits {
         max_texture_units: units.max(floor.max_texture_units as i32) as u32,
         max_vertex_attribs: attribs.max(floor.max_vertex_attribs as i32) as u32,
         max_anisotropy: anisotropy.max(floor.max_anisotropy as i32) as u32,
+        max_vertex_uniform_vectors: vertex_vectors.max(floor.max_vertex_uniform_vectors as i32) as u32,
       }
     }
   }

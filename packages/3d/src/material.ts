@@ -26,6 +26,7 @@ import {
   destroyRenderPipeline,
   destroyShader,
   glsl,
+  limits,
   linkProgram,
   programAttributes,
 } from "@solidrt/core/gpu"
@@ -42,7 +43,20 @@ import type {
 } from "@solidrt/core/gpu"
 import { layoutAttributes, layoutKey, layoutSlot } from "./geometry.ts"
 import type { VertexLayout } from "./geometry.ts"
-import { litFragment, litShadowFragment, litVertex, UNLIT_VERTEX, unlitFragment, unlitShadowFragment, unlitVertex } from "./glsl.ts"
+import { jointCapFor, litFragment, litShadowFragment, litVertex, UNLIT_VERTEX, unlitFragment, unlitShadowFragment, unlitVertex } from "./glsl.ts"
+
+/**
+ * Joint capacity of this device's skinned programs: MAX_JOINTS, shrunk
+ * when the device's vertex uniform budget cannot hold that palette (see
+ * jointCapFor in glsl.ts; the ES 3.0 floor of 256 vectors fits 60). The
+ * uBones array size the lit/unlit skinned variants declare and the
+ * palette length createModel allocates - a custom skinned material passes
+ * it the same way: `litVertex({ skinned: true, jointCap: jointCap() })`,
+ * with a uBones palette of exactly that many mat4s.
+ */
+export function jointCap(): number {
+  return jointCapFor(limits.maxVertexUniformVectors)
+}
 
 export type Material = {
   /** The pipeline this material draws with for geometry of `layout`
@@ -164,7 +178,7 @@ export function unlit(opts: UnlitOptions = {}): Material {
   let cls = unlitClasses.get(key)
   if (cls === undefined) {
     cls = shaderMaterialClass({
-      vertex: unlitVertex({ skinned }),
+      vertex: unlitVertex({ skinned, jointCap: jointCap() }),
       fragment: unlitFragment({ map, alphaTest, transparent, fog, mapTransform }),
       transparent,
       cull,
@@ -348,7 +362,7 @@ export function lit(opts: LitOptions = {}): Material {
   let cls = litClasses.get(key)
   if (cls === undefined) {
     cls = shaderMaterialClass({
-      vertex: litVertex(flags),
+      vertex: litVertex({ ...flags, jointCap: jointCap() }),
       fragment: litFragment(flags),
       transparent: flags.transparent,
       cull,

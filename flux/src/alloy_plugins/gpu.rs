@@ -1550,6 +1550,7 @@ impl ModuleDef for GpuModule {
     limits_obj.set("maxTextureUnits", limits.max_texture_units)?;
     limits_obj.set("maxVertexAttribs", limits.max_vertex_attribs)?;
     limits_obj.set("maxAnisotropy", limits.max_anisotropy)?;
+    limits_obj.set("maxVertexUniformVectors", limits.max_vertex_uniform_vectors)?;
     exports.export("limits", limits_obj)?;
     Ok(())
   }

@@ -65,12 +65,14 @@ pub use yuv::{YuvLayout, YuvMatrix, YuvRange};
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, Ordering};
 use std::sync::OnceLock;
 
-/// The GPU behind the process's GL context, as GL names it.
+/// The GPU behind the process's GL context, as GL names it, with the device
+/// ceilings it reported (the same GpuLimits every create validates against).
 #[derive(Clone, Debug)]
 pub struct GpuInfo {
   pub vendor: String,
   pub renderer: String,
   pub version: String,
+  pub limits: gpu::GpuLimits,
 }
 
 // Platform facts fixed at startup, for a dev tool asking what machine it is

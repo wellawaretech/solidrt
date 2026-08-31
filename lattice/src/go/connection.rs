@@ -523,6 +523,16 @@ async fn try_serve(
       "vendor": gpu.vendor,
       "renderer": gpu.renderer,
       "version": gpu.version,
+      // The device ceilings, spelled like flux:gpu's `limits` export - what
+      // this client's creates validate against, so a dev tool can see why a
+      // size or a rig fits on one connected client and not another.
+      "limits": {
+        "maxTextureSize": gpu.limits.max_texture_size,
+        "maxTextureUnits": gpu.limits.max_texture_units,
+        "maxVertexAttribs": gpu.limits.max_vertex_attribs,
+        "maxAnisotropy": gpu.limits.max_anisotropy,
+        "maxVertexUniformVectors": gpu.limits.max_vertex_uniform_vectors,
+      },
     })),
   });
   let _ = client.send(tokio_websockets::Message::text(info.to_string())).await;

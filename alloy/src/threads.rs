@@ -65,8 +65,9 @@ pub(crate) fn run_context(
       let vendor = gl.get_parameter_string(glow::VENDOR);
       let renderer = gl.get_parameter_string(glow::RENDERER);
       let version = gl.get_parameter_string(glow::VERSION);
+      let limits = crate::gpu::GpuLimits::query(&gl);
       log::info!("[alloy] GPU ready: {vendor} | {renderer} | {version}");
-      crate::set_gpu_info(crate::GpuInfo { vendor, renderer, version });
+      crate::set_gpu_info(crate::GpuInfo { vendor, renderer, version, limits });
     }
 
     let state = RasterState::new(gl, impeller_ctx, binding, surface_size, capture_frames, raster_stats, tx, wake);

@@ -16,6 +16,7 @@ import { join, resolveWithin } from "flux:path"
 import { command } from "flux:subprocess"
 import { interfaces, probe } from "flux:net"
 import type { Child } from "flux:subprocess"
+import type { GpuDeviceLimits } from "../types/control"
 import { state } from "./state"
 import { fail, parseArgs } from "./args"
 import type { ServerConfig } from "./config"
@@ -230,6 +231,20 @@ function text(value: unknown): string | null {
   return typeof value === "string" ? value : null
 }
 
+// The device-limits object of a client's `info.gpu`, or null when absent
+// (an older runtime): every field a number or the object is dropped whole,
+// so a consumer never sees a partial limits report.
+function gpuLimits(value: unknown): GpuDeviceLimits | null {
+  if (!value || typeof value !== "object") return null
+  let v = value as Record<string, unknown>
+  let limits = {} as Record<string, number>
+  for (let key of ["maxTextureSize", "maxTextureUnits", "maxVertexAttribs", "maxAnisotropy", "maxVertexUniformVectors"]) {
+    if (typeof v[key] !== "number") return null
+    limits[key] = v[key]
+  }
+  return limits as GpuDeviceLimits
+}
+
 function onOpen(ws: ServerWebSocket) {
   let id = state.nextClientId++
   state.clients.set(ws, {
@@ -290,7 +305,12 @@ function onMessage(ws: ServerWebSocket, msg: string | Uint8Array) {
         refreshRate: typeof data.refreshRate === "number" ? data.refreshRate : null,
         gpu:
           data.gpu && typeof data.gpu === "object"
-            ? { vendor: text(data.gpu.vendor) ?? "", renderer: text(data.gpu.renderer) ?? "", version: text(data.gpu.version) ?? "" }
+            ? {
+                vendor: text(data.gpu.vendor) ?? "",
+                renderer: text(data.gpu.renderer) ?? "",
+                version: text(data.gpu.version) ?? "",
+                limits: gpuLimits(data.gpu.limits),
+              }
             : null,
       })
       console.log(`[cli] Client info ${ws.remoteAddr ?? "unknown"} ${data.platform} (${data.version})`)

@@ -205,6 +205,13 @@ declare module "flux:gpu" {
      * goes" spelling.
      */
     maxAnisotropy: number
+    /**
+     * vec4 uniform slots a vertex stage may declare (>= 256): a mat4 costs
+     * 4, a `mat4 u[N]` array 4N. What bounds a bone-palette array - a
+     * dynamically indexed array keeps every declared element active, so
+     * the declaration itself must fit or the program fails to link.
+     */
+    maxVertexUniformVectors: number
   }
   /**
    * Create an immutable texture from a pixel buffer (exactly
