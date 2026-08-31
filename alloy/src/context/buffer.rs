@@ -32,6 +32,14 @@ impl Context {
   /// must request a frame.
   pub fn write_gpu_buffer(&self, id: u64, data: &[u8], byte_offset: usize) -> Result<(), String> {
     let size = *self.buffer_sizes.borrow().get(&id).ok_or_else(|| format!("buffer {id} not found"))?;
+    // An ordered buffer's GPU contents are in key order, so a byte-offset
+    // write would land on the wrong records; ordered buffers publish whole
+    // record sets through the lease, where the gather runs.
+    if self.buffer_has_order(id) {
+      return Err(format!(
+        "buffer {id} has an instance order; publish whole records through beginBufferWrite/endBufferWrite"
+      ));
+    }
     let end = byte_offset.checked_add(data.len()).ok_or_else(|| "offset overflow".to_string())?;
     if end > size {
       return Err(format!("write of {} bytes at offset {byte_offset} exceeds buffer size {size}", data.len()));
@@ -65,6 +73,11 @@ impl Context {
   /// channel. `len` 0 cancels - the lease closes, nothing is sent. Always
   /// closes the lease, error or not. The caller must request a frame on a
   /// non-zero publish (same contract as `write_gpu_buffer`).
+  ///
+  /// When the buffer is some entry's ordered instance buffer, the publish is
+  /// where the order materializes: the records are gathered into key order
+  /// through a second pooled block (see `gather_for_publish`), and THAT
+  /// block moves to the raster thread - the one copy the ordering costs.
   pub fn end_buffer_write(&self, id: u64, len: usize) -> Result<(), String> {
     let block = self.write_leases.borrow_mut().end(id)?;
     if len == 0 {
@@ -76,6 +89,7 @@ impl Context {
       self.write_leases.borrow_mut().cancel(id, block);
       return Err(format!("publish of {len} bytes exceeds buffer size {size}"));
     }
+    let block = self.gather_for_publish(id, block, len)?;
     self.send(RasterCmd::WriteBufferLease { id, block, len, recycle: self.block_recycle_tx.clone() });
     self.note_buffer_content(id);
     Ok(())
@@ -88,6 +102,9 @@ impl Context {
   pub fn destroy_gpu_buffer(&self, id: u64) {
     self.buffer_sizes.borrow_mut().remove(&id);
     self.write_leases.borrow_mut().destroy(id);
+    // The ordering entry (if any) keeps its declaration - a later buffer
+    // swap re-keys it - but the retired id stops resolving as ordered.
+    self.drop_order_buffer(id);
     self.send(RasterCmd::DestroyBuffer { id });
   }
 
@@ -103,7 +120,9 @@ impl Context {
     self.buffer_sizes.borrow().get(&id).copied().map(Some).ok_or_else(|| format!("buffer {id} not found"))
   }
 
-  /// Read back part of a vertex buffer's contents by registry id.
+  /// Read back part of a vertex buffer's contents by registry id. An
+  /// ordered instance buffer reads back in gathered (key) order, not slot
+  /// order - the GPU-side contents ARE the gathered records.
   pub fn read_gpu_buffer(&self, id: u64, byte_offset: usize, len: usize) -> Result<Vec<u8>, String> {
     if !self.buffer_sizes.borrow().contains_key(&id) {
       return Err(format!("buffer {id} not found"));

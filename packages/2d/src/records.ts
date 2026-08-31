@@ -2,8 +2,10 @@
 // (bespoke flocking, per-frame gameplay logic over every entity at large
 // populations). Sprites are 13 JS-owned floats in one canonical
 // Float32Array ordered by draw order (insertion order - painter's
-// algorithm, later over earlier); mutations batch to a microtask whose
-// flush publishes the live prefix through the zero-copy buffer write lease.
+// algorithm, later over earlier; `orderBy` swaps that for a core-produced
+// key order at publish, records untouched); mutations batch to a microtask
+// whose flush publishes the live prefix through the zero-copy buffer write
+// lease.
 // A moved sprite is 13 float stores plus one bulk memcpy per dirty frame; a
 // static layer publishes nothing and therefore costs nothing.
 //
@@ -42,17 +44,38 @@ import { FRAGMENT, INSTANCE_ATTRIBUTES, VERTEX } from "./shaders.ts"
 // [cx, cy, w, h, u0, v0, u1, v1, rot, tintR, tintG, tintB, tintA]
 export const FLOATS_PER_SPRITE = 13
 
+// Float offset of cy in a record - what `orderBy: "y"` keys on.
+const Y_FIELD_OFFSET = 1
+
 const RESOLVED = Promise.resolve()
+
+export type RecordLayerOptions = SpriteLayerOptions & {
+  /**
+   * Draw records in KEY order instead of record order, produced by core at
+   * each publish (the gpu `instanceOrder` primitive - the flush's lease
+   * copy arrives gathered, no per-record JS anywhere): `"y"` keys on the
+   * record's cy, so a perspective crowd paints back to front (smaller y =
+   * further up the screen = drawn first); or an explicit `{ field,
+   * descending? }` float offset into the record for a custom sort key.
+   * Record slots stay stable - record i keeps meaning sprite i, and
+   * removeSprite still shifts - only the draw order changes. Ties keep
+   * record order, so an unset key draws exactly as before. Known
+   * limitation: pick() resolves overlapping sprites by record order, not
+   * visual order, when a key is set.
+   */
+  orderBy?: "y" | { field: number; descending?: boolean }
+}
 
 export type RecordLayer = LayerBase & {
   /**
    * The canonical record array - the raw power path. Layout per sprite is
    * FLOATS_PER_SPRITE floats: [cx, cy, w, h, u0, v0, u1, v1, rot, tintR,
-   * tintG, tintB, tintA], record i at i * FLOATS_PER_SPRITE in draw order.
-   * Write fields directly for large per-frame populations, then call
-   * touch() once. Do not cache indices across removeSprite - records
-   * shift - and do not cache the array across addSprite - growth replaces
-   * it.
+   * tintG, tintB, tintA], record i at i * FLOATS_PER_SPRITE. Record order
+   * is draw order - unless the layer was created with `orderBy`, which
+   * draws in key order while record i keeps meaning sprite i. Write fields
+   * directly for large per-frame populations, then call touch() once. Do
+   * not cache indices across removeSprite - records shift - and do not
+   * cache the array across addSprite - growth replaces it.
    */
   records: Float32Array
   /**
@@ -77,7 +100,7 @@ export function createRecordLayer(
   width: number,
   height: number,
   atlas: TextureId,
-  opts?: SpriteLayerOptions,
+  opts?: RecordLayerOptions,
 ): RecordLayer {
   let capacity = opts?.capacity ?? 1024
   if (!(capacity > 0 && Number.isInteger(capacity))) {
@@ -95,6 +118,13 @@ export function createRecordLayer(
   })
   let oversample = opts?.oversample ?? 1
   checkOversample("createRecordLayer", oversample, width, height)
+  let orderBy = opts?.orderBy
+  let instanceOrder =
+    orderBy === undefined
+      ? undefined
+      : orderBy === "y"
+        ? { field: Y_FIELD_OFFSET }
+        : { field: orderBy.field, descending: orderBy.descending }
   let thrash = thrashSentinel(`record layer "${label}"`)
   let texture = createPipelineTexture(
     VERTEX,
@@ -110,6 +140,7 @@ export function createRecordLayer(
       buffer: quad,
       instanceAttributes: INSTANCE_ATTRIBUTES,
       instanceBuffer: records,
+      instanceOrder,
       instanceCount: 0,
       blend: "alpha",
       textures: { uAtlas: atlas },
@@ -152,6 +183,16 @@ export function createRecordLayer(
     endBufferWrite(target, count * FLOATS_PER_SPRITE * 4)
     if (grown !== null) {
       setDraw(texture, { instanceBuffer: grown, instanceCount: count })
+      if (instanceOrder !== undefined) {
+        // The growth publish above landed BEFORE the swap (the entry must
+        // never point at an unwritten buffer), so the order had not yet
+        // followed to the grown buffer and that publish went out ungathered.
+        // One more publish, now under the swapped-in order, restores key
+        // order - growth frames only.
+        let again = beginBufferWrite(grown)
+        again.set(layer.records.subarray(0, count * FLOATS_PER_SPRITE))
+        endBufferWrite(grown, count * FLOATS_PER_SPRITE * 4)
+      }
       destroyBuffer(records)
       records = grown
       published = count

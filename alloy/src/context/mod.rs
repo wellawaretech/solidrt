@@ -15,6 +15,7 @@ mod buffer;
 mod capture;
 pub(crate) mod content;
 mod mirror;
+mod order;
 mod program;
 mod spatial;
 mod target;
@@ -23,6 +24,7 @@ mod texture;
 pub use capture::{CaptureDone, CaptureInfo};
 
 use mirror::{PipelineMirror, SubTargetMirror, TargetMirror};
+use order::InstanceOrders;
 use texture::YuvGroup;
 
 // All GL work - texture uploads, shader passes, offscreen rasterization,
@@ -121,6 +123,9 @@ pub struct Context {
   write_leases: RefCell<WriteLeases>,
   block_recycle_tx: mpsc::Sender<(u64, Vec<u8>)>,
   block_recycle_rx: mpsc::Receiver<(u64, Vec<u8>)>,
+  // Entries that declared an instance order and the buffers they order (see
+  // context/order.rs); end_buffer_write gathers ordered publishes through it.
+  orders: RefCell<InstanceOrders>,
   // UI-side cache of the device ceilings (see gpu_limits): fetched over one
   // blocking RPC on first use, then a plain read on every validation site.
   limits: Cell<Option<GpuLimits>>,
@@ -198,6 +203,7 @@ impl Context {
       write_leases: RefCell::new(WriteLeases::new()),
       block_recycle_tx: recycle_tx,
       block_recycle_rx: recycle_rx,
+      orders: RefCell::new(InstanceOrders::new()),
       limits: Cell::new(None),
       cameras: CameraRegistry::default(),
       microphones: MicrophoneRegistry::default(),

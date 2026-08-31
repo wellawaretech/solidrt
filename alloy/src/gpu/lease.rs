@@ -62,6 +62,20 @@ impl WriteLeases {
     self.recycle(id, block, |_| true);
   }
 
+  /// Take a pooled block for `id` without opening a lease (minting `size`
+  /// bytes when none waits) - the gather destination for an ordered publish,
+  /// where the leased block is the source and a second block receives the
+  /// permuted records. Leaves any open lease untouched; the block returns
+  /// through `recycle`/`cancel` like every other.
+  pub fn take_free(&mut self, id: u64, size: usize) -> Vec<u8> {
+    let block = match self.free.get_mut(&id).and_then(|blocks| blocks.pop()) {
+      Some(block) => block,
+      None => vec![0u8; size],
+    };
+    debug_assert_eq!(block.len(), size, "pooled block size drifted from buffer size");
+    block
+  }
+
   /// Accept a block back from the raster thread. `known` reports whether the
   /// id is still live; blocks for retired ids drop here, and the pool per id
   /// stays capped so a stalled raster thread bounds memory, not grows it.

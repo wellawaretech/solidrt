@@ -655,6 +655,11 @@ pub struct DrawUpdate {
   pub index_count: Option<i32>,
   pub instance_count: Option<i32>,
   pub buffers: BufferUpdate,
+  /// Replace an ordered entry's projected-key direction (the per-camera-move
+  /// update; errs on an entry without a position-keyed instance order).
+  /// UI-side state that shapes the NEXT lease publish - alone it sends
+  /// nothing to the raster thread and re-renders nothing.
+  pub order_direction: Option<[f32; 3]>,
 }
 
 /// The registry ids of one draw entry's buffers by role (vertex, index with

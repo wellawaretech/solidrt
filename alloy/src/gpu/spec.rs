@@ -2,6 +2,7 @@
 //! to the raster thread in one owned value, serving both the public Context
 //! API and the RasterCmd payloads.
 
+use super::order::InstanceOrder;
 use super::vocab::{BufferIds, DrawRange, IndexFormat, ParamValue, PipelineDesc, TextureBinding};
 use crate::gpu::SamplerState;
 
@@ -98,6 +99,12 @@ pub struct DrawSpec {
   pub draw: DrawRange,
   pub params: Vec<(String, ParamValue)>,
   pub textures: Vec<TextureBinding>,
+  /// The entry's declared instance order (see `InstanceOrder`): records of
+  /// its one instance buffer draw in key order, gathered at each lease
+  /// publish. UI-side state only - Context takes it before the spec crosses
+  /// the channel; the raster thread receives already-gathered blocks and
+  /// never sees this field.
+  pub order: Option<InstanceOrder>,
 }
 
 impl DrawSpec {

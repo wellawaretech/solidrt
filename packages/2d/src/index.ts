@@ -14,7 +14,7 @@
 
 export { addGroup, addSprite, createSpriteLayer, getSprite, removeGroup, removeSprite, setGroup, setGroupTransition, setSprite, setSpriteParent, setSpriteTransition, POSE_FLOATS, STYLE_FLOATS } from "./layer.ts"
 export { createRecordLayer, FLOATS_PER_SPRITE } from "./records.ts"
-export type { RecordLayer as RecordLayerHandle } from "./records.ts"
+export type { RecordLayer as RecordLayerHandle, RecordLayerOptions } from "./records.ts"
 export { pointInSprite } from "./pick.ts"
 export { projectCamera, unprojectCamera } from "./camera.ts"
 export type { CameraUpdate } from "./camera.ts"

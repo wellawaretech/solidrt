@@ -45,9 +45,9 @@ pub use event::{
 };
 pub use gpu::{
   parse_blend, parse_cull, AttrFormat, BlendMode, BufferIds, BufferUpdate, CullMode, DepthState, DepthStorage,
-  DrawBounds, DrawRange, DrawSpec, DrawUpdate, GpuLimits, IndexFormat, NodeShader, ParamValue, PipelineDesc,
-  PipelineSpec, ShaderStage, TargetSpec, TextureBinding, Topology, UniformKind, UniformSlot, UniformTable,
-  WindowShader, MAX_INSTANCE_SLOTS,
+  DrawBounds, DrawRange, DrawSpec, DrawUpdate, GpuLimits, IndexFormat, InstanceOrder, NodeShader, OrderKey,
+  ParamValue, PipelineDesc, PipelineSpec, ShaderStage, TargetSpec, TextureBinding, Topology, UniformKind,
+  UniformSlot, UniformTable, WindowShader, MAX_INSTANCE_SLOTS,
 };
 pub use gpu::{
   GpuTexture, SamplerFilter, SamplerOptions, SamplerOverride, SamplerState, TextureEntry, TextureFormat, TextureRegistry,

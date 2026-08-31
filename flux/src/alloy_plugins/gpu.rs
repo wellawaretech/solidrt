@@ -398,7 +398,45 @@ fn collect_entry_half(
     vertex_count: count.unwrap_or(-1),
     instance_count: instances.unwrap_or(-1),
   };
-  Ok(alloy::DrawSpec { pipeline, buffer, index, instance_buffers, draw, params, textures })
+  let order = collect_instance_order(ctx, opts, api)?;
+  Ok(alloy::DrawSpec { pipeline, buffer, index, instance_buffers, draw, params, textures, order })
+}
+
+// The instanceOrder option: a field key ({ field }) or a projected key
+// ({ position, direction }), float offsets into one instance record, plus
+// descending. Only the array shape is checked here; the key rules (exactly
+// one of the two, offset values, direction values, stride fit) are alloy's.
+fn collect_instance_order(
+  ctx: &Ctx<'_>,
+  opts: &Option<Object<'_>>,
+  api: &str,
+) -> rquickjs::Result<Option<alloy::InstanceOrder>> {
+  let obj = match opts {
+    Some(o) => o.get::<_, Option<Object>>("instanceOrder")?,
+    None => None,
+  };
+  let Some(o) = obj else {
+    return Ok(None);
+  };
+  let field = o.get::<_, Option<f64>>("field")?;
+  let position = o.get::<_, Option<f64>>("position")?;
+  let direction = collect_direction(ctx, &o, "direction", api)?;
+  let descending = o.get::<_, Option<bool>>("descending")?.unwrap_or(false);
+  alloy::InstanceOrder::parse(field, position, direction, descending)
+    .map(Some)
+    .map_err(|e| throw_str(ctx, &format!("{api}: {e}")))
+}
+
+// An [x, y, z] direction: exactly 3 numbers when the key is present. The
+// value semantics (finite, nonzero) are alloy's.
+fn collect_direction(ctx: &Ctx<'_>, obj: &Object<'_>, key: &str, api: &str) -> rquickjs::Result<Option<[f32; 3]>> {
+  let Some(list) = obj.get::<_, Option<Vec<f64>>>(key)? else {
+    return Ok(None);
+  };
+  if list.len() != 3 {
+    return Err(throw_str(ctx, &format!("{api}: {key} must be [x, y, z] (3 numbers), got {}", list.len())));
+  }
+  Ok(Some([list[0] as f32, list[1] as f32, list[2] as f32]))
 }
 
 // The instanceBuffer / instanceBuffers pair at create: one buffer id for
@@ -456,6 +494,7 @@ fn collect_draw_update(ctx: &Ctx<'_>, update: &Object<'_>, api: &str) -> rquickj
     index_count: update.get::<_, Option<i32>>("indexCount")?,
     instance_count: update.get::<_, Option<i32>>("instanceCount")?,
     buffers: collect_buffer_update(ctx, update, api)?,
+    order_direction: collect_direction(ctx, update, "orderDirection", api)?,
   })
 }
 
@@ -539,7 +578,7 @@ fn collect_draw_target_spec(
     }
     for key in [
       "buffer", "indexBuffer", "indexFormat", "instanceBuffer", "instanceBuffers", "firstVertex", "vertexCount",
-      "firstIndex", "indexCount", "instanceCount",
+      "firstIndex", "indexCount", "instanceCount", "instanceOrder",
     ] {
       if o.get::<_, rquickjs::Value>(key).map(|v| !v.is_undefined()).unwrap_or(false) {
         return Err(throw_str(ctx, &format!("{api}: '{key}' is draw-entry state; pass it to addDraw")));

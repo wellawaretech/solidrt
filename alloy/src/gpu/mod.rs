@@ -8,6 +8,7 @@
 mod buffer;
 mod lease;
 mod limits;
+mod order;
 mod pass;
 pub(crate) mod program;
 mod resources;
@@ -20,6 +21,7 @@ mod vocab;
 pub use buffer::{release_buffer, GpuBuffer};
 pub use lease::WriteLeases;
 pub use limits::GpuLimits;
+pub use order::{gather_ordered, InstanceOrder, OrderKey, OrderScratch};
 pub use pass::{composite_program_over_window, render_program_to_fbo, render_program_to_window, PassInput, TILE_CLEAR_FRAGMENT};
 pub use program::{
   compile_stage, delete_stage, release_pipeline, release_program, CompiledStage, RenderPipeline, ShaderProgram,

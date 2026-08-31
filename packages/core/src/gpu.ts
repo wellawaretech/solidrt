@@ -136,7 +136,7 @@ export {
 // GPU-side (exact, same size): seed a loadOp "load" accumulator, snapshot a
 // ping-pong buffer, reset state to a known image.
 export { copyTexture, destroyBuffer, renderTarget, setDraw } from "flux:gpu"
-export type { BlendMode, BufferUpdate, CullMode, DrawRange, IndexBinding, IndexFormat, IndexRange, InstanceAttribute, ShaderParams, Topology, VertexAttribute } from "flux:gpu"
+export type { BlendMode, BufferUpdate, CullMode, DrawRange, IndexBinding, IndexFormat, IndexRange, InstanceAttribute, InstanceOrder, OrderUpdate, ShaderParams, Topology, VertexAttribute } from "flux:gpu"
 
 // The draw-list verbs, re-exported raw: entries live and die with their draw
 // target (see createDrawTarget below), so there is no per-entry lifetime to
@@ -150,7 +150,10 @@ export type { BlendMode, BufferUpdate, CullMode, DrawRange, IndexBinding, IndexF
 // params every entry reads. setDrawOrder replaces the whole
 // list order with a full permutation of the live ids - the sorting verb
 // (opaque front-to-back, transparent back-to-front, re-issued when the
-// camera moves).
+// camera moves). That orders ENTRIES; ordering the instance RECORDS within
+// one entry is the instanceOrder creation option (see InstanceOrder), whose
+// projected-key direction updates ride setDraw/setDrawRange as
+// orderDirection.
 export { addDraw, removeDraw, setDrawBuffers, setDrawOrder, setDrawParams, setDrawRange, setDrawTextures } from "flux:gpu"
 
 // The device ceilings (max texture/target size, sampler inputs per pass,
@@ -360,6 +363,8 @@ export function createShaderTarget(
     /** One buffer per instance slot of the pipeline (index = the
      * attributes' `slot`); pass this OR `instanceBuffer`, not both. */
     instanceBuffers?: gpu.BufferId[]
+    /** Draw the instance records in key order (see InstanceOrder). */
+    instanceOrder?: gpu.InstanceOrder
     clearColor?: [number, number, number, number]
     render?: "auto" | "manual"
     loadOp?: "clear" | "load"
@@ -606,6 +611,8 @@ export function createPipelineTexture(
     /** One buffer per instance slot (index = the attributes' `slot`);
      * pass this OR `instanceBuffer`, not both. */
     instanceBuffers?: gpu.BufferId[]
+    /** Draw the instance records in key order (see InstanceOrder). */
+    instanceOrder?: gpu.InstanceOrder
     topology?: gpu.Topology
     depth?: boolean
     depthWrite?: boolean

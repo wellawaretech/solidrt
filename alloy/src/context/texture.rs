@@ -501,6 +501,7 @@ impl Context {
         }
         self.textures.remove(id);
         self.targets.borrow_mut().remove(&id);
+        self.unregister_target_orders(id);
         self.shader_sources.borrow_mut().remove(&id);
         self.manual_targets.borrow_mut().remove(&id);
         self.sub_targets.borrow_mut().remove(&id);

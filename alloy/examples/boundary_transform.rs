@@ -77,15 +77,15 @@ fn build_scene() -> RenderTree {
   tree.create_node(YELLOW, Rectangle::default().with_layout());
   tree.create_node(MAGENTA, Rectangle::default().with_layout());
 
-  tree.insert_node(ROOT, VIEW_A, None);
-  tree.insert_node(VIEW_A, GREEN, None);
-  tree.insert_node(VIEW_A, VIEW_D, None);
-  tree.insert_node(VIEW_D, MARKER, None);
-  tree.insert_node(ROOT, VIEW_B, None);
-  tree.insert_node(VIEW_B, BLUE, None);
-  tree.insert_node(ROOT, VIEW_C, None);
-  tree.insert_node(VIEW_C, YELLOW, None);
-  tree.insert_node(VIEW_C, MAGENTA, None);
+  tree.insert_node(ROOT, VIEW_A, None).expect("insert");
+  tree.insert_node(VIEW_A, GREEN, None).expect("insert");
+  tree.insert_node(VIEW_A, VIEW_D, None).expect("insert");
+  tree.insert_node(VIEW_D, MARKER, None).expect("insert");
+  tree.insert_node(ROOT, VIEW_B, None).expect("insert");
+  tree.insert_node(VIEW_B, BLUE, None).expect("insert");
+  tree.insert_node(ROOT, VIEW_C, None).expect("insert");
+  tree.insert_node(VIEW_C, YELLOW, None).expect("insert");
+  tree.insert_node(VIEW_C, MAGENTA, None).expect("insert");
 
   styled(&mut tree, VIEW_A, |s| sized(s, 100.0, 100.0));
   styled(&mut tree, GREEN, |s| sized(s, 100.0, 100.0));

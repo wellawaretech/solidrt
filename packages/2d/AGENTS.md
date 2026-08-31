@@ -54,7 +54,8 @@ moved subtrees in Rust, and picking walks the core BVH.
   costs zero, the same demand-gate story as the rest of the platform.
 - The records layer (`createRecordLayer`) keeps the old model whole: 13
   JS-owned floats per sprite `[cx, cy, w, h, u0, v0, u1, v1, rot, tint
-  rgba]` (`FLOATS_PER_SPRITE`), draw order = insertion order, remove
+  rgba]` (`FLOATS_PER_SPRITE`), draw order = insertion order (or key
+  order with `orderBy` - see below), remove
   shifts, `layer.records` + `touch()` raw writes, JS pick walk. It is the
   escape hatch for motion only JS can compute at scale (measured 30k
   sprites: 12.9ms raw records vs 30.8ms via setSprite; both figures are
@@ -203,6 +204,14 @@ is flat. Event x/y are layer pixels with the camera undone.
   memcpy, microseconds at 10k; the node layer's style publish is the same
   whole-prefix shape. Dirty ranges were deliberately not built until a
   measurement asks.
+- Records layer `orderBy` ("y" or `{ field, descending? }`): the core
+  gathers the publish into key order (gpu `instanceOrder`, radix sort +
+  one extra memcpy, no per-record JS), so a y-sorted crowd costs the same
+  flush as an unsorted one. Records stay slot-addressed; ties keep record
+  order; `pick()` still resolves overlap by record order. The node layer
+  cannot use this yet - its pose buffer is core-written and its style
+  buffer would need the same permutation (the multi-buffer stage of
+  okf/backlog/gpu-instance-order.md).
 - The node layer's STYLE slots are not compacted: a removed sprite leaves
   its style floats in place (invisible - the pose is zeroed) until the
   slot recycles. Do not read style truth from the buffer; getSprite reads

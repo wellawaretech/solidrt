@@ -146,6 +146,13 @@ impl Context {
     let stride = vertex_stride(&spec.pipeline.attributes) as usize;
     let instance_strides = instance_strides(&spec.pipeline.instance_attributes);
     let bounds = self.resolve_entry_range(&mut spec.entry, stride, instance_strides)?;
+    // The instance order is UI-side state: checked before the create RPC (so
+    // a bad declaration throws with nothing created), taken off the spec (the
+    // raster thread never sees it), committed only once the create succeeds.
+    let order = spec.entry.order.take();
+    if let Some(order) = &order {
+      self.check_instance_order(order, instance_strides, spec.entry.buffer_ids())?;
+    }
     let id = self.textures.allocate_id();
     let (width, height, sampler) = (spec.target.width, spec.target.height, spec.target.sampler);
     let manual = spec.target.manual;
@@ -162,6 +169,9 @@ impl Context {
     self.shader_sources.borrow_mut().insert(id, sources);
     if manual {
       self.manual_targets.borrow_mut().insert(id);
+    }
+    if let Some(order) = order {
+      self.insert_instance_order(id, 0, order, instance_strides[0], buffers.instance_buffers[0]);
     }
     Ok(id)
   }
@@ -247,6 +257,12 @@ impl Context {
     validate_load(&spec)?;
     entry.pipeline = pipeline;
     let bounds = self.resolve_entry_range(&mut entry, stride, instance_strides)?;
+    // Same order handling as create_pipeline_texture: check before the RPC,
+    // take off the spec, commit after success.
+    let order = entry.order.take();
+    if let Some(order) = &order {
+      self.check_instance_order(order, instance_strides, entry.buffer_ids())?;
+    }
     let id = self.textures.allocate_id();
     let (width, height, sampler) = (spec.width, spec.height, spec.sampler);
     let manual = spec.manual;
@@ -260,6 +276,9 @@ impl Context {
     self.shader_sources.borrow_mut().insert(id, sources);
     if manual {
       self.manual_targets.borrow_mut().insert(id);
+    }
+    if let Some(order) = order {
+      self.insert_instance_order(id, 0, order, instance_strides[0], buffers.instance_buffers[0]);
     }
     Ok(id)
   }
@@ -483,9 +502,19 @@ impl Context {
       });
       self.gpu_limits().check_texture_units(entry.textures.len() + shared_extra)?;
     }
+    // The instance order is UI-side state: checked last (so a bad
+    // declaration commits nothing), taken off the spec before it crosses
+    // the channel, registered with the mirror insert.
+    let order = entry.order.take();
+    if let Some(order) = &order {
+      self.check_instance_order(order, instance_strides, entry.buffer_ids())?;
+    }
     list.next_draw += 1;
     list.entries.insert(draw_id, EntryMirror { uniforms, draw: entry.draw, bounds, buffers: entry.buffer_ids() });
     drop(targets);
+    if let Some(order) = order {
+      self.insert_instance_order(target, draw_id, order, instance_strides[0], entry.buffer_ids().instance_buffers[0]);
+    }
     let mut sources = self.shader_sources.borrow_mut();
     let record = sources.entry(target).or_default();
     for b in &entry.textures {
@@ -530,6 +559,7 @@ impl Context {
       return Err(format!("draw {draw} not found on target {target}"));
     }
     drop(targets);
+    self.unregister_instance_order(target, draw);
     if let Some(record) = self.shader_sources.borrow_mut().get_mut(&target) {
       record.retain(|(d, _), _| *d != draw);
     }
@@ -782,6 +812,23 @@ impl Context {
     let next_bounds = if swapped { self.rebound(*bounds, next_ids)? } else { *bounds };
     let next_range = range.merged(update, next_bounds.indexed)?;
     validate_draw_range(next_range, next_bounds)?;
+    // The order half of the transaction: on an ordered entry the order
+    // follows an instance-buffer swap to the new buffer, and orderDirection
+    // replaces the projected key's direction. Checked here, before anything
+    // commits, so a rejected update leaves entry and registry as they were.
+    let entry_key = draw.unwrap_or(0);
+    let instance_swap =
+      (next_ids.instance_buffers[0] != ids.instance_buffers[0]).then_some(next_ids.instance_buffers[0]);
+    if let Some(new_buffer) = instance_swap {
+      self.check_order_rekey(target, entry_key, new_buffer, next_ids)?;
+    }
+    if let Some(direction) = update.order_direction {
+      self.set_instance_order_direction(target, entry_key, direction)?;
+    }
+    if let Some(new_buffer) = instance_swap {
+      self.commit_order_rekey(target, entry_key, new_buffer);
+    }
+    let range_changed = next_range != *range;
     *ids = next_ids;
     *bounds = next_bounds;
     *range = next_range;
@@ -789,11 +836,16 @@ impl Context {
     if swapped {
       self.send(RasterCmd::SetDrawBuffers { target, draw, ids: next_ids });
     }
-    match draw {
-      None => self.send(RasterCmd::SetDraw { id: target, range: next_range }),
-      Some(draw) => self.send(RasterCmd::SetDrawRange { target, draw, range: next_range }),
+    // A direction-only update stages UI-side sort state for the next publish
+    // and renders nothing now; every other update keeps the send-always
+    // behavior it had before orderDirection existed.
+    if update.order_direction.is_none() || swapped || range_changed {
+      match draw {
+        None => self.send(RasterCmd::SetDraw { id: target, range: next_range }),
+        Some(draw) => self.send(RasterCmd::SetDrawRange { target, draw, range: next_range }),
+      }
+      self.note_target_content(target);
     }
-    self.note_target_content(target);
     Ok(())
   }
 

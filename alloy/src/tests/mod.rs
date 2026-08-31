@@ -7,6 +7,7 @@ mod fonts;
 mod frame;
 mod gpu_graph;
 mod gpu_lease;
+mod gpu_order;
 mod gpu_validate;
 mod hit;
 mod keymap;

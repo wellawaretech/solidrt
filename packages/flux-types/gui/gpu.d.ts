@@ -445,6 +445,8 @@ declare module "flux:gpu" {
       /** One buffer per instance slot of the pipeline (index = the
        * attributes' `slot`); pass this OR `instanceBuffer`, not both. */
       instanceBuffers?: BufferId[]
+      /** Draw the instance records in key order (see {@link InstanceOrder}). */
+      instanceOrder?: InstanceOrder
       clearColor?: [number, number, number, number]
       render?: "auto" | "manual"
       loadOp?: "clear" | "load"
@@ -603,6 +605,54 @@ declare module "flux:gpu" {
     instanceBuffer?: BufferId
     instanceBuffers?: BufferId[]
   } & ({} | IndexBinding)
+  /**
+   * A draw entry's instance ORDER, declared at creation via the
+   * `instanceOrder` option: the entry draws the records of its instance
+   * buffer in KEY order instead of buffer order, while the writer keeps
+   * addressing stable slots - raise and y-sort without record churn, and
+   * back-to-front over a large population without per-record JS. (This
+   * orders one entry's RECORDS; {@link setDrawOrder} orders a target's
+   * ENTRIES - different granularity, unrelated verbs.)
+   *
+   * The key, one of two modes fixed at creation, both offsets counted in
+   * FLOATS into one instance record: `field` reads the single f32 at that
+   * offset (a y coordinate, an age, an explicit sort field); `position`
+   * reads the vec3 at that offset and keys on dot(position, `direction`) -
+   * view depth along a direction you update per camera move with
+   * `orderDirection` (see {@link OrderUpdate}). Ascending by default
+   * (smallest key draws first); `descending: true` for back-to-front when
+   * larger keys are nearer. The sort is stable - equal keys keep slot
+   * order, so untouched populations draw exactly as without an order - and
+   * NaN keys sort last (ascending).
+   *
+   * The order materializes when the buffer is PUBLISHED: each
+   * {@link beginBufferWrite}/{@link endBufferWrite} publish gathers the
+   * records into key order on the way to the GPU (one extra copy of the
+   * published bytes, nothing retained). A population that republishes each
+   * frame re-orders each frame for free; a direction change alone takes
+   * effect at the next publish. Because the GPU-side contents are the
+   * gathered records, {@link writeBuffer} on an ordered buffer throws
+   * (a byte-offset write would land on the wrong records - publish whole
+   * record sets through the lease), {@link readBuffer} reads back gathered
+   * order, a publish must be a whole number of records, and
+   * `instanceCount` below the published record count draws the first N in
+   * key order.
+   *
+   * Requires the entry to bind exactly ONE instance buffer, ordered by no
+   * other entry; a buffer swap ({@link BufferUpdate}) carries the order to
+   * the new buffer.
+   */
+  export type InstanceOrder = ({ field: number } | { position: number; direction: [number, number, number] }) & {
+    descending?: boolean
+  }
+  /**
+   * The order half of a draw-entry update: `orderDirection` replaces the
+   * projected key's direction ({@link InstanceOrder}'s `position` mode) -
+   * the per-camera-move update. It stages sort state for the entry's NEXT
+   * publish and renders nothing by itself; on an entry without a
+   * position-keyed instance order it throws.
+   */
+  export type OrderUpdate = { orderDirection?: [number, number, number] }
 
   /**
    * Compile a GLSL ES vertex+fragment pipeline into an offscreen texture of
@@ -651,6 +701,8 @@ declare module "flux:gpu" {
       /** One buffer per instance slot (index = the attributes' `slot`);
        * pass this OR `instanceBuffer`, not both. */
       instanceBuffers?: BufferId[]
+      /** Draw the instance records in key order (see {@link InstanceOrder}). */
+      instanceOrder?: InstanceOrder
       topology?: Topology
       depth?: boolean
       depthWrite?: boolean
@@ -693,12 +745,18 @@ declare module "flux:gpu" {
    * closes and nothing is published. Always closes the lease, error or not;
    * throws when no write is open or `byteLength` exceeds the buffer size.
    * Pipelines drawing from the buffer re-render, like {@link writeBuffer}.
+   * On an ordered instance buffer ({@link InstanceOrder}) the publish is
+   * where the order materializes: the records reach the GPU gathered into
+   * key order, and `byteLength` must be a whole number of records.
    */
   export function endBufferWrite(id: BufferId, byteLength?: number): void
   /**
    * Overwrite part of a vertex buffer at `byteOffset` (default 0), within the
    * size it was created with. Pipelines drawing from the buffer re-render
-   * with their last-applied params.
+   * with their last-applied params. Throws on an ordered instance buffer
+   * ({@link InstanceOrder}): its GPU contents are in key order, so a
+   * byte-offset write would land on the wrong records - publish whole
+   * record sets through {@link beginBufferWrite}/{@link endBufferWrite}.
    */
   export function writeBuffer(id: BufferId, data: Uint8Array, byteOffset?: number): void
   /**
@@ -726,7 +784,7 @@ declare module "flux:gpu" {
    * buffer and extends the range into it, and a call that throws changes
    * nothing (range and buffers commit together or not at all).
    */
-  export function setDraw(id: TextureId, draw: (DrawRange | IndexRange) & BufferUpdate): void
+  export function setDraw(id: TextureId, draw: (DrawRange | IndexRange) & BufferUpdate & OrderUpdate): void
   /**
    * Create a draw target: a render target whose contents are an ordered,
    * mutable LIST of draws - one render clears once, then executes every
@@ -859,6 +917,8 @@ declare module "flux:gpu" {
       /** One buffer per instance slot of the pipeline (index = the
        * attributes' `slot`); pass this OR `instanceBuffer`, not both. */
       instanceBuffers?: BufferId[]
+      /** Draw the instance records in key order (see {@link InstanceOrder}). */
+      instanceOrder?: InstanceOrder
       before?: DrawId
     } & (DrawRange | (IndexBinding & IndexRange)),
   ): DrawId
@@ -955,7 +1015,7 @@ declare module "flux:gpu" {
    * single entry, same partial merge, bounds validation, and vocabulary
    * rule (an indexed entry speaks {@link IndexRange}).
    */
-  export function setDrawRange(target: TextureId, draw: DrawId, update: DrawRange | IndexRange): void
+  export function setDrawRange(target: TextureId, draw: DrawId, update: (DrawRange | IndexRange) & OrderUpdate): void
   /**
    * Swap one draw entry's buffers: the {@link BufferUpdate} half of
    * {@link setDraw} addressed to a single entry, same replace-only rule and
@@ -971,7 +1031,9 @@ declare module "flux:gpu" {
    * back-to-front, and re-issue the order when the camera moves. Entry
    * state (params, textures, ranges) rides along untouched; ids are
    * unaffected. Like every draw-list write it re-renders an auto target
-   * once at the next flush, and folds silently on a manual one.
+   * once at the next flush, and folds silently on a manual one. (This
+   * orders a target's ENTRIES; ordering the instance RECORDS within one
+   * entry is {@link InstanceOrder}.)
    */
   export function setDrawOrder(target: TextureId, order: DrawId[]): void
   /**

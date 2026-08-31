@@ -89,3 +89,28 @@ fn destroy_drops_open_lease_and_pool() {
   assert!(leases.end(1).is_err());
   leases.begin(1, 16).expect("begin after destroy");
 }
+
+#[test]
+fn take_free_mints_and_reuses_without_a_lease() {
+  let mut leases = WriteLeases::new();
+  // No pooled block: mint at the asked size.
+  let block = leases.take_free(1, 32);
+  assert_eq!(block.len(), 32);
+  // A recycled block is what the next take returns (the ordered-publish
+  // steady state: source cancelled back, destination taken from the pool).
+  let mut recycled = vec![0u8; 32];
+  let ptr = recycled.as_mut_ptr();
+  leases.recycle(1, recycled, |_| true);
+  let block = leases.take_free(1, 32);
+  assert_eq!(block.as_ptr() as usize, ptr as usize, "take_free should reuse the pooled block");
+}
+
+#[test]
+fn take_free_leaves_an_open_lease_untouched() {
+  let mut leases = WriteLeases::new();
+  let (leased_ptr, _) = leases.begin(1, 16).expect("begin");
+  let block = leases.take_free(1, 16);
+  assert_ne!(block.as_ptr() as usize, leased_ptr as usize, "the leased block must stay leased");
+  // The lease still closes normally.
+  leases.end(1).expect("end after take_free");
+}
