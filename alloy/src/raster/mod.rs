@@ -63,6 +63,12 @@ pub struct RasterStats {
   /// within the fence timeout, i.e. the GPU is over budget and pacing was
   /// lost for that frame.
   pub(crate) fence_timeouts: AtomicU64,
+  /// Presents the screen missed while a next frame was demanded: over each
+  /// contiguous run of demanded presents, the whole periods elapsed minus the
+  /// presents delivered (see `record_present_interval`). The direct jank
+  /// count - a repeated frame lands here even when every per-second average
+  /// reads clean.
+  pub(crate) missed_presents: AtomicU64,
   /// Shader/pipeline target renders executed by `flush_dirty`. Passes
   /// racing ahead of presented frames means redundant target re-renders
   /// (the ~900-passes-per-frame failure this counter exists to catch).
@@ -110,6 +116,9 @@ pub struct RasterCounters {
   pub idle_ticks: u64,
   /// Present-fence timeouts: frames where the GPU was over budget.
   pub fence_timeouts: u64,
+  /// Presents missed while a next frame was demanded - the direct jank
+  /// count (see `RasterStats::missed_presents`).
+  pub missed_presents: u64,
   /// Shader/pipeline target passes executed on the raster thread.
   pub passes: u64,
   /// Raster-thread wall time spent issuing those passes, microseconds
@@ -132,6 +141,7 @@ impl RasterStats {
       queue: self.queue_depth.load(Ordering::Acquire),
       idle_ticks: self.idle_ticks.load(Ordering::Relaxed),
       fence_timeouts: self.fence_timeouts.load(Ordering::Relaxed),
+      missed_presents: self.missed_presents.load(Ordering::Relaxed),
       passes: self.passes.load(Ordering::Relaxed),
       pass_issue_micros: self.pass_issue_micros.load(Ordering::Relaxed),
       pass_exec_micros: self
@@ -151,6 +161,7 @@ impl RasterStats {
       queue_depth: AtomicUsize::new(0),
       idle_ticks: AtomicU64::new(0),
       fence_timeouts: AtomicU64::new(0),
+      missed_presents: AtomicU64::new(0),
       passes: AtomicU64::new(0),
       pass_issue_micros: AtomicU64::new(0),
       pass_exec_micros: AtomicU64::new(0),
@@ -215,6 +226,19 @@ const PRESENT_FENCE_TIMEOUT_NS: i32 = 100_000_000;
 // okf/backlog/adaptive-present-fence-depth.md.
 const PRESENT_FENCE_DEPTH: usize = 2;
 
+// Slack, in refresh periods, subtracted from a demanded run's elapsed span
+// before rounding it to the presents the display expected. Swap-return times
+// jitter by more than half a period under mailbox/triple-buffered
+// compositors (the reason lattice's animation clock paces by present count,
+// not timestamps), so judging intervals with a plain round() would latch
+// phantom misses on healthy runs; a real missed present overshoots by a full
+// period and still counts through this slack.
+const JANK_JITTER_SLACK: f64 = 0.25;
+
+// Refresh rate assumed for miss accounting until the event loop has queried
+// the display mode (same fallback the frame loop uses).
+const FALLBACK_REFRESH_HZ: f32 = 60.0;
+
 pub(crate) struct RasterState {
   gl: glow::Context,
   impeller_ctx: ImpellerContext,
@@ -257,6 +281,13 @@ pub(crate) struct RasterState {
   stats: Arc<RasterStats>,
   // Once-per-second frame phase trace (see FrameTiming).
   timing: FrameTiming,
+  // The UI-side frame-request latch, sampled (never consumed) at present
+  // time to tell a demanded gap from an idle one; None until the embedder
+  // registers it (SetDemandLatch), and miss accounting stays off without it.
+  demand_latch: Option<Arc<AtomicBool>>,
+  // The contiguous run of demanded presents miss accounting is currently
+  // spanning; None while the app is idle (see record_present_interval).
+  present_run: Option<PresentRun>,
   // Fences signaled as each present's GPU work completes, awaited before a
   // draw once PRESENT_FENCE_DEPTH are outstanding. Vsync alone lets the CPU
   // swap several frames ahead of what is on glass (Android's BufferQueue
@@ -369,6 +400,26 @@ struct OverlayState {
   stale: bool,
 }
 
+/// One contiguous run of demanded presents, the unit miss accounting works
+/// over (see `record_present_interval`): misses are counted as the whole
+/// refresh periods the run has spanned minus the presents delivered, judged
+/// over the accumulated span rather than per interval so per-swap timestamp
+/// jitter cancels instead of latching phantom misses.
+struct PresentRun {
+  /// Instant of the present that opened the run (demand was latched when it
+  /// left the swap).
+  start: std::time::Instant,
+  /// Refresh rate the run is judged against; a mid-run mode change mixes
+  /// periods, so the run restarts instead.
+  hz: f32,
+  /// Presents delivered since `start` (each closes one interval).
+  intervals: u64,
+  /// Misses already added to `RasterStats::missed_presents` for this run;
+  /// only growth beyond this high-water mark is added, so a jittery reading
+  /// can never count the same miss twice.
+  reported: u64,
+}
+
 /// Reply to an RPC; a dead requester (UI thread shutting down) is not an error.
 fn reply<T>(tx: mpsc::Sender<T>, value: T) {
   tx.send(value).ok();
@@ -477,6 +528,8 @@ impl RasterState {
       fence_wait_log: None,
       stats,
       timing: FrameTiming::new(),
+      demand_latch: None,
+      present_run: None,
       present_fences: std::collections::VecDeque::new(),
       textures: HashMap::new(),
       shaders: HashMap::new(),
@@ -539,6 +592,9 @@ impl RasterState {
             if (self.capture_frames || Some(i) == last_frame) && self.frame(dl).is_err() {
               break 'outer; // main loop is gone
             }
+          }
+          RasterCmd::SetDemandLatch { latch } => {
+            self.demand_latch = Some(latch);
           }
           RasterCmd::RebindWindowSurface => {
             // Event-driven (return-to-visible): a failure recorded against
@@ -935,6 +991,7 @@ impl RasterState {
       }
       let present_ms = present_start.elapsed().as_secs_f32() * 1000.0;
       self.timing.record(wait_ms, draw_ms, present_ms);
+      self.record_present_interval(drawn);
       // A frame's native cost beyond ~2 vsync periods means this thread is
       // being stalled in the driver; log which step, rate-limited to one line
       // per second so a sustained stall stays readable. Debug, not warn: a
@@ -958,6 +1015,47 @@ impl RasterState {
       wake();
     }
     Ok(())
+  }
+
+  /// Missed-present (jank) accounting, run as each interactive present
+  /// returns from the swap. A miss is a refresh the screen repeated the old
+  /// frame through while a next frame was demanded; the demand gate makes
+  /// presents legitimately stop when nothing changes, so only gaps with the
+  /// frame-request latch set at present time can count - a gap with no
+  /// demand is idle, not jank. Counting compares whole periods elapsed
+  /// against presents delivered over each contiguous demanded run (span
+  /// first, then divide), because individual swap-return intervals jitter by
+  /// over half a period on healthy pacing (see JANK_JITTER_SLACK); `fps` and
+  /// the per-second averages cannot see a single repeat, this can.
+  fn record_present_interval(&mut self, drawn: bool) {
+    // No swap happened (minimized zero-size window, failed draw): presents
+    // are not pacing anything, so accounting restarts when they resume.
+    if !drawn {
+      self.present_run = None;
+      return;
+    }
+    let now = std::time::Instant::now();
+    let hz = crate::refresh_rate().unwrap_or(FALLBACK_REFRESH_HZ).max(1.0);
+    if self.present_run.as_ref().is_some_and(|run| run.hz != hz) {
+      self.present_run = None;
+    }
+    if let Some(run) = self.present_run.as_mut() {
+      run.intervals += 1;
+      let span_periods = now.duration_since(run.start).as_secs_f64() * hz as f64;
+      let expected = (span_periods - JANK_JITTER_SLACK).round().max(0.0) as u64;
+      let new = expected.saturating_sub(run.intervals).saturating_sub(run.reported);
+      if new > 0 {
+        run.reported += new;
+        self.stats.missed_presents.fetch_add(new, Ordering::Relaxed);
+      }
+    }
+    // Sampled, never consumed - the UI thread's draw gate owns take().
+    let demanded = self.demand_latch.as_ref().is_some_and(|latch| latch.load(Ordering::Relaxed));
+    if !demanded {
+      self.present_run = None;
+    } else if self.present_run.is_none() {
+      self.present_run = Some(PresentRun { start: now, hz, intervals: 0, reported: 0 });
+    }
   }
 
   /// Block until outstanding presents are back under PRESENT_FENCE_DEPTH (or

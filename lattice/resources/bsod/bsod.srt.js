@@ -3622,8 +3622,8 @@ function scanForOrphans(now) {
     return;
   for (let [type] of fresh)
     warnedLeakTypes.add(type);
-  let list = fresh.map(([type, n]) => `<${type}> x${n}`).join(", ");
-  console.warn(`Leak sentinel: ${total} nodes are unreachable and will never be freed: ${list}. ` + `The usual cause is reading an element-valued prop more than once (every read ` + `builds a new subtree); read it once where it mounts, or resolve it with ` + `children(). If these nodes are intentionally kept for later mounting, ignore ` + `this. Element types already reported are not reported again.`);
+  let list = [...counts].map(([type, n]) => `<${type}> x${n}`).join(", ");
+  console.warn(`Leak sentinel: ${total} nodes are unreachable and will never be freed: ${list}. ` + `The usual cause is reading an element-valued prop more than once (every read ` + `builds a new subtree); read it once where it mounts, or resolve it with ` + `children(). If these nodes are intentionally kept for later mounting, ignore ` + `this. The next warning comes when a new element type joins the list.`);
 }
 var warnedRejectedProps = new Set;
 function setTreeProperty(node, name, value) {
@@ -3704,6 +3704,10 @@ var renderer = createRenderer({
   insertNode: (parent, node, anchor) => {
     if (!node)
       return;
+    if (typeof node !== "object" || node.id === undefined) {
+      let what = typeof node === "function" ? "a signal accessor" : `a ${typeof node}`;
+      throw new Error(`insertNode received ${what} instead of an element under <${parent?.elementType ?? "?"}>; ` + `resolve the children with children() or return one root element from the component.`);
+    }
     pendingDestroy.delete(node.id);
     if (parent) {
       if (anchor)

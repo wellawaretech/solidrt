@@ -619,7 +619,12 @@ impl App {
             // engine must observe it.
             event_tx.send(AlloyEvent::PointerLock { locked: sdl_context.mouse().relative_mouse_mode(&window) }).ok();
           }
-          AlloyCommand::SetFrameRequestLatch(latch) => liveness.set_latch(latch),
+          AlloyCommand::SetFrameRequestLatch(latch) => {
+            // The raster thread samples the same latch at present time for
+            // missed-present accounting (see record_present_interval).
+            raster.send(RasterCmd::SetDemandLatch { latch: latch.clone() }).ok();
+            liveness.set_latch(latch);
+          }
           AlloyCommand::SetFramePacing(p) => {
             if frame_pacing != p {
               log::info!("[alloy] frame pacing: {p:?}");

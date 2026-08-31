@@ -28,6 +28,11 @@ pub(crate) enum RasterCmd {
   /// marks a present-only resubmit of the previous frame's unchanged display
   /// list (see `Context::submit_clean`).
   Frame { dl: DisplayList, tree_clean: bool },
+  /// Register the UI-side frame-request latch for missed-present (jank)
+  /// accounting: the raster thread samples it (never consumes) at present
+  /// time to tell a demanded gap from an idle one. Forwarded by the platform
+  /// loop from AlloyCommand::SetFrameRequestLatch, once at startup.
+  SetDemandLatch { latch: std::sync::Arc<std::sync::atomic::AtomicBool> },
   /// Re-run make-current so the context binds the window's current EGL
   /// surface. Android destroys the surface on background and SDL creates a
   /// fresh one on resume, but this thread's binding still points at the dead

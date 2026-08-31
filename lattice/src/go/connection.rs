@@ -1109,6 +1109,7 @@ fn stats_reply(id: u64, r: StatsReply<'_>) -> String {
     put("rasterQueue", rc.queue.into());
     put("idleTicks", rc.idle_ticks.into());
     put("fenceTimeouts", rc.fence_timeouts.into());
+    put("missedPresents", rc.missed_presents.into());
     put("gpuPasses", rc.passes.into());
     // Integer ms: sub-ms increments accumulate in the microsecond counters
     // before this division, so the cumulative rounding loss stays under 1ms.
@@ -1173,6 +1174,7 @@ fn window_json(
     }),
   );
   if let Some(r) = &w.raster_rates {
+    put("missedPresents", r.missed_presents.into());
     put("fenceTimeoutsPerSec", round2(r.fence_timeouts_per_sec).into());
     put("gpuPassesPerFrame", round2(r.passes_per_frame).into());
     put("gpuPassIssueMsPerFrame", round2(r.pass_issue_ms_per_frame).into());

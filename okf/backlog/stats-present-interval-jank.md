@@ -1,6 +1,6 @@
 ---
 title: The stats window has no present-interval jank counter, so a repeated frame can pass every figure clean
-description: Jank is a presented frame whose content does not advance one step - a repeat then a skip (4 4 6) - and none of the window fields count it directly; slowFrames sees only the JS critical path, fenceTimeouts only fires past 100ms, fps and the per-frame averages are blind to a single miss. Count missed presents on the raster thread and make that the figure probes quote.
+description: missedPresents (raster-side, demand-gated, run-based counting) is implemented and is the figure probes quote; remaining are maxPresentGapMs and per-platform validation of the present timestamps (ANGLE/D3D11, macOS, Android).
 created: 2026-08-31
 ---
 
@@ -19,7 +19,7 @@ unchanged, so `fps` reads exactly 60 and every per-second average is
 blind. Jank is a per-frame worst-case phenomenon; only per-interval
 counting sees it.
 
-## Why the current fields miss it
+## Why the other fields miss it
 
 - `window.slowFrames` (lattice/src/frame_history.rs: `total_ms >
   period_ms`) judges the JS-thread critical path only. A frame that
@@ -32,47 +32,74 @@ counting sees it.
 - `gpuFrameExecMsPerFrame` and the other window rates are averages; one
   spiked frame hides inside them.
 
-A probe run can therefore quote every current figure clean while the
-screen showed 4 4 6. Today the only direct measurement is an app-side
-onFrame tick-gap logger (the ad-hoc `[hitch]` line some examples carry),
-which should not be each example's job.
+## Implemented: missedPresents (stage 1)
 
-## Shape
+Measured at the present, where the truth lives:
+`record_present_interval` in alloy/src/raster/mod.rs runs as each
+interactive present returns from the swap, accumulates into
+`RasterStats::missed_presents`, and the count rides `RasterCounters`
+into `/stats` - cumulative next to `fenceTimeouts`, and as a count over
+the window (frame_history `RasterRates`) next to the per-frame rates.
+The get_stats tool description and packages/cli/agents/debugging.md say
+to quote the window's `missedPresents` as the primary jank figure;
+`slowFrames`, `gpuFrameExecMsPerFrame`, `fenceTimeouts`,
+`rasterCmdMsPerSec` attribute the cause.
 
-Measure at the present, where the truth lives: the raster thread already
-brackets the present-fence wait per frame (raster/mod.rs measures
-`wait_ms`), so it knows when each frame actually presented.
+Two design points that settled the shape:
 
-- Count an interval between consecutive presents that exceeds a
-  JANK_INTERVAL_FACTOR (~1.5) times the refresh period as one missed
-  present. Carry `missedPresents` and `maxPresentGapMs` (with its
-  `ageMs`) through `RasterCounters` into the `/stats` window next to
-  `slowFrames`, as counts over the window like the other rates.
-- THE DEMAND GATE WRINKLE, the one design point that needs care:
-  rendering is demand-driven, so presents legitimately stop when nothing
-  changes. An interval only counts as missed while a next frame was
-  actually demanded (latched) when the previous one presented; a gap
-  with no demand is idle, not jank. The latch state at present time
-  decides, not the interval alone.
-- Attribution stays with the existing fields: `missedPresents` says THAT
-  it janked; `slowFrames`, `gpuFrameExecMsPerFrame`, `fenceTimeouts`,
-  `rasterCmdMsPerSec` say why. The stats tool description and
-  packages/cli/agents/debugging.md get one line each: probes quote
-  `missedPresents` as the primary jank figure, the rest as cause.
+- THE DEMAND GATE: rendering is demand-driven, so presents legitimately
+  stop when nothing changes. An interval only counts while a next frame
+  was demanded when the previous one presented; a gap with no demand is
+  idle, not jank. The raster thread samples (never consumes) the
+  frame-request latch at present time - forwarded once at startup via
+  `RasterCmd::SetDemandLatch` from the platform loop's
+  `SetFrameRequestLatch` handler. The timing works out because a raf
+  re-registration latches during the JS phase of the frame being
+  presented, so the latch is reliably set at present time mid-animation
+  and clear after a one-shot frame.
+- RUN-BASED COUNTING, not a per-interval threshold: swap-return
+  timestamps jitter by more than half a refresh period under
+  mailbox/triple-buffered compositors - the documented reason the
+  animation clock paces by present count, not timestamps - so judging
+  each interval against a 1.5x-period threshold (the originally proposed
+  shape) would latch phantom misses on a healthy client. Instead each
+  contiguous demanded run is judged as a whole: misses = whole periods
+  spanned (minus `JANK_JITTER_SLACK` = 0.25) minus presents delivered,
+  reported against a per-run high-water mark so a jittery reading never
+  counts twice. Summing the span before dividing cancels the per-swap
+  jitter; it survives only at run boundaries, where the slack absorbs
+  it. A run restarts on a refresh-rate change (mixed periods) and on a
+  skipped swap (minimized window).
 
-## Open before implementing
+Answers to the questions that were open:
 
-- Whether the paced frame clock's tick timestamps derive from actual
-  presents or are scheduled ahead of them. If they derive from presents,
-  a JS-side tick-gap counter is equivalent and nearly free - but the
-  raster-side count is authoritative either way, and one implementation
-  is better than two.
-- Platform present semantics differ (ANGLE/D3D11 present fence pacing,
-  macOS, Android): the interval must be measured against the same clock
-  that paces the platform, or a healthy client shows phantom misses.
-  The present-fence probes (alloy/examples/present_fence_probe.rs) are
-  the place to validate per platform.
-- Whether the skip half of 4-4-6 needs its own count. A missed present
-  implies the content skip on a paced timeline, so counting misses
-  should subsume it; revisit only if a report shows content skipping
-  without missed presents (that would be a pacing bug, not a stats gap).
+- The paced frame clock does NOT derive its tick timestamps from actual
+  presents: it accumulates one period per frame signal precisely to hide
+  swap jitter. So a JS-side tick-gap counter is structurally blind (in
+  paced time) or jitter-poisoned (in wall time); the raster-side count is
+  the only implementation, not merely the authoritative one.
+- The skip half of 4-4-6 needs no count of its own: a missed present
+  implies the content skip on a paced timeline. Revisit only if a report
+  ever shows content skipping without missed presents (a pacing bug, not
+  a stats gap).
+
+Known sampling caveat, shared with every windowed raster rate: the window
+count is the counter differenced between the first and last frame records
+inside the window, so misses that land before the first in-window record
+(e.g. during a reload's teardown/reseed, when no frames are recorded) show
+only in the cumulative `missedPresents`, not the window count. Observed on
+the tiles example: a reload's seed re-bake froze the demanded animation
+for a few hundred ms (+9 cumulative, hitch logger agreed) while the
+following window read 0.
+
+## Remaining (stage 2)
+
+- `maxPresentGapMs` with its `ageMs`: the worst single gap, for
+  severity. Timestamp-based and so jitter-noisy, but a max is
+  diagnostic, not a count.
+- Platform validation: the counting must hold against how each platform
+  actually paces presents (ANGLE/D3D11 present-fence pacing, macOS,
+  Android). Run the present-fence probes
+  (alloy/examples/present_fence_probe.rs) per platform and confirm a
+  healthy client reads 0 before trusting the figure there. Linux is
+  validated at stage 1.

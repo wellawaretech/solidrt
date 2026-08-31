@@ -62,6 +62,10 @@ pub struct WindowSummary {
 }
 
 pub struct RasterRates {
+  /// Presents missed while a next frame was demanded, over the window: the
+  /// direct jank count (a repeated frame that every average hides). A count,
+  /// not a rate - one miss is one visible hitch.
+  pub missed_presents: u64,
   pub fence_timeouts_per_sec: f32,
   pub passes_per_frame: f32,
   pub pass_issue_ms_per_frame: f32,
@@ -122,6 +126,7 @@ impl FrameHistory {
           _ => None,
         };
         Some(RasterRates {
+          missed_presents: last.raster.missed_presents.saturating_sub(first.raster.missed_presents),
           fence_timeouts_per_sec: d(first.raster.fence_timeouts, last.raster.fence_timeouts) / span_s,
           passes_per_frame: d(first.raster.passes, last.raster.passes) / n,
           pass_issue_ms_per_frame: d(first.raster.pass_issue_micros, last.raster.pass_issue_micros) / 1000.0 / n,

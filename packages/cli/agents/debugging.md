@@ -177,7 +177,11 @@ when exactly one client is connected.
   looks fine, `frames` is the number to read - a picture that only changes
   26 times a second shows 26 there, and the stutter is the app's update
   cadence, not the engine's. `frames: 0` means the picture did not change
-  at all in the window.
+  at all in the window. Probes quote the window's `missedPresents` as the
+  primary jank figure (presents the display missed while a next frame was
+  demanded - the repeated frame every average hides); `slowFrames`,
+  `gpuFrameExecMsPerFrame`, `fenceTimeoutsPerSec` and `rasterCmdMsPerSec`
+  say why.
 - `/debug` - the app's registered debug commands; POST
   `/debug?name=<cmd>` with a JSON body as its args to call one.
 - POST `/input` with `{ "events": [...] }` - synthetic input through the
