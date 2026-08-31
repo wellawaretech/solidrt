@@ -14,6 +14,10 @@ copy one and adapt it.
   under it via the `<TileLayer>` camera prop - transform writes, never a
   re-bake), and a timer editing tiles to show that a `setTile` batch
   re-bakes only the chunks it touches.
+- `anim.tsx` - frame animation with `createAnimation`: three sprites share
+  one looping clip (one clock, stepped by wall time independent of display
+  rate) and a one-shot clip holds its last frame and fires `onEnd`.
+  Self-asserting - watch the logs for ANIM-OK.
 - `pick.tsx` - sprite pointer events through the component face: exact
   rotated-rect hit testing topmost-first, pointer capture (drag a sprite and
   the events keep naming it), click-vs-drag slop, and removal through a

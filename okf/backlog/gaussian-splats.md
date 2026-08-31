@@ -50,10 +50,20 @@ camera settle: viable to tens of thousands of splats, and it proves the
 material and the converter before any engine work.
 
 Stage 2 - production scale. Swap the JS sort for
-[gpu-instance-order](../done/gpu-instance-order.md) (projected key, descending).
-Done looks like: a few hundred thousand splats orbiting smoothly on
-desktop, order updates with zero per-frame JS, parked camera renders
-nothing new.
+[gpu-instance-order](../done/gpu-instance-order.md) (projected key,
+descending, `retain: true`). The delivery vehicle is a GENERIC order
+option on `createInstancedMesh`, not splat-private plumbing: any
+transparent instanced population (future particles included) wants the
+same knob, and the splat viewer is just its first consumer - big enough
+to be its own item, folded here because the splat work forces it anyway.
+What it takes beyond passing `instanceOrder` through to the entry:
+`setInstances` publishes via `writeBuffer`, which THROWS on an ordered
+buffer, so an ordered mesh's publishes (the load upload included) switch
+to the lease (`beginBufferWrite`/`endBufferWrite`); and the camera feeds
+`orderDirection` on settle - with retain, a direction update alone
+re-orders core-side, no republish. Done looks like: a few hundred
+thousand splats orbiting smoothly on desktop, order updates with zero
+per-frame JS, parked camera renders nothing new.
 
 Stage 3 - memory and fidelity, each on demand: packed instance attribute
 formats (u8-normalized color/opacity, half-float position and covariance)

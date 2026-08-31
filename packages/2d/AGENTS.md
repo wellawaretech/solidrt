@@ -102,6 +102,17 @@ moved subtrees in Rust, and picking walks the core BVH.
   past that use the records layer). Signals carry structure and slow
   state - a `<Sprite x={sig()}>` re-running 60 times a second works but
   re-runs an effect per sprite per frame for nothing.
+- Frame animation (animation.ts): `createAnimation(frames, fps, { loop })`
+  is a clip with a shared wall-clock timer stepping every attached sprite
+  (`anim.add(sprite)` / `remove`; `play`/`pause`; `loop: false` holds the
+  last frame and fires `onEnd`). One timer per playing clip, one setSprite
+  per sprite per STEP - an 8fps cycle is 8 publishes a second regardless of
+  display rate, and a paused clip costs nothing. A sprite belongs to at
+  most one animation (add detaches the previous); removed sprites prune
+  lazily on the next step. Works on both layer kinds; with `<Sprite>`,
+  attach via `ref` and leave the `frame` prop off - the clip owns that
+  field (the prop effect passes absent props as undefined, which setSprite
+  keeps, so other props stay reactive).
 - frames.ts and pick.ts are pure (no GPU imports) BY DESIGN so they can be
   checked headless; keep them that way.
 

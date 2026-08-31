@@ -40,8 +40,9 @@ uniform - and the pixel canvas is a component doing arithmetic on the window
 size. Nothing in this item extends the sprite layer, which is why it reads as
 a demo kit rather than an engine stage.
 
-The one exception is the **frame animation helper**,
-`createAnimation(frames, fps)` stepping a sprite's frame. That is sprite-layer
-work, it is a handful of lines, and every sprite population wants it whether
-or not it is going for a retro look - so it is NOT gated on baked layers and
-should not wait behind this item. Take it with the next package pass.
+The one exception was the **frame animation helper**, which never belonged
+here (sprite-layer work, wanted by every sprite population retro or not) and
+shipped 2026-08-31: `createAnimation(frames, fps, { loop })` in
+`packages/2d/src/animation.ts` - a clip with a shared wall-clock timer
+stepping attached sprites, play/pause, one-shot hold + `onEnd`. See the
+package AGENTS.md and `examples/anim.tsx`.
