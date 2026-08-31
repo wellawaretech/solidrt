@@ -356,7 +356,15 @@ impl App {
     // deadline so Ticks only fire when no frames are being produced.
     let mut last_frame_signal = Instant::now();
 
-    loop {
+    // The loop exists to feed the embedder's producer through event_tx; a
+    // dropped receiver means the producer has finished and nothing will ever
+    // consume events or build frames again, so a failed send below winds the
+    // loop down (returning ends the process: main_tx drops, the raster thread
+    // follows). Without this the main/raster pair holds itself up forever -
+    // each waits on the other's channel - and window close or SIGTERM (which
+    // SDL translates into a Quit event) lands in the dead channel and wedges
+    // the process until SIGKILL.
+    'run: loop {
       let tick_period = Duration::from_secs_f64(1.0 / refresh_rate.max(1.0) as f64);
       // Sleep on the SDL event queue until the next idle-tick deadline: input
       // wakes it directly and each submitted frame pushes a FrameReady user
@@ -466,7 +474,11 @@ impl App {
       // refresh period of the queue draining.
       if pending_presents == 0 && last_frame_signal.elapsed() >= tick_period {
         if stats.queue_depth.load(Ordering::Acquire) == 0 {
-          event_tx.send(AlloyEvent::Tick { frame, fps }).ok();
+          // The Tick is the loop's heartbeat, so an idle app with a finished
+          // producer winds down within one tick period (see 'run).
+          if event_tx.send(AlloyEvent::Tick { frame, fps }).is_err() {
+            break 'run;
+          }
           stats.idle_ticks.fetch_add(1, Ordering::Relaxed);
           liveness.on_frame_signal(Instant::now());
         }
@@ -534,7 +546,9 @@ impl App {
             pointer_moves += 1;
             continue;
           }
-          event_tx.send(e).ok();
+          if event_tx.send(e).is_err() {
+            break 'run;
+          }
         }
       }
       // Flush presents deferred to vsync - after the SDL event drain, so the
