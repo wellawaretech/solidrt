@@ -8,11 +8,12 @@
 // The same split, with the same reasoning, as @solidrt/3d's components.
 import { createContext, createEffect, createSignal, displayScale, For, getBoundingBoxViewport, onCleanup, onLayout, untrack, useContext, windowSize } from "@solidrt/core"
 import type { Element, ParentComponent, TextureId, VoidComponent } from "@solidrt/core"
+import { limits } from "@solidrt/core/gpu"
 import type { FilterMode } from "@solidrt/core/gpu"
 import { addGroup, addSprite, createSpriteLayer, removeGroup, removeSprite, setGroup, setGroupTransition, setSprite, setSpriteTransition } from "./layer.ts"
 import type { NodeTransition } from "flux:spatial"
 import type { CameraUpdate, Sprite as SpriteHandle, SpriteGroup, SpriteLayer as LayerHandle, SpriteOptions, SpritePointerEvent, TransitionEndEvent } from "./layer.ts"
-import { fitOversample } from "./oversample.ts"
+import { pickOversample, tileWorldScale } from "./oversample-math.ts"
 
 // The window's device pixel count: the texel budget an auto-picked
 // oversample target stays within (see fitOversample).
@@ -22,13 +23,8 @@ function windowTexels(): number {
   return win.width * scale * (win.height * scale)
 }
 
-/** How far below the current factor's lower boundary the scale must fall
- * before an auto-picked oversample shrinks. Growth is immediate (an
- * undersampled layer is visibly soft); the margin keeps a scale
- * oscillating around an integer (a breathing ancestor transform, float
- * noise in a measured box) from re-baking the layer on every swing. */
-const OVERSAMPLE_SHRINK_MARGIN = 0.25
-
+// The auto-pick apply: the decision itself (cap, shrink hysteresis,
+// validation) is pure and lives in oversample-math.ts.
 function applyOversample(
   layer: { readonly oversample: number; setOversample(n: number): void },
   scale: number,
@@ -36,19 +32,8 @@ function applyOversample(
   targetH: number,
   max: number | undefined,
 ): void {
-  if (max !== undefined && !(Number.isInteger(max) && max >= 1)) {
-    throw new Error(`maxOversample must be a positive integer, got ${max}`)
-  }
-  let n = fitOversample(scale, targetW, targetH, windowTexels())
-  // The cap overrides the shrink hysteresis: lowering maxOversample below
-  // the current factor is an explicit ask, not measurement noise.
-  let capped = false
-  if (max !== undefined && n > max) {
-    n = max
-    capped = true
-  }
-  if (!capped && n < layer.oversample && scale > layer.oversample - 1 - OVERSAMPLE_SHRINK_MARGIN) return
-  layer.setOversample(n)
+  let n = pickOversample(layer.oversample, scale, targetW, targetH, windowTexels(), limits.maxTextureSize, max)
+  if (n !== null) layer.setOversample(n)
 }
 import { createTileLayer } from "./tiles.ts"
 import type { TileChunk, TileLayer as TileLayerHandle } from "./tiles.ts"
@@ -382,11 +367,7 @@ export let TileLayer: VoidComponent<TileLayerProps> = props => {
       let box = getBoundingBoxViewport(world)
       if (!box) return
       let r = props.camera?.rotation ?? 0
-      let cos = Math.abs(Math.cos(r))
-      let sin = Math.abs(Math.sin(r))
-      let rotW = layer.width * cos + layer.height * sin
-      let rotH = layer.width * sin + layer.height * cos
-      let scale = displayScale() * Math.max(box.width / rotW, box.height / rotH)
+      let scale = displayScale() * tileWorldScale(box.width, box.height, layer.width, layer.height, r)
       applyOversample(layer, scale, layer.chunkW, layer.chunkH, props.maxOversample)
     })
   onLayout(pick)

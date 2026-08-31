@@ -34,7 +34,7 @@ import {
 } from "@solidrt/core/gpu"
 import type { BufferId, FilterMode, TextureId } from "@solidrt/core/gpu"
 import type { Frame } from "./frames.ts"
-import { checkOversample } from "./oversample.ts"
+import { checkOversample, thrashSentinel } from "./oversample.ts"
 import { FLOATS_PER_SPRITE } from "./records.ts"
 import { FRAGMENT, INSTANCE_ATTRIBUTES, VERTEX } from "./shaders.ts"
 
@@ -167,6 +167,7 @@ export function createTileLayer(
   let label = opts?.label ?? "tiles"
   let oversample = opts?.oversample ?? 1
   checkOversample("createTileLayer", oversample, chunkW, chunkH)
+  let thrash = thrashSentinel(`tile layer "${label}"`)
   let chunkCols = Math.ceil(cols / chunkTiles)
   let perChunk = chunkTiles * chunkTiles
   // One unit quad (triangle strip), shared by every chunk's pipeline.
@@ -264,6 +265,7 @@ export function createTileLayer(
     setOversample(n) {
       if (disposed || n === oversample) return
       checkOversample("setOversample", n, chunkW, chunkH)
+      thrash()
       oversample = n
       // Resizing a target re-renders it, but a manual target's content is
       // its last bake: mark every chunk so the flush bakes it at the new size.

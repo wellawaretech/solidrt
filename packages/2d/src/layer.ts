@@ -38,7 +38,7 @@ import type { BufferId, TextureId } from "@solidrt/core/gpu"
 import * as spatial from "flux:spatial"
 import type { NodeId, NodeTransition } from "flux:spatial"
 import { on } from "srt:events"
-import { checkOversample } from "./oversample.ts"
+import { checkOversample, thrashSentinel } from "./oversample.ts"
 import type { Frame } from "./frames.ts"
 import { FULL_FRAME, writeFrame } from "./frames.ts"
 import type { RecordLayer } from "./records.ts"
@@ -91,15 +91,15 @@ function declareTransition(node: NodeId, handle: Sprite | SpriteGroup, transitio
  * fields - they touch no GPU state (the scene-graph handler rule).
  */
 export type Sprite = {
-  /** The owning layer, null after removeSprite. */
-  layer: SpriteLayer | RecordLayer | null
+  /** The owning layer, null after removeSprite (which owns the write). */
+  readonly layer: SpriteLayer | RecordLayer | null
   /**
    * The sprite's SPATIAL ARENA node - the citizenship handle: bind core
    * producers to it or reach it through flux:spatial directly (the layer
    * still owns the node's life; destroy it only via removeSprite). Null
    * on a record layer's sprites.
    */
-  node: NodeId | null
+  readonly node: NodeId | null
   /** Instance slot: fixed for the sprite's life on the node layer, the
    * shifting draw-order index on a record layer. Readable (readonly, like
    * the other underscore fields: cheap reads without getSprite's
@@ -227,17 +227,22 @@ export type SpriteLayerOptions = {
  * picked; sprites are always the leaves.
  */
 export type SpriteGroup = {
-  /** The owning layer, null after removeGroup. */
-  layer: SpriteLayer | null
+  /** The owning layer, null after removeGroup (which owns the write). */
+  readonly layer: SpriteLayer | null
   /** The group's spatial arena node. */
-  node: NodeId
-  _x: number
-  _y: number
-  _rot: number
-  _scale: number
+  readonly node: NodeId
+  /** Pose mirror (readonly, like Sprite's underscore fields: cheap reads);
+   * writes go through setGroup. */
+  readonly _x: number
+  readonly _y: number
+  readonly _rot: number
+  readonly _scale: number
   /** See Sprite.onTransitionEnd. */
   onTransitionEnd?: (event: TransitionEndEvent) => void
 }
+
+/** The layer-internal mutable view of a SpriteGroup (see SpriteState). */
+export type GroupState = { -readonly [K in keyof SpriteGroup]: SpriteGroup[K] }
 
 /** Group fields, all optional: absent keys keep values. */
 export type GroupOptions = {
@@ -285,7 +290,7 @@ export type LayerBase = {
   _add(opts?: AddSpriteOptions): Sprite
   _write(sprite: SpriteState, opts: SpriteOptions): void
   _read(sprite: Sprite): Required<SpriteOptions>
-  _remove(sprite: Sprite): void
+  _remove(sprite: SpriteState): void
   _schedule(): void
 }
 
@@ -296,7 +301,7 @@ export type SpriteLayer = LayerBase & {
    * marquee query. Node layer only.
    */
   pickRect(x: number, y: number, w: number, h: number): Sprite[]
-  _groups: Set<SpriteGroup>
+  _groups: Set<GroupState>
 }
 
 /**
@@ -439,6 +444,7 @@ export function createSpriteLayer(
   let label = opts?.label ?? "sprites"
   let oversample = opts?.oversample ?? 1
   checkOversample("createSpriteLayer", oversample, width, height)
+  let thrash = thrashSentinel(`sprite layer "${label}"`)
   // One unit quad (triangle strip), reused by every instance.
   let quad = createBuffer(new Float32Array([-0.5, -0.5, 0.5, -0.5, -0.5, 0.5, 0.5, 0.5]), {
     label: `${label}-quad`,
@@ -484,7 +490,7 @@ export function createSpriteLayer(
   let freeSlots: number[] = []
   let gpuCapacity = capacity
   let styleData = new Float32Array(capacity * STYLE_FLOATS)
-  let byNode = new Map<NodeId, Sprite>()
+  let byNode = new Map<NodeId, SpriteState>()
 
   let flush = () => {
     scheduled = false
@@ -575,6 +581,7 @@ export function createSpriteLayer(
     setOversample(n) {
       if (disposed || n === oversample) return
       checkOversample("setOversample", n, width, height)
+      thrash()
       oversample = n
       setTargetSize(texture, width * n, height * n)
     },
@@ -807,7 +814,7 @@ export function addGroup(layer: SpriteLayer, opts?: GroupOptions): SpriteGroup {
     _y: opts?.y ?? 0,
     _rot: opts?.rotation ?? 0,
     _scale: opts?.scale ?? 1,
-  } as SpriteGroup
+  } as GroupState
   writeGroupTransform(group)
   group.node = spatial.createNode(TRANSFORM, true)
   if (opts?.parent) {
@@ -827,11 +834,12 @@ function writeGroupTransform(group: SpriteGroup): void {
 export function setGroup(group: SpriteGroup, opts: GroupOptions): void {
   let layer = group.layer
   if (!layer) return
+  let g: GroupState = group
   let moved = false
-  if (opts.x !== undefined && opts.x !== group._x) (group._x = opts.x), (moved = true)
-  if (opts.y !== undefined && opts.y !== group._y) (group._y = opts.y), (moved = true)
-  if (opts.rotation !== undefined && opts.rotation !== group._rot) (group._rot = opts.rotation), (moved = true)
-  if (opts.scale !== undefined && opts.scale !== group._scale) (group._scale = opts.scale), (moved = true)
+  if (opts.x !== undefined && opts.x !== g._x) (g._x = opts.x), (moved = true)
+  if (opts.y !== undefined && opts.y !== g._y) (g._y = opts.y), (moved = true)
+  if (opts.rotation !== undefined && opts.rotation !== g._rot) (g._rot = opts.rotation), (moved = true)
+  if (opts.scale !== undefined && opts.scale !== g._scale) (g._scale = opts.scale), (moved = true)
   if (moved) {
     writeGroupTransform(group)
     spatial.writeTransform(group.node, TRANSFORM)
@@ -853,7 +861,8 @@ export function setGroup(group: SpriteGroup, opts: GroupOptions): void {
 export function removeGroup(group: SpriteGroup): void {
   let layer = group.layer
   if (!layer) return
-  group.layer = null
+  let g: GroupState = group
+  g.layer = null
   layer._groups.delete(group)
   declared.delete(group.node)
   spatial.destroyNode(group.node)

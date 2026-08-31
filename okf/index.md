@@ -93,6 +93,10 @@ Shaped, not started.
   at defaults, but neither the tile nor the layer exposes it, so day/night,
   damage states, team colours, biome shifts and fog-of-war dimming all fall
   back to atlas duplication or an overlay rect.
+- **[Tile world bounds - bounded contract or additive path to unbounded](backlog/2d-tile-world-bounds.md)** [2026-08-30]
+  Decide whether the TileLayer's creation-fixed cols x rows grid is the
+  contract, or sketch the additive route to an unbounded world before
+  something depends on the bound
 - **[Scene-wide effects on custom materials - one answer for fog, shadows and what comes next](backlog/3d-custom-material-scene-effects.md)** [2026-08-30]
   A shaderMaterial gets the scene's fog and shadows only by composing FOG and
   the SHADOW trio itself, and every instanced mesh has a custom material, so

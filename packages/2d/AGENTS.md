@@ -250,8 +250,13 @@ is flat. Event x/y are layer pixels with the camera undone.
   TARGET, which never binds for chunk-sized tile targets: a tile world's
   texture memory is resident chunks x n squared, and `maxOversample` is
   the cap that bounds it (auto-pick only; a 2x display otherwise picks 16x
-  the memory of n = 1, silently). Never fix a shimmer by snapping the fit to an integer: the
-  scene should fill its box at any ratio.
+  the memory of n = 1, silently). A layer whose oversample changes more
+  than a few times in a second warns in the console (thrash: every change
+  resizes and redraws the targets, a tile layer re-bakes every resident
+  chunk) - pin `oversample` or set `maxOversample` when an animated
+  transform or camera legitimately sweeps the scale. Never fix a shimmer by
+  snapping the fit to an integer: the scene should fill its box at any
+  ratio.
 - Retro scrolling habits are the app's, not the layer's: keep the camera
   fractional (rounding it to design pixels makes motion step at the
   rounding rate, not the frame rate), and a game that wants whole-pixel

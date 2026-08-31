@@ -34,7 +34,7 @@ import { FULL_FRAME, writeFrame } from "./frames.ts"
 import { readFrame, spriteDispatch } from "./layer.ts"
 import type { LayerBase, Sprite, SpriteHandlers, SpriteLayerOptions, SpriteOptions, SpriteState } from "./layer.ts"
 import { pointInSprite } from "./pick.ts"
-import { checkOversample } from "./oversample.ts"
+import { checkOversample, thrashSentinel } from "./oversample.ts"
 import { FRAGMENT, INSTANCE_ATTRIBUTES, VERTEX } from "./shaders.ts"
 
 // Floats per instance record:
@@ -94,6 +94,7 @@ export function createRecordLayer(
   })
   let oversample = opts?.oversample ?? 1
   checkOversample("createRecordLayer", oversample, width, height)
+  let thrash = thrashSentinel(`record layer "${label}"`)
   let texture = createPipelineTexture(
     VERTEX,
     FRAGMENT,
@@ -210,6 +211,7 @@ export function createRecordLayer(
     setOversample(n) {
       if (disposed || n === oversample) return
       checkOversample("setOversample", n, width, height)
+      thrash()
       oversample = n
       setTargetSize(texture, width * n, height * n)
     },

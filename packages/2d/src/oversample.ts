@@ -4,11 +4,10 @@
 // atlas is still sampled nearest inside (texels stay square blocks), the
 // composite samples linear (each block edge softens over one device pixel
 // instead of snapping to uneven widths). okf/backlog/2d-layer-display-scale.md.
+// The pure math lives in oversample-math.ts (checkable headless); this
+// module binds it to the device limits and adds the thrash sentinel.
 import { limits } from "@solidrt/core/gpu"
-
-/** Tolerance under a whole number when rounding a display scale up, so a
- * scale that is 3 up to float noise picks 3, not 4. */
-const FIT_EPSILON = 1e-6
+import { fitOversampleWithin } from "./oversample-math.ts"
 
 /** Validate an oversample against the target it scales; throws (dev policy). */
 export function checkOversample(verb: string, n: number, width: number, height: number): void {
@@ -30,11 +29,40 @@ export function checkOversample(verb: string, n: number, width: number, height: 
  * not ask for one) and by what the target can grow to on this device.
  */
 export function fitOversample(scale: number, targetW: number, targetH: number, budget: number): number {
-  // The budget bounds the scale, not the rounded factor: the ceiling may
-  // still round a fit that fills the window up by one (a 320 x 200 design
-  // on a 2560 x 1440 panel fits at 7.2 and needs 8).
-  let byBudget = Math.sqrt(budget / (targetW * targetH))
-  let n = Math.max(1, Math.ceil(Math.min(scale, byBudget) - FIT_EPSILON))
-  let byDevice = Math.floor(limits.maxTextureSize / Math.max(targetW, targetH))
-  return Math.max(1, Math.min(n, byDevice))
+  return fitOversampleWithin(scale, targetW, targetH, budget, limits.maxTextureSize)
+}
+
+/** Oversample changes inside the window before the thrash warning fires. A
+ * healthy layer settles in a change or two (mount, then the post-resize
+ * scale); reaching this count means something re-picks every frame. */
+const THRASH_CHANGES = 4
+/** The window those changes must land in, ms. */
+const THRASH_WINDOW_MS = 1000
+
+/**
+ * The thrash sentinel: each layer calls the returned hook on every ACTUAL
+ * oversample change, and bunched changes warn once per layer. Every change
+ * resizes and redraws the layer's targets (a tile layer re-bakes every
+ * resident chunk), so a scale sweeping an integer boundary every frame is
+ * this package's most expensive silent mistake - worth a console line the
+ * moment it happens rather than a profiling session later.
+ */
+export function thrashSentinel(what: string): () => void {
+  let stamps: number[] = []
+  let warned = false
+  return () => {
+    if (warned) return
+    let now = performance.now()
+    stamps.push(now)
+    while (stamps.length > 0 && now - stamps[0]! > THRASH_WINDOW_MS) stamps.shift()
+    if (stamps.length < THRASH_CHANGES) return
+    warned = true
+    console.warn(
+      `Oversample thrash: ${what} changed oversample ${THRASH_CHANGES} times within a second. ` +
+        `Every change resizes and redraws the layer's targets (a tile layer re-bakes every ` +
+        `resident chunk). The usual cause is an animated transform or camera sweeping the ` +
+        `measured scale across integer boundaries; pin \`oversample\`, or bound the sweep ` +
+        `with \`maxOversample\`. Warned once per layer.`,
+    )
+  }
 }
