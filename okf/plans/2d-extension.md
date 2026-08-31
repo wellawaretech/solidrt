@@ -93,7 +93,7 @@ the items below is one - they are gaps in the layer as an API.
 1. **Capacity growth** (okf/backlog/2d-layer-capacity-growth.md). The only
    item here that is a runtime failure rather than a tradeoff: past
    `capacity`, `addSprite` throws and the app has no recovery. First.
-2. **A sort key** (okf/backlog/2d-sprite-sort-key.md). Supersedes the
+2. **A sort key** (okf/done/2d-sprite-sort-key.md). Supersedes the
    "z-ordering" line above. Raising a sprite or depth-sorting a population by
    y is remove-plus-re-add today, i.e. per-element churn in the one package
    whose premise is that per-element costs are what kill you.

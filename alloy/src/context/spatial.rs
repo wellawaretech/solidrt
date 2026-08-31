@@ -51,15 +51,23 @@ impl SinkWriter for Writer<'_> {
     Self::dropped(self.ctx.set_target_params(target, &[(name.to_string(), ParamValue::Array(values.to_vec()))]));
   }
 
-  // An instance-record dirty range, through the ordinary partial buffer
-  // write (bounds-checked there against the buffer's size).
-  fn write_instances(&mut self, buffer: u64, first: u32, values: &[f32]) {
+  // An instance-record staging publish. A plain buffer takes the dirty
+  // range through the ordinary partial write (bounds-checked there against
+  // the buffer's size); an ordered instance buffer publishes the whole
+  // record set gathered into draw order instead - a partial range has no
+  // stable position once records draw in key order.
+  fn write_instances(&mut self, buffer: u64, lo: u32, hi: u32, values: &[f32]) {
     self.wrote = true;
-    let mut data = Vec::with_capacity(values.len() * 4);
-    for v in values {
+    if self.ctx.buffer_has_order(buffer) {
+      Self::dropped(self.ctx.ordered_instance_publish(buffer, values));
+      return;
+    }
+    let range = &values[lo as usize..hi as usize];
+    let mut data = Vec::with_capacity(range.len() * 4);
+    for v in range {
       data.extend_from_slice(&v.to_ne_bytes());
     }
-    Self::dropped(self.ctx.write_gpu_buffer(buffer, &data, first as usize * 4));
+    Self::dropped(self.ctx.write_gpu_buffer(buffer, &data, lo as usize * 4));
   }
 }
 

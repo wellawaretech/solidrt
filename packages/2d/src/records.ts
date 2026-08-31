@@ -49,7 +49,7 @@ const Y_FIELD_OFFSET = 1
 
 const RESOLVED = Promise.resolve()
 
-export type RecordLayerOptions = SpriteLayerOptions & {
+export type RecordLayerOptions = Omit<SpriteLayerOptions, "orderBy"> & {
   /**
    * Draw records in KEY order instead of record order, produced by core at
    * each publish (the gpu `instanceOrder` primitive - the flush's lease
@@ -204,6 +204,9 @@ export function createRecordLayer(
 
   // Record layout: [cx, cy, w, h, u0, v0, u1, v1, rot, tintR, tintG, tintB, tintA]
   let writeRecord = (sprite: SpriteState, opts: SpriteOptions) => {
+    if (opts.sortKey !== undefined) {
+      throw new Error("setSprite: record layers have no sortKey field; order by a record field with orderBy { field }")
+    }
     let at = sprite._slot * FLOATS_PER_SPRITE
     let r = layer.records
     if (opts.x !== undefined) r[at] = opts.x
@@ -339,6 +342,8 @@ export function createRecordLayer(
         flipY: sprite._flipY,
         rotation: r[at + 8]!,
         tint: [r[at + 9]!, r[at + 10]!, r[at + 11]!, r[at + 12]!],
+        // Record sprites have no key field (see writeRecord's throw).
+        sortKey: 0,
       }
     },
     _remove(sprite) {

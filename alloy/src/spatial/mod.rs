@@ -74,10 +74,14 @@ pub trait SinkWriter {
   /// A shared-slot group's array param, rewritten whole (slot sinks share
   /// one array value; see `SharedSlotSink`).
   fn write_shared(&mut self, target: u64, name: &str, values: &[f32]);
-  /// A coalesced run of instance-record floats: `values` lands at float
-  /// offset `first` of vertex buffer `buffer`. At most one write per
-  /// buffer per flush, however many nodes moved (see `InstanceRecordSink`).
-  fn write_instances(&mut self, buffer: u64, first: u32, values: &[f32]);
+  /// One buffer's staged instance records: the coalesced dirty float range
+  /// `[lo, hi)` plus `values`, the WHOLE staging mirror - so a writer that
+  /// must publish the full record set (an ordered instance buffer gathers
+  /// into draw order, where a partial range has no stable position) can
+  /// reach every record, while the plain path writes just the range. At
+  /// most one write per buffer per flush, however many nodes moved (see
+  /// `InstanceRecordSink`).
+  fn write_instances(&mut self, buffer: u64, lo: u32, hi: u32, values: &[f32]);
 }
 
 /// How a shared-slot sink projects the node's world transform into its
@@ -978,7 +982,7 @@ impl Spatial {
     // per buffer per flush, a group dropping with its last write.
     self.instances.retain(|buffer, group| {
       if let Some((lo, hi)) = group.dirty.take() {
-        out.write_instances(*buffer, lo as u32, &group.values[lo..hi]);
+        out.write_instances(*buffer, lo as u32, hi as u32, &group.values);
       }
       group.refs > 0
     });

@@ -84,6 +84,15 @@ export type SpriteLayerProps = {
    * `oversample` is set (explicit already opts out of the pick).
    */
   maxOversample?: number
+  /**
+   * Draw sprites in key order instead of slot order, produced by core at
+   * every publish: `"y"` orders by world y (back-to-front for a
+   * perspective scene, zero JS per frame even under native transitions),
+   * `"sortKey"` by the per-sprite `sortKey` field (explicit layering:
+   * raise-on-drag, click-to-front). Creation-fixed (see
+   * SpriteLayerOptions.orderBy).
+   */
+  orderBy?: "y" | "sortKey"
   label?: string
   ref?: (layer: LayerHandle) => void
   /**
@@ -115,6 +124,7 @@ export let SpriteLayer: ParentComponent<SpriteLayerProps> = props => {
     createSpriteLayer(props.width, props.height, props.atlas, {
       capacity: props.capacity,
       clearColor: props.clearColor,
+      orderBy: props.orderBy,
       label: props.label,
     }),
   )
@@ -241,8 +251,8 @@ export let Sprite: VoidComponent<SpriteProps> = props => {
   let parent = useContext(GroupContext)
   let sprite = untrack(() => addSprite(layer, parent ? { parent } : undefined))
   createEffect(
-    () => [props.x, props.y, props.w, props.h, props.frame, props.flipX, props.flipY, props.rotation, props.tint] as const,
-    ([x, y, w, h, frame, flipX, flipY, rotation, tint]) => setSprite(sprite, { x, y, w, h, frame, flipX, flipY, rotation, tint }),
+    () => [props.x, props.y, props.w, props.h, props.frame, props.flipX, props.flipY, props.rotation, props.tint, props.sortKey] as const,
+    ([x, y, w, h, frame, flipX, flipY, rotation, tint, sortKey]) => setSprite(sprite, { x, y, w, h, frame, flipX, flipY, rotation, tint, sortKey }),
   )
   // After the pose effect, so the mount pose snaps before writes animate.
   createEffect(

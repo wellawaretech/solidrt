@@ -11,7 +11,10 @@
 // - VERTEX_SPLIT + INSTANCE_ATTRIBUTES_SPLIT: the node-backed live layer
 //   (layer.ts), pose and style in separate instance-buffer slots - slot 0
 //   is the core-written Pose2D record [x, y, angle, sx, sy], slot 1 the
-//   JS-written style record [u0, v0, u1, v1, tintR, tintG, tintB, tintA].
+//   JS-written style record [u0, v0, u1, v1, tintR, tintG, tintB, tintA,
+//   sortKey]. The shader never reads iSortKey - it exists for the core's
+//   instanceOrder (orderBy: "sortKey"); declared attributes without an
+//   active program attribute are skipped, their bytes pad the stride.
 // The rotations here (clockwise, y-down) and their JS partners must
 // agree: iRot with pointInSprite in pick.ts, uCameraRot with
 // projectCamera in camera.ts. The differential checks guard the JS side
@@ -95,11 +98,13 @@ export let VERTEX_SPLIT = glsl`
   }
 `
 
-/** The split layout: slot 0 the Pose2D record, slot 1 the style record. */
+/** The split layout: slot 0 the Pose2D record, slot 1 the style record
+ * (iSortKey is layout-only - see the header note). */
 export const INSTANCE_ATTRIBUTES_SPLIT: InstanceAttribute[] = [
   { name: "iPos", format: "vec2" },
   { name: "iRot", format: "f32" },
   { name: "iScale", format: "vec2" },
   { name: "iUv", format: "vec4", slot: 1 },
   { name: "iTint", format: "vec4", slot: 1 },
+  { name: "iSortKey", format: "f32", slot: 1 },
 ]

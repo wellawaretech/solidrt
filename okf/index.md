@@ -55,11 +55,6 @@ Shaped, not started.
   The pixel-art identity kit - fixed logical resolution with integer nearest
   scaling, palette LUT, and scanline/CRT passes - as thin layers over what
   already exists
-- **[Sprite draw order is insertion order, so reordering means remove and re-add](backlog/2d-sprite-sort-key.md)** [2026-08-22]
-  The sprite layer paints in record order with no sort key, so raising one
-  sprite or depth-sorting a population by y - the ordinary case for a dense 2D
-  scene - costs a record shift and an index fixup per element instead of a
-  sort of an index array.
 - **[Seeding a tile world is one setTile call per cell](backlog/2d-tile-bulk-writes.md)** [2026-08-29]
   There is no bulk write, so an 18k-cell seed is 18k setTile calls each paying
   locate() and a frame copy; fine today because the flush batches to a
@@ -734,6 +729,11 @@ Finished, kept for the reasoning.
   inside <Sprite>; GroupContext was created without a default, which Solid 2
   rc1 no longer tolerates for an absent provider. Fixed with a null sentinel
   default.
+- **[Sprite draw order is insertion order, so reordering means remove and re-add](done/2d-sprite-sort-key.md)** [2026-08-22]
+  The sprite layer paints in record order with no sort key, so raising one
+  sprite or depth-sorting a population by y - the ordinary case for a dense 2D
+  scene - costs a record shift and an index fixup per element instead of a
+  sort of an index array.
 - **[The tile camera's world-to-screen mapping is not exported, and its rotation convention is stated nowhere](done/2d-tile-camera-projection.md)** [2026-08-29]
   Anything drawn in world space over a rotating tile world (shadows, parallax
   motes, sprites until the sprite camera rotates) re-implements TileCamera's

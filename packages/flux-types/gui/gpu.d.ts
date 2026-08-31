@@ -628,22 +628,39 @@ declare module "flux:gpu" {
    * The order materializes when the buffer is PUBLISHED: each
    * {@link beginBufferWrite}/{@link endBufferWrite} publish gathers the
    * records into key order on the way to the GPU (one extra copy of the
-   * published bytes, nothing retained). A population that republishes each
-   * frame re-orders each frame for free; a direction change alone takes
-   * effect at the next publish. Because the GPU-side contents are the
-   * gathered records, {@link writeBuffer} on an ordered buffer throws
-   * (a byte-offset write would land on the wrong records - publish whole
-   * record sets through the lease), {@link readBuffer} reads back gathered
-   * order, a publish must be a whole number of records, and
+   * published bytes; a single-buffer entry retains nothing). A population
+   * that republishes each frame re-orders each frame for free; a direction
+   * change alone takes effect at the next publish. Because the GPU-side
+   * contents are the gathered records, {@link writeBuffer} on an ordered
+   * buffer throws (a byte-offset write would land on the wrong records -
+   * publish whole record sets through the lease), {@link readBuffer} reads
+   * back gathered order, a publish must be a whole number of records, and
    * `instanceCount` below the published record count draws the first N in
    * key order.
    *
-   * Requires the entry to bind exactly ONE instance buffer, ordered by no
-   * other entry; a buffer swap ({@link BufferUpdate}) carries the order to
-   * the new buffer.
+   * An entry with SEVERAL instance buffers orders them all under ONE
+   * permutation: the key reads from slot 0's records, and every other
+   * slot's publishes gather to match, so split records (a core-written
+   * pose buffer plus an app-written style buffer) always describe the same
+   * draw order. This retains a copy of each slot's records: when the key
+   * order changes - including through spatial record sinks, with no
+   * publish from the app anywhere - the sibling buffers republish
+   * themselves in the same frame. The entry's instance buffers must be
+   * pairwise distinct, each ordered by no other entry; a buffer swap
+   * ({@link BufferUpdate}) carries the order to the new buffers, every
+   * swapped slot at once - republish app-written slots after a swap, the
+   * new buffer starts empty.
    */
   export type InstanceOrder = ({ field: number } | { position: number; direction: [number, number, number] }) & {
     descending?: boolean
+    /**
+     * Which instance slot's records hold the key (default 0). On a
+     * multi-buffer entry the key may live in any one slot - a core-written
+     * pose slot keyed by position, or an app-written style slot keyed by
+     * an explicit sort field - and every other slot gathers under its
+     * permutation.
+     */
+    slot?: number
   }
   /**
    * The order half of a draw-entry update: `orderDirection` replaces the

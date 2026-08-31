@@ -23,14 +23,14 @@ moved subtrees in Rust, and picking walks the core BVH.
   slot 0 is the POSE buffer `[x, y, angle, sx, sy]` written ONLY by the
   core (each sprite node's Pose2D record sink; one coalesced buffer write
   per flush however many nodes moved), slot 1 the STYLE buffer
-  `[u0, v0, u1, v1, tint rgba]`, JS-owned, published through the zero-copy
-  write lease. NEVER write the pose buffer from JS - the core's staging
-  mirror owns it and will overwrite.
+  `[u0, v0, u1, v1, tint rgba, sortKey]`, JS-owned, published through the
+  zero-copy write lease. NEVER write the pose buffer from JS - the core's
+  staging mirror owns it and will overwrite.
 - Sprites hold FIXED instance slots: draw order is slot order, removal
   zeroes the pose (zero scale = nothing drawn) and recycles the slot to
   the next add. No painter's-insertion-order guarantee across removals;
-  opaque-or-transparent pixel art never notices, z-ordered translucency is
-  the sort-key backlog item (okf/backlog/2d-sprite-sort-key.md).
+  opaque-or-transparent pixel art never notices, and a scene that needs a
+  real draw order says so with `orderBy` ("y" or "sortKey" - see below).
 - Growth (past `capacity`, doubling): pose sinks move in ONE core
   `retargetRecords` call (full republish next flush), style re-uploads,
   `setDraw({ instanceBuffers })` swaps both, old buffers destroyed.
@@ -204,14 +204,22 @@ is flat. Event x/y are layer pixels with the camera undone.
   memcpy, microseconds at 10k; the node layer's style publish is the same
   whole-prefix shape. Dirty ranges were deliberately not built until a
   measurement asks.
-- Records layer `orderBy` ("y" or `{ field, descending? }`): the core
-  gathers the publish into key order (gpu `instanceOrder`, radix sort +
-  one extra memcpy, no per-record JS), so a y-sorted crowd costs the same
-  flush as an unsorted one. Records stay slot-addressed; ties keep record
-  order; `pick()` still resolves overlap by record order. The node layer
-  cannot use this yet - its pose buffer is core-written and its style
-  buffer would need the same permutation (the multi-buffer stage of
-  okf/backlog/gpu-instance-order.md).
+- `orderBy` on BOTH layers: the core gathers publishes into key order
+  (gpu `instanceOrder`, radix sort + one extra memcpy, no per-record JS),
+  so a y-sorted crowd costs the same flush as an unsorted one. Records
+  and slots stay stably addressed; ties keep slot order; `pick()` still
+  resolves overlap by slot/record order. Records layer keys: "y" or a raw
+  `{ field, descending? }` offset into the 13-float record. Node layer
+  keys: `"y"` - WORLD y from the core-written pose buffer, so sprites
+  moved by native transitions (or any core producer) re-sort with zero JS
+  per frame - or `"sortKey"` - the app-owned per-sprite `sortKey` field
+  (style record float 8, default 0), the explicit-layering key for
+  painter-order scenes: raise a dragged piece with `setSprite(hit,
+  { sortKey: ++top })`, back to 0 to restore. Either way the core gathers
+  pose AND style under ONE permutation and republishes the sibling buffer
+  itself when the key buffer re-orders (the multi-buffer stage of
+  okf/backlog/gpu-instance-order.md). `sortKey` on a record-layer sprite
+  throws - its 13-float record has no key field.
 - The node layer's STYLE slots are not compacted: a removed sprite leaves
   its style floats in place (invisible - the pose is zeroed) until the
   slot recycles. Do not read style truth from the buffer; getSprite reads

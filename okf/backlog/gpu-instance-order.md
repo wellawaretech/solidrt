@@ -12,7 +12,7 @@ Instanced draws consume records in buffer order, and nothing can change
 that order except rewriting records. Two consumers hit this today, at
 opposite scales, and a third is foreseeable:
 
-- **The sprite layer** ([2d-sprite-sort-key](2d-sprite-sort-key.md)):
+- **The sprite layer** ([2d-sprite-sort-key](../done/2d-sprite-sort-key.md)):
   raising a dragged sprite or y-sorting a perspective crowd is expressible
   only as remove-and-re-add, which shifts records and renumbers handles.
   Its note proposes a JS index-gather at flush; workable at sprite
@@ -105,6 +105,71 @@ WEBGL_multi_draw ranges instead of moving data - the only zero-copy
 shape, but multi-draw is not core GLES 3.0 and each ordered item
 becomes its own sub-draw, forfeiting instancing. Considered and
 rejected.
+
+## Findings
+
+Stage 1 (gather-at-publish, single instance buffer) landed 2026-08-31
+(uncommitted): `instanceOrder` on the entry creates, field and projected
+keys, radix gather in the lease publish, `orderDirection` updates, the
+buffer-swap rekey, and the record layer's `orderBy` riding it.
+
+Stage 3 (multi-slot entries - the node layer's shape) landed 2026-08-31
+(uncommitted): an entry with several instance buffers orders them all
+under ONE permutation.
+
+- The key reads from SLOT 0's records (a `slot` designation on the
+  declared order is the additive extension when a consumer needs a key
+  elsewhere; none does yet).
+- Multi-slot entries retain the permutation plus a slot-order mirror of
+  each slot's last published records (`context/order.rs`); single-slot
+  entries keep stage 1's zero-retention path bit-for-bit. When the key
+  slot's publish changes the permutation, every sibling slot republishes
+  from its mirror in the same flush - both buffers always describe the
+  same draw order, with no publish from the app anywhere.
+- The spatial sink path publishes ordered buffers whole:
+  `SinkWriter::write_instances` now carries the dirty range plus the WHOLE
+  staging mirror, and Context's writer routes ordered buffers to
+  `ordered_instance_publish` (full-extent gather through a pooled lease
+  block) instead of the partial `write_gpu_buffer` - which keeps rejecting
+  ordered buffers for everyone else, since a byte-offset write has no
+  stable position under a permutation. So a core producer moving nodes
+  re-orders a whole multi-buffer entry with zero JS.
+- The pure half split into `order_permutation` + `gather_permuted`
+  (`gpu/order.rs`); the permuted gather reconciles record-count mismatches
+  between key and sibling buffers (out-of-range perm entries skip, the
+  unpermuted tail appends in slot order).
+- Swaps rekey every changed slot in one `setDraw`/`setDrawRange`
+  transaction; an ordered entry's instance buffers must be pairwise
+  distinct. After a swap the app republishes its own slots (the new buffer
+  starts empty); a retargeted pose group republishes itself at the next
+  spatial flush. Growth flow: create both buffers, `retargetRecords`,
+  swap both slots, destroy the old pair - no flush in between.
+- Verified: `cargo test -p alloy` (order permutation/mismatch units, 360
+  green) and `SDL_VIDEO_DRIVER=offscreen cargo run -p alloy --example
+  draw_ordered` - 23 assertions including the coherence one: a single
+  node move republishes pose AND style in key order with no style publish.
+
+The honest cost, by design: an ordered multi-slot entry gives up
+dirty-range instance writes - any pose motion republishes the full extent
+gathered, and a permutation change republishes the siblings too. That is
+the record layer's existing cost model, and unordered entries are
+untouched.
+
+The 2d consumption landed with it (same day): `orderBy: "y"` on the node
+layer keys on pose world y - see done/2d-sprite-sort-key.md's findings;
+probes/order-probe.tsx is the end-to-end check for both layer kinds.
+
+The `slot` key designation landed 2026-08-31 too (uncommitted):
+`InstanceOrder.parse` takes `slot` (default 0, bounds-checked), the
+registry keys on it everywhere, and draw_ordered.rs covers the
+lease-written-key / sink-written-sibling direction plus the
+declared-but-unconsumed key attribute. Its consumer is the node layer's
+`orderBy: "sortKey"` (style-slot key, the raise case) - which closed
+2d-sprite-sort-key.
+
+Remaining: stage 2 only (retained-copy strategy for write-once splat
+clouds - orthogonal to stage 3; the mirrors here are multi-slot
+coherence machinery, not the per-entry opt-in splats want).
 
 ## Done looks like
 

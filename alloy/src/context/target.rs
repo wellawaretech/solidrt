@@ -171,7 +171,7 @@ impl Context {
       self.manual_targets.borrow_mut().insert(id);
     }
     if let Some(order) = order {
-      self.insert_instance_order(id, 0, order, instance_strides[0], buffers.instance_buffers[0]);
+      self.insert_instance_order(id, 0, order, instance_strides, buffers.instance_buffers);
     }
     Ok(id)
   }
@@ -278,7 +278,7 @@ impl Context {
       self.manual_targets.borrow_mut().insert(id);
     }
     if let Some(order) = order {
-      self.insert_instance_order(id, 0, order, instance_strides[0], buffers.instance_buffers[0]);
+      self.insert_instance_order(id, 0, order, instance_strides, buffers.instance_buffers);
     }
     Ok(id)
   }
@@ -513,7 +513,7 @@ impl Context {
     list.entries.insert(draw_id, EntryMirror { uniforms, draw: entry.draw, bounds, buffers: entry.buffer_ids() });
     drop(targets);
     if let Some(order) = order {
-      self.insert_instance_order(target, draw_id, order, instance_strides[0], entry.buffer_ids().instance_buffers[0]);
+      self.insert_instance_order(target, draw_id, order, instance_strides, entry.buffer_ids().instance_buffers);
     }
     let mut sources = self.shader_sources.borrow_mut();
     let record = sources.entry(target).or_default();
@@ -813,20 +813,20 @@ impl Context {
     let next_range = range.merged(update, next_bounds.indexed)?;
     validate_draw_range(next_range, next_bounds)?;
     // The order half of the transaction: on an ordered entry the order
-    // follows an instance-buffer swap to the new buffer, and orderDirection
-    // replaces the projected key's direction. Checked here, before anything
-    // commits, so a rejected update leaves entry and registry as they were.
+    // follows an instance-buffer swap to the new buffers (every swapped
+    // slot at once), and orderDirection replaces the projected key's
+    // direction. Checked here, before anything commits, so a rejected
+    // update leaves entry and registry as they were.
     let entry_key = draw.unwrap_or(0);
-    let instance_swap =
-      (next_ids.instance_buffers[0] != ids.instance_buffers[0]).then_some(next_ids.instance_buffers[0]);
-    if let Some(new_buffer) = instance_swap {
-      self.check_order_rekey(target, entry_key, new_buffer, next_ids)?;
+    let instance_swap = next_ids.instance_buffers != ids.instance_buffers;
+    if instance_swap {
+      self.check_order_swap(target, entry_key, next_ids)?;
     }
     if let Some(direction) = update.order_direction {
       self.set_instance_order_direction(target, entry_key, direction)?;
     }
-    if let Some(new_buffer) = instance_swap {
-      self.commit_order_rekey(target, entry_key, new_buffer);
+    if instance_swap {
+      self.commit_order_swap(target, entry_key, next_ids);
     }
     let range_changed = next_range != *range;
     *ids = next_ids;

@@ -37,8 +37,9 @@ fragment stage samples exactly that one `sampler2D`.
 Two independent pieces, in this order:
 
 **1. Several atlases in one layer.** Add an atlas index to the record and
-draw one range per atlas. Records already need an ordering pass if the sort
-key lands ([2d-sprite-sort-key.md](2d-sprite-sort-key.md)), so grouping by
+draw one range per atlas. Records already have an ordering pass when a
+sort key is set ([2d-sprite-sort-key.md](../done/2d-sprite-sort-key.md),
+landed), so grouping by
 atlas within that order is nearly free - but the two interact and want
 designing together: strict depth order across atlases forces a draw per
 run, while grouping by atlas first is one draw per atlas and gives up

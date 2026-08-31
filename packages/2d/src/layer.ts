@@ -11,8 +11,8 @@
 //
 // Two instance-buffer slots split ownership: slot 0 is the pose buffer,
 // written ONLY by the core (one coalesced write per flush however many
-// nodes moved); slot 1 is the style buffer [u0, v0, u1, v1, tint rgba],
-// JS-owned and published through the zero-copy write lease. Never write
+// nodes moved); slot 1 is the style buffer [u0, v0, u1, v1, tint rgba,
+// sortKey], JS-owned and published through the zero-copy write lease. Never write
 // the pose buffer from JS - the core's staging mirror is the owner and
 // will overwrite. For motion only JS can compute at large populations, the
 // records layer (records.ts) is the escape hatch.
@@ -50,8 +50,16 @@ import { FRAGMENT, INSTANCE_ATTRIBUTES_SPLIT, VERTEX_SPLIT } from "./shaders.ts"
 
 /** Floats per pose record (the core's Pose2D projection). */
 export const POSE_FLOATS = 5
-/** Floats per style record: [u0, v0, u1, v1, tintR, tintG, tintB, tintA]. */
-export const STYLE_FLOATS = 8
+
+// Float offset of world y in a pose record - what `orderBy: "y"` keys on.
+const POSE_Y_FIELD = 1
+/** Floats per style record:
+ * [u0, v0, u1, v1, tintR, tintG, tintB, tintA, sortKey]. */
+export const STYLE_FLOATS = 9
+
+// Float offset of sortKey in a style record - what `orderBy: "sortKey"`
+// keys on.
+const STYLE_KEY_FIELD = 8
 
 const RESOLVED = Promise.resolve()
 
@@ -163,6 +171,15 @@ export type SpriteOptions = {
   rotation?: number
   /** RGBA multiplier 0..1 each; default opaque white (the texture as-is). */
   tint?: [number, number, number, number]
+  /**
+   * Explicit draw-order key, read only by a layer created with `orderBy:
+   * "sortKey"` (default 0; ties keep slot order, so untouched sprites draw
+   * as without one). The raise idiom: `setSprite(hit, { sortKey: ++top })`
+   * on interaction, back to 0 to restore. Node layer only - a record
+   * layer's 13-float record has no key field (order it by one of its own
+   * fields with `orderBy: { field }`); setting this there throws.
+   */
+  sortKey?: number
 }
 
 export type AddSpriteOptions = SpriteOptions & {
@@ -213,6 +230,30 @@ export type SpriteLayerOptions = {
   oversample?: number
   /** Skip the owner-scoped auto-dispose (see createSpriteLayer). */
   autoFree?: boolean
+  /**
+   * Draw sprites in KEY order instead of slot order, produced by core at
+   * every publish (the gpu `instanceOrder` primitive across the pose/style
+   * buffer pair - no per-sprite JS anywhere): `"y"` keys on the sprite's
+   * WORLD y, the pose the core itself writes, so a perspective crowd
+   * paints back to front (smaller y = further up the screen = drawn
+   * first) - and because the key is core-owned, sprites moved by native
+   * transitions or any other core producer re-sort with zero JS per
+   * frame. Slots stay fixed - handles, picking and the style records are
+   * untouched, only the draw order changes - and ties keep slot order, so
+   * sprites at equal y draw exactly as without it.
+   *
+   * `"sortKey"` keys on the app-owned per-sprite `sortKey` field instead
+   * (setSprite, default 0): explicit layering for painter-order scenes -
+   * raise a dragged piece, click-to-front, hover emphasis - with stable
+   * handles and no record churn.
+   *
+   * Known limitation for both keys: pick() resolves overlapping sprites by
+   * slot order, not visual order, when a key is set. (The record layer's
+   * RecordLayerOptions instead takes `"y"` or a raw `{ field }` offset
+   * into its own records; pose records are core-owned, so the node layer
+   * names its keys.)
+   */
+  orderBy?: "y" | "sortKey"
 }
 
 /**
@@ -461,6 +502,16 @@ export function createSpriteLayer(
       buffer: quad,
       instanceAttributes: INSTANCE_ATTRIBUTES_SPLIT,
       instanceBuffers: [pose, style],
+      // "y" keys on world y in the pose record (slot 0), "sortKey" on the
+      // app-owned key in the style record (slot 1); either way the core
+      // gathers BOTH buffers under the one permutation at every publish
+      // and republishes the sibling itself when the key buffer re-orders.
+      instanceOrder:
+        opts?.orderBy === "y"
+          ? { field: POSE_Y_FIELD }
+          : opts?.orderBy === "sortKey"
+            ? { field: STYLE_KEY_FIELD, slot: 1 }
+            : undefined,
       instanceCount: 0,
       blend: "alpha",
       textures: { uAtlas: atlas },
@@ -549,6 +600,10 @@ export function createSpriteLayer(
       styleData[at + 5] = opts.tint[1]
       styleData[at + 6] = opts.tint[2]
       styleData[at + 7] = opts.tint[3]
+      styleDirty = true
+    }
+    if (opts.sortKey !== undefined) {
+      styleData[at + STYLE_KEY_FIELD] = opts.sortKey
       styleDirty = true
     }
   }
@@ -680,7 +735,9 @@ export function createSpriteLayer(
       spatial.setBounds(node, FLAT_BOUNDS)
       spatial.bindPoseRecord(node, pose, slot)
       byNode.set(node, sprite)
-      writeStyle(sprite, { frame: FULL_FRAME, tint: [1, 1, 1, 1], ...opts })
+      // sortKey defaults to 0 explicitly: a recycled slot holds the
+      // previous occupant's key otherwise.
+      writeStyle(sprite, { frame: FULL_FRAME, tint: [1, 1, 1, 1], sortKey: 0, ...opts })
       layer._schedule()
       return sprite
     },
@@ -692,7 +749,13 @@ export function createSpriteLayer(
       if (opts.h !== undefined && opts.h !== sprite._h) (sprite._h = opts.h), (moved = true)
       if (opts.rotation !== undefined && opts.rotation !== sprite._rot) (sprite._rot = opts.rotation), (moved = true)
       if (moved) writeTransform(sprite)
-      if (opts.frame !== undefined || opts.tint !== undefined || opts.flipX !== undefined || opts.flipY !== undefined) {
+      if (
+        opts.frame !== undefined ||
+        opts.tint !== undefined ||
+        opts.flipX !== undefined ||
+        opts.flipY !== undefined ||
+        opts.sortKey !== undefined
+      ) {
         writeStyle(sprite, opts)
       }
       if (moved || styleDirty) layer._schedule()
@@ -709,6 +772,7 @@ export function createSpriteLayer(
         flipY: sprite._flipY,
         rotation: sprite._rot,
         tint: [styleData[at + 4]!, styleData[at + 5]!, styleData[at + 6]!, styleData[at + 7]!],
+        sortKey: styleData[at + STYLE_KEY_FIELD]!,
       }
     },
     _remove(sprite) {
@@ -739,7 +803,8 @@ export function createSpriteLayer(
  * order, and a removed sprite's slot recycles to the next add - so unlike
  * the record layer there is no painter's-insertion-order guarantee across
  * removals. Opaque-or-transparent pixel art (the overwhelming case) never
- * notices; z-ordered translucency is the sort-key backlog item. Past the
+ * notices; a scene that needs depth order sorts by world y with the
+ * layer's `orderBy: "y"` (core-produced, zero JS per frame). Past the
  * layer's reservation both instance buffers double (pose sinks move in one
  * core retarget); reserve with `capacity` to avoid the copies.
  */

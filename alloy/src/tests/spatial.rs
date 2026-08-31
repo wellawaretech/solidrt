@@ -25,8 +25,9 @@ impl SinkWriter for Recorder {
   fn write_shared(&mut self, target: u64, name: &str, values: &[f32]) {
     self.0.push(Write::Shared { target, name: name.to_string(), values: values.to_vec() });
   }
-  fn write_instances(&mut self, buffer: u64, first: u32, values: &[f32]) {
-    self.0.push(Write::Instances { buffer, first, values: values.to_vec() });
+  fn write_instances(&mut self, buffer: u64, lo: u32, hi: u32, values: &[f32]) {
+    // Record the range slice under `first`, matching the plain write path.
+    self.0.push(Write::Instances { buffer, first: lo, values: values[lo as usize..hi as usize].to_vec() });
   }
 }
 

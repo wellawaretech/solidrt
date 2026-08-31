@@ -34,26 +34,45 @@ pub enum OrderKey {
   Projected { offset: usize, direction: [f32; 3] },
 }
 
-/// One entry's declared instance order: the key source and the direction of
-/// the sort. Ascending draws smallest key first; descending is the
-/// back-to-front alpha case when larger keys are nearer.
+/// One entry's declared instance order: the key source, which instance
+/// slot's records hold it, and the direction of the sort. Ascending draws
+/// smallest key first; descending is the back-to-front alpha case when
+/// larger keys are nearer.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct InstanceOrder {
   pub key: OrderKey,
   pub descending: bool,
+  /// The instance slot whose records hold the key (default 0). On a
+  /// multi-buffer entry every slot gathers under the key slot's
+  /// permutation, whoever writes it - a core-written pose slot keyed by
+  /// world y, or an app-written style slot keyed by an explicit sort field.
+  pub key_slot: usize,
 }
 
 impl InstanceOrder {
   /// Parse the API-boundary shape: `field` or `position` are float offsets
   /// into one instance record (exactly one of the two), `direction` is
-  /// required with `position` and rejected with `field`. Stored offsets are
-  /// bytes.
+  /// required with `position` and rejected with `field`, `slot` names the
+  /// instance slot holding the key (default 0). Stored offsets are bytes.
   pub fn parse(
     field: Option<f64>,
     position: Option<f64>,
     direction: Option<[f32; 3]>,
     descending: bool,
+    slot: Option<f64>,
   ) -> Result<InstanceOrder, String> {
+    let key_slot = match slot {
+      None => 0,
+      Some(s) => {
+        if !(s.is_finite() && s >= 0.0 && s.fract() == 0.0 && (s as usize) < super::vocab::MAX_INSTANCE_SLOTS) {
+          return Err(format!(
+            "instanceOrder slot must be an integer 0..{}, got {s}",
+            super::vocab::MAX_INSTANCE_SLOTS - 1
+          ));
+        }
+        s as usize
+      }
+    };
     let key = match (field, position) {
       (Some(_), Some(_)) => return Err("instanceOrder takes either field or position, not both".to_string()),
       (None, None) => {
@@ -73,7 +92,7 @@ impl InstanceOrder {
         OrderKey::Projected { offset: float_offset(p, "position")?, direction }
       }
     };
-    Ok(InstanceOrder { key, descending })
+    Ok(InstanceOrder { key, descending, key_slot })
   }
 
   /// The key bytes must sit inside one record of `stride` bytes: a field key
@@ -137,6 +156,15 @@ pub struct OrderScratch {
   counts: Vec<u32>,
 }
 
+impl OrderScratch {
+  /// The permutation `order_permutation` left behind (perm[i] = the slot
+  /// drawn i-th) - what a multi-buffer entry retains and applies to sibling
+  /// publishes.
+  pub fn perm(&self) -> &[u32] {
+    &self.perm
+  }
+}
+
 // The f32 at byte offset `at` (native-endian, matching the Float32Array
 // writer); goes through a copy because a lease block has no alignment
 // guarantee.
@@ -165,8 +193,17 @@ fn quantize(f: f32) -> u32 {
 /// against the entry's stride before calling). Stable: equal keys keep slot
 /// order.
 pub fn gather_ordered(order: &InstanceOrder, stride: usize, src: &[u8], dst: &mut [u8], scratch: &mut OrderScratch) {
+  order_permutation(order, stride, src, scratch);
+  gather_permuted(&scratch.perm, stride, src, dst);
+}
+
+/// Sort `src`'s records by key and leave the permutation in `scratch.perm`
+/// (perm[i] = the slot drawn i-th) - the compute half of `gather_ordered`,
+/// exposed so a multi-buffer entry can gather several buffers under ONE
+/// permutation (computed from the key buffer, applied to its siblings).
+/// Same contracts and stability as `gather_ordered`.
+pub fn order_permutation(order: &InstanceOrder, stride: usize, src: &[u8], scratch: &mut OrderScratch) {
   debug_assert!(stride > 0 && src.len() % stride == 0, "publish length not a whole number of records");
-  debug_assert!(dst.len() >= src.len(), "gather destination smaller than the publish");
   let count = src.len() / stride;
   let OrderScratch { keys, perm, tmp, counts } = scratch;
 
@@ -219,8 +256,29 @@ pub fn gather_ordered(order: &InstanceOrder, stride: usize, src: &[u8], dst: &mu
     }
     std::mem::swap(perm, tmp);
   }
+}
 
-  for (i, &slot) in perm.iter().enumerate() {
-    dst[i * stride..(i + 1) * stride].copy_from_slice(&src[slot as usize * stride..(slot as usize + 1) * stride]);
+/// Gather `src`'s records into `dst` following `perm` (perm[i] = the slot
+/// drawn i-th). `dst` must hold at least `src.len()` bytes. The record
+/// counts may disagree - a sibling buffer can publish more or fewer records
+/// than the key buffer the permutation was computed from: perm entries past
+/// `src`'s record count are skipped, records past the permutation's length
+/// append in slot order. Every source record lands exactly once either way.
+pub fn gather_permuted(perm: &[u32], stride: usize, src: &[u8], dst: &mut [u8]) {
+  debug_assert!(stride > 0 && src.len() % stride == 0, "publish length not a whole number of records");
+  debug_assert!(dst.len() >= src.len(), "gather destination smaller than the publish");
+  let count = src.len() / stride;
+  let mut out = 0usize;
+  let mut place = |slot: usize| {
+    dst[out * stride..(out + 1) * stride].copy_from_slice(&src[slot * stride..(slot + 1) * stride]);
+    out += 1;
+  };
+  for &slot in perm {
+    if (slot as usize) < count {
+      place(slot as usize);
+    }
+  }
+  for slot in perm.len()..count {
+    place(slot);
   }
 }

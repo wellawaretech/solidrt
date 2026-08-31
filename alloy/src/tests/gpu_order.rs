@@ -1,4 +1,4 @@
-use crate::gpu::{gather_ordered, InstanceOrder, OrderKey, OrderScratch};
+use crate::gpu::{gather_ordered, gather_permuted, order_permutation, InstanceOrder, OrderKey, OrderScratch};
 
 // Pack f32 records into the byte shape the lease block holds.
 fn bytes(floats: &[f32]) -> Vec<u8> {
@@ -13,31 +13,41 @@ fn record_float(block: &[u8], stride: usize, i: usize, at: usize) -> f32 {
 }
 
 fn field(offset_floats: usize) -> InstanceOrder {
-  InstanceOrder { key: OrderKey::Field { offset: offset_floats * 4 }, descending: false }
+  InstanceOrder { key: OrderKey::Field { offset: offset_floats * 4 }, descending: false, key_slot: 0 }
 }
 
 #[test]
 fn parse_validates_the_key_shape() {
-  let both = InstanceOrder::parse(Some(0.0), Some(0.0), Some([0.0, 0.0, 1.0]), false);
+  let both = InstanceOrder::parse(Some(0.0), Some(0.0), Some([0.0, 0.0, 1.0]), false, None);
   assert!(both.expect_err("both keys").contains("not both"));
-  let neither = InstanceOrder::parse(None, None, None, false);
+  let neither = InstanceOrder::parse(None, None, None, false, None);
   assert!(neither.expect_err("no key").contains("needs a key"));
-  let dir_with_field = InstanceOrder::parse(Some(1.0), None, Some([0.0, 0.0, 1.0]), false);
+  let dir_with_field = InstanceOrder::parse(Some(1.0), None, Some([0.0, 0.0, 1.0]), false, None);
   assert!(dir_with_field.expect_err("direction with field").contains("field key has none"));
-  let no_dir = InstanceOrder::parse(None, Some(0.0), None, false);
+  let no_dir = InstanceOrder::parse(None, Some(0.0), None, false, None);
   assert!(no_dir.expect_err("position without direction").contains("needs a direction"));
-  let fractional = InstanceOrder::parse(Some(1.5), None, None, false);
+  let fractional = InstanceOrder::parse(Some(1.5), None, None, false, None);
   assert!(fractional.expect_err("fractional offset").contains("non-negative integer"));
-  let negative = InstanceOrder::parse(Some(-1.0), None, None, false);
+  let negative = InstanceOrder::parse(Some(-1.0), None, None, false, None);
   assert!(negative.expect_err("negative offset").contains("non-negative integer"));
-  let zero_dir = InstanceOrder::parse(None, Some(0.0), Some([0.0, 0.0, 0.0]), false);
+  let zero_dir = InstanceOrder::parse(None, Some(0.0), Some([0.0, 0.0, 0.0]), false, None);
   assert!(zero_dir.expect_err("zero direction").contains("zero vector"));
-  let nan_dir = InstanceOrder::parse(None, Some(0.0), Some([f32::NAN, 0.0, 1.0]), false);
+  let nan_dir = InstanceOrder::parse(None, Some(0.0), Some([f32::NAN, 0.0, 1.0]), false, None);
   assert!(nan_dir.expect_err("nan direction").contains("finite"));
   // Float offsets store as bytes.
-  let ok = InstanceOrder::parse(Some(2.0), None, None, true).expect("field key parses");
+  let ok = InstanceOrder::parse(Some(2.0), None, None, true, None).expect("field key parses");
   assert_eq!(ok.key, OrderKey::Field { offset: 8 });
   assert!(ok.descending);
+  assert_eq!(ok.key_slot, 0, "slot defaults to 0");
+  // The key slot: an instance-slot index, bounds-checked at parse.
+  let slotted = InstanceOrder::parse(Some(0.0), None, None, false, Some(1.0)).expect("slot 1 parses");
+  assert_eq!(slotted.key_slot, 1);
+  let big = InstanceOrder::parse(Some(0.0), None, None, false, Some(4.0));
+  assert!(big.expect_err("slot past the last").contains("integer 0.."));
+  let fractional_slot = InstanceOrder::parse(Some(0.0), None, None, false, Some(0.5));
+  assert!(fractional_slot.expect_err("fractional slot").contains("integer 0.."));
+  let negative_slot = InstanceOrder::parse(Some(0.0), None, None, false, Some(-1.0));
+  assert!(negative_slot.expect_err("negative slot").contains("integer 0.."));
 }
 
 #[test]
@@ -46,7 +56,7 @@ fn check_stride_bounds_the_key_bytes() {
   field(3).check_stride(16).expect("last float fits");
   assert!(field(4).check_stride(16).expect_err("one past").contains("does not fit"));
   let projected =
-    InstanceOrder { key: OrderKey::Projected { offset: 4, direction: [0.0, 0.0, 1.0] }, descending: false };
+    InstanceOrder { key: OrderKey::Projected { offset: 4, direction: [0.0, 0.0, 1.0] }, descending: false, key_slot: 0 };
   projected.check_stride(16).expect("vec3 at float 1 fits a 16-byte record");
   assert!(projected.check_stride(12).expect_err("vec3 past the record").contains("does not fit"));
 }
@@ -55,7 +65,7 @@ fn check_stride_bounds_the_key_bytes() {
 fn set_direction_is_projected_only() {
   let mut f = field(0);
   assert!(f.set_direction([0.0, 1.0, 0.0]).expect_err("field key").contains("field key"));
-  let mut p = InstanceOrder { key: OrderKey::Projected { offset: 0, direction: [1.0, 0.0, 0.0] }, descending: false };
+  let mut p = InstanceOrder { key: OrderKey::Projected { offset: 0, direction: [1.0, 0.0, 0.0] }, descending: false, key_slot: 0 };
   assert!(p.set_direction([0.0, 0.0, 0.0]).expect_err("zero direction").contains("zero vector"));
   p.set_direction([0.0, 2.0, 0.0]).expect("replace");
   assert_eq!(p.key, OrderKey::Projected { offset: 0, direction: [0.0, 2.0, 0.0] });
@@ -81,7 +91,7 @@ fn gather_descending_reverses() {
   let stride = 8;
   let mut dst = vec![0u8; src.len()];
   let mut scratch = OrderScratch::default();
-  let order = InstanceOrder { key: OrderKey::Field { offset: 0 }, descending: true };
+  let order = InstanceOrder { key: OrderKey::Field { offset: 0 }, descending: true, key_slot: 0 };
   gather_ordered(&order, stride, &src, &mut dst, &mut scratch);
   let got: Vec<f32> = (0..3).map(|i| record_float(&dst, stride, i, 1)).collect();
   assert_eq!(got, vec![1.0, 2.0, 0.0]);
@@ -95,7 +105,7 @@ fn projected_key_follows_the_direction() {
   let mut dst = vec![0u8; src.len()];
   let mut scratch = OrderScratch::default();
   let mut order =
-    InstanceOrder { key: OrderKey::Projected { offset: 0, direction: [0.0, 0.0, 1.0] }, descending: false };
+    InstanceOrder { key: OrderKey::Projected { offset: 0, direction: [0.0, 0.0, 1.0] }, descending: false, key_slot: 0 };
   gather_ordered(&order, stride, &src, &mut dst, &mut scratch);
   let got: Vec<f32> = (0..3).map(|i| record_float(&dst, stride, i, 3)).collect();
   assert_eq!(got, vec![0.0, 2.0, 1.0], "depth ascending along +z");
@@ -140,6 +150,58 @@ fn gather_round_trips_a_large_shuffled_population() {
   let mut dst2 = vec![0u8; src.len()];
   gather_ordered(&field(1), stride, &src, &mut dst2, &mut scratch);
   assert_eq!(dst, dst2, "reused scratch must not change the result");
+}
+
+#[test]
+fn permutation_plus_permuted_gather_equals_gather_ordered() {
+  // The multi-buffer split: computing the permutation from a key buffer and
+  // applying it must reproduce the one-shot gather exactly.
+  let src = bytes(&[3.0, 0.0, -1.0, 1.0, 3.0, 2.0, 0.0, 3.0]);
+  let stride = 8;
+  let mut scratch = OrderScratch::default();
+  let mut one_shot = vec![0u8; src.len()];
+  gather_ordered(&field(0), stride, &src, &mut one_shot, &mut scratch);
+  order_permutation(&field(0), stride, &src, &mut scratch);
+  let mut split = vec![0u8; src.len()];
+  gather_permuted(scratch.perm(), stride, &src, &mut split);
+  assert_eq!(one_shot, split);
+}
+
+#[test]
+fn permuted_gather_follows_a_sibling_stride() {
+  // The key buffer's permutation applied to a sibling buffer with a
+  // DIFFERENT record stride - the pose/style split. Keys [2, 0, 1] order
+  // slots 1, 2, 0; the one-float sibling records follow.
+  let keys = bytes(&[2.0, 9.0, 0.0, 9.0, 1.0, 9.0]);
+  let mut scratch = OrderScratch::default();
+  order_permutation(&field(0), 8, &keys, &mut scratch);
+  let sibling = bytes(&[10.0, 11.0, 12.0]);
+  let mut dst = vec![0u8; sibling.len()];
+  gather_permuted(scratch.perm(), 4, &sibling, &mut dst);
+  let got: Vec<f32> = (0..3).map(|i| record_float(&dst, 4, i, 0)).collect();
+  assert_eq!(got, vec![11.0, 12.0, 10.0]);
+}
+
+#[test]
+fn permuted_gather_reconciles_count_mismatches() {
+  // perm [2, 0, 1] over a 2-record publish: slot 2 is out of range and
+  // skipped, the rest keep permutation order.
+  let src = bytes(&[10.0, 11.0]);
+  let mut dst = vec![0u8; src.len()];
+  gather_permuted(&[2, 0, 1], 4, &src, &mut dst);
+  let got: Vec<f32> = (0..2).map(|i| record_float(&dst, 4, i, 0)).collect();
+  assert_eq!(got, vec![10.0, 11.0], "out-of-range perm entries are skipped");
+  // perm [1, 0] over a 4-record publish: the unpermuted tail appends in
+  // slot order.
+  let src = bytes(&[10.0, 11.0, 12.0, 13.0]);
+  let mut dst = vec![0u8; src.len()];
+  gather_permuted(&[1, 0], 4, &src, &mut dst);
+  let got: Vec<f32> = (0..4).map(|i| record_float(&dst, 4, i, 0)).collect();
+  assert_eq!(got, vec![11.0, 10.0, 12.0, 13.0], "records past the permutation append in slot order");
+  // An empty permutation is the identity.
+  let mut dst = vec![0u8; src.len()];
+  gather_permuted(&[], 4, &src, &mut dst);
+  assert_eq!(src, dst);
 }
 
 #[test]
