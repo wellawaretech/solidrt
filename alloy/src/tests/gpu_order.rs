@@ -13,41 +13,48 @@ fn record_float(block: &[u8], stride: usize, i: usize, at: usize) -> f32 {
 }
 
 fn field(offset_floats: usize) -> InstanceOrder {
-  InstanceOrder { key: OrderKey::Field { offset: offset_floats * 4 }, descending: false, key_slot: 0 }
+  InstanceOrder { key: OrderKey::Field { offset: offset_floats * 4 }, descending: false, key_slot: 0, retain: false }
 }
 
 #[test]
 fn parse_validates_the_key_shape() {
-  let both = InstanceOrder::parse(Some(0.0), Some(0.0), Some([0.0, 0.0, 1.0]), false, None);
+  let both = InstanceOrder::parse(Some(0.0), Some(0.0), Some([0.0, 0.0, 1.0]), false, None, false);
   assert!(both.expect_err("both keys").contains("not both"));
-  let neither = InstanceOrder::parse(None, None, None, false, None);
+  let neither = InstanceOrder::parse(None, None, None, false, None, false);
   assert!(neither.expect_err("no key").contains("needs a key"));
-  let dir_with_field = InstanceOrder::parse(Some(1.0), None, Some([0.0, 0.0, 1.0]), false, None);
+  let dir_with_field = InstanceOrder::parse(Some(1.0), None, Some([0.0, 0.0, 1.0]), false, None, false);
   assert!(dir_with_field.expect_err("direction with field").contains("field key has none"));
-  let no_dir = InstanceOrder::parse(None, Some(0.0), None, false, None);
+  let no_dir = InstanceOrder::parse(None, Some(0.0), None, false, None, false);
   assert!(no_dir.expect_err("position without direction").contains("needs a direction"));
-  let fractional = InstanceOrder::parse(Some(1.5), None, None, false, None);
+  let fractional = InstanceOrder::parse(Some(1.5), None, None, false, None, false);
   assert!(fractional.expect_err("fractional offset").contains("non-negative integer"));
-  let negative = InstanceOrder::parse(Some(-1.0), None, None, false, None);
+  let negative = InstanceOrder::parse(Some(-1.0), None, None, false, None, false);
   assert!(negative.expect_err("negative offset").contains("non-negative integer"));
-  let zero_dir = InstanceOrder::parse(None, Some(0.0), Some([0.0, 0.0, 0.0]), false, None);
+  let zero_dir = InstanceOrder::parse(None, Some(0.0), Some([0.0, 0.0, 0.0]), false, None, false);
   assert!(zero_dir.expect_err("zero direction").contains("zero vector"));
-  let nan_dir = InstanceOrder::parse(None, Some(0.0), Some([f32::NAN, 0.0, 1.0]), false, None);
+  let nan_dir = InstanceOrder::parse(None, Some(0.0), Some([f32::NAN, 0.0, 1.0]), false, None, false);
   assert!(nan_dir.expect_err("nan direction").contains("finite"));
   // Float offsets store as bytes.
-  let ok = InstanceOrder::parse(Some(2.0), None, None, true, None).expect("field key parses");
+  let ok = InstanceOrder::parse(Some(2.0), None, None, true, None, false).expect("field key parses");
   assert_eq!(ok.key, OrderKey::Field { offset: 8 });
   assert!(ok.descending);
   assert_eq!(ok.key_slot, 0, "slot defaults to 0");
   // The key slot: an instance-slot index, bounds-checked at parse.
-  let slotted = InstanceOrder::parse(Some(0.0), None, None, false, Some(1.0)).expect("slot 1 parses");
+  let slotted = InstanceOrder::parse(Some(0.0), None, None, false, Some(1.0), false).expect("slot 1 parses");
   assert_eq!(slotted.key_slot, 1);
-  let big = InstanceOrder::parse(Some(0.0), None, None, false, Some(4.0));
+  let big = InstanceOrder::parse(Some(0.0), None, None, false, Some(4.0), false);
   assert!(big.expect_err("slot past the last").contains("integer 0.."));
-  let fractional_slot = InstanceOrder::parse(Some(0.0), None, None, false, Some(0.5));
+  let fractional_slot = InstanceOrder::parse(Some(0.0), None, None, false, Some(0.5), false);
   assert!(fractional_slot.expect_err("fractional slot").contains("integer 0.."));
-  let negative_slot = InstanceOrder::parse(Some(0.0), None, None, false, Some(-1.0));
+  let negative_slot = InstanceOrder::parse(Some(0.0), None, None, false, Some(-1.0), false);
   assert!(negative_slot.expect_err("negative slot").contains("integer 0.."));
+  // The retained-copy strategy: position keys only (a field key re-orders
+  // when its records republish, so retaining buys nothing).
+  let retained = InstanceOrder::parse(None, Some(0.0), Some([0.0, 0.0, 1.0]), true, None, true)
+    .expect("retain with a position key parses");
+  assert!(retained.retain);
+  let retained_field = InstanceOrder::parse(Some(0.0), None, None, false, None, true);
+  assert!(retained_field.expect_err("retain with a field key").contains("retain applies to a position key"));
 }
 
 #[test]
@@ -56,7 +63,7 @@ fn check_stride_bounds_the_key_bytes() {
   field(3).check_stride(16).expect("last float fits");
   assert!(field(4).check_stride(16).expect_err("one past").contains("does not fit"));
   let projected =
-    InstanceOrder { key: OrderKey::Projected { offset: 4, direction: [0.0, 0.0, 1.0] }, descending: false, key_slot: 0 };
+    InstanceOrder { key: OrderKey::Projected { offset: 4, direction: [0.0, 0.0, 1.0] }, descending: false, key_slot: 0, retain: false };
   projected.check_stride(16).expect("vec3 at float 1 fits a 16-byte record");
   assert!(projected.check_stride(12).expect_err("vec3 past the record").contains("does not fit"));
 }
@@ -65,7 +72,7 @@ fn check_stride_bounds_the_key_bytes() {
 fn set_direction_is_projected_only() {
   let mut f = field(0);
   assert!(f.set_direction([0.0, 1.0, 0.0]).expect_err("field key").contains("field key"));
-  let mut p = InstanceOrder { key: OrderKey::Projected { offset: 0, direction: [1.0, 0.0, 0.0] }, descending: false, key_slot: 0 };
+  let mut p = InstanceOrder { key: OrderKey::Projected { offset: 0, direction: [1.0, 0.0, 0.0] }, descending: false, key_slot: 0, retain: false };
   assert!(p.set_direction([0.0, 0.0, 0.0]).expect_err("zero direction").contains("zero vector"));
   p.set_direction([0.0, 2.0, 0.0]).expect("replace");
   assert_eq!(p.key, OrderKey::Projected { offset: 0, direction: [0.0, 2.0, 0.0] });
@@ -91,7 +98,7 @@ fn gather_descending_reverses() {
   let stride = 8;
   let mut dst = vec![0u8; src.len()];
   let mut scratch = OrderScratch::default();
-  let order = InstanceOrder { key: OrderKey::Field { offset: 0 }, descending: true, key_slot: 0 };
+  let order = InstanceOrder { key: OrderKey::Field { offset: 0 }, descending: true, key_slot: 0, retain: false };
   gather_ordered(&order, stride, &src, &mut dst, &mut scratch);
   let got: Vec<f32> = (0..3).map(|i| record_float(&dst, stride, i, 1)).collect();
   assert_eq!(got, vec![1.0, 2.0, 0.0]);
@@ -105,7 +112,7 @@ fn projected_key_follows_the_direction() {
   let mut dst = vec![0u8; src.len()];
   let mut scratch = OrderScratch::default();
   let mut order =
-    InstanceOrder { key: OrderKey::Projected { offset: 0, direction: [0.0, 0.0, 1.0] }, descending: false, key_slot: 0 };
+    InstanceOrder { key: OrderKey::Projected { offset: 0, direction: [0.0, 0.0, 1.0] }, descending: false, key_slot: 0, retain: false };
   gather_ordered(&order, stride, &src, &mut dst, &mut scratch);
   let got: Vec<f32> = (0..3).map(|i| record_float(&dst, stride, i, 3)).collect();
   assert_eq!(got, vec![0.0, 2.0, 1.0], "depth ascending along +z");

@@ -31,15 +31,16 @@ struct OrderedEntry {
   // The currently ordered buffer per slot (0 after a destroy with no swap).
   buffers: [u64; MAX_INSTANCE_SLOTS],
   // The retained permutation (perm[i] = the slot drawn i-th) from the key
-  // slot's last publish. Retained only on multi-slot entries, where sibling
-  // buffers must gather under the key buffer's permutation; a single-slot
-  // entry recomputes at each publish and retains nothing (stage 1's
-  // contract, unchanged).
+  // slot's last publish. Retained only where `retains()` says so: on
+  // multi-slot entries sibling buffers must gather under the key buffer's
+  // permutation, and a `retain: true` entry keeps it to re-sort on a
+  // direction change; a single-slot gather entry recomputes at each
+  // publish and retains nothing (stage 1's contract, unchanged).
   perm: Vec<u32>,
   // Slot-order copies of each slot's last published records, so a
-  // permutation change can republish every sibling buffer coherently in the
-  // same frame. Multi-slot entries only (plus the byte staging of any
-  // spatial-sink publish); empty otherwise.
+  // permutation change can republish every buffer coherently with no
+  // publish from the app. Kept where `retains()` says so (plus the byte
+  // staging of any spatial-sink publish); empty otherwise.
   mirrors: [Mirror; MAX_INSTANCE_SLOTS],
 }
 
@@ -58,6 +59,13 @@ impl OrderedEntry {
 
   fn slot_of(&self, buffer: u64) -> Option<usize> {
     self.buffers.iter().position(|&b| b != 0 && b == buffer)
+  }
+
+  // Whether the entry keeps mirrors and the permutation between publishes:
+  // multi-slot coherence needs them, and `retain: true` opts a single-slot
+  // entry in (the write-once strategy).
+  fn retains(&self) -> bool {
+    self.order.retain || self.slots() > 1
   }
 }
 
@@ -215,14 +223,44 @@ impl Context {
   }
 
   /// Replace an ordered entry's projected-key direction (the `orderDirection`
-  /// update). Takes effect at the entry's next publish. Errs on an entry
-  /// with no instance order, or one whose key is a field.
+  /// update). On a gather entry it takes effect at the entry's next publish;
+  /// on a retained one `update_draw` follows up with
+  /// `rematerialize_retained_order` once its target borrow drops. Errs on an
+  /// entry with no instance order, or one whose key is a field.
   pub(super) fn set_instance_order_direction(&self, target: u64, draw: u64, direction: [f32; 3]) -> Result<(), String> {
     let mut orders = self.orders.borrow_mut();
     let Some(entry) = orders.entries.get_mut(&(target, draw)) else {
       return Err("the entry has no instance order (declare instanceOrder at creation)".to_string());
     };
     entry.order.set_direction(direction)
+  }
+
+  /// The retained direction-change path: re-sort the entry's retained copy
+  /// under its just-updated direction and, when the permutation actually
+  /// changed, republish every slot from its mirror - no publish from the
+  /// app anywhere. A no-op on a gather entry (direction takes effect at its
+  /// next publish), on a retained entry that never published (empty key
+  /// mirror), and on an unchanged permutation - the parked-camera gate:
+  /// same order, no upload. Runs after `update_draw` drops its target
+  /// borrow, because the republish notes content on the reading targets.
+  pub(super) fn rematerialize_retained_order(&self, target: u64, draw: u64) {
+    let mut orders = self.orders.borrow_mut();
+    let orders = &mut *orders;
+    let Some(entry) = orders.entries.get_mut(&(target, draw)) else {
+      return;
+    };
+    let key_slot = entry.order.key_slot;
+    let len = entry.mirrors[key_slot].len;
+    if !entry.retains() || len == 0 {
+      return;
+    }
+    order_permutation(&entry.order, entry.strides[key_slot], &entry.mirrors[key_slot].data[..len], &mut orders.scratch);
+    if orders.scratch.perm() == entry.perm.as_slice() {
+      return;
+    }
+    entry.perm.clear();
+    entry.perm.extend_from_slice(orders.scratch.perm());
+    self.republish_slots(entry, None);
   }
 
   /// A destroyed buffer stops resolving as ordered (its id is retired), but
@@ -256,11 +294,12 @@ impl Context {
   /// the block is already cancelled back to the pool - the lease is closed
   /// either way, matching end_buffer_write's contract.
   ///
-  /// A single-slot entry computes its permutation from this very block and
-  /// retains nothing. A multi-slot entry retains: the block is mirrored in
-  /// slot order, the key slot's publish recomputes the shared permutation,
-  /// and when it changed the sibling slots republish from their mirrors in
-  /// the same frame - both buffers always describe the same draw order.
+  /// A single-slot gather entry computes its permutation from this very
+  /// block and retains nothing. A retaining entry (multi-slot, or
+  /// `retain: true`) mirrors: the block is copied in slot order, the key
+  /// slot's publish recomputes the shared permutation, and when it changed
+  /// the sibling slots republish from their mirrors in the same frame -
+  /// every buffer always describes the same draw order.
   pub(super) fn gather_for_publish(&self, id: u64, block: Vec<u8>, len: usize) -> Result<Vec<u8>, String> {
     let mut orders = self.orders.borrow_mut();
     let Some(&key) = orders.by_buffer.get(&id) else {
@@ -276,7 +315,7 @@ impl Context {
         "publish of {len} bytes is not a whole number of {stride}-byte instance records (the buffer has an instance order)"
       ));
     }
-    if entry.slots() == 1 {
+    if !entry.retains() {
       let mut dst = self.write_leases.borrow_mut().take_free(id, block.len());
       gather_ordered(&entry.order, stride, &block[..len], &mut dst[..len], &mut orders.scratch);
       self.write_leases.borrow_mut().cancel(id, block);
@@ -299,7 +338,7 @@ impl Context {
     gather_permuted(&entry.perm, stride, &block[..len], &mut dst[..len]);
     self.write_leases.borrow_mut().cancel(id, block);
     if changed {
-      self.republish_siblings(entry, slot);
+      self.republish_slots(entry, Some(slot));
     }
     Ok(dst)
   }
@@ -342,7 +381,7 @@ impl Context {
     let mut changed = false;
     let perm: &[u32] = if slot == entry.order.key_slot {
       order_permutation(&entry.order, stride, &entry.mirrors[slot].data[..len], &mut orders.scratch);
-      if entry.slots() > 1 {
+      if entry.retains() {
         changed = orders.scratch.perm() != entry.perm.as_slice();
         if changed {
           entry.perm.clear();
@@ -360,19 +399,22 @@ impl Context {
     self.send(RasterCmd::WriteBufferLease { id, block: dst, len, recycle: self.block_recycle_tx.clone() });
     self.note_buffer_content(id);
     if changed {
-      self.republish_siblings(entry, slot);
+      self.republish_slots(entry, Some(slot));
     }
     Ok(())
   }
 
   /// Republish every slot but `skip` from its mirror under the entry's
   /// retained permutation - the coherence half of a permutation change: the
-  /// key buffer just published in a new order, so every sibling's GPU
-  /// contents must follow in the same frame. A slot that never published
-  /// (empty mirror) or whose buffer is gone publishes nothing.
-  fn republish_siblings(&self, entry: &OrderedEntry, skip: usize) {
+  /// key buffer just published in a new order, so every other buffer's GPU
+  /// contents must follow in the same frame. `skip` is the slot whose
+  /// publish triggered this (already sent); `None` republishes everything -
+  /// the retained direction-change path, where no slot published at all.
+  /// A slot that never published (empty mirror) or whose buffer is gone
+  /// publishes nothing.
+  fn republish_slots(&self, entry: &OrderedEntry, skip: Option<usize>) {
     for (slot, mirror) in entry.mirrors.iter().enumerate() {
-      if slot == skip || entry.strides[slot] == 0 || mirror.len == 0 || entry.buffers[slot] == 0 {
+      if skip == Some(slot) || entry.strides[slot] == 0 || mirror.len == 0 || entry.buffers[slot] == 0 {
         continue;
       }
       let id = entry.buffers[slot];

@@ -361,14 +361,6 @@ Shaped, not started.
   what the runtime fills). Still open - the composition questions - whether
   the fused paths become thin compositions of the raw layer, whether a
   mid-level program shorthand is wanted, and the two-dialect preamble story.
-- **[Instance draw order within one entry, produced in core](backlog/gpu-instance-order.md)** [2026-08-24]
-  Draw order of one entry's instance records must change without record churn
-  - sprite raise/y-sort reorders by remove-and-re-add today, gaussian splats
-  need back-to-front over 100k+ records per camera move, and particles would
-  need it per frame. One core primitive orders an entry's records by a key
-  (field or view-projected depth); slots stay stable, JS never touches the
-  order. Settled 2026-08-31 - one API, key mode and materialization
-  orthogonal, gather-at-publish default, retained copy opt-in.
 - **[More pipeline blend modes](backlog/gpu-pipeline-blend-modes.md)** [2026-07-29]
   The blend vocabulary on createPipeline is "none", "add", "multiply" and
   "alpha"; the rest of GL's fixed-function space (screen, subtract, min/max)
@@ -1003,6 +995,14 @@ Finished, kept for the reasoning.
   reflection only sees active uniforms - a declared uniform the compiler
   optimized out counted as a typo. A compile-time scan of the source for
   declared uniform names now lets that sub-case warn instead of throw.
+- **[Instance draw order within one entry, produced in core](done/gpu-instance-order.md)** [2026-08-24]
+  Draw order of one entry's instance records must change without record churn
+  - sprite raise/y-sort reorders by remove-and-re-add today, gaussian splats
+  need back-to-front over 100k+ records per camera move, and particles would
+  need it per frame. One core primitive orders an entry's records by a key
+  (field or view-projected depth); slots stay stable, JS never touches the
+  order. Settled 2026-08-31 - one API, key mode and materialization
+  orthogonal, gather-at-publish default, retained copy opt-in.
 - **[GPU object labels and device limits](done/gpu-labels-limits.md)** [2026-07-31]
   Debug labels on every GPU create (surfaced in get_gpu_resources and error
   strings) and a queryable gpu.limits with bounds checks at create, so
@@ -1521,6 +1521,10 @@ Knowledge. No lifecycle - true or wrong, not open or closed.
   about 10 us per animated element per frame, three quarters of it Solid
   (setSignal + recompute + reads), the renderer glue and the FFI crossing
   about 0.4 us each per write.
+- **[Crate alternatives for hand-rolled spatial code](notes/spatial-crate-alternatives.md)** [2026-08-31]
+  Survey of crates that could replace or extend alloy/src/spatial, with
+  measured dependency costs; conclusion is no action, demand-gated pointers
+  only.
 - **[What "something like stylesheets" already means here](notes/style-reuse-without-stylesheets.md)** [2026-08-13]
   A plain object spread into props is the answer to most of what the
   stylesheet question asks, and the constraint on anything more is fixed - no

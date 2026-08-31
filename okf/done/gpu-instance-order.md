@@ -12,14 +12,14 @@ Instanced draws consume records in buffer order, and nothing can change
 that order except rewriting records. Two consumers hit this today, at
 opposite scales, and a third is foreseeable:
 
-- **The sprite layer** ([2d-sprite-sort-key](../done/2d-sprite-sort-key.md)):
+- **The sprite layer** ([2d-sprite-sort-key](2d-sprite-sort-key.md)):
   raising a dragged sprite or y-sorting a perspective crowd is expressible
   only as remove-and-re-add, which shifts records and renumbers handles.
   Its note proposes a JS index-gather at flush; workable at sprite
   populations, but still O(population) interpreted work per frame for a
   moving y-sorted crowd - on the layer whose reason to exist is avoiding
   per-element JS.
-- **Gaussian splats** ([gaussian-splats](gaussian-splats.md)): correct
+- **Gaussian splats** ([gaussian-splats](../backlog/gaussian-splats.md)): correct
   rendering IS a strict back-to-front order over the whole cloud
   (100k-1M records) whenever the camera moves meaningfully. At any rung
   above core this is out of reach; browser viewers burn a worker plus a
@@ -32,7 +32,7 @@ opposite scales, and a third is foreseeable:
   with a field key.
 
 Same primitive, two key sources. This is the third ordering granularity in
-the notes: [spatial-core](spatial-core.md)'s escalation 3 orders draw
+the notes: [spatial-core](../backlog/spatial-core.md)'s escalation 3 orders draw
 ENTRIES within a target; this orders RECORDS within one entry; the sprite
 note was the JS-side draft of it.
 
@@ -75,7 +75,7 @@ orthogonal to the key mode, not paired with it:
   (1M x 32 B per sort); the escalation if that bandwidth shows up is a
   per-instance index attribute with record data fetched from a texture
   by index - 4 B per record, needs
-  [gpu-float-texture-formats](gpu-float-texture-formats.md) and a
+  [gpu-float-texture-formats](../backlog/gpu-float-texture-formats.md) and a
   different material contract, and is exactly what the web
   gaussian-splat viewers ship.
 
@@ -167,9 +167,28 @@ declared-but-unconsumed key attribute. Its consumer is the node layer's
 `orderBy: "sortKey"` (style-slot key, the raise case) - which closed
 2d-sprite-sort-key.
 
-Remaining: stage 2 only (retained-copy strategy for write-once splat
-clouds - orthogonal to stage 3; the mirrors here are multi-slot
-coherence machinery, not the per-entry opt-in splats want).
+Stage 2 (retained-copy strategy) landed 2026-08-31 (uncommitted):
+`retain: true` on `instanceOrder`, position keys only (a field key
+re-orders when its records republish, so retaining buys nothing and
+throws). A retained entry keeps the stage-3 mirrors and permutation even
+single-slot; an `orderDirection` update re-sorts the retained copy and,
+when the permutation actually changed, republishes every slot core-side
+in the same call - no publish from the app, and an order-preserving
+direction uploads nothing (the parked-camera gate is a perm compare,
+after an O(n) re-key). The whole stage rode the stage-3 machinery: one
+predicate (`OrderedEntry::retains`) widens mirror retention, and the
+re-materialize is the sibling republish applied to all slots. The CPU
+copy of the records is the deliberate opt-in cost; camera-settle
+throttling stays the consumer's (the splat viewer decides when the
+camera moved meaningfully). `writeBuffer` stays rejected on retained
+buffers. Verified: parse units, draw_ordered.rs (direction-only re-order
+with no publish, pixel proof, no-op equivalent direction),
+probes/retain-probe.tsx end to end (RETAIN-OK).
+
+Remaining: nothing - all three stages are in. The consumers now own
+their ends: gaussian-splats stage 2 swaps its JS sort for the retained
+projected key; the index-attribute + data-texture escalation stays
+parked on gpu-float-texture-formats until re-upload bandwidth shows up.
 
 ## Done looks like
 

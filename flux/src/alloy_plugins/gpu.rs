@@ -404,9 +404,10 @@ fn collect_entry_half(
 
 // The instanceOrder option: a field key ({ field }) or a projected key
 // ({ position, direction }), float offsets into one instance record, plus
-// descending and the key slot ({ slot }, default 0). Only the array shape
-// is checked here; the key rules (exactly one of the two, offset values,
-// direction values, slot bounds, stride fit) are alloy's.
+// descending, the key slot ({ slot }, default 0) and the retained-copy
+// opt-in ({ retain }). Only the array shape is checked here; the key rules
+// (exactly one of the two, offset values, direction values, slot bounds,
+// retain with position only, stride fit) are alloy's.
 fn collect_instance_order(
   ctx: &Ctx<'_>,
   opts: &Option<Object<'_>>,
@@ -424,7 +425,8 @@ fn collect_instance_order(
   let direction = collect_direction(ctx, &o, "direction", api)?;
   let descending = o.get::<_, Option<bool>>("descending")?.unwrap_or(false);
   let slot = o.get::<_, Option<f64>>("slot")?;
-  alloy::InstanceOrder::parse(field, position, direction, descending, slot)
+  let retain = o.get::<_, Option<bool>>("retain")?.unwrap_or(false);
+  alloy::InstanceOrder::parse(field, position, direction, descending, slot, retain)
     .map(Some)
     .map_err(|e| throw_str(ctx, &format!("{api}: {e}")))
 }

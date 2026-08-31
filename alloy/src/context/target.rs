@@ -846,6 +846,14 @@ impl Context {
       }
       self.note_target_content(target);
     }
+    // On a RETAINED entry a direction change re-materializes right here:
+    // core re-sorts its copy and republishes the buffers when the order
+    // changed (the republish notes content on the reading targets, which is
+    // why this runs after the targets borrow dropped). Gather entries
+    // re-order at their next publish, as above.
+    if update.order_direction.is_some() {
+      self.rematerialize_retained_order(target, entry_key);
+    }
     Ok(())
   }
 

@@ -33,7 +33,7 @@ mesh with explicit bounds).
 
 The one hard gap is the within-cloud order: a strict back-to-front sort
 of every record whenever the camera moves meaningfully. That is
-[gpu-instance-order](gpu-instance-order.md)'s projected-key mode, filed
+[gpu-instance-order](../done/gpu-instance-order.md)'s projected-key mode, filed
 separately because the sprite layer is its second consumer. With the
 existing reorder-on-camera-settle philosophy a parked camera costs
 nothing - a profile no browser viewer has.
@@ -50,7 +50,7 @@ camera settle: viable to tens of thousands of splats, and it proves the
 material and the converter before any engine work.
 
 Stage 2 - production scale. Swap the JS sort for
-[gpu-instance-order](gpu-instance-order.md) (projected key, descending).
+[gpu-instance-order](../done/gpu-instance-order.md) (projected key, descending).
 Done looks like: a few hundred thousand splats orbiting smoothly on
 desktop, order updates with zero per-frame JS, parked camera renders
 nothing new.

@@ -47,19 +47,27 @@ pub struct InstanceOrder {
   /// permutation, whoever writes it - a core-written pose slot keyed by
   /// world y, or an app-written style slot keyed by an explicit sort field.
   pub key_slot: usize,
+  /// The retained-copy strategy, for write-once populations (splat
+  /// clouds): the registry keeps a CPU copy of each slot's published
+  /// records, and a direction update re-sorts and republishes them
+  /// core-side - no publish from the app. Position keys only (a field
+  /// key re-orders when its records republish, so retaining buys nothing).
+  pub retain: bool,
 }
 
 impl InstanceOrder {
   /// Parse the API-boundary shape: `field` or `position` are float offsets
   /// into one instance record (exactly one of the two), `direction` is
   /// required with `position` and rejected with `field`, `slot` names the
-  /// instance slot holding the key (default 0). Stored offsets are bytes.
+  /// instance slot holding the key (default 0), `retain` opts into the
+  /// retained-copy strategy (position keys only). Stored offsets are bytes.
   pub fn parse(
     field: Option<f64>,
     position: Option<f64>,
     direction: Option<[f32; 3]>,
     descending: bool,
     slot: Option<f64>,
+    retain: bool,
   ) -> Result<InstanceOrder, String> {
     let key_slot = match slot {
       None => 0,
@@ -82,6 +90,9 @@ impl InstanceOrder {
         if direction.is_some() {
           return Err("direction applies to a position key; a field key has none".to_string());
         }
+        if retain {
+          return Err("retain applies to a position key; a field key re-orders when its records republish".to_string());
+        }
         OrderKey::Field { offset: float_offset(f, "field")? }
       }
       (None, Some(p)) => {
@@ -92,7 +103,7 @@ impl InstanceOrder {
         OrderKey::Projected { offset: float_offset(p, "position")?, direction }
       }
     };
-    Ok(InstanceOrder { key, descending, key_slot })
+    Ok(InstanceOrder { key, descending, key_slot, retain })
   }
 
   /// The key bytes must sit inside one record of `stride` bytes: a field key
@@ -112,8 +123,9 @@ impl InstanceOrder {
   }
 
   /// Replace the projected key's direction (the per-camera-move update).
-  /// Takes effect at the entry's next publish - gather retains nothing to
-  /// re-sort in place.
+  /// On a gather entry it takes effect at the next publish (gather retains
+  /// nothing to re-sort in place); on a retained entry the registry
+  /// re-materializes from its copy right after (`rematerialize_retained_order`).
   pub fn set_direction(&mut self, direction: [f32; 3]) -> Result<(), String> {
     let OrderKey::Projected { offset, .. } = self.key else {
       return Err("the entry's instance order uses a field key; orderDirection applies to position keys".to_string());

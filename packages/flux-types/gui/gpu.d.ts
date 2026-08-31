@@ -630,7 +630,9 @@ declare module "flux:gpu" {
    * records into key order on the way to the GPU (one extra copy of the
    * published bytes; a single-buffer entry retains nothing). A population
    * that republishes each frame re-orders each frame for free; a direction
-   * change alone takes effect at the next publish. Because the GPU-side
+   * change alone takes effect at the next publish - unless the entry opts
+   * into `retain`, where it re-orders immediately from core's retained
+   * copy. Because the GPU-side
    * contents are the gathered records, {@link writeBuffer} on an ordered
    * buffer throws (a byte-offset write would land on the wrong records -
    * publish whole record sets through the lease), {@link readBuffer} reads
@@ -661,13 +663,30 @@ declare module "flux:gpu" {
      * permutation.
      */
     slot?: number
+    /**
+     * The retained-copy strategy, for write-once populations (a splat
+     * cloud: records written once, only the ORDER changes per camera
+     * move). Core keeps a CPU copy of each slot's published records, and
+     * an `orderDirection` update re-sorts that copy and republishes the
+     * entry's buffers core-side, in the same call, with no publish from
+     * the app; when the re-sort leaves the order unchanged nothing
+     * uploads, so a parked camera costs nothing. The copy is the
+     * deliberate cost (the records' size in CPU memory); publishes still
+     * go through the lease and update the copy. Position keys only - a
+     * field key re-orders when its records republish, so retaining buys
+     * nothing there and throws.
+     */
+    retain?: boolean
   }
   /**
    * The order half of a draw-entry update: `orderDirection` replaces the
    * projected key's direction ({@link InstanceOrder}'s `position` mode) -
-   * the per-camera-move update. It stages sort state for the entry's NEXT
-   * publish and renders nothing by itself; on an entry without a
-   * position-keyed instance order it throws.
+   * the per-camera-move update. On a gather entry it stages sort state for
+   * the entry's NEXT publish and renders nothing by itself; on a retained
+   * entry (`retain: true`) it re-sorts core's copy right away and, when
+   * the order changed, republishes the entry's buffers - no publish from
+   * the app. On an entry without a position-keyed instance order it
+   * throws.
    */
   export type OrderUpdate = { orderDirection?: [number, number, number] }
 
