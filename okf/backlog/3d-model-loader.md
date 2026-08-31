@@ -1,16 +1,24 @@
 ---
 title: Model loader follow-ups
-description: The glTF subset loader (roadmap item 7, shipped 2026-08-26 as parseGltf/createModel at runtime plus the srt tool 3d/model bake) covers uncompressed triangles with base color; still open are the compressed real-world files (Draco/meshopt, KTX2), a retained node hierarchy, merge-by-material, a cull option for double-sided materials, an alpha test for MASK materials (which ModelMaterial does not even report) and vertex colors, each demand-gated.
+description: The glTF subset loader (roadmap item 7, shipped 2026-08-26 as parseGltf/createModel at runtime plus the srt tool 3d/model bake; v3 container with retained hierarchy, skins and animation clips plus the JS mixer since 2026-08-31) covers rigged models end to end; still open are the compressed real-world files (Draco/meshopt, KTX2), morph targets, merge-by-material, vertex colors, per-material samplers and runtime-fetched content, each demand-gated.
 created: 2026-08-26
 ---
 
 # Model loader follow-ups
 
 What shipped (documented in `packages/3d/AGENTS.md`, "Models"): a pure
-glTF 2.0 subset parser (`parseGltf`: .gltf/.glb, world transforms baked,
-one part per mesh node, flat normals generated, base color factor/texture,
-doubleSided applied as `cull: "none"`, MASK as `alphaTest`, BLEND reported), `createModel` (a Group of meshes, one
-`lit` per material, textures uploaded, `dispose()`), the read conveniences
+glTF 2.0 subset parser (`parseGltf`: .gltf/.glb, the node hierarchy
+retained as a pruned pre-order table with node-local vertices since the
+v3 container (2026-08-31; matrix nodes TRS-decomposed, winding flips
+baked from the rest pose), flat normals generated, base color
+factor/texture, doubleSided applied as `cull: "none"`, MASK as
+`alphaTest`, BLEND reported; since 2026-08-31 skins - "skinned" layout,
+joints, inverse binds - and animations as baked clips), `createModel`
+(the hierarchy as nested Groups - `model.nodes` moves a named subtree -
+one `lit` per material with a skinned variant per skinned part, textures
+uploaded, `dispose()`), `createMixer`/`updateSkins` (JS clip playback
+with crossfades and uBones palettes - the rung-1 tier of
+[animation-core](animation-core.md)), the read conveniences
 `loadGltf`/`loadModel`, and the bake: `srt tool 3d/model` writes the same
 parse as a `.srtm` container whose payload is the GPU layout.
 
@@ -31,12 +39,6 @@ was added: the bake already removes the cost where it matters.
   loader" half of the direction in
   [3d-differentiators](../notes/3d-differentiators.md): decode there, emit
   the same `.srtm`.
-- **Node hierarchy.** World transforms are baked into vertices, so a
-  part cannot be moved relative to its parent node and animation/skinning
-  (roadmap item 16) have nothing to drive. The additive form: local-space
-  vertices plus a parent index and TRS per part in the container (a
-  version bump), `createModel` composing Groups. Two demos wanted the flat
-  form; the hierarchy waits for the first consumer.
 - **Merge by material.** One part per node keeps identity (picking,
   per-part hide/highlight) at one draw entry per part. A `--merge` bake
   option collapsing parts by material is the roadmap's one-draw-per-material
@@ -45,42 +47,17 @@ was added: the bake already removes the cost where it matters.
 - **Vertex colors, tangents, second UV set.** Dropped; the open layout
   (`withAttribute`) has the slots, the parser would emit a wider layout per
   primitive and the container already records the layout key.
-- **Alpha mask.** `alphaMode: "MASK"` (with `alphaCutoff`, default 0.5)
-  is common in real scenes: foliage, fences, chains, hair, any texture
-  with cut-away regions, usually paired with `doubleSided`. Drawn opaque
-  the cut-away texels show as solid cards, so a model with masked
-  materials looks broken out of the box. Two gaps, in fix order:
-  1. `ModelMaterial` drops the information: the parser reads `alphaMode`
-     and keeps only `transparent = alphaMode === "BLEND"`, so the
-     `material` callback of `createModel`, the documented escape hatch,
-     cannot tell a MASK material from an OPAQUE one. The only workaround
-     is re-reading the glTF JSON and matching materials by callback
-     order, which leans on the undocumented fact that `data.materials`
-     is in file order. Add `alphaMode: "OPAQUE" | "MASK" | "BLEND"` and
-     `alphaCutoff` to `ModelMaterial` (keep `transparent` as the BLEND
-     shorthand); document that `materials` is in file order.
-  2. `lit`/`unlit` have no alpha test, so even a callback that knows
-     cannot act without dropping to `shaderMaterial` and reimplementing
-     the standard fragment. An `alphaTest?: number` option: one
-     `discard` below the cutoff in the fragment, one more class-key
-     dimension (like the double-sided cull above, which the same
-     materials need). `createModel`'s default material then maps
-     MASK to `alphaTest: alphaCutoff`.
-  The shadow depth override is position-only, so a masked caster casts
-  its whole quad; that is the fragment half of
-  [3d-instanced-shadow-casters](3d-instanced-shadow-casters.md).
 - **Samplers.** Every texture uploads repeat-wrapped, mipmapped and 4x
   anisotropic; per-material wrap/filter is ignored.
-- **Skins and animation channels through the parse and the bake.** A
-  glTF `skins` block (joints, inverse bind matrices, `JOINTS_0`/
-  `WEIGHTS_0` vertex channels) and `animations` (sampler tracks, TRS
-  channels targeting nodes) are ignored. [animation-core](animation-core.md)
-  assumes baked track buffers arrive "from the mature loaders at pack
-  time" and names no loader; this is that loader. Depends on the node
-  hierarchy above (tracks target nodes) and widens the `.srtm` container
-  (a version bump: joints, bind matrices, a "skinned" named layout,
-  clips). Runtime `parseGltf` gets the same subset so a small rigged
-  model can be imported binary like an unrigged one.
+- **Morph targets.** The `weights` channel path and primitive targets
+  are skipped (the one animation feature left out when skins landed);
+  they ride the float-texture machinery of roadmap item 16 and stay out
+  of scope until a model demands them.
+- **Palettes past MAX_JOINTS (32).** The uBones mat4 uniform array caps
+  a rig at 32 joints (createModel throws naming it); real humanoid rigs
+  reach 60-100. The scale-out is bone matrices in a float texture
+  ([gpu-float-texture-formats](gpu-float-texture-formats.md), roadmap
+  item 16's engine half), sampled in the vertex stage.
 - **Runtime-fetched content.** The bake tool runs under bun on the
   developer's machine, so a model the APP downloads (user-made tracks and
   karts, a mod browser, a level editor's exports) meets the runtime

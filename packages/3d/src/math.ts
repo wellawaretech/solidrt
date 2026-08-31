@@ -174,6 +174,68 @@ export function normalMatrix(out: Mat4, m: Mat4): Mat4 {
   return out
 }
 
+/** The determinant of a matrix's upper 3x3 - negative means the transform
+ * mirrors (flips handedness, and with it triangle winding). */
+export function det3(m: Mat4): number {
+  return (
+    m[0] * (m[5] * m[10] - m[6] * m[9]) -
+    m[4] * (m[1] * m[10] - m[2] * m[9]) +
+    m[8] * (m[1] * m[6] - m[2] * m[5])
+  )
+}
+
+/**
+ * Split an affine matrix into the TRS `compose()` builds: translation from
+ * the last column, scale from the basis column lengths (x negated when the
+ * matrix mirrors, so `compose(decompose(m))` keeps the handedness), and the
+ * rotation from the scale-normalized basis. Lossy for a SHEARED matrix -
+ * TRS cannot represent shear, so it is silently dropped; a zero-scale axis
+ * yields a best-effort unit rotation rather than NaNs.
+ */
+export function decompose(m: Mat4, position: Vec3, rotation: Quat, scale: Vec3): void {
+  position[0] = m[12]; position[1] = m[13]; position[2] = m[14]
+  let sx = Math.hypot(m[0], m[1], m[2])
+  let sy = Math.hypot(m[4], m[5], m[6])
+  let sz = Math.hypot(m[8], m[9], m[10])
+  if (det3(m) < 0) sx = -sx
+  scale[0] = sx; scale[1] = sy; scale[2] = sz
+  let ix = sx === 0 ? 0 : 1 / sx
+  let iy = sy === 0 ? 0 : 1 / sy
+  let iz = sz === 0 ? 0 : 1 / sz
+  // Row-major elements of the pure-rotation 3x3 (columns un-scaled).
+  let r00 = m[0] * ix, r01 = m[4] * iy, r02 = m[8] * iz
+  let r10 = m[1] * ix, r11 = m[5] * iy, r12 = m[9] * iz
+  let r20 = m[2] * ix, r21 = m[6] * iy, r22 = m[10] * iz
+  // Shepperd's method: branch on the largest diagonal term for stability.
+  let trace = r00 + r11 + r22
+  if (trace > 0) {
+    let s = Math.sqrt(trace + 1) * 2
+    rotation[3] = s / 4
+    rotation[0] = (r21 - r12) / s
+    rotation[1] = (r02 - r20) / s
+    rotation[2] = (r10 - r01) / s
+  } else if (r00 > r11 && r00 > r22) {
+    let s = Math.sqrt(1 + r00 - r11 - r22) * 2
+    rotation[3] = (r21 - r12) / s
+    rotation[0] = s / 4
+    rotation[1] = (r01 + r10) / s
+    rotation[2] = (r02 + r20) / s
+  } else if (r11 > r22) {
+    let s = Math.sqrt(1 + r11 - r00 - r22) * 2
+    rotation[3] = (r02 - r20) / s
+    rotation[0] = (r01 + r10) / s
+    rotation[1] = s / 4
+    rotation[2] = (r12 + r21) / s
+  } else {
+    let s = Math.sqrt(1 + r22 - r00 - r11) * 2
+    rotation[3] = (r10 - r01) / s
+    rotation[0] = (r02 + r20) / s
+    rotation[1] = (r12 + r21) / s
+    rotation[2] = s / 4
+  }
+  quatNormalize(rotation, rotation)
+}
+
 /**
  * Right-handed perspective projection with the engine's y-down clip flip
  * BAKED IN (row two is negated): geometry authored y-up displays y-up, and

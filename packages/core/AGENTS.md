@@ -317,13 +317,14 @@ latest (solid-js 1.x, off Solid 2.0 entirely). The recipe that works is
   inside JSX, a `createMemo`, or an effect's compute phase) reads it
   untracked: it silently freezes at the initial value.
   Writing a signal or store from inside an owned scope (a component body, a
-  `createMemo`, an effect's compute phase) throws
-  `REACTIVE_WRITE_IN_OWNED_SCOPE` in dev; a loader called in the component
-  body that sets state is the classic React / Solid 1.x reflex that hits
-  this. Move the write into an event handler, an effect's apply phase,
-  `onSettled`, or an `untrack` block; opt in narrowly with
-  `createSignal(v, { ownedWrite: true })` for a signal that genuinely is
-  internal state.
+  `createMemo`, an effect's compute phase, a `ref` callback) throws
+  `REACTIVE_WRITE_IN_OWNED_SCOPE` in dev; a loader kicked off in the
+  component body or a ref that reports progress through a signal is the
+  classic reflex that hits this. `untrack` does NOT exempt a write (the
+  guard is owner-based, and untrack only stops tracking). Move the write
+  into an event handler, an effect's apply phase, or `onSettled`; opt in
+  narrowly with `createSignal(v, { ownedWrite: true })` for a signal that
+  genuinely is internal state.
   Signal writes flush on a microtask: a handler that sets a signal and
   immediately reads it back gets the OLD value. Read it in an effect, or
   call `flush()` (from @solidjs/signals) to force it through.

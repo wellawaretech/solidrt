@@ -12,6 +12,7 @@ import { readFileSync, writeFileSync } from "node:fs"
 import { basename, dirname, extname, join } from "node:path"
 import { parseGltf } from "../src/gltf.ts"
 import { encodeModel } from "../src/model-file.ts"
+import { layoutStride } from "../src/geometry.ts"
 
 function usage(error?: string): never {
   if (error) console.error(error)
@@ -44,9 +45,9 @@ let encoded = encodeModel(data)
 writeFileSync(output, encoded)
 
 let triangles = data.parts.reduce((n, p) => n + p.geometry.indices.length / 3, 0)
-let vertices = data.parts.reduce((n, p) => n + p.geometry.vertices.length / 8, 0)
+let vertices = data.parts.reduce((n, p) => n + p.geometry.vertices.length / layoutStride(p.geometry.layout), 0)
 console.log(
-  `${output}: ${data.parts.length} parts, ${vertices} vertices, ${triangles} triangles, ` +
-    `${data.materials.length} materials, ${data.images.length} images, ${(encoded.byteLength / 1024).toFixed(0)} KiB ` +
+  `${output}: ${data.nodes.length} nodes, ${data.parts.length} parts, ${vertices} vertices, ${triangles} triangles, ` +
+    `${data.clips.length} clips, ${data.materials.length} materials, ${data.images.length} images, ${(encoded.byteLength / 1024).toFixed(0)} KiB ` +
     `(parsed in ${parsed.toFixed(0)} ms)`,
 )

@@ -1,9 +1,11 @@
 // Check rig for the glTF parser (src/gltf.ts) and the .srtm container
 // (src/model-file.ts): a glb built in memory from the box generator, split
-// back into planar accessors the way exporters write them, under three
-// nodes - translated, mirrored (winding must flip), and one without
-// normals (flat normals must be generated). Then the container round trip
-// and the .gltf + external file path. Pure-module inputs only, so it runs
+// back into planar accessors the way exporters write them, under a node
+// tree - a translated mesh under a translated parent (hierarchy retained,
+// vertices left local), a mirrored one (winding must flip), one without
+// normals on a matrix-form node (flat normals generated, TRS decomposed)
+// and a meshless empty (pruned). Then the container round trip and the
+// .gltf + external file path. Pure-module inputs only, so it runs
 // headless on flux, bundled from the repo root:
 //
 //   bunx srt bundle -f --stdout packages/3d/checks/gltf-check.ts | target/release/flux -
@@ -13,6 +15,7 @@
 import { gltfExternalUris, isGlb, parseGltf } from "../src/gltf.ts"
 import type { ModelData } from "../src/gltf.ts"
 import { decodeModel, encodeModel } from "../src/model-file.ts"
+import { sampleChannel } from "../src/clip.ts"
 import { box, validateGeometry, STANDARD_FLOATS } from "../src/geometry.ts"
 
 let failures = 0
@@ -69,6 +72,40 @@ let uvView = pushView(asBytes(uvs))
 let idxView = pushView(asBytes(indices))
 let pngView = pushView(fakePng)
 
+// Animation accessors: three keys at 0/1/2 s, a linear translation, a
+// linear rotation (identity -> 90 -> 180 degrees about z), a step scale,
+// and a two-key CUBICSPLINE translation with zero tangents (a smoothstep).
+let animTimes = new Float32Array([0, 1, 2])
+let animPos = new Float32Array([0, 0, 0, 1, 0, 0, 1, 1, 0])
+let animRot = new Float32Array([0, 0, 0, 1, 0, 0, Math.SQRT1_2, Math.SQRT1_2, 0, 0, 1, 0])
+let animScale = new Float32Array([1, 1, 1, 2, 2, 2, 3, 3, 3])
+let cubicTimes = new Float32Array([0, 2])
+let cubicPos = new Float32Array([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4, 0, 0, 0, 0, 0])
+let animTimesView = pushView(asBytes(animTimes))
+let animPosView = pushView(asBytes(animPos))
+let animRotView = pushView(asBytes(animRot))
+let animScaleView = pushView(asBytes(animScale))
+let cubicTimesView = pushView(asBytes(cubicTimes))
+let cubicPosView = pushView(asBytes(cubicPos))
+
+// Skin accessors: every vertex weighted between joints 0 and 1 with
+// weights that sum to 2 (the parser must renormalize to 0.6/0.4), and
+// two inverse binds - identity, and a translate(-1, 0, 0).
+let jointsData = new Float32Array(vertexCount * 4)
+let weightsData = new Float32Array(vertexCount * 4)
+for (let i = 0; i < vertexCount; i++) {
+  jointsData[i * 4 + 1] = 1
+  weightsData[i * 4] = 1.2
+  weightsData[i * 4 + 1] = 0.8
+}
+let bindData = new Float32Array(32)
+bindData[0] = 1; bindData[5] = 1; bindData[10] = 1; bindData[15] = 1
+bindData[16] = 1; bindData[21] = 1; bindData[26] = 1; bindData[31] = 1
+bindData[28] = -1
+let jointsView = pushView(asBytes(jointsData))
+let weightsView = pushView(asBytes(weightsData))
+let bindView = pushView(asBytes(bindData))
+
 let bounds = (data: Float32Array, n: number): { min: number[]; max: number[] } => {
   let min = new Array(n).fill(Infinity)
   let max = new Array(n).fill(-Infinity)
@@ -79,24 +116,67 @@ let bounds = (data: Float32Array, n: number): { min: number[]; max: number[] } =
   return { min, max }
 }
 
+// "flat" is a matrix-form node: a 90 degree y rotation, column-major, so
+// the parser must decompose it to the quaternion [0, sqrt(.5), 0, sqrt(.5)].
+const ROT_Y_90 = [0, 0, -1, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1]
+
 let document = {
   asset: { version: "2.0" },
   scene: 0,
-  scenes: [{ nodes: [0, 1, 2] }],
+  scenes: [{ nodes: [3, 1, 2, 6] }],
   nodes: [
-    { name: "shifted", mesh: 0, translation: [2, 0, 0] },
+    { name: "shifted", mesh: 0, translation: [1, 0, 0] },
     { name: "mirrored", mesh: 0, scale: [-1, 1, 1] },
-    { name: "flat", mesh: 1, rotation: [0, Math.SQRT1_2, 0, Math.SQRT1_2] },
+    { name: "flat", mesh: 1, matrix: ROT_Y_90 },
+    { name: "rig", translation: [1, 0, 0], children: [0, 4, 5] },
+    { name: "empty", translation: [9, 9, 9] },
+    { name: "tail", translation: [0, 0, 2] },
+    // The node transform of a skinned mesh must be IGNORED (its
+    // vertices are model-space bind pose): [5, 5, 5] must not shift the
+    // part or the bounds.
+    { name: "skinny", mesh: 2, skin: 0, translation: [5, 5, 5] },
   ],
+  skins: [{ joints: [4, 5], inverseBindMatrices: 12 }],
   meshes: [
     { primitives: [{ attributes: { POSITION: 0, NORMAL: 1, TEXCOORD_0: 2 }, indices: 3, material: 0 }] },
     { primitives: [{ attributes: { POSITION: 0 }, indices: 3, material: 1 }] },
+    { primitives: [{ attributes: { POSITION: 0, NORMAL: 1, TEXCOORD_0: 2, JOINTS_0: 10, WEIGHTS_0: 11 }, indices: 3, material: 0 }] },
   ],
   accessors: [
     { bufferView: posView, componentType: 5126, count: vertexCount, type: "VEC3", ...bounds(positions, 3) },
     { bufferView: nrmView, componentType: 5126, count: vertexCount, type: "VEC3" },
     { bufferView: uvView, componentType: 5126, count: vertexCount, type: "VEC2" },
     { bufferView: idxView, componentType: 5123, count: indices.length, type: "SCALAR" },
+    { bufferView: animTimesView, componentType: 5126, count: 3, type: "SCALAR" },
+    { bufferView: animPosView, componentType: 5126, count: 3, type: "VEC3" },
+    { bufferView: animRotView, componentType: 5126, count: 3, type: "VEC4" },
+    { bufferView: animScaleView, componentType: 5126, count: 3, type: "VEC3" },
+    { bufferView: cubicTimesView, componentType: 5126, count: 2, type: "SCALAR" },
+    { bufferView: cubicPosView, componentType: 5126, count: 6, type: "VEC3" },
+    { bufferView: jointsView, componentType: 5126, count: vertexCount, type: "VEC4" },
+    { bufferView: weightsView, componentType: 5126, count: vertexCount, type: "VEC4" },
+    { bufferView: bindView, componentType: 5126, count: 2, type: "MAT4" },
+  ],
+  animations: [
+    {
+      name: "move",
+      channels: [
+        { sampler: 0, target: { node: 0, path: "translation" } },
+        { sampler: 1, target: { node: 4, path: "rotation" } },
+        { sampler: 2, target: { node: 1, path: "scale" } },
+        { sampler: 0, target: { node: 0, path: "weights" } },
+      ],
+      samplers: [
+        { input: 4, output: 5, interpolation: "LINEAR" },
+        { input: 4, output: 6 },
+        { input: 4, output: 7, interpolation: "STEP" },
+      ],
+    },
+    {
+      name: "bounce",
+      channels: [{ sampler: 0, target: { node: 0, path: "translation" } }],
+      samplers: [{ input: 8, output: 9, interpolation: "CUBICSPLINE" }],
+    },
   ],
   bufferViews,
   buffers: [{ byteLength: binLength }],
@@ -144,27 +224,84 @@ function glb(json: unknown, bin: Uint8Array[], binBytes: number): Uint8Array {
 
 let file = glb(document, binBlocks, binLength)
 if (!isGlb(file)) fail("isGlb: the built glb is not recognized")
-if (gltfExternalUris(file).length !== 0) fail("gltfExternalUris: a glb lists external uris")
+if (gltfExternalUris(file).length !== 0) fail("gltfExternalUris: a self-contained glb lists external uris")
+
+// A .glb MAY reference external files (spec-legal; real exporters write
+// image uris): they must be listed and resolved like a .gltf's.
+{
+  let externalImageGlb = glb({ ...document, images: [{ uri: "textures/base.png" }] }, binBlocks, binLength)
+  if (gltfExternalUris(externalImageGlb).join() !== "textures/base.png") {
+    fail(`gltfExternalUris on a glb with an external image: ${gltfExternalUris(externalImageGlb).join()}`)
+  }
+  throws("glb external image without resolver", () => parseGltf(externalImageGlb), "no resolver")
+  let resolvedGlb = parseGltf(externalImageGlb, (uri) => {
+    if (uri === "textures/base.png") return fakePng
+    throw new Error("unexpected uri " + uri)
+  })
+  if (resolvedGlb.images.length !== 1 || resolvedGlb.images[0]!.join() !== fakePng.join()) {
+    fail("glb external image: the png bytes did not come through the resolver")
+  }
+}
 
 // --- parse ----------------------------------------------------------------
 
 let model = parseGltf(file)
 for (let part of model.parts) validateGeometry(part.geometry)
-if (model.parts.length !== 3) fail(`parts: ${model.parts.length}, expected 3`)
-if (model.parts.map((p) => p.name).join() !== "shifted,mirrored,flat") fail(`part names: ${model.parts.map((p) => p.name).join()}`)
+if (model.parts.length !== 4) fail(`parts: ${model.parts.length}, expected 4`)
+if (model.parts.map((p) => p.name).join() !== "shifted,mirrored,flat,skinny") fail(`part names: ${model.parts.map((p) => p.name).join()}`)
 if (model.materials.length !== 4) fail(`materials: ${model.materials.length}, expected 4`)
 if (model.images.length !== 1 || model.images[0]!.join() !== fakePng.join()) fail("images: the png bytes did not come through")
 
-let shifted = model.parts[0]!.geometry
-if (shifted.vertices.length !== cube.vertices.length) fail("shifted: vertex count changed")
+// The node table: pre-order (rig materialized by its descendant part),
+// "flat"'s matrix decomposed to TRS, and the meshless "empty" and
+// "tail" retained ONLY as a skin's joints / an animation target
+// (materialized after the walk, so they come last).
+if (model.nodes.map((n) => n.name).join() !== "rig,shifted,mirrored,flat,skinny,empty,tail") fail(`node names: ${model.nodes.map((n) => n.name).join()}`)
+if (model.nodes.map((n) => (n.parent === null ? "-" : n.parent)).join() !== "-,0,-,-,-,0,0") fail(`node parents: ${model.nodes.map((n) => n.parent).join()}`)
+if (model.parts.map((p) => p.node).join() !== "1,2,3,4") fail(`part nodes: ${model.parts.map((p) => p.node).join()}`)
+if (model.parts.map((p) => (p.skin === null ? "-" : p.skin)).join() !== "-,-,-,0") fail(`part skins: ${model.parts.map((p) => p.skin).join()}`)
+
+// The skin: joints remapped to the compact table, binds through, the
+// skinned layout with renormalized weights, node transform ignored.
+if (model.skins.length !== 1) fail(`skins: ${model.skins.length}, expected 1`)
+let skin = model.skins[0]!
+if (skin.joints.join() !== "5,6") fail(`skin joints: ${skin.joints.join()}`)
+if (skin.inverseBind.length !== 32 || !near(skin.inverseBind[28]!, -1)) fail(`skin inverse binds: ${skin.inverseBind.length} floats, [28] = ${skin.inverseBind[28]}`)
+let skinny = model.parts[3]!.geometry
+if (skinny.layout !== "skinned") fail(`skinny layout: ${String(skinny.layout)}`)
+if (skinny.vertices.length !== vertexCount * 16) fail(`skinny stride: ${skinny.vertices.length / vertexCount} floats per vertex`)
 for (let i = 0; i < vertexCount; i++) {
-  let at = i * STANDARD_FLOATS
-  for (let k = 0; k < STANDARD_FLOATS; k++) {
-    let expect = cube.vertices[at + k]! + (k === 0 ? 2 : 0)
-    if (!near(shifted.vertices[at + k]!, expect)) {
-      fail(`shifted: vertex ${i} float ${k} = ${shifted.vertices[at + k]}, expected ${expect}`)
+  let at = i * 16
+  for (let k = 0; k < 8; k++) {
+    if (!near(skinny.vertices[at + k]!, cube.vertices[i * STANDARD_FLOATS + k]!)) {
+      fail(`skinny: vertex ${i} standard float ${k} differs (node transform baked?)`)
       break
     }
+  }
+  if (skinny.vertices[at + 8] !== 0 || skinny.vertices[at + 9] !== 1) fail(`skinny: vertex ${i} joints ${skinny.vertices[at + 8]},${skinny.vertices[at + 9]}`)
+  if (!near(skinny.vertices[at + 12]!, 0.6) || !near(skinny.vertices[at + 13]!, 0.4)) {
+    fail(`skinny: vertex ${i} weights not renormalized: ${skinny.vertices[at + 12]},${skinny.vertices[at + 13]}`)
+  }
+  if (i > 2) break
+}
+let rig = model.nodes[0]!
+let shiftedNode = model.nodes[1]!
+let mirroredNode = model.nodes[2]!
+let flatNode = model.nodes[3]!
+if (rig.position.join() !== "1,0,0" || shiftedNode.position.join() !== "1,0,0") fail("node positions: rig/shifted")
+if (mirroredNode.scale.join() !== "-1,1,1") fail(`mirrored node scale: ${mirroredNode.scale.join()}`)
+let q = flatNode.rotation
+if (!(near(q[0], 0) && near(q[1], Math.SQRT1_2) && near(q[2], 0) && near(q[3], Math.SQRT1_2))) fail(`flat node rotation (matrix decompose): ${q.join()}`)
+if (!near(flatNode.scale[0], 1) || !near(flatNode.scale[1], 1) || !near(flatNode.scale[2], 1)) fail(`flat node scale: ${flatNode.scale.join()}`)
+
+// Vertices stay node-local: the shifted part's geometry is the cube's,
+// untranslated - the node carries the placement.
+let shifted = model.parts[0]!.geometry
+if (shifted.vertices.length !== cube.vertices.length) fail("shifted: vertex count changed")
+for (let i = 0; i < vertexCount * STANDARD_FLOATS; i++) {
+  if (!near(shifted.vertices[i]!, cube.vertices[i]!)) {
+    fail(`shifted: vertex float ${i} = ${shifted.vertices[i]}, expected ${cube.vertices[i]} (local, unbaked)`)
+    break
   }
 }
 if (shifted.indices.join() !== cube.indices.join()) fail("shifted: indices changed")
@@ -185,14 +322,21 @@ let windingAgrees = (g: { vertices: Float32Array; indices: Uint16Array | Uint32A
 }
 let mirrored = model.parts[1]!.geometry
 if (!windingAgrees(shifted)) fail("shifted: winding disagrees with normals")
-if (!windingAgrees(mirrored)) fail("mirrored: winding was not flipped under the mirroring transform")
+// The mirrored part keeps LOCAL vertices and normals unmirrored; the
+// winding flip is baked into the index order (each triangle's b/c
+// swapped), so the LOCAL winding deliberately disagrees with the stored
+// normals - the node's mirroring transform turns both right at render.
+if (windingAgrees(mirrored)) fail("mirrored: winding was not flipped under the mirroring transform")
 for (let i = 0; i < vertexCount; i++) {
   let at = i * STANDARD_FLOATS
-  if (!near(mirrored.vertices[at]!, -cube.vertices[at]!) || !near(mirrored.vertices[at + 3]!, -cube.vertices[at + 3]!)) {
-    fail(`mirrored: vertex ${i} x/nx not mirrored`)
+  if (!near(mirrored.vertices[at]!, cube.vertices[at]!) || !near(mirrored.vertices[at + 3]!, cube.vertices[at + 3]!)) {
+    fail(`mirrored: vertex ${i} x/nx not local (baked?)`)
     break
   }
 }
+let flippedIndices: number[] = []
+for (let t = 0; t < cube.indices.length; t += 3) flippedIndices.push(cube.indices[t]!, cube.indices[t + 2]!, cube.indices[t + 1]!)
+if (mirrored.indices.join() !== flippedIndices.join()) fail("mirrored: indices are not the flipped cube indices")
 
 let flat = model.parts[2]!.geometry
 let triangles = cube.indices.length / 3
@@ -210,11 +354,12 @@ for (let t = 0; t < triangles; t++) {
     }
   }
 }
-// A cube's flat normals are axis-aligned whatever its rotation by 90 degrees.
+// Local flat normals of an axis-aligned cube are axis-aligned - the
+// node's rotation is NOT baked in.
 for (let t = 0; t < triangles; t++) {
   let a = t * 3 * STANDARD_FLOATS
   let axisAligned = [3, 4, 5].filter((k) => near(Math.abs(flat.vertices[a + k]!), 1)).length === 1
-  if (!axisAligned) fail(`flat: triangle ${t} normal is not axis aligned after the 90 degree rotation`)
+  if (!axisAligned) fail(`flat: triangle ${t} normal is not axis aligned in local space`)
 }
 
 let red = model.materials[0]!
@@ -234,18 +379,78 @@ if (model.parts[0]!.material !== 0 || model.parts[2]!.material !== 1) fail("part
 let b = model.bounds
 if (!(near(b[0]!, -0.5) && near(b[3]!, 2.5) && near(b[1]!, -0.5) && near(b[4]!, 0.5) && near(b[2]!, -0.5) && near(b[5]!, 0.5))) fail(`bounds: ${Array.from(b).join()}`)
 
+// --- clips and sampling ---------------------------------------------------
+
+if (model.clips.map((c) => c.name).join() !== "move,bounce") fail(`clips: ${model.clips.map((c) => c.name).join()}`)
+let move = model.clips[0]!
+let bounce = model.clips[1]!
+if (!near(move.duration, 2) || !near(bounce.duration, 2)) fail(`clip durations: ${move.duration}, ${bounce.duration}`)
+// The weights channel (morph targets) is skipped, the other three kept;
+// targets remap to the compact node table.
+if (move.channels.length !== 3) fail(`move channels: ${move.channels.length}, expected 3`)
+if (move.channels.map((c) => c.node + ":" + c.path + ":" + c.interpolation).join() !== "1:position:linear,5:rotation:linear,2:scale:step") {
+  fail(`move channel headers: ${move.channels.map((c) => c.node + ":" + c.path + ":" + c.interpolation).join()}`)
+}
+if (bounce.channels.length !== 1 || bounce.channels[0]!.interpolation !== "cubic") fail("bounce: one cubic channel expected")
+if (bounce.channels[0]!.values.length !== 18) fail(`bounce cubic values: ${bounce.channels[0]!.values.length} floats, expected 18`)
+
+let sample: number[] = [0, 0, 0, 0]
+let expectSample = (label: string, channel: (typeof move.channels)[0], t: number, expected: number[]): void => {
+  sampleChannel(channel, t, sample)
+  for (let e = 0; e < expected.length; e++) {
+    if (!near(sample[e]!, expected[e]!)) {
+      fail(`${label} at ${t}: [${sample.slice(0, expected.length).join()}], expected [${expected.join()}]`)
+      return
+    }
+  }
+}
+let movePos = move.channels[0]!
+expectSample("linear position", movePos, -1, [0, 0, 0])
+expectSample("linear position", movePos, 0.5, [0.5, 0, 0])
+expectSample("linear position", movePos, 1.5, [1, 0.5, 0])
+expectSample("linear position", movePos, 5, [1, 1, 0])
+let moveRot = move.channels[1]!
+let h = Math.sin(Math.PI / 8)
+expectSample("slerp rotation", moveRot, 0.5, [0, 0, h, Math.cos(Math.PI / 8)])
+expectSample("slerp rotation", moveRot, 2, [0, 0, 1, 0])
+let moveScale = move.channels[2]!
+expectSample("step scale", moveScale, 1.9, [2, 2, 2])
+expectSample("step scale", moveScale, 2, [3, 3, 3])
+let cubic = bounce.channels[0]!
+expectSample("cubic position", cubic, 0, [0, 0, 0])
+// Zero tangents make the Hermite a smoothstep: halfway = half the value.
+expectSample("cubic position", cubic, 1, [2, 0, 0])
+expectSample("cubic position", cubic, 2, [4, 0, 0])
+
 // --- container round trip -------------------------------------------------
 
 let sameModel = (a: ModelData, b: ModelData, label: string): void => {
+  if (JSON.stringify(a.nodes) !== JSON.stringify(b.nodes)) fail(`${label}: nodes`)
   if (a.parts.length !== b.parts.length) return fail(`${label}: part count`)
   for (let i = 0; i < a.parts.length; i++) {
     let p = a.parts[i]!, q = b.parts[i]!
-    if (p.name !== q.name || p.material !== q.material) fail(`${label}: part ${i} header`)
+    if (p.name !== q.name || p.material !== q.material || p.node !== q.node || p.skin !== q.skin) fail(`${label}: part ${i} header`)
+    if ((p.geometry.layout ?? "standard") !== (q.geometry.layout ?? "standard")) fail(`${label}: part ${i} layout`)
     if (p.geometry.vertices.join() !== q.geometry.vertices.join()) fail(`${label}: part ${i} vertices`)
     if (p.geometry.indices.join() !== q.geometry.indices.join()) fail(`${label}: part ${i} indices`)
     if (p.geometry.indices.constructor !== q.geometry.indices.constructor) fail(`${label}: part ${i} index type`)
   }
   if (JSON.stringify(a.materials) !== JSON.stringify(b.materials)) fail(`${label}: materials`)
+  if (a.skins.length !== b.skins.length) fail(`${label}: skin count`)
+  for (let i = 0; i < a.skins.length; i++) {
+    if (a.skins[i]!.joints.join() !== b.skins[i]!.joints.join()) fail(`${label}: skin ${i} joints`)
+    if (a.skins[i]!.inverseBind.join() !== b.skins[i]!.inverseBind.join()) fail(`${label}: skin ${i} binds`)
+  }
+  if (a.clips.length !== b.clips.length) fail(`${label}: clip count`)
+  for (let i = 0; i < a.clips.length; i++) {
+    let c = a.clips[i]!, d = b.clips[i]!
+    if (c.name !== d.name || !near(c.duration, d.duration) || c.channels.length !== d.channels.length) fail(`${label}: clip ${i} header`)
+    for (let k = 0; k < c.channels.length; k++) {
+      let x = c.channels[k]!, y = d.channels[k]!
+      if (x.node !== y.node || x.path !== y.path || x.interpolation !== y.interpolation) fail(`${label}: clip ${i} channel ${k} header`)
+      if (x.times.join() !== y.times.join() || x.values.join() !== y.values.join()) fail(`${label}: clip ${i} channel ${k} data`)
+    }
+  }
   if (a.images.length !== b.images.length || a.images.some((img, i) => img.join() !== b.images[i]!.join())) fail(`${label}: images`)
   if (a.bounds.join() !== b.bounds.join()) fail(`${label}: bounds`)
 }
@@ -288,6 +493,7 @@ throws("unknown required extension", () => parseGltf(glb(unknownExt, binBlocks, 
 let noMaterial = { ...document, meshes: [{ primitives: [{ attributes: { POSITION: 0, NORMAL: 1 }, indices: 3 }] }], nodes: [{ mesh: 0 }], scenes: [{ nodes: [0] }], materials: [] }
 let plain = parseGltf(glb(noMaterial, binBlocks, binLength))
 if (plain.materials.length !== 1 || plain.materials[0]!.name !== "default" || plain.parts[0]!.name !== "node0") fail(`default material: ${JSON.stringify(plain.materials)} / ${plain.parts[0]?.name}`)
+if (plain.nodes.length !== 1 || plain.nodes[0]!.name !== "node0" || plain.nodes[0]!.parent !== null) fail(`nameless node table: ${JSON.stringify(plain.nodes)}`)
 
 console.log(failures === 0 ? "gltf-check: all checks passed" : `gltf-check: ${failures} failure(s)`)
 if (failures > 0) throw new Error("gltf-check failed")

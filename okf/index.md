@@ -80,12 +80,12 @@ Shaped, not started.
   with no error. Decide once between injecting the standard tail at the
   fragColor write and exporting one composed function the author calls, before
   the next scene-wide effect adds a third thing to forget.
-- **[Instanced meshes cast no shadow](backlog/3d-instanced-shadow-casters.md)** [2026-08-27]
+- **[Instanced and skinned meshes cast no true shadow](backlog/3d-instanced-shadow-casters.md)** [2026-08-27]
   The scene's shadow view draws casters with a position-only depth override
   that knows uModel and nothing else, so an instanced mesh's per-record
-  transforms are invisible to it and `castShadow` on an InstancedMesh is
-  skipped. The additive fix is a per-class `shadowVertex` the override
-  borrows.
+  transforms are invisible to it (`castShadow` on an InstancedMesh is skipped)
+  and a skinned mesh casts its bind pose. The additive fix is a per-class
+  `shadowVertex` the override borrows.
 - **[Level of detail - distance-selected mesh variants as a core sink](backlog/3d-lod.md)** [2026-08-30]
   A large scene ships every object at one triangle count; a track with a
   thousand trees either draws full-detail foliage at the horizon or nothing. A
@@ -100,12 +100,12 @@ Shaped, not started.
   resolution and the stats overlay are all measured non-factors.
 - **[Model loader follow-ups](backlog/3d-model-loader.md)** [2026-08-26]
   The glTF subset loader (roadmap item 7, shipped 2026-08-26 as
-  parseGltf/createModel at runtime plus the srt tool 3d/model bake) covers
-  uncompressed triangles with base color; still open are the compressed
-  real-world files (Draco/meshopt, KTX2), a retained node hierarchy,
-  merge-by-material, a cull option for double-sided materials, an alpha test
-  for MASK materials (which ModelMaterial does not even report) and vertex
-  colors, each demand-gated.
+  parseGltf/createModel at runtime plus the srt tool 3d/model bake; v3
+  container with retained hierarchy, skins and animation clips plus the JS
+  mixer since 2026-08-31) covers rigged models end to end; still open are the
+  compressed real-world files (Draco/meshopt, KTX2), morph targets,
+  merge-by-material, vertex colors, per-material samplers and runtime-fetched
+  content, each demand-gated.
 - **[Cascaded shadow maps](backlog/3d-shadow-cascades.md)** [2026-08-27]
   One shadow.camera box per casting light: a large outdoor scene either blurs
   (the box covers everything at one map's resolution) or clips (the box covers

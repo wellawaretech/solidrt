@@ -82,10 +82,11 @@ platform-wide and bite in every app:
    two-argument here: `(compute, apply)`; the Solid 1.x single-arg form does
    not track.
 2. Writing a signal or store from inside an owned scope - a component body,
-   a `createMemo`, an effect's compute phase - throws
-   `REACTIVE_WRITE_IN_OWNED_SCOPE` in dev. Move the write into an event
-   handler, an effect's apply phase, `onSettled`, or an `untrack` block; opt
-   in with `createSignal(v, { ownedWrite: true })` for internal state.
+   a `createMemo`, an effect's compute phase, a `ref` callback - throws
+   `REACTIVE_WRITE_IN_OWNED_SCOPE` in dev; `untrack` does NOT exempt a
+   write. Move the write into an event handler, an effect's apply phase, or
+   `onSettled`; opt in with `createSignal(v, { ownedWrite: true })` for
+   internal state.
 3. An element-valued prop (children, a content/icon slot) builds a fresh
    native subtree on EVERY read, and an uninserted subtree is never freed -
    a permanent memory leak, not wasted work. Read such props exactly once,

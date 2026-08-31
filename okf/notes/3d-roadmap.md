@@ -80,9 +80,8 @@ what it delivered is documented in `packages/3d/AGENTS.md`, not here.
    The bake exists because of a measurement, not a principle: 124 ms of
    interpreter time per 32k vertices against 40 ms for the whole baked load.
    Left, demand-gated, in [3d-model-loader](../backlog/3d-model-loader.md):
-   Draco/meshopt and KTX2 decoding in the bake, a retained node hierarchy
-   (item 16's prerequisite), merge-by-material, a cull option for
-   double-sided materials, vertex colors.
+   Draco/meshopt and KTX2 decoding in the bake, merge-by-material,
+   vertex colors, runtime-fetched content.
 8. [x] **Mipmaps.** Engine: [gpu-mipmaps](../done/gpu-mipmaps.md) (landed 2026-08-23: `mipmap: true` on texture creation).
    Textured models alias immediately at minification; the one engine item
    staging step 3 (real models) still needs.
@@ -182,9 +181,15 @@ what it delivered is documented in `packages/3d/AGENTS.md`, not here.
     split-screen, reflections, minimaps and portals - shadows are just the
     first consumer to hit it. Until then the achievable tier is a projected
     blob, which also wants item 6's blend factors to avoid dithering.
-16. [ ] **Skinning and morph targets.** Engine: float texture formats (same
-    extensions file). Per-vertex JS is ruled out by the interpreter, so bone
-    matrices live in textures and are sampled in the vertex shader.
+16. [ ] **Skinning and morph targets.** Skinning shipped 2026-08-31 at
+    the uniform-array tier with the model loader's skins and the JS
+    mixer (`uBones` mat4 array, MAX_JOINTS = 32, palettes composed in
+    JS - see `packages/3d/AGENTS.md`); what keeps the box open: morph
+    targets, and palettes past the cap - the engine half stays float
+    texture formats (same extensions file), bone matrices sampled in
+    the vertex shader, since per-vertex JS is ruled out by the
+    interpreter. The crowd-scale evaluator is
+    [animation-core](../backlog/animation-core.md), not this item.
 17. [ ] **PBR and the color-space decision.** The furthest tier: physically
     based lighting math forces the sRGB/linear question the pixel contract
     currently answers with "non-linear RGBA8 everywhere".

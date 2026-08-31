@@ -674,33 +674,51 @@ classes do not warn about an inactive uniform.
 ## Models
 
 Authored models come in as glTF 2.0 (.gltf with its .bin and image files
-next to it, or single-file .glb) and become a Group of meshes, Three's
-`gltf.scene`. Three layers, use the lowest that fits:
+next to it, or single-file .glb) and become a Group carrying the file's
+node hierarchy, Three's `gltf.scene`. Three layers, use the lowest that
+fits:
 
 - `parseGltf(bytes, resolve?)` - the pure parser (no engine, runs under
-  bun and on flux): `ModelData` = `parts` (one per mesh node, its NAME
-  kept, vertices in the standard layout with the node's WORLD transform
-  baked in), `materials` (base color factor, `map` = index into `images`,
-  `doubleSided`, `transparent` = alphaMode BLEND, `alphaMode` as written
-  and `alphaCutoff`, spec default 0.5), `images` (the encoded
-  PNG/JPEG bytes, undecoded) and `bounds`. A .gltf's external files come
-  through `resolve(uri)` (uri as written, still percent-encoded;
-  `gltfExternalUris(bytes)` lists them so an async caller can read them
-  first); .glb and data: uris need none. Missing normals produce FLAT
-  shading (the spec's rule): the primitive is un-indexed, one vertex per
-  corner. A mirroring node flips the winding so `cull: "back"` still
-  keeps the outside. Non-triangle primitives are skipped; a required
-  extension the parser does not implement throws naming it, and Draco or
-  meshopt compression throws "re-export without mesh compression" -
-  Blender exports Draco by DEFAULT, so that is the first error a real
-  file hits.
+  bun and on flux): `ModelData` = `nodes` (the retained hierarchy in
+  pre-order - name, parent index, local TRS; matrix-form nodes are
+  TRS-decomposed, shear dropped; nodes that carry no part, joint or
+  animation target anywhere - cameras, lights, unused empties - are
+  pruned), `parts` (one per mesh primitive, its node's NAME kept, `node`
+  index, vertices in the standard layout LOCAL to the node - except
+  skinned parts: "skinned" layout, model-space bind pose, `skin` index),
+  `skins` (joint node indices + inverse binds), `clips` (the animations
+  as baked channel buffers: node/path/interpolation, times, values),
+  `materials` (base color factor, `map` =
+  index into `images`, `doubleSided`, `transparent` = alphaMode BLEND,
+  `alphaMode` as written and `alphaCutoff`, spec default 0.5), `images`
+  (the encoded PNG/JPEG bytes, undecoded) and `bounds` (world-space rest
+  pose, conservative for parts under rotated nodes). External
+  files come through `resolve(uri)` (uri as written, still
+  percent-encoded; `gltfExternalUris(bytes)` lists them so an async
+  caller can read them first) - for a .gltf AND for a .glb, which is
+  usually self-contained but may legally reference external images
+  (real exporters do); data: uris need no resolver. Missing
+  normals produce FLAT shading (the spec's rule): the primitive is
+  un-indexed, one vertex per corner. A mirroring node chain (negative
+  rest-pose world determinant) flips the part's index winding so
+  `cull: "back"` still keeps the outside. Non-triangle primitives are
+  skipped; a required extension the parser does not implement throws
+  naming it, and Draco or meshopt compression throws "re-export without
+  mesh compression" - Blender exports Draco by DEFAULT, so that is the
+  first error a real file hits.
 - `createModel(data, { material?, label? })` - uploads the images (repeat
   wrap, mipmapped, 4x anisotropic), makes one material per glTF material (default `lit({
   color, map, transparent })`; pass `material(m, map)` for anything else,
-  it is called once per material and shared), one mesh per part, all
-  children of the returned `Model` (a Group): `add(scene.root, model)`,
+  it is called once per material and shared), the node table as nested
+  Groups with the file's local TRS, and one mesh per part under its node,
+  all inside the returned `Model` (a Group): `add(scene.root, model)`,
   place it with `setTransform`, find parts by name in `model.parts`
-  (`{ name, mesh }`), `model.bounds` for framing a camera. `dispose()`
+  (`{ name, mesh }`), spin a wheel relative to its axle through
+  `model.nodes` (`{ name, node }` in table order, parents first; names
+  repeat when the file's do - `.find()` yours), `model.bounds` for
+  framing a camera. Skinned parts get the `skinned: true` material
+  variant and hang off the model ROOT (the spec ignores their node's
+  transform; the palette places them - see the mixer below). `dispose()`
   detaches it and frees the geometry buffers and textures - the model owns
   them, nothing else frees them.
 - `loadGltf(path)` / `loadModel(path)` - read from `assets/` with flux:fs
@@ -722,19 +740,48 @@ factor (a zero factor skips the map too - glTF's product rule, emission
 off). The `material(m, maps)` callback receives every uploaded texture
 by lit() option name (`maps.map`/`maps.normalMap`/`maps.emissiveMap`);
 `data.materials` is in file order, so the calls arrive in file order.
+Animation: `createMixer(model)` plays `model.clips` by name -
+`mixer.play(name, { loop?, speed?, fadeMs? })` (fadeMs crossfades: the
+named clip fades in, everything else fades out - Unity's CrossFade,
+Godot's play-with-blend), `mixer.stop({ fadeMs? })`, `mixer.playing()`,
+`mixer.onFinish` for `loop: false` clips (the pose holds at the end).
+The orbit-camera pattern: no frame loop of its own - call
+`mixer.update(dt)` from your onFrame and gate dependents on its boolean
+return. Channels write node TRS through setTransform (a channel nothing
+plays leaves the node's pose alone; your setTransform and the mixer's
+share the path, last write wins), then skins update: each skin's uBones
+palette (model-local jointWorld x inverseBind, `MAX_JOINTS` = 32 from
+/glsl - a bigger rig throws at createModel) is recomputed in JS and
+written per skinned mesh with one setMeshParams. Posing joints directly
+without a mixer takes an explicit `updateSkins(model)` afterwards.
+`sampleChannel` (pure, from the root) is the sampling core for custom
+drivers. This is the JS animation tier - fine for a handful of
+characters, not a crowd; okf/backlog/animation-core.md is the native
+evaluator that replaces the internals, not the API.
+
 Not in the subset, dropped: vertex colors, tangents and further UV sets;
-samplers are ignored (every texture repeats); additive blending draws as
-base color. The follow-ups are filed in okf/backlog/3d-model-loader.md.
-The `.srtm` container is VERSION 2 (the material fields above);
-version-1 bakes are rejected - re-bake with `srt tool 3d/model`.
+morph targets (the "weights" channel path); samplers are ignored (every
+texture repeats); additive blending draws as base color. The follow-ups
+are filed in okf/backlog/3d-model-loader.md. The `.srtm` container is
+VERSION 3 (node table in the header, node-local vertices, skins, clips);
+older bakes are rejected - re-bake with `srt tool 3d/model`.
 
 ## Traps
 
-- A model's vertices are in WORLD space at parse time (node transforms
-  baked), so `model.bounds` and each part's geometry already include the
-  file's placement; the Model group starts at identity and `setTransform`
-  on it moves the whole thing. Parts cannot be moved relative to their
-  glTF parent - that is the retained-hierarchy follow-up, not a bug.
+- A model's vertices are LOCAL to their node; the file's placement lives
+  in the node-table TRS, composed by the scene like any Group chain. So
+  a part's `geometry` alone is at the origin, `model.bounds` (rest-pose
+  world) is what frames a camera, and moving a named node moves its
+  subtree. The winding flip for a mirroring node chain is baked into the
+  index order from the REST pose - re-scaling a node across zero at
+  runtime shows mesh interiors, so do not do that.
+- Skinning is a VERTEX-STAGE effect: everything that runs off the
+  retained tree sees the bind pose. A skinned mesh picks by its
+  bind-pose triangles at the model root, its shadow casts the bind pose
+  (the depth pass has no palette; skinned cutouts too - the skinned
+  depth variant rides with okf/backlog/3d-instanced-shadow-casters.md),
+  and its transparent sort key is the bind-pose box. Moving the JOINTS
+  never moves any of these; moving the MODEL moves them all.
 - The y-down clip flip is baked into `perspective()`; scene code and
   geometry are plain y-up right-handed, and CCW-outward winding culls
   correctly with `cull: "back"`. Do NOT negate y anywhere else, and do not

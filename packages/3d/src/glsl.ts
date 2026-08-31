@@ -37,6 +37,14 @@ export const MAX_CASCADES = 4
  * bounds `uShadowRect`/`uShadowMatrix`. */
 export const MAX_SHADOW_MAPS = MAX_LIGHTS * MAX_CASCADES
 
+/** Bone palette capacity of a skinned program's `uniform mat4
+ * uBones[MAX_JOINTS]` - a mat4 uniform array, so 4 vec4s per joint: 32
+ * joints = 128 of the ES 3.0 floor's 256 vertex vec4s, leaving room for
+ * the standard set. A rig above the cap throws at createModel; palettes
+ * in float textures (3d roadmap item 16) are the scale-out when real
+ * rigs outgrow it. */
+export const MAX_JOINTS = 32
+
 /**
  * The standard lit vertex stage: clip position via uViewProj * uModel,
  * with world position, world normal (via `mat3(uNormal)`, correct under
@@ -47,18 +55,35 @@ export const MAX_SHADOW_MAPS = MAX_LIGHTS * MAX_CASCADES
  * Pair it with your own fragment; the view vector there is
  * `normalize(uCamPos - vWorldPos)`.
  */
+// The skinned-layout blocks a vertex stage splices in: the aJoints/
+// aWeights channels, the palette, and the linear-blend skin matrix.
+// Bone-space normals go through mat3(skin) - exact for rigid bones,
+// the standard approximation under bone scale.
+const SKIN_DECLS = glsl`
+  in vec4 aJoints;
+  in vec4 aWeights;
+  uniform mat4 uBones[${MAX_JOINTS}];
+`
+const SKIN_MATRIX = glsl`
+    mat4 skin = aWeights.x * uBones[int(aJoints.x)] + aWeights.y * uBones[int(aJoints.y)] +
+      aWeights.z * uBones[int(aJoints.z)] + aWeights.w * uBones[int(aJoints.w)];
+`
+
 // The one lit vertex template: the standard prefix always, aColor and
 // aUV2 only when the fragment reads them (an `in` the source mentions
 // makes the material require that channel, so the blocks must be absent,
-// not inactive). LIT_VERTEX / LIT_VERTEX_COLORED are its two named
-// forms; litVertex(o) picks per option set.
-function litVertexSource(colored: boolean, uv2: boolean): string {
+// not inactive), the skin blocks only for a skinned material (they make
+// it require the "skinned" layout the same way). LIT_VERTEX /
+// LIT_VERTEX_COLORED are its two named forms; litVertex(o) picks per
+// option set.
+function litVertexSource(colored: boolean, uv2: boolean, skinned: boolean): string {
   return glsl`
   in vec3 aPos;
   in vec3 aNormal;
   in vec2 aUV;
   ${colored ? "in vec4 aColor;" : ""}
   ${uv2 ? "in vec2 aUV2;" : ""}
+  ${skinned ? SKIN_DECLS : ""}
   uniform mat4 uModel;
   uniform mat4 uViewProj;
   uniform mat4 uNormal;
@@ -69,10 +94,11 @@ function litVertexSource(colored: boolean, uv2: boolean): string {
   ${uv2 ? "out vec2 vUv2;" : ""}
 
   void main() {
-    vec4 world = uModel * vec4(aPos, 1.0);
+    ${skinned ? SKIN_MATRIX : ""}
+    vec4 world = uModel * ${skinned ? "(skin * vec4(aPos, 1.0))" : "vec4(aPos, 1.0)"};
     gl_Position = uViewProj * world;
     vWorldPos = world.xyz;
-    vNormal = mat3(uNormal) * aNormal;
+    vNormal = mat3(uNormal) * ${skinned ? "(mat3(skin) * aNormal)" : "aNormal"};
     vUv = aUV;
     ${colored ? "vColor = aColor;" : ""}
     ${uv2 ? "vUv2 = aUV2;" : ""}
@@ -80,7 +106,7 @@ function litVertexSource(colored: boolean, uv2: boolean): string {
 `
 }
 
-export const LIT_VERTEX = litVertexSource(false, false)
+export const LIT_VERTEX = litVertexSource(false, false, false)
 
 /**
  * LIT_VERTEX for "colored"-layout geometry: the same interface plus the
@@ -90,7 +116,7 @@ export const LIT_VERTEX = litVertexSource(false, false)
  * collects the vertex stage's `in` declarations), so its meshes need
  * geometry carrying that channel - withColors() - or add() throws.
  */
-export const LIT_VERTEX_COLORED = litVertexSource(true, false)
+export const LIT_VERTEX_COLORED = litVertexSource(true, false, false)
 
 /** `vec3 hemisphere(vec3 n, vec3 sky, vec3 ground)` - ambient from a
  * sky/ground gradient by the normal's vertical tilt: sky straight up,
@@ -406,6 +432,11 @@ export type LitSourceOptions = {
    * creation-time state. The shadow source transforms its cutout the
    * same way; lightMap's aUV2 is not transformed. Not with `triplanar`. */
   mapTransform?: boolean
+  /** Skin positions and normals by the "skinned" layout's aJoints/
+   * aWeights against `uniform mat4 uBones[MAX_JOINTS]` (model-local
+   * jointWorld x inverseBind per joint - updateSkins writes it). The
+   * vertex stage then requires that layout; the fragment is unchanged. */
+  skinned?: boolean
   /** GLSL spliced at file scope, before main: the uniforms, constants and
    * helper functions `discardIf` calls. */
   prelude?: string
@@ -433,6 +464,7 @@ type LitSource = {
   specularMap: boolean
   lightMap: boolean
   mapTransform: boolean
+  skinned: boolean
   prelude: string
   discardIf: string
 }
@@ -453,6 +485,7 @@ function resolveLit(o: LitSourceOptions): LitSource {
     specularMap: o.specularMap === true,
     lightMap: o.lightMap === true,
     mapTransform: o.mapTransform === true,
+    skinned: o.skinned === true,
     prelude: o.prelude ?? "",
     discardIf: o.discardIf ?? "",
   }
@@ -513,7 +546,7 @@ function litBase(c: LitSource, flip: boolean): string {
  * varyings in both passes.
  */
 export function litVertex(o: LitSourceOptions = {}): string {
-  return litVertexSource(o.vertexColors === true, o.lightMap === true)
+  return litVertexSource(o.vertexColors === true, o.lightMap === true, o.skinned === true)
 }
 
 /**
@@ -667,6 +700,9 @@ export type UnlitSourceOptions = {
    * offsetV]) and sample the map at `vUv * repeat + offset` (see the lit
    * option of the same name). Needs `map`. */
   mapTransform?: boolean
+  /** Skin positions by the "skinned" layout against uBones (see the lit
+   * option); unlitVertex(o) reads it, the fragment is unchanged. */
+  skinned?: boolean
   /** GLSL spliced at file scope, before main. */
   prelude?: string
   /** A `bool` expression: true discards the fragment; splices into the
@@ -694,6 +730,31 @@ function resolveUnlit(o: UnlitSourceOptions): UnlitSource {
     prelude: o.prelude ?? "",
     discardIf: o.discardIf ?? "",
   }
+}
+
+/**
+ * The vertex stage `unlit` pairs with an option set: UNLIT_VERTEX, or its
+ * skinned form (the skin matrix applied before uModel) when `skinned`.
+ */
+export function unlitVertex(o: UnlitSourceOptions = {}): string {
+  if (o.skinned !== true) return UNLIT_VERTEX
+  return glsl`
+  in vec3 aPos;
+  in vec2 aUV;
+  ${SKIN_DECLS}
+  out vec2 vUv;
+  out vec3 vWorldPos;
+  uniform mat4 uModel;
+  uniform mat4 uViewProj;
+
+  void main() {
+    ${SKIN_MATRIX}
+    vec4 world = uModel * (skin * vec4(aPos, 1.0));
+    vWorldPos = world.xyz;
+    gl_Position = uViewProj * world;
+    vUv = aUV;
+  }
+`
 }
 
 /** The unlit base sample: uColor times the (possibly transformed) map. */

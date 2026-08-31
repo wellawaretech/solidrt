@@ -28,7 +28,7 @@ import type { Quat, TransformUpdate, Vec2, Vec3 } from "./math.ts"
 /** A vertex layout: the named presets, or an explicit attribute list that
  * must begin with the standard prefix (aPos vec3, aNormal vec3, aUV vec2).
  * Absent on a Geometry means "standard". */
-export type VertexLayout = "standard" | "colored" | VertexAttribute[]
+export type VertexLayout = "standard" | "colored" | "skinned" | VertexAttribute[]
 
 const STANDARD_ATTRIBUTES: VertexAttribute[] = [
   { name: "aPos", format: "vec3" },
@@ -38,9 +38,12 @@ const STANDARD_ATTRIBUTES: VertexAttribute[] = [
 
 /** The attribute lists behind the named layouts. Every layout shares the
  * standard prefix, so one shader vocabulary serves all of them. */
-export const VERTEX_LAYOUTS: Record<"standard" | "colored", VertexAttribute[]> = {
+export const VERTEX_LAYOUTS: Record<"standard" | "colored" | "skinned", VertexAttribute[]> = {
   standard: STANDARD_ATTRIBUTES,
   colored: [...STANDARD_ATTRIBUTES, { name: "aColor", format: "vec4" }],
+  // The rigged-model layout: 4 joint indices (as floats - exact to 2^24)
+  // and their weights per vertex, what a skinned vertex stage reads.
+  skinned: [...STANDARD_ATTRIBUTES, { name: "aJoints", format: "vec4" }, { name: "aWeights", format: "vec4" }],
 }
 
 /** Floats per vertex in the "standard" layout (the generators' own write
@@ -53,6 +56,7 @@ const FORMAT_FLOATS: Record<VertexAttribute["format"], number> = { f32: 1, vec2:
 export function layoutAttributes(layout?: VertexLayout): VertexAttribute[] {
   if (layout === undefined || layout === "standard") return VERTEX_LAYOUTS.standard
   if (layout === "colored") return VERTEX_LAYOUTS.colored
+  if (layout === "skinned") return VERTEX_LAYOUTS.skinned
   return layout
 }
 

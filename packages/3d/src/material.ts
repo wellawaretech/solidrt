@@ -42,7 +42,7 @@ import type {
 } from "@solidrt/core/gpu"
 import { layoutAttributes, layoutKey, layoutSlot } from "./geometry.ts"
 import type { VertexLayout } from "./geometry.ts"
-import { litFragment, litShadowFragment, litVertex, UNLIT_VERTEX, unlitFragment, unlitShadowFragment } from "./glsl.ts"
+import { litFragment, litShadowFragment, litVertex, UNLIT_VERTEX, unlitFragment, unlitShadowFragment, unlitVertex } from "./glsl.ts"
 
 export type Material = {
   /** The pipeline this material draws with for geometry of `layout`
@@ -126,6 +126,13 @@ export type UnlitOptions = {
    * `setMeshParams(mesh, { uMapTransform: [ru, rv, ou, ov] })`. Needs a
    * map; not with triplanar (whose repeat is uTriplanar). */
   mapTransform?: { offset?: [number, number]; repeat?: [number, number] }
+  /** Skin positions (and lit normals) by the "skinned" layout's aJoints/
+   * aWeights against the `uBones` mat4 palette - the rigged-model
+   * variant createModel picks for skinned parts. The material then
+   * requires "skinned" geometry, and something must write `uBones`
+   * (updateSkins does, from the model's joints). Bind-pose shadows: the
+   * cutout shadow variant stays unskinned. */
+  skinned?: boolean
 }
 
 /** The uMapTransform vec4 for a mapTransform option: [repeatU, repeatV,
@@ -151,12 +158,13 @@ export function unlit(opts: UnlitOptions = {}): Material {
   let alphaTest = opts.alphaTest !== undefined
   let fog = opts.fog !== false
   let mapTransform = opts.mapTransform !== undefined
+  let skinned = opts.skinned === true
   if (mapTransform && !map) throw new Error("unlit: mapTransform without a map to transform")
-  let key = [map, transparent, cull, alphaTest, fog, mapTransform].join("|")
+  let key = [map, transparent, cull, alphaTest, fog, mapTransform, skinned].join("|")
   let cls = unlitClasses.get(key)
   if (cls === undefined) {
     cls = shaderMaterialClass({
-      vertex: UNLIT_VERTEX,
+      vertex: unlitVertex({ skinned }),
       fragment: unlitFragment({ map, alphaTest, transparent, fog, mapTransform }),
       transparent,
       cull,
@@ -282,6 +290,7 @@ type LitClass = {
   specularMap: boolean
   lightMap: boolean
   mapTransform: boolean
+  skinned: boolean
 }
 
 function litClassKey(c: LitClass): string {
@@ -333,6 +342,7 @@ export function lit(opts: LitOptions = {}): Material {
     specularMap,
     lightMap,
     mapTransform,
+    skinned: opts.skinned === true,
   }
   let key = litClassKey(flags)
   let cls = litClasses.get(key)
@@ -397,6 +407,11 @@ function litShadowMaterial(
   uMap: TextureId,
   uMapTransform?: number[],
 ): Material {
+  // Bind-pose shadows: the depth pass has no uBones writer, so the
+  // shadow variant compiles with skinning stripped (a skinned cutout
+  // caster casts its rest pose; the skinned depth variant rides with the
+  // instanced-casters follow-up).
+  flags = flags.skinned ? { ...flags, skinned: false } : flags
   let key = litClassKey(flags)
   let cls = litShadowClasses.get(key)
   if (cls === undefined) {

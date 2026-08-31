@@ -64,6 +64,14 @@ clock, finished/looped events. Done looks like: a baked multi-channel clip
 drives a node hierarchy with zero per-frame JS, verified by the bench
 pattern spatial-core used (cost proportional to animated nodes, not scene).
 
+Rung-1 tier exists (2026-08-31): `@solidrt/3d`'s `createMixer` plays the
+model loader's baked clips in JS (sample + crossfade + setTransform per
+animated node per frame, plus JS palette composition for skins) - the
+loader half this item assumed now exists, and the mixer's surface
+(play/stop/update/onFinish, weighted crossfade blending) is the drafted
+contract stage 1 replaces the internals of. Its measured comfort zone is
+a handful of characters; the crowd case still lands here.
+
 Stage 2 - skinning. Joint hierarchies are ordinary spatial nodes animated
 by stage 1; the palette (jointWorld * inverseBind per joint) lands in a
 float texture the vertex shader samples. Needs the float-texture engine
