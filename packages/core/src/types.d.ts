@@ -671,7 +671,9 @@ export interface ViewOwnProps extends TransformProps, PointerProps {
    * skipping rasterization entirely. Costs texture memory and re-rasterizes
    * on layout-size or display-scale changes. Content painted outside the
    * element's layout box is cropped, and ancestor scale animations smear the
-   * bitmap; best for screen-aligned, static, raster-expensive content.
+   * bitmap; best for screen-aligned, static, raster-expensive content. On a
+   * d-view the box is the inherited frame (the nearest laid-out ancestor's
+   * box, or the design size under a designSize view), same as a capture.
    *
    * "snapshot-no-aa" is "snapshot" rasterized without anti-aliasing: cheaper
    * (no multisampled scratch, one render pass), but vector content - svg

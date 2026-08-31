@@ -377,12 +377,29 @@ fn snapshot_node_uncalled<'a>(
   aa: bool,
 ) {
   let element = scene.node(node_id);
-  let size = element.layout.as_ref().map(|l| l.size()).unwrap_or_default();
-  let (width, height) = (size.width, size.height);
+  // A laid-out node snapshots its layout box. A detached (d-*) node has none,
+  // but it is still drawn into a definite rectangle: its kind's painted box,
+  // sized with the same ctx.size its build() reads (the same derivation as
+  // service_captures, so snapshot and capture box the node identically). The
+  // box's x/y is the node's own paint offset, countered in the recording so
+  // the content lands at the texture origin and restored on the composited
+  // quad's dst - except for a View, whose offset (translate) lives in the
+  // matrix that Hoist::Transform keeps out of the recording anyway.
+  let (width, height, offset) = match element.layout.as_ref() {
+    Some(l) => (l.size().width, l.size().height, (0.0, 0.0)),
+    None => {
+      let local = element.kind.local_bounds(ctx.size);
+      let offset = match &element.kind {
+        ElementKind::View(_) => (0.0, 0.0),
+        _ => (local.origin.x, local.origin.y),
+      };
+      (local.size.width, local.size.height, offset)
+    }
+  };
   let scale = ctx.platform.display_scale();
   let (tex_w, tex_h) = ((width * scale).ceil() as u32, (height * scale).ceil() as u32);
 
-  // Without a real layout box there is nothing to rasterize into; paint
+  // Without a positive painted box there is nothing to rasterize into; paint
   // inline so overflowing content still shows up.
   if tex_w == 0 || tex_h == 0 {
     record_node(scene, node_id, ctx, builder, Hoist::None);
@@ -404,9 +421,10 @@ fn snapshot_node_uncalled<'a>(
 
   // The content occupies the top-left width*scale x height*scale pixels of the
   // (ceil-padded) texture; mapping exactly that region onto the logical-size
-  // quad keeps the composite pixel-exact under the root scale transform.
+  // quad keeps the composite pixel-exact under the root scale transform. The
+  // quad sits at the detached paint offset the recording countered.
   let src = Rect::new(Point::new(0.0, 0.0), Size::new(width * scale, height * scale));
-  let dst = Rect::new(Point::new(0.0, 0.0), Size::new(width, height));
+  let dst = Rect::new(Point::new(offset.0, offset.1), Size::new(width, height));
 
   // The boundary shader (views only) and its pending-write flag, consumed
   // here whichever branch runs: every shaded branch re-runs the pass, and
@@ -595,6 +613,9 @@ fn snapshot_node_uncalled<'a>(
 
   let mut sub = DisplayListBuilder::new(None);
   sub.scale(scale, scale);
+  if offset != (0.0, 0.0) {
+    sub.translate(-offset.0, -offset.1);
+  }
   record_node(scene, node_id, ctx, &mut sub, hoist);
   let Some(dl) = sub.build() else { return };
 
@@ -642,10 +663,11 @@ fn snapshot_node_uncalled<'a>(
     }
     Err(e) => {
       // Paint inline this frame; the recording carries its own device-scale
-      // transform, so counter the enclosing CTM's scale before replaying.
+      // transform and detached paint offset, so counter both before replaying.
       log::warn!("snapshot rasterization failed for node {node_id}: {e}; painting inline");
       draw_with_transform(builder, own.as_ref(), |b| {
         b.save();
+        b.translate(offset.0, offset.1);
         b.scale(1.0 / scale, 1.0 / scale);
         b.draw_display_list(&dl, opacity);
         b.restore();
