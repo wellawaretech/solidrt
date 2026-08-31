@@ -560,7 +560,8 @@ same constants - customizing never means leaving the system.
 
 Own GLSL inside `lit` without re-typing its assembly: `litFragment(options)`
 (also `/glsl`) builds the exact fragment `lit` compiles - the same option
-names and defaults as LitOptions with boolean `map`/`triplanar`/`alphaTest` -
+names and defaults as LitOptions with the texture options boolean
+(`map`/`triplanar`/`alphaTest`, the surface maps and `mapTransform` too) -
 and `litVertex(options)` the vertex stage it pairs with. Two slots splice
 app GLSL in: `prelude` (file scope - uniforms and helpers; a uniform it
 declares is an ordinary `instance()` param) and `discardIf` (a bool
@@ -624,14 +625,51 @@ with `wrap: "repeat"`. Any `map` on a surface seen at distance also wants
 surface seen at a grazing angle (a floor, a road) wants `anisotropy: 4`
 or more beside it, or trilinear smears the far half into the mip its long
 axis picked (`createModel` uploads its images with both; the device clamps
-the level, `limits.maxAnisotropy` reports it). Internally one `shaderMaterialClass` per option
-combination (map x vertexColors x triplanar x transparent x cull x
-alphaTest), cached for the app's lifetime, one pipeline per vertex layout
-- a thousand lit meshes share one program. The view vector comes from the
-shared uCamPos; `uTriplanar` and `uAlphaTest` are declared only by the
-classes that use them (the cutoff is a per-entry value, so every
-alphaTest material shares one class) so the other classes do not warn
-about an inactive uniform.
+the level, `limits.maxAnisotropy` reports it).
+
+The surface maps, each an option beside `map` and sampled at its uv:
+
+- `normalMap` (+ `normalScale`, ONE float as in Unity/Godot - Three's
+  Vector2 exists to flip DirectX-style green channels, and glTF mandates
+  OpenGL-style +Y) bends the lit normal per texel. The tangent frame is
+  built per fragment from screen-space derivatives (`NORMAL_MAP` in
+  `/glsl`, Three's untangented path), so ANY UV-mapped geometry works
+  with no tangent channel; the trade is mild seams on mirrored UVs. Not
+  with `triplanar` (throws - triplanar samples by world position).
+- `emissive: [r, g, b]` (intensity folded in, the uLightColor
+  convention) and `emissiveMap` add light the lights do not provide,
+  after the lighting terms, shadow-proof, fogged. `emissive` defaults to
+  WHITE when `emissiveMap` is given - the map is the emission - fixing
+  Three's gotcha where an emissiveMap alone shows nothing against the
+  black default.
+- `specularMap`: its RED channel scales `specular` per fragment (chrome
+  and rubber on one mesh); with it `specular` defaults to 1.
+- `lightMap` (+ `lightMapIntensity`) adds a baked-light texture by the
+  geometry's aUV2 channel (`withAttribute(g, { name: "aUV2", format:
+  "vec2" }, fill)`) - ADDED to the light sum like the hemisphere term, so
+  a fully baked scene runs with no lights at all. Three's material-slot
+  form; Unity and Godot bake at scene level, but here the material picks
+  the program.
+- `mapTransform: { offset?, repeat? }` samples every uv map of the
+  material at `uv * repeat + offset` - ONE transform per MATERIAL
+  (Godot's uv1_offset/uv1_scale, Unity's Tiling/Offset; deliberately not
+  Three's per-texture transform, since a TextureId is a shared value
+  whose sampling is creation-time state). aUV2 is exempt. Scroll it per
+  frame with `setMeshParams(mesh, { uMapTransform: [ru, rv, ou, ov] })`.
+  Also on `unlit`. Not with `triplanar` (throws - its repeat is the
+  triplanar value). A cutout's shadow transforms the same way.
+
+`examples/materials.tsx` shows all five. Internally one
+`shaderMaterialClass` per option combination (map x vertexColors x
+triplanar x transparent x cull x alphaTest x fog x the surface maps),
+cached for the app's lifetime, one pipeline per vertex layout - a
+thousand lit meshes share one program, and the key's width costs nothing
+by itself: classes are created lazily per combination USED, so the
+program count is the app's distinct material configurations. The view
+vector comes from the shared uCamPos; `uTriplanar` and `uAlphaTest` are
+declared only by the classes that use them (the cutoff is a per-entry
+value, so every alphaTest material shares one class) so the other
+classes do not warn about an inactive uniform.
 
 ## Models
 
@@ -677,11 +715,18 @@ next to it, or single-file .glb) and become a Group of meshes, Three's
   `examples/model.tsx`); bake anything big.
 
 Applied: `doubleSided` (the default material draws it with `cull:
-"none"`) and alphaMode MASK (`alphaTest: alphaCutoff`). Not in the
-subset, dropped: vertex colors, tangents and further UV sets; samplers
-are ignored (every texture repeats); emissive/additive parts of a model
-draw as their base color (a model's "glow" cards come out as dark wedges).
-The follow-ups are filed in okf/backlog/3d-model-loader.md.
+"none"`), alphaMode MASK (`alphaTest: alphaCutoff`), `normalTexture`
+(+ scale; the derivative frame needs no tangents), `emissiveFactor` x
+`emissiveTexture` with KHR_materials_emissive_strength folded into the
+factor (a zero factor skips the map too - glTF's product rule, emission
+off). The `material(m, maps)` callback receives every uploaded texture
+by lit() option name (`maps.map`/`maps.normalMap`/`maps.emissiveMap`);
+`data.materials` is in file order, so the calls arrive in file order.
+Not in the subset, dropped: vertex colors, tangents and further UV sets;
+samplers are ignored (every texture repeats); additive blending draws as
+base color. The follow-ups are filed in okf/backlog/3d-model-loader.md.
+The `.srtm` container is VERSION 2 (the material fields above);
+version-1 bakes are rejected - re-bake with `srt tool 3d/model`.
 
 ## Traps
 

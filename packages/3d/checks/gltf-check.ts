@@ -102,7 +102,16 @@ let document = {
   buffers: [{ byteLength: binLength }],
   materials: [
     { name: "red", pbrMetallicRoughness: { baseColorFactor: [1, 0, 0, 1] } },
-    { name: "glass", alphaMode: "BLEND", doubleSided: true, pbrMetallicRoughness: { baseColorFactor: [1, 1, 1, 0.5], baseColorTexture: { index: 0 } } },
+    {
+      name: "glass",
+      alphaMode: "BLEND",
+      doubleSided: true,
+      pbrMetallicRoughness: { baseColorFactor: [1, 1, 1, 0.5], baseColorTexture: { index: 0 } },
+      normalTexture: { index: 0, scale: 0.5 },
+      emissiveFactor: [1, 0.5, 0],
+      emissiveTexture: { index: 0 },
+      extensions: { KHR_materials_emissive_strength: { emissiveStrength: 2 } },
+    },
     { name: "leaf", alphaMode: "MASK", alphaCutoff: 0.3, doubleSided: true, pbrMetallicRoughness: { baseColorTexture: { index: 0 } } },
     { name: "cutout-default", alphaMode: "MASK" },
   ],
@@ -211,7 +220,10 @@ for (let t = 0; t < triangles; t++) {
 let red = model.materials[0]!
 let glass = model.materials[1]!
 if (red.color.join() !== "1,0,0,1" || red.map !== null || red.transparent || red.doubleSided) fail(`red material: ${JSON.stringify(red)}`)
+if (red.normalMap !== null || red.normalScale !== 1 || red.emissive.join() !== "0,0,0" || red.emissiveMap !== null) fail(`red material surface maps: ${JSON.stringify(red)}`)
 if (glass.color.join() !== "1,1,1,0.5" || glass.map !== 0 || !glass.transparent || !glass.doubleSided) fail(`glass material: ${JSON.stringify(glass)}`)
+if (glass.normalMap !== 0 || glass.normalScale !== 0.5) fail(`glass normal map: ${JSON.stringify(glass)}`)
+if (glass.emissive.join() !== "2,1,0" || glass.emissiveMap !== 0) fail(`glass emissive (strength folded): ${JSON.stringify(glass)}`)
 if (red.alphaMode !== "OPAQUE" || glass.alphaMode !== "BLEND") fail("alphaMode: OPAQUE/BLEND")
 let leaf = model.materials[2]!
 let cutout = model.materials[3]!

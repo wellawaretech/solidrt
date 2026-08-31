@@ -26,11 +26,21 @@ import type { Mesh, SceneNode } from "./scene.ts"
  * the device by the runtime. */
 const MODEL_ANISOTROPY = 4
 
+/** A glTF material's uploaded textures, by lit() option name; null where
+ * the material has none. */
+export type ModelMaps = {
+  map: TextureId | null
+  normalMap: TextureId | null
+  emissiveMap: TextureId | null
+}
+
 export type ModelOptions = {
   /** The material for each glTF material (default: `lit` with its color,
-   * map and transparency). `map` is the uploaded base color texture, or
-   * null. Called once per material, shared by every part using it. */
-  material?: (material: ModelMaterial, map: TextureId | null) => Material
+   * maps, normal scale, emissive and transparency). `maps` holds the
+   * uploaded textures by lit() option name. Called once per material,
+   * shared by every part using it. `data.materials` is in file order, so
+   * the calls arrive in file order too. */
+  material?: (material: ModelMaterial, maps: ModelMaps) => Material
   /** Debug name for the textures. */
   label?: string
 }
@@ -66,14 +76,25 @@ export function createModel(data: ModelData, opts: ModelOptions = {}): Model {
       label: label ? label + "-image" + i : undefined,
     })
   })
-  let make = opts.material ?? ((m: ModelMaterial, map: TextureId | null): Material => lit({
-        color: m.color,
-        map: map ?? undefined,
-        transparent: m.transparent,
-        cull: m.doubleSided ? "none" : "back",
-        alphaTest: m.alphaMode === "MASK" ? m.alphaCutoff : undefined,
-      }))
-  let materials = data.materials.map((m) => make(m, m.map === null ? null : textures[m.map]!))
+  let make = opts.material ?? ((m: ModelMaterial, maps: ModelMaps): Material => {
+    // An emissive factor of zero is emission OFF (the glTF product rule:
+    // factor times texture), so the map is skipped too - no sampler for
+    // a term that cannot show.
+    let emissive = m.emissive[0] > 0 || m.emissive[1] > 0 || m.emissive[2] > 0
+    return lit({
+      color: m.color,
+      map: maps.map ?? undefined,
+      normalMap: maps.normalMap ?? undefined,
+      normalScale: m.normalScale,
+      emissive: emissive ? m.emissive : undefined,
+      emissiveMap: emissive ? maps.emissiveMap ?? undefined : undefined,
+      transparent: m.transparent,
+      cull: m.doubleSided ? "none" : "back",
+      alphaTest: m.alphaMode === "MASK" ? m.alphaCutoff : undefined,
+    })
+  })
+  let slot = (index: number | null): TextureId | null => (index === null ? null : textures[index]!)
+  let materials = data.materials.map((m) => make(m, { map: slot(m.map), normalMap: slot(m.normalMap), emissiveMap: slot(m.emissiveMap) }))
 
   let model = createGroup() as Model
   model.parts = data.parts.map((part) => {

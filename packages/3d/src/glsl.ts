@@ -47,16 +47,26 @@ export const MAX_SHADOW_MAPS = MAX_LIGHTS * MAX_CASCADES
  * Pair it with your own fragment; the view vector there is
  * `normalize(uCamPos - vWorldPos)`.
  */
-export const LIT_VERTEX = glsl`
+// The one lit vertex template: the standard prefix always, aColor and
+// aUV2 only when the fragment reads them (an `in` the source mentions
+// makes the material require that channel, so the blocks must be absent,
+// not inactive). LIT_VERTEX / LIT_VERTEX_COLORED are its two named
+// forms; litVertex(o) picks per option set.
+function litVertexSource(colored: boolean, uv2: boolean): string {
+  return glsl`
   in vec3 aPos;
   in vec3 aNormal;
   in vec2 aUV;
+  ${colored ? "in vec4 aColor;" : ""}
+  ${uv2 ? "in vec2 aUV2;" : ""}
   uniform mat4 uModel;
   uniform mat4 uViewProj;
   uniform mat4 uNormal;
   out vec3 vWorldPos;
   out vec3 vNormal;
   out vec2 vUv;
+  ${colored ? "out vec4 vColor;" : ""}
+  ${uv2 ? "out vec2 vUv2;" : ""}
 
   void main() {
     vec4 world = uModel * vec4(aPos, 1.0);
@@ -64,8 +74,13 @@ export const LIT_VERTEX = glsl`
     vWorldPos = world.xyz;
     vNormal = mat3(uNormal) * aNormal;
     vUv = aUV;
+    ${colored ? "vColor = aColor;" : ""}
+    ${uv2 ? "vUv2 = aUV2;" : ""}
   }
 `
+}
+
+export const LIT_VERTEX = litVertexSource(false, false)
 
 /**
  * LIT_VERTEX for "colored"-layout geometry: the same interface plus the
@@ -75,28 +90,7 @@ export const LIT_VERTEX = glsl`
  * collects the vertex stage's `in` declarations), so its meshes need
  * geometry carrying that channel - withColors() - or add() throws.
  */
-export const LIT_VERTEX_COLORED = glsl`
-  in vec3 aPos;
-  in vec3 aNormal;
-  in vec2 aUV;
-  in vec4 aColor;
-  uniform mat4 uModel;
-  uniform mat4 uViewProj;
-  uniform mat4 uNormal;
-  out vec3 vWorldPos;
-  out vec3 vNormal;
-  out vec2 vUv;
-  out vec4 vColor;
-
-  void main() {
-    vec4 world = uModel * vec4(aPos, 1.0);
-    gl_Position = uViewProj * world;
-    vWorldPos = world.xyz;
-    vNormal = mat3(uNormal) * aNormal;
-    vUv = aUV;
-    vColor = aColor;
-  }
-`
+export const LIT_VERTEX_COLORED = litVertexSource(true, false)
 
 /** `vec3 hemisphere(vec3 n, vec3 sky, vec3 ground)` - ambient from a
  * sky/ground gradient by the normal's vertical tilt: sky straight up,
@@ -129,6 +123,42 @@ export const BLINN_SPECULAR = glsl`
 export const FRESNEL = glsl`
   float fresnel(vec3 n, vec3 v, float power) {
     return pow(1.0 - max(dot(n, v), 0.0), power);
+  }
+`
+
+/**
+ * `vec3 perturbNormal(vec3 n, vec3 worldPos, vec2 uv)` - the surface
+ * normal bent by a tangent-space normal map (`uniform sampler2D
+ * uNormalMap`, OpenGL-style +Y as glTF mandates, `uniform float
+ * uNormalScale` weighting the bend). The tangent frame is built per
+ * fragment from screen-space derivatives of worldPos and uv (Three's
+ * untangented path, Schuler's cotangent frame), so it works on ANY
+ * UV-mapped geometry with no tangent attribute; the trade is mild seams
+ * on mirrored UVs, the case a real aTangent layout would fix. Needs no
+ * varying of its own - pass the same worldPos and uv the caller lights
+ * and samples with. `n` must be normalized and already facing the viewer
+ * (flip back faces before calling).
+ */
+export const NORMAL_MAP = glsl`
+  uniform sampler2D uNormalMap;
+  uniform float uNormalScale;
+  // NORMAL_MAP_EPS floors the tangent frame's magnitude so a face with
+  // no UV variation (degenerate derivatives) yields the geometric normal
+  // instead of a NaN.
+  const float NORMAL_MAP_EPS = 1e-20;
+  vec3 perturbNormal(vec3 n, vec3 worldPos, vec2 uv) {
+    vec3 mapN = texture(uNormalMap, uv).xyz * 2.0 - 1.0;
+    mapN.xy *= uNormalScale;
+    vec3 dp1 = dFdx(worldPos);
+    vec3 dp2 = dFdy(worldPos);
+    vec2 duv1 = dFdx(uv);
+    vec2 duv2 = dFdy(uv);
+    vec3 dp2perp = cross(dp2, n);
+    vec3 dp1perp = cross(n, dp1);
+    vec3 t = dp2perp * duv1.x + dp1perp * duv2.x;
+    vec3 b = dp2perp * duv1.y + dp1perp * duv2.y;
+    float invMax = inversesqrt(max(max(dot(t, t), dot(b, b)), NORMAL_MAP_EPS));
+    return normalize(mat3(t * invMax, b * invMax, n) * mapN);
   }
 `
 
@@ -346,6 +376,36 @@ export type LitSourceOptions = {
   alphaTest?: boolean
   /** Compose the scene's fog over the result (default true). */
   fog?: boolean
+  /** Bend the lit normal by a tangent-space normal map (NORMAL_MAP:
+   * `uniform sampler2D uNormalMap` scaled by `uniform float
+   * uNormalScale`), sampled at the same uv as uMap. The frame comes from
+   * screen-space derivatives - no tangent attribute. The cutout and
+   * discardIf still see the geometric normal; lighting sees the bent
+   * one. Not with `triplanar` (which samples by world position, not uv). */
+  normalMap?: boolean
+  /** Add `uniform vec3 uEmissive` after the lighting terms - unlit by
+   * design, shadow-proof, fogged like everything else. */
+  emissive?: boolean
+  /** `uniform sampler2D uEmissiveMap` multiplying uEmissive; implies
+   * `emissive`. */
+  emissiveMap?: boolean
+  /** `uniform sampler2D uSpecularMap`: its RED channel scales uSpecular
+   * per fragment (Three's specularMap - chrome and rubber on one mesh). */
+  specularMap?: boolean
+  /** Add a baked-light term: `uniform sampler2D uLightMap` times
+   * `uniform float uLightMapIntensity`, sampled by the aUV2 channel and
+   * ADDED to the light sum like the hemisphere term (a fully baked scene
+   * runs with no lights at all). litVertex(o) then reads aUV2, so the
+   * geometry must carry that channel. */
+  lightMap?: boolean
+  /** Declare `uniform vec4 uMapTransform` ([repeatU, repeatV, offsetU,
+   * offsetV]) and sample every uv-driven map at `vUv * repeat + offset` -
+   * ONE transform for the material's uv maps (Godot's uv1_offset/scale,
+   * Unity's Tiling/Offset), deliberately not Three's per-texture
+   * transform: a TextureId is a shared value whose sampling is
+   * creation-time state. The shadow source transforms its cutout the
+   * same way; lightMap's aUV2 is not transformed. Not with `triplanar`. */
+  mapTransform?: boolean
   /** GLSL spliced at file scope, before main: the uniforms, constants and
    * helper functions `discardIf` calls. */
   prelude?: string
@@ -367,6 +427,12 @@ type LitSource = {
   cull: CullMode
   alphaTest: boolean
   fog: boolean
+  normalMap: boolean
+  emissive: boolean
+  emissiveMap: boolean
+  specularMap: boolean
+  lightMap: boolean
+  mapTransform: boolean
   prelude: string
   discardIf: string
 }
@@ -381,9 +447,21 @@ function resolveLit(o: LitSourceOptions): LitSource {
     cull: o.cull ?? "back",
     alphaTest: o.alphaTest === true,
     fog: o.fog !== false,
+    normalMap: o.normalMap === true,
+    emissive: o.emissive === true || o.emissiveMap === true,
+    emissiveMap: o.emissiveMap === true,
+    specularMap: o.specularMap === true,
+    lightMap: o.lightMap === true,
+    mapTransform: o.mapTransform === true,
     prelude: o.prelude ?? "",
     discardIf: o.discardIf ?? "",
   }
+}
+
+/** Whether the source samples anything by uv - then litBase resolves the
+ * `uv` local (transformed when mapTransform) both passes sample by. */
+function litUv(c: LitSource): boolean {
+  return (c.map && !c.triplanar) || c.normalMap || c.emissiveMap || c.specularMap
 }
 
 // The varyings both lit sources read. The shadow source declares the same
@@ -395,6 +473,7 @@ function litVaryings(c: LitSource): string {
     in vec3 vNormal;
     in vec2 vUv;
     ${c.vertexColors ? "in vec4 vColor;" : ""}
+    ${c.lightMap ? "in vec2 vUv2;" : ""}
   `
 }
 
@@ -409,6 +488,7 @@ function litBase(c: LitSource, flip: boolean): string {
   return glsl`
     vec3 n = normalize(vNormal);
     ${flip ? "if (!gl_FrontFacing) n = -n;" : ""}
+    ${litUv(c) ? `vec2 uv = ${c.mapTransform ? "vUv * uMapTransform.xy + uMapTransform.zw" : "vUv"};` : ""}
     vec4 base = uColor;
     ${
       c.map
@@ -417,7 +497,7 @@ function litBase(c: LitSource, flip: boolean): string {
     w /= w.x + w.y + w.z;
     vec3 p = vWorldPos * uTriplanar;
     base *= texture(uMap, p.yz) * w.x + texture(uMap, p.xz) * w.y + texture(uMap, p.xy) * w.z;`
-          : "base *= texture(uMap, vUv);"
+          : "base *= texture(uMap, uv);"
         : ""
     }
     ${c.vertexColors ? "base *= vColor;" : ""}
@@ -433,7 +513,7 @@ function litBase(c: LitSource, flip: boolean): string {
  * varyings in both passes.
  */
 export function litVertex(o: LitSourceOptions = {}): string {
-  return o.vertexColors === true ? LIT_VERTEX_COLORED : LIT_VERTEX
+  return litVertexSource(o.vertexColors === true, o.lightMap === true)
 }
 
 /**
@@ -444,7 +524,9 @@ export function litVertex(o: LitSourceOptions = {}): string {
  * discard.
  *
  * Per-entry uniforms to supply on instance(): `uColor` (premultiplied
- * vec4), `uSpecular`, `uShininess`, plus `uMap`/`uTriplanar`/`uAlphaTest`
+ * vec4), `uSpecular`, `uShininess`, plus `uMap`/`uTriplanar`/`uAlphaTest`/
+ * `uNormalMap`+`uNormalScale`/`uEmissive`/`uEmissiveMap`/`uSpecularMap`/
+ * `uLightMap`+`uLightMapIntensity`/`uMapTransform`
  * for the options that declare them, plus whatever `prelude` declares.
  * Everything else - the lights, the hemisphere, the camera position, the
  * shadow set, the fog - is written by the scene.
@@ -460,6 +542,12 @@ export function litFragment(o: LitSourceOptions = {}): string {
     uniform float uShininess;
     ${c.triplanar ? "uniform float uTriplanar;" : ""}
     ${c.alphaTest ? "uniform float uAlphaTest;" : ""}
+    ${c.emissive ? "uniform vec3 uEmissive;" : ""}
+    ${c.emissiveMap ? "uniform sampler2D uEmissiveMap;" : ""}
+    ${c.specularMap ? "uniform sampler2D uSpecularMap;" : ""}
+    ${c.lightMap ? "uniform sampler2D uLightMap;\n    uniform float uLightMapIntensity;" : ""}
+    ${c.mapTransform ? "uniform vec4 uMapTransform;" : ""}
+    ${c.normalMap ? NORMAL_MAP : ""}
     uniform vec3 uCamPos;
     uniform vec3 uHemiSky;
     uniform vec3 uHemiGround;
@@ -481,8 +569,10 @@ export function litFragment(o: LitSourceOptions = {}): string {
 
     void main() {
       ${litBase(c, c.cull !== "back")}
+      ${c.normalMap ? "n = perturbNormal(n, vWorldPos, uv);" : ""}
       vec3 v = normalize(uCamPos - vWorldPos);
       vec3 light = hemisphere(n, uHemiSky, uHemiGround);
+      ${c.lightMap ? "light += texture(uLightMap, vUv2).rgb * uLightMapIntensity;" : ""}
       vec3 spec = vec3(0.0);
       for (int i = 0; i < ${MAX_LIGHTS}; i++) {
         if (i >= uLightCount) break;
@@ -491,7 +581,8 @@ export function litFragment(o: LitSourceOptions = {}): string {
         light += uLightColor[i] * lambert(n, l) * s;
         spec += uLightColor[i] * blinnSpecular(n, v, l, uShininess) * s;
       }
-      vec3 rgb = base.rgb * light + spec * uSpecular * base.a;
+      vec3 rgb = base.rgb * light + spec * ${c.specularMap ? "(uSpecular * texture(uSpecularMap, uv).r)" : "uSpecular"} * base.a;
+      ${c.emissive ? `rgb += uEmissive${c.emissiveMap ? " * texture(uEmissiveMap, uv).rgb" : ""} * base.a;` : ""}
       ${c.fog ? `rgb = fog(rgb, ${alpha}, vWorldPos, uCamPos);` : ""}
       fragColor = vec4(rgb, ${alpha});
     }
@@ -521,6 +612,7 @@ export function litShadowFragment(o: LitSourceOptions = {}): string | undefined 
     ${c.map ? "uniform sampler2D uMap;" : ""}
     ${c.triplanar ? "uniform float uTriplanar;" : ""}
     ${c.alphaTest ? "uniform float uAlphaTest;" : ""}
+    ${c.mapTransform ? "uniform vec4 uMapTransform;" : ""}
     ${c.prelude}
 
     void main() {
@@ -571,6 +663,10 @@ export type UnlitSourceOptions = {
   alphaTest?: boolean
   /** Compose the scene's fog over the result (default true). */
   fog?: boolean
+  /** Declare `uniform vec4 uMapTransform` ([repeatU, repeatV, offsetU,
+   * offsetV]) and sample the map at `vUv * repeat + offset` (see the lit
+   * option of the same name). Needs `map`. */
+  mapTransform?: boolean
   /** GLSL spliced at file scope, before main. */
   prelude?: string
   /** A `bool` expression: true discards the fragment; splices into the
@@ -583,6 +679,7 @@ type UnlitSource = {
   transparent: boolean
   alphaTest: boolean
   fog: boolean
+  mapTransform: boolean
   prelude: string
   discardIf: string
 }
@@ -593,9 +690,17 @@ function resolveUnlit(o: UnlitSourceOptions): UnlitSource {
     transparent: o.transparent === true,
     alphaTest: o.alphaTest === true,
     fog: o.fog !== false,
+    mapTransform: o.mapTransform === true && o.map === true,
     prelude: o.prelude ?? "",
     discardIf: o.discardIf ?? "",
   }
+}
+
+/** The unlit base sample: uColor times the (possibly transformed) map. */
+function unlitBase(c: UnlitSource): string {
+  if (!c.map) return "vec4 base = uColor;"
+  let uv = c.mapTransform ? "vUv * uMapTransform.xy + uMapTransform.zw" : "vUv"
+  return `vec4 base = texture(uMap, ${uv}) * uColor;`
 }
 
 /**
@@ -619,11 +724,12 @@ export function unlitFragment(o: UnlitSourceOptions = {}): string {
     ${c.map ? "uniform sampler2D uMap;" : ""}
     uniform vec4 uColor;
     ${c.alphaTest ? "uniform float uAlphaTest;" : ""}
+    ${c.mapTransform ? "uniform vec4 uMapTransform;" : ""}
     ${c.fog ? "uniform vec3 uCamPos;" : ""}
     ${c.fog ? FOG : ""}
     ${c.prelude}
     void main() {
-      vec4 base = ${c.map ? "texture(uMap, vUv) * uColor" : "uColor"};
+      ${unlitBase(c)}
       ${c.alphaTest ? "if (base.a < uAlphaTest) discard;" : ""}
       ${c.discardIf ? `if (${c.discardIf}) discard;` : ""}
       ${c.fog ? `base.rgb = fog(base.rgb, ${alpha}, vWorldPos, uCamPos);` : ""}
@@ -646,9 +752,10 @@ export function unlitShadowFragment(o: UnlitSourceOptions = {}): string | undefi
     uniform vec4 uColor;
     ${c.map ? "uniform sampler2D uMap;" : ""}
     ${c.alphaTest ? "uniform float uAlphaTest;" : ""}
+    ${c.mapTransform ? "uniform vec4 uMapTransform;" : ""}
     ${c.prelude}
     void main() {
-      vec4 base = ${c.map ? "texture(uMap, vUv) * uColor" : "uColor"};
+      ${unlitBase(c)}
       ${c.alphaTest ? "if (base.a < uAlphaTest) discard;" : ""}
       ${c.discardIf ? `if (${c.discardIf}) discard;` : ""}
       fragColor = vec4(1.0);

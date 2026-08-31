@@ -3,8 +3,10 @@
 // mesh node, its name kept), triangles with positions, normals (flat ones
 // generated when absent, per the spec), one UV set and indices, and
 // materials reduced to what lit()/unlit() draw - base color factor and
-// texture, double-sidedness, alpha blending. Both containers: .gltf JSON
-// with external or data: buffers and images, and single-file .glb.
+// texture, normal map (with scale), emissive factor and map
+// (KHR_materials_emissive_strength folded in), double-sidedness, alpha
+// blending and masking. Both containers: .gltf JSON with external or
+// data: buffers and images, and single-file .glb.
 //
 // Pure module by design - a parse is JSON plus typed-array views plus one
 // interleave loop per primitive, so it runs the same under bun (the bake
@@ -40,6 +42,15 @@ export type ModelMaterial = {
   alphaMode: "OPAQUE" | "MASK" | "BLEND"
   /** glTF alphaCutoff (default 0.5); meaningful for MASK only. */
   alphaCutoff: number
+  /** Index into ModelData.images (the tangent-space normal map), or null. */
+  normalMap: number | null
+  /** glTF normalTexture.scale (default 1); meaningful with normalMap. */
+  normalScale: number
+  /** glTF emissiveFactor (default [0, 0, 0] = off) with
+   * KHR_materials_emissive_strength multiplied in. */
+  emissive: [number, number, number]
+  /** Index into ModelData.images (the emissive map), or null. */
+  emissiveMap: number | null
 }
 
 /** One drawable: a mesh node's primitive, vertices in WORLD space. */
@@ -86,6 +97,10 @@ const DEFAULT_MATERIAL: ModelMaterial = {
   transparent: false,
   alphaMode: "OPAQUE",
   alphaCutoff: GLTF_ALPHA_CUTOFF,
+  normalMap: null,
+  normalScale: 1,
+  emissive: [0, 0, 0],
+  emissiveMap: null,
 }
 
 /** True when the bytes are a .glb container (the "glTF" magic). */
@@ -128,9 +143,10 @@ export function parseGltf(bytes: Uint8Array, resolve?: UriResolver): ModelData {
     if (ext === "KHR_draco_mesh_compression" || ext === "EXT_meshopt_compression") {
       throw new Error("parseGltf: the file's meshes are compressed (" + ext + "), which is not supported: re-export without mesh compression")
     }
-    // Quantized attributes read through the normalized-integer path; every
-    // other required extension changes what the file means.
-    if (ext !== "KHR_mesh_quantization") {
+    // Quantized attributes read through the normalized-integer path,
+    // emissive strength folds into the emissive factor; every other
+    // required extension changes what the file means.
+    if (ext !== "KHR_mesh_quantization" && ext !== "KHR_materials_emissive_strength") {
       throw new Error("parseGltf: the file requires the " + ext + " extension, which is not supported")
     }
   }
@@ -173,22 +189,31 @@ export function parseGltf(bytes: Uint8Array, resolve?: UriResolver): ModelData {
     return slot
   }
 
+  // A texture reference's image slot, or null (the reference absent, or
+  // its texture imageless). Further UV sets are outside the subset, so a
+  // non-zero texCoord is ignored and the map samples the one UV set.
+  let textureSlot = (ref: any): number | null => {
+    if (ref === undefined) return null
+    let texture = gltf.textures?.[ref.index]
+    return texture?.source !== undefined ? imageSlot(texture.source) : null
+  }
   let materials: ModelMaterial[] = (gltf.materials ?? []).map((m: any, i: number): ModelMaterial => {
     let pbr = m.pbrMetallicRoughness ?? {}
     let factor = pbr.baseColorFactor ?? [1, 1, 1, 1]
-    let map: number | null = null
-    if (pbr.baseColorTexture !== undefined) {
-      let texture = gltf.textures?.[pbr.baseColorTexture.index]
-      if (texture?.source !== undefined) map = imageSlot(texture.source)
-    }
+    let emissiveFactor: number[] = m.emissiveFactor ?? [0, 0, 0]
+    let strength = m.extensions?.KHR_materials_emissive_strength?.emissiveStrength ?? 1
     return {
       name: m.name ?? "material" + i,
       color: [factor[0], factor[1], factor[2], factor[3] ?? 1],
-      map,
+      map: textureSlot(pbr.baseColorTexture),
       doubleSided: m.doubleSided === true,
       transparent: m.alphaMode === "BLEND",
       alphaMode: m.alphaMode === "MASK" || m.alphaMode === "BLEND" ? m.alphaMode : "OPAQUE",
       alphaCutoff: typeof m.alphaCutoff === "number" ? m.alphaCutoff : GLTF_ALPHA_CUTOFF,
+      normalMap: textureSlot(m.normalTexture),
+      normalScale: typeof m.normalTexture?.scale === "number" ? m.normalTexture.scale : 1,
+      emissive: [(emissiveFactor[0] ?? 0) * strength, (emissiveFactor[1] ?? 0) * strength, (emissiveFactor[2] ?? 0) * strength],
+      emissiveMap: textureSlot(m.emissiveTexture),
     }
   })
   // Primitives without a material draw the spec's default; it is appended

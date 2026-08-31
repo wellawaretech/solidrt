@@ -14,7 +14,10 @@ import { layoutKey, layoutStride, STANDARD_FLOATS } from "./geometry.ts"
 
 /** "SRTM" read as a little-endian u32. */
 const MAGIC = 0x4d545253
-const VERSION = 1
+// Version 2 added the surface-map material fields (normalMap/normalScale/
+// emissive/emissiveMap); version-1 files decode to materials missing them,
+// so they are rejected - re-bake with `srt tool 3d/model`.
+const VERSION = 2
 
 type Block = { offset: number; bytes: number }
 

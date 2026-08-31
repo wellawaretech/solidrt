@@ -116,13 +116,6 @@ Shaped, not started.
   a perspective camera; a point light needs a cube-map target and six faces,
   which the engine has no path for (gpu-cube-maps). Demand-gated - no spot or
   point light NODE exists yet either.
-- **[Surface maps on lit - normal, emissive, specular and light maps, plus a UV transform](backlog/3d-surface-maps.md)** [2026-08-30]
-  lit takes ONE map, the base color; a track surface with a normal map, a
-  glowing sign, a glossy-versus-matte mask or a baked lightmap all have to
-  leave the standard material for a hand-written shaderMaterial. Add the
-  pre-PBR map slots to lit as class-key options, with the tangent layout from
-  roadmap item 10 as the prerequisite and a UV offset/repeat for scrolling
-  surfaces.
 - **[Adaptive present-fence depth](backlog/adaptive-present-fence-depth.md)** [2026-07-27]
   Fallback design if unconditional two-deep present fencing ever shows up as
   desktop drag latency - allow the second in-flight frame only when observed
@@ -786,6 +779,12 @@ Finished, kept for the reasoning.
   spatial core, and a scene VIEW (render this scene into that target from this
   camera) in the library - with the view settled first because split-screen,
   minimaps and reflections hit the same wall.
+- **[Surface maps on lit - normal, emissive, specular and light maps, plus a UV transform](done/3d-surface-maps.md)** [2026-08-31]
+  lit took ONE map, the base color; every other pre-PBR slot (normal,
+  emissive, specular mask, baked light, a UV transform) forced a hand-written
+  shaderMaterial. Shipped as class-key options on lit with derivative-based
+  normal mapping (no tangent layout), the glTF loader and .srtm v2 carrying
+  normal and emissive, and the names settled against Three, Unity and Godot.
 - **[Per-view mesh selection (Three's layers) and the scene's own depth texture](done/3d-view-mesh-selection.md)** [2026-08-31]
   createView mirrors EVERY mesh, so a minimap cannot show markers only, a
   rear-view mirror cannot leave out the HUD meshes and a reflection view draws
@@ -1596,6 +1595,12 @@ Bugs in our dependencies. Status here is the dependency's, not ours.
   needsUnwrap instead of OR-ing it, so an accessor followed by a function-free
   array child is returned raw; the DOM renderer tolerates it, a universal
   renderer passes the memo to insertNode and crashes.
+- **[Cheatsheet says untrack exempts owned-scope writes; the guard is owner-based and untrack cannot](upstream/signals-untrack-owned-write-guard.md)** [2026-08-31]
+  REACTIVE_WRITE_IN_OWNED_SCOPE fires on the owner context, which untrack
+  never touches (it only toggles tracking), so the cheatsheet's documented
+  escape hatch ("move setters into untrack" / "untracked blocks") throws
+  anyway; folded in, the thrown Error should name the owner it already
+  computes for emitDiagnostic.
 - **[Solid babel plugin HTML-escapes text in universal mode](upstream/solid-babel-plugin-universal-escapes-text.md)** [2026-08-30]
   With generate universal, static string children are passed through
   escapeHTML ("<" becomes "&lt;", "&" becomes "&amp;", ">" untouched) and JSX

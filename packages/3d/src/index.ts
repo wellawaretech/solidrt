@@ -23,7 +23,7 @@ export { gltfExternalUris, isGlb, parseGltf } from "./gltf.ts"
 export type { ModelData, ModelMaterial, ModelPart, UriResolver } from "./gltf.ts"
 export { decodeModel, encodeModel } from "./model-file.ts"
 export { createModel, loadGltf, loadModel } from "./model.ts"
-export type { Model, ModelOptions } from "./model.ts"
+export type { Model, ModelMaps, ModelOptions } from "./model.ts"
 export { createOrbitCamera } from "./orbit.ts"
 export type { OrbitCamera, OrbitCameraOptions, OrbitPose, OrbitTarget } from "./orbit.ts"
 // math's lookAt (the camera view matrix) stays on the /math subpath: the

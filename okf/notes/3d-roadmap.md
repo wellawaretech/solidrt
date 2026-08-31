@@ -219,14 +219,13 @@ what it delivered is documented in `packages/3d/AGENTS.md`, not here.
     testing every node per frame is exactly the O(scene) loop the design
     avoids. Both land with no app-facing API change, the reason the draw
     list was shaped as it was.
-21. [ ] **Surface maps on `lit`: normal, emissive, specular, light maps,
-    UV transform.** Library, plus the tangent and second-UV named layouts
-    from item 10 and the loader emitting them (item 7's open list).
-    The pre-PBR tier every engine shipped for a decade - Blinn-Phong with
-    a normal map is what authored track and vehicle assets are made for -
-    and it deliberately does not wait on item 17's lighting model or
-    color-space decision. Shaped in
-    [3d-surface-maps](../backlog/3d-surface-maps.md).
+21. [x] **Surface maps on `lit`: normal, emissive, specular, light maps,
+    UV transform.** Library:
+    [3d-surface-maps](../done/3d-surface-maps.md) (shipped 2026-08-31).
+    Normal mapping is derivative-based, so item 10's tangent layout was
+    NOT needed and returns only as a quality option if mirrored-UV seams
+    show up in a real model; item 17's lighting model and color-space
+    decision stay untouched.
 22. [ ] **Level of detail.** Core, a sink beside item 19's culling: a
     LOD group's level is picked by distance from a reference node after
     the flush and drives the variants' visibility switches, so a

@@ -116,6 +116,24 @@ export type UnlitOptions = {
    * the program - a sky sphere or a far backdrop that must keep its
    * color, an emissive marker. */
   fog?: boolean
+  /** Offset and repeat for the uv every map of this material samples:
+   * `uv * repeat + offset` (defaults `[1, 1]` / `[0, 0]`). ONE transform
+   * per MATERIAL (Godot's uv1_offset/uv1_scale, Unity's Tiling/Offset) -
+   * deliberately not Three's per-texture transform, since a TextureId is
+   * a shared value whose sampling is creation-time state. A cutout's
+   * shadow transforms the same way; lit's lightMap (aUV2) is exempt.
+   * Scrolling surfaces (water, a conveyor) drive it per frame with
+   * `setMeshParams(mesh, { uMapTransform: [ru, rv, ou, ov] })`. Needs a
+   * map; not with triplanar (whose repeat is uTriplanar). */
+  mapTransform?: { offset?: [number, number]; repeat?: [number, number] }
+}
+
+/** The uMapTransform vec4 for a mapTransform option: [repeatU, repeatV,
+ * offsetU, offsetV]. */
+function mapTransformParam(t: { offset?: [number, number]; repeat?: [number, number] }): number[] {
+  let repeat = t.repeat ?? [1, 1]
+  let offset = t.offset ?? [0, 0]
+  return [repeat[0], repeat[1], offset[0], offset[1]]
 }
 
 /**
@@ -132,12 +150,14 @@ export function unlit(opts: UnlitOptions = {}): Material {
   let cull = opts.cull ?? "back"
   let alphaTest = opts.alphaTest !== undefined
   let fog = opts.fog !== false
-  let key = [map, transparent, cull, alphaTest, fog].join("|")
+  let mapTransform = opts.mapTransform !== undefined
+  if (mapTransform && !map) throw new Error("unlit: mapTransform without a map to transform")
+  let key = [map, transparent, cull, alphaTest, fog, mapTransform].join("|")
   let cls = unlitClasses.get(key)
   if (cls === undefined) {
     cls = shaderMaterialClass({
       vertex: UNLIT_VERTEX,
-      fragment: unlitFragment({ map, alphaTest, transparent, fog }),
+      fragment: unlitFragment({ map, alphaTest, transparent, fog, mapTransform }),
       transparent,
       cull,
       label: "scene-unlit-" + key,
@@ -146,10 +166,14 @@ export function unlit(opts: UnlitOptions = {}): Material {
   }
   let params: ShaderParams = { uColor }
   if (alphaTest) params.uAlphaTest = opts.alphaTest!
+  if (mapTransform) params.uMapTransform = mapTransformParam(opts.mapTransform!)
   return cls.instance({
     params,
     textures: map ? { uMap: opts.map! } : undefined,
-    shadow: alphaTest && map ? unlitShadowMaterial(shadowCull(cull), uColor, opts.alphaTest!, opts.map!) : undefined,
+    shadow:
+      alphaTest && map
+        ? unlitShadowMaterial(shadowCull(cull), uColor, opts.alphaTest!, opts.map!, mapTransform ? params.uMapTransform as number[] : undefined)
+        : undefined,
   })
 }
 
@@ -167,6 +191,43 @@ export type LitOptions = UnlitOptions & {
    * each part's size or UVs; the map must be created with
    * `wrap: "repeat"`. */
   triplanar?: number
+  /** A tangent-space normal map (OpenGL-style +Y, as glTF mandates),
+   * sampled at the same uv as `map` and bending the lit normal - track
+   * relief, kart panel lines, without triangles. The tangent frame is
+   * built per fragment from screen-space derivatives (NORMAL_MAP in
+   * `@solidrt/3d/glsl` - Three's untangented path), so ANY UV-mapped
+   * geometry works with no tangent channel; the trade is mild seams on
+   * mirrored UVs. Not with `triplanar` (which samples by world position).
+   * Wants `mipmap: true` at creation like any map seen at distance. */
+  normalMap?: TextureId
+  /** How strongly the normal map bends the surface, default 1 (0 flattens
+   * it). One float, as in Unity (_BumpScale) and Godot (normal_scale) -
+   * not Three's Vector2, whose second component exists to flip
+   * DirectX-style green channels. */
+  normalScale?: number
+  /** Light the surface emits, [r, g, b] 0..1 with any intensity folded in
+   * (the uLightColor convention) - added after the lighting terms,
+   * unaffected by lights and shadows, fogged like everything else.
+   * Defaults to WHITE when `emissiveMap` is given (the map is the
+   * emission - fixing Three's black-default gotcha, where an emissiveMap
+   * alone shows nothing) and to off otherwise. */
+  emissive?: [number, number, number]
+  /** A texture multiplying `emissive` per fragment - lamps, screens,
+   * nitro glow baked into one map. Sampled at the same uv as `map`. */
+  emissiveMap?: TextureId
+  /** A texture whose RED channel scales `specular` per fragment (Three's
+   * specularMap) - chrome and rubber on one mesh. With it, `specular`
+   * defaults to 1 (the map is the strength). */
+  specularMap?: TextureId
+  /** A baked-light texture (an offline render, an AO+GI bake), sampled by
+   * the geometry's aUV2 channel and ADDED to the light sum like the
+   * hemisphere term - a fully baked scene runs with no lights at all
+   * (Three's lightMap; Unity and Godot bake at scene level, but here the
+   * material picks the program). The geometry must carry aUV2
+   * (withAttribute) or add() throws. */
+  lightMap?: TextureId
+  /** Scales the lightMap, default 1. */
+  lightMapIntensity?: number
   /**
    * Receive the scene's directional shadows (default true, like Godot and
    * Three): each casting light's term is multiplied by its shadow-map
@@ -189,7 +250,12 @@ export type LitOptions = UnlitOptions & {
 // faces lights them with the normal flipped, else a double-sided leaf's
 // back is black) x alphaTest (the cutoff itself is a per-entry uniform,
 // one class for every value) x fog (the scene's fog composed last, or
-// left out of the program). An opaque class writes alpha 1 (see
+// left out of the program) x the surface maps (normalMap, emissive /
+// emissiveMap, specularMap, lightMap) x mapTransform. The key's
+// dimensionality costs nothing by itself: classes are created lazily per
+// combination USED, so the program count is the app's distinct material
+// configurations, bounded by its material count, never by this tuple's
+// width. An opaque class writes alpha 1 (see
 // unlitFragment). Lights arrive through the scene's shared params (light
 // nodes); the base color, map and highlight are per entry. The shadow set
 // is shared too and indexed like the lights: one atlas sampler,
@@ -210,6 +276,12 @@ type LitClass = {
   cull: CullMode
   alphaTest: boolean
   fog: boolean
+  normalMap: boolean
+  emissive: boolean
+  emissiveMap: boolean
+  specularMap: boolean
+  lightMap: boolean
+  mapTransform: boolean
 }
 
 function litClassKey(c: LitClass): string {
@@ -235,6 +307,17 @@ export function lit(opts: LitOptions = {}): Material {
   let triplanar = map && opts.triplanar !== undefined
   let alphaTest = opts.alphaTest !== undefined
   let cull = opts.cull ?? "back"
+  let normalMap = opts.normalMap !== undefined
+  let emissiveMap = opts.emissiveMap !== undefined
+  let emissive = opts.emissive !== undefined || emissiveMap
+  let specularMap = opts.specularMap !== undefined
+  let lightMap = opts.lightMap !== undefined
+  let mapTransform = opts.mapTransform !== undefined
+  if (triplanar && normalMap) throw new Error("lit: normalMap cannot combine with triplanar (normal maps sample by uv)")
+  if (triplanar && mapTransform) throw new Error("lit: mapTransform cannot combine with triplanar (its repeat is the triplanar value)")
+  if (mapTransform && !map && !normalMap && !emissiveMap && !specularMap) {
+    throw new Error("lit: mapTransform without a map to transform")
+  }
   let flags: LitClass = {
     map,
     vertexColors: opts.vertexColors === true,
@@ -244,6 +327,12 @@ export function lit(opts: LitOptions = {}): Material {
     cull,
     alphaTest,
     fog: opts.fog !== false,
+    normalMap,
+    emissive,
+    emissiveMap,
+    specularMap,
+    lightMap,
+    mapTransform,
   }
   let key = litClassKey(flags)
   let cls = litClasses.get(key)
@@ -257,17 +346,37 @@ export function lit(opts: LitOptions = {}): Material {
     })
     litClasses.set(key, cls)
   }
-  let params: ShaderParams = { uColor, uSpecular: opts.specular ?? 0, uShininess: opts.shininess ?? 30 }
+  let params: ShaderParams = {
+    uColor,
+    uSpecular: opts.specular ?? (specularMap ? 1 : 0),
+    uShininess: opts.shininess ?? 30,
+  }
   if (triplanar) params.uTriplanar = opts.triplanar!
   if (alphaTest) params.uAlphaTest = opts.alphaTest!
+  if (normalMap) params.uNormalScale = opts.normalScale ?? 1
+  if (emissive) params.uEmissive = opts.emissive ?? [1, 1, 1]
+  if (lightMap) params.uLightMapIntensity = opts.lightMapIntensity ?? 1
+  if (mapTransform) params.uMapTransform = mapTransformParam(opts.mapTransform!)
+  let textures: TextureBindings | undefined
+  if (map || normalMap || emissiveMap || specularMap || lightMap) {
+    textures = {}
+    if (map) textures.uMap = opts.map!
+    if (normalMap) textures.uNormalMap = opts.normalMap!
+    if (emissiveMap) textures.uEmissiveMap = opts.emissiveMap!
+    if (specularMap) textures.uSpecularMap = opts.specularMap!
+    if (lightMap) textures.uLightMap = opts.lightMap!
+  }
   // A mapped cutout casts its cutout, triplanar included (the shadow
   // source resolves the base exactly as the main one does). A color-only
   // alphaTest is a constant over the mesh - all or nothing, and nothing
   // needs no program - so it keeps the plain cull-only variant.
   let material = cls.instance({
     params,
-    textures: map ? { uMap: opts.map! } : undefined,
-    shadow: alphaTest && map ? litShadowMaterial(flags, uColor, opts.alphaTest!, opts.triplanar, opts.map!) : undefined,
+    textures,
+    shadow:
+      alphaTest && map
+        ? litShadowMaterial(flags, uColor, opts.alphaTest!, opts.triplanar, opts.map!, mapTransform ? params.uMapTransform as number[] : undefined)
+        : undefined,
   })
   return material
 }
@@ -286,6 +395,7 @@ function litShadowMaterial(
   uAlphaTest: number,
   triplanar: number | undefined,
   uMap: TextureId,
+  uMapTransform?: number[],
 ): Material {
   let key = litClassKey(flags)
   let cls = litShadowClasses.get(key)
@@ -302,6 +412,7 @@ function litShadowMaterial(
   }
   let params: ShaderParams = { uColor, uAlphaTest }
   if (flags.triplanar) params.uTriplanar = triplanar!
+  if (uMapTransform !== undefined) params.uMapTransform = uMapTransform
   let material = cls.instance({ params, textures: { uMap } })
   // Only triplanar sampling reads the normal here: everywhere else the
   // linker drops vNormal and uNormal reflects inactive, so writing it per
@@ -362,27 +473,30 @@ function shadowVariant(cull: CullMode): Material | undefined {
   return cull === "back" ? undefined : shadowDepthMaterial(shadowCull(cull))
 }
 
-let unlitShadowClasses = new Map<CullMode, ShaderMaterialClass>()
+let unlitShadowClasses = new Map<string, ShaderMaterialClass>()
 
 /** The shadow variant of a discarding unlit material: unlitShadowFragment
  * on the same vertex stage, litShadowMaterial's unlit twin. unlit()'s
- * only discard is the mapped cutout, so the program is one; cull is class
- * state, so one class per shadow cull mode. An instance per material (its
- * map, color, cutoff). */
-function unlitShadowMaterial(cull: CullMode, uColor: number[], uAlphaTest: number, uMap: TextureId): Material {
-  let cls = unlitShadowClasses.get(cull)
+ * only discard is the mapped cutout, so what varies is the shadow cull
+ * and whether the cutout's uv is transformed - one class per combination.
+ * An instance per material (its map, color, cutoff, transform). */
+function unlitShadowMaterial(cull: CullMode, uColor: number[], uAlphaTest: number, uMap: TextureId, uMapTransform?: number[]): Material {
+  let key = cull + "|" + (uMapTransform !== undefined)
+  let cls = unlitShadowClasses.get(key)
   if (cls === undefined) {
-    let fragment = unlitShadowFragment({ map: true, alphaTest: true })
+    let fragment = unlitShadowFragment({ map: true, alphaTest: true, mapTransform: uMapTransform !== undefined })
     if (fragment === undefined) throw new Error("unlitShadowMaterial: the cutout options cannot discard")
     cls = shaderMaterialClass({
       vertex: UNLIT_VERTEX,
       fragment,
       cull,
-      label: "scene-unlit-shadow-" + cull,
+      label: "scene-unlit-shadow-" + key,
     })
-    unlitShadowClasses.set(cull, cls)
+    unlitShadowClasses.set(key, cls)
   }
-  return cls.instance({ params: { uColor, uAlphaTest }, textures: { uMap } })
+  let params: ShaderParams = { uColor, uAlphaTest }
+  if (uMapTransform !== undefined) params.uMapTransform = uMapTransform
+  return cls.instance({ params, textures: { uMap } })
 }
 
 export type SpriteOptions = UnlitOptions & {
