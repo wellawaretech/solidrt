@@ -2,6 +2,7 @@
 title: 2D layers render at layer resolution, so they are soft on HiDPI and shimmer at a fractional designSize fit
 description: A sprite or tile layer draws into a texture sized in the numbers the app passed and is composited at whatever scale its box ends up at, with one sampler doing the whole resample - nearest snaps pixels to uneven widths and boils under motion, linear blurs. Render the layer at an integer oversample of its own resolution, composite linear.
 created: 2026-08-22
+completed: 2026-08-31
 ---
 
 # 2D layers render at layer resolution, so they are soft on HiDPI and shimmer at a fractional designSize fit
@@ -123,3 +124,25 @@ Open before implementing: whether `setSize` keeps taking layer pixels (it
 should: one unit per API, the oversample is the only texel-side number), and
 what a layer does when its window moves between displays of different scale
 mid-run (stage 2's onLayout path covers it if the resize event fires there).
+
+## Findings
+
+Stages 1 and 2 landed (uncommitted, "Oversampling" / "maxOversample"
+commits): `oversample` + `setOversample` on both primitives (the sprite
+layer resizes its target in place, the tile layer resizes every resident
+chunk and re-bakes once), the auto-pick in the components from the leaf's
+on-screen box (`pickOversample`/`fitOversample` in
+[oversample-math.ts](../../packages/2d/src/oversample-math.ts), with the
+window-texel budget capping the pick, shrink hysteresis, and a thrash
+sentinel), re-picked per layout and on `displayScale()` changes - which
+answers the display-move open question. `setSize` kept layer pixels, as
+argued above. The tile layer's `filter` default flipped to linear with
+nearest belonging to the atlas sampler, per the shape. Two follow-ups
+became their own closed items:
+[2d-tile-oversample-ceiling](2d-tile-oversample-ceiling.md) (`maxOversample`
+bounding the auto-pick; the texel budget stays per target by design) and
+the rotation swell divide-out in `<TileLayer>`'s measurement (the AABB of a
+rotated world view is not a resolution factor).
+
+Stage 3 - `@solidrt/3d` getting the same knob and default - did not land
+with this and moved to ideas.md when this item closed.

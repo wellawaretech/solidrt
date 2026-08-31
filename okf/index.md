@@ -51,22 +51,10 @@ Shaped, not started.
   Static 2D bulk (tile worlds, backgrounds) rendered once into a texture and
   drawn as ONE quad, with incremental re-bake - the primitive-count answer for
   tiled GPUs
-- **[2D layers render at layer resolution, so they are soft on HiDPI and shimmer at a fractional designSize fit](backlog/2d-layer-display-scale.md)** [2026-08-22]
-  A sprite or tile layer draws into a texture sized in the numbers the app
-  passed and is composited at whatever scale its box ends up at, with one
-  sampler doing the whole resample - nearest snaps pixels to uneven widths and
-  boils under motion, linear blurs. Render the layer at an integer oversample
-  of its own resolution, composite linear.
 - **[Retro presets for @solidrt/2d](backlog/2d-retro-presets.md)** [2026-08-19]
   The pixel-art identity kit - fixed logical resolution with integer nearest
   scaling, palette LUT, and scanline/CRT passes - as thin layers over what
   already exists
-- **[Sprites as spatial-core citizens](backlog/2d-spatial-citizenship.md)** [2026-08-24]
-  Sprite poses are JS-owned floats, so no core producer (native transitions,
-  animation clips, physics) can ever move a sprite and picking is an O(n) JS
-  walk; make each live sprite a spatial arena node whose InstanceRecord sink
-  writes its instance-buffer slot, connecting 2d to the whole producer stack
-  while rendering stays one instanced draw.
 - **[Sprite draw order is insertion order, so reordering means remove and re-add](backlog/2d-sprite-sort-key.md)** [2026-08-22]
   The sprite layer paints in record order with no sort key, so raising one
   sprite or depth-sorting a population by y - the ordinary case for a dense 2D
@@ -77,15 +65,6 @@ Shaped, not started.
   locate() and a frame copy; fine today because the flush batches to a
   microtask, but a larger world or a procedural refill on approach wants a
   rect write from a typed array.
-- **[A tile is a frame and nothing else, so tinting a tile world means duplicating cells in the atlas](backlog/2d-tile-tint.md)** [2026-08-29]
-  setTile takes a Frame or null; the baked chunk records already carry a tint
-  at defaults, but neither the tile nor the layer exposes it, so day/night,
-  damage states, team colours, biome shifts and fog-of-war dimming all fall
-  back to atlas duplication or an overlay rect.
-- **[Tile world bounds - bounded contract or additive path to unbounded](backlog/2d-tile-world-bounds.md)** [2026-08-30]
-  Decide whether the TileLayer's creation-fixed cols x rows grid is the
-  contract, or sketch the additive route to an unbounded world before
-  something depends on the bound
 - **[Scene-wide effects on custom materials - one answer for fog, shadows and what comes next](backlog/3d-custom-material-scene-effects.md)** [2026-08-30]
   A shaderMaterial gets the scene's fog and shadows only by composing FOG and
   the SHADOW trio itself, and every instanced mesh has a custom material, so
@@ -388,13 +367,13 @@ Shaped, not started.
   the fused paths become thin compositions of the raw layer, whether a
   mid-level program shorthand is wanted, and the two-dialect preamble story.
 - **[Instance draw order within one entry, produced in core](backlog/gpu-instance-order.md)** [2026-08-24]
-  Two populations need the draw order of one entry's instance records to
-  change without record churn - sprite raise/y-sort reorders by
-  remove-and-re-add today, and gaussian splats need a back-to-front order over
-  hundreds of thousands of records per camera move, which is O(N) work no rung
-  above core can pay. One core primitive orders an entry's records by a key (a
-  record field, or view-projected depth) so record slots stay stable and JS
-  never touches the order.
+  Draw order of one entry's instance records must change without record churn
+  - sprite raise/y-sort reorders by remove-and-re-add today, gaussian splats
+  need back-to-front over 100k+ records per camera move, and particles would
+  need it per frame. One core primitive orders an entry's records by a key
+  (field or view-projected depth); slots stay stable, JS never touches the
+  order. Settled 2026-08-31 - one API, key mode and materialization
+  orthogonal, gather-at-publish default, retained copy opt-in.
 - **[More pipeline blend modes](backlog/gpu-pipeline-blend-modes.md)** [2026-07-29]
   The blend vocabulary on createPipeline is "none", "add", "multiply" and
   "alpha"; the rest of GL's fixed-function space (screen, subtract, min/max)
@@ -629,11 +608,10 @@ Shaped, not started.
   background from press state by hand, and every other widget repeats the
   pattern; a helper that selects a prop bundle from state would collapse it.
 - **[The stats window has no present-interval jank counter, so a repeated frame can pass every figure clean](backlog/stats-present-interval-jank.md)** [2026-08-31]
-  Jank is a presented frame whose content does not advance one step - a repeat
-  then a skip (4 4 6) - and none of the window fields count it directly;
-  slowFrames sees only the JS critical path, fenceTimeouts only fires past
-  100ms, fps and the per-frame averages are blind to a single miss. Count
-  missed presents on the raster thread and make that the figure probes quote.
+  missedPresents (raster-side, demand-gated, run-based counting) is
+  implemented and is the figure probes quote; remaining are maxPresentGapMs
+  and per-platform validation of the present timestamps (ANGLE/D3D11, macOS,
+  Android).
 - **[Bidirectional text in the owned layout](backlog/text-bidi.md)** [2026-08-17]
   The owned text engine places wrap units on a line in logical order and
   treats "start" as left, so RTL rich text spanning styled runs on one line,
@@ -731,6 +709,18 @@ Finished, kept for the reasoning.
   data-driven sprite count had to guess a maximum up front and crashed when it
   guessed low; resolved by a draw-entry buffer swap in core (setDraw buffer
   keys / setDrawBuffers) and doubling growth in the layer.
+- **[2D layers render at layer resolution, so they are soft on HiDPI and shimmer at a fractional designSize fit](done/2d-layer-display-scale.md)** [2026-08-31]
+  A sprite or tile layer draws into a texture sized in the numbers the app
+  passed and is composited at whatever scale its box ends up at, with one
+  sampler doing the whole resample - nearest snaps pixels to uneven widths and
+  boils under motion, linear blurs. Render the layer at an integer oversample
+  of its own resolution, composite linear.
+- **[Sprites as spatial-core citizens](done/2d-spatial-citizenship.md)** [2026-08-31]
+  Sprite poses are JS-owned floats, so no core producer (native transitions,
+  animation clips, physics) can ever move a sprite and picking is an O(n) JS
+  walk; make each live sprite a spatial arena node whose InstanceRecord sink
+  writes its instance-buffer slot, connecting 2d to the whole producer stack
+  while rendering stays one instanced draw.
 - **[The sprite layer's camera cannot rotate, so sprites cannot ride a rotating world](done/2d-sprite-camera-rotation.md)** [2026-08-24]
   TileCamera rotates the baked world about a pivot, but the sprite layer's
   uCamera is offset + zoom only, so the ship and enemies drawn as sprites over
@@ -755,6 +745,15 @@ Finished, kept for the reasoning.
   texture memory (resident chunks x n squared) on high-scale displays without
   giving up adaptivity; the window texel budget stays per target by design - a
   layer-total budget would shrink quality as chunks allocate.
+- **[A tile is a frame and nothing else, so tinting a tile world means duplicating cells in the atlas](done/2d-tile-tint.md)** [2026-08-31]
+  setTile takes a Frame or null; the baked chunk records already carry a tint
+  at defaults, but neither the tile nor the layer exposes it, so day/night,
+  damage states, team colours, biome shifts and fog-of-war dimming all fall
+  back to atlas duplication or an overlay rect.
+- **[Tile world bounds - bounded contract or additive path to unbounded](done/2d-tile-world-bounds.md)** [2026-08-31]
+  Decide whether the TileLayer's creation-fixed cols x rows grid is the
+  contract, or sketch the additive route to an unbounded world before
+  something depends on the bound
 - **[Colored geometry generates twice](done/3d-colored-generators.md)** [2026-08-19]
   Building coloured geometry generated twice (generate, then withColors
   repacked). Fixed in two stages 2026-08-23 - vertex layouts became open

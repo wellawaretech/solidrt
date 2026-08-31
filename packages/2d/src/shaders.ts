@@ -46,13 +46,17 @@ export let VERTEX = glsl`
   }
 `
 
+// uTint is the LAYER tint, multiplied over the per-instance vTint (identity
+// [1, 1, 1, 1] - GLSL uniforms default to ZERO, so every pipeline creation
+// must pin it explicitly or everything renders transparent black).
 export let FRAGMENT = glsl`
   in vec2 vUv;
   in vec4 vTint;
   uniform sampler2D uAtlas;
+  uniform vec4 uTint;
 
   void main() {
-    fragColor = texture(uAtlas, vUv) * vTint;
+    fragColor = texture(uAtlas, vUv) * vTint * uTint;
   }
 `
 

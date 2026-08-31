@@ -2,6 +2,7 @@
 title: Tile world bounds - bounded contract or additive path to unbounded
 description: Decide whether the TileLayer's creation-fixed cols x rows grid is the contract, or sketch the additive route to an unbounded world before something depends on the bound
 created: 2026-08-30
+completed: 2026-08-31
 ---
 
 # Tile world bounds
@@ -36,3 +37,17 @@ Options:
 
 Either way the current API survives; the decision only fixes which
 sentences the docs get to promise.
+
+## Decision
+
+Option 1, decided 2026-08-31: bounded is the contract. A tile world is
+finite and sized at creation, documented as deliberate (not a provisional
+limit) in the `createTileLayer` doc comment and packages/2d/AGENTS.md - a
+huge sparse world picks big numbers and pays nothing for empty chunks,
+because the grid bound is bookkeeping, not allocation.
+
+Unbounded stays reachable exactly as sketched above: an additive creation
+form whose composite anchors on the camera, landing together with
+camera-driven chunk residency (2d-baked-layers.md stage B2) - an unbounded
+world without eviction is a memory leak with a scenic route. Nothing
+promised today blocks that; the current API survives it unchanged.

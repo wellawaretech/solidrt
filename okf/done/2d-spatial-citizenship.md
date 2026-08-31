@@ -2,6 +2,7 @@
 title: Sprites as spatial-core citizens
 description: Sprite poses are JS-owned floats, so no core producer (native transitions, animation clips, physics) can ever move a sprite and picking is an O(n) JS walk; make each live sprite a spatial arena node whose InstanceRecord sink writes its instance-buffer slot, connecting 2d to the whole producer stack while rendering stays one instanced draw.
 created: 2026-08-24
+completed: 2026-08-31
 ---
 
 # Sprites as spatial-core citizens

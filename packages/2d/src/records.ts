@@ -101,7 +101,7 @@ export function createRecordLayer(
     FRAGMENT,
     width * oversample,
     height * oversample,
-    { uViewport: [width, height], uCamera: [0, 0, 1, 1], uCameraRot: [1, 0, 0, 0] },
+    { uViewport: [width, height], uCamera: [0, 0, 1, 1], uCameraRot: [1, 0, 0, 0], uTint: [1, 1, 1, 1] },
     {
       label,
       topology: "triangle-strip",

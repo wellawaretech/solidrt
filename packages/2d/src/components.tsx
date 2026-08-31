@@ -307,6 +307,13 @@ export type TileLayerProps = {
   /** Chunk edge in tiles (default ~512px worth); see TileLayerOptions. */
   chunkTiles?: number
   /**
+   * Layer tint, [r, g, b, a] in 0..1, multiplied over every cell's own
+   * tint (day/night, a dimmed parallax plane). A change re-renders every
+   * resident chunk GPU-side (no record uploads) - drive it from slow
+   * state, not per frame.
+   */
+  tint?: [number, number, number, number]
+  /**
    * Pan/zoom/rotate over the world - a transform on the composited world
    * view, never a re-bake. The world view is WORLD sized; put the layer
    * inside a clipping container (`overflow="clip"`) sized to the viewport.
@@ -332,6 +339,7 @@ export let TileLayer: VoidComponent<TileLayerProps> = props => {
       chunkClearColor: props.chunkClearColor,
       filter: props.filter,
       chunkTiles: props.chunkTiles,
+      tint: props.tint,
       label: props.label,
     }),
   )
@@ -340,6 +348,12 @@ export let TileLayer: VoidComponent<TileLayerProps> = props => {
     () => props.oversample,
     n => {
       if (n !== undefined) layer.setOversample(n)
+    },
+  )
+  createEffect(
+    () => props.tint,
+    tint => {
+      if (tint !== undefined) layer.setTint(tint)
     },
   )
   // Auto oversample: the world view's window box, in device pixels, per

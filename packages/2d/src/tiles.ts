@@ -30,6 +30,7 @@ import {
   endBufferWrite,
   limits,
   renderTarget,
+  setTargetParams,
   setTargetSize,
 } from "@solidrt/core/gpu"
 import type { BufferId, FilterMode, TextureId } from "@solidrt/core/gpu"
@@ -67,6 +68,8 @@ export type TileLayerOptions = {
    * chunk count (larger = fewer textures and leaves).
    */
   chunkTiles?: number
+  /** Layer tint, [r, g, b, a] in 0..1; see TileLayer.setTint. */
+  tint?: [number, number, number, number]
   label?: string
   /** Skip the owner-scoped auto-dispose (see createTileLayer). */
   autoFree?: boolean
@@ -115,13 +118,24 @@ export type TileLayer = {
   /** Called after a chunk allocates - the composition hook. Assignable. */
   onChunk?: (chunk: TileChunk) => void
   /**
-   * Set one cell: a frame draws it, null clears it. Batched; the microtask
-   * flush publishes and re-bakes ONLY the chunks that changed, however
-   * many tiles did.
+   * Set one cell: a frame draws it, null clears it (a clear ignores `opts` -
+   * an absent cell has no tint, it draws nothing). `tint` multiplies the
+   * cell's sampled texels like a sprite's tint; absent it keeps the cell's
+   * current tint (a cell being set from empty starts at [1, 1, 1, 1]).
+   * Batched; the microtask flush publishes and re-bakes ONLY the chunks
+   * that changed, however many tiles did.
    */
-  setTile(col: number, row: number, frame: Frame | null): void
+  setTile(col: number, row: number, frame: Frame | null, opts?: { tint?: [number, number, number, number] }): void
   /** The frame at a cell, or null when empty. */
   getTile(col: number, row: number): Frame | null
+  /**
+   * Tint the whole layer, [r, g, b, a] in 0..1: a uniform multiplied over
+   * every cell's own tint (day/night, a dimmed parallax plane). Not a
+   * record write - resident chunks re-render GPU-side with nothing
+   * re-uploaded - but each write does re-render every resident chunk, so
+   * animate it coarsely, not per frame.
+   */
+  setTint(tint: [number, number, number, number]): void
   dispose(): void
 }
 
@@ -129,15 +143,27 @@ type Chunk = TileChunk & {
   records: Float32Array
   buffer: BufferId
   dirty: boolean
+  /** Records changed since the last flush (a tint-only or resize re-bake
+   * renders without re-uploading them). */
+  wrote: boolean
+}
+
+function checkTint(verb: string, tint: [number, number, number, number]): void {
+  if (!(Array.isArray(tint) && tint.length === 4 && tint.every(Number.isFinite))) {
+    throw new Error(`${verb}: tint must be [r, g, b, a], got ${JSON.stringify(tint)}`)
+  }
 }
 
 /**
  * Create a baked tile layer: `cols` x `rows` cells of `tileW` x `tileH`
  * pixels, every tile drawing one atlas frame, baked into lazily-allocated
- * chunk textures and composited as a few quads. The grid shape is fixed at
- * creation - recreate the layer to resize. Disposed automatically with the
- * owning reactive scope (opt out with `{ autoFree: false }`); the atlas is
- * NOT owned - dispose it yourself.
+ * chunk textures and composited as a few quads. A tile world is FINITE and
+ * sized at creation - that is the contract, not a provisional limit:
+ * recreate the layer to resize, and for a huge sparse world just pick big
+ * numbers, since a chunk nobody writes costs nothing (no records, no
+ * texture) and the grid bound is bookkeeping, not allocation. Disposed
+ * automatically with the owning reactive scope (opt out with `{ autoFree:
+ * false }`); the atlas is NOT owned - dispose it yourself.
  */
 export function createTileLayer(
   cols: number,
@@ -165,6 +191,8 @@ export function createTileLayer(
     )
   }
   let label = opts?.label ?? "tiles"
+  let tint: [number, number, number, number] = opts?.tint ?? [1, 1, 1, 1]
+  checkTint("createTileLayer", tint)
   let oversample = opts?.oversample ?? 1
   checkOversample("createTileLayer", oversample, chunkW, chunkH)
   let thrash = thrashSentinel(`tile layer "${label}"`)
@@ -190,13 +218,17 @@ export function createTileLayer(
     for (let chunk of baked) {
       if (!chunk.dirty) continue
       chunk.dirty = false
-      let out = beginBufferWrite(chunk.buffer)
-      out.set(chunk.records)
-      endBufferWrite(chunk.buffer, chunk.records.byteLength)
+      if (chunk.wrote) {
+        chunk.wrote = false
+        let out = beginBufferWrite(chunk.buffer)
+        out.set(chunk.records)
+        endBufferWrite(chunk.buffer, chunk.records.byteLength)
+      }
       renderTarget(chunk.texture)
     }
   }
-  let touch = (chunk: Chunk) => {
+  let touch = (chunk: Chunk, wroteRecords = true) => {
+    if (wroteRecords) chunk.wrote = true
     if (chunk.dirty) return
     chunk.dirty = true
     dirtyChunks.push(chunk)
@@ -217,7 +249,7 @@ export function createTileLayer(
       chunkH * oversample,
       // Bake targets pin the camera rotation to identity: the tile camera
       // rotates the COMPOSITED world (<TileLayer>'s view), never the bake.
-      { uViewport: [chunkW, chunkH], uCamera: [x, y, 1, 1], uCameraRot: [1, 0, 0, 0] },
+      { uViewport: [chunkW, chunkH], uCamera: [x, y, 1, 1], uCameraRot: [1, 0, 0, 0], uTint: tint },
       {
         label: `${label}-chunk`,
         topology: "triangle-strip",
@@ -235,7 +267,7 @@ export function createTileLayer(
         autoFree: false,
       },
     )
-    let chunk: Chunk = { texture, x, y, width: chunkW, height: chunkH, records, buffer, dirty: false }
+    let chunk: Chunk = { texture, x, y, width: chunkW, height: chunkH, records, buffer, dirty: false, wrote: false }
     resident.set(index, chunk)
     layer.chunks.push(chunk)
     layer.onChunk?.(chunk)
@@ -273,10 +305,11 @@ export function createTileLayer(
       // its last bake: mark every chunk so the flush bakes it at the new size.
       for (let chunk of resident.values()) {
         setTargetSize(chunk.texture, chunkW * n, chunkH * n)
-        touch(chunk)
+        // The records are unchanged; the resized target just needs a bake.
+        touch(chunk, false)
       }
     },
-    setTile(col, row, frame) {
+    setTile(col, row, frame, opts) {
       if (disposed) return
       let [index, at] = locate(col, row, "setTile")
       let chunk = resident.get(index)
@@ -288,6 +321,10 @@ export function createTileLayer(
       } else {
         chunk ??= allocate(index)
         let r = chunk.records
+        // A cell coming up from empty starts at the default tint; a
+        // re-set keeps its tint unless opts carries one (absent keys keep
+        // their values, like every options object here).
+        let fresh = r[at + 2] === 0
         r[at] = (col + 0.5) * tileW
         r[at + 1] = (row + 0.5) * tileH
         r[at + 2] = tileW
@@ -296,10 +333,18 @@ export function createTileLayer(
         r[at + 5] = frame.v0
         r[at + 6] = frame.u1
         r[at + 7] = frame.v1
-        r[at + 9] = 1
-        r[at + 10] = 1
-        r[at + 11] = 1
-        r[at + 12] = 1
+        if (opts?.tint !== undefined) {
+          checkTint("setTile", opts.tint)
+          r[at + 9] = opts.tint[0]
+          r[at + 10] = opts.tint[1]
+          r[at + 11] = opts.tint[2]
+          r[at + 12] = opts.tint[3]
+        } else if (fresh) {
+          r[at + 9] = 1
+          r[at + 10] = 1
+          r[at + 11] = 1
+          r[at + 12] = 1
+        }
       }
       touch(chunk)
     },
@@ -309,6 +354,16 @@ export function createTileLayer(
       if (!chunk || chunk.records[at + 2] === 0) return null
       let r = chunk.records
       return { u0: r[at + 4]!, v0: r[at + 5]!, u1: r[at + 6]!, v1: r[at + 7]! }
+    },
+    setTint(next) {
+      if (disposed) return
+      checkTint("setTint", next)
+      if (next[0] === tint[0] && next[1] === tint[1] && next[2] === tint[2] && next[3] === tint[3]) return
+      tint = next
+      for (let chunk of resident.values()) {
+        setTargetParams(chunk.texture, { uTint: tint })
+        touch(chunk, false)
+      }
     },
     dispose() {
       if (disposed) return

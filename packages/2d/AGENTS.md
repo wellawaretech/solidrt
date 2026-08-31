@@ -128,11 +128,23 @@ pivotY), scaled by zoom, ROTATED by rotation about the pivot. The type IS
 the sprite layer's camera type, so one signal drives a whole rotating
 scene across both layers (sprites ride the same rotation in-shader);
 rotation is the ship-flies-over-the-map camera and costs the same
-transform write. The
-grid shape is creation-fixed (recreate to resize). Tiles are data, not
+transform write. A tile
+world is FINITE, sized at creation - the contract, not a provisional
+limit (recreate to resize; a huge sparse world just picks big numbers,
+empty chunks cost nothing). Tiles are data, not
 children: there is no `<Tile>` component on purpose - write cells through
-`ref` with `setTile`. Not built yet: camera-driven residency (bake far
-chunks on approach, evict) - okf/backlog/2d-baked-layers.md.
+`ref` with `setTile`.
+
+Tinting, two levels: `setTile(col, row, frame, { tint })` writes the
+cell's record tint (same `[r, g, b, a]` 0..1 semantics as a sprite's
+tint; absent keys keep their values, a cell set from empty starts at
+`[1, 1, 1, 1]`), and `setTint(rgba)` / the `tint` option and prop tints
+the whole layer through the shared `uTint` uniform, multiplied over the
+per-cell tints - day/night, a dimmed parallax plane. A layer-tint write
+is not a record write (chunks re-render GPU-side, nothing re-uploads),
+but it does re-render every resident chunk: drive it from slow state,
+not per frame. Not built yet: camera-driven residency (bake far chunks
+on approach, evict) - okf/backlog/2d-baked-layers.md.
 
 ## Components
 
@@ -141,7 +153,7 @@ chunks on approach, evict) - okf/backlog/2d-baked-layers.md.
 | `SpriteLayer` | width, height (layer pixels), atlas (TextureId), capacity?, clearColor?, camera?, oversample?, maxOversample?, label?, ref?, output?, events? |
 | `Sprite` | x, y (center; local to the enclosing `<Group>`), w, h, frame?, rotation? (radians, clockwise), tint? ([r,g,b,a] 0..1), transition?, onPointer{Down,Move,Up,Enter,Leave}?, ref? |
 | `Group` | x?, y?, rotation?, scale? (uniform, scales the subtree), transition?, ref? |
-| `TileLayer` | cols, rows, tileW, tileH, atlas (TextureId), chunkClearColor?, filter?, chunkTiles?, oversample?, maxOversample?, camera? (TileCamera: x, y, zoom, rotation, pivotX, pivotY), label?, ref? |
+| `TileLayer` | cols, rows, tileW, tileH, atlas (TextureId), chunkClearColor?, filter?, chunkTiles?, tint? ([r,g,b,a] 0..1, over the whole layer), oversample?, maxOversample?, camera? (TileCamera: x, y, zoom, rotation, pivotX, pivotY), label?, ref? |
 
 `SpriteLayer` owns the layer and renders the built-in `<texture>` leaf
 carrying the layer's pointer handlers (opt out with `events={false}`; compose
