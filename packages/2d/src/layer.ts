@@ -20,7 +20,9 @@
 // Sprites hold FIXED instance slots (freed slots recycle): draw order is
 // slot order, so removal never shifts records and pose sinks never rebind.
 // Layer space is pixels, top-left origin, y-down - the render tree's
-// frame. The camera is a shared-params write (uCamera), never per-sprite.
+// frame. The camera (offset, zoom, rotation about a pivot - CameraUpdate
+// in camera.ts) is a shared-params write (uCamera + uCameraRot), never
+// per-sprite; pointer dispatch undoes it with unprojectCamera.
 import { getOwner, onCleanup } from "@solidrt/core"
 import type { PointerEvent as ElementPointerEvent } from "@solidrt/core"
 import {
@@ -38,6 +40,8 @@ import type { BufferId, TextureId } from "@solidrt/core/gpu"
 import * as spatial from "flux:spatial"
 import type { NodeId, NodeTransition } from "flux:spatial"
 import { on } from "srt:events"
+import { checkCamera, unprojectCamera } from "./camera.ts"
+import type { CameraUpdate } from "./camera.ts"
 import { checkOversample, thrashSentinel } from "./oversample.ts"
 import type { Frame } from "./frames.ts"
 import { FULL_FRAME, writeFrame } from "./frames.ts"
@@ -189,14 +193,6 @@ export type SpriteHandlers = {
   onPointerLeave: (event: ElementPointerEvent) => void
 }
 
-export type CameraUpdate = {
-  /** World pixel at the viewport's top-left corner. */
-  x?: number
-  y?: number
-  /** World-to-screen scale; 1 is pixel-for-pixel. */
-  zoom?: number
-}
-
 export type SpriteLayerOptions = {
   /**
    * Initial slot reservation; default 1024. The layer grows past it on
@@ -313,7 +309,7 @@ export type SpriteLayer = LayerBase & {
  */
 export function spriteDispatch(state: {
   size: () => [number, number]
-  camera: () => [number, number, number]
+  camera: () => CameraUpdate
   pick: (x: number, y: number) => Sprite | null
 }): (layout: (() => { width: number; height: number } | null) | null) => SpriteHandlers {
   let capture = new Map<number, Sprite>()
@@ -329,8 +325,7 @@ export function spriteDispatch(state: {
         y *= height / l.height
       }
       // Undo the camera: screen -> world.
-      let [camX, camY, camZoom] = state.camera()
-      return [x / camZoom + camX, y / camZoom + camY]
+      return unprojectCamera(state.camera(), x, y)
     }
     let makeEvent = (sprite: Sprite, x: number, y: number, e: ElementPointerEvent): SpritePointerEvent => ({
       sprite,
@@ -457,7 +452,7 @@ export function createSpriteLayer(
     FRAGMENT,
     width * oversample,
     height * oversample,
-    { uViewport: [width, height], uCamera: [0, 0, 1, 1] },
+    { uViewport: [width, height], uCamera: [0, 0, 1, 1], uCameraRot: [1, 0, 0, 0] },
     {
       label,
       topology: "triangle-strip",
@@ -478,6 +473,9 @@ export function createSpriteLayer(
   let camX = 0
   let camY = 0
   let camZoom = 1
+  let camRot = 0
+  let camPivotX = 0
+  let camPivotY = 0
   let disposed = false
   let scheduled = false
   let styleDirty = false
@@ -557,7 +555,7 @@ export function createSpriteLayer(
 
   let dispatch = spriteDispatch({
     size: () => [width, height],
-    camera: () => [camX, camY, camZoom],
+    camera: () => ({ x: camX, y: camY, zoom: camZoom, rotation: camRot, pivotX: camPivotX, pivotY: camPivotY }),
     pick: (x, y) => layer.pick(x, y),
   })
 
@@ -587,13 +585,17 @@ export function createSpriteLayer(
     },
     setCamera(update) {
       if (disposed) return
+      checkCamera(update)
       if (update.x !== undefined) camX = update.x
       if (update.y !== undefined) camY = update.y
-      if (update.zoom !== undefined) {
-        if (!(update.zoom > 0)) throw new Error(`setCamera: zoom must be positive, got ${update.zoom}`)
-        camZoom = update.zoom
-      }
-      setTargetParams(texture, { uCamera: [camX, camY, camZoom, camZoom] })
+      if (update.zoom !== undefined) camZoom = update.zoom
+      if (update.rotation !== undefined) camRot = update.rotation
+      if (update.pivotX !== undefined) camPivotX = update.pivotX
+      if (update.pivotY !== undefined) camPivotY = update.pivotY
+      setTargetParams(texture, {
+        uCamera: [camX, camY, camZoom, camZoom],
+        uCameraRot: [Math.cos(camRot), Math.sin(camRot), camPivotX, camPivotY],
+      })
     },
     pick(x, y) {
       // The index reads as of the last core flush; run any pending batch

@@ -23,6 +23,11 @@ const ROWS = 128
 const TILE = 48
 const WORLD = COLS * TILE
 
+// onFrame tick gap that logs as a hitch, as a factor of the display's
+// refresh period (onFrame's rate argument, so any refresh rate works):
+// past 1.5 periods a frame slot was missed while this animation ran.
+const HITCH_FACTOR = 1.5
+
 function App() {
   let atlas = createAtlas(logoBytes, { label: "logo-atlas" })
   let frames = grid(2, 2, { width: atlas.width, height: atlas.height })
@@ -56,16 +61,18 @@ function App() {
   // feeding the transform - never a re-bake.
   let [camera, setCamera] = createSignal<TileCamera>({})
   let lastTick = 0
-  onFrame(tick => {
-    if (lastTick && tick - lastTick > 25) console.log(`[hitch] ${(tick - lastTick).toFixed(1)}ms frame gap`)
+  onFrame((tick, _frame, rate) => {
+    if (lastTick && tick - lastTick > (1000 / rate) * HITCH_FACTOR) console.log(`[hitch] ${(tick - lastTick).toFixed(1)}ms frame gap`)
     lastTick = tick
     let t = tick / 6000
     let radius = 46 * TILE
+    // The path C + r(cos t, sin t) has tangent heading t + pi/2; the
+    // camera convention renders a heading h upward at rotation -h - pi/2.
+    let heading = t + Math.PI / 2
     setCamera({
       x: WORLD / 2 + Math.cos(t) * radius,
       y: WORLD / 2 + Math.sin(t) * radius,
-      // Circle tangent heading, rotated so "forward" renders upward.
-      rotation: -(t + Math.PI / 2),
+      rotation: -heading - Math.PI / 2,
       zoom: 0.9,
       pivotX: windowSize().width / 2,
       pivotY: windowSize().height * 0.78,

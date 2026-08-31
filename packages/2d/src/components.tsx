@@ -12,7 +12,8 @@ import { limits } from "@solidrt/core/gpu"
 import type { FilterMode } from "@solidrt/core/gpu"
 import { addGroup, addSprite, createSpriteLayer, removeGroup, removeSprite, setGroup, setGroupTransition, setSprite, setSpriteTransition } from "./layer.ts"
 import type { NodeTransition } from "flux:spatial"
-import type { CameraUpdate, Sprite as SpriteHandle, SpriteGroup, SpriteLayer as LayerHandle, SpriteOptions, SpritePointerEvent, TransitionEndEvent } from "./layer.ts"
+import type { CameraUpdate } from "./camera.ts"
+import type { Sprite as SpriteHandle, SpriteGroup, SpriteLayer as LayerHandle, SpriteOptions, SpritePointerEvent, TransitionEndEvent } from "./layer.ts"
 import { pickOversample, tileWorldScale } from "./oversample-math.ts"
 
 // The window's device pixel count: the texel budget an auto-picked
@@ -66,7 +67,8 @@ export type SpriteLayerProps = {
   /** Initial record reservation (grows on demand); default 1024. */
   capacity?: number
   clearColor?: [number, number, number, number]
-  /** Pan/zoom over the world; a shared-params write, never per-sprite. */
+  /** Pan/zoom/rotate over the world (in-shader); a shared-params write,
+   * never per-sprite. */
   camera?: CameraUpdate
   /**
    * Target texels per layer pixel. Absent, the component picks it every
@@ -264,20 +266,14 @@ export let Sprite: VoidComponent<SpriteProps> = props => {
 }
 
 /**
- * The tile layer's camera: the world point (`x`, `y`) is shown at the
- * viewport point (`pivotX`, `pivotY`), the world scaled by `zoom` and
- * rotated by `rotation` (radians, clockwise) ABOUT that pivot. The pivot
- * defaults to (0, 0), which makes `{ x, y, zoom }` mean exactly what the
- * sprite layer's camera means (world at the viewport top-left) - one
- * signal drives both. The whole thing is a transform on the composited
- * world, never a re-bake. (The sprite layer's camera cannot rotate yet -
- * okf/backlog/2d-sprite-camera-rotation.md.)
+ * The tile layer's camera - the same CameraUpdate vocabulary as the sprite
+ * layer (see camera.ts for the pivot/rotation semantics and the
+ * heading-upward convention), so one signal drives a whole rotating scene
+ * across both layers. Here the camera is a transform on the composited
+ * world view, never a re-bake; projectCamera/unprojectCamera are the same
+ * mapping as plain functions.
  */
-export type TileCamera = CameraUpdate & {
-  rotation?: number
-  pivotX?: number
-  pivotY?: number
-}
+export type TileCamera = CameraUpdate
 
 export type TileLayerProps = {
   /** Grid shape and tile pixel size - creation-fixed (recreate to resize). */
@@ -376,9 +372,10 @@ export let TileLayer: VoidComponent<TileLayerProps> = props => {
   // fresh array so <For> sees the growth.
   let [chunks, setChunks] = createSignal<TileChunk[]>(layer.chunks.slice())
   layer.onChunk = () => setChunks(layer.chunks.slice())
-  // World -> screen: p maps to pivot + R(rotation) * zoom * (p - camera),
-  // spelled with element transforms as origin at the camera point, rotate +
-  // scale there, then translate the camera point onto the pivot.
+  // World -> screen: p maps to pivot + R(rotation) * zoom * (p - camera) -
+  // projectCamera (camera.ts) spelled with element transforms as origin at
+  // the camera point, rotate + scale there, then translate the camera point
+  // onto the pivot. checks/camera-check.ts holds the two spellings together.
   let camX = () => props.camera?.x ?? 0
   let camY = () => props.camera?.y ?? 0
   return (

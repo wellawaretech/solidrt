@@ -56,3 +56,30 @@ is `-t - pi`. The example is a quarter turn off from its own comment.
 When the sprite camera gains rotation the same function is the one both
 layers agree on, so this is not throwaway: the export is the vocabulary,
 the in-shader rotation is a consumer of it.
+
+## Findings
+
+Landed 2026-08-31 (uncommitted), together with
+[2d-sprite-camera-rotation](2d-sprite-camera-rotation.md) - which is why
+the export is NOT named for the tile camera: the sprite camera gained
+rotation in the same change, `CameraUpdate` became the one camera type
+both layers share (`TileCamera` stays as an alias), and the functions are
+`projectCamera` / `unprojectCamera` in the new pure module
+`packages/2d/src/camera.ts` (no GPU imports, headless-checkable like
+pick.ts).
+
+- The convention sentence lives on the `CameraUpdate` type: rotation
+  turns the world clockwise (y-down) about the pivot; a heading `h`
+  renders upward at `rotation = -h - pi/2`.
+- The example now spells it self-documentingly (`heading = t + pi/2`,
+  `rotation: -heading - pi/2`) and was verified by snapshot: the road
+  band renders vertically through the pivot, where the old code drew it
+  horizontally.
+- Drift guard: `checks/camera-check.ts` runs projectCamera against an
+  oracle spelling the `<view>` props exactly as `<TileLayer>` composes
+  them (origin at the camera point, rotate + scale there, translate onto
+  the pivot), the unproject round trip, and the conventions as hand
+  cases - 20k seeded sweeps, headless on flux. The shader side cannot be
+  oracle-checked headless; the AGENTS.md trap ("touch one rotation,
+  touch all") covers it, and the live probe for the sprite-camera item
+  verified shader agreement pixel-exactly.

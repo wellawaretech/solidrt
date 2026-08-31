@@ -215,7 +215,9 @@ export function createTileLayer(
       FRAGMENT,
       chunkW * oversample,
       chunkH * oversample,
-      { uViewport: [chunkW, chunkH], uCamera: [x, y, 1, 1] },
+      // Bake targets pin the camera rotation to identity: the tile camera
+      // rotates the COMPOSITED world (<TileLayer>'s view), never the bake.
+      { uViewport: [chunkW, chunkH], uCamera: [x, y, 1, 1], uCameraRot: [1, 0, 0, 0] },
       {
         label: `${label}-chunk`,
         topology: "triangle-strip",

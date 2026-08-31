@@ -16,7 +16,9 @@ export { addGroup, addSprite, createSpriteLayer, getSprite, removeGroup, removeS
 export { createRecordLayer, FLOATS_PER_SPRITE } from "./records.ts"
 export type { RecordLayer as RecordLayerHandle } from "./records.ts"
 export { pointInSprite } from "./pick.ts"
-export type { AddSpriteOptions, CameraUpdate, GroupOptions, Sprite as SpriteHandle, SpriteGroup, SpriteHandlers, SpriteLayer as SpriteLayerHandle, SpriteLayerOptions, SpriteOptions, SpritePointerEvent, TransitionEndEvent } from "./layer.ts"
+export { projectCamera, unprojectCamera } from "./camera.ts"
+export type { CameraUpdate } from "./camera.ts"
+export type { AddSpriteOptions, GroupOptions, Sprite as SpriteHandle, SpriteGroup, SpriteHandlers, SpriteLayer as SpriteLayerHandle, SpriteLayerOptions, SpriteOptions, SpritePointerEvent, TransitionEndEvent } from "./layer.ts"
 export { createTileLayer } from "./tiles.ts"
 export type { TileChunk, TileLayer as TileLayerHandle, TileLayerOptions } from "./tiles.ts"
 

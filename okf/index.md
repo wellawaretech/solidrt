@@ -67,12 +67,6 @@ Shaped, not started.
   walk; make each live sprite a spatial arena node whose InstanceRecord sink
   writes its instance-buffer slot, connecting 2d to the whole producer stack
   while rendering stays one instanced draw.
-- **[The sprite layer's camera cannot rotate, so sprites cannot ride a rotating world](backlog/2d-sprite-camera-rotation.md)** [2026-08-24]
-  TileCamera rotates the baked world about a pivot, but the sprite layer's
-  uCamera is offset + zoom only, so the ship and enemies drawn as sprites over
-  a rotating tile map cannot follow - rotation must go in-shader with the
-  inverse in pick and the handlers, keeping one camera vocabulary across both
-  layers.
 - **[Sprite draw order is insertion order, so reordering means remove and re-add](backlog/2d-sprite-sort-key.md)** [2026-08-22]
   The sprite layer paints in record order with no sort key, so raising one
   sprite or depth-sorting a population by y - the ordinary case for a dense 2D
@@ -83,11 +77,6 @@ Shaped, not started.
   locate() and a frame copy; fine today because the flush batches to a
   microtask, but a larger world or a procedural refill on approach wants a
   rect write from a typed array.
-- **[The tile camera's world-to-screen mapping is not exported, and its rotation convention is stated nowhere](backlog/2d-tile-camera-projection.md)** [2026-08-29]
-  Anything drawn in world space over a rotating tile world (shadows, parallax
-  motes, sprites until the sprite camera rotates) re-implements TileCamera's
-  projection by hand from the component source, and the tiles example rotates
-  a quarter turn off from the "heading renders upward" it claims.
 - **[A tile is a frame and nothing else, so tinting a tile world means duplicating cells in the atlas](backlog/2d-tile-tint.md)** [2026-08-29]
   setTile takes a Frame or null; the baked chunk records already carry a tint
   at defaults, but neither the tile nor the layer exposes it, so day/night,
@@ -639,6 +628,12 @@ Shaped, not started.
   Button picks fill/hover/label with a switch over its variant and derives the
   background from press state by hand, and every other widget repeats the
   pattern; a helper that selects a prop bundle from state would collapse it.
+- **[The stats window has no present-interval jank counter, so a repeated frame can pass every figure clean](backlog/stats-present-interval-jank.md)** [2026-08-31]
+  Jank is a presented frame whose content does not advance one step - a repeat
+  then a skip (4 4 6) - and none of the window fields count it directly;
+  slowFrames sees only the JS critical path, fenceTimeouts only fires past
+  100ms, fps and the per-frame averages are blind to a single miss. Count
+  missed presents on the raster thread and make that the figure probes quote.
 - **[Bidirectional text in the owned layout](backlog/text-bidi.md)** [2026-08-17]
   The owned text engine places wrap units on a line in logical order and
   treats "start" as left, so RTL rich text spanning styled runs on one line,
@@ -736,6 +731,12 @@ Finished, kept for the reasoning.
   data-driven sprite count had to guess a maximum up front and crashed when it
   guessed low; resolved by a draw-entry buffer swap in core (setDraw buffer
   keys / setDrawBuffers) and doubling growth in the layer.
+- **[The sprite layer's camera cannot rotate, so sprites cannot ride a rotating world](done/2d-sprite-camera-rotation.md)** [2026-08-24]
+  TileCamera rotates the baked world about a pivot, but the sprite layer's
+  uCamera is offset + zoom only, so the ship and enemies drawn as sprites over
+  a rotating tile map cannot follow - rotation must go in-shader with the
+  inverse in pick and the handlers, keeping one camera vocabulary across both
+  layers.
 - **[A <Sprite> outside a <Group> halts the app at mount](done/2d-sprite-layer-context-halt.md)** [2026-08-24]
   The unchanged packages/2d/examples/pick.tsx (a <Sprite> directly under
   <SpriteLayer>) threw "Context must either be created with a default value or
@@ -743,6 +744,11 @@ Finished, kept for the reasoning.
   inside <Sprite>; GroupContext was created without a default, which Solid 2
   rc1 no longer tolerates for an absent provider. Fixed with a null sentinel
   default.
+- **[The tile camera's world-to-screen mapping is not exported, and its rotation convention is stated nowhere](done/2d-tile-camera-projection.md)** [2026-08-29]
+  Anything drawn in world space over a rotating tile world (shadows, parallax
+  motes, sprites until the sprite camera rotates) re-implements TileCamera's
+  projection by hand from the component source, and the tiles example rotates
+  a quarter turn off from the "heading renders upward" it claims.
 - **[maxOversample bounds the auto-picked oversample; the texel budget stays per target](done/2d-tile-oversample-ceiling.md)** [2026-08-29]
   SpriteLayer and TileLayer take maxOversample (integer >= 1, auto-pick only,
   explicit oversample already opts out), the cap that bounds tile-world

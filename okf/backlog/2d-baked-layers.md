@@ -151,8 +151,8 @@ when it lands, it is four things that belong together, not just eviction:
 
 Bitmap-font runs ride the same machinery. The spatial index waits on
 [2d-spatial-citizenship](2d-spatial-citizenship.md), per above. The
-rotating-camera parity gap for the LIVE layer is filed as
-[2d-sprite-camera-rotation](2d-sprite-camera-rotation.md).
+rotating-camera parity gap for the LIVE layer is closed
+([done](../done/2d-sprite-camera-rotation.md)).
 
 Restating how hard the B2 bound binds, from a demo that leaned on it: two
 worlds of 1.18M cells sat at ~260 MB across 152 chunk textures, memory

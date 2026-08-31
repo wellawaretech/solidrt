@@ -30,6 +30,7 @@ import {
   setTargetSize,
 } from "@solidrt/core/gpu"
 import type { BufferId, TextureId } from "@solidrt/core/gpu"
+import { checkCamera } from "./camera.ts"
 import { FULL_FRAME, writeFrame } from "./frames.ts"
 import { readFrame, spriteDispatch } from "./layer.ts"
 import type { LayerBase, Sprite, SpriteHandlers, SpriteLayerOptions, SpriteOptions, SpriteState } from "./layer.ts"
@@ -100,7 +101,7 @@ export function createRecordLayer(
     FRAGMENT,
     width * oversample,
     height * oversample,
-    { uViewport: [width, height], uCamera: [0, 0, 1, 1] },
+    { uViewport: [width, height], uCamera: [0, 0, 1, 1], uCameraRot: [1, 0, 0, 0] },
     {
       label,
       topology: "triangle-strip",
@@ -121,6 +122,9 @@ export function createRecordLayer(
   let camX = 0
   let camY = 0
   let camZoom = 1
+  let camRot = 0
+  let camPivotX = 0
+  let camPivotY = 0
   let disposed = false
   let dirty = false
   let scheduled = false
@@ -187,7 +191,7 @@ export function createRecordLayer(
 
   let dispatch = spriteDispatch({
     size: () => [width, height],
-    camera: () => [camX, camY, camZoom],
+    camera: () => ({ x: camX, y: camY, zoom: camZoom, rotation: camRot, pivotX: camPivotX, pivotY: camPivotY }),
     pick: (x, y) => layer.pick(x, y),
   })
 
@@ -217,13 +221,17 @@ export function createRecordLayer(
     },
     setCamera(update) {
       if (disposed) return
+      checkCamera(update)
       if (update.x !== undefined) camX = update.x
       if (update.y !== undefined) camY = update.y
-      if (update.zoom !== undefined) {
-        if (!(update.zoom > 0)) throw new Error(`setCamera: zoom must be positive, got ${update.zoom}`)
-        camZoom = update.zoom
-      }
-      setTargetParams(texture, { uCamera: [camX, camY, camZoom, camZoom] })
+      if (update.zoom !== undefined) camZoom = update.zoom
+      if (update.rotation !== undefined) camRot = update.rotation
+      if (update.pivotX !== undefined) camPivotX = update.pivotX
+      if (update.pivotY !== undefined) camPivotY = update.pivotY
+      setTargetParams(texture, {
+        uCamera: [camX, camY, camZoom, camZoom],
+        uCameraRot: [Math.cos(camRot), Math.sin(camRot), camPivotX, camPivotY],
+      })
     },
     pick(x, y) {
       // Topmost first: reverse draw order, exact rotated-rect containment.

@@ -44,3 +44,36 @@ world is projecting in JS - which today means copying the tile camera's
 mapping by hand; [2d-tile-camera-projection](2d-tile-camera-projection.md)
 exports it so the copy goes away, and is the vocabulary this item's
 in-shader rotation then consumes.
+
+## Findings
+
+Landed 2026-08-31 (uncommitted), together with
+[2d-tile-camera-projection](2d-tile-camera-projection.md) (the exported
+vocabulary this consumes).
+
+- `CameraUpdate` (moved to the pure `camera.ts`, shared by both layers;
+  `TileCamera` is now an alias) grew `rotation`, `pivotX`, `pivotY`.
+  Both vertex stages apply `screen = pivot + R(rotation) * zoom *
+  (world - cam)` through a second shared-params uniform `uCameraRot`
+  `[cos, sin, pivotX, pivotY]`. GLSL uniforms default to ZERO, which
+  would collapse every vertex onto the pivot - so identity `[1, 0, 0,
+  0]` is pinned explicitly at every pipeline creation: the sprite and
+  records layers at rest, and the tile layer's chunk bake targets
+  permanently (the tile camera stays a composite transform, never a
+  re-bake).
+- `setCamera` on both layer kinds takes the new fields; the pointer
+  inverse in `spriteDispatch` is now literally `unprojectCamera`, so the
+  shader mapping and its inverse share one source of truth. `pick` /
+  `pickRect` work in world space and needed nothing.
+- The sprite layer's auto-oversample needs NO rotation divide-out,
+  unlike the tile layer's: rotation is in-shader, so the leaf's measured
+  box never swells.
+- Verified live (self-asserting probe, kept as
+  examples/camera-probe.tsx - the standing live guard the AGENTS.md
+  rotation trap points at): under a
+  rotated + pivoted camera the probe sprite samples opaque at its
+  projectCamera pixel and background at the unrotated position; node
+  layer (VERTEX_SPLIT) vs records layer (VERTEX) pixel parity 0/129600;
+  a pointer at the projected pixel hits the sprite and reports its world
+  coordinates exactly; tile chunks bake unchanged under the pinned
+  identity.

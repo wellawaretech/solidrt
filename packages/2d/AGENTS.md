@@ -67,9 +67,15 @@ moved subtrees in Rust, and picking walks the core BVH.
 - Layer space is pixels, top-left origin, y-down - the render tree's frame.
   The pipeline's clip space is y-down too (core gpu.ts pixel contract), so
   the vertex stage carries NO flip anywhere. Do not add one.
-- The camera (`setCamera`/the `camera` prop) is a shared-params write
-  (`uCamera`: offset + zoom), one call however many sprites exist. Picking
-  undoes it, so events arrive in world (layer) pixels.
+- The camera (`setCamera`/the `camera` prop) is ONE `CameraUpdate` type
+  across both layers: offset, zoom, and rotation about a pivot (camera.ts
+  documents the semantics and the heading-upward convention,
+  `rotation = -h - pi/2`). On the sprite layer it is a shared-params
+  write (`uCamera` + `uCameraRot`, the rotation in-shader), one call
+  however many sprites exist; `projectCamera`/`unprojectCamera` export
+  the world <-> screen mapping as pure functions, and pointer dispatch
+  undoes the camera with the latter, so events arrive in world (layer)
+  pixels. Picking itself works in world space and never sees the camera.
 - Retargeted motion is NATIVE: `setSpriteTransition(sprite, { position:
   { duration: 700, bounce: 0.3 }, ... })` (or the `transition` prop) makes
   setSprite writes TARGETS the core animates toward - position/scale
@@ -115,12 +121,14 @@ memory, not `maxTextureSize`. `setTile` batches to a microtask whose flush
 publishes and re-bakes ONLY dirty chunks. After that the layer is static
 textures: zero per-frame cost however many tiles exist.
 
-Scrolling never re-bakes: the `<TileLayer>` camera prop (`TileCamera`) is
-a transform on the composited world view - the world point (x, y) pinned
-to the viewport point (pivotX, pivotY), scaled by zoom, ROTATED by
-rotation about the pivot. Pivot (0,0) makes `{x, y, zoom}` mean what the
-sprite layer's camera means, so one signal drives both; rotation is the
-ship-flies-over-the-map camera and costs the same transform write. The
+Scrolling never re-bakes: the `<TileLayer>` camera prop (`TileCamera`, an
+alias of the shared `CameraUpdate`) is a transform on the composited world
+view - the world point (x, y) pinned to the viewport point (pivotX,
+pivotY), scaled by zoom, ROTATED by rotation about the pivot. The type IS
+the sprite layer's camera type, so one signal drives a whole rotating
+scene across both layers (sprites ride the same rotation in-shader);
+rotation is the ship-flies-over-the-map camera and costs the same
+transform write. The
 grid shape is creation-fixed (recreate to resize). Tiles are data, not
 children: there is no `<Tile>` component on purpose - write cells through
 `ref` with `setTile`. Not built yet: camera-driven residency (bake far
@@ -197,10 +205,14 @@ is flat. Event x/y are layer pixels with the camera undone.
   an atlas uploaded from straight-alpha pixels (`decodeImage(bytes, { alpha:
   "straight" })` + `createTexture`) draws color under transparent texels
   as opaque - the classic "keyed-out backdrop becomes a wash" symptom.
-- `pointInSprite` in pick.ts and the vertex stage's rotation must agree on
-  direction (clockwise, y-down). The differential check (pick-check.ts)
-  guards the math against an oracle but NOT against the shader - if you
-  touch one rotation, touch both.
+- Every rotation must agree on direction (clockwise, y-down):
+  `pointInSprite` in pick.ts with the vertex stage's `iRot`, and
+  `projectCamera` in camera.ts with `uCameraRot` and `<TileLayer>`'s view
+  transform. The differential checks (pick-check.ts, camera-check.ts)
+  guard the JS math against oracles but NOT against the shader - if you
+  touch one rotation, touch all, then run examples/camera-probe.tsx (the
+  live guard: shader vs projectCamera, node/record parity, the pointer
+  round trip) and watch for CAMERA-OK.
 - Sprite handles go inert on removal (`sprite.layer === null`); setSprite on
   an inert handle is a silent no-op (matching the throw-in-dev policy would
   mean throwing, but removal racing a queued pointer event is routine, not
@@ -269,8 +281,9 @@ is flat. Event x/y are layer pixels with the camera undone.
   default size) and every resident chunk keeps a composited leaf. Bounded
   worlds only; streaming/infinite is stage B2 in
   okf/backlog/2d-baked-layers.md.
-- The sprite layer's camera cannot rotate (uCamera is offset + zoom); a
-  sprite layer riding a rotating TileCamera needs
-  okf/backlog/2d-sprite-camera-rotation.md first. Rotating the sprite
-  layer's OUTPUT leaf instead is wrong - it is viewport-sized, the corners
-  cut.
+- The sprite layer's camera rotation is IN-SHADER (uCameraRot) on
+  purpose: rotating the layer's OUTPUT leaf instead is wrong - the output
+  is viewport-sized with the camera already applied, so a leaf transform
+  spins the cropped viewport and the corners cut. The tile layer gets
+  away with the transform-on-the-leaf camera only because its composited
+  view is the WORLD, not a viewport of it.
