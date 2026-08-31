@@ -2,6 +2,7 @@
 title: Per-view mesh selection (Three's layers) and the scene's own depth texture
 description: createView mirrors EVERY mesh, so a minimap cannot show markers only, a rear-view mirror cannot leave out the HUD meshes and a reflection view draws the reflector itself; the mesh filter exists internally for shadow views and is not public. Expose it on ViewOptions, and widen depth "texture" to the scene's own target so a depth-reading post effect has an input.
 created: 2026-08-30
+completed: 2026-08-31
 ---
 
 # Per-view mesh selection (Three's layers) and the scene's own depth texture
@@ -32,15 +33,30 @@ avoid.
 
 ## Shape
 
-Additive on `ViewOptions`: `include?: (mesh: Mesh) => boolean`, the
-existing internal filter made public under a name that does not collide
-with the sampling `filter`. Evaluated at view creation for present meshes
-and at add() for later ones (the shadow-view rule). Re-evaluated on an
-explicit `view.refresh()` rather than per frame - a mesh that changes
-class re-adds through `setGeometry`/`setMaterial` already, so the common
-case is static. A `layers` bitmask (Three's spelling) is a convenience
-over the predicate, not a second mechanism; decide the spelling once
-against Three/Godot/Unity and keep one.
+Settled 2026-08-31 against Three (`object.layers` + `camera.layers`),
+Godot (`layers` + `cull_mask`) and Unity (`layer` + `cullingMask`), which
+all agree: membership on the OBJECT, mask on the camera/view. A predicate
+on the view was considered and rejected - it needs a refresh() API, makes
+the app tag meshes anyway for the predicate to test, and cannot exclude a
+mesh from the MAIN render (the minimap's markers must not draw in the
+scene itself), which needs a mask on the scene's own target exactly as
+Three does through the rendering camera.
+
+- `layers?: number` on Mesh (bitmask, default 1), `setLayers(mesh,
+  bits)`, `<Mesh layers>`. Not inherited from Groups (Three's and
+  Godot's rule).
+- A `layers` mask on `SceneOptions` and `ViewOptions` (default 1,
+  Three's camera default - everything visible out of the box), driven
+  live by `setLayers` on the scene handle and each view. Membership is
+  evaluated at attach; a mask or mesh change attaches/detaches the
+  delta entries.
+- Shadow views follow the scene's mask (what the scene cannot see must
+  not darken it); `scene.pick`/`raycast` skip masked-out meshes, the
+  same rule as invisible ones.
+- The "layer" noun collision with 2d's SpriteLayer/TileLayer containers
+  is accepted: Godot ships CanvasLayer beside `layers` masks in one API,
+  and a future 2d view takes the same bitmask shape
+  ([2d-layer-views](2d-layer-views.md)).
 
 Same file, second small gap: `depth: "texture"` lives on `ViewOptions`
 only. `SceneOptions` has no depth option, so the scene's own pass keeps
@@ -63,9 +79,20 @@ and the rule that a view's OWN params win over the scene fan-out - the
 scene replays its names to a view only for names the view has not set
 itself. State that ordering in the `setParams` docs either way.
 
+## Delivered
+
+2026-08-31, all three pieces (uncommitted): mesh `layers` bitmask +
+`setLayers` + the `layers` props, target masks on SceneOptions/ViewOptions
+with `setLayers` on scene and view (shadow views follow the scene's mask,
+pick/raycast skip masked-out meshes), `depth: "texture"` +
+`scene.depthTexture` on the scene target (throws with `samples`), per-view
+`fog` and the view-owned-params precedence rule. Documented in
+`packages/3d/AGENTS.md`; `examples/scene-views.tsx` shows the marker
+layer and the unfogged map, verified by snapshot.
+
 ## Done looks like
 
-`examples/scene-views.tsx` grows a minimap view with `include` admitting
-marker meshes only, `fog: null` on it while the scene is fogged; an SSAO
-or depth-fog post effect in `output` samples `scene.depthTexture` with no
-second pass.
+`examples/scene-views.tsx` grows a minimap view whose `layers` mask
+admits marker meshes only (markers masked out of the main render),
+`fog: null` on it while the scene is fogged; an SSAO or depth-fog post
+effect in `output` samples `scene.depthTexture` with no second pass.

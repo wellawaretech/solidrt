@@ -51,6 +51,13 @@ Shaped, not started.
   Static 2D bulk (tile worlds, backgrounds) rendered once into a texture and
   drawn as ONE quad, with incremental re-bake - the primitive-count answer for
   tiled GPUs
+- **[2D layer views - a second rendering of a layer world (the minimap)](backlog/2d-layer-views.md)** [2026-08-31]
+  A minimap, a zoomed radar strip or a picture-in-picture is common in 2D
+  games, and today the only way to render a layer's world twice is a second
+  layer with every sprite duplicated and double the writes. Mirror the 3d
+  scene.createView contract on the sprite and tile layers - same world, its
+  own camera and size - with the layers bitmask from the 3d view work when the
+  second view needs a different mesh set (markers only).
 - **[Retro presets for @solidrt/2d](backlog/2d-retro-presets.md)** [2026-08-19]
   The pixel-art identity kit - fixed logical resolution with integer nearest
   scaling, palette LUT, and scanline/CRT passes - as thin layers over what
@@ -60,6 +67,12 @@ Shaped, not started.
   locate() and a frame copy; fine today because the flush batches to a
   microtask, but a larger world or a procedural refill on approach wants a
   rect write from a typed array.
+- **[Wrap-around worlds in 2d - recipes exist but live nowhere, and a wrapping tile world has no seam answer](backlog/2d-wrap-around.md)** [2026-08-31]
+  A toroidal world (Asteroids screen wrap, an endlessly repeating tile map) is
+  expressible today only by app-side recipes nothing documents - position
+  modulo that must SNAP (native transitions animate the wrap jump across the
+  world), ghost copies at the seams - and the chunked tile layer has no way to
+  draw the seam at all.
 - **[Scene-wide effects on custom materials - one answer for fog, shadows and what comes next](backlog/3d-custom-material-scene-effects.md)** [2026-08-30]
   A shaderMaterial gets the scene's fog and shadows only by composing FOG and
   the SHADOW trio itself, and every instanced mesh has a custom material, so
@@ -110,12 +123,6 @@ Shaped, not started.
   pre-PBR map slots to lit as class-key options, with the tangent layout from
   roadmap item 10 as the prerequisite and a UV offset/repeat for scrolling
   surfaces.
-- **[Per-view mesh selection (Three's layers) and the scene's own depth texture](backlog/3d-view-mesh-selection.md)** [2026-08-30]
-  createView mirrors EVERY mesh, so a minimap cannot show markers only, a
-  rear-view mirror cannot leave out the HUD meshes and a reflection view draws
-  the reflector itself; the mesh filter exists internally for shadow views and
-  is not public. Expose it on ViewOptions, and widen depth "texture" to the
-  scene's own target so a depth-reading post effect has an input.
 - **[Adaptive present-fence depth](backlog/adaptive-present-fence-depth.md)** [2026-07-27]
   Fallback design if unconditional two-deep present fencing ever shows up as
   desktop drag latency - allow the second in-flight frame only when observed
@@ -779,6 +786,12 @@ Finished, kept for the reasoning.
   spatial core, and a scene VIEW (render this scene into that target from this
   camera) in the library - with the view settled first because split-screen,
   minimaps and reflections hit the same wall.
+- **[Per-view mesh selection (Three's layers) and the scene's own depth texture](done/3d-view-mesh-selection.md)** [2026-08-31]
+  createView mirrors EVERY mesh, so a minimap cannot show markers only, a
+  rear-view mirror cannot leave out the HUD meshes and a reflection view draws
+  the reflector itself; the mesh filter exists internally for shadow views and
+  is not public. Expose it on ViewOptions, and widen depth "texture" to the
+  scene's own target so a depth-reading post effect has an input.
 - **[Android surface swap blocks four vsyncs](done/android-surface-swap-latency.md)** [2026-07-28]
   SOLVED, it was our 4x MSAA all along, the ~80 ms swap block was the GPU
   draining full off-tile multisample resolve traffic every frame. Fixed via a

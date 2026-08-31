@@ -44,13 +44,30 @@ blendMode and pointer events like any element.
   its CORE node, so the one flush writes every target - the app writes
   nothing per view. Geometry buffers and (without an override) materials
   are shared; the light set and `scene.setParams` names fan out to every
-  view, `view.setParams` is the view's own channel; the scene background
-  is not mirrored; a view has no picking. `overrideMaterial` (Three's
+  view, `view.setParams` is the view's own channel - and names a view
+  sets itself (or its `fog` option, below) become VIEW-OWNED: the
+  scene's setParams/setFog fan-out skips them from then on, so a view
+  override survives scene-wide writes. The scene background
+  is not mirrored; a view has no picking. LAYERS select what a target
+  draws, Three's model exactly: `layers` on a mesh is its membership
+  bitmask (default 1, `setLayers`/the `layers` prop, NOT inherited from
+  Groups), and each target carries a mask (default 1) - `layers` on
+  createScene/createView, live via `setLayers` on the scene handle and
+  each view. A mesh draws where mask & layers is non-zero, so a minimap's
+  marker meshes live on bit 2: invisible in the main render, drawn by
+  the map view whose mask admits them. Shadow views follow the SCENE's
+  mask (what the scene cannot see must not darken it), and
+  pick()/raycast() skip scene-masked-out meshes like invisible ones.
+  Per-view fog: `fog: FogOptions | null` on createView overrides the
+  scene's fog for that view (null = unfogged - the clear minimap over a
+  fogged scene); absent follows the scene. `overrideMaterial` (Three's
   `scene.overrideMaterial`, scoped to the view) draws every mesh with one
   material - a depth pass, a normal/id visualizer - skips instanced
   meshes (the override cannot know their record layout) and draws in add
   order. `depth: "texture"` exposes `view.depthTexture`, the shadow-map
-  input. `ortho: { left, right, top, bottom }` on any camera swaps
+  input; the same option on createScene exposes `scene.depthTexture`,
+  the input for a depth-reading post effect in `output` (not combinable
+  with `samples` - no multisampled sampleable depth). `ortho: { left, right, top, bottom }` on any camera swaps
   perspective for `orthographic()` (`fov` ignored; `ortho: null` returns);
   the scene's own camera takes it too, and pick() follows.
   `examples/scene-views.tsx` is the shape.
@@ -159,9 +176,9 @@ blendMode and pointer events like any element.
 
 | Component | Props |
 | --- | --- |
-| `Scene` | `width`, `height` (target pixels), `clearColor?`, `camera?` (partial CameraUpdate, `ortho` included - the declarative scene.setCamera; same state as `PerspectiveCamera`, use one form), `background?` (fragment GLSL), `fog?` (`{ color, near, far }`, linear by camera distance), `samples?` (1/2/4/8 MSAA), `label?`, `ref?(scene)`, `output?(texture)`, `events?` (mesh pointer events, default on) |
+| `Scene` | `width`, `height` (target pixels), `clearColor?`, `camera?` (partial CameraUpdate, `ortho` included - the declarative scene.setCamera; same state as `PerspectiveCamera`, use one form), `background?` (fragment GLSL), `fog?` (`{ color, near, far }`, linear by camera distance), `layers?` (target mask, default 1), `depth?` (`"texture"` exposes scene.depthTexture; not with samples), `samples?` (1/2/4/8 MSAA), `label?`, `ref?(scene)`, `output?(texture)`, `events?` (mesh pointer events, default on) |
 | `Group` | `position?`, `rotation?` (Euler radians, XYZ order), `quaternion?` (either, not both), `scale?` (number = uniform), `visible?`, pointer events (below), `ref?(node)` |
-| `Mesh` | `geometry`, `material`, transforms as Group, `params?` (per-mesh uniforms, merge semantics - no unset), pointer events (below), `ref?(mesh)` |
+| `Mesh` | `geometry`, `material`, transforms as Group, `params?` (per-mesh uniforms, merge semantics - no unset), `renderOrder?`, `castShadow?`, `layers?` (membership bitmask, default 1), pointer events (below), `ref?(mesh)` |
 | `Sprite` | as Mesh minus `geometry`: a camera-facing unit quad, `scale` is its world size, rotation is ignored; pair with a `sprite()` material |
 | `InstancedMesh` | as Mesh, plus `records` (interleaved per-instance floats; buffer capacity starts at the first value and grows on larger rewrites), `count?` (records drawn, default all), `bounds?` (local [minX..maxZ] over the population - without it the mesh never picks); the record buffer is component-owned and freed on unmount |
 | `PerspectiveCamera` | `fov?` (vertical DEGREES, default 60), `near?`, `far?`, `position?`, `lookAt?`, `up?` - or the Scene `camera` prop, the same state (last write wins) |

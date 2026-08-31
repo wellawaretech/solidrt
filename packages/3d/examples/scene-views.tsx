@@ -6,9 +6,19 @@
 // at once, so the extra views cost the app nothing per frame (and the
 // light set fans out to them too - the map is lit like the main view).
 // Views die with the scene.
+//
+// Layers and per-view fog: the marker disc is on layer bit 2, so the
+// main render (mask 1) and the silhouette never draw it - only the map,
+// whose mask admits both bits. The scene is fogged; `fog: null` on the
+// map keeps the top-down view clear (its fog names are view-owned, so
+// scene-wide fog writes never clobber them).
 import { createSignal, onFrame, pct, render } from "@solidrt/core"
-import { box, DirectionalLight, Group, HemisphereLight, lit, Mesh, PerspectiveCamera, plane, Scene, sphere, unlit } from "@solidrt/3d"
+import { box, circle, DirectionalLight, Group, HemisphereLight, lit, Mesh, PerspectiveCamera, plane, Scene, sphere, unlit } from "@solidrt/3d"
 import type { SceneHandle } from "@solidrt/3d"
+
+// Layer bits: the world everything defaults to, and the map-only markers.
+const WORLD_LAYER = 1
+const MARKER_LAYER = 2
 
 const MAIN = 720
 const SIDE = 360
@@ -20,6 +30,7 @@ function App() {
   let cube = box()
   let floor = plane({ width: 6, height: 6, label: "floor" })
   let ball = sphere({ radius: 0.35 })
+  let marker = circle({ radius: 0.3, label: "marker" })
   // `ref` runs before `output`, so the handle is set when the views are
   // created there; both callbacks run once, untracked - no signals needed.
   let scene!: SceneHandle
@@ -31,12 +42,22 @@ function App() {
           width={MAIN}
           height={MAIN}
           clearColor={[0.07, 0.07, 0.1, 1]}
+          fog={{ color: [0.07, 0.07, 0.1], near: 2.5, far: 9 }}
           label="scene-views"
           ref={s => (scene = s)}
           output={tex => {
             // The map: straight down from y = 10, world -z toward the top of
-            // the leaf, seven world units across at any depth.
-            let map = scene.createView({ width: SIDE, height: SIDE, clearColor: [0.05, 0.08, 0.06, 1], label: "map" })
+            // the leaf, seven world units across at any depth. Its mask also
+            // admits the marker layer, and `fog: null` keeps it clear while
+            // the main view fades to the horizon.
+            let map = scene.createView({
+              width: SIDE,
+              height: SIDE,
+              clearColor: [0.05, 0.08, 0.06, 1],
+              layers: WORLD_LAYER | MARKER_LAYER,
+              fog: null,
+              label: "map",
+            })
             map.setCamera({
               position: [0, 10, 0],
               target: [0, 0, 0],
@@ -85,6 +106,14 @@ function App() {
               scale={[0.5, 1.4, 0.5]}
             />
             <Mesh geometry={ball} material={lit({ color: [0.35, 0.65, 0.9] })} position={[1.1, 0.35, 0]} />
+            {/* The ball's map marker: drawn by the map view alone. */}
+            <Mesh
+              geometry={marker}
+              material={unlit({ color: [0.95, 0.25, 0.2] })}
+              layers={MARKER_LAYER}
+              position={[1.1, 2, 0]}
+              rotation={[-Math.PI / 2, 0, 0]}
+            />
           </Group>
         </Scene>
       </view>

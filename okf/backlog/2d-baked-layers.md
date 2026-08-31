@@ -53,7 +53,7 @@ picking its candidates. Build it here rather than as its own item - alone it
 optimizes a case nobody has hit, and the chunking this item needs is the same
 spatial decomposition.
 
-If [2d-spatial-citizenship](2d-spatial-citizenship.md) lands, the core BVH
+If [2d-spatial-citizenship](../done/2d-spatial-citizenship.md) lands, the core BVH
 covers culling and picking for the live layer and this JS grid is not
 needed; the chunking above (static arithmetic over tiles) is unaffected
 either way. The spatial-index stage therefore WAITS on that decision
@@ -147,10 +147,13 @@ when it lands, it is four things that belong together, not just eviction:
    shimmer against their chunk rects. The fix is chunk-LOCAL record
    coordinates with the existing per-chunk `uCamera` origin doing the
    placement; a record-layout decision that must land WITH the
-   unbounded-world work, not after it.
+   unbounded-world work, not after it. Decide wrap-around topology here
+   too: a torus is "unbounded with modular coordinates", and the
+   camera-anchored composite is where a wrapping tile world's seam gets
+   its answer ([2d-wrap-around](2d-wrap-around.md)).
 
 Bitmap-font runs ride the same machinery. The spatial index waits on
-[2d-spatial-citizenship](2d-spatial-citizenship.md), per above. The
+[2d-spatial-citizenship](../done/2d-spatial-citizenship.md), per above. The
 rotating-camera parity gap for the LIVE layer is closed
 ([done](../done/2d-sprite-camera-rotation.md)).
 

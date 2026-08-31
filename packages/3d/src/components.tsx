@@ -22,6 +22,7 @@ import {
   setGeometry,
   setInstanceCount,
   setInstances,
+  setLayers,
   setLight,
   setCastShadow,
   setMaterial,
@@ -136,6 +137,13 @@ export type SceneProps = {
    * distance from the camera. Reactive; undefined removes it. Match
    * `color` to clearColor or the background, which is not fogged. */
   fog?: FogOptions
+  /** The scene target's layer mask (scene.setLayers as a prop; default 1):
+   * the scene draws the meshes whose `layers` intersect it. Reactive. */
+  layers?: number
+  /** `"texture"` exposes the target's depth as `scene.depthTexture` (a
+   * depth-reading post effect's input). Fixed at creation; not with
+   * `samples`. */
+  depth?: true | "texture"
   label?: string
   /** Multisample count (1, 2, 4 or 8; default 1): anti-aliased mesh edges.
    * Fixed at creation. */
@@ -168,7 +176,12 @@ export type SceneProps = {
  */
 export let Scene: ParentComponent<SceneProps> = props => {
   let scene = untrack(() =>
-    createScene(props.width, props.height, { clearColor: props.clearColor, label: props.label, samples: props.samples }),
+    createScene(props.width, props.height, {
+      clearColor: props.clearColor,
+      label: props.label,
+      samples: props.samples,
+      depth: props.depth,
+    }),
   )
   createEffect(
     () => [props.width, props.height] as const,
@@ -187,6 +200,10 @@ export let Scene: ParentComponent<SceneProps> = props => {
   createEffect(
     () => props.fog,
     f => scene.setFog(f ?? null),
+  )
+  createEffect(
+    () => props.layers,
+    l => scene.setLayers(l ?? 1),
   )
   untrack(() => props.ref)?.(scene)
   let output = untrack(() => props.output)
@@ -236,6 +253,10 @@ export type MeshProps = TransformProps & PointerEventProps & {
   /** Draw into the scene's shadow map (setCastShadow as a prop); default
    * false. Needs a `castShadow` DirectionalLight to show. */
   castShadow?: boolean
+  /** Layer membership bitmask (setLayers as a prop; default 1): a target
+   * draws the mesh when its mask intersects this. Not inherited from
+   * ancestor Groups. */
+  layers?: number
   ref?: (mesh: MeshNode) => void
 }
 
@@ -255,6 +276,10 @@ function syncMesh(mesh: MeshNode, props: SpriteProps): void {
   createEffect(
     () => props.renderOrder,
     o => setRenderOrder(mesh, o ?? 0),
+  )
+  createEffect(
+    () => props.layers,
+    l => setLayers(mesh, l ?? 1),
   )
   syncNode(mesh, props)
   untrack(() => props.ref)?.(mesh)
@@ -286,6 +311,8 @@ export type SpriteProps = TransformProps & PointerEventProps & {
   params?: ShaderParams
   /** Explicit draw-order key (setRenderOrder as a prop); default 0. */
   renderOrder?: number
+  /** Layer membership bitmask (setLayers as a prop; default 1). */
+  layers?: number
   ref?: (mesh: MeshNode) => void
 }
 
@@ -317,6 +344,8 @@ export type InstancedMeshProps = TransformProps & PointerEventProps & {
   params?: ShaderParams
   /** Explicit draw-order key (setRenderOrder as a prop); default 0. */
   renderOrder?: number
+  /** Layer membership bitmask (setLayers as a prop; default 1). */
+  layers?: number
   ref?: (mesh: InstancedMeshNode) => void
 }
 
@@ -360,6 +389,10 @@ export let InstancedMesh: VoidComponent<InstancedMeshProps> = props => {
   createEffect(
     () => props.renderOrder,
     o => setRenderOrder(mesh, o ?? 0),
+  )
+  createEffect(
+    () => props.layers,
+    l => setLayers(mesh, l ?? 1),
   )
   syncNode(mesh, props)
   untrack(() => props.ref)?.(mesh)

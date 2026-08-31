@@ -121,6 +121,8 @@ type SceneHooks = {
   _setBuffer(mesh: Mesh): void
   /** The mesh's castShadow flag changed: re-evaluate the filtered views. */
   _setCast(mesh: Mesh): void
+  /** The mesh's layers bitmask changed: re-evaluate every target. */
+  _setLayers(mesh: Mesh): void
   /** A light's castShadow/shadow options changed. */
   _shadowChanged(light: DirectionalLight): void
   _reorder(): void
@@ -244,6 +246,10 @@ export type Mesh = SceneNode & {
    * Set with setCastShadow. A casting instanced mesh is skipped (the
    * depth pass cannot know its record layout). */
   castShadow: boolean
+  /** Layer membership bitmask (default 1, Three's `object.layers`): a
+   * target draws the mesh when its mask intersects this. Not inherited
+   * from ancestor Groups (Three's and Godot's rule). Set with setLayers. */
+  layers: number
   _entry: DrawId | null
   /** The geometry-buffer reference the entry was built from, acquired at
    * attach and what _detach releases - like _transparent, a snapshot,
@@ -418,10 +424,69 @@ export type FogOptions = (
   heightFalloff?: number
 }
 
+// The shared-param writes a fog value compiles to (null = the three zeros
+// that turn the factor off) - one source for scene.setFog and a view's own
+// `fog`, so both validate and spell the uniforms identically.
+function fogParams(fog: FogOptions | null): ShaderParams {
+  if (fog === null) return { uFogInv: 0, uFogDensity: 0, uFogHeightFalloff: 0 }
+  let color = [fog.color[0], fog.color[1], fog.color[2]]
+  let height = fog.height ?? 0
+  let falloff = fog.heightFalloff ?? 0
+  if (!Number.isFinite(height) || !Number.isFinite(falloff) || falloff < 0) {
+    throw new Error(`fog: height must be finite and heightFalloff finite and >= 0, got ${height} / ${falloff}`)
+  }
+  let params: ShaderParams = { uFogColor: color, uFogHeight: height, uFogHeightFalloff: falloff }
+  if ("density" in fog) {
+    let { density } = fog
+    if (!Number.isFinite(density) || density <= 0) {
+      throw new Error(`fog: density must be finite and > 0, got ${density}`)
+    }
+    return { ...params, uFogInv: 0, uFogDensity: density }
+  }
+  let { near, far } = fog
+  if (!(Number.isFinite(near) && Number.isFinite(far)) || far <= near) {
+    throw new Error(`fog: near/far must be finite with near < far, got ${near}..${far}`)
+  }
+  return { ...params, uFogNear: near, uFogInv: 1 / (far - near), uFogDensity: 0 }
+}
+
+// `params` minus `names` - the scene-params fan-out around a view's own
+// names. Returns the input untouched (no copy) when nothing intersects.
+function withoutNames(params: ShaderParams, names: Set<string>): ShaderParams {
+  let hit = false
+  for (let k of names) {
+    if (k in params) {
+      hit = true
+      break
+    }
+  }
+  if (!hit) return params
+  let out: ShaderParams = {}
+  for (let k of Object.keys(params)) if (!names.has(k)) out[k] = params[k]!
+  return out
+}
+
+// Layer masks are 32-bit sets, Three's Object3D.layers width.
+function checkMask(mask: number, site: string): number {
+  if (!Number.isInteger(mask) || mask < 0 || mask > 0xffffffff) {
+    throw new Error(site + ": layers must be an integer bitmask in 0..0xffffffff, got " + mask)
+  }
+  return mask
+}
+
 export type SceneOptions = {
   clearColor?: [number, number, number, number]
   /** Scene-wide fog; see setFog. */
   fog?: FogOptions
+  /** The scene target's layer mask (bitmask, default 1): the scene draws
+   * the meshes whose `layers` intersect it. Live via scene.setLayers. */
+  layers?: number
+  /** The scene target's depth storage: true (default) for a buffer,
+   * "texture" for a sampleable one exposed as `scene.depthTexture` - the
+   * input for a depth-reading post effect in `output` (depth fog, SSAO,
+   * depth of field). Not with `samples` (the engine has no multisampled
+   * sampleable depth): render larger and display smaller instead. */
+  depth?: true | "texture"
   /** Fragment GLSL drawn behind the meshes, inside the scene's own pass -
    * see setBackground. */
   background?: string
@@ -447,6 +512,17 @@ export type ViewOptions = {
    * draws in add order (no renderOrder or transparent sort).
    */
   overrideMaterial?: Material
+  /** The view's layer mask (bitmask, default 1): the view draws the
+   * meshes whose `layers` intersect it - a minimap admitting marker
+   * meshes only. Live via view.setLayers. */
+  layers?: number
+  /**
+   * The view's own fog: FogOptions overrides the scene's, null turns fog
+   * off in this view (an unfogged minimap over a fogged scene). Absent
+   * follows the scene. The fog names become view-owned params - the
+   * scene's setParams/setFog fan-out skips them (see View.setParams).
+   */
+  fog?: FogOptions | null
   /** The view target's depth storage: true (default) for a buffer,
    * "texture" for a sampleable one exposed as `view.depthTexture`. Not
    * with `into` (the depth is the parent's). */
@@ -480,9 +556,14 @@ export type View = {
   /** Move and resize a view created `into` an atlas (top-left origin);
    * throws on a view with a target of its own. */
   setRect(rect: { x: number; y: number; width: number; height: number }): void
-  /** View-owned shared params on the view's target (the scene's own
-   * setParams names fan out to every view already). */
+  /** View-owned shared params on the view's target. Names written here
+   * (and the `fog` option's) become the view's OWN: the scene's
+   * setParams/setFog fan-out skips them from then on, so a view override
+   * is never clobbered by the next scene-wide write. */
   setParams(params: ShaderParams): void
+  /** Replace the view's layer mask (bitmask): entries for newly admitted
+   * meshes attach, masked-out ones detach. */
+  setLayers(mask: number): void
   /** Destroy the view's target (its entries die with it). Idempotent;
    * views also die with their scene. */
   dispose(): void
@@ -491,6 +572,9 @@ export type View = {
 export type Scene = {
   /** The scene's output: an ordinary texture id (`<texture src>`). */
   texture: TextureId
+  /** The scene target's depth as a sampler-only texture id when created
+   * with `depth: "texture"`, else null. */
+  depthTexture: TextureId | null
   /** The tree root; add(scene.root, node) attaches top-level nodes. */
   root: SceneNode
   /** Partial camera update; absent keys keep their current value. */
@@ -518,6 +602,10 @@ export type Scene = {
    * The background is not fogged: match colors (see FogOptions).
    */
   setFog(fog: FogOptions | null): void
+  /** Replace the scene target's layer mask (bitmask): entries for newly
+   * admitted meshes attach, masked-out ones detach. Shadow views follow
+   * this mask - what the scene cannot see must not darken it. */
+  setLayers(mask: number): void
   /**
    * Set, replace, or remove (null) the scene's background: fragment GLSL
    * drawn as the FIRST entry of the scene's own pass - one target, no
@@ -842,6 +930,7 @@ export function createMesh(geometry: Geometry, material: Material): Mesh {
   mesh.material = material
   mesh.renderOrder = 0
   mesh.castShadow = false
+  mesh.layers = 1
   mesh._entry = null
   mesh._buffers = null
   mesh._transparent = false
@@ -1275,6 +1364,21 @@ export function setRenderOrder(mesh: Mesh, order: number): void {
 }
 
 /** Draw the mesh into the scene's shadow map, or stop (see Mesh.castShadow). */
+/**
+ * Set a mesh's layer membership (bitmask, default 1). A target draws the
+ * mesh when its mask intersects this: the scene's own mask (`layers` on
+ * createScene, `scene.setLayers`), each view's (`layers` on createView,
+ * `view.setLayers`); shadow views follow the scene's. A mesh masked out of
+ * the scene is also skipped by pick()/raycast(), like an invisible one.
+ * `layers: 0` draws nowhere. Not inherited from ancestor Groups.
+ */
+export function setLayers(mesh: Mesh, layers: number): void {
+  checkMask(layers, "setLayers")
+  if (mesh.layers === layers) return
+  mesh.layers = layers
+  mesh._scene?._setLayers(mesh)
+}
+
 export function setCastShadow(mesh: Mesh, cast: boolean): void {
   if (mesh.castShadow === cast) return
   mesh.castShadow = cast
@@ -1327,8 +1431,15 @@ export function setMeshParams(mesh: Mesh, params: ShaderParams): void {
  * `autoFree: false`); outside one, call `dispose()` yourself.
  */
 export function createScene(width: number, height: number, opts?: SceneOptions): Scene {
+  let depthMode = opts?.depth ?? true
+  if (depthMode === "texture" && (opts?.samples ?? 1) > 1) {
+    throw new Error('createScene: depth "texture" cannot combine with samples (no multisampled sampleable depth) - render larger and display smaller instead')
+  }
+  // The scene target's layer mask; shadow views follow it (a mesh the
+  // scene cannot see must not darken it).
+  let sceneMask = checkMask(opts?.layers ?? 1, "createScene")
   let texture = createDrawTarget(width, height, null, {
-    depth: true,
+    depth: depthMode,
     clearColor: opts?.clearColor,
     filter: opts?.filter,
     wrap: opts?.wrap,
@@ -1528,9 +1639,17 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     width: number
     height: number
     override: Material | null
-    /** Which meshes the view draws (null = all): the shadow view's
-     * caster set. Re-evaluated per mesh by _setCast. */
-    filter: ((mesh: Mesh) => boolean) | null
+    /** Non-null marks a SHADOW view and names its caster set (m =>
+     * m.castShadow). Re-evaluated per mesh by _setCast; also picks the
+     * caster's own shadow material variant over the depth override. */
+    shadowFilter: ((mesh: Mesh) => boolean) | null
+    /** Layer mask: the view draws the meshes whose `layers` intersect
+     * it. A shadow view's follows the scene's. */
+    mask: number
+    /** Names the view set itself (view.setParams, the fog option): the
+     * scene's fan-out skips them so a view override survives scene-wide
+     * writes. */
+    ownNames: Set<string>
     camera: Camera
     entries: Map<Mesh, DrawId>
     orderDirty: boolean
@@ -1654,16 +1773,52 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
   // would be same-pass feedback).
   let receivingTargets = (fn: (target: TextureId) => void) => {
     fn(texture)
-    for (let v of views) if (v.filter === null) fn(v.texture)
+    for (let v of views) if (v.shadowFilter === null) fn(v.texture)
+  }
+  // The mesh's entry in the scene's OWN target - what mesh._entry is.
+  // Created when the scene mask admits the mesh, dropped when it stops:
+  // the same lifecycle a view entry has, so `_buffers` (not `_entry`) is
+  // the attached-to-the-scene sentinel.
+  let attachScene = (mesh: Mesh) => {
+    if (mesh._entry !== null) return
+    if ((mesh.layers & sceneMask) === 0) return
+    let inst = mesh._instances
+    let bufs = mesh._buffers!
+    // The entry starts switched off: it has no world matrix yet - the walk
+    // in sync() computes one - and _schedule() defers that to a microtask,
+    // so added live it would draw at the seeded identity until then. The
+    // mismatch branch in sync() turns it on in the same pass that writes
+    // uModel.
+    mesh._entry = addDraw(texture, mesh.material.pipeline(mesh.geometry.layout), entrySeed(mesh.material, mesh._params), {
+      buffer: bufs.buffer,
+      indexBuffer: bufs.index,
+      indexFormat: bufs.indexFormat,
+      textures: mesh.material.textures,
+      instanceBuffer: inst !== null ? inst.buffer : undefined,
+      instanceCount: 0,
+    })
+    // The core turns the entry on (with the world matrix) at the next
+    // flush, and off again whenever the node or an ancestor hides.
+    spatial.bindDraw(mesh._node!, texture, mesh._entry, mesh.material.normalMatrix === true, inst !== null ? inst.count : 1)
+    orderDirty = true
+  }
+  let detachScene = (mesh: Mesh) => {
+    if (mesh._entry === null) return
+    if (mesh._node !== null) spatial.unbindDraw(mesh._node, texture)
+    if (!disposed) removeDraw(texture, mesh._entry)
+    mesh._entry = null
+    orderDirty = true
   }
   let attachView = (v: ViewRecord, mesh: Mesh) => {
+    if (v.entries.has(mesh)) return
     let inst = mesh._instances
     if (v.override !== null && inst !== null) return
-    if (v.filter !== null && !v.filter(mesh)) return
-    // A shadow view (the filtered kind) lets a caster's material pick its
-    // own depth variant (its cull side); any other override view draws
-    // exactly what it was given.
-    let material = v.override !== null ? (v.filter !== null ? (mesh.material.shadow ?? v.override) : v.override) : mesh.material
+    if (v.shadowFilter !== null && !v.shadowFilter(mesh)) return
+    if ((mesh.layers & v.mask) === 0) return
+    // A shadow view lets a caster's material pick its own depth variant
+    // (its cull side); any other override view draws exactly what it was
+    // given.
+    let material = v.override !== null ? (v.shadowFilter !== null ? (mesh.material.shadow ?? v.override) : v.override) : mesh.material
     let bufs = mesh._buffers!
     let entry = addDraw(v.texture, material.pipeline(mesh.geometry.layout), entrySeed(material, v.override !== null ? null : mesh._params), {
       buffer: bufs.buffer,
@@ -1709,7 +1864,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
   // already holds (the light set - rewritten for every target, the simple
   // write - the merged scene params, the shadow map binding), then one
   // entry per mesh the filter admits.
-  let makeView = (vopts: ViewOptions, filter: ((mesh: Mesh) => boolean) | null): ViewRecord => {
+  let makeView = (vopts: ViewOptions, shadowFilter: ((mesh: Mesh) => boolean) | null): ViewRecord => {
     let override = vopts.overrideMaterial ?? null
     if (override !== null) {
       for (let mesh of meshes) if (mesh._instances === null) checkLayout(override, mesh.geometry, "View override material")
@@ -1731,7 +1886,9 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       width: vopts.width,
       height: vopts.height,
       override,
-      filter,
+      shadowFilter,
+      mask: shadowFilter !== null ? sceneMask : checkMask(vopts.layers ?? 1, "createView"),
+      ownNames: new Set(),
       camera: makeCamera(),
       entries: new Map(),
       orderDirty: true,
@@ -1742,7 +1899,12 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     // The light rewrite seeds the shadow set (maps, casts, biases,
     // matrices) on the new target too.
     lightsDirty = true
-    setTargetParams(v.texture, sceneParams)
+    // The view's own fog claims its names before the scene-params seed,
+    // so the seed (and every later fan-out) leaves them to the view.
+    let ownFog = vopts.fog !== undefined ? fogParams(vopts.fog) : null
+    if (ownFog !== null) for (let k of Object.keys(ownFog)) v.ownNames.add(k)
+    setTargetParams(v.texture, ownFog === null ? sceneParams : withoutNames(sceneParams, v.ownNames))
+    if (ownFog !== null) setTargetParams(v.texture, ownFog)
     for (let mesh of meshes) attachView(v, mesh)
     hooks._schedule()
     return v
@@ -1865,7 +2027,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
         v.camera.pending = false
         setTargetParams(v.texture, cameraParams(v.camera))
         if (transparentCount > 1) v.orderDirty = true
-        if (v.filter !== null) shadowMatricesDirty = true
+        if (v.shadowFilter !== null) shadowMatricesDirty = true
       }
     }
     // Light bookkeeping first, so a fresh direction-slot bind is seeded
@@ -1953,10 +2115,20 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       }
     },
     _setCast(mesh) {
-      if (mesh._entry === null || disposed) return
+      if (mesh._buffers === null || disposed) return
       for (let v of views) {
-        if (v.filter === null) continue
-        if (v.filter(mesh)) attachView(v, mesh)
+        if (v.shadowFilter === null) continue
+        if (v.shadowFilter(mesh)) attachView(v, mesh)
+        else detachView(v, mesh)
+      }
+      hooks._schedule()
+    },
+    _setLayers(mesh) {
+      if (mesh._buffers === null || disposed) return
+      if ((mesh.layers & sceneMask) !== 0) attachScene(mesh)
+      else detachScene(mesh)
+      for (let v of views) {
+        if ((mesh.layers & v.mask) !== 0) attachView(v, mesh)
         else detachView(v, mesh)
       }
       hooks._schedule()
@@ -1998,22 +2170,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       }
       let bufs = acquireGeometryBuffers(mesh.geometry)
       mesh._buffers = bufs
-      // The entry starts switched off: it has no world matrix yet - the walk
-      // in sync() computes one - and _schedule() defers that to a microtask,
-      // so added live it would draw at the seeded identity until then. The
-      // mismatch branch in sync() turns it on in the same pass that writes
-      // uModel.
-      mesh._entry = addDraw(texture, mesh.material.pipeline(mesh.geometry.layout), entrySeed(mesh.material, mesh._params), {
-        buffer: bufs.buffer,
-        indexBuffer: bufs.index,
-        indexFormat: bufs.indexFormat,
-        textures: mesh.material.textures,
-        instanceBuffer: inst !== null ? inst.buffer : undefined,
-        instanceCount: 0,
-      })
-      // The core turns the entry on (with the world matrix) at the next
-      // flush, and off again whenever the node or an ancestor hides.
-      spatial.bindDraw(mesh._node!, texture, mesh._entry, mesh.material.normalMatrix === true, inst !== null ? inst.count : 1)
+      attachScene(mesh)
       for (let v of views) attachView(v, mesh)
       // Picking: the local box puts the node in the core index; an
       // ordinary mesh also gets its geometry's triangle shape, an
@@ -2030,16 +2187,15 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       this._schedule()
     },
     _detach(mesh) {
-      if (mesh._entry !== null) {
+      if (mesh._buffers !== null) {
         for (let v of views) detachView(v, mesh)
+        detachScene(mesh)
         if (mesh._node !== null) {
           spatial.setShape(mesh._node, null)
           spatial.setBounds(mesh._node, null)
-          spatial.unbindDraw(mesh._node, texture)
           byNode.delete(mesh._node)
         }
-        if (!disposed) removeDraw(texture, mesh._entry)
-        if (mesh._buffers !== null) releaseGeometryBuffers(mesh._buffers)
+        releaseGeometryBuffers(mesh._buffers)
         mesh._buffers = null
         let i = meshes.indexOf(mesh)
         if (i >= 0) meshes.splice(i, 1)
@@ -2049,8 +2205,8 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       mesh._entry = null
     },
     _setParams(mesh, params) {
-      if (mesh._entry === null || disposed) return
-      setDrawParams(texture, mesh._entry, params)
+      if (mesh._buffers === null || disposed) return
+      if (mesh._entry !== null) setDrawParams(texture, mesh._entry, params)
       // A view drawing the mesh's own material carries its params too; an
       // overridden view has none of them.
       for (let v of views) {
@@ -2061,7 +2217,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     _setCount(mesh) {
       // The core composes the count with the visibility switch: a hidden
       // entry stays at 0 and the unhide restores the new count.
-      if (mesh._entry !== null && mesh._node !== null && !disposed && mesh._instances !== null) {
+      if (mesh._buffers !== null && mesh._node !== null && !disposed && mesh._instances !== null) {
         spatial.setDrawCount(mesh._node, mesh._instances.count)
       }
     },
@@ -2069,8 +2225,8 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       // The entry keeps its range (at most the old capacity, so the larger
       // buffer always passes the swap's bounds check); the caller destroys
       // the old buffer after this, which the entry held alive until now.
-      if (mesh._entry !== null && !disposed && mesh._instances !== null) {
-        setDrawBuffers(texture, mesh._entry, { instanceBuffer: mesh._instances.buffer })
+      if (mesh._buffers !== null && !disposed && mesh._instances !== null) {
+        if (mesh._entry !== null) setDrawBuffers(texture, mesh._entry, { instanceBuffer: mesh._instances.buffer })
         for (let v of views) {
           let entry = v.entries.get(mesh)
           if (entry !== undefined) setDrawBuffers(v.texture, entry, { instanceBuffer: mesh._instances.buffer })
@@ -2223,6 +2379,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
 
   let scene: Scene = {
     texture,
+    depthTexture: depthMode === "texture" ? depthTexture(texture) : null,
     root,
     setCamera(update) {
       updateCamera(camera, update)
@@ -2240,33 +2397,36 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       if (disposed) return
       Object.assign(sceneParams, params)
       setTargetParams(texture, params)
-      for (let v of views) setTargetParams(v.texture, params)
+      for (let v of views) {
+        // A view's own names (view.setParams, its fog) win over the
+        // scene-wide fan-out.
+        let fanned = v.ownNames.size === 0 ? params : withoutNames(params, v.ownNames)
+        if (fanned !== params && Object.keys(fanned).length === 0) continue
+        setTargetParams(v.texture, fanned)
+      }
     },
     setFog(fog) {
-      if (fog === null) {
-        scene.setParams({ uFogInv: 0, uFogDensity: 0, uFogHeightFalloff: 0 })
-        return
+      scene.setParams(fogParams(fog))
+    },
+    setLayers(mask) {
+      checkMask(mask, "scene.setLayers")
+      if (disposed || sceneMask === mask) return
+      sceneMask = mask
+      for (let mesh of meshes) {
+        if ((mesh.layers & mask) !== 0) attachScene(mesh)
+        else detachScene(mesh)
       }
-      let color = [fog.color[0], fog.color[1], fog.color[2]]
-      let height = fog.height ?? 0
-      let falloff = fog.heightFalloff ?? 0
-      if (!Number.isFinite(height) || !Number.isFinite(falloff) || falloff < 0) {
-        throw new Error(`setFog: height must be finite and heightFalloff finite and >= 0, got ${height} / ${falloff}`)
-      }
-      let params: ShaderParams = { uFogColor: color, uFogHeight: height, uFogHeightFalloff: falloff }
-      if ("density" in fog) {
-        let { density } = fog
-        if (!Number.isFinite(density) || density <= 0) {
-          throw new Error(`setFog: density must be finite and > 0, got ${density}`)
+      // Shadow views follow the scene's mask: what the scene cannot see
+      // must not darken it.
+      for (let v of views) {
+        if (v.shadowFilter === null) continue
+        v.mask = mask
+        for (let mesh of meshes) {
+          if ((mesh.layers & mask) !== 0) attachView(v, mesh)
+          else detachView(v, mesh)
         }
-        scene.setParams({ ...params, uFogInv: 0, uFogDensity: density })
-        return
       }
-      let { near, far } = fog
-      if (!(Number.isFinite(near) && Number.isFinite(far)) || far <= near) {
-        throw new Error(`setFog: near/far must be finite with near < far, got ${near}..${far}`)
-      }
-      scene.setParams({ ...params, uFogNear: near, uFogInv: 1 / (far - near), uFogDensity: 0 })
+      hooks._schedule()
     },
     setBackground(source) {
       if (disposed) return
@@ -2280,7 +2440,8 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       let built = backgroundPipeline(source, (opts?.label ?? "scene") + "-background")
       // First in list order: inserted before the first mesh entry, and every
       // later sort keeps it there.
-      let entry = addDraw(texture, built.pipeline, null, { vertexCount: 3, before: meshes[0]?._entry ?? undefined })
+      // Before the first mesh ENTRY - a layers-masked mesh has none.
+      let entry = addDraw(texture, built.pipeline, null, { vertexCount: 3, before: meshes.find(m => m._entry !== null)?._entry ?? undefined })
       background = { entry, pipeline: built.pipeline, program: built.program }
     },
     project(point) {
@@ -2340,6 +2501,8 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       for (let h of spatial.raycast(rayOriginScratch, rayDirScratch)) {
         let mesh = byNode.get(h.node)
         if (mesh === undefined) continue
+        // A mesh the scene mask excludes is skipped like an invisible one.
+        if ((mesh.layers & sceneMask) === 0) continue
         let hit: Hit = { mesh, distance: h.distance, point: h.point }
         if (h.normal !== undefined) hit.normal = h.normal
         if (h.face !== undefined) hit.face = h.face
@@ -2380,7 +2543,19 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
           hooks._schedule()
         },
         setParams(params) {
-          if (!v.disposed) setTargetParams(v.texture, params)
+          if (v.disposed) return
+          for (let k of Object.keys(params)) v.ownNames.add(k)
+          setTargetParams(v.texture, params)
+        },
+        setLayers(mask) {
+          checkMask(mask, "view.setLayers")
+          if (v.disposed || v.mask === mask) return
+          v.mask = mask
+          for (let mesh of meshes) {
+            if ((mesh.layers & mask) !== 0) attachView(v, mesh)
+            else detachView(v, mesh)
+          }
+          hooks._schedule()
         },
         dispose() {
           disposeView(v)
