@@ -130,11 +130,15 @@ export async function main() {
 
   // The assets/ convention folder, created up front: everything in it ships
   // with the app, and the dev watcher only picks up an assets/ folder that
-  // exists when it starts. It starts with a placeholder app icon (picked up
-  // through the assets/icon.svg convention) for the author to replace.
+  // exists when it starts. It starts with the SolidRT logo as the app icon,
+  // for the author to replace: the .svg feeds the launcher tiles and desktop
+  // window icon, the pre-rendered .png sibling the Android launcher icon
+  // (`srt pack --apk`; SVG cannot be rasterized at pack time).
   await mkdir(join(dir, "assets"), { recursive: true })
-  await writeFile(join(dir, "assets", "icon.svg"), await readFile(join(SCAFFOLD_DIR, "icon.svg")))
-  console.log("   Write assets/icon.svg")
+  for (let icon of ["icon.svg", "icon.png"]) {
+    await writeFile(join(dir, "assets", icon), await readFile(join(SCAFFOLD_DIR, icon)))
+    console.log(`   Write assets/${icon}`)
+  }
 
   // The scaffold package.json carries a placeholder name and every extension
   // dependency; set the name from the target folder and keep only the

@@ -16,7 +16,7 @@ endif
 # of truth: any packaging goal sets DIST=1, exports it to the recursive client/
 # runtime makes, and the override beats even a command-line SPEECH=1. The
 # goals are spelled out (not `dist-%`) so `dist` itself is covered.
-ifneq ($(filter dist dist-android dist-android-armeabi-v7a,$(MAKECMDGOALS)),)
+ifneq ($(filter dist android-dist android-dist-armeabi-v7a,$(MAKECMDGOALS)),)
 DIST = 1
 endif
 export DIST
@@ -99,17 +99,17 @@ help:
 	@echo "  dist                 Build both plus the flux binaries into packages/$(HOST_PLATFORM)/"
 	@echo ""
 	@echo "Android dev (single ABI=$(ANDROID_ABI)):"
-	@echo "  client-android       Build the client .so"
-	@echo "  run-android          Build, install, launch, tail logcat"
-	@echo "  run-android-armeabi-v7a  Same, for the 32-bit ABI"
-	@echo "  runtime-android      Build the production runner APK (the srt pack --apk base)"
+	@echo "  android-client       Build the client .so"
+	@echo "  android-run          Build, install, launch, tail logcat"
+	@echo "  android-run-armeabi-v7a  Same, for the 32-bit ABI"
+	@echo "  android-runtime      Build the production runner APK (the srt pack --apk base)"
 	@echo ""
 	@echo "  The launched client auto-connects to DEV_SERVER=$(DEV_SERVER)."
 	@echo "  Override it (10.0.2.2:$(DEV_PORT) for an emulator), or DEV_SERVER= for none."
 	@echo ""
 	@echo "Android dist (fat: all ABIs):"
-	@echo "  dist-android         Build fat APK into packages/android-arm64-v8a/"
-	@echo "  dist-android-armeabi-v7a  Build 32-bit APK into packages/android-armeabi-v7a/"
+	@echo "  android-dist         Build fat APK into packages/android-arm64-v8a/"
+	@echo "  android-dist-armeabi-v7a  Build 32-bit APK into packages/android-armeabi-v7a/"
 	@echo ""
 	@echo "Pass PROFILE=debug for a debug build (default: release)."
 	@echo "Pass SPEECH=1 to build with speech recognition (default: off)."
@@ -124,7 +124,7 @@ help:
 
 # -- Launcher -----------------------------------------
 #
-# SolidRT Go embeds resources/launcher/index.srt.js at compile time via
+# The go client embeds resources/launcher/index.srt.js at compile time via
 # include_str!. The file target rebuilds it when any .tsx source in
 # apps/launcher changes. Run `make launcher-bundle` to force a rebuild.
 

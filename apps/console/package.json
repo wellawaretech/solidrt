@@ -5,6 +5,7 @@
   "solidrt": {
     "appId": "com.solidrt.console",
     "displayName": "Console",
+    "iconBackground": "#0d1a40",
     "fonts": { "serif": false }
   },
   "scripts": {

@@ -53,7 +53,7 @@ The pieces this lands on:
   the keyboard-inset JNI) move to `src/main`, the go-only parts
   (`extractAssets`, the `srt_dev_server` intent extra) into a `src/go`
   subclass.
-- `lattice/Makefile.android` needs a `runtime-android` target, and the `prod`
+- `lattice/Makefile.android` needs a `android-runtime` target, and the `prod`
   flavor in `lattice/android/app/build.gradle` (declared, with an empty
   `src/prod`) needs its own `jniLibs.srcDir` so it picks up the runtime `.so`
   rather than the go one - and its own (empty) assets dir, since
@@ -98,10 +98,14 @@ What the patch has to do, measured against the shipped
   minimum Android accepts for targetSdk 30+. Chunked SHA-256 over
   entries/central directory/EOCD plus one RSA signature, which `node:crypto`
   covers. A fixed certificate shipped in the CLI (same posture as the
-  checked-in `debug.keystore`) makes sideloading work out of the box;
-  publishing needs a `--keystore` flag. To state the posture plainly: anyone
-  holding the shipped key can sign an update to any app packed with it, so
-  the fixed key is for handing builds around, never for store publishing.
+  checked-in `debug.keystore`) makes sideloading work out of the box. To
+  state the posture plainly: anyone holding the shipped key can sign an
+  update to any app packed with it, so the fixed key is for handing builds
+  around, never for store publishing. Distribution signing is deferred:
+  when it lands it is package.json config (a PEM key + cert pair, which
+  `node:crypto` reads natively - not a JKS/PKCS12 keystore, which would
+  need an ASN.1 parser), never a flag; meanwhile pack prints a note that
+  the shared dev key signed the APK.
 - **Payload.** The `.srtapp` added as a STORED entry, which is what makes half
   1's file-descriptor path work at all.
 
@@ -145,9 +149,35 @@ manifest, Play signing, split per device at delivery), not a fat APK.
 
 - `app-icons.md` says "Android is a non-issue ... apps run inside the client,
   so the APK's own icon is the client's". A standalone APK retires that: its
-  icon and label are the app's, so Android joins that item's stage 3. It needs
-  a raster at pack time, and the TypeScript CLI cannot rasterize SVG (`resvg`
-  is a go-feature dep), so the first cut likely accepts a PNG under `assets/`.
+  icon and label are the app's, so Android joins that item's stage 3. The
+  TypeScript CLI cannot rasterize SVG (`resvg` is a go-feature dep), so the
+  first cut accepts a PNG (the `icon` config key naming one; an `.svg` keeps
+  the placeholder with a pack-time note). Decided shape - stay adaptive, let
+  Android do the geometry: every launcher masks icons (circle/squircle/
+  rounded rect) and only the central 66/108 safe zone survives all masks, so
+  a plain full-bleed PNG always risks getting cut. The runner bakes an
+  adaptive icon with two patchable PNG slots: a 1x1 background pixel
+  (stretched full-bleed; generated at pack time from an `iconBackground`
+  color, default near-black) and a foreground wrapped in a 22.5% `<inset>`
+  drawable, so any square PNG lands at 90% of the safe zone with no
+  resampling in the patcher. The PNG must fill its bitmap edge-to-edge:
+  padding belongs to the inset, never to the file (transparent margin in
+  the file shrinks the mark, since the inset cannot see through it). The
+  go client's foreground uses the same PNG-plus-22.5%-inset shape. Later,
+  additively: an inset override for adaptive-aware full-bleed art, and a
+  `<monochrome>` layer for themed icons.
+- TV banner: on Android TV the launcher shows `android:banner` (160x90dp)
+  instead of the icon, and it replaces the label entirely - a banner
+  without text is an anonymous tile on the shelf, which is why Android TV
+  guidance wants the app name in it. The go client's banner
+  (`res/drawable-xhdpi/tv_banner.png`, the mark centered on the official
+  near-black ground) is mark-only today, so "Player" should be rendered
+  into it. Packed apps inherit that same static banner, so on a TV every
+  packed app shows the SolidRT banner, not its own: a patchable banner
+  slot (same mechanism as `app_icon_fg.png`) plus pack-time composition of
+  the app's `displayName` over its icon would fix it - but text rendering
+  at pack time has the same problem as SVG rasterization
+  (`icon-svg-rasterization.md`), so the two probably share a solution.
 - `ffi-android-apk-packaging.md` wants an app's ffi libraries copied into the
   APK as `jniLibs` so `dlopen` by path works. That is the same packaging step
   as half 2, one more thing to inject.

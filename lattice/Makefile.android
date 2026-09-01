@@ -1,10 +1,10 @@
 # lattice/Makefile.android
 #
 # Two tiers of Android build:
-#   - dev (single ABI): client-android / run-android build for one ANDROID_ABI
+#   - dev (single ABI): android-client / android-run build for one ANDROID_ABI
 #     only, for fast iteration. Default is arm64-v8a; use ANDROID_ABI=x86_64 for
 #     the emulator.
-#   - dist (fat): dist-android builds every ABI in ANDROID_ABIS into one APK that
+#   - dist (fat): android-dist builds every ABI in ANDROID_ABIS into one APK that
 #     runs on both real arm64 devices and the x86_64 emulator.
 
 NDK_HOME    ?= /opt/android-ndk
@@ -69,7 +69,7 @@ HOST_LAN_IP = $(shell ip -4 route get 1.1.1.1 2>/dev/null | sed -n 's/.*src \([0
 endif
 DEV_SERVER ?= $(if $(HOST_LAN_IP),$(HOST_LAN_IP):$(DEV_PORT))
 
-.PHONY: client-android run-android run-android-armeabi-v7a dist-android dist-android-armeabi-v7a
+.PHONY: android-client android-run android-run-armeabi-v7a android-dist android-dist-armeabi-v7a
 
 # Cross-compile the engine .so via cargo-ndk.
 # $(1) = label, $(2) = env vars, $(3) = cargo flags
@@ -96,7 +96,7 @@ define ndk-stage
 	@echo "Staged Android .so files into $(ANDROID_DIST)/"
 endef
 
-client-android: $(LAUNCHER_JS) $(BSOD_JS)
+android-client: $(LAUNCHER_JS) $(BSOD_JS)
 	$(call ndk-build,SOLIDRT-GO ($(PROFILE)),,$(CARGO_PROFILE_FLAG) $(GO_FEATURES) --target-dir target/go)
 	$(call ndk-stage,$(PROFILE))
 
@@ -109,10 +109,10 @@ $(GRADLE_WRAPPER_JAR):
 # current with what the device runs, so `srt android --install` (which takes
 # the APK from there in a checkout) installs this build, not an older one.
 # $(1) = profile (release|debug) matching the staged .so
-define android-run
+define apk-run
 	$(call ndk-stage,$(1))
 	# -PsrtAbi keeps a leftover ABI staged under dist/android out of this APK,
-	# so the dev loop stays single-ABI (same reason as dist-android).
+	# so the dev loop stays single-ABI (same reason as android-dist).
 	cd android && ./gradlew assembleGoDebug -PsrtAbi=$(ANDROID_ABI)
 	cp $(APK_GO_DEBUG) $(ANDROID_DIST)/solidrt-go.apk
 	@echo "Staged solidrt-go.apk ($(ANDROID_ABI)) into $(ANDROID_DIST)/"
@@ -123,20 +123,20 @@ define android-run
 	adb logcat -s SDL SDL/APP libmain DEBUG libc
 endef
 
-run-android: client-android $(GRADLE_WRAPPER_JAR)
-	$(call android-run,$(PROFILE))
+android-run: android-client $(GRADLE_WRAPPER_JAR)
+	$(call apk-run,$(PROFILE))
 
-# The same dev loop against the 32-bit ABI (see dist-android-armeabi-v7a).
-run-android-armeabi-v7a:
-	$(MAKE) run-android ANDROID_ABI=armeabi-v7a PROFILE=$(PROFILE)
+# The same dev loop against the 32-bit ABI (see android-dist-armeabi-v7a).
+android-run-armeabi-v7a:
+	$(MAKE) android-run ANDROID_ABI=armeabi-v7a PROFILE=$(PROFILE)
 
-dist-android: $(GRADLE_WRAPPER_JAR)
+android-dist: $(GRADLE_WRAPPER_JAR)
 	# Build + stage the engine .so for every bundled ABI into dist/android/<abi>/.
 	for abi in $(ANDROID_ABIS); do \
-	  $(MAKE) client-android ANDROID_ABI=$$abi PROFILE=$(PROFILE) || exit 1; \
+	  $(MAKE) android-client ANDROID_ABI=$$abi PROFILE=$(PROFILE) || exit 1; \
 	done
 	# Pin the assemble to ANDROID_ABIS via -PsrtAbi so a leftover ABI staged under
-	# dist/android (e.g. armeabi-v7a from dist-android-armeabi-v7a) can't leak into
+	# dist/android (e.g. armeabi-v7a from android-dist-armeabi-v7a) can't leak into
 	# the fat APK; gradle's jniLibs.srcDir would otherwise bundle every staged ABI.
 	cd android && ./gradlew assembleGoDebug -PsrtAbi="$(ANDROID_ABIS_CSV)"
 	mkdir -p $(ANDROID_DIST)
@@ -145,11 +145,11 @@ dist-android: $(GRADLE_WRAPPER_JAR)
 	@echo "Staged fat solidrt-go.apk ($(ANDROID_ABIS)) into $(ANDROID_DIST)/ and $(PKG_ANDROID)/"
 
 # 32-bit (armeabi-v7a) single-ABI APK staged into packages/android-armeabi-v7a/.
-# Unlike the fat dist-android, -PsrtAbi=armeabi-v7a restricts the bundled native
+# Unlike the fat android-dist, -PsrtAbi=armeabi-v7a restricts the bundled native
 # libs to the one ABI even though dist/android may hold other staged ABIs, so the
 # 32-bit package stays 32-bit. SPEECH defaults off everywhere (see Makefile).
-dist-android-armeabi-v7a: $(GRADLE_WRAPPER_JAR)
-	$(MAKE) client-android ANDROID_ABI=armeabi-v7a PROFILE=$(PROFILE)
+android-dist-armeabi-v7a: $(GRADLE_WRAPPER_JAR)
+	$(MAKE) android-client ANDROID_ABI=armeabi-v7a PROFILE=$(PROFILE)
 	cd android && ./gradlew assembleGoDebug -PsrtAbi=armeabi-v7a
 	mkdir -p $(SRT_HOME)/dist/android/armeabi-v7a
 	cp $(APK_GO_DEBUG) $(SRT_HOME)/dist/android/armeabi-v7a/solidrt-go.apk
@@ -166,7 +166,7 @@ ANDROID_RUNTIME_DIST = $(SRT_HOME)/dist/android-runtime
 
 APK_PROD_DEBUG = android/app/build/outputs/apk/prod/debug/app-prod-debug.apk
 
-.PHONY: runtime-android
+.PHONY: android-runtime
 
 # Build the production Android runtime: the not(go) engine .so (no launcher,
 # no dev server; SDL_main boots the .srtapp packed into the APK) assembled
@@ -174,7 +174,7 @@ APK_PROD_DEBUG = android/app/build/outputs/apk/prod/debug/app-prod-debug.apk
 # feature set as the desktop runtime. Single ABI (default arm64-v8a) for the
 # dev loop; per-ABI vs fat publishing is CI's call
 # (okf/backlog/standalone-android-apk.md).
-runtime-android: $(BSOD_JS) $(GRADLE_WRAPPER_JAR)
+android-runtime: $(BSOD_JS) $(GRADLE_WRAPPER_JAR)
 	$(call ndk-build,SOLIDRT RUNTIME ($(PROFILE)),,$(CARGO_PROFILE_FLAG) $(RUNTIME_FEATURES) --target-dir target/runtime-android)
 	mkdir -p $(ANDROID_RUNTIME_DIST)/$(ANDROID_ABI)
 	cp target/runtime-android/$(ANDROID_TARGET)/$(PROFILE)/liblattice.so $(ANDROID_RUNTIME_DIST)/$(ANDROID_ABI)/libmain.so
@@ -182,5 +182,8 @@ runtime-android: $(BSOD_JS) $(GRADLE_WRAPPER_JAR)
 	cp "$$(ls -t target/runtime-android/$(ANDROID_TARGET)/$(PROFILE)/build/impellers-*/out/libimpeller.so | head -1)" $(ANDROID_RUNTIME_DIST)/$(ANDROID_ABI)/
 	cp $(NDK_HOME)/toolchains/llvm/prebuilt/*/sysroot/usr/lib/$(ANDROID_CLANG_TRIPLE)/libc++_shared.so $(ANDROID_RUNTIME_DIST)/$(ANDROID_ABI)/
 	cd android && ./gradlew assembleProdDebug -PsrtAbi=$(ANDROID_ABI)
-	cp $(APK_PROD_DEBUG) $(ANDROID_RUNTIME_DIST)/solidrt-runtime.apk
-	@echo "Staged solidrt-runtime.apk ($(ANDROID_ABI)) into $(ANDROID_RUNTIME_DIST)/"
+	cp $(APK_PROD_DEBUG) $(ANDROID_RUNTIME_DIST)/$(ANDROID_ABI)/solidrt.apk
+	# arm64-v8a is the published runner (okf/backlog/standalone-android-apk.md);
+	# it rides in the same platform package as solidrt-go.apk.
+	if [ "$(ANDROID_ABI)" = "arm64-v8a" ]; then cp $(APK_PROD_DEBUG) $(PKG_ANDROID)/solidrt.apk; fi
+	@echo "Staged solidrt.apk ($(ANDROID_ABI)) into $(ANDROID_RUNTIME_DIST)/$(ANDROID_ABI)/"

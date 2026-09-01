@@ -2,6 +2,18 @@
   "name": "solidrt-app",
   "type": "module",
   "private": true,
+  "solidrt": {
+    "appId": null,
+    "displayName": null,
+    "icon": null,
+    "iconBackground": null,
+    "versionCode": null,
+    "fonts": {
+      "sans": true,
+      "serif": true,
+      "mono": true
+    }
+  },
   "scripts": {
     "dev": "srt run",
     "pack": "srt pack -o out",

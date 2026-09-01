@@ -97,20 +97,30 @@ export function androidPackageVersion(abi: string): string | null {
   }
 }
 
-// The production runner APK `srt pack --apk` patches, staged by `make
-// runtime-android`. Only the SRT_HOME contributor path exists until CI
-// publishes runner packages (okf/backlog/standalone-android-apk.md).
-export function resolveRunnerApk(): string | null {
+// The production runner APK `srt pack --apk` patches: staged per ABI by
+// `make android-runtime` in a checkout, or shipped inside the
+// @solidrt/android-<abi> platform package next to solidrt-go.apk. Runners
+// are per-ABI by decision - a shipped app carries one ABI, never a fat APK
+// (okf/backlog/standalone-android-apk.md).
+export function resolveRunnerApk(abi: string = DEFAULT_ANDROID_ABI): string | null {
   let srtRoot = process.env.SRT_HOME
   if (srtRoot) {
-    let apk = resolve(srtRoot, "dist/android-runtime", "solidrt-runtime.apk")
+    let apk = resolve(srtRoot, "dist/android-runtime", abi, "solidrt.apk")
     if (existsSync(apk)) return apk
+  }
+  let pkg = ANDROID_PKG_MAP[abi]
+  if (pkg) {
+    try {
+      let pkgDir = dirname(require.resolve(`${pkg}/package.json`))
+      let apk = resolve(pkgDir, "solidrt.apk")
+      if (existsSync(apk)) return apk
+    } catch {}
   }
   return null
 }
 
 export function resolveApk(abi: string = DEFAULT_ANDROID_ABI) {
-  // 1. SRT_HOME: contributor checkout, where `make dist-android` stages the APK
+  // 1. SRT_HOME: contributor checkout, where `make android-dist` stages the APK
   //    under dist/android/<abi>/.
   let srtRoot = process.env.SRT_HOME
   if (srtRoot) {

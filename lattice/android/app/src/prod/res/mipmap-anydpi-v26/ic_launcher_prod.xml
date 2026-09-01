@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The runner APK's patchable icon: both layers are plain PNG zip entries
+     the srt pack apk flow swaps byte-for-byte (see
+     packages/cli/src/pack/android/apk.ts). The background is a 1x1 pixel
+     Android stretches full-bleed (generated at pack time from the
+     iconBackground config color); the foreground sits behind an inset so
+     any square PNG lands inside the 66/108 safe zone every launcher mask
+     preserves. -->
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@drawable/app_icon_bg"/>
+    <foreground android:drawable="@drawable/app_icon_fg_inset"/>
+</adaptive-icon>

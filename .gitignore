@@ -23,7 +23,7 @@ scratchpad/
 tmp/
 spikes/
 
-# make dist / dist-android output staged into the platform packages
+# make dist / android-dist output staged into the platform packages
 packages/*/solidrt*
 packages/*/flux*
 packages/*/*.dll

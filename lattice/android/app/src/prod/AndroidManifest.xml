@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Prod overlay: the runner APK carries the patchable adaptive icon
+     instead of the SolidRT client icon (the label is already flavor-scoped
+     via res/values/strings.xml). -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+    <application
+        android:icon="@mipmap/ic_launcher_prod"
+        tools:replace="android:icon" />
+</manifest>

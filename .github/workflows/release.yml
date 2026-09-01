@@ -176,16 +176,24 @@ jobs:
       - uses: ./.github/actions/js-install
 
       - name: Build fat APK (arm64-v8a + x86_64)
-        run: NDK_HOME="$ANDROID_NDK_ROOT" make dist-android VERSION="${GITHUB_REF_NAME#v}"
+        run: NDK_HOME="$ANDROID_NDK_ROOT" make android-dist VERSION="${GITHUB_REF_NAME#v}"
 
       - name: Build 32-bit APK (armeabi-v7a)
-        run: NDK_HOME="$ANDROID_NDK_ROOT" make dist-android-armeabi-v7a VERSION="${GITHUB_REF_NAME#v}"
+        run: NDK_HOME="$ANDROID_NDK_ROOT" make android-dist-armeabi-v7a VERSION="${GITHUB_REF_NAME#v}"
+
+      # The production runner APK `srt pack --apk` patches: per-ABI by
+      # decision, arm64-v8a first (okf/backlog/standalone-android-apk.md).
+      # The Makefile stages it into packages/android-arm64-v8a/ itself.
+      - name: Build runner APK (arm64-v8a)
+        run: NDK_HOME="$ANDROID_NDK_ROOT" make android-runtime VERSION="${GITHUB_REF_NAME#v}"
 
       - name: Upload arm64-v8a APK
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: android-arm64-v8a
-          path: packages/android-arm64-v8a/solidrt-go.apk
+          path: |
+            packages/android-arm64-v8a/solidrt-go.apk
+            packages/android-arm64-v8a/solidrt.apk
 
       - name: Upload armeabi-v7a APK
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

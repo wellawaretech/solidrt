@@ -1,19 +1,55 @@
 import { values, source } from "../lib/args"
 import { bundleFlux, bundleSolid, compileToBytecode, findFluxIsolates } from "../bundle/bundler"
 import { resolvePackFonts } from "../lib/fonts"
-import { loadAppIdentity } from "../lib/project"
+import { loadAppIdentity, loadProject, type Project } from "../lib/project"
 import { resolveMode } from "../lib/mode"
 import { packApp, packFlux, packSolid } from "./trailer"
 import { buildPackFolder, writePackFolder } from "./layout"
 import { patchApk } from "./android/apk"
+import { isPng } from "./android/icon"
 import { requireBinary } from "../lib/util"
 import { resolveApk, resolveRunnerApk, ANDROID_PKG_MAP } from "../lib/artifacts"
-import { readFileSync } from "node:fs"
+import { existsSync, readFileSync } from "node:fs"
 import { dirname, join, resolve } from "node:path"
 
 // Android package names are stricter than a general appId: at least two
 // dot-separated segments, each starting with a letter.
 const ANDROID_APP_ID = /^[a-zA-Z][a-zA-Z0-9_]*(\.[a-zA-Z][a-zA-Z0-9_]*)+$/
+// Where an unconfigured APK starts on Android's update ordering.
+const DEFAULT_VERSION_CODE = 1
+// Display version when package.json declares none (matches the runner base).
+const DEFAULT_VERSION_NAME = "1.0"
+// Adaptive-icon background when the project sets no iconBackground: the
+// near-black ground of the unbranded grayscale scaffold icon.
+const DEFAULT_ICON_BACKGROUND = "#1a1a1a"
+
+// The app's Android launcher icon as PNG bytes: the `icon` config key when it
+// names a .png, else the assets/icon.png convention. An SVG icon (the desktop
+// and launcher-tile source) cannot be rasterized at pack time, so with no PNG
+// beside it the runner's placeholder stays and a note says so.
+function resolveLauncherIcon(project: Project | null): Buffer | undefined {
+  if (!project) return undefined
+  let declared = project.config.icon
+  let path = declared?.endsWith(".png") ? resolve(project.dir, declared) : join(project.dir, "assets", "icon.png")
+  if (!existsSync(path)) {
+    if (declared?.endsWith(".png")) {
+      console.error(`"solidrt": "icon" names ${declared}, which does not exist`)
+      process.exit(1)
+    }
+    // Declared SVG or the conventional assets/icon.svg: the app has icon
+    // artwork, just not in a form the patcher can use.
+    if (declared || existsSync(join(project.dir, "assets", "icon.svg"))) {
+      console.log(">> note: an SVG icon cannot be rasterized at pack time; add assets/icon.png for the launcher icon")
+    }
+    return undefined
+  }
+  let bytes = readFileSync(path)
+  if (!isPng(bytes)) {
+    console.error(`${path} is not a PNG file`)
+    process.exit(1)
+  }
+  return bytes
+}
 
 // Windows executables need the suffix; a user-given --output may already
 // carry it.
@@ -72,7 +108,7 @@ export async function main() {
   // label rewritten, the .srtapp payload added as a stored asset, re-aligned
   // and re-signed - pure TypeScript, no Android SDK
   // (okf/backlog/standalone-android-apk.md). The base is the production
-  // runner APK (`make runtime-android`), which boots the payload; while none
+  // runner APK (`make android-runtime`), which boots the payload; while none
   // is staged, the solidrt-go dev client stands in - that APK installs and
   // launches, but boots the launcher instead of the payload.
   if (values.apk) {
@@ -90,14 +126,29 @@ export async function main() {
       }
     }
     if (!base) {
-      console.error(`Could not find a base APK; run make runtime-android, or add the ${ANDROID_PKG_MAP["arm64-v8a"]} dev dependency`)
+      console.error(`Could not find a base APK; run make android-runtime, or add the ${ANDROID_PKG_MAP["arm64-v8a"]} dev dependency`)
       process.exit(1)
     }
     console.log(`>> base: ${base}`)
-    let patched = patchApk(readFileSync(base), identity.appId, identity.displayName, packApp(folder, bytecode))
+    let project = loadProject(mode.projectDir)
+    let icon = resolveLauncherIcon(project)
+    let { apk, iconApplied } = patchApk(readFileSync(base), {
+      appId: identity.appId,
+      label: identity.displayName,
+      payload: packApp(folder, bytecode),
+      versionCode: project?.config.versionCode ?? DEFAULT_VERSION_CODE,
+      versionName: project?.version ?? DEFAULT_VERSION_NAME,
+      icon,
+      iconBackground: project?.config.iconBackground ?? DEFAULT_ICON_BACKGROUND,
+    })
+    if (icon && !iconApplied) {
+      console.log(">> note: this base APK has no icon slots; the icon was not applied")
+    }
+    console.log(`>> icon: ${icon && iconApplied ? "from project" : "placeholder"}`)
+    console.log(">> signed with the shared development key (fine for sideloading; distribution signing pending)")
     let outfile = values.output ?? mode.entry.replace(/\.[jt]sx?$/, ".apk")
-    await Bun.write(outfile, patched)
-    console.log(`>> wrote ${patched.length} bytes to ${outfile}`)
+    await Bun.write(outfile, apk)
+    console.log(`>> wrote ${apk.length} bytes to ${outfile}`)
     process.exit()
   }
 

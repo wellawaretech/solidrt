@@ -3,5 +3,7 @@
     <color name="colorPrimary">#3F51B5</color>
     <color name="colorPrimaryDark">#303F9F</color>
     <color name="colorAccent">#FF4081</color>
-    <color name="ic_launcher_background">#00000000</color>
+    <!-- Official-icon ground: near-black navy, two steps darker than the
+         mark's darkest blue, so all three facets stay visible. -->
+    <color name="ic_launcher_background">#0d1a40</color>
 </resources>

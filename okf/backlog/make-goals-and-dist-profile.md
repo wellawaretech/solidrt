@@ -12,7 +12,7 @@ The goal names now mean what they say: root `make all` is `lattice flux`
 (both lattice binaries plus the three flux binaries; host-native only),
 `lattice`'s collective goal is `lattice`, the OS-suffixed `dist-<os>` goals
 collapsed to `dist` (release.yml follows), the speech kill-switch lists its
-goals explicitly (`dist dist-android dist-android-armeabi-v7a`, so
+goals explicitly (`dist android-dist android-dist-armeabi-v7a`, so
 `dist-clean` no longer sets `DIST=1`), root `clean` also runs flux's
 `cargo clean` for the workspace-root `target/`, and the per-platform-package
 `.gitignore` files are replaced by one block in the root `.gitignore`.
@@ -65,13 +65,13 @@ Open questions, both because nobody has ever built these that way:
 - **Stripping the client.** Binary size matters for the platform packages, so
   stripping is probably right, but a field crash from a published client then
   yields no symbols.
-- `dist-android` builds the client `.so` at plain `release` and is arguably
+- `android-dist` builds the client `.so` at plain `release` and is arguably
   where stripping pays most. Same question, times three ABIs of CI time.
 
 ## Also here
 
-- **`run-android-armeabi-v7a` could be `run-android
+- **`android-run-armeabi-v7a` could be `android-run
   ANDROID_ABI=armeabi-v7a`.** The target is already just a forwarder, and
   `ANDROID_ABI` is the documented knob alongside `PROFILE=` and `SPEECH=`.
-  `dist-android-armeabi-v7a` is a real second target (a 32-bit-only APK,
+  `android-dist-armeabi-v7a` is a real second target (a 32-bit-only APK,
   since `ANDROID_ABIS` excludes v7a) and keeps its own name.

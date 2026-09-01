@@ -36,7 +36,7 @@ jobs:
             timeout: 60
           - platform: android
             runner: ubuntu-24.04
-            target: client-android
+            target: android-client
             timeout: 90
           - platform: windows
             runner: windows-latest

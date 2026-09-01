@@ -6,11 +6,14 @@ import { fail } from "./util"
 // The fonts `srt pack` appends to a solidrt binary (see
 // okf/plans/packaged-fonts.md). By default the three Noto role defaults;
 // the project's package.json can override them via the `solidrt.fonts` map
-// (alias -> font file path, or false to drop a default):
+// (alias -> font file path, false to drop a default, true to keep one - the
+// scaffold ships the roles as explicit trues so disabling is a one-word
+// edit):
 //
 //   "solidrt": {
 //     "fonts": {
 //       "sans": "./fonts/Inter.ttf",   // replaces the sans default
+//       "serif": true,                 // keeps the serif default
 //       "mono": false,                 // drops the mono default
 //       "display": "./fonts/F.ttf"     // adds a font under a custom alias
 //     }
@@ -51,9 +54,12 @@ export function resolvePackFonts(projectDir: string | null): ResolvedFont[] {
   let selected = new Map<string, string | null>()
   for (let role of Object.keys(DEFAULT_FONTS)) selected.set(role, null)
   for (let [alias, value] of Object.entries(overrides)) {
-    if (value === false) {
-      if (!(alias in DEFAULT_FONTS)) fail(`"solidrt.fonts": "${alias}": false drops a default, but "${alias}" is not one of ${Object.keys(DEFAULT_FONTS).join("/")}`)
-      selected.delete(alias)
+    if (typeof value === "boolean") {
+      if (!(alias in DEFAULT_FONTS)) {
+        fail(`"solidrt.fonts": "${alias}": ${value} toggles a default, but "${alias}" is not one of ${Object.keys(DEFAULT_FONTS).join("/")}`)
+      }
+      // true keeps the role default already selected above; false drops it.
+      if (!value) selected.delete(alias)
     } else {
       selected.set(alias, resolve(project!.dir, value))
     }

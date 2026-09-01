@@ -6,6 +6,7 @@
   "description": "SolidRT platform package for Android arm64-v8a",
   "files": [
     "solidrt-go.apk",
+    "solidrt.apk",
     "LICENSE"
   ]
 }

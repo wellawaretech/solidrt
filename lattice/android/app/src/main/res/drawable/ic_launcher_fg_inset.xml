@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- (108 - 66 * 0.9) / 2 / 108: the foreground PNG is rendered edge-to-edge
+     (padding belongs to this inset, never to the file), and lands at 90% of
+     the 66/108 adaptive-icon safe zone, so no launcher mask (circle,
+     squircle, rounded rect) ever cuts it and the art does not touch the
+     mask edge. Same number as the prod runner's app_icon_fg_inset.xml. -->
+<inset xmlns:android="http://schemas.android.com/apk/res/android"
+    android:drawable="@drawable/ic_launcher_foreground"
+    android:inset="22.5%" />

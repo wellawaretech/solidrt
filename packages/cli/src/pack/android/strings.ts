@@ -134,12 +134,20 @@ export function replacePoolStrings(file: Buffer, poolOff: number, replacements: 
   return out
 }
 
-// The pool index holding the manifest's package attribute value (the
-// application id), found by actually parsing the element chunks rather than
-// assuming a pool position: the root <manifest> element's "package"
-// attribute. Both its raw-value and typed-value fields reference this one
-// index, so replacing the string covers both.
-export function manifestPackageIndex(file: Buffer): { index: number; value: string } {
+// The identity attributes of the root <manifest> element, found by actually
+// parsing the element chunks rather than assuming pool positions. The
+// package (application id) and versionName values are pool indices - both
+// the raw-value and typed-value fields of their attributes reference the
+// same index, so replacing the pool string covers both. versionCode is a
+// typed integer, so what is returned is the absolute byte offset of its
+// attribute's data word, for an in-place write (which must happen before
+// any pool rewrite recomputes the file).
+export function manifestInfo(file: Buffer): {
+  packageIndex: number
+  packageValue: string
+  versionNameIndex: number
+  versionCodeOffset: number
+} {
   if (file.readUInt16LE(0) !== CHUNK_XML) throw new Error("Not a binary AndroidManifest.xml")
   let pool = parsePool(file, XML_POOL_OFFSET)
   let off = XML_POOL_OFFSET + pool.chunkSize
@@ -155,14 +163,23 @@ export function manifestPackageIndex(file: Buffer): { index: number; value: stri
       let attrBase = off + 16 + file.readUInt16LE(off + 24)
       let attrSize = file.readUInt16LE(off + 26)
       let attrCount = file.readUInt16LE(off + 28)
+      let packageIndex = -1
+      let versionNameIndex = -1
+      let versionCodeOffset = -1
       for (let i = 0; i < attrCount; i++) {
+        // Attribute: ns u32, name u32, rawValue u32, then the typed value
+        // (size u16, res0 u8, dataType u8, data u32).
         let attr = attrBase + i * attrSize
-        if (pool.strings[file.readUInt32LE(attr + 4)] === "package") {
-          let index = file.readUInt32LE(attr + 8)
-          return { index, value: pool.strings[index]! }
-        }
+        let attrName = pool.strings[file.readUInt32LE(attr + 4)]
+        if (attrName === "package") packageIndex = file.readUInt32LE(attr + 8)
+        if (attrName === "versionName") versionNameIndex = file.readUInt32LE(attr + 8)
+        if (attrName === "versionCode") versionCodeOffset = attr + 16
       }
-      throw new Error("<manifest> has no package attribute")
+      if (packageIndex < 0) throw new Error("<manifest> has no package attribute")
+      if (versionNameIndex < 0 || versionCodeOffset < 0) {
+        throw new Error("<manifest> has no versionCode/versionName attributes")
+      }
+      return { packageIndex, packageValue: pool.strings[packageIndex]!, versionNameIndex, versionCodeOffset }
     }
     off += size
   }

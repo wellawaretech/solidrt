@@ -389,6 +389,11 @@ Shaped, not started.
   parseColor/mixColors/brightness live only on flux:rendertree (gui feature),
   so site tooling, tests, and theme builders cannot call them; the components
   theme presets hardcode precomputed mix results as a workaround.
+- **[Rasterize icon SVGs with the runtime's own renderer](backlog/icon-svg-rasterization.md)** [2026-09-01]
+  The Android launcher icon needs a PNG the TypeScript CLI cannot produce from
+  icon.svg, so a derived icon.png is checked in and every app must maintain
+  one by hand; the runtime can rasterize it itself via captureSnapshot +
+  encodeImage.
 - **[Backdrop filters through Impeller (blur, glass)](backlog/impeller-backdrop-filters.md)** [2026-07-27]
   save_layer already takes a backdrop ImageFilter and we already call it with
   None; wiring Impeller's built-in blur/dilate/erode/matrix filters gives
@@ -1549,6 +1554,10 @@ Knowledge. No lifecycle - true or wrong, not open or closed.
   Survey of crates that could replace or extend alloy/src/spatial, with
   measured dependency costs; conclusion is no action, demand-gated pointers
   only.
+- **[Standalone APK implementation notes](notes/standalone-apk-implementation.md)** [2026-09-01]
+  Working notes for the srt pack --apk pipeline
+  (backlog/standalone-android-apk.md): what shipped in the first three stages,
+  the traps future edits must know, and how it was verified on a device.
 - **[What "something like stylesheets" already means here](notes/style-reuse-without-stylesheets.md)** [2026-08-13]
   A plain object spread into props is the answer to most of what the
   stylesheet question asks, and the constraint on anything more is fixed - no
