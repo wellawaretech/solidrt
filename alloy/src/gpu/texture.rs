@@ -84,13 +84,27 @@ pub enum SamplerWrap {
 /// in GLSL as `(v, 0, 0, 1)` (read `.r`), and uploads set unpack alignment 1
 /// so any width works with no 4-byte row padding - the point of the format
 /// (packing indices into RGBA texels is only free when the width divides by
-/// four). Shader/pipeline targets are always RGBA8; this only applies to
-/// pixel uploads.
+/// four). R32f/Rgba32f are the float data-texture formats (heights fetched in
+/// a vertex stage, bone matrices at scale, lookup tables wider than 8 bits):
+/// upload-and-sample only, nearest/texelFetch only (see `is_float`), never
+/// readable back or copied (float is not color-renderable in core GLES 3.0).
+/// Shader/pipeline targets are always RGBA8; this only applies to pixel
+/// uploads.
+///
+/// Reserved future values of the same app-facing vocabulary, so they slot in
+/// without an API rethink: "etc2-rgba8" (compressed uploads; changes
+/// `byte_len` to block sizing and the upload verb to glCompressedTexImage2D)
+/// and "rgba8-srgb" (linear-space rendering). Grammar: base layout plus a
+/// qualifier suffix.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
 pub enum TextureFormat {
   #[default]
   Rgba8,
   R8,
+  /// One float per pixel, sampled as `(v, 0, 0, 1)` (read `.r`).
+  R32f,
+  /// Four floats per pixel - a vec4 (or mat4 column) per texel.
+  Rgba32f,
   /// Two channels, one byte each, sampled as `(r, g, 0, 1)`. Exists for the
   /// interleaved UV plane of NV12 YUV textures (see `yuv`); not offered in
   /// the app-facing `parse` until an app-level consumer exists.
@@ -109,17 +123,33 @@ impl TextureFormat {
     match format {
       None | Some("rgba8") => Ok(TextureFormat::Rgba8),
       Some("r8") => Ok(TextureFormat::R8),
-      Some(other) => Err(format!("unknown format '{other}' (expected \"rgba8\" or \"r8\")")),
+      Some("r32f") => Ok(TextureFormat::R32f),
+      Some("rgba32f") => Ok(TextureFormat::Rgba32f),
+      Some(other) => Err(format!("unknown format '{other}' (expected \"rgba8\", \"r8\", \"r32f\" or \"rgba32f\")")),
     }
   }
 
-  pub fn bytes_per_pixel(self) -> usize {
-    match self {
+  /// The byte length of one frame at this format. The sizing seam every
+  /// validation site goes through: today all formats are per-pixel, and a
+  /// future block-compressed format changes only this function.
+  pub fn byte_len(self, width: u32, height: u32) -> usize {
+    let per_pixel = match self {
       TextureFormat::Rgba8 => 4,
       TextureFormat::R8 => 1,
       TextureFormat::Rg8 => 2,
       TextureFormat::Depth24 => 4,
-    }
+      TextureFormat::R32f => 4,
+      TextureFormat::Rgba32f => 16,
+    };
+    (width as usize) * (height as usize) * per_pixel
+  }
+
+  /// Whether this is a float data format: upload-and-sample only, and
+  /// nearest-only sampling - linear float filtering needs
+  /// OES_texture_float_linear (and RGBA32F is never filterable in core), so
+  /// nearest/texelFetch is the portable contract.
+  pub fn is_float(self) -> bool {
+    matches!(self, TextureFormat::R32f | TextureFormat::Rgba32f)
   }
 
   /// The app-facing name, for the resource inventory and error messages.
@@ -129,6 +159,8 @@ impl TextureFormat {
       TextureFormat::R8 => "r8",
       TextureFormat::Rg8 => "rg8",
       TextureFormat::Depth24 => "depth24",
+      TextureFormat::R32f => "r32f",
+      TextureFormat::Rgba32f => "rgba32f",
     }
   }
 }
@@ -228,6 +260,33 @@ impl SamplerState {
       Some(a) => return Err(format!("anisotropy {a} must be a number >= 1 (1 = off, up to 16)")),
     };
     Ok(SamplerState { filter, wrap, mipmap: mipmap.unwrap_or(false), anisotropy })
+  }
+
+  /// Parse the app-facing options against the texture's declared format.
+  /// Same vocabulary as `parse`; a float format flips the filter default to
+  /// nearest and refuses linear, mipmaps and anisotropy outright (nearest/
+  /// texelFetch is the portable float contract - see
+  /// `TextureFormat::is_float`).
+  pub fn parse_for(format: TextureFormat, opts: &SamplerOptions<'_>) -> Result<Self, String> {
+    let mut state = Self::parse(opts)?;
+    if format.is_float() {
+      if opts.filter.is_none() {
+        state.filter = SamplerFilter::Nearest;
+      }
+      if state.filter == SamplerFilter::Linear {
+        return Err(format!(
+          "{} textures sample nearest-only (float linear filtering is not in core GLES 3.0); drop filter: \"linear\"",
+          format.name()
+        ));
+      }
+      if state.mipmap {
+        return Err(format!("{} textures cannot carry a mip chain; drop mipmap: true", format.name()));
+      }
+      if state.anisotropy > MIN_ANISOTROPY {
+        return Err(format!("{} textures sample nearest-only; drop anisotropy", format.name()));
+      }
+    }
+    Ok(state)
   }
 }
 
@@ -432,6 +491,8 @@ impl GpuTexture {
       TextureFormat::R8 => (glow::R8, glow::RED, glow::UNSIGNED_BYTE),
       TextureFormat::Rg8 => (glow::RG8, glow::RG, glow::UNSIGNED_BYTE),
       TextureFormat::Depth24 => (glow::DEPTH_COMPONENT24, glow::DEPTH_COMPONENT, glow::UNSIGNED_INT),
+      TextureFormat::R32f => (glow::R32F, glow::RED, glow::FLOAT),
+      TextureFormat::Rgba32f => (glow::RGBA32F, glow::RGBA, glow::FLOAT),
     };
     unsafe {
       let prev = gl.get_parameter_i32(glow::TEXTURE_BINDING_2D);
@@ -453,9 +514,9 @@ impl GpuTexture {
       // samples it. Completeness fallback only - the declared SamplerState is
       // applied via sampler objects in alloy's passes and via per-draw
       // sampling in Impeller, never through these parameters (Impeller
-      // rewrites them on every draw of the texture). A depth texture is only
-      // complete at NEAREST.
-      let filter = if format == TextureFormat::Depth24 { glow::NEAREST } else { glow::LINEAR };
+      // rewrites them on every draw of the texture). Depth and float textures
+      // are only complete at NEAREST (float linear needs an extension).
+      let filter = if format == TextureFormat::Depth24 || format.is_float() { glow::NEAREST } else { glow::LINEAR };
       gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MIN_FILTER, filter as i32);
       gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MAG_FILTER, filter as i32);
       gl.bind_texture(glow::TEXTURE_2D, NonZeroU32::new(prev as u32).map(glow::NativeTexture));
@@ -469,11 +530,14 @@ impl GpuTexture {
     // alignment holds. R8 rows are width*1 and must unpack at alignment 1 or
     // any width not divisible by 4 reads rows off by their padding - the
     // whole reason the format exists is to avoid that per-frame repacking.
-    // RG8 rows are width*2; alignment 1 is correct for every width.
-    let (gl_format, alignment) = match self.format {
-      TextureFormat::Rgba8 => (glow::RGBA, 4),
-      TextureFormat::R8 => (glow::RED, 1),
-      TextureFormat::Rg8 => (glow::RG, 1),
+    // RG8 rows are width*2; alignment 1 is correct for every width. Float
+    // rows are multiples of 4 bytes at any width, so the default holds.
+    let (gl_format, ty, alignment) = match self.format {
+      TextureFormat::Rgba8 => (glow::RGBA, glow::UNSIGNED_BYTE, 4),
+      TextureFormat::R8 => (glow::RED, glow::UNSIGNED_BYTE, 1),
+      TextureFormat::Rg8 => (glow::RG, glow::UNSIGNED_BYTE, 1),
+      TextureFormat::R32f => (glow::RED, glow::FLOAT, 4),
+      TextureFormat::Rgba32f => (glow::RGBA, glow::FLOAT, 4),
       TextureFormat::Depth24 => {
         // Gated UI-side (a depth id is not an upload texture); backstop.
         log::warn!("[alloy] upload into a depth texture ignored: depth is render-written");
@@ -492,7 +556,7 @@ impl GpuTexture {
         width,
         height,
         gl_format,
-        glow::UNSIGNED_BYTE,
+        ty,
         glow::PixelUnpackData::Slice(Some(data)),
       );
       // Unpack alignment is context state shared with Impeller's own uploads

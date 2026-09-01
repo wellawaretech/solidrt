@@ -11,18 +11,17 @@
 
 import { file } from "flux:fs"
 import { decodeImage } from "@solidrt/core"
-import { createTexture, destroyTexture, limits } from "@solidrt/core/gpu"
+import { createMutableTexture, createTexture, destroyTexture, uploadTexture } from "@solidrt/core/gpu"
 import type { TextureId } from "@solidrt/core/gpu"
 import { gltfExternalUris, parseGltf } from "./gltf.ts"
 import type { ModelClip, ModelData, ModelMaterial } from "./gltf.ts"
 import { compose, copy, mat4, multiply } from "./math.ts"
 import type { Mat4 } from "./math.ts"
-import { MAX_JOINTS } from "./glsl.ts"
 import { decodeModel } from "./model-file.ts"
 import { disposeGeometry } from "./geometry-gpu.ts"
-import { jointCap, lit } from "./material.ts"
+import { lit } from "./material.ts"
 import type { Material } from "./material.ts"
-import { add, createGroup, createMesh, remove, setMeshParams, setTransform } from "./scene.ts"
+import { add, createGroup, createMesh, remove, setTransform } from "./scene.ts"
 import type { Mesh, SceneNode } from "./scene.ts"
 
 /** Anisotropic filtering level for a model's textures: the engines' usual
@@ -72,9 +71,10 @@ export type Model = SceneNode & {
   clips: ModelClip[]
   /** @internal Node-table parent indices, for the skin palette walk. */
   _parents: (number | null)[]
-  /** @internal Skin state: joint node indices, inverse binds, the uBones
-   * palette written each updateSkins, and the meshes drawing the skin. */
-  _skins: { joints: number[]; inverseBind: Float32Array; palette: number[]; meshes: Mesh[] }[]
+  /** @internal Skin state: joint node indices, inverse binds, the palette
+   * written each updateSkins with the rgba32f texture it uploads to
+   * (bound as uBones on the skin's meshes), and the meshes drawing it. */
+  _skins: { joints: number[]; inverseBind: Float32Array; palette: Float32Array; texture: TextureId; meshes: Mesh[] }[]
   /** @internal Model-local world scratch per node, updateSkins-owned. */
   _worlds: Mat4[]
   /** Local rest-pose [minX, minY, minZ, maxX, maxY, maxZ] over every part
@@ -149,18 +149,21 @@ export function createModel(data: ModelData, opts: ModelOptions = {}): Model {
   data.nodes.forEach((n, i) => add(n.parent === null ? model : groups[n.parent]!, groups[i]!))
   model.nodes = data.nodes.map((n, i) => ({ name: n.name, node: groups[i]! }))
   model._parents = data.nodes.map((n) => n.parent)
-  // Palettes are allocated at the device's joint cap, not the rig's size:
-  // the raster side validates uBones against the declared array length
-  // exactly, so a shorter rig uploads a zero-padded tail.
-  let cap = jointCap()
+  // Each skin's palette lives in an rgba32f texture, 4 texels wide, one
+  // row per joint (the four columns of that joint's mat4), sized to the
+  // RIG: rig size is bounded by texture height (>= 2048 everywhere), not
+  // the vertex uniform budget, so there is no joint cap. The texture id
+  // is bound as uBones on every mesh drawing the skin and freed with the
+  // model's other textures.
   model._skins = data.skins.map((skin, i) => {
-    if (skin.joints.length > cap) {
-      let bound = cap < MAX_JOINTS
-        ? "the cap on this device is " + cap + " (" + limits.maxVertexUniformVectors + " vertex uniform vectors)"
-        : "the cap is " + cap + " (MAX_JOINTS)"
-      throw new Error("createModel: skin " + i + " has " + skin.joints.length + " joints; " + bound + "; float-texture palettes are the planned scale-out")
-    }
-    return { joints: skin.joints, inverseBind: skin.inverseBind, palette: new Array(cap * 16).fill(0), meshes: [] }
+    let palette = new Float32Array(skin.joints.length * 16)
+    let texture = createMutableTexture(palette, 4, skin.joints.length, {
+      format: "rgba32f",
+      autoFree: false,
+      label: label ? label + "-skin" + i : "skin" + i,
+    })
+    textures.push(texture)
+    return { joints: skin.joints, inverseBind: skin.inverseBind, palette, texture, meshes: [] }
   })
   model._worlds = []
   model.parts = data.parts.map((part) => {
@@ -175,6 +178,7 @@ export function createModel(data: ModelData, opts: ModelOptions = {}): Model {
       let skin = model._skins[part.skin!]
       if (skin === undefined) throw new Error("createModel: part '" + part.name + "' names a missing skin " + part.skin)
       skin.meshes.push(mesh)
+      mesh._textures = { uBones: skin.texture }
       add(model, mesh)
     } else {
       let node = groups[part.node]
@@ -204,7 +208,7 @@ let SKIN_BIND: Mat4 = mat4()
 
 /**
  * Recompute the model's skin palettes from its joints' CURRENT local
- * transforms and write each skin's `uBones` to its meshes: model-local
+ * transforms and upload each skin's `uBones` palette texture: model-local
  * jointWorld x inverseBind per joint. The mixer calls this after every
  * update that wrote poses; call it yourself only when you pose joints
  * directly with setTransform. O(nodes + joints) plain math - no scene
@@ -233,7 +237,7 @@ export function updateSkins(model: Model): void {
       multiply(SKIN_BONE, worlds[skin.joints[j]!]!, SKIN_BIND)
       for (let k = 0; k < 16; k++) skin.palette[j * 16 + k] = SKIN_BONE[k]!
     }
-    for (let mesh of skin.meshes) setMeshParams(mesh, { uBones: skin.palette })
+    uploadTexture(skin.texture, skin.palette)
   }
 }
 

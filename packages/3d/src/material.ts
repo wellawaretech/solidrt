@@ -26,7 +26,6 @@ import {
   destroyRenderPipeline,
   destroyShader,
   glsl,
-  limits,
   linkProgram,
   programAttributes,
 } from "@solidrt/core/gpu"
@@ -43,20 +42,7 @@ import type {
 } from "@solidrt/core/gpu"
 import { layoutAttributes, layoutKey, layoutSlot } from "./geometry.ts"
 import type { VertexLayout } from "./geometry.ts"
-import { jointCapFor, litFragment, litShadowFragment, litVertex, UNLIT_VERTEX, unlitFragment, unlitShadowFragment, unlitVertex } from "./glsl.ts"
-
-/**
- * Joint capacity of this device's skinned programs: MAX_JOINTS, shrunk
- * when the device's vertex uniform budget cannot hold that palette (see
- * jointCapFor in glsl.ts; the ES 3.0 floor of 256 vectors fits 60). The
- * uBones array size the lit/unlit skinned variants declare and the
- * palette length createModel allocates - a custom skinned material passes
- * it the same way: `litVertex({ skinned: true, jointCap: jointCap() })`,
- * with a uBones palette of exactly that many mat4s.
- */
-export function jointCap(): number {
-  return jointCapFor(limits.maxVertexUniformVectors)
-}
+import { litFragment, litShadowFragment, litVertex, UNLIT_VERTEX, unlitFragment, unlitShadowFragment, unlitVertex } from "./glsl.ts"
 
 export type Material = {
   /** The pipeline this material draws with for geometry of `layout`
@@ -141,11 +127,12 @@ export type UnlitOptions = {
    * map; not with triplanar (whose repeat is uTriplanar). */
   mapTransform?: { offset?: [number, number]; repeat?: [number, number] }
   /** Skin positions (and lit normals) by the "skinned" layout's aJoints/
-   * aWeights against the `uBones` mat4 palette - the rigged-model
+   * aWeights against the `uBones` palette texture - the rigged-model
    * variant createModel picks for skinned parts. The material then
-   * requires "skinned" geometry, and something must write `uBones`
-   * (updateSkins does, from the model's joints). Bind-pose shadows: the
-   * cutout shadow variant stays unskinned. */
+   * requires "skinned" geometry, and something must bind `uBones`
+   * (createModel binds each skin's palette texture to its meshes;
+   * updateSkins writes it from the model's joints). Bind-pose shadows:
+   * the cutout shadow variant stays unskinned. */
   skinned?: boolean
 }
 
@@ -178,7 +165,7 @@ export function unlit(opts: UnlitOptions = {}): Material {
   let cls = unlitClasses.get(key)
   if (cls === undefined) {
     cls = shaderMaterialClass({
-      vertex: unlitVertex({ skinned, jointCap: jointCap() }),
+      vertex: unlitVertex({ skinned }),
       fragment: unlitFragment({ map, alphaTest, transparent, fog, mapTransform }),
       transparent,
       cull,
@@ -362,7 +349,7 @@ export function lit(opts: LitOptions = {}): Material {
   let cls = litClasses.get(key)
   if (cls === undefined) {
     cls = shaderMaterialClass({
-      vertex: litVertex({ ...flags, jointCap: jointCap() }),
+      vertex: litVertex(flags),
       fragment: litFragment(flags),
       transparent: flags.transparent,
       cull,

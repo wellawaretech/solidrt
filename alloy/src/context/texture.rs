@@ -69,12 +69,15 @@ impl Context {
     Ok(self.textures.get(id).expect("texture must exist after insert or update"))
   }
 
-  /// Create a sampleable texture from pixels (RGBA8, or single-channel R8)
-  /// and adopt into Impeller, with the given sampling (how every consumer -
-  /// shader passes and `<texture>` display - samples it) and an optional
-  /// debug label. Returns the registry id assigned to the new texture; errs
-  /// on a size over the device limit (named in the message), checked here so
-  /// the mistake throws at the call site.
+  /// Create a sampleable texture from pixels (see `TextureFormat` for the
+  /// vocabulary) and adopt into Impeller, with the given sampling (how every
+  /// consumer - shader passes and `<texture>` display - samples it) and an
+  /// optional debug label. Returns the registry id assigned to the new
+  /// texture; errs on a size over the device limit (named in the message),
+  /// checked here so the mistake throws at the call site. The caller
+  /// resolves sampling against the format (`SamplerState::parse_for`): float
+  /// formats are nearest-only data textures for shader sampling; displaying
+  /// one via `<texture src>` is out of contract.
   pub fn create_texture_from_pixels(
     &self,
     width: u32,
@@ -87,6 +90,13 @@ impl Context {
     let id = self.textures.allocate_id();
     self.create_texture_at(id, width, height, pixels, sampler, format, label)?;
     Ok(id)
+  }
+
+  /// The declared pixel format of a registered texture id: create-time
+  /// state, stable across id-stable resizes. The boundary layer reads it to
+  /// type-check upload payloads against the format.
+  pub fn texture_format(&self, id: u64) -> Result<TextureFormat, String> {
+    self.textures.get(id).map(|entry| entry.format).ok_or_else(|| format!("texture {id} not found"))
   }
 
   /// Create (or replace) the texture stored at `id`, e.g. to resize a stream
@@ -128,7 +138,7 @@ impl Context {
   }
 
   /// Re-upload pixels into an existing texture, sized by the id's format
-  /// (width*height*4 for rgba8, width*height for r8). `pixels` may be a
+  /// (`TextureFormat::byte_len`). `pixels` may be a
   /// larger buffer holding multiple frames; `offset` selects the frame start.
   /// The frame must match the texture's dimensions exactly.
   pub fn update_texture(&self, id: u64, pixels: &[u8], offset: usize) -> Result<(), String> {
@@ -137,7 +147,7 @@ impl Context {
     }
     let entry = self.textures.get(id).ok_or_else(|| format!("texture {id} not found"))?;
     let (width, height, format) = (entry.width(), entry.height(), entry.format);
-    let frame_size = (width as usize) * (height as usize) * format.bytes_per_pixel();
+    let frame_size = format.byte_len(width, height);
     let end = offset.checked_add(frame_size).ok_or_else(|| "offset overflow".to_string())?;
     if end > pixels.len() {
       return Err(format!(
@@ -156,7 +166,7 @@ impl Context {
   /// new texture immediately (shaders sampling it re-render), in-flight users
   /// of the old entry keep it alive until released. `pixels` seeds the new
   /// contents and must hold at least one frame at the id's format
-  /// (width*height*4 for rgba8, width*height for r8). Rejects render target
+  /// (`TextureFormat::byte_len`). Rejects render target
   /// ids - resize those with `resize_target`, which carries the compiled
   /// program and draw state along. The caller must request a frame.
   pub fn resize_texture(&self, id: u64, width: u32, height: u32, pixels: &[u8]) -> Result<(), String> {
@@ -174,7 +184,7 @@ impl Context {
     // Sampling and format are properties of the id and survive the id-stable
     // resize, as does the label (None here = keep, applied raster-side).
     let (sampler, format) = (entry.sampler(), entry.format);
-    let frame_size = (width as usize) * (height as usize) * format.bytes_per_pixel();
+    let frame_size = format.byte_len(width, height);
     if pixels.len() < frame_size {
       return Err(format!(
         "need {frame_size} bytes for {width}x{height} {}, buffer has {}",
@@ -353,6 +363,12 @@ impl Context {
     }
     let src_entry = self.textures.get(src).ok_or_else(|| format!("texture {src} not found"))?;
     let dst_entry = self.textures.get(dst).ok_or_else(|| format!("texture {dst} not found"))?;
+    if src_entry.format.is_float() {
+      return Err(format!(
+        "texture {src} is {}: float textures are sample-only (a copy would quantize to the target's rgba8)",
+        src_entry.format.name()
+      ));
+    }
     if !self.manual_targets.borrow().contains(&dst) {
       return Err(format!("target {dst} is not manual (the runtime renders it; create with render: \"manual\")"));
     }

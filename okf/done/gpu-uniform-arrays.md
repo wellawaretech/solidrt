@@ -27,7 +27,7 @@ and let the introspection JSON (already scalar-vs-array aware) report the
 element count. ES 3.0 guarantees a few hundred vec4-equivalents per
 stage, so light lists and palettes fit comfortably; genuinely large data
 (bone matrices at scale) still wants float textures
-([gpu-float-texture-formats](../backlog/gpu-float-texture-formats.md)).
+([gpu-float-texture-formats](../done/gpu-float-texture-formats.md)).
 
 Consumers: the scene-graph light model
 (../notes/scene-graph-3d.md, stage 4) is the named one - a light list
@@ -47,4 +47,4 @@ floats flat; errors spell arrays as `vec3[4] (expects 12)`.
 Deliberately unsupported: sampler2D arrays (a texture binding names one
 unit; rejected when named), int vectors, non-mat4 matrices. Large data
 (bone matrices at scale) stays with
-[gpu-float-texture-formats](../backlog/gpu-float-texture-formats.md).
+[gpu-float-texture-formats](../done/gpu-float-texture-formats.md).

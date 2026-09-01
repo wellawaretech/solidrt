@@ -169,8 +169,15 @@ fn collect_textures(ctx: &Ctx<'_>, obj: &Object<'_>, api: &str) -> rquickjs::Res
 // Decode the { filter?, wrap?, mipmap?, anisotropy? } sampling options every
 // create path accepts ("linear"/"nearest", "clamp"/"repeat", bool, number >= 1;
 // defaults linear/clamp/false/1); an unknown value throws at the create call
-// site.
-fn collect_sampler(ctx: &Ctx<'_>, opts: &Option<Object<'_>>, api: &str) -> rquickjs::Result<alloy::SamplerState> {
+// site. Resolved against the texture's format: float formats default to
+// nearest and refuse linear/mipmap/anisotropy (alloy's parse_for invariant);
+// paths without a format option are always rgba8.
+fn collect_sampler(
+  ctx: &Ctx<'_>,
+  opts: &Option<Object<'_>>,
+  format: alloy::TextureFormat,
+  api: &str,
+) -> rquickjs::Result<alloy::SamplerState> {
   let (filter, wrap, mipmap, anisotropy) = match opts {
     Some(o) => (
       o.get::<_, Option<String>>("filter")?,
@@ -180,12 +187,10 @@ fn collect_sampler(ctx: &Ctx<'_>, opts: &Option<Object<'_>>, api: &str) -> rquic
     ),
     None => (None, None, None, None),
   };
-  let state = alloy::SamplerState::parse(&alloy::SamplerOptions {
-    filter: filter.as_deref(),
-    wrap: wrap.as_deref(),
-    mipmap,
-    anisotropy,
-  })
+  let state = alloy::SamplerState::parse_for(
+    format,
+    &alloy::SamplerOptions { filter: filter.as_deref(), wrap: wrap.as_deref(), mipmap, anisotropy },
+  )
   .map_err(|e| throw_str(ctx, &format!("{api}: {e}")))?;
   // Not invalid (GL accepts it), but almost always a forgotten flag: the
   // level filters through the mip chain, and without one it does next to
@@ -206,13 +211,49 @@ fn collect_label(opts: &Option<Object<'_>>) -> rquickjs::Result<Option<String>> 
 }
 
 // Decode the { format? } pixel format the pixel-upload creates accept
-// ("rgba8" default | "r8"); an unknown value throws at the create call site.
+// ("rgba8" default | "r8" | "r32f" | "rgba32f"); an unknown value throws at
+// the create call site.
 fn collect_format(ctx: &Ctx<'_>, opts: &Option<Object<'_>>, api: &str) -> rquickjs::Result<alloy::TextureFormat> {
   let format = match opts {
     Some(o) => o.get::<_, Option<String>>("format")?,
     None => None,
   };
   alloy::TextureFormat::parse(format.as_deref()).map_err(|e| throw_str(ctx, &format!("{api}: {e}")))
+}
+
+// The pixel payload of a texture create/upload. The view type must match the
+// id's format - byte formats take a Uint8Array, float formats a Float32Array -
+// so float data handed as raw bytes (or the reverse) throws at the call site
+// instead of uploading a reinterpretation. Held (not just borrowed) so the JS
+// buffer stays pinned while the bytes are read.
+enum PixelData<'js> {
+  Bytes(TypedArray<'js, u8>),
+  Floats(TypedArray<'js, f32>),
+}
+
+impl<'js> PixelData<'js> {
+  fn collect(ctx: &Ctx<'_>, data: Value<'js>, format: alloy::TextureFormat, api: &str) -> rquickjs::Result<Self> {
+    if format.is_float() {
+      TypedArray::<f32>::from_value(data)
+        .map(PixelData::Floats)
+        .map_err(|_| throw_str(ctx, &format!("{api}: {} data must be a Float32Array", format.name())))
+    } else {
+      TypedArray::<u8>::from_value(data)
+        .map(PixelData::Bytes)
+        .map_err(|_| throw_str(ctx, &format!("{api}: {} data must be a Uint8Array", format.name())))
+    }
+  }
+
+  // The viewed range as raw bytes (`len` from as_raw is a byte count for
+  // every element type). Zero-copy; valid while self is held.
+  fn bytes(&self, ctx: &Ctx<'_>, api: &str) -> rquickjs::Result<&[u8]> {
+    let raw = match self {
+      PixelData::Bytes(a) => a.as_raw(),
+      PixelData::Floats(a) => a.as_raw(),
+    };
+    let raw = raw.ok_or_else(|| throw_str(ctx, &format!("{api}: detached buffer")))?;
+    Ok(unsafe { std::slice::from_raw_parts(raw.ptr.as_ptr(), raw.len) })
+  }
 }
 
 // Decode a target create's positional params argument (the live-data half;
@@ -263,7 +304,7 @@ fn collect_target_half(
     },
     None => 1,
   };
-  let sampler = collect_sampler(ctx, opts, api)?;
+  let sampler = collect_sampler(ctx, opts, alloy::TextureFormat::Rgba8, api)?;
   let label = collect_label(opts)?;
   Ok(alloy::TargetSpec { width, height, clear_color, sampler, manual, load, samples, label })
 }
@@ -802,19 +843,19 @@ impl ModuleDef for GpuModule {
     let create_atx = atx.clone();
     let create_texture = Function::new(
       ctx.clone(),
-      move |ctx: Ctx<'_>, data: TypedArray<'_, u8>, width: u32, height: u32, opts: OptArg<Object<'_>>| -> rquickjs::Result<u64> {
-        let raw = data.as_raw().ok_or_else(|| throw_str(&ctx, "createTexture: detached buffer"))?;
+      move |ctx: Ctx<'_>, data: Value<'_>, width: u32, height: u32, opts: OptArg<Object<'_>>| -> rquickjs::Result<u64> {
         let format = collect_format(&ctx, &opts.0, "createTexture")?;
-        let expected = (width as usize) * (height as usize) * format.bytes_per_pixel();
-        if raw.len != expected {
+        let data = PixelData::collect(&ctx, data, format, "createTexture")?;
+        let pixels = data.bytes(&ctx, "createTexture")?;
+        let expected = format.byte_len(width, height);
+        if pixels.len() != expected {
           return Err(throw_str(
             &ctx,
-            &format!("createTexture: expected {expected} bytes ({}), got {}", format.name(), raw.len),
+            &format!("createTexture: expected {expected} bytes ({}), got {}", format.name(), pixels.len()),
           ));
         }
-        let sampler = collect_sampler(&ctx, &opts.0, "createTexture")?;
+        let sampler = collect_sampler(&ctx, &opts.0, format, "createTexture")?;
         let label = collect_label(&opts.0)?;
-        let pixels = unsafe { std::slice::from_raw_parts(raw.ptr.as_ptr(), raw.len) };
         let id = create_atx
           .create_texture_from_pixels(width, height, pixels, sampler, format, label)
           .map_err(|e| throw_str(&ctx, &format!("createTexture: {e}")))?;
@@ -832,19 +873,20 @@ impl ModuleDef for GpuModule {
     let mutable_atx = atx.clone();
     let create_mutable_texture = Function::new(
       ctx.clone(),
-      move |ctx: Ctx<'_>, data: TypedArray<'_, u8>, width: u32, height: u32, opts: OptArg<Object<'_>>| -> rquickjs::Result<u64> {
-        let raw = data.as_raw().ok_or_else(|| throw_str(&ctx, "createMutableTexture: detached buffer"))?;
+      move |ctx: Ctx<'_>, data: Value<'_>, width: u32, height: u32, opts: OptArg<Object<'_>>| -> rquickjs::Result<u64> {
         let format = collect_format(&ctx, &opts.0, "createMutableTexture")?;
-        let frame_size = (width as usize) * (height as usize) * format.bytes_per_pixel();
-        if raw.len < frame_size {
+        let data = PixelData::collect(&ctx, data, format, "createMutableTexture")?;
+        let all = data.bytes(&ctx, "createMutableTexture")?;
+        let frame_size = format.byte_len(width, height);
+        if all.len() < frame_size {
           return Err(throw_str(
             &ctx,
-            &format!("createMutableTexture: need at least {frame_size} bytes ({}), got {}", format.name(), raw.len),
+            &format!("createMutableTexture: need at least {frame_size} bytes ({}), got {}", format.name(), all.len()),
           ));
         }
-        let sampler = collect_sampler(&ctx, &opts.0, "createMutableTexture")?;
+        let sampler = collect_sampler(&ctx, &opts.0, format, "createMutableTexture")?;
         let label = collect_label(&opts.0)?;
-        let pixels = unsafe { std::slice::from_raw_parts(raw.ptr.as_ptr(), frame_size) };
+        let pixels = &all[..frame_size];
         let id = mutable_atx
           .create_texture_from_pixels(width, height, pixels, sampler, format, label)
           .map_err(|e| throw_str(&ctx, &format!("createMutableTexture: {e}")))?;
@@ -862,9 +904,10 @@ impl ModuleDef for GpuModule {
     let upload_platform = platform.clone();
     let upload_texture = Function::new(
       ctx.clone(),
-      move |ctx: Ctx<'_>, id: u64, data: TypedArray<'_, u8>, offset: OptArg<usize>| -> rquickjs::Result<()> {
-        let raw = data.as_raw().ok_or_else(|| throw_str(&ctx, "uploadTexture: detached buffer"))?;
-        let pixels = unsafe { std::slice::from_raw_parts(raw.ptr.as_ptr(), raw.len) };
+      move |ctx: Ctx<'_>, id: u64, data: Value<'_>, offset: OptArg<usize>| -> rquickjs::Result<()> {
+        let format = upload_atx.texture_format(id).map_err(|e| throw_str(&ctx, &format!("uploadTexture: {e}")))?;
+        let data = PixelData::collect(&ctx, data, format, "uploadTexture")?;
+        let pixels = data.bytes(&ctx, "uploadTexture")?;
         upload_atx
           .update_texture(id, pixels, offset.0.unwrap_or(0))
           .map_err(|e| throw_str(&ctx, &format!("uploadTexture: {e}")))?;
@@ -884,9 +927,10 @@ impl ModuleDef for GpuModule {
     let resize_platform = platform.clone();
     let resize_texture = Function::new(
       ctx.clone(),
-      move |ctx: Ctx<'_>, id: u64, data: TypedArray<'_, u8>, width: u32, height: u32| -> rquickjs::Result<()> {
-        let raw = data.as_raw().ok_or_else(|| throw_str(&ctx, "resizeTexture: detached buffer"))?;
-        let pixels = unsafe { std::slice::from_raw_parts(raw.ptr.as_ptr(), raw.len) };
+      move |ctx: Ctx<'_>, id: u64, data: Value<'_>, width: u32, height: u32| -> rquickjs::Result<()> {
+        let format = resize_atx.texture_format(id).map_err(|e| throw_str(&ctx, &format!("resizeTexture: {e}")))?;
+        let data = PixelData::collect(&ctx, data, format, "resizeTexture")?;
+        let pixels = data.bytes(&ctx, "resizeTexture")?;
         resize_atx
           .resize_texture(id, width, height, pixels)
           .map_err(|e| throw_str(&ctx, &format!("resizeTexture: {e}")))?;
@@ -918,7 +962,7 @@ impl ModuleDef for GpuModule {
           },
           None => Vec::new(),
         };
-        let sampler = collect_sampler(&ctx, &opts.0, "createShaderTexture")?;
+        let sampler = collect_sampler(&ctx, &opts.0, alloy::TextureFormat::Rgba8, "createShaderTexture")?;
         let label = collect_label(&opts.0)?;
         let id = create_shader_atx
           .create_shader_texture(width, height, &fragment_src, &params, &textures, sampler, label)

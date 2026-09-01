@@ -74,8 +74,11 @@ export type { FilterMode, WrapMode, TextureBinding, TextureBindings } from "flux
 
 // Pixel format option for the pixel-upload creates (createTexture,
 // createMutableTexture), fixed for the id's lifetime like the sampler state.
-// "rgba8" (default) or "r8" - see TextureFormat in flux:gpu for the r8
-// contract (1 byte/pixel, sampled as `(v, 0, 0, 1)`, any width).
+// "rgba8" (default), "r8", or the float data-texture formats "r32f"/
+// "rgba32f" (Float32Array payload, nearest/texelFetch sampling only, no
+// readback) - see TextureFormat in flux:gpu for each format's contract.
+// "etc2-rgba8" (compressed) and "rgba8-srgb" are reserved future values of
+// the same vocabulary.
 export type TextureFormatOptions = { format?: gpu.TextureFormat }
 export type { TextureFormat } from "flux:gpu"
 
@@ -220,8 +223,9 @@ export { captureSnapshot, readTexture } from "flux:gpu"
 /**
  * Uploads raw pixels to an immutable GPU texture and returns its id (use it
  * as `<texture src={id} />`). `data` must be exactly `width * height` pixels
- * at the declared format's size (`* 4` bytes for the default "rgba8", `* 1`
- * for "r8"); a mismatch throws. RGBA data is uploaded verbatim and composited
+ * at the declared format's size, in the view type matching the format
+ * (Uint8Array for "rgba8"/"r8", Float32Array for "r32f"/"rgba32f"); a
+ * mismatch throws. RGBA data is uploaded verbatim and composited
  * as premultiplied alpha, like every texture: `decodeImage` and the readback
  * calls already deliver that, and hand-built pixels must too (`rgb * a`). For pixels you intend to mutate and
  * re-upload, use `createMutableTexture` instead. When called inside a
@@ -233,7 +237,7 @@ export { captureSnapshot, readTexture } from "flux:gpu"
  * scope.
  */
 export function createTexture(
-  data: Uint8Array,
+  data: Uint8Array | Float32Array,
   width: number,
   height: number,
   opts?: CreateOptions & SamplerOptions & TextureFormatOptions,
@@ -247,14 +251,15 @@ export function createTexture(
  * Creates a GPU texture you intend to update over time: seed it with `data`,
  * then call `uploadTexture(id, data)` (from flux:gpu) to push new pixels.
  * `data` must hold at least `width * height` pixels at the declared format's
- * size (`* 4` bytes for the default "rgba8", `* 1` for "r8"; it may hold
- * several frames). Like `createTexture`, the texture is freed automatically
+ * size, in the view type matching the format (Uint8Array for "rgba8"/"r8",
+ * Float32Array for "r32f"/"rgba32f"); it may hold
+ * several frames. Like `createTexture`, the texture is freed automatically
  * when the reactive owner is disposed (opt out with `{ autoFree: false }`);
  * created outside a reactive scope you must call `destroyTexture` (from
  * flux:gpu) yourself.
  */
 export function createMutableTexture(
-  data: Uint8Array,
+  data: Uint8Array | Float32Array,
   width: number,
   height: number,
   opts?: CreateOptions & SamplerOptions & TextureFormatOptions,

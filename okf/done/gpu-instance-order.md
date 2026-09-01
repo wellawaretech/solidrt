@@ -75,7 +75,7 @@ orthogonal to the key mode, not paired with it:
   (1M x 32 B per sort); the escalation if that bandwidth shows up is a
   per-instance index attribute with record data fetched from a texture
   by index - 4 B per record, needs
-  [gpu-float-texture-formats](../backlog/gpu-float-texture-formats.md) and a
+  [gpu-float-texture-formats](../done/gpu-float-texture-formats.md) and a
   different material contract, and is exactly what the web
   gaussian-splat viewers ship.
 

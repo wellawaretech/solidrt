@@ -81,7 +81,10 @@ what it delivered is documented in `packages/3d/AGENTS.md`, not here.
    interpreter time per 32k vertices against 40 ms for the whole baked load.
    Left, demand-gated, in [3d-model-loader](../backlog/3d-model-loader.md):
    Draco/meshopt and KTX2 decoding in the bake, merge-by-material,
-   vertex colors, runtime-fetched content.
+   vertex colors, runtime-fetched content. KTX2 has an engine half the bake
+   cannot supply on its own -
+   [gpu-compressed-textures](../backlog/gpu-compressed-textures.md), the
+   ETC2 upload path `createTexture` does not have.
 8. [x] **Mipmaps.** Engine: [gpu-mipmaps](../done/gpu-mipmaps.md) (landed 2026-08-23: `mipmap: true` on texture creation).
    Textured models alias immediately at minification; the one engine item
    staging step 3 (real models) still needs.
@@ -155,8 +158,14 @@ what it delivered is documented in `packages/3d/AGENTS.md`, not here.
     `SHADOW` GLSL; every directional light may cast since 2026-08-27
     (stage 4a, slot = light index); the multi-view shape below became
     `scene.createView` on the way (split-screen, minimaps,
-    override-material passes). The rest of stage 4 (comparison sampling,
-    spot/point casters, cascades, instanced casters) stays demand-gated.
+    override-material passes). The rest of stage 4 stays demand-gated, one
+    item each: comparison sampling
+    ([gpu-depth-compare-sampling](../backlog/gpu-depth-compare-sampling.md)),
+    spot and point casters
+    ([3d-spot-point-shadows](../backlog/3d-spot-point-shadows.md)), cascades
+    ([3d-shadow-cascades](../backlog/3d-shadow-cascades.md)) and instanced
+    and skinned casters
+    ([3d-instanced-shadow-casters](../backlog/3d-instanced-shadow-casters.md)).
     Shaped 2026-08-26 as engine sampleable
     depth ([gpu-sampleable-depth](../done/gpu-sampleable-depth.md)),
     per-target draw sinks in the spatial core, then scene VIEWS, then the
@@ -164,12 +173,6 @@ what it delivered is documented in `packages/3d/AGENTS.md`, not here.
     ([gpu-depth-func](../backlog/gpu-depth-func.md)) turned out not to be
     a dependency. The
     map itself binds through the shared target-level sampler channel.
-    Two small follow-ups on the view shape, filed together in
-    [3d-view-mesh-selection](../backlog/3d-view-mesh-selection.md): the
-    mesh filter shadow views use internally is not public (a minimap or
-    mirror cannot choose its meshes), and `depth: "texture"` exists on
-    views but not on the scene's own target (a depth-reading post effect
-    has no input without a second full pass).
     **Library prerequisite, and it is the bigger half: a `Scene` is
     hardwired to one camera and one target.** There is no way to render the
     same scene twice from a different viewpoint, so even with sampleable
@@ -181,16 +184,16 @@ what it delivered is documented in `packages/3d/AGENTS.md`, not here.
     split-screen, reflections, minimaps and portals - shadows are just the
     first consumer to hit it. Until then the achievable tier is a projected
     blob, which also wants item 6's blend factors to avoid dithering.
-16. [ ] **Skinning and morph targets.** Skinning shipped 2026-08-31 at
-    the uniform-array tier with the model loader's skins and the JS
-    mixer (`uBones` mat4 array sized to jointCap() - MAX_JOINTS = 64,
-    device-shrunk to the vertex uniform budget - palettes composed in
-    JS - see `packages/3d/AGENTS.md`); what keeps the box open: morph
-    targets, and palettes past the cap - the engine half stays float
-    texture formats (same extensions file), bone matrices sampled in
-    the vertex shader, since per-vertex JS is ruled out by the
-    interpreter. The crowd-scale evaluator is
-    [animation-core](../backlog/animation-core.md), not this item.
+16. [ ] **Skinning and morph targets.** Skinning shipped 2026-08-31 with
+    the model loader's skins and the JS mixer, and moved to float-texture
+    palettes 2026-09-01 (`uBones` an rgba32f texture sized to the rig,
+    texelFetched in the vertex stage - built on
+    [gpu-float-texture-formats](../done/gpu-float-texture-formats.md) -
+    so the MAX_JOINTS uniform-array cap is retired; see
+    `packages/3d/AGENTS.md`); what keeps the box open: morph targets,
+    since per-vertex JS is ruled out by the interpreter. The crowd-scale
+    evaluator is [animation-core](../backlog/animation-core.md), not this
+    item.
 17. [ ] **PBR and the color-space decision.** The furthest tier: physically
     based lighting math forces the sRGB/linear question the pixel contract
     currently answers with "non-linear RGBA8 everywhere".

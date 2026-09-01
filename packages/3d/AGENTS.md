@@ -785,12 +785,11 @@ The orbit-camera pattern: no frame loop of its own - call
 return. Channels write node TRS through setTransform (a channel nothing
 plays leaves the node's pose alone; your setTransform and the mixer's
 share the path, last write wins), then skins update: each skin's uBones
-palette (model-local jointWorld x inverseBind, sized to `jointCap()` -
-`MAX_JOINTS` = 64 from /glsl, shrunk where the device's vertex uniform
-budget is tight, 60 on the ES 3.0 floor of 256 vectors; a bigger rig
-throws at createModel naming the device's numbers) is recomputed in JS
-and written per skinned mesh with one setMeshParams. Posing joints directly
-without a mixer takes an explicit `updateSkins(model)` afterwards.
+palette (model-local jointWorld x inverseBind, sized to the RIG - the
+palette is an rgba32f float texture, 4 texels wide, one row per joint,
+sampled in the vertex stage via texelFetch, so there is no joint cap) is
+recomputed in JS and pushed with one uploadTexture per skin. Posing joints
+directly without a mixer takes an explicit `updateSkins(model)` afterwards.
 `sampleChannel` (pure, from the root) is the sampling core for custom
 drivers. This is the JS animation tier - fine for a handful of
 characters, not a crowd; okf/backlog/animation-core.md is the native

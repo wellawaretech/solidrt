@@ -37,38 +37,6 @@ export const MAX_CASCADES = 4
  * bounds `uShadowRect`/`uShadowMatrix`. */
 export const MAX_SHADOW_MAPS = MAX_LIGHTS * MAX_CASCADES
 
-/** Design ceiling of a skinned program's bone palette (`uniform mat4
- * uBones[jointCap()]`) - 64 covers the common humanoid range (a stock
- * game rig runs 40-100 joints; 32 ruled real characters out). A mat4
- * array costs 4 vec4s per joint, so the palette alone is 256 of a floor
- * device's 256 vertex uniform vectors - which is why the declared size
- * is jointCap(), not this constant. A rig above the cap throws at
- * createModel; palettes in float textures (3d roadmap item 16) are the
- * scale-out when real rigs outgrow it. Fixed for the app today; the
- * app-configurable form is tracked in
- * okf/backlog/app-runtime-config.md, like MAX_LIGHTS. */
-export const MAX_JOINTS = 64
-
-/** vec4 slots held back from the palette's vertex uniform budget: the
- * skinned stages' own mat4s (uModel + uViewProj + uNormal = 12) plus one
- * mat4 of margin for driver-internal slots. */
-const SKIN_RESERVED_VECTORS = 16
-
-/**
- * Joint capacity of a skinned program on a device reporting this many
- * vertex uniform vectors (`limits.maxVertexUniformVectors`): MAX_JOINTS,
- * shrunk when the budget cannot hold that palette - uBones is dynamically
- * indexed, so every declared element stays active and counts, and the ES
- * 3.0 floor of 256 caps out at 60 joints. Pure (this module never touches
- * the runtime); material.ts's jointCap() is the device-bound form, and
- * the single number both the uBones declaration and createModel's palette
- * allocation must agree on - the raster side validates a param against
- * the declared array size exactly.
- */
-export function jointCapFor(maxVertexUniformVectors: number): number {
-  return Math.min(MAX_JOINTS, Math.floor((maxVertexUniformVectors - SKIN_RESERVED_VECTORS) / 4))
-}
-
 /**
  * The standard lit vertex stage: clip position via uViewProj * uModel,
  * with world position, world normal (via `mat3(uNormal)`, correct under
@@ -82,17 +50,23 @@ export function jointCapFor(maxVertexUniformVectors: number): number {
 // The skinned-layout blocks a vertex stage splices in: the aJoints/
 // aWeights channels, the palette, and the linear-blend skin matrix.
 // Bone-space normals go through mat3(skin) - exact for rigid bones,
-// the standard approximation under bone scale. The declarations take the
-// palette size: device-derived by the builders' jointCap option, so a
-// floor device gets an array its uniform budget can link.
-const skinDecls = (jointCap: number) => glsl`
+// the standard approximation under bone scale. The palette is a float
+// texture, not a uniform array, so rig size is bounded only by texture
+// height (>= 2048 everywhere), never by the vertex uniform budget: an
+// rgba32f texture 4 texels wide, one row per joint, each row the four
+// columns of that joint's mat4 (updateSkins writes it).
+const SKIN_DECLS = glsl`
   in vec4 aJoints;
   in vec4 aWeights;
-  uniform mat4 uBones[${jointCap}];
+  uniform sampler2D uBones;
+  mat4 boneAt(int j) {
+    return mat4(texelFetch(uBones, ivec2(0, j), 0), texelFetch(uBones, ivec2(1, j), 0),
+      texelFetch(uBones, ivec2(2, j), 0), texelFetch(uBones, ivec2(3, j), 0));
+  }
 `
 const SKIN_MATRIX = glsl`
-    mat4 skin = aWeights.x * uBones[int(aJoints.x)] + aWeights.y * uBones[int(aJoints.y)] +
-      aWeights.z * uBones[int(aJoints.z)] + aWeights.w * uBones[int(aJoints.w)];
+    mat4 skin = aWeights.x * boneAt(int(aJoints.x)) + aWeights.y * boneAt(int(aJoints.y)) +
+      aWeights.z * boneAt(int(aJoints.z)) + aWeights.w * boneAt(int(aJoints.w));
 `
 
 // The one lit vertex template: the standard prefix always, aColor and
@@ -102,14 +76,14 @@ const SKIN_MATRIX = glsl`
 // it require the "skinned" layout the same way). LIT_VERTEX /
 // LIT_VERTEX_COLORED are its two named forms; litVertex(o) picks per
 // option set.
-function litVertexSource(colored: boolean, uv2: boolean, skinned: boolean, jointCap: number): string {
+function litVertexSource(colored: boolean, uv2: boolean, skinned: boolean): string {
   return glsl`
   in vec3 aPos;
   in vec3 aNormal;
   in vec2 aUV;
   ${colored ? "in vec4 aColor;" : ""}
   ${uv2 ? "in vec2 aUV2;" : ""}
-  ${skinned ? skinDecls(jointCap) : ""}
+  ${skinned ? SKIN_DECLS : ""}
   uniform mat4 uModel;
   uniform mat4 uViewProj;
   uniform mat4 uNormal;
@@ -132,7 +106,7 @@ function litVertexSource(colored: boolean, uv2: boolean, skinned: boolean, joint
 `
 }
 
-export const LIT_VERTEX = litVertexSource(false, false, false, MAX_JOINTS)
+export const LIT_VERTEX = litVertexSource(false, false, false)
 
 /**
  * LIT_VERTEX for "colored"-layout geometry: the same interface plus the
@@ -142,7 +116,7 @@ export const LIT_VERTEX = litVertexSource(false, false, false, MAX_JOINTS)
  * collects the vertex stage's `in` declarations), so its meshes need
  * geometry carrying that channel - withColors() - or add() throws.
  */
-export const LIT_VERTEX_COLORED = litVertexSource(true, false, false, MAX_JOINTS)
+export const LIT_VERTEX_COLORED = litVertexSource(true, false, false)
 
 /** `vec3 hemisphere(vec3 n, vec3 sky, vec3 ground)` - ambient from a
  * sky/ground gradient by the normal's vertical tilt: sky straight up,
@@ -459,16 +433,11 @@ export type LitSourceOptions = {
    * same way; lightMap's aUV2 is not transformed. Not with `triplanar`. */
   mapTransform?: boolean
   /** Skin positions and normals by the "skinned" layout's aJoints/
-   * aWeights against `uniform mat4 uBones[jointCap]` (model-local
-   * jointWorld x inverseBind per joint - updateSkins writes it). The
-   * vertex stage then requires that layout; the fragment is unchanged. */
+   * aWeights against the `uBones` palette texture (rgba32f, 4 texels
+   * wide, one row per joint: model-local jointWorld x inverseBind -
+   * updateSkins writes it). The vertex stage then requires that layout
+   * and something must bind `uBones`; the fragment is unchanged. */
   skinned?: boolean
-  /** With `skinned`: the uBones array size, default MAX_JOINTS. Pass
-   * jointCap() (the package export) so the declaration fits the device's
-   * vertex uniform budget - the default links only where that budget
-   * holds the full MAX_JOINTS palette. The palette written to uBones must
-   * carry exactly this many mat4s. */
-  jointCap?: number
   /** GLSL spliced at file scope, before main: the uniforms, constants and
    * helper functions `discardIf` calls. */
   prelude?: string
@@ -578,7 +547,7 @@ function litBase(c: LitSource, flip: boolean): string {
  * varyings in both passes.
  */
 export function litVertex(o: LitSourceOptions = {}): string {
-  return litVertexSource(o.vertexColors === true, o.lightMap === true, o.skinned === true, o.jointCap ?? MAX_JOINTS)
+  return litVertexSource(o.vertexColors === true, o.lightMap === true, o.skinned === true)
 }
 
 /**
@@ -735,9 +704,6 @@ export type UnlitSourceOptions = {
   /** Skin positions by the "skinned" layout against uBones (see the lit
    * option); unlitVertex(o) reads it, the fragment is unchanged. */
   skinned?: boolean
-  /** With `skinned`: the uBones array size, default MAX_JOINTS (see the
-   * lit option of the same name). */
-  jointCap?: number
   /** GLSL spliced at file scope, before main. */
   prelude?: string
   /** A `bool` expression: true discards the fragment; splices into the
@@ -776,7 +742,7 @@ export function unlitVertex(o: UnlitSourceOptions = {}): string {
   return glsl`
   in vec3 aPos;
   in vec2 aUV;
-  ${skinDecls(o.jointCap ?? MAX_JOINTS)}
+  ${SKIN_DECLS}
   out vec2 vUv;
   out vec3 vWorldPos;
   uniform mat4 uModel;

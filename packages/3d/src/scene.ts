@@ -32,7 +32,7 @@ import { addDraw, createBuffer, createDrawTarget, createTexture, depthTexture, d
 import * as spatial from "flux:spatial"
 import type { NodeId, NodeTransition } from "flux:spatial"
 import { on } from "srt:events"
-import type { BufferId, DrawId, FilterMode, ProgramId, RenderPipelineId, ShaderParams, TextureId, VertexAttribute, WrapMode } from "@solidrt/core/gpu"
+import type { BufferId, DrawId, FilterMode, ProgramId, RenderPipelineId, ShaderParams, TextureBindings, TextureId, VertexAttribute, WrapMode } from "@solidrt/core/gpu"
 import { getOwner, onCleanup } from "@solidrt/core"
 import type { PointerEvent as ElementPointerEvent } from "@solidrt/core"
 // The scene's lookAt() aims a node; math's builds a camera's view matrix -
@@ -263,6 +263,12 @@ export type Mesh = SceneNode & {
    * transparent sort key. */
   _center: Vec3
   _params: ShaderParams | null
+  /** Per-mesh sampler bindings merged over the material's at attach (a
+   * skin's uBones palette texture): create-time state, set before the
+   * mesh joins a scene, applied only to entries drawn with the mesh's
+   * OWN material - an override or shadow variant validates its bindings
+   * against a program that may not declare these names. */
+  _textures: TextureBindings | null
   /** Instance state when the mesh was made by createInstancedMesh; null on
    * an ordinary mesh. */
   _instances: MeshInstances | null
@@ -953,6 +959,7 @@ export function createMesh(geometry: Geometry, material: Material): Mesh {
   mesh._transparent = false
   mesh._center = [0, 0, 0]
   mesh._params = null
+  mesh._textures = null
   mesh._instances = null
   mesh._sprite = false
   return mesh
@@ -1812,7 +1819,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       buffer: bufs.buffer,
       indexBuffer: bufs.index,
       indexFormat: bufs.indexFormat,
-      textures: mesh.material.textures,
+      textures: mesh._textures !== null ? { ...mesh.material.textures, ...mesh._textures } : mesh.material.textures,
       instanceBuffer: inst !== null ? inst.buffer : undefined,
       instanceCount: 0,
     })
@@ -1843,7 +1850,10 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       buffer: bufs.buffer,
       indexBuffer: bufs.index,
       indexFormat: bufs.indexFormat,
-      textures: material.textures,
+      // The mesh's own bindings ride only with its own material: an
+      // override (or shadow variant) program may not declare their names,
+      // and per-entry bindings validate strictly.
+      textures: material === mesh.material && mesh._textures !== null ? { ...material.textures, ...mesh._textures } : material.textures,
       instanceBuffer: inst !== null ? inst.buffer : undefined,
       instanceCount: 0,
     })

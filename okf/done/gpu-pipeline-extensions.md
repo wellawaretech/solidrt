@@ -15,7 +15,7 @@ decided one has landed (records below), and on 2026-08-11 the four still-open
 bullets were split into their own items, because this one file kept being the
 destination for unrelated asks:
 
-- [gpu-float-texture-formats](../backlog/gpu-float-texture-formats.md) - R32F/RGBA32F
+- [gpu-float-texture-formats](../done/gpu-float-texture-formats.md) - R32F/RGBA32F
   data textures (was the float-formats bullet).
 - [gpu-sampleable-depth](../done/gpu-sampleable-depth.md) - depth as a sampleable,
   nameable texture (was the sampleable-depth bullet).

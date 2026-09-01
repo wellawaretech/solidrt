@@ -616,7 +616,7 @@ impl RasterState {
           RasterCmd::UpdateYuv { planes, frame } => {
             for (id, offset) in planes {
               let len = match self.textures.get(&id) {
-                Some(gpu) => (gpu.width as usize) * (gpu.height as usize) * gpu.format.bytes_per_pixel(),
+                Some(gpu) => gpu.format.byte_len(gpu.width, gpu.height),
                 None => {
                   log::warn!("[alloy] yuv plane {id} not found");
                   continue;
@@ -1622,7 +1622,7 @@ impl RasterState {
 
   fn update_texture(&mut self, id: u64, pixels: &[u8]) -> Result<(), String> {
     let gpu = self.textures.get(&id).ok_or_else(|| format!("texture {id} not found"))?;
-    let expected = (gpu.width as usize) * (gpu.height as usize) * gpu.format.bytes_per_pixel();
+    let expected = gpu.format.byte_len(gpu.width, gpu.height);
     if pixels.len() != expected {
       return Err(format!(
         "texture {} update is {} bytes, expected {expected} ({})",

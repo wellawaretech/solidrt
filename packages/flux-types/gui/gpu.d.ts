@@ -174,8 +174,24 @@ declare module "flux:gpu" {
    * texture as `(v, 0, 0, 1)` - read `.r`; displaying one via `<texture src>`
    * shows that same red-channel reading. Shader/pipeline targets and
    * readbacks stay RGBA8.
+   *
+   * "r32f" and "rgba32f" are the float data-texture formats, for float
+   * payloads a shader fetches - per-sector heights read in a vertex stage,
+   * bone matrices at scale, lookup tables wider than 8 bits - without
+   * fixed-point encoding into RGBA8 channels. One f32 per channel: data is a
+   * Float32Array of width*height (r32f, sampled as `(v, 0, 0, 1)`) or
+   * width*height*4 (rgba32f, a vec4 per texel). Upload-and-sample only, and
+   * nearest-only - `filter` defaults to "nearest" and "linear", `mipmap` and
+   * `anisotropy` throw (float linear filtering is not in core GLES 3.0;
+   * fetch exact texels with `texelFetch`). No readback or copy path
+   * (readTexture and copyTexture throw: float is not color-renderable in
+   * core), and displaying one via `<texture src>` is out of contract - these
+   * are shader data, not image content.
+   *
+   * Reserved future values of this same vocabulary: "etc2-rgba8" (compressed
+   * uploads) and "rgba8-srgb" (linear-space rendering).
    */
-  export type TextureFormat = "rgba8" | "r8"
+  export type TextureFormat = "rgba8" | "r8" | "r32f" | "rgba32f"
   export type TextureFormatOption = { format?: TextureFormat }
   /**
    * This device's hard ceilings, queried once at startup: process constants.
@@ -214,24 +230,27 @@ declare module "flux:gpu" {
     maxVertexUniformVectors: number
   }
   /**
-   * Create an immutable texture from a pixel buffer (exactly
-   * width*height*bytesPerPixel bytes: *4 for the default "rgba8" format, *1
-   * for "r8"). Returns the texture id.
+   * Create an immutable texture from a pixel buffer holding exactly one
+   * frame at the declared format's size. The view type must match the
+   * format: byte formats ("rgba8", "r8") take a Uint8Array, float formats
+   * ("r32f", "rgba32f") a Float32Array. Returns the texture id.
    */
-  export function createTexture(data: Uint8Array, width: number, height: number, opts?: SamplerOptions & TextureFormatOption & LabelOption): TextureId
+  export function createTexture(data: Uint8Array | Float32Array, width: number, height: number, opts?: SamplerOptions & TextureFormatOption & LabelOption): TextureId
   /**
    * Create a texture intended to be updated later via {@link uploadTexture}. The
-   * seed buffer must hold at least one frame (width*height bytes at the
-   * declared format's pixel size) and may hold more (uploadTexture selects a
-   * frame by offset).
+   * seed buffer must hold at least one frame at the declared format's size
+   * and may hold more (uploadTexture selects a frame by offset); like
+   * {@link createTexture}, the view type must match the format (Uint8Array
+   * for byte formats, Float32Array for float formats).
    */
-  export function createMutableTexture(data: Uint8Array, width: number, height: number, opts?: SamplerOptions & TextureFormatOption & LabelOption): TextureId
+  export function createMutableTexture(data: Uint8Array | Float32Array, width: number, height: number, opts?: SamplerOptions & TextureFormatOption & LabelOption): TextureId
   /**
-   * Replace a mutable texture's pixels; the frame size follows the format the
-   * id was created with. `data` may hold several frames; `offset` (default 0)
-   * selects which frame to upload.
+   * Replace a mutable texture's pixels; the frame size and required view
+   * type (Uint8Array for byte formats, Float32Array for float formats)
+   * follow the format the id was created with. `data` may hold several
+   * frames; `offset` (default 0) selects which frame to upload.
    */
-  export function uploadTexture(id: TextureId, data: Uint8Array, offset?: number): void
+  export function uploadTexture(id: TextureId, data: Uint8Array | Float32Array, offset?: number): void
   /**
    * Replace a texture's storage with a new size at the same id (an id-stable
    * resize): `<texture src>` references and shader sampler bindings keep
@@ -241,7 +260,7 @@ declare module "flux:gpu" {
    * state). Render target ids are rejected - resize those with
    * {@link setTargetSize}.
    */
-  export function resizeTexture(id: TextureId, data: Uint8Array, width: number, height: number): void
+  export function resizeTexture(id: TextureId, data: Uint8Array | Float32Array, width: number, height: number): void
   /**
    * Destroy a texture (immutable, mutable, or shader). Frame-safe: the id is
    * reclaimed by the runtime once the render tree no longer references it, so
@@ -1105,7 +1124,9 @@ declare module "flux:gpu" {
    * copy sees the copy, and targets sampling `dst` update afterwards.
    * Throws if either id is unknown, `dst` is not a manual target (the
    * runtime owns those contents), or `src === dst`. `src` may be any
-   * texture: uploaded, mutable, a camera frame, or another target's output.
+   * texture: uploaded, mutable, a camera frame, or another target's output -
+   * except a float-format texture (the copy would quantize its values to the
+   * target's rgba8; float textures are sample-only, so it throws).
    */
   export function copyTexture(src: TextureId, dst: TextureId): void
   /**
@@ -1144,7 +1165,8 @@ declare module "flux:gpu" {
    * Read back a registered texture's current pixels as RGBA8 (tightly packed,
    * top-to-bottom rows), for any texture id whatever created it (createTexture,
    * createShaderTexture, a render target). Synchronous. Throws if the id is
-   * unknown.
+   * unknown, or names a float-format texture (upload-and-sample only: float
+   * is not color-renderable in core GLES 3.0, so no readback path exists).
    */
   export function readTexture(id: TextureId): { width: number; height: number; data: Uint8Array }
 }

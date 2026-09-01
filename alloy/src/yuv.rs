@@ -61,7 +61,7 @@ pub struct YuvPlane {
 
 impl YuvPlane {
   pub fn byte_len(&self) -> usize {
-    self.width as usize * self.height as usize * self.format.bytes_per_pixel()
+    self.format.byte_len(self.width, self.height)
   }
 }
 

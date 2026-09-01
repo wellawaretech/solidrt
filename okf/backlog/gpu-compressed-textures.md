@@ -16,8 +16,12 @@ hardware format and must transcode or decline. `createTexture`/
 `uploadTexture` are RGBA8-only today, so a game-scale texture set pays the
 full multiple everywhere.
 
-Shape when demanded: a `format` option on createTexture (RGBA8 default,
-`etc2-rgba8` first), raw compressed bytes in, `glCompressedTexImage2D`
+Shape when demanded: `"etc2-rgba8"` as a value of the existing `format`
+option on createTexture - the vocabulary
+[gpu-float-texture-formats](../done/gpu-float-texture-formats.md)
+established already documents it as reserved, and
+`TextureFormat::byte_len(w, h)` in alloy is the one sizing seam block
+compression changes - raw compressed bytes in, `glCompressedTexImage2D`
 under it; `Flux.capabilities` (or [[gpu-labels-limits]]'s limits object)
 answers whether the device takes it natively. Mutable/resize paths and the
 `<texture>` display draw are unaffected (a texture id is a texture id).

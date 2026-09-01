@@ -348,12 +348,6 @@ Shaped, not started.
   propagation - which landed 2026-07-29, so the example is now unblocked and
   simply unwritten. The points-topology particle field shipped 2026-07-29 once
   the blend toggle landed.
-- **[Float texture formats (R32F/RGBA32F)](backlog/gpu-float-texture-formats.md)** [2026-08-11]
-  Data textures are RGBA8-only, so any float payload sampled in a shader
-  (per-sector heights via texelFetch, bone matrices at scale) must be
-  fixed-point encoded into RGBA8 channels and decoded in the shader;
-  R32F/RGBA32F upload formats close it. Split from gpu-pipeline-extensions
-  2026-08-11.
 - **[Refactor the fused creates over the raw shading layer](backlog/gpu-fused-create-refactor.md)** [2026-07-27]
   The naming collision and the iTime trap were resolved 2026-07-31
   (createShaderTexture/createPipelineTexture/createShaderTextureMemo, hard
@@ -998,6 +992,13 @@ Finished, kept for the reasoning.
   lives in a file named texture.rs; split shader.rs into an alloy gpu/ folder
   (vocab, program, buffer, target, pass), rename the flux plugin file, and
   lift the RasterCmd enum, capture path and context DTOs.
+- **[Float texture formats (R32F/RGBA32F)](done/gpu-float-texture-formats.md)** [2026-09-01]
+  "Done 2026-09-01: \"r32f\"/\"rgba32f\" joined the createTexture format
+  vocabulary - Float32Array payload, ES 3.0 core upload and texelFetch
+  sampling, nearest-only (linear/mipmap/anisotropy throw), no readback or copy
+  (float is not color-renderable in core). byte_len(w, h) on TextureFormat is
+  the sizing seam a future compressed format changes; \"etc2-rgba8\" and
+  \"rgba8-srgb\" are documented reserved values of the same vocabulary."
 - **[In-place GPU resize](done/gpu-in-place-resize.md)** [2026-07-30]
   Resize data textures and shader targets at a stable id so texture
   references, sampler bindings and owner-scoped auto-free survive; shipped, no

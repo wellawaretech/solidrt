@@ -196,6 +196,12 @@ impl Context {
       ));
     }
     let entry = self.textures.get(id).ok_or_else(|| format!("texture {id} not found"))?;
+    if entry.format.is_float() {
+      return Err(format!(
+        "texture {id} is {}: float textures are upload-and-sample only (not color-renderable in core GLES 3.0, so no readback path exists)",
+        entry.format.name()
+      ));
+    }
     let (width, height) = (entry.width(), entry.height());
     let pixels = self.read_texture(&entry.impeller, width, height)?;
     Ok((width, height, pixels))

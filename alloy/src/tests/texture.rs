@@ -202,3 +202,49 @@ fn sampler_override_composes_and_merges() {
   assert_eq!(record[1], TextureBinding::new("uB", 3));
   assert_eq!(record[2], TextureBinding::new("uC", 4));
 }
+
+// TextureFormat::parse is the app-facing format vocabulary gate and byte_len
+// the sizing seam every upload validates through; the internal-only formats
+// (rg8, depth24) stay out of the vocabulary.
+#[test]
+fn texture_format_parses_and_sizes() {
+  use crate::gpu::texture::TextureFormat;
+
+  assert_eq!(TextureFormat::parse(None).expect("default parses"), TextureFormat::Rgba8);
+  assert_eq!(TextureFormat::parse(Some("r8")).expect("r8 parses"), TextureFormat::R8);
+  assert_eq!(TextureFormat::parse(Some("r32f")).expect("r32f parses"), TextureFormat::R32f);
+  assert_eq!(TextureFormat::parse(Some("rgba32f")).expect("rgba32f parses"), TextureFormat::Rgba32f);
+  assert!(TextureFormat::parse(Some("rg8")).is_err());
+  assert!(TextureFormat::parse(Some("depth24")).is_err());
+
+  assert_eq!(TextureFormat::Rgba8.byte_len(3, 5), 60);
+  assert_eq!(TextureFormat::R8.byte_len(3, 5), 15);
+  assert_eq!(TextureFormat::R32f.byte_len(3, 5), 60);
+  assert_eq!(TextureFormat::Rgba32f.byte_len(3, 5), 240);
+}
+
+// Float formats are nearest-only data textures (linear float filtering is
+// not in core GLES 3.0): parse_for flips their filter default to nearest and
+// refuses linear, mipmaps and anisotropy; byte formats resolve exactly as
+// SamplerState::parse does.
+#[test]
+fn float_formats_sample_nearest_only() {
+  use crate::gpu::texture::{SamplerFilter, SamplerOptions, SamplerState, TextureFormat};
+
+  let parse = |format, filter, mipmap, anisotropy| {
+    SamplerState::parse_for(format, &SamplerOptions { filter, wrap: None, mipmap, anisotropy })
+  };
+  let state = parse(TextureFormat::R32f, None, None, None).expect("float defaults parse");
+  assert_eq!(state.filter, SamplerFilter::Nearest);
+  let state = parse(TextureFormat::Rgba32f, Some("nearest"), None, None).expect("explicit nearest parses");
+  assert_eq!(state.filter, SamplerFilter::Nearest);
+
+  assert!(parse(TextureFormat::R32f, Some("linear"), None, None).expect_err("linear refused").contains("nearest-only"));
+  assert!(parse(TextureFormat::Rgba32f, None, Some(true), None).expect_err("mipmap refused").contains("mip"));
+  assert!(parse(TextureFormat::R32f, None, None, Some(4.0)).expect_err("anisotropy refused").contains("anisotropy"));
+
+  let state = parse(TextureFormat::Rgba8, None, Some(true), Some(4.0)).expect("byte format unaffected");
+  assert_eq!(state.filter, SamplerFilter::Linear);
+  assert!(state.mipmap);
+  assert_eq!(state.anisotropy, 4);
+}

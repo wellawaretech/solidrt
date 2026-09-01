@@ -53,14 +53,6 @@ was added: the bake already removes the cost where it matters.
   are skipped (the one animation feature left out when skins landed);
   they ride the float-texture machinery of roadmap item 16 and stay out
   of scope until a model demands them.
-- **Palettes past jointCap().** The uBones mat4 uniform array caps a rig
-  at MAX_JOINTS = 64 joints - shrunk to the device's vertex uniform
-  budget (`limits.maxVertexUniformVectors`; 60 on the ES 3.0 floor of
-  256), with createModel throwing the device's numbers (raised from 32,
-  which ruled out real humanoid rigs of 60-100). The scale-out past the
-  cap is still bone matrices in a float texture
-  ([gpu-float-texture-formats](gpu-float-texture-formats.md), roadmap
-  item 16's engine half), sampled in the vertex stage.
 - **Runtime-fetched content.** The bake tool runs under bun on the
   developer's machine, so a model the APP downloads (user-made tracks and
   karts, a mod browser, a level editor's exports) meets the runtime
