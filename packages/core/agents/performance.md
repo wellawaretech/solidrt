@@ -114,7 +114,15 @@ Rules, in order of leverage:
    node - the hoisting described above.
 6. "snapshot" boundaries pay first-frame texture allocation + raster:
    creating many at once (dealing a board of 64 sprites) is a visible
-   one-frame hiccup - pool or pre-warm if that moment matters.
+   one-frame hiccup - pool or pre-warm if that moment matters. The texture
+   is sized by the view's box: the layout box on a view, the inherited
+   frame on a d-view (so a d-view directly under the window snapshots the
+   whole window - box it tighter when the content is small). Confirm a
+   boundary actually engaged rather than trusting the prop: get_render_tree
+   props reads
+   repaintBoundary back, get_stats' nodesPainted drops when the fenced
+   subtree stops being walked, and the dev overlay's BND/SNP lines count
+   boundary reuse per frame.
 7. Shading pixels the app already drew is a different mechanism from rule 2's
    generated textures, and both forms are a `shader` prop taking a linked
    program from compileShader/linkProgram (@solidrt/core/gpu), not a

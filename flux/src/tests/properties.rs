@@ -214,6 +214,42 @@ fn diverging_overflow_axes_read_back_per_axis() {
 }
 
 #[test]
+fn repaint_boundary_is_view_only() {
+  // The prop's JSX contract matches ViewOwnProps: view and d-view take it,
+  // every other kind rejects it name-level (warn-and-continue in core via
+  // the "Unknown property" prefix) instead of silently accepting.
+  assert!(apply("view", "repaintBoundary", PropValue::Bool(true)).is_ok());
+  assert!(apply("d-view", "repaintBoundary", text("snapshot")).is_ok());
+  let err = apply("rect", "repaintBoundary", PropValue::Bool(true)).unwrap_err();
+  assert!(err.starts_with("Unknown property"), "{err}");
+  assert!(err.contains("view-only"), "{err}");
+}
+
+#[test]
+fn repaint_boundary_reads_back_on_a_d_view() {
+  // The observability blind spot from an external report: repaintBoundary
+  // lives on Element, not a kind, and read_jsx only walked the kind - so
+  // get_render_tree props could neither confirm nor deny that the prop
+  // landed on a d-view. Lock the round trip for every accepted form, on a
+  // detached element like the report's.
+  use crate::alloy_plugins::properties::{read_jsx, ReadValue};
+  let mut el = Element::from_kind("d-view").expect("known kind");
+  assert!(!read_jsx(&el).iter().any(|(n, _)| *n == "repaintBoundary"), "off-default emits nothing");
+  apply_el(&mut el, "repaintBoundary", PropValue::Bool(true)).expect("recording applies");
+  assert!(read_jsx(&el).iter().any(|(n, v)| *n == "repaintBoundary" && matches!(v, ReadValue::Bool(true))));
+  apply_el(&mut el, "repaintBoundary", text("snapshot")).expect("snapshot applies");
+  assert!(read_jsx(&el)
+    .iter()
+    .any(|(n, v)| *n == "repaintBoundary" && matches!(v, ReadValue::Str(s) if s == "snapshot")));
+  apply_el(&mut el, "repaintBoundary", text("snapshot-no-aa")).expect("snapshot-no-aa applies");
+  assert!(read_jsx(&el)
+    .iter()
+    .any(|(n, v)| *n == "repaintBoundary" && matches!(v, ReadValue::Str(s) if s == "snapshot-no-aa")));
+  apply_el(&mut el, "repaintBoundary", PropValue::Bool(false)).expect("reset applies");
+  assert!(!read_jsx(&el).iter().any(|(n, _)| *n == "repaintBoundary"), "reset emits nothing again");
+}
+
+#[test]
 fn texture_params_route_to_the_gpu_channel() {
   // Params are target state: the write goes straight to the GPU channel
   // (production: Context::set_target_params) and produces NO tree damage,

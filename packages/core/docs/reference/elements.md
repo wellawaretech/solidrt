@@ -51,6 +51,8 @@ Three of those props are worth knowing before you need them:
   reflow.
 - `repaintBoundary` retains the subtree's display list, and in its
   `"snapshot"` forms its rasterized pixels too. It is the lever for putting
-  heavy static content next to content that changes every frame.
+  heavy static content next to content that changes every frame. On a
+  `d-view` the snapshot boxes the inherited frame: the nearest laid-out
+  ancestor's box, or the design size under a `designSize` view.
 - `clipRadius` rounds the clip, and only does anything when `overflow` is
   non-visible.

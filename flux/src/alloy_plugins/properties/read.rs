@@ -12,7 +12,9 @@
 use alloy::impellers::{
   BlendMode, Color, DrawStyle, FillType, FontStyle, FontWeight, StrokeCap, StrokeJoin, TextAlignment,
 };
-use alloy::rendertree::{Element, ElementKind, Gradient, Line, OriginCoord, PaintState, TextAnchor, TextureFit, View};
+use alloy::rendertree::{
+  BoundaryMode, Element, ElementKind, Gradient, Line, OriginCoord, PaintState, TextAnchor, TextureFit, View,
+};
 
 /// A read-back property value, kept engine- and serializer-free: the caller
 /// (the dev connection) maps these onto its own JSON.
@@ -182,6 +184,17 @@ pub fn read_jsx(element: &Element) -> Vec<(&'static str, ReadValue)> {
       num(&mut out, "w", tex.w);
       num(&mut out, "h", tex.h);
     }
+  }
+  // Element-level, mirroring apply_jsx's encodings. The JSX write side is
+  // view-only, but the field lives on Element and embedders can set it on any
+  // node, so the read side reports it wherever it is set (an external report
+  // hit the gap on a d-view, where the declared boundary could be neither
+  // confirmed nor denied).
+  match element.repaint_boundary {
+    BoundaryMode::None => {}
+    BoundaryMode::Recording => out.push(("repaintBoundary", ReadValue::Bool(true))),
+    BoundaryMode::Snapshot => out.push(("repaintBoundary", ReadValue::Str("snapshot".into()))),
+    BoundaryMode::SnapshotNoAa => out.push(("repaintBoundary", ReadValue::Str("snapshot-no-aa".into()))),
   }
   // Overflow is layout style, applicable to any layouted kind. The write side
   // fans "overflow" out to both axes; read back the uniform name when they

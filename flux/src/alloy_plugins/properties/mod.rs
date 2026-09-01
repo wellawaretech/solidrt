@@ -94,10 +94,21 @@ pub fn apply_jsx(
     return Ok(Damage::Layout);
   }
 
-  // Element-level, kind-independent: marks a retained-paint boundary
-  // (see Element::repaint_boundary). Does not affect layout; Damage::Paint
-  // clears the node's own now-stale cache along with the ancestors'.
+  // Marks a retained-paint boundary (see Element::repaint_boundary). The
+  // field is element-level, but the JSX contract is view/d-view only
+  // (ViewOwnProps): a boundary fences a subtree, and wrapping in a view is
+  // the composable way to get one. Handled here rather than in the view
+  // adapter because the field lives on Element, not View. Does not affect
+  // layout; Damage::Paint clears the node's own now-stale cache along with
+  // the ancestors'. The "Unknown property" prefix makes the wrong-kind
+  // rejection warn-and-continue in core, like other name-level rejections.
   if name == "repaintBoundary" {
+    if !matches!(el.kind, ElementKind::View(_)) {
+      return Err(
+        "Unknown property 'repaintBoundary': repaint boundaries are view-only; wrap this element in a view or d-view"
+          .to_string(),
+      );
+    }
     el.repaint_boundary = match value {
       PropValue::Null | PropValue::Bool(false) => BoundaryMode::None,
       PropValue::Bool(true) => BoundaryMode::Recording,
