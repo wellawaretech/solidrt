@@ -6,6 +6,8 @@ pub mod gl_libs;
 mod go;
 pub mod manifest;
 mod overlay;
+#[cfg(not(feature = "go"))]
+pub mod payload;
 mod stats;
 mod paced_clock;
 mod plugins;
@@ -89,7 +91,9 @@ use std::sync::Arc;
 
 // --- Start Android entry point ------------------------------
 
-#[cfg(target_os = "android")]
+// The go dev client: boots the launcher (no app source), auto-dials a dev
+// server when the launch intent carries one.
+#[cfg(all(target_os = "android", feature = "go"))]
 #[no_mangle]
 pub extern "C" fn SDL_main(argc: i32, argv: *mut *mut i8) -> i32 {
   let dev_server = parse_dev_server_arg(argc, argv);
@@ -102,10 +106,41 @@ pub extern "C" fn SDL_main(argc: i32, argv: *mut *mut i8) -> i32 {
   0
 }
 
+// Where `srt pack --apk` stores the payload in the APK, relative to assets/.
+#[cfg(all(target_os = "android", not(feature = "go")))]
+const PACKED_PAYLOAD_ASSET: &str = "app.srtapp";
+
+// The production Android runtime: boots the .srtapp packed into the APK
+// (`srt pack --apk`), read in place at its offset inside the APK - no dev
+// server, no launcher, no extraction. A runner APK without a payload is a
+// packaging error, so there is no fallback screen; the failure line lands in
+// logcat via SDL's stderr redirect when it does at all - primarily this exit
+// code is for the packager's bring-up.
+#[cfg(all(target_os = "android", not(feature = "go")))]
+#[no_mangle]
+pub extern "C" fn SDL_main(_argc: i32, _argv: *mut *mut i8) -> i32 {
+  let Some((apk, offset, len)) = alloy::sdl_utils::packed_asset_location(PACKED_PAYLOAD_ASSET) else {
+    eprintln!("[srt] no {PACKED_PAYLOAD_ASSET} asset in this APK; nothing to run");
+    return 1;
+  };
+  let Some(payload) = forge::trailer::read_at(apk, offset, len, payload::EMBED_MAGIC).and_then(payload::load) else {
+    eprintln!("[srt] {PACKED_PAYLOAD_ASSET} is not a SolidRT app pack; nothing to run");
+    return 1;
+  };
+  forge::fs::set_assets_base(Some(payload.base));
+  let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().expect("build tokio runtime");
+  // Storage anchors into the app's data sandbox under the Android-resolved
+  // root, keyed by the packed identity like every packed distribution. No
+  // argument channel: the activity is launched by intent.
+  let storage = storage::StorageSpec { data_root: None, client: None, app_id: Some(payload.app_id) };
+  start(&rt, Some(payload.app), alloy::Mode::Run, (1280, 720), false, None, payload.fonts, storage, Vec::new());
+  0
+}
+
 // Pull `--dev-server <addr>` out of the C argv SDL hands SDL_main (populated from
 // MainActivity.getArguments). The address is the dev server the go client should
 // auto-dial; None when launched without it (e.g. tapping the app icon).
-#[cfg(target_os = "android")]
+#[cfg(all(target_os = "android", feature = "go"))]
 fn parse_dev_server_arg(argc: i32, argv: *mut *mut i8) -> Option<String> {
   if argv.is_null() || argc <= 0 {
     return None;
@@ -130,12 +165,12 @@ fn parse_dev_server_arg(argc: i32, argv: *mut *mut i8) -> Option<String> {
 }
 
 // Receives the soft-keyboard (IME) inset height in pixels from
-// MainActivity.nativeKeyboardInset (Android UI thread) and stores it for the
-// event loop to pick up. The export lives in the cdylib so the symbol lands in
-// libmain.so; the env/class pointers are unused.
+// SolidRTActivity.nativeKeyboardInset (Android UI thread) and stores it for
+// the event loop to pick up. The export lives in the cdylib so the symbol
+// lands in libmain.so; the env/class pointers are unused.
 #[cfg(target_os = "android")]
 #[no_mangle]
-pub extern "C" fn Java_com_solidrt_app_MainActivity_nativeKeyboardInset(
+pub extern "C" fn Java_com_solidrt_app_SolidRTActivity_nativeKeyboardInset(
   _env: *mut core::ffi::c_void,
   _class: *mut core::ffi::c_void,
   px: core::ffi::c_int,
@@ -143,12 +178,12 @@ pub extern "C" fn Java_com_solidrt_app_MainActivity_nativeKeyboardInset(
   alloy::set_keyboard_inset_px(px as i32);
 }
 
-// Receives hardware-keyboard presence from MainActivity (initial Configuration
-// plus onConfigurationChanged on attach/detach). SDL's Android backend never
-// registers keyboards, so this is the only source of the fact there.
+// Receives hardware-keyboard presence from SolidRTActivity (initial device
+// scan plus input-device hotplug). SDL's Android backend never registers
+// keyboards, so this is the only source of the fact there.
 #[cfg(target_os = "android")]
 #[no_mangle]
-pub extern "C" fn Java_com_solidrt_app_MainActivity_nativeHardwareKeyboard(
+pub extern "C" fn Java_com_solidrt_app_SolidRTActivity_nativeHardwareKeyboard(
   _env: *mut core::ffi::c_void,
   _class: *mut core::ffi::c_void,
   present: u8,

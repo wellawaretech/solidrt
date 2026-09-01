@@ -312,6 +312,11 @@ Shaped, not started.
   non-root mesh is emitted once with its composed world matrix and once
   against the identity - duplicate parts, one at the wrong transform, and
   bounds covering both.
+- **[Go client crashes at launch on the x86_64 emulator](backlog/go-client-emulator-launch-crash.md)** [2026-09-01]
+  The currently staged solidrt-go.apk aborts within a second of launch on the
+  srt_pixel6 emulator (FORTIFY, destroyed mutex inside libhwui's CommonPool);
+  an older build installed on the same AVD launches fine, so this is a
+  regression in the artifact, not an emulator setup problem.
 - **[Async shader compile and readback](backlog/gpu-async-compile-readback.md)** [2026-07-31]
   Compile/link and readTexture are the two GPU calls whose cost class differs
   from everything else on the surface - both block the JS thread and the
@@ -585,6 +590,11 @@ Shaped, not started.
   camera, no mesh, no lights) that the 3d package is the first consumer of;
   triangle-accurate picking (3d roadmap item 4) and the scene-walk descent
   (item 19) land together on it.
+- **[Standalone APK for a packed app](backlog/standalone-android-apk.md)** [2026-09-01]
+  An app can be packed into a native executable for every desktop platform but
+  not into an installable Android app; the runtime has no Android boot path
+  for a packed payload, and building the APK should not require an Android SDK
+  on the developer's machine.
 - **[Every widget hand-wires its own hover/pressed/disabled variants](backlog/state-variant-selection.md)** [2026-07-26]
   Button picks fill/hover/label with a switch over its variant and derives the
   background from press state by hand, and every other widget repeats the

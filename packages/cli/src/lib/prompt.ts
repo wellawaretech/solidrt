@@ -52,6 +52,12 @@ export async function multiselect(message: string, options: MultiSelectOption[])
   return options.filter((o) => picked.includes(o.value)).map((o) => o.value)
 }
 
+// Yes/no prompt; non-TTY resolves the default.
+export async function confirm(message: string, def = true): Promise<boolean> {
+  if (!process.stdin.isTTY) return def
+  return unwrap(await clack.confirm({ message, initialValue: def }))
+}
+
 // Boxed informational message; silent on a non-TTY.
 export function note(message: string, title?: string) {
   if (process.stdin.isTTY) clack.note(message, title)

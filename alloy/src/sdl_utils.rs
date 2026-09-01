@@ -661,6 +661,72 @@ pub fn has_touchscreen_feature() -> bool {
   })
 }
 
+/// Locate a stored (uncompressed) asset inside this app's own APK: the APK's
+/// absolute path (`ApplicationInfo.sourceDir`) plus the asset's byte offset
+/// and length within it. The production runtime uses this to read the packed
+/// `.srtapp` payload in place (ranged reads against the APK, no extraction;
+/// see forge `fs::AssetsBase::Packed`). The file descriptor Android opens to
+/// report the offset is closed again here; readers reopen the APK by path.
+/// None (with a warning) when the asset is absent or compressed - the caller
+/// treats that as "no payload".
+#[cfg(target_os = "android")]
+pub fn packed_asset_location(name: &str) -> Option<(std::path::PathBuf, u64, u64)> {
+  use sdl3::sys::system::{SDL_GetAndroidActivity, SDL_GetAndroidJNIEnv};
+  let env_ptr = unsafe { SDL_GetAndroidJNIEnv() } as *mut jni::sys::JNIEnv;
+  let activity_ptr = unsafe { SDL_GetAndroidActivity() } as jni::sys::jobject;
+  if env_ptr.is_null() || activity_ptr.is_null() {
+    log::warn!("[alloy] no JNI env/activity for packed asset lookup");
+    return None;
+  }
+  let asset_name = std::ffi::CString::new(name).ok()?;
+  let mut unowned = unsafe { jni::EnvUnowned::from_raw(env_ptr) };
+  let outcome = unowned
+    .with_env(|env| -> Result<Option<(std::path::PathBuf, u64, u64)>, jni::errors::Error> {
+      let activity = unsafe { jni::objects::JObject::from_raw(env, activity_ptr) };
+      let info = env
+        .call_method(
+          &activity,
+          jni::jni_str!("getApplicationInfo"),
+          jni::jni_sig!("()Landroid/content/pm/ApplicationInfo;"),
+          &[],
+        )?
+        .l()?;
+      let source_dir = env.get_field(&info, jni::jni_str!("sourceDir"), jni::jni_sig!("Ljava/lang/String;"))?.l()?;
+      let apk = unsafe { jni::objects::JString::from_raw(env, source_dir.as_raw()) }.try_to_string(env)?;
+      let assets = env
+        .call_method(&activity, jni::jni_str!("getAssets"), jni::jni_sig!("()Landroid/content/res/AssetManager;"), &[])?
+        .l()?;
+      // The AAssetManager is owned by the Java AssetManager (held alive by
+      // the activity for the process lifetime); no ownership transfers here.
+      // The casts bridge the jni crate (jni-sys 0.4) and ndk-sys (jni-sys
+      // 0.3), which name the same ABI types in different crates.
+      let manager =
+        unsafe { ndk_sys::AAssetManager_fromJava(env.get_raw() as *mut _, assets.as_raw() as *mut _) };
+      let Some(manager) = std::ptr::NonNull::new(manager) else { return Ok(None) };
+      let manager = unsafe { ndk::asset::AssetManager::from_ptr(manager) };
+      let Some(asset) = manager.open(&asset_name) else { return Ok(None) };
+      // Fails for a compressed asset, which has no contiguous bytes to point
+      // at - the packer stores the payload uncompressed for this reason.
+      let fd = match asset.open_file_descriptor() {
+        Ok(fd) => fd,
+        Err(e) => {
+          log::warn!("[alloy] asset {name} has no readable file range (stored uncompressed?): {e}");
+          return Ok(None);
+        }
+      };
+      Ok(Some((std::path::PathBuf::from(apk), fd.offset as u64, fd.size as u64)))
+    })
+    .into_outcome();
+  match outcome {
+    jni::Outcome::Ok(location) => location,
+    jni::Outcome::Err(e) => {
+      log::warn!("[alloy] packed asset lookup failed: {e}");
+      None
+    }
+    jni::Outcome::Panic(payload) => std::panic::resume_unwind(payload),
+  }
+}
+
 /// Publish SDL's JNI env + activity into the process-wide `ndk-context` so
 /// JNI-using dependencies can reach the Android `JavaVM` and `Context`. iroh's
 /// network monitoring (reached via `flux:p2p`) reads this; without it the first

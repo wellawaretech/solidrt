@@ -54,12 +54,35 @@ android {
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
     }
-    sourceSets.main {
-        jniLibs.srcDir '../../../dist/android'
-        assets.srcDirs = ['../../../dist/assets']
+    // Native libs and assets are per flavor, not on main: flavor sourceSets
+    // add to main's, so anything staged here for go would also land in the
+    // prod runner APK. The go client carries the launcher assets (extracted
+    // at launch by its MainActivity); the runner APK carries no assets of its
+    // own - `srt pack --apk` injects the app payload into a copy.
+    sourceSets {
+        go {
+            jniLibs.srcDir '../../../dist/android'
+            assets.srcDirs = ['../../../dist/assets']
+        }
+        prod {
+            jniLibs.srcDir '../../../dist/android-runtime'
+        }
     }
     lint {
         abortOnError = false
+    }
+}
+
+// The prod runner ships its native libs deflated (extractNativeLibs=true):
+// the runner APK is direct distribution, where the wire is the file, so
+// download size wins over the extracted on-device copy (40.8 -> ~17 MB
+// measured; okf/backlog/standalone-android-apk.md). The go client keeps
+// stored libs: it is delivered by tooling, and in-place mmap loads faster.
+androidComponents {
+    onVariants(selector().all()) { variant ->
+        if (variant.flavorName == 'prod') {
+            variant.packaging.jniLibs.useLegacyPackaging.set(true)
+        }
     }
 }
 

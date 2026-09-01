@@ -46,15 +46,29 @@ pub fn read_own(magic: &[u8]) -> Option<Trailer> {
 /// Parse the trailer of `exe`. None means "no payload": absent, truncated, or
 /// inconsistent trailers all land here rather than misparsing.
 pub fn read(exe: PathBuf, magic: &[u8]) -> Option<Trailer> {
+  let len = std::fs::metadata(&exe).ok()?.len();
+  read_at(exe, 0, len, magic)
+}
+
+/// Parse a trailer that sits inside `exe` as the byte range `[base, base+len)`
+/// rather than being the whole file: a `.srtapp` stored at an offset in a
+/// container (an APK's `assets/app.srtapp` entry). Table offsets inside the
+/// payload are relative to its start; the returned sections are rebased to
+/// absolute file offsets, so `file_index`/`read_range` (and the
+/// `fs::AssetsBase::Packed` mount they feed) work against the container
+/// unchanged.
+pub fn read_at(exe: PathBuf, base: u64, len: u64, magic: &[u8]) -> Option<Trailer> {
   let mut file = std::fs::File::open(&exe).ok()?;
-  let file_len = file.metadata().ok()?.len();
-  let tail_len = (8 + 4 + magic.len()) as u64; // table offset + entry count + magic
-  if file_len < tail_len {
+  if base.checked_add(len)? > file.metadata().ok()?.len() {
     return None;
   }
-  let tail = file_len - tail_len;
+  let tail_len = (8 + 4 + magic.len()) as u64; // table offset + entry count + magic
+  if len < tail_len {
+    return None;
+  }
+  let tail = len - tail_len;
   let mut tail_bytes = vec![0u8; tail_len as usize];
-  file.seek(SeekFrom::Start(tail)).ok()?;
+  file.seek(SeekFrom::Start(base + tail)).ok()?;
   file.read_exact(&mut tail_bytes).ok()?;
   if &tail_bytes[12..] != magic {
     return None;
@@ -65,7 +79,7 @@ pub fn read(exe: PathBuf, magic: &[u8]) -> Option<Trailer> {
     return None;
   }
   let mut table = vec![0u8; (tail - table_offset) as usize];
-  file.seek(SeekFrom::Start(table_offset)).ok()?;
+  file.seek(SeekFrom::Start(base + table_offset)).ok()?;
   file.read_exact(&mut table).ok()?;
   let mut cursor = 0usize;
   let mut sections = Vec::with_capacity(count as usize);
@@ -83,11 +97,11 @@ pub fn read(exe: PathBuf, magic: &[u8]) -> Option<Trailer> {
     }
     let name = std::str::from_utf8(&table[cursor..cursor + name_len]).ok()?.to_string();
     cursor += name_len;
-    // Sections precede the table.
+    // Sections precede the table (bounds in payload-relative coordinates).
     if offset.checked_add(len)? > table_offset {
       return None;
     }
-    sections.push(Section { kind, name, offset, len });
+    sections.push(Section { kind, name, offset: base + offset, len });
   }
   // The entries must consume the table region exactly.
   if cursor != table.len() {

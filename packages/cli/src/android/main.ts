@@ -1,10 +1,13 @@
-import { existsSync } from "node:fs"
+import { existsSync, readFileSync } from "node:fs"
 import { networkInterfaces } from "node:os"
 import { resolve } from "node:path"
 import { androidPackageVersion, resolveApk, ANDROID_PKG_MAP } from "../lib/artifacts"
-import { values, port } from "../lib/args"
+import { values, port, source } from "../lib/args"
+import { devDir } from "../lib/dev-dir"
 import { CLI_VERSION } from "../lib/project"
-import { multiselect } from "../lib/prompt"
+import { confirm, multiselect } from "../lib/prompt"
+import { apkApplicationId } from "../pack/android/apk"
+import { installPlatformTools, platformToolsAvailable } from "./platform-tools"
 import { resolveByPort, resolveFromCwd } from "../lib/registry"
 import type { LiveRecord } from "../types/registry"
 
@@ -24,7 +27,8 @@ let PACKAGE = "com.solidrt.go"
 let sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
 // adb is a system tool (Android Platform Tools), never bundled. Look on PATH
-// first, then the standard SDK location.
+// first, then the standard SDK locations, then the managed download
+// (platform-tools.ts) - so a system install always wins over ours.
 function resolveAdb() {
   let exe = process.platform === "win32" ? "adb.exe" : "adb"
   let onPath = Bun.which(exe)
@@ -34,17 +38,34 @@ function resolveAdb() {
     let candidate = resolve(root, "platform-tools", exe)
     if (existsSync(candidate)) return candidate
   }
+  let managed = devDir("platform-tools", exe)
+  if (existsSync(managed)) return managed
   return null
 }
 
-function requireAdb() {
+// Resolve adb, offering to download platform-tools when it is missing (on a
+// terminal; the default is yes because typing `srt android` already states
+// the intent). Non-interactive runs keep the print-and-exit behavior: CI
+// should install adb itself, and gets told how.
+async function requireAdb(): Promise<string> {
   let path = resolveAdb()
   if (path) return path
   console.error("Could not find adb (Android Platform Tools).")
-  console.error("Install it:")
-  console.error("  Windows: winget install Google.PlatformTools")
-  console.error("  macOS:   brew install android-platform-tools")
-  console.error("  Linux:   install your distro's android-tools / adb package")
+  if (process.stdin.isTTY && platformToolsAvailable() && (await confirm("Download platform-tools (~15 MB) into ~/.solidrt?"))) {
+    if (await installPlatformTools()) {
+      path = resolveAdb()
+      if (path) return path
+      console.error("The downloaded platform-tools carry no adb; remove ~/.solidrt/platform-tools and retry.")
+    }
+    process.exit(1)
+  }
+  let install =
+    process.platform === "win32"
+      ? "winget install Google.PlatformTools"
+      : process.platform === "darwin"
+        ? "brew install android-platform-tools"
+        : "install your distro's android-tools / adb package"
+  console.error(`Install it: ${install}`)
   process.exit(1)
 }
 
@@ -114,8 +135,13 @@ async function resolveServer(): Promise<LiveRecord | null> {
   return resolved.ok ? resolved.record : null
 }
 
-// Serials of connected, authorized devices (excludes offline/unauthorized).
-function listDevices(adb: string): string[] {
+type AdbDeviceRow = { serial: string; state: string }
+
+// Every row `adb devices` reports, with its state: "device" (usable),
+// "unauthorized" (RSA dialog not accepted), "no permissions ..." (Linux udev
+// rules missing), "offline". Callers filter; the states drive the no-device
+// triage below.
+function listDevices(adb: string): AdbDeviceRow[] {
   let listed = Bun.spawnSync([adb, "devices"], { stdout: "pipe", stderr: "pipe" })
   return listed.stdout
     .toString()
@@ -123,9 +149,33 @@ function listDevices(adb: string): string[] {
     .slice(1)
     .map((l) => l.trim())
     .filter(Boolean)
-    .filter((l) => l.endsWith("\tdevice"))
-    .map((l) => l.split("\t")[0])
-    .filter((s): s is string => Boolean(s))
+    .map((l) => {
+      let [serial, ...state] = l.split("\t")
+      return { serial: serial ?? "", state: state.join("\t") }
+    })
+    .filter((r) => r.serial)
+}
+
+// The "no usable device" cases look different in `adb devices` and have
+// different fixes; name the one that applies instead of a catch-all line.
+function reportNoDevice(rows: AdbDeviceRow[]) {
+  let unauthorized = rows.find((r) => r.state === "unauthorized")
+  if (unauthorized) {
+    console.error(`Device ${unauthorized.serial} is unauthorized: unlock it and accept the USB debugging dialog.`)
+    return
+  }
+  let noPerms = rows.find((r) => r.state.startsWith("no permissions"))
+  if (noPerms) {
+    console.error(
+      `Device ${noPerms.serial} is visible but not accessible: install your distro's adb udev rules ` +
+        `(android-udev on Arch, android-sdk-platform-tools-common on Debian/Ubuntu), then replug it.`,
+    )
+    return
+  }
+  console.error("No Android device found. Enable USB debugging (Developer options) and check the cable (charge-only cables exist).")
+  if (process.platform === "win32") {
+    console.error("On Windows a missing USB driver also hides the device; install the vendor's (or Google's) USB driver.")
+  }
 }
 
 // Primary ABI of the connected device (e.g. "arm64-v8a", "armeabi-v7a"), used
@@ -211,7 +261,8 @@ type Device = { target: string; abi: string }
 // several on a terminal (all preselected: enter means every device). Exits
 // with a clear message on any ambiguity.
 async function resolveTargets(adb: string): Promise<Device[]> {
-  let devices = listDevices(adb)
+  let rows = listDevices(adb)
+  let devices = rows.filter((r) => r.state === "device").map((r) => r.serial)
   let abiByDevice = new Map(devices.map((d) => [d, deviceAbi(adb, d)]))
   let device = (target: string): Device => ({ target, abi: abiByDevice.get(target)! })
 
@@ -252,7 +303,7 @@ async function resolveTargets(adb: string): Promise<Device[]> {
   printDeviceStatus(devices, abiByDevice)
   let [only] = devices
   if (!only) {
-    console.error("No authorized Android device found. Enable USB debugging and check `adb devices`.")
+    reportNoDevice(rows)
     process.exit(1)
   }
   return [device(only)]
@@ -307,13 +358,56 @@ async function launch(adb: string, { target }: Device, server: LiveRecord | null
   console.log(`[cli] Launched SolidRT-Go on ${target}`)
 }
 
+// The launcher activity every SolidRT base APK ships, stored fully qualified
+// in the manifest so pack's application-id rewrite never touches it.
+let PACKED_ACTIVITY = "com.solidrt.app.MainActivity"
+
+// Install a packed APK (srt pack --apk) on the connected devices and launch
+// it. The application id comes out of the APK's own manifest, where pack
+// wrote it. Nothing dev-flavored applies: a packed app carries its payload
+// and never dials the dev server.
+async function installPackedApk(path: string) {
+  let file = resolve(path)
+  if (!existsSync(file)) {
+    console.error(`No such file: ${path}`)
+    process.exit(1)
+  }
+  let appId: string
+  try {
+    appId = apkApplicationId(readFileSync(file))
+  } catch (e) {
+    console.error(`Could not read ${path} as an APK: ${e instanceof Error ? e.message : e}`)
+    process.exit(1)
+  }
+  let adb = await requireAdb()
+  for (let { target } of await resolveTargets(adb)) {
+    console.log(`[cli] Installing ${appId} on ${target}`)
+    let install = Bun.spawn([adb, "-s", target, "install", "-r", file], { stdout: "pipe", stderr: "pipe" })
+    if ((await install.exited) !== 0) {
+      console.error("adb install failed:\n" + (await new Response(install.stderr).text()))
+      process.exit(1)
+    }
+    let start = Bun.spawn([adb, "-s", target, "shell", "am", "start", "-S", "-n", `${appId}/${PACKED_ACTIVITY}`], {
+      stdout: "pipe",
+      stderr: "pipe",
+    })
+    if ((await start.exited) !== 0) {
+      console.error("adb start failed:\n" + (await new Response(start.stderr).text()))
+      process.exit(1)
+    }
+    console.log(`[cli] Launched ${appId} on ${target}`)
+  }
+}
+
 // Launch the Android client on the connected devices over adb (installing it
 // first on --install), then wait briefly for them to show up on the dev
 // server. The clients are not child processes here: their lifecycle is the
-// WS connect/disconnect the server sees.
+// WS connect/disconnect the server sees. With an APK argument, install and
+// launch that packed app instead.
 export async function main() {
+  if (source) return installPackedApk(source)
   let server = await resolveServer()
-  let adb = requireAdb()
+  let adb = await requireAdb()
 
   let devices = await resolveTargets(adb)
   for (let device of devices) await prepare(adb, device)

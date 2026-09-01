@@ -31,7 +31,8 @@ Commands:
   tool [<pkg>/<name>]    List the tools the installed packages ship, or run one
                          (everything after the tool name is the tool's own arguments)
   console                Start the dev console: the dev servers on this machine and their clients
-  android                Launch the client on a connected Android device (--install to install it first)
+  android [file.apk]     Launch the client on a connected Android device (--install to install it first)
+                         (a packed APK: install and launch that app instead)
   bundle [file]          Transpile TS/JS/TSX/JSX to JS or bytecode
                          (a prebuilt <name>.srt.js: compile it to bytecode)
   check [file]           Verify the app builds and typechecks, without writing anything
@@ -77,6 +78,7 @@ client options:
 android options:
   (no flags)             Launch the installed client, pointed at the dev server of the project (or file)
                          in the current directory (the server must run with --lan, or be reached from an emulator)
+  <file.apk>             Install a packed APK (srt pack --apk) and launch it, nothing dev-flavored
       --install          Install or update the client first, from the project's @solidrt/android-<abi> package
       --port <N>         Point it at the local dev server on this port
       --device <serial>  Target a specific adb device by serial or unique prefix
@@ -103,6 +105,8 @@ pack options:
                          instead of the single-file executable
       --app              Write the app alone as one <entry>.srtapp (manifest + bundle + assets,
                          no runner), for a runner to load: solidrt <file>.srtapp
+      --apk              Patch the app into an installable Android APK (id, label, payload;
+                         no Android SDK needed; the base is the go dev client for now)
   -f, --flux             Pack for the bare Flux runtime instead of SolidRT (entry must be .ts|.js)
   -m, --minify           Minify the output
   -o, --output <name>    Output filename

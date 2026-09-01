@@ -19,7 +19,7 @@ clean:
 	$(MAKE) -C lattice clean
 	$(MAKE) -C flux clean
 
-help client runtime launcher-bundle dist client-android run-android run-android-armeabi-v7a dist-android dist-android-armeabi-v7a dist-clean download-fonts:
+help client runtime launcher-bundle dist client-android run-android run-android-armeabi-v7a runtime-android dist-android dist-android-armeabi-v7a dist-clean download-fonts:
 	$(MAKE) -C lattice $@
 
 test:
@@ -29,4 +29,4 @@ format:
 	cargo fmt --all
 
 # lattice, flux and dist are also directory names at the repo root.
-.PHONY: all lattice flux clean help client runtime launcher-bundle dist client-android run-android run-android-armeabi-v7a dist-android dist-android-armeabi-v7a dist-clean download-fonts test format
+.PHONY: all lattice flux clean help client runtime launcher-bundle dist client-android run-android run-android-armeabi-v7a runtime-android dist-android dist-android-armeabi-v7a dist-clean download-fonts test format

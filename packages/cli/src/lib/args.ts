@@ -44,6 +44,7 @@ const OPTIONS = {
     lan: { type: "boolean", default: false },
     folder: { type: "boolean", default: false },
     app: { type: "boolean", default: false },
+    apk: { type: "boolean", default: false },
     stdout: { type: "boolean", default: false },
     json: { type: "boolean", default: false },
     output: { type: "string", short: "o" },
@@ -128,6 +129,14 @@ export function validateArgs() {
         usage("srt bundle [options] [entry.[tsx|jsx|ts|js|srt.js]]")
       }
       break
+    case "android":
+      // A packed APK to install and launch; flagless/--install drive the
+      // dev client, so mixing the two is a contradiction.
+      if (source && !source.endsWith(".apk")) usage("srt android [<file.apk>]")
+      if (source && values.install) {
+        usage("srt android <file.apk>  (--install is the dev-client install; a packed APK installs implicitly)")
+      }
+      break
     case "check":
       // An entry file, or a folder whose entries are discovered (check.ts).
       if (source && !isSource && !(existsSync(source) && statSync(source).isDirectory())) {
@@ -156,11 +165,13 @@ export function validateArgs() {
   let serves = command === "run" || command === "server" || command === "demo"
   // The commands that work on a project or a file (mode.ts).
   let onApp = command === "run" || command === "server" || command === "bundle" || command === "pack" || command === "render"
-  // --folder and --app pick a pack output shape.
-  if ((values.folder || values.app) && command !== "pack") {
-    usage("srt pack --folder|--app  (--folder and --app are only valid with the pack command)")
+  // --folder, --app and --apk pick a pack output shape.
+  if ((values.folder || values.app || values.apk) && command !== "pack") {
+    usage("srt pack --folder|--app|--apk  (--folder, --app and --apk are only valid with the pack command)")
   }
-  if (values.folder && values.app) usage("srt pack --folder|--app  (--folder and --app exclude each other)")
+  if ([values.folder, values.app, values.apk].filter(Boolean).length > 1) {
+    usage("srt pack --folder|--app|--apk  (--folder, --app and --apk exclude each other)")
+  }
   // --install is the android command's APK install step.
   if (values.install && command !== "android") {
     usage("srt android --install  (--install is only valid with the android command)")

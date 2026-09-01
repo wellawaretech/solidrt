@@ -5,8 +5,15 @@ import { loadAppIdentity } from "../lib/project"
 import { resolveMode } from "../lib/mode"
 import { packApp, packFlux, packSolid } from "./trailer"
 import { buildPackFolder, writePackFolder } from "./layout"
+import { patchApk } from "./android/apk"
 import { requireBinary } from "../lib/util"
+import { resolveApk, resolveRunnerApk, ANDROID_PKG_MAP } from "../lib/artifacts"
+import { readFileSync } from "node:fs"
 import { dirname, join, resolve } from "node:path"
+
+// Android package names are stricter than a general appId: at least two
+// dot-separated segments, each starting with a letter.
+const ANDROID_APP_ID = /^[a-zA-Z][a-zA-Z0-9_]*(\.[a-zA-Z][a-zA-Z0-9_]*)+$/
 
 // Windows executables need the suffix; a user-given --output may already
 // carry it.
@@ -25,8 +32,8 @@ async function writeExecutable(packed: Buffer, outfile: string) {
 
 export async function main() {
   if (values.flux) {
-    if (values.folder || values.app) {
-      console.error("--folder and --app are for app packs; flux scripts have no folder or .srtapp output")
+    if (values.folder || values.app || values.apk) {
+      console.error("--folder, --app and --apk are for app packs; flux scripts have no folder, .srtapp or APK output")
       process.exit(1)
     }
     let outfile = exeName(values.output ?? source!.replace(/\.[jt]s$/, ""))
@@ -60,6 +67,39 @@ export async function main() {
   for (let i of bundled.isolates) isolates.push({ id: i.id, bytecode: await compileToBytecode(i.code, i.id) })
   if (isolates.length) console.log(`>> isolates: ${isolates.map((i) => i.id).join(", ")}`)
   let folder = buildPackFolder(mode, bytecode, isolates)
+
+  // --apk patches the app into an installable Android APK: application id and
+  // label rewritten, the .srtapp payload added as a stored asset, re-aligned
+  // and re-signed - pure TypeScript, no Android SDK
+  // (okf/backlog/standalone-android-apk.md). The base is the production
+  // runner APK (`make runtime-android`), which boots the payload; while none
+  // is staged, the solidrt-go dev client stands in - that APK installs and
+  // launches, but boots the launcher instead of the payload.
+  if (values.apk) {
+    if (!ANDROID_APP_ID.test(identity.appId)) {
+      console.error(
+        `"solidrt": "appId" ("${identity.appId}") is not a valid Android application id: use reverse-DNS with at least two dot-separated segments, each starting with a letter (e.g. "com.example.app")`,
+      )
+      process.exit(1)
+    }
+    let base = resolveRunnerApk()
+    if (!base) {
+      base = resolveApk()
+      if (base) {
+        console.log(">> note: no runner APK staged; using the go dev client as the base - the payload rides along unloaded")
+      }
+    }
+    if (!base) {
+      console.error(`Could not find a base APK; run make runtime-android, or add the ${ANDROID_PKG_MAP["arm64-v8a"]} dev dependency`)
+      process.exit(1)
+    }
+    console.log(`>> base: ${base}`)
+    let patched = patchApk(readFileSync(base), identity.appId, identity.displayName, packApp(folder, bytecode))
+    let outfile = values.output ?? mode.entry.replace(/\.[jt]sx?$/, ".apk")
+    await Bun.write(outfile, patched)
+    console.log(`>> wrote ${patched.length} bytes to ${outfile}`)
+    process.exit()
+  }
 
   if (values.folder) {
     let outDir = values.output ?? join("dist", "pack")

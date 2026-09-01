@@ -102,6 +102,7 @@ help:
 	@echo "  client-android       Build the client .so"
 	@echo "  run-android          Build, install, launch, tail logcat"
 	@echo "  run-android-armeabi-v7a  Same, for the 32-bit ABI"
+	@echo "  runtime-android      Build the production runner APK (the srt pack --apk base)"
 	@echo ""
 	@echo "  The launched client auto-connects to DEV_SERVER=$(DEV_SERVER)."
 	@echo "  Override it (10.0.2.2:$(DEV_PORT) for an emulator), or DEV_SERVER= for none."

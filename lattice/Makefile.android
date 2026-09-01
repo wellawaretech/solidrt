@@ -155,3 +155,32 @@ dist-android-armeabi-v7a: $(GRADLE_WRAPPER_JAR)
 	cp $(APK_GO_DEBUG) $(SRT_HOME)/dist/android/armeabi-v7a/solidrt-go.apk
 	cp $(SRT_HOME)/dist/android/armeabi-v7a/solidrt-go.apk $(PKG_ANDROID_32)/solidrt-go.apk
 	@echo "Staged armeabi-v7a solidrt-go.apk into $(SRT_HOME)/dist/android/armeabi-v7a/ and $(PKG_ANDROID_32)/"
+
+# -- Production runtime APK ---------------------------
+
+# Where the runtime .so files and the runner APK are staged; the prod
+# flavor's jniLibs.srcDir in app/build.gradle points here. Kept apart from
+# dist/android so go and runtime builds of the same ABI never overwrite each
+# other's libmain.so.
+ANDROID_RUNTIME_DIST = $(SRT_HOME)/dist/android-runtime
+
+APK_PROD_DEBUG = android/app/build/outputs/apk/prod/debug/app-prod-debug.apk
+
+.PHONY: runtime-android
+
+# Build the production Android runtime: the not(go) engine .so (no launcher,
+# no dev server; SDL_main boots the .srtapp packed into the APK) assembled
+# into the prod flavor as the runner APK `srt pack --apk` patches. Same
+# feature set as the desktop runtime. Single ABI (default arm64-v8a) for the
+# dev loop; per-ABI vs fat publishing is CI's call
+# (okf/backlog/standalone-android-apk.md).
+runtime-android: $(BSOD_JS) $(GRADLE_WRAPPER_JAR)
+	$(call ndk-build,SOLIDRT RUNTIME ($(PROFILE)),,$(CARGO_PROFILE_FLAG) $(RUNTIME_FEATURES) --target-dir target/runtime-android)
+	mkdir -p $(ANDROID_RUNTIME_DIST)/$(ANDROID_ABI)
+	cp target/runtime-android/$(ANDROID_TARGET)/$(PROFILE)/liblattice.so $(ANDROID_RUNTIME_DIST)/$(ANDROID_ABI)/libmain.so
+	cp target/runtime-android/$(ANDROID_TARGET)/$(PROFILE)/libSDL3.so $(ANDROID_RUNTIME_DIST)/$(ANDROID_ABI)/
+	cp "$$(ls -t target/runtime-android/$(ANDROID_TARGET)/$(PROFILE)/build/impellers-*/out/libimpeller.so | head -1)" $(ANDROID_RUNTIME_DIST)/$(ANDROID_ABI)/
+	cp $(NDK_HOME)/toolchains/llvm/prebuilt/*/sysroot/usr/lib/$(ANDROID_CLANG_TRIPLE)/libc++_shared.so $(ANDROID_RUNTIME_DIST)/$(ANDROID_ABI)/
+	cd android && ./gradlew assembleProdDebug -PsrtAbi=$(ANDROID_ABI)
+	cp $(APK_PROD_DEBUG) $(ANDROID_RUNTIME_DIST)/solidrt-runtime.apk
+	@echo "Staged solidrt-runtime.apk ($(ANDROID_ABI)) into $(ANDROID_RUNTIME_DIST)/"

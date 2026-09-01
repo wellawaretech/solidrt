@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Placeholder label in the runner APK; the srt pack apk flow rewrites
+         it to the app's displayName (the patcher locates it by this exact
+         value, see packages/cli/src/pack/android/apk.ts). -->
+    <string name="app_name">SolidRT App</string>
+</resources>
