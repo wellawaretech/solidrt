@@ -153,28 +153,63 @@ fn sinks_are_per_target_and_one_move_feeds_them_all() {
 }
 
 #[test]
-fn slot_sinks_are_per_target() {
+fn slot_sinks_are_per_target_and_name() {
   let mut s = Spatial::new();
   let a = s.create([0.0; 3], Q, ONE, true);
-  let sink = |target: u64| SharedSlotSink {
+  let sink = |target: u64, name: &str| SharedSlotSink {
     target,
-    name: "uLightDir".to_string(),
+    name: name.to_string(),
     len: 3,
     index: 0,
     projection: Projection::Direction([0.0, -1.0, 0.0]),
   };
-  s.bind_shared_slot(a, sink(1)).expect("bind");
-  s.bind_shared_slot(a, sink(2)).expect("bind");
+  s.bind_shared_slot(a, sink(1, "uLightDir")).expect("bind");
+  s.bind_shared_slot(a, sink(2, "uLightDir")).expect("bind");
   let writes = flush(&mut s);
   assert_eq!(writes.len(), 2, "one array per target: {writes:?}");
   // Rebinding on target 1 replaces (no leaked group); unbinding target 2
   // zeroes only its array.
-  s.bind_shared_slot(a, sink(1)).expect("rebind");
+  s.bind_shared_slot(a, sink(1, "uLightDir")).expect("rebind");
   s.unbind_shared_slot(a, Some(2)).expect("unbind");
   let writes = flush(&mut s);
   assert!(writes.contains(&Write::Shared { target: 2, name: "uLightDir".to_string(), values: vec![0.0; 3] }));
   assert!(writes.contains(&Write::Shared { target: 1, name: "uLightDir".to_string(), values: vec![0.0, -1.0, 0.0] }));
   assert!(flush(&mut s).is_empty());
+}
+
+#[test]
+fn one_node_feeds_direction_and_position_of_one_target() {
+  let mut s = Spatial::new();
+  let a = s.create([2.0, 3.0, 4.0], Q, ONE, true);
+  let dir = SharedSlotSink {
+    target: 1,
+    name: "uLightDir".to_string(),
+    len: 3,
+    index: 0,
+    projection: Projection::Direction([0.0, -1.0, 0.0]),
+  };
+  let pos =
+    SharedSlotSink { target: 1, name: "uLightPos".to_string(), len: 3, index: 0, projection: Projection::Position };
+  // A second bind on the same target but another param ADDS (the spot
+  // light shape); each array gets its own write.
+  s.bind_shared_slot(a, dir).expect("bind dir");
+  s.bind_shared_slot(a, pos.clone()).expect("bind pos");
+  let writes = flush(&mut s);
+  assert!(writes.contains(&Write::Shared { target: 1, name: "uLightDir".to_string(), values: vec![0.0, -1.0, 0.0] }));
+  assert!(writes.contains(&Write::Shared { target: 1, name: "uLightPos".to_string(), values: vec![2.0, 3.0, 4.0] }));
+  // The position slot follows a move; the direction (rotation-only) does
+  // not re-send.
+  s.set_transform(a, [5.0, 6.0, 7.0], Q, ONE).expect("move");
+  let writes = flush(&mut s);
+  assert_eq!(writes, vec![Write::Shared { target: 1, name: "uLightPos".to_string(), values: vec![5.0, 6.0, 7.0] }]);
+  // Rebinding the position param alone replaces it and leaves the
+  // direction sink standing.
+  s.bind_shared_slot(a, pos).expect("rebind pos");
+  flush(&mut s);
+  s.unbind_shared_slot(a, Some(1)).expect("unbind all on target");
+  let writes = flush(&mut s);
+  assert!(writes.contains(&Write::Shared { target: 1, name: "uLightDir".to_string(), values: vec![0.0; 3] }));
+  assert!(writes.contains(&Write::Shared { target: 1, name: "uLightPos".to_string(), values: vec![0.0; 3] }));
 }
 
 #[test]

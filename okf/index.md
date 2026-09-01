@@ -107,16 +107,16 @@ Shaped, not started.
   compressed real-world files (Draco/meshopt, KTX2), morph targets,
   merge-by-material, vertex colors, per-material samplers and runtime-fetched
   content, each demand-gated.
+- **[Point light shadows](backlog/3d-point-light-shadows.md)** [2026-08-27]
+  A PointLight lights but cannot cast - its map is a cube (six faces,
+  samplerCube by the light-to-fragment vector against a stored distance), and
+  the engine has no cube-map texture or target (gpu-cube-maps is the blocker).
+  The node, the falloff and the spot sibling landed 2026-09-02.
 - **[Cascaded shadow maps](backlog/3d-shadow-cascades.md)** [2026-08-27]
   One shadow.camera box per casting light: a large outdoor scene either blurs
   (the box covers everything at one map's resolution) or clips (the box covers
   the near part and the far part is lit). Cascades split the view frustum into
   N maps; demand-gated on a scene that outgrows the box.
-- **[Spot and point light shadows](backlog/3d-spot-point-shadows.md)** [2026-08-27]
-  Only DirectionalLight casts. A spot light would be the same shadow view with
-  a perspective camera; a point light needs a cube-map target and six faces,
-  which the engine has no path for (gpu-cube-maps). Demand-gated - no spot or
-  point light NODE exists yet either.
 - **[Adaptive present-fence depth](backlog/adaptive-present-fence-depth.md)** [2026-07-27]
   Fallback design if unconditional two-deep present fencing ever shows up as
   desktop drag latency - allow the second in-flight frame only when observed

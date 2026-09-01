@@ -62,10 +62,13 @@ what it delivered is documented in `packages/3d/AGENTS.md`, not here.
    [gpu-uniform-arrays](../done/gpu-uniform-arrays.md). Library landed
    2026-08-23 (`lit`, light NODES with transform inheritance, triplanar
    as an option - see `packages/3d/AGENTS.md`). Left for later, on
-   demand: `emissive`, a fresnel rim option, and point/spot lights (a
-   position
-   list beside the direction list; the node shape already carries the
-   world matrix they need). The cap `MAX_LIGHTS`
+   demand: `emissive` (landed 2026-08-31 with the surface maps) and a
+   fresnel rim option. Spot and point lights landed 2026-09-02: the
+   typed light list (`uLightType`/`uLightPos`/`uLightParams`,
+   core-driven position slots via the spatial core's Position
+   projection), Three's windowed inverse falloff, `MAX_LIGHTS` raised
+   to 8 with the shadow-slot budget decoupled (`MAX_SHADOW_MAPS` = 8,
+   its own constant). The cap `MAX_LIGHTS`
    is an app-level tunable candidate in
    [app-runtime-config](../backlog/app-runtime-config.md).
 6. [x] **Transparency.** Done 2026-08-17: engine `blend: "multiply"` and
@@ -161,8 +164,10 @@ what it delivered is documented in `packages/3d/AGENTS.md`, not here.
     override-material passes). The rest of stage 4 stays demand-gated, one
     item each: comparison sampling
     ([gpu-depth-compare-sampling](../backlog/gpu-depth-compare-sampling.md)),
-    spot and point casters
-    ([3d-spot-point-shadows](../backlog/3d-spot-point-shadows.md)), cascades
+    point casters
+    ([3d-point-light-shadows](../backlog/3d-point-light-shadows.md);
+    spot casters landed 2026-09-02 - the same machinery with a
+    perspective camera, one slot), cascades
     ([3d-shadow-cascades](../backlog/3d-shadow-cascades.md)) and instanced
     casters
     ([3d-instanced-shadow-casters](../backlog/3d-instanced-shadow-casters.md);

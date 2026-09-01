@@ -90,12 +90,14 @@ pub trait SinkWriter {
 
 /// How a shared-slot sink projects the node's world transform into its
 /// three floats. `Direction` is `normalize(worldRotation * v)` (zeros for
-/// a degenerate result); a world-position projection is the anticipated
-/// sibling when a consumer arrives.
+/// a degenerate result); `Position` is the world translation - the pair a
+/// positional light needs (a spot light feeds both arrays of one target).
 #[derive(Clone, Debug, PartialEq)]
 pub enum Projection {
   /// The world direction of this LOCAL vector.
   Direction([f32; 3]),
+  /// The node's world position.
+  Position,
 }
 
 /// Routes a projection of the node's world transform to one vec3 slot of
@@ -104,8 +106,9 @@ pub enum Projection {
 /// is one param value, re-sent when any slot changes, absent slots zero.
 /// The generic form of "a scene's light directions follow the node tree":
 /// the consumer picks the param name and packs non-spatial data (colors,
-/// counts) itself - core never learns what the slots mean. Like draw
-/// sinks, a node carries one slot sink per target.
+/// counts) itself - core never learns what the slots mean. A node carries
+/// one slot sink per (target, param name), so one node may feed several
+/// arrays of one target (a spot light: its direction and its position).
 #[derive(Clone, Debug, PartialEq)]
 pub struct SharedSlotSink {
   pub target: u64,
@@ -366,8 +369,9 @@ impl Spatial {
     Ok(())
   }
 
-  /// Bind the node's shared-slot sink on the sink's target, replacing the
-  /// one it had there (the abandoned slot zeroes). Binding seeds the slot
+  /// Bind the node's shared-slot sink on the sink's (target, param name),
+  /// replacing the one it had there (the abandoned slot zeroes); a sink
+  /// on another param of the same target stays. Binding seeds the slot
   /// at the next flush. The caller flushes afterwards (the JS scheduler
   /// always does).
   pub fn bind_shared_slot(&mut self, id: NodeId, sink: SharedSlotSink) -> Result<(), String> {
@@ -393,7 +397,18 @@ impl Spatial {
       ));
     }
     group.refs += 1;
-    self.unbind_shared_slot(id, Some(sink.target))?;
+    let slots = &mut self.nodes[i as usize].slots;
+    let mut released = Vec::new();
+    slots.retain(|s| {
+      let replaced = s.target == sink.target && s.name == sink.name;
+      if replaced {
+        released.push(s.clone());
+      }
+      !replaced
+    });
+    for slot in &released {
+      self.release_slot(slot);
+    }
     self.nodes[i as usize].slots.push(sink);
     self.enqueue(i);
     Ok(())
@@ -1047,6 +1062,7 @@ impl Spatial {
               [0.0; 3]
             }
           }
+          Projection::Position => [n.world[12], n.world[13], n.world[14]],
         };
         let at = slot.index as usize * 3;
         if let Some(group) = shared.get_mut(&(slot.target, slot.name.clone())) {

@@ -81,7 +81,19 @@ blendMode and pointer events like any element.
   the `castShadow` meshes (`<Mesh castShadow>`, `setCastShadow`) from an
   orthographic camera at the light's WORLD position along its world
   direction, `shadow.camera` (+-5, 0.5..500 by default) as the frustum.
-  Any directional light may cast (capped by MAX_LIGHTS = MAX_SHADOWS).
+  Any directional light may cast, bounded by the shadow-slot budget
+  (MAX_SHADOW_MAPS = 8, its own constant: a casting light claims
+  `shadow.cascades` consecutive slots, a spot one, and a caster past the
+  budget throws at attach). `<SpotLight castShadow shadow={{ mapSize?,
+  bias?, normalBias?, near? }}>` is the same machinery with a
+  PERSPECTIVE camera: at the light's world position along its world
+  direction, fov = its cone (2 * angle), near from `shadow.near`
+  (default 0.5), far from the light's `distance` (or the directional
+  default 500 when 0) - one map, one slot, the same atlas and lookup.
+  A perspective map's depth is nonlinear, so `normalBias` (world units)
+  is the acne knob to reach for; `bias` acts in that nonlinear depth.
+  Point lights cannot cast yet (a cube map,
+  okf/backlog/gpu-cube-maps.md).
   `shadow: { cascades: N }` (1..MAX_CASCADES = 4) replaces the box with
   N maps fitted to slices of the SCENE camera's frustum (near ..
   `shadow.distance`, default the camera far; the practical split; each
@@ -191,6 +203,8 @@ blendMode and pointer events like any element.
 | `Sprite` | as Mesh minus `geometry`: a camera-facing unit quad, `scale` is its world size, rotation is ignored; pair with a `sprite()` material |
 | `InstancedMesh` | as Mesh, plus `records` (interleaved per-instance floats; buffer capacity starts at the first value and grows on larger rewrites), `count?` (records drawn, default all), `bounds?` (local [minX..maxZ] over the population - without it the mesh never picks); the record buffer is component-owned and freed on unmount |
 | `PerspectiveCamera` | `fov?` (vertical DEGREES, default 60), `near?`, `far?`, `position?`, `lookAt?`, `up?` - or the Scene `camera` prop, the same state (last write wins) |
+| `SpotLight` | transforms as Group, `direction?` (local aim, default [0, -1, 0]), `color?`, `intensity?`, `distance?` (falloff cutoff, 0 = none), `angle?` (cone half-angle DEGREES, default 60), `penumbra?` (0..1 rim fade, default 0), `decay?` (falloff exponent, default 2), `castShadow?`, `shadow?` (mapSize, bias, normalBias, near), `ref?(light)` |
+| `PointLight` | transforms as Group (position is what matters), `color?`, `intensity?`, `distance?`, `decay?`, `ref?(light)` |
 
 Output composition: without `output`, `Scene` emits a minimal
 `<texture width height>` leaf and nothing else is forwarded - anything
@@ -541,7 +555,7 @@ the material need that channel) and the pure functions `HEMISPHERE`
 `BLINN_SPECULAR` (`blinnSpecular(n, v, l, shininess)`), `FRESNEL`
 (`fresnel(n, v, power)`), and the shadow trio composed IN ORDER:
 `SHADOW_SLOTS` (the scene's shadow set: `uShadowAtlas`, per map slot
-`uShadowRect[M]`/`uShadowMatrix[M]`, per directional light
+`uShadowRect[M]`/`uShadowMatrix[M]`, per light index
 `uShadowFirst[N]`/`uShadowCount[N]` (its slots; a cascaded light has
 several, tightest first), `uShadowBias[N]`, `uShadowNormalBias[N]`),
 `SHADOW` (`shadowPoint(coord)` - clip to map point, `shadowInside(p)` -
@@ -588,24 +602,44 @@ direction?, color?, intensity? })` / `<DirectionalLight>` is parallel light
 travelling along `direction` in the node's LOCAL space (default `[0, -1,
 0]`, a sun overhead; length ignored), so a parent Group's rotation turns it
 and position/scale do not matter - deliberately a direction, not Three's
-position-minus-target. `createHemisphereLight({ sky?, ground?, intensity?
+position-minus-target. `createSpotLight({ direction?, color?, intensity?,
+distance?, angle?, penumbra?, decay? })` / `<SpotLight>` is a cone from
+the node's WORLD position along that same LOCAL `direction` (aim by
+`direction` or a parent's rotation; place by setTransform): `angle` is
+the cone half-angle in DEGREES ((0, 90], default 60 - degrees like
+camera fov and like Unity/Godot; Three's radians convert as
+`angle * 180 / PI`), `penumbra` the
+0..1 fraction of it fading to the rim (default 0, a hard edge), and the
+strength falls off as `1 / d^decay` (default 2) windowed to zero at
+`distance` (0 = no cutoff) - Three's SpotLight semantics minus the
+target object. `createPointLight({ color?, intensity?, distance?,
+decay? })` / `<PointLight>` is the omnidirectional version: position
+only, same falloff, no cone. `createHemisphereLight({ sky?, ground?, intensity?
 })` / `<HemisphereLight>` is the ambient term, a gradient by the WORLD
 normal's tilt (fixed to world up, the node's transform is ignored); one per
 scene, the last attached wins. Placement goes through setTransform, the
 light's own fields through `setLight(light, { ... })` (frame-rate-safe,
-like setMeshParams). At most `MAX_LIGHTS` (4, exported from `/glsl`)
-directional lights per scene - the fifth throws at add(); it is a
-shader-source constant, fixed per app. `uLightDir` is core-driven: each
-directional light's slot is a spatial-core shared-slot sink following
-the node's world rotation, so a MOVING light costs no JS. The sync
-rewrites the rest whenever a light attaches, detaches or changes a
-field -
-`uHemiSky`/`uHemiGround` (vec3, intensity folded in), `uLightCount` (int),
-`uLightDir[MAX_LIGHTS]`/`uLightColor[MAX_LIGHTS]` (world-space vector
-TOWARD the light, normalized; intensity folded into the color) - so a
-custom fragment declaring those names reads the same list, and a light
-change costs one write however many meshes. Everything starts black: a
-lit scene with no light shows nothing, on purpose, like Three.
+like setMeshParams). At most `MAX_LIGHTS` (8, exported from `/glsl`)
+lights per scene, directional, spot and point together (the hemisphere
+is not in the list) - the ninth throws at add(); it is a shader-source
+constant, fixed per app. `uLightDir` and `uLightPos` are core-driven:
+each light's slots are spatial-core shared-slot sinks following the
+node's world rotation (direction, negated so the shader reads the
+vector TOWARD the light) and world position, so a MOVING light costs no
+JS. The sync rewrites the rest whenever a light attaches, detaches or
+changes a field - `uHemiSky`/`uHemiGround` (vec3, intensity folded in),
+`uLightCount` (int), `uLightType[N]` (LIGHT_DIRECTIONAL | LIGHT_SPOT |
+LIGHT_POINT), `uLightDir[N]`/`uLightPos[N]`/`uLightColor[N]` (intensity
+folded into the color) and `uLightParams[N]` (cosInner, cosOuter,
+distance, decay) - so a custom fragment composing `LIGHT_SLOTS` +
+`LIGHT_LOOKUP` from `/glsl` reads the same list through `lightVector(i,
+worldPos, out l)` (returns the attenuation, 0 = skip the light; `lit`
+is the shape), and a light change costs one write however many meshes.
+A custom fragment that declares only the old directional subset
+(`uLightCount`/`uLightDir`/`uLightColor`) still works - it just shades
+every light as directional, so keep such materials to directional-only
+scenes. Everything starts black: a lit scene with no light shows
+nothing, on purpose, like Three.
 
 `lit(opts)` is the standard look beside `unlit`: hemisphere ambient plus
 the directional list, Lambert diffuse, Blinn-Phong highlight when

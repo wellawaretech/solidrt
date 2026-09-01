@@ -21,21 +21,25 @@ import type { CullMode } from "@solidrt/core/gpu"
 // bake-time tool can run it headless on bare flux.
 let glsl = String.raw
 
-/** The directional-light cap of the scene's light list (DirectionalLight nodes)
- * and of the `lit` fragment; a custom fragment declares
- * `uniform vec3 uLightDir[MAX_LIGHTS]` / `uLightColor[MAX_LIGHTS]` and
- * loops to `uLightCount`. A shader-source constant, so it is fixed for
- * the app (see okf/backlog/app-runtime-config.md). */
-export const MAX_LIGHTS = 4
+/** The cap of the scene's light list (directional, spot and point nodes
+ * alike; the hemisphere ambient is not in it) and of the `lit` fragment;
+ * a custom fragment composes LIGHT_SLOTS and LIGHT_LOOKUP and loops to
+ * `uLightCount`. A shader-source constant, so it is fixed for the app
+ * (see okf/backlog/app-runtime-config.md). */
+export const MAX_LIGHTS = 8
 
 /** The most cascades one casting light splits its shadow into
  * (`shadow.cascades`, 1..MAX_CASCADES). */
 export const MAX_CASCADES = 4
 
-/** The shadow-map slot count of the scene's shadow set: every casting
- * light owns `shadow.cascades` consecutive slots (one per map), so this
- * bounds `uShadowRect`/`uShadowMatrix`. */
-export const MAX_SHADOW_MAPS = MAX_LIGHTS * MAX_CASCADES
+/** The shadow-map slot budget of the scene's shadow set: every casting
+ * light claims `shadow.cascades` consecutive slots (one per map, a
+ * non-cascaded light one), dealt in light order, and a caster past the
+ * budget throws at attach. Bounds `uShadowRect`/`uShadowMatrix` - its
+ * own constant, NOT MAX_LIGHTS * MAX_CASCADES, so raising the light cap
+ * does not size the fragment uniform budget for the worst case where
+ * every light is a fully cascaded sun. */
+export const MAX_SHADOW_MAPS = 8
 
 /**
  * The standard lit vertex stage: clip position via uViewProj * uModel,
@@ -157,6 +161,68 @@ export const FRESNEL = glsl`
 `
 
 /**
+ * The scene's light list as a receiving program declares it, written by
+ * the scene (`uLightDir` and `uLightPos` core-driven, so a moving light
+ * costs no JS): per light i to `uLightCount`, its `uLightType[i]`
+ * (LIGHT_DIRECTIONAL | LIGHT_SPOT | LIGHT_POINT), `uLightDir[i]` (world
+ * unit vector TOWARD a directional light; a spot's axis toward the
+ * light; unused for a point), `uLightPos[i]` (a spot's or point's world
+ * position; unused for a directional), `uLightColor[i]` (rgb, intensity
+ * folded in) and `uLightParams[i]` (cosInner, cosOuter, distance, decay
+ * - the cone cosines a spot fades between, the falloff cutoff and
+ * exponent a spot or point attenuates by; unused for a directional).
+ * Compose it before LIGHT_LOOKUP; `lit` is the shape.
+ */
+export const LIGHT_SLOTS = glsl`
+  uniform int uLightCount;
+  uniform int uLightType[${MAX_LIGHTS}];
+  uniform vec3 uLightDir[${MAX_LIGHTS}];
+  uniform vec3 uLightPos[${MAX_LIGHTS}];
+  uniform vec3 uLightColor[${MAX_LIGHTS}];
+  uniform vec4 uLightParams[${MAX_LIGHTS}];
+  const int LIGHT_DIRECTIONAL = 0;
+  const int LIGHT_SPOT = 1;
+  const int LIGHT_POINT = 2;
+`
+
+/**
+ * The step from a light index to its incoming vector and strength, over
+ * LIGHT_SLOTS (compose it first). `float lightVector(int i, vec3
+ * worldPos, out vec3 l)` writes the unit vector from `worldPos` TOWARD
+ * light i and returns its attenuation: 1 for a directional light; for a
+ * spot or point, the windowed inverse falloff `1 / d^decay` faded to
+ * zero at `distance` (0 = no cutoff; Three's punctual-light falloff), a
+ * spot's additionally faded across its cone from cosInner to cosOuter.
+ * Zero means the light cannot reach the fragment - skip its shadow
+ * lookup and its terms (`lit` does exactly that).
+ */
+export const LIGHT_LOOKUP = glsl`
+  // Floors the falloff divisors so a fragment at the light's own
+  // position stays finite (Three's punctual-light rule).
+  const float FALLOFF_MIN = 0.01;
+
+  float lightVector(int i, vec3 worldPos, out vec3 l) {
+    if (uLightType[i] == LIGHT_DIRECTIONAL) {
+      l = uLightDir[i];
+      return 1.0;
+    }
+    vec3 dv = uLightPos[i] - worldPos;
+    float d = length(dv);
+    l = dv / max(d, FALLOFF_MIN);
+    vec4 p = uLightParams[i];
+    float atten = 1.0 / max(pow(d, p.w), FALLOFF_MIN);
+    if (p.z > 0.0) {
+      float win = clamp(1.0 - pow(d / p.z, 4.0), 0.0, 1.0);
+      atten *= win * win;
+    }
+    if (uLightType[i] == LIGHT_SPOT) {
+      atten *= smoothstep(p.y, p.x, dot(l, uLightDir[i]));
+    }
+    return atten;
+  }
+`
+
+/**
  * `vec3 perturbNormal(vec3 n, vec3 worldPos, vec2 uv)` - the surface
  * normal bent by a tangent-space normal map (`uniform sampler2D
  * uNormalMap`, OpenGL-style +Y as glTF mandates, `uniform float
@@ -245,7 +311,8 @@ export const FOG = glsl`
  * maps render as one pass; a white texel when nothing casts), a MAP slot
  * set of `MAX_SHADOW_MAPS` - `uShadowRect[M]` (map slot j's tile as x, y,
  * width, height in atlas 0..1 UV) and `uShadowMatrix[M]` (its light-space
- * viewProj) - and, per directional light index, `uShadowFirst[N]` /
+ * viewProj) - and, per light index (the light list's, hemisphere
+ * excluded), `uShadowFirst[N]` /
  * `uShadowCount[N]` (light i's maps are slots `first .. first + count - 1`;
  * count 0 = it does not cast; a box light has one map, a cascaded light
  * `shadow.cascades` of them, tightest first), `uShadowBias[N]` and
@@ -589,9 +656,8 @@ export function litFragment(o: LitSourceOptions = {}): string {
     uniform vec3 uCamPos;
     uniform vec3 uHemiSky;
     uniform vec3 uHemiGround;
-    uniform int uLightCount;
-    uniform vec3 uLightDir[${MAX_LIGHTS}];
-    uniform vec3 uLightColor[${MAX_LIGHTS}];
+    ${LIGHT_SLOTS}
+    ${LIGHT_LOOKUP}
     ${
       c.receiveShadow
         ? `${SHADOW_SLOTS}
@@ -614,10 +680,13 @@ export function litFragment(o: LitSourceOptions = {}): string {
       vec3 spec = vec3(0.0);
       for (int i = 0; i < ${MAX_LIGHTS}; i++) {
         if (i >= uLightCount) break;
-        vec3 l = uLightDir[i];
+        vec3 l;
+        float a = lightVector(i, vWorldPos, l);
+        if (a <= 0.0) continue;
         ${c.receiveShadow ? "float s = lightShadow(i, vWorldPos, n);" : "float s = 1.0;"}
-        light += uLightColor[i] * lambert(n, l) * s;
-        spec += uLightColor[i] * blinnSpecular(n, v, l, uShininess) * s;
+        vec3 lc = uLightColor[i] * (a * s);
+        light += lc * lambert(n, l);
+        spec += lc * blinnSpecular(n, v, l, uShininess);
       }
       vec3 rgb = base.rgb * light + spec * ${c.specularMap ? "(uSpecular * texture(uSpecularMap, uv).r)" : "uSpecular"} * base.a;
       ${c.emissive ? `rgb += uEmissive${c.emissiveMap ? " * texture(uEmissiveMap, uv).rgb" : ""} * base.a;` : ""}

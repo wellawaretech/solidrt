@@ -77,6 +77,7 @@ impl ModuleDef for SpatialModule {
     decl.declare("raycast")?;
     decl.declare("overlap")?;
     decl.declare("bindDirectionSlot")?;
+    decl.declare("bindPositionSlot")?;
     decl.declare("unbindSlot")?;
     decl.declare("bindPoseRecord")?;
     decl.declare("unbindRecord")?;
@@ -105,6 +106,7 @@ impl ModuleDef for SpatialModule {
     exports.export("raycast", Function::new(ctx.clone(), raycast)?)?;
     exports.export("overlap", Function::new(ctx.clone(), overlap)?)?;
     exports.export("bindDirectionSlot", Function::new(ctx.clone(), bind_direction_slot)?)?;
+    exports.export("bindPositionSlot", Function::new(ctx.clone(), bind_position_slot)?)?;
     exports.export("unbindSlot", Function::new(ctx.clone(), unbind_slot)?)?;
     exports.export("bindPoseRecord", Function::new(ctx.clone(), bind_pose_record)?)?;
     exports.export("unbindRecord", Function::new(ctx.clone(), unbind_record)?)?;
@@ -378,6 +380,14 @@ fn bind_direction_slot(
   }
   let sink = SharedSlotSink { target, name, len, index, projection: Projection::Direction([v[0], v[1], v[2]]) };
   state(&ctx).atx.spatial_bind_slot(id, sink).map_err(|e| throw_str(&ctx, &format!("bindDirectionSlot: {e}")))
+}
+
+/// Bind the node's shared-slot sink with the position projection: slot
+/// `index` of the `len`-float shared array param `name` on `target`
+/// follows the node's world position.
+fn bind_position_slot(ctx: Ctx<'_>, id: u64, target: u64, name: String, len: u32, index: u32) -> rquickjs::Result<()> {
+  let sink = SharedSlotSink { target, name, len, index, projection: Projection::Position };
+  state(&ctx).atx.spatial_bind_slot(id, sink).map_err(|e| throw_str(&ctx, &format!("bindPositionSlot: {e}")))
 }
 
 /// Remove the node's slot sink on `target`, or every slot sink without one.

@@ -9,8 +9,22 @@ export { add, createGroup, getRotation, lookAt, remove, setTransform, setTransit
 export type { SceneNode, ScenePointerEvent, TransformUpdate, TransitionEndEvent } from "./node.ts"
 export { createInstancedMesh, createMesh, createSprite, disposeInstances, setCastShadow, setGeometry, setInstanceCount, setInstances, setLayers, setMaterial, setMeshParams, setRenderOrder } from "./mesh.ts"
 export type { InstancedMesh as InstancedMeshNode, InstancedMeshOptions, Mesh as MeshNode, MeshInstances } from "./mesh.ts"
-export { createDirectionalLight, createHemisphereLight, setLight, MAX_SHADOWS } from "./light.ts"
-export type { DirectionalLight as DirectionalLightNode, DirectionalLightOptions, HemisphereLight as HemisphereLightNode, HemisphereLightOptions, Light, ShadowCamera, ShadowOptions } from "./light.ts"
+export { createDirectionalLight, createHemisphereLight, createPointLight, createSpotLight, setLight, MAX_SHADOWS } from "./light.ts"
+export type {
+  DirectionalLight as DirectionalLightNode,
+  DirectionalLightOptions,
+  HemisphereLight as HemisphereLightNode,
+  HemisphereLightOptions,
+  Light,
+  PointLight as PointLightNode,
+  PointLightOptions,
+  CastingLight,
+  ShadowCamera,
+  ShadowOptions,
+  SpotLight as SpotLightNode,
+  SpotLightOptions,
+  SpotShadowOptions,
+} from "./light.ts"
 export { createScene } from "./scene.ts"
 export type { CameraUpdate, FogOptions, Hit, OrthoExtent, RaycastOptions, Scene as SceneHandle, SceneHandlers, SceneOptions, ScreenRay, View, ViewOptions } from "./scene.ts"
 export type { NodeTransition, NodeTransitionSpec } from "flux:spatial"
@@ -23,8 +37,20 @@ export { extrude, lathe, pathFrames, sweep, tube } from "./sweep.ts"
 export type { ExtrudeOptions, LatheOptions, PathFrames, PathPoint, SweepPath, TubeOptions } from "./sweep.ts"
 export { lit, shaderMaterial, shaderMaterialClass, sprite, unlit } from "./material.ts"
 export type { LitOptions, Material, ShaderMaterialClass, ShaderMaterialClassOptions, ShaderMaterialInstanceOptions, ShaderMaterialOptions, SpriteOptions, UnlitOptions } from "./material.ts"
-export { DirectionalLight, Group, HemisphereLight, InstancedMesh, Mesh, PerspectiveCamera, Scene, Sprite, useScene } from "./components.tsx"
-export type { DirectionalLightProps, HemisphereLightProps, InstancedMeshProps, MeshProps, PerspectiveCameraProps, PointerEventProps, SceneProps, SpriteProps, TransformProps } from "./components.tsx"
+export { DirectionalLight, Group, HemisphereLight, InstancedMesh, Mesh, PerspectiveCamera, PointLight, Scene, SpotLight, Sprite, useScene } from "./components.tsx"
+export type {
+  DirectionalLightProps,
+  HemisphereLightProps,
+  InstancedMeshProps,
+  MeshProps,
+  PerspectiveCameraProps,
+  PointerEventProps,
+  PointLightProps,
+  SceneProps,
+  SpotLightProps,
+  SpriteProps,
+  TransformProps,
+} from "./components.tsx"
 export { gltfExternalUris, isGlb, parseGltf } from "./gltf.ts"
 export type { ModelChannel, ModelClip, ModelData, ModelMaterial, ModelNode, ModelPart, ModelSkin, UriResolver } from "./gltf.ts"
 export { decodeModel, encodeModel } from "./model-file.ts"

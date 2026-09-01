@@ -53,7 +53,7 @@ import { fillTransform, leaveScene, makeNode, worldInto } from "./node.ts"
 import type { SceneHooks, SceneNode, ScenePointerEvent } from "./node.ts"
 import { checkMask, instanceStride, localBounds } from "./mesh.ts"
 import type { Mesh } from "./mesh.ts"
-import type { DirectionalLight, Light } from "./light.ts"
+import type { CastingLight, Light } from "./light.ts"
 
 const IDENTITY = mat4()
 const RESOLVED = Promise.resolve()
@@ -625,19 +625,27 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
   // light params at the end of the sync - one write, however many meshes.
   let lights: Light[] = []
   let lightsDirty = false
-  // uLightDir is CORE-DRIVEN: each directional light's slot is a
-  // shared-slot sink (bindDirectionSlot) following the node's world
-  // rotation, with -direction as the local vector (the shader wants the
-  // vector TOWARD the light) - so a light that merely moves costs no JS.
+  // uLightDir and uLightPos are CORE-DRIVEN: each light's slots are
+  // shared-slot sinks following the node's world transform - the
+  // direction slot (bindDirectionSlot) with -direction as the local
+  // vector (the shader wants the vector TOWARD the light; a spot's axis
+  // the same way), the position slot (bindPositionSlot) for the
+  // positional types - so a light that merely moves costs no JS.
   // This rewrite runs on attach/detach/field changes (and a new view)
-  // only and owns the rest: colors, count, hemisphere. The light set is
-  // scene state, so it lands on the scene target and every view target.
+  // only and owns the rest: types, colors, cone/falloff params, count,
+  // hemisphere. The light set is scene state, so it lands on the scene
+  // target and every view target.
   let vecScratch = new Float32Array(3)
+  // SPOT_PENUMBRA_MIN floors the cone's inner-outer cosine window so a
+  // hard rim (penumbra 0) is still a defined smoothstep edge pair.
+  const SPOT_PENUMBRA_MIN = 1e-3
   let writeLights = () => {
     lightsDirty = false
     let sky: Vec3 = [0, 0, 0]
     let ground: Vec3 = [0, 0, 0]
+    let types: number[] = []
     let colors: number[] = []
+    let coneFalloff: number[] = []
     let bias: number[] = []
     let normalBias: number[] = []
     let count = 0
@@ -648,20 +656,38 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
         ground = [light.ground[0] * k, light.ground[1] * k, light.ground[2] * k]
         continue
       }
-      vecScratch[0] = -light.direction[0]
-      vecScratch[1] = -light.direction[1]
-      vecScratch[2] = -light.direction[2]
-      spatial.bindDirectionSlot(light._node!, texture, "uLightDir", MAX_LIGHTS * 3, count, vecScratch)
-      for (let v of views) spatial.bindDirectionSlot(light._node!, v.texture, "uLightDir", MAX_LIGHTS * 3, count, vecScratch)
+      if (light.type !== "point") {
+        vecScratch[0] = -light.direction[0]
+        vecScratch[1] = -light.direction[1]
+        vecScratch[2] = -light.direction[2]
+        spatial.bindDirectionSlot(light._node!, texture, "uLightDir", MAX_LIGHTS * 3, count, vecScratch)
+        for (let v of views) spatial.bindDirectionSlot(light._node!, v.texture, "uLightDir", MAX_LIGHTS * 3, count, vecScratch)
+      }
+      if (light.type !== "directional") {
+        spatial.bindPositionSlot(light._node!, texture, "uLightPos", MAX_LIGHTS * 3, count)
+        for (let v of views) spatial.bindPositionSlot(light._node!, v.texture, "uLightPos", MAX_LIGHTS * 3, count)
+      }
+      types.push(light.type === "directional" ? 0 : light.type === "spot" ? 1 : 2)
       let c = light.color
       let k = light.intensity
       colors.push(c[0] * k, c[1] * k, c[2] * k)
-      bias.push(light.shadow.bias)
-      normalBias.push(light.shadow.normalBias)
+      if (light.type === "spot") {
+        let pen = Math.max(light.penumbra, SPOT_PENUMBRA_MIN)
+        let rad = (light.angle * Math.PI) / 180
+        coneFalloff.push(Math.cos(rad * (1 - pen)), Math.cos(rad), light.distance, light.decay)
+      } else if (light.type === "point") {
+        coneFalloff.push(0, 0, light.distance, light.decay)
+      } else {
+        coneFalloff.push(0, 0, 0, 0)
+      }
+      bias.push(light.type !== "point" ? light.shadow.bias : 0)
+      normalBias.push(light.type !== "point" ? light.shadow.normalBias : 0)
       count++
     }
     for (let i = count; i < MAX_LIGHTS; i++) {
+      types.push(0)
       colors.push(0, 0, 0)
+      coneFalloff.push(0, 0, 0, 0)
       bias.push(0)
       normalBias.push(0)
     }
@@ -689,7 +715,9 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       uHemiSky: sky,
       uHemiGround: ground,
       uLightCount: count,
+      uLightType: types,
       uLightColor: colors,
+      uLightParams: coneFalloff,
       uShadowFirst: first,
       uShadowCount: counts,
       uShadowBias: bias,
@@ -818,20 +846,24 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
   // texels. `lastWorld` is the light's world matrix the shadow cameras
   // were last placed from; `dirty` forces a re-place (options changed).
   type ShadowRect = { x: number; y: number; width: number; height: number }
-  type Shadow = { light: DirectionalLight; views: ViewRecord[]; lastWorld: Mat4; dirty: boolean; rects: ShadowRect[] }
-  let shadows = new Map<DirectionalLight, Shadow>()
+  type Shadow = { light: CastingLight; views: ViewRecord[]; lastWorld: Mat4; dirty: boolean; rects: ShadowRect[] }
+  let shadows = new Map<CastingLight, Shadow>()
   // The map slots: every casting light's maps in light order, a light's
   // cascades consecutive and tightest first. The ONE enumeration the
   // receiving side is dealt by - rects and first/count in writeLights,
   // matrices in sync - so uShadowFirst/uShadowCount agree with both.
-  // `i` is the light's directional index (its uShadow*[i] slot).
+  // `i` is the light's LIST index (its uShadow*[i] slot): every
+  // non-hemisphere light counts, casting or not, so it matches the lit
+  // loop's index.
   let forEachShadowSlot = (fn: (slot: number, i: number, shadow: Shadow, cascade: number) => void): void => {
     let slot = 0
     let i = 0
     for (let light of lights) {
-      if (light.type !== "directional") continue
-      let shadow = shadows.get(light)
-      if (shadow !== undefined) for (let c = 0; c < shadow.views.length; c++) fn(slot++, i, shadow, c)
+      if (light.type === "hemisphere") continue
+      if (light.type !== "point") {
+        let shadow = shadows.get(light)
+        if (shadow !== undefined) for (let c = 0; c < shadow.views.length; c++) fn(slot++, i, shadow, c)
+      }
       i++
     }
   }
@@ -854,9 +886,14 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
   // light order, a light's cascades consecutive. Sizes the atlas, moves
   // tiles whose place changed, and drops the atlas when nothing casts.
   // The rects reach receivers through the next light rewrite.
-  let placeShadows = (adding: DirectionalLight | null): ShadowRect[] | null => {
-    let casters: DirectionalLight[] = []
-    for (let l of lights) if (l.type === "directional" && (shadows.has(l) || l === adding)) casters.push(l)
+  // A caster's tile count: a directional light brings its cascades, a
+  // spot exactly one map.
+  let shadowTiles = (l: CastingLight): number => (l.type === "directional" ? l.shadow.cascades : 1)
+  let placeShadows = (adding: CastingLight | null): ShadowRect[] | null => {
+    let casters: CastingLight[] = []
+    for (let l of lights) {
+      if ((l.type === "directional" || l.type === "spot") && (shadows.has(l) || l === adding)) casters.push(l)
+    }
     if (adding !== null && !casters.includes(adding)) casters.push(adding)
     lightsDirty = true
     if (casters.length === 0) {
@@ -870,7 +907,13 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     let tiles = 0
     for (let l of casters) {
       maxSize = Math.max(maxSize, l.shadow.mapSize)
-      tiles += l.shadow.cascades
+      tiles += shadowTiles(l)
+    }
+    if (tiles > MAX_SHADOW_MAPS) {
+      throw new Error(
+        "The scene's shadow set is full: " + tiles + " maps over the " + MAX_SHADOW_MAPS +
+          "-slot budget (a cascaded light claims shadow.cascades slots)",
+      )
     }
     let lay = shadowLayout(tiles, maxSize)
     if (shadowAtlas === null) {
@@ -894,7 +937,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     for (let l of casters) {
       let size = Math.max(1, Math.floor(l.shadow.mapSize * lay.scale))
       let shadow = shadows.get(l)
-      for (let c = 0; c < l.shadow.cascades; c++, k++) {
+      for (let c = 0; c < shadowTiles(l); c++, k++) {
         let rect: ShadowRect = { x: (k % lay.cols) * lay.cell, y: Math.floor(k / lay.cols) * lay.cell, width: size, height: size }
         if (shadow === undefined) {
           if (placed === null) placed = []
@@ -1069,7 +1112,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
   // the casting meshes with the depth override from that map's frustum.
   // The light rewrite writes the rects in the light's slots on every
   // receiving target.
-  let createShadow = (light: DirectionalLight) => {
+  let createShadow = (light: CastingLight) => {
     let rects = placeShadows(light)
     if (rects === null || shadowAtlas === null) return
     let atlas = shadowAtlas
@@ -1091,7 +1134,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     shadows.set(light, { light, views, lastWorld: mat4(), dirty: true, rects })
     lightsDirty = true
   }
-  let destroyShadow = (light: DirectionalLight) => {
+  let destroyShadow = (light: CastingLight) => {
     let shadow = shadows.get(light)
     if (shadow === undefined) return
     shadows.delete(light)
@@ -1102,9 +1145,14 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
   }
   // Place a shadow's cameras from its light's world matrix. A box light:
   // at its world position, looking along its world direction, the light
-  // frustum as the orthographic extents. Compared against the matrix it
-  // was last placed from, so a scene animating elsewhere rewrites nothing
-  // here. A cascaded light also follows the scene camera (`cameraMoved`).
+  // frustum as the orthographic extents. A spot light: the same pose
+  // with a perspective camera, fov = its cone. Compared against the
+  // matrix it was last placed from, so a scene animating elsewhere
+  // rewrites nothing here. A cascaded light also follows the scene
+  // camera (`cameraMoved`).
+  // The spot shadow camera's far plane when the light has no `distance`
+  // cutoff - the directional box default.
+  const SPOT_SHADOW_FAR = 500
   let cascadeScratch = mat4()
   let cascadeCenter: Vec3 = [0, 0, 0]
   let placeShadowCamera = (shadow: Shadow, cameraMoved: boolean) => {
@@ -1120,6 +1168,21 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     // A sun straight down is the common case and the degenerate one for
     // world up: roll about z then (the map's orientation is invisible).
     let up: Vec3 = Math.abs(d[1]) > VERTICAL_LIGHT ? [0, 0, 1] : [0, 1, 0]
+    if (light.type === "spot") {
+      // The cone's circular footprint inscribes exactly in the square
+      // map at fov = 2 * angle (aspect 1; both in degrees); everything
+      // past the cone gets no light, so no shadow is lost to the
+      // corners' margin.
+      updateCamera(shadow.views[0]!.camera, {
+        position: [m[12], m[13], m[14]],
+        target: [m[12] + d[0], m[13] + d[1], m[14] + d[2]],
+        up,
+        fov: light.angle * 2,
+        near: light.shadow.near,
+        far: light.distance > 0 ? light.distance : SPOT_SHADOW_FAR,
+      })
+      return
+    }
     if (!cascaded) {
       let c = light.shadow.camera
       updateCamera(shadow.views[0]!.camera, {
@@ -1232,18 +1295,18 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     },
     _attachLight(light) {
       if (disposed) return
-      if (light.type === "directional" && lights.filter(l => l.type === "directional").length >= MAX_LIGHTS) {
-        throw new Error("A scene takes at most " + MAX_LIGHTS + " directional lights")
+      if (light.type !== "hemisphere" && lights.filter(l => l.type !== "hemisphere").length >= MAX_LIGHTS) {
+        throw new Error("A scene takes at most " + MAX_LIGHTS + " lights (directional, spot and point together)")
       }
       lights.push(light)
       lightsDirty = true
-      if (light.type === "directional" && light.castShadow) createShadow(light)
+      if ((light.type === "directional" || light.type === "spot") && light.castShadow) createShadow(light)
     },
     _detachLight(light) {
       let i = lights.indexOf(light)
       if (i >= 0) lights.splice(i, 1)
       lightsDirty = true
-      if (light.type === "directional") destroyShadow(light)
+      if (light.type === "directional" || light.type === "spot") destroyShadow(light)
       hooks._schedule()
     },
     _shadowChanged(light) {
@@ -1257,7 +1320,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
         // A cascade count change is a different view set: rebuild it. A
         // mapSize change re-places every tile (the grid cell follows the
         // largest map).
-        if (shadow.views.length !== light.shadow.cascades) {
+        if (shadow.views.length !== shadowTiles(light)) {
           destroyShadow(light)
           createShadow(light)
           return

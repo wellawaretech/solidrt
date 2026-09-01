@@ -14,7 +14,7 @@ import type { ShaderParams } from "@solidrt/core/gpu"
 // the same pairing (and the same name) as Three's Object3D/Matrix4.
 import { compose, eulerFromQuat, identity, mat4, multiply, quat, quatFromFrame, transformPoint, updateRotation, updateScale } from "./math.ts"
 import type { Mat4, Quat, TransformUpdate, Vec3, Vec4 } from "./math.ts"
-import type { DirectionalLight, Light } from "./light.ts"
+import type { CastingLight, Light } from "./light.ts"
 import type { Mesh } from "./mesh.ts"
 
 // lookAt()'s default roll reference. Read-only: quatFromFrame never
@@ -80,7 +80,7 @@ export type SceneHooks = {
   /** The mesh's layers bitmask changed: re-evaluate every target. */
   _setLayers(mesh: Mesh): void
   /** A light's castShadow/shadow options changed. */
-  _shadowChanged(light: DirectionalLight): void
+  _shadowChanged(light: CastingLight): void
   _reorder(): void
   /** The node's transform changed (for the sort and light bookkeeping). */
   _moved(node: SceneNode): void

@@ -150,11 +150,21 @@ declare module "flux:spatial" {
    * zeros. Every sink naming the same param shares one array (`len` must
    * agree); what the slots mean - light directions, an emitter axis - is
    * the caller's business, packed alongside its own non-spatial params.
-   * One slot sink per target, like bindDraw: rebinding on the same target
-   * replaces that sink (the abandoned slot zeroes), another target adds one.
+   * One slot sink per (target, name): rebinding the same param on the
+   * same target replaces that sink (the abandoned slot zeroes); another
+   * param or another target adds one, so a node may feed several arrays
+   * of one target (a spot light: its direction and its position).
    */
   export function bindDirectionSlot(node: NodeId, target: TextureId, name: string, len: number, index: number, vector: Float32Array): void
-  /** Remove the node's slot sink on `target`, or every slot sink without
+  /**
+   * Route the node's world POSITION into vec3 slot `index` of the
+   * `len`-float shared array param `name` on a draw target -
+   * bindDirectionSlot's translation sibling, with the same sharing,
+   * zeroing and per-(target, name) replacement rules. What a positional
+   * light's slot follows.
+   */
+  export function bindPositionSlot(node: NodeId, target: TextureId, name: string, len: number, index: number): void
+  /** Remove the node's slot sinks on `target`, or every slot sink without
    * one (the abandoned slots zero at the next flush). */
   export function unbindSlot(node: NodeId, target?: TextureId): void
 
