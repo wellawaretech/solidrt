@@ -5,8 +5,14 @@
 // without Solid components) and the component face (Scene/Mesh/Group/
 // PerspectiveCamera) on top. See AGENTS.md for the model and the traps.
 
-export { add, createDirectionalLight, createGroup, createHemisphereLight, createInstancedMesh, createMesh, createScene, createSprite, setLight, disposeInstances, getRotation, lookAt, remove, setCastShadow, setGeometry, setInstanceCount, setInstances, setLayers, setMaterial, setMeshParams, setRenderOrder, setTransform, setTransition, setVisible, worldPosition, MAX_SHADOWS } from "./scene.ts"
-export type { CameraUpdate, DirectionalLight as DirectionalLightNode, DirectionalLightOptions, FogOptions, HemisphereLight as HemisphereLightNode, HemisphereLightOptions, Hit, Light, InstancedMesh as InstancedMeshNode, InstancedMeshOptions, Mesh as MeshNode, MeshInstances, OrthoExtent, RaycastOptions, Scene as SceneHandle, SceneHandlers, SceneNode, SceneOptions, ScenePointerEvent, ScreenRay, ShadowCamera, ShadowOptions, TransformUpdate, TransitionEndEvent, View, ViewOptions } from "./scene.ts"
+export { add, createGroup, getRotation, lookAt, remove, setTransform, setTransition, setVisible, worldPosition } from "./node.ts"
+export type { SceneNode, ScenePointerEvent, TransformUpdate, TransitionEndEvent } from "./node.ts"
+export { createInstancedMesh, createMesh, createSprite, disposeInstances, setCastShadow, setGeometry, setInstanceCount, setInstances, setLayers, setMaterial, setMeshParams, setRenderOrder } from "./mesh.ts"
+export type { InstancedMesh as InstancedMeshNode, InstancedMeshOptions, Mesh as MeshNode, MeshInstances } from "./mesh.ts"
+export { createDirectionalLight, createHemisphereLight, setLight, MAX_SHADOWS } from "./light.ts"
+export type { DirectionalLight as DirectionalLightNode, DirectionalLightOptions, HemisphereLight as HemisphereLightNode, HemisphereLightOptions, Light, ShadowCamera, ShadowOptions } from "./light.ts"
+export { createScene } from "./scene.ts"
+export type { CameraUpdate, FogOptions, Hit, OrthoExtent, RaycastOptions, Scene as SceneHandle, SceneHandlers, SceneOptions, ScreenRay, View, ViewOptions } from "./scene.ts"
 export type { NodeTransition, NodeTransitionSpec } from "flux:spatial"
 export { disposeGeometry } from "./geometry-gpu.ts"
 export { box, circle, cone, cylinder, fillAttribute, fillColors, geometryBounds, layoutAttributes, layoutKey, layoutSlot, layoutStride, mergeGeometries, packGeometry, plane, ring, sphere, torus, torusKnot, transformGeometry, validateGeometry, withAttribute, withColors, STANDARD_FLOATS, VERTEX_LAYOUTS } from "./geometry.ts"

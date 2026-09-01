@@ -1,5 +1,6 @@
 // The Solid face: PascalCase components over context, syncing the retained
-// scene (scene.ts) - no new intrinsic elements, no renderer changes. Props
+// scene (node/mesh/light/scene.ts) - no new intrinsic elements, no
+// renderer changes. Props
 // follow the Solid 2.0 model (reactive values, no destructuring); effects
 // write into the retained nodes and the runtime's dirty flush renders.
 // Anything moving at frame rate can bypass the declarative layer: grab the
@@ -8,32 +9,28 @@
 
 import { createContext, createEffect, onCleanup, untrack, useContext } from "@solidrt/core"
 import type { Element, ParentComponent, TextureId, VoidComponent } from "@solidrt/core"
+import { add, createGroup, remove, setTransform, setTransition, setVisible } from "./node.ts"
+import type { SceneNode, ScenePointerEvent, TransitionEndEvent } from "./node.ts"
 import {
-  add,
-  createDirectionalLight,
-  createGroup,
-  createHemisphereLight,
   createInstancedMesh,
   createMesh,
-  createScene,
   createSprite,
   disposeInstances,
-  remove,
+  setCastShadow,
   setGeometry,
   setInstanceCount,
   setInstances,
   setLayers,
-  setLight,
-  setCastShadow,
   setMaterial,
   setMeshParams,
   setRenderOrder,
-  setTransform,
-  setTransition,
-  setVisible,
-} from "./scene.ts"
+} from "./mesh.ts"
+import type { InstancedMesh as InstancedMeshNode, Mesh as MeshNode } from "./mesh.ts"
+import { createDirectionalLight, createHemisphereLight, setLight } from "./light.ts"
+import type { DirectionalLight as DirectionalLightNode, HemisphereLight as HemisphereLightNode, ShadowOptions } from "./light.ts"
+import { createScene } from "./scene.ts"
+import type { CameraUpdate, FogOptions, Scene as SceneHandle } from "./scene.ts"
 import type { ShaderParams } from "@solidrt/core/gpu"
-import type { CameraUpdate, DirectionalLight as DirectionalLightNode, FogOptions, HemisphereLight as HemisphereLightNode, InstancedMesh as InstancedMeshNode, Mesh as MeshNode, Scene as SceneHandle, SceneNode, ScenePointerEvent, ShadowOptions, TransitionEndEvent } from "./scene.ts"
 import type { NodeTransition } from "flux:spatial"
 import type { Geometry } from "./geometry.ts"
 import type { Material } from "./material.ts"

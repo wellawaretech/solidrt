@@ -21,8 +21,10 @@ import { decodeModel } from "./model-file.ts"
 import { disposeGeometry } from "./geometry-gpu.ts"
 import { lit } from "./material.ts"
 import type { Material } from "./material.ts"
-import { add, createGroup, createMesh, remove, setTransform } from "./scene.ts"
-import type { Mesh, SceneNode } from "./scene.ts"
+import { add, createGroup, remove, setTransform } from "./node.ts"
+import type { SceneNode } from "./node.ts"
+import { createMesh } from "./mesh.ts"
+import type { Mesh } from "./mesh.ts"
 
 /** Anisotropic filtering level for a model's textures: the engines' usual
  * default (Godot ships 2x, Unity's quality presets 2-8x) - enough to keep a
