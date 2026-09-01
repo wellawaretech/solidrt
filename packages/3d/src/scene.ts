@@ -265,8 +265,9 @@ export type Mesh = SceneNode & {
   _params: ShaderParams | null
   /** Per-mesh sampler bindings merged over the material's at attach (a
    * skin's uBones palette texture): create-time state, set before the
-   * mesh joins a scene, applied only to entries drawn with the mesh's
-   * OWN material - an override or shadow variant validates its bindings
+   * mesh joins a scene, applied to entries drawn with the mesh's OWN
+   * material or a skinned stand-in (Material.skinned - a skinned shadow
+   * variant declares uBones) - any other override validates its bindings
    * against a program that may not declare these names. */
   _textures: TextureBindings | null
   /** Instance state when the mesh was made by createInstancedMesh; null on
@@ -1850,10 +1851,11 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       buffer: bufs.buffer,
       indexBuffer: bufs.index,
       indexFormat: bufs.indexFormat,
-      // The mesh's own bindings ride only with its own material: an
-      // override (or shadow variant) program may not declare their names,
-      // and per-entry bindings validate strictly.
-      textures: material === mesh.material && mesh._textures !== null ? { ...material.textures, ...mesh._textures } : material.textures,
+      // The mesh's own bindings ride with its own material and with any
+      // skinned stand-in (a skinned shadow variant declares uBones and
+      // needs the mesh's palette); other override programs may not
+      // declare the names, and per-entry bindings validate strictly.
+      textures: (material === mesh.material || material.skinned === true) && mesh._textures !== null ? { ...material.textures, ...mesh._textures } : material.textures,
       instanceBuffer: inst !== null ? inst.buffer : undefined,
       instanceCount: 0,
     })

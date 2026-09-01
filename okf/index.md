@@ -80,12 +80,13 @@ Shaped, not started.
   with no error. Decide once between injecting the standard tail at the
   fragColor write and exporting one composed function the author calls, before
   the next scene-wide effect adds a third thing to forget.
-- **[Instanced and skinned meshes cast no true shadow](backlog/3d-instanced-shadow-casters.md)** [2026-08-27]
+- **[Instanced meshes cast no shadow](backlog/3d-instanced-shadow-casters.md)** [2026-08-27]
   The scene's shadow view draws casters with a position-only depth override
   that knows uModel and nothing else, so an instanced mesh's per-record
-  transforms are invisible to it (`castShadow` on an InstancedMesh is skipped)
-  and a skinned mesh casts its bind pose. The additive fix is a per-class
-  `shadowVertex` the override borrows.
+  transforms are invisible to it and `castShadow` on an InstancedMesh is
+  skipped. The additive fix is a per-class `shadowVertex` the override borrows
+  - the shape the skinned casters (posed shadows since 2026-09-01) already
+  proved out.
 - **[Level of detail - distance-selected mesh variants as a core sink](backlog/3d-lod.md)** [2026-08-30]
   A large scene ships every object at one triangle count; a track with a
   thousand trees either draws full-detail foliage at the horizon or nothing. A

@@ -42,7 +42,7 @@ import type {
 } from "@solidrt/core/gpu"
 import { layoutAttributes, layoutKey, layoutSlot } from "./geometry.ts"
 import type { VertexLayout } from "./geometry.ts"
-import { litFragment, litShadowFragment, litVertex, UNLIT_VERTEX, unlitFragment, unlitShadowFragment, unlitVertex } from "./glsl.ts"
+import { litFragment, litShadowFragment, litVertex, SKIN_DECLS, SKIN_MATRIX, UNLIT_VERTEX, unlitFragment, unlitShadowFragment, unlitVertex } from "./glsl.ts"
 
 export type Material = {
   /** The pipeline this material draws with for geometry of `layout`
@@ -75,12 +75,18 @@ export type Material = {
   /** What a shadow view draws this material's meshes with instead of its
    * default depth override: the depth pass culling the side this material
    * culls (Three's shadowSide rule, Godot's shadow pass), so a `cull:
-   * "none"` caster casts from both faces, and for a cutout (lit
+   * "none"` caster casts from both faces, for a cutout (lit
    * alphaTest with a map) the same discard, so a plant casts leaves and
-   * not rectangles. Absent = the default (a back-culling material casts
-   * from its back faces). A shaderMaterial supplies its own through the
-   * instance option of the same name. */
+   * not rectangles, and for a skinned material the same skinning, so a
+   * posed caster casts its pose. Absent = the default (a back-culling
+   * material casts from its back faces). A shaderMaterial supplies its
+   * own through the instance option of the same name. */
   shadow?: Material
+  /** True when the vertex stage declares `uBones` (read from the source,
+   * like normalMatrix): the program skins by the mesh's palette texture,
+   * so a shadow or override entry for a skinned mesh merges the mesh's
+   * own uBones binding even though this material is not the mesh's. */
+  skinned?: boolean
   /** Present on materials that own their pipeline (shaderMaterial). */
   dispose?(): void
 }
@@ -131,8 +137,8 @@ export type UnlitOptions = {
    * variant createModel picks for skinned parts. The material then
    * requires "skinned" geometry, and something must bind `uBones`
    * (createModel binds each skin's palette texture to its meshes;
-   * updateSkins writes it from the model's joints). Bind-pose shadows:
-   * the cutout shadow variant stays unskinned. */
+   * updateSkins writes it from the model's joints). The shadow variants
+   * (depth and cutout) skin the same way, so a caster casts its pose. */
   skinned?: boolean
 }
 
@@ -181,7 +187,7 @@ export function unlit(opts: UnlitOptions = {}): Material {
     textures: map ? { uMap: opts.map! } : undefined,
     shadow:
       alphaTest && map
-        ? unlitShadowMaterial(shadowCull(cull), uColor, opts.alphaTest!, opts.map!, mapTransform ? params.uMapTransform as number[] : undefined)
+        ? unlitShadowMaterial(shadowCull(cull), skinned, uColor, opts.alphaTest!, opts.map!, mapTransform ? params.uMapTransform as number[] : undefined)
         : undefined,
   })
 }
@@ -408,11 +414,9 @@ function litShadowMaterial(
   uMap: TextureId,
   uMapTransform?: number[],
 ): Material {
-  // Bind-pose shadows: the depth pass has no uBones writer, so the
-  // shadow variant compiles with skinning stripped (a skinned cutout
-  // caster casts its rest pose; the skinned depth variant rides with the
-  // instanced-casters follow-up).
-  flags = flags.skinned ? { ...flags, skinned: false } : flags
+  // A skinned cutout keeps its skinning (flags.skinned rides into the
+  // key and the vertex stage), so the shadow it casts is posed: the
+  // shadow entry merges the mesh's uBones binding (Material.skinned).
   let key = litClassKey(flags)
   let cls = litShadowClasses.get(key)
   if (cls === undefined) {
@@ -451,28 +455,43 @@ const SHADOW_DEPTH_VERTEX = glsl`
   }
 `
 
+// Its skinned twin: the same position-only pass with the skin matrix
+// applied first, so a posed caster's depth is its pose (the entry's
+// uBones binding comes from the mesh, see Material.skinned).
+const SHADOW_DEPTH_VERTEX_SKINNED = glsl`
+  in vec3 aPos;
+  ${SKIN_DECLS}
+  uniform mat4 uModel;
+  uniform mat4 uViewProj;
+  void main() {
+    ${SKIN_MATRIX}
+    gl_Position = uViewProj * uModel * (skin * vec4(aPos, 1.0));
+  }
+`
+
 const SHADOW_DEPTH_FRAGMENT = glsl`
   void main() {
     fragColor = vec4(1.0);
   }
 `
 
-let shadowDepth = new Map<CullMode, Material>()
+let shadowDepth = new Map<string, Material>()
 
 /** The override material of a scene's shadow view (internal): one class
- * per cull mode for the app, built on first use. The default, "front",
- * is the caster's back surface (see above); a material culling
- * otherwise carries its own variant as Material.shadow. */
-export function shadowDepthMaterial(cull: CullMode = "front"): Material {
-  let material = shadowDepth.get(cull)
+ * per cull mode x skinned for the app, built on first use. The default,
+ * "front", is the caster's back surface (see above); a material culling
+ * or skinning otherwise carries its own variant as Material.shadow. */
+export function shadowDepthMaterial(cull: CullMode = "front", skinned = false): Material {
+  let key = cull + (skinned ? "|skinned" : "")
+  let material = shadowDepth.get(key)
   if (material === undefined) {
     material = shaderMaterialClass({
-      vertex: SHADOW_DEPTH_VERTEX,
+      vertex: skinned ? SHADOW_DEPTH_VERTEX_SKINNED : SHADOW_DEPTH_VERTEX,
       fragment: SHADOW_DEPTH_FRAGMENT,
       cull,
-      label: "scene-shadow-depth-" + cull,
+      label: "scene-shadow-depth-" + key,
     }).instance()
-    shadowDepth.set(cull, material)
+    shadowDepth.set(key, material)
   }
   return material
 }
@@ -483,27 +502,31 @@ function shadowCull(cull: CullMode): CullMode {
   return cull === "none" ? "none" : cull === "back" ? "front" : "back"
 }
 
-/** "back" maps to the default depth material, so its variant is
- * undefined. */
-function shadowVariant(cull: CullMode): Material | undefined {
-  return cull === "back" ? undefined : shadowDepthMaterial(shadowCull(cull))
+/** "back" unskinned maps to the default depth material, so its variant
+ * is undefined; a skinned class always needs its own (the default does
+ * not skin). */
+function shadowVariant(cull: CullMode, skinned: boolean): Material | undefined {
+  if (cull === "back" && !skinned) return undefined
+  return shadowDepthMaterial(shadowCull(cull), skinned)
 }
 
 let unlitShadowClasses = new Map<string, ShaderMaterialClass>()
 
 /** The shadow variant of a discarding unlit material: unlitShadowFragment
- * on the same vertex stage, litShadowMaterial's unlit twin. unlit()'s
- * only discard is the mapped cutout, so what varies is the shadow cull
- * and whether the cutout's uv is transformed - one class per combination.
- * An instance per material (its map, color, cutoff, transform). */
-function unlitShadowMaterial(cull: CullMode, uColor: number[], uAlphaTest: number, uMap: TextureId, uMapTransform?: number[]): Material {
-  let key = cull + "|" + (uMapTransform !== undefined)
+ * on the same vertex stage (skinned when the material skins, so the
+ * cutout casts its pose), litShadowMaterial's unlit twin. unlit()'s
+ * only discard is the mapped cutout, so what varies is the shadow cull,
+ * skinning and whether the cutout's uv is transformed - one class per
+ * combination. An instance per material (its map, color, cutoff,
+ * transform). */
+function unlitShadowMaterial(cull: CullMode, skinned: boolean, uColor: number[], uAlphaTest: number, uMap: TextureId, uMapTransform?: number[]): Material {
+  let key = cull + "|" + (uMapTransform !== undefined) + (skinned ? "|skinned" : "")
   let cls = unlitShadowClasses.get(key)
   if (cls === undefined) {
     let fragment = unlitShadowFragment({ map: true, alphaTest: true, mapTransform: uMapTransform !== undefined })
     if (fragment === undefined) throw new Error("unlitShadowMaterial: the cutout options cannot discard")
     cls = shaderMaterialClass({
-      vertex: UNLIT_VERTEX,
+      vertex: unlitVertex({ skinned }),
       fragment,
       cull,
       label: "scene-unlit-shadow-" + key,
@@ -729,7 +752,8 @@ export type ShaderMaterialInstanceOptions = {
   textures?: TextureBindings
   /** The depth variant a shadow view draws this instance with (see
    * Material.shadow): a cutout's discard, an instanced class's vertex
-   * placement. Default: the depth pass with this class's cull side. */
+   * placement. Default: the depth pass with this class's cull side,
+   * skinned like the class when its vertex skins by uBones. */
   shadow?: Material
 }
 
@@ -775,6 +799,9 @@ export function shaderMaterialClass(opts: ShaderMaterialClassOptions): ShaderMat
   // Attributes live in the vertex stage only, so unlike the uNormal scan
   // there is nothing to look for in the fragment source.
   let normalMatrix = /\buNormal\b/.test(opts.vertex) || /\buNormal\b/.test(opts.fragment)
+  // Skinning is a vertex-stage affair like the attributes; a source that
+  // mentions uBones skins by the mesh's palette texture (Material.skinned).
+  let skinned = /\buBones\b/.test(opts.vertex)
   let transparent = opts.transparent ?? (opts.blend !== undefined && opts.blend !== "none")
   let depth = opts.depth ?? true
   let cull = opts.cull ?? "back"
@@ -820,6 +847,7 @@ export function shaderMaterialClass(opts: ShaderMaterialClassOptions): ShaderMat
     instance(inst = {}) {
       return {
         normalMatrix,
+        skinned,
         attributes,
         transparent,
         instanceAttributes,
@@ -829,7 +857,7 @@ export function shaderMaterialClass(opts: ShaderMaterialClassOptions): ShaderMat
         // Lazy: the depth materials are shaderMaterialClass instances
         // themselves, so an eager variant would recurse into its own cache.
         get shadow() {
-          return inst.shadow ?? shadowVariant(cull)
+          return inst.shadow ?? shadowVariant(cull, skinned)
         },
       }
     },

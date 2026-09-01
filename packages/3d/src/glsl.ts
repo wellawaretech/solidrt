@@ -47,15 +47,15 @@ export const MAX_SHADOW_MAPS = MAX_LIGHTS * MAX_CASCADES
  * Pair it with your own fragment; the view vector there is
  * `normalize(uCamPos - vWorldPos)`.
  */
-// The skinned-layout blocks a vertex stage splices in: the aJoints/
-// aWeights channels, the palette, and the linear-blend skin matrix.
-// Bone-space normals go through mat3(skin) - exact for rigid bones,
-// the standard approximation under bone scale. The palette is a float
-// texture, not a uniform array, so rig size is bounded only by texture
-// height (>= 2048 everywhere), never by the vertex uniform budget: an
-// rgba32f texture 4 texels wide, one row per joint, each row the four
-// columns of that joint's mat4 (updateSkins writes it).
-const SKIN_DECLS = glsl`
+/** The skinned-layout declarations a vertex stage splices in: the
+ * aJoints/aWeights channels, the `uBones` palette and `mat4 boneAt(int)`.
+ * The palette is a float texture, not a uniform array, so rig size is
+ * bounded only by texture height (>= 2048 everywhere), never by the
+ * vertex uniform budget: an rgba32f texture 4 texels wide, one row per
+ * joint, each row the four columns of that joint's mat4 (updateSkins
+ * writes it; createModel binds it per skinned mesh). Pair with
+ * SKIN_MATRIX in main(). */
+export const SKIN_DECLS = glsl`
   in vec4 aJoints;
   in vec4 aWeights;
   uniform sampler2D uBones;
@@ -64,7 +64,11 @@ const SKIN_DECLS = glsl`
       texelFetch(uBones, ivec2(2, j), 0), texelFetch(uBones, ivec2(3, j), 0));
   }
 `
-const SKIN_MATRIX = glsl`
+/** The linear-blend skin matrix, spliced into main() after SKIN_DECLS:
+ * apply as `skin * vec4(aPos, 1.0)` before uModel. Bone-space normals go
+ * through `mat3(skin)` - exact for rigid bones, the standard
+ * approximation under bone scale. */
+export const SKIN_MATRIX = glsl`
     mat4 skin = aWeights.x * boneAt(int(aJoints.x)) + aWeights.y * boneAt(int(aJoints.y)) +
       aWeights.z * boneAt(int(aJoints.z)) + aWeights.w * boneAt(int(aJoints.w));
 `

@@ -1,6 +1,6 @@
 ---
-title: Instanced and skinned meshes cast no true shadow
-description: The scene's shadow view draws casters with a position-only depth override that knows uModel and nothing else, so an instanced mesh's per-record transforms are invisible to it (`castShadow` on an InstancedMesh is skipped) and a skinned mesh casts its bind pose. The additive fix is a per-class `shadowVertex` the override borrows.
+title: Instanced meshes cast no shadow
+description: The scene's shadow view draws casters with a position-only depth override that knows uModel and nothing else, so an instanced mesh's per-record transforms are invisible to it and `castShadow` on an InstancedMesh is skipped. The additive fix is a per-class `shadowVertex` the override borrows - the shape the skinned casters (posed shadows since 2026-09-01) already proved out.
 created: 2026-08-27
 ---
 
@@ -38,10 +38,11 @@ It carries the cull side (a `cull: "none"` material casts from both
 faces, Three's `shadowSide` rule) and, for a UV-mapped `lit({ alphaTest
 })`, the cutout discard; `shadowVertex` populates the same field.
 
-The SKINNED case (2026-08-31, with the model loader's skins) is the same
-shape: a `skinned: true` material's vertex stage places vertices by the
-uBones palette, the depth override knows none of it, so a skinned caster
-casts its BIND pose (documented in AGENTS.md Traps). Its `shadowVertex`
-is the skin block plus position, and the shadow instance then needs the
-palette write fanned to it (today setMeshParams deliberately skips
-override-view entries).
+The SKINNED casters took this road on 2026-09-01 and are done: a
+`skinned: true` material's shadow variant (depth and cutout alike)
+splices the same SKIN blocks, `Material.skinned` (reflected from the
+vertex source like normalMatrix) tells the shadow view to merge the
+mesh's own uBones binding into the variant's entry, and the palette is
+a float texture written by id, so nothing needs fanning to override
+entries. Instanced casters are the remaining case, and `shadowVertex`
+would slot in exactly the same way.

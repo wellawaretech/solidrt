@@ -813,11 +813,11 @@ older bakes are rejected - re-bake with `srt tool 3d/model`.
   runtime shows mesh interiors, so do not do that.
 - Skinning is a VERTEX-STAGE effect: everything that runs off the
   retained tree sees the bind pose. A skinned mesh picks by its
-  bind-pose triangles at the model root, its shadow casts the bind pose
-  (the depth pass has no palette; skinned cutouts too - the skinned
-  depth variant rides with okf/backlog/3d-instanced-shadow-casters.md),
-  and its transparent sort key is the bind-pose box. Moving the JOINTS
-  never moves any of these; moving the MODEL moves them all.
+  bind-pose triangles at the model root and its transparent sort key is
+  the bind-pose box; moving the JOINTS never moves either, moving the
+  MODEL moves both. Shadows are the exception: the shadow variants
+  (depth and cutout) skin by the same uBones palette, so a caster casts
+  its pose.
 - The y-down clip flip is baked into `perspective()`; scene code and
   geometry are plain y-up right-handed, and CCW-outward winding culls
   correctly with `cull: "back"`. Do NOT negate y anywhere else, and do not
