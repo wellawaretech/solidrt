@@ -74,7 +74,7 @@ import {
   torusKnot,
   STANDARD_FLOATS,
 } from "@solidrt/3d"
-import type { DirectionalLightNode, OrbitCamera, SceneNode, Vec3 } from "@solidrt/3d"
+import type { DirectionalLightNode, OrbitCameraHandle, SceneNode, Vec3 } from "@solidrt/3d"
 import { BLINN_SPECULAR, HEMISPHERE, LAMBERT, LIT_VERTEX, MAX_LIGHTS, SHADOW, SHADOW_LOOKUP, SHADOW_SLOTS } from "@solidrt/3d/glsl"
 import { registerDebug } from "srt:dev"
 
@@ -384,9 +384,9 @@ let [casters, setCasters] = createSignal(LIGHT_TINTS.length)
 // Assigned in App; the debug commands below only run once the app is up.
 // One orbit camera per panel: the large one on the left, then the two on
 // the right. Only the left one auto-orbits.
-let orbit!: OrbitCamera
-let topOrbit!: OrbitCamera
-let bottomOrbit!: OrbitCamera
+let orbit!: OrbitCameraHandle
+let topOrbit!: OrbitCameraHandle
+let bottomOrbit!: OrbitCameraHandle
 let lights: DirectionalLightNode[] = []
 // The light rig and where it has turned to. Module scope so the `rig` debug
 // command can park it: the spin pauses with the orbit, so a parked pose and
@@ -396,7 +396,7 @@ let rigAngle = 0
 // A panel as input and the frame loop see it: its camera, the distance range
 // its wheel may steer within, and the eased zoom in flight (null when there
 // is none). Assigned in App, in left-then-right order.
-type PanelCamera = { cam: OrbitCamera; minDistance: number; maxDistance: number; zoom: number | null }
+type PanelCamera = { cam: OrbitCameraHandle; minDistance: number; maxDistance: number; zoom: number | null }
 let cameras: PanelCamera[] = []
 
 // A tap toggles the auto-orbit, so tablets have a pause too. A tap is one
@@ -423,7 +423,7 @@ let setAllOrbiting = (orbiting: boolean) => {
 // Hold one camera's eye above the floor (see the EYE_MIN_Y note): the
 // elevation floor is a function of the distance, so it has to be re-derived
 // every frame rather than fixed once as a minElevation.
-let holdAboveFloor = (cam: OrbitCamera) => {
+let holdAboveFloor = (cam: OrbitCameraHandle) => {
   let pose = cam.pose()
   let minElevation = Math.asin(clamp((EYE_MIN_Y - KNOT_CENTER[1]) / pose.distance, -1, 1))
   if (pose.elevation < minElevation) cam.set({ elevation: minElevation })

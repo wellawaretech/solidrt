@@ -80,13 +80,6 @@ Shaped, not started.
   with no error. Decide once between injecting the standard tail at the
   fragColor write and exporting one composed function the author calls, before
   the next scene-wide effect adds a third thing to forget.
-- **[Instanced meshes cast no shadow](backlog/3d-instanced-shadow-casters.md)** [2026-08-27]
-  The scene's shadow view draws casters with a position-only depth override
-  that knows uModel and nothing else, so an instanced mesh's per-record
-  transforms are invisible to it and `castShadow` on an InstancedMesh is
-  skipped. The additive fix is a per-class `shadowVertex` the override borrows
-  - the shape the skinned casters (posed shadows since 2026-09-01) already
-  proved out.
 - **[Level of detail - distance-selected mesh variants as a core sink](backlog/3d-lod.md)** [2026-08-30]
   A large scene ships every object at one triangle count; a track with a
   thousand trees either draws full-detail foliage at the horizon or nothing. A
@@ -777,6 +770,12 @@ Finished, kept for the reasoning.
   SHADOW_LOOKUP (shadowAt + lightShadow) joined SHADOW_SLOTS and SHADOW in
   @solidrt/3d/glsl on 2026-08-27; lit and the one custom receiver compose it,
   so the sampler if-chain has one generator.
+- **[Instanced meshes cast no shadow](done/3d-instanced-shadow-casters.md)** [2026-08-27]
+  Landed 2026-09-02 as the per-class `shadowVertex` option on
+  shaderMaterialClass - the class's vertex stage reduced to position (instance
+  placement included), from which the class builds one shared depth material
+  the shadow views draw its casters with. `castShadow` on an InstancedMesh now
+  works like on any mesh.
 - **[Scene uniform channel, camera basis, material class/instance split](done/3d-material-uniform-plumbing.md)** [2026-08-17]
   The three ways an app talks to the shared uniform set and to a pipeline all
   have a gap: a Scene has no app-writable shared params (the workaround goes

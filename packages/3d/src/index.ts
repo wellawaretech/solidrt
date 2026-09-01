@@ -26,7 +26,7 @@ export type {
   SpotShadowOptions,
 } from "./light.ts"
 export { createScene } from "./scene.ts"
-export type { CameraUpdate, FogOptions, Hit, OrthoExtent, RaycastOptions, Scene as SceneHandle, SceneHandlers, SceneOptions, ScreenRay, View, ViewOptions } from "./scene.ts"
+export type { CameraState, CameraUpdate, FogOptions, Hit, OrthoExtent, RaycastOptions, Scene as SceneHandle, SceneHandlers, SceneOptions, ScreenRay, View, ViewOptions } from "./scene.ts"
 export type { NodeTransition, NodeTransitionSpec } from "flux:spatial"
 export { disposeGeometry } from "./geometry-gpu.ts"
 export { box, circle, cone, cylinder, fillAttribute, fillColors, geometryBounds, layoutAttributes, layoutKey, layoutSlot, layoutStride, mergeGeometries, packGeometry, plane, ring, sphere, torus, torusKnot, transformGeometry, validateGeometry, withAttribute, withColors, STANDARD_FLOATS, VERTEX_LAYOUTS } from "./geometry.ts"
@@ -37,15 +37,18 @@ export { extrude, lathe, pathFrames, sweep, tube } from "./sweep.ts"
 export type { ExtrudeOptions, LatheOptions, PathFrames, PathPoint, SweepPath, TubeOptions } from "./sweep.ts"
 export { lit, shaderMaterial, shaderMaterialClass, sprite, unlit } from "./material.ts"
 export type { LitOptions, Material, ShaderMaterialClass, ShaderMaterialClassOptions, ShaderMaterialInstanceOptions, ShaderMaterialOptions, SpriteOptions, UnlitOptions } from "./material.ts"
-export { DirectionalLight, Group, HemisphereLight, InstancedMesh, Mesh, PerspectiveCamera, PointLight, Scene, SpotLight, Sprite, useScene } from "./components.tsx"
+export { DirectionalLight, Group, HemisphereLight, InstancedMesh, Mesh, OrbitCamera, PerspectiveCamera, PointLight, Scene, SpotLight, Sprite, useScene } from "./components.tsx"
 export type {
   DirectionalLightProps,
   HemisphereLightProps,
   InstancedMeshProps,
   MeshProps,
+  OrbitCameraProps,
   PerspectiveCameraProps,
   PointerEventProps,
   PointLightProps,
+  SceneInput,
+  SceneInputListener,
   SceneProps,
   SpotLightProps,
   SpriteProps,
@@ -60,7 +63,7 @@ export { createMixer } from "./mixer.ts"
 export type { Mixer, MixerPlayOptions } from "./mixer.ts"
 export { sampleChannel } from "./clip.ts"
 export { createOrbitCamera } from "./orbit.ts"
-export type { OrbitCamera, OrbitCameraOptions, OrbitPose, OrbitTarget } from "./orbit.ts"
+export type { OrbitCamera as OrbitCameraHandle, OrbitCameraOptions, OrbitPose, OrbitTarget } from "./orbit.ts"
 // math's lookAt (the camera view matrix) stays on the /math subpath: the
 // root's lookAt is the scene verb, the same split as `add`.
 export { rayBoxDistance, compose, copy, eulerFromQuat, identity, mat4, multiply, normalMatrix, orthographic, perspective, quat, quatFromAxisAngle, quatFromEuler, quatFromFrame, quatFromTo, quatMultiply, quatNormalize, quatSlerp } from "./math.ts"

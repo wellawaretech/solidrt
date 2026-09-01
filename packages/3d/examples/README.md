@@ -37,7 +37,9 @@ depends on `@solidrt/3d` (or in-repo from the package directory).
   `instanceAttributes`, two `<InstancedMesh>` fleets (400 scattered
   rocks, a ring of pines) each ONE draw entry and ONE uModel, a spinning
   group moving both with two matrix writes, and `setInstanceCount` from
-  onFrame breathing the pine population.
+  onFrame breathing the pine population. The class also declares
+  `shadowVertex` (the placement math alone), so both fleets `castShadow`
+  onto the lit ground - the pines' shadows breathe with them.
 - `scene-views.tsx` - scene views: one scene rendered three times, the
   built-in perspective leaf plus two `scene.createView` targets - a
   top-down ORTHOGRAPHIC map (`ortho` on setCamera) and a side silhouette
@@ -58,6 +60,12 @@ depends on `@solidrt/3d` (or in-repo from the package directory).
   the plain box widened to cover the field: one map's texels spread over
   it, blocky everywhere) and the `cascades`/`fly` debug commands set the
   count and the shadow distance and park the flight.
+- `lamps.tsx` - spot and point lights in a dark courtyard: a warm SOFT
+  spot (penumbra 0.4) swinging from a parent group, a fixed HARD spot
+  (penumbra 0.05) aimed by `direction` at a knot on a pedestal, and a
+  blue point bulb orbiting the crates; both spots `castShadow` (a
+  perspective map each), and the header notes the decay-2 intensity
+  scale (candela-like: a lamp 5 units up wants ~40, not ~2).
 - `fog.tsx` - scene fog over a valley of pines between two ridges: a
   click cycles LINEAR (`{ near, far }`, a clear band then a fade to the
   far plane), EXP2 (`{ density }`, thickening from the first metre) and

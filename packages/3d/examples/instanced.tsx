@@ -12,20 +12,29 @@
 // wants in general. The explicit `bounds` cover the scatter so picking
 // still works (one conservative box around the population; omit bounds and
 // the mesh simply never picks).
+//
+// The fleets CAST: the class declares `shadowVertex` - its vertex stage
+// reduced to the position math, instance placement included - and with it
+// `castShadow` on an InstancedMesh works like on any mesh (without it the
+// shadow views skip instanced meshes). The lit ground receives; both
+// populations throw shadows from the one casting sun, and the breathing
+// pines' shadows appear and vanish with them.
 import { createSignal, onFrame, pct, render } from "@solidrt/core"
 import { glsl } from "@solidrt/core/gpu"
 import {
   box,
   cone,
+  DirectionalLight,
   Group,
+  HemisphereLight,
   InstancedMesh,
+  lit,
   Mesh,
   PerspectiveCamera,
   plane,
   Scene,
   setInstanceCount,
   shaderMaterialClass,
-  unlit,
 } from "@solidrt/3d"
 import type { InstancedMeshNode } from "@solidrt/3d"
 import { HEMISPHERE } from "@solidrt/3d/glsl"
@@ -48,6 +57,20 @@ const INSTANCE_VERTEX = glsl`
     gl_Position = uViewProj * uModel * vec4(p, 1.0);
     vNormal = mat3(uModel) * aNormal;
     vTint = iTint;
+  }
+`
+
+// The shadow pass's view of the same placement: aPos * iScale + iPos and
+// nothing else - no normal, no tint. The depth fragment is the engine's.
+const INSTANCE_SHADOW_VERTEX = glsl`
+  in vec3 aPos;
+  in vec3 iPos;
+  in float iScale;
+  uniform mat4 uModel;
+  uniform mat4 uViewProj;
+
+  void main() {
+    gl_Position = uViewProj * uModel * vec4(aPos * iScale + iPos, 1.0);
   }
 `
 
@@ -120,19 +143,30 @@ function App() {
       <view width={pct(100)} height={pct(100)} designSize={[SIZE, SIZE]}>
         <Scene width={SIZE} height={SIZE} clearColor={[0.07, 0.08, 0.1, 1]} label="instanced">
           <PerspectiveCamera fov={55} position={[0, 3.2, 5.4]} lookAt={[0, 0.2, 0]} />
-          <Mesh geometry={plane({ width: 9, height: 9, label: "meadow" })} material={unlit({ color: [0.16, 0.18, 0.16] })} rotation={[-Math.PI / 2, 0, 0]} />
+          <HemisphereLight sky={[0.4, 0.42, 0.45]} ground={[0.12, 0.13, 0.11]} />
+          <DirectionalLight
+            color={[1, 0.95, 0.85]}
+            intensity={0.7}
+            position={[4, 3.5, 3]}
+            direction={[-4, -3.5, -3]}
+            castShadow
+            shadow={{ normalBias: 0.02, camera: { near: 1, far: 20 } }}
+          />
+          <Mesh geometry={plane({ width: 9, height: 9, label: "meadow" })} material={lit({ color: [0.24, 0.27, 0.24] })} rotation={[-Math.PI / 2, 0, 0]} />
           <Group rotation={[0, spin(), 0]}>
             <InstancedMesh
               geometry={box({ label: "rock" })}
               material={instancedLook.instance()}
               records={rocks(400)}
               bounds={[-3.9, 0, -3.9, 3.9, 0.2, 3.9]}
+              castShadow
             />
             <InstancedMesh
               geometry={cone({ radius: 0.3, height: 1, radialSegments: 10, label: "pine" })}
               material={instancedLook.instance()}
               records={pines(PINE_COUNT)}
               bounds={[-2.8, 0, -2.8, 2.8, 0.8, 2.8]}
+              castShadow
               ref={m => (pinesMesh = m)}
             />
           </Group>
@@ -146,6 +180,7 @@ function App() {
 // per-mesh uniforms stay independent (none are used here).
 let instancedLook = shaderMaterialClass({
   vertex: INSTANCE_VERTEX,
+  shadowVertex: INSTANCE_SHADOW_VERTEX,
   fragment: INSTANCE_FRAGMENT,
   instanceAttributes: [
     { name: "iPos", format: "vec3" },

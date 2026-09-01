@@ -66,8 +66,8 @@ blendMode and pointer events like any element.
   fogged scene); absent follows the scene. `overrideMaterial` (Three's
   `scene.overrideMaterial`, scoped to the view) draws every mesh with one
   material - a depth pass, a normal/id visualizer - skips instanced
-  meshes (the override cannot know their record layout) and draws in add
-  order. `depth: "texture"` exposes `view.depthTexture`, the shadow-map
+  meshes (unless the override itself declares their exact
+  `instanceAttributes` record layout) and draws in add order. `depth: "texture"` exposes `view.depthTexture`, the shadow-map
   input; the same option on createScene exposes `scene.depthTexture`,
   the input for a depth-reading post effect in `output` (not combinable
   with `samples` - no multisampled sampleable depth). `ortho: { left, right, top, bottom }` on any camera swaps
@@ -241,7 +241,10 @@ let target = createMemo(() => {
 `windowSize` and `displayScale` come from `@solidrt/core`. The leaf's
 layout differs from the target, so it takes `handlersFor` (below), not
 `handlers`; `useScene()` works inside `output` because it runs in the
-scene context.
+scene context. With an `<OrbitCamera>` (or any SceneInput listener) in
+the scene, also spread `{...useScene().input.handlersFor(windowSize)}`
+on the leaf - the mesh-event and control-input channels are separate
+spreads with the same layout.
 
 Camera control: `createOrbitCamera(scene, { target?, azimuth?, elevation?,
 distance?, min/maxDistance?, min/maxElevation?, orbitSpeed?, rotateSpeed?,
@@ -272,8 +275,19 @@ when the pose changed - to gate per-frame dependents like reprojecting
 HUD overlays. `orbiting()` is reactive (HUD-safe); the pose is plain state via
 `pose()`/`set()` (also the debug-command shape). It drives position and
 target only; fov/near/far stay on scene.setCamera (or the Scene `camera`
-prop). In a component tree, reach the scene via `<Scene ref>` or
-useScene().
+prop).
+
+In a component tree, skip the wiring: `<OrbitCamera azimuth={1.2}
+distance={7} />` as a Scene child reaches the scene through context,
+receives input from the scene's leaf (the built-in one automatically; a
+custom `output` leaf spreads `{...useScene().input.handlersFor(layout)}`
+beside its scene.handlersFor spread, same `layout`), defaults `viewport`
+to the leaf's laid-out size plus the scene camera's fov, and pushes input
+poses synchronously - no ref plumbing, no onFrame. Auto-orbit runs a
+frame loop only while `orbiting()`, so a paused camera keeps the app
+demand-driven idle. Options are read once at mount; runtime pose changes
+(and the debug-command hookup) go through `ref`'s handle, whose set()
+also pushes the pose.
 
 Overlay projection: `scene.project(point)` maps a world point to scene
 pixels (top-left origin, y down - the output texture's own space; `w` is
@@ -639,7 +653,8 @@ A custom fragment that declares only the old directional subset
 (`uLightCount`/`uLightDir`/`uLightColor`) still works - it just shades
 every light as directional, so keep such materials to directional-only
 scenes. Everything starts black: a lit scene with no light shows
-nothing, on purpose, like Three.
+nothing, on purpose, like Three. `examples/lamps.tsx` is the spot/point
+shape (soft vs hard cone, casting spots, an orbiting bulb).
 
 `lit(opts)` is the standard look beside `unlit`: hemisphere ambient plus
 the directional list, Lambert diffuse, Blinn-Phong highlight when
@@ -874,6 +889,9 @@ older bakes are rejected - re-bake with `srt tool 3d/model`.
   `setInstances` past capacity doubles (at least to the records written)
   into a new buffer and swaps it in - amortized like a dynamic array, same
   policy as @solidrt/2d; size the initial records to skip the copies.
+- Instanced casters: `castShadow` on an instanced mesh needs the class's
+  `shadowVertex` (see shadows below); a class without one is skipped by
+  shadow views, silently.
 - An instanced mesh without explicit `bounds` has no BVH leaf: it never
   picks, pointer events never target it, and its transparent sort key
   falls back to the node's world position. That is deliberate - records
@@ -1002,9 +1020,13 @@ older bakes are rejected - re-bake with `srt tool 3d/model`.
   and supplies its own cutout variant as the `shadow` instance option).
   Opting out of receiving is on the
   MATERIAL here (`receiveShadow: false`), not the object (Three's
-  `mesh.receiveShadow`) - Godot's split, and URP's - and instanced
-  meshes never cast (the depth override cannot know their records) - the
-  additive follow-up is a per-class `shadowVertex`. Every casting light
+  `mesh.receiveShadow`) - Godot's split, and URP's. An instanced mesh
+  casts when its class declares `shadowVertex` (the vertex stage reduced
+  to position, instance placement included; the class builds one depth
+  program from it plus the shared depth fragment, culling the shadow
+  side, and every instance shares it) - without one the shadow views
+  SKIP instanced meshes, since the plain depth override cannot know
+  their records. `examples/instanced.tsx` casts. Every casting light
   is a full extra pass over the casters plus a sampler unit on every
   receiving program (MAX_LIGHTS of those are always bound, placeholders
   included), so cast from the lights that matter, not all of them.

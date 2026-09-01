@@ -77,10 +77,13 @@ export type Material = {
    * culls (Three's shadowSide rule, Godot's shadow pass), so a `cull:
    * "none"` caster casts from both faces, for a cutout (lit
    * alphaTest with a map) the same discard, so a plant casts leaves and
-   * not rectangles, and for a skinned material the same skinning, so a
-   * posed caster casts its pose. Absent = the default (a back-culling
-   * material casts from its back faces). A shaderMaterial supplies its
-   * own through the instance option of the same name. */
+   * not rectangles, for a skinned material the same skinning, so a
+   * posed caster casts its pose, and for an instanced class with
+   * `shadowVertex` the same instance placement, so a fleet casts where
+   * its records stand. Absent = the default (a back-culling material
+   * casts from its back faces); an instanced material without one is
+   * SKIPPED by shadow views. A shaderMaterial supplies its own through
+   * the instance option of the same name. */
   shadow?: Material
   /** True when the vertex stage declares `uBones` (read from the source,
    * like normalMatrix): the program skins by the mesh's palette texture,
@@ -725,6 +728,22 @@ export type ShaderMaterialClassOptions = {
    * and the composed uModel still places the whole population.
    */
   instanceAttributes?: VertexAttribute[]
+  /**
+   * The class's vertex stage reduced to POSITION - the instance
+   * placement, a displacement, whatever moves vertices, minus every
+   * color/normal/uv output - for the shadow pass. With it the class's
+   * instances cast: a shadow view draws their meshes with a depth
+   * pipeline built from this stage and the shared depth fragment
+   * (culling the side the class culls, the same instanceAttributes), so
+   * an instanced fleet's shadows land where its records put the
+   * vertices. Same standard-uniform contract as `vertex` (uModel and
+   * uViewProj required); one extra program per class, built at first
+   * cast. Without it, instanced meshes are SKIPPED by shadow views
+   * (`castShadow` does nothing for them) - a non-instanced class needs
+   * it only when its vertex stage moves vertices. Depth-only: a cutout's
+   * discard still goes through the `shadow` instance option.
+   */
+  shadowVertex?: string
   /** Blend over what is behind, with the scene sorting this material's
    * meshes back-to-front after the opaque ones (see Material.transparent).
    * Sets the pipeline defaults blend "alpha" and depthWrite false; the
@@ -751,9 +770,11 @@ export type ShaderMaterialInstanceOptions = {
   params?: ShaderParams
   textures?: TextureBindings
   /** The depth variant a shadow view draws this instance with (see
-   * Material.shadow): a cutout's discard, an instanced class's vertex
-   * placement. Default: the depth pass with this class's cull side,
-   * skinned like the class when its vertex skins by uBones. */
+   * Material.shadow): a cutout's discard, a placement the class-level
+   * `shadowVertex` cannot express. Default: the class's shadowVertex
+   * depth material when one is declared, else the depth pass with this
+   * class's cull side, skinned like the class when its vertex skins by
+   * uBones. */
   shadow?: Material
 }
 
@@ -788,10 +809,12 @@ export function shaderMaterialClass(opts: ShaderMaterialClassOptions): ShaderMat
   // shared params skipping undeclared names the omission would otherwise
   // surface as a silently untransformed render, not an error.
   for (let name of ["uModel", "uViewProj"]) {
-    if (!new RegExp("\\b" + name + "\\b").test(opts.vertex)) {
-      throw new Error(
-        "shaderMaterial vertex stage must declare and use '" + name + "' (see the standard uniform set in AGENTS.md)",
-      )
+    for (let source of opts.shadowVertex === undefined ? [opts.vertex] : [opts.vertex, opts.shadowVertex]) {
+      if (!new RegExp("\\b" + name + "\\b").test(source)) {
+        throw new Error(
+          "shaderMaterial vertex stage must declare and use '" + name + "' (see the standard uniform set in AGENTS.md)",
+        )
+      }
     }
   }
   let program: ProgramId | undefined
@@ -808,6 +831,24 @@ export function shaderMaterialClass(opts: ShaderMaterialClassOptions): ShaderMat
   // An empty list declares nothing - same as absent (the engine requires an
   // instance buffer exactly when attributes are declared).
   let instanceAttributes = opts.instanceAttributes?.length ? opts.instanceAttributes.map(a => ({ ...a })) : undefined
+  // The shadowVertex depth material: one class and one shared instance,
+  // built the first time a caster of this class meets a shadow view.
+  let shadowClass: ShaderMaterialClass | undefined
+  let classShadow: Material | undefined
+  let shadowFor = (): Material | undefined => {
+    if (opts.shadowVertex === undefined) return undefined
+    if (classShadow === undefined) {
+      shadowClass = shaderMaterialClass({
+        vertex: opts.shadowVertex,
+        fragment: SHADOW_DEPTH_FRAGMENT,
+        cull: shadowCull(cull),
+        instanceAttributes,
+        label: (opts.label ?? "shader-material") + "-shadow",
+      })
+      classShadow = shadowClass.instance()
+    }
+    return classShadow
+  }
   let programFor = (): ProgramId => {
     if (program === undefined) {
       let vs = compileShader("vertex", opts.vertex, { header: needsHeader(opts.vertex) })
@@ -857,7 +898,7 @@ export function shaderMaterialClass(opts: ShaderMaterialClassOptions): ShaderMat
         // Lazy: the depth materials are shaderMaterialClass instances
         // themselves, so an eager variant would recurse into its own cache.
         get shadow() {
-          return inst.shadow ?? shadowVariant(cull, skinned)
+          return inst.shadow ?? shadowFor() ?? shadowVariant(cull, skinned)
         },
       }
     },
@@ -867,6 +908,11 @@ export function shaderMaterialClass(opts: ShaderMaterialClassOptions): ShaderMat
       if (program !== undefined) {
         destroyProgram(program)
         program = undefined
+      }
+      if (shadowClass !== undefined) {
+        shadowClass.dispose()
+        shadowClass = undefined
+        classShadow = undefined
       }
     },
   }

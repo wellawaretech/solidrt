@@ -7,8 +7,10 @@
 // node with `ref` and call setTransform from onFrame - signals carry
 // structure and slow state, per-frame motion goes straight to the scene.
 
-import { createContext, createEffect, onCleanup, untrack, useContext } from "@solidrt/core"
-import type { Element, ParentComponent, TextureId, VoidComponent } from "@solidrt/core"
+import { createContext, createEffect, createSignal, onCleanup, onFrame, untrack, useContext } from "@solidrt/core"
+import type { Element, ParentComponent, PointerEvent, TextureId, VoidComponent, WheelEvent } from "@solidrt/core"
+import { createOrbitCamera } from "./orbit.ts"
+import type { OrbitCamera as OrbitCameraHandle, OrbitCameraOptions, OrbitPose } from "./orbit.ts"
 import { add, createGroup, remove, setTransform, setTransition, setVisible } from "./node.ts"
 import type { SceneNode, ScenePointerEvent, TransitionEndEvent } from "./node.ts"
 import {
@@ -43,12 +45,45 @@ import type { Geometry } from "./geometry.ts"
 import type { Material } from "./material.ts"
 import type { Quat, Vec3 } from "./math.ts"
 
-type SceneCtx = { scene: SceneHandle; parent: SceneNode }
+/** A camera control's input feed - the handlers shape createOrbitCamera
+ * exposes, every field optional. */
+export type SceneInputListener = {
+  onPointerDown?(event: PointerEvent): void
+  onPointerMove?(event: PointerEvent): void
+  onPointerUp?(event: PointerEvent): void
+  onWheel?(event: WheelEvent): void
+}
+
+/**
+ * The channel between the element showing the scene and camera-control
+ * components (`<OrbitCamera>`): the leaf feeds pointer and wheel events in,
+ * controls listen. The built-in `<Scene>` leaf is wired automatically; a
+ * custom `output` leaf spreads `{...useScene().input.handlersFor(layout)}`
+ * beside its scene.handlersFor spread, with the same `layout`.
+ */
+export type SceneInput = {
+  /** Spreadable pointer + wheel handlers for the leaf. `layout` reports
+   * the leaf's laid-out size - what viewport-relative controls scale to -
+   * and is read per event, so a reactive layout just works. */
+  handlersFor(layout: () => { width: number; height: number }): {
+    onPointerDown(event: PointerEvent): void
+    onPointerMove(event: PointerEvent): void
+    onPointerUp(event: PointerEvent): void
+    onWheel(event: WheelEvent): void
+  }
+  /** Subscribe a control; returns the unsubscribe. */
+  add(listener: SceneInputListener): () => void
+  /** The showing leaf's laid-out size, null before one registered a
+   * layout (handlersFor supplies it). */
+  layout(): { width: number; height: number } | null
+}
+
+type SceneCtx = { scene: SceneHandle; parent: SceneNode; input: SceneInput }
 let SceneContext = createContext<SceneCtx>()
 
 /**
- * The enclosing scene and parent node - the imperative escape hatch inside
- * a component subtree (throws outside a `<Scene>`).
+ * The enclosing scene, parent node and input channel - the imperative
+ * escape hatch inside a component subtree (throws outside a `<Scene>`).
  */
 export function useScene(): SceneCtx {
   return useContext(SceneContext)
@@ -210,10 +245,41 @@ export let Scene: ParentComponent<SceneProps> = props => {
     l => scene.setLayers(l ?? 1),
   )
   untrack(() => props.ref)?.(scene)
+  // Camera-control input (SceneInput): controls register through context,
+  // the leaf dispatches to them. `hasInput` gates the built-in leaf's
+  // handlers so a control-less scene with events={false} still costs no
+  // pointer routing; ownedWrite because controls add() from their
+  // component bodies.
+  let listeners = new Set<SceneInputListener>()
+  let [hasInput, setHasInput] = createSignal(false, { ownedWrite: true })
+  let leafLayout: (() => { width: number; height: number }) | null = null
+  let input: SceneInput = {
+    handlersFor(layout) {
+      leafLayout = layout
+      return {
+        onPointerDown: e => listeners.forEach(l => l.onPointerDown?.(e)),
+        onPointerMove: e => listeners.forEach(l => l.onPointerMove?.(e)),
+        onPointerUp: e => listeners.forEach(l => l.onPointerUp?.(e)),
+        onWheel: e => listeners.forEach(l => l.onWheel?.(e)),
+      }
+    },
+    add(listener) {
+      listeners.add(listener)
+      setHasInput(true)
+      return () => {
+        listeners.delete(listener)
+        setHasInput(listeners.size > 0)
+      }
+    },
+    layout: () => leafLayout?.() ?? null,
+  }
   let output = untrack(() => props.output)
   let events = untrack(() => props.events) !== false
+  // The built-in leaf is laid out at the target size, so that is its
+  // input layout; a custom output leaf registers its own via handlersFor.
+  let leaf = output ? null : input.handlersFor(() => ({ width: props.width, height: props.height }))
   return (
-    <SceneContext value={{ scene, parent: scene.root }}>
+    <SceneContext value={{ scene, parent: scene.root, input }}>
       {output ? (
         untrack(() => output(scene.texture))
       ) : (
@@ -221,10 +287,11 @@ export let Scene: ParentComponent<SceneProps> = props => {
           src={scene.texture}
           width={props.width}
           height={props.height}
-          onPointerDown={events ? scene.handlers.onPointerDown : undefined}
-          onPointerMove={events ? scene.handlers.onPointerMove : undefined}
-          onPointerUp={events ? scene.handlers.onPointerUp : undefined}
+          onPointerDown={events || hasInput() ? (e: PointerEvent) => { if (events) scene.handlers.onPointerDown(e); leaf!.onPointerDown(e) } : undefined}
+          onPointerMove={events || hasInput() ? (e: PointerEvent) => { if (events) scene.handlers.onPointerMove(e); leaf!.onPointerMove(e) } : undefined}
+          onPointerUp={events || hasInput() ? (e: PointerEvent) => { if (events) scene.handlers.onPointerUp(e); leaf!.onPointerUp(e) } : undefined}
           onPointerLeave={events ? scene.handlers.onPointerLeave : undefined}
+          onWheel={hasInput() ? leaf!.onWheel : undefined}
         />
       )}
       {props.children}
@@ -240,7 +307,7 @@ export let Group: ParentComponent<TransformProps & PointerEventProps & { ref?: (
   syncNode(node, props)
   untrack(() => props.ref)?.(node)
   onCleanup(() => remove(node))
-  return <SceneContext value={{ scene: ctx.scene, parent: node }}>{props.children}</SceneContext>
+  return <SceneContext value={{ scene: ctx.scene, parent: node, input: ctx.input }}>{props.children}</SceneContext>
 }
 
 export type MeshProps = TransformProps & PointerEventProps & {
@@ -255,7 +322,7 @@ export type MeshProps = TransformProps & PointerEventProps & {
   /** Explicit draw-order key (setRenderOrder as a prop); default 0. */
   renderOrder?: number
   /** Draw into the scene's shadow map (setCastShadow as a prop); default
-   * false. Needs a `castShadow` DirectionalLight to show. */
+   * false. Needs a `castShadow` light to show. */
   castShadow?: boolean
   /** Layer membership bitmask (setLayers as a prop; default 1): a target
    * draws the mesh when its mask intersects this. Not inherited from
@@ -348,6 +415,11 @@ export type InstancedMeshProps = TransformProps & PointerEventProps & {
   params?: ShaderParams
   /** Explicit draw-order key (setRenderOrder as a prop); default 0. */
   renderOrder?: number
+  /** Draw into the scene's shadow map (setCastShadow as a prop); default
+   * false. Needs a `castShadow` light AND a material class declaring
+   * `shadowVertex` (the depth pass with the instance placement) - the
+   * shadow views skip an instanced mesh without one. */
+  castShadow?: boolean
   /** Layer membership bitmask (setLayers as a prop; default 1). */
   layers?: number
   ref?: (mesh: InstancedMeshNode) => void
@@ -395,6 +467,10 @@ export let InstancedMesh: VoidComponent<InstancedMeshProps> = props => {
     o => setRenderOrder(mesh, o ?? 0),
   )
   createEffect(
+    () => props.castShadow,
+    c => setCastShadow(mesh, c === true),
+  )
+  createEffect(
     () => props.layers,
     l => setLayers(mesh, l ?? 1),
   )
@@ -428,6 +504,82 @@ export let PerspectiveCamera: VoidComponent<PerspectiveCameraProps> = props => {
     ([fov, near, far, position, lookAt, up]) =>
       ctx.scene.setCamera({ fov, near, far, position, target: lookAt, up }),
   )
+  return null
+}
+
+// Cap on the auto-orbit's per-frame dt in seconds, so the first tick after
+// a suspended stretch (a resumed app, a reload) cannot leap the pose.
+const MAX_ORBIT_DT = 0.1
+
+export type OrbitCameraProps = OrbitCameraOptions & {
+  /** The control's handle (pose()/set()/eye()/orbiting() - also the debug
+   * command shape). This handle's set() pushes the pose itself, so a
+   * caller never touches update(). */
+  ref?: (orbit: OrbitCameraHandle) => void
+}
+
+/**
+ * createOrbitCamera as a Scene child: drives the enclosing scene's camera
+ * and takes its input from the scene's leaf through context - no ref
+ * plumbing, no handler spreads, no onFrame of your own (with a custom
+ * `output`, spread `useScene().input.handlersFor(layout)` on your leaf).
+ * Options are read once at mount; change the pose at runtime through
+ * `ref`'s set(). `viewport` defaults to the leaf's laid-out size plus the
+ * scene camera's fov, so rotation is viewport-relative and two-finger pan
+ * works out of the box (pass your own to override). Auto-orbit runs a
+ * frame loop only while `orbiting()`; a paused or drag-only camera leaves
+ * the app demand-driven idle.
+ */
+export let OrbitCamera: VoidComponent<OrbitCameraProps> = props => {
+  let ctx = useContext(SceneContext)
+  let orbit = untrack(() => {
+    let viewport =
+      props.viewport ??
+      (() => {
+        let layout = ctx.input.layout()
+        return layout === null ? null : { height: layout.height, fov: ctx.scene.camera().fov }
+      })
+    return createOrbitCamera(ctx.scene, { ...props, viewport })
+  })
+  // Input pushes the pose synchronously (update(0)), so a drag needs no
+  // frame loop and the next paint carries the new camera.
+  onCleanup(
+    ctx.input.add({
+      onPointerDown: e => {
+        orbit.handlers.onPointerDown(e)
+        orbit.update(0)
+      },
+      onPointerMove: e => {
+        orbit.handlers.onPointerMove(e)
+        orbit.update(0)
+      },
+      onPointerUp: e => orbit.handlers.onPointerUp(e),
+      onWheel: e => {
+        orbit.handlers.onWheel(e)
+        orbit.update(0)
+      },
+    }),
+  )
+  createEffect(
+    () => orbit.orbiting(),
+    on => {
+      if (!on) return
+      let last: number | null = null
+      return onFrame(tick => {
+        let now = tick / 1000
+        let dt = last === null ? 0 : Math.min(now - last, MAX_ORBIT_DT)
+        last = now
+        orbit.update(dt)
+      })
+    },
+  )
+  untrack(() => props.ref)?.({
+    ...orbit,
+    set: (pose: OrbitPose) => {
+      orbit.set(pose)
+      orbit.update(0)
+    },
+  })
   return null
 }
 

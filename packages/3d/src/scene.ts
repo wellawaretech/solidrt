@@ -128,6 +128,18 @@ export type SceneHandlers = {
  * same box at every depth). */
 export type OrthoExtent = { left: number; right: number; top: number; bottom: number }
 
+/** A camera snapshot (Scene/View `camera()`): CameraUpdate's fields, all
+ * present. Arrays are copies of the internal state. */
+export type CameraState = {
+  fov: number
+  near: number
+  far: number
+  position: Vec3
+  target: Vec3
+  up: Vec3
+  ortho: OrthoExtent | null
+}
+
 export type CameraUpdate = {
   /** Vertical field of view in DEGREES (default 60). */
   fov?: number
@@ -303,6 +315,8 @@ export type View = {
   depthTexture: TextureId | null
   /** Partial camera update, exactly scene.setCamera. */
   setCamera(update: CameraUpdate): void
+  /** Current camera state, exactly scene.camera. */
+  camera(): CameraState
   setSize(width: number, height: number): void
   /** Move and resize a view created `into` an atlas (top-left origin);
    * throws on a view with a target of its own. */
@@ -330,6 +344,10 @@ export type Scene = {
   root: SceneNode
   /** Partial camera update; absent keys keep their current value. */
   setCamera(update: CameraUpdate): void
+  /** The camera as the next frame draws it: setCamera's own fields, a
+   * fresh snapshot per call (arrays are copies - mutate freely, write
+   * back through setCamera). Reflects a pending setCamera immediately. */
+  camera(): CameraState
   setSize(width: number, height: number): void
   /**
    * Scene-wide uniforms: merge app-owned names into the target's SHARED
@@ -502,6 +520,18 @@ function makeCamera(): Camera {
     proj: mat4(),
     view: mat4(),
     viewProj: mat4(),
+  }
+}
+
+function cameraState(cam: Camera): CameraState {
+  return {
+    fov: cam.fov,
+    near: cam.near,
+    far: cam.far,
+    position: [cam.eye[0], cam.eye[1], cam.eye[2]],
+    target: [cam.target[0], cam.target[1], cam.target[2]],
+    up: [cam.up[0], cam.up[1], cam.up[2]],
+    ortho: cam.ortho === null ? null : { left: cam.ortho.left, right: cam.ortho.right, top: cam.ortho.top, bottom: cam.ortho.bottom },
   }
 }
 
@@ -1007,13 +1037,27 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
   let attachView = (v: ViewRecord, mesh: Mesh) => {
     if (v.entries.has(mesh)) return
     let inst = mesh._instances
-    if (v.override !== null && inst !== null) return
     if (v.shadowFilter !== null && !v.shadowFilter(mesh)) return
     if ((mesh.layers & v.mask) === 0) return
     // A shadow view lets a caster's material pick its own depth variant
-    // (its cull side); any other override view draws exactly what it was
-    // given.
+    // (its cull side, cutout, skinning - or the class's shadowVertex,
+    // the instanced placement); any other override view draws exactly
+    // what it was given.
     let material = v.override !== null ? (v.shadowFilter !== null ? (mesh.material.shadow ?? v.override) : v.override) : mesh.material
+    // An override pipeline cannot know an instanced mesh's record
+    // layout, so the mesh is skipped - unless the variant chosen above
+    // is instanced itself (a class with shadowVertex, whose attributes
+    // are the class's own and must match the records like the main
+    // material's did at add()).
+    if (v.override !== null && inst !== null) {
+      let attrs = material.instanceAttributes
+      if (attrs === undefined) return
+      if (instanceStride(attrs) !== inst.stride) {
+        throw new Error(
+          "Shadow material's instanceAttributes take " + instanceStride(attrs) + " floats but the mesh's records are " + inst.stride,
+        )
+      }
+    }
     let bufs = mesh._buffers!
     let entry = addDraw(v.texture, material.pipeline(mesh.geometry.layout), entrySeed(material, v.override !== null ? null : mesh._params), {
       buffer: bufs.buffer,
@@ -1604,6 +1648,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       updateCamera(camera, update)
       hooks._schedule()
     },
+    camera: () => cameraState(camera),
     setSize(w, h) {
       if (disposed || (w === width && h === height)) return
       width = w
@@ -1749,6 +1794,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
           updateCamera(v.camera, update)
           hooks._schedule()
         },
+        camera: () => cameraState(v.camera),
         setSize(w, h) {
           if (v.disposed || (w === v.width && h === v.height)) return
           v.width = w

@@ -3,6 +3,12 @@
 // clamps - the standard interactive-viewer camera, extracted so apps stop
 // rebuilding it.
 //
+// Rotation is viewport-relative when the control knows its viewport
+// (OrbitCameraOptions.viewport): dragging one viewport height sweeps one
+// full turn, Three's OrbitControls convention, so the same drag feels the
+// same on a phone and a 4k window. Without a viewport it falls back to a
+// fixed angle per pixel.
+//
 // Input goes through core's merged transform recognizer (createTransform), so
 // the drag participates in the gesture arena: on a viewport embedded in a
 // scrollable layout, an orbit drag and the ancestor scroller's pan arbitrate
@@ -51,8 +57,13 @@ import type { PointerEvent } from "@solidrt/core"
 import type { CameraUpdate } from "./scene.ts"
 import type { Vec3 } from "./math.ts"
 
-// Baseline sensitivities at rotateSpeed/zoomSpeed 1, in radians per dragged
-// pixel and zoom exponent per wheel-delta unit.
+// Baseline sensitivities at rotateSpeed/zoomSpeed 1. With a `viewport` the
+// rotation is viewport-relative: dragging one viewport height sweeps
+// DRAG_TURNS full turns on either axis (Three's OrbitControls convention),
+// so the feel survives any window size or form factor. Without one it
+// falls back to fixed radians per dragged pixel - the relative rule frozen
+// at a ~785 px viewport. Wheel zoom is an exponent per wheel-delta unit.
+const DRAG_TURNS = 1
 const DRAG_AZIMUTH = 0.008
 const DRAG_ELEVATION = 0.006
 const WHEEL_ZOOM = 0.0015
@@ -84,9 +95,12 @@ export type OrbitCameraOptions = {
   panSpeed?: number
   /** The viewport the pointer coordinates live in: height in the same
    * logical units as clientX/clientY, and the camera's vertical fov in
-   * degrees. Providing it enables two-finger pan; without it two-finger
-   * translation rotates, as it always did. */
-  viewport?: () => { height: number; fov: number }
+   * degrees; return null while neither is known yet. Providing it makes
+   * rotation viewport-relative (a drag across the viewport height is one
+   * full turn, whatever the window size) and enables two-finger pan;
+   * without it rotation is a fixed angle per pixel and two-finger
+   * translation rotates. */
+  viewport?: () => { height: number; fov: number } | null
   /** Constrain where a pan may put the target - return the target to use.
    * The typical use: keep the pivot within a few radii of the subject so
    * panning cannot strand the camera. Zoom and rotation do not consult it. */
@@ -147,9 +161,9 @@ let clampNum = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, 
 /**
  * Create an orbit camera driving `camera`'s position and target, where
  * `camera` is a Scene or one of its Views (fov, near, and far stay yours via
- * its setCamera). The initial pose applies immediately. In a component tree,
- * reach the scene via `<Scene ref>` or useScene() (a view via `<View ref>`)
- * and hand the handlers to whichever element owns input.
+ * its setCamera). The initial pose applies immediately. In a component
+ * tree, prefer the `<OrbitCamera>` component: it wires all of this -
+ * scene, input, viewport, frame loop - through the Scene context.
  */
 export function createOrbitCamera(camera: OrbitTarget, options: OrbitCameraOptions = {}): OrbitCamera {
   let target: Vec3 = options.target ? [options.target[0], options.target[1], options.target[2]] : [0, 0, 0]
@@ -177,8 +191,7 @@ export function createOrbitCamera(camera: OrbitTarget, options: OrbitCameraOptio
   // tracks the fingers: dragged pixels map to world units through the
   // frustum height at the target's depth. Screen +y is down, so the up-axis
   // term is added (fingers down -> camera up -> scene follows down).
-  let pan = (dx: number, dy: number) => {
-    let vp = options.viewport!()
+  let pan = (dx: number, dy: number, vp: { height: number; fov: number }) => {
     let wpp = ((2 * Math.tan((vp.fov * Math.PI) / 360) * distance) / vp.height) * (options.panSpeed ?? 1)
     let sa = Math.sin(azimuth)
     let ca = Math.cos(azimuth)
@@ -269,11 +282,14 @@ export function createOrbitCamera(camera: OrbitTarget, options: OrbitCameraOptio
       }
     },
     onTransformMove: (t) => {
-      if (t.pointers >= 2 && options.viewport) {
-        pan(t.dx, t.dy)
+      let vp = options.viewport?.() ?? null
+      if (t.pointers >= 2 && vp !== null) {
+        pan(t.dx, t.dy, vp)
       } else {
-        azimuth -= t.dx * dragAzimuth
-        elevation = clampNum(elevation + t.dy * dragElevation, minElevation, maxElevation)
+        // Viewport-relative when the height is known, per-pixel otherwise.
+        let rel = vp !== null ? ((DRAG_TURNS * 2 * Math.PI) / vp.height) * (options.rotateSpeed ?? 1) : null
+        azimuth -= t.dx * (rel ?? dragAzimuth)
+        elevation = clampNum(elevation + t.dy * (rel ?? dragElevation), minElevation, maxElevation)
       }
       if (t.scale !== 1) {
         // Fingers spreading (scale > 1) zooms in: the distance shrinks by the

@@ -167,12 +167,12 @@ what it delivered is documented in `packages/3d/AGENTS.md`, not here.
     point casters
     ([3d-point-light-shadows](../backlog/3d-point-light-shadows.md);
     spot casters landed 2026-09-02 - the same machinery with a
-    perspective camera, one slot), cascades
-    ([3d-shadow-cascades](../backlog/3d-shadow-cascades.md)) and instanced
-    casters
-    ([3d-instanced-shadow-casters](../backlog/3d-instanced-shadow-casters.md);
-    skinned casters cast their pose since 2026-09-01, riding the
-    float-texture palettes).
+    perspective camera, one slot) and cascades
+    ([3d-shadow-cascades](../backlog/3d-shadow-cascades.md)). Instanced
+    casters landed 2026-09-02
+    ([3d-instanced-shadow-casters](../done/3d-instanced-shadow-casters.md):
+    per-class `shadowVertex`; skinned casters cast their pose since
+    2026-09-01, riding the float-texture palettes).
     Shaped 2026-08-26 as engine sampleable
     depth ([gpu-sampleable-depth](../done/gpu-sampleable-depth.md)),
     per-target draw sinks in the spatial core, then scene VIEWS, then the
