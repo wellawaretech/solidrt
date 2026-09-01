@@ -3,7 +3,7 @@ title: Cheatsheet says untrack exempts owned-scope writes; the guard is owner-ba
 description: REACTIVE_WRITE_IN_OWNED_SCOPE fires on the owner context, which untrack never touches (it only toggles tracking), so the cheatsheet's documented escape hatch ("move setters into untrack" / "untracked blocks") throws anyway; folded in, the thrown Error should name the owner it already computes for emitDiagnostic.
 project: solid-js CHEATSHEET.md + @solidjs/signals core (github.com/solidjs/solid)
 versions: solid-js / @solidjs/signals 2.0.0-rc.4; next branch checked 2026-08-31
-status: fixed-upstream
+status: resolved
 link: https://github.com/solidjs/solid/issues/3157
 created: 2026-08-31
 ---
@@ -74,3 +74,9 @@ now appends the owning scope's name. Not in any release yet (rc.4 is the
 newest); flip to resolved when it reaches our solid-js. Our own copies of
 the untrack advice (core, scaffold, console AGENTS.md) were corrected the
 same day, with the ref callback added to the owned-scope list.
+
+## Outcome
+
+Resolved in 2.0.0-rc.5 (bumped 2026-09-02): CHEATSHEET.md lines 515 and 648
+now state that untrack does not exempt owned-scope writes (the guard is
+owner-based) and point to event handlers / onSettled / { ownedWrite: true }.

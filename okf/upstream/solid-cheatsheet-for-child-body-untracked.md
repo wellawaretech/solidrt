@@ -3,7 +3,7 @@ title: Solid 2 cheatsheet does not say the For child body is untracked
 description: CHEATSHEET.md documents the accessor/plain-value flip between keyed and non-keyed For, but not that the child function's body is an untracked scope, so the default "destructure at the top, use below" style silently freezes; the trap should sit next to For keyed={false}.
 project: solid-js CHEATSHEET.md (github.com/solidjs/solid)
 versions: solid-js 2.0.0-rc.3 (also rc.4, checked 2026-08-30)
-status: fixed-upstream
+status: resolved
 link: https://github.com/solidjs/solid/issues/3126
 created: 2026-08-30
 ---
@@ -62,3 +62,9 @@ Outcome 2026-08-31: fixed on `next` in b2f0988b (cheatsheet now states the
 callback body is an owner, not a tracking scope, in three places including
 next to the non-keyed `<For>` example). Not in any release yet (rc.4 is the
 newest); flip to resolved when the fix reaches our solid-js.
+
+## Outcome
+
+Resolved in solid-js 2.0.0-rc.5 (bumped 2026-09-02): CHEATSHEET.md now says
+the callback body is an owner, not a tracking scope, and that a top-of-body
+accessor read freezes at the initial value, right under the For keying rules.

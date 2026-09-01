@@ -3,7 +3,7 @@ title: flattenArray drops needsUnwrap when a fragment follows an accessor
 description: In @solidjs/signals flattenArray assigns the nested call's result to needsUnwrap instead of OR-ing it, so an accessor followed by a function-free array child is returned raw; the DOM renderer tolerates it, a universal renderer passes the memo to insertNode and crashes.
 project: "@solidjs/signals (github.com/solidjs/solid, packages/signals)"
 versions: 2.0.0-rc.3 and rc.4; same line on `next` at d6a4a52f (2026-08-30)
-status: fixed-upstream
+status: resolved
 link: https://github.com/solidjs/solid/issues/3133
 created: 2026-08-30
 ---
@@ -100,3 +100,9 @@ Upstream correction worth keeping: @solidjs/web is NOT protected in 2.0 (the
 insertExpression branch was 1.x dom-expressions), so the DOM renderer crashed
 on the same shape too. Not in any release yet (rc.4 is the newest); flip to
 resolved when it reaches our tree.
+
+## Outcome
+
+Resolved in @solidjs/signals 2.0.0-rc.5 (bumped 2026-09-02): flattenArray now
+ORs the nested result (`needsUnwrap = flattenArray(child, ...) || needsUnwrap`),
+verified in the installed dist.
