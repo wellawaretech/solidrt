@@ -4,14 +4,14 @@ plugins {
 
 android {
     namespace = "com.solidrt.app"
-    compileSdkVersion 36
-    buildToolsVersion "36.1.0"
+    compileSdk = 36
+    buildToolsVersion = "36.1.0"
     ndkVersion = "29.0.14206865"
     defaultConfig {
-        minSdkVersion 26
-        targetSdkVersion 36
-        versionCode 1
-        versionName "1.0"
+        minSdk = 26
+        targetSdk = 36
+        versionCode = 1
+        versionName = "1.0"
         // Restrict the packaged native libs to one ABI when -PsrtAbi is passed
         // (e.g. the 32-bit single-ABI dist target). Absent, every ABI staged
         // under dist/android is bundled, which is the fat-APK default.
@@ -30,28 +30,28 @@ android {
     // default; release references it explicitly below.
     signingConfigs {
         debug {
-            storeFile file('debug.keystore')
-            storePassword 'android'
-            keyAlias 'androiddebugkey'
-            keyPassword 'android'
+            storeFile = file('debug.keystore')
+            storePassword = 'android'
+            keyAlias = 'androiddebugkey'
+            keyPassword = 'android'
         }
     }
-    flavorDimensions "variant"
+    flavorDimensions = ["variant"]
     productFlavors {
         go {
-            dimension "variant"
-            applicationId "com.solidrt.go"
+            dimension = "variant"
+            applicationId = "com.solidrt.go"
         }
         prod {
-            dimension "variant"
-            applicationId "com.solidrt.app"
+            dimension = "variant"
+            applicationId = "com.solidrt.app"
         }
     }
     buildTypes {
         release {
-            signingConfig signingConfigs.debug
-            minifyEnabled false
-            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+            signingConfig = signingConfigs.debug
+            minifyEnabled = false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
     }
     // Native libs and assets are per flavor, not on main: flavor sourceSets
