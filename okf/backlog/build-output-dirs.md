@@ -42,9 +42,12 @@ dist/
   stale.
 - **pack --folder** defaults to `dist/pack/` instead of `dist/`. Pack will
   grow more formats (a Steam depot layout, for instance); the root must not
-  be any single format's output or the first new format collides. The
-  single-file exe stays a deliverable: `--output`, default next to the
-  source, like `cargo install` vs `target/`.
+  be any single format's output or the first new format collides.
+- **Single-file deliverables** (the packed executable, `.srtapp`, `.apk`,
+  and `--flux` exes) also default into `dist/`, as root-level files named
+  by the appId's last segment (revised 2026-09-02 from "next to the
+  source": deliverables in `src/` polluted the tree). Files in the root do
+  not collide with the per-flow subdirs; `--output` overrides.
 - **dev stays in `.srt-data/`** for now. Its isolate bundles are dev-server
   serving state tied to a running server, closer to runtime data than build
   output. Revisit when asset pre-processing exists (below).

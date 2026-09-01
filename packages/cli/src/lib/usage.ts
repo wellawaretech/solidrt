@@ -103,13 +103,13 @@ console options:
 pack options:
       --folder           Write the flat app folder (runner + manifest + bundle + assets)
                          instead of the single-file executable
-      --app              Write the app alone as one <entry>.srtapp (manifest + bundle + assets,
+      --app              Write the app alone as one <name>.srtapp (manifest + bundle + assets,
                          no runner), for a runner to load: solidrt <file>.srtapp
       --apk              Patch the app into an installable Android APK (id, label, icon,
                          version, payload; no Android SDK needed; base: the runner APK)
   -f, --flux             Pack for the bare Flux runtime instead of SolidRT (entry must be .ts|.js)
   -m, --minify           Minify the output
-  -o, --output <name>    Output filename
+  -o, --output <name>    Output filename (default: dist/<appId last segment>)
 
 render options:
       --script <file>    Script file to replay (default: no scripted input)

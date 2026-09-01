@@ -10,7 +10,7 @@
   },
   "scripts": {
     "dev": "srt run",
-    "pack": "srt pack -o out src/index.tsx",
+    "pack": "srt pack",
     "server": "srt server",
     "client": "srt client",
     "android": "srt android"

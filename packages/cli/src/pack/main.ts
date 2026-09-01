@@ -10,7 +10,7 @@ import { isPng } from "./android/icon"
 import { requireBinary } from "../lib/util"
 import { resolveApk, resolveRunnerApk, ANDROID_PKG_MAP } from "../lib/artifacts"
 import { existsSync, readFileSync } from "node:fs"
-import { dirname, join, resolve } from "node:path"
+import { basename, dirname, join, resolve } from "node:path"
 
 // Android package names are stricter than a general appId: at least two
 // dot-separated segments, each starting with a letter.
@@ -72,7 +72,7 @@ export async function main() {
       console.error("--folder, --app and --apk are for app packs; flux scripts have no folder, .srtapp or APK output")
       process.exit(1)
     }
-    let outfile = exeName(values.output ?? source!.replace(/\.[jt]s$/, ""))
+    let outfile = exeName(values.output ?? join(dirname(resolve(source!)), "dist", basename(source!).replace(/\.[jt]s$/, "")))
     // The entry's isolate modules ride along as isolates/<id>.bin sections
     // (module name = id, for stack attribution).
     let isolates = []
@@ -88,6 +88,11 @@ export async function main() {
   // assets (fonts included). --folder writes it as a flat folder next to a
   // bare runner; --app writes it alone as one .srtapp for a runner to load;
   // the default single-file exe carries it as trailer sections.
+  //
+  // One output rule: every deliverable defaults into the gitignored dist/
+  // build root (okf/backlog/build-output-dirs.md) - files in the root named
+  // by the appId's last segment, flow dirs (pack/, render/, bundle/) below
+  // it - never next to the sources. --output overrides.
   let mode = resolveMode()
   let identity = loadAppIdentity(mode.entry, mode.projectDir)
   console.log(`>> app: ${identity.appId} (${identity.org} / ${identity.displayName})`)
@@ -96,6 +101,9 @@ export async function main() {
   }
   let fonts = resolvePackFonts(mode.projectDir)
   console.log(`>> fonts: ${fonts.length ? fonts.map((f) => f.alias).join(", ") : "none"}`)
+
+  let distRoot = join(mode.projectDir ?? dirname(mode.entry), "dist")
+  let baseName = identity.appId.split(".").pop()!
 
   let bundled = await bundleSolid(mode)
   let bytecode = await compileToBytecode(bundled.code)
@@ -146,32 +154,28 @@ export async function main() {
     }
     console.log(`>> icon: ${icon && iconApplied ? "from project" : "placeholder"}`)
     console.log(">> signed with the shared development key (fine for sideloading; distribution signing pending)")
-    let outfile = values.output ?? mode.entry.replace(/\.[jt]sx?$/, ".apk")
+    let outfile = values.output ?? join(distRoot, baseName + ".apk")
     await Bun.write(outfile, apk)
     console.log(`>> wrote ${apk.length} bytes to ${outfile}`)
     process.exit()
   }
 
   if (values.folder) {
-    let outDir = values.output ?? join("dist", "pack")
+    let outDir = values.output ?? join(distRoot, "pack")
     writePackFolder(outDir, requireBinary("solidrt"), bytecode, folder)
     console.log(`>> wrote pack folder to ${resolve(outDir)}`)
     process.exit()
   }
 
   if (values.app) {
-    let outfile = values.output ?? mode.entry.replace(/\.[jt]sx?$/, ".srtapp")
+    let outfile = values.output ?? join(distRoot, baseName + ".srtapp")
     let packed = packApp(folder, bytecode)
     await Bun.write(outfile, packed)
     console.log(`>> wrote ${packed.length} bytes to ${outfile}`)
     process.exit()
   }
 
-  let outfile = values.output ?? mode.entry.replace(/\.[jt]sx?$/, "")
-  // On Windows the packed image is a PE executable; it needs a .exe name to run.
-  if (process.platform === "win32" && !outfile.toLowerCase().endsWith(".exe")) {
-    outfile += ".exe"
-  }
+  let outfile = exeName(values.output ?? join(distRoot, baseName))
   await writeExecutable(packSolid(folder, bytecode), outfile)
   process.exit()
 }

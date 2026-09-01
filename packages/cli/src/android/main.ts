@@ -208,7 +208,7 @@ function ensureApk(abi: string): string {
   if (apk) return apk
   let pkg = ANDROID_PKG_MAP[abi]
   if (!pkg) {
-    console.error(`Could not find a SolidRT-Go APK for ABI "${abi}".`)
+    console.error(`Could not find a Player APK for ABI "${abi}".`)
     process.exit(1)
   }
   let spec = RELEASE_VERSION.test(CLI_VERSION) && CLI_VERSION !== "0.0.0" ? `${pkg}@${CLI_VERSION}` : pkg
@@ -314,7 +314,7 @@ async function resolveTargets(adb: string): Promise<Device[]> {
 async function prepare(adb: string, { target, abi }: Device) {
   if (values.install) {
     let apk = ensureApk(abi)
-    console.log(`[cli] Installing SolidRT-Go on ${target}`)
+    console.log(`[cli] Installing Player on ${target}`)
     let install = Bun.spawn([adb, "-s", target, "install", "-r", apk], { stdout: "pipe", stderr: "pipe" })
     if ((await install.exited) !== 0) {
       console.error("adb install failed:\n" + (await new Response(install.stderr).text()))
@@ -324,7 +324,7 @@ async function prepare(adb: string, { target, abi }: Device) {
   }
   let installed = installedVersion(adb, target)
   if (installed === null) {
-    console.error(`No SolidRT-Go client on ${target}; install one with srt android --install`)
+    console.error(`No Player client on ${target}; install one with srt android --install`)
     process.exit(1)
   }
   let expected = androidPackageVersion(abi)
@@ -355,7 +355,7 @@ async function launch(adb: string, { target }: Device, server: LiveRecord | null
     console.error("adb start failed:\n" + (await new Response(start.stderr).text()))
     process.exit(1)
   }
-  console.log(`[cli] Launched SolidRT-Go on ${target}`)
+  console.log(`[cli] Launched Player on ${target}`)
 }
 
 // The launcher activity every SolidRT base APK ships, stored fully qualified
