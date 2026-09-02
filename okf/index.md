@@ -106,6 +106,12 @@ Shaped, not started.
   with no error. Decide once between injecting the standard tail at the
   fragColor write and exporting one composed function the author calls, before
   the next scene-wide effect adds a third thing to forget.
+- **[Environment tier - skybox and environment reflections](backlog/3d-environment.md)** [2026-09-02]
+  The 3d scene has no environment - no skybox from a cube map, no reflections,
+  no image-based ambient - which every engine treats as one scene-level
+  resource; the Three/Godot/Unity comparison here fixes the shape
+  (scene-level, cube map with a mip chain, equirect and six-face sources, HDR
+  half float) and confirms the samplerCube primitive.
 - **[Level of detail - distance-selected mesh variants as a core sink](backlog/3d-lod.md)** [2026-08-30]
   A large scene ships every object at one triangle count; a track with a
   thousand trees either draws full-detail foliage at the horizon or nothing. A
@@ -366,11 +372,10 @@ Shaped, not started.
   A lost GL context used to leave the app running against a dead swapchain;
   swap-result checking and exit after two failed presents shipped, real
   recreation still open.
-- **[Cube map textures](backlog/gpu-cube-maps.md)** [2026-08-04]
-  No TEXTURE_CUBE_MAP support anywhere (upload, sampling, or render target),
-  so environment/reflection mapping, skyboxes and cube shadow maps have no
-  path; ES 3.0 has cube maps in core, seamless filtering included.
-  Demand-gated on the scene-graph environment tier.
+- **[Cube map render targets (render-to-face)](backlog/gpu-cube-render-targets.md)** [2026-09-02]
+  A cube map is upload-only, so dynamic reflection probes and baking a GLSL
+  sky into the environment's radiance cube have no path; one cube draw target
+  with the face as a render-time argument, decided in the cube map shape pass.
 - **[Depth func option](backlog/gpu-depth-func.md)** [2026-08-11]
   The depth comparison is fixed at LESS with no override, which blocks
   equal-depth multi-pass tricks (LEQUAL) and reversed-z; a depthCompare option
@@ -389,6 +394,12 @@ Shaped, not started.
   what the runtime fills). Still open - the composition questions - whether
   the fused paths become thin compositions of the raw layer, whether a
   mid-level program shorthand is wanted, and the two-dialect preamble story.
+- **[Half-float texture format (rgba16f)](backlog/gpu-half-float-format.md)** [2026-09-02]
+  HDR environment maps and IBL run on filterable half float in every engine,
+  but the float formats here are 32-bit and nearest-only, so an HDR cube map
+  or panorama cannot be linearly filtered or mip-mapped; rgba16f is filterable
+  and mip-mappable in core GLES 3.0 and is one new value in the format
+  vocabulary.
 - **[More pipeline blend modes](backlog/gpu-pipeline-blend-modes.md)** [2026-07-29]
   The blend vocabulary on createPipeline is "none", "add", "multiply" and
   "alpha"; the rest of GL's fixed-function space (screen, subtract, min/max)
@@ -1056,6 +1067,11 @@ Finished, kept for the reasoning.
   warns on the raster thread where no app can see it, while a draw count past
   the buffer end is undefined-behaviour vertex fetch; both are validatable
   synchronously at the JS call site from state the UI thread already mirrors.
+- **[Cube map textures](done/gpu-cube-maps.md)** [2026-09-02]
+  No TEXTURE_CUBE_MAP support anywhere (upload, sampling, or render target),
+  so environment/reflection mapping, skyboxes and cube shadow maps have no
+  path; ES 3.0 has cube maps in core, seamless filtering included. Shape
+  confirmed by the environment-tier comparison (3d-environment.md).
 - **[Frame-safe texture destruction](done/gpu-deferred-texture-destroy.md)** [2026-07-30]
   destroyTexture used to land before the reactive texture swap flushed; the
   runtime now defers reclamation until the live render tree no longer
@@ -1592,6 +1608,11 @@ Knowledge. No lifecycle - true or wrong, not open or closed.
   mount is FFI (about 10 ms of 118), and why batching creation into one
   crossing per node changed nothing - mount time goes to per-component JS; the
   per-frame update path is not measured here.
+- **[Flux architecture review](notes/flux-architecture-review.md)** [2026-09-02]
+  Layering holds and the engine loop is sound; the debt is transport protocol
+  logic sitting in flux instead of forge, a per-frame protocol owned by the
+  runner instead of flux::gui, duplicate JS-shape decoders in the gpu module,
+  and a stretched userdata service locator.
 - **[Flux crate review](notes/flux-crate-review.md)** [2026-07-15]
   Marshalling contract upheld, error model strong; the two biggest 2026-07-15
   gaps - gui prop panics and fetch silently dropping Headers/bodies - are

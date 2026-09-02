@@ -152,7 +152,12 @@ declare module "flux:gpu" {
    * not overridable - the chain either exists on the id or it does not.
    */
   export type TextureBinding = TextureId | { id: TextureId; filter?: FilterMode; wrap?: WrapMode }
-  /** Sampler2D inputs by uniform name; see {@link TextureBinding}. */
+  /**
+   * Sampler inputs by uniform name; see {@link TextureBinding}. The uniform's
+   * declared type picks what may bind: a `sampler2D` takes any 2D texture,
+   * a `samplerCube` a cube map ({@link createCubeTexture}), a
+   * `sampler2DShadow` a draw target's depth texture; a mismatch throws.
+   */
   export type TextureBindings = Record<string, TextureBinding>
   /**
    * A free-form debug name every create accepts (WebGPU's label): surfaced by
@@ -205,6 +210,8 @@ declare module "flux:gpu" {
   export let limits: {
     /** Largest width/height of any texture or render target, in pixels (>= 2048). */
     maxTextureSize: number
+    /** Largest face edge of a cube map, in pixels (>= 2048); its own GL ceiling. */
+    maxCubeMapSize: number
     /**
      * Sampler inputs one pass may bind (>= 16): a target's `textures`
      * entries; on a window shader the runtime-filled `uSource` (and
@@ -236,6 +243,19 @@ declare module "flux:gpu" {
    * ("r32f", "rgba32f") a Float32Array. Returns the texture id.
    */
   export function createTexture(data: Uint8Array | Float32Array, width: number, height: number, opts?: SamplerOptions & TextureFormatOption & LabelOption): TextureId
+  /**
+   * Create a cube map from six square faces in GL order (+X, -X, +Y, -Y,
+   * +Z, -Z), each exactly one `size` x `size` frame at the declared format
+   * (view type per format as in {@link createTexture}). Returns an ordinary
+   * texture id that only a `uniform samplerCube` binding consumes - sampled
+   * by direction (`texture(uEnv, dir)`, `textureLod` for a level when
+   * `mipmap: true` built the chain from the faces). Sampler-only and
+   * create-once: `<texture src>` cannot display it, and uploadTexture,
+   * resizeTexture, readTexture and copyTexture throw for it. `wrap` is
+   * accepted and has no effect (cube filtering is seamless). A cube map on a
+   * `sampler2D`, or a 2D texture on a `samplerCube`, throws at the bind.
+   */
+  export function createCubeTexture(faces: (Uint8Array | Float32Array)[], size: number, opts?: SamplerOptions & TextureFormatOption & LabelOption): TextureId
   /**
    * Create a texture intended to be updated later via {@link uploadTexture}. The
    * seed buffer must hold at least one frame at the declared format's size

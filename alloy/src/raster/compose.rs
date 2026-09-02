@@ -127,17 +127,20 @@ impl RasterState {
     // resolve through the registry by id with their declared sampling, a
     // missing id dropping to unbound (samples black), the same contract as
     // shader targets.
-    let mut textures: Vec<PassInput> = vec![("uSource".to_string(), layer.tex, None)];
+    let mut textures: Vec<PassInput> = vec![PassInput::d2("uSource", layer.tex, None)];
     if state.spec.previous {
       if let Some(prev) = &state.prev_layer {
-        textures.push(("uPrevious".to_string(), prev.tex, None));
+        textures.push(PassInput::d2("uPrevious", prev.tex, None));
       }
     }
     for b in &state.spec.textures {
       match self.textures.get(&b.id) {
-        Some(gpu) => {
-          textures.push((b.name.clone(), gpu.gl_texture, Some(self.samplers.get(gpu.sampler.overridden(&b.sampler)))))
-        }
+        Some(gpu) => textures.push(PassInput {
+          name: b.name.clone(),
+          texture: gpu.gl_texture,
+          sampler: Some(self.samplers.get(gpu.sampler.overridden(&b.sampler))),
+          shape: gpu.shape,
+        }),
         None => log::warn!("[alloy] window shader input '{}': texture {} not found", b.name, b.id),
       }
     }
@@ -226,7 +229,7 @@ impl RasterState {
     };
     let layer = ov.layer.as_ref().expect("rasterized above");
     let origin = (ov.decl.x, window.height as i32 - (ov.decl.y + height as i32));
-    let input: PassInput = ("uSrc".to_string(), layer.tex, None);
+    let input = PassInput::d2("uSrc", layer.tex, None);
     crate::gl::composite_program_over_window(&self.gl, &program, origin, width, height, &[input]);
   }
 

@@ -214,8 +214,11 @@ impl Context {
         entry.format.name()
       ));
     }
+    let Some(impeller) = &entry.impeller else {
+      return Err(format!("texture {id} is a cube map: sampler-only, render it through a pass to read it"));
+    };
     let (width, height) = (entry.width(), entry.height());
-    let pixels = self.read_texture(&entry.impeller, width, height)?;
+    let pixels = self.read_texture(impeller, width, height)?;
     Ok((width, height, pixels))
   }
 

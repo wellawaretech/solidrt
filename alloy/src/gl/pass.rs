@@ -7,14 +7,45 @@
 use glow::HasContext;
 
 use super::program::ShaderProgram;
+use crate::gpu::texture::TextureShape;
 use crate::gpu::vocab::{BlendMode, DrawRange, IndexFormat, ParamValue, PipelineDesc, UniformKind, UniformSlot};
 use super::{prev_framebuffer, prev_program, prev_sampler, prev_texture, prev_vertex_array};
 
-/// A resolved sampler input for a pass: uniform name, source GL texture, and
-/// the sampler object carrying the source's declared filter/wrap (None for
+/// A resolved sampler input for a pass: uniform name, source GL texture, the
+/// sampler object carrying the source's declared filter/wrap (None for
 /// internal textures - window layers, the MSAA resolve - which keep their
-/// texture-object state).
-pub type PassInput = (String, glow::Texture, Option<glow::Sampler>);
+/// texture-object state), and the shape that picks the name's bind target.
+pub struct PassInput {
+  pub name: String,
+  pub texture: glow::Texture,
+  pub sampler: Option<glow::Sampler>,
+  pub shape: TextureShape,
+}
+
+impl PassInput {
+  /// A 2D input (every internal texture, and every registered texture that
+  /// is not a cube map).
+  pub fn d2(name: impl Into<String>, texture: glow::Texture, sampler: Option<glow::Sampler>) -> Self {
+    PassInput { name: name.into(), texture, sampler, shape: TextureShape::D2 }
+  }
+
+  fn target(&self) -> u32 {
+    match self.shape {
+      TextureShape::D2 => glow::TEXTURE_2D,
+      TextureShape::Cube => glow::TEXTURE_CUBE_MAP,
+    }
+  }
+}
+
+/// A texture unit's bindings as found before a pass touched it: the 2D and
+/// cube map texture names and the sampler object, restored when the pass
+/// ends.
+struct SavedUnit {
+  unit: u32,
+  texture_2d: i32,
+  texture_cube: i32,
+  sampler: i32,
+}
 
 /// One resolved draw of a mesh pass: the entry's program and draw state plus
 /// its resolved sampler inputs, ready for the raster thread to execute in
@@ -123,7 +154,11 @@ fn apply_uniform(gl: &glow::Context, name: &str, loc: &glow::UniformLocation, sl
       UniformKind::Vec4 => gl.uniform_4_f32_slice(Some(loc), c),
       UniformKind::Mat4 => gl.uniform_matrix_4_f32_slice(Some(loc), false, c),
       // No component count, so the guard above already returned.
-      UniformKind::Sampler2D | UniformKind::Sampler2DShadow | UniformKind::Inactive | UniformKind::Other(_) => {}
+      UniformKind::Sampler2D
+      | UniformKind::Sampler2DShadow
+      | UniformKind::SamplerCube
+      | UniformKind::Inactive
+      | UniformKind::Other(_) => {}
     }
   }
 }
@@ -165,7 +200,8 @@ fn apply_program(
   apply_params(gl, program, params);
 }
 
-/// Bind each resolved sampler input to its own texture unit, bind the input's
+/// Bind each resolved sampler input to its own texture unit on its shape's
+/// target, bind the input's
 /// sampler object on that unit (its declared filter/wrap; the bound sampler
 /// overrides texture-object parameters, which Impeller rewrites at will on
 /// textures it draws), and point the sampler uniform at the unit. The prior
@@ -182,11 +218,12 @@ fn bind_inputs(
   gl: &glow::Context,
   program: &ShaderProgram,
   inputs: &[PassInput],
-  saved: &mut Vec<(u32, i32, i32)>,
+  saved: &mut Vec<SavedUnit>,
   max_units: usize,
 ) {
   unsafe {
-    for (unit, (name, tex, sampler)) in inputs.iter().enumerate() {
+    for (unit, input) in inputs.iter().enumerate() {
+      let name = &input.name;
       if unit >= max_units {
         log::warn!(
           "[shader] sampler input '{name}' exceeds this device's texture unit limit ({max_units} per pass); skipped"
@@ -196,11 +233,16 @@ fn bind_inputs(
       let Some((loc, _)) = program.uniform(name) else { continue };
       let unit = unit as u32;
       gl.active_texture(glow::TEXTURE0 + unit);
-      if !saved.iter().any(|(u, _, _)| *u == unit) {
-        saved.push((unit, gl.get_parameter_i32(glow::TEXTURE_BINDING_2D), gl.get_parameter_i32(glow::SAMPLER_BINDING)));
+      if !saved.iter().any(|s| s.unit == unit) {
+        saved.push(SavedUnit {
+          unit,
+          texture_2d: gl.get_parameter_i32(glow::TEXTURE_BINDING_2D),
+          texture_cube: gl.get_parameter_i32(glow::TEXTURE_BINDING_CUBE_MAP),
+          sampler: gl.get_parameter_i32(glow::SAMPLER_BINDING),
+        });
       }
-      gl.bind_texture(glow::TEXTURE_2D, Some(*tex));
-      gl.bind_sampler(unit, *sampler);
+      gl.bind_texture(input.target(), Some(input.texture));
+      gl.bind_sampler(unit, input.sampler);
       gl.uniform_1_i32(Some(loc), unit as i32);
     }
   }
@@ -334,7 +376,7 @@ pub(super) fn run_pass(
     // Per-unit texture/sampler bindings saved on first touch, restored once
     // at the end (see bind_inputs).
     let max_units = gl.get_parameter_i32(glow::MAX_TEXTURE_IMAGE_UNITS).max(1) as usize;
-    let mut saved_units: Vec<(u32, i32, i32)> = Vec::new();
+    let mut saved_units: Vec<SavedUnit> = Vec::new();
 
     match draw {
       PassDraw::Fullscreen { program, params, textures, vertex_count, clear, blend: blended } => {
@@ -591,10 +633,11 @@ pub(super) fn run_pass(
     }
     gl.color_mask(prev_color_mask[0] != 0, prev_color_mask[1] != 0, prev_color_mask[2] != 0, prev_color_mask[3] != 0);
     gl.depth_range_f32(prev_depth_range[0], prev_depth_range[1]);
-    for (unit, prev, prev_smp) in saved_units {
-      gl.active_texture(glow::TEXTURE0 + unit);
-      gl.bind_texture(glow::TEXTURE_2D, prev_texture(prev));
-      gl.bind_sampler(unit, prev_sampler(prev_smp));
+    for s in saved_units {
+      gl.active_texture(glow::TEXTURE0 + s.unit);
+      gl.bind_texture(glow::TEXTURE_2D, prev_texture(s.texture_2d));
+      gl.bind_texture(glow::TEXTURE_CUBE_MAP, prev_texture(s.texture_cube));
+      gl.bind_sampler(s.unit, prev_sampler(s.sampler));
     }
     gl.active_texture(prev_active as u32);
     gl.use_program(prev_program(prev_program_name));

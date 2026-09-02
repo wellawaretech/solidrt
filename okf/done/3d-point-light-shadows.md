@@ -48,7 +48,7 @@ with the two spots the example sits exactly at the 8-slot budget.
 ## Why not `samplerCube` (the shape this replaced)
 
 The earlier decided shape rendered distance into an rgba8 cube via
-[gpu-cube-maps](../backlog/gpu-cube-maps.md). The Three/Godot/Unity
+[gpu-cube-maps](../done/gpu-cube-maps.md). The Three/Godot/Unity
 comparison overturned it: Three (`cubeToUV` tiles in the 2D map),
 Godot (omni shadows in the one atlas) and Unity URP (six tiles in the
 additional-lights atlas) all ship the atlas route; only Unity's

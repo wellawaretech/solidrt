@@ -794,6 +794,7 @@ pub struct GpuModule;
 impl ModuleDef for GpuModule {
   fn declare<'js>(decl: &Declarations<'js>) -> rquickjs::Result<()> {
     decl.declare("createTexture")?;
+    decl.declare("createCubeTexture")?;
     decl.declare("createMutableTexture")?;
     decl.declare("uploadTexture")?;
     decl.declare("resizeTexture")?;
@@ -865,6 +866,47 @@ impl ModuleDef for GpuModule {
       },
     )
     .expect("create createTexture");
+
+    // A cube map: six faces in GL order (+X, -X, +Y, -Y, +Z, -Z), each one
+    // frame of `size` x `size` at the declared format (same view-type rule as
+    // createTexture), sampled by direction through a `samplerCube`. Sampler
+    // options are the createTexture set; `wrap` parses but has no effect
+    // (GLES 3.0 cube filtering is seamless).
+    let cube_atx = atx.clone();
+    let create_cube_texture = Function::new(
+      ctx.clone(),
+      move |ctx: Ctx<'_>, faces: Array<'_>, size: u32, opts: OptArg<Object<'_>>| -> rquickjs::Result<u64> {
+        let format = collect_format(&ctx, &opts.0, "createCubeTexture")?;
+        if faces.len() != alloy::CUBE_FACES {
+          return Err(throw_str(
+            &ctx,
+            &format!("createCubeTexture: faces must be 6 buffers (+X, -X, +Y, -Y, +Z, -Z), got {}", faces.len()),
+          ));
+        }
+        let expected = format.byte_len(size, size);
+        let mut pixels = Vec::with_capacity(alloy::CUBE_FACES);
+        for (i, face) in faces.iter::<Value>().enumerate() {
+          let data = PixelData::collect(&ctx, face?, format, "createCubeTexture")?;
+          let bytes = data.bytes(&ctx, "createCubeTexture")?;
+          if bytes.len() != expected {
+            return Err(throw_str(
+              &ctx,
+              &format!("createCubeTexture: face {i} is {} bytes, expected {expected} ({size}x{size} {})", bytes.len(), format.name()),
+            ));
+          }
+          pixels.push(bytes.to_vec());
+        }
+        let sampler = collect_sampler(&ctx, &opts.0, format, "createCubeTexture")?;
+        let label = collect_label(&opts.0)?;
+        let id = cube_atx
+          .create_cube_texture(size, pixels, sampler, format, label)
+          .map_err(|e| throw_str(&ctx, &format!("createCubeTexture: {e}")))?;
+        let state = ctx.userdata::<TextureState>().expect("texture state userdata");
+        state.0.created.borrow_mut().insert(id);
+        Ok(id)
+      },
+    )
+    .expect("create createCubeTexture");
 
     // A mutable texture is created exactly like an immutable one; "mutable" only
     // signals intent to update it later via uploadTexture. The seed buffer may be
@@ -1542,6 +1584,7 @@ impl ModuleDef for GpuModule {
     .expect("create destroyTexture");
 
     exports.export("createTexture", create_texture)?;
+    exports.export("createCubeTexture", create_cube_texture)?;
     exports.export("createMutableTexture", create_mutable_texture)?;
     exports.export("uploadTexture", upload_texture)?;
     exports.export("resizeTexture", resize_texture)?;
@@ -1591,6 +1634,7 @@ impl ModuleDef for GpuModule {
     let limits = atx.gpu_limits();
     let limits_obj = Object::new(ctx.clone())?;
     limits_obj.set("maxTextureSize", limits.max_texture_size)?;
+    limits_obj.set("maxCubeMapSize", limits.max_cube_map_size)?;
     limits_obj.set("maxTextureUnits", limits.max_texture_units)?;
     limits_obj.set("maxVertexAttribs", limits.max_vertex_attribs)?;
     limits_obj.set("maxAnisotropy", limits.max_anisotropy)?;

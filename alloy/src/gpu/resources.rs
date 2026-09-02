@@ -37,6 +37,8 @@ pub struct GpuTextureInfo {
   /// Pixel format name: "rgba8" or "r8" for uploads, "rgba8" for a target's
   /// color, "depth24" for a draw target's depth texture id.
   pub format: &'static str,
+  /// "2d" or "cube" (see `TextureShape`).
+  pub shape: &'static str,
   /// The id's declared sampling (filter, wrap, mip chain, anisotropy): the
   /// other creation-time state beside `format`, so a soft or aliased map
   /// can be diagnosed from the inventory instead of the create call.

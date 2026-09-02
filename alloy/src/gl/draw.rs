@@ -2,6 +2,7 @@
 //! texture (snapshots, captures), into a retained layer FBO, and into the
 //! window's default framebuffer.
 
+use super::pass::PassInput;
 use super::rig::{
   msrtt, prev_framebuffer, prev_renderbuffer, prev_texture, supports_invalidate, OffscreenDraw, OffscreenRig,
   EXT_RESOLVE_COPY_SRC, MSAA_SAMPLES,
@@ -570,7 +571,7 @@ fn draw_and_resolve(
           width as u32,
           height as u32,
           &[],
-          &[("uSource".to_string(), ext_color, None)],
+          &[PassInput::d2("uSource", ext_color, None)],
           gl_patch,
         );
       }

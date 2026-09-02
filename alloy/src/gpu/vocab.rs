@@ -7,6 +7,7 @@
 //! checked against reflected/mirrored state where the app made the mistake.
 
 use std::collections::{HashMap, HashSet};
+use crate::gpu::texture::{TextureFormat, TextureShape};
 
 /// A shader uniform value as supplied from the app: a scalar or a flat
 /// component array. The shader's own declaration decides how components are
@@ -372,6 +373,10 @@ pub enum UniformKind {
   /// binds the comparison sampler object (LINEAR + LEQUAL compare, the
   /// hardware 2x2 PCF) instead of the texture's declared sampling.
   Sampler2DShadow,
+  /// A cube map sampler (`samplerCube`): bound via texture bindings like
+  /// Sampler2D, but only a cube map id (`TextureShape::Cube`) may back it,
+  /// and the pass binds the id on the cube map target.
+  SamplerCube,
   /// Declared in the source but optimized out by the compiler, so GL
   /// reflects nothing for it: writes are accepted and skipped (with a
   /// warning) rather than rejected as unknown names.
@@ -394,6 +399,7 @@ impl UniformKind {
       glow::FLOAT_MAT4 => UniformKind::Mat4,
       glow::SAMPLER_2D => UniformKind::Sampler2D,
       glow::SAMPLER_2D_SHADOW => UniformKind::Sampler2DShadow,
+      glow::SAMPLER_CUBE => UniformKind::SamplerCube,
       _ => UniformKind::Other(utype),
     }
   }
@@ -401,7 +407,16 @@ impl UniformKind {
   /// True for the kinds texture bindings serve (plain and comparison
   /// samplers alike); params can set neither.
   pub fn is_sampler(self) -> bool {
-    matches!(self, UniformKind::Sampler2D | UniformKind::Sampler2DShadow)
+    matches!(self, UniformKind::Sampler2D | UniformKind::Sampler2DShadow | UniformKind::SamplerCube)
+  }
+
+  /// The texture shape a sampler kind binds; None for non-samplers.
+  pub fn sampler_shape(self) -> Option<TextureShape> {
+    match self {
+      UniformKind::Sampler2D | UniformKind::Sampler2DShadow => Some(TextureShape::D2),
+      UniformKind::SamplerCube => Some(TextureShape::Cube),
+      _ => None,
+    }
   }
 
   /// Component count of one element of this kind; None for kinds params
@@ -413,7 +428,11 @@ impl UniformKind {
       UniformKind::Vec3 => Some(3),
       UniformKind::Vec4 => Some(4),
       UniformKind::Mat4 => Some(16),
-      UniformKind::Sampler2D | UniformKind::Sampler2DShadow | UniformKind::Inactive | UniformKind::Other(_) => None,
+      UniformKind::Sampler2D
+      | UniformKind::Sampler2DShadow
+      | UniformKind::SamplerCube
+      | UniformKind::Inactive
+      | UniformKind::Other(_) => None,
     }
   }
 
@@ -429,6 +448,7 @@ impl UniformKind {
       UniformKind::Mat4 => "mat4",
       UniformKind::Sampler2D => "sampler2D",
       UniformKind::Sampler2DShadow => "sampler2DShadow",
+      UniformKind::SamplerCube => "samplerCube",
       UniformKind::Inactive => "declared but inactive",
       UniformKind::Other(_) => "an unsupported type",
     }
@@ -514,7 +534,7 @@ pub fn validate_param_if_declared(uniforms: &UniformTable, name: &str, value: &P
     }
     None => {
       return Err(match slot.kind {
-        UniformKind::Sampler2D => format!("param '{name}' is a sampler2D; bind it via textures"),
+        k if k.is_sampler() => format!("param '{name}' is a {}; bind it via textures", k.glsl_name()),
         _ => format!("param '{name}' has an unsupported uniform type (settable: float, int, bool, vec2/3/4, mat4, and arrays of these)"),
       })
     }
@@ -590,6 +610,54 @@ pub fn validate_texture_bindings(uniforms: &UniformTable, textures: &[TextureBin
     }
     if !slot.kind.is_sampler() || slot.count > 1 {
       return Err(format!("uniform '{name}' is {}, not a sampler", slot.glsl_name()));
+    }
+  }
+  Ok(())
+}
+
+/// What the shape rules need to know about a bound texture id: its shape
+/// and its format, as the registry on either thread records them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BoundTexture {
+  pub shape: TextureShape,
+  pub format: TextureFormat,
+}
+
+/// The shape rules of a sampler-binding list, checked against what backs
+/// each id (`lookup`; None = not registered, which the existence checks
+/// elsewhere answer): a `samplerCube` takes a cube map and a 2D sampler
+/// refuses one (a cube name cannot bind on the 2D target - the draw would
+/// sample garbage or error), and a `sampler2DShadow` takes a depth texture
+/// (a color texture behind a comparison sampler is undefined GL). The
+/// reverse of the last stays legal - a depth id on a plain sampler2D is the
+/// raw depth read. One copy of the rules for every bind path on both
+/// threads: the UI-side rebinds answer from the entry registry, the fused
+/// creates (whose uniform kinds only exist post-compile) from the raster
+/// map. Runs after `validate_texture_bindings`, so every name here is an
+/// active sampler.
+pub fn validate_binding_shapes(
+  uniforms: &UniformTable,
+  textures: &[TextureBinding],
+  lookup: impl Fn(u64) -> Option<BoundTexture>,
+) -> Result<(), String> {
+  for TextureBinding { name, id, .. } in textures {
+    let Some(slot) = uniforms.get(name) else { continue };
+    let Some(wanted) = slot.kind.sampler_shape() else { continue };
+    let Some(bound) = lookup(*id) else { continue };
+    if bound.shape != wanted {
+      return Err(match wanted {
+        TextureShape::Cube => {
+          format!("uniform '{name}' is a samplerCube; texture {id} is a 2D texture (bind a cube map from createCubeTexture)")
+        }
+        TextureShape::D2 => {
+          format!("texture {id} is a cube map; uniform '{name}' is a {} (declare it samplerCube)", slot.glsl_name())
+        }
+      });
+    }
+    if slot.kind == UniformKind::Sampler2DShadow && bound.format != TextureFormat::Depth24 {
+      return Err(format!(
+        "uniform '{name}' is a sampler2DShadow; bind a draw target's depth texture (depthTexture(target))"
+      ));
     }
   }
   Ok(())

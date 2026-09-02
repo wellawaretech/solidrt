@@ -338,27 +338,19 @@ impl Context {
     Ok(())
   }
 
-  /// A `sampler2DShadow` uniform compares against depth, so only a depth id
-  /// may back it - a color texture behind a comparison sampler is undefined
-  /// GL. Checked where the program's uniform kinds are known, on every bind
-  /// path a pipeline program can take; the reverse (a depth id on a plain
-  /// sampler2D) stays legal - raw depth reads, the post-effect input.
-  pub(super) fn check_compare_bindings(
+  /// The shape rules of a binding list (`validate_binding_shapes`: a
+  /// `samplerCube` takes a cube map and nothing else does, a
+  /// `sampler2DShadow` takes a depth texture) answered from the entry
+  /// registry, on every bind path whose program kinds the UI side mirrors;
+  /// the fused creates run the same rules raster-side inside their RPC.
+  pub(super) fn check_binding_shapes(
     &self,
     uniforms: &crate::gpu::UniformTable,
     textures: &[crate::gpu::TextureBinding],
   ) -> Result<(), String> {
-    for b in textures {
-      if uniforms.get(&b.name).is_some_and(|s| s.kind == crate::gpu::UniformKind::Sampler2DShadow)
-        && self.depth_owner(b.id).is_none()
-      {
-        return Err(format!(
-          "uniform '{}' is a sampler2DShadow; bind a draw target's depth texture (depthTexture(target))",
-          b.name
-        ));
-      }
-    }
-    Ok(())
+    crate::gpu::validate_binding_shapes(uniforms, textures, |id| {
+      self.textures.get(id).map(|e| crate::gpu::BoundTexture { shape: e.shape, format: e.format })
+    })
   }
 
   /// Inventory the GPU resources the raster thread tracks: registered

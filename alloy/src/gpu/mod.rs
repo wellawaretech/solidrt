@@ -28,13 +28,15 @@ pub use resources::{
 pub use spec::{DepthStorage, DrawSpec, NodeShader, PipelineSpec, TargetSpec, WindowShader};
 pub use texture::{
   SamplerFilter, SamplerOptions, SamplerOverride, SamplerState, TextureEntry, TextureFormat, TextureRegistry,
+  TextureShape, CUBE_FACES,
 };
 #[cfg(test)]
 pub use vocab::merge_bindings;
 pub use vocab::{
   blend_name, cull_name, instance_strides, parse_blend, parse_cull, resolve_draw_range, validate_draw_range,
-  validate_instance_slots, validate_order, validate_param_if_declared, validate_params, validate_texture_bindings,
-  vertex_stride, AttrFormat, AttributeTable, BlendMode, BufferIds, BufferUpdate, CullMode, DepthState, DrawBounds,
+  validate_binding_shapes, validate_instance_slots, validate_order, validate_param_if_declared, validate_params,
+  validate_texture_bindings, vertex_stride, AttrFormat, AttributeTable, BlendMode, BoundTexture, BufferIds,
+  BufferUpdate, CullMode, DepthState, DrawBounds,
   DrawRange, DrawUpdate, IndexFormat, ParamValue, PipelineDesc, ShaderStage, TextureBinding, Topology, UniformKind,
   UniformSlot, UniformTable, MAX_INSTANCE_SLOTS,
 };

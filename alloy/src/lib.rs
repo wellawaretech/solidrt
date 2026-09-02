@@ -52,6 +52,7 @@ pub use gpu::{
 };
 pub use gpu::{
   SamplerFilter, SamplerOptions, SamplerOverride, SamplerState, TextureEntry, TextureFormat, TextureRegistry,
+  TextureShape, CUBE_FACES,
 };
 pub use input::InputState;
 pub use keymap::w3c_code_for_key;

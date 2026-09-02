@@ -92,6 +92,11 @@ impl Buildable for Texture {
       log::warn!("[texture] build: tex_id={} not in registry", tex_id);
       return;
     };
+    // A cube map has no 2D image to draw (sampler-only, see TextureShape).
+    let Some(impeller) = &entry.impeller else {
+      log::warn!("[texture] build: texture {tex_id} is a cube map; <texture> cannot display it (sample it from a pass)");
+      return;
+    };
 
     let src_rect = self.source_rect(entry.width(), entry.height());
     let x = self.x.unwrap_or(0.0);
@@ -109,7 +114,7 @@ impl Buildable for Texture {
       crate::gpu::SamplerFilter::Linear => TextureSampling::Linear,
       crate::gpu::SamplerFilter::Nearest => TextureSampling::NearestNeighbor,
     };
-    builder.draw_texture_rect(&entry.impeller, &src_rect, &dst_rect, sampling, Some(&paint));
+    builder.draw_texture_rect(impeller, &src_rect, &dst_rect, sampling, Some(&paint));
   }
 }
 

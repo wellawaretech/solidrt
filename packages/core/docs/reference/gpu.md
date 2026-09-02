@@ -59,6 +59,8 @@ the dev tooling's GPU inventory and in engine log messages.
 
 {{ decl packages/core/src/gpu.ts createTexture }}
 
+{{ decl packages/core/src/gpu.ts createCubeTexture }}
+
 {{ decl packages/core/src/gpu.ts createMutableTexture }}
 
 {{ decl packages/core/src/gpu.ts createShaderTexture }}
@@ -147,6 +149,14 @@ clamped target in one consumer. The texture's own state stays what
 `<texture>` paints and what every other binding uses. `mipmap` is not
 overridable: the chain either exists on the id or it does not.
 
+A cube map (`createCubeTexture`) is the same id currency with a different
+sampler: declare `uniform samplerCube` and look it up by direction. The
+declared sampler type is what a binding is checked against - a cube map on
+a `sampler2D` throws, as does a 2D texture on a `samplerCube` - and a cube
+map is sampler-only: nothing displays, reads back, copies or re-uploads it.
+`wrap` does not apply to it (cube filtering is seamless across faces);
+`filter`, `mipmap` and `anisotropy` do.
+
 ## Blending
 
 Combining passes is a render-tree job: stack `<texture>` elements and set
@@ -202,6 +212,7 @@ instead - for a UI subtree, `snapshotTexture`.
 ## Limits
 
 `limits` holds the device ceilings queried at startup: maximum texture and
-target size, sampler inputs per pass, vertex attributes per pipeline. Creates
+target size, cube map face size, sampler inputs per pass, vertex attributes
+per pipeline. Creates
 and binds validate against them and throw naming the limit; read them to
 size within the device instead.

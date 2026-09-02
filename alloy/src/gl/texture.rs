@@ -8,7 +8,10 @@ use glow::HasContext;
 use impellers::ISize;
 use std::num::NonZeroU32;
 
-use crate::gpu::texture::{SamplerFilter, SamplerState, SamplerWrap, TextureFormat, ANISOTROPY_LEVELS, MIN_ANISOTROPY};
+use crate::gpu::texture::{
+  SamplerFilter, SamplerState, SamplerWrap, TextureFormat, TextureShape, ANISOTROPY_LEVELS, CUBE_FACES,
+  MIN_ANISOTROPY,
+};
 
 /// The GL sampler objects covering every SamplerState combination (filter x
 /// wrap x mipmap x anisotropy level), created once on the raster thread and
@@ -112,11 +115,15 @@ impl SamplerCache {
 /// takes ownership of the GL name and deletes it when its Texture drops, so
 /// GpuTexture deliberately does NOT delete the name (no Drop impl) - doing so
 /// would double-free the name and corrupt whatever live texture reuses it.
-/// Raster-thread-only: creation and uploads are GL work.
+/// The one exception is a cube map (`shape == Cube`): Impeller adopts 2D
+/// names only, so a cube name stays ours and the raster thread deletes it
+/// on destroy. Raster-thread-only: creation and uploads are GL work.
 pub struct GpuTexture {
   pub gl_texture: glow::Texture,
   pub width: u32,
   pub height: u32,
+  /// 2D or cube map; picks the bind target of every use of the name.
+  pub shape: TextureShape,
   /// Declared sampling for this id; shader passes resolve it to a sampler
   /// object at bind time. The texture-object parameters set below are only a
   /// completeness fallback, not this state's storage.
@@ -141,17 +148,33 @@ pub fn generate_mipmap(gl: &glow::Context, texture: glow::Texture) {
   }
 }
 
+/// The GL storage triple (internal format, pixel layout, component type) of
+/// a format, for the allocating `glTexImage2D` calls.
+fn gl_storage(format: TextureFormat) -> (u32, u32, u32) {
+  match format {
+    TextureFormat::Rgba8 => (glow::RGBA8, glow::RGBA, glow::UNSIGNED_BYTE),
+    TextureFormat::R8 => (glow::R8, glow::RED, glow::UNSIGNED_BYTE),
+    TextureFormat::Rg8 => (glow::RG8, glow::RG, glow::UNSIGNED_BYTE),
+    TextureFormat::Depth24 => (glow::DEPTH_COMPONENT24, glow::DEPTH_COMPONENT, glow::UNSIGNED_INT),
+    TextureFormat::R32f => (glow::R32F, glow::RED, glow::FLOAT),
+    TextureFormat::Rgba32f => (glow::RGBA32F, glow::RGBA, glow::FLOAT),
+  }
+}
+
+/// The completeness-fallback filter of a texture object (see `new`): depth
+/// and float textures are only complete at NEAREST.
+fn fallback_filter(format: TextureFormat) -> u32 {
+  if format == TextureFormat::Depth24 || format.is_float() {
+    glow::NEAREST
+  } else {
+    glow::LINEAR
+  }
+}
+
 impl GpuTexture {
   pub fn new(gl: &glow::Context, size: ISize, sampler: SamplerState, format: TextureFormat) -> Self {
     let (width, height) = (size.width as u32, size.height as u32);
-    let (internal, layout, ty) = match format {
-      TextureFormat::Rgba8 => (glow::RGBA8, glow::RGBA, glow::UNSIGNED_BYTE),
-      TextureFormat::R8 => (glow::R8, glow::RED, glow::UNSIGNED_BYTE),
-      TextureFormat::Rg8 => (glow::RG8, glow::RG, glow::UNSIGNED_BYTE),
-      TextureFormat::Depth24 => (glow::DEPTH_COMPONENT24, glow::DEPTH_COMPONENT, glow::UNSIGNED_INT),
-      TextureFormat::R32f => (glow::R32F, glow::RED, glow::FLOAT),
-      TextureFormat::Rgba32f => (glow::RGBA32F, glow::RGBA, glow::FLOAT),
-    };
+    let (internal, layout, ty) = gl_storage(format);
     unsafe {
       let prev = gl.get_parameter_i32(glow::TEXTURE_BINDING_2D);
       let gl_texture = gl.create_texture().expect("glGenTextures failed");
@@ -174,15 +197,75 @@ impl GpuTexture {
       // sampling in Impeller, never through these parameters (Impeller
       // rewrites them on every draw of the texture). Depth and float textures
       // are only complete at NEAREST (float linear needs an extension).
-      let filter = if format == TextureFormat::Depth24 || format.is_float() { glow::NEAREST } else { glow::LINEAR };
+      let filter = fallback_filter(format);
       gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MIN_FILTER, filter as i32);
       gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MAG_FILTER, filter as i32);
       gl.bind_texture(glow::TEXTURE_2D, NonZeroU32::new(prev as u32).map(glow::NativeTexture));
-      GpuTexture { gl_texture, width, height, sampler, format, label: None }
+      GpuTexture { gl_texture, width, height, shape: TextureShape::D2, sampler, format, label: None }
+    }
+  }
+
+  /// A cube map from six `size` x `size` faces in GL order (+X, -X, +Y, -Y,
+  /// +Z, -Z), each `format.byte_len(size, size)` bytes (checked UI-side;
+  /// backstopped here), allocated and uploaded in one go - a cube map is
+  /// create-once. The mip chain, when the sampling declares one, is
+  /// generated from the faces here. Wrap modes do not apply: GLES 3.0
+  /// filters across cube faces seamlessly. Restores the cube map binding
+  /// it touches.
+  pub fn new_cube(
+    gl: &glow::Context,
+    size: u32,
+    faces: &[Vec<u8>],
+    sampler: SamplerState,
+    format: TextureFormat,
+  ) -> Result<Self, String> {
+    if faces.len() != CUBE_FACES {
+      return Err(format!("a cube map takes {CUBE_FACES} faces, got {}", faces.len()));
+    }
+    let expected = format.byte_len(size, size);
+    if let Some((i, face)) = faces.iter().enumerate().find(|(_, f)| f.len() != expected) {
+      return Err(format!("cube face {i} is {} bytes, expected {expected} ({})", face.len(), format.name()));
+    }
+    let (internal, layout, ty) = gl_storage(format);
+    let (_, _, alignment) = upload_layout(format).ok_or_else(|| format!("{} is not an upload format", format.name()))?;
+    unsafe {
+      let prev = gl.get_parameter_i32(glow::TEXTURE_BINDING_CUBE_MAP);
+      let gl_texture = gl.create_texture().map_err(|e| format!("glGenTextures failed: {e}"))?;
+      gl.bind_texture(glow::TEXTURE_CUBE_MAP, Some(gl_texture));
+      gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, alignment);
+      for (i, face) in faces.iter().enumerate() {
+        gl.tex_image_2d(
+          glow::TEXTURE_CUBE_MAP_POSITIVE_X + i as u32,
+          0,
+          internal as i32,
+          size as i32,
+          size as i32,
+          0,
+          layout,
+          ty,
+          glow::PixelUnpackData::Slice(Some(face)),
+        );
+      }
+      if alignment != 4 {
+        gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, 4);
+      }
+      let filter = fallback_filter(format);
+      gl.tex_parameter_i32(glow::TEXTURE_CUBE_MAP, glow::TEXTURE_MIN_FILTER, filter as i32);
+      gl.tex_parameter_i32(glow::TEXTURE_CUBE_MAP, glow::TEXTURE_MAG_FILTER, filter as i32);
+      if sampler.mipmap {
+        gl.generate_mipmap(glow::TEXTURE_CUBE_MAP);
+      }
+      gl.bind_texture(glow::TEXTURE_CUBE_MAP, NonZeroU32::new(prev as u32).map(glow::NativeTexture));
+      Ok(GpuTexture { gl_texture, width: size, height: size, shape: TextureShape::Cube, sampler, format, label: None })
     }
   }
 
   pub fn upload(&self, gl: &glow::Context, data: &[u8], size: ISize) {
+    if self.shape == TextureShape::Cube {
+      // Gated UI-side (a cube map is create-once); backstop.
+      log::warn!("[alloy] upload into a cube map ignored: cube maps are create-once");
+      return;
+    }
     let (width, height) = (size.width as i32, size.height as i32);
     // RGBA8 rows are width*4, always a multiple of 4, so the default unpack
     // alignment holds. R8 rows are width*1 and must unpack at alignment 1 or
@@ -190,17 +273,10 @@ impl GpuTexture {
     // whole reason the format exists is to avoid that per-frame repacking.
     // RG8 rows are width*2; alignment 1 is correct for every width. Float
     // rows are multiples of 4 bytes at any width, so the default holds.
-    let (gl_format, ty, alignment) = match self.format {
-      TextureFormat::Rgba8 => (glow::RGBA, glow::UNSIGNED_BYTE, 4),
-      TextureFormat::R8 => (glow::RED, glow::UNSIGNED_BYTE, 1),
-      TextureFormat::Rg8 => (glow::RG, glow::UNSIGNED_BYTE, 1),
-      TextureFormat::R32f => (glow::RED, glow::FLOAT, 4),
-      TextureFormat::Rgba32f => (glow::RGBA, glow::FLOAT, 4),
-      TextureFormat::Depth24 => {
-        // Gated UI-side (a depth id is not an upload texture); backstop.
-        log::warn!("[alloy] upload into a depth texture ignored: depth is render-written");
-        return;
-      }
+    let Some((gl_format, ty, alignment)) = upload_layout(self.format) else {
+      // Gated UI-side (a depth id is not an upload texture); backstop.
+      log::warn!("[alloy] upload into a depth texture ignored: depth is render-written");
+      return;
     };
     unsafe {
       let prev = gl.get_parameter_i32(glow::TEXTURE_BINDING_2D);
@@ -229,5 +305,18 @@ impl GpuTexture {
       // No glFinish: the texture is sampled later on this same (single) GL
       // context, so program order already sequences the upload first.
     }
+  }
+}
+
+/// The unpack layout (pixel format, component type, row alignment) of an
+/// upload format; None for the render-written depth format.
+fn upload_layout(format: TextureFormat) -> Option<(u32, u32, i32)> {
+  match format {
+    TextureFormat::Rgba8 => Some((glow::RGBA, glow::UNSIGNED_BYTE, 4)),
+    TextureFormat::R8 => Some((glow::RED, glow::UNSIGNED_BYTE, 1)),
+    TextureFormat::Rg8 => Some((glow::RG, glow::UNSIGNED_BYTE, 1)),
+    TextureFormat::R32f => Some((glow::RED, glow::FLOAT, 4)),
+    TextureFormat::Rgba32f => Some((glow::RGBA, glow::FLOAT, 4)),
+    TextureFormat::Depth24 => None,
   }
 }

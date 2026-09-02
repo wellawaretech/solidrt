@@ -150,11 +150,18 @@ what it delivered is documented in `packages/3d/AGENTS.md`, not here.
     [relative-mouse-input](../done/relative-mouse-input.md) - pointer
     lock/relative motion - which landed, so they are library-only now.
     A chase/follow camera rig is app code over `setTransition`.
-14. [ ] **Environment tier: skybox, reflection/environment maps.** Engine:
-    [gpu-cube-maps](../backlog/gpu-cube-maps.md). Demand-gated. The binding
-    side is already paid: a shared target-level sampler (`setTargetTextures`)
-    binds an environment map once per scene target; cube maps are the
-    remaining engine gap.
+14. [ ] **Environment tier: skybox, reflection/environment maps.** Shaped
+    2026-09-02 with the Three/Godot/Unity comparison in
+    [3d-environment](../backlog/3d-environment.md) (scene-level, mip-chained
+    cube map, equirect + six-face sources, rgba16f for HDR). Engine:
+    [gpu-cube-maps](../done/gpu-cube-maps.md) landed the same day
+    (`createCubeTexture` + `samplerCube`), so the tier is library-only
+    from stage 1; render-to-face
+    ([gpu-cube-render-targets](../backlog/gpu-cube-render-targets.md))
+    and [rgba16f](../backlog/gpu-half-float-format.md) wait for stages 3
+    and 4. The binding side is already paid: a shared target-level
+    sampler (`setTargetTextures`) binds an environment map once per scene
+    target.
 15. [x] **Shadow maps.** Landed 2026-08-26 (uncommitted) through stage 3
     of [3d-shadow-maps](../done/3d-shadow-maps.md): `castShadow` on
     `DirectionalLight` and `Mesh`, `lit` receiving by default, the

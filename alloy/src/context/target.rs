@@ -50,7 +50,7 @@ impl Context {
       label,
       reply,
     })??;
-    self.textures.insert(id, TextureEntry { impeller, width, height, sampler, format: TextureFormat::Rgba8 });
+    self.textures.insert(id, TextureEntry::d2(impeller, width, height, sampler, TextureFormat::Rgba8));
     self.targets.borrow_mut().insert(
       id,
       TargetMirror {
@@ -161,7 +161,7 @@ impl Context {
     let sources: HashMap<(u64, String), u64> =
       spec.entry.textures.iter().map(|b| ((0, b.name.clone()), self.source_of(b.id))).collect();
     let (impeller, uniforms) = self.rpc(|reply| RasterCmd::CreatePipelineTexture { id, spec, reply })??;
-    self.textures.insert(id, TextureEntry { impeller, width, height, sampler, format: TextureFormat::Rgba8 });
+    self.textures.insert(id, TextureEntry::d2(impeller, width, height, sampler, TextureFormat::Rgba8));
     self
       .targets
       .borrow_mut()
@@ -271,7 +271,7 @@ impl Context {
     let sources: HashMap<(u64, String), u64> =
       entry.textures.iter().map(|b| ((0, b.name.clone()), self.source_of(b.id))).collect();
     let impeller = self.rpc(|reply| RasterCmd::CreateShaderTarget { id, spec, entry, reply })??;
-    self.textures.insert(id, TextureEntry { impeller, width, height, sampler, format: TextureFormat::Rgba8 });
+    self.textures.insert(id, TextureEntry::d2(impeller, width, height, sampler, TextureFormat::Rgba8));
     self.targets.borrow_mut().insert(id, TargetMirror { uniforms, draw: Some(draw), bounds, buffers, entries: None });
     self.shader_sources.borrow_mut().insert(id, sources);
     if manual {
@@ -311,11 +311,11 @@ impl Context {
     let handles = self.rpc(|reply| RasterCmd::CreateDrawTarget { id, depth_id, spec, depth, reply })??;
     self
       .textures
-      .insert(id, TextureEntry { impeller: handles.color, width, height, sampler, format: TextureFormat::Rgba8 });
+      .insert(id, TextureEntry::d2(handles.color, width, height, sampler, TextureFormat::Rgba8));
     if let (Some(depth_id), Some(impeller)) = (depth_id, handles.depth) {
       self.textures.insert(
         depth_id,
-        TextureEntry { impeller, width, height, sampler: SamplerState::DEPTH, format: TextureFormat::Depth24 },
+        TextureEntry::d2(impeller, width, height, SamplerState::DEPTH, TextureFormat::Depth24),
       );
       self.depth_ids.borrow_mut().insert(depth_id, id);
     }
@@ -482,7 +482,7 @@ impl Context {
     let bounds = self.resolve_entry_range(&mut entry, stride, instance_strides)?;
     validate_params(&uniforms, &entry.params)?;
     validate_texture_bindings(&uniforms, &entry.textures)?;
-    self.check_compare_bindings(&uniforms, &entry.textures)?;
+    self.check_binding_shapes(&uniforms, &entry.textures)?;
     let draw_id = list.next_draw;
     self.validate_new_bindings(target, draw_id, &entry.textures)?;
     // The entry's effective inputs include the shared names its program
@@ -664,7 +664,7 @@ impl Context {
       let mirror = targets.get(&target).ok_or_else(|| format!("target {target} not found"))?;
       let Some(list) = mirror.entries.as_ref() else {
         validate_texture_bindings(&mirror.uniforms, textures)?;
-        self.check_compare_bindings(&mirror.uniforms, textures)?;
+        self.check_binding_shapes(&mirror.uniforms, textures)?;
         drop(targets);
         self.validate_new_bindings(target, 0, textures)?;
         let mut sources = self.shader_sources.borrow_mut();
@@ -690,7 +690,7 @@ impl Context {
         }
       }
       for entry in list.entries.values() {
-        self.check_compare_bindings(&entry.uniforms, textures)?;
+        self.check_binding_shapes(&entry.uniforms, textures)?;
       }
       // Per-entry unit budget against the MERGED shared set: an entry's
       // effective inputs are its own bindings plus the shared names its
@@ -741,7 +741,7 @@ impl Context {
       validate_texture_bindings(&entry.uniforms, textures)?;
       entry.uniforms.clone()
     };
-    self.check_compare_bindings(&entry_uniforms, textures)?;
+    self.check_binding_shapes(&entry_uniforms, textures)?;
     self.validate_new_bindings(target, draw, textures)?;
     // Combined with the target's shared bindings (entry key 0), the entry's
     // merged inputs must still fit the unit budget - the add_draw rule,
@@ -955,6 +955,7 @@ impl Context {
       for binding in &ws.textures {
         self.check_depth_binding(binding)?;
       }
+      self.check_binding_shapes(uniforms, &ws.textures)?;
     }
     self.send(RasterCmd::SetWindowShader { shader });
     Ok(())

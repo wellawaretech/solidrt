@@ -528,6 +528,7 @@ async fn try_serve(
       // size or a rig fits on one connected client and not another.
       "limits": {
         "maxTextureSize": gpu.limits.max_texture_size,
+        "maxCubeMapSize": gpu.limits.max_cube_map_size,
         "maxTextureUnits": gpu.limits.max_texture_units,
         "maxVertexAttribs": gpu.limits.max_vertex_attribs,
         "maxAnisotropy": gpu.limits.max_anisotropy,
@@ -1461,6 +1462,7 @@ fn gpu_reply(ctx: &flux::rquickjs::Ctx<'_>, id: u64, label: Option<&str>, draw: 
         "height": t.height,
         "target": t.target,
         "format": t.format,
+        "shape": t.shape,
         "sampler": sampler_json(&t.sampler),
       });
       insert_label(&mut obj, &t.label);

@@ -2,7 +2,7 @@ use impellers::{ISize, Texture};
 use std::collections::HashSet;
 use std::rc::Rc;
 
-use crate::gpu::{SamplerState, TextureBinding, TextureEntry, TextureFormat};
+use crate::gpu::{SamplerState, TextureBinding, TextureEntry, TextureFormat, TextureShape, CUBE_FACES};
 use crate::raster::RasterCmd;
 use crate::yuv::{self, YuvLayout, YuvMatrix, YuvRange};
 
@@ -130,11 +130,60 @@ impl Context {
       label,
       reply,
     })??;
-    self.textures.insert(id, TextureEntry { impeller, width, height, sampler, format });
+    self.textures.insert(id, TextureEntry::d2(impeller, width, height, sampler, format));
     if replace {
       self.note_content(id);
     }
     Ok(())
+  }
+
+  /// Create a cube map from six `size` x `size` faces in GL order (+X, -X,
+  /// +Y, -Y, +Z, -Z), each `format.byte_len(size, size)` bytes, with the
+  /// given sampling (the caller resolves it against the format like every
+  /// pixel create; `wrap` is irrelevant - GLES 3.0 filters across faces
+  /// seamlessly) and an optional label. Returns the registry id, an
+  /// ordinary texture id that only a `samplerCube` binding consumes: the
+  /// `<texture>` display, `readTexture`, `copyTexture`, uploads and resizes
+  /// all reject it (see `TextureShape::Cube`). Errs on a face count or
+  /// size mismatch, or a face edge over the device's cube map ceiling.
+  pub fn create_cube_texture(
+    &self,
+    size: u32,
+    faces: Vec<Vec<u8>>,
+    sampler: SamplerState,
+    format: TextureFormat,
+    label: Option<String>,
+  ) -> Result<u64, String> {
+    if size == 0 {
+      return Err("cube map face size must be non-zero".to_string());
+    }
+    self.gpu_limits().check_cube_map_size(size)?;
+    if faces.len() != CUBE_FACES {
+      return Err(format!("a cube map takes {} faces (+X, -X, +Y, -Y, +Z, -Z), got {}", CUBE_FACES, faces.len()));
+    }
+    let expected = format.byte_len(size, size);
+    if let Some((i, face)) = faces.iter().enumerate().find(|(_, f)| f.len() != expected) {
+      return Err(format!(
+        "cube face {i} is {} bytes, expected {expected} ({size}x{size} {})",
+        face.len(),
+        format.name()
+      ));
+    }
+    let id = self.textures.allocate_id();
+    self.rpc(|reply| RasterCmd::CreateCubeTexture { id, size, faces, sampler, format, label, reply })??;
+    self.textures.insert(id, TextureEntry::cube(size, sampler, format));
+    Ok(id)
+  }
+
+  /// The error a 2D-shaped verb returns for a cube map id, or None for
+  /// any other id (unknown ids fall through to the caller's own lookup).
+  pub(super) fn reject_cube(&self, id: u64, verb: &str) -> Result<(), String> {
+    match self.textures.get(id) {
+      Some(entry) if entry.shape == TextureShape::Cube => {
+        Err(format!("texture {id} is a cube map: sampler-only (bind it to a samplerCube); {verb}"))
+      }
+      _ => Ok(()),
+    }
   }
 
   /// Re-upload pixels into an existing texture, sized by the id's format
@@ -145,6 +194,7 @@ impl Context {
     if let Some(owner) = self.depth_owner(id) {
       return Err(format!("texture {id} is target {owner}'s depth texture: render-written, not uploadable"));
     }
+    self.reject_cube(id, "a cube map is create-once, there is no upload into it")?;
     let entry = self.textures.get(id).ok_or_else(|| format!("texture {id} not found"))?;
     let (width, height, format) = (entry.width(), entry.height(), entry.format);
     let frame_size = format.byte_len(width, height);
@@ -181,6 +231,7 @@ impl Context {
         "texture {id} is target {owner}'s depth texture; it resizes with the target (setTargetSize)"
       ));
     }
+    self.reject_cube(id, "a cube map is create-once, there is no resize")?;
     // Sampling and format are properties of the id and survive the id-stable
     // resize, as does the label (None here = keep, applied raster-side).
     let (sampler, format) = (entry.sampler(), entry.format);
@@ -332,13 +383,13 @@ impl Context {
     let sampler = self.textures.get(id).map(|e| e.sampler()).unwrap_or_default();
     self
       .textures
-      .insert(id, TextureEntry { impeller: handles.color, width, height, sampler, format: TextureFormat::Rgba8 });
+      .insert(id, TextureEntry::d2(handles.color, width, height, sampler, TextureFormat::Rgba8));
     // A depth texture is re-registered at its own stable id with the fresh
     // name the resize allocated (the color rule, applied to depth).
     if let (Some(depth_id), Some(impeller)) = (self.depth_of(id), handles.depth) {
       self.textures.insert(
         depth_id,
-        TextureEntry { impeller, width, height, sampler: SamplerState::DEPTH, format: TextureFormat::Depth24 },
+        TextureEntry::d2(impeller, width, height, SamplerState::DEPTH, TextureFormat::Depth24),
       );
     }
     // The storage is regenerated whatever the kind, manual included, so this
@@ -361,6 +412,8 @@ impl Context {
         "texture {src} is target {owner}'s depth texture: sampler-only, sample it from a pass instead"
       ));
     }
+    self.reject_cube(src, "render it through a pass instead of copying")?;
+    self.reject_cube(dst, "nothing renders into it")?;
     let src_entry = self.textures.get(src).ok_or_else(|| format!("texture {src} not found"))?;
     let dst_entry = self.textures.get(dst).ok_or_else(|| format!("texture {dst} not found"))?;
     if src_entry.format.is_float() {
@@ -426,13 +479,7 @@ impl Context {
   pub fn publish_snapshot_texture(&self, id: u64, texture: &Texture, width: u32, height: u32) {
     self.textures.insert(
       id,
-      TextureEntry {
-        impeller: texture.clone(),
-        width,
-        height,
-        sampler: SamplerState::default(),
-        format: TextureFormat::Rgba8,
-      },
+      TextureEntry::d2(texture.clone(), width, height, SamplerState::default(), TextureFormat::Rgba8),
     );
     self.send(RasterCmd::AdoptTexture { id, texture: texture.clone(), width, height });
     self.note_content(id);

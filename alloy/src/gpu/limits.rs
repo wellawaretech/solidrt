@@ -15,6 +15,9 @@ pub struct GpuLimits {
   /// one number because any pipeline target may attach a depth renderbuffer
   /// and one app-facing ceiling is what a size check can name.
   pub max_texture_size: u32,
+  /// Largest face edge of a cube map (GL_MAX_CUBE_MAP_TEXTURE_SIZE): its
+  /// own ceiling in GL, often but not always the 2D one.
+  pub max_cube_map_size: u32,
   /// Sampler inputs one pass may bind (GL_MAX_TEXTURE_IMAGE_UNITS): the
   /// fragment-stage unit count `run_pass` assigns by enumeration index.
   pub max_texture_units: u32,
@@ -40,6 +43,7 @@ impl GpuLimits {
   /// for a driver reporting nonsense.
   pub const FLOOR: GpuLimits = GpuLimits {
     max_texture_size: 2048,
+    max_cube_map_size: 2048,
     max_texture_units: 16,
     max_vertex_attribs: 16,
     max_anisotropy: 1,
@@ -52,6 +56,15 @@ impl GpuLimits {
     let max = self.max_texture_size;
     if width > max || height > max {
       return Err(format!("{width}x{height} exceeds this device's max texture size ({max})"));
+    }
+    Ok(())
+  }
+
+  /// Check a cube map's face edge against the device ceiling.
+  pub fn check_cube_map_size(&self, size: u32) -> Result<(), String> {
+    let max = self.max_cube_map_size;
+    if size > max {
+      return Err(format!("face size {size} exceeds this device's max cube map size ({max})"));
     }
     Ok(())
   }

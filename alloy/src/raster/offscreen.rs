@@ -146,15 +146,18 @@ impl RasterState {
     };
 
     let mut textures: Vec<PassInput> =
-      vec![("uSource".to_string(), source_name, Some(self.samplers.get(SamplerState::default())))];
+      vec![PassInput::d2("uSource", source_name, Some(self.samplers.get(SamplerState::default())))];
     if let Some(history) = history {
-      textures.push(("uPrevious".to_string(), gl_name(history)?, Some(self.samplers.get(SamplerState::default()))));
+      textures.push(PassInput::d2("uPrevious", gl_name(history)?, Some(self.samplers.get(SamplerState::default()))));
     }
     for b in &shader.textures {
       match self.textures.get(&b.id) {
-        Some(gpu) => {
-          textures.push((b.name.clone(), gpu.gl_texture, Some(self.samplers.get(gpu.sampler.overridden(&b.sampler)))))
-        }
+        Some(gpu) => textures.push(PassInput {
+          name: b.name.clone(),
+          texture: gpu.gl_texture,
+          sampler: Some(self.samplers.get(gpu.sampler.overridden(&b.sampler))),
+          shape: gpu.shape,
+        }),
         None => log::warn!("[alloy] node shader input '{}': texture {} not found", b.name, b.id),
       }
     }

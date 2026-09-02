@@ -248,6 +248,33 @@ export function createTexture(
 }
 
 /**
+ * Uploads a cube map: six square faces of `size * size` pixels in GL order
+ * (+X, -X, +Y, -Y, +Z, -Z), each in the view type matching the declared
+ * format like `createTexture`, and returns its id. A cube map is sampled by
+ * DIRECTION from a `uniform samplerCube` in a shader (`texture(uEnv, dir)`;
+ * `textureLod` for an explicit mip level, `mipmap: true` builds the chain
+ * from the faces) - the skybox, reflection and environment-lighting
+ * primitive. Sampler-only: the id binds through `textures` like any other,
+ * but `<texture src>` cannot display it and `readTexture`, `copyTexture`,
+ * `uploadTexture` and `resizeTexture` throw (it is create-once). `wrap` has
+ * no effect - cube filtering is seamless across faces. Binding a cube map
+ * to a `sampler2D`, or a 2D texture to a `samplerCube`, throws at the bind.
+ * Note GL's cube convention: lookups are as seen from inside the cube, so
+ * photographed faces read mirrored on the x axis unless the lookup flips it
+ * (Three's flipEnvMap). Freed like `createTexture` (auto-free under a
+ * reactive owner, `{ autoFree: false }` or `destroyTexture` otherwise).
+ */
+export function createCubeTexture(
+  faces: (Uint8Array | Float32Array)[],
+  size: number,
+  opts?: CreateOptions & SamplerOptions & TextureFormatOptions,
+): gpu.TextureId {
+  let id = gpu.createCubeTexture(faces, size, opts)
+  if (opts?.autoFree !== false && getOwner()) onCleanup(() => gpu.destroyTexture(id))
+  return id
+}
+
+/**
  * Creates a GPU texture you intend to update over time: seed it with `data`,
  * then call `uploadTexture(id, data)` (from flux:gpu) to push new pixels.
  * `data` must hold at least `width * height` pixels at the declared format's

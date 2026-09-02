@@ -73,7 +73,7 @@ Remaining engine items, by the stage that first needs them: mipmaps
 ../backlog/gpu-uniform-arrays.md, filed from this note), blend factors
 plus the premultiplied question (transparency), MSAA (visual quality),
 sampleable depth and float textures (shadows, skinning), cube maps
-(environment; ../backlog/gpu-cube-maps.md, filed from this note). Depth
+(environment; ../done/gpu-cube-maps.md, filed from this note). Depth
 func stays fixed at LESS - deliberate, and the right v1 default anyway.
 
 ## Scope: what "in spirit" means
@@ -189,7 +189,7 @@ Tier 2 - real models, lights, visual quality:
 
 Tier 3 - later features: **sampleable depth** (extensions file; shadow
 maps, SSAO), **float texture formats** (extensions file; skinning
-matrices, HDR), **cube maps** (../backlog/gpu-cube-maps.md, filed
+matrices, HDR), **cube maps** (../done/gpu-cube-maps.md, filed
 2026-08-04 from this note; environment/reflection, cube shadow maps),
 and the sRGB/linear question the pixel contract currently answers with
 "non-linear RGBA8 everywhere" - PBR lighting math would force it. Outside

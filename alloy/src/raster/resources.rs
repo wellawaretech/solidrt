@@ -11,7 +11,7 @@ use crate::gl;
 use crate::gl::{GpuTexture, RenderPipeline, ShaderProgram, Timed};
 use crate::gpu::{
   AttributeTable, GpuBufferInfo, GpuPipelineInfo, GpuProgramInfo, GpuRegionInfo, GpuRenderPipelineInfo, GpuResources,
-  GpuTextureInfo, GpuWindowShaderInfo, PipelineDesc, SamplerState, TextureFormat, UniformTable,
+  GpuTextureInfo, GpuWindowShaderInfo, PipelineDesc, SamplerState, TextureFormat, TextureShape, UniformTable,
 };
 use std::rc::Rc;
 
@@ -47,6 +47,35 @@ impl RasterState {
         // Adoption never took ownership, so the name is still ours to free.
         unsafe { glow::HasContext::delete_texture(&self.gl, gpu.gl_texture) };
         Err("adopt texture failed".to_string())
+      }
+    }
+  }
+
+  /// A cube map from six faces (see `GpuTexture::new_cube`), registered
+  /// without an Impeller adoption: the name stays this thread's to delete.
+  pub(super) fn create_cube_texture(
+    &mut self,
+    id: u64,
+    size: u32,
+    faces: &[Vec<u8>],
+    sampler: SamplerState,
+    format: TextureFormat,
+    label: Option<String>,
+  ) -> Result<(), String> {
+    let mut gpu = GpuTexture::new_cube(&self.gl, size, faces, sampler, format)?;
+    gpu.label = label;
+    self.release_cube(id);
+    self.textures.insert(id, gpu);
+    Ok(())
+  }
+
+  /// Forget texture `id`, deleting its GL name when the name is ours (a
+  /// cube map; every 2D name is Impeller-owned and dies with its adopted
+  /// handle). The one removal doorway for the texture map.
+  pub(super) fn release_cube(&mut self, id: u64) {
+    if let Some(gpu) = self.textures.remove(&id) {
+      if gpu.shape == TextureShape::Cube {
+        unsafe { glow::HasContext::delete_texture(&self.gl, gpu.gl_texture) };
       }
     }
   }
@@ -155,6 +184,7 @@ impl RasterState {
         height: gpu.height,
         target: self.shaders.contains_key(id),
         format: gpu.format.name(),
+        shape: gpu.shape.name(),
         sampler: gpu.sampler,
         label: gpu.label.clone(),
       })

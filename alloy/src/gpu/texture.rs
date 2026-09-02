@@ -163,6 +163,34 @@ impl TextureFormat {
   }
 }
 
+/// The dimensionality of a texture id, declared at creation like `format`.
+/// `Cube` is a cube map: six square faces behind one id, sampled with a
+/// `samplerCube` by direction. Sampling-only - the `<texture>` display draw,
+/// `readTexture` and `copyTexture` are 2D-shaped and reject a cube id at
+/// the call site, and there is no upload or resize after creation (a cube
+/// map is create-once). Render-to-face (cube draw targets) is a later,
+/// additive shape.
+/// The face count of a cube map, in GL (and app-facing) order: +X, -X, +Y,
+/// -Y, +Z, -Z.
+pub const CUBE_FACES: usize = 6;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
+pub enum TextureShape {
+  #[default]
+  D2,
+  Cube,
+}
+
+impl TextureShape {
+  /// The app-facing name, for the resource inventory and error messages.
+  pub fn name(self) -> &'static str {
+    match self {
+      TextureShape::D2 => "2d",
+      TextureShape::Cube => "cube",
+    }
+  }
+}
+
 /// The app-facing sampling options as written at a create call, before
 /// validation: every field optional, absent = the default. One struct
 /// rather than positional arguments so a new sampling axis is one field
@@ -294,7 +322,11 @@ impl SamplerState {
 /// sampling from its filter). The GL name behind it lives in the raster
 /// thread's map.
 pub struct TextureEntry {
-  pub impeller: Texture,
+  /// The Impeller adoption of the GL name: what the `<texture>` display
+  /// draw and the Impeller readback consume. None for a cube map - Impeller
+  /// adopts 2D names only, and a cube map is sampling-only anyway (see
+  /// `TextureShape`), so those two consumers reject it by shape.
+  pub impeller: Option<Texture>,
   pub width: u32,
   pub height: u32,
   pub sampler: SamplerState,
@@ -302,9 +334,22 @@ pub struct TextureEntry {
   /// resize validation. Display of an r8 texture shows the red channel only
   /// (Impeller samples it as `(v, 0, 0, 1)` like any shader would).
   pub format: TextureFormat,
+  /// 2D or cube map (the face edge is `width` == `height`), creation-time
+  /// state like `format`.
+  pub shape: TextureShape,
 }
 
 impl TextureEntry {
+  /// An ordinary 2D entry over its adopted Impeller handle.
+  pub fn d2(impeller: Texture, width: u32, height: u32, sampler: SamplerState, format: TextureFormat) -> Self {
+    TextureEntry { impeller: Some(impeller), width, height, sampler, format, shape: TextureShape::D2 }
+  }
+
+  /// A cube map entry: `size` x `size` faces, no Impeller handle.
+  pub fn cube(size: u32, sampler: SamplerState, format: TextureFormat) -> Self {
+    TextureEntry { impeller: None, width: size, height: size, sampler, format, shape: TextureShape::Cube }
+  }
+
   pub fn width(&self) -> u32 {
     self.width
   }
@@ -313,13 +358,6 @@ impl TextureEntry {
   }
   pub fn sampler(&self) -> SamplerState {
     self.sampler
-  }
-}
-
-impl std::ops::Deref for TextureEntry {
-  type Target = Texture;
-  fn deref(&self) -> &Texture {
-    &self.impeller
   }
 }
 

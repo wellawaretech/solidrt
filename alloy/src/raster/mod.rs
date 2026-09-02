@@ -47,7 +47,7 @@ use crate::gl::{
   SamplerCache, ShaderProgram, ShaderTexture,
 };
 use crate::gpu::{BufferIds, GpuLimits, WindowShader};
-use crate::gpu::{SamplerState, TextureFormat};
+use crate::gpu::{SamplerState, TextureFormat, TextureShape};
 
 /// Counters shared between the raster thread, the frame loop, and the UI
 /// thread's Context, one allocation for all of them. Diagnostics (get_stats)
@@ -613,6 +613,9 @@ impl RasterState {
           RasterCmd::CreateTexture { id, width, height, pixels, sampler, format, label, reply: tx } => {
             reply(tx, self.create_texture(id, width, height, &pixels, sampler, format, label));
           }
+          RasterCmd::CreateCubeTexture { id, size, faces, sampler, format, label, reply: tx } => {
+            reply(tx, self.create_cube_texture(id, size, &faces, sampler, format, label));
+          }
           RasterCmd::UpdateTexture { id, pixels } => {
             if let Err(e) = self.update_texture(id, &pixels) {
               log::warn!("[alloy] texture update failed: {e}");
@@ -775,6 +778,7 @@ impl RasterState {
                   gl_texture,
                   width,
                   height,
+                  shape: TextureShape::D2,
                   sampler: SamplerState::default(),
                   format: TextureFormat::Rgba8,
                   label,
@@ -785,7 +789,7 @@ impl RasterState {
             Err(e) => log::warn!("[alloy] adopt snapshot texture {id} failed: {e}"),
           },
           RasterCmd::DestroyTexture { id } => {
-            self.textures.remove(&id);
+            self.release_cube(id);
             self.dirty.remove(&id);
             // The depth texture goes with its target (its name is
             // Impeller-owned like the color, so removal is bookkeeping).

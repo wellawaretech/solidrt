@@ -136,6 +136,19 @@ pub(crate) enum RasterCmd {
     label: Option<String>,
     reply: mpsc::Sender<Result<Texture, String>>,
   },
+  /// Create a cube map at `id` from six `size` x `size` faces in GL order
+  /// (+X, -X, +Y, -Y, +Z, -Z). Never adopted into Impeller (a cube name
+  /// has no 2D adoption), so the reply is bare: the UI side registers the
+  /// entry without a handle.
+  CreateCubeTexture {
+    id: u64,
+    size: u32,
+    faces: Vec<Vec<u8>>,
+    sampler: SamplerState,
+    format: TextureFormat,
+    label: Option<String>,
+    reply: mpsc::Sender<Result<(), String>>,
+  },
   /// Re-upload pixels into an existing texture; `pixels` is exactly one frame
   /// (the UI side slices multi-frame buffers before sending).
   UpdateTexture { id: u64, pixels: Vec<u8> },

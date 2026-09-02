@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 
 use crate::gpu::{
-  resolve_draw_range, validate_draw_range, validate_params, validate_texture_bindings, BufferIds, BufferUpdate,
-  DrawBounds, DrawRange, DrawUpdate, GpuLimits, IndexFormat, ParamValue, TextureBinding, UniformKind, UniformSlot,
-  UniformTable,
+  resolve_draw_range, validate_binding_shapes, validate_draw_range, validate_params, validate_texture_bindings,
+  BoundTexture, BufferIds, BufferUpdate, DrawBounds, DrawRange, DrawUpdate, GpuLimits, IndexFormat, ParamValue,
+  TextureBinding, TextureFormat, TextureShape, UniformKind, UniformSlot, UniformTable,
 };
 
 fn table(entries: &[(&str, UniformKind)]) -> UniformTable {
@@ -384,4 +384,62 @@ fn instance_buffers_full_swap_preserves_slot_shape() {
     .merged(BufferUpdate { instance_buffers: Some([5, 6, 7, 0]), ..Default::default() })
     .expect_err("adding a slot must error");
   assert!(err.contains("slot 2") && err.contains("not declared"), "{err}");
+}
+
+fn bound(shape: TextureShape, format: TextureFormat) -> BoundTexture {
+  BoundTexture { shape, format }
+}
+
+/// A registry of three ids: 1 a 2D rgba8, 2 a cube map, 3 a depth texture.
+fn lookup(id: u64) -> Option<BoundTexture> {
+  match id {
+    1 => Some(bound(TextureShape::D2, TextureFormat::Rgba8)),
+    2 => Some(bound(TextureShape::Cube, TextureFormat::Rgba8)),
+    3 => Some(bound(TextureShape::D2, TextureFormat::Depth24)),
+    _ => None,
+  }
+}
+
+#[test]
+fn binding_shapes_match_sampler_kinds() {
+  let t = table(&[
+    ("uTex", UniformKind::Sampler2D),
+    ("uEnv", UniformKind::SamplerCube),
+    ("uShadow", UniformKind::Sampler2DShadow),
+  ]);
+  let ok = [TextureBinding::new("uTex", 1), TextureBinding::new("uEnv", 2), TextureBinding::new("uShadow", 3)];
+  assert_eq!(validate_binding_shapes(&t, &ok, lookup), Ok(()));
+  // A depth id on a plain sampler2D is the raw depth read: legal.
+  assert_eq!(validate_binding_shapes(&t, &[TextureBinding::new("uTex", 3)], lookup), Ok(()));
+  // An unregistered id is not this rule's concern.
+  assert_eq!(validate_binding_shapes(&t, &[TextureBinding::new("uEnv", 9)], lookup), Ok(()));
+}
+
+#[test]
+fn binding_shapes_reject_cross_shape_both_ways() {
+  let t = table(&[("uTex", UniformKind::Sampler2D), ("uEnv", UniformKind::SamplerCube)]);
+  let err = validate_binding_shapes(&t, &[TextureBinding::new("uTex", 2)], lookup).expect_err("cube on 2D must error");
+  assert!(err.contains("texture 2 is a cube map") && err.contains("samplerCube"), "{err}");
+  let err = validate_binding_shapes(&t, &[TextureBinding::new("uEnv", 1)], lookup).expect_err("2D on cube must error");
+  assert!(err.contains("uEnv") && err.contains("createCubeTexture"), "{err}");
+}
+
+#[test]
+fn binding_shapes_require_depth_behind_compare_sampler() {
+  let t = table(&[("uShadow", UniformKind::Sampler2DShadow)]);
+  let err = validate_binding_shapes(&t, &[TextureBinding::new("uShadow", 1)], lookup).expect_err("color on shadow must error");
+  assert!(err.contains("sampler2DShadow") && err.contains("depthTexture"), "{err}");
+  let err = validate_binding_shapes(&t, &[TextureBinding::new("uShadow", 2)], lookup).expect_err("cube on shadow must error");
+  assert!(err.contains("cube map"), "{err}");
+}
+
+#[test]
+fn sampler_cube_is_a_sampler_kind() {
+  assert!(UniformKind::SamplerCube.is_sampler());
+  assert_eq!(UniformKind::SamplerCube.sampler_shape(), Some(TextureShape::Cube));
+  assert_eq!(UniformKind::Sampler2DShadow.sampler_shape(), Some(TextureShape::D2));
+  assert_eq!(UniformKind::Vec4.sampler_shape(), None);
+  let t = table(&[("uEnv", UniformKind::SamplerCube)]);
+  let err = validate_params(&t, &[scalar("uEnv", 1.0)]).expect_err("sampler via params must error");
+  assert!(err.contains("samplerCube") && err.contains("bind it via textures"), "{err}");
 }

@@ -16,11 +16,19 @@ use super::{
 use crate::gl;
 use crate::gl::{GpuTexture, PassInput, PassTimer, SamplerCache, ShaderProgram, ShaderTexture, Timed};
 use crate::gpu::{
-  validate_params, validate_texture_bindings, DepthStorage, DrawSpec, ParamValue, PipelineSpec, SamplerState,
-  TargetSpec, TextureBinding, TextureFormat, UniformKind, UniformTable,
+  validate_binding_shapes, validate_params, validate_texture_bindings, BoundTexture, DepthStorage, DrawSpec,
+  ParamValue, PipelineSpec, SamplerState, TargetSpec, TextureBinding, TextureFormat, TextureShape, UniformKind,
+  UniformTable,
 };
 
 impl RasterState {
+  /// What the shape rules see for a registered id (see
+  /// `validate_binding_shapes`): this thread's answer for the fused creates,
+  /// whose uniform kinds only exist post-compile.
+  fn bound_texture(&self, id: u64) -> Option<BoundTexture> {
+    self.textures.get(&id).map(|t| BoundTexture { shape: t.shape, format: t.format })
+  }
+
   /// Render a manual target once, now (see `RasterCmd::RenderTarget`): fresh
   /// inputs first (the pixel-observer rule: this pass samples its sources),
   /// then the one pass, then seed the dirty set so targets sampling this one
@@ -133,6 +141,7 @@ impl RasterState {
       gl_texture: shader.gl_texture(),
       width,
       height,
+      shape: TextureShape::D2,
       sampler: shader.sampler(),
       format: TextureFormat::Rgba8,
       // The id-stable resize keeps the create's label, like create_texture's
@@ -145,7 +154,15 @@ impl RasterState {
       (Some(gl_texture), Some(depth_id)) => {
         let label = self.textures.get(&depth_id).and_then(|old| old.label.clone());
         let depth_gpu =
-          GpuTexture { gl_texture, width, height, sampler: SamplerState::DEPTH, format: TextureFormat::Depth24, label };
+          GpuTexture {
+            gl_texture,
+            width,
+            height,
+            shape: TextureShape::D2,
+            sampler: SamplerState::DEPTH,
+            format: TextureFormat::Depth24,
+            label,
+          };
         let impeller =
           gl::adopt_texture(&depth_gpu, &self.impeller_ctx, size).ok_or("adopt resized depth texture failed")?;
         self.textures.insert(depth_id, depth_gpu);
@@ -195,8 +212,9 @@ impl RasterState {
     // Uniform names only exist after the compile, so create-time params and
     // bindings validate here, inside the blocking RPC - the error still
     // surfaces at the JS call site, and the half-built target rolls back.
-    if let Err(e) =
-      validate_params(&uniforms, params).and_then(|()| validate_texture_bindings(&uniforms, shader.sampler_bindings()))
+    if let Err(e) = validate_params(&uniforms, params)
+      .and_then(|()| validate_texture_bindings(&uniforms, shader.sampler_bindings()))
+      .and_then(|()| validate_binding_shapes(&uniforms, shader.sampler_bindings(), |id| self.bound_texture(id)))
     {
       shader.destroy(&self.gl);
       return Err(e);
@@ -228,6 +246,7 @@ impl RasterState {
     // Same post-compile validation and rollback as create_shader_texture.
     if let Err(e) = validate_params(&uniforms, &spec.entry.params)
       .and_then(|()| validate_texture_bindings(&uniforms, shader.sampler_bindings()))
+      .and_then(|()| validate_binding_shapes(&uniforms, shader.sampler_bindings(), |id| self.bound_texture(id)))
     {
       shader.destroy(&self.gl);
       return Err(e);
@@ -256,6 +275,7 @@ impl RasterState {
     let uniforms = pipeline.uniform_table();
     validate_params(&uniforms, &entry.params)?;
     validate_texture_bindings(&uniforms, &entry.textures)?;
+    validate_binding_shapes(&uniforms, &entry.textures, |id| self.bound_texture(id))?;
     let buffers = resolve_entry_buffers(&self.buffers, entry.buffer_ids())?;
     let mut shader = ShaderTexture::from_pipeline(
       &self.gl,
@@ -317,6 +337,7 @@ impl RasterState {
           gl_texture,
           width,
           height,
+          shape: TextureShape::D2,
           sampler: SamplerState::DEPTH,
           format: TextureFormat::Depth24,
           label: depth_label,
@@ -442,6 +463,7 @@ impl RasterState {
       gl_texture: shader.gl_texture(),
       width,
       height,
+      shape: TextureShape::D2,
       sampler: shader.sampler(),
       format: TextureFormat::Rgba8,
       label,
@@ -475,7 +497,7 @@ impl RasterState {
     let program = ensure_copy_program(&self.gl, &mut self.copy_program)?;
     let gpu = self.textures.get(&src).ok_or_else(|| format!("texture {src} not found"))?;
     let shader = self.shaders.get(&dst).ok_or_else(|| format!("shader texture {dst} not found"))?;
-    let input: PassInput = ("uSrc".to_string(), gpu.gl_texture, Some(self.samplers.get(gpu.sampler)));
+    let input = PassInput::d2("uSrc", gpu.gl_texture, Some(self.samplers.get(gpu.sampler)));
     timed_pass(&self.gl, &mut self.pass_timer, &self.stats, dst, shader, || {
       shader.overwrite_with(&self.gl, &program, &[input]);
     });
@@ -570,9 +592,10 @@ pub(crate) fn propagation_order(dirty: &HashSet<u64>, edges: &HashMap<u64, Vec<u
 /// target's render calls per pass - once for a fragment target, once per
 /// entry for a mesh target. A uniform the program declares as
 /// `sampler2DShadow` gets the comparison sampler instead (hardware LEQUAL
-/// compare, 2x2 PCF); it demands a depth texture, and the UI side rejects
-/// anything else at bind, so a mismatch here means the mirrors diverged -
-/// drop the input (samples as unbound) and say which.
+/// compare, 2x2 PCF); it demands a depth texture, and a cube map may only
+/// back a `samplerCube` (and vice versa). Both shape rules are rejected at
+/// bind on every path, so a mismatch here means the mirrors diverged - drop
+/// the input (samples as unbound) and say which.
 fn resolve_binding_list(
   textures: &HashMap<u64, GpuTexture>,
   samplers: &SamplerCache,
@@ -583,13 +606,18 @@ fn resolve_binding_list(
     .iter()
     .filter_map(|b| {
       let gpu = textures.get(&b.id)?;
-      let compare = program.uniform_kind(&b.name) == Some(UniformKind::Sampler2DShadow);
+      let kind = program.uniform_kind(&b.name);
+      let compare = kind == Some(UniformKind::Sampler2DShadow);
       if compare && gpu.format != TextureFormat::Depth24 {
         log::warn!("[alloy] sampler2DShadow input '{}': texture {} is not a depth texture; skipped", b.name, b.id);
         return None;
       }
+      if kind.and_then(UniformKind::sampler_shape).is_some_and(|wanted| wanted != gpu.shape) {
+        log::warn!("[alloy] input '{}': texture {} is a {} texture, the sampler is not; skipped", b.name, b.id, gpu.shape.name());
+        return None;
+      }
       let sampler = if compare { samplers.compare() } else { samplers.get(gpu.sampler.overridden(&b.sampler)) };
-      Some((b.name.clone(), gpu.gl_texture, Some(sampler)))
+      Some(PassInput { name: b.name.clone(), texture: gpu.gl_texture, sampler: Some(sampler), shape: gpu.shape })
     })
     .collect()
 }
