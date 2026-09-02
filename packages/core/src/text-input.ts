@@ -214,6 +214,9 @@ export type EditorLine = {
 /** The caret's box in content coordinates (before scroll). */
 export type CaretRect = { x: number; y: number; height: number }
 
+/** One line's slice of a selection highlight, in content coordinates (before scroll). */
+export type SelectionRect = { x: number; y: number; width: number; height: number }
+
 export type TextEditorLayout = {
   lines(): EditorLine[]
   caret(): CaretRect
@@ -221,6 +224,8 @@ export type TextEditorLayout = {
   caretLine(): number
   /** The caret position (grapheme boundary) on line `line` nearest to content x. */
   offsetAtX(line: number, x: number): number
+  /** Highlight boxes for the anchor..focus range, one per touched line; empty when collapsed. */
+  selectionRects(anchor: number, focus: number): SelectionRect[]
   /** Index of the line at content y (clamped to the first/last line). */
   lineAtY(y: number): number
   /** The caret position one grapheme left/right of `offset`; a break sequence is one step. For createTextBuffer's `step`. */
@@ -322,18 +327,22 @@ export function createTextEditorLayout(
   }
   let caretLine = createMemo(() => lineOf(input().caret))
 
-  // The caret sits at the last stop at or before its offset (an offset inside
-  // a grapheme, e.g. from a controlled value, snaps back).
-  let caret = createMemo((): CaretRect => {
-    let offset = input().caret
-    let index = caretLine()
-    let line = lines()[index]!
+  // The x of the last stop at or before `offset` on line `index` (an offset
+  // inside a grapheme, e.g. from a controlled value, snaps back).
+  let xAt = (index: number, offset: number): number => {
     let x = 0
     for (let stop of lineStops(index)) {
       if (stop.offset > offset) break
       x = stop.x
     }
-    return { x, y: line.y, height: line.height }
+    return x
+  }
+
+  let caret = createMemo((): CaretRect => {
+    let offset = input().caret
+    let index = caretLine()
+    let line = lines()[index]!
+    return { x: xAt(index, offset), y: line.y, height: line.height }
   })
 
   // Only positions that show on this line are candidates: a boundary offset
@@ -350,6 +359,32 @@ export function createTextEditorLayout(
       }
     }
     return best
+  }
+
+  // One box per line the range touches, offsets snapped to stops like the
+  // caret. A line the selection continues past (every one but the last)
+  // highlights to its ink end plus a space width, so the selected break - a
+  // newline, or the wrap the range crosses - is visible, and a selected empty
+  // line shows as that sliver alone. The last line ends at the focus stop; a
+  // range ending on a wrap boundary owns a zero-width box there (the boundary
+  // offset displays on the next line) and drops it.
+  let selectionRects = (anchor: number, focus: number): SelectionRect[] => {
+    let start = Math.min(anchor, focus)
+    let end = Math.max(anchor, focus)
+    if (start >= end) return []
+    let ls = lines()
+    let first = lineOf(start)
+    let last = lineOf(end)
+    let breakWidth = measureText(" ", input().font).width
+    let out: SelectionRect[] = []
+    for (let i = first; i <= last; i++) {
+      let line = ls[i]!
+      let x = i === first ? xAt(i, start) : 0
+      let width = i === last ? xAt(i, end) - x : Math.max(line.width - x, 0) + breakWidth
+      if (width <= 0) continue
+      out.push({ x, y: line.y, width, height: line.height })
+    }
+    return out
   }
 
   let lineAtY = (y: number): number => {
@@ -399,7 +434,7 @@ export function createTextEditorLayout(
     setScrollY(follow(scrollY(), c.y, c.height, vh, contentHeight))
   })
 
-  return { lines, caret, caretLine, offsetAtX, lineAtY, step, scrollX, scrollY }
+  return { lines, caret, caretLine, offsetAtX, selectionRects, lineAtY, step, scrollX, scrollY }
 }
 
 // Wrap units wider than `width` (through their glued pieces) split into one

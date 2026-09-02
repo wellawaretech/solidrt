@@ -76,6 +76,10 @@ export type Theme = {
     // borderWidth.focus by every focusable control. Defaults to text so it
     // stays visible on primary-filled controls.
     ring: string
+    // The text-selection highlight, drawn by the editable fields behind the
+    // selected glyphs; translucent so the text stays readable. Defaults to
+    // overlayPressed (a neutral scheme-aware tint that needs no color math).
+    selection: string
   }
   // Gaps and paddings, multiples of one base unit (sm 1x, md 2x, lg 4x,
   // xl 5x); read through space() where density should apply.
@@ -110,7 +114,10 @@ export type Theme = {
 export type ThemeColor = string | [light: string, dark: string]
 
 export type ThemeDefinition = {
-  color: { [K in Exclude<keyof Theme["color"], "ring">]: ThemeColor } & { ring?: ThemeColor }
+  color: { [K in Exclude<keyof Theme["color"], "ring" | "selection">]: ThemeColor } & {
+    ring?: ThemeColor
+    selection?: ThemeColor
+  }
   text?: {
     fontFamily?: string
     monoFamily?: string
@@ -184,6 +191,7 @@ export function defineTheme(def: ThemeDefinition, scheme?: "light" | "dark"): Th
     } else color[k] = value
   }
   if (def.color.ring == null) color.ring = color.text
+  if (def.color.selection == null) color.selection = color.overlayPressed
   let base = def.text?.base ?? 14
   let ratio = def.text?.ratio ?? 1.26
   let role = (name: TextVariant): TextStyle => {
@@ -253,6 +261,9 @@ const DEFAULT: ThemeDefinition = {
     // Feedback darkens on a light scheme and lightens on a dark one.
     overlayHover: ["rgba(0,0,0,0.08)", "rgba(255,255,255,0.08)"],
     overlayPressed: ["rgba(0,0,0,0.14)", "rgba(255,255,255,0.14)"],
+    // Primary (#547ebf) at a translucent strength: pale enough to read
+    // through on light, a touch stronger against the dark ground.
+    selection: ["rgba(84,126,191,0.30)", "rgba(84,126,191,0.40)"],
   },
   // base 14 and ratio 1.26 derive title 18 and heading 22; caption sits
   // one step under body but the ratio lands on 11, too small to read on a

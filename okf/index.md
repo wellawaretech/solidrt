@@ -620,12 +620,6 @@ Shaped, not started.
   solid. Extend it to a CSS-style list with line-through/overline,
   textDecorationColor and dashed/dotted/wavy/double, on the same self-drawn
   per-line mechanism.
-- **[TextInput range selection](backlog/text-input-selection.md)** [2026-08-18]
-  The text buffer already models an anchor/focus selection, but TextInput
-  never grows one - no shift+movement, no drag, no highlight, no select-all,
-  no delete-selection path from the UI - so copying or replacing a stretch of
-  text is impossible; wire the gestures and keys onto the buffer's selection
-  and draw it from the editor layout's line stops.
 - **[Hyphenation and optimal-fit line breaking](backlog/text-line-breaking-quality.md)** [2026-08-17]
   Justified narrow columns show lines with huge word gaps when the next word
   is long, and textWrap="pretty" only rescues a lone last word; TeX solves
@@ -643,6 +637,11 @@ Shaped, not started.
   the owned layout reduced the engine's job to shape-one-run and draw-one-run,
   so a second implementation with its own glyph atlas can replace it where
   quality matters.
+- **[Touch and word text selection](backlog/text-selection-touch-word.md)** [2026-09-02]
+  Text selection exists (keys, mouse drag, highlight) but a touch user cannot
+  make one at all - a finger drag deliberately scrolls - and no pointer
+  selects a whole word; add long-press-to-select with draggable handles on
+  touch, and double-click word selection for the mouse.
 - **[No way to tile or repeat a texture](backlog/texture-tile-mode.md)** [2026-08-14]
   Textures always blit once into their destination rect, so a repeating
   background has to be faked with one element per tile or a shader bake;
@@ -1419,6 +1418,12 @@ Finished, kept for the reasoning.
   a word at a time in a wrapping row; Impeller shapes styled runs natively, so
   expose them as <span> children of <text> plus the paragraph props the API
   leaves unused.
+- **[TextInput range selection](done/text-input-selection.md)** [2026-09-02]
+  The text buffer already models an anchor/focus selection, but TextInput
+  never grows one - no shift+movement, no drag, no highlight, no select-all,
+  no delete-selection path from the UI - so copying or replacing a stretch of
+  text is impossible; wire the gestures and keys onto the buffer's selection
+  and draw it from the editor layout's line stops.
 - **[Own the text layout, demote drawParagraph to a shaper](done/text-layout-owned.md)** [2026-08-16]
   Impeller's paragraph is a black box for line breaking, so inline elements,
   exclusions, custom breaking and cheap re-layout are unreachable; experiment

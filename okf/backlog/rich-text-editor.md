@@ -82,12 +82,13 @@ attributes (heading level, list); selection, caret and scrolling as
    carried, not drawn. Verified live: styled render, format on a range,
    typing/caret through mixed sizes (probes/rich-text-probe.tsx).
 
-   Open here: selection highlight (needs the selection item below); inline
+   Open here: inline
    atoms draw as U+FFFC only - real atoms need laid-out children in
    detached text, the open engine question; lists (`list` block attribute)
    need a left-margin marker and indent in the shell.
 
 ## Prerequisite
 
-[TextInput range selection](text-input-selection.md): applying a mark
-needs a range, and the highlight drawing is the same code.
+[TextInput range selection](../done/text-input-selection.md) - DONE
+2026-09-02 in the shared shell: applying a mark has a range, and the
+selection highlight draws in `EditorField` for both components.

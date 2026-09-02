@@ -6,6 +6,7 @@
 // package.
 import {
   For,
+  arena,
   createEffect,
   createMemo,
   createSignal,
@@ -77,8 +78,11 @@ export interface EditorFieldProps extends TransitionProps {
 // and stops those keys from bubbling further. Focused and editing are
 // distinct (see activateField): navigation focuses, select begins editing,
 // Enter while editing submits (single-line) or inserts a newline
-// (multiline). A tap puts the caret at the nearest position. Range selection
-// (shift-movement, highlight) is not wired yet. Outside-click-to-blur is the
+// (multiline). A tap puts the caret at the nearest position. Range selection:
+// Shift+movement (and Shift+tap) extends from the anchor, a mouse/pen drag
+// selects (stealing the gesture arena on its first move), Ctrl/Cmd+A selects
+// all; the highlight draws behind the lines while focused, and edits on a
+// range replace it (the buffer's own behavior). Outside-click-to-blur is the
 // caller's job.
 export function EditorField(props: EditorFieldProps) {
   let [caretOn, setCaretOn] = createSignal(true)
@@ -120,15 +124,57 @@ export function EditorField(props: EditorFieldProps) {
     if (node) setFocus(node.id)
   }
 
-  // Tap-to-position: the viewport's local point plus its scroll is a content
-  // point; the nearest caret stop on the line under it takes the caret. Runs
-  // before the field's own handler above (bubbling), which focuses.
+  // The viewport's local point plus its scroll is a content point; the
+  // nearest caret stop on the line under it. Locals are exact even on the
+  // frozen down path, so a drag keeps mapping after the pointer leaves the
+  // field.
+  let offsetAt = (e: PointerEvent) => {
+    let line = editor.lineAtY(e.localY + editor.scrollY())
+    return editor.offsetAtX(line, e.localX + editor.scrollX())
+  }
+
+  // Drag-select: a mouse/pen down on the viewport arms the pointer, and its
+  // first move steals the gesture arena - precise pointers select text over
+  // an enclosing scroller's pan, as desktop editors do. Touch never arms, so
+  // a finger drag still scrolls (touch range selection is a later,
+  // handle-based interaction); Shift+tap extends everywhere.
+  let dragArmed: number | null = null
+  let dragActive: number | null = null
+  let dragOwner = {
+    cancel: () => {
+      dragActive = null
+    },
+  }
+
+  // Tap-to-position: the offset under the tap takes the caret (Shift keeps
+  // the anchor to extend). Runs before the field's own handler above
+  // (bubbling), which focuses.
   let handleViewportPointerDown = (e: PointerEvent) => {
     if (props.disabled) return
-    let line = editor.lineAtY(e.localY + editor.scrollY())
-    let offset = editor.offsetAtX(line, e.localX + editor.scrollX())
-    buffer.setSelection(offset, offset)
+    let offset = offsetAt(e)
+    buffer.setSelection(e.shiftKey ? buffer.selection().anchor : offset, offset)
+    if (e.pointerType !== "touch" && (e.button == null || e.button === 0)) dragArmed = e.pointerId
     setCaretOn(true)
+  }
+
+  let handleViewportPointerMove = (e: PointerEvent) => {
+    if (props.disabled) return
+    if (dragArmed === e.pointerId) {
+      dragArmed = null
+      if (arena.steal(e.pointerId, dragOwner)) dragActive = e.pointerId
+    }
+    if (dragActive === e.pointerId) {
+      buffer.setSelection(buffer.selection().anchor, offsetAt(e))
+      setCaretOn(true)
+    }
+  }
+
+  let handleViewportPointerUp = (e: PointerEvent) => {
+    if (dragArmed === e.pointerId) dragArmed = null
+    if (dragActive === e.pointerId) {
+      arena.release(e.pointerId, dragOwner)
+      dragActive = null
+    }
   }
 
   let handleFocus = () => {
@@ -160,23 +206,26 @@ export function EditorField(props: EditorFieldProps) {
       buffer.deleteForward()
       setCaretOn(true)
     } else if (e.key === "ArrowLeft") {
-      buffer.move("left")
+      buffer.move("left", { extend: e.shiftKey })
       setCaretOn(true)
     } else if (e.key === "ArrowRight") {
-      buffer.move("right")
+      buffer.move("right", { extend: e.shiftKey })
       setCaretOn(true)
     } else if (e.key === "Home" || e.key === "End") {
       // Multiline: the current line's ends (offsetAtX at 0 / far right, so a
       // wrap boundary resolves to the position that shows on this line).
       if (props.multiline) {
         let offset = editor.offsetAtX(editor.caretLine(), e.key === "Home" ? 0 : 1e9)
-        buffer.setSelection(offset, offset)
+        buffer.setSelection(e.shiftKey ? buffer.selection().anchor : offset, offset)
       } else {
-        buffer.move(e.key === "Home" ? "start" : "end")
+        buffer.move(e.key === "Home" ? "start" : "end", { extend: e.shiftKey })
       }
       setCaretOn(true)
     } else if (props.multiline && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
-      moveLine(e.key === "ArrowUp" ? -1 : 1)
+      moveLine(e.key === "ArrowUp" ? -1 : 1, e.shiftKey)
+      setCaretOn(true)
+    } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "a") {
+      buffer.setSelection(0, value().length)
       setCaretOn(true)
     } else if (props.multiline && e.key === "Enter" && textInputActive()) {
       buffer.insertText("\n")
@@ -200,12 +249,13 @@ export function EditorField(props: EditorFieldProps) {
 
   // Up/Down: the offset on the neighbouring line nearest the caret's x; on
   // the first/last line they go to the text's start/end, as editors do.
-  let moveLine = (delta: number) => {
+  // `extend` (Shift held) keeps the anchor to grow a selection.
+  let moveLine = (delta: number, extend: boolean) => {
     let target = editor.caretLine() + delta
     let count = editor.lines().length
     let offset =
       target < 0 ? 0 : target >= count ? value().length : editor.offsetAtX(target, editor.caret().x)
-    buffer.setSelection(offset, offset)
+    buffer.setSelection(extend ? buffer.selection().anchor : offset, offset)
   }
 
   // Select on the focused field: focused and editing are distinct states. A
@@ -232,6 +282,8 @@ export function EditorField(props: EditorFieldProps) {
   onCleanup(() => {
     if (blinkId != null) clearInterval(blinkId)
     unregisterNav?.()
+    // An unmount mid-drag must not leave a resolved arena claim behind.
+    if (dragActive != null) arena.release(dragActive, dragOwner)
   })
 
   // Style overrides fall back to theme defaults. The border doubles as the
@@ -341,6 +393,8 @@ export function EditorField(props: EditorFieldProps) {
         scrollX={editor.scrollX()}
         scrollY={editor.scrollY()}
         onPointerDown={handleViewportPointerDown}
+        onPointerMove={handleViewportPointerMove}
+        onPointerUp={handleViewportPointerUp}
       >
         {showPlaceholder() ? (
           <d-text w={PLACEHOLDER_SHAPE_WIDTH} {...font()} color={theme.color.textMuted} maxLines={1}>
@@ -348,6 +402,11 @@ export function EditorField(props: EditorFieldProps) {
           </d-text>
         ) : (
           <>
+            {focused() ? (
+              <For each={editor.selectionRects(buffer.selection().anchor, buffer.selection().focus)} keyed={false}>
+                {(r) => <d-rect color={theme.color.selection} x={r().x} y={r().y} w={r().width} h={r().height} />}
+              </For>
+            ) : null}
             <For each={editor.lines()} keyed={false}>
               {(line) => props.renderLine({ line, font, color: textColor })}
             </For>
