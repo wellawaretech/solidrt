@@ -420,23 +420,37 @@ impl FluxEngine {
     drain_job_queue(&runtime).await;
     flush_rejections(&rejections, &logger, on_uncaught.as_ref());
 
+    // Set once runtime.idle() completes (jobs drained, spawner empty) while
+    // pending ops still hold the engine open. Re-polling idle() then resolves
+    // immediately, so the arm is disabled and the loop parks on the exec
+    // channel and the release notification; an exec closure re-arms it.
+    let mut runtime_drained = false;
     loop {
+      // Register for the release notification before re-checking the count:
+      // Notify stores no permit, so a release landing between the check and
+      // the await would otherwise be lost and park the loop for good.
+      let notified = pending.notified();
+      tokio::pin!(notified);
+      notified.as_mut().enable();
+      if runtime_drained && pending.is_idle() {
+        break;
+      }
       tokio::select! {
           Some(f) = exec_rx.recv() => {
               context.with(|ctx| f(ctx)).await;
               drain_job_queue(&runtime).await;
               flush_rejections(&rejections, &logger, on_uncaught.as_ref());
+              runtime_drained = false;
           }
-          _ = pending.notified() => {}
-          _ = runtime.idle() => {
+          _ = &mut notified => {}
+          _ = runtime.idle(), if !runtime_drained => {
               // Job queue drained: this is the microtask checkpoint at which any
               // still-unhandled rejection is genuinely unhandled. Report them.
               flush_rejections(&rejections, &logger, on_uncaught.as_ref());
               if pending.is_idle() {
                   break;
               }
-              tokio::task::yield_now().await;
-              tokio::time::sleep(std::time::Duration::from_micros(1000)).await;
+              runtime_drained = true;
           }
       }
     }

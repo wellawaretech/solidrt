@@ -34,7 +34,11 @@ impl PendingOps {
     self.inner.count.load(Ordering::SeqCst) == 0
   }
 
-  pub(crate) async fn notified(&self) {
-    self.inner.notify.notified().await;
+  /// The release-to-zero notification as a future, not awaited here: the
+  /// engine loop pins it and calls `enable()` to register interest before
+  /// re-checking the count (Notify stores no permit, so registering after a
+  /// racing release would lose the wakeup).
+  pub(crate) fn notified(&self) -> tokio::sync::futures::Notified<'_> {
+    self.inner.notify.notified()
   }
 }
