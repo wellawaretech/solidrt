@@ -1,7 +1,8 @@
 import type { LayoutProps } from "@solidrt/core"
 import { theme } from "./theme"
 import type { StyleProps, TransitionProps } from "./types"
-import { splitTransition, transitionEndFor } from "./types"
+import { splitTransition, transitionEndFor, withTransitionDefaults } from "./types"
+import { colorFade } from "./motion"
 
 export interface DividerProps extends TransitionProps {
   // Line direction. Horizontal (default) is a full-width rule; vertical is a
@@ -34,7 +35,7 @@ export function Divider(props: DividerProps) {
       alignSelf="stretch"
       {...props.layout}
     >
-      <d-rect transition={split().background} onTransitionEnd={transitionEndFor("background", props.onTransitionEnd)} color={color()} />
+      <d-rect transition={withTransitionDefaults(split().background, colorFade())} onTransitionEnd={transitionEndFor("background", props.onTransitionEnd)} color={color()} />
     </view>
   )
 }

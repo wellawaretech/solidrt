@@ -6,7 +6,8 @@ import { policy } from "./policy"
 import { densityScale } from "./density"
 import { typeStyle } from "./typography"
 import type { StyleProps, TransitionProps } from "./types"
-import { splitTransition, transitionEndFor } from "./types"
+import { splitTransition, transitionEndFor, withTransitionDefaults } from "./types"
+import { colorFade, markMotion, pressScale, scaleFeedback } from "./motion"
 
 // Shared selection state for a group. Created and consumed within this module, so
 // RadioGroup/Radio are a self-contained pair, not a cross-component dependency.
@@ -67,6 +68,8 @@ export interface RadioProps extends TransitionProps {
 const RING = 20
 
 // A single option in a RadioGroup: a ring with an inner dot when selected.
+// The ring color fades, the dot pops in/out (markMotion), and a press
+// shrinks the ring - not the whole row, so a long label never wobbles.
 export function Radio(props: RadioProps) {
   // useContext throws ContextNotFoundError if a Radio is used outside a
   // RadioGroup (default-less context), so ctx is always present here.
@@ -90,9 +93,11 @@ export function Radio(props: RadioProps) {
   let ringColor = () => (focusRing() ? theme.color.ring : selected() ? theme.color.primary : theme.color.border)
   let ringWidth = () => (focusRing() ? theme.borderWidth.focus : 2)
 
+  let split = () => splitTransition(props.transition)
+
   return (
     <view
-      transition={splitTransition(props.transition).root}
+      transition={split().root}
       onTransitionEnd={transitionEndFor("root", props.onTransitionEnd)}
       ref={press.ref}
       repaintBoundary
@@ -110,22 +115,46 @@ export function Radio(props: RadioProps) {
       pointerEvents={disabled() ? "none" : undefined}
     >
       <Show when={styled().backgroundColor != null || styled().borderRadius != null}>
-        <d-rect color={styled().backgroundColor ?? "transparent"} radius={styled().borderRadius} />
+        <d-rect
+          transition={withTransitionDefaults(split().background, colorFade())}
+          onTransitionEnd={transitionEndFor("background", props.onTransitionEnd)}
+          color={styled().backgroundColor ?? "transparent"}
+          radius={styled().borderRadius}
+        />
       </Show>
-      <view width={ring()} height={ring()}>
-        <d-oval drawStyle="stroke" color={ringColor()} strokeWidth={ringWidth()} />
+      <view
+        width={ring()}
+        height={ring()}
+        position="relative"
+        scale={pressScale(press.pressed())}
+        transition={scaleFeedback()}
+      >
+        <d-oval drawStyle="stroke" transition={colorFade()} color={ringColor()} strokeWidth={ringWidth()} />
         <Show when={selected()}>
-          <d-oval x={inset()} y={inset()} w={ring() - inset() * 2} h={ring() - inset() * 2} color={theme.color.primary} />
+          <view
+            position="absolute"
+            top={0}
+            bottom={0}
+            left={0}
+            right={0}
+            opacity={1}
+            scale={1}
+            transition={markMotion()}
+          >
+            <d-oval x={inset()} y={inset()} w={ring() - inset() * 2} h={ring() - inset() * 2} transition={colorFade()} color={theme.color.primary} />
+          </view>
         </Show>
       </view>
       <Show when={isText()} fallback={resolved()}>
-        <text color={theme.color.text} {...typeStyle("body")}>
+        <text transition={colorFade()} color={theme.color.text} {...typeStyle("body")}>
           {resolved()}
         </text>
       </Show>
       <Show when={(styled().borderWidth ?? 0) > 0}>
         <d-rect
           drawStyle="stroke"
+          transition={withTransitionDefaults(split().border, colorFade())}
+          onTransitionEnd={transitionEndFor("border", props.onTransitionEnd)}
           color={styled().borderColor ?? "transparent"}
           strokeWidth={styled().borderWidth}
           radius={styled().borderRadius}

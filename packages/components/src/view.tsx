@@ -1,6 +1,7 @@
 import type { LayoutProps, PointerProps } from "@solidrt/core"
 import type { StyleProps, TransitionProps } from "./types"
-import { splitTransition, transitionEndFor } from "./types"
+import { splitTransition, transitionEndFor, withTransitionDefaults } from "./types"
+import { colorFade } from "./motion"
 
 export interface ViewProps extends PointerProps, TransitionProps {
   children?: any
@@ -50,7 +51,7 @@ export function View(props: ViewProps) {
     >
       {hasBackground() ? (
         <d-rect
-          transition={split().background}
+          transition={withTransitionDefaults(split().background, colorFade())}
           onTransitionEnd={transitionEndFor("background", props.onTransitionEnd)}
           color={props.style?.backgroundColor ?? "transparent"}
           radius={props.style?.borderRadius}
@@ -60,7 +61,7 @@ export function View(props: ViewProps) {
       {hasBorder() ? (
         <d-rect
           drawStyle="stroke"
-          transition={split().border}
+          transition={withTransitionDefaults(split().border, colorFade())}
           onTransitionEnd={transitionEndFor("border", props.onTransitionEnd)}
           color={props.style?.borderColor ?? "transparent"}
           strokeWidth={props.style?.borderWidth}

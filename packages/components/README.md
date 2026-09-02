@@ -63,6 +63,14 @@ Corner radius is set once: `radius` in a theme definition is a single number, th
 setTheme({ radius: 4 })   // sm 2, md 4, lg 6
 ```
 
+### Motion
+
+`motion` holds the three durations (ms) every built-in component transition draws from, so one theme edit retimes the whole package: `fast` (default 100) is press/hover feedback, `base` (150) the color and opacity fades - state changes, the theme cross-fade (a `setTheme` fades every themed color rather than snapping), popup enter/exit - and `slow` (250) the travel of a control's moving parts (switch knob, segmented indicator, progress fill). `policy.motion` gates whether these play at all; a per-instance `transition` prop overrides them per property.
+
+```jsx
+setTheme({ motion: { base: 250, slow: 400 } })   // a slower, calmer app
+```
+
 ### Per-component overrides
 
 `theme.components` restyles a component everywhere without wrapping it: a `StyleProps` object per component name, merged between the component's themed defaults and each instance's `style` prop (instance style still wins).
@@ -93,7 +101,7 @@ The fields:
 
 - `interaction` (`"touch" | "desktop" | "hybrid"`) - which affordances a component shows (hover states vs. long-press). `Tooltip`, `Select`, and `ContextMenu` fork on it.
 - `density` (`"comfortable" | "compact" | "dense"`) - control/hit-target/spacing scale; drives `densityScale()` (1 / 0.85 / 0.7). A `<Density>` region overrides it per subtree.
-- `motion` (`"normal" | "reduced" | "none"`) - animation intensity.
+- `motion` (`"normal" | "reduced" | "none"`) - animation intensity. Gates every built-in component transition: `reduced` keeps the color/opacity fades (a fade is not movement) but snaps everything that travels or scales, and halves the indeterminate `Spinner`/`ProgressBar` speeds; `none` snaps it all and parks the indeterminate loops.
 - `focusRing` (`boolean`) - whether focused controls draw a visible focus indicator (true when a keyboard or gamepad/remote is present).
 - `textScale` (`number`) - multiplier on type-scale font sizes; defaults to the OS text-scale preference.
 - `textWeightDelta` (`number`) - weight compensation (steps of 100) for light-on-dark text on low-DPI displays.
@@ -117,7 +125,9 @@ Most components group their props into two objects, split by one rule: `layout` 
 
 `TransitionProps` (`transition`, `onTransitionEnd`) is the third top-level group, in the component's own vocabulary rather than core's: a declaration names the view-level properties (`opacity`, `x`, `y`, `scale*`, `rotate*`, `origin*`, `perspective`, `clipRadius`) and the style ones (`backgroundColor`, `borderColor`, `borderWidth`, `borderRadius`), plus `all`, a shorthand string, and `stagger` - `<Button transition={{ backgroundColor: { duration: 300 }, opacity: "200ms ease-out" }}>`. Core's paint names (`color`, `radius`, `strokeWidth`) are rejected by the types: a component is a root view plus the rects it draws for `style`, and `splitTransition` hands each entry to the node that owns it (the background rect gets `backgroundColor`/`borderRadius`, the stroke rect `borderColor`/`borderWidth`/`borderRadius`, the root view the rest). `onTransitionEnd` reports the component name (`backgroundColor`, not `color`). `Text` adds `color` (its text node), `ScrollView` adds `scrollX`/`scrollY` (its viewport).
 
-Controls whose paint is their own - `Switch` knob, `Slider` thumb, `Checkbox` mark, `Radio` dot, `ProgressBar` fill, `Spinner`, `Icon`, `QrCode`, and the chrome of `NavShell`, `ContextMenu`, `Field` - animate the view-level entries only for now; their internal parts are not reachable through `transition` yet (okf/backlog/component-transitions-internal-paint.md).
+Controls with a moving part of their own name it as an extra entry: `Switch` `knob` (the thumb's travel), `SegmentedControl` `indicator` (the active-segment slide), `ProgressBar` `fill` (the determinate glide) - `<Switch transition={{ knob: "150ms" }}>` retimes just that part. `Slider` deliberately has no parts: its thumb and fill track the drag 1:1, and a transition would rubber-band it.
+
+The components also ship built-in motion with no props at all: state and theme colors fade, a press shrinks the free-standing controls on a quick spring and fades the overlay tints, marks (checkmark, radio dot) pop in and out, moving parts travel on springs, and the overlays (`Modal`, `Tooltip`, the `Select`/`ContextMenu` popups) fade in and out. Timing comes from `theme.motion` (`fast`/`base`/`slow`), and `policy.motion` gates it: `reduced` keeps the fades but snaps everything that moves, `none` snaps it all. A caller's `transition` entry overrides the built-in for that property, and `transition={null}` suppresses a component's built-ins outright.
 
 API: `StyleProps`, `TextLayoutProps`, `Option`, `TransitionProps`, `ComponentTransition`, `TransitionViewProp`, `TransitionStyleProp`, `TransitionScrollProp` - typed and commented in [src/types.ts](./src/types.ts).
 
@@ -354,7 +364,7 @@ API: `Pressable`, `PressableProps`, `PressState` - typed and commented in [src/p
 
 ### Button
 
-A themed press target over `Pressable`: a padded, centered box with a label. `variant` picks the visual role - `primary` (accent fill, the default), `secondary`, `ghost` (no fill until hover), `danger` (destructive) - with fill, hover tint, and label color from the matching theme tokens; no variant draws a border. `size` (`sm`/`md`/`lg`) pins a minimum width so a row of buttons lines up (a longer label still expands past it); omitted, the button sizes to its content. A string or number child renders as the themed label; any other child renders as-is (an icon, a row, ...).
+A themed press target over `Pressable`: a padded, centered box with a label. A press shrinks it slightly on a quick spring and tints it with `overlayPressed`; hover tints with `overlayHover` (non-touch policies). `variant` picks the visual role - `primary` (accent fill, the default), `secondary`, `ghost` (no fill until hover), `danger` (destructive) - with fill, tints, and label color from the matching theme tokens; no variant draws a border. `size` (`sm`/`md`/`lg`) pins a minimum width so a row of buttons lines up (a longer label still expands past it); omitted, the button sizes to its content. A string or number child renders as the themed label; any other child renders as-is (an icon, a row, ...).
 
 ```jsx
 import { Button } from "@solidrt/components"
@@ -399,7 +409,7 @@ API: `createFocusNav`, `FocusNavOptions` - typed and commented in [src/focus-nav
 
 ### Switch
 
-An on/off toggle: the track fills with `primary` when on and `surfaceAlt` when off; the thumb slides across. Controlled via `value`/`onChange`, or uncontrolled via `defaultValue`. Built on `Pressable`, so `disabled` takes no pointer events. `style` overrides the track colors and radius.
+An on/off toggle: the track fills with `primary` when on and `surfaceAlt` when off (a fade), and the thumb springs across - the `knob` transition entry retimes that travel. Controlled via `value`/`onChange`, or uncontrolled via `defaultValue`. Built on `Pressable`, so `disabled` takes no pointer events. `style` overrides the track colors and radius.
 
 ```jsx
 import { Switch } from "@solidrt/components"
@@ -415,7 +425,7 @@ API: `Switch`, `SwitchProps` - typed and commented in [src/switch.tsx](./src/swi
 
 ### Checkbox
 
-A checkbox: filled with `primary` and a drawn checkmark when checked, an empty bordered box otherwise. Controlled via `checked`/`onChange`, or uncontrolled via `defaultChecked`. The mark is the `theme.icons.check` slot when a theme sets one. `style` overrides the box colors, border, and radius.
+A checkbox: filled with `primary` and a drawn checkmark when checked, an empty bordered box otherwise - the fill fades and the mark pops in and out. Controlled via `checked`/`onChange`, or uncontrolled via `defaultChecked`. The mark is the `theme.icons.check` slot when a theme sets one. `style` overrides the box colors, border, and radius.
 
 ```jsx
 import { Checkbox } from "@solidrt/components"
@@ -427,7 +437,7 @@ API: `Checkbox`, `CheckboxProps` - typed and commented in [src/checkbox.tsx](./s
 
 ### RadioGroup / Radio
 
-A single-selection pair: `RadioGroup` owns the selected value (controlled via `value`/`onChange`, or uncontrolled via `defaultValue`) and shares it with its `Radio` children; each `Radio` is a ring with an inner dot when selected. A string/number child of `Radio` renders as a themed label beside the ring; anything else as-is. `disabled` on the group disables every option, on a `Radio` just that one.
+A single-selection pair: `RadioGroup` owns the selected value (controlled via `value`/`onChange`, or uncontrolled via `defaultValue`) and shares it with its `Radio` children; each `Radio` is a ring with an inner dot when selected - the ring color fades and the dot pops in and out. A string/number child of `Radio` renders as a themed label beside the ring; anything else as-is. `disabled` on the group disables every option, on a `Radio` just that one.
 
 ```jsx
 import { RadioGroup, Radio } from "@solidrt/components"
@@ -550,7 +560,7 @@ API: `Spinner`, `SpinnerProps` - typed and commented in [src/spinner.tsx](./src/
 
 ### ProgressBar
 
-A horizontal progress bar: determinate when given a `value` in `[0, 1]` (the fill grows from the left), indeterminate when `value` is undefined (a short segment slides back and forth, driven by core `onFrame`). Track is `surfaceAlt`, fill is `primary`; override via `style.backgroundColor` (track) and `style.color` (fill).
+A horizontal progress bar: determinate when given a `value` in `[0, 1]` (the fill grows from the left, gliding to each new value - the `fill` transition entry retimes it), indeterminate when `value` is undefined (a short segment slides back and forth, driven by core `onFrame`). Track is `surfaceAlt`, fill is `primary`; override via `style.backgroundColor` (track) and `style.color` (fill).
 
 ```jsx
 import { ProgressBar } from "@solidrt/components"
@@ -581,7 +591,7 @@ API: `Portal`, `PortalProps` - typed and commented in [src/portal.tsx](./src/por
 
 ### Modal
 
-A centered overlay rendered at the window root via core `createPortal`: it fills the window with a dimming backdrop (theme `scrim`; override via `backdropColor`, `"transparent"` for no dim) and centers `children` on top. Control visibility by mounting/unmounting it, e.g. `<Show when={open()}>`; the gating signal must start false since portals cannot mount during the initial render. Pressing the backdrop calls `onClose` (unless `dismissable` is false), pressing the content does not, and while mounted the modal traps `createFocusNav` inside itself.
+A centered overlay rendered at the window root via core `createPortal`: it fills the window with a dimming backdrop (theme `scrim`; override via `backdropColor`, `"transparent"` for no dim) and centers `children` on top, the whole overlay fading in at mount and out on removal (an exiting modal takes no hits). Control visibility by mounting/unmounting it, e.g. `<Show when={open()}>`; the gating signal must start false since portals cannot mount during the initial render. Pressing the backdrop calls `onClose` (unless `dismissable` is false), pressing the content does not, and while mounted the modal traps `createFocusNav` inside itself.
 
 ```jsx
 import { Modal, Card, Button } from "@solidrt/components"
@@ -599,7 +609,7 @@ API: `Modal`, `ModalProps` - typed and commented in [src/modal.tsx](./src/modal.
 
 ### Tooltip
 
-A hover-only affordance: under the `desktop`/`hybrid` interaction policies, resting a mouse pointer on the wrapped content shows a bubble near it after `delay` (default 500ms). Under the `touch` policy it never shows, so tooltip content must stay non-essential. The bubble is portal-mounted at the window root, clamped to the window edges, takes no pointer events, and hides on leave and on press. A string/number `content` renders as themed body text; anything else as-is. `placement` picks the side (`"top"`, the default, or `"bottom"`).
+A hover-only affordance: under the `desktop`/`hybrid` interaction policies, resting a mouse pointer on the wrapped content shows a bubble near it after `delay` (default 500ms). Under the `touch` policy it never shows, so tooltip content must stay non-essential. The bubble is portal-mounted at the window root, clamped to the window edges, takes no pointer events, fades in and out, and hides on leave and on press. A string/number `content` renders as themed body text; anything else as-is. `placement` picks the side (`"top"`, the default, or `"bottom"`).
 
 ```jsx
 import { Tooltip, Button } from "@solidrt/components"
@@ -613,7 +623,7 @@ API: `Tooltip`, `TooltipProps` - typed and commented in [src/tooltip.tsx](./src/
 
 ### Select
 
-A single-choice picker whose presentation forks on the interaction policy: `desktop`/`hybrid` opens an anchored dropdown under the trigger (flipping above when there is no room), `touch` opens a bottom sheet over a scrim. Same contract either way: `options` is an `Option[]` (`{ value, label }`), controlled via `value`/`onChange` or uncontrolled via `defaultValue`; pressing outside closes without a change. `placeholder` shows in the trigger while nothing is selected. The option list is not scrollable yet, so keep it short. The trigger's chevron is the `theme.icons.chevronDown` slot when a theme sets one.
+A single-choice picker whose presentation forks on the interaction policy: `desktop`/`hybrid` opens an anchored dropdown under the trigger (flipping above when there is no room), `touch` opens a bottom sheet over a scrim. Same contract either way: `options` is an `Option[]` (`{ value, label }`), controlled via `value`/`onChange` or uncontrolled via `defaultValue`; pressing outside closes without a change. `placeholder` shows in the trigger while nothing is selected. Both presentations fade in and out, and the trigger's chevron flips while open. The option list is not scrollable yet, so keep it short. The chevron is the `theme.icons.chevronDown` slot when a theme sets one.
 
 ```jsx
 import { Select } from "@solidrt/components"
@@ -631,7 +641,7 @@ API: `Select`, `SelectProps` - typed and commented in [src/select.tsx](./src/sel
 
 ### SegmentedControl
 
-A single-choice row of equal-width segments joined flush: only the control's outermost corners are rounded, hairline dividers separate the segments, and the active segment fills with the theme `primary`. Hovered segments tint with the theme `overlayHover` under non-touch interaction policies. `options` is an `Option[]`; controlled via `value`/`onChange`, or uncontrolled via `defaultValue`. Override the inactive fill via `style.backgroundColor` and the outer radius via `style.borderRadius`.
+A single-choice row of equal-width segments joined flush: only the control's outermost corners are rounded, hairline dividers separate the segments, and the active segment is one `primary` indicator that springs between segments on a selection change - the `indicator` transition entry retimes it. Hovered segments tint with the theme `overlayHover` under non-touch interaction policies. `options` is an `Option[]`; controlled via `value`/`onChange`, or uncontrolled via `defaultValue`. Override the inactive fill via `style.backgroundColor` and the outer radius via `style.borderRadius`.
 
 ```jsx
 import { SegmentedControl } from "@solidrt/components"
@@ -647,7 +657,7 @@ API: `SegmentedControl`, `SegmentedControlProps` - typed and commented in [src/s
 
 ### ContextMenu
 
-Secondary actions on the wrapped content. The opening gesture follows the physical pointer: right-click for a mouse, long-press (500ms, cancelled by finger travel) for touch. The presentation forks on the interaction policy: `touch` gets a bottom sheet over a scrim, `desktop`/`hybrid` an anchored menu at the pointer that flips up near the bottom edge. `items` is a `ContextMenuItem[]` (`{ label, onSelect?, disabled? }`); pressing outside closes without selecting.
+Secondary actions on the wrapped content. The opening gesture follows the physical pointer: right-click for a mouse, long-press (500ms, cancelled by finger travel) for touch. The presentation forks on the interaction policy: `touch` gets a bottom sheet over a scrim, `desktop`/`hybrid` an anchored menu at the pointer that flips up near the bottom edge. Both presentations fade in and out. `items` is a `ContextMenuItem[]` (`{ label, onSelect?, disabled? }`); pressing outside closes without selecting.
 
 ```jsx
 import { ContextMenu } from "@solidrt/components"

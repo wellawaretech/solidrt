@@ -5,7 +5,8 @@ import { policy } from "./policy"
 import { space } from "./spacing"
 import { typeStyle } from "./typography"
 import type { TransitionProps } from "./types"
-import { splitTransition, transitionEndFor } from "./types"
+import { splitTransition, transitionEndFor, withTransitionDefaults } from "./types"
+import { colorFade, popupFadeOut } from "./motion"
 
 export interface TooltipProps extends TransitionProps {
   // The tooltip body. A string/number renders as themed text; anything else
@@ -73,6 +74,9 @@ export function Tooltip(props: TooltipProps) {
     // share one build - reading the raw getter again would orphan native nodes.
     let content = children(() => props.content)
     let isText = () => typeof content() === "string" || typeof content() === "number"
+    // The fade is driven by the position write, not a mount-time `from`: the
+    // bubble parks offscreen until measured, so a `from` would play unseen;
+    // the exit fade plays when the bubble unmounts.
     return createPortal(
       <view
         ref={(n: { id: number }) => (bubble = n)}
@@ -87,21 +91,23 @@ export function Tooltip(props: TooltipProps) {
         paddingLeft={space("md")}
         paddingRight={space("md")}
         pointerEvents="none"
+        opacity={pos() ? 1 : 0}
+        transition={popupFadeOut()}
       >
         <d-rect
-          transition={split().background}
+          transition={withTransitionDefaults(split().background, colorFade())}
           onTransitionEnd={transitionEndFor("background", props.onTransitionEnd)}
           color={theme.components.tooltip?.backgroundColor ?? theme.color.surfaceAlt}
           radius={theme.components.tooltip?.borderRadius ?? theme.radius.sm}
         />
         <Show when={isText()} fallback={content()}>
-          <text color={theme.color.text} {...typeStyle("body")}>
+          <text transition={colorFade()} color={theme.color.text} {...typeStyle("body")}>
             {content()}
           </text>
         </Show>
         <d-rect
           drawStyle="stroke"
-          transition={split().border}
+          transition={withTransitionDefaults(split().border, colorFade())}
           onTransitionEnd={transitionEndFor("border", props.onTransitionEnd)}
           color={theme.components.tooltip?.borderColor ?? theme.color.border}
           strokeWidth={theme.components.tooltip?.borderWidth ?? theme.borderWidth.sm}

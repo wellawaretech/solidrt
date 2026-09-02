@@ -1,8 +1,9 @@
 import { children } from "@solidrt/core"
 import type { LayoutProps, PointerProps } from "@solidrt/core"
 import type { StyleProps, TransitionProps } from "./types"
-import { splitTransition, transitionEndFor } from "./types"
+import { splitTransition, transitionEndFor, withTransitionDefaults } from "./types"
 import { createPress, type PressState } from "./press"
+import { colorFade, scaleFeedback } from "./motion"
 
 export type { PressState } from "./press"
 
@@ -55,7 +56,9 @@ export function Pressable(props: PressableProps) {
 
   return (
     <view
-      transition={split().root}
+      // The scale default animates a style-function's press scale, so a
+      // custom control built on Pressable presses like Button by default.
+      transition={withTransitionDefaults(split().root, scaleFeedback())}
       onTransitionEnd={transitionEndFor("root", props.onTransitionEnd)}
       ref={(n: { id: number }) => {
         press.ref(n)
@@ -84,7 +87,7 @@ export function Pressable(props: PressableProps) {
     >
       {hasBackground() ? (
         <d-rect
-          transition={split().background}
+          transition={withTransitionDefaults(split().background, colorFade())}
           onTransitionEnd={transitionEndFor("background", props.onTransitionEnd)}
           color={style()?.backgroundColor ?? "transparent"}
           radius={style()?.borderRadius}
@@ -94,7 +97,7 @@ export function Pressable(props: PressableProps) {
       {hasBorder() ? (
         <d-rect
           drawStyle="stroke"
-          transition={split().border}
+          transition={withTransitionDefaults(split().border, colorFade())}
           onTransitionEnd={transitionEndFor("border", props.onTransitionEnd)}
           color={style()?.borderColor ?? "transparent"}
           strokeWidth={style()?.borderWidth}

@@ -5,6 +5,7 @@ import { space } from "./spacing"
 import { typeStyle } from "./typography"
 import type { TransitionProps } from "./types"
 import { splitTransition, transitionEndFor } from "./types"
+import { colorFade } from "./motion"
 
 export interface FieldProps extends TransitionProps {
   // Label above the control.
@@ -29,13 +30,14 @@ export function Field(props: FieldProps) {
   return (
     <view flexDirection="column" gap={space("sm")} transition={splitTransition(props.transition).root} onTransitionEnd={transitionEndFor("root", props.onTransitionEnd)} {...props.layout}>
       <Show when={props.label != null}>
-        <text color={theme.color.text} {...typeStyle("label")}>
+        <text transition={colorFade()} color={theme.color.text} {...typeStyle("label")}>
           {props.label}
         </text>
       </Show>
       {props.children}
       <Show when={props.error != null || props.description != null}>
         <text
+          transition={colorFade()}
           color={props.error != null ? theme.color.danger : theme.color.textMuted}
           {...typeStyle("caption")}
         >

@@ -1,5 +1,6 @@
 import type { LayoutProps, PointerProps } from "@solidrt/core"
 import type { StyleProps } from "./types"
+import { colorFade } from "./motion"
 
 export interface WindowProps extends PointerProps {
   children?: any
@@ -31,7 +32,7 @@ export function Window(props: WindowProps) {
       pointerEvents={props.pointerEvents}
     >
       {props.style?.backgroundColor != null ? (
-        <d-rect color={props.style.backgroundColor} />
+        <d-rect transition={colorFade()} color={props.style.backgroundColor} />
       ) : null}
       {props.children}
     </window>

@@ -21,9 +21,12 @@ import type {
 // component they would land on the root view, which has no paint, and be
 // silently ignored.
 //
-// Controls whose paint is their own (Switch knob, Slider thumb, Checkbox
-// mark, ...) take the view-level entries only for now; see
-// okf/backlog/component-transitions-internal-paint.md.
+// Controls with a moving part of their own name it as an extra entry
+// (Switch `knob`, SegmentedControl `indicator`, ProgressBar `fill`), routed
+// by partTransition to the node owning it - with a built-in default from
+// motion.tsx when the caller names nothing. Slider is the deliberate
+// exception: its thumb and fill track the drag 1:1, and a transition would
+// rubber-band it.
 export type TransitionViewProp =
   | "opacity"
   | "x"
@@ -84,9 +87,14 @@ const STYLE_TO_BORDER: Record<string, TransitionPropName> = {
  * Map a component declaration onto the three nodes a styled component
  * draws. `all`, a shorthand string and `stagger` apply to every node; named
  * entries go to the node owning the property. An entry for a node that is
- * not mounted (no background set) simply never animates.
+ * not mounted (no background set) simply never animates. `parts` lists the
+ * component's named moving parts, routed separately via partTransition, so
+ * their entries never leak onto the root view.
  */
-export function splitTransition<P extends string>(t: ComponentTransition<P> | undefined): SplitTransition {
+export function splitTransition<P extends string>(
+  t: ComponentTransition<P> | undefined,
+  parts?: readonly string[],
+): SplitTransition {
   if (t == null || typeof t === "string") return { root: t, background: t, border: t }
   let root: Record<string, unknown> = {}
   let background: Record<string, unknown> = {}
@@ -99,12 +107,72 @@ export function splitTransition<P extends string>(t: ComponentTransition<P> | un
     } else if (key in STYLE_TO_BACKGROUND || key in STYLE_TO_BORDER) {
       if (key in STYLE_TO_BACKGROUND) background[STYLE_TO_BACKGROUND[key]!] = value
       if (key in STYLE_TO_BORDER) border[STYLE_TO_BORDER[key]!] = value
-    } else {
+    } else if (!parts?.includes(key)) {
       root[key] = value
     }
   }
   let pick = (o: Record<string, unknown>) => (Object.keys(o).length ? (o as CoreTransitionProps["transition"]) : undefined)
   return { root: pick(root), background: pick(background), border: pick(border) }
+}
+
+/**
+ * Fill a node's split declaration with the component's built-in transitions
+ * (motion.tsx) for the properties the caller left uncovered. A caller
+ * shorthand or `all` covers everything, so their intent wins wholesale;
+ * `transition={null}` suppresses the built-ins too; a named entry overrides
+ * the default for that property only.
+ */
+export function withTransitionDefaults(
+  t: CoreTransitionProps["transition"],
+  defaults: Record<string, Transition | undefined> | undefined,
+): CoreTransitionProps["transition"] {
+  if (t === null || typeof t === "string") return t
+  if (t?.all !== undefined) return t
+  let filled: Record<string, unknown> | undefined
+  for (let key in defaults) {
+    let spec = defaults[key]
+    if (spec === undefined || (t && key in t)) continue
+    ;(filled ??= {})[key] = spec
+  }
+  if (!filled) return t
+  return { ...filled, ...t } as CoreTransitionProps["transition"]
+}
+
+/**
+ * The core declaration for a control's named moving part - a node owning
+ * one animatable property (Switch `knob` -> the knob's `x`). The caller's
+ * entry for the part (or `all`, or a shorthand string) retimes it, an
+ * absent one falls back to the control's built-in spec, and
+ * `transition={null}` suppresses that too.
+ */
+export function partTransition<P extends string>(
+  t: ComponentTransition<P> | undefined,
+  part: string,
+  coreProp: TransitionPropName,
+  fallback: Transition | undefined,
+): CoreTransitionProps["transition"] {
+  let spec: Transition | undefined
+  if (t === null) spec = undefined
+  else if (typeof t === "string") spec = t
+  else if (t) spec = (t as Record<string, Transition | undefined>)[part] ?? t.all ?? fallback
+  else spec = fallback
+  return spec == null ? undefined : ({ [coreProp]: spec } as CoreTransitionProps["transition"])
+}
+
+/**
+ * Report a part's settled core property under the part's name. Filtered to
+ * the part's own property: the node may also run built-in fades (color),
+ * which have no name in the component vocabulary.
+ */
+export function partTransitionEnd<P extends string>(
+  part: P,
+  coreProp: TransitionPropName,
+  handler: ((event: { property: P }) => void) | undefined,
+): ((event: TransitionEndEvent) => void) | undefined {
+  if (!handler) return undefined
+  return (e) => {
+    if (e.property === coreProp) handler({ property: part })
+  }
 }
 
 /** Report a settled core property in the component vocabulary for the node it settled on. */

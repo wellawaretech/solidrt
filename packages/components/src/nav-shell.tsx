@@ -1,4 +1,4 @@
-import { createSignal, Switch, Match, For } from "@solidrt/core"
+import { createSignal, Switch, Match, For, withAlpha } from "@solidrt/core"
 import type { LayoutProps } from "@solidrt/core"
 import { createPress } from "./press"
 import { theme } from "./theme"
@@ -7,6 +7,7 @@ import { space } from "./spacing"
 import { typeStyle } from "./typography"
 import type { TransitionProps } from "./types"
 import { splitTransition, transitionEndFor } from "./types"
+import { colorFade, PressFeedback } from "./motion"
 
 export interface NavItem {
   value: unknown
@@ -44,12 +45,11 @@ export function NavShell(props: NavShellProps) {
   }
 
   let labelColor = (item: NavItem) => (item.value === value() ? theme.color.primary : theme.color.textMuted)
-  let itemBg = (item: NavItem, hovered: boolean) =>
-    item.value === value()
-      ? theme.color.surfaceAlt
-      : hovered && policy.interaction !== "touch"
-        ? theme.color.overlayHover
-        : "transparent"
+  // The selection fill: the surfaceAlt tint at alpha 0 while unselected, so
+  // selecting fades it in (same trap as PressFeedback: a fade from
+  // "transparent" would pass through the wrong hue).
+  let itemBg = (item: NavItem) =>
+    item.value === value() ? theme.color.surfaceAlt : withAlpha(theme.color.surfaceAlt, 0)
 
   // Icon over a small label, centered; shared by the tab bar and the rail.
   let StackedItem = (p: { item: NavItem; padY: number; layout?: LayoutProps }) => {
@@ -67,9 +67,14 @@ export function NavShell(props: NavShellProps) {
         {...p.layout}
         {...press.handlers}
       >
-        <d-rect color={itemBg(p.item, press.hovered())} radius={theme.radius.sm} />
+        <d-rect transition={colorFade()} color={itemBg(p.item)} radius={theme.radius.sm} />
+        <PressFeedback
+          pressed={press.pressed()}
+          hovered={press.hovered() && policy.interaction !== "touch" && p.item.value !== value()}
+          radius={theme.radius.sm}
+        />
         {p.item.icon}
-        <text color={labelColor(p.item)} {...typeStyle("caption")}>
+        <text transition={colorFade()} color={labelColor(p.item)} {...typeStyle("caption")}>
           {p.item.label}
         </text>
       </view>
@@ -79,7 +84,7 @@ export function NavShell(props: NavShellProps) {
   let Tabs = () => (
     <view flexDirection="column" flexShrink={0}>
       <view flexDirection="row">
-        <d-rect color={theme.color.surface} />
+        <d-rect transition={colorFade()} color={theme.color.surface} />
         <For each={props.items}>
           {(item: NavItem) => <StackedItem item={item} padY={theme.spacing.md} layout={{ flex: 1 }} />}
         </For>
@@ -90,7 +95,7 @@ export function NavShell(props: NavShellProps) {
   let Rail = () => (
     <view flexDirection="row" flexShrink={0}>
       <view flexDirection="column" width={theme.size.navRail} gap={theme.spacing.sm} paddingTop={theme.spacing.md}>
-        <d-rect color={theme.color.surface} />
+        <d-rect transition={colorFade()} color={theme.color.surface} />
         <For each={props.items}>{(item: NavItem) => <StackedItem item={item} padY={theme.spacing.md} />}</For>
       </view>
     </view>
@@ -99,7 +104,7 @@ export function NavShell(props: NavShellProps) {
   let Sidebar = () => (
     <view flexDirection="row" flexShrink={0}>
       <view flexDirection="column" width={theme.size.navSidebar} gap={theme.spacing.sm} paddingTop={theme.spacing.md}>
-        <d-rect color={theme.color.surface} />
+        <d-rect transition={colorFade()} color={theme.color.surface} />
         <For each={props.items}>
           {(item: NavItem) => {
             let press = createPress({ onPress: () => select(item.value) })
@@ -118,9 +123,15 @@ export function NavShell(props: NavShellProps) {
                 marginRight={theme.spacing.sm}
                 {...press.handlers}
               >
-                <d-rect color={itemBg(item, press.hovered())} radius={theme.radius.sm} />
+                <d-rect transition={colorFade()} color={itemBg(item)} radius={theme.radius.sm} />
+                <PressFeedback
+                  pressed={press.pressed()}
+                  hovered={press.hovered() && policy.interaction !== "touch" && item.value !== value()}
+                  radius={theme.radius.sm}
+                />
                 {item.icon}
                 <text
+                  transition={colorFade()}
                   color={item.value === value() ? theme.color.primary : theme.color.text}
                   {...typeStyle("body")}
                 >

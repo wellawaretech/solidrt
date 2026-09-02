@@ -5,7 +5,8 @@ import { space } from "./spacing"
 import { typeStyle, typeWeight, lightOnDark } from "./typography"
 import { policy } from "./policy"
 import type { StyleProps, TransitionProps } from "./types"
-import { splitTransition, transitionEndFor } from "./types"
+import { splitTransition, transitionEndFor, withTransitionDefaults } from "./types"
+import { colorFade } from "./motion"
 
 export type BadgeVariant = "primary" | "neutral" | "danger"
 
@@ -65,9 +66,10 @@ export function Badge(props: BadgeProps) {
       rotate={styled().rotate}
       opacity={styled().opacity}
     >
-      <d-rect transition={split().background} onTransitionEnd={transitionEndFor("background", props.onTransitionEnd)} color={bg()} radius={radius()} />
+      <d-rect transition={withTransitionDefaults(split().background, colorFade())} onTransitionEnd={transitionEndFor("background", props.onTransitionEnd)} color={bg()} radius={radius()} />
       <Show when={isText()} fallback={resolved()}>
         <text
+          transition={colorFade()}
           color={fg()}
           {...typeStyle("caption", labelOnDark())}
           fontWeight={typeWeight(600, theme.text.caption.size * policy.textScale, labelOnDark())}

@@ -6,7 +6,7 @@ The fields:
 
 - `interaction` (`"touch" | "desktop" | "hybrid"`) - which affordances a component shows (hover states vs. long-press). `Tooltip`, `Select`, and `ContextMenu` fork on it.
 - `density` (`"comfortable" | "compact" | "dense"`) - control/hit-target/spacing scale; drives `densityScale()` (1 / 0.85 / 0.7). A `<Density>` region overrides it per subtree.
-- `motion` (`"normal" | "reduced" | "none"`) - animation intensity.
+- `motion` (`"normal" | "reduced" | "none"`) - animation intensity. Gates every built-in component transition: `reduced` keeps the color/opacity fades (a fade is not movement) but snaps everything that travels or scales, and halves the indeterminate `Spinner`/`ProgressBar` speeds; `none` snaps it all and parks the indeterminate loops.
 - `focusRing` (`boolean`) - whether focused controls draw a visible focus indicator (true when a keyboard or gamepad/remote is present).
 - `textScale` (`number`) - multiplier on type-scale font sizes; defaults to the OS text-scale preference.
 - `textWeightDelta` (`number`) - weight compensation (steps of 100) for light-on-dark text on low-DPI displays.

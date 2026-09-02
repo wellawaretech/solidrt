@@ -47,6 +47,14 @@ Corner radius is set once: `radius` in a theme definition is a single number, th
 setTheme({ radius: 4 })   // sm 2, md 4, lg 6
 ```
 
+## Motion
+
+`motion` holds the three durations (ms) every built-in component transition draws from, so one theme edit retimes the whole package: `fast` (default 100) is press/hover feedback, `base` (150) the color and opacity fades - state changes, the theme cross-fade (a `setTheme` fades every themed color rather than snapping), popup enter/exit - and `slow` (250) the travel of a control's moving parts (switch knob, segmented indicator, progress fill). `policy.motion` gates whether these play at all; a per-instance `transition` prop overrides them per property.
+
+```jsx
+setTheme({ motion: { base: 250, slow: 400 } })   // a slower, calmer app
+```
+
 ## Per-component overrides
 
 `theme.components` restyles a component everywhere without wrapping it: a `StyleProps` object per component name, merged between the component's themed defaults and each instance's `style` prop (instance style still wins).

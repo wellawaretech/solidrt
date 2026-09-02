@@ -1,14 +1,16 @@
-import { createSignal, For, Show } from "@solidrt/core"
+import { createSignal, For, Show, getBoundingBox, onLayout, withAlpha } from "@solidrt/core"
 import type { LayoutProps } from "@solidrt/core"
 import { createPress } from "./press"
 import { theme } from "./theme"
 import { policy } from "./policy"
 import { space } from "./spacing"
 import { typeStyle, lightOnDark } from "./typography"
-import type { Option, StyleProps, TransitionProps } from "./types"
-import { splitTransition, transitionEndFor } from "./types"
+import type { Option, StyleProps, TransitionProps, TransitionStyleProp, TransitionViewProp } from "./types"
+import { partTransition, partTransitionEnd, splitTransition, transitionEndFor, withTransitionDefaults } from "./types"
+import { colorFade, PressFeedback, travelMotion } from "./motion"
 
-export interface SegmentedControlProps extends TransitionProps {
+export interface SegmentedControlProps
+  extends TransitionProps<TransitionViewProp | TransitionStyleProp | "indicator"> {
   options: Option[]
   // Controlled selected value. If omitted, the control is uncontrolled.
   value?: unknown
@@ -26,10 +28,12 @@ const DIVIDER = 0
 
 // A single-choice row of equal-width segments, joined flush (the Material
 // style): only the control's outermost corners are rounded, interior segments
-// are square, and hairline dividers separate them. The active segment fills
-// with the primary color. Controlled via value/onChange, or uncontrolled via
-// defaultValue. Hover tints inactive segments (non-touch interaction policies
-// only). Override the inactive fill via style, spacing/sizing via layout.
+// are square, and hairline dividers separate them. The active segment is one
+// indicator rect drawn under the labels that springs between segments - the
+// `indicator` transition entry retimes it. Controlled via value/onChange, or
+// uncontrolled via defaultValue. Hover tints inactive segments (non-touch
+// interaction policies only). Override the inactive fill via style, the
+// spacing/sizing via layout.
 export function SegmentedControl(props: SegmentedControlProps) {
   let [internal, setInternal] = createSignal(props.defaultValue)
   let value = () => (props.value !== undefined ? props.value : internal())
@@ -60,12 +64,49 @@ export function SegmentedControl(props: SegmentedControlProps) {
   let label = (active: boolean) =>
     props.disabled ? theme.color.textMuted : active ? theme.color.onPrimary : theme.color.text
 
-  let split = () => splitTransition(props.transition)
+  // The indicator is positioned from measured segment boxes (control-relative
+  // x and width per segment), so a selection change retargets it without a
+  // reflow and unequal rounding never misaligns it. Remeasured each layout.
+  let root: { id: number } | undefined
+  let segs: ({ id: number } | undefined)[] = []
+  let [boxes, setBoxes] = createSignal<{ x: number; w: number }[]>([])
+  // The indicator's travel spring is armed only after the first placement:
+  // the declaration exists from mount, so without this the first measured
+  // write would slide the indicator in from x 0. A timer, not the same
+  // flush - the declaration must be committed strictly after that write.
+  let [placed, setPlaced] = createSignal(false)
+  onLayout(() => {
+    if (!root) return
+    let r = getBoundingBox(root)
+    if (!r) return
+    let next: { x: number; w: number }[] = []
+    for (let i = 0; i < props.options.length; i++) {
+      let s = segs[i]
+      let b = s && getBoundingBox(s)
+      if (!b) return
+      next.push({ x: b.x - r.x, w: b.width })
+    }
+    let cur = boxes()
+    if (cur.length !== next.length || cur.some((c, i) => c.x !== next[i]!.x || c.w !== next[i]!.w)) setBoxes(next)
+    if (!placed()) setTimeout(() => setPlaced(true), 0)
+  })
+  let activeIndex = () => props.options.findIndex((o) => o.value === value())
+  let indicator = () => boxes()[activeIndex()]
+
+  let split = () => splitTransition(props.transition, ["indicator"])
+  let indicatorTransition = () => {
+    if (props.transition === null) return null
+    let travel = placed() ? partTransition(props.transition, "indicator", "x", travelMotion()) : undefined
+    let fade = colorFade()
+    if (!travel && !fade) return undefined
+    return { ...fade, ...(travel as object | undefined) }
+  }
 
   return (
     <view
       transition={split().root}
       onTransitionEnd={transitionEndFor("root", props.onTransitionEnd)}
+      ref={(n: { id: number }) => (root = n)}
       flexDirection="row"
       gap={DIVIDER}
       {...props.layout}
@@ -75,20 +116,25 @@ export function SegmentedControl(props: SegmentedControlProps) {
       rotate={styled().rotate}
       opacity={styled().opacity}
     >
-      <d-rect transition={split().background} onTransitionEnd={transitionEndFor("background", props.onTransitionEnd)} color={theme.color.border} radius={radius()} />
+      <d-rect transition={withTransitionDefaults(split().background, colorFade())} onTransitionEnd={transitionEndFor("background", props.onTransitionEnd)} color={idleFill()} radius={radius()} />
+      <d-rect
+        transition={indicatorTransition()}
+        onTransitionEnd={partTransitionEnd("indicator", "x", props.onTransitionEnd)}
+        color={indicator() ? activeFill() : withAlpha(activeFill(), 0)}
+        x={indicator()?.x ?? 0}
+        w={indicator()?.w ?? 0}
+        radius={corners(activeIndex())}
+      />
       <For each={props.options}>
         {(opt, i) => {
           let active = () => value() === opt.value
           let press = createPress({ onPress: () => select(opt.value) })
-          let fill = () => (active() ? activeFill() : idleFill())
-          // Hover feedback: the theme overlay tint drawn over the segment fill.
-          let overlay = () =>
-            press.hovered() && !props.disabled && policy.interaction !== "touch"
-              ? theme.color.overlayHover
-              : "transparent"
-  return (
+          return (
             <view
-              ref={press.ref}
+              ref={(n: { id: number }) => {
+                segs[i()] = n
+                press.ref(n)
+              }}
               repaintBoundary
               flexGrow={1}
               flexBasis={0}
@@ -101,12 +147,16 @@ export function SegmentedControl(props: SegmentedControlProps) {
               focusable={!props.disabled}
               pointerEvents={props.disabled ? "none" : undefined}
             >
-              <d-rect color={fill()} radius={corners(i())} />
-              <d-rect color={overlay()} radius={corners(i())} />
+              <PressFeedback
+                pressed={press.pressed()}
+                hovered={press.hovered() && !props.disabled && policy.interaction !== "touch"}
+                radius={corners(i())}
+              />
               <Show when={press.focused() && policy.focusRing}>
                 <d-rect drawStyle="stroke" color={theme.color.ring} strokeWidth={theme.borderWidth.focus} radius={corners(i())} />
               </Show>
               <text
+                transition={colorFade()}
                 color={label(active())}
                 {...typeStyle("body", active() ? lightOnDark(label(true), activeFill()) : undefined)}
               >

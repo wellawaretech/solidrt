@@ -7,6 +7,7 @@ import { space } from "./spacing"
 import { typeStyle } from "./typography"
 import type { TransitionProps } from "./types"
 import { splitTransition, transitionEndFor } from "./types"
+import { colorFade, popupFade, popupFadeOut, PressFeedback } from "./motion"
 
 export interface ContextMenuItem {
   label: string
@@ -90,16 +91,11 @@ export function ContextMenu(props: ContextMenuProps) {
         {...press.handlers}
         pointerEvents={p.item.disabled ? "none" : undefined}
       >
-        <d-rect
-          color={
-            press.pressed()
-              ? theme.color.overlayPressed
-              : press.hovered() && policy.interaction !== "touch"
-                ? theme.color.overlayHover
-                : "transparent"
-          }
+        <PressFeedback
+          pressed={press.pressed()}
+          hovered={press.hovered() && policy.interaction !== "touch"}
         />
-        <text {...bodyText(p.item.disabled ? theme.color.textMuted : theme.color.text)}>{p.item.label}</text>
+        <text transition={colorFade()} {...bodyText(p.item.disabled ? theme.color.textMuted : theme.color.text)}>{p.item.label}</text>
       </view>
     )
   }
@@ -121,8 +117,19 @@ export function ContextMenu(props: ContextMenuProps) {
       let cur = pos()
       if (!cur || cur.x !== x || cur.y !== y) setPos({ x, y })
     })
+    // The fade is driven by the position write, not a mount-time `from`: the
+    // menu parks offscreen until measured, so a `from` would play unseen.
+    // The exit fade lives on this root (the node the close unmounts).
     return createPortal(
-      <view position="absolute" top={0} left={0} right={0} bottom={0}>
+      <view
+        position="absolute"
+        top={0}
+        left={0}
+        right={0}
+        bottom={0}
+        opacity={pos() ? 1 : 0}
+        transition={popupFadeOut()}
+      >
         <view position="absolute" top={0} left={0} right={0} bottom={0} onPointerDown={() => setOpen(false)} />
         <view
           ref={(n: { id: number }) => (menu = n)}
@@ -136,12 +143,13 @@ export function ContextMenu(props: ContextMenuProps) {
           paddingTop={theme.spacing.sm}
           paddingBottom={theme.spacing.sm}
         >
-          <d-rect color={theme.color.surface} radius={theme.radius.sm} />
+          <d-rect transition={colorFade()} color={theme.color.surface} radius={theme.radius.sm} />
           <For each={props.items}>
             {(item: ContextMenuItem) => <ItemRow item={item} padY={space("sm")} />}
           </For>
           <d-rect
             drawStyle="stroke"
+            transition={colorFade()}
             color={theme.color.border}
             strokeWidth={theme.borderWidth.sm}
             radius={theme.radius.sm}
@@ -155,9 +163,9 @@ export function ContextMenu(props: ContextMenuProps) {
   // trick) so a row press never has the scrim on its hit path.
   let Sheet = () =>
     createPortal(
-      <view position="absolute" top={0} left={0} right={0} bottom={0}>
+      <view position="absolute" top={0} left={0} right={0} bottom={0} opacity={1} transition={popupFade()}>
         <view position="absolute" top={0} left={0} right={0} bottom={0} onPointerDown={() => setOpen(false)}>
-          <d-rect color={theme.color.scrim} />
+          <d-rect transition={colorFade()} color={theme.color.scrim} />
         </view>
         <view
           position="absolute"
@@ -168,7 +176,7 @@ export function ContextMenu(props: ContextMenuProps) {
           paddingTop={theme.spacing.md}
           paddingBottom={theme.spacing.md + env.safeArea.bottom}
         >
-          <d-rect color={theme.color.surface} radius={theme.radius.sm} />
+          <d-rect transition={colorFade()} color={theme.color.surface} radius={theme.radius.sm} />
           <For each={props.items}>
             {(item: ContextMenuItem) => <ItemRow item={item} padY={Math.round(theme.spacing.md * 1.5)} />}
           </For>

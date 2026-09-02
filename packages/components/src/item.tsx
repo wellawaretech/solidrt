@@ -1,12 +1,13 @@
 import { Show, children } from "@solidrt/core"
 import type { LayoutProps } from "@solidrt/core"
-import { createPress, type PressState } from "./press"
+import { createPress } from "./press"
 import { theme } from "./theme"
 import { policy } from "./policy"
 import { space } from "./spacing"
 import { typeStyle } from "./typography"
 import type { StyleProps, TransitionProps } from "./types"
-import { splitTransition, transitionEndFor } from "./types"
+import { splitTransition, transitionEndFor, withTransitionDefaults } from "./types"
+import { colorFade, PressFeedback } from "./motion"
 
 export interface ItemProps extends TransitionProps {
   // Leading content: an icon, avatar, checkbox, ...
@@ -47,14 +48,6 @@ export function Item(props: ItemProps) {
   let press = createPress(props)
 
   let bg = () => styled().backgroundColor ?? (props.selected ? theme.color.surfaceAlt : "transparent")
-  let overlay = (s: PressState) =>
-    !interactive()
-      ? "transparent"
-      : s.pressed
-        ? theme.color.overlayPressed
-        : s.hovered && policy.interaction !== "touch"
-          ? theme.color.overlayHover
-          : "transparent"
   let radius = () => styled().borderRadius ?? theme.radius.sm
 
   // Resolved once via children(): the typeof probe and the mount site must
@@ -95,18 +88,22 @@ export function Item(props: ItemProps) {
       focusable={(props.focusable ?? true) && interactive()}
       pointerEvents={props.disabled ? "none" : undefined}
     >
-      <d-rect transition={split().background} onTransitionEnd={transitionEndFor("background", props.onTransitionEnd)} color={bg()} radius={radius()} />
-      <d-rect color={overlay(press.state())} radius={radius()} />
+      <d-rect transition={withTransitionDefaults(split().background, colorFade())} onTransitionEnd={transitionEndFor("background", props.onTransitionEnd)} color={bg()} radius={radius()} />
+      <PressFeedback
+        pressed={interactive() && press.pressed()}
+        hovered={interactive() && press.hovered() && policy.interaction !== "touch"}
+        radius={radius()}
+      />
       {props.startContent}
       <view flexDirection="column" flexGrow={1} flexShrink={1} gap={Math.round(space("sm") / 2)}>
         <Show when={labelIsText()} fallback={label()}>
-          <text color={theme.color.text} {...typeStyle("body")} maxLines={1}>
+          <text transition={colorFade()} color={theme.color.text} {...typeStyle("body")} maxLines={1}>
             {label()}
           </text>
         </Show>
         <Show when={props.description != null}>
           <Show when={descriptionIsText()} fallback={description()}>
-            <text color={theme.color.textMuted} {...typeStyle("body")} maxLines={1}>
+            <text transition={colorFade()} color={theme.color.textMuted} {...typeStyle("body")} maxLines={1}>
               {description()}
             </text>
           </Show>

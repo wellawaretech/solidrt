@@ -1,5 +1,5 @@
-import { Show, children } from "@solidrt/core"
-import { createPress, type PressState } from "./press"
+import { Show, children, withAlpha } from "@solidrt/core"
+import { createPress } from "./press"
 import { theme } from "./theme"
 import { policy } from "./policy"
 import { space } from "./spacing"
@@ -7,7 +7,8 @@ import { typeStyle, lightOnDark } from "./typography"
 import { Spinner } from "./spinner"
 import type { LayoutProps } from "@solidrt/core"
 import type { StyleProps, TransitionProps } from "./types"
-import { splitTransition, transitionEndFor } from "./types"
+import { splitTransition, transitionEndFor, withTransitionDefaults } from "./types"
+import { colorFade, scaleFeedback, pressScale, PressFeedback } from "./motion"
 
 export type ButtonVariant = "primary" | "secondary" | "ghost" | "danger"
 export type ButtonSize = "sm" | "md" | "lg"
@@ -42,8 +43,8 @@ export interface ButtonProps extends TransitionProps {
 const SIZE_WIDTH: Record<ButtonSize, number> = { sm: 88, md: 120, lg: 160 }
 
 // A themed press target: a padded, centered, accent-colored box with a label.
-// Press feedback is a slight scale, hover feedback the theme's overlayHover
-// tint drawn over the fill (non-touch interaction policies only), both
+// Press feedback is a slight sprung scale plus the overlayPressed tint, hover
+// feedback the overlayHover tint (non-touch interaction policies only), all
 // reactive reads of the press state so no nodes are recreated. Override the
 // box via style and the padding/sizing via layout; because hover is an
 // overlay, it composes over a caller-set backgroundColor too. When disabled,
@@ -75,10 +76,6 @@ export function Button(props: ButtonProps) {
         : theme.color.surface
       : colors().fill
   let bg = () => styled().backgroundColor ?? idleFill()
-  // The hover feedback: the theme's overlay tint drawn over the fill, so it
-  // composes with any backgroundColor (variant, theme override, or caller).
-  let overlay = (s: PressState) =>
-    s.hovered && !props.disabled && policy.interaction !== "touch" ? theme.color.overlayHover : "transparent"
   let radius = () => styled().borderRadius ?? theme.radius.md
   let label = () => (props.disabled ? theme.color.textMuted : colors().label)
   // Resolved once via children(): reading the raw children getter builds a new
@@ -101,14 +98,14 @@ export function Button(props: ButtonProps) {
     // Always a number: a scale that flips from a number back to undefined
     // hits the transform decoder, which rejects null. Multiply so a
     // caller-set scale is preserved under the press feedback.
-    scale: (styled().scale ?? 1) * (press.pressed() && policy.motion !== "none" ? 0.97 : 1),
+    scale: (styled().scale ?? 1) * pressScale(press.pressed()),
   })
 
   let split = () => splitTransition(props.transition)
 
   return (
     <view
-      transition={split().root}
+      transition={withTransitionDefaults(split().root, scaleFeedback())}
       onTransitionEnd={transitionEndFor("root", props.onTransitionEnd)}
       ref={(n: { id: number }) => {
         press.ref(n)
@@ -134,10 +131,14 @@ export function Button(props: ButtonProps) {
       focusable={(props.focusable ?? true) && props.disabled !== true}
       pointerEvents={props.disabled ? "none" : undefined}
     >
-      <d-rect transition={split().background} onTransitionEnd={transitionEndFor("background", props.onTransitionEnd)} color={style().backgroundColor ?? "transparent"} radius={style().borderRadius} />
-      <d-rect color={overlay(press.state())} radius={style().borderRadius} />
+      <d-rect transition={withTransitionDefaults(split().background, colorFade())} onTransitionEnd={transitionEndFor("background", props.onTransitionEnd)} color={style().backgroundColor ?? "transparent"} radius={style().borderRadius} />
+      <PressFeedback
+        pressed={press.pressed() && !props.disabled}
+        hovered={press.hovered() && !props.disabled && policy.interaction !== "touch"}
+        radius={style().borderRadius}
+      />
       <Show when={isText()} fallback={resolved()}>
-        <text color={press.pending() ? "transparent" : label()} {...typeStyle("body", labelOnDark())}>
+        <text transition={colorFade()} color={press.pending() ? withAlpha(label(), 0) : label()} {...typeStyle("body", labelOnDark())}>
           {resolved()}
         </text>
       </Show>
@@ -149,7 +150,7 @@ export function Button(props: ButtonProps) {
       <Show when={(style().borderWidth ?? 0) > 0}>
         <d-rect
           drawStyle="stroke"
-          transition={split().border}
+          transition={withTransitionDefaults(split().border, colorFade())}
           onTransitionEnd={transitionEndFor("border", props.onTransitionEnd)}
           color={style().borderColor ?? "transparent"}
           strokeWidth={style().borderWidth}

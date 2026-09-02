@@ -2,6 +2,7 @@ import { createPortal, onCleanup } from "@solidrt/core"
 import type { Color, PointerEvent } from "@solidrt/core"
 import { theme } from "./theme"
 import { pushNavScope } from "./focus-nav"
+import { colorFade, popupFade } from "./motion"
 
 export interface ModalProps {
   // Called when the backdrop (the area around the content) is pressed, unless
@@ -40,6 +41,9 @@ export function Modal(props: ModalProps) {
   let popNavScope: (() => void) | null = null
   onCleanup(() => popNavScope?.())
 
+  // The whole overlay (scrim and content together) fades in at mount and
+  // out on removal via popupFade; an exiting modal is hit-test invisible,
+  // so a press during the fade-out reaches what is behind it.
   return createPortal(
     <view
       ref={(n: { id: number }) => {
@@ -52,6 +56,8 @@ export function Modal(props: ModalProps) {
       bottom={0}
       alignItems="center"
       justifyContent="center"
+      opacity={1}
+      transition={popupFade()}
     >
       <view
         position="absolute"
@@ -61,7 +67,7 @@ export function Modal(props: ModalProps) {
         bottom={0}
         onPointerDown={dismiss}
       >
-        <d-rect color={props.backdropColor ?? theme.color.scrim} />
+        <d-rect transition={colorFade()} color={props.backdropColor ?? theme.color.scrim} />
       </view>
       {props.children}
     </view>

@@ -1,6 +1,6 @@
 # Button
 
-A themed press target over `Pressable`: a padded, centered box with a label. `variant` picks the visual role - `primary` (accent fill, the default), `secondary`, `ghost` (no fill until hover), `danger` (destructive) - with fill, hover tint, and label color from the matching theme tokens; no variant draws a border. `size` (`sm`/`md`/`lg`) pins a minimum width so a row of buttons lines up (a longer label still expands past it); omitted, the button sizes to its content. A string or number child renders as the themed label; any other child renders as-is (an icon, a row, ...).
+A themed press target over `Pressable`: a padded, centered box with a label. A press shrinks it slightly on a quick spring and tints it with `overlayPressed`; hover tints with `overlayHover` (non-touch policies). `variant` picks the visual role - `primary` (accent fill, the default), `secondary`, `ghost` (no fill until hover), `danger` (destructive) - with fill, tints, and label color from the matching theme tokens; no variant draws a border. `size` (`sm`/`md`/`lg`) pins a minimum width so a row of buttons lines up (a longer label still expands past it); omitted, the button sizes to its content. A string or number child renders as the themed label; any other child renders as-is (an icon, a row, ...).
 
 ```jsx
 import { Button } from "@solidrt/components"

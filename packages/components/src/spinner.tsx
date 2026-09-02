@@ -4,6 +4,7 @@ import { theme } from "./theme"
 import { policy } from "./policy"
 import type { StyleProps, TransitionProps } from "./types"
 import { splitTransition, transitionEndFor } from "./types"
+import { colorFade } from "./motion"
 
 export interface SpinnerProps extends TransitionProps {
   // Overall diameter in pixels.
@@ -70,6 +71,7 @@ export function Spinner(props: SpinnerProps) {
       <d-path
         d={path()}
         drawStyle="stroke"
+        transition={colorFade()}
         color={color()}
         strokeWidth={thickness()}
         strokeCap="round"

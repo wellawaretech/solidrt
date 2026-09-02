@@ -89,6 +89,13 @@ export type Theme = {
   // Tooltip), lg one step over (Card), full is the pill.
   radius: { sm: number; md: number; lg: number; full: number }
   borderWidth: { sm: number; focus: number }
+  // Motion durations (ms). Every built-in transition the components declare
+  // draws its timing here, so one theme edit retimes the whole package:
+  // fast is press/hover feedback, base the color/opacity fades (state
+  // changes, the theme cross-fade, popup enter/exit), slow the travel of a
+  // control's moving parts (switch knob, segmented indicator, progress
+  // fill). See motion.tsx; policy.motion gates them.
+  motion: { fast: number; base: number; slow: number }
   // Default extents of the components that have one: the panes and rails an
   // app lays its screens around, and the smallest sensible popup/track. Each
   // is a per-instance layout override away (listWidth, layout.width, ...);
@@ -137,6 +144,7 @@ export type ThemeDefinition = {
   // deriveRadius) or explicit steps. Default 8.
   radius?: number | Partial<Theme["radius"]>
   borderWidth?: Partial<Theme["borderWidth"]>
+  motion?: Partial<Theme["motion"]>
   size?: Partial<Theme["size"]>
   icons?: Theme["icons"]
   components?: Theme["components"]
@@ -156,6 +164,10 @@ function deriveRadius(base: number): Theme["radius"] {
   return { sm: Math.round(base / 2), md: base, lg: Math.round(base * 1.5), full: RADIUS_FULL }
 }
 const BORDER_WIDTH = { sm: 1, focus: 2 }
+// The motion timing scale (ms): fast enough that feedback reads as
+// immediate, base tuned so a state fade registers without dragging, slow
+// long enough that a part's travel reads as movement rather than a flicker.
+const MOTION = { fast: 100, base: 150, slow: 250 }
 const SIZE = { navRail: 72, navSidebar: 220, splitViewList: 320, menuMinWidth: 120, slider: 200 }
 
 // Line height and weight per role; body is the base text, label is body at
@@ -221,6 +233,7 @@ export function defineTheme(def: ThemeDefinition, scheme?: "light" | "dark"): Th
     radius:
       typeof def.radius === "number" ? deriveRadius(def.radius) : { ...deriveRadius(RADIUS_BASE), ...def.radius },
     borderWidth: { ...BORDER_WIDTH, ...def.borderWidth },
+    motion: { ...MOTION, ...def.motion },
     size: { ...SIZE, ...def.size },
     icons: def.icons ?? {},
     components: def.components ?? {},

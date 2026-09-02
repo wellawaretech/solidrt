@@ -5,6 +5,7 @@ import { policy } from "./policy"
 import { densityScale } from "./density"
 import type { StyleProps, TransitionProps } from "./types"
 import { splitTransition, transitionEndFor } from "./types"
+import { colorFade } from "./motion"
 
 export interface SliderProps extends TransitionProps {
   // Controlled value. If omitted, the slider is uncontrolled.
@@ -137,11 +138,14 @@ export function Slider(props: SliderProps) {
       onPointerUp={handleUp}
       onKeyDown={handleKeyDown}
     >
+      {/* Colors fade with the theme; the fill's w and the thumb's x never
+          get a transition - they track the drag 1:1, and a spring would
+          rubber-band it. */}
       <view ref={(n: { id: number }) => (groove = n)} position="relative" flex={1} height={GROOVE}>
-        <d-rect color={theme.color.surfaceAlt} radius={GROOVE / 2} />
-        <d-rect color={theme.color.primary} w={fillPx()} h={GROOVE} radius={GROOVE / 2} />
+        <d-rect transition={colorFade()} color={theme.color.surfaceAlt} radius={GROOVE / 2} />
+        <d-rect transition={colorFade()} color={theme.color.primary} w={fillPx()} h={GROOVE} radius={GROOVE / 2} />
         <view position="absolute" left={0} top={(GROOVE - thumb()) / 2} x={fillPx() - thumb() / 2}>
-          <d-oval w={thumb()} h={thumb()} color={theme.color.primary} />
+          <d-oval transition={colorFade()} w={thumb()} h={thumb()} color={theme.color.primary} />
           <Show when={focused() && policy.focusRing}>
             <d-oval drawStyle="stroke" w={thumb()} h={thumb()} color={theme.color.ring} strokeWidth={theme.borderWidth.focus} />
           </Show>

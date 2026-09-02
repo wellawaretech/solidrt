@@ -1,10 +1,11 @@
 import { createMemo } from "@solidrt/core"
 import type { PointerProps } from "@solidrt/core"
 import type { StyleProps, TextLayoutProps, TransitionProps, TransitionViewProp } from "./types"
-import { splitTransition, transitionEndFor } from "./types"
+import { splitTransition, transitionEndFor, withTransitionDefaults } from "./types"
 import { theme, type TextVariant } from "./theme"
 import { policy } from "./policy"
 import { typeWeight } from "./typography"
+import { colorFade } from "./motion"
 
 // Semantic text colors, resolved through the theme. Curated: only tokens that
 // make sense as a text fill; style.color takes raw values for anything else.
@@ -95,7 +96,7 @@ export function Text(props: TextProps) {
       pointerEvents={props.pointerEvents}
     >
       <text
-        transition={split().text}
+        transition={withTransitionDefaults(split().text, colorFade())}
         onTransitionEnd={transitionEndFor("root", props.onTransitionEnd)}
         color={color()}
         fontFamily={props.layout?.fontFamily ?? theme.text.fontFamily}

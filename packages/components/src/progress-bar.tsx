@@ -2,10 +2,11 @@ import { createSignal, onFrame, onLayout, getBoundingBox, Show } from "@solidrt/
 import type { LayoutProps } from "@solidrt/core"
 import { theme } from "./theme"
 import { policy } from "./policy"
-import type { StyleProps, TransitionProps } from "./types"
-import { splitTransition, transitionEndFor } from "./types"
+import type { StyleProps, TransitionProps, TransitionStyleProp, TransitionViewProp } from "./types"
+import { partTransition, partTransitionEnd, splitTransition, transitionEndFor, withTransitionDefaults } from "./types"
+import { colorFade, travelMotion } from "./motion"
 
-export interface ProgressBarProps extends TransitionProps {
+export interface ProgressBarProps extends TransitionProps<TransitionViewProp | TransitionStyleProp | "fill"> {
   // Progress from 0 to 1. Omit (or leave undefined) for an indeterminate bar: a
   // segment that slides back and forth.
   value?: number
@@ -71,13 +72,25 @@ export function ProgressBar(props: ProgressBarProps) {
   let effectivePhase = () => (policy.motion === "none" ? 0.5 : phase())
   let offset = () => effectivePhase() * trackWidth() * (1 - SEGMENT)
 
+  let split = () => splitTransition(props.transition, ["fill"])
+  // Determinate only: a value write glides the fill (the `fill` transition
+  // entry retimes it; bounce 0, progress must not overshoot). Indeterminate
+  // writes w/x per frame, which a transition would lag behind.
+  let fillTransition = () => {
+    if (props.transition === null) return null
+    let travel = indeterminate() ? undefined : partTransition(props.transition, "fill", "w", travelMotion(0))
+    let fade = colorFade()
+    if (!travel && !fade) return undefined
+    return { ...fade, ...(travel as object | undefined) }
+  }
+
   return (
-    <view ref={(n: { id: number }) => (trackNode = n)} position="relative" width="100%" height={h()} transition={splitTransition(props.transition).root} onTransitionEnd={transitionEndFor("root", props.onTransitionEnd)} {...props.layout}>
+    <view ref={(n: { id: number }) => (trackNode = n)} position="relative" width="100%" height={h()} transition={split().root} onTransitionEnd={transitionEndFor("root", props.onTransitionEnd)} {...props.layout}>
       <Show when={animating()}>
         <Animate />
       </Show>
-      <d-rect color={track()} radius={radius()} />
-      <d-rect color={fill()} radius={radius()} w={fillWidth()} h={h()} x={indeterminate() ? offset() : 0} />
+      <d-rect transition={withTransitionDefaults(split().background, colorFade())} onTransitionEnd={transitionEndFor("background", props.onTransitionEnd)} color={track()} radius={radius()} />
+      <d-rect transition={fillTransition()} onTransitionEnd={partTransitionEnd("fill", "w", props.onTransitionEnd)} color={fill()} radius={radius()} w={fillWidth()} h={h()} x={indeterminate() ? offset() : 0} />
     </view>
   )
 }

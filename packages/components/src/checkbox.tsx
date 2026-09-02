@@ -6,7 +6,8 @@ import { policy } from "./policy"
 import { densityScale } from "./density"
 import { Icon } from "./icon"
 import type { StyleProps, TransitionProps } from "./types"
-import { splitTransition, transitionEndFor } from "./types"
+import { splitTransition, transitionEndFor, withTransitionDefaults } from "./types"
+import { colorFade, markMotion, pressScale, scaleFeedback } from "./motion"
 
 export interface CheckboxProps extends TransitionProps {
   // Controlled checked state. If omitted, the checkbox is uncontrolled.
@@ -21,8 +22,10 @@ export interface CheckboxProps extends TransitionProps {
 const SIZE = 20
 
 // A checkbox. When checked, fills with primary and draws a checkmark; otherwise
-// shows an empty bordered box. Controlled via checked/onChange, or uncontrolled
-// via defaultChecked. When disabled, it takes no pointer events at all.
+// shows an empty bordered box. The fill fades, the mark pops in/out
+// (markMotion), and a press shrinks the box slightly (pressScale). Controlled
+// via checked/onChange, or uncontrolled via defaultChecked. When disabled, it
+// takes no pointer events at all.
 export function Checkbox(props: CheckboxProps) {
   let [internal, setInternal] = createSignal(props.defaultChecked ?? false)
   let checked = () => (props.checked !== undefined ? props.checked : internal())
@@ -51,9 +54,11 @@ export function Checkbox(props: CheckboxProps) {
     ...(press.focused() && policy.focusRing ? { borderWidth: theme.borderWidth.focus, borderColor: theme.color.ring } : {}),
   })
 
+  let split = () => splitTransition(props.transition)
+
   return (
     <view
-      transition={splitTransition(props.transition).root}
+      transition={withTransitionDefaults(split().root, scaleFeedback())}
       onTransitionEnd={transitionEndFor("root", props.onTransitionEnd)}
       ref={press.ref}
       repaintBoundary
@@ -63,36 +68,55 @@ export function Checkbox(props: CheckboxProps) {
       {...props.layout}
       x={style().x}
       y={style().y}
-      scale={style().scale}
+      scale={(style().scale ?? 1) * pressScale(press.pressed())}
       rotate={style().rotate}
       opacity={style().opacity}
       {...press.handlers}
       focusable={!props.disabled}
       pointerEvents={props.disabled ? "none" : undefined}
     >
-      <d-rect color={style().backgroundColor ?? "transparent"} radius={style().borderRadius} />
+      <d-rect
+        transition={withTransitionDefaults(split().background, colorFade())}
+        onTransitionEnd={transitionEndFor("background", props.onTransitionEnd)}
+        color={style().backgroundColor ?? "transparent"}
+        radius={style().borderRadius}
+      />
       <Show when={checked()}>
-        <Show
-          when={theme.icons.check}
-          fallback={
-            <d-path
-              d={check()}
-              drawStyle="stroke"
-              color={theme.color.onPrimary}
-              strokeWidth={2}
-              strokeCap="round"
-              strokeJoin="round"
-            />
-          }
+        <view
+          position="absolute"
+          top={0}
+          bottom={0}
+          left={0}
+          right={0}
+          alignItems="center"
+          justifyContent="center"
+          opacity={1}
+          scale={1}
+          transition={markMotion()}
         >
-          <view position="absolute" top={0} bottom={0} left={0} right={0} alignItems="center" justifyContent="center">
+          <Show
+            when={theme.icons.check}
+            fallback={
+              <d-path
+                d={check()}
+                drawStyle="stroke"
+                transition={colorFade()}
+                color={theme.color.onPrimary}
+                strokeWidth={2}
+                strokeCap="round"
+                strokeJoin="round"
+              />
+            }
+          >
             <Icon src={theme.icons.check!} size={Math.round(size() * 0.75)} color={theme.color.onPrimary} />
-          </view>
-        </Show>
+          </Show>
+        </view>
       </Show>
       <Show when={(style().borderWidth ?? 0) > 0}>
         <d-rect
           drawStyle="stroke"
+          transition={withTransitionDefaults(split().border, colorFade())}
+          onTransitionEnd={transitionEndFor("border", props.onTransitionEnd)}
           color={style().borderColor ?? "transparent"}
           strokeWidth={style().borderWidth}
           radius={style().borderRadius}

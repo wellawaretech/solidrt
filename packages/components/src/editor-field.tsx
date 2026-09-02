@@ -24,7 +24,8 @@ import type { Element } from "solid-js"
 import type { MeasureTextOptions, TextRunRange } from "flux:rendertree"
 import { registerNavAction } from "./focus-nav"
 import type { StyleProps, TransitionProps } from "./types"
-import { splitTransition, transitionEndFor } from "./types"
+import { splitTransition, transitionEndFor, withTransitionDefaults } from "./types"
+import { colorFade } from "./motion"
 import { theme } from "./theme"
 import { policy } from "./policy"
 import { space } from "./spacing"
@@ -82,8 +83,9 @@ export interface EditorFieldProps extends TransitionProps {
 // Shift+movement (and Shift+tap) extends from the anchor, a mouse/pen drag
 // selects (stealing the gesture arena on its first move), Ctrl/Cmd+A selects
 // all; the highlight draws behind the lines while focused, and edits on a
-// range replace it (the buffer's own behavior). Outside-click-to-blur is the
-// caller's job.
+// range replace it (the buffer's own behavior). Ctrl/Cmd+C/X/V go through
+// navigator.clipboard (copy and cut need a range; single-line paste flattens
+// line breaks). Outside-click-to-blur is the caller's job.
 export function EditorField(props: EditorFieldProps) {
   let [caretOn, setCaretOn] = createSignal(true)
 
@@ -107,6 +109,12 @@ export function EditorField(props: EditorFieldProps) {
   // factory is a one-shot by contract: read once, deliberately untracked.
   let buffer = untrack(() => props.buffer)((_text, offset, direction) => editor.step(offset, direction))
   let value = buffer.value
+
+  // The selection's text, for copy/cut.
+  let selectedText = (): string => {
+    let { anchor, focus } = buffer.selection()
+    return value().slice(Math.min(anchor, focus), Math.max(anchor, focus))
+  }
 
   // autoFocus runs in an effect, not the ref: setFocus fires onFocus and reads
   // the node's onTextInput handler to toggle the keyboard, and those handlers
@@ -227,6 +235,32 @@ export function EditorField(props: EditorFieldProps) {
     } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "a") {
       buffer.setSelection(0, value().length)
       setCaretOn(true)
+    } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "c") {
+      // Copy acts only on a range; an empty selection leaves the key (and the
+      // clipboard) alone and lets it bubble to app shortcuts.
+      let text = selectedText()
+      if (text.length === 0) consumed = false
+      else navigator.clipboard.writeText(text).catch((err) => console.warn("Clipboard copy failed: " + err))
+    } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "x") {
+      let text = selectedText()
+      if (text.length === 0) consumed = false
+      else {
+        // The range deletes immediately, as native editors cut; a failed
+        // clipboard write is reported, not undone.
+        navigator.clipboard.writeText(text).catch((err) => console.warn("Clipboard cut failed: " + err))
+        buffer.insertText("")
+        setCaretOn(true)
+      }
+    } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "v") {
+      navigator.clipboard.readText().then(
+        (text) => {
+          if (text.length === 0) return
+          if (!props.multiline) text = text.replace(/\r?\n/g, " ")
+          buffer.insertText(text)
+          setCaretOn(true)
+        },
+        (err) => console.warn("Clipboard paste failed: " + err),
+      )
     } else if (props.multiline && e.key === "Enter" && textInputActive()) {
       buffer.insertText("\n")
       setCaretOn(true)
@@ -375,10 +409,10 @@ export function EditorField(props: EditorFieldProps) {
       onKeyDown={handleKeyDown}
       onTextInput={handleTextInput}
     >
-      <d-rect transition={split().background} onTransitionEnd={transitionEndFor("background", props.onTransitionEnd)} color={surfaceColor()} radius={borderRadius()} />
+      <d-rect transition={withTransitionDefaults(split().background, colorFade())} onTransitionEnd={transitionEndFor("background", props.onTransitionEnd)} color={surfaceColor()} radius={borderRadius()} />
       <d-rect
         drawStyle="stroke"
-        transition={split().border}
+        transition={withTransitionDefaults(split().border, colorFade())}
         onTransitionEnd={transitionEndFor("border", props.onTransitionEnd)}
         color={borderColor()}
         strokeWidth={borderWidth()}

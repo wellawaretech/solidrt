@@ -4,7 +4,8 @@ import { theme } from "./theme"
 import { typeStyle } from "./typography"
 import { space } from "./spacing"
 import type { StyleProps, TransitionProps } from "./types"
-import { splitTransition, transitionEndFor } from "./types"
+import { splitTransition, transitionEndFor, withTransitionDefaults } from "./types"
+import { colorFade } from "./motion"
 
 export interface CardProps extends TransitionProps {
   children?: any
@@ -44,9 +45,9 @@ export function Card(props: CardProps) {
       rotate={styled().rotate}
       opacity={styled().opacity}
     >
-      <d-rect transition={split().background} onTransitionEnd={transitionEndFor("background", props.onTransitionEnd)} color={bg()} radius={radius()} />
+      <d-rect transition={withTransitionDefaults(split().background, colorFade())} onTransitionEnd={transitionEndFor("background", props.onTransitionEnd)} color={bg()} radius={radius()} />
       <Show when={props.title != null}>
-        <text color={theme.color.text} {...typeStyle("title")}>
+        <text transition={colorFade()} color={theme.color.text} {...typeStyle("title")}>
           {props.title}
         </text>
       </Show>
@@ -54,7 +55,7 @@ export function Card(props: CardProps) {
       <Show when={hasBorder()}>
         <d-rect
           drawStyle="stroke"
-          transition={split().border}
+          transition={withTransitionDefaults(split().border, colorFade())}
           onTransitionEnd={transitionEndFor("border", props.onTransitionEnd)}
           color={styled().borderColor ?? theme.color.border}
           strokeWidth={styled().borderWidth ?? theme.borderWidth.sm}

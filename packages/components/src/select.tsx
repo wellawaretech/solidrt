@@ -6,8 +6,9 @@ import { policy } from "./policy"
 import { space } from "./spacing"
 import { typeStyle } from "./typography"
 import type { Option, StyleProps, TransitionProps } from "./types"
-import { splitTransition, transitionEndFor } from "./types"
+import { splitTransition, transitionEndFor, withTransitionDefaults } from "./types"
 import { Icon } from "./icon"
+import { colorFade, popupFade, popupFadeOut, PressFeedback, travelMotion } from "./motion"
 
 export interface SelectProps extends TransitionProps {
   options: Option[]
@@ -66,16 +67,11 @@ export function Select(props: SelectProps) {
         {...press.handlers}
         focusable
       >
-        <d-rect
-          color={
-            press.pressed()
-              ? theme.color.overlayPressed
-              : (press.hovered() && policy.interaction !== "touch") || (press.focused() && policy.focusRing)
-                ? theme.color.overlayHover
-                : "transparent"
-          }
+        <PressFeedback
+          pressed={press.pressed()}
+          hovered={(press.hovered() && policy.interaction !== "touch") || (press.focused() && policy.focusRing)}
         />
-        <text {...bodyText(p.option.value === value() ? theme.color.primary : theme.color.text)}>{p.option.label}</text>
+        <text transition={colorFade()} {...bodyText(p.option.value === value() ? theme.color.primary : theme.color.text)}>{p.option.label}</text>
       </view>
     )
   }
@@ -98,8 +94,19 @@ export function Select(props: SelectProps) {
       let cur = pos()
       if (!cur || cur.x !== x || cur.y !== y) setPos({ x, y })
     })
+    // The fade is driven by the position write, not a mount-time `from`: the
+    // menu parks offscreen until measured, so a `from` would play unseen.
+    // The exit fade lives on this root (the node the close unmounts).
     return createPortal(
-      <view position="absolute" top={0} left={0} right={0} bottom={0}>
+      <view
+        position="absolute"
+        top={0}
+        left={0}
+        right={0}
+        bottom={0}
+        opacity={pos() ? 1 : 0}
+        transition={popupFadeOut()}
+      >
         <view position="absolute" top={0} left={0} right={0} bottom={0} onPointerDown={() => setOpen(false)} />
         <view
           ref={(n: { id: number }) => (menu = n)}
@@ -113,12 +120,13 @@ export function Select(props: SelectProps) {
           paddingTop={theme.spacing.sm}
           paddingBottom={theme.spacing.sm}
         >
-          <d-rect color={theme.color.surface} radius={theme.radius.sm} />
+          <d-rect transition={colorFade()} color={theme.color.surface} radius={theme.radius.sm} />
           <For each={props.options}>
             {(o: Option) => <OptionRow option={o} padY={space("sm")} />}
           </For>
           <d-rect
             drawStyle="stroke"
+            transition={colorFade()}
             color={theme.color.border}
             strokeWidth={theme.borderWidth.sm}
             radius={theme.radius.sm}
@@ -132,9 +140,9 @@ export function Select(props: SelectProps) {
   // trick) so pressing an option never has the scrim on its hit path.
   let Sheet = () =>
     createPortal(
-      <view position="absolute" top={0} left={0} right={0} bottom={0}>
+      <view position="absolute" top={0} left={0} right={0} bottom={0} opacity={1} transition={popupFade()}>
         <view position="absolute" top={0} left={0} right={0} bottom={0} onPointerDown={() => setOpen(false)}>
-          <d-rect color={theme.color.scrim} />
+          <d-rect transition={colorFade()} color={theme.color.scrim} />
         </view>
         <view
           position="absolute"
@@ -145,7 +153,7 @@ export function Select(props: SelectProps) {
           paddingTop={theme.spacing.md}
           paddingBottom={theme.spacing.md + env.safeArea.bottom}
         >
-          <d-rect color={theme.color.surface} radius={theme.radius.sm} />
+          <d-rect transition={colorFade()} color={theme.color.surface} radius={theme.radius.sm} />
           <For each={props.options}>
             {(o: Option) => <OptionRow option={o} padY={Math.round(theme.spacing.md * 1.5)} />}
           </For>
@@ -167,12 +175,12 @@ export function Select(props: SelectProps) {
     ...props.style,
     ...(press.focused() && policy.focusRing ? { borderWidth: theme.borderWidth.focus, borderColor: theme.color.ring } : {}),
   })
-  // Hover feedback: the theme overlay tint drawn over the trigger fill.
-  let overlay = () =>
-    press.hovered() && !props.disabled && policy.interaction !== "touch"
-      ? theme.color.overlayHover
-      : "transparent"
-
+  // The chevron flips while the picker is open; travel motion, so it snaps
+  // under reduced motion (the flip itself stays).
+  let chevronSpin = () => {
+    let t = travelMotion()
+    return t && { rotate: t }
+  }
 
   let split = () => splitTransition(props.transition)
 
@@ -203,31 +211,38 @@ export function Select(props: SelectProps) {
       focusable={!props.disabled}
       pointerEvents={props.disabled ? "none" : undefined}
     >
-      <d-rect transition={split().background} onTransitionEnd={transitionEndFor("background", props.onTransitionEnd)} color={style().backgroundColor ?? "transparent"} radius={style().borderRadius} />
-      <d-rect color={overlay()} radius={style().borderRadius} />
+      <d-rect transition={withTransitionDefaults(split().background, colorFade())} onTransitionEnd={transitionEndFor("background", props.onTransitionEnd)} color={style().backgroundColor ?? "transparent"} radius={style().borderRadius} />
+      <PressFeedback
+        pressed={press.pressed() && !props.disabled}
+        hovered={press.hovered() && !props.disabled && policy.interaction !== "touch"}
+        radius={style().borderRadius}
+      />
       <Show
         when={selected()}
-        fallback={<text {...bodyText(theme.color.textMuted)}>{props.placeholder ?? ""}</text>}
+        fallback={<text transition={colorFade()} {...bodyText(theme.color.textMuted)}>{props.placeholder ?? ""}</text>}
       >
-        <text {...bodyText(props.disabled ? theme.color.textMuted : theme.color.text)}>{selected()!.label}</text>
+        <text transition={colorFade()} {...bodyText(props.disabled ? theme.color.textMuted : theme.color.text)}>{selected()!.label}</text>
       </Show>
-      <Show
-        when={theme.icons.chevronDown}
-        fallback={
-          <view width={12} height={8}>
-            <d-path
-              d="M 2 2 L 6 6 L 10 2"
-              drawStyle="stroke"
-              color={theme.color.textMuted}
-              strokeWidth={2}
-              strokeCap="round"
-              strokeJoin="round"
-            />
-          </view>
-        }
-      >
-        <Icon src={theme.icons.chevronDown!} size={12} color={theme.color.textMuted} />
-      </Show>
+      <view rotate={open() ? Math.PI : 0} transition={chevronSpin()}>
+        <Show
+          when={theme.icons.chevronDown}
+          fallback={
+            <view width={12} height={8}>
+              <d-path
+                d="M 2 2 L 6 6 L 10 2"
+                drawStyle="stroke"
+                transition={colorFade()}
+                color={theme.color.textMuted}
+                strokeWidth={2}
+                strokeCap="round"
+                strokeJoin="round"
+              />
+            </view>
+          }
+        >
+          <Icon src={theme.icons.chevronDown!} size={12} color={theme.color.textMuted} />
+        </Show>
+      </view>
       <Show when={open()}>
         <Show when={policy.interaction === "touch"} fallback={<Dropdown />}>
           <Sheet />
@@ -236,7 +251,7 @@ export function Select(props: SelectProps) {
       <Show when={(style().borderWidth ?? 0) > 0}>
         <d-rect
           drawStyle="stroke"
-          transition={split().border}
+          transition={withTransitionDefaults(split().border, colorFade())}
           onTransitionEnd={transitionEndFor("border", props.onTransitionEnd)}
           color={style().borderColor ?? "transparent"}
           strokeWidth={style().borderWidth}
