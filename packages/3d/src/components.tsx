@@ -7,7 +7,7 @@
 // node with `ref` and call setTransform from onFrame - signals carry
 // structure and slow state, per-frame motion goes straight to the scene.
 
-import { createContext, createEffect, createSignal, onCleanup, onFrame, untrack, useContext } from "@solidrt/core"
+import { createContext, createEffect, createSignal, displayScale, getBoundingBoxViewport, getLayoutBox, onCleanup, onFrame, onLayout, untrack, useContext } from "@solidrt/core"
 import type { Element, ParentComponent, PointerEvent, TextureId, VoidComponent, WheelEvent } from "@solidrt/core"
 import { createOrbitCamera } from "./orbit.ts"
 import type { OrbitCamera as OrbitCameraHandle, OrbitCameraOptions, OrbitPose } from "./orbit.ts"
@@ -150,10 +150,20 @@ function syncNode(node: SceneNode, props: TransformProps & PointerEventProps): v
 }
 
 export type SceneProps = {
-  /** Target pixels. With `output`, the leaf's own width/height are layout,
-   * so render size and display size separate (supersampling). */
-  width: number
-  height: number
+  /**
+   * Target pixels - give both, or neither. Omitted, the scene FILLS: the
+   * built-in leaf is laid out at 100% of its parent's box (give it a sized
+   * parent, as on the web) and the target tracks the leaf's on-screen size
+   * in device pixels - display scale, designSize fits and ancestor
+   * transforms included - so a bare `<Scene>` renders at native density on
+   * any display, and viewport-relative camera controls scale with the box.
+   * Fill or fixed is decided at mount. `output` needs explicit sizes (the
+   * target cannot follow a leaf it does not own); the leaf's own
+   * width/height are then layout, so render size and display size separate
+   * (supersampling).
+   */
+  width?: number
+  height?: number
   clearColor?: [number, number, number, number]
   /**
    * Drive the scene camera declaratively (scene.setCamera as a prop): a
@@ -213,9 +223,24 @@ export type SceneProps = {
  * Children (Mesh/Group/PerspectiveCamera) render nothing themselves - they
  * populate the retained scene through context.
  */
+// Creation size of a fill-mode target: the first onLayout replaces it
+// before the first paint, so it only has to be a valid texture size.
+const FILL_INITIAL_SIZE = 1
+
 export let Scene: ParentComponent<SceneProps> = props => {
+  // Fill vs fixed target is decided at mount, like `output`: both
+  // width and height (fixed pixels) or neither (fill).
+  let fill = untrack(() => {
+    if ((props.width === undefined) !== (props.height === undefined)) {
+      throw new Error("Scene: width and height come together - give both (fixed target) or neither (fill)")
+    }
+    if (props.width === undefined && props.output) {
+      throw new Error("Scene: fill needs the built-in leaf - with output, give width and height")
+    }
+    return props.width === undefined
+  })
   let scene = untrack(() =>
-    createScene(props.width, props.height, {
+    createScene(props.width ?? FILL_INITIAL_SIZE, props.height ?? FILL_INITIAL_SIZE, {
       clearColor: props.clearColor,
       label: props.label,
       samples: props.samples,
@@ -224,7 +249,12 @@ export let Scene: ParentComponent<SceneProps> = props => {
   )
   createEffect(
     () => [props.width, props.height] as const,
-    ([w, h]) => scene.setSize(w, h),
+    ([w, h]) => {
+      if ((w === undefined) !== (h === undefined) || (w === undefined) !== fill) {
+        throw new Error("Scene: fill/fixed is mount-fixed - width/height cannot appear or disappear")
+      }
+      if (!fill) scene.setSize(w!, h!)
+    },
   )
   createEffect(
     () => props.camera,
@@ -275,22 +305,53 @@ export let Scene: ParentComponent<SceneProps> = props => {
   }
   let output = untrack(() => props.output)
   let events = untrack(() => props.events) !== false
-  // The built-in leaf is laid out at the target size, so that is its
-  // input layout; a custom output leaf registers its own via handlersFor.
-  let leaf = output ? null : input.handlersFor(() => ({ width: props.width, height: props.height }))
+  let leafNode: { id: number } | undefined
+  // The built-in leaf's laid-out box in ITS units - what pointer
+  // localX/localY report in and every handlersFor scales against. Fixed
+  // mode lays the leaf out at the target size; fill mode reads the box
+  // back (getLayoutBox, the untransformed read, so a designSize fit or
+  // ancestor transform never skews events). Zero before the first layout:
+  // no event can arrive before one, and a degenerate layout passes
+  // coordinates through unscaled. A custom output leaf registers its own
+  // layout via handlersFor.
+  let builtinLayout = fill
+    ? () => (leafNode && getLayoutBox(leafNode)) || { width: 0, height: 0 }
+    : () => ({ width: props.width!, height: props.height! })
+  if (fill) {
+    // Fill sizing: after every layout (and on display-scale changes, which
+    // lay nothing out) the target follows the leaf's on-screen box in
+    // device pixels - getBoundingBoxViewport composes designSize fits and
+    // ancestor transforms, so the scene renders at true density wherever
+    // it sits. onLayout runs before paint (no frame draws at a stale
+    // size); setSize no-ops when nothing changed.
+    let apply = () => {
+      if (!leafNode) return
+      let box = getBoundingBoxViewport(leafNode)
+      if (!box) return
+      let scale = displayScale()
+      scene.setSize(Math.max(1, Math.round(box.width * scale)), Math.max(1, Math.round(box.height * scale)))
+    }
+    onLayout(apply)
+    createEffect(() => displayScale(), apply)
+  }
+  // Mesh events on the built-in leaf: at target size the plain handlers,
+  // in fill mode scaled from the laid-out box.
+  let sceneHandlers = fill ? scene.handlersFor(builtinLayout) : scene.handlers
+  let leaf = output ? null : input.handlersFor(builtinLayout)
   return (
     <SceneContext value={{ scene, parent: scene.root, input }}>
       {output ? (
         untrack(() => output(scene.texture))
       ) : (
         <texture
+          ref={(n: { id: number }) => (leafNode = n)}
           src={scene.texture}
-          width={props.width}
-          height={props.height}
-          onPointerDown={events || hasInput() ? (e: PointerEvent) => { if (events) scene.handlers.onPointerDown(e); leaf!.onPointerDown(e) } : undefined}
-          onPointerMove={events || hasInput() ? (e: PointerEvent) => { if (events) scene.handlers.onPointerMove(e); leaf!.onPointerMove(e) } : undefined}
-          onPointerUp={events || hasInput() ? (e: PointerEvent) => { if (events) scene.handlers.onPointerUp(e); leaf!.onPointerUp(e) } : undefined}
-          onPointerLeave={events ? scene.handlers.onPointerLeave : undefined}
+          width={fill ? "100%" : props.width}
+          height={fill ? "100%" : props.height}
+          onPointerDown={events || hasInput() ? (e: PointerEvent) => { if (events) sceneHandlers.onPointerDown(e); leaf!.onPointerDown(e) } : undefined}
+          onPointerMove={events || hasInput() ? (e: PointerEvent) => { if (events) sceneHandlers.onPointerMove(e); leaf!.onPointerMove(e) } : undefined}
+          onPointerUp={events || hasInput() ? (e: PointerEvent) => { if (events) sceneHandlers.onPointerUp(e); leaf!.onPointerUp(e) } : undefined}
+          onPointerLeave={events ? sceneHandlers.onPointerLeave : undefined}
           onWheel={hasInput() ? leaf!.onWheel : undefined}
         />
       )}

@@ -190,6 +190,15 @@ declare module "flux:rendertree" {
    */
   export function getBoundingBoxViewport(id: number): { x: number, y: number, width: number, height: number } | null
   /**
+   * The node's laid-out box in its parent's frame: layout output before any
+   * transform composes (DOM offsetLeft/offsetTop/offsetWidth/offsetHeight
+   * semantics). The untransformed companion to getBoundingBox: pointer events
+   * report local coordinates in this box's units, whatever designSize fits or
+   * transforms sit on the ancestor chain. Null for detached nodes and before
+   * the first layout.
+   */
+  export function getLayoutBox(id: number): { x: number, y: number, width: number, height: number } | null
+  /**
    * The texture id of a snapshot repaint boundary's retained rasterization
    * (its subtree's pixels at display scale, premultiplied, top-left origin,
    * cropped to the layout box). Allocated on the first call and stable for

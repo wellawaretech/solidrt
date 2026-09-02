@@ -198,7 +198,7 @@ blendMode and pointer events like any element.
 
 | Component | Props |
 | --- | --- |
-| `Scene` | `width`, `height` (target pixels), `clearColor?`, `camera?` (partial CameraUpdate, `ortho` included - the declarative scene.setCamera; same state as `PerspectiveCamera`, use one form), `background?` (fragment GLSL), `fog?` (`{ color, near, far }`, linear by camera distance), `layers?` (target mask, default 1), `depth?` (`"texture"` exposes scene.depthTexture; not with samples), `samples?` (1/2/4/8 MSAA), `label?`, `ref?(scene)`, `output?(texture)`, `events?` (mesh pointer events, default on) |
+| `Scene` | `width?`, `height?` (target pixels - both, or neither = FILL, below), `clearColor?`, `camera?` (partial CameraUpdate, `ortho` included - the declarative scene.setCamera; same state as `PerspectiveCamera`, use one form), `background?` (fragment GLSL), `fog?` (`{ color, near, far }`, linear by camera distance), `layers?` (target mask, default 1), `depth?` (`"texture"` exposes scene.depthTexture; not with samples), `samples?` (1/2/4/8 MSAA), `label?`, `ref?(scene)`, `output?(texture)`, `events?` (mesh pointer events, default on) |
 | `Group` | `position?`, `rotation?` (Euler radians, XYZ order), `quaternion?` (either, not both), `scale?` (number = uniform), `visible?`, pointer events (below), `ref?(node)` |
 | `Mesh` | `geometry`, `material`, transforms as Group, `params?` (per-mesh uniforms, merge semantics - no unset), `renderOrder?`, `castShadow?`, `layers?` (membership bitmask, default 1), pointer events (below), `ref?(mesh)` |
 | `Sprite` | as Mesh minus `geometry`: a camera-facing unit quad, `scale` is its world size, rotation is ignored; pair with a `sprite()` material |
@@ -219,33 +219,32 @@ elsewhere. Called once, untracked, inside the scene context. Scene
 layout, so render and display size separate - render at 2x and display
 smaller for supersampling.
 
-Filling the window: `width`/`height` are DEVICE pixels, the leaf's layout
-is LOGICAL. A `designSize` view fits the leaf to the window but never
-changes the target, so on a HiDPI display a 720-pixel scene is stretched
-across ~1100 device pixels and looks soft, and nothing warns (the
+Fill (the default): omit `width`/`height` and the built-in leaf is laid
+out at 100% of its parent's box (give it a sized parent, as on the web)
+while the target follows the leaf's on-screen size in DEVICE pixels -
+display scale, `designSize` fits and ancestor transforms included
+(getBoundingBoxViewport x displayScale, applied from onLayout, so no
+frame draws at a stale size). A bare `<Scene>` in a pane renders at
+native density on any display, mesh events and `<OrbitCamera>` input are
+wired automatically (event scaling reads the leaf's untransformed box
+back with `getLayoutBox`), and the camera aspect follows the box. Fill
+or fixed is decided at mount; `output` requires explicit sizes (the
+target cannot follow a leaf it does not own), and giving exactly one of
+width/height throws.
+
+Fixed sizes still matter where the target is a measured quantity: probes
+and checks that snapshot exact pixels, supersampling via `output`, or a
+scene composited at a size unrelated to its layout. `width`/`height` are
+DEVICE pixels and the leaf's layout is LOGICAL - a fixed 720-pixel scene
+under a HiDPI `designSize` fit is stretched across ~1100 device pixels
+and looks soft, and nothing warns; that trap is what fill removes (the
 examples' `SIZE = 720` is a verification convenience, not a sizing
-model). Render at the window's device size and lay the leaf out at its
-logical size:
-
-```tsx
-let target = createMemo(() => {
-  let { width, height } = windowSize()
-  let scale = displayScale()
-  return { w: Math.round(width * scale), h: Math.round(height * scale) }
-})
-<Scene width={target().w} height={target().h}
-       output={t => <texture src={t} width={windowSize().width}
-                             height={windowSize().height}
-                             {...useScene().scene.handlersFor(windowSize)} />}>
-```
-
-`windowSize` and `displayScale` come from `@solidrt/core`. The leaf's
-layout differs from the target, so it takes `handlersFor` (below), not
-`handlers`; `useScene()` works inside `output` because it runs in the
-scene context. With an `<OrbitCamera>` (or any SceneInput listener) in
-the scene, also spread `{...useScene().input.handlersFor(windowSize)}`
-on the leaf - the mesh-event and control-input channels are separate
-spreads with the same layout.
+model). A custom `output` leaf whose layout differs from the target
+takes `handlersFor` (below), not `handlers`; `useScene()` works inside
+`output` because it runs in the scene context. With an `<OrbitCamera>`
+(or any SceneInput listener) in the scene, also spread
+`{...useScene().input.handlersFor(layout)}` on the leaf - the mesh-event
+and control-input channels are separate spreads with the same layout.
 
 Camera control: `createOrbitCamera(scene, { target?, azimuth?, elevation?,
 distance?, min/maxDistance?, min/maxElevation?, orbitSpeed?, rotateSpeed?,

@@ -356,6 +356,38 @@ fn texture_stretch_follows_intrinsic_ratio() {
   assert_eq!(box_of(&tree, 3), Size::new(200.0, 100.0));
 }
 
+// layout_box is the untransformed read: the taffy box in the parent's frame,
+// while bounding_box folds ancestor transforms in. A scaled ancestor moves
+// the bounding box but never the layout box - the invariant pointer-event
+// consumers (fill-mode leaves) rely on.
+#[test]
+fn layout_box_ignores_ancestor_transforms() {
+  // root(1, 400x300) > scaled(2, 200x100, scale 2) > child(3, 100%)
+  let mut tree = RenderTree::new();
+  tree.create_node(1, attached());
+  let mut scaled = View::default();
+  scaled.scale_x = Some(2.0);
+  scaled.scale_y = Some(2.0);
+  tree.create_node(2, scaled.with_layout());
+  tree.create_node(3, attached());
+  tree.insert_node(1, 2, None).expect("insert");
+  tree.insert_node(2, 3, None).expect("insert");
+  tree.root = Some(1);
+  size(&mut tree, 1, 400.0, 300.0);
+  size(&mut tree, 2, 200.0, 100.0);
+  tree.node_mut(3).style_mut().expect("child").size =
+    taffy::Size { width: percent(1.0), height: percent(1.0) };
+  let platform = PlatformContext::new(Vec::new());
+  let alloy = headless();
+
+  layout(&mut tree, &platform, &alloy);
+  let lb = tree.layout_box(3).expect("laid out");
+  assert_eq!((lb.size.width, lb.size.height), (200.0, 100.0));
+  assert_xy(lb.origin, 0.0, 0.0);
+  let bb = tree.bounding_box(3).expect("laid out");
+  assert_eq!((bb.size.width, bb.size.height), (400.0, 200.0));
+}
+
 // A span has no layout of its own but feeds its text's measure: inserting or
 // detaching one invalidates the text's cache like a text write does. (A text
 // laid out empty, then given a span, otherwise keeps its 0-wide box.)

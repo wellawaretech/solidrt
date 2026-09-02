@@ -327,6 +327,19 @@ export function getBoundingBoxViewport(node: { id: number }): BoundingBox | null
 }
 
 /**
+ * The node's laid-out box in its parent's frame: layout output before any
+ * transform composes (DOM offsetLeft/offsetTop/offsetWidth/offsetHeight
+ * semantics). The untransformed companion to getBoundingBox: pointer events
+ * report localX/localY in this box's units, whatever designSize fits or
+ * transforms sit on the ancestor chain. A snapshot read like getBoundingBox
+ * (call it inside `onLayout` or an event handler); `null` for detached nodes
+ * and before the first layout.
+ */
+export function getLayoutBox(node: { id: number }): BoundingBox | null {
+  return tree.getLayoutBox(node.id)
+}
+
+/**
  * The texture id of a snapshot boundary's retained rasterization
  * (`repaintBoundary="snapshot"`): the subtree's pixels as a live texture any
  * GPU consumer - a `<texture>`, a shader or draw target binding, a 3d

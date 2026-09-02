@@ -180,7 +180,7 @@ on approach, evict) - okf/backlog/2d-baked-layers.md.
 
 | Component | Props |
 |---|---|
-| `SpriteLayer` | width, height (layer pixels), atlas (TextureId), capacity?, clearColor?, camera?, tint? ([r,g,b,a] 0..1, over the whole layer), oversample?, maxOversample?, label?, ref?, output?, events? |
+| `SpriteLayer` | width?, height? (layer pixels - both, or neither = FILL: the leaf lays out at 100% of its sized parent and the layer follows its box, so layer pixels are the leaf's own coordinates; mount-fixed, `output` requires explicit sizes, matching `<Scene>` in @solidrt/3d), atlas (TextureId), capacity?, clearColor?, camera?, tint? ([r,g,b,a] 0..1, over the whole layer), oversample?, maxOversample?, label?, ref?, output?, events? |
 | `Sprite` | x, y (center; local to the enclosing `<Group>`), w, h, frame?, rotation? (radians, clockwise), tint? ([r,g,b,a] 0..1), visible?, transition?, onPointer{Down,Move,Up,Enter,Leave}?, ref? |
 | `Group` | x?, y?, rotation?, scale? (uniform, scales the subtree), visible? (the whole subtree), transition?, onPointer{Down,Move,Up}? (bubbled from hit child sprites), ref? |
 | `TileLayer` | cols, rows, tileW, tileH, atlas (TextureId), chunkClearColor?, filter?, chunkTiles?, tint? ([r,g,b,a] 0..1, over the whole layer), oversample?, maxOversample?, camera? (TileCamera: x, y, zoom, rotation, pivotX, pivotY), label?, ref? |

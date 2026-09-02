@@ -6,7 +6,7 @@
 // sprite with `ref` and call setSprite from onFrame - signals carry
 // structure and slow state, per-frame motion goes straight to the layer.
 // The same split, with the same reasoning, as @solidrt/3d's components.
-import { createContext, createEffect, createSignal, displayScale, For, getBoundingBoxViewport, onCleanup, onLayout, untrack, useContext, windowSize } from "@solidrt/core"
+import { createContext, createEffect, createSignal, displayScale, For, getBoundingBoxViewport, getLayoutBox, onCleanup, onLayout, untrack, useContext, windowSize } from "@solidrt/core"
 import type { Element, ParentComponent, TextureId, VoidComponent } from "@solidrt/core"
 import { limits } from "@solidrt/core/gpu"
 import type { FilterMode } from "@solidrt/core/gpu"
@@ -73,10 +73,19 @@ export type SpritePointerProps = {
 }
 
 export type SpriteLayerProps = {
-  /** Layer pixels. With `output`, the leaf's own width/height are layout, so
-   * render size and display size separate. */
-  width: number
-  height: number
+  /**
+   * Layer pixels - give both, or neither. Omitted, the layer FILLS: the
+   * built-in leaf is laid out at 100% of its parent's box (give it a sized
+   * parent, as on the web) and the layer sizes to that box, so layer
+   * pixels are the leaf's own coordinates and sprites place in element
+   * units - the auto oversample still supplies display density on top.
+   * Fill or fixed is decided at mount, and matches @solidrt/3d's `<Scene>`
+   * one dimension down. `output` needs explicit sizes (the layer cannot
+   * follow a leaf it does not own); the leaf's own width/height are then
+   * layout, so render size and display size separate.
+   */
+  width?: number
+  height?: number
   /** The atlas texture every sprite samples (create with createAtlas). */
   atlas: TextureId
   /** Initial record reservation (grows on demand); default 1024. */
@@ -140,9 +149,24 @@ export type SpriteLayerProps = {
  * Children (`<Sprite>`) render nothing themselves - they populate the
  * retained layer through context.
  */
+// Creation size of a fill-mode layer: the first onLayout replaces it
+// before the first paint, so it only has to be a valid target size.
+const FILL_INITIAL_SIZE = 1
+
 export let SpriteLayer: ParentComponent<SpriteLayerProps> = props => {
+  // Fill vs fixed layer is decided at mount, like `output`: both width
+  // and height (fixed layer pixels) or neither (fill).
+  let fill = untrack(() => {
+    if ((props.width === undefined) !== (props.height === undefined)) {
+      throw new Error("SpriteLayer: width and height come together - give both (fixed layer) or neither (fill)")
+    }
+    if (props.width === undefined && props.output) {
+      throw new Error("SpriteLayer: fill needs the built-in leaf - with output, give width and height")
+    }
+    return props.width === undefined
+  })
   let layer = untrack(() =>
-    createSpriteLayer(props.width, props.height, props.atlas, {
+    createSpriteLayer(props.width ?? FILL_INITIAL_SIZE, props.height ?? FILL_INITIAL_SIZE, props.atlas, {
       capacity: props.capacity,
       clearColor: props.clearColor,
       tint: props.tint,
@@ -152,7 +176,12 @@ export let SpriteLayer: ParentComponent<SpriteLayerProps> = props => {
   )
   createEffect(
     () => [props.width, props.height] as const,
-    ([w, h]) => layer.setSize(w, h),
+    ([w, h]) => {
+      if ((w === undefined) !== (h === undefined) || (w === undefined) !== fill) {
+        throw new Error("SpriteLayer: fill/fixed is mount-fixed - width/height cannot appear or disappear")
+      }
+      if (!fill) layer.setSize(w!, h!)
+    },
   )
   createEffect(
     () => props.camera,
@@ -175,23 +204,50 @@ export let SpriteLayer: ParentComponent<SpriteLayerProps> = props => {
   untrack(() => props.ref)?.(layer)
   let output = untrack(() => props.output)
   let events = untrack(() => props.events) !== false
+  let leaf: { id: number } | undefined
+  // The layer's pixel size: the props in fixed mode, the built-in leaf's
+  // laid-out box in fill mode (getLayoutBox, the untransformed read, so a
+  // designSize fit or ancestor transform never enters the world space -
+  // display density rides on the oversample pick below). Null before the
+  // first layout.
+  let layerSize = (): { width: number; height: number } | null => {
+    if (!fill) return { width: props.width!, height: props.height! }
+    let box = leaf && getLayoutBox(leaf)
+    if (!box || box.width <= 0 || box.height <= 0) return null
+    return { width: Math.max(1, Math.round(box.width)), height: Math.max(1, Math.round(box.height)) }
+  }
+  // Fill: the layer follows the leaf's box. Registered before the pick, so
+  // one onLayout applies size then oversample in order; setSize no-ops
+  // when nothing changed.
+  if (fill) {
+    onLayout(() => {
+      let size = layerSize()
+      if (size) layer.setSize(size.width, size.height)
+    })
+  }
   // Auto oversample: the built-in leaf's window box, in device pixels, per
   // layer pixel. Picked after every layout, and again when the display scale
   // changes: the first layout runs before the resize event that reports the
   // scale, and a scale change alone lays nothing out. pick runs as an
   // onLayout handler and as an effect apply, both untracked scopes, so its
   // prop reads are wrapped in an explicit untrack.
-  let leaf: { id: number } | undefined
   let pick = () =>
     untrack(() => {
       if (!leaf || props.oversample !== undefined) return
       let box = getBoundingBoxViewport(leaf)
-      if (!box) return
-      let scale = displayScale() * Math.max(box.width / props.width, box.height / props.height)
-      applyOversample(layer, scale, props.width, props.height, props.maxOversample)
+      let size = layerSize()
+      if (!box || !size) return
+      let scale = displayScale() * Math.max(box.width / size.width, box.height / size.height)
+      applyOversample(layer, scale, size.width, size.height, props.maxOversample)
     })
   onLayout(pick)
   createEffect(() => [displayScale(), props.maxOversample], pick)
+  // Sprite events on the built-in leaf: at layer size the plain handlers,
+  // in fill mode scaled from the laid-out box (the box can be fractional,
+  // the layer size never is).
+  let layerHandlers = fill
+    ? layer.handlersFor(() => (leaf && getLayoutBox(leaf)) || { width: 0, height: 0 })
+    : layer.handlers
   return (
     <LayerContext value={layer}>
       {output ? (
@@ -200,12 +256,12 @@ export let SpriteLayer: ParentComponent<SpriteLayerProps> = props => {
         <texture
           ref={(n: { id: number }) => (leaf = n)}
           src={layer.texture}
-          width={props.width}
-          height={props.height}
-          onPointerDown={events ? layer.handlers.onPointerDown : undefined}
-          onPointerMove={events ? layer.handlers.onPointerMove : undefined}
-          onPointerUp={events ? layer.handlers.onPointerUp : undefined}
-          onPointerLeave={events ? layer.handlers.onPointerLeave : undefined}
+          width={fill ? "100%" : props.width}
+          height={fill ? "100%" : props.height}
+          onPointerDown={events ? layerHandlers.onPointerDown : undefined}
+          onPointerMove={events ? layerHandlers.onPointerMove : undefined}
+          onPointerUp={events ? layerHandlers.onPointerUp : undefined}
+          onPointerLeave={events ? layerHandlers.onPointerLeave : undefined}
         />
       )}
       {props.children}

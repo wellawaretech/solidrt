@@ -715,6 +715,21 @@ impl RenderTree {
     self.compute_bounding_box(id, false)
   }
 
+  /// The node's laid-out box in its parent's frame: layout output before any
+  /// transform composes (DOM offsetLeft/offsetTop/offsetWidth/offsetHeight
+  /// semantics). The untransformed companion to bounding_box: pointer events
+  /// report local coordinates in this box's units, whatever designSize fits
+  /// or transforms sit on the ancestor chain. None for detached nodes and
+  /// before the first layout.
+  pub fn layout_box(&self, id: u64) -> Option<Rect> {
+    let node = self.try_node(id)?;
+    let layout = node.layout.as_ref()?;
+    if layout.cache.is_empty() {
+      return None;
+    }
+    Some(Rect::new(layout.location(), layout.size()))
+  }
+
   /// Computed lazily: walks from the node upward each call, so nothing is cached
   /// and only queried nodes cost anything. Call after layout_phase (e.g. from
   /// the postLayout hook) for current-frame values. When `stop_at_context` is

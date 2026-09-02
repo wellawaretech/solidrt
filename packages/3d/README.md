@@ -15,7 +15,7 @@ function App() {
   onFrame(tick => setSpin(tick / 2000))
   return (
     <window>
-      <Scene width={720} height={720}>
+      <Scene>
         <PerspectiveCamera position={[0, 1.5, 3]} lookAt={[0, 0, 0]} />
         <Mesh geometry={box()} material={unlit({ color: [0.9, 0.3, 0.3] })} rotation={[0, spin(), 0]} />
       </Scene>
@@ -30,7 +30,9 @@ per mesh, one shared pipeline per material class, cross-mesh occlusion
 from the shared depth buffer. A static scene costs zero GPU passes - the
 runtime re-renders the target only when something changes - and a moved
 mesh costs one uniform write. By default `<Scene>` composites the target
-as a plain `<texture>` leaf; the `output` prop receives the texture id
+as a plain `<texture>` leaf that fills its parent's box, rendered at the
+leaf's on-screen device-pixel size (give `width`/`height` for a fixed
+target instead); the `output` prop receives the texture id
 and replaces that leaf - place a `<d-texture>`, add paint or pointer
 props, chain a post-effect shader target, or return null and composite
 `scene.texture` yourself.
