@@ -7,8 +7,8 @@ use taffy::{AvailableSpace, NodeId};
 
 use crate::rendertree::cull::{self, CullRect};
 use crate::rendertree::{
-  BoundaryMode, BuildContext, Element, ElementKind, FrameDamage, LayoutContext, PaintCache, PlatformContext,
-  RenderTree, ShadedCache, SnapshotCache,
+  BoundaryMode, BuildContext, Element, ElementKind, FilterState, FrameDamage, LayoutContext, PaintCache,
+  PlatformContext, RenderTree, ShadedCache, SnapshotCache,
 };
 use crate::{CaptureDone, CaptureInfo};
 
@@ -337,6 +337,49 @@ fn view_opacity(element: &Element) -> f32 {
   }
 }
 
+// A View's subtree filter; non-Views (and empty declarations) have none.
+// Hoisted like opacity: applied around cached content at composite time, so
+// a filter write replays the same cache.
+fn view_filter(element: &Element) -> Option<&FilterState> {
+  match &element.kind {
+    ElementKind::View(v) => v.active_filter(),
+    _ => None,
+  }
+}
+
+// The paint carrying a view's composite-time effects: the group opacity in
+// the alpha (riding on `rgb` - black for a save_layer, white for a texture
+// quad, where white keeps the texture's colors), plus the filter's fused
+// color matrix and blur.
+fn effect_paint(rgb: f32, opacity: f32, filter: Option<&FilterState>) -> Paint {
+  let mut paint = Paint::default();
+  paint.set_color(Color::new_srgba(rgb, rgb, rgb, opacity));
+  if let Some(f) = filter {
+    if let Some(cf) = f.to_color_filter() {
+      paint.set_color_filter(&cf);
+    }
+    if let Some(blur) = f.to_image_filter() {
+      paint.set_image_filter(&blur);
+    }
+  }
+  paint
+}
+
+// Replays a recorded display list under the view's composite-time effects: a
+// filter needs a save_layer carrying it (draw_display_list has only an
+// opacity argument), plain opacity stays on the cheap path.
+fn draw_dl_with_effects(builder: &mut DisplayListBuilder, dl: &DisplayList, opacity: f32, filter: Option<&FilterState>) {
+  if filter.is_some() {
+    let paint = effect_paint(0.0, opacity, filter);
+    let bounds = Rect::new(Point::new(-CLIP_INF, -CLIP_INF), Size::new(2.0 * CLIP_INF, 2.0 * CLIP_INF));
+    builder.save_layer(&bounds, Some(&paint), None);
+    builder.draw_display_list(dl, 1.0);
+    builder.restore();
+  } else {
+    builder.draw_display_list(dl, opacity);
+  }
+}
+
 // Composites a Recording boundary's cached content. A View boundary's cache
 // holds children only (Hoist::Full): its current matrix, clip and scroll are
 // applied around the draw here, so transform and scroll writes replay the
@@ -348,15 +391,16 @@ fn draw_cached_recording(
   dl: &DisplayList,
 ) {
   let opacity = view_opacity(element);
+  let filter = view_filter(element);
   if let Some(m) = matrix {
     builder.save();
     builder.transform(m);
     apply_clip(builder, element);
     apply_scroll(builder, element);
-    builder.draw_display_list(dl, opacity);
+    draw_dl_with_effects(builder, dl, opacity, filter);
     builder.restore();
   } else {
-    builder.draw_display_list(dl, opacity);
+    draw_dl_with_effects(builder, dl, opacity, filter);
   }
 }
 
@@ -503,15 +547,13 @@ fn snapshot_node_uncalled<'a>(
   let own = own_matrix(element, ctx.size);
   let hoist = if own.is_some() { Hoist::Transform } else { Hoist::None };
 
-  // Group opacity rides on the composited quad (white keeps the texture's
-  // colors, the alpha fades it), so the texture itself stays opacity-free and
-  // survives opacity writes.
+  // Group opacity and the view filter ride on the composited quad (white
+  // keeps the texture's colors, the alpha fades it, the filters transform
+  // the draw), so the texture itself stays effect-free and survives opacity
+  // and filter writes.
   let opacity = view_opacity(element);
-  let opacity_paint = (opacity < 1.0).then(|| {
-    let mut paint = Paint::default();
-    paint.set_color(Color::new_srgba(1.0, 1.0, 1.0, opacity));
-    paint
-  });
+  let filter = view_filter(element);
+  let quad_paint = (opacity < 1.0 || filter.is_some()).then(|| effect_paint(1.0, opacity, filter));
 
   // The content occupies the top-left width*scale x height*scale pixels of the
   // (ceil-padded) texture; mapping exactly that region onto the logical-size
@@ -588,7 +630,7 @@ fn snapshot_node_uncalled<'a>(
       }
       ctx.snapshots_reused += 1;
       draw_with_transform(builder, own.as_ref(), |b| {
-        b.draw_texture_rect(&output, &src, &dst, TextureSampling::Linear, opacity_paint.as_ref());
+        b.draw_texture_rect(&output, &src, &dst, TextureSampling::Linear, quad_paint.as_ref());
       });
       return;
     }
@@ -662,7 +704,7 @@ fn snapshot_node_uncalled<'a>(
         }
         publish_snapshot(element, ctx, &source, tex_w, tex_h);
         draw_with_transform(builder, own.as_ref(), |b| {
-          b.draw_texture_rect(&output, &src, &dst, TextureSampling::Linear, opacity_paint.as_ref());
+          b.draw_texture_rect(&output, &src, &dst, TextureSampling::Linear, quad_paint.as_ref());
         });
         *element.paint_cache.borrow_mut() = Some(PaintCache::Snapshot(SnapshotCache {
           texture: source,
@@ -684,7 +726,7 @@ fn snapshot_node_uncalled<'a>(
           b.save();
           b.translate(-outset, -outset);
           b.scale(1.0 / scale, 1.0 / scale);
-          b.draw_display_list(&dl, opacity);
+          draw_dl_with_effects(b, &dl, opacity, filter);
           b.restore();
         });
       }
@@ -698,7 +740,7 @@ fn snapshot_node_uncalled<'a>(
       if snap.valid && snap.width == width && snap.height == height && snap.scale == scale {
         ctx.snapshots_reused += 1;
         draw_with_transform(builder, own.as_ref(), |b| {
-          b.draw_texture_rect(&snap.texture, &src, &dst, TextureSampling::Linear, opacity_paint.as_ref());
+          b.draw_texture_rect(&snap.texture, &src, &dst, TextureSampling::Linear, quad_paint.as_ref());
         });
         return;
       }
@@ -732,7 +774,7 @@ fn snapshot_node_uncalled<'a>(
         ctx.snapshots_rerendered += 1;
         publish_snapshot(element, ctx, &texture, tex_w, tex_h);
         draw_with_transform(builder, own.as_ref(), |b| {
-          b.draw_texture_rect(&texture, &src, &dst, TextureSampling::Linear, opacity_paint.as_ref());
+          b.draw_texture_rect(&texture, &src, &dst, TextureSampling::Linear, quad_paint.as_ref());
         });
         *element.paint_cache.borrow_mut() =
           Some(PaintCache::Snapshot(SnapshotCache { texture, width, height, scale, valid: true, shaded: None }));
@@ -750,7 +792,7 @@ fn snapshot_node_uncalled<'a>(
       ctx.snapshots_rasterized += 1;
       publish_snapshot(element, ctx, &texture, tex_w, tex_h);
       draw_with_transform(builder, own.as_ref(), |b| {
-        b.draw_texture_rect(&texture, &src, &dst, TextureSampling::Linear, opacity_paint.as_ref());
+        b.draw_texture_rect(&texture, &src, &dst, TextureSampling::Linear, quad_paint.as_ref());
       });
       *element.paint_cache.borrow_mut() =
         Some(PaintCache::Snapshot(SnapshotCache { texture, width, height, scale, valid: true, shaded: None }));
@@ -763,7 +805,7 @@ fn snapshot_node_uncalled<'a>(
         b.save();
         b.translate(offset.0, offset.1);
         b.scale(1.0 / scale, 1.0 / scale);
-        b.draw_display_list(&dl, opacity);
+        draw_dl_with_effects(b, &dl, opacity, filter);
         b.restore();
       });
     }
@@ -954,6 +996,14 @@ fn record_node<'a>(
     if let Some(own) = own_matrix(element, ctx.size) {
       ctx.cull = ctx.cull.through(&own);
     }
+    // A filter blur pulls just-offscreen content into view: widen what
+    // counts as visible by its reach so that content is not culled away.
+    if let Some(f) = view_filter(element) {
+      let reach = f.blur_outset();
+      if reach > 0.0 {
+        ctx.cull = ctx.cull.map(|r| r.inflate(reach, reach));
+      }
+    }
     if let Some(l) = &element.layout {
       ctx.cull = ctx.cull.clipped(l.size(), clip_x, clip_y);
     }
@@ -967,15 +1017,16 @@ fn record_node<'a>(
     }
   }
 
-  // A non-boundary View's group opacity is baked here as a save_layer (the
-  // alpha composites the children as one group at the restore); boundary
-  // callers hoist it to composite time instead. The bounds are a formality:
-  // Impeller intersects them with the current clip coverage.
+  // A non-boundary View's group opacity and filter are baked here as a
+  // save_layer (the paint's alpha and filters composite the children as one
+  // group at the restore); boundary callers hoist both to composite time
+  // instead. The bounds are a formality: Impeller intersects them with the
+  // current clip coverage.
   let opacity = view_opacity(element);
-  let opacity_layer = hoist == Hoist::None && opacity < 1.0;
-  if opacity_layer {
-    let mut paint = Paint::default();
-    paint.set_color(Color::new_srgba(0.0, 0.0, 0.0, opacity));
+  let filter = view_filter(element);
+  let effect_layer = hoist == Hoist::None && (opacity < 1.0 || filter.is_some());
+  if effect_layer {
+    let paint = effect_paint(0.0, opacity, filter);
     let bounds = Rect::new(Point::new(-CLIP_INF, -CLIP_INF), Size::new(2.0 * CLIP_INF, 2.0 * CLIP_INF));
     builder.save_layer(&bounds, Some(&paint), None);
   }
@@ -1049,7 +1100,7 @@ fn record_node<'a>(
   ctx.cull = saved_cull;
   ctx.to_window = saved_map;
 
-  if opacity_layer {
+  if effect_layer {
     builder.restore();
   }
   if needs_save {

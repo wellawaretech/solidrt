@@ -3,8 +3,8 @@
 Read this before building any screen whose look matters: a background, a
 decoration, an effect, a chart, anything you would have reached for CSS for.
 
-Layout and props are half the model. There is no stylesheet: no filters, no
-box-shadow, no keyframes, no canvas. The visual range a web app gets from CSS
+Layout and props are half the model. There is no stylesheet: no selectors, no
+keyframes, no canvas. The visual range a web app gets from CSS
 comes from the tiers below instead, and reaching past tier 1 is ordinary
 app-building here, not optimization - a screen built only from view
 backgrounds and text is using a fraction of the runtime. Pick the tier the
@@ -50,12 +50,16 @@ no matter how complex the effect, which is why the performance model
   readable text over any fill.
 - gradient background -> a gradient `color` on a `d-rect` (gradients are
   paint values, usable anywhere a color is)
-- `filter: blur/grayscale/hue-rotate`, and any "make this look processed" ->
-  a `shader` on the view (requires repaintBoundary="snapshot"), or on
-  `<window>` for the whole frame
-- `box-shadow` / `text-shadow` / glow -> no shadow prop exists: draw an
-  offset `d-*` shape under the content, or a view shader with `outset` (the
-  transparent margin an effect bleeds into)
+- `filter: blur/grayscale/hue-rotate/...` -> the `filter` prop on a view
+  (object form: `filter={{ blur: 4, grayscale: 1 }}`; hueRotate in radians).
+  For processing beyond the CSS filter functions, a `shader` on the view
+  (requires repaintBoundary="snapshot"), or on `<window>` for the whole frame
+- `box-shadow` -> the `shadow` prop on the shape that IS the surface:
+  `<rect radius={12} color="white" shadow={{ y: 4, blur: 16, color:
+  "#0006" }}/>` (also on oval and path; fields are CSS box-shadow's, color
+  required). `text-shadow` / glow -> still no prop: draw an offset `d-*`
+  shape under the content, or a view shader with `outset` (the transparent
+  margin an effect bleeds into)
 - `backdrop-filter` -> no equivalent. A view shader sees only its own
   subtree's pixels, never what is behind it. Frost the whole frame with a
   window shader, or fake the layer with your own content

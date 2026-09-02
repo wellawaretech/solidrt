@@ -1,5 +1,5 @@
 use super::dash::{walk_dashes, walked_length, Dash, Pen, Piece, DASH_TOLERANCE};
-use super::PaintState;
+use super::{PaintState, ShadowState};
 use crate::impellers::{DisplayListBuilder, DrawStyle, FillType, Path as ImpPath, PathBuilder, Point, Rect, Size};
 use crate::rendertree::hit::{HitContext, Hittable};
 use crate::rendertree::Damage;
@@ -41,6 +41,7 @@ pub struct Path {
   pub x: Option<f32>,
   pub y: Option<f32>,
   pub paint: PaintState,
+  pub shadow: Option<ShadowState>,
   pub fill_rule: FillType,
   pub on_length: Option<f32>,
   pub off_length: Option<f32>,
@@ -64,6 +65,7 @@ impl Default for Path {
       x: None,
       y: None,
       paint: PaintState::default(),
+      shadow: None,
       fill_rule: FillType::NonZero,
       on_length: None,
       off_length: None,
@@ -85,6 +87,7 @@ impl Clone for Path {
       x: self.x,
       y: self.y,
       paint: self.paint.clone(),
+      shadow: self.shadow,
       fill_rule: self.fill_rule,
       on_length: self.on_length,
       off_length: self.off_length,
@@ -336,6 +339,10 @@ impl Path {
     self.path_length = v;
     Damage::Paint
   }
+  pub fn set_shadow(&mut self, v: Option<ShadowState>) -> Damage {
+    self.shadow = v;
+    Damage::Paint
+  }
 
   fn fills(&self) -> bool {
     matches!(self.paint.draw_style, DrawStyle::Fill | DrawStyle::StrokeAndFill)
@@ -442,6 +449,36 @@ impl Buildable for Path {
     if translated {
       builder.save();
       builder.translate(dx, dy);
+    }
+    // The shadow paints first, under the shape, mirroring the element's own
+    // fill/stroke (an open path has no interior box to cast from, so unlike
+    // rect/oval the shadow is the drawn geometry itself; spread is rejected
+    // at decode). Blur and color come from the shadow, everything shaping
+    // the silhouette from the element's paint.
+    if let Some(shadow) = &self.shadow {
+      let styled = |style: DrawStyle| {
+        let mut p = shadow.to_paint();
+        p.set_draw_style(style);
+        p.set_stroke_width(self.paint.stroke_width);
+        p.set_stroke_cap(self.paint.stroke_cap);
+        p.set_stroke_join(self.paint.stroke_join);
+        p.set_stroke_miter(self.paint.stroke_miter);
+        p
+      };
+      builder.save();
+      builder.translate(shadow.dx, shadow.dy);
+      match self.dash().filter(|_| self.strokes()) {
+        Some(dash) => {
+          if self.fills() {
+            builder.draw_path(path, &styled(DrawStyle::Fill));
+          }
+          builder.draw_path(&self.dashed_path(dash), &styled(DrawStyle::Stroke));
+        }
+        None => {
+          builder.draw_path(path, &styled(self.paint.draw_style));
+        }
+      }
+      builder.restore();
     }
     match self.dash().filter(|_| self.strokes()) {
       // Dashing is a stroke property: the fill keeps the whole path, the

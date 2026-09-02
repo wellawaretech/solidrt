@@ -677,3 +677,48 @@ fn line_dash_offset_applies_and_transitions() {
   assert_eq!(apply_el(&mut el, "transition", cfg), Ok(Damage::None));
   assert_eq!(el.transitions.as_ref().expect("config set").props[0].0, AnimProp::DashOffset);
 }
+
+#[test]
+fn shadow_decodes_and_validates() {
+  let good = map(&[
+    ("x", num(2.0)),
+    ("y", num(4.0)),
+    ("blur", num(12.0)),
+    ("spread", num(2.0)),
+    ("color", text("#00000066")),
+  ]);
+  assert_eq!(apply("rect", "shadow", good.clone()), Ok(Damage::Paint));
+  assert_eq!(apply("oval", "shadow", good.clone()), Ok(Damage::Paint));
+  // Null clears.
+  assert_eq!(apply("rect", "shadow", PropValue::Null), Ok(Damage::Paint));
+  // color is required: the tree has no currentColor to inherit.
+  let err = apply("rect", "shadow", map(&[("blur", num(4.0))])).unwrap_err();
+  assert!(err.contains("color"), "{err}");
+  // spread cannot inflate an arbitrary path exactly, so path rejects it...
+  let err = apply("path", "shadow", good).unwrap_err();
+  assert!(err.contains("spread"), "{err}");
+  // ...but takes every other field.
+  let no_spread = map(&[("color", text("black")), ("blur", num(4.0))]);
+  assert_eq!(apply("path", "shadow", no_spread), Ok(Damage::Paint));
+  let err = apply("rect", "shadow", map(&[("color", text("black")), ("radius", num(4.0))])).unwrap_err();
+  assert!(err.contains("'radius'"), "{err}");
+  let negative = map(&[("color", text("black")), ("blur", num(-1.0))]);
+  assert!(apply("rect", "shadow", negative).is_err());
+  let err = apply("rect", "shadow", num(4.0)).unwrap_err();
+  assert!(err.contains("object"), "{err}");
+}
+
+#[test]
+fn filter_decodes_and_validates() {
+  let good = map(&[("blur", num(4.0)), ("grayscale", num(1.0)), ("hueRotate", num(-0.5))]);
+  assert_eq!(apply("view", "filter", good), Ok(Damage::Compose));
+  assert_eq!(apply("view", "filter", PropValue::Null), Ok(Damage::Compose));
+  // Amounts cannot be negative; hueRotate is an angle and can (tested above).
+  let err = apply("view", "filter", map(&[("saturate", num(-1.0))])).unwrap_err();
+  assert!(err.contains("saturate"), "{err}");
+  let err = apply("view", "filter", map(&[("sharpen", num(1.0))])).unwrap_err();
+  assert!(err.contains("'sharpen'"), "{err}");
+  // Filters are view-level (subtree semantics), not per-shape.
+  let err = apply("rect", "filter", map(&[("blur", num(4.0))])).unwrap_err();
+  assert!(err.starts_with("Unknown property"), "{err}");
+}

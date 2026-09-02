@@ -15,7 +15,7 @@
 use std::cell::Cell;
 
 use crate::impellers::{Matrix, Point, Rect, Size};
-use crate::rendertree::{Bounded, Element, ElementKind, PlatformContext, RenderTree, Vector};
+use crate::rendertree::{Bounded, Element, ElementKind, PlatformContext, RenderTree, ShadowState, Vector};
 use taffy::style::Overflow;
 
 // Half-extent standing in for "no bound on this axis": large enough to cover
@@ -149,17 +149,26 @@ fn own_extent(element: &Element, platform: &PlatformContext, inherited: Size) ->
   let frame = element.layout.as_ref().map(|l| l.size()).unwrap_or(inherited);
   let content = element.layout.as_ref().map(|l| l.content_box()).unwrap_or(Rect::new(Point::zero(), frame));
   let inflate = |r: Rect, by: f32| Extent::Bounded(r.inflate(by, by));
+  // A shape's shadow paints past its geometry: union the shadow's own
+  // reach (offset + spread + blur falloff) into the extent.
+  let with_shadow = |r: Rect, by: f32, shadow: &Option<ShadowState>| {
+    let base = inflate(r, by);
+    match shadow {
+      Some(s) => base.union(inflate(s.extent_of(r), AA_OUTSET)),
+      None => base,
+    }
+  };
   let mut extent = match &element.kind {
     ElementKind::Window(_) | ElementKind::View(_) | ElementKind::Span(_) => Extent::Empty,
-    ElementKind::Rectangle(r) => inflate(r.local_bounds(frame), AA_OUTSET + r.paint.stroke_width),
-    ElementKind::Oval(o) => inflate(o.local_bounds(frame), AA_OUTSET + o.paint.stroke_width),
+    ElementKind::Rectangle(r) => with_shadow(r.local_bounds(frame), AA_OUTSET + r.paint.stroke_width, &r.shadow),
+    ElementKind::Oval(o) => with_shadow(o.local_bounds(frame), AA_OUTSET + o.paint.stroke_width, &o.shadow),
     ElementKind::Texture(t) => inflate(t.local_bounds(frame), AA_OUTSET),
     ElementKind::Text(t) => match t.painted_extent(platform, content) {
       Some(r) => inflate(r, AA_OUTSET),
       None => Extent::Unbounded,
     },
     ElementKind::Line(l) => inflate(l.local_bounds(frame), AA_OUTSET),
-    ElementKind::Path(p) => inflate(p.local_bounds(frame), AA_OUTSET),
+    ElementKind::Path(p) => with_shadow(p.local_bounds(frame), AA_OUTSET, &p.shadow),
   };
   // A laid-out node's box is a harmless superset of what its own build draws
   // inside it, and it is what everything else (clip, hit) already means by
@@ -239,6 +248,21 @@ fn compute_envelope(scene: &RenderTree, element: &Element, platform: &PlatformCo
       Extent::Unbounded => Extent::Bounded(clip),
       Extent::Bounded(r) => r.intersection(&clip).map(Extent::Bounded).unwrap_or(Extent::Empty),
     };
+  }
+
+  // A view filter's blur paints past the subtree it filters; grow the
+  // extent by its reach. After the clip cut (the blur samples the clipped
+  // composite and softens outward from it), before the own matrix (the
+  // filter is applied under the view's transform).
+  if let ElementKind::View(v) = &element.kind {
+    if let Some(f) = v.active_filter() {
+      let reach = f.blur_outset();
+      if reach > 0.0 {
+        if let Extent::Bounded(r) = extent {
+          extent = Extent::Bounded(r.inflate(reach, reach));
+        }
+      }
+    }
   }
 
   // Into the slot frame through the node's own matrix (Views only).

@@ -125,6 +125,42 @@ a named BLUR_RADIUS_TO_SIGMA constant.
      is the node's layout box, but a blur samples beyond its own edge, so
      tile mode and bounds together decide what the panel edge looks like.
 
+## Findings (stages 1+2 implementation)
+
+- **The Impeller color-matrix translation column is normalized 0..1 in
+  practice**, despite impeller.h documenting 0..255 - offsets per the doc
+  render invert as solid white and contrast 2 as solid black. Details and
+  evidence: okf/upstream/impeller-color-matrix-translation.md. Filters
+  without a translation term hide the discrepancy.
+- **An outer shadow must clip its own box out** (CSS semantics): drawn
+  naively, a stroke-only or translucent shape shows the shadow through its
+  interior. rect/oval wrap the shadow draw in a Difference clip of the
+  casting shape; path deliberately does not (its shadow mirrors the drawn
+  silhouette, like CSS drop-shadow).
+- Blur image filters use Decal tiling so a blurred panel fades at its edge
+  instead of smearing clamped border pixels.
+- The filter rides the exact mechanics group opacity already had: the
+  save_layer paint at the non-boundary record site, a save_layer wrap
+  around a recording boundary's cached replay, the quad paint on a
+  snapshot boundary. `Damage::Compose` for the same reason as opacity.
+- Envelope growth: shape shadows union their offset+spread+blur reach into
+  `own_extent`; a view filter's blur inflates the subtree envelope after
+  the clip cut and widens the cull rect by the same reach so just-offscreen
+  content still feeds the blur.
+- **Captures exclude the node's own filter**, like opacity and the boundary
+  shader (a capture records the subtree with composite-time effects
+  hoisted out): `/snapshot?node=` of a filtered view returns unfiltered
+  content; sample through a parent or a window crop instead. Pre-existing
+  capture semantics, kept consistent on purpose.
+- Stages 1+2 verified 2026-09-02 on desktop Linux (probes/effects-probe.tsx,
+  release client): pixel assertions for grayscale r=g=b, exact invert of the
+  reference panel, blur-blended stripe boundary, and recording-vs-snapshot
+  boundary equality all pass; magnified crops show the under-box shadow clip
+  and soft falloff. Static probe idles clean (missedPresents 0); the slow
+  paint frames seen during verification correlate with full-window capture
+  readbacks, not with effect painting. The stage 3 Android cost measurement
+  still stands.
+
 ## Deferred (all additive)
 
 - Color filters on `texture` via its PaintState (the img-filter reflex,

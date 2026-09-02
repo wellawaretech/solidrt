@@ -1,3 +1,4 @@
+use super::FilterState;
 use crate::gpu::NodeShader;
 use crate::impellers::{DisplayListBuilder, Matrix};
 use crate::rendertree::hit::{HitContext, Hittable};
@@ -76,6 +77,11 @@ pub struct View {
   // Corner radii [top-left, top-right, bottom-right, bottom-left] for the
   // clip applied when overflow is non-visible. None clips to a plain rect.
   pub clip_radius: Option<[f32; 4]>,
+  // Subtree filter (CSS `filter` through Impeller's built-in filters):
+  // children composited together, then color-transformed and blurred as a
+  // whole. Like opacity it is applied at composite time - on the boundary
+  // paths' quad/layer paint, via a save_layer otherwise.
+  pub filter: Option<FilterState>,
   // Design-space size for the children: everything under the view - layout,
   // paint, hit testing - happens in this w x h coordinate space, which is
   // uniformly scaled to fit and centered in the element's box (SVG's default
@@ -391,6 +397,18 @@ impl View {
   pub fn set_opacity(&mut self, v: Option<f32>) -> Damage {
     self.opacity = v.map(|v| v.clamp(0.0, 1.0));
     Damage::Compose
+  }
+  // Same damage class as opacity, and for the same reason: boundary paths
+  // apply the current filter around their cached content at composite time,
+  // and a non-boundary View's baked save_layer lives in the enclosing
+  // boundary's recording, which Compose's parent-up invalidation clears.
+  pub fn set_filter(&mut self, v: Option<FilterState>) -> Damage {
+    self.filter = v;
+    Damage::Compose
+  }
+  // The declared filter, None when unset or all-default (nothing to apply).
+  pub(crate) fn active_filter(&self) -> Option<&FilterState> {
+    self.filter.as_ref().filter(|f| !f.is_empty())
   }
   pub fn set_scroll_x(&mut self, v: Option<f32>) -> Damage {
     match (v, &mut self.scroll) {

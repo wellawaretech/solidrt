@@ -1605,6 +1605,10 @@ Knowledge. No lifecycle - true or wrong, not open or closed.
 
 Bugs in our dependencies. Status here is the dependency's, not ours.
 
+- **[ImpellerColorMatrix translation column is normalized, not 0..255](upstream/impeller-color-matrix-translation.md)** [2026-09-02]
+  The impeller.h doc (and impellers 0.4.2 doc comment) says the color-matrix
+  translation column is 0..255; the shipped implementation adds it raw in
+  normalized 0..1 color space.
 - **[Impeller interop GlyphInfo grapheme bounds are unusable](upstream/impeller-glyph-info-bounds.md)** [2026-08-18]
   ImpellerGlyphInfoGetGraphemeClusterBounds swaps x and y when building the
   ImpellerRect, and the rect it returns for glyphs of a single-line paragraph

@@ -1,4 +1,6 @@
-use super::{as_pct_fraction, decode_params, decode_texture_bindings, describe, f32_of, opt_f32, opt_radius};
+use super::{
+  as_pct_fraction, decode_filter, decode_params, decode_texture_bindings, describe, f32_of, opt_f32, opt_radius,
+};
 use crate::alloy_plugins::value::PropValue;
 use alloy::rendertree::Damage;
 use alloy::rendertree::OriginCoord;
@@ -48,6 +50,7 @@ pub fn apply(view: &mut View, name: &str, value: &PropValue) -> Result<Option<Da
       view.set_design_size(Some((w, h)))
     }
     "shader" => view.set_shader(decode_shader(value)?),
+    "filter" => view.set_filter(decode_filter(value)?),
     _ => return Ok(None),
   }))
 }

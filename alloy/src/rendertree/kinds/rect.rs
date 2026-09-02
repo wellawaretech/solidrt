@@ -1,6 +1,6 @@
 use super::dash::{box_outline, dashed_path, walked_length, Dash, Piece};
-use super::PaintState;
-use crate::impellers::{DisplayListBuilder, DrawStyle, Paint, Point, Rect, RoundingRadii, Size};
+use super::{PaintState, ShadowState};
+use crate::impellers::{ClipOperation, DisplayListBuilder, DrawStyle, Paint, Point, Rect, RoundingRadii, Size};
 use crate::rendertree::hit::{HitContext, Hittable};
 use crate::rendertree::Damage;
 use crate::rendertree::{Bounded, BuildContext, Buildable, Element, ElementKind, Measurable, MeasureContext};
@@ -18,6 +18,27 @@ pub struct Rectangle {
   pub dash_offset: Option<f32>,
   pub path_length: Option<f32>,
   pub paint: PaintState,
+  pub shadow: Option<ShadowState>,
+}
+
+// Clips the (rounded) box OUT of the current clip, for the shadow's
+// under-the-box exclusion.
+fn clip_out(builder: &mut DisplayListBuilder, rect: &Rect, radii: Option<[f32; 4]>) {
+  match radii {
+    Some([tl, tr, br, bl]) => {
+      let corner = |r: f32| Point::new(r, r);
+      let radii = RoundingRadii {
+        top_left: corner(tl),
+        top_right: corner(tr),
+        bottom_right: corner(br),
+        bottom_left: corner(bl),
+      };
+      builder.clip_rounded_rect(rect, &radii, ClipOperation::Difference);
+    }
+    None => {
+      builder.clip_rect(rect, ClipOperation::Difference);
+    }
+  }
 }
 
 fn draw(builder: &mut DisplayListBuilder, path: &Rect, radii: Option<[f32; 4]>, paint: &Paint) {
@@ -49,6 +70,25 @@ impl Buildable for Rectangle {
   // strokes stay centered - there the geometry is the stroke, not a box.
   fn build<'a>(&'a self, ctx: &mut BuildContext<'a>, builder: &mut DisplayListBuilder) {
     let rect = self.geometry(ctx.size);
+    // The shadow paints first, under the shape, cast by the outer box (CSS
+    // border-box semantics: strokes paint inside, so the box is the shape's
+    // outer edge for every draw style): offset, grown by the spread, radii
+    // grown with it to keep the shadow's corner parallel to the shape's.
+    // The casting box itself is clipped out (CSS: an outer shadow never
+    // paints beneath its own box), so a stroked or translucent shape shows
+    // the background through its interior, not its shadow.
+    if let Some(shadow) = &self.shadow {
+      let spread = shadow.spread;
+      let cast = Rect::new(
+        Point::new(rect.origin.x + shadow.dx - spread, rect.origin.y + shadow.dy - spread),
+        Size::new((rect.size.width + spread * 2.0).max(0.0), (rect.size.height + spread * 2.0).max(0.0)),
+      );
+      let radii = self.radius.map(|radii| radii.map(|r| (r + spread).max(0.0)));
+      builder.save();
+      clip_out(builder, &rect, self.radius);
+      draw(builder, &cast, radii, &shadow.to_paint());
+      builder.restore();
+    }
     let (path, radii) = self.stroke_path(ctx.size);
     match self.dashed_outline(ctx.size) {
       // Dashing is a stroke property: the fill keeps the whole inset shape,
@@ -175,6 +215,10 @@ impl Rectangle {
   }
   pub fn set_path_length(&mut self, v: Option<f32>) -> Damage {
     self.path_length = v;
+    Damage::Paint
+  }
+  pub fn set_shadow(&mut self, v: Option<ShadowState>) -> Damage {
+    self.shadow = v;
     Damage::Paint
   }
 

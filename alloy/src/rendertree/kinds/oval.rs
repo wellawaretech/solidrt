@@ -1,6 +1,6 @@
 use super::dash::{dashed_path, oval_outline, walked_length, Dash, Piece};
-use super::PaintState;
-use crate::impellers::{DisplayListBuilder, DrawStyle, Point, Rect, Size};
+use super::{PaintState, ShadowState};
+use crate::impellers::{ClipOperation, DisplayListBuilder, DrawStyle, Point, Rect, Size};
 use crate::rendertree::hit::{HitContext, Hittable};
 use crate::rendertree::Damage;
 use crate::rendertree::{Bounded, BuildContext, Buildable, Element, ElementKind, Measurable, MeasureContext};
@@ -16,6 +16,7 @@ pub struct Oval {
   pub dash_offset: Option<f32>,
   pub path_length: Option<f32>,
   pub paint: PaintState,
+  pub shadow: Option<ShadowState>,
 }
 
 impl Buildable for Oval {
@@ -24,6 +25,21 @@ impl Buildable for Oval {
   // outer edge lands on the box edge instead of straddling it.
   fn build<'a>(&'a self, ctx: &mut BuildContext<'a>, builder: &mut DisplayListBuilder) {
     let rect = self.geometry(ctx.size);
+    // The shadow paints first, under the shape, cast by the outer box like
+    // `Rectangle::build`: offset, grown by the spread on both axes, and the
+    // casting oval clipped out (CSS: an outer shadow never paints beneath
+    // its own shape).
+    if let Some(shadow) = &self.shadow {
+      let spread = shadow.spread;
+      let cast = Rect::new(
+        Point::new(rect.origin.x + shadow.dx - spread, rect.origin.y + shadow.dy - spread),
+        Size::new((rect.size.width + spread * 2.0).max(0.0), (rect.size.height + spread * 2.0).max(0.0)),
+      );
+      builder.save();
+      builder.clip_oval(&rect, ClipOperation::Difference);
+      builder.draw_oval(&cast, &shadow.to_paint());
+      builder.restore();
+    }
     let path = self.stroke_path(ctx.size);
     match self.dashed_outline(ctx.size) {
       // Dashing is a stroke property: the fill keeps the whole inset oval,
@@ -141,6 +157,10 @@ impl Oval {
   }
   pub fn set_path_length(&mut self, v: Option<f32>) -> Damage {
     self.path_length = v;
+    Damage::Paint
+  }
+  pub fn set_shadow(&mut self, v: Option<ShadowState>) -> Damage {
+    self.shadow = v;
     Damage::Paint
   }
 

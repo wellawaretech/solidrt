@@ -46,7 +46,7 @@ use taffy::style::Position;
 use crate::alloy_plugins::value::PropValue;
 use alloy::impellers::Color;
 use alloy::rendertree::text::layout::{Clear, Side};
-use alloy::rendertree::{BoundaryMode, Damage, Element, ElementKind, PointerEvents};
+use alloy::rendertree::{BoundaryMode, Damage, Element, ElementKind, FilterState, PointerEvents, ShadowState};
 
 // Returns Ok(damage) on success; Err(message) for an unknown property or a
 // value that does not decode, which the FFI caller surfaces as a throwable JS
@@ -389,6 +389,92 @@ pub(super) fn decode_color(value: &PropValue) -> Result<Color, String> {
     .ok_or_else(|| format!("Color must be a number (packed 0xRRGGBBAA) or a CSS color string, got {}", describe(value)))?
     as u32;
   Ok(packed_to_color(rgba))
+}
+
+// { x?, y?, blur?, spread?, color } drop shadow on a shape (CSS box-shadow
+// field semantics, single shadow); null clears. `color` is required - the
+// tree has no currentColor to inherit. `allow_spread` is false on path,
+// whose arbitrary geometry cannot be inflated exactly.
+pub(super) fn decode_shadow(value: &PropValue, allow_spread: bool) -> Result<Option<ShadowState>, String> {
+  if value.is_null() {
+    return Ok(None);
+  }
+  let entries = value
+    .as_map()
+    .ok_or_else(|| format!("shadow must be an object {{ x?, y?, blur?, spread?, color }}, got {}", describe(value)))?;
+  for (k, _) in entries {
+    match k.as_str() {
+      "x" | "y" | "blur" | "spread" | "color" => {}
+      other => return Err(format!("Unknown shadow key '{other}'; expected x, y, blur, spread or color")),
+    }
+  }
+  let field = |key: &str| -> Result<f32, String> {
+    let v = match value.get(key) {
+      None => return Ok(0.0),
+      Some(v) if v.is_null() => return Ok(0.0),
+      Some(v) => f32_of(v, &format!("shadow.{key}"))?,
+    };
+    if !v.is_finite() {
+      return Err(format!("shadow.{key} must be finite, got {v}"));
+    }
+    Ok(v)
+  };
+  let (dx, dy, blur, spread) = (field("x")?, field("y")?, field("blur")?, field("spread")?);
+  if blur < 0.0 {
+    return Err(format!("shadow.blur must be non-negative, got {blur}"));
+  }
+  if !allow_spread && spread != 0.0 {
+    return Err("shadow.spread is not supported on path: an arbitrary path cannot be inflated exactly".to_string());
+  }
+  let color = match value.get("color") {
+    Some(v) if !v.is_null() => decode_color(v)?,
+    _ => return Err("shadow.color is required".to_string()),
+  };
+  Ok(Some(ShadowState { dx, dy, blur, spread, color }))
+}
+
+// { blur?, grayscale?, sepia?, saturate?, hueRotate?, brightness?,
+// contrast?, invert? } subtree filter on a view: CSS filter-function
+// semantics with hueRotate in radians (this API's angle convention). Null,
+// or an object with nothing set, clears.
+pub(super) fn decode_filter(value: &PropValue) -> Result<Option<FilterState>, String> {
+  if value.is_null() {
+    return Ok(None);
+  }
+  let entries = value
+    .as_map()
+    .ok_or_else(|| format!("filter must be an object of filter amounts, got {}", describe(value)))?;
+  let mut f = FilterState::default();
+  for (k, v) in entries {
+    if v.is_null() {
+      continue;
+    }
+    let n = f32_of(v, &format!("filter.{k}"))?;
+    if !n.is_finite() {
+      return Err(format!("filter.{k} must be finite, got {n}"));
+    }
+    // hueRotate is an angle and takes any sign; the amounts do not.
+    if k != "hueRotate" && n < 0.0 {
+      return Err(format!("filter.{k} must be non-negative, got {n}"));
+    }
+    let slot = match k.as_str() {
+      "blur" => &mut f.blur,
+      "grayscale" => &mut f.grayscale,
+      "sepia" => &mut f.sepia,
+      "saturate" => &mut f.saturate,
+      "hueRotate" => &mut f.hue_rotate,
+      "brightness" => &mut f.brightness,
+      "contrast" => &mut f.contrast,
+      "invert" => &mut f.invert,
+      other => {
+        return Err(format!(
+          "Unknown filter key '{other}'; expected blur, grayscale, sepia, saturate, hueRotate, brightness, contrast or invert"
+        ))
+      }
+    };
+    *slot = Some(n);
+  }
+  Ok((!f.is_empty()).then_some(f))
 }
 
 // A single number applies to all four corners; an array is

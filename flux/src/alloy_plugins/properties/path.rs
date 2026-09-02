@@ -1,6 +1,6 @@
 use alloy::impellers::FillType;
 
-use super::{opt, opt_f32, opt_positive_f32, str_of};
+use super::{decode_shadow, opt, opt_f32, opt_positive_f32, str_of};
 use crate::alloy_plugins::value::PropValue;
 use alloy::rendertree::Damage;
 use alloy::rendertree::Path;
@@ -21,6 +21,7 @@ pub fn apply(path: &mut Path, name: &str, value: &PropValue) -> Result<Option<Da
         v => return Err(format!("Unknown fillRule \"{v}\"; expected nonzero or evenodd")),
       })
     })?),
+    "shadow" => path.set_shadow(decode_shadow(value, false)?),
     _ => return Ok(None),
   }))
 }

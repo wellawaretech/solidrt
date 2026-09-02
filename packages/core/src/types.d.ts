@@ -175,6 +175,48 @@ export interface PaintProps {
   strokeWidth?: number
 }
 
+/**
+ * A drop shadow behind a shape (CSS box-shadow field semantics, one shadow):
+ * the shape's outer geometry, offset by x/y, grown by `spread`, softened by
+ * `blur` (a CSS-style radius in logical px), painted in `color` under the
+ * shape. It casts from the shape's outer box whatever the draw style (strokes
+ * paint inside, so the box is the outer edge) - except on `path`, where the
+ * shadow mirrors the element's own fill/stroke silhouette and `spread` is
+ * rejected (an arbitrary path cannot be inflated exactly). `color` is
+ * required; there is no currentColor to inherit.
+ */
+export interface ShadowProps {
+  x?: number
+  y?: number
+  blur?: number
+  spread?: number
+  color: Color
+}
+
+/**
+ * A subtree filter (the CSS filter functions, object form): the view's
+ * children are composited together, run through the set color operations -
+ * fused into one color matrix, applied in the fixed order grayscale, sepia,
+ * saturate, hueRotate, brightness, contrast, invert - and then blurred.
+ * `blur` is a CSS-style radius in logical px; `hueRotate` is radians (this
+ * API's angle convention); the rest are the CSS amounts (1 = unchanged for
+ * saturate/brightness/contrast, 0 = unchanged for the others; grayscale,
+ * sepia and invert saturate at 1). There is no `opacity` key - the view's
+ * own `opacity` prop is the same compositing layer. Like opacity, a filter
+ * on a non-boundary view costs a save_layer; on a repaintBoundary view it
+ * rides the composite for free. Hit testing is unaffected.
+ */
+export interface FilterProps {
+  blur?: number
+  grayscale?: number
+  sepia?: number
+  saturate?: number
+  hueRotate?: number
+  brightness?: number
+  contrast?: number
+  invert?: number
+}
+
 /** A percentage value, from `pct(50)`. Resolves against the element box. */
 export type Pct = { readonly __unit: "pct"; v: number }
 
@@ -703,6 +745,7 @@ export interface ViewOwnProps extends TransformProps, PointerProps {
    * unrotated, opaque content.
    */
   shader?: ViewShaderProps | null
+  filter?: FilterProps
 }
 
 /**
@@ -763,10 +806,13 @@ export interface RectProps extends PaintProps, PointerProps, DashProps {
   // number applies to all four corners; an array is [top-left, top-right,
   // bottom-right, bottom-left] (CSS border-radius order).
   radius?: number | [number, number, number, number]
+  shadow?: ShadowProps
 }
 
 // Strokes paint inside the box, same as `RectProps`.
-export interface OvalProps extends PaintProps, PointerProps, DashProps {}
+export interface OvalProps extends PaintProps, PointerProps, DashProps {
+  shadow?: ShadowProps
+}
 
 /**
  * A stroke's dash pattern, on every stroked primitive (`rect`, `oval`,
@@ -849,6 +895,8 @@ export interface LineProps extends PaintProps, PointerProps, DashProps {
 export interface PathProps extends PaintProps, PointerProps, DashProps {
   d?: string
   fillRule?: "nonzero" | "evenodd"
+  /** Shadows the drawn silhouette (fill and/or stroke); `spread` is rejected here. */
+  shadow?: ShadowProps
 }
 
 export type FontFamily = "sans" | "serif" | "mono" | (string & {})

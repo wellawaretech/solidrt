@@ -14,8 +14,8 @@ mod tree;
 pub use frame::{Commit, FrameBuilder, FrameDriver, PendingFrame};
 pub use hit::{EventInterest, HitConfig, PointerEvents};
 pub use kinds::{
-  fit_rects, Gradient, GradientStop, GradientUnits, Line, OriginCoord, Oval, PaintState, Path, Rectangle, Texture,
-  TextureFit, View, Window,
+  fit_rects, FilterState, Gradient, GradientStop, GradientUnits, Line, OriginCoord, Oval, PaintState, Path,
+  Rectangle, ShadowState, Texture, TextureFit, View, Window,
 };
 pub use layout::{LayoutCache, LayoutContext, LayoutData};
 pub use platform::{FontPayload, PlatformContext};
