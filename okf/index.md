@@ -51,6 +51,16 @@ Shaped, not started.
   Static 2D bulk (tile worlds, backgrounds) rendered once into a texture and
   drawn as ONE quad, with incremental re-bake - the primitive-count answer for
   tiled GPUs
+- **[A 2d camera controller - fit, clamp, zoom-at-cursor, pinch, glide](backlog/2d-camera-controller.md)** [2026-09-02]
+  Every pannable/zoomable app re-derives the same hundred lines of camera math
+  (fit-to-world min zoom, pan clamping, wheel zoom anchored under the cursor
+  with an eased glide, pinch anchoring) - ship it once as a camera controller
+  over the shared CameraUpdate.
+- **[Layer-level pointer events for empty space on the sprite layer](backlog/2d-layer-background-events.md)** [2026-09-02]
+  SpriteLayer's built-in handlers only ever deliver to sprites, so any app
+  that combines per-sprite interaction with pan/zoom on empty space must
+  abandon the layer's dispatch and re-implement pick, capture, tap-slop and
+  hover on its own leaf - give the layer a miss path.
 - **[2D layer views - a second rendering of a layer world (the minimap)](backlog/2d-layer-views.md)** [2026-08-31]
   A minimap, a zoomed radar strip or a picture-in-picture is common in 2D
   games, and today the only way to render a layer's world twice is a second
@@ -62,11 +72,21 @@ Shaped, not started.
   The pixel-art identity kit - fixed logical resolution with integer nearest
   scaling, palette LUT, and scanline/CRT passes - as thin layers over what
   already exists
+- **[Screen-space sizing for sprites (min-px floors, constant-size markers)](backlog/2d-screen-space-sprite-size.md)** [2026-09-02]
+  Markers that must stay legible at any zoom (selection rings, map pins,
+  traffic dots) have no shader-side answer, so apps rewrite w/h from JS on
+  every camera change - per frame for record sprites - even though the camera
+  is already a uniform in the vertex stage.
 - **[Seeding a tile world is one setTile call per cell](backlog/2d-tile-bulk-writes.md)** [2026-08-29]
   There is no bulk write, so an 18k-cell seed is 18k setTile calls each paying
   locate() and a frame copy; fine today because the flush batches to a
   microtask, but a larger world or a procedural refill on approach wants a
   rect write from a typed array.
+- **[World-space text for 2d layers (labels that ride the camera)](backlog/2d-world-space-text.md)** [2026-09-02]
+  Text living IN a layer's world - node labels, cluster names, damage numbers
+  - has no path: apps re-project laid-out <text> elements per camera change,
+  which works for tens of labels and not at all for thousands; give the layer
+  an atlas-text answer.
 - **[Wrap-around worlds in 2d - recipes exist but live nowhere, and a wrapping tile world has no seam answer](backlog/2d-wrap-around.md)** [2026-08-31]
   A toroidal world (Asteroids screen wrap, an endlessly repeating tile map) is
   expressible today only by app-side recipes nothing documents - position
