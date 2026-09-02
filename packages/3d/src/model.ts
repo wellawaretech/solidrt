@@ -10,6 +10,7 @@
 // under them, for bytes obtained any other way (a binary import, a fetch).
 
 import { file } from "flux:fs"
+import * as spatial from "flux:spatial"
 import { decodeImage } from "@solidrt/core"
 import { createMutableTexture, createTexture, destroyTexture } from "@solidrt/core/gpu"
 import type { TextureId } from "@solidrt/core/gpu"
@@ -208,6 +209,14 @@ export function createModel(data: ModelData, opts: ModelOptions = {}): Model {
     for (let part of model.parts) disposeGeometry(part.mesh.geometry)
     for (let id of textures) destroyTexture(id)
     textures.length = 0
+    // Core clips a mixer registered; their players drop at the next
+    // advance (the leave above already killed the target nodes).
+    for (let clip of model.clips) {
+      if (clip._core !== undefined) {
+        spatial.destroyClip(clip._core)
+        clip._core = undefined
+      }
+    }
   }
   return model
 }

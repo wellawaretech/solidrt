@@ -411,6 +411,15 @@ impl UiRuntime for FluxRuntime {
       }
       // The spatial arena's node-transition clock rides the same stamp.
       flux::gui::spatial::stamp_clock(&ctx, ts);
+      // Clip players advance BEFORE the frame's JS: onFrame handlers read
+      // and can overwrite freshly posed nodes (the post-animation hook),
+      // and the draw path's flush publishes the result. Written poses are
+      // this frame's reason to paint; still-progressing players are
+      // standing demand for the next one.
+      let players = flux::gui::spatial::advance_players(&ctx);
+      if players.active || players.wrote {
+        platform.request_frame();
+      }
       if flux::gui::camera::tick(&ctx) {
         // A camera frame landed in its texture; the screen content changed
         // even though the tree did not.

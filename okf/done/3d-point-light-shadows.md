@@ -37,7 +37,13 @@ instead of bleeding into a neighbouring tile.
 Verified with `probes/point-shadow-probe.tsx` (a bulb between walls,
 four pillars, every face receiving): continuous shadows across all
 face seams, atlas dealt as a 3x2 grid of six tiles, six shadow views
-sharing the caster list.
+sharing the caster list; moving-caster re-placement checked by
+stepping a frozen clock, and the same probe rendered correctly on the
+Adreno 610 tablet (cost recorded in
+[3d-low-end-gpu-performance](../backlog/3d-low-end-gpu-performance.md):
+~12.5 ms there, dominated by the flat per-pass overhead).
+`examples/lamps.tsx` ships the feature: its orbiting bulb casts, and
+with the two spots the example sits exactly at the 8-slot budget.
 
 ## Why not `samplerCube` (the shape this replaced)
 

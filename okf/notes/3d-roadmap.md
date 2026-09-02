@@ -204,7 +204,9 @@ what it delivered is documented in `packages/3d/AGENTS.md`, not here.
     `updateSkins` deleted, identical skins deduped); what keeps the box
     open: morph targets, since per-vertex JS is ruled out by the
     interpreter. The crowd-scale evaluator is
-    [animation-core](../backlog/animation-core.md), not this item.
+    [animation-core](../done/animation-core.md), not this item
+    (clip evaluator DELIVERED 2026-09-03; the crowd tier is open until an
+    app pushes it).
 17. [ ] **PBR and the color-space decision.** The furthest tier: physically
     based lighting math forces the sRGB/linear question the pixel contract
     currently answers with "non-linear RGBA8 everywhere".

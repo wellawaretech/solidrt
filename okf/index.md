@@ -126,11 +126,23 @@ Shaped, not started.
   compressed real-world files (Draco/meshopt, KTX2), morph targets,
   merge-by-material, vertex colors, per-material samplers and runtime-fetched
   content, each demand-gated.
+- **[In-place clip playback - root motion detected and cancelled by the mixer](backlog/3d-root-motion.md)** [2026-09-03]
+  Authored clips carry root motion, so any fixed-camera viewer sends the
+  character walking off screen and every app rediscovers pinning by hand; give
+  createMixer a per-clip in-place mode that detects travelling clips by NET
+  DRIFT of the root track, rebases the baseline at play, and strips the motion
+  inside the facade.
 - **[Cascaded shadow maps](backlog/3d-shadow-cascades.md)** [2026-08-27]
   One shadow.camera box per casting light: a large outdoor scene either blurs
   (the box covers everything at one map's resolution) or clips (the box covers
   the near part and the far part is lit). Cascades split the view frustum into
   N maps; demand-gated on a scene that outgrows the box.
+- **[Shared skeletons - drive a channel-less rigged piece from a body's clips](backlog/3d-skeleton-sharing.md)** [2026-09-03]
+  Cosmetic and attachment models ship with a skin but zero animation channels
+  (clips live on the body), so a dressed character needs app code copying the
+  body's posed joints across every frame; give the library a
+  bindSkeleton/drives path built on the evaluator's target tables, where
+  retargeting a clip is handing it the piece's nodes.
 - **[Adaptive present-fence depth](backlog/adaptive-present-fence-depth.md)** [2026-07-27]
   Fallback design if unconditional two-deep present fencing ever shows up as
   desktop drag latency - allow the second in-flight frame only when observed
@@ -155,14 +167,6 @@ Shaped, not started.
   depth-capped present pacing degrades to check-and-proceed there; a
   GetSynciv-spin fallback would restore blocking pacing if Windows drag
   latency ever shows a real problem. macOS (ANGLE-Metal) unmeasured.
-- **[Animation core - clip sampling and blending as a producer into the spatial arena](backlog/animation-core.md)** [2026-08-24]
-  There is no animation system; per-frame clip sampling is O(animated nodes)
-  interpreted work and skinning is O(vertices), both below the interpreter
-  line, so character-driven apps are blocked. Build a core evaluator that
-  samples baked keyframe tracks and writes node TRS into the spatial arena
-  each frame, with JS keeping the O(changes) policy (play, stop, crossfade,
-  state machines); skinning follows as bone palettes through the planned
-  TextureSlot sink.
 - **[App icons](backlog/app-icons.md)** [2026-07-27]
   Stages 1+2 done (SVG icon from package.json/convention through the manifest
   to the launcher, monogram fallback; dev-client window icon via go-gated
@@ -848,6 +852,14 @@ Finished, kept for the reasoning.
   rig's EXT_multisampled_render_to_texture path, whose resolve-out must be a
   sampling draw, never a blit (Adreno). TV at 50 fps / 4x MSAA / 0.1 percent
   drops; full investigation record and measurement rules inside.
+- **[Animation core - clip sampling and blending as a producer into the spatial arena](done/animation-core.md)** [2026-09-03]
+  There is no animation system; per-frame clip sampling is O(animated nodes)
+  interpreted work and skinning is O(vertices), both below the interpreter
+  line, so character-driven apps are blocked. Build a core evaluator that
+  samples baked keyframe tracks and writes node TRS into the spatial arena
+  each frame, with JS keeping the O(changes) policy (play, stop, crossfade,
+  state machines); skinning follows as bone palettes through the planned
+  TextureSlot sink.
 - **[Application lifecycle events](done/app-lifecycle-events.md)** [2026-07-22]
   Fix the Android black screen on resume (EGL surface recreated, demand-driven
   gate never repaints) and let apps see background and foreground through a

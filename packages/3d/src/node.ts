@@ -389,6 +389,34 @@ export function getRotation(node: SceneNode, out: Vec3 = [0, 0, 0]): Vec3 {
   return eulerFromQuat(out, node.quaternion)
 }
 
+// readTransform's FFI carrier (position 3, quaternion 4, scale 3).
+let transformRead = new Float32Array(10)
+
+/**
+ * The node's CURRENT local transform as fresh arrays. In a scene this
+ * reads the core - which is the truth for a node a clip player animates:
+ * the players write core TRS directly, so the JS `position`/`quaternion`/
+ * `scale` fields of animated joints go stale (they hold the last JS
+ * write). Use this for pose reads on animated rigs (root-motion strips,
+ * copying a skeleton); out of a scene it copies the JS fields.
+ */
+export function getTransform(node: SceneNode): { position: Vec3; quaternion: Quat; scale: Vec3 } {
+  if (node._node !== null) {
+    spatial.readTransform(node._node, transformRead)
+    let t = transformRead
+    return {
+      position: [t[0]!, t[1]!, t[2]!],
+      quaternion: [t[3]!, t[4]!, t[5]!, t[6]!],
+      scale: [t[7]!, t[8]!, t[9]!],
+    }
+  }
+  return {
+    position: [node.position[0], node.position[1], node.position[2]],
+    quaternion: [node.quaternion[0], node.quaternion[1], node.quaternion[2], node.quaternion[3]],
+    scale: [node.scale[0], node.scale[1], node.scale[2]],
+  }
+}
+
 /**
  * A node's position in world space, copied into `out` (or a fresh Vec3) -
  * Three's `getWorldPosition`. Brings the ancestor chain up to date first,

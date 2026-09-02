@@ -325,7 +325,7 @@ fn quat_dot(a: [f32; 4], b: [f32; 4]) -> f32 {
   a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3]
 }
 
-fn quat_normalize(q: [f32; 4]) -> [f32; 4] {
+pub(super) fn quat_normalize(q: [f32; 4]) -> [f32; 4] {
   let l = quat_dot(q, q).sqrt();
   if l > 0.0 {
     [q[0] / l, q[1] / l, q[2] / l, q[3] / l]
@@ -380,7 +380,7 @@ fn angle_between(a: [f32; 4], b: [f32; 4]) -> f32 {
   2.0 * quat_dot(a, b).abs().clamp(0.0, 1.0).acos()
 }
 
-fn slerp(a: [f32; 4], b: [f32; 4], t: f32) -> [f32; 4] {
+pub(super) fn slerp(a: [f32; 4], b: [f32; 4], t: f32) -> [f32; 4] {
   let b = near_hemisphere(b, a);
   let dot = quat_dot(a, b).clamp(-1.0, 1.0);
   if dot > 0.9995 {

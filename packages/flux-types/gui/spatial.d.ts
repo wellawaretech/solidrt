@@ -217,4 +217,59 @@ declare module "flux:spatial" {
    * when `new` already carries record sinks.
    */
   export function retargetRecords(old: BufferId, next: BufferId): void
+
+  /** A registered clip's handle (createClip). */
+  export type ClipId = number
+  /** A playing clip instance's handle (createPlayer). */
+  export type PlayerId = number
+
+  /**
+   * Register a baked animation clip: `duration` in seconds, `meta` four
+   * words per channel - [targetSlot, path (0 position, 1 rotation,
+   * 2 scale), interpolation (0 step, 1 linear, 2 cubic), keyCount] - and
+   * `times`/`values` every channel's key arrays concatenated in meta
+   * order (3 floats per key, 4 for rotation; cubic stores three elements
+   * per key: in-tangent, value, out-tangent, tangents per second - the
+   * glTF CUBICSPLINE layout). A clip is shared data: `targetSlot`
+   * indexes the target table each PLAYER supplies, so one clip drives
+   * any number of instances, and retargeting is a different table.
+   */
+  export function createClip(duration: number, meta: Uint32Array, times: Float32Array, values: Float32Array): ClipId
+  /** Free a clip. Players still on it drop at their next advance (a
+   * "dropped" spatialClipEnd). */
+  export function destroyClip(clip: ClipId): void
+  /**
+   * Start playing `clip`: `targets[slot]` is the node each channel
+   * animates - every target must be a live scene node (throws
+   * otherwise). Players advance on the frame clock BEFORE each frame's
+   * JS, sample and weight-blend every active player per (node, path) -
+   * two players on one node crossfade - and write the blended TRS into
+   * the arena, so frame handlers read and may overwrite freshly posed
+   * nodes (last write wins) and the frame's flush publishes the result.
+   * `speed` scales clip time (1 = as authored); `loop` wraps, else the
+   * player holds its final pose and reports once; `weight`/`fade` start
+   * the crossfade state (weight 0..1, fade = weight change per second -
+   * positive fades in, negative out; past 0 the player is removed).
+   * When a player finishes or is removed without finishing (faded out,
+   * clip or target destroyed), the "spatialClipEnd" engine event
+   * (srt:events) fires with payload { player, reason: "finished" |
+   * "dropped" }, before the same frame's handlers.
+   */
+  export function createPlayer(clip: ClipId, targets: NodeId[], speed: number, loop: boolean, weight: number, fade: number): PlayerId
+  /** Write the given fields of a player - the O(changes) crossfade
+   * channel. Setting `time` (seconds) also re-arms a finished player's
+   * end report. Throws on an id that already dropped. */
+  export function setPlayer(player: PlayerId, update: { weight?: number; fade?: number; speed?: number; time?: number }): void
+  /** Remove a player at once, holding whatever pose it last wrote (no
+   * event; stop-with-fade is a setPlayer fade write instead). A dropped
+   * id is fine. */
+  export function destroyPlayer(player: PlayerId): void
+  /**
+   * Fill `out` (a Float32Array of 10) with the node's CURRENT local
+   * transform - position xyz, quaternion xyzw, scale xyz - as the arena
+   * holds it, players' writes included. The pose read for root-motion
+   * strips and skeleton copies: JS-side mirrors of a node animated by a
+   * player go stale, this does not.
+   */
+  export function readTransform(node: NodeId, out: Float32Array): void
 }

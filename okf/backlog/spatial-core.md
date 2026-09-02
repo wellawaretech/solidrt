@@ -32,6 +32,14 @@ shares:
 - a **transform hierarchy**: nodes with local position/quaternion/scale, a
   parent, visibility, a cached world matrix, and dirty propagation that
   recomputes only dirty subtrees;
+- **producers** that write node TRS on the frame clock, upstream of the
+  flush: declared node transitions (writes as targets, springs/curves)
+  and clip players ([animation-core](../done/animation-core.md) - baked
+  keyframe tracks, weighted blending). Deliberately two kinds, not one:
+  stateful convergence toward moving targets vs stateless sampling of
+  authored data (the CSS transitions/animations split); they share the
+  clock, the snap write path and the flush, and last-write-wins keeps
+  them composable;
 - a **flush** that recomputes what changed and hands the results to sinks;
 - a **spatial index** over node world bounds (the AABB tree `bvh.ts` is
   today), with queries;
@@ -74,9 +82,9 @@ reason the binding is a small enum and not a hardwired mesh field:
 
 Other consumers of the same index, none built here: overlap and sphere-cast
 queries for the lightweight collision tier games need without a physics
-engine; emitter world positions for spatial audio; native transitions on
-node transforms, the spatial analogue of the 2D tree's shipped native
-transitions.
+engine; emitter world positions for spatial audio. (Native transitions on
+node transforms, once this list's third entry, shipped - see the
+producers bullet above.)
 
 ## Placement and rules
 
@@ -93,7 +101,11 @@ arrays, no FFI on a read - and `setTransform` forwards the write to core.
 World state (world matrices, bounds, index) lives ONLY in core;
 `worldPosition`/`lookAt`/`project` read it back through one call. The
 alternative (core owns everything, JS reads through FFI) is cleaner but
-makes every read a crossing.
+makes every read a crossing. Amended 2026-09-03 by the clip players:
+nodes a PRODUCER animates are core-authoritative - their JS mirrors hold
+the last JS write, and pose reads go through `readTransform`
+(3d `getTransform`); the JS-mirror rule keeps holding for everything JS
+itself writes.
 
 ## Stage 1 - the walk
 

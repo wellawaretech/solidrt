@@ -29,10 +29,10 @@ shared layer, deliberately bone-free:
   inverse bind as a mat4, anchor = the skeleton root. Zero core changes;
   this item is the sink's anticipated second consumer (the admissibility
   test in [spatial-core](spatial-core.md)).
-- Clip playback: [animation-core](animation-core.md) stage 1 (the native
-  evaluator) targets spatial nodes generically, so baked 2d bone clips
-  ride it for free; until it lands, the 3d package's pure `sampleChannel`
-  tier is the JS fallback.
+- Clip playback: the [animation-core](../done/animation-core.md)
+  evaluator (DONE 2026-09-03) targets spatial nodes generically -
+  `flux:spatial` createClip/createPlayer drive baked 2d bone clips
+  exactly as 3d rigs, zero per-frame JS.
 
 What is genuinely 2d-package work: a skinned mesh primitive in the layer
 vocabulary (vertices with joints/weights against the sprite shaders - the

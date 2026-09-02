@@ -2,6 +2,7 @@
 title: Animation core - clip sampling and blending as a producer into the spatial arena
 description: There is no animation system; per-frame clip sampling is O(animated nodes) interpreted work and skinning is O(vertices), both below the interpreter line, so character-driven apps are blocked. Build a core evaluator that samples baked keyframe tracks and writes node TRS into the spatial arena each frame, with JS keeping the O(changes) policy (play, stop, crossfade, state machines); skinning follows as bone palettes through the planned TextureSlot sink.
 created: 2026-08-24
+completed: 2026-09-03
 ---
 
 # Animation core
@@ -58,21 +59,28 @@ with tracks instead of a single ease.
 
 ## Stages
 
-Stage 1 - node tracks. Clip registry (create/destroy from baked buffers),
-players targeting spatial nodes, sample + blend + write, dt from the frame
-clock, finished/looped events. Done looks like: a baked multi-channel clip
-drives a node hierarchy with zero per-frame JS, verified by the bench
-pattern spatial-core used (cost proportional to animated nodes, not scene).
+Stage 1 - node tracks: DONE 2026-09-03. `alloy/src/spatial/players.rs`:
+a clip registry (packed channels cross FFI once per clip) and players
+(clip, target NodeId table, time, speed, weight, fade, loop) that sample
+the glTF triple (step/linear/cubic, slerp short-arc, cursor-cached key
+lookup), blend per (node, path) with the mixer's incremental weighted
+average, and write TRS through the snap path. Players advance on the
+stamped frame clock BEFORE the frame's JS (lattice runtime.rs, beside
+stamp_clock) - deliberately opposite the node transitions' post-JS slot -
+so onFrame is the post-animation hook (Unity's LateUpdate lesson);
+`flux:spatial` grew createClip/createPlayer/setPlayer/readTransform and
+the "spatialClipEnd" event; the draw path's spatial flush went
+unconditional so player poses always publish. `createMixer` kept its
+surface minus update() (playback self-advances; core-authoritative pose,
+the Unity/Godot model - JS mirrors of animated joints go stale, 3d
+`getTransform` reads back). Measured on the clip-player probe (48-joint
+rig, baked crossfading clips, release client): jsMs 0.04 at 60 fps with
+ZERO frame subscriptions, against ~3.7 ms/frame the JS tier cost one
+59-joint character. Usage and traps: `packages/3d/AGENTS.md`.
 
-Rung-1 tier exists (2026-08-31): `@solidrt/3d`'s `createMixer` plays the
-model loader's baked clips in JS (sample + crossfade + setTransform per
-animated node per frame; palette composition moved to the core flush
-2026-09-02, see stage 2 below) - the loader half this item assumed now
-exists, and the mixer's surface (play/stop/update/onFinish, weighted
-crossfade blending) is the drafted contract stage 1 replaces the
-internals of. Measured (heroes-v2, 2026-09-01): ~3.7 ms/frame to sample
-177 channels for ONE 59-joint character - the comfort zone is a couple
-of characters, and this sampling cost is what stage 1 exists to remove.
+The 2026-08-31 rung-1 measurement that argued the priority (heroes-v2:
+~3.7 ms/frame to sample 177 channels for ONE character) is recorded in
+the heroes-v2 feedback file, item 12.
 
 Stage 2 - skinning: DONE 2026-09-02, built FIRST (the heroes-v2
 measurement showed the palette walk plus its ordering workarounds
@@ -104,6 +112,9 @@ module). `flux-types` parity as always.
 ## Not in this item
 
 A state-machine or blend-tree DSL (app JS, by design), IK, procedural or
-physics-driven animation, cloth, root motion, animation of non-spatial
-properties (that is the native-transitions lane). Each returns as its own
-item when a consumer exists.
+physics-driven animation, cloth, animation of non-spatial properties
+(that is the native-transitions lane). Root motion and shared skeletons
+found their consumer at closing time and are filed:
+[3d-root-motion](../backlog/3d-root-motion.md),
+[3d-skeleton-sharing](../backlog/3d-skeleton-sharing.md). The rest
+returns as its own item when a consumer exists.

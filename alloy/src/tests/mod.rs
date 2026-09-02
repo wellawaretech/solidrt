@@ -24,6 +24,7 @@ mod release;
 mod resample;
 mod router;
 mod spatial;
+mod spatial_players;
 mod spatial_transitions;
 mod text_layout;
 mod texture;

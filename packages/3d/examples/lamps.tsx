@@ -8,9 +8,13 @@
 //     its `direction` prop at the knot on the pedestal: a crisp disc of
 //     light with a sharp rim, for contrast with the soft one.
 //   - A blue point bulb orbits between the crates on its own rig: light
-//     in every direction, no cone, falling off on the floor around it.
-// Both spots `castShadow` (a perspective map of the cone, one shadow
-// slot each; the point light cannot cast). Faces outside every cone and
+//     in every direction, no cone, falling off on the floor around it -
+//     and casting: the crates throw blue-edged shadows that wheel
+//     around the courtyard as the bulb passes.
+// Everything casts: a perspective map of each spot's cone (one shadow
+// slot each) and the bulb's six face maps (six slots) - together
+// exactly the MAX_SHADOW_MAPS budget of 8, all tiles of the scene's
+// one atlas. Faces outside every cone and
 // range stay near-black - the hemisphere idles at 0.05.
 //
 // Intensity under the default decay 2 behaves like candela: the light
@@ -64,7 +68,14 @@ function App() {
             shadow={{ mapSize: 512, normalBias: 0.03 }}
           />
           <Group ref={g => (orbit = g)}>
-            <PointLight position={[2.6, 1, 0]} color={[0.4, 0.6, 1]} intensity={3} distance={8} />
+            <PointLight
+              position={[2.6, 1, 0]}
+              color={[0.4, 0.6, 1]}
+              intensity={3}
+              distance={8}
+              castShadow
+              shadow={{ mapSize: 512, normalBias: 0.03 }}
+            />
           </Group>
           <Mesh geometry={plane({ width: 20, height: 20 })} material={ground} rotation={[-Math.PI / 2, 0, 0]} />
           <Mesh geometry={box()} material={crate} position={[-1.2, 0.5, 0]} castShadow />

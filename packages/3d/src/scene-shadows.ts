@@ -27,9 +27,9 @@ const CASCADE_SPLIT_LAMBDA = 0.5
 // |y| of a light direction above this is straight up or down, where
 // world up cannot serve as the shadow map's roll reference.
 const VERTICAL_LIGHT = 0.99
-// The spot shadow camera's far plane when the light has no `distance`
-// cutoff - the directional box default.
-const SPOT_SHADOW_FAR = 500
+// A perspective shadow camera's far plane (spot cone, point face) when
+// the light has no `distance` cutoff - the directional box default.
+const PERSPECTIVE_SHADOW_FAR = 500
 
 // Degrees added to a point-light face map's 90-degree fov: the guard
 // band that keeps a face-seam fragment's occluder inside the map it
@@ -318,7 +318,7 @@ export function makeShadowSystem<V extends ShadowView>(deps: ShadowSystemDeps<V>
     shadow.dirty = false
     copy(shadow.lastWorld, m)
     if (light.type === "point") {
-      let far = light.distance > 0 ? light.distance : SPOT_SHADOW_FAR
+      let far = light.distance > 0 ? light.distance : PERSPECTIVE_SHADOW_FAR
       for (let f = 0; f < POINT_FACES.length; f++) {
         let face = POINT_FACES[f]!
         updateCamera(shadow.views[f]!.camera, {
@@ -354,7 +354,7 @@ export function makeShadowSystem<V extends ShadowView>(deps: ShadowSystemDeps<V>
         up,
         fov: light.angle * 2,
         near: light.shadow.near,
-        far: light.distance > 0 ? light.distance : SPOT_SHADOW_FAR,
+        far: light.distance > 0 ? light.distance : PERSPECTIVE_SHADOW_FAR,
       })
       return
     }

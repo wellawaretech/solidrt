@@ -126,6 +126,9 @@ export type ModelClip = {
   /** Seconds: the largest key time over the channels. */
   duration: number
   channels: ModelChannel[]
+  /** @internal The core clip id once a mixer registered it; freed by
+   * model.dispose. */
+  _core?: number
 }
 
 /** A parsed model: plain data, no GPU resources. What parseGltf and

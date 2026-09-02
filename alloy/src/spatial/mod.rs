@@ -15,6 +15,7 @@
 mod bvh;
 mod math;
 mod pick;
+mod players;
 mod transitions;
 
 use std::collections::HashMap;
@@ -27,6 +28,12 @@ pub use pick::{Hit, Shape, ShapeId};
 #[cfg(test)]
 #[cfg(test)]
 pub(crate) use pick::{ray_shape, BVH_MIN_TRIANGLES};
+pub use players::{
+  ChannelInterpolation, ChannelPath, ClipChannel, ClipEvent, ClipId, PlayerId, PlayerUpdate, PlayersTick,
+};
+// The pure sampler, for the differential tests.
+#[cfg(test)]
+pub(crate) use players::sample as sample_channel;
 pub use transitions::{Component, NodeTransitionConfig};
 
 use bvh::Bvh;
@@ -275,6 +282,7 @@ pub struct Spatial {
   instances: HashMap<u64, InstanceGroup>,
   palettes: HashMap<u64, PaletteGroup>,
   transitions: NodeTransitions,
+  players: players::PlayerSet,
 }
 
 fn index(id: NodeId) -> usize {

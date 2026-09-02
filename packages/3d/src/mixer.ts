@@ -1,30 +1,26 @@
 // Clip playback for models: `createMixer(model)` plays the model's baked
-// animation clips (`model.clips`) by writing node TRS through
-// setTransform. The orbit-camera pattern: the mixer registers no frame
-// loop - the app calls `mixer.update(dt)` from its own onFrame and uses
-// the boolean return to gate dependents. `play(name, { fadeMs })`
-// crossfades: the named clip fades in while every other active clip fades
-// out over the same window, which is the idle/walk/run/attack shape.
+// animation clips (`model.clips`) through the spatial core's clip
+// players. Policy lives here at O(changes) - `play(name, { fadeMs })`
+// crossfades by creating one player and writing fades on the others (the
+// idle/walk/run/attack shape) - while sampling, blending and the TRS
+// writes are native, once per frame, BEFORE the frame's JS. So playback
+// needs no frame loop at all (there is no update() to call), and your
+// onFrame is the post-animation hook: it reads freshly posed joints
+// (getTransform) and may overwrite them (root-motion strips, skeleton
+// copies), last write wins, palettes and uModel following at the frame's
+// flush. A channel the active clips do not animate keeps the node's
+// current pose. Playing requires the model to be IN A SCENE (players
+// bind live arena nodes); removing it drops the players, and a re-added
+// model plays again from play().
 //
-// This is the JS tier of animation (okf/backlog/animation-core.md is the
-// native evaluator that replaces these internals, not this API): sampling
-// is O(animated channels) interpreted work per update - fine for a couple
-// of characters, not for a crowd. A channel the active clips do not
-// animate keeps the node's current pose (the file's rest pose, or
-// whatever the app wrote); the mixer's writes and the app's setTransform
-// go through the same path, last write wins, and the skin palettes follow
-// at the frame's flush - so posing joints before OR after update() is
-// equally fine (root-motion strips, attachment tweaks).
-//
-// `sampleChannel` (./clip.ts) is the pure core (no scene, runs under
-// bun), exported from the package root for checks and custom drivers.
+// `sampleChannel` (./clip.ts) stays the pure JS sampling core (checks,
+// custom drivers, bake-side resampling) - the native evaluator implements
+// the same glTF contract.
 
-import { quatSlerp } from "./math.ts"
-import type { Quat, Vec3 } from "./math.ts"
+import * as spatial from "flux:spatial"
+import type { NodeId } from "flux:spatial"
+import { on } from "srt:events"
 import type { ModelClip } from "./gltf.ts"
-import { sampleChannel } from "./clip.ts"
-import { setTransform } from "./node.ts"
-import type { SceneNode } from "./node.ts"
 import type { Model } from "./model.ts"
 
 export type MixerPlayOptions = {
@@ -40,14 +36,11 @@ export type MixerPlayOptions = {
 
 export type Mixer = {
   /** (Re)start a clip by name from its beginning; an unknown name throws
-   * listing what the model has. */
+   * listing what the model has. The model must be in a scene. */
   play(name: string, opts?: MixerPlayOptions): void
   /** Fade every active clip out (instantly with no fadeMs); the nodes
    * keep the last written pose. */
   stop(opts?: { fadeMs?: number }): void
-  /** Advance by `dt` seconds and write the blended pose. Call from your
-   * onFrame; returns true while clips are active (poses were written). */
-  update(dt: number): boolean
   /** Names of the clips currently playing or fading in. */
   playing(): string[]
   /** Fired once when a `loop: false` clip reaches its end; the pose
@@ -58,51 +51,89 @@ export type Mixer = {
   clips: string[]
 }
 
-// One playing clip. `fade` is the weight change per second: positive
-// fading in, negative fading out, 0 steady.
-type Action = {
-  clip: ModelClip
-  targets: SceneNode[]
-  time: number
-  speed: number
-  loop: boolean
-  weight: number
-  fade: number
-  finished: boolean
+// The packed-clip codes of flux:spatial's createClip layout.
+const PATH_CODE = { position: 0, rotation: 1, scale: 2 } as const
+const INTERP_CODE = { step: 0, linear: 1, cubic: 2 } as const
+
+// Player end reports ("spatialClipEnd", emitted before each frame's JS)
+// routed back to the owning mixer's action.
+const PLAYER_ENDS = new Map<number, (reason: string) => void>()
+on("spatialClipEnd", (event: { player: number; reason: string }) => {
+  PLAYER_ENDS.get(event.player)?.(event.reason)
+})
+
+/** Register the clip's baked channels with the core once; the id is
+ * cached on the clip (shared by every mixer) and freed by model.dispose. */
+function coreClip(clip: ModelClip): number {
+  if (clip._core !== undefined) return clip._core
+  let channels = clip.channels
+  let meta = new Uint32Array(channels.length * 4)
+  let timeCount = 0
+  let valueCount = 0
+  channels.forEach((c, i) => {
+    // Target slot = channel index: the player's target table below is
+    // built in the same order.
+    meta[i * 4] = i
+    meta[i * 4 + 1] = PATH_CODE[c.path]
+    meta[i * 4 + 2] = INTERP_CODE[c.interpolation]
+    meta[i * 4 + 3] = c.times.length
+    timeCount += c.times.length
+    valueCount += c.values.length
+  })
+  let times = new Float32Array(timeCount)
+  let values = new Float32Array(valueCount)
+  let t = 0
+  let v = 0
+  for (let c of channels) {
+    times.set(c.times, t)
+    t += c.times.length
+    values.set(c.values, v)
+    v += c.values.length
+  }
+  clip._core = spatial.createClip(clip.duration, meta, times, values)
+  return clip._core
 }
 
-// A node's blended pose this update; `has` bits say which paths any
-// active channel wrote (1 position, 2 rotation, 4 scale) and `sum` the
-// per-path accumulated weight for the running weighted average.
-type Slot = {
-  node: SceneNode
-  has: number
-  sum: [number, number, number]
-  position: Vec3
-  rotation: Quat
-  scale: Vec3
-}
-
-const PATH_INDEX = { position: 0, rotation: 1, scale: 2 } as const
-const PATH_BIT = [1, 2, 4]
+// One playing clip: the JS bookkeeping over a core player.
+type Action = { name: string; player: number; fadingOut: boolean; finished: boolean }
 
 /**
  * A mixer over a model's clips. One mixer per model; make it where you
- * made the model and drive it from the same onFrame that steps your
- * scene.
+ * made the model. Playback is core-driven - nothing to call per frame.
  */
 export function createMixer(model: Model): Mixer {
-  // Channel targets resolve once: clips index the model's node table.
-  let targetsFor = (clip: ModelClip): SceneNode[] =>
+  // Channel targets resolve at play: clips index the model's node table,
+  // and the arena ids are per scene-entry, so a re-added model binds
+  // fresh ones.
+  let targetsFor = (clip: ModelClip): NodeId[] =>
     clip.channels.map((c) => {
       let entry = model.nodes[c.node]
       if (entry === undefined) throw new Error("createMixer: clip '" + clip.name + "' targets a missing node " + c.node)
-      return entry.node
+      let id = entry.node._node
+      if (id === null) throw new Error("play: the model must be in a scene (add() it first) before clips can play")
+      return id
     })
 
   let actions: Action[] = []
-  let slots = new Map<number, Slot>()
-  let sample: number[] = [0, 0, 0, 0]
+  let dropAction = (action: Action) => {
+    PLAYER_ENDS.delete(action.player)
+    let i = actions.indexOf(action)
+    if (i >= 0) actions.splice(i, 1)
+  }
+  let start = (clip: ModelClip, opts: MixerPlayOptions, weight: number, fade: number): void => {
+    let player = spatial.createPlayer(coreClip(clip), targetsFor(clip), opts.speed ?? 1, opts.loop ?? true, weight, fade)
+    let action: Action = { name: clip.name, player, fadingOut: false, finished: false }
+    PLAYER_ENDS.set(player, (reason) => {
+      if (reason === "finished") {
+        action.finished = true
+        mixer.onFinish?.(action.name)
+      } else {
+        // Faded out, or the model left the scene / was disposed.
+        dropAction(action)
+      }
+    })
+    actions.push(action)
+  }
 
   let mixer: Mixer = {
     clips: model.clips.map((c) => c.name),
@@ -113,106 +144,36 @@ export function createMixer(model: Model): Mixer {
       }
       let fadeMs = opts.fadeMs ?? 0
       if (fadeMs > 0) {
-        for (let action of actions) action.fade = -1000 / fadeMs
-        actions.push({ clip, targets: targetsFor(clip), time: 0, speed: opts.speed ?? 1, loop: opts.loop ?? true, weight: 0, fade: 1000 / fadeMs, finished: false })
+        for (let action of actions) {
+          action.fadingOut = true
+          spatial.setPlayer(action.player, { fade: -1000 / fadeMs })
+        }
+        start(clip, opts, 0, 1000 / fadeMs)
       } else {
-        actions.length = 0
-        actions.push({ clip, targets: targetsFor(clip), time: 0, speed: opts.speed ?? 1, loop: opts.loop ?? true, weight: 1, fade: 0, finished: false })
+        for (let action of [...actions]) {
+          spatial.destroyPlayer(action.player)
+          dropAction(action)
+        }
+        start(clip, opts, 1, 0)
       }
     },
     stop(opts = {}) {
       let fadeMs = opts.fadeMs ?? 0
-      if (fadeMs > 0) for (let action of actions) action.fade = -1000 / fadeMs
-      else actions.length = 0
-    },
-    update(dt) {
-      if (actions.length === 0) return false
-      // Advance clocks and fades; drop actions that faded out.
-      for (let i = actions.length - 1; i >= 0; i--) {
-        let action = actions[i]!
-        if (action.fade !== 0) {
-          action.weight += action.fade * dt
-          if (action.weight >= 1) {
-            action.weight = 1
-            action.fade = 0
-          } else if (action.weight <= 0) {
-            actions.splice(i, 1)
-            continue
-          }
+      if (fadeMs > 0) {
+        for (let action of actions) {
+          action.fadingOut = true
+          spatial.setPlayer(action.player, { fade: -1000 / fadeMs })
         }
-        let duration = action.clip.duration
-        action.time += dt * action.speed
-        if (duration <= 0) action.time = 0
-        else if (action.loop) action.time = ((action.time % duration) + duration) % duration
-        else if (action.time >= duration) {
-          action.time = duration
-          if (!action.finished) {
-            action.finished = true
-            mixer.onFinish?.(action.clip.name)
-          }
-        } else if (action.time < 0) action.time = 0
-      }
-      if (actions.length === 0) return false
-
-      // Blend: per (node, path), the weighted average over the actions
-      // that animate it (incremental - each contributor slerps/lerps in
-      // by its share of the accumulated weight).
-      for (let slot of slots.values()) slot.has = 0
-      for (let action of actions) {
-        let channels = action.clip.channels
-        for (let i = 0; i < channels.length; i++) {
-          let channel = channels[i]!
-          sampleChannel(channel, action.time, sample)
-          let slot = slots.get(channel.node)
-          if (slot === undefined) {
-            slot = {
-              node: action.targets[i]!,
-              has: 0,
-              sum: [0, 0, 0],
-              position: [0, 0, 0],
-              rotation: [0, 0, 0, 1],
-              scale: [1, 1, 1],
-            }
-            slots.set(channel.node, slot)
-          }
-          let path = PATH_INDEX[channel.path]
-          let value = path === 0 ? slot.position : path === 1 ? slot.rotation : slot.scale
-          if ((slot.has & PATH_BIT[path]!) === 0) {
-            slot.has |= PATH_BIT[path]!
-            slot.sum[path] = action.weight
-            for (let e = 0; e < value.length; e++) value[e] = sample[e]!
-          } else {
-            let total = slot.sum[path] + action.weight
-            let share = total > 0 ? action.weight / total : 0
-            slot.sum[path] = total
-            if (path === 1) quatSlerp(value as Quat, value as Quat, readQuatSample(sample), share)
-            else for (let e = 0; e < 3; e++) value[e] = value[e]! + (sample[e]! - value[e]!) * share
-          }
+      } else {
+        for (let action of [...actions]) {
+          spatial.destroyPlayer(action.player)
+          dropAction(action)
         }
       }
-      for (let slot of slots.values()) {
-        if (slot.has === 0) continue
-        setTransform(slot.node, {
-          position: slot.has & 1 ? slot.position : undefined,
-          quaternion: slot.has & 2 ? slot.rotation : undefined,
-          scale: slot.has & 4 ? slot.scale : undefined,
-        })
-      }
-      return true
     },
     playing() {
-      return actions.filter((a) => a.fade >= 0).map((a) => a.clip.name)
+      return actions.filter((a) => !a.fadingOut).map((a) => a.name)
     },
   }
   return mixer
-}
-
-const SAMPLE_Q: Quat = [0, 0, 0, 1]
-
-function readQuatSample(sample: number[]): Quat {
-  SAMPLE_Q[0] = sample[0]!
-  SAMPLE_Q[1] = sample[1]!
-  SAMPLE_Q[2] = sample[2]!
-  SAMPLE_Q[3] = sample[3]!
-  return SAMPLE_Q
 }

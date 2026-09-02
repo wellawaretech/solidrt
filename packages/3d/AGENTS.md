@@ -843,23 +843,33 @@ Animation: `createMixer(model)` plays `model.clips` by name -
 named clip fades in, everything else fades out - Unity's CrossFade,
 Godot's play-with-blend), `mixer.stop({ fadeMs? })`, `mixer.playing()`,
 `mixer.onFinish` for `loop: false` clips (the pose holds at the end).
-The orbit-camera pattern: no frame loop of its own - call
-`mixer.update(dt)` from your onFrame and gate dependents on its boolean
-return. Channels write node TRS through setTransform (a channel nothing
-plays leaves the node's pose alone; your setTransform and the mixer's
-share the path, last write wins). Skins need nothing further: each
-skin's uBones palette (model-local jointWorld x inverseBind, sized to
-the RIG - an rgba32f float texture, 4 texels wide, one row per joint,
-sampled in the vertex stage via texelFetch, so there is no joint cap) is
-composed by the spatial core at the frame's flush from the joint nodes
-themselves, so ANY setTransform on a joint - mixer channel, root-motion
-strip after update(), hand-posed socket, no mixer at all - lands in the
-palette the same frame, in any order, and identical skins (a body/legs
-split, LODs) share one computed-once texture. `sampleChannel` (pure,
-from the root) is the sampling core for custom drivers. The sampling is
-the JS animation tier - fine for a couple of characters, not a crowd;
-okf/backlog/animation-core.md is the native evaluator that replaces the
-internals, not the API.
+Playback is CORE-DRIVEN: there is no update() and no frame loop to
+register - clips are registered with the spatial core once and players
+sample, weight-blend and write joint TRS natively each frame, so a
+playing character costs zero JS per frame (gate other work on
+`mixer.playing()`). play() requires the model to be IN a scene (players
+bind live arena nodes; removing the model drops them - a re-added model
+plays again from play()). Three traps that follow from core ownership:
+(1) players advance BEFORE your onFrame, which is therefore the
+post-animation hook - read a freshly posed joint and overwrite it
+(root-motion strips, skeleton copies) in plain setTransform, last write
+wins, all published by the same flush; (2) the JS
+`position`/`quaternion` fields of player-animated joints go STALE (they
+hold the last JS write) - read poses with `getTransform(node)`, which
+reads the core; (3) a channel nothing plays leaves the node's pose
+alone; (4) known gap: native pose writes bypass the scene's moved list,
+so a TRANSPARENT mesh parented under a player-animated joint does not
+re-trigger the back-to-front re-sort while it animates (opaque meshes,
+palettes and picking are unaffected) - nudge the scene with any
+setTransform if it shows, until the core-side transparent sort lands. Skins need nothing further: each skin's uBones palette
+(model-local jointWorld x inverseBind, sized to the RIG - an rgba32f
+float texture, 4 texels wide, one row per joint, sampled in the vertex
+stage via texelFetch, so there is no joint cap) is composed by the
+spatial core at the frame's flush from the joint nodes themselves, in
+any write order, and identical skins (a body/legs split, LODs) share one
+computed-once texture. `sampleChannel` (pure, from the root) stays the
+JS sampling core for checks and custom drivers;
+okf/done/animation-core.md records the design.
 
 Not in the subset, dropped: vertex colors, tangents and further UV sets;
 morph targets (the "weights" channel path); samplers are ignored (every

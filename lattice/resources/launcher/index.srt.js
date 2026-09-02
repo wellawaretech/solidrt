@@ -7060,7 +7060,7 @@ function travelMotion(bounce = TRAVEL_BOUNCE) {
 }
 function colorFade() {
   let fade = fadeMotion();
-  return fade && {
+  return fade === undefined ? undefined : {
     color: fade
   };
 }
@@ -7092,7 +7092,7 @@ function PressFeedback(props) {
   let tint = () => props.pressed ? theme.color.overlayPressed : theme.color.overlayHover;
   let fade = () => {
     let f = feedbackFade();
-    return f && {
+    return f === undefined ? undefined : {
       color: f
     };
   };
@@ -7254,12 +7254,15 @@ function partTransition(t, part, coreProp, fallback) {
     [coreProp]: spec
   };
 }
-function partTransitionEnd(part, handler) {
+function partTransitionEnd(part, coreProp, handler) {
   if (!handler)
     return;
-  return () => handler({
-    property: part
-  });
+  return (e) => {
+    if (e.property === coreProp)
+      handler({
+        property: part
+      });
+  };
 }
 function transitionEndFor(node, handler) {
   if (!handler)
@@ -8605,11 +8608,11 @@ function EditorField(props) {
     })() : null)];
   })());
   effect3(() => ({
-    e: split().background,
+    e: withTransitionDefaults(split().background, colorFade()),
     t: transitionEndFor("background", props.onTransitionEnd),
     a: surfaceColor(),
     o: borderRadius(),
-    i: split().border,
+    i: withTransitionDefaults(split().border, colorFade()),
     n: transitionEndFor("border", props.onTransitionEnd),
     s: borderColor(),
     h: borderWidth(),
@@ -9843,6 +9846,7 @@ function SegmentedControl(props) {
         segs[i()] = n;
         press.ref(n);
       }, _el$4);
+      setProp(_el$4, "repaintBoundary", true);
       setProp(_el$4, "flexGrow", 1);
       setProp(_el$4, "flexBasis", 0);
       setProp(_el$4, "alignItems", "center");
@@ -9920,7 +9924,7 @@ function SegmentedControl(props) {
     a: idleFill(),
     o: radius(),
     i: indicatorTransition(),
-    n: partTransitionEnd("indicator", props.onTransitionEnd),
+    n: partTransitionEnd("indicator", "x", props.onTransitionEnd),
     s: indicator() ? activeFill() : withAlpha(activeFill(), 0),
     h: indicator()?.x ?? 0,
     r: indicator()?.w ?? 0,

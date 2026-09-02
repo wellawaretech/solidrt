@@ -214,3 +214,15 @@ into `notes/` when this closes.
   number is what any budget for this class of hardware has to start from:
   a 33 ms frame with a 19.6 ms floor leaves room for roughly 0.5 Mpx of
   shaded 3D, against the 2.40 Mpx the demo currently asks for.
+- Point shadows (six face tiles, landed 2026-09-02) measured on the same
+  tablet with probes/point-shadow-probe.tsx (fullscreen room, 4 casters,
+  4x MSAA, one casting point light at mapSize 512): 58.6 ms with the six
+  face passes, 46.1 ms without - **~12.5 ms for a casting point light**,
+  consistent with six passes at the ~2 ms flat per-pass cost above (the
+  512-tile depth draws and the receiver's one extra tap are the small
+  rest). The per-pass overhead dominates, so a future single-pass atlas
+  render (all tiles of one target drawn in one pass with viewport
+  switches, no per-tile FBO cycle) would cut most of it; a casting point
+  light on this class of hardware is otherwise a ~budget-quarter item.
+  GPU timer attribution stays unusable on this device (exec micros read
+  0), so the number is an A/B of castShadow, not a timer read.

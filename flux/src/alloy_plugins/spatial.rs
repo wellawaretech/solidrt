@@ -16,8 +16,8 @@ use crate::alloy_plugins::value::PropValue;
 use crate::plugins::marshal::OptArg;
 use alloy::rendertree::PlatformContext;
 use alloy::spatial::{
-  Component, DrawSink, InstanceProjection, InstanceRecordSink, NodeTransitionConfig, Projection, Shape,
-  SharedSlotSink, TextureSlotSink,
+  ChannelInterpolation, ChannelPath, ClipChannel, ClipEvent, Component, DrawSink, InstanceProjection,
+  InstanceRecordSink, NodeTransitionConfig, PlayerUpdate, Projection, Shape, SharedSlotSink, TextureSlotSink,
 };
 
 fn throw_str(ctx: &Ctx<'_>, msg: &str) -> rquickjs::Error {
@@ -81,6 +81,12 @@ impl ModuleDef for SpatialModule {
     decl.declare("unbindSlot")?;
     decl.declare("bindTextureSlot")?;
     decl.declare("unbindTextureSlot")?;
+    decl.declare("createClip")?;
+    decl.declare("destroyClip")?;
+    decl.declare("createPlayer")?;
+    decl.declare("setPlayer")?;
+    decl.declare("destroyPlayer")?;
+    decl.declare("readTransform")?;
     decl.declare("bindPoseRecord")?;
     decl.declare("unbindRecord")?;
     decl.declare("retargetRecords")?;
@@ -112,6 +118,12 @@ impl ModuleDef for SpatialModule {
     exports.export("unbindSlot", Function::new(ctx.clone(), unbind_slot)?)?;
     exports.export("bindTextureSlot", Function::new(ctx.clone(), bind_texture_slot)?)?;
     exports.export("unbindTextureSlot", Function::new(ctx.clone(), unbind_texture_slot)?)?;
+    exports.export("createClip", Function::new(ctx.clone(), create_clip)?)?;
+    exports.export("destroyClip", Function::new(ctx.clone(), destroy_clip)?)?;
+    exports.export("createPlayer", Function::new(ctx.clone(), create_player)?)?;
+    exports.export("setPlayer", Function::new(ctx.clone(), set_player)?)?;
+    exports.export("destroyPlayer", Function::new(ctx.clone(), destroy_player)?)?;
+    exports.export("readTransform", Function::new(ctx.clone(), read_transform)?)?;
     exports.export("bindPoseRecord", Function::new(ctx.clone(), bind_pose_record)?)?;
     exports.export("unbindRecord", Function::new(ctx.clone(), unbind_record)?)?;
     exports.export("retargetRecords", Function::new(ctx.clone(), retarget_records)?)?;
@@ -434,6 +446,125 @@ fn unbind_texture_slot(ctx: Ctx<'_>, id: u64, texture: OptArg<u64>) -> rquickjs:
     .map_err(|e| throw_str(&ctx, &format!("unbindTextureSlot: {e}")))
 }
 
+// Meta words per channel in createClip's packed layout.
+const CLIP_META_WORDS: usize = 4;
+
+/// Register a baked clip: `meta` is [targetSlot, path (0 position,
+/// 1 rotation, 2 scale), interpolation (0 step, 1 linear, 2 cubic),
+/// keyCount] per channel; `times` and `values` are every channel's key
+/// arrays concatenated in meta order. One crossing per clip.
+fn create_clip<'js>(
+  ctx: Ctx<'js>,
+  duration: f64,
+  meta: TypedArray<'js, u32>,
+  times: TypedArray<'js, f32>,
+  values: TypedArray<'js, f32>,
+) -> rquickjs::Result<u64> {
+  let meta_raw = meta.as_raw().ok_or_else(|| throw_str(&ctx, "createClip: detached buffer"))?;
+  let meta: &[u32] = unsafe { std::slice::from_raw_parts(meta_raw.ptr.as_ptr() as *const u32, meta_raw.len / 4) };
+  let times = floats(&ctx, &times, "createClip")?;
+  let values = floats(&ctx, &values, "createClip")?;
+  if meta.len() % CLIP_META_WORDS != 0 {
+    return Err(throw_str(&ctx, "createClip: meta must be 4 words per channel"));
+  }
+  let mut channels = Vec::with_capacity(meta.len() / CLIP_META_WORDS);
+  let mut t_at = 0usize;
+  let mut v_at = 0usize;
+  for (i, entry) in meta.chunks(CLIP_META_WORDS).enumerate() {
+    let path = match entry[1] {
+      0 => ChannelPath::Position,
+      1 => ChannelPath::Rotation,
+      2 => ChannelPath::Scale,
+      other => return Err(throw_str(&ctx, &format!("createClip: channel {i} path {other} is not 0, 1 or 2"))),
+    };
+    let interpolation = match entry[2] {
+      0 => ChannelInterpolation::Step,
+      1 => ChannelInterpolation::Linear,
+      2 => ChannelInterpolation::Cubic,
+      other => {
+        return Err(throw_str(&ctx, &format!("createClip: channel {i} interpolation {other} is not 0, 1 or 2")))
+      }
+    };
+    let keys = entry[3] as usize;
+    let elements = if path == ChannelPath::Rotation { 4 } else { 3 };
+    let stride = if interpolation == ChannelInterpolation::Cubic { elements * 3 } else { elements };
+    let t_end = t_at + keys;
+    let v_end = v_at + keys * stride;
+    if t_end > times.len() || v_end > values.len() {
+      return Err(throw_str(&ctx, &format!("createClip: channel {i} runs past the times/values arrays")));
+    }
+    channels.push(ClipChannel {
+      target_slot: entry[0],
+      path,
+      interpolation,
+      times: times[t_at..t_end].to_vec(),
+      values: values[v_at..v_end].to_vec(),
+    });
+    t_at = t_end;
+    v_at = v_end;
+  }
+  if t_at != times.len() || v_at != values.len() {
+    return Err(throw_str(&ctx, "createClip: times/values are longer than meta describes"));
+  }
+  state(&ctx).atx.spatial().create_clip(duration, channels).map_err(|e| throw_str(&ctx, &format!("createClip: {e}")))
+}
+
+fn destroy_clip(ctx: Ctx<'_>, id: u64) -> rquickjs::Result<()> {
+  state(&ctx).atx.spatial().destroy_clip(id).map_err(|e| throw_str(&ctx, &format!("destroyClip: {e}")))
+}
+
+/// Start a player: `targets[slot]` is the node each clip channel's target
+/// slot animates. Every target must be a live scene node.
+fn create_player(
+  ctx: Ctx<'_>,
+  clip: u64,
+  targets: Vec<u64>,
+  speed: f64,
+  looped: bool,
+  weight: f64,
+  fade: f64,
+) -> rquickjs::Result<u64> {
+  state(&ctx)
+    .atx
+    .spatial()
+    .create_player(clip, targets, speed as f32, looped, weight as f32, fade as f32)
+    .map_err(|e| throw_str(&ctx, &format!("createPlayer: {e}")))
+}
+
+/// Write the given fields of a player: { weight?, fade?, speed?, time? }.
+/// Setting time re-arms a finished player's end report.
+fn set_player<'js>(ctx: Ctx<'js>, id: u64, value: Object<'js>) -> rquickjs::Result<()> {
+  let update = PlayerUpdate {
+    weight: value.get::<_, Option<f64>>("weight")?.map(|v| v as f32),
+    fade: value.get::<_, Option<f64>>("fade")?.map(|v| v as f32),
+    speed: value.get::<_, Option<f64>>("speed")?.map(|v| v as f32),
+    time: value.get::<_, Option<f64>>("time")?,
+  };
+  state(&ctx).atx.spatial().set_player(id, update).map_err(|e| throw_str(&ctx, &format!("setPlayer: {e}")))
+}
+
+fn destroy_player(ctx: Ctx<'_>, id: u64) -> rquickjs::Result<()> {
+  state(&ctx).atx.spatial().destroy_player(id);
+  Ok(())
+}
+
+/// Fill `out` (a Float32Array of 10) with the node's current local TRS
+/// (position, quaternion, scale) - what the players last wrote, or any
+/// later snap. The pose read for root-motion strips and skeleton copies.
+fn read_transform(ctx: Ctx<'_>, id: u64, out: TypedArray<'_, f32>) -> rquickjs::Result<()> {
+  let (p, q, s) =
+    state(&ctx).atx.spatial().transform_of(id).map_err(|e| throw_str(&ctx, &format!("readTransform: {e}")))?;
+  let raw = out.as_raw().ok_or_else(|| throw_str(&ctx, "readTransform: detached buffer"))?;
+  if raw.len != 10 * 4 {
+    return Err(throw_str(&ctx, "readTransform: out must be a Float32Array of 10"));
+  }
+  let dst = unsafe { std::slice::from_raw_parts_mut(raw.ptr.as_ptr() as *mut f32, 10) };
+  dst[0..3].copy_from_slice(&p);
+  dst[3..7].copy_from_slice(&q);
+  dst[7..10].copy_from_slice(&s);
+  Ok(())
+}
+
 /// Bind the node's instance-record sink with the 2D pose projection: the
 /// flush writes [x, y, angle, sx, sy] to record slot `index` of vertex
 /// buffer `buffer`, batched into one buffer write per flush.
@@ -469,6 +600,42 @@ pub struct SpatialTick {
   pub wrote: bool,
 }
 
+/// What a frame's clip-player advance produced (see `advance_players`).
+pub struct PlayersTick {
+  /// Players can still progress: keep requesting frames.
+  pub active: bool,
+  /// Node TRS changed: this frame must flush and paint.
+  pub wrote: bool,
+}
+
+/// Advance the clip players to the stamped clock and write the blended
+/// poses into the arena. The runner calls this BEFORE the frame's JS
+/// (right after stamping the clock), so `onFrame` handlers read and can
+/// overwrite freshly posed nodes - the post-animation hook - and the draw
+/// path's flush publishes the result. Finished/dropped players reach JS
+/// as one "spatialClipEnd" engine event each, payload `{ player, reason }`
+/// (reason "finished" or "dropped"), emitted here so handlers run in the
+/// same frame's turn.
+pub fn advance_players(ctx: &Ctx<'_>) -> PlayersTick {
+  let Some(st) = ctx.userdata::<SpatialState>() else {
+    return PlayersTick { active: false, wrote: false };
+  };
+  let st = st.0.clone();
+  let tick = st.atx.spatial().advance_players();
+  let events = st.atx.spatial().take_clip_events();
+  for event in events {
+    let obj = Object::new(ctx.clone()).expect("create spatialClipEnd object");
+    let (player, reason) = match event {
+      ClipEvent::Finished(id) => (id, "finished"),
+      ClipEvent::Dropped(id) => (id, "dropped"),
+    };
+    obj.set("player", player).expect("set player");
+    obj.set("reason", reason).expect("set reason");
+    crate::emit_event(ctx, "spatialClipEnd", obj);
+  }
+  PlayersTick { active: tick.active, wrote: tick.wrote }
+}
+
 /// Advance the node transitions to the stamped clock and publish what
 /// moved: steps every running track (writing node TRS through the arena's
 /// ordinary snap path), flushes the arena when anything was written, and
@@ -482,7 +649,11 @@ pub fn tick(ctx: &Ctx<'_>) -> SpatialTick {
   let st = st.0.clone();
   let active = st.atx.spatial().advance_transitions();
   let settled = st.atx.spatial().take_settled_transitions();
-  let wrote = (active || !settled.is_empty()) && st.atx.spatial_flush();
+  // The flush is unconditional: besides transition writes, the queue may
+  // hold clip-player poses (advanced before the frame's JS) and whatever
+  // that JS wrote without its own microtask flush landing yet. An empty
+  // queue is a cheap no-op.
+  let wrote = st.atx.spatial_flush();
   for (node, component) in settled {
     let obj = Object::new(ctx.clone()).expect("create spatialTransitionEnd object");
     obj.set("node", node).expect("set node");
