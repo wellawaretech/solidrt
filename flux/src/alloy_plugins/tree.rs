@@ -225,6 +225,9 @@ struct RenderTreeInner {
   platform: Arc<PlatformContext>,
   alloy_cmd_tx: Sender<alloy::AlloyCommand>,
   atx: AlloyContext,
+  // The direct draw path's frame driver (see `render`): one per context, so
+  // consecutive `render()` calls reuse the retained display list.
+  render_driver: RefCell<FrameDriver>,
 }
 
 /// Create the shared render tree and stash the state the `flux:rendertree`
@@ -239,9 +242,13 @@ pub fn store_state(
 ) {
   let shared = SharedRenderTree(Rc::new(RefCell::new(tree)));
   ctx.store_userdata(shared.clone()).expect("store render tree");
-  ctx
-    .store_userdata(RenderTreeState(Rc::new(RenderTreeInner { tree: shared.0, platform, alloy_cmd_tx, atx })))
-    .expect("store rendertree state");
+  let inner =
+    RenderTreeInner { tree: shared.0, platform, alloy_cmd_tx, atx, render_driver: RefCell::new(FrameDriver::new()) };
+  ctx.store_userdata(RenderTreeState(Rc::new(inner))).expect("store rendertree state");
+}
+
+fn state(ctx: &Ctx<'_>) -> Rc<RenderTreeInner> {
+  ctx.userdata::<RenderTreeState>().expect("rendertree state userdata").0.clone()
 }
 
 /// The `flux:rendertree` module: the render-tree bridge the renderer drives to
@@ -278,356 +285,318 @@ impl ModuleDef for RenderTreeModule {
   }
 
   fn evaluate<'js>(ctx: &Ctx<'js>, exports: &Exports<'js>) -> rquickjs::Result<()> {
-    let state = ctx.userdata::<RenderTreeState>().expect("rendertree state userdata");
-    let tree = state.0.tree.clone();
-    let platform = state.0.platform.clone();
-    let alloy_cmd_tx = state.0.alloy_cmd_tx.clone();
-    let atx = state.0.atx.clone();
-
-    let tree_ref = tree.clone();
-    let platform_ref = platform.clone();
-    let create_root = Function::new(ctx.clone(), move |id: u64| {
-      let mut tree = tree_ref.borrow_mut();
-      tree.create_node(id, Window::default().with_layout());
-      tree.root = Some(id);
-      platform_ref.request_frame();
-    })?;
-
-    let tree_ref = tree.clone();
-    let platform_ref = platform.clone();
-    let set_root = Function::new(ctx.clone(), move |id: u64| {
-      tree_ref.borrow_mut().set_root(id);
-      platform_ref.request_frame();
-    })?;
-
-    let tree_ref = tree.clone();
-    let platform_ref = platform.clone();
-    let create_node = Function::new(ctx.clone(), move |ctx: Ctx<'js>, id: u64, kind: String| -> rquickjs::Result<()> {
-      let Some(element) = Element::from_kind(&kind) else {
-        return Err(rquickjs::Exception::throw_message(&ctx, &format!("Unknown node kind: <{kind}>")));
-      };
-      tree_ref.borrow_mut().create_node(id, element);
-      platform_ref.request_frame();
-      Ok(())
-    })?;
-
-    let tree_ref = tree.clone();
-    let platform_ref = platform.clone();
-    let detach_node = Function::new(ctx.clone(), move |parent_id: u64, node_id: u64| {
-      tree_ref.borrow_mut().detach_node(parent_id, node_id);
-      platform_ref.request_frame();
-    })?;
-
-    let tree_ref = tree.clone();
-    let platform_ref = platform.clone();
-    let destroy_node = Function::new(ctx.clone(), move |node_id: u64| {
-      tree_ref.borrow_mut().destroy_node(node_id);
-      platform_ref.request_frame();
-    })?;
-
-    let tree_ref = tree.clone();
-    let platform_ref = platform.clone();
-    let insert_node = Function::new(
-      ctx.clone(),
-      move |ctx: Ctx<'_>, parent_id: u64, node_id: u64, anchor_id: OptArg<u64>| -> rquickjs::Result<()> {
-        tree_ref
-          .borrow_mut()
-          .insert_node(parent_id, node_id, anchor_id.0)
-          .map_err(|msg| rquickjs::Exception::throw_message(&ctx, &msg))?;
-        platform_ref.request_frame();
-        Ok(())
-      },
-    )?;
-
-    let tree_ref = tree.clone();
-    let platform_ref = platform.clone();
-    let cmd_tx = alloy_cmd_tx.clone();
-    let props_atx = atx.clone();
-    let set_property = Function::new(
-      ctx.clone(),
-      move |ctx: Ctx<'_>, node_id: u64, property: String, value: Value<'_>| -> rquickjs::Result<()> {
-        SETPROP_COUNT.with(|c| c.set(c.get() + 1));
-        // Native transitions: a numeric write to an animatable property on
-        // an element declaring a transition for it becomes a track target
-        // (Rust interpolates from the next frame on) instead of a snap. A
-        // false consumes nothing and has cancelled any running track for
-        // the pair, so the normal write below is authoritative.
-        if let Some(prop) = super::properties::transition::anim_prop(&property) {
-          // Colors arrive as raw CSS strings (or packed 0xRRGGBBAA numbers
-          // for compatibility); everything else animatable is a plain
-          // scalar. Anything else (null, a gradient object, an unparsable
-          // string) never animates - the normal write path raises the
-          // proper error for the bad string.
-          let target = match prop {
-            AnimProp::Color => {
-              let packed = value.as_number().map(|n| super::properties::packed_to_color(n as u32));
-              let parsed = || {
-                let s = value.as_string()?.to_string().ok()?;
-                alloy::color::parse_css(&s).ok()
-              };
-              packed.or_else(parsed).map(AnimValue::Color)
-            }
-            _ => value.as_number().map(|n| AnimValue::Scalar(n as f32)),
-          };
-          if tree_ref.borrow_mut().transition_write(node_id, prop, target) {
-            platform_ref.request_frame();
-            return Ok(());
-          }
-        }
-        let value = to_prop_value(&value)?;
-        tree_ref
-          .borrow_mut()
-          .try_edit(node_id, |el| {
-            super::properties::apply_jsx(el, &property, &value, &cmd_tx, &|id, params| {
-              props_atx.set_target_params(id, params)
-            })
-          })
-          .map_err(|msg| rquickjs::Exception::throw_message(&ctx, &msg))?;
-        platform_ref.request_frame();
-        Ok(())
-      },
-    )?;
-
-    // Pure dispatch metadata (which pointer deliveries the node's handlers
-    // want; see alloy's EventInterest): no visual change, so no frame request.
-    let tree_ref = tree.clone();
-    let set_event_interest = Function::new(ctx.clone(), move |ctx: Ctx<'_>, node_id: u64, bits: u32| {
-      if bits & !EventInterest::KNOWN != 0 {
-        return Err(rquickjs::Exception::throw_message(
-          &ctx,
-          &format!("setEventInterest: unknown bits 0x{:x}", bits & !EventInterest::KNOWN),
-        ));
-      }
-      tree_ref.borrow_mut().edit(node_id, |el| {
-        el.set_event_interest(EventInterest(bits));
-        Damage::None
-      });
-      Ok(())
-    })?;
-
-    let platform_ref = platform.clone();
-    let request_frame = Function::new(ctx.clone(), move || platform_ref.request_frame())?;
-
-    // The direct draw path: put the current tree on screen now. Lets a
-    // flux + alloy app render without the runner's frame loop. Runs alloy's
-    // frame protocol, so when nothing changed since the last call the retained
-    // display list is re-presented instead of rebuilt (fresh texture contents
-    // are still sampled at the raster flush); the call itself is the demand,
-    // so the driver's gate never skips it.
-    let tree_ref = tree.clone();
-    let render_platform = platform.clone();
-    let render_atx = atx.clone();
-    let render_driver = RefCell::new(FrameDriver::new());
-    let render = Function::new(ctx.clone(), move || {
-      let mut driver = render_driver.borrow_mut();
-      let Some(frame) = driver.begin(&render_platform, true) else { return };
-      match frame.commit(&mut tree_ref.borrow_mut(), &render_platform, &render_atx) {
-        Err(()) => log::warn!("render: render thread unavailable, dropping frame"),
-        Ok(Commit::Reused { .. }) => {}
-        Ok(Commit::Build(mut b)) => {
-          // The paint phase runs layout itself; the direct path has no
-          // between-phase hooks to sequence.
-          b.paint(&mut tree_ref.borrow_mut(), &render_platform, &render_atx);
-          if b.finish(&tree_ref.borrow(), &render_platform, &render_atx).is_err() {
-            log::warn!("render: render thread unavailable, dropping frame");
-          }
-        }
-      }
-    })?;
-
-    let tree_ref = tree.clone();
-    let get_bounding_box = Function::new(ctx.clone(), move |id: u64| -> Option<JsBoundingBox> {
-      tree_ref.borrow().bounding_box(id).map(JsBoundingBox)
-    })?;
-
-    let tree_ref = tree.clone();
-    let get_bounding_box_viewport = Function::new(ctx.clone(), move |id: u64| -> Option<JsBoundingBox> {
-      tree_ref.borrow().bounding_box_viewport(id).map(JsBoundingBox)
-    })?;
-
-    let tree_ref = tree.clone();
-    let get_layout_box = Function::new(ctx.clone(), move |id: u64| -> Option<JsBoundingBox> {
-      tree_ref.borrow().layout_box(id).map(JsBoundingBox)
-    })?;
-
-    let tree_ref = tree.clone();
-    let snapshot_atx = atx.clone();
-    let snapshot_texture = Function::new(ctx.clone(), move |ctx: Ctx<'_>, id: u64| -> rquickjs::Result<u64> {
-      tree_ref.borrow().snapshot_texture(id, &snapshot_atx).map_err(|msg| rquickjs::Exception::throw_message(&ctx, &msg))
-    })?;
-
-    let cmd_tx = alloy_cmd_tx.clone();
-    let set_pointer_lock = Function::new(ctx.clone(), move |locked: bool| {
-      cmd_tx.send(alloy::AlloyCommand::SetPointerLock(locked)).ok();
-    })?;
-
-    let cmd_tx = alloy_cmd_tx.clone();
-    let set_text_input_active = Function::new(ctx.clone(), move |active: bool, hints: OptArg<Object<'_>>| {
-      let mut options = alloy::TextInputOptions::default();
-      if let Some(h) = hints.0 {
-        if let Ok(v) = h.get::<_, String>("type") {
-          options.input_type = match v.as_str() {
-            "text" => Some(alloy::TextInputType::Text),
-            "name" => Some(alloy::TextInputType::Name),
-            "email" => Some(alloy::TextInputType::Email),
-            "username" => Some(alloy::TextInputType::Username),
-            "password" => Some(alloy::TextInputType::PasswordHidden),
-            "number" => Some(alloy::TextInputType::Number),
-            "pin" => Some(alloy::TextInputType::NumberPasswordHidden),
-            _ => None,
-          };
-        }
-        if let Ok(v) = h.get::<_, String>("capitalize") {
-          options.capitalize = match v.as_str() {
-            "none" => Some(alloy::TextCapitalization::None),
-            "sentences" => Some(alloy::TextCapitalization::Sentences),
-            "words" => Some(alloy::TextCapitalization::Words),
-            "letters" => Some(alloy::TextCapitalization::Letters),
-            _ => None,
-          };
-        }
-        if let Ok(v) = h.get::<_, bool>("autocorrect") {
-          options.autocorrect = Some(v);
-        }
-        if let Ok(v) = h.get::<_, bool>("multiline") {
-          options.multiline = Some(v);
-        }
-      }
-      cmd_tx.send(alloy::AlloyCommand::SetTextInputActive(active, options)).ok();
-    })?;
-
-    let measure_platform = platform.clone();
-    let measure_atx = atx.clone();
-    let measure_text = Function::new(ctx.clone(), move |ctx: Ctx<'js>, text: String, options: OptArg<Object<'js>>| -> rquickjs::Result<TextSize> {
-      let mut node = Text::default();
-      node.set_plain_text(text);
-      if let Some(opts) = options.0 {
-        apply_font_options(&ctx, &mut node, &opts)?;
-      }
-
-      let size = node.measure(&MeasureContext {
-        platform: &measure_platform,
-        alloy: &*measure_atx,
-        known: Size { width: None, height: None },
-        available: Size { width: AvailableSpace::MaxContent, height: AvailableSpace::MaxContent },
-      });
-      Ok(TextSize { width: size.width, height: size.height })
-    })?;
-
-    let prepare_platform = platform.clone();
-    let prepare_text = Function::new(
-      ctx.clone(),
-      move |ctx: Ctx<'js>, text: String, options: OptArg<Object<'js>>| -> rquickjs::Result<Object<'js>> {
-        let mut node = Text::default();
-        let mut carets = false;
-        let mut runs = Vec::new();
-        if let Some(opts) = options.0 {
-          apply_font_options(&ctx, &mut node, &opts)?;
-          carets = opts.get::<_, bool>("carets").unwrap_or(false);
-          if let Ok(list) = opts.get::<_, rquickjs::Array<'js>>("runs") {
-            runs = prepared_runs(&ctx, &text, &node, list)?;
-          }
-        }
-        let units = prepare_units(&prepare_platform, &text, &node.run_style(), &runs, carets);
-        let array = rquickjs::Array::new(ctx.clone())?;
-        // Byte offsets to UTF-16 (JS string) offsets, incrementally: units tile
-        // the text in order.
-        let (mut byte, mut utf16) = (0usize, 0usize);
-        let mut to_utf16 = |at: usize| {
-          utf16 += text[byte..at].encode_utf16().count();
-          byte = at;
-          utf16
-        };
-        for (i, unit) in units.into_iter().enumerate() {
-          let obj = Object::new(ctx.clone())?;
-          let start = to_utf16(unit.start) as u32;
-          obj.set("start", start)?;
-          obj.set("end", to_utf16(unit.end) as u32)?;
-          if let Some(stops) = &unit.carets {
-            let array = rquickjs::Array::new(ctx.clone())?;
-            for (j, stop) in stops.iter().enumerate() {
-              let o = Object::new(ctx.clone())?;
-              o.set("offset", start + stop.offset)?;
-              o.set("x", stop.x)?;
-              array.set(j, o)?;
-            }
-            obj.set("carets", array)?;
-          }
-          obj.set("text", unit.text)?;
-          obj.set("advance", unit.metrics.advance)?;
-          obj.set("width", unit.metrics.ink_width)?;
-          obj.set("ascent", unit.metrics.ascent)?;
-          obj.set("descent", unit.metrics.descent)?;
-          obj.set("hardBreak", unit.hard_break)?;
-          obj.set("glue", unit.glue)?;
-          if let Some(run) = unit.run {
-            obj.set("run", run as u32)?;
-          }
-          array.set(i, obj)?;
-        }
-        let prepared = Object::new(ctx.clone())?;
-        prepared.set("text", text)?;
-        prepared.set("units", array)?;
-        Ok(prepared)
-      },
-    )?;
-
-    exports.export("createRoot", create_root)?;
-    exports.export("setRoot", set_root)?;
-    exports.export("createNode", create_node)?;
-    exports.export("detachNode", detach_node)?;
-    exports.export("destroyNode", destroy_node)?;
-    exports.export("insertNode", insert_node)?;
-    // Color utilities over alloy's color module (one owner for the CSS
-    // grammar and the perceptual math; okf/backlog/css-colors-in-rust.md).
-    // parseColor returns the same packed 0xRRGGBBAA number the JS parser
-    // used to, and throws on an invalid string.
-    // Returned as f64: a u32 return would marshal through a signed 32-bit
-    // int, turning any color with red >= 0x80 negative on the JS side.
-    let parse_color = Function::new(ctx.clone(), move |ctx: Ctx<'_>, color: String| -> rquickjs::Result<f64> {
-      alloy::color::parse_css(&color)
-        .map(|c| color_to_packed(c) as f64)
-        .map_err(|msg| rquickjs::Exception::throw_message(&ctx, &msg))
-    })?;
-
-    // Mixes in oklab; `t` is the fraction of `b`. Returns a hex string
-    // (#rrggbb, with an alpha byte only when the mix is translucent).
-    let mix_colors =
-      Function::new(ctx.clone(), move |ctx: Ctx<'_>, a: String, b: String, t: f64| -> rquickjs::Result<String> {
-        let err = |msg: String| rquickjs::Exception::throw_message(&ctx, &msg);
-        let a = alloy::color::parse_css(&a).map_err(err)?;
-        let b = alloy::color::parse_css(&b).map_err(|msg| rquickjs::Exception::throw_message(&ctx, &msg))?;
-        let m = alloy::color::mix(a, b, t as f32);
-        let packed = color_to_packed(m);
-        let (r, g, bl, al) = (packed >> 24 & 0xFF, packed >> 16 & 0xFF, packed >> 8 & 0xFF, packed & 0xFF);
-        Ok(if al == 0xFF {
-          format!("#{r:02x}{g:02x}{bl:02x}")
-        } else {
-          format!("#{r:02x}{g:02x}{bl:02x}{al:02x}")
-        })
-      })?;
-
-    let brightness_fn = Function::new(ctx.clone(), move |ctx: Ctx<'_>, color: String| -> rquickjs::Result<f64> {
-      alloy::color::parse_css(&color)
-        .map(|c| alloy::color::brightness(c) as f64)
-        .map_err(|msg| rquickjs::Exception::throw_message(&ctx, &msg))
-    })?;
-
-    exports.export("setProperty", set_property)?;
-    exports.export("setEventInterest", set_event_interest)?;
-    exports.export("requestFrame", request_frame)?;
-    exports.export("render", render)?;
-    exports.export("setTextInputActive", set_text_input_active)?;
-    exports.export("setPointerLock", set_pointer_lock)?;
-    exports.export("measureText", measure_text)?;
-    exports.export("prepareText", prepare_text)?;
-    exports.export("getBoundingBox", get_bounding_box)?;
-    exports.export("getBoundingBoxViewport", get_bounding_box_viewport)?;
-    exports.export("getLayoutBox", get_layout_box)?;
-    exports.export("snapshotTexture", snapshot_texture)?;
-    exports.export("parseColor", parse_color)?;
-    exports.export("mixColors", mix_colors)?;
-    exports.export("brightness", brightness_fn)?;
+    exports.export("createRoot", Function::new(ctx.clone(), create_root)?)?;
+    exports.export("setRoot", Function::new(ctx.clone(), set_root)?)?;
+    exports.export("createNode", Function::new(ctx.clone(), create_node)?)?;
+    exports.export("detachNode", Function::new(ctx.clone(), detach_node)?)?;
+    exports.export("destroyNode", Function::new(ctx.clone(), destroy_node)?)?;
+    exports.export("insertNode", Function::new(ctx.clone(), insert_node)?)?;
+    exports.export("setProperty", Function::new(ctx.clone(), set_property)?)?;
+    exports.export("setEventInterest", Function::new(ctx.clone(), set_event_interest)?)?;
+    exports.export("requestFrame", Function::new(ctx.clone(), request_frame)?)?;
+    exports.export("render", Function::new(ctx.clone(), render)?)?;
+    exports.export("setTextInputActive", Function::new(ctx.clone(), set_text_input_active)?)?;
+    exports.export("setPointerLock", Function::new(ctx.clone(), set_pointer_lock)?)?;
+    exports.export("measureText", Function::new(ctx.clone(), measure_text)?)?;
+    exports.export("prepareText", Function::new(ctx.clone(), prepare_text)?)?;
+    exports.export("getBoundingBox", Function::new(ctx.clone(), get_bounding_box)?)?;
+    exports.export("getBoundingBoxViewport", Function::new(ctx.clone(), get_bounding_box_viewport)?)?;
+    exports.export("getLayoutBox", Function::new(ctx.clone(), get_layout_box)?)?;
+    exports.export("snapshotTexture", Function::new(ctx.clone(), snapshot_texture)?)?;
+    exports.export("parseColor", Function::new(ctx.clone(), parse_color)?)?;
+    exports.export("mixColors", Function::new(ctx.clone(), mix_colors)?)?;
+    exports.export("brightness", Function::new(ctx.clone(), brightness)?)?;
     Ok(())
   }
+}
+
+fn create_root(ctx: Ctx<'_>, id: u64) {
+  let s = state(&ctx);
+  let mut tree = s.tree.borrow_mut();
+  tree.create_node(id, Window::default().with_layout());
+  tree.root = Some(id);
+  s.platform.request_frame();
+}
+
+fn set_root(ctx: Ctx<'_>, id: u64) {
+  let s = state(&ctx);
+  s.tree.borrow_mut().set_root(id);
+  s.platform.request_frame();
+}
+
+fn create_node(ctx: Ctx<'_>, id: u64, kind: String) -> rquickjs::Result<()> {
+  let Some(element) = Element::from_kind(&kind) else {
+    return Err(rquickjs::Exception::throw_message(&ctx, &format!("Unknown node kind: <{kind}>")));
+  };
+  let s = state(&ctx);
+  s.tree.borrow_mut().create_node(id, element);
+  s.platform.request_frame();
+  Ok(())
+}
+
+fn detach_node(ctx: Ctx<'_>, parent_id: u64, node_id: u64) {
+  let s = state(&ctx);
+  s.tree.borrow_mut().detach_node(parent_id, node_id);
+  s.platform.request_frame();
+}
+
+fn destroy_node(ctx: Ctx<'_>, node_id: u64) {
+  let s = state(&ctx);
+  s.tree.borrow_mut().destroy_node(node_id);
+  s.platform.request_frame();
+}
+
+fn insert_node(ctx: Ctx<'_>, parent_id: u64, node_id: u64, anchor_id: OptArg<u64>) -> rquickjs::Result<()> {
+  let s = state(&ctx);
+  s.tree
+    .borrow_mut()
+    .insert_node(parent_id, node_id, anchor_id.0)
+    .map_err(|msg| rquickjs::Exception::throw_message(&ctx, &msg))?;
+  s.platform.request_frame();
+  Ok(())
+}
+
+fn set_property(ctx: Ctx<'_>, node_id: u64, property: String, value: Value<'_>) -> rquickjs::Result<()> {
+  SETPROP_COUNT.with(|c| c.set(c.get() + 1));
+  let s = state(&ctx);
+  // Native transitions: a numeric write to an animatable property on
+  // an element declaring a transition for it becomes a track target
+  // (Rust interpolates from the next frame on) instead of a snap. A
+  // false consumes nothing and has cancelled any running track for
+  // the pair, so the normal write below is authoritative.
+  if let Some(prop) = super::properties::transition::anim_prop(&property) {
+    // Colors arrive as raw CSS strings (or packed 0xRRGGBBAA numbers
+    // for compatibility); everything else animatable is a plain
+    // scalar. Anything else (null, a gradient object, an unparsable
+    // string) never animates - the normal write path raises the
+    // proper error for the bad string.
+    let target = match prop {
+      AnimProp::Color => {
+        let packed = value.as_number().map(|n| super::properties::packed_to_color(n as u32));
+        let parsed = || {
+          let css = value.as_string()?.to_string().ok()?;
+          alloy::color::parse_css(&css).ok()
+        };
+        packed.or_else(parsed).map(AnimValue::Color)
+      }
+      _ => value.as_number().map(|n| AnimValue::Scalar(n as f32)),
+    };
+    if s.tree.borrow_mut().transition_write(node_id, prop, target) {
+      s.platform.request_frame();
+      return Ok(());
+    }
+  }
+  let value = to_prop_value(&value)?;
+  s.tree
+    .borrow_mut()
+    .try_edit(node_id, |el| {
+      super::properties::apply_jsx(el, &property, &value, &s.alloy_cmd_tx, &|id, params| {
+        s.atx.set_target_params(id, params)
+      })
+    })
+    .map_err(|msg| rquickjs::Exception::throw_message(&ctx, &msg))?;
+  s.platform.request_frame();
+  Ok(())
+}
+
+// Pure dispatch metadata (which pointer deliveries the node's handlers
+// want; see alloy's EventInterest): no visual change, so no frame request.
+fn set_event_interest(ctx: Ctx<'_>, node_id: u64, bits: u32) -> rquickjs::Result<()> {
+  if bits & !EventInterest::KNOWN != 0 {
+    return Err(rquickjs::Exception::throw_message(
+      &ctx,
+      &format!("setEventInterest: unknown bits 0x{:x}", bits & !EventInterest::KNOWN),
+    ));
+  }
+  state(&ctx).tree.borrow_mut().edit(node_id, |el| {
+    el.set_event_interest(EventInterest(bits));
+    Damage::None
+  });
+  Ok(())
+}
+
+fn request_frame(ctx: Ctx<'_>) {
+  state(&ctx).platform.request_frame();
+}
+
+// The direct draw path: put the current tree on screen now. Lets a
+// flux + alloy app render without the runner's frame loop. Runs alloy's
+// frame protocol, so when nothing changed since the last call the retained
+// display list is re-presented instead of rebuilt (fresh texture contents
+// are still sampled at the raster flush); the call itself is the demand,
+// so the driver's gate never skips it.
+fn render(ctx: Ctx<'_>) {
+  let s = state(&ctx);
+  let mut driver = s.render_driver.borrow_mut();
+  let Some(frame) = driver.begin(&s.platform, true) else { return };
+  let commit = frame.commit(&mut s.tree.borrow_mut(), &s.platform, &s.atx);
+  match commit {
+    Err(()) => log::warn!("render: render thread unavailable, dropping frame"),
+    Ok(Commit::Reused { .. }) => {}
+    Ok(Commit::Build(mut b)) => {
+      // The paint phase runs layout itself; the direct path has no
+      // between-phase hooks to sequence.
+      b.paint(&mut s.tree.borrow_mut(), &s.platform, &s.atx);
+      if b.finish(&s.tree.borrow(), &s.platform, &s.atx).is_err() {
+        log::warn!("render: render thread unavailable, dropping frame");
+      }
+    }
+  }
+}
+
+fn set_text_input_active(ctx: Ctx<'_>, active: bool, hints: OptArg<Object<'_>>) {
+  let mut options = alloy::TextInputOptions::default();
+  if let Some(h) = hints.0 {
+    if let Ok(v) = h.get::<_, String>("type") {
+      options.input_type = match v.as_str() {
+        "text" => Some(alloy::TextInputType::Text),
+        "name" => Some(alloy::TextInputType::Name),
+        "email" => Some(alloy::TextInputType::Email),
+        "username" => Some(alloy::TextInputType::Username),
+        "password" => Some(alloy::TextInputType::PasswordHidden),
+        "number" => Some(alloy::TextInputType::Number),
+        "pin" => Some(alloy::TextInputType::NumberPasswordHidden),
+        _ => None,
+      };
+    }
+    if let Ok(v) = h.get::<_, String>("capitalize") {
+      options.capitalize = match v.as_str() {
+        "none" => Some(alloy::TextCapitalization::None),
+        "sentences" => Some(alloy::TextCapitalization::Sentences),
+        "words" => Some(alloy::TextCapitalization::Words),
+        "letters" => Some(alloy::TextCapitalization::Letters),
+        _ => None,
+      };
+    }
+    if let Ok(v) = h.get::<_, bool>("autocorrect") {
+      options.autocorrect = Some(v);
+    }
+    if let Ok(v) = h.get::<_, bool>("multiline") {
+      options.multiline = Some(v);
+    }
+  }
+  state(&ctx).alloy_cmd_tx.send(alloy::AlloyCommand::SetTextInputActive(active, options)).ok();
+}
+
+fn set_pointer_lock(ctx: Ctx<'_>, locked: bool) {
+  state(&ctx).alloy_cmd_tx.send(alloy::AlloyCommand::SetPointerLock(locked)).ok();
+}
+
+fn measure_text<'js>(ctx: Ctx<'js>, text: String, options: OptArg<Object<'js>>) -> rquickjs::Result<TextSize> {
+  let mut node = Text::default();
+  node.set_plain_text(text);
+  if let Some(opts) = options.0 {
+    apply_font_options(&ctx, &mut node, &opts)?;
+  }
+  let s = state(&ctx);
+  let size = node.measure(&MeasureContext {
+    platform: &s.platform,
+    alloy: &*s.atx,
+    known: Size { width: None, height: None },
+    available: Size { width: AvailableSpace::MaxContent, height: AvailableSpace::MaxContent },
+  });
+  Ok(TextSize { width: size.width, height: size.height })
+}
+
+fn prepare_text<'js>(ctx: Ctx<'js>, text: String, options: OptArg<Object<'js>>) -> rquickjs::Result<Object<'js>> {
+  let mut node = Text::default();
+  let mut carets = false;
+  let mut runs = Vec::new();
+  if let Some(opts) = options.0 {
+    apply_font_options(&ctx, &mut node, &opts)?;
+    carets = opts.get::<_, bool>("carets").unwrap_or(false);
+    if let Ok(list) = opts.get::<_, rquickjs::Array<'js>>("runs") {
+      runs = prepared_runs(&ctx, &text, &node, list)?;
+    }
+  }
+  let s = state(&ctx);
+  let units = prepare_units(&s.platform, &text, &node.run_style(), &runs, carets);
+  let array = rquickjs::Array::new(ctx.clone())?;
+  // Byte offsets to UTF-16 (JS string) offsets, incrementally: units tile
+  // the text in order.
+  let (mut byte, mut utf16) = (0usize, 0usize);
+  let mut to_utf16 = |at: usize| {
+    utf16 += text[byte..at].encode_utf16().count();
+    byte = at;
+    utf16
+  };
+  for (i, unit) in units.into_iter().enumerate() {
+    let obj = Object::new(ctx.clone())?;
+    let start = to_utf16(unit.start) as u32;
+    obj.set("start", start)?;
+    obj.set("end", to_utf16(unit.end) as u32)?;
+    if let Some(stops) = &unit.carets {
+      let array = rquickjs::Array::new(ctx.clone())?;
+      for (j, stop) in stops.iter().enumerate() {
+        let o = Object::new(ctx.clone())?;
+        o.set("offset", start + stop.offset)?;
+        o.set("x", stop.x)?;
+        array.set(j, o)?;
+      }
+      obj.set("carets", array)?;
+    }
+    obj.set("text", unit.text)?;
+    obj.set("advance", unit.metrics.advance)?;
+    obj.set("width", unit.metrics.ink_width)?;
+    obj.set("ascent", unit.metrics.ascent)?;
+    obj.set("descent", unit.metrics.descent)?;
+    obj.set("hardBreak", unit.hard_break)?;
+    obj.set("glue", unit.glue)?;
+    if let Some(run) = unit.run {
+      obj.set("run", run as u32)?;
+    }
+    array.set(i, obj)?;
+  }
+  let prepared = Object::new(ctx.clone())?;
+  prepared.set("text", text)?;
+  prepared.set("units", array)?;
+  Ok(prepared)
+}
+
+fn get_bounding_box(ctx: Ctx<'_>, id: u64) -> Option<JsBoundingBox> {
+  state(&ctx).tree.borrow().bounding_box(id).map(JsBoundingBox)
+}
+
+fn get_bounding_box_viewport(ctx: Ctx<'_>, id: u64) -> Option<JsBoundingBox> {
+  state(&ctx).tree.borrow().bounding_box_viewport(id).map(JsBoundingBox)
+}
+
+fn get_layout_box(ctx: Ctx<'_>, id: u64) -> Option<JsBoundingBox> {
+  state(&ctx).tree.borrow().layout_box(id).map(JsBoundingBox)
+}
+
+fn snapshot_texture(ctx: Ctx<'_>, id: u64) -> rquickjs::Result<u64> {
+  let s = state(&ctx);
+  let result = s.tree.borrow().snapshot_texture(id, &s.atx);
+  result.map_err(|msg| rquickjs::Exception::throw_message(&ctx, &msg))
+}
+
+// Color utilities over alloy's color module (one owner for the CSS
+// grammar and the perceptual math; okf/backlog/css-colors-in-rust.md).
+// parseColor returns the same packed 0xRRGGBBAA number the JS parser
+// used to, and throws on an invalid string.
+// Returned as f64: a u32 return would marshal through a signed 32-bit
+// int, turning any color with red >= 0x80 negative on the JS side.
+fn parse_color(ctx: Ctx<'_>, color: String) -> rquickjs::Result<f64> {
+  alloy::color::parse_css(&color)
+    .map(|c| color_to_packed(c) as f64)
+    .map_err(|msg| rquickjs::Exception::throw_message(&ctx, &msg))
+}
+
+// Mixes in oklab; `t` is the fraction of `b`. Returns a hex string
+// (#rrggbb, with an alpha byte only when the mix is translucent).
+fn mix_colors(ctx: Ctx<'_>, a: String, b: String, t: f64) -> rquickjs::Result<String> {
+  let err = |msg: String| rquickjs::Exception::throw_message(&ctx, &msg);
+  let a = alloy::color::parse_css(&a).map_err(err)?;
+  let b = alloy::color::parse_css(&b).map_err(err)?;
+  let m = alloy::color::mix(a, b, t as f32);
+  let packed = color_to_packed(m);
+  let (r, g, bl, al) = (packed >> 24 & 0xFF, packed >> 16 & 0xFF, packed >> 8 & 0xFF, packed & 0xFF);
+  Ok(if al == 0xFF { format!("#{r:02x}{g:02x}{bl:02x}") } else { format!("#{r:02x}{g:02x}{bl:02x}{al:02x}") })
+}
+
+fn brightness(ctx: Ctx<'_>, color: String) -> rquickjs::Result<f64> {
+  alloy::color::parse_css(&color)
+    .map(|c| alloy::color::brightness(c) as f64)
+    .map_err(|msg| rquickjs::Exception::throw_message(&ctx, &msg))
 }

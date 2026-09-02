@@ -107,9 +107,12 @@ declare module "flux:gpu" {
    * A uniform that is declared but optimized out by the compiler is accepted
    * with a warning and the write is skipped, so one param object can drive
    * shader variants that do not all use every uniform.
-   * An `undefined` value is skipped, so conditional spreads stay usable.
+   * An `undefined` (or `null`) value is skipped, so conditional spreads stay
+   * usable. A `Float32Array`/`Float64Array` is accepted as a flat array. The
+   * same decoder serves the `<texture params>`, view and window shader props,
+   * so the prop and the imperative path accept and reject identically.
    */
-  export type ShaderParams = Record<string, number | number[]>
+  export type ShaderParams = Record<string, number | number[] | Float32Array | Float64Array>
   /** Magnification/minification filter; "linear" (default) or hard-pixel "nearest". */
   export type FilterMode = "linear" | "nearest"
   /** Sampling outside 0..1: "clamp" (default, extend edge pixels) or "repeat" (tile). */
@@ -156,7 +159,9 @@ declare module "flux:gpu" {
    * Sampler inputs by uniform name; see {@link TextureBinding}. The uniform's
    * declared type picks what may bind: a `sampler2D` takes any 2D texture,
    * a `samplerCube` a cube map ({@link createCubeTexture}), a
-   * `sampler2DShadow` a draw target's depth texture; a mismatch throws.
+   * `sampler2DShadow` a draw target's depth texture; a mismatch throws. An
+   * `undefined` (or `null`) binding is skipped, like a param; an id must be
+   * a non-negative integer (a negative or fractional value throws).
    */
   export type TextureBindings = Record<string, TextureBinding>
   /**

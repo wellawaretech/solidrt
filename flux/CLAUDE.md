@@ -30,6 +30,17 @@ Otherwise the crate it marshals decides: `forge_plugins/` or `alloy_plugins/`.
 `packages/flux-types` keeps its own reader-facing `modules/`/`standards/`/`gui/`
 split (import, global, GUI); do not "fix" the asymmetry.
 
+Binding style in `alloy_plugins/`: every module export is a free `fn`
+taking `Ctx` first and reading its plugin state from userdata through the
+module's `state(&ctx)` accessor (stashed by its `store_state` before any
+import), and `evaluate` is one `exports.export(name, Function::new(ctx.clone(),
+name)?)` line per export. Do not bind exports as capturing closures: they
+repeat the state clones per binding and need the HRTB coercion below for a
+`'js`-bound return. The one place a closure is right is a method on a
+per-instance handle (a player's `close`, a track's `ended`): it captures
+only the instance id and forwards to a free `*_impl` fn. Models:
+`spatial.rs`, `gpu.rs`, `tree.rs`.
+
 `plugins/` holds what the layers share: `js_error.rs` + `marshal.rs` +
 `value.rs` + `seekable.rs`, the marshalling toolkit, and `mod.rs`, which
 builds the JS context and registers the layers. `value.rs` is where

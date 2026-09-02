@@ -649,11 +649,13 @@ export interface WindowShaderProps {
   program: ProgramId
   /**
    * Uniforms filled by name, paced to the next real repaint. A number drives
-   * a scalar (`float`/`int`); a flat number array drives the declared GLSL
-   * type: 2/3/4 for `vec2`/`vec3`/`vec4`, 16 (column-major) for `mat4`.
+   * a scalar (`float`/`int`); a flat number array (or a Float32Array /
+   * Float64Array) drives the declared GLSL type: 2/3/4 for
+   * `vec2`/`vec3`/`vec4`, 16 (column-major) for `mat4`. An undefined or null
+   * entry is skipped.
    */
-  params?: Record<string, number | number[]>
-  /** Extra sampler2D inputs: uniform name to texture id, or `{ id, filter?, wrap? }` for a per-binding sampling override. */
+  params?: Record<string, number | number[] | Float32Array | Float64Array>
+  /** Extra sampler2D inputs: uniform name to texture id, or `{ id, filter?, wrap? }` for a per-binding sampling override. An undefined or null entry is skipped. */
   textures?: TextureBindings
   /** Vertices drawn (attributeless triangles). Default 3, the covering triangle. */
   vertexCount?: number
@@ -773,11 +775,13 @@ export interface ViewShaderProps {
   program: ProgramId
   /**
    * Uniforms filled by name, paced to the next real repaint. A number drives
-   * a scalar (`float`/`int`); a flat number array drives the declared GLSL
-   * type: 2/3/4 for `vec2`/`vec3`/`vec4`, 16 (column-major) for `mat4`.
+   * a scalar (`float`/`int`); a flat number array (or a Float32Array /
+   * Float64Array) drives the declared GLSL type: 2/3/4 for
+   * `vec2`/`vec3`/`vec4`, 16 (column-major) for `mat4`. An undefined or null
+   * entry is skipped.
    */
-  params?: Record<string, number | number[]>
-  /** Extra sampler2D inputs: uniform name to texture id, or `{ id, filter?, wrap? }` for a per-binding sampling override. */
+  params?: Record<string, number | number[] | Float32Array | Float64Array>
+  /** Extra sampler2D inputs: uniform name to texture id, or `{ id, filter?, wrap? }` for a per-binding sampling override. An undefined or null entry is skipped. */
   textures?: TextureBindings
   /**
    * Transparent margin in logical px on every side of the layout box, for
@@ -1019,7 +1023,8 @@ export interface TextureProps extends PaintProps, PointerProps {
   // throws, and set src before params: a write with no src to route to
   // throws). However often a signal writes, the target renders once per
   // frame at the raster flush. A number drives a scalar (`float`/`int`); a
-  // flat number array drives the declared GLSL type: 2/3/4 for
-  // `vec2`/`vec3`/`vec4`, 16 (column-major) for `mat4`.
-  params?: Record<string, number | number[]>
+  // flat number array (or a Float32Array / Float64Array) drives the declared
+  // GLSL type: 2/3/4 for `vec2`/`vec3`/`vec4`, 16 (column-major) for `mat4`.
+  // An undefined or null entry is skipped.
+  params?: Record<string, number | number[] | Float32Array | Float64Array>
 }

@@ -107,7 +107,38 @@ and is unit-testable.
 
 ## 3. Two decoders for the same JS shapes
 
-Shader params and texture bindings are decoded once over `PropValue`
+**Status 2026-09-02: done, all three stages.** `properties::decode_params` and
+`decode_texture_bindings` are the one implementation; `gpu.rs`
+`collect_params`/`collect_textures` marshal the object through
+`to_prop_value` and call them, so the prop and the imperative path accept
+and reject identically: a null or undefined entry is skipped, a texture id
+must be a non-negative integer, and a Float32Array/Float64Array is accepted
+as a flat array on both (documented in flux-types `gpu.d.ts` and core
+`types.d.ts`; core's `createShaderTextureMemo` record compare learned typed
+arrays too). `gpu.rs` and `tree.rs` are in the free-function style: every
+export is a `fn` reading the plugin state from userdata and `evaluate` is
+one line per export (`gpu.rs` 1760 to 1588 lines, `tree.rs` 633 to 602; the
+direct `render` export's `FrameDriver` moved into the shared
+`RenderTreeInner`). `video.rs` needs no pass: its six closures are
+per-player method bindings that capture only the player id and forward to
+free `*_impl` functions, the shape `audio.rs`, `camera.rs` and
+`microphone.rs` use for bound handles too; the alternative, an rquickjs
+class per player, would change the JS shape for nothing. Verified: flux gui
+unit tests (two new: undefined entries skipped end to end through the
+marshaller, strict ids on both binding forms), the three headless gpu
+examples (`gpu_manual`'s stale `setShaderParams`/`setShaderTextures`
+imports fixed in passing), lattice check, clippy, `srt check` (only the
+pre-existing `@solidrt/core/video` resolve error remains), and
+`gpu-shared-params.tsx` plus 3d `lit.tsx` on the dev client: shared and
+per-entry params and bindings in the GPU inventory, no warnings, zero
+missed presents. Stage 3: the same tests, examples (they draw through the
+direct `render` export), lattice check and clippy, plus `examples/text-flow`
+on a release dev client: prepareText with carets, layoutNextLine breaks and
+mixColors in the tree, a pointer move re-breaks the lines around the circle
+into left and right slots, zero missed presents, and no log entry beyond
+one first-paint slow-frame report.
+
+As found: shader params and texture bindings are decoded once over `PropValue`
 (`properties/mod.rs`: `decode_params`, `decode_texture_bindings`) and again
 over raw rquickjs objects (`gpu.rs`: `collect_params`, `collect_textures`).
 They already disagree: the gpu path skips `undefined` entries and requires a

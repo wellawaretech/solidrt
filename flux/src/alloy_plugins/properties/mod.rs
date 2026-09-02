@@ -291,10 +291,8 @@ pub(super) fn opt<T>(
 // string-parse; a bare number stays pixels.
 pub(super) fn as_pct_fraction(value: &PropValue) -> Result<Option<f32>, String> {
   if value.get("__unit").and_then(PropValue::as_str) == Some("pct") {
-    let v = value
-      .get("v")
-      .and_then(PropValue::as_f64)
-      .ok_or_else(|| "pct() value must be a number".to_string())? as f32;
+    let v =
+      value.get("v").and_then(PropValue::as_f64).ok_or_else(|| "pct() value must be a number".to_string())? as f32;
     Ok(Some(v / 100.0))
   } else {
     Ok(None)
@@ -307,7 +305,12 @@ pub(super) fn str_of<'a>(value: &'a PropValue, what: &str) -> Result<&'a str, St
 
 // { name: number | number[] } shader uniform values, dispatched by the
 // shader's declared GLSL type in alloy (float/int scalar, vec2/3/4, mat4 as
-// 16 numbers). Null clears (an empty set); a non-numeric entry is an error.
+// 16 numbers). The one decoder for the shape: the texture/view/window shader
+// props and every flux:gpu params argument (gpu.rs collect_params) come
+// through here, so both paths accept and reject identically. Null clears (an
+// empty set). A null entry (a JS undefined, so conditional spreads stay
+// usable) is skipped; a non-numeric entry is an error. A Float32Array or
+// Float64Array marshals as a list and is accepted like one.
 pub(super) fn decode_params(value: &PropValue) -> Result<Vec<(String, alloy::ParamValue)>, String> {
   if value.is_null() {
     return Ok(Vec::new());
@@ -316,6 +319,9 @@ pub(super) fn decode_params(value: &PropValue) -> Result<Vec<(String, alloy::Par
     value.as_map().ok_or_else(|| format!("Params must be an object of numbers, got {}", describe(value)))?;
   let mut out = Vec::with_capacity(entries.len());
   for (k, v) in entries {
+    if v.is_null() {
+      continue;
+    }
     let param = if let Some(n) = v.as_f64() {
       alloy::ParamValue::Scalar(n as f32)
     } else if let Some(list) = v.as_list() {
@@ -329,45 +335,62 @@ pub(super) fn decode_params(value: &PropValue) -> Result<Vec<(String, alloy::Par
   Ok(out)
 }
 
-// { name: textureId | { id, filter?, wrap? } } sampler bindings for a shader
-// declaration, mapping sampler2D uniform names to texture registry ids with
-// an optional per-binding sampling override. Null clears; anything else is an
-// error.
+// { name: textureId | { id, filter?, wrap? } } sampler bindings, mapping
+// sampler uniform names to texture registry ids with an optional per-binding
+// sampling override. The one decoder for the shape, like decode_params: the
+// shader props and every flux:gpu textures option or argument (gpu.rs
+// collect_textures). Null clears; a null entry is skipped; an id must be a
+// non-negative integer.
 pub(super) fn decode_texture_bindings(value: &PropValue) -> Result<Vec<alloy::TextureBinding>, String> {
   if value.is_null() {
     return Ok(Vec::new());
   }
   let entries =
     value.as_map().ok_or_else(|| format!("Textures must be an object of texture ids, got {}", describe(value)))?;
-  entries
-    .iter()
-    .map(|(k, t)| {
-      if t.as_map().is_some() {
-        let id = t
-          .get("id")
-          .and_then(|v| v.as_f64())
-          .ok_or_else(|| format!("Texture binding '{k}': 'id' must be a texture id (number)"))?;
-        let text = |key: &str| -> Result<Option<String>, String> {
-          match t.get(key) {
-            None => Ok(None),
-            Some(v) if v.is_null() => Ok(None),
-            Some(v) => v
-              .as_str()
-              .map(|s| Some(s.to_string()))
-              .ok_or_else(|| format!("Texture binding '{k}': '{key}' must be a string, got {}", describe(v))),
-          }
-        };
-        let (filter, wrap) = (text("filter")?, text("wrap")?);
-        let sampler = alloy::SamplerOverride::parse(filter.as_deref(), wrap.as_deref())
-          .map_err(|e| format!("Texture binding '{k}': {e}"))?;
-        return Ok(alloy::TextureBinding { name: k.clone(), id: id as u64, sampler });
-      }
-      let id = t.as_f64().ok_or_else(|| {
-        format!("Texture binding '{k}' must be a texture id (number) or {{ id, filter?, wrap? }}, got {}", describe(t))
-      })?;
-      Ok(alloy::TextureBinding::new(k.clone(), id as u64))
-    })
-    .collect()
+  let mut out = Vec::with_capacity(entries.len());
+  for (k, t) in entries {
+    if t.is_null() {
+      continue;
+    }
+    if t.as_map().is_some() {
+      let id = t
+        .get("id")
+        .and_then(texture_id)
+        .ok_or_else(|| format!("Texture binding '{k}': 'id' must be a texture id (a non-negative integer)"))?;
+      let text = |key: &str| -> Result<Option<String>, String> {
+        match t.get(key) {
+          None => Ok(None),
+          Some(v) if v.is_null() => Ok(None),
+          Some(v) => v
+            .as_str()
+            .map(|s| Some(s.to_string()))
+            .ok_or_else(|| format!("Texture binding '{k}': '{key}' must be a string, got {}", describe(v))),
+        }
+      };
+      let (filter, wrap) = (text("filter")?, text("wrap")?);
+      let sampler = alloy::SamplerOverride::parse(filter.as_deref(), wrap.as_deref())
+        .map_err(|e| format!("Texture binding '{k}': {e}"))?;
+      out.push(alloy::TextureBinding { name: k.clone(), id, sampler });
+      continue;
+    }
+    let id = texture_id(t).ok_or_else(|| {
+      format!(
+        "Texture binding '{k}' must be a texture id (a non-negative integer) or {{ id, filter?, wrap? }}, got {}",
+        describe(t)
+      )
+    })?;
+    out.push(alloy::TextureBinding::new(k.clone(), id));
+  }
+  Ok(out)
+}
+
+// A texture registry id: a non-negative integral number. Anything else
+// (negative, fractional, non-finite, not a number) is None.
+fn texture_id(value: &PropValue) -> Option<u64> {
+  match value.as_f64() {
+    Some(n) if n >= 0.0 && n.fract() == 0.0 => Some(n as u64),
+    _ => None,
+  }
 }
 
 // JSX sends colors as a packed 0xRRGGBBAA u32 (parsed from a CSS string in JS).
@@ -384,10 +407,9 @@ pub(super) fn decode_color(value: &PropValue) -> Result<Color, String> {
   if let Some(s) = value.as_str() {
     return alloy::color::parse_css(s);
   }
-  let rgba = value
-    .as_f64()
-    .ok_or_else(|| format!("Color must be a number (packed 0xRRGGBBAA) or a CSS color string, got {}", describe(value)))?
-    as u32;
+  let rgba = value.as_f64().ok_or_else(|| {
+    format!("Color must be a number (packed 0xRRGGBBAA) or a CSS color string, got {}", describe(value))
+  })? as u32;
   Ok(packed_to_color(rgba))
 }
 
@@ -441,9 +463,8 @@ pub(super) fn decode_filter(value: &PropValue) -> Result<Option<FilterState>, St
   if value.is_null() {
     return Ok(None);
   }
-  let entries = value
-    .as_map()
-    .ok_or_else(|| format!("filter must be an object of filter amounts, got {}", describe(value)))?;
+  let entries =
+    value.as_map().ok_or_else(|| format!("filter must be an object of filter amounts, got {}", describe(value)))?;
   let mut f = FilterState::default();
   for (k, v) in entries {
     if v.is_null() {

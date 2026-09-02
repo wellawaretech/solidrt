@@ -486,14 +486,22 @@ export type ShaderSpec = {
 } & SamplerOptions
 
 // Shallow name->value equality for params/textures records; treats undefined
-// as the empty record. A param value may be a number or a flat number array
-// (typed uniforms), so arrays compare elementwise; a texture binding may be
-// an `{ id, filter?, wrap? }` override, compared field by field.
-type RecordValue = number | number[] | gpu.TextureBinding
+// as the empty record. A param value may be a number or a flat number list
+// (typed uniforms: a number[] or a Float32Array/Float64Array), so lists
+// compare elementwise; a texture binding may be an `{ id, filter?, wrap? }`
+// override, compared field by field.
+type RecordValue = number | number[] | Float32Array | Float64Array | gpu.TextureBinding
+function isNumberList(v: RecordValue | undefined): v is number[] | Float32Array | Float64Array {
+  return Array.isArray(v) || v instanceof Float32Array || v instanceof Float64Array
+}
 function sameValue(a: RecordValue | undefined, b: RecordValue | undefined): boolean {
   if (a === b) return true
-  if (Array.isArray(a) && Array.isArray(b)) return a.length === b.length && a.every((v, i) => v === b[i])
-  if (typeof a === "object" && typeof b === "object" && !Array.isArray(a) && !Array.isArray(b)) {
+  if (isNumberList(a) && isNumberList(b)) {
+    if (a.length !== b.length) return false
+    for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false
+    return true
+  }
+  if (typeof a === "object" && typeof b === "object" && !isNumberList(a) && !isNumberList(b)) {
     return a.id === b.id && a.filter === b.filter && a.wrap === b.wrap
   }
   return false

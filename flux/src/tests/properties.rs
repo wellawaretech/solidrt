@@ -134,6 +134,49 @@ fn params_reject_non_numeric_entries() {
   assert!(err.contains("'uVec'"), "{err}");
 }
 
+// The flux:gpu params arguments cross the same boundary as the prop (gpu.rs
+// collect_params marshals through to_prop_value and decodes here), so this
+// is the one rule for both: `{ uA: 1, uB: undefined }` marshals uB as Null,
+// which the decoder skips - conditional spreads write only what is set.
+#[test]
+fn undefined_param_entries_marshal_as_null_and_are_skipped() {
+  use std::cell::RefCell;
+  let rt = rquickjs::Runtime::new().expect("js runtime");
+  let context = rquickjs::Context::full(&rt).expect("js context");
+  context.with(|ctx| {
+    let v: rquickjs::Value = ctx.eval("({ uA: 1, uB: undefined, uC: [1, 2], uD: null })").expect("eval");
+    let value = crate::alloy_plugins::tree::to_prop_value(&v).expect("marshal");
+    let mut el = Element::from_kind("texture").expect("known kind");
+    apply_el(&mut el, "src", num(7.0)).expect("src applies");
+    let (tx, _rx) = channel();
+    let seen: RefCell<Vec<String>> = RefCell::new(Vec::new());
+    apply_jsx(&mut el, "params", &value, &tx, &|_, params| {
+      *seen.borrow_mut() = params.iter().map(|(k, _)| k.clone()).collect();
+      Ok(())
+    })
+    .expect("params applies");
+    assert_eq!(*seen.borrow(), vec!["uA".to_string(), "uC".to_string()]);
+  });
+}
+
+#[test]
+fn texture_bindings_require_non_negative_integer_ids() {
+  // One rule for the shader props and the flux:gpu textures arguments
+  // (gpu.rs collect_textures decodes here too): an id is a registry index,
+  // never negative or fractional, in both the bare and the { id } form. A
+  // null binding is skipped, like a null param.
+  let shader = |textures: PropValue| apply("view", "shader", map(&[("program", num(1.0)), ("textures", textures)]));
+  assert!(shader(map(&[("uTex", num(3.0))])).is_ok());
+  assert!(shader(map(&[("uTex", map(&[("id", num(3.0)), ("filter", text("nearest"))]))])).is_ok());
+  assert!(shader(map(&[("uTex", PropValue::Null), ("uLut", num(3.0))])).is_ok());
+  for bad in [num(-1.0), num(1.5), num(f64::NAN), text("3")] {
+    let err = shader(map(&[("uTex", bad.clone())])).unwrap_err();
+    assert!(err.contains("'uTex'"), "{err}");
+    let err = shader(map(&[("uTex", map(&[("id", bad)]))])).unwrap_err();
+    assert!(err.contains("'uTex'"), "{err}");
+  }
+}
+
 #[test]
 fn colors_and_gradients() {
   // Colors arrive as raw CSS strings (parsed runtime-side) or as the packed
@@ -680,13 +723,8 @@ fn line_dash_offset_applies_and_transitions() {
 
 #[test]
 fn shadow_decodes_and_validates() {
-  let good = map(&[
-    ("x", num(2.0)),
-    ("y", num(4.0)),
-    ("blur", num(12.0)),
-    ("spread", num(2.0)),
-    ("color", text("#00000066")),
-  ]);
+  let good =
+    map(&[("x", num(2.0)), ("y", num(4.0)), ("blur", num(12.0)), ("spread", num(2.0)), ("color", text("#00000066"))]);
   assert_eq!(apply("rect", "shadow", good.clone()), Ok(Damage::Paint));
   assert_eq!(apply("oval", "shadow", good.clone()), Ok(Damage::Paint));
   // Null clears.
