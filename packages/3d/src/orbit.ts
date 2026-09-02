@@ -54,7 +54,7 @@
 import { createSignal } from "@solidjs/signals"
 import { createTransform } from "@solidrt/core"
 import type { PointerEvent } from "@solidrt/core"
-import type { CameraUpdate } from "./scene.ts"
+import type { CameraUpdate } from "./camera.ts"
 import type { Vec3 } from "./math.ts"
 
 // Baseline sensitivities at rotateSpeed/zoomSpeed 1. With a `viewport` the

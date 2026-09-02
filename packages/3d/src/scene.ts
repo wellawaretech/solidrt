@@ -29,24 +29,30 @@
 // subtrees that moved since they last looked.
 //
 // This file is the scene half: createScene and everything one scene
-// instance owns (targets, views, shadows, sync, picking, pointer events).
-// The node layer it renders - the graph, transforms, meshes, lights -
-// lives in node.ts, mesh.ts and light.ts, talking back through the
-// SceneHooks seam (node.ts).
+// instance owns (targets, views, sync, picking). The node layer it
+// renders - the graph, transforms, meshes, lights - lives in node.ts,
+// mesh.ts and light.ts, talking back through the SceneHooks seam
+// (node.ts); the camera record is camera.ts, and the per-scene shadow
+// and pointer subsystems are scene-shadows.ts / scene-pointer.ts,
+// built here with the scene's seams as their deps.
 
-import { addDraw, createDrawTarget, depthTexture, destroyProgram, destroyRenderPipeline, destroyTexture, limits, removeDraw, setDrawBuffers, setDrawOrder, setDrawParams, setTargetParams, setTargetRect, setTargetSize, setTargetTextures } from "@solidrt/core/gpu"
+import { addDraw, createDrawTarget, depthTexture, destroyProgram, destroyRenderPipeline, destroyTexture, removeDraw, setDrawBuffers, setDrawOrder, setDrawParams, setTargetParams, setTargetRect, setTargetSize, setTargetTextures } from "@solidrt/core/gpu"
 import * as spatial from "flux:spatial"
 import type { NodeId } from "flux:spatial"
 import type { DrawId, FilterMode, ProgramId, RenderPipelineId, ShaderParams, TextureId, WrapMode } from "@solidrt/core/gpu"
 import { getOwner, onCleanup } from "@solidrt/core"
 import type { PointerEvent as ElementPointerEvent } from "@solidrt/core"
-import { cascadeSplit, copy, frustumSliceSphere, identity, lookAt as lookAtMatrix, mat4, multiply, orthographic, perspective, snapToGrid, transformPoint, transformVector } from "./math.ts"
+import { copy, mat4, transformPoint } from "./math.ts"
 import type { Mat4, Vec3, Vec4 } from "./math.ts"
 import { MAX_LIGHTS, MAX_SHADOW_MAPS } from "./glsl.ts"
+import { cameraParams, cameraState, ensureCamera, makeCamera, updateCamera } from "./camera.ts"
+import type { Camera, CameraState, CameraUpdate } from "./camera.ts"
+import { makeShadowSystem, shadowPlaceholder } from "./scene-shadows.ts"
+import { makePointerInput } from "./scene-pointer.ts"
 import { layoutKey, validateGeometry } from "./geometry.ts"
 import type { Geometry } from "./geometry.ts"
 import { acquireGeometryBuffers, releaseGeometryBuffers } from "./geometry-gpu.ts"
-import { backgroundPipeline, missingAttributes, shadowDepthMaterial } from "./material.ts"
+import { backgroundPipeline, missingAttributes } from "./material.ts"
 import type { Material } from "./material.ts"
 import { orderEntries } from "./order.ts"
 import { fillTransform, leaveScene, makeNode, worldInto } from "./node.ts"
@@ -57,13 +63,6 @@ import type { CastingLight, Light } from "./light.ts"
 
 const IDENTITY = mat4()
 const RESOLVED = Promise.resolve()
-// How a cascaded light slices the camera range: 0 uniform, 1
-// logarithmic, halfway the "practical" split (near slices small, far
-// ones not starved).
-const CASCADE_SPLIT_LAMBDA = 0.5
-// |y| of a light direction above this is straight up or down, where
-// world up cannot serve as the shadow map's roll reference.
-const VERTICAL_LIGHT = 0.99
 
 // raycast()'s FFI carriers; values are copied at the boundary, so one of
 // each serves every call.
@@ -122,37 +121,6 @@ export type SceneHandlers = {
   onPointerMove(event: ElementPointerEvent): void
   onPointerUp(event: ElementPointerEvent): void
   onPointerLeave(event: ElementPointerEvent): void
-}
-
-/** An orthographic projection's view-space extents, in world units (the
- * same box at every depth). */
-export type OrthoExtent = { left: number; right: number; top: number; bottom: number }
-
-/** A camera snapshot (Scene/View `camera()`): CameraUpdate's fields, all
- * present. Arrays are copies of the internal state. */
-export type CameraState = {
-  fov: number
-  near: number
-  far: number
-  position: Vec3
-  target: Vec3
-  up: Vec3
-  ortho: OrthoExtent | null
-}
-
-export type CameraUpdate = {
-  /** Vertical field of view in DEGREES (default 60). */
-  fov?: number
-  near?: number
-  far?: number
-  position?: Vec3
-  target?: Vec3
-  up?: Vec3
-  /** An orthographic projection with these extents (`fov` is then
-   * ignored); null returns to perspective. Three's OrthographicCamera as
-   * a camera option: a top-down map, an isometric view, a shadow-map
-   * light. */
-  ortho?: OrthoExtent | null
 }
 
 /**
@@ -486,91 +454,6 @@ export type Scene = {
   dispose(): void
 }
 
-// A camera: the scene's own and one per view, the same state and the same
-// one-shared-write contract. `dirty` = the matrices need recomputing (a
-// setCamera or a resize), `pending` = the GPU write is owed to the next
-// sync. The recompute is split from the sync so project()/viewProj() see a
-// fresh matrix right after setCamera, before the microtask runs.
-type Camera = {
-  fov: number
-  near: number
-  far: number
-  eye: Vec3
-  target: Vec3
-  up: Vec3
-  ortho: OrthoExtent | null
-  dirty: boolean
-  pending: boolean
-  proj: Mat4
-  view: Mat4
-  viewProj: Mat4
-}
-
-function makeCamera(): Camera {
-  return {
-    fov: 60,
-    near: 0.1,
-    far: 100,
-    eye: [0, 0, 3],
-    target: [0, 0, 0],
-    up: [0, 1, 0],
-    ortho: null,
-    dirty: true,
-    pending: false,
-    proj: mat4(),
-    view: mat4(),
-    viewProj: mat4(),
-  }
-}
-
-function cameraState(cam: Camera): CameraState {
-  return {
-    fov: cam.fov,
-    near: cam.near,
-    far: cam.far,
-    position: [cam.eye[0], cam.eye[1], cam.eye[2]],
-    target: [cam.target[0], cam.target[1], cam.target[2]],
-    up: [cam.up[0], cam.up[1], cam.up[2]],
-    ortho: cam.ortho === null ? null : { left: cam.ortho.left, right: cam.ortho.right, top: cam.ortho.top, bottom: cam.ortho.bottom },
-  }
-}
-
-function updateCamera(cam: Camera, update: CameraUpdate): void {
-  if (update.fov !== undefined) cam.fov = update.fov
-  if (update.near !== undefined) cam.near = update.near
-  if (update.far !== undefined) cam.far = update.far
-  if (update.position) cam.eye = [update.position[0], update.position[1], update.position[2]]
-  if (update.target) cam.target = [update.target[0], update.target[1], update.target[2]]
-  if (update.up) cam.up = [update.up[0], update.up[1], update.up[2]]
-  if (update.ortho !== undefined) {
-    let o = update.ortho
-    cam.ortho = o === null ? null : { left: o.left, right: o.right, top: o.top, bottom: o.bottom }
-  }
-  cam.dirty = true
-}
-
-function ensureCamera(cam: Camera, width: number, height: number): void {
-  if (!cam.dirty) return
-  cam.dirty = false
-  cam.pending = true
-  let o = cam.ortho
-  if (o === null) perspective(cam.proj, (cam.fov * Math.PI) / 180, width / height, cam.near, cam.far)
-  else orthographic(cam.proj, o.left, o.right, o.top, o.bottom, cam.near, cam.far)
-  lookAtMatrix(cam.view, cam.eye, cam.target, cam.up)
-  multiply(cam.viewProj, cam.proj, cam.view)
-}
-
-// The camera is target state: one shared write, whatever the target holds.
-// Entries are untouched - uModel is camera-independent, and uCamPos is
-// stored even when no current material declares it. The camera basis rides
-// along: the view matrix's first two rows are the camera's world-space
-// right and up (no clip flip - that lives in the projection), so a
-// billboard needs no reconstruction from uViewProj.
-function cameraParams(cam: Camera): ShaderParams {
-  let v = cam.view
-  return { uViewProj: cam.viewProj, uCamPos: cam.eye, uCamRight: [v[0], v[4], v[8]], uCamUp: [v[1], v[5], v[9]] }
-}
-
 // A material reads attributes by name; the geometry's layout must carry
 // every one it declares (the pipeline is built for that layout, so a
 // missing channel would have no home) - an error, like the rest of the
@@ -593,20 +476,6 @@ function entrySeed(material: Material, params: ShaderParams | null): ShaderParam
   return material.normalMatrix
     ? { uModel: IDENTITY, uNormal: IDENTITY, ...material.params, ...params }
     : { uModel: IDENTITY, ...material.params, ...params }
-}
-
-// The uShadowAtlas binding while nothing casts: the depth texture of a
-// one-texel draw target that renders nothing (its clear leaves depth 1,
-// never shadowed), shared by every scene for the app. It must be a real
-// depth texture - uShadowAtlas is a sampler2DShadow, and the engine
-// refuses a color texture behind a comparison sampler.
-let placeholder: TextureId | undefined
-
-function shadowPlaceholder(): TextureId {
-  if (placeholder === undefined) {
-    placeholder = createDrawTarget(1, 1, null, { depth: "texture", autoFree: false, label: "scene-shadow-none" })
-  }
-  return depthTexture(placeholder)
 }
 
 /**
@@ -636,15 +505,12 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
   let scheduled = false
 
   // Picking: the index and the narrowphase live in the spatial core; this
-  // map turns a hit's core node back into the mesh. The pointer
-  // bookkeeping behind scene.handlers follows.
+  // map turns a hit's core node back into the mesh.
   let byNode = new Map<NodeId, Mesh>()
   // Nodes whose transform changed since the last sync (deduped by the
   // _moved flag): what the light and transparent-order bookkeeping
   // reacts to, since which meshes moved is the core's knowledge now.
   let moved: SceneNode[] = []
-  let capture = new Map<number, Mesh>()
-  let hover = new Map<number, Mesh>()
 
   // Live meshes (those holding a draw entry) in add order; the background
   // entry never joins this list. Draw order is derived from it by
@@ -734,12 +600,11 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     let first: number[] = new Array(MAX_LIGHTS).fill(0)
     let counts: number[] = new Array(MAX_LIGHTS).fill(0)
     let rects: number[] = []
-    let atlas = shadowAtlas
+    let atlas = shadowSys.atlas()
     let maps: Record<string, TextureId> = { uShadowAtlas: atlas !== null ? depthTexture(atlas.texture) : shadowPlaceholder() }
-    forEachShadowSlot((slot, i, shadow, c) => {
+    shadowSys.forEachShadowSlot((slot, i, c, r) => {
       if (c === 0) first[i] = slot
       counts[i] = counts[i]! + 1
-      let r = shadow.rects[c]!
       let a = atlas!
       rects.push(r.x / a.width, r.y / a.height, r.width / a.width, r.height / a.height)
     })
@@ -763,7 +628,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     })
     // A slot change (a light attached, detached or reordered) moves every
     // matrix too: rewrite the whole array once.
-    shadowMatricesDirty = true
+    shadowSys.markMatricesDirty()
   }
   let orderDirty = false
   // The order last handed to the engine: a resort that lands on the same
@@ -872,130 +737,6 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
   let views: ViewRecord[] = []
   // Every name scene.setParams has merged so far, replayed on a new view.
   let sceneParams: ShaderParams = {}
-  // The shadows, one per casting directional light: the internal views
-  // rendering its maps (tiles of the shadow atlas, depth override, casting
-  // meshes only; one for a box light, `shadow.cascades` for a cascaded
-  // one, tightest first) and `rects`, each tile's place in the atlas in
-  // texels. `lastWorld` is the light's world matrix the shadow cameras
-  // were last placed from; `dirty` forces a re-place (options changed).
-  type ShadowRect = { x: number; y: number; width: number; height: number }
-  type Shadow = { light: CastingLight; views: ViewRecord[]; lastWorld: Mat4; dirty: boolean; rects: ShadowRect[] }
-  let shadows = new Map<CastingLight, Shadow>()
-  // The map slots: every casting light's maps in light order, a light's
-  // cascades consecutive and tightest first. The ONE enumeration the
-  // receiving side is dealt by - rects and first/count in writeLights,
-  // matrices in sync - so uShadowFirst/uShadowCount agree with both.
-  // `i` is the light's LIST index (its uShadow*[i] slot): every
-  // non-hemisphere light counts, casting or not, so it matches the lit
-  // loop's index.
-  let forEachShadowSlot = (fn: (slot: number, i: number, shadow: Shadow, cascade: number) => void): void => {
-    let slot = 0
-    let i = 0
-    for (let light of lights) {
-      if (light.type === "hemisphere") continue
-      if (light.type !== "point") {
-        let shadow = shadows.get(light)
-        if (shadow !== undefined) for (let c = 0; c < shadow.views.length; c++) fn(slot++, i, shadow, c)
-      }
-      i++
-    }
-  }
-  // The shadow atlas: ONE depth-texture target every casting light's map
-  // is a tile of, so N maps render as one pass and receivers sample one
-  // sampler through per-map rects (uShadowRect). Created with the first
-  // caster, destroyed with the last. Laid out as a grid of cells the
-  // largest mapSize wide, scaled down uniformly when that would exceed
-  // the device's texture size: tile size follows the budget.
-  let shadowAtlas: { texture: TextureId; width: number; height: number } | null = null
-  let shadowLayout = (count: number, maxSize: number) => {
-    let cols = Math.ceil(Math.sqrt(count))
-    let rows = Math.ceil(count / cols)
-    let scale = Math.min(1, limits.maxTextureSize / (cols * maxSize), limits.maxTextureSize / (rows * maxSize))
-    let cell = Math.max(1, Math.floor(maxSize * scale))
-    return { cols, cell, scale, width: cols * cell, height: rows * cell }
-  }
-  // Place every shadow tile for the current caster set plus `adding` (not
-  // yet in `shadows`; its rects are returned for the view creates), in
-  // light order, a light's cascades consecutive. Sizes the atlas, moves
-  // tiles whose place changed, and drops the atlas when nothing casts.
-  // The rects reach receivers through the next light rewrite.
-  // A caster's tile count: a directional light brings its cascades, a
-  // spot exactly one map.
-  let shadowTiles = (l: CastingLight): number => (l.type === "directional" ? l.shadow.cascades : 1)
-  let placeShadows = (adding: CastingLight | null): ShadowRect[] | null => {
-    let casters: CastingLight[] = []
-    for (let l of lights) {
-      if ((l.type === "directional" || l.type === "spot") && (shadows.has(l) || l === adding)) casters.push(l)
-    }
-    if (adding !== null && !casters.includes(adding)) casters.push(adding)
-    lightsDirty = true
-    if (casters.length === 0) {
-      if (shadowAtlas !== null) {
-        destroyTexture(shadowAtlas.texture)
-        shadowAtlas = null
-      }
-      return null
-    }
-    let maxSize = 1
-    let tiles = 0
-    for (let l of casters) {
-      maxSize = Math.max(maxSize, l.shadow.mapSize)
-      tiles += shadowTiles(l)
-    }
-    if (tiles > MAX_SHADOW_MAPS) {
-      throw new Error(
-        "The scene's shadow set is full: " + tiles + " maps over the " + MAX_SHADOW_MAPS +
-          "-slot budget (a cascaded light claims shadow.cascades slots)",
-      )
-    }
-    let lay = shadowLayout(tiles, maxSize)
-    if (shadowAtlas === null) {
-      shadowAtlas = {
-        texture: createDrawTarget(lay.width, lay.height, null, {
-          depth: "texture",
-          clearColor: [1, 1, 1, 1],
-          label: (opts?.label ?? "scene") + "-shadow-atlas",
-          autoFree: false,
-        }),
-        width: lay.width,
-        height: lay.height,
-      }
-    } else if (shadowAtlas.width !== lay.width || shadowAtlas.height !== lay.height) {
-      setTargetSize(shadowAtlas.texture, lay.width, lay.height)
-      shadowAtlas.width = lay.width
-      shadowAtlas.height = lay.height
-    }
-    let placed: ShadowRect[] | null = null
-    let k = 0
-    for (let l of casters) {
-      let size = Math.max(1, Math.floor(l.shadow.mapSize * lay.scale))
-      let shadow = shadows.get(l)
-      for (let c = 0; c < shadowTiles(l); c++, k++) {
-        let rect: ShadowRect = { x: (k % lay.cols) * lay.cell, y: Math.floor(k / lay.cols) * lay.cell, width: size, height: size }
-        if (shadow === undefined) {
-          if (placed === null) placed = []
-          placed.push(rect)
-          continue
-        }
-        let r = shadow.rects[c]!
-        if (r.x === rect.x && r.y === rect.y && r.width === rect.width && r.height === rect.height) continue
-        shadow.rects[c] = rect
-        let view = shadow.views[c]!
-        setTargetRect(view.texture, rect)
-        view.width = rect.width
-        view.height = rect.height
-        // A tile's texel size moved: the cascade fit snaps to it.
-        shadow.dirty = true
-      }
-    }
-    return placed
-  }
-  let shadowDir: Vec3 = [0, 0, 0]
-  // uShadowMatrix is one array param (the engine writes whole arrays), so
-  // any shadow camera move rewrites all MAX_SHADOW_MAPS matrices, identity
-  // in the slots that are not dealt.
-  let shadowMatrices: number[] = new Array(MAX_SHADOW_MAPS * 16).fill(0)
-  let shadowMatricesDirty = false
   // Every target a receiving material can draw into: the scene's and each
   // view's but the shadow views (binding a target's own depth into it
   // would be same-pass feedback).
@@ -1155,126 +896,22 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     hooks._schedule()
     return v
   }
-  // A shadow's views: one square tile of the shadow atlas per map drawing
-  // the casting meshes with the depth override from that map's frustum.
-  // The light rewrite writes the rects in the light's slots on every
-  // receiving target.
-  let createShadow = (light: CastingLight) => {
-    let rects = placeShadows(light)
-    if (rects === null || shadowAtlas === null) return
-    let atlas = shadowAtlas
-    let views = rects.map(rect =>
-      makeView(
-        {
-          width: rect.width,
-          height: rect.height,
-          into: atlas.texture,
-          x: rect.x,
-          y: rect.y,
-          overrideMaterial: shadowDepthMaterial(),
-          clearColor: [1, 1, 1, 1],
-          label: (opts?.label ?? "scene") + "-shadow",
-        },
-        m => m.castShadow,
-      ),
-    )
-    shadows.set(light, { light, views, lastWorld: mat4(), dirty: true, rects })
-    lightsDirty = true
-  }
-  let destroyShadow = (light: CastingLight) => {
-    let shadow = shadows.get(light)
-    if (shadow === undefined) return
-    shadows.delete(light)
-    for (let v of shadow.views) disposeView(v)
-    placeShadows(null)
-    lightsDirty = true
-    hooks._schedule()
-  }
-  // Place a shadow's cameras from its light's world matrix. A box light:
-  // at its world position, looking along its world direction, the light
-  // frustum as the orthographic extents. A spot light: the same pose
-  // with a perspective camera, fov = its cone. Compared against the
-  // matrix it was last placed from, so a scene animating elsewhere
-  // rewrites nothing here. A cascaded light also follows the scene
-  // camera (`cameraMoved`).
-  // The spot shadow camera's far plane when the light has no `distance`
-  // cutoff - the directional box default.
-  const SPOT_SHADOW_FAR = 500
-  let cascadeScratch = mat4()
-  let cascadeCenter: Vec3 = [0, 0, 0]
-  let placeShadowCamera = (shadow: Shadow, cameraMoved: boolean) => {
-    let light = shadow.light
-    let m = worldInto(worldScratch, light)
-    let cascaded = shadow.views.length > 1
-    if (!shadow.dirty && !(cascaded && cameraMoved) && m.every((x, i) => x === shadow.lastWorld[i])) return
-    shadow.dirty = false
-    copy(shadow.lastWorld, m)
-    transformVector(shadowDir, m, light.direction)
-    let len = Math.hypot(shadowDir[0], shadowDir[1], shadowDir[2]) || 1
-    let d: Vec3 = [shadowDir[0] / len, shadowDir[1] / len, shadowDir[2] / len]
-    // A sun straight down is the common case and the degenerate one for
-    // world up: roll about z then (the map's orientation is invisible).
-    let up: Vec3 = Math.abs(d[1]) > VERTICAL_LIGHT ? [0, 0, 1] : [0, 1, 0]
-    if (light.type === "spot") {
-      // The cone's circular footprint inscribes exactly in the square
-      // map at fov = 2 * angle (aspect 1; both in degrees); everything
-      // past the cone gets no light, so no shadow is lost to the
-      // corners' margin.
-      updateCamera(shadow.views[0]!.camera, {
-        position: [m[12], m[13], m[14]],
-        target: [m[12] + d[0], m[13] + d[1], m[14] + d[2]],
-        up,
-        fov: light.angle * 2,
-        near: light.shadow.near,
-        far: light.distance > 0 ? light.distance : SPOT_SHADOW_FAR,
-      })
-      return
-    }
-    if (!cascaded) {
-      let c = light.shadow.camera
-      updateCamera(shadow.views[0]!.camera, {
-        position: [m[12], m[13], m[14]],
-        target: [m[12] + d[0], m[13] + d[1], m[14] + d[2]],
-        up,
-        ortho: { left: c.left, right: c.right, top: c.top, bottom: c.bottom },
-        near: c.near,
-        far: c.far,
-      })
-      return
-    }
-    // Cascades: the scene camera's range near..far (far capped by
-    // shadow.distance) sliced by cascadeSplit, each slice's bounding
-    // sphere (frustumSliceSphere) as an orthographic box looking along
-    // the light, its centre snapped to the map's texel grid in light
-    // space (snapToGrid) so the shadow edges do not swim as the camera
-    // moves. The box reaches back toward the light by the whole range,
-    // so a caster outside the slice still casts into it.
-    let n = shadow.views.length
-    let near = camera.near
-    let far = Math.min(camera.far, light.shadow.distance ?? Infinity)
-    if (!(far > near)) far = near + 1
-    // The light's rotation only: rows are its right, up and back axes.
-    let basis = lookAtMatrix(cascadeScratch, [0, 0, 0], d, up)
-    let aspect = width / height
-    let zn = near
-    for (let c = 0; c < n; c++) {
-      let zf = cascadeSplit(near, far, c, n, CASCADE_SPLIT_LAMBDA)
-      let radius = frustumSliceSphere(cascadeCenter, camera, aspect, zn, zf)
-      zn = zf
-      let view = shadow.views[c]!
-      // A texel is 2r / mapSize world units.
-      snapToGrid(cascadeCenter, cascadeCenter, basis, (2 * radius) / view.width)
-      let back = radius + far
-      updateCamera(view.camera, {
-        position: [cascadeCenter[0] - d[0] * back, cascadeCenter[1] - d[1] * back, cascadeCenter[2] - d[2] * back],
-        target: cascadeCenter,
-        up,
-        ortho: { left: -radius, right: radius, top: radius, bottom: -radius },
-        near: 0,
-        far: back + radius,
-      })
-    }
-  }
+  // The shadow subsystem: the atlas, the per-caster shadow views (made
+  // through makeView above) and their map cameras. The deps close over
+  // this scene instance; writeLights reads the dealt slots back through
+  // forEachShadowSlot/atlas and sync drives placeCameras/flushMatrices.
+  let shadowSys = makeShadowSystem({
+    lights,
+    camera,
+    targetSize: () => ({ width, height }),
+    label: opts?.label ?? "scene",
+    makeView,
+    disposeView,
+    markLightsDirty: () => {
+      lightsDirty = true
+    },
+    schedule: () => hooks._schedule(),
+  })
 
   let sync = () => {
     scheduled = false
@@ -1286,14 +923,14 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       setTargetParams(texture, cameraParams(camera))
       if (transparentCount > 1) orderDirty = true
     }
-    for (let shadow of shadows.values()) placeShadowCamera(shadow, cameraMoved)
+    shadowSys.placeCameras(cameraMoved)
     for (let v of views) {
       ensureCamera(v.camera, v.width, v.height)
       if (v.camera.pending) {
         v.camera.pending = false
         setTargetParams(v.texture, cameraParams(v.camera))
         if (transparentCount > 1) v.orderDirty = true
-        if (v.shadowFilter !== null) shadowMatricesDirty = true
+        if (v.shadowFilter !== null) shadowSys.markMatricesDirty()
       }
     }
     // Light bookkeeping first, so a fresh direction-slot bind is seeded
@@ -1301,18 +938,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     if (lightsDirty) writeLights()
     // The matrices that render the maps are the ones receivers look up
     // with: one array to every receiving target per shadow-camera move.
-    if (shadowMatricesDirty) {
-      shadowMatricesDirty = false
-      let dealt = 0
-      forEachShadowSlot((slot, _i, shadow, c) => {
-        let m = shadow.views[c]!.camera.viewProj
-        for (let k = 0; k < 16; k++) shadowMatrices[slot * 16 + k] = m[k]!
-        dealt = slot + 1
-      })
-      for (let slot = dealt; slot < MAX_SHADOW_MAPS; slot++) for (let k = 0; k < 16; k++) shadowMatrices[slot * 16 + k] = IDENTITY[k]!
-      let params: ShaderParams = { uShadowMatrix: shadowMatrices }
-      receivingTargets(t => setTargetParams(t, params))
-    }
+    shadowSys.flushMatrices(params => receivingTargets(t => setTargetParams(t, params)))
     // The core recomputes the moved subtrees and writes every entry's
     // uModel/uNormal, visibility switch and direction slots.
     spatial.flush()
@@ -1347,38 +973,18 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       }
       lights.push(light)
       lightsDirty = true
-      if ((light.type === "directional" || light.type === "spot") && light.castShadow) createShadow(light)
+      if ((light.type === "directional" || light.type === "spot") && light.castShadow) shadowSys.createShadow(light)
     },
     _detachLight(light) {
       let i = lights.indexOf(light)
       if (i >= 0) lights.splice(i, 1)
       lightsDirty = true
-      if (light.type === "directional" || light.type === "spot") destroyShadow(light)
+      if (light.type === "directional" || light.type === "spot") shadowSys.destroyShadow(light)
       hooks._schedule()
     },
     _shadowChanged(light) {
       if (disposed) return
-      let shadow = shadows.get(light)
-      if (shadow !== undefined) {
-        if (!light.castShadow) {
-          destroyShadow(light)
-          return
-        }
-        // A cascade count change is a different view set: rebuild it. A
-        // mapSize change re-places every tile (the grid cell follows the
-        // largest map).
-        if (shadow.views.length !== shadowTiles(light)) {
-          destroyShadow(light)
-          createShadow(light)
-          return
-        }
-        placeShadows(null)
-        shadow.dirty = true
-        lightsDirty = true
-        hooks._schedule()
-      } else if (light.castShadow) {
-        createShadow(light)
-      }
+      shadowSys.shadowChanged(light)
     },
     _setCast(mesh) {
       if (mesh._buffers === null || disposed) return
@@ -1522,126 +1128,13 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
   lightsDirty = true
   hooks._schedule()
 
-  // --- Pointer event dispatch (behind scene.handlers) ---
-
-  type BubbleName = "onPointerDown" | "onPointerMove" | "onPointerUp"
-  type InternalEvent = ScenePointerEvent & { _stopped: boolean }
-
-  let makeEvent = (e: ElementPointerEvent, mesh: Mesh, x: number, y: number, point: Vec3 | null, distance: number | null): InternalEvent => {
-    let event: InternalEvent = {
-      mesh,
-      currentTarget: mesh,
-      point,
-      distance,
-      x,
-      y,
-      pointerId: e.pointerId,
-      pointerType: e.pointerType,
-      button: e.button,
-      shiftKey: e.shiftKey,
-      ctrlKey: e.ctrlKey,
-      altKey: e.altKey,
-      metaKey: e.metaKey,
-      _stopped: false,
-      stopPropagation() {
-        event._stopped = true
-      },
-    }
-    return event
-  }
-
-  let bubble = (name: BubbleName, event: InternalEvent): void => {
-    for (let n: SceneNode | null = event.mesh; n !== null && !event._stopped; n = n.parent) {
-      let handler = n[name]
-      if (handler) {
-        event.currentTarget = n
-        handler(event)
-      }
-    }
-  }
-
-  // The captured mesh's own hit, if the ray still strikes it.
-  let hitOn = (mesh: Mesh, x: number, y: number): Hit | null => {
-    for (let h of scene.pick(x, y)) if (h.mesh === mesh) return h
-    return null
-  }
-
-  // localX/localY arrive in the leaf's LAYOUT frame (the hit test undoes
-  // every transform above it, design-size fits included), so a leaf laid out at
-  // the target size - the built-in <Scene> leaf, a d-texture at natural
-  // size - is already in scene pixels. Only a leaf deliberately laid out at
-  // a DIFFERENT size (the supersampling pattern) needs the ratio, and only
-  // the app knows that layout: handlersFor takes it.
-  let makeHandlers = (layout: (() => { width: number; height: number }) | null): SceneHandlers => {
-    let eventX = 0
-    let eventY = 0
-    let toScene = (e: ElementPointerEvent): void => {
-      if (layout === null) {
-        eventX = e.localX
-        eventY = e.localY
-        return
-      }
-      let l = layout()
-      eventX = e.localX * (l.width > 0 ? width / l.width : 1)
-      eventY = e.localY * (l.height > 0 ? height / l.height : 1)
-    }
-    return {
-      onPointerDown(e) {
-        toScene(e)
-        let hit = scene.pick(eventX, eventY)[0]
-        if (hit === undefined) return
-        capture.set(e.pointerId, hit.mesh)
-        bubble("onPointerDown", makeEvent(e, hit.mesh, eventX, eventY, hit.point, hit.distance))
-      },
-      onPointerMove(e) {
-        toScene(e)
-        let captured = capture.get(e.pointerId)
-        if (captured !== undefined) {
-          let hit = hitOn(captured, eventX, eventY)
-          bubble("onPointerMove", makeEvent(e, captured, eventX, eventY, hit ? hit.point : null, hit ? hit.distance : null))
-          return
-        }
-        let hit = scene.pick(eventX, eventY)[0]
-        let prev = hover.get(e.pointerId)
-        if (prev !== hit?.mesh) {
-          if (prev !== undefined) {
-            hover.delete(e.pointerId)
-            prev.onPointerLeave?.(makeEvent(e, prev, eventX, eventY, null, null))
-          }
-          if (hit !== undefined) {
-            hover.set(e.pointerId, hit.mesh)
-            hit.mesh.onPointerEnter?.(makeEvent(e, hit.mesh, eventX, eventY, hit.point, hit.distance))
-          }
-        }
-        if (hit !== undefined) {
-          bubble("onPointerMove", makeEvent(e, hit.mesh, eventX, eventY, hit.point, hit.distance))
-        }
-      },
-      onPointerUp(e) {
-        toScene(e)
-        let captured = capture.get(e.pointerId)
-        if (captured !== undefined) {
-          capture.delete(e.pointerId)
-          let hit = hitOn(captured, eventX, eventY)
-          bubble("onPointerUp", makeEvent(e, captured, eventX, eventY, hit ? hit.point : null, hit ? hit.distance : null))
-          return
-        }
-        let hit = scene.pick(eventX, eventY)[0]
-        if (hit !== undefined) {
-          bubble("onPointerUp", makeEvent(e, hit.mesh, eventX, eventY, hit.point, hit.distance))
-        }
-      },
-      onPointerLeave(e) {
-        let prev = hover.get(e.pointerId)
-        if (prev !== undefined) {
-          hover.delete(e.pointerId)
-          toScene(e)
-          prev.onPointerLeave?.(makeEvent(e, prev, eventX, eventY, null, null))
-        }
-      },
-    }
-  }
-  let handlers = makeHandlers(null)
+  // Pointer dispatch (scene.handlers): capture/hover bookkeeping and the
+  // bubble walk live in scene-pointer.ts; all it needs of the scene is
+  // pick() and the target size.
+  let pointer = makePointerInput({
+    pick: (x, y) => scene.pick(x, y),
+    targetSize: () => ({ width, height }),
+  })
 
   let scene: Scene = {
     texture,
@@ -1783,10 +1276,8 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       }
       return hits
     },
-    handlers,
-    handlersFor(layout) {
-      return makeHandlers(layout)
-    },
+    handlers: pointer.handlers,
+    handlersFor: pointer.handlersFor,
     createView(vopts) {
       if (disposed) throw new Error("createView: the scene is disposed")
       let v = makeView(vopts, null)
@@ -1852,12 +1343,8 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       // targets still exist; afterwards their groups are gone.
       spatial.flush()
       destroyTexture(texture)
-      shadows.clear()
       for (let v of views.slice()) disposeView(v)
-      if (shadowAtlas !== null) {
-        destroyTexture(shadowAtlas.texture)
-        shadowAtlas = null
-      }
+      shadowSys.dispose()
       if (background !== null) {
         // The entry died with the target; the pipeline and program are the
         // scene's own (unlike shared material pipelines), so they go too.

@@ -38,7 +38,8 @@ import type {
   SpotShadowOptions,
 } from "./light.ts"
 import { createScene } from "./scene.ts"
-import type { CameraUpdate, FogOptions, Scene as SceneHandle } from "./scene.ts"
+import type { CameraUpdate } from "./camera.ts"
+import type { FogOptions, Scene as SceneHandle } from "./scene.ts"
 import type { ShaderParams } from "@solidrt/core/gpu"
 import type { NodeTransition } from "flux:spatial"
 import type { Geometry } from "./geometry.ts"
