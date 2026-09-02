@@ -145,4 +145,9 @@ the rotation swell divide-out in `<TileLayer>`'s measurement (the AABB of a
 rotated world view is not a resolution factor).
 
 Stage 3 - `@solidrt/3d` getting the same knob and default - did not land
-with this and moved to ideas.md when this item closed.
+with this and moved to ideas.md when this item closed. Resolved 2026-09-02:
+`<Scene>` fill-by-default renders the target at the leaf's on-screen
+device-pixel size (the auto default, decided once with the same
+getBoundingBoxViewport x displayScale measurement the 2d pick uses); the
+explicit knob became the `resolution` multiplier shaped in
+[scene-fill-extensions](../backlog/scene-fill-extensions.md).

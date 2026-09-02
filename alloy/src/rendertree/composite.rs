@@ -77,7 +77,7 @@ pub fn paint_phase(
 
   // The walk borrows the tree for the BuildContext's lifetime, so it is
   // scoped: only plain stats leave the block.
-  let (mut stats, damage) = {
+  let (mut stats, damage, regions) = {
     let mut ctx = BuildContext::new(platform, alloy);
     ctx.size = size;
     // The root's boxes come from its layout like every other node's (the hit
@@ -112,8 +112,11 @@ pub fn paint_phase(
       snapshots_rasterized: ctx.snapshots_rasterized,
       damage_px: 0.0,
     };
-    (stats, damage)
+    let regions = std::mem::take(&mut ctx.backdrop_regions);
+    (stats, damage, regions)
   };
+  let damage = expand_damage_for_backdrops(damage, &regions);
+  tree.set_backdrop_regions(regions);
   let frame_damage = clamp_damage(damage, damage_full, window_rect);
   tree.set_frame_damage(frame_damage);
   stats.damage_px = frame_damage.area(size);
@@ -137,6 +140,42 @@ pub fn paint_phase(
     alloy.reclaim_destroyed(&tree.referenced_texture_ids());
   }
   stats
+}
+
+// Partial repaint: a backdrop panel re-filters what lies beneath it, so a
+// change within the blur's reach of a panel changes the panel's own pixels
+// too - the repaint rect must grow to cover the whole panel, or the blit
+// leaves its edge stale. An unmappable region (non-2D transform) makes any
+// damage full-frame rather than risking that. Iterates because one panel's
+// growth can reach another; bounded by the region count.
+pub(crate) fn expand_damage_for_backdrops(
+  damage: cull::Extent,
+  regions: &[crate::rendertree::BackdropRegion],
+) -> cull::Extent {
+  if regions.is_empty() {
+    return damage;
+  }
+  let mut current = match damage {
+    cull::Extent::Bounded(r) => r,
+    other => return other,
+  };
+  if regions.iter().any(Option::is_none) {
+    return cull::Extent::Unbounded;
+  }
+  for _ in 0..regions.len() {
+    let mut grew = false;
+    for entry in regions {
+      let Some((region, reach)) = entry else { continue };
+      if current.intersects(&region.inflate(*reach, *reach)) && !current.contains_rect(region) {
+        current = current.union(region);
+        grew = true;
+      }
+    }
+    if !grew {
+      break;
+    }
+  }
+  cull::Extent::Bounded(current)
 }
 
 // A resolved damage union cut to the window and to the FrameDamage form.
@@ -171,6 +210,7 @@ pub fn resolve_reuse_damage(tree: &mut RenderTree, window: Size) -> FrameDamage 
       damage = damage.union(damaged_extent(tree, id));
     }
   }
+  let damage = expand_damage_for_backdrops(damage, tree.backdrop_regions());
   clamp_damage(damage, full, window_rect)
 }
 
@@ -365,6 +405,41 @@ fn effect_paint(rgb: f32, opacity: f32, filter: Option<&FilterState>) -> Paint {
   paint
 }
 
+// A View's backdrop filter, emitted where its content is composited: one
+// save_layer whose backdrop argument captures and filters the pixels
+// already painted beneath the box, restored immediately so the filtered
+// backdrop lands back in the target and the view's own content draws over
+// it unfiltered. The blur rides the backdrop argument; color keys ride the
+// restore paint's color filter (applied to the captured layer content),
+// with an identity matrix filter forcing the capture when only color keys
+// are set - Impeller has no color-filter-as-image-filter constructor. The
+// bounds are the layout box in box space, so this must be emitted after
+// the view's matrix and clip and before any scroll translate; an overflow
+// clip (clipRadius included) bounds the region, which is how rounded glass
+// is spelled. No-op for non-Views and empty declarations.
+fn emit_backdrop(builder: &mut DisplayListBuilder, element: &Element, inherited: Size) {
+  let ElementKind::View(v) = &element.kind else { return };
+  let Some(f) = v.active_backdrop_filter() else { return };
+  let size = element.layout.as_ref().map(|l| l.size()).unwrap_or(inherited);
+  let bounds = Rect::new(Point::zero(), size);
+  let backdrop = f.to_backdrop_image_filter();
+  let paint = f.to_color_filter().map(|cf| {
+    let mut paint = Paint::default();
+    paint.set_color_filter(&cf);
+    paint
+  });
+  // The filtered region is whatever clip is in effect when the layer is
+  // pushed - the layer's `bounds` argument is a content hint, not a clip
+  // (unclipped, the capture covers the window; verified live). Clip to the
+  // box explicitly; a rounded overflow clip already applied above
+  // intersects with it for rounded glass.
+  builder.save();
+  builder.clip_rect(&bounds, ClipOperation::Intersect);
+  builder.save_layer(&bounds, paint.as_ref(), Some(&backdrop));
+  builder.restore();
+  builder.restore();
+}
+
 // Replays a recorded display list under the view's composite-time effects: a
 // filter needs a save_layer carrying it (draw_display_list has only an
 // opacity argument), plain opacity stays on the cheap path.
@@ -389,6 +464,7 @@ fn draw_cached_recording(
   element: &Element,
   matrix: Option<&Matrix>,
   dl: &DisplayList,
+  inherited: Size,
 ) {
   let opacity = view_opacity(element);
   let filter = view_filter(element);
@@ -396,6 +472,9 @@ fn draw_cached_recording(
     builder.save();
     builder.transform(m);
     apply_clip(builder, element);
+    // Box-space bounds: before the scroll translate, like record_node's
+    // emission order.
+    emit_backdrop(builder, element, inherited);
     apply_scroll(builder, element);
     draw_dl_with_effects(builder, dl, opacity, filter);
     builder.restore();
@@ -444,6 +523,22 @@ fn build_recursive<'a>(
   }
 
   let element = scene.node(node_id);
+  // Note a backdrop panel's window-space region for damage widening,
+  // whichever composite path draws it below: a change within the blur's
+  // reach of the panel alters the panel's pixels, so damage resolves must
+  // be able to pull the whole region into the repaint rect.
+  if let ElementKind::View(v) = &element.kind {
+    if let Some(f) = v.active_backdrop_filter() {
+      let size = element.layout.as_ref().map(|l| l.size()).unwrap_or(ctx.size);
+      let region = cull::Extent::Bounded(Rect::new(Point::zero(), size))
+        .transformed(&own_matrix(element, ctx.size).unwrap_or_else(Matrix::identity))
+        .to_window(Point::zero(), &ctx.to_window);
+      ctx.backdrop_regions.push(match region {
+        cull::Extent::Bounded(r) => Some((r, f.blur_outset())),
+        _ => None,
+      });
+    }
+  }
   // A view's boundary shader requires repaintBoundary="snapshot": the prop's
   // real cost is snapshot semantics, kept explicit rather than implied. Warn
   // once per declaration write (the dirty flag), not per frame.
@@ -465,7 +560,7 @@ fn build_recursive<'a>(
       };
       if let Some(dl) = cached {
         ctx.boundaries_reused += 1;
-        draw_cached_recording(builder, element, own.as_ref(), &dl);
+        draw_cached_recording(builder, element, own.as_ref(), &dl, ctx.size);
         return;
       }
       // The recording outlives this frame's viewport (an ancestor scroll
@@ -476,7 +571,7 @@ fn build_recursive<'a>(
       ctx.cull = cull;
       if let Some(dl) = sub.build() {
         ctx.boundaries_recorded += 1;
-        draw_cached_recording(builder, element, own.as_ref(), &dl);
+        draw_cached_recording(builder, element, own.as_ref(), &dl, ctx.size);
         *element.paint_cache.borrow_mut() = Some(PaintCache::Recording(dl));
       }
     }
@@ -515,6 +610,9 @@ fn snapshot_node_uncalled<'a>(
   aa: bool,
 ) {
   let element = scene.node(node_id);
+  // The inherited frame, copied out for the quad closures' backdrop
+  // emission (ctx cannot be borrowed inside them).
+  let frame = ctx.size;
   // A laid-out node snapshots its layout box. A detached (d-*) node has none,
   // but it is still drawn into a definite rectangle: its kind's painted box,
   // sized with the same ctx.size its build() reads (the same derivation as
@@ -630,6 +728,7 @@ fn snapshot_node_uncalled<'a>(
       }
       ctx.snapshots_reused += 1;
       draw_with_transform(builder, own.as_ref(), |b| {
+          emit_backdrop(b, element, frame);
         b.draw_texture_rect(&output, &src, &dst, TextureSampling::Linear, quad_paint.as_ref());
       });
       return;
@@ -704,6 +803,7 @@ fn snapshot_node_uncalled<'a>(
         }
         publish_snapshot(element, ctx, &source, tex_w, tex_h);
         draw_with_transform(builder, own.as_ref(), |b| {
+          emit_backdrop(b, element, frame);
           b.draw_texture_rect(&output, &src, &dst, TextureSampling::Linear, quad_paint.as_ref());
         });
         *element.paint_cache.borrow_mut() = Some(PaintCache::Snapshot(SnapshotCache {
@@ -723,6 +823,7 @@ fn snapshot_node_uncalled<'a>(
         log::warn!("shaded snapshot failed for node {node_id}: {e}; painting inline unshaded");
         element.paint_cache.borrow_mut().take();
         draw_with_transform(builder, own.as_ref(), |b| {
+          emit_backdrop(b, element, frame);
           b.save();
           b.translate(-outset, -outset);
           b.scale(1.0 / scale, 1.0 / scale);
@@ -740,6 +841,7 @@ fn snapshot_node_uncalled<'a>(
       if snap.valid && snap.width == width && snap.height == height && snap.scale == scale {
         ctx.snapshots_reused += 1;
         draw_with_transform(builder, own.as_ref(), |b| {
+          emit_backdrop(b, element, frame);
           b.draw_texture_rect(&snap.texture, &src, &dst, TextureSampling::Linear, quad_paint.as_ref());
         });
         return;
@@ -774,6 +876,7 @@ fn snapshot_node_uncalled<'a>(
         ctx.snapshots_rerendered += 1;
         publish_snapshot(element, ctx, &texture, tex_w, tex_h);
         draw_with_transform(builder, own.as_ref(), |b| {
+          emit_backdrop(b, element, frame);
           b.draw_texture_rect(&texture, &src, &dst, TextureSampling::Linear, quad_paint.as_ref());
         });
         *element.paint_cache.borrow_mut() =
@@ -792,6 +895,7 @@ fn snapshot_node_uncalled<'a>(
       ctx.snapshots_rasterized += 1;
       publish_snapshot(element, ctx, &texture, tex_w, tex_h);
       draw_with_transform(builder, own.as_ref(), |b| {
+          emit_backdrop(b, element, frame);
         b.draw_texture_rect(&texture, &src, &dst, TextureSampling::Linear, quad_paint.as_ref());
       });
       *element.paint_cache.borrow_mut() =
@@ -802,6 +906,7 @@ fn snapshot_node_uncalled<'a>(
       // transform and detached paint offset, so counter both before replaying.
       log::warn!("snapshot rasterization failed for node {node_id}: {e}; painting inline");
       draw_with_transform(builder, own.as_ref(), |b| {
+          emit_backdrop(b, element, frame);
         b.save();
         b.translate(offset.0, offset.1);
         b.scale(1.0 / scale, 1.0 / scale);
@@ -956,6 +1061,13 @@ fn record_node<'a>(
   }
   if record_clip {
     apply_clip(builder, element);
+  }
+  // The backdrop layer reads the current target, so only the inline path
+  // emits it here; boundary callers emit it at composite time instead
+  // (draw_cached_recording, the snapshot quad sites) - baked into a cache
+  // or a snapshot raster it would read the offscreen, not the window.
+  if hoist == Hoist::None {
+    emit_backdrop(builder, element, ctx.size);
   }
   if hoist != Hoist::Full {
     apply_scroll(builder, element);

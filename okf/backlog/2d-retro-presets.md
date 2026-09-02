@@ -13,7 +13,7 @@ showcase) as much as function.
 
 - **Pixel canvas**: a fixed logical resolution (e.g. 320x180) displayed
   big and sharp. With layer oversampling
-  (okf/backlog/2d-layer-display-scale.md) this is nothing but `<view
+  (okf/done/2d-layer-display-scale.md) this is nothing but `<view
   designSize>` around the layers: the fit fills the window at any ratio and
   the layers resample properly, so motion is fluent at every size. The
   hard-pixel variant (integer scale, letterboxed remainder) needs no feature

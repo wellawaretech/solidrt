@@ -722,3 +722,14 @@ fn filter_decodes_and_validates() {
   let err = apply("rect", "filter", map(&[("blur", num(4.0))])).unwrap_err();
   assert!(err.starts_with("Unknown property"), "{err}");
 }
+
+#[test]
+fn backdrop_filter_decodes_like_filter() {
+  let good = map(&[("blur", num(8.0)), ("saturate", num(1.4))]);
+  assert_eq!(apply("view", "backdropFilter", good), Ok(Damage::Compose));
+  assert_eq!(apply("view", "backdropFilter", PropValue::Null), Ok(Damage::Compose));
+  let err = apply("view", "backdropFilter", map(&[("sharpen", num(1.0))])).unwrap_err();
+  assert!(err.contains("'sharpen'"), "{err}");
+  let err = apply("rect", "backdropFilter", map(&[("blur", num(4.0))])).unwrap_err();
+  assert!(err.starts_with("Unknown property"), "{err}");
+}

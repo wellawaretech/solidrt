@@ -1,7 +1,8 @@
 ---
 title: Impeller effects as element props (shadow, filter, backdropFilter)
-description: Expose Impeller's built-in filters as three props - shadow on shape elements, filter on views, backdropFilter on views - closing the "where is box-shadow" gap without GLSL; folds in the former impeller-backdrop-filters item.
+description: shadow on rect/oval/path, filter and backdropFilter on views, through Impeller's built-in filters - the "where is box-shadow" layer beneath the GLSL tiers; all three shipped and pixel-verified; found two upstream Impeller bugs on the way.
 created: 2026-09-02
+completed: 2026-09-02
 ---
 
 # Impeller effects as element props
@@ -80,17 +81,19 @@ Object props throughout (one API shape, web object form); validation
 throws per the dev/prod policy; blur lengths are logical px, converted with
 a named BLUR_RADIUS_TO_SIGMA constant.
 
-1. `shadow` on shape elements (`rect`, `oval`, `path`, `svg`, and `d-`
-   forms): `{ x?, y?, blur?, spread?, color }`, CSS box-shadow field
-   semantics. Named `shadow`, not `boxShadow`: a `<path>` has no box, and
-   one name lets `text` take the same prop later where CSS needed a second
-   name. Single shadow; an array form is additive later.
+1. `shadow` on shape elements (`rect`, `oval`, `path`, and `d-` forms;
+   there is no `svg` intrinsic - parsed SVG is paths): `{ x?, y?, blur?,
+   spread?, color }`, CSS box-shadow field semantics. Named `shadow`, not
+   `boxShadow`: a `<path>` has no box, and one name lets `text` take the
+   same prop later where CSS needed a second name. Single shadow; an array
+   form is additive later.
 2. `filter` on views: keys are the CSS filter-function names - `blur` plus
    the color family (`grayscale`, `saturate`, `brightness`, `contrast`,
-   `sepia`, `invert`, `hueRotate`, `opacity`). All color keys multiply into
-   one ColorMatrix; application order is fixed and documented (color ops,
-   then blur) since object form cannot express author ordering and these
-   do not need it.
+   `sepia`, `invert`, `hueRotate`; no `opacity` key - the view's own
+   `opacity` prop is the same compositing layer). All color keys multiply
+   into one ColorMatrix; application order is fixed and documented (color
+   ops, then blur) since object form cannot express author ordering and
+   these do not need it.
 3. `backdropFilter` on views: same object shape and decode as `filter`,
    wired to the save_layer backdrop argument. Frosted glass with correct
    see-through semantics, the case a subtree effect fundamentally cannot
@@ -111,19 +114,37 @@ a named BLUR_RADIUS_TO_SIGMA constant.
    Envelope inflation for blur, `Damage::Compose`. Cost is honest and
    documented: like opacity, a filter on a non-boundary view forces an
    offscreen.
-3. **`backdropFilter`.** Smallest code delta, most semantic risk, so last.
-   Carried over from the folded item, still to work out:
-   - Repaint-boundary trap: a backdrop read sees the current target, so a
-     snapshot boundary between panel and backdrop puts them on opposite
-     sides of an offscreen - same trap documented for blend modes in
-     okf/done/texture-element-compositing.md. Warn, or refuse the
-     combination.
-   - Cost: forces an offscreen plus a read of the current target at that
-     point in the display list. Region-sized, but measure on Android
-     before offering it as a casual style prop.
-   - Bounds and edge: save_layer takes explicit bounds; the natural choice
-     is the node's layout box, but a blur samples beyond its own edge, so
-     tile mode and bounds together decide what the panel edge looks like.
+3. **`backdropFilter`.** DONE, verified 2026-09-02 on desktop Linux (see
+   Findings). One save_layer per panel at composite time
+   (composite::emit_backdrop), restored immediately: the backdrop argument
+   captures and filters the pixels beneath, children draw over the result
+   unfiltered. Blur rides the backdrop argument (Clamp tiling - the
+   backdrop is a filled surface, Decal would darken the border); color
+   keys ride the restore paint's color filter, with a sub-pixel blur
+   (sigma 0.001) standing in for the identity capture filter. Emitted
+   inline (record order: after the clip, before scroll) for non-boundary
+   views, at composite time by both boundary paths. Resolved from the
+   folded item's open points:
+   - Repaint-boundary trap: a panel that IS a boundary works (emission is
+     composite-time, outside the cache/raster); a panel INSIDE a snapshot
+     subtree sees only that boundary's offscreen - documented on the prop,
+     not detected, same stance as blend modes there.
+   - Bounds and edge: the filtered region is the clip in effect when the
+     layer is pushed - save_layer's `bounds` is a content HINT, not a clip
+     (unclipped, the capture covers the whole window; found live when one
+     grayscale panel grayed the entire frame). emit_backdrop clips to the
+     box explicitly; overflow clip + clipRadius intersects for rounded
+     glass.
+   - Partial repaint: a change within the blur's reach of a panel changes
+     the panel's pixels, so the walk notes every panel's window region
+     (BuildContext::backdrop_regions, stored on the tree) and damage
+     resolves widen any damage rect touching region+reach to the whole
+     panel (composite::expand_damage_for_backdrops, both the walk and the
+     present-only reuse path). Verified live: a mover behind glass
+     re-filters on every step.
+   - Cost, desktop: four glass panels re-filtering over a 20 Hz animation
+     hold frameMs ~16.5 with missedPresents 0. The Android measurement is
+     its own item: okf/backlog/backdrop-filter-android-cost.md.
 
 ## Findings (stages 1+2 implementation)
 
@@ -151,15 +172,21 @@ a named BLUR_RADIUS_TO_SIGMA constant.
   shader (a capture records the subtree with composite-time effects
   hoisted out): `/snapshot?node=` of a filtered view returns unfiltered
   content; sample through a parent or a window crop instead. Pre-existing
-  capture semantics, kept consistent on purpose.
+  capture semantics, kept consistent on purpose. backdropFilter is likewise
+  absent from captures (a capture's offscreen has no backdrop).
+- **A second upstream bug**: ImpellerImageFilterCreateMatrixNew returns
+  null for any input, and the impellers crate's non-null assert turns that
+  into a process abort - okf/upstream/impeller-image-filter-matrix-null.md.
+  Never call ImageFilter::new_matrix until it is fixed.
+- A backdrop panel is painted content even childless: own_extent gives a
+  backdrop view its box (a bare d-view glass panel must not cull away).
 - Stages 1+2 verified 2026-09-02 on desktop Linux (probes/effects-probe.tsx,
   release client): pixel assertions for grayscale r=g=b, exact invert of the
   reference panel, blur-blended stripe boundary, and recording-vs-snapshot
   boundary equality all pass; magnified crops show the under-box shadow clip
   and soft falloff. Static probe idles clean (missedPresents 0); the slow
   paint frames seen during verification correlate with full-window capture
-  readbacks, not with effect painting. The stage 3 Android cost measurement
-  still stands.
+  readbacks, not with effect painting.
 
 ## Deferred (all additive)
 

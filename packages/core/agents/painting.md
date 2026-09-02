@@ -60,9 +60,13 @@ no matter how complex the effect, which is why the performance model
   required). `text-shadow` / glow -> still no prop: draw an offset `d-*`
   shape under the content, or a view shader with `outset` (the transparent
   margin an effect bleeds into)
-- `backdrop-filter` -> no equivalent. A view shader sees only its own
-  subtree's pixels, never what is behind it. Frost the whole frame with a
-  window shader, or fake the layer with your own content
+- `backdrop-filter` -> the `backdropFilter` prop on a view (same keys as
+  `filter`): frosted glass with real see-through semantics. It reads the
+  pixels already painted beneath, so it costs an offscreen capture - a
+  deliberate panel, not a casual style - and inside a
+  repaintBoundary="snapshot" subtree it sees only that boundary's own
+  content. A view `shader` cannot do this at all (it sees only its own
+  subtree's pixels)
 - CSS `transition` -> the `transition` prop: declare it on the element and
   keep writing targets; the runtime animates natively (performance rule 1)
 - `@keyframes` -> a `transition` prop when the motion is target-shaped;

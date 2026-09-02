@@ -36,6 +36,12 @@ use taffy::{AvailableSpace, Position, Style};
 pub use crate::impellers::{Point, Rect, Size};
 pub type Vector = euclid::Vector2D<f32, euclid::UnknownUnit>;
 
+/// A backdrop-filter region noted during the paint walk: the panel's box in
+/// window space and its blur reach in logical px. None when the walk could
+/// not map it (a non-2D transform in the chain) - any damage then repaints
+/// the full frame rather than risking a stale panel.
+pub type BackdropRegion = Option<(Rect, f32)>;
+
 /// Build context passed during display list tree traversal. Engine state
 /// (platform, alloy) comes first; paint-time geometry follows.
 pub struct BuildContext<'a> {
@@ -58,6 +64,11 @@ pub struct BuildContext<'a> {
   pub to_window: cull::WindowMap,
   /// Nodes whose subtree the walk entered this frame (culled ones excluded).
   pub nodes_painted: u32,
+  /// Backdrop-filter regions the walk passed, in window space with each
+  /// region's blur reach; None for a region a non-2D transform made
+  /// unmappable. Stored on the tree after the walk so damage resolves can
+  /// widen a damage rect to whole panels (composite::expand_damage_for_backdrops).
+  pub backdrop_regions: Vec<BackdropRegion>,
   // Repaint-boundary diagnostics for the frame being built (see composite.rs).
   pub boundaries_reused: u32,
   pub boundaries_recorded: u32,
@@ -76,6 +87,7 @@ impl<'a> BuildContext<'a> {
       cull: None,
       to_window: None,
       nodes_painted: 0,
+      backdrop_regions: Vec::new(),
       boundaries_reused: 0,
       boundaries_recorded: 0,
       snapshots_reused: 0,

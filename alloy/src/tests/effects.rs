@@ -101,6 +101,52 @@ fn filter_blur_grows_the_subtree_envelope() {
 }
 
 #[test]
+fn backdrop_regions_widen_damage() {
+  use crate::rendertree::composite::expand_damage_for_backdrops;
+  let panel = (rect(100.0, 100.0, 200.0, 80.0), 12.0f32);
+
+  // Damage away from the panel passes through untouched.
+  let far = expand_damage_for_backdrops(Extent::Bounded(rect(500.0, 500.0, 10.0, 10.0)), &[Some(panel)]);
+  assert_eq!(far, Extent::Bounded(rect(500.0, 500.0, 10.0, 10.0)));
+
+  // Damage just outside the panel but inside the blur's reach pulls the
+  // whole panel into the repaint rect.
+  let near = expand_damage_for_backdrops(Extent::Bounded(rect(90.0, 110.0, 5.0, 5.0)), &[Some(panel)]);
+  assert_eq!(near, Extent::Bounded(rect(90.0, 100.0, 210.0, 80.0).union(&rect(90.0, 110.0, 5.0, 5.0))));
+
+  // One panel's growth can reach a second panel (iteration).
+  let chained = expand_damage_for_backdrops(
+    Extent::Bounded(rect(90.0, 110.0, 5.0, 5.0)),
+    &[Some(panel), Some((rect(305.0, 100.0, 50.0, 50.0), 10.0))],
+  );
+  let Extent::Bounded(r) = chained else { panic!("bounded") };
+  assert!(r.contains_rect(&rect(305.0, 100.0, 50.0, 50.0)), "{r:?}");
+
+  // An unmappable region makes any damage full-frame; empty damage stays
+  // empty (nothing changed, nothing to re-filter).
+  assert_eq!(expand_damage_for_backdrops(Extent::Bounded(rect(0.0, 0.0, 1.0, 1.0)), &[None]), Extent::Unbounded);
+  assert_eq!(expand_damage_for_backdrops(Extent::Empty, &[Some(panel)]), Extent::Empty);
+}
+
+#[test]
+fn detached_backdrop_view_has_a_bounded_extent() {
+  let mut tree = RenderTree::new();
+  tree.create_node(1, View::default().with_layout());
+  let mut v = View::default();
+  v.set_backdrop_filter(Some(FilterState { blur: Some(4.0), ..Default::default() }));
+  tree.create_node(2, v.no_layout());
+  tree.insert_node(1, 2, None).expect("insert");
+  tree.root = Some(1);
+  place(&mut tree, 1, 0.0, 0.0, 400.0, 300.0);
+  let platform = PlatformContext::new(Vec::new());
+
+  // A childless d-view normally has an Empty (cullable) envelope; with a
+  // backdrop filter its box is painted content.
+  let env = bounded(envelope(&tree, 2, &platform, Size::new(400.0, 300.0)));
+  assert!(close(env, rect(0.0, 0.0, 400.0, 300.0)), "{env:?}");
+}
+
+#[test]
 fn color_matrix_composition() {
   // No color keys: no matrix at all.
   assert!(matrix_for_tests(&FilterState { blur: Some(4.0), ..Default::default() }).is_none());

@@ -746,6 +746,18 @@ export interface ViewOwnProps extends TransformProps, PointerProps {
    */
   shader?: ViewShaderProps | null
   filter?: FilterProps
+  /**
+   * Filters the pixels already painted BENEATH the view's box, in place,
+   * before the view's own content draws - frosted glass over live content
+   * (CSS `backdrop-filter`). Same keys and semantics as `filter`. The
+   * region is the layout box; give the view an overflow clip with
+   * `clipRadius` for rounded glass. Costs an offscreen capture of the
+   * pixels beneath at that point in the frame, so treat it as a deliberate
+   * panel, not a casual style. Inside a `repaintBoundary="snapshot"`
+   * subtree it sees only that boundary's own offscreen content, never what
+   * is behind the boundary (the same containment `blendMode` has there).
+   */
+  backdropFilter?: FilterProps
 }
 
 /**

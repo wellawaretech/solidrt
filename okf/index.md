@@ -168,6 +168,11 @@ Shaped, not started.
 - **[AVIF decoding in decodeImage](backlog/avif-decode.md)** [2026-07-19]
   The one practical web image format decodeImage lacks; pure-Rust decode does
   not exist in the image crate, so it needs the dav1d C system dependency.
+- **[Measure backdropFilter cost on Android](backlog/backdrop-filter-android-cost.md)** [2026-09-02]
+  A backdropFilter forces an offscreen capture-and-filter of the pixels
+  beneath per panel; desktop holds 60 fps with four panels over live content,
+  but tiler GPUs pay differently for mid-frame target reads - measure before
+  treating the prop as casual on TV/phone.
 - **[One build-output root with per-flow subdirs](backlog/build-output-dirs.md)** [2026-08-21]
   Give dev, render and pack one gitignored output root (dist/) with a subdir
   per flow, fixing render's missing isolate support and clearing the ground
@@ -382,11 +387,6 @@ Shaped, not started.
   icon.svg, so a derived icon.png is checked in and every app must maintain
   one by hand; the runtime can rasterize it itself via captureSnapshot +
   encodeImage.
-- **[Impeller effects as element props (shadow, filter, backdropFilter)](backlog/impeller-effects.md)** [2026-09-02]
-  Expose Impeller's built-in filters as three props - shadow on shape
-  elements, filter on views, backdropFilter on views - closing the "where is
-  box-shadow" gap without GLSL; folds in the former impeller-backdrop-filters
-  item.
 - **[Isolate transfer() and AbortSignal](backlog/isolate-transfer-and-abort.md)** [2026-08-20]
   Design proposal for the two isolate follow-ups that need new call-surface
   vocabulary - zero-copy buffer hand-over and abortable calls. Decides once
@@ -1156,6 +1156,11 @@ Finished, kept for the reasoning.
   equally true when the raster thread was too far behind to have returned a
   frame, closing a positive feedback loop that diverged without bound; fixed
   and TV-verified, with the adjacent findings split into their own items.
+- **[Impeller effects as element props (shadow, filter, backdropFilter)](done/impeller-effects.md)** [2026-09-02]
+  shadow on rect/oval/path, filter and backdropFilter on views, through
+  Impeller's built-in filters - the "where is box-shadow" layer beneath the
+  GLSL tiers; all three shipped and pixel-verified; found two upstream
+  Impeller bugs on the way.
 - **[Isolate follow-ups](done/isolate-follow-ups.md)** [2026-08-21]
   The open ends left when isolates (okf/done/isolates-and-ports.md) closed,
   kept in one place so none vanished with the done record. All of them are now
@@ -1500,6 +1505,10 @@ Knowledge. No lifecycle - true or wrong, not open or closed.
   What is true about sampleable depth, per-target sinks, scene views and the
   shadow set regardless of how they were built - cut from the shadow-maps
   plan's Findings on close.
+- **[Devtools introspection survey](notes/devtools-introspection-survey.md)** [2026-09-02]
+  What browser devtools have that the control API lacks, and candidate
+  extensions (pick mode, highlight, live prop edit, node-to-source, composer
+  REPL, streaming) shaped as control endpoints plus console blocks.
 - **[FFI crossing costs, measured](notes/ffi-crossing-costs.md)** [2026-08-18]
   What one JS-to-Rust property write costs on the release runtime (about 0.25
   us including decode, string dispatch and apply), what share of a 3000-node
@@ -1614,6 +1623,10 @@ Bugs in our dependencies. Status here is the dependency's, not ours.
   ImpellerRect, and the rect it returns for glyphs of a single-line paragraph
   carries no position (per-glyph width in the x slot, zero width), so caret
   geometry cannot be read from it.
+- **[ImpellerImageFilterCreateMatrixNew returns null](upstream/impeller-image-filter-matrix-null.md)** [2026-09-02]
+  The prebuilt Impeller the impellers 0.4.2 crate links returns null from
+  ImpellerImageFilterCreateMatrixNew for any input (even the identity matrix),
+  which the crate's non-null assert turns into a process abort.
 - **[quickjs-ng ArrayBuffer.prototype.transfer mishandles external buffers](upstream/quickjs-ng-transfer-external-buffers.md)** [2026-08-03]
   transfer() on a JS_NewArrayBuffer-backed (external) buffer calls js_realloc
   on a pointer the JS allocator does not own when the length changes (heap

@@ -99,6 +99,29 @@ impl FilterState {
     blur_reach(self.blur.unwrap_or(0.0))
   }
 
+  /// The image filter for a save_layer's backdrop argument: the blur, or a
+  /// sub-pixel blur when only color keys are set - the backdrop argument is
+  /// what makes save_layer capture the pixels beneath at all, and the color
+  /// transform then rides the restore paint (composite::emit_backdrop). A
+  /// blur stands in for the identity because the prebuilt Impeller's matrix
+  /// image filter cannot be constructed at all
+  /// (ImpellerImageFilterCreateMatrixNew returns null -
+  /// okf/upstream/impeller-image-filter-matrix-null.md).
+  /// Clamp tiling: the backdrop is a filled surface, so unlike the subtree
+  /// blur there is no transparent edge for Decal to preserve, and Decal
+  /// would darken the region's border where the kernel reads outside the
+  /// captured bounds.
+  pub fn to_backdrop_image_filter(&self) -> ImageFilter {
+    // Far below one pixel: visually the identity, but a real, constructible
+    // filter that still triggers the backdrop capture.
+    const BACKDROP_CAPTURE_SIGMA: f32 = 0.001;
+    let sigma = match self.blur.filter(|r| *r > 0.0) {
+      Some(radius) => radius * BLUR_RADIUS_TO_SIGMA,
+      None => BACKDROP_CAPTURE_SIGMA,
+    };
+    ImageFilter::new_blur(sigma, sigma, TileMode::Clamp)
+  }
+
   // The fused normalized matrix, applied in a fixed documented order:
   // grayscale, sepia, saturate, hueRotate, brightness, contrast, invert.
   // Object props cannot express author ordering and these do not need it.

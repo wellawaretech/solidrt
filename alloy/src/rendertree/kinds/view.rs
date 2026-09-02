@@ -82,6 +82,12 @@ pub struct View {
   // whole. Like opacity it is applied at composite time - on the boundary
   // paths' quad/layer paint, via a save_layer otherwise.
   pub filter: Option<FilterState>,
+  // Backdrop filter (CSS `backdrop-filter`): the pixels already painted
+  // beneath the view's box, filtered in place before the view's content
+  // draws (composite::emit_backdrop). Reads the CURRENT target, so inside
+  // a snapshot boundary it sees only that boundary's offscreen content -
+  // the same containment blend modes have.
+  pub backdrop_filter: Option<FilterState>,
   // Design-space size for the children: everything under the view - layout,
   // paint, hit testing - happens in this w x h coordinate space, which is
   // uniformly scaled to fit and centered in the element's box (SVG's default
@@ -409,6 +415,16 @@ impl View {
   // The declared filter, None when unset or all-default (nothing to apply).
   pub(crate) fn active_filter(&self) -> Option<&FilterState> {
     self.filter.as_ref().filter(|f| !f.is_empty())
+  }
+  // Compose, like filter: every path emits the backdrop layer at composite
+  // time (or bakes it into the enclosing boundary's recording, which the
+  // parent-up invalidation clears).
+  pub fn set_backdrop_filter(&mut self, v: Option<FilterState>) -> Damage {
+    self.backdrop_filter = v;
+    Damage::Compose
+  }
+  pub(crate) fn active_backdrop_filter(&self) -> Option<&FilterState> {
+    self.backdrop_filter.as_ref().filter(|f| !f.is_empty())
   }
   pub fn set_scroll_x(&mut self, v: Option<f32>) -> Damage {
     match (v, &mut self.scroll) {

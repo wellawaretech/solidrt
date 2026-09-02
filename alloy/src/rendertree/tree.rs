@@ -48,6 +48,10 @@ pub struct RenderTree {
   // The damage the last painted frame resolved to, for stats and (stage 2)
   // the raster pass.
   frame_damage: FrameDamage,
+  // Backdrop-filter regions as of the last paint walk (window space + blur
+  // reach). Damage resolves widen any damage rect touching one to the whole
+  // panel, walk or no walk (composite::expand_damage_for_backdrops).
+  backdrop_regions: Vec<crate::rendertree::BackdropRegion>,
 }
 
 // Taffy's CompactLength stores f32 values as tagged pointers (*const ()),
@@ -67,6 +71,7 @@ impl RenderTree {
       damaged: HashSet::new(),
       damaged_full: true,
       frame_damage: FrameDamage::Full,
+      backdrop_regions: Vec::new(),
     }
   }
 
@@ -620,6 +625,16 @@ impl RenderTree {
 
   pub(crate) fn set_frame_damage(&mut self, damage: FrameDamage) {
     self.frame_damage = damage;
+  }
+
+  /// The backdrop-filter regions the last paint walk passed
+  /// (composite::paint_phase writes them; damage resolves read them).
+  pub(crate) fn backdrop_regions(&self) -> &[crate::rendertree::BackdropRegion] {
+    &self.backdrop_regions
+  }
+
+  pub(crate) fn set_backdrop_regions(&mut self, regions: Vec<crate::rendertree::BackdropRegion>) {
+    self.backdrop_regions = regions;
   }
 
   /// `apply_damage` for a frame's worth of writes at once: one revision

@@ -109,9 +109,11 @@ the items below is one - they are gaps in the layer as an API.
    target, and images arriving at runtime have no way in. Normal for an
    application, unusual for a game, which is why v1 did not feel it.
 6. **The display-scale decision**
-   (okf/backlog/2d-layer-display-scale.md). Layer output is upsampled on a
-   HiDPI screen unless the app sizes and zooms for it by hand. Wants deciding
-   once across @solidrt/2d and @solidrt/3d, not implementing twice.
+   (okf/done/2d-layer-display-scale.md). DONE, and decided once as wanted:
+   2d layers auto-pick an integer oversample from the on-screen box, and
+   3d scenes got the same default via fill mode (target tracks the leaf's
+   device-pixel size; the explicit knob is
+   okf/backlog/scene-fill-extensions.md).
 
 Dirty-range publishing stays deferred and measurement-gated: one moved sprite
 republishing the whole live prefix is a single memcpy - ~520KB at 10k

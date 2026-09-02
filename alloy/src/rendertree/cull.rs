@@ -81,7 +81,7 @@ impl Extent {
 
   // Maps a bounded extent forward through `m` (its outer bounding box);
   // anything but a 2D affine matrix makes the result unknown.
-  fn transformed(self, m: &Matrix) -> Extent {
+  pub(crate) fn transformed(self, m: &Matrix) -> Extent {
     match self {
       Extent::Bounded(r) => {
         if !m.is_2d() {
@@ -159,7 +159,14 @@ fn own_extent(element: &Element, platform: &PlatformContext, inherited: Size) ->
     }
   };
   let mut extent = match &element.kind {
-    ElementKind::Window(_) | ElementKind::View(_) | ElementKind::Span(_) => Extent::Empty,
+    ElementKind::Window(_) | ElementKind::Span(_) => Extent::Empty,
+    // A backdrop panel paints the filtered backdrop across its box even
+    // with no children - visible content of its own, so a detached one
+    // must not resolve to an empty (cullable) extent.
+    ElementKind::View(v) => match v.active_backdrop_filter() {
+      Some(_) => Extent::Bounded(Rect::new(Point::zero(), frame)),
+      None => Extent::Empty,
+    },
     ElementKind::Rectangle(r) => with_shadow(r.local_bounds(frame), AA_OUTSET + r.paint.stroke_width, &r.shadow),
     ElementKind::Oval(o) => with_shadow(o.local_bounds(frame), AA_OUTSET + o.paint.stroke_width, &o.shadow),
     ElementKind::Texture(t) => inflate(t.local_bounds(frame), AA_OUTSET),
