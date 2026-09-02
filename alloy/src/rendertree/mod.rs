@@ -280,7 +280,7 @@ pub enum Damage {
 
 /// A painted frame's resolved screen damage, in window coordinates (logical
 /// px): the union of every damaged node's old and new window extents,
-/// produced by composite::paint_phase (okf/plans/partial-repaint.md). `Full`
+/// produced by composite::paint_phase (okf/done/partial-repaint.md). `Full`
 /// is the conservative fallback - resize, re-root, an unbounded or non-2D
 /// extent in the union, or a damaged-node batch past the accumulation cap.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -383,7 +383,7 @@ pub struct Element {
   pub envelope: cull::EnvelopeCache,
   // The subtree's window-space painted extent as of the last paint walk that
   // considered this node - the OLD half of a damaged node's old + new damage
-  // union (okf/plans/partial-repaint.md). Deliberately NOT cleared by
+  // union (okf/done/partial-repaint.md). Deliberately NOT cleared by
   // invalidate_paint: it must survive into the next frame's damage resolve,
   // and a stale value (a node inside a valid boundary cache) can only
   // over-damage, since whatever moved the subtree was damaged itself when it

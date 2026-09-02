@@ -1,4 +1,4 @@
-//! Frame-damage resolution (okf/plans/partial-repaint.md, stage 1): the
+//! Frame-damage resolution (okf/done/partial-repaint.md, stage 1): the
 //! damaged-id set plus the last_extent cells resolve into a FrameDamage
 //! rect that covers a change's old and new pixels, degrades to Full on
 //! anything uncertain, and reports None on an unchanged frame.

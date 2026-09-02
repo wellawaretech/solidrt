@@ -2,6 +2,7 @@
 title: Partial repaint - damage rects for the raster pass
 description: Every frame with any damage re-rasterizes the full window display list; a 1 px change is a full-screen raster + resolve. Track screen-space damage rects and scissor the raster to them (EGL buffer age / swap-with-damage), so fill cost scales with what changed.
 created: 2026-09-02
+completed: 2026-09-02
 ---
 
 # Partial repaint - damage rects for the raster pass
@@ -111,13 +112,19 @@ the offscreen rig:
    EGL/GLES rig path; full-frame fallback everywhere else. Done, see
    Findings; power/frameMs on fill-bound hardware (a TV) still to be
    measured.
-3. Deferred until a real workload demands it:
-   `eglSwapBuffersWithDamageKHR` / `eglSetDamageRegionKHR` (compositor
-   hint; both resolve on Linux/Mesa), multiple damage rects, the
-   Android fast-path decision, or promoting snapshot boundaries to
-   composited layers (the Chrome-style layer tree).
+3. Follow-ups extracted at completion: the Android fast-path decision
+   is [partial-repaint-android](../backlog/partial-repaint-android.md)
+   (symptom measured on the TV); the compositor damage hint and
+   multiple damage rects are ideas.md lines awaiting a measured victim;
+   layer promotion (the Chrome-style layer tree) stays a deliberate
+   non-goal until an app demands it.
 
 ## Findings
+
+The durable engine facts (Impeller clears every wrapped target; rig and
+FBO 0 share orientation; buffer-age availability per stack) are cut to
+[impeller-wrapped-targets-and-buffer-age](../notes/impeller-wrapped-targets-and-buffer-age.md);
+what follows is this plan's own record.
 
 Stage 0 probe, 2026-09-02, Linux desktop (Mesa Intel RPL-P, GLES 3.2,
 SDL on EGL):
@@ -205,11 +212,31 @@ missedPresents, 0 slowFrames, p95 1.85 ms, no warnings or GL errors;
 examples/spin (3d) holds 60 fps with its Scene-texture content damage
 riding the reuse-path resolve. Full-suite tests green (377 alloy, 56
 flux gui). Visual check on the gallery under scroll/hover confirmed
-clean (no stale or torn regions). Not yet measured - the item's done
-criterion, and what keeps it in plans/: power/frameMs on fill-bound
-hardware, and the Android fast-path decision (it stays full-frame by
-design, so partial repaint there currently engages only via the MSRTT
-rig path).
+clean (no stale or torn regions).
+
+TV measurement, 2026-09-02 (Philips TPM171E, MediaTek armv7, 1920x1080
+at 50 Hz, release armv7 client): the window backbuffer is 4x
+multisampled, so the Android in-tile fast path is active and
+`repaint_patch` correctly answers full frame (a gate added this session
+- without it partialPresents would have counted fast-path frames that
+actually drew full). The cost of that, measured with two probes sharing
+the same 800-rect boundary-wrapped field and a 10 Hz animation:
+
+- damage-probe (20x20 mover): gpuFrameExecMsPerFrame 39.4-40.4 ms,
+  frameMs ~28-30, cpuPct ~130, 0 missedPresents.
+- damage-probe-full (window-covering animated rect): 44.4-45.4 ms.
+
+A 20 px change costs ~88% of a full-window change - fill cost is
+damage-size-independent on this device, exactly the item's symptom, at
+~40 ms GPU per animated frame. That is the quantified opportunity for
+the Android follow-up (partial-repaint-android in the backlog): a
+patch-confined MSRTT rig frame should bring the mover frame down
+toward the desktop behavior. SurfaceFlinger's context lists
+EGL_KHR_partial_update (which requires EGL_EXT_buffer_age per the
+Khronos spec), so buffer age is very likely available to the app there
+too. The old (2026-08-18) installed client could not serve as an A/B
+baseline against today's server (missing setPointerLock export), hence
+the two-probe comparison.
 
 ## Related
 

@@ -49,7 +49,7 @@ worst frame, not a new cliff.
   (`tree.rs`) shares a `visited` set so common ancestors are cleared
   once per batch. Thread one `visited` set through the layout pass and
   call that instead. No contract change.
-- If [partial-repaint](../plans/partial-repaint.md) lands, its per-frame damage
+- If [partial-repaint](../done/partial-repaint.md) lands, its per-frame damage
   rect accumulation wants old + new bounds out of exactly this walk, so
   the batched form becomes the natural accumulation point rather than
   just a saving.

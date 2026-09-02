@@ -39,7 +39,7 @@ pub struct RenderTree {
   // edit/try_edit and on create/destroy, so it cannot drift from element
   // state whatever a write closure touched.
   texture_referencers: HashSet<u64>,
-  // Partial repaint (okf/plans/partial-repaint.md): nodes whose on-screen
+  // Partial repaint (okf/done/partial-repaint.md): nodes whose on-screen
   // pixels may differ from the last painted frame. Every damage and
   // structural mutation path funnels into note_damage; composite::paint_phase
   // drains the set and resolves it against the elements' last_extent cells.
@@ -583,7 +583,7 @@ impl RenderTree {
     !self.transitions.is_empty()
   }
 
-  /// Partial repaint (okf/plans/partial-repaint.md): note that `id`'s
+  /// Partial repaint (okf/done/partial-repaint.md): note that `id`'s
   /// on-screen pixels may differ from the last painted frame. Every damage
   /// and structural mutation path funnels here; past the cap the frame
   /// degrades to full damage.

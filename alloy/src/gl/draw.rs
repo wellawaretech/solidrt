@@ -503,7 +503,7 @@ fn draw_and_resolve(
     gl.clear_color(0.0, 0.0, 0.0, 0.0);
     gl.clear(glow::COLOR_BUFFER_BIT | glow::DEPTH_BUFFER_BIT | glow::STENCIL_BUFFER_BIT);
 
-    // Partial repaint (okf/plans/partial-repaint.md): a root clip on the
+    // Partial repaint (okf/done/partial-repaint.md): a root clip on the
     // patch rect confines the raster - Impeller rejects ops outside a clip
     // cheaply - and the resolve below copies only that rect into `dst`,
     // whose remaining pixels the caller has verified as current (buffer

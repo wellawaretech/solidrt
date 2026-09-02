@@ -96,7 +96,7 @@ pub struct RasterStats {
   /// and reports as absent.
   pub(crate) timer_queries: AtomicBool,
   /// Presents that drew only a damage patch over an aged back buffer
-  /// (partial repaint, okf/plans/partial-repaint.md); the verification
+  /// (partial repaint, okf/done/partial-repaint.md); the verification
   /// signal that stage 2 is engaging.
   pub(crate) partial_presents: AtomicU64,
   /// Wall time spent executing non-Frame raster commands, in microseconds:
@@ -376,7 +376,7 @@ pub(crate) struct RasterState {
   // the retained layer (the clean-tree fast path). Reported in
   // GpuWindowShaderInfo for verification.
   pass_only_frames: u64,
-  // Partial repaint (okf/plans/partial-repaint.md stage 2). Damage carried
+  // Partial repaint (okf/done/partial-repaint.md stage 2). Damage carried
   // by frames received but not yet drawn: the next frame's own delta plus
   // any load-shed frames', consumed by `frame`.
   pending_damage: PresentDamage,
@@ -1196,6 +1196,12 @@ impl RasterState {
       return None;
     }
     if self.capture_frames || self.window_shader.is_some() {
+      return None;
+    }
+    // The multisampled-FBO0 fast path draws straight into the window and
+    // cannot patch; answering Full here keeps the counter honest and skips
+    // the wrapper-list build.
+    if gl::window_fast_path(&self.gl) {
       return None;
     }
     if matches!(own, PresentDamage::Full) {

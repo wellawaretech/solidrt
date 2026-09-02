@@ -28,11 +28,6 @@ Decided and being worked on now. A plan nobody is working on goes back to backlo
   The solidrt runtime goes font-free and srt pack appends fonts as trailer
   sections, with the three Noto role defaults declared through the
   package.json solidrt fonts key.
-- **[Partial repaint - damage rects for the raster pass](plans/partial-repaint.md)** [2026-09-02]
-  Every frame with any damage re-rasterizes the full window display list; a 1
-  px change is a full-screen raster + resolve. Track screen-space damage rects
-  and scissor the raster to them (EGL buffer age / swap-with-damage), so fill
-  cost scales with what changed.
 - **[Reactivity halt containment](plans/reactivity-halt-containment.md)** [2026-07-17]
   One unclaimed error used to halt the whole app for good; decided and built
   as a root error boundary around the app's window (error window with reset)
@@ -387,11 +382,11 @@ Shaped, not started.
   icon.svg, so a derived icon.png is checked in and every app must maintain
   one by hand; the runtime can rasterize it itself via captureSnapshot +
   encodeImage.
-- **[Backdrop filters through Impeller (blur, glass)](backlog/impeller-backdrop-filters.md)** [2026-07-27]
-  save_layer already takes a backdrop ImageFilter and we already call it with
-  None; wiring Impeller's built-in blur/dilate/erode/matrix filters gives
-  frosted panels with correct see-through semantics, no GLSL and no root
-  layer.
+- **[Impeller effects as element props (shadow, filter, backdropFilter)](backlog/impeller-effects.md)** [2026-09-02]
+  Expose Impeller's built-in filters as three props - shadow on shape
+  elements, filter on views, backdropFilter on views - closing the "where is
+  box-shadow" gap without GLSL; folds in the former impeller-backdrop-filters
+  item.
 - **[Isolate transfer() and AbortSignal](backlog/isolate-transfer-and-abort.md)** [2026-08-20]
   Design proposal for the two isolate follow-ups that need new call-surface
   vocabulary - zero-copy buffer hand-over and abortable calls. Decides once
@@ -477,6 +472,12 @@ Shaped, not started.
   group opacity and group transforms; add an opt-in tree output (groups with
   id/opacity/transform, paths in local space) backed by a `transform` matrix
   prop on views, keeping the flat list as the default.
+- **[Partial repaint on Android's multisampled fast path](backlog/partial-repaint-android.md)** [2026-09-02]
+  On the MediaTek TV a 20 px animation costs ~40 ms GPU per frame - 88% of a
+  full-window change - because the multisampled-FBO0 fast path draws full
+  frames and partial repaint steps aside; decide and build the patch-confined
+  alternative (MSRTT rig + patch copy vs in-tile full frame), measured per
+  device.
 - **[Physics core - an embedded engine as a producer into the spatial arena](backlog/physics-core.md)** [2026-08-24]
   Rigid-body physics is per-body-per-frame and per-contact work, below the
   interpreter line, and nothing provides it, so games needing dynamics are
@@ -1284,6 +1285,11 @@ Finished, kept for the reasoning.
   core, flux:svg module) returning plain draw data that JS maps to d-path
   subtrees; vector currency becomes path data, matching the texture-id rule
   that rejected <image>.
+- **[Partial repaint - damage rects for the raster pass](done/partial-repaint.md)** [2026-09-02]
+  Every frame with any damage re-rasterizes the full window display list; a 1
+  px change is a full-screen raster + resolve. Track screen-space damage rects
+  and scissor the raster to them (EGL buffer age / swap-with-damage), so fill
+  cost scales with what changed.
 - **[Path dashing through the shared dash walker](done/path-dashing.md)** [2026-08-27]
   <path>/<d-path> take onLength/offLength/dashOffset with line's semantics -
   the stroke walks the lyon-flattened subpaths through the walker shared with
@@ -1530,6 +1536,10 @@ Knowledge. No lifecycle - true or wrong, not open or closed.
   whitespace is never underlined, the stroke is the font's post thickness
   centered on baseline + underlinePosition, and the C API exposes no underline
   metrics - with the shipped Notos' numbers.
+- **[Impeller wrapped targets clear; EGL buffer age facts per stack](notes/impeller-wrapped-targets-and-buffer-age.md)** [2026-09-02]
+  Impeller never loads a wrapped FBO's existing content (every wrap_fbo draw
+  starts cleared), so partial redraw must compose offscreen and blit;
+  buffer-age and damage-extension availability as measured per stack.
 - **[Why offscreen rasters are multisampled](notes/offscreen-msaa-provenance.md)** [2026-08-13]
   Offscreen MSAA exists for one case - gradient emoji drawn through the svg
   path into a snapshot boundary - so that case is the regression test for any

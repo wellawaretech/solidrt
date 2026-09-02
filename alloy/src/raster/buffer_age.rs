@@ -1,5 +1,5 @@
 //! EGL_EXT_buffer_age on the window surface, for partial repaint
-//! (okf/plans/partial-repaint.md stage 2). The age of the back buffer says
+//! (okf/done/partial-repaint.md stage 2). The age of the back buffer says
 //! which earlier frame's pixels it still holds, so a frame may redraw only
 //! the union of the damage since then and present the rest preserved.
 //!

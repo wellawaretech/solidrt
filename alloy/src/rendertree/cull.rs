@@ -42,7 +42,7 @@ pub enum Extent {
 /// non-2D matrix entered the chain - extents mapped through it become
 /// Unbounded, so a 3D subtree degrades to full damage, never to a wrong
 /// skip. Carried by BuildContext for the damage-extent cells
-/// (okf/plans/partial-repaint.md); unlike the cull rect it never suspends
+/// (okf/done/partial-repaint.md); unlike the cull rect it never suspends
 /// inside boundary recordings, since a recording replays at the walk's
 /// current window position.
 pub type WindowMap = Option<euclid::default::Transform2D<f32>>;
