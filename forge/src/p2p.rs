@@ -3,10 +3,11 @@
 //! The scripting-engine-independent half of `flux:p2p`: the bound `Endpoint`
 //! (keypair identity, dial/accept, ticket encoding, path introspection), the
 //! bidirectional `Stream` (pull-based read + queued writer), and the iroh-facing
-//! free functions. It names no scripting-engine types; the marshalling layer
-//! (`plugins/flux/p2p.rs`) decodes JS args into these types, builds the JS
+//! free functions. It names no scripting-engine types, and no iroh types cross
+//! its boundary: `connect`/`accept_one` hand back an assembled `Stream`, and
+//! `connect_io`/`accept_io` a byte duplex. The marshalling layer (flux
+//! `forge_plugins/p2p.rs`) decodes JS args into these types, builds the JS
 //! classes and the accept async-iterable, and encodes results back to JS.
-//! Destined for the `forge` crate (see REDESIGN.md).
 //!
 //! "protocol" is the JS-facing name for what QUIC/iroh call the connection's
 //! ALPN (RFC 7301): an opaque identifier negotiated in the handshake that both
@@ -15,9 +16,9 @@
 //! A `Stream` is a byte-oriented duplex: reads are pull-based (`read_chunk` pulls
 //! at most `READ_CHUNK` bytes, `Ok(None)` at end-of-stream) so the transport only
 //! advances as the caller iterates; writes go through an mpsc queue drained by
-//! `run_writer` (the caller spawns that task, since spawning is host-specific).
-//! `Stream::new` returns the handle together with the writer's receiver, the same
-//! split as the websocket `SocketSink`.
+//! the `StreamWriter` handed out beside the stream (the caller spawns its `run`,
+//! since spawning is host-specific), the same split as the websocket
+//! `SocketSink`.
 
 use std::cell::RefCell;
 use std::net::SocketAddr;
@@ -36,7 +37,7 @@ use crate::Value;
 const READ_CHUNK: usize = 64 * 1024;
 
 /// A message queued from the caller for the per-stream writer task.
-pub enum WriteMsg {
+enum WriteMsg {
   Data(Vec<u8>),
   Finish,
 }
@@ -107,9 +108,21 @@ impl Endpoint {
 
   /// Dial a peer and open one bidirectional stream over `protocol`. `peer` is
   /// either a `ticket` (connects directly, no discovery) or a bare endpoint `id`
-  /// (needs discovery to resolve the peer's address). Returns the raw iroh parts;
-  /// the caller assembles a `Stream` from them.
-  pub async fn connect(&self, peer: String, protocol: String) -> Result<(Connection, SendStream, RecvStream), String> {
+  /// (needs discovery to resolve the peer's address). Returns the assembled
+  /// `Stream` plus its writer task, which the caller spawns.
+  pub async fn connect(&self, peer: String, protocol: String) -> Result<(Rc<Stream>, StreamWriter), String> {
+    let (conn, send, recv) = self.connect_raw(peer, protocol).await?;
+    Ok(Stream::open(conn, send, recv))
+  }
+
+  /// Like `connect`, but packaged as a byte duplex (see `accept_io`): for a
+  /// byte-oriented consumer such as the dev tunnel's TCP forwarder.
+  pub async fn connect_io(&self, peer: String, protocol: String) -> Result<ConnIo, String> {
+    let (conn, send, recv) = self.connect_raw(peer, protocol).await?;
+    Ok(ConnIo { io: tokio::io::join(recv, send), conn })
+  }
+
+  async fn connect_raw(&self, peer: String, protocol: String) -> Result<(Connection, SendStream, RecvStream), String> {
     let alpn = protocol.into_bytes();
     let addr = parse_dial(&peer)?;
     let conn = self.inner.connect(addr, &alpn).await.map_err(|e| e.to_string())?;
@@ -118,9 +131,10 @@ impl Endpoint {
   }
 
   /// Accept the next incoming connection matching `alpn` and open its first
-  /// bidirectional stream. `Ok(None)` once the endpoint stops accepting (closed).
-  pub async fn accept_one(&self, alpn: &[u8]) -> Result<Option<(Connection, SendStream, RecvStream)>, String> {
-    accept_one(&self.inner, alpn).await
+  /// bidirectional stream as a `Stream` plus its writer task. `Ok(None)` once
+  /// the endpoint stops accepting (closed).
+  pub async fn accept_one(&self, alpn: &[u8]) -> Result<Option<(Rc<Stream>, StreamWriter)>, String> {
+    Ok(accept_one(&self.inner, alpn).await?.map(|(conn, send, recv)| Stream::open(conn, send, recv)))
   }
 
   /// Like `accept_one`, but packaged as a byte duplex: the remote peer's id plus
@@ -206,7 +220,7 @@ impl From<ConnInfo> for Value {
 }
 
 /// A single bidirectional p2p stream: a byte duplex. Reads are pull-based; writes
-/// go through the writer task draining the channel `new` hands back. Holds the
+/// go through the writer task (`StreamWriter`) draining the queue. Holds the
 /// `Connection` only to keep the QUIC connection (and thus the stream) alive for
 /// the stream's lifetime.
 pub struct Stream {
@@ -215,14 +229,39 @@ pub struct Stream {
   tx: mpsc::UnboundedSender<WriteMsg>,
 }
 
+/// The send half of a `Stream` plus the queue feeding it, handed out beside
+/// the stream so the host spawns `run` where its tasks live (spawning is
+/// host-specific).
+pub struct StreamWriter {
+  send: SendStream,
+  rx: mpsc::UnboundedReceiver<WriteMsg>,
+}
+
+impl StreamWriter {
+  /// Drain queued writes onto the send half in order, then finish it. A write
+  /// error or a closed queue ends the task.
+  pub async fn run(mut self, logger: &Logger) {
+    while let Some(msg) = self.rx.recv().await {
+      match msg {
+        WriteMsg::Data(buf) => {
+          if let Err(e) = self.send.write_all(&buf).await {
+            logger.warn(&format!("[flux] p2p write error: {e}"));
+            break;
+          }
+        }
+        WriteMsg::Finish => break,
+      }
+    }
+    let _ = self.send.finish();
+  }
+}
+
 impl Stream {
-  /// Build a stream and the receiver its writer task drains. The caller spawns
-  /// `run_writer(send, rx, logger)` (spawning is host-specific). Owns the
-  /// outgoing channel so callers never handle `WriteMsg` directly.
-  pub fn new(conn: Connection, recv: RecvStream) -> (Rc<Stream>, mpsc::UnboundedReceiver<WriteMsg>) {
+  /// Assemble a stream and its writer from an opened bi-stream.
+  fn open(conn: Connection, send: SendStream, recv: RecvStream) -> (Rc<Stream>, StreamWriter) {
     let (tx, rx) = mpsc::unbounded_channel::<WriteMsg>();
     let stream = Rc::new(Stream { conn, recv: RefCell::new(Some(recv)), tx });
-    (stream, rx)
+    (stream, StreamWriter { send, rx })
   }
 
   /// Pull the next chunk (at most `READ_CHUNK` bytes). `Ok(None)` at end-of-stream
@@ -427,21 +466,6 @@ async fn accept_one(ep: &IrohEndpoint, alpn: &[u8]) -> Result<Option<(Connection
 
 /// Drain queued writes onto the send half in order, then finish it. A write
 /// error or a closed queue ends the task.
-pub async fn run_writer(mut send: SendStream, mut rx: mpsc::UnboundedReceiver<WriteMsg>, logger: &Logger) {
-  while let Some(msg) = rx.recv().await {
-    match msg {
-      WriteMsg::Data(buf) => {
-        if let Err(e) = send.write_all(&buf).await {
-          logger.warn(&format!("[flux] p2p write error: {e}"));
-          break;
-        }
-      }
-      WriteMsg::Finish => break,
-    }
-  }
-  let _ = send.finish();
-}
-
 fn encode_hex(bytes: &[u8]) -> String {
   bytes.iter().map(|b| format!("{b:02x}")).collect()
 }

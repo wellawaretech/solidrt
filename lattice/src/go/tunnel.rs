@@ -98,11 +98,10 @@ async fn accept_loop(listener: TcpListener, endpoint: forge::p2p::Endpoint, tick
     let ticket = ticket.clone();
     tokio::spawn(async move {
       // One QUIC connection per TCP connection: the server's accept loop takes
-      // each incoming connection's first bi-stream.
-      match endpoint.connect(ticket, PROTOCOL.to_string()).await {
-        // The connection handle must outlive the pump: dropping it closes the
-        // stream.
-        Ok((_conn, send, recv)) => pump(tcp, send, recv).await,
+      // each incoming connection's first bi-stream. The io handle holds the
+      // connection, so it lives exactly as long as the pump.
+      match endpoint.connect_io(ticket, PROTOCOL.to_string()).await {
+        Ok(io) => pump(tcp, io).await,
         Err(e) => log::warn!("[sgo] Tunnel dial failed: {e}"),
       }
     });
@@ -111,7 +110,8 @@ async fn accept_loop(listener: TcpListener, endpoint: forge::p2p::Endpoint, tick
 
 /// Copy bytes both ways until each direction reaches end-of-stream, shutting
 /// down the opposite write half so closes propagate.
-async fn pump(tcp: TcpStream, mut send: impl AsyncWrite + Unpin, mut recv: impl AsyncRead + Unpin) {
+async fn pump(tcp: TcpStream, io: impl AsyncRead + AsyncWrite + Unpin) {
+  let (mut recv, mut send) = tokio::io::split(io);
   let (mut tcp_read, mut tcp_write) = tcp.into_split();
   let up = async {
     let _ = tokio::io::copy(&mut tcp_read, &mut send).await;

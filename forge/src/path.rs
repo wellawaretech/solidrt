@@ -2,8 +2,8 @@
 //!
 //! The scripting-engine-independent half of `flux:path`: lexical join and the
 //! resolve-within-a-trusted-base containment check. It names no scripting-engine
-//! types; the marshalling layer (`plugins/flux/path.rs`) adapts JS args and
-//! turns `None` into JS `null`. Destined for the `forge` crate (see REDESIGN.md).
+//! types; the marshalling layer (flux `forge_plugins/path.rs`) adapts JS args
+//! and turns `None` into JS `null`.
 
 use std::path::{PathBuf, MAIN_SEPARATOR_STR};
 

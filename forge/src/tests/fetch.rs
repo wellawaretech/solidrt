@@ -6,7 +6,7 @@ use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use crate::cache::Cache;
-use crate::fetch::{cached_meta, do_fetch_cached, CacheMode, HostLimits};
+use crate::fetch::{cached_meta, do_fetch_cached, CacheMode, Client, HostLimits};
 
 async fn acquires_within(limits: &HostLimits, host: &str, ms: u64) -> Option<tokio::sync::OwnedSemaphorePermit> {
   tokio::time::timeout(Duration::from_millis(ms), limits.acquire(host)).await.ok()
@@ -97,8 +97,8 @@ async fn scripted_server(responses: Vec<&'static str>) -> (std::net::SocketAddr,
 async fn fetch_asset(url: &str, cache_dir: &str) -> crate::fetch::ResponseData {
   let cache = Rc::new(Cache::new(temp_dir(cache_dir), 1024 * 1024));
   let limits = Rc::new(HostLimits::new(2));
-  let client = Rc::new(reqwest::Client::new());
-  do_fetch_cached(client, "GET", url, vec![], None, cache, CacheMode::ForceCache, limits).await.expect("fetch")
+  let client = Client::new("forge-test").expect("build client");
+  do_fetch_cached(&client, "GET", url, vec![], None, cache, CacheMode::ForceCache, limits).await.expect("fetch")
 }
 
 #[tokio::test]

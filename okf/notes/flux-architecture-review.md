@@ -27,7 +27,37 @@ The debt is concentrated in four places, ranked below.
 
 ## 1. Transport protocol logic lives in flux, not forge
 
-`flux/Cargo.toml` pulls reqwest, hyper, http-body-util, bytes,
+**Status 2026-09-02: done, all three stages.** flux's direct dependencies
+are forge, rquickjs, tokio and log (plus alloy and taffy behind `gui`).
+
+- Stage 1, edge seams: `forge::fetch::Client` and `RequestBody` replace the
+  reqwest client and body in flux's fetch (and lattice's dev-server proxy),
+  `forge::p2p` hands back an assembled `Stream` plus `StreamWriter` (and a
+  `connect_io` duplex for lattice's tunnel), `forge::subprocess::Spawned`
+  yields `ByteStream`s, and the http/fetch channel bodies take `Vec<u8>`.
+- Stage 2, client driver: `forge::websocket` owns `parse_ws_url`, the
+  shared `ClientSocket` state (readyState, writer slot, close signal and
+  the web API's close-code/reason validation), `run_client` (connect,
+  handshake, frame loop) against a `ClientDispatch`, and the `ClientWriter`
+  the host spawns. Its public surface uses a `Kind` enum (text, binary,
+  ping, pong) instead of fastwebsockets' `OpCode`, and the writer queues are
+  opaque (`SinkQueue`).
+- Stage 3, server types: `forge::http` owns `RequestParts` (built from the
+  hyper request inside `serve_connection`, which now takes an async
+  `Fn(RequestParts) -> Reply` handler and the connection's `Remote`), the
+  opaque `Reply` (`text`, `full`, `streamed`), and `UpgradeHandle`;
+  `forge::websocket` owns `accept_upgrade` -> `Handshake` -> `PendingSocket`
+  and the opaque `SocketRead`/`SocketWrite` halves the loops drive. The
+  accept loops hand the peer to the host with the socket.
+
+flux keeps what it should: the JS classes and handler properties, the
+Request/Response marshalling, the routes-then-fetch dispatch policy (with
+its 405 and 404), and every `ctx.spawn`. Verified: forge lib tests, the
+flux integration suite (http, websocket client and server, fetch), the flux
+gui unit tests, `cargo check -p lattice --features go`, clippy, and the
+subprocess, p2p echo and p2p serve smoke scripts.
+
+As found, `flux/Cargo.toml` pulled reqwest, hyper, http-body-util, bytes,
 fastwebsockets, iroh and tokio-util directly - seven transport crates in a
 marshalling crate. The symptoms:
 
@@ -123,12 +153,12 @@ error.
 - `forge_plugins/events.rs` (the listener registry and sticky cache) has no
   JS surface; it is shared infrastructure and belongs under `plugins/` with
   the toolkit.
-- Stale seam docs: several forge module headers (`process.rs`, `path.rs`,
-  `subprocess.rs`, `websocket.rs`, `fs.rs`) still say "destined for the
-  forge crate (see REDESIGN.md)" and cite `plugins/flux/*.rs` paths that no
-  longer exist; `serve.rs` documents the handle as returned by `Flux.serve`;
-  `flux/README.md` still lists `Flux.on`. The layering docs are otherwise
-  the best in the repo, which makes the stale ones mislead more.
+- Stale seam docs (fixed 2026-09-02): several forge module headers still
+  said "destined for the forge crate (see REDESIGN.md)" and cited
+  `plugins/flux/*.rs` paths that no longer existed; `serve.rs` documented
+  the handle as returned by `Flux.serve`; `flux/README.md` listed `Flux.on`.
+  All corrected; the README's `Flux` section now states the
+  introspection-only contract.
 - `standards_plugins/body.rs::is_async_iterable` (and the sibling shims in
   `body.rs`/`marshal.rs`) `ctx.eval` a JS function on every call; cache it
   like `NativeQueueMicrotask` in `time.rs`.

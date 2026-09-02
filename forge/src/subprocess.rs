@@ -5,10 +5,10 @@
 //! (the `Child` handle's stdin serialization / kill / status-wait, and the
 //! `Supervisor` task that owns the OS child, races a kill request against exit,
 //! and publishes the exit status). It names no scripting-engine types; the
-//! marshalling layer (`plugins/flux/subprocess.rs`) decodes JS args into a
-//! `CommandSpec`, drives these methods, wraps the child's stdout/stderr in the
-//! shared body async-iterables, and encodes results back to JS. Destined for the
-//! `forge` crate (see REDESIGN.md).
+//! marshalling layer (flux `forge_plugins/subprocess.rs`) decodes JS args into
+//! a `CommandSpec`, drives these methods, wraps the child's stdout/stderr
+//! byte streams in the shared body async-iterables, and encodes results back
+//! to JS.
 //!
 //! Arguments are always an array, never a shell, so there is no per-platform
 //! shell/quoting and no injection. `kill_on_drop(true)` reaps a timed-out or
@@ -25,10 +25,12 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 
-use tokio::io::AsyncWriteExt;
-use tokio::process::{Child as TokioChild, ChildStderr, ChildStdin, ChildStdout, Command as TokioCommand};
+use tokio::io::{AsyncRead, AsyncWriteExt};
+use tokio::process::{Child as TokioChild, ChildStdin, Command as TokioCommand};
 use tokio::sync::{watch, Mutex, Notify};
+use tokio_util::io::ReaderStream;
 
+use crate::stream::{to_byte_stream, ByteStream};
 use crate::Value;
 
 /// A parsed, reusable command spec. Shared (`Rc`) into each `output()`/`spawn()`
@@ -173,8 +175,8 @@ impl CommandSpec {
 
     let mut child = command.spawn().map_err(|e| spawn_err(&self.cmd, e))?;
     let pid = child.id();
-    let stdout = child.stdout.take();
-    let stderr = child.stderr.take();
+    let stdout = pipe_stream(child.stdout.take());
+    let stderr = pipe_stream(child.stderr.take());
 
     // stdin is behind an async Mutex so write()/endStdin() serialize: a write
     // holds the lock across its (backpressure-respecting) write_all, so concurrent
@@ -197,10 +199,21 @@ const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
 /// spawn), and any initial stdin (to write on a spawned task).
 pub struct Spawned {
   pub child: Child,
-  pub stdout: Option<ChildStdout>,
-  pub stderr: Option<ChildStderr>,
+  /// The child's output pipes as byte streams; a detached child has null
+  /// stdio, so its streams end immediately.
+  pub stdout: ByteStream,
+  pub stderr: ByteStream,
   pub supervisor: Supervisor,
   pub initial_stdin: Option<Vec<u8>>,
+}
+
+/// A child's output pipe as a `ByteStream`; `None` (a detached child's null
+/// stdio) is an empty stream, so consumers need no special case.
+fn pipe_stream<R: AsyncRead + 'static>(pipe: Option<R>) -> ByteStream {
+  match pipe {
+    Some(pipe) => to_byte_stream(ReaderStream::new(pipe)),
+    None => to_byte_stream(ReaderStream::new(tokio::io::empty())),
+  }
 }
 
 /// A handle to a spawned child: interactive stdin, kill, and exit status. Cloned

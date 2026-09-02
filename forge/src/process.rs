@@ -1,7 +1,7 @@
 //! Engine-free process core: host metadata and OS signal sources.
 //!
-//! Names no scripting-engine types. The marshalling layer
-//! (`plugins/flux/process.rs`) owns the event-bus wiring (`ctx.spawn`,
+//! Names no scripting-engine types. The marshalling layer (flux
+//! `forge_plugins/process.rs`) owns the event-bus wiring (`ctx.spawn`,
 //! emit/has-listeners, the per-context dedup) and forwards to the pieces here:
 //! host metadata (`platform`/`arch`/`rss`/`home_dir`/`exec_path`/`env_vars`, the OS and host
 //! names), `kill`/`alive`, and `SignalStream`, which hides the

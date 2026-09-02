@@ -49,17 +49,9 @@ taffy = { version = "0.12.1", optional = true }
 log = { workspace = true }
 rquickjs = { version = "0.12.2", features = ["rust-alloc", "futures", "macro", "loader"] }
 tokio = { workspace = true, features = ["sync", "time", "fs", "io-util", "macros", "rt", "net", "signal", "process"] }
-# The capability cores (and their reqwest/hyper/rusqlite/iroh/... deps) live in
-# forge now; flux keeps only what the marshalling layer names directly.
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream"] }
-hyper = { version = "1", features = ["server", "http1"] }
-http-body-util = "0.1"
-bytes = "1"
-fastwebsockets = { version = "0.10.0", features = ["upgrade", "unstable-split"] }
-iroh = "1"
-# ReaderStream adapts a child's stdout/stderr (AsyncRead) into a byte stream for
-# flux:subprocess streaming spawn.
-tokio-util = { version = "0.7", features = ["io"] }
+# The capability cores and every transport crate (reqwest, hyper, iroh,
+# fastwebsockets, rusqlite, ...) live in forge; flux names only the crates the
+# marshalling layer itself is written against.
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["full"] }

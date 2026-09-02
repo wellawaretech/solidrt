@@ -34,15 +34,13 @@ use rquickjs::module::{Declarations, Exports, ModuleDef};
 use rquickjs::promise::Promised;
 use rquickjs::{Class, Ctx, Exception, Function, IntoJs, JsLifetime, Object, Value};
 
-use iroh::endpoint::{Connection, RecvStream, SendStream};
-
 use crate::logger::CtxLogger;
 use crate::pending::PendingOps;
 use crate::plugins::js_error::JsResult;
 use crate::plugins::marshal::{attach_async_iterator, iter_result, with_pending, OptArg, Step};
 use crate::standards_plugins::body::{extract_body_value, JsBytes};
 use crate::plugins::value::Neutral;
-use forge::p2p::{decode_hex32, run_writer, Endpoint, Stream};
+use forge::p2p::{decode_hex32, Endpoint, Stream, StreamWriter};
 
 /// `next()` of the `accept` async-iterable: a promise resolving to an iterator
 /// result object (boxed so the closure has a nameable return type).
@@ -128,7 +126,7 @@ impl P2pEndpoint {
       let r = inner.connect(peer, protocol).await;
       pending.release();
       match r {
-        Ok((conn, send, recv)) => P2pStream::create(&ctx2, conn, send, recv),
+        Ok((stream, writer)) => P2pStream::create(&ctx2, stream, writer),
         Err(msg) => Err(Exception::throw_message(&ctx2, &msg)),
       }
     }))
@@ -151,8 +149,8 @@ impl P2pEndpoint {
         let r = inner.accept_one(&alpn).await;
         pending.release();
         match r {
-          Ok(Some((conn, send, recv))) => {
-            let stream = P2pStream::create(&ctx2, conn, send, recv)?;
+          Ok(Some((stream, writer))) => {
+            let stream = P2pStream::create(&ctx2, stream, writer)?;
             iter_result(&ctx2, Some(stream.into_js(&ctx2)?))
           }
           Ok(None) => iter_result(&ctx2, None),
@@ -198,21 +196,15 @@ pub struct P2pStream {
 }
 
 impl P2pStream {
-  /// Build the JS stream object: assemble the forge `Stream`, spawn its writer
-  /// task (spawning is host-specific, so it stays in marshalling), and make the
+  /// Build the JS stream object over the forge `Stream`: spawn its writer task
+  /// (spawning is host-specific, so it stays in marshalling) and make the
   /// instance async-iterable.
-  fn create<'js>(
-    ctx: &Ctx<'js>,
-    conn: Connection,
-    send: SendStream,
-    recv: RecvStream,
-  ) -> rquickjs::Result<Class<'js, P2pStream>> {
-    let (inner, rx) = Stream::new(conn, recv);
+  fn create<'js>(ctx: &Ctx<'js>, inner: Rc<Stream>, writer: StreamWriter) -> rquickjs::Result<Class<'js, P2pStream>> {
     let pending = ctx.userdata::<PendingOps>().expect("pending ops").clone();
     let logger = ctx.logger();
     pending.hold();
     ctx.spawn(async move {
-      run_writer(send, rx, &logger).await;
+      writer.run(&logger).await;
       pending.release();
     });
 

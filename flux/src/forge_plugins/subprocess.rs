@@ -3,11 +3,10 @@ use rquickjs::module::{Declarations, Exports, ModuleDef};
 use rquickjs::promise::Promised;
 use rquickjs::{Ctx, Exception, Function, Object, TypedArray, Value};
 use std::rc::Rc;
-use tokio_util::io::ReaderStream;
 
 use crate::pending::PendingOps;
 use crate::plugins::marshal::{with_pending, OptArg};
-use crate::standards_plugins::body::{byte_stream_iterable, to_byte_stream};
+use crate::standards_plugins::body::byte_stream_iterable;
 use crate::plugins::value::Neutral;
 use forge::subprocess::{self, CommandSpec, Spawned};
 
@@ -185,15 +184,8 @@ fn build_child<'js>(ctx: Ctx<'js>, spec: &Rc<CommandSpec>) -> rquickjs::Result<O
     });
   }
 
-  // A detached child has null stdio; its streams iterate to nothing.
-  let stdout = match stdout {
-    Some(stdout) => to_byte_stream(ReaderStream::new(stdout)),
-    None => to_byte_stream(ReaderStream::new(tokio::io::empty())),
-  };
-  let stderr = match stderr {
-    Some(stderr) => to_byte_stream(ReaderStream::new(stderr)),
-    None => to_byte_stream(ReaderStream::new(tokio::io::empty())),
-  };
+  // A detached child has null stdio; forge hands back empty streams for it, so
+  // they iterate to nothing.
   let obj = Object::new(ctx.clone())?;
   obj.set("pid", child.pid())?;
   obj.set("stdout", byte_stream_iterable(&ctx, stdout, pending.clone())?)?;

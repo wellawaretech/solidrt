@@ -1,8 +1,3 @@
-use fastwebsockets::upgrade::{is_upgrade_request, upgrade as accept_upgrade, UpgradeFut};
-use fastwebsockets::OpCode;
-use http_body_util::BodyExt;
-use hyper::header::{HeaderName, HeaderValue};
-use hyper::Request as HyperRequest;
 use rquickjs::class::{Trace, Tracer};
 use rquickjs::function::IntoArgs;
 use rquickjs::{Class, Ctx, Exception, Function, JsLifetime, Object, Value};
@@ -14,10 +9,16 @@ use crate::logger::{format_js_error, Logger};
 use crate::pending::PendingOps;
 use crate::plugins::marshal::OptArg;
 use crate::standards_plugins::body::{extract_body_value, JsBytes};
-use forge::http::{Remote, ResBody};
+use forge::http::{Remote, UpgradeHandle};
 use forge::websocket::{
-  run_reader, run_writer, SocketSink, Topics, WsDispatch, DEFAULT_BACKPRESSURE_LIMIT, MAX_CONTROL_PAYLOAD,
+  run_reader, run_writer, Handshake, Kind, PendingSocket, SocketSink, Topics, WsDispatch,
+  DEFAULT_BACKPRESSURE_LIMIT, MAX_CONTROL_PAYLOAD,
 };
+
+// Marshalling only: the upgrade handshake, the frame queue, the pub/sub
+// registry, and the read/write loops live in `forge::websocket`; this layer
+// parses the `websocket` option, builds the `ServerWebSocket` handle, and
+// forwards the loops' callbacks to the JS functions.
 
 /// The `websocket` option callbacks of `serve`. One set per server, shared by
 /// all sockets. No `ping` callback: incoming pings are answered automatically
@@ -50,14 +51,13 @@ pub(crate) fn parse_ws_handlers<'js>(opts: &Object<'js>) -> rquickjs::Result<Opt
 
 /// A serve Request's upgrade capability, stored on the Request while its handler
 /// runs. `server.upgrade(req)` moves it from `Ready` to `Accepted`; serve then
-/// sends the held 101 response once the handler returns.
+/// sends the held 101 reply once the handler returns.
 pub(crate) enum ServeUpgrade<'js> {
-  /// Not upgraded yet: the hyper upgrade handle taken from the incoming request.
-  Ready(hyper::upgrade::OnUpgrade),
-  /// Handshake accepted: the 101 response to send, the future resolving to the
-  /// raw socket once hyper releases the connection, the user value destined
-  /// for `ws.data`, and the peer address destined for `ws.remoteAddr`.
-  Accepted { response: hyper::Response<ResBody>, socket: UpgradeFut, data: Option<Value<'js>>, remote: Option<Remote> },
+  /// Not upgraded yet: the upgrade handle taken from the incoming request.
+  Ready(UpgradeHandle),
+  /// Handshake accepted: the 101 reply plus the pending socket, the user value
+  /// destined for `ws.data`, and the peer destined for `ws.remoteAddr`.
+  Accepted { handshake: Handshake, data: Option<Value<'js>>, remote: Option<Remote> },
 }
 
 unsafe impl<'js> JsLifetime<'js> for ServeUpgrade<'js> {
@@ -74,46 +74,13 @@ impl<'js> ServeUpgrade<'js> {
   }
 }
 
-/// Validate a websocket upgrade and produce the 101 response plus the socket
-/// future. The original hyper request was already split into parts by serve, so
-/// rebuild a minimal one from the extracted headers (fastwebsockets validates
-/// `Sec-WebSocket-Key`/`-Version` from it) and re-attach the upgrade handle
-/// where `hyper::upgrade::on` looks for it. `extra_headers` (from
-/// `upgrade(req, { headers })`) are appended to the 101; an invalid one fails
-/// the upgrade rather than silently dropping it.
-pub(crate) fn try_upgrade<'js>(
-  headers: &[(String, String)],
-  on_upgrade: hyper::upgrade::OnUpgrade,
-  extra_headers: &[(String, String)],
-  data: Option<Value<'js>>,
-  remote: Option<Remote>,
-) -> Result<ServeUpgrade<'js>, String> {
-  let mut builder = HyperRequest::builder();
-  for (k, v) in headers {
-    builder = builder.header(k.as_str(), v.as_str());
-  }
-  let mut req = builder.body(()).map_err(|e| format!("invalid headers: {e}"))?;
-  if !is_upgrade_request(&req) {
-    return Err("not a websocket upgrade request".to_string());
-  }
-  req.extensions_mut().insert(on_upgrade);
-  let (response, socket) = accept_upgrade(&mut req).map_err(|e| e.to_string())?;
-  let mut response = response.map(BodyExt::boxed);
-  for (k, v) in extra_headers {
-    let name = HeaderName::from_bytes(k.as_bytes()).map_err(|e| format!("invalid header name {k}: {e}"))?;
-    let value = HeaderValue::from_str(v).map_err(|e| format!("invalid header value for {k}: {e}"))?;
-    response.headers_mut().append(name, value);
-  }
-  Ok(ServeUpgrade::Accepted { response, socket, data, remote })
-}
-
-/// Split a message value into its frame opcode and payload bytes: a string
+/// Split a message value into its frame kind and payload bytes: a string
 /// sends a text frame, a Uint8Array a binary frame. Shared by send and publish
 /// (and the client's send).
-pub(crate) fn message_payload<'js>(data: &Value<'js>) -> rquickjs::Result<(OpCode, Vec<u8>)> {
+pub(crate) fn message_payload<'js>(data: &Value<'js>) -> rquickjs::Result<(Kind, Vec<u8>)> {
   match data.as_string() {
-    Some(s) => Ok((OpCode::Text, s.to_string()?.into_bytes())),
-    None => Ok((OpCode::Binary, extract_body_value(data, "ServerWebSocket")?)),
+    Some(s) => Ok((Kind::Text, s.to_string()?.into_bytes())),
+    None => Ok((Kind::Binary, extract_body_value(data, "ServerWebSocket")?)),
   }
 }
 
@@ -160,19 +127,19 @@ impl<'js> ServerWebSocket<'js> {
   /// the queue exceeds backpressureLimit (the message is still queued and
   /// `drain` fires once the queue empties).
   pub fn send(&self, data: Value<'js>) -> rquickjs::Result<i32> {
-    let (opcode, payload) = message_payload(&data)?;
-    Ok(self.sink.enqueue(opcode, payload))
+    let (kind, payload) = message_payload(&data)?;
+    Ok(self.sink.enqueue(kind, payload))
   }
 
   /// Send a ping control frame (the peer's reply surfaces in the `pong`
   /// callback). Same return values as `send`.
   pub fn ping(&self, ctx: Ctx<'js>, data: OptArg<Value<'js>>) -> rquickjs::Result<i32> {
-    Ok(self.sink.enqueue(OpCode::Ping, Self::control_payload(&ctx, data)?))
+    Ok(self.sink.enqueue(Kind::Ping, Self::control_payload(&ctx, data)?))
   }
 
   /// Send an unsolicited pong control frame. Same return values as `send`.
   pub fn pong(&self, ctx: Ctx<'js>, data: OptArg<Value<'js>>) -> rquickjs::Result<i32> {
-    Ok(self.sink.enqueue(OpCode::Pong, Self::control_payload(&ctx, data)?))
+    Ok(self.sink.enqueue(Kind::Pong, Self::control_payload(&ctx, data)?))
   }
 
   /// Join a topic; `server.publish(topic)` and peers' `ws.publish(topic)` then
@@ -194,8 +161,8 @@ impl<'js> ServerWebSocket<'js> {
   /// Publish to every subscriber of `topic` except this socket. Returns the
   /// number of sockets the message was queued to.
   pub fn publish(&self, topic: String, data: Value<'js>) -> rquickjs::Result<i32> {
-    let (opcode, payload) = message_payload(&data)?;
-    Ok(self.sink.publish(&topic, opcode, payload))
+    let (kind, payload) = message_payload(&data)?;
+    Ok(self.sink.publish(&topic, kind, payload))
   }
 
   /// Send a close frame (default 1000). The connection finishes once the peer
@@ -273,7 +240,7 @@ impl<'js> WsDispatch for JsDispatch<'js> {
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn spawn_socket<'js>(
   ctx: &Ctx<'js>,
-  socket: UpgradeFut,
+  socket: PendingSocket,
   handlers: Rc<WsHandlers<'js>>,
   shutdown_rx: watch::Receiver<bool>,
   logger: Logger,
@@ -293,7 +260,7 @@ pub(crate) fn spawn_socket<'js>(
 #[allow(clippy::too_many_arguments)]
 async fn run_socket<'js>(
   ctx: Ctx<'js>,
-  socket: UpgradeFut,
+  socket: PendingSocket,
   handlers: Rc<WsHandlers<'js>>,
   shutdown_rx: watch::Receiver<bool>,
   logger: Logger,
@@ -302,15 +269,14 @@ async fn run_socket<'js>(
   remote: Option<Remote>,
   topics: Topics,
 ) {
-  let ws = match socket.await {
-    Ok(ws) => ws,
+  let (read_half, write_half) = match socket.accept().await {
+    Ok(halves) => halves,
     Err(e) => {
       logger.warn(&format!("[flux] websocket upgrade failed: {e}"));
       return;
     }
   };
-  let (read_half, write_half) = ws.split(tokio::io::split);
-  let (sink, rx) = SocketSink::new(topics, handlers.backpressure_limit);
+  let (sink, queue) = SocketSink::new(topics, handlers.backpressure_limit);
   let close_notify = Rc::new(Notify::new());
 
   let socket_handle = ServerWebSocket {
@@ -340,7 +306,7 @@ async fn run_socket<'js>(
   let writer_logger = logger.clone();
   let writer_pending = pending.clone();
   ctx.spawn(async move {
-    run_writer(write_half, rx, writer_sink, &*writer_dispatch, &writer_handle, &writer_logger).await;
+    run_writer(write_half, queue, writer_sink, &*writer_dispatch, &writer_handle, &writer_logger).await;
     writer_pending.release();
   });
 

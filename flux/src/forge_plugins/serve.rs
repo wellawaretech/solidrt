@@ -1,14 +1,9 @@
-use bytes::Bytes;
-use http_body_util::BodyExt;
-use hyper::body::Incoming;
-use hyper::service::service_fn;
-use hyper::upgrade::OnUpgrade;
-use hyper::{Request as HyperRequest, Response as HyperResponse, StatusCode};
 use rquickjs::class::Trace;
 use rquickjs::module::{Declarations, Exports, ModuleDef};
 use rquickjs::promise::MaybePromise;
 use rquickjs::{Class, Ctx, Exception, Function, JsLifetime, Object, Value};
-use std::convert::Infallible;
+use std::future::Future;
+use std::pin::Pin;
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -16,40 +11,43 @@ use crate::logger::{format_js_error, CtxLogger, Logger};
 use crate::pending::PendingOps;
 use crate::plugins::marshal::{mark_observed, OptArg};
 use crate::forge_plugins::p2p::P2pEndpoint;
-use crate::forge_plugins::websocket::{
-  message_payload, parse_ws_handlers, spawn_socket, try_upgrade, ServeUpgrade, WsHandlers,
-};
-use crate::standards_plugins::body::{pump_async_iterable, to_byte_stream, ByteStream, MessageBody};
+use crate::forge_plugins::websocket::{message_payload, parse_ws_handlers, spawn_socket, ServeUpgrade, WsHandlers};
+use crate::standards_plugins::body::{pump_async_iterable, MessageBody};
 use crate::standards_plugins::headers::headers_from_init;
 use crate::standards_plugins::request::{request_from_parts, Request};
 use crate::standards_plugins::response::Response;
 use forge::http::{
-  accept_loop, accept_loop_p2p, bind_listener, build_response, channel_body, full_body, serve_connection,
-  text_response, Remote, ResBody, Route, RouteTable, ServerShared,
+  accept_loop, accept_loop_p2p, bind_listener, serve_connection, Remote, Reply, RequestParts, Route, RouteTable,
+  ServerShared,
 };
-use forge::websocket::Topics;
+use forge::websocket::{accept_upgrade, Topics};
+
+// Marshalling only: the listener, connection lifecycle, request parts, reply
+// bodies, and routing table live in `forge::http`; this layer parses the serve
+// options, builds the JS Request, calls the JS handlers, and turns what they
+// return into a `Reply`.
 
 /// Read a server-built Response's buffered bytes. Server responses are buffered
 /// (`new Response(string/bytes)`) or outgoing streams (handled separately), never
 /// `Incoming`, so a non-buffered body just yields nothing here.
-fn buffered_bytes(r: &Response<'_>) -> Bytes {
+fn buffered_bytes(r: &Response<'_>) -> Vec<u8> {
   match &r.body {
-    MessageBody::Buffered(state) => Bytes::from(state.take().unwrap_or_default()),
-    MessageBody::Incoming(_) => Bytes::new(),
+    MessageBody::Buffered(state) => state.take().unwrap_or_default(),
+    MessageBody::Incoming(_) => Vec::new(),
   }
 }
 
-fn response_from_native<'js>(r: &Response<'js>) -> HyperResponse<ResBody> {
-  build_response(r.status, &r.headers.borrow().entries(), full_body(buffered_bytes(r)))
+fn response_from_native<'js>(r: &Response<'js>) -> Reply {
+  Reply::full(r.status, &r.headers.borrow().entries(), buffered_bytes(r))
 }
 
-/// Build a streamed response: spawn a task that drives the JS async-iterable body
-/// (`resp.stream`), feeding its chunks into the response over chunked transfer
+/// Build a streamed reply: spawn a task that drives the JS async-iterable body
+/// (`resp.stream`), feeding its chunks into the reply over chunked transfer
 /// encoding (no Content-Length). The handler has already returned, so production
 /// continues on the executor while hyper flushes frames as they arrive.
-fn stream_response<'js>(ctx: &Ctx<'js>, resp: &Response<'js>) -> HyperResponse<ResBody> {
+fn stream_response<'js>(ctx: &Ctx<'js>, resp: &Response<'js>) -> Reply {
   let iterable = resp.stream.clone().expect("stream_response called without a stream");
-  let (tx, body) = channel_body();
+  let (tx, reply) = Reply::streamed(resp.status, &resp.headers.borrow().entries());
 
   let pump_ctx = ctx.clone();
   let logger = ctx.logger();
@@ -57,13 +55,13 @@ fn stream_response<'js>(ctx: &Ctx<'js>, resp: &Response<'js>) -> HyperResponse<R
     pump_async_iterable(pump_ctx, iterable, tx, logger).await;
   });
 
-  build_response(resp.status, &resp.headers.borrow().entries(), body)
+  reply
 }
 
-fn response_from_value<'js>(val: Value<'js>, logger: &Logger) -> HyperResponse<ResBody> {
+fn response_from_value<'js>(val: Value<'js>, logger: &Logger) -> Reply {
   if let Some(s) = val.as_string() {
     let s = s.to_string().unwrap_or_default();
-    return text_response(StatusCode::OK, &s);
+    return Reply::text(200, &s);
   }
   if let Ok(class) = Class::<Response>::from_value(&val) {
     let resp = class.borrow();
@@ -73,7 +71,11 @@ fn response_from_value<'js>(val: Value<'js>, logger: &Logger) -> HyperResponse<R
     return response_from_native(&resp);
   }
   logger.warn("[flux] serve fetch must return a string or a Response");
-  text_response(StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error")
+  internal_error()
+}
+
+fn internal_error() -> Reply {
+  Reply::text(500, "Internal Server Error")
 }
 
 /// A `routes` value that is a plain `Response`, captured once at registration so
@@ -82,7 +84,7 @@ fn response_from_value<'js>(val: Value<'js>, logger: &Logger) -> HyperResponse<R
 struct StaticResponse {
   status: u16,
   headers: Vec<(String, String)>,
-  body: Bytes,
+  body: Vec<u8>,
 }
 
 fn snapshot_response<'js>(r: &Response<'js>) -> StaticResponse {
@@ -147,15 +149,15 @@ struct Handlers<'js> {
 }
 
 /// Invoke a JS request handler `(req, server)`, await a promise result, and turn
-/// the value into a response. A throw or rejection routes through the `error`
+/// the value into a reply. A throw or rejection routes through the `error`
 /// handler. A request upgraded to a websocket during the call gets its held 101
-/// response instead.
+/// reply instead.
 async fn call_handler<'js>(
   f: &Function<'js>,
   req_class: Class<'js, Request<'js>>,
   handlers: &Handlers<'js>,
   logger: &Logger,
-) -> HyperResponse<ResBody> {
+) -> Reply {
   let ctx = f.ctx().clone();
   let error_fn = handlers.error_fn.as_ref();
   let val = match f
@@ -169,25 +171,25 @@ async fn call_handler<'js>(
     Ok(v) => v,
     Err(e) => return error_response(&ctx, e, error_fn, logger).await,
   };
-  if let Some(resp) = take_upgrade(&ctx, &req_class, handlers, &resolved, logger) {
-    return resp;
+  if let Some(reply) = take_upgrade(&ctx, &req_class, handlers, &resolved, logger) {
+    return reply;
   }
   response_from_value(resolved, logger)
 }
 
 /// If `server.upgrade(req)` accepted a websocket handshake during this handler
-/// call, spawn the socket tasks and return the held 101 response. Taking the
-/// slot also drops an unused `Ready` capability: once the handler has returned
-/// a normal response, the request can no longer upgrade.
+/// call, spawn the socket tasks and return the held 101 reply. Taking the slot
+/// also drops an unused `Ready` capability: once the handler has returned a
+/// normal response, the request can no longer upgrade.
 fn take_upgrade<'js>(
   ctx: &Ctx<'js>,
   req_class: &Class<'js, Request<'js>>,
   handlers: &Handlers<'js>,
   resolved: &Value<'js>,
   logger: &Logger,
-) -> Option<HyperResponse<ResBody>> {
+) -> Option<Reply> {
   let slot = req_class.borrow().upgrade.borrow_mut().take();
-  let Some(ServeUpgrade::Accepted { response, socket, data, remote }) = slot else {
+  let Some(ServeUpgrade::Accepted { handshake, data, remote }) = slot else {
     return None;
   };
   if !resolved.is_undefined() {
@@ -196,15 +198,16 @@ fn take_upgrade<'js>(
   let Some(ws_handlers) = handlers.websocket.clone() else {
     // upgrade() refuses without a websocket option, so this should not happen.
     logger.warn("[flux] serve: upgraded request without websocket handlers");
-    return Some(text_response(StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error"));
+    return Some(internal_error());
   };
   let server = handlers.server.borrow();
   let shutdown_rx = server.shared.subscribe();
+  let (reply, socket) = handshake.into_parts();
   spawn_socket(ctx, socket, ws_handlers, shutdown_rx, logger.clone(), data, remote, server.topics.clone());
-  Some(response)
+  Some(reply)
 }
 
-/// Build the response for a failed `fetch`: either the callback threw or its
+/// Build the reply for a failed `fetch`: either the callback threw or its
 /// returned promise rejected. In both cases rquickjs re-throws the value into
 /// the context, so `ctx.catch()` yields the JS error to hand to the user's
 /// `error(err)` handler. With no handler (or if the handler itself throws or
@@ -215,7 +218,7 @@ async fn error_response<'js>(
   _err: rquickjs::Error,
   error_fn: Option<&Function<'js>>,
   logger: &Logger,
-) -> HyperResponse<ResBody> {
+) -> Reply {
   let exception = ctx.catch();
   logger.warn(&format!(
     "[flux] serve fetch error: {}",
@@ -224,14 +227,14 @@ async fn error_response<'js>(
 
   let ef = match error_fn {
     Some(f) => f,
-    None => return text_response(StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error"),
+    None => return internal_error(),
   };
 
   let val = match ef.call::<(Value<'_>,), Value<'_>>((exception,)) {
     Ok(v) => v,
     Err(e) => {
       logger.warn(&format!("[flux] serve error handler threw: {}", format_js_error(ctx, e)));
-      return text_response(StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error");
+      return internal_error();
     }
   };
   mark_observed(&val);
@@ -240,28 +243,11 @@ async fn error_response<'js>(
     Ok(v) => v,
     Err(e) => {
       logger.warn(&format!("[flux] serve error handler rejected: {}", format_js_error(ctx, e)));
-      return text_response(StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error");
+      return internal_error();
     }
   };
 
   response_from_value(resolved, logger)
-}
-
-/// The parts of an incoming request, extracted once up front and then consumed by
-/// whichever handler serves it (a route fn, a per-method fn, or the `fetch`
-/// fallback). Bundling them keeps `dispatch_fn` under clippy's argument limit. The
-/// `body` is the request stream, read incrementally by the handler (not buffered).
-struct RequestParts {
-  method: String,
-  url: String,
-  body: ByteStream,
-  headers: Vec<(String, String)>,
-  /// The hyper upgrade handle, carried into the JS Request so the handler can
-  /// call `server.upgrade(req)`.
-  upgrade: Option<OnUpgrade>,
-  /// The connection's peer, carried into the JS Request for
-  /// `server.requestIP(req)` and `ws.remoteAddr`.
-  remote: Option<Remote>,
 }
 
 /// Build the JS `Request` from `parts` (plus any captured path `params`) and run
@@ -273,7 +259,7 @@ async fn dispatch_fn<'js>(
   params: Vec<(String, String)>,
   handlers: &Handlers<'js>,
   logger: &Logger,
-) -> HyperResponse<ResBody> {
+) -> Reply {
   let ctx = f.ctx().clone();
   let req_class = match request_from_parts(
     &ctx,
@@ -288,55 +274,31 @@ async fn dispatch_fn<'js>(
     Ok(c) => c,
     Err(e) => {
       logger.warn(&format!("[flux] serve build Request error: {e}"));
-      return text_response(StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error");
+      return internal_error();
     }
   };
   call_handler(f, req_class, handlers, logger).await
 }
 
-async fn handle_request<'js>(
-  mut req: HyperRequest<Incoming>,
-  remote: Option<Remote>,
-  handlers: &Handlers<'js>,
-  logger: &Logger,
-) -> HyperResponse<ResBody> {
+/// One request's dispatch: the route table first (a static route serves its
+/// snapshot without building a Request; a per-method route answers 405 with
+/// `Allow` for an unlisted method), then the `fetch` fallback, then 404.
+async fn handle_request<'js>(parts: RequestParts, handlers: &Handlers<'js>, logger: &Logger) -> Reply {
   let fetch_fn = handlers.fetch_fn.as_ref();
   let routes = handlers.routes.as_deref();
 
-  let method = req.method().as_str().to_string();
-  let url = req.uri().to_string();
-  let headers: Vec<(String, String)> = req
-    .headers()
-    .iter()
-    .filter_map(|(name, value)| value.to_str().ok().map(|v| (name.as_str().to_string(), v.to_string())))
-    .collect();
-
-  // The upgrade handle rides along on the Request so a handler can accept a
-  // websocket via server.upgrade(req); unused it is simply dropped.
-  let upgrade = req.extensions_mut().remove::<OnUpgrade>();
-
-  // Stream the request body to the handler rather than buffering it up front, so
-  // large uploads stay constant-memory: the handler reads it on demand via
-  // req.text()/req.json()/req.bytes() or by iterating req.body. A handler that
-  // never reads it (e.g. a static route) just drops the unread stream.
-  let body = to_byte_stream(req.into_body().into_data_stream());
-  let parts = RequestParts { method, url, body, headers, upgrade, remote };
-
-  // Try the route table first; a match dispatches to its handler. Static routes
-  // need neither the body nor a Request, so they serve their snapshot directly.
   if let Some(table) = routes {
     let path = parts.url.split('?').next().unwrap_or(parts.url.as_str());
     if let Some((handler, params)) = table.lookup(path) {
       match handler {
-        RouteHandler::Static(s) => return build_response(s.status, &s.headers, full_body(s.body.clone())),
+        RouteHandler::Static(s) => return Reply::full(s.status, &s.headers, s.body.clone()),
         RouteHandler::Fn(f) => return dispatch_fn(f, parts, params, handlers, logger).await,
-        // Per-method object: dispatch on the request method, else 405 + Allow.
         RouteHandler::Methods(methods) => {
           return match methods.iter().find(|(m, _)| *m == parts.method) {
             Some((_, f)) => dispatch_fn(f, parts, params, handlers, logger).await,
             None => {
               let allow = methods.iter().map(|(m, _)| m.clone()).collect::<Vec<_>>().join(", ");
-              build_response(405, &[("Allow".to_string(), allow)], full_body(Bytes::from_static(b"Method Not Allowed")))
+              Reply::full(405, &[("Allow".to_string(), allow)], b"Method Not Allowed".to_vec())
             }
           };
         }
@@ -347,14 +309,15 @@ async fn handle_request<'js>(
   // No route matched: fall through to the `fetch` handler, or 404 without one.
   match fetch_fn {
     Some(f) => dispatch_fn(f, parts, Vec::new(), handlers, logger).await,
-    None => text_response(StatusCode::NOT_FOUND, "Not Found"),
+    None => Reply::text(404, "Not Found"),
   }
 }
 
-/// Handle returned by `Flux.serve`. Loosely models Bun's `Server`: `close()` plus
-/// `port`/`host`/`url` introspection. `close()` is synchronous and graceful:
-/// it stops accepting and asks each open connection to shut down gracefully, so
-/// in-flight requests finish and idle keep-alive connections close promptly.
+/// Handle returned by `serve` (`flux:http`). Loosely models Bun's `Server`:
+/// `close()` plus `port`/`host`/`url` introspection. `close()` is synchronous
+/// and graceful: it stops accepting and asks each open connection to shut down
+/// gracefully, so in-flight requests finish and idle keep-alive connections
+/// close promptly.
 #[derive(Trace, JsLifetime)]
 #[rquickjs::class(rename = "Server")]
 pub struct Server {
@@ -375,7 +338,7 @@ pub struct Server {
 #[rquickjs::methods]
 impl Server {
   /// Accept a websocket handshake for `req`. On true the handler must return
-  /// nothing: the held 101 response is sent when it returns, and the `websocket`
+  /// nothing: the held 101 reply is sent when it returns, and the `websocket`
   /// callbacks take over the connection. False means the request cannot upgrade
   /// (not a websocket request, already upgraded, or no `websocket` option), so
   /// the handler can serve a normal response instead. Options: `data` becomes
@@ -407,12 +370,12 @@ impl Server {
     let req = req.borrow();
     let headers = req.headers.borrow().entries();
     let mut slot = req.upgrade.borrow_mut();
-    let Some(ServeUpgrade::Ready(on_upgrade)) = slot.take() else {
+    let Some(ServeUpgrade::Ready(handle)) = slot.take() else {
       return false;
     };
-    match try_upgrade(&headers, on_upgrade, &extra_headers, data, req.remote.clone()) {
-      Ok(accepted) => {
-        *slot = Some(accepted);
+    match accept_upgrade(&headers, handle, &extra_headers) {
+      Ok(handshake) => {
+        *slot = Some(ServeUpgrade::Accepted { handshake, data, remote: req.remote.clone() });
         true
       }
       Err(e) => {
@@ -425,8 +388,8 @@ impl Server {
   /// Publish a message (string or Uint8Array) to every socket subscribed to
   /// `topic`. Returns the number of sockets the message was queued to.
   pub fn publish<'js>(&self, topic: String, data: Value<'js>) -> rquickjs::Result<i32> {
-    let (opcode, payload) = message_payload(&data)?;
-    Ok(self.topics.publish(&topic, opcode, payload, None))
+    let (kind, payload) = message_payload(&data)?;
+    Ok(self.topics.publish(&topic, kind, payload, None))
   }
 
   /// How many sockets are currently subscribed to `topic`.
@@ -461,8 +424,7 @@ impl Server {
   }
 
   /// Close the server: stop accepting new connections and gracefully shut down
-  /// open ones. Safe to
-  /// call more than once.
+  /// open ones. Safe to call more than once.
   pub fn close(&self) {
     self.shared.stop();
   }
@@ -483,20 +445,18 @@ impl Server {
   }
 }
 
-/// Build the per-connection hyper service: each request dispatches into the JS
-/// handlers with the connection's peer identity attached. Shared by the TCP and
-/// p2p accept loops.
-fn connection_service<'js>(
+/// The per-connection request handler forge's connection loop calls: each
+/// request dispatches into the JS handlers. Shared by the TCP and p2p accept
+/// loops. Boxed because a closure cannot name its own async block's type.
+fn request_handler<'js>(
   handlers: Handlers<'js>,
   logger: Logger,
-  remote: Option<Remote>,
-) -> impl hyper::service::Service<HyperRequest<Incoming>, Response = HyperResponse<ResBody>, Error = Infallible> + 'js {
-  service_fn(move |req: HyperRequest<Incoming>| {
+) -> impl Fn(RequestParts) -> Pin<Box<dyn Future<Output = Reply> + 'js>> + 'js {
+  move |parts| {
     let handlers = handlers.clone();
     let logger = logger.clone();
-    let remote = remote.clone();
-    async move { Ok::<_, Infallible>(handle_request(req, remote, &handlers, &logger).await) }
-  })
+    Box::pin(async move { handle_request(parts, &handlers, &logger).await })
+  }
 }
 
 /// `serve(opts)`: bind a listener, spawn the accept loop, return a `Server`.
@@ -557,11 +517,10 @@ fn serve_impl<'js>(ctx: Ctx<'js>, opts: Object<'js>) -> rquickjs::Result<Class<'
     // Each accepted socket spawns its own connection task. Spawning stays here in
     // the marshalling layer (the engine-free core hands sockets back through this
     // closure) so the core never touches `ctx.spawn`.
-    let on_conn = move |sock: tokio::net::TcpStream| {
-      let remote = sock.peer_addr().ok().map(Remote::Ip);
+    let on_conn = move |remote, sock| {
       let conn_rx = loop_shared.subscribe();
-      let service = connection_service(loop_handlers.clone(), loop_logger.clone(), remote);
-      loop_ctx.spawn(serve_connection(sock, service, loop_logger.clone(), conn_rx));
+      let handler = request_handler(loop_handlers.clone(), loop_logger.clone());
+      loop_ctx.spawn(serve_connection(sock, remote, handler, loop_logger.clone(), conn_rx));
     };
     accept_loop(listener, accept_logger, shutdown_rx, on_conn).await;
     // Paired with the hold() above. Connection tasks shut themselves down on the
@@ -581,16 +540,16 @@ fn serve_impl<'js>(ctx: Ctx<'js>, opts: Object<'js>) -> rquickjs::Result<Class<'
     ctx.spawn(async move {
       let shutdown_rx = loop_shared.subscribe();
       let accept_logger = loop_logger.clone();
-      let on_conn = move |remote: String, io: forge::p2p::ConnIo| {
+      let on_conn = move |remote, io: forge::p2p::ConnIo| {
         let conn_rx = loop_shared.subscribe();
-        let service = connection_service(handlers.clone(), loop_logger.clone(), Some(Remote::Peer(remote)));
+        let handler = request_handler(handlers.clone(), loop_logger.clone());
         // Hold the QUIC connection past the served io: dropping it on the heels
         // of the final write would discard the unacknowledged tail (see
         // `ConnIo::closed`).
         let closed = io.closed();
         let conn_logger = loop_logger.clone();
         loop_ctx.spawn(async move {
-          serve_connection(io, service, conn_logger, conn_rx).await;
+          serve_connection(io, Some(remote), handler, conn_logger, conn_rx).await;
           closed.await;
         });
       };

@@ -57,7 +57,9 @@ echo 'console.log("hello")' | fluxc > app.bin
 
 ### `Flux` global
 
-`Flux.on(event, handler)` - subscribe to events emitted by the host.
+Runtime introspection only, no feature APIs: `Flux.version` (the build's
+version stamp) and `Flux.capabilities` (the feature names this build
+provides, e.g. `Flux.capabilities.includes("subprocess")`).
 
 ### `flux:http`
 

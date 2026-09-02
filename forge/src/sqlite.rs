@@ -3,9 +3,8 @@
 //! The scripting-engine-independent half of `flux:sqlite`: the connection actor,
 //! the command protocol, query execution, and the owned value/result types that
 //! cross the channel. It names no scripting-engine types; the marshalling layer
-//! (`plugins/flux/sqlite.rs`) decodes JS args into these types, drives the
-//! `SqliteConnection` methods, and encodes the results back to JS. Destined for
-//! the `forge` crate (see REDESIGN.md).
+//! (flux `forge_plugins/sqlite.rs`) decodes JS args into these types, drives
+//! the `SqliteConnection` methods, and encodes the results back to JS.
 //!
 //! Each `SqliteConnection` owns a dedicated OS thread that holds the
 //! `rusqlite::Connection` for its whole life. A method marshals a `Command` over

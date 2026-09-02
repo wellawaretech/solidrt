@@ -1208,19 +1208,12 @@ name = "flux"
 version = "0.0.0"
 dependencies = [
  "alloy",
- "bytes",
- "fastwebsockets",
  "forge",
- "http-body-util",
- "hyper",
- "iroh",
  "libc",
  "log",
- "reqwest 0.12.28",
  "rquickjs",
  "taffy",
  "tokio",
- "tokio-util",
 ]
 
 [[package]]

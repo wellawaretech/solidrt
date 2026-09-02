@@ -1,4 +1,4 @@
-use hyper::upgrade::OnUpgrade;
+use forge::http::UpgradeHandle;
 use rquickjs::class::Trace;
 use rquickjs::promise::Promised;
 use rquickjs::{Class, Ctx, JsLifetime, Object, Value};
@@ -154,7 +154,7 @@ pub(crate) fn request_from_parts<'js>(
   body: ByteStream,
   headers: Vec<(String, String)>,
   params: Vec<(String, String)>,
-  upgrade: Option<OnUpgrade>,
+  upgrade: Option<UpgradeHandle>,
   remote: Option<forge::http::Remote>,
 ) -> rquickjs::Result<Class<'js, Request<'js>>> {
   let headers = headers_from_pairs(ctx, headers)?;

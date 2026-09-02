@@ -1,4 +1,3 @@
-use bytes::Bytes;
 use rquickjs::{
   function::{MutFn, This},
   promise::{MaybePromise, Promised},
@@ -15,10 +14,10 @@ use crate::pending::PendingOps;
 use crate::plugins::js_error::JsResult;
 use crate::plugins::marshal::{attach_async_iterator, Step};
 
-// Re-exported so existing `crate::standards_plugins::body::{ByteStream, to_byte_stream}`
-// importers (response, request, serve, subprocess) stay unchanged; the
-// engine-free primitive itself now lives in `forge::stream`.
-pub(crate) use forge::stream::{to_byte_stream, ByteStream};
+// Re-exported so the `crate::standards_plugins::body::ByteStream` importers
+// (response, request) stay unchanged; the engine-free primitive itself lives
+// in `forge::stream`.
+pub(crate) use forge::stream::ByteStream;
 
 /// In-memory body buffer shared by Response and Request. Consume-once semantics:
 /// `take` returns the bytes once, then subsequent calls return None.
@@ -266,7 +265,7 @@ pub(crate) fn extract_streaming_body<'js>(
 pub(crate) async fn pump_async_iterable<'js>(
   ctx: Ctx<'js>,
   iterable: Object<'js>,
-  tx: mpsc::Sender<Bytes>,
+  tx: mpsc::Sender<Vec<u8>>,
   logger: Logger,
 ) {
   let get_iter: Function<'js> = match ctx.eval("(o) => o[Symbol.asyncIterator]()") {
@@ -331,7 +330,7 @@ pub(crate) async fn pump_async_iterable<'js>(
       continue;
     }
     // A send error means the consumer is gone (e.g. the connection closed).
-    if tx.send(Bytes::from(chunk)).await.is_err() {
+    if tx.send(chunk).await.is_err() {
       break;
     }
   }

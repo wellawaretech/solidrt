@@ -2,10 +2,10 @@
 //!
 //! The scripting-engine-independent half of `flux:fs` (the `file()`/`dir()`
 //! references): the actual disk operations and the owned `StatInfo` result type.
-//! It names no scripting-engine types; the marshalling layer
-//! (`plugins/flux/file.rs`, `plugins/flux/dir.rs`) decodes JS args into these
-//! calls, holds `PendingOps` around them, and encodes the results back to JS.
-//! Destined for the `forge` crate (see REDESIGN.md).
+//! It names no scripting-engine types; the marshalling layer (flux
+//! `forge_plugins/file.rs` and `forge_plugins/dir.rs`) decodes JS args into
+//! these calls, holds `PendingOps` around them, and encodes the results back
+//! to JS.
 
 use std::collections::HashMap;
 use std::io::{Read, Seek, SeekFrom};

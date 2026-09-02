@@ -1,25 +1,28 @@
 //! Engine-free HTTP server core.
 //!
-//! The retained, scripting-engine-independent foundation of the `flux:http`
-//! server: routing, response/body plumbing, connection lifecycle, and graceful
-//! shutdown. It names no scripting-engine types (no `rquickjs`, no `'js`).
-//! Everything that must call back into a script is expressed generically: a
-//! `hyper::service::Service` for request dispatch, an `FnMut(TcpStream)` for
-//! spawning connection tasks. The marshalling layer (`plugins/flux/serve.rs`)
-//! monomorphizes those generics with its engine-bound types and owns every
-//! `ctx.spawn`. Destined to move to the `forge` crate; keeping it a standalone
-//! module now proves the seam (see REDESIGN.md).
+//! The scripting-engine-independent foundation of the `flux:http` server:
+//! routing, request and reply plumbing, connection lifecycle, and graceful
+//! shutdown. It names no scripting-engine types, and no hyper type crosses
+//! its boundary: a request reaches the host as `RequestParts`, the host
+//! answers with a `Reply`, and a websocket upgrade travels as an opaque
+//! `UpgradeHandle`. Everything that must call back into a script is
+//! expressed generically: an async `Fn(RequestParts) -> Reply` for request
+//! dispatch, an `FnMut` for spawning connection tasks. The marshalling layer
+//! (flux `forge_plugins/serve.rs`) monomorphizes those generics with its
+//! engine-bound types and owns every `ctx.spawn`.
 
 use bytes::Bytes;
 use http_body_util::combinators::BoxBody;
 use http_body_util::{BodyExt, Full};
 use hyper::body::{Body, Frame, Incoming};
 use hyper::server::conn::http1;
-use hyper::service::Service;
+use hyper::service::service_fn;
+use hyper::upgrade::OnUpgrade;
 use hyper::{Request as HyperRequest, Response as HyperResponse, StatusCode};
 use hyper_util::rt::TokioIo;
 use percent_encoding::percent_decode_str;
 use std::convert::Infallible;
+use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
@@ -27,22 +30,23 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{mpsc, watch};
 
 use crate::logger::Logger;
+use crate::stream::{to_byte_stream, ByteStream};
 
 // ---- Response bodies -------------------------------------------------------
 
 /// One boxed body type for every serve response, so buffered (`Full`) and
 /// streamed (`ChannelBody`) responses share a single hyper body type. Bodies
 /// never produce an error, hence `Infallible`.
-pub type ResBody = BoxBody<Bytes, Infallible>;
+pub(crate) type ResBody = BoxBody<Bytes, Infallible>;
 
-pub fn full_body(bytes: Bytes) -> ResBody {
-  Full::new(bytes).boxed()
+fn full_body(bytes: Vec<u8>) -> ResBody {
+  Full::new(Bytes::from(bytes)).boxed()
 }
 
 /// A streamed response body: hyper pulls frames as the producer task sends bytes.
 /// The stream ends (EOF) when the sender is dropped (producer finished or errored).
 struct ChannelBody {
-  rx: mpsc::Receiver<Bytes>,
+  rx: mpsc::Receiver<Vec<u8>>,
 }
 
 impl Body for ChannelBody {
@@ -54,7 +58,7 @@ impl Body for ChannelBody {
     cx: &mut Context<'_>,
   ) -> Poll<Option<Result<Frame<Self::Data>, Self::Error>>> {
     match self.rx.poll_recv(cx) {
-      Poll::Ready(Some(bytes)) => Poll::Ready(Some(Ok(Frame::data(bytes)))),
+      Poll::Ready(Some(bytes)) => Poll::Ready(Some(Ok(Frame::data(Bytes::from(bytes))))),
       Poll::Ready(None) => Poll::Ready(None),
       Poll::Pending => Poll::Pending,
     }
@@ -62,26 +66,26 @@ impl Body for ChannelBody {
 }
 
 /// Build a streamed response body and the sender that feeds it. The producer task
-/// sends `Bytes` frames; dropping the sender ends the body (EOF). Used for
-/// responses whose bytes are produced after the handler returns (chunked transfer
+/// sends chunks; dropping the sender ends the body (EOF). Used for responses
+/// whose bytes are produced after the handler returns (chunked transfer
 /// encoding, no Content-Length).
-pub fn channel_body() -> (mpsc::Sender<Bytes>, ResBody) {
-  let (tx, rx) = mpsc::channel::<Bytes>(16);
+fn channel_body() -> (mpsc::Sender<Vec<u8>>, ResBody) {
+  let (tx, rx) = mpsc::channel::<Vec<u8>>(16);
   (tx, ChannelBody { rx }.boxed())
 }
 
-pub fn text_response(status: StatusCode, body: &str) -> HyperResponse<ResBody> {
+fn text_response(status: StatusCode, body: &str) -> HyperResponse<ResBody> {
   HyperResponse::builder()
     .status(status)
     .header("Content-Type", "text/plain")
-    .body(full_body(Bytes::copy_from_slice(body.as_bytes())))
+    .body(full_body(body.as_bytes().to_vec()))
     .expect("build response")
 }
 
 /// Assemble a hyper response from already-extracted parts and an (already boxed)
 /// body. Defaults the Content-Type to text/plain when the headers don't set one.
 /// Shared by buffered and streamed responses alike.
-pub fn build_response(status: u16, headers: &[(String, String)], body: ResBody) -> HyperResponse<ResBody> {
+fn build_response(status: u16, headers: &[(String, String)], body: ResBody) -> HyperResponse<ResBody> {
   let status = StatusCode::from_u16(status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
   let mut builder = HyperResponse::builder().status(status);
   let mut has_content_type = false;
@@ -95,6 +99,80 @@ pub fn build_response(status: u16, headers: &[(String, String)], body: ResBody) 
     builder = builder.header("Content-Type", "text/plain");
   }
   builder.body(body).unwrap_or_else(|_| text_response(StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error"))
+}
+
+/// What a request handler answers with, opaque to the host: a buffered body
+/// (`full`, `text`), a streamed one (`streamed`, fed through the returned
+/// sender), or the 101 of an accepted websocket upgrade
+/// (`websocket::Handshake::into_parts`).
+pub struct Reply(HyperResponse<ResBody>);
+
+impl Reply {
+  /// A plain-text reply; an invalid status code becomes 500.
+  pub fn text(status: u16, body: &str) -> Reply {
+    Reply(text_response(StatusCode::from_u16(status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR), body))
+  }
+
+  /// A buffered reply. Content-Type defaults to text/plain when `headers` do
+  /// not set one.
+  pub fn full(status: u16, headers: &[(String, String)], body: Vec<u8>) -> Reply {
+    Reply(build_response(status, headers, full_body(body)))
+  }
+
+  /// A streamed reply (chunked transfer encoding): the producer sends chunks
+  /// through the sender and drops it to end the body.
+  pub fn streamed(status: u16, headers: &[(String, String)]) -> (mpsc::Sender<Vec<u8>>, Reply) {
+    let (tx, body) = channel_body();
+    (tx, Reply(build_response(status, headers, body)))
+  }
+
+  pub(crate) fn from_hyper(response: HyperResponse<ResBody>) -> Reply {
+    Reply(response)
+  }
+}
+
+// ---- Requests --------------------------------------------------------------
+
+/// A request's websocket upgrade capability, carried on `RequestParts` for
+/// the host to hand back through `websocket::accept_upgrade`. Opaque: it wraps
+/// hyper's upgrade handle.
+pub struct UpgradeHandle(OnUpgrade);
+
+impl UpgradeHandle {
+  pub(crate) fn into_inner(self) -> OnUpgrade {
+    self.0
+  }
+}
+
+/// An incoming request as the host sees it. The `body` is the request stream,
+/// read incrementally by the handler rather than buffered up front, so large
+/// uploads stay constant-memory; a handler that never reads it just drops the
+/// unread stream.
+pub struct RequestParts {
+  pub method: String,
+  pub url: String,
+  pub headers: Vec<(String, String)>,
+  pub body: ByteStream,
+  /// Present on every HTTP/1 request hyper can upgrade; consumed by the
+  /// host's `server.upgrade(req)`.
+  pub upgrade: Option<UpgradeHandle>,
+  /// The connection's peer, for `server.requestIP(req)` and `ws.remoteAddr`.
+  pub remote: Option<Remote>,
+}
+
+impl RequestParts {
+  fn from_hyper(mut req: HyperRequest<Incoming>, remote: Option<Remote>) -> RequestParts {
+    let method = req.method().as_str().to_string();
+    let url = req.uri().to_string();
+    let headers = req
+      .headers()
+      .iter()
+      .filter_map(|(name, value)| value.to_str().ok().map(|v| (name.as_str().to_string(), v.to_string())))
+      .collect();
+    let upgrade = req.extensions_mut().remove::<OnUpgrade>().map(UpgradeHandle);
+    let body = to_byte_stream(req.into_body().into_data_stream());
+    RequestParts { method, url, headers, body, upgrade, remote }
+  }
 }
 
 // ---- Routing ---------------------------------------------------------------
@@ -251,14 +329,25 @@ pub enum Remote {
 /// Serve one accepted connection: run HTTP/1 with websocket upgrades and graceful
 /// shutdown. On a stop signal, finish any in-flight request then close; an idle
 /// keep-alive connection has nothing in flight, so it closes promptly. Generic
-/// over the request `service` so the engine-free core never names the handler's
+/// over the request `handler` so the engine-free core never names the host's
 /// (script-bound) types, and over the `io` so any byte duplex serves (an accepted
-/// TCP socket, a p2p connection's `ConnIo`).
-pub async fn serve_connection<I, S>(io: I, service: S, logger: Logger, mut shutdown_rx: watch::Receiver<bool>)
-where
+/// TCP socket, a p2p connection's `ConnIo`). `remote` rides onto every request
+/// the connection carries.
+pub async fn serve_connection<I, H, Fut>(
+  io: I,
+  remote: Option<Remote>,
+  handler: H,
+  logger: Logger,
+  mut shutdown_rx: watch::Receiver<bool>,
+) where
   I: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
-  S: Service<HyperRequest<Incoming>, Response = HyperResponse<ResBody>, Error = Infallible>,
+  H: Fn(RequestParts) -> Fut,
+  Fut: Future<Output = Reply>,
 {
+  let service = service_fn(move |req: HyperRequest<Incoming>| {
+    let reply = handler(RequestParts::from_hyper(req, remote.clone()));
+    async move { Ok::<_, Infallible>(reply.await.0) }
+  });
   let io = TokioIo::new(io);
   // with_upgrades keeps the connection alive past a 101 response so hyper can
   // hand the raw stream to the websocket tasks.
@@ -282,23 +371,27 @@ where
   }
 }
 
-/// Accept connections until shutdown, handing each accepted socket to `on_conn`
-/// (which the marshalling layer uses to spawn a connection task). Owns the
-/// accept/stop `select!` and accept-error logging; the spawn itself stays with
-/// the caller so the engine-free core never spawns engine-bound tasks.
+/// Accept connections until shutdown, handing each accepted socket and its
+/// peer to `on_conn` (which the marshalling layer uses to spawn a connection
+/// task). Owns the accept/stop `select!` and accept-error logging; the spawn
+/// itself stays with the caller so the engine-free core never spawns
+/// engine-bound tasks.
 pub async fn accept_loop<F>(
   listener: TcpListener,
   logger: Logger,
   mut shutdown_rx: watch::Receiver<bool>,
   mut on_conn: F,
 ) where
-  F: FnMut(TcpStream),
+  F: FnMut(Option<Remote>, TcpStream),
 {
   loop {
     tokio::select! {
       accepted = listener.accept() => {
         match accepted {
-          Ok((sock, _)) => on_conn(sock),
+          Ok((sock, _)) => {
+            let remote = sock.peer_addr().ok().map(Remote::Ip);
+            on_conn(remote, sock)
+          }
           Err(e) => logger.warn(&format!("[flux] serve accept error: {e}")),
         }
       }
@@ -310,9 +403,9 @@ pub async fn accept_loop<F>(
 /// The p2p sibling of `accept_loop`: accept incoming connections on `endpoint`
 /// whose ALPN matches `alpn` until shutdown (or the endpoint closes), handing
 /// each connection's first bi-stream to `on_conn` as a byte duplex plus the
-/// remote peer's endpoint id. One QUIC connection carries one HTTP connection,
-/// mirroring how the dev tunnel client dials (lattice/src/go/tunnel.rs). The
-/// shutdown only stops accepting; the endpoint stays open for its owner.
+/// remote peer. One QUIC connection carries one HTTP connection, mirroring how
+/// the dev tunnel client dials (lattice/src/go/tunnel.rs). The shutdown only
+/// stops accepting; the endpoint stays open for its owner.
 pub async fn accept_loop_p2p<F>(
   endpoint: crate::p2p::Endpoint,
   alpn: Vec<u8>,
@@ -320,13 +413,13 @@ pub async fn accept_loop_p2p<F>(
   mut shutdown_rx: watch::Receiver<bool>,
   mut on_conn: F,
 ) where
-  F: FnMut(String, crate::p2p::ConnIo),
+  F: FnMut(Remote, crate::p2p::ConnIo),
 {
   loop {
     tokio::select! {
       accepted = endpoint.accept_io(&alpn) => {
         match accepted {
-          Ok(Some((remote, io))) => on_conn(remote, io),
+          Ok(Some((remote, io))) => on_conn(Remote::Peer(remote), io),
           Ok(None) => break,
           Err(e) => logger.warn(&format!("[flux] serve p2p accept error: {e}")),
         }

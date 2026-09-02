@@ -13,7 +13,9 @@ use crate::standards_plugins::headers::header_pairs_from_init;
 use crate::standards_plugins::http::HttpClient;
 use crate::standards_plugins::response::response_from_parts;
 use forge::cache::Cache;
-use forge::fetch::{channel_request_body, do_fetch, do_fetch_cached, CacheMode, HostLimits, ResponseData};
+use forge::fetch::{
+  channel_request_body, do_fetch, do_fetch_cached, CacheMode, HostLimits, RequestBody, ResponseData,
+};
 
 /// Placeholder cap until a real default is decided (plan open question).
 const FETCH_CACHE_MAX_BYTES: u64 = 256 * 1024 * 1024;
@@ -61,7 +63,7 @@ pub(crate) fn init_fetch(ctx: &Ctx<'_>) {
           .unwrap_or_else(|| "GET".to_string())
           .to_uppercase();
 
-        let body: Option<reqwest::Body> = match opts.0.as_ref().and_then(|o| o.get::<_, Value>("body").ok()) {
+        let body: Option<RequestBody> = match opts.0.as_ref().and_then(|o| o.get::<_, Value>("body").ok()) {
           Some(val) => request_body_from_value(val)?,
           None => None,
         };
@@ -81,9 +83,9 @@ pub(crate) fn init_fetch(ctx: &Ctx<'_>) {
         let net = async move {
           match (cache, cache_mode) {
             (Some(cache), Some(mode)) => {
-              do_fetch_cached(client, &method, &url, headers, body, cache, mode, limits).await
+              do_fetch_cached(&client, &method, &url, headers, body, cache, mode, limits).await
             }
-            _ => do_fetch(client, &method, &url, headers, body).await,
+            _ => do_fetch(&client, &method, &url, headers, body).await,
           }
         };
 
@@ -161,15 +163,15 @@ fn settle_fetch<'js>(ctx: &Ctx<'js>, resolve: &Function<'js>, reject: &Function<
 /// chunked body (see `pump_async_iterable`). Null/undefined mean no body; any
 /// other value throws. Public because the lattice dev-server proxy's fetch
 /// marshals its body the same way.
-pub fn request_body_from_value<'js>(val: Value<'js>) -> rquickjs::Result<Option<reqwest::Body>> {
+pub fn request_body_from_value<'js>(val: Value<'js>) -> rquickjs::Result<Option<RequestBody>> {
   if val.is_null() || val.is_undefined() {
     return Ok(None);
   }
   if let Some(s) = val.as_string() {
-    return Ok(Some(reqwest::Body::from(s.to_string()?.into_bytes())));
+    return Ok(Some(RequestBody::bytes(s.to_string()?.into_bytes())));
   }
   if let Ok(ta) = TypedArray::<u8>::from_value(val.clone()) {
-    return Ok(Some(reqwest::Body::from(ta.as_bytes().map(|b| b.to_vec()).unwrap_or_default())));
+    return Ok(Some(RequestBody::bytes(ta.as_bytes().map(|b| b.to_vec()).unwrap_or_default())));
   }
   if is_async_iterable(val.ctx(), &val)? {
     // Use the value's own context so the result's lifetime unifies with it.

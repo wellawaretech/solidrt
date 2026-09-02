@@ -13,17 +13,18 @@ use flux::rquickjs::{
   Ctx, Function, JsLifetime, Object, Value,
 };
 use flux::{do_fetch, header_pairs_from_init, request_body_from_value, JsResponseData, JsResult};
+use forge::fetch::Client;
 use std::rc::Rc;
 
 #[derive(Clone, JsLifetime)]
 struct ProxyState {
   #[qjs(skip_trace)]
-  client: Rc<reqwest::Client>,
+  client: Client,
 }
 
 pub fn install_proxy_state(ctx: Ctx<'_>, dev_server: String) {
-  let client = reqwest::Client::builder().user_agent("lattice-go-proxy").build().expect("build proxy http client");
-  ctx.store_userdata(ProxyState { client: Rc::new(client) }).expect("store proxy state");
+  let client = Client::new("lattice-go-proxy").expect("build proxy http client");
+  ctx.store_userdata(ProxyState { client }).expect("store proxy state");
 
   let proxy_url = Rc::new(format!("http://{dev_server}/__proxy__"));
   let fetch_fn = Function::new(
@@ -57,7 +58,7 @@ pub fn install_proxy_state(ctx: Ctx<'_>, dev_server: String) {
         let proxy_url = (*proxy_url).clone();
         let client = state.client.clone();
         Ok(Promised(
-          async move { JsResult(do_fetch(client, &method, &proxy_url, headers, body).await.map(JsResponseData)) },
+          async move { JsResult(do_fetch(&client, &method, &proxy_url, headers, body).await.map(JsResponseData)) },
         ))
       }
     }),

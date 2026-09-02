@@ -1,11 +1,13 @@
 //! Engine-free `fetch` core.
 //!
 //! Sends an HTTP request with reqwest and reads the response into a plain
-//! `ResponseData`. Names no scripting-engine types: the marshalling layer
-//! (`plugins/fetch.rs`) decodes the JS request, builds the request body, and
-//! turns `ResponseData` into a JS `Response`. Streamed request bodies are fed
-//! through `channel_request_body`, whose sender the marshalling layer drives
-//! from a JS async-iterable.
+//! `ResponseData`. Names no scripting-engine types, and no reqwest types cross
+//! its boundary either: the client is `Client`, an outgoing body is
+//! `RequestBody`. The marshalling layer (flux `standards_plugins/fetch.rs`)
+//! decodes the JS request, builds the request body, and turns `ResponseData`
+//! into a JS `Response`. Streamed request bodies are fed through
+//! `channel_request_body`, whose sender the marshalling layer drives from a
+//! JS async-iterable.
 
 use bytes::Bytes;
 use futures_core::Stream;
@@ -35,28 +37,52 @@ pub struct ResponseData {
   pub body: ByteStream,
 }
 
+/// The HTTP client `fetch` sends through: one per engine, carrying the host's
+/// `User-Agent`. Cheap to clone (the reqwest client is a shared handle), so
+/// callers clone it into each request future.
+#[derive(Clone)]
+pub struct Client {
+  inner: reqwest::Client,
+}
+
+impl Client {
+  pub fn new(user_agent: &str) -> Result<Client, String> {
+    reqwest::Client::builder().user_agent(user_agent).build().map(|inner| Client { inner }).map_err(|e| e.to_string())
+  }
+}
+
+/// An outgoing request body: buffered bytes (`bytes`), or the streamed side
+/// of `channel_request_body`.
+pub struct RequestBody(reqwest::Body);
+
+impl RequestBody {
+  pub fn bytes(bytes: Vec<u8>) -> RequestBody {
+    RequestBody(reqwest::Body::from(bytes))
+  }
+}
+
 /// Bridges the mpsc receiver fed by the marshalling layer into a `futures`
 /// stream so reqwest can send it as a streamed (chunked) request body. The
 /// mirror of forge/http's `ChannelBody`, but for `futures::Stream` rather than
 /// `hyper::Body`.
 struct ChunkStream {
-  rx: mpsc::Receiver<Bytes>,
+  rx: mpsc::Receiver<Vec<u8>>,
 }
 
 impl Stream for ChunkStream {
   type Item = Result<Bytes, io::Error>;
 
   fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-    self.rx.poll_recv(cx).map(|chunk| chunk.map(Ok))
+    self.rx.poll_recv(cx).map(|chunk| chunk.map(|c| Ok(Bytes::from(c))))
   }
 }
 
 /// Build a streamed request body and the sender that feeds it. The producer
-/// (the marshalling layer's pump over a JS async-iterable) sends `Bytes` frames;
+/// (the marshalling layer's pump over a JS async-iterable) sends chunks;
 /// dropping the sender ends the body. Mirrors forge/http's `channel_body`.
-pub fn channel_request_body() -> (mpsc::Sender<Bytes>, reqwest::Body) {
-  let (tx, rx) = mpsc::channel::<Bytes>(16);
-  (tx, reqwest::Body::wrap_stream(ChunkStream { rx }))
+pub fn channel_request_body() -> (mpsc::Sender<Vec<u8>>, RequestBody) {
+  let (tx, rx) = mpsc::channel::<Vec<u8>>(16);
+  (tx, RequestBody(reqwest::Body::wrap_stream(ChunkStream { rx })))
 }
 
 fn headers_to_pairs(headers: &reqwest::header::HeaderMap) -> Vec<(String, String)> {
@@ -67,15 +93,16 @@ fn headers_to_pairs(headers: &reqwest::header::HeaderMap) -> Vec<(String, String
 }
 
 /// Send an HTTP request and read the response into a `ResponseData`. The `body`
-/// may be buffered (`reqwest::Body::from(bytes)`) or streamed
+/// may be buffered (`RequestBody::bytes`) or streamed
 /// (`channel_request_body`); `None` sends no body.
 pub async fn do_fetch(
-  client: Rc<reqwest::Client>,
+  client: &Client,
   method: &str,
   url: &str,
   headers: Vec<(String, String)>,
-  body: Option<reqwest::Body>,
+  body: Option<RequestBody>,
 ) -> Result<ResponseData, String> {
+  let client = &client.inner;
   let mut req = match method {
     "GET" => client.get(url),
     "POST" => client.post(url),
@@ -91,7 +118,7 @@ pub async fn do_fetch(
   }
 
   if let Some(body) = body {
-    req = req.body(body);
+    req = req.body(body.0);
   }
 
   let resp = req.send().await.map_err(|e| e.to_string())?;
@@ -284,11 +311,11 @@ fn jittered_backoff(attempt: u32) -> Duration {
 /// `RETRY_LIMIT` times. Plain `do_fetch` traffic deliberately has none of
 /// this; a caller that wants backoff on API calls implements its own policy.
 pub async fn do_fetch_cached(
-  client: Rc<reqwest::Client>,
+  client: &Client,
   method: &str,
   url: &str,
   headers: Vec<(String, String)>,
-  body: Option<reqwest::Body>,
+  body: Option<RequestBody>,
   cache: Rc<Cache>,
   mode: CacheMode,
   limits: Rc<HostLimits>,
@@ -321,7 +348,7 @@ pub async fn do_fetch_cached(
   // requests retry; a GET with a body is a fringe case.
   let can_retry = body.is_none();
   let mut attempt: u32 = 0;
-  let mut resp = do_fetch(client.clone(), method, url, headers.clone(), body).await?;
+  let mut resp = do_fetch(client, method, url, headers.clone(), body).await?;
   while can_retry && resp.status == 429 && attempt < RETRY_LIMIT {
     let delay = match retry_after(&resp.headers) {
       Some(after) if after > RETRY_AFTER_MAX => break,
@@ -335,7 +362,7 @@ pub async fn do_fetch_cached(
     // queue behind the cooldown instead of taking over the freed slot.
     tokio::time::sleep(delay).await;
     attempt += 1;
-    resp = do_fetch(client.clone(), method, url, headers.clone(), None).await?;
+    resp = do_fetch(client, method, url, headers.clone(), None).await?;
   }
   let ResponseData { status, status_text, url: resolved_url, headers: resp_headers, body: resp_body } = resp;
   let resp_body = match permit {
