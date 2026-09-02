@@ -1,6 +1,5 @@
 mod decoration;
 pub mod layout;
-mod paragraph;
 mod runs;
 mod shape;
 mod words;
@@ -16,7 +15,6 @@ use crate::rendertree::{
   Bounded, BuildContext, Buildable, Damage, Element, ElementKind, Measurable, MeasureContext, PaintState,
   PlatformContext,
 };
-use paragraph::ParaCache;
 use shape::{OwnedCache, ShapedRun};
 use std::cell::RefCell;
 use taffy::{AvailableSpace, Display, Style};
@@ -94,10 +92,6 @@ pub struct Text {
   // overrides layered along its span ancestry. Resolved against this Text's
   // own fields at shape time, so a `<text>` prop change needs no resync.
   pub runs: Vec<TextRun>,
-  // Lay the text out with one Impeller paragraph per width instead of the
-  // owned breaker (text::layout). Kept as a reference/fallback engine; not
-  // exposed as a prop. Spans, atoms, floats, indent and wrap are owned-only.
-  pub paragraph_engine: bool,
   pub font_family: String,
   pub font_size: f32,
   pub font_style: FontStyle,
@@ -133,15 +127,12 @@ pub struct Text {
   pub w: Option<f32>,
   pub h: Option<f32>,
   pub paint: PaintState,
-  // Shaped paragraphs for the current inputs, keyed by layout width. Shaping
+  // The run metrics per wrap-unit piece (measured once per key through the
+  // shared word cache; the shaped paragraphs themselves live only in that
+  // cache) plus the line layouts derived from them, keyed by width. Shaping
   // dominates measure/build cost and properties are written directly from
   // several places, so validity is checked by fingerprint (ParaKey) instead
   // of setter hooks. Interior-mutable: measure and build take &self.
-  cache: RefCell<ParaCache>,
-  // Owned-layout counterpart: the run metrics per wrap-unit piece (measured
-  // once per key through the shared word cache; the shaped paragraphs
-  // themselves live only in that cache) plus the line layouts derived from
-  // them, keyed by width.
   owned: RefCell<OwnedCache>,
 }
 
@@ -150,7 +141,6 @@ impl Default for Text {
     Self {
       computed_text: String::new(),
       runs: Vec::new(),
-      paragraph_engine: false,
       font_family: "sans".to_string(),
       font_size: DEFAULT_FONT_SIZE,
       font_style: FontStyle::Normal,
@@ -171,7 +161,6 @@ impl Default for Text {
       w: None,
       h: None,
       paint: PaintState::default(),
-      cache: RefCell::new(ParaCache::default()),
       owned: RefCell::new(OwnedCache::default()),
     }
   }
@@ -185,86 +174,82 @@ impl Buildable for Text {
     // geometry, where the content box is the whole frame at origin zero.
     let mut origin =
       Point::new(ctx.content.origin.x + self.x.unwrap_or(0.0), ctx.content.origin.y + self.y.unwrap_or(0.0));
-    if !self.paragraph_engine {
-      let mut owned = self.owned.borrow_mut();
-      self.prepare_owned(ctx.platform, &mut owned);
-      let width = self.shaping_width(&owned, ctx.content.size.width);
-      origin.x += self.anchor_shift(width);
-      let index = self.owned_layout(ctx.platform, &mut owned, width);
-      let owned = &*owned;
-      let runs = owned.runs_for(index);
-      let layout = &owned.layouts[index].layout;
-      let styles = self.run_styles();
-      // Paragraphs come from the shared word cache per visible run (a miss
-      // shapes on the spot); nothing shaped is retained on the text itself.
-      {
-        let typography = ctx.platform.typography();
-        let mut words = ctx.platform.words();
-        let mut draw = |shaped: &ShapedRun, x: f32, y: f32| {
-          if let Some(word) = words.get_or_shape(&typography, &shaped.text, &styles[shaped.style]) {
-            builder.draw_paragraph(&word.paragraph, Point::new(origin.x + x, origin.y + y));
-          }
-        };
-        for placed in &layout.runs {
-          let shaped = &runs[placed.run];
-          if !shaped.atom {
-            draw(shaped, placed.x, placed.y);
-          }
+    let mut owned = self.owned.borrow_mut();
+    self.prepare_owned(ctx.platform, &mut owned);
+    let width = self.shaping_width(&owned, ctx.content.size.width);
+    origin.x += self.anchor_shift(width);
+    let index = self.owned_layout(ctx.platform, &mut owned, width);
+    let owned = &*owned;
+    let runs = owned.runs_for(index);
+    let layout = &owned.layouts[index].layout;
+    let styles = self.run_styles();
+    // Paragraphs come from the shared word cache per visible run (a miss
+    // shapes on the spot); nothing shaped is retained on the text itself.
+    {
+      let typography = ctx.platform.typography();
+      let mut words = ctx.platform.words();
+      let mut draw = |shaped: &ShapedRun, x: f32, y: f32| {
+        if let Some(word) = words.get_or_shape(&typography, &shaped.text, &styles[shaped.style]) {
+          builder.draw_paragraph(&word.paragraph, Point::new(origin.x + x, origin.y + y));
         }
-        if let (Some((x, y)), Some(ellipsis)) = (layout.ellipsis, owned.ellipsis.as_ref()) {
-          draw(ellipsis, x, y);
+      };
+      for placed in &layout.runs {
+        let shaped = &runs[placed.run];
+        if !shaped.atom {
+          draw(shaped, placed.x, placed.y);
         }
       }
-      // CSS decorating boxes: the text's underline is one line in its own
-      // style under everything (atoms excepted); a span's underline is its
-      // own line in the span's style. Both may cover a run.
-      let font_metrics = ctx.platform.font_metrics();
-      let ink_of = |placed: &PlacedRun| runs[placed.run].run.metrics.ink_width;
-      if self.underline {
-        let style = self.run_style();
-        let underline = Underline::resolve(
-          font_metrics.underline(&style.font_family),
-          style.font_size,
-          self.underline_offset,
-          self.underline_thickness,
-        );
-        decoration::draw_underlines(
-          builder,
-          origin,
-          layout,
-          |placed| (!runs[placed.run].atom).then_some((underline, &style.paint)),
-          ink_of,
-        );
+      if let (Some((x, y)), Some(ellipsis)) = (layout.ellipsis, owned.ellipsis.as_ref()) {
+        draw(ellipsis, x, y);
       }
-      if self.runs.iter().any(|r| r.overrides.underline == Some(true)) {
-        decoration::draw_underlines(
-          builder,
-          origin,
-          layout,
-          |placed| {
-            let shaped = &runs[placed.run];
-            if shaped.atom {
-              return None;
-            }
-            let overrides = &self.runs[shaped.style].overrides;
-            if overrides.underline != Some(true) {
-              return None;
-            }
-            let style = &styles[shaped.style];
-            let underline = Underline::resolve(
-              font_metrics.underline(&style.font_family),
-              style.font_size,
-              overrides.underline_offset.or(self.underline_offset),
-              overrides.underline_thickness.or(self.underline_thickness),
-            );
-            Some((underline, &style.paint))
-          },
-          ink_of,
-        );
-      }
-      return;
     }
-    self.build_paragraph(ctx.platform, builder, origin, self.w.unwrap_or(ctx.content.size.width));
+    // CSS decorating boxes: the text's underline is one line in its own
+    // style under everything (atoms excepted); a span's underline is its
+    // own line in the span's style. Both may cover a run.
+    let font_metrics = ctx.platform.font_metrics();
+    let ink_of = |placed: &PlacedRun| runs[placed.run].run.metrics.ink_width;
+    if self.underline {
+      let style = self.run_style();
+      let underline = Underline::resolve(
+        font_metrics.underline(&style.font_family),
+        style.font_size,
+        self.underline_offset,
+        self.underline_thickness,
+      );
+      decoration::draw_underlines(
+        builder,
+        origin,
+        layout,
+        |placed| (!runs[placed.run].atom).then_some((underline, &style.paint)),
+        ink_of,
+      );
+    }
+    if self.runs.iter().any(|r| r.overrides.underline == Some(true)) {
+      decoration::draw_underlines(
+        builder,
+        origin,
+        layout,
+        |placed| {
+          let shaped = &runs[placed.run];
+          if shaped.atom {
+            return None;
+          }
+          let overrides = &self.runs[shaped.style].overrides;
+          if overrides.underline != Some(true) {
+            return None;
+          }
+          let style = &styles[shaped.style];
+          let underline = Underline::resolve(
+            font_metrics.underline(&style.font_family),
+            style.font_size,
+            overrides.underline_offset.or(self.underline_offset),
+            overrides.underline_thickness.or(self.underline_thickness),
+          );
+          Some((underline, &style.paint))
+        },
+        ink_of,
+      );
+    }
   }
 }
 
@@ -273,9 +258,6 @@ impl Measurable for Text {
     crate::rendertree::counters::note_measure_call();
     if let (Some(w), Some(h)) = (ctx.known.width, ctx.known.height) {
       return Size::new(w, h);
-    }
-    if self.paragraph_engine {
-      return self.measure_paragraph(ctx);
     }
     self.measure_owned(ctx)
   }
@@ -300,11 +282,11 @@ impl Text {
   /// Bounds of a detached text in its own frame (`frame` is the box it
   /// inherits): the laid-out paragraph from the layout the last paint used -
   /// widest line by line stack - with `w`/`h` overriding a side each. Before
-  /// a first paint (nothing laid out yet) or under the paragraph engine it is
-  /// the box answer of local_bounds.
+  /// a first paint (nothing laid out yet) it is the box answer of
+  /// local_bounds.
   pub fn detached_bounds(&self, frame: Size) -> Rect {
     let owned = self.owned.borrow();
-    if self.paragraph_engine || !owned.key.as_ref().is_some_and(|k| k.matches(self)) {
+    if !owned.key.as_ref().is_some_and(|k| k.matches(self)) {
       return self.local_bounds(frame);
     }
     let width = self.shaping_width(&owned, frame.width);
@@ -377,12 +359,8 @@ impl Text {
 
   /// The box the lines and decorations paint into when built against
   /// `content` (the content box build() reads its origin and width from), in
-  /// the text's own frame. None under the paragraph engine, whose extent is
-  /// not read back.
+  /// the text's own frame.
   pub(crate) fn painted_extent(&self, platform: &PlatformContext, content: Rect) -> Option<Rect> {
-    if self.paragraph_engine {
-      return None;
-    }
     let mut owned = self.owned.borrow_mut();
     self.prepare_owned(platform, &mut owned);
     let width = self.shaping_width(&owned, content.size.width);
@@ -438,9 +416,9 @@ impl Text {
 
   /// Where the atoms sit for a layout at `width` (content width), as (node,
   /// top-left) relative to the text's box: the layout pass writes these into
-  /// the atoms' computed layouts after the text's own. Owned path only.
+  /// the atoms' computed layouts after the text's own.
   pub fn atom_positions(&self, platform: &PlatformContext, width: f32) -> Vec<(u64, Point)> {
-    if self.paragraph_engine || self.runs.iter().all(|r| r.atom.is_none()) {
+    if self.runs.iter().all(|r| r.atom.is_none()) {
       return Vec::new();
     }
     let mut owned = self.owned.borrow_mut();
@@ -457,14 +435,10 @@ impl Text {
       .collect()
   }
 
-  /// The span whose text is under `point` (text-local, box `size`), on the
-  /// owned path, from the layout the last paint used; None on a miss, on the
-  /// paragraph path, or when nothing has been laid out yet. Atoms are hit as
-  /// elements, not through here.
+  /// The span whose text is under `point` (text-local, box `size`), from the
+  /// layout the last paint used; None on a miss, or when nothing has been
+  /// laid out yet. Atoms are hit as elements, not through here.
   pub fn hit_run(&self, point: Point, content: Rect) -> Option<u64> {
-    if self.paragraph_engine {
-      return None;
-    }
     let owned = self.owned.borrow();
     if !owned.key.as_ref().is_some_and(|k| k.matches(self)) {
       return None;
@@ -518,10 +492,6 @@ impl Text {
     Damage::Paint
   }
 
-  pub fn set_paragraph_engine(&mut self, on: bool) -> Damage {
-    self.paragraph_engine = on;
-    Damage::Layout
-  }
   pub fn set_text_overflow(&mut self, v: Option<TextOverflow>) -> Damage {
     self.text_overflow = v.unwrap_or_default();
     Damage::Layout

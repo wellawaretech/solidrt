@@ -200,20 +200,15 @@ fn compute_envelope(scene: &RenderTree, element: &Element, platform: &PlatformCo
   // out and drawn like any child.
   let mut children = Extent::Empty;
   if !(clip_x && clip_y) {
-    let text_atoms = match &element.kind {
-      ElementKind::Text(t) => Some(!t.paragraph_engine),
-      _ => None,
-    };
+    let text_atoms = matches!(&element.kind, ElementKind::Text(_));
     let frame = child_frame(element, inherited);
     for &child_id in &element.children {
       let child = scene.node(child_id);
       if child.is_hidden() {
         continue;
       }
-      if let Some(atoms) = text_atoms {
-        if !atoms || !child.has_layout() {
-          continue;
-        }
+      if text_atoms && !child.has_layout() {
+        continue;
       }
       let pos = child.layout.as_ref().map(|l| l.location()).unwrap_or_default();
       children = children.union(envelope(scene, child_id, platform, frame).translate(pos.to_vector()));

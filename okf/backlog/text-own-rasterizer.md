@@ -64,8 +64,10 @@ CJK samples.
 ## Done looks like
 
 A second shaper selected per platform or per app, the Medium-weight
-workaround retired where it runs, `Text.paragraph_engine` and the paragraph
-path deleted (they exist as the reference until then). A real shaper also
+workaround retired where it runs. (`Text.paragraph_engine` and the paragraph
+path were kept as the reference implementation until 2026-09-02, then
+deleted: the owned engine had been the only path in use, verified
+pixel-identical.) A real shaper also
 returns per-cluster advances, so caret stops become one O(n) read of the
 shaped run (prefix re-shaping deleted), runs can shape across word
 boundaries, and fallback (a notdef cluster re-shaped in a covering font)

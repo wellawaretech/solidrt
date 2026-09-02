@@ -38,8 +38,9 @@ partly so this door stays open.
 - Span hit testing and `layoutNextLine`'s cursor stay logical; visual order
   is the placer's concern.
 - Probe rows: RTL paragraph, mixed Latin/Hebrew line, RTL rich text across
-  spans, RTL alignment; the paragraph engine (`Text.paragraph_engine`) as
-  the reference to compare against, since Impeller handles bidi natively.
+  spans, RTL alignment; a whole-text Impeller paragraph (built ad hoc in the
+  probe; the in-tree paragraph engine was deleted 2026-09-02) as the
+  reference to compare against, since Impeller handles bidi natively.
 
 ## Involves
 

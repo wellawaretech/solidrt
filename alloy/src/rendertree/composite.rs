@@ -982,12 +982,8 @@ fn record_node<'a>(
 
   // A text's children are spans (runs of its paragraph, drawn by the text
   // itself) and inline atoms (laid-out elements the text placed on its lines,
-  // drawn like any child at their location; owned layout only, the paragraph
-  // engine has no placeholders).
-  let text_atoms = match &element.kind {
-    ElementKind::Text(t) => Some(!t.paragraph_engine),
-    _ => None,
-  };
+  // drawn like any child at their location).
+  let text_atoms = matches!(&element.kind, ElementKind::Text(_));
 
   // The frame this node's detached children inherit (cull::child_frame is
   // the one derivation); read before the loop mutates ctx.size.
@@ -998,10 +994,8 @@ fn record_node<'a>(
     if child.is_hidden() {
       continue;
     }
-    if let Some(atoms) = text_atoms {
-      if !atoms || !child.has_layout() {
-        continue;
-      }
+    if text_atoms && !child.has_layout() {
+      continue;
     }
 
     let pos = child.layout.as_ref().map(|l| l.location()).unwrap_or_default();

@@ -262,8 +262,8 @@ fn hit_recursive(
   };
 
   // A text's laid-out children are its inline atoms, hit like any child at
-  // their placed location (owned layout only); its spans have no box of their
-  // own and are resolved from the line layout below.
+  // their placed location; its spans have no box of their own and are
+  // resolved from the line layout below.
   let text = match &element.kind {
     ElementKind::Text(t) => Some(t),
     _ => None,
@@ -276,10 +276,8 @@ fn hit_recursive(
     if child.is_hidden() {
       continue;
     }
-    if let Some(t) = text {
-      if t.paragraph_engine || !child.has_layout() {
-        continue;
-      }
+    if text.is_some() && !child.has_layout() {
+      continue;
     }
     let child_size = child.layout.as_ref().map(|l| l.size()).unwrap_or(local_size);
     let child_pos = child.layout.as_ref().map(|l| l.location()).unwrap_or_default();

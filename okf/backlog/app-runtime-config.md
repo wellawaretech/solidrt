@@ -17,9 +17,6 @@ are the ones apps will hit first:
   plumbed to the engine builder.
 - Word cache `CAPACITY = 8192` entries (alloy/src/rendertree/text/words.rs).
   Text-heavy apps want more; small devices want less.
-- `Text.paragraph_engine` (alloy/src/rendertree/text/mod.rs) is a
-  Rust-only bool with no way to flip it from an app. It is the escape hatch
-  while the owned engine matures (see [text-layout-owned](../done/text-layout-owned.md)).
 - `FETCH_CACHE_MAX_BYTES = 256 MiB` (flux/src/standards_plugins/fetch.rs),
   doc comment: "placeholder cap until a real default is decided".
 - Log level exists only as the `SRT_LOG` env var; a packed app cannot ship
@@ -49,7 +46,6 @@ list and keeps the runtime side a plain struct handed to constructors.
     "runtime": {
       "jsStackSize": 33554432,
       "wordCacheSize": 16384,
-      "paragraphEngine": false,
       "fetchCacheBytes": 134217728,
       "logLevel": "warn"
     }
@@ -74,9 +70,8 @@ defaults for anything missing, so a manifest from an older CLI still loads.
    - `jsStackSize` -> `FluxEngine::builder().stack_size(..)` (exists).
    - `fetchCacheBytes` -> new `EngineConfig` field, read where the fetch
      plugin opens its cache instead of the constant.
-   - `wordCacheSize`, `paragraphEngine` -> alloy: the rendertree already
-     gets rebuilt/reset per app; give `WordCache::new` a capacity and
-     `Text` a default for `paragraph_engine` sourced from a
+   - `wordCacheSize` -> alloy: the rendertree already gets rebuilt/reset
+     per app; give `WordCache::new` a capacity sourced from a
      `rendertree::TextConfig`, set through the existing alloy command
      channel at activation. Rendertree stays engine-independent: it takes
      the struct, not the manifest.

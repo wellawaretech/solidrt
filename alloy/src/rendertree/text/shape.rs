@@ -394,8 +394,8 @@ impl Text {
     self.runs.iter().map(|r| r.overrides.resolve(self)).collect()
   }
 
-  // Line layout for `width` from the prepared runs, cached per width like the
-  // paragraph path. Pure arithmetic, except that a unit wider than the line
+  // Line layout for `width` from the prepared runs, cached per width. Pure
+  // arithmetic, except that a unit wider than the line
   // is re-split at grapheme boundaries (overflowWrap: anywhere) and laid out
   // again, which shapes the new pieces. Returns the index into `layouts`.
   pub(super) fn owned_layout(&self, platform: &PlatformContext, owned: &mut OwnedCache, width: f32) -> usize {
