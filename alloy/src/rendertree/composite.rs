@@ -7,8 +7,8 @@ use taffy::{AvailableSpace, NodeId};
 
 use crate::rendertree::cull::{self, CullRect};
 use crate::rendertree::{
-  BoundaryMode, BuildContext, Element, ElementKind, LayoutContext, PaintCache, PlatformContext, RenderTree,
-  ShadedCache, SnapshotCache,
+  BoundaryMode, BuildContext, Element, ElementKind, FrameDamage, LayoutContext, PaintCache, PlatformContext,
+  RenderTree, ShadedCache, SnapshotCache,
 };
 use crate::{CaptureDone, CaptureInfo};
 
@@ -24,6 +24,9 @@ pub fn layout_phase(tree: &mut RenderTree, platform: &PlatformContext, alloy: &c
 
   if platform.take_window_size_dirty() {
     tree.invalidate_cache(root_id);
+    // A resized window relayouts nearly everything; the frame is fully
+    // damaged by definition.
+    tree.damage_all();
   }
 
   let available_space =
@@ -45,6 +48,9 @@ pub struct PaintStats {
   pub snapshots_reused: u32,
   pub snapshots_rerendered: u32,
   pub snapshots_rasterized: u32,
+  /// The frame's resolved damage area in logical px^2 (window area on a
+  /// fully damaged frame); see RenderTree::frame_damage.
+  pub damage_px: f32,
 }
 
 // Picks up any cache invalidations queued by onLayout handlers, then paints.
@@ -59,16 +65,70 @@ pub fn paint_phase(
 
   layout_phase(tree, platform, alloy);
 
-  let mut ctx = BuildContext::new(platform, alloy);
-  ctx.size = Size::new(width, height);
-  // The root's boxes come from its layout like every other node's (the hit
-  // side derives them per element, so a padded root must agree here too);
-  // before the first layout the window is the frame.
-  ctx.content =
-    tree.node(root_id).layout.as_ref().map(|l| l.content_box()).unwrap_or(Rect::new(Point::zero(), ctx.size));
-  // Nothing outside the window is visible: the root cull rect is the window.
-  ctx.cull = Some(Rect::new(Point::zero(), ctx.size));
-  build_recursive(tree, root_id, &mut ctx, builder);
+  // Partial repaint: the damaged ids' last_extent cells still hold their
+  // extents as of the LAST walk - the old half of the damage union (where
+  // pixels must be erased). The walk below rewrites the cells; the second
+  // pass after it reads the new half. Taken after layout_phase so the ids
+  // noted by set_unrounded_layout (relayout-shifted nodes) are included.
+  let (damaged, damage_full) = tree.take_damage();
+  let size = Size::new(width, height);
+  let window_rect = Rect::new(Point::zero(), size);
+  tree.node(root_id).last_extent.set(cull::Extent::Bounded(window_rect));
+
+  // The walk borrows the tree for the BuildContext's lifetime, so it is
+  // scoped: only plain stats leave the block.
+  let (mut stats, mut damage) = {
+    let mut ctx = BuildContext::new(platform, alloy);
+    ctx.size = size;
+    // The root's boxes come from its layout like every other node's (the hit
+    // side derives them per element, so a padded root must agree here too);
+    // before the first layout the window is the frame.
+    ctx.content =
+      tree.node(root_id).layout.as_ref().map(|l| l.content_box()).unwrap_or(Rect::new(Point::zero(), ctx.size));
+    // Nothing outside the window is visible: the root cull rect is the window.
+    ctx.cull = Some(window_rect);
+    ctx.to_window = Some(euclid::default::Transform2D::identity());
+
+    let mut damage = cull::Extent::Empty;
+    if !damage_full {
+      for &id in &damaged {
+        damage = damage.union(damaged_extent(tree, id));
+      }
+    }
+
+    build_recursive(tree, root_id, &mut ctx, builder);
+
+    if !damage_full {
+      for &id in &damaged {
+        damage = damage.union(damaged_extent(tree, id));
+      }
+    }
+    let stats = PaintStats {
+      nodes_painted: ctx.nodes_painted,
+      boundaries_reused: ctx.boundaries_reused,
+      boundaries_recorded: ctx.boundaries_recorded,
+      snapshots_reused: ctx.snapshots_reused,
+      snapshots_rerendered: ctx.snapshots_rerendered,
+      snapshots_rasterized: ctx.snapshots_rasterized,
+      damage_px: 0.0,
+    };
+    (stats, damage)
+  };
+  if damage_full {
+    damage = cull::Extent::Unbounded;
+  }
+  let frame_damage = match damage {
+    cull::Extent::Empty => FrameDamage::None,
+    cull::Extent::Unbounded => FrameDamage::Full,
+    cull::Extent::Bounded(r) => match r.intersection(&window_rect) {
+      // Damage entirely outside the window changes no visible pixel.
+      None => FrameDamage::None,
+      Some(clamped) if clamped.contains_rect(&window_rect) => FrameDamage::Full,
+      Some(clamped) => FrameDamage::Rect(clamped),
+    },
+  };
+  tree.set_frame_damage(frame_damage);
+  stats.damage_px = frame_damage.area(size);
   // Any capture request whose node the walk never visited targets a node that
   // is not in the live tree; fail it rather than leave its promise pending.
   alloy.fail_unserviced_captures();
@@ -88,14 +148,24 @@ pub fn paint_phase(
   if alloy.has_pending_destroys() {
     alloy.reclaim_destroyed(&tree.referenced_texture_ids());
   }
-  PaintStats {
-    nodes_painted: ctx.nodes_painted,
-    boundaries_reused: ctx.boundaries_reused,
-    boundaries_recorded: ctx.boundaries_recorded,
-    snapshots_reused: ctx.snapshots_reused,
-    snapshots_rerendered: ctx.snapshots_rerendered,
-    snapshots_rasterized: ctx.snapshots_rasterized,
+  stats
+}
+
+// A damaged node's window extent from its cell. A node the walk has never
+// considered (a span, drawn by its text; a node born under a culled parent)
+// has an Empty cell and borrows the nearest ancestor's - conservative, and
+// the ascent ends at the root, whose cell is the window. A destroyed id
+// contributes nothing: its removal already noted the parent.
+fn damaged_extent(tree: &RenderTree, id: u64) -> cull::Extent {
+  let mut current = Some(id);
+  while let Some(cur) = current {
+    let Some(element) = tree.try_node(cur) else { return cull::Extent::Empty };
+    match element.last_extent.get() {
+      cull::Extent::Empty => current = element.parent,
+      extent => return extent,
+    }
   }
+  cull::Extent::Empty
 }
 
 /// Lay out and paint the whole tree into a fresh display list and submit it to
@@ -832,6 +902,25 @@ fn record_node<'a>(
     builder.transform(fit);
   }
 
+  // The window map follows the record order regardless of hoisting: a
+  // hoisted matrix/scroll is applied by the caller at composite time, but
+  // the content still lands under it on screen, which is what the damage
+  // extents must describe. Unlike the cull rect it is never suspended
+  // inside boundary recordings - a recording replays at the walk's current
+  // window position this frame.
+  let saved_map = ctx.to_window;
+  if let Some(own) = own_matrix(element, ctx.size) {
+    ctx.to_window = cull::map_through(&ctx.to_window, &own);
+  }
+  if let ElementKind::View(v) = &element.kind {
+    if let Some(s) = v.scroll {
+      ctx.to_window = cull::map_translate(&ctx.to_window, -s);
+    }
+  }
+  if let Some(fit) = &view_fit {
+    ctx.to_window = cull::map_through(&ctx.to_window, fit);
+  }
+
   // The cull rect follows the same four ops into the child frame. Under a
   // hoist the caller applied the matrix/clip/scroll itself and reset the cull
   // (boundaries and captures hold whole subtrees), so only Hoist::None sees a
@@ -893,6 +982,13 @@ fn record_node<'a>(
 
     let pos = child.layout.as_ref().map(|l| l.location()).unwrap_or_default();
 
+    // The child's current window extent, kept on the element for damage
+    // resolves (see paint_phase). Written for culled children too - their
+    // envelope is still their true extent - and skipped only for hidden
+    // ones above, whose stale cell is exactly their to-be-erased pixels.
+    let child_env = cull::envelope(scene, child_id, ctx.platform, child_frame);
+    child.last_extent.set(child_env.to_window(pos, &ctx.to_window));
+
     // Viewport culling: a child whose envelope cannot reach the cull rect is
     // skipped whole. The envelope resolves against the frame the child would
     // inherit (child_frame in cull.rs mirrors the else branch below). Not
@@ -900,14 +996,14 @@ fn record_node<'a>(
     // their node, on screen or not.
     let child_cull = ctx.cull.into_child(pos);
     if let Some(cull) = &child_cull {
-      if !ctx.alloy.has_pending_captures()
-        && !cull::envelope(scene, child_id, ctx.platform, child_frame).may_intersect(cull)
-      {
+      if !ctx.alloy.has_pending_captures() && !child_env.may_intersect(cull) {
         continue;
       }
     }
     let parent_cull = ctx.cull;
     ctx.cull = child_cull;
+    let parent_map = ctx.to_window;
+    ctx.to_window = cull::map_translate(&ctx.to_window, pos.to_vector());
 
     builder.translate(pos.x, pos.y);
 
@@ -929,9 +1025,11 @@ fn record_node<'a>(
     }
 
     ctx.cull = parent_cull;
+    ctx.to_window = parent_map;
     builder.translate(-pos.x, -pos.y);
   }
   ctx.cull = saved_cull;
+  ctx.to_window = saved_map;
 
   if opacity_layer {
     builder.restore();

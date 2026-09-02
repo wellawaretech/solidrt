@@ -23,7 +23,6 @@ import { registerDebug } from "srt:dev"
 import { box, DirectionalLight, HemisphereLight, lit, Mesh, PerspectiveCamera, plane, Scene, sphere } from "@solidrt/3d"
 import type { Geometry, Vec3 } from "@solidrt/3d"
 
-const SIZE = 720
 const FIELD = 260
 const FAR = 200
 // The flight: a circle over the field, looking ahead along it.
@@ -97,10 +96,8 @@ function App() {
 
   return (
     <window>
-      <view width={pct(100)} height={pct(100)} designSize={[SIZE, SIZE]} onPointerDown={() => setCascades(c => (c % 4) + 1)}>
+      <view width={pct(100)} height={pct(100)} onPointerDown={() => setCascades(c => (c % 4) + 1)}>
         <Scene
-          width={SIZE}
-          height={SIZE}
           clearColor={[SKY[0], SKY[1], SKY[2], 1]}
           fog={{ color: SKY, near: FOG_NEAR, far: FOG_FAR }}
           samples={4}

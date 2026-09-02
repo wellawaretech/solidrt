@@ -11,8 +11,6 @@
 import { createSignal, onFrame, pct, render } from "@solidrt/core"
 import { box, Group, Mesh, PerspectiveCamera, plane, Scene, sphere, unlit } from "@solidrt/3d"
 
-const SIZE = 720
-
 function App() {
   let [spin, setSpin] = createSignal(0)
   onFrame(tick => setSpin(tick / 2000))
@@ -26,8 +24,8 @@ function App() {
 
   return (
     <window>
-      <view width={pct(100)} height={pct(100)} designSize={[SIZE, SIZE]}>
-        <Scene width={SIZE} height={SIZE} clearColor={[0.07, 0.07, 0.1, 1]} label="scene-basic">
+      <view width={pct(100)} height={pct(100)}>
+        <Scene clearColor={[0.07, 0.07, 0.1, 1]} label="scene-basic">
           <PerspectiveCamera fov={55} position={[0, 1.6, 3.6]} lookAt={[0, 0.3, 0]} />
           <Mesh
             geometry={floor}

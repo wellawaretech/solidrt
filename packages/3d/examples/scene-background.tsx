@@ -10,8 +10,6 @@ import { pct, render } from "@solidrt/core"
 import { glsl } from "@solidrt/core/gpu"
 import { box, Mesh, PerspectiveCamera, Scene, sphere, torusKnot, unlit } from "@solidrt/3d"
 
-const SIZE = 720
-
 // A radial night-sky gradient with hash grain so the ramp does not band.
 let BACKDROP = glsl`
   void main() {
@@ -28,8 +26,8 @@ let BACKDROP = glsl`
 function App() {
   return (
     <window>
-      <view width={pct(100)} height={pct(100)} designSize={[SIZE, SIZE]}>
-        <Scene width={SIZE} height={SIZE} background={BACKDROP} label="backdrop-demo">
+      <view width={pct(100)} height={pct(100)}>
+        <Scene background={BACKDROP} label="backdrop-demo">
           <PerspectiveCamera fov={55} position={[0, 1.8, 4.4]} lookAt={[0, 0.4, 0]} />
           <Mesh geometry={torusKnot({ radius: 0.7, tube: 0.2, tubularSegments: 128, radialSegments: 16 })} material={unlit({ color: [0.85, 0.55, 0.25] })} position={[0, 0.9, 0]} />
           <Mesh geometry={box()} material={unlit({ color: [0.3, 0.5, 0.8] })} position={[-1.5, 0.4, -0.5]} scale={0.8} />

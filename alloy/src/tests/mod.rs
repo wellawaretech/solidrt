@@ -3,6 +3,7 @@ mod box_dash;
 mod color;
 mod composite;
 mod cull;
+mod damage;
 mod fonts;
 mod frame;
 mod gpu_graph;

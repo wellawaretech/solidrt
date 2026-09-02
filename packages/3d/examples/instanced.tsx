@@ -39,8 +39,6 @@ import {
 import type { InstancedMeshNode } from "@solidrt/3d"
 import { HEMISPHERE } from "@solidrt/3d/glsl"
 
-const SIZE = 720
-
 const INSTANCE_VERTEX = glsl`
   in vec3 aPos;
   in vec3 aNormal;
@@ -140,8 +138,8 @@ function App() {
 
   return (
     <window>
-      <view width={pct(100)} height={pct(100)} designSize={[SIZE, SIZE]}>
-        <Scene width={SIZE} height={SIZE} clearColor={[0.07, 0.08, 0.1, 1]} label="instanced">
+      <view width={pct(100)} height={pct(100)}>
+        <Scene clearColor={[0.07, 0.08, 0.1, 1]} label="instanced">
           <PerspectiveCamera fov={55} position={[0, 3.2, 5.4]} lookAt={[0, 0.2, 0]} />
           <HemisphereLight sky={[0.4, 0.42, 0.45]} ground={[0.12, 0.13, 0.11]} />
           <DirectionalLight

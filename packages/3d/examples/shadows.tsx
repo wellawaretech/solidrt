@@ -21,8 +21,6 @@ import { createSignal, onFrame, pct, render } from "@solidrt/core"
 import { box, cylinder, DirectionalLight, Group, HemisphereLight, lit, Mesh, PerspectiveCamera, plane, Scene, setTransform, sphere, torusKnot } from "@solidrt/3d"
 import type { DirectionalLightNode } from "@solidrt/3d"
 
-const SIZE = 720
-
 function App() {
   let [t, setT] = createSignal(0)
   let sun!: DirectionalLightNode
@@ -43,8 +41,8 @@ function App() {
 
   return (
     <window>
-      <view width={pct(100)} height={pct(100)} designSize={[SIZE, SIZE]}>
-        <Scene width={SIZE} height={SIZE} clearColor={[0.55, 0.65, 0.8, 1]} samples={4} label="shadows">
+      <view width={pct(100)} height={pct(100)}>
+        <Scene clearColor={[0.55, 0.65, 0.8, 1]} samples={4} label="shadows">
           <PerspectiveCamera fov={45} position={[0, 4, 7]} lookAt={[0, 0.5, 0]} />
           <HemisphereLight sky={[0.45, 0.5, 0.6]} ground={[0.2, 0.18, 0.15]} />
           <DirectionalLight

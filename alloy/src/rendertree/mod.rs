@@ -52,6 +52,10 @@ pub struct BuildContext<'a> {
   /// What can still be seen, in the frame the walk is currently in; None
   /// culls nothing (see cull.rs).
   pub cull: Option<Rect>,
+  /// The forward transform from the walk's current frame to window space,
+  /// for the damage-extent cells; None past a non-2D matrix (see
+  /// cull::WindowMap). Never suspended inside boundary recordings.
+  pub to_window: cull::WindowMap,
   /// Nodes whose subtree the walk entered this frame (culled ones excluded).
   pub nodes_painted: u32,
   // Repaint-boundary diagnostics for the frame being built (see composite.rs).
@@ -70,6 +74,7 @@ impl<'a> BuildContext<'a> {
       size: Size::default(),
       content: Rect::new(Point::zero(), Size::default()),
       cull: None,
+      to_window: None,
       nodes_painted: 0,
       boundaries_reused: 0,
       boundaries_recorded: 0,
@@ -273,6 +278,31 @@ pub enum Damage {
   Layout,
 }
 
+/// A painted frame's resolved screen damage, in window coordinates (logical
+/// px): the union of every damaged node's old and new window extents,
+/// produced by composite::paint_phase (okf/plans/partial-repaint.md). `Full`
+/// is the conservative fallback - resize, re-root, an unbounded or non-2D
+/// extent in the union, or a damaged-node batch past the accumulation cap.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum FrameDamage {
+  /// No painted pixel changed.
+  None,
+  /// Damage confined to this rect (already clamped to the window).
+  Rect(Rect),
+  Full,
+}
+
+impl FrameDamage {
+  /// Damage area in logical px^2, with `window` as the full-frame answer.
+  pub fn area(&self, window: Size) -> f32 {
+    match self {
+      FrameDamage::None => 0.0,
+      FrameDamage::Rect(r) => r.size.width * r.size.height,
+      FrameDamage::Full => window.width * window.height,
+    }
+  }
+}
+
 /// What a repaint boundary retains across frames: nothing, the recorded
 /// display list (skips rebuilding), or rasterized pixels (skips rasterizing
 /// too, at the cost of GPU memory and resolution-dependence). SnapshotNoAa
@@ -351,6 +381,14 @@ pub struct Element {
   pub snapshot_texture_id: Cell<Option<u64>>,
   // The subtree's paint envelope (see cull.rs), cleared alongside paint_cache.
   pub envelope: cull::EnvelopeCache,
+  // The subtree's window-space painted extent as of the last paint walk that
+  // considered this node - the OLD half of a damaged node's old + new damage
+  // union (okf/plans/partial-repaint.md). Deliberately NOT cleared by
+  // invalidate_paint: it must survive into the next frame's damage resolve,
+  // and a stale value (a node inside a valid boundary cache) can only
+  // over-damage, since whatever moved the subtree was damaged itself when it
+  // moved. Empty until the walk first considers the node.
+  pub last_extent: Cell<cull::Extent>,
   // Native transition declaration (see transitions.rs): which properties
   // animate on write, and how. None (the overwhelmingly common case) makes
   // every write snap, as ever.
@@ -383,6 +421,7 @@ impl Element {
       paint_cache: RefCell::new(None),
       snapshot_texture_id: Cell::new(None),
       envelope: cull::EnvelopeCache::default(),
+      last_extent: Cell::new(cull::Extent::Empty),
       transitions: None,
       entered: false,
       exiting: false,
@@ -409,6 +448,7 @@ impl Element {
       paint_cache: RefCell::new(None),
       snapshot_texture_id: Cell::new(None),
       envelope: cull::EnvelopeCache::default(),
+      last_extent: Cell::new(cull::Extent::Empty),
       transitions: None,
       entered: false,
       exiting: false,
@@ -444,6 +484,19 @@ impl Element {
 
   pub fn has_layout(&self) -> bool {
     self.layout.is_some()
+  }
+
+  /// Whether this element references any texture-registry id: a texture
+  /// element with a source, or a view whose shader samples extra texture
+  /// inputs. Feeds the tree's referencer index (its membership predicate),
+  /// which keeps `texture_content_changed` and the destroy sweep at
+  /// O(referencers) instead of O(nodes).
+  pub(crate) fn references_textures(&self) -> bool {
+    match &self.kind {
+      ElementKind::Texture(t) => t.texture_id.is_some(),
+      ElementKind::View(v) => v.shader.as_ref().is_some_and(|s| !s.textures.is_empty()),
+      _ => false,
+    }
   }
 
   /// `display: none`: the subtree generates no box. Layout zeroes it (taffy's

@@ -9,8 +9,6 @@ import { createSignal, onFrame, pct, render } from "@solidrt/core"
 import { createTexture } from "@solidrt/core/gpu"
 import { box, Group, Mesh, PerspectiveCamera, plane, Scene, sprite, Sprite, unlit } from "@solidrt/3d"
 
-const SIZE = 720
-
 // A soft disc, alpha falling off from the center; premultiplied like every
 // texture the engine samples.
 function glow(): ReturnType<typeof createTexture> {
@@ -68,8 +66,8 @@ function App() {
 
   return (
     <window>
-      <view width={pct(100)} height={pct(100)} designSize={[SIZE, SIZE]}>
-        <Scene width={SIZE} height={SIZE} clearColor={[0.07, 0.07, 0.1, 1]} label="sprites">
+      <view width={pct(100)} height={pct(100)}>
+        <Scene clearColor={[0.07, 0.07, 0.1, 1]} label="sprites">
           <PerspectiveCamera fov={50} position={eye()} lookAt={[0, 0.6, 0]} />
           <Mesh
             geometry={plane({ width: 8, height: 8 })}

@@ -238,8 +238,9 @@ scene composited at a size unrelated to its layout. `width`/`height` are
 DEVICE pixels and the leaf's layout is LOGICAL - a fixed 720-pixel scene
 under a HiDPI `designSize` fit is stretched across ~1100 device pixels
 and looks soft, and nothing warns; that trap is what fill removes (the
-examples' `SIZE = 720` is a verification convenience, not a sizing
-model). A custom `output` leaf whose layout differs from the target
+examples fill; scene-views and scene-post-effect keep fixed sizes to
+show multi-view composition and supersampling). A custom `output` leaf
+whose layout differs from the target
 takes `handlersFor` (below), not `handlers`; `useScene()` works inside
 `output` because it runs in the scene context. With an `<OrbitCamera>`
 (or any SceneInput listener) in the scene, also spread

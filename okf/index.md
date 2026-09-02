@@ -28,6 +28,11 @@ Decided and being worked on now. A plan nobody is working on goes back to backlo
   The solidrt runtime goes font-free and srt pack appends fonts as trailer
   sections, with the three Noto role defaults declared through the
   package.json solidrt fonts key.
+- **[Partial repaint - damage rects for the raster pass](plans/partial-repaint.md)** [2026-09-02]
+  Every frame with any damage re-rasterizes the full window display list; a 1
+  px change is a full-screen raster + resolve. Track screen-space damage rects
+  and scissor the raster to them (EGL buffer age / swap-with-damage), so fill
+  cost scales with what changed.
 - **[Reactivity halt containment](plans/reactivity-halt-containment.md)** [2026-07-17]
   One unclaimed error used to halt the whole app for good; decided and built
   as a root error boundary around the app's window (error window with reset)
@@ -191,10 +196,10 @@ Shaped, not started.
   addressable, so the motion users most want on a control (the knob sliding)
   still snaps.
 - **[Content-damage perf watchpoints](backlog/content-damage-perf.md)** [2026-08-10]
-  One remaining perf pothole in the GPU-content-damage path (the O(nodes)
-  walk, unrealistic at current app scales; symptom and drop-in fix recorded);
-  the boundary-shader-input full re-bake was fixed 2026-08-10 (shader_dirty +
-  Compose instead of invalidate_paint).
+  Perf potholes in the damage-tracking path. Open - the unbatched
+  invalidate_paint in set_unrounded_layout making resize O(n * depth). Fixed -
+  the O(nodes) texture walk (referencer index, 2026-09-02) and the
+  boundary-shader-input full re-bake (shader_dirty + Compose, 2026-08-10).
 - **[Generate the docs/core.md props reference from the types](backlog/core-docs-generated-props.md)** [2026-08-06]
   Hand-copied prop lists are how core.md drifted (fill/background/imageWidth);
   jsx-runtime.d.ts and types.d.ts are clean enough to generate the per-element
@@ -625,11 +630,12 @@ Shaped, not started.
   the entire text node rather than the changed part; unverified since the
   Solid 2.0 bump, so the first step is a repro.
 - **[Own glyph rasterizer behind the shaper seam](backlog/text-own-rasterizer.md)** [2026-08-17]
-  Text quality is capped by what Impeller's paragraph rasterizes (grayscale AA
-  only, no gamma or stem darkening for light-on-dark, no letter spacing or
-  variation axes in the C API); the owned layout reduced the engine's job to
-  shape-one-run and draw-one-run, so a second implementation with its own
-  glyph atlas can replace it where quality matters.
+  Text quality and shaping semantics are capped by Impeller's paragraph engine
+  (grayscale AA only, no gamma or stem darkening, no glyph positions so carets
+  re-shape every prefix, shaping cut at word boundaries, fallback not ours);
+  the owned layout reduced the engine's job to shape-one-run and draw-one-run,
+  so a second implementation with its own glyph atlas can replace it where
+  quality matters.
 - **[No way to tile or repeat a texture](backlog/texture-tile-mode.md)** [2026-08-14]
   Textures always blit once into their destination rect, so a repeating
   background has to be faked with one element per tile or a shader bake;
@@ -1535,6 +1541,10 @@ Knowledge. No lifecycle - true or wrong, not open or closed.
   read refused as filtered there; loopback and wildcard listeners coexist
   under SO_REUSEADDR on macOS only, so a bind failure is the whole truth on
   Linux and Windows but not on a Mac.
+- **[Project review 2026-08](notes/project-review-2026-08.md)** [2026-08-28]
+  Whole-project session review (2026-08-28) vs Flutter/RN/Electron; core
+  renderer bet right, product layer (tests, text editing, a11y, security,
+  docs) is the gap; 8 ranked priorities.
 - **[A 3D scene graph above the pipeline](notes/scene-graph-3d.md)** [2026-08-03]
   How a Three.js-in-spirit retained scene graph (meshes, materials, cameras,
   lights) would be built over flux:gpu as a sibling library with a Solid

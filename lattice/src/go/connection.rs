@@ -1110,6 +1110,7 @@ fn stats_reply(id: u64, r: StatsReply<'_>) -> String {
   put("cacheGets", s.cache_gets.into());
   put("cacheHits", s.cache_hits.into());
   put("nodesPainted", s.paint.nodes_painted.into());
+  put("damagePx", (s.paint.damage_px.round() as i64).into());
   put("window", window_json(r.window, r.time_ms, r.window_ms));
   if let Some((mounted, total)) = r.counts {
     put("mountedNodes", mounted.into());

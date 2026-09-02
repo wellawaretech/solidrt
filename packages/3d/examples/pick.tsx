@@ -14,8 +14,6 @@ import { createSignal, pct, render } from "@solidrt/core"
 import { box, cone, Group, Mesh, PerspectiveCamera, plane, Scene, setMeshParams, setTransform, sphere, torus, unlit } from "@solidrt/3d"
 import type { Geometry, ScenePointerEvent, Vec3 } from "@solidrt/3d"
 
-const SIZE = 720
-
 type Color = [number, number, number]
 
 let [hovered, setHovered] = createSignal("nothing")
@@ -70,8 +68,8 @@ function App() {
 
   return (
     <window>
-      <view width={pct(100)} height={pct(100)} designSize={[SIZE, SIZE]}>
-        <Scene width={SIZE} height={SIZE} clearColor={[0.07, 0.07, 0.1, 1]} label="pick">
+      <view width={pct(100)} height={pct(100)}>
+        <Scene clearColor={[0.07, 0.07, 0.1, 1]} label="pick">
           <PerspectiveCamera fov={55} position={[0, 2.6, 5]} lookAt={[0, 0.4, 0]} />
           <Mesh geometry={floor} material={unlit({ color: [0.15, 0.16, 0.2] })} rotation={[-Math.PI / 2, 0, 0]} />
           {/* The group hears every child click that is not stopped. */}

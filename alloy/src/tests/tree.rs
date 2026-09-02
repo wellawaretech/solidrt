@@ -869,6 +869,30 @@ fn content_hit_invalidates_the_boundary_cache_path() {
   assert!(tree.node(0).paint_cache.borrow().is_none());
 }
 
+#[test]
+fn texture_referencer_index_tracks_lifecycle() {
+  // The index texture_content_changed iterates must follow element state:
+  // in on src set, out on src clear, in on a shader with texture inputs,
+  // out on destroy.
+  let mut tree = RenderTree::new();
+  tree.create_node(1, Texture::default().with_layout());
+  assert!(tree.texture_referencers().is_empty());
+  tree.edit(1, |el| match &mut el.kind {
+    ElementKind::Texture(t) => t.set_src(Some(7)),
+    _ => unreachable!(),
+  });
+  assert!(tree.texture_referencers().contains(&1));
+  tree.edit(1, |el| match &mut el.kind {
+    ElementKind::Texture(t) => t.set_src(None),
+    _ => unreachable!(),
+  });
+  assert!(tree.texture_referencers().is_empty());
+  shaded_boundary(&mut tree, 2, 9);
+  assert!(tree.texture_referencers().contains(&2));
+  tree.destroy_node(2);
+  assert!(tree.texture_referencers().is_empty());
+}
+
 fn frame(w: f32, h: f32) -> crate::impellers::Rect {
   crate::impellers::Rect::new(crate::impellers::Point::zero(), crate::impellers::Size::new(w, h))
 }

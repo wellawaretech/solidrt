@@ -13,8 +13,6 @@ import { add, createModel, DirectionalLight, Group, HemisphereLight, parseGltf, 
 import type { SceneNode } from "@solidrt/3d"
 import modelBytes from "./model.glb" with { type: "binary" }
 
-const SIZE = 720
-
 function App() {
   let [t, setT] = createSignal(0)
   onFrame(tick => setT(tick / 1000))
@@ -36,8 +34,8 @@ function App() {
 
   return (
     <window>
-      <view width={pct(100)} height={pct(100)} designSize={[SIZE, SIZE]}>
-        <Scene width={SIZE} height={SIZE} clearColor={[0.1, 0.11, 0.14, 1]} samples={4} label="model">
+      <view width={pct(100)} height={pct(100)}>
+        <Scene clearColor={[0.1, 0.11, 0.14, 1]} samples={4} label="model">
           <PerspectiveCamera fov={40} position={[center[0] + radius * 1.4, center[1] + radius * 1.1, center[2] + radius * 2.2]} lookAt={center} />
           <HemisphereLight sky={[0.45, 0.5, 0.6]} ground={[0.2, 0.17, 0.14]} />
           <DirectionalLight direction={[0.5, -0.8, 0.3]} color={[1, 0.95, 0.85]} intensity={0.9} />

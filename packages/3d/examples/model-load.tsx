@@ -26,8 +26,6 @@ import { createMemo, createSignal, Loading, onFrame, pct, render } from "@solidr
 import { add, DirectionalLight, Group, HemisphereLight, loadModel, PerspectiveCamera, Scene } from "@solidrt/3d"
 import type { Model, SceneNode } from "@solidrt/3d"
 
-const SIZE = 720
-
 function Rover(props: { turn: () => number }) {
   // The async value: a memo returning a Promise. Its read below suspends
   // until the file is read and the model built, then resumes under the
@@ -44,7 +42,7 @@ function Rover(props: { turn: () => number }) {
     let center: [number, number, number] = [(b[0]! + b[3]!) / 2, (b[1]! + b[4]!) / 2, (b[2]! + b[5]!) / 2]
     let radius = Math.hypot(b[3]! - b[0]!, b[4]! - b[1]!, b[5]! - b[2]!) / 2
     return (
-      <Scene width={SIZE} height={SIZE} clearColor={[0.1, 0.11, 0.14, 1]} samples={4} label="model-load">
+      <Scene clearColor={[0.1, 0.11, 0.14, 1]} samples={4} label="model-load">
         <PerspectiveCamera fov={40} position={[center[0] + radius * 1.4, center[1] + radius * 1.1, center[2] + radius * 2.2]} lookAt={center} />
         <HemisphereLight sky={[0.45, 0.5, 0.6]} ground={[0.2, 0.17, 0.14]} />
         <DirectionalLight direction={[0.5, -0.8, 0.3]} color={[1, 0.95, 0.85]} intensity={0.9} />
@@ -64,7 +62,7 @@ function App() {
   // anything - it is created and torn down by <Loading> itself.
   return (
     <window>
-      <view width={pct(100)} height={pct(100)} designSize={[SIZE, SIZE]}>
+      <view width={pct(100)} height={pct(100)}>
         <Loading fallback={<text fontSize={24} color="#8899aa">Loading rover...</text>}>
           <Rover turn={() => t() / 3} />
         </Loading>

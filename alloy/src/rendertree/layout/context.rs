@@ -263,6 +263,10 @@ impl<'a> LayoutPartialTree for LayoutContext<'a> {
     // node are stale.
     if data.computed != *layout {
       data.computed = *layout;
+      // Partial repaint: this is the one place a node moved by someone
+      // else's relayout (a sibling grew) becomes visible, so its old and
+      // new extents join the frame damage.
+      self.render_tree.note_damage(id);
       self.render_tree.invalidate_paint(id);
     }
   }

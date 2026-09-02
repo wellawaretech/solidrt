@@ -14,8 +14,6 @@ import { createSignal, onFrame, pct, render } from "@solidrt/core"
 import { createTexture } from "@solidrt/core/gpu"
 import { box, DirectionalLight, Group, HemisphereLight, lit, Mesh, PerspectiveCamera, Scene, sphere, torusKnot, plane } from "@solidrt/3d"
 
-const SIZE = 720
-
 function checker(): ReturnType<typeof createTexture> {
   let n = 64
   let data = new Uint8Array(n * n * 4)
@@ -41,8 +39,8 @@ function App() {
 
   return (
     <window>
-      <view width={pct(100)} height={pct(100)} designSize={[SIZE, SIZE]}>
-        <Scene width={SIZE} height={SIZE} clearColor={[0.07, 0.07, 0.1, 1]} samples={4} label="lit">
+      <view width={pct(100)} height={pct(100)}>
+        <Scene clearColor={[0.07, 0.07, 0.1, 1]} samples={4} label="lit">
           <PerspectiveCamera fov={50} position={[0, 2.6, 5]} lookAt={[0, 0.4, 0]} />
           <HemisphereLight sky={[0.35, 0.38, 0.45]} ground={[0.12, 0.1, 0.08]} />
           <Group rotation={[0, t(), 0]}>

@@ -25,7 +25,6 @@ import {
 } from "@solidrt/3d"
 import type { MeshNode, Vec3 } from "@solidrt/3d"
 
-const SIZE = 720
 const Y_AXIS: Vec3 = [0, 1, 0]
 
 function App() {
@@ -79,8 +78,8 @@ function App() {
 
   return (
     <window>
-      <view width={pct(100)} height={pct(100)} designSize={[SIZE, SIZE]}>
-        <Scene width={SIZE} height={SIZE} clearColor={[0.07, 0.07, 0.1, 1]} label="aim">
+      <view width={pct(100)} height={pct(100)}>
+        <Scene clearColor={[0.07, 0.07, 0.1, 1]} label="aim">
           <PerspectiveCamera fov={55} position={[0, 2.6, 4.6]} lookAt={[0, 0.7, 0]} />
           <Mesh
             geometry={plane({ width: 7, height: 7, label: "floor" })}

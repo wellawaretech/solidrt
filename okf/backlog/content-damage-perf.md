@@ -1,6 +1,6 @@
 ---
 title: Content-damage perf watchpoints
-description: One remaining perf pothole in the GPU-content-damage path (the O(nodes) walk, unrealistic at current app scales; symptom and drop-in fix recorded); the boundary-shader-input full re-bake was fixed 2026-08-10 (shader_dirty + Compose instead of invalidate_paint).
+description: Perf potholes in the damage-tracking path. Open - the unbatched invalidate_paint in set_unrounded_layout making resize O(n * depth). Fixed - the O(nodes) texture walk (referencer index, 2026-09-02) and the boundary-shader-input full re-bake (shader_dirty + Compose, 2026-08-10).
 created: 2026-08-10
 ---
 
@@ -8,24 +8,51 @@ created: 2026-08-10
 
 Correctness landed in
 [snapshot-gpu-content-invalidation](../done/snapshot-gpu-content-invalidation.md);
-this holds its known perf potholes. Not worth fixing speculatively - the
-open one has a crisp symptom and a contained fix.
+this holds the damage path's known perf potholes. Not worth fixing
+speculatively - each open one has a crisp symptom and a contained fix.
 
-## O(nodes) walk in texture_content_changed
+## O(nodes) walk in texture_content_changed - FIXED 2026-09-02
 
-`RenderTree::texture_content_changed` iterates every node once per frame
-that had GPU content writes (~5-20ns/node: linear map iteration plus a
-kind-discriminant check). At realistic tree sizes (hundreds to a few
-thousand nodes) that is tens of microseconds against a frame budget -
-invisible. It could matter only at ~50k+ nodes combined with per-frame
-GPU writes.
+Was: `RenderTree::texture_content_changed` iterated every node once per
+frame that had GPU content writes, so an app mixing a very large tree
+with continuous GPU content (camera, video) paid O(nodes) per tick.
 
-- **Symptom:** jsMs/frameMs growth on exactly the frames that carry GPU
-  writes, scaling with node count, in an app that mixes a very large UI
-  tree with continuous GPU content.
-- **Fix:** maintain an index of texture-referencing node ids (the dual of
-  the walk; must hook texture src set/unset, boundary-shader binding
-  writes, and node destroy) and iterate that instead. No contract change.
+Fixed with the sketched index, but maintained by reconciliation rather
+than setter hooks: the setters live on the kind structs and never see
+the tree, while every write completes through `edit`/`try_edit` - so the
+tree recomputes membership there (`Element::references_textures`, a pure
+function of current element state: a texture with a source, a view whose
+shader has texture inputs), plus create_node and delete_recursive.
+Recompute-per-edit is O(1) and cannot drift whatever the closure
+touched, including the FFI path's direct field writes. `try_edit`
+reconciles even on Err, since the closure may mutate before failing.
+`texture_content_changed` and `referenced_texture_ids` (the
+deferred-destroy sweep, the same O(nodes) shape) both iterate the set;
+the boundary checks stay at query time, so behavior is unchanged. Test:
+tree.rs `texture_referencer_index_tracks_lifecycle`.
+
+## Unbatched invalidate_paint in set_unrounded_layout
+
+`set_unrounded_layout` (`alloy/src/rendertree/layout/context.rs`) calls
+the plain `invalidate_paint` for every node whose computed layout
+changed, and that walk has no early-out: it clears all the way to the
+root even through ancestors an earlier walk already cleared this frame.
+A resize changes nearly every node's layout, so the invalidation cost is
+O(n * depth) on top of the O(n) relayout. Constants are tiny (a borrow
+plus a cache clear per step), so this is a constant-factor add on the
+worst frame, not a new cliff.
+
+- **Symptom:** layoutMs scaling super-linearly with tree depth on resize
+  frames of a very large tree, with the relayout itself (cache-cleared
+  taffy pass) not accounting for it.
+- **Fix:** the batched walk already exists - `invalidate_paint_batched`
+  (`tree.rs`) shares a `visited` set so common ancestors are cleared
+  once per batch. Thread one `visited` set through the layout pass and
+  call that instead. No contract change.
+- If [partial-repaint](../plans/partial-repaint.md) lands, its per-frame damage
+  rect accumulation wants old + new bounds out of exactly this walk, so
+  the batched form becomes the natural accumulation point rather than
+  just a saving.
 
 ## Boundary-shader INPUT hit does a full re-bake - FIXED 2026-08-10
 

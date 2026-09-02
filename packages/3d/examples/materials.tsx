@@ -15,8 +15,6 @@ import { createTexture } from "@solidrt/core/gpu"
 import { box, DirectionalLight, Group, HemisphereLight, lit, Mesh, PerspectiveCamera, plane, Scene, setMeshParams, sphere, withAttribute } from "@solidrt/3d"
 import type { MeshNode } from "@solidrt/3d"
 
-const SIZE = 720
-
 // A tangent-space normal map from a procedural height field (a grid of
 // round bumps): finite-difference the height, pack the normal as
 // OpenGL-style rgb. What every baked normal map contains, minus the
@@ -125,8 +123,8 @@ function App() {
 
   return (
     <window>
-      <view width={pct(100)} height={pct(100)} designSize={[SIZE, SIZE]}>
-        <Scene width={SIZE} height={SIZE} clearColor={[0.06, 0.06, 0.09, 1]} samples={4} label="materials">
+      <view width={pct(100)} height={pct(100)}>
+        <Scene clearColor={[0.06, 0.06, 0.09, 1]} samples={4} label="materials">
           <PerspectiveCamera fov={50} position={[0, 2.8, 5.2]} lookAt={[0, 0.5, 0]} />
           <HemisphereLight sky={[0.3, 0.33, 0.4]} ground={[0.1, 0.09, 0.08]} />
           <Group rotation={[0, t() / 2, 0]}>

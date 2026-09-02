@@ -37,8 +37,34 @@ pub enum Extent {
   Unbounded,
 }
 
+/// Forward companion of the cull rect: the 2D transform from the frame the
+/// paint walk is currently in to window space (logical px). `None` once a
+/// non-2D matrix entered the chain - extents mapped through it become
+/// Unbounded, so a 3D subtree degrades to full damage, never to a wrong
+/// skip. Carried by BuildContext for the damage-extent cells
+/// (okf/plans/partial-repaint.md); unlike the cull rect it never suspends
+/// inside boundary recordings, since a recording replays at the walk's
+/// current window position.
+pub type WindowMap = Option<euclid::default::Transform2D<f32>>;
+
+/// `map` one record-order op deeper: the walk applied `m` (own matrix or
+/// design-size fit) to the frame it is in.
+pub(crate) fn map_through(map: &WindowMap, m: &Matrix) -> WindowMap {
+  let cur = (*map)?;
+  if !m.is_2d() {
+    return None;
+  }
+  Some(m.to_2d().then(&cur))
+}
+
+/// `map` past a translation the walk recorded (a scroll's -offset, a
+/// child's location).
+pub(crate) fn map_translate(map: &WindowMap, v: Vector) -> WindowMap {
+  map.map(|m| m.pre_translate(v))
+}
+
 impl Extent {
-  fn union(self, other: Extent) -> Extent {
+  pub(crate) fn union(self, other: Extent) -> Extent {
     match (self, other) {
       (Extent::Unbounded, _) | (_, Extent::Unbounded) => Extent::Unbounded,
       (Extent::Empty, e) | (e, Extent::Empty) => e,
@@ -64,6 +90,17 @@ impl Extent {
         Extent::Bounded(m.to_2d().outer_transformed_rect(&r))
       }
       e => e,
+    }
+  }
+
+  /// The extent in window space: placed at its slot position `pos`, then
+  /// through the walk's forward window map. An unknown map makes any
+  /// painted extent Unbounded.
+  pub(crate) fn to_window(self, pos: Point, map: &WindowMap) -> Extent {
+    match (self.translate(pos.to_vector()), map) {
+      (Extent::Empty, _) => Extent::Empty,
+      (Extent::Bounded(r), Some(m)) => Extent::Bounded(m.outer_transformed_rect(&r)),
+      (_, None) | (Extent::Unbounded, _) => Extent::Unbounded,
     }
   }
 

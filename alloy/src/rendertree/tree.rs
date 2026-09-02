@@ -6,8 +6,15 @@ use taffy::NodeId;
 use crate::impellers::Matrix;
 use crate::rendertree::transitions::{AnimValue, PendingWrite, Transitions};
 use crate::rendertree::{
-  AnimProp, BoundaryMode, Damage, Element, ElementKind, PaintCache, Point, Rect, RunOverrides, Size, TextRun, ATOM_CHAR,
+  AnimProp, BoundaryMode, Damage, Element, ElementKind, FrameDamage, PaintCache, Point, Rect, RunOverrides, Size,
+  TextRun, ATOM_CHAR,
 };
+
+// Damage accumulation cap: past this many damaged nodes in one frame the
+// frame is treated as fully damaged instead of paying per-node rect math (a
+// resize-scale relayout damages nearly every node, and a near-window union
+// is worth no less than a full repaint).
+const MAX_DAMAGED_NODES: usize = 256;
 
 pub struct RenderTree {
   nodes: HashMap<u64, Element>,
@@ -25,6 +32,22 @@ pub struct RenderTree {
   // was deleted, awaiting release by the frame loop. Interior-mutable so the
   // paint walk can drain it through the shared tree borrow it already holds.
   released_snapshot_textures: RefCell<Vec<u64>>,
+  // Nodes referencing any texture-registry id (Element::references_textures):
+  // texture elements with a source, views whose shader samples extra texture
+  // inputs. Keeps texture_content_changed and the destroy sweep at
+  // O(referencers) instead of O(nodes). Membership is reconciled after every
+  // edit/try_edit and on create/destroy, so it cannot drift from element
+  // state whatever a write closure touched.
+  texture_referencers: HashSet<u64>,
+  // Partial repaint (okf/plans/partial-repaint.md): nodes whose on-screen
+  // pixels may differ from the last painted frame. Every damage and
+  // structural mutation path funnels into note_damage; composite::paint_phase
+  // drains the set and resolves it against the elements' last_extent cells.
+  damaged: HashSet<u64>,
+  damaged_full: bool,
+  // The damage the last painted frame resolved to, for stats and (stage 2)
+  // the raster pass.
+  frame_damage: FrameDamage,
 }
 
 // Taffy's CompactLength stores f32 values as tagged pointers (*const ()),
@@ -40,7 +63,24 @@ impl RenderTree {
       revision: 0,
       transitions: Transitions::default(),
       released_snapshot_textures: RefCell::new(Vec::new()),
+      texture_referencers: HashSet::new(),
+      damaged: HashSet::new(),
+      damaged_full: true,
+      frame_damage: FrameDamage::Full,
     }
+  }
+
+  fn reconcile_texture_referencer(&mut self, node_id: u64) {
+    if self.nodes.get(&node_id).is_some_and(Element::references_textures) {
+      self.texture_referencers.insert(node_id);
+    } else {
+      self.texture_referencers.remove(&node_id);
+    }
+  }
+
+  #[cfg(test)]
+  pub(crate) fn texture_referencers(&self) -> &HashSet<u64> {
+    &self.texture_referencers
   }
 
   pub fn revision(&self) -> u64 {
@@ -56,6 +96,7 @@ impl RenderTree {
       panic!("duplicate node id {}", id);
     }
     self.nodes.insert(id, element);
+    self.reconcile_texture_referencer(id);
     self.bump_revision();
     id
   }
@@ -71,6 +112,7 @@ impl RenderTree {
       return;
     }
     self.root = Some(id);
+    self.damage_all();
     self.invalidate_paint(id);
     self.bump_revision();
   }
@@ -151,6 +193,9 @@ impl RenderTree {
     if child_has_layout || child_is_span {
       self.invalidate_cache(parent_id);
     }
+    // The parent id carries the damage: its extent covered the subtree
+    // before the insert and covers the new child after the next layout.
+    self.note_damage(parent_id);
     self.invalidate_paint(parent_id);
     self.bump_revision();
 
@@ -234,6 +279,8 @@ impl RenderTree {
     if child_has_layout || child_is_span {
       self.invalidate_cache(parent_id);
     }
+    // The parent's last extent covers the detached subtree's pixels.
+    self.note_damage(parent_id);
     self.invalidate_paint(parent_id);
     self.bump_revision();
   }
@@ -354,6 +401,8 @@ impl RenderTree {
         if child_has_layout {
           self.invalidate_cache(parent_id);
         }
+        // The parent's last extent covers the destroyed subtree's pixels.
+        self.note_damage(parent_id);
         self.invalidate_paint(parent_id);
       }
     }
@@ -375,6 +424,7 @@ impl RenderTree {
   /// invalidation half of the transaction.
   pub fn edit(&mut self, id: u64, f: impl FnOnce(&mut Element) -> Damage) {
     let damage = f(self.node_mut(id));
+    self.reconcile_texture_referencer(id);
     self.apply_damage(id, damage);
     self.sync_span_parent(id);
   }
@@ -533,6 +583,45 @@ impl RenderTree {
     !self.transitions.is_empty()
   }
 
+  /// Partial repaint (okf/plans/partial-repaint.md): note that `id`'s
+  /// on-screen pixels may differ from the last painted frame. Every damage
+  /// and structural mutation path funnels here; past the cap the frame
+  /// degrades to full damage.
+  pub(crate) fn note_damage(&mut self, id: u64) {
+    if self.damaged_full {
+      return;
+    }
+    if self.damaged.len() >= MAX_DAMAGED_NODES {
+      self.damage_all();
+      return;
+    }
+    self.damaged.insert(id);
+  }
+
+  /// Degrade the frame being accumulated to full damage (resize, re-root).
+  pub fn damage_all(&mut self) {
+    self.damaged_full = true;
+    self.damaged.clear();
+  }
+
+  /// Drain the accumulated damage for the frame being painted: the damaged
+  /// node ids, and whether the frame is fully damaged regardless of them.
+  pub(crate) fn take_damage(&mut self) -> (Vec<u64>, bool) {
+    let full = self.damaged_full;
+    self.damaged_full = false;
+    (self.damaged.drain().collect(), full)
+  }
+
+  /// The damage the last painted frame resolved to (composite::paint_phase
+  /// writes it).
+  pub fn frame_damage(&self) -> FrameDamage {
+    self.frame_damage
+  }
+
+  pub(crate) fn set_frame_damage(&mut self, damage: FrameDamage) {
+    self.frame_damage = damage;
+  }
+
   /// `apply_damage` for a frame's worth of writes at once: one revision
   /// bump, and the ancestor invalidation walks share a visited set so
   /// common ancestors are cleared once per batch instead of once per write
@@ -546,6 +635,7 @@ impl RenderTree {
         continue;
       }
       any = true;
+      self.note_damage(node_id);
       if let Some(element) = self.try_node(node_id) {
         element.envelope.clear();
       }
@@ -577,7 +667,11 @@ impl RenderTree {
   }
 
   pub fn try_edit<E>(&mut self, id: u64, f: impl FnOnce(&mut Element) -> Result<Damage, E>) -> Result<(), E> {
-    let damage = f(self.node_mut(id))?;
+    let result = f(self.node_mut(id));
+    // Even on Err: the closure may have mutated before failing, and the
+    // referencer index must track element state, not the damage outcome.
+    self.reconcile_texture_referencer(id);
+    let damage = result?;
     self.apply_damage(id, damage);
     self.sync_span_parent(id);
     Ok(())
@@ -592,6 +686,7 @@ impl RenderTree {
       Damage::None | Damage::Present => return,
       _ => self.bump_revision(),
     }
+    self.note_damage(node_id);
     // The node's paint envelope (cull.rs) is stated past its own matrix and
     // scroll, so even the damages below that spare the node's own paint cache
     // (Compose, Scroll on a Recording boundary) invalidate it; the ancestors'
@@ -888,6 +983,7 @@ impl RenderTree {
       self.delete_recursive(child_id);
     }
     if let Some(element) = self.nodes.remove(&node_id) {
+      self.texture_referencers.remove(&node_id);
       if let Some(id) = element.snapshot_texture_id.get() {
         self.released_snapshot_textures.borrow_mut().push(id);
       }
@@ -1067,12 +1163,18 @@ impl RenderTree {
     }
     let mut bake_hits: Vec<u64> = Vec::new();
     let mut shader_hits: Vec<u64> = Vec::new();
-    for (id, element) in self.nodes.iter() {
+    // Every referencer displaying a changed id shows new pixels at its
+    // rect, tree damage or not - partial repaint needs those rects even on
+    // the present-only reuse path.
+    let mut content_hits: Vec<u64> = Vec::new();
+    for &id in &self.texture_referencers {
+      let Some(element) = self.nodes.get(&id) else { continue };
       match &element.kind {
         ElementKind::Texture(t) => {
           if let Some(tex) = t.texture_id.filter(|t| ids.contains(t)) {
-            if self.under_snapshot_boundary(*id, tex) {
-              bake_hits.push(*id);
+            content_hits.push(id);
+            if self.under_snapshot_boundary(id, tex) {
+              bake_hits.push(id);
             }
           }
         }
@@ -1083,11 +1185,14 @@ impl RenderTree {
           if matches!(element.repaint_boundary, BoundaryMode::Snapshot | BoundaryMode::SnapshotNoAa)
             && v.shader.as_ref().is_some_and(|s| s.textures.iter().any(|b| ids.contains(&b.id)))
           {
-            shader_hits.push(*id);
+            shader_hits.push(id);
           }
         }
         _ => {}
       }
+    }
+    for id in &content_hits {
+      self.note_damage(*id);
     }
     if bake_hits.is_empty() && shader_hits.is_empty() {
       return false;
@@ -1137,7 +1242,7 @@ impl RenderTree {
   /// the per-frame path.
   pub fn referenced_texture_ids(&self) -> HashSet<u64> {
     let mut ids = HashSet::new();
-    for element in self.nodes.values() {
+    for element in self.texture_referencers.iter().filter_map(|id| self.nodes.get(id)) {
       match &element.kind {
         ElementKind::Texture(t) => {
           if let Some(id) = t.texture_id {
