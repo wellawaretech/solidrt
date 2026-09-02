@@ -308,6 +308,24 @@ export const FOG = glsl`
 `
 
 /**
+ * A cube-map lookup direction from a world-space one. GL samples a cube
+ * map in a left-handed frame (the faces are seen from inside), so a
+ * six-face set authored the usual way - Three's px, nx, py, ny, pz, nz,
+ * the order createCubeTexture takes - renders mirrored unless x is
+ * negated: Three's `flipEnvMap`, applied to every image-sourced cube.
+ * Every library lookup of an uploaded cube goes through this (the skybox
+ * behind `setBackground({ cube })`, the environment reflections to come),
+ * so a Three cube-map set renders here as it does there; a Three shader
+ * ported with its own flip would double-flip - drop theirs. A cube the
+ * engine renders itself (render-to-face, later) will not need it.
+ */
+export const CUBE_LOOKUP = glsl`
+  vec3 cubeDir(vec3 d) {
+    return vec3(-d.x, d.y, d.z);
+  }
+`
+
+/**
  * The scene's shadow set as a receiving program declares it: ONE
  * `uShadowAtlas` (a `sampler2DShadow` - every casting light's depth map is
  * a tile of it, so N maps render as one pass; a cleared one-texel depth

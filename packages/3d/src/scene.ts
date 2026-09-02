@@ -36,7 +36,7 @@
 // and pointer subsystems are scene-shadows.ts / scene-pointer.ts,
 // built here with the scene's seams as their deps.
 
-import { addDraw, createDrawTarget, depthTexture, destroyProgram, destroyRenderPipeline, destroyTexture, removeDraw, setDrawBuffers, setDrawOrder, setDrawParams, setTargetParams, setTargetRect, setTargetSize, setTargetTextures } from "@solidrt/core/gpu"
+import { addDraw, createDrawTarget, depthTexture, destroyProgram, destroyRenderPipeline, destroyTexture, removeDraw, setDrawBuffers, setDrawOrder, setDrawParams, setDrawTextures, setTargetParams, setTargetRect, setTargetSize, setTargetTextures } from "@solidrt/core/gpu"
 import * as spatial from "flux:spatial"
 import type { NodeId } from "flux:spatial"
 import type { DrawId, FilterMode, ProgramId, RenderPipelineId, ShaderParams, TextureId, WrapMode } from "@solidrt/core/gpu"
@@ -52,7 +52,7 @@ import { makePointerInput } from "./scene-pointer.ts"
 import { layoutKey, validateGeometry } from "./geometry.ts"
 import type { Geometry } from "./geometry.ts"
 import { acquireGeometryBuffers, releaseGeometryBuffers } from "./geometry-gpu.ts"
-import { backgroundPipeline, missingAttributes } from "./material.ts"
+import { backgroundPipeline, missingAttributes, SKYBOX_FRAGMENT } from "./material.ts"
 import type { Material } from "./material.ts"
 import { orderEntries } from "./order.ts"
 import { fillTransform, leaveScene, makeNode, worldInto } from "./node.ts"
@@ -205,6 +205,50 @@ function withoutNames(params: ShaderParams, names: Set<string>): ShaderParams {
   return out
 }
 
+/**
+ * A skybox: the scene's background sampled from a cube map along each
+ * pixel's view ray (setBackground's object form). Three's
+ * `scene.background = cubeTexture` with `backgroundIntensity` and
+ * `backgroundRotation`; Unity's Skybox/Cubemap `_Exposure` and
+ * `_Rotation`; Godot's `background_energy_multiplier` and `sky_rotation`.
+ * Under an orthographic camera every pixel looks the same way, so the
+ * skybox is one flat color there (a sky needs perspective in every
+ * engine).
+ */
+export type SkyboxOptions = {
+  /** A cube map (createCubeTexture, faces in +X, -X, +Y, -Y, +Z, -Z
+   * order - Three's px, nx, py, ny, pz, nz); a 2D texture id throws. The
+   * lookup mirrors x like Three's `flipEnvMap`, so a Three cube-map set
+   * renders identically (see CUBE_LOOKUP in `@solidrt/3d/glsl`). */
+  cube: TextureId
+  /** Multiplier on the sampled color, >= 0; default 1. */
+  intensity?: number
+  /** Turn about world y in RADIANS (default 0): the sky turns as a node
+   * with rotation [0, r, 0] would. Radians like node rotation and Three;
+   * Unity's `_Rotation` is degrees. */
+  rotation?: number
+}
+
+// The entry params a skybox compiles to. uSkyRotation is the INVERSE turn:
+// a lookup along view direction v must find the texel that sat at
+// R(-r) v before the sky turned by +r.
+function skyboxParams(sky: SkyboxOptions, site: string): ShaderParams {
+  let intensity = sky.intensity ?? 1
+  let rotation = sky.rotation ?? 0
+  if (!Number.isFinite(intensity) || intensity < 0) throw new Error(site + ": intensity must be a finite number >= 0, got " + intensity)
+  if (!Number.isFinite(rotation)) throw new Error(site + ": rotation must be a finite angle in radians, got " + rotation)
+  let c = Math.cos(rotation)
+  let n = Math.sin(rotation)
+  // prettier-ignore
+  let turn: Mat4 = [
+    c, 0, n, 0,
+    0, 1, 0, 0,
+    -n, 0, c, 0,
+    0, 0, 0, 1,
+  ]
+  return { uSkyIntensity: intensity, uSkyRotation: turn }
+}
+
 export type SceneOptions = {
   clearColor?: [number, number, number, number]
   /** Scene-wide fog; see setFog. */
@@ -218,9 +262,9 @@ export type SceneOptions = {
    * depth of field). Not with `samples` (the engine has no multisampled
    * sampleable depth): render larger and display smaller instead. */
   depth?: true | "texture"
-  /** Fragment GLSL drawn behind the meshes, inside the scene's own pass -
-   * see setBackground. */
-  background?: string
+  /** The background drawn behind the meshes, inside the scene's own pass:
+   * fragment GLSL or a skybox - see setBackground. */
+  background?: string | SkyboxOptions
   label?: string
   /** `autoFree: false` opts out of owner-scoped auto-dispose (then call dispose yourself). */
   autoFree?: boolean
@@ -344,19 +388,31 @@ export type Scene = {
    * this mask - what the scene cannot see must not darken it. */
   setLayers(mask: number): void
   /**
-   * Set, replace, or remove (null) the scene's background: fragment GLSL
-   * drawn as the FIRST entry of the scene's own pass - one target, no
-   * second texture layer, no separate resize plumbing. The fragment gets
-   * the shader-target contract exactly (vUV 0..1 top-left origin,
-   * iResolution, fragColor; no `#version` line means the standard
-   * preamble), so a source written for createShaderTexture ports verbatim.
-   * It draws with depth off before every mesh and covers the whole target,
-   * so the clearColor stops being visible. Three's `scene.background =
-   * color` is `clearColor` here; the texture form can arrive later as a
-   * non-breaking widening. No app-driven uniforms in v1 - a background is
-   * static art (anything animated is a mesh's own shaderMaterial).
+   * Set, replace, or remove (null) the scene's background, drawn as the
+   * FIRST entry of the scene's own pass - one target, no second texture
+   * layer, no separate resize plumbing. It draws with depth off before
+   * every mesh and covers the whole target, so the clearColor stops being
+   * visible. Two forms:
+   *
+   * Fragment GLSL. The fragment gets the shader-target contract (vUV 0..1
+   * top-left origin, iResolution, fragColor; no `#version` line means the
+   * standard preamble), so a source written for createShaderTexture ports
+   * verbatim, PLUS `vRay`: the world-space view ray through the pixel
+   * (unnormalized; normalize it), which makes a directional sky - a
+   * horizon gradient, a sun disc, stars - a few lines of fragment code.
+   * The background is an ordinary scene entry, so it may also declare
+   * `uniform vec3 uCamPos` (the ray's origin) and any name written through
+   * scene.setParams (an app clock for an animated sky).
+   *
+   * A skybox (SkyboxOptions): `{ cube, intensity?, rotation? }` samples a
+   * cube map along the same ray. Replacing one skybox with another
+   * rewrites the entry's params and textures without recompiling, so
+   * `rotation` can animate from the reactive prop.
+   *
+   * Three's `scene.background = color` is `clearColor` here; a 2D image
+   * form can arrive later as a non-breaking widening.
    */
-  setBackground(source: string | null): void
+  setBackground(source: string | SkyboxOptions | null): void
   /**
    * Project a world point to scene pixels: origin top-left, y down - the
    * output texture's own coordinate space, ready for overlay layout (HUD
@@ -634,7 +690,9 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
   // The order last handed to the engine: a resort that lands on the same
   // permutation (the common case under a moving camera) issues nothing.
   let lastOrder: DrawId[] = []
-  let background: { entry: DrawId; pipeline: RenderPipelineId; program: ProgramId } | null = null
+  // `skybox`: the entry runs the library's cube-map fragment (its params
+  // and textures are rewritable in place); false = app GLSL.
+  let background: { entry: DrawId; pipeline: RenderPipelineId; program: ProgramId; skybox: boolean } | null = null
   let sortEntries = () => {
     orderDirty = false
     let order = orderEntries(meshes, camera.view, background?.entry)
@@ -1190,6 +1248,13 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     },
     setBackground(source) {
       if (disposed) return
+      // A skybox replacing a skybox keeps its entry: same program, new
+      // params and cube.
+      if (source !== null && typeof source !== "string" && background !== null && background.skybox) {
+        setDrawParams(texture, background.entry, skyboxParams(source, "scene.setBackground"))
+        setDrawTextures(texture, background.entry, { uSky: source.cube })
+        return
+      }
       if (background !== null) {
         removeDraw(texture, background.entry)
         destroyRenderPipeline(background.pipeline)
@@ -1197,12 +1262,20 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
         background = null
       }
       if (source === null) return
-      let built = backgroundPipeline(source, (opts?.label ?? "scene") + "-background")
+      let label = opts?.label ?? "scene"
       // First in list order: inserted before the first mesh entry, and every
       // later sort keeps it there.
       // Before the first mesh ENTRY - a layers-masked mesh has none.
-      let entry = addDraw(texture, built.pipeline, null, { vertexCount: 3, before: meshes.find(m => m._entry !== null)?._entry ?? undefined })
-      background = { entry, pipeline: built.pipeline, program: built.program }
+      let before = meshes.find(m => m._entry !== null)?._entry ?? undefined
+      if (typeof source === "string") {
+        let built = backgroundPipeline(source, label + "-background")
+        let entry = addDraw(texture, built.pipeline, null, { vertexCount: 3, before })
+        background = { entry, pipeline: built.pipeline, program: built.program, skybox: false }
+        return
+      }
+      let built = backgroundPipeline(SKYBOX_FRAGMENT, label + "-skybox")
+      let entry = addDraw(texture, built.pipeline, skyboxParams(source, "scene.setBackground"), { vertexCount: 3, before, textures: { uSky: source.cube } })
+      background = { entry, pipeline: built.pipeline, program: built.program, skybox: true }
     },
     project(point) {
       ensureCamera(camera, width, height)

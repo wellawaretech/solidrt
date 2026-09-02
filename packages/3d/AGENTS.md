@@ -208,7 +208,7 @@ blendMode and pointer events like any element.
 
 | Component | Props |
 | --- | --- |
-| `Scene` | `width?`, `height?` (target pixels - both, or neither = FILL, below), `clearColor?`, `camera?` (partial CameraUpdate, `ortho` included - the declarative scene.setCamera; same state as `PerspectiveCamera`, use one form), `background?` (fragment GLSL), `fog?` (`{ color, near, far }`, linear by camera distance), `layers?` (target mask, default 1), `depth?` (`"texture"` exposes scene.depthTexture; not with samples), `samples?` (1/2/4/8 MSAA), `label?`, `ref?(scene)`, `output?(texture)`, `events?` (mesh pointer events, default on) |
+| `Scene` | `width?`, `height?` (target pixels - both, or neither = FILL, below), `clearColor?`, `camera?` (partial CameraUpdate, `ortho` included - the declarative scene.setCamera; same state as `PerspectiveCamera`, use one form), `background?` (fragment GLSL, or a skybox `{ cube, intensity?, rotation? }`), `fog?` (`{ color, near, far }`, linear by camera distance), `layers?` (target mask, default 1), `depth?` (`"texture"` exposes scene.depthTexture; not with samples), `samples?` (1/2/4/8 MSAA), `label?`, `ref?(scene)`, `output?(texture)`, `events?` (mesh pointer events, default on) |
 | `Group` | `position?`, `rotation?` (Euler radians, XYZ order), `quaternion?` (either, not both), `scale?` (number = uniform), `visible?`, pointer events (below), `ref?(node)` |
 | `Mesh` | `geometry`, `material`, transforms as Group, `params?` (per-mesh uniforms, merge semantics - no unset), `renderOrder?`, `castShadow?`, `layers?` (membership bitmask, default 1), pointer events (below), `ref?(mesh)` |
 | `Sprite` | as Mesh minus `geometry`: a camera-facing unit quad, `scale` is its world size, rotation is ignored; pair with a `sprite()` material |
@@ -470,7 +470,10 @@ Materials:
   `normalize(uCamPos - worldPos)`), `uniform vec3 uCamRight` / `uCamUp`
   (the camera's world-space view axes, shared likewise - a billboard is
   `center + uCamRight * x + uCamUp * y`; do NOT rebuild them from
-  uViewProj rows, that carries the clip flip) and `uniform mat4 uNormal` (the world
+  uViewProj rows, that carries the clip flip), `uniform mat4
+  uInvViewProj` (the camera's inverse view-projection, shared likewise -
+  a clip position back to world, the world-space ray through a pixel
+  without knowing the projection) and `uniform mat4 uNormal` (the world
   inverse-transpose, written beside uModel for this material's meshes;
   take `mat3(uNormal)` - correct under non-uniform scale, where
   mat3(uModel) bends normals off the surface). Attributes come from the
@@ -525,19 +528,44 @@ transparent-sorts conservatively as one box. `examples/instanced.tsx` is
 the live proof.
 
 Background: `scene.setBackground(source | null)`, the `background` option
-on createScene, and the reactive `Scene` prop. Fragment GLSL drawn as the
-FIRST entry of the scene's own pass (attributeless fullscreen triangle,
-depth off) - one target instead of a backdrop texture stacked under the
-scene, with no separate resize plumbing. The source gets the
-shader-target fragment contract exactly (vUV 0..1 top-left origin,
-iResolution, fragColor; no `#version` line = the standard preamble), so
-a `createShaderTexture` backdrop ports verbatim. Three's
-`scene.background = color` is `clearColor` here; a texture-id form can
-widen the signature later (a branded TextureId is a number, so
-`string | TextureId` disambiguates at runtime). No app-driven uniforms:
-a background is static art - anything animated is a mesh's own
-shaderMaterial (or, until blend factors land, a separate shader texture
-underneath, which translucent grounds also still need).
+on createScene, and the reactive `Scene` prop. Drawn as the FIRST entry
+of the scene's own pass (attributeless fullscreen triangle, depth off) -
+one target instead of a backdrop texture stacked under the scene, with
+no separate resize plumbing. Two forms:
+
+- Fragment GLSL. The source gets the shader-target fragment contract
+  (vUV 0..1 top-left origin, iResolution, fragColor; no `#version` line
+  = the standard preamble), so a `createShaderTexture` backdrop ports
+  verbatim, PLUS `in vec3 vRay`: the world-space view ray through the
+  pixel, unnormalized (the vertex stage carries its clip position back
+  through the shared uInvViewProj at the near and far planes). A
+  directional sky - horizon gradient, sun disc, stars - is a few lines
+  on `normalize(vRay)`. The background is an ordinary scene entry, so it
+  may declare `uniform vec3 uCamPos` (the ray's origin) and any name
+  written through `scene.setParams` (an app clock for an animated sky).
+  Godot's sky shader and Unity's skybox material are the same idea; the
+  radiance bake for environment lighting will consume this same source
+  later, so a procedural sky written here lights the scene then.
+- A skybox `{ cube, intensity?, rotation? }` (SkyboxOptions): a cube
+  map from createCubeTexture sampled along the same ray - Three's
+  `scene.background = cubeTexture` with `backgroundIntensity` and
+  `backgroundRotation`. `rotation` is a turn about world y in radians
+  (the sky turns as a node with that rotation would); `intensity` a
+  multiplier. Replacing a skybox with a skybox rewrites the entry's
+  params and cube in place (no recompile), so the reactive prop can
+  animate the rotation. Under an orthographic camera every pixel looks
+  the same way, so a skybox is one flat color there. A 2D texture id
+  throws at the samplerCube binding. `examples/skybox.tsx`.
+
+The cube-map handedness: GL samples a cube in a left-handed frame, so
+the library's lookups negate x (CUBE_LOOKUP in `@solidrt/3d/glsl`,
+Three's `flipEnvMap`); a Three cube-map set in px, nx, py, ny, pz, nz
+order renders identically, and a ported Three shader must not flip
+again. Three's `scene.background = color` is `clearColor` here; a 2D
+image form can widen the signature later (a branded TextureId is a
+number, so the object form keeps it unambiguous). Translucent grounds
+over a background still need blend factors (a separate shader texture
+underneath until then).
 
 Fog: `scene.setFog(fog | null)`, the `fog` option on createScene and
 the reactive `Scene` prop, in Three's two shapes: linear `{ color, near,
@@ -1067,7 +1095,7 @@ older bakes are rejected - re-bake with `srt tool 3d/model`.
 - SCENE-WIDE uniforms go through that same shared channel via
   `scene.setParams({ uTime })`, and this is the single highest-leverage
   pattern in the library. It merges an app-owned name in beside
-  uViewProj/uCamPos/uCamRight/uCamUp - names merge, a target tolerates
+  uViewProj/uInvViewProj/uCamPos/uCamRight/uCamUp - names merge, a target tolerates
   zero coverage, neither side clobbers the other. One write per frame
   however many meshes read it, with the motion itself in vertex shaders
   off that one clock. `params`/`setMeshParams` is the PER-MESH answer and
@@ -1163,3 +1191,5 @@ older bakes are rejected - re-bake with `srt tool 3d/model`.
 - The background pipeline/program are SCENE-OWNED (unlike shared
   material pipelines): setBackground(null), replacement, and dispose()
   destroy them. Do not hand the background's pipeline to anything else.
+  A skybox is the same slot with the library's fragment; only a
+  skybox-to-skybox replace keeps the entry (params and cube rewritten).

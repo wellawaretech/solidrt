@@ -87,10 +87,12 @@ share one authoring surface, as in Godot.
 Unity: skybox rotation and exposure, reflection intensity multiplier.
 Godot: `sky_rotation`, `background_energy_multiplier`,
 `ambient_light_sky_contribution`. All three: a rotation and an intensity,
-on the background and on the environment separately. Verdict: `{ map,
-intensity?, rotation? }` for both; rotation as a y-axis angle in the
-same unit the rest of the library uses, blurriness deferred (it is a mip
-bias on the background draw, additive).
+on the background and on the environment separately. Verdict: `{ cube,
+intensity?, rotation? }` for both (the key names the shape, since a
+TextureId is a bare number and a 2D image background can widen later
+under its own key); rotation as a y-axis angle in radians, like node
+rotation, blurriness deferred (it is a mip bias on the background draw,
+additive).
 
 **Dynamic probes.** Three `CubeCamera` + `WebGLCubeRenderTarget`, Unity
 `ReflectionProbe` (realtime), Godot `ReflectionProbe` (`update_mode`
@@ -119,7 +121,8 @@ existing format vocabulary, nothing else moves.
 every cube lookup of an image-sourced cube (`flipEnvMap`), and not on a
 render-target-sourced one. This lives in the library's GLSL (the
 reflection and skybox lookups), never in the primitive; document it next
-to the lookup so a ported Three shader does not double-flip.
+to the lookup so a ported Three shader does not double-flip. Landed as
+`CUBE_LOOKUP` in `@solidrt/3d/glsl` with stage 1.
 
 ## Structural leverage
 
@@ -142,11 +145,14 @@ Where the different internal model helps, beyond parity:
 
 ## Staging
 
-1. **Skybox from a cube map.** `setBackground` widens to
-   `string | { cube: TextureId, intensity?, rotation? } | null` (the
-   union widening item 18 reserved), drawn as the same first entry with
-   a view-ray lookup; and the directional GLSL background is sanctioned
-   (the fragment receives a world-space ray). The primitive is in.
+1. **Skybox from a cube map.** Landed 2026-09-02. `setBackground`
+   widened to `string | { cube: TextureId, intensity?, rotation? } |
+   null` (the union widening item 18 reserved), drawn as the same first
+   entry with a view-ray lookup; the directional GLSL background is
+   sanctioned (the fragment receives `vRay`, a world-space ray rebuilt
+   from the new shared `uInvViewProj`). A skybox-to-skybox replace
+   rewrites the entry in place, so `rotation` animates from the reactive
+   prop. `examples/skybox.tsx`, `probes/skybox-probe.tsx`.
 2. **Environment reflections on `lit`.** `scene.setEnvironment({ map,
    intensity?, rotation? })`; `lit` gains `reflectivity` (Three's
    Phong/Lambert knob) and mixes a `textureLod` reflection lookup at a

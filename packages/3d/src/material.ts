@@ -42,7 +42,7 @@ import type {
 } from "@solidrt/core/gpu"
 import { layoutAttributes, layoutKey, layoutSlot } from "./geometry.ts"
 import type { VertexLayout } from "./geometry.ts"
-import { litFragment, litShadowFragment, litVertex, SKIN_DECLS, SKIN_MATRIX, UNLIT_VERTEX, unlitFragment, unlitShadowFragment, unlitVertex } from "./glsl.ts"
+import { CUBE_LOOKUP, litFragment, litShadowFragment, litVertex, SKIN_DECLS, SKIN_MATRIX, UNLIT_VERTEX, unlitFragment, unlitShadowFragment, unlitVertex } from "./glsl.ts"
 
 export type Material = {
   /** The pipeline this material draws with for geometry of `layout`
@@ -656,21 +656,50 @@ function needsHeader(source: string): boolean {
 // engine's own attributeless fullscreen triangle (gl_VertexID, no vertex
 // buffer), emitting the SAME vUV the shader-target contract provides: 0..1
 // with origin at the displayed top-left - so a backdrop fragment written
-// for createShaderTexture ports verbatim.
+// for createShaderTexture ports verbatim - plus vRay, the world-space
+// view ray through the pixel: the vertex's own clip position carried back
+// to world at the near and far planes through the camera's shared
+// uInvViewProj, far minus near. Linear interpolation is exact for it
+// (at a fixed clip depth the unprojected point is affine in clip x, y
+// under either projection), and under an orthographic camera every ray is
+// the camera's forward. Unnormalized: a sky fragment normalizes it.
 const BACKGROUND_VERTEX = glsl`
+  uniform mat4 uInvViewProj;
   out vec2 vUV;
+  out vec3 vRay;
   void main() {
     vec2 p = vec2(float((gl_VertexID << 1) & 2), float(gl_VertexID & 2));
     vUV = p;
-    gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);
+    vec2 ndc = p * 2.0 - 1.0;
+    vec4 near = uInvViewProj * vec4(ndc, -1.0, 1.0);
+    vec4 far = uInvViewProj * vec4(ndc, 1.0, 1.0);
+    vRay = far.xyz / far.w - near.xyz / near.w;
+    gl_Position = vec4(ndc, 0.0, 1.0);
   }
 `
 
 // Pipeline fragments get no vUV from the engine preamble (a pipeline's
 // varyings are its own), so the background slot injects the full
-// shader-target fragment contract itself: vUV, fragColor, iResolution.
+// shader-target fragment contract itself: vUV, fragColor, iResolution,
+// and its own vRay.
 const BACKGROUND_FRAGMENT_PREAMBLE =
-  "#version 300 es\nprecision highp float;\nin vec2 vUV;\nout vec4 fragColor;\nuniform vec2 iResolution;\n"
+  "#version 300 es\nprecision highp float;\nin vec2 vUV;\nin vec3 vRay;\nout vec4 fragColor;\nuniform vec2 iResolution;\n"
+
+// The skybox fragment behind setBackground({ cube }): the view ray through
+// the sky's rotation (the INVERSE turn, written by skyboxParams, so the
+// sky itself turns by +rotation like a node would), then the cube lookup
+// with its handedness flip, times the intensity. Opaque: the skybox
+// replaces the clearColor exactly as a GLSL background does.
+export const SKYBOX_FRAGMENT = glsl`
+  uniform samplerCube uSky;
+  uniform float uSkyIntensity;
+  uniform mat4 uSkyRotation;
+  ${CUBE_LOOKUP}
+  void main() {
+    vec3 dir = mat3(uSkyRotation) * normalize(vRay);
+    fragColor = vec4(texture(uSky, cubeDir(dir)).rgb * uSkyIntensity, 1.0);
+  }
+`
 
 /** The scene's background pipeline (internal - reached via
  * scene.setBackground): depth-free, attributeless, drawn as entry zero of

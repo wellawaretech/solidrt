@@ -39,7 +39,7 @@ import type {
 } from "./light.ts"
 import { createScene } from "./scene.ts"
 import type { CameraUpdate } from "./camera.ts"
-import type { FogOptions, Scene as SceneHandle } from "./scene.ts"
+import type { FogOptions, Scene as SceneHandle, SkyboxOptions } from "./scene.ts"
 import type { ShaderParams } from "@solidrt/core/gpu"
 import type { NodeTransition } from "flux:spatial"
 import type { Geometry } from "./geometry.ts"
@@ -175,12 +175,14 @@ export type SceneProps = {
    * dimension up.
    */
   camera?: CameraUpdate
-  /** Fragment GLSL drawn behind the meshes, inside the scene's own pass
-   * (scene.setBackground): vUV/iResolution/fragColor contract, so a
-   * createShaderTexture backdrop ports verbatim. Reactive - swapping the
-   * source replaces the background; undefined removes it. Three's
+  /** The background drawn behind the meshes, inside the scene's own pass
+   * (scene.setBackground): fragment GLSL (vUV/iResolution/fragColor plus
+   * the vRay view ray, so a createShaderTexture backdrop ports verbatim
+   * and a directional sky is a few lines) or a skybox `{ cube, intensity?,
+   * rotation? }`. Reactive - swapping the source replaces the background,
+   * a skybox's knobs update in place; undefined removes it. Three's
    * `scene.background = color` is `clearColor` here. */
-  background?: string
+  background?: string | SkyboxOptions
   /** Scene-wide fog (scene.setFog): linear `{ color, near, far }` or exp2
    * `{ color, density }`, optionally thinning above `height` by
    * `heightFalloff`; every standard material fades toward `color` by

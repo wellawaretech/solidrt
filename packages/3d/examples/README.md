@@ -29,6 +29,11 @@ depends on `@solidrt/3d` (or in-repo from the package directory).
   scene's own pass (`<Scene background>`): one target, no stacked
   backdrop texture, no resize plumbing; the source is shader-target
   compatible verbatim.
+- `skybox.tsx` - a cube-map skybox (`<Scene background={{ cube,
+  rotation }}>`) baked in JS at startup: horizon gradient, sun disc and
+  glow, no image assets. The sky turns and the sun light turns with it,
+  the `rotation` knob updating the background in place; drag to look
+  around.
 - `sprites.tsx` - sprites: a ring of `"full"` billboard glows that stay
   flat to the screen and `"fixed-y"` cutout trees that only yaw toward
   the camera and stay upright as it climbs, both turned in the vertex

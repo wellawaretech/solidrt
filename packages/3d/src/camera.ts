@@ -3,7 +3,7 @@
 // everywhere. Split out of scene.ts so the shadow system can place its
 // map cameras through the exact code the scene uses for its own.
 
-import { lookAt as lookAtMatrix, mat4, multiply, orthographic, perspective } from "./math.ts"
+import { invert, lookAt as lookAtMatrix, mat4, multiply, orthographic, perspective } from "./math.ts"
 import type { Mat4, Vec3 } from "./math.ts"
 import type { ShaderParams } from "@solidrt/core/gpu"
 
@@ -55,6 +55,7 @@ export type Camera = {
   proj: Mat4
   view: Mat4
   viewProj: Mat4
+  invViewProj: Mat4
 }
 
 export function makeCamera(): Camera {
@@ -71,6 +72,7 @@ export function makeCamera(): Camera {
     proj: mat4(),
     view: mat4(),
     viewProj: mat4(),
+    invViewProj: mat4(),
   }
 }
 
@@ -109,6 +111,7 @@ export function ensureCamera(cam: Camera, width: number, height: number): void {
   else orthographic(cam.proj, o.left, o.right, o.top, o.bottom, cam.near, cam.far)
   lookAtMatrix(cam.view, cam.eye, cam.target, cam.up)
   multiply(cam.viewProj, cam.proj, cam.view)
+  invert(cam.invViewProj, cam.viewProj)
 }
 
 // The camera is target state: one shared write, whatever the target holds.
@@ -116,8 +119,17 @@ export function ensureCamera(cam: Camera, width: number, height: number): void {
 // stored even when no current material declares it. The camera basis rides
 // along: the view matrix's first two rows are the camera's world-space
 // right and up (no clip flip - that lives in the projection), so a
-// billboard needs no reconstruction from uViewProj.
+// billboard needs no reconstruction from uViewProj. The inverse rides too:
+// uInvViewProj carries a clip position back to world, which is how the
+// background slot (and any shader declaring it) gets a world-space ray
+// per pixel without knowing the projection.
 export function cameraParams(cam: Camera): ShaderParams {
   let v = cam.view
-  return { uViewProj: cam.viewProj, uCamPos: cam.eye, uCamRight: [v[0], v[4], v[8]], uCamUp: [v[1], v[5], v[9]] }
+  return {
+    uViewProj: cam.viewProj,
+    uInvViewProj: cam.invViewProj,
+    uCamPos: cam.eye,
+    uCamRight: [v[0], v[4], v[8]],
+    uCamUp: [v[1], v[5], v[9]],
+  }
 }

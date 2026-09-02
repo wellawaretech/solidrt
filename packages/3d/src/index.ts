@@ -26,7 +26,7 @@ export type {
   SpotShadowOptions,
 } from "./light.ts"
 export { createScene } from "./scene.ts"
-export type { FogOptions, Hit, RaycastOptions, Scene as SceneHandle, SceneHandlers, SceneOptions, ScreenRay, View, ViewOptions } from "./scene.ts"
+export type { FogOptions, Hit, RaycastOptions, Scene as SceneHandle, SceneHandlers, SceneOptions, ScreenRay, SkyboxOptions, View, ViewOptions } from "./scene.ts"
 export type { CameraState, CameraUpdate, OrthoExtent } from "./camera.ts"
 export type { NodeTransition, NodeTransitionSpec } from "flux:spatial"
 export { disposeGeometry } from "./geometry-gpu.ts"

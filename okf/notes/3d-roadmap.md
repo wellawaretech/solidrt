@@ -223,21 +223,13 @@ what it delivered is documented in `packages/3d/AGENTS.md`, not here.
     background (skybox) is the cube-map case, this was the screen-space one.
     Note for the proving-ground demo: its ground FADES over the backdrop,
     which needs item 6's blend factors before the two layers can merge.
-    Left open 2026-08-17, a documentation decision: `setBackground` is
-    documented as "static art" with only `vUV` and `iResolution`, so apps
-    read it as unable to be a sky (no camera, no clock) and build an
-    inverted sphere mesh instead (`cull: "front"`, `depthWrite: false`,
-    added first, re-centred on the camera each frame). But the background
-    is an ordinary entry in the scene target, and shared params apply to
-    EVERY entry where its program declares the name
-    (`alloy/src/gpu/pass.rs`, shared first then the entry's own), so a
-    background fragment that declares `uniform mat4 uViewProj` or an
-    app-owned name written through the shared channel already receives it
-    - a directional, animated sky is possible today with no library change.
-    Decide whether to sanction that (then the doc comment and
-    `packages/3d/AGENTS.md` say so, and the vertex stage might hand the
-    fragment a view ray) or to keep the slot deliberately static and point
-    at the sphere-mesh shape. Do not leave it as folklore either way.
+    Settled 2026-09-02 with the environment tier's stage 1
+    ([3d-environment](../backlog/3d-environment.md)): the directional
+    background is SANCTIONED. The vertex stage hands the fragment `vRay`
+    (a world-space view ray rebuilt from the new shared `uInvViewProj`),
+    the background may declare `uCamPos` and any `scene.setParams` name,
+    and the docs say so; a skybox `{ cube, intensity?, rotation? }` is
+    the object form of the same slot. The 2D image form stays reserved.
 19. [ ] **Scene scale.** The walk itself goes to core as stage 1 of
     [spatial-core](../backlog/spatial-core.md) - the JS sync recurses the
     whole tree on every change, so one moved node is O(scene) today, and
