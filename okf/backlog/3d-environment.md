@@ -152,12 +152,22 @@ Where the different internal model helps, beyond parity:
    sanctioned (the fragment receives `vRay`, a world-space ray rebuilt
    from the new shared `uInvViewProj`). A skybox-to-skybox replace
    rewrites the entry in place, so `rotation` animates from the reactive
-   prop. `examples/skybox.tsx`, `probes/skybox-probe.tsx`.
-2. **Environment reflections on `lit`.** `scene.setEnvironment({ map,
-   intensity?, rotation? })`; `lit` gains `reflectivity` (Three's
-   Phong/Lambert knob) and mixes a `textureLod` reflection lookup at a
-   level derived from `shininess`, fresnel-weighted. LDR, current color
-   math. The generated (box-filtered) chain is enough here.
+   prop. `examples/skybox.tsx`, `probes/skybox-probe.tsx`. The runtime
+   equirect path landed with it: `equirectToCube(map, size, opts?)`
+   renders the six faces on the GPU and reads them back into a cube
+   TextureId (center column -Z, top row +Y - Godot's and Unity's
+   convention, Three centers +X); `probes/equirect-probe.tsx`.
+2. **Environment reflections on `lit`.** Landed 2026-09-02.
+   `scene.setEnvironment({ cube, intensity?, rotation? } | null)`, the
+   createScene option and the reactive prop; one `uEnv` samplerCube per
+   receiving target (a 1x1 black placeholder while unset, seeded through
+   the light rewrite so new views get it) and shared `uEnvIntensity` /
+   `uEnvRotation` / `uEnvOn`. `lit({ reflectivity })` composes the
+   exported `ENVIRONMENT` set: `mix(rgb, reflection, weight)` with a
+   Schlick weight (reflectivity face-on, 1 at grazing) and the mirror
+   direction sampled by `textureLod` at roughness `sqrt(2 / (shininess +
+   2))` times the cube's top level. LDR, current color math, the
+   generated box-filtered chain. `probes/environment-probe.tsx`.
 3. **HDR and PBR.** Item 17:
    [rgba16f](gpu-half-float-format.md), linear lighting, tone mapping,
    metallic/roughness on `lit` (or a `standard` material), split-sum IBL
@@ -172,5 +182,11 @@ Where the different internal model helps, beyond parity:
 - Scene-level only, no `material.envMap` in v1 (Three porters).
 - `reflectivity` on Blinn-Phong is the Three Phong shape; Godot and Unity
   have no non-PBR reflective material, so stage 2 is a Three-parity
-  intermediate that stage 3 supersedes without removing it.
+  intermediate that stage 3 supersedes without removing it. Its combine
+  is Three's MixOperation with a Schlick weight; Three's default
+  MultiplyOperation (a tint) and AddOperation are not offered.
 - Rotation is a single y angle, not Three's Euler triple, until asked.
+- No per-material `envMap` on `unlit` (Three's MeshBasicMaterial has
+  one); the environment is scene-level and `lit`-only until asked.
+- The panorama's center column faces -Z (Godot, Unity); Three's faces
+  +X, so a Three-tuned environment rotation differs by a quarter turn.

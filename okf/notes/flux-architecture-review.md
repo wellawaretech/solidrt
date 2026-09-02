@@ -155,7 +155,35 @@ one and would halve `gpu.rs`.
 
 ## 4. Userdata as the service locator is stretched
 
-123 `ctx.userdata::<T>()` lookups, 99 of them `expect`/`unwrap`, held
+**Status 2026-09-02: done, stages 1 and 2; stage 3 deferred to finding
+2.** Stage 1: the fetch and http initializers read `cache_dir` and
+`user_agent` off the stored `EngineConfig`; `FetchCacheDir`, `UserAgent`
+and their two store closures in `build` are gone. Stage 2: lattice no
+longer reads flux userdata. `flux::gui::tree` gained `stamp_clock`, `tick`
+(advance the tracks, emit the transitionEnd events, return frame demand),
+`node_counts` and `with_tree`; `flux::gui::alloy_context` hands the runner
+the `Arc<alloy::Context>` for its dev-server queries (capture, GPU
+inventory, texture and buffer reads, raster counters); `flux::
+timeline_now_ms` is public for the playback clock. `AlloyContext` is
+crate-private, with the seven `store_state` functions: lattice's draw
+bridge and speech plugin hold the plain `Arc<alloy::Context>` (lattice
+owns the instance and already hands it to `GuiHost` as one).
+`SharedRenderTree` stays public for exactly one reader, the draw bridge's
+frame build (commit, layout, paint, finish, with the postLayout hook
+between): that is the per-frame protocol finding 2 moves, so closures
+around it now would be undone there. Stage 3 (one shared gui state) waits
+for finding 2, where the frame module is its second consumer. Verified:
+flux check, clippy and gui unit tests, the http, isolate and engine
+integration suites (an isolate child inherits the config), lattice check,
+clippy and unit tests, and on a release dev client:
+`probes/transition-demo.tsx` under a frozen clock (tap, step, the tween
+read mid-flight and settled through the tree query, the three transitionEnd
+handler logs, node counts and raster figures in the stats reply, a node
+snapshot), then `gpu-shared-params.tsx` for the GPU inventory, a texture
+read, a vertex buffer read (the quad's corners) and the missing-id error;
+no warnings, zero missed presents at steady state.
+
+As found: 123 `ctx.userdata::<T>()` lookups, 99 of them `expect`/`unwrap`, held
 together by the fixed order in `plugins::init_context`. Within flux that is
 workable. Three things are not:
 

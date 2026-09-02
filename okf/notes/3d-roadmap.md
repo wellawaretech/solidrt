@@ -162,6 +162,11 @@ what it delivered is documented in `packages/3d/AGENTS.md`, not here.
     and 4. The binding side is already paid: a shared target-level
     sampler (`setTargetTextures`) binds an environment map once per scene
     target.
+    Stages 1 and 2 LANDED 2026-09-02 (library only): the skybox and the
+    sanctioned `vRay` background, `equirectToCube`, and
+    `scene.setEnvironment` + `lit({ reflectivity })` over the exported
+    ENVIRONMENT set. Open: stage 3 (HDR/PBR, with item 17) and stage 4
+    (dynamic probes); the box stays unchecked until those land.
 15. [x] **Shadow maps.** Landed 2026-08-26 (uncommitted) through stage 3
     of [3d-shadow-maps](../done/3d-shadow-maps.md): `castShadow` on
     `DirectionalLight` and `Mesh`, `lit` receiving by default, the

@@ -237,6 +237,17 @@ export type LitOptions = UnlitOptions & {
    * specularMap) - chrome and rubber on one mesh. With it, `specular`
    * defaults to 1 (the map is the strength). */
   specularMap?: TextureId
+  /** Mirror the scene's environment (scene.setEnvironment), 0..1: the
+   * face-on reflection weight, rising to 1 at grazing angles (Schlick) -
+   * 1 is chrome, ~0.05 a glossy dielectric with rim reflections. The
+   * reflection blurs with `shininess` (a wide sheen reflects a blurred
+   * sky, a mirror dot a sharp one; the environment cube needs mipmaps
+   * for the blur) and `specularMap`'s red scales it like `specular`.
+   * Three's Phong `reflectivity` with MixOperation and a fresnel weight
+   * (Three's default MultiplyOperation tints instead; not offered). Off
+   * while the scene has no environment. Undefined declares no
+   * environment sampler at all. */
+  reflectivity?: number
   /** A baked-light texture (an offline render, an AO+GI bake), sampled by
    * the geometry's aUV2 channel and ADDED to the light sum like the
    * hemisphere term - a fully baked scene runs with no lights at all
@@ -298,6 +309,7 @@ type LitClass = {
   emissive: boolean
   emissiveMap: boolean
   specularMap: boolean
+  env: boolean
   lightMap: boolean
   mapTransform: boolean
   skinned: boolean
@@ -330,8 +342,12 @@ export function lit(opts: LitOptions = {}): Material {
   let emissiveMap = opts.emissiveMap !== undefined
   let emissive = opts.emissive !== undefined || emissiveMap
   let specularMap = opts.specularMap !== undefined
+  let env = opts.reflectivity !== undefined
   let lightMap = opts.lightMap !== undefined
   let mapTransform = opts.mapTransform !== undefined
+  if (env && !(Number.isFinite(opts.reflectivity) && opts.reflectivity! >= 0 && opts.reflectivity! <= 1)) {
+    throw new Error("lit: reflectivity must be a number in 0..1, got " + opts.reflectivity)
+  }
   if (triplanar && normalMap) throw new Error("lit: normalMap cannot combine with triplanar (normal maps sample by uv)")
   if (triplanar && mapTransform) throw new Error("lit: mapTransform cannot combine with triplanar (its repeat is the triplanar value)")
   if (mapTransform && !map && !normalMap && !emissiveMap && !specularMap) {
@@ -350,6 +366,7 @@ export function lit(opts: LitOptions = {}): Material {
     emissive,
     emissiveMap,
     specularMap,
+    env,
     lightMap,
     mapTransform,
     skinned: opts.skinned === true,
@@ -374,6 +391,7 @@ export function lit(opts: LitOptions = {}): Material {
   if (triplanar) params.uTriplanar = opts.triplanar!
   if (alphaTest) params.uAlphaTest = opts.alphaTest!
   if (normalMap) params.uNormalScale = opts.normalScale ?? 1
+  if (env) params.uReflectivity = opts.reflectivity!
   if (emissive) params.uEmissive = opts.emissive ?? [1, 1, 1]
   if (lightMap) params.uLightMapIntensity = opts.lightMapIntensity ?? 1
   if (mapTransform) params.uMapTransform = mapTransformParam(opts.mapTransform!)

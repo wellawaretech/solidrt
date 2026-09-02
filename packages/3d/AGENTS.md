@@ -208,7 +208,7 @@ blendMode and pointer events like any element.
 
 | Component | Props |
 | --- | --- |
-| `Scene` | `width?`, `height?` (target pixels - both, or neither = FILL, below), `clearColor?`, `camera?` (partial CameraUpdate, `ortho` included - the declarative scene.setCamera; same state as `PerspectiveCamera`, use one form), `background?` (fragment GLSL, or a skybox `{ cube, intensity?, rotation? }`), `fog?` (`{ color, near, far }`, linear by camera distance), `layers?` (target mask, default 1), `depth?` (`"texture"` exposes scene.depthTexture; not with samples), `samples?` (1/2/4/8 MSAA), `label?`, `ref?(scene)`, `output?(texture)`, `events?` (mesh pointer events, default on) |
+| `Scene` | `width?`, `height?` (target pixels - both, or neither = FILL, below), `clearColor?`, `camera?` (partial CameraUpdate, `ortho` included - the declarative scene.setCamera; same state as `PerspectiveCamera`, use one form), `background?` (fragment GLSL, or a skybox `{ cube, intensity?, rotation? }`), `environment?` (`{ cube, intensity?, rotation? }`, the cube reflective materials mirror), `fog?` (`{ color, near, far }`, linear by camera distance), `layers?` (target mask, default 1), `depth?` (`"texture"` exposes scene.depthTexture; not with samples), `samples?` (1/2/4/8 MSAA), `label?`, `ref?(scene)`, `output?(texture)`, `events?` (mesh pointer events, default on) |
 | `Group` | `position?`, `rotation?` (Euler radians, XYZ order), `quaternion?` (either, not both), `scale?` (number = uniform), `visible?`, pointer events (below), `ref?(node)` |
 | `Mesh` | `geometry`, `material`, transforms as Group, `params?` (per-mesh uniforms, merge semantics - no unset), `renderOrder?`, `castShadow?`, `layers?` (membership bitmask, default 1), pointer events (below), `ref?(mesh)` |
 | `Sprite` | as Mesh minus `geometry`: a camera-facing unit quad, `scale` is its world size, rotation is ignored; pair with a `sprite()` material |
@@ -567,6 +567,41 @@ number, so the object form keeps it unambiguous). Translucent grounds
 over a background still need blend factors (a separate shader texture
 underneath until then).
 
+Environment: `scene.setEnvironment({ cube, intensity?, rotation? } |
+null)`, the `environment` option on createScene and the reactive `Scene`
+prop - the cube map every `lit({ reflectivity })` material mirrors,
+typically the skybox's own cube turned with it. Scene-level like Three's
+`scene.environment`, Unity's environment reflections and Godot's
+sky-lit reflections: ONE `uEnv` samplerCube bound on every target the
+scene draws into (a 1x1 black placeholder while unset) and one
+shared-params write (`uEnvIntensity`, `uEnvRotation`, `uEnvOn`), however
+many meshes reflect; no per-material envMap (Three's Basic/Phong
+`envMap`) - a custom material composes ENVIRONMENT from
+`@solidrt/3d/glsl` (includes CUBE_LOOKUP). `reflectivity` 0..1 is the
+face-on weight, rising to 1 at grazing angles (Schlick), mixed in as
+`rgb = mix(rgb, reflection, weight)`: 1 is chrome, ~0.05 a glossy
+dielectric with rim reflections; Three's Phong `reflectivity` under its
+MixOperation with a fresnel weight (Three's default MultiplyOperation
+tints instead; not offered). The reflection blurs with `shininess`:
+roughness `sqrt(2 / (shininess + 2))` picks a mip level of the cube
+(`textureLod`), so the environment cube wants `mipmap: true`; a cube
+without mipmaps stays sharp. `specularMap`'s red scales it like
+`specular`. Not an ambient light source: the hemisphere light stays the
+ambient term (SH9 from the environment is a later, additive mode). A
+declared `reflectivity` with no environment set contributes nothing
+(uEnvOn 0), not a black reflection. `examples/skybox.tsx`.
+
+Panoramas: `equirectToCube(map, size, opts?)` converts an uploaded
+equirectangular 2D texture (createImage, createTexture) into a cube
+TextureId on the GPU, synchronously (six face passes, read back and
+uploaded once; `opts` are createCubeTexture's - `mipmap: true` for an
+environment). The center column faces -Z and the top row is +Y, as in
+Godot's PanoramaSkyMaterial and Unity's Skybox/Panoramic; Three centers
++X, a quarter turn away. Leave the source texture's wrap at clamp
+(`repeat` also wraps vertically and bleeds the poles). The build-time
+form (the srt asset pipeline emitting faces and prefiltered levels) is
+open in okf/backlog/3d-environment.md.
+
 Fog: `scene.setFog(fog | null)`, the `fog` option on createScene and
 the reactive `Scene` prop, in Three's two shapes: linear `{ color, near,
 far }` (`Fog`; fades from near to far, fully fogged past far) or exp2
@@ -700,8 +735,10 @@ shape (soft vs hard cone, casting spots, an orbiting bulb).
 
 `lit(opts)` is the standard look beside `unlit`: hemisphere ambient plus
 the directional list, Lambert diffuse, Blinn-Phong highlight when
-`specular` (0..1 strength) is set with `shininess` (default 30), the
-same `color`/`map`/`transparent` as unlit, `vertexColors: true` to
+`specular` (0..1 strength) is set with `shininess` (default 30), a
+mirror of the scene's environment when `reflectivity` (0..1, the
+face-on weight; see Environment above) is set, blurred by the same
+`shininess`, the same `color`/`map`/`transparent` as unlit, `vertexColors: true` to
 multiply by the colored layout's aColor (so the geometry must carry it),
 `triplanar: n` to sample `map` by world position at `n` repeats per
 world unit, blended across the three axis planes by the normal, and
@@ -1193,3 +1230,8 @@ older bakes are rejected - re-bake with `srt tool 3d/model`.
   destroy them. Do not hand the background's pipeline to anything else.
   A skybox is the same slot with the library's fragment; only a
   skybox-to-skybox replace keeps the entry (params and cube rewritten).
+- The environment binds through the light rewrite's map set (uEnv
+  beside uShadowAtlas on every receiving target, new views included) and
+  directly on setEnvironment; the placeholder cube is app-lifetime like
+  the shadow placeholder. A `lit` without `reflectivity` declares no
+  environment sampler - the flag is part of the class key.

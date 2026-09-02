@@ -39,7 +39,7 @@ import type {
 } from "./light.ts"
 import { createScene } from "./scene.ts"
 import type { CameraUpdate } from "./camera.ts"
-import type { FogOptions, Scene as SceneHandle, SkyboxOptions } from "./scene.ts"
+import type { EnvironmentOptions, FogOptions, Scene as SceneHandle, SkyboxOptions } from "./scene.ts"
 import type { ShaderParams } from "@solidrt/core/gpu"
 import type { NodeTransition } from "flux:spatial"
 import type { Geometry } from "./geometry.ts"
@@ -183,6 +183,10 @@ export type SceneProps = {
    * a skybox's knobs update in place; undefined removes it. Three's
    * `scene.background = color` is `clearColor` here. */
   background?: string | SkyboxOptions
+  /** The cube map reflective `lit` materials mirror (scene.setEnvironment):
+   * `{ cube, intensity?, rotation? }`, typically the skybox's own cube
+   * turned with it. Reactive; undefined removes it. */
+  environment?: EnvironmentOptions
   /** Scene-wide fog (scene.setFog): linear `{ color, near, far }` or exp2
    * `{ color, density }`, optionally thinning above `height` by
    * `heightFalloff`; every standard material fades toward `color` by
@@ -268,6 +272,10 @@ export let Scene: ParentComponent<SceneProps> = props => {
   createEffect(
     () => props.background,
     b => scene.setBackground(b ?? null),
+  )
+  createEffect(
+    () => props.environment,
+    e => scene.setEnvironment(e ?? null),
   )
   createEffect(
     () => props.fog,

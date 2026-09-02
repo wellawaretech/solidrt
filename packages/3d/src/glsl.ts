@@ -326,6 +326,44 @@ export const CUBE_LOOKUP = glsl`
 `
 
 /**
+ * The scene's environment as a reflecting program declares it: `uEnv`
+ * (a samplerCube the scene binds on every receiving target - a 1x1 black
+ * cube while no environment is set), `uEnvIntensity`, `uEnvRotation`
+ * (the inverse of the environment's y turn, the skybox's convention) and
+ * `uEnvOn` (0 with no environment, so the term contributes nothing
+ * instead of reflecting black). `envReflection(n, v, shininess)` samples
+ * the mirror direction (v toward the camera) at a mip level from the
+ * Blinn-Phong exponent - roughness `sqrt(2 / (shininess + 2))` times the
+ * cube's top level from textureSize, so a wide sheen reflects a blurred
+ * environment and a mirror dot a sharp one; a cube uploaded without
+ * mipmaps stays sharp - scaled by the intensity. `envWeight(n, v,
+ * reflectivity)` is the Schlick fresnel weight: `reflectivity` face-on,
+ * 1 at grazing, 0 with no environment. `lit` applies them as
+ * `rgb = mix(rgb, envReflection(n, v, uShininess), envWeight(n, v,
+ * uReflectivity))` - Three's MixOperation with a fresnel weight. Includes
+ * CUBE_LOOKUP: compose one or the other, not both.
+ */
+export const ENVIRONMENT = glsl`
+  uniform samplerCube uEnv;
+  uniform float uEnvIntensity;
+  uniform mat4 uEnvRotation;
+  uniform float uEnvOn;
+  // Schlick's approximation exponent.
+  const float ENV_SCHLICK_POWER = 5.0;
+  ${CUBE_LOOKUP}
+  vec3 envReflection(vec3 n, vec3 v, float shininess) {
+    vec3 r = mat3(uEnvRotation) * reflect(-v, n);
+    float topLevel = log2(float(textureSize(uEnv, 0).x));
+    float roughness = sqrt(2.0 / (shininess + 2.0));
+    return textureLod(uEnv, cubeDir(r), roughness * topLevel).rgb * uEnvIntensity;
+  }
+  float envWeight(vec3 n, vec3 v, float reflectivity) {
+    float f = pow(1.0 - max(dot(n, v), 0.0), ENV_SCHLICK_POWER);
+    return (reflectivity + (1.0 - reflectivity) * f) * uEnvOn;
+  }
+`
+
+/**
  * The scene's shadow set as a receiving program declares it: ONE
  * `uShadowAtlas` (a `sampler2DShadow` - every casting light's depth map is
  * a tile of it, so N maps render as one pass; a cleared one-texel depth
@@ -528,6 +566,10 @@ export type LitSourceOptions = {
   /** `uniform sampler2D uSpecularMap`: its RED channel scales uSpecular
    * per fragment (Three's specularMap - chrome and rubber on one mesh). */
   specularMap?: boolean
+  /** Compose the scene's ENVIRONMENT and mix its mirror reflection in by
+   * `uniform float uReflectivity` (the Schlick face-on weight), scaled
+   * per fragment by uSpecularMap's red when `specularMap`. */
+  env?: boolean
   /** Add a baked-light term: `uniform sampler2D uLightMap` times
    * `uniform float uLightMapIntensity`, sampled by the aUV2 channel and
    * ADDED to the light sum like the hemisphere term (a fully baked scene
@@ -573,6 +615,7 @@ type LitSource = {
   emissive: boolean
   emissiveMap: boolean
   specularMap: boolean
+  env: boolean
   lightMap: boolean
   mapTransform: boolean
   skinned: boolean
@@ -594,6 +637,7 @@ function resolveLit(o: LitSourceOptions): LitSource {
     emissive: o.emissive === true || o.emissiveMap === true,
     emissiveMap: o.emissiveMap === true,
     specularMap: o.specularMap === true,
+    env: o.env === true,
     lightMap: o.lightMap === true,
     mapTransform: o.mapTransform === true,
     skinned: o.skinned === true,
@@ -689,6 +733,7 @@ export function litFragment(o: LitSourceOptions = {}): string {
     ${c.emissive ? "uniform vec3 uEmissive;" : ""}
     ${c.emissiveMap ? "uniform sampler2D uEmissiveMap;" : ""}
     ${c.specularMap ? "uniform sampler2D uSpecularMap;" : ""}
+    ${c.env ? "uniform float uReflectivity;" : ""}
     ${c.lightMap ? "uniform sampler2D uLightMap;\n    uniform float uLightMapIntensity;" : ""}
     ${c.mapTransform ? "uniform vec4 uMapTransform;" : ""}
     ${c.normalMap ? NORMAL_MAP : ""}
@@ -707,6 +752,7 @@ export function litFragment(o: LitSourceOptions = {}): string {
     ${HEMISPHERE}
     ${LAMBERT}
     ${BLINN_SPECULAR}
+    ${c.env ? ENVIRONMENT : ""}
     ${c.fog ? FOG : ""}
     ${c.prelude}
 
@@ -728,6 +774,7 @@ export function litFragment(o: LitSourceOptions = {}): string {
         spec += lc * blinnSpecular(n, v, l, uShininess);
       }
       vec3 rgb = base.rgb * light + spec * ${c.specularMap ? "(uSpecular * texture(uSpecularMap, uv).r)" : "uSpecular"} * base.a;
+      ${c.env ? `rgb = mix(rgb, envReflection(n, v, uShininess) * base.a, envWeight(n, v, uReflectivity${c.specularMap ? " * texture(uSpecularMap, uv).r" : ""}));` : ""}
       ${c.emissive ? `rgb += uEmissive${c.emissiveMap ? " * texture(uEmissiveMap, uv).rgb" : ""} * base.a;` : ""}
       ${c.fog ? `rgb = fog(rgb, ${alpha}, vWorldPos, uCamPos);` : ""}
       fragColor = vec4(rgb, ${alpha});

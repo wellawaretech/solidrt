@@ -53,6 +53,7 @@ import { layoutKey, validateGeometry } from "./geometry.ts"
 import type { Geometry } from "./geometry.ts"
 import { acquireGeometryBuffers, releaseGeometryBuffers } from "./geometry-gpu.ts"
 import { backgroundPipeline, missingAttributes, SKYBOX_FRAGMENT } from "./material.ts"
+import { environmentPlaceholder } from "./environment.ts"
 import type { Material } from "./material.ts"
 import { orderEntries } from "./order.ts"
 import { fillTransform, leaveScene, makeNode, worldInto } from "./node.ts"
@@ -229,24 +230,62 @@ export type SkyboxOptions = {
   rotation?: number
 }
 
-// The entry params a skybox compiles to. uSkyRotation is the INVERSE turn:
-// a lookup along view direction v must find the texel that sat at
-// R(-r) v before the sky turned by +r.
-function skyboxParams(sky: SkyboxOptions, site: string): ShaderParams {
-  let intensity = sky.intensity ?? 1
-  let rotation = sky.rotation ?? 0
-  if (!Number.isFinite(intensity) || intensity < 0) throw new Error(site + ": intensity must be a finite number >= 0, got " + intensity)
-  if (!Number.isFinite(rotation)) throw new Error(site + ": rotation must be a finite angle in radians, got " + rotation)
+/**
+ * The scene's environment: a cube map every `lit` material with
+ * `reflectivity` mirrors (scene.setEnvironment). The same three fields
+ * as a skybox, and typically the same cube - Three's `scene.environment`
+ * with `environmentIntensity` and `environmentRotation`; Unity's
+ * environment reflections source, Godot's reflected light from the sky.
+ */
+export type EnvironmentOptions = {
+  /** A cube map (createCubeTexture with `mipmap: true` for shininess to
+   * blur it; equirectToCube for a panorama), faces in +X, -X, +Y, -Y,
+   * +Z, -Z order; looked up like the skybox (CUBE_LOOKUP). A 2D texture
+   * id throws. */
+  cube: TextureId
+  /** Multiplier on the reflected color, >= 0; default 1. */
+  intensity?: number
+  /** Turn about world y in RADIANS (default 0), the skybox's convention:
+   * the environment turns as a node with rotation [0, r, 0] would. */
+  rotation?: number
+}
+
+// The uniform turn a rotated cube map is looked up through: the INVERSE
+// of the sky's turn, because a lookup along view direction v must find
+// the texel that sat at R(-r) v before the sky turned by +r.
+function cubeTurn(rotation: number): Mat4 {
   let c = Math.cos(rotation)
   let n = Math.sin(rotation)
   // prettier-ignore
-  let turn: Mat4 = [
+  return [
     c, 0, n, 0,
     0, 1, 0, 0,
     -n, 0, c, 0,
     0, 0, 0, 1,
   ]
-  return { uSkyIntensity: intensity, uSkyRotation: turn }
+}
+
+function checkCubeKnobs(o: { intensity?: number; rotation?: number }, site: string): { intensity: number; rotation: number } {
+  let intensity = o.intensity ?? 1
+  let rotation = o.rotation ?? 0
+  if (!Number.isFinite(intensity) || intensity < 0) throw new Error(site + ": intensity must be a finite number >= 0, got " + intensity)
+  if (!Number.isFinite(rotation)) throw new Error(site + ": rotation must be a finite angle in radians, got " + rotation)
+  return { intensity, rotation }
+}
+
+// The entry params a skybox compiles to.
+function skyboxParams(sky: SkyboxOptions, site: string): ShaderParams {
+  let k = checkCubeKnobs(sky, site)
+  return { uSkyIntensity: k.intensity, uSkyRotation: cubeTurn(k.rotation) }
+}
+
+// The shared params an environment compiles to (null = off: uEnvOn 0
+// makes every reflective material's term vanish; the set ENVIRONMENT in
+// `@solidrt/3d/glsl` declares).
+function environmentParams(env: EnvironmentOptions | null): ShaderParams {
+  if (env === null) return { uEnvIntensity: 0, uEnvRotation: cubeTurn(0), uEnvOn: 0 }
+  let k = checkCubeKnobs(env, "scene.setEnvironment")
+  return { uEnvIntensity: k.intensity, uEnvRotation: cubeTurn(k.rotation), uEnvOn: 1 }
 }
 
 export type SceneOptions = {
@@ -265,6 +304,8 @@ export type SceneOptions = {
   /** The background drawn behind the meshes, inside the scene's own pass:
    * fragment GLSL or a skybox - see setBackground. */
   background?: string | SkyboxOptions
+  /** The cube map reflective materials mirror; see setEnvironment. */
+  environment?: EnvironmentOptions
   label?: string
   /** `autoFree: false` opts out of owner-scoped auto-dispose (then call dispose yourself). */
   autoFree?: boolean
@@ -413,6 +454,19 @@ export type Scene = {
    * form can arrive later as a non-breaking widening.
    */
   setBackground(source: string | SkyboxOptions | null): void
+  /**
+   * Set, replace, or remove (null) the scene's environment: the cube map
+   * every `lit` material created with `reflectivity` mirrors, blurred by
+   * its `shininess`. Scene-level like Three's `scene.environment`,
+   * Unity's environment reflections and Godot's sky-lit reflections: one
+   * cube bound on every target the scene draws into, one shared-params
+   * write for intensity and rotation, however many meshes reflect (a
+   * custom material composes ENVIRONMENT from `@solidrt/3d/glsl`). No
+   * per-material map. Typically the skybox's own cube, turned with it.
+   * Not an ambient light source yet: the hemisphere light stays the
+   * ambient term.
+   */
+  setEnvironment(env: EnvironmentOptions | null): void
   /**
    * Project a world point to scene pixels: origin top-left, y down - the
    * output texture's own coordinate space, ready for overlay layout (HUD
@@ -657,7 +711,10 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     let counts: number[] = new Array(MAX_LIGHTS).fill(0)
     let rects: number[] = []
     let atlas = shadowSys.atlas()
-    let maps: Record<string, TextureId> = { uShadowAtlas: atlas !== null ? depthTexture(atlas.texture) : shadowPlaceholder() }
+    let maps: Record<string, TextureId> = {
+      uShadowAtlas: atlas !== null ? depthTexture(atlas.texture) : shadowPlaceholder(),
+      uEnv: environment ?? environmentPlaceholder(),
+    }
     shadowSys.forEachShadowSlot((slot, i, c, r) => {
       if (c === 0) first[i] = slot
       counts[i] = counts[i]! + 1
@@ -693,6 +750,9 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
   // `skybox`: the entry runs the library's cube-map fragment (its params
   // and textures are rewritable in place); false = app GLSL.
   let background: { entry: DrawId; pipeline: RenderPipelineId; program: ProgramId; skybox: boolean } | null = null
+  // The environment cube bound as uEnv on every receiving target (the
+  // light rewrite seeds it on new targets); null binds the placeholder.
+  let environment: TextureId | null = null
   let sortEntries = () => {
     orderDirty = false
     let order = orderEntries(meshes, camera.view, background?.entry)
@@ -1277,6 +1337,14 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       let entry = addDraw(texture, built.pipeline, skyboxParams(source, "scene.setBackground"), { vertexCount: 3, before, textures: { uSky: source.cube } })
       background = { entry, pipeline: built.pipeline, program: built.program, skybox: true }
     },
+    setEnvironment(env) {
+      if (disposed) return
+      let params = environmentParams(env)
+      environment = env === null ? null : env.cube
+      let cube = environment ?? environmentPlaceholder()
+      receivingTargets(t => setTargetTextures(t, { uEnv: cube }))
+      scene.setParams(params)
+    },
     project(point) {
       ensureCamera(camera, width, height)
       transformPoint(clip, camera.viewProj, point)
@@ -1432,8 +1500,12 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
   // it has coverage from the first frame; a target tolerates the names
   // when nothing declares them.
   scene.setParams({ uFogColor: [0, 0, 0], uFogNear: 0, uFogInv: 0, uFogDensity: 0, uFogHeight: 0, uFogHeightFalloff: 0 })
+  // Likewise the environment set starts at "none" (uEnvOn 0), so a
+  // reflective material has coverage before setEnvironment.
+  scene.setParams(environmentParams(null))
   if (opts?.fog !== undefined) scene.setFog(opts.fog)
   if (opts?.background !== undefined) scene.setBackground(opts.background)
+  if (opts?.environment !== undefined) scene.setEnvironment(opts.environment)
   if (opts?.autoFree !== false && getOwner()) onCleanup(() => scene.dispose())
   return scene
 }

@@ -1,12 +1,16 @@
-// A skybox: the scene's background sampled from a cube map along each
-// pixel's view ray - `<Scene background={{ cube, intensity?, rotation? }}>`,
-// Three's `scene.background = cubeTexture`. The cube map here is baked in
-// JS at startup (a horizon gradient, a sun disc and its glow), so the
-// example ships no image assets; a photographed sky is the same
-// createCubeTexture call with six decoded faces in Three's px, nx, py,
-// ny, pz, nz order. The sky turns slowly and the sun light turns with it:
-// `rotation` is a reactive prop the scene updates in place, no recompile.
-// Drag to look around, wheel to zoom.
+// A skybox and its reflections: the scene's background sampled from a
+// cube map along each pixel's view ray - `<Scene background={{ cube,
+// intensity?, rotation? }}>`, Three's `scene.background = cubeTexture` -
+// and the same cube as the scene's environment (`environment={{ cube,
+// rotation }}`, Three's `scene.environment`), which every lit material
+// with `reflectivity` mirrors: the chrome sphere sharply, the brass knot
+// blurred by its shininess. The cube map is baked in JS at startup (a
+// horizon gradient, a sun disc and its glow), so the example ships no
+// image assets; a photographed sky is the same createCubeTexture call
+// with six decoded faces in Three's px, nx, py, ny, pz, nz order, or
+// equirectToCube on a panorama. The sky turns slowly and the sun light
+// turns with it: `rotation` is a reactive prop the scene updates in
+// place, no recompile. Drag to look around, wheel to zoom.
 import { createSignal, onFrame, pct, render } from "@solidrt/core"
 import { createCubeTexture } from "@solidrt/core/gpu"
 import { box, DirectionalLight, HemisphereLight, lit, Mesh, OrbitCamera, plane, Scene, sphere, torusKnot } from "@solidrt/3d"
@@ -100,19 +104,23 @@ function App() {
   let sun = () => turnedSun(turn())
 
   let ground = lit({ color: [0.36, 0.4, 0.3] })
-  let brass = lit({ color: [0.85, 0.6, 0.3], shininess: 48 })
+  // Glossy: a blurred reflection (shininess 48) at a dielectric's face-on
+  // weight, rising toward the silhouette.
+  let brass = lit({ color: [0.85, 0.6, 0.3], specular: 0.6, shininess: 48, reflectivity: 0.15 })
   let stone = lit({ color: [0.6, 0.6, 0.62] })
+  // Chrome: the environment itself, sharp.
+  let chrome = lit({ color: [1, 1, 1], specular: 1, shininess: 400, reflectivity: 1 })
   return (
     <window>
       <view width={pct(100)} height={pct(100)}>
-        <Scene background={{ cube, rotation: turn() }} label="skybox-demo">
+        <Scene background={{ cube, rotation: turn() }} environment={{ cube, rotation: turn() }} label="skybox-demo">
           <OrbitCamera azimuth={0.4} elevation={0.12} distance={7} />
           <HemisphereLight sky={[0.5, 0.6, 0.8]} ground={[0.3, 0.27, 0.24]} />
           <DirectionalLight direction={[-sun()[0], -sun()[1], -sun()[2]]} color={SUN_COLOR} intensity={0.9} />
           <Mesh geometry={plane({ width: 12, height: 12 })} material={ground} rotation={[-Math.PI / 2, 0, 0]} />
           <Mesh geometry={torusKnot({ radius: 0.7, tube: 0.22, tubularSegments: 128, radialSegments: 16 })} material={brass} position={[0, 1.2, 0]} />
           <Mesh geometry={box()} material={stone} position={[-2, 0.5, -0.5]} />
-          <Mesh geometry={sphere({ radius: 0.5 })} material={stone} position={[2, 0.5, -0.5]} />
+          <Mesh geometry={sphere({ radius: 0.6, widthSegments: 48, heightSegments: 32 })} material={chrome} position={[2, 0.6, -0.5]} />
         </Scene>
       </view>
     </window>
