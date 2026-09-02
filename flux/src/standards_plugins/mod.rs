@@ -6,6 +6,10 @@
 
 pub mod abort;
 pub mod body;
+// Web standard by surface, alloy-backed and installed from `gui::install`
+// (see the placement rule in flux/CLAUDE.md), so gui-gated.
+#[cfg(feature = "gui")]
+pub mod clipboard;
 pub mod console;
 pub mod crypto;
 pub mod fetch;

@@ -722,6 +722,20 @@ impl App {
               }
             }
           }
+          AlloyCommand::SetClipboardText(text, respond) => {
+            let result = sdl_context
+              .video()
+              .map_err(|e| e.to_string())
+              .and_then(|video| video.clipboard().set_clipboard_text(&text).map_err(|e| e.to_string()));
+            respond(result);
+          }
+          AlloyCommand::GetClipboardText(respond) => {
+            let result = sdl_context
+              .video()
+              .map_err(|e| e.to_string())
+              .and_then(|video| video.clipboard().clipboard_text().map_err(|e| e.to_string()));
+            respond(result);
+          }
           AlloyCommand::Background => {
             if !window.minimize() {
               log::warn!("background (minimize) failed: {}", crate::sdl_utils::sdl_error());

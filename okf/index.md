@@ -214,13 +214,11 @@ Shaped, not started.
   the server registry, and shells out to bun for bundling and typechecking
   only; a server starts in its project root or on a single file (never by
   searching up), one server per key, never identified by port.
-- **[Component transitions cannot reach a control's internal paint](backlog/component-transitions-internal-paint.md)** [2026-08-22]
-  The components forward `transition` to their root view and to the
-  background/border rects drawn for `style`, but a control's own parts - the
-  Switch knob, Slider thumb, Checkbox mark, Radio dot, ProgressBar fill,
-  Spinner, Icon paths, and the chrome of NavShell/ContextMenu/Field - are not
-  addressable, so the motion users most want on a control (the knob sliding)
-  still snaps.
+- **[Clipboard (navigator.clipboard)](backlog/clipboard.md)** [2026-09-02]
+  Nothing in the runtime can reach the OS clipboard - a selection in a
+  TextInput cannot be copied out and nothing can be pasted in - so give flux
+  the web-standard navigator.clipboard readText/writeText (text only) over
+  SDL's clipboard, and wire Ctrl/Cmd+C/X/V into the editable fields.
 - **[Content-damage perf watchpoints](backlog/content-damage-perf.md)** [2026-08-10]
   Perf potholes in the damage-tracking path. Open - the unbatched
   invalidate_paint in set_unrounded_layout making resize O(n * depth). Fixed -
@@ -562,6 +560,11 @@ Shaped, not started.
 - **[Production diagnostics surface](backlog/production-diagnostics-surface.md)** [2026-07-17]
   Layout counters are latched into Stats but only dev-client queries read
   them; wanted a production consumer so field bug reports carry the numbers.
+- **[OS reduce-motion preference is ignored](backlog/reduce-motion-preference.md)** [2026-09-02]
+  The components' built-in motion is gated on policy.motion, but nothing reads
+  the OS "reduce motion" accessibility setting, so users who asked their
+  system for less motion still get springs and slides unless the app calls
+  setPolicy by hand.
 - **[Guard that every referenced example ships](backlog/release-example-parity-check.md)** [2026-07-29]
   A committed examples README can name an example file that is untracked, so
   the doc ships and the file does not; a release-time parity check would catch
@@ -878,6 +881,12 @@ Finished, kept for the reasoning.
   Press extracted from Pressable into a components-package createPress util
   and grown into a recognizer family with an innermost-wins arena and
   first-class cancel and fail.
+- **[Component transitions cannot reach a control's internal paint](done/component-transitions-internal-paint.md)** [2026-08-22]
+  The components forwarded `transition` only to their root view and style
+  rects, so a control's own parts (Switch knob, Checkbox mark, ...) snapped.
+  Fixed by built-in default motion (motion.tsx) driven by theme.motion and
+  gated on policy.motion, plus named-part routing (knob/indicator/fill)
+  through partTransition.
 - **[Press util; end the Pressable exception](done/components-press-util.md)** [2026-07-27]
   Press semantics extracted from Pressable into a components-package util;
   widened to gesture recognizers and promoted to

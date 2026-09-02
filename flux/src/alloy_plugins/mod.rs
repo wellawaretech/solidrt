@@ -67,6 +67,9 @@ pub struct GuiHost {
 /// userdata, which the runner's draw bridge (`srt:render`) reads to draw it.
 pub fn install(builder: FluxEngineBuilder, host: GuiHost) -> FluxEngineBuilder {
   let GuiHost { platform, alloy, render_tree, alloy_cmd_tx } = host;
+  // navigator.clipboard is a web-standard surface (standards_plugins) that
+  // marshals alloy commands, so it installs here at the gui seam.
+  let clipboard_cmd_tx = alloy_cmd_tx.clone();
   let tree_platform = platform.clone();
   let raf_platform = platform.clone();
   let spatial_platform = platform.clone();
@@ -99,6 +102,7 @@ pub fn install(builder: FluxEngineBuilder, host: GuiHost) -> FluxEngineBuilder {
     .plugin(move |ctx| camera::store_state(&ctx, camera_atx))
     .plugin(move |ctx| microphone::store_state(&ctx, microphone_atx))
     .plugin(move |ctx| audio::store_state(&ctx, audio_atx))
+    .plugin(move |ctx| crate::standards_plugins::clipboard::init_clipboard(&ctx, clipboard_cmd_tx))
     .plugin(register_capabilities)
     .module_override("flux:rendertree", tree::RenderTreeModule)
     .module_override("flux:camera", camera::CameraModule)

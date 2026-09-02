@@ -6260,6 +6260,12 @@ import * as tree3 from "flux:rendertree";
 function parseColor2(color) {
   return tree3.parseColor(color);
 }
+var ALPHA_MAX = 255;
+function withAlpha(color, alpha) {
+  let rgb = parseColor2(color) >>> 8;
+  let a = Math.round(Math.min(1, Math.max(0, alpha)) * ALPHA_MAX);
+  return "#" + rgb.toString(16).padStart(6, "0") + a.toString(16).padStart(2, "0");
+}
 function brightness2(color) {
   return tree3.brightness(color);
 }
@@ -6810,6 +6816,303 @@ function createPan(options) {
 }
 // ../../packages/core/src/transform.ts
 import { on as on5 } from "srt:events";
+// ../../packages/components/src/theme.ts
+var SPACING_BASE = 4;
+function deriveSpacing(base) {
+  return {
+    sm: base,
+    md: base * 2,
+    lg: base * 4,
+    xl: base * 5
+  };
+}
+var RADIUS_BASE = 8;
+var RADIUS_FULL = 9999;
+function deriveRadius(base) {
+  return {
+    sm: Math.round(base / 2),
+    md: base,
+    lg: Math.round(base * 1.5),
+    full: RADIUS_FULL
+  };
+}
+var BORDER_WIDTH = {
+  sm: 1,
+  focus: 2
+};
+var MOTION = {
+  fast: 100,
+  base: 150,
+  slow: 250
+};
+var SIZE = {
+  navRail: 72,
+  navSidebar: 220,
+  splitViewList: 320,
+  menuMinWidth: 120,
+  slider: 200
+};
+var ROLE_DEFAULTS = {
+  caption: {
+    step: -1,
+    lineHeight: 1.3,
+    weight: 400
+  },
+  label: {
+    step: 0,
+    lineHeight: 1.5,
+    weight: 600
+  },
+  body: {
+    step: 0,
+    lineHeight: 1.5,
+    weight: 400
+  },
+  title: {
+    step: 1,
+    lineHeight: 1.4,
+    weight: 700
+  },
+  heading: {
+    step: 2,
+    lineHeight: 1.3,
+    weight: 700
+  }
+};
+function defineTheme(def, scheme) {
+  let color = {};
+  for (let key in def.color) {
+    let k = key;
+    let value = def.color[k];
+    if (value == null)
+      continue;
+    if (Array.isArray(value)) {
+      if (!scheme)
+        throw new Error(`Theme color "${key}" is a [light, dark] pair; pass a scheme to defineTheme`);
+      color[k] = value[scheme === "light" ? 0 : 1];
+    } else
+      color[k] = value;
+  }
+  if (def.color.ring == null)
+    color.ring = color.text;
+  if (def.color.selection == null)
+    color.selection = color.overlayPressed;
+  let base = def.text?.base ?? 14;
+  let ratio = def.text?.ratio ?? 1.26;
+  let role = (name) => {
+    let d = ROLE_DEFAULTS[name];
+    return {
+      size: Math.round(base * ratio ** d.step),
+      lineHeight: d.lineHeight,
+      weight: d.weight,
+      ...def.text?.roles?.[name]
+    };
+  };
+  return {
+    text: {
+      fontFamily: def.text?.fontFamily ?? "sans",
+      monoFamily: def.text?.monoFamily ?? "mono",
+      caption: role("caption"),
+      label: role("label"),
+      body: role("body"),
+      title: role("title"),
+      heading: role("heading")
+    },
+    color,
+    spacing: typeof def.spacing === "number" ? deriveSpacing(def.spacing) : {
+      ...deriveSpacing(SPACING_BASE),
+      ...def.spacing
+    },
+    radius: typeof def.radius === "number" ? deriveRadius(def.radius) : {
+      ...deriveRadius(RADIUS_BASE),
+      ...def.radius
+    },
+    borderWidth: {
+      ...BORDER_WIDTH,
+      ...def.borderWidth
+    },
+    motion: {
+      ...MOTION,
+      ...def.motion
+    },
+    size: {
+      ...SIZE,
+      ...def.size
+    },
+    icons: def.icons ?? {},
+    components: def.components ?? {}
+  };
+}
+var DEFAULT = {
+  color: {
+    background: ["#ffffff", "#0b0f17"],
+    surface: ["#f6f8fa", "#161b22"],
+    surfaceAlt: ["#eaeef2", "#21262d"],
+    text: ["#1f2328", "#b1bac4"],
+    textMuted: ["#707376", "#828993"],
+    border: ["rgba(0,0,0,0.15)", "rgba(255,255,255,0.14)"],
+    primary: "#547ebf",
+    onPrimary: "#ffffff",
+    secondary: "#2b5696",
+    onSecondary: "#ffffff",
+    danger: ["#cf222e", "#f85149"],
+    scrim: ["rgba(0,0,0,0.4)", "rgba(0,0,0,0.6)"],
+    overlayHover: ["rgba(0,0,0,0.08)", "rgba(255,255,255,0.08)"],
+    overlayPressed: ["rgba(0,0,0,0.14)", "rgba(255,255,255,0.14)"],
+    selection: ["rgba(84,126,191,0.30)", "rgba(84,126,191,0.40)"]
+  },
+  text: {
+    roles: {
+      caption: {
+        size: 12
+      }
+    }
+  }
+};
+var darkTheme = defineTheme(DEFAULT, "dark");
+var lightTheme = defineTheme(DEFAULT, "light");
+var [themeStore, setThemeStore] = createStore({
+  ...darkTheme
+});
+var theme = themeStore;
+function setTheme(partial) {
+  setThemeStore((s) => {
+    for (let key in partial) {
+      let k = key;
+      Object.assign(s[k], partial[k]);
+    }
+  });
+}
+
+// ../../packages/components/src/policy.ts
+function defaultPolicyResolver(caps) {
+  let interaction = caps.touch && caps.precisePointer ? "hybrid" : caps.touch ? "touch" : caps.precisePointer ? "desktop" : "hybrid";
+  let layout = caps.windowSizeClass === "expanded" ? "twoPane" : "singlePane";
+  return {
+    interaction,
+    density: interaction === "desktop" ? "compact" : "comfortable",
+    motion: "normal",
+    focusRing: caps.keyboardNav || gamepads().some((p) => p != null),
+    textScale: env.textScale,
+    textWeightDelta: env.displayScale < 1.5 ? 100 : 0,
+    navigation: layout === "twoPane" ? "sidebar" : "bottomTabs",
+    layout
+  };
+}
+var [resolverBox, setResolverBox] = createSignal({
+  resolve: defaultPolicyResolver
+});
+var [overrides, setOverrides] = createSignal({});
+var resolved = () => resolverBox().resolve(capabilities);
+var policy = {
+  get interaction() {
+    return overrides().interaction ?? resolved().interaction;
+  },
+  get density() {
+    return overrides().density ?? resolved().density;
+  },
+  get motion() {
+    return overrides().motion ?? resolved().motion;
+  },
+  get focusRing() {
+    return overrides().focusRing ?? resolved().focusRing;
+  },
+  get textScale() {
+    return overrides().textScale ?? resolved().textScale;
+  },
+  get textWeightDelta() {
+    return overrides().textWeightDelta ?? resolved().textWeightDelta;
+  },
+  get navigation() {
+    return overrides().navigation ?? resolved().navigation;
+  },
+  get layout() {
+    return overrides().layout ?? resolved().layout;
+  }
+};
+
+// ../../packages/components/src/motion.tsx
+var PRESS_SCALE = 0.97;
+var TRAVEL_BOUNCE = 0.15;
+function fadeMotion() {
+  if (policy.motion === "none")
+    return;
+  return {
+    duration: theme.motion.base,
+    curve: "ease-out"
+  };
+}
+function feedbackFade() {
+  if (policy.motion === "none")
+    return;
+  return {
+    duration: theme.motion.fast,
+    curve: "ease-out"
+  };
+}
+function travelMotion(bounce = TRAVEL_BOUNCE) {
+  if (policy.motion !== "normal")
+    return;
+  return {
+    duration: theme.motion.slow,
+    bounce
+  };
+}
+function colorFade() {
+  let fade = fadeMotion();
+  return fade && {
+    color: fade
+  };
+}
+function scaleFeedback() {
+  if (policy.motion !== "normal")
+    return;
+  return {
+    scale: {
+      duration: theme.motion.fast
+    }
+  };
+}
+function pressScale(pressed) {
+  return pressed && policy.motion === "normal" ? PRESS_SCALE : 1;
+}
+function popupFade() {
+  if (policy.motion === "none")
+    return;
+  return {
+    opacity: {
+      duration: theme.motion.base,
+      curve: "ease-out",
+      from: 0,
+      exit: 0
+    }
+  };
+}
+function PressFeedback(props) {
+  let tint = () => props.pressed ? theme.color.overlayPressed : theme.color.overlayHover;
+  let fade = () => {
+    let f = feedbackFade();
+    return f && {
+      color: f
+    };
+  };
+  var _el$ = createElement("d-rect");
+  effect3(() => ({
+    e: fade(),
+    t: props.pressed || props.hovered ? tint() : withAlpha(tint(), 0),
+    a: props.radius
+  }), ({
+    e,
+    t,
+    a
+  }, _p$) => {
+    e !== _p$?.e && setProp(_el$, "transition", e, _p$?.e);
+    t !== _p$?.t && setProp(_el$, "color", t, _p$?.t);
+    a !== _p$?.a && setProp(_el$, "radius", a, _p$?.a);
+  });
+  return _el$;
+}
+
 // ../../packages/components/src/window.tsx
 function Window(props) {
   var _el$ = createElement("window");
@@ -6861,8 +7164,15 @@ function Window(props) {
     var _c$ = memo2(() => props.style?.backgroundColor != null);
     return () => _c$() ? (() => {
       var _el$2 = createElement("d-rect");
-      effect3(() => props.style.backgroundColor, (_v$, _$p) => {
-        setProp(_el$2, "color", _v$, _$p);
+      effect3(() => ({
+        e: colorFade(),
+        t: props.style.backgroundColor
+      }), ({
+        e,
+        t
+      }, _p$) => {
+        e !== _p$?.e && setProp(_el$2, "transition", e, _p$?.e);
+        t !== _p$?.t && setProp(_el$2, "color", t, _p$?.t);
       });
       return _el$2;
     })() : null;
@@ -6880,7 +7190,7 @@ var STYLE_TO_BORDER = {
   borderWidth: "strokeWidth",
   borderRadius: "radius"
 };
-function splitTransition(t) {
+function splitTransition(t, parts) {
   if (t == null || typeof t === "string")
     return {
       root: t,
@@ -6900,7 +7210,7 @@ function splitTransition(t) {
         background[STYLE_TO_BACKGROUND[key]] = value;
       if (key in STYLE_TO_BORDER)
         border[STYLE_TO_BORDER[key]] = value;
-    } else {
+    } else if (!parts?.includes(key)) {
       root[key] = value;
     }
   }
@@ -6910,6 +7220,46 @@ function splitTransition(t) {
     background: pick(background),
     border: pick(border)
   };
+}
+function withTransitionDefaults(t, defaults) {
+  if (t === null || typeof t === "string")
+    return t;
+  if (t?.all !== undefined)
+    return t;
+  let filled;
+  for (let key in defaults) {
+    let spec = defaults[key];
+    if (spec === undefined || t && key in t)
+      continue;
+    (filled ??= {})[key] = spec;
+  }
+  if (!filled)
+    return t;
+  return {
+    ...filled,
+    ...t
+  };
+}
+function partTransition(t, part, coreProp, fallback) {
+  let spec;
+  if (t === null)
+    spec = undefined;
+  else if (typeof t === "string")
+    spec = t;
+  else if (t)
+    spec = t[part] ?? t.all ?? fallback;
+  else
+    spec = fallback;
+  return spec == null ? undefined : {
+    [coreProp]: spec
+  };
+}
+function partTransitionEnd(part, handler) {
+  if (!handler)
+    return;
+  return () => handler({
+    property: part
+  });
 }
 function transitionEndFor(node, handler) {
   if (!handler)
@@ -7023,7 +7373,7 @@ function View(props) {
     return () => _c$() ? (() => {
       var _el$2 = createElement("d-rect");
       effect3(() => ({
-        e: split().background,
+        e: withTransitionDefaults(split().background, colorFade()),
         t: transitionEndFor("background", props.onTransitionEnd),
         a: props.style?.backgroundColor ?? "transparent",
         o: props.style?.borderRadius
@@ -7049,7 +7399,7 @@ function View(props) {
         drawStyle: "stroke"
       });
       effect3(() => ({
-        e: split().border,
+        e: withTransitionDefaults(split().border, colorFade()),
         t: transitionEndFor("border", props.onTransitionEnd),
         a: props.style?.borderColor ?? "transparent",
         o: props.style?.borderWidth,
@@ -7072,212 +7422,6 @@ function View(props) {
   })(), null);
   return _el$;
 }
-// ../../packages/components/src/theme.ts
-var SPACING_BASE = 4;
-function deriveSpacing(base) {
-  return {
-    sm: base,
-    md: base * 2,
-    lg: base * 4,
-    xl: base * 5
-  };
-}
-var RADIUS_BASE = 8;
-var RADIUS_FULL = 9999;
-function deriveRadius(base) {
-  return {
-    sm: Math.round(base / 2),
-    md: base,
-    lg: Math.round(base * 1.5),
-    full: RADIUS_FULL
-  };
-}
-var BORDER_WIDTH = {
-  sm: 1,
-  focus: 2
-};
-var SIZE = {
-  navRail: 72,
-  navSidebar: 220,
-  splitViewList: 320,
-  menuMinWidth: 120,
-  slider: 200
-};
-var ROLE_DEFAULTS = {
-  caption: {
-    step: -1,
-    lineHeight: 1.3,
-    weight: 400
-  },
-  label: {
-    step: 0,
-    lineHeight: 1.5,
-    weight: 600
-  },
-  body: {
-    step: 0,
-    lineHeight: 1.5,
-    weight: 400
-  },
-  title: {
-    step: 1,
-    lineHeight: 1.4,
-    weight: 700
-  },
-  heading: {
-    step: 2,
-    lineHeight: 1.3,
-    weight: 700
-  }
-};
-function defineTheme(def, scheme) {
-  let color = {};
-  for (let key in def.color) {
-    let k = key;
-    let value = def.color[k];
-    if (value == null)
-      continue;
-    if (Array.isArray(value)) {
-      if (!scheme)
-        throw new Error(`Theme color "${key}" is a [light, dark] pair; pass a scheme to defineTheme`);
-      color[k] = value[scheme === "light" ? 0 : 1];
-    } else
-      color[k] = value;
-  }
-  if (def.color.ring == null)
-    color.ring = color.text;
-  if (def.color.selection == null)
-    color.selection = color.overlayPressed;
-  let base = def.text?.base ?? 14;
-  let ratio = def.text?.ratio ?? 1.26;
-  let role = (name) => {
-    let d = ROLE_DEFAULTS[name];
-    return {
-      size: Math.round(base * ratio ** d.step),
-      lineHeight: d.lineHeight,
-      weight: d.weight,
-      ...def.text?.roles?.[name]
-    };
-  };
-  return {
-    text: {
-      fontFamily: def.text?.fontFamily ?? "sans",
-      monoFamily: def.text?.monoFamily ?? "mono",
-      caption: role("caption"),
-      label: role("label"),
-      body: role("body"),
-      title: role("title"),
-      heading: role("heading")
-    },
-    color,
-    spacing: typeof def.spacing === "number" ? deriveSpacing(def.spacing) : {
-      ...deriveSpacing(SPACING_BASE),
-      ...def.spacing
-    },
-    radius: typeof def.radius === "number" ? deriveRadius(def.radius) : {
-      ...deriveRadius(RADIUS_BASE),
-      ...def.radius
-    },
-    borderWidth: {
-      ...BORDER_WIDTH,
-      ...def.borderWidth
-    },
-    size: {
-      ...SIZE,
-      ...def.size
-    },
-    icons: def.icons ?? {},
-    components: def.components ?? {}
-  };
-}
-var DEFAULT = {
-  color: {
-    background: ["#ffffff", "#0b0f17"],
-    surface: ["#f6f8fa", "#161b22"],
-    surfaceAlt: ["#eaeef2", "#21262d"],
-    text: ["#1f2328", "#b1bac4"],
-    textMuted: ["#707376", "#828993"],
-    border: ["rgba(0,0,0,0.15)", "rgba(255,255,255,0.14)"],
-    primary: "#547ebf",
-    onPrimary: "#ffffff",
-    secondary: "#2b5696",
-    onSecondary: "#ffffff",
-    danger: ["#cf222e", "#f85149"],
-    scrim: ["rgba(0,0,0,0.4)", "rgba(0,0,0,0.6)"],
-    overlayHover: ["rgba(0,0,0,0.08)", "rgba(255,255,255,0.08)"],
-    overlayPressed: ["rgba(0,0,0,0.14)", "rgba(255,255,255,0.14)"],
-    selection: ["rgba(84,126,191,0.30)", "rgba(84,126,191,0.40)"]
-  },
-  text: {
-    roles: {
-      caption: {
-        size: 12
-      }
-    }
-  }
-};
-var darkTheme = defineTheme(DEFAULT, "dark");
-var lightTheme = defineTheme(DEFAULT, "light");
-var [themeStore, setThemeStore] = createStore({
-  ...darkTheme
-});
-var theme = themeStore;
-function setTheme(partial) {
-  setThemeStore((s) => {
-    for (let key in partial) {
-      let k = key;
-      Object.assign(s[k], partial[k]);
-    }
-  });
-}
-
-// ../../packages/components/src/policy.ts
-function defaultPolicyResolver(caps) {
-  let interaction = caps.touch && caps.precisePointer ? "hybrid" : caps.touch ? "touch" : caps.precisePointer ? "desktop" : "hybrid";
-  let layout = caps.windowSizeClass === "expanded" ? "twoPane" : "singlePane";
-  return {
-    interaction,
-    density: interaction === "desktop" ? "compact" : "comfortable",
-    motion: "normal",
-    focusRing: caps.keyboardNav || gamepads().some((p) => p != null),
-    textScale: env.textScale,
-    textWeightDelta: env.displayScale < 1.5 ? 100 : 0,
-    navigation: layout === "twoPane" ? "sidebar" : "bottomTabs",
-    layout
-  };
-}
-var [resolverBox, setResolverBox] = createSignal({
-  resolve: defaultPolicyResolver
-});
-var [overrides, setOverrides] = createSignal({});
-var resolved = () => resolverBox().resolve(capabilities);
-var policy = {
-  get interaction() {
-    return overrides().interaction ?? resolved().interaction;
-  },
-  get density() {
-    return overrides().density ?? resolved().density;
-  },
-  get motion() {
-    return overrides().motion ?? resolved().motion;
-  },
-  get focusRing() {
-    return overrides().focusRing ?? resolved().focusRing;
-  },
-  get textScale() {
-    return overrides().textScale ?? resolved().textScale;
-  },
-  get textWeightDelta() {
-    return overrides().textWeightDelta ?? resolved().textWeightDelta;
-  },
-  get navigation() {
-    return overrides().navigation ?? resolved().navigation;
-  },
-  get layout() {
-    return overrides().layout ?? resolved().layout;
-  }
-};
-
 // ../../packages/components/src/typography.ts
 var SMALL_TEXT = 16;
 function lightOnDark(text, fill) {
@@ -7409,7 +7553,7 @@ function Text(props) {
   }), true);
   insert(_el$2, () => props.children);
   effect3(() => ({
-    e: split().text,
+    e: withTransitionDefaults(split().text, colorFade()),
     t: transitionEndFor("root", props.onTransitionEnd),
     a: color(),
     o: props.layout?.fontFamily ?? theme.text.fontFamily,
@@ -8105,6 +8249,13 @@ function EditorField(props) {
   });
   let buffer = untrack(() => props.buffer)((_text, offset, direction) => editor.step(offset, direction));
   let value = buffer.value;
+  let selectedText = () => {
+    let {
+      anchor,
+      focus
+    } = buffer.selection();
+    return value().slice(Math.min(anchor, focus), Math.max(anchor, focus));
+  };
   createEffect(() => props.autoFocus, (autoFocus) => {
     if (autoFocus && node)
       setFocus(node.id);
@@ -8206,6 +8357,30 @@ function EditorField(props) {
     } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "a") {
       buffer.setSelection(0, value().length);
       setCaretOn(true);
+    } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "c") {
+      let text = selectedText();
+      if (text.length === 0)
+        consumed = false;
+      else
+        navigator.clipboard.writeText(text).catch((err) => console.warn("Clipboard copy failed: " + err));
+    } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "x") {
+      let text = selectedText();
+      if (text.length === 0)
+        consumed = false;
+      else {
+        navigator.clipboard.writeText(text).catch((err) => console.warn("Clipboard cut failed: " + err));
+        buffer.insertText("");
+        setCaretOn(true);
+      }
+    } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "v") {
+      navigator.clipboard.readText().then((text) => {
+        if (text.length === 0)
+          return;
+        if (!props.multiline)
+          text = text.replace(/\r?\n/g, " ");
+        buffer.insertText(text);
+        setCaretOn(true);
+      }, (err) => console.warn("Clipboard paste failed: " + err));
     } else if (props.multiline && e.key === "Enter" && textInputActive()) {
       buffer.insertText(`
 `);
@@ -8932,7 +9107,7 @@ function Pressable(props) {
   setProp(_el$, "repaintBoundary", true);
   spread(_el$, mergeProps({
     get transition() {
-      return split().root;
+      return withTransitionDefaults(split().root, scaleFeedback());
     },
     get onTransitionEnd() {
       return transitionEndFor("root", props.onTransitionEnd);
@@ -8998,7 +9173,7 @@ function Pressable(props) {
     return () => _c$() ? (() => {
       var _el$2 = createElement("d-rect");
       effect3(() => ({
-        e: split().background,
+        e: withTransitionDefaults(split().background, colorFade()),
         t: transitionEndFor("background", props.onTransitionEnd),
         a: style()?.backgroundColor ?? "transparent",
         o: style()?.borderRadius
@@ -9024,7 +9199,7 @@ function Pressable(props) {
         drawStyle: "stroke"
       });
       effect3(() => ({
-        e: split().border,
+        e: withTransitionDefaults(split().border, colorFade()),
         t: transitionEndFor("border", props.onTransitionEnd),
         a: style()?.borderColor ?? "transparent",
         o: style()?.borderWidth,
@@ -9112,16 +9287,19 @@ function Spinner(props) {
   }), _el$2);
   effect3(() => ({
     e: path(),
-    t: color(),
-    a: thickness()
+    t: colorFade(),
+    a: color(),
+    o: thickness()
   }), ({
     e,
     t,
-    a
+    a,
+    o
   }, _p$) => {
     e !== _p$?.e && setProp(_el$2, "d", e, _p$?.e);
-    t !== _p$?.t && setProp(_el$2, "color", t, _p$?.t);
-    a !== _p$?.a && setProp(_el$2, "strokeWidth", a, _p$?.a);
+    t !== _p$?.t && setProp(_el$2, "transition", t, _p$?.t);
+    a !== _p$?.a && setProp(_el$2, "color", a, _p$?.a);
+    o !== _p$?.o && setProp(_el$2, "strokeWidth", o, _p$?.o);
   });
   return _el$;
 }
@@ -9164,7 +9342,6 @@ function Button(props) {
   });
   let idleFill = () => props.disabled ? props.variant === "ghost" ? "transparent" : theme.color.surface : colors().fill;
   let bg = () => styled().backgroundColor ?? idleFill();
-  let overlay = (s) => s.hovered && !props.disabled && policy.interaction !== "touch" ? theme.color.overlayHover : "transparent";
   let radius = () => styled().borderRadius ?? theme.radius.md;
   let label = () => props.disabled ? theme.color.textMuted : colors().label;
   let resolved2 = children(() => props.children);
@@ -9179,12 +9356,11 @@ function Button(props) {
     } : {},
     backgroundColor: bg(),
     borderRadius: radius(),
-    scale: (styled().scale ?? 1) * (press.pressed() && policy.motion !== "none" ? 0.97 : 1)
+    scale: (styled().scale ?? 1) * pressScale(press.pressed())
   });
   let split = () => splitTransition(props.transition);
-  var _el$ = createElement("view"), _el$2 = createElement("d-rect"), _el$3 = createElement("d-rect");
+  var _el$ = createElement("view"), _el$2 = createElement("d-rect");
   insertNode2(_el$, _el$2);
-  insertNode2(_el$, _el$3);
   ref(() => (n) => {
     press.ref(n);
     props.ref?.(n);
@@ -9196,7 +9372,7 @@ function Button(props) {
   setProp(_el$, "position", "relative");
   spread(_el$, mergeProps({
     get transition() {
-      return split().root;
+      return withTransitionDefaults(split().root, scaleFeedback());
     },
     get onTransitionEnd() {
       return transitionEndFor("root", props.onTransitionEnd);
@@ -9241,6 +9417,17 @@ function Button(props) {
       return props.disabled ? "none" : undefined;
     }
   }), true);
+  insert(_el$, createComponent2(PressFeedback, {
+    get pressed() {
+      return memo2(() => !!press.pressed())() ? !props.disabled : press.pressed();
+    },
+    get hovered() {
+      return memo2(() => !!(press.hovered() && !props.disabled))() ? policy.interaction !== "touch" : press.hovered() && !props.disabled;
+    },
+    get radius() {
+      return style().borderRadius;
+    }
+  }), null);
   insert(_el$, createComponent2(Show, {
     get when() {
       return isText();
@@ -9249,14 +9436,17 @@ function Button(props) {
       return resolved2();
     },
     get children() {
-      var _el$4 = createElement("text");
-      spread(_el$4, mergeProps({
+      var _el$3 = createElement("text");
+      spread(_el$3, mergeProps({
+        get transition() {
+          return colorFade();
+        },
         get color() {
-          return memo2(() => !!press.pending())() ? "transparent" : label();
+          return memo2(() => !!press.pending())() ? withAlpha(label(), 0) : label();
         }
       }, () => typeStyle("body", labelOnDark())), true);
-      insert(_el$4, resolved2);
-      return _el$4;
+      insert(_el$3, resolved2);
+      return _el$3;
     }
   }), null);
   insert(_el$, createComponent2(Show, {
@@ -9264,7 +9454,7 @@ function Button(props) {
       return press.pending();
     },
     get children() {
-      var _el$5 = createElement("view", {
+      var _el$4 = createElement("view", {
         position: "absolute",
         top: 0,
         bottom: 0,
@@ -9273,7 +9463,7 @@ function Button(props) {
         alignItems: "center",
         justifyContent: "center"
       });
-      insert(_el$5, createComponent2(Spinner, {
+      insert(_el$4, createComponent2(Spinner, {
         size: 16,
         thickness: 2,
         get style() {
@@ -9282,7 +9472,7 @@ function Button(props) {
           };
         }
       }));
-      return _el$5;
+      return _el$4;
     }
   }), null);
   insert(_el$, createComponent2(Show, {
@@ -9290,11 +9480,11 @@ function Button(props) {
       return (style().borderWidth ?? 0) > 0;
     },
     get children() {
-      var _el$6 = createElement("d-rect", {
+      var _el$5 = createElement("d-rect", {
         drawStyle: "stroke"
       });
       effect3(() => ({
-        e: split().border,
+        e: withTransitionDefaults(split().border, colorFade()),
         t: transitionEndFor("border", props.onTransitionEnd),
         a: style().borderColor ?? "transparent",
         o: style().borderWidth,
@@ -9306,36 +9496,30 @@ function Button(props) {
         o,
         i
       }, _p$) => {
-        e !== _p$?.e && setProp(_el$6, "transition", e, _p$?.e);
-        t !== _p$?.t && setProp(_el$6, "onTransitionEnd", t, _p$?.t);
-        a !== _p$?.a && setProp(_el$6, "color", a, _p$?.a);
-        o !== _p$?.o && setProp(_el$6, "strokeWidth", o, _p$?.o);
-        i !== _p$?.i && setProp(_el$6, "radius", i, _p$?.i);
+        e !== _p$?.e && setProp(_el$5, "transition", e, _p$?.e);
+        t !== _p$?.t && setProp(_el$5, "onTransitionEnd", t, _p$?.t);
+        a !== _p$?.a && setProp(_el$5, "color", a, _p$?.a);
+        o !== _p$?.o && setProp(_el$5, "strokeWidth", o, _p$?.o);
+        i !== _p$?.i && setProp(_el$5, "radius", i, _p$?.i);
       });
-      return _el$6;
+      return _el$5;
     }
   }), null);
   effect3(() => ({
-    e: split().background,
+    e: withTransitionDefaults(split().background, colorFade()),
     t: transitionEndFor("background", props.onTransitionEnd),
     a: style().backgroundColor ?? "transparent",
-    o: style().borderRadius,
-    i: overlay(press.state()),
-    n: style().borderRadius
+    o: style().borderRadius
   }), ({
     e,
     t,
     a,
-    o,
-    i,
-    n
+    o
   }, _p$) => {
     e !== _p$?.e && setProp(_el$2, "transition", e, _p$?.e);
     t !== _p$?.t && setProp(_el$2, "onTransitionEnd", t, _p$?.t);
     a !== _p$?.a && setProp(_el$2, "color", a, _p$?.a);
     o !== _p$?.o && setProp(_el$2, "radius", o, _p$?.o);
-    i !== _p$?.i && setProp(_el$3, "color", i, _p$?.i);
-    n !== _p$?.n && setProp(_el$3, "radius", n, _p$?.n);
   });
   return _el$;
 }
@@ -9433,6 +9617,9 @@ function Card(props) {
     get children() {
       var _el$3 = createElement("text");
       spread(_el$3, mergeProps({
+        get transition() {
+          return colorFade();
+        },
         get color() {
           return theme.color.text;
         }
@@ -9451,7 +9638,7 @@ function Card(props) {
         drawStyle: "stroke"
       });
       effect3(() => ({
-        e: split().border,
+        e: withTransitionDefaults(split().border, colorFade()),
         t: transitionEndFor("border", props.onTransitionEnd),
         a: styled().borderColor ?? theme.color.border,
         o: styled().borderWidth ?? theme.borderWidth.sm,
@@ -9473,7 +9660,7 @@ function Card(props) {
     }
   }), null);
   effect3(() => ({
-    e: split().background,
+    e: withTransitionDefaults(split().background, colorFade()),
     t: transitionEndFor("background", props.onTransitionEnd),
     a: bg(),
     o: radius()
@@ -9506,7 +9693,8 @@ function Modal(props) {
       right: 0,
       bottom: 0,
       alignItems: "center",
-      justifyContent: "center"
+      justifyContent: "center",
+      opacity: 1
     }), _el$2 = createElement("view", {
       position: "absolute",
       top: 0,
@@ -9521,8 +9709,18 @@ function Modal(props) {
     }, _el$);
     insertNode2(_el$2, _el$3);
     insert(_el$, () => props.children, null);
-    effect3(() => props.backdropColor ?? theme.color.scrim, (_v$, _$p) => {
-      setProp(_el$3, "color", _v$, _$p);
+    effect3(() => ({
+      e: popupFade(),
+      t: colorFade(),
+      a: props.backdropColor ?? theme.color.scrim
+    }), ({
+      e,
+      t,
+      a
+    }, _p$) => {
+      e !== _p$?.e && setProp(_el$, "transition", e, _p$?.e);
+      t !== _p$?.t && setProp(_el$3, "transition", t, _p$?.t);
+      a !== _p$?.a && setProp(_el$3, "color", a, _p$?.a);
     });
     return _el$;
   })());
@@ -9558,9 +9756,52 @@ function SegmentedControl(props) {
   let idleFill = () => styled().backgroundColor ?? theme.color.surfaceAlt;
   let activeFill = () => props.disabled ? theme.color.surface : theme.color.primary;
   let label = (active) => props.disabled ? theme.color.textMuted : active ? theme.color.onPrimary : theme.color.text;
-  let split = () => splitTransition(props.transition);
-  var _el$ = createElement("view"), _el$2 = createElement("d-rect");
+  let root;
+  let segs = [];
+  let [boxes, setBoxes] = createSignal([]);
+  let [placed, setPlaced] = createSignal(false);
+  onLayout(() => {
+    if (!root)
+      return;
+    let r = getBoundingBox2(root);
+    if (!r)
+      return;
+    let next = [];
+    for (let i = 0;i < props.options.length; i++) {
+      let s = segs[i];
+      let b = s && getBoundingBox2(s);
+      if (!b)
+        return;
+      next.push({
+        x: b.x - r.x,
+        w: b.width
+      });
+    }
+    let cur = boxes();
+    if (cur.length !== next.length || cur.some((c, i) => c.x !== next[i].x || c.w !== next[i].w))
+      setBoxes(next);
+    if (!placed())
+      setTimeout(() => setPlaced(true), 0);
+  });
+  let activeIndex = () => props.options.findIndex((o) => o.value === value());
+  let indicator = () => boxes()[activeIndex()];
+  let split = () => splitTransition(props.transition, ["indicator"]);
+  let indicatorTransition = () => {
+    if (props.transition === null)
+      return null;
+    let travel = placed() ? partTransition(props.transition, "indicator", "x", travelMotion()) : undefined;
+    let fade = colorFade();
+    if (!travel && !fade)
+      return;
+    return {
+      ...fade,
+      ...travel
+    };
+  };
+  var _el$ = createElement("view"), _el$2 = createElement("d-rect"), _el$3 = createElement("d-rect");
   insertNode2(_el$, _el$2);
+  insertNode2(_el$, _el$3);
+  ref(() => (n) => root = n, _el$);
   setProp(_el$, "flexDirection", "row");
   setProp(_el$, "gap", 0);
   spread(_el$, mergeProps({
@@ -9596,19 +9837,16 @@ function SegmentedControl(props) {
       let press = createPress({
         onPress: () => select(opt.value)
       });
-      let fill = () => active() ? activeFill() : idleFill();
-      let overlay = () => press.hovered() && !props.disabled && policy.interaction !== "touch" ? theme.color.overlayHover : "transparent";
-      var _el$3 = createElement("view"), _el$4 = createElement("d-rect"), _el$5 = createElement("d-rect"), _el$7 = createElement("text");
-      insertNode2(_el$3, _el$4);
-      insertNode2(_el$3, _el$5);
-      insertNode2(_el$3, _el$7);
-      var _ref$ = press.ref;
-      typeof _ref$ === "function" || Array.isArray(_ref$) ? ref(() => _ref$, _el$3) : press.ref = _el$3;
-      setProp(_el$3, "repaintBoundary", true);
-      setProp(_el$3, "flexGrow", 1);
-      setProp(_el$3, "flexBasis", 0);
-      setProp(_el$3, "alignItems", "center");
-      spread(_el$3, mergeProps({
+      var _el$4 = createElement("view"), _el$6 = createElement("text");
+      insertNode2(_el$4, _el$6);
+      ref(() => (n) => {
+        segs[i()] = n;
+        press.ref(n);
+      }, _el$4);
+      setProp(_el$4, "flexGrow", 1);
+      setProp(_el$4, "flexBasis", 0);
+      setProp(_el$4, "alignItems", "center");
+      spread(_el$4, mergeProps({
         get paddingTop() {
           return space("md");
         },
@@ -9629,12 +9867,23 @@ function SegmentedControl(props) {
           return props.disabled ? "none" : undefined;
         }
       }), true);
-      insert(_el$3, createComponent2(Show, {
+      insert(_el$4, createComponent2(PressFeedback, {
+        get pressed() {
+          return press.pressed();
+        },
+        get hovered() {
+          return memo2(() => !!(press.hovered() && !props.disabled))() ? policy.interaction !== "touch" : press.hovered() && !props.disabled;
+        },
+        get radius() {
+          return corners(i());
+        }
+      }), _el$6);
+      insert(_el$4, createComponent2(Show, {
         get when() {
           return memo2(() => !!press.focused())() ? policy.focusRing : press.focused();
         },
         get children() {
-          var _el$6 = createElement("d-rect", {
+          var _el$5 = createElement("d-rect", {
             drawStyle: "stroke"
           });
           effect3(() => ({
@@ -9646,53 +9895,58 @@ function SegmentedControl(props) {
             t,
             a
           }, _p$) => {
-            e !== _p$?.e && setProp(_el$6, "color", e, _p$?.e);
-            t !== _p$?.t && setProp(_el$6, "strokeWidth", t, _p$?.t);
-            a !== _p$?.a && setProp(_el$6, "radius", a, _p$?.a);
+            e !== _p$?.e && setProp(_el$5, "color", e, _p$?.e);
+            t !== _p$?.t && setProp(_el$5, "strokeWidth", t, _p$?.t);
+            a !== _p$?.a && setProp(_el$5, "radius", a, _p$?.a);
           });
-          return _el$6;
+          return _el$5;
         }
-      }), _el$7);
-      spread(_el$7, mergeProps({
+      }), _el$6);
+      spread(_el$6, mergeProps({
+        get transition() {
+          return colorFade();
+        },
         get color() {
           return label(active());
         }
       }, () => typeStyle("body", active() ? lightOnDark(label(true), activeFill()) : undefined)), true);
-      insert(_el$7, () => opt.label);
-      effect3(() => ({
-        e: fill(),
-        t: corners(i()),
-        a: overlay(),
-        o: corners(i())
-      }), ({
-        e,
-        t,
-        a,
-        o
-      }, _p$) => {
-        e !== _p$?.e && setProp(_el$4, "color", e, _p$?.e);
-        t !== _p$?.t && setProp(_el$4, "radius", t, _p$?.t);
-        a !== _p$?.a && setProp(_el$5, "color", a, _p$?.a);
-        o !== _p$?.o && setProp(_el$5, "radius", o, _p$?.o);
-      });
-      return _el$3;
+      insert(_el$6, () => opt.label);
+      return _el$4;
     }
   }), null);
   effect3(() => ({
-    e: split().background,
+    e: withTransitionDefaults(split().background, colorFade()),
     t: transitionEndFor("background", props.onTransitionEnd),
-    a: theme.color.border,
-    o: radius()
+    a: idleFill(),
+    o: radius(),
+    i: indicatorTransition(),
+    n: partTransitionEnd("indicator", props.onTransitionEnd),
+    s: indicator() ? activeFill() : withAlpha(activeFill(), 0),
+    h: indicator()?.x ?? 0,
+    r: indicator()?.w ?? 0,
+    d: corners(activeIndex())
   }), ({
     e,
     t,
     a,
-    o
+    o,
+    i,
+    n,
+    s,
+    h,
+    r,
+    d
   }, _p$) => {
     e !== _p$?.e && setProp(_el$2, "transition", e, _p$?.e);
     t !== _p$?.t && setProp(_el$2, "onTransitionEnd", t, _p$?.t);
     a !== _p$?.a && setProp(_el$2, "color", a, _p$?.a);
     o !== _p$?.o && setProp(_el$2, "radius", o, _p$?.o);
+    i !== _p$?.i && setProp(_el$3, "transition", i, _p$?.i);
+    n !== _p$?.n && setProp(_el$3, "onTransitionEnd", n, _p$?.n);
+    s !== _p$?.s && setProp(_el$3, "color", s, _p$?.s);
+    h !== _p$?.h && setProp(_el$3, "x", h, _p$?.h);
+    r !== _p$?.r && setProp(_el$3, "w", r, _p$?.r);
+    d !== _p$?.d && setProp(_el$3, "radius", d, _p$?.d);
   });
   return _el$;
 }

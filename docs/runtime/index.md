@@ -62,9 +62,11 @@ A GUI build of Flux, which is what SolidRT runs on, adds the device and
 rendering modules: `flux:rendertree` (the native tree `@solidrt/core` drives),
 `flux:gpu` (textures, shaders, draw targets), `flux:spatial` (a native
 transform hierarchy feeding draw entries), `flux:camera`,
-`flux:microphone`, `flux:audio` and `flux:video`. The `create*` primitives in
-Core wrap them with reactivity; the modules are the imperative layer
-underneath.
+`flux:microphone`, `flux:audio` and `flux:video`, plus one web-standard
+global that needs a windowing platform: `navigator`, carrying
+`navigator.clipboard` (`readText`/`writeText`, text only). The `create*`
+primitives in Core wrap them with reactivity; the modules are the
+imperative layer underneath.
 
 Where a standard exists, Flux keeps its vocabulary and simplifies the
 semantics to what a single known application needs, rather than what the
