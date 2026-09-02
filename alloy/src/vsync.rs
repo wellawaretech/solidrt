@@ -168,6 +168,196 @@ impl PacingBudget {
   }
 }
 
+// Headroom on the vsync-signal deadline beyond its latest legitimate
+// arrival (request + period + delay): sleep overshoot on the vsync thread
+// plus channel/wake latency into the main loop.
+const VSYNC_SLACK: std::time::Duration = std::time::Duration::from_millis(4);
+
+/// What `FrameRelease::on_present` asks of the caller.
+pub(crate) enum Release {
+  /// Emit the frame signal now (no vsync backend, or SwapPaced): the
+  /// blocking swap paces production.
+  Emit,
+  /// The present's frame signal waits for the vsync signal; when `arm` is
+  /// Some the caller must arm one VsyncSource request with that delay (the
+  /// chain start out of idle - normally the release below pre-armed it).
+  Deferred { arm: Option<std::time::Duration> },
+}
+
+/// What `FrameRelease::on_wake` asks of the caller.
+pub(crate) enum Wake {
+  /// Nothing to release.
+  Idle,
+  /// Release the deferred presents: emit `emit` frame signals, then arm a
+  /// VsyncSource request with `arm`'s delay when Some (the pre-arm for the
+  /// next vsync). `timed_out` = the fallback fired instead of a signal
+  /// (diagnostics; the superseded signal will be discarded by try_take).
+  Release { emit: u32, timed_out: bool, arm: Option<std::time::Duration> },
+}
+
+/// What `FrameRelease::set_pacing` asks of the caller.
+pub(crate) enum PacingChange {
+  Unchanged,
+  /// The policy changed (log it). `released` deferred presents must emit
+  /// their frame signals now (presents already deferred to a vsync signal
+  /// must not strand when leaving VsyncLocked; the outstanding vsync
+  /// request's signal drains harmlessly with nothing pending); 0 when
+  /// nothing was deferred, in which case no signal fires and the
+  /// frame-signal clock stays untouched.
+  Changed { released: u32 },
+}
+
+/// The vsync frame-release state machine (see FramePacing): which presents'
+/// frame signals defer to the display vsync, when the one outstanding
+/// request is armed and with what delay, and when the release fallback fires
+/// instead of a lost signal. Pure policy in the liveness.rs mold: the caller
+/// performs the effects each decision names (emitting frame signals, arming
+/// VsyncSource requests) and feeds the clock, so the invariants unit-test
+/// without a display (src/tests/release.rs). Without a vsync backend, and
+/// under SwapPaced, every present releases immediately and nothing arms.
+pub(crate) struct FrameRelease {
+  /// Whether a platform vsync backend exists; without one every decision is
+  /// Release::Emit and the rest of the state never engages.
+  backend: bool,
+  /// Frame-release policy; VsyncLocked until the embedder's policy arrives.
+  pacing: FramePacing,
+  /// Presents whose frame signal awaits the vsync signal (at most one in
+  /// practice: the UI thread builds the next frame only after the emission).
+  pending: u32,
+  /// Whether a vsync request is outstanding (at most one ever is). Armed at
+  /// signal emission for the NEXT vsync - not at present-return, which lands
+  /// near the vsync boundary after the full build+draw pipeline and loses
+  /// the re-arm race often enough to halve the frame rate (measured
+  /// 41-51/60). Disarmed by taking the signal; a signal taken with nothing
+  /// pending ends the chain (demand stopped), costing one spare callback.
+  armed: bool,
+  /// The fallback deadline: the latest instant the armed request's signal
+  /// could legitimately arrive (request time + one period to the next
+  /// choreographer vsync + the armed delay + slack). Anchoring on the
+  /// request keeps the fallback tight - a lost signal costs a ~1.6-period
+  /// production gap instead of the 2-3 a present-return anchor allowed -
+  /// while never firing before a healthy signal could still arrive. Racing
+  /// a merely-late one is harmless: the fallback supersedes it (new request
+  /// generation) and the chain re-locks at the next vsync.
+  deadline: std::time::Instant,
+  /// Pipeline cost estimator for the signal delay; samples open at each
+  /// vsync-released emission and close at the matching present.
+  budget: PacingBudget,
+  /// The open sample's emission instant. Tick-triggered presents (first
+  /// frame out of idle) have no open mark and are not sampled.
+  signal_emitted: Option<std::time::Instant>,
+}
+
+impl FrameRelease {
+  pub fn new(backend: bool, now: std::time::Instant) -> Self {
+    FrameRelease {
+      backend,
+      pacing: FramePacing::VsyncLocked,
+      pending: 0,
+      armed: false,
+      deadline: now,
+      budget: PacingBudget::new(),
+      signal_emitted: None,
+    }
+  }
+
+  /// Feed one present-return; `period` is the current refresh period.
+  pub fn on_present(&mut self, now: std::time::Instant, period: std::time::Duration) -> Release {
+    if !self.backend || self.pacing != FramePacing::VsyncLocked {
+      return Release::Emit;
+    }
+    if let Some(emitted) = self.signal_emitted.take() {
+      self.budget.record(now.duration_since(emitted).as_secs_f32() * 1000.0, period);
+    }
+    self.pending += 1;
+    // Normally the signal releasing this present is already armed
+    // (pre-armed when the previous one was emitted); this request only
+    // starts the chain on the first present out of idle.
+    Release::Deferred { arm: self.arm(now, period) }
+  }
+
+  /// Feed one loop wake with the VsyncSource drain's result. One signal
+  /// releases all pending; a signal past the fallback deadline is replaced
+  /// by the fallback, which also disarms so the release pre-arms a fresh
+  /// request superseding the late one.
+  pub fn on_wake(&mut self, now: std::time::Instant, period: std::time::Duration, signal_taken: bool) -> Wake {
+    if signal_taken {
+      self.armed = false;
+    }
+    if self.pending == 0 {
+      return Wake::Idle;
+    }
+    let timed_out = !signal_taken && now >= self.deadline;
+    if timed_out {
+      self.armed = false;
+    }
+    if !signal_taken && !timed_out {
+      return Wake::Idle;
+    }
+    let emit = self.pending;
+    self.pending = 0;
+    self.signal_emitted = Some(now);
+    // Pre-arm the signal for the next vsync while this frame is being
+    // built: the signal timing must not depend on when the build's present
+    // returns (see `armed`). The frame this emission triggers has until
+    // that signal - a full period plus the delay - to present, or it slips
+    // a frame.
+    Wake::Release { emit, timed_out, arm: self.arm(now, period) }
+  }
+
+  /// Feed a frame-pacing policy write. Leaving VsyncLocked releases the
+  /// deferred presents and resets the vsync-side state: the open budget
+  /// sample dies (its present will return under different pacing, so the
+  /// duration would be a bogus pipeline cost), and the chain disarms - the
+  /// outstanding request's signal still drains harmlessly, but a return to
+  /// VsyncLocked then arms a fresh request with a fresh deadline instead of
+  /// trusting the stale one.
+  pub fn set_pacing(&mut self, p: FramePacing) -> PacingChange {
+    if self.pacing == p {
+      return PacingChange::Unchanged;
+    }
+    self.pacing = p;
+    if p == FramePacing::SwapPaced {
+      let released = self.pending;
+      self.pending = 0;
+      self.armed = false;
+      self.signal_emitted = None;
+      PacingChange::Changed { released }
+    } else {
+      PacingChange::Changed { released: 0 }
+    }
+  }
+
+  /// The fallback deadline to wake at; None when no present is deferred
+  /// (the caller sleeps toward its idle-tick deadline instead).
+  pub fn wait_deadline(&self) -> Option<std::time::Instant> {
+    (self.pending > 0).then_some(self.deadline)
+  }
+
+  /// Whether no present is deferred: the idle-tick gate (while one is, the
+  /// real frame signal is at most a refresh period away, fallback included).
+  pub fn idle(&self) -> bool {
+    self.pending == 0
+  }
+
+  /// Last armed signal delay in ms, for the 1/s diagnostics line.
+  pub fn current_delay_ms(&self) -> f32 {
+    self.budget.current_ms()
+  }
+
+  // Arm a request if none is outstanding: pick the delay, set the fallback
+  // deadline, and hand the delay to the caller for VsyncSource::request.
+  fn arm(&mut self, now: std::time::Instant, period: std::time::Duration) -> Option<std::time::Duration> {
+    if self.armed {
+      return None;
+    }
+    let delay = self.budget.delay(period);
+    self.deadline = now + period + delay + VSYNC_SLACK;
+    self.armed = true;
+    Some(delay)
+  }
+}
+
 #[cfg(target_os = "android")]
 mod android {
   use std::cell::Cell;

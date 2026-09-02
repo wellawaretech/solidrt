@@ -161,7 +161,7 @@ const EMPTY_PX: (u8, u8, u8, u8) = (0, 0, 0, 0);
 
 fn main() {
   let app = alloy::setup("boundary transform", ISize::new(600, 400), alloy::Mode::Run);
-  app.run(|ctx, _cmd_tx, _event_rx| {
+  let _ = app.run(|ctx, _cmd_tx, _event_rx| {
     let platform = PlatformContext::new(Vec::new());
     platform.set_window_size(W as f32, H as f32);
     platform.set_display_scale(1.0);

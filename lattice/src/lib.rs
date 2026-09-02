@@ -990,6 +990,8 @@ fn install_panic_hook() {
   }));
 }
 
+/// Err only comes out of playback mode (an incomplete capture); the binary
+/// turns it into the process exit code.
 pub fn start(
   rt: &tokio::runtime::Runtime,
   app_source: Option<AppSource>,
@@ -1000,7 +1002,7 @@ pub fn start(
   fonts: Vec<FontPayload>,
   storage: storage::StorageSpec,
   args: Vec<String>,
-) {
+) -> Result<(), String> {
   alloy::install_logger();
   install_panic_hook();
   log::info!("[srt] SolidRT version {VERSION}");
@@ -1017,5 +1019,5 @@ pub fn start(
   let user_input_muted = app.user_input_mute();
   app.run(move |atx, alloy_cmd_tx, event_rx| {
     ui_thread(handle, atx, alloy_cmd_tx, event_rx, resampler, user_input_muted, opts);
-  });
+  })
 }

@@ -186,6 +186,94 @@ fn display_refresh_rate(window: &sdl3::video::Window) -> f32 {
 // over the mpsc channel, which the woken loop drains.
 struct FrameReady;
 
+// The platform facts the loop must poll (SDL emits no events for them):
+// screen-keyboard visibility/height, hardware-keyboard presence, power
+// status, and the display refresh rate safety net. One owner: each fact is
+// re-queried on its own cadence and emits an event only on a transition, so
+// consumers see edges instead of level spam.
+struct PlatformWatch {
+  // Screen-keyboard state; transitions emit KeyboardVisibility so the JS
+  // side can react (auto-blur on hide, layout adjustments on show).
+  keyboard_shown: bool,
+  keyboard_height: f32,
+  // Android hardware-keyboard hotplug arrives via JNI (a Configuration
+  // change), not as an SDL keyboard event, so the loop watches the fact and
+  // re-emits InputDevices on change. Elsewhere SDL's own added/removed
+  // events cover hotplug and this never transitions.
+  physical_keyboard: bool,
+  last_power_check: Instant,
+  last_refresh_check: Instant,
+  refresh_rate: f32,
+}
+
+// Power poll cadence.
+//TODO how often do we check? configurable? send on AlloyCommand only?
+const POWER_CHECK_PERIOD: Duration = Duration::from_secs(10);
+// Refresh-rate safety net cadence: catches a rate change the display event
+// might miss (e.g. Android 90 <-> 60Hz without a mode-change event).
+const REFRESH_CHECK_PERIOD: Duration = Duration::from_secs(1);
+
+impl PlatformWatch {
+  fn new(window: &sdl3::video::Window) -> Self {
+    PlatformWatch {
+      keyboard_shown: false,
+      keyboard_height: 0.0,
+      physical_keyboard: crate::sdl_utils::physical_keyboard(),
+      last_power_check: Instant::now(),
+      last_refresh_check: Instant::now(),
+      refresh_rate: display_refresh_rate(window),
+    }
+  }
+
+  // The display refresh rate as last observed; the loop derives its tick
+  // period from this every iteration.
+  fn refresh_rate(&self) -> f32 {
+    self.refresh_rate
+  }
+
+  // Re-query the display mode, emitting on change. The display-event arm
+  // and the periodic safety net both funnel here.
+  fn check_refresh(&mut self, window: &sdl3::video::Window) -> Option<AlloyEvent> {
+    let hz = display_refresh_rate(window);
+    if hz == self.refresh_rate {
+      return None;
+    }
+    self.refresh_rate = hz;
+    Some(AlloyEvent::DisplayRefreshRate { hz })
+  }
+
+  // One poll per loop iteration; returns the transition events to send.
+  fn poll(&mut self, sdl_context: &sdl3::Sdl, window: &sdl3::video::Window) -> Vec<AlloyEvent> {
+    let mut events = Vec::new();
+    if let Ok(video) = sdl_context.video() {
+      let shown = video.text_input().is_screen_keyboard_shown(window);
+      let scale = crate::sdl_utils::window_display_scale(window);
+      let height = crate::keyboard_inset_px() as f32 / scale;
+      if shown != self.keyboard_shown || height != self.keyboard_height {
+        self.keyboard_shown = shown;
+        self.keyboard_height = height;
+        events.push(AlloyEvent::KeyboardVisibility { shown, height });
+      }
+    }
+    let physical_keyboard = crate::sdl_utils::physical_keyboard();
+    if physical_keyboard != self.physical_keyboard {
+      self.physical_keyboard = physical_keyboard;
+      events.push(current_input_devices_event());
+    }
+    if self.last_power_check.elapsed() >= POWER_CHECK_PERIOD {
+      self.last_power_check = Instant::now();
+      events.push(AlloyEvent::PowerStatus { info: crate::sdl_utils::get_power_info() });
+    }
+    if self.last_refresh_check.elapsed() >= REFRESH_CHECK_PERIOD {
+      self.last_refresh_check = Instant::now();
+      if let Some(e) = self.check_refresh(window) {
+        events.push(e);
+      }
+    }
+    events
+  }
+}
+
 impl App {
   /// Handle onto the resampler the run loop feeds. Grab a clone before
   /// run(): the UI consumer samples it once per frame signal, and
@@ -201,10 +289,13 @@ impl App {
     self.user_input_muted.clone()
   }
 
+  /// Run the platform loop until the app winds down. `Err` only comes out of
+  /// playback mode (an incomplete capture); the embedder turns it into the
+  /// process exit code - alloy itself never exits the process here.
   pub fn run(
     self,
     dl_producer: impl FnOnce(Arc<Context>, mpsc::Sender<AlloyCommand>, mpsc::Receiver<AlloyEvent>) + Send + 'static,
-  ) {
+  ) -> Result<(), String> {
     let App { sdl_context, mut window, platform, mode, resampler, user_input_muted } = self;
     let surface_size = platform.surface_size_handle();
 
@@ -244,8 +335,7 @@ impl App {
     event_tx.send(initial).ok();
 
     if let Mode::Playback(playback) = mode {
-      run_playback_loop(window, rx, event_tx, playback);
-      return;
+      return run_playback_loop(window, rx, event_tx, playback);
     }
 
     // Timely "hidden" on Android: with BLOCK_ON_PAUSE the pump blocks before
@@ -279,38 +369,12 @@ impl App {
         sender.push_custom_event(FrameReady).ok();
       })
     };
-    // Headroom on the vsync-signal deadline beyond its latest legitimate
-    // arrival (request + period + delay): sleep overshoot on the vsync thread
-    // plus channel/wake latency into the main loop.
-    const VSYNC_SLACK: Duration = Duration::from_millis(4);
-    // Presents whose FrameRendered awaits the vsync signal. vsync_deadline
-    // drives the fallback: if the armed request's signal has not arrived by
-    // the latest instant it legitimately could (request time + one period to
-    // the next choreographer vsync + the armed delay + slack), release the
-    // pending present instead of stalling frame production. Anchoring on the
-    // request keeps the fallback tight - a lost signal costs a ~1.6-period
-    // production gap instead of the 2-3 the old present-return anchor allowed
-    // - while never firing before a healthy signal could still arrive. Racing
-    // a merely-late one is harmless anyway: the fallback supersedes it (new
-    // request generation) and the chain re-locks at the next vsync.
-    let mut pending_presents: u32 = 0;
-    let mut vsync_deadline = Instant::now();
-    // Frame-release policy (see vsync::FramePacing). VsyncLocked until the
-    // embedder's policy arrives; only consulted where a vsync backend exists.
-    let mut frame_pacing = crate::vsync::FramePacing::VsyncLocked;
-    // Whether a vsync request is outstanding (at most one ever is). Armed at
-    // signal emission for the NEXT vsync - not at present-return, which lands
-    // near the vsync boundary after the full build+draw pipeline and loses
-    // the re-arm race often enough to halve the frame rate (measured
-    // 41-51/60). Disarmed by taking the signal; a signal taken with nothing
-    // pending ends the chain (demand stopped), costing one spare callback.
-    let mut vsync_armed = false;
-    // Pipeline cost estimator for the signal delay: signal_emitted marks each
-    // vsync-released FrameRendered, and its matching Presented closes the
-    // sample. Tick-triggered presents (first frame out of idle) have no open
-    // mark and are not sampled.
-    let mut pacing = crate::vsync::PacingBudget::new();
-    let mut signal_emitted: Option<Instant> = None;
+    // The vsync frame-release policy (deferred presents, the one outstanding
+    // request, the fallback deadline, the signal-delay budget), extracted as
+    // a pure state machine so its invariants unit-test without a display;
+    // this loop performs the effects its decisions name. See
+    // vsync::FrameRelease.
+    let mut release = crate::vsync::FrameRelease::new(vsync.is_some(), Instant::now());
 
     let mut event_pump = sdl_context.event_pump().expect("Failed to get SDL event pump");
     // None when SDL has no gamepad support on this platform; pads already
@@ -322,7 +386,9 @@ impl App {
     // refresh rate (its own event, delivered on init and on change). Smoothing
     // and pacing are userspace policy.
     let start_time = Instant::now();
-    let mut refresh_rate = display_refresh_rate(&window);
+    // The polled platform facts (keyboard, power, refresh-rate safety net);
+    // polled at the bottom of each iteration, emitting on transitions.
+    let mut watch = PlatformWatch::new(&window);
 
     let mut fps_last_second = Instant::now();
     let mut fps_frame_count: u32 = 0;
@@ -337,18 +403,6 @@ impl App {
     // events report the lock point instead; motion continues via rel.
     let mut pointer_lock_frozen: Option<(f32, f32)> = None;
     let mut last_mouse: (f32, f32) = (0.0, 0.0);
-    let mut last_power_check = Instant::now();
-
-    // Polled each loop iteration; transitions emit KeyboardVisibility so the
-    // JS side can react (auto-blur on hide, layout adjustments on show).
-    let mut prev_keyboard_shown = false;
-    let mut prev_keyboard_height = 0.0_f32;
-
-    // Android hardware-keyboard hotplug arrives via JNI (a Configuration
-    // change), not as an SDL keyboard event, so the loop watches the fact and
-    // re-emits InputDevices on change. Elsewhere SDL's own added/removed
-    // events cover hotplug and this never transitions.
-    let mut prev_physical_keyboard = crate::sdl_utils::physical_keyboard();
 
     // Instant of the last frame signal (FrameRendered or Tick). When the UI
     // thread submits nothing for a full refresh period, an idle Tick keeps its
@@ -365,19 +419,18 @@ impl App {
     // SDL translates into a Quit event) lands in the dead channel and wedges
     // the process until SIGKILL.
     'run: loop {
-      let tick_period = Duration::from_secs_f64(1.0 / refresh_rate.max(1.0) as f64);
+      let tick_period = Duration::from_secs_f64(1.0 / watch.refresh_rate().max(1.0) as f64);
       // Sleep on the SDL event queue until the next idle-tick deadline: input
       // wakes it directly and each submitted frame pushes a FrameReady user
       // event (see Context::submit), so nothing needs polling. The woken-for
       // event is handled below alongside the rest of the queue; a FrameReady
       // falls through translate_event as a no-op, its work is the rx drain.
-      let remaining = if pending_presents > 0 {
+      let remaining = match release.wait_deadline() {
         // A present awaits its vsync signal: Ticks are suppressed and the
         // wake comes from the vsync thread, so wait until the fallback
         // deadline instead (neither spinning nor sleeping through it).
-        vsync_deadline.saturating_duration_since(Instant::now())
-      } else {
-        tick_period.saturating_sub(last_frame_signal.elapsed())
+        Some(deadline) => deadline.saturating_duration_since(Instant::now()),
+        None => tick_period.saturating_sub(last_frame_signal.elapsed()),
       };
       let first_event = if remaining.is_zero() {
         None
@@ -397,31 +450,20 @@ impl App {
         match rx.try_recv() {
           Ok(FrameOutput::Presented) => {
             fps_frame_count += 1;
-            match &vsync {
-              Some(v) if frame_pacing == crate::vsync::FramePacing::VsyncLocked => {
-                if let Some(emitted) = signal_emitted.take() {
-                  pacing.record(emitted.elapsed().as_secs_f32() * 1000.0, tick_period);
-                }
-                pending_presents += 1;
-                // Normally the signal releasing this present is already
-                // armed (pre-armed when the previous one was emitted); this
-                // request only starts the chain on the first present out of
-                // idle.
-                if !vsync_armed {
-                  let delay = pacing.delay(tick_period);
-                  vsync_deadline = Instant::now() + tick_period + delay + VSYNC_SLACK;
-                  v.request(delay);
-                  vsync_armed = true;
-                }
-              }
+            match release.on_present(Instant::now(), tick_period) {
               // No vsync backend, or SwapPaced policy: the frame signal
               // follows the present directly and the blocking swap paces.
-              _ => {
+              crate::vsync::Release::Emit => {
                 let time = start_time.elapsed().as_secs_f64();
                 event_tx.send(AlloyEvent::FrameRendered { frame, fps, time }).ok();
                 frame += 1;
                 last_frame_signal = Instant::now();
                 liveness.on_frame_signal(last_frame_signal);
+              }
+              crate::vsync::Release::Deferred { arm } => {
+                if let (Some(v), Some(delay)) = (&vsync, arm) {
+                  v.request(delay);
+                }
               }
             }
           }
@@ -450,14 +492,8 @@ impl App {
           pointer_moves = 0;
         }
         if vsync.is_some() && fps > 0 {
-          let delay_ms = pacing.current_ms();
+          let delay_ms = release.current_delay_ms();
           log::debug!("[alloy] pacing: signal delay {delay_ms:.1}ms");
-        }
-        // Safety net: report a refresh-rate change the display event might miss.
-        let hz = display_refresh_rate(&window);
-        if hz != refresh_rate {
-          refresh_rate = hz;
-          event_tx.send(AlloyEvent::DisplayRefreshRate { hz }).ok();
         }
       }
 
@@ -472,7 +508,7 @@ impl App {
       // suppression too, or `remaining` above stays zero and the loop spins
       // through the backlog instead of sleeping; ticks resume within one
       // refresh period of the queue draining.
-      if pending_presents == 0 && last_frame_signal.elapsed() >= tick_period {
+      if release.idle() && last_frame_signal.elapsed() >= tick_period {
         if stats.queue_depth.load(Ordering::Acquire) == 0 {
           // The Tick is the loop's heartbeat, so an idle app with a finished
           // producer winds down within one tick period (see 'run).
@@ -497,10 +533,8 @@ impl App {
         if let sdl3::event::Event::Display { display_event, .. } = &sdl_event {
           use sdl3::event::DisplayEvent;
           if matches!(display_event, DisplayEvent::CurrentModeChanged | DisplayEvent::DesktopModeChanged) {
-            let hz = display_refresh_rate(&window);
-            if hz != refresh_rate {
-              refresh_rate = hz;
-              event_tx.send(AlloyEvent::DisplayRefreshRate { hz }).ok();
+            if let Some(e) = watch.check_refresh(&window) {
+              event_tx.send(e).ok();
             }
           }
         }
@@ -561,42 +595,25 @@ impl App {
       // arriving after its present was released by the fallback, cannot
       // release a future present early.
       if let Some(v) = &vsync {
-        let mut due = v.try_take();
-        if due {
-          vsync_armed = false;
-        }
-        if pending_presents > 0 {
-          if !due && Instant::now() >= vsync_deadline {
-            // Debug, not warn: a GPU-saturated device (Android TV) misses
-            // vsyncs in steady state, one line per missed frame. SRT_LOG=debug
-            // surfaces them when diagnosing the vsync source itself.
-            log::debug!("[alloy] vsync signal missed; emitting frame signal after timeout");
-            due = true;
-            // The armed signal did not make it in time; disarm so the pre-arm
-            // below sends a fresh request, superseding it - when it lands it
-            // will be discarded instead of releasing the next present early.
-            vsync_armed = false;
-          }
-          if due {
-            while pending_presents > 0 {
-              pending_presents -= 1;
+        match release.on_wake(Instant::now(), tick_period, v.try_take()) {
+          crate::vsync::Wake::Idle => {}
+          crate::vsync::Wake::Release { emit, timed_out, arm } => {
+            if timed_out {
+              // Debug, not warn: a GPU-saturated device (Android TV) misses
+              // vsyncs in steady state, one line per missed frame.
+              // SRT_LOG=debug surfaces them when diagnosing the vsync source
+              // itself.
+              log::debug!("[alloy] vsync signal missed; emitting frame signal after timeout");
+            }
+            for _ in 0..emit {
               let time = start_time.elapsed().as_secs_f64();
               event_tx.send(AlloyEvent::FrameRendered { frame, fps, time }).ok();
               frame += 1;
             }
             last_frame_signal = Instant::now();
             liveness.on_frame_signal(last_frame_signal);
-            signal_emitted = Some(Instant::now());
-            // Pre-arm the signal for the next vsync while this frame is
-            // being built: the signal timing must not depend on when the
-            // build's present returns (see vsync_armed). The frame this
-            // emission triggers has until that signal - a full period plus
-            // the delay - to present, or it slips a frame.
-            if !vsync_armed {
-              let delay = pacing.delay(tick_period);
-              vsync_deadline = Instant::now() + tick_period + delay + VSYNC_SLACK;
+            if let Some(delay) = arm {
               v.request(delay);
-              vsync_armed = true;
             }
           }
         }
@@ -622,7 +639,7 @@ impl App {
               raster.send(RasterCmd::RebindWindowSurface).ok();
             }
             event_tx.send(e).ok();
-            event_tx.send(AlloyEvent::DisplayRefreshRate { hz: refresh_rate }).ok();
+            event_tx.send(AlloyEvent::DisplayRefreshRate { hz: watch.refresh_rate() }).ok();
             event_tx.send(current_system_theme_event()).ok();
             event_tx.send(current_input_devices_event()).ok();
             event_tx.send(current_orientation_event(&window)).ok();
@@ -639,17 +656,14 @@ impl App {
             raster.send(RasterCmd::SetDemandLatch { latch: latch.clone() }).ok();
             liveness.set_latch(latch);
           }
-          AlloyCommand::SetFramePacing(p) => {
-            if frame_pacing != p {
+          AlloyCommand::SetFramePacing(p) => match release.set_pacing(p) {
+            crate::vsync::PacingChange::Unchanged => {}
+            crate::vsync::PacingChange::Changed { released } => {
               log::info!("[alloy] frame pacing: {p:?}");
-              frame_pacing = p;
-              // Presents already deferred to a vsync signal must not strand
-              // when leaving VsyncLocked; release them now. The outstanding
-              // vsync request stays armed and its signal drains harmlessly
-              // with nothing pending.
-              if p == crate::vsync::FramePacing::SwapPaced {
-                while pending_presents > 0 {
-                  pending_presents -= 1;
+              // The clock reset belongs to an actual emission: a switch that
+              // released nothing must not delay the next idle Tick.
+              if released > 0 {
+                for _ in 0..released {
                   let time = start_time.elapsed().as_secs_f64();
                   event_tx.send(AlloyEvent::FrameRendered { frame, fps, time }).ok();
                   frame += 1;
@@ -658,7 +672,7 @@ impl App {
                 liveness.on_frame_signal(last_frame_signal);
               }
             }
-          }
+          },
           AlloyCommand::SetTitle(t) => {
             if let Err(e) = window.set_title(&t) {
               log::warn!("set_title failed: {e}");
@@ -676,7 +690,7 @@ impl App {
               log::warn!("set_fullscreen failed: {e}");
             }
           }
-          AlloyCommand::SetCursor(cursor) => match sdl3::mouse::Cursor::from_system(cursor) {
+          AlloyCommand::SetCursor(cursor) => match sdl3::mouse::Cursor::from_system(cursor.to_sdl()) {
             Ok(c) => c.set(),
             Err(e) => log::warn!("set_cursor failed: {e}"),
           },
@@ -716,28 +730,10 @@ impl App {
         }
       }
 
-      if let Ok(video) = sdl_context.video() {
-        let shown = video.text_input().is_screen_keyboard_shown(&window);
-        let scale = crate::sdl_utils::window_display_scale(&window);
-        let height = crate::keyboard_inset_px() as f32 / scale;
-        if shown != prev_keyboard_shown || height != prev_keyboard_height {
-          prev_keyboard_shown = shown;
-          prev_keyboard_height = height;
-          event_tx.send(AlloyEvent::KeyboardVisibility { shown, height }).ok();
-        }
-      }
-
-      let physical_keyboard = crate::sdl_utils::physical_keyboard();
-      if physical_keyboard != prev_physical_keyboard {
-        prev_physical_keyboard = physical_keyboard;
-        event_tx.send(current_input_devices_event()).ok();
-      }
-
-      //TODO how often do we check? configurable? send on AlloyCommand only?
-      if last_power_check.elapsed().as_secs() >= 10 {
-        last_power_check = Instant::now();
-        event_tx.send(AlloyEvent::PowerStatus { info: crate::sdl_utils::get_power_info() }).ok();
+      for e in watch.poll(&sdl_context, &window) {
+        event_tx.send(e).ok();
       }
     }
+    Ok(())
   }
 }

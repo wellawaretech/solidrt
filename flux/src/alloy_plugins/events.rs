@@ -1,6 +1,5 @@
-use alloy::sdl3::video::Orientation;
 use alloy::sdl_utils::{PowerState, SystemTheme};
-use alloy::{AlloyEvent, Modifiers};
+use alloy::{AlloyEvent, Modifiers, Orientation};
 use rquickjs::{Array, Null, Object};
 
 use crate::{emit_event, emit_sticky, ExecHandle};

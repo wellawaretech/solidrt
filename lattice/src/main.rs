@@ -26,7 +26,9 @@ fn main() {
     let app_args: Vec<String> = std::env::args().skip(1).collect();
     let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().expect("Failed to build Tokio runtime");
     let storage = lattice::storage::StorageSpec { data_root: None, client: None, app_id: Some(payload.app_id) };
-    lattice::start(&rt, Some(payload.app), alloy::Mode::Run, (1280, 720), false, None, payload.fonts, storage, app_args);
+    // Mode::Run never returns Err (only playback does); ignore rather than
+    // invent an exit path the interactive loop does not have.
+    let _ = lattice::start(&rt, Some(payload.app), alloy::Mode::Run, (1280, 720), false, None, payload.fonts, storage, app_args);
     return;
   }
 
@@ -158,7 +160,21 @@ fn main() {
   };
   let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().expect("Failed to build Tokio runtime");
   let storage = lattice::storage::StorageSpec { data_root: data_root.map(Into::into), client, app_id };
-  lattice::start(&rt, app, mode, size, stats, dev_server, fonts, storage, app_args);
+  let result = lattice::start(&rt, app, mode, size, stats, dev_server, fonts, storage, app_args);
+  // Playback exits hard, here in the binary: headless callers gate on the
+  // exit code (srt render verification), so an incomplete capture must read
+  // nonzero - and a plain return would run the runtime's drop, which can
+  // block on a lingering blocking task and hang the render at the finish
+  // line. Interactive mode returns Ok and winds down normally.
+  if playback {
+    match result {
+      Ok(()) => std::process::exit(0),
+      Err(e) => {
+        log::error!("[srt] {e}");
+        std::process::exit(1);
+      }
+    }
+  }
 }
 
 // `--out` names where playback frames land: an existing directory (frames

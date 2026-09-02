@@ -20,6 +20,7 @@ mod liveness;
 mod paint;
 mod path;
 mod present;
+mod release;
 mod resample;
 mod router;
 mod spatial;

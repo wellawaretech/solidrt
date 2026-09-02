@@ -300,11 +300,10 @@ impl Context {
     self.send(RasterCmd::SetOverlay { overlay });
   }
 
-  /// Inventory the GPU resources the raster thread tracks: registered
-  /// textures, vertex buffers, and shader/pipeline targets with their
-  /// bookkeeping (draw state, layout, bindings, current params - the most
-  /// recent writes, which the next flush renders with). Sorted by id for
-  /// stable output.
+  /// The draw target owning depth texture `id` (create_draw_target with
+  /// DepthStorage::Texture); None when `id` is not a depth id. The paths
+  /// that must refuse to treat a depth id as a texture of its own (destroy,
+  /// readback, copy) consult this.
   pub fn depth_owner(&self, id: u64) -> Option<u64> {
     self.depth_ids.borrow().get(&id).copied()
   }
@@ -362,6 +361,11 @@ impl Context {
     Ok(())
   }
 
+  /// Inventory the GPU resources the raster thread tracks: registered
+  /// textures, vertex buffers, and shader/pipeline targets with their
+  /// bookkeeping (draw state, layout, bindings, current params - the most
+  /// recent writes, which the next flush renders with). Sorted by id for
+  /// stable output.
   pub fn gpu_resources(&self) -> GpuResources {
     self.rpc(|reply| RasterCmd::Resources { reply }).unwrap_or_else(|_| GpuResources {
       textures: Vec::new(),

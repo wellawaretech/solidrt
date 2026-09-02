@@ -272,6 +272,11 @@ Shaped, not started.
   Text defaults to Medium so that small type stays readable on 1x desktop
   displays, which over-thickens every label on the 2-3x phone screens that
   never needed it.
+- **[Wire up the mouse cursor - element cursor prop over SetCursor](backlog/element-cursor-prop.md)** [2026-09-02]
+  AlloyCommand::SetCursor and SetCursorVisible exist with a CSS-vocabulary
+  Cursor enum but have no sender anywhere; give apps the web's cursor model -
+  a per-element cursor prop resolved against the hover path, innermost wins,
+  "none" hides.
 - **[Move the fetch disk cache out of forge?](backlog/fetch-cache-out-of-forge.md)** [2026-07-24]
   Lattice is now the only cache configurer, so should the mechanism follow the
   policy out of forge, and which of the three candidate shapes pays for

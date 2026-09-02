@@ -24,7 +24,7 @@ pub(crate) fn run_playback_loop(
   rx: mpsc::Receiver<FrameOutput>,
   event_tx: mpsc::Sender<AlloyEvent>,
   mut playback: PlaybackConfig,
-) {
+) -> Result<(), String> {
   let (w_px, h_px) = window.size_in_pixels();
   let width = w_px as usize;
   let height = h_px as usize;
@@ -64,14 +64,14 @@ pub(crate) fn run_playback_loop(
 
   log::info!("[alloy] recording complete ({written} of {} frames)", playback.frames);
   // An incomplete capture means the app failed to produce some frame (threw
-  // at startup, raster thread died, readbacks failed). Headless callers use
-  // this exit code as a verification gate, so only a full capture reads as
-  // success.
+  // at startup, raster thread died, readbacks failed). Err surfaces through
+  // App::run to the embedder, whose exit code headless callers use as a
+  // verification gate - so only a full capture reads as success, and the
+  // exit itself stays out of library code.
   if written < playback.frames {
-    log::error!("[alloy] only {written} of {} frames were written", playback.frames);
-    std::process::exit(1);
+    return Err(format!("only {written} of {} frames were written", playback.frames));
   }
-  std::process::exit(0);
+  Ok(())
 }
 
 // Lossless PNG. GL gives RGBA bottom-up, image expects top-down, so we flip

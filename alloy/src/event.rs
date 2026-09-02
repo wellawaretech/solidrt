@@ -23,7 +23,7 @@ pub enum AlloyCommand {
   // the loop applies it immediately, releasing any vsync-deferred presents
   // when leaving VsyncLocked.
   SetFramePacing(crate::vsync::FramePacing),
-  SetCursor(sdl3::mouse::SystemCursor),
+  SetCursor(Cursor),
   SetCursorVisible(bool),
   // Relative mouse mode (pointer lock): SDL hides the cursor, confines it
   // to the window, and mouse motion reports hardware deltas while absolute
@@ -35,6 +35,70 @@ pub enum AlloyCommand {
   // routes to Activity.moveTaskToBack, the platform's back-at-root
   // convention. Desktop quits by process exit instead and never sends this.
   Background,
+}
+
+// Standard cursor shape (SetCursor), in the CSS `cursor` vocabulary - the
+// subset the platform provides everywhere. Translated to the platform cursor
+// at the loop; SDL's cursor type never leaves this crate (the same boundary
+// rule as keys, see `crate::keymap`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Cursor {
+  Default,
+  Text,
+  Wait,
+  Crosshair,
+  Progress,
+  NwseResize,
+  NeswResize,
+  EwResize,
+  NsResize,
+  Move,
+  NotAllowed,
+  Pointer,
+}
+
+impl Cursor {
+  pub(crate) fn to_sdl(self) -> sdl3::mouse::SystemCursor {
+    use sdl3::mouse::SystemCursor;
+    match self {
+      Cursor::Default => SystemCursor::Arrow,
+      Cursor::Text => SystemCursor::IBeam,
+      Cursor::Wait => SystemCursor::Wait,
+      Cursor::Crosshair => SystemCursor::Crosshair,
+      Cursor::Progress => SystemCursor::WaitArrow,
+      Cursor::NwseResize => SystemCursor::SizeNWSE,
+      Cursor::NeswResize => SystemCursor::SizeNESW,
+      Cursor::EwResize => SystemCursor::SizeWE,
+      Cursor::NsResize => SystemCursor::SizeNS,
+      Cursor::Move => SystemCursor::SizeAll,
+      Cursor::NotAllowed => SystemCursor::No,
+      Cursor::Pointer => SystemCursor::Hand,
+    }
+  }
+}
+
+// Orientation of the display the window is on (DisplayOrientation).
+// Translated from SDL at the loop, like keys and cursors.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Orientation {
+  Unknown,
+  Landscape,
+  LandscapeFlipped,
+  Portrait,
+  PortraitFlipped,
+}
+
+impl Orientation {
+  fn from_sdl(o: sdl3::video::Orientation) -> Self {
+    use sdl3::video::Orientation as Sdl;
+    match o {
+      Sdl::Landscape => Orientation::Landscape,
+      Sdl::LandscapeFlipped => Orientation::LandscapeFlipped,
+      Sdl::Portrait => Orientation::Portrait,
+      Sdl::PortraitFlipped => Orientation::PortraitFlipped,
+      Sdl::Unknown => Orientation::Unknown,
+    }
+  }
 }
 
 // IME/session configuration for SetTextInputActive(true), mirroring SDL's
@@ -274,7 +338,7 @@ pub enum AlloyEvent {
   // Orientation of the display the window is on. Emitted at init and on
   // rotation.
   DisplayOrientation {
-    orientation: sdl3::video::Orientation,
+    orientation: Orientation,
   },
   // Full connected-gamepad state, emitted whenever any pad connects,
   // disconnects, or changes a button/axis (coalesced to at most one per main
@@ -325,8 +389,8 @@ pub(crate) fn current_input_devices_event() -> AlloyEvent {
 pub(crate) fn current_orientation_event(window: &sdl3::video::Window) -> AlloyEvent {
   let orientation = window
     .get_display()
-    .map(|d| sdl3::video::Orientation::from_ll(d.get_orientation()))
-    .unwrap_or(sdl3::video::Orientation::Unknown);
+    .map(|d| Orientation::from_sdl(sdl3::video::Orientation::from_ll(d.get_orientation())))
+    .unwrap_or(Orientation::Unknown);
   AlloyEvent::DisplayOrientation { orientation }
 }
 

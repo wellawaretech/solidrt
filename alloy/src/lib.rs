@@ -41,7 +41,8 @@ pub use app::{setup, App};
 pub use backend::DisplayContext;
 pub use context::{CaptureDone, CaptureInfo, Context, Overlay};
 pub use event::{
-  AlloyCommand, AlloyEvent, GamepadState, Modifiers, PointerType, TextCapitalization, TextInputOptions, TextInputType,
+  AlloyCommand, AlloyEvent, Cursor, GamepadState, Modifiers, Orientation, PointerType, TextCapitalization,
+  TextInputOptions, TextInputType,
 };
 pub use gpu::{
   parse_blend, parse_cull, AttrFormat, BlendMode, BufferIds, BufferUpdate, CullMode, DepthState, DepthStorage,

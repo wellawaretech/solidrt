@@ -165,6 +165,27 @@ the loop: fold the four inline platform pollers (screen keyboard,
 hardware keyboard hotplug, power, refresh rate; app.rs:452-461,
 719-740) into one PlatformWatch that emits events on transitions.
 
+Done 2026-09-02: FrameRelease in vsync.rs (beside FramePacing and the
+PacingBudget it now owns) - on_present -> Emit | Deferred{arm},
+on_wake(signal_taken) -> Idle | Release{emit, timed_out, arm},
+set_pacing -> Unchanged | Changed{released}, plus wait_deadline/idle for
+the loop's sleep and tick gate; the six locals and VSYNC_SLACK moved in
+as documented fields, the loop performs the effects each decision names.
+Seven unit tests in src/tests/release.rs (chain start arms, one signal
+releases all and pre-arms, fallback at the deadline disarms and
+supersedes, empty-signal chain end, SwapPaced release-on-switch).
+PlatformWatch in app.rs holds the four pollers' state and cadences
+(power 10s, refresh net 1s as named constants), emitting on transitions;
+the display-event arm and the safety net funnel through one
+check_refresh. App::run is ~440 lines. Three accidental quirks of the
+old locals were fixed rather than transcribed: a pacing switch that
+releases nothing no longer resets the frame-signal clock, and leaving
+VsyncLocked clears the open budget sample (its present returns under
+different pacing - a bogus pipeline cost) and disarms, so a return to
+VsyncLocked arms a fresh superseding request instead of trusting a
+stale deadline. Verified: 395 alloy tests (8 for FrameRelease),
+examples check, flux --lib --features gui (59), lattice check.
+
 ### 6. Small, cheap policy consolidations
 
 Each is under an hour and removes one convention:
@@ -221,6 +242,20 @@ gui (59 tests), lattice check.
   (playback.rs:72-74); return a result and let lattice exit.
 - Micro: gpu_resources doc attached to depth_owner
   (context/mod.rs:303-310); context/capture "offscreen" naming above.
+
+Done 2026-09-02: alloy Cursor (CSS `cursor` vocabulary, the 12 shapes
+SDL provides everywhere) and Orientation enums in event.rs, translated
+at the loop like keys; SDL's cursor and orientation types no longer
+leave the crate (power and theme were already alloy enums in
+sdl_utils). flux's DisplayOrientation marshalling reads
+alloy::Orientation; no JS-visible change. run_playback_loop returns
+Result (incomplete capture = Err) through App::run -> lattice::start;
+the exit(0)/exit(1) decision moved to lattice's main - the headless
+verification gate is unchanged. The examples bind `let _ =` (Mode::Run
+never errs). gpu_resources' doc moved off depth_owner, which got its
+own. Not changed: raster's present() still exits on confirmed GPU
+context loss - that exit is the documented context-loss policy
+(okf/backlog/gpu-context-loss.md), not a library-boundary leak.
 
 ## Do not churn (explicit)
 
