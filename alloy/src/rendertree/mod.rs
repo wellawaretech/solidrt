@@ -1,3 +1,4 @@
+mod boundary;
 pub mod composite;
 pub mod counters;
 pub mod cull;
@@ -12,11 +13,12 @@ pub mod text;
 pub mod transitions;
 mod tree;
 
+pub use boundary::{BakedBackdrops, PaintCache, RecordingCache, ShadedCache, SnapshotCache};
 pub use frame::{Commit, FrameBuilder, FrameDriver, PendingFrame};
 pub use hit::{EventInterest, HitConfig, PointerEvents};
 pub use kinds::{
-  fit_rects, FilterState, Gradient, GradientStop, GradientUnits, Line, OriginCoord, Oval, PaintState, Path,
-  Rectangle, ShadowState, Texture, TextureFit, View, Window,
+  fit_rects, FilterState, Gradient, GradientStop, GradientUnits, Line, OriginCoord, Oval, PaintState, Path, Rectangle,
+  ShadowState, Texture, TextureFit, View, Window,
 };
 pub use layout::{LayoutCache, LayoutContext, LayoutData};
 pub use platform::{FontPayload, PlatformContext};
@@ -25,7 +27,7 @@ pub use text::{OverflowWrap, RunOverrides, RunStyle, Span, Text, TextAnchor, Tex
 pub use transitions::{AnimProp, AnimValue, Curve, TransitionConfig, TransitionEntry, TransitionSpec};
 pub use tree::{NodeMatch, NodeSnapshot, RenderTree};
 
-use crate::impellers::{DisplayList, DisplayListBuilder, Texture as ImpellerTexture};
+use crate::impellers::DisplayListBuilder;
 use std::cell::{Cell, RefCell};
 use taffy::{AvailableSpace, Position, Style};
 
@@ -266,7 +268,7 @@ impl Measurable for ElementKind {
 /// `Compose` marks a write to composite-time state - a View's matrix, its
 /// group opacity, a boundary shader declaration: the node's own cached
 /// content stays valid (composite applies the current state around or over
-/// it; see composite::hoisted_matrix and composite::snapshot_node), but
+/// it; see composite::own_matrix and boundary::snapshot_node), but
 /// ancestor boundaries hold the node's old composited result and must
 /// repaint.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -281,7 +283,7 @@ pub enum Damage {
   /// The node's composite-time state changed; its content caches survive.
   Compose,
   /// The node's scroll offset changed. A Recording cache survives (clip and
-  /// scroll are applied around it at composite time; see composite::Hoist),
+  /// scroll are applied around it at composite time; see boundary::Hoist),
   /// but a Snapshot texture does not contain scrolled-out pixels and must
   /// re-rasterize.
   Scroll,
@@ -329,43 +331,6 @@ pub enum BoundaryMode {
   Recording,
   Snapshot,
   SnapshotNoAa,
-}
-
-/// A boundary's retained paint result, in node-local coordinates.
-pub enum PaintCache {
-  Recording(DisplayList),
-  Snapshot(SnapshotCache),
-}
-
-/// A snapshot boundary's retained rasterization. It remembers the logical
-/// size and display scale it was rasterized at: pixels are
-/// resolution-dependent, so a mismatch forces re-rasterization even when
-/// nothing inside the subtree changed. Invalidation marks it stale
-/// (`valid: false`) instead of dropping it: the pixels are worthless but the
-/// texture allocation is still exactly the right size, so the next raster
-/// re-renders into it instead of reallocating (see composite::snapshot_node).
-/// All storage is exact-size; with an unchanged canvas the allocation is
-/// reusable across shader declaration changes in either direction.
-pub struct SnapshotCache {
-  pub texture: ImpellerTexture,
-  pub width: f32,
-  pub height: f32,
-  pub scale: f32,
-  pub valid: bool,
-  /// The shader half, present while a boundary shader is declared (see
-  /// `View::set_shader`); its output is composited in place of `texture`.
-  pub shaded: Option<ShadedCache>,
-}
-
-/// The boundary shader's cache: the pass output composited in place of the
-/// raw snapshot, the outset the canvas was rasterized with (it joins the
-/// validity key - a different outset means different storage), and, with
-/// `previous` declared, the prior rasterization retained as the pass's
-/// `uPrevious` input.
-pub struct ShadedCache {
-  pub output: ImpellerTexture,
-  pub outset: f32,
-  pub history: Option<ImpellerTexture>,
 }
 
 pub struct Element {

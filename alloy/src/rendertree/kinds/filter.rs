@@ -36,12 +36,8 @@ pub struct FilterState {
 // translation, still in 0..1 here).
 type Matrix4x5 = [[f32; 5]; 4];
 
-const IDENTITY: Matrix4x5 = [
-  [1.0, 0.0, 0.0, 0.0, 0.0],
-  [0.0, 1.0, 0.0, 0.0, 0.0],
-  [0.0, 0.0, 1.0, 0.0, 0.0],
-  [0.0, 0.0, 0.0, 1.0, 0.0],
-];
+const IDENTITY: Matrix4x5 =
+  [[1.0, 0.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 0.0, 1.0, 0.0]];
 
 // after * before, treating both as 5x5 with an identity last row: the
 // combined transform applies `before` first.
@@ -141,10 +137,7 @@ impl FilterState {
     }
     if let Some(k) = self.sepia {
       let k = k.clamp(0.0, 1.0);
-      push(lerp_rgb(
-        [[0.393, 0.769, 0.189], [0.349, 0.686, 0.168], [0.272, 0.534, 0.131]],
-        k,
-      ));
+      push(lerp_rgb([[0.393, 0.769, 0.189], [0.349, 0.686, 0.168], [0.272, 0.534, 0.131]], k));
     }
     if let Some(s) = self.saturate {
       // The feColorMatrix "saturate" matrix: luminance plus s of the excess.

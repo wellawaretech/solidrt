@@ -1,20 +1,18 @@
-use crate::impellers::{
-  ClipOperation, Color, DisplayList, DisplayListBuilder, Matrix, Paint, Point, Rect, RoundingRadii, Size, Texture,
-  TextureSampling,
-};
+use crate::impellers::{ClipOperation, Color, DisplayListBuilder, Matrix, Paint, Point, Rect, RoundingRadii, Size};
 use taffy::style::Overflow;
 use taffy::{AvailableSpace, NodeId};
 
+use crate::rendertree::boundary::{self, Hoist};
 use crate::rendertree::cull::{self, CullRect};
 use crate::rendertree::{
   BoundaryMode, BuildContext, Element, ElementKind, FilterState, FrameDamage, LayoutContext, PaintCache,
-  PlatformContext, RenderTree, ShadedCache, SnapshotCache,
+  PlatformContext, RenderTree,
 };
 use crate::{CaptureDone, CaptureInfo};
 
 // Large finite extent used to leave one axis effectively unclipped when only the
 // other axis has non-visible overflow. clip_rect requires a finite rectangle.
-const CLIP_INF: f32 = 1.0e7;
+pub(super) const CLIP_INF: f32 = 1.0e7;
 
 // Runs taffy layout. Safe to call repeatedly: taffy's per-node cache makes
 // a second call cheap when nothing has been invalidated since the previous run.
@@ -205,26 +203,6 @@ pub fn render(tree: &mut RenderTree, platform: &PlatformContext, alloy: &crate::
   stats
 }
 
-// What a boundary caller applies itself at composite time, and record_node
-// therefore leaves out of the cached content. The record order is matrix,
-// clip, scroll, fit, children; a hoist always covers a prefix of the first
-// three (a hoisted scroll requires a hoisted clip, otherwise the
-// composite-time scroll translate would move a recorded clip that must stay
-// put in viewport space; a design-size fit is never hoisted - it is content).
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Hoist {
-  /// Record everything (non-boundary nodes, non-View boundaries).
-  None,
-  /// The caller applies the View's matrix; clip and scroll stay recorded.
-  /// Snapshot boundaries use this: their raster must bake clip and scroll,
-  /// since the texture holds only the pixels visible at rasterize time.
-  Transform,
-  /// The caller applies matrix, clip and scroll; the cache holds the fit and
-  /// children only. Recording boundaries use this, making the cache reusable
-  /// under scroll writes as well as transform writes (see Damage::Scroll).
-  Full,
-}
-
 // A View's own box transform: the user chain only, no design-size fit (the fit
 // maps children into the box, it never moves the box itself, and it is
 // content - recorded by record_node so caches and captures hold fitted,
@@ -235,7 +213,7 @@ enum Hoist {
 // so the cache stays reusable under transform-only changes and Snapshot mode
 // never bakes a rotation/scale into the layout-box crop. None for non-View
 // kinds, which paint transform-free content in build().
-fn own_matrix(element: &Element, inherited: Size) -> Option<Matrix> {
+pub(super) fn own_matrix(element: &Element, inherited: Size) -> Option<Matrix> {
   match &element.kind {
     ElementKind::View(v) => {
       let box_size = element.layout.as_ref().map(|l| l.size()).unwrap_or(inherited);
@@ -262,7 +240,7 @@ fn overflow_clips(element: &Element) -> (bool, bool) {
 // okf/backlog/overflow-viewbox-clip.md). Shared by record_node and the
 // Recording boundary composite path so the two cannot diverge. No-op without
 // a clip.
-fn apply_clip(builder: &mut DisplayListBuilder, element: &Element) {
+pub(super) fn apply_clip(builder: &mut DisplayListBuilder, element: &Element) {
   let (clip_x, clip_y) = overflow_clips(element);
   if !clip_x && !clip_y {
     return;
@@ -301,7 +279,7 @@ fn apply_clip(builder: &mut DisplayListBuilder, element: &Element) {
 // side divides by the fit scale instead (View::content_scroll). Positive
 // scroll shifts content leftward/upward. No-op for non-Views and unscrolled
 // Views.
-fn apply_scroll(builder: &mut DisplayListBuilder, element: &Element) {
+pub(super) fn apply_scroll(builder: &mut DisplayListBuilder, element: &Element) {
   if let ElementKind::View(view) = &element.kind {
     if let Some(s) = view.scroll {
       builder.translate(-s.x, -s.y);
@@ -313,7 +291,7 @@ fn apply_scroll(builder: &mut DisplayListBuilder, element: &Element) {
 // hoisted out of boundary caches and applied at composite time (the opacity
 // arg of draw_display_list, or a paint on the snapshot quad), so an opacity
 // write replays the same cache.
-fn view_opacity(element: &Element) -> f32 {
+pub(super) fn view_opacity(element: &Element) -> f32 {
   match &element.kind {
     ElementKind::View(v) => v.opacity.unwrap_or(1.0),
     _ => 1.0,
@@ -323,7 +301,7 @@ fn view_opacity(element: &Element) -> f32 {
 // A View's subtree filter; non-Views (and empty declarations) have none.
 // Hoisted like opacity: applied around cached content at composite time, so
 // a filter write replays the same cache.
-fn view_filter(element: &Element) -> Option<&FilterState> {
+pub(super) fn view_filter(element: &Element) -> Option<&FilterState> {
   match &element.kind {
     ElementKind::View(v) => v.active_filter(),
     _ => None,
@@ -334,7 +312,7 @@ fn view_filter(element: &Element) -> Option<&FilterState> {
 // the alpha (riding on `rgb` - black for a save_layer, white for a texture
 // quad, where white keeps the texture's colors), plus the filter's fused
 // color matrix and blur.
-fn effect_paint(rgb: f32, opacity: f32, filter: Option<&FilterState>) -> Paint {
+pub(super) fn effect_paint(rgb: f32, opacity: f32, filter: Option<&FilterState>) -> Paint {
   let mut paint = Paint::default();
   paint.set_color(Color::new_srgba(rgb, rgb, rgb, opacity));
   if let Some(f) = filter {
@@ -356,91 +334,115 @@ fn effect_paint(rgb: f32, opacity: f32, filter: Option<&FilterState>) -> Paint {
 // restore paint's color filter (applied to the captured layer content),
 // with an identity matrix filter forcing the capture when only color keys
 // are set - Impeller has no color-filter-as-image-filter constructor. The
+// element's group opacity rides the restore paint's alpha: the layer is
+// emitted outside the opacity group at every composite path (a backdrop
+// capture inside a fresh save_layer would read that layer, not the
+// window), so the fade is applied here instead - the filtered pixels
+// restore at the element's alpha over the unfiltered ones already in the
+// target, and glass fades with its panel like CSS composites it. The
 // bounds are the layout box in box space, so this must be emitted after
-// the view's matrix and clip and before any scroll translate; an overflow
-// clip (clipRadius included) bounds the region, which is how rounded glass
-// is spelled. No-op for non-Views and empty declarations.
-fn emit_backdrop(builder: &mut DisplayListBuilder, element: &Element, inherited: Size) {
+// the view's matrix and before any scroll translate. No-op for non-Views,
+// empty declarations, and fully transparent elements.
+pub(super) fn emit_backdrop(builder: &mut DisplayListBuilder, element: &Element, inherited: Size) {
   let ElementKind::View(v) = &element.kind else { return };
   let Some(f) = v.active_backdrop_filter() else { return };
+  let opacity = v.opacity.unwrap_or(1.0);
+  if opacity <= 0.0 {
+    return;
+  }
   let size = element.layout.as_ref().map(|l| l.size()).unwrap_or(inherited);
   let bounds = Rect::new(Point::zero(), size);
   let backdrop = f.to_backdrop_image_filter();
-  let paint = f.to_color_filter().map(|cf| {
+  let color_filter = f.to_color_filter();
+  let paint = (color_filter.is_some() || opacity < 1.0).then(|| {
     let mut paint = Paint::default();
-    paint.set_color_filter(&cf);
+    paint.set_color(Color::new_srgba(0.0, 0.0, 0.0, opacity));
+    if let Some(cf) = &color_filter {
+      paint.set_color_filter(cf);
+    }
     paint
   });
   // The filtered region is whatever clip is in effect when the layer is
   // pushed - the layer's `bounds` argument is a content hint, not a clip
   // (unclipped, the capture covers the window; verified live). Clip to the
-  // box explicitly; a rounded overflow clip already applied above
-  // intersects with it for rounded glass.
+  // box explicitly, and apply the view's own overflow clip (clipRadius
+  // included) here as well: rounded glass is spelled through it, and the
+  // snapshot quad path composites with the clip baked into texture pixels
+  // only, so the emission cannot rely on a caller having applied it to the
+  // live target. Callers that did (record_node, draw_cached_recording)
+  // intersect an identical clip, which is a no-op.
   builder.save();
+  apply_clip(builder, element);
   builder.clip_rect(&bounds, ClipOperation::Intersect);
   builder.save_layer(&bounds, paint.as_ref(), Some(&backdrop));
   builder.restore();
   builder.restore();
 }
 
-// Replays a recorded display list under the view's composite-time effects: a
-// filter needs a save_layer carrying it (draw_display_list has only an
-// opacity argument), plain opacity stays on the cheap path.
-fn draw_dl_with_effects(builder: &mut DisplayListBuilder, dl: &DisplayList, opacity: f32, filter: Option<&FilterState>) {
-  if filter.is_some() {
-    let paint = effect_paint(0.0, opacity, filter);
-    let bounds = Rect::new(Point::new(-CLIP_INF, -CLIP_INF), Size::new(2.0 * CLIP_INF, 2.0 * CLIP_INF));
-    builder.save_layer(&bounds, Some(&paint), None);
-    builder.draw_display_list(dl, 1.0);
-    builder.restore();
-  } else {
-    builder.draw_display_list(dl, opacity);
+// Whether a pending capture targets a node strictly inside `node_id`'s
+// subtree. Captures are serviced by the walk reaching their node, so a valid
+// boundary cache (whose composite leg skips the subtree) must not stand
+// between the walk and a capture - the same exemption the cull skip makes.
+// The boundary node's own captures are not the subtree's concern: they were
+// already taken at build_recursive entry.
+pub(super) fn capture_pending_within(scene: &RenderTree, node_id: u64, alloy: &crate::Context) -> bool {
+  if !alloy.has_pending_captures() {
+    return false;
   }
+  alloy.pending_capture_nodes().iter().any(|&target| {
+    let mut current = scene.try_node(target).and_then(|e| e.parent);
+    while let Some(id) = current {
+      if id == node_id {
+        return true;
+      }
+      current = scene.try_node(id).and_then(|e| e.parent);
+    }
+    false
+  })
 }
 
-// Composites a Recording boundary's cached content. A View boundary's cache
-// holds children only (Hoist::Full): its current matrix, clip and scroll are
-// applied around the draw here, so transform and scroll writes replay the
-// same cache. A non-View boundary's cache holds everything and draws bare.
-fn draw_cached_recording(
-  builder: &mut DisplayListBuilder,
-  element: &Element,
-  matrix: Option<&Matrix>,
-  dl: &DisplayList,
-  inherited: Size,
+// Reach (and thereby service) the captures inside a boundary whose cache is
+// being reused: record the subtree into a discarded builder, purely so the
+// walk descends to the capture nodes. The cache itself is untouched - the
+// caller still composites it - so a capture never re-rasterizes a snapshot
+// or rotates a shader history. No-op unless a pending capture is inside.
+// The shared ctx is isolated like service_captures does it: the caller
+// reads ctx.size after this (draw_cached_recording's inherited frame), the
+// boundary stats must not count the discarded walk, and the descent's
+// backdrop-region pushes describe no pixels this frame draws.
+pub(super) fn service_captures_under_cache<'a>(
+  scene: &'a RenderTree,
+  node_id: u64,
+  ctx: &mut BuildContext<'a>,
+  hoist: Hoist,
 ) {
-  let opacity = view_opacity(element);
-  let filter = view_filter(element);
-  if let Some(m) = matrix {
-    builder.save();
-    builder.transform(m);
-    apply_clip(builder, element);
-    // Box-space bounds: before the scroll translate, like record_node's
-    // emission order.
-    emit_backdrop(builder, element, inherited);
-    apply_scroll(builder, element);
-    draw_dl_with_effects(builder, dl, opacity, filter);
-    builder.restore();
-  } else {
-    draw_dl_with_effects(builder, dl, opacity, filter);
+  if !capture_pending_within(scene, node_id, ctx.alloy) {
+    return;
   }
-}
-
-// Applies a boundary's hoisted matrix around `draw`; a plain pass-through when
-// the boundary has no transform of its own.
-fn draw_with_transform(
-  builder: &mut DisplayListBuilder,
-  matrix: Option<&Matrix>,
-  draw: impl FnOnce(&mut DisplayListBuilder),
-) {
-  if let Some(m) = matrix {
-    builder.save();
-    builder.transform(m);
-    draw(builder);
-    builder.restore();
-  } else {
-    draw(builder);
-  }
+  let saved_size = ctx.size;
+  let saved_content = ctx.content;
+  // Captures hold whole subtrees, like the boundary record the cache came
+  // from: suspend the cull for the descent.
+  let saved_cull = ctx.cull.take();
+  let saved_regions = ctx.backdrop_regions.len();
+  let saved_stats = (
+    ctx.boundaries_reused,
+    ctx.boundaries_recorded,
+    ctx.snapshots_reused,
+    ctx.snapshots_rerendered,
+    ctx.snapshots_rasterized,
+  );
+  let mut sub = DisplayListBuilder::new(None);
+  record_node(scene, node_id, ctx, &mut sub, hoist);
+  ctx.size = saved_size;
+  ctx.content = saved_content;
+  ctx.cull = saved_cull;
+  ctx.backdrop_regions.truncate(saved_regions);
+  ctx.boundaries_reused = saved_stats.0;
+  ctx.boundaries_recorded = saved_stats.1;
+  ctx.snapshots_reused = saved_stats.2;
+  ctx.snapshots_rerendered = saved_stats.3;
+  ctx.snapshots_rasterized = saved_stats.4;
 }
 
 // Repaint-boundary gate: a boundary subtree's paint result is retained (as a
@@ -498,374 +500,47 @@ fn build_recursive<'a>(
       let own = own_matrix(element, ctx.size);
       let hoist = if own.is_some() { Hoist::Full } else { Hoist::None };
       let cached = match &*element.paint_cache.borrow() {
-        Some(PaintCache::Recording(dl)) => Some(dl.clone()),
+        Some(PaintCache::Recording(rec)) => Some((rec.dl.clone(), rec.backdrops)),
         _ => None,
       };
-      if let Some(dl) = cached {
+      if let Some((dl, backdrops)) = cached {
+        service_captures_under_cache(scene, node_id, ctx, hoist);
+        // Panels baked inside the recording re-filter the live window at
+        // replay, but the walk is not entering the subtree to push their
+        // regions: push one in their place - the boundary's subtree
+        // extent as the parent loop just wrote it this frame, so it is
+        // live under transform and scroll writes the cache survives.
+        match backdrops {
+          boundary::BakedBackdrops::None => {}
+          boundary::BakedBackdrops::Unmappable => ctx.backdrop_regions.push(None),
+          boundary::BakedBackdrops::Reach(reach) => ctx.backdrop_regions.push(match element.last_extent.get() {
+            cull::Extent::Bounded(rect) => Some((rect, reach)),
+            _ => None,
+          }),
+        }
         ctx.boundaries_reused += 1;
-        draw_cached_recording(builder, element, own.as_ref(), &dl, ctx.size);
+        boundary::draw_cached_recording(builder, element, own.as_ref(), &dl, ctx.size);
         return;
       }
       // The recording outlives this frame's viewport (an ancestor scroll
       // does not invalidate it), so it must hold the whole subtree.
+      let regions_before = ctx.backdrop_regions.len();
       let mut sub = DisplayListBuilder::new(None);
       let cull = ctx.cull.take();
       record_node(scene, node_id, ctx, &mut sub, hoist);
       ctx.cull = cull;
       if let Some(dl) = sub.build() {
         ctx.boundaries_recorded += 1;
-        draw_cached_recording(builder, element, own.as_ref(), &dl, ctx.size);
-        *element.paint_cache.borrow_mut() = Some(PaintCache::Recording(dl));
+        // The regions the record walk pushed (the boundary's own entry
+        // predates regions_before) summarize what the cache must stand in
+        // for on reuse frames.
+        let backdrops = boundary::BakedBackdrops::summarize(&ctx.backdrop_regions[regions_before..]);
+        boundary::draw_cached_recording(builder, element, own.as_ref(), &dl, ctx.size);
+        *element.paint_cache.borrow_mut() = Some(PaintCache::Recording(boundary::RecordingCache { dl, backdrops }));
       }
     }
-    BoundaryMode::Snapshot => snapshot_node(scene, node_id, ctx, builder, true),
-    BoundaryMode::SnapshotNoAa => snapshot_node(scene, node_id, ctx, builder, false),
-  }
-}
-
-// Snapshot gate: the subtree is rasterized into a texture at the current
-// display scale and composited as a single quad until something inside it
-// changes, its layout size changes, or the display scale changes. Content
-// painting outside the layout box is cropped (unlike a recording boundary);
-// the crop happens in untransformed local space, since the boundary's own
-// transform is hoisted out of the raster and applied to the quad instead.
-// All storage is exact-size. A declared boundary shader adds one pass over
-// the rasterization and composites its output instead (see View::set_shader).
-fn snapshot_node<'a>(
-  scene: &'a RenderTree,
-  node_id: u64,
-  ctx: &mut BuildContext<'a>,
-  builder: &mut DisplayListBuilder,
-  aa: bool,
-) {
-  // The texture outlives this frame's viewport (an ancestor scroll does not
-  // invalidate it), so the raster must hold the whole subtree.
-  let cull = ctx.cull.take();
-  snapshot_node_uncalled(scene, node_id, ctx, builder, aa);
-  ctx.cull = cull;
-}
-
-fn snapshot_node_uncalled<'a>(
-  scene: &'a RenderTree,
-  node_id: u64,
-  ctx: &mut BuildContext<'a>,
-  builder: &mut DisplayListBuilder,
-  aa: bool,
-) {
-  let element = scene.node(node_id);
-  // The inherited frame, copied out for the quad closures' backdrop
-  // emission (ctx cannot be borrowed inside them).
-  let frame = ctx.size;
-  // A laid-out node snapshots its layout box. A detached (d-*) node has none,
-  // but it is still drawn into a definite rectangle: its kind's painted box,
-  // sized with the same ctx.size its build() reads (the same derivation as
-  // service_captures, so snapshot and capture box the node identically). The
-  // box's x/y is the node's own paint offset, countered in the recording so
-  // the content lands at the texture origin and restored on the composited
-  // quad's dst - except for a View, whose offset (translate) lives in the
-  // matrix that Hoist::Transform keeps out of the recording anyway.
-  let (width, height, offset) = match element.layout.as_ref() {
-    Some(l) => (l.size().width, l.size().height, (0.0, 0.0)),
-    None => {
-      let local = element.kind.local_bounds(ctx.size);
-      let offset = match &element.kind {
-        ElementKind::View(_) => (0.0, 0.0),
-        _ => (local.origin.x, local.origin.y),
-      };
-      (local.size.width, local.size.height, offset)
-    }
-  };
-  let scale = ctx.platform.display_scale();
-  let (tex_w, tex_h) = ((width * scale).ceil() as u32, (height * scale).ceil() as u32);
-
-  // Without a positive painted box there is nothing to rasterize into; paint
-  // inline so overflowing content still shows up.
-  if tex_w == 0 || tex_h == 0 {
-    record_node(scene, node_id, ctx, builder, Hoist::None);
-    return;
-  }
-
-  let own = own_matrix(element, ctx.size);
-  let hoist = if own.is_some() { Hoist::Transform } else { Hoist::None };
-
-  // Group opacity and the view filter ride on the composited quad (white
-  // keeps the texture's colors, the alpha fades it, the filters transform
-  // the draw), so the texture itself stays effect-free and survives opacity
-  // and filter writes.
-  let opacity = view_opacity(element);
-  let filter = view_filter(element);
-  let quad_paint = (opacity < 1.0 || filter.is_some()).then(|| effect_paint(1.0, opacity, filter));
-
-  // The content occupies the top-left width*scale x height*scale pixels of the
-  // (ceil-padded) texture; mapping exactly that region onto the logical-size
-  // quad keeps the composite pixel-exact under the root scale transform. The
-  // quad sits at the detached paint offset the recording countered.
-  let src = Rect::new(Point::new(0.0, 0.0), Size::new(width * scale, height * scale));
-  let dst = Rect::new(Point::new(offset.0, offset.1), Size::new(width, height));
-
-  // The boundary shader (views only) and its pending-write flag, consumed
-  // here whichever branch runs: every shaded branch re-runs the pass, and
-  // the plain path has nothing to re-run.
-  let (shader, shader_dirty) = match &element.kind {
-    ElementKind::View(v) => (v.shader.as_ref(), v.take_shader_dirty()),
-    _ => (None, false),
-  };
-
-  // A withdrawn shader keeps the snapshot: the source texture and its
-  // validity are untouched, only the pass output (and any history) drops.
-  // Except with an outset - that canvas is bigger than the plain box-sized
-  // texture, so the storage cannot be kept.
-  if shader.is_none() {
-    let mut cache = element.paint_cache.borrow_mut();
-    let drop_all = if let Some(PaintCache::Snapshot(snap)) = &mut *cache {
-      snap.shaded.take().is_some_and(|sc| sc.outset > 0.0)
-    } else {
-      false
-    };
-    if drop_all {
-      cache.take();
-    }
-  }
-
-  if let Some(decl) = shader {
-    // The outset grows the canvas symmetrically: content sits at
-    // (outset, outset) clipped to the layout box, the margin is transparent
-    // and belongs to the effect, and the composited quad extends past the
-    // box by the same amount. The pass and all textures work at canvas
-    // size, so src/dst and the pixel dims are re-derived here.
-    let outset = decl.outset.max(0.0);
-    let (canvas_w, canvas_h) = (width + 2.0 * outset, height + 2.0 * outset);
-    let (tex_w, tex_h) = ((canvas_w * scale).ceil() as u32, (canvas_h * scale).ceil() as u32);
-    let src = Rect::new(Point::new(0.0, 0.0), Size::new(canvas_w * scale, canvas_h * scale));
-    let dst = Rect::new(Point::new(-outset, -outset), Size::new(canvas_w, canvas_h));
-
-    // Valid content with matching shader storage: composite the cached
-    // output, re-running the pass in place first when a declaration write
-    // is pending (the params path - the snapshot is not re-rasterized). An
-    // outset change or a `previous` toggle fails the compare instead; both
-    // change what storage must exist.
-    let cached = {
-      let cache = element.paint_cache.borrow();
-      match &*cache {
-        Some(PaintCache::Snapshot(snap)) => match &snap.shaded {
-          Some(sc)
-            if snap.valid
-              && snap.width == width
-              && snap.height == height
-              && snap.scale == scale
-              && sc.outset == outset
-              && sc.history.is_some() == decl.previous =>
-          {
-            Some((snap.texture.clone(), sc.output.clone(), sc.history.clone()))
-          }
-          _ => None,
-        },
-        _ => None,
-      }
-    };
-    if let Some((source, output, history)) = cached {
-      if shader_dirty {
-        if let Err(e) = ctx.alloy.rerun_node_shader(decl, &source, &output, history.as_ref(), tex_w, tex_h) {
-          log::warn!("boundary shader re-run failed for node {node_id}: {e}");
-        }
-      }
-      ctx.snapshots_reused += 1;
-      draw_with_transform(builder, own.as_ref(), |b| {
-          emit_backdrop(b, element, frame);
-        b.draw_texture_rect(&output, &src, &dst, TextureSampling::Linear, quad_paint.as_ref());
-      });
-      return;
-    }
-
-    // Content changed (or the declaration needs different storage): record,
-    // rasterize and run the pass in one trip. Dimension-matched storage is
-    // re-rendered in place; exact storage means only an exact match
-    // qualifies, which the (width, height, scale) + outset equality is.
-    let mut sub = DisplayListBuilder::new(None);
-    sub.scale(scale, scale);
-    if outset > 0.0 {
-      sub.translate(outset, outset);
-      // Without an outset the box crop is the texture viewport itself; with
-      // a margin the crop must be explicit, or overflowing content would
-      // paint into the effect's transparent margin.
-      sub.clip_rect(&Rect::new(Point::new(0.0, 0.0), Size::new(width, height)), ClipOperation::Intersect);
-    }
-    record_node(scene, node_id, ctx, &mut sub, hoist);
-    let Some(dl) = sub.build() else { return };
-
-    // Reusable storage: the source (plain or shaded), plus output and
-    // history when the cache was already shaded. A plain cache's texture
-    // counts as outset 0, so declaring a no-outset shader over an existing
-    // snapshot re-renders its storage instead of reallocating.
-    let retained = {
-      let cache = element.paint_cache.borrow();
-      match &*cache {
-        Some(PaintCache::Snapshot(snap))
-          if snap.width == width
-            && snap.height == height
-            && snap.scale == scale
-            && snap.shaded.as_ref().map_or(0.0, |sc| sc.outset) == outset =>
-        {
-          let output = snap.shaded.as_ref().map(|sc| sc.output.clone());
-          let history = snap.shaded.as_ref().and_then(|sc| sc.history.clone());
-          Some((snap.texture.clone(), output, history))
-        }
-        _ => None,
-      }
-    };
-    // Storage roles for this rasterization. Without `previous` the source
-    // re-renders in place. With it, the roles rotate: render into the old
-    // history's storage (fresh when none) and bind the old source as
-    // uPrevious - the previous rasterization by construction, no copy.
-    let (render_into, history_pass, reuse_output) = match &retained {
-      Some((source, output, history)) => {
-        if decl.previous {
-          (history.clone(), Some(source.clone()), output.clone())
-        } else {
-          (Some(source.clone()), None, output.clone())
-        }
-      }
-      None => (None, None, None),
-    };
-    let result = ctx.alloy.rasterize_shaded(
-      &dl,
-      tex_w,
-      tex_h,
-      aa,
-      decl,
-      render_into.as_ref(),
-      reuse_output.as_ref(),
-      history_pass.as_ref(),
-    );
-    match result {
-      Ok((source, output, history)) => {
-        if retained.is_some() {
-          ctx.snapshots_rerendered += 1;
-        } else {
-          ctx.snapshots_rasterized += 1;
-        }
-        publish_snapshot(element, ctx, &source, tex_w, tex_h);
-        draw_with_transform(builder, own.as_ref(), |b| {
-          emit_backdrop(b, element, frame);
-          b.draw_texture_rect(&output, &src, &dst, TextureSampling::Linear, quad_paint.as_ref());
-        });
-        *element.paint_cache.borrow_mut() = Some(PaintCache::Snapshot(SnapshotCache {
-          texture: source,
-          width,
-          height,
-          scale,
-          valid: true,
-          shaded: Some(ShadedCache { output, outset, history }),
-        }));
-      }
-      Err(e) => {
-        // Paint inline (unshaded) this frame and drop the cache, so no
-        // stale storage is offered for in-place reuse on the next damage.
-        // The recording carries its own device-scale transform and content
-        // offset, so counter both before replaying.
-        log::warn!("shaded snapshot failed for node {node_id}: {e}; painting inline unshaded");
-        element.paint_cache.borrow_mut().take();
-        draw_with_transform(builder, own.as_ref(), |b| {
-          emit_backdrop(b, element, frame);
-          b.save();
-          b.translate(-outset, -outset);
-          b.scale(1.0 / scale, 1.0 / scale);
-          draw_dl_with_effects(b, &dl, opacity, filter);
-          b.restore();
-        });
-      }
-    }
-    return;
-  }
-
-  {
-    let cache = element.paint_cache.borrow();
-    if let Some(PaintCache::Snapshot(snap)) = &*cache {
-      if snap.valid && snap.width == width && snap.height == height && snap.scale == scale {
-        ctx.snapshots_reused += 1;
-        draw_with_transform(builder, own.as_ref(), |b| {
-          emit_backdrop(b, element, frame);
-          b.draw_texture_rect(&snap.texture, &src, &dst, TextureSampling::Linear, quad_paint.as_ref());
-        });
-        return;
-      }
-    }
-  }
-
-  let mut sub = DisplayListBuilder::new(None);
-  sub.scale(scale, scale);
-  if offset != (0.0, 0.0) {
-    sub.translate(-offset.0, -offset.1);
-  }
-  record_node(scene, node_id, ctx, &mut sub, hoist);
-  let Some(dl) = sub.build() else { return };
-
-  // Stale storage at unchanged dimensions is re-rendered in place: the
-  // offscreen draw clears and rewrites the full allocation, so no stale
-  // pixels survive. Exact-size storage means any dimension change
-  // reallocates.
-  let retained = {
-    let cache = element.paint_cache.borrow();
-    match &*cache {
-      Some(PaintCache::Snapshot(snap)) if snap.width == width && snap.height == height && snap.scale == scale => {
-        Some(snap.texture.clone())
-      }
-      _ => None,
-    }
-  };
-  if let Some(texture) = retained {
-    match ctx.alloy.render_display_list_into_texture(&dl, &texture, tex_w, tex_h, aa) {
-      Ok(()) => {
-        ctx.snapshots_rerendered += 1;
-        publish_snapshot(element, ctx, &texture, tex_w, tex_h);
-        draw_with_transform(builder, own.as_ref(), |b| {
-          emit_backdrop(b, element, frame);
-          b.draw_texture_rect(&texture, &src, &dst, TextureSampling::Linear, quad_paint.as_ref());
-        });
-        *element.paint_cache.borrow_mut() =
-          Some(PaintCache::Snapshot(SnapshotCache { texture, width, height, scale, valid: true, shaded: None }));
-        return;
-      }
-      Err(e) => {
-        log::warn!("snapshot re-render failed for node {node_id}: {e}; reallocating");
-        element.paint_cache.borrow_mut().take();
-      }
-    }
-  }
-
-  match ctx.alloy.render_display_list_to_texture(&dl, tex_w, tex_h, aa) {
-    Ok(texture) => {
-      ctx.snapshots_rasterized += 1;
-      publish_snapshot(element, ctx, &texture, tex_w, tex_h);
-      draw_with_transform(builder, own.as_ref(), |b| {
-          emit_backdrop(b, element, frame);
-        b.draw_texture_rect(&texture, &src, &dst, TextureSampling::Linear, quad_paint.as_ref());
-      });
-      *element.paint_cache.borrow_mut() =
-        Some(PaintCache::Snapshot(SnapshotCache { texture, width, height, scale, valid: true, shaded: None }));
-    }
-    Err(e) => {
-      // Paint inline this frame; the recording carries its own device-scale
-      // transform and detached paint offset, so counter both before replaying.
-      log::warn!("snapshot rasterization failed for node {node_id}: {e}; painting inline");
-      draw_with_transform(builder, own.as_ref(), |b| {
-          emit_backdrop(b, element, frame);
-        b.save();
-        b.translate(offset.0, offset.1);
-        b.scale(1.0 / scale, 1.0 / scale);
-        draw_dl_with_effects(b, &dl, opacity, filter);
-        b.restore();
-      });
-    }
-  }
-}
-
-// Re-point a boundary's vended texture id (see RenderTree::snapshot_texture)
-// at the rasterization just produced. A boundary nobody asked for publishes
-// nothing.
-fn publish_snapshot(element: &Element, ctx: &BuildContext<'_>, texture: &Texture, tex_w: u32, tex_h: u32) {
-  if let Some(id) = element.snapshot_texture_id.get() {
-    ctx.alloy.publish_snapshot_texture(id, texture, tex_w, tex_h);
+    BoundaryMode::Snapshot => boundary::snapshot_node(scene, node_id, ctx, builder, true),
+    BoundaryMode::SnapshotNoAa => boundary::snapshot_node(scene, node_id, ctx, builder, false),
   }
 }
 
@@ -878,25 +553,11 @@ fn publish_snapshot(element: &Element, ctx: &BuildContext<'_>, texture: &Texture
 fn service_captures<'a>(scene: &'a RenderTree, node_id: u64, ctx: &mut BuildContext<'a>, requests: Vec<CaptureDone>) {
   let element = scene.node(node_id);
   let scale = ctx.platform.display_scale();
-  // A laid-out node captures its layout box. A detached (d-*) node has none,
-  // but it is still drawn into a definite rectangle: its kind's painted box,
-  // sized with the same ctx.size its build() reads (the caller's child walk
-  // set it just before recursing here), so the capture box equals the painted
-  // box by construction rather than by a second size derivation. The box's
-  // x/y is the node's own paint offset, countered below so the content lands
-  // at the texture origin - except for a View, whose offset (translate) lives
-  // in the matrix that Hoist::Transform keeps out of the recording anyway.
-  let (width, height, offset) = match element.layout.as_ref() {
-    Some(l) => (l.size().width, l.size().height, (0.0, 0.0)),
-    None => {
-      let local = element.kind.local_bounds(ctx.size);
-      let offset = match &element.kind {
-        ElementKind::View(_) => (0.0, 0.0),
-        _ => (local.origin.x, local.origin.y),
-      };
-      (local.size.width, local.size.height, offset)
-    }
-  };
+  // The same painted box the snapshot path rasterizes into (the caller's
+  // child walk set ctx.size just before recursing here), so the capture box
+  // equals the painted box by construction rather than by a second size
+  // derivation; the offset is countered below like the snapshot recording.
+  let (width, height, offset) = boundary::painted_box(element, ctx.size);
   let (tex_w, tex_h) = ((width * scale).ceil() as u32, (height * scale).ceil() as u32);
   if tex_w == 0 || tex_h == 0 {
     let why = if element.layout.is_none() {
@@ -917,6 +578,11 @@ fn service_captures<'a>(scene: &'a RenderTree, node_id: u64, ctx: &mut BuildCont
   let saved_content = ctx.content;
   // A capture holds the whole subtree, not the on-screen part of it.
   let saved_cull = ctx.cull.take();
+  // The capture walk's backdrop-region pushes duplicate what the frame's
+  // own walk tracks (or, under a non-2D transform, push a None that would
+  // degrade the whole resolve to full damage): drop them with the rest of
+  // the isolation.
+  let saved_regions = ctx.backdrop_regions.len();
   let saved_stats = (
     ctx.boundaries_reused,
     ctx.boundaries_recorded,
@@ -933,6 +599,7 @@ fn service_captures<'a>(scene: &'a RenderTree, node_id: u64, ctx: &mut BuildCont
   ctx.size = saved_size;
   ctx.content = saved_content;
   ctx.cull = saved_cull;
+  ctx.backdrop_regions.truncate(saved_regions);
   ctx.boundaries_reused = saved_stats.0;
   ctx.boundaries_recorded = saved_stats.1;
   ctx.snapshots_reused = saved_stats.2;
@@ -960,7 +627,7 @@ fn service_captures<'a>(scene: &'a RenderTree, node_id: u64, ctx: &mut BuildCont
 // `hoist` names what the boundary caller applies itself at composite time
 // (see Hoist); the content is recorded without those ops. A hoisted matrix is
 // only ever a View's own box transform (own_matrix).
-fn record_node<'a>(
+pub(super) fn record_node<'a>(
   scene: &'a RenderTree,
   node_id: u64,
   ctx: &mut BuildContext<'a>,
@@ -1007,7 +674,7 @@ fn record_node<'a>(
   }
   // The backdrop layer reads the current target, so only the inline path
   // emits it here; boundary callers emit it at composite time instead
-  // (draw_cached_recording, the snapshot quad sites) - baked into a cache
+  // (boundary.rs: draw_cached_recording, BoundaryComposite) - baked into a cache
   // or a snapshot raster it would read the offscreen, not the window.
   if hoist == Hoist::None {
     emit_backdrop(builder, element, ctx.size);

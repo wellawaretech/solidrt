@@ -832,6 +832,10 @@ Finished, kept for the reasoning.
   A d-* node is drawn but has no layout entry, so every capture of one
   rejected as zero-sized; captures now size from the node's painted box,
   sourced so it cannot diverge from what the paint path uses.
+- **[captureSnapshot fails for nodes inside a valid boundary cache](done/capture-inside-valid-boundary-cache.md)** [2026-09-02]
+  A capture of a node nested under a repaint boundary whose cache was valid
+  errored with "capture node is not in the live render tree", because the
+  paint walk early-returned at the cached boundary and never reached the node.
 - **[Node captures round-trip through a texture nobody wants](done/capture-pixels-round-trip.md)** [2026-08-06]
   "Done 2026-08-06: captureSnapshot now resolves { width, height, data }
   directly and no texture is created; the padding-aware capture texture

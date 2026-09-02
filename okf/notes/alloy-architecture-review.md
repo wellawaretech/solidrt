@@ -78,6 +78,16 @@ structs into rendertree/boundary.rs; composite.rs keeps phases +
 record_node/build_recursive at ~600 lines each. Highest value per line
 in the crate; shaded snapshots will keep growing.
 
+Done 2026-09-02: boundary.rs holds Hoist, the cache structs, SnapshotKey
+(one matches() for the four storage compares) and BoundaryComposite (one
+draw path for all seven quad legs and both inline fallbacks; the shared
+src/dst/outset derivation lives in its constructor); painted_box is now
+shared with service_captures. Verified: alloy tests, boundary_transform
+and boundary_detached GL examples, and a live view-shader-history
+dissolve pixel-exact against the expected uMix blend. Surfaced
+pre-existing: captures of nodes inside a valid boundary cache failed;
+fixed same day (okf/done/capture-inside-valid-boundary-cache.md).
+
 ### 3. Split gpu/ into protocol half and GL half
 
 gpu/ is two modules wearing one name: vocab/spec/limits/lease/order/

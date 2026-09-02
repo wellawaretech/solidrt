@@ -151,7 +151,7 @@ pub struct WindowShader {
 
 /// A shader declared on a snapshot repaint boundary: one fullscreen pass of a
 /// linked program over the boundary's rasterized subtree, composited in its
-/// place (see `rendertree::composite::snapshot_node`). The rasterization
+/// place (see `rendertree::boundary::snapshot_node`). The rasterization
 /// binds as `uniform sampler2D uSource` (top-left origin, like every sampled
 /// texture); `iResolution` is the boundary in physical pixels. The program
 /// contract matches shader targets, not the window pass: offscreen in,

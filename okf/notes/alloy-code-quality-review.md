@@ -34,6 +34,17 @@ and nothing compensates. Failure: animated content under a nested glass
 panel leaves a stale re-filtered band outside the patch rect on EGL
 buffer-age partial repaint.
 
+Fixed 2026-09-02: the Recording cache stores a BakedBackdrops summary
+(largest panel reach, or an unmappable marker) taken from the regions
+its record walk pushed; the cached leg pushes one conservative region
+in the panels' place - the boundary's live window-space subtree extent
+from element.last_extent, so it stays correct under the transform and
+scroll writes the cache survives. Reuse-path frames inherit the
+complete list from the ledger. Regression-tested in
+tests/composite.rs baked_backdrop_widens_reuse_frame_damage (near
+damage widens to the panel without going full; far damage stays tight;
+the test fails with the push removed).
+
 ### 2. Snapshot quad path emits the backdrop without the overflow clip
 
 `composite.rs`. All seven snapshot quad sites (~731, 806, 826, 844,
@@ -52,6 +63,11 @@ Failure: `backdropFilter` + overflow clip + `clipRadius` +
 corners poking past the rounded content; identical markup without the
 snapshot boundary renders rounded.
 
+Fixed 2026-09-02: emit_backdrop applies the overflow clip itself, so
+every composite path bounds the layer by construction; callers that
+already clipped intersect an identical clip (no-op). Verified live with
+probes/glass-snapshot-probe.tsx.
+
 ### 3. Element opacity never applies to the backdrop layer
 
 `composite.rs`. At all three composite paths the backdrop save_layer is
@@ -68,6 +84,16 @@ hide the element. CSS composites the filtered backdrop inside the
 element's group so it fades with the element. No comment marks the
 divergence as intentional.
 
+Fixed 2026-09-02: the element's opacity rides the backdrop layer's
+restore paint alpha in emit_backdrop (the layer stays outside the
+opacity group on purpose - a backdrop capture inside a fresh save_layer
+would read that layer, not the window - and restoring the filtered
+pixels at the element's alpha over the unfiltered ones is the same
+fade). Opacity 0 skips the emission. Verified pixel-exact with
+probes/glass-snapshot-probe.tsx (panels at opacity 1, 0.5, 0). The
+element FILTER still does not apply to the backdrop output - an even
+more exotic combination, left as a known divergence.
+
 ## Confirmed, low severity
 
 ### 4. `service_captures` leaks capture-walk backdrop regions
@@ -80,6 +106,10 @@ pushes a `None` entry, and one `None` degrades
 `expand_damage_for_backdrops` to Unbounded -> full damage. Net: one
 conservative or full frame during a capture, which is a readback frame
 anyway. Fix is adding the field to the save/restore list.
+
+Fixed 2026-09-02: backdrop_regions joined the save/restore (a length
+truncate) in service_captures and in the capture descent through cached
+boundaries (okf/done/capture-inside-valid-boundary-cache.md).
 
 ### 5. Panels inside snapshot boundaries widen window damage spuriously
 
@@ -114,6 +144,10 @@ the rect presents stale or black. draw.rs and readback.rs should call
 inside it (pass element + frame); several pasted lines are misindented.
 The next snapshot branch that copies `draw_texture_rect` without the
 pasted line silently loses backdrop filters on exactly one cache state.
+
+Fixed 2026-09-02 by the boundary refactor: the emission lives in
+BoundaryComposite::draw (rendertree/boundary.rs), one path for every
+cache state (see the architecture review, win 2).
 
 ### 8. Backdrop damage widening is a call-site convention
 

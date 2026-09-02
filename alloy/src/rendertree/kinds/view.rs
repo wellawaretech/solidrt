@@ -97,7 +97,7 @@ pub struct View {
   // user transform props still operate in box space.
   pub design_size: Option<Size>,
   // The shader declared on this view's snapshot boundary (see
-  // composite::snapshot_node): one pass over the rasterized subtree,
+  // boundary::snapshot_node): one pass over the rasterized subtree,
   // composited in its place. Runs only with repaintBoundary="snapshot";
   // composite warns otherwise.
   pub shader: Option<NodeShader>,
@@ -149,7 +149,7 @@ impl View {
   // without a (non-degenerate) design_size. Kept separate from the user chain
   // because the two hoist differently: the fit belongs to the CONTENT (it is
   // recorded into boundary caches and captures), the user chain to the box
-  // (hoisted to composite time). See composite::hoisted_matrix.
+  // (hoisted to composite time). See composite::own_matrix.
   pub(crate) fn fit_matrix(&self, size: Size) -> Option<Matrix> {
     let vb = self.design_size?;
     let s = self.fit_scale(size)?;

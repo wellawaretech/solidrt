@@ -22,11 +22,19 @@ pub type CaptureDone = Box<dyn FnOnce(Result<CaptureInfo, String>)>;
 
 impl Context {
   /// Queue a capture of `node_id`'s subtree, serviced on the next paint pass
-  /// that visits the node. `done` is invoked once with the outcome after that
-  /// pass. If the node is never visited (not in the live tree), the request is
-  /// failed by `fail_unserviced_captures`.
+  /// that visits the node (cached boundaries on the way descend for it, see
+  /// composite::capture_pending_within). `done` is invoked once with the
+  /// outcome after that pass. If the node is never visited (not in the live
+  /// tree, or hidden), the request is failed by `fail_unserviced_captures`.
   pub fn request_capture(&self, node_id: u64, done: CaptureDone) {
     self.capture_requests.borrow_mut().entry(node_id).or_default().push(done);
+  }
+
+  /// The node ids with captures queued, for the paint walk's does-a-capture-
+  /// target-this-subtree test at cached boundaries. Small: captures are rare
+  /// dev-tool requests, one or two at a time.
+  pub fn pending_capture_nodes(&self) -> Vec<u64> {
+    self.capture_requests.borrow().keys().copied().collect()
   }
 
   /// Whether any capture is queued. Checked per visited node on the paint hot
@@ -48,11 +56,15 @@ impl Context {
   }
 
   /// Fail every still-queued request: the paint walk finished without visiting
-  /// their nodes, so they are not in the live tree. Called at end of paint.
+  /// their nodes, so they are not in the live tree or sit under a hidden
+  /// (display: none) ancestor. Called at end of paint.
   pub fn fail_unserviced_captures(&self) {
     let leftover = std::mem::take(&mut *self.capture_requests.borrow_mut());
     for done in leftover.into_values().flatten() {
-      self.complete_capture(done, Err("capture node is not in the live render tree".to_string()));
+      self.complete_capture(
+        done,
+        Err("capture node was never reached by the paint walk: not in the live render tree, or hidden".to_string()),
+      );
     }
   }
 
