@@ -44,7 +44,7 @@ pub(crate) struct OffscreenRig {
   pub(super) ext: Option<ExtStorage>,
   // Fullscreen 1:1 copy program consuming ext.color into the destination;
   // lazily compiled on the first in-tile resolve.
-  pub(super) copy: Option<crate::gpu::ShaderProgram>,
+  pub(super) copy: Option<super::ShaderProgram>,
   // Depth-stencil for the single-sample path, where the resolve texture
   // attaches directly as color.
   pub(super) ss_depth: Option<SizedRenderbuffer>,

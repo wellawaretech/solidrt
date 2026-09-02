@@ -12,9 +12,9 @@ use std::rc::Rc;
 use super::buffer::{release_buffer, GpuBuffer};
 use super::pass::{run_pass, DrawGroup, PassDraw, PassInput, ResolvedDraw};
 use super::program::{release_pipeline, release_program, RenderPipeline, ShaderProgram};
-use super::resources::GpuDrawInfo;
-use super::spec::DepthStorage;
-use super::vocab::{
+use crate::gpu::resources::GpuDrawInfo;
+use crate::gpu::spec::DepthStorage;
+use crate::gpu::vocab::{
   blend_name, cull_name, merge_bindings, validate_order, AttrFormat, DrawRange, IndexFormat, ParamValue, PipelineDesc,
   TextureBinding,
 };
@@ -201,7 +201,7 @@ pub struct ShaderTexture {
   passes: Cell<u64>,
   pass_issue_micros: Cell<u64>,
   /// GPU-side execution time of those passes, microseconds, credited by the
-  /// owner as timer queries retire (see gpu::PassTimer).
+  /// owner as timer queries retire (see PassTimer).
   pass_exec_micros: Cell<u64>,
   /// Some = a sub-target (see `Region`): `fbo` and `target` are the
   /// parent's names, borrowed for bookkeeping only - never rendered through
@@ -526,7 +526,7 @@ unsafe fn record_layout(
   attributes: &[(String, AttrFormat)],
   divisor: u32,
 ) {
-  let stride = super::vocab::vertex_stride(attributes);
+  let stride = crate::gpu::vocab::vertex_stride(attributes);
   let mut offset = 0i32;
   for (name, fmt) in attributes {
     // None means the shader does not (actively) use the attribute; that
@@ -1098,7 +1098,7 @@ impl ShaderTexture {
     // sampling it minified), so it follows every content write: the
     // automatic regeneration the dirty flush makes possible.
     if self.sampler.mipmap {
-      crate::gpu::generate_mipmap(gl, self.target);
+      super::texture::generate_mipmap(gl, self.target);
     }
   }
 
@@ -1495,7 +1495,7 @@ impl ShaderTexture {
   /// The active uniforms of this target's program (fragment, or entry 0 -
   /// the two fused creates are single-entry by construction), for the create
   /// replies that seed the UI-side validation mirror.
-  pub fn uniform_table(&self) -> super::vocab::UniformTable {
+  pub fn uniform_table(&self) -> crate::gpu::vocab::UniformTable {
     match &self.kind {
       TargetKind::Fragment { program, .. } => program.uniform_table(),
       TargetKind::Mesh(mesh) => mesh.entries.first().map(|e| e.pipeline.program.uniform_table()).unwrap_or_default(),

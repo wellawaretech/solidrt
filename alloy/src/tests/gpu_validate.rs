@@ -302,7 +302,7 @@ uniform Lights { vec3 dir; } uLights;
 void main() {}
 ";
   assert_eq!(
-    crate::gpu::program::declared_uniform_names(src),
+    crate::gl::declared_uniform_names(src),
     vec!["iResolution", "uColor", "uTint", "uMap"].into_iter().map(String::from).collect::<Vec<_>>()
   );
 }

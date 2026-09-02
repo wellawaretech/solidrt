@@ -156,9 +156,8 @@ fn sampler_state_anisotropy_rounds_and_caps() {
 // needed - the index is pure arithmetic over the enumeration `new` walks.
 #[test]
 fn sampler_cache_index_is_a_bijection() {
-  use crate::gpu::texture::{
-    SamplerCache, SamplerFilter, SamplerState, SamplerWrap, ANISOTROPY_LEVELS, MIN_ANISOTROPY,
-  };
+  use crate::gl::SamplerCache;
+  use crate::gpu::texture::{SamplerFilter, SamplerState, SamplerWrap, ANISOTROPY_LEVELS, MIN_ANISOTROPY};
 
   let mut seen = vec![false; SamplerCache::COUNT];
   for filter in [SamplerFilter::Linear, SamplerFilter::Nearest] {

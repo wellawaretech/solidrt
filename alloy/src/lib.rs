@@ -50,7 +50,7 @@ pub use gpu::{
   UniformSlot, UniformTable, WindowShader, MAX_INSTANCE_SLOTS,
 };
 pub use gpu::{
-  GpuTexture, SamplerFilter, SamplerOptions, SamplerOverride, SamplerState, TextureEntry, TextureFormat, TextureRegistry,
+  SamplerFilter, SamplerOptions, SamplerOverride, SamplerState, TextureEntry, TextureFormat, TextureRegistry,
 };
 pub use input::InputState;
 pub use keymap::w3c_code_for_key;

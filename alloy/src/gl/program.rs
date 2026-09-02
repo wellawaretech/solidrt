@@ -6,7 +6,7 @@ use glow::HasContext;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
-use super::vocab::{PipelineDesc, ShaderStage};
+use crate::gpu::vocab::{PipelineDesc, ShaderStage};
 
 // Attributeless fullscreen triangle. GLES 3.0 exposes gl_VertexID, so the three
 // covering vertices are computed in the shader with no vertex buffer. vUV is the
@@ -223,14 +223,14 @@ pub struct ShaderProgram {
   /// slot (element kind + array size); iResolution is filled from the target
   /// size at render. Array uniforms are keyed by their bare name (GL's
   /// reported `[0]` suffix is stripped).
-  uniforms: HashMap<String, (glow::UniformLocation, super::vocab::UniformSlot)>,
+  uniforms: HashMap<String, (glow::UniformLocation, crate::gpu::vocab::UniformSlot)>,
   /// Uniform names declared in the sources but absent from `uniforms`: the
   /// compiler optimized them out. Writes to these are accepted and skipped
   /// (warned at the call site) rather than rejected as unknown names.
   inactive: HashSet<String>,
   /// Active vertex attributes (name, format), reflected at link time. Empty
   /// for fullscreen fragment passes (their vertex stage reads gl_VertexID).
-  attributes: super::vocab::AttributeTable,
+  attributes: crate::gpu::vocab::AttributeTable,
   /// Vertex+fragment pipeline (own vertex stage over a buffer) vs fullscreen
   /// fragment pass. Decides which target shape the program can back.
   pipeline: bool,
@@ -316,18 +316,18 @@ impl ShaderProgram {
   }
 
   /// The active vertex attributes (name, format) in GL's reported order.
-  pub fn attribute_table(&self) -> super::vocab::AttributeTable {
+  pub fn attribute_table(&self) -> crate::gpu::vocab::AttributeTable {
     self.attributes.clone()
   }
 
   /// The active uniforms as a plain-data table (name -> slot), for the
   /// UI-side mirror and call-site validation (see `vocab::UniformTable`),
   /// plus an `Inactive` slot per declared-but-optimized-out name.
-  pub fn uniform_table(&self) -> super::vocab::UniformTable {
+  pub fn uniform_table(&self) -> crate::gpu::vocab::UniformTable {
     let inactive = self
       .inactive
       .iter()
-      .map(|name| (name.clone(), super::vocab::UniformSlot { kind: super::vocab::UniformKind::Inactive, count: 1 }));
+      .map(|name| (name.clone(), crate::gpu::vocab::UniformSlot { kind: crate::gpu::vocab::UniformKind::Inactive, count: 1 }));
     self.uniforms.iter().map(|(name, (_, slot))| (name.clone(), *slot)).chain(inactive).collect()
   }
 
@@ -345,13 +345,13 @@ impl ShaderProgram {
   }
 
   /// An active uniform's location and typed slot, for the apply path.
-  pub(super) fn uniform(&self, name: &str) -> Option<&(glow::UniformLocation, super::vocab::UniformSlot)> {
+  pub(super) fn uniform(&self, name: &str) -> Option<&(glow::UniformLocation, crate::gpu::vocab::UniformSlot)> {
     self.uniforms.get(name)
   }
 
   /// An active uniform's reflected kind - how the binding resolver tells a
   /// comparison sampler (sampler2DShadow) from a plain one.
-  pub(crate) fn uniform_kind(&self, name: &str) -> Option<super::vocab::UniformKind> {
+  pub(crate) fn uniform_kind(&self, name: &str) -> Option<crate::gpu::vocab::UniformKind> {
     self.uniforms.get(name).map(|(_, slot)| slot.kind)
   }
 
@@ -369,7 +369,7 @@ impl ShaderProgram {
 fn reflect_uniforms(
   gl: &glow::Context,
   program: glow::Program,
-) -> HashMap<String, (glow::UniformLocation, super::vocab::UniformSlot)> {
+) -> HashMap<String, (glow::UniformLocation, crate::gpu::vocab::UniformSlot)> {
   let mut uniforms = HashMap::new();
   unsafe {
     let count = gl.get_active_uniforms(program);
@@ -377,8 +377,8 @@ fn reflect_uniforms(
       if let Some(u) = gl.get_active_uniform(program, i) {
         if let Some(loc) = gl.get_uniform_location(program, &u.name) {
           let name = u.name.strip_suffix("[0]").unwrap_or(&u.name).to_string();
-          let slot = super::vocab::UniformSlot {
-            kind: super::vocab::UniformKind::from_gl(u.utype),
+          let slot = crate::gpu::vocab::UniformSlot {
+            kind: crate::gpu::vocab::UniformKind::from_gl(u.utype),
             count: u.size.max(1) as usize,
           };
           uniforms.insert(name, (loc, slot));
@@ -394,7 +394,7 @@ fn reflect_uniforms(
 /// (gl_VertexID, gl_InstanceID) are not reported by GL. A type no layout
 /// can express (a matrix or integer attribute) is an error here, at link,
 /// rather than a silent mis-bind at draw.
-fn reflect_attributes(gl: &glow::Context, program: glow::Program) -> Result<super::vocab::AttributeTable, String> {
+fn reflect_attributes(gl: &glow::Context, program: glow::Program) -> Result<crate::gpu::vocab::AttributeTable, String> {
   let mut attributes = Vec::new();
   unsafe {
     let count = gl.get_active_attributes(program);
@@ -403,7 +403,7 @@ fn reflect_attributes(gl: &glow::Context, program: glow::Program) -> Result<supe
         if a.name.starts_with("gl_") {
           continue;
         }
-        let format = super::vocab::AttrFormat::from_gl(a.atype).ok_or_else(|| {
+        let format = crate::gpu::vocab::AttrFormat::from_gl(a.atype).ok_or_else(|| {
           format!(
             "vertex attribute '{}' has type {:#x}, which no pipeline layout can feed (use float, vec2, vec3 or vec4)",
             a.name, a.atype
@@ -417,7 +417,7 @@ fn reflect_attributes(gl: &glow::Context, program: glow::Program) -> Result<supe
 }
 
 fn inactive_names(
-  uniforms: &HashMap<String, (glow::UniformLocation, super::vocab::UniformSlot)>,
+  uniforms: &HashMap<String, (glow::UniformLocation, crate::gpu::vocab::UniformSlot)>,
   declared: Vec<String>,
 ) -> HashSet<String> {
   declared.into_iter().filter(|name| !uniforms.contains_key(name)).collect()
@@ -521,7 +521,7 @@ impl RenderPipeline {
   }
 
   /// The shared program's active uniforms (see `ShaderProgram::uniform_table`).
-  pub fn uniform_table(&self) -> super::vocab::UniformTable {
+  pub fn uniform_table(&self) -> crate::gpu::vocab::UniformTable {
     self.program.uniform_table()
   }
 }

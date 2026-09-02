@@ -36,14 +36,17 @@ use std::sync::{mpsc, Arc};
 
 use crate::backend::{FrameOutput, GlBinding};
 use crate::gl;
-use crate::gpu::{
-  release_buffer, release_pipeline, release_program, validate_params, validate_texture_bindings, AttributeTable,
-  BufferIds, DepthStorage, DrawSpec, EntryBuffers, GpuBuffer, GpuBufferInfo, GpuLimits, GpuPipelineInfo,
-  GpuProgramInfo, GpuRegionInfo, GpuRenderPipelineInfo, GpuResources, GpuTextureInfo, GpuWindowShaderInfo, ParamValue,
-  PassInput, PassTimer, PipelineDesc, PipelineSpec, RenderPipeline, ShaderProgram, ShaderTexture, TargetSpec,
-  TextureBinding, Timed, UniformKind, UniformTable, WindowShader,
+use crate::gl::{
+  release_buffer, release_pipeline, release_program, EntryBuffers, GpuBuffer, GpuTexture, PassInput, PassTimer,
+  RenderPipeline, SamplerCache, ShaderProgram, ShaderTexture, Timed,
 };
-use crate::gpu::{GpuTexture, SamplerCache, SamplerState, TextureFormat};
+use crate::gpu::{
+  validate_params, validate_texture_bindings, AttributeTable, BufferIds, DepthStorage, DrawSpec, GpuBufferInfo,
+  GpuLimits, GpuPipelineInfo, GpuProgramInfo, GpuRegionInfo, GpuRenderPipelineInfo, GpuResources, GpuTextureInfo,
+  GpuWindowShaderInfo, ParamValue, PipelineDesc, PipelineSpec, TargetSpec, TextureBinding, UniformKind, UniformTable,
+  WindowShader,
+};
+use crate::gpu::{SamplerState, TextureFormat};
 use capture::flip_for_fbo;
 
 /// Counters shared between the raster thread, the frame loop, and the UI
@@ -337,7 +340,7 @@ pub(crate) struct RasterState {
   render_pipelines: HashMap<u64, Rc<RenderPipeline>>,
   // Raw compiled stages in their own id space, inputs to LinkProgram. The GL
   // shader object is deleted on DestroyStage; linked programs are unaffected.
-  stages: HashMap<u64, crate::gpu::CompiledStage>,
+  stages: HashMap<u64, crate::gl::CompiledStage>,
   // Vertex buffers pipelines draw from, in their own id space. Targets hold
   // their buffer by Rc, like programs and pipelines, so removal here only
   // deletes the GL buffer once no target draws from it (see
@@ -461,7 +464,7 @@ fn ensure_copy_program(gl: &glow::Context, slot: &mut Option<Rc<ShaderProgram>>)
 /// slot stays empty, so parents render their tiles without the wipe.
 fn ensure_tile_clear_program(gl: &glow::Context, slot: &mut Option<Rc<ShaderProgram>>) -> Option<Rc<ShaderProgram>> {
   if slot.is_none() {
-    match ShaderProgram::new_fragment(gl, crate::gpu::TILE_CLEAR_FRAGMENT) {
+    match ShaderProgram::new_fragment(gl, crate::gl::TILE_CLEAR_FRAGMENT) {
       Ok(program) => *slot = Some(Rc::new(program)),
       Err(e) => log::error!("[alloy] tile clear program failed to compile: {e}"),
     }
@@ -521,7 +524,7 @@ impl RasterState {
     tx: mpsc::Sender<FrameOutput>,
     wake: Option<Box<dyn Fn() + Send + Sync>>,
   ) -> Self {
-    let limits = GpuLimits::query(&gl);
+    let limits = crate::gl::query_limits(&gl);
     let samplers = SamplerCache::new(&gl, limits.max_anisotropy);
     if limits.max_anisotropy > 1 {
       log::info!("[alloy] anisotropic filtering up to {}x (EXT_texture_filter_anisotropic)", limits.max_anisotropy);
@@ -673,7 +676,7 @@ impl RasterState {
             reply(tx, self.create_pipeline_texture(id, spec));
           }
           RasterCmd::CompileStage { id, stage, source, header, reply: tx } => {
-            let result = crate::gpu::compile_stage(&self.gl, stage, &source, header).map(|shader| {
+            let result = crate::gl::compile_stage(&self.gl, stage, &source, header).map(|shader| {
               self.stages.insert(id, shader);
             });
             reply(tx, result);
@@ -683,7 +686,7 @@ impl RasterState {
           }
           RasterCmd::DestroyStage { id } => {
             if let Some(stage) = self.stages.remove(&id) {
-              crate::gpu::delete_stage(&self.gl, stage.shader);
+              crate::gl::delete_stage(&self.gl, stage.shader);
             }
           }
           RasterCmd::CreateRenderPipeline { id, program, desc, label, reply: tx } => {
@@ -1225,7 +1228,7 @@ impl RasterState {
         // creation clear).
         std::mem::swap(&mut state.layer, &mut state.prev_layer);
         if state.prev_layer.is_none() {
-          let (tex, fbo) = crate::gpu::create_layer_target(&self.gl, width, height, [0.0, 0.0, 0.0, 1.0])?;
+          let (tex, fbo) = crate::gl::create_layer_target(&self.gl, width, height, [0.0, 0.0, 0.0, 1.0])?;
           state.prev_layer = Some(LayerTarget { tex, fbo, width, height });
         }
       } else if let Some(old) = state.prev_layer.take() {
@@ -1247,7 +1250,7 @@ impl RasterState {
             glow::HasContext::delete_texture(&self.gl, old.tex);
           }
         }
-        let (tex, fbo) = crate::gpu::create_layer_target(&self.gl, width, height, [0.0, 0.0, 0.0, 1.0])?;
+        let (tex, fbo) = crate::gl::create_layer_target(&self.gl, width, height, [0.0, 0.0, 0.0, 1.0])?;
         state.layer = Some(LayerTarget { tex, fbo, width, height });
       }
       let layer = state.layer.as_ref().expect("layer allocated above");
@@ -1284,7 +1287,7 @@ impl RasterState {
         None => log::warn!("[alloy] window shader input '{}': texture {} not found", b.name, b.id),
       }
     }
-    crate::gpu::render_program_to_window(
+    crate::gl::render_program_to_window(
       &self.gl,
       &state.program,
       width,
@@ -1337,7 +1340,7 @@ impl RasterState {
     }
     if ov.stale || ov.layer.is_none() {
       if ov.layer.is_none() {
-        match crate::gpu::create_layer_target(&self.gl, width, height, [0.0, 0.0, 0.0, 0.0]) {
+        match crate::gl::create_layer_target(&self.gl, width, height, [0.0, 0.0, 0.0, 0.0]) {
           Ok((tex, fbo)) => ov.layer = Some(LayerTarget { tex, fbo, width, height }),
           Err(e) => {
             log::warn!("[alloy] overlay layer: {e}");
@@ -1370,7 +1373,7 @@ impl RasterState {
     let layer = ov.layer.as_ref().expect("rasterized above");
     let origin = (ov.decl.x, window.height as i32 - (ov.decl.y + height as i32));
     let input: PassInput = ("uSrc".to_string(), layer.tex, None);
-    crate::gpu::composite_program_over_window(&self.gl, &program, origin, width, height, &[input]);
+    crate::gl::composite_program_over_window(&self.gl, &program, origin, width, height, &[input]);
   }
 
   /// Apply a SetWindowShader command. A redeclaration with the same program

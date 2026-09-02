@@ -2,8 +2,11 @@
 //! main thread, the interactive GlBinding, and loading the glow and Impeller
 //! contexts on the raster thread.
 
+use super::texture::GpuTexture;
 use crate::backend::GlBinding;
-use crate::{DisplayContext, GpuTexture};
+use crate::gpu::GpuLimits;
+use crate::DisplayContext;
+use glow::HasContext;
 use impellers::{Context as ImpellerContext, ISize, Texture};
 use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
@@ -158,4 +161,39 @@ pub(crate) fn setup_opengl_platform(
     gl_context,
     surface_size: Arc::new(AtomicU64::new(crate::backend::pack_size(w, h))),
   })
+}
+
+/// Query the device ceilings from the live context (raster thread, the one
+/// place GL exists). Values are clamped up to the ES 3.0 floors: a context
+/// this engine could create guarantees them, and a garbage glGet must not
+/// turn every create into an error.
+pub(crate) fn query_limits(gl: &glow::Context) -> GpuLimits {
+  let floor = GpuLimits::FLOOR;
+  unsafe {
+    let tex = gl.get_parameter_i32(glow::MAX_TEXTURE_SIZE);
+    let rb = gl.get_parameter_i32(glow::MAX_RENDERBUFFER_SIZE);
+    let units = gl.get_parameter_i32(glow::MAX_TEXTURE_IMAGE_UNITS);
+    let attribs = gl.get_parameter_i32(glow::MAX_VERTEX_ATTRIBS);
+    let vertex_vectors = gl.get_parameter_i32(glow::MAX_VERTEX_UNIFORM_VECTORS);
+    // An extension, never core at any GL level, but present on practically
+    // every ES 3.0 device and on ANGLE over D3D11/Metal; absence is a fact
+    // to report, not an error. A desktop core profile may list only the
+    // GL 4.6 spelling (ARB), same enums. The parameter is a float in the
+    // spec.
+    let ext = gl.supported_extensions();
+    let anisotropy = if ext.contains("GL_EXT_texture_filter_anisotropic")
+      || ext.contains("GL_ARB_texture_filter_anisotropic")
+    {
+      gl.get_parameter_f32(glow::MAX_TEXTURE_MAX_ANISOTROPY_EXT) as i32
+    } else {
+      1
+    };
+    GpuLimits {
+      max_texture_size: tex.min(rb).max(floor.max_texture_size as i32) as u32,
+      max_texture_units: units.max(floor.max_texture_units as i32) as u32,
+      max_vertex_attribs: attribs.max(floor.max_vertex_attribs as i32) as u32,
+      max_anisotropy: anisotropy.max(floor.max_anisotropy as i32) as u32,
+      max_vertex_uniform_vectors: vertex_vectors.max(floor.max_vertex_uniform_vectors as i32) as u32,
+    }
+  }
 }

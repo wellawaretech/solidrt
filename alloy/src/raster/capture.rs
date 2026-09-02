@@ -11,7 +11,8 @@ use impellers::{DisplayList, ISize, Texture};
 use super::RasterState;
 use crate::gl;
 use crate::gpu::SamplerState;
-use crate::gpu::{NodeShader, PassInput};
+use crate::gl::PassInput;
+use crate::gpu::NodeShader;
 
 impl RasterState {
   /// Rasterize a display list into a new adopted texture of the given pixel
@@ -101,7 +102,7 @@ impl RasterState {
   /// history: it is sampled before anything ever renders into it, and a
   /// snapshot's empty regions are transparent, so its defined start is too.
   fn create_history_texture(&mut self, width: u32, height: u32) -> Result<Texture, String> {
-    let (tex, fbo) = crate::gpu::create_layer_target(&self.gl, width, height, [0.0; 4])?;
+    let (tex, fbo) = crate::gl::create_layer_target(&self.gl, width, height, [0.0; 4])?;
     unsafe { self.gl.delete_framebuffer(fbo) };
     match unsafe { self.impeller_ctx.adopt_opengl_texture(width, height, 1, tex.0.get() as u64) } {
       Some(adopted) => Ok(adopted),
@@ -141,7 +142,7 @@ impl RasterState {
         let name = gl_name(texture)?;
         (name, pass_fbo(&self.gl, name)?)
       }
-      None => crate::gpu::create_layer_target(&self.gl, width, height, [0.0; 4])?,
+      None => crate::gl::create_layer_target(&self.gl, width, height, [0.0; 4])?,
     };
 
     let mut textures: Vec<PassInput> =
@@ -160,8 +161,8 @@ impl RasterState {
 
     let start = std::time::Instant::now();
     self.pass_timer.begin(&self.gl);
-    crate::gpu::render_program_to_fbo(&self.gl, &program, Some(fbo), width, height, &shader.params, &textures, None);
-    self.pass_timer.end(&self.gl, crate::gpu::Timed::Pass { target: 0 });
+    crate::gl::render_program_to_fbo(&self.gl, &program, Some(fbo), width, height, &shader.params, &textures, None);
+    self.pass_timer.end(&self.gl, crate::gl::Timed::Pass { target: 0 });
     self.stats.passes.fetch_add(1, Ordering::Relaxed);
     self.stats.pass_issue_micros.fetch_add(start.elapsed().as_micros() as u64, Ordering::Relaxed);
 

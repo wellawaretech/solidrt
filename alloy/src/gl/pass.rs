@@ -7,7 +7,7 @@
 use glow::HasContext;
 
 use super::program::ShaderProgram;
-use super::vocab::{BlendMode, DrawRange, IndexFormat, ParamValue, PipelineDesc, UniformKind, UniformSlot};
+use crate::gpu::vocab::{BlendMode, DrawRange, IndexFormat, ParamValue, PipelineDesc, UniformKind, UniformSlot};
 use super::{prev_framebuffer, prev_program, prev_sampler, prev_texture, prev_vertex_array};
 
 /// A resolved sampler input for a pass: uniform name, source GL texture, and

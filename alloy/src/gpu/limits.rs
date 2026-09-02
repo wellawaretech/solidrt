@@ -1,11 +1,10 @@
 //! Device limits: the hard per-driver ceilings (texture size, sampler units,
-//! vertex attributes). Queried from GL once at raster-thread startup, served
-//! to the UI thread over a blocking RPC and cached there, so every create and
-//! bind can be checked at the call site with the limit named in the error -
-//! instead of the raw GL failure ("framebuffer incomplete 0x8cd6", a silently
-//! garbage draw) surfacing later on the raster thread.
-
-use glow::HasContext;
+//! vertex attributes). Queried from GL once at raster-thread startup (see
+//! `gl::query_limits`), served to the UI thread over a blocking RPC and
+//! cached there, so every create and bind can be checked at the call site
+//! with the limit named in the error - instead of the raw GL failure
+//! ("framebuffer incomplete 0x8cd6", a silently garbage draw) surfacing
+//! later on the raster thread.
 
 /// The device ceilings alloy validates against. Plain Copy data, so one value
 /// crosses the raster channel and lands in the UI-side cache.
@@ -46,41 +45,6 @@ impl GpuLimits {
     max_anisotropy: 1,
     max_vertex_uniform_vectors: 256,
   };
-
-  /// Query the ceilings from the live context (raster thread, the one place
-  /// GL exists). Values are clamped up to the ES 3.0 floors: a context this
-  /// engine could create guarantees them, and a garbage glGet must not turn
-  /// every create into an error.
-  pub fn query(gl: &glow::Context) -> Self {
-    let floor = GpuLimits::FLOOR;
-    unsafe {
-      let tex = gl.get_parameter_i32(glow::MAX_TEXTURE_SIZE);
-      let rb = gl.get_parameter_i32(glow::MAX_RENDERBUFFER_SIZE);
-      let units = gl.get_parameter_i32(glow::MAX_TEXTURE_IMAGE_UNITS);
-      let attribs = gl.get_parameter_i32(glow::MAX_VERTEX_ATTRIBS);
-      let vertex_vectors = gl.get_parameter_i32(glow::MAX_VERTEX_UNIFORM_VECTORS);
-      // An extension, never core at any GL level, but present on practically
-      // every ES 3.0 device and on ANGLE over D3D11/Metal; absence is a fact
-      // to report, not an error. A desktop core profile may list only the
-      // GL 4.6 spelling (ARB), same enums. The parameter is a float in the
-      // spec.
-      let ext = gl.supported_extensions();
-      let anisotropy = if ext.contains("GL_EXT_texture_filter_anisotropic")
-        || ext.contains("GL_ARB_texture_filter_anisotropic")
-      {
-        gl.get_parameter_f32(glow::MAX_TEXTURE_MAX_ANISOTROPY_EXT) as i32
-      } else {
-        1
-      };
-      GpuLimits {
-        max_texture_size: tex.min(rb).max(floor.max_texture_size as i32) as u32,
-        max_texture_units: units.max(floor.max_texture_units as i32) as u32,
-        max_vertex_attribs: attribs.max(floor.max_vertex_attribs as i32) as u32,
-        max_anisotropy: anisotropy.max(floor.max_anisotropy as i32) as u32,
-        max_vertex_uniform_vectors: vertex_vectors.max(floor.max_vertex_uniform_vectors as i32) as u32,
-      }
-    }
-  }
 
   /// Check a texture or target size against the device ceiling. Runs UI-side
   /// at the call-site boundary, like the validators in `vocab`.

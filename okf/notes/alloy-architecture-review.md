@@ -101,6 +101,20 @@ start with texture.rs) makes the "srt-ui has zero GL" contract
 structural instead of conventional, and makes the mirrored context/X
 vs gpu/X naming truthful.
 
+Done 2026-09-02: the GL half moved into gl/ (buffer, program, pass,
+target, timing as git mvs; SamplerCache + GpuTexture + generate_mipmap
+split out as gl/texture.rs; GpuLimits::query became gl::query_limits;
+the prev_* restore helpers moved to gl/mod.rs). gpu/ is now the pure
+protocol layer - vocab, spec, limits, lease, order, resources, texture
+vocabulary + UI-side TextureRegistry - with zero glow-context use (the
+u32 constant mappings on vocab enums stay, they cannot execute GL).
+GpuTexture left the public lib.rs surface (no external consumers). The
+invariant is greppable: `HasContext` appears only under gl/, raster/,
+and threads.rs. Verified: cargo check + 387 alloy tests, alloy
+examples check, flux --lib --features gui (59 tests), lattice check.
+Sequencing note honored: the gpu/target.rs storage/entry split (item
+4) now applies to gl/target.rs, after this move.
+
 ### 4. Mechanical file splits (navigational, zero behavior change)
 
 - raster/mod.rs (2468 lines) along its five responsibilities; the
