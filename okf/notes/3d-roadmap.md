@@ -161,10 +161,10 @@ what it delivered is documented in `packages/3d/AGENTS.md`, not here.
     `SHADOW` GLSL; every directional light may cast since 2026-08-27
     (stage 4a, slot = light index); the multi-view shape below became
     `scene.createView` on the way (split-screen, minimaps,
-    override-material passes). The rest of stage 4 stays demand-gated, one
-    item each: comparison sampling
-    ([gpu-depth-compare-sampling](../backlog/gpu-depth-compare-sampling.md)),
-    point casters
+    override-material passes). Comparison sampling landed 2026-09-02
+    ([gpu-depth-compare-sampling](../done/gpu-depth-compare-sampling.md):
+    uShadowAtlas is a sampler2DShadow, one hardware 2x2-PCF tap). The
+    rest of stage 4 stays demand-gated, one item each: point casters
     ([3d-point-light-shadows](../backlog/3d-point-light-shadows.md);
     spot casters landed 2026-09-02 - the same machinery with a
     perspective camera, one slot) and cascades

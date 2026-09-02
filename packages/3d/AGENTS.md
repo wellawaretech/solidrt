@@ -121,7 +121,8 @@ blendMode and pointer events like any element.
   (Godot's and Three's default); `lit({ receiveShadow: false })` opts a
   material out and drops the map from its program - a material option,
   as with vertexColors/triplanar, because the material picks the program
-  (Godot's `disable_receive_shadows`). The factor is `SHADOW`'s 3x3 PCF
+  (Godot's `disable_receive_shadows`). The factor is `SHADOW`'s one
+  hardware-compare tap (sampler2DShadow, LEQUAL, the driver's 2x2 PCF)
   on each casting light's own term. `examples/shadows.tsx` (three
   casting lights) is the shape; `examples/cascades.tsx` the cascaded sun.
 - RETARGETED motion is native: `setTransition(node, { position:
@@ -574,7 +575,10 @@ the material need that channel) and the pure functions `HEMISPHERE`
 several, tightest first), `uShadowBias[N]`, `uShadowNormalBias[N]`),
 `SHADOW` (`shadowPoint(coord)` - clip to map point, `shadowInside(p)` -
 does the map have it, `shadowSample(map, rect, p, bias)` - one tile's
-3x3 PCF factor, and `shadow(map, rect, coord, bias)` composing the
+factor as ONE hardware comparison tap (`uShadowAtlas` is a
+sampler2DShadow; the engine binds the comparison sampler for that
+declaration, so the 2x2 PCF weighting is the driver's), and
+`shadow(map, rect, coord, bias)` composing the
 three) and `SHADOW_LOOKUP`
 (`lightShadow(i, worldPos, n)` - light i's factor, 1 when it does not
 cast; it walks the light's slots and samples the first map that covers

@@ -307,8 +307,9 @@ export const FOG = glsl`
 
 /**
  * The scene's shadow set as a receiving program declares it: ONE
- * `uShadowAtlas` (every casting light's depth map is a tile of it, so N
- * maps render as one pass; a white texel when nothing casts), a MAP slot
+ * `uShadowAtlas` (a `sampler2DShadow` - every casting light's depth map is
+ * a tile of it, so N maps render as one pass; a cleared one-texel depth
+ * map when nothing casts), a MAP slot
  * set of `MAX_SHADOW_MAPS` - `uShadowRect[M]` (map slot j's tile as x, y,
  * width, height in atlas 0..1 UV) and `uShadowMatrix[M]` (its light-space
  * viewProj) - and, per light index (the light list's, hemisphere
@@ -324,7 +325,7 @@ export const FOG = glsl`
  * sampler for nothing.
  */
 export const SHADOW_SLOTS = glsl`
-  uniform sampler2D uShadowAtlas;
+  uniform sampler2DShadow uShadowAtlas;
   uniform vec4 uShadowRect[${MAX_SHADOW_MAPS}];
   uniform mat4 uShadowMatrix[${MAX_SHADOW_MAPS}];
   uniform int uShadowFirst[${MAX_LIGHTS}];
@@ -340,18 +341,21 @@ export const SHADOW_SLOTS = glsl`
  * point: xy in 0..1 across the map, z the depth to compare. `bool
  * shadowInside(vec3 p)` is whether the map has it at all (xy in 0..1, z
  * not past the far plane) - the cascade select. `float shadowSample(
- * sampler2D map, vec4 rect, vec3 p, float bias)` is the factor (1 lit, 0
- * shadowed) of a point the map has: a 3x3 PCF over texel neighbours in
- * the map's tile `rect` (x, y, width, height in `map`'s 0..1 UV;
- * `vec4(0, 0, 1, 1)` is a whole map) comparing the map's `.r` (a stage-1
- * depth texture samples nearest, so the softness is this loop, not the
- * sampler); every tap is clamped to the tile inset by half a texel, so
- * no tap reads a neighbouring map's tile; `bias` is subtracted from the
- * point's depth against acne. `float shadow(sampler2D map, vec4 rect,
- * vec4 coord, float bias)` composes the three: 1 (lit) outside the map,
- * else the sample -
+ * sampler2DShadow map, vec4 rect, vec3 p, float bias)` is the factor (1
+ * lit, 0 shadowed) of a point the map has: ONE comparison tap - the
+ * sampler compares `p.z - bias` against the map in hardware (LEQUAL) and
+ * LINEAR-weights the four neighbours' results, the 2x2 PCF a shader loop
+ * cannot match (it weights the compare, not the depth). The tap lands in
+ * the map's tile `rect` (x, y, width, height in the atlas's 0..1 UV;
+ * `vec4(0, 0, 1, 1)` is a whole map), clamped to the tile inset by half
+ * a texel so the footprint never reads a neighbouring map's tile.
+ * `float shadow(sampler2DShadow map, vec4 rect, vec4 coord, float bias)`
+ * composes the three: 1 (lit) outside the map, else the sample -
  * `shadow(uShadowAtlas, uShadowRect[0], uShadowMatrix[0] * vec4(vWorldPos, 1.0), uShadowBias[0])`.
- * SHADOW_LOOKUP uses the steps, so it projects each map once.
+ * SHADOW_LOOKUP uses the steps, so it projects each map once. The engine
+ * binds the comparison sampler wherever a program declares the uniform
+ * as sampler2DShadow; a program declaring plain `sampler2D uShadowAtlas`
+ * (hand-rolled old GLSL) still reads raw depth values at nearest.
  */
 export const SHADOW = glsl`
   vec3 shadowPoint(vec4 coord) {
@@ -362,22 +366,15 @@ export const SHADOW = glsl`
     return all(greaterThanEqual(p.xy, vec2(0.0))) && all(lessThanEqual(p, vec3(1.0)));
   }
 
-  float shadowSample(sampler2D map, vec4 rect, vec3 p, float bias) {
+  float shadowSample(sampler2DShadow map, vec4 rect, vec3 p, float bias) {
     vec2 texel = 1.0 / vec2(textureSize(map, 0));
     vec2 lo = rect.xy + 0.5 * texel;
     vec2 hi = rect.xy + rect.zw - 0.5 * texel;
     vec2 base = rect.xy + p.xy * rect.zw;
-    float lit = 0.0;
-    for (int y = -1; y <= 1; y++) {
-      for (int x = -1; x <= 1; x++) {
-        float d = texture(map, clamp(base + vec2(float(x), float(y)) * texel, lo, hi)).r;
-        lit += p.z - bias <= d ? 1.0 : 0.0;
-      }
-    }
-    return lit / 9.0;
+    return texture(map, vec3(clamp(base, lo, hi), p.z - bias));
   }
 
-  float shadow(sampler2D map, vec4 rect, vec4 coord, float bias) {
+  float shadow(sampler2DShadow map, vec4 rect, vec4 coord, float bias) {
     vec3 p = shadowPoint(coord);
     return shadowInside(p) ? shadowSample(map, rect, p, bias) : 1.0;
   }

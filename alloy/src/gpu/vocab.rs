@@ -367,6 +367,11 @@ pub enum UniformKind {
   Mat4,
   /// Bound via texture bindings, never via params.
   Sampler2D,
+  /// A comparison sampler (`sampler2DShadow`): bound via texture bindings
+  /// like Sampler2D, but only a depth texture may back it, and the pass
+  /// binds the comparison sampler object (LINEAR + LEQUAL compare, the
+  /// hardware 2x2 PCF) instead of the texture's declared sampling.
+  Sampler2DShadow,
   /// Declared in the source but optimized out by the compiler, so GL
   /// reflects nothing for it: writes are accepted and skipped (with a
   /// warning) rather than rejected as unknown names.
@@ -388,8 +393,15 @@ impl UniformKind {
       glow::FLOAT_VEC4 => UniformKind::Vec4,
       glow::FLOAT_MAT4 => UniformKind::Mat4,
       glow::SAMPLER_2D => UniformKind::Sampler2D,
+      glow::SAMPLER_2D_SHADOW => UniformKind::Sampler2DShadow,
       _ => UniformKind::Other(utype),
     }
+  }
+
+  /// True for the kinds texture bindings serve (plain and comparison
+  /// samplers alike); params can set neither.
+  pub fn is_sampler(self) -> bool {
+    matches!(self, UniformKind::Sampler2D | UniformKind::Sampler2DShadow)
   }
 
   /// Component count of one element of this kind; None for kinds params
@@ -401,7 +413,7 @@ impl UniformKind {
       UniformKind::Vec3 => Some(3),
       UniformKind::Vec4 => Some(4),
       UniformKind::Mat4 => Some(16),
-      UniformKind::Sampler2D | UniformKind::Inactive | UniformKind::Other(_) => None,
+      UniformKind::Sampler2D | UniformKind::Sampler2DShadow | UniformKind::Inactive | UniformKind::Other(_) => None,
     }
   }
 
@@ -416,6 +428,7 @@ impl UniformKind {
       UniformKind::Vec4 => "vec4",
       UniformKind::Mat4 => "mat4",
       UniformKind::Sampler2D => "sampler2D",
+      UniformKind::Sampler2DShadow => "sampler2DShadow",
       UniformKind::Inactive => "declared but inactive",
       UniformKind::Other(_) => "an unsupported type",
     }
@@ -575,8 +588,8 @@ pub fn validate_texture_bindings(uniforms: &UniformTable, textures: &[TextureBin
       warn_inactive(name);
       continue;
     }
-    if slot.kind != UniformKind::Sampler2D || slot.count > 1 {
-      return Err(format!("uniform '{name}' is {}, not a sampler2D", slot.glsl_name()));
+    if !slot.kind.is_sampler() || slot.count > 1 {
+      return Err(format!("uniform '{name}' is {}, not a sampler", slot.glsl_name()));
     }
   }
   Ok(())

@@ -140,14 +140,17 @@ impl MeshState {
   /// The entry list resolved for a pass, in list order. An entry's inputs
   /// are its own bindings plus the shared ones its program declares and
   /// does not bind itself (entry overrides shared, and an undeclared shared
-  /// name must not eat a texture unit on this entry).
-  fn resolved_draws(&self, resolve: &dyn Fn(&[TextureBinding]) -> Vec<PassInput>) -> Vec<ResolvedDraw<'_>> {
+  /// name must not eat a texture unit on this entry). The resolver gets the
+  /// entry's program so a comparison-sampler uniform (sampler2DShadow) picks
+  /// the comparison sampler per ENTRY - one shared depth binding serves a
+  /// comparing receiver and a raw-reading one in the same pass.
+  fn resolved_draws(&self, resolve: &dyn Fn(&[TextureBinding], &ShaderProgram) -> Vec<PassInput>) -> Vec<ResolvedDraw<'_>> {
     self
       .entries
       .iter()
       .map(|e| {
         let inputs = if self.shared_bindings.is_empty() {
-          resolve(&e.bindings)
+          resolve(&e.bindings, &e.pipeline.program)
         } else {
           let mut combined = e.bindings.clone();
           for b in &self.shared_bindings {
@@ -155,7 +158,7 @@ impl MeshState {
               combined.push(b.clone());
             }
           }
-          resolve(&combined)
+          resolve(&combined, &e.pipeline.program)
         };
         ResolvedDraw {
           program: &e.pipeline.program,
@@ -1608,10 +1611,10 @@ impl ShaderTexture {
   /// See `run_pass` for the GL state contract; Context::submit's per-frame
   /// fence orders the work ahead of the render thread sampling the target
   /// from its shared GL context, so no glFinish is needed here.
-  pub fn render(&self, gl: &glow::Context, resolve: &dyn Fn(&[TextureBinding]) -> Vec<PassInput>) {
+  pub fn render(&self, gl: &glow::Context, resolve: &dyn Fn(&[TextureBinding], &ShaderProgram) -> Vec<PassInput>) {
     match &self.kind {
       TargetKind::Fragment { program, params, bindings } => {
-        let inputs = resolve(bindings);
+        let inputs = resolve(bindings, program);
         let draw =
           PassDraw::Fullscreen { program, params, textures: &inputs, vertex_count: 3, clear: None, blend: false };
         run_pass(gl, Some(self.fbo), (0, 0), self.width, self.height, draw);
@@ -1631,7 +1634,7 @@ impl ShaderTexture {
   pub fn render_groups(
     &self,
     gl: &glow::Context,
-    resolve: &dyn Fn(&[TextureBinding]) -> Vec<PassInput>,
+    resolve: &dyn Fn(&[TextureBinding], &ShaderProgram) -> Vec<PassInput>,
     full: bool,
     tiles: &[&ShaderTexture],
     tile_clear: Option<&ShaderProgram>,

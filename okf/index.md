@@ -331,11 +331,6 @@ Shaped, not started.
   so environment/reflection mapping, skyboxes and cube shadow maps have no
   path; ES 3.0 has cube maps in core, seamless filtering included.
   Demand-gated on the scene-graph environment tier.
-- **[Depth comparison sampling](backlog/gpu-depth-compare-sampling.md)** [2026-08-27]
-  A depth id samples NEAREST with the compare done in GLSL, so a shadow lookup
-  pays nine taps for a 3x3 PCF; ES 3.0's sampler2DShadow compares in hardware
-  at one LINEAR tap (2x2 PCF). Additive sampler state on the depth id; changes
-  SHADOW's body, not its signature.
 - **[Depth func option](backlog/gpu-depth-func.md)** [2026-08-11]
   The depth comparison is fixed at LESS with no override, which blocks
   equal-depth multi-pass tricks (LEQUAL) and reversed-z; a depthCompare option
@@ -997,6 +992,11 @@ Finished, kept for the reasoning.
   destroyTexture used to land before the reactive texture swap flushed; the
   runtime now defers reclamation until the live render tree no longer
   references the id.
+- **[Depth comparison sampling](done/gpu-depth-compare-sampling.md)** [2026-08-27]
+  Landed 2026-09-02, driven by the program's declared sampler type instead of
+  new API - a pipeline program declaring `sampler2DShadow` for a depth texture
+  gets the engine's comparison sampler (LINEAR + LEQUAL, hardware 2x2 PCF);
+  SHADOW's 3x3 nine-tap loop became one comparison tap.
 - **[GPU draw targets (multi-pass into one target)](done/gpu-draw-list.md)** [2026-08-04]
   The multi-pass bullet of gpu-pipeline-extensions, built as a retained
   ordered draw list - createDrawTarget + addDraw/removeDraw with stable

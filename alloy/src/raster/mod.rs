@@ -36,7 +36,7 @@ use crate::gpu::{
   BufferIds, DepthStorage, DrawSpec, EntryBuffers, GpuBuffer, GpuBufferInfo, GpuLimits, GpuPipelineInfo,
   GpuProgramInfo, GpuRegionInfo, GpuRenderPipelineInfo, GpuResources, GpuTextureInfo, GpuWindowShaderInfo, ParamValue, PassInput,
   PassTimer, PipelineDesc, PipelineSpec, RenderPipeline, ShaderProgram, ShaderTexture, TargetSpec, TextureBinding,
-  Timed, UniformTable, WindowShader,
+  Timed, UniformKind, UniformTable, WindowShader,
 };
 use crate::gpu::{GpuTexture, SamplerCache, SamplerState, TextureFormat};
 use capture::flip_for_fbo;
@@ -789,7 +789,9 @@ impl RasterState {
               Some(shader) => {
                 let start = std::time::Instant::now();
                 self.pass_timer.begin(&self.gl);
-                shader.render(&self.gl, &|bindings| resolve_binding_list(&self.textures, &self.samplers, bindings));
+                shader.render(&self.gl, &|bindings, program| {
+                  resolve_binding_list(&self.textures, &self.samplers, bindings, program)
+                });
                 self.pass_timer.end(&self.gl, Timed::Pass { target: id });
                 let micros = start.elapsed().as_micros() as u64;
                 shader.record_pass(micros);
@@ -1534,7 +1536,9 @@ impl RasterState {
       }
       let start = std::time::Instant::now();
       self.pass_timer.begin(&self.gl);
-      let resolve = |bindings: &[TextureBinding]| resolve_binding_list(&self.textures, &self.samplers, bindings);
+      let resolve = |bindings: &[TextureBinding], program: &ShaderProgram| {
+        resolve_binding_list(&self.textures, &self.samplers, bindings, program)
+      };
       match self.regions.get(id) {
         None => shader.render(&self.gl, &resolve),
         Some(tiles) => {
@@ -2231,18 +2235,28 @@ pub(crate) fn propagation_order(dirty: &HashSet<u64>, edges: &HashMap<u64, Vec<u
 /// the source's declared state under the binding's override, dropping any
 /// id no longer registered (it samples as unbound/black). The resolver a
 /// target's render calls per pass - once for a fragment target, once per
-/// entry for a mesh target.
+/// entry for a mesh target. A uniform the program declares as
+/// `sampler2DShadow` gets the comparison sampler instead (hardware LEQUAL
+/// compare, 2x2 PCF); it demands a depth texture, and the UI side rejects
+/// anything else at bind, so a mismatch here means the mirrors diverged -
+/// drop the input (samples as unbound) and say which.
 fn resolve_binding_list(
   textures: &HashMap<u64, GpuTexture>,
   samplers: &SamplerCache,
   bindings: &[TextureBinding],
+  program: &ShaderProgram,
 ) -> Vec<PassInput> {
   bindings
     .iter()
     .filter_map(|b| {
-      textures
-        .get(&b.id)
-        .map(|gpu| (b.name.clone(), gpu.gl_texture, Some(samplers.get(gpu.sampler.overridden(&b.sampler)))))
+      let gpu = textures.get(&b.id)?;
+      let compare = program.uniform_kind(&b.name) == Some(UniformKind::Sampler2DShadow);
+      if compare && gpu.format != TextureFormat::Depth24 {
+        log::warn!("[alloy] sampler2DShadow input '{}': texture {} is not a depth texture; skipped", b.name, b.id);
+        return None;
+      }
+      let sampler = if compare { samplers.compare() } else { samplers.get(gpu.sampler.overridden(&b.sampler)) };
+      Some((b.name.clone(), gpu.gl_texture, Some(sampler)))
     })
     .collect()
 }

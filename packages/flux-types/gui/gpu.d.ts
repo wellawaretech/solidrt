@@ -932,9 +932,15 @@ declare module "flux:gpu" {
    * depth throws. SAMPLER-ONLY: it is not an upload texture and not a
    * readback source (`readTexture`/`copyTexture` throw - render it through a
    * pass to read it), its sampling is fixed at `nearest`/`clamp` (a depth
-   * texture is only complete at nearest without a comparison mode - filter
-   * in the shader, e.g. a PCF loop), and it dies with its target
-   * (`destroyTexture` on it throws). Displaying it via `<texture src>`
+   * texture is only complete at nearest without a comparison mode), and it
+   * dies with its target (`destroyTexture` on it throws). A pipeline
+   * program may instead declare the uniform as `sampler2DShadow`: the
+   * engine then binds a COMPARISON sampler for it - `texture(map,
+   * vec3(uv, ref))` returns the hardware LEQUAL compare of `ref` against
+   * the map, LINEAR-weighted over the 2x2 footprint (one-tap PCF). Only a
+   * depth texture may back a sampler2DShadow uniform (anything else is
+   * refused at bind); a plain `sampler2D` keeps the raw nearest reads.
+   * Displaying it via `<texture src>`
    * shows the depth in the red channel. Throws for a target without texture
    * depth.
    */

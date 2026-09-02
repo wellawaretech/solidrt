@@ -305,6 +305,57 @@ fn design_size_view_in_a_row_stretches_unless_aligned() {
   assert_eq!(box_of(&tree, 4), Size::new(100.0, 50.0));
 }
 
+// A texture is a replaced element, not a special case: parent alignment
+// applies to it in full. An explicitly sized texture centers under
+// alignItems: center (cross-axis stretch never applies to a definite cross
+// size), and alignSelf is the per-node override - HTML <img> in a flex
+// container, exactly.
+#[test]
+fn texture_honors_parent_cross_axis_alignment() {
+  // root(1, 400x300 column, alignItems center) > tex(2, 100x50)
+  let mut tree = RenderTree::new();
+  tree.create_node(1, attached());
+  tree.create_node(2, Texture::default().with_layout());
+  tree.insert_node(1, 2, None).expect("insert");
+  tree.root = Some(1);
+  size(&mut tree, 1, 400.0, 300.0);
+  size(&mut tree, 2, 100.0, 50.0);
+  tree.node_mut(1).style_mut().expect("root").align_items = Some(AlignItems::CENTER);
+  let platform = PlatformContext::new(Vec::new());
+  let alloy = headless();
+
+  layout(&mut tree, &platform, &alloy);
+  assert_eq!(box_of(&tree, 2), Size::new(100.0, 50.0));
+  let loc = tree.node(2).layout_data().location();
+  assert_xy(Point::new(loc.x, loc.y), 150.0, 0.0);
+}
+
+// With no explicit size, the default alignItems: stretch reaches the
+// texture's auto cross axis and the measured axis follows the intrinsic
+// ratio (replaced_size with a known width); alignSelf: flex-start opts a
+// node back to its natural size, the same escape as on the web.
+#[test]
+fn texture_stretch_follows_intrinsic_ratio() {
+  // root(1, 400x300 column) > stretched(2), natural(3, alignSelf start);
+  // both carry a 200x100 intrinsic via the src crop, no texture registry.
+  let mut tree = RenderTree::new();
+  tree.create_node(1, attached());
+  let tex = || Texture { src_w: Some(200.0), src_h: Some(100.0), ..Texture::default() };
+  tree.create_node(2, tex().with_layout());
+  tree.create_node(3, tex().with_layout());
+  tree.insert_node(1, 2, None).expect("insert");
+  tree.insert_node(1, 3, None).expect("insert");
+  tree.root = Some(1);
+  size(&mut tree, 1, 400.0, 300.0);
+  tree.node_mut(3).style_mut().expect("natural").align_self = Some(AlignSelf::FLEX_START);
+  let platform = PlatformContext::new(Vec::new());
+  let alloy = headless();
+
+  layout(&mut tree, &platform, &alloy);
+  assert_eq!(box_of(&tree, 2), Size::new(400.0, 200.0));
+  assert_eq!(box_of(&tree, 3), Size::new(200.0, 100.0));
+}
+
 // A span has no layout of its own but feeds its text's measure: inserting or
 // detaching one invalidates the text's cache like a text write does. (A text
 // laid out empty, then given a span, otherwise keeps its 0-wide box.)

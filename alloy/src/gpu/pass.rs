@@ -123,7 +123,7 @@ fn apply_uniform(gl: &glow::Context, name: &str, loc: &glow::UniformLocation, sl
       UniformKind::Vec4 => gl.uniform_4_f32_slice(Some(loc), c),
       UniformKind::Mat4 => gl.uniform_matrix_4_f32_slice(Some(loc), false, c),
       // No component count, so the guard above already returned.
-      UniformKind::Sampler2D | UniformKind::Inactive | UniformKind::Other(_) => {}
+      UniformKind::Sampler2D | UniformKind::Sampler2DShadow | UniformKind::Inactive | UniformKind::Other(_) => {}
     }
   }
 }

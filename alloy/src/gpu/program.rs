@@ -28,9 +28,13 @@ void main() {
 // The preamble declares exactly what the runtime provides: anything the app
 // drives (a time uniform, say) is the app's own declaration, like any other
 // uniform, so forgetting to drive it is a compile error rather than a value
-// silently stuck at 0.
+// silently stuck at 0. sampler2DShadow gets a default precision because ES
+// 3.0 gives it NONE (unlike sampler2D's lowp), so a comparison-sampler
+// uniform would otherwise fail to compile without a per-declaration
+// qualifier - a trap, not a choice the app should have to make.
 const FRAGMENT_PREAMBLE: &str = r"#version 300 es
 precision highp float;
+precision highp sampler2DShadow;
 in vec2 vUV;
 out vec4 fragColor;
 uniform vec2 iResolution;
@@ -43,11 +47,13 @@ uniform vec2 iResolution;
 // attribute list. As above, a source with its own #version gets no preamble.
 const PIPELINE_VERTEX_PREAMBLE: &str = r"#version 300 es
 precision highp float;
+precision highp sampler2DShadow;
 uniform vec2 iResolution;
 ";
 
 const PIPELINE_FRAGMENT_PREAMBLE: &str = r"#version 300 es
 precision highp float;
+precision highp sampler2DShadow;
 out vec4 fragColor;
 uniform vec2 iResolution;
 ";
@@ -341,6 +347,12 @@ impl ShaderProgram {
   /// An active uniform's location and typed slot, for the apply path.
   pub(super) fn uniform(&self, name: &str) -> Option<&(glow::UniformLocation, super::vocab::UniformSlot)> {
     self.uniforms.get(name)
+  }
+
+  /// An active uniform's reflected kind - how the binding resolver tells a
+  /// comparison sampler (sampler2DShadow) from a plain one.
+  pub(crate) fn uniform_kind(&self, name: &str) -> Option<super::vocab::UniformKind> {
+    self.uniforms.get(name).map(|(_, slot)| slot.kind)
   }
 
   pub(crate) fn delete(self, gl: &glow::Context) {

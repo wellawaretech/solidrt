@@ -34,7 +34,7 @@
 // lives in node.ts, mesh.ts and light.ts, talking back through the
 // SceneHooks seam (node.ts).
 
-import { addDraw, createDrawTarget, createTexture, depthTexture, destroyProgram, destroyRenderPipeline, destroyTexture, limits, removeDraw, setDrawBuffers, setDrawOrder, setDrawParams, setTargetParams, setTargetRect, setTargetSize, setTargetTextures } from "@solidrt/core/gpu"
+import { addDraw, createDrawTarget, depthTexture, destroyProgram, destroyRenderPipeline, destroyTexture, limits, removeDraw, setDrawBuffers, setDrawOrder, setDrawParams, setTargetParams, setTargetRect, setTargetSize, setTargetTextures } from "@solidrt/core/gpu"
 import * as spatial from "flux:spatial"
 import type { NodeId } from "flux:spatial"
 import type { DrawId, FilterMode, ProgramId, RenderPipelineId, ShaderParams, TextureId, WrapMode } from "@solidrt/core/gpu"
@@ -595,15 +595,18 @@ function entrySeed(material: Material, params: ShaderParams | null): ShaderParam
     : { uModel: IDENTITY, ...material.params, ...params }
 }
 
-// The uShadowAtlas binding while nothing casts: one white
-// texel (depth 1, never shadowed), shared by every scene for the app.
+// The uShadowAtlas binding while nothing casts: the depth texture of a
+// one-texel draw target that renders nothing (its clear leaves depth 1,
+// never shadowed), shared by every scene for the app. It must be a real
+// depth texture - uShadowAtlas is a sampler2DShadow, and the engine
+// refuses a color texture behind a comparison sampler.
 let placeholder: TextureId | undefined
 
 function shadowPlaceholder(): TextureId {
   if (placeholder === undefined) {
-    placeholder = createTexture(new Uint8Array([255, 255, 255, 255]), 1, 1, { autoFree: false, label: "scene-shadow-none" })
+    placeholder = createDrawTarget(1, 1, null, { depth: "texture", autoFree: false, label: "scene-shadow-none" })
   }
-  return placeholder
+  return depthTexture(placeholder)
 }
 
 /**

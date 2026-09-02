@@ -5,7 +5,7 @@ use crate::rendertree::Damage;
 use crate::rendertree::{
   replaced_size, Bounded, BuildContext, Buildable, Element, ElementKind, Measurable, MeasureContext,
 };
-use taffy::{AlignSelf, Display, Style};
+use taffy::{Display, Style};
 
 // CSS object-fit semantics: how the source pixels map to the element box.
 // Fill stretches (the default, like CSS); Cover/None crop; Contain/ScaleDown
@@ -198,13 +198,12 @@ impl Texture {
   }
 
   pub fn initial_style() -> Style {
-    Style {
-      display: Display::Block,
-      // Replaced-element default: opt out of flex `align-items: stretch`,
-      // matching HTML <img>. User can override via align-self prop.
-      align_self: Some(AlignSelf::START),
-      ..Default::default()
-    }
+    // No align_self override: parent alignment applies in full, like any
+    // element (and like HTML <img>, which flex containers do stretch).
+    // Stretch only reaches a texture whose cross size is auto; the
+    // measured axis then follows the intrinsic ratio via replaced_size,
+    // and alignSelf="flex-start" is the per-node opt-out, as on the web.
+    Style { display: Display::Block, ..Default::default() }
   }
 
   pub fn with_layout(self) -> Element {

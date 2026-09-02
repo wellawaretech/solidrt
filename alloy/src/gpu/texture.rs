@@ -303,6 +303,10 @@ impl SamplerState {
 /// `GL_EXT_texture_filter_anisotropic`).
 pub struct SamplerCache {
   samplers: [glow::Sampler; SamplerCache::COUNT],
+  /// The one comparison sampler (see `compare()`), outside the indexed
+  /// state combinations: comparison is picked by the program's declared
+  /// sampler type, never by SamplerState.
+  compare: glow::Sampler,
 }
 
 impl SamplerCache {
@@ -349,11 +353,33 @@ impl SamplerCache {
         }
       }
     }
-    SamplerCache { samplers: samplers.map(|s| s.expect("all sampler states populated")) }
+    // The comparison sampler: LINEAR so the hardware compares the four
+    // neighbours and bilinearly weights the RESULTS (2x2 PCF - the step a
+    // shader-side loop cannot take, which blends depth values), LEQUAL to
+    // match the `ref <= depth` convention every shadow lookup here uses.
+    let compare = unsafe {
+      let sampler = gl.create_sampler().expect("glGenSamplers failed");
+      gl.sampler_parameter_i32(sampler, glow::TEXTURE_MIN_FILTER, glow::LINEAR as i32);
+      gl.sampler_parameter_i32(sampler, glow::TEXTURE_MAG_FILTER, glow::LINEAR as i32);
+      gl.sampler_parameter_i32(sampler, glow::TEXTURE_WRAP_S, glow::CLAMP_TO_EDGE as i32);
+      gl.sampler_parameter_i32(sampler, glow::TEXTURE_WRAP_T, glow::CLAMP_TO_EDGE as i32);
+      gl.sampler_parameter_i32(sampler, glow::TEXTURE_COMPARE_MODE, glow::COMPARE_REF_TO_TEXTURE as i32);
+      gl.sampler_parameter_i32(sampler, glow::TEXTURE_COMPARE_FUNC, glow::LEQUAL as i32);
+      sampler
+    };
+    SamplerCache { samplers: samplers.map(|s| s.expect("all sampler states populated")), compare }
   }
 
   pub fn get(&self, state: SamplerState) -> glow::Sampler {
     self.samplers[Self::index(state)]
+  }
+
+  /// The sampler for a `sampler2DShadow` binding: `texture(map, vec3(uv,
+  /// ref))` returns the LEQUAL compare of `ref` against the depth texture,
+  /// LINEAR-weighted over the 2x2 footprint. Only meaningful on a
+  /// depth-format texture (the resolver enforces that).
+  pub fn compare(&self) -> glow::Sampler {
+    self.compare
   }
 
   pub(crate) fn index(state: SamplerState) -> usize {

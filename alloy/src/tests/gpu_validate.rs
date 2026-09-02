@@ -89,11 +89,18 @@ fn params_sampler_and_unsupported_kinds_error() {
 }
 
 #[test]
-fn texture_bindings_require_active_sampler2d() {
-  let t = table(&[("uTex", UniformKind::Sampler2D), ("uColor", UniformKind::Vec4)]);
+fn texture_bindings_require_active_sampler() {
+  let t = table(&[
+    ("uTex", UniformKind::Sampler2D),
+    ("uShadow", UniformKind::Sampler2DShadow),
+    ("uColor", UniformKind::Vec4),
+  ]);
   assert_eq!(validate_texture_bindings(&t, &[TextureBinding::new("uTex", 7)]), Ok(()));
+  // A comparison sampler binds the same way (the depth-format requirement
+  // is the context's check, not this table-only one).
+  assert_eq!(validate_texture_bindings(&t, &[TextureBinding::new("uShadow", 7)]), Ok(()));
   let err = validate_texture_bindings(&t, &[TextureBinding::new("uColor", 7)]).expect_err("non-sampler must error");
-  assert!(err.contains("uColor") && err.contains("not a sampler2D"), "{err}");
+  assert!(err.contains("uColor") && err.contains("not a sampler"), "{err}");
   let err = validate_texture_bindings(&t, &[TextureBinding::new("uTx", 7)]).expect_err("typo must error");
   assert!(err.contains("no active uniform named 'uTx'"), "{err}");
 }
@@ -102,7 +109,7 @@ fn texture_bindings_require_active_sampler2d() {
 fn texture_bindings_reject_sampler_arrays() {
   let t = array_table(&[("uTexes", UniformKind::Sampler2D, 4)]);
   let err = validate_texture_bindings(&t, &[TextureBinding::new("uTexes", 7)]).expect_err("sampler array must error");
-  assert!(err.contains("sampler2D[4]") && err.contains("not a sampler2D"), "{err}");
+  assert!(err.contains("sampler2D[4]") && err.contains("not a sampler"), "{err}");
 }
 
 fn range(first: i32, count: i32, instances: i32) -> DrawRange {

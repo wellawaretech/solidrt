@@ -482,6 +482,7 @@ impl Context {
     let bounds = self.resolve_entry_range(&mut entry, stride, instance_strides)?;
     validate_params(&uniforms, &entry.params)?;
     validate_texture_bindings(&uniforms, &entry.textures)?;
+    self.check_compare_bindings(&uniforms, &entry.textures)?;
     let draw_id = list.next_draw;
     self.validate_new_bindings(target, draw_id, &entry.textures)?;
     // The entry's effective inputs include the shared names its program
@@ -495,7 +496,7 @@ impl Context {
         c.keys()
           .filter(|(e, name)| {
             *e == 0
-              && uniforms.get(name.as_str()).is_some_and(|s| s.kind == UniformKind::Sampler2D)
+              && uniforms.get(name.as_str()).is_some_and(|s| s.kind.is_sampler())
               && !entry.textures.iter().any(|b| b.name == *name)
           })
           .count()
@@ -663,6 +664,7 @@ impl Context {
       let mirror = targets.get(&target).ok_or_else(|| format!("target {target} not found"))?;
       let Some(list) = mirror.entries.as_ref() else {
         validate_texture_bindings(&mirror.uniforms, textures)?;
+        self.check_compare_bindings(&mirror.uniforms, textures)?;
         drop(targets);
         self.validate_new_bindings(target, 0, textures)?;
         let mut sources = self.shader_sources.borrow_mut();
@@ -681,11 +683,14 @@ impl Context {
             if slot.kind == UniformKind::Inactive {
               continue;
             }
-            if slot.kind != UniformKind::Sampler2D || slot.count > 1 {
-              return Err(format!("uniform '{name}' is {}, not a sampler2D", slot.glsl_name()));
+            if !slot.kind.is_sampler() || slot.count > 1 {
+              return Err(format!("uniform '{name}' is {}, not a sampler", slot.glsl_name()));
             }
           }
         }
+      }
+      for entry in list.entries.values() {
+        self.check_compare_bindings(&entry.uniforms, textures)?;
       }
       // Per-entry unit budget against the MERGED shared set: an entry's
       // effective inputs are its own bindings plus the shared names its
@@ -705,7 +710,7 @@ impl Context {
         let extra = shared
           .iter()
           .filter(|n| {
-            entry.uniforms.get(**n).is_some_and(|s| s.kind == UniformKind::Sampler2D)
+            entry.uniforms.get(**n).is_some_and(|s| s.kind.is_sampler())
               && record.is_none_or(|c| !c.contains_key(&(*draw_id, (**n).to_string())))
           })
           .count();
@@ -736,6 +741,7 @@ impl Context {
       validate_texture_bindings(&entry.uniforms, textures)?;
       entry.uniforms.clone()
     };
+    self.check_compare_bindings(&entry_uniforms, textures)?;
     self.validate_new_bindings(target, draw, textures)?;
     // Combined with the target's shared bindings (entry key 0), the entry's
     // merged inputs must still fit the unit budget - the add_draw rule,
@@ -749,7 +755,7 @@ impl Context {
         c.keys()
           .filter(|(e, name)| {
             *e == 0
-              && entry_uniforms.get(name.as_str()).is_some_and(|s| s.kind == UniformKind::Sampler2D)
+              && entry_uniforms.get(name.as_str()).is_some_and(|s| s.kind.is_sampler())
               && !c.contains_key(&(draw, name.clone()))
               && !textures.iter().any(|b| b.name == *name)
           })
@@ -937,6 +943,13 @@ impl Context {
       let uniforms = programs.get(&ws.program).ok_or_else(|| format!("program {} not found", ws.program))?;
       validate_params(uniforms, &ws.params)?;
       validate_texture_bindings(uniforms, &ws.textures)?;
+      // The window pass resolves bindings without the comparison-sampler
+      // path, so a comparing uniform would silently missample - refuse it.
+      for TextureBinding { name, .. } in &ws.textures {
+        if uniforms.get(name).is_some_and(|s| s.kind == UniformKind::Sampler2DShadow) {
+          return Err(format!("uniform '{name}' is a sampler2DShadow; comparison sampling is not available in a window shader"));
+        }
+      }
       for binding in &ws.textures {
         self.check_depth_binding(binding)?;
       }
