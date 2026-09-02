@@ -1,4 +1,4 @@
-use crate::spatial::{compose, multiply, DrawSink, Mat4, SinkWriter, Spatial, IDENTITY};
+use crate::spatial::{compose, multiply, DrawSink, Mat4, SinkWriter, Spatial, TextureSlotSink, IDENTITY};
 
 const Q: [f32; 4] = [0.0, 0.0, 0.0, 1.0];
 const ONE: [f32; 3] = [1.0, 1.0, 1.0];
@@ -11,6 +11,7 @@ enum Write {
   Count { target: u64, draw: u64, count: u32 },
   Shared { target: u64, name: String, values: Vec<f32> },
   Instances { buffer: u64, first: u32, values: Vec<f32> },
+  Texture { texture: u64, values: Vec<f32> },
 }
 
 struct Recorder(Vec<Write>);
@@ -28,6 +29,9 @@ impl SinkWriter for Recorder {
   fn write_instances(&mut self, buffer: u64, lo: u32, hi: u32, values: &[f32]) {
     // Record the range slice under `first`, matching the plain write path.
     self.0.push(Write::Instances { buffer, first: lo, values: values[lo as usize..hi as usize].to_vec() });
+  }
+  fn write_texture(&mut self, texture: u64, values: &[f32]) {
+    self.0.push(Write::Texture { texture, values: values.to_vec() });
   }
 }
 
@@ -728,4 +732,144 @@ fn destroying_a_bound_node_zeroes_its_slot() {
   s.set_transform(b, [7.0, 8.0, 0.0], Q, ONE).expect("move");
   let writes = flush(&mut s);
   assert_eq!(writes, vec![Write::Instances { buffer: 4, first: 5, values: vec![7.0, 8.0, 0.0, 1.0, 1.0] }]);
+}
+
+// --- Texture slots (matrix palettes) ---
+
+fn palette(w: &Write) -> (u64, Vec<f32>) {
+  match w {
+    Write::Texture { texture, values } => (*texture, values.clone()),
+    other => panic!("expected a texture write, got {other:?}"),
+  }
+}
+
+fn assert_rows_eq(got: &[f32], want: &[f32]) {
+  assert_eq!(got.len(), want.len(), "palette length");
+  for (i, (g, w)) in got.iter().zip(want).enumerate() {
+    assert!((g - w).abs() < 1e-5, "palette float {i}: {g} vs {w}");
+  }
+}
+
+/// A translation as a post matrix (column-major, translation in 12..15).
+fn post(x: f32, y: f32, z: f32) -> Mat4 {
+  compose([x, y, z], [0.0, 0.0, 0.0, 1.0], [1.0, 1.0, 1.0])
+}
+
+#[test]
+fn texture_slots_stage_world_times_post_and_publish_whole() {
+  let mut s = Spatial::new();
+  let a = s.create([1.0, 0.0, 0.0], Q, ONE, true);
+  let b = s.create([0.0, 2.0, 0.0], Q, [2.0, 2.0, 2.0], true);
+  s.bind_texture_slot(a, TextureSlotSink { texture: 5, row: 0, post: post(0.5, 0.0, 0.0) }, None).expect("bind");
+  s.bind_texture_slot(b, TextureSlotSink { texture: 5, row: 1, post: IDENTITY }, None).expect("bind");
+  let writes = flush(&mut s);
+  assert_eq!(writes.len(), 1, "one write per texture per flush: {writes:?}");
+  let (texture, values) = palette(&writes[0]);
+  assert_eq!(texture, 5);
+  let mut want = Vec::new();
+  want.extend_from_slice(&multiply(compose([1.0, 0.0, 0.0], Q, ONE), post(0.5, 0.0, 0.0)));
+  want.extend_from_slice(&compose([0.0, 2.0, 0.0], Q, [2.0, 2.0, 2.0]));
+  assert_rows_eq(&values, &want);
+  assert!(flush(&mut s).is_empty(), "a clean palette publishes nothing");
+}
+
+#[test]
+fn moving_one_node_republishes_with_only_its_row_changed() {
+  let mut s = Spatial::new();
+  let a = s.create([1.0, 0.0, 0.0], Q, ONE, true);
+  let b = s.create([2.0, 0.0, 0.0], Q, ONE, true);
+  s.bind_texture_slot(a, TextureSlotSink { texture: 5, row: 0, post: IDENTITY }, None).expect("bind");
+  s.bind_texture_slot(b, TextureSlotSink { texture: 5, row: 1, post: IDENTITY }, None).expect("bind");
+  let (_, before) = palette(&flush(&mut s)[0]);
+  s.set_transform(b, [9.0, 0.0, 0.0], Q, ONE).expect("move");
+  let writes = flush(&mut s);
+  assert_eq!(writes.len(), 1);
+  let (_, after) = palette(&writes[0]);
+  assert_eq!(after[..16], before[..16], "row 0 untouched");
+  assert_eq!(after[16 + 12], 9.0, "row 1 moved");
+}
+
+#[test]
+fn anchored_rows_are_anchor_local() {
+  let mut s = Spatial::new();
+  // Model root somewhere in the world; a joint chain under it. The
+  // published rows must be MODEL-local (independent of the root's own
+  // placement), post-multiplied by the inverse bind stand-in.
+  let root = s.create([10.0, 0.0, 0.0], Q, [2.0, 2.0, 2.0], true);
+  let joint = s.create([0.0, 3.0, 0.0], Q, ONE, true);
+  s.set_parent(joint, Some(root)).expect("parent");
+  let bind = post(-1.0, 0.0, 0.0);
+  s.bind_texture_slot(joint, TextureSlotSink { texture: 8, row: 0, post: bind }, Some(root)).expect("bind");
+  let (_, values) = palette(&flush(&mut s)[0]);
+  let want = multiply(compose([0.0, 3.0, 0.0], Q, ONE), bind);
+  assert_rows_eq(&values, &want);
+  // Moving the ANCHOR restages the subtree; the anchor-local rows come
+  // out unchanged (the palette is relative), but they do republish.
+  s.set_transform(root, [0.0, 5.0, 0.0], Q, ONE).expect("move root");
+  let writes = flush(&mut s);
+  assert_eq!(writes.len(), 1, "anchor move republishes: {writes:?}");
+  let (_, values) = palette(&writes[0]);
+  let want = multiply(compose([0.0, 3.0, 0.0], Q, ONE), bind);
+  assert_rows_eq(&values, &want);
+  // Moving the joint changes the model-local row.
+  s.set_transform(joint, [0.0, 4.0, 0.0], Q, ONE).expect("move joint");
+  let (_, values) = palette(&flush(&mut s)[0]);
+  let want = multiply(compose([0.0, 4.0, 0.0], Q, ONE), bind);
+  assert_rows_eq(&values, &want);
+}
+
+#[test]
+fn one_anchor_per_texture_and_rebind_replaces() {
+  let mut s = Spatial::new();
+  let root = s.create([0.0; 3], Q, ONE, true);
+  let a = s.create([1.0, 0.0, 0.0], Q, ONE, true);
+  let b = s.create([2.0, 0.0, 0.0], Q, ONE, true);
+  s.bind_texture_slot(a, TextureSlotSink { texture: 5, row: 0, post: IDENTITY }, Some(root)).expect("bind");
+  let err = s
+    .bind_texture_slot(b, TextureSlotSink { texture: 5, row: 1, post: IDENTITY }, None)
+    .expect_err("anchor mismatch must error");
+  assert!(err.contains("anchored"), "{err}");
+  // Re-binding the same node on the same texture replaces its slot (the
+  // one-slot-per-texture rule), so the group's refs stay balanced.
+  s.bind_texture_slot(a, TextureSlotSink { texture: 5, row: 1, post: IDENTITY }, Some(root)).expect("rebind");
+  flush(&mut s);
+  s.unbind_texture_slot(a, Some(5)).expect("unbind");
+  // The group died with its last claim: an anchorless bind now succeeds.
+  s.bind_texture_slot(b, TextureSlotSink { texture: 5, row: 0, post: IDENTITY }, None).expect("fresh group");
+  let (_, values) = palette(&flush(&mut s)[0]);
+  assert_eq!(values[12], 2.0);
+}
+
+#[test]
+fn unbind_and_destroy_stop_publishing() {
+  let mut s = Spatial::new();
+  let a = s.create([1.0, 0.0, 0.0], Q, ONE, true);
+  s.bind_texture_slot(a, TextureSlotSink { texture: 5, row: 0, post: IDENTITY }, None).expect("bind");
+  flush(&mut s);
+  s.unbind_texture_slot(a, None).expect("unbind");
+  s.set_transform(a, [7.0, 0.0, 0.0], Q, ONE).expect("move");
+  assert!(flush(&mut s).is_empty(), "an unbound node stages nothing");
+  s.bind_texture_slot(a, TextureSlotSink { texture: 5, row: 0, post: IDENTITY }, None).expect("rebind");
+  flush(&mut s);
+  s.destroy(a).expect("destroy");
+  assert!(flush(&mut s).is_empty(), "a destroyed node's group is reaped without a write");
+}
+
+#[test]
+fn hidden_nodes_keep_their_palette_rows_fresh() {
+  let mut s = Spatial::new();
+  let root = s.create([0.0; 3], Q, ONE, true);
+  let joint = s.create([1.0, 0.0, 0.0], Q, ONE, true);
+  s.set_parent(joint, Some(root)).expect("parent");
+  s.bind_texture_slot(joint, TextureSlotSink { texture: 5, row: 0, post: IDENTITY }, None).expect("bind");
+  flush(&mut s);
+  s.set_visible(root, false).expect("hide");
+  flush(&mut s);
+  // A move while hidden still publishes: visibility is the mesh entry's
+  // business, the palette feeds whatever draws it.
+  s.set_transform(joint, [4.0, 0.0, 0.0], Q, ONE).expect("move");
+  let writes = flush(&mut s);
+  assert_eq!(writes.len(), 1, "{writes:?}");
+  let (_, values) = palette(&writes[0]);
+  assert_eq!(values[12], 4.0);
 }

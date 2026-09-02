@@ -197,10 +197,13 @@ what it delivered is documented in `packages/3d/AGENTS.md`, not here.
     texelFetched in the vertex stage - built on
     [gpu-float-texture-formats](../done/gpu-float-texture-formats.md) -
     so the MAX_JOINTS uniform-array cap is retired; see
-    `packages/3d/AGENTS.md`); what keeps the box open: morph targets,
-    since per-vertex JS is ruled out by the interpreter. The crowd-scale
-    evaluator is [animation-core](../backlog/animation-core.md), not this
-    item.
+    `packages/3d/AGENTS.md`). Palette composition moved into the spatial
+    core 2026-09-02 (the `TextureSlot` sink: joints bound row by row with
+    their inverse bind, palettes composed and uploaded at the flush,
+    `updateSkins` deleted, identical skins deduped); what keeps the box
+    open: morph targets, since per-vertex JS is ruled out by the
+    interpreter. The crowd-scale evaluator is
+    [animation-core](../backlog/animation-core.md), not this item.
 17. [ ] **PBR and the color-space decision.** The furthest tier: physically
     based lighting math forces the sRGB/linear question the pixel contract
     currently answers with "non-linear RGBA8 everywhere".

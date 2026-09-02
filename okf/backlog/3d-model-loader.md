@@ -16,9 +16,9 @@ factor/texture, doubleSided applied as `cull: "none"`, MASK as
 joints, inverse binds - and animations as baked clips), `createModel`
 (the hierarchy as nested Groups - `model.nodes` moves a named subtree -
 one `lit` per material with a skinned variant per skinned part, textures
-uploaded, `dispose()`), `createMixer`/`updateSkins` (JS clip playback
-with crossfades and uBones palettes - the rung-1 tier of
-[animation-core](animation-core.md)), the read conveniences
+uploaded, `dispose()`), `createMixer` (JS clip playback with crossfades -
+the rung-1 tier of [animation-core](animation-core.md); the uBones
+palettes are core-composed at the spatial flush since 2026-09-02), the read conveniences
 `loadGltf`/`loadModel`, and the bake: `srt tool 3d/model` writes the same
 parse as a `.srtm` container whose payload is the GPU layout.
 

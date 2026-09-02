@@ -77,6 +77,12 @@ Shaped, not started.
   traffic dots) have no shader-side answer, so apps rewrite w/h from JS on
   every camera change - per frame for record sprites - even though the camera
   is already a uniform in the vertex stage.
+- **[2d skeletal sprites - skinned deformation over the spatial palette sink](backlog/2d-skeletal-sprites.md)** [2026-09-02]
+  The 2d package has flipbook animation only; Spine/DragonBones-class skeletal
+  characters (bone hierarchies deforming a textured mesh) have no path, even
+  though the core machinery - arena bones, the TextureSlot palette sink, the
+  coming native clip evaluator - already exists or is planned with zero
+  2d-specific core work.
 - **[Seeding a tile world is one setTile call per cell](backlog/2d-tile-bulk-writes.md)** [2026-08-29]
   There is no bulk write, so an 18k-cell seed is 18k setTile calls each paying
   locate() and a frame copy; fine today because the flush batches to a

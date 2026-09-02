@@ -111,17 +111,12 @@ defaults for anything missing, so a manifest from an older CLI still loads.
   lit fragment and into the scene's shared light list, so it is fixed per
   app, not per scene. Four directional lights cover non-PBR scenes; an app
   wanting more would raise it here rather than per material.
-- The bone palette ceiling in `@solidrt/3d` (`MAX_JOINTS`, 64, raised
-  2026-08-31 with the joint-cap rework): the design half of `jointCap()` -
-  the runtime clamps a configured value to the device's vertex uniform
-  budget the same way, so raising it only takes effect where the budget
-  holds it. Same species as `MAX_LIGHTS` (a GLSL array size fixed per
-  app), but with a real cost dial: the declared size is also the per-frame
-  uBones upload per skinned mesh (cap x 64 bytes - param validation
-  requires the declared length exactly), so an app raises it for one big
-  rig on capable devices or lowers it to shave upload on crowd scenes.
-  Past a few hundred joints the answer is float-texture palettes (3d
-  roadmap item 16), not this knob.
+- ~~The bone palette ceiling in `@solidrt/3d` (`MAX_JOINTS`)~~: GONE as a
+  knob candidate. The 2026-09-01 float-texture palettes retired the cap
+  entirely (palette sized to the rig, no uniform budget in play), and
+  2026-09-02 moved palette composition into the spatial core's flush, so
+  neither the size nor the upload is an app-tunable anymore. Kept here so
+  the example is not re-proposed.
 - Any runtime-mutable config, env-var mirrors for the new keys, or a
   separate config file.
 

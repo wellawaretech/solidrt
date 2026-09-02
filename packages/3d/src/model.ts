@@ -11,12 +11,10 @@
 
 import { file } from "flux:fs"
 import { decodeImage } from "@solidrt/core"
-import { createMutableTexture, createTexture, destroyTexture, uploadTexture } from "@solidrt/core/gpu"
+import { createMutableTexture, createTexture, destroyTexture } from "@solidrt/core/gpu"
 import type { TextureId } from "@solidrt/core/gpu"
 import { gltfExternalUris, parseGltf } from "./gltf.ts"
 import type { ModelClip, ModelData, ModelMaterial } from "./gltf.ts"
-import { compose, copy, mat4, multiply } from "./math.ts"
-import type { Mat4 } from "./math.ts"
 import { decodeModel } from "./model-file.ts"
 import { disposeGeometry } from "./geometry-gpu.ts"
 import { lit } from "./material.ts"
@@ -71,14 +69,6 @@ export type Model = SceneNode & {
   /** The file's animation clips (empty when it has none); createMixer
    * plays them. Channel node indices resolve through `nodes`. */
   clips: ModelClip[]
-  /** @internal Node-table parent indices, for the skin palette walk. */
-  _parents: (number | null)[]
-  /** @internal Skin state: joint node indices, inverse binds, the palette
-   * written each updateSkins with the rgba32f texture it uploads to
-   * (bound as uBones on the skin's meshes), and the meshes drawing it. */
-  _skins: { joints: number[]; inverseBind: Float32Array; palette: Float32Array; texture: TextureId; meshes: Mesh[] }[]
-  /** @internal Model-local world scratch per node, updateSkins-owned. */
-  _worlds: Mat4[]
   /** Local rest-pose [minX, minY, minZ, maxX, maxY, maxZ] over every part
    * (conservative for parts under rotated nodes). */
   bounds: Float32Array
@@ -150,24 +140,46 @@ export function createModel(data: ModelData, opts: ModelOptions = {}): Model {
   })
   data.nodes.forEach((n, i) => add(n.parent === null ? model : groups[n.parent]!, groups[i]!))
   model.nodes = data.nodes.map((n, i) => ({ name: n.name, node: groups[i]! }))
-  model._parents = data.nodes.map((n) => n.parent)
   // Each skin's palette lives in an rgba32f texture, 4 texels wide, one
   // row per joint (the four columns of that joint's mat4), sized to the
   // RIG: rig size is bounded by texture height (>= 2048 everywhere), not
   // the vertex uniform budget, so there is no joint cap. The texture id
   // is bound as uBones on every mesh drawing the skin and freed with the
-  // model's other textures.
-  model._skins = data.skins.map((skin, i) => {
-    let palette = new Float32Array(skin.joints.length * 16)
-    let texture = createMutableTexture(palette, 4, skin.joints.length, {
+  // model's other textures. The bone matrices themselves are the spatial
+  // core's job: each joint node carries a palette-row binding (texture,
+  // row, inverse bind, the model root as anchor) that enterScene attaches,
+  // so the flush writes model-local jointWorld x inverseBind rows whenever
+  // joints move - there is no JS palette walk, and posing joints with
+  // setTransform is always enough. Identical skins (same joints, same
+  // inverse binds - the body/legs and LOD splits exporters produce) share
+  // one texture, so their palette is computed and uploaded once.
+  let skinTextures: TextureId[] = []
+  data.skins.forEach((skin, i) => {
+    let joints = skin.joints.join(",")
+    for (let j = 0; j < i; j++) {
+      let other = data.skins[j]!
+      if (
+        other.joints.join(",") === joints &&
+        other.inverseBind.length === skin.inverseBind.length &&
+        other.inverseBind.every((v, k) => v === skin.inverseBind[k])
+      ) {
+        skinTextures.push(skinTextures[j]!)
+        return
+      }
+    }
+    let texture = createMutableTexture(new Float32Array(skin.joints.length * 16), 4, skin.joints.length, {
       format: "rgba32f",
       autoFree: false,
       label: label ? label + "-skin" + i : "skin" + i,
     })
     textures.push(texture)
-    return { joints: skin.joints, inverseBind: skin.inverseBind, palette, texture, meshes: [] }
+    skinTextures.push(texture)
+    for (let j = 0; j < skin.joints.length; j++) {
+      let joint = groups[skin.joints[j]!]
+      if (joint === undefined) throw new Error("createModel: skin " + i + " names a missing node " + skin.joints[j])
+      ;(joint._palettes ??= []).push({ texture, row: j, post: skin.inverseBind.slice(j * 16, j * 16 + 16), anchor: model })
+    }
   })
-  model._worlds = []
   model.parts = data.parts.map((part) => {
     let skinned = part.skin !== null
     let material = materialFor(part.material, skinned)
@@ -177,10 +189,9 @@ export function createModel(data: ModelData, opts: ModelOptions = {}): Model {
       // matrices place them, so its mesh hangs off the model root (the
       // spec ignores the node's transform for skinned meshes) and uModel
       // stays the model's own placement.
-      let skin = model._skins[part.skin!]
-      if (skin === undefined) throw new Error("createModel: part '" + part.name + "' names a missing skin " + part.skin)
-      skin.meshes.push(mesh)
-      mesh._textures = { uBones: skin.texture }
+      let texture = skinTextures[part.skin!]
+      if (texture === undefined) throw new Error("createModel: part '" + part.name + "' names a missing skin " + part.skin)
+      mesh._textures = { uBones: texture }
       add(model, mesh)
     } else {
       let node = groups[part.node]
@@ -192,9 +203,6 @@ export function createModel(data: ModelData, opts: ModelOptions = {}): Model {
   model.materials = materials
   model.clips = data.clips
   model.bounds = data.bounds
-  // Seed the bind-pose palettes so a rigged model shows its rest pose
-  // before anything plays.
-  updateSkins(model)
   model.dispose = () => {
     if (model.parent !== null) remove(model)
     for (let part of model.parts) disposeGeometry(part.mesh.geometry)
@@ -202,45 +210,6 @@ export function createModel(data: ModelData, opts: ModelOptions = {}): Model {
     textures.length = 0
   }
   return model
-}
-
-let SKIN_LOCAL: Mat4 = mat4()
-let SKIN_BONE: Mat4 = mat4()
-let SKIN_BIND: Mat4 = mat4()
-
-/**
- * Recompute the model's skin palettes from its joints' CURRENT local
- * transforms and upload each skin's `uBones` palette texture: model-local
- * jointWorld x inverseBind per joint. The mixer calls this after every
- * update that wrote poses; call it yourself only when you pose joints
- * directly with setTransform. O(nodes + joints) plain math - no scene
- * readback, the walk composes the same local TRS the nodes carry.
- */
-export function updateSkins(model: Model): void {
-  if (model._skins.length === 0) return
-  let nodes = model.nodes
-  let worlds = model._worlds
-  if (worlds.length !== nodes.length) {
-    worlds.length = 0
-    for (let i = 0; i < nodes.length; i++) worlds.push(mat4())
-  }
-  // The table is pre-order, so a parent's world is done before its
-  // children compose against it.
-  for (let i = 0; i < nodes.length; i++) {
-    let n = nodes[i]!.node
-    compose(SKIN_LOCAL, n.position, n.quaternion, n.scale)
-    let parent = model._parents[i]
-    if (parent == null) copy(worlds[i]!, SKIN_LOCAL)
-    else multiply(worlds[i]!, worlds[parent]!, SKIN_LOCAL)
-  }
-  for (let skin of model._skins) {
-    for (let j = 0; j < skin.joints.length; j++) {
-      for (let k = 0; k < 16; k++) SKIN_BIND[k] = skin.inverseBind[j * 16 + k]!
-      multiply(SKIN_BONE, worlds[skin.joints[j]!]!, SKIN_BIND)
-      for (let k = 0; k < 16; k++) skin.palette[j * 16 + k] = SKIN_BONE[k]!
-    }
-    uploadTexture(skin.texture, skin.palette)
-  }
 }
 
 /**

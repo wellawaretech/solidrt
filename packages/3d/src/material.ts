@@ -139,8 +139,8 @@ export type UnlitOptions = {
    * aWeights against the `uBones` palette texture - the rigged-model
    * variant createModel picks for skinned parts. The material then
    * requires "skinned" geometry, and something must bind `uBones`
-   * (createModel binds each skin's palette texture to its meshes;
-   * updateSkins writes it from the model's joints). The shadow variants
+   * (createModel binds each skin's palette texture to its meshes and
+   * the spatial flush writes it from the joints). The shadow variants
    * (depth and cutout) skin the same way, so a caster casts its pose. */
   skinned?: boolean
 }

@@ -7146,6 +7146,8 @@ function defineTheme(def, scheme) {
   }
   if (def.color.ring == null)
     color.ring = color.text;
+  if (def.color.selection == null)
+    color.selection = color.overlayPressed;
   let base = def.text?.base ?? 14;
   let ratio = def.text?.ratio ?? 1.26;
   let role = (name) => {
@@ -7203,7 +7205,8 @@ var DEFAULT = {
     danger: ["#cf222e", "#f85149"],
     scrim: ["rgba(0,0,0,0.4)", "rgba(0,0,0,0.6)"],
     overlayHover: ["rgba(0,0,0,0.08)", "rgba(255,255,255,0.08)"],
-    overlayPressed: ["rgba(0,0,0,0.14)", "rgba(255,255,255,0.14)"]
+    overlayPressed: ["rgba(0,0,0,0.14)", "rgba(255,255,255,0.14)"],
+    selection: ["rgba(84,126,191,0.30)", "rgba(84,126,191,0.40)"]
   },
   text: {
     roles: {
@@ -7694,18 +7697,21 @@ function createTextEditorLayout(viewport, input) {
     return ls.length - 1;
   };
   let caretLine = createMemo(() => lineOf(input().caret));
-  let caret = createMemo(() => {
-    let offset = input().caret;
-    let index = caretLine();
-    let line = lines()[index];
+  let xAt = (index, offset) => {
     let x = 0;
     for (let stop of lineStops(index)) {
       if (stop.offset > offset)
         break;
       x = stop.x;
     }
+    return x;
+  };
+  let caret = createMemo(() => {
+    let offset = input().caret;
+    let index = caretLine();
+    let line = lines()[index];
     return {
-      x,
+      x: xAt(index, offset),
       y: line.y,
       height: line.height
     };
@@ -7723,6 +7729,31 @@ function createTextEditorLayout(viewport, input) {
       }
     }
     return best;
+  };
+  let selectionRects = (anchor, focus) => {
+    let start = Math.min(anchor, focus);
+    let end = Math.max(anchor, focus);
+    if (start >= end)
+      return [];
+    let ls = lines();
+    let first = lineOf(start);
+    let last = lineOf(end);
+    let breakWidth = measureText2(" ", input().font).width;
+    let out = [];
+    for (let i = first;i <= last; i++) {
+      let line = ls[i];
+      let x = i === first ? xAt(i, start) : 0;
+      let width = i === last ? xAt(i, end) - x : Math.max(line.width - x, 0) + breakWidth;
+      if (width <= 0)
+        continue;
+      out.push({
+        x,
+        y: line.y,
+        width,
+        height: line.height
+      });
+    }
+    return out;
   };
   let lineAtY = (y) => {
     let ls = lines();
@@ -7790,6 +7821,7 @@ function createTextEditorLayout(viewport, input) {
     caret,
     caretLine,
     offsetAtX,
+    selectionRects,
     lineAtY,
     step,
     scrollX,
@@ -8083,13 +8115,46 @@ function EditorField(props) {
     if (node)
       setFocus(node.id);
   };
+  let offsetAt = (e) => {
+    let line = editor.lineAtY(e.localY + editor.scrollY());
+    return editor.offsetAtX(line, e.localX + editor.scrollX());
+  };
+  let dragArmed = null;
+  let dragActive = null;
+  let dragOwner = {
+    cancel: () => {
+      dragActive = null;
+    }
+  };
   let handleViewportPointerDown = (e) => {
     if (props.disabled)
       return;
-    let line = editor.lineAtY(e.localY + editor.scrollY());
-    let offset = editor.offsetAtX(line, e.localX + editor.scrollX());
-    buffer.setSelection(offset, offset);
+    let offset = offsetAt(e);
+    buffer.setSelection(e.shiftKey ? buffer.selection().anchor : offset, offset);
+    if (e.pointerType !== "touch" && (e.button == null || e.button === 0))
+      dragArmed = e.pointerId;
     setCaretOn(true);
+  };
+  let handleViewportPointerMove = (e) => {
+    if (props.disabled)
+      return;
+    if (dragArmed === e.pointerId) {
+      dragArmed = null;
+      if (arena.steal(e.pointerId, dragOwner))
+        dragActive = e.pointerId;
+    }
+    if (dragActive === e.pointerId) {
+      buffer.setSelection(buffer.selection().anchor, offsetAt(e));
+      setCaretOn(true);
+    }
+  };
+  let handleViewportPointerUp = (e) => {
+    if (dragArmed === e.pointerId)
+      dragArmed = null;
+    if (dragActive === e.pointerId) {
+      arena.release(e.pointerId, dragOwner);
+      dragActive = null;
+    }
   };
   let handleFocus = () => {
     setCaretOn(true);
@@ -8116,21 +8181,30 @@ function EditorField(props) {
       buffer.deleteForward();
       setCaretOn(true);
     } else if (e.key === "ArrowLeft") {
-      buffer.move("left");
+      buffer.move("left", {
+        extend: e.shiftKey
+      });
       setCaretOn(true);
     } else if (e.key === "ArrowRight") {
-      buffer.move("right");
+      buffer.move("right", {
+        extend: e.shiftKey
+      });
       setCaretOn(true);
     } else if (e.key === "Home" || e.key === "End") {
       if (props.multiline) {
         let offset = editor.offsetAtX(editor.caretLine(), e.key === "Home" ? 0 : 1e9);
-        buffer.setSelection(offset, offset);
+        buffer.setSelection(e.shiftKey ? buffer.selection().anchor : offset, offset);
       } else {
-        buffer.move(e.key === "Home" ? "start" : "end");
+        buffer.move(e.key === "Home" ? "start" : "end", {
+          extend: e.shiftKey
+        });
       }
       setCaretOn(true);
     } else if (props.multiline && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
-      moveLine(e.key === "ArrowUp" ? -1 : 1);
+      moveLine(e.key === "ArrowUp" ? -1 : 1, e.shiftKey);
+      setCaretOn(true);
+    } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "a") {
+      buffer.setSelection(0, value().length);
       setCaretOn(true);
     } else if (props.multiline && e.key === "Enter" && textInputActive()) {
       buffer.insertText(`
@@ -8153,11 +8227,11 @@ function EditorField(props) {
     buffer.insertText(e.text ?? "");
     setCaretOn(true);
   };
-  let moveLine = (delta) => {
+  let moveLine = (delta, extend) => {
     let target = editor.caretLine() + delta;
     let count = editor.lines().length;
     let offset = target < 0 ? 0 : target >= count ? value().length : editor.offsetAtX(target, editor.caret().x);
-    buffer.setSelection(offset, offset);
+    buffer.setSelection(extend ? buffer.selection().anchor : offset, offset);
   };
   let activateField = () => {
     if (props.disabled)
@@ -8174,6 +8248,8 @@ function EditorField(props) {
     if (blinkId != null)
       clearInterval(blinkId);
     unregisterNav?.();
+    if (dragActive != null)
+      arena.release(dragActive, dragOwner);
   });
   let textColor = () => props.style?.color ?? theme.color.text;
   let surfaceColor = () => props.style?.backgroundColor ?? theme.color.surface;
@@ -8215,7 +8291,9 @@ function EditorField(props) {
   }), _el$4 = createElement("view", {
     flex: 1,
     overflow: "hidden",
-    onPointerDown: handleViewportPointerDown
+    onPointerDown: handleViewportPointerDown,
+    onPointerMove: handleViewportPointerMove,
+    onPointerUp: handleViewportPointerUp
   });
   insertNode2(_el$, _el$2);
   insertNode2(_el$, _el$3);
@@ -8290,7 +8368,35 @@ function EditorField(props) {
       }), true);
       insert(_el$5, () => props.placeholder ?? "");
       return _el$5;
-    })() : [createComponent2(For, {
+    })() : [memo2(() => memo2(() => !!focused())() ? createComponent2(For, {
+      get each() {
+        return editor.selectionRects(buffer.selection().anchor, buffer.selection().focus);
+      },
+      keyed: false,
+      children: (r) => (() => {
+        var _el$6 = createElement("d-rect");
+        effect3(() => ({
+          e: theme.color.selection,
+          t: r().x,
+          a: r().y,
+          o: r().width,
+          i: r().height
+        }), ({
+          e,
+          t,
+          a,
+          o,
+          i
+        }, _p$) => {
+          e !== _p$?.e && setProp(_el$6, "color", e, _p$?.e);
+          t !== _p$?.t && setProp(_el$6, "x", t, _p$?.t);
+          a !== _p$?.a && setProp(_el$6, "y", a, _p$?.a);
+          o !== _p$?.o && setProp(_el$6, "w", o, _p$?.o);
+          i !== _p$?.i && setProp(_el$6, "h", i, _p$?.i);
+        });
+        return _el$6;
+      })()
+    }) : null), createComponent2(For, {
       get each() {
         return editor.lines();
       },
@@ -8301,7 +8407,7 @@ function EditorField(props) {
         color: textColor
       })
     }), memo2(() => memo2(() => !!showCaret())() ? (() => {
-      var _el$6 = createElement("d-rect", {
+      var _el$7 = createElement("d-rect", {
         w: 1
       });
       effect3(() => ({
@@ -8315,12 +8421,12 @@ function EditorField(props) {
         a,
         o
       }, _p$) => {
-        e !== _p$?.e && setProp(_el$6, "color", e, _p$?.e);
-        t !== _p$?.t && setProp(_el$6, "x", t, _p$?.t);
-        a !== _p$?.a && setProp(_el$6, "y", a, _p$?.a);
-        o !== _p$?.o && setProp(_el$6, "h", o, _p$?.o);
+        e !== _p$?.e && setProp(_el$7, "color", e, _p$?.e);
+        t !== _p$?.t && setProp(_el$7, "x", t, _p$?.t);
+        a !== _p$?.a && setProp(_el$7, "y", a, _p$?.a);
+        o !== _p$?.o && setProp(_el$7, "h", o, _p$?.o);
       });
-      return _el$6;
+      return _el$7;
     })() : null)];
   })());
   effect3(() => ({

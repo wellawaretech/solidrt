@@ -39,17 +39,20 @@ shares:
   the walk, it only consumes its result.
 
 The admissibility rule for a sink, stated once because every row must
-pass it: (1) its INPUT is exactly the flush's output - a node's world
-transform, nothing else; (2) its DESTINATION is an existing engine
-channel addressed by caller-supplied ids and names (a draw entry's
-params, its range, a target's shared params); (3) no domain constant or
-name lives in core - no `uLightDir`, no light/bone/instance concept.
-(`uModel`/`uNormal` in the DrawParams sink are the sanctioned exception:
-they are the draw list's own standard vocabulary, engine-level, not a
-package's.) Consumer count is not the test - shape is: a second consumer
-must need zero core changes. A sink that would need core to INTERPRET
-the transform (fold an intensity, pack colors) fails the rule and stays
-in the consumer.
+pass it: (1) its INPUT is the flush's output - a node's world transform -
+optionally combined with transform-shaped binding constants (the
+TextureSlot sink's per-binding post-multiply matrix, and its group's
+anchor node whose world relativizes the output: still matrices in,
+matrices out, nothing interpreted); (2) its DESTINATION is an existing
+engine channel addressed by caller-supplied ids and names (a draw entry's
+params, its range, a target's shared params, a texture's rows); (3) no
+domain constant or name lives in core - no `uLightDir`, no
+light/bone/instance concept. (`uModel`/`uNormal` in the DrawParams sink
+are the sanctioned exception: they are the draw list's own standard
+vocabulary, engine-level, not a package's.) Consumer count is not the
+test - shape is: a second consumer must need zero core changes. A sink
+that would need core to INTERPRET the transform (fold an intensity, pack
+colors) fails the rule and stays in the consumer.
 
 Nothing in the module knows about cameras, perspective, lights, materials
 or meshes. A consumer supplies matrices (a view-projection is target
@@ -65,7 +68,7 @@ reason the binding is a small enum and not a hardwired mesh field:
 |---|---|---|
 | `DrawParams { target, draw, normal }` | the draw entry's `uModel` (+ `uNormal`) params | `@solidrt/3d`; any draw-list user (2D sprite scenes with an orthographic matrix are the same thing) |
 | `InstanceRecord { buffer, index }` | one slot of an instance buffer | instanced fleets whose instances are nodes: the thousands-of-dynamic-objects tier |
-| `TextureSlot { texture, index }` | one row of a float texture | skeleton bones for skinning (3d roadmap item 16) |
+| `TextureSlot { texture, row, post }` (BUILT 2026-09-02: `bind_texture_slot`, group-level optional anchor, one whole-palette upload per texture per flush) | one row of a float texture (`world * post`, anchor-relative when the group has one) | skeleton bones for skinning: `createModel` binds joints with `post` = inverse bind, anchor = model root; anticipated second consumer [2d-skeletal-sprites](2d-skeletal-sprites.md) |
 | `EntryVisible { target, draw }` | the entry's instance count (0 / N) | frustum culling (item 19's other half) |
 | `SharedSlot { target, name, len, index, projection }` | one vec3 slot of a target shared array param (Direction projection today; Position is the anticipated sibling) | `@solidrt/3d` light directions (`uLightDir`); any tracked axis a shader reads |
 

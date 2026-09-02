@@ -837,16 +837,19 @@ The orbit-camera pattern: no frame loop of its own - call
 `mixer.update(dt)` from your onFrame and gate dependents on its boolean
 return. Channels write node TRS through setTransform (a channel nothing
 plays leaves the node's pose alone; your setTransform and the mixer's
-share the path, last write wins), then skins update: each skin's uBones
-palette (model-local jointWorld x inverseBind, sized to the RIG - the
-palette is an rgba32f float texture, 4 texels wide, one row per joint,
+share the path, last write wins). Skins need nothing further: each
+skin's uBones palette (model-local jointWorld x inverseBind, sized to
+the RIG - an rgba32f float texture, 4 texels wide, one row per joint,
 sampled in the vertex stage via texelFetch, so there is no joint cap) is
-recomputed in JS and pushed with one uploadTexture per skin. Posing joints
-directly without a mixer takes an explicit `updateSkins(model)` afterwards.
-`sampleChannel` (pure, from the root) is the sampling core for custom
-drivers. This is the JS animation tier - fine for a handful of
-characters, not a crowd; okf/backlog/animation-core.md is the native
-evaluator that replaces the internals, not the API.
+composed by the spatial core at the frame's flush from the joint nodes
+themselves, so ANY setTransform on a joint - mixer channel, root-motion
+strip after update(), hand-posed socket, no mixer at all - lands in the
+palette the same frame, in any order, and identical skins (a body/legs
+split, LODs) share one computed-once texture. `sampleChannel` (pure,
+from the root) is the sampling core for custom drivers. The sampling is
+the JS animation tier - fine for a couple of characters, not a crowd;
+okf/backlog/animation-core.md is the native evaluator that replaces the
+internals, not the API.
 
 Not in the subset, dropped: vertex colors, tangents and further UV sets;
 morph targets (the "weights" channel path); samplers are ignored (every

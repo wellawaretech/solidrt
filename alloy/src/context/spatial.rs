@@ -1,6 +1,6 @@
-use crate::gpu::{validate_params, DrawUpdate, ParamValue};
+use crate::gpu::{validate_params, DrawUpdate, ParamValue, TextureFormat};
 use crate::raster::RasterCmd;
-use crate::spatial::{DrawSink, InstanceRecordSink, Mat4, NodeId, SharedSlotSink, SinkWriter, Spatial};
+use crate::spatial::{DrawSink, InstanceRecordSink, Mat4, NodeId, SharedSlotSink, SinkWriter, Spatial, TextureSlotSink};
 
 use super::mirror::entry_mirror;
 use super::Context;
@@ -69,6 +69,26 @@ impl SinkWriter for Writer<'_> {
     }
     Self::dropped(self.ctx.write_gpu_buffer(buffer, &data, lo as usize * 4));
   }
+
+  // A palette publish: the staged rows as one whole-texture upload (the
+  // ordinary content-damage path; a palette is a few KB). The upload pads
+  // to the full frame, so rows above the bound extent read zero.
+  fn write_texture(&mut self, texture: u64, values: &[f32]) {
+    self.wrote = true;
+    let Some(entry) = self.ctx.textures.get(texture) else {
+      Self::dropped(Err(format!("texture {texture} not found")));
+      return;
+    };
+    let frame = entry.format.byte_len(entry.width(), entry.height());
+    let mut data = Vec::with_capacity(frame.max(values.len() * 4));
+    for v in values {
+      data.extend_from_slice(&v.to_ne_bytes());
+    }
+    if data.len() < frame {
+      data.resize(frame, 0);
+    }
+    Self::dropped(self.ctx.update_texture(texture, &data, 0));
+  }
 }
 
 impl Context {
@@ -120,6 +140,43 @@ impl Context {
   /// Remove a node's slot sink on `target`, or every slot sink with None.
   pub fn spatial_unbind_slot(&self, node: NodeId, target: Option<u64>) -> Result<(), String> {
     self.spatial.borrow_mut().unbind_shared_slot(node, target)
+  }
+
+  /// Bind a node's texture slot; validated here so a bad binding throws at
+  /// its call site: the texture must exist as an uploadable rgba32f matrix
+  /// palette (4 texels wide, one mat4 per row) with `row` inside it.
+  pub fn spatial_bind_texture_slot(
+    &self,
+    node: NodeId,
+    sink: TextureSlotSink,
+    anchor: Option<NodeId>,
+  ) -> Result<(), String> {
+    {
+      let entry = self
+        .textures
+        .get(sink.texture)
+        .ok_or_else(|| format!("texture {} not found", sink.texture))?;
+      if entry.format != TextureFormat::Rgba32f {
+        return Err(format!("texture {} is {}, matrix rows need rgba32f", sink.texture, entry.format.name()));
+      }
+      // One column-major mat4 per row: exactly four rgba32f texels.
+      if entry.width() != 4 {
+        return Err(format!("texture {} is {} texels wide, matrix rows need 4", sink.texture, entry.width()));
+      }
+      if sink.row >= entry.height() {
+        return Err(format!("row {} is outside texture {} ({} rows)", sink.row, sink.texture, entry.height()));
+      }
+      if self.depth_owner(sink.texture).is_some() || self.targets.borrow().contains_key(&sink.texture) {
+        return Err(format!("texture {} is render-written, not uploadable", sink.texture));
+      }
+    }
+    self.spatial.borrow_mut().bind_texture_slot(node, sink, anchor)
+  }
+
+  /// Remove a node's texture slot on `texture`, or every texture slot with
+  /// None.
+  pub fn spatial_unbind_texture_slot(&self, node: NodeId, texture: Option<u64>) -> Result<(), String> {
+    self.spatial.borrow_mut().unbind_texture_slot(node, texture)
   }
 
   /// Bind (or with None unbind) a node's instance-record sink. Validated

@@ -169,6 +169,28 @@ declare module "flux:spatial" {
   export function unbindSlot(node: NodeId, target?: TextureId): void
 
   /**
+   * Route the node's world matrix, post-multiplied by the constant `post`
+   * (a Float32Array of 16, column-major), into row `row` of a float
+   * texture: the flush writes the 16 floats as the row's four rgba32f
+   * texels - the matrix-palette channel a vertex shader `texelFetch`es
+   * (a skin binds each joint node with `post` its inverse bind). Writes
+   * batch: however many bound nodes moved, each flush uploads at most one
+   * whole palette per texture. With `anchor` - one node shared by every
+   * bind on the texture, and an ANCESTOR of every bound node - rows are
+   * anchor-local (`inverse(anchorWorld) * world * post`), so a model
+   * root's placement stays out of its own palette. Rows keep updating
+   * while nodes are hidden (visibility is the drawing entry's business),
+   * and an unbound or destroyed node's row keeps its last value. Validated
+   * at bind time: the texture must be an uploadable rgba32f texture 4
+   * texels wide with `row` inside it. Rebinding the same texture replaces
+   * the node's slot there; another texture adds one.
+   */
+  export function bindTextureSlot(node: NodeId, texture: TextureId, row: number, post: Float32Array, anchor?: NodeId): void
+  /** Remove the node's texture slot on `texture`, or every texture slot
+   * without one (abandoned rows keep their last value). */
+  export function unbindTextureSlot(node: NodeId, texture?: TextureId): void
+
+  /**
    * Route the node's world pose to record slot `index` of vertex buffer
    * `buffer` used as an instance buffer: the flush writes the 5 floats
    * [x, y, angle, sx, sy] (world xy translation, rotation of the local x

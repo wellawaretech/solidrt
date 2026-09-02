@@ -66,22 +66,30 @@ pattern spatial-core used (cost proportional to animated nodes, not scene).
 
 Rung-1 tier exists (2026-08-31): `@solidrt/3d`'s `createMixer` plays the
 model loader's baked clips in JS (sample + crossfade + setTransform per
-animated node per frame, plus JS palette composition for skins) - the
-loader half this item assumed now exists, and the mixer's surface
-(play/stop/update/onFinish, weighted crossfade blending) is the drafted
-contract stage 1 replaces the internals of. Its measured comfort zone is
-a handful of characters; the crowd case still lands here.
+animated node per frame; palette composition moved to the core flush
+2026-09-02, see stage 2 below) - the loader half this item assumed now
+exists, and the mixer's surface (play/stop/update/onFinish, weighted
+crossfade blending) is the drafted contract stage 1 replaces the
+internals of. Measured (heroes-v2, 2026-09-01): ~3.7 ms/frame to sample
+177 channels for ONE 59-joint character - the comfort zone is a couple
+of characters, and this sampling cost is what stage 1 exists to remove.
 
-Stage 2 - skinning. Joint hierarchies are ordinary spatial nodes animated
-by stage 1; the palette (jointWorld * inverseBind per joint) lands in a
-float texture the vertex shader samples. Needs the float-texture engine
-item (roadmap 16) and the `TextureSlot` sink. Open design question, settle
-before building: whether a per-joint "palette node" (a child whose static
-local transform is the inverse bind) keeps the sink rule pure - its world
-matrix IS the palette entry - or whether inverse binds with shear force a
-per-binding constant post-multiply on the sink, which is still
-transform-shaped but widens the sink contract. Morph targets ride the same
-float-texture machinery and stay out of scope until a model demands them.
+Stage 2 - skinning: DONE 2026-09-02, built FIRST (the heroes-v2
+measurement showed the palette walk plus its ordering workarounds
+outweighed sampling): the `TextureSlot` sink landed in spatial
+(`bind_texture_slot`: per-node `{texture, row, post}`, group-level
+optional anchor, one whole-palette upload per texture per flush),
+`createModel` binds each joint with `post` = its inverse bind and the
+model root as anchor (palettes stay model-local, the skinned uModel
+contract untouched), identical skins dedupe to one texture, and
+`updateSkins` is deleted - palettes compose at the flush, so pose writes
+in any order against `mixer.update` land the same frame. The design
+question is settled: the per-binding constant post-multiply, NOT the
+"palette node" (a TRS local cannot represent a sheared inverse bind, and
+it would double the node count per rig); the admissibility rule in
+[spatial-core](spatial-core.md) records the widening. Morph targets ride
+the same float-texture machinery and stay out of scope until a model
+demands them.
 
 ## Placement and rules
 

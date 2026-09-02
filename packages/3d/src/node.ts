@@ -9,7 +9,7 @@
 import * as spatial from "flux:spatial"
 import type { NodeId, NodeTransition } from "flux:spatial"
 import { on } from "srt:events"
-import type { ShaderParams } from "@solidrt/core/gpu"
+import type { ShaderParams, TextureId } from "@solidrt/core/gpu"
 // The scene's lookAt() aims a node; math's builds a camera's view matrix -
 // the same pairing (and the same name) as Three's Object3D/Matrix4.
 import { compose, eulerFromQuat, identity, mat4, multiply, quat, quatFromFrame, transformPoint, updateRotation, updateScale } from "./math.ts"
@@ -118,6 +118,12 @@ export type SceneNode = {
   _scene: SceneHooks | null
   /** The declared transition, re-applied on every scene enter. */
   _transition: NodeTransition | string | null
+  /** Skin palette rows this node feeds (a model joint carries one per
+   * skin): bound to the core at every scene enter, so the flush writes
+   * `inverse(anchorWorld) * world * post` - the model-local bone matrix -
+   * to the palette texture's row whenever the node moves. `anchor` is the
+   * model root; null for non-joints (the common case pays one null check). */
+  _palettes: { texture: TextureId; row: number; post: Float32Array; anchor: SceneNode }[] | null
 }
 
 /** The settled component of a node transition. */
@@ -169,6 +175,7 @@ export function makeNode(kind: SceneNode["kind"]): SceneNode {
     _moved: false,
     _scene: null,
     _transition: null,
+    _palettes: null,
   }
 }
 
@@ -205,6 +212,14 @@ function enterScene(node: SceneNode, scene: SceneHooks): void {
   // The parent is in the scene already (add() enters the child only then),
   // and the scene root is the one node without a parent.
   if (node.parent !== null && node.parent._node !== null) spatial.setParent(node._node, node.parent._node)
+  if (node._palettes !== null) {
+    // A joint's palette rows: the anchor (its model root) entered first -
+    // enterScene recurses parents-first - so its core node is live. The
+    // core drops the binding with the node at leaveScene.
+    for (let p of node._palettes) {
+      if (p.anchor._node !== null) spatial.bindTextureSlot(node._node, p.texture, p.row, p.post, p.anchor._node)
+    }
+  }
   if (node.kind === "mesh") scene._attach(node as Mesh)
   else if (node.kind === "light") scene._attachLight(node as Light)
   for (let c of node.children) enterScene(c, scene)

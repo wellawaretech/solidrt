@@ -8,11 +8,13 @@
 //
 // This is the JS tier of animation (okf/backlog/animation-core.md is the
 // native evaluator that replaces these internals, not this API): sampling
-// is O(animated channels) interpreted work per update - fine for a
-// handful of characters, not for a crowd. A channel the active clips do
-// not animate keeps the node's current pose (the file's rest pose, or
+// is O(animated channels) interpreted work per update - fine for a couple
+// of characters, not for a crowd. A channel the active clips do not
+// animate keeps the node's current pose (the file's rest pose, or
 // whatever the app wrote); the mixer's writes and the app's setTransform
-// go through the same path, last write wins.
+// go through the same path, last write wins, and the skin palettes follow
+// at the frame's flush - so posing joints before OR after update() is
+// equally fine (root-motion strips, attachment tweaks).
 //
 // `sampleChannel` (./clip.ts) is the pure core (no scene, runs under
 // bun), exported from the package root for checks and custom drivers.
@@ -23,7 +25,6 @@ import type { ModelClip } from "./gltf.ts"
 import { sampleChannel } from "./clip.ts"
 import { setTransform } from "./node.ts"
 import type { SceneNode } from "./node.ts"
-import { updateSkins } from "./model.ts"
 import type { Model } from "./model.ts"
 
 export type MixerPlayOptions = {
@@ -197,7 +198,6 @@ export function createMixer(model: Model): Mixer {
           scale: slot.has & 4 ? slot.scale : undefined,
         })
       }
-      updateSkins(model)
       return true
     },
     playing() {

@@ -87,6 +87,10 @@ pub trait SinkWriter {
   /// most one write per buffer per flush, however many nodes moved (see
   /// `InstanceRecordSink`).
   fn write_instances(&mut self, buffer: u64, lo: u32, hi: u32, values: &[f32]);
+  /// A float texture's fresh rows, whole: 16 floats (one column-major mat4,
+  /// one row of a 4-texel-wide rgba32f texture) per bound slot. At most one
+  /// write per texture per flush (see `TextureSlotSink`).
+  fn write_texture(&mut self, texture: u64, values: &[f32]);
 }
 
 /// How a shared-slot sink projects the node's world transform into its
@@ -165,6 +169,41 @@ pub struct InstanceRecordSink {
   pub projection: InstanceProjection,
 }
 
+/// Routes the node's world matrix, post-multiplied by a constant matrix,
+/// to row `row` of a float texture: 16 floats (one column-major mat4, the
+/// four rgba32f texels of that row) at `values[row*16, (row+1)*16)`. The
+/// bridge between the transform hierarchy and matrix palettes a vertex
+/// shader texelFetches - a skin's bone palette is joint nodes bound row by
+/// row with `post` the joint's inverse bind. Writes batch like instance
+/// records: the flush stages every changed row and publishes each dirty
+/// texture once, whole. A node carries one texture slot per texture.
+///
+/// The texture's group may carry an ANCHOR node: published rows are then
+/// `inverse(anchorWorld) * nodeWorld * post`, making the palette local to
+/// the anchor (a model root keeps its skin palette in model space, so the
+/// mesh's own `uModel` still places it). The anchor must be an ANCESTOR of
+/// every bound node - only then does an anchor move restage every row (its
+/// whole subtree recomputes); this is the consumer's contract, unchecked.
+/// Rows update while hidden (a palette feeds a mesh whose own sink handles
+/// visibility), and an unbound or destroyed node's row keeps its last
+/// value (a zeroed bone matrix would collapse the vertices weighted to it;
+/// teardown destroys the texture in the same batch anyway).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TextureSlotSink {
+  pub texture: u64,
+  pub row: u32,
+  pub post: Mat4,
+}
+
+/// One palette texture's staging mirror and the sinks feeding it. `values`
+/// holds `nodeWorld * post` per row; the anchor inverse applies at publish.
+struct PaletteGroup {
+  anchor: Option<NodeId>,
+  values: Vec<f32>,
+  refs: u32,
+  dirty: bool,
+}
+
 /// One instance buffer's staging mirror and the sinks feeding it.
 struct InstanceGroup {
   stride: u32,
@@ -217,6 +256,8 @@ struct Node {
   shape: Option<ShapeId>,
   /// One per target.
   slots: Vec<SharedSlotSink>,
+  /// One per texture.
+  texture_slots: Vec<TextureSlotSink>,
   record: Option<InstanceRecordSink>,
   /// The record slot holds this node's shown pose (false = zeroed or
   /// never written; the next shown flush writes it).
@@ -232,6 +273,7 @@ pub struct Spatial {
   pub(crate) shapes: pick::Shapes,
   shared: HashMap<(u64, String), SharedGroup>,
   instances: HashMap<u64, InstanceGroup>,
+  palettes: HashMap<u64, PaletteGroup>,
   transitions: NodeTransitions,
 }
 
@@ -286,6 +328,7 @@ impl Spatial {
       leaf: None,
       shape: None,
       slots: Vec::new(),
+      texture_slots: Vec::new(),
       record: None,
       record_on: false,
     };
@@ -323,6 +366,9 @@ impl Spatial {
     }
     for slot in std::mem::take(&mut self.nodes[i as usize].slots) {
       self.release_slot(&slot);
+    }
+    for slot in std::mem::take(&mut self.nodes[i as usize].texture_slots) {
+      self.release_texture_slot(&slot);
     }
     if let Some(record) = self.nodes[i as usize].record.take() {
       self.release_record(&record);
@@ -433,6 +479,82 @@ impl Spatial {
     }
     self.enqueue(i);
     Ok(())
+  }
+
+  /// Bind the node's texture slot on the sink's texture, replacing the one
+  /// it had there (a re-bind to another row abandons the old row, which
+  /// keeps its last value). Every bind on one texture must name the same
+  /// `anchor` (one anchor per palette, like one stride per instance
+  /// buffer); the first bind sets it. Fit against the actual texture is
+  /// the caller's check (Context validates at bind); the staging mirror
+  /// grows to the highest bound row. Binding stages the row at the next
+  /// flush - the queued node recomputes unconditionally.
+  pub fn bind_texture_slot(&mut self, id: NodeId, sink: TextureSlotSink, anchor: Option<NodeId>) -> Result<(), String> {
+    let i = self.resolve(id)?;
+    if let Some(a) = anchor {
+      self.resolve(a)?;
+    }
+    let group = self.palettes.entry(sink.texture).or_insert_with(|| PaletteGroup {
+      anchor,
+      values: Vec::new(),
+      refs: 0,
+      dirty: false,
+    });
+    if group.refs > 0 && group.anchor != anchor {
+      return Err(format!(
+        "texture {} palette is anchored to {:?}, not {:?} (one anchor per texture)",
+        sink.texture, group.anchor, anchor
+      ));
+    }
+    group.anchor = anchor;
+    let need = (sink.row as usize + 1) * 16;
+    if group.values.len() < need {
+      group.values.resize(need, 0.0);
+    }
+    group.refs += 1;
+    let slots = &mut self.nodes[i as usize].texture_slots;
+    let mut released = Vec::new();
+    slots.retain(|s| {
+      let replaced = s.texture == sink.texture;
+      if replaced {
+        released.push(*s);
+      }
+      !replaced
+    });
+    for slot in &released {
+      self.release_texture_slot(slot);
+    }
+    self.nodes[i as usize].texture_slots.push(sink);
+    self.enqueue(i);
+    Ok(())
+  }
+
+  /// Remove the node's texture slot on `texture` (or every texture slot
+  /// with None); the abandoned rows keep their last value.
+  pub fn unbind_texture_slot(&mut self, id: NodeId, texture: Option<u64>) -> Result<(), String> {
+    let i = self.resolve(id)?;
+    let slots = &mut self.nodes[i as usize].texture_slots;
+    let mut released = Vec::new();
+    slots.retain(|s| {
+      let keep = texture.is_some_and(|t| t != s.texture);
+      if !keep {
+        released.push(*s);
+      }
+      keep
+    });
+    for slot in &released {
+      self.release_texture_slot(slot);
+    }
+    Ok(())
+  }
+
+  /// Drop one texture slot's claim on its group; the group itself is
+  /// dropped at the next flush once unreferenced. The row is NOT zeroed
+  /// (see `TextureSlotSink`).
+  fn release_texture_slot(&mut self, sink: &TextureSlotSink) {
+    if let Some(group) = self.palettes.get_mut(&sink.texture) {
+      group.refs = group.refs.saturating_sub(1);
+    }
   }
 
   /// Bind (or with None unbind) the node's instance-record sink. Binding
@@ -1011,6 +1133,38 @@ impl Spatial {
       }
       group.refs > 0
     });
+    // Palette staging publishes whole per texture. Anchored rows relativize
+    // here, at the flush's end: the anchor's world is fresh (an anchor move
+    // restaged every row, since it is an ancestor of every bound node), and
+    // one inverse covers the palette. A dead anchor falls back to identity
+    // (the consumer tears joints down before their model root, so live
+    // sinks never see it).
+    if self.palettes.values().any(|g| g.dirty || g.refs == 0) {
+      let mut palettes = std::mem::take(&mut self.palettes);
+      let mut scratch: Vec<f32> = Vec::new();
+      palettes.retain(|texture, group| {
+        if group.dirty {
+          group.dirty = false;
+          match group.anchor {
+            None => out.write_texture(*texture, &group.values),
+            Some(a) => {
+              let inv = match self.resolve(a) {
+                Ok(i) => invert_affine(&self.nodes[i as usize].world),
+                Err(_) => IDENTITY,
+              };
+              scratch.clear();
+              for row in group.values.chunks(16) {
+                let m: Mat4 = row.try_into().expect("palette rows are 16 floats");
+                scratch.extend_from_slice(&multiply(inv, m));
+              }
+              out.write_texture(*texture, &scratch);
+            }
+          }
+        }
+        group.refs > 0
+      });
+      self.palettes = palettes;
+    }
   }
 
   fn has_queued_ancestor(&self, i: u32) -> bool {
@@ -1069,6 +1223,17 @@ impl Spatial {
         if let Some(group) = shared.get_mut(&(slot.target, slot.name.clone())) {
           if group.values[at..at + 3] != v {
             group.values[at..at + 3].copy_from_slice(&v);
+            group.dirty = true;
+          }
+        }
+      }
+      let palettes = &mut self.palettes;
+      for slot in &n.texture_slots {
+        if let Some(group) = palettes.get_mut(&slot.texture) {
+          let m = multiply(n.world, slot.post);
+          let at = slot.row as usize * 16;
+          if group.values[at..at + 16] != m {
+            group.values[at..at + 16].copy_from_slice(&m);
             group.dirty = true;
           }
         }

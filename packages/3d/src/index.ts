@@ -58,7 +58,7 @@ export type {
 export { gltfExternalUris, isGlb, parseGltf } from "./gltf.ts"
 export type { ModelChannel, ModelClip, ModelData, ModelMaterial, ModelNode, ModelPart, ModelSkin, UriResolver } from "./gltf.ts"
 export { decodeModel, encodeModel } from "./model-file.ts"
-export { createModel, loadGltf, loadModel, updateSkins } from "./model.ts"
+export { createModel, loadGltf, loadModel } from "./model.ts"
 export type { Model, ModelMaps, ModelOptions } from "./model.ts"
 export { createMixer } from "./mixer.ts"
 export type { Mixer, MixerPlayOptions } from "./mixer.ts"

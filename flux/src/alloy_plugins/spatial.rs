@@ -17,7 +17,7 @@ use crate::plugins::marshal::OptArg;
 use alloy::rendertree::PlatformContext;
 use alloy::spatial::{
   Component, DrawSink, InstanceProjection, InstanceRecordSink, NodeTransitionConfig, Projection, Shape,
-  SharedSlotSink,
+  SharedSlotSink, TextureSlotSink,
 };
 
 fn throw_str(ctx: &Ctx<'_>, msg: &str) -> rquickjs::Error {
@@ -79,6 +79,8 @@ impl ModuleDef for SpatialModule {
     decl.declare("bindDirectionSlot")?;
     decl.declare("bindPositionSlot")?;
     decl.declare("unbindSlot")?;
+    decl.declare("bindTextureSlot")?;
+    decl.declare("unbindTextureSlot")?;
     decl.declare("bindPoseRecord")?;
     decl.declare("unbindRecord")?;
     decl.declare("retargetRecords")?;
@@ -108,6 +110,8 @@ impl ModuleDef for SpatialModule {
     exports.export("bindDirectionSlot", Function::new(ctx.clone(), bind_direction_slot)?)?;
     exports.export("bindPositionSlot", Function::new(ctx.clone(), bind_position_slot)?)?;
     exports.export("unbindSlot", Function::new(ctx.clone(), unbind_slot)?)?;
+    exports.export("bindTextureSlot", Function::new(ctx.clone(), bind_texture_slot)?)?;
+    exports.export("unbindTextureSlot", Function::new(ctx.clone(), unbind_texture_slot)?)?;
     exports.export("bindPoseRecord", Function::new(ctx.clone(), bind_pose_record)?)?;
     exports.export("unbindRecord", Function::new(ctx.clone(), unbind_record)?)?;
     exports.export("retargetRecords", Function::new(ctx.clone(), retarget_records)?)?;
@@ -393,6 +397,41 @@ fn bind_position_slot(ctx: Ctx<'_>, id: u64, target: u64, name: String, len: u32
 /// Remove the node's slot sink on `target`, or every slot sink without one.
 fn unbind_slot(ctx: Ctx<'_>, id: u64, target: OptArg<u64>) -> rquickjs::Result<()> {
   state(&ctx).atx.spatial_unbind_slot(id, target.0).map_err(|e| throw_str(&ctx, &format!("unbindSlot: {e}")))
+}
+
+/// Bind the node's texture slot: the flush writes the node's world matrix,
+/// post-multiplied by `post` (a Float32Array of 16, column-major), as the
+/// 16 floats of row `row` of the rgba32f texture - one whole-palette
+/// upload per texture per flush. With `anchor` (an ancestor node shared by
+/// every slot on the texture) rows are anchor-local:
+/// inverse(anchorWorld) * world * post.
+fn bind_texture_slot(
+  ctx: Ctx<'_>,
+  id: u64,
+  texture: u64,
+  row: u32,
+  post: TypedArray<'_, f32>,
+  anchor: OptArg<u64>,
+) -> rquickjs::Result<()> {
+  let p = floats(&ctx, &post, "bindTextureSlot")?;
+  if p.len() != 16 {
+    return Err(throw_str(&ctx, "bindTextureSlot: post must be a Float32Array of 16 (a column-major mat4)"));
+  }
+  let mut m = [0.0f32; 16];
+  m.copy_from_slice(p);
+  state(&ctx)
+    .atx
+    .spatial_bind_texture_slot(id, TextureSlotSink { texture, row, post: m }, anchor.0)
+    .map_err(|e| throw_str(&ctx, &format!("bindTextureSlot: {e}")))
+}
+
+/// Remove the node's texture slot on `texture`, or every texture slot
+/// without one; abandoned rows keep their last value.
+fn unbind_texture_slot(ctx: Ctx<'_>, id: u64, texture: OptArg<u64>) -> rquickjs::Result<()> {
+  state(&ctx)
+    .atx
+    .spatial_unbind_texture_slot(id, texture.0)
+    .map_err(|e| throw_str(&ctx, &format!("unbindTextureSlot: {e}")))
 }
 
 /// Bind the node's instance-record sink with the 2D pose projection: the

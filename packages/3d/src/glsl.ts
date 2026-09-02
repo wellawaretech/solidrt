@@ -56,8 +56,9 @@ export const MAX_SHADOW_MAPS = 8
  * The palette is a float texture, not a uniform array, so rig size is
  * bounded only by texture height (>= 2048 everywhere), never by the
  * vertex uniform budget: an rgba32f texture 4 texels wide, one row per
- * joint, each row the four columns of that joint's mat4 (updateSkins
- * writes it; createModel binds it per skinned mesh). Pair with
+ * joint, each row the four columns of that joint's mat4 (the spatial
+ * flush writes it from the bound joint nodes; createModel binds it per
+ * skinned mesh). Pair with
  * SKIN_MATRIX in main(). */
 export const SKIN_DECLS = glsl`
   in vec4 aJoints;
@@ -503,7 +504,7 @@ export type LitSourceOptions = {
   /** Skin positions and normals by the "skinned" layout's aJoints/
    * aWeights against the `uBones` palette texture (rgba32f, 4 texels
    * wide, one row per joint: model-local jointWorld x inverseBind -
-   * updateSkins writes it). The vertex stage then requires that layout
+   * the spatial flush writes it). The vertex stage then requires that layout
    * and something must bind `uBones`; the fragment is unchanged. */
   skinned?: boolean
   /** GLSL spliced at file scope, before main: the uniforms, constants and
