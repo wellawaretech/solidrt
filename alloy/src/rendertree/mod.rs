@@ -1,6 +1,7 @@
 pub mod composite;
 pub mod counters;
 pub mod cull;
+pub(crate) mod damage;
 pub mod frame;
 pub mod hit;
 pub(crate) mod kinds;
@@ -67,7 +68,7 @@ pub struct BuildContext<'a> {
   /// Backdrop-filter regions the walk passed, in window space with each
   /// region's blur reach; None for a region a non-2D transform made
   /// unmappable. Stored on the tree after the walk so damage resolves can
-  /// widen a damage rect to whole panels (composite::expand_damage_for_backdrops).
+  /// widen a damage rect to whole panels (damage::expand_damage_for_backdrops).
   pub backdrop_regions: Vec<BackdropRegion>,
   // Repaint-boundary diagnostics for the frame being built (see composite.rs).
   pub boundaries_reused: u32,

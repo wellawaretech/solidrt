@@ -59,6 +59,11 @@ it, so this pays off before that starts.
   readback.rs:56 legitimately keeps the raw predicate (glReadPixels
   cannot read multisampled regardless of route).
 
+Done 2026-09-02: DamageLedger in rendertree/damage.rs, DamageTracker and
+WindowRoute in raster/repaint.rs, gl/draw.rs consuming the route. Verified
+live (spin example: 1094/1097 presents partial, 61 fps, no missed
+presents).
+
 ### 2. Reify the boundary composite in composite.rs
 
 `snapshot_node_uncalled` (composite.rs:605-918) is a 3x2 decision

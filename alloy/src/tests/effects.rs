@@ -102,7 +102,7 @@ fn filter_blur_grows_the_subtree_envelope() {
 
 #[test]
 fn backdrop_regions_widen_damage() {
-  use crate::rendertree::composite::expand_damage_for_backdrops;
+  use crate::rendertree::damage::expand_damage_for_backdrops;
   let panel = (rect(100.0, 100.0, 200.0, 80.0), 12.0f32);
 
   // Damage away from the panel passes through untouched.

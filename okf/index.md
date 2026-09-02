@@ -489,6 +489,13 @@ Shaped, not started.
   friction stepped inside the solver, which is per-wheel-per-substep work no
   app can do in JS. Rapier has no vehicle module of its own; shape it as the
   physics core's first higher-level controller after the core lands.
+- **[Pipeline target resize from a 1x1 creation leaves the framebuffer incomplete](backlog/pipeline-target-resize-incomplete.md)** [2026-09-02]
+  A createPipelineTexture target created at 1x1 (the size a 0x0 startup window
+  clamps to) fails its first real setTargetSize with "shader framebuffer
+  incomplete after resize: target framebuffer incomplete: 0x8cd6"
+  (GL_FRAMEBUFFER_INCOMPLETE_ATTACHMENT), killing the app; hit twice,
+  reproducibly, on the Linux desktop client while bringing up the 2d starlings
+  demo.
 - **[srt render is never headless on ANGLE](backlog/playback-headless-angle.md)** [2026-08-17]
   On Windows the offscreen video driver fails every time (SDL's offscreen path
   needs EGL_EXT_device_enumeration, which ANGLE does not implement) and

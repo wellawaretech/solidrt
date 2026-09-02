@@ -166,7 +166,14 @@ const KEY_INTENSITY = 0.35
 // contact shadow, and a tight cone keeps its map texels dense and its
 // floor taps few.
 const KEY_ANGLE = 22
-const SHADOW_MAP = 1024
+// Per-caster map resolution. 2048, not the old 1024: a spot's perspective
+// map spreads its texels over the whole cone footprint (the old ortho box
+// packed them into 5.2 world units), so the same count reads blocky at
+// the shadow edge - quality first for the demo, and the extra depth
+// raster measured cheap next to the fill. Four casters tile a
+// 4096x4096 atlas; scene-shadows downscales uniformly where
+// maxTextureSize cannot hold it.
+const SHADOW_MAP = 2048
 // The shadow camera's near plane: the caster sits LIGHT_DISTANCE up the ray.
 const SHADOW_NEAR = 2
 // The split: one large panel taking SPLIT of the window's long axis, the

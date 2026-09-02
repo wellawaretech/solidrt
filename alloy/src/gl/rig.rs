@@ -297,10 +297,6 @@ pub(crate) fn supports_invalidate(gl: &glow::Context) -> bool {
   }
 }
 
-/// FBO 0's multisample count, queried once per process. Positive when the
-/// window backbuffer itself is multisampled (Android requests this, see
-/// configure_opengl); the driver then resolves in-tile at swap and plain
-/// window frames skip the rig entirely.
 /// True when the window's default framebuffer is multisampled (the Android
 /// in-tile fast path): frames then draw straight into FBO 0 and a damage
 /// patch cannot apply - Impeller clears the wrapped target, and there is no
@@ -309,6 +305,10 @@ pub(crate) fn window_fast_path(gl: &glow::Context) -> bool {
   window_samples(gl) >= 2
 }
 
+/// FBO 0's multisample count, queried once per process. Positive when the
+/// window backbuffer itself is multisampled (Android requests this, see
+/// configure_opengl); the driver then resolves in-tile at swap and plain
+/// window frames skip the rig entirely.
 pub(super) fn window_samples(gl: &glow::Context) -> i32 {
   static N: std::sync::OnceLock<i32> = std::sync::OnceLock::new();
   *N.get_or_init(|| unsafe {

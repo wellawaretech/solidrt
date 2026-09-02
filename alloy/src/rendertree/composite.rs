@@ -70,7 +70,7 @@ pub fn paint_phase(
   // pixels must be erased). The walk below rewrites the cells; the second
   // pass after it reads the new half. Taken after layout_phase so the ids
   // noted by set_unrounded_layout (relayout-shifted nodes) are included.
-  let (damaged, damage_full) = tree.take_damage();
+  let (damaged, damage_full) = tree.damage_ledger().take();
   let size = Size::new(width, height);
   let window_rect = Rect::new(Point::zero(), size);
   tree.node(root_id).last_extent.set(cull::Extent::Bounded(window_rect));
@@ -115,10 +115,7 @@ pub fn paint_phase(
     let regions = std::mem::take(&mut ctx.backdrop_regions);
     (stats, damage, regions)
   };
-  let damage = expand_damage_for_backdrops(damage, &regions);
-  tree.set_backdrop_regions(regions);
-  let frame_damage = clamp_damage(damage, damage_full, window_rect);
-  tree.set_frame_damage(frame_damage);
+  let frame_damage = tree.damage_ledger().resolve_walk(damage, damage_full, regions, window_rect);
   stats.damage_px = frame_damage.area(size);
   // Any capture request whose node the walk never visited targets a node that
   // is not in the live tree; fail it rather than leave its promise pending.
@@ -142,59 +139,6 @@ pub fn paint_phase(
   stats
 }
 
-// Partial repaint: a backdrop panel re-filters what lies beneath it, so a
-// change within the blur's reach of a panel changes the panel's own pixels
-// too - the repaint rect must grow to cover the whole panel, or the blit
-// leaves its edge stale. An unmappable region (non-2D transform) makes any
-// damage full-frame rather than risking that. Iterates because one panel's
-// growth can reach another; bounded by the region count.
-pub(crate) fn expand_damage_for_backdrops(
-  damage: cull::Extent,
-  regions: &[crate::rendertree::BackdropRegion],
-) -> cull::Extent {
-  if regions.is_empty() {
-    return damage;
-  }
-  let mut current = match damage {
-    cull::Extent::Bounded(r) => r,
-    other => return other,
-  };
-  if regions.iter().any(Option::is_none) {
-    return cull::Extent::Unbounded;
-  }
-  for _ in 0..regions.len() {
-    let mut grew = false;
-    for entry in regions {
-      let Some((region, reach)) = entry else { continue };
-      if current.intersects(&region.inflate(*reach, *reach)) && !current.contains_rect(region) {
-        current = current.union(region);
-        grew = true;
-      }
-    }
-    if !grew {
-      break;
-    }
-  }
-  cull::Extent::Bounded(current)
-}
-
-// A resolved damage union cut to the window and to the FrameDamage form.
-fn clamp_damage(damage: cull::Extent, full: bool, window_rect: Rect) -> FrameDamage {
-  if full {
-    return FrameDamage::Full;
-  }
-  match damage {
-    cull::Extent::Empty => FrameDamage::None,
-    cull::Extent::Unbounded => FrameDamage::Full,
-    cull::Extent::Bounded(r) => match r.intersection(&window_rect) {
-      // Damage entirely outside the window changes no visible pixel.
-      None => FrameDamage::None,
-      Some(clamped) if clamped.contains_rect(&window_rect) => FrameDamage::Full,
-      Some(clamped) => FrameDamage::Rect(clamped),
-    },
-  }
-}
-
 /// Resolve the accumulated damage WITHOUT a paint walk, for the present-only
 /// reuse path (PendingFrame::commit): the tree is unchanged since the last
 /// walk, so a damaged id's cell is both its old and its new extent. Only
@@ -202,7 +146,7 @@ fn clamp_damage(damage: cull::Extent, full: bool, window_rect: Rect) -> FrameDam
 /// an unchanged display list (texture_content_changed notes them without a
 /// revision bump).
 pub fn resolve_reuse_damage(tree: &mut RenderTree, window: Size) -> FrameDamage {
-  let (damaged, full) = tree.take_damage();
+  let (damaged, full) = tree.damage_ledger().take();
   let window_rect = Rect::new(Point::zero(), window);
   let mut damage = cull::Extent::Empty;
   if !full {
@@ -210,8 +154,7 @@ pub fn resolve_reuse_damage(tree: &mut RenderTree, window: Size) -> FrameDamage 
       damage = damage.union(damaged_extent(tree, id));
     }
   }
-  let damage = expand_damage_for_backdrops(damage, tree.backdrop_regions());
-  clamp_damage(damage, full, window_rect)
+  tree.damage_ledger().resolve_reuse(damage, full, window_rect)
 }
 
 // A damaged node's window extent from its cell. A node the walk has never

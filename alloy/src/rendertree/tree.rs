@@ -4,17 +4,12 @@ use std::collections::{HashMap, HashSet};
 use taffy::NodeId;
 
 use crate::impellers::Matrix;
+use crate::rendertree::damage::DamageLedger;
 use crate::rendertree::transitions::{AnimValue, PendingWrite, Transitions};
 use crate::rendertree::{
   AnimProp, BoundaryMode, Damage, Element, ElementKind, FrameDamage, PaintCache, Point, Rect, RunOverrides, Size,
   TextRun, ATOM_CHAR,
 };
-
-// Damage accumulation cap: past this many damaged nodes in one frame the
-// frame is treated as fully damaged instead of paying per-node rect math (a
-// resize-scale relayout damages nearly every node, and a near-window union
-// is worth no less than a full repaint).
-const MAX_DAMAGED_NODES: usize = 256;
 
 pub struct RenderTree {
   nodes: HashMap<u64, Element>,
@@ -39,19 +34,11 @@ pub struct RenderTree {
   // edit/try_edit and on create/destroy, so it cannot drift from element
   // state whatever a write closure touched.
   texture_referencers: HashSet<u64>,
-  // Partial repaint (okf/done/partial-repaint.md): nodes whose on-screen
-  // pixels may differ from the last painted frame. Every damage and
-  // structural mutation path funnels into note_damage; composite::paint_phase
-  // drains the set and resolves it against the elements' last_extent cells.
-  damaged: HashSet<u64>,
-  damaged_full: bool,
-  // The damage the last painted frame resolved to, for stats and (stage 2)
-  // the raster pass.
-  frame_damage: FrameDamage,
-  // Backdrop-filter regions as of the last paint walk (window space + blur
-  // reach). Damage resolves widen any damage rect touching one to the whole
-  // panel, walk or no walk (composite::expand_damage_for_backdrops).
-  backdrop_regions: Vec<crate::rendertree::BackdropRegion>,
+  // Partial repaint (okf/done/partial-repaint.md): the damage accumulated
+  // since the last resolve and the resolution state, owned as one protocol
+  // (see damage.rs). Every damage and structural mutation path funnels into
+  // note_damage; the composite damage resolves drain and settle it.
+  damage: DamageLedger,
 }
 
 // Taffy's CompactLength stores f32 values as tagged pointers (*const ()),
@@ -68,10 +55,7 @@ impl RenderTree {
       transitions: Transitions::default(),
       released_snapshot_textures: RefCell::new(Vec::new()),
       texture_referencers: HashSet::new(),
-      damaged: HashSet::new(),
-      damaged_full: true,
-      frame_damage: FrameDamage::Full,
-      backdrop_regions: Vec::new(),
+      damage: DamageLedger::new(),
     }
   }
 
@@ -590,51 +574,25 @@ impl RenderTree {
 
   /// Partial repaint (okf/done/partial-repaint.md): note that `id`'s
   /// on-screen pixels may differ from the last painted frame. Every damage
-  /// and structural mutation path funnels here; past the cap the frame
-  /// degrades to full damage.
+  /// and structural mutation path funnels here.
   pub(crate) fn note_damage(&mut self, id: u64) {
-    if self.damaged_full {
-      return;
-    }
-    if self.damaged.len() >= MAX_DAMAGED_NODES {
-      self.damage_all();
-      return;
-    }
-    self.damaged.insert(id);
+    self.damage.note(id);
   }
 
   /// Degrade the frame being accumulated to full damage (resize, re-root).
   pub fn damage_all(&mut self) {
-    self.damaged_full = true;
-    self.damaged.clear();
+    self.damage.all();
   }
 
-  /// Drain the accumulated damage for the frame being painted: the damaged
-  /// node ids, and whether the frame is fully damaged regardless of them.
-  pub(crate) fn take_damage(&mut self) -> (Vec<u64>, bool) {
-    let full = self.damaged_full;
-    self.damaged_full = false;
-    (self.damaged.drain().collect(), full)
-  }
-
-  /// The damage the last painted frame resolved to (composite::paint_phase
-  /// writes it).
+  /// The damage the last painted frame resolved to.
   pub fn frame_damage(&self) -> FrameDamage {
-    self.frame_damage
+    self.damage.frame_damage()
   }
 
-  pub(crate) fn set_frame_damage(&mut self, damage: FrameDamage) {
-    self.frame_damage = damage;
-  }
-
-  /// The backdrop-filter regions the last paint walk passed
-  /// (composite::paint_phase writes them; damage resolves read them).
-  pub(crate) fn backdrop_regions(&self) -> &[crate::rendertree::BackdropRegion] {
-    &self.backdrop_regions
-  }
-
-  pub(crate) fn set_backdrop_regions(&mut self, regions: Vec<crate::rendertree::BackdropRegion>) {
-    self.backdrop_regions = regions;
+  /// The damage ledger, for the composite damage resolves (take + resolve;
+  /// see damage.rs).
+  pub(crate) fn damage_ledger(&mut self) -> &mut DamageLedger {
+    &mut self.damage
   }
 
   /// `apply_damage` for a frame's worth of writes at once: one revision

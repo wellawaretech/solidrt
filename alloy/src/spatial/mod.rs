@@ -25,6 +25,7 @@ pub use pick::{Hit, Shape, ShapeId};
 // The linear narrowphase and the indexing threshold, for tests: the
 // brute-force path is the oracle the BVH path is checked against.
 #[cfg(test)]
+#[cfg(test)]
 pub(crate) use pick::{ray_shape, BVH_MIN_TRIANGLES};
 pub use transitions::{Component, NodeTransitionConfig};
 

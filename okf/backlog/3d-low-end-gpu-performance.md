@@ -138,6 +138,43 @@ reduction, shadow map resolution, the overlay.
 Appended during the work, per the rule in [../README.md](../README.md); cut
 into `notes/` when this closes.
 
+- Philips TPM171E TV (Mali-T860, 1080p, displayScale 1), 2026-09-02,
+  four-spot rig with 2048 maps: the demo's authored state runs 3.4 fps /
+  290 ms - the MIN_RENDER_SCALE 1.5 supersampling floor alone costs
+  167 ms (scale 1.0 is 123 ms), and the four 2048 shadow maps + taps
+  cost 72 ms of that 123 (0 casters: 51 ms). Rendering and shadows are
+  CORRECT on Mali (sampler2DShadow, atlas, spot cones all verified by
+  snapshot) - it is purely a budget problem. The supersampling floor is
+  the wrong default for the TV class, which is the render-scale policy
+  question again: nothing distinguishes this device from a desktop
+  (displayScale 1 both), and the attribution verdict does not trip on
+  Mali either (timers armed). A per-pass-cost startup probe remains the
+  candidate behavioral key.
+- Shadow map resolution AT SPOT CONES is not the non-factor the ortho
+  measurement above suggested: 1024 -> 2048 on four casters costs
+  ~15 ms on the Adreno tablet and ~50 ms-class on the Mali TV (within
+  the 72 ms shadow share), because a cone spreads texels so the map
+  area is what fights the jaggies. Quality-first keeps 2048 (user call,
+  2026-09-02); the TV pays it.
+- Render scale, measured 2026-09-02 (four-spot rig, landscape): 1.5x is
+  73.0 ms; 1.0x is 53.5 ms (~19.5 ms back, the largest single lever, as
+  predicted) but visibly soft on the 1.5x display; 1.0x + 4x MSAA on the
+  scene and the side atlas is 62.5 ms - MSAA costs ~9 ms here (the
+  in-tile resolve is a sampling draw on this device), still 10.5 ms
+  under native. MSAA on TOP of the 1.5x supersample is strictly wasted
+  (90.6 ms portrait) - one AA mechanism at a time.
+- A cap policy keyed on the timer attribution verdict was built and
+  REVERTED the same day: the verdict is false on the Adreno 610 AND the
+  Mali-T860 (both drivers attribute the synthetic pass pair honestly
+  even where real frames misattribute), so the fact had zero true
+  positives and shipped as speculative API. The shape that worked and
+  can be rebuilt against a real fact: verdict as an Option on GpuLimits
+  (fact only, filled beside PassTimer::new), marshalled as an absent-
+  when-unmeasured limits field, policy as a @solidrt/3d
+  defaultRenderScale() the fill-mode <Scene> consumes. Detecting
+  "fill-bound tiler" behaviorally needs its own probe - a startup
+  per-pass-cost ladder measuring the flat ~2.15 ms/pass signature is
+  the candidate; vendor lists stay rejected.
 - Re-measured 2026-09-02 with the shadow atlas (sub-targets, 6 passes ->
   3) and hardware depth-compare sampling (one tap per caster) both in:
   17.1 fps / 58.4 ms / 3 passes, against the 13.1 fps / 76.3 ms / 6

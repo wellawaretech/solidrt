@@ -3,10 +3,10 @@
 //! window's default framebuffer.
 
 use super::rig::{
-  msrtt, prev_framebuffer, prev_renderbuffer, prev_texture, supports_invalidate, window_samples, OffscreenDraw,
-  OffscreenRig, EXT_RESOLVE_COPY_SRC, MSAA_SAMPLES,
+  msrtt, prev_framebuffer, prev_renderbuffer, prev_texture, supports_invalidate, OffscreenDraw, OffscreenRig,
+  EXT_RESOLVE_COPY_SRC, MSAA_SAMPLES,
 };
-use crate::raster::DamageRect;
+use crate::raster::{DamageRect, WindowRoute};
 use glow::HasContext;
 use impellers::{
   ClipOperation, Context as ImpellerContext, DisplayList, DisplayListBuilder, ISize, PixelFormat, Point, Rect, Size,
@@ -293,8 +293,9 @@ fn draw_offscreen(
   }
 }
 
-/// Rasterize a display list into the retained rig at the window's physical
-/// size and resolve it 1:1 into the default framebuffer (FBO 0). The display
+/// Draw a frame's display list to the window along `route`: straight into
+/// FBO 0 on the multisampled fast path, otherwise through the retained rig
+/// at the window's physical size, resolved 1:1 into FBO 0. The display
 /// list is drawn unflipped: Impeller treats every wrapped FBO as a bottom-up
 /// window target, so the rig content is already in window orientation and
 /// the straight blit preserves it (only offscreen textures that get sampled
@@ -309,15 +310,18 @@ pub(crate) fn render_display_list_to_window(
   rig: &mut OffscreenRig,
   dl: &DisplayList,
   size: ISize,
-  patch: Option<DamageRect>,
+  route: WindowRoute,
 ) -> Result<(), String> {
-  // Multisampled-backbuffer fast path (Android, see configure_opengl): the
-  // driver multisamples FBO 0 inside tile memory and resolves at swap, so
-  // the frame draws straight into the window - no rig pass, no resolve
-  // copy, and MSAA costs almost nothing. The layer variant below still goes
-  // via the rig (its target must end up in a sampleable texture).
-  if window_samples(gl) >= 2 {
-    unsafe {
+  // The route is decided once, raster-side (DamageTracker::route, from
+  // window_fast_path); this function only executes it, so a patch can never
+  // meet the fast path.
+  match route {
+    // Multisampled-backbuffer fast path (Android, see configure_opengl): the
+    // driver multisamples FBO 0 inside tile memory and resolves at swap, so
+    // the frame draws straight into the window - no rig pass, no resolve
+    // copy, and MSAA costs almost nothing. The layer variant below still goes
+    // via the rig (its target must end up in a sampleable texture).
+    WindowRoute::FastPath => unsafe {
       let prev_fbo = gl.get_parameter_i32(glow::FRAMEBUFFER_BINDING);
       gl.bind_framebuffer(glow::FRAMEBUFFER, None);
       // Same defined-base rationale as the rig path: the backbuffer carries
@@ -330,10 +334,10 @@ pub(crate) fn render_display_list_to_window(
         None => Err("wrap_fbo failed for window framebuffer".to_string()),
       };
       gl.bind_framebuffer(glow::FRAMEBUFFER, prev_framebuffer(prev_fbo));
-      return result;
-    }
+      result
+    },
+    WindowRoute::Rig(patch) => render_display_list_via_rig(gl, impeller_ctx, rig, dl, size, None, patch),
   }
-  render_display_list_via_rig(gl, impeller_ctx, rig, dl, size, None, patch)
 }
 
 /// Rasterize a display list into the retained rig at `size` and resolve it

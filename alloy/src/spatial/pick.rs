@@ -208,9 +208,10 @@ fn finish(shape: &Shape, (t, face, u, v, normal): RawHit) -> (f32, u32, Option<[
 }
 
 /// Nearest triangle of `shape` along the local-space ray, every triangle
-/// tested: (t, face, uv, unnormalized local normal), or None. The linear
-/// path for small shapes, and the oracle the indexed path is tested
-/// against.
+/// tested: (t, face, uv, unnormalized local normal), or None. The oracle
+/// the indexed path is tested against (production small-shape rays go
+/// through `Shapes::ray`, which calls `ray_all` directly).
+#[cfg(test)]
 pub fn ray_shape(shape: &Shape, o: [f32; 3], d: [f32; 3]) -> Option<(f32, u32, Option<[f32; 2]>, [f32; 3])> {
   ray_all(shape, o, d).map(|raw| finish(shape, raw))
 }
