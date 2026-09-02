@@ -23,7 +23,7 @@ struct AudioPluginState(#[qjs(skip_trace)] Rc<AlloyContext>);
 /// Store the audio plugin state in userdata, before any module import, so
 /// `AudioModule::evaluate` can read it. The `flux:audio` surface is registered
 /// separately via `module_override`.
-pub fn store_state(ctx: &Ctx<'_>, atx: AlloyContext) {
+pub(crate) fn store_state(ctx: &Ctx<'_>, atx: AlloyContext) {
   ctx.store_userdata(AudioPluginState(Rc::new(atx))).expect("store audio state");
 }
 

@@ -713,14 +713,11 @@ async fn try_serve(
                   Some(eh) => {
                     let reply_tx = queries.outbound_tx.clone();
                     eh.exec(move |ctx| {
-                      let counts = ctx.userdata::<flux::gui::tree::SharedRenderTree>().map(|t| {
-                        let tree = t.0.borrow();
-                        (tree.mounted_count(), tree.node_count())
-                      });
+                      let counts = flux::gui::tree::node_counts(&ctx);
                       // Read live, not from the frame-latched snapshot: a
                       // backlogged raster thread produces no frames, so the
                       // latch goes stale exactly when these matter.
-                      let raster = ctx.userdata::<flux::gui::AlloyContext>().map(|atx| atx.raster_counters());
+                      let raster = flux::gui::alloy_context(&ctx).map(|atx| atx.raster_counters());
                       let reply = StatsReply { snap, time_ms: now_ms, window_ms, window: window.as_ref(), counts, raster };
                       let _ = reply_tx.send(stats_reply(id, reply));
                     });
@@ -1207,7 +1204,7 @@ fn window_json(
 // problem the query option exists to avoid.
 const TREE_MATCH_LIMIT: usize = 100;
 
-/// Snapshot the render tree from the engine's userdata and encode it. With
+/// Snapshot the render tree and encode it. With
 /// `search`, reply with the matching nodes (id paths included) instead of a
 /// subtree. Runs on the JS thread (see the query handling above).
 fn tree_reply(
@@ -1218,40 +1215,39 @@ fn tree_reply(
   search: Option<&str>,
   props: bool,
 ) -> String {
-  let Some(tree) = ctx.userdata::<flux::gui::tree::SharedRenderTree>() else {
-    return error_reply(id, "no render tree");
-  };
-  let tree = tree.0.borrow();
-  let props_tree = props.then_some(&*tree);
-  if let Some(needle) = search {
-    return match tree.snapshot_matches(root, needle, TREE_MATCH_LIMIT) {
-      Some(matches) => {
-        let entries: Vec<_> = matches
-          .iter()
-          .map(|m| {
-            let mut obj = node_json(&m.node, props_tree);
-            let map = obj.as_object_mut().expect("node_json is an object");
-            map.remove("children");
-            map.insert("path".into(), m.path.clone().into());
-            obj
-          })
-          .collect();
-        serde_json::json!({"type": "result", "id": id, "data": {"matches": entries, "limit": TREE_MATCH_LIMIT}})
-          .to_string()
-      }
+  let reply = flux::gui::tree::with_tree(ctx, |tree| {
+    let props_tree = props.then_some(tree);
+    if let Some(needle) = search {
+      return match tree.snapshot_matches(root, needle, TREE_MATCH_LIMIT) {
+        Some(matches) => {
+          let entries: Vec<_> = matches
+            .iter()
+            .map(|m| {
+              let mut obj = node_json(&m.node, props_tree);
+              let map = obj.as_object_mut().expect("node_json is an object");
+              map.remove("children");
+              map.insert("path".into(), m.path.clone().into());
+              obj
+            })
+            .collect();
+          serde_json::json!({"type": "result", "id": id, "data": {"matches": entries, "limit": TREE_MATCH_LIMIT}})
+            .to_string()
+        }
+        None => match root {
+          Some(r) => error_reply(id, &format!("no node with id {r}")),
+          None => error_reply(id, "no render tree (the app has not rendered)"),
+        },
+      };
+    }
+    match tree.snapshot_from(root, depth) {
+      Some(node) => serde_json::json!({"type": "result", "id": id, "data": node_json(&node, props_tree)}).to_string(),
       None => match root {
         Some(r) => error_reply(id, &format!("no node with id {r}")),
         None => error_reply(id, "no render tree (the app has not rendered)"),
       },
-    };
-  }
-  match tree.snapshot_from(root, depth) {
-    Some(node) => serde_json::json!({"type": "result", "id": id, "data": node_json(&node, props_tree)}).to_string(),
-    None => match root {
-      Some(r) => error_reply(id, &format!("no node with id {r}")),
-      None => error_reply(id, "no render tree (the app has not rendered)"),
-    },
-  }
+    }
+  });
+  reply.unwrap_or_else(|| error_reply(id, "no render tree"))
 }
 
 /// The optional crop rect of a snapshot/texture query message.
@@ -1350,11 +1346,10 @@ fn request_snapshot(
   reply_tx: UnboundedSender<String>,
   frame_requested: Arc<AtomicBool>,
 ) {
-  let Some(atx) = ctx.userdata::<flux::gui::AlloyContext>() else {
+  let Some(alloy) = flux::gui::alloy_context(ctx) else {
     let _ = reply_tx.send(error_reply(id, "no alloy context"));
     return;
   };
-  let alloy = atx.0.clone();
   alloy.request_capture(
     node_id,
     Box::new(move |result| {
@@ -1447,10 +1442,10 @@ fn param_json(v: &alloy::ParamValue, elide: bool) -> serde_json::Value {
 /// draw entry id (target-scoped, so pair it with `label` to pin one target)
 /// whose params are reported in full instead of elided.
 fn gpu_reply(ctx: &flux::rquickjs::Ctx<'_>, id: u64, label: Option<&str>, draw: Option<u64>) -> String {
-  let Some(atx) = ctx.userdata::<flux::gui::AlloyContext>() else {
+  let Some(atx) = flux::gui::alloy_context(ctx) else {
     return error_reply(id, "no alloy context");
   };
-  let res = atx.0.gpu_resources();
+  let res = atx.gpu_resources();
 
   let textures: Vec<serde_json::Value> = res
     .textures
@@ -1747,10 +1742,10 @@ fn texture_reply(
   scale: u32,
   raw: bool,
 ) -> String {
-  let Some(atx) = ctx.userdata::<flux::gui::AlloyContext>() else {
+  let Some(atx) = flux::gui::alloy_context(ctx) else {
     return error_reply(id, "no alloy context");
   };
-  match atx.0.read_texture_by_id(texture_id) {
+  match atx.read_texture_by_id(texture_id) {
     Err(e) => error_reply(id, &e),
     Ok((width, height, pixels)) => match crop_scale_rgba(pixels, width, height, rect, scale) {
       Ok((pixels, width, height)) => snapshot_reply(id, width, height, pixels, raw),
@@ -1774,7 +1769,7 @@ fn buffer_reply(
   length: Option<usize>,
   fmt: &str,
 ) -> String {
-  let Some(atx) = ctx.userdata::<flux::gui::AlloyContext>() else {
+  let Some(atx) = flux::gui::alloy_context(ctx) else {
     return error_reply(id, "no alloy context");
   };
   let elem_size = match fmt {
@@ -1783,7 +1778,7 @@ fn buffer_reply(
     "u8" => 1,
     _ => return error_reply(id, &format!("unsupported as '{fmt}' (expected f32|u16|u8)")),
   };
-  let total = match atx.0.gpu_buffer_len(buffer_id) {
+  let total = match atx.gpu_buffer_len(buffer_id) {
     Ok(n) => n,
     Err(e) => return error_reply(id, &e),
   };
@@ -1794,7 +1789,7 @@ fn buffer_reply(
   let want = length.map(|n| n.saturating_mul(elem_size)).unwrap_or(avail).min(avail);
   // Whole elements only, so a cap or short buffer never splits a value.
   let len = (want.min(BUFFER_READ_CAP_BYTES) / elem_size) * elem_size;
-  match atx.0.read_gpu_buffer(buffer_id, byte_offset, len) {
+  match atx.read_gpu_buffer(buffer_id, byte_offset, len) {
     Err(e) => error_reply(id, &e),
     Ok(bytes) => {
       // Native endianness: the bytes came from typed arrays in this same

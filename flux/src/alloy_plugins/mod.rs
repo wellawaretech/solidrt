@@ -37,13 +37,20 @@ use crate::engine::FluxEngineBuilder;
 /// hold it in JS userdata. Derefs to `alloy::Context` for the rendering /
 /// texture / capture methods the bindings forward to.
 #[derive(Clone, JsLifetime)]
-pub struct AlloyContext(#[qjs(skip_trace)] pub Arc<alloy::Context>);
+pub(crate) struct AlloyContext(#[qjs(skip_trace)] pub Arc<alloy::Context>);
 
 impl std::ops::Deref for AlloyContext {
   type Target = alloy::Context;
   fn deref(&self) -> &Self::Target {
     &self.0
   }
+}
+
+/// The alloy context for the runner's out-of-frame queries (a dev-server
+/// snapshot, the GPU inventory, a texture or buffer read), which run on the
+/// JS thread with a `Ctx` in hand. None before the GUI is installed.
+pub fn alloy_context(ctx: &Ctx<'_>) -> Option<Arc<alloy::Context>> {
+  ctx.userdata::<AlloyContext>().map(|atx| atx.0.clone())
 }
 
 /// The host instances the GUI bindings need, owned by the runner (lattice) and
@@ -81,9 +88,9 @@ pub fn install(builder: FluxEngineBuilder, host: GuiHost) -> FluxEngineBuilder {
   let microphone_atx = AlloyContext(alloy.clone());
   #[cfg(feature = "video")]
   let video_atx = AlloyContext(alloy.clone());
-  // Stored as standalone userdata (below) so the runner can reach the alloy
-  // context off the JS thread's `Ctx` - e.g. to service a dev-server snapshot
-  // query - the way it reaches `SharedRenderTree` for a tree query.
+  // Stored as standalone userdata (below) behind `alloy_context`, for the
+  // runner's queries that run on the JS thread with a `Ctx` in hand (a
+  // dev-server snapshot, the GPU inventory).
   let query_atx = AlloyContext(alloy.clone());
   let audio_atx = AlloyContext(alloy);
   // The render tree and the capture/render devices are all `flux:*` modules

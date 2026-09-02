@@ -21,7 +21,7 @@ struct MicrophonePluginState(#[qjs(skip_trace)] Rc<AlloyContext>);
 /// Store the microphone plugin state in userdata, before any module import, so
 /// `MicrophoneModule::evaluate` can read it. The `flux:microphone` surface is
 /// registered separately via `module_override`.
-pub fn store_state(ctx: &Ctx<'_>, atx: AlloyContext) {
+pub(crate) fn store_state(ctx: &Ctx<'_>, atx: AlloyContext) {
   ctx.store_userdata(MicrophonePluginState(Rc::new(atx))).expect("store microphone state");
 }
 

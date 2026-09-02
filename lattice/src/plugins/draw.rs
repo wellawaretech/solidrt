@@ -3,7 +3,6 @@ use crate::overlay;
 use crate::stats;
 use alloy::InputState;
 use alloy::rendertree::{self, Commit, FrameDriver, PlatformContext};
-use flux::gui::AlloyContext;
 use flux::{
   emit_event, CtxLogger,
   rquickjs::{
@@ -31,7 +30,7 @@ struct RenderState(#[qjs(skip_trace)] Rc<RenderInner>);
 
 struct RenderInner {
   platform: Arc<PlatformContext>,
-  atx: AlloyContext,
+  atx: Arc<alloy::Context>,
   input_state: Arc<InputState>,
   // Latest stats figures, published every frame for readers outside the draw
   // loop (the dev server's stats query answers from here).
@@ -85,7 +84,7 @@ impl Drop for RenderInner {
 pub fn store_state(
   ctx: &QuickJsContext<'_>,
   platform: Arc<PlatformContext>,
-  atx: AlloyContext,
+  atx: Arc<alloy::Context>,
   input_state: Arc<InputState>,
   stats_snapshot: Arc<Mutex<stats::StatsSnapshot>>,
   history: Arc<Mutex<FrameHistory>>,
@@ -207,20 +206,17 @@ impl RenderInner {
     let snap = stats.borrow().snapshot(render_frame.frame, platform.fps(), atx.textures.len());
     *stats_snapshot.lock().expect("stats snapshot lock poisoned") = snap;
 
+    // The tree handle, for the frame build below (commit, layout, paint,
+    // finish); the per-frame protocol pieces go through flux's functions.
     let tree = qtx.userdata::<flux::gui::tree::SharedRenderTree>().expect("render tree userdata");
 
     // Native transitions: advance every running track to this frame's
     // animation clock (stamped by the runtime before the frame's JS ran)
-    // so the frame below paints the interpolated values. Runs before the
-    // demand gate: the advance's damage is this frame's reason to rebuild.
-    let anim_active = tree.0.borrow_mut().advance_transitions();
-    // Settled tracks report onTransitionEnd now, before the frame below
-    // paints: the handlers' writes latch the next frame like any post-flush
-    // work. The tree borrow is released first - handlers call back in.
-    let settled = tree.0.borrow_mut().take_settled_transitions();
-    if !settled.is_empty() {
-      flux::gui::tree::emit_transition_ends(qtx, &settled);
-    }
+    // so the frame below paints the interpolated values, and report the
+    // settled ones (onTransitionEnd) before it paints: the handlers' writes
+    // latch the next frame like any post-flush work. Runs before the demand
+    // gate: the advance's damage is this frame's reason to rebuild.
+    let anim_active = flux::gui::tree::tick(qtx);
     // The spatial arena's node transitions, the same slot in the frame:
     // the advance writes node TRS on the animation clock, the flush
     // publishes what moved through the sinks, and settles reach JS as

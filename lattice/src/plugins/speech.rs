@@ -8,12 +8,12 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::sync::Arc;
 
 use flux::rquickjs::promise::Promise;
 use flux::rquickjs::{Ctx, Exception, FromJs, Function, JsLifetime, Object, Persistent, TypedArray, Value};
 
 use crate::speech::{Recognizer, RecognizerConfig, RecognizerEvent, SAMPLE_RATE};
-use flux::gui::AlloyContext;
 
 fn throw_str(ctx: &Ctx<'_>, msg: &str) -> flux::rquickjs::Error {
   ctx.throw(flux::rquickjs::String::from_str(ctx.clone(), msg).expect("create error string").into())
@@ -40,7 +40,7 @@ struct PendingStart {
 }
 
 struct Inner {
-  atx: AlloyContext,
+  atx: Arc<alloy::Context>,
   sessions: RefCell<HashMap<u64, Session>>,
   next_id: RefCell<u64>,
   pending: RefCell<Vec<PendingStart>>,
@@ -49,7 +49,7 @@ struct Inner {
 #[derive(Clone, JsLifetime)]
 struct SpeechPluginState(#[qjs(skip_trace)] Rc<Inner>);
 
-pub fn init(ctx: Ctx<'_>, atx: AlloyContext) {
+pub fn init(ctx: Ctx<'_>, atx: Arc<alloy::Context>) {
   ctx
     .store_userdata(SpeechPluginState(Rc::new(Inner {
       atx,

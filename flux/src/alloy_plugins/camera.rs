@@ -42,7 +42,7 @@ struct CameraPluginState(#[qjs(skip_trace)] Rc<Inner>);
 /// module import) so `CameraModule::evaluate` and the per-frame `tick` can read
 /// it. The `flux:camera` module surface is registered separately via
 /// `module_override`.
-pub fn store_state(ctx: &Ctx<'_>, atx: AlloyContext) {
+pub(crate) fn store_state(ctx: &Ctx<'_>, atx: AlloyContext) {
   ctx
     .store_userdata(CameraPluginState(Rc::new(Inner {
       atx,

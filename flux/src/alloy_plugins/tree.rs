@@ -198,10 +198,10 @@ fn color_to_packed(c: alloy::impellers::Color) -> u32 {
 }
 
 /// Emit one "transitionEnd" engine event per settled track, payload
-/// `{ target, property }` (JSX property name). The runner calls this right
-/// after the frame's transition advance; the JS side routes each to the
-/// node's onTransitionEnd handler.
-pub fn emit_transition_ends(ctx: &Ctx<'_>, settled: &[(u64, alloy::rendertree::AnimProp)]) {
+/// `{ target, property }` (JSX property name). `tick` calls this right after
+/// the frame's transition advance; the JS side routes each to the node's
+/// onTransitionEnd handler.
+pub(crate) fn emit_transition_ends(ctx: &Ctx<'_>, settled: &[(u64, alloy::rendertree::AnimProp)]) {
   for &(node, prop) in settled {
     let obj = Object::new(ctx.clone()).expect("create transitionEnd object");
     obj.set("target", node).expect("set target");
@@ -212,8 +212,53 @@ pub fn emit_transition_ends(ctx: &Ctx<'_>, settled: &[(u64, alloy::rendertree::A
   }
 }
 
+/// The render tree handle the runner's draw bridge (`srt:render`) reads for
+/// the frame build (commit, layout, paint, finish, with its JS hooks between
+/// the phases). Every other reader goes through the functions below.
 #[derive(Clone, JsLifetime)]
 pub struct SharedRenderTree(#[qjs(skip_trace)] pub Rc<RefCell<RenderTree>>);
+
+/// Stamp the transition animation clock with this frame's app time (the
+/// runner, once per frame before the frame's JS runs, beside the spatial
+/// arena's stamp): property writes during the flush start their tracks at
+/// this time and `tick` advances to it. No-op before the GUI is installed.
+pub fn stamp_clock(ctx: &Ctx<'_>, now_ms: f64) {
+  if let Some(tree) = ctx.userdata::<SharedRenderTree>() {
+    tree.0.borrow_mut().set_transition_now(now_ms);
+  }
+}
+
+/// Advance every running transition track to the stamped clock and report
+/// the settled ones to JS as "transitionEnd" events. Returns whether a track
+/// is still running (frame demand for the runner's gate). The tree borrow is
+/// released before the handlers run: they call back in.
+pub fn tick(ctx: &Ctx<'_>) -> bool {
+  let Some(tree) = ctx.userdata::<SharedRenderTree>() else {
+    return false;
+  };
+  let active = tree.0.borrow_mut().advance_transitions();
+  let settled = tree.0.borrow_mut().take_settled_transitions();
+  if !settled.is_empty() {
+    emit_transition_ends(ctx, &settled);
+  }
+  active
+}
+
+/// Mounted and total node counts (the runner's stats query). None before the
+/// GUI is installed.
+pub fn node_counts(ctx: &Ctx<'_>) -> Option<(usize, usize)> {
+  let tree = ctx.userdata::<SharedRenderTree>()?;
+  let tree = tree.0.borrow();
+  Some((tree.mounted_count(), tree.node_count()))
+}
+
+/// Run `f` over the render tree (the runner's tree query). None before the
+/// GUI is installed.
+pub fn with_tree<R>(ctx: &Ctx<'_>, f: impl FnOnce(&RenderTree) -> R) -> Option<R> {
+  let tree = ctx.userdata::<SharedRenderTree>()?;
+  let result = f(&tree.0.borrow());
+  Some(result)
+}
 
 // State the `flux:rendertree` module binds, stashed in userdata by `store_state`
 // before any import so the module's `evaluate` can build its exports.
@@ -233,7 +278,7 @@ struct RenderTreeInner {
 /// Create the shared render tree and stash the state the `flux:rendertree`
 /// module binds, before any import. Also stores `SharedRenderTree`, which the
 /// runner's draw bridge (`srt:render`) reads directly.
-pub fn store_state(
+pub(crate) fn store_state(
   ctx: &Ctx<'_>,
   tree: RenderTree,
   alloy_cmd_tx: Sender<alloy::AlloyCommand>,

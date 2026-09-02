@@ -397,7 +397,7 @@ impl UiRuntime for FluxRuntime {
           (pc.now_ms(), pc.timer_now_ms())
         }
         None => {
-          let t = ctx.userdata::<flux::Timeline>().map(|t| t.now_ms()).unwrap_or(0.0);
+          let t = flux::timeline_now_ms(&ctx);
           (t, t)
         }
       };
@@ -406,9 +406,7 @@ impl UiRuntime for FluxRuntime {
       // their transition tracks at this time, and the draw path's advance
       // reads the same stamp, so a track's first frame paints its from-value
       // and pause/scale/step semantics ride in with ts.
-      if let Some(tree) = ctx.userdata::<flux::gui::tree::SharedRenderTree>() {
-        tree.0.borrow_mut().set_transition_now(ts);
-      }
+      flux::gui::tree::stamp_clock(&ctx, ts);
       // The spatial arena's node-transition clock rides the same stamp.
       flux::gui::spatial::stamp_clock(&ctx, ts);
       // Clip players advance BEFORE the frame's JS: onFrame handlers read

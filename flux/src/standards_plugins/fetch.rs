@@ -1,7 +1,4 @@
-use rquickjs::{
-  function::MutFn, Class, Ctx, Exception, Function, IntoJs, JsLifetime, Object, Promise, TypedArray, Value,
-};
-use std::path::PathBuf;
+use rquickjs::{function::MutFn, Class, Ctx, Exception, Function, IntoJs, Object, Promise, TypedArray, Value};
 use std::rc::Rc;
 
 use crate::logger::CtxLogger;
@@ -24,15 +21,14 @@ const FETCH_CACHE_MAX_BYTES: u64 = 256 * 1024 * 1024;
 /// (asset-mode) fetches only.
 const FETCHES_PER_HOST: usize = 6;
 
-/// Builder-provided fetch cache directory (`FluxEngineBuilder::cache_dir`).
-#[derive(Clone, JsLifetime)]
-pub struct FetchCacheDir(#[qjs(skip_trace)] pub PathBuf);
-
 pub(crate) fn init_fetch(ctx: &Ctx<'_>) {
   let globals = ctx.globals();
 
-  let cache: Option<Rc<Cache>> =
-    ctx.userdata::<FetchCacheDir>().map(|dir| Rc::new(Cache::new(dir.0.clone(), FETCH_CACHE_MAX_BYTES)));
+  // `FluxEngineBuilder::cache_dir`, read off the stored engine config.
+  let cache: Option<Rc<Cache>> = ctx
+    .userdata::<crate::engine::EngineConfig>()
+    .and_then(|config| config.cache_dir.clone())
+    .map(|dir| Rc::new(Cache::new(dir, FETCH_CACHE_MAX_BYTES)));
   let limits = Rc::new(HostLimits::new(FETCHES_PER_HOST));
 
   let fetch_fn = Function::new(

@@ -32,7 +32,7 @@ struct SpatialInner {
 #[derive(Clone, JsLifetime)]
 struct SpatialState(#[qjs(skip_trace)] Rc<SpatialInner>);
 
-pub fn store_state(ctx: &Ctx<'_>, atx: AlloyContext, platform: Arc<PlatformContext>) {
+pub(crate) fn store_state(ctx: &Ctx<'_>, atx: AlloyContext, platform: Arc<PlatformContext>) {
   ctx.store_userdata(SpatialState(Rc::new(SpatialInner { atx, platform }))).expect("store spatial state");
 }
 

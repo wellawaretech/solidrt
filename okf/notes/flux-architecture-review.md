@@ -173,7 +173,16 @@ workable. Three things are not:
 
 ## 5. Event ownership is split by a fallback arm
 
-`alloy_plugins/events.rs::forward` returns false for whatever flux does not
+**Status 2026-09-02: done, stage 1.** `forward`'s wildcard is an explicit
+arm naming the eight runner-owned variants (the four pointer events, the
+two frame signals, Quit, Exposed), so the match is exhaustive: a probe
+variant added to `AlloyEvent` fails flux's build with E0004 at that match.
+Lattice's `Runtime::event` keeps its wildcard on purpose (the flux error
+already forces the ownership decision; a second list would duplicate the
+sixteen marshalled variants). Verified: flux check, clippy and gui unit
+tests, lattice check.
+
+As found: `alloy_plugins/events.rs::forward` returns false for whatever flux does not
 handle, and lattice's `Runtime::event` matches the rest. A new `AlloyEvent`
 variant compiles cleanly on both sides and reaches nobody. An exhaustive
 match in flux naming the runner-owned variants turns that into a compile

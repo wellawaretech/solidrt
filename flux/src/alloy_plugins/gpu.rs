@@ -748,7 +748,7 @@ fn reject_pipeline_keys(ctx: &Ctx<'_>, opts: &Option<Object<'_>>, api: &str) -> 
 /// Store the texture plugin state (alloy context, platform, and the created-id
 /// set for reload cleanup) in userdata, before any module import. The
 /// `flux:gpu` surface is registered separately via `module_override`.
-pub fn store_state(ctx: &Ctx<'_>, atx: AlloyContext, platform: Arc<PlatformContext>) {
+pub(crate) fn store_state(ctx: &Ctx<'_>, atx: AlloyContext, platform: Arc<PlatformContext>) {
   ctx
     .store_userdata(TextureState(Rc::new(TextureInner {
       atx,

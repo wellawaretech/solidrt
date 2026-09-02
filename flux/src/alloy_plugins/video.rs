@@ -92,7 +92,7 @@ struct VideoPluginState(#[qjs(skip_trace)] Rc<Inner>);
 
 /// Store the video plugin state in userdata. Runs at engine init, before any
 /// module import; the `flux:video` module surface reads it in `evaluate`.
-pub fn store_state(ctx: &Ctx<'_>, atx: AlloyContext) {
+pub(crate) fn store_state(ctx: &Ctx<'_>, atx: AlloyContext) {
   ctx
     .store_userdata(VideoPluginState(Rc::new(Inner {
       atx,

@@ -81,7 +81,6 @@ impl ExitPolicy {
 use alloy::impellers::ISize;
 use alloy::rendertree::{FontPayload, PlatformContext, RenderTree};
 use alloy::{AlloyEvent, InputState};
-use flux::gui::AlloyContext;
 use flux::{ExecHandle, FluxEngine};
 use runtime::UiRuntime;
 use std::cell::RefCell;
@@ -739,7 +738,7 @@ fn ui_thread(
       let draw_platform = platform.clone();
       let draw_atx = atx.clone();
       #[cfg(feature = "speech")]
-      let speech_atx = AlloyContext(atx.clone());
+      let speech_atx = atx.clone();
       let builder = FluxEngine::builder()
         .stack_size(JS_STACK_SIZE)
         .user_agent(format!("SolidRT/{VERSION}"))
@@ -783,7 +782,7 @@ fn ui_thread(
           plugins::draw::store_state(
             &ctx,
             draw_platform,
-            AlloyContext(draw_atx),
+            draw_atx,
             input_state,
             draw_stats,
             draw_history,

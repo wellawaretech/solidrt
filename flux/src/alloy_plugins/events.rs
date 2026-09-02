@@ -12,6 +12,8 @@ use crate::{emit_event, emit_sticky, ExecHandle};
 /// events the runner still owns (pointer dispatch, frame pacing). Any
 /// non-marshalling bookkeeping the runner needs (e.g. the modifier state read
 /// by pointer dispatch, the pacing clock's refresh rate) stays on its side.
+/// The match is exhaustive on purpose: a new `AlloyEvent` variant does not
+/// compile until it is marshalled here or listed as runner-owned.
 pub fn forward(exec: &ExecHandle, event: &AlloyEvent) -> bool {
   match event {
     AlloyEvent::WindowFocus => emit_named(exec, "windowFocus"),
@@ -187,7 +189,17 @@ pub fn forward(exec: &ExecHandle, event: &AlloyEvent) -> bool {
         emit_event(&ctx, "powerStatus", obj);
       });
     }
-    _ => return false,
+    // Runner-owned: pointer dispatch is hit testing, not marshalling; the
+    // frame signals, Quit and Exposed are the run loop's own (see lattice's
+    // event loop). No wildcard - a new variant must be placed above or here.
+    AlloyEvent::PointerMove { .. }
+    | AlloyEvent::PointerDown { .. }
+    | AlloyEvent::PointerUp { .. }
+    | AlloyEvent::Wheel { .. }
+    | AlloyEvent::FrameRendered { .. }
+    | AlloyEvent::Tick { .. }
+    | AlloyEvent::Quit
+    | AlloyEvent::Exposed => return false,
   }
   true
 }

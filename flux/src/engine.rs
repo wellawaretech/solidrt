@@ -245,19 +245,9 @@ impl FluxEngineBuilder {
       stack_size: self.stack_size,
       isolate_resolver: self.isolate_resolver,
     };
-    // The config lands in userdata whole (for children) and split into the
-    // per-plugin userdata fetch/http read.
+    // The config lands in userdata whole: the fetch and http initializers
+    // read their settings from it, and an isolate child inherits it.
     let mut userdata = self.userdata;
-    if let Some(dir) = config.cache_dir.clone() {
-      userdata.push(Box::new(move |ctx| {
-        ctx.store_userdata(crate::standards_plugins::fetch::FetchCacheDir(dir)).expect("store cache dir");
-      }));
-    }
-    if let Some(agent) = config.user_agent.clone() {
-      userdata.push(Box::new(move |ctx| {
-        ctx.store_userdata(crate::standards_plugins::http::UserAgent(agent)).expect("store user agent");
-      }));
-    }
     let stored = config.clone();
     userdata.push(Box::new(move |ctx| {
       ctx.store_userdata(stored).expect("store engine config");
