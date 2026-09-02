@@ -1198,15 +1198,9 @@ impl RasterState {
     if self.capture_frames || self.window_shader.is_some() {
       return None;
     }
-    // The multisampled-FBO0 fast path draws straight into the window and
-    // cannot patch; answering Full here keeps the counter honest and skips
-    // the wrapper-list build.
-    if gl::window_fast_path(&self.gl) {
-      return None;
-    }
-    if matches!(own, PresentDamage::Full) {
-      return None;
-    }
+    // Probe before the fast-path check so the log answers what the APP's
+    // EGL context supports even on devices where partial repaint stays off
+    // (okf/backlog/display-list-op-cost.md).
     if !self.buffer_age_tried {
       self.buffer_age_tried = true;
       match buffer_age::BufferAge::new() {
@@ -1216,6 +1210,15 @@ impl RasterState {
         }
         Err(e) => log::info!("[alloy] partial repaint off: {e}"),
       }
+    }
+    // The multisampled-FBO0 fast path draws straight into the window and
+    // cannot patch; answering Full here keeps the counter honest and skips
+    // the wrapper-list build.
+    if gl::window_fast_path(&self.gl) {
+      return None;
+    }
+    if matches!(own, PresentDamage::Full) {
+      return None;
     }
     let age = self.buffer_age.as_ref()?.age();
     if age <= 0 {

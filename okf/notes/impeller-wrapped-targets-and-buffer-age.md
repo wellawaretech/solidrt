@@ -34,12 +34,19 @@ flip, no mirroring). Validated pixel-exact in the probe's phase C.
   `eglSetDamageRegionKHR` (with `EGL_KHR_partial_update` listed) both
   resolve. Plain `eglSwapBuffers` (SDL's swap) keeps age valid; the
   damage entry points are only compositor hints.
-- Philips TPM171E (MediaTek, Android): the app-side context was not
-  probed directly, but SurfaceFlinger's context lists
-  `EGL_KHR_partial_update`, which requires `EGL_EXT_buffer_age` per the
-  Khronos spec. The window backbuffer there is 4x multisampled (the
-  in-tile fast path), where partial composition does not apply anyway
-  (see okf/backlog/partial-repaint-android.md).
+- Philips TPM171E (MediaTek Mali-T860, Android): app-side display
+  extensions probed 2026-09-02 - `EGL_KHR_partial_update` and
+  `EGL_KHR_swap_buffers_with_damage` are listed, `EGL_EXT_buffer_age`
+  is NOT. The KHR extension defines the same age attribute
+  (`EGL_BUFFER_AGE_KHR` = 0x313D), so the age query works; an
+  EXT-only string check reports a false negative on this stack (bug
+  fixed in `raster::buffer_age` the same day - either extension now
+  enables the query). Ages come back valid every frame at steady
+  state. `eglSetDamageRegionKHR` resolves and accepts per-frame
+  sub-rects, but does not reduce timed GPU frame cost on the
+  multisampled fast path (see okf/backlog/display-list-op-cost.md).
+  The window backbuffer there is 4x multisampled (the in-tile fast
+  path), where partial composition does not apply anyway.
 
 The raster thread can query buffer age with khronos-egl against
 `eglGetCurrentDisplay`/`eglGetCurrentSurface` - the dlopen'd libEGL is

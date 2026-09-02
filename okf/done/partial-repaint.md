@@ -113,7 +113,7 @@ the offscreen rig:
    Findings; power/frameMs on fill-bound hardware (a TV) still to be
    measured.
 3. Follow-ups extracted at completion: the Android fast-path decision
-   is [partial-repaint-android](../backlog/partial-repaint-android.md)
+   is [display-list-op-cost](../backlog/display-list-op-cost.md)
    (symptom measured on the TV); the compositor damage hint and
    multiple damage rects are ideas.md lines awaiting a measured victim;
    layer promotion (the Chrome-style layer tree) stays a deliberate
@@ -229,7 +229,7 @@ the same 800-rect boundary-wrapped field and a 10 Hz animation:
 A 20 px change costs ~88% of a full-window change - fill cost is
 damage-size-independent on this device, exactly the item's symptom, at
 ~40 ms GPU per animated frame. That is the quantified opportunity for
-the Android follow-up (partial-repaint-android in the backlog): a
+the Android follow-up (display-list-op-cost in the backlog): a
 patch-confined MSRTT rig frame should bring the mover frame down
 toward the desktop behavior. SurfaceFlinger's context lists
 EGL_KHR_partial_update (which requires EGL_EXT_buffer_age per the

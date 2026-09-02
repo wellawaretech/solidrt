@@ -14,6 +14,8 @@ use crate::egl_headless::{load_egl, Egl};
 use khronos_egl as egl;
 
 // EGL_EXT_buffer_age surface attribute; not in khronos-egl's constants.
+// EGL_KHR_partial_update names the same value EGL_BUFFER_AGE_KHR, so the
+// query is valid under either extension.
 const BUFFER_AGE_EXT: egl::Int = 0x313D;
 
 pub(crate) struct BufferAge {
@@ -33,8 +35,12 @@ impl BufferAge {
       .query_string(Some(display), egl::EXTENSIONS)
       .map(|s| s.to_string_lossy().into_owned())
       .unwrap_or_default();
-    if !extensions.contains("EGL_EXT_buffer_age") {
-      return Err("EGL_EXT_buffer_age not advertised".to_string());
+    log::info!("[alloy] EGL display extensions: {extensions}");
+    let partial_update = extensions.contains("EGL_KHR_partial_update");
+    // EGL_KHR_partial_update defines EGL_BUFFER_AGE_KHR (same enum as the
+    // EXT attribute), so either extension makes the age query valid.
+    if !extensions.contains("EGL_EXT_buffer_age") && !partial_update {
+      return Err("neither EGL_EXT_buffer_age nor EGL_KHR_partial_update advertised".to_string());
     }
     Ok(BufferAge { egl: instance })
   }

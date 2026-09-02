@@ -53,6 +53,23 @@ when the next scene-wide effect arrives (point lights, environment
 maps) so the function's signature is designed against three consumers,
 not two.
 
+## Findings
+
+- The third thing to forget arrived with spot and point lights
+  (2026-09-02), and it is worse than fog or shadows: a custom fragment
+  that hand-rolls the directional pattern (`lambert(n, uLightDir[i])`
+  times `lightShadow(i, ...)`, no `lightVector`) renders a SpotLight as
+  a directional light - no cone, no falloff - so the "spotlight" washes
+  every mesh it faces edge to edge and a floor plane reads as a lit
+  RECTANGLE instead of a pool. Both of the demo's shaders
+  (`the-third-dimension.tsx`) are this exact pattern. Repro:
+  `probes/spot-custom-material-probe.tsx`, cone-less custom floor beside
+  a `lit` floor, same spot. Verified correct in `lit` on desktop GL and
+  Adreno (`probes/spot-point-probe.tsx`). The composed-function design
+  now has its three consumers: fog, the shadow trio, and the light
+  loop itself (`lightVector` gating both attenuation and whether the
+  shadow lookup runs at all, the `a <= 0.0 continue` in `lit`).
+
 ## Done looks like
 
 `examples/instanced.tsx` fogs and shadows with the standard meshes

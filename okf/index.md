@@ -241,6 +241,13 @@ Shaped, not started.
   get_stats/get_snapshot need a JS-thread slice, so they time out on a busy
   (healthy) app with a message that says "wedged"; serve inventory and stats
   off published state, and name the real timeout.
+- **[Per-op display-list cost dominates animated frames on slow CPUs](backlog/display-list-op-cost.md)** [2026-09-02]
+  The MediaTek TV's ~40 ms animated-frame cost is NOT GPU fill - saturation
+  runs show it scales with static display-list op count at constant damage
+  (800 ops = 26 fps, 50 ops = 50 fps locked) and is identical on the fast path
+  and the rig partial path; the bottleneck is per-op display-list processing
+  on the armv7 CPU, so the real lever is not handing Impeller the full scene
+  DL every frame.
 - **[Default font weight should follow display scale](backlog/dpi-aware-default-font-weight.md)** [2026-08-14]
   Text defaults to Medium so that small type stays readable on 1x desktop
   displays, which over-thickens every label on the 2-3x phone screens that
@@ -373,11 +380,6 @@ Shaped, not started.
   Answering "who else is burning the GPU" needs a different mechanism on every
   OS, so it wants a documented per-platform recipe or an srt doctor helper
   rather than an engine feature.
-- **[GPU timer stats are unusable on tiled GPUs, and gpuFrameExecMs can return garbage](backlog/gpu-timer-attribution.md)** [2026-08-27]
-  On Adreno the per-pass execMs and gpuFrameExecMs figures move with unrelated
-  state, invert against ground truth, and on a frame with no passes report 401
-  ms of GPU time in a 17 ms frame, so anyone optimising from them is led the
-  wrong way.
 - **[Color math is unreachable headless](backlog/headless-color-math.md)** [2026-08-19]
   parseColor/mixColors/brightness live only on flux:rendertree (gui feature),
   so site tooling, tests, and theme builders cannot call them; the components
@@ -472,12 +474,6 @@ Shaped, not started.
   group opacity and group transforms; add an opt-in tree output (groups with
   id/opacity/transform, paths in local space) backed by a `transform` matrix
   prop on views, keeping the flat list as the default.
-- **[Partial repaint on Android's multisampled fast path](backlog/partial-repaint-android.md)** [2026-09-02]
-  On the MediaTek TV a 20 px animation costs ~40 ms GPU per frame - 88% of a
-  full-window change - because the multisampled-FBO0 fast path draws full
-  frames and partial repaint steps aside; decide and build the patch-confined
-  alternative (MSRTT rig + patch copy vs in-tile full frame), measured per
-  device.
 - **[Physics core - an embedded engine as a producer into the spatial arena](backlog/physics-core.md)** [2026-08-24]
   Rigid-body physics is per-body-per-frame and per-contact work, below the
   interpreter line, and nothing provides it, so games needing dynamics are
@@ -1136,6 +1132,11 @@ Finished, kept for the reasoning.
   and the prop warn-fails on them), and rename the lifetime `manual` option
   out of its collision with render: "manual". Cheapest now; more expensive
   with every app shipped.
+- **[GPU timer stats are unusable on tiled GPUs, and gpuFrameExecMs can return garbage](done/gpu-timer-attribution.md)** [2026-09-02]
+  On Adreno the per-pass execMs and gpuFrameExecMs figures move with unrelated
+  state, invert against ground truth, and on a frame with no passes report 401
+  ms of GPU time in a 17 ms frame, so anyone optimising from them is led the
+  wrong way.
 - **[Report GPU-side pass duration, not raster-thread occupancy](done/gpu-timer-query-pass-timing.md)** [2026-08-13]
   get_stats reports gpuPassMs as the raster thread's time issuing passes, so a
   pass that is cheap to issue and expensive on the GPU reads as free; timer
@@ -1475,6 +1476,14 @@ Knowledge. No lifecycle - true or wrong, not open or closed.
   A ranked list of what @solidrt/3d still needs to be practically comparable
   to Three.js, ordered by structural leverage first and then by the research
   staging, each entry checked off when the capability is delivered.
+- **[Alloy architecture review](notes/alloy-architecture-review.md)** [2026-09-02]
+  Structural review of the alloy crate; macro-architecture is sound, the
+  recurring debt is policies held by call-site convention, with a ranked list
+  of wins and an explicit do-not-churn list.
+- **[Alloy code quality review (effects/backdrop era)](notes/alloy-code-quality-review.md)** [2026-09-02]
+  Multi-agent review of the alloy crate; three confirmed backdrop rendering
+  bugs, structural hazards, and duplication findings, with verified failure
+  scenarios.
 - **[Alloy crate review](notes/alloy-crate-review.md)** [2026-07-15]
   GL-through-ANGLE is now the single backend by design and the crate has
   doubled with the gpu/raster subsystems; the old top test asks (damage,
@@ -1605,6 +1614,12 @@ Knowledge. No lifecycle - true or wrong, not open or closed.
   width, and what the shared word cache changes; the numbers under the owned
   text engine's claims (pixel parity, cold shaping a wash, re-layout 14x
   cheaper, edits re-shape only their words).
+- **[Postmortem - a bad GPU counter steered a day of TV perf work](notes/tv-gpu-measurement-postmortem.md)** [2026-09-02]
+  gpuFrameExecMs on the MediaTek TV produced a plausible-looking "40 ms GPU
+  fill" number that spawned a mis-attributed backlog item, a probe
+  implementation, and a design debate before saturation measurement showed the
+  cost was CPU-side display-list walking; the trap was documented six days
+  earlier but left armed.
 - **[Update mechanism and client storage](notes/update-mechanism.md)** [2026-07-16]
   "Survey and agreed direction: bundle OTA first with a signed manifest, dev
   and production converging on one client binary, a named data dir with a
@@ -1623,10 +1638,11 @@ Bugs in our dependencies. Status here is the dependency's, not ours.
   ImpellerRect, and the rect it returns for glyphs of a single-line paragraph
   carries no position (per-glyph width in the x slot, zero width), so caret
   geometry cannot be read from it.
-- **[ImpellerImageFilterCreateMatrixNew returns null](upstream/impeller-image-filter-matrix-null.md)** [2026-09-02]
-  The prebuilt Impeller the impellers 0.4.2 crate links returns null from
-  ImpellerImageFilterCreateMatrixNew for any input (even the identity matrix),
-  which the crate's non-null assert turns into a process abort.
+- **[ImageFilter::new_matrix asserts on Impeller's by-design null for identity](upstream/impeller-image-filter-matrix-null.md)** [2026-09-02]
+  Impeller's ImpellerImageFilterCreateMatrixNew legitimately returns null
+  (marked IMPELLER_NULLABLE) for identity or non-finite matrices; the
+  impellers 0.4.2 crate asserts non-null on that return, so a plain identity
+  matrix aborts the process.
 - **[quickjs-ng ArrayBuffer.prototype.transfer mishandles external buffers](upstream/quickjs-ng-transfer-external-buffers.md)** [2026-08-03]
   transfer() on a JS_NewArrayBuffer-backed (external) buffer calls js_realloc
   on a pointer the JS allocator does not own when the length changes (heap

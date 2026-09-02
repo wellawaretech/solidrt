@@ -181,7 +181,14 @@ when exactly one client is connected.
   primary jank figure (presents the display missed while a next frame was
   demanded - the repeated frame every average hides); `slowFrames`,
   `gpuFrameExecMsPerFrame`, `fenceTimeoutsPerSec` and `rasterCmdMsPerSec`
-  say why.
+  say why. The `gpu*ExecMs` figures are absent (not 0) when the client's
+  context has no timer queries or when the startup attribution self-test
+  caught the driver booking deferred pass execution to the wrong query,
+  as some tiled GPUs do; where they are absent, measure the GPU by
+  subtraction (change one variable, take the frame-time delta). When
+  comparing two configurations, divide a `frames` delta by a `timeMs`
+  delta rather than reading `frameMs`: it is a smoothed EMA and disagrees
+  with the counters under bimodal frame times.
 - `/debug` - the app's registered debug commands; POST
   `/debug?name=<cmd>` with a JSON body as its args to call one.
 - POST `/input` with `{ "events": [...] }` - synthetic input through the

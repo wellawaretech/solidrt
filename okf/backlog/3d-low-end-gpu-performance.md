@@ -48,7 +48,8 @@ wall-clock frame time. Do not use the GPU timer figures - see
 | Window composite | ~2 | zero-pass probe, below |
 
 **Per-pass cost is flat at ~2.15 ms** regardless of size or content.
-Measured with [floor-probe.tsx](../../packages/3d/demos/src/floor-probe.tsx)
+Measured with a since-removed floor-probe demo (a fullscreen d-rect plus N
+armable constant-shader targets)
 by arming N 128x128 targets whose shader writes a constant, nothing else in
 the frame:
 
@@ -137,6 +138,11 @@ reduction, shadow map resolution, the overlay.
 Appended during the work, per the rule in [../README.md](../README.md); cut
 into `notes/` when this closes.
 
+- Re-measured 2026-09-02 with the shadow atlas (sub-targets, 6 passes ->
+  3) and hardware depth-compare sampling (one tap per caster) both in:
+  17.1 fps / 58.4 ms / 3 passes, against the 13.1 fps / 76.3 ms / 6
+  passes above. Levers 2 and 3 are spent; render scale and the
+  ground/backdrop shaders are what remains.
 - Per-pass cost on Adreno 610 is ~2.15 ms flat, independent of target size
   (measured at 128x128) and of shader content. Pass count is therefore a
   first-class budget item on tiled mobile GPUs, not an implementation

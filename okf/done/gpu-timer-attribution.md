@@ -2,6 +2,7 @@
 title: GPU timer stats are unusable on tiled GPUs, and gpuFrameExecMs can return garbage
 description: On Adreno the per-pass execMs and gpuFrameExecMs figures move with unrelated state, invert against ground truth, and on a frame with no passes report 401 ms of GPU time in a 17 ms frame, so anyone optimising from them is led the wrong way.
 created: 2026-08-27
+completed: 2026-09-02
 ---
 
 # GPU timer stats are unusable on tiled GPUs, and gpuFrameExecMs can return garbage
@@ -49,8 +50,12 @@ seconds of GPU time per wall-clock second is not a misattribution, it is a
 bad read: a harvest against a query that never completed, a stale or
 uninitialised accumulator, or a unit error on the no-pass path.
 
-Reproduce with [packages/3d/demos/src/floor-probe.tsx](../../packages/3d/demos/src/floor-probe.tsx),
-`mode` 0 through 3 with `passes` 0.
+Reproduced with a since-removed floor-probe demo. A later re-measurement
+session (2026-08-27, same tablet) could not reproduce the 401 ms reading -
+the worst seen was 94% of wall clock - but did confirm the total is not
+defensible on Adreno either: 66% GPU on a frame that is all GPU by
+subtraction, 94% on a single fullscreen rect, three different readings for
+the same work depending on what ran before.
 
 ## Cause
 
@@ -79,32 +84,52 @@ investigation they pointed at the window composite as a 22 ms bottleneck; it
 is 1.9 ms. Acting on that number would have meant rewriting the compositing
 path to fix a cost that was never there.
 
-## What done looks like
+It has since happened for real: on 2026-09-02 the same counter on the
+MediaTek TV produced a "~40 ms GPU fill per animated frame" reading that
+spawned a mis-attributed backlog item, an eglSetDamageRegionKHR probe
+implementation (later removed), and a window-config design debate, before
+saturation measurement showed the cost was CPU-side display-list walking
+(okf/notes/tv-gpu-measurement-postmortem.md,
+okf/backlog/display-list-op-cost.md).
 
-Either the numbers mean something defensible on a tiler, or they say they
-cannot. Any of these closes it:
+## Resolution (2026-09-02)
 
-- Report the timers as unavailable where the split cannot be trusted, the
-  way `timer_queries: false` already reports absence, rather than serving a
-  number that reads as authoritative. A tiler is detectable from the GL
-  renderer string, and Adreno/Mali/PowerVR is most of the Android fleet.
-- Keep a single per-frame total, which is defensible because deferred tile
-  work still lands somewhere inside the frame, and drop the per-pass split.
-- Fix the attribution properly with `GL_TIMESTAMP` queries around a
-  `glFlush` per pass, accepting that forcing the flush changes what is being
-  measured, which may make this not worth doing.
+The timers now say they cannot be trusted where they cannot, and the
+verdict is measured per device rather than assumed per vendor - a renderer
+string blocklist was considered and rejected, because it names suspects
+instead of catching the crime and gets every unlisted driver wrong in one
+direction or the other.
 
-Symptom 2 should be fixed regardless of which route symptom 1 takes: no
-configuration should be able to report more GPU time than wall-clock time.
-A cheap assertion that the harvested figure does not exceed the frame's
-wall-clock duration would have caught it at the source.
+- **Attribution self-test** at raster startup
+  ([alloy/src/gpu/timing.rs](../../alloy/src/gpu/timing.rs)): pass A
+  renders a deliberately expensive shader offscreen inside one
+  `TIME_ELAPSED` query, pass B samples the result through a trivial shader
+  inside a second, `glFinish` closes the run. An honest driver books the
+  heavy work to A's query; a driver with the deferral pathology books it
+  to B's, and A's share collapses - the exact failure above, in miniature.
+  Three runs, majority verdict (absorbing DVFS ramp-up), disjoint runs
+  discarded, a zero total votes broken. A failed verdict disarms
+  `PassTimer`, so `/stats`, MCP `get_stats` and the HUD all report the
+  fields absent through the existing `timer_queries: false` path. Mesa
+  Intel measures shares of 0.94-0.95 and keeps its timers; the Adreno
+  deferral moves the split exactly this way, though the probe has not yet
+  been re-run on the device.
+- **Wall-clock bound at harvest** (symptom 2, structurally): every pending
+  query carries its begin `Instant`, and a harvested result whose GPU time
+  exceeds the wall clock between begin and harvest is dropped as a bad
+  read. No configuration can report more GPU time than wall time again.
+- **Docs**: MCP `get_stats` description and
+  [packages/cli/agents/debugging.md](../../packages/cli/agents/debugging.md)
+  now say the `gpu*ExecMs` fields are absent when unsupported or when the
+  self-test disarmed them (measure by subtraction there), and that
+  configuration comparisons divide a frame-counter delta by a `timeMs`
+  delta rather than reading the `frameMs` EMA, which disagrees with the
+  counters under bimodal frame times (48.8 ms EMA against 40.8 ms
+  measured over the same window).
+- `alloy/examples/timer_attribution_probe.rs` boots the raster thread with
+  the logger installed and prints whether the timers survived; per-run
+  shares at `SRT_LOG=debug`.
 
-## Also worth doing
-
-`frameMs` is a smoothed EMA and disagrees with the frame counter under
-bimodal frame times (48.8 ms EMA against 40.8 ms measured over the same
-window). Anything comparing configurations should divide a frame-counter
-delta by a `timeMs` delta instead. Worth a sentence in
-[packages/cli/agents/debugging.md](../../packages/cli/agents/debugging.md),
-which currently sends readers to `/stats` without saying which of its fields
-survive a comparison.
+True per-pass attribution via `GL_TIMESTAMP` around a forced `glFlush` per
+pass was deliberately not pursued: the flush changes what is being
+measured, and absence plus subtraction answers the questions that matter.
