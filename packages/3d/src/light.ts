@@ -100,8 +100,10 @@ export type SpotLight = SceneNode & {
   shadow: { mapSize: number; bias: number; normalBias: number; near: number }
 }
 
+/** The perspective-map shadow options a spot or point light takes. */
 export type SpotShadowOptions = {
-  /** Shadow map resolution in texels, square (default 1024). */
+  /** Shadow map resolution in texels, square (default 1024). A point
+   * light renders SIX maps at this size, one per face. */
   mapSize?: number
   /** Depth bias against acne, in the map's 0..1 depth (default 0). Note
    * a perspective map's depth is nonlinear: `normalBias` is the knob to
@@ -130,6 +132,14 @@ export type PointLight = SceneNode & {
   distance: number
   /** Falloff exponent (default 2). */
   decay: number
+  /** Render shadow maps from this light: six 90-degree face maps
+   * (perspective, world-axis aligned) as tiles of the scene's shadow
+   * atlas, claiming six shadow slots; a receiver picks the face by the
+   * light-to-point direction. Far = `distance` (or the directional
+   * default when 0), so give a casting bulb a distance. */
+  castShadow: boolean
+  /** The resolved shadow options (read; write through setLight). */
+  shadow: { mapSize: number; bias: number; normalBias: number; near: number }
 }
 
 /** The ambient term: a sky/ground gradient by the WORLD normal's
@@ -145,9 +155,10 @@ export type HemisphereLight = SceneNode & {
 
 export type Light = DirectionalLight | SpotLight | PointLight | HemisphereLight
 
-/** The light types that can render a shadow map (a point light cannot
- * yet: its map is a cube, see okf/backlog/gpu-cube-maps.md). */
-export type CastingLight = DirectionalLight | SpotLight
+/** The light types that can render a shadow map - all of them: a
+ * directional light's box or cascades, a spot's one cone map, a point
+ * light's six face maps. */
+export type CastingLight = DirectionalLight | SpotLight | PointLight
 
 export type DirectionalLightOptions = {
   direction?: Vec3
@@ -174,14 +185,17 @@ export type PointLightOptions = {
   intensity?: number
   distance?: number
   decay?: number
+  castShadow?: boolean
+  /** Shadow-map options, merged key by key (setLight keeps unmentioned ones). */
+  shadow?: SpotShadowOptions
 }
 export type HemisphereLightOptions = { sky?: Vec3; ground?: Vec3; intensity?: number }
 
-/** Every directional light may cast; the real bound is the shadow-slot
- * budget (MAX_SHADOW_MAPS: a casting light claims `shadow.cascades`
- * slots, and a caster past the budget throws at attach). Every map is a
- * tile of the scene's one shadow atlas, so the pass count never follows
- * the caster count, the fill does. */
+/** Every light may cast; the real bound is the shadow-slot budget
+ * (MAX_SHADOW_MAPS: a directional light claims `shadow.cascades` slots,
+ * a point light six, a spot one, and a caster past the budget throws at
+ * attach). Every map is a tile of the scene's one shadow atlas, so the
+ * pass count never follows the caster count, the fill does. */
 export const MAX_SHADOWS = MAX_LIGHTS
 export { MAX_CASCADES }
 
@@ -268,6 +282,9 @@ export function createPointLight(opts: PointLightOptions = {}): PointLight {
   light.intensity = opts.intensity ?? 1
   light.distance = opts.distance ?? 0
   light.decay = opts.decay ?? 2
+  light.castShadow = opts.castShadow === true
+  light.shadow = { mapSize: 1024, bias: 0, normalBias: 0, near: 0.5 }
+  if (opts.shadow !== undefined) mergeSpotShadow(light.shadow, opts.shadow)
   return light
 }
 
@@ -329,6 +346,16 @@ export function setLight(
     if (update.color !== undefined) light.color = [...update.color] as Vec3
     if (update.distance !== undefined) light.distance = update.distance
     if (update.decay !== undefined) light.decay = update.decay
+    let shadowChanged = false
+    if (update.castShadow !== undefined && update.castShadow !== light.castShadow) {
+      light.castShadow = update.castShadow
+      shadowChanged = true
+    }
+    if (update.shadow !== undefined) {
+      mergeSpotShadow(light.shadow, update.shadow)
+      shadowChanged = true
+    }
+    if (shadowChanged) light._scene?._shadowChanged(light)
   } else {
     if (update.sky !== undefined) light.sky = [...update.sky] as Vec3
     if (update.ground !== undefined) light.ground = [...update.ground] as Vec3

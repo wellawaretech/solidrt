@@ -33,8 +33,9 @@ export const MAX_LIGHTS = 8
 export const MAX_CASCADES = 4
 
 /** The shadow-map slot budget of the scene's shadow set: every casting
- * light claims `shadow.cascades` consecutive slots (one per map, a
- * non-cascaded light one), dealt in light order, and a caster past the
+ * light claims consecutive slots, one per map (a directional light
+ * `shadow.cascades`, a point light its six faces, a spot one), dealt in
+ * light order, and a caster past the
  * budget throws at attach. Bounds `uShadowRect`/`uShadowMatrix` - its
  * own constant, NOT MAX_LIGHTS * MAX_CASCADES, so raising the light cap
  * does not size the fragment uniform budget for the worst case where
@@ -317,10 +318,13 @@ export const FOG = glsl`
  * excluded), `uShadowFirst[N]` /
  * `uShadowCount[N]` (light i's maps are slots `first .. first + count - 1`;
  * count 0 = it does not cast; a box light has one map, a cascaded light
- * `shadow.cascades` of them, tightest first), `uShadowBias[N]` and
+ * `shadow.cascades` of them tightest first, a point light six face maps
+ * in +X, -X, +Y, -Y, +Z, -Z order), `uShadowBias[N]` and
  * `uShadowNormalBias[N]`. The scene binds and writes all of it on every
  * target a receiving material can draw into; a custom material composes
- * this, then SHADOW, then SHADOW_LOOKUP (in that order) and multiplies
+ * LIGHT_SLOTS, this, SHADOW, then SHADOW_LOOKUP (in that order - the
+ * lookup reads the light type and position for a point light's face
+ * select) and multiplies
  * light i's term by `lightShadow(i, worldPos, n)` - `lit` is the shape. A
  * material that does not receive composes none of it, so it declares no
  * sampler for nothing.
@@ -382,21 +386,26 @@ export const SHADOW = glsl`
 `
 
 /**
- * The step from a light index to its shadow factor, over SHADOW_SLOTS and
- * SHADOW (compose both first). `float lightShadow(int i, vec3 worldPos,
- * vec3 n)` is the one to call per light: 1 for a light that does not
- * cast, else the factor for `worldPos` pushed along its normal `n` by
- * `uShadowNormalBias[i]` (the acne knob to reach for first), looked up in
- * the FIRST of light i's maps that has the point (a box light has one; a
- * cascaded light's maps come tightest first, so the sharpest cascade
- * that has the point wins and a point past the last is lit) with that
- * map's `uShadowMatrix[j]`, its tile and `uShadowBias[i]`. Inside the
- * outer SHADOW_BLEND of a map (in map 0..1 units, so 0.1 is its outer
- * 10% on each side) the factor fades into the next cascade's, so the
- * hand-over is a band and not a seam; the last map, a box light's only
- * one, and any rim the next cascade does not reach (the near side, at
- * the camera's feet) have no band. Position and normal are arguments, so
- * no varying name is pinned and a custom vertex stage composes freely.
+ * The step from a light index to its shadow factor, over LIGHT_SLOTS,
+ * SHADOW_SLOTS and SHADOW (compose all three first - the light type and
+ * position pick a point light's face map). `float lightShadow(int i,
+ * vec3 worldPos, vec3 n)` is the one to call per light: 1 for a light
+ * that does not cast, else the factor for `worldPos` pushed along its
+ * normal `n` by `uShadowNormalBias[i]` (the acne knob to reach for
+ * first). A point light's six face maps are selected directly: the
+ * dominant axis of the light-to-point vector names the face (the slot
+ * order +X, -X, +Y, -Y, +Z, -Z), one projection, one tap. Every other
+ * light is looked up in the FIRST of its maps that has the point (a box
+ * light has one; a cascaded light's maps come tightest first, so the
+ * sharpest cascade that has the point wins and a point past the last is
+ * lit) with that map's `uShadowMatrix[j]`, its tile and
+ * `uShadowBias[i]`. Inside the outer SHADOW_BLEND of a map (in map 0..1
+ * units, so 0.1 is its outer 10% on each side) the factor fades into
+ * the next cascade's, so the hand-over is a band and not a seam; the
+ * last map, a box light's only one, and any rim the next cascade does
+ * not reach (the near side, at the camera's feet) have no band.
+ * Position and normal are arguments, so no varying name is pinned and a
+ * custom vertex stage composes freely.
  */
 export const SHADOW_LOOKUP = glsl`
   const float SHADOW_BLEND = 0.1;
@@ -407,6 +416,20 @@ export const SHADOW_LOOKUP = glsl`
     vec4 w = vec4(worldPos + n * uShadowNormalBias[i], 1.0);
     float bias = uShadowBias[i];
     int first = uShadowFirst[i];
+    if (uLightType[i] == LIGHT_POINT) {
+      // Six 90-degree face frusta partition every direction: the
+      // dominant axis IS the face, so no scan and no behind-the-camera
+      // projection (a perspective map's w flips sign there and xy can
+      // land inside 0..1 spuriously).
+      vec3 dv = worldPos - uLightPos[i];
+      vec3 ad = abs(dv);
+      int face;
+      if (ad.x >= ad.y && ad.x >= ad.z) face = dv.x > 0.0 ? 0 : 1;
+      else if (ad.y >= ad.z) face = dv.y > 0.0 ? 2 : 3;
+      else face = dv.z > 0.0 ? 4 : 5;
+      int j = first + face;
+      return shadow(uShadowAtlas, uShadowRect[j], uShadowMatrix[j] * w, bias);
+    }
     int last = first + count - 1;
     for (int j = first; j <= last; j++) {
       vec3 p = shadowPoint(uShadowMatrix[j] * w);

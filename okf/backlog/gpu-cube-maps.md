@@ -58,11 +58,21 @@ noted so a consumer does not re-derive it):
   the face is a render-time argument (`renderTarget(cube, face)`);
   `depth: true` is one renderbuffer reused across the six face passes.
   Reject `samples >= 2`, `mipmap`, `depth: "texture"` initially.
-- **Point shadows** (../backlog/3d-point-light-shadows.md) then need no
-  cube depth: distance packed into an rgba8 cube color target, sampled
-  by `samplerCube` with the light-to-fragment vector.
+
+Point shadows dropped out as a consumer (2026-09-02): the
+Three/Godot/URP comparison put them on six face tiles in the existing
+shadow atlas instead - library-only, hardware PCF retained, no
+sampler-array cap (reasoning recorded in
+[3d-point-light-shadows](../done/3d-point-light-shadows.md), landed
+2026-09-02). That removes the
+driving consumer for render-to-face; static uploads plus `samplerCube`
+sampling serve the environment tier, and render-to-face waits for
+dynamic environment probes. Worth noting for the tier's own shape pass:
+Three's IBL pipeline (PMREM) packs into a 2D texture and equirect
+panoramas are the common interchange, so even the environment tier
+should get a fresh Three/Godot/Unity comparison before this builds.
 
 Filed 2026-08-04 from ../notes/scene-graph-3d.md (stage 5,
 demand-gated); no field report asks yet. The spot half of the old
 spot-and-point shadow item landed 2026-09-02 without cube maps; the
-remaining consumers are point shadows and the environment tier.
+remaining consumer is the environment tier.

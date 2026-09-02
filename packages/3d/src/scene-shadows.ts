@@ -1,7 +1,7 @@
 // The shadow half of a scene instance: the atlas every casting light's
 // map is a tile of, the per-caster shadow views (made through the
 // scene's own view machinery), and the map cameras (box, spot cone,
-// cascades). One system per scene, built by makeShadowSystem with the
+// cascades, point faces). One system per scene, built by makeShadowSystem with the
 // scene's seams as `deps` - the deps type IS the coupling, documented.
 // The receiving side (uShadowRect/uShadowFirst/uShadowMatrix writes onto
 // targets) stays in scene.ts with the light fan-out; it reads the slots
@@ -30,6 +30,28 @@ const VERTICAL_LIGHT = 0.99
 // The spot shadow camera's far plane when the light has no `distance`
 // cutoff - the directional box default.
 const SPOT_SHADOW_FAR = 500
+
+// Degrees added to a point-light face map's 90-degree fov: the guard
+// band that keeps a face-seam fragment's occluder inside the map it
+// samples (without it every seam shows a lit slit where each map's
+// coverage ends at its edge). Costs a sliver of map resolution.
+const POINT_SHADOW_FOV_GUARD = 4
+
+// A point light's six face frusta in slot order (+X, -X, +Y, -Y, +Z,
+// -Z - SHADOW_LOOKUP's dominant-axis select counts on it), each a
+// square 90-degree perspective map from the light's world position.
+// World-axis aligned: a point light has no direction and rotation does
+// not matter. The up only orients the map inside its tile, which the
+// lookup reads back through the same matrix, so any non-colinear
+// choice works.
+const POINT_FACES: { dir: Vec3; up: Vec3 }[] = [
+  { dir: [1, 0, 0], up: [0, 1, 0] },
+  { dir: [-1, 0, 0], up: [0, 1, 0] },
+  { dir: [0, 1, 0], up: [0, 0, 1] },
+  { dir: [0, -1, 0], up: [0, 0, 1] },
+  { dir: [0, 0, 1], up: [0, 1, 0] },
+  { dir: [0, 0, -1], up: [0, 1, 0] },
+]
 
 const IDENTITY = mat4()
 
@@ -152,17 +174,16 @@ export function makeShadowSystem<V extends ShadowView>(deps: ShadowSystemDeps<V>
     return { cols, cell, scale, width: cols * cell, height: rows * cell }
   }
   // A caster's tile count: a directional light brings its cascades, a
-  // spot exactly one map.
-  let shadowTiles = (l: CastingLight): number => (l.type === "directional" ? l.shadow.cascades : 1)
+  // point light its six faces, a spot exactly one map.
+  let shadowTiles = (l: CastingLight): number =>
+    l.type === "directional" ? l.shadow.cascades : l.type === "point" ? POINT_FACES.length : 1
   let eachSlot = (fn: (slot: number, lightIndex: number, shadow: Shadow, cascade: number) => void): void => {
     let slot = 0
     let i = 0
     for (let light of deps.lights) {
       if (light.type === "hemisphere") continue
-      if (light.type !== "point") {
-        let shadow = shadows.get(light)
-        if (shadow !== undefined) for (let c = 0; c < shadow.views.length; c++) fn(slot++, i, shadow, c)
-      }
+      let shadow = shadows.get(light)
+      if (shadow !== undefined) for (let c = 0; c < shadow.views.length; c++) fn(slot++, i, shadow, c)
       i++
     }
   }
@@ -177,7 +198,7 @@ export function makeShadowSystem<V extends ShadowView>(deps: ShadowSystemDeps<V>
   let placeShadows = (adding: CastingLight | null): ShadowRect[] | null => {
     let casters: CastingLight[] = []
     for (let l of deps.lights) {
-      if ((l.type === "directional" || l.type === "spot") && (shadows.has(l) || l === adding)) casters.push(l)
+      if (l.type !== "hemisphere" && (shadows.has(l) || l === adding)) casters.push(l)
     }
     if (adding !== null && !casters.includes(adding)) casters.push(adding)
     deps.markLightsDirty()
@@ -197,7 +218,7 @@ export function makeShadowSystem<V extends ShadowView>(deps: ShadowSystemDeps<V>
     if (tiles > MAX_SHADOW_MAPS) {
       throw new Error(
         "The scene's shadow set is full: " + tiles + " maps over the " + MAX_SHADOW_MAPS +
-          "-slot budget (a cascaded light claims shadow.cascades slots)",
+          "-slot budget (a cascaded light claims shadow.cascades slots, a point light six)",
       )
     }
     let lay = shadowLayout(tiles, maxSize)
@@ -280,7 +301,8 @@ export function makeShadowSystem<V extends ShadowView>(deps: ShadowSystemDeps<V>
   // Place a shadow's cameras from its light's world matrix. A box light:
   // at its world position, looking along its world direction, the light
   // frustum as the orthographic extents. A spot light: the same pose
-  // with a perspective camera, fov = its cone. Compared against the
+  // with a perspective camera, fov = its cone. A point light: the six
+  // POINT_FACES frusta at its world position. Compared against the
   // matrix it was last placed from, so a scene animating elsewhere
   // rewrites nothing here. A cascaded light also follows the scene
   // camera (`cameraMoved`).
@@ -291,10 +313,30 @@ export function makeShadowSystem<V extends ShadowView>(deps: ShadowSystemDeps<V>
   let placeShadowCamera = (shadow: Shadow, cameraMoved: boolean) => {
     let light = shadow.light
     let m = worldInto(worldScratch, light)
-    let cascaded = shadow.views.length > 1
+    let cascaded = light.type === "directional" && shadow.views.length > 1
     if (!shadow.dirty && !(cascaded && cameraMoved) && m.every((x, i) => x === shadow.lastWorld[i])) return
     shadow.dirty = false
     copy(shadow.lastWorld, m)
+    if (light.type === "point") {
+      let far = light.distance > 0 ? light.distance : SPOT_SHADOW_FAR
+      for (let f = 0; f < POINT_FACES.length; f++) {
+        let face = POINT_FACES[f]!
+        updateCamera(shadow.views[f]!.camera, {
+          position: [m[12], m[13], m[14]],
+          target: [m[12] + face.dir[0], m[13] + face.dir[1], m[14] + face.dir[2]],
+          up: face.up,
+          // A cube face spans exactly 90 degrees (square tile, aspect
+          // 1); the guard band widens each map past its face so a
+          // fragment at a face seam still finds its occluder inside the
+          // map (the lookup's dominant-axis select is unchanged, so the
+          // overlap is never sampled twice) - URP's fovBias.
+          fov: 90 + POINT_SHADOW_FOV_GUARD,
+          near: light.shadow.near,
+          far,
+        })
+      }
+      return
+    }
     transformVector(shadowDir, m, light.direction)
     let len = Math.hypot(shadowDir[0], shadowDir[1], shadowDir[2]) || 1
     let d: Vec3 = [shadowDir[0] / len, shadowDir[1] / len, shadowDir[2] / len]

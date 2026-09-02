@@ -164,10 +164,11 @@ what it delivered is documented in `packages/3d/AGENTS.md`, not here.
     override-material passes). Comparison sampling landed 2026-09-02
     ([gpu-depth-compare-sampling](../done/gpu-depth-compare-sampling.md):
     uShadowAtlas is a sampler2DShadow, one hardware 2x2-PCF tap). The
-    rest of stage 4 stays demand-gated, one item each: point casters
-    ([3d-point-light-shadows](../backlog/3d-point-light-shadows.md);
-    spot casters landed 2026-09-02 - the same machinery with a
-    perspective camera, one slot) and cascades
+    Spot casters landed 2026-09-02 (the same machinery with a
+    perspective camera, one slot) and point casters with them
+    ([3d-point-light-shadows](../done/3d-point-light-shadows.md): six
+    face tiles in the atlas, dominant-axis select - no cube map); still
+    demand-gated: cascades
     ([3d-shadow-cascades](../backlog/3d-shadow-cascades.md)). Instanced
     casters landed 2026-09-02
     ([3d-instanced-shadow-casters](../done/3d-instanced-shadow-casters.md):

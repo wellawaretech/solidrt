@@ -579,8 +579,8 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       } else {
         coneFalloff.push(0, 0, 0, 0)
       }
-      bias.push(light.type !== "point" ? light.shadow.bias : 0)
-      normalBias.push(light.type !== "point" ? light.shadow.normalBias : 0)
+      bias.push(light.shadow.bias)
+      normalBias.push(light.shadow.normalBias)
       count++
     }
     for (let i = count; i < MAX_LIGHTS; i++) {
@@ -590,7 +590,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       bias.push(0)
       normalBias.push(0)
     }
-    // The shadow set rides with the lights. Per directional light i: its
+    // The shadow set rides with the lights. Per casting light i: its
     // map slots as uShadowFirst[i] + uShadowCount[i] (0 = a receiving
     // material draws that light plain) and its biases; per map slot j its
     // tile of the atlas as uShadowRect[j] in atlas UV (the whole map in
@@ -973,13 +973,13 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       }
       lights.push(light)
       lightsDirty = true
-      if ((light.type === "directional" || light.type === "spot") && light.castShadow) shadowSys.createShadow(light)
+      if (light.type !== "hemisphere" && light.castShadow) shadowSys.createShadow(light)
     },
     _detachLight(light) {
       let i = lights.indexOf(light)
       if (i >= 0) lights.splice(i, 1)
       lightsDirty = true
-      if (light.type === "directional" || light.type === "spot") shadowSys.destroyShadow(light)
+      if (light.type !== "hemisphere") shadowSys.destroyShadow(light)
       hooks._schedule()
     },
     _shadowChanged(light) {

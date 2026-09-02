@@ -81,19 +81,29 @@ blendMode and pointer events like any element.
   the `castShadow` meshes (`<Mesh castShadow>`, `setCastShadow`) from an
   orthographic camera at the light's WORLD position along its world
   direction, `shadow.camera` (+-5, 0.5..500 by default) as the frustum.
-  Any directional light may cast, bounded by the shadow-slot budget
-  (MAX_SHADOW_MAPS = 8, its own constant: a casting light claims
-  `shadow.cascades` consecutive slots, a spot one, and a caster past the
-  budget throws at attach). `<SpotLight castShadow shadow={{ mapSize?,
-  bias?, normalBias?, near? }}>` is the same machinery with a
-  PERSPECTIVE camera: at the light's world position along its world
-  direction, fov = its cone (2 * angle), near from `shadow.near`
-  (default 0.5), far from the light's `distance` (or the directional
-  default 500 when 0) - one map, one slot, the same atlas and lookup.
-  A perspective map's depth is nonlinear, so `normalBias` (world units)
-  is the acne knob to reach for; `bias` acts in that nonlinear depth.
-  Point lights cannot cast yet (a cube map,
-  okf/backlog/gpu-cube-maps.md).
+  Any light may cast, bounded by the shadow-slot budget
+  (MAX_SHADOW_MAPS = 8, its own constant: a directional light claims
+  `shadow.cascades` consecutive slots, a point light six, a spot one,
+  and a caster past the budget throws at attach). `<SpotLight castShadow
+  shadow={{ mapSize?, bias?, normalBias?, near? }}>` is the same
+  machinery with a PERSPECTIVE camera: at the light's world position
+  along its world direction, fov = its cone (2 * angle), near from
+  `shadow.near` (default 0.5), far from the light's `distance` (or the
+  directional default 500 when 0) - one map, one slot, the same atlas
+  and lookup. A perspective map's depth is nonlinear, so `normalBias`
+  (world units) is the acne knob to reach for; `bias` acts in that
+  nonlinear depth. `<PointLight castShadow>` casts in every direction
+  with the same option set: six 90-degree face maps (world-axis
+  aligned, slot order +X, -X, +Y, -Y, +Z, -Z) as six consecutive tiles
+  of the same atlas, far from `distance` like a spot - so give a
+  casting bulb a distance. No cube map: a receiver picks the face by
+  the dominant axis of the light-to-point vector (SHADOW_LOOKUP), one
+  projection, one hardware-compare tap - the Three/Godot/Unity-URP
+  atlas route. Each face map renders a few degrees wider than its face
+  (URP's fovBias) so a seam fragment's occluder is inside the map it
+  samples - without the guard band every seam shows a lit slit - and
+  PCF taps clamp at face-tile edges, so a face seam hardens slightly
+  instead of bleeding into the neighbour.
   `shadow: { cascades: N }` (1..MAX_CASCADES = 4) replaces the box with
   N maps fitted to slices of the SCENE camera's frustum (near ..
   `shadow.distance`, default the camera far; the practical split; each
@@ -205,7 +215,7 @@ blendMode and pointer events like any element.
 | `InstancedMesh` | as Mesh, plus `records` (interleaved per-instance floats; buffer capacity starts at the first value and grows on larger rewrites), `count?` (records drawn, default all), `bounds?` (local [minX..maxZ] over the population - without it the mesh never picks); the record buffer is component-owned and freed on unmount |
 | `PerspectiveCamera` | `fov?` (vertical DEGREES, default 60), `near?`, `far?`, `position?`, `lookAt?`, `up?` - or the Scene `camera` prop, the same state (last write wins) |
 | `SpotLight` | transforms as Group, `direction?` (local aim, default [0, -1, 0]), `color?`, `intensity?`, `distance?` (falloff cutoff, 0 = none), `angle?` (cone half-angle DEGREES, default 60), `penumbra?` (0..1 rim fade, default 0), `decay?` (falloff exponent, default 2), `castShadow?`, `shadow?` (mapSize, bias, normalBias, near), `ref?(light)` |
-| `PointLight` | transforms as Group (position is what matters), `color?`, `intensity?`, `distance?`, `decay?`, `ref?(light)` |
+| `PointLight` | transforms as Group (position is what matters), `color?`, `intensity?`, `distance?`, `decay?`, `castShadow?` (six face maps, six shadow slots), `shadow?` (mapSize, bias, normalBias, near), `ref?(light)` |
 
 Output composition: without `output`, `Scene` emits a minimal
 `<texture width height>` leaf and nothing else is forwarded - anything

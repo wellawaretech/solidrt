@@ -126,11 +126,6 @@ Shaped, not started.
   compressed real-world files (Draco/meshopt, KTX2), morph targets,
   merge-by-material, vertex colors, per-material samplers and runtime-fetched
   content, each demand-gated.
-- **[Point light shadows](backlog/3d-point-light-shadows.md)** [2026-08-27]
-  A PointLight lights but cannot cast - its map is a cube (six faces,
-  samplerCube by the light-to-fragment vector against a stored distance), and
-  the engine has no cube-map texture or target (gpu-cube-maps is the blocker).
-  The node, the falloff and the spot sibling landed 2026-09-02.
 - **[Cascaded shadow maps](backlog/3d-shadow-cascades.md)** [2026-08-27]
   One shadow.camera box per casting light: a large outdoor scene either blurs
   (the box covers everything at one map's resolution) or clips (the box covers
@@ -823,6 +818,11 @@ Finished, kept for the reasoning.
   through scene.texture), the standard set carries no camera basis so
   billboards reconstruct it from uViewProj rows, and shaderMaterial cannot
   express one program with many parameterisations.
+- **[Point light shadows](done/3d-point-light-shadows.md)** [2026-08-27]
+  A PointLight lit but could not cast. Landed 2026-09-02 as six 90-degree face
+  tiles in the existing shadow atlas with a dominant-axis face select in
+  SHADOW_LOOKUP - the Three/Godot/URP atlas route, library-only, no cube maps;
+  a fov guard band (URP's fovBias) closes the face-seam slits.
 - **[Shadow maps and their dependencies](done/3d-shadow-maps.md)** [2026-08-26]
   Directional shadow maps for @solidrt/3d, staged over the three things they
   need - a sampleable depth id in the engine, per-target draw sinks in the
