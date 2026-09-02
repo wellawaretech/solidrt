@@ -11,7 +11,7 @@ use crate::backend::GlBinding;
 use khronos_egl as egl;
 use std::sync::Arc;
 
-type Egl = egl::DynamicInstance<egl::EGL1_4>;
+pub(crate) type Egl = egl::DynamicInstance<egl::EGL1_4>;
 
 /// The pbuffer context and everything it hangs off. Handles are process-wide
 /// EGL objects with no thread affinity of their own; the raster thread is the
@@ -60,7 +60,10 @@ fn library_candidates(names: &[&str]) -> Vec<std::path::PathBuf> {
   out
 }
 
-fn load_egl() -> Result<Egl, String> {
+// Also used by raster::buffer_age: the same library SDL's EGL path loaded
+// (system libEGL, or the packaged ANGLE next to the executable), so
+// current-display/surface queries see SDL's per-thread binding.
+pub(crate) fn load_egl() -> Result<Egl, String> {
   let mut last = String::new();
   for path in library_candidates(EGL_LIB) {
     match unsafe { Egl::load_required_from_filename(&path) } {

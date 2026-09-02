@@ -1119,6 +1119,7 @@ fn stats_reply(id: u64, r: StatsReply<'_>) -> String {
   if let Some(rc) = r.raster {
     put("rasterQueue", rc.queue.into());
     put("idleTicks", rc.idle_ticks.into());
+    put("partialPresents", rc.partial_presents.into());
     put("fenceTimeouts", rc.fence_timeouts.into());
     put("missedPresents", rc.missed_presents.into());
     put("gpuPasses", rc.passes.into());

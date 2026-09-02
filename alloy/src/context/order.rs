@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 
-use crate::gpu::{gather_ordered, gather_permuted, order_permutation, BufferIds, InstanceOrder, OrderScratch, MAX_INSTANCE_SLOTS};
+use crate::gpu::{
+  gather_ordered, gather_permuted, order_permutation, BufferIds, InstanceOrder, OrderScratch, MAX_INSTANCE_SLOTS,
+};
 use crate::raster::RasterCmd;
 
 use super::Context;
@@ -117,7 +119,9 @@ impl Context {
         ));
       }
       if let Some((t, d)) = orders.by_buffer.get(&buffer) {
-        return Err(format!("buffer {buffer} is already ordered by draw {d} of target {t}; one ordered entry per buffer"));
+        return Err(format!(
+          "buffer {buffer} is already ordered by draw {d} of target {t}; one ordered entry per buffer"
+        ));
       }
     }
     Ok(())
@@ -155,8 +159,7 @@ impl Context {
 
   /// Drop every order of a reclaimed target.
   pub(super) fn unregister_target_orders(&self, target: u64) {
-    let removed: Vec<(u64, u64)> =
-      self.orders.borrow().entries.keys().filter(|(t, _)| *t == target).copied().collect();
+    let removed: Vec<(u64, u64)> = self.orders.borrow().entries.keys().filter(|(t, _)| *t == target).copied().collect();
     for (t, d) in removed {
       self.unregister_instance_order(t, d);
     }
@@ -427,7 +430,12 @@ impl Context {
       };
       let mut dst = self.write_leases.borrow_mut().take_free(id, size);
       gather_permuted(&entry.perm, entry.strides[slot], &mirror.data[..mirror.len], &mut dst[..mirror.len]);
-      self.send(RasterCmd::WriteBufferLease { id, block: dst, len: mirror.len, recycle: self.block_recycle_tx.clone() });
+      self.send(RasterCmd::WriteBufferLease {
+        id,
+        block: dst,
+        len: mirror.len,
+        recycle: self.block_recycle_tx.clone(),
+      });
       self.note_buffer_content(id);
     }
   }

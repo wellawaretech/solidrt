@@ -20,14 +20,95 @@ pub struct TargetHandles {
 }
 use crate::gpu::{SamplerState, TextureFormat};
 
+// Outset applied when converting logical damage to physical pixels: absorbs
+// the logical->physical scale rounding at the patch edges.
+const DAMAGE_PAD_PX: i32 = 1;
+
+/// An integer damage rectangle in physical pixels, top-left origin,
+/// non-empty by construction (width/height >= 1).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DamageRect {
+  pub x: i32,
+  pub y: i32,
+  pub width: i32,
+  pub height: i32,
+}
+
+impl DamageRect {
+  pub fn union(self, other: DamageRect) -> DamageRect {
+    let x0 = self.x.min(other.x);
+    let y0 = self.y.min(other.y);
+    let x1 = (self.x + self.width).max(other.x + other.width);
+    let y1 = (self.y + self.height).max(other.y + other.height);
+    DamageRect { x: x0, y: y0, width: x1 - x0, height: y1 - y0 }
+  }
+
+  /// Cut to a `width` x `height` surface; None when nothing remains.
+  pub fn clamped(self, width: i32, height: i32) -> Option<DamageRect> {
+    let x0 = self.x.max(0);
+    let y0 = self.y.max(0);
+    let x1 = (self.x + self.width).min(width);
+    let y1 = (self.y + self.height).min(height);
+    if x1 <= x0 || y1 <= y0 {
+      return None;
+    }
+    Some(DamageRect { x: x0, y: y0, width: x1 - x0, height: y1 - y0 })
+  }
+
+  /// True when the rect covers the whole `width` x `height` surface.
+  pub fn covers(self, width: i32, height: i32) -> bool {
+    self.x <= 0 && self.y <= 0 && self.x + self.width >= width && self.y + self.height >= height
+  }
+}
+
+/// Screen damage carried with a frame: what its content changed relative to
+/// the previous submitted frame, in physical pixels (converted from the
+/// rendertree's logical FrameDamage at submit, see okf/plans/
+/// partial-repaint.md). `Full` claims nothing and always redraws the whole
+/// window; `None` still presents - the union with older frames' damage may
+/// have to repair an aged back buffer.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum PresentDamage {
+  None,
+  Rect(DamageRect),
+  Full,
+}
+
+impl PresentDamage {
+  pub fn union(self, other: PresentDamage) -> PresentDamage {
+    match (self, other) {
+      (PresentDamage::Full, _) | (_, PresentDamage::Full) => PresentDamage::Full,
+      (PresentDamage::None, d) | (d, PresentDamage::None) => d,
+      (PresentDamage::Rect(a), PresentDamage::Rect(b)) => PresentDamage::Rect(a.union(b)),
+    }
+  }
+
+  /// Physical-pixel form of the paint walk's logical damage, padded and
+  /// rounded out.
+  pub fn from_frame(damage: crate::rendertree::FrameDamage, scale: f32) -> PresentDamage {
+    match damage {
+      crate::rendertree::FrameDamage::None => PresentDamage::None,
+      crate::rendertree::FrameDamage::Full => PresentDamage::Full,
+      crate::rendertree::FrameDamage::Rect(r) => {
+        let x = (r.origin.x * scale).floor() as i32 - DAMAGE_PAD_PX;
+        let y = (r.origin.y * scale).floor() as i32 - DAMAGE_PAD_PX;
+        let x1 = ((r.origin.x + r.size.width) * scale).ceil() as i32 + DAMAGE_PAD_PX;
+        let y1 = ((r.origin.y + r.size.height) * scale).ceil() as i32 + DAMAGE_PAD_PX;
+        PresentDamage::Rect(DamageRect { x, y, width: x1 - x, height: y1 - y })
+      }
+    }
+  }
+}
+
 pub(crate) enum RasterCmd {
   /// Draw and present (interactive) or read back (playback) a frame. In
   /// interactive mode, when several frames are queued only the newest is
-  /// drawn (load shedding); in capture mode every frame draws, because
-  /// playback's contract is exactly one Captured per submit. `tree_clean`
-  /// marks a present-only resubmit of the previous frame's unchanged display
-  /// list (see `Context::submit_clean`).
-  Frame { dl: DisplayList, tree_clean: bool },
+  /// drawn (load shedding; a shed frame's `damage` is unioned into the one
+  /// that draws); in capture mode every frame draws, because playback's
+  /// contract is exactly one Captured per submit. `tree_clean` marks a
+  /// present-only resubmit of the previous frame's unchanged display list
+  /// (see `Context::submit_clean`).
+  Frame { dl: DisplayList, tree_clean: bool, damage: PresentDamage },
   /// Register the UI-side frame-request latch for missed-present (jank)
   /// accounting: the raster thread samples it (never consumes) at present
   /// time to tell a demanded gap from an idle one. Forwarded by the platform

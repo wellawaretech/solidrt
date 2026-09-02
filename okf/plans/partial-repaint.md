@@ -108,9 +108,9 @@ the offscreen rig:
    the extent cells, the resolve, and a damage-area stat in PaintStats
    surfaced next to `nodesPainted` in `get_stats`. Done, see Findings.
 2. The win: repaint-union clip + rect blit + buffer-age present on the
-   EGL/GLES rig path; full-frame fallback everywhere else. Verified by
-   freeze-clock snapshot identity against full repaint, then frameMs /
-   power with a small animation on fill-bound hardware.
+   EGL/GLES rig path; full-frame fallback everywhere else. Done, see
+   Findings; power/frameMs on fill-bound hardware (a TV) still to be
+   measured.
 3. Deferred until a real workload demands it:
    `eglSwapBuffersWithDamageKHR` / `eglSetDamageRegionKHR` (compositor
    hint; both resolve on Linux/Mesa), multiple damage rects, the
@@ -166,6 +166,50 @@ Carry-overs for stage 2:
   amortized cost is one extra pass per invalidated subtree.
 - `Damage::Present` unions nothing by design; the window-shader writes
   it carries fall under stage 2's window-shader full-damage fallback.
+
+Stage 2 landed 2026-09-02. The pieces:
+
+- `PresentDamage`/`DamageRect` (raster/cmd.rs): the frame's content
+  delta in physical pixels, converted from the logical FrameDamage at
+  submit (1 px pad absorbs scale rounding); `Context::submit` and
+  `submit_clean` now carry it, `Full` being the always-correct default
+  for raw-alloy callers. The reuse path resolves its damage without a
+  walk (`composite::resolve_reuse_damage`, the stage 1 carry-over):
+  only GPU-content ids land there and their cells are current.
+- `raster::buffer_age`: EGL_EXT_buffer_age queried against the raster
+  thread's current display/surface via khronos-egl (the loader shared
+  with egl_headless); SDL's swap path untouched. Probed once, logged
+  ("partial repaint: EGL buffer age available" / "off: reason").
+- `RasterState::repaint_patch`: the frame's own delta (plus load-shed
+  frames' - the run loop unions every received frame's damage - plus
+  the overlay rect while one composites, since its blend must not
+  stack) unioned with the last `age - 1` ring entries. The ring keeps
+  per-present content deltas (DAMAGE_RING = 8); resize, playback,
+  window shader, age 0, age past the ring, or a failed present (ring
+  cleared, delta carried forward) all mean full frame.
+- The draw (gl/draw.rs): the patch becomes a root clip_rect wrapped
+  around the frame's display list raster-side (Impeller owns GL
+  scissor state, so confinement must come from the list), the rig's
+  full clear stays, and the resolve copies only the patch - the
+  explicit blit uses the patch rect (same rect both sides, GL-flipped
+  once), and the MSRTT copy-draw gets a scissor through a new optional
+  scissor on `run_pass`/`render_program_to_fbo`. The Android
+  multisampled-FBO0 fast path ignores the patch and stays full-frame.
+- `partialPresents` (RasterStats -> get_stats): cumulative presents
+  that drew only a patch.
+
+Verified live (Linux desktop, Mesa Intel): damage-probe reports
+partialPresents climbing in step with its 10 Hz animation;
+examples/gallery under scroll + hover bursts ran 300 frames with 0
+missedPresents, 0 slowFrames, p95 1.85 ms, no warnings or GL errors;
+examples/spin (3d) holds 60 fps with its Scene-texture content damage
+riding the reuse-path resolve. Full-suite tests green (377 alloy, 56
+flux gui). Visual check on the gallery under scroll/hover confirmed
+clean (no stale or torn regions). Not yet measured - the item's done
+criterion, and what keeps it in plans/: power/frameMs on fill-bound
+hardware, and the Android fast-path decision (it stays full-frame by
+design, so partial repaint there currently engages only via the MSRTT
+rig path).
 
 ## Related
 

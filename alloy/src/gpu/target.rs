@@ -1617,7 +1617,7 @@ impl ShaderTexture {
         let inputs = resolve(bindings, program);
         let draw =
           PassDraw::Fullscreen { program, params, textures: &inputs, vertex_count: 3, clear: None, blend: false };
-        run_pass(gl, Some(self.fbo), (0, 0), self.width, self.height, draw);
+        run_pass(gl, Some(self.fbo), (0, 0), self.width, self.height, None, draw);
         self.resolve(gl);
       }
       TargetKind::Mesh(_) => self.render_groups(gl, resolve, true, &[], None),
@@ -1672,7 +1672,7 @@ impl ShaderTexture {
       groups: &groups,
       tile_clear,
     };
-    run_pass(gl, Some(self.draw_fbo()), (0, 0), self.width, self.height, draw);
+    run_pass(gl, Some(self.draw_fbo()), (0, 0), self.width, self.height, None, draw);
     self.resolve(gl);
   }
 
@@ -1681,7 +1681,7 @@ impl ShaderTexture {
   /// pixel: the copyTexture write. A sampling draw, never a blit (see
   /// `gl::draw::draw_and_resolve` for why blits are not an option on this stack).
   pub fn overwrite_with(&self, gl: &glow::Context, program: &ShaderProgram, textures: &[PassInput]) {
-    super::pass::render_program_to_fbo(gl, program, Some(self.fbo), self.width, self.height, &[], textures);
+    super::pass::render_program_to_fbo(gl, program, Some(self.fbo), self.width, self.height, &[], textures, None);
     self.resolve(gl);
   }
 

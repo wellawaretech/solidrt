@@ -6,8 +6,12 @@ use super::rig::{
   msrtt, prev_framebuffer, prev_renderbuffer, prev_texture, supports_invalidate, window_samples, OffscreenDraw,
   OffscreenRig, EXT_RESOLVE_COPY_SRC, MSAA_SAMPLES,
 };
+use crate::raster::DamageRect;
 use glow::HasContext;
-use impellers::{Context as ImpellerContext, DisplayList, ISize, PixelFormat, Texture};
+use impellers::{
+  ClipOperation, Context as ImpellerContext, DisplayList, DisplayListBuilder, ISize, PixelFormat, Point, Rect, Size,
+  Texture,
+};
 use std::num::NonZeroU32;
 
 /// Rasterize a display list into a new GL texture and adopt it into Impeller,
@@ -305,6 +309,7 @@ pub(crate) fn render_display_list_to_window(
   rig: &mut OffscreenRig,
   dl: &DisplayList,
   size: ISize,
+  patch: Option<DamageRect>,
 ) -> Result<(), String> {
   // Multisampled-backbuffer fast path (Android, see configure_opengl): the
   // driver multisamples FBO 0 inside tile memory and resolves at swap, so
@@ -328,7 +333,7 @@ pub(crate) fn render_display_list_to_window(
       return result;
     }
   }
-  render_display_list_via_rig(gl, impeller_ctx, rig, dl, size, None)
+  render_display_list_via_rig(gl, impeller_ctx, rig, dl, size, None, patch)
 }
 
 /// Rasterize a display list into the retained rig at `size` and resolve it
@@ -348,7 +353,7 @@ pub(crate) fn render_display_list_to_layer(
   size: ISize,
   layer: glow::NativeFramebuffer,
 ) -> Result<(), String> {
-  render_display_list_via_rig(gl, impeller_ctx, rig, dl, size, Some(layer))
+  render_display_list_via_rig(gl, impeller_ctx, rig, dl, size, Some(layer), None)
 }
 
 fn render_display_list_via_rig(
@@ -358,14 +363,15 @@ fn render_display_list_via_rig(
   dl: &DisplayList,
   size: ISize,
   dst: Option<glow::NativeFramebuffer>,
+  patch: Option<DamageRect>,
 ) -> Result<(), String> {
   let max_samples = unsafe { gl.get_parameter_i32(glow::MAX_SAMPLES) };
   let samples = if rig.msaa_unavailable { 0 } else { MSAA_SAMPLES.min(max_samples) };
-  let mut outcome = draw_and_resolve(gl, impeller_ctx, rig, dl, size, dst, samples);
+  let mut outcome = draw_and_resolve(gl, impeller_ctx, rig, dl, size, dst, samples, patch);
   if matches!(outcome, OffscreenDraw::MsaaUnavailable) {
     log::warn!("[alloy] window MSAA unavailable; rendering without anti-aliasing");
     rig.latch_msaa_unavailable(gl);
-    outcome = draw_and_resolve(gl, impeller_ctx, rig, dl, size, dst, 0);
+    outcome = draw_and_resolve(gl, impeller_ctx, rig, dl, size, dst, 0, patch);
   }
   match outcome {
     OffscreenDraw::Done => Ok(()),
@@ -390,6 +396,7 @@ fn draw_and_resolve(
   size: ISize,
   dst: Option<glow::NativeFramebuffer>,
   samples: i32,
+  patch: Option<DamageRect>,
 ) -> OffscreenDraw {
   let (width, height) = (size.width as i32, size.height as i32);
   // The rig's transient storage is 64px-quantized purely as an allocation
@@ -496,10 +503,41 @@ fn draw_and_resolve(
     gl.clear_color(0.0, 0.0, 0.0, 0.0);
     gl.clear(glow::COLOR_BUFFER_BIT | glow::DEPTH_BUFFER_BIT | glow::STENCIL_BUFFER_BIT);
 
+    // Partial repaint (okf/plans/partial-repaint.md): a root clip on the
+    // patch rect confines the raster - Impeller rejects ops outside a clip
+    // cheaply - and the resolve below copies only that rect into `dst`,
+    // whose remaining pixels the caller has verified as current (buffer
+    // age). The clip lands in the display list because Impeller manages GL
+    // scissor state itself during the draw.
+    let clipped;
+    let draw_dl = match patch {
+      Some(p) => {
+        let mut b = DisplayListBuilder::new(None);
+        b.clip_rect(
+          &Rect::new(Point::new(p.x as f32, p.y as f32), Size::new(p.width as f32, p.height as f32)),
+          ClipOperation::Intersect,
+        );
+        b.draw_display_list(dl, 1.0);
+        match b.build() {
+          Some(list) => {
+            clipped = list;
+            &clipped
+          }
+          None => dl,
+        }
+      }
+      None => dl,
+    };
+
     let mut result = match impeller_ctx.wrap_fbo(draw_fbo.0.get() as u64, PixelFormat::RGBA8888, size) {
-      Some(mut surface) => surface.draw_display_list(dl).map_err(|e| format!("frame draw failed: {e}")),
+      Some(mut surface) => surface.draw_display_list(draw_dl).map_err(|e| format!("frame draw failed: {e}")),
       None => Err("wrap_fbo failed for frame framebuffer".to_string()),
     };
+
+    // The patch in GL bottom-up coordinates: identical on the rig and dst
+    // sides (Impeller orients every wrapped FBO the same way, validated in
+    // examples/partial_repaint_probe.rs phase C).
+    let gl_patch = patch.map(|p| (p.x, height - (p.y + p.height), p.width, p.height));
 
     if result.is_ok() && ext_attached {
       // Consume the resolved image the way the extension intends: sample
@@ -529,6 +567,7 @@ fn draw_and_resolve(
           height as u32,
           &[],
           &[("uSource".to_string(), ext_color, None)],
+          gl_patch,
         );
       }
       // Only the depth-stencil samples are dead here; ext.color must survive
@@ -540,7 +579,11 @@ fn draw_and_resolve(
     } else if result.is_ok() {
       gl.bind_framebuffer(glow::DRAW_FRAMEBUFFER, dst);
       gl.bind_framebuffer(glow::READ_FRAMEBUFFER, Some(draw_fbo));
-      gl.blit_framebuffer(0, 0, width, height, 0, 0, width, height, glow::COLOR_BUFFER_BIT, glow::NEAREST);
+      let (bx0, by0, bx1, by1) = match gl_patch {
+        Some((px, py, pw, ph)) => (px, py, px + pw, py + ph),
+        None => (0, 0, width, height),
+      };
+      gl.blit_framebuffer(bx0, by0, bx1, by1, bx0, by0, bx1, by1, glow::COLOR_BUFFER_BIT, glow::NEAREST);
       // The rig contents are dead after the resolve; the invalidate keeps
       // tilers from writing them back to main memory.
       if supports_invalidate(gl) {

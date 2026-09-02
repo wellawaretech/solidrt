@@ -18,10 +18,12 @@
 //! deletion to this context's reactor, which flushes on the next frame here
 //! (verified by examples/xthread_release.rs).
 
+mod buffer_age;
 mod capture;
 mod cmd;
 
 pub(crate) use cmd::RasterCmd;
+pub use cmd::{DamageRect, PresentDamage};
 
 use impellers::{Context as ImpellerContext, DisplayList, ISize, Texture};
 use std::collections::{HashMap, HashSet};
@@ -34,9 +36,9 @@ use crate::gl;
 use crate::gpu::{
   release_buffer, release_pipeline, release_program, validate_params, validate_texture_bindings, AttributeTable,
   BufferIds, DepthStorage, DrawSpec, EntryBuffers, GpuBuffer, GpuBufferInfo, GpuLimits, GpuPipelineInfo,
-  GpuProgramInfo, GpuRegionInfo, GpuRenderPipelineInfo, GpuResources, GpuTextureInfo, GpuWindowShaderInfo, ParamValue, PassInput,
-  PassTimer, PipelineDesc, PipelineSpec, RenderPipeline, ShaderProgram, ShaderTexture, TargetSpec, TextureBinding,
-  Timed, UniformKind, UniformTable, WindowShader,
+  GpuProgramInfo, GpuRegionInfo, GpuRenderPipelineInfo, GpuResources, GpuTextureInfo, GpuWindowShaderInfo, ParamValue,
+  PassInput, PassTimer, PipelineDesc, PipelineSpec, RenderPipeline, ShaderProgram, ShaderTexture, TargetSpec,
+  TextureBinding, Timed, UniformKind, UniformTable, WindowShader,
 };
 use crate::gpu::{GpuTexture, SamplerCache, SamplerState, TextureFormat};
 use capture::flip_for_fbo;
@@ -93,6 +95,10 @@ pub struct RasterStats {
   /// raster thread at startup. False means `pass_exec_micros` is meaningless
   /// and reports as absent.
   pub(crate) timer_queries: AtomicBool,
+  /// Presents that drew only a damage patch over an aged back buffer
+  /// (partial repaint, okf/plans/partial-repaint.md); the verification
+  /// signal that stage 2 is engaging.
+  pub(crate) partial_presents: AtomicU64,
   /// Wall time spent executing non-Frame raster commands, in microseconds:
   /// texture uploads, readbacks, offscreen rasterizations, compiles, param
   /// writes, and the pass flushes those commands trigger. This is the work
@@ -133,6 +139,9 @@ pub struct RasterCounters {
   /// Raster-thread wall time spent executing non-Frame commands,
   /// microseconds - the work no frame-phase timing sees.
   pub cmd_micros: u64,
+  /// Presents that drew only a damage patch over an aged back buffer
+  /// (partial repaint); stays 0 where buffer age is unavailable.
+  pub partial_presents: u64,
 }
 
 impl RasterStats {
@@ -153,6 +162,7 @@ impl RasterStats {
         .load(Ordering::Relaxed)
         .then(|| self.frame_exec_micros.load(Ordering::Relaxed)),
       cmd_micros: self.cmd_micros.load(Ordering::Relaxed),
+      partial_presents: self.partial_presents.load(Ordering::Relaxed),
     }
   }
 
@@ -168,6 +178,7 @@ impl RasterStats {
       frame_exec_micros: AtomicU64::new(0),
       timer_queries: AtomicBool::new(false),
       cmd_micros: AtomicU64::new(0),
+      partial_presents: AtomicU64::new(0),
     }
   }
 }
@@ -238,6 +249,11 @@ const JANK_JITTER_SLACK: f64 = 0.25;
 // Refresh rate assumed for miss accounting until the event loop has queried
 // the display mode (same fallback the frame loop uses).
 const FALLBACK_REFRESH_HZ: f32 = 60.0;
+
+// Damage-ring depth: how many past frames' deltas are kept for buffer-age
+// repairs. A back buffer older than this redraws in full; swapchains run
+// 2-4 buffers deep, so 8 leaves margin.
+const DAMAGE_RING: usize = 8;
 
 pub(crate) struct RasterState {
   gl: glow::Context,
@@ -360,6 +376,20 @@ pub(crate) struct RasterState {
   // the retained layer (the clean-tree fast path). Reported in
   // GpuWindowShaderInfo for verification.
   pass_only_frames: u64,
+  // Partial repaint (okf/plans/partial-repaint.md stage 2). Damage carried
+  // by frames received but not yet drawn: the next frame's own delta plus
+  // any load-shed frames', consumed by `frame`.
+  pending_damage: PresentDamage,
+  // Per presented frame, that frame's content delta (newest last): what a
+  // later frame must redraw over an aged back buffer. Cleared on resize and
+  // on any failed present (the buffer's content is then unknown).
+  damage_ring: std::collections::VecDeque<PresentDamage>,
+  // The surface size the ring's entries were recorded at.
+  damage_ring_size: ISize,
+  // The EGL buffer-age query; probed once at the first eligible frame
+  // (None afterwards means unavailable, logged then).
+  buffer_age: Option<buffer_age::BufferAge>,
+  buffer_age_tried: bool,
   tx: mpsc::Sender<FrameOutput>,
   // Wakes the main thread's event wait after a present; None in playback
   // mode, whose capture loop blocks on the channel directly.
@@ -547,6 +577,11 @@ impl RasterState {
       tile_clear_program: None,
       content_dirty: true,
       pass_only_frames: 0,
+      pending_damage: PresentDamage::None,
+      damage_ring: std::collections::VecDeque::new(),
+      damage_ring_size: ISize::new(0, 0),
+      buffer_age: None,
+      buffer_age_tried: false,
       tx,
       wake,
     }
@@ -583,12 +618,15 @@ impl RasterState {
         let cmd_start = std::time::Instant::now();
         self.harvest_pass_timings();
         match cmd {
-          RasterCmd::Frame { dl, tree_clean } => {
+          RasterCmd::Frame { dl, tree_clean, damage } => {
             // A load-shed frame that was not clean still changed the tree:
             // the frame that draws in its place must not skip the resolve.
             if !tree_clean {
               self.content_dirty = true;
             }
+            // A shed frame's damage folds into the frame that draws in its
+            // place, so its changes still reach the screen.
+            self.pending_damage = self.pending_damage.union(damage);
             if (self.capture_frames || Some(i) == last_frame) && self.frame(dl).is_err() {
               break 'outer; // main loop is gone
             }
@@ -961,12 +999,26 @@ impl RasterState {
     self.flush_dirty();
     let (width, height) = crate::backend::unpack_size(self.surface_size.load(Ordering::Acquire));
     let size = ISize::new(width as i64, height as i64);
+    // This frame's content delta: its own damage plus any load-shed frames',
+    // plus the overlay's rect while one is active - the overlay is BLENDED
+    // over the frame, so the pixels under it must re-raster every frame or
+    // last frame's composite would stack.
+    let mut own_damage = std::mem::replace(&mut self.pending_damage, PresentDamage::None);
+    if let Some(ov) = &self.overlay {
+      own_damage = own_damage.union(PresentDamage::Rect(DamageRect {
+        x: ov.decl.x,
+        y: ov.decl.y,
+        width: ov.decl.width as i32,
+        height: ov.decl.height as i32,
+      }));
+    }
+    let patch = self.repaint_patch(own_damage, size);
     let wait_start = std::time::Instant::now();
     self.await_present_fence();
     let wait_ms = wait_start.elapsed().as_secs_f32() * 1000.0;
     let draw_start = std::time::Instant::now();
     self.pass_timer.begin(&self.gl);
-    let drawn = self.draw_to_window(&dl, size);
+    let drawn = self.draw_to_window(&dl, size, patch);
     self.pass_timer.end(&self.gl, Timed::Frame);
     let draw_ms = draw_start.elapsed().as_secs_f32() * 1000.0;
     // The overlay composites over the finished frame (shaded or not),
@@ -980,16 +1032,41 @@ impl RasterState {
       self.tx.send(FrameOutput::Captured(pixels)).map_err(|_| ())?;
     } else {
       let present_start = std::time::Instant::now();
-      if drawn && !self.present() && self.rebind_window_surface() {
-        // The failed swap's frame is lost with the dead binding (Android
-        // replaces the EGL surface across background/resume, and a frame
-        // latched by resize or expose can reach this thread before the
-        // event-driven rebind). Redraw against the rebound surface and
-        // present again; the retry's outcome feeds the failure threshold
-        // honestly (fail, rebind, fail again = confirmed loss).
-        if self.draw_to_window(&dl, size) {
-          self.present();
+      let mut presented = false;
+      if drawn {
+        if self.present() {
+          presented = true;
+        } else if self.rebind_window_surface() {
+          // The failed swap's frame is lost with the dead binding (Android
+          // replaces the EGL surface across background/resume, and a frame
+          // latched by resize or expose can reach this thread before the
+          // event-driven rebind). Redraw against the rebound surface and
+          // present again; the retry's outcome feeds the failure threshold
+          // honestly (fail, rebind, fail again = confirmed loss). The fresh
+          // surface preserves nothing, so the retry draws in full.
+          self.damage_ring.clear();
+          own_damage = PresentDamage::Full;
+          if self.draw_to_window(&dl, size, None) {
+            presented = self.present();
+          }
         }
+      }
+      if presented {
+        // The ring records the frame's content delta - however much was
+        // actually drawn - so a future aged buffer can be repaired.
+        self.damage_ring.push_back(own_damage);
+        while self.damage_ring.len() > DAMAGE_RING {
+          self.damage_ring.pop_front();
+        }
+        if patch.is_some() {
+          self.stats.partial_presents.fetch_add(1, Ordering::Relaxed);
+        }
+      } else {
+        // No present: the changes never reached the screen and the buffer
+        // chain's state is uncertain. Carry the delta forward and repaint
+        // in full next time.
+        self.pending_damage = self.pending_damage.union(own_damage);
+        self.damage_ring.clear();
       }
       let present_ms = present_start.elapsed().as_secs_f32() * 1000.0;
       self.timing.record(wait_ms, draw_ms, present_ms);
@@ -1105,7 +1182,62 @@ impl RasterState {
   /// FBO 0; true when a frame reached the backbuffer. False skips the frame
   /// (a zero-sized minimized window, or a failed draw) - the caller still
   /// notifies, so lockstep consumers (playback) never stall.
-  fn draw_to_window(&mut self, dl: &DisplayList, size: ISize) -> bool {
+  /// The region this frame must redraw, or None for the whole window: the
+  /// frame's own delta unioned with the deltas of every frame the aged back
+  /// buffer has not seen (EGL_EXT_buffer_age). Any uncertainty - playback,
+  /// an active window shader, a resize, no buffer age, an age deeper than
+  /// the ring - answers None, so correctness never depends on the
+  /// extension. A zero-sized rect is a valid answer: nothing to redraw, the
+  /// present still repairs nothing and shows the preserved buffer.
+  fn repaint_patch(&mut self, own: PresentDamage, size: ISize) -> Option<DamageRect> {
+    if self.damage_ring_size != size {
+      self.damage_ring.clear();
+      self.damage_ring_size = size;
+      return None;
+    }
+    if self.capture_frames || self.window_shader.is_some() {
+      return None;
+    }
+    if matches!(own, PresentDamage::Full) {
+      return None;
+    }
+    if !self.buffer_age_tried {
+      self.buffer_age_tried = true;
+      match buffer_age::BufferAge::new() {
+        Ok(query) => {
+          log::info!("[alloy] partial repaint: EGL buffer age available");
+          self.buffer_age = Some(query);
+        }
+        Err(e) => log::info!("[alloy] partial repaint off: {e}"),
+      }
+    }
+    let age = self.buffer_age.as_ref()?.age();
+    if age <= 0 {
+      return None;
+    }
+    // The buffer holds the frame from `age` swaps ago; everything the
+    // frames since then changed must redraw, plus this frame's own delta.
+    let missing = (age - 1) as usize;
+    if missing > self.damage_ring.len() {
+      return None;
+    }
+    let mut union = own;
+    for past in self.damage_ring.iter().rev().take(missing) {
+      union = union.union(*past);
+    }
+    let empty = DamageRect { x: 0, y: 0, width: 0, height: 0 };
+    match union {
+      PresentDamage::Full => None,
+      PresentDamage::None => Some(empty),
+      PresentDamage::Rect(r) => match r.clamped(size.width as i32, size.height as i32) {
+        None => Some(empty),
+        Some(c) if c.covers(size.width as i32, size.height as i32) => None,
+        Some(c) => Some(c),
+      },
+    }
+  }
+
+  fn draw_to_window(&mut self, dl: &DisplayList, size: ISize, patch: Option<DamageRect>) -> bool {
     // Resize-race diagnostics: geometry transitions as this thread sees them,
     // once per size.
     if self.last_size.width != size.width || self.last_size.height != size.height {
@@ -1129,7 +1261,8 @@ impl RasterState {
         Err(e) => log::warn!("[alloy] window shader pass failed: {e}; drawing without it"),
       }
     }
-    match gl::render_display_list_to_window(&self.gl, &mut self.impeller_ctx, &mut self.offscreen_rig, dl, size) {
+    match gl::render_display_list_to_window(&self.gl, &mut self.impeller_ctx, &mut self.offscreen_rig, dl, size, patch)
+    {
       Ok(()) => true,
       Err(e) => {
         log::warn!("[alloy] frame draw failed at {}x{}: {e}; skipping frame", size.width, size.height);
@@ -1523,11 +1656,8 @@ impl RasterState {
     }
     let affected: HashSet<u64> = order.iter().chain(cyclic.iter()).copied().collect();
     let changed = |id: &u64| self.dirty.contains(id) || affected.contains(id);
-    let tile_clear = if self.regions.is_empty() {
-      None
-    } else {
-      ensure_tile_clear_program(&self.gl, &mut self.tile_clear_program)
-    };
+    let tile_clear =
+      if self.regions.is_empty() { None } else { ensure_tile_clear_program(&self.gl, &mut self.tile_clear_program) };
     for id in order.iter().chain(cyclic.iter()) {
       let Some(shader) = self.shaders.get(id) else { continue };
       // A tile renders as a group of its parent's pass, never alone.
@@ -1850,8 +1980,16 @@ impl RasterState {
   /// flush-rendered target; the parent renders it at the next flush.
   fn create_sub_target(&mut self, id: u64, parent: u64, x: i32, y: i32, spec: TargetSpec) -> Result<(), String> {
     let parent_shader = self.shaders.get(&parent).ok_or_else(|| format!("target {parent} not found"))?;
-    let shader =
-      ShaderTexture::new_sub_target(parent_shader, parent, x, y, spec.width, spec.height, spec.clear_color, spec.label)?;
+    let shader = ShaderTexture::new_sub_target(
+      parent_shader,
+      parent,
+      x,
+      y,
+      spec.width,
+      spec.height,
+      spec.clear_color,
+      spec.label,
+    )?;
     self.shaders.insert(id, shader);
     self.regions.entry(parent).or_default().push(id);
     self.dirty.insert(id);

@@ -77,7 +77,7 @@ pub fn paint_phase(
 
   // The walk borrows the tree for the BuildContext's lifetime, so it is
   // scoped: only plain stats leave the block.
-  let (mut stats, mut damage) = {
+  let (mut stats, damage) = {
     let mut ctx = BuildContext::new(platform, alloy);
     ctx.size = size;
     // The root's boxes come from its layout like every other node's (the hit
@@ -114,19 +114,7 @@ pub fn paint_phase(
     };
     (stats, damage)
   };
-  if damage_full {
-    damage = cull::Extent::Unbounded;
-  }
-  let frame_damage = match damage {
-    cull::Extent::Empty => FrameDamage::None,
-    cull::Extent::Unbounded => FrameDamage::Full,
-    cull::Extent::Bounded(r) => match r.intersection(&window_rect) {
-      // Damage entirely outside the window changes no visible pixel.
-      None => FrameDamage::None,
-      Some(clamped) if clamped.contains_rect(&window_rect) => FrameDamage::Full,
-      Some(clamped) => FrameDamage::Rect(clamped),
-    },
-  };
+  let frame_damage = clamp_damage(damage, damage_full, window_rect);
   tree.set_frame_damage(frame_damage);
   stats.damage_px = frame_damage.area(size);
   // Any capture request whose node the walk never visited targets a node that
@@ -149,6 +137,41 @@ pub fn paint_phase(
     alloy.reclaim_destroyed(&tree.referenced_texture_ids());
   }
   stats
+}
+
+// A resolved damage union cut to the window and to the FrameDamage form.
+fn clamp_damage(damage: cull::Extent, full: bool, window_rect: Rect) -> FrameDamage {
+  if full {
+    return FrameDamage::Full;
+  }
+  match damage {
+    cull::Extent::Empty => FrameDamage::None,
+    cull::Extent::Unbounded => FrameDamage::Full,
+    cull::Extent::Bounded(r) => match r.intersection(&window_rect) {
+      // Damage entirely outside the window changes no visible pixel.
+      None => FrameDamage::None,
+      Some(clamped) if clamped.contains_rect(&window_rect) => FrameDamage::Full,
+      Some(clamped) => FrameDamage::Rect(clamped),
+    },
+  }
+}
+
+/// Resolve the accumulated damage WITHOUT a paint walk, for the present-only
+/// reuse path (PendingFrame::commit): the tree is unchanged since the last
+/// walk, so a damaged id's cell is both its old and its new extent. Only
+/// GPU-content damage lands here - texture nodes whose pixels changed behind
+/// an unchanged display list (texture_content_changed notes them without a
+/// revision bump).
+pub fn resolve_reuse_damage(tree: &mut RenderTree, window: Size) -> FrameDamage {
+  let (damaged, full) = tree.take_damage();
+  let window_rect = Rect::new(Point::zero(), window);
+  let mut damage = cull::Extent::Empty;
+  if !full {
+    for &id in &damaged {
+      damage = damage.union(damaged_extent(tree, id));
+    }
+  }
+  clamp_damage(damage, full, window_rect)
 }
 
 // A damaged node's window extent from its cell. A node the walk has never
@@ -191,7 +214,8 @@ pub fn render(tree: &mut RenderTree, platform: &PlatformContext, alloy: &crate::
   builder.scale(scale, scale);
   let stats = paint_phase(&mut builder, tree, platform, alloy);
   if let Some(dl) = builder.build() {
-    if alloy.submit(dl).is_err() {
+    let damage = crate::PresentDamage::from_frame(tree.frame_damage(), platform.display_scale());
+    if alloy.submit(dl, damage).is_err() {
       log::warn!("rendertree::render: render thread unavailable, dropping frame");
     }
   }

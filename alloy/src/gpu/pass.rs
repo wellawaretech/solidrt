@@ -223,7 +223,7 @@ pub fn render_program_to_window(
 ) {
   let draw =
     PassDraw::Fullscreen { program, params, textures, vertex_count, clear: Some([0.0, 0.0, 0.0, 1.0]), blend: false };
-  run_pass(gl, None, (0, 0), width, height, draw);
+  run_pass(gl, None, (0, 0), width, height, None, draw);
 }
 
 /// Composite `program`'s output over the default framebuffer's existing
@@ -240,7 +240,7 @@ pub fn composite_program_over_window(
   textures: &[PassInput],
 ) {
   let draw = PassDraw::Fullscreen { program, params: &[], textures, vertex_count: 3, clear: None, blend: true };
-  run_pass(gl, None, origin, width, height, draw);
+  run_pass(gl, None, origin, width, height, None, draw);
 }
 
 /// Run one fullscreen draw of `program` into `fbo` (None = the default
@@ -257,9 +257,10 @@ pub fn render_program_to_fbo(
   height: u32,
   params: &[(String, ParamValue)],
   textures: &[PassInput],
+  scissor: Option<(i32, i32, i32, i32)>,
 ) {
   let draw = PassDraw::Fullscreen { program, params, textures, vertex_count: 3, clear: None, blend: false };
-  run_pass(gl, fbo, (0, 0), width, height, draw);
+  run_pass(gl, fbo, (0, 0), width, height, scissor, draw);
 }
 
 /// Run one pass into `fbo` (None = the default framebuffer) at viewport
@@ -276,6 +277,7 @@ pub(super) fn run_pass(
   origin: (i32, i32),
   width: u32,
   height: u32,
+  scissor: Option<(i32, i32, i32, i32)>,
   draw: PassDraw,
 ) {
   unsafe {
@@ -288,7 +290,7 @@ pub(super) fn run_pass(
     gl.get_parameter_i32_slice(glow::SCISSOR_BOX, &mut prev_scissor_box);
     let blend = gl.is_enabled(glow::BLEND);
     let depth = gl.is_enabled(glow::DEPTH_TEST);
-    let scissor = gl.is_enabled(glow::SCISSOR_TEST);
+    let scissor_was_on = gl.is_enabled(glow::SCISSOR_TEST);
     let cull = gl.is_enabled(glow::CULL_FACE);
 
     gl.bind_framebuffer(glow::FRAMEBUFFER, fbo);
@@ -320,6 +322,14 @@ pub(super) fn run_pass(
     gl.disable(glow::POLYGON_OFFSET_FILL);
     gl.color_mask(true, true, true, true);
     gl.depth_range_f32(0.0, 1.0);
+
+    // A caller-confined pass (the partial-repaint resolve copy): the draw
+    // writes only inside `scissor` (GL bottom-up coordinates). Applied after
+    // the neutralize above; undone with the box restored below.
+    if let Some((sx, sy, sw, sh)) = scissor {
+      gl.enable(glow::SCISSOR_TEST);
+      gl.scissor(sx, sy, sw, sh);
+    }
 
     // Per-unit texture/sampler bindings saved on first touch, restored once
     // at the end (see bind_inputs).
@@ -428,7 +438,12 @@ pub(super) fn run_pass(
                 let color = group.clear.unwrap_or([0.0; 4]);
                 let params = [("uColor".to_string(), ParamValue::Array(color.to_vec()))];
                 apply_program(gl, program, w, h, &params);
-                gl.color_mask(group.clear.is_some(), group.clear.is_some(), group.clear.is_some(), group.clear.is_some());
+                gl.color_mask(
+                  group.clear.is_some(),
+                  group.clear.is_some(),
+                  group.clear.is_some(),
+                  group.clear.is_some(),
+                );
                 if clear_depth {
                   gl.enable(glow::DEPTH_TEST);
                   gl.depth_func(glow::ALWAYS);
@@ -553,6 +568,11 @@ pub(super) fn run_pass(
       }
     }
 
+    if scissor.is_some() {
+      gl.disable(glow::SCISSOR_TEST);
+      gl.scissor(prev_scissor_box[0], prev_scissor_box[1], prev_scissor_box[2], prev_scissor_box[3]);
+    }
+
     // Restore prior GL state for Impeller.
     if stencil {
       gl.enable(glow::STENCIL_TEST);
@@ -586,7 +606,7 @@ pub(super) fn run_pass(
     if depth {
       gl.enable(glow::DEPTH_TEST);
     }
-    if scissor {
+    if scissor_was_on {
       gl.enable(glow::SCISSOR_TEST);
     }
     if cull {

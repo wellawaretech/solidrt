@@ -22,7 +22,7 @@ pub mod motion;
 mod playback;
 mod present;
 mod raster;
-pub use raster::RasterCounters;
+pub use raster::{DamageRect, PresentDamage, RasterCounters};
 pub mod rendertree;
 pub mod resample;
 mod script;

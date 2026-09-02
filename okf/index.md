@@ -560,6 +560,9 @@ Shaped, not started.
   Remap stack frames in the runtime itself so the local terminal and logcat
   show tsx positions too; explicitly not to be done unless server-only
   remapping proves insufficient.
+- **[Extend Scene/SpriteLayer fill mode with a resolution multiplier and output support](backlog/scene-fill-extensions.md)** [2026-09-02]
+  Two additive follow-ups to fill-by-default - a dpr/resolution prop for
+  supersampling on top of fill, and fill composed with a custom output leaf.
 - **[Nothing can set a default text style for a subtree](backlog/scoped-text-defaults.md)** [2026-07-26]
   Every <text> carries its own props because the rendertree is flat
   per-element writes with no cascade, so an app dropping to a raw <text>

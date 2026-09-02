@@ -42,7 +42,7 @@ fn main() {
     loop {
       let builder = DisplayListBuilder::new(None);
       let dl = draw(builder, &ctx, t);
-      if ctx.submit(dl).is_err() {
+      if ctx.submit(dl, alloy::PresentDamage::Full).is_err() {
         break;
       }
 

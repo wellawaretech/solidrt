@@ -947,7 +947,9 @@ impl Context {
       // path, so a comparing uniform would silently missample - refuse it.
       for TextureBinding { name, .. } in &ws.textures {
         if uniforms.get(name).is_some_and(|s| s.kind == UniformKind::Sampler2DShadow) {
-          return Err(format!("uniform '{name}' is a sampler2DShadow; comparison sampling is not available in a window shader"));
+          return Err(format!(
+            "uniform '{name}' is a sampler2DShadow; comparison sampling is not available in a window shader"
+          ));
         }
       }
       for binding in &ws.textures {

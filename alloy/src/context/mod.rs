@@ -256,10 +256,13 @@ impl Context {
   /// Hand the frame's display list to the raster thread, which draws and
   /// presents it (or reads it back in playback mode) and then notifies the
   /// main loop. Returns immediately; the UI thread is free to build the next
-  /// frame while this one is on the GPU. Err means the raster thread is gone
-  /// and the engine should shut down.
-  pub fn submit(&self, dl: DisplayList) -> Result<(), ()> {
-    self.raster_tx.send(RasterCmd::Frame { dl, tree_clean: false }).map_err(|_| ())
+  /// frame while this one is on the GPU. `damage` is what this frame's
+  /// content changed relative to the previous submit, in physical pixels
+  /// (see PresentDamage); a caller without damage tracking passes
+  /// `PresentDamage::Full`, which is always correct. Err means the raster
+  /// thread is gone and the engine should shut down.
+  pub fn submit(&self, dl: DisplayList, damage: crate::PresentDamage) -> Result<(), ()> {
+    self.raster_tx.send(RasterCmd::Frame { dl, tree_clean: false, damage }).map_err(|_| ())
   }
 
   /// Submit a frame whose display list is the same list as the previous
@@ -268,9 +271,11 @@ impl Context {
   /// only the shader pass over the retained layer - unless content-bearing
   /// commands (texture uploads, target renders) arrived since the last
   /// resolve; it tracks that itself. Never send this for a rebuilt list:
-  /// a wrong clean claim presents a stale frame.
-  pub fn submit_clean(&self, dl: DisplayList) -> Result<(), ()> {
-    self.raster_tx.send(RasterCmd::Frame { dl, tree_clean: true }).map_err(|_| ())
+  /// a wrong clean claim presents a stale frame. `damage` covers the GPU
+  /// content that changed behind the unchanged list (texture nodes showing
+  /// fresh uploads).
+  pub fn submit_clean(&self, dl: DisplayList, damage: crate::PresentDamage) -> Result<(), ()> {
+    self.raster_tx.send(RasterCmd::Frame { dl, tree_clean: true, damage }).map_err(|_| ())
   }
 
   /// Rebind the raster thread's context to the window's current EGL surface.

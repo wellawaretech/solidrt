@@ -104,8 +104,12 @@ impl<'d> PendingFrame<'d> {
             }
           }
           // Clean resubmit: the raster side may run only the shader pass
-          // over its retained layer (see Context::submit_clean).
-          alloy.submit_clean(c.dl.clone())?;
+          // over its retained layer (see Context::submit_clean). The damage
+          // is resolved without a walk - only GPU-content changes land on
+          // this path, and their nodes' extents are current.
+          let (w, h) = platform.window_size();
+          let damage = composite::resolve_reuse_damage(tree, crate::impellers::Size::new(w, h));
+          alloy.submit_clean(c.dl.clone(), crate::PresentDamage::from_frame(damage, platform.display_scale()))?;
           // The reuse path skips paint_phase, whose end-of-frame sweep
           // reclaims deferred destroys - run it here too so a destroy with
           // no other tree change (its requested frame lands in this path)
@@ -172,7 +176,7 @@ impl FrameBuilder<'_> {
         window: platform.window_size(),
         scale: platform.display_scale(),
       });
-      alloy.submit(dl)?;
+      alloy.submit(dl, crate::PresentDamage::from_frame(tree.frame_damage(), platform.display_scale()))?;
     }
     Ok(())
   }

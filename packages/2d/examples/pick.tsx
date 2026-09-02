@@ -6,14 +6,13 @@
 // pointer outruns it. A click (press and release without moving) cycles the
 // tint. Shift-click removes the sprite, exercising slot recycling (the
 // freed pose slot zeroes and waits for the next add); structure lives in a
-// signal, so <For> unmounts the removed <Sprite>.
+// signal, so <For> unmounts the removed <Sprite>. The layer FILLS the
+// window (no width/height): layer pixels are the leaf's own coordinates,
+// so sprite coords read directly as window-logical positions.
 import { createSignal, render, For } from "@solidrt/core"
 import { createAtlas, grid, setSprite, Sprite, SpriteLayer } from "@solidrt/2d"
 import type { Frame, SpriteHandle } from "@solidrt/2d"
 import logoBytes from "./logo.png" with { type: "binary" }
-
-const W = 720
-const H = 720
 
 const TINTS: [number, number, number, number][] = [
   [1, 1, 1, 1],
@@ -35,8 +34,8 @@ function App() {
   ])
 
   return (
-    <window alignItems="center" justifyContent="center">
-      <SpriteLayer width={W} height={H} atlas={atlas.texture} capacity={64} clearColor={[0.05, 0.05, 0.09, 1]}>
+    <window>
+      <SpriteLayer atlas={atlas.texture} capacity={64} clearColor={[0.05, 0.05, 0.09, 1]}>
         <For each={items()}>
           {item => {
             let tintIndex = 0
