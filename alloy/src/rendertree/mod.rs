@@ -183,7 +183,7 @@ impl ElementKind {
       ElementKind::Path(p) => Some(&mut p.paint),
       ElementKind::Text(t) => Some(&mut t.paint),
       ElementKind::Texture(t) => Some(&mut t.paint),
-      _ => None,
+      ElementKind::Window(_) | ElementKind::View(_) | ElementKind::Span(_) => None,
     }
   }
 
@@ -196,7 +196,7 @@ impl ElementKind {
       ElementKind::Path(p) => Some(&p.paint),
       ElementKind::Text(t) => Some(&t.paint),
       ElementKind::Texture(t) => Some(&t.paint),
-      _ => None,
+      ElementKind::Window(_) | ElementKind::View(_) | ElementKind::Span(_) => None,
     }
   }
 
@@ -226,7 +226,7 @@ impl ElementKind {
       ElementKind::Texture(n) => n.local_bounds(fallback),
       ElementKind::Line(n) => n.local_bounds(fallback),
       ElementKind::Path(n) => n.local_bounds(fallback),
-      _ => Rect::new(Point::zero(), fallback),
+      ElementKind::Window(_) | ElementKind::Span(_) => Rect::new(Point::zero(), fallback),
     }
   }
 }
@@ -256,7 +256,7 @@ impl Measurable for ElementKind {
       ElementKind::Oval(n) => n.measure(ctx),
       ElementKind::Line(n) => n.measure(ctx),
       ElementKind::Rectangle(n) => n.measure(ctx),
-      _ => Size::zero(),
+      ElementKind::Window(_) | ElementKind::View(_) | ElementKind::Span(_) => Size::zero(),
     }
   }
 }
@@ -462,6 +462,13 @@ impl Element {
 
   pub fn has_layout(&self) -> bool {
     self.layout.is_some()
+  }
+
+  /// The element's frame: its border box when laid out, else the size it
+  /// inherited (a detached node has no box of its own). The one spelling of
+  /// the layout-size-else-inherited derivation every walk uses.
+  pub fn frame_size(&self, inherited: Size) -> Size {
+    self.layout.as_ref().map(|l| l.size()).unwrap_or(inherited)
   }
 
   /// Whether this element references any texture-registry id: a texture

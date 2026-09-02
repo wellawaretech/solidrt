@@ -91,7 +91,10 @@ impl Hittable for ElementKind {
       ElementKind::Path(n) => n.is_in_bounds(point, ctx),
       ElementKind::Texture(n) => n.is_in_bounds(point, ctx),
       ElementKind::Span(_) => false,
-      _ => point.x >= 0.0 && point.x < ctx.size.width && point.y >= 0.0 && point.y < ctx.size.height,
+      // The border-box test: right for anything whose hit area is its frame.
+      ElementKind::Window(_) | ElementKind::View(_) | ElementKind::Line(_) | ElementKind::Text(_) => {
+        point.x >= 0.0 && point.x < ctx.size.width && point.y >= 0.0 && point.y < ctx.size.height
+      }
     }
   }
 }
@@ -127,7 +130,7 @@ pub fn locals_along_path(tree: &RenderTree, chain: &[u64], point: Point) -> Vec<
   let mut parent_scroll = Vector::default();
   for (i, &id) in chain.iter().enumerate() {
     let Some(element) = tree.try_node(id) else { break };
-    let size = element.layout.as_ref().map(|l| l.size()).unwrap_or(parent_size);
+    let size = element.frame_size(parent_size);
     let content = element.layout.as_ref().map(|l| l.content_box()).unwrap_or(Rect::new(Point::zero(), size));
     if i > 0 {
       let pos = element.layout.as_ref().map(|l| l.location()).unwrap_or_default();
@@ -279,7 +282,7 @@ fn hit_recursive(
     if text.is_some() && !child.has_layout() {
       continue;
     }
-    let child_size = child.layout.as_ref().map(|l| l.size()).unwrap_or(local_size);
+    let child_size = child.frame_size(local_size);
     let child_pos = child.layout.as_ref().map(|l| l.location()).unwrap_or_default();
     let child_point = local - child_pos.to_vector() + scroll;
     if hit_recursive(tree, child_id, child_point, child_size, pointer_events, path) {

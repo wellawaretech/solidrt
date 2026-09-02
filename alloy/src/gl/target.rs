@@ -6,110 +6,23 @@
 
 use glow::HasContext;
 use std::cell::Cell;
-use std::num::NonZeroU32;
 use std::rc::Rc;
 
-use super::buffer::{release_buffer, GpuBuffer};
+use super::entry::{
+  build_vao, check_entry_buffers, merge_record, release_entry_buffers, DrawEntry, EntryBuffers, MeshState,
+};
 use super::pass::{run_pass, DrawGroup, PassDraw, PassInput, ResolvedDraw};
+use super::storage::{
+  attach_storage, create_depth_texture, create_mesh_storage, create_target_texture, DepthAttachment, MeshStorage, Msaa,
+};
 use super::program::{release_pipeline, release_program, RenderPipeline, ShaderProgram};
 use crate::gpu::resources::GpuDrawInfo;
 use crate::gpu::spec::DepthStorage;
 use crate::gpu::vocab::{
-  blend_name, cull_name, merge_bindings, validate_order, AttrFormat, DrawRange, IndexFormat, ParamValue, PipelineDesc,
+  blend_name, cull_name, merge_bindings, validate_order, AttrFormat, DrawRange, ParamValue, PipelineDesc,
   TextureBinding,
 };
-use super::{prev_buffer, prev_framebuffer, prev_texture, prev_vertex_array};
-
-/// The buffers one draw entry fetches through, resolved from registry ids to
-/// live Rc clones (the raster-side counterpart of `DrawSpec`'s id fields).
-/// Each buffer rides in the entry for its VAO's lifetime - Rc-held like the
-/// pipeline, so destroying the registry entry in either order is safe. The
-/// registry ids stay alongside for `reads_buffer` and introspection.
-#[derive(Default)]
-pub struct EntryBuffers {
-  /// The interleaved vertex buffer the pipeline's `attributes` describe;
-  /// None when the pipeline is attributeless.
-  pub vertex: Option<(Rc<GpuBuffer>, u64)>,
-  /// Index binding: present = the entry draws indexed; the buffer's
-  /// ELEMENT_ARRAY binding is captured in the entry's VAO at build time.
-  pub index: Option<(Rc<GpuBuffer>, u64, IndexFormat)>,
-  /// The per-instance buffers, one per instance slot the pipeline's
-  /// `instance_attributes` declare (dense from 0), each captured in the
-  /// VAO at divisor 1; empty when it declares none.
-  pub instances: Vec<(Rc<GpuBuffer>, u64)>,
-}
-
-/// One draw of a mesh target's ordered list: the pipeline it draws with
-/// (which owns the draw state), plus everything bound to THIS entry - the
-/// VAO built against its concrete buffers, those buffers' registry ids, the
-/// draw range, uniform values, and sampler inputs. Entries are addressed
-/// by a UI-allocated id that stays stable across add/remove (never an index).
-pub(super) struct DrawEntry {
-  pub(super) id: u64,
-  pub(super) pipeline: Rc<RenderPipeline>,
-  /// Registry id of the shared pipeline this entry draws with; None for the
-  /// fused create path, whose pipeline is anonymous and dies with the target.
-  pipeline_id: Option<u64>,
-  pub(super) vao: glow::VertexArray,
-  /// The entry's resolved buffers (vertex, index, instance): what the VAO
-  /// reads, and what buffer writes re-render through (see `reads_buffer`).
-  buffers: EntryBuffers,
-  /// Resolved and bounds-checked UI-side (see `resolve_draw_range`) before
-  /// it ever reaches this field.
-  pub(super) draw: DrawRange,
-  /// This entry's current uniform values, folded in by the params merge (its
-  /// only writer) and re-applied at every render - entries sharing a program
-  /// overwrite each other's uniforms per pass, so re-application is
-  /// mandatory, not redundancy.
-  pub(super) params: Vec<(String, ParamValue)>,
-  /// sampler2D uniform name -> source texture id. Resolved to a live GL
-  /// texture at each render by the owner (which holds the texture registry),
-  /// so an input whose contents or registry entry changed is picked up
-  /// automatically.
-  pub(super) bindings: Vec<TextureBinding>,
-}
-
-/// The mesh half of a target: the ordered draw list sharing this target's
-/// color (and optional depth) storage, rendered as one pass - clear once,
-/// then entries in list order.
-pub(super) struct MeshState {
-  /// The ordered draw list. The single-draw creates hold exactly one entry
-  /// (id 0, `fixed`); draw targets start empty and mutate via
-  /// `add_entry`/`remove_entry`.
-  pub(super) entries: Vec<DrawEntry>,
-  /// Target-level params every entry shares (a camera's view-projection),
-  /// applied at render before each entry's own params so an entry naming the
-  /// same uniform overrides the shared value. Target state, not entry state:
-  /// it survives entry add/remove/rebuild. Only draw targets write it (via
-  /// `merge_shared_params`); the fixed kinds' target-level params ARE entry
-  /// 0's params.
-  pub(super) shared_params: Vec<(String, ParamValue)>,
-  /// Target-level sampler bindings every entry shares (an environment map, a
-  /// shadow map, a LUT): sampler2D uniform name -> source texture id, same
-  /// shape as an entry's `bindings`. At render each entry gets the shared
-  /// names its program declares and its own bindings do not override - so
-  /// coverage may be partial and an entry's own binding wins, mirroring
-  /// `shared_params`. Target state; only draw targets write it (via
-  /// `merge_shared_bindings`).
-  pub(super) shared_bindings: Vec<TextureBinding>,
-  /// Present when the target owns depth storage: explicit on a draw target
-  /// (`create_draw_target`'s depth option), derived from the pipeline on the
-  /// single-draw creates. A renderbuffer stays private to the FBO; a depth
-  /// texture is registered under its own id by the owner (see
-  /// `DepthAttachment`).
-  depth: Option<DepthAttachment>,
-  /// Multisampled storage when the target was created with `samples >= 2`
-  /// and the device granted it; None = single-sample. See `Msaa`.
-  msaa: Option<Msaa>,
-  pub(super) clear_color: [f32; 4],
-  /// Color load op (see `TargetSpec::load`): true = draw over the previous
-  /// contents instead of clearing. Only ever true on manual targets.
-  pub(super) load: bool,
-  /// The single-draw creates: the entry set is fixed at creation. The
-  /// per-target verbs address entry 0; add/remove are rejected (gated
-  /// UI-side, backstopped here).
-  fixed: bool,
-}
+use super::prev_framebuffer;
 
 /// A sub-target's place in its parent: a draw target created with
 /// `into` renders into a rectangle of `parent`'s storage instead of owning
@@ -134,44 +47,6 @@ pub(super) enum TargetKind {
   Fragment { program: Rc<ShaderProgram>, params: Vec<(String, ParamValue)>, bindings: Vec<TextureBinding> },
   /// A vertex+fragment mesh target: clear + the ordered draw list.
   Mesh(MeshState),
-}
-
-impl MeshState {
-  /// The entry list resolved for a pass, in list order. An entry's inputs
-  /// are its own bindings plus the shared ones its program declares and
-  /// does not bind itself (entry overrides shared, and an undeclared shared
-  /// name must not eat a texture unit on this entry). The resolver gets the
-  /// entry's program so a comparison-sampler uniform (sampler2DShadow) picks
-  /// the comparison sampler per ENTRY - one shared depth binding serves a
-  /// comparing receiver and a raw-reading one in the same pass.
-  fn resolved_draws(&self, resolve: &dyn Fn(&[TextureBinding], &ShaderProgram) -> Vec<PassInput>) -> Vec<ResolvedDraw<'_>> {
-    self
-      .entries
-      .iter()
-      .map(|e| {
-        let inputs = if self.shared_bindings.is_empty() {
-          resolve(&e.bindings, &e.pipeline.program)
-        } else {
-          let mut combined = e.bindings.clone();
-          for b in &self.shared_bindings {
-            if e.pipeline.program.is_active(&b.name) && !combined.iter().any(|c| c.name == b.name) {
-              combined.push(b.clone());
-            }
-          }
-          resolve(&combined, &e.pipeline.program)
-        };
-        ResolvedDraw {
-          program: &e.pipeline.program,
-          desc: &e.pipeline.desc,
-          vao: e.vao,
-          range: e.draw,
-          index: e.buffers.index.as_ref().map(|(_, _, fmt)| *fmt),
-          params: &e.params,
-          inputs,
-        }
-      })
-      .collect()
-  }
 }
 
 /// An FBO-backed RGBA8 target texture rendered by shader passes: either a
@@ -208,466 +83,6 @@ pub struct ShaderTexture {
   /// here (the parent renders the tile as a group of its own pass) and
   /// never deleted here. `width`/`height` are the tile's size.
   region: Option<Region>,
-}
-
-/// How a mesh target multisamples. Both flavors keep the target texture
-/// single-sample - it stays the id everything else samples, displays, reads
-/// back and copies - and differ only in where the samples live:
-///
-/// - `InTile` (EXT_multisampled_render_to_texture): the texture itself is
-///   attached with a sample count and the driver resolves at tile writeback.
-///   No extra color storage, no resolve pass; the right answer on tiled
-///   mobile GPUs (see `gl::MsrttFns`).
-/// - `Explicit` (ES 3.0 core): a multisampled color renderbuffer in its own
-///   FBO, resolved into the texture with glBlitFramebuffer after every pass.
-///
-/// Depth, when the target owns it, is allocated multisampled to match
-/// (through the extension's or the core storage call respectively).
-pub(super) enum Msaa {
-  InTile { fns: &'static crate::gl::MsrttFns, samples: i32 },
-  Explicit { fbo: glow::Framebuffer, color: glow::Renderbuffer, samples: i32 },
-}
-
-impl Msaa {
-  fn samples(&self) -> i32 {
-    match self {
-      Msaa::InTile { samples, .. } | Msaa::Explicit { samples, .. } => *samples,
-    }
-  }
-}
-
-/// Target texture + FBO shared by every target kind: allocation only, nothing
-/// attached and no binding left behind. `attach_storage` wires and checks
-/// it; `create_mesh_storage` is the one-call form every create uses.
-fn create_target(gl: &glow::Context, width: u32, height: u32) -> Result<(glow::Texture, glow::Framebuffer), String> {
-  unsafe {
-    let target = create_target_texture(gl, width, height)?;
-    let fbo = match gl.create_framebuffer() {
-      Ok(fbo) => fbo,
-      Err(e) => {
-        gl.delete_texture(target);
-        return Err(format!("glGenFramebuffers failed: {e}"));
-      }
-    };
-    Ok((target, fbo))
-  }
-}
-
-/// The target texture alone (creation and resize share it): LINEAR, clamp,
-/// no mips - the default MIN_FILTER references mipmaps, which would make the
-/// texture sampling-incomplete (reads as black) when Impeller samples it.
-/// Restores the texture binding it touches.
-unsafe fn create_target_texture(gl: &glow::Context, width: u32, height: u32) -> Result<glow::Texture, String> {
-  let prev_tex = gl.get_parameter_i32(glow::TEXTURE_BINDING_2D);
-  let target = gl.create_texture().map_err(|e| format!("glGenTextures failed: {e}"))?;
-  gl.bind_texture(glow::TEXTURE_2D, Some(target));
-  gl.tex_image_2d(
-    glow::TEXTURE_2D,
-    0,
-    glow::RGBA8 as i32,
-    width as i32,
-    height as i32,
-    0,
-    glow::RGBA,
-    glow::UNSIGNED_BYTE,
-    glow::PixelUnpackData::Slice(None),
-  );
-  gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MIN_FILTER, glow::LINEAR as i32);
-  gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MAG_FILTER, glow::LINEAR as i32);
-  gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_WRAP_S, glow::CLAMP_TO_EDGE as i32);
-  gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_WRAP_T, glow::CLAMP_TO_EDGE as i32);
-  gl.bind_texture(glow::TEXTURE_2D, prev_texture(prev_tex));
-  Ok(target)
-}
-
-/// A mesh target's depth storage (see `DepthStorage`). `Buffer` is the
-/// private renderbuffer, deleted with the target. `Texture` is a
-/// `DEPTH_COMPONENT24` texture that the owner adopts into Impeller under its
-/// own registry id exactly like the color target, so it follows the color
-/// target's ownership rule: never deleted here once registered (Impeller
-/// deletes the name when the adopted handle drops), and replaced by a fresh
-/// name on resize so in-flight users of the old one stay valid.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) enum DepthAttachment {
-  Buffer(glow::Renderbuffer),
-  Texture(glow::Texture),
-}
-
-/// A depth texture at `width` x `height`: `DEPTH_COMPONENT24`, NEAREST and
-/// clamped - a depth texture without a comparison mode is only
-/// sampling-complete at NEAREST (ES 3.0), and its registry entry declares
-/// the same, so the sampler object a pass binds agrees with these. Restores
-/// the texture binding it touches.
-unsafe fn create_depth_texture(gl: &glow::Context, width: u32, height: u32) -> Result<glow::Texture, String> {
-  let prev_tex = gl.get_parameter_i32(glow::TEXTURE_BINDING_2D);
-  let tex = gl.create_texture().map_err(|e| format!("glGenTextures (depth) failed: {e}"))?;
-  gl.bind_texture(glow::TEXTURE_2D, Some(tex));
-  gl.tex_image_2d(
-    glow::TEXTURE_2D,
-    0,
-    glow::DEPTH_COMPONENT24 as i32,
-    width as i32,
-    height as i32,
-    0,
-    glow::DEPTH_COMPONENT,
-    glow::UNSIGNED_INT,
-    glow::PixelUnpackData::Slice(None),
-  );
-  gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MIN_FILTER, glow::NEAREST as i32);
-  gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MAG_FILTER, glow::NEAREST as i32);
-  gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_WRAP_S, glow::CLAMP_TO_EDGE as i32);
-  gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_WRAP_T, glow::CLAMP_TO_EDGE as i32);
-  gl.bind_texture(glow::TEXTURE_2D, prev_texture(prev_tex));
-  Ok(tex)
-}
-
-/// Everything a mesh target draws into: the texture-owning FBO, optional
-/// depth storage, optional multisampling.
-struct MeshStorage {
-  target: glow::Texture,
-  fbo: glow::Framebuffer,
-  depth: Option<DepthAttachment>,
-  msaa: Option<Msaa>,
-}
-
-impl MeshStorage {
-  /// Delete every GL name this storage owns (the create-path rollback; a
-  /// live target frees through `ShaderTexture::destroy` instead). The depth
-  /// texture is not yet adopted on this path, so it is ours to delete.
-  unsafe fn delete(self, gl: &glow::Context) {
-    match self.depth {
-      Some(DepthAttachment::Buffer(rb)) => gl.delete_renderbuffer(rb),
-      Some(DepthAttachment::Texture(tex)) => gl.delete_texture(tex),
-      None => {}
-    }
-    if let Some(Msaa::Explicit { fbo, color, .. }) = self.msaa {
-      gl.delete_framebuffer(fbo);
-      gl.delete_renderbuffer(color);
-    }
-    gl.delete_framebuffer(self.fbo);
-    gl.delete_texture(self.target);
-  }
-}
-
-/// Create a target's storage at `samples`x (1 = single-sample; `depth` and
-/// `samples` are the mesh-only extras, the fragment and layer targets ask
-/// for neither and get the bare color FBO). A count
-/// above the device maximum is clamped; the in-tile flavor is tried first
-/// where the extension exists, then the explicit one, and a multisampled
-/// configuration the driver refuses (incomplete FBO) falls back to
-/// single-sample with a warning rather than failing the create - the app
-/// asked for quality, not for a hard requirement. Restores the framebuffer
-/// binding.
-fn create_mesh_storage(
-  gl: &glow::Context,
-  width: u32,
-  height: u32,
-  depth: DepthStorage,
-  samples: u32,
-) -> Result<MeshStorage, String> {
-  if depth == DepthStorage::Texture && samples >= 2 {
-    // Gated UI-side; backstopped here because a multisampled depth texture
-    // would silently be unsampleable.
-    return Err("a depth texture cannot be multisampled (samples must be 1 with depth \"texture\")".to_string());
-  }
-  unsafe {
-    let prev_fbo = gl.get_parameter_i32(glow::FRAMEBUFFER_BINDING);
-    let (target, fbo) = create_target(gl, width, height)?;
-    let depth = match depth {
-      DepthStorage::None => None,
-      DepthStorage::Buffer => match gl.create_renderbuffer() {
-        Ok(rb) => Some(DepthAttachment::Buffer(rb)),
-        Err(e) => {
-          gl.delete_framebuffer(fbo);
-          gl.delete_texture(target);
-          return Err(format!("glGenRenderbuffers failed: {e}"));
-        }
-      },
-      DepthStorage::Texture => match create_depth_texture(gl, width, height) {
-        Ok(tex) => Some(DepthAttachment::Texture(tex)),
-        Err(e) => {
-          gl.delete_framebuffer(fbo);
-          gl.delete_texture(target);
-          return Err(e);
-        }
-      },
-    };
-    let mut storage = MeshStorage { target, fbo, depth, msaa: None };
-
-    let max_samples = gl.get_parameter_i32(glow::MAX_SAMPLES).max(1);
-    let samples = (samples as i32).min(max_samples);
-    if samples >= 2 {
-      storage.msaa = match crate::gl::msrtt() {
-        Some(fns) => Some(Msaa::InTile { fns, samples }),
-        None => match (gl.create_framebuffer(), gl.create_renderbuffer()) {
-          (Ok(msaa_fbo), Ok(color)) => Some(Msaa::Explicit { fbo: msaa_fbo, color, samples }),
-          (Ok(msaa_fbo), Err(e)) => {
-            gl.delete_framebuffer(msaa_fbo);
-            storage.delete(gl);
-            return Err(format!("glGenRenderbuffers failed: {e}"));
-          }
-          (Err(e), _) => {
-            storage.delete(gl);
-            return Err(format!("glGenFramebuffers failed: {e}"));
-          }
-        },
-      };
-      match attach_storage(gl, &storage, width, height) {
-        Ok(()) => {
-          gl.bind_framebuffer(glow::FRAMEBUFFER, prev_framebuffer(prev_fbo));
-          return Ok(storage);
-        }
-        Err(e) => {
-          log::warn!("[shader] {samples}x multisampling unavailable ({e}); target renders single-sample");
-          if let Some(Msaa::Explicit { fbo: msaa_fbo, color, .. }) = storage.msaa.take() {
-            gl.delete_framebuffer(msaa_fbo);
-            gl.delete_renderbuffer(color);
-          }
-        }
-      }
-    }
-    let result = attach_storage(gl, &storage, width, height);
-    gl.bind_framebuffer(glow::FRAMEBUFFER, prev_framebuffer(prev_fbo));
-    match result {
-      Ok(()) => Ok(storage),
-      Err(e) => {
-        storage.delete(gl);
-        Err(e)
-      }
-    }
-  }
-}
-
-/// (Re)attach and (re)size a mesh target's storage for `width` x `height`:
-/// the texture onto its FBO (multisampled through the extension for the
-/// in-tile flavor), the explicit flavor's color renderbuffer onto the draw
-/// FBO, and the depth renderbuffer onto whichever FBO draws. Creation and
-/// resize share it. Ends with the draw FBO's completeness check and leaves
-/// the framebuffer binding on it; the renderbuffer binding is restored.
-unsafe fn attach_storage(gl: &glow::Context, storage: &MeshStorage, width: u32, height: u32) -> Result<(), String> {
-  let (w, h) = (width as i32, height as i32);
-  let prev_rb = gl.get_parameter_i32(glow::RENDERBUFFER_BINDING);
-  gl.bind_framebuffer(glow::FRAMEBUFFER, Some(storage.fbo));
-  let explicit = match &storage.msaa {
-    None => {
-      gl.framebuffer_texture_2d(glow::FRAMEBUFFER, glow::COLOR_ATTACHMENT0, glow::TEXTURE_2D, Some(storage.target), 0);
-      if let Some(DepthAttachment::Buffer(rb)) = storage.depth {
-        gl.bind_renderbuffer(glow::RENDERBUFFER, Some(rb));
-        gl.renderbuffer_storage(glow::RENDERBUFFER, glow::DEPTH_COMPONENT24, w, h);
-      }
-      false
-    }
-    Some(Msaa::InTile { fns, samples }) => {
-      (fns.framebuffer_texture_2d_multisample)(
-        glow::FRAMEBUFFER,
-        glow::COLOR_ATTACHMENT0,
-        glow::TEXTURE_2D,
-        storage.target.0.get(),
-        0,
-        *samples,
-      );
-      if let Some(DepthAttachment::Buffer(rb)) = storage.depth {
-        gl.bind_renderbuffer(glow::RENDERBUFFER, Some(rb));
-        (fns.renderbuffer_storage_multisample)(glow::RENDERBUFFER, *samples, glow::DEPTH_COMPONENT24, w, h);
-      }
-      false
-    }
-    Some(Msaa::Explicit { fbo, color, samples }) => {
-      // The texture FBO is the resolve destination and must be complete on
-      // its own.
-      gl.framebuffer_texture_2d(glow::FRAMEBUFFER, glow::COLOR_ATTACHMENT0, glow::TEXTURE_2D, Some(storage.target), 0);
-      let status = gl.check_framebuffer_status(glow::FRAMEBUFFER);
-      if status != glow::FRAMEBUFFER_COMPLETE {
-        gl.bind_renderbuffer(glow::RENDERBUFFER, prev_renderbuffer(prev_rb));
-        return Err(format!("target framebuffer incomplete: {status:#x}"));
-      }
-      gl.bind_framebuffer(glow::FRAMEBUFFER, Some(*fbo));
-      gl.bind_renderbuffer(glow::RENDERBUFFER, Some(*color));
-      gl.renderbuffer_storage_multisample(glow::RENDERBUFFER, *samples, glow::RGBA8, w, h);
-      gl.framebuffer_renderbuffer(glow::FRAMEBUFFER, glow::COLOR_ATTACHMENT0, glow::RENDERBUFFER, Some(*color));
-      if let Some(DepthAttachment::Buffer(rb)) = storage.depth {
-        gl.bind_renderbuffer(glow::RENDERBUFFER, Some(rb));
-        gl.renderbuffer_storage_multisample(glow::RENDERBUFFER, *samples, glow::DEPTH_COMPONENT24, w, h);
-      }
-      true
-    }
-  };
-  match storage.depth {
-    Some(DepthAttachment::Buffer(rb)) => {
-      gl.framebuffer_renderbuffer(glow::FRAMEBUFFER, glow::DEPTH_ATTACHMENT, glow::RENDERBUFFER, Some(rb));
-    }
-    // Sized at creation (never respecified: a resize brings a new name), so
-    // attaching is all there is to do.
-    Some(DepthAttachment::Texture(tex)) => {
-      gl.framebuffer_texture_2d(glow::FRAMEBUFFER, glow::DEPTH_ATTACHMENT, glow::TEXTURE_2D, Some(tex), 0);
-    }
-    None => {}
-  }
-  gl.bind_renderbuffer(glow::RENDERBUFFER, prev_renderbuffer(prev_rb));
-  let status = gl.check_framebuffer_status(glow::FRAMEBUFFER);
-  if status != glow::FRAMEBUFFER_COMPLETE {
-    let what = if explicit { "multisample" } else { "target" };
-    return Err(format!("{what} framebuffer incomplete: {status:#x}"));
-  }
-  Ok(())
-}
-
-fn prev_renderbuffer(prev: i32) -> Option<glow::Renderbuffer> {
-  NonZeroU32::new(prev as u32).map(glow::NativeRenderbuffer)
-}
-
-/// Record one interleaved attribute layout against the currently bound
-/// ARRAY_BUFFER into the current VAO. Attribute locations are looked up by
-/// name, so an attribute the shader does not use is skipped - its bytes
-/// still occupy the stride. `divisor` 0 advances per vertex, 1 per instance.
-unsafe fn record_layout(
-  gl: &glow::Context,
-  program: &ShaderProgram,
-  attributes: &[(String, AttrFormat)],
-  divisor: u32,
-) {
-  let stride = crate::gpu::vocab::vertex_stride(attributes);
-  let mut offset = 0i32;
-  for (name, fmt) in attributes {
-    // None means the shader does not (actively) use the attribute; that
-    // is fine, the bytes are simply skipped over via the stride.
-    if let Some(loc) = gl.get_attrib_location(program.program, name) {
-      gl.enable_vertex_attrib_array(loc);
-      gl.vertex_attrib_pointer_f32(loc, fmt.components(), glow::FLOAT, false, stride, offset);
-      if divisor != 0 {
-        gl.vertex_attrib_divisor(loc, divisor);
-      }
-    }
-    offset += fmt.components() * 4;
-  }
-}
-
-/// Record a pipeline's vertex and instance layouts against an entry's
-/// concrete buffers in a fresh VAO: `desc.attributes` over the vertex buffer
-/// (divisor 0), `desc.instance_attributes` over the instance buffer (divisor
-/// 1 - the divisor is VAO state in ES 3.0, like the attribute pointers). The
-/// index buffer, when given, is bound as ELEMENT_ARRAY while the VAO is
-/// current: that binding is VAO state too, so it is captured here once and
-/// needs no per-draw rebinding (and no explicit save - restoring the
-/// previous VAO restores its own element binding). Restores the VAO and
-/// array-buffer bindings it touches.
-fn build_vao(
-  gl: &glow::Context,
-  program: &ShaderProgram,
-  desc: &PipelineDesc,
-  buffers: &EntryBuffers,
-) -> Result<glow::VertexArray, String> {
-  unsafe {
-    let prev_vao = gl.get_parameter_i32(glow::VERTEX_ARRAY_BINDING);
-    let prev_ab = gl.get_parameter_i32(glow::ARRAY_BUFFER_BINDING);
-    let vao = gl.create_vertex_array().map_err(|e| format!("glGenVertexArrays failed: {e}"))?;
-    gl.bind_vertex_array(Some(vao));
-    if let Some((buffer, _)) = &buffers.vertex {
-      gl.bind_buffer(glow::ARRAY_BUFFER, Some(buffer.vbo));
-      record_layout(gl, program, &desc.attributes, 0);
-    }
-    for (slot, (buffer, _)) in buffers.instances.iter().enumerate() {
-      let layout: Vec<(String, AttrFormat)> = desc
-        .instance_attributes
-        .iter()
-        .filter(|(_, _, s)| *s as usize == slot)
-        .map(|(n, f, _)| (n.clone(), *f))
-        .collect();
-      gl.bind_buffer(glow::ARRAY_BUFFER, Some(buffer.vbo));
-      record_layout(gl, program, &layout, 1);
-    }
-    if let Some((index, _, _)) = &buffers.index {
-      gl.bind_buffer(glow::ELEMENT_ARRAY_BUFFER, Some(index.vbo));
-    }
-    gl.bind_vertex_array(prev_vertex_array(prev_vao));
-    gl.bind_buffer(glow::ARRAY_BUFFER, prev_buffer(prev_ab));
-    Ok(vao)
-  }
-}
-
-/// The buffer-presence contract between a pipeline and an entry: a declared
-/// layout needs its buffer, and an instance buffer without a declared layout
-/// would never be read. Validated at the call site against the UI mirrors;
-/// this copy is the raster-side backstop for the create paths.
-fn check_entry_buffers(desc: &PipelineDesc, buffers: &EntryBuffers) -> Result<(), String> {
-  if !desc.attributes.is_empty() && buffers.vertex.is_none() {
-    return Err("pipeline declares attributes but no vertex buffer".to_string());
-  }
-  let slots = desc.instance_attributes.iter().map(|(_, _, s)| *s as usize + 1).max().unwrap_or(0);
-  if slots > buffers.instances.len() {
-    return Err("pipeline declares instanceAttributes but no instance buffer".to_string());
-  }
-  if slots < buffers.instances.len() {
-    return Err("pipeline declares no instanceAttributes; the instance buffer would never be read".to_string());
-  }
-  Ok(())
-}
-
-/// Drop an entry's uses of its buffers, deleting each GL buffer when the
-/// entry held the last reference (see `release_buffer`).
-fn release_entry_buffers(gl: &glow::Context, buffers: EntryBuffers) {
-  if let Some((buffer, _)) = buffers.vertex {
-    release_buffer(gl, buffer);
-  }
-  if let Some((buffer, _, _)) = buffers.index {
-    release_buffer(gl, buffer);
-  }
-  for (buffer, _) in buffers.instances {
-    release_buffer(gl, buffer);
-  }
-}
-
-/// Fold a params update into a record by name (new names append, existing
-/// names overwrite): the merge rule shared by target-level and per-entry
-/// params writes.
-fn merge_record(record: &mut Vec<(String, ParamValue)>, params: &[(String, ParamValue)]) {
-  for (name, value) in params {
-    match record.iter_mut().find(|(n, _)| n == name) {
-      Some(entry) => entry.1 = value.clone(),
-      None => record.push((name.clone(), value.clone())),
-    }
-  }
-}
-
-/// Create a retained layer target: an exactly-sized RGBA8 texture + FBO
-/// (the window-shader layer, a boundary shader's output or history). Exact
-/// on purpose - shaders sample it with 0..1 coordinates, so padding would
-/// leak into the sampling contract. Completeness-checked here (unlike shader
-/// targets, nothing later would catch it); restores the FBO binding it
-/// touches. The new layer starts cleared to `clear`: a history layer
-/// (`uPrevious`) is sampled before anything renders into it, and undefined
-/// storage must not reach a program - the window path clears opaque black
-/// (its frames are opaque), boundary layers clear transparent (a snapshot's
-/// empty regions are).
-pub fn create_layer_target(
-  gl: &glow::Context,
-  width: u32,
-  height: u32,
-  clear: [f32; 4],
-) -> Result<(glow::Texture, glow::Framebuffer), String> {
-  let MeshStorage { target, fbo, .. } = create_mesh_storage(gl, width, height, DepthStorage::None, 1)?;
-  unsafe {
-    // Scissor, color mask, and clear color are Impeller-cached state on this
-    // shared context: force a full clear and put all three back.
-    let prev_fbo = gl.get_parameter_i32(glow::FRAMEBUFFER_BINDING);
-    let scissor = gl.is_enabled(glow::SCISSOR_TEST);
-    let mut prev_mask = [0i32; 4];
-    gl.get_parameter_i32_slice(glow::COLOR_WRITEMASK, &mut prev_mask);
-    let mut prev_clear = [0f32; 4];
-    gl.get_parameter_f32_slice(glow::COLOR_CLEAR_VALUE, &mut prev_clear);
-    gl.bind_framebuffer(glow::FRAMEBUFFER, Some(fbo));
-    gl.disable(glow::SCISSOR_TEST);
-    gl.color_mask(true, true, true, true);
-    gl.clear_color(clear[0], clear[1], clear[2], clear[3]);
-    gl.clear(glow::COLOR_BUFFER_BIT);
-    gl.clear_color(prev_clear[0], prev_clear[1], prev_clear[2], prev_clear[3]);
-    gl.color_mask(prev_mask[0] != 0, prev_mask[1] != 0, prev_mask[2] != 0, prev_mask[3] != 0);
-    if scissor {
-      gl.enable(glow::SCISSOR_TEST);
-    }
-    gl.bind_framebuffer(glow::FRAMEBUFFER, prev_framebuffer(prev_fbo));
-  }
-  Ok((target, fbo))
 }
 
 impl ShaderTexture {
@@ -953,6 +368,14 @@ impl ShaderTexture {
     self.mesh().and_then(|m| m.entries.first())
   }
 
+  /// The first entry's full draw record (see `GpuDrawInfo`) - the one
+  /// accessor behind every "first entry" question the inventory asks of the
+  /// fixed single-entry kinds; None on a fragment-only shader. Same data
+  /// `draw_infos` reports per entry.
+  pub fn entry0_info(&self) -> Option<GpuDrawInfo> {
+    self.draw_infos().into_iter().next()
+  }
+
   /// Whether the target draws over its previous contents (loadOp "load").
   pub fn load(&self) -> bool {
     self.mesh().is_some_and(|m| m.load)
@@ -983,34 +406,6 @@ impl ShaderTexture {
     self.entry0().and_then(|e| e.pipeline.program_id)
   }
 
-  /// Registry id of the shared pipeline the first entry draws with; None
-  /// for fragment targets and the fused create path.
-  pub fn pipeline_id(&self) -> Option<u64> {
-    self.entry0().and_then(|e| e.pipeline_id)
-  }
-
-  /// Registry id of the vertex buffer the first entry draws from, if any.
-  pub fn buffer_id(&self) -> Option<u64> {
-    self.entry0().and_then(|e| e.buffers.vertex.as_ref().map(|(_, id)| *id))
-  }
-
-  /// Registry id of the first entry's index buffer, if it draws indexed.
-  pub fn index_buffer_id(&self) -> Option<u64> {
-    self.entry0().and_then(|e| e.buffers.index.as_ref().map(|(_, iid, _)| *iid))
-  }
-
-  /// The first entry's index format as the string `IndexFormat::parse`
-  /// accepts; None when it draws plain.
-  pub fn index_format_name(&self) -> Option<&'static str> {
-    self.entry0().and_then(|e| e.buffers.index.as_ref().map(|(_, _, fmt)| fmt.name()))
-  }
-
-  /// Registry ids of the first entry's per-instance buffers, in slot
-  /// order; empty when it binds none.
-  pub fn instance_buffer_ids(&self) -> Vec<u64> {
-    self.entry0().map(|e| e.buffers.instances.iter().map(|(_, id)| *id).collect()).unwrap_or_default()
-  }
-
   /// Whether this is a mesh target (vs a fullscreen fragment pass).
   pub fn is_pipeline(&self) -> bool {
     self.mesh().is_some()
@@ -1033,17 +428,6 @@ impl ShaderTexture {
           || e.buffers.instances.iter().any(|(_, iid)| *iid == id)
       })
     })
-  }
-
-  /// The draw range of the first entry; None on a fragment-only shader.
-  pub fn draw_range(&self) -> Option<DrawRange> {
-    self.entry0().map(|e| e.draw)
-  }
-
-  /// The first entry's topology as the string `Topology::parse` accepts;
-  /// None on a fragment-only shader.
-  pub fn topology_name(&self) -> Option<&'static str> {
-    self.entry0().map(|e| e.pipeline.desc.topology.name())
   }
 
   /// The first entry's declared interleaved attribute layout; empty for
@@ -1134,24 +518,6 @@ impl ShaderTexture {
       gl.bind_framebuffer(glow::READ_FRAMEBUFFER, prev_framebuffer(prev_read));
       gl.bind_framebuffer(glow::DRAW_FRAMEBUFFER, prev_framebuffer(prev_draw));
     }
-  }
-
-  /// Whether the first entry's draw writes depth; None on a fragment-only
-  /// shader.
-  pub fn depth_write(&self) -> Option<bool> {
-    self.entry0().map(|e| e.pipeline.desc.depth.map_or(true, |d| d.write))
-  }
-
-  /// The first entry's blend mode as the string `parse_blend` accepts; None
-  /// on a fragment-only shader.
-  pub fn blend_name(&self) -> Option<&'static str> {
-    self.entry0().map(|e| blend_name(e.pipeline.desc.blend))
-  }
-
-  /// The first entry's cull mode as the string `parse_cull` accepts; None on
-  /// a fragment-only shader.
-  pub fn cull_name(&self) -> Option<&'static str> {
-    self.entry0().map(|e| cull_name(e.pipeline.desc.cull))
   }
 
   /// Set the first entry's draw range (resolved and validated UI-side, see

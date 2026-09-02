@@ -389,3 +389,16 @@ pub(crate) enum RasterCmd {
   /// The Context caches the reply, so this crosses once per process.
   Limits { reply: mpsc::Sender<GpuLimits> },
 }
+
+impl RasterCmd {
+  /// Whether executing this command can change what a resolved frame samples
+  /// (texture uploads, target renders, program changes, ...), invalidating
+  /// the clean-tree fast path until the next real resolve. The exemptions:
+  /// Frame itself, window shader redeclarations (the very writes the fast
+  /// path exists for), and the overlay (drawn post-pass into FBO 0, never
+  /// sampled by the frame). A shader *program* change still invalidates
+  /// through its cleared layer.
+  pub(crate) fn invalidates_resolved_content(&self) -> bool {
+    !matches!(self, RasterCmd::Frame { .. } | RasterCmd::SetWindowShader { .. } | RasterCmd::SetOverlay { .. })
+  }
+}

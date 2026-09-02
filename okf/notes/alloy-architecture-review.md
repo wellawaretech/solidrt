@@ -132,6 +132,26 @@ Sequencing note honored: the gpu/target.rs storage/entry split (item
   (the enter/exit/stagger lifecycle, ~370 lines of animation policy),
   tree/geometry.rs, tree/inspect.rs.
 
+Done 2026-09-02, all three as pure moves (slice-level, no body edits):
+raster/mod.rs (2299) split to 931 - mod.rs keeps stats/sender/state
+structs/new/run plus the shared free helpers; frame.rs (frame + present
+pacing/fences/jank accounting), compose.rs (window shader + overlay
+composition), targets.rs (target lifecycle + flush_dirty + timed_pass +
+propagation_order, cfg(test)-re-exported at the old crate::raster path),
+resources.rs (plain registries + the Resources inventory); capture.rs
+git-mv'd to offscreen.rs. gl/target.rs (1732) split to 1146 + entry.rs
+(DrawEntry/MeshState/VAO build) + storage.rs (target/depth/MSAA storage,
+create_layer_target); the ten first-entry accessors collapsed into
+entry0_info() -> Option<GpuDrawInfo> consumed by the inventory
+(program_id/attributes/instance_attributes stay - GpuDrawInfo does not
+carry them). rendertree/tree.rs git-mv'd to tree/mod.rs (775) +
+tree/transitions.rs (tree-side plumbing; the element-side state module
+rendertree/transitions.rs already existed and is untouched) +
+tree/geometry.rs + tree/inspect.rs (NodeSnapshot/NodeMatch re-exported,
+public paths unchanged). Cross-module methods are pub(super), the
+capture.rs pattern. Verified: 387 alloy tests, examples check, flux
+--lib --features gui (59), lattice check.
+
 ### 5. Extract the vsync frame-release state machine from App::run
 
 The frame-release policy in the 540-line App::run loop is seven
@@ -172,6 +192,24 @@ Each is under an hour and removes one convention:
   derivation repeated at 8+ sites, and one shared `painted_box` for the
   detached-node derivation duplicated between snapshot_node_uncalled
   and service_captures.
+
+Done 2026-09-02: apply_content_changes + release_retired_textures free
+functions in composite.rs, called from all three frame producers;
+UpdateShaderParams/UpdateShaderTextures/SetDraw routed through entry_write
+and a timed_pass free function owning the pass-accounting quadruplet (three
+sites, not four, post item-1 landing);
+RasterCmd::invalidates_resolved_content() beside the enum;
+Element::frame_size replacing the eight spellings (painted_box was already
+shared by item 2); the five kind-dispatch wildcard arms spelled out
+(paint/paint_mut/local_bounds/measure, hit.rs is_in_bounds). The
+six-map fold into TargetMirror was deliberately reduced to a
+remove_target_records doorway (context/target.rs) used by
+reclaim_destroyed: the maps are split-borrowed across 90+ sites, so one
+RefCell would trade a sync convention for runtime double-borrow hazards
+(the same argument the do-not-churn list makes for the raster maps);
+insertion stays with each create path, whose recorded subsets genuinely
+differ. Verified: 387 alloy tests + examples check, flux --lib --features
+gui (59 tests), lattice check.
 
 ### 7. Boundary hygiene, opportunistic
 

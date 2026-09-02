@@ -959,6 +959,20 @@ impl Context {
     self.send(RasterCmd::SetWindowShader { shader });
     Ok(())
   }
+
+  /// Drop every per-target record for `id`: the target mirror, its instance
+  /// orders, its sampler edges, and its manual/sub-target membership. The one
+  /// removal doorway - the maps must fall together or validation answers
+  /// diverge from the raster thread - so a new per-target map has exactly one
+  /// place to join the sweep. (Insertion stays with each create path: the
+  /// subsets they record genuinely differ.)
+  pub(super) fn remove_target_records(&self, id: u64) {
+    self.targets.borrow_mut().remove(&id);
+    self.unregister_target_orders(id);
+    self.shader_sources.borrow_mut().remove(&id);
+    self.manual_targets.borrow_mut().remove(&id);
+    self.sub_targets.borrow_mut().remove(&id);
+  }
 }
 
 /// The loadOp invariant behind both target create paths: loading the

@@ -121,20 +121,39 @@ pub fn paint_phase(
   // Deliver every capture outcome now the walk is done, so callbacks (which may
   // read back or free textures) run out of the tree borrow.
   alloy.deliver_captures();
-  // Vended snapshot textures whose boundary was deleted join the deferred
-  // destroys below, so a consumer still sampling one keeps its last pixels.
+  release_retired_textures(tree, alloy);
+  stats
+}
+
+/// Apply GPU content writes since the last frame (target re-renders, uploads,
+/// camera frames) to the tree: they change pixels behind unchanged texture ids
+/// and leave no tree damage of their own, and a baked snapshot boundary over
+/// one would keep replaying stale pixels. Every frame producer calls this
+/// before resolving its frame; returns whether anything changed.
+pub(crate) fn apply_content_changes(tree: &mut RenderTree, alloy: &crate::Context) -> bool {
+  let content = alloy.take_content_changes();
+  let changed = !content.is_empty();
+  if changed {
+    tree.texture_content_changed(&content);
+  }
+  changed
+}
+
+/// End-of-frame texture housekeeping, run by every frame producer once its
+/// display list is settled. Vended snapshot textures whose boundary was
+/// deleted join the deferred destroys, so a consumer still sampling one keeps
+/// its last pixels. Then deferred destroys reclaim ids the live tree no
+/// longer references - the frame's display list is already recorded (Rc'd
+/// Impeller handles keep its textures alive), and any still-referenced id
+/// stays queued so a build never finds a hole in the registry. Gated so the
+/// tree scan only runs when a destroy is actually pending.
+pub(crate) fn release_retired_textures(tree: &mut RenderTree, alloy: &crate::Context) {
   for id in tree.take_released_snapshot_textures() {
     alloy.release_borrowed(id);
   }
-  // Deferred destroys: reclaim ids the live tree no longer references. This
-  // frame's display list is already recorded (Rc'd Impeller handles keep its
-  // textures alive), and any still-referenced id stays queued so a build never
-  // finds a hole in the registry. Gated so the tree scan only runs when a
-  // destroy is actually pending.
   if alloy.has_pending_destroys() {
     alloy.reclaim_destroyed(&tree.referenced_texture_ids());
   }
-  stats
 }
 
 /// Resolve the accumulated damage WITHOUT a paint walk, for the present-only
@@ -179,16 +198,10 @@ fn damaged_extent(tree: &RenderTree, id: u64) -> cull::Extent {
 /// calls each frame to put the current tree on screen. Returns the frame's paint
 /// stats.
 pub fn render(tree: &mut RenderTree, platform: &PlatformContext, alloy: &crate::Context) -> PaintStats {
-  // GPU content writes since the last frame (target re-renders, uploads,
-  // camera frames) change pixels behind unchanged texture ids and leave no
-  // tree damage of their own; a baked snapshot boundary over one would keep
-  // replaying stale pixels. The runner's frame loop drains this itself,
-  // ahead of its display-list reuse check; this path is the frame producer
-  // for everything else, so it must apply them too.
-  let content = alloy.take_content_changes();
-  if !content.is_empty() {
-    tree.texture_content_changed(&content);
-  }
+  // The runner's frame loop drains content changes itself, ahead of its
+  // display-list reuse check; this path is the frame producer for everything
+  // else, so it must apply them too.
+  apply_content_changes(tree, alloy);
 
   let mut builder = DisplayListBuilder::new(None);
   let scale = platform.display_scale();
@@ -216,7 +229,7 @@ pub fn render(tree: &mut RenderTree, platform: &PlatformContext, alloy: &crate::
 pub(super) fn own_matrix(element: &Element, inherited: Size) -> Option<Matrix> {
   match &element.kind {
     ElementKind::View(v) => {
-      let box_size = element.layout.as_ref().map(|l| l.size()).unwrap_or(inherited);
+      let box_size = element.frame_size(inherited);
       Some(v.box_matrix(box_size))
     }
     _ => None,
@@ -350,7 +363,7 @@ pub(super) fn emit_backdrop(builder: &mut DisplayListBuilder, element: &Element,
   if opacity <= 0.0 {
     return;
   }
-  let size = element.layout.as_ref().map(|l| l.size()).unwrap_or(inherited);
+  let size = element.frame_size(inherited);
   let bounds = Rect::new(Point::zero(), size);
   let backdrop = f.to_backdrop_image_filter();
   let color_filter = f.to_color_filter();
@@ -474,7 +487,7 @@ fn build_recursive<'a>(
   // be able to pull the whole region into the repaint rect.
   if let ElementKind::View(v) = &element.kind {
     if let Some(f) = v.active_backdrop_filter() {
-      let size = element.layout.as_ref().map(|l| l.size()).unwrap_or(ctx.size);
+      let size = element.frame_size(ctx.size);
       let region = cull::Extent::Bounded(Rect::new(Point::zero(), size))
         .transformed(&own_matrix(element, ctx.size).unwrap_or_else(Matrix::identity))
         .to_window(Point::zero(), &ctx.to_window);
@@ -647,7 +660,7 @@ pub(super) fn record_node<'a>(
   let view_fit = match &element.kind {
     // The fit resolves against the border box, like own_matrix; detached
     // views fall back to the inherited frame in ctx.size.
-    ElementKind::View(v) => v.fit_matrix(element.layout.as_ref().map(|l| l.size()).unwrap_or(ctx.size)),
+    ElementKind::View(v) => v.fit_matrix(element.frame_size(ctx.size)),
     _ => None,
   };
   let needs_save =

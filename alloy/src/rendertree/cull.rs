@@ -130,7 +130,7 @@ impl EnvelopeCache {
 // size under a design size), else what it inherited itself. Mirrors the child
 // walk in composite::record_node.
 pub(crate) fn child_frame(element: &Element, inherited: Size) -> Size {
-  let mut frame = element.layout.as_ref().map(|l| l.size()).unwrap_or(inherited);
+  let mut frame = element.frame_size(inherited);
   if let ElementKind::View(v) = &element.kind {
     if let Some(vb) = v.design_space() {
       frame = vb;
@@ -146,7 +146,7 @@ pub(crate) fn child_frame(element: &Element, inherited: Size) -> Size {
 // hold their stroke (the outset is geometry-dependent), so only AA is added.
 // Text the extent cannot be read from is unbounded.
 fn own_extent(element: &Element, platform: &PlatformContext, inherited: Size) -> Extent {
-  let frame = element.layout.as_ref().map(|l| l.size()).unwrap_or(inherited);
+  let frame = element.frame_size(inherited);
   let content = element.layout.as_ref().map(|l| l.content_box()).unwrap_or(Rect::new(Point::zero(), frame));
   let inflate = |r: Rect, by: f32| Extent::Bounded(r.inflate(by, by));
   // A shape's shadow paints past its geometry: union the shadow's own

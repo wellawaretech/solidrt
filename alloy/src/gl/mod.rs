@@ -11,11 +11,13 @@
 
 mod buffer;
 mod context;
+mod entry;
 mod draw;
 mod pass;
 mod program;
 mod readback;
 mod rig;
+mod storage;
 mod target;
 mod texture;
 mod timing;
@@ -33,7 +35,9 @@ pub(crate) use program::{
 };
 #[cfg(test)]
 pub(crate) use program::declared_uniform_names;
-pub(crate) use target::{create_layer_target, EntryBuffers, ShaderTexture};
+pub(crate) use entry::EntryBuffers;
+pub(crate) use storage::create_layer_target;
+pub(crate) use target::ShaderTexture;
 pub(crate) use texture::{GpuTexture, SamplerCache};
 pub(crate) use timing::{PassTimer, Timed};
 pub(crate) use draw::{

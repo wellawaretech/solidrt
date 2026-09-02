@@ -83,10 +83,7 @@ impl<'d> PendingFrame<'d> {
     platform: &PlatformContext,
     alloy: &crate::Context,
   ) -> Result<Commit<'d>, ()> {
-    let content = alloy.take_content_changes();
-    if !content.is_empty() {
-      tree.texture_content_changed(&content);
-    }
+    let content_changed = composite::apply_content_changes(tree, alloy);
 
     if !platform.always_render() && !alloy.has_pending_captures() {
       if let Some(c) = self.driver.cache.as_ref() {
@@ -110,18 +107,12 @@ impl<'d> PendingFrame<'d> {
           let (w, h) = platform.window_size();
           let damage = composite::resolve_reuse_damage(tree, crate::impellers::Size::new(w, h));
           alloy.submit_clean(c.dl.clone(), crate::PresentDamage::from_frame(damage, platform.display_scale()))?;
-          // The reuse path skips paint_phase, whose end-of-frame sweep
-          // reclaims deferred destroys - run it here too so a destroy with
-          // no other tree change (its requested frame lands in this path)
-          // is not stranded until the next rebuild. The cached list's Rc'd
-          // Impeller handles keep its textures alive regardless.
-          for id in tree.take_released_snapshot_textures() {
-            alloy.release_borrowed(id);
-          }
-          if alloy.has_pending_destroys() {
-            alloy.reclaim_destroyed(&tree.referenced_texture_ids());
-          }
-          return Ok(Commit::Reused { content_changed: !content.is_empty() });
+          // The reuse path skips paint_phase, which runs this sweep itself -
+          // run it here too so a destroy with no other tree change (its
+          // requested frame lands in this path) is not stranded until the
+          // next rebuild.
+          composite::release_retired_textures(tree, alloy);
+          return Ok(Commit::Reused { content_changed });
         }
       }
     }
