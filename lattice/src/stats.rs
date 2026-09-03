@@ -50,10 +50,15 @@ pub struct StatsSnapshot {
   pub reused: u32,
   pub skipped: u32,
   pub textures: usize,
-  /// GPU-side execution time per frame (ms) over the last sample window:
-  /// window draws plus shader passes, from the raster thread's timer
+  /// GPU-side execution time per presented frame (ms) over the last sample
+  /// window: window draws plus shader passes, from the raster thread's timer
   /// queries. None when the client's context has none.
   pub gpu_ms: Option<f32>,
+  /// The same window's wall time per presented frame (ms), measured with
+  /// gpu_ms and the denominator for its share (see overlay::push_hud_lines).
+  /// Not frame_ms: presents run behind the demand gate, ticks do not. 0 until
+  /// a window with a present has closed.
+  pub present_ms: f32,
   /// Layout-activity counters from the last full rebuild, raw (not smoothed):
   /// these are counts to reason about, not rates to watch. See
   /// alloy::rendertree::counters.
@@ -136,10 +141,12 @@ pub struct Stats {
   // GPU execution accounting: the latest (frame, cumulative exec micros)
   // the draw loop recorded, the mark the last sample took, and the
   // per-frame figure computed between them. None while the raster thread
-  // reports no timer queries.
+  // reports no timer queries. present_ms is the wall time per present over
+  // the same window (see StatsSnapshot).
   gpu_now: Option<(u64, u64)>,
   gpu_mark: Option<(u64, u64)>,
   gpu_ms: Option<f32>,
+  present_ms: f32,
 }
 
 impl Stats {
@@ -170,6 +177,7 @@ impl Stats {
       gpu_now: None,
       gpu_mark: None,
       gpu_ms: None,
+      present_ms: 0.0,
     };
     stats.sample();
     stats
@@ -223,10 +231,15 @@ impl Stats {
     self.reused_acc = 0;
     self.skipped_acc = 0;
 
-    // GPU time per frame over the window just closed.
+    // GPU time per presented frame over the window just closed, and the
+    // window's wall time per present: the GPU share's denominator (see
+    // overlay::push_hud_lines), since presents run behind the demand gate
+    // and the tick period frame_ms does not.
     if let (Some((f0, us0)), Some((f1, us1))) = (self.gpu_mark, self.gpu_now) {
       if f1 > f0 {
-        self.gpu_ms = Some(us1.saturating_sub(us0) as f32 / 1000.0 / (f1 - f0) as f32);
+        let presents = (f1 - f0) as f32;
+        self.gpu_ms = Some(us1.saturating_sub(us0) as f32 / 1000.0 / presents);
+        self.present_ms = wall_delta * 1000.0 / presents;
       }
     }
     self.gpu_mark = self.gpu_now;
@@ -311,6 +324,7 @@ impl Stats {
       skipped: self.skipped,
       textures,
       gpu_ms: self.gpu_ms,
+      present_ms: self.present_ms,
       node_count: self.node_count,
       measure_calls: self.layout_counters.measure_calls,
       para_shapes: self.layout_counters.para_shapes,

@@ -50,9 +50,14 @@ impl GpuLimits {
     max_vertex_uniform_vectors: 256,
   };
 
-  /// Check a texture or target size against the device ceiling. Runs UI-side
-  /// at the call-site boundary, like the validators in `vocab`.
+  /// Check a texture or target size against the device ceiling (and against
+  /// zero: a 0-sized attachment only surfaces later as an opaque framebuffer
+  /// completeness failure). Runs UI-side at the call-site boundary, like the
+  /// validators in `vocab`.
   pub fn check_texture_size(&self, width: u32, height: u32) -> Result<(), String> {
+    if width == 0 || height == 0 {
+      return Err(format!("{width}x{height}: width and height must be at least 1"));
+    }
     let max = self.max_texture_size;
     if width > max || height > max {
       return Err(format!("{width}x{height} exceeds this device's max texture size ({max})"));

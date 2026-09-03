@@ -377,10 +377,10 @@ let TOOLS: {
     name: "call_debug",
     annotations: DRIVES_APP,
     description:
-      "Call a debug command the running app registered via registerDebug from srt:dev, by name (from list_debug). `args` (any JSON value; omit it for none) is passed to the command's function as its single argument; the command's return value comes back JSON-serialized (undefined as null). Commands run synchronously on the app's JS thread - use them to query app state (positions, counters, internal flags) or trigger app behavior (toggle a mode, open a door) without touching its real input handling.",
+      "Call a debug command the running app registered via registerDebug from srt:dev, by name (from list_debug). `args` is passed to the command's function as its single argument, as the value itself - the bridge serializes it, so do not JSON-encode it yourself: a string goes bare (`arcana`, not `\"arcana\"`, which arrives as a string with literal quote characters), a number as a number, structured input as an object; omit it for none. The command's return value comes back JSON-serialized (undefined as null). Commands run synchronously on the app's JS thread - use them to query app state (positions, counters, internal flags) or trigger app behavior (toggle a mode, open a door) without touching its real input handling.",
     inputSchema: {
       name: z.string().describe("Debug command name, from list_debug"),
-      args: z.any().describe("Argument passed to the command, any JSON value (default: none)").optional(),
+      args: z.any().describe("Argument passed to the command, as the value itself, not JSON text: a bare string (arcana, not \"arcana\"), a number, a boolean, or an object/array (default: none)").optional(),
       client: CLIENT_ARG,
     },
   },

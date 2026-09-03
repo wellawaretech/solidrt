@@ -51,3 +51,29 @@ happens; window resizes after that would still exercise the same code.
   problem.
 - The mount gate in starlings.tsx becomes unnecessary (it can stay as
   belt and braces).
+
+## Outcome: could not reproduce (2026-09-03)
+
+Retried on the current tree (Linux desktop client, Wayland, Mesa Intel),
+every variant resizing from a 1x1 creation: a plain pipeline texture
+before the first frame, the same after a second on screen with and
+without text in the frame, a record layer walking the demo's exact effect
+(`setSize` then `setOversample`), and the starlings demo with its mount
+gate removed. All resized cleanly (the demo's target ended at
+2560x1440). The resize path itself did not change between the report and
+the retry, so the working assumption is that one of the many changes
+around it since the report fixed the trigger; the mount gate in
+starlings.tsx stays as belt and braces. The probes are
+`probes/target-resize-probe.tsx` and `probes/record-layer-resize-probe.tsx`.
+
+The one deterministic way to get the reported error text is a zero
+dimension (a resize to 0x0 fails with exactly `shader framebuffer
+incomplete after resize: target framebuffer incomplete: 0x8cd6`, a
+creation at 0x0 with the create-time twin). `GpuLimits::check_texture_size`
+now rejects a zero width or height up front, so creation, `setTargetSize`
+and `resizeTexture` all name the real problem
+(`setTargetSize: 0x720: width and height must be at least 1`).
+
+Observed on the way: the first read of `windowSize()` returns 0x0 even
+when the window has long had a size, because the sticky resize replay
+lands after that synchronous read; later reads see the real size.

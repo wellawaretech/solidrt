@@ -215,6 +215,18 @@ impl RasterSender {
     }
     result
   }
+
+  /// Block until every command queued before this call has executed. The
+  /// thread answers in order, so the reply means its queue was empty and
+  /// nothing is drawing: what a process exit or a window teardown needs,
+  /// since either pulls the driver out from under a draw still encoding.
+  /// A raster thread that is already gone counts as drained.
+  pub(crate) fn drain(&self) {
+    let (reply_tx, reply_rx) = mpsc::channel();
+    if self.send(RasterCmd::Drain { reply: reply_tx }).is_ok() {
+      reply_rx.recv().ok();
+    }
+  }
 }
 
 // Consecutive failed presents that confirm the GL context is gone for good.
@@ -896,6 +908,9 @@ impl RasterState {
           }
           RasterCmd::Limits { reply: tx } => {
             reply(tx, self.limits);
+          }
+          RasterCmd::Drain { reply: tx } => {
+            reply(tx, ());
           }
         }
         // The command is done (a load-shed one counts: it was consumed); the

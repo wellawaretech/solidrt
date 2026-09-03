@@ -2,6 +2,7 @@
 title: The overlay's GPU% divides per-present cost by the per-tick period
 description: gpu_ms is GPU execution per PRESENTED frame while frame_ms is the gap between render-handler TICKS, so the HUD's GPU share inflates in exact proportion to how well the demand gate works - a settled app with the GPU at 1.3% busy reads GPU 50%, and the reader concludes the opposite of the truth.
 created: 2026-09-03
+completed: 2026-09-03
 ---
 
 # The overlay's GPU% divides per-present cost by the per-tick period
@@ -80,3 +81,37 @@ A settled app - display list fully reused, one present per second, GPU
 idle - reads a single-digit GPU share on the HUD, and an app whose GPU is
 genuinely saturated still reads near 100%. Both checked against
 `drm-engine-render` on Linux.
+
+## Resolution (2026-09-03)
+
+`Stats::sample` (`lattice/src/stats.rs`) now derives a second figure from
+the same `(frame, micros)` pair it computes `gpu_ms` from: `present_ms`,
+the window's wall time per presented frame. `push_hud_lines`
+(`lattice/src/overlay.rs`) divides the GPU line by that instead of
+`frame_ms`, with the comment saying so; the four phase shares keep the
+tick period. Since both figures span the same sample window, the share
+is the window's GPU busy fraction, which is what `drm-engine-render`
+measures.
+
+Verified on the Linux desktop client (i915), HUD against the kernel over
+the same 6 s:
+
+| app | presents | HUD before | HUD now | drm-engine-render |
+|---|---|---|---|---|
+| hello-world, settled (1 reuse, 59 skip) | 1/s | 50% | 0% | 0.16% |
+| trails, 1280x720 | 61/s | 12% | 12% | 12.8% |
+| trails, fullscreen 1692x1128 | 62/s | 24% | 24% | 25.4% |
+
+The every-tick rows also cross-check the window figure: 1.98 ms and
+4.02 ms `gpuFrameExecMsPerFrame` (plus 0.09 ms of passes) over a 16.4 ms
+present are 12.6% and 25%. A saturated GPU was not staged; the share is
+GPU micros over wall micros, so saturation reads 100% by construction.
+
+The two adjacent figures re-checked:
+
+- `gpuFrameExecMs / timeMs`: closed by documentation. The `get_stats`
+  description says to difference two queries and points at the window's
+  per-frame figure; nothing in the payload invites the cumulative share.
+- `window.gpuFrameExecMsPerFrame` reading 0 for an every-tick presenter:
+  not reproducible. trails (GPU content changes through a reused display
+  list, no rebuilds) reports 1.98 ms over a 5 s window of 299 frames.

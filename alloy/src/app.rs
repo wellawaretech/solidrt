@@ -7,7 +7,7 @@ use crate::backend::{DisplayContext, FrameOutput};
 use crate::context::Context;
 use crate::event::{
   current_input_devices_event, current_orientation_event, current_resize_event, current_system_theme_event,
-  playback_resize_event, translate_event, AlloyCommand, AlloyEvent,
+  playback_init_events, translate_event, AlloyCommand, AlloyEvent,
 };
 use crate::gl;
 use crate::liveness::SurfaceLiveness;
@@ -160,12 +160,9 @@ fn setup_headless(
   Ok((window, platform))
 }
 
-fn apply_main_thread_effects(event: &AlloyEvent, surface_size: &Arc<AtomicU64>, mode: &Mode) {
-  // In playback mode the surface is fixed at the size captured in setup, which is
-  // exactly what the frame readback assumes; ignore resize events.
-  if mode.is_playback() {
-    return;
-  }
+// Interactive loop only: playback's surface is fixed at the size captured in
+// setup, which is exactly what the frame readback assumes.
+fn apply_main_thread_effects(event: &AlloyEvent, surface_size: &Arc<AtomicU64>) {
   if let AlloyEvent::Resize { size, display_scale, .. } = event {
     let (w, h) = ((size.width as f32 * display_scale) as u32, (size.height as f32 * display_scale) as u32);
     surface_size.store(crate::backend::pack_size(w, h), Ordering::Release);
@@ -327,16 +324,26 @@ impl App {
     // AlloyCommand::SetFrameRequestLatch.
     let mut liveness = SurfaceLiveness::new();
 
-    let initial = if mode.is_playback() { playback_resize_event(&window) } else { current_resize_event(&window) };
-    apply_main_thread_effects(&initial, &surface_size, &mode);
+    if let Mode::Playback(playback) = mode {
+      // The capture loop never reads commands, so the init events the
+      // interactive loop answers EmitInitEvents with are sent up front
+      // instead; a capture runs exactly one engine, and it is not built yet,
+      // so the events wait in the channel until it is.
+      for event in playback_init_events(&window, playback.fps) {
+        if liveness.on_event(&event, Instant::now()) {
+          raster.send(RasterCmd::RebindWindowSurface).ok();
+        }
+        event_tx.send(event).ok();
+      }
+      return run_playback_loop(window, rx, event_tx, &raster, playback);
+    }
+
+    let initial = current_resize_event(&window);
+    apply_main_thread_effects(&initial, &surface_size);
     if liveness.on_event(&initial, Instant::now()) {
       raster.send(RasterCmd::RebindWindowSurface).ok();
     }
     event_tx.send(initial).ok();
-
-    if let Mode::Playback(playback) = mode {
-      return run_playback_loop(window, rx, event_tx, playback);
-    }
 
     // Timely "hidden" on Android: with BLOCK_ON_PAUSE the pump blocks before
     // the queued background events are drained, so through the normal path
@@ -559,7 +566,7 @@ impl App {
             },
             _ => {}
           }
-          apply_main_thread_effects(&e, &surface_size, &mode);
+          apply_main_thread_effects(&e, &surface_size);
           if liveness.on_event(&e, Instant::now()) {
             raster.send(RasterCmd::RebindWindowSurface).ok();
           }
@@ -634,7 +641,7 @@ impl App {
         match cmd {
           AlloyCommand::EmitInitEvents => {
             let e = current_resize_event(&window);
-            apply_main_thread_effects(&e, &surface_size, &mode);
+            apply_main_thread_effects(&e, &surface_size);
             if liveness.on_event(&e, Instant::now()) {
               raster.send(RasterCmd::RebindWindowSurface).ok();
             }

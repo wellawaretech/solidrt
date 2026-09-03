@@ -401,6 +401,10 @@ pub(crate) enum RasterCmd {
   /// The device ceilings, queried once at thread startup (see `GpuLimits`).
   /// The Context caches the reply, so this crosses once per process.
   Limits { reply: mpsc::Sender<GpuLimits> },
+  /// Fence: answered when the thread reaches it, which (commands execute in
+  /// order) is when everything queued before it has executed and nothing is
+  /// drawing. See RasterSender::drain.
+  Drain { reply: mpsc::Sender<()> },
 }
 
 impl RasterCmd {
@@ -408,10 +412,16 @@ impl RasterCmd {
   /// (texture uploads, target renders, program changes, ...), invalidating
   /// the clean-tree fast path until the next real resolve. The exemptions:
   /// Frame itself, window shader redeclarations (the very writes the fast
-  /// path exists for), and the overlay (drawn post-pass into FBO 0, never
-  /// sampled by the frame). A shader *program* change still invalidates
-  /// through its cleared layer.
+  /// path exists for), the overlay (drawn post-pass into FBO 0, never
+  /// sampled by the frame), and the Drain fence, which touches nothing. A
+  /// shader *program* change still invalidates through its cleared layer.
   pub(crate) fn invalidates_resolved_content(&self) -> bool {
-    !matches!(self, RasterCmd::Frame { .. } | RasterCmd::SetWindowShader { .. } | RasterCmd::SetOverlay { .. })
+    !matches!(
+      self,
+      RasterCmd::Frame { .. }
+        | RasterCmd::SetWindowShader { .. }
+        | RasterCmd::SetOverlay { .. }
+        | RasterCmd::Drain { .. }
+    )
   }
 }

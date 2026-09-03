@@ -127,13 +127,19 @@ fn push_hud_lines(text: &mut String, s: &StatsSnapshot) {
     pct(s.post_ms),
     pct(s.hover_ms),
   ));
-  // GPU execution per frame as a frame share (window draw plus shader
-  // passes, timer-queried on the raster thread): the one figure here that
-  // is not JS-thread work, so it does not sum with the phases above. Near
-  // 100% the GPU is the bottleneck whatever the phases say. Hidden when the
-  // context has no timer queries.
+  // GPU execution (window draw plus shader passes, timer-queried on the
+  // raster thread) as a share of the PRESENT interval, not of frame_ms like
+  // the four above: gpu_ms is per presented frame while frame_ms is the tick
+  // period, and the demand gate makes those differ by exactly the frames it
+  // skips (a settled app presenting once a second read GPU 50% at 1.3%
+  // busy). Both come from the same sample window, so the share is GPU busy
+  // over the window it was measured on. The one figure here that is not
+  // JS-thread work, so it does not sum with the phases; near 100% the GPU
+  // is the bottleneck whatever the phases say. Hidden when the context has
+  // no timer queries.
   if let Some(gpu_ms) = s.gpu_ms {
-    text.push_str(&format!("\nGPU {:.0}%", pct(gpu_ms)));
+    let gpu_pct = if s.present_ms > 0.0 { gpu_ms / s.present_ms * 100.0 } else { 0.0 };
+    text.push_str(&format!("\nGPU {:.0}%", gpu_pct));
   }
   // Demand-gate savings/sec: frames served from the cached display list
   // (reuse) and frames skipped entirely (skip). Hidden when the gate saved

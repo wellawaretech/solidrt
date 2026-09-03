@@ -208,12 +208,6 @@ Shaped, not started.
   Give dev, render and pack one gitignored output root (dist/) with a subdir
   per flow, fixing render's missing isolate support and clearing the ground
   for pack formats and asset pre-processing.
-- **[A bare string argument to call_debug arrives JSON-quoted](backlog/call-debug-string-arg-encoding.md)** [2026-09-03]
-  Calling a debug command with a bare string argument delivers it to the
-  handler with literal quote characters, so a membership guard rejects it and
-  the command silently no-ops while still returning a plausible payload; the
-  object form is unaffected, and reading the transport end to end does not
-  show where the second encoding is added, so the first move is a live repro.
 - **[captureSnapshot fails inside a clean repaint boundary](backlog/capture-inside-clean-boundary.md)** [2026-08-27]
   A capture (captureSnapshot, /snapshot) of a node under a repaintBoundary
   view whose recording is being reused fails with "capture node is not in the
@@ -534,13 +528,6 @@ Shaped, not started.
   friction stepped inside the solver, which is per-wheel-per-substep work no
   app can do in JS. Rapier has no vehicle module of its own; shape it as the
   physics core's first higher-level controller after the core lands.
-- **[Pipeline target resize from a 1x1 creation leaves the framebuffer incomplete](backlog/pipeline-target-resize-incomplete.md)** [2026-09-02]
-  A createPipelineTexture target created at 1x1 (the size a 0x0 startup window
-  clamps to) fails its first real setTargetSize with "shader framebuffer
-  incomplete after resize: target framebuffer incomplete: 0x8cd6"
-  (GL_FRAMEBUFFER_INCOMPLETE_ATTACHMENT), killing the app; hit twice,
-  reproducibly, on the Linux desktop client while bringing up the 2d starlings
-  demo.
 - **[srt render is never headless on ANGLE](backlog/playback-headless-angle.md)** [2026-08-17]
   On Windows the offscreen video driver fails every time (SDL's offscreen path
   needs EGL_EXT_device_enumeration, which ANGLE does not implement) and
@@ -548,17 +535,6 @@ Shaped, not started.
   exists to run without a display requires an interactive window station
   there; the ANGLE that ships already advertises the extensions a real
   headless path needs.
-- **[Intermittent SIGABRT at headless playback shutdown](backlog/playback-shutdown-sigabrt.md)** [2026-08-06]
-  Headless playback exits the process while the raster thread is still drawing
-  the frame after the last recorded one; Impeller's encoder then hits a FATAL
-  check (captured 2026-08-30 on animating examples), which is the SIGABRT one
-  changelog-shot run died of.
-- **[Playback's first frame does not reflect app state](backlog/playback-window-size-zero.md)** [2026-08-06]
-  Two ways the first headless capture shows something the app never intended -
-  windowSize() reads 0x0 because playback's synthesised Resize never reaches
-  JS, and frame 0 is captured before the app's first frame callback runs, so
-  it shows the mount state, not the simulated one; plus --fps doubling as the
-  simulation step, so a clamped-dt app barely advances at low capture rates.
 - **[Per-node event-interest mask for pointer dispatch](backlog/pointer-event-interest-mask.md)** [2026-08-01]
   Rust marshals the full root-to-leaf hit path into JS for every pointer event
   because only the JS handler registry knows which nodes listen; a per-element
@@ -654,11 +630,6 @@ Shaped, not started.
   Button picks fill/hover/label with a switch over its variant and derives the
   background from press state by hand, and every other widget repeats the
   pattern; a helper that selects a prop bundle from state would collapse it.
-- **[The overlay's GPU% divides per-present cost by the per-tick period](backlog/stats-overlay-gpu-share-divisor.md)** [2026-09-03]
-  gpu_ms is GPU execution per PRESENTED frame while frame_ms is the gap
-  between render-handler TICKS, so the HUD's GPU share inflates in exact
-  proportion to how well the demand gate works - a settled app with the GPU at
-  1.3% busy reads GPU 50%, and the reader concludes the opposite of the truth.
 - **[The stats window has no present-interval jank counter, so a repeated frame can pass every figure clean](backlog/stats-present-interval-jank.md)** [2026-08-31]
   missedPresents (raster-side, demand-gated, run-based counting) is
   implemented and is the figure probes quote; remaining are maxPresentGapMs
@@ -901,6 +872,12 @@ Finished, kept for the reasoning.
   An omitted option object arrives at the binding as an explicit undefined,
   which Opt<Object> refuses - so createTexture without opts throws and every
   <Image> load fails.
+- **[A bare string argument to call_debug arrives JSON-quoted](done/call-debug-string-arg-encoding.md)** [2026-09-03]
+  Calling a debug command with a bare string argument delivers it to the
+  handler with literal quote characters, so a membership guard rejects it and
+  the command silently no-ops while still returning a plausible payload; the
+  object form is unaffected, and reading the transport end to end does not
+  show where the second encoding is added, so the first move is a live repro.
 - **[captureSnapshot on detached (d-*) nodes](done/capture-detached-nodes.md)** [2026-07-29]
   A d-* node is drawn but has no layout entry, so every capture of one
   rejected as zero-sized; captures now size from the node's painted box,
@@ -1397,6 +1374,25 @@ Finished, kept for the reasoning.
   line (kinds/dash.rs), the fill keeps the true curve, the pattern restarts at
   each subpath, and a d-path's bounds count dashes as caps; pathLength (SVG)
   on both kinds makes the pattern fractional for partial draws.
+- **[Pipeline target resize from a 1x1 creation leaves the framebuffer incomplete](done/pipeline-target-resize-incomplete.md)** [2026-09-02]
+  A createPipelineTexture target created at 1x1 (the size a 0x0 startup window
+  clamps to) fails its first real setTargetSize with "shader framebuffer
+  incomplete after resize: target framebuffer incomplete: 0x8cd6"
+  (GL_FRAMEBUFFER_INCOMPLETE_ATTACHMENT), killing the app; hit twice,
+  reproducibly, on the Linux desktop client while bringing up the 2d starlings
+  demo.
+- **[Intermittent SIGABRT at headless playback shutdown](done/playback-shutdown-sigabrt.md)** [2026-09-03]
+  Every headless render ended in a signal after a complete capture, static
+  apps included - the loop's final FrameRendered had the raster thread drawing
+  a frame while the window teardown or the app's exit() pulled the driver out
+  from under it. Closed by ending the lockstep at the last written draw and
+  fencing the raster thread before every playback exit.
+- **[Playback's first frame does not reflect app state](done/playback-window-size-zero.md)** [2026-09-03]
+  The first headless capture predated the app's first frame callback, and
+  playback never answered the init bundle (onFrame's rate stayed 60 at any
+  --fps); the 0x0 windowSize() was the general mount-time first-read trap, not
+  a playback drop. Closed by drawing but not writing the mount frame and a
+  pinned playback init bundle; --step stays an idea.
 - **[Portals cannot mount at initial render](done/portal-initial-mount.md)** [2026-07-27]
   A portal visible at first mount throws "no mount target" because windowRoot
   is set only after the initial build; decided as by design, documented with a
@@ -1484,6 +1480,11 @@ Finished, kept for the reasoning.
   launch (background shell, supervisor, CI) tore down the server, the client
   and the registry record within a second; startRepl now returns early when
   stdin is not a tty, and the piped-sleep workaround is gone.
+- **[The overlay's GPU% divides per-present cost by the per-tick period](done/stats-overlay-gpu-share-divisor.md)** [2026-09-03]
+  gpu_ms is GPU execution per PRESENTED frame while frame_ms is the gap
+  between render-handler TICKS, so the HUD's GPU share inflates in exact
+  proportion to how well the demand gate works - a settled app with the GPU at
+  1.3% busy reads GPU 50%, and the reader concludes the opposite of the truth.
 - **[Stats overlay should draw after the window shader pass](done/stats-overlay-post-shader.md)** [2026-08-10]
   The debug overlay was recorded into the app's display list, so a window
   shader warped the HUD and its once-per-second refresh forced full rebuilds.

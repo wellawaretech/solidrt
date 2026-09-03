@@ -18,11 +18,13 @@ HEIGHT=4000
 
 # Playback writes a PNG per frame as well. Those are not the output - park them
 # in a temp dir rather than beside the one we want. --duration is an upper
-# bound: the app exits as soon as it has written its file.
+# bound: the app exits as soon as it has written its file. The app is a file
+# on its own (--file): run from the repo root, a bare path would be refused
+# as ambiguous with the root project.
 FRAME_DIR="$(mktemp -d)"
 trap 'rm -rf "$FRAME_DIR"' EXIT
 
-out="$(bun "$HERE/../../packages/cli/bin/srt" render "$APP" \
+out="$(bun "$HERE/../../packages/cli/bin/srt" render "$APP" --file \
   --size "${WIDTH}x${HEIGHT}" --fps 4 --duration 5 -o "$FRAME_DIR" \
   -- "$(cd "$OUT_DIR" && pwd)" 2>&1)"
 

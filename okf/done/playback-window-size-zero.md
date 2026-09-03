@@ -1,7 +1,9 @@
 ---
 title: Playback's first frame does not reflect app state
-description: Two ways the first headless capture shows something the app never intended - windowSize() reads 0x0 because playback's synthesised Resize never reaches JS, and frame 0 is captured before the app's first frame callback runs, so it shows the mount state, not the simulated one; plus --fps doubling as the simulation step, so a clamped-dt app barely advances at low capture rates.
+description: The first headless capture predated the app's first frame callback, and playback never answered the init bundle (onFrame's rate stayed 60 at any --fps); the 0x0 windowSize() was the general mount-time first-read trap, not a playback drop. Closed by drawing but not writing the mount frame and a pinned playback init bundle; --step stays an idea.
+tags: [render, playback, capture, headless]
 created: 2026-08-06
+completed: 2026-09-03
 ---
 
 # Playback's first frame does not reflect app state
@@ -63,3 +65,37 @@ time-based much cheaper. Both first-frame problems and this one are
 properties of the same loop and should be decided together: what the app
 has seen by the time frame N is captured, and how app time relates to
 frame index.
+
+## Resolution (2026-09-03)
+
+The first symptom was misdiagnosed. Playback's resize did reach JS all
+along: `App::run` sends it before the capture loop starts, and core
+bootstraps frame 0 on the first resize it sees, so a reactive `windowSize()`
+read was right in frame 0 (verified on `window-signals.tsx`). What read 0x0
+was a mount-time, non-reactive read, and that is the general first-read
+trap in every mode: the engine evaluates the module before it drains any
+queued event. What playback did lack was the rest of the init bundle: the
+capture loop never reads commands, so `EmitInitEvents` went unanswered and
+`onFrame`'s `rate` stayed at the 60 default whatever `--fps` said.
+
+Landed:
+
+- `playback_init_events` (alloy `event.rs`) is playback's stand-in for the
+  `EmitInitEvents` answer: the refresh rate pinned to the capture fps, then
+  the resize last, because core bootstraps frame 0 on it and everything
+  sent before it must be in place for that frame. Theme, input devices,
+  orientation and pointer lock stay unsent on purpose: an offscreen capture
+  has none, core's defaults cover their absence, and any pin there is a
+  product choice.
+- The mount frame is drawn but not written (`playback.rs`): PNG k is the
+  state after the app's (k+1)th frame callback at time (k+1)/fps, so every
+  written frame is one a frame callback has shaped. A static app renders
+  identical PNGs; a scripted event at time t lands in the PNG at time t.
+- `packages/cli/AGENTS.md` and the `srt render` docs state both.
+
+`probes/playback-first-frame-probe.tsx` shows all of the above per frame:
+a mount-time read, a reactive read, and the callback count with its last
+tick, on the PNG and in the log.
+
+Not done: decoupling the simulation step from `--fps` (`--step`), recorded
+in `ideas.md`.

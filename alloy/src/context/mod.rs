@@ -223,6 +223,14 @@ impl Context {
     self.raster_tx.send(cmd).ok();
   }
 
+  /// Block until the raster thread has executed everything queued before
+  /// this call, so nothing is drawing when the caller goes on to exit the
+  /// process (see RasterSender::drain). Only meaningful from the thread that
+  /// submits frames: another producer could queue a draw behind the fence.
+  pub fn drain(&self) {
+    self.raster_tx.drain();
+  }
+
   /// Blocking RPC: send a command carrying a reply sender and wait for the
   /// reply. Err only when the raster thread is gone (engine shutdown).
   fn rpc<T>(&self, make: impl FnOnce(mpsc::Sender<T>) -> RasterCmd) -> Result<T, String> {

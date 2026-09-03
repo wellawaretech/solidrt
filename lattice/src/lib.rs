@@ -46,6 +46,8 @@ enum EngineCmd {
 #[derive(Clone)]
 struct ExitPolicy {
   playback: bool,
+  // Playback's exit fences the raster thread first (see exit).
+  alloy: Arc<alloy::Context>,
   #[cfg(feature = "go")]
   launcher_active: Arc<std::sync::atomic::AtomicBool>,
   #[cfg(feature = "go")]
@@ -58,6 +60,12 @@ struct ExitPolicy {
 impl ExitPolicy {
   fn exit(&self) {
     if self.playback {
+      // Nothing may be drawing when the process exits: the draw the last
+      // frame submitted may still be encoding on the raster thread, and the
+      // exit tears the driver down under it. This thread is the only
+      // display-list producer, so a fence answered in order proves the
+      // queue is empty.
+      self.alloy.drain();
       std::process::exit(0);
     }
     #[cfg(feature = "go")]
@@ -676,6 +684,7 @@ fn ui_thread(
     );
     let exit_policy = ExitPolicy {
       playback: playback_fps.is_some(),
+      alloy: atx.clone(),
       #[cfg(feature = "go")]
       launcher_active: launcher_active.clone(),
       #[cfg(feature = "go")]

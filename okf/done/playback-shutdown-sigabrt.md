@@ -1,7 +1,9 @@
 ---
 title: Intermittent SIGABRT at headless playback shutdown
-description: Headless playback exits the process while the raster thread is still drawing the frame after the last recorded one; Impeller's encoder then hits a FATAL check (captured 2026-08-30 on animating examples), which is the SIGABRT one changelog-shot run died of.
+description: Every headless render ended in a signal after a complete capture, static apps included - the loop's final FrameRendered had the raster thread drawing a frame while the window teardown or the app's exit() pulled the driver out from under it. Closed by ending the lockstep at the last written draw and fencing the raster thread before every playback exit.
+tags: [render, playback, capture, headless, shutdown]
 created: 2026-08-06
+completed: 2026-09-03
 ---
 
 # Intermittent SIGABRT at headless playback shutdown
@@ -58,3 +60,39 @@ final `FrameRendered`, or stop the raster thread (drain its queue and join)
 before `exit`. The exit-code gate is the reason it matters: a 134 on a
 complete capture reads as a failed verification.
 
+## Resolution (2026-09-03)
+
+Not intermittent by the time it was looked at: every `srt render` ended in
+a signal, 139 in most runs and 134 in some, static apps included, so the
+exit-code gate never read success. Two exit paths, one mechanism, both
+caught in backtraces:
+
+- Budget spent: the loop sent `FrameRendered` for the last written draw,
+  playback renders unconditionally, so the UI thread built one more frame
+  and the raster thread started drawing it. The loop returned and dropped
+  the SDL window, which `dlclose`s the EGL library; the in-flight draw
+  failed, the raster thread exited, and libglvnd's thread-exit destructor
+  faulted on the unloaded library (the 139). When Impeller's encoder check
+  fired first it was the 134.
+- `exit()` from the app: `process::exit` ran on the JS thread while the
+  raster thread was still encoding the draw the last frame submitted (the
+  core shows it inside Impeller's blit encoder, in the Mesa driver).
+
+Landed:
+
+- The lockstep ends at the last written draw: no scripted input and no
+  `FrameRendered` after it (`alloy/src/playback.rs`).
+- A raster fence: `RasterCmd::Drain`, answered in order, behind
+  `RasterSender::drain` and `Context::drain`. The capture loop fences before
+  it returns (ahead of the window drop), and playback's exit policy in
+  lattice fences before `process::exit`. The JS thread is the only
+  display-list producer, so the reply proves nothing is drawing.
+
+`probes/playback-exit-probe.tsx` is the exit() case at its worst: exit()
+from a microtask queued in a frame callback, after that frame's display
+list is submitted.
+
+Verified: 18 consecutive renders, five each of a static and an animating
+example and eight of the exit probe, all exit 0 with every frame written,
+where before the change all 18 ended in a signal. `changelog-shot`, the
+original sighting, renders and exits 0 as well.

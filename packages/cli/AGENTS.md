@@ -76,7 +76,9 @@ Two reliable checks that need no GUI:
 1. `bunx srt bundle` - exit 0 means the app compiles. Fast.
 2. `bunx srt render --size 480x640 --duration 1 --fps 2` -
    renders offscreen via EGL and writes `frame-NNNNNN.png`. This actually
-   proves the app renders. Combine with `--fps`/`--duration` (defaults
+   proves the app renders: exit 0 means every frame was written (an app
+   that calls `exit()` ends the run early, also with 0). Combine with
+   `--fps`/`--duration` (defaults
    1280x720, 60fps, 1s). No display needed: rendering uses SDL's offscreen
    driver, or alloy's own EGL pbuffer where that driver cannot go headless
    (see the ANGLE gotcha below).
@@ -92,6 +94,11 @@ behavior in isolation.
   different directory (or a path prefix for the `-NNNNNN.png` names).
 - `--size` is physical output pixels: layout runs at exactly that size
   (display scale is pinned to 1), so frames are identical on every machine.
+- Every frame follows a frame callback: frame k is the app's state after its
+  (k+1)th `onFrame` call, at time (k+1)/fps; the mount state (before any
+  callback) is drawn but never written. `onFrame`'s `rate` is the capture
+  fps. A mount-time `windowSize()` read is 0x0, as on a live client (the
+  first resize lands after the module has evaluated); read it reactively.
 - Run from the project directory. There is no `bunx --cwd` flag.
 - On ANGLE stacks (Windows, macOS) SDL's offscreen driver cannot go
   headless (no EGL device enumeration), so `render` there builds its own

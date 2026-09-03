@@ -254,6 +254,8 @@ fn limits_texture_size_names_the_limit() {
   assert!(err.contains("8193x16") && err.contains("max texture size (8192)"), "{err}");
   let err = l.check_texture_size(16, 9000).expect_err("oversize height must error");
   assert!(err.contains("16x9000") && err.contains("8192"), "{err}");
+  let err = l.check_texture_size(0, 720).expect_err("zero width must error");
+  assert!(err.contains("0x720") && err.contains("at least 1"), "{err}");
 }
 
 #[test]
