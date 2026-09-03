@@ -292,7 +292,20 @@ error.
   introspection-only contract.
 - `standards_plugins/body.rs::is_async_iterable` (and the sibling shims in
   `body.rs`/`marshal.rs`) `ctx.eval` a JS function on every call; cache it
-  like `NativeQueueMicrotask` in `time.rs`.
+  like `NativeQueueMicrotask` in `time.rs`. Fixed 2026-09-03, by removal
+  rather than caching: the three `Symbol.asyncIterator` shims read and set
+  the symbol through `PredefinedAtom::SymbolAsyncIterator`, the idiom
+  `forge_plugins/isolate.rs` already used (`attach_async_iterator` takes the
+  `Object` a `Class` instance derefs to). The fourth, the buffered body's
+  `async function*` wrapper, is a `forge::stream::from_bytes` one-shot
+  `ByteStream` fed to the same `byte_stream_iterable` the network bodies use,
+  so a buffered `.body` is the same `{ next, [Symbol.asyncIterator] }` object
+  as a streamed one (no generator `return`/`throw`; `for await` and `break`
+  are unaffected) and an empty body ends without an empty chunk. No JS
+  source is compiled from the marshalling layer any more. Verified: forge lib
+  tests (two new for the one-shot stream), flux gui unit tests, the http,
+  net, websocket, isolate and web_api suites (one new: a buffered and an
+  empty `.body` iterated), flux clippy, lattice check.
 - Still open from the July review: the three `examples/gpu_*.rs` use
   `flux::gui` with no `[[example]] required-features = ["gui"]` stanza, so a
   bare `cargo test -p flux` fails (root CLAUDE.md documents the workaround

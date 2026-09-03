@@ -56,6 +56,31 @@ async fn headers_init_copies_instance_and_rejects_non_string_values() {
 }
 
 #[tokio::test]
+async fn buffered_body_iterates_as_one_chunk() {
+  let out = run_source(
+    r#"
+            // A buffered body (`new Response("...")`) iterates like a streamed
+            // one: a single Uint8Array chunk holding the whole payload. An empty
+            // body ends at once, with no empty chunk.
+            (async () => {
+                let dec = new TextDecoder();
+                let chunks = [];
+                for await (const c of new Response("buffered body").body) {
+                    chunks.push(c instanceof Uint8Array ? dec.decode(c) : typeof c);
+                }
+                console.log(chunks.length, chunks.join("|"));
+                let empty = 0;
+                for await (const _ of new Response("").body) empty++;
+                console.log("empty", empty);
+            })().catch(e => console.error("test error: " + (e && e.message || e)));
+            "#,
+  )
+  .await;
+  assert!(out.errors().is_empty(), "stderr: {}", out.errors());
+  assert_eq!(out.lines_at(flux::LogLevel::Log), vec!["1 buffered body", "empty 0"]);
+}
+
+#[tokio::test]
 async fn array_buffer_transfer_family_is_removed() {
   // The vendored quickjs-ng transfer() corrupts externally backed buffers
   // (okf/upstream/quickjs-ng-transfer-external-buffers.md), so context setup

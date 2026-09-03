@@ -1,4 +1,5 @@
 use rquickjs::{
+  atom::PredefinedAtom,
   function::{MutFn, This},
   promise::{MaybePromise, Promised},
   ArrayBuffer, Ctx, Function, IntoJs, Object, TypedArray, Value,
@@ -85,16 +86,11 @@ impl MessageBody {
   /// A streamed body iterates the network stream; a buffered one yields its bytes
   /// as a single chunk, so `for await (const c of msg.body)` works uniformly.
   pub(crate) fn as_async_iterable<'js>(&self, ctx: &Ctx<'js>, pending: PendingOps) -> rquickjs::Result<Value<'js>> {
-    match self {
-      MessageBody::Incoming(incoming) => {
-        let stream = incoming.take().ok_or_else(|| throw_consumed(ctx))?;
-        Ok(byte_stream_iterable(ctx, stream, pending)?.into_value())
-      }
-      MessageBody::Buffered(state) => {
-        let bytes = state.take().ok_or_else(|| throw_consumed(ctx))?;
-        buffered_async_iterable(ctx, bytes)
-      }
-    }
+    let stream = match self {
+      MessageBody::Incoming(incoming) => incoming.take().ok_or_else(|| throw_consumed(ctx))?,
+      MessageBody::Buffered(state) => forge::stream::from_bytes(state.take().ok_or_else(|| throw_consumed(ctx))?),
+    };
+    Ok(byte_stream_iterable(ctx, stream, pending)?.into_value())
   }
 }
 
@@ -206,15 +202,6 @@ pub(crate) fn byte_stream_iterable<'js>(
   Ok(iter)
 }
 
-/// Wrap already-buffered bytes in a single-chunk async-iterable, so `response.body`
-/// behaves uniformly for buffered and streamed responses. An empty body yields
-/// nothing.
-pub(crate) fn buffered_async_iterable<'js>(ctx: &Ctx<'js>, bytes: Vec<u8>) -> rquickjs::Result<Value<'js>> {
-  let ta = TypedArray::<u8>::new(ctx.clone(), bytes)?;
-  let wrap: Function = ctx.eval("(b) => (async function* () { if (b.length) yield b; })()")?;
-  wrap.call((ta,))
-}
-
 /// Extract bytes from a JS value (string, Uint8Array, null/undefined).
 pub(crate) fn extract_body_value<'js>(val: &Value<'js>, for_class: &'static str) -> rquickjs::Result<Vec<u8>> {
   if val.is_null() || val.is_undefined() {
@@ -231,24 +218,21 @@ pub(crate) fn extract_body_value<'js>(val: &Value<'js>, for_class: &'static str)
 
 /// True if `val` is an async-iterable (has a `Symbol.asyncIterator` method), e.g.
 /// the object an `async function*` generator returns. Primitives (strings, null,
-/// numbers) are not objects, so they short-circuit to false without evaluating.
-pub(crate) fn is_async_iterable<'js>(ctx: &Ctx<'js>, val: &Value<'js>) -> rquickjs::Result<bool> {
-  if val.as_object().is_none() {
+/// numbers) are not objects, so they are false without a property read.
+pub(crate) fn is_async_iterable<'js>(val: &Value<'js>) -> rquickjs::Result<bool> {
+  let Some(obj) = val.as_object() else {
     return Ok(false);
-  }
-  let probe: Function<'js> = ctx.eval("(o) => typeof o[Symbol.asyncIterator] === 'function'")?;
-  probe.call((val.clone(),))
+  };
+  let method: Value<'js> = obj.get(PredefinedAtom::SymbolAsyncIterator)?;
+  Ok(method.is_function())
 }
 
 /// Parse a Response body value into either buffered bytes or, when it is an
 /// async-iterable, a stream source object to be drained later (see
 /// `pump_async_iterable`). Otherwise falls back to the buffered `extract_body_value`
 /// rules (string, Uint8Array, null/undefined).
-pub(crate) fn extract_streaming_body<'js>(
-  ctx: &Ctx<'js>,
-  val: &Value<'js>,
-) -> rquickjs::Result<(Vec<u8>, Option<Object<'js>>)> {
-  if is_async_iterable(ctx, val)? {
+pub(crate) fn extract_streaming_body<'js>(val: &Value<'js>) -> rquickjs::Result<(Vec<u8>, Option<Object<'js>>)> {
+  if is_async_iterable(val)? {
     let obj = val.clone().into_object().expect("async iterable is an object");
     return Ok((Vec::new(), Some(obj)));
   }
@@ -268,14 +252,14 @@ pub(crate) async fn pump_async_iterable<'js>(
   tx: mpsc::Sender<Vec<u8>>,
   logger: Logger,
 ) {
-  let get_iter: Function<'js> = match ctx.eval("(o) => o[Symbol.asyncIterator]()") {
+  let get_iter: Function<'js> = match iterable.get(PredefinedAtom::SymbolAsyncIterator) {
     Ok(f) => f,
     Err(e) => {
-      logger.warn(&format!("[flux] stream: body is not async-iterable: {e}"));
+      logger.warn(&format!("[flux] stream: body is not async-iterable: {}", format_js_error(&ctx, e)));
       return;
     }
   };
-  let iter: Object<'js> = match get_iter.call((iterable,)) {
+  let iter: Object<'js> = match get_iter.call((This(iterable),)) {
     Ok(i) => i,
     Err(e) => {
       logger.warn(&format!("[flux] stream: could not get async iterator: {}", format_js_error(&ctx, e)));

@@ -40,3 +40,20 @@ where
 {
   Box::pin(MapErrStream { inner: Box::pin(stream) })
 }
+
+/// A `ByteStream` over already-buffered bytes: the whole buffer as one chunk,
+/// then the end. Empty bytes end at once, so a consumer never sees an empty
+/// chunk. Lets a buffered body and a network body share one consumer.
+pub fn from_bytes(bytes: impl Into<Bytes>) -> ByteStream {
+  Box::pin(OneShot(Some(bytes.into()).filter(|b| !b.is_empty())))
+}
+
+struct OneShot(Option<Bytes>);
+
+impl Stream for OneShot {
+  type Item = Result<Bytes, io::Error>;
+
+  fn poll_next(mut self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+    Poll::Ready(self.0.take().map(Ok))
+  }
+}

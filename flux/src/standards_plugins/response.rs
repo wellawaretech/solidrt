@@ -47,7 +47,7 @@ impl<'js> Response<'js> {
   #[qjs(constructor)]
   pub fn new(ctx: Ctx<'js>, body: OptArg<Value<'js>>, init: OptArg<Object<'js>>) -> rquickjs::Result<Self> {
     let (body_bytes, stream) = match body.0 {
-      Some(v) => extract_streaming_body(&ctx, &v)?,
+      Some(v) => extract_streaming_body(&v)?,
       None => (Vec::new(), None),
     };
     let (status, status_text, headers_val) = parse_init(init.0.as_ref())?;

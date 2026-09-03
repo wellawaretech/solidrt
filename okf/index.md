@@ -631,6 +631,12 @@ Shaped, not started.
   velocity from the camera and write three setters. Bind a playback to a
   spatial node and name a listener node, and the core writes pan/gain/rate
   from the flushed world matrices; the JS pattern stays valid.
+- **[Reset the spatial core on app switch](backlog/spatial-core-app-switch-leak.md)** [2026-09-03]
+  The alloy Context (and with it the spatial core - nodes, sinks, palettes,
+  clip players) is shared across engine rebuilds and never reset, while the
+  dying app's GPU resources are destroyed on engine drop. Leaving an animated
+  3d app leaves its clip players running against destroyed textures: a warning
+  per frame and a launcher stuck at full frame rate forever.
 - **[Spatial core - transform hierarchy, spatial index and queries in alloy](backlog/spatial-core.md)** [2026-08-23]
   The @solidrt/3d sync walk recurses the whole node tree in QuickJS on every
   change (one moved node = O(scene)), picking is a JS box-only test, and both

@@ -153,10 +153,10 @@ fn settle_fetch<'js>(ctx: &Ctx<'js>, resolve: &Function<'js>, reject: &Function<
   }
 }
 
-/// Marshal a fetch request body value into a reqwest Body. Buffered bodies
-/// (string, Uint8Array) are checked first so they pay no eval. An async-iterable
-/// body is streamed: a task drives it into a channel that reqwest sends as a
-/// chunked body (see `pump_async_iterable`). Null/undefined mean no body; any
+/// Marshal a fetch request body value into a `RequestBody`. Buffered bodies
+/// (string, Uint8Array) are checked first so they pay no property read. An
+/// async-iterable body is streamed: a task drives it into a channel that is
+/// sent as a chunked body (see `pump_async_iterable`). Null/undefined mean no body; any
 /// other value throws. Public because the lattice dev-server proxy's fetch
 /// marshals its body the same way.
 pub fn request_body_from_value<'js>(val: Value<'js>) -> rquickjs::Result<Option<RequestBody>> {
@@ -169,7 +169,7 @@ pub fn request_body_from_value<'js>(val: Value<'js>) -> rquickjs::Result<Option<
   if let Ok(ta) = TypedArray::<u8>::from_value(val.clone()) {
     return Ok(Some(RequestBody::bytes(ta.as_bytes().map(|b| b.to_vec()).unwrap_or_default())));
   }
-  if is_async_iterable(val.ctx(), &val)? {
+  if is_async_iterable(&val)? {
     // Use the value's own context so the result's lifetime unifies with it.
     let stream_ctx = val.ctx().clone();
     let logger = stream_ctx.logger();

@@ -10,6 +10,7 @@
 
 use std::future::Future;
 
+use rquickjs::atom::PredefinedAtom;
 use rquickjs::function::{FromParam, ParamRequirement, ParamsAccessor, This};
 use rquickjs::promise::Promised;
 use rquickjs::{qjs, ArrayBuffer, Ctx, FromJs, Function, IntoJs, Object, Value};
@@ -111,15 +112,10 @@ pub fn iter_result<'js>(ctx: &Ctx<'js>, value: Option<Value<'js>>) -> rquickjs::
 }
 
 /// Make `obj` its own async-iterator: `obj[Symbol.asyncIterator]()` returns
-/// `obj`, so `for await (const x of obj)` drives its `next()`. Generic over the
-/// JS handle type (an `Object` iterator, a `Class` instance like `P2pStream`).
-pub fn attach_async_iterator<'js, T>(ctx: &Ctx<'js>, obj: &T) -> rquickjs::Result<()>
-where
-  T: IntoJs<'js> + Clone,
-{
-  let attach: Function = ctx.eval("(o) => { o[Symbol.asyncIterator] = function () { return this; }; }")?;
-  attach.call::<_, ()>((obj.clone(),))?;
-  Ok(())
+/// `obj`, so `for await (const x of obj)` drives its `next()`. A `Class`
+/// instance (`P2pStream`, `NetConn`) derefs to its `Object`.
+pub fn attach_async_iterator<'js>(ctx: &Ctx<'js>, obj: &Object<'js>) -> rquickjs::Result<()> {
+  obj.set(PredefinedAtom::SymbolAsyncIterator, Function::new(ctx.clone(), |this: This<Value<'js>>| this.0)?)
 }
 
 /// Mark a returned promise as handled at the JS-engine level before its result is
