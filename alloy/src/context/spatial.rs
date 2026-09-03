@@ -1,54 +1,63 @@
 use crate::gpu::{validate_params, DrawUpdate, ParamValue, TextureFormat};
 use crate::raster::RasterCmd;
-use crate::spatial::{DrawSink, InstanceRecordSink, Mat4, NodeId, SharedSlotSink, SinkWriter, Spatial, TextureSlotSink};
+use crate::spatial::{
+  DrawSink, InstanceRecordSink, Mat4, NodeId, SharedSlotSink, SinkWriter, Spatial, TextureSlotSink,
+};
 
 use super::mirror::entry_mirror;
 use super::Context;
 
 /// Context's `SinkWriter`: each write resolves against the target/draw
 /// mirrors and goes down the raster channel. A write that no longer lands
-/// (its entry or target removed since bind time) drops with a warning -
-/// bind-time validation covered everything else. `wrote` reports whether
-/// anything went out, so the caller knows to request a frame.
+/// (its entry or target removed since bind time) drops with a warning and
+/// reports false, on which the core releases the binding - so a dead
+/// binding warns once, not once per frame - bind-time validation covered
+/// everything else. `wrote` reports whether anything went out, so the
+/// caller knows to request a frame; a dropped write is not a reason to
+/// draw.
 struct Writer<'a> {
   ctx: &'a Context,
   wrote: bool,
 }
 
 impl Writer<'_> {
-  fn dropped(result: Result<(), String>) {
-    if let Err(e) = result {
-      log::warn!("[spatial] sink write dropped: {e}");
+  fn landed(&mut self, result: Result<(), String>) -> bool {
+    match result {
+      Ok(()) => {
+        self.wrote = true;
+        true
+      }
+      Err(e) => {
+        log::warn!("[spatial] sink write dropped, binding released: {e}");
+        false
+      }
     }
   }
 }
 
 impl SinkWriter for Writer<'_> {
-  fn write_params(&mut self, target: u64, draw: u64, model: &Mat4, normal: Option<&Mat4>) {
-    self.wrote = true;
+  fn write_params(&mut self, target: u64, draw: u64, model: &Mat4, normal: Option<&Mat4>) -> bool {
     let mut params = vec![("uModel".to_string(), ParamValue::Array(model.to_vec()))];
     if let Some(n) = normal {
       params.push(("uNormal".to_string(), ParamValue::Array(n.to_vec())));
     }
     let known = entry_mirror(&self.ctx.targets.borrow(), target, draw).map(|_| ());
-    Self::dropped(known.map(|_| {
+    self.landed(known.map(|_| {
       self.ctx.send(RasterCmd::UpdateDrawParams { target, draw, params });
       self.ctx.note_target_content(target);
-    }));
+    }))
   }
 
-  fn write_count(&mut self, target: u64, draw: u64, count: u32) {
-    self.wrote = true;
+  fn write_count(&mut self, target: u64, draw: u64, count: u32) -> bool {
     let update = DrawUpdate { instance_count: Some(count as i32), ..DrawUpdate::default() };
-    Self::dropped(self.ctx.update_draw(target, Some(draw), update));
+    self.landed(self.ctx.update_draw(target, Some(draw), update))
   }
 
   // A shared-slot group's array, whole, through the ordinary shared
   // channel (draw targets store unknown names until a declaring
   // material arrives, so this validates like any setTargetParams).
-  fn write_shared(&mut self, target: u64, name: &str, values: &[f32]) {
-    self.wrote = true;
-    Self::dropped(self.ctx.set_target_params(target, &[(name.to_string(), ParamValue::Array(values.to_vec()))]));
+  fn write_shared(&mut self, target: u64, name: &str, values: &[f32]) -> bool {
+    self.landed(self.ctx.set_target_params(target, &[(name.to_string(), ParamValue::Array(values.to_vec()))]))
   }
 
   // An instance-record staging publish. A plain buffer takes the dirty
@@ -56,28 +65,24 @@ impl SinkWriter for Writer<'_> {
   // the buffer's size); an ordered instance buffer publishes the whole
   // record set gathered into draw order instead - a partial range has no
   // stable position once records draw in key order.
-  fn write_instances(&mut self, buffer: u64, lo: u32, hi: u32, values: &[f32]) {
-    self.wrote = true;
+  fn write_instances(&mut self, buffer: u64, lo: u32, hi: u32, values: &[f32]) -> bool {
     if self.ctx.buffer_has_order(buffer) {
-      Self::dropped(self.ctx.ordered_instance_publish(buffer, values));
-      return;
+      return self.landed(self.ctx.ordered_instance_publish(buffer, values));
     }
     let range = &values[lo as usize..hi as usize];
     let mut data = Vec::with_capacity(range.len() * 4);
     for v in range {
       data.extend_from_slice(&v.to_ne_bytes());
     }
-    Self::dropped(self.ctx.write_gpu_buffer(buffer, &data, lo as usize * 4));
+    self.landed(self.ctx.write_gpu_buffer(buffer, &data, lo as usize * 4))
   }
 
   // A palette publish: the staged rows as one whole-texture upload (the
   // ordinary content-damage path; a palette is a few KB). The upload pads
   // to the full frame, so rows above the bound extent read zero.
-  fn write_texture(&mut self, texture: u64, values: &[f32]) {
-    self.wrote = true;
+  fn write_texture(&mut self, texture: u64, values: &[f32]) -> bool {
     let Some(entry) = self.ctx.textures.get(texture) else {
-      Self::dropped(Err(format!("texture {texture} not found")));
-      return;
+      return self.landed(Err(format!("texture {texture} not found")));
     };
     let frame = entry.format.byte_len(entry.width(), entry.height());
     let mut data = Vec::with_capacity(frame.max(values.len() * 4));
@@ -87,7 +92,7 @@ impl SinkWriter for Writer<'_> {
     if data.len() < frame {
       data.resize(frame, 0);
     }
-    Self::dropped(self.ctx.update_texture(texture, &data, 0));
+    self.landed(self.ctx.update_texture(texture, &data, 0))
   }
 }
 
@@ -97,6 +102,14 @@ impl Context {
   /// context's draw entries.
   pub fn spatial(&self) -> std::cell::RefMut<'_, Spatial> {
     self.spatial.borrow_mut()
+  }
+
+  /// Drop the whole spatial core: every node, sink, clip and player. Called
+  /// between engine runs, beside the camera/microphone/audio closes: the
+  /// dying app's GPU resources go with its engine, and a sink or looping
+  /// player left behind would write into nothing every frame, forever.
+  pub fn reset_spatial(&self) {
+    *self.spatial.borrow_mut() = Spatial::new();
   }
 
   /// Bind a node's draw sink on the sink's target (replacing the one it
@@ -152,10 +165,7 @@ impl Context {
     anchor: Option<NodeId>,
   ) -> Result<(), String> {
     {
-      let entry = self
-        .textures
-        .get(sink.texture)
-        .ok_or_else(|| format!("texture {} not found", sink.texture))?;
+      let entry = self.textures.get(sink.texture).ok_or_else(|| format!("texture {} not found", sink.texture))?;
       if entry.format != TextureFormat::Rgba32f {
         return Err(format!("texture {} is {}, matrix rows need rgba32f", sink.texture, entry.format.name()));
       }

@@ -76,16 +76,22 @@ struct BoundSink {
 /// Context resolves the ids against its draw entries and forwards down the
 /// raster channel; tests record). Arguments are borrowed from core state -
 /// an implementation copies what it keeps.
+///
+/// Every write returns whether it landed. False means the resource is gone
+/// (a destroyed target, buffer or texture; ids are never reused, so it is
+/// gone for good), and the core releases the binding that produced the
+/// write: the draw sink, or the slot/record/palette group. A dead binding
+/// thus costs one write, not one per frame.
 pub trait SinkWriter {
   /// A shown entry's fresh world transform: `uModel`, plus `uNormal` when
   /// the sink asked for it.
-  fn write_params(&mut self, target: u64, draw: u64, model: &Mat4, normal: Option<&Mat4>);
+  fn write_params(&mut self, target: u64, draw: u64, model: &Mat4, normal: Option<&Mat4>) -> bool;
   /// An entry's instance count - the visibility switch (0 = hidden, the
   /// sink's count = shown).
-  fn write_count(&mut self, target: u64, draw: u64, count: u32);
+  fn write_count(&mut self, target: u64, draw: u64, count: u32) -> bool;
   /// A shared-slot group's array param, rewritten whole (slot sinks share
   /// one array value; see `SharedSlotSink`).
-  fn write_shared(&mut self, target: u64, name: &str, values: &[f32]);
+  fn write_shared(&mut self, target: u64, name: &str, values: &[f32]) -> bool;
   /// One buffer's staged instance records: the coalesced dirty float range
   /// `[lo, hi)` plus `values`, the WHOLE staging mirror - so a writer that
   /// must publish the full record set (an ordered instance buffer gathers
@@ -93,11 +99,11 @@ pub trait SinkWriter {
   /// reach every record, while the plain path writes just the range. At
   /// most one write per buffer per flush, however many nodes moved (see
   /// `InstanceRecordSink`).
-  fn write_instances(&mut self, buffer: u64, lo: u32, hi: u32, values: &[f32]);
+  fn write_instances(&mut self, buffer: u64, lo: u32, hi: u32, values: &[f32]) -> bool;
   /// A float texture's fresh rows, whole: 16 floats (one column-major mat4,
   /// one row of a 4-texel-wide rgba32f texture) per bound slot. At most one
   /// write per texture per flush (see `TextureSlotSink`).
-  fn write_texture(&mut self, texture: u64, values: &[f32]);
+  fn write_texture(&mut self, texture: u64, values: &[f32]) -> bool;
 }
 
 /// How a shared-slot sink projects the node's world transform into its
@@ -1058,13 +1064,15 @@ impl Spatial {
       return Err(format!("spatial node {id} has no draw sink"));
     }
     let mut wrote = false;
-    for b in n.sinks.iter_mut() {
+    n.sinks.retain_mut(|b| {
       b.sink.count = count;
-      if b.entry_on {
-        out.write_count(b.sink.target, b.sink.draw, count);
-        wrote = true;
+      if !b.entry_on {
+        return true;
       }
-    }
+      let landed = out.write_count(b.sink.target, b.sink.draw, count);
+      wrote |= landed;
+      landed
+    });
     Ok(wrote)
   }
 
@@ -1105,7 +1113,9 @@ impl Spatial {
     Ok(world)
   }
 
-  /// Recompute every queued subtree and hand the sink writes to `out`.
+  /// Recompute every queued subtree and hand the sink writes to `out`. A
+  /// group whose write did not land is dropped with it (see `SinkWriter`);
+  /// the slots still naming it stage nothing, so it never writes again.
   pub fn flush(&mut self, out: &mut dyn SinkWriter) {
     if !self.queue.is_empty() {
       let queue = std::mem::take(&mut self.queue);
@@ -1127,19 +1137,21 @@ impl Spatial {
     // once per flush, whole; a group nothing references any more goes
     // with its last write.
     self.shared.retain(|(target, name), group| {
+      let mut landed = true;
       if group.dirty {
         group.dirty = false;
-        out.write_shared(*target, name, &group.values);
+        landed = out.write_shared(*target, name, &group.values);
       }
-      group.refs > 0
+      landed && group.refs > 0
     });
     // Instance staging publishes the same way: one coalesced dirty range
     // per buffer per flush, a group dropping with its last write.
     self.instances.retain(|buffer, group| {
+      let mut landed = true;
       if let Some((lo, hi)) = group.dirty.take() {
-        out.write_instances(*buffer, lo as u32, hi as u32, &group.values);
+        landed = out.write_instances(*buffer, lo as u32, hi as u32, &group.values);
       }
-      group.refs > 0
+      landed && group.refs > 0
     });
     // Palette staging publishes whole per texture. Anchored rows relativize
     // here, at the flush's end: the anchor's world is fresh (an anchor move
@@ -1151,9 +1163,10 @@ impl Spatial {
       let mut palettes = std::mem::take(&mut self.palettes);
       let mut scratch: Vec<f32> = Vec::new();
       palettes.retain(|texture, group| {
+        let mut landed = true;
         if group.dirty {
           group.dirty = false;
-          match group.anchor {
+          landed = match group.anchor {
             None => out.write_texture(*texture, &group.values),
             Some(a) => {
               let inv = match self.resolve(a) {
@@ -1165,11 +1178,11 @@ impl Spatial {
                 let m: Mat4 = row.try_into().expect("palette rows are 16 floats");
                 scratch.extend_from_slice(&multiply(inv, m));
               }
-              out.write_texture(*texture, &scratch);
+              out.write_texture(*texture, &scratch)
             }
-          }
+          };
         }
-        group.refs > 0
+        landed && group.refs > 0
       });
       self.palettes = palettes;
     }
@@ -1248,30 +1261,36 @@ impl Spatial {
       }
     }
     let n = &mut self.nodes[i as usize];
+    let world = n.world;
     // The inverse-transpose is one matrix however many sinks ask for it.
     let mut normal: Option<Mat4> = None;
-    for b in n.sinks.iter_mut() {
+    // A sink whose entry is gone (a write that did not land) is released
+    // here: the entry was the consumer's to remove, and it did.
+    n.sinks.retain_mut(|b| {
       let sink = b.sink;
       if shown != b.entry_on {
         b.entry_on = shown;
-        out.write_count(sink.target, sink.draw, if shown { sink.count } else { 0 });
+        if !out.write_count(sink.target, sink.draw, if shown { sink.count } else { 0 }) {
+          return false;
+        }
         if shown {
           b.fresh = true;
         }
       }
       if shown && (changed || b.fresh) {
         if sink.normal && normal.is_none() {
-          normal = Some(normal_matrix(&n.world));
+          normal = Some(normal_matrix(&world));
         }
-        out.write_params(sink.target, sink.draw, &n.world, if sink.normal { normal.as_ref() } else { None });
         b.fresh = false;
-      } else if changed {
+        return out.write_params(sink.target, sink.draw, &world, if sink.normal { normal.as_ref() } else { None });
+      }
+      if changed {
         b.fresh = true;
       }
-    }
+      true
+    });
     let record = n.record;
     let record_on = n.record_on;
-    let world = n.world;
     if let Some(rec) = record {
       match rec.projection {
         InstanceProjection::Pose2D => {

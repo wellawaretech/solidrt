@@ -14,24 +14,42 @@ enum Write {
   Texture { texture: u64, values: Vec<f32> },
 }
 
-struct Recorder(Vec<Write>);
+/// Records every write it is handed; a write on a resource id listed in
+/// `dead` is recorded too, but reported as not landed (the resource is
+/// gone), the way the context's writer reports a destroyed target.
+#[derive(Default)]
+struct Recorder {
+  writes: Vec<Write>,
+  dead: Vec<u64>,
+}
+
+impl Recorder {
+  fn landed(&self, resource: u64) -> bool {
+    !self.dead.contains(&resource)
+  }
+}
 
 impl SinkWriter for Recorder {
-  fn write_params(&mut self, target: u64, draw: u64, model: &Mat4, normal: Option<&Mat4>) {
-    self.0.push(Write::Params { target, draw, model: *model, normal: normal.copied() });
+  fn write_params(&mut self, target: u64, draw: u64, model: &Mat4, normal: Option<&Mat4>) -> bool {
+    self.writes.push(Write::Params { target, draw, model: *model, normal: normal.copied() });
+    self.landed(target)
   }
-  fn write_count(&mut self, target: u64, draw: u64, count: u32) {
-    self.0.push(Write::Count { target, draw, count });
+  fn write_count(&mut self, target: u64, draw: u64, count: u32) -> bool {
+    self.writes.push(Write::Count { target, draw, count });
+    self.landed(target)
   }
-  fn write_shared(&mut self, target: u64, name: &str, values: &[f32]) {
-    self.0.push(Write::Shared { target, name: name.to_string(), values: values.to_vec() });
+  fn write_shared(&mut self, target: u64, name: &str, values: &[f32]) -> bool {
+    self.writes.push(Write::Shared { target, name: name.to_string(), values: values.to_vec() });
+    self.landed(target)
   }
-  fn write_instances(&mut self, buffer: u64, lo: u32, hi: u32, values: &[f32]) {
+  fn write_instances(&mut self, buffer: u64, lo: u32, hi: u32, values: &[f32]) -> bool {
     // Record the range slice under `first`, matching the plain write path.
-    self.0.push(Write::Instances { buffer, first: lo, values: values[lo as usize..hi as usize].to_vec() });
+    self.writes.push(Write::Instances { buffer, first: lo, values: values[lo as usize..hi as usize].to_vec() });
+    self.landed(buffer)
   }
-  fn write_texture(&mut self, texture: u64, values: &[f32]) {
-    self.0.push(Write::Texture { texture, values: values.to_vec() });
+  fn write_texture(&mut self, texture: u64, values: &[f32]) -> bool {
+    self.writes.push(Write::Texture { texture, values: values.to_vec() });
+    self.landed(texture)
   }
 }
 
@@ -40,9 +58,16 @@ fn sink(draw: u64) -> DrawSink {
 }
 
 fn flush(s: &mut Spatial) -> Vec<Write> {
-  let mut out = Recorder(Vec::new());
+  let mut out = Recorder::default();
   s.flush(&mut out);
-  out.0
+  out.writes
+}
+
+/// A flush whose writes on the `dead` resource ids do not land.
+fn flush_dead(s: &mut Spatial, dead: &[u64]) -> Vec<Write> {
+  let mut out = Recorder { writes: Vec::new(), dead: dead.to_vec() };
+  s.flush(&mut out);
+  out.writes
 }
 
 fn model(w: &Write) -> [f32; 16] {
@@ -142,11 +167,11 @@ fn sinks_are_per_target_and_one_move_feeds_them_all() {
   assert!(writes.iter().any(|w| matches!(w, Write::Params { target: 1, draw: 9, normal: None, .. })));
   assert!(writes.iter().any(|w| matches!(w, Write::Params { target: 2, draw: 8, normal: Some(_), .. })));
   // The count write fans out to every entry that is on.
-  let mut out = Recorder(Vec::new());
+  let mut out = Recorder::default();
   assert!(s.set_sink_count(m, 5, &mut out).expect("count"));
-  assert_eq!(out.0.len(), 2);
-  assert!(out.0.contains(&Write::Count { target: 1, draw: 9, count: 5 }));
-  assert!(out.0.contains(&Write::Count { target: 2, draw: 8, count: 5 }));
+  assert_eq!(out.writes.len(), 2);
+  assert!(out.writes.contains(&Write::Count { target: 1, draw: 9, count: 5 }));
+  assert!(out.writes.contains(&Write::Count { target: 2, draw: 8, count: 5 }));
   // Unbinding one target leaves the other; hiding then writes one count.
   s.unbind_sink(m, Some(1)).expect("unbind");
   flush(&mut s);
@@ -872,4 +897,31 @@ fn hidden_nodes_keep_their_palette_rows_fresh() {
   assert_eq!(writes.len(), 1, "{writes:?}");
   let (_, values) = palette(&writes[0]);
   assert_eq!(values[12], 4.0);
+}
+
+#[test]
+fn a_draw_sink_whose_write_does_not_land_is_released() {
+  let mut s = Spatial::new();
+  let a = s.create([1.0, 0.0, 0.0], Q, ONE, true);
+  s.bind_sink(a, sink(7)).expect("sink");
+  // Target 1 is gone: the first flush attempts one write, and stops there.
+  let writes = flush_dead(&mut s, &[1]);
+  assert_eq!(writes, vec![Write::Count { target: 1, draw: 7, count: 1 }]);
+  // Then the binding is gone with it: a move writes nothing more.
+  s.set_transform(a, [2.0, 0.0, 0.0], Q, ONE).expect("move");
+  assert!(flush_dead(&mut s, &[1]).is_empty(), "a released sink never writes again");
+  assert!(s.unbind_sink(a, Some(1)).is_ok(), "releasing is not an error for the consumer");
+}
+
+#[test]
+fn a_palette_whose_write_does_not_land_is_dropped() {
+  let mut s = Spatial::new();
+  let a = s.create([1.0, 0.0, 0.0], Q, ONE, true);
+  s.bind_texture_slot(a, TextureSlotSink { texture: 5, row: 0, post: IDENTITY }, None).expect("bind");
+  let writes = flush_dead(&mut s, &[5]);
+  assert_eq!(writes.len(), 1, "one attempt: {writes:?}");
+  assert!(matches!(writes[0], Write::Texture { texture: 5, .. }));
+  s.set_transform(a, [2.0, 0.0, 0.0], Q, ONE).expect("move");
+  assert!(flush_dead(&mut s, &[5]).is_empty(), "a dropped palette never writes again");
+  assert!(s.unbind_texture_slot(a, Some(5)).is_ok());
 }

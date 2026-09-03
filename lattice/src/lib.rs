@@ -728,11 +728,15 @@ fn ui_thread(
       let platform = platform.clone();
       let atx = atx.clone();
       // A reloaded app must not inherit (or leak) the previous app's open
-      // capture devices or playing sounds; their JS handles died with the old
-      // engine, so nothing else will ever stop them.
+      // capture devices, playing sounds or spatial nodes; their JS handles
+      // died with the old engine, so nothing else will ever stop them. The
+      // spatial core in particular: its GPU targets died with the engine,
+      // and a looping clip player left behind would animate into nothing at
+      // full frame rate, forever.
       atx.close_all_cameras();
       atx.close_all_microphones();
       atx.close_all_audio();
+      atx.reset_spatial();
       let input_state = input_state.clone();
 
       let draw_platform = platform.clone();
