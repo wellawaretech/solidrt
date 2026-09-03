@@ -1,7 +1,6 @@
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
-use std::sync::Arc;
 
 use rquickjs::module::{Declarations, Exports, ModuleDef};
 use rquickjs::promise::Promise;
@@ -9,9 +8,7 @@ use rquickjs::{Array, ArrayBuffer, Ctx, Exception, Function, JsLifetime, Object,
 
 use super::properties::{decode_params, decode_texture_bindings};
 use super::tree::to_prop_value;
-use super::AlloyContext;
 use crate::plugins::marshal::{array_buffer_over, OptArg};
-use alloy::rendertree::PlatformContext;
 use alloy::CaptureInfo;
 
 // Per-engine texture bookkeeping, held in context userdata so engine teardown
@@ -21,10 +18,9 @@ use alloy::CaptureInfo;
 struct TextureState(#[qjs(skip_trace)] Rc<TextureInner>);
 
 struct TextureInner {
-  atx: AlloyContext,
-  // Held so the bindings (which get only a Ctx) can request frames after an
-  // upload / shader-param change.
-  platform: Arc<PlatformContext>,
+  // The shared host handles: alloy for every resource call and the teardown
+  // release in Drop, platform for the frame request after a content write.
+  gui: Rc<super::Gui>,
   // Every texture id this engine created (immutable, mutable, and shader).
   // The alloy texture registry outlives the engine, so without this a reload
   // leaks the previous app's textures - the app rarely calls destroyTexture
@@ -69,26 +65,26 @@ impl Drop for TextureInner {
     // next app (or the launcher) rendering through it - the raster thread
     // holds the program by Rc, so even the program destroys below would not
     // stop the pass.
-    self.atx.set_window_shader(None).ok();
+    self.gui.alloy.set_window_shader(None).ok();
     // Then textures before buffers: destroying a pipeline before its buffer
     // is the documented order for destroy_gpu_buffer. Pipelines, programs and
     // stages are order-safe (targets keep their pipeline alive, pipelines
     // their program, programs their own compiled stage copies), released last
     // for symmetry.
     for id in self.created.borrow_mut().drain() {
-      self.atx.destroy_texture(id);
+      self.gui.alloy.destroy_texture(id);
     }
     for id in self.created_buffers.borrow_mut().drain() {
-      self.atx.destroy_gpu_buffer(id);
+      self.gui.alloy.destroy_gpu_buffer(id);
     }
     for id in self.created_pipelines.borrow_mut().drain() {
-      self.atx.destroy_render_pipeline(id);
+      self.gui.alloy.destroy_render_pipeline(id);
     }
     for id in self.created_programs.borrow_mut().drain() {
-      self.atx.destroy_shader_program(id);
+      self.gui.alloy.destroy_shader_program(id);
     }
     for id in self.created_stages.borrow_mut().drain() {
-      self.atx.destroy_shader_stage(id);
+      self.gui.alloy.destroy_shader_stage(id);
     }
   }
 }
@@ -748,11 +744,10 @@ fn reject_pipeline_keys(ctx: &Ctx<'_>, opts: &Option<Object<'_>>, api: &str) -> 
 /// Store the texture plugin state (alloy context, platform, and the created-id
 /// set for reload cleanup) in userdata, before any module import. The
 /// `flux:gpu` surface is registered separately via `module_override`.
-pub(crate) fn store_state(ctx: &Ctx<'_>, atx: AlloyContext, platform: Arc<PlatformContext>) {
+pub(crate) fn store_state(ctx: &Ctx<'_>) {
   ctx
     .store_userdata(TextureState(Rc::new(TextureInner {
-      atx,
-      platform,
+      gui: super::gui(ctx),
       created: RefCell::new(HashSet::new()),
       created_buffers: RefCell::new(HashSet::new()),
       open_buffer_writes: RefCell::new(HashMap::new()),
@@ -862,7 +857,7 @@ impl ModuleDef for GpuModule {
     // (module evaluate runs at import time, warming alloy's UI-side cache
     // before any app code validates against it). Exported as a plain object:
     // there is nothing to call, the values never change.
-    let limits = state(ctx).atx.gpu_limits();
+    let limits = state(ctx).gui.alloy.gpu_limits();
     let limits_obj = Object::new(ctx.clone())?;
     limits_obj.set("maxTextureSize", limits.max_texture_size)?;
     limits_obj.set("maxCubeMapSize", limits.max_cube_map_size)?;
@@ -896,7 +891,8 @@ fn create_texture(
   let label = collect_label(&opts.0)?;
   let st = state(&ctx);
   let id = st
-    .atx
+    .gui
+    .alloy
     .create_texture_from_pixels(width, height, pixels, sampler, format, label)
     .map_err(|e| throw_str(&ctx, &format!("createTexture: {e}")))?;
   st.created.borrow_mut().insert(id);
@@ -937,7 +933,8 @@ fn create_cube_texture(ctx: Ctx<'_>, faces: Array<'_>, size: u32, opts: OptArg<O
   let label = collect_label(&opts.0)?;
   let st = state(&ctx);
   let id = st
-    .atx
+    .gui
+    .alloy
     .create_cube_texture(size, pixels, sampler, format, label)
     .map_err(|e| throw_str(&ctx, &format!("createCubeTexture: {e}")))?;
   st.created.borrow_mut().insert(id);
@@ -970,7 +967,8 @@ fn create_mutable_texture(
   let pixels = &all[..frame_size];
   let st = state(&ctx);
   let id = st
-    .atx
+    .gui
+    .alloy
     .create_texture_from_pixels(width, height, pixels, sampler, format, label)
     .map_err(|e| throw_str(&ctx, &format!("createMutableTexture: {e}")))?;
   st.created.borrow_mut().insert(id);
@@ -982,14 +980,15 @@ fn create_mutable_texture(
 // `offset` selects the one to upload. Reading the buffer is zero-copy.
 fn upload_texture(ctx: Ctx<'_>, id: u64, data: Value<'_>, offset: OptArg<usize>) -> rquickjs::Result<()> {
   let st = state(&ctx);
-  let format = st.atx.texture_format(id).map_err(|e| throw_str(&ctx, &format!("uploadTexture: {e}")))?;
+  let format = st.gui.alloy.texture_format(id).map_err(|e| throw_str(&ctx, &format!("uploadTexture: {e}")))?;
   let data = PixelData::collect(&ctx, data, format, "uploadTexture")?;
   let pixels = data.bytes(&ctx, "uploadTexture")?;
-  st.atx
+  st.gui
+    .alloy
     .update_texture(id, pixels, offset.0.unwrap_or(0))
     .map_err(|e| throw_str(&ctx, &format!("uploadTexture: {e}")))?;
   // New texture content changes the screen without any tree mutation.
-  st.platform.request_frame();
+  st.gui.platform.request_frame();
   Ok(())
 }
 
@@ -1000,12 +999,15 @@ fn upload_texture(ctx: Ctx<'_>, id: u64, data: Value<'_>, offset: OptArg<usize>)
 // id (render targets are rejected there; those resize via setTargetSize).
 fn resize_texture(ctx: Ctx<'_>, id: u64, data: Value<'_>, width: u32, height: u32) -> rquickjs::Result<()> {
   let st = state(&ctx);
-  let format = st.atx.texture_format(id).map_err(|e| throw_str(&ctx, &format!("resizeTexture: {e}")))?;
+  let format = st.gui.alloy.texture_format(id).map_err(|e| throw_str(&ctx, &format!("resizeTexture: {e}")))?;
   let data = PixelData::collect(&ctx, data, format, "resizeTexture")?;
   let pixels = data.bytes(&ctx, "resizeTexture")?;
-  st.atx.resize_texture(id, width, height, pixels).map_err(|e| throw_str(&ctx, &format!("resizeTexture: {e}")))?;
+  st.gui
+    .alloy
+    .resize_texture(id, width, height, pixels)
+    .map_err(|e| throw_str(&ctx, &format!("resizeTexture: {e}")))?;
   // The replacement changes the screen without any tree mutation.
-  st.platform.request_frame();
+  st.gui.platform.request_frame();
   Ok(())
 }
 
@@ -1032,7 +1034,8 @@ fn create_shader_texture(
   let label = collect_label(&opts.0)?;
   let st = state(&ctx);
   let id = st
-    .atx
+    .gui
+    .alloy
     .create_shader_texture(width, height, &fragment_src, &params, &textures, sampler, label)
     .map_err(|e| throw_str(&ctx, &format!("createShaderTexture: {e}")))?;
   st.created.borrow_mut().insert(id);
@@ -1056,7 +1059,8 @@ fn create_pipeline_texture(
   let (target, entry) = collect_target_spec(&ctx, &params, &opts.0, width, height, "createPipelineTexture")?;
   let st = state(&ctx);
   let id = st
-    .atx
+    .gui
+    .alloy
     .create_pipeline_texture(alloy::PipelineSpec { vertex_src, fragment_src, pipeline, target, entry })
     .map_err(|e| throw_str(&ctx, &format!("createPipelineTexture: {e}")))?;
   st.created.borrow_mut().insert(id);
@@ -1071,7 +1075,8 @@ fn create_render_pipeline(ctx: Ctx<'_>, program: u64, opts: OptArg<Object<'_>>) 
   let label = collect_label(&opts.0)?;
   let st = state(&ctx);
   let id = st
-    .atx
+    .gui
+    .alloy
     .create_render_pipeline(program, desc, label)
     .map_err(|e| throw_str(&ctx, &format!("createRenderPipeline: {e}")))?;
   st.created_pipelines.borrow_mut().insert(id);
@@ -1081,7 +1086,7 @@ fn create_render_pipeline(ctx: Ctx<'_>, program: u64, opts: OptArg<Object<'_>>) 
 fn destroy_render_pipeline(ctx: Ctx<'_>, id: u64) {
   let st = state(&ctx);
   st.created_pipelines.borrow_mut().remove(&id);
-  st.atx.destroy_render_pipeline(id);
+  st.gui.alloy.destroy_render_pipeline(id);
 }
 
 // Raw stage compile: complete GLSL ES by default, the standard header on
@@ -1094,8 +1099,11 @@ fn compile_shader(ctx: Ctx<'_>, stage: String, source: String, opts: OptArg<Obje
     None => false,
   };
   let st = state(&ctx);
-  let id =
-    st.atx.compile_shader_stage(stage, &source, header).map_err(|e| throw_str(&ctx, &format!("compileShader: {e}")))?;
+  let id = st
+    .gui
+    .alloy
+    .compile_shader_stage(stage, &source, header)
+    .map_err(|e| throw_str(&ctx, &format!("compileShader: {e}")))?;
   st.created_stages.borrow_mut().insert(id);
   Ok(id)
 }
@@ -1105,8 +1113,11 @@ fn compile_shader(ctx: Ctx<'_>, stage: String, source: String, opts: OptArg<Obje
 fn link_program(ctx: Ctx<'_>, vertex: u64, fragment: u64, opts: OptArg<Object<'_>>) -> rquickjs::Result<u64> {
   let label = collect_label(&opts.0)?;
   let st = state(&ctx);
-  let id =
-    st.atx.link_shader_program(vertex, fragment, label).map_err(|e| throw_str(&ctx, &format!("linkProgram: {e}")))?;
+  let id = st
+    .gui
+    .alloy
+    .link_shader_program(vertex, fragment, label)
+    .map_err(|e| throw_str(&ctx, &format!("linkProgram: {e}")))?;
   st.created_programs.borrow_mut().insert(id);
   Ok(id)
 }
@@ -1114,7 +1125,7 @@ fn link_program(ctx: Ctx<'_>, vertex: u64, fragment: u64, opts: OptArg<Object<'_
 fn destroy_shader(ctx: Ctx<'_>, id: u64) {
   let st = state(&ctx);
   st.created_stages.borrow_mut().remove(&id);
-  st.atx.destroy_shader_stage(id);
+  st.gui.alloy.destroy_shader_stage(id);
 }
 
 // createShaderTarget(pipeline, width, height, params?, opts?) -> texture
@@ -1132,7 +1143,8 @@ fn create_shader_target(
   let (spec, entry) = collect_target_spec(&ctx, &params, &opts.0, width, height, "createShaderTarget")?;
   let st = state(&ctx);
   let id = st
-    .atx
+    .gui
+    .alloy
     .create_shader_target(pipeline, spec, entry)
     .map_err(|e| throw_str(&ctx, &format!("createShaderTarget: {e}")))?;
   st.created.borrow_mut().insert(id);
@@ -1145,7 +1157,7 @@ fn create_shader_target(
 // from the UI-side mirror, no raster round trip.
 fn program_attributes<'js>(ctx: Ctx<'js>, id: u64) -> rquickjs::Result<Array<'js>> {
   let table =
-    state(&ctx).atx.program_attributes(id).map_err(|e| throw_str(&ctx, &format!("programAttributes: {e}")))?;
+    state(&ctx).gui.alloy.program_attributes(id).map_err(|e| throw_str(&ctx, &format!("programAttributes: {e}")))?;
   let arr = Array::new(ctx.clone())?;
   for (i, (name, format)) in table.iter().enumerate() {
     let obj = Object::new(ctx.clone())?;
@@ -1159,7 +1171,7 @@ fn program_attributes<'js>(ctx: Ctx<'js>, id: u64) -> rquickjs::Result<Array<'js
 fn destroy_program(ctx: Ctx<'_>, id: u64) {
   let st = state(&ctx);
   st.created_programs.borrow_mut().remove(&id);
-  st.atx.destroy_shader_program(id);
+  st.gui.alloy.destroy_shader_program(id);
 }
 
 // createBuffer(data | byteLength): bytes seed the buffer; a number makes
@@ -1172,13 +1184,16 @@ fn create_buffer(ctx: Ctx<'_>, data: Value<'_>, opts: OptArg<Object<'_>>) -> rqu
     if !(n.is_finite() && n >= 0.0 && n.fract() == 0.0) {
       return Err(throw_str(&ctx, &format!("createBuffer: byteLength must be a non-negative integer, got {n}")));
     }
-    st.atx.create_gpu_buffer_zeroed(n as usize, label).map_err(|e| throw_str(&ctx, &format!("createBuffer: {e}")))?
+    st.gui
+      .alloy
+      .create_gpu_buffer_zeroed(n as usize, label)
+      .map_err(|e| throw_str(&ctx, &format!("createBuffer: {e}")))?
   } else {
     let data = TypedArray::<u8>::from_value(data)
       .map_err(|_| throw_str(&ctx, "createBuffer: expected a Uint8Array or a byteLength number"))?;
     let raw = data.as_raw().ok_or_else(|| throw_str(&ctx, "createBuffer: detached buffer"))?;
     let bytes = unsafe { std::slice::from_raw_parts(raw.ptr.as_ptr(), raw.len) };
-    st.atx.create_gpu_buffer(bytes, label).map_err(|e| throw_str(&ctx, &format!("createBuffer: {e}")))?
+    st.gui.alloy.create_gpu_buffer(bytes, label).map_err(|e| throw_str(&ctx, &format!("createBuffer: {e}")))?
   };
   st.created_buffers.borrow_mut().insert(id);
   Ok(id)
@@ -1197,13 +1212,14 @@ fn begin_buffer_write<'js>(ctx: Ctx<'js>, id: u64) -> rquickjs::Result<ArrayBuff
   if st.open_buffer_writes.borrow().contains_key(&id) {
     return Err(throw_str(&ctx, &format!("beginBufferWrite: buffer {id} already has an open write")));
   }
-  let (ptr, len) = st.atx.begin_buffer_write(id).map_err(|e| throw_str(&ctx, &format!("beginBufferWrite: {e}")))?;
+  let (ptr, len) =
+    st.gui.alloy.begin_buffer_write(id).map_err(|e| throw_str(&ctx, &format!("beginBufferWrite: {e}")))?;
   let view = match array_buffer_over(&ctx, ptr, len) {
     Ok(view) => view,
     Err(e) => {
       // The lease is open in alloy but no JS view exists: cancel it so the
       // id is not wedged.
-      st.atx.end_buffer_write(id, 0).ok();
+      st.gui.alloy.end_buffer_write(id, 0).ok();
       return Err(e);
     }
   };
@@ -1225,10 +1241,10 @@ fn end_buffer_write(ctx: Ctx<'_>, id: u64, byte_length: OptArg<usize>) -> rquick
     view.detach();
   }
   let len = byte_length.0.unwrap_or(lease.size);
-  st.atx.end_buffer_write(id, len).map_err(|e| throw_str(&ctx, &format!("endBufferWrite: {e}")))?;
+  st.gui.alloy.end_buffer_write(id, len).map_err(|e| throw_str(&ctx, &format!("endBufferWrite: {e}")))?;
   if len > 0 {
     // New buffer contents change the screen without any tree mutation.
-    st.platform.request_frame();
+    st.gui.platform.request_frame();
   }
   Ok(())
 }
@@ -1239,10 +1255,11 @@ fn write_buffer(ctx: Ctx<'_>, id: u64, data: TypedArray<'_, u8>, offset: OptArg<
   let raw = data.as_raw().ok_or_else(|| throw_str(&ctx, "writeBuffer: detached buffer"))?;
   let bytes = unsafe { std::slice::from_raw_parts(raw.ptr.as_ptr(), raw.len) };
   let st = state(&ctx);
-  st.atx
+  st.gui
+    .alloy
     .write_gpu_buffer(id, bytes, offset.0.unwrap_or(0))
     .map_err(|e| throw_str(&ctx, &format!("writeBuffer: {e}")))?;
-  st.platform.request_frame();
+  st.gui.platform.request_frame();
   Ok(())
 }
 
@@ -1256,7 +1273,7 @@ fn destroy_buffer(ctx: Ctx<'_>, id: u64) {
     }
   }
   st.created_buffers.borrow_mut().remove(&id);
-  st.atx.destroy_gpu_buffer(id);
+  st.gui.alloy.destroy_gpu_buffer(id);
 }
 
 // Partial draw-entry update: keys present overwrite, absent keys keep
@@ -1270,8 +1287,8 @@ fn destroy_buffer(ctx: Ctx<'_>, id: u64) {
 fn set_draw(ctx: Ctx<'_>, id: u64, draw: Object<'_>) -> rquickjs::Result<()> {
   let update = collect_draw_update(&ctx, &draw, "setDraw")?;
   let st = state(&ctx);
-  st.atx.set_draw(id, update).map_err(|e| throw_str(&ctx, &format!("setDraw: {e}")))?;
-  st.platform.request_frame();
+  st.gui.alloy.set_draw(id, update).map_err(|e| throw_str(&ctx, &format!("setDraw: {e}")))?;
+  st.gui.platform.request_frame();
   Ok(())
 }
 
@@ -1297,15 +1314,15 @@ fn create_draw_target(
   };
   let st = state(&ctx);
   let id = match into {
-    Some((parent, x, y)) => st.atx.create_sub_target(parent, x, y, spec),
-    None => st.atx.create_draw_target(spec, depth),
+    Some((parent, x, y)) => st.gui.alloy.create_sub_target(parent, x, y, spec),
+    None => st.gui.alloy.create_draw_target(spec, depth),
   }
   .map_err(|e| throw_str(&ctx, &format!("createDrawTarget: {e}")))?;
   if !params.is_empty() {
-    st.atx.set_target_params(id, &params).map_err(|e| throw_str(&ctx, &format!("createDrawTarget: {e}")))?;
+    st.gui.alloy.set_target_params(id, &params).map_err(|e| throw_str(&ctx, &format!("createDrawTarget: {e}")))?;
   }
   if !textures.is_empty() {
-    st.atx.set_target_textures(id, &textures).map_err(|e| throw_str(&ctx, &format!("createDrawTarget: {e}")))?;
+    st.gui.alloy.set_target_textures(id, &textures).map_err(|e| throw_str(&ctx, &format!("createDrawTarget: {e}")))?;
   }
   st.created.borrow_mut().insert(id);
   Ok(id)
@@ -1315,7 +1332,7 @@ fn create_draw_target(
 // created with depth: "texture" - a sampler-only id (bind it anywhere a
 // texture binds; it dies with its target, destroyTexture on it throws).
 fn depth_texture(ctx: Ctx<'_>, target: u64) -> rquickjs::Result<u64> {
-  state(&ctx).atx.depth_texture(target).map_err(|e| throw_str(&ctx, &format!("depthTexture: {e}")))
+  state(&ctx).gui.alloy.depth_texture(target).map_err(|e| throw_str(&ctx, &format!("depthTexture: {e}")))
 }
 
 // addDraw(target, pipeline, params?, opts?) -> draw id: add a draw
@@ -1337,8 +1354,8 @@ fn add_draw(
     None => None,
   };
   let st = state(&ctx);
-  let id = st.atx.add_draw(target, entry, before).map_err(|e| throw_str(&ctx, &format!("addDraw: {e}")))?;
-  st.platform.request_frame();
+  let id = st.gui.alloy.add_draw(target, entry, before).map_err(|e| throw_str(&ctx, &format!("addDraw: {e}")))?;
+  st.gui.platform.request_frame();
   Ok(id)
 }
 
@@ -1346,15 +1363,15 @@ fn add_draw(
 // the current entry ids - the sorting verb.
 fn set_draw_order(ctx: Ctx<'_>, target: u64, order: Vec<u64>) -> rquickjs::Result<()> {
   let st = state(&ctx);
-  st.atx.set_draw_order(target, &order).map_err(|e| throw_str(&ctx, &format!("setDrawOrder: {e}")))?;
-  st.platform.request_frame();
+  st.gui.alloy.set_draw_order(target, &order).map_err(|e| throw_str(&ctx, &format!("setDrawOrder: {e}")))?;
+  st.gui.platform.request_frame();
   Ok(())
 }
 
 fn remove_draw(ctx: Ctx<'_>, target: u64, draw: u64) -> rquickjs::Result<()> {
   let st = state(&ctx);
-  st.atx.remove_draw(target, draw).map_err(|e| throw_str(&ctx, &format!("removeDraw: {e}")))?;
-  st.platform.request_frame();
+  st.gui.alloy.remove_draw(target, draw).map_err(|e| throw_str(&ctx, &format!("removeDraw: {e}")))?;
+  st.gui.platform.request_frame();
   Ok(())
 }
 
@@ -1362,8 +1379,8 @@ fn remove_draw(ctx: Ctx<'_>, target: u64, draw: u64) -> rquickjs::Result<()> {
 fn set_draw_params(ctx: Ctx<'_>, target: u64, draw: u64, params: Object<'_>) -> rquickjs::Result<()> {
   let params = collect_params(&ctx, &params, "setDrawParams")?;
   let st = state(&ctx);
-  st.atx.set_draw_params(target, draw, &params).map_err(|e| throw_str(&ctx, &format!("setDrawParams: {e}")))?;
-  st.platform.request_frame();
+  st.gui.alloy.set_draw_params(target, draw, &params).map_err(|e| throw_str(&ctx, &format!("setDrawParams: {e}")))?;
+  st.gui.platform.request_frame();
   Ok(())
 }
 
@@ -1379,8 +1396,8 @@ fn set_draw_params(ctx: Ctx<'_>, target: u64, draw: u64, params: Object<'_>) -> 
 fn set_target_params(ctx: Ctx<'_>, target: u64, params: Object<'_>) -> rquickjs::Result<()> {
   let params = collect_params(&ctx, &params, "setTargetParams")?;
   let st = state(&ctx);
-  st.atx.set_target_params(target, &params).map_err(|e| throw_str(&ctx, &format!("setTargetParams: {e}")))?;
-  st.platform.request_frame();
+  st.gui.alloy.set_target_params(target, &params).map_err(|e| throw_str(&ctx, &format!("setTargetParams: {e}")))?;
+  st.gui.platform.request_frame();
   Ok(())
 }
 
@@ -1393,8 +1410,11 @@ fn set_target_params(ctx: Ctx<'_>, target: u64, params: Object<'_>) -> rquickjs:
 fn set_target_textures(ctx: Ctx<'_>, target: u64, textures: Object<'_>) -> rquickjs::Result<()> {
   let textures = collect_textures(&ctx, &textures, "setTargetTextures")?;
   let st = state(&ctx);
-  st.atx.set_target_textures(target, &textures).map_err(|e| throw_str(&ctx, &format!("setTargetTextures: {e}")))?;
-  st.platform.request_frame();
+  st.gui
+    .alloy
+    .set_target_textures(target, &textures)
+    .map_err(|e| throw_str(&ctx, &format!("setTargetTextures: {e}")))?;
+  st.gui.platform.request_frame();
   Ok(())
 }
 
@@ -1403,9 +1423,9 @@ fn set_target_textures(ctx: Ctx<'_>, target: u64, textures: Object<'_>) -> rquic
 // and the output re-renders at the new size.
 fn set_target_size(ctx: Ctx<'_>, id: u64, width: u32, height: u32) -> rquickjs::Result<()> {
   let st = state(&ctx);
-  st.atx.resize_target(id, width, height).map_err(|e| throw_str(&ctx, &format!("setTargetSize: {e}")))?;
+  st.gui.alloy.resize_target(id, width, height).map_err(|e| throw_str(&ctx, &format!("setTargetSize: {e}")))?;
   // New target output changes the screen without any tree mutation.
-  st.platform.request_frame();
+  st.gui.platform.request_frame();
   Ok(())
 }
 
@@ -1424,10 +1444,11 @@ fn set_target_rect(ctx: Ctx<'_>, id: u64, rect: Object<'_>) -> rquickjs::Result<
     return Err(throw_str(&ctx, "setTargetRect: width and height must be at least 1"));
   }
   let st = state(&ctx);
-  st.atx
+  st.gui
+    .alloy
     .set_target_rect(id, x as i32, y as i32, width as u32, height as u32)
     .map_err(|e| throw_str(&ctx, &format!("setTargetRect: {e}")))?;
-  st.platform.request_frame();
+  st.gui.platform.request_frame();
   Ok(())
 }
 
@@ -1435,8 +1456,11 @@ fn set_target_rect(ctx: Ctx<'_>, id: u64, rect: Object<'_>) -> rquickjs::Result<
 fn set_draw_textures(ctx: Ctx<'_>, target: u64, draw: u64, textures: Object<'_>) -> rquickjs::Result<()> {
   let textures = collect_textures(&ctx, &textures, "setDrawTextures")?;
   let st = state(&ctx);
-  st.atx.set_draw_textures(target, draw, &textures).map_err(|e| throw_str(&ctx, &format!("setDrawTextures: {e}")))?;
-  st.platform.request_frame();
+  st.gui
+    .alloy
+    .set_draw_textures(target, draw, &textures)
+    .map_err(|e| throw_str(&ctx, &format!("setDrawTextures: {e}")))?;
+  st.gui.platform.request_frame();
   Ok(())
 }
 
@@ -1445,8 +1469,8 @@ fn set_draw_textures(ctx: Ctx<'_>, target: u64, draw: u64, textures: Object<'_>)
 fn set_draw_range(ctx: Ctx<'_>, target: u64, draw: u64, update: Object<'_>) -> rquickjs::Result<()> {
   let update = collect_draw_update(&ctx, &update, "setDrawRange")?;
   let st = state(&ctx);
-  st.atx.set_draw_range(target, draw, update).map_err(|e| throw_str(&ctx, &format!("setDrawRange: {e}")))?;
-  st.platform.request_frame();
+  st.gui.alloy.set_draw_range(target, draw, update).map_err(|e| throw_str(&ctx, &format!("setDrawRange: {e}")))?;
+  st.gui.platform.request_frame();
   Ok(())
 }
 
@@ -1458,8 +1482,8 @@ fn set_draw_buffers(ctx: Ctx<'_>, target: u64, draw: u64, update: Object<'_>) ->
   let buffers = collect_buffer_update(&ctx, &update, "setDrawBuffers")?;
   let update = alloy::DrawUpdate { buffers, ..Default::default() };
   let st = state(&ctx);
-  st.atx.set_draw_range(target, draw, update).map_err(|e| throw_str(&ctx, &format!("setDrawBuffers: {e}")))?;
-  st.platform.request_frame();
+  st.gui.alloy.set_draw_range(target, draw, update).map_err(|e| throw_str(&ctx, &format!("setDrawBuffers: {e}")))?;
+  st.gui.platform.request_frame();
   Ok(())
 }
 
@@ -1467,9 +1491,9 @@ fn set_draw_buffers(ctx: Ctx<'_>, target: u64, draw: u64, update: Object<'_>) ->
 // validates the mode and queues the pass in call order.
 fn render_target(ctx: Ctx<'_>, id: u64) -> rquickjs::Result<()> {
   let st = state(&ctx);
-  st.atx.render_target(id).map_err(|e| throw_str(&ctx, &format!("renderTarget: {e}")))?;
+  st.gui.alloy.render_target(id).map_err(|e| throw_str(&ctx, &format!("renderTarget: {e}")))?;
   // New target output changes the screen without any tree mutation.
-  st.platform.request_frame();
+  st.gui.platform.request_frame();
   Ok(())
 }
 
@@ -1477,9 +1501,9 @@ fn render_target(ctx: Ctx<'_>, id: u64) -> rquickjs::Result<()> {
 // ids, sizes, and the mode, and queues the copy in call order.
 fn copy_texture(ctx: Ctx<'_>, src: u64, dst: u64) -> rquickjs::Result<()> {
   let st = state(&ctx);
-  st.atx.copy_texture(src, dst).map_err(|e| throw_str(&ctx, &format!("copyTexture: {e}")))?;
+  st.gui.alloy.copy_texture(src, dst).map_err(|e| throw_str(&ctx, &format!("copyTexture: {e}")))?;
   // New target output changes the screen without any tree mutation.
-  st.platform.request_frame();
+  st.gui.platform.request_frame();
   Ok(())
 }
 
@@ -1487,7 +1511,7 @@ fn destroy_texture(ctx: Ctx<'_>, id: u64) -> rquickjs::Result<()> {
   let st = state(&ctx);
   // A runtime-owned id (snapshot boundary, camera, video) is released by
   // its owner: the boundary's unmount, the session's close.
-  if st.atx.is_borrowed(id) {
+  if st.gui.alloy.is_borrowed(id) {
     return Err(rquickjs::Exception::throw_message(
       &ctx,
       &format!(
@@ -1496,18 +1520,18 @@ fn destroy_texture(ctx: Ctx<'_>, id: u64) -> rquickjs::Result<()> {
     ));
   }
   // A depth texture id is the target's storage, reclaimed with it.
-  if let Some(owner) = st.atx.depth_owner(id) {
+  if let Some(owner) = st.gui.alloy.depth_owner(id) {
     return Err(throw_str(
       &ctx,
       &format!("destroyTexture: texture {id} is the depth texture of target {owner} and dies with it"),
     ));
   }
   st.created.borrow_mut().remove(&id);
-  st.atx.destroy_texture(id);
+  st.gui.alloy.destroy_texture(id);
   // Destruction is deferred to the paint loop's reclamation sweep, which
   // only runs when a frame is produced - request one so a destroy on an
   // otherwise idle app is not stranded.
-  st.platform.request_frame();
+  st.gui.platform.request_frame();
   Ok(())
 }
 
@@ -1524,14 +1548,14 @@ fn capture_snapshot<'js>(ctx: Ctx<'js>, node_id: u64) -> rquickjs::Result<Promis
   // owns the callback until the capture is serviced, keeping the state alive
   // while the request is in flight (no cycle: alloy is not owned by the state).
   let inner = st.clone();
-  st.atx.request_capture(
+  st.gui.alloy.request_capture(
     node_id,
     Box::new(move |result| {
       inner.capture_settle.borrow_mut().push(CaptureSettle { result, resolve, reject });
     }),
   );
   // The capture is serviced during a paint; make sure one happens.
-  st.platform.request_frame();
+  st.gui.platform.request_frame();
   Ok(promise)
 }
 
@@ -1541,7 +1565,7 @@ fn capture_snapshot<'js>(ctx: Ctx<'js>, node_id: u64) -> rquickjs::Result<Promis
 /// nothing to wait for.
 fn read_texture<'js>(ctx: Ctx<'js>, id: u64) -> rquickjs::Result<Object<'js>> {
   let (width, height, pixels) =
-    state(&ctx).atx.read_texture_by_id(id).map_err(|e| throw_str(&ctx, &format!("readTexture: {e}")))?;
+    state(&ctx).gui.alloy.read_texture_by_id(id).map_err(|e| throw_str(&ctx, &format!("readTexture: {e}")))?;
   let obj = Object::new(ctx.clone())?;
   obj.set("width", width)?;
   obj.set("height", height)?;
@@ -1559,10 +1583,10 @@ fn reject_with(ctx: &Ctx<'_>, reject: Persistent<Function<'static>>, msg: &str) 
   }
 }
 
-/// Per-frame hook, called alongside `camera::tick` / `raf::flush`. Drains the
-/// capture outcomes the completion callbacks enqueued during the last paint and
-/// settles each promise, tracking the new texture id for reload cleanup.
-pub fn tick(ctx: &Ctx<'_>) {
+/// Per-frame hook (see `frame::advance`). Drains the capture outcomes the
+/// completion callbacks enqueued during the last paint and settles each
+/// promise, tracking the new texture id for reload cleanup.
+pub(crate) fn tick(ctx: &Ctx<'_>) {
   let Some(state) = ctx.userdata::<TextureState>() else {
     return;
   };

@@ -4,17 +4,13 @@
 //! scale xyz) so a hot-path write is one argument, and node ids are plain
 //! numbers (generation-tagged, never reused).
 
-use std::rc::Rc;
-use std::sync::Arc;
 
 use rquickjs::module::{Declarations, Exports, ModuleDef};
-use rquickjs::{Array, Ctx, Function, JsLifetime, Object, TypedArray, Value};
+use rquickjs::{Array, Ctx, Function, Object, TypedArray, Value};
 
-use super::AlloyContext;
 use crate::alloy_plugins::properties::transition::decode_spec;
 use crate::alloy_plugins::value::PropValue;
 use crate::plugins::marshal::OptArg;
-use alloy::rendertree::PlatformContext;
 use alloy::spatial::{
   ChannelInterpolation, ChannelPath, ClipChannel, ClipEvent, Component, DrawSink, InstanceProjection,
   InstanceRecordSink, NodeTransitionConfig, PlayerUpdate, Projection, Shape, SharedSlotSink, TextureSlotSink,
@@ -24,21 +20,8 @@ fn throw_str(ctx: &Ctx<'_>, msg: &str) -> rquickjs::Error {
   rquickjs::Exception::throw_message(ctx, msg)
 }
 
-struct SpatialInner {
-  atx: AlloyContext,
-  platform: Arc<PlatformContext>,
-}
-
-#[derive(Clone, JsLifetime)]
-struct SpatialState(#[qjs(skip_trace)] Rc<SpatialInner>);
-
-pub(crate) fn store_state(ctx: &Ctx<'_>, atx: AlloyContext, platform: Arc<PlatformContext>) {
-  ctx.store_userdata(SpatialState(Rc::new(SpatialInner { atx, platform }))).expect("store spatial state");
-}
-
-fn state(ctx: &Ctx<'_>) -> Rc<SpatialInner> {
-  ctx.userdata::<SpatialState>().expect("spatial state userdata").0.clone()
-}
+// The spatial bindings keep no state of their own: every call forwards to
+// the arena in the shared alloy context (`super::gui`).
 
 /// The 10 floats of a transform argument: position, quaternion, scale.
 fn transform(ctx: &Ctx<'_>, data: &TypedArray<'_, f32>, api: &str) -> rquickjs::Result<([f32; 3], [f32; 4], [f32; 3])> {
@@ -133,20 +116,24 @@ impl ModuleDef for SpatialModule {
 
 fn create_node(ctx: Ctx<'_>, data: TypedArray<'_, f32>, visible: bool) -> rquickjs::Result<u64> {
   let (p, q, s) = transform(&ctx, &data, "createNode")?;
-  Ok(state(&ctx).atx.spatial().create(p, q, s, visible))
+  Ok(super::gui(&ctx).alloy.spatial().create(p, q, s, visible))
 }
 
 fn destroy_node(ctx: Ctx<'_>, id: u64) -> rquickjs::Result<()> {
-  state(&ctx).atx.spatial().destroy(id).map_err(|e| throw_str(&ctx, &format!("destroyNode: {e}")))
+  super::gui(&ctx).alloy.spatial().destroy(id).map_err(|e| throw_str(&ctx, &format!("destroyNode: {e}")))
 }
 
 fn set_parent(ctx: Ctx<'_>, id: u64, parent: OptArg<u64>) -> rquickjs::Result<()> {
-  state(&ctx).atx.spatial().set_parent(id, parent.0).map_err(|e| throw_str(&ctx, &format!("setParent: {e}")))
+  super::gui(&ctx).alloy.spatial().set_parent(id, parent.0).map_err(|e| throw_str(&ctx, &format!("setParent: {e}")))
 }
 
 fn set_transform(ctx: Ctx<'_>, id: u64, data: TypedArray<'_, f32>) -> rquickjs::Result<()> {
   let (p, q, s) = transform(&ctx, &data, "setTransform")?;
-  state(&ctx).atx.spatial().set_transform(id, p, q, s).map_err(|e| throw_str(&ctx, &format!("setTransform: {e}")))
+  super::gui(&ctx)
+    .alloy
+    .spatial()
+    .set_transform(id, p, q, s)
+    .map_err(|e| throw_str(&ctx, &format!("setTransform: {e}")))
 }
 
 /// The node transition declaration: an object keyed by transform component
@@ -189,7 +176,11 @@ fn set_transition<'js>(ctx: Ctx<'js>, id: u64, value: Value<'js>) -> rquickjs::R
     let pv = super::tree::to_prop_value(&value)?;
     Some(decode_node_transition(&pv).map_err(|e| throw_str(&ctx, &format!("setTransition: {e}")))?)
   };
-  state(&ctx).atx.spatial().set_node_transition(id, config).map_err(|e| throw_str(&ctx, &format!("setTransition: {e}")))
+  super::gui(&ctx)
+    .alloy
+    .spatial()
+    .set_node_transition(id, config)
+    .map_err(|e| throw_str(&ctx, &format!("setTransition: {e}")))
 }
 
 /// Replace the local transform through the transition declaration: declared
@@ -198,9 +189,9 @@ fn set_transition<'js>(ctx: Ctx<'js>, id: u64, value: Value<'js>) -> rquickjs::R
 /// track (or a snap that moved the node) requests a frame.
 fn write_transform(ctx: Ctx<'_>, id: u64, data: TypedArray<'_, f32>) -> rquickjs::Result<()> {
   let (p, q, s) = transform(&ctx, &data, "writeTransform")?;
-  let st = state(&ctx);
+  let st = super::gui(&ctx);
   let changed =
-    st.atx.spatial().write_transform(id, p, q, s).map_err(|e| throw_str(&ctx, &format!("writeTransform: {e}")))?;
+    st.alloy.spatial().write_transform(id, p, q, s).map_err(|e| throw_str(&ctx, &format!("writeTransform: {e}")))?;
   if changed {
     st.platform.request_frame();
   }
@@ -208,24 +199,24 @@ fn write_transform(ctx: Ctx<'_>, id: u64, data: TypedArray<'_, f32>) -> rquickjs
 }
 
 fn set_visible(ctx: Ctx<'_>, id: u64, visible: bool) -> rquickjs::Result<()> {
-  state(&ctx).atx.spatial().set_visible(id, visible).map_err(|e| throw_str(&ctx, &format!("setVisible: {e}")))
+  super::gui(&ctx).alloy.spatial().set_visible(id, visible).map_err(|e| throw_str(&ctx, &format!("setVisible: {e}")))
 }
 
 fn bind_draw(ctx: Ctx<'_>, id: u64, target: u64, draw: u64, normal: bool, count: u32) -> rquickjs::Result<()> {
-  state(&ctx)
-    .atx
+  super::gui(&ctx)
+    .alloy
     .spatial_bind(id, DrawSink { target, draw, normal, count })
     .map_err(|e| throw_str(&ctx, &format!("bindDraw: {e}")))
 }
 
 /// Remove the node's draw sink on `target`, or every draw sink without one.
 fn unbind_draw(ctx: Ctx<'_>, id: u64, target: OptArg<u64>) -> rquickjs::Result<()> {
-  state(&ctx).atx.spatial_unbind(id, target.0).map_err(|e| throw_str(&ctx, &format!("unbindDraw: {e}")))
+  super::gui(&ctx).alloy.spatial_unbind(id, target.0).map_err(|e| throw_str(&ctx, &format!("unbindDraw: {e}")))
 }
 
 fn set_draw_count(ctx: Ctx<'_>, id: u64, count: u32) -> rquickjs::Result<()> {
-  let st = state(&ctx);
-  let wrote = st.atx.spatial_set_count(id, count).map_err(|e| throw_str(&ctx, &format!("setDrawCount: {e}")))?;
+  let st = super::gui(&ctx);
+  let wrote = st.alloy.spatial_set_count(id, count).map_err(|e| throw_str(&ctx, &format!("setDrawCount: {e}")))?;
   if wrote {
     st.platform.request_frame();
   }
@@ -234,7 +225,7 @@ fn set_draw_count(ctx: Ctx<'_>, id: u64, count: u32) -> rquickjs::Result<()> {
 
 /// Fill `out` (a Float32Array of 16) with the node's current world matrix.
 fn world_matrix(ctx: Ctx<'_>, id: u64, out: TypedArray<'_, f32>) -> rquickjs::Result<()> {
-  let world = state(&ctx).atx.spatial().world(id).map_err(|e| throw_str(&ctx, &format!("worldMatrix: {e}")))?;
+  let world = super::gui(&ctx).alloy.spatial().world(id).map_err(|e| throw_str(&ctx, &format!("worldMatrix: {e}")))?;
   let raw = out.as_raw().ok_or_else(|| throw_str(&ctx, "worldMatrix: detached buffer"))?;
   if raw.len != 16 * 4 {
     return Err(throw_str(&ctx, "worldMatrix: out must be a Float32Array of 16"));
@@ -245,12 +236,12 @@ fn world_matrix(ctx: Ctx<'_>, id: u64, out: TypedArray<'_, f32>) -> rquickjs::Re
 }
 
 fn shown(ctx: Ctx<'_>, id: u64) -> rquickjs::Result<bool> {
-  state(&ctx).atx.spatial().shown(id).map_err(|e| throw_str(&ctx, &format!("shown: {e}")))
+  super::gui(&ctx).alloy.spatial().shown(id).map_err(|e| throw_str(&ctx, &format!("shown: {e}")))
 }
 
 fn flush(ctx: Ctx<'_>) -> rquickjs::Result<()> {
-  let st = state(&ctx);
-  if st.atx.spatial_flush() {
+  let st = super::gui(&ctx);
+  if st.alloy.spatial_flush() {
     st.platform.request_frame();
   }
   Ok(())
@@ -275,7 +266,7 @@ fn set_bounds(ctx: Ctx<'_>, id: u64, bounds: OptArg<TypedArray<'_, f32>>) -> rqu
     }
     None => None,
   };
-  state(&ctx).atx.spatial().set_bounds(id, b).map_err(|e| throw_str(&ctx, &format!("setBounds: {e}")))
+  super::gui(&ctx).alloy.spatial().set_bounds(id, b).map_err(|e| throw_str(&ctx, &format!("setBounds: {e}")))
 }
 
 /// Triangle data for the narrowphase: positions are read from an
@@ -319,19 +310,19 @@ fn create_shape<'js>(
     } else {
       return Err(throw_str(&ctx, "createShape: indices must be a Uint16Array or Uint32Array"));
     };
-  state(&ctx)
-    .atx
+  super::gui(&ctx)
+    .alloy
     .spatial()
     .create_shape(Shape { positions, uvs, indices })
     .map_err(|e| throw_str(&ctx, &format!("createShape: {e}")))
 }
 
 fn destroy_shape(ctx: Ctx<'_>, id: u64) -> rquickjs::Result<()> {
-  state(&ctx).atx.spatial().destroy_shape(id).map_err(|e| throw_str(&ctx, &format!("destroyShape: {e}")))
+  super::gui(&ctx).alloy.spatial().destroy_shape(id).map_err(|e| throw_str(&ctx, &format!("destroyShape: {e}")))
 }
 
 fn set_shape(ctx: Ctx<'_>, id: u64, shape: OptArg<u64>) -> rquickjs::Result<()> {
-  state(&ctx).atx.spatial().set_shape(id, shape.0).map_err(|e| throw_str(&ctx, &format!("setShape: {e}")))
+  super::gui(&ctx).alloy.spatial().set_shape(id, shape.0).map_err(|e| throw_str(&ctx, &format!("setShape: {e}")))
 }
 
 /// Every shown node with bounds the ray strikes, nearest first, as
@@ -342,7 +333,7 @@ fn raycast<'js>(ctx: Ctx<'js>, origin: TypedArray<'js, f32>, direction: TypedArr
   if o.len() != 3 || d.len() != 3 {
     return Err(throw_str(&ctx, "raycast: origin and direction must be Float32Arrays of 3"));
   }
-  let hits = state(&ctx).atx.spatial().raycast([o[0], o[1], o[2]], [d[0], d[1], d[2]]);
+  let hits = super::gui(&ctx).alloy.spatial().raycast([o[0], o[1], o[2]], [d[0], d[1], d[2]]);
   let arr = Array::new(ctx.clone())?;
   for (i, h) in hits.iter().enumerate() {
     let obj = Object::new(ctx.clone())?;
@@ -370,7 +361,7 @@ fn overlap<'js>(ctx: Ctx<'js>, bounds: TypedArray<'js, f32>) -> rquickjs::Result
   if b.len() != 6 {
     return Err(throw_str(&ctx, "overlap: bounds must be a Float32Array of 6 (minX..maxZ)"));
   }
-  let nodes = state(&ctx).atx.spatial().overlap([b[0], b[1], b[2], b[3], b[4], b[5]]);
+  let nodes = super::gui(&ctx).alloy.spatial().overlap([b[0], b[1], b[2], b[3], b[4], b[5]]);
   let arr = Array::new(ctx.clone())?;
   for (i, id) in nodes.iter().enumerate() {
     arr.set(i, *id)?;
@@ -395,7 +386,7 @@ fn bind_direction_slot(
     return Err(throw_str(&ctx, "bindDirectionSlot: vector must be a Float32Array of 3"));
   }
   let sink = SharedSlotSink { target, name, len, index, projection: Projection::Direction([v[0], v[1], v[2]]) };
-  state(&ctx).atx.spatial_bind_slot(id, sink).map_err(|e| throw_str(&ctx, &format!("bindDirectionSlot: {e}")))
+  super::gui(&ctx).alloy.spatial_bind_slot(id, sink).map_err(|e| throw_str(&ctx, &format!("bindDirectionSlot: {e}")))
 }
 
 /// Bind the node's shared-slot sink with the position projection: slot
@@ -403,12 +394,12 @@ fn bind_direction_slot(
 /// follows the node's world position.
 fn bind_position_slot(ctx: Ctx<'_>, id: u64, target: u64, name: String, len: u32, index: u32) -> rquickjs::Result<()> {
   let sink = SharedSlotSink { target, name, len, index, projection: Projection::Position };
-  state(&ctx).atx.spatial_bind_slot(id, sink).map_err(|e| throw_str(&ctx, &format!("bindPositionSlot: {e}")))
+  super::gui(&ctx).alloy.spatial_bind_slot(id, sink).map_err(|e| throw_str(&ctx, &format!("bindPositionSlot: {e}")))
 }
 
 /// Remove the node's slot sink on `target`, or every slot sink without one.
 fn unbind_slot(ctx: Ctx<'_>, id: u64, target: OptArg<u64>) -> rquickjs::Result<()> {
-  state(&ctx).atx.spatial_unbind_slot(id, target.0).map_err(|e| throw_str(&ctx, &format!("unbindSlot: {e}")))
+  super::gui(&ctx).alloy.spatial_unbind_slot(id, target.0).map_err(|e| throw_str(&ctx, &format!("unbindSlot: {e}")))
 }
 
 /// Bind the node's texture slot: the flush writes the node's world matrix,
@@ -431,8 +422,8 @@ fn bind_texture_slot(
   }
   let mut m = [0.0f32; 16];
   m.copy_from_slice(p);
-  state(&ctx)
-    .atx
+  super::gui(&ctx)
+    .alloy
     .spatial_bind_texture_slot(id, TextureSlotSink { texture, row, post: m }, anchor.0)
     .map_err(|e| throw_str(&ctx, &format!("bindTextureSlot: {e}")))
 }
@@ -440,8 +431,8 @@ fn bind_texture_slot(
 /// Remove the node's texture slot on `texture`, or every texture slot
 /// without one; abandoned rows keep their last value.
 fn unbind_texture_slot(ctx: Ctx<'_>, id: u64, texture: OptArg<u64>) -> rquickjs::Result<()> {
-  state(&ctx)
-    .atx
+  super::gui(&ctx)
+    .alloy
     .spatial_unbind_texture_slot(id, texture.0)
     .map_err(|e| throw_str(&ctx, &format!("unbindTextureSlot: {e}")))
 }
@@ -506,11 +497,15 @@ fn create_clip<'js>(
   if t_at != times.len() || v_at != values.len() {
     return Err(throw_str(&ctx, "createClip: times/values are longer than meta describes"));
   }
-  state(&ctx).atx.spatial().create_clip(duration, channels).map_err(|e| throw_str(&ctx, &format!("createClip: {e}")))
+  super::gui(&ctx)
+    .alloy
+    .spatial()
+    .create_clip(duration, channels)
+    .map_err(|e| throw_str(&ctx, &format!("createClip: {e}")))
 }
 
 fn destroy_clip(ctx: Ctx<'_>, id: u64) -> rquickjs::Result<()> {
-  state(&ctx).atx.spatial().destroy_clip(id).map_err(|e| throw_str(&ctx, &format!("destroyClip: {e}")))
+  super::gui(&ctx).alloy.spatial().destroy_clip(id).map_err(|e| throw_str(&ctx, &format!("destroyClip: {e}")))
 }
 
 /// Start a player: `targets[slot]` is the node each clip channel's target
@@ -524,8 +519,8 @@ fn create_player(
   weight: f64,
   fade: f64,
 ) -> rquickjs::Result<u64> {
-  state(&ctx)
-    .atx
+  super::gui(&ctx)
+    .alloy
     .spatial()
     .create_player(clip, targets, speed as f32, looped, weight as f32, fade as f32)
     .map_err(|e| throw_str(&ctx, &format!("createPlayer: {e}")))
@@ -540,11 +535,11 @@ fn set_player<'js>(ctx: Ctx<'js>, id: u64, value: Object<'js>) -> rquickjs::Resu
     speed: value.get::<_, Option<f64>>("speed")?.map(|v| v as f32),
     time: value.get::<_, Option<f64>>("time")?,
   };
-  state(&ctx).atx.spatial().set_player(id, update).map_err(|e| throw_str(&ctx, &format!("setPlayer: {e}")))
+  super::gui(&ctx).alloy.spatial().set_player(id, update).map_err(|e| throw_str(&ctx, &format!("setPlayer: {e}")))
 }
 
 fn destroy_player(ctx: Ctx<'_>, id: u64) -> rquickjs::Result<()> {
-  state(&ctx).atx.spatial().destroy_player(id);
+  super::gui(&ctx).alloy.spatial().destroy_player(id);
   Ok(())
 }
 
@@ -553,7 +548,7 @@ fn destroy_player(ctx: Ctx<'_>, id: u64) -> rquickjs::Result<()> {
 /// later snap. The pose read for root-motion strips and skeleton copies.
 fn read_transform(ctx: Ctx<'_>, id: u64, out: TypedArray<'_, f32>) -> rquickjs::Result<()> {
   let (p, q, s) =
-    state(&ctx).atx.spatial().transform_of(id).map_err(|e| throw_str(&ctx, &format!("readTransform: {e}")))?;
+    super::gui(&ctx).alloy.spatial().transform_of(id).map_err(|e| throw_str(&ctx, &format!("readTransform: {e}")))?;
   let raw = out.as_raw().ok_or_else(|| throw_str(&ctx, "readTransform: detached buffer"))?;
   if raw.len != 10 * 4 {
     return Err(throw_str(&ctx, "readTransform: out must be a Float32Array of 10"));
@@ -570,30 +565,36 @@ fn read_transform(ctx: Ctx<'_>, id: u64, out: TypedArray<'_, f32>) -> rquickjs::
 /// buffer `buffer`, batched into one buffer write per flush.
 fn bind_pose_record(ctx: Ctx<'_>, id: u64, buffer: u64, index: u32) -> rquickjs::Result<()> {
   let sink = InstanceRecordSink { buffer, index, projection: InstanceProjection::Pose2D };
-  state(&ctx).atx.spatial_bind_record(id, Some(sink)).map_err(|e| throw_str(&ctx, &format!("bindPoseRecord: {e}")))
+  super::gui(&ctx)
+    .alloy
+    .spatial_bind_record(id, Some(sink))
+    .map_err(|e| throw_str(&ctx, &format!("bindPoseRecord: {e}")))
 }
 
 fn unbind_record(ctx: Ctx<'_>, id: u64) -> rquickjs::Result<()> {
-  state(&ctx).atx.spatial_bind_record(id, None).map_err(|e| throw_str(&ctx, &format!("unbindRecord: {e}")))
+  super::gui(&ctx).alloy.spatial_bind_record(id, None).map_err(|e| throw_str(&ctx, &format!("unbindRecord: {e}")))
 }
 
 /// Move every record sink on buffer `old` to buffer `new` - the growth
 /// swap: one call and one bulk republish instead of a rebind per node.
 fn retarget_records(ctx: Ctx<'_>, old: u64, new: u64) -> rquickjs::Result<()> {
-  state(&ctx).atx.spatial_retarget_records(old, new).map_err(|e| throw_str(&ctx, &format!("retargetRecords: {e}")))
+  super::gui(&ctx)
+    .alloy
+    .spatial_retarget_records(old, new)
+    .map_err(|e| throw_str(&ctx, &format!("retargetRecords: {e}")))
 }
 
-/// Stamp the node-transition animation clock (the runner, once per frame
-/// with the app timeline before the frame's JS runs, beside the render
-/// tree's stamp). No-op before the GUI is installed.
-pub fn stamp_clock(ctx: &Ctx<'_>, now_ms: f64) {
-  if let Some(st) = ctx.userdata::<SpatialState>() {
-    st.0.atx.spatial().set_transition_now(now_ms);
+/// Stamp the node-transition animation clock (the frame module, once per
+/// frame with the app timeline before the frame's JS runs, beside the
+/// render tree's stamp). No-op before the GUI is installed.
+pub(crate) fn stamp_clock(ctx: &Ctx<'_>, now_ms: f64) {
+  if let Some(g) = super::try_gui(ctx) {
+    g.alloy.spatial().set_transition_now(now_ms);
   }
 }
 
 /// What a frame's node-transition tick produced (see `tick`).
-pub struct SpatialTick {
+pub(crate) struct SpatialTick {
   /// Tracks still run: the runner's signal to keep requesting frames.
   pub active: bool,
   /// The flush sent sink writes: this frame must paint.
@@ -601,7 +602,7 @@ pub struct SpatialTick {
 }
 
 /// What a frame's clip-player advance produced (see `advance_players`).
-pub struct PlayersTick {
+pub(crate) struct PlayersTick {
   /// Players can still progress: keep requesting frames.
   pub active: bool,
   /// Node TRS changed: this frame must flush and paint.
@@ -609,20 +610,19 @@ pub struct PlayersTick {
 }
 
 /// Advance the clip players to the stamped clock and write the blended
-/// poses into the arena. The runner calls this BEFORE the frame's JS
+/// poses into the arena. The frame module calls this BEFORE the frame's JS
 /// (right after stamping the clock), so `onFrame` handlers read and can
 /// overwrite freshly posed nodes - the post-animation hook - and the draw
 /// path's flush publishes the result. Finished/dropped players reach JS
 /// as one "spatialClipEnd" engine event each, payload `{ player, reason }`
 /// (reason "finished" or "dropped"), emitted here so handlers run in the
 /// same frame's turn.
-pub fn advance_players(ctx: &Ctx<'_>) -> PlayersTick {
-  let Some(st) = ctx.userdata::<SpatialState>() else {
+pub(crate) fn advance_players(ctx: &Ctx<'_>) -> PlayersTick {
+  let Some(st) = super::try_gui(ctx) else {
     return PlayersTick { active: false, wrote: false };
   };
-  let st = st.0.clone();
-  let tick = st.atx.spatial().advance_players();
-  let events = st.atx.spatial().take_clip_events();
+  let tick = st.alloy.spatial().advance_players();
+  let events = st.alloy.spatial().take_clip_events();
   for event in events {
     let obj = Object::new(ctx.clone()).expect("create spatialClipEnd object");
     let (player, reason) = match event {
@@ -640,20 +640,19 @@ pub fn advance_players(ctx: &Ctx<'_>) -> PlayersTick {
 /// moved: steps every running track (writing node TRS through the arena's
 /// ordinary snap path), flushes the arena when anything was written, and
 /// emits one "spatialTransitionEnd" engine event per settled track,
-/// payload `{ node, component }`. The runner calls this beside the render
-/// tree's transition advance, before the frame's demand gate.
-pub fn tick(ctx: &Ctx<'_>) -> SpatialTick {
-  let Some(st) = ctx.userdata::<SpatialState>() else {
+/// payload `{ node, component }`. `frame::draw` calls this beside the
+/// render tree's transition advance, before the frame's demand gate.
+pub(crate) fn tick(ctx: &Ctx<'_>) -> SpatialTick {
+  let Some(st) = super::try_gui(ctx) else {
     return SpatialTick { active: false, wrote: false };
   };
-  let st = st.0.clone();
-  let active = st.atx.spatial().advance_transitions();
-  let settled = st.atx.spatial().take_settled_transitions();
+  let active = st.alloy.spatial().advance_transitions();
+  let settled = st.alloy.spatial().take_settled_transitions();
   // The flush is unconditional: besides transition writes, the queue may
   // hold clip-player poses (advanced before the frame's JS) and whatever
   // that JS wrote without its own microtask flush landing yet. An empty
   // queue is a cheap no-op.
-  let wrote = st.atx.spatial_flush();
+  let wrote = st.alloy.spatial_flush();
   for (node, component) in settled {
     let obj = Object::new(ctx.clone()).expect("create spatialTransitionEnd object");
     obj.set("node", node).expect("set node");

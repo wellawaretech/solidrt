@@ -8,9 +8,10 @@ use std::time::Instant;
 /// draw() reads. Zero timing calls cross into JS.
 #[derive(Clone, Copy, Default)]
 pub struct RenderFrame {
-  /// Instant captured just before the "render" event is emitted. Read and
-  /// cleared at draw() entry, the delta is the JS render handler (onFrame +
-  /// flush); None on a native draw with no render event (the paused path).
+  /// Instant captured just before the frame is delivered to JS. Read and
+  /// cleared at draw() entry, the delta is the frame's JS (timers, rAF
+  /// callbacks, the render handler's onFrame + flush); None on a native draw
+  /// with no delivery (the paused path).
   pub start: Option<Instant>,
   /// Present index of the frame being computed.
   pub frame: u64,

@@ -3,13 +3,11 @@
 //! (or the fire-and-forget `play`) yields a playback handle with live controls.
 //! Raw sound/track ids stay in Rust.
 
-use std::rc::Rc;
 
 use alloy::audio::PcmFormat;
 use rquickjs::module::{Declarations, Exports, ModuleDef};
-use rquickjs::{Ctx, FromJs, Function, JsLifetime, Object, TypedArray, Value};
+use rquickjs::{Ctx, FromJs, Function, Object, TypedArray, Value};
 
-use super::AlloyContext;
 use crate::plugins::marshal::OptArg;
 use crate::plugins::seekable::SeekableSource;
 
@@ -17,15 +15,8 @@ fn throw_str(ctx: &Ctx<'_>, msg: &str) -> rquickjs::Error {
   rquickjs::Exception::throw_message(ctx, msg)
 }
 
-#[derive(Clone, JsLifetime)]
-struct AudioPluginState(#[qjs(skip_trace)] Rc<AlloyContext>);
-
-/// Store the audio plugin state in userdata, before any module import, so
-/// `AudioModule::evaluate` can read it. The `flux:audio` surface is registered
-/// separately via `module_override`.
-pub(crate) fn store_state(ctx: &Ctx<'_>, atx: AlloyContext) {
-  ctx.store_userdata(AudioPluginState(Rc::new(atx))).expect("store audio state");
-}
+// The audio bindings keep no state of their own: every call forwards to the
+// shared alloy context (`super::gui`).
 
 /// The `flux:audio` module. Handles are bound objects (playback: `{ stop,
 /// setGain, setPan, setRate, ended }`; clip: `{ play, unload }`) so raw ids
@@ -201,8 +192,8 @@ fn play_impl<'js>(
 ) -> rquickjs::Result<Object<'js>> {
   let play_options = read_options(&ctx, &options)?;
   let bytes = typed_bytes(&ctx, &data, "play")?;
-  let state = ctx.userdata::<AudioPluginState>().expect("audio state");
-  let id = state.0.play_audio(bytes, &play_options).map_err(|e| throw_str(&ctx, &format!("play: {e}")))?;
+  let gui = super::gui(&ctx);
+  let id = gui.alloy.play_audio(bytes, &play_options).map_err(|e| throw_str(&ctx, &format!("play: {e}")))?;
   playback_handle(&ctx, id)
 }
 
@@ -222,8 +213,8 @@ fn clip_handle<'js>(ctx: &Ctx<'js>, sound_id: u64) -> rquickjs::Result<Object<'j
 /// overlapping playback with no decode.
 fn load_impl<'js>(ctx: Ctx<'js>, data: TypedArray<'js, u8>) -> rquickjs::Result<Object<'js>> {
   let bytes = typed_bytes(&ctx, &data, "load")?;
-  let state = ctx.userdata::<AudioPluginState>().expect("audio state");
-  let sound_id = state.0.load_sound(bytes).map_err(|e| throw_str(&ctx, &format!("load: {e}")))?;
+  let gui = super::gui(&ctx);
+  let sound_id = gui.alloy.load_sound(bytes).map_err(|e| throw_str(&ctx, &format!("load: {e}")))?;
   clip_handle(&ctx, sound_id)
 }
 
@@ -269,9 +260,9 @@ fn load_pcm_impl<'js>(
     PcmData::F32(a) => (a.as_bytes(), PcmFormat::F32),
   };
   let bytes = bytes.ok_or_else(|| throw_str(&ctx, "loadPcm: detached buffer"))?;
-  let state = ctx.userdata::<AudioPluginState>().expect("audio state");
-  let sound_id = state
-    .0
+  let gui = super::gui(&ctx);
+  let sound_id = gui
+    .alloy
     .load_pcm_sound(bytes, sample_rate as i32, channels, format)
     .map_err(|e| throw_str(&ctx, &format!("loadPcm: {e}")))?;
   clip_handle(&ctx, sound_id)
@@ -285,44 +276,44 @@ fn load_pcm_impl<'js>(
 /// file. Play it as a single voice; do not overlap a stream with itself.
 fn stream_impl<'js>(ctx: Ctx<'js>, source: Object<'js>) -> rquickjs::Result<Object<'js>> {
   let reader = SeekableSource::open_from(&source).map_err(|e| throw_str(&ctx, &format!("stream: {e}")))?;
-  let state = ctx.userdata::<AudioPluginState>().expect("audio state");
-  let sound_id = state.0.stream_sound_io(reader).map_err(|e| throw_str(&ctx, &format!("stream: {e}")))?;
+  let gui = super::gui(&ctx);
+  let sound_id = gui.alloy.stream_sound_io(reader).map_err(|e| throw_str(&ctx, &format!("stream: {e}")))?;
   clip_handle(&ctx, sound_id)
 }
 
 fn play_sound_impl<'js>(ctx: Ctx<'js>, sound_id: u64, options: OptArg<Object<'js>>) -> rquickjs::Result<Object<'js>> {
   let play_options = read_options(&ctx, &options)?;
-  let state = ctx.userdata::<AudioPluginState>().expect("audio state");
-  let id = state.0.play_sound(sound_id, &play_options).map_err(|e| throw_str(&ctx, &format!("play: {e}")))?;
+  let gui = super::gui(&ctx);
+  let id = gui.alloy.play_sound(sound_id, &play_options).map_err(|e| throw_str(&ctx, &format!("play: {e}")))?;
   playback_handle(&ctx, id)
 }
 
 fn set_gain_impl<'js>(ctx: Ctx<'js>, id: u64, gain: f32, options: OptArg<Object<'js>>) -> rquickjs::Result<()> {
   check_gain(&ctx, "setGain", gain)?;
   let ramp_ms = read_ramp_ms(&ctx, "setGain", &options)?;
-  let state = ctx.userdata::<AudioPluginState>().expect("audio state");
-  state.0.set_audio_gain(id, gain, ramp_ms).map_err(|e| throw_str(&ctx, &format!("setGain: {e}")))
+  let gui = super::gui(&ctx);
+  gui.alloy.set_audio_gain(id, gain, ramp_ms).map_err(|e| throw_str(&ctx, &format!("setGain: {e}")))
 }
 
 fn set_pan_impl<'js>(ctx: Ctx<'js>, id: u64, pan: f32, options: OptArg<Object<'js>>) -> rquickjs::Result<()> {
   check_pan(&ctx, "setPan", pan)?;
   let ramp_ms = read_ramp_ms(&ctx, "setPan", &options)?;
-  let state = ctx.userdata::<AudioPluginState>().expect("audio state");
-  state.0.set_audio_pan(id, pan, ramp_ms).map_err(|e| throw_str(&ctx, &format!("setPan: {e}")))
+  let gui = super::gui(&ctx);
+  gui.alloy.set_audio_pan(id, pan, ramp_ms).map_err(|e| throw_str(&ctx, &format!("setPan: {e}")))
 }
 
 fn set_rate_impl<'js>(ctx: Ctx<'js>, id: u64, rate: f32, options: OptArg<Object<'js>>) -> rquickjs::Result<()> {
   check_rate(&ctx, "setRate", rate)?;
   let ramp_ms = read_ramp_ms(&ctx, "setRate", &options)?;
-  let state = ctx.userdata::<AudioPluginState>().expect("audio state");
-  state.0.set_audio_rate(id, rate, ramp_ms).map_err(|e| throw_str(&ctx, &format!("setRate: {e}")))
+  let gui = super::gui(&ctx);
+  gui.alloy.set_audio_rate(id, rate, ramp_ms).map_err(|e| throw_str(&ctx, &format!("setRate: {e}")))
 }
 
 fn set_master_gain_impl<'js>(ctx: Ctx<'js>, gain: f32, options: OptArg<Object<'js>>) -> rquickjs::Result<()> {
   check_gain(&ctx, "setMasterGain", gain)?;
   let ramp_ms = read_ramp_ms(&ctx, "setMasterGain", &options)?;
-  let state = ctx.userdata::<AudioPluginState>().expect("audio state");
-  state.0.set_master_gain(gain, ramp_ms).map_err(|e| throw_str(&ctx, &format!("setMasterGain: {e}")))
+  let gui = super::gui(&ctx);
+  gui.alloy.set_master_gain(gain, ramp_ms).map_err(|e| throw_str(&ctx, &format!("setMasterGain: {e}")))
 }
 
 /// Declared contract, not yet implemented (lands with the own-mixer
@@ -335,24 +326,24 @@ fn set_bus_gain_impl(ctx: Ctx<'_>) -> rquickjs::Result<()> {
 }
 
 fn output_sample_rate_impl(ctx: Ctx<'_>) -> rquickjs::Result<i32> {
-  let state = ctx.userdata::<AudioPluginState>().expect("audio state");
-  state.0.audio_output_sample_rate().map_err(|e| throw_str(&ctx, &format!("outputSampleRate: {e}")))
+  let gui = super::gui(&ctx);
+  gui.alloy.audio_output_sample_rate().map_err(|e| throw_str(&ctx, &format!("outputSampleRate: {e}")))
 }
 
 fn ended_impl(ctx: Ctx<'_>, id: u64) -> bool {
-  let state = ctx.userdata::<AudioPluginState>().expect("audio state");
-  state.0.audio_ended(id)
+  let gui = super::gui(&ctx);
+  gui.alloy.audio_ended(id)
 }
 
 fn unload_impl(ctx: Ctx<'_>, sound_id: u64) {
-  let state = ctx.userdata::<AudioPluginState>().expect("audio state");
-  state.0.unload_sound(sound_id);
+  let gui = super::gui(&ctx);
+  gui.alloy.unload_sound(sound_id);
 }
 
 fn stop_impl<'js>(ctx: Ctx<'js>, id: u64, options: OptArg<Object<'js>>) -> rquickjs::Result<()> {
   let fade_out_ms = read_fade_out_ms(&ctx, "stop", &options)?;
-  let state = ctx.userdata::<AudioPluginState>().expect("audio state");
-  state.0.stop_audio(id, fade_out_ms);
+  let gui = super::gui(&ctx);
+  gui.alloy.stop_audio(id, fade_out_ms);
   Ok(())
 }
 
@@ -362,13 +353,13 @@ fn stop_all_impl<'js>(ctx: Ctx<'js>, options: OptArg<Object<'js>>) -> rquickjs::
     Some(opts) => opts.get::<_, Option<String>>("bus")?,
     None => None,
   };
-  let state = ctx.userdata::<AudioPluginState>().expect("audio state");
+  let gui = super::gui(&ctx);
   match bus {
     Some(bus) => {
       check_bus(&ctx, "stop", &bus)?;
-      state.0.stop_bus_audio(&bus, fade_out_ms);
+      gui.alloy.stop_bus_audio(&bus, fade_out_ms);
     }
-    None => state.0.stop_all_audio(fade_out_ms),
+    None => gui.alloy.stop_all_audio(fade_out_ms),
   }
   Ok(())
 }

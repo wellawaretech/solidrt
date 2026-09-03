@@ -110,7 +110,8 @@ fn push_hud_lines(text: &mut String, s: &StatsSnapshot) {
   // phases record zero on reused and skipped frames, see Stats::record_frame),
   // so a share stays within 100%. Shares sum to ~100% when CPU-bound; less
   // means idle or GPU-bound headroom. A share is relative to the current
-  // frame, so one phase shrinks when another grows. JS = onFrame + flush;
+  // frame, so one phase shrinks when another grows. JS = the frame's JS
+  // (timers, rAF, onFrame + flush);
   // LAY/PNT/PST/HOV = native draw phases; all four read 0% for an app whose
   // tree is static, however much its pixels change. SET is a raw count
   // (setProperty writes/frame), not a share.

@@ -7,6 +7,7 @@
 pub mod audio;
 pub mod camera;
 pub mod events;
+pub mod frame;
 pub mod input;
 pub mod microphone;
 pub(crate) mod properties;
@@ -23,6 +24,7 @@ pub mod video;
 // setProperty.
 pub use properties::{read_jsx, ReadValue};
 
+use std::rc::Rc;
 use std::sync::mpsc::Sender;
 use std::sync::Arc;
 
@@ -33,24 +35,33 @@ use alloy::AlloyCommand;
 
 use crate::engine::FluxEngineBuilder;
 
-/// JsLifetime wrapper around the shared alloy context, so the gui plugins can
-/// hold it in JS userdata. Derefs to `alloy::Context` for the rendering /
-/// texture / capture methods the bindings forward to.
-#[derive(Clone, JsLifetime)]
-pub(crate) struct AlloyContext(#[qjs(skip_trace)] pub Arc<alloy::Context>);
+/// The host instances every gui plugin shares, stored once by `install`
+/// before any plugin runs: the alloy context (rendering, textures, capture,
+/// spatial, media) and the platform handle (frame requests, window facts).
+/// A plugin with data of its own holds this by pointer in its state (`gui`);
+/// one without reads it through `gui(&ctx)`.
+pub(crate) struct Gui {
+  pub(crate) alloy: Arc<alloy::Context>,
+  pub(crate) platform: Arc<PlatformContext>,
+}
 
-impl std::ops::Deref for AlloyContext {
-  type Target = alloy::Context;
-  fn deref(&self) -> &Self::Target {
-    &self.0
-  }
+#[derive(Clone, JsLifetime)]
+struct GuiState(#[qjs(skip_trace)] Rc<Gui>);
+
+pub(crate) fn gui(ctx: &Ctx<'_>) -> Rc<Gui> {
+  ctx.userdata::<GuiState>().expect("gui state userdata").0.clone()
+}
+
+/// None before the GUI is installed (the per-frame hooks are no-ops then).
+pub(crate) fn try_gui(ctx: &Ctx<'_>) -> Option<Rc<Gui>> {
+  ctx.userdata::<GuiState>().map(|g| g.0.clone())
 }
 
 /// The alloy context for the runner's out-of-frame queries (a dev-server
 /// snapshot, the GPU inventory, a texture or buffer read), which run on the
 /// JS thread with a `Ctx` in hand. None before the GUI is installed.
 pub fn alloy_context(ctx: &Ctx<'_>) -> Option<Arc<alloy::Context>> {
-  ctx.userdata::<AlloyContext>().map(|atx| atx.0.clone())
+  try_gui(ctx).map(|g| g.alloy.clone())
 }
 
 /// The host instances the GUI bindings need, owned by the runner (lattice) and
@@ -70,45 +81,28 @@ pub struct GuiHost {
 
 /// Register the GUI plugin set onto the engine builder. The single seam the
 /// runner calls: it must not need to know individual plugin init functions or
-/// their registration order. The tree plugin stores the shared render tree in
-/// userdata, which the runner's draw bridge (`srt:render`) reads to draw it.
+/// their registration order, and per frame it drives them through `frame`
+/// (`advance`, `deliver`, `draw`) rather than the plugins' own hooks or the
+/// tree itself.
 pub fn install(builder: FluxEngineBuilder, host: GuiHost) -> FluxEngineBuilder {
   let GuiHost { platform, alloy, render_tree, alloy_cmd_tx } = host;
   // navigator.clipboard is a web-standard surface (standards_plugins) that
   // marshals alloy commands, so it installs here at the gui seam.
   let clipboard_cmd_tx = alloy_cmd_tx.clone();
-  let tree_platform = platform.clone();
-  let raf_platform = platform.clone();
-  let spatial_platform = platform.clone();
-  let gpu_platform = platform;
-  let tree_atx = AlloyContext(alloy.clone());
-  let gpu_atx = AlloyContext(alloy.clone());
-  let spatial_atx = AlloyContext(alloy.clone());
-  let camera_atx = AlloyContext(alloy.clone());
-  let microphone_atx = AlloyContext(alloy.clone());
-  #[cfg(feature = "video")]
-  let video_atx = AlloyContext(alloy.clone());
-  // Stored as standalone userdata (below) behind `alloy_context`, for the
-  // runner's queries that run on the JS thread with a `Ctx` in hand (a
-  // dev-server snapshot, the GPU inventory).
-  let query_atx = AlloyContext(alloy.clone());
-  let audio_atx = AlloyContext(alloy);
   // The render tree and the capture/render devices are all `flux:*` modules
-  // (registered below); only the web-standard rAF stays a global. The plugins
-  // store each module's host state in userdata before any import; the module
-  // surfaces read it in their `evaluate`.
+  // (registered below); only the web-standard rAF stays a global. The shared
+  // host state goes in first; the plugins with data of their own store it
+  // in userdata before any import, and the module surfaces read it in their
+  // `evaluate`.
   let builder = builder
-    .plugin(move |ctx| tree::store_state(&ctx, render_tree, alloy_cmd_tx, tree_platform, tree_atx))
     .plugin(move |ctx| {
-      ctx.store_userdata(query_atx).expect("store alloy context userdata");
+      ctx.store_userdata(GuiState(Rc::new(Gui { alloy, platform }))).expect("store gui state");
     })
+    .plugin(move |ctx| tree::store_state(&ctx, render_tree, alloy_cmd_tx))
     .plugin(|ctx| input::store_state(&ctx))
-    .plugin(move |ctx| raf::init(&ctx, raf_platform))
-    .plugin(move |ctx| gpu::store_state(&ctx, gpu_atx, gpu_platform))
-    .plugin(move |ctx| spatial::store_state(&ctx, spatial_atx, spatial_platform))
-    .plugin(move |ctx| camera::store_state(&ctx, camera_atx))
-    .plugin(move |ctx| microphone::store_state(&ctx, microphone_atx))
-    .plugin(move |ctx| audio::store_state(&ctx, audio_atx))
+    .plugin(|ctx| raf::init(&ctx))
+    .plugin(|ctx| gpu::store_state(&ctx))
+    .plugin(|ctx| camera::store_state(&ctx))
     .plugin(move |ctx| crate::standards_plugins::clipboard::init_clipboard(&ctx, clipboard_cmd_tx))
     .plugin(register_capabilities)
     .module_override("flux:rendertree", tree::RenderTreeModule)
@@ -118,9 +112,7 @@ pub fn install(builder: FluxEngineBuilder, host: GuiHost) -> FluxEngineBuilder {
     .module_override("flux:gpu", gpu::GpuModule)
     .module_override("flux:spatial", spatial::SpatialModule);
   #[cfg(feature = "video")]
-  let builder = builder
-    .plugin(move |ctx| video::store_state(&ctx, video_atx))
-    .module_override("flux:video", video::VideoModule);
+  let builder = builder.plugin(|ctx| video::store_state(&ctx)).module_override("flux:video", video::VideoModule);
   builder
 }
 

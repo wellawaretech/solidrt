@@ -3,27 +3,17 @@
 //! for audio recording); the JS wrapper in @solidrt/core makes it async to
 //! leave room for platforms that need a runtime permission flow.
 
-use std::rc::Rc;
-
 use rquickjs::module::{Declarations, Exports, ModuleDef};
-use rquickjs::{Array, Ctx, Function, JsLifetime, Object, TypedArray};
+use rquickjs::{Array, Ctx, Function, Object, TypedArray};
 
 use crate::plugins::marshal::OptArg;
-use super::AlloyContext;
 
 fn throw_str(ctx: &Ctx<'_>, msg: &str) -> rquickjs::Error {
   rquickjs::Exception::throw_message(ctx, msg)
 }
 
-#[derive(Clone, JsLifetime)]
-struct MicrophonePluginState(#[qjs(skip_trace)] Rc<AlloyContext>);
-
-/// Store the microphone plugin state in userdata, before any module import, so
-/// `MicrophoneModule::evaluate` can read it. The `flux:microphone` surface is
-/// registered separately via `module_override`.
-pub(crate) fn store_state(ctx: &Ctx<'_>, atx: AlloyContext) {
-  ctx.store_userdata(MicrophonePluginState(Rc::new(atx))).expect("store microphone state");
-}
+// The microphone bindings keep no state of their own: every call forwards
+// to the shared alloy context (`super::gui`).
 
 /// The `flux:microphone` module. `open` returns a bound session object
 /// (`{ sampleRate, read, close }`) so the raw handle stays in Rust.
@@ -63,9 +53,9 @@ fn open_impl<'js>(ctx: Ctx<'js>, options: OptArg<Object<'js>>) -> rquickjs::Resu
   }
   let sample_rate = sample_rate.unwrap_or(16000);
 
-  let state = ctx.userdata::<MicrophonePluginState>().expect("microphone state");
+  let gui = super::gui(&ctx);
   let session =
-    state.0.open_microphone(device, sample_rate).map_err(|e| throw_str(&ctx, &format!("openMicrophone: {e}")))?;
+    gui.alloy.open_microphone(device, sample_rate).map_err(|e| throw_str(&ctx, &format!("openMicrophone: {e}")))?;
 
   let obj = Object::new(ctx.clone())?;
   obj.set("sampleRate", sample_rate)?;
@@ -91,12 +81,12 @@ where
 
 /// Drain the mono f32 samples captured since the last read.
 fn read_impl(ctx: Ctx<'_>, session: u64) -> rquickjs::Result<TypedArray<'_, f32>> {
-  let state = ctx.userdata::<MicrophonePluginState>().expect("microphone state");
-  let samples = state.0.read_microphone(session).map_err(|e| throw_str(&ctx, &format!("read: {e}")))?;
+  let gui = super::gui(&ctx);
+  let samples = gui.alloy.read_microphone(session).map_err(|e| throw_str(&ctx, &format!("read: {e}")))?;
   TypedArray::new(ctx.clone(), samples)
 }
 
 fn close_impl(ctx: Ctx<'_>, session: u64) {
-  let state = ctx.userdata::<MicrophonePluginState>().expect("microphone state");
-  state.0.close_microphone(session);
+  let gui = super::gui(&ctx);
+  gui.alloy.close_microphone(session);
 }

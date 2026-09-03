@@ -106,7 +106,7 @@ pub struct Stats {
   // when frames are sparse.
   last_js: Instant,
   last_draw: Instant,
-  // JS render-handler cost (onFrame + flush, ms) and setProperty calls per
+  // The frame's JS cost (timers, rAF, onFrame + flush, ms) and setProperty calls per
   // frame, both moving-averaged. Sourced from native thread-local timers so
   // collecting them adds no work to the JS side.
   js_ms: f32,
@@ -243,7 +243,7 @@ impl Stats {
     };
   }
 
-  /// JS render-handler time (onFrame + flush, ms) and setProperty count for the
+  /// The frame's JS time (timers, rAF, onFrame + flush, ms) and setProperty count for the
   /// frame. Recorded every frame, before the demand gate, since flush runs even
   /// when the native draw is skipped. Also drives the once-per-second sample
   /// (cpu/mem, per-second counters), so those stay fresh with the overlay off.

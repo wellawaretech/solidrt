@@ -2,13 +2,15 @@ use crate::frame_history::{FrameHistory, FrameRecord};
 use crate::overlay;
 use crate::stats;
 use alloy::InputState;
-use alloy::rendertree::{self, Commit, FrameDriver, PlatformContext};
+use alloy::rendertree::{self, PlatformContext};
 use flux::{
-  emit_event, CtxLogger,
+  emit_event,
+  gui::frame::Commit,
   rquickjs::{
     module::{Declarations, Exports, ModuleDef},
     Ctx as QuickJsContext, Function, JsLifetime,
   },
+  CtxLogger,
 };
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -21,10 +23,10 @@ const SLOW_WARN_INTERVAL: Duration = Duration::from_secs(1);
 
 // The host state the `srt:render` module binds, stashed in userdata by
 // `store_state` before any import so the module's `evaluate` can build
-// `renderFrame`. The shared render tree it draws is read separately from
-// userdata (stored by flux's tree plugin). Also holds the draw loop's own
-// frame-to-frame state (stats, display-list cache) so the body is callable
-// both from the JS export and natively (see `render_now`).
+// `renderFrame`. Also holds the draw loop's own frame-to-frame state (stats,
+// overlay) so the body is callable both from the JS export and natively
+// (see `render_now`). The tree it draws and the frame protocol over it are
+// flux's (`frame::draw`).
 #[derive(Clone, JsLifetime)]
 struct RenderState(#[qjs(skip_trace)] Rc<RenderInner>);
 
@@ -39,10 +41,6 @@ struct RenderInner {
   // Raw per-rebuild records for the stats query's window summary (worst
   // frame, percentiles), the figures the smoothed Stats average away.
   history: Arc<Mutex<FrameHistory>>,
-  // The engine-free frame protocol (demand gate, retained-list reuse, the
-  // capture/destroy/content interlocks) lives in alloy; this bridge sequences
-  // it and runs the JS hooks between the phases.
-  driver: RefCell<FrameDriver>,
   // The dev-session facts the overlay's badge shows (see overlay::Badge):
   // written by the dev connection (go/connection.rs), which latches a frame
   // request on every edge so the change is drawn on an idle app.
@@ -99,7 +97,6 @@ pub fn store_state(
       stats_snapshot,
       stats: RefCell::new(stats::Stats::new()),
       history,
-      driver: RefCell::new(FrameDriver::new()),
       dev_connected,
       user_input_muted,
       overlay_installed: Cell::new(false),
@@ -122,9 +119,9 @@ pub fn render_now(ctx: &QuickJsContext<'_>) {
 }
 
 /// The `srt:render` module: `renderFrame()`, the runner's per-frame draw. Not
-/// part of `flux:rendertree` because it bundles lattice-only policy (demand
-/// gating, display-list reuse, the stats overlay, hover refresh) over the
-/// engine-free draw phases in alloy.
+/// part of `flux:rendertree` because it bundles lattice-only policy (the
+/// stats overlay and figures, the frame history, hover refresh, the
+/// postLayout hook) around flux's frame protocol.
 pub struct SrtRenderModule;
 
 impl ModuleDef for SrtRenderModule {
@@ -192,10 +189,11 @@ impl RenderInner {
       c.set(crate::frame::RenderFrame { start: None, ..rf });
       rf
     });
-    // JS render-handler cost (onFrame + flush), measured natively: time since
-    // the instant stamped before the "render" event, now that the handler has
-    // reached draw(). Recorded for every frame (gated ones too, since flush
-    // still ran), with the FFI prop writes that flush produced.
+    // The frame's JS cost (timers, rAF, onFrame + flush), measured natively:
+    // time since the instant stamped before the frame was delivered, now
+    // that the render handler has reached draw(). Recorded for every frame
+    // (gated ones too, since flush still ran), with the FFI prop writes that
+    // flush produced.
     let js_ms = render_frame.start.map(|t| t.elapsed().as_secs_f32() * 1000.0).unwrap_or(0.0);
     let set_count = flux::gui::tree::SETPROP_COUNT.with(|c| c.replace(0));
     stats.borrow_mut().record_gpu(render_frame.frame, &atx.raster_counters());
@@ -206,181 +204,164 @@ impl RenderInner {
     let snap = stats.borrow().snapshot(render_frame.frame, platform.fps(), atx.textures.len());
     *stats_snapshot.lock().expect("stats snapshot lock poisoned") = snap;
 
-    // The tree handle, for the frame build below (commit, layout, paint,
-    // finish); the per-frame protocol pieces go through flux's functions.
-    let tree = qtx.userdata::<flux::gui::tree::SharedRenderTree>().expect("render tree userdata");
-
-    // Native transitions: advance every running track to this frame's
-    // animation clock (stamped by the runtime before the frame's JS ran)
-    // so the frame below paints the interpolated values, and report the
-    // settled ones (onTransitionEnd) before it paints: the handlers' writes
-    // latch the next frame like any post-flush work. Runs before the demand
-    // gate: the advance's damage is this frame's reason to rebuild.
-    let anim_active = flux::gui::tree::tick(qtx);
-    // The spatial arena's node transitions, the same slot in the frame:
-    // the advance writes node TRS on the animation clock, the flush
-    // publishes what moved through the sinks, and settles reach JS as
-    // "spatialTransitionEnd" engine events. `wrote` is this frame's
-    // reason to paint (sink writes changed content); `active` is demand
-    // for the next one.
-    let spatial = flux::gui::spatial::tick(qtx);
-
-    // Demand-driven gate: when nothing requested a frame, skip it entirely
-    // (layout, paint, submit, hover refresh - elements only move when a frame
-    // is produced, so hover cannot have changed either). The overlay is the
-    // bridge's own demand (see above); playback mode never gates. Running
-    // transitions are demand too, and re-request below after `begin`
-    // consumed the latch, so the loop keeps ticking until they settle.
-    let mut driver = self.driver.borrow_mut();
-    let demand = overlay_refresh || overlay_clear || anim_active || spatial.active || spatial.wrote;
-    let Some(frame) = driver.begin(platform, demand) else {
-      let mut s = stats.borrow_mut();
-      s.note_skipped();
-      s.record_frame(stats::FramePhases::default());
-      s.record_paint(rendertree::composite::PaintStats::default());
-      return;
-    };
-    if anim_active || spatial.active {
-      platform.request_frame();
-    }
-
-    // Push the overlay change ahead of this frame's submit (either path
-    // below): the ordered raster channel then applies it to exactly this
-    // frame. Built from the figures record_js just sampled; the raster
-    // thread retains the list, so nothing is sent while the figures stand.
-    if overlay_refresh {
-      let overlay =
-        overlay::build(&snap, stats_on, badge, &platform.typography(), platform.safe_area(), platform.display_scale());
-      self.overlay_installed.set(overlay.is_some());
-      self.overlay_key.set(overlay_key);
-      atx.set_overlay(overlay);
-    } else if overlay_clear {
-      atx.set_overlay(None);
-      self.overlay_installed.set(false);
-    }
-
-    // Content damage, then present-only reuse or the build handle: the
-    // driver's interlocks (captures, deferred destroys, the window-shader
-    // flush) run on whichever path resolves. On reuse, layout, postLayout and
-    // hover refresh are skipped too - the tree and window are unchanged. The
-    // phases and paint counts are still recorded, as zero: the skip path
-    // above does the same, so the smoothed phase figures track every frame
-    // the JS thread sees and decay when nothing rebuilds, and the paint walk
-    // counts describe this frame (no walk) rather than the last one that had
-    // one. A tree that never rebuilds otherwise presents one stale rebuild's
-    // cost as a live share of a moving frame period (an app reusing its
-    // display list at 60 Hz showed PNT 350%) and its boundary counts as
-    // current.
-    let mut b = match frame
-      .commit(&mut tree.0.borrow_mut(), platform, atx)
-      .expect("Failed to submit display list")
-    {
-      Commit::Reused { content_changed } => {
+    // The frame protocol - the transition ticks (render tree, spatial arena,
+    // each settling to JS before the frame paints), the demand gate, reuse
+    // or rebuild - is flux's `frame::draw`; this bridge supplies its own
+    // demand and runs its policy between the phases. The overlay is that
+    // demand (see above); playback mode never gates.
+    flux::gui::frame::draw(qtx, overlay_refresh || overlay_clear, |frame| {
+      // Demand-driven gate: when nothing requested a frame, skip it entirely
+      // (layout, paint, submit, hover refresh - elements only move when a
+      // frame is produced, so hover cannot have changed either).
+      let Some(frame) = frame else {
         let mut s = stats.borrow_mut();
-        s.note_reused();
+        s.note_skipped();
         s.record_frame(stats::FramePhases::default());
         s.record_paint(rendertree::composite::PaintStats::default());
-        // GPU content presented through the reused display list (a layer
-        // write, a shader param, an upload) still changed the picture - a
-        // sprite app's every frame is one. Record it, with the render
-        // handler as its whole critical path, or the frame window reads
-        // `frames: 0` for exactly the apps that animate every frame.
-        if content_changed {
-          self.history.lock().expect("frame history lock poisoned").push(FrameRecord {
-            at_ms: crate::frame_history::now_ms(),
-            frame: render_frame.frame,
-            period_ms: render_frame.period_ms,
-            js_ms,
-            total_ms: js_ms,
-            raster: atx.raster_counters(),
-            ..FrameRecord::default()
-          });
-        }
         return;
-      }
-      Commit::Build(b) => b,
-    };
-
-    let mut phases = stats::FramePhases::default();
-
-    // Layout phase: the mut borrow is scoped to the call so onLayout handlers
-    // (which may call setProperty etc.) don't trip the RefCell.
-    let t = Instant::now();
-    b.layout(&mut tree.0.borrow_mut(), platform, atx);
-    phases.layout = t.elapsed();
-
-    // Post-layout hook. Handlers run synchronously and may invalidate the
-    // layout cache via setProperty; the paint phase re-runs layout to absorb
-    // those changes.
-    let t = Instant::now();
-    emit_event(qtx, "postLayout", ());
-    phases.post = t.elapsed();
-
-    let t = Instant::now();
-    let paint_stats = b.paint(&mut tree.0.borrow_mut(), platform, atx);
-    phases.paint = t.elapsed();
-
-    // Input dispatch happens on event arrival (flux::gui::input::dispatch);
-    // here we only re-check hover, since this frame's layout may have moved
-    // elements under a stationary pointer.
-    let t = Instant::now();
-    flux::gui::input::refresh_hover(qtx, input_state.pointers(), input_state.modifiers());
-    phases.hover = t.elapsed();
-
-    {
-      let mut s = stats.borrow_mut();
-      s.record_frame(phases);
-      // Taken after paint so the counters cover the whole rebuild (paint
-      // shapes paragraphs too), plus the writes that led into it.
-      let counters = rendertree::counters::take();
-      let nodes = tree.0.borrow().node_count();
-      let nodes_added = nodes.saturating_sub(self.last_node_count.replace(nodes));
-      s.record_layout_activity(nodes, counters);
-      s.record_paint(paint_stats);
-      let ms = |d: std::time::Duration| d.as_secs_f32() * 1000.0;
-      let record = FrameRecord {
-        at_ms: crate::frame_history::now_ms(),
-        frame: render_frame.frame,
-        period_ms: render_frame.period_ms,
-        js_ms,
-        layout_ms: ms(phases.layout),
-        post_ms: ms(phases.post),
-        paint_ms: ms(phases.paint),
-        hover_ms: ms(phases.hover),
-        total_ms: js_ms + ms(phases.layout + phases.post + phases.paint + phases.hover),
-        counters,
-        nodes_painted: paint_stats.nodes_painted,
-        raster: atx.raster_counters(),
       };
-      // A frame over its refresh period is jank a human feels; say so through
-      // the engine logger (the one the dev server forwards, so get_logs sees
-      // it) with the breakdown that names the phase.
-      if record.total_ms > record.period_ms && record.period_ms > 0.0 {
-        let due = self.last_slow_warn.get().is_none_or(|t| t.elapsed() >= SLOW_WARN_INTERVAL);
-        if due {
-          self.last_slow_warn.set(Some(Instant::now()));
-          qtx.logger().warn(&format!(
-            "Slow frame: {:.1} ms (budget {:.1}): js {:.1}, layout {:.1}, postLayout {:.1}, paint {:.1}, hover {:.1}; paraShapes {}, measureCalls {}, dirtiedNodes {}, nodesAdded {}, cacheHits {}/{}, nodesPainted {}",
-            record.total_ms,
-            record.period_ms,
-            record.js_ms,
-            record.layout_ms,
-            record.post_ms,
-            record.paint_ms,
-            record.hover_ms,
-            counters.para_shapes,
-            counters.measure_calls,
-            counters.dirtied,
-            nodes_added,
-            counters.cache_hits,
-            counters.cache_gets,
-            paint_stats.nodes_painted,
-          ));
-        }
-      }
-      self.history.lock().expect("frame history lock poisoned").push(record);
-    }
 
-    b.finish(&tree.0.borrow(), platform, atx).expect("Failed to submit display list");
+      // Push the overlay change ahead of this frame's submit (either path
+      // below): the ordered raster channel then applies it to exactly this
+      // frame. Built from the figures record_js just sampled; the raster
+      // thread retains the list, so nothing is sent while the figures stand.
+      if overlay_refresh {
+        let overlay = overlay::build(
+          &snap,
+          stats_on,
+          badge,
+          &platform.typography(),
+          platform.safe_area(),
+          platform.display_scale(),
+        );
+        self.overlay_installed.set(overlay.is_some());
+        self.overlay_key.set(overlay_key);
+        atx.set_overlay(overlay);
+      } else if overlay_clear {
+        atx.set_overlay(None);
+        self.overlay_installed.set(false);
+      }
+
+      // Content damage, then present-only reuse or the build handle: the
+      // driver's interlocks (captures, deferred destroys, the window-shader
+      // flush) run on whichever path resolves. On reuse, layout, postLayout and
+      // hover refresh are skipped too - the tree and window are unchanged. The
+      // phases and paint counts are still recorded, as zero: the skip path
+      // above does the same, so the smoothed phase figures track every frame
+      // the JS thread sees and decay when nothing rebuilds, and the paint walk
+      // counts describe this frame (no walk) rather than the last one that had
+      // one. A tree that never rebuilds otherwise presents one stale rebuild's
+      // cost as a live share of a moving frame period (an app reusing its
+      // display list at 60 Hz showed PNT 350%) and its boundary counts as
+      // current.
+      let mut b = match frame.commit().expect("Failed to submit display list") {
+        Commit::Reused { content_changed } => {
+          let mut s = stats.borrow_mut();
+          s.note_reused();
+          s.record_frame(stats::FramePhases::default());
+          s.record_paint(rendertree::composite::PaintStats::default());
+          // GPU content presented through the reused display list (a layer
+          // write, a shader param, an upload) still changed the picture - a
+          // sprite app's every frame is one. Record it, with the render
+          // handler as its whole critical path, or the frame window reads
+          // `frames: 0` for exactly the apps that animate every frame.
+          if content_changed {
+            self.history.lock().expect("frame history lock poisoned").push(FrameRecord {
+              at_ms: crate::frame_history::now_ms(),
+              frame: render_frame.frame,
+              period_ms: render_frame.period_ms,
+              js_ms,
+              total_ms: js_ms,
+              raster: atx.raster_counters(),
+              ..FrameRecord::default()
+            });
+          }
+          return;
+        }
+        Commit::Build(b) => b,
+      };
+
+      let mut phases = stats::FramePhases::default();
+
+      // Layout phase: the tree borrow is scoped to the call so onLayout
+      // handlers (which may call setProperty etc.) don't trip the RefCell.
+      let t = Instant::now();
+      b.layout();
+      phases.layout = t.elapsed();
+
+      // Post-layout hook. Handlers run synchronously and may invalidate the
+      // layout cache via setProperty; the paint phase re-runs layout to absorb
+      // those changes.
+      let t = Instant::now();
+      emit_event(qtx, "postLayout", ());
+      phases.post = t.elapsed();
+
+      let t = Instant::now();
+      let paint_stats = b.paint();
+      phases.paint = t.elapsed();
+
+      // Input dispatch happens on event arrival (flux::gui::input::dispatch);
+      // here we only re-check hover, since this frame's layout may have moved
+      // elements under a stationary pointer.
+      let t = Instant::now();
+      flux::gui::input::refresh_hover(qtx, input_state.pointers(), input_state.modifiers());
+      phases.hover = t.elapsed();
+
+      {
+        let mut s = stats.borrow_mut();
+        s.record_frame(phases);
+        // Taken after paint so the counters cover the whole rebuild (paint
+        // shapes paragraphs too), plus the writes that led into it.
+        let counters = rendertree::counters::take();
+        let nodes = flux::gui::tree::node_counts(qtx).map_or(0, |(_, total)| total);
+        let nodes_added = nodes.saturating_sub(self.last_node_count.replace(nodes));
+        s.record_layout_activity(nodes, counters);
+        s.record_paint(paint_stats);
+        let ms = |d: std::time::Duration| d.as_secs_f32() * 1000.0;
+        let record = FrameRecord {
+          at_ms: crate::frame_history::now_ms(),
+          frame: render_frame.frame,
+          period_ms: render_frame.period_ms,
+          js_ms,
+          layout_ms: ms(phases.layout),
+          post_ms: ms(phases.post),
+          paint_ms: ms(phases.paint),
+          hover_ms: ms(phases.hover),
+          total_ms: js_ms + ms(phases.layout + phases.post + phases.paint + phases.hover),
+          counters,
+          nodes_painted: paint_stats.nodes_painted,
+          raster: atx.raster_counters(),
+        };
+        // A frame over its refresh period is jank a human feels; say so through
+        // the engine logger (the one the dev server forwards, so get_logs sees
+        // it) with the breakdown that names the phase.
+        if record.total_ms > record.period_ms && record.period_ms > 0.0 {
+          let due = self.last_slow_warn.get().is_none_or(|t| t.elapsed() >= SLOW_WARN_INTERVAL);
+          if due {
+            self.last_slow_warn.set(Some(Instant::now()));
+            qtx.logger().warn(&format!(
+              "Slow frame: {:.1} ms (budget {:.1}): js {:.1}, layout {:.1}, postLayout {:.1}, paint {:.1}, hover {:.1}; paraShapes {}, measureCalls {}, dirtiedNodes {}, nodesAdded {}, cacheHits {}/{}, nodesPainted {}",
+              record.total_ms,
+              record.period_ms,
+              record.js_ms,
+              record.layout_ms,
+              record.post_ms,
+              record.paint_ms,
+              record.hover_ms,
+              counters.para_shapes,
+              counters.measure_calls,
+              counters.dirtied,
+              nodes_added,
+              counters.cache_hits,
+              counters.cache_gets,
+              paint_stats.nodes_painted,
+            ));
+          }
+        }
+        self.history.lock().expect("frame history lock poisoned").push(record);
+      }
+
+      b.finish().expect("Failed to submit display list");
+    });
   }
 }

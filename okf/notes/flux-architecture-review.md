@@ -88,7 +88,57 @@ and taffy, nothing else.
 
 ## 2. The per-frame protocol is owned by the runner, not by flux
 
-`alloy_plugins/mod.rs::install` is the single registration seam and
+**Status 2026-09-03: done, both stages.** `flux::gui::frame` owns the order:
+`advance(ctx, now_ms, period_ms)` stamps both animation clocks, advances
+the clip players, ticks camera, video (feature gate inside flux) and gpu,
+and latches the frame request itself when a device or player changed
+content or still runs (the tree plugin already requests frames for its own
+writes, so the note's sketched demand flag was not needed);
+`deliver(ctx, frame, now_ms, timer_now_ms)` advances virtual time, flushes
+rAF and emits the render event. The seven per-plugin hooks lattice called
+are crate-private. Lattice's frame verb keeps input dispatch and the move
+terminator, the clock policy, the speech pump (right after `advance`), the
+pause gate with its native draw, the stepped-frame request and the timing
+stamp. One measurement changed with it: the stamp now lands before
+`deliver`, so the stats' JS figure (HUD `JS`, `jsMs`, the slow-frame line)
+is the frame's JS - timers, rAF callbacks and the render handler - not the
+handler alone; a heavy timer callback delays the frame, and now shows.
+Verified: flux check, clippy and gui unit tests, lattice check, clippy and
+unit tests, a release client, and on it `probes/timer-deadline-probe.tsx`
+(all three phases: timers fire within a frame period in the idle and spin
+phases and within the probe's own 40 ms frames in the heavy phase, which
+is the slow-frame storm it is designed to induce), `probes/
+transition-demo.tsx` under a frozen clock (the panel does not move after
+the tap until frames are stepped, progresses per step, the tween ends
+after its 21 frames and the color spring later, six transitionEnd lines
+counting the three mount-time settles), and `examples/spin` at steady
+state: 61 fps, 179 changed frames in 3 s, zero missed presents, zero slow
+frames. The video tick is verified by compilation only: `examples/video`
+does not build (the pre-existing `@solidrt/core/video` resolve error).
+
+Stage 2: `frame::draw(ctx, extra_demand, |frame| ...)` runs the two
+transition ticks and the demand gate in flux and hands the caller a
+`Frame` whose `commit` resolves to `Reused` or a `Build` with `layout`,
+`paint` and `finish`, each binding the tree borrow to its own call so JS
+run between the phases can write properties. The draw bridge's closure
+keeps its policy (overlay push, per-phase timing, the postLayout event,
+hover refresh, stats and history; the node count comes from
+`tree::node_counts`). Flux's driver is the one driver per tree: the direct
+`render` export is a hook-less `draw`, lattice's second driver is gone, and
+`tree::tick`, `spatial::tick` and `SharedRenderTree` are crate-private (the
+input plugin is the handle's remaining reader). A nested `draw` from a JS
+hook (a transitionEnd or postLayout handler calling `render`) finds the
+driver taken and skips with a warning instead of panicking. Verified: flux
+check, clippy and gui unit tests, lattice check, clippy and unit tests, the
+three headless gpu examples (the direct path), a release client, and on it
+`probes/transition-demo.tsx` under a frozen clock (the same per-step
+timeline as stage 1, plus a node snapshot of the settled panel: the capture
+interlock through the shared driver), `examples/text-flow` at steady state
+(thirty synthetic moves, 33 rebuilt frames with the phase figures recorded,
+zero slow frames, zero missed presents) and `examples/spin` (61 fps, 180
+changed frames in 3 s, zero missed presents).
+
+As found: `alloy_plugins/mod.rs::install` is the single registration seam and
 promises the runner never needs to know plugin order. Per frame that promise
 does not hold: `lattice/src/runtime.rs` (`frame`) calls ten flux hooks in
 an order flux's own doc comments require - stamp the tree clock, spatial
@@ -168,11 +218,24 @@ timeline_now_ms` is public for the playback clock. `AlloyContext` is
 crate-private, with the seven `store_state` functions: lattice's draw
 bridge and speech plugin hold the plain `Arc<alloy::Context>` (lattice
 owns the instance and already hands it to `GuiHost` as one).
-`SharedRenderTree` stays public for exactly one reader, the draw bridge's
-frame build (commit, layout, paint, finish, with the postLayout hook
-between): that is the per-frame protocol finding 2 moves, so closures
-around it now would be undone there. Stage 3 (one shared gui state) waits
-for finding 2, where the frame module is its second consumer. Verified:
+`SharedRenderTree` stayed public for exactly one reader, the draw bridge's
+frame build, until finding 2 stage 2 moved that build into flux; it is
+crate-private now. Stage 3 (2026-09-03): one shared `Gui` state (the alloy
+context and the platform handle), stored once by `install` before any
+plugin; the `AlloyContext` newtype and every per-plugin handle copy are
+gone. A plugin state with data of its own (tree, gpu, camera, video) holds
+the shared state as `gui: Rc<Gui>` - gpu and video need the alloy handle
+in Drop, where their teardown releases textures, buffers and sinks - and
+spatial, microphone and audio, which held nothing but the handle, have no
+state and no `store_state`; rAF reads the platform at init. `install` is
+one store plus plain `store_state` calls. Lattice is untouched: `install`,
+`alloy_context` and the frame module keep their signatures. Verified:
+flux check (gui and video), clippy and gui unit tests, lattice check,
+clippy and unit tests, the three headless gpu examples, and on a release
+client `probes/transition-demo.tsx` under a frozen clock, `examples/spin`
+at steady state and `examples/audio` (the audio plugin's state changed
+shape). Camera and microphone are compile-verified only: the headless
+client has no devices. Stage 1 and 2 verification:
 flux check, clippy and gui unit tests, the http, isolate and engine
 integration suites (an isolate child inherits the config), lattice check,
 clippy and unit tests, and on a release dev client:

@@ -223,8 +223,9 @@ fn reject_with(ctx: &Ctx<'_>, reject: Persistent<Function<'static>>, msg: &str) 
   }
 }
 
-/// Per-frame hook, called from the FrameRendered handler alongside raf::flush:
-/// pump mic samples into each worker, then dispatch worker events.
+/// Per-frame hook, called from the frame verb right after flux's
+/// `frame::advance`: pump mic samples into each worker, then dispatch worker
+/// events.
 pub fn tick(ctx: &Ctx<'_>) {
   let Some(state) = ctx.userdata::<SpeechPluginState>() else {
     return;

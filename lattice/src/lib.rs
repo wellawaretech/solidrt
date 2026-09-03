@@ -760,10 +760,9 @@ fn ui_thread(
         flux::LogLevel::Warn => log::warn!("{msg}"),
         flux::LogLevel::Error => log::error!("{msg}"),
       });
-      // flux owns the gui plugin set and its registration order; it stores the
-      // shared render tree in userdata, which the runner's draw bridge
-      // (`srt:render`) reads to draw it. lattice only supplies the host
-      // instances they bind.
+      // flux owns the gui plugin set, its registration order and the frame
+      // protocol the draw bridge (`srt:render`) draws through; lattice only
+      // supplies the host instances they bind.
       let builder = flux::gui::install(
         builder,
         flux::gui::GuiHost {

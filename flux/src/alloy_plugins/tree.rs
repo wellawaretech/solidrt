@@ -3,16 +3,14 @@ use rquickjs::{Ctx, Function, IntoJs, JsLifetime, Object, Value};
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::mpsc::Sender;
-use std::sync::Arc;
 use taffy::prelude::*;
 
-use super::AlloyContext;
 use crate::alloy_plugins::value::PropValue;
 use crate::plugins::marshal::OptArg;
 use alloy::rendertree::text::{prepare_units, PreparedRun};
 use alloy::rendertree::{
-  AnimProp, AnimValue, Commit, Damage, Element, EventInterest, FrameDriver, Measurable, MeasureContext,
-  PlatformContext, Rect, RenderTree, Text, Window,
+  AnimProp, AnimValue, Damage, Element, EventInterest, FrameDriver, Measurable, MeasureContext, Rect, RenderTree, Text,
+  Window,
 };
 
 thread_local! {
@@ -212,27 +210,28 @@ pub(crate) fn emit_transition_ends(ctx: &Ctx<'_>, settled: &[(u64, alloy::render
   }
 }
 
-/// The render tree handle the runner's draw bridge (`srt:render`) reads for
-/// the frame build (commit, layout, paint, finish, with its JS hooks between
-/// the phases). Every other reader goes through the functions below.
+/// The render tree handle the input plugin hit-tests against; every reader
+/// outside the crate goes through the functions below and `frame::draw`.
 #[derive(Clone, JsLifetime)]
-pub struct SharedRenderTree(#[qjs(skip_trace)] pub Rc<RefCell<RenderTree>>);
+pub(crate) struct SharedRenderTree(#[qjs(skip_trace)] pub Rc<RefCell<RenderTree>>);
 
 /// Stamp the transition animation clock with this frame's app time (the
-/// runner, once per frame before the frame's JS runs, beside the spatial
-/// arena's stamp): property writes during the flush start their tracks at
-/// this time and `tick` advances to it. No-op before the GUI is installed.
-pub fn stamp_clock(ctx: &Ctx<'_>, now_ms: f64) {
+/// frame module, once per frame before the frame's JS runs, beside the
+/// spatial arena's stamp): property writes during the flush start their
+/// tracks at this time and `tick` advances to it. No-op before the GUI is
+/// installed.
+pub(crate) fn stamp_clock(ctx: &Ctx<'_>, now_ms: f64) {
   if let Some(tree) = ctx.userdata::<SharedRenderTree>() {
     tree.0.borrow_mut().set_transition_now(now_ms);
   }
 }
 
 /// Advance every running transition track to the stamped clock and report
-/// the settled ones to JS as "transitionEnd" events. Returns whether a track
-/// is still running (frame demand for the runner's gate). The tree borrow is
-/// released before the handlers run: they call back in.
-pub fn tick(ctx: &Ctx<'_>) -> bool {
+/// the settled ones to JS as "transitionEnd" events (`frame::draw`, before
+/// the demand gate). Returns whether a track is still running (frame
+/// demand). The tree borrow is released before the handlers run: they call
+/// back in.
+pub(crate) fn tick(ctx: &Ctx<'_>) -> bool {
   let Some(tree) = ctx.userdata::<SharedRenderTree>() else {
     return false;
   };
@@ -261,39 +260,41 @@ pub fn with_tree<R>(ctx: &Ctx<'_>, f: impl FnOnce(&RenderTree) -> R) -> Option<R
 }
 
 // State the `flux:rendertree` module binds, stashed in userdata by `store_state`
-// before any import so the module's `evaluate` can build its exports.
+// before any import so the module's `evaluate` can build its exports. The
+// frame module draws from it too (`frame::draw`).
 #[derive(Clone, JsLifetime)]
 struct RenderTreeState(#[qjs(skip_trace)] Rc<RenderTreeInner>);
 
-struct RenderTreeInner {
-  tree: Rc<RefCell<RenderTree>>,
-  platform: Arc<PlatformContext>,
+pub(crate) struct RenderTreeInner {
+  pub(crate) tree: Rc<RefCell<RenderTree>>,
+  pub(crate) gui: Rc<super::Gui>,
   alloy_cmd_tx: Sender<alloy::AlloyCommand>,
-  atx: AlloyContext,
-  // The direct draw path's frame driver (see `render`): one per context, so
-  // consecutive `render()` calls reuse the retained display list.
-  render_driver: RefCell<FrameDriver>,
+  // The one frame driver over this tree (`frame::draw`): every draw path
+  // shares its retained display list.
+  pub(crate) render_driver: RefCell<FrameDriver>,
 }
 
 /// Create the shared render tree and stash the state the `flux:rendertree`
-/// module binds, before any import. Also stores `SharedRenderTree`, which the
-/// runner's draw bridge (`srt:render`) reads directly.
-pub(crate) fn store_state(
-  ctx: &Ctx<'_>,
-  tree: RenderTree,
-  alloy_cmd_tx: Sender<alloy::AlloyCommand>,
-  platform: Arc<PlatformContext>,
-  atx: AlloyContext,
-) {
+/// module binds, before any import.
+pub(crate) fn store_state(ctx: &Ctx<'_>, tree: RenderTree, alloy_cmd_tx: Sender<alloy::AlloyCommand>) {
   let shared = SharedRenderTree(Rc::new(RefCell::new(tree)));
   ctx.store_userdata(shared.clone()).expect("store render tree");
-  let inner =
-    RenderTreeInner { tree: shared.0, platform, alloy_cmd_tx, atx, render_driver: RefCell::new(FrameDriver::new()) };
+  let inner = RenderTreeInner {
+    tree: shared.0,
+    gui: super::gui(ctx),
+    alloy_cmd_tx,
+    render_driver: RefCell::new(FrameDriver::new()),
+  };
   ctx.store_userdata(RenderTreeState(Rc::new(inner))).expect("store rendertree state");
 }
 
 fn state(ctx: &Ctx<'_>) -> Rc<RenderTreeInner> {
   ctx.userdata::<RenderTreeState>().expect("rendertree state userdata").0.clone()
+}
+
+/// The tree state for the frame module; None before the GUI is installed.
+pub(crate) fn try_state(ctx: &Ctx<'_>) -> Option<Rc<RenderTreeInner>> {
+  ctx.userdata::<RenderTreeState>().map(|s| s.0.clone())
 }
 
 /// The `flux:rendertree` module: the render-tree bridge the renderer drives to
@@ -360,13 +361,13 @@ fn create_root(ctx: Ctx<'_>, id: u64) {
   let mut tree = s.tree.borrow_mut();
   tree.create_node(id, Window::default().with_layout());
   tree.root = Some(id);
-  s.platform.request_frame();
+  s.gui.platform.request_frame();
 }
 
 fn set_root(ctx: Ctx<'_>, id: u64) {
   let s = state(&ctx);
   s.tree.borrow_mut().set_root(id);
-  s.platform.request_frame();
+  s.gui.platform.request_frame();
 }
 
 fn create_node(ctx: Ctx<'_>, id: u64, kind: String) -> rquickjs::Result<()> {
@@ -375,20 +376,20 @@ fn create_node(ctx: Ctx<'_>, id: u64, kind: String) -> rquickjs::Result<()> {
   };
   let s = state(&ctx);
   s.tree.borrow_mut().create_node(id, element);
-  s.platform.request_frame();
+  s.gui.platform.request_frame();
   Ok(())
 }
 
 fn detach_node(ctx: Ctx<'_>, parent_id: u64, node_id: u64) {
   let s = state(&ctx);
   s.tree.borrow_mut().detach_node(parent_id, node_id);
-  s.platform.request_frame();
+  s.gui.platform.request_frame();
 }
 
 fn destroy_node(ctx: Ctx<'_>, node_id: u64) {
   let s = state(&ctx);
   s.tree.borrow_mut().destroy_node(node_id);
-  s.platform.request_frame();
+  s.gui.platform.request_frame();
 }
 
 fn insert_node(ctx: Ctx<'_>, parent_id: u64, node_id: u64, anchor_id: OptArg<u64>) -> rquickjs::Result<()> {
@@ -397,7 +398,7 @@ fn insert_node(ctx: Ctx<'_>, parent_id: u64, node_id: u64, anchor_id: OptArg<u64
     .borrow_mut()
     .insert_node(parent_id, node_id, anchor_id.0)
     .map_err(|msg| rquickjs::Exception::throw_message(&ctx, &msg))?;
-  s.platform.request_frame();
+  s.gui.platform.request_frame();
   Ok(())
 }
 
@@ -427,7 +428,7 @@ fn set_property(ctx: Ctx<'_>, node_id: u64, property: String, value: Value<'_>) 
       _ => value.as_number().map(|n| AnimValue::Scalar(n as f32)),
     };
     if s.tree.borrow_mut().transition_write(node_id, prop, target) {
-      s.platform.request_frame();
+      s.gui.platform.request_frame();
       return Ok(());
     }
   }
@@ -436,11 +437,11 @@ fn set_property(ctx: Ctx<'_>, node_id: u64, property: String, value: Value<'_>) 
     .borrow_mut()
     .try_edit(node_id, |el| {
       super::properties::apply_jsx(el, &property, &value, &s.alloy_cmd_tx, &|id, params| {
-        s.atx.set_target_params(id, params)
+        s.gui.alloy.set_target_params(id, params)
       })
     })
     .map_err(|msg| rquickjs::Exception::throw_message(&ctx, &msg))?;
-  s.platform.request_frame();
+  s.gui.platform.request_frame();
   Ok(())
 }
 
@@ -461,32 +462,31 @@ fn set_event_interest(ctx: Ctx<'_>, node_id: u64, bits: u32) -> rquickjs::Result
 }
 
 fn request_frame(ctx: Ctx<'_>) {
-  state(&ctx).platform.request_frame();
+  state(&ctx).gui.platform.request_frame();
 }
 
 // The direct draw path: put the current tree on screen now. Lets a
-// flux + alloy app render without the runner's frame loop. Runs alloy's
-// frame protocol, so when nothing changed since the last call the retained
-// display list is re-presented instead of rebuilt (fresh texture contents
-// are still sampled at the raster flush); the call itself is the demand,
-// so the driver's gate never skips it.
+// flux + alloy app render without the runner's frame loop. Runs the frame
+// protocol (`frame::draw`), so when nothing changed since the last call the
+// retained display list is re-presented instead of rebuilt (fresh texture
+// contents are still sampled at the raster flush); the call itself is the
+// demand, so the gate never skips it.
 fn render(ctx: Ctx<'_>) {
-  let s = state(&ctx);
-  let mut driver = s.render_driver.borrow_mut();
-  let Some(frame) = driver.begin(&s.platform, true) else { return };
-  let commit = frame.commit(&mut s.tree.borrow_mut(), &s.platform, &s.atx);
-  match commit {
-    Err(()) => log::warn!("render: render thread unavailable, dropping frame"),
-    Ok(Commit::Reused { .. }) => {}
-    Ok(Commit::Build(mut b)) => {
-      // The paint phase runs layout itself; the direct path has no
-      // between-phase hooks to sequence.
-      b.paint(&mut s.tree.borrow_mut(), &s.platform, &s.atx);
-      if b.finish(&s.tree.borrow(), &s.platform, &s.atx).is_err() {
-        log::warn!("render: render thread unavailable, dropping frame");
+  super::frame::draw(&ctx, true, |frame| {
+    let Some(frame) = frame else { return };
+    match frame.commit() {
+      Err(()) => log::warn!("render: render thread unavailable, dropping frame"),
+      Ok(super::frame::Commit::Reused { .. }) => {}
+      Ok(super::frame::Commit::Build(mut b)) => {
+        // The paint phase runs layout itself; the direct path has no
+        // between-phase hooks to sequence.
+        b.paint();
+        if b.finish().is_err() {
+          log::warn!("render: render thread unavailable, dropping frame");
+        }
       }
     }
-  }
+  });
 }
 
 fn set_text_input_active(ctx: Ctx<'_>, active: bool, hints: OptArg<Object<'_>>) {
@@ -535,8 +535,8 @@ fn measure_text<'js>(ctx: Ctx<'js>, text: String, options: OptArg<Object<'js>>) 
   }
   let s = state(&ctx);
   let size = node.measure(&MeasureContext {
-    platform: &s.platform,
-    alloy: &*s.atx,
+    platform: &s.gui.platform,
+    alloy: &*s.gui.alloy,
     known: Size { width: None, height: None },
     available: Size { width: AvailableSpace::MaxContent, height: AvailableSpace::MaxContent },
   });
@@ -555,7 +555,7 @@ fn prepare_text<'js>(ctx: Ctx<'js>, text: String, options: OptArg<Object<'js>>) 
     }
   }
   let s = state(&ctx);
-  let units = prepare_units(&s.platform, &text, &node.run_style(), &runs, carets);
+  let units = prepare_units(&s.gui.platform, &text, &node.run_style(), &runs, carets);
   let array = rquickjs::Array::new(ctx.clone())?;
   // Byte offsets to UTF-16 (JS string) offsets, incrementally: units tile
   // the text in order.
@@ -612,7 +612,7 @@ fn get_layout_box(ctx: Ctx<'_>, id: u64) -> Option<JsBoundingBox> {
 
 fn snapshot_texture(ctx: Ctx<'_>, id: u64) -> rquickjs::Result<u64> {
   let s = state(&ctx);
-  let result = s.tree.borrow().snapshot_texture(id, &s.atx);
+  let result = s.tree.borrow().snapshot_texture(id, &s.gui.alloy);
   result.map_err(|msg| rquickjs::Exception::throw_message(&ctx, &msg))
 }
 

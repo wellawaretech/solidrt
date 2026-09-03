@@ -22,7 +22,12 @@ they marshal:
 - `alloy_plugins/` (behind the `gui` feature, and re-exported as `flux::gui`
   to pair with the feature name): the alloy-backed render-tree, capture, media
   and input bindings. The runner (lattice) supplies the host instances via
-  `gui::install`; flux owns which plugins exist and their registration order.
+  `gui::install`; flux owns which plugins exist and their registration order,
+  and `gui::frame` owns the frame protocol: `advance` and `deliver` fix the
+  order the per-frame hooks run in, `draw` runs the transition ticks, the
+  demand gate and the draw phases over the tree. A runner drives a frame
+  with those three calls, never the per-plugin hooks or the tree handle
+  (both crate-private).
 
 Placement rule: is the JS surface a web standard? `standards_plugins/`,
 regardless of what backs it (`fetch` marshals forge but is a standard).
@@ -34,7 +39,11 @@ Binding style in `alloy_plugins/`: every module export is a free `fn`
 taking `Ctx` first and reading its plugin state from userdata through the
 module's `state(&ctx)` accessor (stashed by its `store_state` before any
 import), and `evaluate` is one `exports.export(name, Function::new(ctx.clone(),
-name)?)` line per export. Do not bind exports as capturing closures: they
+name)?)` line per export. The host handles (the alloy context, the platform)
+live once in the shared `Gui` state `install` stores first: a plugin state
+with data of its own holds it as `gui: Rc<Gui>`, a plugin with none has no
+state and calls `gui(&ctx)` (spatial, microphone, audio); never store a
+handle copy per plugin. Do not bind exports as capturing closures: they
 repeat the state clones per binding and need the HRTB coercion below for a
 `'js`-bound return. The one place a closure is right is a method on a
 per-instance handle (a player's `close`, a track's `ended`): it captures

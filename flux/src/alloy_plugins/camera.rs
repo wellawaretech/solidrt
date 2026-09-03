@@ -16,7 +16,6 @@ use rquickjs::promise::Promise;
 use rquickjs::{Array, Ctx, Exception, Function, JsLifetime, Object, Persistent, TypedArray};
 
 use crate::plugins::marshal::OptArg;
-use super::AlloyContext;
 
 fn throw_str(ctx: &Ctx<'_>, msg: &str) -> rquickjs::Error {
   rquickjs::Exception::throw_message(ctx, msg)
@@ -29,7 +28,7 @@ struct PendingOpen {
 }
 
 struct Inner {
-  atx: AlloyContext,
+  gui: Rc<super::Gui>,
   pending: RefCell<Vec<PendingOpen>>,
   /// Per-session JS barcode callback (sessions opened with scan).
   barcode_handlers: RefCell<HashMap<u64, Persistent<Function<'static>>>>,
@@ -42,10 +41,10 @@ struct CameraPluginState(#[qjs(skip_trace)] Rc<Inner>);
 /// module import) so `CameraModule::evaluate` and the per-frame `tick` can read
 /// it. The `flux:camera` module surface is registered separately via
 /// `module_override`.
-pub(crate) fn store_state(ctx: &Ctx<'_>, atx: AlloyContext) {
+pub(crate) fn store_state(ctx: &Ctx<'_>) {
   ctx
     .store_userdata(CameraPluginState(Rc::new(Inner {
-      atx,
+      gui: super::gui(ctx),
       pending: RefCell::new(Vec::new()),
       barcode_handlers: RefCell::new(HashMap::new()),
     })))
@@ -132,7 +131,7 @@ fn open_impl<'js>(ctx: Ctx<'js>, options: OptArg<Object<'js>>) -> rquickjs::Resu
   // sync throw here unwinds through the caller's reactive computation, which
   // no .catch can intercept (observed as REACTIVITY_HALTED in the launcher).
   let (promise, resolve, reject) = Promise::new(&ctx)?;
-  match state.0.atx.open_camera(device, facing, size, scan_qr) {
+  match state.0.gui.alloy.open_camera(device, facing, size, scan_qr) {
     Ok(session) => {
       state.0.pending.borrow_mut().push(PendingOpen {
         session,
@@ -150,7 +149,7 @@ fn open_impl<'js>(ctx: Ctx<'js>, options: OptArg<Object<'js>>) -> rquickjs::Resu
 
 fn close_impl(ctx: Ctx<'_>, session: u64) {
   let state = ctx.userdata::<CameraPluginState>().expect("camera state");
-  state.0.atx.close_camera(session);
+  state.0.gui.alloy.close_camera(session);
   state.0.barcode_handlers.borrow_mut().remove(&session);
 }
 
@@ -197,14 +196,13 @@ fn reject_with(ctx: &Ctx<'_>, reject: Persistent<Function<'static>>, msg: &str) 
   }
 }
 
-/// Per-frame hook, called from the FrameRendered handler alongside raf::flush.
-/// Returns true when a camera uploaded a new frame into its texture, so the
-/// caller can request a redraw.
-pub fn tick(ctx: &Ctx<'_>) -> bool {
+/// Per-frame hook (see `frame::advance`). Returns true when a camera
+/// uploaded a new frame into its texture, so the caller can request a redraw.
+pub(crate) fn tick(ctx: &Ctx<'_>) -> bool {
   let Some(state) = ctx.userdata::<CameraPluginState>() else {
     return false;
   };
-  let uploaded = state.0.atx.pump_cameras();
+  let uploaded = state.0.gui.alloy.pump_cameras();
   dispatch_barcodes(ctx, &state);
 
   if state.0.pending.borrow().is_empty() {
@@ -212,7 +210,7 @@ pub fn tick(ctx: &Ctx<'_>) -> bool {
   }
   let pending = std::mem::take(&mut *state.0.pending.borrow_mut());
   for entry in pending {
-    match state.0.atx.camera_status(entry.session) {
+    match state.0.gui.alloy.camera_status(entry.session) {
       Some(CameraStatus::Pending) => state.0.pending.borrow_mut().push(entry),
       Some(CameraStatus::Ready { texture_id, width, height }) => {
         let session = entry.session;
@@ -254,11 +252,11 @@ fn dispatch_barcodes(ctx: &Ctx<'_>, state: &CameraPluginState) {
   let handlers: Vec<(u64, Persistent<Function<'static>>)> =
     state.0.barcode_handlers.borrow().iter().map(|(sid, f)| (*sid, f.clone())).collect();
   for (session, handler) in handlers {
-    if state.0.atx.camera_status(session).is_none() {
+    if state.0.gui.alloy.camera_status(session).is_none() {
       state.0.barcode_handlers.borrow_mut().remove(&session);
       continue;
     }
-    for data in state.0.atx.take_camera_barcodes(session) {
+    for data in state.0.gui.alloy.take_camera_barcodes(session) {
       let call = || -> rquickjs::Result<()> {
         let obj = Object::new(ctx.clone())?;
         obj.set("data", data.as_str())?;

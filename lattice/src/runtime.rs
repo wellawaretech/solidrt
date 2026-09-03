@@ -7,7 +7,7 @@ use alloy::rendertree::PlatformContext;
 use alloy::resample::SharedResampler;
 use alloy::{AlloyEvent, InputState};
 use flux::gui::input::InputEvent;
-use flux::{emit_event, ExecHandle};
+use flux::ExecHandle;
 
 use crate::paced_clock::PacedClock;
 
@@ -286,9 +286,10 @@ impl UiRuntime for FluxRuntime {
   }
 
   /// Run the per-frame JS work for one frame signal (FrameRendered or idle
-  /// Tick): publish the frame index, advance the paced clock, pump cameras and
-  /// speech, flush rAF callbacks, and emit the "render" event. `next_frame` is
-  /// the present index the frame being computed would get.
+  /// Tick): dispatch the sampled moves, publish the frame index, advance the
+  /// paced clock, then drive flux's frame protocol (`frame::advance`, the
+  /// speech pump, and `frame::deliver` unless the clock is paused).
+  /// `next_frame` is the present index the frame being computed would get.
   fn frame(&mut self, next_frame: u64) {
     let exec = self.exec.borrow();
     let Some(eh) = exec.as_ref() else {
@@ -315,10 +316,6 @@ impl UiRuntime for FluxRuntime {
     // The presentation model's period; None in playback mode, which has no
     // presentation model.
     let paced_period_ms = self.paced.as_ref().map(|p| p.period_ms());
-    // Display period for video frame scheduling; 0 in playback just disables
-    // the selection lookahead.
-    #[cfg(feature = "video")]
-    let period_us = paced_period_ms.map(|p| (p * 1000.0) as i64).unwrap_or(0);
     // The refresh period a frame's cost is judged against (frame history):
     // the presentation model's in run mode, the capture rate's in playback.
     let judge_period_ms = paced_period_ms.map(|p| p as f32).unwrap_or_else(|| 1000.0 / self.platform.fps().max(1) as f32);
@@ -401,41 +398,13 @@ impl UiRuntime for FluxRuntime {
           (t, t)
         }
       };
-      // Stamp the render tree's animation clock with this frame's app-time
-      // before any frame work runs: property writes during the flush start
-      // their transition tracks at this time, and the draw path's advance
-      // reads the same stamp, so a track's first frame paints its from-value
-      // and pause/scale/step semantics ride in with ts.
-      flux::gui::tree::stamp_clock(&ctx, ts);
-      // The spatial arena's node-transition clock rides the same stamp.
-      flux::gui::spatial::stamp_clock(&ctx, ts);
-      // Clip players advance BEFORE the frame's JS: onFrame handlers read
-      // and can overwrite freshly posed nodes (the post-animation hook),
-      // and the draw path's flush publishes the result. Written poses are
-      // this frame's reason to paint; still-progressing players are
-      // standing demand for the next one.
-      let players = flux::gui::spatial::advance_players(&ctx);
-      if players.active || players.wrote {
-        platform.request_frame();
-      }
-      if flux::gui::camera::tick(&ctx) {
-        // A camera frame landed in its texture; the screen content changed
-        // even though the tree did not.
-        platform.request_frame();
-      }
-      #[cfg(feature = "video")]
-      {
-        let video = flux::gui::video::tick(&ctx, period_us);
-        if video.uploaded || video.playing {
-          // Same for a video frame uploaded into its player's texture - and a
-          // mid-playback player is standing demand for the next tick, so video
-          // rides the frame grid instead of free-running on its own uploads.
-          platform.request_frame();
-        }
-      }
-      // Settle any captureSnapshot promises whose captures alloy rendered on the
-      // previous paint pass.
-      flux::gui::gpu::tick(&ctx);
+      // The pre-delivery half of flux's frame protocol: both animation
+      // clocks stamped with this frame's app time (so property writes during
+      // the flush start their tracks at ts, the draw path's advance reads the
+      // same stamp, and pause/scale/step semantics ride in with it), the clip
+      // players advanced ahead of the frame's JS, the devices ticked. It
+      // latches the frame request for what changed content.
+      flux::gui::frame::advance(&ctx, ts, paced_period_ms);
       #[cfg(feature = "speech")]
       crate::plugins::speech::tick(&ctx);
       if !deliver {
@@ -451,21 +420,16 @@ impl UiRuntime for FluxRuntime {
         // so the step is visible to a following snapshot.
         platform.request_frame();
       }
-      // Timers fire before the frame callbacks, one task-queue turn per
-      // frame (see flux virtual time); the frame then consumes the state
-      // they dirtied. They advance on the timer reading, not ts.
-      flux::advance_virtual_time(&ctx, timer_ts);
-      flux::gui::raf::flush(&ctx, ts);
-      let time = ts / 1000.0;
-      let obj = flux::rquickjs::Object::new(ctx.clone()).expect("create object");
-      obj.set("frame", next_frame).expect("set frame");
-      obj.set("time", time).expect("set time");
-      // Stamp the frame for draw(): the start instant measures onFrame + flush
-      // without any timing call crossing into JS (see frame::RenderFrame).
+      // Stamp the frame for draw(): the start instant measures the frame's
+      // JS (timers, rAF, onFrame + flush) without any timing call crossing
+      // into JS (see frame::RenderFrame).
       crate::frame::RENDER_FRAME.with(|c| {
         c.set(crate::frame::RenderFrame { start: Some(std::time::Instant::now()), frame: next_frame, period_ms: judge_period_ms })
       });
-      emit_event(&ctx, "render", obj);
+      // The delivery half: timers on the timer reading (one task-queue turn
+      // per frame, see flux virtual time), then rAF and the render event on
+      // ts, so the frame consumes the state the callbacks dirtied.
+      flux::gui::frame::deliver(&ctx, next_frame, ts, timer_ts);
       timing.lock().expect("js timing lock poisoned").record_frame(start.elapsed().as_secs_f32() * 1000.0);
     });
   }

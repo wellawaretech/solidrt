@@ -34,8 +34,6 @@ use rquickjs::module::{Declarations, Exports, ModuleDef};
 use rquickjs::promise::Promise;
 use rquickjs::{Ctx, Exception, Function, JsLifetime, Object};
 
-use super::AlloyContext;
-
 // The silent-stream master clock reading in us: the engine timeline behind
 // `video-timeline-pacing`, a process-monotonic wall origin otherwise.
 #[cfg(feature = "video-timeline-pacing")]
@@ -69,7 +67,8 @@ struct PlayerEntry {
 }
 
 struct Inner {
-  atx: AlloyContext,
+  // The shared host handles; alloy also takes the teardown release in Drop.
+  gui: Rc<super::Gui>,
   players: RefCell<HashMap<u64, PlayerEntry>>,
   next_id: RefCell<u64>,
 }
@@ -79,9 +78,9 @@ impl Drop for Inner {
   // workers exit when the VideoPlayer drops its queue receivers).
   fn drop(&mut self) {
     for (_, entry) in self.players.borrow_mut().drain() {
-      self.atx.destroy_texture(entry.texture);
+      self.gui.alloy.destroy_texture(entry.texture);
       if let Some(sink) = entry.sink {
-        self.atx.destroy_pcm_sink(sink);
+        self.gui.alloy.destroy_pcm_sink(sink);
       }
     }
   }
@@ -92,10 +91,10 @@ struct VideoPluginState(#[qjs(skip_trace)] Rc<Inner>);
 
 /// Store the video plugin state in userdata. Runs at engine init, before any
 /// module import; the `flux:video` module surface reads it in `evaluate`.
-pub(crate) fn store_state(ctx: &Ctx<'_>, atx: AlloyContext) {
+pub(crate) fn store_state(ctx: &Ctx<'_>) {
   ctx
     .store_userdata(VideoPluginState(Rc::new(Inner {
-      atx,
+      gui: super::gui(ctx),
       players: RefCell::new(HashMap::new()),
       next_id: RefCell::new(0),
     })))
@@ -145,7 +144,7 @@ fn build_player<'js>(ctx: Ctx<'js>, path: &str) -> Result<Object<'js>, String> {
     PixelLayout::I420 => alloy::YuvLayout::I420,
   };
   let matrix = if player.color_is_bt709() { alloy::YuvMatrix::Bt709 } else { alloy::YuvMatrix::Bt601 };
-  let texture = state.0.atx.create_yuv_texture(
+  let texture = state.0.gui.alloy.create_yuv_texture(
     width,
     height,
     layout,
@@ -157,15 +156,15 @@ fn build_player<'js>(ctx: Ctx<'js>, path: &str) -> Result<Object<'js>, String> {
     Some(format!("video:{path}")),
   )?;
   // The player owns its texture: freed by close(), never by the app.
-  state.0.atx.borrow_texture(texture);
+  state.0.gui.alloy.borrow_texture(texture);
 
   // A sink that cannot open (headless box, no output device) plays silent
   // on the wall clock instead of failing the video - and starts paused so
   // prefetched audio waits for play().
   let sink = match info.audio.as_ref() {
-    Some(audio) => match state.0.atx.create_pcm_sink(audio.sample_rate, audio.channels) {
+    Some(audio) => match state.0.gui.alloy.create_pcm_sink(audio.sample_rate, audio.channels) {
       Ok(sink) => {
-        if let Err(e) = state.0.atx.set_pcm_sink_paused(sink, true) {
+        if let Err(e) = state.0.gui.alloy.set_pcm_sink_paused(sink, true) {
           log::warn!("[video] {e}");
         }
         Some(sink)
@@ -224,7 +223,7 @@ fn play_impl(ctx: Ctx<'_>, id: u64, play: bool) {
     }
   }
   if let Some(sink) = entry.sink {
-    if let Err(e) = state.0.atx.set_pcm_sink_paused(sink, !play) {
+    if let Err(e) = state.0.gui.alloy.set_pcm_sink_paused(sink, !play) {
       log::warn!("[video] {e}");
     }
   }
@@ -253,14 +252,14 @@ fn close_impl(ctx: Ctx<'_>, id: u64) {
   let Some(entry) = state.0.players.borrow_mut().remove(&id) else {
     return;
   };
-  state.0.atx.release_borrowed(entry.texture);
+  state.0.gui.alloy.release_borrowed(entry.texture);
   if let Some(sink) = entry.sink {
-    state.0.atx.destroy_pcm_sink(sink);
+    state.0.gui.alloy.destroy_pcm_sink(sink);
   }
 }
 
 /// What one tick did, for the caller's frame-demand decision.
-pub struct VideoTick {
+pub(crate) struct VideoTick {
   /// A player uploaded a new frame into its texture: the screen content
   /// changed and a redraw is needed.
   pub uploaded: bool,
@@ -270,10 +269,10 @@ pub struct VideoTick {
   pub playing: bool,
 }
 
-/// Per-frame hook, called from the FrameRendered handler alongside
-/// `camera::tick`. `period_us` is the display refresh period (0 when the
-/// caller has none); silent-stream frame selection looks ahead half of it.
-pub fn tick(ctx: &Ctx<'_>, period_us: i64) -> VideoTick {
+/// Per-frame hook (see `frame::advance`). `period_us` is the display
+/// refresh period (0 when the caller has none); silent-stream frame
+/// selection looks ahead half of it.
+pub(crate) fn tick(ctx: &Ctx<'_>, period_us: i64) -> VideoTick {
   let mut result = VideoTick { uploaded: false, playing: false };
   let Some(state) = ctx.userdata::<VideoPluginState>() else {
     return result;
@@ -282,11 +281,11 @@ pub fn tick(ctx: &Ctx<'_>, period_us: i64) -> VideoTick {
     // Keep the sink fed up to the lookahead whatever the play state (a
     // paused sink holds its queue), so play() starts with audio ready.
     if let Some(sink) = entry.sink {
-      while state.0.atx.pcm_sink_queued_us(sink).unwrap_or(i64::MAX) < PCM_LOOKAHEAD_US {
+      while state.0.gui.alloy.pcm_sink_queued_us(sink).unwrap_or(i64::MAX) < PCM_LOOKAHEAD_US {
         let Some(chunk) = entry.player.next_pcm() else {
           break;
         };
-        if let Err(e) = state.0.atx.pcm_sink_push(sink, &chunk.samples) {
+        if let Err(e) = state.0.gui.alloy.pcm_sink_push(sink, &chunk.samples) {
           log::warn!("[video] {e}");
           break;
         }
@@ -300,14 +299,14 @@ pub fn tick(ctx: &Ctx<'_>, period_us: i64) -> VideoTick {
     }
     let lookahead_us = if cfg!(feature = "video-timeline-pacing") { period_us / 2 } else { 0 };
     let clock_us = match entry.sink {
-      Some(sink) => state.0.atx.pcm_sink_position_us(sink).unwrap_or(0),
+      Some(sink) => state.0.gui.alloy.pcm_sink_position_us(sink).unwrap_or(0),
       None => {
         let now_us = clock_now_us(ctx);
         entry.base_us + entry.origin_us.map(|o| now_us - o).unwrap_or(0) + lookahead_us
       }
     };
     if let Some(frame) = entry.player.advance(clock_us) {
-      match state.0.atx.update_yuv(entry.texture, frame.data) {
+      match state.0.gui.alloy.update_yuv(entry.texture, frame.data) {
         Ok(()) => result.uploaded = true,
         Err(e) => log::warn!("[video] {e}"),
       }

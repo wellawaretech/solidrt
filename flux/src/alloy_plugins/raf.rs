@@ -1,11 +1,8 @@
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::sync::Arc;
 
 use crate::logger::report_uncaught;
 use rquickjs::{Ctx, Function, JsLifetime, Persistent};
-
-use alloy::rendertree::PlatformContext;
 
 // Per-engine requestAnimationFrame queue, stored in the JS context userdata so
 // it is recreated on engine reload. Callbacks are one-shot; flush() swaps the
@@ -19,8 +16,9 @@ struct RafInner {
   pending: Vec<(u32, Persistent<Function<'static>>)>,
 }
 
-pub fn init(ctx: &Ctx<'_>, platform: Arc<PlatformContext>) {
+pub(crate) fn init(ctx: &Ctx<'_>) {
   ctx.store_userdata(RafCallbacks::default()).expect("store raf callbacks");
+  let platform = super::gui(ctx).platform.clone();
 
   let globals = ctx.globals();
   let raf = Function::new(ctx.clone(), move |callback: Function<'_>| {
@@ -53,9 +51,10 @@ fn cancel_animation_frame(ctx: Ctx<'_>, id: u32) {
   store.0.borrow_mut().pending.retain(|(i, _)| *i != id);
 }
 
-// Run every callback registered before this frame, passing the timestamp in ms.
-// The queue is taken first so re-registrations during dispatch land next frame.
-pub fn flush(ctx: &Ctx<'_>, timestamp: f64) {
+// Run every callback registered before this frame (see `frame::deliver`),
+// passing the timestamp in ms. The queue is taken first so re-registrations
+// during dispatch land next frame.
+pub(crate) fn flush(ctx: &Ctx<'_>, timestamp: f64) {
   let due = {
     let store = ctx.userdata::<RafCallbacks>().expect("raf callbacks userdata");
     let mut inner = store.0.borrow_mut();
