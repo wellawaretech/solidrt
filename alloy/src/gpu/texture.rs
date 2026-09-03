@@ -84,16 +84,21 @@ pub enum SamplerWrap {
 /// (packing indices into RGBA texels is only free when the width divides by
 /// four). R32f/Rgba32f are the float data-texture formats (heights fetched in
 /// a vertex stage, bone matrices at scale, lookup tables wider than 8 bits):
-/// upload-and-sample only, nearest/texelFetch only (see `is_float`), never
+/// upload-and-sample only, nearest/texelFetch only (see `filterable`), never
 /// readable back or copied (float is not color-renderable in core GLES 3.0).
-/// Shader/pipeline targets are always RGBA8; this only applies to pixel
-/// uploads.
+/// Rgba16f is the HDR image format (environment maps, panoramas): the same
+/// float payload at the boundary, stored as half float, and filterable like
+/// a byte format because GLES 3.0 lists RGBA16F as texture-filterable.
+/// Rgba8Srgb is an rgba8 whose stored bytes are sRGB-encoded: sampling
+/// decodes them to linear light in hardware, before filtering, so the
+/// filter and the mip chain are right - the color-map format of
+/// linear-space lighting. Shader/pipeline targets are always RGBA8; this
+/// only applies to pixel uploads.
 ///
-/// Reserved future values of the same app-facing vocabulary, so they slot in
+/// Reserved future value of the same app-facing vocabulary, so it slots in
 /// without an API rethink: "etc2-rgba8" (compressed uploads; changes
-/// `byte_len` to block sizing and the upload verb to glCompressedTexImage2D)
-/// and "rgba8-srgb" (linear-space rendering). Grammar: base layout plus a
-/// qualifier suffix.
+/// `byte_len` to block sizing and the upload verb to glCompressedTexImage2D).
+/// Grammar: base layout plus a qualifier suffix.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
 pub enum TextureFormat {
   #[default]
@@ -103,6 +108,16 @@ pub enum TextureFormat {
   R32f,
   /// Four floats per pixel - a vec4 (or mat4 column) per texel.
   Rgba32f,
+  /// Four half floats per pixel: the HDR image format. Filterable (see
+  /// `filterable`); a generated mip chain needs half float to be
+  /// color-renderable (`GpuLimits::half_float_renderable`), which
+  /// glGenerateMipmap requires of every format.
+  Rgba16f,
+  /// Rgba8 stored sRGB-encoded (SRGB8_ALPHA8): sampling decodes RGB to
+  /// linear light in hardware, alpha stays linear. Upload-and-sample only
+  /// like the float formats: the readback path samples (decodes) instead of
+  /// returning the stored bytes, so there is no readback or copy.
+  Rgba8Srgb,
   /// Two channels, one byte each, sampled as `(r, g, 0, 1)`. Exists for the
   /// interleaved UV plane of NV12 YUV textures (see `yuv`); not offered in
   /// the app-facing `parse` until an app-level consumer exists.
@@ -123,7 +138,11 @@ impl TextureFormat {
       Some("r8") => Ok(TextureFormat::R8),
       Some("r32f") => Ok(TextureFormat::R32f),
       Some("rgba32f") => Ok(TextureFormat::Rgba32f),
-      Some(other) => Err(format!("unknown format '{other}' (expected \"rgba8\", \"r8\", \"r32f\" or \"rgba32f\")")),
+      Some("rgba16f") => Ok(TextureFormat::Rgba16f),
+      Some("rgba8-srgb") => Ok(TextureFormat::Rgba8Srgb),
+      Some(other) => Err(format!(
+        "unknown format '{other}' (expected \"rgba8\", \"rgba8-srgb\", \"r8\", \"r32f\", \"rgba32f\" or \"rgba16f\")"
+      )),
     }
   }
 
@@ -138,16 +157,48 @@ impl TextureFormat {
       TextureFormat::Depth24 => 4,
       TextureFormat::R32f => 4,
       TextureFormat::Rgba32f => 16,
+      TextureFormat::Rgba16f => 8,
+      TextureFormat::Rgba8Srgb => 4,
     };
     (width as usize) * (height as usize) * per_pixel
   }
 
-  /// Whether this is a float data format: upload-and-sample only, and
-  /// nearest-only sampling - linear float filtering needs
-  /// OES_texture_float_linear (and RGBA32F is never filterable in core), so
-  /// nearest/texelFetch is the portable contract.
+  /// Whether the payload is floats: one f32 per component at the boundary
+  /// (a Float32Array in JS), stored as f32 (R32f, Rgba32f) or packed to f16
+  /// (Rgba16f, see `f16_bytes`).
   pub fn is_float(self) -> bool {
-    matches!(self, TextureFormat::R32f | TextureFormat::Rgba32f)
+    matches!(self, TextureFormat::R32f | TextureFormat::Rgba32f | TextureFormat::Rgba16f)
+  }
+
+  /// Whether linear filtering (and with it a mip chain and anisotropy)
+  /// applies. The 32-bit float formats are nearest-only: linear float
+  /// filtering needs OES_texture_float_linear and RGBA32F is never
+  /// filterable in core, so nearest/texelFetch is their portable contract.
+  /// RGBA16F is texture-filterable in core GLES 3.0 like every byte format;
+  /// depth samples nearest without a comparison mode.
+  pub fn filterable(self) -> bool {
+    !matches!(self, TextureFormat::R32f | TextureFormat::Rgba32f | TextureFormat::Depth24)
+  }
+
+  /// Whether the format is upload-and-sample only, with no readback or copy
+  /// path: float is not color-renderable in core GLES 3.0, and an sRGB
+  /// texture's readback would sample (decode) instead of returning the
+  /// stored bytes.
+  pub fn sample_only(self) -> bool {
+    self.is_float() || self == TextureFormat::Rgba8Srgb
+  }
+
+  /// Pack an f32 payload (its native-endian bytes, as a Float32Array views
+  /// them) to the f16 bytes an Rgba16f upload stores, native endian as
+  /// HALF_FLOAT unpacks them. The boundary converts, so alloy sees every
+  /// payload at its `byte_len`.
+  pub fn f16_bytes(f32_bytes: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(f32_bytes.len() / 2);
+    for c in f32_bytes.chunks_exact(4) {
+      let v = f32::from_ne_bytes([c[0], c[1], c[2], c[3]]);
+      out.extend_from_slice(&half::f16::from_f32(v).to_ne_bytes());
+    }
+    out
   }
 
   /// The app-facing name, for the resource inventory and error messages.
@@ -159,6 +210,8 @@ impl TextureFormat {
       TextureFormat::Depth24 => "depth24",
       TextureFormat::R32f => "r32f",
       TextureFormat::Rgba32f => "rgba32f",
+      TextureFormat::Rgba16f => "rgba16f",
+      TextureFormat::Rgba8Srgb => "rgba8-srgb",
     }
   }
 }
@@ -289,13 +342,13 @@ impl SamplerState {
   }
 
   /// Parse the app-facing options against the texture's declared format.
-  /// Same vocabulary as `parse`; a float format flips the filter default to
-  /// nearest and refuses linear, mipmaps and anisotropy outright (nearest/
-  /// texelFetch is the portable float contract - see
-  /// `TextureFormat::is_float`).
+  /// Same vocabulary as `parse`; a non-filterable format (the 32-bit
+  /// floats) flips the filter default to nearest and refuses linear,
+  /// mipmaps and anisotropy outright (nearest/texelFetch is the portable
+  /// float contract - see `TextureFormat::filterable`).
   pub fn parse_for(format: TextureFormat, opts: &SamplerOptions<'_>) -> Result<Self, String> {
     let mut state = Self::parse(opts)?;
-    if format.is_float() {
+    if !format.filterable() {
       if opts.filter.is_none() {
         state.filter = SamplerFilter::Nearest;
       }
@@ -330,9 +383,9 @@ pub struct TextureEntry {
   pub width: u32,
   pub height: u32,
   pub sampler: SamplerState,
-  /// Pixel format of the id (rgba8 unless created as r8); sizes update and
-  /// resize validation. Display of an r8 texture shows the red channel only
-  /// (Impeller samples it as `(v, 0, 0, 1)` like any shader would).
+  /// Pixel format of the id (rgba8 unless created otherwise); sizes update
+  /// and resize validation. Display of an r8 texture shows the red channel
+  /// only (Impeller samples it as `(v, 0, 0, 1)` like any shader would).
   pub format: TextureFormat,
   /// 2D or cube map (the face edge is `width` == `height`), creation-time
   /// state like `format`.

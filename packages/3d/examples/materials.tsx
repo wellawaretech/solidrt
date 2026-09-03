@@ -53,7 +53,7 @@ function windowMap() {
       data.set(on ? [255, 190, 90, 255] : [0, 0, 0, 255], (y * n + x) * 4)
     }
   }
-  return createTexture(data, n, n, { mipmap: true })
+  return createTexture(data, n, n, { format: "rgba8-srgb", mipmap: true })
 }
 
 // Vertical stripes in the red channel: the specular mask.
@@ -79,7 +79,7 @@ function chevronMap() {
       data.set(on ? [235, 220, 60, 255] : [40, 40, 45, 255], (y * n + x) * 4)
     }
   }
-  return createTexture(data, n, n, { wrap: "repeat", mipmap: true })
+  return createTexture(data, n, n, { format: "rgba8-srgb", wrap: "repeat", mipmap: true })
 }
 
 // A radial warm glow, the stand-in for an offline lightmap bake.

@@ -394,12 +394,6 @@ Shaped, not started.
   what the runtime fills). Still open - the composition questions - whether
   the fused paths become thin compositions of the raw layer, whether a
   mid-level program shorthand is wanted, and the two-dialect preamble story.
-- **[Half-float texture format (rgba16f)](backlog/gpu-half-float-format.md)** [2026-09-02]
-  HDR environment maps and IBL run on filterable half float in every engine,
-  but the float formats here are 32-bit and nearest-only, so an HDR cube map
-  or panorama cannot be linearly filtered or mip-mapped; rgba16f is filterable
-  and mip-mappable in core GLES 3.0 and is one new value in the format
-  vocabulary.
 - **[More pipeline blend modes](backlog/gpu-pipeline-blend-modes.md)** [2026-07-29]
   The blend vocabulary on createPipeline is "none", "add", "multiply" and
   "alpha"; the rest of GL's fixed-function space (screen, subtract, min/max)
@@ -1092,6 +1086,12 @@ Finished, kept for the reasoning.
   (float is not color-renderable in core). byte_len(w, h) on TextureFormat is
   the sizing seam a future compressed format changes; \"etc2-rgba8\" and
   \"rgba8-srgb\" are documented reserved values of the same vocabulary."
+- **[Half-float and sRGB texture formats (rgba16f, rgba8-srgb)](done/gpu-half-float-format.md)** [2026-09-03]
+  "Done 2026-09-03: \"rgba16f\" (Float32Array payload packed to half on
+  upload, filterable, mip chain gated on the device's half-float
+  renderability) and \"rgba8-srgb\" (SRGB8_ALPHA8, hardware decode on sample)
+  joined the format vocabulary as the HDR image and the color-map formats of
+  the 3d color pipeline; both upload-and-sample only."
 - **[In-place GPU resize](done/gpu-in-place-resize.md)** [2026-07-30]
   Resize data textures and shader targets at a stable id so texture
   references, sampler bindings and owner-scoped auto-free survive; shipped, no

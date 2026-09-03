@@ -23,7 +23,7 @@ function glow(): ReturnType<typeof createTexture> {
       data.set([255 * a, 240 * a, 200 * a, 255 * a], (y * n + x) * 4)
     }
   }
-  return createTexture(data, n, n)
+  return createTexture(data, n, n, { format: "rgba8-srgb" })
 }
 
 // A cutout tree: green triangle over a brown trunk, transparent elsewhere.
@@ -41,7 +41,7 @@ function tree(): ReturnType<typeof createTexture> {
       data.set([rgb[0]!, rgb[1]!, rgb[2]!, a], (y * n + x) * 4)
     }
   }
-  return createTexture(data, n, n)
+  return createTexture(data, n, n, { format: "rgba8-srgb" })
 }
 
 function App() {

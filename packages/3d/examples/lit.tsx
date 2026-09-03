@@ -23,7 +23,7 @@ function checker(): ReturnType<typeof createTexture> {
       data.set([v, v, v, 255], (y * n + x) * 4)
     }
   }
-  return createTexture(data, n, n, { wrap: "repeat", mipmap: true })
+  return createTexture(data, n, n, { format: "rgba8-srgb", wrap: "repeat", mipmap: true })
 }
 
 function App() {

@@ -168,11 +168,37 @@ Where the different internal model helps, beyond parity:
    direction sampled by `textureLod` at roughness `sqrt(2 / (shininess +
    2))` times the cube's top level. LDR, current color math, the
    generated box-filtered chain. `probes/environment-probe.tsx`.
-3. **HDR and PBR.** Item 17:
-   [rgba16f](gpu-half-float-format.md), linear lighting, tone mapping,
-   metallic/roughness on `lit` (or a `standard` material), split-sum IBL
-   with the analytic BRDF, explicit prefiltered levels from the `srt`
-   pipeline, SH9 ambient. Each an additive option on the shapes above.
+3. **HDR and PBR.** Item 17, in four parts:
+   - 3a, landed 2026-09-03: the formats
+     ([gpu-half-float-format](../done/gpu-half-float-format.md)):
+     `"rgba16f"` (half float, filterable, mip chain gated on the device's
+     half-float renderability) and `"rgba8-srgb"` (hardware decode on
+     sample), 2D and cube, upload-and-sample only.
+   - 3b, landed 2026-09-03: the color pipeline, LINEAR-ONLY (Three since
+     r152 and Godot; Unity's gamma switch is legacy). Every `[r, g, b]`
+     option is sRGB and decoded when the uniform is written
+     (`packages/3d/src/color.ts`); color maps decode through
+     `rgba8-srgb` (createModel tags glTF's base color and emissive
+     images); vertex colors are linear. Every library fragment ends in
+     the exported `OUTPUT` set's `outputColor(rgb, alpha)`: exposure,
+     tone mapping (`scene.setToneMapping("none" | "aces")`,
+     `setExposure`, the reactive props) and the sRGB encode, done in the
+     fragment (Three's way) because the runtime samples the scene target
+     raw for display, so an sRGB render target would show decoded, too
+     dark. Consequences documented in packages/3d/AGENTS.md (Color):
+     transparent meshes blend in encoded space, the clearColor is not
+     tone mapped, a plain rgba8 color map renders washed out.
+     `equirectToCube` takes the panorama's format and re-encodes the
+     faces for an sRGB cube. `lit` gained `emissiveIntensity` (the
+     glTF emissive strength, no longer folded into the color).
+   - 3c, open: the `standard` material - metallic/roughness with glTF's
+     channel packing, GGX direct lighting in the existing light and
+     shadow loop, split-sum image lighting with the analytic environment
+     BRDF over the generated chain; the glTF loader maps
+     pbrMetallicRoughness to it, `lit` stays.
+   - 3d, open: explicit `levels` on createCubeTexture, the `srt`
+     pipeline turning a `.hdr` into a prefiltered rgba16f cube asset
+     (build-time equirect for LDR too), SH9 ambient from the cube.
 4. **Dynamic probes.** `createReflectionProbe` over render-to-face
    ([gpu-cube-render-targets](gpu-cube-render-targets.md)), and baking
    the GLSL sky into the radiance cube.
@@ -190,3 +216,12 @@ Where the different internal model helps, beyond parity:
   one); the environment is scene-level and `lit`-only until asked.
 - The panorama's center column faces -Z (Godot, Unity); Three's faces
   +X, so a Three-tuned environment rotation differs by a quarter turn.
+- Linear-only, no gamma mode (Unity porters): a scene tuned under the
+  old non-linear math shows softer terminators and brighter mid-tones;
+  drop ambient rather than lights.
+- Tone mapping is a uniform branch (`uToneMapping`), not Three's
+  per-material compiled define, and there is no per-material
+  `toneMapped: false`: a fragment that writes fragColor directly skips
+  the stage instead.
+- Only "aces" beside "none" so far; AgX (Three, Godot) and Neutral
+  (Three, Unity) are additive values.

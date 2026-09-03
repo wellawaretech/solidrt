@@ -6,6 +6,8 @@
 //! ("framebuffer incomplete 0x8cd6", a silently garbage draw) surfacing
 //! later on the raster thread.
 
+use super::texture::TextureFormat;
+
 /// The device ceilings alloy validates against. Plain Copy data, so one value
 /// crosses the raster channel and lands in the UI-side cache.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -35,6 +37,13 @@ pub struct GpuLimits {
   /// validation ceiling: a requested level above it is clamped silently at
   /// sampler creation, the way every engine treats the level.
   pub max_anisotropy: u32,
+  /// Whether half float is color-renderable here
+  /// (GL_EXT_color_buffer_half_float or GL_EXT_color_buffer_float): what
+  /// glGenerateMipmap requires of a format, so it gates `mipmap: true` on
+  /// an rgba16f texture. An extension at every GLES level, present on
+  /// practically every device; where it is absent an HDR cube map samples
+  /// its base level (or, later, ships its levels explicitly).
+  pub half_float_renderable: bool,
 }
 
 impl GpuLimits {
@@ -48,6 +57,7 @@ impl GpuLimits {
     max_vertex_attribs: 16,
     max_anisotropy: 1,
     max_vertex_uniform_vectors: 256,
+    half_float_renderable: false,
   };
 
   /// Check a texture or target size against the device ceiling (and against
@@ -61,6 +71,19 @@ impl GpuLimits {
     let max = self.max_texture_size;
     if width > max || height > max {
       return Err(format!("{width}x{height} exceeds this device's max texture size ({max})"));
+    }
+    Ok(())
+  }
+
+  /// Check a texture's mip request against its format: the chain comes from
+  /// glGenerateMipmap, which needs a color-renderable format, and half float
+  /// is renderable only through an extension.
+  pub fn check_mipmap(&self, format: TextureFormat, mipmap: bool) -> Result<(), String> {
+    if mipmap && format == TextureFormat::Rgba16f && !self.half_float_renderable {
+      return Err(
+        "rgba16f cannot carry a generated mip chain on this device (half float is not color-renderable: no EXT_color_buffer_half_float); drop mipmap: true"
+          .to_string(),
+      );
     }
     Ok(())
   }

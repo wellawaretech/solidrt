@@ -51,7 +51,11 @@
 //   and target holds 8-bit RGBA UNORM exactly as written; nothing converts to
 //   or from linear light. `filter: "linear"` averages and the `blend` modes
 //   accumulate non-linear values - the usual approximation, stated so
-//   shaders written today stay correct if a format vocabulary arrives.
+//   shaders written today stay correct. The one exception is opt-in: an
+//   "rgba8-srgb" texture decodes to linear light when a shader samples it
+//   (and "rgba16f" holds linear HDR values), which is how a linear-space
+//   renderer such as `@solidrt/3d` reads its inputs before encoding its
+//   output back into this contract.
 
 import { createEffect, createSignal, getOwner, onCleanup, untrack } from "@solidjs/signals"
 import * as gpu from "flux:gpu"
@@ -73,12 +77,14 @@ export type SamplerOptions = { filter?: gpu.FilterMode; wrap?: gpu.WrapMode; mip
 export type { FilterMode, WrapMode, TextureBinding, TextureBindings } from "flux:gpu"
 
 // Pixel format option for the pixel-upload creates (createTexture,
-// createMutableTexture), fixed for the id's lifetime like the sampler state.
-// "rgba8" (default), "r8", or the float data-texture formats "r32f"/
-// "rgba32f" (Float32Array payload, nearest/texelFetch sampling only, no
-// readback) - see TextureFormat in flux:gpu for each format's contract.
-// "etc2-rgba8" (compressed) and "rgba8-srgb" are reserved future values of
-// the same vocabulary.
+// createCubeTexture, createMutableTexture), fixed for the id's lifetime like
+// the sampler state. "rgba8" (default), "rgba8-srgb" (decodes to linear
+// light on sample), "r8", the float data-texture formats "r32f"/"rgba32f"
+// (Float32Array payload, nearest/texelFetch sampling only, no readback) and
+// the HDR image format "rgba16f" (Float32Array payload packed to half float,
+// filterable) - see TextureFormat in flux:gpu for each format's contract.
+// "etc2-rgba8" (compressed) is a reserved future value of the same
+// vocabulary.
 export type TextureFormatOptions = { format?: gpu.TextureFormat }
 export type { TextureFormat } from "flux:gpu"
 
@@ -224,8 +230,8 @@ export { captureSnapshot, readTexture } from "flux:gpu"
  * Uploads raw pixels to an immutable GPU texture and returns its id (use it
  * as `<texture src={id} />`). `data` must be exactly `width * height` pixels
  * at the declared format's size, in the view type matching the format
- * (Uint8Array for "rgba8"/"r8", Float32Array for "r32f"/"rgba32f"); a
- * mismatch throws. RGBA data is uploaded verbatim and composited
+ * (Uint8Array for "rgba8"/"rgba8-srgb"/"r8", Float32Array for "r32f"/
+ * "rgba32f"/"rgba16f"); a mismatch throws. RGBA data is uploaded verbatim and composited
  * as premultiplied alpha, like every texture: `decodeImage` and the readback
  * calls already deliver that, and hand-built pixels must too (`rgb * a`). For pixels you intend to mutate and
  * re-upload, use `createMutableTexture` instead. When called inside a
@@ -278,9 +284,9 @@ export function createCubeTexture(
  * Creates a GPU texture you intend to update over time: seed it with `data`,
  * then call `uploadTexture(id, data)` (from flux:gpu) to push new pixels.
  * `data` must hold at least `width * height` pixels at the declared format's
- * size, in the view type matching the format (Uint8Array for "rgba8"/"r8",
- * Float32Array for "r32f"/"rgba32f"); it may hold
- * several frames. Like `createTexture`, the texture is freed automatically
+ * size, in the view type matching the format (Uint8Array for "rgba8"/
+ * "rgba8-srgb"/"r8", Float32Array for "r32f"/"rgba32f"/"rgba16f"); it may
+ * hold several frames. Like `createTexture`, the texture is freed automatically
  * when the reactive owner is disposed (opt out with `{ autoFree: false }`);
  * created outside a reactive scope you must call `destroyTexture` (from
  * flux:gpu) yourself.

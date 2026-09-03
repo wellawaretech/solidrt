@@ -213,6 +213,8 @@ fn texture_format_parses_and_sizes() {
   assert_eq!(TextureFormat::parse(Some("r8")).expect("r8 parses"), TextureFormat::R8);
   assert_eq!(TextureFormat::parse(Some("r32f")).expect("r32f parses"), TextureFormat::R32f);
   assert_eq!(TextureFormat::parse(Some("rgba32f")).expect("rgba32f parses"), TextureFormat::Rgba32f);
+  assert_eq!(TextureFormat::parse(Some("rgba16f")).expect("rgba16f parses"), TextureFormat::Rgba16f);
+  assert_eq!(TextureFormat::parse(Some("rgba8-srgb")).expect("rgba8-srgb parses"), TextureFormat::Rgba8Srgb);
   assert!(TextureFormat::parse(Some("rg8")).is_err());
   assert!(TextureFormat::parse(Some("depth24")).is_err());
 
@@ -220,6 +222,48 @@ fn texture_format_parses_and_sizes() {
   assert_eq!(TextureFormat::R8.byte_len(3, 5), 15);
   assert_eq!(TextureFormat::R32f.byte_len(3, 5), 60);
   assert_eq!(TextureFormat::Rgba32f.byte_len(3, 5), 240);
+  assert_eq!(TextureFormat::Rgba16f.byte_len(3, 5), 120);
+  assert_eq!(TextureFormat::Rgba8Srgb.byte_len(3, 5), 60);
+}
+
+// The half-float and sRGB formats sample like byte formats (RGBA16F is
+// texture-filterable in core GLES 3.0, sRGB decodes before filtering):
+// linear by default, mipmaps and anisotropy accepted. Only the 32-bit floats
+// are nearest-only, and only the float formats and sRGB refuse readback.
+#[test]
+fn half_float_and_srgb_sample_like_byte_formats() {
+  use crate::gpu::texture::{SamplerFilter, SamplerOptions, SamplerState, TextureFormat};
+
+  for format in [TextureFormat::Rgba16f, TextureFormat::Rgba8Srgb] {
+    let state = SamplerState::parse_for(format, &SamplerOptions { filter: None, wrap: None, mipmap: Some(true), anisotropy: Some(4.0) })
+      .expect("linear, mipmap and anisotropy parse");
+    assert_eq!(state.filter, SamplerFilter::Linear);
+    assert!(state.mipmap);
+    assert_eq!(state.anisotropy, 4);
+    assert!(format.filterable());
+    assert!(format.sample_only());
+  }
+  assert!(TextureFormat::Rgba16f.is_float());
+  assert!(!TextureFormat::Rgba8Srgb.is_float());
+  assert!(!TextureFormat::R32f.filterable());
+  assert!(!TextureFormat::Rgba8.sample_only());
+}
+
+// f16_bytes packs the f32 payload bytes to native-endian halves: the
+// canonical bit patterns of 1, -2, 0.5 and the largest finite half.
+#[test]
+fn f16_bytes_packs_halves() {
+  use crate::gpu::texture::TextureFormat;
+
+  let floats = [1.0f32, -2.0, 0.5, 65504.0];
+  let mut f32_bytes = Vec::new();
+  for v in floats {
+    f32_bytes.extend_from_slice(&v.to_ne_bytes());
+  }
+  let packed = TextureFormat::f16_bytes(&f32_bytes);
+  assert_eq!(packed.len(), 8);
+  let halves: Vec<u16> = packed.chunks_exact(2).map(|c| u16::from_ne_bytes([c[0], c[1]])).collect();
+  assert_eq!(halves, vec![0x3C00, 0xC000, 0x3800, 0x7BFF]);
 }
 
 // Float formats are nearest-only data textures (linear float filtering is

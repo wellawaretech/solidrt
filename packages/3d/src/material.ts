@@ -42,7 +42,8 @@ import type {
 } from "@solidrt/core/gpu"
 import { layoutAttributes, layoutKey, layoutSlot } from "./geometry.ts"
 import type { VertexLayout } from "./geometry.ts"
-import { CUBE_LOOKUP, litFragment, litShadowFragment, litVertex, SKIN_DECLS, SKIN_MATRIX, UNLIT_VERTEX, unlitFragment, unlitShadowFragment, unlitVertex } from "./glsl.ts"
+import { linearColor } from "./color.ts"
+import { CUBE_LOOKUP, litFragment, litShadowFragment, litVertex, SKIN_DECLS, SKIN_MATRIX, UNLIT_VERTEX, unlitFragment, unlitShadowFragment, unlitVertex, OUTPUT } from "./glsl.ts"
 
 export type Material = {
   /** The pipeline this material draws with for geometry of `layout`
@@ -99,10 +100,25 @@ export type Material = {
 // pipeline per vertex layout inside each.
 let unlitClasses = new Map<string, ShaderMaterialClass>()
 
+// The uColor a color option compiles to: sRGB decoded to linear light,
+// then premultiplied by its alpha (the target's contract).
+function colorParam(color: readonly number[]): number[] {
+  let a = color.length === 4 ? color[3]! : 1
+  let c = linearColor(color)
+  return [c[0]! * a, c[1]! * a, c[2]! * a, a]
+}
+
 export type UnlitOptions = {
-  /** Straight [r, g, b] or [r, g, b, a], 0..1. Default white. */
+  /** Straight [r, g, b] or [r, g, b, a], 0..1, sRGB - a color picker's
+   * values. The library decodes it to linear light for shading and the
+   * output stage encodes the result back (see the color contract in
+   * AGENTS.md); an unlit surface with no tone mapping shows the value
+   * as given. Default white. */
   color?: [number, number, number] | [number, number, number, number]
-  /** A texture id to sample (tinted by `color` when both are given). */
+  /** A texture id to sample (tinted by `color` when both are given).
+   * Create a color image with `format: "rgba8-srgb"` so it decodes to
+   * linear light like `color`; a plain rgba8 map reads as linear data and
+   * shows washed out. */
   map?: TextureId
   /** Blend over what is behind (color alpha and map alpha both count).
    * Without it an alpha below 1 still draws opaque. See Material.transparent. */
@@ -159,9 +175,7 @@ function mapTransformParam(t: { offset?: [number, number]; repeat?: [number, num
  * light list); see the scene-graph research note.
  */
 export function unlit(opts: UnlitOptions = {}): Material {
-  let color = opts.color ?? [1, 1, 1]
-  let a = color.length === 4 ? color[3] : 1
-  let uColor = [color[0] * a, color[1] * a, color[2] * a, a]
+  let uColor = colorParam(opts.color ?? [1, 1, 1])
   let map = opts.map !== undefined
   let transparent = opts.transparent === true
   let cull = opts.cull ?? "back"
@@ -223,15 +237,19 @@ export type LitOptions = UnlitOptions & {
    * not Three's Vector2, whose second component exists to flip
    * DirectX-style green channels. */
   normalScale?: number
-  /** Light the surface emits, [r, g, b] 0..1 with any intensity folded in
-   * (the uLightColor convention) - added after the lighting terms,
-   * unaffected by lights and shadows, fogged like everything else.
-   * Defaults to WHITE when `emissiveMap` is given (the map is the
-   * emission - fixing Three's black-default gotcha, where an emissiveMap
-   * alone shows nothing) and to off otherwise. */
+  /** Light the surface emits, [r, g, b] 0..1, sRGB like `color` - added
+   * after the lighting terms, unaffected by lights and shadows, fogged
+   * like everything else. Defaults to WHITE when `emissiveMap` is given
+   * (the map is the emission - fixing Three's black-default gotcha, where
+   * an emissiveMap alone shows nothing) and to off otherwise. */
   emissive?: [number, number, number]
+  /** Scales `emissive` in linear light, default 1: values above 1 for a
+   * glow that tone mapping can bloom (Three's emissiveIntensity, Godot's
+   * emission_energy_multiplier, glTF's KHR_materials_emissive_strength). */
+  emissiveIntensity?: number
   /** A texture multiplying `emissive` per fragment - lamps, screens,
-   * nitro glow baked into one map. Sampled at the same uv as `map`. */
+   * nitro glow baked into one map. Sampled at the same uv as `map`;
+   * create it with `format: "rgba8-srgb"` like `map`. */
   emissiveMap?: TextureId
   /** A texture whose RED channel scales `specular` per fragment (Three's
    * specularMap) - chrome and rubber on one mesh. With it, `specular`
@@ -331,9 +349,7 @@ let litClasses = new Map<string, ShaderMaterialClass>()
  * starts at zero: set at least one of the two.
  */
 export function lit(opts: LitOptions = {}): Material {
-  let color = opts.color ?? [1, 1, 1]
-  let a = color.length === 4 ? color[3] : 1
-  let uColor = [color[0] * a, color[1] * a, color[2] * a, a]
+  let uColor = colorParam(opts.color ?? [1, 1, 1])
   let map = opts.map !== undefined
   let triplanar = map && opts.triplanar !== undefined
   let alphaTest = opts.alphaTest !== undefined
@@ -392,7 +408,10 @@ export function lit(opts: LitOptions = {}): Material {
   if (alphaTest) params.uAlphaTest = opts.alphaTest!
   if (normalMap) params.uNormalScale = opts.normalScale ?? 1
   if (env) params.uReflectivity = opts.reflectivity!
-  if (emissive) params.uEmissive = opts.emissive ?? [1, 1, 1]
+  if (emissive) {
+    let k = opts.emissiveIntensity ?? 1
+    params.uEmissive = linearColor(opts.emissive ?? [1, 1, 1]).map(c => c * k)
+  }
   if (lightMap) params.uLightMapIntensity = opts.lightMapIntensity ?? 1
   if (mapTransform) params.uMapTransform = mapTransformParam(opts.mapTransform!)
   let textures: TextureBindings | undefined
@@ -631,9 +650,7 @@ let spriteClasses = new Map<string, ShaderMaterialClass>()
  * for an opaque one. Culling is off: a camera-facing quad has no back.
  */
 export function sprite(opts: SpriteOptions = {}): Material {
-  let color = opts.color ?? [1, 1, 1]
-  let a = color.length === 4 ? color[3] : 1
-  let uColor = [color[0] * a, color[1] * a, color[2] * a, a]
+  let uColor = colorParam(opts.color ?? [1, 1, 1])
   let map = opts.map !== undefined
   let transparent = opts.transparent !== false
   let fixedY = opts.billboard === "fixed-y"
@@ -699,15 +716,17 @@ const BACKGROUND_VERTEX = glsl`
 // Pipeline fragments get no vUV from the engine preamble (a pipeline's
 // varyings are its own), so the background slot injects the full
 // shader-target fragment contract itself: vUV, fragColor, iResolution,
-// and its own vRay.
+// its own vRay, and the OUTPUT set, so a sky can end with outputColor
+// and take the scene's exposure and tone mapping.
 const BACKGROUND_FRAGMENT_PREAMBLE =
-  "#version 300 es\nprecision highp float;\nin vec2 vUV;\nin vec3 vRay;\nout vec4 fragColor;\nuniform vec2 iResolution;\n"
+  "#version 300 es\nprecision highp float;\nin vec2 vUV;\nin vec3 vRay;\nout vec4 fragColor;\nuniform vec2 iResolution;\n" + OUTPUT + "\n"
 
 // The skybox fragment behind setBackground({ cube }): the view ray through
 // the sky's rotation (the INVERSE turn, written by skyboxParams, so the
 // sky itself turns by +rotation like a node would), then the cube lookup
-// with its handedness flip, times the intensity. Opaque: the skybox
-// replaces the clearColor exactly as a GLSL background does.
+// with its handedness flip, times the intensity, through the output
+// stage (the preamble declares it) like every lit pixel. Opaque: the
+// skybox replaces the clearColor exactly as a GLSL background does.
 export const SKYBOX_FRAGMENT = glsl`
   uniform samplerCube uSky;
   uniform float uSkyIntensity;
@@ -715,7 +734,7 @@ export const SKYBOX_FRAGMENT = glsl`
   ${CUBE_LOOKUP}
   void main() {
     vec3 dir = mat3(uSkyRotation) * normalize(vRay);
-    fragColor = vec4(texture(uSky, cubeDir(dir)).rgb * uSkyIntensity, 1.0);
+    fragColor = outputColor(texture(uSky, cubeDir(dir)).rgb * uSkyIntensity, 1.0);
   }
 `
 

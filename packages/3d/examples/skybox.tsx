@@ -94,7 +94,7 @@ function turnedSun(angle: number): Vec3 {
 }
 
 function App() {
-  let cube = createCubeTexture(bakeSky(), FACE, { mipmap: true, label: "sky" })
+  let cube = createCubeTexture(bakeSky(), FACE, { format: "rgba8-srgb", mipmap: true, label: "sky" })
   let [turn, setTurn] = createSignal(0)
   let last = 0
   onFrame(tick => {

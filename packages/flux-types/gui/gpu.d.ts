@@ -198,10 +198,27 @@ declare module "flux:gpu" {
    * core), and displaying one via `<texture src>` is out of contract - these
    * are shader data, not image content.
    *
-   * Reserved future values of this same vocabulary: "etc2-rgba8" (compressed
-   * uploads) and "rgba8-srgb" (linear-space rendering).
+   * "rgba16f" is the HDR image format (environment maps, panoramas): the same
+   * Float32Array payload (width*height*4), packed to half float on upload,
+   * and filterable like a byte format (RGBA16F is texture-filterable in core
+   * GLES 3.0), so `filter` defaults to "linear" and `anisotropy` applies.
+   * `mipmap: true` needs half float to be color-renderable on the device
+   * (`limits.halfFloatRenderable`; an extension almost every device has) and
+   * throws where it is not. Upload-and-sample only like the 32-bit formats.
+   *
+   * "rgba8-srgb" is "rgba8" whose bytes are sRGB-encoded: a shader sampling
+   * it reads linear light (the decode is done in hardware, before filtering,
+   * so `filter`, `mipmap` and `anisotropy` are all correct); alpha is not
+   * decoded. The color-map format of linear-space lighting - base color and
+   * emissive maps - while data maps (normal, roughness, metallic) stay
+   * "rgba8". Upload-and-sample only: readTexture and copyTexture throw (a
+   * readback would decode rather than return the stored bytes) and
+   * displaying one via `<texture src>` is out of contract.
+   *
+   * Reserved future value of this same vocabulary: "etc2-rgba8" (compressed
+   * uploads).
    */
-  export type TextureFormat = "rgba8" | "r8" | "r32f" | "rgba32f"
+  export type TextureFormat = "rgba8" | "rgba8-srgb" | "r8" | "r32f" | "rgba32f" | "rgba16f"
   export type TextureFormatOption = { format?: TextureFormat }
   /**
    * This device's hard ceilings, queried once at startup: process constants.
@@ -240,12 +257,20 @@ declare module "flux:gpu" {
      * the declaration itself must fit or the program fails to link.
      */
     maxVertexUniformVectors: number
+    /**
+     * Whether half float is color-renderable on this device (the
+     * EXT_color_buffer_half_float extension, which almost every device
+     * has): what a generated mip chain needs, so `mipmap: true` on an
+     * "rgba16f" texture throws where this is false.
+     */
+    halfFloatRenderable: boolean
   }
   /**
    * Create an immutable texture from a pixel buffer holding exactly one
    * frame at the declared format's size. The view type must match the
-   * format: byte formats ("rgba8", "r8") take a Uint8Array, float formats
-   * ("r32f", "rgba32f") a Float32Array. Returns the texture id.
+   * format: byte formats ("rgba8", "rgba8-srgb", "r8") take a Uint8Array,
+   * float formats ("r32f", "rgba32f", "rgba16f") a Float32Array. Returns
+   * the texture id.
    */
   export function createTexture(data: Uint8Array | Float32Array, width: number, height: number, opts?: SamplerOptions & TextureFormatOption & LabelOption): TextureId
   /**

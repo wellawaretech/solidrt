@@ -4,7 +4,8 @@
 // scene binds as uEnv while no environment is set.
 
 import { createCubeTexture, createShaderTexture, destroyTexture, glsl, readTexture } from "@solidrt/core/gpu"
-import type { CreateOptions, SamplerOptions, TextureId } from "@solidrt/core/gpu"
+import type { CreateOptions, SamplerOptions, TextureFormatOptions, TextureId } from "@solidrt/core/gpu"
+import { SRGB } from "./glsl.ts"
 
 // One face of the cube: the texel's sampling direction from the GL
 // cube-map table (t = 0 the first row), with the x flip CUBE_LOOKUP
@@ -14,9 +15,13 @@ import type { CreateOptions, SamplerOptions, TextureId } from "@solidrt/core/gpu
 // Skybox/Panoramic agree; Three centers +X, a quarter turn away), its top
 // row +Y. At the seam column the uv derivative jumps by a full turn;
 // zeroing that component keeps a mipmapped source from drawing a line.
+// An sRGB source samples decoded; uEncode re-encodes the face so the
+// cube, created at the same format, decodes the same way.
 const EQUIRECT_FACE = glsl`
   uniform sampler2D uMap;
   uniform float uFace;
+  uniform float uEncode;
+  ${SRGB}
   const float PI = 3.14159265358979;
   // A uv derivative larger than this is the seam wrap, not a real step.
   const float SEAM_JUMP = 0.5;
@@ -38,7 +43,8 @@ const EQUIRECT_FACE = glsl`
     vec2 dy = dFdy(uv);
     if (abs(dx.x) > SEAM_JUMP) dx.x = 0.0;
     if (abs(dy.x) > SEAM_JUMP) dy.x = 0.0;
-    fragColor = textureGrad(uMap, uv, dx, dy);
+    vec4 c = textureGrad(uMap, uv, dx, dy);
+    fragColor = uEncode > 0.5 ? vec4(linearToSrgb(c.rgb), c.a) : c;
   }
 `
 
@@ -50,18 +56,28 @@ const EQUIRECT_FACE = glsl`
  * of a lat-long image. The six faces render on the GPU and are read back
  * and uploaded once, synchronously: a few milliseconds, the same cost as
  * the upload itself. `opts` are createCubeTexture's (`mipmap: true` for an
- * environment shininess can blur; `label`; `autoFree: false` to own it).
+ * environment shininess can blur; `label`; `autoFree: false` to own it),
+ * and `format` names the PANORAMA's format so the cube decodes like it:
+ * "rgba8-srgb" for a photographed sky uploaded as such (the faces are
+ * re-encoded), "rgba8" (default) for data. An HDR ("rgba16f") panorama
+ * has no runtime path yet - the face passes render rgba8 - so it throws;
+ * upload its faces directly.
  * The panorama's center column faces -Z and its top row is +Y. Leave its
  * wrap at the default clamp: `repeat` would also wrap vertically and
  * bleed the poles across the top and bottom rows, while the clamped seam
  * column costs at most a texel-wide blend at +Z. Three centers its
  * panoramas on +X: a rotation tuned there differs by a quarter turn here.
  */
-export function equirectToCube(map: TextureId, size: number, opts?: CreateOptions & SamplerOptions): TextureId {
+export function equirectToCube(map: TextureId, size: number, opts?: CreateOptions & SamplerOptions & TextureFormatOptions): TextureId {
   if (!Number.isInteger(size) || size < 1) throw new Error("equirectToCube: size must be a positive integer, got " + size)
+  let format = opts?.format ?? "rgba8"
+  if (format !== "rgba8" && format !== "rgba8-srgb") {
+    throw new Error('equirectToCube: format must be "rgba8" or "rgba8-srgb" (the face passes render rgba8), got ' + format)
+  }
+  let encode = format === "rgba8-srgb" ? 1 : 0
   let faces: Uint8Array[] = []
   for (let face = 0; face < 6; face++) {
-    let target = createShaderTexture(EQUIRECT_FACE, size, size, { uFace: face }, {
+    let target = createShaderTexture(EQUIRECT_FACE, size, size, { uFace: face, uEncode: encode }, {
       textures: { uMap: map },
       autoFree: false,
       label: (opts?.label ?? "equirect") + "-face-" + face,

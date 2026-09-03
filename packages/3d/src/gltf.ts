@@ -5,7 +5,7 @@
 // normals (flat ones generated when absent, per the spec), one UV set and
 // indices, and materials reduced to what lit()/unlit() draw - base color
 // factor and texture, normal map (with scale), emissive factor and map
-// (KHR_materials_emissive_strength folded in), double-sidedness, alpha
+// (KHR_materials_emissive_strength as the intensity), double-sidedness, alpha
 // blending and masking - plus the file's animations as baked clips
 // (times/values per channel, the mixer's food). Nodes with no part below
 // them and no animation channel targeting them (cameras, lights, unused
@@ -26,6 +26,7 @@
 // joints, inverse binds, and the "skinned" vertex layout.
 
 import { compose, decompose, det3, mat4, multiply } from "./math.ts"
+import { linearToSrgb } from "./color.ts"
 import type { Mat4, Quat, Vec3 } from "./math.ts"
 import { layoutStride, packGeometry, packIndices, STANDARD_FLOATS } from "./geometry.ts"
 import type { Geometry } from "./geometry.ts"
@@ -33,7 +34,8 @@ import type { Geometry } from "./geometry.ts"
 /** What lit()/unlit() take from a glTF material. */
 export type ModelMaterial = {
   name: string
-  /** Straight [r, g, b, a] 0..1 (glTF baseColorFactor). */
+  /** Straight [r, g, b, a] 0..1: glTF's LINEAR baseColorFactor encoded
+   * to sRGB, what lit({ color }) takes. */
   color: [number, number, number, number]
   /** Index into ModelData.images (the base color texture), or null. */
   map: number | null
@@ -51,9 +53,11 @@ export type ModelMaterial = {
   normalMap: number | null
   /** glTF normalTexture.scale (default 1); meaningful with normalMap. */
   normalScale: number
-  /** glTF emissiveFactor (default [0, 0, 0] = off) with
-   * KHR_materials_emissive_strength multiplied in. */
+  /** glTF's linear emissiveFactor (default [0, 0, 0] = off) encoded to
+   * sRGB, what lit({ emissive }) takes. */
   emissive: [number, number, number]
+  /** KHR_materials_emissive_strength (default 1): lit's emissiveIntensity. */
+  emissiveIntensity: number
   /** Index into ModelData.images (the emissive map), or null. */
   emissiveMap: number | null
 }
@@ -183,6 +187,7 @@ const DEFAULT_MATERIAL: ModelMaterial = {
   normalMap: null,
   normalScale: 1,
   emissive: [0, 0, 0],
+  emissiveIntensity: 1,
   emissiveMap: null,
 }
 
@@ -230,8 +235,8 @@ export function parseGltf(bytes: Uint8Array, resolve?: UriResolver): ModelData {
       throw new Error("parseGltf: the file's meshes are compressed (" + ext + "), which is not supported: re-export without mesh compression")
     }
     // Quantized attributes read through the normalized-integer path,
-    // emissive strength folds into the emissive factor; every other
-    // required extension changes what the file means.
+    // emissive strength is the emissive intensity; every other required
+    // extension changes what the file means.
     if (ext !== "KHR_mesh_quantization" && ext !== "KHR_materials_emissive_strength") {
       throw new Error("parseGltf: the file requires the " + ext + " extension, which is not supported")
     }
@@ -291,9 +296,10 @@ export function parseGltf(bytes: Uint8Array, resolve?: UriResolver): ModelData {
     let factor = pbr.baseColorFactor ?? [1, 1, 1, 1]
     let emissiveFactor: number[] = m.emissiveFactor ?? [0, 0, 0]
     let strength = m.extensions?.KHR_materials_emissive_strength?.emissiveStrength ?? 1
+    // glTF factors are linear; the material options are sRGB.
     return {
       name: m.name ?? "material" + i,
-      color: [factor[0], factor[1], factor[2], factor[3] ?? 1],
+      color: [linearToSrgb(factor[0]), linearToSrgb(factor[1]), linearToSrgb(factor[2]), factor[3] ?? 1],
       map: textureSlot(pbr.baseColorTexture),
       doubleSided: m.doubleSided === true,
       transparent: m.alphaMode === "BLEND",
@@ -301,7 +307,8 @@ export function parseGltf(bytes: Uint8Array, resolve?: UriResolver): ModelData {
       alphaCutoff: typeof m.alphaCutoff === "number" ? m.alphaCutoff : GLTF_ALPHA_CUTOFF,
       normalMap: textureSlot(m.normalTexture),
       normalScale: typeof m.normalTexture?.scale === "number" ? m.normalTexture.scale : 1,
-      emissive: [(emissiveFactor[0] ?? 0) * strength, (emissiveFactor[1] ?? 0) * strength, (emissiveFactor[2] ?? 0) * strength],
+      emissive: [linearToSrgb(emissiveFactor[0] ?? 0), linearToSrgb(emissiveFactor[1] ?? 0), linearToSrgb(emissiveFactor[2] ?? 0)],
+      emissiveIntensity: strength,
       emissiveMap: textureSlot(m.emissiveTexture),
     }
   })

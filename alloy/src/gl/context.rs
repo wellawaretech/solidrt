@@ -189,6 +189,11 @@ pub(crate) fn query_limits(gl: &glow::Context) -> GpuLimits {
     } else {
       1
     };
+    // Half-float render targets are likewise an extension at every GLES
+    // level (the float one implies the half one); a fact for the mip gate
+    // on rgba16f, never an error.
+    let half_float_renderable =
+      ext.contains("GL_EXT_color_buffer_half_float") || ext.contains("GL_EXT_color_buffer_float");
     GpuLimits {
       max_texture_size: tex.min(rb).max(floor.max_texture_size as i32) as u32,
       max_cube_map_size: cube.max(floor.max_cube_map_size as i32) as u32,
@@ -196,6 +201,7 @@ pub(crate) fn query_limits(gl: &glow::Context) -> GpuLimits {
       max_vertex_attribs: attribs.max(floor.max_vertex_attribs as i32) as u32,
       max_anisotropy: anisotropy.max(floor.max_anisotropy as i32) as u32,
       max_vertex_uniform_vectors: vertex_vectors.max(floor.max_vertex_uniform_vectors as i32) as u32,
+      half_float_renderable,
     }
   }
 }

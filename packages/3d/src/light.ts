@@ -160,6 +160,9 @@ export type Light = DirectionalLight | SpotLight | PointLight | HemisphereLight
  * light's six face maps. */
 export type CastingLight = DirectionalLight | SpotLight | PointLight
 
+// Every light `color` (and the hemisphere's sky/ground) is sRGB 0..1
+// like a material color, decoded when the scene writes the light list;
+// `intensity` scales it in linear light.
 export type DirectionalLightOptions = {
   direction?: Vec3
   color?: Vec3

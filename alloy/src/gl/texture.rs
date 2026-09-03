@@ -158,13 +158,15 @@ fn gl_storage(format: TextureFormat) -> (u32, u32, u32) {
     TextureFormat::Depth24 => (glow::DEPTH_COMPONENT24, glow::DEPTH_COMPONENT, glow::UNSIGNED_INT),
     TextureFormat::R32f => (glow::R32F, glow::RED, glow::FLOAT),
     TextureFormat::Rgba32f => (glow::RGBA32F, glow::RGBA, glow::FLOAT),
+    TextureFormat::Rgba16f => (glow::RGBA16F, glow::RGBA, glow::HALF_FLOAT),
+    TextureFormat::Rgba8Srgb => (glow::SRGB8_ALPHA8, glow::RGBA, glow::UNSIGNED_BYTE),
   }
 }
 
 /// The completeness-fallback filter of a texture object (see `new`): depth
-/// and float textures are only complete at NEAREST.
+/// and 32-bit float textures are only complete at NEAREST.
 fn fallback_filter(format: TextureFormat) -> u32 {
-  if format == TextureFormat::Depth24 || format.is_float() {
+  if !format.filterable() {
     glow::NEAREST
   } else {
     glow::LINEAR
@@ -195,8 +197,9 @@ impl GpuTexture {
       // samples it. Completeness fallback only - the declared SamplerState is
       // applied via sampler objects in alloy's passes and via per-draw
       // sampling in Impeller, never through these parameters (Impeller
-      // rewrites them on every draw of the texture). Depth and float textures
-      // are only complete at NEAREST (float linear needs an extension).
+      // rewrites them on every draw of the texture). Depth and 32-bit float
+      // textures are only complete at NEAREST (float linear needs an
+      // extension).
       let filter = fallback_filter(format);
       gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MIN_FILTER, filter as i32);
       gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MAG_FILTER, filter as i32);
@@ -317,6 +320,8 @@ fn upload_layout(format: TextureFormat) -> Option<(u32, u32, i32)> {
     TextureFormat::Rg8 => Some((glow::RG, glow::UNSIGNED_BYTE, 1)),
     TextureFormat::R32f => Some((glow::RED, glow::FLOAT, 4)),
     TextureFormat::Rgba32f => Some((glow::RGBA, glow::FLOAT, 4)),
+    TextureFormat::Rgba16f => Some((glow::RGBA, glow::HALF_FLOAT, 4)),
+    TextureFormat::Rgba8Srgb => Some((glow::RGBA, glow::UNSIGNED_BYTE, 4)),
     TextureFormat::Depth24 => None,
   }
 }

@@ -43,6 +43,7 @@ import type { DrawId, FilterMode, ProgramId, RenderPipelineId, ShaderParams, Tex
 import { getOwner, onCleanup } from "@solidrt/core"
 import type { PointerEvent as ElementPointerEvent } from "@solidrt/core"
 import { copy, mat4, transformPoint } from "./math.ts"
+import { linearColor } from "./color.ts"
 import type { Mat4, Vec3, Vec4 } from "./math.ts"
 import { MAX_LIGHTS, MAX_SHADOW_MAPS } from "./glsl.ts"
 import { cameraParams, cameraState, ensureCamera, makeCamera, updateCamera } from "./camera.ts"
@@ -154,7 +155,8 @@ export type FogOptions = (
       density: number
     }
 ) & {
-  /** Straight [r, g, b], 0..1. */
+  /** Straight [r, g, b], 0..1, sRGB like every color option (decoded to
+   * linear light for the mix). */
   color: [number, number, number]
   /** World y at and below which the fog is full; default 0. Only acts
    * with a `heightFalloff`. */
@@ -169,7 +171,7 @@ export type FogOptions = (
 // `fog`, so both validate and spell the uniforms identically.
 function fogParams(fog: FogOptions | null): ShaderParams {
   if (fog === null) return { uFogInv: 0, uFogDensity: 0, uFogHeightFalloff: 0 }
-  let color = [fog.color[0], fog.color[1], fog.color[2]]
+  let color = linearColor(fog.color)
   let height = fog.height ?? 0
   let falloff = fog.heightFalloff ?? 0
   if (!Number.isFinite(height) || !Number.isFinite(falloff) || falloff < 0) {
@@ -288,10 +290,25 @@ function environmentParams(env: EnvironmentOptions | null): ShaderParams {
   return { uEnvIntensity: k.intensity, uEnvRotation: cubeTurn(k.rotation), uEnvOn: 1 }
 }
 
+/** The output tone mapping (setToneMapping): "none" clamps, "aces" is the
+ * filmic curve every engine ships (Three's ACESFilmic, Godot's ACES,
+ * Unity's ACES). */
+export type ToneMapping = "none" | "aces"
+
+// The uToneMapping value per mode; the OUTPUT set branches on it.
+const TONE_MAPPING_CODE: Record<ToneMapping, number> = { none: 0, aces: 1 }
+
 export type SceneOptions = {
+  /** The target's clear, written as given: encoded pixels, untouched by
+   * exposure and tone mapping (a GLSL background or skybox goes through
+   * both). */
   clearColor?: [number, number, number, number]
   /** Scene-wide fog; see setFog. */
   fog?: FogOptions
+  /** Output tone mapping, default "none"; see setToneMapping. */
+  toneMapping?: ToneMapping
+  /** Output exposure, default 1; see setExposure. */
+  exposure?: number
   /** The scene target's layer mask (bitmask, default 1): the scene draws
    * the meshes whose `layers` intersect it. Live via scene.setLayers. */
   layers?: number
@@ -467,6 +484,25 @@ export type Scene = {
    * ambient term.
    */
   setEnvironment(env: EnvironmentOptions | null): void
+  /**
+   * The output stage's tone mapping, applied by every library material,
+   * the skybox and a GLSL background that ends with outputColor: "none"
+   * (default) clamps the linear result, "aces" compresses highlights on
+   * the filmic curve. One shared-params write (`uToneMapping`, the OUTPUT
+   * set in `@solidrt/3d/glsl` declares), like Three's
+   * renderer.toneMapping and Godot's Environment tonemap; a custom
+   * fragment that writes fragColor directly is untouched. The clearColor
+   * is not tone mapped: with a curve on, draw the backdrop as a
+   * background.
+   */
+  setToneMapping(mode: ToneMapping): void
+  /**
+   * The output stage's exposure (default 1): the linear result is scaled
+   * by it before tone mapping, so a scene lit in physical-ish units is
+   * brought into range here rather than by dimming every light. One
+   * shared-params write (`uExposure`), like Three's toneMappingExposure.
+   */
+  setExposure(exposure: number): void
   /**
    * Project a world point to scene pixels: origin top-left, y down - the
    * output texture's own coordinate space, ready for overlay layout (HUD
@@ -661,8 +697,10 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     for (let light of lights) {
       if (light.type === "hemisphere") {
         let k = light.intensity
-        sky = [light.sky[0] * k, light.sky[1] * k, light.sky[2] * k]
-        ground = [light.ground[0] * k, light.ground[1] * k, light.ground[2] * k]
+        let s = linearColor(light.sky)
+        let g = linearColor(light.ground)
+        sky = [s[0]! * k, s[1]! * k, s[2]! * k]
+        ground = [g[0]! * k, g[1]! * k, g[2]! * k]
         continue
       }
       if (light.type !== "point") {
@@ -677,9 +715,9 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
         for (let v of views) spatial.bindPositionSlot(light._node!, v.texture, "uLightPos", MAX_LIGHTS * 3, count)
       }
       types.push(light.type === "directional" ? 0 : light.type === "spot" ? 1 : 2)
-      let c = light.color
+      let c = linearColor(light.color)
       let k = light.intensity
-      colors.push(c[0] * k, c[1] * k, c[2] * k)
+      colors.push(c[0]! * k, c[1]! * k, c[2]! * k)
       if (light.type === "spot") {
         let pen = Math.max(light.penumbra, SPOT_PENUMBRA_MIN)
         let rad = (light.angle * Math.PI) / 180
@@ -1345,6 +1383,15 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       receivingTargets(t => setTargetTextures(t, { uEnv: cube }))
       scene.setParams(params)
     },
+    setToneMapping(mode) {
+      let code = TONE_MAPPING_CODE[mode]
+      if (code === undefined) throw new Error('scene.setToneMapping: expected "none" or "aces", got ' + mode)
+      scene.setParams({ uToneMapping: code })
+    },
+    setExposure(exposure) {
+      if (!Number.isFinite(exposure) || exposure < 0) throw new Error("scene.setExposure: expected a finite number >= 0, got " + exposure)
+      scene.setParams({ uExposure: exposure })
+    },
     project(point) {
       ensureCamera(camera, width, height)
       transformPoint(clip, camera.viewProj, point)
@@ -1503,7 +1550,12 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
   // Likewise the environment set starts at "none" (uEnvOn 0), so a
   // reflective material has coverage before setEnvironment.
   scene.setParams(environmentParams(null))
+  // And the output stage at its defaults (exposure 1, no tone mapping),
+  // which every library fragment declares.
+  scene.setParams({ uExposure: 1, uToneMapping: TONE_MAPPING_CODE.none })
   if (opts?.fog !== undefined) scene.setFog(opts.fog)
+  if (opts?.toneMapping !== undefined) scene.setToneMapping(opts.toneMapping)
+  if (opts?.exposure !== undefined) scene.setExposure(opts.exposure)
   if (opts?.background !== undefined) scene.setBackground(opts.background)
   if (opts?.environment !== undefined) scene.setEnvironment(opts.environment)
   if (opts?.autoFree !== false && getOwner()) onCleanup(() => scene.dispose())

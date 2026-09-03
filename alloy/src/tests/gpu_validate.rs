@@ -267,6 +267,21 @@ fn limits_texture_units_names_the_limit() {
   assert!(err.contains("17 sampler inputs") && err.contains("(16 per pass)"), "{err}");
 }
 
+// A generated mip chain needs a color-renderable format: rgba16f's gate is
+// the device's half-float renderability, every other format passes.
+#[test]
+fn limits_mipmap_gates_half_float_on_renderability() {
+  use crate::gpu::texture::TextureFormat;
+
+  let l = GpuLimits::FLOOR;
+  assert_eq!(l.check_mipmap(TextureFormat::Rgba16f, false), Ok(()));
+  assert_eq!(l.check_mipmap(TextureFormat::Rgba8Srgb, true), Ok(()));
+  let err = l.check_mipmap(TextureFormat::Rgba16f, true).expect_err("half float mipmaps need the extension");
+  assert!(err.contains("rgba16f") && err.contains("mipmap: true"), "{err}");
+  let l = GpuLimits { half_float_renderable: true, ..GpuLimits::FLOOR };
+  assert_eq!(l.check_mipmap(TextureFormat::Rgba16f, true), Ok(()));
+}
+
 #[test]
 fn limits_vertex_attribs_names_the_limit() {
   let l = GpuLimits::FLOOR;

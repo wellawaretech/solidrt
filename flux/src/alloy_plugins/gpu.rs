@@ -166,8 +166,8 @@ fn collect_label(opts: &Option<Object<'_>>) -> rquickjs::Result<Option<String>> 
 }
 
 // Decode the { format? } pixel format the pixel-upload creates accept
-// ("rgba8" default | "r8" | "r32f" | "rgba32f"); an unknown value throws at
-// the create call site.
+// ("rgba8" default | "rgba8-srgb" | "r8" | "r32f" | "rgba32f" | "rgba16f");
+// an unknown value throws at the create call site.
 fn collect_format(ctx: &Ctx<'_>, opts: &Option<Object<'_>>, api: &str) -> rquickjs::Result<alloy::TextureFormat> {
   let format = match opts {
     Some(o) => o.get::<_, Option<String>>("format")?,
@@ -180,18 +180,26 @@ fn collect_format(ctx: &Ctx<'_>, opts: &Option<Object<'_>>, api: &str) -> rquick
 // id's format - byte formats take a Uint8Array, float formats a Float32Array -
 // so float data handed as raw bytes (or the reverse) throws at the call site
 // instead of uploading a reinterpretation. Held (not just borrowed) so the JS
-// buffer stays pinned while the bytes are read.
+// buffer stays pinned while the bytes are read. The half-float format takes
+// the same Float32Array and packs it here, so alloy sees every payload at
+// the format's stored size.
 enum PixelData<'js> {
   Bytes(TypedArray<'js, u8>),
   Floats(TypedArray<'js, f32>),
+  Halves(Vec<u8>),
 }
 
 impl<'js> PixelData<'js> {
   fn collect(ctx: &Ctx<'_>, data: Value<'js>, format: alloy::TextureFormat, api: &str) -> rquickjs::Result<Self> {
     if format.is_float() {
-      TypedArray::<f32>::from_value(data)
-        .map(PixelData::Floats)
-        .map_err(|_| throw_str(ctx, &format!("{api}: {} data must be a Float32Array", format.name())))
+      let floats = TypedArray::<f32>::from_value(data)
+        .map_err(|_| throw_str(ctx, &format!("{api}: {} data must be a Float32Array", format.name())))?;
+      if format == alloy::TextureFormat::Rgba16f {
+        let raw = floats.as_raw().ok_or_else(|| throw_str(ctx, &format!("{api}: detached buffer")))?;
+        let f32_bytes = unsafe { std::slice::from_raw_parts(raw.ptr.as_ptr(), raw.len) };
+        return Ok(PixelData::Halves(alloy::TextureFormat::f16_bytes(f32_bytes)));
+      }
+      Ok(PixelData::Floats(floats))
     } else {
       TypedArray::<u8>::from_value(data)
         .map(PixelData::Bytes)
@@ -200,11 +208,13 @@ impl<'js> PixelData<'js> {
   }
 
   // The viewed range as raw bytes (`len` from as_raw is a byte count for
-  // every element type). Zero-copy; valid while self is held.
+  // every element type). Zero-copy but for the packed halves; valid while
+  // self is held.
   fn bytes(&self, ctx: &Ctx<'_>, api: &str) -> rquickjs::Result<&[u8]> {
     let raw = match self {
       PixelData::Bytes(a) => a.as_raw(),
       PixelData::Floats(a) => a.as_raw(),
+      PixelData::Halves(v) => return Ok(v.as_slice()),
     };
     let raw = raw.ok_or_else(|| throw_str(ctx, &format!("{api}: detached buffer")))?;
     Ok(unsafe { std::slice::from_raw_parts(raw.ptr.as_ptr(), raw.len) })
@@ -865,6 +875,7 @@ impl ModuleDef for GpuModule {
     limits_obj.set("maxVertexAttribs", limits.max_vertex_attribs)?;
     limits_obj.set("maxAnisotropy", limits.max_anisotropy)?;
     limits_obj.set("maxVertexUniformVectors", limits.max_vertex_uniform_vectors)?;
+    limits_obj.set("halfFloatRenderable", limits.half_float_renderable)?;
     exports.export("limits", limits_obj)?;
     Ok(())
   }

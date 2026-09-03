@@ -208,9 +208,9 @@ impl Context {
       ));
     }
     let entry = self.textures.get(id).ok_or_else(|| format!("texture {id} not found"))?;
-    if entry.format.is_float() {
+    if entry.format.sample_only() {
       return Err(format!(
-        "texture {id} is {}: float textures are upload-and-sample only (not color-renderable in core GLES 3.0, so no readback path exists)",
+        "texture {id} is {}: upload-and-sample only (float is not color-renderable in core GLES 3.0, and an sRGB readback would decode rather than return the stored bytes), so no readback path exists",
         entry.format.name()
       ));
     }

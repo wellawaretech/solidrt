@@ -308,6 +308,71 @@ export const FOG = glsl`
 `
 
 /**
+ * The sRGB transfer functions (IEC 61966-2-1): `vec3 srgbToLinear(vec3)`
+ * and `vec3 linearToSrgb(vec3)`, clamped at zero. An "rgba8-srgb" texture
+ * decodes in hardware and needs neither; these serve pixels a format
+ * cannot tag (a render target sampled as a map) and the output stage.
+ * OUTPUT includes this set - never compose both.
+ */
+export const SRGB = glsl`
+  vec3 srgbToLinear(vec3 c) {
+    c = max(c, vec3(0.0));
+    return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(0.04045, c));
+  }
+  vec3 linearToSrgb(vec3 c) {
+    c = max(c, vec3(0.0));
+    return mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, step(0.0031308, c));
+  }
+`
+
+/**
+ * The output stage every library fragment ends with: `vec4
+ * outputColor(vec3 rgb, float alpha)` takes the PREMULTIPLIED linear
+ * result and its alpha, applies the scene's exposure and tone mapping
+ * (`uniform float uExposure`; `uniform float uToneMapping`, 0 none, 1
+ * ACES - the shared params scene.setExposure / setToneMapping write),
+ * encodes to sRGB and returns the premultiplied pixel the target holds.
+ * It un-premultiplies inside so the encode is exact at partial alpha.
+ * Compose it last in a custom fragment: `fragColor = outputColor(rgb,
+ * alpha);` - a fragment that writes fragColor directly writes final
+ * encoded pixels and skips exposure and tone mapping. Includes SRGB.
+ */
+export const OUTPUT = glsl`
+  uniform float uExposure;
+  uniform float uToneMapping;
+  ${SRGB}
+  // Stephen Hill's fit of the ACES RRT and ODT (Three's ACESFilmic, Godot's
+  // ACES): the matrices between sRGB and the fit's working space, and the
+  // exposure scale that puts middle gray where the reference does.
+  const float ACES_EXPOSURE_SCALE = 1.0 / 0.6;
+  const mat3 ACES_INPUT = mat3(
+    0.59719, 0.07600, 0.02840,
+    0.35458, 0.90834, 0.13383,
+    0.04823, 0.01566, 0.83777);
+  const mat3 ACES_OUTPUT = mat3(
+    1.60475, -0.10208, -0.00327,
+    -0.53108, 1.10813, -0.07276,
+    -0.07367, -0.00605, 1.07602);
+  vec3 acesFit(vec3 v) {
+    vec3 a = v * (v + 0.0245786) - 0.000090537;
+    vec3 b = v * (0.983729 * v + 0.4329510) + 0.238081;
+    return a / b;
+  }
+  vec3 acesToneMap(vec3 c) {
+    c = ACES_INPUT * (c * ACES_EXPOSURE_SCALE);
+    c = acesFit(c);
+    return clamp(ACES_OUTPUT * c, 0.0, 1.0);
+  }
+  vec4 outputColor(vec3 rgb, float alpha) {
+    vec3 c = alpha > 0.0 ? rgb / alpha : rgb;
+    c *= uExposure;
+    if (uToneMapping > 0.5) c = acesToneMap(c);
+    c = linearToSrgb(clamp(c, 0.0, 1.0));
+    return vec4(c * alpha, alpha);
+  }
+`
+
+/**
  * A cube-map lookup direction from a world-space one. GL samples a cube
  * map in a left-handed frame (the faces are seen from inside), so a
  * six-face set authored the usual way - Three's px, nx, py, ny, pz, nz,
@@ -754,6 +819,7 @@ export function litFragment(o: LitSourceOptions = {}): string {
     ${BLINN_SPECULAR}
     ${c.env ? ENVIRONMENT : ""}
     ${c.fog ? FOG : ""}
+    ${OUTPUT}
     ${c.prelude}
 
     void main() {
@@ -777,7 +843,7 @@ export function litFragment(o: LitSourceOptions = {}): string {
       ${c.env ? `rgb = mix(rgb, envReflection(n, v, uShininess) * base.a, envWeight(n, v, uReflectivity${c.specularMap ? " * texture(uSpecularMap, uv).r" : ""}));` : ""}
       ${c.emissive ? `rgb += uEmissive${c.emissiveMap ? " * texture(uEmissiveMap, uv).rgb" : ""} * base.a;` : ""}
       ${c.fog ? `rgb = fog(rgb, ${alpha}, vWorldPos, uCamPos);` : ""}
-      fragColor = vec4(rgb, ${alpha});
+      fragColor = outputColor(rgb, ${alpha});
     }
   `
 }
@@ -932,9 +998,10 @@ function unlitBase(c: UnlitSource): string {
  * a hole through an opaque draw. Pair with UNLIT_VERTEX (or a custom
  * vertex stage writing vUv/vWorldPos, as sprite does).
  *
- * Per-entry uniforms on instance(): `uColor` (premultiplied vec4), plus
- * `uMap`/`uAlphaTest` for the options that declare them, plus whatever
- * `prelude` declares.
+ * Per-entry uniforms on instance(): `uColor` (linear light, premultiplied
+ * vec4), plus `uMap`/`uAlphaTest` for the options that declare them, plus
+ * whatever `prelude` declares. Ends with OUTPUT's outputColor like every
+ * library fragment.
  */
 export function unlitFragment(o: UnlitSourceOptions = {}): string {
   let c = resolveUnlit(o)
@@ -948,13 +1015,14 @@ export function unlitFragment(o: UnlitSourceOptions = {}): string {
     ${c.mapTransform ? "uniform vec4 uMapTransform;" : ""}
     ${c.fog ? "uniform vec3 uCamPos;" : ""}
     ${c.fog ? FOG : ""}
+    ${OUTPUT}
     ${c.prelude}
     void main() {
       ${unlitBase(c)}
       ${c.alphaTest ? "if (base.a < uAlphaTest) discard;" : ""}
       ${c.discardIf ? `if (${c.discardIf}) discard;` : ""}
       ${c.fog ? `base.rgb = fog(base.rgb, ${alpha}, vWorldPos, uCamPos);` : ""}
-      fragColor = vec4(base.rgb, ${alpha});
+      fragColor = outputColor(base.rgb, ${alpha});
     }
   `
 }

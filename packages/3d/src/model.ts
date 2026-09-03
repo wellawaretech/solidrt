@@ -79,15 +79,23 @@ export type Model = SceneNode & {
 
 /**
  * Build the scene object for parsed model data: upload its images (repeat
- * wrap, mipmapped, MODEL_ANISOTROPY), make a material per glTF material,
- * the file's node hierarchy as nested Groups, and a mesh per part under
- * its node. Synchronous - the data is already in memory.
+ * wrap, mipmapped, MODEL_ANISOTROPY; the base color and emissive images
+ * as "rgba8-srgb" since glTF stores those sRGB-encoded, the data maps as
+ * rgba8), make a material per glTF material, the file's node hierarchy as
+ * nested Groups, and a mesh per part under its node. Synchronous - the
+ * data is already in memory.
  */
 export function createModel(data: ModelData, opts: ModelOptions = {}): Model {
   let label = opts.label
+  let colorImages = new Set<number>()
+  for (let m of data.materials) {
+    if (m.map !== null) colorImages.add(m.map)
+    if (m.emissiveMap !== null) colorImages.add(m.emissiveMap)
+  }
   let textures: TextureId[] = data.images.map((bytes, i) => {
     let image = decodeImage(bytes)
     return createTexture(image.data, image.width, image.height, {
+      format: colorImages.has(i) ? "rgba8-srgb" : "rgba8",
       wrap: "repeat",
       mipmap: true,
       anisotropy: MODEL_ANISOTROPY,
@@ -106,6 +114,7 @@ export function createModel(data: ModelData, opts: ModelOptions = {}): Model {
       normalMap: maps.normalMap ?? undefined,
       normalScale: m.normalScale,
       emissive: emissive ? m.emissive : undefined,
+      emissiveIntensity: emissive ? m.emissiveIntensity : undefined,
       emissiveMap: emissive ? maps.emissiveMap ?? undefined : undefined,
       transparent: m.transparent,
       cull: m.doubleSided ? "none" : "back",

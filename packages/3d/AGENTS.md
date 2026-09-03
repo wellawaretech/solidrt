@@ -208,7 +208,7 @@ blendMode and pointer events like any element.
 
 | Component | Props |
 | --- | --- |
-| `Scene` | `width?`, `height?` (target pixels - both, or neither = FILL, below), `clearColor?`, `camera?` (partial CameraUpdate, `ortho` included - the declarative scene.setCamera; same state as `PerspectiveCamera`, use one form), `background?` (fragment GLSL, or a skybox `{ cube, intensity?, rotation? }`), `environment?` (`{ cube, intensity?, rotation? }`, the cube reflective materials mirror), `fog?` (`{ color, near, far }`, linear by camera distance), `layers?` (target mask, default 1), `depth?` (`"texture"` exposes scene.depthTexture; not with samples), `samples?` (1/2/4/8 MSAA), `label?`, `ref?(scene)`, `output?(texture)`, `events?` (mesh pointer events, default on) |
+| `Scene` | `width?`, `height?` (target pixels - both, or neither = FILL, below), `clearColor?`, `camera?` (partial CameraUpdate, `ortho` included - the declarative scene.setCamera; same state as `PerspectiveCamera`, use one form), `background?` (fragment GLSL, or a skybox `{ cube, intensity?, rotation? }`), `environment?` (`{ cube, intensity?, rotation? }`, the cube reflective materials mirror), `fog?` (`{ color, near, far }`, linear by camera distance), `toneMapping?` (`"none"` default or `"aces"`), `exposure?` (default 1), `layers?` (target mask, default 1), `depth?` (`"texture"` exposes scene.depthTexture; not with samples), `samples?` (1/2/4/8 MSAA), `label?`, `ref?(scene)`, `output?(texture)`, `events?` (mesh pointer events, default on) |
 | `Group` | `position?`, `rotation?` (Euler radians, XYZ order), `quaternion?` (either, not both), `scale?` (number = uniform), `visible?`, pointer events (below), `ref?(node)` |
 | `Mesh` | `geometry`, `material`, transforms as Group, `params?` (per-mesh uniforms, merge semantics - no unset), `renderOrder?`, `castShadow?`, `layers?` (membership bitmask, default 1), pointer events (below), `ref?(mesh)` |
 | `Sprite` | as Mesh minus `geometry`: a camera-facing unit quad, `scale` is its world size, rotation is ignored; pair with a `sprite()` material |
@@ -443,7 +443,8 @@ uint16/uint32 indices by vertex count automatically.
 Materials:
 
 - `unlit({ color?, map?, transparent?, cull?, alphaTest?, fog? })` -
-  straight `[r, g, b, a?]` 0..1, premultiplied internally; `cull` and
+  straight `[r, g, b, a?]` 0..1 sRGB (decoded to linear light, see Color
+  below), premultiplied internally; `cull` and
   `alphaTest` as on lit (a mapped cutout casts its cutout); `fog: false`
   opts out of the scene's fog (all three standard materials take it).
 - `sprite({ color?, map?, transparent?, billboard? })` - unlit on a quad
@@ -473,7 +474,12 @@ Materials:
   uViewProj rows, that carries the clip flip), `uniform mat4
   uInvViewProj` (the camera's inverse view-projection, shared likewise -
   a clip position back to world, the world-space ray through a pixel
-  without knowing the projection) and `uniform mat4 uNormal` (the world
+  without knowing the projection), the output stage's `uniform float
+  uExposure` / `uToneMapping` (compose `OUTPUT` from `/glsl` and end with
+  `fragColor = outputColor(rgb, alpha)` to take the scene's exposure and
+  tone mapping and encode like the library materials do; a fragment
+  writing fragColor directly writes final encoded pixels) and `uniform
+  mat4 uNormal` (the world
   inverse-transpose, written beside uModel for this material's meshes;
   take `mat3(uNormal)` - correct under non-uniform scale, where
   mat3(uModel) bends normals off the surface). Attributes come from the
@@ -545,7 +551,11 @@ no separate resize plumbing. Two forms:
   written through `scene.setParams` (an app clock for an animated sky).
   Godot's sky shader and Unity's skybox material are the same idea; the
   radiance bake for environment lighting will consume this same source
-  later, so a procedural sky written here lights the scene then.
+  later, so a procedural sky written here lights the scene then. The
+  preamble declares the OUTPUT set: end with `fragColor =
+  outputColor(rgb, 1.0)` for a sky that takes the scene's exposure and
+  tone mapping (the skybox form does); a direct fragColor write is final
+  encoded pixels.
 - A skybox `{ cube, intensity?, rotation? }` (SkyboxOptions): a cube
   map from createCubeTexture sampled along the same ray - Three's
   `scene.background = cubeTexture` with `backgroundIntensity` and
@@ -633,6 +643,31 @@ horizon, and put `far` at or inside the camera's far plane to hide the
 clip. `examples/fog.tsx` cycles the forms over a valley;
 `examples/cascades.tsx` fogs its field to the sky.
 
+Color: the scene shades in LINEAR light and outputs sRGB, like Three
+(ColorManagement), Godot and Unity's linear space - no gamma mode. Every
+`[r, g, b]` color option is sRGB, what a color picker shows: material
+`color` and `emissive`, light `color`, the hemisphere's `sky`/`ground`,
+fog `color`; the library decodes it when it writes the uniform
+(`srgbToLinear`/`linearColor` are exported for values you write straight
+to a uniform yourself). Color MAPS decode through their format: create a
+base color, emissive or sky image with `format: "rgba8-srgb"`
+(createTexture, createCubeTexture; createModel does it for glTF's base
+color and emissive images) - a plain rgba8 map reads as linear data and
+renders washed out; data maps (normal, specular, roughness, light maps)
+stay rgba8, and an HDR image is "rgba16f". Vertex colors are linear, as
+glTF stores them. Every library fragment ends in the OUTPUT set's
+`outputColor(rgb, alpha)`: exposure (`scene.setExposure`, default 1),
+tone mapping (`scene.setToneMapping("none" | "aces")`, the reactive
+`toneMapping`/`exposure` props) and the sRGB encode, premultiplied. The
+scene target therefore holds encoded pixels like every texture the
+runtime displays; `clearColor` is written as given and is NOT tone
+mapped (with a curve on, draw the backdrop as a background), and a
+transparent mesh blends in encoded space (Three's compromise; the
+hardware-encode alternative would display wrong through the runtime's
+raw sampling). What changed for a scene tuned before this: terminators
+soften, mid-tones brighten, highlights widen - drop ambient rather than
+lights. `emissiveIntensity` scales the emissive in linear light.
+
 Lighting GLSL (`@solidrt/3d/glsl`): exported string constants composed
 into shaderMaterial sources with plain template literals - `LIT_VERTEX`
 (the standard vertex stage: clip position plus vWorldPos/vNormal/vUv
@@ -673,8 +708,9 @@ declares is an ordinary `instance()` param) and `discardIf` (a bool
 EXPRESSION evaluated beside the alphaTest discard; it can read the
 varyings, the declared uniforms, and prelude's names). Slots are
 expressions on purpose: no local of the generated program is part of the
-contract, and colors are premultiplied throughout, so no slot touches
-them - reach past the slots by composing the constants above.
+contract, and colors are linear light, premultiplied throughout, so no
+slot touches them - reach past the slots by composing the constants
+above.
 `litShadowFragment(options)` is the depth-pass twin (same base and
 discards, nothing after them), so a discarding material casts what it
 draws: build it on `litVertex(options)` with the OPPOSITE cull, instance
@@ -764,12 +800,12 @@ The surface maps, each an option beside `map` and sampled at its uv:
   `/glsl`, Three's untangented path), so ANY UV-mapped geometry works
   with no tangent channel; the trade is mild seams on mirrored UVs. Not
   with `triplanar` (throws - triplanar samples by world position).
-- `emissive: [r, g, b]` (intensity folded in, the uLightColor
-  convention) and `emissiveMap` add light the lights do not provide,
-  after the lighting terms, shadow-proof, fogged. `emissive` defaults to
-  WHITE when `emissiveMap` is given - the map is the emission - fixing
-  Three's gotcha where an emissiveMap alone shows nothing against the
-  black default.
+- `emissive: [r, g, b]` (sRGB like `color`) times `emissiveIntensity`
+  (linear, default 1; glTF's emissive strength) and `emissiveMap` add
+  light the lights do not provide, after the lighting terms,
+  shadow-proof, fogged. `emissive` defaults to WHITE when `emissiveMap`
+  is given - the map is the emission - fixing Three's gotcha where an
+  emissiveMap alone shows nothing against the black default.
 - `specularMap`: its RED channel scales `specular` per fragment (chrome
   and rubber on one mesh); with it `specular` defaults to 1.
 - `lightMap` (+ `lightMapIntensity`) adds a baked-light texture by the
@@ -1132,7 +1168,9 @@ older bakes are rejected - re-bake with `srt tool 3d/model`.
 - SCENE-WIDE uniforms go through that same shared channel via
   `scene.setParams({ uTime })`, and this is the single highest-leverage
   pattern in the library. It merges an app-owned name in beside
-  uViewProj/uInvViewProj/uCamPos/uCamRight/uCamUp - names merge, a target tolerates
+  uViewProj/uInvViewProj/uCamPos/uCamRight/uCamUp and the scene's own
+  fog, environment and output sets (uFog*, uEnv*, uExposure,
+  uToneMapping) - names merge, a target tolerates
   zero coverage, neither side clobbers the other. One write per frame
   however many meshes read it, with the motion itself in vertex shaders
   off that one clock. `params`/`setMeshParams` is the PER-MESH answer and
@@ -1225,6 +1263,16 @@ older bakes are rejected - re-bake with `srt tool 3d/model`.
   REPLACES the clearColor visually (the clear still runs; you just never
   see it), and a `transparent: true` mesh blends over it in-pass since the
   background is always entry zero.
+- A color map created as plain rgba8 renders WASHED OUT: the fragment
+  reads its encoded bytes as linear light and encodes them again. Create
+  color images (base color, emissive, a sky's faces or panorama) with
+  `format: "rgba8-srgb"`; keep data maps rgba8. A rendered texture (a
+  scene view, a shader target, a UI capture) holds encoded pixels and
+  cannot be tagged, so as a `map` it needs `srgbToLinear` from SRGB in a
+  custom fragment (no material option yet).
+- Reading the scene texture back (a probe's readTexture, a snapshot)
+  gives ENCODED pixels: an expected linear value v shows as
+  `linearToSrgb(v) * 255` - intensity 0.5 reads 188, not 128.
 - The background pipeline/program are SCENE-OWNED (unlike shared
   material pipelines): setBackground(null), replacement, and dispose()
   destroy them. Do not hand the background's pipeline to anything else.

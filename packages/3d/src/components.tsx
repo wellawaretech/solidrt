@@ -39,7 +39,7 @@ import type {
 } from "./light.ts"
 import { createScene } from "./scene.ts"
 import type { CameraUpdate } from "./camera.ts"
-import type { EnvironmentOptions, FogOptions, Scene as SceneHandle, SkyboxOptions } from "./scene.ts"
+import type { EnvironmentOptions, FogOptions, Scene as SceneHandle, SkyboxOptions, ToneMapping } from "./scene.ts"
 import type { ShaderParams } from "@solidrt/core/gpu"
 import type { NodeTransition } from "flux:spatial"
 import type { Geometry } from "./geometry.ts"
@@ -193,6 +193,11 @@ export type SceneProps = {
    * distance from the camera. Reactive; undefined removes it. Match
    * `color` to clearColor or the background, which is not fogged. */
   fog?: FogOptions
+  /** Output tone mapping (scene.setToneMapping): "none" (default) or
+   * "aces". Reactive. */
+  toneMapping?: ToneMapping
+  /** Output exposure (scene.setExposure), default 1. Reactive. */
+  exposure?: number
   /** The scene target's layer mask (scene.setLayers as a prop; default 1):
    * the scene draws the meshes whose `layers` intersect it. Reactive. */
   layers?: number
@@ -280,6 +285,14 @@ export let Scene: ParentComponent<SceneProps> = props => {
   createEffect(
     () => props.fog,
     f => scene.setFog(f ?? null),
+  )
+  createEffect(
+    () => props.toneMapping,
+    t => scene.setToneMapping(t ?? "none"),
+  )
+  createEffect(
+    () => props.exposure,
+    e => scene.setExposure(e ?? 1),
   )
   createEffect(
     () => props.layers,

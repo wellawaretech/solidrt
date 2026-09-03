@@ -165,8 +165,12 @@ what it delivered is documented in `packages/3d/AGENTS.md`, not here.
     Stages 1 and 2 LANDED 2026-09-02 (library only): the skybox and the
     sanctioned `vRay` background, `equirectToCube`, and
     `scene.setEnvironment` + `lit({ reflectivity })` over the exported
-    ENVIRONMENT set. Open: stage 3 (HDR/PBR, with item 17) and stage 4
-    (dynamic probes); the box stays unchecked until those land.
+    ENVIRONMENT set. Stage 3a (the rgba16f and rgba8-srgb formats) and 3b
+    (the linear color pipeline with tone mapping and exposure) LANDED
+    2026-09-03 - item 17's color-space decision. Open: 3c (the `standard`
+    PBR material), 3d (prefiltered levels, the build-time HDR asset, SH9
+    ambient) and stage 4 (dynamic probes); the box stays unchecked until
+    those land.
 15. [x] **Shadow maps.** Landed 2026-08-26 (uncommitted) through stage 3
     of [3d-shadow-maps](../done/3d-shadow-maps.md): `castShadow` on
     `DirectionalLight` and `Mesh`, `lit` receiving by default, the
@@ -222,6 +226,14 @@ what it delivered is documented in `packages/3d/AGENTS.md`, not here.
 17. [ ] **PBR and the color-space decision.** The furthest tier: physically
     based lighting math forces the sRGB/linear question the pixel contract
     currently answers with "non-linear RGBA8 everywhere".
+    The color-space half is DECIDED and LANDED 2026-09-03 as stage 3b of
+    [3d-environment](../backlog/3d-environment.md): linear-only lighting
+    in `@solidrt/3d` (sRGB color options decoded on write, color maps as
+    "rgba8-srgb", the OUTPUT set's exposure/tone mapping/encode in every
+    library fragment); the pixel contract of the runtime itself stays
+    non-linear RGBA8, with the sRGB and half-float formats as the opt-in
+    decode. Open: the `standard` metallic/roughness material (stage 3c)
+    and the HDR asset path (3d).
 18. [x] **Scene background.** Deferred within the item: the texture-id form (a
     reserved non-breaking union widening - decide fit semantics when a
     consumer arrives). The boundary with item 14 stands: a camera-linked

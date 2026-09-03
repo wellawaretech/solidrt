@@ -115,7 +115,9 @@ impl Context {
     format: TextureFormat,
     label: Option<String>,
   ) -> Result<(), String> {
-    self.gpu_limits().check_texture_size(width, height)?;
+    let limits = self.gpu_limits();
+    limits.check_texture_size(width, height)?;
+    limits.check_mipmap(format, sampler.mipmap)?;
     // A create at a fresh id cannot be referenced by anything yet; a replace
     // at a live id (stream resize, camera format change) is a content change
     // behind that id like any other.
@@ -157,7 +159,9 @@ impl Context {
     if size == 0 {
       return Err("cube map face size must be non-zero".to_string());
     }
-    self.gpu_limits().check_cube_map_size(size)?;
+    let limits = self.gpu_limits();
+    limits.check_cube_map_size(size)?;
+    limits.check_mipmap(format, sampler.mipmap)?;
     if faces.len() != CUBE_FACES {
       return Err(format!("a cube map takes {} faces (+X, -X, +Y, -Y, +Z, -Z), got {}", CUBE_FACES, faces.len()));
     }
@@ -416,9 +420,9 @@ impl Context {
     self.reject_cube(dst, "nothing renders into it")?;
     let src_entry = self.textures.get(src).ok_or_else(|| format!("texture {src} not found"))?;
     let dst_entry = self.textures.get(dst).ok_or_else(|| format!("texture {dst} not found"))?;
-    if src_entry.format.is_float() {
+    if src_entry.format.sample_only() {
       return Err(format!(
-        "texture {src} is {}: float textures are sample-only (a copy would quantize to the target's rgba8)",
+        "texture {src} is {}: sample-only (a copy would quantize float to the target's rgba8, or decode sRGB)",
         src_entry.format.name()
       ));
     }
