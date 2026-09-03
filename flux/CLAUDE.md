@@ -51,8 +51,11 @@ only the instance id and forwards to a free `*_impl` fn. Models:
 `spatial.rs`, `gpu.rs`, `tree.rs`.
 
 `plugins/` holds what the layers share: `js_error.rs` + `marshal.rs` +
-`value.rs` + `seekable.rs`, the marshalling toolkit, and `mod.rs`, which
-builds the JS context and registers the layers. `value.rs` is where
+`value.rs` + `seekable.rs`, the marshalling toolkit; `events.rs`, the event
+bus mechanism (listener registry, sticky cache, PendingOps hold) with no JS
+surface of its own, which forge plugins and lattice build their `on`/`once`
+surfaces on; and `mod.rs`, which builds the JS context and registers the
+layers. `value.rs` is where
 `forge::Value` meets JS: a forge result type implements `From<T> for Value` in
 forge and the plugin returns `Neutral(result.into())`; do not hand-write a
 per-type `IntoJs` for plain data results.

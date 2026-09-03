@@ -7,8 +7,8 @@ use std::sync::Arc;
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::sync::Notify;
 
-use super::events::{add_listener, clear_listeners, emit_event, has_listeners, remove_listener};
 use crate::logger::CtxLogger;
+use crate::plugins::events::{add_listener, clear_listeners, emit_event, has_listeners, remove_listener};
 use forge::tty::{is_terminal, open_input, set_raw_mode, write as write_stdout, Input, Key};
 
 // flux:tty - the terminal attached to this process. Node's tty/readline

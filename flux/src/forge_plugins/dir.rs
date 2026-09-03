@@ -6,7 +6,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use tokio::sync::Notify;
 
-use super::events::{add_listener, remove_listener};
+use crate::plugins::events::{add_listener, remove_listener};
 use crate::plugins::marshal::{with_pending, OptArg};
 use crate::plugins::value::Neutral;
 use forge::fs;
@@ -76,7 +76,7 @@ fn watch<'js>(
         ("kind".to_string(), Value::String(change.kind.as_str().to_string())),
         ("path".to_string(), Value::String(change.path)),
       ]);
-      super::events::emit_event(&ctx_cb, &name, Neutral(data));
+      crate::plugins::events::emit_event(&ctx_cb, &name, Neutral(data));
     }
     // Ended by the OS watch going away rather than the unsubscribe: drop the
     // listener too, or the bus would hold the engine alive for nothing.

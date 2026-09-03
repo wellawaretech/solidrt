@@ -1,5 +1,4 @@
 pub mod dir;
-pub mod events;
 pub mod ffi;
 pub mod file;
 pub mod fs;

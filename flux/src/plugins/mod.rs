@@ -1,11 +1,13 @@
 // Shared plugin infrastructure: the marshalling toolkit (js_error, marshal,
-// value, seekable) every plugin layer uses, and `init_context`, which builds the
-// JS context and registers the layers. The layers themselves are crate-level
+// value, seekable) every plugin layer uses, the event bus mechanism (events:
+// listener registry and sticky cache, no JS surface of its own), and
+// `init_context`, which builds the JS context and registers the layers. The layers themselves are crate-level
 // siblings named for what they marshal (see flux/CLAUDE.md):
 // `standards_plugins` = web-standard JS APIs (console, fetch, Headers/Request/
 // Response, timers, WebSocket client), whatever backs them; `forge_plugins` =
 // the `flux:*` capability modules binding forge; `alloy_plugins` = the
 // alloy-backed render/capture bindings (feature `gui`).
+pub mod events;
 pub mod js_error;
 pub mod marshal;
 pub mod seekable;
@@ -177,7 +179,7 @@ pub(crate) async fn init_context(
       crate::standards_plugins::time::init(&ctx);
       crate::standards_plugins::fetch::init_fetch(&ctx);
       crate::standards_plugins::console::init_console(&ctx);
-      crate::forge_plugins::events::init(&ctx);
+      events::init(&ctx);
       flux_obj.set("version", env!("FLUX_VERSION")).expect("failed to set Flux.version");
       flux_obj.set("capabilities", build_capabilities(&ctx)).expect("failed to set Flux.capabilities");
       crate::standards_plugins::headers::init_headers(&ctx);

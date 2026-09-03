@@ -283,7 +283,11 @@ error.
 
 - `forge_plugins/events.rs` (the listener registry and sticky cache) has no
   JS surface; it is shared infrastructure and belongs under `plugins/` with
-  the toolkit.
+  the toolkit. Moved 2026-09-03 to `plugins/events.rs` (`git mv`, contents
+  unchanged); the dir, process and tty plugins, the `flux::emit_event` family
+  re-export and `init_context` point at the new path, and the root and flux
+  `CLAUDE.md` layout sentences name it. Verified: flux clippy and gui unit
+  tests, the events, process, tty and dir suites, lattice check.
 - Stale seam docs (fixed 2026-09-02): several forge module headers still
   said "destined for the forge crate (see REDESIGN.md)" and cited
   `plugins/flux/*.rs` paths that no longer existed; `serve.rs` documented

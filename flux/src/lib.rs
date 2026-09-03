@@ -22,7 +22,7 @@ pub use forge::process::{arch, platform};
 pub use forge::seek::{SeekableRead, SeekableReader};
 pub use logger::{report_uncaught, CtxLogger, LogLevel, Logger};
 pub use plugins::js_error::JsResult;
-pub use forge_plugins::events::{emit_event, emit_sticky, has_listeners, register_listener, sticky_cached};
+pub use plugins::events::{emit_event, emit_sticky, has_listeners, register_listener, sticky_cached};
 pub use forge_plugins::process::ProcessArgs;
 pub use plugins::seekable::{SeekableOpener, SeekableSource};
 pub use standards_plugins::body::{attach_body, JsBytes, JsonValue};
