@@ -111,7 +111,7 @@ tsconfig.json - the two load-bearing lines are jsx + jsxImportSource:
 ```
 
 Peer deps @solidjs/signals and @solidjs/universal must match (currently
-2.0.0-rc.5); bun resolves them from peerDependencies. On a version bump,
+2.0.0-rc.6); bun resolves them from peerDependencies. On a version bump,
 `bun install` only warns ("incorrect peer dependency") and keeps the old
 ones, and `bun update solid-js @solidjs/signals @solidjs/universal` does
 not read the pin either: it adds all three to package.json at registry
