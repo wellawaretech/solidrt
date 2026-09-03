@@ -208,6 +208,12 @@ Shaped, not started.
   Give dev, render and pack one gitignored output root (dist/) with a subdir
   per flow, fixing render's missing isolate support and clearing the ground
   for pack formats and asset pre-processing.
+- **[A bare string argument to call_debug arrives JSON-quoted](backlog/call-debug-string-arg-encoding.md)** [2026-09-03]
+  Calling a debug command with a bare string argument delivers it to the
+  handler with literal quote characters, so a membership guard rejects it and
+  the command silently no-ops while still returning a plausible payload; the
+  object form is unaffected, and reading the transport end to end does not
+  show where the second encoding is added, so the first move is a live repro.
 - **[captureSnapshot fails inside a clean repaint boundary](backlog/capture-inside-clean-boundary.md)** [2026-08-27]
   A capture (captureSnapshot, /snapshot) of a node under a repaintBoundary
   view whose recording is being reused fails with "capture node is not in the
@@ -648,11 +654,22 @@ Shaped, not started.
   Button picks fill/hover/label with a switch over its variant and derives the
   background from press state by hand, and every other widget repeats the
   pattern; a helper that selects a prop bundle from state would collapse it.
+- **[The overlay's GPU% divides per-present cost by the per-tick period](backlog/stats-overlay-gpu-share-divisor.md)** [2026-09-03]
+  gpu_ms is GPU execution per PRESENTED frame while frame_ms is the gap
+  between render-handler TICKS, so the HUD's GPU share inflates in exact
+  proportion to how well the demand gate works - a settled app with the GPU at
+  1.3% busy reads GPU 50%, and the reader concludes the opposite of the truth.
 - **[The stats window has no present-interval jank counter, so a repeated frame can pass every figure clean](backlog/stats-present-interval-jank.md)** [2026-08-31]
   missedPresents (raster-side, demand-gated, run-based counting) is
   implemented and is the figure probes quote; remaining are maxPresentGapMs
   and per-platform validation of the present timestamps (ANGLE/D3D11, macOS,
   Android).
+- **[Elements built before a suspending read are orphaned on every retry](backlog/suspend-retry-orphan-elements.md)** [2026-09-03]
+  A component that creates an element and then reads a pending async value
+  throws NotReadyError to the nearest <Loading>, which discards the
+  partly-built subtree without freeing it, so every retry leaks the elements
+  built before the suspend point - and the leak sentinel that catches it names
+  the wrong cause.
 - **[Bidirectional text in the owned layout](backlog/text-bidi.md)** [2026-08-17]
   The owned text engine places wrap units on a line in logical order and
   treats "start" as left, so RTL rich text spanning styled runs on one line,
