@@ -38,8 +38,8 @@ export { fillet, roundRect, shape, triangulate } from "./profile.ts"
 export type { Profile, ProfilePoint } from "./profile.ts"
 export { extrude, lathe, pathFrames, sweep, tube } from "./sweep.ts"
 export type { ExtrudeOptions, LatheOptions, PathFrames, PathPoint, SweepPath, TubeOptions } from "./sweep.ts"
-export { lit, shaderMaterial, shaderMaterialClass, sprite, unlit } from "./material.ts"
-export type { LitOptions, Material, ShaderMaterialClass, ShaderMaterialClassOptions, ShaderMaterialInstanceOptions, ShaderMaterialOptions, SpriteOptions, UnlitOptions } from "./material.ts"
+export { lit, shaderMaterial, shaderMaterialClass, sprite, standard, unlit } from "./material.ts"
+export type { LitOptions, Material, ShaderMaterialClass, ShaderMaterialClassOptions, ShaderMaterialInstanceOptions, ShaderMaterialOptions, SpriteOptions, StandardOptions, UnlitOptions } from "./material.ts"
 export { DirectionalLight, Group, HemisphereLight, InstancedMesh, Mesh, OrbitCamera, PerspectiveCamera, PointLight, Scene, SpotLight, Sprite, useScene } from "./components.tsx"
 export type {
   DirectionalLightProps,

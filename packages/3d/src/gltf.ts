@@ -60,6 +60,15 @@ export type ModelMaterial = {
   emissiveIntensity: number
   /** Index into ModelData.images (the emissive map), or null. */
   emissiveMap: number | null
+  /** glTF metallicFactor (default 1): standard's metalness. */
+  metalness: number
+  /** glTF roughnessFactor (default 1): standard's roughness. */
+  roughness: number
+  /** Index into ModelData.images (glTF's ONE packed
+   * metallicRoughnessTexture: green = roughness, blue = metalness), or
+   * null; createModel hands it to `material` as both maps.metalnessMap
+   * and maps.roughnessMap, standard's two channel-select options. */
+  metalnessRoughnessMap: number | null
 }
 
 /** One node of the model's retained hierarchy: a local TRS under `parent`
@@ -189,6 +198,9 @@ const DEFAULT_MATERIAL: ModelMaterial = {
   emissive: [0, 0, 0],
   emissiveIntensity: 1,
   emissiveMap: null,
+  metalness: 1,
+  roughness: 1,
+  metalnessRoughnessMap: null,
 }
 
 /** True when the bytes are a .glb container (the "glTF" magic). */
@@ -310,6 +322,9 @@ export function parseGltf(bytes: Uint8Array, resolve?: UriResolver): ModelData {
       emissive: [linearToSrgb(emissiveFactor[0] ?? 0), linearToSrgb(emissiveFactor[1] ?? 0), linearToSrgb(emissiveFactor[2] ?? 0)],
       emissiveIntensity: strength,
       emissiveMap: textureSlot(m.emissiveTexture),
+      metalness: typeof pbr.metallicFactor === "number" ? pbr.metallicFactor : 1,
+      roughness: typeof pbr.roughnessFactor === "number" ? pbr.roughnessFactor : 1,
+      metalnessRoughnessMap: textureSlot(pbr.metallicRoughnessTexture),
     }
   })
   // Primitives without a material draw the spec's default; it is appended

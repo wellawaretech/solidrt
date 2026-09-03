@@ -21,7 +21,10 @@ const MAGIC = 0x4d545253
 // parts in the "skinned" layout) and animation clips (channel
 // times/values as payload blocks). Version-2 files world-baked and have
 // none of it, so they are rejected - re-bake with `srt tool 3d/model`.
-const VERSION = 3
+// Version 4 adds the metalness/roughness fields to the material records
+// (metalness, roughness, metalnessRoughnessMap); a version-3 file lacks
+// them, so it is rejected the same way rather than read as all-metal.
+const VERSION = 4
 
 // The named layouts the container writes; a custom attribute-list layout
 // has no name to store, so encodeModel rejects it.

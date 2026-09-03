@@ -167,8 +167,11 @@ what it delivered is documented in `packages/3d/AGENTS.md`, not here.
     `scene.setEnvironment` + `lit({ reflectivity })` over the exported
     ENVIRONMENT set. Stage 3a (the rgba16f and rgba8-srgb formats) and 3b
     (the linear color pipeline with tone mapping and exposure) LANDED
-    2026-09-03 - item 17's color-space decision. Open: 3c (the `standard`
-    PBR material), 3d (prefiltered levels, the build-time HDR asset, SH9
+    2026-09-03 - item 17's color-space decision. Stage 3c (the `standard`
+    metalness/roughness material: GGX in the light loop, the split sum
+    over the environment, glTF's PBR fields in the model file at VERSION
+    4) LANDED 2026-09-03 too; createModel keeps `lit` as its default
+    until 3d. Open: 3d (prefiltered levels, the build-time HDR asset, SH9
     ambient) and stage 4 (dynamic probes); the box stays unchecked until
     those land.
 15. [x] **Shadow maps.** Landed 2026-08-26 (uncommitted) through stage 3
@@ -232,8 +235,9 @@ what it delivered is documented in `packages/3d/AGENTS.md`, not here.
     "rgba8-srgb", the OUTPUT set's exposure/tone mapping/encode in every
     library fragment); the pixel contract of the runtime itself stays
     non-linear RGBA8, with the sRGB and half-float formats as the opt-in
-    decode. Open: the `standard` metallic/roughness material (stage 3c)
-    and the HDR asset path (3d).
+    decode. The `standard` metalness/roughness material LANDED 2026-09-03
+    (stage 3c; `lit` stays, and stays createModel's default until 3d).
+    Open: the HDR asset path (3d).
 18. [x] **Scene background.** Deferred within the item: the texture-id form (a
     reserved non-breaking union widening - decide fit semantics when a
     consumer arrives). The boundary with item 14 stands: a camera-linked

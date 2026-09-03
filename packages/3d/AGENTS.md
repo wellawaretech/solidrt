@@ -446,7 +446,7 @@ Materials:
   straight `[r, g, b, a?]` 0..1 sRGB (decoded to linear light, see Color
   below), premultiplied internally; `cull` and
   `alphaTest` as on lit (a mapped cutout casts its cutout); `fog: false`
-  opts out of the scene's fog (all three standard materials take it).
+  opts out of the scene's fog (all four library materials take it).
 - `sprite({ color?, map?, transparent?, billboard? })` - unlit on a quad
   that turns to face the camera IN THE VERTEX STAGE (off the shared
   uCamRight/uCamUp, or uCamPos for `billboard: "fixed-y"`, which yaws
@@ -579,7 +579,9 @@ underneath until then).
 
 Environment: `scene.setEnvironment({ cube, intensity?, rotation? } |
 null)`, the `environment` option on createScene and the reactive `Scene`
-prop - the cube map every `lit({ reflectivity })` material mirrors,
+prop - the cube map every `standard` material reflects (always, as the
+split sum: `envRadiance` at its roughness times PBR's `envBrdf`) and
+every `lit({ reflectivity })` material mirrors,
 typically the skybox's own cube turned with it. Scene-level like Three's
 `scene.environment`, Unity's environment reflections and Godot's
 sky-lit reflections: ONE `uEnv` samplerCube bound on every target the
@@ -676,7 +678,12 @@ plus the colored layout's aColor forwarded raw as vColor - using it makes
 the material need that channel) and the pure functions `HEMISPHERE`
 (`hemisphere(n, sky, ground)`), `LAMBERT` (`lambert(n, l)`),
 `BLINN_SPECULAR` (`blinnSpecular(n, v, l, shininess)`), `FRESNEL`
-(`fresnel(n, v, power)`), and the shadow trio composed IN ORDER:
+(`fresnel(n, v, power)`), `PBR` (the GGX metalness/roughness model
+`standard` shades with: `ggxSpecular(n, v, l, f0, roughness)` - one
+light's lobe, to weight by `lambert(n, l)` and the light color like the
+diffuse - `envBrdf(nv, roughness)` for the split sum's scale and bias on
+f0, `DIELECTRIC_F0`, and the D/V/F pieces; it defines `PBR_PI`, not
+`PI`), and the shadow trio composed IN ORDER:
 `SHADOW_SLOTS` (the scene's shadow set: `uShadowAtlas`, per map slot
 `uShadowRect[M]`/`uShadowMatrix[M]`, per light index
 `uShadowFirst[N]`/`uShadowCount[N]` (its slots; a cascaded light has
@@ -711,6 +718,10 @@ expressions on purpose: no local of the generated program is part of the
 contract, and colors are linear light, premultiplied throughout, so no
 slot touches them - reach past the slots by composing the constants
 above.
+`standardFragment(options)` is the same for `standard`: lit's options
+minus `specularMap`/`env` (the environment is always composed) plus
+`metalnessMap`/`roughnessMap`, on the same `litVertex(options)`, with
+`uMetalness`/`uRoughness` in place of `uSpecular`/`uShininess`.
 `litShadowFragment(options)` is the depth-pass twin (same base and
 discards, nothing after them), so a discarding material casts what it
 draws: build it on `litVertex(options)` with the OPPOSITE cull, instance
@@ -823,7 +834,31 @@ The surface maps, each an option beside `map` and sampled at its uv:
   Also on `unlit`. Not with `triplanar` (throws - its repeat is the
   triplanar value). A cutout's shadow transforms the same way.
 
-`examples/materials.tsx` shows all five. Internally one
+`examples/materials.tsx` shows all five.
+
+`standard(opts)` is the metalness/roughness material, the look authored
+assets expect (Three's MeshStandardMaterial, Godot's StandardMaterial3D,
+Unity's Standard): every lit option but the Blinn-Phong knobs
+(`specular`, `shininess`, `specularMap`, `reflectivity`), plus
+`metalness` (0..1, default 0: a metal has no diffuse and reflects tinted
+by `color`, a dielectric reflects 4% face-on), `roughness` (0..1
+perceptual, default 1: 0 a mirror, 1 matte; one value widens the
+highlight and blurs the environment alike; Unity's smoothness is its
+inverse) and the packed data maps `metalnessMap` (its BLUE channel) and
+`roughnessMap` (GREEN) - Three's two channel-select options over glTF's
+ONE metallicRoughnessTexture, so pass the same texture to both; with a
+map the factor defaults to 1 (the map is the value). Shading is GGX
+(`PBR` in `/glsl`: distribution, height-correlated Smith visibility,
+Schlick fresnel) per light in the same light and shadow loop, the
+hemisphere on the diffuse, and the scene's environment ALWAYS - the
+split sum, `envRadiance` at the roughness over the cube's mip chain
+times the analytic `envBrdf` - with no `reflectivity` switch: the
+environment is intrinsic to the model. Light intensities read as lit's
+(1 lights a white matte surface to 1; Godot's and Unity's convention -
+a Three scene's intensities divide by pi). Without an environment a
+metal shows only its highlights: no diffuse, nothing to reflect (Three
+and Godot do the same), so give the scene one. `examples/standard.tsx`
+is the sphere grid. Internally one
 `shaderMaterialClass` per option combination (map x vertexColors x
 triplanar x transparent x cull x alphaTest x fog x the surface maps),
 cached for the app's lifetime, one pipeline per vertex layout - a
@@ -854,7 +889,9 @@ fits:
   as baked channel buffers: node/path/interpolation, times, values),
   `materials` (base color factor, `map` =
   index into `images`, `doubleSided`, `transparent` = alphaMode BLEND,
-  `alphaMode` as written and `alphaCutoff`, spec default 0.5), `images`
+  `alphaMode` as written and `alphaCutoff`, spec default 0.5, the
+  normal and emissive slots, `metalness`/`roughness` factors and the
+  packed `metalnessRoughnessMap` - standard's inputs), `images`
   (the encoded PNG/JPEG bytes, undecoded) and `bounds` (world-space rest
   pose, conservative for parts under rotated nodes). External
   files come through `resolve(uri)` (uri as written, still
@@ -872,8 +909,12 @@ fits:
   first error a real file hits.
 - `createModel(data, { material?, label? })` - uploads the images (repeat
   wrap, mipmapped, 4x anisotropic), makes one material per glTF material (default `lit({
-  color, map, transparent })`; pass `material(m, map)` for anything else,
-  it is called once per material and shared), the node table as nested
+  color, map, transparent })` - `standard` becomes the default once an
+  HDR environment asset ships, since a glTF metal in a scene with no
+  environment renders near black; until then pass `material: (m, maps,
+  skinned) => standard({ color: m.color, ...maps, metalness:
+  m.metalness, roughness: m.roughness, skinned })` yourself, or any
+  other material; it is called once per material and shared), the node table as nested
   Groups with the file's local TRS, and one mesh per part under its node,
   all inside the returned `Model` (a Group): `add(scene.root, model)`,
   place it with `setTransform`, find parts by name in `model.parts`
@@ -936,9 +977,16 @@ Applied: `doubleSided` (the default material draws it with `cull:
 (+ scale; the derivative frame needs no tangents), `emissiveFactor` x
 `emissiveTexture` with KHR_materials_emissive_strength folded into the
 factor (a zero factor skips the map too - glTF's product rule, emission
-off). The `material(m, maps)` callback receives every uploaded texture
-by lit() option name (`maps.map`/`maps.normalMap`/`maps.emissiveMap`);
+off), `pbrMetallicRoughness` factors as `m.metalness`/`m.roughness` and
+its packed texture as BOTH `maps.metalnessMap` and `maps.roughnessMap`
+(standard's channel-select options; the default `lit` ignores them).
+The `material(m, maps)` callback receives every uploaded texture
+by lit()/standard() option name (`maps.map`/`maps.normalMap`/
+`maps.emissiveMap`/`maps.metalnessMap`/`maps.roughnessMap`);
 `data.materials` is in file order, so the calls arrive in file order.
+A `.srtm` baked before the material records carried the PBR fields
+(file version 3) is rejected by loadModel - re-bake with `srt tool
+3d/model`.
 Animation: `createMixer(model)` plays `model.clips` by name -
 `mixer.play(name, { loop?, speed?, fadeMs? })` (fadeMs crossfades: the
 named clip fades in, everything else fades out - Unity's CrossFade,
@@ -995,6 +1043,15 @@ older bakes are rejected - re-bake with `srt tool 3d/model`.
   MODEL moves both. Shadows are the exception: the shadow variants
   (depth and cutout) skin by the same uBones palette, so a caster casts
   its pose.
+- A `standard` metal in a scene with no environment renders near black:
+  its diffuse is zero and the black placeholder cube is all there is to
+  reflect (Three and Godot render the same; Unity falls back to an
+  ambient probe, this does not). glTF's default metallic factor is 1,
+  so an untextured asset is all metal. Set `environment` - the skybox's
+  cube is the usual one - or keep `lit`.
+- Light intensities are the same numbers for `lit` and `standard`: 1
+  lights a white matte surface to 1 face-on. A Three scene's intensities
+  are a factor pi larger for the same look; divide when porting.
 - The y-down clip flip is baked into `perspective()`; scene code and
   geometry are plain y-up right-handed, and CCW-outward winding culls
   correctly with `cull: "back"`. Do NOT negate y anywhere else, and do not

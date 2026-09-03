@@ -43,7 +43,7 @@ import type {
 import { layoutAttributes, layoutKey, layoutSlot } from "./geometry.ts"
 import type { VertexLayout } from "./geometry.ts"
 import { linearColor } from "./color.ts"
-import { CUBE_LOOKUP, litFragment, litShadowFragment, litVertex, SKIN_DECLS, SKIN_MATRIX, UNLIT_VERTEX, unlitFragment, unlitShadowFragment, unlitVertex, OUTPUT } from "./glsl.ts"
+import { CUBE_LOOKUP, litFragment, litShadowFragment, litVertex, SKIN_DECLS, SKIN_MATRIX, standardFragment, UNLIT_VERTEX, unlitFragment, unlitShadowFragment, unlitVertex, OUTPUT } from "./glsl.ts"
 
 export type Material = {
   /** The pipeline this material draws with for geometry of `layout`
@@ -436,6 +436,159 @@ export function lit(opts: LitOptions = {}): Material {
         : undefined,
   })
   return material
+}
+
+export type StandardOptions = Omit<LitOptions, "specular" | "shininess" | "specularMap" | "reflectivity"> & {
+  /** How metallic the surface is, 0..1 (default 0; 1 when `metalnessMap`
+   * is given - the map is the value): a metal has no diffuse and
+   * reflects tinted by `color`, a dielectric reflects 4% face-on.
+   * Three's metalness; metallic in Godot, Unity and glTF. */
+  metalness?: number
+  /** Perceptual roughness, 0..1 (default 1): 0 a mirror, 1 fully matte;
+   * it widens the highlight and blurs the environment reflection alike.
+   * Unity's smoothness is 1 - roughness. */
+  roughness?: number
+  /** A texture whose BLUE channel scales `metalness` per fragment, and
+   * `roughnessMap` one whose GREEN channel scales `roughness`: Three's
+   * two options over glTF's ONE packed metallicRoughnessTexture, so
+   * pass the same texture to both (createModel's `maps` does). Data
+   * maps, created as plain rgba8; sampled at the same uv as `map`. */
+  metalnessMap?: TextureId
+  roughnessMap?: TextureId
+}
+
+// The `standard` class key: lit's minus the Blinn-Phong slots (env is
+// always on, the environment being intrinsic to the model) plus the two
+// packed maps. Its cutout shadow is lit's own, keyed on the shared subset
+// in lit's order, so the two materials share shadow programs.
+type StandardClass = Omit<LitClass, "specularMap" | "env"> & { metalnessMap: boolean; roughnessMap: boolean }
+
+function standardClassKey(c: StandardClass): string {
+  return Object.values(c).join("|")
+}
+let standardClasses = new Map<string, ShaderMaterialClass>()
+
+function standardShadowFlags(c: StandardClass): LitClass {
+  return {
+    map: c.map,
+    vertexColors: c.vertexColors,
+    triplanar: c.triplanar,
+    transparent: c.transparent,
+    receiveShadow: c.receiveShadow,
+    cull: c.cull,
+    alphaTest: c.alphaTest,
+    fog: c.fog,
+    normalMap: c.normalMap,
+    emissive: c.emissive,
+    emissiveMap: c.emissiveMap,
+    specularMap: false,
+    env: false,
+    lightMap: c.lightMap,
+    mapTransform: c.mapTransform,
+    skinned: c.skinned,
+  }
+}
+
+/**
+ * The metalness/roughness material, the look authored assets expect
+ * (Three's MeshStandardMaterial, Godot's StandardMaterial3D, Unity's
+ * Standard): the same base, maps, cutout, shadows, emissive, fog and
+ * lights as `lit`, shaded with GGX specular (PBR in `@solidrt/3d/glsl`)
+ * and the scene's environment sampled ALWAYS as the split sum over its
+ * mip chain - no `reflectivity` switch, the environment is intrinsic to
+ * the model. Light intensities read as lit's (1 lights a white matte
+ * surface to 1). Without an environment set a metal shows only its
+ * highlights - its diffuse is zero and there is nothing to reflect, as
+ * in Three and Godot - so give the scene one. One program per option
+ * combination, shared by every instance, like lit.
+ */
+export function standard(opts: StandardOptions = {}): Material {
+  let uColor = colorParam(opts.color ?? [1, 1, 1])
+  let map = opts.map !== undefined
+  let triplanar = map && opts.triplanar !== undefined
+  let alphaTest = opts.alphaTest !== undefined
+  let cull = opts.cull ?? "back"
+  let normalMap = opts.normalMap !== undefined
+  let emissiveMap = opts.emissiveMap !== undefined
+  let emissive = opts.emissive !== undefined || emissiveMap
+  let metalnessMap = opts.metalnessMap !== undefined
+  let roughnessMap = opts.roughnessMap !== undefined
+  let lightMap = opts.lightMap !== undefined
+  let mapTransform = opts.mapTransform !== undefined
+  let metalness = opts.metalness ?? (metalnessMap ? 1 : 0)
+  let roughness = opts.roughness ?? 1
+  if (!(Number.isFinite(metalness) && metalness >= 0 && metalness <= 1)) {
+    throw new Error("standard: metalness must be a number in 0..1, got " + opts.metalness)
+  }
+  if (!(Number.isFinite(roughness) && roughness >= 0 && roughness <= 1)) {
+    throw new Error("standard: roughness must be a number in 0..1, got " + opts.roughness)
+  }
+  if (triplanar && normalMap) throw new Error("standard: normalMap cannot combine with triplanar (normal maps sample by uv)")
+  if (triplanar && (metalnessMap || roughnessMap)) {
+    throw new Error("standard: metalnessMap and roughnessMap cannot combine with triplanar (they sample by uv)")
+  }
+  if (triplanar && mapTransform) throw new Error("standard: mapTransform cannot combine with triplanar (its repeat is the triplanar value)")
+  if (mapTransform && !map && !normalMap && !emissiveMap && !metalnessMap && !roughnessMap) {
+    throw new Error("standard: mapTransform without a map to transform")
+  }
+  let flags: StandardClass = {
+    map,
+    vertexColors: opts.vertexColors === true,
+    triplanar,
+    transparent: opts.transparent === true,
+    receiveShadow: opts.receiveShadow !== false,
+    cull,
+    alphaTest,
+    fog: opts.fog !== false,
+    normalMap,
+    emissive,
+    emissiveMap,
+    lightMap,
+    mapTransform,
+    skinned: opts.skinned === true,
+    metalnessMap,
+    roughnessMap,
+  }
+  let key = standardClassKey(flags)
+  let cls = standardClasses.get(key)
+  if (cls === undefined) {
+    cls = shaderMaterialClass({
+      vertex: litVertex(flags),
+      fragment: standardFragment(flags),
+      transparent: flags.transparent,
+      cull,
+      label: "scene-standard-" + key,
+    })
+    standardClasses.set(key, cls)
+  }
+  let params: ShaderParams = { uColor, uMetalness: metalness, uRoughness: roughness }
+  if (triplanar) params.uTriplanar = opts.triplanar!
+  if (alphaTest) params.uAlphaTest = opts.alphaTest!
+  if (normalMap) params.uNormalScale = opts.normalScale ?? 1
+  if (emissive) {
+    let k = opts.emissiveIntensity ?? 1
+    params.uEmissive = linearColor(opts.emissive ?? [1, 1, 1]).map(c => c * k)
+  }
+  if (lightMap) params.uLightMapIntensity = opts.lightMapIntensity ?? 1
+  if (mapTransform) params.uMapTransform = mapTransformParam(opts.mapTransform!)
+  let textures: TextureBindings | undefined
+  if (map || normalMap || emissiveMap || metalnessMap || roughnessMap || lightMap) {
+    textures = {}
+    if (map) textures.uMap = opts.map!
+    if (normalMap) textures.uNormalMap = opts.normalMap!
+    if (emissiveMap) textures.uEmissiveMap = opts.emissiveMap!
+    if (metalnessMap) textures.uMetalnessMap = opts.metalnessMap!
+    if (roughnessMap) textures.uRoughnessMap = opts.roughnessMap!
+    if (lightMap) textures.uLightMap = opts.lightMap!
+  }
+  return cls.instance({
+    params,
+    textures,
+    shadow:
+      alphaTest && map
+        ? litShadowMaterial(standardShadowFlags(flags), uColor, opts.alphaTest!, opts.triplanar, opts.map!, mapTransform ? params.uMapTransform as number[] : undefined)
+        : undefined,
+  })
 }
 
 let litShadowClasses = new Map<string, ShaderMaterialClass>()

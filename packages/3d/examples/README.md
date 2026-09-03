@@ -36,6 +36,12 @@ depends on `@solidrt/3d` (or in-repo from the package directory).
   (`lit({ reflectivity: 1 })`) and, blurred by shininess, a glossy knot.
   The sky turns and the sun light turns with it, the `rotation` knobs
   updating in place; drag to look around.
+- `standard.tsx` - the `standard` material, the sphere grid every PBR
+  engine opens with: metalness down the rows, roughness across the
+  columns, under the skybox example's baked sky as background and
+  environment and a warm sun casting shadows; a bare-metal row shows
+  the environment as tinted reflections, the dielectric row the same
+  sky as a faint face-on gloss. Drag to look around.
 - `sprites.tsx` - sprites: a ring of `"full"` billboard glows that stay
   flat to the screen and `"fixed-y"` cutout trees that only yaw toward
   the camera and stay upright as it climbs, both turned in the vertex

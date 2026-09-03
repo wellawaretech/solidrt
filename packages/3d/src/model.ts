@@ -31,18 +31,24 @@ import type { Mesh } from "./mesh.ts"
  * the device by the runtime. */
 const MODEL_ANISOTROPY = 4
 
-/** A glTF material's uploaded textures, by lit() option name; null where
- * the material has none. */
+/** A glTF material's uploaded textures, by lit()/standard() option name;
+ * null where the material has none. */
 export type ModelMaps = {
   map: TextureId | null
   normalMap: TextureId | null
   emissiveMap: TextureId | null
+  /** glTF's ONE packed metallicRoughnessTexture under both of standard's
+   * names (blue = metalness, green = roughness): pass both through. */
+  metalnessMap: TextureId | null
+  roughnessMap: TextureId | null
 }
 
 export type ModelOptions = {
   /** The material for each glTF material (default: `lit` with its color,
-   * maps, normal scale, emissive and transparency). `maps` holds the
-   * uploaded textures by lit() option name. Called once per material -
+   * maps, normal scale, emissive and transparency; `standard` takes the
+   * same `maps` plus `m.metalness`/`m.roughness`, and becomes the
+   * default once the HDR environment asset lands). `maps` holds the
+   * uploaded textures by lit()/standard() option name. Called once per material -
    * or once per (material, skinned) combination when skinned parts share
    * a material with static ones - and shared by every part using it.
    * `skinned` is true when the material must skin (pass it through to
@@ -133,7 +139,17 @@ export function createModel(data: ModelData, opts: ModelOptions = {}): Model {
     let key = index + (skinned ? "|skinned" : "")
     let made = variants.get(key)
     if (made === undefined) {
-      made = make(m, { map: slot(m.map), normalMap: slot(m.normalMap), emissiveMap: slot(m.emissiveMap) }, skinned)
+      made = make(
+        m,
+        {
+          map: slot(m.map),
+          normalMap: slot(m.normalMap),
+          emissiveMap: slot(m.emissiveMap),
+          metalnessMap: slot(m.metalnessRoughnessMap),
+          roughnessMap: slot(m.metalnessRoughnessMap),
+        },
+        skinned,
+      )
       variants.set(key, made)
     }
     return made

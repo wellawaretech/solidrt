@@ -124,6 +124,33 @@ reflection and skybox lookups), never in the primitive; document it next
 to the lookup so a ported Three shader does not double-flip. Landed as
 `CUBE_LOOKUP` in `@solidrt/3d/glsl` with stage 1.
 
+**The standard material (stage 3c).** Names: Three says `metalness`
+and `roughness`, Godot, Unity and glTF say metallic (Unity's roughness
+is `smoothness`, its inverse); Three's are kept, the porting consumer's
+vocabulary, with `roughness` perceptual (alpha = roughness squared) as
+in all three. Maps: glTF packs roughness in green and metalness in blue
+of one texture; Three imports it as `roughnessMap` + `metalnessMap`
+reading those channels from the same texture, Godot selects a channel
+per texture, Unity packs metallic in red with smoothness in alpha.
+Verdict: Three's two channel-select options, so the glTF texture passes
+twice and a Three port is verbatim. Direct lobe: GGX + height-correlated
+Smith + Schlick in all three; dielectric f0 0.04 in all three (Godot's
+`metallic_specular` 0.5 is the same number). Light convention: Godot
+and Unity light a white diffuse surface to 1 at intensity 1 and carry
+pi inside the specular normalisation; Three's lights are lux-scaled, so
+its intensities run a factor pi larger for the same look. Verdict: the
+2-vs-1 form, which `lit` already used. Image lighting: split sum in all
+three, with the analytic fit for the environment BRDF in Three
+(DFGApprox) and Godot (brdf_approx); Unity's URP folds a surface
+reduction into a lerp. Verdict: the Lazarov fit, no lookup texture.
+Metals without an environment: Three and Godot render them black (no
+diffuse, nothing to reflect); Unity falls back to its ambient probe.
+Verdict: 2-vs-1, no fallback - documented as a trap, and the reason
+createModel keeps `lit` as its default until an environment asset
+ships with 3d. Not offered: Three's per-material `envMapIntensity`
+(Godot and Unity scale at scene level, as `setEnvironment` does),
+`aoMap` (additive, next), multi-scatter compensation (Three only).
+
 ## Structural leverage
 
 Where the different internal model helps, beyond parity:
@@ -191,11 +218,26 @@ Where the different internal model helps, beyond parity:
      `equirectToCube` takes the panorama's format and re-encodes the
      faces for an sRGB cube. `lit` gained `emissiveIntensity` (the
      glTF emissive strength, no longer folded into the color).
-   - 3c, open: the `standard` material - metallic/roughness with glTF's
-     channel packing, GGX direct lighting in the existing light and
-     shadow loop, split-sum image lighting with the analytic environment
-     BRDF over the generated chain; the glTF loader maps
-     pbrMetallicRoughness to it, `lit` stays.
+   - 3c, landed 2026-09-03: `standard(opts)` beside `lit` - lit's base,
+     maps, cutout, shadow, emissive and fog options with the Blinn-Phong
+     knobs replaced by `metalness`/`roughness` and Three's channel-select
+     `metalnessMap` (blue) / `roughnessMap` (green), which is glTF's one
+     packed texture passed twice. GGX distribution, height-correlated
+     Smith visibility and Schlick fresnel (dielectric f0 0.04) in the
+     existing light and shadow loop; the scene environment sampled ALWAYS
+     as the split sum (`envRadiance` at the material's roughness over
+     the generated chain, times Lazarov's analytic `envBrdf`); the
+     hemisphere stays the diffuse ambient. One shared builder behind
+     `litFragment` and the new `standardFragment`; the `PBR` set is
+     exported beside the others. glTF: `ModelMaterial` carries
+     `metalness`, `roughness` and `metalnessRoughnessMap` (model file
+     VERSION 4 - version-3 .srtm files are rejected, re-bake), createModel
+     hands the packed map to `material` as both `maps.metalnessMap` and
+     `maps.roughnessMap`; its DEFAULT STAYS `lit` until 3d ships a real
+     environment asset (decided 2026-09-03: a glTF metal in a scene with
+     no environment renders near black, and glTF's default metallic
+     factor is 1). `examples/standard.tsx` (the sphere grid),
+     `probes/standard-probe.tsx`.
    - 3d, open: explicit `levels` on createCubeTexture, the `srt`
      pipeline turning a `.hdr` into a prefiltered rgba16f cube asset
      (build-time equirect for LDR too), SH9 ambient from the cube.
@@ -225,3 +267,10 @@ Where the different internal model helps, beyond parity:
   the stage instead.
 - Only "aces" beside "none" so far; AgX (Three, Godot) and Neutral
   (Three, Unity) are additive values.
+- `standard` says `metalness`/`roughness` (Three), not metallic /
+  smoothness (Godot, Unity, glTF). Light intensities follow Godot and
+  Unity (1 lights white to 1): a Three scene's intensities divide by pi.
+- No per-material `envMapIntensity` (Three) on `standard`; the scene's
+  `intensity` is the knob. No `aoMap` and no multi-scatter compensation
+  yet, both additive. A metal in a scene without an environment renders
+  near black (Three, Godot), no ambient-probe fallback (Unity).

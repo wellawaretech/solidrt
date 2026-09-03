@@ -163,6 +163,70 @@ export const FRESNEL = glsl`
 `
 
 /**
+ * The metalness/roughness light model `standard` shades with (Three's
+ * MeshStandardMaterial, Godot's StandardMaterial3D, Unity's Standard).
+ * `vec3 ggxSpecular(n, v, l, f0, roughness)` is one light's specular
+ * lobe - GGX distribution x height-correlated Smith visibility x Schlick
+ * fresnel, times pi - for the caller to weight by `lambert(n, l)` and
+ * the light color, the same convention the diffuse uses (a light of
+ * intensity 1 lights a white diffuse surface to 1 face-on; Three's
+ * lights are the same lobe with intensities a factor pi larger).
+ * `roughness` is perceptual: alpha is its square, floored at
+ * MIN_ROUGHNESS so a mirror keeps a lobe of finite width. `vec2
+ * envBrdf(nv, roughness)` is the split-sum environment BRDF - the scale
+ * and bias on f0 (`f0 * ab.x + ab.y`) that turns prefiltered radiance
+ * into the specular image term - as Lazarov's analytic fit (Three's
+ * DFGApprox, Godot's brdf_approx; no lookup texture). `DIELECTRIC_F0` is
+ * a non-metal's face-on reflectance (0.04 in all three engines); a
+ * metal's f0 is its base color. The pieces (`ggxDistribution(nh, a2)`,
+ * `smithVisibility(nl, nv, a2)`, `schlickFresnel(f0, vh)`) are there for
+ * a custom lobe. Defines PBR_PI, not PI, so a prelude's own PI stands.
+ */
+export const PBR = glsl`
+  const float PBR_PI = 3.14159265;
+  // Face-on reflectance of a dielectric (index of refraction about 1.5).
+  const float DIELECTRIC_F0 = 0.04;
+  // Floor on the perceptual roughness: alpha never reaches zero, so a
+  // perfect mirror keeps a highlight of finite width (Three's clamp).
+  const float MIN_ROUGHNESS = 0.0525;
+  // Floor on the visibility denominator at grazing angles.
+  const float VISIBILITY_MIN = 1e-5;
+  // Schlick's approximation exponent.
+  const float SCHLICK_POWER = 5.0;
+  float ggxDistribution(float nh, float a2) {
+    float d = nh * nh * (a2 - 1.0) + 1.0;
+    return a2 / (PBR_PI * d * d);
+  }
+  float smithVisibility(float nl, float nv, float a2) {
+    float gv = nl * sqrt(nv * nv * (1.0 - a2) + a2);
+    float gl = nv * sqrt(nl * nl * (1.0 - a2) + a2);
+    return 0.5 / max(gv + gl, VISIBILITY_MIN);
+  }
+  vec3 schlickFresnel(vec3 f0, float vh) {
+    return f0 + (1.0 - f0) * pow(1.0 - vh, SCHLICK_POWER);
+  }
+  vec3 ggxSpecular(vec3 n, vec3 v, vec3 l, vec3 f0, float roughness) {
+    vec3 h = normalize(l + v);
+    float nl = max(dot(n, l), 0.0);
+    float nv = max(dot(n, v), 0.0);
+    float nh = max(dot(n, h), 0.0);
+    float vh = max(dot(v, h), 0.0);
+    float r = max(roughness, MIN_ROUGHNESS);
+    float a2 = r * r * r * r;
+    return schlickFresnel(f0, vh) * (ggxDistribution(nh, a2) * smithVisibility(nl, nv, a2) * PBR_PI);
+  }
+  // Lazarov's fit of the environment BRDF integral: the coefficients of
+  // the two polynomials in roughness, and the grazing-angle exponent.
+  vec2 envBrdf(float nv, float roughness) {
+    const vec4 c0 = vec4(-1.0, -0.0275, -0.572, 0.022);
+    const vec4 c1 = vec4(1.0, 0.0425, 1.04, -0.04);
+    vec4 r = roughness * c0 + c1;
+    float a004 = min(r.x * r.x, exp2(-9.28 * nv)) * r.x + r.y;
+    return vec2(-1.04, 1.04) * a004 + r.zw;
+  }
+`
+
+/**
  * The scene's light list as a receiving program declares it, written by
  * the scene (`uLightDir` and `uLightPos` core-driven, so a moving light
  * costs no JS): per light i to `uLightCount`, its `uLightType[i]`
@@ -396,12 +460,15 @@ export const CUBE_LOOKUP = glsl`
  * cube while no environment is set), `uEnvIntensity`, `uEnvRotation`
  * (the inverse of the environment's y turn, the skybox's convention) and
  * `uEnvOn` (0 with no environment, so the term contributes nothing
- * instead of reflecting black). `envReflection(n, v, shininess)` samples
- * the mirror direction (v toward the camera) at a mip level from the
- * Blinn-Phong exponent - roughness `sqrt(2 / (shininess + 2))` times the
- * cube's top level from textureSize, so a wide sheen reflects a blurred
- * environment and a mirror dot a sharp one; a cube uploaded without
- * mipmaps stays sharp - scaled by the intensity. `envWeight(n, v,
+ * instead of reflecting black). `envRadiance(r, roughness)` samples the
+ * environment along world direction `r` at a mip level from a perceptual
+ * roughness - 0 the sharp base level, 1 the cube's top level from
+ * textureSize - scaled by the intensity: the prefiltered radiance of
+ * the split sum (`standard` multiplies it by PBR's envBrdf); a cube
+ * uploaded without mipmaps stays sharp. `envReflection(n, v, shininess)`
+ * is the Blinn-Phong face of it: the mirror direction (v toward the
+ * camera) at roughness `sqrt(2 / (shininess + 2))`, so a wide sheen
+ * reflects a blurred environment and a mirror dot a sharp one. `envWeight(n, v,
  * reflectivity)` is the Schlick fresnel weight: `reflectivity` face-on,
  * 1 at grazing, 0 with no environment. `lit` applies them as
  * `rgb = mix(rgb, envReflection(n, v, uShininess), envWeight(n, v,
@@ -416,11 +483,12 @@ export const ENVIRONMENT = glsl`
   // Schlick's approximation exponent.
   const float ENV_SCHLICK_POWER = 5.0;
   ${CUBE_LOOKUP}
-  vec3 envReflection(vec3 n, vec3 v, float shininess) {
-    vec3 r = mat3(uEnvRotation) * reflect(-v, n);
+  vec3 envRadiance(vec3 r, float roughness) {
     float topLevel = log2(float(textureSize(uEnv, 0).x));
-    float roughness = sqrt(2.0 / (shininess + 2.0));
-    return textureLod(uEnv, cubeDir(r), roughness * topLevel).rgb * uEnvIntensity;
+    return textureLod(uEnv, cubeDir(mat3(uEnvRotation) * r), roughness * topLevel).rgb * uEnvIntensity;
+  }
+  vec3 envReflection(vec3 n, vec3 v, float shininess) {
+    return envRadiance(reflect(-v, n), sqrt(2.0 / (shininess + 2.0)));
   }
   float envWeight(vec3 n, vec3 v, float reflectivity) {
     float f = pow(1.0 - max(dot(n, v), 0.0), ENV_SCHLICK_POWER);
@@ -664,6 +732,22 @@ export type LitSourceOptions = {
   discardIf?: string
 }
 
+/**
+ * The option set `standardFragment` builds from: every lit option but
+ * the Blinn-Phong ones (`specularMap`; `env`, since the environment is
+ * always composed), plus the two packed data maps.
+ */
+export type StandardSourceOptions = Omit<LitSourceOptions, "specularMap" | "env"> & {
+  /** `uniform sampler2D uMetalnessMap`: its BLUE channel scales
+   * uMetalness per fragment (Three's metalnessMap, glTF's packed
+   * channel). */
+  metalnessMap?: boolean
+  /** `uniform sampler2D uRoughnessMap`: its GREEN channel scales
+   * uRoughness (Three's roughnessMap, glTF's packed channel - bind the
+   * same texture to both). */
+  roughnessMap?: boolean
+}
+
 // The resolved option set: every flag concrete, every slot a string, so
 // the builders below never re-apply a default and `lit`'s class key and
 // its program cannot drift apart.
@@ -686,6 +770,11 @@ type LitSource = {
   skinned: boolean
   prelude: string
   discardIf: string
+  // The light model: Blinn-Phong (`lit`) or GGX metalness/roughness
+  // (`standard`, which also samples the environment unconditionally).
+  brdf: "blinn" | "ggx"
+  metalnessMap: boolean
+  roughnessMap: boolean
 }
 
 function resolveLit(o: LitSourceOptions): LitSource {
@@ -708,13 +797,27 @@ function resolveLit(o: LitSourceOptions): LitSource {
     skinned: o.skinned === true,
     prelude: o.prelude ?? "",
     discardIf: o.discardIf ?? "",
+    brdf: "blinn",
+    metalnessMap: false,
+    roughnessMap: false,
+  }
+}
+
+function resolveStandard(o: StandardSourceOptions): LitSource {
+  return {
+    ...resolveLit(o),
+    specularMap: false,
+    env: true,
+    brdf: "ggx",
+    metalnessMap: o.metalnessMap === true,
+    roughnessMap: o.roughnessMap === true,
   }
 }
 
 /** Whether the source samples anything by uv - then litBase resolves the
  * `uv` local (transformed when mapTransform) both passes sample by. */
 function litUv(c: LitSource): boolean {
-  return (c.map && !c.triplanar) || c.normalMap || c.emissiveMap || c.specularMap
+  return (c.map && !c.triplanar) || c.normalMap || c.emissiveMap || c.specularMap || c.metalnessMap || c.roughnessMap
 }
 
 // The varyings both lit sources read. The shadow source declares the same
@@ -785,20 +888,52 @@ export function litVertex(o: LitSourceOptions = {}): string {
  * shadow set, the fog - is written by the scene.
  */
 export function litFragment(o: LitSourceOptions = {}): string {
-  let c = resolveLit(o)
+  return lightingFragment(resolveLit(o))
+}
+
+/**
+ * The `standard` fragment source for an option set - the exact program
+ * `standard` builds: the lit program (base, cutout, normal map, the
+ * light and shadow loop, emissive, fog, output) shaded with the GGX
+ * metalness/roughness model (PBR) instead of Blinn-Phong, and the
+ * scene's ENVIRONMENT sampled unconditionally as the split sum
+ * (envRadiance times envBrdf). Pair it with litVertex(o), and with
+ * litShadowFragment(o) when it can discard, exactly as litFragment.
+ *
+ * Per-entry uniforms: `uColor` (premultiplied vec4), `uMetalness`,
+ * `uRoughness`, `uMetalnessMap` (blue channel) and `uRoughnessMap`
+ * (green) when declared, plus the lit slots the options declare
+ * (`uMap`/`uTriplanar`/`uAlphaTest`/`uNormalMap`+`uNormalScale`/
+ * `uEmissive`/`uEmissiveMap`/`uLightMap`+`uLightMapIntensity`/
+ * `uMapTransform`) and whatever `prelude` declares.
+ */
+export function standardFragment(o: StandardSourceOptions = {}): string {
+  return lightingFragment(resolveStandard(o))
+}
+
+// The one lit program, both light models. What the brdf changes: the
+// material uniforms, each light's specular term, and the image lighting
+// (Blinn-Phong mixes a fresnel-weighted mirror in when asked; GGX adds
+// the split-sum term always). The light convention is Godot's and
+// Unity's for both: a light of intensity 1 lights a white diffuse
+// surface to 1 face-on, and the GGX lobe carries the pi its
+// normalisation assumes (PBR's doc).
+function lightingFragment(c: LitSource): string {
   let alpha = c.transparent ? "base.a" : "1.0"
+  let ggx = c.brdf === "ggx"
   return glsl`
     ${litVaryings(c)}
     uniform vec4 uColor;
     ${c.map ? "uniform sampler2D uMap;" : ""}
-    uniform float uSpecular;
-    uniform float uShininess;
+    ${ggx ? "uniform float uMetalness;\n    uniform float uRoughness;" : "uniform float uSpecular;\n    uniform float uShininess;"}
+    ${c.metalnessMap ? "uniform sampler2D uMetalnessMap;" : ""}
+    ${c.roughnessMap ? "uniform sampler2D uRoughnessMap;" : ""}
     ${c.triplanar ? "uniform float uTriplanar;" : ""}
     ${c.alphaTest ? "uniform float uAlphaTest;" : ""}
     ${c.emissive ? "uniform vec3 uEmissive;" : ""}
     ${c.emissiveMap ? "uniform sampler2D uEmissiveMap;" : ""}
     ${c.specularMap ? "uniform sampler2D uSpecularMap;" : ""}
-    ${c.env ? "uniform float uReflectivity;" : ""}
+    ${c.env && !ggx ? "uniform float uReflectivity;" : ""}
     ${c.lightMap ? "uniform sampler2D uLightMap;\n    uniform float uLightMapIntensity;" : ""}
     ${c.mapTransform ? "uniform vec4 uMapTransform;" : ""}
     ${c.normalMap ? NORMAL_MAP : ""}
@@ -816,7 +951,7 @@ export function litFragment(o: LitSourceOptions = {}): string {
     }
     ${HEMISPHERE}
     ${LAMBERT}
-    ${BLINN_SPECULAR}
+    ${ggx ? PBR : BLINN_SPECULAR}
     ${c.env ? ENVIRONMENT : ""}
     ${c.fog ? FOG : ""}
     ${OUTPUT}
@@ -826,6 +961,14 @@ export function litFragment(o: LitSourceOptions = {}): string {
       ${litBase(c, c.cull !== "back")}
       ${c.normalMap ? "n = perturbNormal(n, vWorldPos, uv);" : ""}
       vec3 v = normalize(uCamPos - vWorldPos);
+      ${
+        ggx
+          ? `float metalness = uMetalness${c.metalnessMap ? " * texture(uMetalnessMap, uv).b" : ""};
+      float roughness = uRoughness${c.roughnessMap ? " * texture(uRoughnessMap, uv).g" : ""};
+      vec3 diffuseColor = base.rgb * (1.0 - metalness);
+      vec3 f0 = mix(vec3(DIELECTRIC_F0) * base.a, base.rgb, metalness);`
+          : ""
+      }
       vec3 light = hemisphere(n, uHemiSky, uHemiGround);
       ${c.lightMap ? "light += texture(uLightMap, vUv2).rgb * uLightMapIntensity;" : ""}
       vec3 spec = vec3(0.0);
@@ -836,11 +979,23 @@ export function litFragment(o: LitSourceOptions = {}): string {
         if (a <= 0.0) continue;
         ${c.receiveShadow ? "float s = lightShadow(i, vWorldPos, n);" : "float s = 1.0;"}
         vec3 lc = uLightColor[i] * (a * s);
-        light += lc * lambert(n, l);
-        spec += lc * blinnSpecular(n, v, l, uShininess);
+        ${
+          ggx
+            ? `float nl = lambert(n, l);
+        light += lc * nl;
+        spec += lc * (nl * ggxSpecular(n, v, l, f0, roughness));`
+            : `light += lc * lambert(n, l);
+        spec += lc * blinnSpecular(n, v, l, uShininess);`
+        }
       }
-      vec3 rgb = base.rgb * light + spec * ${c.specularMap ? "(uSpecular * texture(uSpecularMap, uv).r)" : "uSpecular"} * base.a;
-      ${c.env ? `rgb = mix(rgb, envReflection(n, v, uShininess) * base.a, envWeight(n, v, uReflectivity${c.specularMap ? " * texture(uSpecularMap, uv).r" : ""}));` : ""}
+      ${
+        ggx
+          ? `vec3 rgb = diffuseColor * light + spec;
+      vec2 ab = envBrdf(max(dot(n, v), 0.0), roughness);
+      rgb += envRadiance(reflect(-v, n), roughness) * (f0 * ab.x + ab.y * base.a);`
+          : `vec3 rgb = base.rgb * light + spec * ${c.specularMap ? "(uSpecular * texture(uSpecularMap, uv).r)" : "uSpecular"} * base.a;
+      ${c.env ? `rgb = mix(rgb, envReflection(n, v, uShininess) * base.a, envWeight(n, v, uReflectivity${c.specularMap ? " * texture(uSpecularMap, uv).r" : ""}));` : ""}`
+      }
       ${c.emissive ? `rgb += uEmissive${c.emissiveMap ? " * texture(uEmissiveMap, uv).rgb" : ""} * base.a;` : ""}
       ${c.fog ? `rgb = fog(rgb, ${alpha}, vWorldPos, uCamPos);` : ""}
       fragColor = outputColor(rgb, ${alpha});
