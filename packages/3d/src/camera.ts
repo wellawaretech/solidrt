@@ -50,6 +50,11 @@ export type Camera = {
   target: Vec3
   up: Vec3
   ortho: OrthoExtent | null
+  /** Mirror the projection's x: the image comes out flipped left to
+   * right. A reflection probe's face cameras set it - a GL cube face is
+   * seen from outside, the x mirror of what a camera sees - and the cube
+   * draw target's pass inverts the winding to match. */
+  mirror: boolean
   dirty: boolean
   pending: boolean
   proj: Mat4
@@ -67,6 +72,7 @@ export function makeCamera(): Camera {
     target: [0, 0, 0],
     up: [0, 1, 0],
     ortho: null,
+    mirror: false,
     dirty: true,
     pending: false,
     proj: mat4(),
@@ -109,6 +115,13 @@ export function ensureCamera(cam: Camera, width: number, height: number): void {
   let o = cam.ortho
   if (o === null) perspective(cam.proj, (cam.fov * Math.PI) / 180, width / height, cam.near, cam.far)
   else orthographic(cam.proj, o.left, o.right, o.top, o.bottom, cam.near, cam.far)
+  if (cam.mirror) {
+    // Negate the clip x row (column-major: elements 0, 4, 8, 12).
+    cam.proj[0] = -cam.proj[0]!
+    cam.proj[4] = -cam.proj[4]!
+    cam.proj[8] = -cam.proj[8]!
+    cam.proj[12] = -cam.proj[12]!
+  }
   lookAtMatrix(cam.view, cam.eye, cam.target, cam.up)
   multiply(cam.viewProj, cam.proj, cam.view)
   invert(cam.invViewProj, cam.viewProj)

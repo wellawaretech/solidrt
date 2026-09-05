@@ -404,6 +404,10 @@ export const SRGB = glsl`
 export const OUTPUT = glsl`
   uniform float uExposure;
   uniform float uToneMapping;
+  // 1 (the scene's default) encodes to sRGB for display; 0 writes linear
+  // light, what a reflection probe's faces hold so the environment
+  // lookups read radiance (the scene sets it per target).
+  uniform float uOutputEncode;
   ${SRGB}
   // Stephen Hill's fit of the ACES RRT and ODT (Three's ACESFilmic, Godot's
   // ACES): the matrices between sRGB and the fit's working space, and the
@@ -431,26 +435,9 @@ export const OUTPUT = glsl`
     vec3 c = alpha > 0.0 ? rgb / alpha : rgb;
     c *= uExposure;
     if (uToneMapping > 0.5) c = acesToneMap(c);
-    c = linearToSrgb(clamp(c, 0.0, 1.0));
+    c = clamp(c, 0.0, 1.0);
+    if (uOutputEncode > 0.5) c = linearToSrgb(c);
     return vec4(c * alpha, alpha);
-  }
-`
-
-/**
- * A cube-map lookup direction from a world-space one. GL samples a cube
- * map in a left-handed frame (the faces are seen from inside), so a
- * six-face set authored the usual way - Three's px, nx, py, ny, pz, nz,
- * the order createCubeTexture takes - renders mirrored unless x is
- * negated: Three's `flipEnvMap`, applied to every image-sourced cube.
- * Every library lookup of an uploaded cube goes through this (the skybox
- * behind `setBackground({ cube })`, the environment reflections to come),
- * so a Three cube-map set renders here as it does there; a Three shader
- * ported with its own flip would double-flip - drop theirs. A cube the
- * engine renders itself (render-to-face, later) will not need it.
- */
-export const CUBE_LOOKUP = glsl`
-  vec3 cubeDir(vec3 d) {
-    return vec3(-d.x, d.y, d.z);
   }
 `
 
@@ -462,18 +449,29 @@ export const CUBE_LOOKUP = glsl`
  * `uEnvOn` (0 with no environment, so the term contributes nothing
  * instead of reflecting black). `envRadiance(r, roughness)` samples the
  * environment along world direction `r` at a mip level from a perceptual
- * roughness - 0 the sharp base level, 1 the cube's top level from
- * textureSize - scaled by the intensity: the prefiltered radiance of
- * the split sum (`standard` multiplies it by PBR's envBrdf); a cube
- * uploaded without mipmaps stays sharp. `envReflection(n, v, shininess)`
+ * roughness - 0 the sharp base level, 1 the level whose faces are
+ * ENV_ROUGH_FACE (4) texels wide, linear between (Godot's
+ * `roughness * MAX_ROUGHNESS_LOD`; Unity's six LOD steps; Three maps
+ * onto a 16-texel floor): the level a baked chain (`srt tool
+ * 3d/environment`, loadEnvironment) convolves at that roughness, and a
+ * generated chain merely box-filters - scaled by the intensity: the
+ * prefiltered radiance of the split sum (`standard` multiplies it by PBR's
+ * envBrdf); a cube uploaded without mipmaps stays sharp.
+ * `envIrradiance(n)` is the diffuse face of it - the fully rough sample
+ * along the normal, what Three (`getIBLIrradiance`) and Godot read for
+ * the image-lit diffuse term; `standard` adds it to the hemisphere
+ * ambient. `envReflection(n, v, shininess)`
  * is the Blinn-Phong face of it: the mirror direction (v toward the
  * camera) at roughness `sqrt(2 / (shininess + 2))`, so a wide sheen
  * reflects a blurred environment and a mirror dot a sharp one. `envWeight(n, v,
  * reflectivity)` is the Schlick fresnel weight: `reflectivity` face-on,
  * 1 at grazing, 0 with no environment. `lit` applies them as
  * `rgb = mix(rgb, envReflection(n, v, uShininess), envWeight(n, v,
- * uReflectivity))` - Three's MixOperation with a fresnel weight. Includes
- * CUBE_LOOKUP: compose one or the other, not both.
+ * uReflectivity))` - Three's MixOperation with a fresnel weight. Every
+ * lookup is a plain `texture(uEnv, dir)` in world space: a cube map here
+ * holds what a lookup returns (GL's own convention, as Godot and Unity
+ * sample theirs), so there is no handedness flip and a Three shader
+ * ported with `flipEnvMap` drops it.
  */
 export const ENVIRONMENT = glsl`
   uniform samplerCube uEnv;
@@ -482,10 +480,16 @@ export const ENVIRONMENT = glsl`
   uniform float uEnvOn;
   // Schlick's approximation exponent.
   const float ENV_SCHLICK_POWER = 5.0;
-  ${CUBE_LOOKUP}
+  // log2 of the face edge (4 texels) a roughness of 1 samples: the chain
+  // is convolved down to it (environment-bake.ts ENV_ROUGH_FACE), and the
+  // levels below keep the sampler complete.
+  const float ENV_ROUGH_FACE_LOG2 = 2.0;
   vec3 envRadiance(vec3 r, float roughness) {
-    float topLevel = log2(float(textureSize(uEnv, 0).x));
-    return textureLod(uEnv, cubeDir(mat3(uEnvRotation) * r), roughness * topLevel).rgb * uEnvIntensity;
+    float roughLevel = max(log2(float(textureSize(uEnv, 0).x)) - ENV_ROUGH_FACE_LOG2, 0.0);
+    return textureLod(uEnv, mat3(uEnvRotation) * r, roughness * roughLevel).rgb * uEnvIntensity;
+  }
+  vec3 envIrradiance(vec3 n) {
+    return envRadiance(n, 1.0);
   }
   vec3 envReflection(vec3 n, vec3 v, float shininess) {
     return envRadiance(reflect(-v, n), sqrt(2.0 / (shininess + 2.0)));
@@ -970,6 +974,7 @@ function lightingFragment(c: LitSource): string {
           : ""
       }
       vec3 light = hemisphere(n, uHemiSky, uHemiGround);
+      ${ggx ? "light += envIrradiance(n);" : ""}
       ${c.lightMap ? "light += texture(uLightMap, vUv2).rgb * uLightMapIntensity;" : ""}
       vec3 spec = vec3(0.0);
       for (int i = 0; i < ${MAX_LIGHTS}; i++) {

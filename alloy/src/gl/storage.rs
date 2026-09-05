@@ -8,6 +8,7 @@ use std::num::NonZeroU32;
 
 use super::{prev_framebuffer, prev_texture};
 use crate::gpu::spec::DepthStorage;
+use crate::gpu::texture::CUBE_FACES;
 
 /// How a mesh target multisamples. Both flavors keep the target texture
 /// single-sample - it stays the id everything else samples, displays, reads
@@ -235,6 +236,87 @@ pub(super) fn create_mesh_storage(
       }
     }
   }
+}
+
+/// A cube draw target's storage: a six-face RGBA8 cube texture (LINEAR, no
+/// mips - render-to-face is create-once and single-sample), its FBO with
+/// face 0 attached for the completeness check (a render re-attaches the
+/// face it draws; see `attach_cube_face`), and the one depth renderbuffer
+/// every face pass reuses. Restores the bindings it touches.
+pub(super) fn create_cube_storage(gl: &glow::Context, size: u32, depth: DepthStorage) -> Result<MeshStorage, String> {
+  if depth == DepthStorage::Texture {
+    return Err("a cube draw target cannot expose a depth texture (one renderbuffer serves its six faces)".to_string());
+  }
+  unsafe {
+    let prev_fbo = gl.get_parameter_i32(glow::FRAMEBUFFER_BINDING);
+    let prev_tex = gl.get_parameter_i32(glow::TEXTURE_BINDING_CUBE_MAP);
+    let target = gl.create_texture().map_err(|e| format!("glGenTextures failed: {e}"))?;
+    gl.bind_texture(glow::TEXTURE_CUBE_MAP, Some(target));
+    for face in 0..CUBE_FACES as u32 {
+      gl.tex_image_2d(
+        glow::TEXTURE_CUBE_MAP_POSITIVE_X + face,
+        0,
+        glow::RGBA8 as i32,
+        size as i32,
+        size as i32,
+        0,
+        glow::RGBA,
+        glow::UNSIGNED_BYTE,
+        glow::PixelUnpackData::Slice(None),
+      );
+    }
+    gl.tex_parameter_i32(glow::TEXTURE_CUBE_MAP, glow::TEXTURE_MIN_FILTER, glow::LINEAR as i32);
+    gl.tex_parameter_i32(glow::TEXTURE_CUBE_MAP, glow::TEXTURE_MAG_FILTER, glow::LINEAR as i32);
+    gl.bind_texture(glow::TEXTURE_CUBE_MAP, NonZeroU32::new(prev_tex as u32).map(glow::NativeTexture));
+    let fbo = match gl.create_framebuffer() {
+      Ok(fbo) => fbo,
+      Err(e) => {
+        gl.delete_texture(target);
+        return Err(format!("glGenFramebuffers failed: {e}"));
+      }
+    };
+    let depth = match depth {
+      DepthStorage::Buffer => match gl.create_renderbuffer() {
+        Ok(rb) => Some(DepthAttachment::Buffer(rb)),
+        Err(e) => {
+          gl.delete_framebuffer(fbo);
+          gl.delete_texture(target);
+          return Err(format!("glGenRenderbuffers failed: {e}"));
+        }
+      },
+      _ => None,
+    };
+    let storage = MeshStorage { target, fbo, depth, msaa: None };
+    let prev_rb = gl.get_parameter_i32(glow::RENDERBUFFER_BINDING);
+    gl.bind_framebuffer(glow::FRAMEBUFFER, Some(fbo));
+    attach_cube_face(gl, target, 0);
+    if let Some(DepthAttachment::Buffer(rb)) = storage.depth {
+      gl.bind_renderbuffer(glow::RENDERBUFFER, Some(rb));
+      gl.renderbuffer_storage(glow::RENDERBUFFER, glow::DEPTH_COMPONENT24, size as i32, size as i32);
+      gl.framebuffer_renderbuffer(glow::FRAMEBUFFER, glow::DEPTH_ATTACHMENT, glow::RENDERBUFFER, Some(rb));
+    }
+    gl.bind_renderbuffer(glow::RENDERBUFFER, prev_renderbuffer(prev_rb));
+    let status = gl.check_framebuffer_status(glow::FRAMEBUFFER);
+    gl.bind_framebuffer(glow::FRAMEBUFFER, prev_framebuffer(prev_fbo));
+    if status != glow::FRAMEBUFFER_COMPLETE {
+      storage.delete(gl);
+      return Err(format!("cube target framebuffer incomplete: {status:#x}"));
+    }
+    Ok(storage)
+  }
+}
+
+/// Attach face `face` (GL order: +X, -X, +Y, -Y, +Z, -Z) of cube texture
+/// `target` as the color of the CURRENTLY BOUND framebuffer: the per-face
+/// step of a cube target's render and clear.
+pub(super) unsafe fn attach_cube_face(gl: &glow::Context, target: glow::Texture, face: u32) {
+  gl.framebuffer_texture_2d(
+    glow::FRAMEBUFFER,
+    glow::COLOR_ATTACHMENT0,
+    glow::TEXTURE_CUBE_MAP_POSITIVE_X + face,
+    Some(target),
+    0,
+  );
 }
 
 /// (Re)attach and (re)size a mesh target's storage for `width` x `height`:

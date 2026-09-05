@@ -133,6 +133,18 @@ fn collect_sampler(
   format: alloy::TextureFormat,
   api: &str,
 ) -> rquickjs::Result<alloy::SamplerState> {
+  collect_sampler_defaulting(ctx, opts, format, api, None)
+}
+
+// collect_sampler with `mipmap_default` standing in for an absent `mipmap`
+// option (an explicit mip chain implies it).
+fn collect_sampler_defaulting(
+  ctx: &Ctx<'_>,
+  opts: &Option<Object<'_>>,
+  format: alloy::TextureFormat,
+  api: &str,
+  mipmap_default: Option<bool>,
+) -> rquickjs::Result<alloy::SamplerState> {
   let (filter, wrap, mipmap, anisotropy) = match opts {
     Some(o) => (
       o.get::<_, Option<String>>("filter")?,
@@ -142,6 +154,7 @@ fn collect_sampler(
     ),
     None => (None, None, None, None),
   };
+  let mipmap = mipmap.or(mipmap_default);
   let state = alloy::SamplerState::parse_for(
     format,
     &alloy::SamplerOptions { filter: filter.as_deref(), wrap: wrap.as_deref(), mipmap, anisotropy },
@@ -802,6 +815,7 @@ impl ModuleDef for GpuModule {
     decl.declare("destroyBuffer")?;
     decl.declare("setDraw")?;
     decl.declare("createDrawTarget")?;
+    decl.declare("createCubeDrawTarget")?;
     decl.declare("depthTexture")?;
     decl.declare("addDraw")?;
     decl.declare("removeDraw")?;
@@ -846,6 +860,7 @@ impl ModuleDef for GpuModule {
     exports.export("destroyBuffer", Function::new(ctx.clone(), destroy_buffer)?)?;
     exports.export("setDraw", Function::new(ctx.clone(), set_draw)?)?;
     exports.export("createDrawTarget", Function::new(ctx.clone(), create_draw_target)?)?;
+    exports.export("createCubeDrawTarget", Function::new(ctx.clone(), create_cube_draw_target)?)?;
     exports.export("depthTexture", Function::new(ctx.clone(), depth_texture)?)?;
     exports.export("addDraw", Function::new(ctx.clone(), add_draw)?)?;
     exports.export("removeDraw", Function::new(ctx.clone(), remove_draw)?)?;
@@ -912,35 +927,42 @@ fn create_texture(
 
 // A cube map: six faces in GL order (+X, -X, +Y, -Y, +Z, -Z), each one
 // frame of `size` x `size` at the declared format (same view-type rule as
-// createTexture), sampled by direction through a `samplerCube`. Sampler
-// options are the createTexture set; `wrap` parses but has no effect
-// (GLES 3.0 cube filtering is seamless).
+// createTexture), sampled by direction through a `samplerCube` - or an
+// explicit mip chain, an array of such six-face arrays from level 0 down
+// to the 1x1 level (the full chain, level-major to alloy), uploaded as
+// given: the prefiltered environment map's path, which also needs no
+// generated chain and so no color-renderable format. Sampler options are
+// the createTexture set; `wrap` parses but has no effect (GLES 3.0 cube
+// filtering is seamless); explicit levels imply `mipmap: true`.
 fn create_cube_texture(ctx: Ctx<'_>, faces: Array<'_>, size: u32, opts: OptArg<Object<'_>>) -> rquickjs::Result<u64> {
   let format = collect_format(&ctx, &opts.0, "createCubeTexture")?;
-  if faces.len() != alloy::CUBE_FACES {
-    return Err(throw_str(
-      &ctx,
-      &format!("createCubeTexture: faces must be 6 buffers (+X, -X, +Y, -Y, +Z, -Z), got {}", faces.len()),
-    ));
-  }
-  let expected = format.byte_len(size, size);
+  let explicit = faces.len() > 0 && faces.get::<Value>(0)?.is_array();
   let mut pixels = Vec::with_capacity(alloy::CUBE_FACES);
-  for (i, face) in faces.iter::<Value>().enumerate() {
-    let data = PixelData::collect(&ctx, face?, format, "createCubeTexture")?;
-    let bytes = data.bytes(&ctx, "createCubeTexture")?;
-    if bytes.len() != expected {
+  if explicit {
+    let chain = alloy::mip_levels(size) as usize;
+    if faces.len() != chain {
       return Err(throw_str(
         &ctx,
         &format!(
-          "createCubeTexture: face {i} is {} bytes, expected {expected} ({size}x{size} {})",
-          bytes.len(),
-          format.name()
+          "createCubeTexture: an explicit mip chain for {size}x{size} faces has {chain} levels (down to 1x1), got {}",
+          faces.len()
         ),
       ));
     }
-    pixels.push(bytes.to_vec());
+    for (level, entry) in faces.iter::<Value>().enumerate() {
+      let level_faces = entry?
+        .into_array()
+        .ok_or_else(|| throw_str(&ctx, &format!("createCubeTexture: level {level} must be an array of 6 faces")))?;
+      let edge = alloy::mip_size(size, level as u32);
+      collect_faces(&ctx, &level_faces, edge, format, &mut pixels, &format!("level {level} "))?;
+    }
+  } else {
+    collect_faces(&ctx, &faces, size, format, &mut pixels, "")?;
   }
-  let sampler = collect_sampler(&ctx, &opts.0, format, "createCubeTexture")?;
+  let sampler = collect_sampler_defaulting(&ctx, &opts.0, format, "createCubeTexture", explicit.then_some(true))?;
+  if explicit && !sampler.mipmap {
+    return Err(throw_str(&ctx, "createCubeTexture: explicit mip levels are the chain mipmap sampling reads; drop mipmap: false"));
+  }
   let label = collect_label(&opts.0)?;
   let st = state(&ctx);
   let id = st
@@ -950,6 +972,42 @@ fn create_cube_texture(ctx: Ctx<'_>, faces: Array<'_>, size: u32, opts: OptArg<O
     .map_err(|e| throw_str(&ctx, &format!("createCubeTexture: {e}")))?;
   st.created.borrow_mut().insert(id);
   Ok(id)
+}
+
+// Six faces of one cube level, each `edge` x `edge` at `format`, appended
+// to `pixels` in GL order; `where` prefixes the face index in messages
+// ("level 2 face 1") for a chain upload.
+fn collect_faces(
+  ctx: &Ctx<'_>,
+  faces: &Array<'_>,
+  edge: u32,
+  format: alloy::TextureFormat,
+  pixels: &mut Vec<Vec<u8>>,
+  where_: &str,
+) -> rquickjs::Result<()> {
+  if faces.len() != alloy::CUBE_FACES {
+    return Err(throw_str(
+      ctx,
+      &format!("createCubeTexture: {where_}faces must be 6 buffers (+X, -X, +Y, -Y, +Z, -Z), got {}", faces.len()),
+    ));
+  }
+  let expected = format.byte_len(edge, edge);
+  for (i, face) in faces.iter::<Value>().enumerate() {
+    let data = PixelData::collect(ctx, face?, format, "createCubeTexture")?;
+    let bytes = data.bytes(ctx, "createCubeTexture")?;
+    if bytes.len() != expected {
+      return Err(throw_str(
+        ctx,
+        &format!(
+          "createCubeTexture: {where_}face {i} is {} bytes, expected {expected} ({edge}x{edge} {})",
+          bytes.len(),
+          format.name()
+        ),
+      ));
+    }
+    pixels.push(bytes.to_vec());
+  }
+  Ok(())
 }
 
 // A mutable texture is created exactly like an immutable one; "mutable" only
@@ -1339,6 +1397,49 @@ fn create_draw_target(
   Ok(id)
 }
 
+// createCubeDrawTarget(size, params?, opts?) -> texture id: a draw target
+// whose output is a `size` x `size` cube map rendered one face at a time
+// (renderTarget(id, face)) - the reflection-probe primitive. Options are
+// createDrawTarget's minus `into` (no tiles) and with `render` defaulting
+// to (and required to be) "manual"; alloy rejects samples, mipmap and
+// depth "texture". The face pass inverts the front-face rule, so the app
+// renders through an x-mirrored projection (see alloy).
+fn create_cube_draw_target(
+  ctx: Ctx<'_>,
+  size: u32,
+  params: Option<Object<'_>>,
+  opts: OptArg<Object<'_>>,
+) -> rquickjs::Result<u64> {
+  if let Some(o) = &opts.0 {
+    if o.get::<_, rquickjs::Value>("into").map(|v| !v.is_undefined()).unwrap_or(false) {
+      return Err(throw_str(&ctx, "createCubeDrawTarget: a cube draw target has no tiles; drop 'into'"));
+    }
+    if o.get::<_, Option<String>>("render")?.as_deref() == Some("auto") {
+      return Err(throw_str(&ctx, "createCubeDrawTarget: a cube draw target is manual (rendered face by face); drop render: \"auto\""));
+    }
+  }
+  let (mut spec, depth, textures, _) = collect_draw_target_spec(&ctx, &opts.0, size, size, "createCubeDrawTarget")?;
+  spec.manual = true;
+  let params = match &params {
+    Some(o) => collect_params(&ctx, o, "createCubeDrawTarget")?,
+    None => Vec::new(),
+  };
+  let st = state(&ctx);
+  let id = st
+    .gui
+    .alloy
+    .create_cube_draw_target(size, spec, depth)
+    .map_err(|e| throw_str(&ctx, &format!("createCubeDrawTarget: {e}")))?;
+  if !params.is_empty() {
+    st.gui.alloy.set_target_params(id, &params).map_err(|e| throw_str(&ctx, &format!("createCubeDrawTarget: {e}")))?;
+  }
+  if !textures.is_empty() {
+    st.gui.alloy.set_target_textures(id, &textures).map_err(|e| throw_str(&ctx, &format!("createCubeDrawTarget: {e}")))?;
+  }
+  st.created.borrow_mut().insert(id);
+  Ok(id)
+}
+
 // depthTexture(target) -> texture id: the depth texture of a draw target
 // created with depth: "texture" - a sampler-only id (bind it anywhere a
 // texture binds; it dies with its target, destroyTexture on it throws).
@@ -1500,9 +1601,12 @@ fn set_draw_buffers(ctx: Ctx<'_>, target: u64, draw: u64, update: Object<'_>) ->
 
 // The explicit render verb for manual targets (render: "manual"); alloy
 // validates the mode and queues the pass in call order.
-fn render_target(ctx: Ctx<'_>, id: u64) -> rquickjs::Result<()> {
+// renderTarget(id, face?): a manual target rendered once, now; `face`
+// (0..5) selects the face of a cube draw target and is rejected on a 2D
+// one (alloy validates both ways).
+fn render_target(ctx: Ctx<'_>, id: u64, face: OptArg<u32>) -> rquickjs::Result<()> {
   let st = state(&ctx);
-  st.gui.alloy.render_target(id).map_err(|e| throw_str(&ctx, &format!("renderTarget: {e}")))?;
+  st.gui.alloy.render_target(id, face.0).map_err(|e| throw_str(&ctx, &format!("renderTarget: {e}")))?;
   // New target output changes the screen without any tree mutation.
   st.gui.platform.request_frame();
   Ok(())

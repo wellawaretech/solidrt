@@ -137,7 +137,8 @@ pub(crate) enum RasterCmd {
     reply: mpsc::Sender<Result<Texture, String>>,
   },
   /// Create a cube map at `id` from six `size` x `size` faces in GL order
-  /// (+X, -X, +Y, -Y, +Z, -Z). Never adopted into Impeller (a cube name
+  /// (+X, -X, +Y, -Y, +Z, -Z), or from an explicit mip chain (the full
+  /// chain level-major, `check_cube_faces`). Never adopted into Impeller (a cube name
   /// has no 2D adoption), so the reply is bare: the UI side registers the
   /// entry without a handle.
   CreateCubeTexture {
@@ -223,6 +224,18 @@ pub(crate) enum RasterCmd {
     depth: DepthStorage,
     reply: mpsc::Sender<Result<TargetHandles, String>>,
   },
+  /// Create a cube draw target at `id`: a `size` x `size` cube map as the
+  /// color of a manual draw target rendered face by face (RenderTarget
+  /// with a face), over one shared depth renderbuffer. Never adopted into
+  /// Impeller (cube maps are sampler-only), so the reply is bare and the
+  /// raster side deletes the name on destroy, as for uploaded cube maps.
+  CreateCubeDrawTarget {
+    id: u64,
+    size: u32,
+    spec: TargetSpec,
+    depth: DepthStorage,
+    reply: mpsc::Sender<Result<(), String>>,
+  },
   /// Create a sub-target: a draw target rendering into the `spec`-sized
   /// rectangle at `(x, y)` (top-left origin) of draw target `parent`'s
   /// storage, registered under `id` in the shader map only (it has no
@@ -307,7 +320,9 @@ pub(crate) enum RasterCmd {
   /// the pass, and mark the target's output changed so targets sampling it
   /// re-render at the next flush. Fire-and-forget on this ordered channel, so
   /// renders land in call order and a readback issued after one observes it.
-  RenderTarget { id: u64 },
+  /// `face` names the face of a cube draw target (validated UI-side: Some
+  /// exactly for cube targets).
+  RenderTarget { id: u64, face: Option<u32> },
   /// Overwrite manual target `dst` with the current pixels of texture `src`
   /// (same size, validated UI-side): the GPU-side seed/history write, the
   /// copyTexture analog of uploadTexture. Flushes first (it observes src),

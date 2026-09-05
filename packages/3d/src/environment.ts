@@ -1,16 +1,34 @@
-// Environment helpers: the equirectangular-to-cube conversion a fetched
-// panorama needs at runtime (the build-time form belongs to the srt asset
-// pipeline; see okf/backlog/3d-environment.md), and the placeholder cube a
-// scene binds as uEnv while no environment is set.
+// Environment helpers: the baked HDR environment loader (the .srte chain
+// `srt tool 3d/environment` writes), the equirectangular-to-cube
+// conversion a fetched LDR panorama needs at runtime, and the placeholder
+// cube a scene binds as uEnv while no environment is set.
 
+import { file } from "flux:fs"
 import { createCubeTexture, createShaderTexture, destroyTexture, glsl, readTexture } from "@solidrt/core/gpu"
 import type { CreateOptions, SamplerOptions, TextureFormatOptions, TextureId } from "@solidrt/core/gpu"
+import { decodeEnvironment } from "./environment-bake.ts"
 import { SRGB } from "./glsl.ts"
 
+/**
+ * Read a baked environment (`srt tool 3d/environment sky.hdr -o
+ * assets/sky.srte`) and upload it: the HDR cube with its GGX-prefiltered
+ * mip chain, as an explicit "rgba16f" chain - no generated mipmaps, so it
+ * works on every device. The id is what `environment={{ cube }}` and
+ * `background={{ cube }}` take (Three's `scene.environment` from an
+ * RGBELoader + PMREMGenerator, Unity's convolved reflection probe, Godot's
+ * radiance map, all done at build time here). Created after an await, so
+ * it is NOT auto-freed: an environment normally lives as long as the app;
+ * destroyTexture it otherwise. The same async shape as loadModel (see
+ * examples/model-load.tsx for the <Loading> pattern).
+ */
+export async function loadEnvironment(path: string, opts?: CreateOptions): Promise<TextureId> {
+  let { size, levels } = decodeEnvironment(await file(path).bytes())
+  return createCubeTexture(levels, size, { ...opts, format: "rgba16f", mipmap: true, label: opts?.label ?? "environment" })
+}
+
 // One face of the cube: the texel's sampling direction from the GL
-// cube-map table (t = 0 the first row), with the x flip CUBE_LOOKUP
-// applies at lookup, so the face holds what a lookup of that world
-// direction should find. The panorama's center column faces -Z (the
+// cube-map table (t = 0 the first row), so the face holds what a lookup
+// of that world direction returns. The panorama's center column faces -Z (the
 // camera's default forward; Godot's PanoramaSkyMaterial and Unity's
 // Skybox/Panoramic agree; Three centers +X, a quarter turn away), its top
 // row +Y. At the seam column the uv derivative jumps by a full turn;
@@ -36,7 +54,6 @@ const EQUIRECT_FACE = glsl`
     else if (face == 3) d = vec3(a, -1.0, -b);
     else if (face == 4) d = vec3(a, -b, 1.0);
     else d = vec3(-a, -b, -1.0);
-    d.x = -d.x;
     d = normalize(d);
     vec2 uv = vec2(atan(d.x, -d.z) / (2.0 * PI) + 0.5, acos(clamp(d.y, -1.0, 1.0)) / PI);
     vec2 dx = dFdx(uv);
@@ -60,8 +77,8 @@ const EQUIRECT_FACE = glsl`
  * and `format` names the PANORAMA's format so the cube decodes like it:
  * "rgba8-srgb" for a photographed sky uploaded as such (the faces are
  * re-encoded), "rgba8" (default) for data. An HDR ("rgba16f") panorama
- * has no runtime path yet - the face passes render rgba8 - so it throws;
- * upload its faces directly.
+ * has no runtime path here - the face passes render rgba8 - so it throws;
+ * bake it with `srt tool 3d/environment` and loadEnvironment it.
  * The panorama's center column faces -Z and its top row is +Y. Leave its
  * wrap at the default clamp: `repeat` would also wrap vertically and
  * bleed the poles across the top and bottom rows, while the clamped seam

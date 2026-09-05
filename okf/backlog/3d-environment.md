@@ -61,6 +61,13 @@ uniform floats, no texture. Verdict: keep the hemisphere ambient as the
 v1 term; SH9 from the environment is an additive later step (an
 `ambient: "sh"` mode, coefficients computed once from the cube's smallest
 level). Three's `HemisphereLight` stays a first-class light, as here.
+AMENDED 2026-09-03 (stage 3d): re-read for the scene-environment path
+rather than the separate light probe, Three's `getIBLIrradiance`
+samples the PMREM at roughness 1 and Godot samples its radiance cube at
+the max roughness LOD; only Unity uses SH there. 2-vs-1 the other way,
+and one line of GLSL with no new data: `standard` adds
+`envIrradiance(n)` (the fully rough level along the normal) to the
+hemisphere. SH9 stays the additive later form (Three's LightProbe).
 
 **The specular BRDF.** All three use the split-sum form: prefiltered
 radiance times an environment BRDF, and all three use an analytic fit for
@@ -123,6 +130,16 @@ render-target-sourced one. This lives in the library's GLSL (the
 reflection and skybox lookups), never in the primitive; document it next
 to the lookup so a ported Three shader does not double-flip. Landed as
 `CUBE_LOOKUP` in `@solidrt/3d/glsl` with stage 1.
+REVERSED 2026-09-04, before stage 4's rendered cubes: Godot and Unity
+never flip in the shader - images are converted at import - and Three's
+per-source flip would have put two conventions into every lookup
+forever (a rendered cube samples natively). 2-vs-1 for no shader flip:
+`CUBE_LOOKUP` is gone, a cube map holds what a lookup returns, every
+bake writes GL's own table (the compensating x negation left the tool,
+`equirectToCube` and the JS skies together with the flip, so baked
+pixels are unchanged; .srte files re-bake), and a Three-style face set
+mirrors each image at load (a `loadCubeImages` helper is the additive
+home for that when a face set arrives).
 
 **The standard material (stage 3c).** Names: Three says `metalness`
 and `roughness`, Godot, Unity and glTF say metallic (Unity's roughness
@@ -238,12 +255,58 @@ Where the different internal model helps, beyond parity:
      no environment renders near black, and glTF's default metallic
      factor is 1). `examples/standard.tsx` (the sphere grid),
      `probes/standard-probe.tsx`.
-   - 3d, open: explicit `levels` on createCubeTexture, the `srt`
-     pipeline turning a `.hdr` into a prefiltered rgba16f cube asset
-     (build-time equirect for LDR too), SH9 ambient from the cube.
-4. **Dynamic probes.** `createReflectionProbe` over render-to-face
-   ([gpu-cube-render-targets](gpu-cube-render-targets.md)), and baking
-   the GLSL sky into the radiance cube.
+   - 3d, landed 2026-09-03: `createCubeTexture(faces | levels, size)`
+     takes an explicit mip chain (an array of six-face arrays, level 0
+     down to 1x1, the FULL chain so no MAX_LEVEL state exists; levels
+     imply `mipmap: true`; uploaded level by level, so no generated
+     chain and no half-float renderability gate - an rgba16f chain works
+     on every device); `srt tool 3d/environment <in.hdr> [-o out.srte]
+     [--size 128]` (packages/3d/tools/environment.ts over the pure
+     `src/environment-bake.ts`: a Radiance RGBE decoder, CPU
+     equirect-to-cube with supersampling, GGX prefiltering per level by
+     importance sampling with the source lod from each sample's solid
+     angle, the .srte container - float32 rgba faces after a 16-byte
+     header, 2 MiB at 128); `loadEnvironment(path)` uploads it;
+     `ENVIRONMENT` maps roughness onto the chain by the fixed rule
+     `r * (log2(size) - 2)` (roughness 1 = the 4x4 level, the last one
+     convolved; Unity's six LOD steps and Godot's MAX_ROUGHNESS_LOD are
+     the same fixed-count idea, Three floors at 16x16) and gained
+     `envIrradiance(n)`, which `standard` adds to the hemisphere (the
+     amended diffuse verdict above); createModel's default flipped to
+     `standard`. LDR panoramas stay on the runtime `equirectToCube`
+     (bun has no PNG/JPEG decoder for the tool; a decoder dependency
+     when asked). `examples/environment.tsx`, `probes/cube-levels-probe.tsx`,
+     `packages/3d/tests/environment.test.ts`.
+     Open, additive: SH9 (Three's LightProbe form), `aoMap`, RGBE or half
+     packing in the .srte (a 4x smaller file), EXR input.
+4. **Dynamic probes.**
+   - 4a, landed 2026-09-05: render-to-face and sharp probes. Engine:
+     `createCubeDrawTarget(size, params?, opts?)` - one entry list over a
+     six-face rgba8 cube color and one shared depth renderbuffer, manual
+     by contract, rendered with `renderTarget(id, face)`; samples, mipmap,
+     depth "texture", tiles and resize rejected; the face pass inverts
+     the front-face rule (a GL cube face is seen from outside, the x
+     mirror of a 2D target's image, which the app's projection supplies -
+     Unity's invertCulling for mirrored cameras). Library:
+     `scene.createReflectionProbe({ position, size?, near?, far?,
+     layers?, clearColor?, label? })` -> `{ cube, setPosition, update(),
+     dispose() }`, a view record over the cube target: plain world-up face
+     cameras through `Camera.mirror` (an x-flipped projection), six manual
+     renders per `update()`, the probe's own `uOutputEncode` 0 /
+     `uToneMapping` 0 / `uExposure` 1 so the faces hold linear light (the
+     OUTPUT set gained `uOutputEncode`), never sampling its own cube (one
+     bounce). Sharp: Three's CubeCamera parity. `examples/probe.tsx`,
+     `probes/cube-target-probe.tsx`, `probes/reflection-probe-probe.tsx`
+     (six walls read back through the probe, which also proves the
+     winding rule). Decided on the way: no shader flip for rendered cubes
+     either - the convention reversal above made a rendered cube native.
+   - 4b, open: `mipmap: true` on cube targets plus `renderTarget(id,
+     face, level)`, a GPU GGX prefilter (the bake tool's math as a
+     fragment, base cube in, chain out) so probes blur with roughness,
+     and `scene.bakeBackground(size)` rendering the GLSL sky into a cube
+     through the same path (Godot's sky-lit scene).
+   - 4c, open: HDR probes - `format: "rgba16f"` on draw targets, gated on
+     half-float renderability with an rgba8 fallback.
 
 ## Divergences to document
 
@@ -274,3 +337,21 @@ Where the different internal model helps, beyond parity:
   `intensity` is the knob. No `aoMap` and no multi-scatter compensation
   yet, both additive. A metal in a scene without an environment renders
   near black (Three, Godot), no ambient-probe fallback (Unity).
+- The image-lit diffuse is the chain's fully rough level along the
+  normal (Three, Godot), not an SH probe (Unity); the hemisphere light
+  adds to it rather than being replaced by it (Three's lights add;
+  Godot blends by `ambient_light_sky_contribution`, Unity picks one
+  ambient source). Drop the hemisphere when the environment should
+  light alone.
+- Prefiltering is a build step (`srt tool 3d/environment`, Unity's
+  import-time convolution); there is no runtime PMREM (Three) or
+  sky-change reconvolution (Godot) until stage 4's render-to-face.
+- The environment's roughness-to-level rule is linear (Godot), not
+  Three's nonlinear `roughnessToMip`; a Three-tuned roughness reads
+  slightly blurrier in the low range.
+- A reflection probe is one API on the scene (`createReflectionProbe`)
+  rather than Three's camera object plus render target pair; no box
+  projection, blending, importance or time slicing (Unity, Godot) - all
+  additive. It renders 8-bit linear (LDR) until 4c, where all three
+  engines render HDR; and mirrored, so derivative-built tangent frames
+  invert in reflections (a Unity invertCulling caveat too).

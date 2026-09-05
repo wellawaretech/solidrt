@@ -170,10 +170,17 @@ what it delivered is documented in `packages/3d/AGENTS.md`, not here.
     2026-09-03 - item 17's color-space decision. Stage 3c (the `standard`
     metalness/roughness material: GGX in the light loop, the split sum
     over the environment, glTF's PBR fields in the model file at VERSION
-    4) LANDED 2026-09-03 too; createModel keeps `lit` as its default
-    until 3d. Open: 3d (prefiltered levels, the build-time HDR asset, SH9
-    ambient) and stage 4 (dynamic probes); the box stays unchecked until
-    those land.
+    4) LANDED 2026-09-03 too. Stage 3d LANDED 2026-09-03: explicit mip
+    levels on `createCubeTexture` (engine), `srt tool 3d/environment`
+    baking a .hdr into a GGX-prefiltered rgba16f chain (.srte),
+    `loadEnvironment`, the image-lit diffuse as the chain's fully rough
+    level (Three/Godot; SH9 stays additive), and createModel's default
+    flipped to `standard`. Stage 4a LANDED 2026-09-05: cube draw targets
+    with render-to-face (engine) and `scene.createReflectionProbe` (sharp,
+    linear, one bounce), after the cube convention reversal (no shader
+    flip; a cube holds what a lookup returns). Open: 4b (prefiltered
+    probes, the GLSL sky baked into the radiance cube) and 4c (HDR
+    probes); the box stays unchecked until those land.
 15. [x] **Shadow maps.** Landed 2026-08-26 (uncommitted) through stage 3
     of [3d-shadow-maps](../done/3d-shadow-maps.md): `castShadow` on
     `DirectionalLight` and `Mesh`, `lit` receiving by default, the
@@ -236,8 +243,10 @@ what it delivered is documented in `packages/3d/AGENTS.md`, not here.
     library fragment); the pixel contract of the runtime itself stays
     non-linear RGBA8, with the sRGB and half-float formats as the opt-in
     decode. The `standard` metalness/roughness material LANDED 2026-09-03
-    (stage 3c; `lit` stays, and stays createModel's default until 3d).
-    Open: the HDR asset path (3d).
+    (stage 3c). The HDR asset path LANDED 2026-09-03 (stage 3d: the
+    `srt tool 3d/environment` bake, `loadEnvironment`, explicit cube
+    levels); `standard` is createModel's default since. Open: SH9,
+    `aoMap`, a packed .srte payload - all additive.
 18. [x] **Scene background.** Deferred within the item: the texture-id form (a
     reserved non-breaking union widening - decide fit semantics when a
     consumer arrives). The boundary with item 14 stands: a camera-linked

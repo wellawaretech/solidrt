@@ -567,11 +567,16 @@ no separate resize plumbing. Two forms:
   the same way, so a skybox is one flat color there. A 2D texture id
   throws at the samplerCube binding. `examples/skybox.tsx`.
 
-The cube-map handedness: GL samples a cube in a left-handed frame, so
-the library's lookups negate x (CUBE_LOOKUP in `@solidrt/3d/glsl`,
-Three's `flipEnvMap`); a Three cube-map set in px, nx, py, ny, pz, nz
-order renders identically, and a ported Three shader must not flip
-again. Three's `scene.background = color` is `clearColor` here; a 2D
+The cube-map convention: a cube map holds what a GL lookup returns -
+each face as seen from OUTSIDE the cube, GL's own (RenderMan) frame -
+and every library lookup is a plain `texture(cube, dir)` in world space.
+No shader flip, as in Godot and Unity, which convert images at import;
+Three instead flips x in the shader for image cubes (`flipEnvMap`) and
+not for rendered ones, so a ported Three shader drops its flip, and a
+Three-style six-face image set (px, nx, py, ny, pz, nz as seen from
+inside) is mirrored per image at load. Every bake here (the tool,
+`equirectToCube`, the examples' JS skies) writes GL's table directly,
+and a cube the scene renders itself needs nothing. Three's `scene.background = color` is `clearColor` here; a 2D
 image form can widen the signature later (a branded TextureId is a
 number, so the object form keeps it unambiguous). Translucent grounds
 over a background still need blend factors (a separate shader texture
@@ -579,17 +584,38 @@ underneath until then).
 
 Environment: `scene.setEnvironment({ cube, intensity?, rotation? } |
 null)`, the `environment` option on createScene and the reactive `Scene`
-prop - the cube map every `standard` material reflects (always, as the
-split sum: `envRadiance` at its roughness times PBR's `envBrdf`) and
-every `lit({ reflectivity })` material mirrors,
-typically the skybox's own cube turned with it. Scene-level like Three's
+prop - the cube map every `standard` material is lit by (always: the
+split sum `envRadiance` at its roughness times PBR's `envBrdf` for the
+specular, `envIrradiance` - the fully rough sample along the normal, as
+Three's getIBLIrradiance and Godot read it - added to the hemisphere
+for the diffuse) and every `lit({ reflectivity })` material mirrors,
+typically the skybox's own cube turned with it. The cube to use is a
+BAKED one: `bunx srt tool 3d/environment sky.hdr -o assets/sky.srte`
+turns an equirectangular Radiance .hdr (Poly Haven's are CC0) into the
+six faces plus the GGX-prefiltered mip chain in linear float, and
+`await loadEnvironment("assets/sky.srte")` uploads it as an explicit
+"rgba16f" chain (createCubeTexture's array-of-levels form: no generated
+mipmaps, so no half-float render support needed - it works on every
+device; created after an await, so not auto-freed). Unity convolves at
+import the same way; Three's PMREMGenerator and Godot's radiance map do
+it at runtime. The roughness-to-level rule is `ENVIRONMENT`'s:
+roughness r samples level `r * (log2(size) - 2)`, so a roughness of 1
+lands on the 4x4 level (ENV_ROUGH_FACE in environment-bake.ts), the
+last one the bake convolves; a `mipmap: true` cube from six faces
+(equirectToCube, a JS-baked sky) merely box-filters that chain, so its
+rough reflections are sharper than they should be and its diffuse term
+is a coarse average - fine for a sky gradient, wrong for a photograph.
+A 128 environment (2 MiB, the default) lights any surface; for a
+mirror-finish showpiece bake at 256, and for a crisp backdrop pair it
+with a separate hi-res LDR skybox (a 2k panorama through equirectToCube)
+as `background` while the .srte stays the `environment`. Scene-level like Three's
 `scene.environment`, Unity's environment reflections and Godot's
 sky-lit reflections: ONE `uEnv` samplerCube bound on every target the
 scene draws into (a 1x1 black placeholder while unset) and one
 shared-params write (`uEnvIntensity`, `uEnvRotation`, `uEnvOn`), however
 many meshes reflect; no per-material envMap (Three's Basic/Phong
 `envMap`) - a custom material composes ENVIRONMENT from
-`@solidrt/3d/glsl` (includes CUBE_LOOKUP). `reflectivity` 0..1 is the
+`@solidrt/3d/glsl`. `reflectivity` 0..1 is the
 face-on weight, rising to 1 at grazing angles (Schlick), mixed in as
 `rgb = mix(rgb, reflection, weight)`: 1 is chrome, ~0.05 a glossy
 dielectric with rim reflections; Three's Phong `reflectivity` under its
@@ -598,10 +624,39 @@ tints instead; not offered). The reflection blurs with `shininess`:
 roughness `sqrt(2 / (shininess + 2))` picks a mip level of the cube
 (`textureLod`), so the environment cube wants `mipmap: true`; a cube
 without mipmaps stays sharp. `specularMap`'s red scales it like
-`specular`. Not an ambient light source: the hemisphere light stays the
-ambient term (SH9 from the environment is a later, additive mode). A
-declared `reflectivity` with no environment set contributes nothing
-(uEnvOn 0), not a black reflection. `examples/skybox.tsx`.
+`specular`. For `lit` it is not an ambient light source: the hemisphere
+light stays its only ambient term (`standard` adds envIrradiance; SH9
+is a later, additive mode). A declared `reflectivity` with no
+environment set contributes nothing (uEnvOn 0), not a black reflection.
+`examples/skybox.tsx` (a JS-baked sky), `examples/environment.tsx` (a
+baked HDRI lighting the scene alone).
+
+Reflection probes: `scene.createReflectionProbe({ position, size?,
+near?, far?, layers?, clearColor?, label? })` renders the scene into a
+cube map from a point - Three's CubeCamera, Unity's and Godot's
+realtime ReflectionProbe - and returns `{ cube, setPosition, update(),
+dispose() }`; `cube` is what `environment={{ cube }}` (a chrome ball
+mirroring its surroundings) or `background` takes. A view under the
+hood: one entry list mirrored from the scene, the light set and scene
+params fanned out, its own layer mask (keep the mirroring object out of
+its own probe with `layers`), a cube draw target (`createCubeDrawTarget`
+in core, rendered face by face with `renderTarget(cube, face)`).
+Nothing renders it but `probe.update()`: six scene passes, from the
+meshes as the last frame's flush placed them, so call it when the
+surroundings moved (every frame for a moving scene, once for a still
+one). The faces hold LINEAR light (the probe owns `uOutputEncode` 0,
+`uToneMapping` 0 and `uExposure` 1 on its target, names the scene's
+fan-out then skips), 8 bits per channel (rgba8, so dark reflections
+band; HDR probes are additive), and the probe never samples its own
+cube while rendering (a black environment stands in: one bounce). The
+cube is SHARP - no mip chain - so `standard` reflects it as a mirror at
+every roughness and `lit({ reflectivity })` blurs nothing; prefiltered
+probes (render-into-level plus a GPU GGX pass) and baking the GLSL sky
+into the radiance cube are the next stage of okf/backlog/3d-environment.md.
+The face cameras are plain world-up cameras through an x-mirrored
+projection (`Camera.mirror`), because a GL cube face is seen from
+outside; the engine inverts the front-face rule on cube target passes
+so cull modes keep their meaning. `examples/probe.tsx`.
 
 Panoramas: `equirectToCube(map, size, opts?)` converts an uploaded
 equirectangular 2D texture (createImage, createTexture) into a cube
@@ -610,9 +665,11 @@ uploaded once; `opts` are createCubeTexture's - `mipmap: true` for an
 environment). The center column faces -Z and the top row is +Y, as in
 Godot's PanoramaSkyMaterial and Unity's Skybox/Panoramic; Three centers
 +X, a quarter turn away. Leave the source texture's wrap at clamp
-(`repeat` also wraps vertically and bleeds the poles). The build-time
-form (the srt asset pipeline emitting faces and prefiltered levels) is
-open in okf/backlog/3d-environment.md.
+(`repeat` also wraps vertically and bleeds the poles). This is the LDR
+runtime path (the face passes render rgba8, so an HDR panorama throws);
+HDR goes through the bake tool above, whose CPU pipeline
+(`src/environment-bake.ts`: decodeHdr, panoramaToCube, prefilterCube,
+the .srte encode/decode) is pure TypeScript and bun-tested.
 
 Fog: `scene.setFog(fog | null)`, the `fog` option on createScene and
 the reactive `Scene` prop, in Three's two shapes: linear `{ color, near,
@@ -852,8 +909,10 @@ map the factor defaults to 1 (the map is the value). Shading is GGX
 Schlick fresnel) per light in the same light and shadow loop, the
 hemisphere on the diffuse, and the scene's environment ALWAYS - the
 split sum, `envRadiance` at the roughness over the cube's mip chain
-times the analytic `envBrdf` - with no `reflectivity` switch: the
-environment is intrinsic to the model. Light intensities read as lit's
+times the analytic `envBrdf` for the specular, `envIrradiance` on the
+diffuse beside the hemisphere - with no `reflectivity` switch: the
+environment is intrinsic to the model, and a baked environment with no
+lights at all lights a scene (`examples/environment.tsx`). Light intensities read as lit's
 (1 lights a white matte surface to 1; Godot's and Unity's convention -
 a Three scene's intensities divide by pi). Without an environment a
 metal shows only its highlights: no diffuse, nothing to reflect (Three
@@ -908,13 +967,13 @@ fits:
   mesh compression" - Blender exports Draco by DEFAULT, so that is the
   first error a real file hits.
 - `createModel(data, { material?, label? })` - uploads the images (repeat
-  wrap, mipmapped, 4x anisotropic), makes one material per glTF material (default `lit({
-  color, map, transparent })` - `standard` becomes the default once an
-  HDR environment asset ships, since a glTF metal in a scene with no
-  environment renders near black; until then pass `material: (m, maps,
-  skinned) => standard({ color: m.color, ...maps, metalness:
-  m.metalness, roughness: m.roughness, skinned })` yourself, or any
-  other material; it is called once per material and shared), the node table as nested
+  wrap, mipmapped, 4x anisotropic), makes one material per glTF material (default `standard`
+  with the file's color, maps, normal scale, metalness/roughness and
+  packed map, emissive and transparency - the glTF material model, so a
+  scene showing a model wants an `environment` (a glTF metal in a scene
+  with none renders near black); `material: (m, maps, skinned) =>
+  lit({ color: m.color, map: maps.map ?? undefined, skinned })` for the
+  Blinn-Phong look, or any other material; it is called once per material and shared), the node table as nested
   Groups with the file's local TRS, and one mesh per part under its node,
   all inside the returned `Model` (a Group): `add(scene.root, model)`,
   place it with `setTransform`, find parts by name in `model.parts`
@@ -1047,8 +1106,20 @@ older bakes are rejected - re-bake with `srt tool 3d/model`.
   its diffuse is zero and the black placeholder cube is all there is to
   reflect (Three and Godot render the same; Unity falls back to an
   ambient probe, this does not). glTF's default metallic factor is 1,
-  so an untextured asset is all metal. Set `environment` - the skybox's
-  cube is the usual one - or keep `lit`.
+  so an untextured asset is all metal, and createModel's default is
+  `standard`: give a model scene an `environment` (loadEnvironment's
+  baked .srte, or the skybox's cube), or pass `lit` as the material.
+- A reflection probe is a mirrored render (x-flipped projection, winding
+  inverted by the engine): anything built from screen-space derivatives
+  flips with it, so a normal-mapped surface shows its bumps INVERTED in
+  a probe's reflection. Known and shared with every engine's mirrored
+  views; a `uMirror` sign on the derivative frame is the fix when it
+  matters.
+- A generated cube chain (`mipmap: true` from six faces) is a box
+  filter, not the GGX convolution the roughness-to-level rule assumes:
+  rough reflections read too sharp and the diffuse `envIrradiance` is a
+  4x4 average. Bake with `srt tool 3d/environment` for anything
+  photographed; the JS sky gradients in the examples get away with it.
 - Light intensities are the same numbers for `lit` and `standard`: 1
   lights a white matte surface to 1 face-on. A Three scene's intensities
   are a factor pi larger for the same look; divide when porting.

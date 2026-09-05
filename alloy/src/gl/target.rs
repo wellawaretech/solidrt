@@ -13,7 +13,8 @@ use super::entry::{
 };
 use super::pass::{run_pass, DrawGroup, PassDraw, PassInput, ResolvedDraw};
 use super::storage::{
-  attach_storage, create_depth_texture, create_mesh_storage, create_target_texture, DepthAttachment, MeshStorage, Msaa,
+  attach_cube_face, attach_storage, create_cube_storage, create_depth_texture, create_mesh_storage, create_target_texture,
+  DepthAttachment, MeshStorage, Msaa,
 };
 use super::program::{release_pipeline, release_program, RenderPipeline, ShaderProgram};
 use crate::gpu::resources::GpuDrawInfo;
@@ -83,6 +84,14 @@ pub struct ShaderTexture {
   /// here (the parent renders the tile as a group of its own pass) and
   /// never deleted here. `width`/`height` are the tile's size.
   region: Option<Region>,
+  /// A cube draw target (see `new_cube_draw_target`): `target` is a cube
+  /// map name whose faces are rendered one at a time (`render_face`), each
+  /// pass with the front-face rule inverted - GL's cube faces are seen
+  /// from outside, the x mirror of a 2D target's image, and the app
+  /// mirrors its projection to match. `width` == `height` == the face
+  /// edge. The name is never Impeller-adopted (cube maps are sampler-only),
+  /// so the owner deletes it.
+  cube: bool,
 }
 
 impl ShaderTexture {
@@ -128,6 +137,7 @@ impl ShaderTexture {
         passes: Cell::new(0),
         pass_issue_micros: Cell::new(0),
         pass_exec_micros: Cell::new(0),
+        cube: false,
         region: None,
       })
     }
@@ -224,6 +234,7 @@ impl ShaderTexture {
         passes: Cell::new(0),
         pass_issue_micros: Cell::new(0),
         pass_exec_micros: Cell::new(0),
+        cube: false,
         region: None,
       })
     }
@@ -262,8 +273,50 @@ impl ShaderTexture {
       passes: Cell::new(0),
       pass_issue_micros: Cell::new(0),
       pass_exec_micros: Cell::new(0),
+      cube: false,
       region: None,
     })
+  }
+
+  /// A cube draw target: a draw target whose color is a `size` x `size`
+  /// cube map, rendered face by face (`render_face`) over one shared depth
+  /// renderbuffer. Manual by contract (the owner marks it so): a render
+  /// is one face, and the six faces are the app's to sequence.
+  pub fn new_cube_draw_target(
+    gl: &glow::Context,
+    size: u32,
+    depth: DepthStorage,
+    clear_color: [f32; 4],
+  ) -> Result<Self, String> {
+    let MeshStorage { target, fbo, depth, msaa } = create_cube_storage(gl, size, depth)?;
+    Ok(ShaderTexture {
+      kind: TargetKind::Mesh(MeshState {
+        entries: Vec::new(),
+        shared_params: Vec::new(),
+        shared_bindings: Vec::new(),
+        depth,
+        msaa,
+        clear_color,
+        load: false,
+        fixed: false,
+      }),
+      fbo,
+      target,
+      width: size,
+      height: size,
+      sampler: crate::gpu::SamplerState::default(),
+      manual: true,
+      passes: Cell::new(0),
+      pass_issue_micros: Cell::new(0),
+      pass_exec_micros: Cell::new(0),
+      cube: true,
+      region: None,
+    })
+  }
+
+  /// Whether this is a cube draw target (rendered through `render_face`).
+  pub fn cube(&self) -> bool {
+    self.cube
   }
 
   /// A sub-target: a draw target with an empty, mutable draw list that
@@ -310,6 +363,7 @@ impl ShaderTexture {
       passes: Cell::new(0),
       pass_issue_micros: Cell::new(0),
       pass_exec_micros: Cell::new(0),
+      cube: false,
       region: Some(Region { parent: parent_id, x, y, label }),
     })
   }
@@ -990,6 +1044,24 @@ impl ShaderTexture {
     }
   }
 
+  /// Render one face (GL order: +X, -X, +Y, -Y, +Z, -Z) of a cube draw
+  /// target: attach it as the FBO's color, then the mesh pass as `render`
+  /// runs it (its own entries over the whole face, winding inverted). The
+  /// depth renderbuffer is shared, cleared per face by the pass.
+  pub fn render_face(&self, gl: &glow::Context, resolve: &dyn Fn(&[TextureBinding], &ShaderProgram) -> Vec<PassInput>, face: u32) {
+    if !self.cube {
+      log::warn!("[alloy] render_face on a 2D target ignored");
+      return;
+    }
+    unsafe {
+      let prev_fbo = gl.get_parameter_i32(glow::FRAMEBUFFER_BINDING);
+      gl.bind_framebuffer(glow::FRAMEBUFFER, Some(self.fbo));
+      attach_cube_face(gl, self.target, face);
+      gl.bind_framebuffer(glow::FRAMEBUFFER, super::prev_framebuffer(prev_fbo));
+    }
+    self.render_groups(gl, resolve, true, &[], None);
+  }
+
   /// Render a mesh target's pass with its sub-targets as groups (see
   /// `DrawGroup`): with `full`, the pass-level clear, the target's own
   /// entries over the whole storage, then every tile in `tiles`; without
@@ -1037,6 +1109,7 @@ impl ShaderTexture {
       depth: mesh.depth.is_some(),
       groups: &groups,
       tile_clear,
+      invert_winding: self.cube,
     };
     run_pass(gl, Some(self.draw_fbo()), (0, 0), self.width, self.height, None, draw);
     self.resolve(gl);
@@ -1072,18 +1145,26 @@ impl ShaderTexture {
       gl.disable(glow::SCISSOR_TEST);
       gl.color_mask(true, true, true, true);
       gl.clear_color(r, g, b, a);
-      if self.mesh().is_some_and(|m| m.depth.is_some()) {
-        let prev_depth_mask = gl.get_parameter_i32(glow::DEPTH_WRITEMASK) != 0;
-        let prev_clear_depth = gl.get_parameter_f32(glow::DEPTH_CLEAR_VALUE);
-        gl.depth_mask(true);
-        // Always the far plane; Impeller's clip passes leave 0.0 behind (see
-        // run_pass).
-        gl.clear_depth_f32(1.0);
-        gl.clear(glow::COLOR_BUFFER_BIT | glow::DEPTH_BUFFER_BIT);
-        gl.depth_mask(prev_depth_mask);
-        gl.clear_depth_f32(prev_clear_depth);
-      } else {
-        gl.clear(glow::COLOR_BUFFER_BIT);
+      // A cube target clears every face (each attached in turn); a 2D
+      // target its one image.
+      let faces = if self.cube { crate::gpu::texture::CUBE_FACES as u32 } else { 1 };
+      for face in 0..faces {
+        if self.cube {
+          attach_cube_face(gl, self.target, face);
+        }
+        if self.mesh().is_some_and(|m| m.depth.is_some()) {
+          let prev_depth_mask = gl.get_parameter_i32(glow::DEPTH_WRITEMASK) != 0;
+          let prev_clear_depth = gl.get_parameter_f32(glow::DEPTH_CLEAR_VALUE);
+          gl.depth_mask(true);
+          // Always the far plane; Impeller's clip passes leave 0.0 behind (see
+          // run_pass).
+          gl.clear_depth_f32(1.0);
+          gl.clear(glow::COLOR_BUFFER_BIT | glow::DEPTH_BUFFER_BIT);
+          gl.depth_mask(prev_depth_mask);
+          gl.clear_depth_f32(prev_clear_depth);
+        } else {
+          gl.clear(glow::COLOR_BUFFER_BIT);
+        }
       }
 
       gl.clear_color(prev_clear[0], prev_clear[1], prev_clear[2], prev_clear[3]);

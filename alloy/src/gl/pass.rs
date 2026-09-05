@@ -121,6 +121,11 @@ pub(super) enum PassDraw<'a> {
     depth: bool,
     groups: &'a [DrawGroup<'a>],
     tile_clear: Option<&'a ShaderProgram>,
+    /// Invert the front-face rule for every culled entry: a cube draw
+    /// target's face pass, whose image is the x mirror of a 2D target's
+    /// (GL cube faces are seen from outside), so a pipeline's cull mode
+    /// keeps its meaning there.
+    invert_winding: bool,
   },
 }
 
@@ -413,7 +418,7 @@ pub(super) fn run_pass(
           gl.draw_arrays(glow::TRIANGLES, 0, vertex_count);
         }
       }
-      PassDraw::Draws { clear, clear_depth, depth: has_depth, groups, tile_clear } => {
+      PassDraw::Draws { clear, clear_depth, depth: has_depth, groups, tile_clear, invert_winding } => {
         // Mesh pass: geometry does not cover the target, so clear first -
         // once, at the top; every entry then draws over the shared result.
         // Clear color, depth mask, depth func, clear-depth value, the blend
@@ -550,7 +555,7 @@ pub(super) fn run_pass(
               Some(mode) => {
                 gl.enable(glow::CULL_FACE);
                 gl.cull_face(mode.gl());
-                gl.front_face(glow::CW);
+                gl.front_face(if invert_winding { glow::CCW } else { glow::CW });
               }
               None => gl.disable(glow::CULL_FACE),
             }

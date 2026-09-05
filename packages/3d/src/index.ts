@@ -26,8 +26,8 @@ export type {
   SpotShadowOptions,
 } from "./light.ts"
 export { createScene } from "./scene.ts"
-export type { EnvironmentOptions, FogOptions, Hit, RaycastOptions, Scene as SceneHandle, SceneHandlers, SceneOptions, ScreenRay, SkyboxOptions, ToneMapping, View, ViewOptions } from "./scene.ts"
-export { equirectToCube } from "./environment.ts"
+export type { EnvironmentOptions, FogOptions, Hit, RaycastOptions, ReflectionProbe, ReflectionProbeOptions, Scene as SceneHandle, SceneHandlers, SceneOptions, ScreenRay, SkyboxOptions, ToneMapping, View, ViewOptions } from "./scene.ts"
+export { equirectToCube, loadEnvironment } from "./environment.ts"
 export { linearColor, linearToSrgb, srgbToLinear } from "./color.ts"
 export type { CameraState, CameraUpdate, OrthoExtent } from "./camera.ts"
 export type { NodeTransition, NodeTransitionSpec } from "flux:spatial"

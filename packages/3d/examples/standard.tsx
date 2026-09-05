@@ -62,13 +62,12 @@ function sky(d: Vec3): Rgb {
 }
 
 // The world direction whose lookup lands on face i's texel (s, t) - the
-// GL cube-map table with CUBE_LOOKUP's x flip applied (see skybox.tsx).
+// GL cube-map table, no flip (see skybox.tsx).
 function texelDirection(face: number, s: number, t: number): Vec3 {
   let a = 2 * s - 1
   let b = 2 * t - 1
   let d: Vec3 =
     face === 0 ? [1, -b, -a] : face === 1 ? [-1, -b, a] : face === 2 ? [a, 1, b] : face === 3 ? [a, -1, -b] : face === 4 ? [a, -b, 1] : [-a, -b, -1]
-  d[0] = -d[0]
   return normalize(d)
 }
 

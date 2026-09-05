@@ -18,7 +18,7 @@ import { gltfExternalUris, parseGltf } from "./gltf.ts"
 import type { ModelClip, ModelData, ModelMaterial } from "./gltf.ts"
 import { decodeModel } from "./model-file.ts"
 import { disposeGeometry } from "./geometry-gpu.ts"
-import { lit } from "./material.ts"
+import { standard } from "./material.ts"
 import type { Material } from "./material.ts"
 import { add, createGroup, remove, setTransform } from "./node.ts"
 import type { SceneNode } from "./node.ts"
@@ -44,11 +44,12 @@ export type ModelMaps = {
 }
 
 export type ModelOptions = {
-  /** The material for each glTF material (default: `lit` with its color,
-   * maps, normal scale, emissive and transparency; `standard` takes the
-   * same `maps` plus `m.metalness`/`m.roughness`, and becomes the
-   * default once the HDR environment asset lands). `maps` holds the
-   * uploaded textures by lit()/standard() option name. Called once per material -
+  /** The material for each glTF material (default: `standard` with its
+   * color, maps, normal scale, metalness/roughness, emissive and
+   * transparency - the glTF material model; a scene with no `environment`
+   * renders its metals near black, so set one, or return `lit` here for
+   * the Blinn-Phong look). `maps` holds the uploaded textures by
+   * lit()/standard() option name. Called once per material -
    * or once per (material, skinned) combination when skinned parts share
    * a material with static ones - and shared by every part using it.
    * `skinned` is true when the material must skin (pass it through to
@@ -114,11 +115,15 @@ export function createModel(data: ModelData, opts: ModelOptions = {}): Model {
     // factor times texture), so the map is skipped too - no sampler for
     // a term that cannot show.
     let emissive = m.emissive[0] > 0 || m.emissive[1] > 0 || m.emissive[2] > 0
-    return lit({
+    return standard({
       color: m.color,
       map: maps.map ?? undefined,
       normalMap: maps.normalMap ?? undefined,
       normalScale: m.normalScale,
+      metalness: m.metalness,
+      roughness: m.roughness,
+      metalnessMap: maps.metalnessMap ?? undefined,
+      roughnessMap: maps.roughnessMap ?? undefined,
       emissive: emissive ? m.emissive : undefined,
       emissiveIntensity: emissive ? m.emissiveIntensity : undefined,
       emissiveMap: emissive ? maps.emissiveMap ?? undefined : undefined,

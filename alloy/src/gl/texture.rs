@@ -9,8 +9,8 @@ use impellers::ISize;
 use std::num::NonZeroU32;
 
 use crate::gpu::texture::{
-  SamplerFilter, SamplerState, SamplerWrap, TextureFormat, TextureShape, ANISOTROPY_LEVELS, CUBE_FACES,
-  MIN_ANISOTROPY,
+  check_cube_faces, mip_size, SamplerFilter, SamplerState, SamplerWrap, TextureFormat, TextureShape,
+  ANISOTROPY_LEVELS, CUBE_FACES, MIN_ANISOTROPY,
 };
 
 /// The GL sampler objects covering every SamplerState combination (filter x
@@ -209,12 +209,14 @@ impl GpuTexture {
   }
 
   /// A cube map from six `size` x `size` faces in GL order (+X, -X, +Y, -Y,
-  /// +Z, -Z), each `format.byte_len(size, size)` bytes (checked UI-side;
-  /// backstopped here), allocated and uploaded in one go - a cube map is
-  /// create-once. The mip chain, when the sampling declares one, is
-  /// generated from the faces here. Wrap modes do not apply: GLES 3.0
-  /// filters across cube faces seamlessly. Restores the cube map binding
-  /// it touches.
+  /// +Z, -Z), each `format.byte_len(size, size)` bytes, or from an explicit
+  /// mip chain (the full chain level-major; see `check_cube_faces` - checked
+  /// UI-side, backstopped here), allocated and uploaded in one go - a cube
+  /// map is create-once. The mip chain, when the sampling declares one, is
+  /// generated from the six faces here, or uploaded level by level when
+  /// given explicitly (no generation, so no color-renderable format
+  /// needed). Wrap modes do not apply: GLES 3.0 filters across cube faces
+  /// seamlessly. Restores the cube map binding it touches.
   pub fn new_cube(
     gl: &glow::Context,
     size: u32,
@@ -222,13 +224,7 @@ impl GpuTexture {
     sampler: SamplerState,
     format: TextureFormat,
   ) -> Result<Self, String> {
-    if faces.len() != CUBE_FACES {
-      return Err(format!("a cube map takes {CUBE_FACES} faces, got {}", faces.len()));
-    }
-    let expected = format.byte_len(size, size);
-    if let Some((i, face)) = faces.iter().enumerate().find(|(_, f)| f.len() != expected) {
-      return Err(format!("cube face {i} is {} bytes, expected {expected} ({})", face.len(), format.name()));
-    }
+    let levels = check_cube_faces(size, faces, format)?;
     let (internal, layout, ty) = gl_storage(format);
     let (_, _, alignment) = upload_layout(format).ok_or_else(|| format!("{} is not an upload format", format.name()))?;
     unsafe {
@@ -237,12 +233,14 @@ impl GpuTexture {
       gl.bind_texture(glow::TEXTURE_CUBE_MAP, Some(gl_texture));
       gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, alignment);
       for (i, face) in faces.iter().enumerate() {
+        let level = (i / CUBE_FACES) as u32;
+        let edge = mip_size(size, level) as i32;
         gl.tex_image_2d(
-          glow::TEXTURE_CUBE_MAP_POSITIVE_X + i as u32,
-          0,
+          glow::TEXTURE_CUBE_MAP_POSITIVE_X + (i % CUBE_FACES) as u32,
+          level as i32,
           internal as i32,
-          size as i32,
-          size as i32,
+          edge,
+          edge,
           0,
           layout,
           ty,
@@ -255,7 +253,7 @@ impl GpuTexture {
       let filter = fallback_filter(format);
       gl.tex_parameter_i32(glow::TEXTURE_CUBE_MAP, glow::TEXTURE_MIN_FILTER, filter as i32);
       gl.tex_parameter_i32(glow::TEXTURE_CUBE_MAP, glow::TEXTURE_MAG_FILTER, filter as i32);
-      if sampler.mipmap {
+      if sampler.mipmap && levels == 1 {
         gl.generate_mipmap(glow::TEXTURE_CUBE_MAP);
       }
       gl.bind_texture(glow::TEXTURE_CUBE_MAP, NonZeroU32::new(prev as u32).map(glow::NativeTexture));

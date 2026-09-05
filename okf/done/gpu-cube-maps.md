@@ -88,7 +88,12 @@ shape above:
   generated chain; the widening to `Buffer[6][]` (level 0 first, each
   level six faces, sizes halving) is additive and must not need any other
   change, so `mipmap: true` with explicit levels means "the chain is
-  what you uploaded".
+  what you uploaded". LANDED 2026-09-03 (3d-environment stage 3d)
+  exactly so: the full chain down to 1x1 (no MAX_LEVEL state), levels
+  imply `mipmap: true`, validated once in `check_cube_faces`
+  (gpu/texture.rs) for the UI and raster sides, uploaded level by level
+  with no `generate_mipmap` - which also bypasses the half-float
+  renderability gate, so an rgba16f chain uploads on every device.
 - **`rgba16f` follow-on.** The HDR environment format all three engines
   run IBL on is half float, and GLES 3.0 makes RGBA16F filterable and
   mip-mappable in core (RGBA32F is not, which is why the existing float
@@ -98,7 +103,9 @@ shape above:
   item when item 17 (PBR/color space) starts, nothing in stage 1 blocks
   it.
 - **Handedness** (GL's left-handed cube frame, Three's `flipEnvMap`) is a
-  library-GLSL concern, not the primitive's: raw GL sampling here.
+  library-GLSL concern, not the primitive's: raw GL sampling here. (The
+  library dropped its flip 2026-09-04: a cube map holds what a lookup
+  returns, Godot's and Unity's convention; see 3d-environment.)
 - **Render-to-face** stays stage 2; its consumer is now named
   (reflection probes and baking the GLSL sky into the radiance cube,
   3d-environment stage 4).

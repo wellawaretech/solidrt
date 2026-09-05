@@ -2,7 +2,7 @@ use impellers::{ISize, Texture};
 use std::collections::HashSet;
 use std::rc::Rc;
 
-use crate::gpu::{SamplerState, TextureBinding, TextureEntry, TextureFormat, TextureShape, CUBE_FACES};
+use crate::gpu::{check_cube_faces, SamplerState, TextureBinding, TextureEntry, TextureFormat, TextureShape};
 use crate::raster::RasterCmd;
 use crate::yuv::{self, YuvLayout, YuvMatrix, YuvRange};
 
@@ -140,14 +140,18 @@ impl Context {
   }
 
   /// Create a cube map from six `size` x `size` faces in GL order (+X, -X,
-  /// +Y, -Y, +Z, -Z), each `format.byte_len(size, size)` bytes, with the
-  /// given sampling (the caller resolves it against the format like every
-  /// pixel create; `wrap` is irrelevant - GLES 3.0 filters across faces
-  /// seamlessly) and an optional label. Returns the registry id, an
-  /// ordinary texture id that only a `samplerCube` binding consumes: the
-  /// `<texture>` display, `readTexture`, `copyTexture`, uploads and resizes
-  /// all reject it (see `TextureShape::Cube`). Errs on a face count or
-  /// size mismatch, or a face edge over the device's cube map ceiling.
+  /// +Y, -Y, +Z, -Z), each `format.byte_len(size, size)` bytes - or from
+  /// an explicit mip chain, the full chain level-major (see
+  /// `check_cube_faces`), which is uploaded as given instead of generated
+  /// and so needs no color-renderable format - with the given sampling
+  /// (the caller resolves it against the format like every pixel create;
+  /// `wrap` is irrelevant - GLES 3.0 filters across faces seamlessly; an
+  /// explicit chain requires `mipmap`) and an optional label. Returns the
+  /// registry id, an ordinary texture id that only a `samplerCube` binding
+  /// consumes: the `<texture>` display, `readTexture`, `copyTexture`,
+  /// uploads and resizes all reject it (see `TextureShape::Cube`). Errs on
+  /// a face count or size mismatch, or a face edge over the device's cube
+  /// map ceiling.
   pub fn create_cube_texture(
     &self,
     size: u32,
@@ -161,17 +165,12 @@ impl Context {
     }
     let limits = self.gpu_limits();
     limits.check_cube_map_size(size)?;
-    limits.check_mipmap(format, sampler.mipmap)?;
-    if faces.len() != CUBE_FACES {
-      return Err(format!("a cube map takes {} faces (+X, -X, +Y, -Y, +Z, -Z), got {}", CUBE_FACES, faces.len()));
-    }
-    let expected = format.byte_len(size, size);
-    if let Some((i, face)) = faces.iter().enumerate().find(|(_, f)| f.len() != expected) {
-      return Err(format!(
-        "cube face {i} is {} bytes, expected {expected} ({size}x{size} {})",
-        face.len(),
-        format.name()
-      ));
+    let levels = check_cube_faces(size, &faces, format)?;
+    // Only a GENERATED chain needs the format to be color-renderable; an
+    // explicit one is plain uploads.
+    limits.check_mipmap(format, sampler.mipmap && levels == 1)?;
+    if levels > 1 && !sampler.mipmap {
+      return Err("an explicit mip chain is sampled through mipmap: true".to_string());
     }
     let id = self.textures.allocate_id();
     self.rpc(|reply| RasterCmd::CreateCubeTexture { id, size, faces, sampler, format, label, reply })??;
@@ -376,6 +375,9 @@ impl Context {
   pub fn resize_target(&self, id: u64, width: u32, height: u32) -> Result<(), String> {
     if !self.targets.borrow().contains_key(&id) {
       return Err(format!("target {id} not found"));
+    }
+    if self.textures.get(id).is_some_and(|e| e.shape == TextureShape::Cube) {
+      return Err(format!("target {id} is a cube draw target: create-once, it does not resize"));
     }
     // A sub-target's size is its rectangle's; the origin stays.
     let tile = self.sub_targets.borrow().get(&id).map(|t| (t.x, t.y));

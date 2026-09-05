@@ -5,7 +5,7 @@ use crate::gpu::{
   instance_strides, resolve_draw_range, validate_draw_range, validate_instance_slots, validate_order,
   validate_param_if_declared, validate_params, validate_texture_bindings, vertex_stride, BufferIds, DepthStorage,
   DrawBounds, DrawSpec, DrawUpdate, ParamValue, PipelineSpec, SamplerState, TargetSpec, TextureBinding, TextureEntry,
-  TextureFormat, UniformKind, UniformTable, WindowShader, MAX_INSTANCE_SLOTS,
+  TextureFormat, UniformKind, UniformTable, WindowShader, MAX_INSTANCE_SLOTS, TextureShape, CUBE_FACES,
 };
 use crate::raster::RasterCmd;
 
@@ -338,6 +338,54 @@ impl Context {
     if manual {
       self.manual_targets.borrow_mut().insert(id);
     }
+    Ok(id)
+  }
+
+  /// Create a cube draw target: a draw target whose output is a `size` x
+  /// `size` cube map, rendered one face at a time through
+  /// `render_target(id, Some(face))` - dynamic reflection probes and sky
+  /// bakes. Manual by contract (a render is one face; the app sequences
+  /// six), single-sample, no generated mip chain, `depth` a private
+  /// renderbuffer or none (a depth texture cannot serve six faces). The
+  /// id is a cube map to every consumer: sampler-only (`samplerCube`
+  /// bindings), never displayed, read back, copied or resized. The face
+  /// pass inverts the front-face rule (see `ShaderTexture::cube`), so the
+  /// app renders each face through an x-mirrored projection and its
+  /// pipelines' cull modes keep their meaning.
+  pub fn create_cube_draw_target(&self, size: u32, spec: TargetSpec, depth: DepthStorage) -> Result<u64, String> {
+    if size == 0 {
+      return Err("cube draw target face size must be non-zero".to_string());
+    }
+    self.gpu_limits().check_cube_map_size(size)?;
+    validate_load(&spec)?;
+    if !spec.manual {
+      return Err("a cube draw target is manual: render it face by face with renderTarget(id, face)".to_string());
+    }
+    if spec.samples >= 2 {
+      return Err("a cube draw target cannot be multisampled yet; use samples 1".to_string());
+    }
+    if spec.sampler.mipmap {
+      return Err("a cube draw target cannot carry a mip chain yet; drop mipmap: true".to_string());
+    }
+    if depth == DepthStorage::Texture {
+      return Err("a cube draw target cannot expose a depth texture (one renderbuffer serves its six faces)".to_string());
+    }
+    let id = self.textures.allocate_id();
+    let sampler = spec.sampler;
+    self.rpc(|reply| RasterCmd::CreateCubeDrawTarget { id, size, spec, depth, reply })??;
+    self.textures.insert(id, TextureEntry::cube(size, sampler, TextureFormat::Rgba8));
+    self.targets.borrow_mut().insert(
+      id,
+      TargetMirror {
+        uniforms: Rc::new(UniformTable::default()),
+        draw: None,
+        bounds: DrawBounds::default(),
+        buffers: BufferIds::default(),
+        entries: Some(DrawListMirror { depth: depth.is_some(), depth_texture: None, next_draw: 1, entries: HashMap::new() }),
+      },
+    );
+    self.shader_sources.borrow_mut().insert(id, HashMap::new());
+    self.manual_targets.borrow_mut().insert(id);
     Ok(id)
   }
 
@@ -907,14 +955,24 @@ impl Context {
   /// this one re-render at the next flush. The caller must request a frame
   /// for displayed output. Errs on an unknown id or a target the flush owns
   /// (a non-manual one, whose pass must stay a pure function of its inputs).
-  pub fn render_target(&self, id: u64) -> Result<(), String> {
+  pub fn render_target(&self, id: u64, face: Option<u32>) -> Result<(), String> {
     if !self.targets.borrow().contains_key(&id) {
       return Err(format!("shader texture {id} not found"));
     }
     if !self.manual_targets.borrow().contains(&id) {
       return Err(format!("target {id} is not manual (the runtime renders it; create with render: \"manual\")"));
     }
-    self.send(RasterCmd::RenderTarget { id });
+    // A cube target renders one face per call; a 2D target takes no face.
+    let cube = self.textures.get(id).is_some_and(|entry| entry.shape == TextureShape::Cube);
+    match (cube, face) {
+      (true, None) => return Err(format!("target {id} is a cube draw target: renderTarget(id, face) names the face to render")),
+      (true, Some(f)) if f as usize >= CUBE_FACES => {
+        return Err(format!("cube face must be 0..5 (+X, -X, +Y, -Y, +Z, -Z), got {f}"));
+      }
+      (false, Some(_)) => return Err(format!("target {id} is a 2D target: renderTarget(id) takes no face")),
+      _ => {}
+    }
+    self.send(RasterCmd::RenderTarget { id, face });
     // A manual target's pixels change exactly here (and at copy_texture), so
     // this notes directly - note_target_content's manual skip is for the
     // writes that only stage state for a later render.

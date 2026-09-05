@@ -5,8 +5,9 @@
 // server (it keeps the tunnel key and the remembered port), so the only thing
 // left to establish is whether the process that wrote the record still runs.
 import { dir, file } from "flux:fs"
-import { alive, execPath, homedir, platform } from "flux:process"
+import { alive, execPath, homedir, pid, platform } from "flux:process"
 import { command } from "flux:subprocess"
+import { control } from "./control"
 
 /** A client connected to a dev server, as the server reports it. */
 export type Client = {
@@ -23,6 +24,9 @@ export type Client = {
   queries: string[]
   /** Whether its stats overlay is drawn. */
   stats: boolean
+  /** Its time scale as the server last saw it: 0 paused, 1 real time. 1 on
+   * a server that predates the field. */
+  timeScale: number
   /** Its storage tree on its own machine, or null when it did not say. */
   clientDir: string | null
   pid: number | null
@@ -57,6 +61,11 @@ export type Server = {
   /** Typed in as host:port rather than found in this machine's registry.
    * Read-only: everything that starts or stops a process is local. */
   remote: boolean
+  /** Whether the user's own input is muted on its clients, and whether its
+   * reload-on-save is paused (see /mute and /watch); false until the port
+   * answered. */
+  userInputMuted: boolean
+  watchPaused: boolean
   clients: Client[] | null
 }
 
@@ -129,6 +138,8 @@ function toServer(record: any): Server | null {
     projectDir: typeof record.projectDir === "string" ? record.projectDir : null,
     started: typeof record.started === "string" ? record.started : "",
     remote: false,
+    userInputMuted: false,
+    watchPaused: false,
     clients: null,
   }
 }
@@ -147,6 +158,8 @@ function remoteServer(host: string, port: number): Server {
     projectDir: null,
     started: "",
     remote: true,
+    userInputMuted: false,
+    watchPaused: false,
     clients: null,
   }
 }
@@ -169,10 +182,10 @@ function text(value: unknown): string | null {
 // serves comes from the answer or not at all.
 async function withClients(server: Server): Promise<Server> {
   try {
-    let resp = await fetch(`http://${server.address}:${server.port}/__control__/clients`)
-    if (!resp.ok) return server
-    let body = await resp.json()
+    let body = await control(server, "clients")
     if (!Array.isArray(body?.clients)) return server
+    server.userInputMuted = body.userInputMuted === true
+    server.watchPaused = body.watchPaused === true
     if (server.remote) {
       server.key = text(body.key) ?? ""
       server.mode = body.mode === "file" ? "file" : "project"
@@ -187,6 +200,7 @@ async function withClients(server: Server): Promise<Server> {
       capabilities: Array.isArray(client.capabilities) ? client.capabilities : [],
       queries: Array.isArray(client.queries) ? client.queries : [],
       stats: client.stats === true,
+      timeScale: typeof client.timeScale === "number" ? client.timeScale : 1,
       clientDir: text(client.clientDir),
       pid: typeof client.pid === "number" ? client.pid : null,
       execPath: text(client.execPath),
@@ -200,6 +214,12 @@ async function withClients(server: Server): Promise<Server> {
   return server
 }
 
+/** Whether this console is itself one of the server's clients (its process
+ * is in the list): muting that server's input would mute the console. */
+export function servesMe(server: Server): boolean {
+  return (server.clients ?? []).some((client) => client.pid === pid)
+}
+
 /** Uptime, from the record's bind timestamp: "3m", "2h 14m", "4d 2h". */
 export function uptime(server: Server, now: number = Date.now()): string {
   let started = Date.parse(server.started)
@@ -209,6 +229,15 @@ export function uptime(server: Server, now: number = Date.now()): string {
   let hours = Math.floor(minutes / 60)
   if (hours < 24) return `${hours}h ${minutes % 60}m`
   return `${Math.floor(hours / 24)}d ${hours % 24}h`
+}
+
+/** The identity a client keeps across connections: its machine and storage
+ * tree, so a restart in the same slot continues the same chat. Falls back to
+ * the connection id for a runtime that reports no tree - such a client is a
+ * new party on every reconnect, which is all its report allows. */
+export function clientKey(client: Client): string {
+  if (!client.clientDir) return `#${client.id}`
+  return `${client.host ?? "unknown"}/${client.clientDir}`
 }
 
 /** How a client reads in the UI: platform, runtime version, build profile. */
@@ -228,33 +257,6 @@ export function clientFacts(client: Client): string[] {
   if (client.pid !== null || client.execPath) lines.push(`pid ${client.pid ?? "?"} ${client.execPath ?? ""}`.trim())
   lines.push(client.clientDir ?? "storage not reported")
   return lines
-}
-
-
-/** Switch one client's stats overlay on or off. The server records the
- * state per client, so the next poll shows it. */
-export async function setClientStats(server: Server, client: Client, on: boolean): Promise<void> {
-  let resp = await fetch(
-    `http://${server.address}:${server.port}/__control__/stats?client=${client.id}&active=${on}`,
-    { method: "POST" },
-  )
-  if (!resp.ok) throw new Error((await resp.json().catch(() => null))?.error ?? `Stats toggle failed (${resp.status})`)
-}
-
-/** A picture of one client's window right now, as the server's snapshot
- * query returns it: the PNG bytes and the size they are. The root node's id
- * is per client and changes on reload, so it is read fresh each time. */
-export async function snapshotClient(
-  server: Server,
-  client: Client,
-): Promise<{ png: Uint8Array; width: number; height: number }> {
-  let base = `http://${server.address}:${server.port}/__control__`
-  let root = await (await fetch(`${base}/tree?client=${client.id}&depth=0`)).json()
-  if (typeof root?.id !== "number") throw new Error(root?.error ?? "The client reported no window")
-  let shot = await (await fetch(`${base}/snapshot?client=${client.id}&node=${root.id}`)).json()
-  if (typeof shot?.pngBase64 !== "string") throw new Error(shot?.error ?? "The client sent no picture")
-  let png = Uint8Array.from(atob(shot.pngBase64), (c) => c.charCodeAt(0))
-  return { png, width: shot.width, height: shot.height }
 }
 
 /** Ask a typed-in address what it serves. A server comes back either way:

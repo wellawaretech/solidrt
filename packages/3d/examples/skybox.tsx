@@ -54,15 +54,13 @@ function sky(d: Vec3): Rgb {
 }
 
 // The world direction whose lookup lands on face i's texel (s, t), t = 0
-// the first row: the GL cube-map table gives the sampling direction, and
-// the x flip is the one CUBE_LOOKUP applies (an involution, so applying
-// it here bakes the texel the library's lookup will read for `world`).
+// the first row: the GL cube-map table, which is also what the library
+// samples with (no flip) - so the texel holds the sky in that direction.
 function texelDirection(face: number, s: number, t: number): Vec3 {
   let a = 2 * s - 1
   let b = 2 * t - 1
   let d: Vec3 =
     face === 0 ? [1, -b, -a] : face === 1 ? [-1, -b, a] : face === 2 ? [a, 1, b] : face === 3 ? [a, -1, -b] : face === 4 ? [a, -b, 1] : [-a, -b, -1]
-  d[0] = -d[0]
   return normalize(d)
 }
 

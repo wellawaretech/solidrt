@@ -42,6 +42,19 @@ depends on `@solidrt/3d` (or in-repo from the package directory).
   environment and a warm sun casting shadows; a bare-metal row shows
   the environment as tinted reflections, the dielectric row the same
   sky as a faint face-on gloss. Drag to look around.
+- `environment.tsx` - a baked HDR environment lighting the scene ALONE
+  (no lights, no hemisphere): `loadEnvironment` reads the .srte that
+  `bunx srt tool 3d/environment <panorama>.hdr -o assets/environment.srte`
+  bakes from any equirectangular .hdr (Poly Haven's are CC0; the asset
+  is not committed, bake one first), used as background and environment
+  with ACES tone mapping. A metal row and a red dielectric row, roughness
+  0 to 1 across: the metals are the room, sharp to blurred. Drag to
+  look around.
+- `probe.tsx` - a reflection probe (`scene.createReflectionProbe`): the
+  scene rendered into a cube map from the center of a chrome ball, every
+  frame, and set as the environment the ball mirrors - six colored walls
+  and four orbiting spheres show in the chrome. Layers keep the ball out
+  of its own probe. Drag to look around.
 - `sprites.tsx` - sprites: a ring of `"full"` billboard glows that stay
   flat to the screen and `"fixed-y"` cutout trees that only yaw toward
   the camera and stay upright as it climbs, both turned in the vertex

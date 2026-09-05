@@ -260,18 +260,24 @@ export function createTexture(
  * DIRECTION from a `uniform samplerCube` in a shader (`texture(uEnv, dir)`;
  * `textureLod` for an explicit mip level, `mipmap: true` builds the chain
  * from the faces) - the skybox, reflection and environment-lighting
- * primitive. Sampler-only: the id binds through `textures` like any other,
+ * primitive. `faces` may instead be an explicit mip chain - an array of
+ * six-face arrays, level 0 first, halving down to the 1x1 level (the full
+ * chain) - uploaded as given: prefiltered environment levels, with no
+ * generated chain and so no renderability requirement on the format (an
+ * "rgba16f" chain works on every device). Explicit levels imply `mipmap:
+ * true`. Sampler-only: the id binds through `textures` like any other,
  * but `<texture src>` cannot display it and `readTexture`, `copyTexture`,
  * `uploadTexture` and `resizeTexture` throw (it is create-once). `wrap` has
  * no effect - cube filtering is seamless across faces. Binding a cube map
  * to a `sampler2D`, or a 2D texture to a `samplerCube`, throws at the bind.
- * Note GL's cube convention: lookups are as seen from inside the cube, so
- * photographed faces read mirrored on the x axis unless the lookup flips it
- * (Three's flipEnvMap). Freed like `createTexture` (auto-free under a
+ * Note GL's cube convention: each face is what a lookup in that direction
+ * returns, the cube as seen from OUTSIDE, so a face set authored the Three
+ * way (each face as seen from inside) reads mirrored on x unless each
+ * image is mirrored at load. Freed like `createTexture` (auto-free under a
  * reactive owner, `{ autoFree: false }` or `destroyTexture` otherwise).
  */
 export function createCubeTexture(
-  faces: (Uint8Array | Float32Array)[],
+  faces: (Uint8Array | Float32Array)[] | (Uint8Array | Float32Array)[][],
   size: number,
   opts?: CreateOptions & SamplerOptions & TextureFormatOptions,
 ): gpu.TextureId {
@@ -476,6 +482,35 @@ export function createDrawTarget(
     SamplerOptions,
 ): gpu.TextureId {
   let id = gpu.createDrawTarget(width, height, params, opts)
+  if (opts?.autoFree !== false && getOwner()) onCleanup(() => gpu.destroyTexture(id))
+  return id
+}
+
+/**
+ * Creates a cube draw target: a draw target whose output is a `size` x
+ * `size` cube map, rendered one face at a time with `renderTarget(id,
+ * face)` (0 +X, 1 -X, 2 +Y, 3 -Y, 4 +Z, 5 -Z) - the reflection-probe
+ * primitive (`@solidrt/3d`'s `scene.createReflectionProbe` drives it).
+ * Manual by contract, one depth renderbuffer for the six faces (`depth:
+ * true`), no samples, mipmap or tiles; the id binds to a `samplerCube`
+ * and cannot be displayed, read back, copied or resized. Each face pass
+ * inverts the front-face rule (a GL cube face is the x mirror of a 2D
+ * target's image), so render the faces through an x-mirrored projection;
+ * see flux:gpu's createCubeDrawTarget. Freed like every target.
+ */
+export function createCubeDrawTarget(
+  size: number,
+  params?: gpu.ShaderParams | null,
+  opts?: {
+    depth?: boolean
+    textures?: gpu.TextureBindings
+    clearColor?: [number, number, number, number]
+    render?: "manual"
+    loadOp?: "clear" | "load"
+  } & CreateOptions &
+    SamplerOptions,
+): gpu.TextureId {
+  let id = gpu.createCubeDrawTarget(size, params, opts)
   if (opts?.autoFree !== false && getOwner()) onCleanup(() => gpu.destroyTexture(id))
   return id
 }

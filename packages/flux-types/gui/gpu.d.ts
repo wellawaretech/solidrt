@@ -276,16 +276,24 @@ declare module "flux:gpu" {
   /**
    * Create a cube map from six square faces in GL order (+X, -X, +Y, -Y,
    * +Z, -Z), each exactly one `size` x `size` frame at the declared format
-   * (view type per format as in {@link createTexture}). Returns an ordinary
-   * texture id that only a `uniform samplerCube` binding consumes - sampled
-   * by direction (`texture(uEnv, dir)`, `textureLod` for a level when
-   * `mipmap: true` built the chain from the faces). Sampler-only and
-   * create-once: `<texture src>` cannot display it, and uploadTexture,
+   * (view type per format as in {@link createTexture}) - or from an explicit
+   * mip chain: an array of such six-face arrays, level 0 first, sizes
+   * halving down to the 1x1 level (the FULL chain; a shorter one throws),
+   * uploaded as given instead of generated, so it carries prefiltered
+   * levels and needs no color-renderable format (an "rgba16f" chain works
+   * on every device). Explicit levels imply `mipmap: true` (`mipmap: false`
+   * with them throws). Returns an ordinary texture id that only a `uniform
+   * samplerCube` binding consumes - sampled by direction (`texture(uEnv,
+   * dir)`, `textureLod` for a level when the chain exists). Sampler-only
+   * and create-once: `<texture src>` cannot display it, and uploadTexture,
    * resizeTexture, readTexture and copyTexture throw for it. `wrap` is
    * accepted and has no effect (cube filtering is seamless). A cube map on a
    * `sampler2D`, or a 2D texture on a `samplerCube`, throws at the bind.
+   * GL's convention holds: each face is what a lookup in that direction
+   * returns (the cube seen from outside), so a face set authored as seen
+   * from inside (Three's) is mirrored per image before upload.
    */
-  export function createCubeTexture(faces: (Uint8Array | Float32Array)[], size: number, opts?: SamplerOptions & TextureFormatOption & LabelOption): TextureId
+  export function createCubeTexture(faces: (Uint8Array | Float32Array)[] | (Uint8Array | Float32Array)[][], size: number, opts?: SamplerOptions & TextureFormatOption & LabelOption): TextureId
   /**
    * Create a texture intended to be updated later via {@link uploadTexture}. The
    * seed buffer must hold at least one frame at the declared format's size
@@ -971,6 +979,35 @@ declare module "flux:gpu" {
       LabelOption,
   ): TextureId
   /**
+   * Create a cube draw target: a draw target whose output is a `size` x
+   * `size` CUBE MAP, rendered one face at a time with `renderTarget(id,
+   * face)` (GL order: 0 +X, 1 -X, 2 +Y, 3 -Y, 4 +Z, 5 -Z) - the
+   * reflection-probe and sky-bake primitive. One entry list, shared params
+   * and bindings as on {@link createDrawTarget}; the app writes the face's
+   * camera into the shared params and renders, six times. Manual by
+   * contract (`render` defaults to "manual"; "auto" throws), one private
+   * depth renderbuffer for all faces (`depth: true`; "texture" throws), no
+   * `samples`, no `mipmap`, no `into`. The id is a cube map to every
+   * consumer: bind it to a `samplerCube`, never display, read back, copy
+   * or resize it. Each face pass inverts the front-face rule: a GL cube
+   * face is seen from outside, the x mirror of a 2D target's image, so
+   * render every face through an x-mirrored projection and the pipelines'
+   * cull modes keep their meaning (derivative-built tangent frames flip
+   * with the mirror - a known artifact of mirrored views).
+   */
+  export function createCubeDrawTarget(
+    size: number,
+    params?: ShaderParams | null,
+    opts?: {
+      depth?: boolean
+      textures?: TextureBindings
+      clearColor?: [number, number, number, number]
+      render?: "manual"
+      loadOp?: "clear" | "load"
+    } & SamplerOptions &
+      LabelOption,
+  ): TextureId
+  /**
    * The depth texture of a draw target created with `depth: "texture"`: a
    * texture id of its own, stable for the target's life (a
    * {@link setTargetSize} follows the color), holding the target's depth
@@ -1166,9 +1203,11 @@ declare module "flux:gpu" {
    * the one counting. Ping-pong feedback is two manual targets sampling
    * each other, stepped alternately from `onFrame`; binding a target to
    * ITSELF still throws (same-pass GL feedback, undefined pixels regardless
-   * of who schedules it).
+   * of who schedules it). `face` (0..5) names the face of a cube draw
+   * target ({@link createCubeDrawTarget}) and is required there; a 2D
+   * target takes none.
    */
-  export function renderTarget(id: TextureId): void
+  export function renderTarget(id: TextureId, face?: number): void
   /**
    * Overwrite a `render: "manual"` target with another texture's current
    * pixels, GPU-side: the seed/history analog of {@link uploadTexture}

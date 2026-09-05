@@ -227,6 +227,52 @@ impl TextureFormat {
 /// -Y, +Z, -Z.
 pub const CUBE_FACES: usize = 6;
 
+/// The level count of a full mip chain from a `size` edge down to 1x1
+/// (GL's rule: level k has edge `max(1, size >> k)`).
+pub fn mip_levels(size: u32) -> u32 {
+  u32::BITS - size.max(1).leading_zeros()
+}
+
+/// The edge of level `level` of a chain from a `size` edge.
+pub fn mip_size(size: u32, level: u32) -> u32 {
+  (size >> level).max(1)
+}
+
+/// Check a cube map's face list: the six base faces (+X, -X, +Y, -Y, +Z,
+/// -Z), or an explicit mip chain - the FULL chain down to 1x1, level-major
+/// (level 0's six faces, then level 1's, ...), which is what prefiltered
+/// environment maps upload - each face `format.byte_len(edge, edge)`
+/// bytes for its level's edge. Returns the level count carried: 1 for
+/// the base faces (a chain, if sampled, is generated from them).
+pub fn check_cube_faces(size: u32, faces: &[Vec<u8>], format: TextureFormat) -> Result<u32, String> {
+  let chain = mip_levels(size);
+  let levels = if faces.len() == CUBE_FACES {
+    1
+  } else if faces.len() == CUBE_FACES * chain as usize {
+    chain
+  } else {
+    return Err(format!(
+      "a cube map takes {CUBE_FACES} faces (+X, -X, +Y, -Y, +Z, -Z) or its full {chain}-level mip chain of {} faces, got {}",
+      CUBE_FACES * chain as usize,
+      faces.len()
+    ));
+  };
+  for (i, face) in faces.iter().enumerate() {
+    let level = (i / CUBE_FACES) as u32;
+    let edge = mip_size(size, level);
+    let expected = format.byte_len(edge, edge);
+    if face.len() != expected {
+      return Err(format!(
+        "cube face {} of level {level} is {} bytes, expected {expected} ({edge}x{edge} {})",
+        i % CUBE_FACES,
+        face.len(),
+        format.name()
+      ));
+    }
+  }
+  Ok(levels)
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
 pub enum TextureShape {
   #[default]

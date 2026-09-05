@@ -1,9 +1,10 @@
 use std::collections::HashMap;
 
 use crate::gpu::{
-  resolve_draw_range, validate_binding_shapes, validate_draw_range, validate_params, validate_texture_bindings,
-  BoundTexture, BufferIds, BufferUpdate, DrawBounds, DrawRange, DrawUpdate, GpuLimits, IndexFormat, ParamValue,
-  TextureBinding, TextureFormat, TextureShape, UniformKind, UniformSlot, UniformTable,
+  check_cube_faces, mip_levels, mip_size, resolve_draw_range, validate_binding_shapes, validate_draw_range,
+  validate_params, validate_texture_bindings, BoundTexture, BufferIds, BufferUpdate, DrawBounds, DrawRange,
+  DrawUpdate, GpuLimits, IndexFormat, ParamValue, TextureBinding, TextureFormat, TextureShape, UniformKind,
+  UniformSlot, UniformTable, CUBE_FACES,
 };
 
 fn table(entries: &[(&str, UniformKind)]) -> UniformTable {
@@ -459,4 +460,40 @@ fn sampler_cube_is_a_sampler_kind() {
   let t = table(&[("uEnv", UniformKind::SamplerCube)]);
   let err = validate_params(&t, &[scalar("uEnv", 1.0)]).expect_err("sampler via params must error");
   assert!(err.contains("samplerCube") && err.contains("bind it via textures"), "{err}");
+}
+
+// The cube face list: six base faces, or the full mip chain level-major.
+fn cube_faces(size: u32, levels: u32) -> Vec<Vec<u8>> {
+  let mut faces = Vec::new();
+  for level in 0..levels {
+    let edge = mip_size(size, level) as usize;
+    for _ in 0..CUBE_FACES {
+      faces.push(vec![0u8; edge * edge * 4]);
+    }
+  }
+  faces
+}
+
+#[test]
+fn mip_chain_counts_and_edges() {
+  assert_eq!(mip_levels(1), 1);
+  assert_eq!(mip_levels(4), 3);
+  assert_eq!(mip_levels(5), 3);
+  assert_eq!(mip_levels(128), 8);
+  assert_eq!(mip_size(5, 1), 2);
+  assert_eq!(mip_size(5, 2), 1);
+  assert_eq!(mip_size(4, 7), 1);
+}
+
+#[test]
+fn cube_faces_base_or_full_chain() {
+  let rgba = TextureFormat::Rgba8;
+  assert_eq!(check_cube_faces(4, &cube_faces(4, 1), rgba).expect("six faces"), 1);
+  assert_eq!(check_cube_faces(4, &cube_faces(4, 3), rgba).expect("full chain"), 3);
+  let err = check_cube_faces(4, &cube_faces(4, 2), rgba).expect_err("a partial chain must error");
+  assert!(err.contains("full 3-level mip chain of 18 faces") && err.contains("got 12"), "{err}");
+  let mut short = cube_faces(4, 3);
+  short[7] = vec![0u8; 4];
+  let err = check_cube_faces(4, &short, rgba).expect_err("a wrong level edge must error");
+  assert!(err.contains("face 1 of level 1") && err.contains("expected 16 (2x2 rgba8)"), "{err}");
 }

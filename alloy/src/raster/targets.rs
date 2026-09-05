@@ -34,14 +34,18 @@ impl RasterState {
   /// then the one pass, then seed the dirty set so targets sampling this one
   /// re-render at the next flush - the same shape as an uploadTexture
   /// content change.
-  pub(super) fn render_target_now(&mut self, id: u64) {
+  pub(super) fn render_target_now(&mut self, id: u64, face: Option<u32>) {
     self.flush_dirty();
     match self.shaders.get(&id) {
       Some(shader) => {
         timed_pass(&self.gl, &mut self.pass_timer, &self.stats, id, shader, || {
-          shader.render(&self.gl, &|bindings, program| {
+          let resolve = |bindings: &[TextureBinding], program: &ShaderProgram| {
             resolve_binding_list(&self.textures, &self.samplers, bindings, program)
-          });
+          };
+          match face {
+            Some(face) => shader.render_face(&self.gl, &resolve, face),
+            None => shader.render(&self.gl, &resolve),
+          }
         });
         self.dirty.insert(id);
       }
@@ -365,6 +369,37 @@ impl RasterState {
       _ => None,
     };
     Ok(cmd::TargetHandles { color, depth })
+  }
+
+  /// Create a cube draw target (see `RasterCmd::CreateCubeDrawTarget`):
+  /// registered like an uploaded cube map - a cube-shaped texture entry
+  /// with no Impeller adoption, the name deleted by `release_cube` on
+  /// destroy - plus its shader, cleared now (a manual target's defined
+  /// initial contents, all six faces).
+  pub(super) fn create_cube_draw_target(
+    &mut self,
+    id: u64,
+    size: u32,
+    spec: TargetSpec,
+    depth: DepthStorage,
+  ) -> Result<(), String> {
+    let shader = ShaderTexture::new_cube_draw_target(&self.gl, size, depth, spec.clear_color)?
+      .with_sampler(spec.sampler)
+      .with_manual(true)
+      .with_load(spec.load);
+    let gpu = GpuTexture {
+      gl_texture: shader.gl_texture(),
+      width: size,
+      height: size,
+      shape: TextureShape::Cube,
+      sampler: spec.sampler,
+      format: TextureFormat::Rgba8,
+      label: spec.label,
+    };
+    shader.clear(&self.gl);
+    self.textures.insert(id, gpu);
+    self.shaders.insert(id, shader);
+    Ok(())
   }
 
   /// Create a sub-target of draw target `parent` under `id` (see

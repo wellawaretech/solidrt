@@ -43,7 +43,7 @@ import type {
 import { layoutAttributes, layoutKey, layoutSlot } from "./geometry.ts"
 import type { VertexLayout } from "./geometry.ts"
 import { linearColor } from "./color.ts"
-import { CUBE_LOOKUP, litFragment, litShadowFragment, litVertex, SKIN_DECLS, SKIN_MATRIX, standardFragment, UNLIT_VERTEX, unlitFragment, unlitShadowFragment, unlitVertex, OUTPUT } from "./glsl.ts"
+import { litFragment, litShadowFragment, litVertex, SKIN_DECLS, SKIN_MATRIX, standardFragment, UNLIT_VERTEX, unlitFragment, unlitShadowFragment, unlitVertex, OUTPUT } from "./glsl.ts"
 
 export type Material = {
   /** The pipeline this material draws with for geometry of `layout`
@@ -877,17 +877,16 @@ const BACKGROUND_FRAGMENT_PREAMBLE =
 // The skybox fragment behind setBackground({ cube }): the view ray through
 // the sky's rotation (the INVERSE turn, written by skyboxParams, so the
 // sky itself turns by +rotation like a node would), then the cube lookup
-// with its handedness flip, times the intensity, through the output
+// times the intensity, through the output
 // stage (the preamble declares it) like every lit pixel. Opaque: the
 // skybox replaces the clearColor exactly as a GLSL background does.
 export const SKYBOX_FRAGMENT = glsl`
   uniform samplerCube uSky;
   uniform float uSkyIntensity;
   uniform mat4 uSkyRotation;
-  ${CUBE_LOOKUP}
   void main() {
     vec3 dir = mat3(uSkyRotation) * normalize(vRay);
-    fragColor = outputColor(texture(uSky, cubeDir(dir)).rgb * uSkyIntensity, 1.0);
+    fragColor = outputColor(texture(uSky, dir).rgb * uSkyIntensity, 1.0);
   }
 `
 
