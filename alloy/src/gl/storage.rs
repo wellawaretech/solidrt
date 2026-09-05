@@ -43,9 +43,10 @@ pub(super) fn create_target(
   gl: &glow::Context,
   width: u32,
   height: u32,
+  format: TextureFormat,
 ) -> Result<(glow::Texture, glow::Framebuffer), String> {
   unsafe {
-    let target = create_target_texture(gl, width, height)?;
+    let target = create_target_texture(gl, width, height, format)?;
     let fbo = match gl.create_framebuffer() {
       Ok(fbo) => fbo,
       Err(e) => {
@@ -57,27 +58,30 @@ pub(super) fn create_target(
   }
 }
 
-/// The target texture alone (creation and resize share it): LINEAR, clamp,
-/// no mips - the default MIN_FILTER references mipmaps, which would make the
+/// The target texture alone (creation and resize share it), at `format`'s
+/// storage (a color-renderable one, checked UI-side): LINEAR, clamp, no
+/// mips - the default MIN_FILTER references mipmaps, which would make the
 /// texture sampling-incomplete (reads as black) when Impeller samples it.
 /// Restores the texture binding it touches.
 pub(super) unsafe fn create_target_texture(
   gl: &glow::Context,
   width: u32,
   height: u32,
+  format: TextureFormat,
 ) -> Result<glow::Texture, String> {
   let prev_tex = gl.get_parameter_i32(glow::TEXTURE_BINDING_2D);
   let target = gl.create_texture().map_err(|e| format!("glGenTextures failed: {e}"))?;
   gl.bind_texture(glow::TEXTURE_2D, Some(target));
+  let (internal, layout, ty) = super::texture::gl_storage(format);
   gl.tex_image_2d(
     glow::TEXTURE_2D,
     0,
-    glow::RGBA8 as i32,
+    internal as i32,
     width as i32,
     height as i32,
     0,
-    glow::RGBA,
-    glow::UNSIGNED_BYTE,
+    layout,
+    ty,
     glow::PixelUnpackData::Slice(None),
   );
   gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MIN_FILTER, glow::LINEAR as i32);
@@ -176,6 +180,7 @@ pub(super) fn create_mesh_storage(
   height: u32,
   depth: DepthStorage,
   samples: u32,
+  format: TextureFormat,
 ) -> Result<MeshStorage, String> {
   if depth == DepthStorage::Texture && samples >= 2 {
     // Gated UI-side; backstopped here because a multisampled depth texture
@@ -184,7 +189,7 @@ pub(super) fn create_mesh_storage(
   }
   unsafe {
     let prev_fbo = gl.get_parameter_i32(glow::FRAMEBUFFER_BINDING);
-    let (target, fbo) = create_target(gl, width, height)?;
+    let (target, fbo) = create_target(gl, width, height, format)?;
     let depth = match depth {
       DepthStorage::None => None,
       DepthStorage::Buffer => match gl.create_renderbuffer() {
@@ -224,7 +229,7 @@ pub(super) fn create_mesh_storage(
           }
         },
       };
-      match attach_storage(gl, &storage, width, height) {
+      match attach_storage(gl, &storage, width, height, format) {
         Ok(()) => {
           gl.bind_framebuffer(glow::FRAMEBUFFER, prev_framebuffer(prev_fbo));
           return Ok(storage);
@@ -238,7 +243,7 @@ pub(super) fn create_mesh_storage(
         }
       }
     }
-    let result = attach_storage(gl, &storage, width, height);
+    let result = attach_storage(gl, &storage, width, height, format);
     gl.bind_framebuffer(glow::FRAMEBUFFER, prev_framebuffer(prev_fbo));
     match result {
       Ok(()) => Ok(storage),
@@ -358,6 +363,7 @@ pub(super) unsafe fn attach_storage(
   storage: &MeshStorage,
   width: u32,
   height: u32,
+  format: TextureFormat,
 ) -> Result<(), String> {
   let (w, h) = (width as i32, height as i32);
   let prev_rb = gl.get_parameter_i32(glow::RENDERBUFFER_BINDING);
@@ -397,7 +403,10 @@ pub(super) unsafe fn attach_storage(
       }
       gl.bind_framebuffer(glow::FRAMEBUFFER, Some(*fbo));
       gl.bind_renderbuffer(glow::RENDERBUFFER, Some(*color));
-      gl.renderbuffer_storage_multisample(glow::RENDERBUFFER, *samples, glow::RGBA8, w, h);
+      // The resolve blit needs matching formats: the renderbuffer is the
+      // texture's.
+      let (internal, _, _) = super::texture::gl_storage(format);
+      gl.renderbuffer_storage_multisample(glow::RENDERBUFFER, *samples, internal, w, h);
       gl.framebuffer_renderbuffer(glow::FRAMEBUFFER, glow::COLOR_ATTACHMENT0, glow::RENDERBUFFER, Some(*color));
       if let Some(DepthAttachment::Buffer(rb)) = storage.depth {
         gl.bind_renderbuffer(glow::RENDERBUFFER, Some(rb));
@@ -450,7 +459,8 @@ pub fn create_layer_target(
   height: u32,
   clear: [f32; 4],
 ) -> Result<(glow::Texture, glow::Framebuffer), String> {
-  let MeshStorage { target, fbo, .. } = create_mesh_storage(gl, width, height, DepthStorage::None, 1)?;
+  let MeshStorage { target, fbo, .. } =
+    create_mesh_storage(gl, width, height, DepthStorage::None, 1, TextureFormat::Rgba8)?;
   unsafe {
     // Scissor, color mask, and clear color are Impeller-cached state on this
     // shared context: force a full clear and put all three back.

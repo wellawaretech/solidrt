@@ -47,8 +47,12 @@ impl SamplerState {
   /// filter without a comparison mode), clamped, no chain. Overrides on a
   /// binding may still ask for linear; they get an incomplete sample, so
   /// consumers filter in the shader (PCF).
-  pub const DEPTH: SamplerState =
-    SamplerState { filter: SamplerFilter::Nearest, wrap: SamplerWrap::Clamp, mipmap: false, anisotropy: MIN_ANISOTROPY };
+  pub const DEPTH: SamplerState = SamplerState {
+    filter: SamplerFilter::Nearest,
+    wrap: SamplerWrap::Clamp,
+    mipmap: false,
+    anisotropy: MIN_ANISOTROPY,
+  };
 
   /// The cache slot of an anisotropy level: log2 of the (power-of-two) level.
   pub(crate) fn anisotropy_slot(anisotropy: u8) -> usize {
@@ -58,7 +62,12 @@ impl SamplerState {
 
 impl Default for SamplerState {
   fn default() -> Self {
-    SamplerState { filter: SamplerFilter::default(), wrap: SamplerWrap::default(), mipmap: false, anisotropy: MIN_ANISOTROPY }
+    SamplerState {
+      filter: SamplerFilter::default(),
+      wrap: SamplerWrap::default(),
+      mipmap: false,
+      anisotropy: MIN_ANISOTROPY,
+    }
   }
 }
 
@@ -92,8 +101,11 @@ pub enum SamplerWrap {
 /// Rgba8Srgb is an rgba8 whose stored bytes are sRGB-encoded: sampling
 /// decodes them to linear light in hardware, before filtering, so the
 /// filter and the mip chain are right - the color-map format of
-/// linear-space lighting. Shader/pipeline targets are always RGBA8; this
-/// only applies to pixel uploads.
+/// linear-space lighting. Draw targets (2D and cube) take Rgba8, Rgba8Srgb
+/// or, where half float is color-renderable, Rgba16f
+/// (`GpuLimits::check_render_format`); a non-Rgba8 draw target is
+/// sampler-only like the uploads of those formats. Shader and pipeline
+/// textures are always RGBA8.
 ///
 /// Reserved future value of the same app-facing vocabulary, so it slots in
 /// without an API rethink: "etc2-rgba8" (compressed uploads; changes
@@ -180,10 +192,12 @@ impl TextureFormat {
     !matches!(self, TextureFormat::R32f | TextureFormat::Rgba32f | TextureFormat::Depth24)
   }
 
-  /// Whether the format is upload-and-sample only, with no readback or copy
-  /// path: float is not color-renderable in core GLES 3.0, and an sRGB
-  /// texture's readback would sample (decode) instead of returning the
-  /// stored bytes.
+  /// Whether the format is sample-only, with no readback, copy or display
+  /// path: the 32-bit floats are not color-renderable in core GLES 3.0, a
+  /// half-float readback would quantize, and an sRGB texture's readback
+  /// would sample (decode) instead of returning the stored bytes. A draw
+  /// target of such a format renders (through a pass) but is read the same
+  /// way: through a pass into an Rgba8 target.
   pub fn sample_only(self) -> bool {
     self.is_float() || self == TextureFormat::Rgba8Srgb
   }
@@ -422,9 +436,11 @@ impl SamplerState {
 /// thread's map.
 pub struct TextureEntry {
   /// The Impeller adoption of the GL name: what the `<texture>` display
-  /// draw and the Impeller readback consume. None for a cube map - Impeller
-  /// adopts 2D names only, and a cube map is sampling-only anyway (see
-  /// `TextureShape`), so those two consumers reject it by shape.
+  /// draw and the Impeller readback consume. None for a cube map (Impeller
+  /// adopts 2D names only, and a cube map is sampling-only anyway, see
+  /// `TextureShape`) and for a 2D draw target of a format other than rgba8
+  /// (half float or sRGB storage Impeller would display raw): both are
+  /// sampler-only, and those two consumers reject them by this field.
   pub impeller: Option<Texture>,
   pub width: u32,
   pub height: u32,
@@ -442,6 +458,12 @@ impl TextureEntry {
   /// An ordinary 2D entry over its adopted Impeller handle.
   pub fn d2(impeller: Texture, width: u32, height: u32, sampler: SamplerState, format: TextureFormat) -> Self {
     TextureEntry { impeller: Some(impeller), width, height, sampler, format, shape: TextureShape::D2 }
+  }
+
+  /// A 2D entry with no Impeller handle: a draw target of a format other
+  /// than rgba8, sampler-only.
+  pub fn d2_sampler_only(width: u32, height: u32, sampler: SamplerState, format: TextureFormat) -> Self {
+    TextureEntry { impeller: None, width, height, sampler, format, shape: TextureShape::D2 }
   }
 
   /// A cube map entry: `size` x `size` faces, no Impeller handle.

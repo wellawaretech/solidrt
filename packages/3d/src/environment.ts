@@ -18,6 +18,7 @@ import {
   destroyShader,
   destroyTexture,
   glsl,
+  limits,
   linkProgram,
   removeDraw,
   renderTarget,
@@ -143,10 +144,11 @@ const EQUIRECT_FACE = glsl`
  * createCubeTexture's (`mipmap: true` for an environment shininess can
  * blur; `label`; `autoFree: false` to own it), and `format` names the
  * PANORAMA's format so the cube decodes like it: "rgba8-srgb" for a
- * photographed sky uploaded as such, "rgba8" (default) for data. An HDR
- * ("rgba16f") panorama has no runtime path here - a cube draw target is
- * 8-bit - so it throws; bake it with `srt tool 3d/environment` and
- * loadEnvironment it. The panorama's center column faces -Z and its top
+ * photographed sky uploaded as such, "rgba8" (default) for data,
+ * "rgba16f" for an HDR panorama (the cube keeps the range; renderable on
+ * every device with half-float rendering, else it throws - the prefiltered
+ * form of that panorama is `srt tool 3d/environment` plus
+ * loadEnvironment). The panorama's center column faces -Z and its top
  * row is +Y. Leave its wrap at the default clamp: `repeat` would also
  * wrap vertically and bleed the poles across the top and bottom rows,
  * while the clamped seam column costs at most a texel-wide blend at +Z.
@@ -156,8 +158,8 @@ const EQUIRECT_FACE = glsl`
 export function equirectToCube(map: TextureId, size: number, opts?: CreateOptions & SamplerOptions & TextureFormatOptions): TextureId {
   if (!Number.isInteger(size) || size < 1) throw new Error("equirectToCube: size must be a positive integer, got " + size)
   let format = opts?.format ?? "rgba8"
-  if (format !== "rgba8" && format !== "rgba8-srgb") {
-    throw new Error('equirectToCube: format must be "rgba8" or "rgba8-srgb" (a cube draw target is 8-bit), got ' + format)
+  if (format !== "rgba8" && format !== "rgba8-srgb" && format !== "rgba16f") {
+    throw new Error('equirectToCube: format must be "rgba8", "rgba8-srgb" or "rgba16f" (the panorama\'s), got ' + format)
   }
   let label = opts?.label ?? "equirect"
   let cube = createCubeDrawTarget(size, null, { ...opts, format, label })
@@ -260,18 +262,29 @@ export type Prefilter = {
   dispose(): void
 }
 
+/** The format of a rendered radiance cube (a probe's faces, its chain, a
+ * baked sky): half float where the device renders it, so the range of a
+ * sun or an emissive survives into reflections as in every engine's HDR
+ * probe, else 8-bit and clamped - the picture degrades, the app runs. Not
+ * a knob: the renderer decides for all probes (Godot), HDR by default
+ * (Unity). */
+export type ProbeFormat = "rgba8" | "rgba16f"
+export function probeFormat(): ProbeFormat {
+  return limits.halfFloatRenderable ? "rgba16f" : "rgba8"
+}
+
 /**
  * The runtime counterpart of the bake tool's prefilterCube: a mipmapped
- * cube draw target of `size` whose chain `run()` fills from `source`, a
- * `mipmap: true` cube of the same size (a cube draw target rendered
- * sharp), one pass per face per level - 48 small passes at 128. Three's
- * PMREMGenerator, Unity's and Godot's probe convolution, on the same
- * roughness-to-level rule as the .srte chain (levelRoughness), so
- * `standard` reads both alike.
+ * cube draw target of `size` and `format` whose chain `run()` fills from
+ * `source`, a `mipmap: true` cube of the same size and format (a cube
+ * draw target rendered sharp), one pass per face per level - 48 small
+ * passes at 128. Three's PMREMGenerator, Unity's and Godot's probe
+ * convolution, on the same roughness-to-level rule as the .srte chain
+ * (levelRoughness), so `standard` reads both alike.
  */
-export function createPrefilter(size: number, source: TextureId, label: string): Prefilter {
+export function createPrefilter(size: number, source: TextureId, format: ProbeFormat, label: string): Prefilter {
   let pass: ReturnType<typeof facePipeline> | null = facePipeline(PREFILTER_FACE, label + "-prefilter")
-  let cube = createCubeDrawTarget(size, null, { mipmap: true, autoFree: false, label })
+  let cube = createCubeDrawTarget(size, null, { mipmap: true, format, autoFree: false, label })
   let entry = addDraw(cube, pass.pipeline, { uFace: 0, uRoughness: 0 }, { vertexCount: 3, textures: { uSource: source } })
   let levels = mipLevels(size)
   let finish = () => {

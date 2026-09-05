@@ -20,8 +20,11 @@ import type { Vec3 } from "@solidrt/3d/math"
 const COUNT = 6
 const RADIUS = 0.45
 const GAP = 1.15
-// The sun's direction.
-const SUN: Vec3 = normalize([0.5, 0.4, -0.75])
+// The sun's direction: high and on the camera's side, so its reflection
+// lands on the spheres' upper right - a sharp disc on the mirror, a broad
+// bright highlight on the rough metals (the HDR bake keeps the disc's
+// energy, which an 8-bit probe would clamp to white).
+const SUN: Vec3 = normalize([0.6, 0.5, 0.6])
 // The bake's face edge: 128 is the environment default; the sun disc
 // blurs into its glow at this size, which is what a rough surface wants.
 const BAKE_SIZE = 128
@@ -31,10 +34,12 @@ const BAKE_SIZE = 128
 // screen and leaves them linear for the bake.
 const SKY = glsl`
   uniform vec3 uSunDir;
-  // Cosine of the disc's angular radius (about 2 degrees) and the glow's
-  // falloff exponent.
+  // Cosine of the disc's angular radius (about 2 degrees), the glow's
+  // falloff exponent and the disc's radiance (well above 1: a low-key
+  // sun, real ones are far brighter still).
   const float SUN_DISC = 0.9994;
   const float SUN_GLOW = 24.0;
+  const float SUN_RADIANCE = 40.0;
   void main() {
     vec3 d = normalize(vRay);
     vec3 zenith = vec3(0.08, 0.22, 0.55);
@@ -44,7 +49,7 @@ const SKY = glsl`
     vec3 col = h >= 0.0 ? mix(horizon, zenith, pow(h, 0.6)) : mix(horizon, ground, pow(-h, 0.2));
     float s = max(dot(d, uSunDir), 0.0);
     col += vec3(1.0, 0.85, 0.6) * pow(s, SUN_GLOW) * 0.6;
-    if (s > SUN_DISC) col = vec3(6.0, 5.2, 4.0);
+    if (s > SUN_DISC) col = vec3(1.0, 0.87, 0.67) * SUN_RADIANCE;
     fragColor = outputColor(col, 1.0);
   }
 `

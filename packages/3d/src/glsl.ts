@@ -404,9 +404,10 @@ export const SRGB = glsl`
 export const OUTPUT = glsl`
   uniform float uExposure;
   uniform float uToneMapping;
-  // 1 (the scene's default) encodes to sRGB for display; 0 writes linear
-  // light, what a reflection probe's faces hold so the environment
-  // lookups read radiance (the scene sets it per target).
+  // 1 (the scene's default) clamps and encodes to sRGB for display; 0
+  // writes linear light unclamped, what a reflection probe's faces hold
+  // so the environment lookups read radiance (the scene sets it per
+  // target; an 8-bit target clamps it on write regardless).
   uniform float uOutputEncode;
   ${SRGB}
   // Stephen Hill's fit of the ACES RRT and ODT (Three's ACESFilmic, Godot's
@@ -435,8 +436,10 @@ export const OUTPUT = glsl`
     vec3 c = alpha > 0.0 ? rgb / alpha : rgb;
     c *= uExposure;
     if (uToneMapping > 0.5) c = acesToneMap(c);
-    c = clamp(c, 0.0, 1.0);
-    if (uOutputEncode > 0.5) c = linearToSrgb(c);
+    // Linear output keeps its range (a half-float probe holds a sun's
+    // radiance); the display encode is 8-bit and clamps first.
+    if (uOutputEncode > 0.5) c = linearToSrgb(clamp(c, 0.0, 1.0));
+    else c = max(c, vec3(0.0));
     return vec4(c * alpha, alpha);
   }
 `

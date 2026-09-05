@@ -7,7 +7,7 @@ completed: 2026-09-03
 
 # Half-float and sRGB texture formats (rgba16f, rgba8-srgb)
 
-What landed (stage 3a of [3d-environment](../backlog/3d-environment.md),
+What landed (stage 3a of [3d-environment](../done/3d-environment.md),
 verified by `probes/hdr-format-probe.tsx`):
 
 - `"rgba16f"` on createTexture / createCubeTexture / createMutableTexture:
@@ -36,7 +36,7 @@ verified by `probes/hdr-format-probe.tsx`):
 
 The shape as decided before it landed:
 
-From the environment-tier comparison ([3d-environment](3d-environment.md)):
+From the environment-tier comparison ([3d-environment](../done/3d-environment.md)):
 Three's PMREM default is `HalfFloatType`, Unity's and Godot's HDR sky and
 reflection storage is half float. GLES 3.0 lists RGBA16F as
 texture-filterable (and mip-mappable through `glGenerateMipmap`), while

@@ -329,6 +329,10 @@ pub(crate) struct RasterState {
   // resolution, re-uploads, and readbacks. Mirrors the UI side's registry
   // through the command stream.
   textures: HashMap<u64, GpuTexture>,
+  /// 2D names Impeller never adopted (draw targets of a format other than
+  /// rgba8: sampler-only, never displayed): this thread's to delete, like
+  /// every cube map's (see `release_texture`).
+  unadopted: HashSet<u64>,
   // Compiled shader targets keyed by the texture id their output is
   // registered under.
   shaders: HashMap<u64, ShaderTexture>,
@@ -552,6 +556,7 @@ impl RasterState {
       present_run: None,
       present_fences: std::collections::VecDeque::new(),
       textures: HashMap::new(),
+      unadopted: HashSet::new(),
       shaders: HashMap::new(),
       target_depths: HashMap::new(),
       depth_owners: HashMap::new(),
@@ -695,8 +700,8 @@ impl RasterState {
           RasterCmd::CreateShaderTarget { id, spec, entry, reply: tx } => {
             reply(tx, self.create_shader_target(id, spec, entry));
           }
-          RasterCmd::CreateDrawTarget { id, depth_id, spec, depth, reply: tx } => {
-            reply(tx, self.create_draw_target(id, depth_id, spec, depth));
+          RasterCmd::CreateDrawTarget { id, depth_id, spec, depth, format, reply: tx } => {
+            reply(tx, self.create_draw_target(id, depth_id, spec, depth, format));
           }
           RasterCmd::CreateCubeDrawTarget { id, size, spec, depth, format, reply: tx } => {
             reply(tx, self.create_cube_draw_target(id, size, spec, depth, format));
@@ -804,7 +809,7 @@ impl RasterState {
             Err(e) => log::warn!("[alloy] adopt snapshot texture {id} failed: {e}"),
           },
           RasterCmd::DestroyTexture { id } => {
-            self.release_cube(id);
+            self.release_texture(id);
             self.dirty.remove(&id);
             // The depth texture goes with its target (its name is
             // Impeller-owned like the color, so removal is bookkeeping).

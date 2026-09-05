@@ -15,7 +15,10 @@ use crate::gpu::{
 /// color output, and the depth texture when the target has one
 /// (`DepthStorage::Texture`). The UI side registers each under its own id.
 pub struct TargetHandles {
-  pub color: Texture,
+  /// The color's Impeller adoption; None for a draw target of a format
+  /// other than rgba8 (sampler-only, never displayed: the raster side owns
+  /// and deletes the name, as for a cube map).
+  pub color: Option<Texture>,
   pub depth: Option<Texture>,
 }
 use crate::gpu::{SamplerState, TextureFormat};
@@ -222,6 +225,7 @@ pub(crate) enum RasterCmd {
     depth_id: Option<u64>,
     spec: TargetSpec,
     depth: DepthStorage,
+    format: TextureFormat,
     reply: mpsc::Sender<Result<TargetHandles, String>>,
   },
   /// Create a cube draw target at `id`: a `size` x `size` cube map as the

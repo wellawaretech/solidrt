@@ -54,7 +54,7 @@ import { layoutKey, validateGeometry } from "./geometry.ts"
 import type { Geometry } from "./geometry.ts"
 import { acquireGeometryBuffers, releaseGeometryBuffers } from "./geometry-gpu.ts"
 import { backgroundPipeline, missingAttributes, SKYBOX_FRAGMENT } from "./material.ts"
-import { createEnvironmentPlaceholder, createPrefilter } from "./environment.ts"
+import { createEnvironmentPlaceholder, createPrefilter, probeFormat } from "./environment.ts"
 import type { Prefilter } from "./environment.ts"
 import type { Material } from "./material.ts"
 import { orderEntries } from "./order.ts"
@@ -1190,6 +1190,8 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
               // The prefilter reads the faces at the lod of each sample's
               // solid angle: a generated chain, refreshed per face render.
               mipmap,
+              // Linear radiance, HDR where the device renders half float.
+              format: probeFormat(),
               clearColor: vopts.clearColor,
               label: vopts.label ?? (opts?.label ?? "scene") + "-probe",
               autoFree: false,
@@ -1766,7 +1768,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       // probe's own names, so the scene's fan-out leaves them alone.
       for (let k of Object.keys(LINEAR_OUTPUT)) v.ownNames.add(k)
       setTargetParams(v.texture, LINEAR_OUTPUT)
-      let chain = prefilter ? createPrefilter(size, v.texture, (popts.label ?? (opts?.label ?? "scene") + "-probe") + "-chain") : null
+      let chain = prefilter ? createPrefilter(size, v.texture, probeFormat(), (popts.label ?? (opts?.label ?? "scene") + "-probe") + "-chain") : null
       v.probeCube = chain?.cube ?? v.texture
       let position: Vec3 = [popts.position[0], popts.position[1], popts.position[2]]
       return {

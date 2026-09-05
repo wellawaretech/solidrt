@@ -74,7 +74,7 @@ panoramas are the common interchange, so even the environment tier
 should get a fresh Three/Godot/Unity comparison before this builds.
 
 Environment-tier comparison done 2026-09-02
-([3d-environment](3d-environment.md)), as this note asked for. It
+([3d-environment](../done/3d-environment.md)), as this note asked for. It
 confirms the primitive: Godot and Unity both sample a mip-chained
 `samplerCube` with `textureLod`, and Three's 2D PMREM packing is its own
 WebGL1 workaround (no seamless cube filtering, no cube `textureLod`

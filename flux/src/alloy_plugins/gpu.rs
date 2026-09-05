@@ -583,16 +583,18 @@ fn collect_draw_target_spec(
   api: &str,
 ) -> rquickjs::Result<(alloy::TargetSpec, alloy::DepthStorage, Vec<alloy::TextureBinding>, Option<(u64, i32, i32)>)> {
   // `into` makes a sub-target: the parent's id plus the tile's top-left
-  // origin `x`/`y` (default 0). Depth is the parent's, so the key is
-  // rejected here; render/loadOp/samples are alloy's to reject.
+  // origin `x`/`y` (default 0). Depth and format are the parent's, so the
+  // keys are rejected here; render/loadOp/samples are alloy's to reject.
   let into = match opts {
     Some(o) => match o.get::<_, Option<f64>>("into")? {
       Some(parent) => {
-        if o.get::<_, rquickjs::Value>("depth").map(|v| !v.is_undefined()).unwrap_or(false) {
-          return Err(throw_str(
-            ctx,
-            &format!("{api}: 'depth' is the parent's on a sub-target; create the parent with it"),
-          ));
+        for key in ["depth", "format"] {
+          if o.get::<_, rquickjs::Value>(key).map(|v| !v.is_undefined()).unwrap_or(false) {
+            return Err(throw_str(
+              ctx,
+              &format!("{api}: '{key}' is the parent's on a sub-target; create the parent with it"),
+            ));
+          }
         }
         let x = o.get::<_, Option<f64>>("x")?.unwrap_or(0.0);
         let y = o.get::<_, Option<f64>>("y")?.unwrap_or(0.0);
@@ -1380,6 +1382,7 @@ fn create_draw_target(
   opts: OptArg<Object<'_>>,
 ) -> rquickjs::Result<u64> {
   let (spec, depth, textures, into) = collect_draw_target_spec(&ctx, &opts.0, width, height, "createDrawTarget")?;
+  let format = collect_format(&ctx, &opts.0, "createDrawTarget")?;
   let params = match &params {
     Some(o) => collect_params(&ctx, o, "createDrawTarget")?,
     None => Vec::new(),
@@ -1387,7 +1390,7 @@ fn create_draw_target(
   let st = state(&ctx);
   let id = match into {
     Some((parent, x, y)) => st.gui.alloy.create_sub_target(parent, x, y, spec),
-    None => st.gui.alloy.create_draw_target(spec, depth),
+    None => st.gui.alloy.create_draw_target(spec, depth, format),
   }
   .map_err(|e| throw_str(&ctx, &format!("createDrawTarget: {e}")))?;
   if !params.is_empty() {

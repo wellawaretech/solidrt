@@ -85,6 +85,11 @@ pub struct ShaderTexture {
   /// here (the parent renders the tile as a group of its own pass) and
   /// never deleted here. `width`/`height` are the tile's size.
   region: Option<Region>,
+  /// The color storage's pixel format (`TextureFormat::Rgba8` for every
+  /// shader texture and pipeline texture; a draw target's is its own, a
+  /// sub-target's its parent's). Survives resize, which reallocates the
+  /// target at it.
+  format: TextureFormat,
   /// A cube draw target (see `new_cube_draw_target`): `target` is a cube
   /// map name whose faces are rendered one at a time (`render_face`), each
   /// pass with the front-face rule inverted - GL's cube faces are seen
@@ -122,10 +127,11 @@ impl ShaderTexture {
     if program.is_pipeline() {
       return Err((program, "program is a pipeline; the target needs a render pipeline".to_string()));
     }
-    let MeshStorage { target, fbo, .. } = match create_mesh_storage(gl, width, height, DepthStorage::None, 1) {
-      Ok(storage) => storage,
-      Err(e) => return Err((program, e)),
-    };
+    let MeshStorage { target, fbo, .. } =
+      match create_mesh_storage(gl, width, height, DepthStorage::None, 1, TextureFormat::Rgba8) {
+        Ok(storage) => storage,
+        Err(e) => return Err((program, e)),
+      };
     {
       Ok(ShaderTexture {
         kind: TargetKind::Fragment { program, params: Vec::new(), bindings: sampler_bindings },
@@ -140,6 +146,7 @@ impl ShaderTexture {
         pass_exec_micros: Cell::new(0),
         cube: false,
         region: None,
+        format: TextureFormat::Rgba8,
       })
     }
   }
@@ -198,7 +205,7 @@ impl ShaderTexture {
       return Err((pipeline, e));
     }
     let depth = if pipeline.desc.depth.is_some() { DepthStorage::Buffer } else { DepthStorage::None };
-    let storage = match create_mesh_storage(gl, width, height, depth, samples) {
+    let storage = match create_mesh_storage(gl, width, height, depth, samples, TextureFormat::Rgba8) {
       Ok(storage) => storage,
       Err(e) => return Err((pipeline, e)),
     };
@@ -237,14 +244,16 @@ impl ShaderTexture {
         pass_exec_micros: Cell::new(0),
         cube: false,
         region: None,
+        format: TextureFormat::Rgba8,
       })
     }
   }
 
   /// A mesh target with an empty, mutable draw list (`create_draw_target`):
-  /// color storage plus optional target-owned depth storage, rendered as
-  /// clear + entries in list order. Entries arrive via `add_entry`; with none
-  /// the render is the clear alone.
+  /// color storage at `format` (color-renderable, checked UI-side) plus
+  /// optional target-owned depth storage, rendered as clear + entries in
+  /// list order. Entries arrive via `add_entry`; with none the render is the
+  /// clear alone.
   pub fn new_draw_target(
     gl: &glow::Context,
     width: u32,
@@ -252,8 +261,9 @@ impl ShaderTexture {
     depth: DepthStorage,
     clear_color: [f32; 4],
     samples: u32,
+    format: TextureFormat,
   ) -> Result<Self, String> {
-    let MeshStorage { target, fbo, depth, msaa } = create_mesh_storage(gl, width, height, depth, samples)?;
+    let MeshStorage { target, fbo, depth, msaa } = create_mesh_storage(gl, width, height, depth, samples, format)?;
     Ok(ShaderTexture {
       kind: TargetKind::Mesh(MeshState {
         entries: Vec::new(),
@@ -276,6 +286,7 @@ impl ShaderTexture {
       pass_exec_micros: Cell::new(0),
       cube: false,
       region: None,
+      format,
     })
   }
 
@@ -317,6 +328,7 @@ impl ShaderTexture {
       pass_exec_micros: Cell::new(0),
       cube: true,
       region: None,
+      format,
     })
   }
 
@@ -366,6 +378,7 @@ impl ShaderTexture {
       pass_exec_micros: Cell::new(0),
       cube: false,
       region: Some(Region { parent: parent_id, x, y, label }),
+      format: parent.format,
     })
   }
 
@@ -434,6 +447,11 @@ impl ShaderTexture {
   /// Whether the target draws over its previous contents (loadOp "load").
   pub fn load(&self) -> bool {
     self.mesh().is_some_and(|m| m.load)
+  }
+
+  /// The color storage's pixel format (see the field).
+  pub fn format(&self) -> TextureFormat {
+    self.format
   }
 
   pub fn sampler(&self) -> crate::gpu::SamplerState {
@@ -824,7 +842,7 @@ impl ShaderTexture {
     }
     unsafe {
       let prev_fbo = gl.get_parameter_i32(glow::FRAMEBUFFER_BINDING);
-      let target = create_target_texture(gl, width, height)?;
+      let target = create_target_texture(gl, width, height, self.format)?;
       // Color, depth and multisample storage must all match or the FBO goes
       // incomplete; on failure size everything back to the old target so the
       // shader keeps rendering at its previous size. The storage view borrows
@@ -854,11 +872,11 @@ impl ShaderTexture {
           Msaa::Explicit { fbo, color, samples } => Msaa::Explicit { fbo: *fbo, color: *color, samples: *samples },
         }),
       };
-      let result = attach_storage(gl, &storage, width, height);
+      let result = attach_storage(gl, &storage, width, height, self.format);
       if let Err(e) = &result {
         storage.target = self.target;
         storage.depth = old_depth;
-        if let Err(rollback) = attach_storage(gl, &storage, self.width, self.height) {
+        if let Err(rollback) = attach_storage(gl, &storage, self.width, self.height, self.format) {
           log::error!("[shader] resize rollback failed ({rollback}) after: {e}");
         }
       }

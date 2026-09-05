@@ -386,17 +386,19 @@ impl Context {
     }
     self.gpu_limits().check_texture_size(width, height)?;
     let handles = self.rpc(|reply| RasterCmd::ResizeShaderTexture { id, width, height, reply })??;
-    let sampler = self.textures.get(id).map(|e| e.sampler()).unwrap_or_default();
-    self
-      .textures
-      .insert(id, TextureEntry::d2(handles.color, width, height, sampler, TextureFormat::Rgba8));
+    let (sampler, format) =
+      self.textures.get(id).map(|e| (e.sampler(), e.format)).unwrap_or((SamplerState::default(), TextureFormat::Rgba8));
+    let entry = match handles.color {
+      Some(color) => TextureEntry::d2(color, width, height, sampler, format),
+      None => TextureEntry::d2_sampler_only(width, height, sampler, format),
+    };
+    self.textures.insert(id, entry);
     // A depth texture is re-registered at its own stable id with the fresh
     // name the resize allocated (the color rule, applied to depth).
     if let (Some(depth_id), Some(impeller)) = (self.depth_of(id), handles.depth) {
-      self.textures.insert(
-        depth_id,
-        TextureEntry::d2(impeller, width, height, SamplerState::DEPTH, TextureFormat::Depth24),
-      );
+      self
+        .textures
+        .insert(depth_id, TextureEntry::d2(impeller, width, height, SamplerState::DEPTH, TextureFormat::Depth24));
     }
     // The storage is regenerated whatever the kind, manual included, so this
     // notes unconditionally (unlike the pure-mutation paths).
@@ -483,10 +485,9 @@ impl Context {
   /// rasterization of the boundary, whether the backing was reused or
   /// reallocated - the id is the stable handle across both.
   pub fn publish_snapshot_texture(&self, id: u64, texture: &Texture, width: u32, height: u32) {
-    self.textures.insert(
-      id,
-      TextureEntry::d2(texture.clone(), width, height, SamplerState::default(), TextureFormat::Rgba8),
-    );
+    self
+      .textures
+      .insert(id, TextureEntry::d2(texture.clone(), width, height, SamplerState::default(), TextureFormat::Rgba8));
     self.send(RasterCmd::AdoptTexture { id, texture: texture.clone(), width, height });
     self.note_content(id);
   }

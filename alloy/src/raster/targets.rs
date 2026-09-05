@@ -200,6 +200,10 @@ impl RasterState {
     height: u32,
   ) -> Result<cmd::TargetHandles, String> {
     let shader = self.shaders.get_mut(&id).ok_or_else(|| format!("shader texture {id} not found"))?;
+    // An unadopted target's old name is this thread's to free once the
+    // resize has allocated the new one (Impeller frees every adopted name).
+    let unadopted = self.unadopted.contains(&id);
+    let old_name = self.textures.get(&id).map(|old| old.gl_texture);
     shader.resize(&self.gl, width, height)?;
     let shader = self.shaders.get(&id).expect("shader present after resize");
     let size = ISize::new(width as i64, height as i64);
@@ -209,7 +213,7 @@ impl RasterState {
       height,
       shape: TextureShape::D2,
       sampler: shader.sampler(),
-      format: TextureFormat::Rgba8,
+      format: shader.format(),
       // The id-stable resize keeps the create's label, like create_texture's
       // replace-at-id path.
       label: self.textures.get(&id).and_then(|old| old.label.clone()),
@@ -235,22 +239,19 @@ impl RasterState {
       }
       _ => None,
     };
+    if unadopted {
+      if let Some(old) = old_name {
+        unsafe { glow::HasContext::delete_texture(&self.gl, old) };
+      }
+      self.textures.insert(id, gpu);
+      self.reseed_resized(id);
+      return Ok(cmd::TargetHandles { color: None, depth });
+    }
     match gl::adopt_texture(&gpu, &self.impeller_ctx, size) {
       Some(impeller) => {
         self.textures.insert(id, gpu);
-        if let Some(shader) = self.shaders.get(&id) {
-          if shader.manual() {
-            // A resize cannot preserve accumulated history (new storage);
-            // clear it so the app re-seeds from defined pixels. The flush
-            // will not render it, so the clear must happen here.
-            shader.clear(&self.gl);
-          }
-        }
-        // The new storage renders (and its samplers re-resolve) at the next
-        // flush, before anything observes it; for a manual target the dirty
-        // seed only re-renders its samplers against the new (cleared) name.
-        self.dirty.insert(id);
-        Ok(cmd::TargetHandles { color: impeller, depth })
+        self.reseed_resized(id);
+        Ok(cmd::TargetHandles { color: Some(impeller), depth })
       }
       // Should-not-happen path (adoption of a valid GL name): the shader keeps
       // rendering into the new target, but the registry entry still shows the
@@ -381,24 +382,33 @@ impl RasterState {
     depth_id: Option<u64>,
     spec: TargetSpec,
     depth: DepthStorage,
+    format: TextureFormat,
   ) -> Result<cmd::TargetHandles, String> {
     let (width, height) = (spec.width, spec.height);
-    let shader = ShaderTexture::new_draw_target(&self.gl, width, height, depth, spec.clear_color, spec.samples)?
-      .with_sampler(spec.sampler)
-      .with_manual(spec.manual)
-      .with_load(spec.load);
+    let shader =
+      ShaderTexture::new_draw_target(&self.gl, width, height, depth, spec.clear_color, spec.samples, format)?
+        .with_sampler(spec.sampler)
+        .with_manual(spec.manual)
+        .with_load(spec.load);
     let depth_texture = shader.depth_texture();
     let depth_label = spec.label.as_ref().map(|l| format!("{l}.depth"));
-    let color = match self.register_shader_target(id, shader, width, height, spec.label, "adopt draw target failed") {
-      Ok(color) => color,
-      Err(e) => {
-        // register deleted the color name; the depth texture is ours until
-        // adopted.
-        if let Some(tex) = depth_texture {
-          unsafe { glow::HasContext::delete_texture(&self.gl, tex) };
+    // Impeller adopts rgba8 alone (what it displays and reads back); any
+    // other format is a sampler-only target, registered without a handle.
+    let color = if format == TextureFormat::Rgba8 {
+      match self.register_shader_target(id, shader, width, height, spec.label, "adopt draw target failed") {
+        Ok(color) => Some(color),
+        Err(e) => {
+          // register deleted the color name; the depth texture is ours until
+          // adopted.
+          if let Some(tex) = depth_texture {
+            unsafe { glow::HasContext::delete_texture(&self.gl, tex) };
+          }
+          return Err(e);
         }
-        return Err(e);
       }
+    } else {
+      self.register_unadopted_target(id, shader, width, height, format, spec.label);
+      None
     };
     let depth = match (depth_texture, depth_id) {
       (Some(gl_texture), Some(depth_id)) => {
@@ -438,7 +448,7 @@ impl RasterState {
 
   /// Create a cube draw target (see `RasterCmd::CreateCubeDrawTarget`):
   /// registered like an uploaded cube map - a cube-shaped texture entry
-  /// with no Impeller adoption, the name deleted by `release_cube` on
+  /// with no Impeller adoption, the name deleted by `release_texture` on
   /// destroy - plus its shader, cleared now (a manual target's defined
   /// initial contents, all six faces).
   pub(super) fn create_cube_draw_target(
@@ -449,10 +459,11 @@ impl RasterState {
     depth: DepthStorage,
     format: TextureFormat,
   ) -> Result<(), String> {
-    let shader = ShaderTexture::new_cube_draw_target(&self.gl, size, depth, spec.clear_color, spec.sampler.mipmap, format)?
-      .with_sampler(spec.sampler)
-      .with_manual(true)
-      .with_load(spec.load);
+    let shader =
+      ShaderTexture::new_cube_draw_target(&self.gl, size, depth, spec.clear_color, spec.sampler.mipmap, format)?
+        .with_sampler(spec.sampler)
+        .with_manual(true)
+        .with_load(spec.load);
     let gpu = GpuTexture {
       gl_texture: shader.gl_texture(),
       width: size,
@@ -563,6 +574,53 @@ impl RasterState {
   /// pixels, so the blocking create RPC never pays for a draw. A manual
   /// target is cleared instead: its pass runs only on RenderTarget, and the
   /// clear is what keeps undefined storage from ever being observable.
+  /// After a resize: a manual target cannot preserve accumulated history
+  /// (new storage), so clear it and the app re-seeds from defined pixels -
+  /// the flush will not render it, so the clear happens here. Either way
+  /// the new storage renders (and its samplers re-resolve) at the next
+  /// flush, before anything observes it; for a manual target the dirty
+  /// seed only re-renders its samplers against the new (cleared) name.
+  fn reseed_resized(&mut self, id: u64) {
+    if let Some(shader) = self.shaders.get(&id) {
+      if shader.manual() {
+        shader.clear(&self.gl);
+      }
+    }
+    self.dirty.insert(id);
+  }
+
+  /// Register a 2D target whose format Impeller does not adopt (see
+  /// `create_draw_target`): in the texture map for sampling, in the shader
+  /// map for rendering, and in `unadopted` so `release_texture` deletes
+  /// the name.
+  fn register_unadopted_target(
+    &mut self,
+    id: u64,
+    shader: ShaderTexture,
+    width: u32,
+    height: u32,
+    format: TextureFormat,
+    label: Option<String>,
+  ) {
+    let gpu = GpuTexture {
+      gl_texture: shader.gl_texture(),
+      width,
+      height,
+      shape: TextureShape::D2,
+      sampler: shader.sampler(),
+      format,
+      label,
+    };
+    self.textures.insert(id, gpu);
+    self.unadopted.insert(id);
+    if shader.manual() {
+      shader.clear(&self.gl);
+    } else {
+      self.dirty.insert(id);
+    }
+    self.shaders.insert(id, shader);
+  }
+
   fn register_shader_target(
     &mut self,
     id: u64,

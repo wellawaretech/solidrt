@@ -59,7 +59,9 @@ depends on `@solidrt/3d` (or in-repo from the package directory).
 - `sky-lit.tsx` - a sky-lit scene (`scene.bakeBackground`): a procedural
   GLSL sky is the background AND, baked into a prefiltered cube, the
   environment - no light nodes. Two rows of `standard` spheres, metal and
-  dielectric, roughness 0 to 1 across. Drag to look around.
+  dielectric, roughness 0 to 1 across; the sun disc bakes at 40x (the
+  probe format is half float where the device renders it), so the rough
+  metals carry its energy as a broad highlight. Drag to look around.
 - `sprites.tsx` - sprites: a ring of `"full"` billboard glows that stay
   flat to the screen and `"fixed-y"` cutout trees that only yaw toward
   the camera and stay upright as it climbs, both turned in the vertex

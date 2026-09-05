@@ -92,9 +92,14 @@ impl Buildable for Texture {
       log::warn!("[texture] build: tex_id={} not in registry", tex_id);
       return;
     };
-    // A cube map has no 2D image to draw (sampler-only, see TextureShape).
+    // No Impeller handle, nothing to draw: a cube map, or a draw target of
+    // a format other than rgba8 (sampler-only, see TextureEntry::impeller).
     let Some(impeller) = &entry.impeller else {
-      log::warn!("[texture] build: texture {tex_id} is a cube map; <texture> cannot display it (sample it from a pass)");
+      log::warn!(
+        "[texture] build: texture {tex_id} is sampler-only ({} {}); <texture> cannot display it (sample it from a pass)",
+        entry.format.name(),
+        if entry.shape == crate::gpu::TextureShape::Cube { "cube map" } else { "draw target" }
+      );
       return;
     };
 

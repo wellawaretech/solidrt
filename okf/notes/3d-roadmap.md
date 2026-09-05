@@ -100,17 +100,6 @@ what it delivered is documented in `packages/3d/AGENTS.md`, not here.
     layouts (tangents, skin weights) when items 7 and 16 force them. The
     direction stays a small set of named layouts, not an open
     BufferGeometry-style model.
-20. [x] **Geometry as data: transform, merge, public bounds.** Library:
-    [3d-geometry-ops](../done/3d-geometry-ops.md) (shipped 2026-08-19). Sits here rather than
-    at the end of the list because it ranks with the other geometry work and
-    ids are permanent, not positional. The generators build geometry and
-    nothing can move or combine it, so a static scene costs one node, one
-    draw entry and one `uModel` write per part - the per-frame walk this
-    whole ranking is organised around. Baking placement into vertices
-    collapses a static scene to one mesh per material, which is structural
-    leverage on the interpreter, not a micro-optimisation. Pure array math,
-    no engine call. Carries the two already-written-but-unexported helpers
-    (`geometryBounds`, `rayBoxDistance`) along with it.
 11. [x] **Rotation: aiming and quaternions.** Library. Only on-demand sugar is
     left (`rotateOnAxis`-style wrappers are one-liners over `quatMultiply`;
     name each against Unity, glam and Godot alongside Three, per the
@@ -150,74 +139,39 @@ what it delivered is documented in `packages/3d/AGENTS.md`, not here.
     [relative-mouse-input](../done/relative-mouse-input.md) - pointer
     lock/relative motion - which landed, so they are library-only now.
     A chase/follow camera rig is app code over `setTransition`.
-14. [ ] **Environment tier: skybox, reflection/environment maps.** Shaped
-    2026-09-02 with the Three/Godot/Unity comparison in
-    [3d-environment](../backlog/3d-environment.md) (scene-level, mip-chained
-    cube map, equirect + six-face sources, rgba16f for HDR). Engine:
-    [gpu-cube-maps](../done/gpu-cube-maps.md) landed the same day
-    (`createCubeTexture` + `samplerCube`), so the tier is library-only
-    from stage 1; render-to-face
-    ([gpu-cube-render-targets](../backlog/gpu-cube-render-targets.md))
-    and [rgba16f](../backlog/gpu-half-float-format.md) wait for stages 3
-    and 4. The binding side is already paid: a shared target-level
-    sampler (`setTargetTextures`) binds an environment map once per scene
-    target.
-    Stages 1 and 2 LANDED 2026-09-02 (library only): the skybox and the
-    sanctioned `vRay` background, `equirectToCube`, and
-    `scene.setEnvironment` + `lit({ reflectivity })` over the exported
-    ENVIRONMENT set. Stage 3a (the rgba16f and rgba8-srgb formats) and 3b
-    (the linear color pipeline with tone mapping and exposure) LANDED
-    2026-09-03 - item 17's color-space decision. Stage 3c (the `standard`
-    metalness/roughness material: GGX in the light loop, the split sum
-    over the environment, glTF's PBR fields in the model file at VERSION
-    4) LANDED 2026-09-03 too. Stage 3d LANDED 2026-09-03: explicit mip
-    levels on `createCubeTexture` (engine), `srt tool 3d/environment`
-    baking a .hdr into a GGX-prefiltered rgba16f chain (.srte),
-    `loadEnvironment`, the image-lit diffuse as the chain's fully rough
-    level (Three/Godot; SH9 stays additive), and createModel's default
-    flipped to `standard`. Stage 4a LANDED 2026-09-05: cube draw targets
-    with render-to-face (engine) and `scene.createReflectionProbe` (sharp,
-    linear, one bounce), after the cube convention reversal (no shader
-    flip; a cube holds what a lookup returns). Open: 4b (prefiltered
-    probes, the GLSL sky baked into the radiance cube) and 4c (HDR
-    probes); the box stays unchecked until those land.
-15. [x] **Shadow maps.** Landed 2026-08-26 (uncommitted) through stage 3
-    of [3d-shadow-maps](../done/3d-shadow-maps.md): `castShadow` on
-    `DirectionalLight` and `Mesh`, `lit` receiving by default, the
-    `SHADOW` GLSL; every directional light may cast since 2026-08-27
-    (stage 4a, slot = light index); the multi-view shape below became
-    `scene.createView` on the way (split-screen, minimaps,
-    override-material passes). Comparison sampling landed 2026-09-02
-    ([gpu-depth-compare-sampling](../done/gpu-depth-compare-sampling.md):
-    uShadowAtlas is a sampler2DShadow, one hardware 2x2-PCF tap). The
-    Spot casters landed 2026-09-02 (the same machinery with a
-    perspective camera, one slot) and point casters with them
-    ([3d-point-light-shadows](../done/3d-point-light-shadows.md): six
-    face tiles in the atlas, dominant-axis select - no cube map); still
+14. [x] **Environment tier: skybox, reflection/environment maps.** The
+    skybox and `vRay` background, `setEnvironment`, the HDR asset path
+    (`srt tool 3d/environment`, `loadEnvironment`), reflection probes,
+    the GPU GGX prefilter and `bakeBackground`, half float where the
+    device renders it - all documented in `packages/3d/AGENTS.md`. Design
+    and the Three/Godot/Unity comparison:
+    [3d-environment](../done/3d-environment.md); engine halves
+    [gpu-cube-maps](../done/gpu-cube-maps.md),
+    [gpu-cube-render-targets](../done/gpu-cube-render-targets.md),
+    [gpu-half-float-format](../done/gpu-half-float-format.md). What
+    remains is additive - SH9, `aoMap`, a packed .srte payload,
+    `loadCubeImages` - plus the follow-on
+    [3d-hdr-scene-buffer](../backlog/3d-hdr-scene-buffer.md), tracked
+    under item 17. Two settled constraints outlive the work: the cube
+    convention is "a cube holds what a lookup returns" (no shader flip),
+    and a prefilter always writes a second cube, never in place.
+15. [x] **Shadow maps.** Directional, spot and point casters, instanced and
+    skinned casters, hardware-compared sampling - all documented in
+    `packages/3d/AGENTS.md`. Design and staging:
+    [3d-shadow-maps](../done/3d-shadow-maps.md),
+    [gpu-sampleable-depth](../done/gpu-sampleable-depth.md),
+    [gpu-depth-compare-sampling](../done/gpu-depth-compare-sampling.md),
+    [3d-point-light-shadows](../done/3d-point-light-shadows.md),
+    [3d-instanced-shadow-casters](../done/3d-instanced-shadow-casters.md).
+    The multi-view shape this forced (`scene.createView`) is also what
+    split-screen, minimaps and override-material passes use. Still
     demand-gated: cascades
-    ([3d-shadow-cascades](../backlog/3d-shadow-cascades.md)). Instanced
-    casters landed 2026-09-02
-    ([3d-instanced-shadow-casters](../done/3d-instanced-shadow-casters.md):
-    per-class `shadowVertex`; skinned casters cast their pose since
-    2026-09-01, riding the float-texture palettes).
-    Shaped 2026-08-26 as engine sampleable
-    depth ([gpu-sampleable-depth](../done/gpu-sampleable-depth.md)),
-    per-target draw sinks in the spatial core, then scene VIEWS, then the
-    shadow itself; the depth-func option
+    ([3d-shadow-cascades](../backlog/3d-shadow-cascades.md)), and the
+    composition trap for custom materials
+    ([3d-custom-material-scene-effects](../backlog/3d-custom-material-scene-effects.md)).
+    The depth-func option
     ([gpu-depth-func](../backlog/gpu-depth-func.md)) turned out not to be
-    a dependency. The
-    map itself binds through the shared target-level sampler channel.
-    **Library prerequisite, and it is the bigger half: a `Scene` is
-    hardwired to one camera and one target.** There is no way to render the
-    same scene twice from a different viewpoint, so even with sampleable
-    depth in hand an app cannot produce the depth pass. The pieces below it
-    all exist (`createDrawTarget` with `depth: true`, a second camera,
-    `setTargetParams`); what is missing is a scene-graph shape for "render
-    this scene into that target from this camera". Settle that shape before
-    the engine work, because the same constraint is what rules out
-    split-screen, reflections, minimaps and portals - shadows are just the
-    first consumer to hit it. Until then the achievable tier is a projected
-    blob, which also wants item 6's blend factors to avoid dithering.
+    a dependency.
 16. [ ] **Skinning and morph targets.** Skinning shipped 2026-08-31 with
     the model loader's skins and the JS mixer, and moved to float-texture
     palettes 2026-09-01 (`uBones` an rgba32f texture sized to the rig,
@@ -233,20 +187,19 @@ what it delivered is documented in `packages/3d/AGENTS.md`, not here.
     [animation-core](../done/animation-core.md), not this item
     (clip evaluator DELIVERED 2026-09-03; the crowd tier is open until an
     app pushes it).
-17. [ ] **PBR and the color-space decision.** The furthest tier: physically
-    based lighting math forces the sRGB/linear question the pixel contract
-    currently answers with "non-linear RGBA8 everywhere".
-    The color-space half is DECIDED and LANDED 2026-09-03 as stage 3b of
-    [3d-environment](../backlog/3d-environment.md): linear-only lighting
-    in `@solidrt/3d` (sRGB color options decoded on write, color maps as
-    "rgba8-srgb", the OUTPUT set's exposure/tone mapping/encode in every
-    library fragment); the pixel contract of the runtime itself stays
-    non-linear RGBA8, with the sRGB and half-float formats as the opt-in
-    decode. The `standard` metalness/roughness material LANDED 2026-09-03
-    (stage 3c). The HDR asset path LANDED 2026-09-03 (stage 3d: the
-    `srt tool 3d/environment` bake, `loadEnvironment`, explicit cube
-    levels); `standard` is createModel's default since. Open: SH9,
-    `aoMap`, a packed .srte payload - all additive.
+17. [ ] **PBR and the color-space decision.** The color-space half is
+    DECIDED: linear-only lighting inside `@solidrt/3d` (sRGB color options
+    decoded on write, color maps as `rgba8-srgb`, exposure, tone mapping
+    and encode in every library fragment), while the runtime's pixel
+    contract stays non-linear RGBA8 with the sRGB and half-float formats
+    as the opt-in decode. The `standard` metalness/roughness material,
+    the HDR asset path and half-float probes shipped with item 14
+    ([3d-environment](../done/3d-environment.md)) and are documented in
+    `packages/3d/AGENTS.md`. What keeps the box open is the scene buffer
+    itself ([3d-hdr-scene-buffer](../backlog/3d-hdr-scene-buffer.md):
+    render the view into half float, tone map once in a resolve pass, so
+    transparency blends in linear space and post effects can see
+    radiance). Additive on demand: SH9, `aoMap`, a packed .srte payload.
 18. [x] **Scene background.** Deferred within the item: the texture-id form (a
     reserved non-breaking union widening - decide fit semantics when a
     consumer arrives). The boundary with item 14 stands: a camera-linked
@@ -254,7 +207,7 @@ what it delivered is documented in `packages/3d/AGENTS.md`, not here.
     Note for the proving-ground demo: its ground FADES over the backdrop,
     which needs item 6's blend factors before the two layers can merge.
     Settled 2026-09-02 with the environment tier's stage 1
-    ([3d-environment](../backlog/3d-environment.md)): the directional
+    ([3d-environment](../done/3d-environment.md)): the directional
     background is SANCTIONED. The vertex stage hands the fragment `vRay`
     (a world-space view ray rebuilt from the new shared `uInvViewProj`),
     the background may declare `uCamPos` and any `scene.setParams` name,
@@ -270,6 +223,19 @@ what it delivered is documented in `packages/3d/AGENTS.md`, not here.
     testing every node per frame is exactly the O(scene) loop the design
     avoids. Both land with no app-facing API change, the reason the draw
     list was shaped as it was.
+20. [x] **Geometry as data: transform, merge, public bounds.** Library:
+    [3d-geometry-ops](../done/3d-geometry-ops.md) (shipped 2026-08-19). Sits in numeric
+    order rather than with the geometry items because ids are permanent,
+    not positional, and Markdown renumbers an ordered list by position:
+    the source number is the one every cross-reference means, so it must
+    also be the rendered one. The generators build geometry and
+    nothing can move or combine it, so a static scene costs one node, one
+    draw entry and one `uModel` write per part - the per-frame walk this
+    whole ranking is organised around. Baking placement into vertices
+    collapses a static scene to one mesh per material, which is structural
+    leverage on the interpreter, not a micro-optimisation. Pure array math,
+    no engine call. Carries the two already-written-but-unexported helpers
+    (`geometryBounds`, `rayBoxDistance`) along with it.
 21. [x] **Surface maps on `lit`: normal, emissive, specular, light maps,
     UV transform.** Library:
     [3d-surface-maps](../done/3d-surface-maps.md) (shipped 2026-08-31).
@@ -284,7 +250,6 @@ what it delivered is documented in `packages/3d/AGENTS.md`, not here.
     O(scene) walk item 19 rules out. Shaped in
     [3d-lod](../backlog/3d-lod.md). Mesh simplification stays a bake-tool
     job.
-
 ## Not in scope
 
 Deliberately left behind, per the scope section of scene-graph-3d:

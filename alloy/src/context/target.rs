@@ -295,8 +295,17 @@ impl Context {
   /// `DepthStorage::Texture` registers the depth under an id of its own
   /// (see `depth_texture`), allocated here beside the color id and adopted
   /// with it; the two live and die together.
-  pub fn create_draw_target(&self, spec: TargetSpec, depth: DepthStorage) -> Result<u64, String> {
+  pub fn create_draw_target(
+    &self,
+    spec: TargetSpec,
+    depth: DepthStorage,
+    format: TextureFormat,
+  ) -> Result<u64, String> {
     self.gpu_limits().check_texture_size(spec.width, spec.height)?;
+    // rgba8 is the one format Impeller displays and reads back; rgba8-srgb
+    // (encodes on write) and rgba16f (keeps the range: HDR views, bakes)
+    // make a sampler-only target - a pass source, never a `<texture>`.
+    self.gpu_limits().check_render_format(format)?;
     validate_load(&spec)?;
     if depth == DepthStorage::Texture && spec.samples >= 2 {
       return Err(
@@ -308,8 +317,12 @@ impl Context {
     let depth_id = (depth == DepthStorage::Texture).then(|| self.textures.allocate_id());
     let (width, height, sampler) = (spec.width, spec.height, spec.sampler);
     let manual = spec.manual;
-    let handles = self.rpc(|reply| RasterCmd::CreateDrawTarget { id, depth_id, spec, depth, reply })??;
-    self.textures.insert(id, TextureEntry::d2(handles.color, width, height, sampler, TextureFormat::Rgba8));
+    let handles = self.rpc(|reply| RasterCmd::CreateDrawTarget { id, depth_id, spec, depth, format, reply })??;
+    let entry = match handles.color {
+      Some(color) => TextureEntry::d2(color, width, height, sampler, format),
+      None => TextureEntry::d2_sampler_only(width, height, sampler, format),
+    };
+    self.textures.insert(id, entry);
     if let (Some(depth_id), Some(impeller)) = (depth_id, handles.depth) {
       self
         .textures
@@ -343,8 +356,9 @@ impl Context {
   /// `render_target(id, Some(face), level)` - dynamic reflection probes and
   /// sky bakes. Manual by contract (a render is one face; the app sequences
   /// six), single-sample, `depth` a private renderbuffer or none (a depth
-  /// texture cannot serve six faces), `format` rgba8 or rgba8-srgb (the
-  /// cube decodes on sample like an uploaded one). With `mipmap` the chain is allocated
+  /// texture cannot serve six faces), `format` rgba8, rgba8-srgb (the cube
+  /// decodes on sample like an uploaded one) or rgba16f where half float is
+  /// renderable (`GpuLimits::check_render_format`). With `mipmap` the chain is allocated
   /// and each level is renderable (the prefiltered environment chain); a
   /// face render without a level regenerates it, as any content write. The
   /// id is a cube map to every consumer: sampler-only (`samplerCube`
@@ -362,12 +376,9 @@ impl Context {
     if size == 0 {
       return Err("cube draw target face size must be non-zero".to_string());
     }
-    // The two 8-bit color-renderable formats; an sRGB target encodes on
-    // write (GLES), so a pass writes linear light into it as into any
-    // other. Half float waits for the renderability gate (3d-environment 4c).
-    if !matches!(format, TextureFormat::Rgba8 | TextureFormat::Rgba8Srgb) {
-      return Err(format!("cube draw target format must be rgba8 or rgba8-srgb, got {}", format.name()));
-    }
+    // An sRGB target encodes on write (GLES), so a pass writes linear light
+    // into it as into any other; half float keeps the range (HDR probes).
+    self.gpu_limits().check_render_format(format)?;
     self.gpu_limits().check_cube_map_size(size)?;
     validate_load(&spec)?;
     if !spec.manual {

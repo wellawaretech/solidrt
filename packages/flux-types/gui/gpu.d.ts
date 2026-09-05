@@ -204,16 +204,20 @@ declare module "flux:gpu" {
    * GLES 3.0), so `filter` defaults to "linear" and `anisotropy` applies.
    * `mipmap: true` needs half float to be color-renderable on the device
    * (`limits.halfFloatRenderable`; an extension almost every device has) and
-   * throws where it is not. Upload-and-sample only like the 32-bit formats.
+   * throws where it is not. Sample-only like the 32-bit formats (no
+   * readback, copy or display); also a draw target format where half float
+   * is renderable ({@link createDrawTarget}, {@link createCubeDrawTarget}:
+   * HDR views, probes and bakes).
    *
    * "rgba8-srgb" is "rgba8" whose bytes are sRGB-encoded: a shader sampling
    * it reads linear light (the decode is done in hardware, before filtering,
    * so `filter`, `mipmap` and `anisotropy` are all correct); alpha is not
    * decoded. The color-map format of linear-space lighting - base color and
    * emissive maps - while data maps (normal, roughness, metallic) stay
-   * "rgba8". Upload-and-sample only: readTexture and copyTexture throw (a
-   * readback would decode rather than return the stored bytes) and
-   * displaying one via `<texture src>` is out of contract.
+   * "rgba8". Sample-only: readTexture and copyTexture throw (a readback
+   * would decode rather than return the stored bytes) and displaying one
+   * via `<texture src>` is out of contract; also a draw target format (the
+   * target encodes what a pass writes).
    *
    * Reserved future value of this same vocabulary: "etc2-rgba8" (compressed
    * uploads).
@@ -945,6 +949,17 @@ declare module "flux:gpu" {
    * Returns a texture id (display, resize, destroy like any target; entries
    * die with it).
    *
+   * `format` is the color storage: "rgba8" (default), "rgba8-srgb" (the
+   * target encodes what a pass writes and decodes on sample, like an
+   * uploaded sRGB texture) or "rgba16f" (half float: the range a pass
+   * writes survives - an HDR view or bake; renderable where
+   * `limits.halfFloatRenderable`, throws elsewhere). Other formats throw
+   * (not color-renderable). A target of either non-default format is
+   * SAMPLER-ONLY: bind it to a `sampler2D`; a `<texture>` leaf cannot
+   * display it, {@link readTexture} and {@link copyTexture} refuse it -
+   * render it through a pass into an rgba8 target for those. Multisampling
+   * and resize work at the format.
+   *
    * `into` makes a SUB-TARGET: a draw target that renders into the `width`
    * x `height` rectangle at `x`/`y` (top-left origin, the texture leaf's
    * `srcX`/`srcY` space; default 0) of draw target `into`'s storage instead
@@ -956,8 +971,8 @@ declare module "flux:gpu" {
    * cost one pass instead of N. The returned id is not a texture: sample,
    * display (`<d-texture src={parent} srcX srcY srcW srcH>`), read back and
    * copy the PARENT; `depthTexture(parent)` is the tile's depth too. Depth,
-   * `samples`, `render` and `loadOp` are the parent's (passing them
-   * throws), `clearColor` is the tile's own. A rectangle partly outside the
+   * `samples`, `format`, `render` and `loadOp` are the parent's (passing
+   * them throws), `clearColor` is the tile's own. A rectangle partly outside the
    * parent is clipped; {@link setTargetRect} moves it. Tiles do not nest.
    * Destroying the parent destroys its tiles.
    */
@@ -967,6 +982,7 @@ declare module "flux:gpu" {
     params?: ShaderParams | null,
     opts?: {
       depth?: boolean | "texture"
+      format?: "rgba8" | "rgba8-srgb" | "rgba16f"
       textures?: TextureBindings
       clearColor?: [number, number, number, number]
       render?: "auto" | "manual"
@@ -987,7 +1003,8 @@ declare module "flux:gpu" {
    * camera into the shared params and renders, six times. Manual by
    * contract (`render` defaults to "manual"; "auto" throws), one private
    * depth renderbuffer for all faces (`depth: true`; "texture" throws), no
-   * `samples`, no `into`; `format` rgba8 or rgba8-srgb. `mipmap: true` allocates the whole chain: a face
+   * `samples`, no `into`; `format` rgba8, rgba8-srgb or rgba16f. `mipmap:
+   * true` allocates the whole chain: a face
    * render without a level regenerates it from level 0 (as every content
    * write on a mipmapped target), a render into an explicit `level`
    * writes that level alone at its own edge - how a prefiltered
@@ -1004,8 +1021,12 @@ declare module "flux:gpu" {
     params?: ShaderParams | null,
     opts?: {
       depth?: boolean
-      /** rgba8 (default) or rgba8-srgb: the cube then encodes what a pass writes and decodes on sample, like an uploaded sRGB cube. Other formats throw (HDR draw targets are a later stage). */
-      format?: "rgba8" | "rgba8-srgb"
+      /** rgba8 (default); rgba8-srgb: the cube encodes what a pass writes
+       * and decodes on sample, like an uploaded sRGB cube; rgba16f: half
+       * float, the range a pass writes survives (HDR probes), renderable
+       * where `limits.halfFloatRenderable` (throws elsewhere - fall back to
+       * rgba8). Other formats throw: not color-renderable. */
+      format?: "rgba8" | "rgba8-srgb" | "rgba16f"
       textures?: TextureBindings
       clearColor?: [number, number, number, number]
       render?: "manual"

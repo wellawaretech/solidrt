@@ -6,7 +6,7 @@ use std::sync::atomic::Ordering;
 
 use impellers::{ISize, Texture};
 
-use super::{RasterState};
+use super::RasterState;
 use crate::gl;
 use crate::gl::{GpuTexture, RenderPipeline, ShaderProgram, Timed};
 use crate::gpu::{
@@ -64,17 +64,19 @@ impl RasterState {
   ) -> Result<(), String> {
     let mut gpu = GpuTexture::new_cube(&self.gl, size, faces, sampler, format)?;
     gpu.label = label;
-    self.release_cube(id);
+    self.release_texture(id);
     self.textures.insert(id, gpu);
     Ok(())
   }
 
   /// Forget texture `id`, deleting its GL name when the name is ours (a
-  /// cube map; every 2D name is Impeller-owned and dies with its adopted
-  /// handle). The one removal doorway for the texture map.
-  pub(super) fn release_cube(&mut self, id: u64) {
+  /// cube map, or a 2D draw target Impeller never adopted; every other 2D
+  /// name is Impeller-owned and dies with its adopted handle). The one
+  /// removal doorway for the texture map.
+  pub(super) fn release_texture(&mut self, id: u64) {
+    let unadopted = self.unadopted.remove(&id);
     if let Some(gpu) = self.textures.remove(&id) {
-      if gpu.shape == TextureShape::Cube {
+      if gpu.shape == TextureShape::Cube || unadopted {
         unsafe { glow::HasContext::delete_texture(&self.gl, gpu.gl_texture) };
       }
     }

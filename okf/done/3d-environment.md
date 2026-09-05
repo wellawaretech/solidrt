@@ -1,7 +1,8 @@
 ---
 title: Environment tier - skybox and environment reflections
-description: The 3d scene has no environment - no skybox from a cube map, no reflections, no image-based ambient - which every engine treats as one scene-level resource; the Three/Godot/Unity comparison here fixes the shape (scene-level, cube map with a mip chain, equirect and six-face sources, HDR half float) and confirms the samplerCube primitive.
+description: "Done 2026-09-06 in four stages: skybox and vRay background, scene environment with lit reflectivity, the linear-only color pipeline with rgba16f and rgba8-srgb, the standard GGX material, the .hdr bake tool and loadEnvironment, cube draw targets with prefiltered HDR reflection probes and scene.bakeBackground; shaped by the Three/Godot/Unity comparison (scene-level, mip-chained cube, GL's own cube convention, half float)."
 created: 2026-09-02
+completed: 2026-09-06
 ---
 
 # Environment tier - skybox and environment reflections
@@ -277,8 +278,10 @@ Where the different internal model helps, beyond parity:
      (bun has no PNG/JPEG decoder for the tool; a decoder dependency
      when asked). `examples/environment.tsx`, `probes/cube-levels-probe.tsx`,
      `packages/3d/tests/environment.test.ts`.
-     Open, additive: SH9 (Three's LightProbe form), `aoMap`, RGBE or half
-     packing in the .srte (a 4x smaller file), EXR input.
+     Additive, tracked in
+     [3d-environment-additive](../backlog/3d-environment-additive.md):
+     SH9 (Three's LightProbe form), `aoMap`, RGBE or half packing in the
+     .srte (a 4x smaller file), EXR input.
 4. **Dynamic probes.**
    - 4a, landed 2026-09-05: render-to-face and sharp probes. Engine:
      `createCubeDrawTarget(size, params?, opts?)` - one entry list over a
@@ -347,9 +350,51 @@ Where the different internal model helps, beyond parity:
      sampling lod 0 only are far cheaper). Documented as a cost rather
      than designed around: update a prefiltered probe when the scene
      changed, `prefilter: false` for an every-frame mirror on a tight
-     budget. Open: the same measurement on Android, the TV and the Pi.
-   - 4c, open: HDR probes - `format: "rgba16f"` on draw targets, gated on
-     half-float renderability with an rgba8 fallback.
+     budget. The same measurement on Android, the TV and the Pi is
+     tracked in [3d-environment-additive](../backlog/3d-environment-additive.md).
+   - 4c, landed 2026-09-06: HDR probes. Engine: `format` on EVERY draw
+     target, 2D and cube, one vocabulary - rgba8 (default), rgba8-srgb,
+     rgba16f - behind one gate (`GpuLimits::check_render_format`: rgba16f
+     throws where half float is not color-renderable, naming
+     `limits.halfFloatRenderable`); the 2D storage, the multisample
+     renderbuffer and resize all allocate at the format, a sub-target
+     inherits its parent's. A non-rgba8 2D target is SAMPLER-ONLY, the
+     cube map's rule: never Impeller-adopted (the raster thread owns and
+     deletes the name, `unadopted`), so no `<texture>` display, readback
+     or copy - render it through a pass into rgba8 for those. Library:
+     `probeFormat()` returns rgba16f where renderable, else rgba8 - the
+     silent fallback, the renderer deciding for all probes (Godot's
+     stance, Unity's HDR-on default), no per-probe knob; probes, their
+     chains, `bakeBackground` and `equirectToCube` (an rgba16f panorama
+     gives an rgba16f cube) follow it. The finding: `outputColor` clamped
+     to 0..1 BEFORE the encode branch, so the linear probe path was LDR
+     by construction; the clamp moved into the display encode (an 8-bit
+     target still clamps on write), linear output is unbounded. Rejected
+     RGBM for the fallback device (no target platform here lacks the
+     extension; an encode in every probe output plus a decode in
+     `envRadiance` for a device nobody can name). `examples/sky-lit.tsx`
+     bakes a 40.0 sun disc; `probes/draw-target-format-probe.tsx`,
+     `probes/cube-target-probe.tsx`, `probes/prefilter-probe.tsx`;
+     `probes/probe-orientation-probe.tsx` (2026-09-06) checks a rendered
+     face's orientation WITHIN the face - an off-axis marker on three
+     walls read along its own direction and its two single-component
+     mirrors - which no axis lookup can, and which the mirror camera
+     plus winding inversion passes; `probes/probe-world-space-probe.tsx`
+     reads a mirror ball's center from cameras on +X and +Z (each
+     reflects its own wall, so the lookup is world-space, and right of
+     center turns toward the camera's right). Both written when the probe
+     example's ball read as "a glass sphere with something inside": that
+     is what a chrome ball in a box of six flat colors looks like - the
+     central disc is the hemisphere behind the camera (walls not in view,
+     sharp edges at the room's corners), the rim reflects the walls that
+     are also behind the ball in the view - not a bug.
+     Cost: none measurable - examples/probe.tsx (a prefiltered 128 probe
+     updated every frame) reads the same ~14.8 ms of GPU per frame at
+     half float as at rgba8, 60 fps held (Intel/Mesa, screen saver off).
+     Follow-on, its own item:
+     [3d-hdr-scene-buffer](../backlog/3d-hdr-scene-buffer.md); the
+     additive leftovers of the whole tier:
+     [3d-environment-additive](../backlog/3d-environment-additive.md).
 
 ## Divergences to document
 
@@ -397,8 +442,9 @@ Where the different internal model helps, beyond parity:
 - A reflection probe is one API on the scene (`createReflectionProbe`)
   rather than Three's camera object plus render target pair; no box
   projection, blending, importance or time slicing (Unity, Godot) - all
-  additive. It renders 8-bit linear (LDR) until 4c, where all three
-  engines render HDR; and mirrored, so derivative-built tangent frames
+  additive. It renders half float where the device renders it and 8-bit
+  clamped elsewhere (no per-probe HDR flag: Unity's `hdr` toggle is a
+  one-line pass-through if ever asked for); and mirrored, so derivative-built tangent frames
   invert in reflections (a Unity invertCulling caveat too). Prefiltered
   by default (Unity, Godot); `prefilter: false` is Three's sharp
   CubeCamera. The chain's sample count (64) is fixed, not a quality knob

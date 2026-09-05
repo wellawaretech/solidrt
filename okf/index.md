@@ -106,12 +106,19 @@ Shaped, not started.
   with no error. Decide once between injecting the standard tail at the
   fragColor write and exporting one composed function the author calls, before
   the next scene-wide effect adds a third thing to forget.
-- **[Environment tier - skybox and environment reflections](backlog/3d-environment.md)** [2026-09-02]
-  The 3d scene has no environment - no skybox from a cube map, no reflections,
-  no image-based ambient - which every engine treats as one scene-level
-  resource; the Three/Godot/Unity comparison here fixes the shape
-  (scene-level, cube map with a mip chain, equirect and six-face sources, HDR
-  half float) and confirms the samplerCube primitive.
+- **[Environment tier leftovers - SH9, aoMap, packed .srte, EXR, loadCubeImages](backlog/3d-environment-additive.md)** [2026-09-06]
+  The environment tier is complete (skybox, HDR environments, PBR, prefiltered
+  HDR probes and sky bakes) and each of these is a deliberate non-goal of that
+  work that a consumer would ask for next - an image-lit diffuse cheaper than
+  the chain's rough level, ambient occlusion maps, a smaller environment file,
+  EXR input, Three-style face sets, a per-probe format, half-float readback,
+  and the probe cost on the low-end devices.
+- **[HDR scene buffer - tone map in a resolve pass](backlog/3d-hdr-scene-buffer.md)** [2026-09-06]
+  A 3d view renders straight into its 8-bit target with exposure, tone mapping
+  and the sRGB encode in every fragment, so transparent meshes blend in
+  encoded space, the clearColor is never tone mapped and no post effect
+  (bloom) can see radiance; Godot and Unity render the scene into a half-float
+  buffer and tone map once, in a final pass.
 - **[Level of detail - distance-selected mesh variants as a core sink](backlog/3d-lod.md)** [2026-08-30]
   A large scene ships every object at one triangle count; a track with a
   thousand trees either draws full-detail foliage at the horizon or nothing. A
@@ -372,10 +379,6 @@ Shaped, not started.
   A lost GL context used to leave the app running against a dead swapchain;
   swap-result checking and exit after two failed presents shipped, real
   recreation still open.
-- **[Cube map render targets (render-to-face)](backlog/gpu-cube-render-targets.md)** [2026-09-02]
-  A cube map is upload-only, so dynamic reflection probes and baking a GLSL
-  sky into the environment's radiance cube have no path; one cube draw target
-  with the face as a render-time argument, decided in the cube map shape pass.
 - **[Depth func option](backlog/gpu-depth-func.md)** [2026-08-11]
   The depth comparison is fixed at LESS with no override, which blocks
   equal-depth multi-pass tricks (LEQUAL) and reversed-z; a depthCompare option
@@ -788,6 +791,13 @@ Finished, kept for the reasoning.
   attribute lists (withAttribute, one pipeline per layout per material) and
   every generator takes a layout option to emit the wider stride in one pass.
   Split from 3d-geometry-ops when that shipped 2026-08-19.
+- **[Environment tier - skybox and environment reflections](done/3d-environment.md)** [2026-09-06]
+  "Done 2026-09-06 in four stages: skybox and vRay background, scene
+  environment with lit reflectivity, the linear-only color pipeline with
+  rgba16f and rgba8-srgb, the standard GGX material, the .hdr bake tool and
+  loadEnvironment, cube draw targets with prefiltered HDR reflection probes
+  and scene.bakeBackground; shaped by the Three/Godot/Unity comparison
+  (scene-level, mip-chained cube, GL's own cube convention, half float)."
 - **[Geometry GPU buffers accumulate when a Mesh's geometry prop changes](done/3d-geometry-buffer-disposal.md)** [2026-08-18]
   Swapping <Mesh geometry> reactively leaves every previous generation's
   vertex/index buffers resident, because geometry buffers are app-lifetime and
@@ -1060,6 +1070,13 @@ Finished, kept for the reasoning.
   so environment/reflection mapping, skyboxes and cube shadow maps have no
   path; ES 3.0 has cube maps in core, seamless filtering included. Shape
   confirmed by the environment-tier comparison (3d-environment.md).
+- **[Cube map render targets (render-to-face)](done/gpu-cube-render-targets.md)** [2026-09-06]
+  "Done 2026-09-06: createCubeDrawTarget with the face (and mip level) as
+  render-time arguments of renderTarget, the face pass inverting the
+  front-face rule, mipmap: true allocating a renderable chain, and format
+  (rgba8, rgba8-srgb, rgba16f where half float is renderable) on every draw
+  target, 2D and cube; the primitive under reflection probes, the GPU
+  prefilter and the sky bake."
 - **[Frame-safe texture destruction](done/gpu-deferred-texture-destroy.md)** [2026-07-30]
   destroyTexture used to land before the reactive texture swap flushed; the
   runtime now defers reclamation until the live render tree no longer

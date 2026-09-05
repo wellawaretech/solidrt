@@ -666,10 +666,13 @@ them): update a prefiltered probe when the surroundings changed, or
 every few frames, and keep `prefilter: false` for a probe that must
 refresh every frame on a tight budget. The faces hold LINEAR light (the probe owns
 `uOutputEncode` 0, `uToneMapping` 0 and `uExposure` 1 on its target,
-names the scene's fan-out then skips), 8 bits per channel (rgba8, so
-dark reflections band; HDR probes are additive), and the probe never
-samples its own cube while rendering (a black environment stands in: one
-bounce). The face cameras are plain world-up cameras through an
+names the scene's fan-out then skips), HALF FLOAT where the device
+renders it (`limits.halfFloatRenderable`, every GLES 3 device here: a
+sun's or an emissive's range survives into the reflection, as in every
+engine's HDR probe) and 8-bit clamped elsewhere - the renderer decides
+for all probes (Godot), not a per-probe knob (`probeFormat()` in
+environment.ts) - and the probe never samples its own cube while
+rendering (a black environment stands in: one bounce). The face cameras are plain world-up cameras through an
 x-mirrored projection (`Camera.mirror`), because a GL cube face is seen
 from outside; the engine inverts the front-face rule on cube target
 passes so cull modes keep their meaning. `examples/probe.tsx`.
@@ -683,25 +686,30 @@ TextureId for `environment={{ cube }}`: Godot's sky-to-radiance bake, so
 a procedural sky lights the scene with no light nodes, and the runtime
 way to turn a hi-res LDR skybox into a properly convolved environment
 (the `mipmap: true` box chain above is the sharper, cheaper
-alternative). A snapshot at 8-bit linear (default 128): bake again when
-the sky changes, and destroy the old cube - it is not auto-freed (an
-environment normally lives as long as the app). A sky that reads
+alternative). A snapshot at the probe format (half float where
+renderable; default size 128): bake again when the sky changes, and
+destroy the old cube - it is not auto-freed (an environment normally
+lives as long as the app). `outputColor` leaves linear output UNCLAMPED
+(the clamp sits in the display encode), so a sky's sun disc of 40.0
+bakes as 40.0 and shows as the broad bright highlight on rough metal
+that HDR is for. A sky that reads
 `uCamPos` bakes from the origin; scene params (an app clock) are seen as
 of the call. `examples/sky-lit.tsx`.
 
 Panoramas: `equirectToCube(map, size, opts?)` converts an uploaded
 equirectangular 2D texture (createImage, createTexture) into a cube
 TextureId on the GPU, synchronously (six face passes straight into a
-cube draw target of the panorama's format, rgba8 or rgba8-srgb - no
-readback; `opts` are createCubeTexture's - `mipmap: true` for an
-environment). The center column faces -Z and the top row is +Y, as in
-Godot's PanoramaSkyMaterial and Unity's Skybox/Panoramic; Three centers
-+X, a quarter turn away. Leave the source texture's wrap at clamp
-(`repeat` also wraps vertically and bleeds the poles). This is the LDR
-runtime path (a cube draw target is 8-bit, so an HDR panorama throws);
-HDR goes through the bake tool above, whose CPU pipeline
-(`src/environment-bake.ts`: decodeHdr, panoramaToCube, prefilterCube,
-the .srte encode/decode) is pure TypeScript and bun-tested.
+cube draw target of the panorama's format - rgba8, rgba8-srgb or
+rgba16f, no readback; `opts` are createCubeTexture's - `mipmap: true`
+for an environment). The center column faces -Z and the top row is +Y,
+as in Godot's PanoramaSkyMaterial and Unity's Skybox/Panoramic; Three
+centers +X, a quarter turn away. Leave the source texture's wrap at
+clamp (`repeat` also wraps vertically and bleeds the poles). An HDR
+panorama uploaded as rgba16f converts into a half-float cube (sharp:
+a skybox, or `mipmap: true` for the box chain); its PREFILTERED form is
+the bake tool above, whose CPU pipeline (`src/environment-bake.ts`:
+decodeHdr, panoramaToCube, prefilterCube, the .srte encode/decode) is
+pure TypeScript and bun-tested - there is no runtime .hdr decoder.
 
 Fog: `scene.setFog(fog | null)`, the `fog` option on createScene and
 the reactive `Scene` prop, in Three's two shapes: linear `{ color, near,
@@ -1426,10 +1434,12 @@ older bakes are rejected - re-bake with `srt tool 3d/model`.
 - A color map created as plain rgba8 renders WASHED OUT: the fragment
   reads its encoded bytes as linear light and encodes them again. Create
   color images (base color, emissive, a sky's faces or panorama) with
-  `format: "rgba8-srgb"`; keep data maps rgba8. A rendered texture (a
-  scene view, a shader target, a UI capture) holds encoded pixels and
+  `format: "rgba8-srgb"`; keep data maps rgba8. A rendered rgba8 texture
+  (a scene view, a shader target, a UI capture) holds encoded pixels and
   cannot be tagged, so as a `map` it needs `srgbToLinear` from SRGB in a
-  custom fragment (no material option yet).
+  custom fragment (no material option yet); a draw target you create
+  yourself can be `format: "rgba8-srgb"` and then decodes on sample (it
+  is sampler-only: no display, readback or copy).
 - Reading the scene texture back (a probe's readTexture, a snapshot)
   gives ENCODED pixels: an expected linear value v shows as
   `linearToSrgb(v) * 255` - intensity 0.5 reads 188, not 128.

@@ -1,7 +1,8 @@
 ---
 title: Cube map render targets (render-to-face)
-description: A cube map is upload-only, so dynamic reflection probes and baking a GLSL sky into the environment's radiance cube have no path; one cube draw target with the face as a render-time argument, decided in the cube map shape pass.
+description: "Done 2026-09-06: createCubeDrawTarget with the face (and mip level) as render-time arguments of renderTarget, the face pass inverting the front-face rule, mipmap: true allocating a renderable chain, and format (rgba8, rgba8-srgb, rgba16f where half float is renderable) on every draw target, 2D and cube; the primitive under reflection probes, the GPU prefilter and the sky bake."
 created: 2026-09-02
+completed: 2026-09-06
 ---
 
 # Cube map render targets (render-to-face)
@@ -10,7 +11,7 @@ Split out of [gpu-cube-maps](../done/gpu-cube-maps.md) when its stage 1
 (upload + `samplerCube`) landed; the shape was decided there and is
 repeated here so it does not get re-derived.
 
-Consumers, all in [3d-environment](3d-environment.md) stage 4: a
+Consumers, all in [3d-environment](../done/3d-environment.md) stage 4: a
 reflection probe (Three `CubeCamera`, Unity/Godot `ReflectionProbe`
 realtime), and rendering the scene's GLSL sky into the radiance cube the
 environment samples (Godot's sky-to-radiance bake), with roughness
@@ -35,8 +36,18 @@ without one regenerates the chain (`generate_cube_mipmap`, the cube form
 of the 2D content-write rule). Same day: `format` on cube draw targets,
 rgba8 (default) or rgba8-srgb (GLES encodes on write, the only profile
 here), so `equirectToCube` renders straight into a cube of the panorama's
-format instead of reading six 2D targets back. Open here: the half-float
-format on draw targets (4c), and `format` on 2D draw targets at all.
+format instead of reading six 2D targets back.
+
+Stage 3 LANDED 2026-09-06 as 3d-environment stage 4c: `format` on every
+draw target, 2D and cube, one vocabulary (rgba8, rgba8-srgb, rgba16f)
+behind `GpuLimits::check_render_format` (rgba16f gated on half-float
+renderability, the other floats and r8 rejected as not color-renderable);
+2D storage, the multisample renderbuffer and resize allocate at the
+format, a sub-target inherits its parent's. A non-rgba8 2D target follows
+the cube map's rule - never Impeller-adopted, so sampler-only (no
+display, readback, copy) and the raster thread deletes its name.
+Nothing is open here; the HDR scene buffer that this enables is
+[3d-hdr-scene-buffer](../backlog/3d-hdr-scene-buffer.md).
 
 Shape:
 
@@ -44,7 +55,8 @@ Shape:
   face is a render-time argument (`renderTarget(cube, face)`), so the
   target model is not multiplied by six. `depth: true` is one renderbuffer
   reused across the six face passes.
-- Reject `samples >= 2`, `mipmap` and `depth: "texture"` initially.
+- Reject `samples >= 2`, `mipmap` and `depth: "texture"` initially
+  (`mipmap` landed in stage 2; the other two stand).
 - The output is the same sampler-only cube id `createCubeTexture` returns
   (shape state, `TextureShape::Cube`); the raster side must delete the
   name itself, as for uploaded cube maps (never Impeller-adopted).

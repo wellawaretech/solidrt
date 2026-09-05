@@ -88,6 +88,22 @@ impl GpuLimits {
     Ok(())
   }
 
+  /// Check a draw target's color format: the two 8-bit formats are
+  /// color-renderable in core GLES 3.0, half float only through an
+  /// extension (the HDR probe and bake format), and the 32-bit float and
+  /// single-channel formats are upload-and-sample only here.
+  pub fn check_render_format(&self, format: TextureFormat) -> Result<(), String> {
+    match format {
+      TextureFormat::Rgba8 | TextureFormat::Rgba8Srgb => Ok(()),
+      TextureFormat::Rgba16f if self.half_float_renderable => Ok(()),
+      TextureFormat::Rgba16f => Err(
+        "rgba16f is not renderable on this device (half float is not color-renderable: no EXT_color_buffer_half_float); check limits.halfFloatRenderable and fall back to rgba8"
+          .to_string(),
+      ),
+      other => Err(format!("draw target format must be rgba8, rgba8-srgb or rgba16f, got {}", other.name())),
+    }
+  }
+
   /// Check a cube map's face edge against the device ceiling.
   pub fn check_cube_map_size(&self, size: u32) -> Result<(), String> {
     let max = self.max_cube_map_size;

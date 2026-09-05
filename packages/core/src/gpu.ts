@@ -83,6 +83,8 @@ export type { FilterMode, WrapMode, TextureBinding, TextureBindings } from "flux
 // (Float32Array payload, nearest/texelFetch sampling only, no readback) and
 // the HDR image format "rgba16f" (Float32Array payload packed to half float,
 // filterable) - see TextureFormat in flux:gpu for each format's contract.
+// Draw targets (createDrawTarget, createCubeDrawTarget) take the renderable
+// subset: "rgba8", "rgba8-srgb", "rgba16f".
 // "etc2-rgba8" (compressed) is a reserved future value of the same
 // vocabulary.
 export type TextureFormatOptions = { format?: gpu.TextureFormat }
@@ -449,6 +451,13 @@ export function createShaderTarget(
  * driven later with `setTargetTextures`, same precedence and coverage
  * rules.
  *
+ * `format` is the color storage: "rgba8" (default), "rgba8-srgb" (encodes
+ * what a pass writes, decodes on sample) or "rgba16f" (half float, keeps
+ * the range - an HDR view or bake; where `limits.halfFloatRenderable`,
+ * else it throws). A target of either non-default format is SAMPLER-ONLY:
+ * a pass source, never displayed by a `<texture>` leaf, read back or
+ * copied (render it through a pass into an rgba8 target for those).
+ *
  * `into` makes a sub-target: a draw target rendering into the rectangle at
  * `x`/`y` (top-left origin) of draw target `into`'s storage, so N views or
  * N shadow maps share one texture and ONE pass; the id is a draw target to
@@ -470,6 +479,7 @@ export function createDrawTarget(
   params?: gpu.ShaderParams | null,
   opts?: {
     depth?: boolean | "texture"
+    format?: "rgba8" | "rgba8-srgb" | "rgba16f"
     textures?: gpu.TextureBindings
     clearColor?: [number, number, number, number]
     render?: "auto" | "manual"
@@ -492,8 +502,9 @@ export function createDrawTarget(
  * face)` (0 +X, 1 -X, 2 +Y, 3 -Y, 4 +Z, 5 -Z) - the reflection-probe
  * primitive (`@solidrt/3d`'s `scene.createReflectionProbe` drives it).
  * Manual by contract, one depth renderbuffer for the six faces (`depth:
- * true`), no samples or tiles; `format` rgba8 or rgba8-srgb (encodes on
- * write, decodes on sample); `mipmap: true` allocates the chain and
+ * true`), no samples or tiles; `format` rgba8, rgba8-srgb (encodes on
+ * write, decodes on sample) or rgba16f (half float, the HDR probe format,
+ * where `limits.halfFloatRenderable`); `mipmap: true` allocates the chain and
  * `renderTarget(id, face, level)` renders one level of it (a face render
  * without a level regenerates the chain instead) - the prefiltered
  * environment path. The id binds to a `samplerCube`
@@ -507,7 +518,7 @@ export function createCubeDrawTarget(
   params?: gpu.ShaderParams | null,
   opts?: {
     depth?: boolean
-    format?: "rgba8" | "rgba8-srgb"
+    format?: "rgba8" | "rgba8-srgb" | "rgba16f"
     textures?: gpu.TextureBindings
     clearColor?: [number, number, number, number]
     render?: "manual"
