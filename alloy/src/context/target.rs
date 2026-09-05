@@ -5,7 +5,7 @@ use crate::gpu::{
   instance_strides, resolve_draw_range, validate_draw_range, validate_instance_slots, validate_order,
   validate_param_if_declared, validate_params, validate_texture_bindings, vertex_stride, BufferIds, DepthStorage,
   DrawBounds, DrawSpec, DrawUpdate, ParamValue, PipelineSpec, SamplerState, TargetSpec, TextureBinding, TextureEntry,
-  TextureFormat, UniformKind, UniformTable, WindowShader, MAX_INSTANCE_SLOTS, TextureShape, CUBE_FACES,
+  TextureFormat, TextureShape, UniformKind, UniformTable, WindowShader, CUBE_FACES, MAX_INSTANCE_SLOTS,
 };
 use crate::raster::RasterCmd;
 
@@ -309,14 +309,11 @@ impl Context {
     let (width, height, sampler) = (spec.width, spec.height, spec.sampler);
     let manual = spec.manual;
     let handles = self.rpc(|reply| RasterCmd::CreateDrawTarget { id, depth_id, spec, depth, reply })??;
-    self
-      .textures
-      .insert(id, TextureEntry::d2(handles.color, width, height, sampler, TextureFormat::Rgba8));
+    self.textures.insert(id, TextureEntry::d2(handles.color, width, height, sampler, TextureFormat::Rgba8));
     if let (Some(depth_id), Some(impeller)) = (depth_id, handles.depth) {
-      self.textures.insert(
-        depth_id,
-        TextureEntry::d2(impeller, width, height, SamplerState::DEPTH, TextureFormat::Depth24),
-      );
+      self
+        .textures
+        .insert(depth_id, TextureEntry::d2(impeller, width, height, SamplerState::DEPTH, TextureFormat::Depth24));
       self.depth_ids.borrow_mut().insert(depth_id, id);
     }
     self.targets.borrow_mut().insert(
@@ -343,18 +340,33 @@ impl Context {
 
   /// Create a cube draw target: a draw target whose output is a `size` x
   /// `size` cube map, rendered one face at a time through
-  /// `render_target(id, Some(face))` - dynamic reflection probes and sky
-  /// bakes. Manual by contract (a render is one face; the app sequences
-  /// six), single-sample, no generated mip chain, `depth` a private
-  /// renderbuffer or none (a depth texture cannot serve six faces). The
+  /// `render_target(id, Some(face), level)` - dynamic reflection probes and
+  /// sky bakes. Manual by contract (a render is one face; the app sequences
+  /// six), single-sample, `depth` a private renderbuffer or none (a depth
+  /// texture cannot serve six faces), `format` rgba8 or rgba8-srgb (the
+  /// cube decodes on sample like an uploaded one). With `mipmap` the chain is allocated
+  /// and each level is renderable (the prefiltered environment chain); a
+  /// face render without a level regenerates it, as any content write. The
   /// id is a cube map to every consumer: sampler-only (`samplerCube`
   /// bindings), never displayed, read back, copied or resized. The face
   /// pass inverts the front-face rule (see `ShaderTexture::cube`), so the
   /// app renders each face through an x-mirrored projection and its
   /// pipelines' cull modes keep their meaning.
-  pub fn create_cube_draw_target(&self, size: u32, spec: TargetSpec, depth: DepthStorage) -> Result<u64, String> {
+  pub fn create_cube_draw_target(
+    &self,
+    size: u32,
+    spec: TargetSpec,
+    depth: DepthStorage,
+    format: TextureFormat,
+  ) -> Result<u64, String> {
     if size == 0 {
       return Err("cube draw target face size must be non-zero".to_string());
+    }
+    // The two 8-bit color-renderable formats; an sRGB target encodes on
+    // write (GLES), so a pass writes linear light into it as into any
+    // other. Half float waits for the renderability gate (3d-environment 4c).
+    if !matches!(format, TextureFormat::Rgba8 | TextureFormat::Rgba8Srgb) {
+      return Err(format!("cube draw target format must be rgba8 or rgba8-srgb, got {}", format.name()));
     }
     self.gpu_limits().check_cube_map_size(size)?;
     validate_load(&spec)?;
@@ -364,16 +376,15 @@ impl Context {
     if spec.samples >= 2 {
       return Err("a cube draw target cannot be multisampled yet; use samples 1".to_string());
     }
-    if spec.sampler.mipmap {
-      return Err("a cube draw target cannot carry a mip chain yet; drop mipmap: true".to_string());
-    }
     if depth == DepthStorage::Texture {
-      return Err("a cube draw target cannot expose a depth texture (one renderbuffer serves its six faces)".to_string());
+      return Err(
+        "a cube draw target cannot expose a depth texture (one renderbuffer serves its six faces)".to_string(),
+      );
     }
     let id = self.textures.allocate_id();
     let sampler = spec.sampler;
-    self.rpc(|reply| RasterCmd::CreateCubeDrawTarget { id, size, spec, depth, reply })??;
-    self.textures.insert(id, TextureEntry::cube(size, sampler, TextureFormat::Rgba8));
+    self.rpc(|reply| RasterCmd::CreateCubeDrawTarget { id, size, spec, depth, format, reply })??;
+    self.textures.insert(id, TextureEntry::cube(size, sampler, format));
     self.targets.borrow_mut().insert(
       id,
       TargetMirror {
@@ -381,7 +392,12 @@ impl Context {
         draw: None,
         bounds: DrawBounds::default(),
         buffers: BufferIds::default(),
-        entries: Some(DrawListMirror { depth: depth.is_some(), depth_texture: None, next_draw: 1, entries: HashMap::new() }),
+        entries: Some(DrawListMirror {
+          depth: depth.is_some(),
+          depth_texture: None,
+          next_draw: 1,
+          entries: HashMap::new(),
+        }),
       },
     );
     self.shader_sources.borrow_mut().insert(id, HashMap::new());
@@ -955,7 +971,10 @@ impl Context {
   /// this one re-render at the next flush. The caller must request a frame
   /// for displayed output. Errs on an unknown id or a target the flush owns
   /// (a non-manual one, whose pass must stay a pure function of its inputs).
-  pub fn render_target(&self, id: u64, face: Option<u32>) -> Result<(), String> {
+  /// `level` picks the mip level of a cube face to render into (a
+  /// mipmapped cube target's chain; level 0 is the only level otherwise);
+  /// without one the face's level 0 renders and the chain regenerates.
+  pub fn render_target(&self, id: u64, face: Option<u32>, level: Option<u32>) -> Result<(), String> {
     if !self.targets.borrow().contains_key(&id) {
       return Err(format!("shader texture {id} not found"));
     }
@@ -963,16 +982,35 @@ impl Context {
       return Err(format!("target {id} is not manual (the runtime renders it; create with render: \"manual\")"));
     }
     // A cube target renders one face per call; a 2D target takes no face.
-    let cube = self.textures.get(id).is_some_and(|entry| entry.shape == TextureShape::Cube);
+    let entry = self.textures.get(id);
+    let cube = entry.as_ref().is_some_and(|entry| entry.shape == TextureShape::Cube);
     match (cube, face) {
-      (true, None) => return Err(format!("target {id} is a cube draw target: renderTarget(id, face) names the face to render")),
+      (true, None) => {
+        return Err(format!("target {id} is a cube draw target: renderTarget(id, face) names the face to render"))
+      }
       (true, Some(f)) if f as usize >= CUBE_FACES => {
         return Err(format!("cube face must be 0..5 (+X, -X, +Y, -Y, +Z, -Z), got {f}"));
       }
       (false, Some(_)) => return Err(format!("target {id} is a 2D target: renderTarget(id) takes no face")),
       _ => {}
     }
-    self.send(RasterCmd::RenderTarget { id, face });
+    if let Some(l) = level {
+      let Some(entry) = entry.filter(|_| cube) else {
+        return Err(format!(
+          "target {id} is a 2D target: a mip level is a cube face's (renderTarget(id, face, level))"
+        ));
+      };
+      let levels = if entry.sampler.mipmap { crate::gpu::texture::mip_levels(entry.width) } else { 1 };
+      if l >= levels {
+        return Err(format!(
+          "cube target {id} has {levels} mip level(s) (a {}x{} cube{}), got level {l}",
+          entry.width,
+          entry.width,
+          if entry.sampler.mipmap { "" } else { " without mipmap: true" }
+        ));
+      }
+    }
+    self.send(RasterCmd::RenderTarget { id, face, level });
     // A manual target's pixels change exactly here (and at copy_texture), so
     // this notes directly - note_target_content's manual skip is for the
     // writes that only stage state for a later render.

@@ -23,8 +23,20 @@ UI-side `create_cube_draw_target`), `renderTarget(id, face)` (the
 `RenderTarget` command grew `face: Option<u32>`, validated UI-side
 against the entry's shape), the face pass inverting the front-face rule
 (`PassDraw::Draws::invert_winding`) because a GL cube face is the x
-mirror of a 2D target's image. Open here: render-into-level for the
-prefiltered chain (4b), a color format on draw targets for HDR (4c).
+mirror of a 2D target's image.
+
+Stage 2 LANDED 2026-09-05 as 3d-environment stage 4b: `mipmap: true` on a
+cube draw target allocates the whole chain (`create_cube_storage`), the
+`RenderTarget` command grew `level: Option<u32>` (validated UI-side
+against the chain: `mip_levels(edge)` with `mipmap`, 1 without), and
+`render_face(face, level)` attaches that level and runs the pass at the
+level's edge; an explicit level writes that level alone, a face render
+without one regenerates the chain (`generate_cube_mipmap`, the cube form
+of the 2D content-write rule). Same day: `format` on cube draw targets,
+rgba8 (default) or rgba8-srgb (GLES encodes on write, the only profile
+here), so `equirectToCube` renders straight into a cube of the panorama's
+format instead of reading six 2D targets back. Open here: the half-float
+format on draw targets (4c), and `format` on 2D draw targets at all.
 
 Shape:
 
@@ -37,6 +49,8 @@ Shape:
   (shape state, `TextureShape::Cube`); the raster side must delete the
   name itself, as for uploaded cube maps (never Impeller-adopted).
 - Prefiltered levels: rendering into level N of a face (the GGX
-  convolution pass) is the additive follow-on; the upload side landed
-  the same thing 2026-09-03 as the explicit-chain form of
-  `createCubeTexture` (an array of six-face arrays, the full chain).
+  convolution pass) landed as above; the upload side landed the same
+  thing 2026-09-03 as the explicit-chain form of `createCubeTexture` (an
+  array of six-face arrays, the full chain). The convolution samples a
+  SECOND cube (the sharp render, with a generated chain): a pass may not
+  sample its own texture, so the chain is never built in place.

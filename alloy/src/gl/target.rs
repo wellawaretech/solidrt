@@ -12,18 +12,19 @@ use super::entry::{
   build_vao, check_entry_buffers, merge_record, release_entry_buffers, DrawEntry, EntryBuffers, MeshState,
 };
 use super::pass::{run_pass, DrawGroup, PassDraw, PassInput, ResolvedDraw};
-use super::storage::{
-  attach_cube_face, attach_storage, create_cube_storage, create_depth_texture, create_mesh_storage, create_target_texture,
-  DepthAttachment, MeshStorage, Msaa,
-};
+use super::prev_framebuffer;
 use super::program::{release_pipeline, release_program, RenderPipeline, ShaderProgram};
+use super::storage::{
+  attach_cube_face, attach_storage, create_cube_storage, create_depth_texture, create_mesh_storage,
+  create_target_texture, DepthAttachment, MeshStorage, Msaa,
+};
 use crate::gpu::resources::GpuDrawInfo;
 use crate::gpu::spec::DepthStorage;
+use crate::gpu::texture::TextureFormat;
 use crate::gpu::vocab::{
   blend_name, cull_name, merge_bindings, validate_order, AttrFormat, DrawRange, ParamValue, PipelineDesc,
   TextureBinding,
 };
-use super::prev_framebuffer;
 
 /// A sub-target's place in its parent: a draw target created with
 /// `into` renders into a rectangle of `parent`'s storage instead of owning
@@ -281,14 +282,19 @@ impl ShaderTexture {
   /// A cube draw target: a draw target whose color is a `size` x `size`
   /// cube map, rendered face by face (`render_face`) over one shared depth
   /// renderbuffer. Manual by contract (the owner marks it so): a render
-  /// is one face, and the six faces are the app's to sequence.
+  /// is one face, and the six faces are the app's to sequence. With
+  /// `mipmap` the whole chain is allocated: a face render into an explicit
+  /// level writes that level, one without regenerates the chain from level
+  /// 0 as every content write does.
   pub fn new_cube_draw_target(
     gl: &glow::Context,
     size: u32,
     depth: DepthStorage,
     clear_color: [f32; 4],
+    mipmap: bool,
+    format: TextureFormat,
   ) -> Result<Self, String> {
-    let MeshStorage { target, fbo, depth, msaa } = create_cube_storage(gl, size, depth)?;
+    let MeshStorage { target, fbo, depth, msaa } = create_cube_storage(gl, size, depth, mipmap, format)?;
     Ok(ShaderTexture {
       kind: TargetKind::Mesh(MeshState {
         entries: Vec::new(),
@@ -312,11 +318,6 @@ impl ShaderTexture {
       cube: true,
       region: None,
     })
-  }
-
-  /// Whether this is a cube draw target (rendered through `render_face`).
-  pub fn cube(&self) -> bool {
-    self.cube
   }
 
   /// A sub-target: a draw target with an empty, mutable draw list that
@@ -536,7 +537,11 @@ impl ShaderTexture {
     // sampling it minified), so it follows every content write: the
     // automatic regeneration the dirty flush makes possible.
     if self.sampler.mipmap {
-      super::texture::generate_mipmap(gl, self.target);
+      if self.cube {
+        super::texture::generate_cube_mipmap(gl, self.target);
+      } else {
+        super::texture::generate_mipmap(gl, self.target);
+      }
     }
   }
 
@@ -1047,19 +1052,36 @@ impl ShaderTexture {
   /// Render one face (GL order: +X, -X, +Y, -Y, +Z, -Z) of a cube draw
   /// target: attach it as the FBO's color, then the mesh pass as `render`
   /// runs it (its own entries over the whole face, winding inverted). The
-  /// depth renderbuffer is shared, cleared per face by the pass.
-  pub fn render_face(&self, gl: &glow::Context, resolve: &dyn Fn(&[TextureBinding], &ShaderProgram) -> Vec<PassInput>, face: u32) {
+  /// depth renderbuffer is shared, cleared per face by the pass. With a
+  /// `level` the pass covers that mip level of the face at the level's
+  /// edge and writes nothing else - one link of a chain the app renders
+  /// itself (a prefiltered environment); without one, the face's level 0,
+  /// followed by the chain regeneration a mipmapped target owes every
+  /// content write. (Validated UI-side: a level exists on a mipmapped
+  /// target only.)
+  pub fn render_face(
+    &self,
+    gl: &glow::Context,
+    resolve: &dyn Fn(&[TextureBinding], &ShaderProgram) -> Vec<PassInput>,
+    face: u32,
+    level: Option<u32>,
+  ) {
     if !self.cube {
       log::warn!("[alloy] render_face on a 2D target ignored");
       return;
     }
+    let lvl = level.unwrap_or(0);
     unsafe {
       let prev_fbo = gl.get_parameter_i32(glow::FRAMEBUFFER_BINDING);
       gl.bind_framebuffer(glow::FRAMEBUFFER, Some(self.fbo));
-      attach_cube_face(gl, self.target, face);
+      attach_cube_face(gl, self.target, face, lvl);
       gl.bind_framebuffer(glow::FRAMEBUFFER, super::prev_framebuffer(prev_fbo));
     }
-    self.render_groups(gl, resolve, true, &[], None);
+    let edge = crate::gpu::texture::mip_size(self.width, lvl);
+    self.pass_groups(gl, resolve, true, &[], None, edge, edge);
+    if level.is_none() {
+      self.resolve(gl);
+    }
   }
 
   /// Render a mesh target's pass with its sub-targets as groups (see
@@ -1076,6 +1098,23 @@ impl ShaderTexture {
     full: bool,
     tiles: &[&ShaderTexture],
     tile_clear: Option<&ShaderProgram>,
+  ) {
+    self.pass_groups(gl, resolve, full, tiles, tile_clear, self.width, self.height);
+    self.resolve(gl);
+  }
+
+  /// The pass of `render_groups` over a `width` x `height` viewport (the
+  /// storage's size, or one mip level's edge for a cube face render into
+  /// a level), without the content-write tail: the caller resolves.
+  fn pass_groups(
+    &self,
+    gl: &glow::Context,
+    resolve: &dyn Fn(&[TextureBinding], &ShaderProgram) -> Vec<PassInput>,
+    full: bool,
+    tiles: &[&ShaderTexture],
+    tile_clear: Option<&ShaderProgram>,
+    width: u32,
+    height: u32,
   ) {
     let Some(mesh) = self.mesh() else { return };
     let own: Vec<ResolvedDraw> = if full { mesh.resolved_draws(resolve) } else { Vec::new() };
@@ -1111,8 +1150,7 @@ impl ShaderTexture {
       tile_clear,
       invert_winding: self.cube,
     };
-    run_pass(gl, Some(self.draw_fbo()), (0, 0), self.width, self.height, None, draw);
-    self.resolve(gl);
+    run_pass(gl, Some(self.draw_fbo()), (0, 0), width, height, None, draw);
   }
 
   /// Draw the resolved inputs over this target's full contents via `program`
@@ -1145,12 +1183,13 @@ impl ShaderTexture {
       gl.disable(glow::SCISSOR_TEST);
       gl.color_mask(true, true, true, true);
       gl.clear_color(r, g, b, a);
-      // A cube target clears every face (each attached in turn); a 2D
-      // target its one image.
+      // A cube target clears every face (each attached in turn; a chain
+      // regenerates from them in the resolve below); a 2D target its one
+      // image.
       let faces = if self.cube { crate::gpu::texture::CUBE_FACES as u32 } else { 1 };
       for face in 0..faces {
         if self.cube {
-          attach_cube_face(gl, self.target, face);
+          attach_cube_face(gl, self.target, face, 0);
         }
         if self.mesh().is_some_and(|m| m.depth.is_some()) {
           let prev_depth_mask = gl.get_parameter_i32(glow::DEPTH_WRITEMASK) != 0;

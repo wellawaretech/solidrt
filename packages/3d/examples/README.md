@@ -51,10 +51,15 @@ depends on `@solidrt/3d` (or in-repo from the package directory).
   0 to 1 across: the metals are the room, sharp to blurred. Drag to
   look around.
 - `probe.tsx` - a reflection probe (`scene.createReflectionProbe`): the
-  scene rendered into a cube map from the center of a chrome ball, every
-  frame, and set as the environment the ball mirrors - six colored walls
-  and four orbiting spheres show in the chrome. Layers keep the ball out
-  of its own probe. Drag to look around.
+  scene rendered into a cube map from the center of a satin chrome ball,
+  every frame, prefiltered into the roughness chain and set as the
+  environment the ball reflects - six colored walls and four orbiting
+  spheres show in it, blurred by the ball's roughness. Layers keep the
+  ball out of its own probe. Drag to look around.
+- `sky-lit.tsx` - a sky-lit scene (`scene.bakeBackground`): a procedural
+  GLSL sky is the background AND, baked into a prefiltered cube, the
+  environment - no light nodes. Two rows of `standard` spheres, metal and
+  dielectric, roughness 0 to 1 across. Drag to look around.
 - `sprites.tsx` - sprites: a ring of `"full"` billboard glows that stay
   flat to the screen and `"fixed-y"` cutout trees that only yaw toward
   the camera and stay upright as it climbs, both turned in the vertex

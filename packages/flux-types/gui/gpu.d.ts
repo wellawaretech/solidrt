@@ -987,9 +987,13 @@ declare module "flux:gpu" {
    * camera into the shared params and renders, six times. Manual by
    * contract (`render` defaults to "manual"; "auto" throws), one private
    * depth renderbuffer for all faces (`depth: true`; "texture" throws), no
-   * `samples`, no `mipmap`, no `into`. The id is a cube map to every
-   * consumer: bind it to a `samplerCube`, never display, read back, copy
-   * or resize it. Each face pass inverts the front-face rule: a GL cube
+   * `samples`, no `into`; `format` rgba8 or rgba8-srgb. `mipmap: true` allocates the whole chain: a face
+   * render without a level regenerates it from level 0 (as every content
+   * write on a mipmapped target), a render into an explicit `level`
+   * writes that level alone at its own edge - how a prefiltered
+   * environment chain is rendered level by level. The id is a cube map to
+   * every consumer: bind it to a `samplerCube`, never display, read back,
+   * copy or resize it. Each face pass inverts the front-face rule: a GL cube
    * face is seen from outside, the x mirror of a 2D target's image, so
    * render every face through an x-mirrored projection and the pipelines'
    * cull modes keep their meaning (derivative-built tangent frames flip
@@ -1000,6 +1004,8 @@ declare module "flux:gpu" {
     params?: ShaderParams | null,
     opts?: {
       depth?: boolean
+      /** rgba8 (default) or rgba8-srgb: the cube then encodes what a pass writes and decodes on sample, like an uploaded sRGB cube. Other formats throw (HDR draw targets are a later stage). */
+      format?: "rgba8" | "rgba8-srgb"
       textures?: TextureBindings
       clearColor?: [number, number, number, number]
       render?: "manual"
@@ -1205,9 +1211,14 @@ declare module "flux:gpu" {
    * ITSELF still throws (same-pass GL feedback, undefined pixels regardless
    * of who schedules it). `face` (0..5) names the face of a cube draw
    * target ({@link createCubeDrawTarget}) and is required there; a 2D
-   * target takes none.
+   * target takes none. `level` names the mip level of that face to render
+   * into, on a `mipmap: true` cube target (0 up to the chain's last; the
+   * pass runs at the level's edge and regenerates nothing); without it the
+   * face's level 0 renders and the chain regenerates. Throws for a level
+   * on a 2D target or beyond the chain (a cube target without `mipmap`
+   * has level 0 only).
    */
-  export function renderTarget(id: TextureId, face?: number): void
+  export function renderTarget(id: TextureId, face?: number, level?: number): void
   /**
    * Overwrite a `render: "manual"` target with another texture's current
    * pixels, GPU-side: the seed/history analog of {@link uploadTexture}

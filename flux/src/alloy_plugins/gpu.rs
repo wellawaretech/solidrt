@@ -961,7 +961,10 @@ fn create_cube_texture(ctx: Ctx<'_>, faces: Array<'_>, size: u32, opts: OptArg<O
   }
   let sampler = collect_sampler_defaulting(&ctx, &opts.0, format, "createCubeTexture", explicit.then_some(true))?;
   if explicit && !sampler.mipmap {
-    return Err(throw_str(&ctx, "createCubeTexture: explicit mip levels are the chain mipmap sampling reads; drop mipmap: false"));
+    return Err(throw_str(
+      &ctx,
+      "createCubeTexture: explicit mip levels are the chain mipmap sampling reads; drop mipmap: false",
+    ));
   }
   let label = collect_label(&opts.0)?;
   let st = state(&ctx);
@@ -1401,9 +1404,11 @@ fn create_draw_target(
 // whose output is a `size` x `size` cube map rendered one face at a time
 // (renderTarget(id, face)) - the reflection-probe primitive. Options are
 // createDrawTarget's minus `into` (no tiles) and with `render` defaulting
-// to (and required to be) "manual"; alloy rejects samples, mipmap and
-// depth "texture". The face pass inverts the front-face rule, so the app
-// renders through an x-mirrored projection (see alloy).
+// to (and required to be) "manual"; alloy rejects samples and depth
+// "texture". `mipmap: true` allocates the chain, renderable level by level
+// (renderTarget(id, face, level)); `format` is rgba8 (default) or
+// rgba8-srgb (encodes on write, decodes on sample). The face pass inverts the front-face
+// rule, so the app renders through an x-mirrored projection (see alloy).
 fn create_cube_draw_target(
   ctx: Ctx<'_>,
   size: u32,
@@ -1415,11 +1420,15 @@ fn create_cube_draw_target(
       return Err(throw_str(&ctx, "createCubeDrawTarget: a cube draw target has no tiles; drop 'into'"));
     }
     if o.get::<_, Option<String>>("render")?.as_deref() == Some("auto") {
-      return Err(throw_str(&ctx, "createCubeDrawTarget: a cube draw target is manual (rendered face by face); drop render: \"auto\""));
+      return Err(throw_str(
+        &ctx,
+        "createCubeDrawTarget: a cube draw target is manual (rendered face by face); drop render: \"auto\"",
+      ));
     }
   }
   let (mut spec, depth, textures, _) = collect_draw_target_spec(&ctx, &opts.0, size, size, "createCubeDrawTarget")?;
   spec.manual = true;
+  let format = collect_format(&ctx, &opts.0, "createCubeDrawTarget")?;
   let params = match &params {
     Some(o) => collect_params(&ctx, o, "createCubeDrawTarget")?,
     None => Vec::new(),
@@ -1428,13 +1437,16 @@ fn create_cube_draw_target(
   let id = st
     .gui
     .alloy
-    .create_cube_draw_target(size, spec, depth)
+    .create_cube_draw_target(size, spec, depth, format)
     .map_err(|e| throw_str(&ctx, &format!("createCubeDrawTarget: {e}")))?;
   if !params.is_empty() {
     st.gui.alloy.set_target_params(id, &params).map_err(|e| throw_str(&ctx, &format!("createCubeDrawTarget: {e}")))?;
   }
   if !textures.is_empty() {
-    st.gui.alloy.set_target_textures(id, &textures).map_err(|e| throw_str(&ctx, &format!("createCubeDrawTarget: {e}")))?;
+    st.gui
+      .alloy
+      .set_target_textures(id, &textures)
+      .map_err(|e| throw_str(&ctx, &format!("createCubeDrawTarget: {e}")))?;
   }
   st.created.borrow_mut().insert(id);
   Ok(id)
@@ -1604,9 +1616,12 @@ fn set_draw_buffers(ctx: Ctx<'_>, target: u64, draw: u64, update: Object<'_>) ->
 // renderTarget(id, face?): a manual target rendered once, now; `face`
 // (0..5) selects the face of a cube draw target and is rejected on a 2D
 // one (alloy validates both ways).
-fn render_target(ctx: Ctx<'_>, id: u64, face: OptArg<u32>) -> rquickjs::Result<()> {
+// renderTarget(id, face?, level?): `face` is a cube draw target's face,
+// `level` the mip level of that face to render into (a mipmapped cube
+// target; alloy validates both).
+fn render_target(ctx: Ctx<'_>, id: u64, face: OptArg<u32>, level: OptArg<u32>) -> rquickjs::Result<()> {
   let st = state(&ctx);
-  st.gui.alloy.render_target(id, face.0).map_err(|e| throw_str(&ctx, &format!("renderTarget: {e}")))?;
+  st.gui.alloy.render_target(id, face.0, level.0).map_err(|e| throw_str(&ctx, &format!("renderTarget: {e}")))?;
   // New target output changes the screen without any tree mutation.
   st.gui.platform.request_frame();
   Ok(())

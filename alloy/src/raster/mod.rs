@@ -698,8 +698,8 @@ impl RasterState {
           RasterCmd::CreateDrawTarget { id, depth_id, spec, depth, reply: tx } => {
             reply(tx, self.create_draw_target(id, depth_id, spec, depth));
           }
-          RasterCmd::CreateCubeDrawTarget { id, size, spec, depth, reply: tx } => {
-            reply(tx, self.create_cube_draw_target(id, size, spec, depth));
+          RasterCmd::CreateCubeDrawTarget { id, size, spec, depth, format, reply: tx } => {
+            reply(tx, self.create_cube_draw_target(id, size, spec, depth, format));
           }
           RasterCmd::CreateSubTarget { id, parent, x, y, spec, reply: tx } => {
             reply(tx, self.create_sub_target(id, parent, x, y, spec));
@@ -772,8 +772,8 @@ impl RasterState {
           RasterCmd::SetDraw { id, range } => {
             self.entry_write(id, "draw update", |_, shader| shader.set_draw(range));
           }
-          RasterCmd::RenderTarget { id, face } => {
-            self.render_target_now(id, face);
+          RasterCmd::RenderTarget { id, face, level } => {
+            self.render_target_now(id, face, level);
           }
           RasterCmd::CopyTexture { src, dst } => {
             // Observes src's pixels, so flush first (the same rule as

@@ -10,9 +10,7 @@ use std::sync::atomic::Ordering;
 
 use impellers::{ISize, Texture};
 
-use super::{
-  cmd, ensure_copy_program, resolve_entry_buffers, RasterState, RasterStats,
-};
+use super::{cmd, ensure_copy_program, resolve_entry_buffers, RasterState, RasterStats};
 use crate::gl;
 use crate::gl::{GpuTexture, PassInput, PassTimer, SamplerCache, ShaderProgram, ShaderTexture, Timed};
 use crate::gpu::{
@@ -34,8 +32,8 @@ impl RasterState {
   /// then the one pass, then seed the dirty set so targets sampling this one
   /// re-render at the next flush - the same shape as an uploadTexture
   /// content change.
-  pub(super) fn render_target_now(&mut self, id: u64, face: Option<u32>) {
-    self.flush_dirty();
+  pub(super) fn render_target_now(&mut self, id: u64, face: Option<u32>, level: Option<u32>) {
+    self.flush_sources_of(id);
     match self.shaders.get(&id) {
       Some(shader) => {
         timed_pass(&self.gl, &mut self.pass_timer, &self.stats, id, shader, || {
@@ -43,7 +41,7 @@ impl RasterState {
             resolve_binding_list(&self.textures, &self.samplers, bindings, program)
           };
           match face {
-            Some(face) => shader.render_face(&self.gl, &resolve, face),
+            Some(face) => shader.render_face(&self.gl, &resolve, face, level),
             None => shader.render(&self.gl, &resolve),
           }
         });
@@ -66,6 +64,41 @@ impl RasterState {
   /// invariant honest: everything ordered here is a pure function of its
   /// inputs, so rendering it zero, one, or many times is indistinguishable.
   pub(super) fn flush_dirty(&mut self) {
+    self.flush_dirty_within(None);
+  }
+
+  /// The flush a manual render owes its pass: only the pending writes among
+  /// the targets `id` transitively samples (through non-manual targets; a
+  /// manual one is a plain content source here as in `flush_dirty`). Any
+  /// other dirty target - typically the auto target that samples the manual
+  /// one being rendered, dirtied by its previous face or level pass - waits
+  /// for the frame's flush instead of re-rendering before every pass of a
+  /// six-face, nine-level sequence.
+  pub(super) fn flush_sources_of(&mut self, id: u64) {
+    if self.dirty.is_empty() {
+      return;
+    }
+    let mut scope: HashSet<u64> = HashSet::new();
+    let mut stack = vec![id];
+    while let Some(t) = stack.pop() {
+      let Some(shader) = self.shaders.get(&t) else { continue };
+      for s in shader.binding_sources() {
+        let s = self.depth_owners.get(&s).copied().unwrap_or(s);
+        if self.shaders.get(&s).is_some_and(|src| !src.manual()) && scope.insert(s) {
+          stack.push(s);
+        }
+      }
+    }
+    if !scope.is_empty() {
+      self.flush_dirty_within(Some(&scope));
+    }
+  }
+
+  /// `flush_dirty` over every non-manual target, or, with a `scope`, over
+  /// the targets in it only: the rest of the dirty set is left for a later
+  /// flush, with the rendered targets' out-of-scope samplers dirtied in
+  /// their place (the rendered ones are fresh now).
+  fn flush_dirty_within(&mut self, scope: Option<&HashSet<u64>>) {
     if self.dirty.is_empty() {
       return;
     }
@@ -101,12 +134,17 @@ impl RasterState {
     let changed = |id: &u64| self.dirty.contains(id) || affected.contains(id);
     let tile_clear =
       if self.regions.is_empty() { None } else { ensure_tile_clear_program(&self.gl, &mut self.tile_clear_program) };
+    let mut rendered: Vec<u64> = Vec::new();
     for id in order.iter().chain(cyclic.iter()) {
+      if scope.is_some_and(|s| !s.contains(id)) {
+        continue;
+      }
       let Some(shader) = self.shaders.get(id) else { continue };
       // A tile renders as a group of its parent's pass, never alone.
       if shader.region().is_some() {
         continue;
       }
+      rendered.push(*id);
       let resolve = |bindings: &[TextureBinding], program: &ShaderProgram| {
         resolve_binding_list(&self.textures, &self.samplers, bindings, program)
       };
@@ -127,7 +165,26 @@ impl RasterState {
         }
       });
     }
-    self.dirty.clear();
+    match scope {
+      None => self.dirty.clear(),
+      Some(scope) => {
+        for r in &rendered {
+          self.dirty.remove(r);
+          if let Some(tiles) = self.regions.get(r) {
+            for tile in tiles {
+              self.dirty.remove(tile);
+            }
+          }
+          // A fresh target's content changed for the samplers outside the
+          // scope: they take its place in the dirty set.
+          for (d, sources) in &edges {
+            if !scope.contains(d) && sources.contains(r) {
+              self.dirty.insert(*d);
+            }
+          }
+        }
+      }
+    }
   }
 
   /// Resize an existing shader/pipeline target in place: a new target texture
@@ -136,7 +193,12 @@ impl RasterState {
   /// runs on RenderTarget), then adopted into Impeller. Replies with the new
   /// handle so the UI side re-registers it under the same id; the old handle
   /// keeps the old GL name alive until in-flight display lists drop it.
-  pub(super) fn resize_shader_texture(&mut self, id: u64, width: u32, height: u32) -> Result<cmd::TargetHandles, String> {
+  pub(super) fn resize_shader_texture(
+    &mut self,
+    id: u64,
+    width: u32,
+    height: u32,
+  ) -> Result<cmd::TargetHandles, String> {
     let shader = self.shaders.get_mut(&id).ok_or_else(|| format!("shader texture {id} not found"))?;
     shader.resize(&self.gl, width, height)?;
     let shader = self.shaders.get(&id).expect("shader present after resize");
@@ -157,16 +219,15 @@ impl RasterState {
     let depth = match (shader.depth_texture(), self.target_depths.get(&id).copied()) {
       (Some(gl_texture), Some(depth_id)) => {
         let label = self.textures.get(&depth_id).and_then(|old| old.label.clone());
-        let depth_gpu =
-          GpuTexture {
-            gl_texture,
-            width,
-            height,
-            shape: TextureShape::D2,
-            sampler: SamplerState::DEPTH,
-            format: TextureFormat::Depth24,
-            label,
-          };
+        let depth_gpu = GpuTexture {
+          gl_texture,
+          width,
+          height,
+          shape: TextureShape::D2,
+          sampler: SamplerState::DEPTH,
+          format: TextureFormat::Depth24,
+          label,
+        };
         let impeller =
           gl::adopt_texture(&depth_gpu, &self.impeller_ctx, size).ok_or("adopt resized depth texture failed")?;
         self.textures.insert(depth_id, depth_gpu);
@@ -228,7 +289,11 @@ impl RasterState {
     Ok((texture, uniforms))
   }
 
-  pub(super) fn create_pipeline_texture(&mut self, id: u64, spec: PipelineSpec) -> Result<(Texture, UniformTable), String> {
+  pub(super) fn create_pipeline_texture(
+    &mut self,
+    id: u64,
+    spec: PipelineSpec,
+  ) -> Result<(Texture, UniformTable), String> {
     let label = spec.target.label.clone();
     let buffers = resolve_entry_buffers(&self.buffers, spec.entry.buffer_ids())?;
     let shader = ShaderTexture::new_pipeline(
@@ -382,8 +447,9 @@ impl RasterState {
     size: u32,
     spec: TargetSpec,
     depth: DepthStorage,
+    format: TextureFormat,
   ) -> Result<(), String> {
-    let shader = ShaderTexture::new_cube_draw_target(&self.gl, size, depth, spec.clear_color)?
+    let shader = ShaderTexture::new_cube_draw_target(&self.gl, size, depth, spec.clear_color, spec.sampler.mipmap, format)?
       .with_sampler(spec.sampler)
       .with_manual(true)
       .with_load(spec.load);
@@ -393,7 +459,7 @@ impl RasterState {
       height: size,
       shape: TextureShape::Cube,
       sampler: spec.sampler,
-      format: TextureFormat::Rgba8,
+      format,
       label: spec.label,
     };
     shader.clear(&self.gl);
@@ -406,7 +472,14 @@ impl RasterState {
   /// `RasterCmd::CreateSubTarget`): in the shader map and the parent's
   /// group list, never in the texture map. Starts dirty like every
   /// flush-rendered target; the parent renders it at the next flush.
-  pub(super) fn create_sub_target(&mut self, id: u64, parent: u64, x: i32, y: i32, spec: TargetSpec) -> Result<(), String> {
+  pub(super) fn create_sub_target(
+    &mut self,
+    id: u64,
+    parent: u64,
+    x: i32,
+    y: i32,
+    spec: TargetSpec,
+  ) -> Result<(), String> {
     let parent_shader = self.shaders.get(&parent).ok_or_else(|| format!("target {parent} not found"))?;
     let shader = ShaderTexture::new_sub_target(
       parent_shader,
@@ -427,7 +500,13 @@ impl RasterState {
   /// Add a draw entry to a draw target (see `RasterCmd::AddDraw`). The UI
   /// side validated everything against its mirrors; a failure here means the
   /// mirrors diverged.
-  pub(super) fn add_draw(&mut self, target: u64, draw: u64, entry: DrawSpec, before: Option<u64>) -> Result<(), String> {
+  pub(super) fn add_draw(
+    &mut self,
+    target: u64,
+    draw: u64,
+    entry: DrawSpec,
+    before: Option<u64>,
+  ) -> Result<(), String> {
     let pipeline = self
       .render_pipelines
       .get(&entry.pipeline)
@@ -648,7 +727,12 @@ fn resolve_binding_list(
         return None;
       }
       if kind.and_then(UniformKind::sampler_shape).is_some_and(|wanted| wanted != gpu.shape) {
-        log::warn!("[alloy] input '{}': texture {} is a {} texture, the sampler is not; skipped", b.name, b.id, gpu.shape.name());
+        log::warn!(
+          "[alloy] input '{}': texture {} is a {} texture, the sampler is not; skipped",
+          b.name,
+          b.id,
+          gpu.shape.name()
+        );
         return None;
       }
       let sampler = if compare { samplers.compare() } else { samplers.get(gpu.sampler.overridden(&b.sampler)) };

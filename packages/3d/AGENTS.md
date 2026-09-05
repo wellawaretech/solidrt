@@ -47,8 +47,9 @@ blendMode and pointer events like any element.
   view, `view.setParams` is the view's own channel - and names a view
   sets itself (or its `fog` option, below) become VIEW-OWNED: the
   scene's setParams/setFog fan-out skips them from then on, so a view
-  override survives scene-wide writes. The scene background
-  is not mirrored; a view has no picking. LAYERS select what a target
+  override survives scene-wide writes. A view's backdrop is its
+  clearColor (the scene background draws on PROBES, not views); a view
+  has no picking. LAYERS select what a target
   draws, Three's model exactly: `layers` on a mesh is its membership
   bitmask (default 1, `setLayers`/the `layers` prop, NOT inherited from
   Groups), and each target carries a mask (default 1) - `layers` on
@@ -639,34 +640,65 @@ dispose() }`; `cube` is what `environment={{ cube }}` (a chrome ball
 mirroring its surroundings) or `background` takes. A view under the
 hood: one entry list mirrored from the scene, the light set and scene
 params fanned out, its own layer mask (keep the mirroring object out of
-its own probe with `layers`), a cube draw target (`createCubeDrawTarget`
-in core, rendered face by face with `renderTarget(cube, face)`).
+its own probe with `layers`), the scene's background drawn first on
+every face (the GLSL sky or skybox behind the meshes, through the face
+camera, in linear light - what Three, Unity and Godot probes see), a
+cube draw target (`createCubeDrawTarget` in core, rendered face by face
+with `renderTarget(cube, face)`).
 Nothing renders it but `probe.update()`: six scene passes, from the
 meshes as the last frame's flush placed them, so call it when the
 surroundings moved (every frame for a moving scene, once for a still
-one). The faces hold LINEAR light (the probe owns `uOutputEncode` 0,
-`uToneMapping` 0 and `uExposure` 1 on its target, names the scene's
-fan-out then skips), 8 bits per channel (rgba8, so dark reflections
-band; HDR probes are additive), and the probe never samples its own
-cube while rendering (a black environment stands in: one bounce). The
-cube is SHARP - no mip chain - so `standard` reflects it as a mirror at
-every roughness and `lit({ reflectivity })` blurs nothing; prefiltered
-probes (render-into-level plus a GPU GGX pass) and baking the GLSL sky
-into the radiance cube are the next stage of okf/backlog/3d-environment.md.
-The face cameras are plain world-up cameras through an x-mirrored
-projection (`Camera.mirror`), because a GL cube face is seen from
-outside; the engine inverts the front-face rule on cube target passes
-so cull modes keep their meaning. `examples/probe.tsx`.
+one), then the PREFILTER: the faces convolved on the GPU into a second,
+`mipmap: true` cube target level by level (`renderTarget(chain, face,
+level)`, one small pass each - 48 at 128 - the bake tool's GGX
+importance sampling as a fragment, `createPrefilter` in environment.ts,
+with the same roughness-to-level rule as a .srte chain), so `standard`
+blurs a probe by roughness exactly like a baked environment; `prefilter:
+false` skips it and hands out the sharp faces (Three's CubeCamera: a
+mirror at every roughness). COST: the chain's passes are tiny, but a
+pass that samples mip levels of a cube map carries a fixed GPU cost
+(about 0.3 ms each on an Intel/Mesa laptop, the same at 8 samples or at
+256 - measured 2026-09-05), so a prefiltered probe updated every frame
+costs ~14 ms of GPU there against ~1 ms for the six face passes: fine at
+60 fps on its own, the largest single item in a frame budget. Realtime
+probes are the expensive option in every engine (Unity time-slices
+them): update a prefiltered probe when the surroundings changed, or
+every few frames, and keep `prefilter: false` for a probe that must
+refresh every frame on a tight budget. The faces hold LINEAR light (the probe owns
+`uOutputEncode` 0, `uToneMapping` 0 and `uExposure` 1 on its target,
+names the scene's fan-out then skips), 8 bits per channel (rgba8, so
+dark reflections band; HDR probes are additive), and the probe never
+samples its own cube while rendering (a black environment stands in: one
+bounce). The face cameras are plain world-up cameras through an
+x-mirrored projection (`Camera.mirror`), because a GL cube face is seen
+from outside; the engine inverts the front-face rule on cube target
+passes so cull modes keep their meaning. `examples/probe.tsx`.
+
+Baked sky: `scene.bakeBackground(size?)` is a reflection probe at the
+origin that sees no mesh (layer mask 0): the scene's background - the
+GLSL sky or the skybox - alone on its six faces, LINEAR (a sky ending in
+`outputColor` bakes its light; one writing fragColor raw bakes those
+bytes as light), prefilters it like a probe and returns the chain's
+TextureId for `environment={{ cube }}`: Godot's sky-to-radiance bake, so
+a procedural sky lights the scene with no light nodes, and the runtime
+way to turn a hi-res LDR skybox into a properly convolved environment
+(the `mipmap: true` box chain above is the sharper, cheaper
+alternative). A snapshot at 8-bit linear (default 128): bake again when
+the sky changes, and destroy the old cube - it is not auto-freed (an
+environment normally lives as long as the app). A sky that reads
+`uCamPos` bakes from the origin; scene params (an app clock) are seen as
+of the call. `examples/sky-lit.tsx`.
 
 Panoramas: `equirectToCube(map, size, opts?)` converts an uploaded
 equirectangular 2D texture (createImage, createTexture) into a cube
-TextureId on the GPU, synchronously (six face passes, read back and
-uploaded once; `opts` are createCubeTexture's - `mipmap: true` for an
+TextureId on the GPU, synchronously (six face passes straight into a
+cube draw target of the panorama's format, rgba8 or rgba8-srgb - no
+readback; `opts` are createCubeTexture's - `mipmap: true` for an
 environment). The center column faces -Z and the top row is +Y, as in
 Godot's PanoramaSkyMaterial and Unity's Skybox/Panoramic; Three centers
 +X, a quarter turn away. Leave the source texture's wrap at clamp
 (`repeat` also wraps vertically and bleeds the poles). This is the LDR
-runtime path (the face passes render rgba8, so an HDR panorama throws);
+runtime path (a cube draw target is 8-bit, so an HDR panorama throws);
 HDR goes through the bake tool above, whose CPU pipeline
 (`src/environment-bake.ts`: decodeHdr, panoramaToCube, prefilterCube,
 the .srte encode/decode) is pure TypeScript and bun-tested.

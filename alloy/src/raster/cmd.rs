@@ -234,6 +234,8 @@ pub(crate) enum RasterCmd {
     size: u32,
     spec: TargetSpec,
     depth: DepthStorage,
+    /// rgba8 or rgba8-srgb (validated UI-side).
+    format: TextureFormat,
     reply: mpsc::Sender<Result<(), String>>,
   },
   /// Create a sub-target: a draw target rendering into the `spec`-sized
@@ -321,8 +323,10 @@ pub(crate) enum RasterCmd {
   /// re-render at the next flush. Fire-and-forget on this ordered channel, so
   /// renders land in call order and a readback issued after one observes it.
   /// `face` names the face of a cube draw target (validated UI-side: Some
-  /// exactly for cube targets).
-  RenderTarget { id: u64, face: Option<u32> },
+  /// exactly for cube targets), `level` the mip level of that face to
+  /// render into (UI-side: within a mipmapped cube target's chain; None
+  /// is level 0 plus the chain regeneration).
+  RenderTarget { id: u64, face: Option<u32>, level: Option<u32> },
   /// Overwrite manual target `dst` with the current pixels of texture `src`
   /// (same size, validated UI-side): the GPU-side seed/history write, the
   /// copyTexture analog of uploadTexture. Flushes first (it observes src),

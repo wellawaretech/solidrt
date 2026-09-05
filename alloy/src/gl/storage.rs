@@ -8,7 +8,7 @@ use std::num::NonZeroU32;
 
 use super::{prev_framebuffer, prev_texture};
 use crate::gpu::spec::DepthStorage;
-use crate::gpu::texture::CUBE_FACES;
+use crate::gpu::texture::{mip_levels, mip_size, TextureFormat, CUBE_FACES};
 
 /// How a mesh target multisamples. Both flavors keep the target texture
 /// single-sample - it stays the id everything else samples, displays, reads
@@ -39,7 +39,11 @@ impl Msaa {
 /// Target texture + FBO shared by every target kind: allocation only, nothing
 /// attached and no binding left behind. `attach_storage` wires and checks
 /// it; `create_mesh_storage` is the one-call form every create uses.
-pub(super) fn create_target(gl: &glow::Context, width: u32, height: u32) -> Result<(glow::Texture, glow::Framebuffer), String> {
+pub(super) fn create_target(
+  gl: &glow::Context,
+  width: u32,
+  height: u32,
+) -> Result<(glow::Texture, glow::Framebuffer), String> {
   unsafe {
     let target = create_target_texture(gl, width, height)?;
     let fbo = match gl.create_framebuffer() {
@@ -57,7 +61,11 @@ pub(super) fn create_target(gl: &glow::Context, width: u32, height: u32) -> Resu
 /// no mips - the default MIN_FILTER references mipmaps, which would make the
 /// texture sampling-incomplete (reads as black) when Impeller samples it.
 /// Restores the texture binding it touches.
-pub(super) unsafe fn create_target_texture(gl: &glow::Context, width: u32, height: u32) -> Result<glow::Texture, String> {
+pub(super) unsafe fn create_target_texture(
+  gl: &glow::Context,
+  width: u32,
+  height: u32,
+) -> Result<glow::Texture, String> {
   let prev_tex = gl.get_parameter_i32(glow::TEXTURE_BINDING_2D);
   let target = gl.create_texture().map_err(|e| format!("glGenTextures failed: {e}"))?;
   gl.bind_texture(glow::TEXTURE_2D, Some(target));
@@ -98,7 +106,11 @@ pub(super) enum DepthAttachment {
 /// sampling-complete at NEAREST (ES 3.0), and its registry entry declares
 /// the same, so the sampler object a pass binds agrees with these. Restores
 /// the texture binding it touches.
-pub(super) unsafe fn create_depth_texture(gl: &glow::Context, width: u32, height: u32) -> Result<glow::Texture, String> {
+pub(super) unsafe fn create_depth_texture(
+  gl: &glow::Context,
+  width: u32,
+  height: u32,
+) -> Result<glow::Texture, String> {
   let prev_tex = gl.get_parameter_i32(glow::TEXTURE_BINDING_2D);
   let tex = gl.create_texture().map_err(|e| format!("glGenTextures (depth) failed: {e}"))?;
   gl.bind_texture(glow::TEXTURE_2D, Some(tex));
@@ -238,12 +250,23 @@ pub(super) fn create_mesh_storage(
   }
 }
 
-/// A cube draw target's storage: a six-face RGBA8 cube texture (LINEAR, no
-/// mips - render-to-face is create-once and single-sample), its FBO with
-/// face 0 attached for the completeness check (a render re-attaches the
-/// face it draws; see `attach_cube_face`), and the one depth renderbuffer
-/// every face pass reuses. Restores the bindings it touches.
-pub(super) fn create_cube_storage(gl: &glow::Context, size: u32, depth: DepthStorage) -> Result<MeshStorage, String> {
+/// A cube draw target's storage: a six-face cube texture at `format` (rgba8
+/// or rgba8-srgb, which encodes on write - GLES always does; LINEAR;
+/// with `mipmap` every level of the chain down to 1x1 is allocated, so a
+/// render can target any level and a generated chain has storage to land
+/// in - render-to-face is create-once and single-sample), its FBO with
+/// face 0 of level 0 attached for the completeness check (a render
+/// re-attaches the face and level it draws; see `attach_cube_face`), and
+/// the one depth renderbuffer every face pass reuses, sized for level 0
+/// (GL clips a smaller level's pass to that level; the depth attachment
+/// may be larger). Restores the bindings it touches.
+pub(super) fn create_cube_storage(
+  gl: &glow::Context,
+  size: u32,
+  depth: DepthStorage,
+  mipmap: bool,
+  format: TextureFormat,
+) -> Result<MeshStorage, String> {
   if depth == DepthStorage::Texture {
     return Err("a cube draw target cannot expose a depth texture (one renderbuffer serves its six faces)".to_string());
   }
@@ -252,18 +275,23 @@ pub(super) fn create_cube_storage(gl: &glow::Context, size: u32, depth: DepthSto
     let prev_tex = gl.get_parameter_i32(glow::TEXTURE_BINDING_CUBE_MAP);
     let target = gl.create_texture().map_err(|e| format!("glGenTextures failed: {e}"))?;
     gl.bind_texture(glow::TEXTURE_CUBE_MAP, Some(target));
-    for face in 0..CUBE_FACES as u32 {
-      gl.tex_image_2d(
-        glow::TEXTURE_CUBE_MAP_POSITIVE_X + face,
-        0,
-        glow::RGBA8 as i32,
-        size as i32,
-        size as i32,
-        0,
-        glow::RGBA,
-        glow::UNSIGNED_BYTE,
-        glow::PixelUnpackData::Slice(None),
-      );
+    let levels = if mipmap { mip_levels(size) } else { 1 };
+    let (internal, layout, ty) = super::texture::gl_storage(format);
+    for level in 0..levels {
+      let edge = mip_size(size, level) as i32;
+      for face in 0..CUBE_FACES as u32 {
+        gl.tex_image_2d(
+          glow::TEXTURE_CUBE_MAP_POSITIVE_X + face,
+          level as i32,
+          internal as i32,
+          edge,
+          edge,
+          0,
+          layout,
+          ty,
+          glow::PixelUnpackData::Slice(None),
+        );
+      }
     }
     gl.tex_parameter_i32(glow::TEXTURE_CUBE_MAP, glow::TEXTURE_MIN_FILTER, glow::LINEAR as i32);
     gl.tex_parameter_i32(glow::TEXTURE_CUBE_MAP, glow::TEXTURE_MAG_FILTER, glow::LINEAR as i32);
@@ -289,7 +317,7 @@ pub(super) fn create_cube_storage(gl: &glow::Context, size: u32, depth: DepthSto
     let storage = MeshStorage { target, fbo, depth, msaa: None };
     let prev_rb = gl.get_parameter_i32(glow::RENDERBUFFER_BINDING);
     gl.bind_framebuffer(glow::FRAMEBUFFER, Some(fbo));
-    attach_cube_face(gl, target, 0);
+    attach_cube_face(gl, target, 0, 0);
     if let Some(DepthAttachment::Buffer(rb)) = storage.depth {
       gl.bind_renderbuffer(glow::RENDERBUFFER, Some(rb));
       gl.renderbuffer_storage(glow::RENDERBUFFER, glow::DEPTH_COMPONENT24, size as i32, size as i32);
@@ -306,16 +334,16 @@ pub(super) fn create_cube_storage(gl: &glow::Context, size: u32, depth: DepthSto
   }
 }
 
-/// Attach face `face` (GL order: +X, -X, +Y, -Y, +Z, -Z) of cube texture
-/// `target` as the color of the CURRENTLY BOUND framebuffer: the per-face
-/// step of a cube target's render and clear.
-pub(super) unsafe fn attach_cube_face(gl: &glow::Context, target: glow::Texture, face: u32) {
+/// Attach mip level `level` of face `face` (GL order: +X, -X, +Y, -Y, +Z,
+/// -Z) of cube texture `target` as the color of the CURRENTLY BOUND
+/// framebuffer: the per-face step of a cube target's render and clear.
+pub(super) unsafe fn attach_cube_face(gl: &glow::Context, target: glow::Texture, face: u32, level: u32) {
   gl.framebuffer_texture_2d(
     glow::FRAMEBUFFER,
     glow::COLOR_ATTACHMENT0,
     glow::TEXTURE_CUBE_MAP_POSITIVE_X + face,
     Some(target),
-    0,
+    level as i32,
   );
 }
 
@@ -325,7 +353,12 @@ pub(super) unsafe fn attach_cube_face(gl: &glow::Context, target: glow::Texture,
 /// FBO, and the depth renderbuffer onto whichever FBO draws. Creation and
 /// resize share it. Ends with the draw FBO's completeness check and leaves
 /// the framebuffer binding on it; the renderbuffer binding is restored.
-pub(super) unsafe fn attach_storage(gl: &glow::Context, storage: &MeshStorage, width: u32, height: u32) -> Result<(), String> {
+pub(super) unsafe fn attach_storage(
+  gl: &glow::Context,
+  storage: &MeshStorage,
+  width: u32,
+  height: u32,
+) -> Result<(), String> {
   let (w, h) = (width as i32, height as i32);
   let prev_rb = gl.get_parameter_i32(glow::RENDERBUFFER_BINDING);
   gl.bind_framebuffer(glow::FRAMEBUFFER, Some(storage.fbo));

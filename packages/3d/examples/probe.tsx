@@ -5,10 +5,12 @@
 // spheres orbit the ball, and the probe re-renders every frame (six scene
 // passes) so the orbit shows in the chrome. Layers keep the ball out of
 // its own probe: the room and the orbiters live on layers 1 and 2, the
-// ball on layer 1 only, and the probe looks at layer 2. The probe's cube
-// is sharp (no mip chain), so the ball is a mirror; a rough `standard`
-// surface would reflect it as one too, until prefiltered probes land.
-// Drag to look around.
+// ball on layer 1 only, and the probe looks at layer 2. Each update also
+// prefilters the faces into the roughness chain (the default), so the
+// ball's satin finish blurs the room the way a baked environment would;
+// `prefilter: false` would keep a sharp mirror at a sixth of the passes
+// (the chain is the frame's largest GPU item; see AGENTS.md). Drag to
+// look around.
 
 import { createSignal, onFrame, pct, render } from "@solidrt/core"
 import { DirectionalLight, HemisphereLight, Mesh, OrbitCamera, plane, Scene, sphere, standard, unlit } from "@solidrt/3d"
@@ -21,10 +23,11 @@ const ROOM = 5
 const ORBITER_RADIUS = 0.35
 const ORBIT = 2
 const ORBIT_SPEED = 0.8
-// The chrome ball's radius.
+// The chrome ball's radius and its satin roughness (0 is a mirror).
 const BALL = 1
+const BALL_ROUGHNESS = 0.2
 // The probe's face edge.
-const PROBE_SIZE = 256
+const PROBE_SIZE = 128
 // Layer bits: the scene camera sees both, the probe only ROOM_LAYER.
 const BALL_LAYER = 1
 const ROOM_LAYER = 2
@@ -70,7 +73,7 @@ function App() {
   let walls = WALL_COLORS.map(color => unlit({ color }))
   let orbiter = sphere({ radius: ORBITER_RADIUS, widthSegments: 24, heightSegments: 16 })
   let orbiters = ORBITER_COLORS.map(color => unlit({ color }))
-  let ball = standard({ color: [1, 1, 1], metalness: 1, roughness: 0 })
+  let ball = standard({ color: [1, 1, 1], metalness: 1, roughness: BALL_ROUGHNESS })
   let orbitPosition = (i: number): Vec3 => {
     let a = t() * ORBIT_SPEED + (i * Math.PI) / 2
     return [Math.cos(a) * ORBIT, Math.sin(a * 1.7) * 0.8, Math.sin(a) * ORBIT]

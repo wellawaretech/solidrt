@@ -300,11 +300,54 @@ Where the different internal model helps, beyond parity:
      (six walls read back through the probe, which also proves the
      winding rule). Decided on the way: no shader flip for rendered cubes
      either - the convention reversal above made a rendered cube native.
-   - 4b, open: `mipmap: true` on cube targets plus `renderTarget(id,
-     face, level)`, a GPU GGX prefilter (the bake tool's math as a
-     fragment, base cube in, chain out) so probes blur with roughness,
-     and `scene.bakeBackground(size)` rendering the GLSL sky into a cube
-     through the same path (Godot's sky-lit scene).
+   - 4b, landed 2026-09-05: `mipmap: true` on cube draw targets (the
+     whole chain allocated; a face render without a level regenerates
+     it, the 2D rule) plus `renderTarget(id, face, level)` (the pass at
+     the level's edge, writing that level alone; validated against the
+     chain UI-side); the GPU GGX prefilter (`createPrefilter` in
+     environment.ts: a second mipmapped cube target, one covering-triangle
+     pass per face per level running prefilterCube's importance sampling
+     as a fragment - 64 Hammersley samples, each read from the sharp
+     source's generated chain at the lod of its solid angle, N = V = R;
+     level 0 a copy; the same levelRoughness rule as the .srte chain);
+     probes prefilter by default (`prefilter: false` keeps Three's sharp
+     CubeCamera), `probe.cube` is the chain, and the probe's own faces
+     still bind the placeholder when that chain is the environment;
+     `scene.bakeBackground(size = 128)` is a probe over layer mask 0
+     (the background alone) whose `finish()` keeps the prefiltered chain
+     (not auto-freed). Probes DRAW THE SCENE BACKGROUND, first on every
+     face (Three, Unity and Godot probes all see the sky): the background
+     keeps one entry per target (`entries: Map<TextureId, DrawId>`),
+     fanned out by setBackground and seeded by makeView for sky views;
+     plain views keep their clearColor backdrop. The `Scene` component
+     seeds createScene with its initial props and its effects run
+     `defer`red, so `ref` hands out a configured scene (a bake in `ref`
+     works) and the first frame draws the background.
+     `examples/sky-lit.tsx`, `probes/prefilter-probe.tsx` (the room read
+     back at level 0 and the roughness-1 level, a sharp probe, a GLSL sky
+     bake, a skybox bake), `probes/cube-target-probe.tsx` (levels).
+     Decided on the way: two cubes, not in-place levels - a pass may not
+     sample the texture it renders (same-pass feedback), and TEXTURE_MAX_
+     LEVEL games would put mutable sampler state on an id; the sharp cube
+     costs the same memory again and nothing else. And a raster-side
+     rule the chain forced into the open: a manual render flushed EVERY
+     dirty target first, so the scene target sampling the probe's cube
+     re-rendered before each of the 54 level passes (16 fps at 256, and
+     4a's six face passes had already been paying six scene renders a
+     frame). `render_target_now` now flushes only the targets the pass
+     transitively samples (`flush_sources_of`); the rendered ones leave
+     the dirty set and their out-of-scope samplers take their place, so
+     the frame's flush still reaches them once. Measured after that, on
+     the Intel/Mesa laptop with the screen saver off (a first reading
+     under it was 4x worse and capped at 20 fps): the six face passes
+     ~1 ms, the 48 chain passes at 128 ~14 ms of GPU per frame, 60 fps
+     held - a FIXED ~0.3 ms per pass that samples mip levels > 0 of a
+     cube map (the same with 8 samples, at 256, with a constant or
+     automatic lod, with an uploaded source, and into level 0; passes
+     sampling lod 0 only are far cheaper). Documented as a cost rather
+     than designed around: update a prefiltered probe when the scene
+     changed, `prefilter: false` for an every-frame mirror on a tight
+     budget. Open: the same measurement on Android, the TV and the Pi.
    - 4c, open: HDR probes - `format: "rgba16f"` on draw targets, gated on
      half-float renderability with an rgba8 fallback.
 
@@ -343,9 +386,11 @@ Where the different internal model helps, beyond parity:
   Godot blends by `ambient_light_sky_contribution`, Unity picks one
   ambient source). Drop the hemisphere when the environment should
   light alone.
-- Prefiltering is a build step (`srt tool 3d/environment`, Unity's
-  import-time convolution); there is no runtime PMREM (Three) or
-  sky-change reconvolution (Godot) until stage 4's render-to-face.
+- Prefiltering an HDR asset is a build step (`srt tool 3d/environment`,
+  Unity's import-time convolution); the runtime convolution exists for
+  rendered cubes only - probes and `bakeBackground` (Godot's sky-change
+  reconvolution, on demand rather than automatic) - so there is no
+  PMREM-from-texture (Three) for an uploaded cube; upload the chain.
 - The environment's roughness-to-level rule is linear (Godot), not
   Three's nonlinear `roughnessToMip`; a Three-tuned roughness reads
   slightly blurrier in the low range.
@@ -354,4 +399,7 @@ Where the different internal model helps, beyond parity:
   projection, blending, importance or time slicing (Unity, Godot) - all
   additive. It renders 8-bit linear (LDR) until 4c, where all three
   engines render HDR; and mirrored, so derivative-built tangent frames
-  invert in reflections (a Unity invertCulling caveat too).
+  invert in reflections (a Unity invertCulling caveat too). Prefiltered
+  by default (Unity, Godot); `prefilter: false` is Three's sharp
+  CubeCamera. The chain's sample count (64) is fixed, not a quality knob
+  (Unity's probe resolution is the only knob there too).

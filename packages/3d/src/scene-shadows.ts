@@ -55,20 +55,6 @@ const POINT_FACES: { dir: Vec3; up: Vec3 }[] = [
 
 const IDENTITY = mat4()
 
-// The uShadowAtlas binding while nothing casts: the depth texture of a
-// one-texel draw target that renders nothing (its clear leaves depth 1,
-// never shadowed), shared by every scene for the app. It must be a real
-// depth texture - uShadowAtlas is a sampler2DShadow, and the engine
-// refuses a color texture behind a comparison sampler.
-let placeholder: TextureId | undefined
-
-export function shadowPlaceholder(): TextureId {
-  if (placeholder === undefined) {
-    placeholder = createDrawTarget(1, 1, null, { depth: "texture", autoFree: false, label: "scene-shadow-none" })
-  }
-  return depthTexture(placeholder)
-}
-
 /** One tile's place in the atlas, in texels. */
 export type ShadowRect = { x: number; y: number; width: number; height: number }
 
@@ -146,8 +132,14 @@ export type ShadowSystem = {
   /** Write the uShadowMatrix array through `write` if owed - the
    * matrices that render the maps are the ones receivers look up with. */
   flushMatrices(write: (params: ShaderParams) => void): void
-  /** Drop the atlas and forget every caster. The shadow views die with
-   * the scene's own view teardown, not here. */
+  /** The uShadowAtlas binding while nothing casts: the depth texture of a
+   * one-texel target that renders nothing (its clear leaves depth 1, never
+   * shadowed). A real depth texture, because uShadowAtlas is a
+   * sampler2DShadow and the engine refuses a color texture behind a
+   * comparison sampler. Created on first use, owned by this system. */
+  placeholder(): TextureId
+  /** Drop the atlas, the placeholder and forget every caster. The shadow
+   * views die with the scene's own view teardown, not here. */
   dispose(): void
 }
 
@@ -166,6 +158,8 @@ export function makeShadowSystem<V extends ShadowView>(deps: ShadowSystemDeps<V>
   // largest mapSize wide, scaled down uniformly when that would exceed
   // the device's texture size: tile size follows the budget.
   let shadowAtlas: { texture: TextureId; width: number; height: number } | null = null
+  // The one-texel depth target behind placeholder(), made on first use.
+  let placeholderTarget: TextureId | null = null
   let shadowLayout = (count: number, maxSize: number) => {
     let cols = Math.ceil(Math.sqrt(count))
     let rows = Math.ceil(count / cols)
@@ -456,11 +450,21 @@ export function makeShadowSystem<V extends ShadowView>(deps: ShadowSystemDeps<V>
       for (let slot = dealt; slot < MAX_SHADOW_MAPS; slot++) for (let k = 0; k < 16; k++) shadowMatrices[slot * 16 + k] = IDENTITY[k]!
       write({ uShadowMatrix: shadowMatrices })
     },
+    placeholder() {
+      if (placeholderTarget === null) {
+        placeholderTarget = createDrawTarget(1, 1, null, { depth: "texture", autoFree: false, label: deps.label + "-shadow-none" })
+      }
+      return depthTexture(placeholderTarget)
+    },
     dispose() {
       shadows.clear()
       if (shadowAtlas !== null) {
         destroyTexture(shadowAtlas.texture)
         shadowAtlas = null
+      }
+      if (placeholderTarget !== null) {
+        destroyTexture(placeholderTarget)
+        placeholderTarget = null
       }
     },
   }

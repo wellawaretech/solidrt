@@ -492,7 +492,11 @@ export function createDrawTarget(
  * face)` (0 +X, 1 -X, 2 +Y, 3 -Y, 4 +Z, 5 -Z) - the reflection-probe
  * primitive (`@solidrt/3d`'s `scene.createReflectionProbe` drives it).
  * Manual by contract, one depth renderbuffer for the six faces (`depth:
- * true`), no samples, mipmap or tiles; the id binds to a `samplerCube`
+ * true`), no samples or tiles; `format` rgba8 or rgba8-srgb (encodes on
+ * write, decodes on sample); `mipmap: true` allocates the chain and
+ * `renderTarget(id, face, level)` renders one level of it (a face render
+ * without a level regenerates the chain instead) - the prefiltered
+ * environment path. The id binds to a `samplerCube`
  * and cannot be displayed, read back, copied or resized. Each face pass
  * inverts the front-face rule (a GL cube face is the x mirror of a 2D
  * target's image), so render the faces through an x-mirrored projection;
@@ -503,6 +507,7 @@ export function createCubeDrawTarget(
   params?: gpu.ShaderParams | null,
   opts?: {
     depth?: boolean
+    format?: "rgba8" | "rgba8-srgb"
     textures?: gpu.TextureBindings
     clearColor?: [number, number, number, number]
     render?: "manual"

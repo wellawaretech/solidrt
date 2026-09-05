@@ -9,8 +9,8 @@ use impellers::ISize;
 use std::num::NonZeroU32;
 
 use crate::gpu::texture::{
-  check_cube_faces, mip_size, SamplerFilter, SamplerState, SamplerWrap, TextureFormat, TextureShape,
-  ANISOTROPY_LEVELS, CUBE_FACES, MIN_ANISOTROPY,
+  check_cube_faces, mip_size, SamplerFilter, SamplerState, SamplerWrap, TextureFormat, TextureShape, ANISOTROPY_LEVELS,
+  CUBE_FACES, MIN_ANISOTROPY,
 };
 
 /// The GL sampler objects covering every SamplerState combination (filter x
@@ -148,9 +148,20 @@ pub fn generate_mipmap(gl: &glow::Context, texture: glow::Texture) {
   }
 }
 
+/// `generate_mipmap` for a cube map name: the chain of all six faces from
+/// their level 0. Restores the cube map binding it touches.
+pub fn generate_cube_mipmap(gl: &glow::Context, texture: glow::Texture) {
+  unsafe {
+    let prev = gl.get_parameter_i32(glow::TEXTURE_BINDING_CUBE_MAP);
+    gl.bind_texture(glow::TEXTURE_CUBE_MAP, Some(texture));
+    gl.generate_mipmap(glow::TEXTURE_CUBE_MAP);
+    gl.bind_texture(glow::TEXTURE_CUBE_MAP, NonZeroU32::new(prev as u32).map(glow::NativeTexture));
+  }
+}
+
 /// The GL storage triple (internal format, pixel layout, component type) of
 /// a format, for the allocating `glTexImage2D` calls.
-fn gl_storage(format: TextureFormat) -> (u32, u32, u32) {
+pub(super) fn gl_storage(format: TextureFormat) -> (u32, u32, u32) {
   match format {
     TextureFormat::Rgba8 => (glow::RGBA8, glow::RGBA, glow::UNSIGNED_BYTE),
     TextureFormat::R8 => (glow::R8, glow::RED, glow::UNSIGNED_BYTE),
@@ -226,7 +237,8 @@ impl GpuTexture {
   ) -> Result<Self, String> {
     let levels = check_cube_faces(size, faces, format)?;
     let (internal, layout, ty) = gl_storage(format);
-    let (_, _, alignment) = upload_layout(format).ok_or_else(|| format!("{} is not an upload format", format.name()))?;
+    let (_, _, alignment) =
+      upload_layout(format).ok_or_else(|| format!("{} is not an upload format", format.name()))?;
     unsafe {
       let prev = gl.get_parameter_i32(glow::TEXTURE_BINDING_CUBE_MAP);
       let gl_texture = gl.create_texture().map_err(|e| format!("glGenTextures failed: {e}"))?;

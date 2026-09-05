@@ -251,14 +251,25 @@ export let Scene: ParentComponent<SceneProps> = props => {
     }
     return props.width === undefined
   })
-  let scene = untrack(() =>
-    createScene(props.width ?? FILL_INITIAL_SIZE, props.height ?? FILL_INITIAL_SIZE, {
+  // The initial props seed createScene, so `ref` (below) hands out a
+  // configured scene and the first frame draws it whole; the effects
+  // after this follow changes only (`defer`).
+  let scene = untrack(() => {
+    let s = createScene(props.width ?? FILL_INITIAL_SIZE, props.height ?? FILL_INITIAL_SIZE, {
       clearColor: props.clearColor,
       label: props.label,
       samples: props.samples,
       depth: props.depth,
-    }),
-  )
+      background: props.background,
+      environment: props.environment,
+      fog: props.fog,
+      toneMapping: props.toneMapping,
+      exposure: props.exposure,
+      layers: props.layers,
+    })
+    if (props.camera) s.setCamera(props.camera)
+    return s
+  })
   createEffect(
     () => [props.width, props.height] as const,
     ([w, h]) => {
@@ -273,30 +284,37 @@ export let Scene: ParentComponent<SceneProps> = props => {
     camera => {
       if (camera) scene.setCamera(camera)
     },
+    { defer: true },
   )
   createEffect(
     () => props.background,
     b => scene.setBackground(b ?? null),
+    { defer: true },
   )
   createEffect(
     () => props.environment,
     e => scene.setEnvironment(e ?? null),
+    { defer: true },
   )
   createEffect(
     () => props.fog,
     f => scene.setFog(f ?? null),
+    { defer: true },
   )
   createEffect(
     () => props.toneMapping,
     t => scene.setToneMapping(t ?? "none"),
+    { defer: true },
   )
   createEffect(
     () => props.exposure,
     e => scene.setExposure(e ?? 1),
+    { defer: true },
   )
   createEffect(
     () => props.layers,
     l => scene.setLayers(l ?? 1),
+    { defer: true },
   )
   untrack(() => props.ref)?.(scene)
   // Camera-control input (SceneInput): controls register through context,

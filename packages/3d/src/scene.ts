@@ -48,13 +48,14 @@ import type { Mat4, Vec3, Vec4 } from "./math.ts"
 import { MAX_LIGHTS, MAX_SHADOW_MAPS } from "./glsl.ts"
 import { cameraParams, cameraState, ensureCamera, makeCamera, updateCamera } from "./camera.ts"
 import type { Camera, CameraState, CameraUpdate } from "./camera.ts"
-import { makeShadowSystem, shadowPlaceholder } from "./scene-shadows.ts"
+import { makeShadowSystem } from "./scene-shadows.ts"
 import { makePointerInput } from "./scene-pointer.ts"
 import { layoutKey, validateGeometry } from "./geometry.ts"
 import type { Geometry } from "./geometry.ts"
 import { acquireGeometryBuffers, releaseGeometryBuffers } from "./geometry-gpu.ts"
 import { backgroundPipeline, missingAttributes, SKYBOX_FRAGMENT } from "./material.ts"
-import { environmentPlaceholder } from "./environment.ts"
+import { createEnvironmentPlaceholder, createPrefilter } from "./environment.ts"
+import type { Prefilter } from "./environment.ts"
 import type { Material } from "./material.ts"
 import { orderEntries } from "./order.ts"
 import { fillTransform, leaveScene, makeNode, worldInto } from "./node.ts"
@@ -418,21 +419,29 @@ export type ReflectionProbeOptions = {
   /** Layer mask (bitmask, default 1): which meshes the probe sees. */
   layers?: number
   clearColor?: [number, number, number, number]
+  /** Convolve the faces into the roughness chain after each update
+   * (default true: Unity's and Godot's probes; `standard` blurs it by
+   * roughness like a baked environment). `false` keeps the sharp cube
+   * alone - Three's CubeCamera - at a sixth of the passes. */
+  prefilter?: boolean
   label?: string
 }
 
 export type ReflectionProbe = {
   /** The cube map: what `environment={{ cube }}` and `background={{
-   * cube }}` take. Sharp (no mip chain): a `standard` surface reflects
-   * it at its roughness 0 look whatever its roughness, until prefiltered
-   * probes land. */
+   * cube }}` take. The prefiltered chain (roughness 0 sharp at level 0,
+   * blurred below, the same rule as a baked .srte), or with `prefilter:
+   * false` the sharp faces alone - then `standard` reflects it at its
+   * roughness 0 look whatever its roughness. */
   cube: TextureId
   setPosition(position: Vec3): void
   /** Render the six faces now - six passes over the scene's draw list,
-   * seeing the meshes where the last frame's flush placed them. Call it
-   * when the surroundings changed (every frame for a moving scene, once
-   * for a still one). The probe's own cube is never sampled by the faces
-   * it renders (a black environment stands in): one bounce. */
+   * seeing the meshes where the last frame's flush placed them - then
+   * (unless `prefilter: false`) the chain: one small pass per face per
+   * level. Call it when the surroundings changed (every frame for a
+   * moving scene, once for a still one). The probe's own cube is never
+   * sampled by the faces it renders (a black environment stands in): one
+   * bounce. */
   update(): void
   /** Destroy the cube (idempotent; probes also die with the scene). */
   dispose(): void
@@ -459,10 +468,15 @@ const PROBE_FACE_UP: Vec3[] = [
   [0, 1, 0],
   [0, 1, 0],
 ]
-// Default face edge of a reflection probe (Unity's default resolution).
+// Default face edge of a reflection probe (Unity's default resolution),
+// and of a baked background (the bake tool's default).
 const PROBE_SIZE = 128
 // A cube face spans a quarter turn.
 const PROBE_FOV = 90
+// The output stage of a cube that holds light rather than display pixels
+// (a probe's faces, a baked sky): no sRGB encode, no tone mapping, unit
+// exposure - so the environment lookups read radiance.
+const LINEAR_OUTPUT: ShaderParams = { uOutputEncode: 0, uToneMapping: TONE_MAPPING_CODE.none, uExposure: 1 }
 
 export type Scene = {
   /** The scene's output: an ordinary texture id (`<texture src>`). */
@@ -648,9 +662,10 @@ export type Scene = {
    * nothing per view. Views share the scene's geometry buffers and
    * (unless `overrideMaterial`) its materials; the light set and
    * scene.setParams names fan out to every view, view.setParams is the
-   * view's own channel. The scene's background is not mirrored (a view's
-   * backdrop is its clearColor), and a view has no picking or pointer
-   * events. Views die with the scene; `view.dispose()` drops one early.
+   * view's own channel. A view's backdrop is its clearColor (the scene's
+   * background draws on probes, not on views), and a view has no picking
+   * or pointer events. Views die with the scene; `view.dispose()` drops
+   * one early.
    */
   createView(opts: ViewOptions): View
   /**
@@ -658,14 +673,32 @@ export type Scene = {
    * six faces at 90 degrees - Three's CubeCamera, Unity's and Godot's
    * realtime ReflectionProbe - for the environment a moving object
    * mirrors its surroundings through. A view under the hood (one entry
-   * list, the light set and scene params fanned out), rendered only by
+   * list, the light set and scene params fanned out) that also draws the
+   * scene's background behind the meshes, as a probe does in every
+   * engine, rendered only by
    * `probe.update()`, which the app calls when the surroundings moved:
-   * six scene passes each time. The result is sharp (no mip chain), so
-   * rough `standard` surfaces reflect it as a mirror would until
-   * prefiltered probes land; `lit({ reflectivity })` is the natural
-   * consumer today. Probes die with the scene.
+   * six scene passes each time, then the GPU prefilter into the roughness
+   * chain (unless `prefilter: false`), so `standard` blurs it by
+   * roughness exactly as it does a baked environment. Probes die with
+   * the scene.
    */
   createReflectionProbe(opts: ReflectionProbeOptions): ReflectionProbe
+  /**
+   * Bake the background into an environment: a reflection probe at the
+   * origin that sees no mesh (layer mask 0), so its six `size` faces
+   * (default 128) hold the background alone - the GLSL sky or the skybox,
+   * exactly as the scene draws it, written LINEAR (uOutputEncode 0, no tone mapping, unit exposure,
+   * so a sky ending in outputColor bakes its light; one writing fragColor
+   * raw bakes those bytes as light) - then GGX-prefiltered into the chain
+   * `standard` samples by roughness: Godot's sky-to-radiance bake, a
+   * procedural sky lighting the scene, or a hi-res LDR skybox reduced to
+   * an environment. A snapshot: bake again when the sky changed. Returns
+   * the cube for `environment={{ cube }}` - a mipmapped cube draw target,
+   * 8-bit linear like a probe, NOT auto-freed (an environment normally
+   * lives as long as the app; destroyTexture it otherwise). Throws
+   * without a background.
+   */
+  bakeBackground(size?: number): TextureId
   /** Destroy the target (entries die with it). Idempotent. Material
    * pipelines are shared and survive (app-lifetime, see material.ts);
    * geometry buffers are reference-counted and freed with their last
@@ -823,8 +856,8 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     let rects: number[] = []
     let atlas = shadowSys.atlas()
     let maps: Record<string, TextureId> = {
-      uShadowAtlas: atlas !== null ? depthTexture(atlas.texture) : shadowPlaceholder(),
-      uEnv: environment ?? environmentPlaceholder(),
+      uShadowAtlas: atlas !== null ? depthTexture(atlas.texture) : shadowSys.placeholder(),
+      uEnv: environment ?? envPlaceholder,
     }
     shadowSys.forEachShadowSlot((slot, i, c, r) => {
       if (c === 0) first[i] = slot
@@ -850,7 +883,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       setTargetParams(t, params)
       // A probe never samples its own cube while rendering it (a same-pass
       // feedback the engine rejects): its faces see a black environment.
-      setTargetTextures(t, t === environment ? { ...maps, uEnv: environmentPlaceholder() } : maps)
+      setTargetTextures(t, ownsEnvironment(t) ? { ...maps, uEnv: envPlaceholder } : maps)
     })
     // A slot change (a light attached, detached or reordered) moves every
     // matrix too: rewrite the whole array once.
@@ -862,13 +895,29 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
   let lastOrder: DrawId[] = []
   // `skybox`: the entry runs the library's cube-map fragment (its params
   // and textures are rewritable in place); false = app GLSL.
-  let background: { entry: DrawId; pipeline: RenderPipelineId; program: ProgramId; skybox: boolean } | null = null
+  // `sky` is the skybox source (its cube and knobs) for the bake, null
+  // for a GLSL background.
+  // `entries` is the background's draw entry per target that draws it:
+  // the scene's own and every sky view's (a reflection probe), each first
+  // in its list.
+  let background: { pipeline: RenderPipelineId; program: ProgramId; sky: SkyboxOptions | null; entries: Map<TextureId, DrawId> } | null = null
+  // Add the current background to `target` before entry `before` (its
+  // first mesh entry; undefined appends, right for a target with none yet).
+  let attachBackground = (target: TextureId, before: DrawId | undefined) => {
+    if (background === null) return
+    let sky = background.sky
+    let params = sky === null ? null : skyboxParams(sky, "scene.setBackground")
+    let textures = sky === null ? undefined : { uSky: sky.cube }
+    background.entries.set(target, addDraw(target, background.pipeline, params, { vertexCount: 3, before, textures }))
+  }
   // The environment cube bound as uEnv on every receiving target (the
-  // light rewrite seeds it on new targets); null binds the placeholder.
+  // light rewrite seeds it on new targets); null binds the placeholder,
+  // the scene's own 1x1 black cube.
   let environment: TextureId | null = null
+  let envPlaceholder = createEnvironmentPlaceholder((opts?.label ?? "scene") + "-env-none")
   let sortEntries = () => {
     orderDirty = false
-    let order = orderEntries(meshes, camera.view, background?.entry)
+    let order = orderEntries(meshes, camera.view, background?.entries.get(texture))
     if (order.length === lastOrder.length && order.every((id, i) => id === lastOrder[i])) return
     lastOrder = order
     setDrawOrder(texture, order)
@@ -967,6 +1016,14 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
      * edge, rendered face by face through probe.update(); null for a
      * 2D view. */
     cube: number | null
+    /** A probe's public cube: the chain prefiltered from its target, or
+     * the target itself when sharp (null for a 2D view). When it is the
+     * scene's environment, the probe's own faces bind the placeholder. */
+    probeCube: TextureId | null
+    /** Whether the scene's background draws on this target, first in its
+     * list (a probe: the sky behind the meshes); a plain view's backdrop
+     * is its clearColor. */
+    sky: boolean
     disposed: boolean
   }
   let views: ViewRecord[] = []
@@ -979,6 +1036,10 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     fn(texture)
     for (let v of views) if (v.shadowFilter === null) fn(v.texture)
   }
+  // Whether receiving target `t` is the probe whose cube is the scene's
+  // environment (the faces, or the chain prefiltered from them): it
+  // samples the placeholder instead of itself.
+  let ownsEnvironment = (t: TextureId) => environment !== null && views.some(v => v.texture === t && v.probeCube === environment)
   // The mesh's entry in the scene's OWN target - what mesh._entry is.
   // Created when the scene mask admits the mesh, dropped when it stops:
   // the same lifecycle a view entry has, so `_buffers` (not `_entry`) is
@@ -1065,7 +1126,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
   let sortView = (v: ViewRecord) => {
     v.orderDirty = false
     if (v.override !== null) return
-    let order = orderEntries(meshes, v.camera.view, undefined, m => v.entries.get(m as Mesh) ?? null)
+    let order = orderEntries(meshes, v.camera.view, background?.entries.get(v.texture), m => v.entries.get(m as Mesh) ?? null)
     if (order.length === v.lastOrder.length && order.every((id, i) => id === v.lastOrder[i])) return
     v.lastOrder = order
     setDrawOrder(v.texture, order)
@@ -1073,6 +1134,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
   let disposeView = (v: ViewRecord) => {
     if (v.disposed) return
     v.disposed = true
+    background?.entries.delete(v.texture)
     for (let mesh of v.entries.keys()) if (mesh._node !== null) spatial.unbindDraw(mesh._node, v.texture)
     v.entries.clear()
     for (let light of lights) if (light.type === "directional" && light._node !== null) spatial.unbindSlot(light._node, v.texture)
@@ -1082,11 +1144,39 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     let i = views.indexOf(v)
     if (i >= 0) views.splice(i, 1)
   }
+  // The six face renders of cube target `target` from `position` through
+  // `cam`, a mirrored 90-degree camera (PROBE_FACE_DIRECTION and
+  // PROBE_FACE_UP): each face's camera lands in the target's params,
+  // `perFace` runs (a probe's sort), then the face renders. With `chain`
+  // (a `mipmap: true` target, the prefilter's source) the first five faces
+  // render into level 0 explicitly - an explicit level regenerates nothing
+  // - and only the last face's plain render rebuilds the cube's chain: one
+  // generation per six faces instead of six (a whole-cube generateMipmap
+  // is the expensive step on some drivers).
+  let renderCubeFaces = (target: TextureId, cam: Camera, size: number, position: Vec3, chain: boolean, perFace?: (face: number) => void) => {
+    let last = PROBE_FACE_DIRECTION.length - 1
+    for (let face = 0; face <= last; face++) {
+      let d = PROBE_FACE_DIRECTION[face]!
+      updateCamera(cam, { position, target: [position[0] + d[0], position[1] + d[1], position[2] + d[2]], up: PROBE_FACE_UP[face] })
+      ensureCamera(cam, size, size)
+      cam.pending = false
+      setTargetParams(target, cameraParams(cam))
+      perFace?.(face)
+      if (chain && face < last) renderTarget(target, face, 0)
+      else renderTarget(target, face)
+    }
+  }
   // A view record: the target, seeded with everything the scene target
   // already holds (the light set - rewritten for every target, the simple
   // write - the merged scene params, the shadow map binding), then one
   // entry per mesh the filter admits.
-  let makeView = (vopts: ViewOptions, shadowFilter: ((mesh: Mesh) => boolean) | null, cube: number | null = null): ViewRecord => {
+  let makeView = (
+    vopts: ViewOptions,
+    shadowFilter: ((mesh: Mesh) => boolean) | null,
+    cube: number | null = null,
+    mipmap = false,
+    sky = false,
+  ): ViewRecord => {
     let override = vopts.overrideMaterial ?? null
     if (override !== null) {
       for (let mesh of meshes) if (mesh._instances === null) checkLayout(override, mesh.geometry, "View override material")
@@ -1097,6 +1187,9 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
         cube !== null
           ? createCubeDrawTarget(cube, null, {
               depth: true,
+              // The prefilter reads the faces at the lod of each sample's
+              // solid angle: a generated chain, refreshed per face render.
+              mipmap,
               clearColor: vopts.clearColor,
               label: vopts.label ?? (opts?.label ?? "scene") + "-probe",
               autoFree: false,
@@ -1124,9 +1217,14 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       orderDirty: true,
       lastOrder: [],
       cube,
+      probeCube: null,
+      sky,
       disposed: false,
     }
     views.push(v)
+    // The background goes in first (no mesh entry exists yet), where every
+    // later sort keeps it.
+    if (sky) attachBackground(v.texture, undefined)
     // The light rewrite seeds the shadow set (maps, casts, biases,
     // matrices) on the new target too.
     lightsDirty = true
@@ -1434,42 +1532,42 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     },
     setBackground(source) {
       if (disposed) return
-      // A skybox replacing a skybox keeps its entry: same program, new
-      // params and cube.
-      if (source !== null && typeof source !== "string" && background !== null && background.skybox) {
-        setDrawParams(texture, background.entry, skyboxParams(source, "scene.setBackground"))
-        setDrawTextures(texture, background.entry, { uSky: source.cube })
+      // A skybox replacing a skybox keeps its entries: same program, new
+      // params and cube on every target.
+      if (source !== null && typeof source !== "string" && background !== null && background.sky !== null) {
+        let params = skyboxParams(source, "scene.setBackground")
+        for (let [target, entry] of background.entries) {
+          setDrawParams(target, entry, params)
+          setDrawTextures(target, entry, { uSky: source.cube })
+        }
+        background.sky = source
         return
       }
+      let sky = source === null || typeof source === "string" ? null : source
+      if (sky !== null) skyboxParams(sky, "scene.setBackground")
       if (background !== null) {
-        removeDraw(texture, background.entry)
+        for (let [target, entry] of background.entries) removeDraw(target, entry)
         destroyRenderPipeline(background.pipeline)
         destroyProgram(background.program)
         background = null
       }
       if (source === null) return
       let label = opts?.label ?? "scene"
-      // First in list order: inserted before the first mesh entry, and every
+      let built = sky === null ? backgroundPipeline(source as string, label + "-background") : backgroundPipeline(SKYBOX_FRAGMENT, label + "-skybox")
+      background = { pipeline: built.pipeline, program: built.program, sky, entries: new Map() }
+      // First in list order on every target that draws it: inserted before
+      // the first mesh ENTRY (a layers-masked mesh has none), and every
       // later sort keeps it there.
-      // Before the first mesh ENTRY - a layers-masked mesh has none.
-      let before = meshes.find(m => m._entry !== null)?._entry ?? undefined
-      if (typeof source === "string") {
-        let built = backgroundPipeline(source, label + "-background")
-        let entry = addDraw(texture, built.pipeline, null, { vertexCount: 3, before })
-        background = { entry, pipeline: built.pipeline, program: built.program, skybox: false }
-        return
-      }
-      let built = backgroundPipeline(SKYBOX_FRAGMENT, label + "-skybox")
-      let entry = addDraw(texture, built.pipeline, skyboxParams(source, "scene.setBackground"), { vertexCount: 3, before, textures: { uSky: source.cube } })
-      background = { entry, pipeline: built.pipeline, program: built.program, skybox: true }
+      attachBackground(texture, meshes.find(m => m._entry !== null)?._entry ?? undefined)
+      for (let v of views) if (v.sky && !v.disposed) attachBackground(v.texture, v.lastOrder[0] ?? v.entries.values().next().value)
     },
     setEnvironment(env) {
       if (disposed) return
       let params = environmentParams(env)
       environment = env === null ? null : env.cube
-      let cube = environment ?? environmentPlaceholder()
+      let cube = environment ?? envPlaceholder
       // A probe's own faces never sample the probe (see writeLights).
-      receivingTargets(t => setTargetTextures(t, { uEnv: t === environment ? environmentPlaceholder() : cube }))
+      receivingTargets(t => setTargetTextures(t, { uEnv: ownsEnvironment(t) ? envPlaceholder : cube }))
       scene.setParams(params)
     },
     setToneMapping(mode) {
@@ -1605,48 +1703,18 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     },
     createReflectionProbe(popts) {
       if (disposed) throw new Error("createReflectionProbe: the scene is disposed")
-      let size = popts.size ?? PROBE_SIZE
-      if (!Number.isInteger(size) || size < 1) throw new Error("createReflectionProbe: size must be a positive integer, got " + size)
-      let v = makeView(
-        { width: size, height: size, layers: popts.layers, clearColor: popts.clearColor, label: popts.label },
-        null,
-        size,
-      )
-      v.camera.mirror = true
-      updateCamera(v.camera, { fov: PROBE_FOV, near: popts.near, far: popts.far })
-      // The faces hold LINEAR radiance, untouched by the scene's output
-      // stage: no sRGB encode, no tone mapping, unit exposure - the
-      // probe's own names, so the scene's fan-out leaves them alone.
-      let own: ShaderParams = { uOutputEncode: 0, uToneMapping: TONE_MAPPING_CODE.none, uExposure: 1 }
-      for (let k of Object.keys(own)) v.ownNames.add(k)
-      setTargetParams(v.texture, own)
-      let position: Vec3 = [popts.position[0], popts.position[1], popts.position[2]]
-      return {
-        cube: v.texture,
-        setPosition(p) {
-          position = [p[0], p[1], p[2]]
-        },
-        update() {
-          if (v.disposed) return
-          // The scene's pending state (lights, params, the fan-out to this
-          // target) lands before the faces read it.
-          sync()
-          for (let face = 0; face < PROBE_FACE_DIRECTION.length; face++) {
-            let d = PROBE_FACE_DIRECTION[face]!
-            updateCamera(v.camera, { position, target: [position[0] + d[0], position[1] + d[1], position[2] + d[2]], up: PROBE_FACE_UP[face] })
-            ensureCamera(v.camera, size, size)
-            v.camera.pending = false
-            setTargetParams(v.texture, cameraParams(v.camera))
-            // Opaque order is a hint (front to back); only transparency
-            // needs the per-face sort.
-            if (face === 0 || transparentCount > 1) sortView(v)
-            renderTarget(v.texture, face)
-          }
-        },
-        dispose() {
-          disposeView(v)
-        },
-      }
+      let { cube, setPosition, update, dispose } = makeProbe(popts, checkMask(popts.layers ?? 1, "createReflectionProbe"))
+      return { cube, setPosition, update, dispose }
+    },
+    bakeBackground(size = PROBE_SIZE) {
+      if (disposed) throw new Error("bakeBackground: the scene is disposed")
+      if (background === null) throw new Error("scene.bakeBackground: the scene has no background to bake")
+      if (!Number.isInteger(size) || size < 1) throw new Error("scene.bakeBackground: size must be a positive integer, got " + size)
+      // A probe that sees no mesh (mask 0) draws the background alone: the
+      // same face cameras, linear output and prefilter as any probe.
+      let probe = makeProbe({ position: [0, 0, 0], size, label: (opts?.label ?? "scene") + "-sky" }, 0)
+      probe.update()
+      return probe.finish()
     },
     dispose() {
       if (disposed) return
@@ -1667,14 +1735,68 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       destroyTexture(texture)
       for (let v of views.slice()) disposeView(v)
       shadowSys.dispose()
+      destroyTexture(envPlaceholder)
       if (background !== null) {
-        // The entry died with the target; the pipeline and program are the
-        // scene's own (unlike shared material pipelines), so they go too.
+        // The entries died with the targets; the pipeline and program are
+        // the scene's own (unlike shared material pipelines), so they go too.
         destroyRenderPipeline(background.pipeline)
         destroyProgram(background.program)
         background = null
       }
     },
+  }
+  // A reflection probe over layer mask `mask` (see createReflectionProbe):
+  // the public object plus `finish`, which keeps the prefiltered chain and
+  // drops everything else - the bake's one-shot use.
+  let makeProbe = (popts: ReflectionProbeOptions, mask: number): ReflectionProbe & { finish(): TextureId } => {
+      let size = popts.size ?? PROBE_SIZE
+      if (!Number.isInteger(size) || size < 1) throw new Error("createReflectionProbe: size must be a positive integer, got " + size)
+      let prefilter = popts.prefilter !== false
+      let v = makeView(
+        { width: size, height: size, layers: mask, clearColor: popts.clearColor, label: popts.label },
+        null,
+        size,
+        prefilter,
+        true,
+      )
+      v.camera.mirror = true
+      updateCamera(v.camera, { fov: PROBE_FOV, near: popts.near, far: popts.far })
+      // The faces hold LINEAR radiance, untouched by the scene's output
+      // stage: no sRGB encode, no tone mapping, unit exposure - the
+      // probe's own names, so the scene's fan-out leaves them alone.
+      for (let k of Object.keys(LINEAR_OUTPUT)) v.ownNames.add(k)
+      setTargetParams(v.texture, LINEAR_OUTPUT)
+      let chain = prefilter ? createPrefilter(size, v.texture, (popts.label ?? (opts?.label ?? "scene") + "-probe") + "-chain") : null
+      v.probeCube = chain?.cube ?? v.texture
+      let position: Vec3 = [popts.position[0], popts.position[1], popts.position[2]]
+      return {
+        cube: v.probeCube,
+        setPosition(p) {
+          position = [p[0], p[1], p[2]]
+        },
+        update() {
+          if (v.disposed) return
+          // The scene's pending state (lights, params, the fan-out to this
+          // target) lands before the faces read it.
+          sync()
+          renderCubeFaces(v.texture, v.camera, size, position, chain !== null, face => {
+            // Opaque order is a hint (front to back); only transparency
+            // needs the per-face sort.
+            if (face === 0 || transparentCount > 1) sortView(v)
+          })
+          chain?.run()
+        },
+        dispose() {
+          chain?.dispose()
+          disposeView(v)
+        },
+        finish() {
+          if (chain === null) throw new Error("finish: a sharp probe has no chain to keep")
+          let cube = chain.finish()
+          disposeView(v)
+          return cube
+        },
+      }
   }
   // The fog set starts at "none" (uFogInv and uFogDensity 0 are factor 0,
   // uFogHeightFalloff 0 is no attenuation) so every material that declares
