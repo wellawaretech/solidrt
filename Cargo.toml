@@ -7,13 +7,18 @@ members = [
 ]
 resolver = "2"
 
+# Every dependency requirement in this workspace is an exact `=x.y.z` pin, here
+# and in the member manifests. Cargo.lock alone does not hold a version still:
+# `cargo update` floats a caret requirement to any semver-compatible release, so
+# the manifest is where a version is actually decided. Exact pins make each bump
+# an explicit, reviewable edit (that is also what dependabot then rewrites).
 [workspace.dependencies]
 alloy = { path = "alloy" }
 forge = { path = "forge" }
 flux = { path = "flux", default-features = false }
-log = "0.4"
-rquickjs = { version = "0.12.2", features = ["bindgen", "rust-alloc", "futures", "macro", "loader"] }
-tokio = { version = "1.52.3", features = ["rt", "rt-multi-thread", "time", "sync", "net"] }
+log = "=0.4.34"
+rquickjs = { version = "=0.12.2", features = ["bindgen", "rust-alloc", "futures", "macro", "loader"] }
+tokio = { version = "=1.53.1", features = ["rt", "rt-multi-thread", "time", "sync", "net"] }
 
 # livekit-wakeword 0.1.3 + a session optimization-level fix (without it the
 # ort-tract backend runs unoptimized graphs, ~9x slower than real time).

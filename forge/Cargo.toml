@@ -17,102 +17,102 @@ video = ["dep:mp4", "dep:symphonia", "dep:openh264", "dep:ndk", "dep:ndk-sys"]
 [dependencies]
 log = { workspace = true }
 tokio = { workspace = true, features = ["sync", "time", "fs", "io-util", "macros", "rt", "net", "signal", "process"] }
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream"] }
-hyper = { version = "1", features = ["server", "http1"] }
-hyper-util = { version = "0.1", features = ["tokio"] }
-http-body-util = "0.1"
+reqwest = { version = "=0.12.28", default-features = false, features = ["rustls-tls", "stream"] }
+hyper = { version = "=1.11.1", features = ["server", "http1"] }
+hyper-util = { version = "=0.1.20", features = ["tokio"] }
+http-body-util = "=0.1.5"
 # The digest core behind crypto.subtle.digest.
-sha2 = "0.10"
-bytes = "1"
-futures-core = "0.3"
+sha2 = "=0.10.9"
+bytes = "=1.12.1"
+futures-core = "=0.3.34"
 # Jitter for the fetch 429 backoff. Already in the tree (tokio and others
 # depend on it).
-fastrand = "2"
+fastrand = "=2.5.0"
 # Entry file names for forge::cache (hash of the cache key). Already in the
 # tree (iroh depends on it).
-blake3 = "1"
+blake3 = "=1.8.7"
 # ReaderStream: cached entry file -> ByteStream for forge::cache lookups.
 # Already in the tree (hyper-util/iroh depend on it).
-tokio-util = { version = "0.7", features = ["io"] }
+tokio-util = { version = "=0.7.19", features = ["io"] }
 # The fetch cache's metadata blob (response snapshot stored next to the body).
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-percent-encoding = "2"
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = "=1.0.151"
+percent-encoding = "=2.3.2"
 # Raw terminal mode and key events for forge::tty (a safe binding crate:
 # termios on unix, the Console API on Windows). No event-stream: keys are
 # read blocking on the stdin reader thread.
-crossterm = { version = "0.27", default-features = false, features = ["windows", "events"] }
-rusqlite = { version = "0.40", features = ["bundled", "hooks"] }
-path-clean = "1"
+crossterm = { version = "=0.27.0", default-features = false, features = ["windows", "events"] }
+rusqlite = { version = "=0.40.2", features = ["bundled", "hooks"] }
+path-clean = "=1.0.1"
 # Directory change notifications for forge::fs::DirWatcher (flux:fs dir().watch):
 # inotify / FSEvents / ReadDirectoryChangesW behind one API. No crossbeam
 # channel feature: events cross to the caller on a tokio channel.
-notify = { version = "8", default-features = false, features = ["macos_fsevent"] }
+notify = { version = "=8.2.0", default-features = false, features = ["macos_fsevent"] }
 # Current-process stats for flux:process (memoryUsage rss).
-sysinfo = { version = "0.39", default-features = false, features = ["system"] }
-fastwebsockets = { version = "0.10.0", features = ["upgrade", "unstable-split"] }
-iroh = "1"
+sysinfo = { version = "=0.39.6", default-features = false, features = ["system"] }
+fastwebsockets = { version = "=0.10.0", features = ["upgrade", "unstable-split"] }
+iroh = "=1.1.0"
 # Cross-platform PATH lookup for the subprocess `which` (handles Windows PATHEXT).
-which = "7"
+which = "=7.0.3"
 # UDP socket options the flux:net multicast beacon needs (SO_REUSEADDR/REUSEPORT)
 # that tokio's UdpSocket::bind doesn't expose: bind via socket2, then adopt with
 # UdpSocket::from_std. Already in the tree (tokio depends on it).
-socket2 = "0.6"
+socket2 = "=0.6.5"
 # DNS message codec for flux:mdns (mDNS / DNS-SD). Already in the tree (iroh deps),
 # so this adds zero new crates; default features (std only) cover build + parse.
-hickory-proto = "0.26"
+hickory-proto = "=0.26.1"
 # Cross-platform interface enumeration (name / IPv4+prefix / MAC / flags) for
 # flux:net interfaces() - the no-subprocess replacement for parsing `ip addr`.
 # Already in the tree (iroh depends on it).
-netdev = "0.45"
+netdev = "=0.46.2"
 # Pure-Rust, no-JIT wasm interpreter behind forge::wasm (flux:wasm). No
 # per-platform native build or signing story: one .wasm runs on every target.
 # The default `wat` feature also accepts text-format sources, handy for tests
 # and small inline modules.
-wasmi = "2.0.0-beta.7"
+wasmi = "=2.0.0"
 # Default features = bundled static libffi built from vendored sources. Do not
 # switch to the "system" feature: Android NDK and Windows have no system libffi.
-libffi = "5"
-libloading = "0.9"
+libffi = "=5.2.0"
+libloading = "=0.9.0"
 # Full SVG document parsing/normalization for forge::svg / parseSvg (resolves
 # CSS, transforms, use/defs, gradients into a flat path tree). default-features
 # off drops the text/font stack (fontdb, rustybuzz, unicode-*); we only emit
 # the normalized geometry as plain data, never rasterize, so resvg/tiny-skia
 # are not pulled.
-usvg = { version = "0.47", default-features = false }
+usvg = { version = "=0.47.0", default-features = false }
 # forge::image (flux:image decodeImage/encodeImage): the practical web decode
 # set; png + jpeg also encode. avif decode is deliberately absent (the image
 # crate only encodes avif in pure Rust; decoding needs the dav1d C system
 # dependency), see okf/backlog/avif-decode.md.
-image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif", "bmp", "ico"] }
+image = { version = "=0.25.10", default-features = false, features = ["png", "jpeg", "webp", "gif", "bmp", "ico"] }
 
 # forge::video (see okf/backlog/video-playback.md). mp4 parses the container:
 # probed 2026-08-12, symphonia's isomp4 delivers the H.264 packets but not
 # the avcC extra data, and the SPS/PPS live only there in MP4. symphonia
 # decodes AAC (pure Rust, patents expired) and later grows into the
 # SDL3_mixer replacement.
-mp4 = { version = "0.14", optional = true }
-symphonia = { version = "0.5", default-features = false, features = ["aac"], optional = true }
+mp4 = { version = "=0.14.0", optional = true }
+symphonia = { version = "=0.5.5", default-features = false, features = ["aac"], optional = true }
 
 # openh264 is the PoC/dev software decoder ONLY (no B-slice support;
 # per-platform hardware decoders are the shipped path). Android already has
 # its hardware decoder, so the C++ openh264 build is skipped there entirely.
 [target.'cfg(not(target_os = "android"))'.dependencies]
-openh264 = { version = "0.9", optional = true }
+openh264 = { version = "=0.9.8", optional = true }
 
 # forge::video's Android decoder: AMediaCodec in buffer mode. Same ndk crate
 # alloy uses; api-level-26 matches the oldest target (the Philips TV), so no
 # 28+ gated calls. ndk-sys only for the AMEDIACODEC_BUFFER_FLAG_* constants.
 [target.'cfg(target_os = "android")'.dependencies]
-ndk = { version = "0.9", default-features = false, features = ["media", "api-level-26"], optional = true }
-ndk-sys = { version = "0.6", optional = true }
+ndk = { version = "=0.9.0", default-features = false, features = ["media", "api-level-26"], optional = true }
+ndk-sys = { version = "=0.6.0", optional = true }
 
 # The foreground-job check behind forge::tty::is_terminal (tcgetpgrp /
 # getpgrp, safe wrappers). Already in the tree (which depends on it).
 [target.'cfg(unix)'.dependencies]
-rustix = { version = "1", features = ["termios", "process"] }
+rustix = { version = "=1.1.4", features = ["termios", "process"] }
 
 [build-dependencies]
 # Locates the target C compiler (respecting cargo-ndk's CC_<target>) so the
 # Android build can link clang_rt.builtins; see build.rs.
-cc = "1"
+cc = "=1.4.4"

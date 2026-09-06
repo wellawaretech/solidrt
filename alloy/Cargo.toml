@@ -7,73 +7,73 @@ edition = "2021"
 name = "basic"
 
 [target.'cfg(target_os = "android")'.dependencies]
-impellers = { version = "0.4.2", features = ["prebuilt_libs", "sys"] }
-sdl3 = { version = "0.18.4", features = ["build-from-source", "mixer"] }
+impellers = { version = "=0.4.2", features = ["prebuilt_libs", "sys"] }
+sdl3 = { version = "=0.18.4", features = ["build-from-source", "mixer"] }
 # Android's sdl3 uses non-static build-from-source, which forwards only
 # build-from-source (not the vendored static build) to sdl3-mixer-sys, so the
 # vendored static build is requested here explicitly. Ogg/Vorbis + WAV only.
-sdl3-mixer-sys = { version = "0.6", features = ["no-default-formats", "sdlmixer-vorbis-stb", "sdlmixer-wave", "build-static-vendored"] }
+sdl3-mixer-sys = { version = "=0.6.3", features = ["no-default-formats", "sdlmixer-vorbis-stb", "sdlmixer-wave", "build-static-vendored"] }
 # Bridge SDL's JNI env + activity into the process-wide ndk-context that
 # JNI-using deps (e.g. iroh's network monitoring via flux:p2p) read on Android.
-ndk-context = "0.1"
-jni = "0.22"
+ndk-context = "=0.1.1"
+jni = "=0.22.4"
 # AChoreographer vsync callbacks for frame pacing (src/vsync.rs, the sole
 # consumer): ndk provides the safe looper wrapper, ndk-sys the raw
 # choreographer calls the safe crate does not cover. Both drop if SDL ships
 # its own choreographer API (libsdl-org/SDL#15013, milestone 3.8.0).
-ndk = { version = "0.9", default-features = false }
-ndk-sys = "0.6"
+ndk = { version = "=0.9.0", default-features = false }
+ndk-sys = "=0.6.0"
 
 # setpriority/gettid (Android/Linux) and QoS classes (macOS) for the frame
 # thread priority boost (sdl_utils::frame_thread_priority): the UI and raster
 # threads run at display priority so background processes stop preempting
 # frames mid-flight.
 [target.'cfg(unix)'.dependencies]
-libc = "0.2"
+libc = "=0.2.189"
 
 # impellers ships pre-generated bindings sized for 64-bit hosts; on 32-bit
 # armv7 the pointer-sized struct fields don't line up, so re-run bindgen
 # against the real target (Makefile.android sets BINDGEN_EXTRA_CLANG_ARGS).
 [target.'cfg(all(target_os = "android", target_arch = "arm"))'.dependencies]
-impellers = { version = "0.4.2", features = ["bindgen_live"] }
+impellers = { version = "=0.4.2", features = ["bindgen_live"] }
 
 # Desktop targets build SDL statically (build-from-source-static), which already
 # forwards build-static-vendored to sdl3-mixer-sys, so the format features alone
 # suffice here. Ogg/Vorbis + WAV only.
 [target.'cfg(target_os = "macos")'.dependencies]
-impellers = { version = "0.4.2", features = ["prebuilt_libs", "sys", "static_link"] }
-sdl3 = { version = "0.18.4", features = ["build-from-source-static", "mixer"] }
-sdl3-mixer-sys = { version = "0.6", features = ["no-default-formats", "sdlmixer-vorbis-stb", "sdlmixer-wave"] }
+impellers = { version = "=0.4.2", features = ["prebuilt_libs", "sys", "static_link"] }
+sdl3 = { version = "=0.18.4", features = ["build-from-source-static", "mixer"] }
+sdl3-mixer-sys = { version = "=0.6.3", features = ["no-default-formats", "sdlmixer-vorbis-stb", "sdlmixer-wave"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-impellers = { version = "0.4.2", features = ["prebuilt_libs", "sys", "static_link"] }
-sdl3 = { version = "0.18.4", features = ["build-from-source-static", "mixer"] }
-sdl3-mixer-sys = { version = "0.6", features = ["no-default-formats", "sdlmixer-vorbis-stb", "sdlmixer-wave"] }
+impellers = { version = "=0.4.2", features = ["prebuilt_libs", "sys", "static_link"] }
+sdl3 = { version = "=0.18.4", features = ["build-from-source-static", "mixer"] }
+sdl3-mixer-sys = { version = "=0.6.3", features = ["no-default-formats", "sdlmixer-vorbis-stb", "sdlmixer-wave"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 # GetCurrentThread/SetThreadPriority for the frame thread priority boost, the
 # Windows half of what libc covers on unix (sdl_utils::frame_thread_priority).
 # Already in the client's graph via tokio/rustix/socket2, and socket2 already
 # enables this feature, so the unified build compiles no extra crate.
-windows-sys = { version = "0.61", features = ["Win32_System_Threading"] }
-impellers = { version = "0.4.2", features = ["prebuilt_libs", "sys", "static_link"] }
-sdl3 = { version = "0.18.4", features = ["build-from-source-static", "mixer"] }
-sdl3-mixer-sys = { version = "0.6", features = ["no-default-formats", "sdlmixer-vorbis-stb", "sdlmixer-wave"] }
+windows-sys = { version = "=0.61.2", features = ["Win32_System_Threading"] }
+impellers = { version = "=0.4.2", features = ["prebuilt_libs", "sys", "static_link"] }
+sdl3 = { version = "=0.18.4", features = ["build-from-source-static", "mixer"] }
+sdl3-mixer-sys = { version = "=0.6.3", features = ["no-default-formats", "sdlmixer-vorbis-stb", "sdlmixer-wave"] }
 
 [dependencies]
 log = { workspace = true }
 # GLES bindings loaded from SDL's GL proc-address. Replaces the hand-written
 # transmute FFI in gl.rs and the former wgpu texture-allocation layer; Impeller
 # remains the renderer. glow is loader-based, so one entry covers all targets.
-glow = "0.17"
-image = { version = "0.25", default-features = false, features = ["png"] }
+glow = "=0.17.0"
+image = { version = "=0.25.10", default-features = false, features = ["png"] }
 # Font-table reader for what Impeller does not expose: underline metrics
 # (post table) and family names of registered fonts. Safe Rust, no deps.
-ttf-parser = { version = "0.25", default-features = false, features = ["std"] }
+ttf-parser = { version = "=0.25.1", default-features = false, features = ["std"] }
 # CSS color-string grammar (hex, rgb()/hsl()/hwb(), named colors) for the
 # color property and the parseColor binding; the color math itself (oklab,
 # mixing) is ours in src/color.rs. Replaced the JS-side colord dependency.
-csscolorparser = { version = "0.7", default-features = false, features = ["named-colors"] }
+csscolorparser = { version = "=0.7.2", default-features = false, features = ["named-colors"] }
 # QR decoding for camera streams. Chosen over rqrr after a tolerance probe on
 # camera-realistic frames (blur + noise + low contrast): rxing decoded 9/9,
 # rqrr 3/9. ~3.4ms/frame with a code present, ~0.75ms without (desktop release).
@@ -81,30 +81,30 @@ csscolorparser = { version = "0.7", default-features = false, features = ["named
 # webp, ...) into the whole workspace via feature unification. The luma helpers
 # we use need only decoders + multi_barcode_readers + qrcode; encoding_rs
 # covers non-UTF-8 QR payload character sets.
-rxing = { version = "0.9.1", default-features = false, features = ["decoders", "multi_barcode_readers", "qrcode", "encoding_rs"] }
+rxing = { version = "=0.9.2", default-features = false, features = ["decoders", "multi_barcode_readers", "qrcode", "encoding_rs"] }
 # Render-tree dependencies (the retained-mode UI layer in src/rendertree).
 # taffy = flexbox layout; lyon + svgtypes = path geometry/hit-testing.
 # euclid must track the requirement impellers declares: impellers' Point/Size/
 # Rect/Matrix are euclid aliases, and the Vector alias in rendertree only
 # unifies with them while both resolve to the same euclid version.
-euclid = "0.22"
-taffy = "0.12.1"
-svgtypes = "0.16"
-lyon_path = "1"
-lyon_algorithms = "1"
+euclid = "=0.22.14"
+taffy = "=0.12.2"
+svgtypes = "=0.16.1"
+lyon_path = "=1.0.19"
+lyon_algorithms = "=1.0.21"
 # UAX #14 line-break opportunities for the owned text layout
 # (rendertree/text/layout.rs): segments between opportunities are the wrap
 # units the greedy breaker places. UAX #29 grapheme clusters split a unit
 # wider than its line when overflowWrap is "anywhere".
-unicode-linebreak = "0.1"
-unicode-segmentation = "1"
+unicode-linebreak = "=0.1.5"
+unicode-segmentation = "=1.13.3"
 # Bounded LRU for the shared shaped-word cache (rendertree/text/words.rs).
-lru = "0.18"
+lru = "=0.18.3"
 # f32 -> f16 packing for rgba16f uploads (gpu/texture.rs `f16_bytes`).
-half = "2.7.1"
+half = "=2.7.1"
 # Headless playback context (src/egl_headless.rs): a bare EGL pbuffer on a
 # runtime-loaded libEGL, taken only when SDL's offscreen driver cannot go
 # headless (ANGLE). libloading is khronos-egl's loader, reused for the GLES
 # client library fallback.
-khronos-egl = { version = "6", default-features = false, features = ["dynamic", "1_5"] }
-libloading = "0.8"
+khronos-egl = { version = "=6.0.0", default-features = false, features = ["dynamic", "1_5"] }
+libloading = "=0.8.9"

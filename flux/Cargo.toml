@@ -43,11 +43,11 @@ video-timeline-pacing = ["video"]
 forge = { workspace = true }
 alloy = { workspace = true, optional = true }
 # Render-tree layout types named by the gui tree/properties bindings. Must match
-# the version alloy + lattice pin (0.12.1) so the taffy `Style` type unifies
+# the version alloy + lattice pin (0.12.2) so the taffy `Style` type unifies
 # across the crate boundary.
-taffy = { version = "0.12.1", optional = true }
+taffy = { version = "=0.12.2", optional = true }
 log = { workspace = true }
-rquickjs = { version = "0.12.2", features = ["rust-alloc", "futures", "macro", "loader"] }
+rquickjs = { version = "=0.12.2", features = ["rust-alloc", "futures", "macro", "loader"] }
 tokio = { workspace = true, features = ["sync", "time", "fs", "io-util", "macros", "rt", "net", "signal", "process"] }
 # The capability cores and every transport crate (reqwest, hyper, iroh,
 # fastwebsockets, rusqlite, ...) live in forge; flux names only the crates the
@@ -55,4 +55,4 @@ tokio = { workspace = true, features = ["sync", "time", "fs", "io-util", "macros
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["full"] }
-libc = "0.2"
+libc = "=0.2.189"

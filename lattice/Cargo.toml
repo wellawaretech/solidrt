@@ -40,45 +40,45 @@ flux = { workspace = true, default-features = false, features = ["gui"] }
 # Every build: the assets mount (forge::fs::set_assets_base) plus, for the go
 # client, the p2p tunnel core flux:p2p marshals. Already in the tree via flux.
 forge = { workspace = true }
-half = "2.7.1"
+half = "=2.7.1"
 rquickjs = { workspace = true }
 # taffy stays: the properties plugins assign taffy Style directly. The render
 # tree (and its lyon/svgtypes path deps) moved to alloy.
-taffy = "0.12.1"
-base64 = { version = "0.22", optional = true }
+taffy = "=0.12.2"
+base64 = { version = "=0.22.1", optional = true }
 tokio = { workspace = true }
-tokio-websockets = { version = "0.13", features = ["client", "fastrand", "sha1_smol"], optional = true }
-futures-util = { version = "0.3", features = ["sink"], optional = true }
-http = { version = "1", optional = true }
+tokio-websockets = { version = "=0.13.3", features = ["client", "fastrand", "sha1_smol"], optional = true }
+futures-util = { version = "=0.3.34", features = ["sink"], optional = true }
+http = { version = "=1.5.0", optional = true }
 # Every build since stage 3b: the packed runner reads manifest.json (folder
 # boot, src/manifest.rs); stage 4 OTA needs it in packed apps anyway.
-serde = { version = "1", features = ["derive"] }
-serde_json = { version = "1" }
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = { version = "=1.0.151" }
 # Version-store integrity: manifest hash = version id, bundle hash verify
 # (src/go/store.rs). go-only until packed apps read the store (stage 4).
-sha2 = { version = "0.10", optional = true }
+sha2 = { version = "=0.10.9", optional = true }
 # Window icon rasterization (src/go/icon.rs): SVG source -> RGBA pixels for
 # SDL_SetWindowIcon. Deliberately go-only so the production runtime stays
 # raster-free (packed apps get icons from platform packaging, stage 3); same
 # usvg underneath as forge's geometry-only dep (forge::svg), so no second SVG
 # parser.
-resvg = { version = "0.47", default-features = false, optional = true }
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"], optional = true }
-whisper-rs = { version = "0.16", features = ["log_backend"], optional = true }
-livekit-wakeword = { version = "0.1", optional = true }
+resvg = { version = "=0.47.0", default-features = false, optional = true }
+reqwest = { version = "=0.12.28", default-features = false, features = ["rustls-tls"], optional = true }
+whisper-rs = { version = "=0.16.0", features = ["log_backend"], optional = true }
+livekit-wakeword = { version = "=0.1.3", optional = true }
 
 # Process stats for the debug overlay: RSS via sysinfo, CPU% via cpu_time.
-sysinfo = { version = "0.39", default-features = false, features = ["system"] }
-cpu-time = "1"
+sysinfo = { version = "=0.39.6", default-features = false, features = ["system"] }
+cpu-time = "=1.0.0"
 
 # Preloading the packed-in GL libraries (ANGLE) after extraction, so SDL's
 # later load-by-name resolves to them (src/gl_libs.rs). Same crate forge
 # already uses for flux:ffi.
 [target.'cfg(any(windows, target_os = "macos"))'.dependencies]
-libloading = "0.9"
+libloading = "=0.9.0"
 
 # mDNS / DNS-SD dev-server discovery for the go client (see src/go/connection.rs).
 # Android reaches the dev server via the adb-reverse loopback instead, and
 # receiving mDNS there would need a WifiManager.MulticastLock, so it is excluded.
 [target.'cfg(not(target_os = "android"))'.dependencies]
-mdns-sd = "0.20"
+mdns-sd = "=0.20.2"
