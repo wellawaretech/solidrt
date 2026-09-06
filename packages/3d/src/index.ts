@@ -40,9 +40,10 @@ export { extrude, lathe, pathFrames, sweep, tube } from "./sweep.ts"
 export type { ExtrudeOptions, LatheOptions, PathFrames, PathPoint, SweepPath, TubeOptions } from "./sweep.ts"
 export { lit, shaderMaterial, shaderMaterialClass, sprite, standard, unlit } from "./material.ts"
 export type { LitOptions, Material, ShaderMaterialClass, ShaderMaterialClassOptions, ShaderMaterialInstanceOptions, ShaderMaterialOptions, SpriteOptions, StandardOptions, UnlitOptions } from "./material.ts"
-export { DirectionalLight, Group, HemisphereLight, InstancedMesh, Mesh, OrbitCamera, PerspectiveCamera, PointLight, Scene, SpotLight, Sprite, useScene } from "./components.tsx"
+export { DirectionalLight, FirstPersonCamera, Group, HemisphereLight, InstancedMesh, Mesh, OrbitCamera, PerspectiveCamera, PointLight, Scene, SpotLight, Sprite, useScene } from "./components.tsx"
 export type {
   DirectionalLightProps,
+  FirstPersonCameraProps,
   HemisphereLightProps,
   InstancedMeshProps,
   MeshProps,
@@ -67,6 +68,8 @@ export type { Mixer, MixerPlayOptions } from "./mixer.ts"
 export { sampleChannel } from "./clip.ts"
 export { createOrbitCamera } from "./orbit.ts"
 export type { OrbitCamera as OrbitCameraHandle, OrbitCameraOptions, OrbitPose, OrbitTarget } from "./orbit.ts"
+export { createFirstPersonCamera } from "./first-person.ts"
+export type { FirstPersonCamera as FirstPersonCameraHandle, FirstPersonCameraOptions, FirstPersonPose, FirstPersonTarget } from "./first-person.ts"
 // math's lookAt (the camera view matrix) stays on the /math subpath: the
 // root's lookAt is the scene verb, the same split as `add`.
 export { rayBoxDistance, compose, copy, eulerFromQuat, identity, mat4, multiply, normalMatrix, orthographic, perspective, quat, quatFromAxisAngle, quatFromEuler, quatFromFrame, quatFromTo, quatMultiply, quatNormalize, quatSlerp } from "./math.ts"

@@ -515,8 +515,9 @@ export const ENVIRONMENT = glsl`
  * `uShadowCount[N]` (light i's maps are slots `first .. first + count - 1`;
  * count 0 = it does not cast; a box light has one map, a cascaded light
  * `shadow.cascades` of them tightest first, a point light six face maps
- * in +X, -X, +Y, -Y, +Z, -Z order), `uShadowBias[N]` and
- * `uShadowNormalBias[N]`. The scene binds and writes all of it on every
+ * in +X, -X, +Y, -Y, +Z, -Z order), `uShadowBias[N]`,
+ * `uShadowNormalBias[N]` and `uShadowRadius[N]` (the filter radius in
+ * map texels, 1 = one tap). The scene binds and writes all of it on every
  * target a receiving material can draw into; a custom material composes
  * LIGHT_SLOTS, this, SHADOW, then SHADOW_LOOKUP (in that order - the
  * lookup reads the light type and position for a point light's face
@@ -533,6 +534,7 @@ export const SHADOW_SLOTS = glsl`
   uniform int uShadowCount[${MAX_LIGHTS}];
   uniform float uShadowBias[${MAX_LIGHTS}];
   uniform float uShadowNormalBias[${MAX_LIGHTS}];
+  uniform float uShadowRadius[${MAX_LIGHTS}];
 `
 
 /**
@@ -542,17 +544,21 @@ export const SHADOW_SLOTS = glsl`
  * point: xy in 0..1 across the map, z the depth to compare. `bool
  * shadowInside(vec3 p)` is whether the map has it at all (xy in 0..1, z
  * not past the far plane) - the cascade select. `float shadowSample(
- * sampler2DShadow map, vec4 rect, vec3 p, float bias)` is the factor (1
- * lit, 0 shadowed) of a point the map has: ONE comparison tap - the
- * sampler compares `p.z - bias` against the map in hardware (LEQUAL) and
- * LINEAR-weights the four neighbours' results, the 2x2 PCF a shader loop
- * cannot match (it weights the compare, not the depth). The tap lands in
- * the map's tile `rect` (x, y, width, height in the atlas's 0..1 UV;
- * `vec4(0, 0, 1, 1)` is a whole map), clamped to the tile inset by half
- * a texel so the footprint never reads a neighbouring map's tile.
- * `float shadow(sampler2DShadow map, vec4 rect, vec4 coord, float bias)`
- * composes the three: 1 (lit) outside the map, else the sample -
- * `shadow(uShadowAtlas, uShadowRect[0], uShadowMatrix[0] * vec4(vWorldPos, 1.0), uShadowBias[0])`.
+ * sampler2DShadow map, vec4 rect, vec3 p, float bias, float radius)` is
+ * the factor (1 lit, 0 shadowed) of a point the map has. At `radius` 1
+ * it is ONE comparison tap - the sampler compares `p.z - bias` against
+ * the map in hardware (LEQUAL) and LINEAR-weights the four neighbours'
+ * results, the 2x2 PCF a shader loop cannot match (it weights the
+ * compare, not the depth). Above 1 it averages a 3x3 grid of those taps
+ * `radius` texels apart (Three's PCF kernel: the edge softens over about
+ * 2 * radius texels; past ~3 the taps separate and the edge bands). A tap
+ * lands in the map's tile `rect` (x, y, width, height in the atlas's 0..1
+ * UV; `vec4(0, 0, 1, 1)` is a whole map), clamped to the tile inset by
+ * half a texel so the footprint never reads a neighbouring map's tile.
+ * `float shadow(sampler2DShadow map, vec4 rect, vec4 coord, float bias,
+ * float radius)` composes the three: 1 (lit) outside the map, else the
+ * sample - `shadow(uShadowAtlas, uShadowRect[0], uShadowMatrix[0] *
+ * vec4(vWorldPos, 1.0), uShadowBias[0], uShadowRadius[0])`.
  * SHADOW_LOOKUP uses the steps, so it projects each map once. The engine
  * binds the comparison sampler wherever a program declares the uniform
  * as sampler2DShadow; a program declaring plain `sampler2D uShadowAtlas`
@@ -567,17 +573,26 @@ export const SHADOW = glsl`
     return all(greaterThanEqual(p.xy, vec2(0.0))) && all(lessThanEqual(p, vec3(1.0)));
   }
 
-  float shadowSample(sampler2DShadow map, vec4 rect, vec3 p, float bias) {
+  float shadowSample(sampler2DShadow map, vec4 rect, vec3 p, float bias, float radius) {
     vec2 texel = 1.0 / vec2(textureSize(map, 0));
     vec2 lo = rect.xy + 0.5 * texel;
     vec2 hi = rect.xy + rect.zw - 0.5 * texel;
     vec2 base = rect.xy + p.xy * rect.zw;
-    return texture(map, vec3(clamp(base, lo, hi), p.z - bias));
+    float z = p.z - bias;
+    if (radius <= 1.0) return texture(map, vec3(clamp(base, lo, hi), z));
+    vec2 step = texel * radius;
+    float sum = 0.0;
+    for (int y = -1; y <= 1; y++) {
+      for (int x = -1; x <= 1; x++) {
+        sum += texture(map, vec3(clamp(base + vec2(float(x), float(y)) * step, lo, hi), z));
+      }
+    }
+    return sum / 9.0;
   }
 
-  float shadow(sampler2DShadow map, vec4 rect, vec4 coord, float bias) {
+  float shadow(sampler2DShadow map, vec4 rect, vec4 coord, float bias, float radius) {
     vec3 p = shadowPoint(coord);
-    return shadowInside(p) ? shadowSample(map, rect, p, bias) : 1.0;
+    return shadowInside(p) ? shadowSample(map, rect, p, bias, radius) : 1.0;
   }
 `
 
@@ -594,8 +609,8 @@ export const SHADOW = glsl`
  * light is looked up in the FIRST of its maps that has the point (a box
  * light has one; a cascaded light's maps come tightest first, so the
  * sharpest cascade that has the point wins and a point past the last is
- * lit) with that map's `uShadowMatrix[j]`, its tile and
- * `uShadowBias[i]`. Inside the outer SHADOW_BLEND of a map (in map 0..1
+ * lit) with that map's `uShadowMatrix[j]`, its tile, `uShadowBias[i]`
+ * and `uShadowRadius[i]`. Inside the outer SHADOW_BLEND of a map (in map 0..1
  * units, so 0.1 is its outer 10% on each side) the factor fades into
  * the next cascade's, so the hand-over is a band and not a seam; the
  * last map, a box light's only one, and any rim the next cascade does
@@ -611,6 +626,7 @@ export const SHADOW_LOOKUP = glsl`
     if (count == 0) return 1.0;
     vec4 w = vec4(worldPos + n * uShadowNormalBias[i], 1.0);
     float bias = uShadowBias[i];
+    float radius = uShadowRadius[i];
     int first = uShadowFirst[i];
     if (uLightType[i] == LIGHT_POINT) {
       // Six 90-degree face frusta partition every direction: the
@@ -624,19 +640,19 @@ export const SHADOW_LOOKUP = glsl`
       else if (ad.y >= ad.z) face = dv.y > 0.0 ? 2 : 3;
       else face = dv.z > 0.0 ? 4 : 5;
       int j = first + face;
-      return shadow(uShadowAtlas, uShadowRect[j], uShadowMatrix[j] * w, bias);
+      return shadow(uShadowAtlas, uShadowRect[j], uShadowMatrix[j] * w, bias, radius);
     }
     int last = first + count - 1;
     for (int j = first; j <= last; j++) {
       vec3 p = shadowPoint(uShadowMatrix[j] * w);
       if (!shadowInside(p)) continue;
-      float s = shadowSample(uShadowAtlas, uShadowRect[j], p, bias);
+      float s = shadowSample(uShadowAtlas, uShadowRect[j], p, bias, radius);
       if (j == last) return s;
       float edge = min(min(p.x, 1.0 - p.x), min(p.y, 1.0 - p.y));
       if (edge >= SHADOW_BLEND) return s;
       vec3 q = shadowPoint(uShadowMatrix[j + 1] * w);
       if (!shadowInside(q)) return s;
-      return mix(shadowSample(uShadowAtlas, uShadowRect[j + 1], q, bias), s, edge / SHADOW_BLEND);
+      return mix(shadowSample(uShadowAtlas, uShadowRect[j + 1], q, bias, radius), s, edge / SHADOW_BLEND);
     }
     return 1.0;
   }

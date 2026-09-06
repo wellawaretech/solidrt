@@ -799,6 +799,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     let coneFalloff: number[] = []
     let bias: number[] = []
     let normalBias: number[] = []
+    let radius: number[] = []
     let count = 0
     for (let light of lights) {
       if (light.type === "hemisphere") {
@@ -835,6 +836,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       }
       bias.push(light.shadow.bias)
       normalBias.push(light.shadow.normalBias)
+      radius.push(light.shadow.radius)
       count++
     }
     for (let i = count; i < MAX_LIGHTS; i++) {
@@ -843,6 +845,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       coneFalloff.push(0, 0, 0, 0)
       bias.push(0)
       normalBias.push(0)
+      radius.push(1)
     }
     // The shadow set rides with the lights. Per casting light i: its
     // map slots as uShadowFirst[i] + uShadowCount[i] (0 = a receiving
@@ -877,6 +880,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       uShadowCount: counts,
       uShadowBias: bias,
       uShadowNormalBias: normalBias,
+      uShadowRadius: radius,
       uShadowRect: rects,
     }
     receivingTargets(t => {

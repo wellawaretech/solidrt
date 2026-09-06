@@ -20,6 +20,11 @@ export type ShadowOptions = {
   /** Offset a receiving point along its normal before the lookup, in
    * world units (default 0) - the acne fix that keeps contact shadows. */
   normalBias?: number
+  /** Filter radius in map texels (default 1): 1 is the single hardware
+   * compare tap (a 2x2 bilinear PCF); above 1 a 3x3 grid of those taps
+   * spread `radius` texels apart, Three's `shadow.radius` - softer edges
+   * for the texel stairs a close receiver shows, at nine taps. */
+  radius?: number
   /** The light frustum; absent keys keep the defaults +-5, 0.5..500.
    * Ignored by a cascaded light (its frustums follow the scene camera). */
   camera?: Partial<ShadowCamera>
@@ -61,7 +66,7 @@ export type DirectionalLight = SceneNode & {
    * `receiveShadow: false`). */
   castShadow: boolean
   /** The resolved shadow options (read; write through setLight). */
-  shadow: { mapSize: number; bias: number; normalBias: number; camera: ShadowCamera; cascades: number; distance: number | null }
+  shadow: { mapSize: number; bias: number; normalBias: number; radius: number; camera: ShadowCamera; cascades: number; distance: number | null }
 }
 
 /** A spot light node: a cone of light from the node's WORLD position
@@ -97,7 +102,7 @@ export type SpotLight = SceneNode & {
    * the default when 0). One map, one shadow slot. */
   castShadow: boolean
   /** The resolved shadow options (read; write through setLight). */
-  shadow: { mapSize: number; bias: number; normalBias: number; near: number }
+  shadow: { mapSize: number; bias: number; normalBias: number; radius: number; near: number }
 }
 
 /** The perspective-map shadow options a spot or point light takes. */
@@ -112,6 +117,11 @@ export type SpotShadowOptions = {
   /** Offset a receiving point along its normal before the lookup, in
    * world units (default 0). */
   normalBias?: number
+  /** Filter radius in map texels (default 1): 1 is the single hardware
+   * compare tap (a 2x2 bilinear PCF); above 1 a 3x3 grid of those taps
+   * spread `radius` texels apart, Three's `shadow.radius` - softer edges
+   * for the texel stairs a close receiver shows, at nine taps. */
+  radius?: number
   /** The shadow camera's near plane in world units (default 0.5); its
    * far is the light's `distance` (or the directional default, 500,
    * when 0). */
@@ -139,7 +149,7 @@ export type PointLight = SceneNode & {
    * default when 0), so give a casting bulb a distance. */
   castShadow: boolean
   /** The resolved shadow options (read; write through setLight). */
-  shadow: { mapSize: number; bias: number; normalBias: number; near: number }
+  shadow: { mapSize: number; bias: number; normalBias: number; radius: number; near: number }
 }
 
 /** The ambient term: a sky/ground gradient by the WORLD normal's
@@ -221,10 +231,16 @@ function checkFalloff(update: { distance?: number; decay?: number }): void {
   if (update.decay !== undefined && !(update.decay >= 0)) throw new Error("Light decay must be >= 0")
 }
 
+function checkRadius(radius: number): number {
+  if (!(radius >= 1)) throw new Error("shadow.radius must be >= 1 (1 = the single hardware tap)")
+  return radius
+}
+
 function mergeShadow(into: DirectionalLight["shadow"], update: ShadowOptions): void {
   if (update.mapSize !== undefined) into.mapSize = update.mapSize
   if (update.bias !== undefined) into.bias = update.bias
   if (update.normalBias !== undefined) into.normalBias = update.normalBias
+  if (update.radius !== undefined) into.radius = checkRadius(update.radius)
   if (update.camera !== undefined) Object.assign(into.camera, update.camera)
   if (update.cascades !== undefined) {
     let n = update.cascades
@@ -245,7 +261,7 @@ export function createDirectionalLight(opts: DirectionalLightOptions = {}): Dire
   light.color = [...(opts.color ?? [1, 1, 1])] as Vec3
   light.intensity = opts.intensity ?? 1
   light.castShadow = opts.castShadow === true
-  light.shadow = { mapSize: 1024, bias: 0, normalBias: 0, camera: { left: -5, right: 5, top: 5, bottom: -5, near: 0.5, far: 500 }, cascades: 1, distance: null }
+  light.shadow = { mapSize: 1024, bias: 0, normalBias: 0, radius: 1, camera: { left: -5, right: 5, top: 5, bottom: -5, near: 0.5, far: 500 }, cascades: 1, distance: null }
   if (opts.shadow !== undefined) mergeShadow(light.shadow, opts.shadow)
   return light
 }
@@ -262,7 +278,7 @@ export function createSpotLight(opts: SpotLightOptions = {}): SpotLight {
   light.penumbra = opts.penumbra ?? 0
   light.decay = opts.decay ?? 2
   light.castShadow = opts.castShadow === true
-  light.shadow = { mapSize: 1024, bias: 0, normalBias: 0, near: 0.5 }
+  light.shadow = { mapSize: 1024, bias: 0, normalBias: 0, radius: 1, near: 0.5 }
   if (opts.shadow !== undefined) mergeSpotShadow(light.shadow, opts.shadow)
   return light
 }
@@ -286,7 +302,7 @@ export function createPointLight(opts: PointLightOptions = {}): PointLight {
   light.distance = opts.distance ?? 0
   light.decay = opts.decay ?? 2
   light.castShadow = opts.castShadow === true
-  light.shadow = { mapSize: 1024, bias: 0, normalBias: 0, near: 0.5 }
+  light.shadow = { mapSize: 1024, bias: 0, normalBias: 0, radius: 1, near: 0.5 }
   if (opts.shadow !== undefined) mergeSpotShadow(light.shadow, opts.shadow)
   return light
 }
