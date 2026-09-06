@@ -46,10 +46,10 @@ endif
 
 SRT_HOME ?= $(abspath $(CURDIR)/..)
 
-# The launcher app sources live in apps/launcher like any regular app; the
+# The launcher app sources live in apps/player like any regular app; the
 # generated bundles land here in resources/ because lattice is what embeds
 # them (include_str! in src/lib.rs).
-LAUNCHER_DIR = $(SRT_HOME)/apps/launcher
+LAUNCHER_DIR = $(SRT_HOME)/apps/player
 LAUNCHER_SRC = $(LAUNCHER_DIR)/src/index.tsx
 LAUNCHER_JS  = $(CURDIR)/resources/launcher/index.srt.js
 
@@ -126,7 +126,7 @@ help:
 #
 # The go client embeds resources/launcher/index.srt.js at compile time via
 # include_str!. The file target rebuilds it when any .tsx source in
-# apps/launcher changes. Run `make launcher-bundle` to force a rebuild.
+# apps/player changes. Run `make launcher-bundle` to force a rebuild.
 
 launcher-bundle: $(LAUNCHER_JS) $(BSOD_JS)
 

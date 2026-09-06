@@ -1,5 +1,5 @@
 {
-  "name": "launcher",
+  "name": "player",
   "type": "module",
   "private": true,
   "scripts": {
