@@ -35,6 +35,10 @@ export type CameraUpdate = {
   pivotY?: number
 }
 
+/** A camera snapshot (a layer's `camera()`): CameraUpdate's fields, all
+ * present - the argument for projectCamera/unprojectCamera. */
+export type CameraState = Required<CameraUpdate>
+
 const CAMERA_FIELDS = ["x", "y", "zoom", "rotation", "pivotX", "pivotY"] as const
 
 /**

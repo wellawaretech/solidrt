@@ -1,7 +1,7 @@
 // Frame animation via createAnimation: a row of sprites sharing one looping
 // clip (one clock, one setSprite per sprite per STEP - an app's whole crowd
 // animates off a handful of timers, no onFrame loop), plus a one-shot clip
-// that holds its last frame and fires onEnd. Self-asserting: samples the
+// that holds its last frame and fires onFinish. Self-asserting: samples the
 // sprites' frames against the wall clock and logs ANIM-OK / ANIM-FAIL.
 //
 // The atlas is the core logo sliced 2x2 by grid(): a 4-frame "clip". Real
@@ -37,10 +37,10 @@ function App() {
     looped.push(sprite)
   }
 
-  // The one-shot: plays through once, holds the last frame, fires onEnd.
+  // The one-shot: plays through once, holds the last frame, fires onFinish.
   let shot = createAnimation(frames, SHOT_FPS, { loop: false })
   let ended = 0
-  shot.onEnd = () => ended++
+  shot.onFinish = () => ended++
   let shotSprite = addSprite(layer, { x: 440, y: H / 2, w: SPRITE, h: SPRITE })
   shot.add(shotSprite)
 
@@ -71,7 +71,7 @@ function App() {
     // One-shot: 4 frames at 5fps end at 800ms - long since done here.
     check(shownIndex(shotSprite) === frames.length - 1, "one-shot holds its last frame")
     check(!shot.playing, "one-shot stopped playing")
-    check(ended === 1, `onEnd fired once, got ${ended}`)
+    check(ended === 1, `onFinish fired once, got ${ended}`)
     check(looping.playing, "the looping clip is still playing")
     console.log(failures.length === 0 ? "ANIM-OK" : `ANIM-FAIL: ${failures.join("; ")}`)
   }, period * 4.5)

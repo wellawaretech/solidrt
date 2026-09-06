@@ -58,16 +58,16 @@ export type Camera2dPose = {
   rotation?: number
 }
 
-export type Rect2d = { x: number; y: number; w: number; h: number }
+export type Rect2d = { x: number; y: number; width: number; height: number }
 
 export type Camera2dMotionOptions = Camera2dPose & {
   /** Viewport size in layer pixels, read whenever the camera needs it (a
    * resize re-clamps at the next update). Return zeros while unknown -
    * clamping and fitting wait for a real size. */
-  viewport: () => { w: number; h: number }
+  viewport: () => { width: number; height: number }
   /** World bounds (origin 0,0) the view is kept inside: an axis whose view
    * is wider than the world centers. Absent = unbounded. */
-  world?: { w: number; h: number }
+  world?: { width: number; height: number }
   /** Zoom range. minZoom defaults to the fit zoom (whole world visible)
    * when `world` is given, else to no lower bound; maxZoom to no upper
    * bound. An explicit maxZoom below the fit zoom wins, the world then
@@ -80,7 +80,7 @@ export type Camera2dMotionOptions = Camera2dPose & {
   pivot?: { x: number; y: number }
   /** Follow dead zone as fractions of the viewport, centered on the pivot:
    * the target roams inside it without moving the camera. Default 0,0. */
-  deadZone?: { w: number; h: number }
+  deadZone?: { width: number; height: number }
   /** Multiplier over the built-in wheel and pinch sensitivity. */
   zoomSpeed?: number
   /** Multiplier over the built-in follow damping. */
@@ -164,11 +164,11 @@ function checkFraction(what: string, v: number): void {
  */
 export function createCameraMotion(target: Camera2dTarget | Camera2dTarget[], options: Camera2dMotionOptions, onActive?: (active: boolean) => void): Camera2dMotion {
   let targets = Array.isArray(target) ? target : [target]
-  if (typeof options.viewport !== "function") throw new Error("createCamera2d: viewport must be a function returning { w, h }")
+  if (typeof options.viewport !== "function") throw new Error("createCamera2d: viewport must be a function returning { width, height }")
   let world = options.world ?? null
   if (world) {
-    positive("world.w", world.w)
-    positive("world.h", world.h)
+    positive("world.width", world.width)
+    positive("world.height", world.height)
   }
   if (options.minZoom !== undefined) positive("minZoom", options.minZoom)
   if (options.maxZoom !== undefined) positive("maxZoom", options.maxZoom)
@@ -180,18 +180,18 @@ export function createCameraMotion(target: Camera2dTarget | Camera2dTarget[], op
   let pivotFy = options.pivot?.y ?? 0.5
   finite("pivot.x", pivotFx)
   finite("pivot.y", pivotFy)
-  let deadW = options.deadZone?.w ?? 0
-  let deadH = options.deadZone?.h ?? 0
-  checkFraction("deadZone.w", deadW)
-  checkFraction("deadZone.h", deadH)
+  let deadW = options.deadZone?.width ?? 0
+  let deadH = options.deadZone?.height ?? 0
+  checkFraction("deadZone.width", deadW)
+  checkFraction("deadZone.height", deadH)
   let wheelZoom = WHEEL_ZOOM * (options.zoomSpeed ?? 1)
   let zoomExponent = options.zoomSpeed ?? 1
   let followEase = FOLLOW_EASE * (options.followSpeed ?? 1)
   let inertia = options.inertia ?? true
   let maxZoom = options.maxZoom ?? Infinity
 
-  let x = options.x ?? (world ? world.w / 2 : 0)
-  let y = options.y ?? (world ? world.h / 2 : 0)
+  let x = options.x ?? (world ? world.width / 2 : 0)
+  let y = options.y ?? (world ? world.height / 2 : 0)
   let zoom = options.zoom ?? 1
   let rotation = options.rotation ?? 0
 
@@ -202,17 +202,17 @@ export function createCameraMotion(target: Camera2dTarget | Camera2dTarget[], op
   let known = () => vw > 0 && vh > 0
   let readViewport = () => {
     let v = options.viewport()
-    if (!(Number.isFinite(v.w) && Number.isFinite(v.h) && v.w >= 0 && v.h >= 0)) {
-      throw new Error(`createCamera2d: viewport() must return non-negative finite w/h, got ${v.w}x${v.h}`)
+    if (!(Number.isFinite(v.width) && Number.isFinite(v.height) && v.width >= 0 && v.height >= 0)) {
+      throw new Error(`createCamera2d: viewport() must return non-negative finite width/height, got ${v.width}x${v.height}`)
     }
-    vw = v.w
-    vh = v.h
+    vw = v.width
+    vh = v.height
   }
   let px = () => vw * pivotFx
   let py = () => vh * pivotFy
 
   let minZoom = () => {
-    let fit = world && known() ? Math.min(vw / world.w, vh / world.h) : 0
+    let fit = world && known() ? Math.min(vw / world.width, vh / world.height) : 0
     return Math.min(options.minZoom ?? fit, maxZoom)
   }
 
@@ -224,8 +224,8 @@ export function createCameraMotion(target: Camera2dTarget | Camera2dTarget[], op
     let viewH = vh / z
     let left = cx - px() / z
     let top = cy - py() / z
-    left = viewW >= world.w ? (world.w - viewW) / 2 : clampNum(left, 0, world.w - viewW)
-    top = viewH >= world.h ? (world.h - viewH) / 2 : clampNum(top, 0, world.h - viewH)
+    left = viewW >= world.width ? (world.width - viewW) / 2 : clampNum(left, 0, world.width - viewW)
+    top = viewH >= world.height ? (world.height - viewH) / 2 : clampNum(top, 0, world.height - viewH)
     return [left + px() / z, top + py() / z]
   }
   let clamp = () => {
@@ -310,10 +310,10 @@ export function createCameraMotion(target: Camera2dTarget | Camera2dTarget[], op
     glide = { kind: "pose", x: cx, y: cy, zoom: z }
   }
   let fitNow = (rect: Rect2d | null, ease: boolean) => {
-    let r = rect ?? (world ? { x: 0, y: 0, w: world.w, h: world.h } : null)
+    let r = rect ?? (world ? { x: 0, y: 0, width: world.width, height: world.height } : null)
     if (!r) throw new Error("createCamera2d: fit() needs a rect when the camera has no world")
-    let z = clampNum(Math.min(vw / r.w, vh / r.h), minZoom(), maxZoom)
-    let [nx, ny] = anchorPose(r.x + r.w / 2, r.y + r.h / 2, vw / 2, vh / 2, z)
+    let z = clampNum(Math.min(vw / r.width, vh / r.height), minZoom(), maxZoom)
+    let [nx, ny] = anchorPose(r.x + r.width / 2, r.y + r.height / 2, vw / 2, vh / 2, z)
     if (ease) {
       glideTo(nx, ny, z)
       return
@@ -440,7 +440,7 @@ export function createCameraMotion(target: Camera2dTarget | Camera2dTarget[], op
         maxX = Math.max(maxX, cx)
         maxY = Math.max(maxY, cy)
       }
-      return { x: minX, y: minY, w: maxX - minX, h: maxY - minY }
+      return { x: minX, y: minY, width: maxX - minX, height: maxY - minY }
     },
     update(dt) {
       let pw = vw

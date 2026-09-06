@@ -73,6 +73,11 @@ Shaped, not started.
   though the core machinery - arena bones, the TextureSlot palette sink, the
   coming native clip evaluator - already exists or is planned with zero
   2d-specific core work.
+- **[2d spatial queries - overlap, sweep, raycast and move-and-slide for sprites](backlog/2d-spatial-queries.md)** [2026-09-06]
+  Every live sprite already sits in the core's picking index, but the 2d
+  package exposes only pick and pickRect, so a circle query, a cast along a
+  motion or a move-and-slide has no path while the 3d scene wraps all of them
+  with filters and a character mover on top.
 - **[Seeding a tile world is one setTile call per cell](backlog/2d-tile-bulk-writes.md)** [2026-08-29]
   There is no bulk write, so an 18k-cell seed is 18k setTile calls each paying
   locate() and a frame copy; fine today because the flush batches to a
@@ -102,6 +107,11 @@ Shaped, not started.
   encoded space, the clearColor is never tone mapped and no post effect
   (bloom) can see radiance; Godot and Unity render the scene into a half-float
   buffer and tone map once, in a final pass.
+- **[3d instances as spatial arena nodes - the full-matrix record projection](backlog/3d-instance-citizenship.md)** [2026-09-06]
+  An instanced mesh's records are JS-written floats, so native transitions,
+  clip players and per-instance picking never reach an instance, while every
+  2d sprite already is an arena node; the core's InstanceProjection has only
+  Pose2D and the full-matrix sibling it anticipates is the missing piece.
 - **[Level of detail - distance-selected mesh variants as a core sink](backlog/3d-lod.md)** [2026-08-30]
   A large scene ships every object at one triangle count; a track with a
   thousand trees either draws full-detail foliage at the horizon or nothing. A

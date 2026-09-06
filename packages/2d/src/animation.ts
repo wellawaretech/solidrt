@@ -48,7 +48,7 @@ export type SpriteAnimation = {
   pause(): void
   /** One-shot clips (loop: false): the last frame finished its display
    * time. Fires once per play-through, never on pause or dispose. */
-  onEnd?: () => void
+  onFinish?: () => void
   /** Stop the clock and detach every sprite. Owner-scoped like a layer
    * (opt out with autoFree: false). */
   dispose(): void
@@ -120,7 +120,7 @@ export function createAnimation(frames: Frame[], fps: number, opts?: AnimationOp
       stopClock()
       playing = false
       ended = true
-      handle.onEnd?.()
+      handle.onFinish?.()
       return
     }
     setIndex(loop ? raw % frames.length : Math.min(raw, frames.length - 1))
@@ -133,7 +133,7 @@ export function createAnimation(frames: Frame[], fps: number, opts?: AnimationOp
     get playing() {
       return playing
     },
-    onEnd: undefined,
+    onFinish: undefined,
     add(sprite) {
       if (disposed) throw new Error("createAnimation: add on a disposed animation")
       attachedTo.get(sprite)?.remove(sprite)

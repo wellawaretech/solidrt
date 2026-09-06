@@ -414,7 +414,7 @@ export let Sprite: VoidComponent<SpriteProps> = props => {
 export type Camera2dProps = Omit<Camera2dOptions, "viewport"> & {
   /** Viewport in layer pixels; defaults to the enclosing layer's own size
    * (live: a fill layer's box, a setSize). */
-  viewport?: () => { w: number; h: number }
+  viewport?: () => { width: number; height: number }
   ref?: (camera: Camera2dHandle) => void
 }
 
@@ -441,7 +441,7 @@ export let Camera2d: VoidComponent<Camera2dProps> = props => {
   // live).
   let options: Camera2dOptions = merge(props, {
     get viewport() {
-      return props.viewport ?? (() => ({ w: layer.width, h: layer.height }))
+      return props.viewport ?? (() => ({ width: layer.width, height: layer.height }))
     },
   })
   let cam = untrack(() => createCamera2d(layer, options))

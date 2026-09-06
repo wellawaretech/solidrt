@@ -662,9 +662,9 @@ export let PerspectiveCamera: VoidComponent<PerspectiveCameraProps> = props => {
 const MAX_ORBIT_DT = 0.1
 
 export type OrbitCameraProps = OrbitCameraOptions & {
-  /** The control's handle (pose()/set()/eye()/orbiting() - also the debug
-   * command shape). This handle's set() pushes the pose itself, so a
-   * caller never touches update(). */
+  /** The control's handle (pose()/set()/eye()/orbiting()/active() - also
+   * the debug command shape). This handle's set() pushes the pose itself,
+   * so a caller never touches update(). */
   ref?: (orbit: OrbitCameraHandle) => void
 }
 
@@ -681,8 +681,8 @@ export type OrbitCameraProps = OrbitCameraOptions & {
  * defaults to the leaf's laid-out size plus the scene camera's fov, so
  * rotation is viewport-relative and two-finger pan works out of the box
  * (pass your own to override). Auto-orbit runs a frame loop only while
- * `orbiting()` and `orbitSpeed` is non-zero; a paused or drag-only camera
- * leaves the app demand-driven idle.
+ * `active()` (orbiting with a non-zero `orbitSpeed`); a paused or
+ * drag-only camera leaves the app demand-driven idle.
  */
 export let OrbitCamera: VoidComponent<OrbitCameraProps> = props => {
   let ctx = useContext(SceneContext)
@@ -719,7 +719,7 @@ export let OrbitCamera: VoidComponent<OrbitCameraProps> = props => {
     }),
   )
   createEffect(
-    () => orbit.orbiting() && (options.orbitSpeed ?? 0) !== 0,
+    () => orbit.active(),
     on => {
       if (!on) return
       let last: number | null = null

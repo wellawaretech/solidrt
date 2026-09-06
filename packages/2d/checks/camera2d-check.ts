@@ -51,9 +51,9 @@ const SWEEP = 500
 
 let near = (a: number, b: number, eps = EPS) => Math.abs(a - b) <= eps
 
-type Rig = { cam: Camera2dMotion; view: { w: number; h: number }; last: () => CameraUpdate | null; writes: () => number }
+type Rig = { cam: Camera2dMotion; view: { width: number; height: number }; last: () => CameraUpdate | null; writes: () => number }
 
-function make(opts: Partial<Camera2dMotionOptions> = {}, view = { w: 800, h: 600 }): Rig {
+function make(opts: Partial<Camera2dMotionOptions> = {}, view = { width: 800, height: 600 }): Rig {
   let last: CameraUpdate | null = null
   let writes = 0
   let cam = createCameraMotion(
@@ -79,13 +79,13 @@ function settle(cam: Camera2dMotion): number {
 
 // ---- Default fit, contain centering, the fit-zoom pan no-op ----
 {
-  let { cam, last } = make({ world: { w: 1000, h: 500 } })
+  let { cam, last } = make({ world: { width: 1000, height: 500 } })
   let c = cam.camera()
   if (!near(c.zoom!, 0.8)) fail(`default fit zoom: expected 0.8, got ${c.zoom}`)
   if (!near(c.pivotX!, 400) || !near(c.pivotY!, 300)) fail(`pivot defaults to the viewport center, got ${c.pivotX},${c.pivotY}`)
   let r = cam.viewRect()
-  if (!near(r.x, 0) || !near(r.w, 1000)) fail(`fit shows the whole world width, got x=${r.x} w=${r.w}`)
-  if (!near(r.y, -125) || !near(r.h, 750)) fail(`the taller view centers the world vertically, got y=${r.y} h=${r.h}`)
+  if (!near(r.x, 0) || !near(r.width, 1000)) fail(`fit shows the whole world width, got x=${r.x} w=${r.width}`)
+  if (!near(r.y, -125) || !near(r.height, 750)) fail(`the taller view centers the world vertically, got y=${r.y} h=${r.height}`)
   if (last() === null) fail("the initial pose reaches the target at creation")
   cam.panBy(100, 50)
   let after = cam.camera()
@@ -94,7 +94,7 @@ function settle(cam: Camera2dMotion): number {
 
 // ---- The contain clamp at a zoom, snap writes ----
 {
-  let { cam } = make({ world: { w: 1000, h: 500 }, zoom: 2 })
+  let { cam } = make({ world: { width: 1000, height: 500 }, zoom: 2 })
   cam.set({ x: 5000 })
   if (!near(cam.camera().x!, 800)) fail(`set clamps x to the right edge (800), got ${cam.camera().x}`)
   cam.panBy(10000, 10000)
@@ -106,7 +106,7 @@ function settle(cam: Camera2dMotion): number {
 
 // ---- Godot's rule: limits ignore rotation ----
 {
-  let { cam } = make({ world: { w: 1000, h: 500 }, zoom: 2 })
+  let { cam } = make({ world: { width: 1000, height: 500 }, zoom: 2 })
   cam.set({ x: 5000, y: 5000, rotation: 1 })
   let c = cam.camera()
   if (!near(c.x!, 800) || !near(c.y!, 350)) fail(`rotated view clamps as if unrotated (800,350), got ${c.x},${c.y}`)
@@ -178,7 +178,7 @@ for (let i = 0; i < SWEEP; i++) {
 
 // ---- glideTo: eased pose, exact landing, rest ----
 {
-  let { cam, writes } = make({ world: { w: 1000, h: 500 }, zoom: 2 })
+  let { cam, writes } = make({ world: { width: 1000, height: 500 }, zoom: 2 })
   cam.glideTo(700, 300, 3)
   let w0 = writes()
   let ticks = settle(cam)
@@ -194,38 +194,38 @@ for (let i = 0; i < SWEEP; i++) {
   c = cam.camera()
   if (!near(c.x!, 1000 - 400 / 3) || !near(c.y!, 400)) fail(`glideTo clamps its destination to (866.67,400), got ${c.x},${c.y}`)
   let r = cam.viewRect()
-  if (r.x + r.w > 1000 + EPS || r.y + r.h > 500 + EPS) fail(`glide destination stays inside the world, view ${JSON.stringify(r)}`)
+  if (r.x + r.width > 1000 + EPS || r.y + r.height > 500 + EPS) fail(`glide destination stays inside the world, view ${JSON.stringify(r)}`)
 }
 
 // ---- fit(rect): snapping and gliding, maxZoom below the fit ----
 {
-  let { cam } = make({ world: { w: 1000, h: 500 }, maxZoom: 10 })
-  cam.fit({ x: 100, y: 100, w: 200, h: 100 })
+  let { cam } = make({ world: { width: 1000, height: 500 }, maxZoom: 10 })
+  cam.fit({ x: 100, y: 100, width: 200, height: 100 })
   let c = cam.camera()
   if (!near(c.zoom!, 4) || !near(c.x!, 200) || !near(c.y!, 150)) fail(`fit(rect) centers the rect at zoom 4 (200,150), got ${c.x},${c.y},${c.zoom}`)
   cam.fit(undefined, { glide: true })
   let ticks = settle(cam)
   c = cam.camera()
   if (ticks === 0 || !near(c.zoom!, 0.8) || !near(c.x!, 500) || !near(c.y!, 250)) fail(`fit({ glide }) eases back to the world fit, got ${c.x},${c.y},${c.zoom} after ${ticks}`)
-  let capped = make({ world: { w: 1000, h: 500 }, maxZoom: 0.5 })
+  let capped = make({ world: { width: 1000, height: 500 }, maxZoom: 0.5 })
   let cc = capped.cam.camera()
   let r = capped.cam.viewRect()
   if (!near(cc.zoom!, 0.5) || !near(cc.x!, 500) || !near(cc.y!, 250)) fail(`maxZoom below the fit wins and the world floats centered, got ${cc.x},${cc.y},${cc.zoom}`)
-  if (!near(r.w, 1600)) fail(`capped fit view is 1600 wide, got ${r.w}`)
+  if (!near(r.width, 1600)) fail(`capped fit view is 1600 wide, got ${r.width}`)
 }
 
 // ---- Deferred fit: an unknown viewport neither throws nor clamps ----
 {
-  let view = { w: 0, h: 0 }
-  let { cam, last } = make({ world: { w: 1000, h: 500 } }, view)
+  let view = { width: 0, height: 0 }
+  let { cam, last } = make({ world: { width: 1000, height: 500 } }, view)
   if (last() === null || cam.camera().zoom !== 1) fail("unknown viewport: the pose still reaches the target, unfitted")
-  view.w = 800
-  view.h = 600
+  view.width = 800
+  view.height = 600
   if (!cam.update(DT)) fail("the viewport becoming known is a change")
   if (!near(cam.camera().zoom!, 0.8)) fail(`the deferred fit runs once the viewport is known, got zoom ${cam.camera().zoom}`)
   // A resize keeps the world point under the pivot and re-clamps.
   cam.set({ zoom: 2, x: 700, y: 300 })
-  view.w = 400
+  view.width = 400
   cam.update(DT)
   let c = cam.camera()
   if (!near(c.pivotX!, 200) || !near(c.x!, 700)) fail(`resize keeps the world point at the moved pivot, got pivotX ${c.pivotX} x ${c.x}`)
@@ -233,7 +233,7 @@ for (let i = 0; i < SWEEP; i++) {
 
 // ---- Follow: tight, then through a dead zone; settles and rests ----
 {
-  let { cam } = make({ world: { w: 1000, h: 500 }, zoom: 2, x: 500, y: 250 })
+  let { cam } = make({ world: { width: 1000, height: 500 }, zoom: 2, x: 500, y: 250 })
   cam.follow(600, 250)
   let ticks = settle(cam)
   let c = cam.camera()
@@ -244,7 +244,7 @@ for (let i = 0; i < SWEEP; i++) {
   if (cam.update(DT)) fail("re-following a reached target writes nothing")
 }
 {
-  let { cam } = make({ world: { w: 1000, h: 500 }, zoom: 2, x: 500, y: 250, deadZone: { w: 0.5, h: 0.5 } })
+  let { cam } = make({ world: { width: 1000, height: 500 }, zoom: 2, x: 500, y: 250, deadZone: { width: 0.5, height: 0.5 } })
   // Zone half-width 200 px; the target at screen x 800 overshoots by 200 px
   // = 100 world px, so the camera stops at 600 with the target on the edge.
   cam.follow(700, 250)
@@ -304,7 +304,7 @@ for (let i = 0; i < SWEEP; i++) {
 
 // ---- Pivot at the top-left: the scrolling camera ----
 {
-  let { cam } = make({ world: { w: 1000, h: 500 }, zoom: 1, pivot: { x: 0, y: 0 } })
+  let { cam } = make({ world: { width: 1000, height: 500 }, zoom: 1, pivot: { x: 0, y: 0 } })
   cam.set({ x: -50, y: 0 })
   let c = cam.camera()
   if (!near(c.x!, 0) || !near(c.y!, -50)) fail(`top-left pivot: x clamps to 0 and the short axis centers at -50, got ${c.x},${c.y}`)
@@ -324,9 +324,9 @@ for (let i = 0; i < SWEEP; i++) {
       if (!(err instanceof Error) || !err.message.startsWith("createCamera2d")) fail(`${what}: unexpected error ${err}`)
     }
   }
-  throws("world.w 0", () => make({ world: { w: 0, h: 10 } }))
+  throws("world.width 0", () => make({ world: { width: 0, height: 10 } }))
   throws("minZoom > maxZoom", () => make({ minZoom: 3, maxZoom: 2 }))
-  throws("deadZone 2", () => make({ deadZone: { w: 2, h: 0 } }))
+  throws("deadZone 2", () => make({ deadZone: { width: 2, height: 0 } }))
   throws("zoom 0", () => make({ zoom: 0 }))
   throws("set NaN", () => make().cam.set({ x: NaN }))
   throws("zoomAt factor 0", () => make().cam.zoomAt(0, 0, 0))

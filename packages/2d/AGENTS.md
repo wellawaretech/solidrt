@@ -48,6 +48,9 @@ moved subtrees in Rust, and picking walks the core BVH.
   destroy here, as for removeSprite; re-parent a child out first to keep
   it). @solidrt/3d's `remove` instead DETACHES a re-addable subtree - its
   nodes exist outside a scene, sprites cannot exist outside their layer.
+  A handle's x/y are local to its group; `worldPosition(sprite | group)`
+  reads the layer-pixel position composed through every enclosing group
+  from the core's world matrix (@solidrt/3d's worldPosition).
 - `visible` (@solidrt/3d's setVisible, in the setSprite/setGroup bag;
   default true) is core node visibility: hidden, the pose slot zeroes
   (nothing drawn) and pick/pickRect skip the node; a group's flag hides
@@ -89,8 +92,13 @@ moved subtrees in Rust, and picking walks the core BVH.
   the world <-> screen mapping as pure functions, and pointer dispatch
   undoes the camera with the latter, so events arrive in world (layer)
   pixels. Picking itself works in world space and never sees the camera.
-- Camera control: `createCamera2d(layer | layers, { viewport, world?,
-  min/maxZoom?, pivot?, deadZone?, zoomSpeed?, followSpeed?, inertia?,
+  `layer.camera()` reads the camera back (every field present - the
+  `CameraState` snapshot, @solidrt/3d's scene.camera()) and
+  `layer.project(x, y)` / `layer.unproject(x, y)` are the two pure
+  functions over it.
+- Camera control: `createCamera2d(layer | layers, { viewport: () =>
+  ({ width, height }), world?: { width, height }, min/maxZoom?, pivot?,
+  deadZone?: { width, height }, zoomSpeed?, followSpeed?, inertia?,
   x?, y?, zoom?, rotation? })` - Godot's Camera2D and Three's
   MapControls in one control over the shared CameraUpdate: drag to pan
   with inertia on release, wheel and pinch zoom about the pointer, eased
@@ -165,7 +173,8 @@ moved subtrees in Rust, and picking walks the core BVH.
 - Frame animation (animation.ts): `createAnimation(frames, fps, { loop })`
   is a clip with a shared wall-clock timer stepping every attached sprite
   (`anim.add(sprite)` / `remove`; `play`/`pause`; `loop: false` holds the
-  last frame and fires `onEnd`). One timer per playing clip, one setSprite
+  last frame and fires `onFinish`, the mixer's name for it in
+  @solidrt/3d). One timer per playing clip, one setSprite
   per sprite per STEP - an 8fps cycle is 8 publishes a second regardless of
   display rate, and a paused clip costs nothing. A sprite belongs to at
   most one animation (add detaches the previous); removed sprites prune
@@ -226,7 +235,7 @@ on approach, evict) - okf/backlog/2d-baked-layers.md.
 | `SpriteLayer` | width?, height? (layer pixels - both, or neither = FILL: the leaf lays out at 100% of its sized parent and the layer follows its box, so layer pixels are the leaf's own coordinates; mount-fixed, `output` requires explicit sizes, matching `<Scene>` in @solidrt/3d), atlas (TextureId), capacity?, clearColor?, camera?, tint? ([r,g,b,a] 0..1, over the whole layer), oversample?, maxOversample?, orderBy?, label?, ref?, output?, events?, onPointer{Down,Move,Up}?, onWheel?, onTap? (the root of the walk: `event.sprite` is the hit sprite or null over empty space) |
 | `Sprite` | x, y (center; local to the enclosing `<Group>`), w, h, frame?, rotation? (radians, clockwise), tint? ([r,g,b,a] 0..1), visible?, transition?, onPointer{Down,Move,Up,Enter,Leave}?, onWheel?, onTap?, ref? |
 | `Group` | x?, y?, rotation?, scale? (uniform, scales the subtree), visible? (the whole subtree), transition?, onPointer{Down,Move,Up}?, onWheel?, onTap? (bubbled from hit child sprites), ref? |
-| `Camera2d` | createCamera2d's options minus `viewport` (world?, min/maxZoom?, pivot?, deadZone?, zoomSpeed?, followSpeed?, inertia?, x?, y?, zoom?, rotation?), viewport? (default: the layer's size), ref? - a `<SpriteLayer>` child driving its camera from the layer's root; read at mount |
+| `Camera2d` | createCamera2d's options minus `viewport` (world?, min/maxZoom?, pivot?, deadZone?, zoomSpeed?, followSpeed?, inertia?, x?, y?, zoom?, rotation?), viewport? (`() => { width, height }`, default: the layer's size), ref? - a `<SpriteLayer>` child driving its camera from the layer's root; read at mount |
 | `TileLayer` | cols, rows, tileW, tileH, atlas (TextureId), chunkClearColor?, filter?, chunkTiles?, tint? ([r,g,b,a] 0..1, over the whole layer), oversample?, maxOversample?, camera? (TileCamera: x, y, zoom, rotation, pivotX, pivotY), label?, ref? |
 
 `SpriteLayer` owns the layer and renders the built-in `<texture>` leaf
@@ -294,8 +303,8 @@ hover, wheel and tap rules headless.
 - With a transition set, the sprite's fields (and getSprite) read the
   TARGET, not the mid-flight pose - the JS mirror is what setSprite
   composes partial writes from, and targets are the right thing to
-  compose. Picking and the pose buffer see the actual mid-flight pose
-  (what is on screen). Clearing the transition (null) keeps the
+  compose. Picking, the pose buffer and `worldPosition` see the actual
+  mid-flight pose (what is on screen). Clearing the transition (null) keeps the
   mid-flight pose on the node while the mirror still holds the old
   target: the next setSprite write snaps to whatever it says.
 - Node layer picking reads the index as of the last core flush; `pick`/

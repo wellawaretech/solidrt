@@ -23,7 +23,7 @@ import type { Camera2dHandle, SpriteHandle } from "@solidrt/2d"
 import { registerDebug } from "srt:dev"
 import logoBytes from "./logo.png" with { type: "binary" }
 
-const WORLD = { w: 2400, h: 1600 }
+const WORLD = { width: 2400, height: 1600 }
 const COUNT = 300
 const SPRITE = 64
 const ROAMER = 96
@@ -36,7 +36,7 @@ const ROAM_SPAN = 0.4
 // Spin rate while R is on, radians per second.
 const SPIN_RATE = 0.4
 // The follow dead zone, fractions of the viewport.
-const DEAD_ZONE = { w: 0.3, h: 0.3 }
+const DEAD_ZONE = { width: 0.3, height: 0.3 }
 // Largest frame step, seconds: a stall eases on from here instead of
 // teleporting.
 const MAX_DT = 0.1
@@ -58,8 +58,8 @@ function App() {
   let atlas = createAtlas(logoBytes, { label: "logo-atlas" })
   let frames = grid(2, 2, { width: atlas.width, height: atlas.height })
   // The window's logical size, mirrored for the layer and the camera.
-  let win = { w: 1, h: 1 }
-  let layer = createSpriteLayer(win.w, win.h, atlas.texture, {
+  let win = { width: 1, height: 1 }
+  let layer = createSpriteLayer(win.width, win.height, atlas.texture, {
     capacity: COUNT + 1,
     clearColor: [0.05, 0.05, 0.09, 1],
     label: "camera",
@@ -71,8 +71,8 @@ function App() {
   }
   for (let i = 0; i < COUNT; i++) {
     let sprite = addSprite(layer, {
-      x: Math.random() * WORLD.w,
-      y: Math.random() * WORLD.h,
+      x: Math.random() * WORLD.width,
+      y: Math.random() * WORLD.height,
       w: SPRITE,
       h: SPRITE,
       frame: frames[i % 4],
@@ -92,7 +92,7 @@ function App() {
     sprite.onTap = () => select(sprite)
     if (first === null) first = sprite
   }
-  let roamer = addSprite(layer, { x: WORLD.w / 2, y: WORLD.h / 2, w: ROAMER, h: ROAMER, frame: frames[0], tint: [1, 0.8, 0.3, 1] })
+  let roamer = addSprite(layer, { x: WORLD.width / 2, y: WORLD.height / 2, w: ROAMER, h: ROAMER, frame: frames[0], tint: [1, 0.8, 0.3, 1] })
 
   cam = createCamera2d(layer, {
     viewport: () => win,
@@ -115,10 +115,10 @@ function App() {
   createEffect(
     () => ({ size: windowSize(), scale: displayScale() }),
     ({ size, scale }) => {
-      win.w = Math.max(1, size.width)
-      win.h = Math.max(1, size.height)
-      layer.setSize(win.w, win.h)
-      layer.setOversample(fitOversample(scale, win.w, win.h, win.w * win.h * scale * scale))
+      win.width = Math.max(1, size.width)
+      win.height = Math.max(1, size.height)
+      layer.setSize(win.width, win.height)
+      layer.setOversample(fitOversample(scale, win.width, win.height, win.width * win.height * scale * scale))
     },
   )
 
@@ -127,8 +127,8 @@ function App() {
     let t = tick / 1000
     let dt = Math.min(MAX_DT, Math.max(0, t - last))
     last = t
-    let rx = WORLD.w / 2 + Math.sin(t * ROAM_RATE_X) * WORLD.w * ROAM_SPAN
-    let ry = WORLD.h / 2 + Math.sin(t * ROAM_RATE_Y) * WORLD.h * ROAM_SPAN
+    let rx = WORLD.width / 2 + Math.sin(t * ROAM_RATE_X) * WORLD.width * ROAM_SPAN
+    let ry = WORLD.height / 2 + Math.sin(t * ROAM_RATE_Y) * WORLD.height * ROAM_SPAN
     setSprite(roamer, { x: rx, y: ry, rotation: t })
     roamerAt.x = rx
     roamerAt.y = ry

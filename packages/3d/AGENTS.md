@@ -315,8 +315,10 @@ camera looks at, not wherever the zoom left the target. Spread
 `orbit.handlers` onto the input-owning element, call `orbit.update(dt)`
 from your onFrame (no frame loop of its own), and use its return - true
 when the pose changed - to gate per-frame dependents like reprojecting
-HUD overlays. `orbiting()` is reactive (HUD-safe); the pose is plain state via
-`pose()`/`set()` (also the debug-command shape). It drives position and
+HUD overlays. `orbiting()` (the auto-orbit switch) and `active()` (the
+frame-loop gate: orbiting with a non-zero rate - the predicate the 2d
+camera and the first-person camera share) are reactive (HUD-safe); the
+pose is plain state via `pose()`/`set()` (also the debug-command shape). It drives position and
 target only; fov/near/far stay on scene.setCamera (or the Scene `camera`
 prop).
 
@@ -327,8 +329,8 @@ custom `output` leaf spreads `{...useScene().input.handlersFor(layout)}`
 beside its scene.handlersFor spread, same `layout`), defaults `viewport`
 to the leaf's laid-out size plus the scene camera's fov, and pushes input
 poses synchronously - no ref plumbing, no onFrame. Auto-orbit runs a
-frame loop only while `orbiting()` and `orbitSpeed` is non-zero, so a
-paused camera keeps the app demand-driven idle. The pose props are
+frame loop only while `active()`, so a paused camera keeps the app
+demand-driven idle. The pose props are
 initial values: runtime pose changes (and the debug-command hookup) go
 through `ref`'s handle, whose set() also pushes the pose. Every other
 prop is live - forwarded to the control as a getter and read where it

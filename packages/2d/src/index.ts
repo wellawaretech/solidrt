@@ -12,12 +12,12 @@
 // without Solid components) and the components (SpriteLayer/Sprite/Group/
 // TileLayer) on top. See AGENTS.md for the model and the traps.
 
-export { addGroup, addSprite, createSpriteLayer, getSprite, removeGroup, removeSprite, setGroup, setGroupTransition, setSprite, setSpriteParent, setSpriteTransition, POSE_FLOATS, STYLE_FLOATS } from "./layer.ts"
+export { addGroup, addSprite, createSpriteLayer, getSprite, removeGroup, removeSprite, setGroup, setGroupTransition, setSprite, setSpriteParent, setSpriteTransition, worldPosition, POSE_FLOATS, STYLE_FLOATS } from "./layer.ts"
 export { createRecordLayer, FLOATS_PER_SPRITE } from "./records.ts"
 export type { RecordLayer as RecordLayerHandle, RecordLayerOptions } from "./records.ts"
 export { pointInSprite } from "./pick.ts"
 export { projectCamera, unprojectCamera } from "./camera.ts"
-export type { CameraUpdate } from "./camera.ts"
+export type { CameraState, CameraUpdate } from "./camera.ts"
 export { createCamera2d } from "./camera2d.ts"
 export type { Camera2d as Camera2dHandle, Camera2dOptions } from "./camera2d.ts"
 export type { Camera2dPose, Camera2dTarget, Rect2d } from "./camera-motion.ts"

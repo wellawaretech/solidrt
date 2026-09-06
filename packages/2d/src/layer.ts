@@ -41,8 +41,8 @@ import type { BufferId, TextureId } from "@solidrt/core/gpu"
 import * as spatial from "flux:spatial"
 import type { NodeId, NodeTransition } from "flux:spatial"
 import { on } from "srt:events"
-import { checkCamera } from "./camera.ts"
-import type { CameraUpdate } from "./camera.ts"
+import { checkCamera, projectCamera, unprojectCamera } from "./camera.ts"
+import type { CameraState, CameraUpdate } from "./camera.ts"
 import { spriteDispatch } from "./dispatch.ts"
 import { checkOversample, thrashSentinel } from "./oversample.ts"
 import type { Frame } from "./frames.ts"
@@ -71,6 +71,8 @@ const FLAT_BOUNDS = new Float32Array([-0.5, -0.5, 0, 0.5, 0.5, 0])
 const RAY_ORIGIN = new Float32Array(3)
 const RAY_DIR = new Float32Array([0, 0, 1])
 const BOX = new Float32Array([0, 0, 0, 0, 0, 1, 0, 0, 0, 1])
+// worldPosition's world-matrix scratch (column-major; translation at 12, 13).
+const WORLD = new Float32Array(16)
 
 // Settle routing: the core's "spatialTransitionEnd" event carries the node
 // id, so the handles with a transition DECLARED are indexed by node (only
@@ -456,6 +458,16 @@ export type LayerBase = {
    */
   setOversample(n: number): void
   setCamera(update: CameraUpdate): void
+  /** The camera as last set (a fresh object per call, every field
+   * present): the argument for projectCamera/unprojectCamera -
+   * @solidrt/3d's scene.camera(). */
+  camera(): CameraState
+  /** World (layer) pixels -> viewport pixels under the current camera:
+   * projectCamera over camera(). */
+  project(x: number, y: number): [number, number]
+  /** Viewport pixels -> world (layer) pixels, the inverse: what pointer
+   * dispatch applies to every event. */
+  unproject(x: number, y: number): [number, number]
   /**
    * Tint the whole layer, [r, g, b, a] in 0..1: a uniform multiplied over
    * every sprite's own tint (day/night, a dimmed parallax plane, a
@@ -492,7 +504,7 @@ export type SpriteLayer = LayerBase & {
    * (the core BVH overlap query, exact for rotated sprites), unordered -
    * the marquee query. Node layer only.
    */
-  pickRect(x: number, y: number, w: number, h: number): Sprite[]
+  pickRect(x: number, y: number, width: number, height: number): Sprite[]
   _groups: Set<GroupState>
 }
 
@@ -730,6 +742,15 @@ export function createSpriteLayer(
         uCameraRot: [Math.cos(camRot), Math.sin(camRot), camPivotX, camPivotY],
       })
     },
+    camera() {
+      return { x: camX, y: camY, zoom: camZoom, rotation: camRot, pivotX: camPivotX, pivotY: camPivotY }
+    },
+    project(x, y) {
+      return projectCamera(layer.camera(), x, y)
+    },
+    unproject(x, y) {
+      return unprojectCamera(layer.camera(), x, y)
+    },
     setTint(next) {
       if (disposed) return
       checkTint("setTint", next)
@@ -752,15 +773,15 @@ export function createSpriteLayer(
       // Topmost first: higher slot = drawn later = on top.
       return out.sort((a, b) => b._slot - a._slot)
     },
-    pickRect(x, y, w, h) {
+    pickRect(x, y, width, height) {
       if (scheduled) flush()
       // The marquee as a "box" volume: center, half extents, no rotation,
       // a unit deep so every sprite plane (z = 0) lies inside it.
-      BOX[0] = x + w / 2
-      BOX[1] = y + h / 2
+      BOX[0] = x + width / 2
+      BOX[1] = y + height / 2
       BOX[2] = 0
-      BOX[3] = w / 2
-      BOX[4] = h / 2
+      BOX[3] = width / 2
+      BOX[4] = height / 2
       BOX[5] = 1
       let out: Sprite[] = []
       for (let hit of spatial.overlap("box", BOX)) {
@@ -894,7 +915,7 @@ export function createSpriteLayer(
   }
   let dispatch = spriteDispatch({
     size: () => [width, height],
-    camera: () => ({ x: camX, y: camY, zoom: camZoom, rotation: camRot, pivotX: camPivotX, pivotY: camPivotY }),
+    camera: () => layer.camera(),
     pick: (x, y) => layer.pick(x, y),
     root: layer,
     listeners,
@@ -938,9 +959,32 @@ export function removeSprite(sprite: Sprite): void {
 }
 
 /**
+ * A sprite's or group's position in LAYER pixels: its local x/y composed
+ * through every enclosing group (@solidrt/3d's worldPosition, Three's
+ * getWorldPosition), read from the core's world matrix as the tree stands
+ * now, pending writes included. Under a transition this is the
+ * mid-flight pose - what picking and the screen show - where the handle's
+ * own fields hold the target. A record layer's sprite has no groups, so
+ * its world position is its own, read as getSprite reads it (the records
+ * array). A fresh pair per call; null once the handle is inert.
+ */
+export function worldPosition(target: Sprite | SpriteGroup): [number, number] | null {
+  if (target.layer === null) return null
+  // The set only groups carry tells the two handle kinds apart (as in
+  // removeGroup); a node-less sprite is a record layer's.
+  if (!("_children" in target) && target.node === null) {
+    let s = target.layer._read(target)
+    return [s.x, s.y]
+  }
+  spatial.worldMatrix(target.node!, WORLD)
+  return [WORLD[12]!, WORLD[13]!]
+}
+
+/**
  * Re-parent a sprite under a group (null = back to the layer root); its
  * pose fields then read in the new parent's frame, where the sprite keeps
- * them (it holds its local pose, not its world pose). Node layer only.
+ * them (it holds its local pose, not its world pose; worldPosition reads
+ * the composed one). Node layer only.
  */
 export function setSpriteParent(sprite: Sprite, parent: SpriteGroup | null): void {
   let layer = sprite.layer

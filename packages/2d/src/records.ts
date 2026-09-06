@@ -32,7 +32,7 @@ import {
   setTargetSize,
 } from "@solidrt/core/gpu"
 import type { BufferId, TextureId } from "@solidrt/core/gpu"
-import { checkCamera } from "./camera.ts"
+import { checkCamera, projectCamera, unprojectCamera } from "./camera.ts"
 import { FULL_FRAME, writeFrame } from "./frames.ts"
 import { spriteDispatch } from "./dispatch.ts"
 import { checkTint, readFrame } from "./layer.ts"
@@ -291,6 +291,15 @@ export function createRecordLayer(
         uCameraRot: [Math.cos(camRot), Math.sin(camRot), camPivotX, camPivotY],
       })
     },
+    camera() {
+      return { x: camX, y: camY, zoom: camZoom, rotation: camRot, pivotX: camPivotX, pivotY: camPivotY }
+    },
+    project(x, y) {
+      return projectCamera(layer.camera(), x, y)
+    },
+    unproject(x, y) {
+      return unprojectCamera(layer.camera(), x, y)
+    },
     setTint(next) {
       if (disposed) return
       checkTint("setTint", next)
@@ -398,7 +407,7 @@ export function createRecordLayer(
   }
   let dispatch = spriteDispatch({
     size: () => [width, height],
-    camera: () => ({ x: camX, y: camY, zoom: camZoom, rotation: camRot, pivotX: camPivotX, pivotY: camPivotY }),
+    camera: () => layer.camera(),
     pick: (x, y) => layer.pick(x, y),
     root: layer,
     listeners,

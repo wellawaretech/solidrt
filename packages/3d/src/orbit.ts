@@ -165,6 +165,10 @@ export type OrbitCamera = {
   /** Whether the auto-orbit is running. Reactive (signal-backed), so HUD
    * text can read it. */
   orbiting(): boolean
+  /** Whether update(dt) still has work: the auto-orbit on with a non-zero
+   * `orbitSpeed`. The frame-loop gate, reactive like orbiting() - the
+   * same predicate the 2d camera and the first-person camera expose. */
+  active(): boolean
   /** Advance the auto-orbit and push any pose change to the driven camera.
    * Call from onFrame with the frame's dt in seconds; returns whether the
    * pose changed. */
@@ -341,6 +345,7 @@ export function createOrbitCamera(camera: OrbitTarget, options: OrbitCameraOptio
     eye,
     pose: () => ({ azimuth, elevation, distance }),
     orbiting,
+    active: () => orbiting() && orbitSpeed() !== 0,
     set(pose) {
       if (pose.azimuth !== undefined) azimuth = pose.azimuth
       if (pose.elevation !== undefined) elevation = pose.elevation
