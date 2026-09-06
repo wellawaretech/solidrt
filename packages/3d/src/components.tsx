@@ -7,10 +7,12 @@
 // node with `ref` and call setTransform from onFrame - signals carry
 // structure and slow state, per-frame motion goes straight to the scene.
 
-import { createContext, createEffect, createSignal, displayScale, getBoundingBoxViewport, getLayoutBox, onCleanup, onFrame, onLayout, untrack, useContext } from "@solidrt/core"
-import type { Element, ParentComponent, PointerEvent, TextureId, VoidComponent, WheelEvent } from "@solidrt/core"
+import { createContext, createEffect, createSignal, displayScale, getBoundingBoxViewport, getLayoutBox, onCleanup, onFrame, onLayout, setFocus, untrack, useContext } from "@solidrt/core"
+import type { Element, KeyEvent, ParentComponent, PointerEvent, TextureId, VoidComponent, WheelEvent } from "@solidrt/core"
 import { createOrbitCamera } from "./orbit.ts"
 import type { OrbitCamera as OrbitCameraHandle, OrbitCameraOptions, OrbitPose } from "./orbit.ts"
+import { createFirstPersonCamera } from "./first-person.ts"
+import type { FirstPersonCamera as FirstPersonCameraHandle, FirstPersonCameraOptions, FirstPersonPose } from "./first-person.ts"
 import { add, createGroup, remove, setTransform, setTransition, setVisible } from "./node.ts"
 import type { SceneNode, ScenePointerEvent, TransitionEndEvent } from "./node.ts"
 import {
@@ -46,31 +48,44 @@ import type { Geometry } from "./geometry.ts"
 import type { Material } from "./material.ts"
 import type { Quat, Vec3 } from "./math.ts"
 
-/** A camera control's input feed - the handlers shape createOrbitCamera
- * exposes, every field optional. */
+/** A camera control's input feed - the handlers shape the camera controls
+ * expose, every field optional. A listener with key handlers makes the
+ * leaf focusable and focused on pointer down, since keys route through
+ * the focused node; onBlur tells it the held keys will get no key-up. */
 export type SceneInputListener = {
   onPointerDown?(event: PointerEvent): void
   onPointerMove?(event: PointerEvent): void
   onPointerUp?(event: PointerEvent): void
   onWheel?(event: WheelEvent): void
+  onKeyDown?(event: KeyEvent): void
+  onKeyUp?(event: KeyEvent): void
+  onBlur?(): void
 }
 
 /**
  * The channel between the element showing the scene and camera-control
- * components (`<OrbitCamera>`): the leaf feeds pointer and wheel events in,
- * controls listen. The built-in `<Scene>` leaf is wired automatically; a
- * custom `output` leaf spreads `{...useScene().input.handlersFor(layout)}`
- * beside its scene.handlersFor spread, with the same `layout`.
+ * components (`<OrbitCamera>`, `<FirstPersonCamera>`): the leaf feeds
+ * pointer, wheel and key events in, controls listen. The built-in
+ * `<Scene>` leaf is wired automatically; a custom `output` leaf spreads
+ * `{...useScene().input.handlersFor(layout)}` beside its scene.handlersFor
+ * spread, with the same `layout`, and declares itself `focusable` when a
+ * key-driven control is in the scene (the spread's onPointerDown focuses
+ * it; keys reach only the focused node).
  */
 export type SceneInput = {
-  /** Spreadable pointer + wheel handlers for the leaf. `layout` reports
-   * the leaf's laid-out size - what viewport-relative controls scale to -
-   * and is read per event, so a reactive layout just works. */
-  handlersFor(layout: () => { width: number; height: number }): {
+  /** Spreadable pointer + wheel + key handlers for the leaf. `layout`
+   * reports the leaf's laid-out size - what viewport-relative controls
+   * scale to - and is read per event, so a reactive layout just works.
+   * `node` is the leaf itself, focused on pointer down while a key
+   * listener is registered. */
+  handlersFor(layout: () => { width: number; height: number }, node?: () => { id: number } | undefined): {
     onPointerDown(event: PointerEvent): void
     onPointerMove(event: PointerEvent): void
     onPointerUp(event: PointerEvent): void
     onWheel(event: WheelEvent): void
+    onKeyDown(event: KeyEvent): void
+    onKeyUp(event: KeyEvent): void
+    onBlur(): void
   }
   /** Subscribe a control; returns the unsubscribe. */
   add(listener: SceneInputListener): () => void
@@ -324,23 +339,37 @@ export let Scene: ParentComponent<SceneProps> = props => {
   // component bodies.
   let listeners = new Set<SceneInputListener>()
   let [hasInput, setHasInput] = createSignal(false, { ownedWrite: true })
+  // Whether any control wants keys: the leaf turns focusable and takes
+  // focus on pointer down only then, so a pointer-only scene never steals
+  // focus from a text field on a click.
+  let [hasKeys, setHasKeys] = createSignal(false, { ownedWrite: true })
+  let anyKeys = () => [...listeners].some(l => l.onKeyDown || l.onKeyUp)
   let leafLayout: (() => { width: number; height: number }) | null = null
   let input: SceneInput = {
-    handlersFor(layout) {
+    handlersFor(layout, node) {
       leafLayout = layout
       return {
-        onPointerDown: e => listeners.forEach(l => l.onPointerDown?.(e)),
+        onPointerDown: e => {
+          let n = node?.()
+          if (n && untrack(hasKeys)) setFocus(n.id)
+          listeners.forEach(l => l.onPointerDown?.(e))
+        },
         onPointerMove: e => listeners.forEach(l => l.onPointerMove?.(e)),
         onPointerUp: e => listeners.forEach(l => l.onPointerUp?.(e)),
         onWheel: e => listeners.forEach(l => l.onWheel?.(e)),
+        onKeyDown: e => listeners.forEach(l => l.onKeyDown?.(e)),
+        onKeyUp: e => listeners.forEach(l => l.onKeyUp?.(e)),
+        onBlur: () => listeners.forEach(l => l.onBlur?.()),
       }
     },
     add(listener) {
       listeners.add(listener)
       setHasInput(true)
+      setHasKeys(anyKeys())
       return () => {
         listeners.delete(listener)
         setHasInput(listeners.size > 0)
+        setHasKeys(anyKeys())
       }
     },
     layout: () => leafLayout?.() ?? null,
@@ -379,7 +408,7 @@ export let Scene: ParentComponent<SceneProps> = props => {
   // Mesh events on the built-in leaf: at target size the plain handlers,
   // in fill mode scaled from the laid-out box.
   let sceneHandlers = fill ? scene.handlersFor(builtinLayout) : scene.handlers
-  let leaf = output ? null : input.handlersFor(builtinLayout)
+  let leaf = output ? null : input.handlersFor(builtinLayout, () => leafNode)
   return (
     <SceneContext value={{ scene, parent: scene.root, input }}>
       {output ? (
@@ -395,6 +424,10 @@ export let Scene: ParentComponent<SceneProps> = props => {
           onPointerUp={events || hasInput() ? (e: PointerEvent) => { if (events) sceneHandlers.onPointerUp(e); leaf!.onPointerUp(e) } : undefined}
           onPointerLeave={events ? sceneHandlers.onPointerLeave : undefined}
           onWheel={hasInput() ? leaf!.onWheel : undefined}
+          focusable={hasKeys()}
+          onKeyDown={hasKeys() ? leaf!.onKeyDown : undefined}
+          onKeyUp={hasKeys() ? leaf!.onKeyUp : undefined}
+          onBlur={hasKeys() ? leaf!.onBlur : undefined}
         />
       )}
       {props.children}
@@ -681,6 +714,68 @@ export let OrbitCamera: VoidComponent<OrbitCameraProps> = props => {
     set: (pose: OrbitPose) => {
       orbit.set(pose)
       orbit.update(0)
+    },
+  })
+  return null
+}
+
+// Cap on the first-person loop's per-frame dt in seconds, the same guard
+// as the orbit's: a resumed app must not teleport the walker.
+const MAX_WALK_DT = 0.1
+
+export type FirstPersonCameraProps = FirstPersonCameraOptions & {
+  /** The control's handle (pose()/set()/eye()/forward()/active() - also
+   * the debug command shape). This handle's set() pushes the pose itself,
+   * so a caller never touches update(). */
+  ref?: (camera: FirstPersonCameraHandle) => void
+}
+
+/**
+ * createFirstPersonCamera as a Scene child: drives the enclosing scene's
+ * camera and takes its input from the scene's leaf through context. The
+ * leaf becomes focusable and takes focus on pointer down, which is what
+ * routes WASD to the control (keys go to the focused node; a click on the
+ * scene is the same gesture a web canvas needs). With a custom `output`,
+ * spread `useScene().input.handlersFor(layout, node)` on your leaf and
+ * mark it `focusable`. Pointer lock stays yours: call `lockPointer(true)`
+ * from a click and `lockPointer(false)` from Escape. Options are read
+ * once at mount; change the pose at runtime through `ref`'s set().
+ * `viewport` defaults to the leaf's laid-out size, so a drag is
+ * viewport-relative. A frame loop runs only while `active()` - a key
+ * held or a stick deflected - so a still scene stays demand-driven idle.
+ */
+export let FirstPersonCamera: VoidComponent<FirstPersonCameraProps> = props => {
+  let ctx = useContext(SceneContext)
+  let camera = untrack(() => {
+    let viewport =
+      props.viewport ??
+      (() => {
+        let layout = ctx.input.layout()
+        return layout === null ? null : { height: layout.height }
+      })
+    return createFirstPersonCamera(ctx.scene, { ...props, viewport })
+  })
+  // Look input applies synchronously inside the control's handlers, so a
+  // mouse move under lock needs no frame loop; only movement integrates.
+  onCleanup(ctx.input.add(camera.handlers))
+  createEffect(
+    () => camera.active(),
+    on => {
+      if (!on) return
+      let last: number | null = null
+      return onFrame(tick => {
+        let now = tick / 1000
+        let dt = last === null ? 0 : Math.min(now - last, MAX_WALK_DT)
+        last = now
+        camera.update(dt)
+      })
+    },
+  )
+  untrack(() => props.ref)?.({
+    ...camera,
+    set: (pose: FirstPersonPose) => {
+      camera.set(pose)
+      camera.update(0)
     },
   })
   return null

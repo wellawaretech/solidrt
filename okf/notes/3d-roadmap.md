@@ -132,13 +132,13 @@ what it delivered is documented in `packages/3d/AGENTS.md`, not here.
     size (`sizeAttenuation: false`), and an instanced sprite fleet -
     `shaderMaterialClass({ instanceAttributes })` plus the AGENTS.md
     billboard recipe already covers the last.
-13. [ ] **Camera and control breadth.** The orthographic camera landed
-    (`ortho: { left, right, top, bottom }` on any camera, scene and view
-    alike - see `packages/3d/AGENTS.md`). First-person controls were
-    blocked on engine
-    [relative-mouse-input](../done/relative-mouse-input.md) - pointer
-    lock/relative motion - which landed, so they are library-only now.
-    A chase/follow camera rig is app code over `setTransition`.
+13. [x] **Camera and control breadth.** Orthographic camera, orbit and
+    first-person controls - see `packages/3d/AGENTS.md`. First-person
+    rides engine [relative-mouse-input](../done/relative-mouse-input.md).
+    Left for later, additive: a chase/follow camera rig (Godot's
+    SpringArm3D, Cinemachine's shape) is app code over `setTransition`
+    until a third-person game asks for it; collision stays outside every
+    control (`clampPosition` is the hook), pending a collision tier.
 14. [x] **Environment tier: skybox, reflection/environment maps.** The
     skybox and `vRay` background, `setEnvironment`, the HDR asset path
     (`srt tool 3d/environment`, `loadEnvironment`), reflection probes,

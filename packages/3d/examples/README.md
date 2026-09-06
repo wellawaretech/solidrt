@@ -73,6 +73,13 @@ depends on `@solidrt/3d` (or in-repo from the package directory).
   onFrame breathing the pine population. The class also declares
   `shadowVertex` (the placement math alone), so both fleets `castShadow`
   onto the lit ground - the pines' shadows breathe with them.
+- `first-person.tsx` - a first-person walk: `<FirstPersonCamera>` over
+  a walled courtyard of shadow-casting pillars, WASD/arrows and the pad
+  sticks to walk, mouse look under pointer lock (click locks, Escape
+  releases - the app's calls, not the control's), a drag to look on
+  touch; `clampPosition` keeps the walker inside the walls, the whole of
+  the collision a camera control offers; the `pose` debug command reads
+  and sets the pose headlessly.
 - `scene-views.tsx` - scene views: one scene rendered three times, the
   built-in perspective leaf plus two `scene.createView` targets - a
   top-down ORTHOGRAPHIC map (`ortho` on setCamera) and a side silhouette
