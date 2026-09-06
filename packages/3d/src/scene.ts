@@ -44,7 +44,7 @@ import { getOwner, onCleanup } from "@solidrt/core"
 import type { PointerEvent as ElementPointerEvent } from "@solidrt/core"
 import { copy, mat4, transformPoint } from "./math.ts"
 import { linearColor } from "./color.ts"
-import type { Mat4, Vec3, Vec4 } from "./math.ts"
+import type { Mat4, Quat, Vec3, Vec4 } from "./math.ts"
 import { MAX_LIGHTS, MAX_SHADOW_MAPS } from "./glsl.ts"
 import { cameraParams, cameraState, ensureCamera, makeCamera, updateCamera } from "./camera.ts"
 import type { Camera, CameraState, CameraUpdate } from "./camera.ts"
@@ -71,6 +71,47 @@ const RESOLVED = Promise.resolve()
 // each serves every call.
 let rayOriginScratch = new Float32Array(3)
 let rayDirScratch = new Float32Array(3)
+// overlap()/sweep()'s carriers: the volume in flux:spatial's packed
+// layout, one array per kind (capsule: a, b, radius; box: center, half
+// extents, rotation), and the sweep's motion.
+let capsuleScratch = new Float32Array(7)
+let boxScratch = new Float32Array(10)
+let motionScratch = new Float32Array(3)
+const IDENTITY_QUAT: Quat = [0, 0, 0, 1]
+
+/** Pack a volume into its kind's scratch array and name the kind; a
+ * sphere is a capsule whose segment is one point. */
+function packVolume(volume: Volume, site: string): "capsule" | "box" {
+  if ("halfExtents" in volume) {
+    let s = boxScratch
+    let h = volume.halfExtents
+    if (!(h[0] >= 0 && h[1] >= 0 && h[2] >= 0)) throw new Error(site + ": halfExtents must be >= 0, got " + h)
+    let q = volume.rotation ?? IDENTITY_QUAT
+    s[0] = volume.center[0]
+    s[1] = volume.center[1]
+    s[2] = volume.center[2]
+    s[3] = h[0]
+    s[4] = h[1]
+    s[5] = h[2]
+    s[6] = q[0]
+    s[7] = q[1]
+    s[8] = q[2]
+    s[9] = q[3]
+    return "box"
+  }
+  if (!(volume.radius >= 0)) throw new Error(site + ": radius must be >= 0, got " + volume.radius)
+  let s = capsuleScratch
+  let a = "center" in volume ? volume.center : volume.a
+  let b = "center" in volume ? volume.center : volume.b
+  s[0] = a[0]
+  s[1] = a[1]
+  s[2] = a[2]
+  s[3] = b[0]
+  s[4] = b[1]
+  s[5] = b[2]
+  s[6] = volume.radius
+  return "capsule"
+}
 
 // pick()'s camera-ray scratch.
 let pickDir: Vec3 = [0, 0, 0]
@@ -100,8 +141,8 @@ export type Hit = {
  * point at camera-forward distance `w` (unproject's mapping). */
 export type ScreenRay = { origin: Vec3; direction: Vec3 }
 
-/** Filters for one raycast query. */
-export type RaycastOptions = {
+/** Filters for one raycast/overlap/sweep query. */
+export type QueryOptions = {
   /**
    * Layer mask replacing the scene's for this query (Unity's layerMask,
    * Three's raycaster.layers): hits come from meshes whose `layers`
@@ -114,6 +155,28 @@ export type RaycastOptions = {
    * include-list); composes with `layers`. */
   meshes?: Mesh[]
 }
+
+/** A query volume for overlap()/sweep(): a sphere, a capsule (the radius
+ * swept along the segment a-b) or an oriented box (half extents along
+ * the axes of `rotation`, identity when absent) - Unity's Overlap/Cast
+ * trio, Godot's Sphere/Capsule/BoxShape3D. */
+export type Sphere = { center: Vec3; radius: number }
+export type Capsule = { a: Vec3; b: Vec3; radius: number }
+export type OrientedBox = { center: Vec3; halfExtents: Vec3; rotation?: Quat }
+export type Volume = Sphere | Capsule | OrientedBox
+
+/** One mesh an overlap() volume touches: its deepest contact - the point
+ * on the mesh, the unit direction out of it, and the depth along that
+ * direction that clears the contact (Unity's ComputePenetration, Godot's
+ * get_rest_info, per mesh). */
+export type Overlap = { mesh: Mesh; point: Vec3; normal: Vec3; depth: number }
+
+/** One mesh a sweep() volume touches on its way: `time` is the fraction
+ * of the motion at first touch (0 for a volume already in contact and
+ * moving in), `point` the touch point on the mesh, `normal` the unit
+ * normal there facing the volume (Unity's RaycastHit from a cast,
+ * Godot's KinematicCollision3D). */
+export type Impact = { mesh: Mesh; time: number; point: Vec3; normal: Vec3 }
 
 /** Element handlers wiring a scene's pointer events: spread onto whatever
  * element shows `scene.texture` (the built-in `<Scene>` leaf wires them
@@ -618,7 +681,27 @@ export type Scene = {
   pick(x: number, y: number): Hit[]
   /** pick()'s world-space half: the same query along an arbitrary ray.
    * `direction` need not be normalized; distances are world units. */
-  raycast(origin: Vec3, direction: Vec3, opts?: RaycastOptions): Hit[]
+  raycast(origin: Vec3, direction: Vec3, opts?: QueryOptions): Hit[]
+  /**
+   * Every mesh the volume touches (Unity's OverlapSphere/Box/Capsule,
+   * Godot's intersect_shape), each with its deepest contact. Tested per
+   * triangle in world space against the same shapes raycast() uses, so
+   * an undrawn collider layer answers through `opts.layers`, and any
+   * transform holds; an instanced mesh or sprite counts by its box.
+   * Surfaces, not solids: a volume wholly inside a closed mesh with no
+   * triangle in reach touches nothing. Unordered; reflects pending writes
+   * like raycast().
+   */
+  overlap(volume: Volume, opts?: QueryOptions): Overlap[]
+  /**
+   * The volume moved by `motion`: every mesh it touches on the way, at
+   * its first touch, earliest first (Unity's SphereCast/CapsuleCast/
+   * BoxCast, Godot's cast_motion). A volume already in contact reports
+   * time 0 while the motion closes in, and nothing while it leaves or
+   * slides along the contact - what lets a move-and-slide proceed along
+   * a wall. A zero motion touches nothing. Same testing as overlap().
+   */
+  sweep(volume: Volume, motion: Vec3, opts?: QueryOptions): Impact[]
   /**
    * pick()'s ray half (Unity's ScreenPointToRay, Godot's
    * project_ray_origin/normal): the camera ray through a scene pixel,
@@ -759,6 +842,21 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
   // Picking: the index and the narrowphase live in the spatial core; this
   // map turns a hit's core node back into the mesh.
   let byNode = new Map<NodeId, Mesh>()
+  // The per-query mesh filter raycast/overlap/sweep share: a hit's core
+  // node back to its mesh, or null when the query mask excludes the mesh
+  // (skipped like an invisible one; the mask defaults to the scene's, so
+  // an undrawn layer needs an explicit opts.layers to report) or the
+  // include-list leaves it out.
+  let admitted = (qopts: QueryOptions | undefined, site: string) => {
+    let mask = qopts?.layers !== undefined ? checkMask(qopts.layers, site) : sceneMask
+    let include = qopts?.meshes !== undefined ? new Set(qopts.meshes) : null
+    return (node: NodeId): Mesh | null => {
+      let mesh = byNode.get(node)
+      if (mesh === undefined || (mesh.layers & mask) === 0) return null
+      if (include !== null && !include.has(mesh)) return null
+      return mesh
+    }
+  }
   // Nodes whose transform changed since the last sync (deduped by the
   // _moved flag): what the light and transparent-order bookkeeping
   // reacts to, since which meshes moved is the core's knowledge now.
@@ -1654,8 +1752,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       // microtask still runs and finds nothing dirty - harmless.)
       if (scheduled) sync()
       if (disposed) return []
-      let mask = rayOpts?.layers !== undefined ? checkMask(rayOpts.layers, "raycast") : sceneMask
-      let include = rayOpts?.meshes !== undefined ? new Set(rayOpts.meshes) : null
+      let admit = admitted(rayOpts, "raycast")
       let hits: Hit[] = []
       rayOriginScratch[0] = origin[0]
       rayOriginScratch[1] = origin[1]
@@ -1664,13 +1761,8 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       rayDirScratch[1] = direction[1]
       rayDirScratch[2] = direction[2]
       for (let h of spatial.raycast(rayOriginScratch, rayDirScratch)) {
-        let mesh = byNode.get(h.node)
-        if (mesh === undefined) continue
-        // A mesh the query mask excludes is skipped like an invisible one;
-        // the mask defaults to the scene's, so an undrawn layer needs an
-        // explicit opts.layers to report.
-        if ((mesh.layers & mask) === 0) continue
-        if (include !== null && !include.has(mesh)) continue
+        let mesh = admit(h.node)
+        if (mesh === null) continue
         let hit: Hit = { mesh, distance: h.distance, point: h.point }
         if (h.normal !== undefined) hit.normal = h.normal
         if (h.face !== undefined) hit.face = h.face
@@ -1678,6 +1770,33 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
         hits.push(hit)
       }
       return hits
+    },
+    overlap(volume, qopts) {
+      if (scheduled) sync()
+      if (disposed) return []
+      let admit = admitted(qopts, "overlap")
+      let kind = packVolume(volume, "overlap")
+      let out: Overlap[] = []
+      for (let h of spatial.overlapVolume(kind, kind === "box" ? boxScratch : capsuleScratch)) {
+        let mesh = admit(h.node)
+        if (mesh !== null) out.push({ mesh, point: h.point, normal: h.normal, depth: h.depth })
+      }
+      return out
+    },
+    sweep(volume, motion, qopts) {
+      if (scheduled) sync()
+      if (disposed) return []
+      let admit = admitted(qopts, "sweep")
+      let kind = packVolume(volume, "sweep")
+      motionScratch[0] = motion[0]
+      motionScratch[1] = motion[1]
+      motionScratch[2] = motion[2]
+      let out: Impact[] = []
+      for (let h of spatial.sweepVolume(kind, kind === "box" ? boxScratch : capsuleScratch, motionScratch)) {
+        let mesh = admit(h.node)
+        if (mesh !== null) out.push({ mesh, time: h.time, point: h.point, normal: h.normal })
+      }
+      return out
     },
     handlers: pointer.handlers,
     handlersFor: pointer.handlersFor,

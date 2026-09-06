@@ -161,6 +161,47 @@ declare module "flux:spatial" {
    */
   export function overlap(bounds: Float32Array): NodeId[]
 
+  /** A query volume's layout for overlapVolume/sweepVolume: "capsule" is
+   * 7 floats (a, b, radius; a sphere when a == b), "box" is 10 (center,
+   * half extents, unit quaternion xyzw). */
+  export type VolumeKind = "capsule" | "box"
+  /** One node overlapVolume() touches: its deepest contact - the point on
+   * the node's surface, the unit direction out of it, and the depth along
+   * that direction that clears the contact. */
+  export type Overlap = {
+    node: NodeId
+    point: [number, number, number]
+    normal: [number, number, number]
+    depth: number
+  }
+  /** One node sweepVolume() touches: `time` is the fraction of the motion
+   * at first touch, `point` the touch point on the node's surface,
+   * `normal` the unit normal there facing the volume. */
+  export type Impact = {
+    node: NodeId
+    time: number
+    point: [number, number, number]
+    normal: [number, number, number]
+  }
+  /**
+   * Every shown node with bounds the volume touches, each with its
+   * deepest contact. A node with a shape is tested per triangle in world
+   * space, so it holds under any transform; a node without one is its
+   * local box's twelve triangles. Surfaces, not solids: a volume wholly
+   * inside a closed mesh with no triangle in reach touches nothing.
+   * Unordered; reads the index as of the last flush, like raycast.
+   */
+  export function overlapVolume(kind: VolumeKind, volume: Float32Array): Overlap[]
+  /**
+   * The volume moved by `motion` (a Float32Array of 3): every shown node
+   * with bounds it touches on the way, at its first touch, earliest
+   * first. A node already in contact reports time 0 while the motion
+   * closes in, and nothing while it leaves or slides along the contact;
+   * a zero motion touches nothing. Same testing and index contract as
+   * overlapVolume.
+   */
+  export function sweepVolume(kind: VolumeKind, volume: Float32Array, motion: Float32Array): Impact[]
+
   /**
    * Route the world DIRECTION of the node's local `vector` (a
    * Float32Array of 3) into

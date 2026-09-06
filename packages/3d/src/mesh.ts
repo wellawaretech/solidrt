@@ -302,7 +302,7 @@ export function setRenderOrder(mesh: Mesh, order: number): void {
  * createScene, `scene.setLayers`), each view's (`layers` on createView,
  * `view.setLayers`); shadow views follow the scene's. A mesh masked out of
  * the scene is also skipped by pick()/raycast(), like an invisible one -
- * unless a raycast passes its own mask (RaycastOptions.layers), which is
+ * unless a raycast passes its own mask (QueryOptions.layers), which is
  * how an undrawn collision-only mesh stays queryable. `layers: 0` draws
  * nowhere. Not inherited from ancestor Groups.
  */

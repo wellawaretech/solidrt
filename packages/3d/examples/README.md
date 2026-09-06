@@ -80,6 +80,14 @@ depends on `@solidrt/3d` (or in-repo from the package directory).
   touch; `clampPosition` keeps the walker inside the walls, the whole of
   the collision a camera control offers; the `pose` debug command reads
   and sets the pose headlessly.
+- `collision.tsx` - collision without a physics engine: the same walker
+  as a capsule through `moveAndSlide` over the scene's sweep queries,
+  in a level of walls, a ramp, a platform with a ledge and pillars whose
+  drawn meshes carry the collider layer bit too; gravity as a frame loop
+  that runs only while airborne (Space jumps), pickups lit by one
+  `overlap` per move. Debug commands `walk` (frame-sized steps through
+  the collision), `jump`, `fall` (one airborne step by hand) and `state`
+  drive it headlessly.
 - `scene-views.tsx` - scene views: one scene rendered three times, the
   built-in perspective leaf plus two `scene.createView` targets - a
   top-down ORTHOGRAPHIC map (`ortho` on setCamera) and a side silhouette

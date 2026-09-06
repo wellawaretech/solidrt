@@ -13,6 +13,7 @@
 // Node ids carry a generation and are never reused.
 
 mod bvh;
+mod collide;
 mod cull;
 mod math;
 mod pick;
@@ -22,8 +23,13 @@ mod transitions;
 use std::collections::HashMap;
 
 pub use bvh::{ray_box_distance, Box3};
+pub use collide::{Impact, Overlap, Volume};
 pub use math::{compose, invert_affine, multiply, normal_matrix, transform_point, transform_vector, IDENTITY};
 pub use pick::{Hit, Shape, ShapeId};
+// The per-triangle narrowphase, for tests: the brute-force oracle the
+// indexed volume queries are checked against.
+#[cfg(test)]
+pub(crate) use collide::{segment_triangle, Query};
 // The linear narrowphase and the indexing threshold, for tests: the
 // brute-force path is the oracle the BVH path is checked against.
 #[cfg(test)]
@@ -243,6 +249,44 @@ fn pose2d(m: &Mat4) -> [f32; 5] {
   let sy = (m[4] * m[4] + m[5] * m[5]).sqrt();
   let mirrored = m[0] * m[5] - m[1] * m[4] < 0.0;
   [m[12], m[13], m[1].atan2(m[0]), sx, if mirrored { -sy } else { sy }]
+}
+
+/// Hand `visit` every world-space triangle of a node that can touch the
+/// world box `aabb`: its shape's, through the shape BVH walked with the
+/// box in the node's frame, or the twelve of its local box without one.
+fn node_triangles(
+  shapes: &mut pick::Shapes,
+  shape: Option<ShapeId>,
+  bounds: &Box3,
+  world: &Mat4,
+  aabb: &Box3,
+  visit: &mut dyn FnMut([[f32; 3]; 3]),
+) {
+  let carry = |tri: [[f32; 3]; 3]| {
+    [transform_point(world, tri[0]), transform_point(world, tri[1]), transform_point(world, tri[2])]
+  };
+  match shape {
+    Some(sid) => {
+      let local = world_box(aabb, &invert_affine(world));
+      shapes.visit_box(sid, &local, &mut |tri| visit(carry(tri)));
+    }
+    None => {
+      // Corner i has bit 0 = max x, bit 1 = max y, bit 2 = max z.
+      let corner = |i: usize| -> [f32; 3] {
+        [
+          if i & 1 != 0 { bounds[3] } else { bounds[0] },
+          if i & 2 != 0 { bounds[4] } else { bounds[1] },
+          if i & 4 != 0 { bounds[5] } else { bounds[2] },
+        ]
+      };
+      const FACES: [[usize; 4]; 6] =
+        [[0, 2, 6, 4], [1, 3, 7, 5], [0, 1, 5, 4], [2, 3, 7, 6], [0, 1, 3, 2], [4, 5, 7, 6]];
+      for f in FACES {
+        visit(carry([corner(f[0]), corner(f[1]), corner(f[2])]));
+        visit(carry([corner(f[0]), corner(f[2]), corner(f[3])]));
+      }
+    }
+  }
 }
 
 struct Node {
@@ -999,6 +1043,84 @@ impl Spatial {
       }
     }
     out
+  }
+
+  /// Every shown node with bounds the volume touches, each with its
+  /// deepest contact (point on the node's surface, the direction out of
+  /// it, the depth along that direction). A node with a shape is tested
+  /// per triangle in world space, so it holds under any transform; a node
+  /// without one is its local box's twelve. Surfaces, not solids: a volume
+  /// wholly inside a closed mesh with no triangle in reach touches
+  /// nothing, the trimesh contract everywhere. Unordered; reads the index
+  /// as of the last flush, like `raycast`.
+  pub fn overlap_volume(&mut self, volume: &Volume) -> Vec<Overlap> {
+    let query = collide::Query::new(volume);
+    let aabb = query.bounds(None);
+    let mut candidates = Vec::new();
+    self.bvh.query(&aabb, &mut |i| candidates.push(i));
+    let mut out = Vec::new();
+    for i in candidates {
+      let Some((bounds, world, shape)) = self.collider(i) else {
+        continue;
+      };
+      let mut best: Option<collide::Contact> = None;
+      node_triangles(&mut self.shapes, shape, &bounds, &world, &aabb, &mut |tri| {
+        if let Some(c) = query.overlap_triangle(&tri) {
+          if best.is_none_or(|b| c.2 > b.2) {
+            best = Some(c);
+          }
+        }
+      });
+      if let Some((point, normal, depth)) = best {
+        out.push(Overlap { node: self.id_of(i), point, normal, depth });
+      }
+    }
+    out
+  }
+
+  /// The volume moved by `motion`: every shown node with bounds it
+  /// touches on the way, each at its first touch (time as a fraction of
+  /// the motion, the touch point, the normal facing the volume), earliest
+  /// first. A node already in contact reports time 0 while the motion
+  /// closes in, and nothing while it leaves or slides along the contact.
+  /// Same testing and index contract as `overlap_volume`; a zero motion
+  /// touches nothing.
+  pub fn sweep_volume(&mut self, volume: &Volume, motion: [f32; 3]) -> Vec<Impact> {
+    let query = collide::Query::new(volume);
+    let aabb = query.bounds(Some(motion));
+    let mut candidates = Vec::new();
+    self.bvh.query(&aabb, &mut |i| candidates.push(i));
+    let mut out = Vec::new();
+    for i in candidates {
+      let Some((bounds, world, shape)) = self.collider(i) else {
+        continue;
+      };
+      let mut first: Option<(f32, [f32; 3], [f32; 3])> = None;
+      node_triangles(&mut self.shapes, shape, &bounds, &world, &aabb, &mut |tri| {
+        if let Some(h) = query.sweep_triangle(motion, &tri) {
+          if first.is_none_or(|f| h.0 < f.0) {
+            first = Some(h);
+          }
+        }
+      });
+      if let Some((time, point, normal)) = first {
+        out.push(Impact { node: self.id_of(i), time, point, normal });
+      }
+    }
+    out.sort_by(|a, b| a.time.partial_cmp(&b.time).unwrap_or(std::cmp::Ordering::Equal));
+    out
+  }
+
+  /// What the volume queries test a node by: its local box, world matrix
+  /// and (resolvable) shape; None for a node the queries skip.
+  fn collider(&self, i: u32) -> Option<(Box3, Mat4, Option<ShapeId>)> {
+    let n = &self.nodes[i as usize];
+    if !n.alive || !n.shown {
+      return None;
+    }
+    let bounds = n.bounds?;
+    let shape = n.shape.filter(|&sid| self.shapes.get(sid).is_some());
+    Some((bounds, n.world, shape))
   }
 
   /// Re-parent a node (None = make it a root). Errs on a cycle.

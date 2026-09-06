@@ -249,14 +249,15 @@ what it delivered is documented in `packages/3d/AGENTS.md`, not here.
     O(scene) walk item 19 rules out. Shaped in
     [3d-lod](../backlog/3d-lod.md). Mesh simplification stays a bake-tool
     job.
-23. [ ] **Collision without a physics engine: overlap, sweep,
+23. [x] **Collision without a physics engine: overlap, sweep,
     move-and-slide.** Core queries over the spatial index picking already
-    uses, plus the library controller over them. Shaped in
-    [spatial-collision-queries](../backlog/spatial-collision-queries.md);
+    uses (sphere, capsule and box; exact sweeps), `scene.overlap` /
+    `scene.sweep`, and `moveAndSlide` over them, documented in
+    `packages/3d/AGENTS.md` (Collision) with `examples/collision.tsx`
+    and the `collision-check` rig. Record in
+    [spatial-collision-queries](../done/spatial-collision-queries.md);
     rigid-body dynamics stay with
-    [physics-core](../backlog/physics-core.md). For a game this ranks
-    directly after culling: the raycast alone makes a fly-through, not a
-    level.
+    [physics-core](../backlog/physics-core.md).
 
 ## Not in scope
 

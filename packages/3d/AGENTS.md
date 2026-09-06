@@ -58,10 +58,10 @@ blendMode and pointer events like any element.
   marker meshes live on bit 2: invisible in the main render, drawn by
   the map view whose mask admits them. Shadow views follow the SCENE's
   mask (what the scene cannot see must not darken it), and
-  pick()/raycast() skip scene-masked-out meshes like invisible ones -
-  unless the raycast passes its own `{ layers }`, which is how a low-poly
-  collision mesh lives undrawn in the scene yet answers ground queries
-  (the physics-collider pattern).
+  pick()/raycast()/overlap()/sweep() skip scene-masked-out meshes like
+  invisible ones - unless the query passes its own `{ layers }`, which is
+  how a low-poly collision mesh lives undrawn in the scene yet answers
+  ground and collision queries (the physics-collider pattern).
   Per-view fog: `fog: FogOptions | null` on createView overrides the
   scene's fog for that view (null = unfogged - the clear minimap over a
   fogged scene); absent follows the scene. `overrideMaterial` (Three's
@@ -225,13 +225,16 @@ blendMode and pointer events like any element.
   `gltf-check`) run on
   flux from the repo root: `bunx srt bundle -f --stdout
   packages/3d/checks/<name>.ts | target/release/flux -`. Run the ones
-  touching what you changed. `raycast-check.tsx` is the exception: it
-  asserts the documented picking contract (triangle accuracy, the box
-  tier, pick/raycast parity, layer masks, the `{ meshes }` filter)
-  against a real scene, so it runs on the playback client instead:
-  `bunx srt render packages/3d/checks/raycast-check.tsx --project
-  --duration 3 --size 128x128`. Run it whenever a doc edit touches
-  picking claims - two copies of this contract have drifted before.
+  touching what you changed. `raycast-check.tsx` and
+  `collision-check.tsx` are the exceptions: they assert the documented
+  picking contract (triangle accuracy, the box tier, pick/raycast
+  parity, layer masks, the `{ meshes }` filter) and collision contract
+  (exact sweep times, the surface rule, the slide filter, layers and
+  meshes on overlap/sweep, moveAndSlide's landing) against a real scene,
+  so they run on the playback client instead:
+  `bunx srt render packages/3d/checks/<name>.tsx --project --duration 3
+  --size 128x128`. Run them whenever a doc edit touches picking or
+  collision claims - two copies of this contract have drifted before.
 
 ## Components
 
@@ -342,9 +345,10 @@ movementX/movementY while `pointerLocked()`, from a one-finger drag
 down/up in `fly` mode. Walking (the default) flattens the heading onto
 the ground plane at fixed height. The control NEVER calls `lockPointer`
 - click-to-lock and Escape-to-release are the app's window-level
-decisions (see `examples/first-person.tsx`) - and has no collision:
-`clampPosition(next)` is the whole hook (bounds, a floor height, a
-raycast against a collider mesh). Spread `handlers` (pointer + key +
+decisions (see `examples/first-person.tsx`) - and has no collision of
+its own: `clampPosition(next)` is the whole hook - bounds, a floor
+height, or `moveAndSlide` against the collision layer (see
+`examples/collision.tsx`). Spread `handlers` (pointer + key +
 onBlur; keys reach only the FOCUSED node, so that element must hold
 focus or be the window), call `update(dt)` from onFrame; `active()` is
 reactive - a key held or a stick deflected - and gates the loop. Keys
@@ -400,6 +404,54 @@ explicit population bounds; records are opaque), so its hits have none of
 the three. Both methods
 flush pending writes first (the lookAt/project immediacy contract), and
 both skip invisible meshes.
+
+Collision: `scene.overlap(volume, opts?)` and `scene.sweep(volume,
+motion, opts?)` are the same index's other two questions - what a volume
+touches, and where a moving one first touches: Unity's
+OverlapSphere/Box/Capsule and SphereCast/CapsuleCast/BoxCast, Godot's
+intersect_shape and cast_motion (Three has the raycaster alone; every
+Three game adds a physics library or three-mesh-bvh for this). A
+`Volume` is a sphere (`{ center, radius }`), a capsule (`{ a, b,
+radius }`, the radius swept along the segment - a character) or an
+oriented box (`{ center, halfExtents, rotation? }`). overlap returns
+`Overlap[]` - `{ mesh, point, normal, depth }`, the deepest contact per
+mesh: the point on the mesh, the unit direction out of it and the depth
+along it that clears the contact (Godot's get_rest_info, Unity's
+ComputePenetration, per hit; unordered) - and sweep `Impact[]` -
+`{ mesh, time, point, normal }`, per mesh its first touch with `time`
+the fraction of the motion, earliest first. Both take raycast's `opts`
+(`{ layers, meshes }`) and test per triangle in WORLD space against the
+same shapes, so any transform holds, an instanced mesh or sprite counts
+by its box, and the physics-collider pattern is one `{ layers }` away.
+Two contracts to know: the tests are SURFACES (a volume wholly inside a
+closed mesh with no triangle in reach touches nothing - the trimesh rule
+in every engine), and a sweep from a volume already in contact reports
+time 0 only while the motion closes in; leaving or sliding along the
+contact is no hit, which is what lets a slide along a wall proceed. A
+zero motion touches nothing.
+`moveAndSlide(scene, volume, motion, opts?)` is the controller over
+them: Godot's CharacterBody3D.move_and_slide and Unity's
+CharacterController.Move as one PURE function - no node, no velocity;
+the first-person camera composes it in `clampPosition`, a node-driven
+body applies `result.motion` with setTransform. It pushes the body out
+of anything it starts inside, sweeps, stops a skin short, slides the
+rest along the contact plane up to `maxSlides` times, then snaps down
+onto a floor within `floorSnap` unless the motion rises - and the
+`floor` it reports is the one it ENDS on (within `floorSnap` below), not
+one it touched on the way. `MoveOptions`
+adds `up`, `floorMaxAngle` (45 degrees: flatter is floor, steeper a wall
+the body slides down), `maxSlides` (6), `skin` (0.01) and `floorSnap`
+(0.1, 0 off) to the query filters; the result is `{ motion, floor, wall,
+ceiling, hits }`. Gravity is the caller's - fold it into `motion` and
+zero it while `floor` is set (the snap keeps reporting the floor while
+the body stands still) - and a walkable floor absorbs the vertical part,
+so a body never creeps down a slope it can stand on.
+`examples/collision.tsx` is the whole pattern: a capsule walker through
+`clampPosition`, gravity as a frame loop that runs only while airborne,
+the level on a collider layer bit beside its drawn one, pickups lit by
+one overlap per move. Deliberately absent and additive when asked: a
+step offset (Unity's stepOffset; Godot has none either) and a cylinder
+volume (Godot only).
 
 Mesh pointer events - the element vocabulary one tree deeper:
 `onPointerDown/Move/Up/Enter/Leave` as plain fields on any node (and as
@@ -1551,3 +1603,14 @@ older bakes are rejected - re-bake with `srt tool 3d/model`.
   directly on setEnvironment; the placeholder cube is app-lifetime like
   the shadow placeholder. A `lit` without `reflectivity` declares no
   environment sampler - the flag is part of the class key.
+- overlap()/sweep() test SURFACES, the trimesh contract everywhere: a
+  volume wholly inside a closed mesh with no triangle in reach touches
+  nothing, and a body whose center has passed through a wall reports
+  the push-out on the side its center is on. Keep a skin (moveAndSlide
+  does) and never teleport a body into geometry expecting it to come
+  out the far side.
+- moveAndSlide owns no gravity and no velocity: fold the fall into
+  `motion` every frame and zero it while `floor` is set. A walkable
+  floor absorbs the vertical part (a body never creeps down a slope it
+  can stand on), and with `floorSnap: 0` a standing body reports no
+  floor unless its motion presses into one.

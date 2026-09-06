@@ -6,7 +6,7 @@ const ONE: [f32; 3] = [1.0, 1.0, 1.0];
 // The recording SinkWriter: one owned variant per trait method, so the
 // tests assert on flush output by equality.
 #[derive(Clone, Debug, PartialEq)]
-enum Write {
+pub(super) enum Write {
   Params { target: u64, draw: u64, model: Mat4, normal: Option<Mat4> },
   Count { target: u64, draw: u64, count: u32 },
   Shared { target: u64, name: String, values: Vec<f32> },
@@ -57,7 +57,7 @@ fn sink(draw: u64) -> DrawSink {
   DrawSink { target: 1, draw, normal: false, count: 1 }
 }
 
-fn flush(s: &mut Spatial) -> Vec<Write> {
+pub(super) fn flush(s: &mut Spatial) -> Vec<Write> {
   let mut out = Recorder::default();
   s.flush(&mut out);
   out.writes
@@ -397,7 +397,7 @@ fn triangle_hit_carries_face_uv_and_normal() {
 
 // A heightfield over x/z, `side` cells square, two triangles per cell:
 // vertex heights vary so faces are not coplanar, UVs span 0..1.
-fn grid_shape(side: usize) -> Shape {
+pub(super) fn grid_shape(side: usize) -> Shape {
   let verts = side + 1;
   let mut positions = Vec::with_capacity(verts * verts * 3);
   let mut uvs = Vec::with_capacity(verts * verts * 2);

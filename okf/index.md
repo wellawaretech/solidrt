@@ -51,11 +51,6 @@ Shaped, not started.
   Static 2D bulk (tile worlds, backgrounds) rendered once into a texture and
   drawn as ONE quad, with incremental re-bake - the primitive-count answer for
   tiled GPUs
-- **[A 2d camera controller - fit, clamp, zoom-at-cursor, pinch, glide](backlog/2d-camera-controller.md)** [2026-09-02]
-  Every pannable/zoomable app re-derives the same hundred lines of camera math
-  (fit-to-world min zoom, pan clamping, wheel zoom anchored under the cursor
-  with an eased glide, pinch anchoring) - ship it once as a camera controller
-  over the shared CameraUpdate.
 - **[Layer-level pointer events for empty space on the sprite layer](backlog/2d-layer-background-events.md)** [2026-09-02]
   SpriteLayer's built-in handlers only ever deliver to sprites, so any app
   that combines per-sprite interaction with pan/zoom on empty space must
@@ -604,13 +599,6 @@ Shaped, not started.
   velocity from the camera and write three setters. Bind a playback to a
   spatial node and name a listener node, and the core writes pan/gain/rate
   from the flushed world matrices; the JS pattern stays valid.
-- **[Collision queries on the spatial index - overlap, shape sweep, move-and-slide](backlog/spatial-collision-queries.md)** [2026-09-06]
-  The only collision tool a game has is the raycast against an undrawn
-  collider mesh, so a character walking into a wall, picking up an item or
-  standing on a slope needs per-frame JS geometry every app writes badly; give
-  the spatial core overlap and swept-shape queries over the index it already
-  keeps, and the 3d package a move-and-slide over them, so the lightweight
-  collision tier games need arrives without a physics engine.
 - **[Spatial core - transform hierarchy, spatial index and queries in alloy](backlog/spatial-core.md)** [2026-08-23]
   The @solidrt/3d sync walk recurses the whole node tree in QuickJS on every
   change (one moved node = O(scene)), picking is a JS box-only test, and both
@@ -731,6 +719,11 @@ Shaped, not started.
 
 Finished, kept for the reasoning.
 
+- **[A 2d camera controller - fit, clamp, zoom-at-cursor, pinch, glide](done/2d-camera-controller.md)** [2026-09-02]
+  Every pannable/zoomable app re-derived the same hundred lines of camera math
+  (fit-to-world min zoom, pan clamping, wheel zoom anchored under the cursor
+  with an eased glide, pinch anchoring); createCamera2d in @solidrt/2d ships
+  it once, with follow, inertia and rotation, in the 3d orbit camera's shape.
 - **[A sprite layer's capacity is fixed and overflow throws](done/2d-layer-capacity-growth.md)** [2026-08-23]
   createSpriteLayer reserved a record buffer for the layer's life, so a
   data-driven sprite count had to guess a maximum up front and crashed when it
@@ -1472,6 +1465,13 @@ Finished, kept for the reasoning.
   captureSnapshot and get_snapshot latch a frame request but do not wake the
   render loop, so a truly idle client never services the capture and the query
   times out.
+- **[Collision queries on the spatial index - overlap, shape sweep, move-and-slide](done/spatial-collision-queries.md)** [2026-09-06]
+  The only collision tool a game has is the raycast against an undrawn
+  collider mesh, so a character walking into a wall, picking up an item or
+  standing on a slope needs per-frame JS geometry every app writes badly; give
+  the spatial core overlap and swept-shape queries over the index it already
+  keeps, and the 3d package a move-and-slide over them, so the lightweight
+  collision tier games need arrives without a physics engine.
 - **[Reset the spatial core on app switch](done/spatial-core-app-switch-leak.md)** [2026-09-03]
   The alloy Context (and with it the spatial core - nodes, sinks, palettes,
   clip players) is shared across engine rebuilds and never reset, while the
@@ -1594,6 +1594,10 @@ Finished, kept for the reasoning.
 
 Knowledge. No lifecycle - true or wrong, not open or closed.
 
+- **[2d camera conventions - pose, bounds, easing, input, and how to verify one](notes/2d-camera-conventions.md)** [2026-09-06]
+  The decisions behind createCamera2d, each against Godot's Camera2D, Unity's
+  Cinemachine and Three's MapControls (plus the map/whiteboard libraries for
+  the canvas half), and the traps met building and verifying it.
 - **[Where a native 3D layer can beat the browser libraries](notes/3d-differentiators.md)** [2026-08-05]
   Both halves of the Three.js comparison beyond feature count - where solidrt
   can end up ahead, and where it loses. Retained draw list makes per-frame

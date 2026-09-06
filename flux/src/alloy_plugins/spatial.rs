@@ -13,7 +13,7 @@ use crate::plugins::marshal::OptArg;
 use alloy::spatial::{
   ChannelInterpolation, ChannelPath, ClipChannel, ClipEvent, Component, DrawSink, InstanceProjection,
   InstanceRecordSink, NodeTransitionConfig, PlayerUpdate, Projection, RootMotion, Shape, SharedSlotSink,
-  TextureSlotSink,
+  TextureSlotSink, Volume,
 };
 
 fn throw_str(ctx: &Ctx<'_>, msg: &str) -> rquickjs::Error {
@@ -63,6 +63,8 @@ impl ModuleDef for SpatialModule {
     decl.declare("setShape")?;
     decl.declare("raycast")?;
     decl.declare("overlap")?;
+    decl.declare("overlapVolume")?;
+    decl.declare("sweepVolume")?;
     decl.declare("bindDirectionSlot")?;
     decl.declare("bindPositionSlot")?;
     decl.declare("unbindSlot")?;
@@ -105,6 +107,8 @@ impl ModuleDef for SpatialModule {
     exports.export("setShape", Function::new(ctx.clone(), set_shape)?)?;
     exports.export("raycast", Function::new(ctx.clone(), raycast)?)?;
     exports.export("overlap", Function::new(ctx.clone(), overlap)?)?;
+    exports.export("overlapVolume", Function::new(ctx.clone(), overlap_volume)?)?;
+    exports.export("sweepVolume", Function::new(ctx.clone(), sweep_volume)?)?;
     exports.export("bindDirectionSlot", Function::new(ctx.clone(), bind_direction_slot)?)?;
     exports.export("bindPositionSlot", Function::new(ctx.clone(), bind_position_slot)?)?;
     exports.export("unbindSlot", Function::new(ctx.clone(), unbind_slot)?)?;
@@ -432,6 +436,73 @@ fn overlap<'js>(ctx: Ctx<'js>, bounds: TypedArray<'js, f32>) -> rquickjs::Result
   let arr = Array::new(ctx.clone())?;
   for (i, id) in nodes.iter().enumerate() {
     arr.set(i, *id)?;
+  }
+  Ok(arr)
+}
+
+/// A query volume from its kind and packed floats: "capsule" is a, b,
+/// radius (7 floats; a sphere when a == b), "box" is center, half
+/// extents, rotation quaternion (10).
+fn volume_arg(ctx: &Ctx<'_>, kind: &str, data: &TypedArray<'_, f32>, api: &str) -> rquickjs::Result<Volume> {
+  let v = floats(ctx, data, api)?;
+  match (kind, v.len()) {
+    ("capsule", 7) => Ok(Volume::Capsule { a: [v[0], v[1], v[2]], b: [v[3], v[4], v[5]], radius: v[6] }),
+    ("box", 10) => Ok(Volume::Box {
+      center: [v[0], v[1], v[2]],
+      half: [v[3], v[4], v[5]],
+      rotation: [v[6], v[7], v[8], v[9]],
+    }),
+    _ => Err(throw_str(
+      ctx,
+      &format!("{api}: volume must be \"capsule\" with 7 floats (a, b, radius) or \"box\" with 10 (center, half extents, rotation)"),
+    )),
+  }
+}
+
+fn vec3(v: [f32; 3]) -> Vec<f64> {
+  vec![v[0] as f64, v[1] as f64, v[2] as f64]
+}
+
+/// Every shown node with bounds the volume touches, each with its deepest
+/// contact, as `{ node, point, normal, depth }` objects (unordered).
+fn overlap_volume<'js>(ctx: Ctx<'js>, kind: String, data: TypedArray<'js, f32>) -> rquickjs::Result<Array<'js>> {
+  let volume = volume_arg(&ctx, &kind, &data, "overlapVolume")?;
+  let hits = super::gui(&ctx).alloy.spatial().overlap_volume(&volume);
+  let arr = Array::new(ctx.clone())?;
+  for (i, h) in hits.iter().enumerate() {
+    let obj = Object::new(ctx.clone())?;
+    obj.set("node", h.node)?;
+    obj.set("point", vec3(h.point))?;
+    obj.set("normal", vec3(h.normal))?;
+    obj.set("depth", h.depth as f64)?;
+    arr.set(i, obj)?;
+  }
+  Ok(arr)
+}
+
+/// The volume moved by `motion`: every shown node with bounds it touches
+/// on the way, at its first touch, earliest first, as `{ node, time,
+/// point, normal }` objects.
+fn sweep_volume<'js>(
+  ctx: Ctx<'js>,
+  kind: String,
+  data: TypedArray<'js, f32>,
+  motion: TypedArray<'js, f32>,
+) -> rquickjs::Result<Array<'js>> {
+  let volume = volume_arg(&ctx, &kind, &data, "sweepVolume")?;
+  let m = floats(&ctx, &motion, "sweepVolume")?;
+  if m.len() != 3 {
+    return Err(throw_str(&ctx, "sweepVolume: motion must be a Float32Array of 3"));
+  }
+  let hits = super::gui(&ctx).alloy.spatial().sweep_volume(&volume, [m[0], m[1], m[2]]);
+  let arr = Array::new(ctx.clone())?;
+  for (i, h) in hits.iter().enumerate() {
+    let obj = Object::new(ctx.clone())?;
+    obj.set("node", h.node)?;
+    obj.set("time", h.time as f64)?;
+    obj.set("point", vec3(h.point))?;
+    obj.set("normal", vec3(h.normal))?;
+    arr.set(i, obj)?;
   }
   Ok(arr)
 }

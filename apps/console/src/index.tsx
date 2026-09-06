@@ -59,7 +59,7 @@ const POLL_MS = 2000
 // nothing else.
 const STRIP_WIDTH = 44
 
-// The list pane's width in two-pane, matching the launcher's.
+// The list pane's width in two-pane, matching the player's.
 const LIST_WIDTH = 380
 
 // setTheme(consoleTheme)

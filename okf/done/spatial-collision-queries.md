@@ -83,3 +83,27 @@ anyway.
 Rigid bodies, joints, contact resolution between two moving bodies
 (physics-core). Mesh-vs-mesh overlap (convex pairs) beyond triangle-vs-shape.
 Navmesh.
+
+## Done 2026-09-06
+
+Shipped as shaped, with the comparison against Three, Godot and Unity
+deciding two things the shaping had left out: the box volume is in
+(Unity's OverlapBox/BoxCast and Godot's BoxShape3D are everyday tools,
+so "on demand" was demand-gating), and the sweeps are exact rather than
+iterative (the capsule sweep is a sphere sweep against the triangle
+extruded along the capsule's segment, PhysX's construction; the box
+sweep a separating-axis test with the box's interval moving in time).
+Triangles are tested in world space, so any node transform holds; a
+node without a shape is its box's twelve triangles, which gives sprites
+and population boxes both queries for free. `moveAndSlide` is a pure
+function (no node, no velocity), with the depenetration pass, skin and
+floor snap Godot and Unity both wrap around the slide loop; the floor it
+reports is the one the body ends on. The contract and the engine mapping
+live in `packages/3d/AGENTS.md` (Collision), the tests in
+`alloy/src/tests/spatial_collide.rs`, `packages/3d/tests/collision.test.ts`
+and `packages/3d/checks/collision-check.tsx`.
+
+Deliberate non-goals, additive when asked: a step offset (Unity only),
+a cylinder volume (Godot only), a sweep against a node's box under a
+different rule than its twelve triangles.
+

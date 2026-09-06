@@ -119,25 +119,57 @@ impl Shapes {
     Ok(())
   }
 
-  /// The narrowphase for one shape: its nearest triangle along the
-  /// local-space ray, through the shape's BVH when it has one. The first
-  /// ray against a shape of BVH_MIN_TRIANGLES or more builds the index
-  /// here; smaller shapes test every triangle, which beats the traversal
-  /// at that size. Same result as `ray_shape`, or None for a miss or an
-  /// unresolvable id.
-  pub fn ray(&mut self, id: ShapeId, o: [f32; 3], d: [f32; 3]) -> Option<(f32, u32, Option<[f32; 2]>, [f32; 3])> {
+  /// The shape with its triangle BVH, which the first query against a
+  /// shape of BVH_MIN_TRIANGLES or more builds here; smaller shapes stay
+  /// flat (None), since testing every triangle beats the traversal at
+  /// that size. None for an unresolvable id.
+  fn indexed(&mut self, id: ShapeId) -> Option<(&Shape, Option<&TriBvh>)> {
     let i = self.index(id)? as usize;
     let slot = &mut self.slots[i];
-    let shape = slot.shape.as_ref()?;
-    if slot.index.is_none() && shape.indices.len() / 3 >= BVH_MIN_TRIANGLES {
-      slot.index = Some(TriBvh::build(shape));
+    let faces = slot.shape.as_ref()?.indices.len() / 3;
+    if slot.index.is_none() && faces >= BVH_MIN_TRIANGLES {
+      slot.index = Some(TriBvh::build(slot.shape.as_ref()?));
     }
-    let raw = match &slot.index {
+    Some((slot.shape.as_ref()?, slot.index.as_ref()))
+  }
+
+  /// The narrowphase for one shape: its nearest triangle along the
+  /// local-space ray, through the shape's BVH when it has one. Same
+  /// result as `ray_shape`, or None for a miss or an unresolvable id.
+  pub fn ray(&mut self, id: ShapeId, o: [f32; 3], d: [f32; 3]) -> Option<(f32, u32, Option<[f32; 2]>, [f32; 3])> {
+    let (shape, index) = self.indexed(id)?;
+    let raw = match index {
       Some(bvh) => bvh.ray(shape, o, d),
       None => ray_all(shape, o, d),
     }?;
     Some(finish(shape, raw))
   }
+
+  /// Hand `visit` every triangle (local-space vertices) whose bounds
+  /// touch the local box `b`, through the shape's BVH when it has one;
+  /// a flat shape hands over all of them. Nothing for an unresolvable id.
+  pub fn visit_box(&mut self, id: ShapeId, b: &Box3, visit: &mut dyn FnMut([[f32; 3]; 3])) {
+    let Some((shape, index)) = self.indexed(id) else {
+      return;
+    };
+    match index {
+      Some(bvh) => bvh.visit_box(shape, b, visit),
+      None => {
+        for tri in shape.indices.chunks_exact(3) {
+          visit(vertices(shape, tri));
+        }
+      }
+    }
+  }
+}
+
+/// A triangle's three vertices.
+fn vertices(shape: &Shape, tri: &[u32]) -> [[f32; 3]; 3] {
+  let at = |i: u32| -> [f32; 3] {
+    let k = i as usize * 3;
+    [shape.positions[k], shape.positions[k + 1], shape.positions[k + 2]]
+  };
+  [at(tri[0]), at(tri[1]), at(tri[2])]
 }
 
 /// t, face, barycentric u/v, unnormalized local normal - the narrowphase
@@ -309,6 +341,31 @@ impl TriBvh {
     }
     best
   }
+
+  /// Every triangle in a leaf whose box touches `b` (touching counts).
+  fn visit_box(&self, shape: &Shape, b: &Box3, visit: &mut dyn FnMut([[f32; 3]; 3])) {
+    let mut stack = [0u32; TRAVERSAL_STACK];
+    stack[0] = 0;
+    let mut top = 1;
+    while top > 0 {
+      top -= 1;
+      let node = &self.nodes[stack[top] as usize];
+      let nb = &node.bounds;
+      if nb[0] > b[3] || nb[1] > b[4] || nb[2] > b[5] || nb[3] < b[0] || nb[4] < b[1] || nb[5] < b[2] {
+        continue;
+      }
+      if node.count > 0 {
+        for &face in &self.faces[node.link as usize..(node.link + node.count) as usize] {
+          visit(vertices(shape, &shape.indices[face as usize * 3..face as usize * 3 + 3]));
+        }
+        continue;
+      }
+      debug_assert!(top + 1 < TRAVERSAL_STACK, "triangle BVH deeper than its traversal stack");
+      stack[top] = node.link;
+      stack[top + 1] = node.link + 1;
+      top += 2;
+    }
+  }
 }
 
 /// Fill `node` with the faces in `faces[lo..hi]`: a leaf when the run is
@@ -394,10 +451,10 @@ pub fn box_overlap(m: &Mat4, local: &Box3, query: &Box3) -> bool {
   true
 }
 
-fn cross(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
+pub(super) fn cross(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
   [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]
 }
 
-fn dot(a: [f32; 3], b: [f32; 3]) -> f32 {
+pub(super) fn dot(a: [f32; 3], b: [f32; 3]) -> f32 {
   a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
 }
