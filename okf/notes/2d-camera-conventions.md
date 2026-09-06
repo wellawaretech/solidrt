@@ -84,7 +84,7 @@ derived from canvas apps alone misses the follow camera entirely.
   worth.
 - The sprite layer's own dispatch and a camera on the same leaf both act
   on a drag that starts on a sprite; the split needs the layer's miss path
-  ([2d-layer-background-events](../backlog/2d-layer-background-events.md)),
+  ([2d-layer-background-events](../done/2d-layer-background-events.md)),
   which is why the component form waits.
 
 ## Verification traps

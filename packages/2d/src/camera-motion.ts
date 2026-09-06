@@ -125,6 +125,13 @@ export type Camera2dMotion = {
    * layers if it changed. Call from onFrame with the frame's dt in
    * seconds; returns whether the pose changed. */
   update(dt: number): boolean
+  /**
+   * Whether update() still has work: a glide, fling or deferred fit in
+   * flight, a follow engaged, or a write not yet pushed. The frame-loop
+   * gate - run update(dt) on frames while true, and nothing while false
+   * (a resting camera costs no frames).
+   */
+  active(): boolean
 }
 
 type Glide = { kind: "anchor"; target: number; sx: number; sy: number; wx: number; wy: number } | { kind: "pose"; x: number; y: number; zoom: number }
@@ -150,7 +157,12 @@ function checkFraction(what: string, v: number): void {
   if (!(Number.isFinite(v) && v >= 0 && v <= 1)) throw new Error(`createCamera2d: ${what} must be within 0..1, got ${v}`)
 }
 
-export function createCameraMotion(target: Camera2dTarget | Camera2dTarget[], options: Camera2dMotionOptions): Camera2dMotion {
+/**
+ * The pure motion behind createCamera2d. `onActive` reports each flip of
+ * active() as it happens (the reactive face in camera2d.ts feeds a signal
+ * from it); pure callers poll active() instead.
+ */
+export function createCameraMotion(target: Camera2dTarget | Camera2dTarget[], options: Camera2dMotionOptions, onActive?: (active: boolean) => void): Camera2dMotion {
   let targets = Array.isArray(target) ? target : [target]
   if (typeof options.viewport !== "function") throw new Error("createCamera2d: viewport must be a function returning { w, h }")
   let world = options.world ?? null
@@ -260,9 +272,19 @@ export function createCameraMotion(target: Camera2dTarget | Camera2dTarget[], op
     dirty = true
     followSettled = false
   }
+  let active = () => dirty || glide !== null || fling !== null || followAt !== null || pendingFit !== null
+  // Report flips of active() to the hook; every public entry ends here.
+  let wasActive = false
+  let notify = () => {
+    let now = active()
+    if (now === wasActive) return
+    wasActive = now
+    onActive?.(now)
+  }
   let interrupt = () => {
     glide = null
     fling = null
+    notify()
   }
   let apply = () => {
     let update = camera()
@@ -312,9 +334,11 @@ export function createCameraMotion(target: Camera2dTarget | Camera2dTarget[], op
   }
   dirty = false
   apply()
+  notify()
 
   return {
     camera,
+    active,
     set(pose) {
       checkPose("set", pose)
       readViewport()
@@ -325,6 +349,7 @@ export function createCameraMotion(target: Camera2dTarget | Camera2dTarget[], op
       if (pose.rotation !== undefined) rotation = pose.rotation
       clamp()
       touch()
+      notify()
     },
     panBy(dx, dy) {
       readViewport()
@@ -334,6 +359,7 @@ export function createCameraMotion(target: Camera2dTarget | Camera2dTarget[], op
       dragDx += dx
       dragDy += dy
       touch()
+      notify()
     },
     release() {
       // Fold the delta still pending from the release's own frame in with
@@ -347,12 +373,14 @@ export function createCameraMotion(target: Camera2dTarget | Camera2dTarget[], op
       if (!inertia || followAt !== null) return
       if (Math.hypot(rvx, rvy) < FLING_MIN_SPEED) return
       fling = { vx: rvx, vy: rvy }
+      notify()
     },
     zoomAt(sx, sy, factor) {
       positive("zoomAt factor", factor)
       readViewport()
       interrupt()
       zoomTo(sx, sy, zoom * Math.pow(factor, zoomExponent))
+      notify()
     },
     wheel(sx, sy, deltaY) {
       readViewport()
@@ -364,15 +392,21 @@ export function createCameraMotion(target: Camera2dTarget | Camera2dTarget[], op
       let target = clampNum(from * Math.exp(-deltaY * wheelZoom), minZoom(), maxZoom)
       let [wx, wy] = unprojectCamera(camera(), sx, sy)
       glide = { kind: "anchor", target, sx, sy, wx, wy }
+      notify()
     },
-    glideTo,
+    glideTo(tx, ty, tz) {
+      glideTo(tx, ty, tz)
+      notify()
+    },
     fit(rect, opts) {
       readViewport()
       if (!known()) {
         pendingFit = { rect: rect ?? null, glide: opts?.glide ?? false }
+        notify()
         return
       }
       fitNow(rect ?? null, opts?.glide ?? false)
+      notify()
     },
     follow(tx, ty) {
       finite("follow x", tx)
@@ -385,9 +419,11 @@ export function createCameraMotion(target: Camera2dTarget | Camera2dTarget[], op
         followAt.y = ty
       }
       followSettled = false
+      notify()
     },
     unfollow() {
       followAt = null
+      notify()
     },
     interrupt,
     viewRect() {
@@ -483,9 +519,13 @@ export function createCameraMotion(target: Camera2dTarget | Camera2dTarget[], op
           dirty = true
         }
       }
-      if (!dirty) return false
+      if (!dirty) {
+        notify()
+        return false
+      }
       dirty = false
       apply()
+      notify()
       return true
     },
   }

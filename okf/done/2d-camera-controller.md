@@ -49,7 +49,7 @@ The item's open questions, answered:
 - Input: the controller owns it through `handlers` (Three's and the map
   libraries' model; Godot's "no input" was the non-answer). An
   `attach(layer)` or a `<Camera2d>` component needs the sprite layer's
-  miss path first ([2d-layer-background-events](../backlog/2d-layer-background-events.md)).
+  miss path first ([2d-layer-background-events](2d-layer-background-events.md)).
 
 Verified: the check on three seeds (contain centering, anchoring under
 random pivots and rotations, glides landing exactly and resting, follow

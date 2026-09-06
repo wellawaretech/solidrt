@@ -18,7 +18,7 @@ moved subtrees in Rust, and picking walks the core BVH.
   `setGroupTransition` - plain objects, no signals, usable without
   components), the records layer (records.ts: `createRecordLayer` - the
   raw escape hatch, below), and the component face (components.tsx:
-  `SpriteLayer`/`Sprite`/`Group` over context).
+  `SpriteLayer`/`Sprite`/`Group`/`Camera2d` over context).
 - Node layer ownership split, two instance-buffer slots on one pipeline:
   slot 0 is the POSE buffer `[x, y, angle, sx, sy]` written ONLY by the
   core (each sprite node's Pose2D record sink; one coalesced buffer write
@@ -91,7 +91,7 @@ moved subtrees in Rust, and picking walks the core BVH.
   pixels. Picking itself works in world space and never sees the camera.
 - Camera control: `createCamera2d(layer | layers, { viewport, world?,
   min/maxZoom?, pivot?, deadZone?, zoomSpeed?, followSpeed?, inertia?,
-  onTap?, x?, y?, zoom?, rotation? })` - Godot's Camera2D and Three's
+  x?, y?, zoom?, rotation? })` - Godot's Camera2D and Three's
   MapControls in one control over the shared CameraUpdate: drag to pan
   with inertia on release, wheel and pinch zoom about the pointer, eased
   `glideTo`/`fit`, `follow(x, y)` through a dead zone with damping,
@@ -99,22 +99,38 @@ moved subtrees in Rust, and picking walks the core BVH.
   axis whose view is wider than the world centers; limits ignore
   rotation, Godot's rule). The pose is "world point at the pivot", the
   pivot a viewport fraction defaulting to the center, so `camera().x/y`
-  is the view center and glideTo/follow land there. The first argument
-  is anything with the layers' `setCamera` (a sprite layer, a record
-  layer, both at once, or a signal setter feeding `<TileLayer camera>`).
-  Input runs on core's `createTransform` recognizer like the 3d orbit
-  camera (arena arbitration, slop swallowed, one delta per frame); spread
-  `cam.handlers` onto the layer's own leaf, call `cam.update(dt)` from
-  onFrame (the only per-frame call: it pushes one setCamera per driven
-  layer when the pose changed and reports that), read `cam.camera()` for
-  projectCamera. Anchors and deltas arrive in the leaf's own frame
-  (core's recognizers measure in the node's frames), so a leaf under a
-  designSize fit pans and zooms correctly. The motion is camera-motion.ts,
-  pure; checks/camera2d-check.ts pins the clamp, anchoring, glides,
-  follow and inertia headless, examples/camera.tsx is the live guard.
-  Not yet, all additive: a `<Camera2d>` component (needs the layer's
-  miss path, see okf/backlog/2d-layer-background-events.md), two-finger
-  twist rotation, rotation glides, a contain origin other than center.
+  is the view center and glideTo/follow land there (without a `world`,
+  the default pose puts world 0,0 at the pivot: a fill layer that wants
+  world = screen at rest takes `pivot: { x: 0, y: 0 }`). The first
+  argument is anything with the layers' `setCamera` (a sprite layer, a
+  record layer, both at once, or a signal setter feeding `<TileLayer
+  camera>`). Input runs on core's `createTransform` recognizer like the
+  3d orbit camera (arena arbitration, slop swallowed, one delta per
+  FRAME - a synthetic drag under a frozen clock pans nothing until frames
+  step). Two ways in: `cam.attach(layer)` listens at the layer's root, so
+  the camera sees exactly the presses the sprites let through (a sprite
+  that stops its down keeps the camera out of that drag; a wheel
+  anywhere zooms) and pushes the pose synchronously on input; the raw
+  `cam.handlers` spread onto a leaf without a dispatch (a tile world on
+  its own). Call `cam.update(dt)` from a frame loop (it pushes one
+  setCamera per driven layer when the pose changed and reports that),
+  gated on the reactive `cam.active()` (true while a glide, fling, fit
+  or follow needs frames, false at rest), read `cam.camera()` for
+  projectCamera. The camera has NO tap of its own: taps are the
+  dispatch's (`onTap` on the root with `e.sprite` null is "tap on empty
+  space"). `<Camera2d>` inside `<SpriteLayer>` is all of that wired
+  through context, the 3d `<OrbitCamera>` shape: options read at mount,
+  `viewport` defaulting to the layer's size, frames only while
+  `active()`. Anchors and deltas arrive in the leaf's own frame (core's
+  recognizers measure in the node's frames), so a leaf under a
+  designSize fit pans and zooms correctly. The motion is
+  camera-motion.ts, pure; checks/camera2d-check.ts pins the clamp,
+  anchoring, glides, follow and inertia headless, examples/camera.tsx
+  (function face, attach) and examples/pick.tsx (`<Camera2d>`) are the
+  live guards. Not yet, all additive: two-finger twist rotation,
+  rotation glides, a contain origin other than center, live option
+  props on `<Camera2d>` (the motion reads them once; remount for new
+  bounds).
 - Layer tint (`setTint(rgba)`/the `tint` option and prop, both layer
   kinds): one `uTint` shared-params write multiplied over every sprite's
   own tint - day/night, a dimmed parallax plane, a fade-in. Cheap to
@@ -157,8 +173,9 @@ moved subtrees in Rust, and picking walks the core BVH.
   attach via `ref` and leave the `frame` prop off - the clip owns that
   field (the prop effect passes absent props as undefined, which setSprite
   keeps, so other props stay reactive).
-- frames.ts and pick.ts are pure (no GPU imports) BY DESIGN so they can be
-  checked headless; keep them that way.
+- frames.ts, pick.ts, camera.ts, camera-motion.ts and dispatch.ts are pure
+  (no GPU imports) BY DESIGN so they can be checked headless; keep them
+  that way.
 
 ## The baked tile layer (tiles.ts)
 
@@ -206,9 +223,10 @@ on approach, evict) - okf/backlog/2d-baked-layers.md.
 
 | Component | Props |
 |---|---|
-| `SpriteLayer` | width?, height? (layer pixels - both, or neither = FILL: the leaf lays out at 100% of its sized parent and the layer follows its box, so layer pixels are the leaf's own coordinates; mount-fixed, `output` requires explicit sizes, matching `<Scene>` in @solidrt/3d), atlas (TextureId), capacity?, clearColor?, camera?, tint? ([r,g,b,a] 0..1, over the whole layer), oversample?, maxOversample?, label?, ref?, output?, events? |
-| `Sprite` | x, y (center; local to the enclosing `<Group>`), w, h, frame?, rotation? (radians, clockwise), tint? ([r,g,b,a] 0..1), visible?, transition?, onPointer{Down,Move,Up,Enter,Leave}?, ref? |
-| `Group` | x?, y?, rotation?, scale? (uniform, scales the subtree), visible? (the whole subtree), transition?, onPointer{Down,Move,Up}? (bubbled from hit child sprites), ref? |
+| `SpriteLayer` | width?, height? (layer pixels - both, or neither = FILL: the leaf lays out at 100% of its sized parent and the layer follows its box, so layer pixels are the leaf's own coordinates; mount-fixed, `output` requires explicit sizes, matching `<Scene>` in @solidrt/3d), atlas (TextureId), capacity?, clearColor?, camera?, tint? ([r,g,b,a] 0..1, over the whole layer), oversample?, maxOversample?, orderBy?, label?, ref?, output?, events?, onPointer{Down,Move,Up}?, onWheel?, onTap? (the root of the walk: `event.sprite` is the hit sprite or null over empty space) |
+| `Sprite` | x, y (center; local to the enclosing `<Group>`), w, h, frame?, rotation? (radians, clockwise), tint? ([r,g,b,a] 0..1), visible?, transition?, onPointer{Down,Move,Up,Enter,Leave}?, onWheel?, onTap?, ref? |
+| `Group` | x?, y?, rotation?, scale? (uniform, scales the subtree), visible? (the whole subtree), transition?, onPointer{Down,Move,Up}?, onWheel?, onTap? (bubbled from hit child sprites), ref? |
+| `Camera2d` | createCamera2d's options minus `viewport` (world?, min/maxZoom?, pivot?, deadZone?, zoomSpeed?, followSpeed?, inertia?, x?, y?, zoom?, rotation?), viewport? (default: the layer's size), ref? - a `<SpriteLayer>` child driving its camera from the layer's root; read at mount |
 | `TileLayer` | cols, rows, tileW, tileH, atlas (TextureId), chunkClearColor?, filter?, chunkTiles?, tint? ([r,g,b,a] 0..1, over the whole layer), oversample?, maxOversample?, camera? (TileCamera: x, y, zoom, rotation, pivotX, pivotY), label?, ref? |
 
 `SpriteLayer` owns the layer and renders the built-in `<texture>` leaf
@@ -223,15 +241,39 @@ nothing - it allocates a record through context and syncs props into it.
 optional parent needs a non-undefined default, since Solid 2 throws on a
 resolved `undefined` even when one was passed as the default.
 
-Pointer events: exact rotated-rect containment, topmost sprite first, capture
-per pointerId (a drag keeps delivering to the grabbed sprite with live
-coordinates), enter/leave paired per pointer. Down/move/up bubble from the
-hit sprite through its enclosing groups - `event.sprite` stays the hit,
-`currentTarget` the handle whose handler runs, `stopPropagation()` stops
-the walk (the same model as @solidrt/3d's scene dispatch; a record layer
-has no groups, so the walk ends at the sprite). Enter/leave fire on the
-sprite alone - a group never receives them. Event x/y are layer pixels
-with the camera undone.
+Pointer events (dispatch.ts, both layer kinds): the DOM event model one
+tree deeper, with the LAYER as the root of the walk. Exact rotated-rect
+containment, topmost sprite first; down/move/up/wheel dispatch on the hit
+sprite, bubble through its enclosing groups and END AT THE LAYER's
+listeners (`layer.listen({...})`, the `<SpriteLayer onPointer*/onWheel/
+onTap>` props) - over empty space the walk is the layer alone, with
+`event.sprite` null. `event.sprite` stays the hit, `currentTarget` the
+handle whose handler runs (the layer at the end), `stopPropagation()`
+stops the walk, and a stopped DOWN claims the whole press: that pointer's
+move, up and tap never reach the layer either (the chain still bubbles).
+That one rule is how a sprite drags itself under a `<Camera2d>` without
+the view panning: stop the down, own the captured moves. Capture is per
+pointerId to the press target, the layer included (a drag from empty
+space keeps delivering to the root as it crosses sprites; a drag from a
+sprite keeps naming it with live coordinates). Enter/leave fire on the
+sprite alone - a group never receives them - while the root sees every
+move, so "hovering empty space" is a root move with `sprite` null. Taps
+are synthesized by the dispatch (DOM click, Unity's click handler):
+`onTap` fires after the up when the press released on the target it
+pressed within the slop (8 window px, core's recognizer slop, so a press
+is never both a tap and a pan), was the only pointer down for its whole
+press (a pinch never taps), with `tapCount` counting repeats within 300
+ms and 20 px on the same target (a double tap is `tapCount === 2`).
+Wheel walks like a move with `deltaX/deltaY`. Every event carries
+`native`, the leaf's element event, for core's recognizers (`createPan`
+to drag a sprite with slop, `createTransform` under the camera); a plain
+`onPointerMove` also fires on hover, so a sprite drag gates on its own
+pressed flag from down to up (`native.button` is set on down/up only).
+Root listeners all run, in registration order (the root is the last
+stop, nothing is left to claim); a record layer has no groups, so the
+chain is the sprite then the root. Event x/y are layer pixels with the
+camera undone. checks/dispatch-check.ts pins the walk, claiming, capture,
+hover, wheel and tap rules headless.
 
 ## Traps
 

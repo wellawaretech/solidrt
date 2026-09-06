@@ -6,14 +6,17 @@
 // sprite with `ref` and call setSprite from onFrame - signals carry
 // structure and slow state, per-frame motion goes straight to the layer.
 // The same split, with the same reasoning, as @solidrt/3d's components.
-import { createContext, createEffect, createSignal, displayScale, For, getBoundingBoxViewport, getLayoutBox, onCleanup, onLayout, untrack, useContext, windowSize } from "@solidrt/core"
+import { merge } from "@solidjs/signals"
+import { createContext, createEffect, createSignal, displayScale, For, getBoundingBoxViewport, getLayoutBox, onCleanup, onFrame, onLayout, untrack, useContext, windowSize } from "@solidrt/core"
 import type { Element, ParentComponent, TextureId, VoidComponent } from "@solidrt/core"
 import { limits } from "@solidrt/core/gpu"
 import type { FilterMode } from "@solidrt/core/gpu"
 import { addGroup, addSprite, createSpriteLayer, removeGroup, removeSprite, setGroup, setGroupTransition, setSprite, setSpriteTransition } from "./layer.ts"
 import type { NodeTransition } from "flux:spatial"
 import type { CameraUpdate } from "./camera.ts"
-import type { Sprite as SpriteHandle, SpriteGroup, SpriteLayer as LayerHandle, SpriteOptions, SpritePointerEvent, TransitionEndEvent } from "./layer.ts"
+import { createCamera2d } from "./camera2d.ts"
+import type { Camera2d as Camera2dHandle, Camera2dOptions } from "./camera2d.ts"
+import type { LayerPointerEvent, LayerTapEvent, LayerWheelEvent, Sprite as SpriteHandle, SpriteGroup, SpriteLayer as LayerHandle, SpriteOptions, SpritePointerEvent, SpriteTapEvent, SpriteWheelEvent, TransitionEndEvent } from "./layer.ts"
 import { pickOversample, tileWorldScale } from "./oversample-math.ts"
 
 // The window's device pixel count: the texel budget an auto-picked
@@ -57,11 +60,12 @@ export function useSpriteLayer(): LayerCtx {
 
 /**
  * Sprite pointer events, the element vocabulary one tree deeper: the
- * topmost hit sprite receives the event, down/move/up bubble to enclosing
- * Groups (stopPropagation stops the walk), enter/leave pair on the sprite
- * alone. Events flow while the element showing the layer carries
- * layer.handlers - the built-in `<SpriteLayer>` leaf does (opt out with
- * events={false}); an `output` leaf spreads them itself.
+ * topmost hit sprite receives the event, down/move/up/wheel/tap bubble to
+ * enclosing Groups and end at the `<SpriteLayer>` (stopPropagation stops
+ * the walk; stopping a down claims the whole press), enter/leave pair on
+ * the sprite alone. Events flow while the element showing the layer
+ * carries layer.handlers - the built-in `<SpriteLayer>` leaf does (opt
+ * out with events={false}); an `output` leaf spreads them itself.
  */
 export type SpritePointerProps = {
   onPointerDown?: (event: SpritePointerEvent) => void
@@ -70,9 +74,28 @@ export type SpritePointerProps = {
   /** Sprites only: a Group never receives enter/leave. */
   onPointerEnter?: (event: SpritePointerEvent) => void
   onPointerLeave?: (event: SpritePointerEvent) => void
+  onWheel?: (event: SpriteWheelEvent) => void
+  /** A press released on the sprite without dragging; `tapCount` counts
+   * repeats (2 = double tap). */
+  onTap?: (event: SpriteTapEvent) => void
 }
 
-export type SpriteLayerProps = {
+/**
+ * The layer's own pointer events, the root of the walk: every event
+ * arrives after the hit sprite and its Groups (`event.sprite` set) or as
+ * the only stop over empty space (`event.sprite` null), unless a handler
+ * stopped it. Deselect on a miss, start a marquee, drive a camera - the
+ * `<Camera2d>` child listens at the same root.
+ */
+export type LayerPointerProps = {
+  onPointerDown?: (event: LayerPointerEvent) => void
+  onPointerMove?: (event: LayerPointerEvent) => void
+  onPointerUp?: (event: LayerPointerEvent) => void
+  onWheel?: (event: LayerWheelEvent) => void
+  onTap?: (event: LayerTapEvent) => void
+}
+
+export type SpriteLayerProps = LayerPointerProps & {
   /**
    * Layer pixels - give both, or neither. Omitted, the layer FILLS: the
    * built-in leaf is laid out at 100% of its parent's box (give it a sized
@@ -133,8 +156,9 @@ export type SpriteLayerProps = {
    */
   output?: (texture: TextureId) => Element
   /**
-   * Sprite pointer events (default on): the built-in leaf carries
-   * layer.handlers. `false` detaches them - the leaf then costs no pointer
+   * Pointer events (default on): the built-in leaf carries layer.handlers,
+   * so sprites, groups, the layer's own handlers and a `<Camera2d>` child
+   * receive input. `false` detaches them - the leaf then costs no pointer
    * routing at all.
    */
   events?: boolean
@@ -202,6 +226,17 @@ export let SpriteLayer: ParentComponent<SpriteLayerProps> = props => {
     },
   )
   untrack(() => props.ref)?.(layer)
+  // The layer's own handlers at the root of the walk; the props are read
+  // per event, so a handler prop may change without re-registering.
+  onCleanup(
+    layer.listen({
+      onPointerDown: e => props.onPointerDown?.(e),
+      onPointerMove: e => props.onPointerMove?.(e),
+      onPointerUp: e => props.onPointerUp?.(e),
+      onWheel: e => props.onWheel?.(e),
+      onTap: e => props.onTap?.(e),
+    }),
+  )
   let output = untrack(() => props.output)
   let events = untrack(() => props.events) !== false
   let leaf: { id: number } | undefined
@@ -262,6 +297,7 @@ export let SpriteLayer: ParentComponent<SpriteLayerProps> = props => {
           onPointerMove={events ? layerHandlers.onPointerMove : undefined}
           onPointerUp={events ? layerHandlers.onPointerUp : undefined}
           onPointerLeave={events ? layerHandlers.onPointerLeave : undefined}
+          onWheel={events ? layerHandlers.onWheel : undefined}
         />
       )}
       {props.children}
@@ -285,6 +321,8 @@ export type GroupProps = {
   onPointerDown?: (event: SpritePointerEvent) => void
   onPointerMove?: (event: SpritePointerEvent) => void
   onPointerUp?: (event: SpritePointerEvent) => void
+  onWheel?: (event: SpriteWheelEvent) => void
+  onTap?: (event: SpriteTapEvent) => void
   /** How pose-prop changes animate (see setGroupTransition); the mount
    * pose always snaps. */
   transition?: NodeTransition | string | null
@@ -314,11 +352,13 @@ export let Group: ParentComponent<GroupProps> = props => {
     transition => setGroupTransition(group, transition ?? null),
   )
   createEffect(
-    () => [props.onPointerDown, props.onPointerMove, props.onPointerUp, props.onTransitionEnd] as const,
-    ([down, move, up, end]) => {
+    () => [props.onPointerDown, props.onPointerMove, props.onPointerUp, props.onWheel, props.onTap, props.onTransitionEnd] as const,
+    ([down, move, up, wheel, tap, end]) => {
       group.onPointerDown = down
       group.onPointerMove = move
       group.onPointerUp = up
+      group.onWheel = wheel
+      group.onTap = tap
       group.onTransitionEnd = end
     },
   )
@@ -354,18 +394,72 @@ export let Sprite: VoidComponent<SpriteProps> = props => {
     transition => setSpriteTransition(sprite, transition ?? null),
   )
   createEffect(
-    () => [props.onPointerDown, props.onPointerMove, props.onPointerUp, props.onPointerEnter, props.onPointerLeave, props.onTransitionEnd] as const,
-    ([down, move, up, enter, leave, end]) => {
+    () => [props.onPointerDown, props.onPointerMove, props.onPointerUp, props.onPointerEnter, props.onPointerLeave, props.onWheel, props.onTap, props.onTransitionEnd] as const,
+    ([down, move, up, enter, leave, wheel, tap, end]) => {
       sprite.onPointerDown = down
       sprite.onPointerMove = move
       sprite.onPointerUp = up
       sprite.onPointerEnter = enter
       sprite.onPointerLeave = leave
+      sprite.onWheel = wheel
+      sprite.onTap = tap
       sprite.onTransitionEnd = end
     },
   )
   untrack(() => props.ref)?.(sprite)
   onCleanup(() => removeSprite(sprite))
+  return null
+}
+
+export type Camera2dProps = Omit<Camera2dOptions, "viewport"> & {
+  /** Viewport in layer pixels; defaults to the enclosing layer's own size
+   * (live: a fill layer's box, a setSize). */
+  viewport?: () => { w: number; h: number }
+  ref?: (camera: Camera2dHandle) => void
+}
+
+// Cap on the camera loop's per-frame dt in seconds, so the first tick
+// after a suspended stretch (a resumed app, a reload) cannot leap a glide.
+const MAX_CAMERA_DT = 0.1
+
+/**
+ * createCamera2d as a SpriteLayer child: drives the enclosing layer's
+ * camera and takes its input from the layer's root through context - no
+ * ref plumbing, no handler spreads, no onFrame of your own. A sprite that
+ * claims its press (stopPropagation on its down) keeps the camera out of
+ * that drag; everything else pans, pinches and wheels. The options are
+ * read at mount (the motion reads them once): change the pose at runtime
+ * through `ref`'s set/glideTo/fit/follow, and remount (a keyed `<Show>`)
+ * for new bounds. `viewport` defaults to the layer's own size. Frames run
+ * only while the camera moves (`active()`), so a resting camera leaves
+ * the app demand-driven idle.
+ */
+export let Camera2d: VoidComponent<Camera2dProps> = props => {
+  let layer = useContext(LayerContext)
+  // Through merge, not a spread: a props object hands out getters, and
+  // merge keeps them (the motion reads each once at creation, viewport
+  // live).
+  let options: Camera2dOptions = merge(props, {
+    get viewport() {
+      return props.viewport ?? (() => ({ w: layer.width, h: layer.height }))
+    },
+  })
+  let cam = untrack(() => createCamera2d(layer, options))
+  onCleanup(cam.attach(layer))
+  createEffect(
+    () => cam.active(),
+    on => {
+      if (!on) return
+      let last: number | null = null
+      return onFrame(tick => {
+        let now = tick / 1000
+        let dt = last === null ? 0 : Math.min(now - last, MAX_CAMERA_DT)
+        last = now
+        cam.update(dt)
+      })
+    },
+  )
+  untrack(() => props.ref)?.(cam)
   return null
 }
 

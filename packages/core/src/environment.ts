@@ -1,4 +1,4 @@
-import { createRoot, createSignal } from "@solidjs/signals"
+import { createSignal, runWithOwner } from "@solidjs/signals"
 import { on } from "srt:events"
 import { onPointerMove } from "./core"
 import { windowSize, safeArea, displayScale, windowFocused, keyboardHeight } from "./window"
@@ -12,13 +12,17 @@ import { windowSize, safeArea, displayScale, windowFocused, keyboardHeight } fro
 // capability derived from them can appear mid-session (e.g. the first mouse
 // move) but never flickers away.
 //
-// `ownedWrite: true` on the signals below: each is lazily created the first
-// time its ensure* function runs, which can happen inside a tracked scope
-// (e.g. a memo's first read of env.inputDevices). Sticky events replay their
-// cached value synchronously on subscribe (srt:events' on()), so that same
-// call can immediately write the signal it just created. That's a legitimate
-// internal-state write, not a stray write escaping a computation, so it opts
-// out of the write-in-owned-scope guard.
+// Every fact below is lazily created the first time its ensure* function
+// runs, which is usually inside a component or a computation (a memo's first
+// read of env.inputDevices, a HUD effect's first read of pointerLocked()).
+// Created there, the fact would belong to that reader: sticky events replay
+// their cached value synchronously on subscribe (srt:events' on()), so the
+// on() call writes the signal it just created inside the reader's owned
+// scope - a render-time write, which the guard rejects - and a root or a
+// subscription created there is disposed with the reader. The facts are
+// app-lifetime, so each ensure* creates under no owner (runWithOwner(null)):
+// the replay lands unowned, nothing is filed under the reader, and no
+// `ownedWrite` opt-out is needed.
 
 /** Connected input device classes, as reported by the runtime. */
 export interface InputDevices {
@@ -39,58 +43,68 @@ let devicesAccessor: (() => InputDevices | undefined) | undefined
 
 function ensureDevicesState() {
   if (devicesAccessor) return
-  let [devices, setDevices] = createSignal<InputDevices | undefined>(undefined, { ownedWrite: true })
-  // Sticky: the current state replays on subscribe, so the first read already
-  // sees it on runtimes that report devices.
-  on("inputDevices", (d: InputDevices) => {
-    setDevices({ keyboard: !!d.keyboard, mouse: !!d.mouse, touch: !!d.touch, screenKeyboard: !!d.screenKeyboard })
+  runWithOwner(null, () => {
+    let [devices, setDevices] = createSignal<InputDevices | undefined>(undefined)
+    // Sticky: the current state replays on subscribe, so the first read already
+    // sees it on runtimes that report devices.
+    on("inputDevices", (d: InputDevices) => {
+      setDevices({ keyboard: !!d.keyboard, mouse: !!d.mouse, touch: !!d.touch, screenKeyboard: !!d.screenKeyboard })
+    })
+    devicesAccessor = devices
   })
-  devicesAccessor = devices
 }
 
 let systemThemeAccessor: (() => SystemTheme) | undefined
 
 function ensureSystemThemeState() {
   if (systemThemeAccessor) return
-  let [theme, setTheme] = createSignal<SystemTheme>("unknown", { ownedWrite: true })
-  on("systemTheme", (e: { theme?: SystemTheme }) => setTheme(e.theme ?? "unknown"))
-  systemThemeAccessor = theme
+  runWithOwner(null, () => {
+    let [theme, setTheme] = createSignal<SystemTheme>("unknown")
+    on("systemTheme", (e: { theme?: SystemTheme }) => setTheme(e.theme ?? "unknown"))
+    systemThemeAccessor = theme
+  })
 }
 
 let visibilityAccessor: (() => Visibility) | undefined
 
 function ensureVisibilityState() {
   if (visibilityAccessor) return
-  let [visibility, setVisibility] = createSignal<Visibility>("visible", { ownedWrite: true })
-  // Sticky. The runtime may report the same state through several platform
-  // paths; the signal's equality check turns repeats into no-ops for
-  // reactive consumers.
-  on("visibility", (e: { state?: Visibility }) => setVisibility(e.state === "hidden" ? "hidden" : "visible"))
-  visibilityAccessor = visibility
+  runWithOwner(null, () => {
+    let [visibility, setVisibility] = createSignal<Visibility>("visible")
+    // Sticky. The runtime may report the same state through several platform
+    // paths; the signal's equality check turns repeats into no-ops for
+    // reactive consumers.
+    on("visibility", (e: { state?: Visibility }) => setVisibility(e.state === "hidden" ? "hidden" : "visible"))
+    visibilityAccessor = visibility
+  })
 }
 
 let orientationAccessor: (() => Orientation) | undefined
 
 function ensureOrientationState() {
   if (orientationAccessor) return
-  let [orientation, setOrientation] = createSignal<Orientation>("unknown", { ownedWrite: true })
-  on("displayOrientation", (e: { orientation?: Orientation }) => {
-    setOrientation(e.orientation ?? "unknown")
+  runWithOwner(null, () => {
+    let [orientation, setOrientation] = createSignal<Orientation>("unknown")
+    on("displayOrientation", (e: { orientation?: Orientation }) => {
+      setOrientation(e.orientation ?? "unknown")
+    })
+    orientationAccessor = orientation
   })
-  orientationAccessor = orientation
 }
 
 let textScaleAccessor: (() => number) | undefined
 
 function ensureTextScaleState() {
   if (textScaleAccessor) return
-  let [scale, setScale] = createSignal(1, { ownedWrite: true })
-  // Sticky, like systemTheme. Guard nonsense values: a runtime bug reporting
-  // 0 or a negative would otherwise collapse all text.
-  on("textScale", (e: { scale?: number }) => {
-    setScale(typeof e.scale === "number" && e.scale > 0 ? e.scale : 1)
+  runWithOwner(null, () => {
+    let [scale, setScale] = createSignal(1)
+    // Sticky, like systemTheme. Guard nonsense values: a runtime bug reporting
+    // 0 or a negative would otherwise collapse all text.
+    on("textScale", (e: { scale?: number }) => {
+      setScale(typeof e.scale === "number" && e.scale > 0 ? e.scale : 1)
+    })
+    textScaleAccessor = scale
   })
-  textScaleAccessor = scale
 }
 
 let mouseSeenAccessor: (() => boolean) | undefined
@@ -98,50 +112,54 @@ let touchSeenAccessor: (() => boolean) | undefined
 
 function ensurePointerState() {
   if (mouseSeenAccessor) return
-  let [mouse, setMouse] = createSignal(false)
-  let [touch, setTouch] = createSignal(false)
-  let sawMouse = false
-  let sawTouch = false
-  let unsubs: (() => void)[] = []
-  let unsubMove: () => void = null!
-  let note = (e: { pointerType?: string }) => {
-    if (e.pointerType === "mouse" && !sawMouse) {
-      sawMouse = true
-      setMouse(true)
-      // Moves have nothing left to teach: touch is learned from downs (a
-      // touch never moves without one), so drop the move subscription and
-      // with it the ambient interest bit that forces move deliveries.
-      unsubMove()
-    } else if (e.pointerType === "touch" && !sawTouch) {
-      sawTouch = true
-      setTouch(true)
+  runWithOwner(null, () => {
+    let [mouse, setMouse] = createSignal(false)
+    let [touch, setTouch] = createSignal(false)
+    let sawMouse = false
+    let sawTouch = false
+    let unsubs: (() => void)[] = []
+    let unsubMove: () => void = null!
+    let note = (e: { pointerType?: string }) => {
+      if (e.pointerType === "mouse" && !sawMouse) {
+        sawMouse = true
+        setMouse(true)
+        // Moves have nothing left to teach: touch is learned from downs (a
+        // touch never moves without one), so drop the move subscription and
+        // with it the ambient interest bit that forces move deliveries.
+        unsubMove()
+      } else if (e.pointerType === "touch" && !sawTouch) {
+        sawTouch = true
+        setTouch(true)
+      }
+      // Both types observed: nothing left to learn, stop listening.
+      if (sawMouse && sawTouch) for (let u of unsubs) u()
     }
-    // Both types observed: nothing left to learn, stop listening.
-    if (sawMouse && sawTouch) for (let u of unsubs) u()
-  }
-  // Downs always deliver, so the raw bus tap suffices; moves are gated when
-  // nobody listens, so they go through onPointerMove, whose subscription
-  // keeps them flowing. The probe is app-lifetime: createRoot detaches its
-  // scope cleanup from whatever computation first read the accessor.
-  unsubMove = createRoot(() => onPointerMove(note))
-  unsubs.push(unsubMove, on("pointerDown", note))
-  mouseSeenAccessor = mouse
-  touchSeenAccessor = touch
+    // Downs always deliver, so the raw bus tap suffices; moves are gated when
+    // nobody listens, so they go through onPointerMove, whose subscription
+    // keeps them flowing. Unowned here, so it registers no cleanup: the
+    // returned unsubscribe is the probe's only handle, as intended.
+    unsubMove = onPointerMove(note)
+    unsubs.push(unsubMove, on("pointerDown", note))
+    mouseSeenAccessor = mouse
+    touchSeenAccessor = touch
+  })
 }
 
 let keyboardSeenAccessor: (() => boolean) | undefined
 
 function ensureKeyboardState() {
   if (keyboardSeenAccessor) return
-  let [keyboard, setKeyboard] = createSignal(false)
-  // Soft keyboards also deliver some keydowns (Backspace, Return), so this can
-  // read true on a touch-only device once the user types in a field. Only a
-  // fallback: capabilities prefer runtime-reported device presence.
-  let unsub = on("keydown", () => {
-    setKeyboard(true)
-    unsub()
+  runWithOwner(null, () => {
+    let [keyboard, setKeyboard] = createSignal(false)
+    // Soft keyboards also deliver some keydowns (Backspace, Return), so this can
+    // read true on a touch-only device once the user types in a field. Only a
+    // fallback: capabilities prefer runtime-reported device presence.
+    let unsub = on("keydown", () => {
+      setKeyboard(true)
+      unsub()
+    })
+    keyboardSeenAccessor = keyboard
   })
-  keyboardSeenAccessor = keyboard
 }
 
 /**

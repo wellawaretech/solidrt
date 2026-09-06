@@ -22,9 +22,10 @@
 // Layer space is pixels, top-left origin, y-down - the render tree's
 // frame. The camera (offset, zoom, rotation about a pivot - CameraUpdate
 // in camera.ts) is a shared-params write (uCamera + uCameraRot), never
-// per-sprite; pointer dispatch undoes it with unprojectCamera.
+// per-sprite; pointer dispatch (dispatch.ts) undoes it with
+// unprojectCamera.
 import { getOwner, onCleanup } from "@solidrt/core"
-import type { PointerEvent as ElementPointerEvent } from "@solidrt/core"
+import type { PointerEvent as ElementPointerEvent, WheelEvent as ElementWheelEvent } from "@solidrt/core"
 import {
   beginBufferWrite,
   createBuffer,
@@ -40,8 +41,9 @@ import type { BufferId, TextureId } from "@solidrt/core/gpu"
 import * as spatial from "flux:spatial"
 import type { NodeId, NodeTransition } from "flux:spatial"
 import { on } from "srt:events"
-import { checkCamera, unprojectCamera } from "./camera.ts"
+import { checkCamera } from "./camera.ts"
 import type { CameraUpdate } from "./camera.ts"
+import { spriteDispatch } from "./dispatch.ts"
 import { checkOversample, thrashSentinel } from "./oversample.ts"
 import type { Frame } from "./frames.ts"
 import { FULL_FRAME, writeFrame } from "./frames.ts"
@@ -141,6 +143,11 @@ export type Sprite = {
   onPointerUp?: (event: SpritePointerEvent) => void
   onPointerEnter?: (event: SpritePointerEvent) => void
   onPointerLeave?: (event: SpritePointerEvent) => void
+  /** A wheel notch over the sprite; bubbles like down/move/up. */
+  onWheel?: (event: SpriteWheelEvent) => void
+  /** A press that released on this sprite without dragging (see
+   * SpriteTapEvent); bubbles like down/move/up. */
+  onTap?: (event: SpriteTapEvent) => void
   /** A declared transition (setSpriteTransition) settled naturally on
    * one component; a cancel or snap never fires. */
   onTransitionEnd?: (event: TransitionEndEvent) => void
@@ -205,13 +212,8 @@ export type AddSpriteOptions = SpriteOptions & {
   parent?: SpriteGroup | null
 }
 
-export type SpritePointerEvent = {
-  /** The sprite the event is about (the topmost hit at the point, or the
-   * captured sprite during a drag) - constant while the event bubbles. */
-  sprite: Sprite
-  /** The sprite or group whose handler is running; changes as the event
-   * bubbles from the hit sprite through its enclosing groups. */
-  currentTarget: Sprite | SpriteGroup
+/** What every layer pointer event carries, whichever handler sees it. */
+export type LayerEventBase = {
   /** Pointer position in LAYER pixels (the camera mapping undone). */
   x: number
   y: number
@@ -222,8 +224,74 @@ export type SpritePointerEvent = {
   ctrlKey: boolean
   altKey: boolean
   metaKey: boolean
-  /** Stops the bubble walk after the current handler. */
+  /**
+   * The element event the layer's leaf received, in the leaf's own frame
+   * (localX/localY, clientX/clientY, movementX/Y): what core's
+   * recognizers consume, so a sprite drags itself through `createPan` and
+   * a camera rides `createTransform` on the same events the walk carries.
+   */
+  native: ElementPointerEvent
+  /**
+   * Stops the walk after the current handler: no enclosing group and none
+   * of the layer's listeners see the event. Stopping a DOWN claims the
+   * whole press - that pointer's move, up and tap never reach the layer
+   * either, so a sprite that drags itself stops its down once and a
+   * camera attached at the root never pans it.
+   */
   stopPropagation(): void
+}
+
+/** The event as a sprite's or group's handler sees it. */
+export type SpritePointerEvent = LayerEventBase & {
+  /** The sprite the event is about (the topmost hit at the point, or the
+   * captured sprite during a drag) - constant while the event bubbles. */
+  sprite: Sprite
+  /** The sprite or group whose handler is running; changes as the event
+   * bubbles from the hit sprite through its enclosing groups. */
+  currentTarget: Sprite | SpriteGroup
+}
+
+/**
+ * The event as the LAYER's listeners see it (LayerBase.listen), the last
+ * stop of the walk: `sprite` is the hit sprite it bubbled from, or null
+ * over empty space, where the layer is the only target.
+ */
+export type LayerPointerEvent = LayerEventBase & {
+  sprite: Sprite | null
+  currentTarget: SpriteLayer | RecordLayer
+}
+
+type WheelFields = {
+  /** The wheel delta as the element event reports it. */
+  deltaX: number
+  deltaY: number
+  native: ElementWheelEvent
+}
+type TapFields = {
+  /** 1 for a tap, 2 for the second of a double tap (the same target,
+   * within the repeat interval and distance), and so on - DOM's `detail`,
+   * Unity's `clickCount`. */
+  tapCount: number
+}
+
+export type SpriteWheelEvent = SpritePointerEvent & WheelFields
+export type LayerWheelEvent = LayerPointerEvent & WheelFields
+/**
+ * A press that released on the target it pressed without travelling past
+ * the slop, the only pointer down for its whole press (a pinch never taps).
+ * Dispatched after the up, bubbling the same way; `x`/`y` are the release
+ * point.
+ */
+export type SpriteTapEvent = SpritePointerEvent & TapFields
+export type LayerTapEvent = LayerPointerEvent & TapFields
+
+/** A listener at the layer root; see LayerBase.listen. */
+export type LayerPointerListener = {
+  onPointerDown?: (event: LayerPointerEvent) => void
+  onPointerMove?: (event: LayerPointerEvent) => void
+  onPointerUp?: (event: LayerPointerEvent) => void
+  onWheel?: (event: LayerWheelEvent) => void
+  onTap?: (event: LayerTapEvent) => void
 }
 
 export type SpriteHandlers = {
@@ -231,6 +299,7 @@ export type SpriteHandlers = {
   onPointerMove: (event: ElementPointerEvent) => void
   onPointerUp: (event: ElementPointerEvent) => void
   onPointerLeave: (event: ElementPointerEvent) => void
+  onWheel: (event: ElementWheelEvent) => void
 }
 
 /** Validate an [r, g, b, a] tint (throws - the dev validation policy).
@@ -324,6 +393,8 @@ export type SpriteGroup = {
   onPointerDown?: (event: SpritePointerEvent) => void
   onPointerMove?: (event: SpritePointerEvent) => void
   onPointerUp?: (event: SpritePointerEvent) => void
+  onWheel?: (event: SpriteWheelEvent) => void
+  onTap?: (event: SpriteTapEvent) => void
   /** See Sprite.onTransitionEnd. */
   onTransitionEnd?: (event: TransitionEndEvent) => void
 }
@@ -353,11 +424,27 @@ export type GroupOptions = {
 export type LayerBase = {
   /** The layer's output: an ordinary texture id (`<texture src>`). */
   texture: TextureId
-  /** Element handlers wiring sprite pointer events; see handlersFor. */
+  /** Element handlers wiring the layer's pointer events (sprites, groups
+   * and the root listeners); see handlersFor. */
   handlers: SpriteHandlers
   /** Live sprite count. */
   readonly count: number
+  /** Layer pixels, as created or last set by setSize. */
+  readonly width: number
+  readonly height: number
   setSize(width: number, height: number): void
+  /**
+   * Listen at the root of the event walk. Every down, move, up, wheel and
+   * tap arrives here after the hit sprite and its enclosing groups
+   * (`sprite` set) or as the walk's only stop over empty space (`sprite`
+   * null), unless a handler stopped it on the way. Listeners run in
+   * registration order and all of them run - the root is the last stop,
+   * there is nothing left to claim. Returns the remover. The app's own
+   * root handling (deselect on a miss, a marquee) and controls
+   * (createCamera2d's attach) meet here, which is why the root is a list
+   * where a sprite has plain fields.
+   */
+  listen(listener: LayerPointerListener): () => void
   /** Target texels per layer pixel; see setOversample. */
   readonly oversample: number
   /**
@@ -407,116 +494,6 @@ export type SpriteLayer = LayerBase & {
    */
   pickRect(x: number, y: number, w: number, h: number): Sprite[]
   _groups: Set<GroupState>
-}
-
-/**
- * Pointer dispatch shared by both layer kinds: capture per pointer, hover
- * pairing, and the element bubbling rule one tree deeper - down/move/up
- * dispatch on the hit sprite and bubble through its enclosing groups
- * (stopPropagation stops the walk; a record layer has no groups, so the
- * walk ends at the sprite), enter/leave pair on the sprite alone, the
- * same model as @solidrt/3d's scene dispatch. Layout null = the leaf is
- * laid out at layer size, so localX/localY are layer pixels already (the
- * element hit test undid every ancestor transform - never getBoundingBox
- * here). Internal - layers expose the result as handlers/handlersFor.
- */
-export function spriteDispatch(state: {
-  size: () => [number, number]
-  camera: () => CameraUpdate
-  pick: (x: number, y: number) => Sprite[]
-}): (layout: (() => { width: number; height: number }) | null) => SpriteHandlers {
-  let capture = new Map<number, Sprite>()
-  let hover = new Map<number, Sprite>()
-  type BubbleName = "onPointerDown" | "onPointerMove" | "onPointerUp"
-  type InternalEvent = SpritePointerEvent & { _stopped: boolean }
-  let bubble = (name: BubbleName, event: InternalEvent): void => {
-    for (let n: Sprite | SpriteGroup | null = event.sprite; n !== null && !event._stopped; n = n._parent) {
-      let handler = n[name]
-      if (handler) {
-        event.currentTarget = n
-        handler(event)
-      }
-    }
-  }
-  return layout => {
-    let toLayer = (e: ElementPointerEvent): [number, number] => {
-      let x = e.localX
-      let y = e.localY
-      let l = layout?.()
-      let [width, height] = state.size()
-      if (l && l.width > 0 && l.height > 0) {
-        x *= width / l.width
-        y *= height / l.height
-      }
-      // Undo the camera: screen -> world.
-      return unprojectCamera(state.camera(), x, y)
-    }
-    let makeEvent = (sprite: Sprite, x: number, y: number, e: ElementPointerEvent): InternalEvent => {
-      let event: InternalEvent = {
-        sprite,
-        currentTarget: sprite,
-        x,
-        y,
-        pointerId: e.pointerId,
-        pointerType: e.pointerType,
-        button: e.button,
-        shiftKey: e.shiftKey,
-        ctrlKey: e.ctrlKey,
-        altKey: e.altKey,
-        metaKey: e.metaKey,
-        _stopped: false,
-        stopPropagation() {
-          event._stopped = true
-        },
-      }
-      return event
-    }
-    return {
-      onPointerDown(e) {
-        let [x, y] = toLayer(e)
-        let hit = state.pick(x, y)[0] ?? null
-        if (!hit) return
-        capture.set(e.pointerId, hit)
-        bubble("onPointerDown", makeEvent(hit, x, y, e))
-      },
-      onPointerMove(e) {
-        let [x, y] = toLayer(e)
-        let captured = capture.get(e.pointerId)
-        if (captured) {
-          if (captured.layer) bubble("onPointerMove", makeEvent(captured, x, y, e))
-          return
-        }
-        let hit = state.pick(x, y)[0] ?? null
-        let prev = hover.get(e.pointerId) ?? null
-        if (prev !== hit) {
-          if (prev && prev.layer) prev.onPointerLeave?.(makeEvent(prev, x, y, e))
-          if (hit) hit.onPointerEnter?.(makeEvent(hit, x, y, e))
-          if (hit) hover.set(e.pointerId, hit)
-          else hover.delete(e.pointerId)
-        }
-        if (hit) bubble("onPointerMove", makeEvent(hit, x, y, e))
-      },
-      onPointerUp(e) {
-        let [x, y] = toLayer(e)
-        let captured = capture.get(e.pointerId)
-        if (captured) {
-          capture.delete(e.pointerId)
-          if (captured.layer) bubble("onPointerUp", makeEvent(captured, x, y, e))
-          return
-        }
-        let hit = state.pick(x, y)[0] ?? null
-        if (hit) bubble("onPointerUp", makeEvent(hit, x, y, e))
-      },
-      onPointerLeave(e) {
-        let [x, y] = toLayer(e)
-        let prev = hover.get(e.pointerId)
-        if (prev) {
-          hover.delete(e.pointerId)
-          if (prev.layer) prev.onPointerLeave?.(makeEvent(prev, x, y, e))
-        }
-      },
-    }
-  }
 }
 
 /** The stored UVs at `at` un-mirrored by the sprite's flags: the frame as
@@ -701,17 +678,19 @@ export function createSpriteLayer(
     }
   }
 
-  let dispatch = spriteDispatch({
-    size: () => [width, height],
-    camera: () => ({ x: camX, y: camY, zoom: camZoom, rotation: camRot, pivotX: camPivotX, pivotY: camPivotY }),
-    pick: (x, y) => layer.pick(x, y),
-  })
+  let listeners = new Set<LayerPointerListener>()
 
   let layer: SpriteLayer = {
     texture,
     handlers: undefined as unknown as SpriteHandlers,
     get count() {
       return byNode.size
+    },
+    get width() {
+      return width
+    },
+    get height() {
+      return height
     },
     setSize(w, h) {
       if (disposed || (w === width && h === height)) return
@@ -720,6 +699,12 @@ export function createSpriteLayer(
       height = h
       setTargetSize(texture, w * oversample, h * oversample)
       setTargetParams(texture, { uViewport: [w, h] })
+    },
+    listen(listener) {
+      listeners.add(listener)
+      return () => {
+        listeners.delete(listener)
+      }
     },
     get oversample() {
       return oversample
@@ -790,6 +775,7 @@ export function createSpriteLayer(
     dispose() {
       if (disposed) return
       disposed = true
+      listeners.clear()
       for (let sprite of byNode.values()) {
         sprite.layer = null
         declared.delete(sprite.node!)
@@ -906,6 +892,13 @@ export function createSpriteLayer(
     },
     _groups: new Set(),
   }
+  let dispatch = spriteDispatch({
+    size: () => [width, height],
+    camera: () => ({ x: camX, y: camY, zoom: camZoom, rotation: camRot, pivotX: camPivotX, pivotY: camPivotY }),
+    pick: (x, y) => layer.pick(x, y),
+    root: layer,
+    listeners,
+  })
   layer.handlers = dispatch(null)
 
   if (opts?.autoFree !== false && getOwner()) onCleanup(() => layer.dispose())

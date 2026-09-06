@@ -1,4 +1,4 @@
-import { createSignal } from "@solidjs/signals"
+import { createSignal, runWithOwner } from "@solidjs/signals"
 import { on } from "srt:events"
 
 // Gamepad State: a reactive mirror of the runtime's sticky "gamepads" event.
@@ -52,11 +52,13 @@ let gamepadsAccessor: (() => (GamepadState | null)[]) | undefined
  */
 export function gamepads(): (GamepadState | null)[] {
   if (!gamepadsAccessor) {
-    // ownedWrite: the sticky event replays synchronously inside on(), which
-    // may run within a tracked scope's first read (see environment.ts).
-    let [pads, setPads] = createSignal<(GamepadState | null)[]>([], { ownedWrite: true })
-    on("gamepads", (e: { pads?: (GamepadState | null)[] }) => setPads(e.pads ?? []))
-    gamepadsAccessor = pads
+    // Under no owner: the sticky event replays synchronously inside on(),
+    // and the first read is usually a tracked scope (see environment.ts).
+    runWithOwner(null, () => {
+      let [pads, setPads] = createSignal<(GamepadState | null)[]>([])
+      on("gamepads", (e: { pads?: (GamepadState | null)[] }) => setPads(e.pads ?? []))
+      gamepadsAccessor = pads
+    })
   }
-  return gamepadsAccessor()
+  return gamepadsAccessor!()
 }

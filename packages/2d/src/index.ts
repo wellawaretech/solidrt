@@ -21,7 +21,24 @@ export type { CameraUpdate } from "./camera.ts"
 export { createCamera2d } from "./camera2d.ts"
 export type { Camera2d as Camera2dHandle, Camera2dOptions } from "./camera2d.ts"
 export type { Camera2dPose, Camera2dTarget, Rect2d } from "./camera-motion.ts"
-export type { AddSpriteOptions, GroupOptions, Sprite as SpriteHandle, SpriteGroup, SpriteHandlers, SpriteLayer as SpriteLayerHandle, SpriteLayerOptions, SpriteOptions, SpritePointerEvent, TransitionEndEvent } from "./layer.ts"
+export type {
+  AddSpriteOptions,
+  GroupOptions,
+  LayerPointerEvent,
+  LayerPointerListener,
+  LayerTapEvent,
+  LayerWheelEvent,
+  Sprite as SpriteHandle,
+  SpriteGroup,
+  SpriteHandlers,
+  SpriteLayer as SpriteLayerHandle,
+  SpriteLayerOptions,
+  SpriteOptions,
+  SpritePointerEvent,
+  SpriteTapEvent,
+  SpriteWheelEvent,
+  TransitionEndEvent,
+} from "./layer.ts"
 export { createTileLayer } from "./tiles.ts"
 export type { TileChunk, TileLayer as TileLayerHandle, TileLayerOptions } from "./tiles.ts"
 
@@ -33,5 +50,5 @@ export type { AnimationOptions, SpriteAnimation } from "./animation.ts"
 export { fitOversample } from "./oversample.ts"
 export { createAtlas } from "./atlas.ts"
 export type { Atlas, AtlasOptions } from "./atlas.ts"
-export { Group, Sprite, SpriteLayer, TileLayer, useSpriteLayer } from "./components.tsx"
-export type { GroupProps, SpriteLayerProps, SpritePointerProps, SpriteProps, TileCamera, TileLayerProps } from "./components.tsx"
+export { Camera2d, Group, Sprite, SpriteLayer, TileLayer, useSpriteLayer } from "./components.tsx"
+export type { Camera2dProps, GroupProps, LayerPointerProps, SpriteLayerProps, SpritePointerProps, SpriteProps, TileCamera, TileLayerProps } from "./components.tsx"

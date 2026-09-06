@@ -34,8 +34,9 @@ import {
 import type { BufferId, TextureId } from "@solidrt/core/gpu"
 import { checkCamera } from "./camera.ts"
 import { FULL_FRAME, writeFrame } from "./frames.ts"
-import { checkTint, readFrame, spriteDispatch } from "./layer.ts"
-import type { LayerBase, Sprite, SpriteHandlers, SpriteLayerOptions, SpriteOptions, SpriteState } from "./layer.ts"
+import { spriteDispatch } from "./dispatch.ts"
+import { checkTint, readFrame } from "./layer.ts"
+import type { LayerBase, LayerPointerListener, Sprite, SpriteHandlers, SpriteLayerOptions, SpriteOptions, SpriteState } from "./layer.ts"
 import { pointInSprite } from "./pick.ts"
 import { checkOversample, thrashSentinel } from "./oversample.ts"
 import { FRAGMENT, INSTANCE_ATTRIBUTES, VERTEX } from "./shaders.ts"
@@ -238,17 +239,19 @@ export function createRecordLayer(
     }
   }
 
-  let dispatch = spriteDispatch({
-    size: () => [width, height],
-    camera: () => ({ x: camX, y: camY, zoom: camZoom, rotation: camRot, pivotX: camPivotX, pivotY: camPivotY }),
-    pick: (x, y) => layer.pick(x, y),
-  })
+  let listeners = new Set<LayerPointerListener>()
 
   let layer: RecordLayer = {
     texture,
     handlers: undefined as unknown as SpriteHandlers,
     get count() {
       return layer._order.length
+    },
+    get width() {
+      return width
+    },
+    get height() {
+      return height
     },
     setSize(w, h) {
       if (disposed || (w === width && h === height)) return
@@ -257,6 +260,12 @@ export function createRecordLayer(
       height = h
       setTargetSize(texture, w * oversample, h * oversample)
       setTargetParams(texture, { uViewport: [w, h] })
+    },
+    listen(listener) {
+      listeners.add(listener)
+      return () => {
+        listeners.delete(listener)
+      }
     },
     get oversample() {
       return oversample
@@ -305,6 +314,7 @@ export function createRecordLayer(
     dispose() {
       if (disposed) return
       disposed = true
+      listeners.clear()
       for (let sprite of layer._order) sprite.layer = null
       layer._order.length = 0
       destroyTexture(texture)
@@ -386,6 +396,13 @@ export function createRecordLayer(
     },
     _order: [],
   }
+  let dispatch = spriteDispatch({
+    size: () => [width, height],
+    camera: () => ({ x: camX, y: camY, zoom: camZoom, rotation: camRot, pivotX: camPivotX, pivotY: camPivotY }),
+    pick: (x, y) => layer.pick(x, y),
+    root: layer,
+    listeners,
+  })
   layer.handlers = dispatch(null)
 
   if (opts?.autoFree !== false && getOwner()) onCleanup(() => layer.dispose())

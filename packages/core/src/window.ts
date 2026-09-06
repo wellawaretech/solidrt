@@ -1,4 +1,4 @@
-import { createSignal, getOwner, onCleanup, onSettled, flush } from "@solidjs/signals"
+import { createSignal, getOwner, onCleanup, onSettled, runWithOwner, flush } from "@solidjs/signals"
 import { requestFrame, setPointerLock } from "flux:rendertree"
 import { renderFrame } from "srt:render"
 import { on, once } from "srt:events"
@@ -113,9 +113,13 @@ export function onResize(fn: (data: ResizeEvent) => void) {
 // Singleton accessors over the same events as onResize / onWindowFocus. There
 // is one window, so these are bare accessors rather than a createX instance.
 // Lazily subscribed on first read (resize is sticky, so the first read sees the
-// current value); app-lifetime, so no onCleanup. `ownedWrite: true` on the
-// signals below is the sticky-replay-into-a-tracked-scope case explained on
-// the ensure* functions in environment.ts.
+// current value); app-lifetime, so no onCleanup. Each is created under no
+// owner (runWithOwner(null)): the first read is usually a component or a
+// computation, and a sticky event replays its cached value synchronously
+// inside on(), so creating the signal in the reader's scope would write it
+// there too - a render-time write, which the guard rejects. Detached, the
+// fact belongs to the app, not to whoever read it first (the reasoning
+// in full is on the ensure* functions in environment.ts).
 
 let sizeAccessor: (() => { width: number; height: number }) | undefined
 let safeAreaAccessor: (() => SafeArea) | undefined
@@ -123,17 +127,19 @@ let displayScaleAccessor: (() => number) | undefined
 
 function ensureResizeState() {
   if (sizeAccessor) return
-  let [size, setSize] = createSignal({ width: 0, height: 0 }, { ownedWrite: true })
-  let [safe, setSafe] = createSignal<SafeArea>({ top: 0, left: 0, right: 0, bottom: 0 }, { ownedWrite: true })
-  let [scale, setScale] = createSignal(1, { ownedWrite: true })
-  on("resize", (e: ResizeEvent) => {
-    setSize({ width: e.width, height: e.height })
-    setSafe(e.safeArea)
-    setScale(e.displayScale)
+  runWithOwner(null, () => {
+    let [size, setSize] = createSignal({ width: 0, height: 0 })
+    let [safe, setSafe] = createSignal<SafeArea>({ top: 0, left: 0, right: 0, bottom: 0 })
+    let [scale, setScale] = createSignal(1)
+    on("resize", (e: ResizeEvent) => {
+      setSize({ width: e.width, height: e.height })
+      setSafe(e.safeArea)
+      setScale(e.displayScale)
+    })
+    sizeAccessor = size
+    safeAreaAccessor = safe
+    displayScaleAccessor = scale
   })
-  sizeAccessor = size
-  safeAreaAccessor = safe
-  displayScaleAccessor = scale
 }
 
 /** Current window size, as a reactive accessor. */
@@ -159,12 +165,14 @@ let focusedAccessor: (() => boolean) | undefined
 /** Whether the window currently has focus, as a reactive accessor. */
 export function windowFocused(): boolean {
   if (!focusedAccessor) {
-    let [focused, setFocused] = createSignal(true)
-    on("windowFocus", () => setFocused(true))
-    on("windowBlur", () => setFocused(false))
-    focusedAccessor = focused
+    runWithOwner(null, () => {
+      let [focused, setFocused] = createSignal(true)
+      on("windowFocus", () => setFocused(true))
+      on("windowBlur", () => setFocused(false))
+      focusedAccessor = focused
+    })
   }
-  return focusedAccessor()
+  return focusedAccessor!()
 }
 
 /**
@@ -186,12 +194,14 @@ let pointerLockedAccessor: (() => boolean) | undefined
 /** Whether the pointer is currently locked (relative mouse mode), as a reactive accessor. */
 export function pointerLocked(): boolean {
   if (!pointerLockedAccessor) {
-    let [locked, setLocked] = createSignal(false)
-    // Sticky event: a subscriber after the lock still observes the state.
-    on("pointerLock", ({ locked }: { locked: boolean }) => setLocked(locked))
-    pointerLockedAccessor = locked
+    runWithOwner(null, () => {
+      let [locked, setLocked] = createSignal(false)
+      // Sticky event: a subscriber after the lock still observes the state.
+      on("pointerLock", ({ locked }: { locked: boolean }) => setLocked(locked))
+      pointerLockedAccessor = locked
+    })
   }
-  return pointerLockedAccessor()
+  return pointerLockedAccessor!()
 }
 
 let keyboardHeightAccessor: (() => number) | undefined
@@ -204,11 +214,13 @@ let keyboardHeightAccessor: (() => number) | undefined
  */
 export function keyboardHeight(): number {
   if (!keyboardHeightAccessor) {
-    let [height, setHeight] = createSignal(0)
-    on("keyboardVisibility", ({ height: h }: { height: number }) => setHeight(h ?? 0))
-    keyboardHeightAccessor = height
+    runWithOwner(null, () => {
+      let [height, setHeight] = createSignal(0)
+      on("keyboardVisibility", ({ height: h }: { height: number }) => setHeight(h ?? 0))
+      keyboardHeightAccessor = height
+    })
   }
-  return keyboardHeightAccessor()
+  return keyboardHeightAccessor!()
 }
 
 // Post-layout handlers run in registration order from one bus subscription,

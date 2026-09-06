@@ -51,11 +51,6 @@ Shaped, not started.
   Static 2D bulk (tile worlds, backgrounds) rendered once into a texture and
   drawn as ONE quad, with incremental re-bake - the primitive-count answer for
   tiled GPUs
-- **[Layer-level pointer events for empty space on the sprite layer](backlog/2d-layer-background-events.md)** [2026-09-02]
-  SpriteLayer's built-in handlers only ever deliver to sprites, so any app
-  that combines per-sprite interaction with pan/zoom on empty space must
-  abandon the layer's dispatch and re-implement pick, capture, tap-slop and
-  hover on its own leaf - give the layer a miss path.
 - **[2D layer views - a second rendering of a layer world (the minimap)](backlog/2d-layer-views.md)** [2026-08-31]
   A minimap, a zoomed radar strip or a picture-in-picture is common in 2D
   games, and today the only way to render a layer's world twice is a second
@@ -127,6 +122,13 @@ Shaped, not started.
   compressed real-world files (Draco/meshopt, KTX2), morph targets,
   merge-by-material, vertex colors, per-material samplers and runtime-fetched
   content, each demand-gated.
+- **[The 3d scene is not the root of its pointer walk, and mesh drags also orbit](backlog/3d-scene-pointer-root-walk.md)** [2026-09-06]
+  Scene dispatch delivers to meshes only and the SceneInput channel to
+  controls only, with nothing between them, so a mesh drag orbits the camera
+  too, there is no mesh wheel or click, and no scene-level miss event; the 2d
+  layer now has the DOM model (the layer as the last stop, claiming by
+  stopPropagation, root capture, wheel, synthesized taps) and the scene should
+  carry the identical vocabulary.
 - **[Cascade split ratios are fixed](backlog/3d-shadow-cascade-splits.md)** [2026-09-06]
   A cascaded sun slices its range with one fixed practical split
   (CASCADE_SPLIT_LAMBDA 0.5), so a scene whose detail sits far from the camera
@@ -725,6 +727,13 @@ Finished, kept for the reasoning.
   (fit-to-world min zoom, pan clamping, wheel zoom anchored under the cursor
   with an eased glide, pinch anchoring); createCamera2d in @solidrt/2d ships
   it once, with follow, inertia and rotation, in the 3d orbit camera's shape.
+- **[The sprite layer is the root of its pointer walk](done/2d-layer-background-events.md)** [2026-09-06]
+  SpriteLayer's dispatch delivered only to sprites, so any app combining
+  per-sprite interaction with pan/zoom on empty space re-implemented pick,
+  capture, tap slop and hover on its own leaf; the layer is now the last stop
+  of every event (DOM's container, r3f's onPointerMissed, Godot's
+  _unhandled_input), with claiming by stopPropagation, capture to the root,
+  wheel, and synthesized taps.
 - **[A sprite layer's capacity is fixed and overflow throws](done/2d-layer-capacity-growth.md)** [2026-08-23]
   createSpriteLayer reserved a record buffer for the layer's life, so a
   data-driven sprite count had to guess a maximum up front and crashed when it
