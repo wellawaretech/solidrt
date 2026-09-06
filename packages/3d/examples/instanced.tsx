@@ -19,6 +19,13 @@
 // shadow views skip instanced meshes). The lit ground receives; both
 // populations throw shadows from the one casting sun, and the breathing
 // pines' shadows appear and vanish with them.
+//
+// The fleets are also lit, shadowed and fogged exactly like the ground,
+// with no lighting code of their own: the class pairs its instanced
+// vertex stage with the stock `litFragment` (the fragment `lit` compiles),
+// which is the first tier of custom looks - a vertex stage that writes
+// the lit varyings gets the whole scene for free. The per-instance tint
+// rides the `vertexColors` path as vColor.
 import { createSignal, onFrame, pct, render } from "@solidrt/core"
 import { glsl } from "@solidrt/core/gpu"
 import {
@@ -37,24 +44,32 @@ import {
   shaderMaterialClass,
 } from "@solidrt/3d"
 import type { InstancedMeshNode } from "@solidrt/3d"
-import { HEMISPHERE } from "@solidrt/3d/glsl"
+import { litFragment } from "@solidrt/3d/glsl"
 
+// The lit varyings (vWorldPos, vNormal, vUv, and vColor for the tint), as
+// LIT_VERTEX writes them, from an instanced placement.
 const INSTANCE_VERTEX = glsl`
   in vec3 aPos;
   in vec3 aNormal;
+  in vec2 aUV;
   in vec3 iPos;
   in float iScale;
   in vec3 iTint;
+  out vec3 vWorldPos;
   out vec3 vNormal;
-  out vec3 vTint;
+  out vec2 vUv;
+  out vec4 vColor;
   uniform mat4 uModel;
   uniform mat4 uViewProj;
+  uniform mat4 uNormal;
 
   void main() {
-    vec3 p = aPos * iScale + iPos;
-    gl_Position = uViewProj * uModel * vec4(p, 1.0);
-    vNormal = mat3(uModel) * aNormal;
-    vTint = iTint;
+    vec4 world = uModel * vec4(aPos * iScale + iPos, 1.0);
+    gl_Position = uViewProj * world;
+    vWorldPos = world.xyz;
+    vNormal = mat3(uNormal) * aNormal;
+    vUv = aUV;
+    vColor = vec4(iTint, 1.0);
   }
 `
 
@@ -69,17 +84,6 @@ const INSTANCE_SHADOW_VERTEX = glsl`
 
   void main() {
     gl_Position = uViewProj * uModel * vec4(aPos * iScale + iPos, 1.0);
-  }
-`
-
-const INSTANCE_FRAGMENT = glsl`
-  in vec3 vNormal;
-  in vec3 vTint;
-  ${HEMISPHERE}
-
-  void main() {
-    vec3 c = vTint * hemisphere(normalize(vNormal), vec3(1.05, 1.0, 0.95), vec3(0.35, 0.32, 0.3));
-    fragColor = vec4(c, 1.0);
   }
 `
 
@@ -139,7 +143,7 @@ function App() {
   return (
     <window>
       <view width={pct(100)} height={pct(100)}>
-        <Scene clearColor={[0.07, 0.08, 0.1, 1]} label="instanced">
+        <Scene clearColor={[0.07, 0.08, 0.1, 1]} fog={{ color: [0.07, 0.08, 0.1], near: 5, far: 13 }} label="instanced">
           <PerspectiveCamera fov={55} position={[0, 3.2, 5.4]} lookAt={[0, 0.2, 0]} />
           <HemisphereLight sky={[0.4, 0.42, 0.45]} ground={[0.12, 0.13, 0.11]} />
           <DirectionalLight
@@ -154,14 +158,14 @@ function App() {
           <Group rotation={[0, spin(), 0]}>
             <InstancedMesh
               geometry={box({ label: "rock" })}
-              material={instancedLook.instance()}
+              material={instancedLook.instance({ params: LOOK })}
               records={rocks(400)}
               bounds={[-3.9, 0, -3.9, 3.9, 0.2, 3.9]}
               castShadow
             />
             <InstancedMesh
               geometry={cone({ radius: 0.3, height: 1, radialSegments: 10, label: "pine" })}
-              material={instancedLook.instance()}
+              material={instancedLook.instance({ params: LOOK })}
               records={pines(PINE_COUNT)}
               bounds={[-2.8, 0, -2.8, 2.8, 0.8, 2.8]}
               castShadow
@@ -175,11 +179,14 @@ function App() {
 }
 
 // One class, one compiled pipeline; each mesh gets its own instance() so
-// per-mesh uniforms stay independent (none are used here).
+// per-mesh uniforms stay independent. The fragment is the stock lit one,
+// so the instance carries lit's per-entry uniforms: a white base (the
+// tint arrives per instance through vColor) and a modest highlight.
+const LOOK = { uColor: [1, 1, 1, 1], uSpecular: 0.25, uShininess: 30 }
 let instancedLook = shaderMaterialClass({
   vertex: INSTANCE_VERTEX,
   shadowVertex: INSTANCE_SHADOW_VERTEX,
-  fragment: INSTANCE_FRAGMENT,
+  fragment: litFragment({ vertexColors: true }),
   instanceAttributes: [
     { name: "iPos", format: "vec3" },
     { name: "iScale", format: "f32" },

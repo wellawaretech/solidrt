@@ -164,11 +164,12 @@ what it delivered is documented in `packages/3d/AGENTS.md`, not here.
     [3d-point-light-shadows](../done/3d-point-light-shadows.md),
     [3d-instanced-shadow-casters](../done/3d-instanced-shadow-casters.md).
     The multi-view shape this forced (`scene.createView`) is also what
-    split-screen, minimaps and override-material passes use. Still
-    demand-gated: cascades
-    ([3d-shadow-cascades](../backlog/3d-shadow-cascades.md)), and the
-    composition trap for custom materials
-    ([3d-custom-material-scene-effects](../backlog/3d-custom-material-scene-effects.md)).
+    split-screen, minimaps and override-material passes use. Cascades
+    landed too ([3d-shadow-cascades](../done/3d-shadow-cascades.md));
+    what stays open there is the split ratios
+    ([3d-shadow-cascade-splits](../backlog/3d-shadow-cascade-splits.md)).
+    The composition trap for custom materials closed with the scene set
+    ([3d-custom-material-scene-effects](../done/3d-custom-material-scene-effects.md)).
     The depth-func option
     ([gpu-depth-func](../backlog/gpu-depth-func.md)) turned out not to be
     a dependency.

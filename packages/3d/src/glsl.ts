@@ -1,8 +1,10 @@
 // The exported lighting GLSL: string constants an app composes into its
 // own shaderMaterial sources with plain template literals - the same
-// pieces the package's future lit materials will be built from, so a
-// custom material never becomes second-class (no preprocessor, no include
-// resolver; the policy is argued in okf/research/3d-differentiators.md).
+// pieces the package's lit materials are built from (sceneSource is the
+// whole scene in one set; the lit, standard and unlit programs are
+// assembled from it), so a custom material never becomes second-class
+// (no preprocessor, no include resolver; the policy is argued in
+// okf/notes/3d-differentiators.md).
 //
 // The light-model functions are PURE: normals, view vectors, light
 // directions, colors and exponents all arrive as arguments, so these
@@ -659,25 +661,271 @@ export const SHADOW_LOOKUP = glsl`
 `
 
 /**
+ * The material defaults every Surface starts from (`surfaceOf`) and the
+ * `lit`/`standard` options fall back to: one table, so a custom fragment
+ * that builds its own Surface and a stock material agree on what
+ * "unspecified" means.
+ */
+export const SURFACE_DEFAULTS = {
+  /** Blinn-Phong highlight strength: none, pure diffuse. */
+  specular: 0,
+  /** Blinn-Phong exponent: a medium sheen. */
+  shininess: 30,
+  /** Environment mix weight face-on: none. */
+  reflectivity: 0,
+  /** A dielectric. */
+  metalness: 0,
+  /** Fully matte. */
+  roughness: 1,
+}
+
+/**
+ * What a material knows about a fragment, as one struct - the contract
+ * between a surface description and the scene's shading (Godot's
+ * fragment() outputs, URP's SurfaceData, Filament's MaterialInputs):
+ *
+ *   struct Surface {
+ *     vec4 base;          // linear light, PREMULTIPLIED; alpha = coverage
+ *     vec3 normal;        // unit, facing the viewer
+ *     vec3 emissive;      // added after lighting, unlit by design, fogged
+ *     vec3 ambient;       // extra irradiance (a light map), added to the diffuse sum
+ *     float specular, shininess, reflectivity;   // the Blinn-Phong model (shadeBlinn)
+ *     float metalness, roughness;                // the metalness/roughness model (shadePbr)
+ *   };
+ *
+ * `Surface surfaceOf(vec4 base, vec3 normal)` fills the rest with
+ * SURFACE_DEFAULTS (no emissive, no ambient), so a fragment sets only
+ * what it means. One struct for both light models, as Godot and Unity
+ * have it, so a `surface` function (litFragment's slot) has one
+ * signature whatever material it sits in; the model that shades reads
+ * its own fields and ignores the other's. Included by sceneSource - never
+ * compose both.
+ */
+export const SURFACE = glsl`
+  struct Surface {
+    vec4 base;
+    vec3 normal;
+    vec3 emissive;
+    vec3 ambient;
+    float specular;
+    float shininess;
+    float reflectivity;
+    float metalness;
+    float roughness;
+  };
+  const float SURFACE_SPECULAR = ${SURFACE_DEFAULTS.specular.toFixed(1)};
+  const float SURFACE_SHININESS = ${SURFACE_DEFAULTS.shininess.toFixed(1)};
+  const float SURFACE_REFLECTIVITY = ${SURFACE_DEFAULTS.reflectivity.toFixed(1)};
+  const float SURFACE_METALNESS = ${SURFACE_DEFAULTS.metalness.toFixed(1)};
+  const float SURFACE_ROUGHNESS = ${SURFACE_DEFAULTS.roughness.toFixed(1)};
+  Surface surfaceOf(vec4 base, vec3 normal) {
+    return Surface(base, normal, vec3(0.0), vec3(0.0), SURFACE_SPECULAR, SURFACE_SHININESS, SURFACE_REFLECTIVITY, SURFACE_METALNESS, SURFACE_ROUGHNESS);
+  }
+`
+
+/**
+ * What the scene set composes: every flag defaults to true, and each one
+ * exists only because it changes a DECLARATION (a sampler the program
+ * would otherwise bind for nothing, a uniform block it would otherwise
+ * carry) - the light list itself is dynamic (uLightCount, uShadowCount),
+ * so there is no per-light or per-effect variant to pick.
+ */
+export type SceneSourceOptions = {
+  /** The light list, the hemisphere, the shade functions and sceneLight.
+   * False is an unlit program: only sceneOutput remains (and Surface). */
+  lights?: boolean
+  /** Compose the shadow set and factor each light by it. False declares
+   * no shadow sampler; every light is unshadowed. Needs `lights`. */
+  receiveShadow?: boolean
+  /** Compose ENVIRONMENT: shadeBlinn mixes the fresnel-weighted mirror
+   * reflection in by `Surface.reflectivity`, shadePbr adds the image-lit
+   * diffuse and the split-sum specular. False declares no environment
+   * cube and shades with the lights alone. Needs `lights`. */
+  env?: boolean
+  /** Fog inside sceneOutput. False leaves the fog set out. */
+  fog?: boolean
+}
+
+/**
+ * The scene as a program declares it, in one set: everything a fragment
+ * needs to be a citizen of the scene - lit by its lights, shadowed by its
+ * casters, reflecting its environment, fogged, exposed, tone mapped and
+ * encoded like the stock materials, because the stock materials are
+ * built from this very source. It declares `uCamPos`, `uHemiSky` /
+ * `uHemiGround`, LIGHT_SLOTS + LIGHT_LOOKUP, the SHADOW trio, the pure
+ * light functions (HEMISPHERE, LAMBERT, BLINN_SPECULAR, PBR),
+ * ENVIRONMENT, FOG and OUTPUT (per the flags), SURFACE, and exports:
+ *
+ *   struct SceneLight { vec3 dir; vec3 color; };
+ *   SceneLight sceneLight(int i, vec3 position, vec3 normal);
+ *   vec3 shadeBlinn(Surface s, vec3 position);
+ *   vec3 shadePbr(Surface s, vec3 position);
+ *   vec4 sceneOutput(vec3 rgb, float alpha, vec3 position);
+ *
+ * `sceneLight` is light i seen from a world point: `dir` the unit vector
+ * TOWARD it, `color` its rgb already attenuated (falloff, cone) and
+ * shadowed - zero when it cannot reach the fragment, and then no shadow
+ * tap was spent. It is the accessor a custom light model loops over to
+ * `uLightCount` (URP's GetAdditionalLight, Godot's light() inputs), and
+ * the one that makes a spot light impossible to render as a directional.
+ *
+ * The shade functions are the whole light loop of `lit` (Blinn-Phong)
+ * and `standard` (GGX): hemisphere plus `Surface.ambient` plus every
+ * light's diffuse and specular, the environment term, then the emissive,
+ * returning linear PREMULTIPLIED rgb. A term added by hand after them is
+ * multiplied by the surface's alpha, the premultiplied rule the functions
+ * follow inside. The view vector is derived from `uCamPos` and
+ * `position`, so no varying name is pinned: pass whatever your vertex
+ * stage carries the world position in.
+ *
+ * `sceneOutput` is the tail every library fragment ends with: fog over
+ * the premultiplied color, then OUTPUT's exposure, tone mapping and
+ * encode - the one place a post effect or a scene buffer change lands.
+ *
+ *   ${SCENE}
+ *   void main() {
+ *     Surface s = surfaceOf(vec4(albedo, 1.0), normalize(vNormal));
+ *     s.specular = 0.4;
+ *     fragColor = sceneOutput(shadeBlinn(s, vWorldPos), 1.0, vWorldPos);
+ *   }
+ *
+ * `SCENE` is `sceneSource()` with every flag on; `sceneSource(flags)`
+ * leaves the samplers a program does not need undeclared. A fragment that
+ * composes this declares none of the sets it includes by itself.
+ */
+export function sceneSource(o: SceneSourceOptions = {}): string {
+  let lights = o.lights !== false
+  let receiveShadow = lights && o.receiveShadow !== false
+  let env = lights && o.env !== false
+  let fog = o.fog !== false
+  return glsl`
+    ${SURFACE}
+    ${lights || fog ? "uniform vec3 uCamPos;" : ""}
+    ${
+      lights
+        ? `uniform vec3 uHemiSky;
+    uniform vec3 uHemiGround;
+    ${LIGHT_SLOTS}
+    ${LIGHT_LOOKUP}`
+        : ""
+    }
+    ${
+      receiveShadow
+        ? `${SHADOW_SLOTS}
+    ${SHADOW}
+    ${SHADOW_LOOKUP}`
+        : ""
+    }
+    ${
+      lights
+        ? `${HEMISPHERE}
+    ${LAMBERT}
+    ${BLINN_SPECULAR}
+    ${PBR}`
+        : ""
+    }
+    ${env ? ENVIRONMENT : ""}
+    ${fog ? FOG : ""}
+    ${OUTPUT}
+    ${lights ? sceneShadeSource(receiveShadow, env) : ""}
+
+    vec4 sceneOutput(vec3 rgb, float alpha, vec3 position) {
+      ${fog ? "rgb = fog(rgb, alpha, position, uCamPos);" : ""}
+      return outputColor(rgb, alpha);
+    }
+  `
+}
+
+/** `sceneSource()` with every flag on. */
+export const SCENE = sceneSource()
+
+// The light accessor and the two shade functions, over the sets
+// sceneSource composed before them. A light that cannot reach the point
+// is skipped whole (no shadow tap, no terms), the gate `lit` always had.
+function sceneShadeSource(receiveShadow: boolean, env: boolean): string {
+  return glsl`
+    struct SceneLight {
+      vec3 dir;
+      vec3 color;
+    };
+
+    SceneLight sceneLight(int i, vec3 position, vec3 normal) {
+      SceneLight light;
+      float a = lightVector(i, position, light.dir);
+      ${receiveShadow ? "if (a > 0.0) a *= lightShadow(i, position, normal);" : ""}
+      light.color = uLightColor[i] * a;
+      return light;
+    }
+
+    vec3 shadeBlinn(Surface s, vec3 position) {
+      vec3 n = s.normal;
+      vec3 v = normalize(uCamPos - position);
+      vec3 light = hemisphere(n, uHemiSky, uHemiGround);
+      light += s.ambient;
+      vec3 spec = vec3(0.0);
+      for (int i = 0; i < ${MAX_LIGHTS}; i++) {
+        if (i >= uLightCount) break;
+        SceneLight l = sceneLight(i, position, n);
+        if (all(equal(l.color, vec3(0.0)))) continue;
+        light += l.color * lambert(n, l.dir);
+        spec += l.color * blinnSpecular(n, v, l.dir, s.shininess);
+      }
+      vec3 rgb = s.base.rgb * light + spec * s.specular * s.base.a;
+      ${env ? "rgb = mix(rgb, envReflection(n, v, s.shininess) * s.base.a, envWeight(n, v, s.reflectivity));" : ""}
+      rgb += s.emissive * s.base.a;
+      return rgb;
+    }
+
+    vec3 shadePbr(Surface s, vec3 position) {
+      vec3 n = s.normal;
+      vec3 v = normalize(uCamPos - position);
+      vec3 diffuseColor = s.base.rgb * (1.0 - s.metalness);
+      vec3 f0 = mix(vec3(DIELECTRIC_F0) * s.base.a, s.base.rgb, s.metalness);
+      vec3 light = hemisphere(n, uHemiSky, uHemiGround);
+      ${env ? "light += envIrradiance(n);" : ""}
+      light += s.ambient;
+      vec3 spec = vec3(0.0);
+      for (int i = 0; i < ${MAX_LIGHTS}; i++) {
+        if (i >= uLightCount) break;
+        SceneLight l = sceneLight(i, position, n);
+        if (all(equal(l.color, vec3(0.0)))) continue;
+        float nl = lambert(n, l.dir);
+        light += l.color * nl;
+        spec += l.color * (nl * ggxSpecular(n, v, l.dir, f0, s.roughness));
+      }
+      vec3 rgb = diffuseColor * light + spec;
+      ${
+        env
+          ? `vec2 ab = envBrdf(max(dot(n, v), 0.0), s.roughness);
+      rgb += envRadiance(reflect(-v, n), s.roughness) * (f0 * ab.x + ab.y * s.base.a);`
+          : ""
+      }
+      rgb += s.emissive * s.base.a;
+      return rgb;
+    }
+  `
+}
+
+/**
  * The option set the lit program builders take: the flags that pick the
  * program - the same names and defaults as LitOptions, minus the values
  * (`map: true` says the fragment samples uMap, not which texture) - plus
  * two slots an app splices its own GLSL into.
  *
- * The slots are deliberately narrow: `prelude` adds declarations,
- * `discardIf` is a bool EXPRESSION, spliced at a fixed point - not a
- * statement block against named locals, so no local of the generated
- * program is part of the contract and restructuring it stays an internal
- * change. A slot can read the varyings (vWorldPos, vNormal, vUv, and
- * vColor with vertexColors), the uniforms the flags declare, and whatever
- * `prelude` declares; a uniform `prelude` declares is an ordinary
- * per-entry param, passed to instance() like uColor. Colors in this
- * program are PREMULTIPLIED (the engine's pixel contract), which is why
- * no slot touches them.
+ * The slots are a typed contract, not named locals: `prelude` adds
+ * declarations, `surface` is a function over the Surface struct (SURFACE)
+ * the program fills before shading, so no local of the generated program
+ * is part of the contract and restructuring it stays an internal change.
+ * A slot can read the varyings (vWorldPos, vNormal, vUv, and vColor with
+ * vertexColors), the uniforms the flags declare, and whatever `prelude`
+ * declares; a uniform `prelude` declares is an ordinary per-entry param,
+ * passed to instance() like uColor. Colors are linear light,
+ * PREMULTIPLIED (the engine's pixel contract), `Surface.base` included.
  *
- * Reach past the slots - a tint, a normal perturbation, a different light
- * model - by composing a fragment from LIT_VERTEX and the pure functions
- * above. That is the same import list, not a lower tier.
+ * Reach past the slots - a different light model, a term added after the
+ * shade - by composing a fragment from litVertex and the scene set
+ * (sceneSource) the program itself is built from. Same import list, not a
+ * lower tier.
  */
 export type LitSourceOptions = {
   /** The fragment samples a `uniform sampler2D uMap`, tinted by uColor. */
@@ -709,9 +957,10 @@ export type LitSourceOptions = {
   /** Bend the lit normal by a tangent-space normal map (NORMAL_MAP:
    * `uniform sampler2D uNormalMap` scaled by `uniform float
    * uNormalScale`), sampled at the same uv as uMap. The frame comes from
-   * screen-space derivatives - no tangent attribute. The cutout and
-   * discardIf still see the geometric normal; lighting sees the bent
-   * one. Not with `triplanar` (which samples by world position, not uv). */
+   * screen-space derivatives - no tangent attribute. The cutout still
+   * sees the geometric normal; the surface slot and the lighting see the
+   * bent one. Not with `triplanar` (which samples by world position, not
+   * uv). */
   normalMap?: boolean
   /** Add `uniform vec3 uEmissive` after the lighting terms - unlit by
    * design, shadow-proof, fogged like everything else. */
@@ -747,12 +996,17 @@ export type LitSourceOptions = {
    * and something must bind `uBones`; the fragment is unchanged. */
   skinned?: boolean
   /** GLSL spliced at file scope, before main: the uniforms, constants and
-   * helper functions `discardIf` calls. */
+   * helper functions `surface` calls. */
   prelude?: string
-  /** A `bool` expression: true discards the fragment. Runs where the
-   * alphaTest discard runs, after the base color is resolved. Splices
-   * into the SHADOW source too, so what it discards casts no shadow. */
-  discardIf?: string
+  /** GLSL declaring `void surface(inout Surface s)`: the material's own
+   * say over the fragment, called once the program has filled `s` from
+   * its options (base from uColor, the map and the vertex color; the
+   * normal, bent by the normal map; emissive, ambient, and the light
+   * model's fields from the per-entry uniforms) and before it shades.
+   * Rewrite any field, or `discard`. Runs in the SHADOW source too with
+   * the same base and the geometric normal, so what it discards casts no
+   * shadow. Reads the varyings and prelude's names. */
+  surface?: string
 }
 
 /**
@@ -792,7 +1046,7 @@ type LitSource = {
   mapTransform: boolean
   skinned: boolean
   prelude: string
-  discardIf: string
+  surface: string
   // The light model: Blinn-Phong (`lit`) or GGX metalness/roughness
   // (`standard`, which also samples the environment unconditionally).
   brdf: "blinn" | "ggx"
@@ -819,7 +1073,7 @@ function resolveLit(o: LitSourceOptions): LitSource {
     mapTransform: o.mapTransform === true,
     skinned: o.skinned === true,
     prelude: o.prelude ?? "",
-    discardIf: o.discardIf ?? "",
+    surface: o.surface ?? "",
     brdf: "blinn",
     metalnessMap: false,
     roughnessMap: false,
@@ -844,8 +1098,8 @@ function litUv(c: LitSource): boolean {
 }
 
 // The varyings both lit sources read. The shadow source declares the same
-// set even where it uses none of them, so a discardIf written against the
-// main pass compiles unchanged there.
+// set even where it uses none of them, so a surface function written
+// against the main pass compiles unchanged there.
 function litVaryings(c: LitSource): string {
   return glsl`
     in vec3 vWorldPos;
@@ -856,13 +1110,13 @@ function litVaryings(c: LitSource): string {
   `
 }
 
-// Base color to discard decision, shared by the main and shadow sources:
-// uColor, the map (by UV or triplanar), the vertex color, then the cutout
-// and the app's own discard. `n` is the surface normal the sampling and
-// discardIf see: flipped toward the viewer in the main pass of a program
-// that shows back faces, the plain geometric normal in the shadow pass
-// (which draws the other side of the surface; triplanar weights are
-// abs(n), so the sample is the same either way).
+// Base color to cutout, shared by the main and shadow sources: uColor,
+// the map (by UV or triplanar), the vertex color, then the alphaTest
+// discard. `n` is the surface normal the sampling and the surface slot
+// see: flipped toward the viewer in the main pass of a program that shows
+// back faces, the plain geometric normal in the shadow pass (which draws
+// the other side of the surface; triplanar weights are abs(n), so the
+// sample is the same either way).
 function litBase(c: LitSource, flip: boolean): string {
   return glsl`
     vec3 n = normalize(vNormal);
@@ -881,15 +1135,14 @@ function litBase(c: LitSource, flip: boolean): string {
     }
     ${c.vertexColors ? "base *= vColor;" : ""}
     ${c.alphaTest ? "if (base.a < uAlphaTest) discard;" : ""}
-    ${c.discardIf ? `if (${c.discardIf}) discard;` : ""}
   `
 }
 
 /**
  * The vertex stage `lit` pairs with a given option set: LIT_VERTEX, or
  * LIT_VERTEX_COLORED when the fragment reads vColor. The shadow source
- * takes this same stage, which is what lets a discardIf read the same
- * varyings in both passes.
+ * takes this same stage, which is what lets a surface function read the
+ * same varyings in both passes.
  */
 export function litVertex(o: LitSourceOptions = {}): string {
   return litVertexSource(o.vertexColors === true, o.lightMap === true, o.skinned === true)
@@ -934,16 +1187,17 @@ export function standardFragment(o: StandardSourceOptions = {}): string {
   return lightingFragment(resolveStandard(o))
 }
 
-// The one lit program, both light models. What the brdf changes: the
-// material uniforms, each light's specular term, and the image lighting
-// (Blinn-Phong mixes a fresnel-weighted mirror in when asked; GGX adds
-// the split-sum term always). The light convention is Godot's and
-// Unity's for both: a light of intensity 1 lights a white diffuse
-// surface to 1 face-on, and the GGX lobe carries the pi its
-// normalisation assumes (PBR's doc).
+// The one lit program, both light models: the options fill a Surface,
+// the scene set shades it. What the brdf changes: the material uniforms
+// and the shade function (shadeBlinn mixes a fresnel-weighted mirror in
+// when asked; shadePbr adds the split-sum term always). The light
+// convention is Godot's and Unity's for both: a light of intensity 1
+// lights a white diffuse surface to 1 face-on, and the GGX lobe carries
+// the pi its normalisation assumes (PBR's doc).
 function lightingFragment(c: LitSource): string {
-  let alpha = c.transparent ? "base.a" : "1.0"
+  let alpha = c.transparent ? "s.base.a" : "1.0"
   let ggx = c.brdf === "ggx"
+  let specularMap = c.specularMap ? " * texture(uSpecularMap, uv).r" : ""
   return glsl`
     ${litVaryings(c)}
     uniform vec4 uColor;
@@ -960,80 +1214,38 @@ function lightingFragment(c: LitSource): string {
     ${c.lightMap ? "uniform sampler2D uLightMap;\n    uniform float uLightMapIntensity;" : ""}
     ${c.mapTransform ? "uniform vec4 uMapTransform;" : ""}
     ${c.normalMap ? NORMAL_MAP : ""}
-    uniform vec3 uCamPos;
-    uniform vec3 uHemiSky;
-    uniform vec3 uHemiGround;
-    ${LIGHT_SLOTS}
-    ${LIGHT_LOOKUP}
-    ${
-      c.receiveShadow
-        ? `${SHADOW_SLOTS}
-    ${SHADOW}
-    ${SHADOW_LOOKUP}`
-        : ""
-    }
-    ${HEMISPHERE}
-    ${LAMBERT}
-    ${ggx ? PBR : BLINN_SPECULAR}
-    ${c.env ? ENVIRONMENT : ""}
-    ${c.fog ? FOG : ""}
-    ${OUTPUT}
+    ${sceneSource({ receiveShadow: c.receiveShadow, env: c.env, fog: c.fog })}
     ${c.prelude}
+    ${c.surface}
 
     void main() {
       ${litBase(c, c.cull !== "back")}
       ${c.normalMap ? "n = perturbNormal(n, vWorldPos, uv);" : ""}
-      vec3 v = normalize(uCamPos - vWorldPos);
+      Surface s = surfaceOf(base, n);
       ${
         ggx
-          ? `float metalness = uMetalness${c.metalnessMap ? " * texture(uMetalnessMap, uv).b" : ""};
-      float roughness = uRoughness${c.roughnessMap ? " * texture(uRoughnessMap, uv).g" : ""};
-      vec3 diffuseColor = base.rgb * (1.0 - metalness);
-      vec3 f0 = mix(vec3(DIELECTRIC_F0) * base.a, base.rgb, metalness);`
-          : ""
+          ? `s.metalness = uMetalness${c.metalnessMap ? " * texture(uMetalnessMap, uv).b" : ""};
+      s.roughness = uRoughness${c.roughnessMap ? " * texture(uRoughnessMap, uv).g" : ""};`
+          : `s.specular = uSpecular${specularMap};
+      s.shininess = uShininess;
+      ${c.env ? `s.reflectivity = uReflectivity${specularMap};` : ""}`
       }
-      vec3 light = hemisphere(n, uHemiSky, uHemiGround);
-      ${ggx ? "light += envIrradiance(n);" : ""}
-      ${c.lightMap ? "light += texture(uLightMap, vUv2).rgb * uLightMapIntensity;" : ""}
-      vec3 spec = vec3(0.0);
-      for (int i = 0; i < ${MAX_LIGHTS}; i++) {
-        if (i >= uLightCount) break;
-        vec3 l;
-        float a = lightVector(i, vWorldPos, l);
-        if (a <= 0.0) continue;
-        ${c.receiveShadow ? "float s = lightShadow(i, vWorldPos, n);" : "float s = 1.0;"}
-        vec3 lc = uLightColor[i] * (a * s);
-        ${
-          ggx
-            ? `float nl = lambert(n, l);
-        light += lc * nl;
-        spec += lc * (nl * ggxSpecular(n, v, l, f0, roughness));`
-            : `light += lc * lambert(n, l);
-        spec += lc * blinnSpecular(n, v, l, uShininess);`
-        }
-      }
-      ${
-        ggx
-          ? `vec3 rgb = diffuseColor * light + spec;
-      vec2 ab = envBrdf(max(dot(n, v), 0.0), roughness);
-      rgb += envRadiance(reflect(-v, n), roughness) * (f0 * ab.x + ab.y * base.a);`
-          : `vec3 rgb = base.rgb * light + spec * ${c.specularMap ? "(uSpecular * texture(uSpecularMap, uv).r)" : "uSpecular"} * base.a;
-      ${c.env ? `rgb = mix(rgb, envReflection(n, v, uShininess) * base.a, envWeight(n, v, uReflectivity${c.specularMap ? " * texture(uSpecularMap, uv).r" : ""}));` : ""}`
-      }
-      ${c.emissive ? `rgb += uEmissive${c.emissiveMap ? " * texture(uEmissiveMap, uv).rgb" : ""} * base.a;` : ""}
-      ${c.fog ? `rgb = fog(rgb, ${alpha}, vWorldPos, uCamPos);` : ""}
-      fragColor = outputColor(rgb, ${alpha});
+      ${c.emissive ? `s.emissive = uEmissive${c.emissiveMap ? " * texture(uEmissiveMap, uv).rgb" : ""};` : ""}
+      ${c.lightMap ? "s.ambient = texture(uLightMap, vUv2).rgb * uLightMapIntensity;" : ""}
+      ${c.surface ? "surface(s);" : ""}
+      vec3 rgb = ${ggx ? "shadePbr" : "shadeBlinn"}(s, vWorldPos);
+      fragColor = sceneOutput(rgb, ${alpha}, vWorldPos);
     }
   `
 }
 
 /**
  * The depth-pass source that makes a discarding lit material cast what it
- * actually draws: the same base, cutout and discardIf as litFragment(o),
- * and nothing after them (no lighting, no fog - a shadow has neither).
- * Undefined when the option set cannot discard, which means the scene's
- * default depth material is already right and the material should carry
- * no `shadow` of its own.
+ * actually draws: the same base, cutout and surface function as
+ * litFragment(o), and nothing after them (no lighting, no fog - a shadow
+ * has neither). Undefined when the option set cannot discard (no
+ * alphaTest, no surface), which means the scene's default depth material
+ * is already right and the material should carry no `shadow` of its own.
  *
  * Use it as a second shaderMaterialClass on litVertex(o) with the
  * OPPOSITE cull (Three's shadowSide rule: `cull: "back"` casts from
@@ -1043,7 +1255,7 @@ function lightingFragment(c: LitSource): string {
  */
 export function litShadowFragment(o: LitSourceOptions = {}): string | undefined {
   let c = resolveLit(o)
-  if (!c.alphaTest && !c.discardIf) return undefined
+  if (!c.alphaTest && !c.surface) return undefined
   return glsl`
     ${litVaryings(c)}
     uniform vec4 uColor;
@@ -1051,10 +1263,13 @@ export function litShadowFragment(o: LitSourceOptions = {}): string | undefined 
     ${c.triplanar ? "uniform float uTriplanar;" : ""}
     ${c.alphaTest ? "uniform float uAlphaTest;" : ""}
     ${c.mapTransform ? "uniform vec4 uMapTransform;" : ""}
+    ${SURFACE}
     ${c.prelude}
+    ${c.surface}
 
     void main() {
       ${litBase(c, false)}
+      ${c.surface ? "Surface s = surfaceOf(base, n);\n      surface(s);" : ""}
       fragColor = vec4(1.0);
     }
   `
@@ -1110,9 +1325,11 @@ export type UnlitSourceOptions = {
   skinned?: boolean
   /** GLSL spliced at file scope, before main. */
   prelude?: string
-  /** A `bool` expression: true discards the fragment; splices into the
-   * shadow source too. */
-  discardIf?: string
+  /** GLSL declaring `void surface(inout Surface s)`, called with the base
+   * resolved (see the lit slot): the unlit program shades nothing, so only
+   * `s.base` is read back and `s.normal` is zero (no normal varying). A
+   * `discard` inside it runs in the shadow source too. */
+  surface?: string
 }
 
 type UnlitSource = {
@@ -1122,7 +1339,7 @@ type UnlitSource = {
   fog: boolean
   mapTransform: boolean
   prelude: string
-  discardIf: string
+  surface: string
 }
 
 function resolveUnlit(o: UnlitSourceOptions): UnlitSource {
@@ -1133,7 +1350,7 @@ function resolveUnlit(o: UnlitSourceOptions): UnlitSource {
     fog: o.fog !== false,
     mapTransform: o.mapTransform === true && o.map === true,
     prelude: o.prelude ?? "",
-    discardIf: o.discardIf ?? "",
+    surface: o.surface ?? "",
   }
 }
 
@@ -1171,37 +1388,36 @@ function unlitBase(c: UnlitSource): string {
 
 /**
  * The `unlit` fragment source for an option set (sprite shares it): the
- * color, times the map when there is one, the discards, then the scene's
- * fog unless opted out. An opaque program writes alpha 1: the scene
- * target is composited premultiplied, so a leaked texel alpha would punch
- * a hole through an opaque draw. Pair with UNLIT_VERTEX (or a custom
- * vertex stage writing vUv/vWorldPos, as sprite does).
+ * color, times the map when there is one, the cutout, the surface slot,
+ * then the scene tail (sceneOutput: fog unless opted out, exposure, tone
+ * mapping, encode) like every library fragment. An opaque program writes
+ * alpha 1: the scene target is composited premultiplied, so a leaked
+ * texel alpha would punch a hole through an opaque draw. Pair with
+ * UNLIT_VERTEX (or a custom vertex stage writing vUv/vWorldPos, as sprite
+ * does - vWorldPos is read whether or not the program fogs).
  *
  * Per-entry uniforms on instance(): `uColor` (linear light, premultiplied
  * vec4), plus `uMap`/`uAlphaTest` for the options that declare them, plus
- * whatever `prelude` declares. Ends with OUTPUT's outputColor like every
- * library fragment.
+ * whatever `prelude` declares.
  */
 export function unlitFragment(o: UnlitSourceOptions = {}): string {
   let c = resolveUnlit(o)
   let alpha = c.transparent ? "base.a" : "1.0"
   return glsl`
     ${c.map ? "in vec2 vUv;" : ""}
-    ${c.fog ? "in vec3 vWorldPos;" : ""}
+    in vec3 vWorldPos;
     ${c.map ? "uniform sampler2D uMap;" : ""}
     uniform vec4 uColor;
     ${c.alphaTest ? "uniform float uAlphaTest;" : ""}
     ${c.mapTransform ? "uniform vec4 uMapTransform;" : ""}
-    ${c.fog ? "uniform vec3 uCamPos;" : ""}
-    ${c.fog ? FOG : ""}
-    ${OUTPUT}
+    ${sceneSource({ lights: false, fog: c.fog })}
     ${c.prelude}
+    ${c.surface}
     void main() {
       ${unlitBase(c)}
       ${c.alphaTest ? "if (base.a < uAlphaTest) discard;" : ""}
-      ${c.discardIf ? `if (${c.discardIf}) discard;` : ""}
-      ${c.fog ? `base.rgb = fog(base.rgb, ${alpha}, vWorldPos, uCamPos);` : ""}
-      fragColor = outputColor(base.rgb, ${alpha});
+      ${c.surface ? "Surface s = surfaceOf(base, vec3(0.0));\n      surface(s);\n      base = s.base;" : ""}
+      fragColor = sceneOutput(base.rgb, ${alpha}, vWorldPos);
     }
   `
 }
@@ -1214,18 +1430,20 @@ export function unlitFragment(o: UnlitSourceOptions = {}): string {
  */
 export function unlitShadowFragment(o: UnlitSourceOptions = {}): string | undefined {
   let c = resolveUnlit(o)
-  if (!c.alphaTest && !c.discardIf) return undefined
+  if (!c.alphaTest && !c.surface) return undefined
   return glsl`
     ${c.map ? "in vec2 vUv;" : ""}
     uniform vec4 uColor;
     ${c.map ? "uniform sampler2D uMap;" : ""}
     ${c.alphaTest ? "uniform float uAlphaTest;" : ""}
     ${c.mapTransform ? "uniform vec4 uMapTransform;" : ""}
+    ${SURFACE}
     ${c.prelude}
+    ${c.surface}
     void main() {
       ${unlitBase(c)}
       ${c.alphaTest ? "if (base.a < uAlphaTest) discard;" : ""}
-      ${c.discardIf ? `if (${c.discardIf}) discard;` : ""}
+      ${c.surface ? "Surface s = surfaceOf(base, vec3(0.0));\n      surface(s);" : ""}
       fragColor = vec4(1.0);
     }
   `

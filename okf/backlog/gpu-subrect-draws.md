@@ -51,7 +51,7 @@ cannot index a sampler array with a non-constant. An atlas collapses that to
 one sampler plus a `uniform vec4 uShadowRect[N]` of tile offsets and scales -
 no branch, no per-light binding, fewer bound samplers and better occupancy.
 
-**Cascaded shadow maps.** [3d-shadow-cascades.md](3d-shadow-cascades.md)
+**Cascaded shadow maps.** [3d-shadow-cascades.md](../done/3d-shadow-cascades.md)
 splits each light's frustum into N maps. Per-light targets make that N x
 lights passes. Over an atlas it stays one pass and one sampler, so this is
 closer to a prerequisite for cascades than an optimisation of them.
@@ -238,7 +238,7 @@ Always measure with ballast on this device.
    callers. Demo on the tablet: 5 -> 3 passes/frame, 68.6-69.5 -> 66.4-66.9
    ms/frame; the whole item took the demo from 6 passes at 71.2 ms to 3 at
    66.5 ms (~14.0 -> ~15.0 fps), the rest of that frame is fill.
-3. Cascades ([3d-shadow-cascades.md](3d-shadow-cascades.md)) on top.
+3. Cascades ([3d-shadow-cascades.md](../done/3d-shadow-cascades.md)) on top.
    Landed 2026-08-28 (uncommitted, with the blend band and
    `shadow.distance`; split ratios stay open in that item): `shadow: { cascades: N }` makes a
    light N tiles of the same atlas, `SHADOW_SLOTS` went from light slots

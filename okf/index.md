@@ -94,13 +94,6 @@ Shaped, not started.
   modulo that must SNAP (native transitions animate the wrap jump across the
   world), ghost copies at the seams - and the chunked tile layer has no way to
   draw the seam at all.
-- **[Scene-wide effects on custom materials - one answer for fog, shadows and what comes next](backlog/3d-custom-material-scene-effects.md)** [2026-08-30]
-  A shaderMaterial gets the scene's fog and shadows only by composing FOG and
-  the SHADOW trio itself, and every instanced mesh has a custom material, so
-  an instanced forest stays crisp and unshadowed in a fogged, shadowed scene
-  with no error. Decide once between injecting the standard tail at the
-  fragColor write and exporting one composed function the author calls, before
-  the next scene-wide effect adds a third thing to forget.
 - **[Environment tier leftovers - SH9, aoMap, packed .srte, EXR, loadCubeImages](backlog/3d-environment-additive.md)** [2026-09-06]
   The environment tier is complete (skybox, HDR environments, PBR, prefiltered
   HDR probes and sky bakes) and each of these is a deliberate non-goal of that
@@ -134,11 +127,12 @@ Shaped, not started.
   compressed real-world files (Draco/meshopt, KTX2), morph targets,
   merge-by-material, vertex colors, per-material samplers and runtime-fetched
   content, each demand-gated.
-- **[Cascaded shadow maps](backlog/3d-shadow-cascades.md)** [2026-08-27]
-  One shadow.camera box per casting light: a large outdoor scene either blurs
-  (the box covers everything at one map's resolution) or clips (the box covers
-  the near part and the far part is lit). Cascades split the view frustum into
-  N maps; demand-gated on a scene that outgrows the box.
+- **[Cascade split ratios are fixed](backlog/3d-shadow-cascade-splits.md)** [2026-09-06]
+  A cascaded sun slices its range with one fixed practical split
+  (CASCADE_SPLIT_LAMBDA 0.5), so a scene whose detail sits far from the camera
+  (a high viewpoint, a driving game) cannot push resolution outward and a
+  close-quarters one cannot pull it in; Godot's shadow_split_1..3 and Unity's
+  cascade splits are per-light ratios, Three's CSM addon a mode switch.
 - **[Shared skeletons - drive a channel-less rigged piece from a body's clips](backlog/3d-skeleton-sharing.md)** [2026-09-03]
   Cosmetic and attachment models ship with a skin but zero animation channels
   (clips live on the body), so a dressed character needs app code copying the
@@ -792,6 +786,15 @@ Finished, kept for the reasoning.
   attribute lists (withAttribute, one pipeline per layout per material) and
   every generator takes a layout option to emit the wider stride in one pass.
   Split from 3d-geometry-ops when that shipped 2026-08-19.
+- **[Scene-wide effects on custom materials - one answer for fog, shadows and what comes next](done/3d-custom-material-scene-effects.md)** [2026-08-30]
+  A shaderMaterial got the scene's fog, shadows, lights and output only by
+  composing each set itself, so an instanced forest stayed crisp and
+  unshadowed in a fogged, shadowed scene and a hand-rolled loop rendered a
+  spot as a directional light, with no error. Decided as a function-level
+  contract, neither injection nor bare composition - one scene set
+  (sceneSource) with a Surface struct, shade functions, a light accessor and
+  one output tail, the stock materials built from it, custom looks joining at
+  one of three tiers.
 - **[Environment tier - skybox and environment reflections](done/3d-environment.md)** [2026-09-06]
   "Done 2026-09-06 in four stages: skybox and vRay background, scene
   environment with lit reflectivity, the linear-only color pipeline with
@@ -836,6 +839,13 @@ Finished, kept for the reasoning.
   (inPlace, by net drift) and, for games, moves it onto the model through a
   core binding (rootMotion "apply" | "report") - translation and yaw,
   continuous across loop wraps, verified on Mixamo's standing turns.
+- **[Cascaded shadow maps](done/3d-shadow-cascades.md)** [2026-08-27]
+  One shadow.camera box per casting light: a large outdoor scene either blurs
+  (the box covers everything at one map's resolution) or clips (the box covers
+  the near part and the far part is lit). Cascades split the view frustum into
+  N maps, landed 2026-08-28 as shadow.cascades on a directional light with a
+  blend band and shadow.distance; the split ratios stay fixed (their own
+  backlog item).
 - **[Shadow maps and their dependencies](done/3d-shadow-maps.md)** [2026-08-26]
   Directional shadow maps for @solidrt/3d, staged over the three things they
   need - a sampleable depth id in the engine, per-target draw sinks in the

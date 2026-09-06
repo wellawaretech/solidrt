@@ -914,34 +914,67 @@ samplers. Lights, colors and exponents are arguments, so
 nothing is pinned but the function names; `lit` is composed from these
 same constants - customizing never means leaving the system.
 
-Own GLSL inside `lit` without re-typing its assembly: `litFragment(options)`
-(also `/glsl`) builds the exact fragment `lit` compiles - the same option
-names and defaults as LitOptions with the texture options boolean
-(`map`/`triplanar`/`alphaTest`, the surface maps and `mapTransform` too) -
-and `litVertex(options)` the vertex stage it pairs with. Two slots splice
-app GLSL in: `prelude` (file scope - uniforms and helpers; a uniform it
-declares is an ordinary `instance()` param) and `discardIf` (a bool
-EXPRESSION evaluated beside the alphaTest discard; it can read the
-varyings, the declared uniforms, and prelude's names). Slots are
-expressions on purpose: no local of the generated program is part of the
-contract, and colors are linear light, premultiplied throughout, so no
-slot touches them - reach past the slots by composing the constants
-above.
+A custom look is a citizen of the scene - lit by its lights, shadowed,
+fogged, exposed and tone mapped like the stock materials - at one of
+three tiers, top first:
+
+1. STANDARD FRAGMENT, CUSTOM VERTEX. Any vertex stage that writes the lit
+   varyings (vWorldPos, vNormal, vUv, plus vColor with `vertexColors`,
+   vUv2 with `lightMap`) pairs with `litFragment(options)` /
+   `standardFragment(options)` (`/glsl`): the exact fragment `lit` /
+   `standard` compile, the same option names and defaults as their
+   options with the texture options boolean. An instanced or displaced
+   mesh keeps the stock shading whole (`examples/instanced.tsx`: the
+   per-instance tint rides vColor). Instance it with the per-entry
+   uniforms the source declares (uColor, uSpecular/uShininess or
+   uMetalness/uRoughness, the maps opted into).
+2. A SURFACE FUNCTION inside the stock fragment. `litFragment({ surface,
+   prelude })`: `prelude` is file scope (uniforms and helpers; a uniform
+   it declares is an ordinary `instance()` param), `surface` declares
+   `void surface(inout Surface s)`, called once the program has filled
+   the Surface struct from its options (base from uColor, the map and
+   the vertex color; the normal, bent by the normal map; emissive,
+   ambient, the light model's fields) and before it shades. Rewrite any
+   field or `discard`; it reads the varyings, the declared uniforms and
+   prelude's names, and runs in the shadow twin too, so what it discards
+   casts no shadow. The struct is the contract, no local of the
+   generated program is; colors are linear light, premultiplied
+   throughout, `Surface.base` included. The material describes the
+   surface, the package shades it (Godot's fragment(), Filament's
+   material()).
+3. A FRAGMENT OF YOUR OWN over the scene set. Compose `SCENE` (or
+   `sceneSource({ lights, receiveShadow, env, fog })`, each flag leaving a
+   declaration out): it declares uCamPos, uHemiSky/uHemiGround, the
+   light list, the shadow set, the environment, fog and OUTPUT - declare
+   none of them yourself. Build a `Surface` with `surfaceOf(base,
+   normal)`, set the fields you mean, call `shadeBlinn(s, position)` or
+   `shadePbr(s, position)` (premultiplied rgb back: hemisphere, every
+   light with its shadow, the environment term, the emissive), add your
+   own terms times the alpha, and end with `sceneOutput(rgb, alpha,
+   position)` (fog, exposure, tone mapping, encode). A custom LIGHT MODEL
+   loops `sceneLight(i, position, normal)` to `uLightCount` instead of a
+   shade function: light i's direction and its color already attenuated,
+   cone-faded and shadowed (zero when it cannot reach). The stock
+   materials are built from this same set, so the tiers cannot drift;
+   `probes/scene-set-probe.tsx` is the byte-identity rig that checks it.
+   The demo `the-third-dimension.tsx` has tier 2 (the ground) and tier 3
+   (the knot's rim term); `probes/spot-custom-material-probe.tsx` a
+   sceneLight loop beside a lit() floor.
 `standardFragment(options)` is the same for `standard`: lit's options
 minus `specularMap`/`env` (the environment is always composed) plus
 `metalnessMap`/`roughnessMap`, on the same `litVertex(options)`, with
 `uMetalness`/`uRoughness` in place of `uSpecular`/`uShininess`.
-`litShadowFragment(options)` is the depth-pass twin (same base and
-discards, nothing after them), so a discarding material casts what it
-draws: build it on `litVertex(options)` with the OPPOSITE cull, instance
+`litShadowFragment(options)` is the depth-pass twin (same base, cutout
+and surface function, nothing after them), so a discarding material
+casts what it draws: build it on `litVertex(options)` with the OPPOSITE cull, instance
 it with only the uniform values its source declares (per-entry params
 reject unknown names), and pass it as the main instance's `shadow`.
 It returns undefined when the options cannot discard - the scene's
 default depth override is then already right, carry no `shadow`.
 `UNLIT_VERTEX` / `unlitFragment` / `unlitShadowFragment` are the unlit
 twins (no lighting flags, no cull; varyings vUv/vWorldPos only). TRAP:
-a shadow program that never reads `n` (no triplanar, no discardIf using
-it) reflects `uNormal` inactive - set `normalMatrix: false` on that
+a shadow program that never reads `n` (no triplanar, no surface function
+using it) reflects `uNormal` inactive - set `normalMatrix: false` on that
 instance or every caster move warns about the skipped write.
 
 Lights and `lit`: lights are graph NODES, like Three. `createDirectionalLight({
@@ -1564,13 +1597,16 @@ older bakes are rejected - re-bake with `srt tool 3d/model`.
   leaf under a design size. Only a leaf whose layout size deliberately
   differs from the target (supersampling) needs `handlersFor`, fed the
   layout size the app itself set.
-- Scene-wide effects reach a custom material ONLY by composition: a
-  `shaderMaterial` that does not compose `FOG` is unfogged, one that does
-  not compose the `SHADOW_*` trio is unshadowed, and since every
-  instanced mesh has a custom material, an instanced forest stays crisp
-  in a fogged scene until its fragment calls `fog()`. The engine cannot
-  inject it (what you declare is what runs); check both when a custom
-  look sits beside standard ones and reads wrong at distance.
+- A custom fragment that ends in `fragColor = vec4(...)` bypasses the
+  scene: no fog, no exposure or tone mapping, no encode - and a
+  hand-rolled loop over `uLightDir` renders a spot light as a
+  directional one (a lit rectangle on the floor, no cone). What you
+  declare is what runs, and the engine injects nothing, so pick a tier
+  (the three after the GLSL exports under "The model"): a stock fragment
+  on your vertex stage,
+  a `surface` function, or `SCENE` with `shadeBlinn`/`shadePbr` or
+  `sceneLight` and `sceneOutput` at the end. Composing `FOG` and the
+  `SHADOW_*` trio by hand still works and is no longer the shape.
 - Hover (enter/leave) reacts to pointer MOTION only: a mesh animating
   under a still pointer fires nothing until the next move - the same
   limit the element hit test has (hit-test-per-frame is an open platform

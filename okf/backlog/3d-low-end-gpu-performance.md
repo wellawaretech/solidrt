@@ -123,7 +123,7 @@ belongs in the library:
    consumers and is written up separately in
    [gpu-subrect-draws.md](gpu-subrect-draws.md). The only structural fix
    here, it costs no visual quality, and it composes with
-   [3d-shadow-cascades.md](3d-shadow-cascades.md), which would otherwise
+   [3d-shadow-cascades.md](../done/3d-shadow-cascades.md), which would otherwise
    multiply the pass count again.
 4. **The ground and backdrop fragment shaders** (part of the ~17 ms; demo).
    The top-down view costs 7.7 ms against the side view's 4.6 ms at

@@ -43,7 +43,7 @@ import type {
 import { layoutAttributes, layoutKey, layoutSlot } from "./geometry.ts"
 import type { VertexLayout } from "./geometry.ts"
 import { linearColor } from "./color.ts"
-import { litFragment, litShadowFragment, litVertex, SKIN_DECLS, SKIN_MATRIX, standardFragment, UNLIT_VERTEX, unlitFragment, unlitShadowFragment, unlitVertex, OUTPUT } from "./glsl.ts"
+import { litFragment, litShadowFragment, litVertex, SKIN_DECLS, SKIN_MATRIX, standardFragment, SURFACE_DEFAULTS, UNLIT_VERTEX, unlitFragment, unlitShadowFragment, unlitVertex, OUTPUT } from "./glsl.ts"
 
 export type Material = {
   /** The pipeline this material draws with for geometry of `layout`
@@ -401,8 +401,8 @@ export function lit(opts: LitOptions = {}): Material {
   }
   let params: ShaderParams = {
     uColor,
-    uSpecular: opts.specular ?? (specularMap ? 1 : 0),
-    uShininess: opts.shininess ?? 30,
+    uSpecular: opts.specular ?? (specularMap ? 1 : SURFACE_DEFAULTS.specular),
+    uShininess: opts.shininess ?? SURFACE_DEFAULTS.shininess,
   }
   if (triplanar) params.uTriplanar = opts.triplanar!
   if (alphaTest) params.uAlphaTest = opts.alphaTest!
@@ -515,8 +515,8 @@ export function standard(opts: StandardOptions = {}): Material {
   let roughnessMap = opts.roughnessMap !== undefined
   let lightMap = opts.lightMap !== undefined
   let mapTransform = opts.mapTransform !== undefined
-  let metalness = opts.metalness ?? (metalnessMap ? 1 : 0)
-  let roughness = opts.roughness ?? 1
+  let metalness = opts.metalness ?? (metalnessMap ? 1 : SURFACE_DEFAULTS.metalness)
+  let roughness = opts.roughness ?? SURFACE_DEFAULTS.roughness
   if (!(Number.isFinite(metalness) && metalness >= 0 && metalness <= 1)) {
     throw new Error("standard: metalness must be a number in 0..1, got " + opts.metalness)
   }

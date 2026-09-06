@@ -1,6 +1,6 @@
 ---
 title: Scene-wide effects on custom materials - one answer for fog, shadows and what comes next
-description: A shaderMaterial gets the scene's fog and shadows only by composing FOG and the SHADOW trio itself, and every instanced mesh has a custom material, so an instanced forest stays crisp and unshadowed in a fogged, shadowed scene with no error. Decide once between injecting the standard tail at the fragColor write and exporting one composed function the author calls, before the next scene-wide effect adds a third thing to forget.
+description: A shaderMaterial got the scene's fog, shadows, lights and output only by composing each set itself, so an instanced forest stayed crisp and unshadowed in a fogged, shadowed scene and a hand-rolled loop rendered a spot as a directional light, with no error. Decided as a function-level contract, neither injection nor bare composition - one scene set (sceneSource) with a Surface struct, shade functions, a light accessor and one output tail, the stock materials built from it, custom looks joining at one of three tiers.
 created: 2026-08-30
 ---
 
@@ -26,7 +26,37 @@ is where it should live until this item decides the mechanism. Three has
 the same split (a `ShaderMaterial` needs the fog and shadow chunks), and
 Three users hit it constantly.
 
-## The two shapes
+## The decision
+
+Neither shape as framed. The field (Godot's `fragment()` outputs,
+Filament's `material()`, Unity URP's `UniversalFragmentPBR` + `MixFog`,
+Bevy's `apply_pbr_lighting` + post-lighting processing, drei's
+CustomShaderMaterial for Three) converges on a FUNCTION-LEVEL contract:
+the author's code is a function the package's program calls (that is
+composition, no string surgery), and the package owns the effects (what
+injection wanted). Landed 2026-09-06 as `sceneSource` in
+`@solidrt/3d/glsl`: one set declaring everything the scene binds, a
+`Surface` struct (URP's SurfaceData, one for both light models),
+`shadeBlinn` / `shadePbr` (the whole light loop, environment and
+emissive), the `sceneLight(i, position, normal)` accessor (URP's
+GetAdditionalLight - the light's direction and its color already
+attenuated, cone-faded and shadowed, so the spot-as-directional mistake
+cannot be written) and `sceneOutput` (fog, exposure, tone mapping,
+encode - the one tail, which is also where the HDR scene buffer will
+land). The lit, standard, unlit and sprite fragments are built from that
+set, checked byte-identical before and after by
+`probes/scene-set-probe.tsx` (every material variant under a sun, a
+spot, a point light, fog, an environment and tone mapping). Custom looks
+join at three tiers - a stock fragment on a custom vertex stage, a
+`surface` function slot (which replaced `discardIf`), or a fragment of
+their own over the set - documented in `packages/3d/AGENTS.md` with the
+premise that was right all along: what you declare is what runs.
+
+The exposure/tone-mapping/encode tail turned out to be a fourth thing
+custom fragments forgot (the demo's knot wrote a hand gamma to
+fragColor), which is what settled the tail as one owned function.
+
+## The two shapes, as first framed
 
 - **Injection.** `shaderMaterialClass({ fog: true, receiveShadow: true })`
   rewrites the fragment source: declares the sets and wraps the
@@ -55,23 +85,14 @@ not two.
 
 ## Findings
 
-- The third thing to forget arrived with spot and point lights
-  (2026-09-02), and it is worse than fog or shadows: a custom fragment
-  that hand-rolls the directional pattern (`lambert(n, uLightDir[i])`
-  times `lightShadow(i, ...)`, no `lightVector`) renders a SpotLight as
-  a directional light - no cone, no falloff - so the "spotlight" washes
-  every mesh it faces edge to edge and a floor plane reads as a lit
-  RECTANGLE instead of a pool. Both of the demo's shaders
-  (`the-third-dimension.tsx`) are this exact pattern. Repro:
-  `probes/spot-custom-material-probe.tsx`, cone-less custom floor beside
-  a `lit` floor, same spot. Verified correct in `lit` on desktop GL and
-  Adreno (`probes/spot-point-probe.tsx`). The composed-function design
-  now has its three consumers: fog, the shadow trio, and the light
-  loop itself (`lightVector` gating both attenuation and whether the
-  shadow lookup runs at all, the `a <= 0.0 continue` in `lit`).
+Cut into `packages/3d/AGENTS.md` (the tiers paragraph under the GLSL
+exports, and the trap "a custom fragment that ends in `fragColor =
+vec4(...)` bypasses the scene"). The spot-as-directional finding of
+2026-09-02 is the trap's second sentence; its repro
+`probes/spot-custom-material-probe.tsx` is now the tier-3 rig, a
+`sceneLight` loop beside a lit() floor that must match it.
 
 ## Done looks like
 
 `examples/instanced.tsx` fogs and shadows with the standard meshes
-beside it, its fragment one line longer; AGENTS.md's trap paragraph
-shrinks to "end a custom fragment with `sceneShade`". No engine change.
+beside it - it lost its fragment altogether (tier 1). No engine change.

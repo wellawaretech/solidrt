@@ -76,7 +76,7 @@ import {
   STANDARD_FLOATS,
 } from "@solidrt/3d"
 import type { OrbitCameraHandle, SceneNode, SpotLightNode, Vec3 } from "@solidrt/3d"
-import { BLINN_SPECULAR, HEMISPHERE, LAMBERT, LIGHT_LOOKUP, LIGHT_SLOTS, LIT_VERTEX, MAX_LIGHTS, SHADOW, SHADOW_LOOKUP, SHADOW_SLOTS } from "@solidrt/3d/glsl"
+import { FRESNEL, LIT_VERTEX, litFragment, SCENE } from "@solidrt/3d/glsl"
 import { registerDebug } from "srt:dev"
 
 const KNOT_P = 2
@@ -227,59 +227,34 @@ const MIN_RENDER_SCALE = 1.5
 // vertex stage - LIT_VERTEX from @solidrt/3d/glsl, the package's standard
 // stage: it transforms by the per-mesh `uModel` and the target-shared
 // `uViewProj`, and hands the fragments world position (vWorldPos), world
-// normal (vNormal, through mat3(uNormal)) and UV (vUv). Lighting is
-// therefore world-space throughout, and `uCamPos` - the camera's world
-// position, which the scene writes once per camera move beside uViewProj -
-// is the view vector's other end. Lighting comes from the scene's real
-// light nodes through the standard uniform set (see LIGHTING below), so
-// there are no app-written uniforms and no baked-in light directions: the
-// meshes may be placed by any transform without the shaders caring, and
-// moving a light node re-shades everything.
+// normal (vNormal, through mat3(uNormal)) and UV (vUv). Lighting comes
+// from the scene's real light nodes through the scene set (SCENE): the
+// same source the stock materials compile, so there are no app-written
+// light uniforms and no baked-in light directions - the meshes may be
+// placed by any transform without the shaders caring, moving a light node
+// re-shades everything, and a spot light is a cone here because the set's
+// light loop is the one that knows what a spot is.
 
-const LIGHTING = glsl`
-  uniform vec3 uHemiSky;
-  uniform vec3 uHemiGround;
-
-  // The scene's typed light list (LIGHT_SLOTS) and the step from a light
-  // index to its incoming vector and strength (LIGHT_LOOKUP). lightVector
-  // is what makes the shader light-TYPE-correct: it hands back the unit
-  // vector toward light i and its attenuation - 1 for a directional, the
-  // cone-and-falloff product for a spot - so the loop below works whatever
-  // the rig is made of. Zero attenuation means the light cannot reach the
-  // fragment; skip its shadow lookup and its terms (the lit material's
-  // rule, and skipping the lookup is where the cone earns its taps back).
-  ${LIGHT_SLOTS}
-  ${LIGHT_LOOKUP}
-
-  // The shadow set, all of it written by the scene at target level.
-  // uShadowAtlas holds every light's depth maps as tiles; light i's maps
-  // are map slots uShadowFirst[i] .. + uShadowCount[i] (0 when it does
-  // not cast; more than one for a cascaded light), each with its tile
-  // uShadowRect[j] and the light-space view-projection uShadowMatrix[j]
-  // that rendered it; the two bias knobs are per light.
-  ${SHADOW_SLOTS}
-
-  ${HEMISPHERE}
-  ${LAMBERT}
-  ${BLINN_SPECULAR}
-  ${SHADOW}
-  // lightShadow(i, worldPos, n): light i's factor, 1 when it does not
-  // cast - the same lookup the lit material composes.
-  ${SHADOW_LOOKUP}
-`
+// The knot's own material terms, and its rim: a view-dependent term of
+// the shading model added after the scene's shade, not a stand-in light.
+const KNOT_SPECULAR = 0.45
+const KNOT_SHININESS = 64.0
+const RIM_POWER = 3.5
+const RIM_STRENGTH = 0.30
 
 /**
- * Knot fragment stage: Blinn-Phong (key + fill + rim + specular) over a
- * cosine palette swept along the knot.
+ * Knot fragment stage: the scene's Blinn-Phong shade (hemisphere, every
+ * light with its shadow, through shadeBlinn) over a cosine palette swept
+ * along the knot, plus a fresnel rim, ending in the scene's output
+ * (exposure, tone mapping, encode) like every stock material.
  */
 let KNOT_FRAGMENT = glsl`
   in vec3 vWorldPos;
   in vec3 vNormal;
   in vec2 vUv;
 
-  uniform vec3 uCamPos;
-
-  ${LIGHTING}
+  ${SCENE}
+  ${FRESNEL}
 
   const float TAU = 6.28318530718;
 
@@ -295,7 +270,6 @@ let KNOT_FRAGMENT = glsl`
   }
 
   void main() {
-    vec3 view = normalize(uCamPos - vWorldPos);
     vec3 n = normalize(vNormal);
 
     vec3 base = palette(vUv.x + 0.05 * sin(vUv.y * TAU * 3.0));
@@ -303,49 +277,33 @@ let KNOT_FRAGMENT = glsl`
     float band = smoothstep(0.30, 0.50, abs(fract(vUv.x * 64.0) - 0.5));
     base *= mix(0.82, 1.0, band);
 
-    vec3 light = hemisphere(n, uHemiSky, uHemiGround);
-    vec3 spec = vec3(0.0);
-    for (int i = 0; i < ${MAX_LIGHTS}; i++) {
-      if (i >= uLightCount) break;
-      vec3 l;
-      float a = lightVector(i, vWorldPos, l);
-      if (a <= 0.0) continue;
-      // The knot draws into every map, so it also self-shadows: a stretch
-      // of tube in the lee of another loses that light and keeps the rest,
-      // which is where the colour separation gets its hardest edge.
-      float s = lightShadow(i, vWorldPos, n);
-      vec3 lc = uLightColor[i] * (a * s);
-      light += lc * lambert(n, l);
-      spec += lc * blinnSpecular(n, view, l, 64.0);
-    }
-
-    vec3 lit = base * light + spec * 0.45;
+    // The knot draws into every map, so it also self-shadows: a stretch
+    // of tube in the lee of another loses that light and keeps the rest,
+    // which is where the colour separation gets its hardest edge.
+    Surface s = surfaceOf(vec4(base, 1.0), n);
+    s.specular = ${KNOT_SPECULAR.toFixed(2)};
+    s.shininess = ${KNOT_SHININESS.toFixed(1)};
+    vec3 rgb = shadeBlinn(s, vWorldPos);
 
     // Fresnel rim tinted by the surface's own color, so grazing angles
-    // brighten the silhouette instead of bleaching it toward white. A
-    // view-dependent term of the shading model, not a stand-in light.
-    float rim = pow(1.0 - max(dot(n, view), 0.0), 3.5);
-    lit += mix(vec3(0.25, 0.45, 0.85), base, 0.5) * rim * 0.30;
+    // brighten the silhouette instead of bleaching it toward white.
+    vec3 view = normalize(uCamPos - vWorldPos);
+    rgb += mix(vec3(0.25, 0.45, 0.85), base, 0.5) * fresnel(n, view, ${RIM_POWER.toFixed(1)}) * ${RIM_STRENGTH.toFixed(2)};
 
-    fragColor = vec4(pow(clamp(lit, 0.0, 1.0), vec3(0.92)), 1.0);
+    fragColor = sceneOutput(rgb, 1.0, vWorldPos);
   }
 `
 
 /**
- * Ground fragment stage: a distance-faded checkerboard, lit by the scene's
- * lights and the shadow map, over the plane's own UVs scaled to its world
- * footprint (FLOOR_SIZE, interpolated), so the mesh can be a stock plane()
- * under any transform. Output is premultiplied
- * alpha - the ground fades to fully transparent so the scene's background
- * entry shows through it. That fade is why the material is `transparent`.
+ * Ground: the stock lit fragment with a `surface` function - the material
+ * describes the surface (a distance-faded checkerboard over the plane's
+ * own UVs scaled to its world footprint, FLOOR_SIZE) and the package
+ * shades it with the same lights, shadows and fog as the knot. Output is
+ * premultiplied alpha - the ground fades to fully transparent so the
+ * scene's background entry shows through it. That fade is why the
+ * material is `transparent`.
  */
-let GROUND_FRAGMENT = glsl`
-  in vec2 vUv;
-  in vec3 vNormal;
-  in vec3 vWorldPos;
-
-  ${LIGHTING}
-
+let GROUND_PRELUDE = glsl`
   // World units per square.
   const float TILE = 1.15;
 
@@ -365,40 +323,28 @@ let GROUND_FRAGMENT = glsl`
                   - abs(fract((p + 0.5 * w) * 0.5) - 0.5)) / w;
     return 0.5 - 0.5 * i.x * i.y;
   }
+`
 
-  void main() {
+let GROUND_SURFACE = glsl`
+  void surface(inout Surface s) {
     vec2 p = (vUv - 0.5) * ${FLOOR_SIZE.toFixed(1)};
-    float r = length(p);
-    float fade = 1.0 - smoothstep(6.0, 17.0, r);
-
-    // Albedo, not final colour: the light term below multiplies it.
+    float fade = 1.0 - smoothstep(6.0, 17.0, length(p));
+    // Albedo, not final colour: the scene's shade multiplies it. Under the
+    // spot rig the three cones overlap on the centre of the floor, so the
+    // tints still sum toward neutral there - until the maps take them away
+    // one at a time: three shadows, each keeping the two lights it does
+    // not block, crossing into pure primaries where two overlap and into
+    // the ambient alone where all three do, inside pools that fall off
+    // toward the rim instead of a flat wash.
     vec3 tile = mix(vec3(0.16, 0.18, 0.22), vec3(0.52, 0.55, 0.60), checker(p / TILE));
-
-    // The same real lights the knot uses, through the same lightVector
-    // step. Under the spot rig the three cones overlap on the centre of
-    // the floor, so the tints still sum toward neutral there - until the
-    // maps take them away one at a time. That is the picture here: three
-    // shadows, each keeping the two lights it does not block, crossing
-    // into pure primaries where two overlap and into the ambient alone
-    // where all three do - now inside pools that fall off toward the rim
-    // instead of a flat wash.
-    vec3 n = normalize(vNormal);
-    vec3 light = hemisphere(n, uHemiSky, uHemiGround);
-    for (int i = 0; i < ${MAX_LIGHTS}; i++) {
-      if (i >= uLightCount) break;
-      vec3 l;
-      float a = lightVector(i, vWorldPos, l);
-      if (a <= 0.0) continue;
-      light += uLightColor[i] * (a * lambert(n, l)) * lightShadow(i, vWorldPos, n);
-    }
-    tile *= light;
-
     // Premultiplied, alpha being the distance fade: the floor is a solid
-    // surface that dissolves into the background at the rim, so the shadow
+    // surface that dissolves into the background at the rim, so a shadow
     // simply darkens the tiles rather than contributing coverage of its own.
-    fragColor = vec4(tile * fade, fade);
+    s.base = vec4(tile * fade, fade);
   }
 `
+
+let GROUND_FRAGMENT = litFragment({ transparent: true, prelude: GROUND_PRELUDE, surface: GROUND_SURFACE })
 
 /**
  * Backdrop: a static radial gradient with a touch of hash grain so the ramp
@@ -659,6 +605,9 @@ function App() {
       vertex: LIT_VERTEX,
       fragment: GROUND_FRAGMENT,
       transparent: true,
+      // lit's per-entry uniforms: the surface function replaces the base,
+      // so the color is moot; no highlight on the floor.
+      params: { uColor: [1, 1, 1, 1], uSpecular: 0, uShininess: 30 },
       label: "ground",
     }),
   )

@@ -1,6 +1,6 @@
 ---
 title: Cascaded shadow maps
-description: One shadow.camera box per casting light: a large outdoor scene either blurs (the box covers everything at one map's resolution) or clips (the box covers the near part and the far part is lit). Cascades split the view frustum into N maps; demand-gated on a scene that outgrows the box.
+description: One shadow.camera box per casting light: a large outdoor scene either blurs (the box covers everything at one map's resolution) or clips (the box covers the near part and the far part is lit). Cascades split the view frustum into N maps, landed 2026-08-28 as shadow.cascades on a directional light with a blend band and shadow.distance; the split ratios stay fixed (their own backlog item).
 created: 2026-08-27
 ---
 
@@ -22,7 +22,7 @@ views, the slot set is per light - the cascade set would be N maps and
 N matrices under one light slot, plus a split-depth array and a
 per-fragment cascade select in `SHADOW_LOOKUP`.
 
-## Landed (2026-08-28, uncommitted)
+## Landed 2026-08-28
 
 `shadow: { cascades: N }` (1..`MAX_CASCADES` = 4, default 1 = the box)
 on a directional light. The scene keeps N internal views for it, each a
@@ -94,9 +94,8 @@ every slice corner inside its sphere, the far ring touching it, the snap
 on-grid within a step; `placeShadowCamera` is policy only, and one
 `forEachShadowSlot` deals the map slots for rects and matrices alike.
 
-Open here: split ratios (`CASCADE_SPLIT_LAMBDA` is fixed at 0.5;
-`shadow.splits` as fractions of the distance would be the additive
-step), on demand.
+Still open, as its own item: the split ratios
+([3d-shadow-cascade-splits](../backlog/3d-shadow-cascade-splits.md)).
 
 ## Done looks like
 
