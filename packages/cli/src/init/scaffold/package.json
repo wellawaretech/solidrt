@@ -15,7 +15,7 @@
     }
   },
   "scripts": {
-    "dev": "srt run",
+    "dev": "srt run --lan",
     "pack": "srt pack",
     "server": "srt server",
     "client": "srt client",
