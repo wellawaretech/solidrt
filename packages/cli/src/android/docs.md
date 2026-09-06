@@ -9,7 +9,7 @@ so it picks the server up. The command then waits a few seconds for the
 client to appear on the server and reports its client id. The server must
 run with `--lan` so the device can reach it; an emulator reaches a loopback
 server through its host alias. Without a running server the client starts
-on its own, into the launcher (`--port` must name a live server). With several
+on its own, into the player (`--port` must name a live server). With several
 devices connected a terminal asks which ones (all preselected, so enter
 launches on every device); `--device` picks one by serial or unique prefix
 (a script must).

@@ -57,7 +57,7 @@ define stage-windows
 	@echo "Staged $(3).exe into $(HOST_DIST)/"
 endef
 
-client: $(LAUNCHER_JS) $(BSOD_JS) angle-windows
+client: $(PLAYER_JS) $(BSOD_JS) angle-windows
 	@echo "Building SOLIDRT-GO Windows ($(PROFILE)) $(VERSION)"
 	RUSTFLAGS="$(WIN_RUSTFLAGS)" $(WIN_CMAKE_ENV) \
 	$(SOLIDRT_VERSION) cargo build $(CARGO_PROFILE_FLAG) $(GO_FEATURES) --bin solidrt-go --target-dir target/go

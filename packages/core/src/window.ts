@@ -7,8 +7,8 @@ import { getEventHandler, focusedNode, setFocus, activateTextInput, setInterestR
 import { scanForOrphans, getNodePath } from "./renderer"
 
 /**
- * Leaves the current app, unconditionally: back to the launcher in a dev
- * client, quitting when standalone or at the launcher itself (on Android the
+ * Leaves the current app, unconditionally: back to the player in a dev
+ * client, quitting when standalone or at the player itself (on Android the
  * client backgrounds instead of dying). The default action of an unprevented
  * `back` event; call it directly to exit programmatically, e.g. after
  * intercepting back for an unsaved-changes dialog.

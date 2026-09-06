@@ -66,8 +66,8 @@ declare module "srt:events" {
 // The running application's own surface (lattice), present in every build.
 declare module "srt:app" {
   /**
-   * Leave the current app, unconditionally: back to the launcher in a dev
-   * client, quit when standalone or at the launcher root (on Android the
+   * Leave the current app, unconditionally: back to the player in a dev
+   * client, quit when standalone or at the player root (on Android the
    * client backgrounds instead of dying). The default action of an
    * unprevented `back` event; prefer the @solidrt/core re-export.
    */
@@ -81,7 +81,7 @@ declare module "srt:dev" {
   export const canDiscover: boolean
   export const recents: string[]
   /**
-   * The dev-server address the client was launched with (so the launcher can
+   * The dev-server address the client was launched with (so the player can
    * auto-connect without on-device interaction), or null when launched without
    * one.
    */
@@ -101,7 +101,7 @@ declare module "srt:dev" {
   export function registerDebug(name: string, fn: (args?: any) => unknown): void
 }
 
-// Installed-app management (lattice), the launcher's surface over the client's
+// Installed-app management (lattice), the player's surface over the client's
 // version store. Present only in go/dev client builds; elsewhere `available`
 // is false, `list` returns [], and launch/remove are no-ops.
 declare module "srt:apps" {
@@ -166,7 +166,7 @@ declare module "srt:apps" {
   export function info(id: string): AppInfo
   /**
    * Boot the app's installed current version, replacing the running app (the
-   * launcher). Throws when the app is not installed. Custom fonts of the
+   * player). Throws when the app is not installed. Custom fonts of the
    * launched app register at client startup only, not mid-session.
    */
   export function launch(id: string): void
@@ -182,8 +182,8 @@ declare module "srt:apps" {
    */
   export function clearCache(id: string): void
   /**
-   * Build identity of this runtime, for the launcher's settings screen. Not
-   * app-specific, but surfaced here since the launcher already imports this
+   * Build identity of this runtime, for the player's settings screen. Not
+   * app-specific, but surfaced here since the player already imports this
    * module. `version` is the release version (git describe; "0.0.0-dev" in a
    * plain build), `profile` is "debug" or "release", `platform` is the OS
    * (std::env::consts::OS, e.g. "linux", "android", "windows", "macos").

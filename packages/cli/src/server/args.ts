@@ -1,5 +1,5 @@
 // The server's command line: the interface `srt run` / `srt server` (a bun
-// launcher that spawns this process) and the console (a flux app that spawns
+// player that spawns this process) and the console (a flux app that spawns
 // it or imports it) share, so it takes flags and never a config blob
 // (okf/done/srt-command-folders.md):
 //

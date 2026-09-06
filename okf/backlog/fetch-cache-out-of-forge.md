@@ -25,7 +25,7 @@ What lives where today:
   `Cache` from the injected `FetchCacheDir` userdata. Without a dir the
   option degrades to plain network.
 - lattice - the only configurer (per-app dir from storage resolution)
-  and the launcher browse/clear consumer (`forge::cache::scan` in
+  and the player browse/clear consumer (`forge::cache::scan` in
   go/store.rs).
 
 The wrinkle: flux cannot call into lattice (flux depends on forge, not

@@ -1,4 +1,4 @@
-// The launcher's back affordance: an arrow, no label, meant to sit at the left
+// The player's back affordance: an arrow, no label, meant to sit at the left
 // of a screen's heading row rather than on a row of its own (a lone labelled
 // button above the title reads as a stray form control, and duplicates what the
 // title already says). Every view that fills a pane carries one, in both

@@ -35,18 +35,18 @@ pub struct DevSession {
   // srt.dev plugin.
   dev_cmd_tx: UnboundedSender<DevCmd>,
   // Dev-server address delivered at launch (srt client --android), exposed to JS
-  // as srt:dev launchAddress so the launcher can auto-connect. Consumed by a
-  // user exit (see DevExitHandle), since the launcher re-dials it on every
+  // as srt:dev launchAddress so the player can auto-connect. Consumed by a
+  // user exit (see DevExitHandle), since the player re-dials it on every
   // mount.
   launch_address: Arc<Mutex<Option<String>>>,
 }
 
 /// What a user exit does to the dev session (see ExitPolicy in lib.rs): drop
-/// the connection and forget the launch address, so the launcher the exit
+/// the connection and forget the launch address, so the player the exit
 /// returns to sits idle instead of re-dialing and taking the server's
 /// latched push straight back into the app. A device on a dev leash that
 /// exits its app is done with the leash too; the address stays one tap away
-/// in the launcher.
+/// in the player.
 #[derive(Clone)]
 pub struct DevExitHandle {
   cmd_tx: UnboundedSender<DevCmd>,
@@ -157,7 +157,7 @@ impl DevSession {
   }
 
   /// Replay the latest connection state into a freshly built engine so a reload
-  /// (e.g. a server stop returning to the launcher) keeps the right indicator.
+  /// (e.g. a server stop returning to the player) keeps the right indicator.
   pub fn replay_state(&self, exec: &ExecHandle) {
     emit_dev_state(exec, self.dev_state.borrow().clone(), self.dev_recents.borrow().clone());
   }
@@ -186,9 +186,9 @@ fn add_recent(recents: &Rc<RefCell<Vec<String>>>, addr: &str, recent: Option<&st
 }
 
 // Emit the dev-server connection state to JS as the sticky `dev` event.
-// Sticky so it replays to the launcher's subscriber on each engine rebuild,
+// Sticky so it replays to the player's subscriber on each engine rebuild,
 // which keeps the "connected" indicator across a server stop (the stop reloads
-// the launcher but leaves the websocket up).
+// the player but leaves the websocket up).
 fn emit_dev_state(eh: &ExecHandle, st: ConnState, recents: Vec<String>) {
   eh.exec(move |ctx| {
     let (state, addr, tunneled) = st.parts();

@@ -116,7 +116,7 @@ The precise condition matters, because it is what makes the fix below work.
 The worker DOES contain the wedge as long as no further `SDL_UDEV_Scan`
 runs. Gamepad init is the scan that bit us: it happens inside `App::run` at
 startup, and on this box it is slow enough (14 video nodes) to still be
-running when the launcher's first render called into the camera. Hotplug
+running when the player's first render called into the camera. Hotplug
 does NOT do the same: `SDL_UDEV_Poll` dispatches the one device that
 changed, and `CameraUdevCallback` only acts on `SDL_UDEV_DEVICE_VIDEO_CAPTURE`
 class devices, so a gamepad plugged in later never re-walks the video nodes.
@@ -138,7 +138,7 @@ V3D, GLES 3.1, Impeller and the app were never implicated.
 
 ## What we do about it
 
-The launcher no longer enumerates cameras. Its scan button used to be gated
+The player no longer enumerates cameras. Its scan button used to be gated
 on `cameraDevices().length > 0` in both `home-screen.tsx` and
 `connect-panel.tsx`, which started the camera subsystem on every client
 start - and, on the Pi, did so while gamepad init was still scanning, so both

@@ -15,7 +15,7 @@ export type ClientEntry = {
    * the advertisement); dev tools plan their verification surface from it. */
   queries: string[]
   /** The client's storage tree on its own machine (`<data-root>/client<N>`
-   * for a dev client, the install folder for the launcher or a packed app),
+   * for a dev client, the install folder for the player or a packed app),
    * or null when it runs without writable storage or predates the field. */
   clientDir: string | null
   /** Whether its stats overlay is drawn (see POST /stats). */

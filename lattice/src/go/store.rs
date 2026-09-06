@@ -6,7 +6,7 @@
 //     state.json                  {version, current, previous, healthy, launches}
 //
 // A dev push is installed here before the engine reload applies it, so the
-// app appears in the launcher's list and can be launched offline. The version
+// app appears in the player's list and can be launched offline. The version
 // id is the sha256 of the
 // manifest's canonical bytes (the exact string the CLI sent, never
 // re-serialized); every file's own hash and size are verified against its
@@ -140,7 +140,7 @@ pub fn current_version_dir(app_id: &str) -> Option<PathBuf> {
   dir.is_dir().then_some(dir)
 }
 
-/// An installed app as the launcher lists it.
+/// An installed app as the player lists it.
 pub struct InstalledApp {
   pub id: String,
   /// The installed manifest's displayName, defaulting to the id.
@@ -196,7 +196,7 @@ pub(crate) fn list_installed_at(apps: &Path) -> Vec<InstalledApp> {
       Some(InstalledApp { id, name, icon, version: state.current, updated, size })
     })
     .collect();
-  // Newest first, the way a launcher list reads; equal timestamps (two
+  // Newest first, the way a player list reads; equal timestamps (two
   // installs inside the filesystem's mtime granularity) fall back to name.
   installed.sort_by(|a, b| b.updated.cmp(&a.updated).then_with(|| a.name.cmp(&b.name)).then_with(|| a.id.cmp(&b.id)));
   installed
@@ -207,7 +207,7 @@ pub(crate) fn list_installed_at(apps: &Path) -> Vec<InstalledApp> {
 const ICON_MAX_BYTES: u64 = 128 * 1024;
 
 // The manifest-declared icon's SVG source from a version dir. Cosmetic, so
-// every failure degrades to None (the launcher falls back) rather than
+// every failure degrades to None (the player falls back) rather than
 // failing the listing; only the oversize case warns, since it means a
 // manifest that passed validation with an unreasonable icon.
 fn load_icon(version_dir: &Path, manifest: &Manifest) -> Option<String> {
@@ -281,7 +281,7 @@ pub struct CacheEntry {
   pub size: u64,
 }
 
-/// Usage details for one installed app, as the launcher's detail view shows
+/// Usage details for one installed app, as the player's detail view shows
 /// them. The listings are disk walks, not manifest claims: the manifest is
 /// reconciled against disk at install time, and what the view shows is what
 /// is actually there.

@@ -72,7 +72,7 @@ markdown file per page.
 - `flux` - JavaScript runtime (QuickJS-based): exposes Alloy and Forge through `flux:*` modules, embeddable and standalone
 - `lattice` - the runtime itself, one crate with two binaries:
   - `solidrt` - what an application ships with: drives the window and the frame loop, loads and sandboxes the packed app, and adds the `srt:*` modules
-  - `solidrt-go` - the development client: the same runtime, connected to a dev server, with the launcher and the debug tooling on top. Also built as an Android app, with iOS to follow
+  - `solidrt-go` - the development client: the same runtime, connected to a dev server, with the player and the debug tooling on top. Also built as an Android app, with iOS to follow
 
 **npm packages**
 

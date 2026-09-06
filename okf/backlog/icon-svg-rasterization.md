@@ -18,7 +18,7 @@ The runtime already has everything needed to close the loop in-house, no
 external rasterizer:
 
 1. render the `<svg>` element at the target size (full usvg fidelity, the
-   same renderer the launcher tiles use),
+   same renderer the player tiles use),
 2. `captureSnapshot(nodeId)` (`flux:gpu`) - premultiplied RGBA8,
 3. `encodeImage(img)` (`flux:image`) - PNG bytes, premultiplied-to-straight
    handled by default,

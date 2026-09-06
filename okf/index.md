@@ -176,9 +176,9 @@ Shaped, not started.
   latency ever shows a real problem. macOS (ANGLE-Metal) unmeasured.
 - **[App icons](backlog/app-icons.md)** [2026-07-27]
   Stages 1+2 done (SVG icon from package.json/convention through the manifest
-  to the launcher, monogram fallback; dev-client window icon via go-gated
-  resvg + SDL_SetWindowIcon); stage 3 packed executables remains and owns
-  packed-app icons on all platforms.
+  to the player, monogram fallback; dev-client window icon via go-gated resvg
+  + SDL_SetWindowIcon); stage 3 packed executables remains and owns packed-app
+  icons on all platforms.
 - **[App-level runtime configuration](backlog/app-runtime-config.md)** [2026-08-17]
   A start-only `solidrt.runtime` block in package.json for tunables that today
   are compile-time constants (JS stack size, word cache size, paragraph
@@ -189,7 +189,7 @@ Shaped, not started.
   name into an end user's filesystem - no shipped game files itself under
   unreal/. Proposed rule - <pref>/<org>/<app-id>/ when solidrt.org is
   declared, <pref>/<app-id>/ when it is not, never a forced vendor level -
-  with the launcher taking the same rule as <pref>/solidrt-go/. The config key
+  with the player taking the same rule as <pref>/solidrt-go/. The config key
   exists but is display metadata only: org reaches neither the manifest nor
   the pack payload, so the plumbing is the work. Independent of the dev-server
   session work, since dev clients move to ~/.srt/clients/.
@@ -238,8 +238,8 @@ Shaped, not started.
   "Opening the app at a URL from outside: an OS registration half (scheme
   declaration in srt pack and the Android manifest) and an app half that is
   just onOpenUrl."
-- **[A demo shows up in the launcher under its project's name, not its own](backlog/demo-identity-per-demo.md)** [2026-08-26]
-  srt demo serves demos/ as one project, so the launcher entry, appId and
+- **[A demo shows up in the player under its project's name, not its own](backlog/demo-identity-per-demo.md)** [2026-08-26]
+  srt demo serves demos/ as one project, so the player entry, appId and
   storage are the project's; the gallery appeared as "SolidRT components
   demos". Renamed for now (one demo per package); a second demo in a package
   needs per-demo identity derived from the slug.
@@ -310,7 +310,7 @@ Shaped, not started.
 - **[Focus navigation (spatial/D-pad, tab order) on the focusable registry](backlog/focus-navigation.md)** [2026-08-01]
   Stage 3 of the focus/key-routing work - move focus across getFocusables()
   candidates from bubbled arrow keys, activate with select/Enter, and fold the
-  launcher's parallel spatial nav onto real focus.
+  player's parallel spatial nav onto real focus.
 - **[fontStretch / width axis](backlog/font-stretch-axis.md)** [2026-07-27]
   The bundled Noto variables carry a wdth axis the text API cannot reach;
   whether to expose a CSS-style font-stretch, pending an Impeller

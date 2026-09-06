@@ -27,7 +27,7 @@
   // target dirs matter because CMake emits fake-.ts dependency files
   // (compiler_depend.ts) under lattice/target build trees. packages/,
   // apps/, and sandbox/ are excluded because they carry their own
-  // target-specific tsconfigs (flux-targeted core/components/launcher
+  // target-specific tsconfigs (flux-targeted core/components/player
   // vs bun-targeted cli); this root config only covers strays with no
   // nearer config.
   "exclude": ["**/node_modules", "**/target", "packages", "apps", "lattice", "sandbox"]

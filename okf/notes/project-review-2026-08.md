@@ -85,7 +85,7 @@ Where you are behind, and not by a little: text editing (selection, clipboard, I
 
 1. **JS test harness in CI** (already shaped in backlog). Every other item below is unsafe to ship at your commit cadence without it.
 2. **Text selection + clipboard + IME composition.** This is the single feature gap that disqualifies the most app categories, and it touches alloy, flux and components at once, so it only gets more expensive later.
-3. **Decide the security posture explicitly.** Either the launcher runs trusted apps only (say so, drop the "one client runs many apps" framing) or ffi/subprocess/process/fs need a per-app manifest grant. Signing the pack container is on the same path.
+3. **Decide the security posture explicitly.** Either the player runs trusted apps only (say so, drop the "one client runs many apps" framing) or ffi/subprocess/process/fs need a per-app manifest grant. Signing the pack container is on the same path.
 4. **Fix the 1 ms idle spin and the O(n) texture scan.** Both are small and both bite on the exact devices you target (TV, Pi, phone).
 5. **Lazy/virtualized list + engine-side fling.** Flutter's slivers are the reason it feels native on long lists; a column that "IS the list" does not survive a real dataset.
 6. **Expose Impeller's filters** (blur, shadow, backdrop, path clip) as props. Cheap to do, closes the "where is box-shadow" reflex without GLSL.

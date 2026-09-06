@@ -1,6 +1,6 @@
 // The dev server registry record: ~/.solidrt/servers/<key hash>/live.json,
 // written by the server (server/registry.ts) and read by srt client, srt mcp
-// and the launcher (src/lib/registry.ts). See bundle.d.ts for the folder.
+// and the player (src/lib/registry.ts). See bundle.d.ts for the folder.
 
 export type LiveRecord = {
   pid: number

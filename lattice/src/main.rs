@@ -126,7 +126,7 @@ fn main() {
         (source_path.map(path_app), Vec::new(), None)
       }
     };
-  // The runtime has no built-in screen to fall back to (the launcher is
+  // The runtime has no built-in screen to fall back to (the player is
   // go-only); without an app there is nothing to run.
   #[cfg(not(feature = "go"))]
   if app.is_none() {

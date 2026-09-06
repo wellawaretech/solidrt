@@ -23,7 +23,7 @@ release is attempted:
   globals); the flux-types/docs mirroring is still a
   manual convention with no check. Partly covered since 2026-07-25: CI
   (.github/workflows/ci.yml) typechecks core/components/cli/cli-server/
-  launcher and runs `srt check` on every examples/* app per PR/push.
+  player and runs `srt check` on every examples/* app per PR/push.
 - `srt check` clean on the scaffold app; components strict-clean (postmortem
   4.3 second half) so dependency errors are not hiding app-relevant ones.
   CI covers the examples apps but not the scaffold itself.

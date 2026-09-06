@@ -62,7 +62,7 @@ impl Drop for TextureInner {
     // The window shader first, unconditionally: it is raster-thread state
     // cleared only by an explicit command, and a dying app's declaration is
     // stale by definition. Without this, an app that declared one leaves the
-    // next app (or the launcher) rendering through it - the raster thread
+    // next app (or the player) rendering through it - the raster thread
     // holds the program by Rc, so even the program destroys below would not
     // stop the pass.
     self.gui.alloy.set_window_shader(None).ok();

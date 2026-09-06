@@ -79,7 +79,7 @@
 
         <!-- Trap the system back button/gesture: it arrives as the AC_BACK key
              event, which alloy normalizes to the back intent (in-app
-             navigation, else exit to launcher / background). Without the trap
+             navigation, else exit to player / background). Without the trap
              the activity would finish on every back press. -->
         <meta-data android:name="SDL_ENV.SDL_ANDROID_TRAP_BACK_BUTTON" android:value="1"/>
 

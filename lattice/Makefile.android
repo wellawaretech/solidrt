@@ -55,7 +55,7 @@ GRADLE_WRAPPER_JAR = android/gradle/wrapper/gradle-wrapper.jar
 
 # Dev-server address handed to the launched client as the srt_dev_server intent
 # extra; MainActivity forwards it to native argv (--dev-server) and the client
-# auto-connects instead of waiting in the launcher's connect UI. A device shares
+# auto-connects instead of waiting in the player's connect UI. A device shares
 # a LAN with this host, so the default is this host's own IPv4 on the route to
 # the outside world. Override with DEV_SERVER=host:port (an emulator reaches the
 # host through its NAT alias, DEV_SERVER=10.0.2.2:34884), or DEV_SERVER= to
@@ -96,7 +96,7 @@ define ndk-stage
 	@echo "Staged Android .so files into $(ANDROID_DIST)/"
 endef
 
-android-client: $(LAUNCHER_JS) $(BSOD_JS)
+android-client: $(PLAYER_JS) $(BSOD_JS)
 	$(call ndk-build,SOLIDRT-GO ($(PROFILE)),,$(CARGO_PROFILE_FLAG) $(GO_FEATURES) --target-dir target/go)
 	$(call ndk-stage,$(PROFILE))
 
@@ -168,7 +168,7 @@ APK_PROD_DEBUG = android/app/build/outputs/apk/prod/debug/app-prod-debug.apk
 
 .PHONY: android-runtime
 
-# Build the production Android runtime: the not(go) engine .so (no launcher,
+# Build the production Android runtime: the not(go) engine .so (no player,
 # no dev server; SDL_main boots the .srtapp packed into the APK) assembled
 # into the prod flavor as the runner APK `srt pack --apk` patches. Same
 # feature set as the desktop runtime. Single ABI (default arm64-v8a) for the

@@ -1,6 +1,6 @@
 ---
 title: A shipped app stores its data under its own vendor, not under solidrt
-description: Packed apps currently land in <pref>/SolidRT/<app-id>/, forcing the engine's name into an end user's filesystem - no shipped game files itself under unreal/. Proposed rule - <pref>/<org>/<app-id>/ when solidrt.org is declared, <pref>/<app-id>/ when it is not, never a forced vendor level - with the launcher taking the same rule as <pref>/solidrt-go/. The config key exists but is display metadata only: org reaches neither the manifest nor the pack payload, so the plumbing is the work. Independent of the dev-server session work, since dev clients move to ~/.srt/clients/.
+description: Packed apps currently land in <pref>/SolidRT/<app-id>/, forcing the engine's name into an end user's filesystem - no shipped game files itself under unreal/. Proposed rule - <pref>/<org>/<app-id>/ when solidrt.org is declared, <pref>/<app-id>/ when it is not, never a forced vendor level - with the player taking the same rule as <pref>/solidrt-go/. The config key exists but is display metadata only: org reaches neither the manifest nor the pack payload, so the plumbing is the work. Independent of the dev-server session work, since dev clients move to ~/.srt/clients/.
 created: 2026-08-13
 ---
 
@@ -26,13 +26,13 @@ Never a forced `solidrt/` level. The vendor grouping is opt-in and belongs
 to the app's publisher: a vendor with five apps gets one folder holding
 five, a vendor with one app can skip it entirely.
 
-The launcher takes the same rule rather than an exception, which is what
+The player takes the same rule rather than an exception, which is what
 finally removes the odd `SolidRT/go/` split - the product is called
 `solidrt-go`, so splitting its name across two directory levels was an
 artifact of SDL's `get_pref_path(org, app)` signature, not a decision:
 
 ```
-<pref>/solidrt-go/         the launcher: identity/, config.json, logs/, apps/<id>/...
+<pref>/solidrt-go/         the player: identity/, config.json, logs/, apps/<id>/...
 ```
 
 With no shared vendor namespace left, the hazard of a packed app whose id

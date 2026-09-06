@@ -121,7 +121,7 @@ function devServerAddress(adb: string, target: string, server: LiveRecord): stri
 
 // The dev server the device should dial: --port picks a local server by
 // port (and must exist), otherwise the project (or file) in the current
-// directory, or none: the client then starts on its own, into the launcher.
+// directory, or none: the client then starts on its own, into the player.
 async function resolveServer(): Promise<LiveRecord | null> {
   if (port !== undefined) {
     let resolved = await resolveByPort(port)

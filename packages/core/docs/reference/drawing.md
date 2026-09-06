@@ -91,7 +91,7 @@ for every pixel source in the engine.
 ## Logo
 
 The SolidRT brand mark, the same seven-segment puzzle the scaffold's welcome
-screen and the launcher draw, as a component: a square `view` of `size`
+screen and the player draw, as a component: a square `view` of `size`
 pixels with the segments as gradient-filled `d-path`s.
 
 {{ decl packages/core/src/logo.tsx LogoProps }}

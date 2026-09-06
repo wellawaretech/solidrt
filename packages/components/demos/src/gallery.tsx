@@ -106,14 +106,14 @@ const TAP_TARGET = 44
 // Breathing room between the list's cards and the scroller's clip edge, so a
 // focus ring on the outermost card is not cut off.
 const LIST_GUTTER = 2
-// Reading widths, as the launcher sets them: single-pane runs up to the
+// Reading widths, as the player sets them: single-pane runs up to the
 // expanded breakpoint (840), so past these the column is centered rather than
 // stretched. The detail column is wider than the list's because it holds
 // label-and-value rows and controls, not prose.
 const COLUMN_MAX_WIDTH = 440
 const DETAIL_MAX_WIDTH = 640
 
-// An icon-only press target, as the launcher's back arrow: a square tap
+// An icon-only press target, as the player's back arrow: a square tap
 // target with a hover tint and no fill, no label.
 function IconButton(props: { src: string; onPress: () => void }) {
   return (
@@ -136,7 +136,7 @@ function IconButton(props: { src: string; onPress: () => void }) {
   )
 }
 
-// A group in the list, shaped like the launcher's app rows: a pressable Card
+// A group in the list, shaped like the player's app rows: a pressable Card
 // with a title and a muted line, filled while selected or hovered. Only
 // two-pane shows the selection - single-pane shows the list without the
 // detail, and a highlighted row with nothing selected on screen reads as a

@@ -21,7 +21,7 @@ mod tests;
 
 #[cfg_attr(not(feature = "go"), allow(dead_code))]
 enum EngineCmd {
-  // Return to the launcher; only the dev session sends this.
+  // Return to the player; only the dev session sends this.
   #[cfg(feature = "go")]
   Stop,
   // `app_id` names the app a dev push belongs to (from its installed
@@ -29,27 +29,27 @@ enum EngineCmd {
   // reload applies. None for pushes without a manifest (bytecode one-shots,
   // the BSOD trigger), which keep the current sandbox. `args` is the app's
   // argument vector for this start (the dev session's configured args; empty
-  // for a launcher launch), exposed as flux:process argv.
+  // for a player launch), exposed as flux:process argv.
   Reload { code: String, app_id: Option<String>, args: Vec<String> },
 }
 
 // What "exit the current app" means, decided by host context (see
-// okf/plans/exit-to-launcher.md): with the launcher hosting an app (or the
-// BSOD), Stop returns to the launcher, dropping the dev connection on the
-// way (see DevExitHandle); at the launcher root, and always in
-// launcher-less runtime builds, the client quits - process exit on desktop,
+// okf/done/exit-to-launcher.md): with the player hosting an app (or the
+// BSOD), Stop returns to the player, dropping the dev connection on the
+// way (see DevExitHandle); at the player root, and always in
+// player-less runtime builds, the client quits - process exit on desktop,
 // backgrounding the activity on Android (the platform's back-at-root
 // convention). Backs the srt:app exit() verb, which is core's default action
 // for an unprevented `back` event. In playback mode exit() ends the recording
 // run instead: the frame budget is only an upper bound, and there is no
-// launcher to return to.
+// player to return to.
 #[derive(Clone)]
 struct ExitPolicy {
   playback: bool,
   // Playback's exit fences the raster thread first (see exit).
   alloy: Arc<alloy::Context>,
   #[cfg(feature = "go")]
-  launcher_active: Arc<std::sync::atomic::AtomicBool>,
+  player_active: Arc<std::sync::atomic::AtomicBool>,
   #[cfg(feature = "go")]
   engine_tx: tokio::sync::mpsc::UnboundedSender<EngineCmd>,
   #[cfg(feature = "go")]
@@ -69,7 +69,7 @@ impl ExitPolicy {
       std::process::exit(0);
     }
     #[cfg(feature = "go")]
-    if !self.launcher_active.load(Ordering::Relaxed) {
+    if !self.player_active.load(Ordering::Relaxed) {
       if let Some(dev) = &self.dev {
         dev.disconnect();
       }
@@ -98,7 +98,7 @@ use std::sync::Arc;
 
 // --- Start Android entry point ------------------------------
 
-// The go dev client: boots the launcher (no app source), auto-dials a dev
+// The go dev client: boots the player (no app source), auto-dials a dev
 // server when the launch intent carries one.
 #[cfg(all(target_os = "android", feature = "go"))]
 #[no_mangle]
@@ -119,7 +119,7 @@ const PACKED_PAYLOAD_ASSET: &str = "app.srtapp";
 
 // The production Android runtime: boots the .srtapp packed into the APK
 // (`srt pack --apk`), read in place at its offset inside the APK - no dev
-// server, no launcher, no extraction. A runner APK without a payload is a
+// server, no player, no extraction. A runner APK without a payload is a
 // packaging error, so there is no fallback screen; the failure line lands in
 // logcat via SDL's stderr redirect when it does at all - primarily this exit
 // code is for the packager's bring-up.
@@ -200,14 +200,14 @@ pub extern "C" fn Java_com_solidrt_app_SolidRTActivity_nativeHardwareKeyboard(
 
 // --- End Android entry point ------------------------------
 
-// The launcher is the go client's home; the production runtime never
+// The player is the go client's home; the production runtime never
 // shows it (it always boots a provided app source), so only go builds embed it.
 #[cfg(feature = "go")]
-const LAUNCHER_SOURCE: &str = include_str!("../resources/launcher/index.srt.js");
+const PLAYER_SOURCE: &str = include_str!("../resources/player/index.srt.js");
 const BSOD_SOURCE: &str = include_str!("../resources/bsod/bsod.srt.js");
 
 /// The dev client's built-in fonts: the three Noto role defaults, matching what
-/// a default packed app carries in its trailer. The dev loop (launcher,
+/// a default packed app carries in its trailer. The dev loop (player,
 /// BSOD, HUD, `srt render` golden frames) needs deterministic text without a
 /// packed payload, so these stay compiled in; the production runtime ships no
 /// font data and registers whatever the trailer carries.
@@ -266,7 +266,7 @@ struct RunOptions {
   storage: storage::StorageSpec,
   // The app's argument vector (everything after the source path or a bare
   // `--` on the runner command line), exposed as flux:process argv. Process-
-  // level: a reload or launcher-launched app sees the same vector.
+  // level: a reload or player-launched app sees the same vector.
   args: Vec<String>,
 }
 
@@ -311,7 +311,7 @@ fn anchor_dir(data_dir: &std::path::Path) -> Result<bool, String> {
 
 // Anchor the process into `app_id`'s data sandbox (see storage: the cwd is
 // the app's persistent data dir). The sandbox can vanish while the client
-// runs - the launcher removes an app or wipes its cache once it stopped -
+// runs - the player removes an app or wipes its cache once it stopped -
 // stranding the cwd on an unlinked inode where every relative open fails, so
 // anchoring is re-checked before every engine spin instead of done once.
 // Quiet when the cwd is already right; without writable storage the cwd is
@@ -363,13 +363,13 @@ fn ui_thread(
     None => log::warn!("[srt] no writable storage, leaving working directory unchanged"),
   }
   // The startup app id: the anchor before any named reload, and what Stop
-  // re-anchors to so the launcher never squats in a stopped app's sandbox
+  // re-anchors to so the player never squats in a stopped app's sandbox
   // (removing that app must not fight the cwd, and the loop-top guard must
   // not resurrect its data dir).
   let default_app_id = storage_spec.app_id.clone().unwrap_or_else(|| "default".to_string());
   // The app the process should be anchored to (whose data/ is the cwd). This
   // is intent, not observed state: the loop-top ensure_anchored re-checks it
-  // every engine spin, so a sandbox deleted while the client runs (launcher
+  // every engine spin, so a sandbox deleted while the client runs (player
   // app remove / cache wipe) is rebuilt before the next app run. A dev push
   // naming a different app re-anchors (see anchor_app).
   let mut current_app_id: Option<String> = Some(default_app_id.clone());
@@ -391,17 +391,17 @@ fn ui_thread(
   platform.set_always_render(matches!(playback_fps, Some(rfps) if rfps > 0));
   platform.set_stats_enabled(stats);
   let input_state = Arc::new(InputState::new());
-  // The go client's boot rule: no app source means the launcher, always,
-  // online or offline. Launched with a dev-server address, the launcher dials
+  // The go client's boot rule: no app source means the player, always,
+  // online or offline. Launched with a dev-server address, the player dials
   // it (srt:dev launchAddress) and the server's latched push provides the app;
-  // installed apps are launched from the launcher's list, never auto-booted.
+  // installed apps are launched from the player's list, never auto-booted.
   #[cfg(feature = "go")]
-  let mut current_app = app.unwrap_or_else(|| AppSource::Text(LAUNCHER_SOURCE.to_string()));
+  let mut current_app = app.unwrap_or_else(|| AppSource::Text(PLAYER_SOURCE.to_string()));
   #[cfg(not(feature = "go"))]
   let mut current_app = app.expect("runtime builds must provide an app source");
   // The running app's argument vector (flux:process argv), per app start:
   // the process tail for the app the process was started for, a push's args
-  // for a dev reload, empty for the launcher and its launches.
+  // for a dev reload, empty for the player and its launches.
   let mut current_args = args;
   let mut showing_bsod = false;
 
@@ -606,7 +606,7 @@ fn ui_thread(
             // engine processed the dispatch (a handler prevented it, or
             // exit() already ran). No probe by the deadline means the engine
             // is wedged - and a blocked JS thread also blocks EngineCmd
-            // handling here, so returning to the launcher is impossible; quit
+            // handling here, so returning to the player is impossible; quit
             // the process so the user is never trapped. Skipped when the
             // engine changed meanwhile: that request belonged to an app that
             // is already gone.
@@ -652,10 +652,10 @@ fn ui_thread(
 
     #[cfg_attr(not(feature = "go"), allow(unused_variables))]
     let (cmd_tx, mut cmd_rx) = tokio::sync::mpsc::unbounded_channel::<EngineCmd>();
-    // True while the current engine runs the launcher itself (set at each
-    // engine build); exit() at the launcher root quits instead of Stop-ing.
+    // True while the current engine runs the player itself (set at each
+    // engine build); exit() at the player root quits instead of Stop-ing.
     #[cfg(feature = "go")]
-    let launcher_active = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let player_active = Arc::new(std::sync::atomic::AtomicBool::new(false));
     // The dev-server client: connection supervisor, recents, proxy state and the
     // srt.dev surface. None in playback mode (and entirely absent without the
     // `go` feature). This is the runtime's only seam to the dev client.
@@ -686,7 +686,7 @@ fn ui_thread(
       playback: playback_fps.is_some(),
       alloy: atx.clone(),
       #[cfg(feature = "go")]
-      launcher_active: launcher_active.clone(),
+      player_active: player_active.clone(),
       #[cfg(feature = "go")]
       engine_tx: cmd_tx.clone(),
       #[cfg(feature = "go")]
@@ -853,7 +853,7 @@ fn ui_thread(
       };
       #[cfg(feature = "speech")]
       let builder = builder.plugin(move |ctx| plugins::speech::init(ctx, speech_atx));
-      // The launcher's app-management surface over the version store; the
+      // The player's app-management surface over the version store; the
       // launch closure feeds the same reload path a dev push uses.
       #[cfg(feature = "go")]
       let builder = {
@@ -870,15 +870,15 @@ fn ui_thread(
       *current_exec.borrow_mut() = Some(engine.exec_handle());
       engine_generation.fetch_add(1, Ordering::Relaxed);
       #[cfg(feature = "go")]
-      launcher_active.store(
-        matches!(&current_app, AppSource::Text(src) if src.as_str() == LAUNCHER_SOURCE),
+      player_active.store(
+        matches!(&current_app, AppSource::Text(src) if src.as_str() == PLAYER_SOURCE),
         Ordering::Relaxed,
       );
       *query_exec.lock().expect("query exec lock poisoned") = Some(engine.exec_handle());
       alloy_cmd_tx.send(alloy::AlloyCommand::EmitInitEvents).ok();
       // The window icon and title follow the app like the sandbox and fonts
       // do: the installed manifest's icon and displayName, or the client's
-      // own mark and name for the launcher (its default_app_id has no store
+      // own mark and name for the player (its default_app_id has no store
       // entry). An app's explicit `title` window prop still wins: it applies
       // later, during render. Old manifests without displayName title as
       // their id.
@@ -894,7 +894,7 @@ fn ui_thread(
         alloy_cmd_tx.send(alloy::AlloyCommand::SetTitle(title)).ok();
       }
       // Replay the current connection state into this engine so a reload (e.g.
-      // a server stop returning to the launcher) keeps the right indicator.
+      // a server stop returning to the player) keeps the right indicator.
       #[cfg(feature = "go")]
       if let Some(dev) = &dev_session {
         dev.replay_state(&engine.exec_handle());
@@ -921,13 +921,13 @@ fn ui_thread(
                 }
                 #[cfg(feature = "go")]
                 EngineCmd::Stop => {
-                  next_app = Some(AppSource::Text(LAUNCHER_SOURCE.to_string()));
+                  next_app = Some(AppSource::Text(PLAYER_SOURCE.to_string()));
                   current_args = Vec::new();
-                  // Back to the launcher: release the stopped app's sandbox
-                  // by re-anchoring to the startup default, so the launcher
+                  // Back to the player: release the stopped app's sandbox
+                  // by re-anchoring to the startup default, so the player
                   // can remove the app without the cwd (or the loop-top
                   // guard) holding its data dir alive. Its fonts go with it -
-                  // the launcher runs on the base set alone.
+                  // the player runs on the base set alone.
                   current_app_id = Some(default_app_id.clone());
                   platform.reset_fonts(base_fonts.clone());
                 }
@@ -969,7 +969,7 @@ fn ui_thread(
           }
           #[cfg(feature = "go")]
           Some(EngineCmd::Stop) => {
-            current_app = AppSource::Text(LAUNCHER_SOURCE.to_string());
+            current_app = AppSource::Text(PLAYER_SOURCE.to_string());
             current_args = Vec::new();
             showing_bsod = false;
             // Same sandbox and font release as the in-loop Stop arm above.

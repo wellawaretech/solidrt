@@ -36,7 +36,7 @@ ignored (fill always first).
       | { type: "path";  id?: string; draws: SvgDraw[] }
 
 - Flat stays the default and keeps its shape, so the icon one-liner, the
-  components `Icon` and the launcher app-icon do not change. Tree is opt-in;
+  components `Icon` and the player app-icon do not change. Tree is opt-in;
   TS overloads on `tree: true` give each call site the right type.
 - `SvgDraw` is unchanged and stays spread-clean (`<d-path {...draw} />`):
   unknown props are rejected by name in flux, so `id`/`type` live on the
@@ -115,7 +115,7 @@ unsupported in both modes, documented as before.
   flux `forge_plugins/svg.rs`; `packages/flux-types/modules/svg.d.ts`.
 - core `svg.ts` overloads + `SvgNode`/`SvgTree` exports;
   `packages/core/examples/parse-svg.tsx` switches the interactive house to
-  tree mode with groups. `Icon` and launcher untouched.
+  tree mode with groups. `Icon` and player untouched.
 - Same change: the example's inline sources read `<svg designSize="...">`
   since the viewBox -> designSize rename swept them; restore `viewBox`
   (the 24x24 arrow currently parses at usvg's 100x100 default).

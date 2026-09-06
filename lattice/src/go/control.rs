@@ -37,7 +37,7 @@ pub fn install_dev_control(
     stop: Box::new(move || {
       let _ = stop_tx.send(DevCmd::Stop);
     }),
-    // discover is mDNS (desktop only); the flag lets the launcher show only
+    // discover is mDNS (desktop only); the flag lets the player show only
     // the buttons that apply.
     can_discover: cfg!(not(target_os = "android")),
     recents,

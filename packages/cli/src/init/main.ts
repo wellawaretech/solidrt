@@ -131,7 +131,7 @@ export async function main() {
   // The assets/ convention folder, created up front: everything in it ships
   // with the app, and the dev watcher only picks up an assets/ folder that
   // exists when it starts. It starts with the SolidRT logo as the app icon,
-  // for the author to replace: the .svg feeds the launcher tiles and desktop
+  // for the author to replace: the .svg feeds the player tiles and desktop
   // window icon, the pre-rendered .png sibling the Android launcher icon
   // (`srt pack --apk`; SVG cannot be rasterized at pack time).
   await mkdir(join(dir, "assets"), { recursive: true })

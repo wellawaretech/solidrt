@@ -1,6 +1,6 @@
 // Client storage: data-root resolution and the on-disk tree
 // (okf/plans/client-storage-updates.md, stage 1 + layout revision 2026-07-21;
-// launcher layout + run marker: okf/backlog/parallel-dev-servers.md stage 3).
+// player layout + run marker: okf/backlog/parallel-dev-servers.md stage 3).
 //
 // Three layouts, picked by how the process was launched. Two independent
 // facts distinguish them: is there a client level (only under an explicit
@@ -28,7 +28,7 @@
 //   <pref SolidRT/app-id>/    e.g. ~/.local/share/SolidRT/com.example.app/
 //     identity/  data/  cache/  logs/
 //
-// Launcher (neither): one install is one client, so there is no client
+// Player (neither): one install is one client, so there is no client
 // level, but it installs many apps:
 //
 //   <pref SolidRT/go>/
@@ -170,7 +170,7 @@ pub(crate) fn resolve(spec: &StorageSpec) -> Option<Storage> {
       return None;
     }
   }
-  // Dev trees only: the pref-path layouts (packed app, launcher, Android)
+  // Dev trees only: the pref-path layouts (packed app, player, Android)
   // have one client per install by construction, so no marker is claimed and
   // nothing dev-shaped is written there.
   let run_marker = if spec.data_root.is_some() { claim_run_marker(&client_dir) } else { None };

@@ -39,9 +39,9 @@ rather than fired and lost. The sticky-event mechanism behind
 
 ## In-repo precedent
 
-The launcher already treats an externally supplied string as an entry
+The player already treats an externally supplied string as an entry
 point: QR scan to a dev-server address, and `srt:apps` launching an app by
-id. A launcher that is also the URL dispatcher (scheme -> installed app id
+id. A player that is also the URL dispatcher (scheme -> installed app id
 -> launch with the URL) is the natural shape on Android, where only one
 process can own an intent filter, and it is worth considering before
 per-app registration is designed.

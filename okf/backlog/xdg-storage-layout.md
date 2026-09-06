@@ -102,7 +102,7 @@ control-port probe (which is the open lead in `parallel-dev-servers.md`).
   identities, and installed dev apps need re-pushing. All dev-only and all
   disposable, so "just change it" is probably right, but a one-shot move of
   the old dir is cheap if it is not.
-- **Does the same reasoning apply to the runtime side?** The launcher and
+- **Does the same reasoning apply to the runtime side?** The player and
   packed apps resolve through `SDL_GetPrefPath`, which is not XDG-aware
   beyond landing in `~/.local/share`. That is
   `app-storage-vendor-path.md`'s territory, and the two should agree on

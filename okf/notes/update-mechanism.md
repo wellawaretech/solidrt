@@ -211,7 +211,7 @@ Resolution rule (decided), one knob, no second code path:
 3. generic client: pref path `SolidRT/go`. The name stays: after the
    production split it refers to exactly the thing that uses it (the
    unpinned Expo-Go-style client); rename only if that becomes a
-   user-facing launcher product (a dev-cache migration, not user data).
+   user-facing player product (a dev-cache migration, not user data).
 
 Dev default `.srt-data/` in the project root (decided; gitignored,
 precedent `.expo/` / `target/`): project self-contained, delete =
@@ -383,7 +383,7 @@ no-app-loaded fallback.
   sufficient; TUF is the paranoid option, probably overkill.
 - Publishing: `srt publish`(?) produces bundle + version manifest onto
   plain static hosting; command shape undecided.
-- Launcher UI for multi-app clients (the storage supports it; whether
+- Player UI for multi-app clients (the storage supports it; whether
   to surface it is separate).
 - Whether bundle downloads could also ride the iroh p2p path
   (device-to-device update forwarding) - fun, not stage 1.

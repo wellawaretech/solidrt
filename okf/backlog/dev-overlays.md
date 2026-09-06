@@ -33,13 +33,13 @@ follow, unchanged.
 A production `solidrt` build has neither flag and draws nothing, as now.
 
 A user exit (`exit()`, the back chord) from an app while connected drops
-the connection and forgets the launch address, so the launcher it returns
+the connection and forgets the launch address, so the player it returns
 to sits idle. Otherwise the server still owned the device and its next
 save re-pushed the app the person had just left; and a client started
-with `--dev-server` re-dials its launch address on every launcher mount,
+with `--dev-server` re-dials its launch address on every player mount,
 which would have taken the latched push straight back into the app. The
 server-initiated `stop` (server shutting down) is unchanged: it returns to
-the launcher with the connection state it has.
+the player with the connection state it has.
 
 ## What it involves
 
@@ -64,9 +64,9 @@ MCP change.
 
 The badge exposed a stale flag: `DevFlags::connected` (and the mute) were
 cleared after `try_serve`'s session loop, but a dev command (`DevCmd::Stop`
-from the launcher's Disconnect, or now a user exit) cancels that future
+from the player's Disconnect, or now a user exit) cancels that future
 from the supervisor's `select!`, so the teardown never ran and the client
-stayed "connected" for log forwarding and the badge while the launcher
+stayed "connected" for log forwarding and the badge while the player
 said "Not connected". Fixed with a drop guard created at connect.
 
 ## Deliberately not done

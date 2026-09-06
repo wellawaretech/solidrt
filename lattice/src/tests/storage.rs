@@ -47,12 +47,12 @@ fn resolve_rejects_unsafe_components() {
   let _ = std::fs::remove_dir_all(&root);
 }
 
-// The launcher layout resolves through the real pref path; pointing SDL's
+// The player layout resolves through the real pref path; pointing SDL's
 // XDG base at a temp dir keeps the test out of the user's data dir. Linux
 // only: the base env var is platform-specific. No other test reads it.
 #[cfg(target_os = "linux")]
 #[test]
-fn launcher_tree_has_no_client_level() {
+fn player_tree_has_no_client_level() {
   let root = temp_root("go");
   std::env::set_var("XDG_DATA_HOME", &root);
   // --client is data-root-only: one install is one client, so the number is
@@ -93,7 +93,7 @@ impl Drop for CwdGuard {
   }
 }
 
-// The launcher can remove an app (or wipe its cache) while the client keeps
+// The player can remove an app (or wipe its cache) while the client keeps
 // running, unlinking the inode the cwd points at; getcwd then fails and every
 // relative open ENOENTs. anchor_dir must recover from that, not just anchor
 // once. Unix only: Windows refuses to delete the current directory, so the
@@ -111,7 +111,7 @@ fn anchor_dir_recovers_from_deleted_cwd() {
   // Anchoring again is a no-op.
   assert_eq!(crate::anchor_dir(&data_dir), Ok(false));
 
-  // Delete the sandbox out from under the anchor (the launcher's app remove).
+  // Delete the sandbox out from under the anchor (the player's app remove).
   std::fs::remove_dir_all(&root).expect("remove root");
   assert!(std::env::current_dir().is_err(), "getcwd should fail on a deleted cwd");
 

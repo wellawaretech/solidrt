@@ -5,7 +5,7 @@ import { resolveFromCwd } from "../lib/registry"
 // Standalone solidrt-go client (no dev server of its own). Without flags it
 // attaches to the dev server of the project (or file) in the current
 // directory, resolved from the registry, and starts on its own (into the
-// launcher) when there is none; --port picks a local server by port and
+// player) when there is none; --port picks a local server by port and
 // --server names any address, and those must exist. A device is `srt android`.
 export async function main() {
   let runner = requireBinary("solidrt-go")

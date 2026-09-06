@@ -1,5 +1,5 @@
 {
-  // Flux-targeted, like packages/core: the launcher is a solidrt app compiled
+  // Flux-targeted, like packages/core: the player is a solidrt app compiled
   // into the client. The prebuilt .srt.js artifacts alongside are ignored
   // (no allowJs).
   "compilerOptions": {

@@ -590,7 +590,7 @@ export function HomeScreen(props: {
                       connected; the dev card's Disconnect is the affordance
                       then. No camera pre-check: enumerating cameras starts the
                       platform's capture backend, and doing that on every
-                      launcher start is what a wedged backend turns into a dead
+                      player start is what a wedged backend turns into a dead
                       client (Raspberry Pi; see sdl_utils::camera_subsystem_init).
                       The subsystem starts when the scan screen opens a camera,
                       and a machine without one gets the scan screen's error

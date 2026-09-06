@@ -1,6 +1,6 @@
 // Reading the server registry: every running dev server keeps a live.json in
 // ~/.solidrt/servers/<key hash>/ (written by the server itself, see
-// packages/cli/src/server/registry.ts). `srt client`, `srt mcp` and the launcher
+// packages/cli/src/server/registry.ts). `srt client`, `srt mcp` and the player
 // resolve a server from it by key: the canonical project root or file path
 // (see mode.ts). The record is a hint; the server is authoritative, so a
 // caller confirms with a control call (the x-solidrt-project header names

@@ -29,11 +29,11 @@ Measured locally on this tree, native vs the Babel pipeline it would replace:
 
 | Corpus | Babel (solid + ts) | Native (JSX only) |
 | --- | ---: | ---: |
-| 80 real `.tsx` (launcher + core examples + components), 278 KB | 391 ms | 11.7 ms |
-| Launcher's own 10 `.tsx` | 72 ms | 2.3 ms |
+| 80 real `.tsx` (player + core examples + components), 278 KB | 391 ms | 11.7 ms |
+| Player's own 10 `.tsx` | 72 ms | 2.3 ms |
 
 The second row is the one that decides this. A full `srt bundle` of the
-launcher is about 1050 ms wall, so Babel's JSX+TS work is roughly 7 percent
+player is about 1050 ms wall, so Babel's JSX+TS work is roughly 7 percent
 of it. Swapping compilers saves about 70 ms on a one second bundle and
 changes nothing anybody would notice.
 
@@ -101,8 +101,8 @@ Babel path is the cheaper correct choice.
 
 If it is picked up, the cheap proof that a swap is behaviour-preserving is
 the one used for the rc.3 migration: copy the two checked-in bundles
-(`lattice/resources/launcher/index.srt.js`, `lattice/resources/bsod/bsod.srt.js`),
-rebuild with `make launcher-bundle -B`, and `cmp`. Byte equality there
+(`lattice/resources/player/index.srt.js`, `lattice/resources/bsod/bsod.srt.js`),
+rebuild with `make player-bundle -B`, and `cmp`. Byte equality there
 exercises the real pipeline over real app code. A compiler swap will not be
 byte-identical the way the plugin rename was, so the diff has to be read
 rather than just compared.

@@ -25,7 +25,7 @@ const DEFAULT_ICON_BACKGROUND = "#1a1a1a"
 
 // The app's Android launcher icon as PNG bytes: the `icon` config key when it
 // names a .png, else the assets/icon.png convention. An SVG icon (the desktop
-// and launcher-tile source) cannot be rasterized at pack time, so with no PNG
+// and player-tile source) cannot be rasterized at pack time, so with no PNG
 // beside it the runner's placeholder stays and a note says so.
 function resolveLauncherIcon(project: Project | null): Buffer | undefined {
   if (!project) return undefined
@@ -118,7 +118,7 @@ export async function main() {
   // (okf/backlog/standalone-android-apk.md). The base is the production
   // runner APK (`make android-runtime`), which boots the payload; while none
   // is staged, the solidrt-go dev client stands in - that APK installs and
-  // launches, but boots the launcher instead of the payload.
+  // launches, but boots the player instead of the payload.
   if (values.apk) {
     if (!ANDROID_APP_ID.test(identity.appId)) {
       console.error(

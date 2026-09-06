@@ -129,7 +129,7 @@ fn open_impl<'js>(ctx: Ctx<'js>, options: OptArg<Object<'js>>) -> rquickjs::Resu
   // failure can be environmental (a stale hotplug entry whose /dev node is
   // gone: SDL still lists unplugged Linux cameras, see AlloyEvent doc). A
   // sync throw here unwinds through the caller's reactive computation, which
-  // no .catch can intercept (observed as REACTIVITY_HALTED in the launcher).
+  // no .catch can intercept (observed as REACTIVITY_HALTED in the player).
   let (promise, resolve, reject) = Promise::new(&ctx)?;
   match state.0.gui.alloy.open_camera(device, facing, size, scan_qr) {
     Ok(session) => {

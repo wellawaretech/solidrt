@@ -46,15 +46,15 @@ endif
 
 SRT_HOME ?= $(abspath $(CURDIR)/..)
 
-# The launcher app sources live in apps/player like any regular app; the
+# The player app sources live in apps/player like any regular app; the
 # generated bundles land here in resources/ because lattice is what embeds
 # them (include_str! in src/lib.rs).
-LAUNCHER_DIR = $(SRT_HOME)/apps/player
-LAUNCHER_SRC = $(LAUNCHER_DIR)/src/index.tsx
-LAUNCHER_JS  = $(CURDIR)/resources/launcher/index.srt.js
+PLAYER_DIR = $(SRT_HOME)/apps/player
+PLAYER_SRC = $(PLAYER_DIR)/src/index.tsx
+PLAYER_JS  = $(CURDIR)/resources/player/index.srt.js
 
 # The BSOD screen shown when an app fails to start.
-BSOD_SRC = $(LAUNCHER_DIR)/src/bsod.tsx
+BSOD_SRC = $(PLAYER_DIR)/src/bsod.tsx
 BSOD_JS  = $(CURDIR)/resources/bsod/bsod.srt.js
 
 include $(SRT_HOME)/platform.mk
@@ -70,7 +70,7 @@ endif
 
 .DEFAULT_GOAL := client
 
-.PHONY: lattice help launcher-bundle dist-clean clean
+.PHONY: lattice help player-bundle dist-clean clean
 
 # Build both lattice host binaries (client + runtime). The root `make all`
 # adds the flux binaries on top.
@@ -83,13 +83,13 @@ lattice: client runtime
 # version bump rewrites it, so both bundles pick up the new runtime.
 BUNDLE_DEPS = $(wildcard $(SRT_HOME)/packages/core/src/*.ts*) $(wildcard $(SRT_HOME)/packages/components/src/*.ts*) $(wildcard $(SRT_HOME)/bun.lock)
 
-$(LAUNCHER_JS): $(wildcard $(LAUNCHER_DIR)/src/*.tsx) $(wildcard $(LAUNCHER_DIR)/src/parts/*.tsx) $(BUNDLE_DEPS)
-	@echo "Bundling launcher (index.tsx -> resources/launcher/)..."
-	cd $(LAUNCHER_DIR) && bunx srt bundle $(LAUNCHER_SRC) --project -o $(dir $(LAUNCHER_JS))
+$(PLAYER_JS): $(wildcard $(PLAYER_DIR)/src/*.tsx) $(wildcard $(PLAYER_DIR)/src/parts/*.tsx) $(BUNDLE_DEPS)
+	@echo "Bundling player (index.tsx -> resources/player/)..."
+	cd $(PLAYER_DIR) && bunx srt bundle $(PLAYER_SRC) --project -o $(dir $(PLAYER_JS))
 
 $(BSOD_JS): $(BSOD_SRC) $(BUNDLE_DEPS)
 	@echo "Bundling BSOD screen (bsod.tsx -> resources/bsod/)..."
-	cd $(LAUNCHER_DIR) && bunx srt bundle $(BSOD_SRC) --project -o $(dir $(BSOD_JS))
+	cd $(PLAYER_DIR) && bunx srt bundle $(BSOD_SRC) --project -o $(dir $(BSOD_JS))
 
 help:
 	@echo "Host ($(HOST_TARGET)):"
@@ -115,20 +115,20 @@ help:
 	@echo "Pass SPEECH=1 to build with speech recognition (default: off)."
 	@echo "dist targets always build speech-free; solidrt and fluxrt use release-opt."
 	@echo ""
-	@echo "Launcher:"
-	@echo "  launcher-bundle      Regenerate the launcher and BSOD bundles"
+	@echo "Player:"
+	@echo "  player-bundle      Regenerate the player and BSOD bundles"
 	@echo ""
 	@echo "Clean:"
 	@echo "  clean                Remove all build artifacts"
 	@echo "  dist-clean           Remove dist/ only"
 
-# -- Launcher -----------------------------------------
+# -- Player -----------------------------------------
 #
-# The go client embeds resources/launcher/index.srt.js at compile time via
+# The go client embeds resources/player/index.srt.js at compile time via
 # include_str!. The file target rebuilds it when any .tsx source in
-# apps/player changes. Run `make launcher-bundle` to force a rebuild.
+# apps/player changes. Run `make player-bundle` to force a rebuild.
 
-launcher-bundle: $(LAUNCHER_JS) $(BSOD_JS)
+player-bundle: $(PLAYER_JS) $(BSOD_JS)
 
 # -- Fonts --------------------------------------------
 

@@ -1,6 +1,6 @@
 ---
 title: Focus navigation (spatial/D-pad, tab order) on the focusable registry
-description: Stage 3 of the focus/key-routing work - move focus across getFocusables() candidates from bubbled arrow keys, activate with select/Enter, and fold the launcher's parallel spatial nav onto real focus.
+description: Stage 3 of the focus/key-routing work - move focus across getFocusables() candidates from bubbled arrow keys, activate with select/Enter, and fold the player's parallel spatial nav onto real focus.
 created: 2026-08-01
 ---
 
@@ -17,7 +17,7 @@ The work:
 
 - DONE 2026-08-01: `createFocusNav` in components (focus-nav.ts) -
   window-level arrow keys + gamepad dpad edges score `getFocusables()` boxes
-  (launcher's ahead + 2*across metric), Tab/Shift+Tab walk visual reading
+  (player's ahead + 2*across metric), Tab/Shift+Tab walk visual reading
   order (rows top-to-bottom then x, wrapping), both moving real focus;
   `scope` option traps navigation in a subtree (modals), pulling stale
   outside focus in. createPress gained `focused` state,
@@ -25,7 +25,7 @@ The work:
   nav-action registry that gamepad south activates through. Button:
   `focusable` by default, focus ring under `policy.focusRing`. Pressable:
   `focusable` opt-in.
-- DONE 2026-08-01: launcher folded in. parts/nav.tsx DELETED; NavButton ->
+- DONE 2026-08-01: player folded in. parts/nav.tsx DELETED; NavButton ->
   Button, navTarget pressables -> `<Pressable focusable>` with a local
   focusRing helper (parts/types.ts), the settings mode row a focusable
   Pressable wrapping the SegmentedControl. Modal trapping moved into
@@ -75,13 +75,13 @@ Traps for whoever picks this up:
   core registry -> setTextInputActive(active, hints) -> AlloyCommand ->
   SDL_StartTextInputWithProperties (sdl_utils wrapper; crate lacks it). A
   session hopping between fields restarts on the new node so its hints
-  apply. TextInput exposes it as `hints`; the launcher address field is
+  apply. TextInput exposes it as `hints`; the player address field is
   capitalize-none/no-autocorrect and the port field type "number". Old
   runtimes ignore the extra argument; effect needs a client rebuild.
   Device-unverified until then.
 
 Deliberately deferred from the components stage (inherited from the
-launcher's own stage-1 gaps): scroll-into-view for a focused off-screen
+player's own stage-1 gaps): scroll-into-view for a focused off-screen
 candidate, held-dpad auto-repeat on gamepads (keyboards repeat on their
 own), pressed-state visuals on key activation (the ring is the feedback),
 and `focusable` on the other press controls (Switch/Checkbox/Radio/...) -

@@ -56,7 +56,7 @@ android {
     }
     // Native libs and assets are per flavor, not on main: flavor sourceSets
     // add to main's, so anything staged here for go would also land in the
-    // prod runner APK. The go client carries the launcher assets (extracted
+    // prod runner APK. The go client carries the player assets (extracted
     // at launch by its MainActivity); the runner APK carries no assets of its
     // own - `srt pack --apk` injects the app payload into a copy.
     sourceSets {

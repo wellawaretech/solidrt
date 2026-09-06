@@ -63,7 +63,7 @@ export function ConnectPanel(props: {
           <Text variant="heading" layout={{ flexGrow: 1 }}>
             Connect
           </Text>
-          {/* Shown unconditionally: see home-screen.tsx on why the launcher
+          {/* Shown unconditionally: see home-screen.tsx on why the player
               does not enumerate cameras to decide. */}
           <ScanButton onPress={props.onScan} />
         </View>

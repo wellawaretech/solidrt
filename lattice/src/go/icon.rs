@@ -1,6 +1,6 @@
 // The dev client's window icon: the running app's manifest-declared SVG
 // rasterized for SDL_SetWindowIcon, or the SolidRT puzzle mark when the
-// launcher is showing or the app declares none. Go-only on purpose: packed
+// player is showing or the app declares none. Go-only on purpose: packed
 // runners get their icons from platform packaging (okf/backlog/app-icons.md,
 // stage 3), so the production runtime never pulls a rasterizer.
 
@@ -8,7 +8,7 @@ use resvg::{tiny_skia, usvg};
 
 const ICON_RASTER_SIZE: u32 = 128;
 // The client's own mark: the gradient puzzle (the flat icon-puzzle.svg is
-// the launcher's in-UI variant; websites and window icons use the gradient).
+// the player's in-UI variant; websites and window icons use the gradient).
 const DEFAULT_ICON_SVG: &str = include_str!("../../assets/icon-puzzle-gradient.svg");
 
 /// Set the window icon for the app about to run: its store-installed icon,

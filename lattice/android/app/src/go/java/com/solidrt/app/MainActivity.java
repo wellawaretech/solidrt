@@ -10,7 +10,7 @@ import java.io.InputStream;
 import java.io.OutputStream;
 
 // The go dev client's activity: the shared SolidRT body plus the dev loop's
-// two extras - the launcher assets extracted into filesDir, and the
+// two extras - the player assets extracted into filesDir, and the
 // dev-server address forwarded from the launch intent.
 public class MainActivity extends SolidRTActivity {
 

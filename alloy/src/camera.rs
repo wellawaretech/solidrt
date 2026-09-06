@@ -171,7 +171,7 @@ enum InitStatus {
 /// formats also captures the main thread's gamepad init, which walks the
 /// same scan. Both threads then spin at 100% CPU and the client never draws
 /// a frame. A backend that can wedge must be kept from initializing at all
-/// until an app actually wants a camera - which is why the launcher no longer
+/// until an app actually wants a camera - which is why the player no longer
 /// enumerates cameras to decide whether to show its scan button.
 ///
 /// No other SDL_InitSubSystem call may race this one (SDL's init refcounting

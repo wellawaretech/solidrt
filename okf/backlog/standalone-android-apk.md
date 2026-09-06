@@ -8,7 +8,7 @@ created: 2026-09-01
 
 `srt pack` produces a standalone executable for the platform it runs on.
 Android has no equivalent: the only Android artifact is `solidrt-go.apk`, the
-dev client, which hosts apps behind its launcher and dev-server connection. An
+dev client, which hosts apps behind its player and dev-server connection. An
 app cannot be handed to someone as an installable Android app.
 
 Two independent halves, and only the second one is about zip files.
@@ -16,12 +16,12 @@ Two independent halves, and only the second one is about zip files.
 ## Half 1: the runtime has no Android boot path for a packed app
 
 On Android the native library is always `liblattice.so` built `--lib` with the
-`go` feature, so `SDL_main` boots the launcher. The production payload loader
+`go` feature, so `SDL_main` boots the player. The production payload loader
 (`FactoryPayload`, `load_payload`) lives in `lattice/src/main.rs`, a `[[bin]]`
 target that is never built for Android.
 
 Decided shape: a real production Android runtime, not the go client with the
-launcher suppressed. A packed APK must not carry the dev server, the launcher
+player suppressed. A packed APK must not carry the dev server, the player
 or the BSOD.
 
 The pieces this lands on:
@@ -29,7 +29,7 @@ The pieces this lands on:
 - `SDL_main` (`lattice/src/lib.rs`) is gated on `target_os = "android"` only,
   not on the `go` feature - but its body calls the go-gated
   `embedded_fonts()`, so a `RUNTIME_FEATURES` cdylib did not actually compile
-  for Android before the split. The split: `go` keeps the launcher path,
+  for Android before the split. The split: `go` keeps the player path,
   `not(go)` loads the packed payload (and registers the payload's fonts).
 - The payload loader moves out of `main.rs` into a module both targets share,
   parameterized by source instead of always `current_exe()`.
@@ -58,10 +58,10 @@ The pieces this lands on:
   `src/prod`) needs its own `jniLibs.srcDir` so it picks up the runtime `.so`
   rather than the go one - and its own (empty) assets dir, since
   `sourceSets.main` points assets at `dist/assets`, which would pack the go
-  launcher's assets into every runner APK as dead weight.
+  player's assets into every runner APK as dead weight.
 
-Exit already behaves correctly for a standalone app: launcher-less builds
-background the activity instead of returning to a launcher.
+Exit already behaves correctly for a standalone app: player-less builds
+background the activity instead of returning to a player.
 
 ## Half 2: building the APK without an Android SDK
 
@@ -84,7 +84,7 @@ What the patch has to do, measured against the shipped
   which package.json has no field for.
 - **Label and icon.** `resources.arsc` is 2844 bytes; its global string pool is
   18 strings, index 0 being the label (`SolidRT Go`) and 1-17 resource file
-  paths including `res/mipmap-anydpi-v26/ic_launcher.xml`. Both edits are the
+  paths including `res/mipmap-anydpi-v26/ic_player.xml`. Both edits are the
   same primitive as the id edit: rewrite a `ResStringPool` chunk (rebuild
   offsets, fix enclosing chunk sizes). One module serves both files.
 - **Alignment.** Native libs are STORED and padded through the extra field to

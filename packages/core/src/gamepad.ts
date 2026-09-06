@@ -18,7 +18,7 @@ import { on } from "srt:events"
  *
  * The snapshot is a faithful report. Note that pressing "back" (select) on a
  * mapped pad ALSO emits the `back` event (see onBack) - it is the pad-side
- * sibling of Android's system back, the runtime's exit-to-launcher gesture.
+ * sibling of Android's system back, the runtime's exit-to-player gesture.
  * Apps that bind "back" for their own controls should preventDefault that
  * event.
  */

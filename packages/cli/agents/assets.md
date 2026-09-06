@@ -38,7 +38,7 @@ preparing a build for distribution.
   reverse-DNS `appId` before distributing - it keys the app's storage
   folder, defaults from the package name in dev, and `srt pack` warns
   while defaulted. `org` and `displayName` are optional display metadata
-  (future launcher/window naming) with no storage meaning.
+  (future player/window naming) with no storage meaning.
 - `bunx srt pack` builds a single-file executable (the runner with the
   bytecode, manifest, assets and fonts appended as a trailer);
   `bunx srt pack --folder` writes the flat app folder

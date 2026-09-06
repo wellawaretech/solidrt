@@ -1,4 +1,4 @@
-// The live connection to the dev server, shared across the launcher screens
+// The live connection to the dev server, shared across the player screens
 // (Home's status line, Connect's recents + dial, Scan's dial). This is app-wide
 // singleton state, so per Solid's guidance ("truly app-wide state is a
 // module-scope signal, not Context/props") it lives here as module-scope

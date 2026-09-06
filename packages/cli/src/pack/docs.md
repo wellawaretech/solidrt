@@ -24,9 +24,9 @@ machine: a copy of the runner APK is patched in place - application id
 re-aligned and re-signed with a fixed development key, so the result
 sideloads out of the box (publishing will need a real key). The base is
 the production runner APK (in a checkout, `make android-runtime` stages
-it), which boots the payload directly - no launcher, no dev server. With
+it), which boots the payload directly - no player, no dev server. With
 no runner staged, the solidrt-go dev client stands in: that APK installs
-and launches, but boots the launcher instead of the payload.
+and launches, but boots the player instead of the payload.
 
 Set a stable `appId` in the `solidrt` key of package.json before
 distributing (it keys the app's storage folder); `pack` warns while it is

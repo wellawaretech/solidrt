@@ -3,11 +3,11 @@ use std::rc::Rc;
 use flux::rquickjs::module::{Declarations, Exports, ModuleDef};
 use flux::rquickjs::{Array, Ctx, Exception, Function, JsLifetime, Object};
 
-// The `srt:apps` module: the launcher's surface over the client's version
+// The `srt:apps` module: the player's surface over the client's version
 // store (list / launch / remove installed apps). The store logic lives in the
 // go layer (go/store.rs); here we only marshal it to JS.
 //
-// The module is registered unconditionally so the launcher's static import
+// The module is registered unconditionally so the player's static import
 // resolves in every build, but the underlying control is installed only in go
 // builds. When absent, `available` is false, `list` returns [], and
 // launch/remove are no-ops, matching `srt:dev`.
@@ -89,7 +89,7 @@ impl AppsControl {
 }
 
 // Installs the apps control as userdata. Call from a go engine plugin before
-// the launcher imports `srt:apps`.
+// the player imports `srt:apps`.
 #[cfg_attr(not(feature = "go"), allow(dead_code))]
 pub fn install(ctx: &Ctx<'_>, control: AppsControl) {
   ctx.store_userdata(control).expect("store apps control");
@@ -200,8 +200,8 @@ impl ModuleDef for SrtAppsModule {
     exports.export("launch", Function::new(ctx.clone(), launch_impl)?)?;
     exports.export("remove", Function::new(ctx.clone(), remove_impl)?)?;
     exports.export("clearCache", Function::new(ctx.clone(), clear_cache_impl)?)?;
-    // Build identity of this runtime, for the launcher's settings screen. Not
-    // app-specific, but the launcher already imports this module.
+    // Build identity of this runtime, for the player's settings screen. Not
+    // app-specific, but the player already imports this module.
     exports.export("version", crate::VERSION)?;
     exports.export("profile", crate::PROFILE)?;
     exports.export("platform", std::env::consts::OS)?;

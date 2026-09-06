@@ -1,4 +1,4 @@
-// The go client's launcher: the compiled-in home screen. Lists the apps
+// The go client's player: the compiled-in home screen. Lists the apps
 // installed in the version store (tap a row for its details and remove, or the
 // row's play button to launch straight away) and manages the dev-server
 // connection (address entry, discovery, QR scan on a full-screen camera view,
@@ -6,11 +6,11 @@
 // @solidrt/components; follows the OS dark/light preference and the layout
 // policy: wide windows show a WhatsApp-style split (list left, selected app's
 // details right), narrow ones navigate between two screens. Bundled by
-// `make launcher-bundle` and embedded via include_str! (see lattice/src/lib.rs
-// LAUNCHER_SOURCE).
+// `make player-bundle` and embedded via include_str! (see lattice/src/lib.rs
+// PLAYER_SOURCE).
 //
 // This module owns the theme, the screen routing, the back stack (every level of
-// it, including the leave-the-launcher confirmation), and the app selection and
+// it, including the leave-the-player confirmation), and the app selection and
 // status notice (lifted so they survive a scan). Routing is two screens deep
 // only: the home screen and the full-bleed camera scan. Settings and connect are
 // panels of the home screen, each replacing one of its panes, and HomeScreen
@@ -72,7 +72,7 @@ function App() {
   // screen surfaces in the home status line).
   let [selectedId, setSelectedId] = createSignal<string | null>(null)
   let [notice, setNotice] = createSignal<string | null>(null)
-  // Whether the leave-the-launcher confirmation is up. Starts false, as every
+  // Whether the leave-the-player confirmation is up. Starts false, as every
   // Modal's gating signal must (portals cannot mount during the initial render).
   let [confirmExit, setConfirmExit] = createSignal(false)
 

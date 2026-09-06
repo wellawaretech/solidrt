@@ -1,9 +1,9 @@
-// Cross-screen types and small helpers shared by the launcher screens.
+// Cross-screen types and small helpers shared by the player screens.
 import { theme, policy, type StyleProps } from "@solidrt/components"
 
 export type DevState = "idle" | "searching" | "connecting" | "connected"
 
-// The focus-navigation ring for the launcher's custom pressables (Button
+// The focus-navigation ring for the player's custom pressables (Button
 // draws its own), spread into a style. Present while focused under the
 // focusRing policy; empty otherwise. Text-colored rather than primary so it
 // stays visible on primary-filled surfaces.

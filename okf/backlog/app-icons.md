@@ -1,13 +1,13 @@
 ---
 title: App icons
-description: Stages 1+2 done (SVG icon from package.json/convention through the manifest to the launcher, monogram fallback; dev-client window icon via go-gated resvg + SDL_SetWindowIcon); stage 3 packed executables remains and owns packed-app icons on all platforms.
+description: Stages 1+2 done (SVG icon from package.json/convention through the manifest to the player, monogram fallback; dev-client window icon via go-gated resvg + SDL_SetWindowIcon); stage 3 packed executables remains and owns packed-app icons on all platforms.
 created: 2026-07-27
 ---
 
 # App icons
 
 Originally: apps had no icon concept at all - nothing in `srt pack`, the
-pack folder writer, the manifest, or the launcher knew what an app looked
+pack folder writer, the manifest, or the player knew what an app looked
 like, and a packed executable took whatever the OS gives an unadorned
 binary. Stages 1 and 2 below have since shipped (see Status); only the
 packed-executable half is still true.
@@ -36,8 +36,8 @@ the tooling knows.
 
 ## Staging
 
-1. **Declare and carry, launcher shows it.** package.json field ->
-   validation -> manifest -> `srt:apps` -> the launcher's app list and
+1. **Declare and carry, player shows it.** package.json field ->
+   validation -> manifest -> `srt:apps` -> the player's app list and
    detail view. Self-contained, no native work, and it is the stage the
    docs need.
 2. **Desktop window icon.** The running app's window and taskbar entry.
@@ -51,14 +51,14 @@ the tooling knows.
 
 Android is a non-issue for stages 2 and 3: apps run inside the client, so
 the APK's own icon is the client's, and per-app icons there only ever
-affect the launcher list from stage 1.
+affect the player list from stage 1.
 
 ## Status
 
 Stage 1 landed 2026-07-27: `solidrt.icon` (plus the `assets/icon.svg`
 convention default) -> validated in `collectAssets` -> `icon` field in both
 dev and pack manifests -> `InstalledApp.icon` carries the SVG source (128 KB
-cap, cosmetic failures degrade to absent) -> launcher list and detail render
+cap, cosmetic failures degrade to absent) -> player list and detail render
 it via `AppIcon`, with a monogram fallback (muted rounded square + first
 letter). The scaffold ships a placeholder `assets/icon.svg`; hello-world has
 one as the living example.
@@ -68,7 +68,7 @@ runtime stays raster-free, so `resvg` is a go-feature dep
 (`lattice/src/go/icon.rs` rasterizes at 128, straight-alpha) feeding
 `AlloyCommand::SetIcon` -> `sdl_utils::set_window_icon` (SDL_SetWindowIcon
 wrapper). The icon follows the app the way the sandbox and fonts do (one call
-next to EmitInitEvents per engine spin); the launcher and icon-less apps get
+next to EmitInitEvents per engine spin); the player and icon-less apps get
 the embedded puzzle mark. Packed runners are deliberately NOT wired: stage 3
 platform packaging owns their icons (a Windows .exe resource icon covers
 window + taskbar natively; macOS ignores SDL window icons entirely, only the
@@ -80,7 +80,7 @@ Stage 3 remains.
 ## Decided: SVG
 
 SVG won for both shipped stages: one file, scales to every surface, already
-rendered by the engine (usvg -> d-path) for the launcher, and rasterized at
+rendered by the engine (usvg -> d-path) for the player, and rasterized at
 a fixed size by resvg for the window icon. The default/fallback mark is the
 embedded `lattice/assets/icon-puzzle-gradient.svg`. Stage 3's OS-level
 embedding will still need fixed-size rasters produced at pack time.

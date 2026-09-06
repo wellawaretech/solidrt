@@ -88,7 +88,7 @@ public class SolidRTActivity extends SDLActivity {
     }
 
     // Flavor hook, run before SDL comes up: the go client extracts its
-    // launcher assets here; the production runtime does nothing (its payload
+    // player assets here; the production runtime does nothing (its payload
     // is read in place from the APK, never extracted).
     protected void prepareAssets() {
     }

@@ -8,7 +8,7 @@ import { fail } from "./util"
 //   "solidrt": {
 //     "appId": "com.example.app",   // stable identity: storage dir, Android package id
 //     "org": "Example",             // optional display metadata (publisher)
-//     "displayName": "Example App", // optional display metadata (launcher/window)
+//     "displayName": "Example App", // optional display metadata (player/window)
 //     "fonts": { ... },             // see fonts.ts
 //     "icon": "./assets/icon.svg",  // optional app icon (SVG, under assets/);
 //                                   // an undeclared assets/icon.svg is picked
@@ -230,7 +230,7 @@ function walkAssets(assetsDir: string, dir: string, out: ManifestAsset[]) {
 // pointing into that set: `solidrt.fonts` path entries and `solidrt.icon`
 // must live under assets/ so they reach dev clients and the version store
 // (`false` font entries only drop pack defaults and have no manifest
-// presence). The icon is SVG-only for now: the launcher renders SVG natively,
+// presence). The icon is SVG-only for now: the player renders SVG natively,
 // and the raster surfaces (window icon, OS embedding) come with later stages
 // (okf/backlog/app-icons.md). An undeclared assets/icon.svg is picked up by
 // convention.

@@ -14,7 +14,7 @@ define stage-bin
 	@echo "Staged $(3) into $(HOST_DIST)/"
 endef
 
-client: $(LAUNCHER_JS) $(BSOD_JS)
+client: $(PLAYER_JS) $(BSOD_JS)
 	@echo "Building SOLIDRT-GO ($(PROFILE)) $(VERSION)"
 	$(SOLIDRT_VERSION) cargo build $(CARGO_PROFILE_FLAG) $(GO_FEATURES) --bin solidrt-go --target-dir target/go
 	$(call stage-bin,go,$(PROFILE),solidrt-go)

@@ -16,7 +16,7 @@ advertise is dropped, not ported - and no mDNS code is deleted"; the p2p
 ticket became the single cross-device connect story). The advertise code
 survives as a comment in packages/cli/src/dev-server.ts. So pressing Discover
 put the client into "Searching..." with nothing on the LAN that could ever
-answer; the launcher's Discover button was commented out on 2026-08-01
+answer; the player's Discover button was commented out on 2026-08-01
 (apps/player/src/parts/connect-panel.tsx) to remove the dead end.
 
 Note the plan explicitly accepted this gap and said "do not bolt advertise
@@ -38,7 +38,7 @@ the server, as a flux capability, not in the CLI. That means:
 - `flux:mdns` exposes it (e.g. `advertise(service, port, opts)` returning a
   stop handle), keeping the plugin a thin marshalling layer.
 - The dev server publishes `_solidrt._tcp` next to its serve call.
-- The launcher uncomments Discover (connect-panel.tsx).
+- The player uncomments Discover (connect-panel.tsx).
 
 ## Feasibility questions (why this may be a dead end)
 

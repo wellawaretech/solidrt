@@ -225,11 +225,11 @@ async fn supervisor(
 /// drops. Returns when a new command interrupts (or the channel closes).
 ///
 /// A connect naming what this loop already dials is redundant and ignored
-/// rather than treated as an interrupt: the launcher re-dials its launch
+/// rather than treated as an interrupt: the player re-dials its launch
 /// address on every mount (including the mount a dev push causes), and
 /// tearing down the live connection to redial it would make the server
 /// re-deliver its latched push to the fresh connection, reloading the
-/// launcher into another dial - a reload/reconnect loop that never settles.
+/// player into another dial - a reload/reconnect loop that never settles.
 async fn run_direct(
   addr: String,
   cmd_rx: &mut UnboundedReceiver<DevCmd>,
@@ -498,7 +498,7 @@ async fn try_serve(
 
   // What this client already knows about itself and never changes, told
   // once so a dev tool can tell clients apart and see what machine each one
-  // is: its storage tree (<data-root>/client<N>, or the launcher/packed
+  // is: its storage tree (<data-root>/client<N>, or the player/packed
   // folder; null without writable storage), pid and executable, the host
   // and OS, the SDL video driver, the display refresh rate as of the
   // connect and the GPU strings. The GPU strings come from the raster
@@ -596,7 +596,7 @@ async fn try_serve(
             flags.proxy_http_enabled.store(proxy_http, Ordering::Relaxed);
             if let Some(code) = json.get("code").and_then(|c| c.as_str()) {
               // A push with a manifest is an install: persist the version so
-              // the app appears in the launcher's list and launches offline.
+              // the app appears in the player's list and launches offline.
               // The reload itself applies the in-memory code either way - a
               // failed install degrades to an ephemeral push.
               let mut app_id = None;
@@ -625,7 +625,7 @@ async fn try_serve(
             }
           }
           Some("stop") => {
-            // The launcher must never come up paused.
+            // The player must never come up paused.
             flags.clock.reset();
             let _ = tx.send(crate::EngineCmd::Stop);
           }
