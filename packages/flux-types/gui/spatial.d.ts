@@ -258,7 +258,23 @@ declare module "flux:spatial" {
    * Rebinding replaces the node's record sink; the abandoned slot zeroes.
    */
   export function bindPoseRecord(node: NodeId, buffer: BufferId, index: number): void
-  /** Remove the node's record sink (its slot zeroes at the next flush). */
+  /**
+   * Route the node's world matrix to record slot `index` of vertex buffer
+   * `buffer` as 16 floats (one column-major mat4) at float offset
+   * index * 16: the per-instance model matrix a vertex stage reads as
+   * four vec4 attributes. With `anchor` (an ANCESTOR of the node, one per
+   * buffer - every bind on the buffer names the same one) the record is
+   * the matrix RELATIVE to it, `inverse(anchorWorld) * world`, so a mesh's
+   * instances stay in the mesh's own space and its uModel still places
+   * the whole population (`uModel * instanceMatrix`); without one it is
+   * the plain world matrix. Batching, growth (retargetRecords) and
+   * rebinding as bindPoseRecord; a hidden, unbound or destroyed node's
+   * slot becomes a zero-scale matrix (w stays 1), so the instance
+   * collapses to a point and draws nothing. Every sink on one buffer
+   * shares one projection.
+   */
+  export function bindMatrixRecord(node: NodeId, buffer: BufferId, index: number, anchor?: NodeId): void
+  /** Remove the node's record sink (its slot hides at the next flush). */
   export function unbindRecord(node: NodeId): void
   /**
    * Move every record sink on buffer `old` to buffer `new`, slot indices

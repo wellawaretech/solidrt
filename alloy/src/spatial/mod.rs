@@ -153,22 +153,43 @@ struct SharedGroup {
   dirty: bool,
 }
 
-/// How an instance-record sink projects the node's world transform into
-/// its slot's floats. `Pose2D` is `[x, y, angle, sx, sy]`: world xy
-/// translation, the rotation of the local x axis in the world xy plane
-/// (`atan2(m[1], m[0])`), and the xy scale, `sy` negated when the matrix
-/// mirrors (negative 2x2 determinant) so handedness survives the round
-/// trip. A full-matrix projection is the anticipated 3d sibling.
+/// How an instance-record sink projects the node's transform into its
+/// slot's floats. `Pose2D` is `[x, y, angle, sx, sy]`: xy translation,
+/// the rotation of the local x axis in the xy plane (`atan2(m[1], m[0])`),
+/// and the xy scale, `sy` negated when the matrix mirrors (negative 2x2
+/// determinant) so handedness survives the round trip. `Matrix` is the
+/// whole matrix, 16 floats column-major: the per-instance model matrix a
+/// vertex stage reads as four vec4 columns. Both project the WORLD
+/// matrix, or, when the buffer's group carries an anchor (see
+/// `set_instance_record`), the world matrix relative to it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum InstanceProjection {
   Pose2D,
+  Matrix,
 }
+
+/// A hidden `Matrix` slot: zero scale with the translation's w kept at 1,
+/// so the instance's vertices collapse to one point and its zero-area
+/// triangles draw nothing. An all-zero matrix would leave w = 0, a
+/// homogeneous point the clipper need not reject.
+const HIDDEN_MATRIX: [f32; 16] = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0];
+/// A hidden `Pose2D` slot: zero scale collapses the quad.
+const HIDDEN_POSE2D: [f32; 5] = [0.0; 5];
 
 impl InstanceProjection {
   /// Floats per record slot.
   pub fn floats(&self) -> u32 {
     match self {
       InstanceProjection::Pose2D => 5,
+      InstanceProjection::Matrix => 16,
+    }
+  }
+
+  /// The slot of a hidden, unbound or destroyed node: draws nothing.
+  fn hidden(&self) -> &'static [f32] {
+    match self {
+      InstanceProjection::Pose2D => &HIDDEN_POSE2D,
+      InstanceProjection::Matrix => &HIDDEN_MATRIX,
     }
   }
 }
@@ -180,9 +201,9 @@ impl InstanceProjection {
 /// node per drawn instance, the draw itself untouched. Writes batch: the
 /// flush accumulates every slot into a staging mirror and publishes one
 /// coalesced dirty range per buffer, so a thousand nodes moved by one
-/// producer step cost one buffer write. A hidden node's slot zeroes
-/// (zero scale collapses the instance); so does an unbound or destroyed
-/// node's.
+/// producer step cost one buffer write. A hidden node's slot takes the
+/// projection's hidden record (zero scale collapses the instance); so
+/// does an unbound or destroyed node's.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct InstanceRecordSink {
   pub buffer: u64,
@@ -225,9 +246,15 @@ struct PaletteGroup {
   dirty: bool,
 }
 
-/// One instance buffer's staging mirror and the sinks feeding it.
+/// One instance buffer's staging mirror and the sinks feeding it: one
+/// projection (so one stride) and one anchor per buffer.
 struct InstanceGroup {
-  stride: u32,
+  projection: InstanceProjection,
+  /// The node whose frame the records are relative to; None = world.
+  anchor: Option<NodeId>,
+  /// `inverse(anchorWorld)` as of flush `inv_flush` (see `anchored`).
+  anchor_inv: Mat4,
+  inv_flush: u64,
   values: Vec<f32>,
   refs: u32,
   /// Dirty float range [lo, hi) into `values`; None = clean.
@@ -235,11 +262,24 @@ struct InstanceGroup {
 }
 
 impl InstanceGroup {
+  fn stride(&self) -> usize {
+    self.projection.floats() as usize
+  }
+
   fn mark(&mut self, lo: usize, hi: usize) {
     self.dirty = match self.dirty {
       Some((a, b)) => Some((a.min(lo), b.max(hi))),
       None => Some((lo, hi)),
     };
+  }
+
+  /// Grow the mirror to hold `slots` records; a new slot starts hidden,
+  /// so a gap between bound slots never publishes as raw zeros.
+  fn reserve(&mut self, slots: usize) {
+    let need = slots * self.stride();
+    while self.values.len() < need {
+      self.values.extend_from_slice(self.projection.hidden());
+    }
   }
 }
 
@@ -388,6 +428,9 @@ pub struct Spatial {
   /// Nodes the walk recomputed or re-shown this flush: the cull pass
   /// re-tests their sinks even when no frustum moved.
   touched: Vec<u32>,
+  /// Counts flushes: what per-flush caches (an instance group's anchor
+  /// inverse) are stamped with.
+  flush_id: u64,
 }
 
 fn index(id: NodeId) -> usize {
@@ -840,28 +883,51 @@ impl Spatial {
   }
 
   /// Bind (or with None unbind) the node's instance-record sink. Binding
-  /// writes the slot at the next flush; unbinding zeroes it there. Every
+  /// writes the slot at the next flush; unbinding hides it there. Every
   /// sink on one buffer must carry the same projection (one stride per
-  /// buffer). Slot fit against the actual GPU buffer is the caller's
-  /// check (Context validates at bind); the staging mirror grows to the
-  /// highest bound slot.
-  pub fn set_instance_record(&mut self, id: NodeId, sink: Option<InstanceRecordSink>) -> Result<(), String> {
+  /// buffer) and name the same `anchor`: the node whose frame the records
+  /// are relative to (`inverse(anchorWorld) * world` - a mesh's instances
+  /// stay in the mesh's own space, so its uModel still places the whole
+  /// population), None for plain world records. The anchor must be an
+  /// ANCESTOR of every bound node, so an anchor move restages every slot
+  /// (its subtree recomputes): the consumer's contract, unchecked, as for
+  /// the palette anchor. Slot fit against the actual GPU buffer is the
+  /// caller's check (Context validates at bind); the staging mirror grows
+  /// to the highest bound slot.
+  pub fn set_instance_record(
+    &mut self,
+    id: NodeId,
+    sink: Option<InstanceRecordSink>,
+    anchor: Option<NodeId>,
+  ) -> Result<(), String> {
     let i = self.resolve(id)?;
     if let Some(sink) = &sink {
-      let stride = sink.projection.floats();
+      if let Some(a) = anchor {
+        self.resolve(a)?;
+      }
       let group = self.instances.entry(sink.buffer).or_insert_with(|| InstanceGroup {
-        stride,
+        projection: sink.projection,
+        anchor,
+        anchor_inv: IDENTITY,
+        inv_flush: 0,
         values: Vec::new(),
         refs: 0,
         dirty: None,
       });
-      if group.stride != stride {
-        return Err(format!("instance buffer {} carries {}-float records, not {}", sink.buffer, group.stride, stride));
+      if group.projection != sink.projection {
+        return Err(format!(
+          "instance buffer {} carries {:?} records, not {:?} (one projection per buffer)",
+          sink.buffer, group.projection, sink.projection
+        ));
       }
-      let need = (sink.index as usize + 1) * stride as usize;
-      if group.values.len() < need {
-        group.values.resize(need, 0.0);
+      if group.refs > 0 && group.anchor != anchor {
+        return Err(format!(
+          "instance buffer {} records are anchored to {:?}, not {:?} (one anchor per buffer)",
+          sink.buffer, group.anchor, anchor
+        ));
       }
+      group.anchor = anchor;
+      group.reserve(sink.index as usize + 1);
       group.refs += 1;
     }
     if let Some(old) = self.nodes[i as usize].record.take() {
@@ -912,14 +978,15 @@ impl Spatial {
     Ok(())
   }
 
-  /// Drop one record sink's claim on its group: the slot zeroes at the
+  /// Drop one record sink's claim on its group: the slot hides at the
   /// next flush, and the group itself is dropped there once unreferenced.
   fn release_record(&mut self, sink: &InstanceRecordSink) {
     if let Some(group) = self.instances.get_mut(&sink.buffer) {
-      let stride = group.stride as usize;
+      let stride = group.stride();
       let at = sink.index as usize * stride;
-      if group.values[at..at + stride].iter().any(|&v| v != 0.0) {
-        group.values[at..at + stride].fill(0.0);
+      let hidden = group.projection.hidden();
+      if group.values[at..at + stride] != *hidden {
+        group.values[at..at + stride].copy_from_slice(hidden);
         group.mark(at, at + stride);
       }
       group.refs = group.refs.saturating_sub(1);
@@ -929,13 +996,37 @@ impl Spatial {
   /// Stage one record slot's fresh values; a no-op when they are unchanged.
   fn stage_record(&mut self, sink: &InstanceRecordSink, values: &[f32]) {
     if let Some(group) = self.instances.get_mut(&sink.buffer) {
-      let at = sink.index as usize * group.stride as usize;
+      let at = sink.index as usize * group.stride();
       let slot = &mut group.values[at..at + values.len()];
       if slot != values {
         slot.copy_from_slice(values);
         group.mark(at, at + values.len());
       }
     }
+  }
+
+  /// `world` in the buffer's anchor frame (`inverse(anchorWorld) * world`;
+  /// `world` itself without an anchor). The inverse is taken once per
+  /// flush per buffer: the walk visits an anchor before its descendants,
+  /// so it is fresh by the time a bound node stages. A dead anchor reads
+  /// as identity (a consumer tears instances down before their mesh).
+  fn anchored(&mut self, buffer: u64, world: &Mat4) -> Mat4 {
+    let (anchor, stale) = match self.instances.get(&buffer) {
+      Some(group) => (group.anchor, group.inv_flush != self.flush_id),
+      None => return *world,
+    };
+    let Some(anchor) = anchor else { return *world };
+    if stale {
+      let inv = match self.resolve(anchor) {
+        Ok(a) => invert_affine(&self.nodes[a as usize].world),
+        Err(_) => IDENTITY,
+      };
+      let flush_id = self.flush_id;
+      let group = self.instances.get_mut(&buffer).expect("group found above");
+      group.anchor_inv = inv;
+      group.inv_flush = flush_id;
+    }
+    multiply(self.instances[&buffer].anchor_inv, *world)
   }
 
   /// Drop one sink's claim on its group: the slot zeroes at the next
@@ -1429,6 +1520,7 @@ impl Spatial {
   /// group whose write did not land is dropped with it (see `SinkWriter`);
   /// the slots still naming it stage nothing, so it never writes again.
   pub fn flush(&mut self, out: &mut dyn SinkWriter) {
+    self.flush_id += 1;
     if !self.queue.is_empty() {
       let queue = std::mem::take(&mut self.queue);
       for &i in &queue {
@@ -1627,16 +1719,16 @@ impl Spatial {
     let record = self.nodes[i as usize].record;
     let record_on = self.nodes[i as usize].record_on;
     if let Some(rec) = record {
-      match rec.projection {
-        InstanceProjection::Pose2D => {
-          if shown && (changed || !record_on) {
-            self.stage_record(&rec, &pose2d(&world));
-            self.nodes[i as usize].record_on = true;
-          } else if !shown && record_on {
-            self.stage_record(&rec, &[0.0; 5]);
-            self.nodes[i as usize].record_on = false;
-          }
+      if shown && (changed || !record_on) {
+        let m = self.anchored(rec.buffer, &world);
+        match rec.projection {
+          InstanceProjection::Pose2D => self.stage_record(&rec, &pose2d(&m)),
+          InstanceProjection::Matrix => self.stage_record(&rec, &m),
         }
+        self.nodes[i as usize].record_on = true;
+      } else if !shown && record_on {
+        self.stage_record(&rec, rec.projection.hidden());
+        self.nodes[i as usize].record_on = false;
       }
     }
     if refit {

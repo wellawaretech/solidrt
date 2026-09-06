@@ -77,6 +77,7 @@ impl ModuleDef for SpatialModule {
     decl.declare("destroyPlayer")?;
     decl.declare("readTransform")?;
     decl.declare("bindPoseRecord")?;
+    decl.declare("bindMatrixRecord")?;
     decl.declare("unbindRecord")?;
     decl.declare("retargetRecords")?;
     Ok(())
@@ -120,6 +121,7 @@ impl ModuleDef for SpatialModule {
     exports.export("destroyPlayer", Function::new(ctx.clone(), destroy_player)?)?;
     exports.export("readTransform", Function::new(ctx.clone(), read_transform)?)?;
     exports.export("bindPoseRecord", Function::new(ctx.clone(), bind_pose_record)?)?;
+    exports.export("bindMatrixRecord", Function::new(ctx.clone(), bind_matrix_record)?)?;
     exports.export("unbindRecord", Function::new(ctx.clone(), unbind_record)?)?;
     exports.export("retargetRecords", Function::new(ctx.clone(), retarget_records)?)?;
     Ok(())
@@ -720,12 +722,26 @@ fn bind_pose_record(ctx: Ctx<'_>, id: u64, buffer: u64, index: u32) -> rquickjs:
   let sink = InstanceRecordSink { buffer, index, projection: InstanceProjection::Pose2D };
   super::gui(&ctx)
     .alloy
-    .spatial_bind_record(id, Some(sink))
+    .spatial_bind_record(id, Some(sink), None)
     .map_err(|e| throw_str(&ctx, &format!("bindPoseRecord: {e}")))
 }
 
+/// Bind the node's instance-record sink with the matrix projection: the
+/// flush writes the node's world matrix, relative to `anchor` when given,
+/// as 16 floats to record slot `index` of vertex buffer `buffer`.
+fn bind_matrix_record(ctx: Ctx<'_>, id: u64, buffer: u64, index: u32, anchor: OptArg<u64>) -> rquickjs::Result<()> {
+  let sink = InstanceRecordSink { buffer, index, projection: InstanceProjection::Matrix };
+  super::gui(&ctx)
+    .alloy
+    .spatial_bind_record(id, Some(sink), anchor.0)
+    .map_err(|e| throw_str(&ctx, &format!("bindMatrixRecord: {e}")))
+}
+
 fn unbind_record(ctx: Ctx<'_>, id: u64) -> rquickjs::Result<()> {
-  super::gui(&ctx).alloy.spatial_bind_record(id, None).map_err(|e| throw_str(&ctx, &format!("unbindRecord: {e}")))
+  super::gui(&ctx)
+    .alloy
+    .spatial_bind_record(id, None, None)
+    .map_err(|e| throw_str(&ctx, &format!("unbindRecord: {e}")))
 }
 
 /// Move every record sink on buffer `old` to buffer `new` - the growth

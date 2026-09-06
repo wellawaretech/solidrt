@@ -16,7 +16,7 @@
 // every function returns its raw term, weighting and color belong to the
 // caller.
 
-import type { CullMode } from "@solidrt/core/gpu"
+import type { CullMode, InstanceAttribute } from "@solidrt/core/gpu"
 
 // core/gpu's glsl tag, aliased locally (it is String.raw) so this module
 // stays runtime-pure: no flux:gpu import, so the checks/ rigs and any
@@ -43,6 +43,57 @@ export const MAX_CASCADES = 4
  * does not size the fragment uniform budget for the worst case where
  * every light is a fully cascaded sun. */
 export const MAX_SHADOW_MAPS = 8
+
+/** The instance attributes an instanced mesh's material declares
+ * (`shaderMaterialClass({ instanceAttributes: INSTANCE_MATRIX_ATTRIBUTES
+ * })`): the four vec4 columns of the per-instance matrix the spatial core
+ * writes - the instance's placement inside the mesh (createInstancedMesh,
+ * addInstance). Read them through INSTANCE_MATRIX. Slot 0, the core's
+ * record; an app's own per-instance floats go in slot 1 (the style
+ * record, see INSTANCE_COLOR_ATTRIBUTES). */
+export const INSTANCE_MATRIX_ATTRIBUTES: InstanceAttribute[] = [
+  { name: "iModel0", format: "vec4" },
+  { name: "iModel1", format: "vec4" },
+  { name: "iModel2", format: "vec4" },
+  { name: "iModel3", format: "vec4" },
+]
+
+/** The per-instance color the stock materials read with `instanceColors`
+ * (`in vec4 iColor`, premultiplied linear like aColor, forwarded as
+ * vColor): a slot-1 attribute, so it is the instance's STYLE record -
+ * app-owned, written with setInstanceStyle(instance, [r, g, b, a]) - beside
+ * the core's matrix in slot 0. A custom class appends it (or any slot-1
+ * layout of its own) to INSTANCE_MATRIX_ATTRIBUTES; the stock materials
+ * start every instance at white. Three's instanceColor, Godot's
+ * MultiMesh instance color. */
+export const INSTANCE_COLOR_ATTRIBUTES: InstanceAttribute[] = [{ name: "iColor", format: "vec4", slot: 1 }]
+
+/**
+ * The vertex-stage declarations over INSTANCE_MATRIX_ATTRIBUTES:
+ * `instanceMatrix()` is the instance's placement inside the mesh, applied
+ * under the mesh's own uModel (`uModel * instanceMatrix() * vec4(aPos,
+ * 1.0)`, and `mat3(uNormal) * instanceNormalMatrix() * aNormal` for the
+ * normal). `instanceNormalMatrix()` is Three's derivation: each column
+ * divided by its squared length, which is the inverse-transpose of any
+ * rotation-times-scale matrix, so it is exact for every instance and for
+ * uniformly scaled groups between mesh and instance at no per-instance
+ * data. The one case it misses is a sheared hierarchy - a non-uniformly
+ * scaled group above a rotated instance; a stage that builds one writes
+ * `transpose(inverse(mat3(instanceMatrix())))` instead (Godot's form).
+ */
+export const INSTANCE_MATRIX = glsl`
+  in vec4 iModel0;
+  in vec4 iModel1;
+  in vec4 iModel2;
+  in vec4 iModel3;
+  mat4 instanceMatrix() {
+    return mat4(iModel0, iModel1, iModel2, iModel3);
+  }
+  mat3 instanceNormalMatrix() {
+    mat3 m = mat3(iModel0.xyz, iModel1.xyz, iModel2.xyz);
+    return mat3(m[0] / dot(m[0], m[0]), m[1] / dot(m[1], m[1]), m[2] / dot(m[2], m[2]));
+  }
+`
 
 /**
  * The standard lit vertex stage: clip position via uViewProj * uModel,
@@ -81,14 +132,30 @@ export const SKIN_MATRIX = glsl`
       aWeights.z * boneAt(int(aJoints.z)) + aWeights.w * boneAt(int(aJoints.w));
 `
 
+// The per-instance placement, spliced into a vertex stage's position and
+// normal math for an instanced material: the skin (when any) first, then
+// the instance's matrix inside the mesh, then uModel - so a skinned
+// instanced fleet poses every copy by the one shared palette and places
+// each by its own record.
+function instancedPosition(skinned: boolean, instanced: boolean): string {
+  let local = skinned ? "(skin * vec4(aPos, 1.0))" : "vec4(aPos, 1.0)"
+  return instanced ? `uModel * (instanceMatrix() * ${local})` : `uModel * ${local}`
+}
+function instancedNormal(skinned: boolean, instanced: boolean): string {
+  let local = skinned ? "(mat3(skin) * aNormal)" : "aNormal"
+  return instanced ? `mat3(uNormal) * (instanceNormalMatrix() * ${local})` : `mat3(uNormal) * ${local}`
+}
+
 // The one lit vertex template: the standard prefix always, aColor and
 // aUV2 only when the fragment reads them (an `in` the source mentions
 // makes the material require that channel, so the blocks must be absent,
 // not inactive), the skin blocks only for a skinned material (they make
-// it require the "skinned" layout the same way). LIT_VERTEX /
-// LIT_VERTEX_COLORED are its two named forms; litVertex(o) picks per
-// option set.
-function litVertexSource(colored: boolean, uv2: boolean, skinned: boolean): string {
+// it require the "skinned" layout the same way), the instance matrix
+// and color only for an instanced one. vColor carries the vertex color,
+// the instance color, or their product. LIT_VERTEX / LIT_VERTEX_COLORED
+// are its two named forms; litVertex(o) picks per option set.
+function litVertexSource(colored: boolean, uv2: boolean, skinned: boolean, instanced: boolean, instanceColors: boolean): string {
+  let color = colored && instanceColors ? "aColor * iColor" : colored ? "aColor" : instanceColors ? "iColor" : ""
   return glsl`
   in vec3 aPos;
   in vec3 aNormal;
@@ -96,29 +163,31 @@ function litVertexSource(colored: boolean, uv2: boolean, skinned: boolean): stri
   ${colored ? "in vec4 aColor;" : ""}
   ${uv2 ? "in vec2 aUV2;" : ""}
   ${skinned ? SKIN_DECLS : ""}
+  ${instanced ? INSTANCE_MATRIX : ""}
+  ${instanceColors ? "in vec4 iColor;" : ""}
   uniform mat4 uModel;
   uniform mat4 uViewProj;
   uniform mat4 uNormal;
   out vec3 vWorldPos;
   out vec3 vNormal;
   out vec2 vUv;
-  ${colored ? "out vec4 vColor;" : ""}
+  ${color ? "out vec4 vColor;" : ""}
   ${uv2 ? "out vec2 vUv2;" : ""}
 
   void main() {
     ${skinned ? SKIN_MATRIX : ""}
-    vec4 world = uModel * ${skinned ? "(skin * vec4(aPos, 1.0))" : "vec4(aPos, 1.0)"};
+    vec4 world = ${instancedPosition(skinned, instanced)};
     gl_Position = uViewProj * world;
     vWorldPos = world.xyz;
-    vNormal = mat3(uNormal) * ${skinned ? "(mat3(skin) * aNormal)" : "aNormal"};
+    vNormal = ${instancedNormal(skinned, instanced)};
     vUv = aUV;
-    ${colored ? "vColor = aColor;" : ""}
+    ${color ? `vColor = ${color};` : ""}
     ${uv2 ? "vUv2 = aUV2;" : ""}
   }
 `
 }
 
-export const LIT_VERTEX = litVertexSource(false, false, false)
+export const LIT_VERTEX = litVertexSource(false, false, false, false, false)
 
 /**
  * LIT_VERTEX for "colored"-layout geometry: the same interface plus the
@@ -128,7 +197,7 @@ export const LIT_VERTEX = litVertexSource(false, false, false)
  * collects the vertex stage's `in` declarations), so its meshes need
  * geometry carrying that channel - withColors() - or add() throws.
  */
-export const LIT_VERTEX_COLORED = litVertexSource(true, false, false)
+export const LIT_VERTEX_COLORED = litVertexSource(true, false, false, false, false)
 
 /** `vec3 hemisphere(vec3 n, vec3 sky, vec3 ground)` - ambient from a
  * sky/ground gradient by the normal's vertical tilt: sky straight up,
@@ -995,6 +1064,15 @@ export type LitSourceOptions = {
    * the spatial flush writes it). The vertex stage then requires that layout
    * and something must bind `uBones`; the fragment is unchanged. */
   skinned?: boolean
+  /** Place each copy by its instance matrix (INSTANCE_MATRIX under
+   * uModel, normals through instanceNormalMatrix): the vertex stage of a
+   * material for createInstancedMesh. The class then declares
+   * INSTANCE_MATRIX_ATTRIBUTES; the fragment is unchanged. */
+  instanced?: boolean
+  /** Multiply the base by the per-instance `iColor` (implies `instanced`;
+   * the class declares INSTANCE_COLOR_ATTRIBUTES too): vColor carries it,
+   * times aColor under `vertexColors`. */
+  instanceColors?: boolean
   /** GLSL spliced at file scope, before main: the uniforms, constants and
    * helper functions `surface` calls. */
   prelude?: string
@@ -1045,6 +1123,8 @@ type LitSource = {
   lightMap: boolean
   mapTransform: boolean
   skinned: boolean
+  instanced: boolean
+  instanceColors: boolean
   prelude: string
   surface: string
   // The light model: Blinn-Phong (`lit`) or GGX metalness/roughness
@@ -1072,6 +1152,8 @@ function resolveLit(o: LitSourceOptions): LitSource {
     lightMap: o.lightMap === true,
     mapTransform: o.mapTransform === true,
     skinned: o.skinned === true,
+    instanced: o.instanced === true || o.instanceColors === true,
+    instanceColors: o.instanceColors === true,
     prelude: o.prelude ?? "",
     surface: o.surface ?? "",
     brdf: "blinn",
@@ -1105,7 +1187,7 @@ function litVaryings(c: LitSource): string {
     in vec3 vWorldPos;
     in vec3 vNormal;
     in vec2 vUv;
-    ${c.vertexColors ? "in vec4 vColor;" : ""}
+    ${c.vertexColors || c.instanceColors ? "in vec4 vColor;" : ""}
     ${c.lightMap ? "in vec2 vUv2;" : ""}
   `
 }
@@ -1133,7 +1215,7 @@ function litBase(c: LitSource, flip: boolean): string {
           : "base *= texture(uMap, uv);"
         : ""
     }
-    ${c.vertexColors ? "base *= vColor;" : ""}
+    ${c.vertexColors || c.instanceColors ? "base *= vColor;" : ""}
     ${c.alphaTest ? "if (base.a < uAlphaTest) discard;" : ""}
   `
 }
@@ -1145,7 +1227,8 @@ function litBase(c: LitSource, flip: boolean): string {
  * same varyings in both passes.
  */
 export function litVertex(o: LitSourceOptions = {}): string {
-  return litVertexSource(o.vertexColors === true, o.lightMap === true, o.skinned === true)
+  let c = resolveLit(o)
+  return litVertexSource(c.vertexColors, c.lightMap, c.skinned, c.instanced, c.instanceColors)
 }
 
 /**
@@ -1323,6 +1406,12 @@ export type UnlitSourceOptions = {
   /** Skin positions by the "skinned" layout against uBones (see the lit
    * option); unlitVertex(o) reads it, the fragment is unchanged. */
   skinned?: boolean
+  /** Place each copy by its instance matrix (see the lit option);
+   * unlitVertex(o) reads it, the fragment is unchanged. */
+  instanced?: boolean
+  /** Multiply the base by the per-instance `iColor` (implies `instanced`;
+   * see the lit option): the one per-copy value an unlit fleet wants. */
+  instanceColors?: boolean
   /** GLSL spliced at file scope, before main. */
   prelude?: string
   /** GLSL declaring `void surface(inout Surface s)`, called with the base
@@ -1338,6 +1427,9 @@ type UnlitSource = {
   alphaTest: boolean
   fog: boolean
   mapTransform: boolean
+  skinned: boolean
+  instanced: boolean
+  instanceColors: boolean
   prelude: string
   surface: string
 }
@@ -1349,6 +1441,9 @@ function resolveUnlit(o: UnlitSourceOptions): UnlitSource {
     alphaTest: o.alphaTest === true,
     fog: o.fog !== false,
     mapTransform: o.mapTransform === true && o.map === true,
+    skinned: o.skinned === true,
+    instanced: o.instanced === true || o.instanceColors === true,
+    instanceColors: o.instanceColors === true,
     prelude: o.prelude ?? "",
     surface: o.surface ?? "",
   }
@@ -1356,34 +1451,42 @@ function resolveUnlit(o: UnlitSourceOptions): UnlitSource {
 
 /**
  * The vertex stage `unlit` pairs with an option set: UNLIT_VERTEX, or its
- * skinned form (the skin matrix applied before uModel) when `skinned`.
+ * skinned form (the skin matrix applied before uModel) when `skinned`,
+ * its instanced form (the instance matrix under uModel, iColor forwarded
+ * as vColor under `instanceColors`) when `instanced`.
  */
 export function unlitVertex(o: UnlitSourceOptions = {}): string {
-  if (o.skinned !== true) return UNLIT_VERTEX
+  let c = resolveUnlit(o)
+  if (!c.skinned && !c.instanced) return UNLIT_VERTEX
   return glsl`
   in vec3 aPos;
   in vec2 aUV;
-  ${SKIN_DECLS}
+  ${c.skinned ? SKIN_DECLS : ""}
+  ${c.instanced ? INSTANCE_MATRIX : ""}
+  ${c.instanceColors ? "in vec4 iColor;" : ""}
   out vec2 vUv;
   out vec3 vWorldPos;
+  ${c.instanceColors ? "out vec4 vColor;" : ""}
   uniform mat4 uModel;
   uniform mat4 uViewProj;
 
   void main() {
-    ${SKIN_MATRIX}
-    vec4 world = uModel * (skin * vec4(aPos, 1.0));
+    ${c.skinned ? SKIN_MATRIX : ""}
+    vec4 world = ${instancedPosition(c.skinned, c.instanced)};
     vWorldPos = world.xyz;
     gl_Position = uViewProj * world;
     vUv = aUV;
+    ${c.instanceColors ? "vColor = iColor;" : ""}
   }
 `
 }
 
-/** The unlit base sample: uColor times the (possibly transformed) map. */
+/** The unlit base sample: uColor times the (possibly transformed) map,
+ * times the instance color when the material carries one. */
 function unlitBase(c: UnlitSource): string {
-  if (!c.map) return "vec4 base = uColor;"
   let uv = c.mapTransform ? "vUv * uMapTransform.xy + uMapTransform.zw" : "vUv"
-  return `vec4 base = texture(uMap, ${uv}) * uColor;`
+  let base = c.map ? `vec4 base = texture(uMap, ${uv}) * uColor;` : "vec4 base = uColor;"
+  return c.instanceColors ? base + "\n      base *= vColor;" : base
 }
 
 /**
@@ -1406,6 +1509,7 @@ export function unlitFragment(o: UnlitSourceOptions = {}): string {
   return glsl`
     ${c.map ? "in vec2 vUv;" : ""}
     in vec3 vWorldPos;
+    ${c.instanceColors ? "in vec4 vColor;" : ""}
     ${c.map ? "uniform sampler2D uMap;" : ""}
     uniform vec4 uColor;
     ${c.alphaTest ? "uniform float uAlphaTest;" : ""}
@@ -1433,6 +1537,7 @@ export function unlitShadowFragment(o: UnlitSourceOptions = {}): string | undefi
   if (!c.alphaTest && !c.surface) return undefined
   return glsl`
     ${c.map ? "in vec2 vUv;" : ""}
+    ${c.instanceColors ? "in vec4 vColor;" : ""}
     uniform vec4 uColor;
     ${c.map ? "uniform sampler2D uMap;" : ""}
     ${c.alphaTest ? "uniform float uAlphaTest;" : ""}

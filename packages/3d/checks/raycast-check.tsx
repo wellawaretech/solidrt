@@ -25,7 +25,7 @@ import { glsl } from "@solidrt/core/gpu"
 import {
   add,
   box,
-  createInstancedMesh,
+  createRecordMesh,
   createMesh,
   createScene,
   mergeGeometries,
@@ -80,7 +80,7 @@ function App() {
     instanceAttributes: [{ name: "iPos", format: "vec3" }],
     label: "raycast-check-instanced",
   })
-  let instanced = createInstancedMesh(box(), look.instance(), new Float32Array([0, 0, 0]), 1, {
+  let instanced = createRecordMesh(box(), look.instance(), new Float32Array([0, 0, 0]), 1, {
     bounds: [-0.5, -0.5, -0.5, 0.5, 0.5, 0.5],
   })
   setTransform(instanced, { position: [0, 3, 0] })

@@ -66,13 +66,24 @@ depends on `@solidrt/3d` (or in-repo from the package directory).
   flat to the screen and `"fixed-y"` cutout trees that only yaw toward
   the camera and stay upright as it climbs, both turned in the vertex
   stage while the camera circles - no per-sprite JS per frame.
-- `instanced.tsx` - instanced meshes: one material class declaring
-  `instanceAttributes`, two `<InstancedMesh>` fleets (400 scattered
-  rocks, a ring of pines) each ONE draw entry and ONE uModel, a spinning
-  group moving both with two matrix writes, and `setInstanceCount` from
-  onFrame breathing the pine population. The class also declares
-  `shadowVertex` (the placement math alone), so both fleets `castShadow`
-  onto the lit ground - the pines' shadows breathe with them.
+- `instanced.tsx` - record meshes, the JS-written population: one
+  material class declaring `instanceAttributes`, two `<RecordMesh>`
+  fleets (400 scattered rocks, a ring of pines) each ONE draw entry and
+  ONE uModel, a spinning group moving both with two matrix writes, and
+  `setRecordCount` from onFrame breathing the pine population. The class
+  also declares `shadowVertex` (the placement math alone), so both
+  fleets `castShadow` onto the lit ground - the pines' shadows breathe
+  with them.
+- `fleet.tsx` - instanced meshes, the node-backed population: one
+  `<InstancedMesh>` of a thousand `<Instance>` nodes under the stock
+  `lit` material with `instanceColors` (lighting, shadows, fog and a
+  per-instance tint with no GLSL). Every few seconds a signal picks the
+  next formation and the core springs every instance to its place
+  through its `transition` - one signal write, zero JS per frame after
+  it; a tap flips the struck instance's tint (pointer events name the
+  instance; every style write between two frames is one buffer write).
+  Drag to orbit; the `formation` and `state` debug commands drive it
+  headlessly.
 - `first-person.tsx` - a first-person walk: `<FirstPersonCamera>` over
   a walled courtyard of shadow-casting pillars, WASD/arrows and the pad
   sticks to walk, mouse look under pointer lock (click locks, Escape

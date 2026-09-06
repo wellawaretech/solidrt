@@ -50,7 +50,7 @@ import { cameraParams, cameraState, ensureCamera, makeCamera, updateCamera } fro
 import type { Camera, CameraState, CameraUpdate } from "./camera.ts"
 import { makeShadowSystem } from "./scene-shadows.ts"
 import { makePointerInput } from "./scene-pointer.ts"
-import { layoutKey, validateGeometry } from "./geometry.ts"
+import { geometryBounds, layoutKey, validateGeometry } from "./geometry.ts"
 import type { Geometry } from "./geometry.ts"
 import { acquireGeometryBuffers, releaseGeometryBuffers } from "./geometry-gpu.ts"
 import { backgroundPipeline, missingAttributes, SKYBOX_FRAGMENT } from "./material.ts"
@@ -60,8 +60,8 @@ import type { Material } from "./material.ts"
 import { orderEntries } from "./order.ts"
 import { fillTransform, leaveScene, makeNode, worldInto } from "./node.ts"
 import type { SceneHooks, SceneNode, ScenePointerEvent } from "./node.ts"
-import { checkMask, instanceStride, localBounds } from "./mesh.ts"
-import type { Mesh } from "./mesh.ts"
+import { checkInstancePairing, checkMask, instanceBinding, localBounds, publishInstanceStyle } from "./mesh.ts"
+import type { InstancedMesh, InstanceNode, Mesh } from "./mesh.ts"
 import type { CastingLight, Light } from "./light.ts"
 
 const IDENTITY = mat4()
@@ -124,11 +124,15 @@ let worldScratch = mat4()
  * triangle hit (every ordinary mesh - the test is per triangle, so a ray
  * through a knot's hole misses) the world-space geometric `normal` facing
  * the ray, the triangle index `face` and the interpolated texture `uv`.
- * An instanced mesh is picked by the faces of its explicit population box
- * and a sprite by those of a unit box around its center, so their hits
- * carry the struck face's `normal` and no `face`/`uv`. */
+ * An instanced mesh is picked per instance, by the geometry's triangles
+ * placed as that instance (`instance` names it, Three's instanceId). A
+ * record mesh is picked by the faces of its explicit population box and
+ * a sprite by those of a unit box around its center, so their hits carry
+ * the struck face's `normal` and no `face`/`uv`. */
 export type Hit = {
   mesh: Mesh
+  /** The instance struck, for an instanced mesh. */
+  instance?: InstanceNode
   distance: number
   point: Vec3
   normal: Vec3
@@ -168,15 +172,16 @@ export type Volume = Sphere | Capsule | OrientedBox
 /** One mesh an overlap() volume touches: its deepest contact - the point
  * on the mesh, the unit direction out of it, and the depth along that
  * direction that clears the contact (Unity's ComputePenetration, Godot's
- * get_rest_info, per mesh). */
-export type Overlap = { mesh: Mesh; point: Vec3; normal: Vec3; depth: number }
+ * get_rest_info, per mesh). `instance` names the instance touched on an
+ * instanced mesh, which reports once per instance. */
+export type Overlap = { mesh: Mesh; instance?: InstanceNode; point: Vec3; normal: Vec3; depth: number }
 
 /** One mesh a sweep() volume touches on its way: `time` is the fraction
  * of the motion at first touch (0 for a volume already in contact and
  * moving in), `point` the touch point on the mesh, `normal` the unit
  * normal there facing the volume (Unity's RaycastHit from a cast,
- * Godot's KinematicCollision3D). */
-export type Impact = { mesh: Mesh; time: number; point: Vec3; normal: Vec3 }
+ * Godot's KinematicCollision3D). `instance` as on Overlap. */
+export type Impact = { mesh: Mesh; instance?: InstanceNode; time: number; point: Vec3; normal: Vec3 }
 
 /** Element handlers wiring a scene's pointer events: spread onto whatever
  * element shows `scene.texture` (the built-in `<Scene>` leaf wires them
@@ -841,27 +846,42 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
   let scheduled = false
 
   // Picking: the index and the narrowphase live in the spatial core; this
-  // map turns a hit's core node back into the mesh.
-  let byNode = new Map<NodeId, Mesh>()
-  // The per-query mesh filter raycast/overlap/sweep share: a hit's core
-  // node back to its mesh, or null when the query mask excludes the mesh
-  // (skipped like an invisible one; the mask defaults to the scene's, so
-  // an undrawn layer needs an explicit opts.layers to report) or the
-  // include-list leaves it out.
+  // map turns a hit's core node back into the mesh, or the instance of an
+  // instanced mesh (each instance node is its own leaf).
+  let byNode = new Map<NodeId, Mesh | InstanceNode>()
+  // The per-query filter raycast/overlap/sweep share: a hit's core node
+  // back to its mesh (and instance), or null when the query mask excludes
+  // the mesh (skipped like an invisible one; the mask defaults to the
+  // scene's, so an undrawn layer needs an explicit opts.layers to report)
+  // or the include-list leaves it out.
   let admitted = (qopts: QueryOptions | undefined, site: string) => {
     let mask = qopts?.layers !== undefined ? checkMask(qopts.layers, site) : sceneMask
     let include = qopts?.meshes !== undefined ? new Set(qopts.meshes) : null
-    return (node: NodeId): Mesh | null => {
-      let mesh = byNode.get(node)
-      if (mesh === undefined || (mesh.layers & mask) === 0) return null
+    return (node: NodeId): { mesh: Mesh; instance: InstanceNode | null } | null => {
+      let leaf = byNode.get(node)
+      if (leaf === undefined) return null
+      let instance = leaf.kind === "instance" ? leaf : null
+      let mesh = instance !== null ? instance.mesh : (leaf as Mesh)
+      if (mesh === null || (mesh.layers & mask) === 0) return null
       if (include !== null && !include.has(mesh)) return null
-      return mesh
+      return { mesh, instance }
     }
   }
   // Nodes whose transform changed since the last sync (deduped by the
   // _moved flag): what the light and transparent-order bookkeeping
   // reacts to, since which meshes moved is the core's knowledge now.
   let moved: SceneNode[] = []
+  // Instanced meshes with style writes to publish at the next sync.
+  let styleDirty = new Set<InstancedMesh>()
+  // Instanced meshes whose cull group - their live instance nodes - changed
+  // since the last sync: one setCullGroup per mesh however many entered
+  // or left.
+  let groupDirty = new Set<InstancedMesh>()
+  let instanceGroup = (mesh: InstancedMesh): NodeId[] => {
+    let members: NodeId[] = []
+    for (let n of mesh._instances.nodes.slots) if (n !== null && n._node !== null) members.push(n._node)
+    return members
+  }
 
   // Live meshes (those holding a draw entry) in add order; the background
   // entry never joins this list. Draw order is derived from it by
@@ -1162,7 +1182,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       indexBuffer: bufs.index,
       indexFormat: bufs.indexFormat,
       textures: mesh._textures !== null ? { ...mesh.material.textures, ...mesh._textures } : mesh.material.textures,
-      instanceBuffer: inst !== null ? inst.buffer : undefined,
+      ...(inst !== null ? instanceBinding(mesh.material, inst) : {}),
       instanceCount: 0,
     })
     // The core turns the entry on (with the world matrix) at the next
@@ -1177,29 +1197,26 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     mesh._entry = null
     orderDirty = true
   }
+  // The material a view draws a mesh with: a shadow view lets a caster's
+  // material pick its own depth variant (its cull side, cutout, skinning
+  // - or the class's shadowVertex, the instanced placement); any other
+  // override view draws exactly what it was given.
+  let viewMaterial = (v: ViewRecord, mesh: Mesh): Material =>
+    v.override !== null ? (v.shadowFilter !== null ? (mesh.material.shadow ?? v.override) : v.override) : mesh.material
   let attachView = (v: ViewRecord, mesh: Mesh) => {
     if (v.entries.has(mesh)) return
     let inst = mesh._instances
     if (v.shadowFilter !== null && !v.shadowFilter(mesh)) return
     if ((mesh.layers & v.mask) === 0) return
-    // A shadow view lets a caster's material pick its own depth variant
-    // (its cull side, cutout, skinning - or the class's shadowVertex,
-    // the instanced placement); any other override view draws exactly
-    // what it was given.
-    let material = v.override !== null ? (v.shadowFilter !== null ? (mesh.material.shadow ?? v.override) : v.override) : mesh.material
-    // An override pipeline cannot know an instanced mesh's record
-    // layout, so the mesh is skipped - unless the variant chosen above
-    // is instanced itself (a class with shadowVertex, whose attributes
-    // are the class's own and must match the records like the main
-    // material's did at add()).
+    let material = viewMaterial(v, mesh)
+    // An override pipeline cannot know a populated mesh's record layout,
+    // so the mesh is skipped - unless the variant chosen above is
+    // instanced itself (a class with shadowVertex, a stock material's
+    // instanced depth pass), whose attributes must fit the records like
+    // the main material's did at add().
     if (v.override !== null && inst !== null) {
-      let attrs = material.instanceAttributes
-      if (attrs === undefined) return
-      if (instanceStride(attrs) !== inst.stride) {
-        throw new Error(
-          "Shadow material's instanceAttributes take " + instanceStride(attrs) + " floats but the mesh's records are " + inst.stride,
-        )
-      }
+      if (material.instanceAttributes === undefined) return
+      checkInstancePairing(material, inst, "Shadow material")
     }
     let bufs = mesh._buffers!
     let entry = addDraw(v.texture, material.pipeline(mesh.geometry.layout), entrySeed(material, v.override !== null ? null : mesh._params), {
@@ -1211,7 +1228,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       // needs the mesh's palette); other override programs may not
       // declare the names, and per-entry bindings validate strictly.
       textures: (material === mesh.material || material.skinned === true) && mesh._textures !== null ? { ...material.textures, ...mesh._textures } : material.textures,
-      instanceBuffer: inst !== null ? inst.buffer : undefined,
+      ...(inst !== null ? instanceBinding(material, inst) : {}),
       instanceCount: 0,
     })
     spatial.bindDraw(mesh._node!, v.texture, entry, material.normalMatrix === true, inst !== null ? inst.count : 1)
@@ -1396,6 +1413,19 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     // Light bookkeeping first, so a fresh direction-slot bind is seeded
     // by the flush below in the same sync.
     if (lightsDirty) writeLights()
+    // The instanced meshes' style writes since the last sync: one
+    // coalesced buffer write per mesh.
+    if (styleDirty.size > 0) {
+      for (let m of styleDirty) if (m._instances !== null) publishInstanceStyle(m)
+      styleDirty.clear()
+    }
+    // An instanced mesh without explicit bounds is culled by the union of
+    // its instances' boxes: the core's cull group (a skinned part's joint
+    // group, generalized) over the live instance nodes.
+    if (groupDirty.size > 0) {
+      for (let m of groupDirty) if (m._node !== null && m._buffers !== null && m._instances !== null) spatial.setCullGroup(m._node, instanceGroup(m))
+      groupDirty.clear()
+    }
     // The matrices that render the maps are the ones receivers look up
     // with: one array to every receiving target per shadow-camera move.
     shadowSys.flushMatrices(params => receivingTargets(t => setTargetParams(t, params)))
@@ -1479,38 +1509,46 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
         if (v.override !== null && mesh._instances === null) checkLayout(v.override, mesh.geometry, "View override material")
       }
       // Instancing pairs the same way layout does: the pipeline's instance
-      // attributes describe the mesh's record buffer, so one without the
+      // attributes describe the mesh's record buffers, so one without the
       // other (or a record stride from a different attribute list) would
       // bind garbage - errors here, at add().
       let inst = mesh._instances
-      let instAttrs = mesh.material.instanceAttributes
-      if (instAttrs !== undefined && inst === null) {
+      if (mesh.material.instanceAttributes !== undefined && inst === null) {
         throw new Error(
-          "Material declares instanceAttributes - create its meshes with createInstancedMesh (records included), not createMesh",
+          "Material declares instanceAttributes - create its meshes with createInstancedMesh or createRecordMesh, not createMesh",
         )
       }
-      if (inst !== null) {
-        if (instAttrs === undefined) {
-          throw new Error("Instanced mesh with a non-instanced material - the material must declare instanceAttributes")
-        }
-        let stride = instanceStride(instAttrs)
-        if (stride !== inst.stride) {
-          throw new Error(
-            "Instanced mesh records are " + inst.stride + " floats but the material's instanceAttributes take " + stride,
-          )
-        }
-      }
+      if (inst !== null) checkInstancePairing(mesh.material, inst, "Mesh material")
       let bufs = acquireGeometryBuffers(mesh.geometry)
       mesh._buffers = bufs
       attachScene(mesh)
       for (let v of views) attachView(v, mesh)
+      // The style mirror may have been written while the mesh was out of
+      // a scene (or into a buffer this scene never saw): republish it.
+      if (inst !== null && inst.style !== null) {
+        inst.style.dirty = inst.count > 0 ? [0, inst.count * inst.style.stride] : null
+        if (inst.style.dirty !== null) styleDirty.add(mesh as InstancedMesh)
+      }
       // Picking: the local box puts the node in the core index; an
-      // ordinary mesh also gets its geometry's triangle shape, an
-      // instanced one is box-only (records are opaque, and without
-      // explicit bounds it is not picked at all), as is a sprite (its
-      // triangles lie wherever the camera is, not where the geometry says).
+      // ordinary mesh also gets its geometry's triangle shape, a
+      // populated one is box-only (its instances are the leaves that
+      // pick, each with the shape; a record mesh's records are opaque, so
+      // without explicit bounds it is not picked at all), as is a sprite
+      // (its triangles lie wherever the camera is, not where the geometry
+      // says).
       spatial.setBounds(mesh._node!, localBounds(mesh))
       spatial.setShape(mesh._node!, inst === null && !mesh._sprite ? bufs.shape : null)
+      // A rebuilt entry (setGeometry) re-boxes the live instances to the
+      // new geometry; their record bindings are untouched. On a first
+      // entry none has a core node yet - they enter after the mesh.
+      if (inst !== null && inst.nodes !== null) {
+        for (let n of inst.nodes.slots) {
+          if (n !== null && n._node !== null) {
+            spatial.setBounds(n._node, geometryBounds(mesh.geometry))
+            spatial.setShape(n._node, bufs.shape)
+          }
+        }
+      }
       // Culling: the gate and margin only when off the defaults, and a
       // skinned part's joint group (joints entered before it: a model
       // adds its node tree before its parts).
@@ -1520,6 +1558,10 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
         for (let j of mesh._cullJoints) if (j._node !== null) joints.push(j._node)
         spatial.setCullGroup(mesh._node!, joints)
       }
+      // An instanced mesh without explicit bounds is culled by its
+      // instances' union, the same group over the instance nodes - set
+      // at the sync, once they have entered (they enter after the mesh).
+      if (inst !== null && inst.nodes !== null && inst.bounds === null) groupDirty.add(mesh as InstancedMesh)
       byNode.set(mesh._node!, mesh)
       meshes.push(mesh)
       mesh._transparent = mesh.material.transparent === true
@@ -1529,6 +1571,8 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     },
     _detach(mesh) {
       if (mesh._buffers !== null) {
+        styleDirty.delete(mesh as InstancedMesh)
+        groupDirty.delete(mesh as InstancedMesh)
         for (let v of views) detachView(v, mesh)
         detachScene(mesh)
         if (mesh._node !== null) {
@@ -1544,6 +1588,32 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
         orderDirty = true
       }
       mesh._entry = null
+    },
+    _attachInstance(instance) {
+      if (disposed) return
+      let mesh = instance.mesh
+      // The mesh entered first (parents enter before children), so its
+      // geometry buffers and core node are live - a mesh masked out of
+      // the scene included, whose instances still pick.
+      if (mesh === null || mesh._buffers === null || mesh._node === null || instance._node === null) return
+      spatial.setBounds(instance._node, geometryBounds(mesh.geometry))
+      spatial.setShape(instance._node, mesh._buffers.shape)
+      // The record is the instance's placement inside the mesh (the mesh
+      // node is the anchor), staged by the core at the next flush.
+      spatial.bindMatrixRecord(instance._node, mesh._instances.buffer, instance._slot, mesh._node)
+      byNode.set(instance._node, instance)
+      if (mesh._instances.bounds === null) groupDirty.add(mesh)
+      this._schedule()
+    },
+    _detachInstance(instance) {
+      // The core node is destroyed right after: its box, shape and record
+      // binding go with it, and the slot hides at the next flush. The
+      // mesh's group loses the member at the sync (a mesh leaving with
+      // its instances is skipped there: its node is gone by then).
+      if (instance._node !== null) byNode.delete(instance._node)
+      let mesh = instance.mesh
+      if (mesh !== null && mesh._instances !== null && mesh._instances.bounds === null) groupDirty.add(mesh)
+      this._schedule()
     },
     _setParams(mesh, params) {
       if (mesh._buffers === null || disposed) return
@@ -1563,16 +1633,23 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       }
     },
     _setBuffer(mesh) {
-      // The entry keeps its range (at most the old capacity, so the larger
-      // buffer always passes the swap's bounds check); the caller destroys
-      // the old buffer after this, which the entry held alive until now.
-      if (mesh._buffers !== null && !disposed && mesh._instances !== null) {
-        if (mesh._entry !== null) setDrawBuffers(texture, mesh._entry, { instanceBuffer: mesh._instances.buffer })
+      // The entries keep their range (at most the old capacity, so the
+      // larger buffers always pass the swap's bounds check); the caller
+      // destroys the old buffers after this, which the entries held alive
+      // until now. Each entry swaps the slots its own material binds.
+      let inst = mesh._instances
+      if (mesh._buffers !== null && !disposed && inst !== null) {
+        if (mesh._entry !== null) setDrawBuffers(texture, mesh._entry, instanceBinding(mesh.material, inst))
         for (let v of views) {
           let entry = v.entries.get(mesh)
-          if (entry !== undefined) setDrawBuffers(v.texture, entry, { instanceBuffer: mesh._instances.buffer })
+          if (entry !== undefined) setDrawBuffers(v.texture, entry, instanceBinding(viewMaterial(v, mesh), inst))
         }
       }
+    },
+    _setStyle(mesh) {
+      if (disposed || mesh._buffers === null) return
+      styleDirty.add(mesh)
+      this._schedule()
     },
     _reorder() {
       orderDirty = true
@@ -1762,9 +1839,10 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       rayDirScratch[1] = direction[1]
       rayDirScratch[2] = direction[2]
       for (let h of spatial.raycast(rayOriginScratch, rayDirScratch)) {
-        let mesh = admit(h.node)
-        if (mesh === null) continue
-        let hit: Hit = { mesh, distance: h.distance, point: h.point, normal: h.normal }
+        let leaf = admit(h.node)
+        if (leaf === null) continue
+        let hit: Hit = { mesh: leaf.mesh, distance: h.distance, point: h.point, normal: h.normal }
+        if (leaf.instance !== null) hit.instance = leaf.instance
         if (h.face !== undefined) hit.face = h.face
         if (h.uv !== undefined) hit.uv = h.uv
         hits.push(hit)
@@ -1778,8 +1856,11 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       let kind = packVolume(volume, "overlap")
       let out: Overlap[] = []
       for (let h of spatial.overlap(kind, kind === "box" ? boxScratch : capsuleScratch)) {
-        let mesh = admit(h.node)
-        if (mesh !== null) out.push({ mesh, point: h.point, normal: h.normal, depth: h.depth })
+        let leaf = admit(h.node)
+        if (leaf === null) continue
+        let contact: Overlap = { mesh: leaf.mesh, point: h.point, normal: h.normal, depth: h.depth }
+        if (leaf.instance !== null) contact.instance = leaf.instance
+        out.push(contact)
       }
       return out
     },
@@ -1793,8 +1874,11 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       motionScratch[2] = motion[2]
       let out: Impact[] = []
       for (let h of spatial.sweep(kind, kind === "box" ? boxScratch : capsuleScratch, motionScratch)) {
-        let mesh = admit(h.node)
-        if (mesh !== null) out.push({ mesh, time: h.time, point: h.point, normal: h.normal })
+        let leaf = admit(h.node)
+        if (leaf === null) continue
+        let impact: Impact = { mesh: leaf.mesh, time: h.time, point: h.point, normal: h.normal }
+        if (leaf.instance !== null) impact.instance = leaf.instance
+        out.push(impact)
       }
       return out
     },

@@ -107,11 +107,12 @@ Shaped, not started.
   encoded space, the clearColor is never tone mapped and no post effect
   (bloom) can see radiance; Godot and Unity render the scene into a half-float
   buffer and tone map once, in a final pass.
-- **[3d instances as spatial arena nodes - the full-matrix record projection](backlog/3d-instance-citizenship.md)** [2026-09-06]
-  An instanced mesh's records are JS-written floats, so native transitions,
-  clip players and per-instance picking never reach an instance, while every
-  2d sprite already is an arena node; the core's InstanceProjection has only
-  Pose2D and the full-matrix sibling it anticipates is the missing piece.
+- **[Instanced meshes - the additive follow-ups](backlog/3d-instance-additive.md)** [2026-09-06]
+  What the instance-citizenship item left as strictly additive work -
+  per-instance frustum gating, the transparent sort center from the instances'
+  union box, shear-exact normals as a second projection, instanced sprites,
+  and a per-instance frame/atlas convention for the stock materials; none
+  changes a shipped contract.
 - **[Level of detail - distance-selected mesh variants as a core sink](backlog/3d-lod.md)** [2026-08-30]
   A large scene ships every object at one triangle count; a track with a
   thousand trees either draws full-detail foliage at the horizon or nothing. A
@@ -836,6 +837,11 @@ Finished, kept for the reasoning.
   SHADOW_LOOKUP (shadowAt + lightShadow) joined SHADOW_SLOTS and SHADOW in
   @solidrt/3d/glsl on 2026-08-27; lit and the one custom receiver compose it,
   so the sampler if-chain has one generator.
+- **[3d instances as spatial arena nodes - the full-matrix record projection](done/3d-instance-citizenship.md)** [2026-09-06]
+  An instanced mesh's records are JS-written floats, so native transitions,
+  clip players and per-instance picking never reach an instance, while every
+  2d sprite already is an arena node; the core's InstanceProjection has only
+  Pose2D and the full-matrix sibling it anticipates is the missing piece.
 - **[Instanced meshes cast no shadow](done/3d-instanced-shadow-casters.md)** [2026-08-27]
   Landed 2026-09-02 as the per-class `shadowVertex` option on
   shaderMaterialClass - the class's vertex stage reduced to position (instance

@@ -189,10 +189,16 @@ impl Context {
     self.spatial.borrow_mut().unbind_texture_slot(node, texture)
   }
 
-  /// Bind (or with None unbind) a node's instance-record sink. Validated
+  /// Bind (or with None unbind) a node's instance-record sink, relative to
+  /// `anchor` when given (see `Spatial::set_instance_record`). Validated
   /// at bind time like the draw path: the buffer must exist and the slot
   /// must fit its byte size, so a bad binding throws at its call site.
-  pub fn spatial_bind_record(&self, node: NodeId, sink: Option<InstanceRecordSink>) -> Result<(), String> {
+  pub fn spatial_bind_record(
+    &self,
+    node: NodeId,
+    sink: Option<InstanceRecordSink>,
+    anchor: Option<NodeId>,
+  ) -> Result<(), String> {
     if let Some(sink) = &sink {
       let size = self.gpu_buffer_len(sink.buffer)?;
       let stride = sink.projection.floats() as usize;
@@ -204,7 +210,7 @@ impl Context {
         ));
       }
     }
-    self.spatial.borrow_mut().set_instance_record(node, sink)
+    self.spatial.borrow_mut().set_instance_record(node, sink, anchor)
   }
 
   /// Move every record sink on buffer `old` to buffer `new` (the growth

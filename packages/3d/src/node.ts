@@ -15,7 +15,7 @@ import type { ShaderParams, TextureId } from "@solidrt/core/gpu"
 import { compose, eulerFromQuat, identity, mat4, multiply, quat, quatFromFrame, transformPoint, updateRotation, updateScale } from "./math.ts"
 import type { Mat4, Quat, TransformUpdate, Vec3, Vec4 } from "./math.ts"
 import type { CastingLight, Light } from "./light.ts"
-import type { Mesh } from "./mesh.ts"
+import type { InstancedMesh, InstanceNode, Mesh } from "./mesh.ts"
 
 // lookAt()'s default roll reference. Read-only: quatFromFrame never
 // writes its inputs, so one shared vector is safe.
@@ -68,13 +68,20 @@ export type SceneHooks = {
   _schedule(): void
   _attach(mesh: Mesh): void
   _detach(mesh: Mesh): void
+  /** An instance entered the scene (its mesh entered first): box, shape
+   * and record binding. */
+  _attachInstance(instance: InstanceNode): void
+  _detachInstance(instance: InstanceNode): void
   _attachLight(light: Light): void
   _detachLight(light: Light): void
   _lightChanged(): void
   _setParams(mesh: Mesh, params: ShaderParams): void
   _setCount(mesh: Mesh): void
-  /** Re-point the mesh's entry at its (replaced) instance buffer. */
+  /** Re-point the mesh's entries at its (replaced) instance buffers. */
   _setBuffer(mesh: Mesh): void
+  /** The instanced mesh's style mirror has a dirty range: publish it at
+   * the next sync. */
+  _setStyle(mesh: InstancedMesh): void
   /** The mesh's castShadow flag changed: re-evaluate the filtered views. */
   _setCast(mesh: Mesh): void
   /** The mesh's layers bitmask changed: re-evaluate every target. */
@@ -87,7 +94,7 @@ export type SceneHooks = {
 }
 
 export type SceneNode = {
-  kind: "group" | "mesh" | "light"
+  kind: "group" | "mesh" | "light" | "instance"
   parent: SceneNode | null
   children: SceneNode[]
   /** Read freely; write through setTransform/setVisible so changes sync. */
@@ -140,15 +147,18 @@ export type TransitionEndEvent = {
 }
 
 /**
- * The event a mesh (or ancestor group) handler receives: the element
- * pointer vocabulary carried over, plus the 3D fields. `point`/`distance`
- * are null exactly when the ray misses the dispatch mesh - which happens
- * only during a captured drag or on a leave.
+ * The event a mesh, instance or ancestor group handler receives: the
+ * element pointer vocabulary carried over, plus the 3D fields.
+ * `point`/`distance` are null exactly when the ray misses the dispatch
+ * target - which happens only during a captured drag or on a leave.
  */
 export type ScenePointerEvent = {
   /** The mesh the event is about (the hit, or the captured mesh during a
    * drag) - constant while the event bubbles. */
   mesh: Mesh
+  /** The instance struck when `mesh` is an instanced mesh (the walk
+   * starts there), null otherwise - constant while the event bubbles. */
+  instance: InstanceNode | null
   /** Node whose handler is running; changes as the event bubbles. */
   currentTarget: SceneNode
   /** World-space hit point on `mesh`, or null when the ray misses it. */
@@ -193,16 +203,20 @@ export function createGroup(): SceneNode {
   return makeNode("group")
 }
 
-/** Attach `child` under `parent` (re-parenting detaches it first). */
+/** Attach `child` under `parent` (re-parenting detaches it first). An
+ * instance is slot-bound to its mesh: addInstance places it. */
 export function add(parent: SceneNode, child: SceneNode): void {
+  if (child.kind === "instance") throw new Error("add: an instance is slot-bound to its mesh - addInstance places it, removeInstance destroys it")
   if (child.parent !== null) remove(child)
   child.parent = parent
   parent.children.push(child)
   if (parent._scene) enterScene(child, parent._scene)
 }
 
-/** Detach `child` from its parent (and its meshes from the scene). */
+/** Detach `child` from its parent (and its meshes from the scene). An
+ * instance is destroyed instead, by removeInstance. */
 export function remove(child: SceneNode): void {
+  if (child.kind === "instance") throw new Error("remove: an instance is slot-bound to its mesh - removeInstance destroys it")
   if (child._scene) leaveScene(child)
   let parent = child.parent
   if (parent !== null) {
@@ -212,7 +226,7 @@ export function remove(child: SceneNode): void {
   }
 }
 
-function enterScene(node: SceneNode, scene: SceneHooks): void {
+export function enterScene(node: SceneNode, scene: SceneHooks): void {
   node._scene = scene
   node._node = spatial.createNode(fillTransform(node), node.visible)
   if (node._transition !== null) {
@@ -233,6 +247,7 @@ function enterScene(node: SceneNode, scene: SceneHooks): void {
   if (node._cullBounds !== null) spatial.setCullBounds(node._node, node._cullBounds)
   if (node.kind === "mesh") scene._attach(node as Mesh)
   else if (node.kind === "light") scene._attachLight(node as Light)
+  else if (node.kind === "instance") scene._attachInstance(node as InstanceNode)
   for (let c of node.children) enterScene(c, scene)
   scene._schedule()
 }
@@ -241,6 +256,7 @@ export function leaveScene(node: SceneNode): void {
   let scene = node._scene
   if (scene && node.kind === "mesh") scene._detach(node as Mesh)
   else if (scene && node.kind === "light") scene._detachLight(node as Light)
+  else if (scene && node.kind === "instance") scene._detachInstance(node as InstanceNode)
   node._scene = null
   for (let c of node.children) leaveScene(c)
   if (node._node !== null) {

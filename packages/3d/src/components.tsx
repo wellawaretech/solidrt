@@ -17,21 +17,25 @@ import type { FirstPersonCamera as FirstPersonCameraHandle, FirstPersonCameraOpt
 import { add, createGroup, remove, setTransform, setTransition, setVisible } from "./node.ts"
 import type { SceneNode, ScenePointerEvent, TransitionEndEvent } from "./node.ts"
 import {
+  addInstance,
   createInstancedMesh,
   createMesh,
+  createRecordMesh,
   createSprite,
   disposeInstances,
+  removeInstance,
   setCastShadow,
   setCulling,
   setGeometry,
-  setInstanceCount,
-  setInstances,
+  setInstanceStyle,
   setLayers,
   setMaterial,
   setMeshParams,
+  setRecordCount,
+  setRecords,
   setRenderOrder,
 } from "./mesh.ts"
-import type { InstancedMesh as InstancedMeshNode, Mesh as MeshNode } from "./mesh.ts"
+import type { InstancedMesh as InstancedMeshNode, InstanceNode, Mesh as MeshNode, RecordMesh as RecordMeshNode } from "./mesh.ts"
 import { createDirectionalLight, createHemisphereLight, createPointLight, createSpotLight, setLight } from "./light.ts"
 import type {
   DirectionalLight as DirectionalLightNode,
@@ -107,6 +111,16 @@ export function useScene(): SceneCtx {
   return useContext(SceneContext)
 }
 
+// The scene context for a node component's children. Solid's provider is
+// a root and two memos over the children, paid even when there are none,
+// so it is built only when the JSX has children: the compiler emits the
+// `children` getter only then, so the test is structural, not a read
+// (probes/3d-instance-mount-bench.tsx has the per-row cost).
+function provide(ctx: SceneCtx, parent: SceneNode, props: { children?: Element }): Element | undefined {
+  if (!("children" in props)) return undefined
+  return <SceneContext value={{ scene: ctx.scene, parent, input: ctx.input }}>{props.children}</SceneContext>
+}
+
 export type TransformProps = {
   position?: Vec3
   /** Euler radians in XYZ order (x first), Three's `Euler` default. */
@@ -141,22 +155,28 @@ export type PointerEventProps = {
 }
 
 function syncNode(node: SceneNode, props: TransformProps & PointerEventProps): void {
+  // One effect for the transform and the handlers: re-assigning six
+  // handler fields on a transform write is free, an effect of its own is
+  // not (a node component's mount cost is mostly its effects and its
+  // context provider, see probes/3d-instance-mount-bench.tsx).
   createEffect(
-    () => [props.position, props.rotation, props.quaternion, props.scale, props.visible] as const,
-    ([position, rotation, quaternion, scale, visible]) => {
+    () =>
+      [
+        props.position,
+        props.rotation,
+        props.quaternion,
+        props.scale,
+        props.visible,
+        props.onPointerDown,
+        props.onPointerMove,
+        props.onPointerUp,
+        props.onPointerEnter,
+        props.onPointerLeave,
+        props.onTransitionEnd,
+      ] as const,
+    ([position, rotation, quaternion, scale, visible, down, move, up, enter, leave, end]) => {
       setTransform(node, { position, rotation, quaternion, scale })
       setVisible(node, visible !== false)
-    },
-  )
-  // After the transform effect, so the mount transform snaps before writes
-  // animate.
-  createEffect(
-    () => props.transition,
-    transition => setTransition(node, transition ?? null),
-  )
-  createEffect(
-    () => [props.onPointerDown, props.onPointerMove, props.onPointerUp, props.onPointerEnter, props.onPointerLeave, props.onTransitionEnd] as const,
-    ([down, move, up, enter, leave, end]) => {
       node.onPointerDown = down
       node.onPointerMove = move
       node.onPointerUp = up
@@ -164,6 +184,13 @@ function syncNode(node: SceneNode, props: TransformProps & PointerEventProps): v
       node.onPointerLeave = leave
       node.onTransitionEnd = end
     },
+  )
+  // After the transform effect, so the mount transform snaps before writes
+  // animate. Its own effect: merged above, every transform write would
+  // re-send the config to the core.
+  createEffect(
+    () => props.transition,
+    transition => setTransition(node, transition ?? null),
   )
 }
 
@@ -396,14 +423,18 @@ export let Scene: ParentComponent<SceneProps> = props => {
     // device pixels - getBoundingBoxViewport composes designSize fits and
     // ancestor transforms, so the scene renders at true density wherever
     // it sits. onLayout runs before paint (no frame draws at a stale
-    // size); setSize no-ops when nothing changed.
-    let apply = () => {
-      if (!leafNode) return
-      let box = getBoundingBoxViewport(leafNode)
-      if (!box) return
-      let scale = displayScale()
-      scene.setSize(Math.max(1, Math.round(box.width * scale)), Math.max(1, Math.round(box.height * scale)))
-    }
+    // size); setSize no-ops when nothing changed. apply runs as an
+    // onLayout handler and as an effect apply, both untracked scopes, so
+    // its scale read is wrapped in an explicit untrack (the effect's
+    // compute is what tracks it).
+    let apply = () =>
+      untrack(() => {
+        if (!leafNode) return
+        let box = getBoundingBoxViewport(leafNode)
+        if (!box) return
+        let scale = displayScale()
+        scene.setSize(Math.max(1, Math.round(box.width * scale)), Math.max(1, Math.round(box.height * scale)))
+      })
     onLayout(apply)
     createEffect(() => displayScale(), apply)
   }
@@ -445,7 +476,7 @@ export let Group: ParentComponent<TransformProps & PointerEventProps & { ref?: (
   syncNode(node, props)
   untrack(() => props.ref)?.(node)
   onCleanup(() => remove(node))
-  return <SceneContext value={{ scene: ctx.scene, parent: node, input: ctx.input }}>{props.children}</SceneContext>
+  return provide(ctx, node, props)
 }
 
 export type MeshProps = TransformProps & PointerEventProps & {
@@ -473,8 +504,11 @@ export type MeshProps = TransformProps & PointerEventProps & {
   ref?: (mesh: MeshNode) => void
 }
 
-// The mesh-side props Mesh and Sprite share (Sprite has no geometry).
-function syncMesh(mesh: MeshNode, props: SpriteProps): void {
+// The mesh-side props every mesh component shares (Sprite has no
+// geometry, so that one stays with the components that take it); the
+// ref and the cleanup are each component's own (a populated mesh frees
+// its buffers, a plain one is removed).
+function syncMesh(mesh: MeshNode, props: Omit<SpriteProps, "ref">): void {
   createEffect(
     () => props.material,
     m => setMaterial(mesh, m),
@@ -499,8 +533,6 @@ function syncMesh(mesh: MeshNode, props: SpriteProps): void {
     ([culled, margin]) => setCulling(mesh, { frustumCulled: culled !== false, cullMargin: margin ?? 0 }),
   )
   syncNode(mesh, props)
-  untrack(() => props.ref)?.(mesh)
-  onCleanup(() => remove(mesh))
 }
 
 /** One draw entry: geometry drawn with a material at a transform. */
@@ -518,6 +550,8 @@ export let Mesh: VoidComponent<MeshProps> = props => {
     c => setCastShadow(mesh, c === true),
   )
   syncMesh(mesh, props)
+  untrack(() => props.ref)?.(mesh)
+  onCleanup(() => remove(mesh))
   return null
 }
 
@@ -544,12 +578,111 @@ export let Sprite: VoidComponent<SpriteProps> = props => {
   let mesh = untrack(() => createSprite(props.material))
   add(ctx.parent, mesh)
   syncMesh(mesh, props)
+  untrack(() => props.ref)?.(mesh)
+  onCleanup(() => remove(mesh))
   return null
 }
 
-export type InstancedMeshProps = TransformProps & PointerEventProps & {
+// The props both populated meshes share with Mesh: everything but the
+// geometry/material pair (documented per component) and the ref.
+type PopulatedMeshProps = Omit<MeshProps, "geometry" | "material" | "ref">
+
+export type InstancedMeshProps = PopulatedMeshProps & {
   geometry: Geometry
-  /** Must declare instanceAttributes (shaderMaterialClass). */
+  /** An instanced material: a stock one with `instanced` (or
+   * `instanceColors`, for a per-instance tint), or a class declaring
+   * INSTANCE_MATRIX_ATTRIBUTES in slot 0 and any style layout in slot 1. */
+  material: Material
+  /** Instance slots reserved up front (default 64; fixed at creation).
+   * Past it the buffers double into replacements - amortized, but size it
+   * realistically to skip the copies. */
+  capacity?: number
+  /** LOCAL bounds covering the population ([minX..maxZ]), fixed at
+   * creation: the mesh node's own box for the frustum test and the
+   * transparent sort. Optional here - instances pick by themselves, and
+   * without it the mesh culls by the union of their boxes. */
+  bounds?: ArrayLike<number>
+  /** Debug label for the record buffers. */
+  label?: string
+  /** Draw into the scene's shadow map (setCastShadow as a prop); default
+   * false. The stock instanced materials cast; a custom class needs a
+   * `shadowVertex`. */
+  castShadow?: boolean
+  ref?: (mesh: InstancedMeshNode) => void
+}
+
+let InstancedMeshContext = createContext<InstancedMeshNode | null>(null)
+
+/**
+ * One draw entry covering N instance NODES (createInstancedMesh as a
+ * component): `<Instance>` children populate it - each a scene node the
+ * core places, so their `transition` props spring with zero per-frame
+ * JS, and picking, pointer events, overlap and sweep name the instance
+ * struck. `<Group>` children between the mesh and its instances are
+ * squads (the records stay mesh-relative through them). The record
+ * buffers are component-owned and freed on unmount.
+ */
+export let InstancedMesh: ParentComponent<InstancedMeshProps> = props => {
+  let ctx = useContext(SceneContext)
+  let mesh = untrack(() =>
+    createInstancedMesh(props.geometry, props.material, { capacity: props.capacity, bounds: props.bounds, label: props.label }),
+  )
+  add(ctx.parent, mesh)
+  createEffect(
+    () => props.geometry,
+    g => setGeometry(mesh, g),
+    { defer: true },
+  )
+  createEffect(
+    () => props.castShadow,
+    c => setCastShadow(mesh, c === true),
+  )
+  syncMesh(mesh, props)
+  untrack(() => props.ref)?.(mesh)
+  onCleanup(() => disposeInstances(mesh))
+  return (
+    <SceneContext value={{ scene: ctx.scene, parent: mesh, input: ctx.input }}>
+      <InstancedMeshContext value={mesh}>{props.children}</InstancedMeshContext>
+    </SceneContext>
+  )
+}
+
+export type InstanceProps = TransformProps & PointerEventProps & {
+  /** The instance's style record (setInstanceStyle as a prop): the
+   * floats of the material's slot-1 instance attributes - `[r, g, b, a]`
+   * under a stock material's `instanceColors`. Reactive; absent, the
+   * instance keeps the material's instanceStyle (white for a tint). */
+  style?: ArrayLike<number>
+  ref?: (instance: InstanceNode) => void
+}
+
+/**
+ * One instance of the enclosing `<InstancedMesh>` (addInstance as a
+ * component): a node placed under the nearest `<Group>` or `<Instance>`
+ * inside the mesh, with the transform, transition and pointer props of
+ * a `<Group>` plus `style`. Children (a `<Mesh>` headlight under a car
+ * instance) mount under it. Throws outside an `<InstancedMesh>`.
+ */
+export let Instance: ParentComponent<InstanceProps> = props => {
+  let ctx = useContext(SceneContext)
+  let mesh = useContext(InstancedMeshContext)
+  if (mesh === null) throw new Error("<Instance> must be inside an <InstancedMesh>")
+  let instance = addInstance(mesh, undefined, ctx.parent)
+  syncNode(instance, props)
+  createEffect(
+    () => props.style,
+    s => {
+      if (s !== undefined) setInstanceStyle(instance, s)
+    },
+  )
+  untrack(() => props.ref)?.(instance)
+  onCleanup(() => removeInstance(instance))
+  return provide(ctx, instance, props)
+}
+
+export type RecordMeshProps = PopulatedMeshProps & {
+  geometry: Geometry
+  /** Must declare instanceAttributes (shaderMaterialClass), slot 0 only. */
   material: Material
   /** Interleaved per-instance records (stride = the material's instance
    * attributes summed). Reactive; a later array larger than the buffer
@@ -561,38 +694,32 @@ export type InstancedMeshProps = TransformProps & PointerEventProps & {
    * creation. Without them the mesh has no picking leaf, so pointer events
    * never target it. */
   bounds?: ArrayLike<number>
-  /** Per-mesh uniforms, merge semantics - as on Mesh. */
-  params?: ShaderParams
-  /** Explicit draw-order key (setRenderOrder as a prop); default 0. */
-  renderOrder?: number
   /** Draw into the scene's shadow map (setCastShadow as a prop); default
    * false. Needs a `castShadow` light AND a material class declaring
    * `shadowVertex` (the depth pass with the instance placement) - the
-   * shadow views skip an instanced mesh without one. */
+   * shadow views skip a populated mesh without one. */
   castShadow?: boolean
-  /** Layer membership bitmask (setLayers as a prop; default 1). */
-  layers?: number
-  ref?: (mesh: InstancedMeshNode) => void
+  ref?: (mesh: RecordMeshNode) => void
 }
 
-/** One draw entry covering N instances: geometry repeated per record of
- * `records` (createInstancedMesh as a component). The record buffer is
- * component-owned and freed on unmount. */
-export let InstancedMesh: VoidComponent<InstancedMeshProps> = props => {
+/** One draw entry covering N records: geometry repeated per record of
+ * `records` (createRecordMesh as a component, the JS-written population).
+ * The record buffer is component-owned and freed on unmount. */
+export let RecordMesh: VoidComponent<RecordMeshProps> = props => {
   let ctx = useContext(SceneContext)
   let mesh = untrack(() =>
-    createInstancedMesh(props.geometry, props.material, props.records, props.count, { bounds: props.bounds }),
+    createRecordMesh(props.geometry, props.material, props.records, props.count, { bounds: props.bounds }),
   )
   add(ctx.parent, mesh)
   createEffect(
     () => props.records,
-    r => setInstances(mesh, r, untrack(() => props.count)),
+    r => setRecords(mesh, r, untrack(() => props.count)),
     { defer: true },
   )
   createEffect(
     () => props.count,
     c => {
-      if (c !== undefined) setInstanceCount(mesh, c)
+      if (c !== undefined) setRecordCount(mesh, c)
     },
     { defer: true },
   )
@@ -602,29 +729,10 @@ export let InstancedMesh: VoidComponent<InstancedMeshProps> = props => {
     { defer: true },
   )
   createEffect(
-    () => props.material,
-    m => setMaterial(mesh, m),
-    { defer: true },
-  )
-  createEffect(
-    () => props.params,
-    p => {
-      if (p !== undefined) setMeshParams(mesh, p)
-    },
-  )
-  createEffect(
-    () => props.renderOrder,
-    o => setRenderOrder(mesh, o ?? 0),
-  )
-  createEffect(
     () => props.castShadow,
     c => setCastShadow(mesh, c === true),
   )
-  createEffect(
-    () => props.layers,
-    l => setLayers(mesh, l ?? 1),
-  )
-  syncNode(mesh, props)
+  syncMesh(mesh, props)
   untrack(() => props.ref)?.(mesh)
   onCleanup(() => disposeInstances(mesh))
   return null

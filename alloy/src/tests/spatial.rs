@@ -654,7 +654,7 @@ fn pose_records_decompose_world_and_preserve_mirroring() {
   let root = s.create([10.0, 20.0, 0.0], Q, ONE, true);
   let child = s.create([0.0; 3], [0.0, 0.0, (0.5f32).sqrt(), (0.5f32).sqrt()], [2.0, 3.0, 1.0], true);
   s.set_parent(child, Some(root)).expect("parent");
-  s.set_instance_record(child, record(4, 0)).expect("bind");
+  s.set_instance_record(child, record(4, 0), None).expect("bind");
   let writes = flush(&mut s);
   assert_eq!(writes.len(), 1);
   let Write::Instances { buffer: 4, first: 0, values } = &writes[0] else { panic!("expected instances") };
@@ -674,8 +674,8 @@ fn pose_records_batch_into_one_coalesced_write() {
   let mut s = Spatial::new();
   let a = s.create([1.0, 0.0, 0.0], Q, ONE, true);
   let b = s.create([2.0, 0.0, 0.0], Q, ONE, true);
-  s.set_instance_record(a, record(4, 0)).expect("bind");
-  s.set_instance_record(b, record(4, 3)).expect("bind");
+  s.set_instance_record(a, record(4, 0), None).expect("bind");
+  s.set_instance_record(b, record(4, 3), None).expect("bind");
   // Both slots dirty: ONE write spanning them, unbound slots 1-2 zeros.
   let writes = flush(&mut s);
   assert_eq!(writes.len(), 1);
@@ -697,7 +697,7 @@ fn pose_records_batch_into_one_coalesced_write() {
 fn hidden_record_slots_zero_and_the_group_drops_with_its_last_sink() {
   let mut s = Spatial::new();
   let a = s.create([1.0, 2.0, 0.0], Q, ONE, true);
-  s.set_instance_record(a, record(4, 0)).expect("bind");
+  s.set_instance_record(a, record(4, 0), None).expect("bind");
   flush(&mut s);
   // Hiding zeroes the slot (zero scale collapses the instance).
   s.set_visible(a, false).expect("hide");
@@ -709,7 +709,7 @@ fn hidden_record_slots_zero_and_the_group_drops_with_its_last_sink() {
   assert_eq!(writes, vec![Write::Instances { buffer: 4, first: 0, values: vec![1.0, 2.0, 0.0, 1.0, 1.0] }]);
   // Unbinding zeroes and drops the group with the final write: a later
   // move of the node publishes nothing.
-  s.set_instance_record(a, None).expect("unbind");
+  s.set_instance_record(a, None, None).expect("unbind");
   let writes = flush(&mut s);
   assert_eq!(writes, vec![Write::Instances { buffer: 4, first: 0, values: vec![0.0; 5] }]);
   s.set_transform(a, [9.0, 9.0, 0.0], Q, ONE).expect("move");
@@ -721,8 +721,8 @@ fn retargeting_records_republishes_whole_to_the_new_buffer() {
   let mut s = Spatial::new();
   let a = s.create([1.0, 2.0, 0.0], Q, ONE, true);
   let b = s.create([3.0, 4.0, 0.0], Q, ONE, true);
-  s.set_instance_record(a, record(4, 0)).expect("bind");
-  s.set_instance_record(b, record(4, 1)).expect("bind");
+  s.set_instance_record(a, record(4, 0), None).expect("bind");
+  s.set_instance_record(b, record(4, 1), None).expect("bind");
   flush(&mut s);
   assert_eq!(s.records_extent(4), Some(10));
   assert_eq!(s.records_extent(9), None);
@@ -741,7 +741,7 @@ fn retargeting_records_republishes_whole_to_the_new_buffer() {
   let writes = flush(&mut s);
   assert_eq!(writes, vec![Write::Instances { buffer: 9, first: 5, values: vec![5.0, 6.0, 0.0, 1.0, 1.0] }]);
   let c = s.create([7.0, 0.0, 0.0], Q, ONE, true);
-  s.set_instance_record(c, record(4, 0)).expect("rebind old id");
+  s.set_instance_record(c, record(4, 0), None).expect("rebind old id");
   let writes = flush(&mut s);
   assert_eq!(writes, vec![Write::Instances { buffer: 4, first: 0, values: vec![7.0, 0.0, 0.0, 1.0, 1.0] }]);
   // Errors: no records on the source; a destination already carrying some.
@@ -751,13 +751,81 @@ fn retargeting_records_republishes_whole_to_the_new_buffer() {
   assert!(err.contains("already carries"), "{err}");
 }
 
+fn matrix(buffer: u64, index: u32) -> Option<InstanceRecordSink> {
+  Some(InstanceRecordSink { buffer, index, projection: InstanceProjection::Matrix })
+}
+
+#[test]
+fn matrix_records_are_anchor_relative_and_hide_to_zero_scale() {
+  let mut s = Spatial::new();
+  // The anchor (a mesh) placed and scaled, the instance under it.
+  let mesh = s.create([10.0, 0.0, 0.0], Q, [2.0, 2.0, 2.0], true);
+  let inst = s.create([1.0, 2.0, 3.0], Q, ONE, true);
+  s.set_parent(inst, Some(mesh)).expect("parent");
+  s.set_instance_record(inst, matrix(4, 0), Some(mesh)).expect("bind");
+  let writes = flush(&mut s);
+  assert_eq!(writes.len(), 1);
+  let Write::Instances { buffer: 4, first: 0, values } = &writes[0] else { panic!("expected instances") };
+  // Relative to the anchor the record is the instance's own placement.
+  let mut placement = [0.0f32; 16];
+  placement[0] = 1.0;
+  placement[5] = 1.0;
+  placement[10] = 1.0;
+  placement[12] = 1.0;
+  placement[13] = 2.0;
+  placement[14] = 3.0;
+  placement[15] = 1.0;
+  assert_eq!(values.as_slice(), &placement);
+  // Moving the anchor restages every slot under it but changes no
+  // relative record: nothing publishes.
+  s.set_transform(mesh, [20.0, 5.0, 0.0], Q, [2.0, 2.0, 2.0]).expect("move anchor");
+  assert!(flush(&mut s).is_empty());
+  // Hiding stages the zero-scale matrix with w kept at 1; showing restores.
+  s.set_visible(inst, false).expect("hide");
+  let mut hidden = [0.0f32; 16];
+  hidden[15] = 1.0;
+  assert_eq!(flush(&mut s), vec![Write::Instances { buffer: 4, first: 0, values: hidden.to_vec() }]);
+  s.set_visible(inst, true).expect("show");
+  assert_eq!(flush(&mut s), vec![Write::Instances { buffer: 4, first: 0, values: placement.to_vec() }]);
+  // Without an anchor the record is the world matrix: the parent's scale
+  // and offset fold in.
+  let free = s.create([1.0, 0.0, 0.0], Q, ONE, true);
+  s.set_parent(free, Some(mesh)).expect("parent");
+  s.set_instance_record(free, matrix(7, 0), None).expect("bind world");
+  let writes = flush(&mut s);
+  let Write::Instances { buffer: 7, first: 0, values } = &writes[0] else { panic!("expected instances") };
+  assert_eq!(values[0], 2.0, "x column carries the scale {values:?}");
+  assert_eq!(values[12..15], [22.0, 5.0, 0.0], "translation {values:?}");
+}
+
+#[test]
+fn records_on_one_buffer_share_projection_and_anchor() {
+  let mut s = Spatial::new();
+  let anchor = s.create([0.0; 3], Q, ONE, true);
+  let a = s.create([0.0; 3], Q, ONE, true);
+  let b = s.create([0.0; 3], Q, ONE, true);
+  s.set_instance_record(a, matrix(4, 0), Some(anchor)).expect("bind");
+  let err = s.set_instance_record(b, record(4, 1), Some(anchor)).expect_err("a pose record on a matrix buffer must error");
+  assert!(err.contains("Matrix"), "{err}");
+  let err = s.set_instance_record(b, matrix(4, 1), None).expect_err("another anchor must error");
+  assert!(err.contains("anchored"), "{err}");
+  // A gap between bound slots publishes as a hidden matrix, never as raw
+  // zeros (w must stay 1).
+  s.set_instance_record(b, matrix(4, 2), Some(anchor)).expect("bind");
+  let writes = flush(&mut s);
+  let Write::Instances { buffer: 4, first: 0, values } = &writes[0] else { panic!("expected instances") };
+  assert_eq!(values.len(), 48);
+  assert_eq!(values[16..31], [0.0; 15]);
+  assert_eq!(values[31], 1.0);
+}
+
 #[test]
 fn destroying_a_bound_node_zeroes_its_slot() {
   let mut s = Spatial::new();
   let a = s.create([1.0, 2.0, 0.0], Q, ONE, true);
   let b = s.create([3.0, 4.0, 0.0], Q, ONE, true);
-  s.set_instance_record(a, record(4, 0)).expect("bind");
-  s.set_instance_record(b, record(4, 1)).expect("bind");
+  s.set_instance_record(a, record(4, 0), None).expect("bind");
+  s.set_instance_record(b, record(4, 1), None).expect("bind");
   flush(&mut s);
   s.destroy(a).expect("destroy");
   let writes = flush(&mut s);

@@ -7,8 +7,8 @@
 
 export { add, createGroup, getRotation, getTransform, lookAt, remove, setTransform, setTransition, setVisible, worldPosition } from "./node.ts"
 export type { SceneNode, ScenePointerEvent, TransformUpdate, TransitionEndEvent } from "./node.ts"
-export { createInstancedMesh, createMesh, createSprite, disposeInstances, setCastShadow, setCulling, setGeometry, setInstanceCount, setInstances, setLayers, setMaterial, setMeshParams, setRenderOrder } from "./mesh.ts"
-export type { InstancedMesh as InstancedMeshNode, InstancedMeshOptions, Mesh as MeshNode, MeshInstances } from "./mesh.ts"
+export { addInstance, createInstancedMesh, createMesh, createRecordMesh, createSprite, disposeInstances, removeInstance, setCastShadow, setCulling, setGeometry, setInstanceStyle, setLayers, setMaterial, setMeshParams, setRecordCount, setRecords, setRenderOrder, INSTANCE_FLOATS } from "./mesh.ts"
+export type { InstancedMesh as InstancedMeshNode, InstancedMeshOptions, InstanceNode, InstanceSlots, InstanceStyle, Mesh as MeshNode, MeshInstances, RecordMesh as RecordMeshNode, RecordMeshOptions } from "./mesh.ts"
 export { createDirectionalLight, createHemisphereLight, createPointLight, createSpotLight, setLight, MAX_SHADOWS } from "./light.ts"
 export type {
   DirectionalLight as DirectionalLightNode,
@@ -42,17 +42,19 @@ export { extrude, lathe, pathFrames, sweep, tube } from "./sweep.ts"
 export type { ExtrudeOptions, LatheOptions, PathFrames, PathPoint, SweepPath, TubeOptions } from "./sweep.ts"
 export { lit, shaderMaterial, shaderMaterialClass, sprite, standard, unlit } from "./material.ts"
 export type { LitOptions, Material, ShaderMaterialClass, ShaderMaterialClassOptions, ShaderMaterialInstanceOptions, ShaderMaterialOptions, SpriteOptions, StandardOptions, UnlitOptions } from "./material.ts"
-export { DirectionalLight, FirstPersonCamera, Group, HemisphereLight, InstancedMesh, Mesh, OrbitCamera, PerspectiveCamera, PointLight, Scene, SpotLight, Sprite, useScene } from "./components.tsx"
+export { DirectionalLight, FirstPersonCamera, Group, HemisphereLight, Instance, InstancedMesh, Mesh, OrbitCamera, PerspectiveCamera, PointLight, RecordMesh, Scene, SpotLight, Sprite, useScene } from "./components.tsx"
 export type {
   DirectionalLightProps,
   FirstPersonCameraProps,
   HemisphereLightProps,
   InstancedMeshProps,
+  InstanceProps,
   MeshProps,
   OrbitCameraProps,
   PerspectiveCameraProps,
   PointerEventProps,
   PointLightProps,
+  RecordMeshProps,
   SceneInput,
   SceneInputListener,
   SceneProps,

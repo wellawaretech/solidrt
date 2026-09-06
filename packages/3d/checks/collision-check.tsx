@@ -22,7 +22,7 @@
 // exits; read the output, not the exit code.
 import { exit, onFrame, pct, render } from "@solidrt/core"
 import { glsl } from "@solidrt/core/gpu"
-import { add, box, createInstancedMesh, createMesh, createScene, moveAndSlide, setLayers, setTransform, shaderMaterialClass, unlit } from "@solidrt/3d"
+import { add, box, createRecordMesh, createMesh, createScene, moveAndSlide, setLayers, setTransform, shaderMaterialClass, unlit } from "@solidrt/3d"
 import type { Vec3 } from "@solidrt/3d"
 
 const SIZE = 128
@@ -72,7 +72,7 @@ function App() {
     instanceAttributes: [{ name: "iPos", format: "vec3" }],
     label: "collision-check-instanced",
   })
-  let instanced = createInstancedMesh(box(), look.instance(), new Float32Array([0, 0, 0]), 1, {
+  let instanced = createRecordMesh(box(), look.instance(), new Float32Array([0, 0, 0]), 1, {
     bounds: [-1, -1, -1, 1, 1, 1],
   })
   setTransform(instanced, { position: [0, 10, 0] })

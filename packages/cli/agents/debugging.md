@@ -116,7 +116,9 @@ What the dev server (`srt run` / `srt server`) is and what it serves.
   hand in a checkout it needs only `SRT_HOME`.
 - Reload-on-save watches the bundle's inputs (every file the running
   bundle was built from, dependencies included) and the `assets/` tree, not
-  a directory: a file the app does not import never triggers a rebuild.
+  a directory: a file the app does not import never triggers a rebuild,
+  and every one it does - package sources included - pushes a fresh app
+  (debug state and resource ids reset, so re-seed).
   While the last build failed, the source tree is watched as a whole until
   a build succeeds. `POST /__control__/watch?active=false` pauses it (the
   MCP `pause_watch` tool) while an agent edits; `POST /__control__/reload`
@@ -193,7 +195,8 @@ when exactly one client is connected.
   `/debug?name=<cmd>` with a JSON body as its args to call one.
 - POST `/input` with `{ "events": [...] }` - synthetic input through the
   real pipeline, same event shape as the `send_input` tool (tap real
-  coordinates read from `/tree`).
+  coordinates read from `/tree` just before: the window's logical size
+  follows the display it sits on, so a size read earlier can be stale).
 - POST `/clock?scale=<x>` (0 pauses) / `?step=<n>` frames while paused;
   `{ scale, pendingSteps }` back. `/clients` reports each client's `timeScale`,
   reset to 1 by every push.

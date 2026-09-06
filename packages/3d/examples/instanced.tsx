@@ -1,13 +1,13 @@
 // Instanced meshes: one draw entry covering a whole population. A material
-// class declares `instanceAttributes`, createInstancedMesh (here via the
-// <InstancedMesh> component) supplies one interleaved record per instance,
+// class declares `instanceAttributes`, createRecordMesh (here via the
+// <RecordMesh> component) supplies one interleaved record per instance,
 // and the vertex stage reads each record through the matching `in`
 // variables. Two meshes share the one class: 400 scattered "rocks" and a
 // breathing ring of "pines" - each is ONE entry and ONE uModel however
 // many instances it draws, so the spinning group below moves both fleets
 // with two matrix writes per frame.
 //
-// setInstanceCount is the population dial (the pines breathe); records are
+// setRecordCount is the population dial (the pines breathe); records are
 // data, not matrices - position/scale/tint here, whatever your shader
 // wants in general. The explicit `bounds` cover the scatter so picking
 // still works (one conservative box around the population; omit bounds and
@@ -15,7 +15,7 @@
 //
 // The fleets CAST: the class declares `shadowVertex` - its vertex stage
 // reduced to the position math, instance placement included - and with it
-// `castShadow` on an InstancedMesh works like on any mesh (without it the
+// `castShadow` on an RecordMesh works like on any mesh (without it the
 // shadow views skip instanced meshes). The lit ground receives; both
 // populations throw shadows from the one casting sun, and the breathing
 // pines' shadows appear and vanish with them.
@@ -34,16 +34,16 @@ import {
   DirectionalLight,
   Group,
   HemisphereLight,
-  InstancedMesh,
+  RecordMesh,
   lit,
   Mesh,
   PerspectiveCamera,
   plane,
   Scene,
-  setInstanceCount,
+  setRecordCount,
   shaderMaterialClass,
 } from "@solidrt/3d"
-import type { InstancedMeshNode } from "@solidrt/3d"
+import type { RecordMeshNode } from "@solidrt/3d"
 import { litFragment } from "@solidrt/3d/glsl"
 
 // The lit varyings (vWorldPos, vNormal, vUv, and vColor for the tint), as
@@ -131,13 +131,13 @@ const PINE_COUNT = 48
 
 function App() {
   let [spin, setSpin] = createSignal(0)
-  let pinesMesh!: InstancedMeshNode
+  let pinesMesh!: RecordMeshNode
   onFrame(tick => {
     setSpin(tick / 6000)
     // The population dial: draw the first N records. The buffer holds the
     // full ring; only the draw range moves, one setDrawRange per change.
     let n = Math.round(PINE_COUNT * (0.5 + 0.5 * Math.sin(tick / 900)))
-    if (pinesMesh) setInstanceCount(pinesMesh, n)
+    if (pinesMesh) setRecordCount(pinesMesh, n)
   })
 
   return (
@@ -156,14 +156,14 @@ function App() {
           />
           <Mesh geometry={plane({ width: 9, height: 9, label: "meadow" })} material={lit({ color: [0.24, 0.27, 0.24] })} rotation={[-Math.PI / 2, 0, 0]} />
           <Group rotation={[0, spin(), 0]}>
-            <InstancedMesh
+            <RecordMesh
               geometry={box({ label: "rock" })}
               material={instancedLook.instance({ params: LOOK })}
               records={rocks(400)}
               bounds={[-3.9, 0, -3.9, 3.9, 0.2, 3.9]}
               castShadow
             />
-            <InstancedMesh
+            <RecordMesh
               geometry={cone({ radius: 0.3, height: 1, radialSegments: 10, label: "pine" })}
               material={instancedLook.instance({ params: LOOK })}
               records={pines(PINE_COUNT)}

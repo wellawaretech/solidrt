@@ -31,6 +31,9 @@ blendMode and pointer events like any element.
   except instance record buffers (`disposeInstances`) and the scene
   itself. (@solidrt/2d's `removeGroup` DESTROYS its subtree instead - a
   sprite cannot exist outside its layer, so there remove means destroy.)
+  An instance node (addInstance on an instanced mesh) follows the 2d
+  rule: slot-bound to its mesh, `removeInstance` destroys it, and the
+  generic add/remove throw on it.
 - Rendering is the runtime's. The target is `render: "auto"`: it
   re-renders when entries change, so a STATIC scene costs zero passes and
   the library registers no frame loop. Continuous animation is the app's
@@ -83,8 +86,12 @@ blendMode and pointer events like any element.
   still camera re-tests nothing (a camera move re-tests every sink on
   that target, in Rust; a node move re-tests its own). The box is the
   picking box (the local bounds through the world matrix, the
-  Godot/Unity AABB test; Three uses spheres); a mesh without bounds
-  (an instanced mesh with no explicit `bounds`) is never culled. Per
+  Godot/Unity AABB test; Three uses spheres); an instanced mesh without
+  explicit `bounds` is culled by the union of its live instances' boxes
+  (the joint group below over the instance nodes, so the box follows
+  them: Godot's MultiMesh AABB, with `bounds` as its custom_aabb; Three
+  computes an InstancedMesh sphere once and leaves it stale, Unity wants
+  worldBounds), and a record mesh without `bounds` is never culled. Per
   mesh: `frustumCulled: false` (Three's name; `setCulling`) for geometry
   a vertex stage moves beyond its box - a fullscreen quad, a custom
   displacement - and `cullMargin` (world units, Godot's
@@ -244,7 +251,9 @@ blendMode and pointer events like any element.
 | `Group` | `position?`, `rotation?` (Euler radians, XYZ order), `quaternion?` (either, not both), `scale?` (number = uniform), `visible?`, pointer events (below), `ref?(node)` |
 | `Mesh` | `geometry`, `material`, transforms as Group, `params?` (per-mesh uniforms, merge semantics - no unset), `renderOrder?`, `castShadow?`, `layers?` (membership bitmask, default 1), pointer events (below), `ref?(mesh)` |
 | `Sprite` | as Mesh minus `geometry`: a camera-facing unit quad, `scale` is its world size, rotation is ignored; pair with a `sprite()` material |
-| `InstancedMesh` | as Mesh, plus `records` (interleaved per-instance floats; buffer capacity starts at the first value and grows on larger rewrites), `count?` (records drawn, default all), `bounds?` (local [minX..maxZ] over the population - without it the mesh never picks); the record buffer is component-owned and freed on unmount |
+| `InstancedMesh` | as Mesh (an instanced `material`: a stock one with `instanced`/`instanceColors`, or a class declaring INSTANCE_MATRIX_ATTRIBUTES), plus `capacity?` (instance slots, default 64; the buffers double past it), `bounds?` (optional: instances pick by themselves and the mesh culls by their union), `label?`; a PARENT: `<Instance>` children populate it, `<Group>` children are squads; the record buffers are component-owned and freed on unmount |
+| `Instance` | one instance of the enclosing `InstancedMesh`: transforms, `transition`, pointer events as Group, plus `style?` (the material's slot-1 floats - `[r, g, b, a]` under `instanceColors`), `ref?(instance)`; a parent too (a `<Mesh>` under an instance rides with it) |
+| `RecordMesh` | as Mesh, plus `records` (interleaved per-instance floats; buffer capacity starts at the first value and grows on larger rewrites), `count?` (records drawn, default all), `bounds?` (local [minX..maxZ] over the population - without it the mesh never picks); the record buffer is component-owned and freed on unmount |
 | `PerspectiveCamera` | `fov?` (vertical DEGREES, default 60), `near?`, `far?`, `position?`, `lookAt?`, `up?` - or the Scene `camera` prop, the same state (last write wins) |
 | `SpotLight` | transforms as Group, `direction?` (local aim, default [0, -1, 0]), `color?`, `intensity?`, `distance?` (falloff cutoff, 0 = none), `angle?` (cone half-angle DEGREES, default 60), `penumbra?` (0..1 rim fade, default 0), `decay?` (falloff exponent, default 2), `castShadow?`, `shadow?` (mapSize, bias, normalBias, near), `ref?(light)` |
 | `PointLight` | transforms as Group (position is what matters), `color?`, `intensity?`, `distance?`, `decay?`, `castShadow?` (six face maps, six shadow slots), `shadow?` (mapSize, bias, normalBias, near), `ref?(light)` |
@@ -630,35 +639,106 @@ Materials:
   pipeline with its own values. `dispose()` lives on the class alone.
   `shaderMaterial(opts)` is exactly a class with one instance (its
   `dispose` forwards to the class).
-- `instanceAttributes: [{ name, format }]` on either shader-material form
-  makes an INSTANCED material: the vertex stage reads them as `in`
+- `instanceAttributes: [{ name, format, slot? }]` on either shader-material
+  form makes an INSTANCED material: the vertex stage reads them as `in`
   variables beside the layout's own, and each drawn instance gets one
-  record of the mesh's instance buffer. Its meshes come from
-  `createInstancedMesh` (below); a `createMesh` mesh is rejected at add().
+  record per slot from the mesh's instance buffers - slot 0 (default)
+  is the record buffer, slot 1 an instanced mesh's STYLE buffer (below).
+  Its meshes come from `createInstancedMesh` or `createRecordMesh`; a
+  `createMesh` mesh is rejected at add(). `instanceStyle: [..]` is the
+  slot-1 record a fresh instance starts with. The stock materials do
+  the same with one flag: `lit/standard/unlit({ instanced: true })`
+  places by the instance matrix (the shadow pass too, so the fleet
+  casts), and `{ instanceColors: true }` adds a per-instance
+  premultiplied `[r, g, b, a]` style record starting white - Unity's
+  per-material instancing switch with Three's setColorAt.
 
-Instancing - one draw entry covering a population:
-`createInstancedMesh(geometry, material, records, count?, { bounds?,
-label? })` returns an ordinary Mesh whose entry draws the geometry once
-per record. `records` is the interleaved per-instance data (stride = the
-material's instanceAttributes summed, a mismatch throws), uploaded to a
-mesh-owned buffer whose capacity starts at the records given. `count` picks how
-many records draw (default all). Everything mesh works unchanged:
-setTransform moves the whole population through one uModel, setVisible
-zeroes the drawn count and restores the record count on unhide,
-renderOrder/params/geometry/material swaps apply. `setInstances(mesh,
-records, count?)` rewrites records from the start (count defaults to the
-records written; more than capacity GROWS: capacity doubles into a
-replacement buffer, the entry is re-pointed via `setDrawBuffers`, the old
-buffer is freed), `setInstanceCount(mesh, n)` is the population dial (clamped to capacity;
-frame-rate-safe), and `disposeInstances(mesh)` detaches and frees the
-record buffer - the one explicit free, geometry-buffer rule. Records are
-opaque data (position/yaw/tint/whatever your shader reads), NOT matrices:
-a per-instance mat4 would be four vec4 columns reassembled in the shader,
-but most fleets want a few floats. Picking: the library cannot know where
-records place instances, so an instanced mesh has NO picking leaf unless
-you pass `bounds` (local, covering the population) - then it picks and
-transparent-sorts conservatively as one box. `examples/instanced.tsx` is
-the live proof.
+Instancing - one draw entry covering a population, in two forms. The
+axis between them is WHERE MOTION IS COMPUTED, the same split as
+@solidrt/2d's sprite and record layers.
+
+`createInstancedMesh(geometry, material, { capacity?, bounds?, label? })`
+draws the geometry once per instance NODE: `addInstance(mesh,
+transform?, parent?)` returns a scene node (kind "instance") placed
+inside the mesh - setTransform/setTransition/setVisible, lookAt,
+worldPosition, pointer handlers and children of its own all apply - whose
+matrix RELATIVE to the mesh the spatial core writes into the record
+buffer (`bindMatrixRecord` anchored on the mesh node: one coalesced
+buffer write per flush however many instances moved, so native
+transitions and clip players move instances with zero per-frame JS).
+The material declares `INSTANCE_MATRIX_ATTRIBUTES` in slot 0 (four vec4
+columns, 16 floats; anything else throws at creation) and its vertex
+stage splices `INSTANCE_MATRIX` from `@solidrt/3d/glsl`: `uModel *
+instanceMatrix() * vec4(aPos, 1.0)`, normals through
+`instanceNormalMatrix()` (Three's derivation, exact for any rotation and
+scale at no per-instance data; a sheared hierarchy - a non-uniformly
+scaled group above a rotated instance - takes
+`transpose(inverse(mat3(instanceMatrix())))` instead) - or is a stock
+material with `instanced`. Slot-1 attributes, when the material declares
+any, give every instance a STYLE record beside its matrix
+(`MeshInstances.style`): app-owned floats in a second, mesh-owned
+buffer, written per instance with `setInstanceStyle(instance, floats)`
+into a JS mirror and published as ONE coalesced buffer write per mesh at
+the scene's sync (a frame-rate path, like setTransform); a fresh or
+recycled slot starts from the material's `instanceStyle` (white under
+`instanceColors`, zeros otherwise); under `alphaTest` the cutout shadow
+multiplies by the same color, so an instance faded below the cutoff
+casts nothing, like its pixels (Godot's alpha scissor holds in its
+shadow pass too). The core's pose slot and the app's style slot are
+@solidrt/2d's split one dimension up. Slots are fixed
+for an instance's life and recycle on `removeInstance` (remove means
+destroy: an instance cannot exist outside its mesh, and the generic
+add/remove throw on one), the drawn count is the slot high-water mark,
+and past `capacity` (default 64) both buffers double into replacements
+with the live records retargeted in one core call and the style mirror
+republished. `parent` may be a group inside the mesh's subtree (a squad
+in a fleet): the record stays mesh-relative through it. Picking is per
+instance: every instance node carries the geometry's bounds and
+triangle shape, so `Hit`, `Overlap` and `Impact` name the `instance` and
+pointer events bubble from it (`event.instance`) through the mesh to its
+ancestors. `bounds` on the mesh is optional here: without it the mesh
+culls by the union of its live instances' boxes (following them, hidden
+ones included) and sorts by its node position; with it the explicit
+box does both. Three's InstancedMesh count
+constructor over Unity's one-transform-per-instance model; Godot's
+MultiMesh is the record form. The components: `<InstancedMesh capacity>`
+with `<Instance position style transition onPointerDown>` children
+(`<Group>` children are squads, an `<Instance>` is a parent too);
+`examples/fleet.tsx` is a thousand of them springing between formations
+with tap-to-tint, `probes/3d-instance-probe.tsx` the function face.
+Mount cost is the one difference between the faces: an `<Instance>` row
+costs about eight times an `addInstance` call (the component machinery -
+a Solid row, two effects, the style effect; a node component's context
+provider is built only when it has children, the biggest single saving -
+`probes/3d-instance-mount-bench.tsx` measures it), so a few thousand
+mount in tens of milliseconds either way; populations spawned per frame,
+or in five figures, belong to the function face.
+
+`createRecordMesh(geometry, material, records, count?, { bounds?,
+label? })` is the raw form: `records` is the interleaved per-instance
+data (stride = the material's slot-0 instanceAttributes summed, a
+mismatch throws; slot 1 is an instanced mesh's and throws here),
+uploaded to a mesh-owned buffer whose capacity starts at the
+records given, and `count` picks how many draw (default all).
+`setRecords(mesh, records, count?)` rewrites from the start (count
+defaults to the records written; more than capacity GROWS: capacity
+doubles into a replacement buffer, the entry is re-pointed via
+`setDrawBuffers`, the old buffer is freed) and `setRecordCount(mesh, n)`
+is the population dial (clamped to capacity; frame-rate-safe). Records
+are opaque data (position/yaw/tint/whatever your shader reads), so the
+library cannot know where they place instances: a record mesh has NO
+picking leaf unless you pass `bounds` (local, covering the population) -
+then it picks and transparent-sorts conservatively as one box. The
+escape hatch for motion only JS can compute at scale (a particle sim, a
+crowd stepped in a worker).
+
+Everything mesh works on both: setTransform moves the whole population
+through one uModel, setVisible zeroes the drawn count and restores it on
+unhide, renderOrder/params/geometry/material swaps apply, and
+`disposeInstances(mesh)` detaches and frees the record buffers - the one
+explicit free, geometry-buffer rule. `examples/fleet.tsx` (instances,
+components), `probes/3d-instance-probe.tsx` (instances, functions) and
+`examples/instanced.tsx` (records) are the live proofs.
 
 Background: `scene.setBackground(source | null)`, the `background` option
 on createScene, and the reactive `Scene` prop. Drawn as the FIRST entry
@@ -1047,7 +1127,10 @@ multiply by the colored layout's aColor (so the geometry must carry it),
 world unit, blended across the three axis planes by the normal, and
 `alphaTest: t` for a cutout (a fragment whose final alpha is below `t`
 is discarded; Three's alphaTest, glTF MASK): opaque, depth-written, no
-sorting, usually with `cull: "none"` for cards. Triplanar
+sorting, usually with `cull: "none"` for cards, and `instanced: true` /
+`instanceColors: true` for an instanced mesh's population (see
+Instancing: the placement, the depth pass and a per-instance tint with
+no GLSL; the material then draws populated meshes only). Triplanar
 is an OPTION, not the default: generators emit 0..1 UVs per face, so a
 map on a plane is a decal (UV) while a map on generated scenery wants one
 density across parts of any size (triplanar); the map must be created
@@ -1376,22 +1459,46 @@ older bakes are rejected - re-bake with `srt tool 3d/model`.
   live: it has no world matrix yet, and drawn before the sync microtask it
   flashes at the world origin for a frame.
 - Instancing pairs strictly at add(), like layout: an instanced material
-  needs a createInstancedMesh mesh (records included) and vice versa, and
-  the record stride must match the material's attributes - each mismatch
-  throws there. The instance buffer is MESH-owned (unlike shared geometry
-  buffers): `disposeInstances` is its one free, and the mesh cannot be
-  re-added afterwards. Capacity grows by REPLACEMENT, never resize:
-  `setInstances` past capacity doubles (at least to the records written)
-  into a new buffer and swaps it in - amortized like a dynamic array, same
-  policy as @solidrt/2d; size the initial records to skip the copies.
-- Instanced casters: `castShadow` on an instanced mesh needs the class's
-  `shadowVertex` (see shadows below); a class without one is skipped by
-  shadow views, silently.
-- An instanced mesh without explicit `bounds` has no BVH leaf: it never
+  needs a createInstancedMesh or createRecordMesh mesh and vice versa,
+  and the record strides must match the material's attributes per slot
+  (the 16 floats of INSTANCE_MATRIX_ATTRIBUTES in slot 0 on an instanced
+  mesh, its style stride in slot 1; a record mesh is slot 0 only) - each
+  mismatch throws there, at creation for the mesh's own material and at
+  add() for a swapped one. The instance buffers are MESH-owned (unlike
+  shared geometry buffers): `disposeInstances` is their one free, and
+  the mesh cannot be re-added afterwards. Capacity grows by REPLACEMENT,
+  never resize: an addInstance or setRecords past capacity doubles into
+  new buffers and swaps them in (an instanced mesh's live records move
+  in one core `retargetRecords`, its style mirror republishes) -
+  amortized like a dynamic array, same policy as @solidrt/2d; size
+  `capacity` or the initial records to skip the copies. An instanced
+  mesh's style stride comes from its material AT CREATION: a later
+  setMaterial to a class with another slot-1 layout throws at the
+  rebuild.
+- Style writes are mirrored, not immediate: `setInstanceStyle` lands in
+  `MeshInstances.style.data` and the scene's sync publishes the dirty
+  range - so a write on a mesh outside any scene shows once it is added
+  (the attach republishes the whole mirror), and reading the GPU buffer
+  back mid-frame can lag the mirror by one sync.
+- Instanced casters: `castShadow` on a populated mesh needs a depth pass
+  with the instance placement in it - the stock materials' `instanced`
+  carries one, a custom class needs `shadowVertex` (see shadows below);
+  a class without one is skipped by shadow views, silently.
+- A record mesh without explicit `bounds` has no BVH leaf: it never
   picks, pointer events never target it, and its transparent sort key
   falls back to the node's world position. That is deliberate - records
   are opaque to the library, so any inferred box would be a guess. Supply
-  `bounds` for anything pickable or transparent.
+  `bounds` for anything pickable or transparent. An instanced mesh picks
+  per instance regardless and culls by its instances' union; its
+  `bounds` replace that union and give the transparent sort a center.
+- An instance node's own fields hold its LOCAL pose (relative to its
+  parent, as for any node); the record the core writes is its pose
+  relative to the MESH, composed through any group between them. A
+  removed instance's children stay parented to the dead node: remove()
+  one to re-use it. `disposeInstances` on an instanced mesh flushes the
+  core before freeing the buffer, so the destroyed instances' hiding
+  writes land in a live buffer; keep that order if you ever free a
+  record buffer by hand.
 - Transparency is an EXPLICIT material flag, Three's rule: `unlit({ color:
   [r, g, b, 0.5] })` still draws opaque, and opaque means it: the standard
   classes write alpha 1 when not `transparent` (the scene target is
@@ -1519,7 +1626,8 @@ older bakes are rejected - re-bake with `srt tool 3d/model`.
   casts when its class declares `shadowVertex` (the vertex stage reduced
   to position, instance placement included; the class builds one depth
   program from it plus the shared depth fragment, culling the shadow
-  side, and every instance shares it) - without one the shadow views
+  side and binding only the instance slots the stage reads, and every
+  instance shares it) - without one the shadow views
   SKIP instanced meshes, since the plain depth override cannot know
   their records. `examples/instanced.tsx` casts. Every casting light
   is a full extra pass over the casters plus a sampler unit on every

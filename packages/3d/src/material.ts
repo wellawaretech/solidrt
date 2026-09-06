@@ -33,6 +33,7 @@ import type {
   BlendMode,
   CullMode,
   ProgramId,
+  InstanceAttribute,
   RenderPipelineId,
   ShaderParams,
   TextureBindings,
@@ -43,7 +44,23 @@ import type {
 import { layoutAttributes, layoutKey, layoutSlot } from "./geometry.ts"
 import type { VertexLayout } from "./geometry.ts"
 import { linearColor } from "./color.ts"
-import { litFragment, litShadowFragment, litVertex, SKIN_DECLS, SKIN_MATRIX, standardFragment, SURFACE_DEFAULTS, UNLIT_VERTEX, unlitFragment, unlitShadowFragment, unlitVertex, OUTPUT } from "./glsl.ts"
+import {
+  INSTANCE_COLOR_ATTRIBUTES,
+  INSTANCE_MATRIX,
+  INSTANCE_MATRIX_ATTRIBUTES,
+  litFragment,
+  litShadowFragment,
+  litVertex,
+  SKIN_DECLS,
+  SKIN_MATRIX,
+  standardFragment,
+  SURFACE_DEFAULTS,
+  UNLIT_VERTEX,
+  unlitFragment,
+  unlitShadowFragment,
+  unlitVertex,
+  OUTPUT,
+} from "./glsl.ts"
 
 export type Material = {
   /** The pipeline this material draws with for geometry of `layout`
@@ -69,10 +86,16 @@ export type Material = {
    * back-to-front by mesh origin, and re-sorts them when the camera moves. */
   transparent?: boolean
   /** Per-instance attributes, when the material's pipeline declares them
-   * (shaderMaterialClass's `instanceAttributes`). Such a material draws
-   * instanced meshes only - createInstancedMesh supplies the record buffer,
-   * and createMesh meshes are rejected at add(). */
-  instanceAttributes?: VertexAttribute[]
+   * (shaderMaterialClass's `instanceAttributes`; the stock materials'
+   * `instanced`). Such a material draws populated meshes only - an
+   * instanced mesh binds slot 0 to the core-written matrix records and
+   * slot 1 to its app-written style records, a record mesh binds slot 0
+   * to its records - and createMesh meshes are rejected at add(). */
+  instanceAttributes?: InstanceAttribute[]
+  /** The style record (the slot-1 attributes' floats, in order) every
+   * fresh instance of an instanced mesh starts with; absent = zeros.
+   * White for the stock materials' `instanceColors`. */
+  instanceStyle?: ArrayLike<number>
   /** What a shadow view draws this material's meshes with instead of its
    * default depth override: the depth pass culling the side this material
    * culls (Three's shadowSide rule, Godot's shadow pass), so a `cull:
@@ -159,7 +182,33 @@ export type UnlitOptions = {
    * the spatial flush writes it from the joints). The shadow variants
    * (depth and cutout) skin the same way, so a caster casts its pose. */
   skinned?: boolean
+  /** Draw instanced meshes (createInstancedMesh / `<InstancedMesh>`):
+   * the vertex stage places each copy by its instance matrix under the
+   * mesh's uModel, and the material declares INSTANCE_MATRIX_ATTRIBUTES,
+   * so it draws populated meshes ONLY (a createMesh mesh is rejected at
+   * add()). The shadow variants place the same way, so a fleet casts.
+   * Unity's per-material "Enable GPU Instancing"; Three's built-ins do
+   * it implicitly on an InstancedMesh. */
+  instanced?: boolean
+  /** Multiply the base by a per-instance color (implies `instanced`):
+   * the instance's style record is one premultiplied linear [r, g, b, a]
+   * (INSTANCE_COLOR_ATTRIBUTES), starting white, written with
+   * setInstanceStyle or `<Instance style>`. Three's setColorAt, Godot's
+   * MultiMesh instance color. A cutout's shadow multiplies by the same
+   * color, so alpha below `alphaTest` cuts the shadow with the pixels. */
+  instanceColors?: boolean
 }
+
+// The instance attributes a stock instanced material declares: the
+// matrix always, the color record beside it under instanceColors.
+function stockInstanceAttributes(instanced: boolean, instanceColors: boolean): InstanceAttribute[] | undefined {
+  if (!instanced) return undefined
+  return instanceColors ? [...INSTANCE_MATRIX_ATTRIBUTES, ...INSTANCE_COLOR_ATTRIBUTES] : INSTANCE_MATRIX_ATTRIBUTES
+}
+// A fresh instance's color: white, the multiplicative identity, so an
+// instance never written shows the material's own color (Godot's default;
+// Three's zero-filled instanceColor is the trap avoided here).
+const INSTANCE_COLOR_DEFAULT = [1, 1, 1, 1]
 
 /** The uMapTransform vec4 for a mapTransform option: [repeatU, repeatV,
  * offsetU, offsetV]. */
@@ -183,13 +232,18 @@ export function unlit(opts: UnlitOptions = {}): Material {
   let fog = opts.fog !== false
   let mapTransform = opts.mapTransform !== undefined
   let skinned = opts.skinned === true
+  let instanceColors = opts.instanceColors === true
+  let instanced = opts.instanced === true || instanceColors
   if (mapTransform && !map) throw new Error("unlit: mapTransform without a map to transform")
-  let key = [map, transparent, cull, alphaTest, fog, mapTransform, skinned].join("|")
+  let key = [map, transparent, cull, alphaTest, fog, mapTransform, skinned, instanced, instanceColors].join("|")
   let cls = unlitClasses.get(key)
   if (cls === undefined) {
     cls = shaderMaterialClass({
-      vertex: unlitVertex({ skinned }),
-      fragment: unlitFragment({ map, alphaTest, transparent, fog, mapTransform }),
+      vertex: unlitVertex({ skinned, instanced, instanceColors }),
+      fragment: unlitFragment({ map, alphaTest, transparent, fog, mapTransform, instanceColors }),
+      shadowVertex: instanced ? shadowDepthVertex(skinned, true) : undefined,
+      instanceAttributes: stockInstanceAttributes(instanced, instanceColors),
+      instanceStyle: instanceColors ? INSTANCE_COLOR_DEFAULT : undefined,
       transparent,
       cull,
       label: "scene-unlit-" + key,
@@ -204,7 +258,7 @@ export function unlit(opts: UnlitOptions = {}): Material {
     textures: map ? { uMap: opts.map! } : undefined,
     shadow:
       alphaTest && map
-        ? unlitShadowMaterial(shadowCull(cull), skinned, uColor, opts.alphaTest!, opts.map!, mapTransform ? params.uMapTransform as number[] : undefined)
+        ? unlitShadowMaterial(shadowCull(cull), skinned, instanced, instanceColors, uColor, opts.alphaTest!, opts.map!, mapTransform ? params.uMapTransform as number[] : undefined)
         : undefined,
   })
 }
@@ -331,6 +385,8 @@ type LitClass = {
   lightMap: boolean
   mapTransform: boolean
   skinned: boolean
+  instanced: boolean
+  instanceColors: boolean
 }
 
 function litClassKey(c: LitClass): string {
@@ -386,6 +442,8 @@ export function lit(opts: LitOptions = {}): Material {
     lightMap,
     mapTransform,
     skinned: opts.skinned === true,
+    instanced: opts.instanced === true || opts.instanceColors === true,
+    instanceColors: opts.instanceColors === true,
   }
   let key = litClassKey(flags)
   let cls = litClasses.get(key)
@@ -393,6 +451,9 @@ export function lit(opts: LitOptions = {}): Material {
     cls = shaderMaterialClass({
       vertex: litVertex(flags),
       fragment: litFragment(flags),
+      shadowVertex: flags.instanced ? shadowDepthVertex(flags.skinned, true) : undefined,
+      instanceAttributes: stockInstanceAttributes(flags.instanced, flags.instanceColors),
+      instanceStyle: flags.instanceColors ? INSTANCE_COLOR_DEFAULT : undefined,
       transparent: flags.transparent,
       cull,
       label: "scene-lit-" + key,
@@ -486,6 +547,8 @@ function standardShadowFlags(c: StandardClass): LitClass {
     lightMap: c.lightMap,
     mapTransform: c.mapTransform,
     skinned: c.skinned,
+    instanced: c.instanced,
+    instanceColors: c.instanceColors,
   }
 }
 
@@ -546,6 +609,8 @@ export function standard(opts: StandardOptions = {}): Material {
     lightMap,
     mapTransform,
     skinned: opts.skinned === true,
+    instanced: opts.instanced === true || opts.instanceColors === true,
+    instanceColors: opts.instanceColors === true,
     metalnessMap,
     roughnessMap,
   }
@@ -555,6 +620,9 @@ export function standard(opts: StandardOptions = {}): Material {
     cls = shaderMaterialClass({
       vertex: litVertex(flags),
       fragment: standardFragment(flags),
+      shadowVertex: flags.instanced ? shadowDepthVertex(flags.skinned, true) : undefined,
+      instanceAttributes: stockInstanceAttributes(flags.instanced, flags.instanceColors),
+      instanceStyle: flags.instanceColors ? INSTANCE_COLOR_DEFAULT : undefined,
       transparent: flags.transparent,
       cull,
       label: "scene-standard-" + key,
@@ -619,6 +687,7 @@ function litShadowMaterial(
       vertex: litVertex(flags),
       fragment,
       cull: shadowCull(flags.cull),
+      instanceAttributes: stockInstanceAttributes(flags.instanced, flags.instanceColors),
       label: "scene-lit-shadow-" + key,
     })
     litShadowClasses.set(key, cls)
@@ -639,28 +708,25 @@ function litShadowMaterial(
 // Front faces culled, Three's shadowSide default: the map holds each
 // caster's BACK surface, so a receiving front face at the same depth
 // compares lit without a bias and acne needs no fighting on closed meshes.
-const SHADOW_DEPTH_VERTEX = glsl`
+// The skinned form applies the skin matrix first, so a posed caster's
+// depth is its pose (the entry's uBones binding comes from the mesh, see
+// Material.skinned); the instanced form places each copy by its instance
+// matrix, so a fleet casts where its records stand - the stock instanced
+// materials pass it as their class's shadowVertex.
+function shadowDepthVertex(skinned: boolean, instanced: boolean): string {
+  let local = skinned ? "(skin * vec4(aPos, 1.0))" : "vec4(aPos, 1.0)"
+  return glsl`
   in vec3 aPos;
+  ${skinned ? SKIN_DECLS : ""}
+  ${instanced ? INSTANCE_MATRIX : ""}
   uniform mat4 uModel;
   uniform mat4 uViewProj;
   void main() {
-    gl_Position = uViewProj * uModel * vec4(aPos, 1.0);
+    ${skinned ? SKIN_MATRIX : ""}
+    gl_Position = uViewProj * uModel * ${instanced ? `(instanceMatrix() * ${local})` : local};
   }
 `
-
-// Its skinned twin: the same position-only pass with the skin matrix
-// applied first, so a posed caster's depth is its pose (the entry's
-// uBones binding comes from the mesh, see Material.skinned).
-const SHADOW_DEPTH_VERTEX_SKINNED = glsl`
-  in vec3 aPos;
-  ${SKIN_DECLS}
-  uniform mat4 uModel;
-  uniform mat4 uViewProj;
-  void main() {
-    ${SKIN_MATRIX}
-    gl_Position = uViewProj * uModel * (skin * vec4(aPos, 1.0));
-  }
-`
+}
 
 const SHADOW_DEPTH_FRAGMENT = glsl`
   void main() {
@@ -679,7 +745,7 @@ export function shadowDepthMaterial(cull: CullMode = "front", skinned = false): 
   let material = shadowDepth.get(key)
   if (material === undefined) {
     material = shaderMaterialClass({
-      vertex: skinned ? SHADOW_DEPTH_VERTEX_SKINNED : SHADOW_DEPTH_VERTEX,
+      vertex: shadowDepthVertex(skinned, false),
       fragment: SHADOW_DEPTH_FRAGMENT,
       cull,
       label: "scene-shadow-depth-" + key,
@@ -712,16 +778,26 @@ let unlitShadowClasses = new Map<string, ShaderMaterialClass>()
  * skinning and whether the cutout's uv is transformed - one class per
  * combination. An instance per material (its map, color, cutoff,
  * transform). */
-function unlitShadowMaterial(cull: CullMode, skinned: boolean, uColor: number[], uAlphaTest: number, uMap: TextureId, uMapTransform?: number[]): Material {
-  let key = cull + "|" + (uMapTransform !== undefined) + (skinned ? "|skinned" : "")
+function unlitShadowMaterial(
+  cull: CullMode,
+  skinned: boolean,
+  instanced: boolean,
+  instanceColors: boolean,
+  uColor: number[],
+  uAlphaTest: number,
+  uMap: TextureId,
+  uMapTransform?: number[],
+): Material {
+  let key = [cull, uMapTransform !== undefined, skinned, instanced, instanceColors].join("|")
   let cls = unlitShadowClasses.get(key)
   if (cls === undefined) {
-    let fragment = unlitShadowFragment({ map: true, alphaTest: true, mapTransform: uMapTransform !== undefined })
+    let fragment = unlitShadowFragment({ map: true, alphaTest: true, mapTransform: uMapTransform !== undefined, instanceColors })
     if (fragment === undefined) throw new Error("unlitShadowMaterial: the cutout options cannot discard")
     cls = shaderMaterialClass({
-      vertex: unlitVertex({ skinned }),
+      vertex: unlitVertex({ skinned, instanced, instanceColors }),
       fragment,
       cull,
+      instanceAttributes: stockInstanceAttributes(instanced, instanceColors),
       label: "scene-unlit-shadow-" + key,
     })
     unlitShadowClasses.set(key, cls)
@@ -731,7 +807,10 @@ function unlitShadowMaterial(cull: CullMode, skinned: boolean, uColor: number[],
   return cls.instance({ params, textures: { uMap } })
 }
 
-export type SpriteOptions = UnlitOptions & {
+/** A sprite's options: unlit's, minus instancing (the billboard stage
+ * places one quad per mesh; an instanced billboard field is a custom
+ * class's vertex stage). */
+export type SpriteOptions = Omit<UnlitOptions, "instanced" | "instanceColors"> & {
   /** Which way the quad turns to face the camera. `"full"` (default,
    * Three's Sprite): both axes follow the view, the quad is always flat
    * to the screen. `"fixed-y"` (Godot's BILLBOARD_FIXED_Y): only the yaw
@@ -803,6 +882,11 @@ let spriteClasses = new Map<string, ShaderMaterialClass>()
  * for an opaque one. Culling is off: a camera-facing quad has no back.
  */
 export function sprite(opts: SpriteOptions = {}): Material {
+  // Excluded by the type and checked for a JS caller: the billboard stage
+  // has no instance placement, so the flags would otherwise be ignored.
+  if ((opts as UnlitOptions).instanced || (opts as UnlitOptions).instanceColors) {
+    throw new Error("sprite: instanced and instanceColors are not sprite options (one billboard per mesh)")
+  }
   let uColor = colorParam(opts.color ?? [1, 1, 1])
   let map = opts.map !== undefined
   let transparent = opts.transparent !== false
@@ -940,19 +1024,31 @@ export type ShaderMaterialClassOptions = {
    * beside the layout's own, and each drawn instance gets one record from
    * the mesh's instance buffer (interleaved floats in this order). A class
    * with instance attributes makes INSTANCED materials: attach their meshes
-   * with createInstancedMesh, which carries the records - a createMesh mesh
-   * is rejected at add(). A per-instance transform is data, not a matrix:
-   * a position/yaw/scale record beats four vec4 columns for most fleets,
-   * and the composed uModel still places the whole population.
+   * with createInstancedMesh or createRecordMesh, which carry the records
+   * - a createMesh mesh is rejected at add(). Each attribute's `slot`
+   * (default 0) picks the buffer: an instanced mesh binds the core's
+   * matrix records (INSTANCE_MATRIX_ATTRIBUTES, exactly) to slot 0 and
+   * the app's style records - any layout, written per instance with
+   * setInstanceStyle - to slot 1; a record mesh is slot 0 only, its
+   * records whatever the stage reads (a position/yaw/scale record beats
+   * four vec4 columns for a JS-stepped fleet, and the composed uModel
+   * still places the whole population).
    */
-  instanceAttributes?: VertexAttribute[]
+  instanceAttributes?: InstanceAttribute[]
+  /** The style record a fresh instance starts with (the slot-1
+   * attributes' floats, in order); default zeros. The identity of
+   * whatever the stage does with the record - white for a multiplied
+   * tint. */
+  instanceStyle?: ArrayLike<number>
   /**
    * The class's vertex stage reduced to POSITION - the instance
    * placement, a displacement, whatever moves vertices, minus every
    * color/normal/uv output - for the shadow pass. With it the class's
    * instances cast: a shadow view draws their meshes with a depth
    * pipeline built from this stage and the shared depth fragment
-   * (culling the side the class culls, the same instanceAttributes), so
+   * (culling the side the class culls, binding the instance slots this
+   * stage reads - the records always, a style slot only when it names
+   * one of its attributes), so
    * an instanced fleet's shadows land where its records put the
    * vertices. Same standard-uniform contract as `vertex` (uModel and
    * uViewProj required); one extra program per class, built at first
@@ -1049,6 +1145,20 @@ export function shaderMaterialClass(opts: ShaderMaterialClassOptions): ShaderMat
   // An empty list declares nothing - same as absent (the engine requires an
   // instance buffer exactly when attributes are declared).
   let instanceAttributes = opts.instanceAttributes?.length ? opts.instanceAttributes.map(a => ({ ...a })) : undefined
+  // The shadowVertex depth pass binds the instance slots its stage reads
+  // from - the record slot always (a stage reading none of it cannot
+  // place the instances, an error here), a style slot only when the
+  // stage names one of its attributes - and declares each bound slot's
+  // whole layout, since a slot's stride is the record's (an unread
+  // attribute in a bound slot is inactive, like an extra geometry channel).
+  let shadowAttributes: InstanceAttribute[] | undefined
+  if (opts.shadowVertex !== undefined && instanceAttributes !== undefined) {
+    let source = opts.shadowVertex
+    let named = (a: InstanceAttribute) => new RegExp("\\b" + a.name + "\\b").test(source)
+    let slots = new Set(instanceAttributes.filter(named).map(a => a.slot ?? 0))
+    if (!slots.has(0)) throw new Error("shaderMaterial shadowVertex must read the slot-0 instance attributes it places instances by")
+    shadowAttributes = instanceAttributes.filter(a => slots.has(a.slot ?? 0))
+  }
   // The shadowVertex depth material: one class and one shared instance,
   // built the first time a caster of this class meets a shadow view.
   let shadowClass: ShaderMaterialClass | undefined
@@ -1060,7 +1170,7 @@ export function shaderMaterialClass(opts: ShaderMaterialClassOptions): ShaderMat
         vertex: opts.shadowVertex,
         fragment: SHADOW_DEPTH_FRAGMENT,
         cull: shadowCull(cull),
-        instanceAttributes,
+        instanceAttributes: shadowAttributes,
         label: (opts.label ?? "shader-material") + "-shadow",
       })
       classShadow = shadowClass.instance()
@@ -1110,6 +1220,7 @@ export function shaderMaterialClass(opts: ShaderMaterialClassOptions): ShaderMat
         attributes,
         transparent,
         instanceAttributes,
+        instanceStyle: opts.instanceStyle,
         pipeline: pipelineFor,
         params: inst.params ?? {},
         textures: inst.textures,

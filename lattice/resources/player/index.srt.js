@@ -5401,7 +5401,8 @@ function onPointerMove(fn) {
         syncInterest(interestRoot);
     }
   };
-  onCleanup(cleanup2);
+  if (getOwner())
+    onCleanup(cleanup2);
   return cleanup2;
 }
 function setInterestRoot(nodeId) {
@@ -5596,7 +5597,8 @@ function onFrame(fn) {
     cancelled = true;
     animationFrames.delete(frameId);
   };
-  onCleanup(cleanup2);
+  if (getOwner())
+    onCleanup(cleanup2);
   return cleanup2;
 }
 var sizeAccessor;
@@ -5605,34 +5607,30 @@ var displayScaleAccessor;
 function ensureResizeState() {
   if (sizeAccessor)
     return;
-  let [size, setSize] = createSignal({
-    width: 0,
-    height: 0
-  }, {
-    ownedWrite: true
-  });
-  let [safe, setSafe] = createSignal({
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0
-  }, {
-    ownedWrite: true
-  });
-  let [scale, setScale] = createSignal(1, {
-    ownedWrite: true
-  });
-  on2("resize", (e) => {
-    setSize({
-      width: e.width,
-      height: e.height
+  runWithOwner(null, () => {
+    let [size, setSize] = createSignal({
+      width: 0,
+      height: 0
     });
-    setSafe(e.safeArea);
-    setScale(e.displayScale);
+    let [safe, setSafe] = createSignal({
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 0
+    });
+    let [scale, setScale] = createSignal(1);
+    on2("resize", (e) => {
+      setSize({
+        width: e.width,
+        height: e.height
+      });
+      setSafe(e.safeArea);
+      setScale(e.displayScale);
+    });
+    sizeAccessor = size;
+    safeAreaAccessor = safe;
+    displayScaleAccessor = scale;
   });
-  sizeAccessor = size;
-  safeAreaAccessor = safe;
-  displayScaleAccessor = scale;
 }
 function windowSize() {
   ensureResizeState();
@@ -5649,21 +5647,25 @@ function displayScale() {
 var focusedAccessor;
 function windowFocused() {
   if (!focusedAccessor) {
-    let [focused, setFocused] = createSignal(true);
-    on2("windowFocus", () => setFocused(true));
-    on2("windowBlur", () => setFocused(false));
-    focusedAccessor = focused;
+    runWithOwner(null, () => {
+      let [focused, setFocused] = createSignal(true);
+      on2("windowFocus", () => setFocused(true));
+      on2("windowBlur", () => setFocused(false));
+      focusedAccessor = focused;
+    });
   }
   return focusedAccessor();
 }
 var keyboardHeightAccessor;
 function keyboardHeight() {
   if (!keyboardHeightAccessor) {
-    let [height, setHeight] = createSignal(0);
-    on2("keyboardVisibility", ({
-      height: h
-    }) => setHeight(h ?? 0));
-    keyboardHeightAccessor = height;
+    runWithOwner(null, () => {
+      let [height, setHeight] = createSignal(0);
+      on2("keyboardVisibility", ({
+        height: h
+      }) => setHeight(h ?? 0));
+      keyboardHeightAccessor = height;
+    });
   }
   return keyboardHeightAccessor();
 }
@@ -5694,7 +5696,8 @@ function onLayout(fn) {
     if (i >= 0)
       layoutHandlers.splice(i, 1);
   };
-  onCleanup(unsubscribe);
+  if (getOwner())
+    onCleanup(unsubscribe);
   return unsubscribe;
 }
 var backHandlers = [];
@@ -5705,7 +5708,8 @@ function onBack(fn) {
     if (i >= 0)
       backHandlers.splice(i, 1);
   };
-  onCleanup(cleanup2);
+  if (getOwner())
+    onCleanup(cleanup2);
   return cleanup2;
 }
 var windowRootId = 0;
@@ -6308,102 +6312,106 @@ var devicesAccessor;
 function ensureDevicesState() {
   if (devicesAccessor)
     return;
-  let [devices, setDevices] = createSignal(undefined, {
-    ownedWrite: true
-  });
-  on3("inputDevices", (d) => {
-    setDevices({
-      keyboard: !!d.keyboard,
-      mouse: !!d.mouse,
-      touch: !!d.touch,
-      screenKeyboard: !!d.screenKeyboard
+  runWithOwner(null, () => {
+    let [devices, setDevices] = createSignal(undefined);
+    on3("inputDevices", (d) => {
+      setDevices({
+        keyboard: !!d.keyboard,
+        mouse: !!d.mouse,
+        touch: !!d.touch,
+        screenKeyboard: !!d.screenKeyboard
+      });
     });
+    devicesAccessor = devices;
   });
-  devicesAccessor = devices;
 }
 var systemThemeAccessor;
 function ensureSystemThemeState() {
   if (systemThemeAccessor)
     return;
-  let [theme, setTheme] = createSignal("unknown", {
-    ownedWrite: true
+  runWithOwner(null, () => {
+    let [theme, setTheme] = createSignal("unknown");
+    on3("systemTheme", (e) => setTheme(e.theme ?? "unknown"));
+    systemThemeAccessor = theme;
   });
-  on3("systemTheme", (e) => setTheme(e.theme ?? "unknown"));
-  systemThemeAccessor = theme;
 }
 var visibilityAccessor;
 function ensureVisibilityState() {
   if (visibilityAccessor)
     return;
-  let [visibility, setVisibility] = createSignal("visible", {
-    ownedWrite: true
+  runWithOwner(null, () => {
+    let [visibility, setVisibility] = createSignal("visible");
+    on3("visibility", (e) => setVisibility(e.state === "hidden" ? "hidden" : "visible"));
+    visibilityAccessor = visibility;
   });
-  on3("visibility", (e) => setVisibility(e.state === "hidden" ? "hidden" : "visible"));
-  visibilityAccessor = visibility;
 }
 var orientationAccessor;
 function ensureOrientationState() {
   if (orientationAccessor)
     return;
-  let [orientation, setOrientation] = createSignal("unknown", {
-    ownedWrite: true
+  runWithOwner(null, () => {
+    let [orientation, setOrientation] = createSignal("unknown");
+    on3("displayOrientation", (e) => {
+      setOrientation(e.orientation ?? "unknown");
+    });
+    orientationAccessor = orientation;
   });
-  on3("displayOrientation", (e) => {
-    setOrientation(e.orientation ?? "unknown");
-  });
-  orientationAccessor = orientation;
 }
 var textScaleAccessor;
 function ensureTextScaleState() {
   if (textScaleAccessor)
     return;
-  let [scale, setScale] = createSignal(1, {
-    ownedWrite: true
+  runWithOwner(null, () => {
+    let [scale, setScale] = createSignal(1);
+    on3("textScale", (e) => {
+      setScale(typeof e.scale === "number" && e.scale > 0 ? e.scale : 1);
+    });
+    textScaleAccessor = scale;
   });
-  on3("textScale", (e) => {
-    setScale(typeof e.scale === "number" && e.scale > 0 ? e.scale : 1);
-  });
-  textScaleAccessor = scale;
 }
 var mouseSeenAccessor;
 var touchSeenAccessor;
 function ensurePointerState() {
   if (mouseSeenAccessor)
     return;
-  let [mouse, setMouse] = createSignal(false);
-  let [touch, setTouch] = createSignal(false);
-  let sawMouse = false;
-  let sawTouch = false;
-  let unsubs = [];
-  let unsubMove = null;
-  let note = (e) => {
-    if (e.pointerType === "mouse" && !sawMouse) {
-      sawMouse = true;
-      setMouse(true);
-      unsubMove();
-    } else if (e.pointerType === "touch" && !sawTouch) {
-      sawTouch = true;
-      setTouch(true);
-    }
-    if (sawMouse && sawTouch)
-      for (let u of unsubs)
-        u();
-  };
-  unsubMove = createRoot(() => onPointerMove(note));
-  unsubs.push(unsubMove, on3("pointerDown", note));
-  mouseSeenAccessor = mouse;
-  touchSeenAccessor = touch;
+  runWithOwner(null, () => {
+    let [mouse, setMouse] = createSignal(false);
+    let [touch, setTouch] = createSignal(false);
+    let sawMouse = false;
+    let sawTouch = false;
+    let unsubs = [];
+    let unsubMove = null;
+    let note = (e) => {
+      if (e.pointerType === "mouse" && !sawMouse) {
+        sawMouse = true;
+        setMouse(true);
+        unsubMove();
+      } else if (e.pointerType === "touch" && !sawTouch) {
+        sawTouch = true;
+        setTouch(true);
+      }
+      if (sawMouse && sawTouch)
+        for (let u of unsubs)
+          u();
+    };
+    unsubMove = onPointerMove(note);
+    unsubs.push(unsubMove, on3("pointerDown", note));
+    mouseSeenAccessor = mouse;
+    touchSeenAccessor = touch;
+  });
 }
 var keyboardSeenAccessor;
 function ensureKeyboardState() {
   if (keyboardSeenAccessor)
     return;
-  let [keyboard, setKeyboard] = createSignal(false);
-  let unsub = on3("keydown", () => {
-    setKeyboard(true);
-    unsub();
+  runWithOwner(null, () => {
+    let [keyboard, setKeyboard] = createSignal(false);
+    let unsub = on3("keydown", () => {
+      setKeyboard(true);
+      unsub();
+    });
+    keyboardSeenAccessor = keyboard;
   });
-  keyboardSeenAccessor = keyboard;
 }
 var env = {
   get windowSize() {
@@ -6459,11 +6467,11 @@ import { on as on4 } from "srt:events";
 var gamepadsAccessor;
 function gamepads() {
   if (!gamepadsAccessor) {
-    let [pads, setPads] = createSignal([], {
-      ownedWrite: true
+    runWithOwner(null, () => {
+      let [pads, setPads] = createSignal([]);
+      on4("gamepads", (e) => setPads(e.pads ?? []));
+      gamepadsAccessor = pads;
     });
-    on4("gamepads", (e) => setPads(e.pads ?? []));
-    gamepadsAccessor = pads;
   }
   return gamepadsAccessor();
 }
