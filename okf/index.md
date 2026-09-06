@@ -414,6 +414,13 @@ Shaped, not started.
   icon.svg, so a derived icon.png is checked in and every app must maintain
   one by hand; the runtime can rasterize it itself via captureSnapshot +
   encodeImage.
+- **[A standing onFrame ticks at 2-3 Hz on an idle desktop client](backlog/idle-onframe-tick-rate.md)** [2026-09-06]
+  debugging.md promises a registered onFrame keeps the runtime calling it
+  every frame at the refresh rate; on a SwapPaced desktop client whose picture
+  does not change, the callback ran 2-3 times a second and only a picture
+  change (or a control-API call) produced a frame, so a frame loop that
+  integrates from tick deltas (a gravity fall that does not move the camera
+  yet) stalls.
 - **[Isolate transfer() and AbortSignal](backlog/isolate-transfer-and-abort.md)** [2026-08-20]
   Design proposal for the two isolate follow-ups that need new call-surface
   vocabulary - zero-copy buffer hand-over and abortable calls. Decides once

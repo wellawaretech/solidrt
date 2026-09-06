@@ -89,6 +89,32 @@ moved subtrees in Rust, and picking walks the core BVH.
   the world <-> screen mapping as pure functions, and pointer dispatch
   undoes the camera with the latter, so events arrive in world (layer)
   pixels. Picking itself works in world space and never sees the camera.
+- Camera control: `createCamera2d(layer | layers, { viewport, world?,
+  min/maxZoom?, pivot?, deadZone?, zoomSpeed?, followSpeed?, inertia?,
+  onTap?, x?, y?, zoom?, rotation? })` - Godot's Camera2D and Three's
+  MapControls in one control over the shared CameraUpdate: drag to pan
+  with inertia on release, wheel and pinch zoom about the pointer, eased
+  `glideTo`/`fit`, `follow(x, y)` through a dead zone with damping,
+  rotation about the pivot, and world bounds that CONTAIN the view (an
+  axis whose view is wider than the world centers; limits ignore
+  rotation, Godot's rule). The pose is "world point at the pivot", the
+  pivot a viewport fraction defaulting to the center, so `camera().x/y`
+  is the view center and glideTo/follow land there. The first argument
+  is anything with the layers' `setCamera` (a sprite layer, a record
+  layer, both at once, or a signal setter feeding `<TileLayer camera>`).
+  Input runs on core's `createTransform` recognizer like the 3d orbit
+  camera (arena arbitration, slop swallowed, one delta per frame); spread
+  `cam.handlers` onto the layer's own leaf, call `cam.update(dt)` from
+  onFrame (the only per-frame call: it pushes one setCamera per driven
+  layer when the pose changed and reports that), read `cam.camera()` for
+  projectCamera. Anchors use the event's localX/localY (layer pixels);
+  deltas are window-logical, so the leaf must not be scaled relative to
+  the window (the ScrollView convention). The motion is camera-motion.ts,
+  pure; checks/camera2d-check.ts pins the clamp, anchoring, glides,
+  follow and inertia headless, examples/camera.tsx is the live guard.
+  Not yet, all additive: a `<Camera2d>` component (needs the layer's
+  miss path, see okf/backlog/2d-layer-background-events.md), two-finger
+  twist rotation, rotation glides, a contain origin other than center.
 - Layer tint (`setTint(rgba)`/the `tint` option and prop, both layer
   kinds): one `uTint` shared-params write multiplied over every sprite's
   own tint - day/night, a dimmed parallax plane, a fade-in. Cheap to

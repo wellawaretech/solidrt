@@ -18,6 +18,12 @@ copy one and adapt it.
   one looping clip (one clock, stepped by wall time independent of display
   rate) and a one-shot clip holds its last frame and fires `onEnd`.
   Self-asserting - watch the logs for ANIM-OK.
+- `camera.tsx` - the 2d camera (`createCamera2d`) over a world larger than
+  the window: drag to pan with inertia, wheel/pinch to zoom about the
+  pointer, tap to glide there, F to follow a roaming sprite through a dead
+  zone, R to spin the view, Space to fit the world. The camera's `handlers`
+  spread onto the layer's leaf; `update(dt)` from `onFrame` is the only
+  per-frame call. Debug commands `camera` and `mode` drive it headless.
 - `pick.tsx` - sprite pointer events through the component face: exact
   rotated-rect hit testing topmost-first, pointer capture (drag a sprite and
   the events keep naming it), click-vs-drag slop, and removal through a
