@@ -32,7 +32,6 @@ import {
   theme,
   type PressState,
 } from "@solidrt/components"
-import { consoleTheme } from "./theme"
 import {
   clientKey,
   entryLabel,
