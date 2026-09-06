@@ -130,3 +130,13 @@ pub fn transform_vector(m: &Mat4, v: [f32; 3]) -> [f32; 3] {
     m[2] * v[0] + m[6] * v[1] + m[10] * v[2],
   ]
 }
+
+/// Rotate `v` by the unit quaternion `q` ([x, y, z, w]).
+pub fn rotate_vector(q: [f32; 4], v: [f32; 3]) -> [f32; 3] {
+  // v' = v + 2 * cross(q.xyz, cross(q.xyz, v) + q.w * v)
+  let (qx, qy, qz, qw) = (q[0], q[1], q[2], q[3]);
+  let tx = 2.0 * (qy * v[2] - qz * v[1]);
+  let ty = 2.0 * (qz * v[0] - qx * v[2]);
+  let tz = 2.0 * (qx * v[1] - qy * v[0]);
+  [v[0] + qw * tx + (qy * tz - qz * ty), v[1] + qw * ty + (qz * tx - qx * tz), v[2] + qw * tz + (qx * ty - qy * tx)]
+}

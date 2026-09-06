@@ -115,6 +115,10 @@ export type SceneNode = {
   /** The core node while in a scene (created at add, freed at remove). */
   _node: NodeId | null
   _moved: boolean
+  /** The core writes this node's TRS itself (a clip player's target, a
+   * root-motion anchor), so the JS mirror above is stale: setTransform
+   * never short-circuits on it. Set once, never cleared. */
+  _native: boolean
   _scene: SceneHooks | null
   /** The declared transition, re-applied on every scene enter. */
   _transition: NodeTransition | string | null
@@ -176,6 +180,7 @@ export function makeNode(kind: SceneNode["kind"]): SceneNode {
     scale: [1, 1, 1],
     visible: true,
     _node: null,
+    _native: false,
     _moved: false,
     _scene: null,
     _transition: null,
@@ -305,7 +310,10 @@ export function setTransform(node: SceneNode, update: TransformUpdate): void {
   // intended shape, and most nodes did not move. Exact compares, like
   // setVisible - a value that survives a float round trip unchanged is the
   // same value, and an epsilon would need a scale-dependent one anyway.
-  let changed = false
+  // Except on a node the core poses itself: its mirror is stale, so an
+  // equal write may well be a real move (a character teleported back to
+  // where it started) and always goes through.
+  let changed = node._native
   let p = update.position
   if (p && (p[0] !== node.position[0] || p[1] !== node.position[1] || p[2] !== node.position[2])) {
     node.position[0] = p[0]

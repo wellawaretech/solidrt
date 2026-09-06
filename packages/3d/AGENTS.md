@@ -1160,14 +1160,54 @@ plays again from play()). Three traps that follow from core ownership:
 post-animation hook - read a freshly posed joint and overwrite it
 (root-motion strips, skeleton copies) in plain setTransform, last write
 wins, all published by the same flush; (2) the JS
-`position`/`quaternion` fields of player-animated joints go STALE (they
-hold the last JS write) - read poses with `getTransform(node)`, which
-reads the core; (3) a channel nothing plays leaves the node's pose
+`position`/`quaternion` fields of player-animated joints (and of the
+model node under root motion "apply") go STALE (they hold the last JS
+write) - read poses with `getTransform(node)`, which reads the core;
+writes to such a node always go through (setTransform skips its
+usual equal-value short-circuit there, so a teleport back to the last
+JS-written spot is not lost); (3) a channel nothing plays leaves the node's pose
 alone; (4) known gap: native pose writes bypass the scene's moved list,
 so a TRANSPARENT mesh parented under a player-animated joint does not
 re-trigger the back-to-front re-sort while it animates (opaque meshes,
 palettes and picking are unaffected) - nudge the scene with any
-setTransform if it shows, until the core-side transparent sort lands. Skins need nothing further: each skin's uBones palette
+setTransform if it shows, until the core-side transparent sort lands.
+Root motion: `play(name, { inPlace? })` strips a clip's root travel
+(Unity's applyRootMotion off, Godot's root_motion_track): the root's
+x/z hold at the clip's first key and its height rebases onto the root's
+rest position, the vertical bob intact. `createMixer(model, {
+rootHeight })` rebases EVERY clip onto that height, pinned or not, for
+an export whose clips ride above its rest pose. Unset, it is decided per clip by NET DRIFT of the
+root's position track - last key minus first, past a fraction of the
+model's height - so run cycles play in place and a taunt that roams and
+returns does not (pinning THOSE pushes the slide into the feet);
+`mixer.travels(name)` reads the verdict. The root is the topmost node
+any position channel of the clip targets. The strip is baked into a
+second core clip on first in-place play, so it costs no per-frame JS and
+crossfades like any other clip. A GAME wants the travel kept and moved
+onto the character: `createMixer(model, { rootMotion: "apply" |
+"report" })` plays every clip fully pinned (all three root axes held)
+and its yaw held too (the turn about +y stripped key by key, so the
+lean and pitch of the pose survive), while the core samples the
+authored root tracks at each player's time and hands the per-frame
+delta on - a translation in the model's local frame and a yaw in
+radians. "apply" adds both to the model node itself (Unity's
+applyRootMotion: the character walks and turns where its clip says),
+"report" accumulates them until `mixer.rootDelta()` takes them
+(`{ position, yaw }`), for a controller to spend through its own
+movement (Godot's get_root_motion_position). Zero per-frame JS in
+"apply"; one read per frame in "report". Loop wraps are continuous
+(the clip's net drift is added across the wrap), crossfades weight the
+deltas like the poses, and a clip's travel is given in the root's
+CURRENT facing (its own turn so far undone), so a turn that wanders
+out and back ends where the clip says and two blending clips agree on
+the frame. The object form `{ mode, up?, vertical? }` names the root's
+parent-space up axis (default +y; the turn and height axis) and
+`vertical: "pose"` keeps the height in the pose, delivering only the
+horizontal travel (Unity's bake-into-pose Y - for a controller that
+owns gravity). `inPlace` is ignored while rootMotion is set. Yaw is
+the swing-twist about up (exact under any lean); a cubic rotation
+track is linearized at 60 keys/s before its yaw is held. Verified on
+Mixamo's standing turns (external/mixamo-turn). Skins need nothing further: each skin's uBones palette
 (model-local jointWorld x inverseBind, sized to the RIG - an rgba32f
 float texture, 4 texels wide, one row per joint, sampled in the vertex
 stage via texelFetch, so there is no joint cap) is composed by the

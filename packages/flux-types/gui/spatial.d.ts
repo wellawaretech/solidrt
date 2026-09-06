@@ -280,6 +280,30 @@ declare module "flux:spatial" {
    * channel. Setting `time` (seconds) also re-arms a finished player's
    * end report. Throws on an id that already dropped. */
   export function setPlayer(player: PlayerId, update: { weight?: number; fade?: number; speed?: number; time?: number }): void
+  /**
+   * Bind root motion to a player: `channel` of `clip` (a position channel
+   * - normally the ROOT track of the authored clip, while the player
+   * plays an in-place variant that holds the root still) is sampled at
+   * the player's time each advance, and its travel since the previous
+   * advance (continuous across a loop wrap, weighted by the player's
+   * weight) is reported as one "spatialRootMotion" engine event
+   * (srt:events) per advance, payload { player, x, y, z, yaw }, before
+   * the frame's handlers. The translation is given in the root's CURRENT
+   * facing (the clip's own turn so far undone), i.e. the character's
+   * local frame. `rotation`, a rotation channel of the same clip (the
+   * root's), adds the yaw half: the twist about `up`, in radians (zero
+   * without it). With an `anchor` the translation, rotated by the
+   * anchor's own rotation, is added to the anchor's position and the yaw
+   * turns the anchor about `up` in its own frame - Unity's
+   * applyRootMotion; without one it is Godot's root_motion_track, the
+   * app's to apply. `opts.up` is the root's parent-space up axis (default
+   * [0, 1, 0]); `opts.vertical: false` drops the component along it from
+   * the delta (the height stays in the pose). Binding primes at the
+   * player's current time, so the next advance already delivers. A
+   * second call rebinds. Throws on a dropped player, a wrong channel
+   * kind, a zero up axis, or a dead anchor.
+   */
+  export function bindRootMotion(player: PlayerId, clip: ClipId, channel: number, rotation?: number, anchor?: NodeId, opts?: { up?: [number, number, number]; vertical?: boolean }): void
   /** Remove a player at once, holding whatever pose it last wrote (no
    * event; stop-with-fade is a setPlayer fade write instead). A dropped
    * id is fine. */

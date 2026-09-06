@@ -1,5 +1,5 @@
 use crate::spatial::{
-  sample_channel, ChannelInterpolation, ChannelPath, ClipChannel, ClipEvent, PlayerUpdate, Spatial,
+  sample_channel, ChannelInterpolation, ChannelPath, ClipChannel, ClipEvent, PlayerUpdate, RootMotion, Spatial,
 };
 
 const Q: [f32; 4] = [0.0, 0.0, 0.0, 1.0];
@@ -18,9 +18,12 @@ fn sampled(c: &ClipChannel, time: f32, cursor: &mut u32) -> [f32; 4] {
 #[test]
 fn sampling_matches_the_gltf_contract() {
   // Linear position: clamped ends, midpoint lerp.
-  let lin = channel(ChannelPath::Position, ChannelInterpolation::Linear, &[0.0, 1.0, 2.0], &[
-    0.0, 0.0, 0.0, 10.0, 0.0, 0.0, 10.0, 20.0, 0.0,
-  ]);
+  let lin = channel(
+    ChannelPath::Position,
+    ChannelInterpolation::Linear,
+    &[0.0, 1.0, 2.0],
+    &[0.0, 0.0, 0.0, 10.0, 0.0, 0.0, 10.0, 20.0, 0.0],
+  );
   let mut cur = 0;
   assert_eq!(sampled(&lin, -1.0, &mut cur)[..3], [0.0, 0.0, 0.0]);
   assert_eq!(sampled(&lin, 0.5, &mut cur)[..3], [5.0, 0.0, 0.0]);
@@ -32,17 +35,19 @@ fn sampling_matches_the_gltf_contract() {
   assert_eq!(cur, 0);
 
   // Step holds the earlier key.
-  let step =
-    channel(ChannelPath::Scale, ChannelInterpolation::Step, &[0.0, 1.0], &[1.0, 1.0, 1.0, 3.0, 3.0, 3.0]);
+  let step = channel(ChannelPath::Scale, ChannelInterpolation::Step, &[0.0, 1.0], &[1.0, 1.0, 1.0, 3.0, 3.0, 3.0]);
   let mut cur = 0;
   assert_eq!(sampled(&step, 0.99, &mut cur)[..3], [1.0, 1.0, 1.0]);
   assert_eq!(sampled(&step, 1.0, &mut cur)[..3], [3.0, 3.0, 3.0]);
 
   // Rotation slerps the short arc: identity to 180 degrees about z at
   // t = 0.5 is 90 degrees (x = 0, y = 0, z = sin 45, w = cos 45).
-  let rot = channel(ChannelPath::Rotation, ChannelInterpolation::Linear, &[0.0, 1.0], &[
-    0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0,
-  ]);
+  let rot = channel(
+    ChannelPath::Rotation,
+    ChannelInterpolation::Linear,
+    &[0.0, 1.0],
+    &[0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0],
+  );
   let mut cur = 0;
   let q = sampled(&rot, 0.5, &mut cur);
   let h = (0.5f32).sqrt();
@@ -52,12 +57,16 @@ fn sampling_matches_the_gltf_contract() {
 
   // Cubic: zero tangents at both keys give the smoothstep of the values;
   // at s = 0.5 that is the midpoint.
-  let cubic = channel(ChannelPath::Position, ChannelInterpolation::Cubic, &[0.0, 2.0], &[
-    // key 0: in-tangent, value, out-tangent
-    0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
-    // key 1
-    0.0, 0.0, 0.0, 8.0, 0.0, 0.0, 0.0, 0.0, 0.0,
-  ]);
+  let cubic = channel(
+    ChannelPath::Position,
+    ChannelInterpolation::Cubic,
+    &[0.0, 2.0],
+    &[
+      // key 0: in-tangent, value, out-tangent
+      0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, // key 1
+      0.0, 0.0, 0.0, 8.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+    ],
+  );
   let mut cur = 0;
   assert_eq!(sampled(&cubic, 1.0, &mut cur)[..3], [4.0, 0.0, 0.0]);
   // Quarter point of the smoothstep h01(0.25) = -2(1/64) + 3(1/16) = 5/32.
@@ -69,9 +78,7 @@ fn sampling_matches_the_gltf_contract() {
 fn slide_clip(s: &mut Spatial) -> u64 {
   s.create_clip(
     1.0,
-    vec![channel(ChannelPath::Position, ChannelInterpolation::Linear, &[0.0, 1.0], &[
-      0.0, 0.0, 0.0, 10.0, 0.0, 0.0,
-    ])],
+    vec![channel(ChannelPath::Position, ChannelInterpolation::Linear, &[0.0, 1.0], &[0.0, 0.0, 0.0, 10.0, 0.0, 0.0])],
   )
   .expect("clip")
 }
@@ -206,4 +213,84 @@ fn dead_targets_and_dead_clips_drop_players() {
   let clip2 = slide_clip(&mut s);
   assert!(s.create_player(clip2, vec![], 1.0, true, 1.0, 0.0).is_err());
   assert!(s.create_player(clip2, vec![n], 1.0, true, 1.0, 0.0).is_err(), "dead target must fail at create");
+}
+
+/// A root that walks +x 10 units while turning 90 degrees about +y over
+/// 1 s: channel 0 its position, channel 1 its rotation.
+fn walk_and_turn_clip(s: &mut Spatial) -> u64 {
+  let h = (0.5f32).sqrt();
+  let mut rot =
+    channel(ChannelPath::Rotation, ChannelInterpolation::Linear, &[0.0, 1.0], &[0.0, 0.0, 0.0, 1.0, 0.0, h, 0.0, h]);
+  rot.target_slot = 0;
+  s.create_clip(
+    1.0,
+    vec![
+      channel(ChannelPath::Position, ChannelInterpolation::Linear, &[0.0, 1.0], &[0.0, 0.0, 0.0, 10.0, 0.0, 0.0]),
+      rot,
+    ],
+  )
+  .expect("clip")
+}
+
+fn yaw_about_y(q: [f32; 4]) -> f32 {
+  2.0 * q[1].atan2(q[3])
+}
+
+#[test]
+fn root_motion_moves_and_turns_the_anchor_continuously() {
+  let mut s = Spatial::new();
+  let root = s.create([0.0; 3], Q, ONE, true);
+  let anchor = s.create([0.0; 3], Q, ONE, true);
+  let clip = walk_and_turn_clip(&mut s);
+  advance_at(&mut s, 0.0);
+  let player = s.create_player(clip, vec![root], 1.0, true, 1.0, 0.0).expect("player");
+  s.bind_root_motion(
+    player,
+    RootMotion { clip, channel: 0, rotation: Some(1), anchor: Some(anchor), up: [0.0, 1.0, 0.0], vertical: true },
+  )
+  .expect("bind");
+
+  // Binding primes at the player's time: the first advance already
+  // delivers the travel, in the clip's frame (+x) since the anchor
+  // started aligned with it.
+  advance_at(&mut s, 500.0);
+  let (p, q, _) = s.transform_of(anchor).expect("read");
+  assert!((p[0] - 5.0).abs() < 0.05 && p[2].abs() < 0.2, "{p:?}");
+  assert!((yaw_about_y(q) - std::f32::consts::FRAC_PI_4).abs() < 1e-3, "{q:?}");
+  let reports = s.take_root_motion();
+  assert_eq!(reports.len(), 1);
+  assert!((reports[0].2 - std::f32::consts::FRAC_PI_4).abs() < 1e-3, "{reports:?}");
+
+  // Across the loop wrap the walk and the turn both continue: 1.5 s in,
+  // 15 units along the clip's +x and 135 degrees.
+  for ms in [1000.0, 1250.0, 1500.0] {
+    advance_at(&mut s, ms);
+  }
+  let (p, q, _) = s.transform_of(anchor).expect("read");
+  assert!((p[0] - 15.0).abs() < 0.3 && p[2].abs() < 0.5, "{p:?}");
+  assert!((yaw_about_y(q) - 3.0 * std::f32::consts::FRAC_PI_4).abs() < 1e-2, "{q:?}");
+}
+
+#[test]
+fn root_motion_without_vertical_keeps_the_rise_out_of_the_delta() {
+  let mut s = Spatial::new();
+  let root = s.create([0.0; 3], Q, ONE, true);
+  let clip = s
+    .create_clip(
+      1.0,
+      vec![channel(ChannelPath::Position, ChannelInterpolation::Linear, &[0.0, 1.0], &[0.0, 0.0, 0.0, 4.0, 3.0, 0.0])],
+    )
+    .expect("clip");
+  advance_at(&mut s, 0.0);
+  let player = s.create_player(clip, vec![root], 1.0, false, 1.0, 0.0).expect("player");
+  s.bind_root_motion(
+    player,
+    RootMotion { clip, channel: 0, rotation: None, anchor: None, up: [0.0, 1.0, 0.0], vertical: false },
+  )
+  .expect("bind");
+  advance_at(&mut s, 500.0);
+  let reports = s.take_root_motion();
+  assert_eq!(reports.len(), 1);
+  let d = reports[0].1;
+  assert!((d[0] - 2.0).abs() < 1e-5 && d[1].abs() < 1e-6, "{d:?}");
 }

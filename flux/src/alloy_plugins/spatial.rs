@@ -4,7 +4,6 @@
 //! scale xyz) so a hot-path write is one argument, and node ids are plain
 //! numbers (generation-tagged, never reused).
 
-
 use rquickjs::module::{Declarations, Exports, ModuleDef};
 use rquickjs::{Array, Ctx, Function, Object, TypedArray, Value};
 
@@ -13,7 +12,8 @@ use crate::alloy_plugins::value::PropValue;
 use crate::plugins::marshal::OptArg;
 use alloy::spatial::{
   ChannelInterpolation, ChannelPath, ClipChannel, ClipEvent, Component, DrawSink, InstanceProjection,
-  InstanceRecordSink, NodeTransitionConfig, PlayerUpdate, Projection, Shape, SharedSlotSink, TextureSlotSink,
+  InstanceRecordSink, NodeTransitionConfig, PlayerUpdate, Projection, RootMotion, Shape, SharedSlotSink,
+  TextureSlotSink,
 };
 
 fn throw_str(ctx: &Ctx<'_>, msg: &str) -> rquickjs::Error {
@@ -72,6 +72,7 @@ impl ModuleDef for SpatialModule {
     decl.declare("destroyClip")?;
     decl.declare("createPlayer")?;
     decl.declare("setPlayer")?;
+    decl.declare("bindRootMotion")?;
     decl.declare("destroyPlayer")?;
     decl.declare("readTransform")?;
     decl.declare("bindPoseRecord")?;
@@ -113,6 +114,7 @@ impl ModuleDef for SpatialModule {
     exports.export("destroyClip", Function::new(ctx.clone(), destroy_clip)?)?;
     exports.export("createPlayer", Function::new(ctx.clone(), create_player)?)?;
     exports.export("setPlayer", Function::new(ctx.clone(), set_player)?)?;
+    exports.export("bindRootMotion", Function::new(ctx.clone(), bind_root_motion)?)?;
     exports.export("destroyPlayer", Function::new(ctx.clone(), destroy_player)?)?;
     exports.export("readTransform", Function::new(ctx.clone(), read_transform)?)?;
     exports.export("bindPoseRecord", Function::new(ctx.clone(), bind_pose_record)?)?;
@@ -153,8 +155,7 @@ fn decode_node_transition(value: &PropValue) -> Result<NodeTransitionConfig, Str
     return Ok(NodeTransitionConfig { all: Some(decode_spec("transition", value)?), ..Default::default() });
   }
   let entries = value.as_map().ok_or_else(|| {
-    "transition must be a shorthand string or an object keyed by component (position, rotation, scale, all)"
-      .to_string()
+    "transition must be a shorthand string or an object keyed by component (position, rotation, scale, all)".to_string()
   })?;
   let mut config = NodeTransitionConfig::default();
   for (key, entry) in entries {
@@ -311,7 +312,11 @@ fn set_frustum(ctx: Ctx<'_>, target: u64, view_proj: OptArg<TypedArray<'_, f32>>
 }
 
 fn set_cull(ctx: Ctx<'_>, id: u64, enabled: bool, margin: f64) -> rquickjs::Result<()> {
-  super::gui(&ctx).alloy.spatial().set_cull(id, enabled, margin as f32).map_err(|e| throw_str(&ctx, &format!("setCull: {e}")))
+  super::gui(&ctx)
+    .alloy
+    .spatial()
+    .set_cull(id, enabled, margin as f32)
+    .map_err(|e| throw_str(&ctx, &format!("setCull: {e}")))
 }
 
 fn set_cull_bounds(ctx: Ctx<'_>, id: u64, bounds: OptArg<TypedArray<'_, f32>>) -> rquickjs::Result<()> {
@@ -320,7 +325,11 @@ fn set_cull_bounds(ctx: Ctx<'_>, id: u64, bounds: OptArg<TypedArray<'_, f32>>) -
 }
 
 fn set_cull_group(ctx: Ctx<'_>, id: u64, members: Vec<u64>) -> rquickjs::Result<()> {
-  super::gui(&ctx).alloy.spatial().set_cull_group(id, &members).map_err(|e| throw_str(&ctx, &format!("setCullGroup: {e}")))
+  super::gui(&ctx)
+    .alloy
+    .spatial()
+    .set_cull_group(id, &members)
+    .map_err(|e| throw_str(&ctx, &format!("setCullGroup: {e}")))
 }
 
 /// Triangle data for the narrowphase: positions are read from an
@@ -381,7 +390,11 @@ fn set_shape(ctx: Ctx<'_>, id: u64, shape: OptArg<u64>) -> rquickjs::Result<()> 
 
 /// Every shown node with bounds the ray strikes, nearest first, as
 /// `{ node, distance, point, normal?, face?, uv? }` objects.
-fn raycast<'js>(ctx: Ctx<'js>, origin: TypedArray<'js, f32>, direction: TypedArray<'js, f32>) -> rquickjs::Result<Array<'js>> {
+fn raycast<'js>(
+  ctx: Ctx<'js>,
+  origin: TypedArray<'js, f32>,
+  direction: TypedArray<'js, f32>,
+) -> rquickjs::Result<Array<'js>> {
   let o = floats(&ctx, &origin, "raycast")?;
   let d = floats(&ctx, &direction, "raycast")?;
   if o.len() != 3 || d.len() != 3 {
@@ -526,9 +539,7 @@ fn create_clip<'js>(
       0 => ChannelInterpolation::Step,
       1 => ChannelInterpolation::Linear,
       2 => ChannelInterpolation::Cubic,
-      other => {
-        return Err(throw_str(&ctx, &format!("createClip: channel {i} interpolation {other} is not 0, 1 or 2")))
-      }
+      other => return Err(throw_str(&ctx, &format!("createClip: channel {i} interpolation {other} is not 0, 1 or 2"))),
     };
     let keys = entry[3] as usize;
     let elements = if path == ChannelPath::Rotation { 4 } else { 3 };
@@ -590,6 +601,42 @@ fn set_player<'js>(ctx: Ctx<'js>, id: u64, value: Object<'js>) -> rquickjs::Resu
     time: value.get::<_, Option<f64>>("time")?,
   };
   super::gui(&ctx).alloy.spatial().set_player(id, update).map_err(|e| throw_str(&ctx, &format!("setPlayer: {e}")))
+}
+
+/// Bind root motion to a player: `channel` of `clip` (a position channel,
+/// normally the authored clip's root track) is sampled per advance and
+/// its delta reported as a "spatialRootMotion" event, with the twist of
+/// `rotation` (a rotation channel of the same clip) about `up` when
+/// given; with an `anchor` the delta also moves and turns that node.
+/// `opts`: { up?: [x, y, z] (default +y), vertical?: boolean (default
+/// true; false keeps the height out of the delta) }.
+fn bind_root_motion<'js>(
+  ctx: Ctx<'js>,
+  id: u64,
+  clip: u64,
+  channel: u32,
+  rotation: OptArg<u32>,
+  anchor: OptArg<u64>,
+  opts: OptArg<Object<'js>>,
+) -> rquickjs::Result<()> {
+  let mut up = [0.0f32, 1.0, 0.0];
+  let mut vertical = true;
+  if let Some(o) = opts.0 {
+    if let Some(v) = o.get::<_, Option<Vec<f64>>>("up")? {
+      if v.len() != 3 {
+        return Err(throw_str(&ctx, "bindRootMotion: up must be [x, y, z]"));
+      }
+      up = [v[0] as f32, v[1] as f32, v[2] as f32];
+    }
+    if let Some(v) = o.get::<_, Option<bool>>("vertical")? {
+      vertical = v;
+    }
+  }
+  super::gui(&ctx)
+    .alloy
+    .spatial()
+    .bind_root_motion(id, RootMotion { clip, channel, rotation: rotation.0, anchor: anchor.0, up, vertical })
+    .map_err(|e| throw_str(&ctx, &format!("bindRootMotion: {e}")))
 }
 
 fn destroy_player(ctx: Ctx<'_>, id: u64) -> rquickjs::Result<()> {
@@ -670,7 +717,8 @@ pub(crate) struct PlayersTick {
 /// path's flush publishes the result. Finished/dropped players reach JS
 /// as one "spatialClipEnd" engine event each, payload `{ player, reason }`
 /// (reason "finished" or "dropped"), emitted here so handlers run in the
-/// same frame's turn.
+/// same frame's turn. Root-motion deltas of bound players follow as one
+/// "spatialRootMotion" event each, payload `{ player, x, y, z, yaw }`.
 pub(crate) fn advance_players(ctx: &Ctx<'_>) -> PlayersTick {
   let Some(st) = super::try_gui(ctx) else {
     return PlayersTick { active: false, wrote: false };
@@ -686,6 +734,15 @@ pub(crate) fn advance_players(ctx: &Ctx<'_>) -> PlayersTick {
     obj.set("player", player).expect("set player");
     obj.set("reason", reason).expect("set reason");
     crate::emit_event(ctx, "spatialClipEnd", obj);
+  }
+  for (player, delta, yaw) in st.alloy.spatial().take_root_motion() {
+    let obj = Object::new(ctx.clone()).expect("create spatialRootMotion object");
+    obj.set("player", player).expect("set player");
+    obj.set("x", delta[0] as f64).expect("set x");
+    obj.set("y", delta[1] as f64).expect("set y");
+    obj.set("z", delta[2] as f64).expect("set z");
+    obj.set("yaw", yaw as f64).expect("set yaw");
+    crate::emit_event(ctx, "spatialRootMotion", obj);
   }
   PlayersTick { active: tick.active, wrote: tick.wrote }
 }

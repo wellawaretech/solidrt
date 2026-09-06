@@ -53,11 +53,21 @@ picking its candidates. Build it here rather than as its own item - alone it
 optimizes a case nobody has hit, and the chunking this item needs is the same
 spatial decomposition.
 
-If [2d-spatial-citizenship](../done/2d-spatial-citizenship.md) lands, the core BVH
-covers culling and picking for the live layer and this JS grid is not
-needed; the chunking above (static arithmetic over tiles) is unaffected
-either way. The spatial-index stage therefore WAITS on that decision
-rather than being built here.
+[2d-spatial-citizenship](../done/2d-spatial-citizenship.md) landed: the
+core BVH covers picking for the live layer (`pick` and `overlap` are core
+queries now), so the JS grid is not needed. What remains of this section
+is the compaction half, folded into stage B2 below as its fifth part.
+
+Decided 2026-09-06, when the 3d frustum gate landed in the spatial core:
+that gate flips a DRAW ENTRY's instance count, and a sprite layer is one
+entry for the whole population, so wiring it to the 2d camera would cull
+the whole layer or nothing. A sprite is a record, not a draw (the design
+choice Godot's and Unity's per-sprite culling does not share: their
+sprites ARE draws), and an off-screen record costs one degenerate quad in
+the vertex stage and no fragments - nothing to win at tens of thousands.
+The 2d culling that matters is this item's chunk residency and
+composition pruning; record compaction is the sprite-layer form and pays
+only at hundreds of thousands of records.
 
 ## Findings
 
@@ -121,12 +131,14 @@ bottom-of-viewport pivot with seamless chunk boundaries.
 - Default chunk edge ~512px of tiles (`chunkTiles` to tune); chunk size
   is validated against maxTextureSize instead of the world size.
 
-Remaining here - stage B2, streaming worlds. Today's contract is bounded
-worlds with memory proportional to the TOUCHED area (allocation is
-monotonic, nothing evicts): sparse worlds are fine, a fully-painted
-1024x1024-tile world at 480px chunks is ~10k chunks x ~920KB of texture -
-far past reasonable. Deferred until a real world exceeds texture memory;
-when it lands, it is four things that belong together, not just eviction:
+Remaining here - stage B2, streaming worlds, the 2d culling item. Today's
+contract is bounded worlds with memory proportional to the TOUCHED area
+(allocation is monotonic, nothing evicts): sparse worlds are fine, a
+fully-painted 1024x1024-tile world at 480px chunks is ~10k chunks x
+~920KB of texture - far past reasonable, and a demo has already sat at
+260 MB (below). Every tile engine streams by camera, so this is certain
+work, not gated on a further app; it is five things that belong
+together, not just eviction:
 
 1. **A view-rect input into the core layer** - the one signal driving
    everything below (the component's camera already knows it; the core
@@ -151,11 +163,17 @@ when it lands, it is four things that belong together, not just eviction:
    too: a torus is "unbounded with modular coordinates", and the
    camera-anchored composite is where a wrapping tile world's seam gets
    its answer ([2d-wrap-around](2d-wrap-around.md)).
+5. **Record compaction for the live sprite layer**, the same view rect as
+   input: the ordered instance buffer already gathers into draw order on
+   publish, so a gather restricted to the records the camera rect overlaps
+   (`spatial.overlap`, one core query per camera move) is the whole
+   change, and `instanceCount` shrinks to the visible prefix. Only worth
+   switching on past a record count where the gather is cheaper than the
+   vertices it saves - measure that threshold when the first world of that
+   size arrives, but build the switch here so it exists.
 
-Bitmap-font runs ride the same machinery. The spatial index waits on
-[2d-spatial-citizenship](../done/2d-spatial-citizenship.md), per above. The
-rotating-camera parity gap for the LIVE layer is closed
-([done](../done/2d-sprite-camera-rotation.md)).
+Bitmap-font runs ride the same machinery. The rotating-camera parity gap
+for the LIVE layer is closed ([done](../done/2d-sprite-camera-rotation.md)).
 
 Restating how hard the B2 bound binds, from a demo that leaned on it: two
 worlds of 1.18M cells sat at ~260 MB across 152 chunk textures, memory

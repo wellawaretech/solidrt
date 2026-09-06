@@ -30,7 +30,7 @@ pub use pick::{Hit, Shape, ShapeId};
 #[cfg(test)]
 pub(crate) use pick::{ray_shape, BVH_MIN_TRIANGLES};
 pub use players::{
-  ChannelInterpolation, ChannelPath, ClipChannel, ClipEvent, ClipId, PlayerId, PlayerUpdate, PlayersTick,
+  ChannelInterpolation, ChannelPath, ClipChannel, ClipEvent, ClipId, PlayerId, PlayerUpdate, PlayersTick, RootMotion,
 };
 // The pure sampler, for the differential tests.
 #[cfg(test)]

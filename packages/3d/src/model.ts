@@ -253,6 +253,10 @@ export function createModel(data: ModelData, opts: ModelOptions = {}): Model {
         spatial.destroyClip(clip._core)
         clip._core = undefined
       }
+      if (clip._coreVariants !== undefined) {
+        for (let id of clip._coreVariants.values()) spatial.destroyClip(id)
+        clip._coreVariants = undefined
+      }
     }
   }
   return model

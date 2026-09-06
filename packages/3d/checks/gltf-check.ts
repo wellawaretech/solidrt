@@ -17,6 +17,7 @@ import type { ModelData } from "../src/gltf.ts"
 import { decodeModel, encodeModel } from "../src/model-file.ts"
 import { sampleChannel } from "../src/clip.ts"
 import { box, validateGeometry, STANDARD_FLOATS } from "../src/geometry.ts"
+import { linearToSrgb } from "../src/color.ts"
 
 let failures = 0
 let fail = (msg: string): void => {
@@ -24,6 +25,7 @@ let fail = (msg: string): void => {
   console.log("FAIL:", msg)
 }
 let near = (a: number, b: number, eps = 1e-5): boolean => Math.abs(a - b) <= eps
+let nearAll = (a: ArrayLike<number>, b: number[]): boolean => a.length === b.length && b.every((v, i) => near(a[i]!, v))
 let throws = (label: string, fn: () => unknown, needle?: string): void => {
   try {
     fn()
@@ -284,6 +286,15 @@ for (let i = 0; i < vertexCount; i++) {
   }
   if (i > 2) break
 }
+// Joint boxes: every vertex is weighted to both joints, so joint 0 (an
+// identity bind) boxes the whole cube and joint 1 (bound at x -1) the same
+// cube shifted by its inverse bind.
+let cubeBox = bounds(positions, 3)
+let jointBox = (j: number): number[] => Array.from(skin.jointBounds.subarray(j * 6, j * 6 + 6))
+if (!nearAll(jointBox(0), [...cubeBox.min, ...cubeBox.max])) fail(`joint 0 bounds: ${jointBox(0).join()}`)
+if (!nearAll(jointBox(1), [cubeBox.min[0]! - 1, cubeBox.min[1]!, cubeBox.min[2]!, cubeBox.max[0]! - 1, cubeBox.max[1]!, cubeBox.max[2]!])) {
+  fail(`joint 1 bounds: ${jointBox(1).join()}`)
+}
 let rig = model.nodes[0]!
 let shiftedNode = model.nodes[1]!
 let mirroredNode = model.nodes[2]!
@@ -364,11 +375,17 @@ for (let t = 0; t < triangles; t++) {
 
 let red = model.materials[0]!
 let glass = model.materials[1]!
-if (red.color.join() !== "1,0,0,1" || red.map !== null || red.transparent || red.doubleSided) fail(`red material: ${JSON.stringify(red)}`)
+// Factors are linear in the file and sRGB on the material: 0 and 1 survive
+// the encode up to float rounding, 0.5 does not (it lands on ~0.735).
+if (!nearAll(red.color, [1, 0, 0, 1]) || red.map !== null || red.transparent || red.doubleSided) fail(`red material: ${JSON.stringify(red)}`)
 if (red.normalMap !== null || red.normalScale !== 1 || red.emissive.join() !== "0,0,0" || red.emissiveMap !== null) fail(`red material surface maps: ${JSON.stringify(red)}`)
-if (glass.color.join() !== "1,1,1,0.5" || glass.map !== 0 || !glass.transparent || !glass.doubleSided) fail(`glass material: ${JSON.stringify(glass)}`)
+if (!nearAll(glass.color, [1, 1, 1, 0.5]) || glass.map !== 0 || !glass.transparent || !glass.doubleSided) fail(`glass material: ${JSON.stringify(glass)}`)
 if (glass.normalMap !== 0 || glass.normalScale !== 0.5) fail(`glass normal map: ${JSON.stringify(glass)}`)
-if (glass.emissive.join() !== "2,1,0" || glass.emissiveMap !== 0) fail(`glass emissive (strength folded): ${JSON.stringify(glass)}`)
+// KHR_materials_emissive_strength stays a separate intensity, not folded
+// into the (sRGB-encoded) emissive color.
+if (!nearAll(glass.emissive, [1, linearToSrgb(0.5), 0]) || glass.emissiveIntensity !== 2 || glass.emissiveMap !== 0) {
+  fail(`glass emissive: ${JSON.stringify(glass)}`)
+}
 if (red.alphaMode !== "OPAQUE" || glass.alphaMode !== "BLEND") fail("alphaMode: OPAQUE/BLEND")
 let leaf = model.materials[2]!
 let cutout = model.materials[3]!

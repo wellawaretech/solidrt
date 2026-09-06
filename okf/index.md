@@ -139,12 +139,6 @@ Shaped, not started.
   compressed real-world files (Draco/meshopt, KTX2), morph targets,
   merge-by-material, vertex colors, per-material samplers and runtime-fetched
   content, each demand-gated.
-- **[In-place clip playback - root motion detected and cancelled by the mixer](backlog/3d-root-motion.md)** [2026-09-03]
-  Authored clips carry root motion, so any fixed-camera viewer sends the
-  character walking off screen and every app rediscovers pinning by hand; give
-  createMixer a per-clip in-place mode that detects travelling clips by NET
-  DRIFT of the root track, rebases the baseline at play, and strips the motion
-  inside the facade.
 - **[Cascaded shadow maps](backlog/3d-shadow-cascades.md)** [2026-08-27]
   One shadow.camera box per casting light: a large outdoor scene either blurs
   (the box covers everything at one map's resolution) or clips (the box covers
@@ -610,6 +604,13 @@ Shaped, not started.
   velocity from the camera and write three setters. Bind a playback to a
   spatial node and name a listener node, and the core writes pan/gain/rate
   from the flushed world matrices; the JS pattern stays valid.
+- **[Collision queries on the spatial index - overlap, shape sweep, move-and-slide](backlog/spatial-collision-queries.md)** [2026-09-06]
+  The only collision tool a game has is the raycast against an undrawn
+  collider mesh, so a character walking into a wall, picking up an item or
+  standing on a slope needs per-frame JS geometry every app writes badly; give
+  the spatial core overlap and swept-shape queries over the index it already
+  keeps, and the 3d package a move-and-slide over them, so the lightweight
+  collision tier games need arrives without a physics engine.
 - **[Spatial core - transform hierarchy, spatial index and queries in alloy](backlog/spatial-core.md)** [2026-08-23]
   The @solidrt/3d sync walk recurses the whole node tree in QuickJS on every
   change (one moved node = O(scene)), picking is a JS box-only test, and both
@@ -830,6 +831,11 @@ Finished, kept for the reasoning.
   tiles in the existing shadow atlas with a dominant-axis face select in
   SHADOW_LOOKUP - the Three/Godot/URP atlas route, library-only, no cube maps;
   a fov guard band (URP's fovBias) closes the face-seam slits.
+- **[Root motion - in-place playback, and the travel moved onto the character](done/3d-root-motion.md)** [2026-09-03]
+  Authored clips carry root motion; the mixer now strips it for viewers
+  (inPlace, by net drift) and, for games, moves it onto the model through a
+  core binding (rootMotion "apply" | "report") - translation and yaw,
+  continuous across loop wraps, verified on Mixamo's standing turns.
 - **[Shadow maps and their dependencies](done/3d-shadow-maps.md)** [2026-08-26]
   Directional shadow maps for @solidrt/3d, staged over the three things they
   need - a sampleable depth id in the engine, per-target draw sinks in the

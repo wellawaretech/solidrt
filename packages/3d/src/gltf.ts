@@ -148,6 +148,10 @@ export type ModelClip = {
   /** @internal The core clip id once a mixer registered it; freed by
    * model.dispose. */
   _core?: number
+  /** @internal Root-corrected core clips (travel pinned and/or height
+   * rebased) by variant key, registered on first such play; freed by
+   * model.dispose. */
+  _coreVariants?: Map<string, number>
 }
 
 /** A parsed model: plain data, no GPU resources. What parseGltf and
@@ -375,6 +379,7 @@ export function parseGltf(bytes: Uint8Array, resolve?: UriResolver): ModelData {
   }
 
   let parts: ModelPart[] = []
+  let pendingJointBounds: { skin: number; positions: Float32Array; count: number; joints: Float32Array; weights: Float32Array }[] = []
   let bounds = new Float32Array([Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity])
 
   let emit = (prim: any, name: string, node: number, world: Mat4, skin: number | null): void => {
@@ -414,7 +419,10 @@ export function parseGltf(bytes: Uint8Array, resolve?: UriResolver): ModelData {
     // the flipped winding. Baked from the REST pose; a scale animated
     // across zero would unbake it, which is pathological.
     let flip = !skinned && det3(world) < 0
-    if (skinned) growJointBounds(skins[skin!]!, pos.data, pos.count, joints!, weights!)
+    // Joint boxes need the skin's inverse binds, and skins are built after
+    // the walk (their joints are ordinary nodes the walk registers), so
+    // the arrays are parked under the FILE's skin index and grown then.
+    if (skinned) pendingJointBounds.push({ skin: skin!, positions: pos.data, count: pos.count, joints: joints!, weights: weights! })
 
     let vertices: Float32Array
     let packedIndices: number[]
@@ -546,9 +554,10 @@ export function parseGltf(bytes: Uint8Array, resolve?: UriResolver): ModelData {
   // materialized here so the retained table carries them; part.skin
   // remaps from the file's skin index to the compact list.
   let skins: ModelSkin[] = []
-  // Per-joint bounds accumulate as skinned parts are emitted: each
-  // influenced vertex (weight above zero) goes through the joint's
-  // inverse bind into joint space and grows that joint's box.
+  // Per-joint bounds, grown from the parked skinned primitives once the
+  // compact skins exist: each influenced vertex (weight above zero) goes
+  // through the joint's inverse bind into joint space and grows that
+  // joint's box.
   let growJointBounds = (skin: ModelSkin, positions: Float32Array, count: number, joints: Float32Array, weights: Float32Array): void => {
     let jb = skin.jointBounds
     let ib = skin.inverseBind
@@ -609,6 +618,10 @@ export function parseGltf(bytes: Uint8Array, resolve?: UriResolver): ModelData {
       skinSlots.set(part.skin, slot)
     }
     part.skin = slot
+  }
+  for (let parked of pendingJointBounds) {
+    let slot = skinSlots.get(parked.skin)
+    if (slot !== undefined) growJointBounds(skins[slot]!, parked.positions, parked.count, parked.joints, parked.weights)
   }
 
   // Animations, after the walk so channels can materialize their target
