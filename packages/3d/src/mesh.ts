@@ -10,6 +10,7 @@ import type { Geometry } from "./geometry.ts"
 import type { GeometryBuffers } from "./geometry-gpu.ts"
 import type { Material } from "./material.ts"
 import type { Vec3 } from "./math.ts"
+import * as spatial from "flux:spatial"
 import { makeNode, remove } from "./node.ts"
 import type { SceneNode } from "./node.ts"
 
@@ -29,6 +30,19 @@ export type Mesh = SceneNode & {
    * target draws the mesh when its mask intersects this. Not inherited
    * from ancestor Groups (Three's and Godot's rule). Set with setLayers. */
   layers: number
+  /** Whether every target's frustum gates the mesh (default true, Three's
+   * `frustumCulled`): outside it the entry draws nothing. Off for geometry
+   * a vertex stage moves beyond its box (a fullscreen quad, a custom
+   * displacement). Set with setCulling. */
+  frustumCulled: boolean
+  /** World units the frustum test grows the box by on every side (default
+   * 0, Godot's `extra_cull_margin`): the pad for wind, wobble and any other
+   * vertex-stage displacement that stays bounded. Set with setCulling. */
+  cullMargin: number
+  /** Joint nodes whose world boxes, united, stand in for this mesh's own
+   * in the frustum test - a skinned part's cull box follows its pose.
+   * null for an unskinned mesh. */
+  _cullJoints: SceneNode[] | null
   _entry: DrawId | null
   /** The geometry-buffer reference the entry was built from, acquired at
    * attach and what _detach releases - like _transparent, a snapshot,
@@ -98,6 +112,9 @@ export function createMesh(geometry: Geometry, material: Material): Mesh {
   mesh.renderOrder = 0
   mesh.castShadow = false
   mesh.layers = 1
+  mesh.frustumCulled = true
+  mesh.cullMargin = 0
+  mesh._cullJoints = null
   mesh._entry = null
   mesh._buffers = null
   mesh._transparent = false
@@ -111,9 +128,13 @@ export function createMesh(geometry: Geometry, material: Material): Mesh {
 
 // Every sprite draws the same unit quad, built once: geometry is data
 // and its GPU buffers are acquired per mesh, so one shared value is the
-// normal sharing story. The box is the quad's extent at any facing.
+// normal sharing story. The box is the quad's reach at any facing: the
+// unit quad's corners lie on a sphere of radius sqrt(0.5), so the box of
+// that sphere holds it however the camera turns it - what the frustum
+// test needs, and close enough for a pick.
 let spriteQuad: Geometry | undefined
-const SPRITE_BOUNDS = new Float32Array([-0.5, -0.5, -0.5, 0.5, 0.5, 0.5])
+const SPRITE_REACH = Math.SQRT1_2
+const SPRITE_BOUNDS = new Float32Array([-SPRITE_REACH, -SPRITE_REACH, -SPRITE_REACH, SPRITE_REACH, SPRITE_REACH, SPRITE_REACH])
 
 /**
  * A camera-facing quad, Three's `Sprite`: a unit plane drawn with a
@@ -297,6 +318,21 @@ export function setCastShadow(mesh: Mesh, cast: boolean): void {
   if (mesh.castShadow === cast) return
   mesh.castShadow = cast
   mesh._scene?._setCast(mesh)
+}
+
+/** Frustum culling per mesh: `frustumCulled` (default true) switches the
+ * gate, `cullMargin` (world units, default 0) grows the tested box. */
+export function setCulling(mesh: Mesh, options: { frustumCulled?: boolean; cullMargin?: number }): void {
+  let culled = options.frustumCulled ?? mesh.frustumCulled
+  let margin = options.cullMargin ?? mesh.cullMargin
+  if (!(margin >= 0)) throw new Error("setCulling: cullMargin must be >= 0")
+  if (culled === mesh.frustumCulled && margin === mesh.cullMargin) return
+  mesh.frustumCulled = culled
+  mesh.cullMargin = margin
+  if (mesh._node !== null) {
+    spatial.setCull(mesh._node, culled, margin)
+    mesh._scene?._schedule()
+  }
 }
 
 /** Swap a mesh's geometry: its draw entry is rebuilt (the scene re-sorts

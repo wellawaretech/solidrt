@@ -75,6 +75,29 @@ blendMode and pointer events like any element.
   perspective for `orthographic()` (`fov` ignored; `ortho: null` returns);
   the scene's own camera takes it too, and pick() follows.
   `examples/scene-views.tsx` is the shape.
+- CULLING is the core's, per target, on by default: every camera write
+  (the scene's, a view's, a shadow tile's) also sets that target's
+  frustum in the spatial core, and the flush switches an entry whose
+  world box falls wholly outside it to instance count 0 - the same
+  switch as `visible`, so a culled mesh costs nothing per frame and a
+  still camera re-tests nothing (a camera move re-tests every sink on
+  that target, in Rust; a node move re-tests its own). The box is the
+  picking box (the local bounds through the world matrix, the
+  Godot/Unity AABB test; Three uses spheres); a mesh without bounds
+  (an instanced mesh with no explicit `bounds`) is never culled. Per
+  mesh: `frustumCulled: false` (Three's name; `setCulling`) for geometry
+  a vertex stage moves beyond its box - a fullscreen quad, a custom
+  displacement - and `cullMargin` (world units, Godot's
+  `extra_cull_margin`) for bounded displacement such as wind. Sprites
+  cull by their quad's reach at any facing. A SKINNED part is culled by
+  the union of its joints' boxes (the bake computes each joint's
+  influence box in joint space, `ModelSkin.jointBounds`, .srtm VERSION
+  5; the joint nodes carry them as culling-only bounds, outside the
+  picking index), so the box follows the pose with no per-frame JS -
+  Unity's bone bounds, Godot's per-bone AABBs; no `updateWhenOffscreen`
+  knob is needed. Probe faces set no frustum (six cameras, one target).
+  Shadow tiles cull casters against their light frustum, which is what
+  makes `shadow.distance` and cascades cheaper.
 - SHADOWS are a view: `<DirectionalLight castShadow shadow={{ mapSize?,
   bias?, normalBias?, radius?, camera? }}>` (`createDirectionalLight({ castShadow,
   shadow })`, `setLight`) makes the scene own an internal

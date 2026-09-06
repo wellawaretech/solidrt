@@ -1142,6 +1142,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     for (let mesh of v.entries.keys()) if (mesh._node !== null) spatial.unbindDraw(mesh._node, v.texture)
     v.entries.clear()
     for (let light of lights) if (light.type === "directional" && light._node !== null) spatial.unbindSlot(light._node, v.texture)
+    spatial.setFrustum(v.texture, null)
     // Drain the zeroed direction slots while the target still exists.
     spatial.flush()
     destroyTexture(v.texture)
@@ -1261,6 +1262,16 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     schedule: () => hooks._schedule(),
   })
 
+  // A camera write is also the target's frustum for the core's culling:
+  // the scene's own, every view's, every shadow tile's - set before the
+  // flush below, which switches the entries outside it off. Cube face
+  // renders (probes) set no frustum: six cameras share one target and the
+  // core would only ever see the last.
+  let frustumScratch = new Float32Array(16)
+  let setFrustum = (target: TextureId, cam: Camera) => {
+    frustumScratch.set(cam.viewProj)
+    spatial.setFrustum(target, frustumScratch)
+  }
   let sync = () => {
     scheduled = false
     if (disposed) return
@@ -1269,6 +1280,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     if (camera.pending) {
       camera.pending = false
       setTargetParams(texture, cameraParams(camera))
+      setFrustum(texture, camera)
       if (transparentCount > 1) orderDirty = true
     }
     shadowSys.placeCameras(cameraMoved)
@@ -1277,6 +1289,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       if (v.camera.pending) {
         v.camera.pending = false
         setTargetParams(v.texture, cameraParams(v.camera))
+        setFrustum(v.texture, v.camera)
         if (transparentCount > 1) v.orderDirty = true
         if (v.shadowFilter !== null) shadowSys.markMatricesDirty()
       }
@@ -1399,6 +1412,15 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       // triangles lie wherever the camera is, not where the geometry says).
       spatial.setBounds(mesh._node!, localBounds(mesh))
       spatial.setShape(mesh._node!, inst === null && !mesh._sprite ? bufs.shape : null)
+      // Culling: the gate and margin only when off the defaults, and a
+      // skinned part's joint group (joints entered before it: a model
+      // adds its node tree before its parts).
+      if (!mesh.frustumCulled || mesh.cullMargin !== 0) spatial.setCull(mesh._node!, mesh.frustumCulled, mesh.cullMargin)
+      if (mesh._cullJoints !== null) {
+        let joints: NodeId[] = []
+        for (let j of mesh._cullJoints) if (j._node !== null) joints.push(j._node)
+        spatial.setCullGroup(mesh._node!, joints)
+      }
       byNode.set(mesh._node!, mesh)
       meshes.push(mesh)
       mesh._transparent = mesh.material.transparent === true
@@ -1735,6 +1757,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
         spatial.destroyNode(root._node)
         root._node = null
       }
+      spatial.setFrustum(texture, null)
       // Drain the zeroed direction slots the teardown queued while the
       // targets still exist; afterwards their groups are gone.
       spatial.flush()

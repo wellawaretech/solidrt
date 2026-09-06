@@ -925,3 +925,104 @@ fn a_palette_whose_write_does_not_land_is_dropped() {
   assert!(flush_dead(&mut s, &[5]).is_empty(), "a dropped palette never writes again");
   assert!(s.unbind_texture_slot(a, Some(5)).is_ok());
 }
+
+// Frustum culling: an identity view-projection is the unit cube in world
+// space, and a translation moves that cube, so `cube_at(x)` is a frustum
+// spanning x-1..x+1.
+fn cube_at(x: f32) -> Mat4 {
+  compose([-x, 0.0, 0.0], Q, ONE)
+}
+
+const UNIT: [f32; 6] = [-0.5, -0.5, -0.5, 0.5, 0.5, 0.5];
+
+#[test]
+fn a_frustum_switches_entries_off_and_back_on_with_params() {
+  let mut s = Spatial::new();
+  let n = s.create([0.0; 3], Q, ONE, true);
+  s.set_bounds(n, Some(UNIT)).expect("bounds");
+  s.bind_sink(n, sink(1)).expect("sink");
+  s.set_frustum(1, Some(cube_at(0.0)));
+  let writes = flush(&mut s);
+  assert_eq!(writes[0], Write::Count { target: 1, draw: 1, count: 1 });
+  assert_eq!(writes.len(), 2, "on, with params");
+  // The frustum moves away: one count write, nothing else.
+  s.set_frustum(1, Some(cube_at(5.0)));
+  assert_eq!(flush(&mut s), vec![Write::Count { target: 1, draw: 1, count: 0 }]);
+  assert!(flush(&mut s).is_empty(), "a still frustum re-tests nothing");
+  // The node moves while culled: no write at all (the entry is off)...
+  s.set_transform(n, [2.0, 0.0, 0.0], Q, ONE).expect("move");
+  assert!(flush(&mut s).is_empty());
+  // ...and walking into view turns it on WITH the matrix it missed.
+  s.set_transform(n, [5.0, 0.0, 0.0], Q, ONE).expect("move");
+  let writes = flush(&mut s);
+  assert_eq!(writes[0], Write::Count { target: 1, draw: 1, count: 1 });
+  assert_eq!(model(&writes[1])[12..15], [5.0, 0.0, 0.0]);
+  // Lifting the frustum keeps it on; hiding still switches it off.
+  s.set_frustum(1, None);
+  assert!(flush(&mut s).is_empty());
+  s.set_visible(n, false).expect("hide");
+  assert_eq!(flush(&mut s), vec![Write::Count { target: 1, draw: 1, count: 0 }]);
+}
+
+#[test]
+fn culling_is_per_target_and_respects_the_opt_out_and_margin() {
+  let mut s = Spatial::new();
+  let n = s.create([0.0; 3], Q, ONE, true);
+  s.set_bounds(n, Some(UNIT)).expect("bounds");
+  s.bind_sink(n, DrawSink { target: 1, draw: 1, normal: false, count: 1 }).expect("sink");
+  s.bind_sink(n, DrawSink { target: 2, draw: 2, normal: false, count: 1 }).expect("sink");
+  s.set_frustum(1, Some(cube_at(0.0)));
+  s.set_frustum(2, Some(cube_at(2.0)));
+  let writes = flush(&mut s);
+  assert!(writes.contains(&Write::Count { target: 1, draw: 1, count: 1 }));
+  assert!(!writes.contains(&Write::Count { target: 2, draw: 2, count: 1 }), "target 2 does not see the node");
+  // A margin of one unit reaches the second frustum (box edge 0.5, frustum
+  // edge 1): on, with the params that entry never had.
+  s.set_cull(n, true, 1.0).expect("cull");
+  let writes = flush(&mut s);
+  assert_eq!(writes[0], Write::Count { target: 2, draw: 2, count: 1 });
+  assert_eq!(writes.len(), 2);
+  // The opt-out ignores the frustum entirely.
+  s.set_frustum(2, Some(cube_at(50.0)));
+  assert_eq!(flush(&mut s), vec![Write::Count { target: 2, draw: 2, count: 0 }]);
+  s.set_cull(n, false, 0.0).expect("cull");
+  assert_eq!(flush(&mut s), vec![Write::Count { target: 2, draw: 2, count: 1 }]);
+}
+
+#[test]
+fn a_node_without_a_box_is_never_culled() {
+  let mut s = Spatial::new();
+  let n = s.create([0.0; 3], Q, ONE, true);
+  s.bind_sink(n, sink(1)).expect("sink");
+  s.set_frustum(1, Some(cube_at(50.0)));
+  assert_eq!(flush(&mut s)[0], Write::Count { target: 1, draw: 1, count: 1 });
+}
+
+#[test]
+fn a_cull_group_follows_its_members_boxes() {
+  let mut s = Spatial::new();
+  let root = s.create([0.0; 3], Q, ONE, true);
+  let part = s.create([0.0; 3], Q, ONE, true);
+  let joint_a = s.create([0.0; 3], Q, ONE, true);
+  let joint_b = s.create([4.0, 0.0, 0.0], Q, ONE, true);
+  for n in [part, joint_a, joint_b] {
+    s.set_parent(n, Some(root)).expect("parent");
+  }
+  // Culling-only boxes keep the joints out of the picking index.
+  s.set_cull_bounds(joint_a, Some(UNIT)).expect("cull bounds");
+  s.set_cull_bounds(joint_b, Some(UNIT)).expect("cull bounds");
+  assert!(s.overlap([-10.0, -10.0, -10.0, 10.0, 10.0, 10.0]).is_empty());
+  s.set_cull_group(part, &[joint_a, joint_b]).expect("group");
+  s.bind_sink(part, sink(1)).expect("sink");
+  // A frustum over joint B alone shows the part (the union spans both
+  // joints, so anything between them counts too); past both hides it.
+  s.set_frustum(1, Some(cube_at(4.0)));
+  assert_eq!(flush(&mut s)[0], Write::Count { target: 1, draw: 1, count: 1 });
+  s.set_frustum(1, Some(cube_at(10.0)));
+  assert_eq!(flush(&mut s), vec![Write::Count { target: 1, draw: 1, count: 0 }]);
+  // A joint moving into the frustum brings the part back: the pose is
+  // what culls, not the part's own placement (which never changed).
+  s.set_transform(joint_b, [10.0, 0.0, 0.0], Q, ONE).expect("move");
+  let writes = flush(&mut s);
+  assert!(writes.contains(&Write::Count { target: 1, draw: 1, count: 1 }));
+}

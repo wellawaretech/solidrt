@@ -213,16 +213,15 @@ what it delivered is documented in `packages/3d/AGENTS.md`, not here.
     the background may declare `uCamPos` and any `scene.setParams` name,
     and the docs say so; a skybox `{ cube, intensity?, rotation? }` is
     the object form of the same slot. The 2D image form stays reserved.
-19. [ ] **Scene scale.** The walk itself goes to core as stage 1 of
-    [spatial-core](../backlog/spatial-core.md) - the JS sync recurses the
-    whole tree on every change, so one moved node is O(scene) today, and
-    the known triggers (hundreds of non-instanceable moving nodes; the
-    O(vertices) picking tier of item 4) are not hypothetical. Frustum
-    culling follows as a small query over the same core index when a
-    GPU-bound scene needs it; a JS form is ruled out, not deferred, because
-    testing every node per frame is exactly the O(scene) loop the design
-    avoids. Both land with no app-facing API change, the reason the draw
-    list was shaped as it was.
+19. [x] **Scene scale.** The walk in core
+    ([spatial-core](../backlog/spatial-core.md), stage 1) and frustum
+    culling as the draw sink's per-target gate, with pose-following
+    bounds for skinned parts - see `packages/3d/AGENTS.md`. What stays
+    forward-looking: the cull sweep is linear over the nodes with sinks
+    on a moved target (microseconds at thousands of nodes); a BVH-walked
+    sweep is the same behavior at a better cost curve, for when a profile
+    shows the linear one. A JS form stays ruled out, not deferred. Level
+    of detail is item 22.
 20. [x] **Geometry as data: transform, merge, public bounds.** Library:
     [3d-geometry-ops](../done/3d-geometry-ops.md) (shipped 2026-08-19). Sits in numeric
     order rather than with the geometry items because ids are permanent,

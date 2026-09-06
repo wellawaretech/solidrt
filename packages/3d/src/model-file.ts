@@ -24,7 +24,7 @@ const MAGIC = 0x4d545253
 // Version 4 adds the metalness/roughness fields to the material records
 // (metalness, roughness, metalnessRoughnessMap); a version-3 file lacks
 // them, so it is rejected the same way rather than read as all-metal.
-const VERSION = 4
+const VERSION = 5
 
 // The named layouts the container writes; a custom attribute-list layout
 // has no name to store, so encodeModel rejects it.
@@ -43,7 +43,7 @@ type PartHeader = Block & {
   index: Block
 }
 
-type SkinHeader = { joints: number[]; inverseBind: Block }
+type SkinHeader = { joints: number[]; inverseBind: Block; jointBounds: Block }
 
 type ChannelHeader = {
   node: number
@@ -103,7 +103,7 @@ export function encodeModel(data: ModelData): Uint8Array {
   })
   let images = data.images.map((image) => push(image))
   let floats = (f: Float32Array): Block => push(new Uint8Array(f.buffer, f.byteOffset, f.byteLength))
-  let skins: SkinHeader[] = data.skins.map((skin) => ({ joints: skin.joints, inverseBind: floats(skin.inverseBind) }))
+  let skins: SkinHeader[] = data.skins.map((skin) => ({ joints: skin.joints, inverseBind: floats(skin.inverseBind), jointBounds: floats(skin.jointBounds) }))
   let clips: ClipHeader[] = data.clips.map((clip) => ({
     name: clip.name,
     duration: clip.duration,
@@ -171,7 +171,7 @@ export function decodeModel(bytes: Uint8Array): ModelData {
   })
   let images = header.images.map((block) => new Uint8Array(buffer, payload + block.offset, block.bytes))
   let floats = (block: Block): Float32Array => new Float32Array(buffer, payload + block.offset, block.bytes / 4)
-  let skins: ModelSkin[] = header.skins.map((skin) => ({ joints: skin.joints, inverseBind: floats(skin.inverseBind) }))
+  let skins: ModelSkin[] = header.skins.map((skin) => ({ joints: skin.joints, inverseBind: floats(skin.inverseBind), jointBounds: floats(skin.jointBounds) }))
   let clips = header.clips.map((clip) => ({
     name: clip.name,
     duration: clip.duration,

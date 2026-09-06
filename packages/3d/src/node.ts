@@ -124,6 +124,10 @@ export type SceneNode = {
    * to the palette texture's row whenever the node moves. `anchor` is the
    * model root; null for non-joints (the common case pays one null check). */
   _palettes: { texture: TextureId; row: number; post: Float32Array; anchor: SceneNode }[] | null
+  /** A culling-only local box (a model joint's influence region, in joint
+   * space): bound at every scene enter so the joint's world box follows
+   * the pose without joining the picking index. null for the common case. */
+  _cullBounds: Float32Array | null
 }
 
 /** The settled component of a node transition. */
@@ -176,6 +180,7 @@ export function makeNode(kind: SceneNode["kind"]): SceneNode {
     _scene: null,
     _transition: null,
     _palettes: null,
+    _cullBounds: null,
   }
 }
 
@@ -220,6 +225,7 @@ function enterScene(node: SceneNode, scene: SceneHooks): void {
       if (p.anchor._node !== null) spatial.bindTextureSlot(node._node, p.texture, p.row, p.post, p.anchor._node)
     }
   }
+  if (node._cullBounds !== null) spatial.setCullBounds(node._node, node._cullBounds)
   if (node.kind === "mesh") scene._attach(node as Mesh)
   else if (node.kind === "light") scene._attachLight(node as Light)
   for (let c of node.children) enterScene(c, scene)

@@ -209,6 +209,11 @@ export function createModel(data: ModelData, opts: ModelOptions = {}): Model {
       let joint = groups[skin.joints[j]!]
       if (joint === undefined) throw new Error("createModel: skin " + i + " names a missing node " + skin.joints[j])
       ;(joint._palettes ??= []).push({ texture, row: j, post: skin.inverseBind.slice(j * 16, j * 16 + 16), anchor: model })
+      // The joint's influence box, in joint space: culling-only bounds the
+      // flush carries through the pose. A joint influencing nothing (an
+      // inverted box) gets none and contributes nothing to the union.
+      let jb = skin.jointBounds.subarray(j * 6, j * 6 + 6)
+      if (jb[0]! <= jb[3]! && jb[1]! <= jb[4]! && jb[2]! <= jb[5]!) joint._cullBounds = Float32Array.from(jb)
     }
   })
   model.parts = data.parts.map((part) => {
@@ -223,6 +228,8 @@ export function createModel(data: ModelData, opts: ModelOptions = {}): Model {
       let texture = skinTextures[part.skin!]
       if (texture === undefined) throw new Error("createModel: part '" + part.name + "' names a missing skin " + part.skin)
       mesh._textures = { uBones: texture }
+      // Culled by its joints' boxes, so the box follows the animation.
+      mesh._cullJoints = data.skins[part.skin!]!.joints.map((n) => groups[n]!)
       add(model, mesh)
     } else {
       let node = groups[part.node]

@@ -114,6 +114,12 @@ export type ModelSkin = {
   joints: number[]
   /** 16 floats per joint, column-major, in joint order. */
   inverseBind: Float32Array
+  /** 6 floats per joint: the box, in the JOINT's space, of every vertex it
+   * influences - the runtime culls a skinned part by the union of these
+   * carried through the posed joints, so the box follows the animation
+   * (Godot's and Unity's per-bone bounds). A joint influencing nothing
+   * holds an inverted box (min > max). */
+  jointBounds: Float32Array
 }
 
 /** One animated property of one node: baked key times and values. */
@@ -408,6 +414,7 @@ export function parseGltf(bytes: Uint8Array, resolve?: UriResolver): ModelData {
     // the flipped winding. Baked from the REST pose; a scale animated
     // across zero would unbake it, which is pathological.
     let flip = !skinned && det3(world) < 0
+    if (skinned) growJointBounds(skins[skin!]!, pos.data, pos.count, joints!, weights!)
 
     let vertices: Float32Array
     let packedIndices: number[]
@@ -539,6 +546,32 @@ export function parseGltf(bytes: Uint8Array, resolve?: UriResolver): ModelData {
   // materialized here so the retained table carries them; part.skin
   // remaps from the file's skin index to the compact list.
   let skins: ModelSkin[] = []
+  // Per-joint bounds accumulate as skinned parts are emitted: each
+  // influenced vertex (weight above zero) goes through the joint's
+  // inverse bind into joint space and grows that joint's box.
+  let growJointBounds = (skin: ModelSkin, positions: Float32Array, count: number, joints: Float32Array, weights: Float32Array): void => {
+    let jb = skin.jointBounds
+    let ib = skin.inverseBind
+    for (let i = 0; i < count; i++) {
+      let x = positions[i * 3]!, y = positions[i * 3 + 1]!, z = positions[i * 3 + 2]!
+      for (let k = 0; k < 4; k++) {
+        if (weights[i * 4 + k]! <= 0) continue
+        let j = joints[i * 4 + k]!
+        if (j >= skin.joints.length) continue
+        let m = j * 16
+        let px = ib[m]! * x + ib[m + 4]! * y + ib[m + 8]! * z + ib[m + 12]!
+        let py = ib[m + 1]! * x + ib[m + 5]! * y + ib[m + 9]! * z + ib[m + 13]!
+        let pz = ib[m + 2]! * x + ib[m + 6]! * y + ib[m + 10]! * z + ib[m + 14]!
+        let b = j * 6
+        if (px < jb[b]!) jb[b] = px
+        if (py < jb[b + 1]!) jb[b + 1] = py
+        if (pz < jb[b + 2]!) jb[b + 2] = pz
+        if (px > jb[b + 3]!) jb[b + 3] = px
+        if (py > jb[b + 4]!) jb[b + 4] = py
+        if (pz > jb[b + 5]!) jb[b + 5] = pz
+      }
+    }
+  }
   let skinSlots = new Map<number, number>()
   for (let part of parts) {
     if (part.skin === null) continue
@@ -570,7 +603,9 @@ export function parseGltf(bytes: Uint8Array, resolve?: UriResolver): ModelData {
         }
       }
       slot = skins.length
-      skins.push({ joints: jointIndices, inverseBind })
+      let jointBounds = new Float32Array(jointIndices.length * 6)
+      for (let j = 0; j < jointIndices.length; j++) jointBounds.set([Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity], j * 6)
+      skins.push({ joints: jointIndices, inverseBind, jointBounds })
       skinSlots.set(part.skin, slot)
     }
     part.skin = slot

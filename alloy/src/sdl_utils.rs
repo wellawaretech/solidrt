@@ -236,7 +236,7 @@ pub fn camera_subsystem_init() -> bool {
   // the event pump: no ticks, no frames, a black window, both threads at 100%.
   //
   // Hence the launcher shows its scan button without enumerating cameras
-  // first (apps/launcher/src/parts/home-screen.tsx): a machine whose backend
+  // first (apps/player/src/parts/home-screen.tsx): a machine whose backend
   // cannot enumerate stays fully usable as long as nothing asks it to.
   unsafe { SDL_InitSubSystem(SDL_INIT_CAMERA) }
 }

@@ -117,6 +117,26 @@ declare module "flux:spatial" {
    * follows the flush; hidden nodes stay in and are skipped at query time. */
   export function setBounds(node: NodeId, bounds: Float32Array | null): void
   /**
+   * The clip volume gating every draw sink on `target`: its view-projection
+   * (Float32Array of 16, column-major), or null to lift it. An entry whose
+   * node box (grown by its cull margin) falls wholly outside reads
+   * instanceCount 0 like a hidden node, and comes back with a fresh params
+   * write. Nodes without a box, or with culling off, are never gated. Read
+   * at flush: set it before the flush that should see it.
+   */
+  export function setFrustum(target: TextureId, viewProj: Float32Array | null): void
+  /** Whether frustums gate the node's draw sinks (default true), and the
+   * world-unit margin the test grows its box by (default 0). */
+  export function setCull(node: NodeId, enabled: boolean, margin: number): void
+  /** A local box for culling ONLY - the node stays out of the picking
+   * index (setBounds is the indexed one). null falls back to its bounds. */
+  export function setCullBounds(node: NodeId, bounds: Float32Array | null): void
+  /** Cull the node by the union of these nodes' world boxes instead of
+   * its own (a skinned mesh by its joints): an empty list restores its
+   * own. Members without a box contribute nothing; with none at all the
+   * node is not culled. */
+  export function setCullGroup(node: NodeId, members: NodeId[]): void
+  /**
    * Triangle data for the picking narrowphase, one copy shared by every
    * node that references it: positions read from an interleaved vertex
    * array (`stride` floats per vertex, xyz at `posOffset`, uv at

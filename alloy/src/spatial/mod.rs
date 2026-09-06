@@ -13,6 +13,7 @@
 // Node ids carry a generation and are never reused.
 
 mod bvh;
+mod cull;
 mod math;
 mod pick;
 mod players;
@@ -37,6 +38,7 @@ pub(crate) use players::sample as sample_channel;
 pub use transitions::{Component, NodeTransitionConfig};
 
 use bvh::Bvh;
+use cull::{union, world_box, Frustum};
 use transitions::NodeTransitions;
 
 pub type Mat4 = [f32; 16];
@@ -257,6 +259,9 @@ struct Node {
   local_dirty: bool,
   /// Queued for the next flush (a transform, visibility or parent change).
   queued: bool,
+  /// Recomputed or re-shown by this flush's walk: the cull pass re-tests
+  /// every sink (a target's frustum moving re-tests them anyway).
+  queued_touch: bool,
   visible: bool,
   /// Effective visibility as of the last flush (every ancestor visible too).
   shown: bool,
@@ -265,6 +270,24 @@ struct Node {
   /// Local-space tight box; with one the node has a leaf in the index.
   bounds: Option<Box3>,
   leaf: Option<u32>,
+  /// A local box for culling ONLY (a skeleton joint's influence region):
+  /// keeps the node out of the picking index while its world box still
+  /// follows the flush. Culling reads this, else `bounds`.
+  cull_bounds: Option<Box3>,
+  /// The world-axis box of `cull_bounds`/`bounds` as of the last
+  /// recompute; None without either.
+  world_box: Option<Box3>,
+  /// Whether frustums gate this node's draw sinks at all (the per-object
+  /// opt-out for geometry a vertex stage moves beyond its box).
+  cull: bool,
+  /// World units the frustum test widens the box by on every side.
+  cull_margin: f32,
+  /// Nodes whose world boxes, united, stand in for this node's own in the
+  /// frustum test (a skinned part culled by its joints' boxes, so the box
+  /// follows the pose). Empty = the node's own box.
+  cull_group: Vec<NodeId>,
+  /// Nodes whose cull group this node is in: a move here re-tests them.
+  cull_owners: Vec<NodeId>,
   /// Triangle data for the picking narrowphase; None = box only.
   shape: Option<ShapeId>,
   /// One per target.
@@ -289,6 +312,15 @@ pub struct Spatial {
   palettes: HashMap<u64, PaletteGroup>,
   transitions: NodeTransitions,
   players: players::PlayerSet,
+  /// Per target, the clip volume its draw sinks are gated by (a target
+  /// without one never culls).
+  frustums: HashMap<u64, Frustum>,
+  /// Targets whose frustum changed since the last flush: every sink on
+  /// them is re-tested by the cull pass.
+  frustum_dirty: Vec<u64>,
+  /// Nodes the walk recomputed or re-shown this flush: the cull pass
+  /// re-tests their sinks even when no frustum moved.
+  touched: Vec<u32>,
 }
 
 fn index(id: NodeId) -> usize {
@@ -335,11 +367,18 @@ impl Spatial {
       world: IDENTITY,
       local_dirty: true,
       queued: false,
+      queued_touch: false,
       visible,
       shown: false,
       sinks: Vec::new(),
       bounds: None,
       leaf: None,
+      cull_bounds: None,
+      world_box: None,
+      cull: true,
+      cull_margin: 0.0,
+      cull_group: Vec::new(),
+      cull_owners: Vec::new(),
       shape: None,
       slots: Vec::new(),
       texture_slots: Vec::new(),
@@ -394,6 +433,10 @@ impl Spatial {
     n.parent = None;
     n.sinks.clear();
     n.bounds = None;
+    n.cull_bounds = None;
+    n.world_box = None;
+    n.cull_group.clear();
+    n.cull_owners.clear();
     n.shape = None;
     self.free.push(i);
     Ok(())
@@ -417,6 +460,164 @@ impl Spatial {
     self.nodes[i as usize].bounds = bounds;
     self.enqueue(i);
     Ok(())
+  }
+
+  /// The clip volume gating every draw sink on `target` (None lifts it):
+  /// the target's view-projection, column-major. Entries whose node box
+  /// (grown by its margin) falls wholly outside it read instance count 0,
+  /// exactly like a hidden node, and come back with a fresh params write.
+  /// Nodes without a box, or with culling off, are never gated.
+  pub fn set_frustum(&mut self, target: u64, view_proj: Option<Mat4>) {
+    let changed = match view_proj {
+      Some(m) => {
+        let f = Frustum::from_view_proj(&m);
+        self.frustums.insert(target, f) != Some(f)
+      }
+      None => self.frustums.remove(&target).is_some(),
+    };
+    if changed && !self.frustum_dirty.contains(&target) {
+      self.frustum_dirty.push(target);
+    }
+  }
+
+  /// Whether frustums gate the node's draw sinks, and the world-unit
+  /// margin the test widens its box by.
+  pub fn set_cull(&mut self, id: NodeId, enabled: bool, margin: f32) -> Result<(), String> {
+    let i = self.resolve(id)?;
+    let n = &mut self.nodes[i as usize];
+    n.cull = enabled;
+    n.cull_margin = margin;
+    self.touch(i);
+    Ok(())
+  }
+
+  /// Hand the node to the next cull pass without a recompute (its boxes
+  /// are current; only the gate changed).
+  fn touch(&mut self, i: u32) {
+    let n = &mut self.nodes[i as usize];
+    if !n.queued_touch && !n.sinks.is_empty() {
+      n.queued_touch = true;
+      self.touched.push(i);
+    }
+  }
+
+  /// A local box for culling only - the node stays out of the picking
+  /// index (`set_bounds` is the indexed one). None falls back to `bounds`.
+  pub fn set_cull_bounds(&mut self, id: NodeId, bounds: Option<Box3>) -> Result<(), String> {
+    let i = self.resolve(id)?;
+    self.nodes[i as usize].cull_bounds = bounds;
+    self.enqueue(i);
+    Ok(())
+  }
+
+  /// Cull the node by the union of these nodes' world boxes instead of
+  /// its own (empty restores its own). A member without a box, or gone,
+  /// contributes nothing; with no member box at all the node is not culled.
+  pub fn set_cull_group(&mut self, id: NodeId, members: &[NodeId]) -> Result<(), String> {
+    let i = self.resolve(id)?;
+    let mut indices = Vec::with_capacity(members.len());
+    for &m in members {
+      indices.push(self.resolve(m)?);
+    }
+    let old = std::mem::replace(&mut self.nodes[i as usize].cull_group, members.to_vec());
+    for m in old {
+      if let Ok(j) = self.resolve(m) {
+        self.nodes[j as usize].cull_owners.retain(|&o| o != id);
+      }
+    }
+    for j in indices {
+      self.nodes[j as usize].cull_owners.push(id);
+    }
+    self.touch(i);
+    Ok(())
+  }
+
+  /// The box the frustum test reads for node `i`: its group's union, else
+  /// its own world box. None = nothing to test, never culled.
+  fn cull_box(&self, i: u32) -> Option<Box3> {
+    let n = &self.nodes[i as usize];
+    if n.cull_group.is_empty() {
+      return n.world_box;
+    }
+    let mut acc: Option<Box3> = None;
+    for &m in &n.cull_group {
+      let Ok(j) = self.resolve(m) else {
+        continue;
+      };
+      if let Some(b) = self.nodes[j as usize].world_box {
+        acc = Some(match acc {
+          Some(a) => union(&a, &b),
+          None => b,
+        });
+      }
+    }
+    acc
+  }
+
+  /// Whether `target`'s frustum lets node `i` draw.
+  fn frustum_allows(&self, i: u32, target: u64) -> bool {
+    let n = &self.nodes[i as usize];
+    if !n.cull {
+      return true;
+    }
+    let Some(f) = self.frustums.get(&target) else {
+      return true;
+    };
+    match self.cull_box(i) {
+      Some(b) => f.intersects(&b, n.cull_margin),
+      None => true,
+    }
+  }
+
+  /// The visibility switches, after the walk: every sink of a touched
+  /// node, and every sink on a target whose frustum moved, is set to
+  /// "shown and inside the frustum". A flip writes the count; a sink
+  /// turning on with a stale entry (bound, or moved while off) gets its
+  /// params too. A write that does not land releases the sink.
+  fn cull_pass(&mut self, out: &mut dyn SinkWriter) {
+    let dirty = std::mem::take(&mut self.frustum_dirty);
+    let touched = std::mem::take(&mut self.touched);
+    let candidates: Vec<u32> = if dirty.is_empty() {
+      touched
+    } else {
+      (0..self.nodes.len() as u32).filter(|&i| self.nodes[i as usize].alive && !self.nodes[i as usize].sinks.is_empty()).collect()
+    };
+    for i in candidates {
+      let n = &self.nodes[i as usize];
+      if !n.alive || n.sinks.is_empty() {
+        continue;
+      }
+      let shown = n.shown;
+      let world = n.world;
+      let every = n.queued_touch;
+      let mut sinks = std::mem::take(&mut self.nodes[i as usize].sinks);
+      let mut normal: Option<Mat4> = None;
+      sinks.retain_mut(|b| {
+        let sink = b.sink;
+        if !every && !dirty.contains(&sink.target) {
+          return true;
+        }
+        let want = shown && self.frustum_allows(i, sink.target);
+        if want == b.entry_on {
+          return true;
+        }
+        b.entry_on = want;
+        if !out.write_count(sink.target, sink.draw, if want { sink.count } else { 0 }) {
+          return false;
+        }
+        if want && b.fresh {
+          if sink.normal && normal.is_none() {
+            normal = Some(normal_matrix(&world));
+          }
+          b.fresh = false;
+          return out.write_params(sink.target, sink.draw, &world, if sink.normal { normal.as_ref() } else { None });
+        }
+        true
+      });
+      let n = &mut self.nodes[i as usize];
+      n.sinks = sinks;
+      n.queued_touch = false;
+    }
   }
 
   /// Attach (or with None detach) triangle data for the narrowphase. The
@@ -696,16 +897,7 @@ impl Spatial {
     let Some(b) = n.bounds else {
       return;
     };
-    let m = &n.world;
-    let c = [(b[0] + b[3]) / 2.0, (b[1] + b[4]) / 2.0, (b[2] + b[5]) / 2.0];
-    let e = [(b[3] - b[0]) / 2.0, (b[4] - b[1]) / 2.0, (b[5] - b[2]) / 2.0];
-    let w = transform_point(m, c);
-    let r = [
-      m[0].abs() * e[0] + m[4].abs() * e[1] + m[8].abs() * e[2],
-      m[1].abs() * e[0] + m[5].abs() * e[1] + m[9].abs() * e[2],
-      m[2].abs() * e[0] + m[6].abs() * e[1] + m[10].abs() * e[2],
-    ];
-    let tight = [w[0] - r[0], w[1] - r[1], w[2] - r[2], w[0] + r[0], w[1] + r[1], w[2] + r[2]];
+    let tight = world_box(&b, &n.world);
     match n.leaf {
       Some(leaf) => self.bvh.update(leaf, &tight),
       None => {
@@ -1133,6 +1325,9 @@ impl Spatial {
         self.nodes[i as usize].queued = false;
       }
     }
+    if !self.touched.is_empty() || !self.frustum_dirty.is_empty() {
+      self.cull_pass(out);
+    }
     // Shared params changed by the walk, an unbind or a destroy go out
     // once per flush, whole; a group nothing references any more goes
     // with its last write.
@@ -1222,8 +1417,13 @@ impl Spatial {
       changed = true;
     }
     let shown = parent_shown && n.visible;
+    let touched = changed || shown != n.shown || n.queued;
     n.shown = shown;
     let refit = n.bounds.is_some() && (changed || n.leaf.is_none());
+    if changed || n.world_box.is_none() {
+      n.world_box = n.cull_bounds.or(n.bounds).map(|b| world_box(&b, &n.world));
+    }
+
     if changed {
       // Disjoint borrows: the node's slots read, the shared groups written.
       let shared = &mut self.shared;
@@ -1260,37 +1460,52 @@ impl Spatial {
         }
       }
     }
-    let n = &mut self.nodes[i as usize];
-    let world = n.world;
+    let world = self.nodes[i as usize].world;
+    if changed && !self.nodes[i as usize].cull_owners.is_empty() {
+      // A group member moved: the owners re-test against the fresh union.
+      let owners = self.nodes[i as usize].cull_owners.clone();
+      for o in owners {
+        if let Ok(j) = self.resolve(o) {
+          self.touch(j);
+        }
+      }
+    }
+    if touched && !self.nodes[i as usize].sinks.is_empty() && !self.nodes[i as usize].queued_touch {
+      self.nodes[i as usize].queued_touch = true;
+      self.touched.push(i);
+    }
     // The inverse-transpose is one matrix however many sinks ask for it.
     let mut normal: Option<Mat4> = None;
-    // A sink whose entry is gone (a write that did not land) is released
-    // here: the entry was the consumer's to remove, and it did.
-    n.sinks.retain_mut(|b| {
-      let sink = b.sink;
-      if shown != b.entry_on {
-        b.entry_on = shown;
-        if !out.write_count(sink.target, sink.draw, if shown { sink.count } else { 0 }) {
-          return false;
-        }
-        if shown {
-          b.fresh = true;
-        }
-      }
-      if shown && (changed || b.fresh) {
-        if sink.normal && normal.is_none() {
+    // Entries that are on AND staying on get their fresh matrix here; the
+    // switch itself (visibility and the frustum) is the cull pass's, after
+    // the walk, so a group's boxes are all current when it is decided. An
+    // entry that is off, or about to go off, remembers it owes a params
+    // write for when it turns on (a group member not yet recomputed can
+    // make the test here say off while the pass says on: the owed write
+    // covers that). A sink whose entry is gone (a write that did not
+    // land) is released here: the entry was the consumer's to remove, and
+    // it did.
+    let mut k = 0;
+    while k < self.nodes[i as usize].sinks.len() {
+      let b = self.nodes[i as usize].sinks[k];
+      let staying_on = shown && b.entry_on && self.frustum_allows(i, b.sink.target);
+      let sinks = &mut self.nodes[i as usize].sinks;
+      if staying_on && (changed || b.fresh) {
+        if b.sink.normal && normal.is_none() {
           normal = Some(normal_matrix(&world));
         }
-        b.fresh = false;
-        return out.write_params(sink.target, sink.draw, &world, if sink.normal { normal.as_ref() } else { None });
+        sinks[k].fresh = false;
+        if !out.write_params(b.sink.target, b.sink.draw, &world, if b.sink.normal { normal.as_ref() } else { None }) {
+          sinks.remove(k);
+          continue;
+        }
+      } else if changed {
+        sinks[k].fresh = true;
       }
-      if changed {
-        b.fresh = true;
-      }
-      true
-    });
-    let record = n.record;
-    let record_on = n.record_on;
+      k += 1;
+    }
+    let record = self.nodes[i as usize].record;
+    let record_on = self.nodes[i as usize].record_on;
     if let Some(rec) = record {
       match rec.projection {
         InstanceProjection::Pose2D => {

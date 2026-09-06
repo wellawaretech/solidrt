@@ -54,6 +54,10 @@ impl ModuleDef for SpatialModule {
     decl.declare("shown")?;
     decl.declare("flush")?;
     decl.declare("setBounds")?;
+    decl.declare("setFrustum")?;
+    decl.declare("setCull")?;
+    decl.declare("setCullBounds")?;
+    decl.declare("setCullGroup")?;
     decl.declare("createShape")?;
     decl.declare("destroyShape")?;
     decl.declare("setShape")?;
@@ -91,6 +95,10 @@ impl ModuleDef for SpatialModule {
     exports.export("shown", Function::new(ctx.clone(), shown)?)?;
     exports.export("flush", Function::new(ctx.clone(), flush)?)?;
     exports.export("setBounds", Function::new(ctx.clone(), set_bounds)?)?;
+    exports.export("setFrustum", Function::new(ctx.clone(), set_frustum)?)?;
+    exports.export("setCull", Function::new(ctx.clone(), set_cull)?)?;
+    exports.export("setCullBounds", Function::new(ctx.clone(), set_cull_bounds)?)?;
+    exports.export("setCullGroup", Function::new(ctx.clone(), set_cull_group)?)?;
     exports.export("createShape", Function::new(ctx.clone(), create_shape)?)?;
     exports.export("destroyShape", Function::new(ctx.clone(), destroy_shape)?)?;
     exports.export("setShape", Function::new(ctx.clone(), set_shape)?)?;
@@ -267,6 +275,52 @@ fn set_bounds(ctx: Ctx<'_>, id: u64, bounds: OptArg<TypedArray<'_, f32>>) -> rqu
     None => None,
   };
   super::gui(&ctx).alloy.spatial().set_bounds(id, b).map_err(|e| throw_str(&ctx, &format!("setBounds: {e}")))
+}
+
+/// A six-float box argument (min xyz, max xyz), or None.
+fn box_arg(ctx: &Ctx<'_>, bounds: &OptArg<TypedArray<'_, f32>>, api: &str) -> rquickjs::Result<Option<[f32; 6]>> {
+  match &bounds.0 {
+    Some(data) => {
+      let f = floats(ctx, data, api)?;
+      if f.len() != 6 {
+        return Err(throw_str(ctx, &format!("{api}: bounds must be a Float32Array of 6 (min xyz, max xyz)")));
+      }
+      Ok(Some([f[0], f[1], f[2], f[3], f[4], f[5]]))
+    }
+    None => Ok(None),
+  }
+}
+
+/// The clip volume gating a target's draw sinks: its view-projection as a
+/// Float32Array of 16 (column-major), or null to lift it.
+fn set_frustum(ctx: Ctx<'_>, target: u64, view_proj: OptArg<TypedArray<'_, f32>>) -> rquickjs::Result<()> {
+  let m = match &view_proj.0 {
+    Some(data) => {
+      let f = floats(&ctx, data, "setFrustum")?;
+      if f.len() != 16 {
+        return Err(throw_str(&ctx, "setFrustum: viewProj must be a Float32Array of 16"));
+      }
+      let mut m = [0.0f32; 16];
+      m.copy_from_slice(f);
+      Some(m)
+    }
+    None => None,
+  };
+  super::gui(&ctx).alloy.spatial().set_frustum(target, m);
+  Ok(())
+}
+
+fn set_cull(ctx: Ctx<'_>, id: u64, enabled: bool, margin: f64) -> rquickjs::Result<()> {
+  super::gui(&ctx).alloy.spatial().set_cull(id, enabled, margin as f32).map_err(|e| throw_str(&ctx, &format!("setCull: {e}")))
+}
+
+fn set_cull_bounds(ctx: Ctx<'_>, id: u64, bounds: OptArg<TypedArray<'_, f32>>) -> rquickjs::Result<()> {
+  let b = box_arg(&ctx, &bounds, "setCullBounds")?;
+  super::gui(&ctx).alloy.spatial().set_cull_bounds(id, b).map_err(|e| throw_str(&ctx, &format!("setCullBounds: {e}")))
+}
+
+fn set_cull_group(ctx: Ctx<'_>, id: u64, members: Vec<u64>) -> rquickjs::Result<()> {
+  super::gui(&ctx).alloy.spatial().set_cull_group(id, &members).map_err(|e| throw_str(&ctx, &format!("setCullGroup: {e}")))
 }
 
 /// Triangle data for the narrowphase: positions are read from an

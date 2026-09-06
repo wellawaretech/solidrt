@@ -21,6 +21,7 @@ import {
   createSprite,
   disposeInstances,
   setCastShadow,
+  setCulling,
   setGeometry,
   setInstanceCount,
   setInstances,
@@ -464,6 +465,10 @@ export type MeshProps = TransformProps & PointerEventProps & {
    * draws the mesh when its mask intersects this. Not inherited from
    * ancestor Groups. */
   layers?: number
+  /** Frustum culling switch (setCulling as a prop; default true). */
+  frustumCulled?: boolean
+  /** World units the culled box grows by (setCulling as a prop; default 0). */
+  cullMargin?: number
   ref?: (mesh: MeshNode) => void
 }
 
@@ -487,6 +492,10 @@ function syncMesh(mesh: MeshNode, props: SpriteProps): void {
   createEffect(
     () => props.layers,
     l => setLayers(mesh, l ?? 1),
+  )
+  createEffect(
+    () => [props.frustumCulled, props.cullMargin] as const,
+    ([culled, margin]) => setCulling(mesh, { frustumCulled: culled !== false, cullMargin: margin ?? 0 }),
   )
   syncNode(mesh, props)
   untrack(() => props.ref)?.(mesh)
@@ -520,6 +529,10 @@ export type SpriteProps = TransformProps & PointerEventProps & {
   renderOrder?: number
   /** Layer membership bitmask (setLayers as a prop; default 1). */
   layers?: number
+  /** Frustum culling switch (setCulling as a prop; default true). */
+  frustumCulled?: boolean
+  /** World units the culled box grows by (setCulling as a prop; default 0). */
+  cullMargin?: number
   ref?: (mesh: MeshNode) => void
 }
 
