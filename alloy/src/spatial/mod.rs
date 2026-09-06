@@ -271,22 +271,45 @@ fn node_triangles(
       shapes.visit_box(sid, &local, &mut |tri| visit(carry(tri)));
     }
     None => {
-      // Corner i has bit 0 = max x, bit 1 = max y, bit 2 = max z.
-      let corner = |i: usize| -> [f32; 3] {
-        [
-          if i & 1 != 0 { bounds[3] } else { bounds[0] },
-          if i & 2 != 0 { bounds[4] } else { bounds[1] },
-          if i & 4 != 0 { bounds[5] } else { bounds[2] },
-        ]
-      };
-      const FACES: [[usize; 4]; 6] =
-        [[0, 2, 6, 4], [1, 3, 7, 5], [0, 1, 5, 4], [2, 3, 7, 6], [0, 1, 3, 2], [4, 5, 7, 6]];
-      for f in FACES {
-        visit(carry([corner(f[0]), corner(f[1]), corner(f[2])]));
-        visit(carry([corner(f[0]), corner(f[2]), corner(f[3])]));
+      for tri in box_triangles(bounds) {
+        visit(carry(tri));
       }
     }
   }
+}
+
+/// The twelve triangles of a local box, two per face; every test they
+/// feed is two-sided, so the winding is immaterial.
+fn box_triangles(bounds: &Box3) -> [[[f32; 3]; 3]; 12] {
+  // Corner i has bit 0 = max x, bit 1 = max y, bit 2 = max z.
+  let corner = |i: usize| -> [f32; 3] {
+    [
+      if i & 1 != 0 { bounds[3] } else { bounds[0] },
+      if i & 2 != 0 { bounds[4] } else { bounds[1] },
+      if i & 4 != 0 { bounds[5] } else { bounds[2] },
+    ]
+  };
+  const FACES: [[usize; 4]; 6] = [[0, 2, 6, 4], [1, 3, 7, 5], [0, 1, 5, 4], [2, 3, 7, 6], [0, 1, 3, 2], [4, 5, 7, 6]];
+  let mut out = [[[0.0; 3]; 3]; 12];
+  for (f, face) in FACES.iter().enumerate() {
+    out[f * 2] = [corner(face[0]), corner(face[1]), corner(face[2])];
+    out[f * 2 + 1] = [corner(face[0]), corner(face[2]), corner(face[3])];
+  }
+  out
+}
+
+/// The nearest of a local box's twelve triangles along the local ray:
+/// (t, unnormalized local normal), or None.
+fn ray_box(bounds: &Box3, o: [f32; 3], d: [f32; 3]) -> Option<(f32, [f32; 3])> {
+  let mut best: Option<(f32, [f32; 3])> = None;
+  for [a, b, c] in box_triangles(bounds) {
+    if let Some((t, _, _, n)) = pick::ray_points(a, b, c, o, d) {
+      if best.is_none_or(|(bt, _)| t < bt) {
+        best = Some((t, n));
+      }
+    }
+  }
+  best
 }
 
 struct Node {
@@ -960,7 +983,9 @@ impl Spatial {
   /// Every shown node with bounds the ray strikes, nearest first. A node
   /// with a shape is tested per triangle (hit carries `face`, `uv` when the
   /// shape has UVs, and the world-space geometric `normal`); without one
-  /// its local box is the volume. The first ray reaching a large shape
+  /// its local box's twelve triangles are (a `normal` from the face, no
+  /// `face`/`uv`), so a ray from inside meets the far side - the surface
+  /// contract of `overlap`/`sweep`. The first ray reaching a large shape
   /// builds its triangle BVH (see pick.rs), so repeated rays against a
   /// merged scene stay log-cost. `direction` need not be normalized;
   /// distances are world units.
@@ -992,20 +1017,18 @@ impl Spatial {
       let lo = transform_point(&inv, origin);
       let ld = transform_vector(&inv, d);
       let found = match shape {
-        Some(sid) => self.shapes.ray(sid, lo, ld).map(|(t, face, uv, local_normal)| {
-          let nm = normal_matrix(&world);
-          let wn = transform_vector(&nm, local_normal);
-          let l = (wn[0] * wn[0] + wn[1] * wn[1] + wn[2] * wn[2]).sqrt();
-          let mut normal = if l > 0.0 { [wn[0] / l, wn[1] / l, wn[2] / l] } else { wn };
-          // Face the ray, whichever side was struck.
-          if normal[0] * d[0] + normal[1] * d[1] + normal[2] * d[2] > 0.0 {
-            normal = [-normal[0], -normal[1], -normal[2]];
-          }
-          (t, Some(face), uv, Some(normal))
-        }),
-        None => ray_box_distance(lo, ld, &bounds).map(|t| (t, None, None, None)),
+        Some(sid) => self.shapes.ray(sid, lo, ld).map(|(t, face, uv, n)| (t, Some(face), uv, n)),
+        None => ray_box(&bounds, lo, ld).map(|(t, n)| (t, None, None, n)),
       };
-      if let Some((t, face, uv, normal)) = found {
+      if let Some((t, face, uv, local_normal)) = found {
+        let nm = normal_matrix(&world);
+        let wn = transform_vector(&nm, local_normal);
+        let l = (wn[0] * wn[0] + wn[1] * wn[1] + wn[2] * wn[2]).sqrt();
+        let mut normal = if l > 0.0 { [wn[0] / l, wn[1] / l, wn[2] / l] } else { wn };
+        // Face the ray, whichever side was struck.
+        if normal[0] * d[0] + normal[1] * d[1] + normal[2] * d[2] > 0.0 {
+          normal = [-normal[0], -normal[1], -normal[2]];
+        }
         hits.push(Hit {
           node: self.id_of(i),
           distance: t,
@@ -1020,31 +1043,6 @@ impl Spatial {
     hits
   }
 
-  /// Every shown node with bounds whose local box, carried through its
-  /// world matrix, overlaps the world-axis box `bounds` (touching counts;
-  /// a point is min == max). Broadphase through the index, narrowphase by
-  /// separating axes (`pick::box_overlap`), so a rotated flat rect tests
-  /// exactly, never by its world AABB. Unordered; reads the index as of
-  /// the last flush, like `raycast`.
-  pub fn overlap(&mut self, bounds: Box3) -> Vec<NodeId> {
-    let mut candidates = Vec::new();
-    self.bvh.query(&bounds, &mut |i| candidates.push(i));
-    let mut out = Vec::new();
-    for i in candidates {
-      let n = &self.nodes[i as usize];
-      if !n.alive || !n.shown {
-        continue;
-      }
-      let Some(local) = n.bounds else {
-        continue;
-      };
-      if pick::box_overlap(&n.world, &local, &bounds) {
-        out.push(self.id_of(i));
-      }
-    }
-    out
-  }
-
   /// Every shown node with bounds the volume touches, each with its
   /// deepest contact (point on the node's surface, the direction out of
   /// it, the depth along that direction). A node with a shape is tested
@@ -1053,7 +1051,7 @@ impl Spatial {
   /// wholly inside a closed mesh with no triangle in reach touches
   /// nothing, the trimesh contract everywhere. Unordered; reads the index
   /// as of the last flush, like `raycast`.
-  pub fn overlap_volume(&mut self, volume: &Volume) -> Vec<Overlap> {
+  pub fn overlap(&mut self, volume: &Volume) -> Vec<Overlap> {
     let query = collide::Query::new(volume);
     let aabb = query.bounds(None);
     let mut candidates = Vec::new();
@@ -1083,9 +1081,9 @@ impl Spatial {
   /// the motion, the touch point, the normal facing the volume), earliest
   /// first. A node already in contact reports time 0 while the motion
   /// closes in, and nothing while it leaves or slides along the contact.
-  /// Same testing and index contract as `overlap_volume`; a zero motion
+  /// Same testing and index contract as `overlap`; a zero motion
   /// touches nothing.
-  pub fn sweep_volume(&mut self, volume: &Volume, motion: [f32; 3]) -> Vec<Impact> {
+  pub fn sweep(&mut self, volume: &Volume, motion: [f32; 3]) -> Vec<Impact> {
     let query = collide::Query::new(volume);
     let aabb = query.bounds(Some(motion));
     let mut candidates = Vec::new();

@@ -26,14 +26,18 @@ const ENGAGE = 0.6
 const QUIET_SMOOTH = 0.19
 
 export type TransformDelta = {
-  /** Focal-point movement since the previous frame, logical px. */
+  /** Focal-point movement since the previous frame, in the handler node's
+   * PARENT frame (the frame its own x/y live in: window pixels under no
+   * scaling ancestor, design pixels under a designSize fit), so it applies
+   * 1:1 to the node or to content inside it. */
   dx: number
   dy: number
   /** Multiplicative span change since the previous frame (1 = unchanged, >1 = fingers spreading). */
   scale: number
   /** Rotation of the pointer pair since the previous frame, radians (0 with a single pointer). */
   rotation: number
-  /** Current focal point in window coordinates (the clientX/clientY frame) - the zoom-about anchor. */
+  /** Current focal point in the handler node's LOCAL frame (its own
+   * pixels) - the zoom-about anchor for content inside it. */
   x: number
   y: number
   /** How many pointers are down right now. Consumers that give one- and
@@ -106,12 +110,25 @@ export interface TransformOptions {
 // path, so an active transform survives leaving the node or the window.
 // cancel() is the external-cancel hook; it ends an active gesture without
 // onTransformEnd. Options are read at event time.
+//
+// Frames: the slop, the span filter and its rate gates are finger-travel
+// thresholds, so they are measured in window pixels (clientX/clientY);
+// the focal movement (dx/dy) and the pair angle are measured in the node's
+// parent frame (parentX/parentY), the frame the node's own coordinates
+// live in, so a scaled ancestor (a designSize fit) is accounted for and
+// the delta applies unchanged to the node or to content inside it; the
+// focal point (x/y) is reported in the node's local frame (localX/localY),
+// the anchor a zoom-about-the-fingers needs. Scale and rotation are ratios
+// and angles, the same in every uniformly scaled frame. The event carries
+// all three frames exactly, on and off the node.
 export function createTransform(options: TransformOptions) {
+  type Tracked = { cx: number; cy: number; px: number; py: number; lx: number; ly: number }
+  let at = (e: PointerEvent): Tracked => ({ cx: e.clientX, cy: e.clientY, px: e.parentX, py: e.parentY, lx: e.localX, ly: e.localY })
   // All tracked pointers, in down order (the first two define the rotation pair).
-  let pointers = new Map<number, { x: number; y: number }>()
+  let pointers = new Map<number, Tracked>()
   let active = false
   // Slop baseline while armed; last delivered configuration while active.
-  let ref: { x: number; y: number; span: number; angle: number } | null = null
+  let ref: { cx: number; cy: number; px: number; py: number; span: number; angle: number } | null = null
   // The zoom gate and filter (see the zoom-noise note above): scale stays 1
   // until the SMOOTHED span leaves spanBase by SLOP, then streams smoothed
   // ratios for the rest of the gesture.
@@ -128,27 +145,41 @@ export function createTransform(options: TransformOptions) {
   // emits nothing.
   let rebase = false
 
+  // Centroids in all three frames, the span in window pixels (it feeds the
+  // finger-travel gates), the pair angle in the parent frame.
   let measure = () => {
     let n = pointers.size
-    let x = 0
-    let y = 0
+    let cx = 0
+    let cy = 0
+    let px = 0
+    let py = 0
+    let lx = 0
+    let ly = 0
     for (let p of pointers.values()) {
-      x += p.x
-      y += p.y
+      cx += p.cx
+      cy += p.cy
+      px += p.px
+      py += p.py
+      lx += p.lx
+      ly += p.ly
     }
-    x /= n
-    y /= n
+    cx /= n
+    cy /= n
+    px /= n
+    py /= n
+    lx /= n
+    ly /= n
     let span = 0
-    for (let p of pointers.values()) span += Math.hypot(p.x - x, p.y - y)
+    for (let p of pointers.values()) span += Math.hypot(p.cx - cx, p.cy - cy)
     span /= n
     let angle = 0
     if (n >= 2) {
       let pair = pointers.values()
       let a = pair.next().value!
       let b = pair.next().value!
-      angle = Math.atan2(b.y - a.y, b.x - a.x)
+      angle = Math.atan2(b.py - a.py, b.px - a.px)
     }
-    return { x, y, span, angle }
+    return { cx, cy, px, py, lx, ly, span, angle }
   }
 
   let reset = () => {
@@ -202,10 +233,10 @@ export function createTransform(options: TransformOptions) {
       if (rotation > Math.PI) rotation -= 2 * Math.PI
       else if (rotation < -Math.PI) rotation += 2 * Math.PI
     }
-    let dx = m.x - ref.x
-    let dy = m.y - ref.y
+    let dx = m.px - ref.px
+    let dy = m.py - ref.py
     ref = m
-    options.onTransformMove?.({ dx, dy, scale, rotation, x: m.x, y: m.y, pointers: pointers.size })
+    options.onTransformMove?.({ dx, dy, scale, rotation, x: m.lx, y: m.ly, pointers: pointers.size })
   }
 
   // An unmount mid-gesture must not leave resolved claims behind (or a live
@@ -226,24 +257,22 @@ export function createTransform(options: TransformOptions) {
         // A finger joining an established gesture belongs to it outright; if
         // the arena refuses (resolved elsewhere) the finger stays out.
         if (!arena.steal(e.pointerId, owner)) return
-        pointers.set(e.pointerId, { x: e.clientX, y: e.clientY })
+        pointers.set(e.pointerId, at(e))
         rebase = true
         return
       }
-      pointers.set(e.pointerId, { x: e.clientX, y: e.clientY })
+      pointers.set(e.pointerId, at(e))
       ref = measure()
     },
     onPointerMove: (e: PointerEvent) => {
-      let p = pointers.get(e.pointerId)
-      if (!p || !ref) return
-      p.x = e.clientX
-      p.y = e.clientY
+      if (!pointers.has(e.pointerId) || !ref) return
+      pointers.set(e.pointerId, at(e))
       if (!active) {
         // Arming runs per event: the slop test tolerates a mixed-age
         // measure (8px against <=1 frame of staleness), and the arena
         // steal must happen synchronously inside the dispatch walk.
         let m = measure()
-        let travel = Math.hypot(m.x - ref.x, m.y - ref.y)
+        let travel = Math.hypot(m.cx - ref.cx, m.cy - ref.cy)
         if (travel < SLOP && Math.abs(m.span - ref.span) < SLOP) return
         let taken: number[] = []
         let refused = false

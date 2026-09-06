@@ -102,24 +102,24 @@ fn sphere_overlap_reports_depth_and_normal() {
   let mut s = Spatial::new();
   let f = floor(&mut s);
   flush(&mut s);
-  let hits = s.overlap_volume(&sphere([1.0, 0.3, 2.0], 0.5));
+  let hits = s.overlap(&sphere([1.0, 0.3, 2.0], 0.5));
   assert_eq!(hits.len(), 1);
   assert_eq!(hits[0].node, f);
   assert!(close(hits[0].depth, 0.2), "depth {}", hits[0].depth);
   assert!(near(hits[0].normal, [0.0, 1.0, 0.0]));
   assert!(near(hits[0].point, [1.0, 0.0, 2.0]));
-  assert!(s.overlap_volume(&sphere([1.0, 0.6, 2.0], 0.5)).is_empty(), "clear of the floor");
-  let touching = s.overlap_volume(&sphere([1.0, 0.5, 2.0], 0.5));
+  assert!(s.overlap(&sphere([1.0, 0.6, 2.0], 0.5)).is_empty(), "clear of the floor");
+  let touching = s.overlap(&sphere([1.0, 0.5, 2.0], 0.5));
   assert_eq!(touching.len(), 1, "touching counts");
   assert!(close(touching[0].depth, 0.0));
-  assert!(s.overlap_volume(&sphere([7.0, 0.1, 0.0], 0.5)).is_empty(), "beside the floor");
-  let pierced = s.overlap_volume(&sphere([1.0, -0.2, 2.0], 0.5));
+  assert!(s.overlap(&sphere([7.0, 0.1, 0.0], 0.5)).is_empty(), "beside the floor");
+  let pierced = s.overlap(&sphere([1.0, -0.2, 2.0], 0.5));
   assert_eq!(pierced.len(), 1, "a center below the floor still contacts");
   assert!(near(pierced[0].normal, [0.0, -1.0, 0.0]), "the push is out on the center's side");
   assert!(close(pierced[0].depth, 0.5 - 0.2), "depth {}", pierced[0].depth);
   s.set_visible(f, false).expect("hide");
   flush(&mut s);
-  assert!(s.overlap_volume(&sphere([1.0, 0.3, 2.0], 0.5)).is_empty(), "hidden nodes are skipped");
+  assert!(s.overlap(&sphere([1.0, 0.3, 2.0], 0.5)).is_empty(), "hidden nodes are skipped");
 }
 
 #[test]
@@ -128,11 +128,11 @@ fn box_only_node_is_its_twelve_triangles() {
   let n = s.create([5.0, 0.0, 0.0], Q, ONE, true);
   s.set_bounds(n, Some([-1.0, -1.0, -1.0, 1.0, 1.0, 1.0])).expect("bounds");
   flush(&mut s);
-  assert!(s.overlap_volume(&sphere([3.2, 0.0, 0.0], 0.5)).is_empty());
-  let hits = s.overlap_volume(&sphere([3.7, 0.0, 0.0], 0.5));
+  assert!(s.overlap(&sphere([3.2, 0.0, 0.0], 0.5)).is_empty());
+  let hits = s.overlap(&sphere([3.7, 0.0, 0.0], 0.5));
   assert_eq!(hits.len(), 1);
   assert!(close(hits[0].depth, 0.2) && near(hits[0].normal, [-1.0, 0.0, 0.0]) && near(hits[0].point, [4.0, 0.0, 0.0]));
-  let hits = s.sweep_volume(&sphere([0.0, 0.0, 0.0], 0.5), [4.0, 0.0, 0.0]);
+  let hits = s.sweep(&sphere([0.0, 0.0, 0.0], 0.5), [4.0, 0.0, 0.0]);
   assert_eq!(hits.len(), 1);
   assert!(close(hits[0].time, 0.875), "time {}", hits[0].time);
   assert!(near(hits[0].normal, [-1.0, 0.0, 0.0]) && near(hits[0].point, [4.0, 0.0, 0.0]));
@@ -143,23 +143,23 @@ fn sphere_sweep_hits_the_wall_exactly() {
   let mut s = Spatial::new();
   let w = wall(&mut s);
   flush(&mut s);
-  let hits = s.sweep_volume(&sphere([-3.0, 0.0, 0.0], 0.5), [5.0, 0.0, 0.0]);
+  let hits = s.sweep(&sphere([-3.0, 0.0, 0.0], 0.5), [5.0, 0.0, 0.0]);
   assert_eq!(hits.len(), 1);
   assert_eq!(hits[0].node, w);
   assert!(close(hits[0].time, 0.5), "time {}", hits[0].time);
   assert!(near(hits[0].normal, [-1.0, 0.0, 0.0]));
   assert!(near(hits[0].point, [0.0, 0.0, 0.0]));
-  assert!(s.sweep_volume(&sphere([-3.0, 0.0, 0.0], 0.5), [1.0, 0.0, 0.0]).is_empty(), "falls short");
-  assert!(s.sweep_volume(&sphere([-3.0, 0.0, 7.0], 0.5), [5.0, 0.0, 0.0]).is_empty(), "passes beside");
-  assert!(s.sweep_volume(&sphere([3.0, 0.0, 0.0], 0.5), [5.0, 0.0, 0.0]).is_empty(), "moves away");
+  assert!(s.sweep(&sphere([-3.0, 0.0, 0.0], 0.5), [1.0, 0.0, 0.0]).is_empty(), "falls short");
+  assert!(s.sweep(&sphere([-3.0, 0.0, 7.0], 0.5), [5.0, 0.0, 0.0]).is_empty(), "passes beside");
+  assert!(s.sweep(&sphere([3.0, 0.0, 0.0], 0.5), [5.0, 0.0, 0.0]).is_empty(), "moves away");
   // Grazing the wall's edge at z = 5, 0.3 off it: the sphere meets the
   // edge when its center is sqrt(0.5^2 - 0.3^2) = 0.4 short of the plane.
-  let hits = s.sweep_volume(&sphere([-3.0, 0.0, 5.3], 0.5), [5.0, 0.0, 0.0]);
+  let hits = s.sweep(&sphere([-3.0, 0.0, 5.3], 0.5), [5.0, 0.0, 0.0]);
   assert_eq!(hits.len(), 1, "an edge hit");
   assert!(close(hits[0].time, 2.6 / 5.0), "time {}", hits[0].time);
   assert!(near(hits[0].normal, [-0.8, 0.0, 0.6]), "normal {:?}", hits[0].normal);
   assert!(near(hits[0].point, [0.0, 0.0, 5.0]));
-  assert!(s.sweep_volume(&sphere([-3.0, 0.0, 0.0], 0.5), [0.0; 3]).is_empty(), "a zero motion touches nothing");
+  assert!(s.sweep(&sphere([-3.0, 0.0, 0.0], 0.5), [0.0; 3]).is_empty(), "a zero motion touches nothing");
 }
 
 #[test]
@@ -167,20 +167,20 @@ fn capsule_sweep_lands_and_slides() {
   let mut s = Spatial::new();
   floor(&mut s);
   flush(&mut s);
-  let hits = s.sweep_volume(&capsule([0.0, 1.5, 0.0], [0.0, 2.5, 0.0], 0.5), [0.0, -2.0, 0.0]);
+  let hits = s.sweep(&capsule([0.0, 1.5, 0.0], [0.0, 2.5, 0.0], 0.5), [0.0, -2.0, 0.0]);
   assert_eq!(hits.len(), 1);
   assert!(close(hits[0].time, 0.5), "time {}", hits[0].time);
   assert!(near(hits[0].normal, [0.0, 1.0, 0.0]) && near(hits[0].point, [0.0, 0.0, 0.0]));
   // Resting on the floor: a slide along it is no hit, a push into it is
   // an immediate one, and lifting off is none.
   let resting = capsule([0.0, 0.5, 0.0], [0.0, 1.5, 0.0], 0.5);
-  assert!(s.sweep_volume(&resting, [1.0, 0.0, 0.0]).is_empty(), "sliding along the contact");
-  let hits = s.sweep_volume(&resting, [1.0, -1.0, 0.0]);
+  assert!(s.sweep(&resting, [1.0, 0.0, 0.0]).is_empty(), "sliding along the contact");
+  let hits = s.sweep(&resting, [1.0, -1.0, 0.0]);
   assert_eq!(hits.len(), 1);
   assert!(hits[0].time < TOLERANCE && near(hits[0].normal, [0.0, 1.0, 0.0]));
-  assert!(s.sweep_volume(&resting, [0.0, 1.0, 0.0]).is_empty(), "leaving the contact");
+  assert!(s.sweep(&resting, [0.0, 1.0, 0.0]).is_empty(), "leaving the contact");
   // A tilted capsule lands on its lower end.
-  let hits = s.sweep_volume(&capsule([0.0, 2.0, 0.0], [1.0, 3.0, 0.0], 0.5), [0.0, -3.0, 0.0]);
+  let hits = s.sweep(&capsule([0.0, 2.0, 0.0], [1.0, 3.0, 0.0], 0.5), [0.0, -3.0, 0.0]);
   assert_eq!(hits.len(), 1);
   assert!(close(hits[0].time, 0.5), "time {}", hits[0].time);
   assert!(near(hits[0].point, [0.0, 0.0, 0.0]) && near(hits[0].normal, [0.0, 1.0, 0.0]));
@@ -191,12 +191,12 @@ fn capsule_sweep_hits_a_wall_along_its_length() {
   let mut s = Spatial::new();
   wall(&mut s);
   flush(&mut s);
-  let hits = s.sweep_volume(&capsule([-3.0, 0.0, 0.0], [-3.0, 1.0, 0.0], 0.5), [5.0, 0.0, 0.0]);
+  let hits = s.sweep(&capsule([-3.0, 0.0, 0.0], [-3.0, 1.0, 0.0], 0.5), [5.0, 0.0, 0.0]);
   assert_eq!(hits.len(), 1);
   assert!(close(hits[0].time, 0.5), "time {}", hits[0].time);
   assert!(near(hits[0].normal, [-1.0, 0.0, 0.0]));
   assert!(close(hits[0].point[0], 0.0) && (0.0..=1.0).contains(&hits[0].point[1]));
-  let hits = s.overlap_volume(&capsule([-0.3, 0.0, 0.0], [-0.3, 1.0, 0.0], 0.5));
+  let hits = s.overlap(&capsule([-0.3, 0.0, 0.0], [-0.3, 1.0, 0.0], 0.5));
   assert_eq!(hits.len(), 1);
   assert!(close(hits[0].depth, 0.2) && near(hits[0].normal, [-1.0, 0.0, 0.0]));
 }
@@ -207,21 +207,21 @@ fn queries_hold_under_scale_and_rotation() {
   let n = add_shape(&mut s, cube_shape(), [-0.5, -0.5, -0.5, 0.5, 0.5, 0.5], [0.0; 3], Q, [2.0, 1.0, 1.0]);
   flush(&mut s);
   // Faces at x = +-1: the sphere touches at center x = -1.5.
-  let hits = s.sweep_volume(&sphere([-4.0, 0.0, 0.0], 0.5), [4.0, 0.0, 0.0]);
+  let hits = s.sweep(&sphere([-4.0, 0.0, 0.0], 0.5), [4.0, 0.0, 0.0]);
   assert_eq!(hits.len(), 1);
   assert!(close(hits[0].time, 0.625), "time {}", hits[0].time);
   assert!(near(hits[0].normal, [-1.0, 0.0, 0.0]) && near(hits[0].point, [-1.0, 0.0, 0.0]));
   // A quarter turn about y swings the long side onto z: faces at x = +-0.5.
   s.set_transform(n, [0.0; 3], quarter_turn([0.0, 1.0, 0.0]), [2.0, 1.0, 1.0]).expect("rotate");
   flush(&mut s);
-  let hits = s.sweep_volume(&sphere([-4.0, 0.0, 0.0], 0.5), [4.0, 0.0, 0.0]);
+  let hits = s.sweep(&sphere([-4.0, 0.0, 0.0], 0.5), [4.0, 0.0, 0.0]);
   assert_eq!(hits.len(), 1);
   assert!(close(hits[0].time, 0.75), "time {}", hits[0].time);
   assert!(near(hits[0].normal, [-1.0, 0.0, 0.0]) && near(hits[0].point, [-0.5, 0.0, 0.0]));
-  let hits = s.overlap_volume(&sphere([-0.9, 0.0, 0.0], 0.5));
+  let hits = s.overlap(&sphere([-0.9, 0.0, 0.0], 0.5));
   assert_eq!(hits.len(), 1);
   assert!(close(hits[0].depth, 0.1) && near(hits[0].normal, [-1.0, 0.0, 0.0]), "{:?}", hits[0]);
-  let hits = s.sweep_volume(&sphere([0.0, 0.0, -4.0], 0.5), [0.0, 0.0, 4.0]);
+  let hits = s.sweep(&sphere([0.0, 0.0, -4.0], 0.5), [0.0, 0.0, 4.0]);
   assert_eq!(hits.len(), 1);
   assert!(close(hits[0].time, 0.625), "the long side now faces z: time {}", hits[0].time);
 }
@@ -232,17 +232,17 @@ fn box_overlap_and_sweep() {
   floor(&mut s);
   flush(&mut s);
   let half = [0.5, 0.5, 0.5];
-  let hits = s.overlap_volume(&obb([1.0, 0.4, 1.0], half, Q));
+  let hits = s.overlap(&obb([1.0, 0.4, 1.0], half, Q));
   assert_eq!(hits.len(), 1);
   assert!(close(hits[0].depth, 0.1) && near(hits[0].normal, [0.0, 1.0, 0.0]), "{:?}", hits[0]);
   assert!(close(hits[0].point[1], 0.0), "the contact lies on the floor");
-  assert!(s.overlap_volume(&obb([1.0, 0.6, 1.0], half, Q)).is_empty());
-  let hits = s.sweep_volume(&obb([0.0, 2.0, 0.0], half, Q), [0.0, -3.0, 0.0]);
+  assert!(s.overlap(&obb([1.0, 0.6, 1.0], half, Q)).is_empty());
+  let hits = s.sweep(&obb([0.0, 2.0, 0.0], half, Q), [0.0, -3.0, 0.0]);
   assert_eq!(hits.len(), 1);
   assert!(close(hits[0].time, 0.5) && near(hits[0].normal, [0.0, 1.0, 0.0]), "{:?}", hits[0]);
   assert!(close(hits[0].point[1], 0.0));
   // Turned 45 degrees about z the box lands on an edge, sqrt(0.5) below its center.
-  let hits = s.sweep_volume(
+  let hits = s.sweep(
     &obb([0.0, 2.0, 0.0], half, [0.0, 0.0, (std::f32::consts::FRAC_PI_8).sin(), (std::f32::consts::FRAC_PI_8).cos()]),
     [0.0, -3.0, 0.0],
   );
@@ -251,17 +251,17 @@ fn box_overlap_and_sweep() {
   assert!(near(hits[0].normal, [0.0, 1.0, 0.0]), "{:?}", hits[0]);
   let p = hits[0].point;
   assert!(close(p[0], 0.0) && close(p[1], 0.0) && p[2].abs() <= 0.5, "the contact lies on the landing edge: {p:?}");
-  assert!(s.sweep_volume(&obb([0.0, 0.5, 0.0], half, Q), [1.0, 0.0, 0.0]).is_empty(), "sliding along the floor");
-  let hits = s.sweep_volume(&obb([0.0, 0.5, 0.0], half, Q), [1.0, -1.0, 0.0]);
+  assert!(s.sweep(&obb([0.0, 0.5, 0.0], half, Q), [1.0, 0.0, 0.0]).is_empty(), "sliding along the floor");
+  let hits = s.sweep(&obb([0.0, 0.5, 0.0], half, Q), [1.0, -1.0, 0.0]);
   assert_eq!(hits.len(), 1);
   assert!(hits[0].time < TOLERANCE && near(hits[0].normal, [0.0, 1.0, 0.0]));
   let mut s = Spatial::new();
   wall(&mut s);
   flush(&mut s);
-  let hits = s.sweep_volume(&obb([-3.0, 0.0, 0.0], half, Q), [5.0, 0.0, 0.0]);
+  let hits = s.sweep(&obb([-3.0, 0.0, 0.0], half, Q), [5.0, 0.0, 0.0]);
   assert_eq!(hits.len(), 1);
   assert!(close(hits[0].time, 0.5) && near(hits[0].normal, [-1.0, 0.0, 0.0]), "{:?}", hits[0]);
-  assert!(s.sweep_volume(&obb([-3.0, 0.0, 7.0], half, Q), [5.0, 0.0, 0.0]).is_empty(), "passes beside");
+  assert!(s.sweep(&obb([-3.0, 0.0, 7.0], half, Q), [5.0, 0.0, 0.0]).is_empty(), "passes beside");
 }
 
 #[test]
@@ -308,7 +308,7 @@ fn volume_queries_match_the_linear_oracle() {
       .filter_map(|tri| query.overlap_triangle(tri))
       .map(|c| c.2)
       .fold(None, |best: Option<f32>, d| Some(best.map_or(d, |b| b.max(d))));
-    let got = s.overlap_volume(&volume);
+    let got = s.overlap(&volume);
     match expected {
       Some(depth) => {
         overlaps += 1;
@@ -329,7 +329,7 @@ fn volume_queries_match_the_linear_oracle() {
       .filter_map(|tri| query.sweep_triangle(motion, tri))
       .map(|h| h.0)
       .fold(None, |best: Option<f32>, t| Some(best.map_or(t, |b| b.min(t))));
-    let got = s.sweep_volume(&start, motion);
+    let got = s.sweep(&start, motion);
     match expected {
       Some(t) => {
         impacts += 1;

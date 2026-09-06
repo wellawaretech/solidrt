@@ -6800,8 +6800,8 @@ function createPan(options) {
           active = e.pointerId;
           armed = null;
           origin = {
-            x: e.clientX,
-            y: e.clientY
+            x: e.parentX,
+            y: e.parentY
           };
           options.onPanStart?.();
         } else {
@@ -6810,10 +6810,10 @@ function createPan(options) {
         return;
       }
       if (active === e.pointerId && origin) {
-        options.onPanMove?.(e.clientX - origin.x, e.clientY - origin.y);
+        options.onPanMove?.(e.parentX - origin.x, e.parentY - origin.y);
         origin = {
-          x: e.clientX,
-          y: e.clientY
+          x: e.parentX,
+          y: e.parentY
         };
       }
     },

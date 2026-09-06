@@ -1,4 +1,4 @@
-use crate::spatial::{compose, multiply, DrawSink, Mat4, SinkWriter, Spatial, TextureSlotSink, IDENTITY};
+use crate::spatial::{compose, multiply, DrawSink, Mat4, SinkWriter, Spatial, TextureSlotSink, Volume, IDENTITY};
 
 const Q: [f32; 4] = [0.0, 0.0, 0.0, 1.0];
 const ONE: [f32; 3] = [1.0, 1.0, 1.0];
@@ -323,7 +323,7 @@ fn box_hits_sorted_and_hidden_skipped() {
   // The far box is scaled 2x: its near face sits at -6 + 1 = -5.
   assert!((hits[1].distance - 5.0).abs() < 1e-5);
   assert_eq!(hits[0].face, None);
-  assert_eq!(hits[0].normal, None);
+  assert!((hits[0].normal[2] - 1.0).abs() < 1e-5, "a box hit carries the struck face's normal, facing the ray");
   s.set_visible(near, false).expect("hide");
   flush(&mut s);
   let hits = s.raycast([0.0, 0.0, 0.0], [0.0, 0.0, -1.0]);
@@ -334,7 +334,7 @@ fn box_hits_sorted_and_hidden_skipped() {
 }
 
 #[test]
-fn overlap_is_exact_for_rotated_rects_and_skips_hidden() {
+fn box_overlap_is_exact_for_rotated_rects_and_skips_hidden() {
   let mut s = Spatial::new();
   let half = std::f32::consts::FRAC_PI_4 / 2.0;
   let q45 = [0.0, 0.0, half.sin(), half.cos()];
@@ -346,24 +346,33 @@ fn overlap_is_exact_for_rotated_rects_and_skips_hidden() {
     s.set_bounds(n, Some(flat)).expect("bounds");
   }
   flush(&mut s);
-  let mut all = s.overlap([-1.0, -1.0, -1.0, 11.0, 1.0, 1.0]);
-  all.sort_unstable();
+  // A world-axis box query, the 2d marquee's form.
+  let query = |b: [f32; 6]| Volume::Box {
+    center: [(b[0] + b[3]) / 2.0, (b[1] + b[4]) / 2.0, (b[2] + b[5]) / 2.0],
+    half: [(b[3] - b[0]) / 2.0, (b[4] - b[1]) / 2.0, (b[5] - b[2]) / 2.0],
+    rotation: Q,
+  };
+  let ids = |hits: Vec<crate::spatial::Overlap>| {
+    let mut out: Vec<u64> = hits.into_iter().map(|h| h.node).collect();
+    out.sort_unstable();
+    out
+  };
   let mut expect = vec![spun, off];
   expect.sort_unstable();
-  assert_eq!(all, expect, "hidden nodes never report");
+  assert_eq!(ids(s.overlap(&query([-1.0, -1.0, -1.0, 11.0, 1.0, 1.0]))), expect, "hidden nodes never report");
   // Inside the rotated square's world AABB but outside the square itself
   // (the 45-degree diamond ends at |x| + |y| = sqrt(0.5)): the separating
   // axes make the test exact, never AABB-conservative.
-  assert!(s.overlap([0.55, 0.55, -1.0, 0.8, 0.8, 1.0]).is_empty());
+  assert!(s.overlap(&query([0.55, 0.55, -1.0, 0.8, 0.8, 1.0])).is_empty());
   // A point query is the degenerate box, same edge.
-  assert_eq!(s.overlap([0.6, 0.0, 0.0, 0.6, 0.0, 0.0]), vec![spun]);
-  assert!(s.overlap([0.6, 0.6, 0.0, 0.6, 0.6, 0.0]).is_empty());
+  assert_eq!(ids(s.overlap(&query([0.6, 0.0, 0.0, 0.6, 0.0, 0.0]))), vec![spun]);
+  assert!(s.overlap(&query([0.6, 0.6, 0.0, 0.6, 0.6, 0.0])).is_empty());
   // Moves land at the flush, like raycast.
   s.set_transform(off, [20.0, 0.0, 0.0], Q, ONE).expect("move");
-  assert_eq!(s.overlap([9.0, -1.0, -1.0, 11.0, 1.0, 1.0]), vec![off], "pre-flush query sees the old pose");
+  assert_eq!(ids(s.overlap(&query([9.0, -1.0, -1.0, 11.0, 1.0, 1.0]))), vec![off], "pre-flush query sees the old pose");
   flush(&mut s);
-  assert!(s.overlap([9.0, -1.0, -1.0, 11.0, 1.0, 1.0]).is_empty());
-  assert_eq!(s.overlap([19.0, -1.0, -1.0, 21.0, 1.0, 1.0]), vec![off]);
+  assert!(s.overlap(&query([9.0, -1.0, -1.0, 11.0, 1.0, 1.0])).is_empty());
+  assert_eq!(ids(s.overlap(&query([19.0, -1.0, -1.0, 21.0, 1.0, 1.0]))), vec![off]);
 }
 
 #[test]
@@ -383,12 +392,12 @@ fn triangle_hit_carries_face_uv_and_normal() {
   assert_eq!(h.face, Some(1));
   let uv = h.uv.expect("uv");
   assert!((uv[0] - 0.25).abs() < 1e-5 && (uv[1] - 0.75).abs() < 1e-5, "uv {uv:?}");
-  assert_eq!(h.normal, Some([0.0, 0.0, 1.0]), "normal faces the ray");
+  assert_eq!(h.normal, [0.0, 0.0, 1.0], "normal faces the ray");
   // Outside the quad: the triangle test says miss.
   assert!(s.raycast([2.5, 2.5, 0.0], [0.0, 0.0, -1.0]).is_empty());
   // From behind, the normal flips to face the ray.
   let back = s.raycast([0.0, 0.0, -6.0], [0.0, 0.0, 1.0]);
-  assert_eq!(back[0].normal, Some([0.0, 0.0, -1.0]));
+  assert_eq!(back[0].normal, [0.0, 0.0, -1.0]);
   s.destroy_shape(shape).expect("destroy");
   assert!(s.set_shape(n, Some(shape)).is_err());
   // A node whose shape is gone falls back to its box.
@@ -459,7 +468,7 @@ fn shape_bvh_matches_the_linear_oracle() {
         assert_eq!(h.face, Some(face));
         let (gu, wu) = (h.uv.expect("uv"), uv.expect("oracle uv"));
         assert!((gu[0] - wu[0]).abs() < 1e-3 && (gu[1] - wu[1]).abs() < 1e-3, "uv {gu:?} vs {wu:?}");
-        let normal = h.normal.expect("normal");
+        let normal = h.normal;
         assert!(normal[1] > 0.0, "a downward ray sees the up-facing side");
       }
       None => assert!(got.is_empty(), "the index must not invent hits"),
@@ -1011,7 +1020,7 @@ fn a_cull_group_follows_its_members_boxes() {
   // Culling-only boxes keep the joints out of the picking index.
   s.set_cull_bounds(joint_a, Some(UNIT)).expect("cull bounds");
   s.set_cull_bounds(joint_b, Some(UNIT)).expect("cull bounds");
-  assert!(s.overlap([-10.0, -10.0, -10.0, 10.0, 10.0, 10.0]).is_empty());
+  assert!(s.overlap(&Volume::Box { center: [0.0; 3], half: [10.0; 3], rotation: Q }).is_empty());
   s.set_cull_group(part, &[joint_a, joint_b]).expect("group");
   s.bind_sink(part, sink(1)).expect("sink");
   // A frustum over joint B alone shows the part (the union spans both

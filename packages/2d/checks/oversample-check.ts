@@ -9,8 +9,8 @@
 //   bunx srt bundle -f --stdout packages/2d/checks/oversample-check.ts | target/release/flux - [seed]
 //
 // A seeded PRNG keeps failures reproducible - rerun with the printed seed.
-// A failure prints FAIL lines and throws at the end; the flux binary exits 0
-// regardless, so read the output, not the exit code.
+// A failure prints FAIL lines and throws at the end, and the flux binary
+// exits 1 on the uncaught throw, so a CI step can gate on the exit code.
 
 import { argv } from "flux:process"
 import { fitOversampleWithin, pickOversample, tileWorldScale } from "../src/oversample-math.ts"

@@ -142,7 +142,10 @@ together, not just eviction:
 
 1. **A view-rect input into the core layer** - the one signal driving
    everything below (the component's camera already knows it; the core
-   layer does not).
+   layer does not). The app side has it since
+   [2d-camera-controller](../done/2d-camera-controller.md):
+   `createCamera2d`'s `viewRect()` is the world AABB of the view,
+   rotation included, so the layer input is what remains.
 2. **Residency**: evict far chunks' textures, keep the ~5KB CPU records
    (~180x cheaper than the texture), re-bake on approach. For truly
    unbounded roaming even records can go: an app-provided re-fill callback

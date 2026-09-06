@@ -19,11 +19,11 @@ unprojectCamera", but taking the leaf's handlers yourself means the
 built-in per-sprite dispatch never runs: the app re-implements picking,
 per-pointer capture, tap-vs-drag slop and hover pairing by hand.
 
-Both 2d demos hit this. Starlings only needed layer-level gestures, so
-the workaround was cheap. Relay (packages/2d/demos/src/relay.tsx) needs
-both sides and carries a full hand-rolled dispatch: pickNode over
-`layer.pick`, its own pointer map, its own pinch bookkeeping, its own
-hover tracking - roughly a hundred lines every canvas app will paste.
+Every canvas app hits this: one that only needs layer-level gestures
+gets by on the workaround; one that needs both sides ends up with a full
+hand-rolled dispatch - a pick over `layer.pick`, its own pointer map, its
+own pinch bookkeeping, its own hover tracking - roughly a hundred lines
+every such app will paste.
 
 ## Shape
 
@@ -55,5 +55,9 @@ event, which is what the layer lacks.
 - Do enter/leave pair against the background too (hover left all
   sprites), or stay sprite-only as today?
 - Does the record layer get the same surface (it shares spriteDispatch)?
-- Should tap-vs-drag slop stay app code, or ride along here (see the
-  camera-controller item, which would consume these events)?
+- Tap-vs-drag slop is settled since
+  [2d-camera-controller](../done/2d-camera-controller.md): `createCamera2d`
+  derives a tap as a press that never engaged core's transform recognizer
+  (the recognizer's slop), and `cam.handlers` is the consumer the miss
+  path feeds. So this item only has to deliver misses to a handler set of
+  the element shape; the `<Camera2d>` component follows from it.

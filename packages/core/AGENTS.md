@@ -294,7 +294,12 @@ latest (solid-js 1.x, off Solid 2.0 entirely). The recipe that works is
 - Gesture recognizers, shared by every package: `createPan` (single-pointer
   drag, axis-aware slop, per-event dx/dy) and `createTransform` (merged
   pan + pinch + rotate over the whole pointer set, Flutter-Scale style: streams
-  `{ dx, dy, scale, rotation, x, y, pointers }` once per FRAME - positions
+  `{ dx, dy, scale, rotation, x, y, pointers }` once per FRAME. Frames, both
+  recognizers: slop and span gates are finger travel and measure in window
+  pixels; dx/dy are measured in the handler node's PARENT frame (the frame
+  its own x/y live in) so they apply 1:1 to the node or to content inside
+  it under any scaled ancestor (a designSize fit); the transform's focal
+  x/y is in the node's LOCAL frame, the zoom-about anchor. Positions
   update per event, but the cross-pointer measure waits for the
   `pointerFrame` batch terminator, when every pointer is the same age; one
   finger degrades to a plain pan, and `pointers` is how a consumer gives one-

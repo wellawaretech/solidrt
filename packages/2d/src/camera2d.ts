@@ -15,12 +15,11 @@
 // glide. A press that releases without the recognizer engaging is a tap,
 // reported as a world point.
 //
-// Coordinates: anchors (the point a zoom keeps pinned, a tap) use the
-// event's localX/localY, i.e. the input element's own pixels, which for
-// the layer's leaf are layer pixels. The recognizer's deltas are
-// window-logical pixels (clientX/clientY), the convention core's
-// ScrollView shares - so the input element must not be scaled relative
-// to the window; a translated leaf is fine.
+// Coordinates: everything arrives in the input element's own frame. The
+// recognizer reports the pinch focal in the element's local pixels (layer
+// pixels on the layer's leaf) and the drag deltas in its parent frame, and
+// the wheel and a tap use the event's localX/localY - so a leaf under a
+// designSize fit or any scaled ancestor pans and zooms correctly.
 //
 // Pose is plain mutable state advanced by update(dt) from the app's own
 // onFrame; the control registers no frame loop of its own. update() pushes
@@ -58,27 +57,17 @@ export type Camera2d = Camera2dMotion & {
  * camera), or anything else with the layers' `setCamera`, such as a signal
  * setter feeding `<TileLayer camera>`. The initial pose applies
  * immediately: the world fitted when `world` is given and no `zoom`.
+ * Create it from an owned scope (a component body, like the orbit
+ * camera): the input recognizer registers its cleanup with the owner.
  */
 export function createCamera2d(target: Camera2dTarget | Camera2dTarget[], options: Camera2dOptions): Camera2d {
   let motion = createCameraMotion(target, options)
-  // Every pointer down on the element, in its local pixels: the pinch's
-  // focal anchor, which the recognizer reports in window pixels only.
-  let pointers = new Map<number, { x: number; y: number }>()
+  // The pointers down on the element, for the tap rule.
+  let down = new Set<number>()
   let gesture = false
   // The pointer whose press may still be a tap (alone, and the recognizer
   // has not engaged).
   let tap: number | null = null
-
-  let focal = () => {
-    let fx = 0
-    let fy = 0
-    for (let p of pointers.values()) {
-      fx += p.x
-      fy += p.y
-    }
-    let n = Math.max(1, pointers.size)
-    return { x: fx / n, y: fy / n }
-  }
 
   let transform = createTransform({
     onTransformStart: () => {
@@ -86,10 +75,7 @@ export function createCamera2d(target: Camera2dTarget | Camera2dTarget[], option
       tap = null
     },
     onTransformMove: (t) => {
-      if (t.scale !== 1) {
-        let f = focal()
-        motion.zoomAt(f.x, f.y, t.scale)
-      }
+      if (t.scale !== 1) motion.zoomAt(t.x, t.y, t.scale)
       if (t.dx !== 0 || t.dy !== 0) motion.panBy(t.dx, t.dy)
     },
     onTransformEnd: () => {
@@ -103,24 +89,19 @@ export function createCamera2d(target: Camera2dTarget | Camera2dTarget[], option
     handlers: {
       onPointerDown(e) {
         if (e.button != null && e.button !== 0) return
-        pointers.set(e.pointerId, { x: e.localX, y: e.localY })
-        tap = pointers.size === 1 ? e.pointerId : null
+        down.add(e.pointerId)
+        tap = down.size === 1 ? e.pointerId : null
         // A finger landing on a gliding view stops it where it is.
         motion.interrupt()
         transform.handlers.onPointerDown(e)
       },
       onPointerMove(e) {
-        let p = pointers.get(e.pointerId)
-        if (p) {
-          p.x = e.localX
-          p.y = e.localY
-        }
         transform.handlers.onPointerMove(e)
       },
       onPointerUp(e) {
-        let wasTap = tap === e.pointerId && !gesture && pointers.size === 1
+        let wasTap = tap === e.pointerId && !gesture && down.size === 1
         transform.handlers.onPointerUp(e)
-        pointers.delete(e.pointerId)
+        down.delete(e.pointerId)
         if (tap === e.pointerId) tap = null
         if (wasTap && options.onTap) {
           let [wx, wy] = unprojectCamera(motion.camera(), e.localX, e.localY)

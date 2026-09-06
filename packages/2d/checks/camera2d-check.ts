@@ -9,10 +9,11 @@
 //   bunx srt bundle -f --stdout packages/2d/checks/camera2d-check.ts | target/release/flux - [seed]
 //
 // A seeded PRNG keeps failures reproducible - rerun with the printed seed.
-// A failure prints FAIL lines and throws at the end; the flux binary exits 0
-// regardless, so read the output, not the exit code. The input glue
-// (createCamera2d's handlers over core's transform recognizer) needs the
-// runtime's event bus and is exercised live by examples/camera.tsx.
+// A failure prints FAIL lines and throws at the end, and the flux binary
+// exits 1 on the uncaught throw, so a CI step can gate on the exit code.
+// The input glue (createCamera2d's handlers over core's transform
+// recognizer) needs the runtime's event bus and is exercised live by
+// examples/camera.tsx.
 
 import { argv } from "flux:process"
 import { createCameraMotion } from "../src/camera-motion.ts"

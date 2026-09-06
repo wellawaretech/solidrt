@@ -63,8 +63,7 @@ impl ModuleDef for SpatialModule {
     decl.declare("setShape")?;
     decl.declare("raycast")?;
     decl.declare("overlap")?;
-    decl.declare("overlapVolume")?;
-    decl.declare("sweepVolume")?;
+    decl.declare("sweep")?;
     decl.declare("bindDirectionSlot")?;
     decl.declare("bindPositionSlot")?;
     decl.declare("unbindSlot")?;
@@ -107,8 +106,7 @@ impl ModuleDef for SpatialModule {
     exports.export("setShape", Function::new(ctx.clone(), set_shape)?)?;
     exports.export("raycast", Function::new(ctx.clone(), raycast)?)?;
     exports.export("overlap", Function::new(ctx.clone(), overlap)?)?;
-    exports.export("overlapVolume", Function::new(ctx.clone(), overlap_volume)?)?;
-    exports.export("sweepVolume", Function::new(ctx.clone(), sweep_volume)?)?;
+    exports.export("sweep", Function::new(ctx.clone(), sweep)?)?;
     exports.export("bindDirectionSlot", Function::new(ctx.clone(), bind_direction_slot)?)?;
     exports.export("bindPositionSlot", Function::new(ctx.clone(), bind_position_slot)?)?;
     exports.export("unbindSlot", Function::new(ctx.clone(), unbind_slot)?)?;
@@ -393,7 +391,7 @@ fn set_shape(ctx: Ctx<'_>, id: u64, shape: OptArg<u64>) -> rquickjs::Result<()> 
 }
 
 /// Every shown node with bounds the ray strikes, nearest first, as
-/// `{ node, distance, point, normal?, face?, uv? }` objects.
+/// `{ node, distance, point, normal, face?, uv? }` objects.
 fn raycast<'js>(
   ctx: Ctx<'js>,
   origin: TypedArray<'js, f32>,
@@ -410,10 +408,8 @@ fn raycast<'js>(
     let obj = Object::new(ctx.clone())?;
     obj.set("node", h.node)?;
     obj.set("distance", h.distance as f64)?;
-    obj.set("point", vec![h.point[0] as f64, h.point[1] as f64, h.point[2] as f64])?;
-    if let Some(n) = h.normal {
-      obj.set("normal", vec![n[0] as f64, n[1] as f64, n[2] as f64])?;
-    }
+    obj.set("point", vec3(h.point))?;
+    obj.set("normal", vec3(h.normal))?;
     if let Some(f) = h.face {
       obj.set("face", f)?;
     }
@@ -421,21 +417,6 @@ fn raycast<'js>(
       obj.set("uv", vec![uv[0] as f64, uv[1] as f64])?;
     }
     arr.set(i, obj)?;
-  }
-  Ok(arr)
-}
-
-/// Every shown node with bounds whose transformed local box overlaps the
-/// world-axis box, as an array of node ids (unordered).
-fn overlap<'js>(ctx: Ctx<'js>, bounds: TypedArray<'js, f32>) -> rquickjs::Result<Array<'js>> {
-  let b = floats(&ctx, &bounds, "overlap")?;
-  if b.len() != 6 {
-    return Err(throw_str(&ctx, "overlap: bounds must be a Float32Array of 6 (minX..maxZ)"));
-  }
-  let nodes = super::gui(&ctx).alloy.spatial().overlap([b[0], b[1], b[2], b[3], b[4], b[5]]);
-  let arr = Array::new(ctx.clone())?;
-  for (i, id) in nodes.iter().enumerate() {
-    arr.set(i, *id)?;
   }
   Ok(arr)
 }
@@ -465,9 +446,9 @@ fn vec3(v: [f32; 3]) -> Vec<f64> {
 
 /// Every shown node with bounds the volume touches, each with its deepest
 /// contact, as `{ node, point, normal, depth }` objects (unordered).
-fn overlap_volume<'js>(ctx: Ctx<'js>, kind: String, data: TypedArray<'js, f32>) -> rquickjs::Result<Array<'js>> {
-  let volume = volume_arg(&ctx, &kind, &data, "overlapVolume")?;
-  let hits = super::gui(&ctx).alloy.spatial().overlap_volume(&volume);
+fn overlap<'js>(ctx: Ctx<'js>, kind: String, data: TypedArray<'js, f32>) -> rquickjs::Result<Array<'js>> {
+  let volume = volume_arg(&ctx, &kind, &data, "overlap")?;
+  let hits = super::gui(&ctx).alloy.spatial().overlap(&volume);
   let arr = Array::new(ctx.clone())?;
   for (i, h) in hits.iter().enumerate() {
     let obj = Object::new(ctx.clone())?;
@@ -483,18 +464,18 @@ fn overlap_volume<'js>(ctx: Ctx<'js>, kind: String, data: TypedArray<'js, f32>) 
 /// The volume moved by `motion`: every shown node with bounds it touches
 /// on the way, at its first touch, earliest first, as `{ node, time,
 /// point, normal }` objects.
-fn sweep_volume<'js>(
+fn sweep<'js>(
   ctx: Ctx<'js>,
   kind: String,
   data: TypedArray<'js, f32>,
   motion: TypedArray<'js, f32>,
 ) -> rquickjs::Result<Array<'js>> {
-  let volume = volume_arg(&ctx, &kind, &data, "sweepVolume")?;
-  let m = floats(&ctx, &motion, "sweepVolume")?;
+  let volume = volume_arg(&ctx, &kind, &data, "sweep")?;
+  let m = floats(&ctx, &motion, "sweep")?;
   if m.len() != 3 {
-    return Err(throw_str(&ctx, "sweepVolume: motion must be a Float32Array of 3"));
+    return Err(throw_str(&ctx, "sweep: motion must be a Float32Array of 3"));
   }
-  let hits = super::gui(&ctx).alloy.spatial().sweep_volume(&volume, [m[0], m[1], m[2]]);
+  let hits = super::gui(&ctx).alloy.spatial().sweep(&volume, [m[0], m[1], m[2]]);
   let arr = Array::new(ctx.clone())?;
   for (i, h) in hits.iter().enumerate() {
     let obj = Object::new(ctx.clone())?;

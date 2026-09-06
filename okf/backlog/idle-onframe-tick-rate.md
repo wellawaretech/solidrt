@@ -51,6 +51,13 @@ collision.tsx` in `@solidrt/3d` hit exactly this: its gravity loop
 starts at speed 0, the first frames move the eye by nothing visible, and
 the loop then waited on the idle cadence. `/clock?step=<n>` did not
 advance the onFrame tick either (steps ran, `tick` deltas stayed 0).
+Seen again 2026-09-06 from the other side: `step=<n>` answers with
+`pendingSteps` and returns BEFORE the steps run, and they drain at the
+idle cadence, so a debug read right after the POST races them (a 120-step
+request had advanced a glide by a few frames' worth when read at once,
+and had landed after a 3 s wait). debugging.md's "freeze, step, snapshot"
+reads as synchronous; either the endpoint blocks until its queue drains,
+as `/input` does for its events, or the guide says to wait.
 
 Either the runtime's idle-tick gate is over-gating a standing request
 (the `idle-tick runaway` fix, or the frame-pacing policy work in

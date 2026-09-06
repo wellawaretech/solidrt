@@ -68,7 +68,7 @@ const TRANSFORM = new Float32Array(10)
 const FLAT_BOUNDS = new Float32Array([-0.5, -0.5, 0, 0.5, 0.5, 0])
 const RAY_ORIGIN = new Float32Array(3)
 const RAY_DIR = new Float32Array([0, 0, 1])
-const BOX = new Float32Array(6)
+const BOX = new Float32Array([0, 0, 0, 0, 0, 1, 0, 0, 0, 1])
 
 // Settle routing: the core's "spatialTransitionEnd" event carries the node
 // id, so the handles with a transition DECLARED are indexed by node (only
@@ -769,15 +769,17 @@ export function createSpriteLayer(
     },
     pickRect(x, y, w, h) {
       if (scheduled) flush()
-      BOX[0] = x
-      BOX[1] = y
-      BOX[2] = -1
-      BOX[3] = x + w
-      BOX[4] = y + h
+      // The marquee as a "box" volume: center, half extents, no rotation,
+      // a unit deep so every sprite plane (z = 0) lies inside it.
+      BOX[0] = x + w / 2
+      BOX[1] = y + h / 2
+      BOX[2] = 0
+      BOX[3] = w / 2
+      BOX[4] = h / 2
       BOX[5] = 1
       let out: Sprite[] = []
-      for (let node of spatial.overlap(BOX)) {
-        let sprite = byNode.get(node)
+      for (let hit of spatial.overlap("box", BOX)) {
+        let sprite = byNode.get(hit.node)
         if (sprite) out.push(sprite)
       }
       return out

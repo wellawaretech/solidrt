@@ -6,7 +6,8 @@
 // Claims covered:
 //   1. An ordinary mesh picks per triangle: hits carry face/uv/normal,
 //      and a ray through a gap INSIDE the merged geometry's box misses.
-//   2. An instanced mesh is box-only: its hits carry none of the three.
+//   2. An instanced mesh is box-only: its hits carry the box face's
+//      normal and neither face nor uv.
 //   3. pick(x, y) and raycast cast the same ray: same nearest mesh.
 //   4. A scene-masked-out mesh is skipped by raycast like an invisible
 //      one - unless the query passes its own { layers }, which sees it
@@ -108,11 +109,11 @@ function App() {
     if (scene.raycast([0, 0, 10], down).length !== 0)
       fail("a ray through the gap inside the merged box must miss (triangle test, not box test)")
 
-    // 2. Instanced hits are box-only.
+    // 2. Instanced hits are box-only: the face's normal, no face/uv.
     let inst = scene.raycast([0, 3, 10], down)
     if (inst.length !== 1 || inst[0]!.mesh !== instanced) fail("ray into the instanced box should hit it once")
-    else if (inst[0]!.face !== undefined || inst[0]!.uv !== undefined || inst[0]!.normal !== undefined)
-      fail("an instanced hit must carry no face, uv or normal")
+    else if (inst[0]!.face !== undefined || inst[0]!.uv !== undefined) fail("an instanced hit must carry no face or uv")
+    else if (Math.abs(inst[0]!.normal[2] - 1) > 1e-4) fail(`an instanced hit carries the struck face's normal, got [${inst[0]!.normal}]`)
 
     // 3. pick() casts the same ray as raycast(screenRay).
     let px = scene.project([-2, 0, 0])

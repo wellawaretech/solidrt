@@ -307,8 +307,8 @@ a pan may put the pivot. Zoom aims
 at the target unless `zoomAnchor(x, y, {eye, target})` maps the pinch focal
 / wheel cursor to a world point (ground hit, target-depth plane, ...) - then
 that point stays pinned under the pointer and the target slides toward it;
-only the app can build that mapping, since fov, aspect and element placement
-are app state. Pair it with `rotateAnchor({eye, target})`: called at gesture
+only the app can build that mapping, since fov and aspect are app state
+(the point arrives in the input element's own pixels). Pair it with `rotateAnchor({eye, target})`: called at gesture
 start, its point is projected onto the view axis and re-seats the pivot
 without moving the picture, so a drag after an anchored zoom orbits what the
 camera looks at, not wherever the zoom left the target. Spread
@@ -346,9 +346,9 @@ down/up in `fly` mode. Walking (the default) flattens the heading onto
 the ground plane at fixed height. The control NEVER calls `lockPointer`
 - click-to-lock and Escape-to-release are the app's window-level
 decisions (see `examples/first-person.tsx`) - and has no collision of
-its own: `clampPosition(next)` is the whole hook - bounds, a floor
-height, or `moveAndSlide` against the collision layer (see
-`examples/collision.tsx`). Spread `handlers` (pointer + key +
+its own: `clampPosition(next, current)` is the whole hook - bounds, a
+floor height, or `moveAndSlide` over `next - current` against the
+collision layer (see `examples/collision.tsx`). Spread `handlers` (pointer + key +
 onBlur; keys reach only the FOCUSED node, so that element must hold
 focus or be the window), call `update(dt)` from onFrame; `active()` is
 reactive - a key held or a stick deflected - and gates the loop. Keys
@@ -400,8 +400,10 @@ a ray through a knot's hole misses. A large geometry's triangles are
 BVH-indexed too - built by the first ray that reaches the shape, log-cost
 after - so raycasting a merged static scene stays cheap (see the batching
 advice). An instanced mesh is box-only (its
-explicit population bounds; records are opaque), so its hits have none of
-the three. Both methods
+explicit population bounds; records are opaque): it is tested by the
+box's twelve triangles, so its hits carry the struck face's `normal` and
+no `face`/`uv` - and a ray from inside it meets the far side, the
+surface contract overlap/sweep share. Both methods
 flush pending writes first (the lookAt/project immediacy contract), and
 both skip invisible meshes.
 
@@ -1549,9 +1551,9 @@ older bakes are rejected - re-bake with `srt tool 3d/model`.
   aColor you do not read.
 - Picking is triangle-accurate for ordinary meshes (`point` is a surface
   point, hits carry `face`/`uv`/`normal`) but box-only for instanced
-  meshes: there `point` is the entry point of the population `bounds`
-  box, and `face`/`uv`/`normal` are absent. Never present an instanced
-  hit as a surface hit. Both tiers run in the spatial core (Rust); never
+  meshes: there `point` is where the ray meets the population `bounds`
+  box, `normal` that face's, and `face`/`uv` are absent. Never present an
+  instanced hit as a surface hit. Both tiers run in the spatial core (Rust); never
   add a per-triangle path in JS - rays at mesh scale are
   interpreter-hostile, and the core already does it.
 - `scene.handlers` vs `handlersFor`: localX/localY arrive in the leaf's

@@ -18,6 +18,16 @@ What exists today, none of it structural:
   (seeded PRNG, `fail()` counter, PASS/FAIL print, throw at the end), run by
   hand as `bunx srt bundle -f --stdout <file> | target/release/flux -`.
   They are tests in everything but name and harness.
+- `packages/2d/checks/{camera,camera2d,frames,oversample,pick}-check.ts` -
+  the same rig shape, headless on flux by keeping the checked modules free
+  of core imports: `srt:events` (the pointerFrame terminator core's
+  recognizers subscribe to) exists only under lattice, so anything that
+  imports `createPan`/`createTransform` cannot run on the bare binary. The
+  3d cameras (`createOrbitCamera`, `createFirstPersonCamera`) mix their
+  motion with that glue and have no rig for that reason; the 2d camera's
+  motion/input split (camera-motion.ts vs camera2d.ts) is the precedent
+  for giving them one. Also: `srt check` typechecks examples and demos but
+  not `checks/`, so a broken rig is only found by running it.
 - `flux/examples/*_test.js` - 13 manual smoke scripts for the flux modules
   ([flux-crate-review](../notes/flux-crate-review.md) item 7 already asks to
   promote them).

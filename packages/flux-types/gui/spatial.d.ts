@@ -97,16 +97,17 @@ declare module "flux:spatial" {
 
   export type ShapeId = number & { readonly __spatialShape: unique symbol }
 
-  /** One hit of raycast(), nearest first. `face`/`uv`/`normal` are present
-   * for nodes with a shape (uv only when the shape has UVs); a node with
-   * bounds but no shape reports its local box, distance and point only. */
+  /** One hit of raycast(), nearest first. `face`/`uv` are present for
+   * nodes with a shape (uv only when the shape has UVs); a node with
+   * bounds but no shape is its local box's twelve triangles, so its hit
+   * carries the struck face's normal and no face/uv. */
   export type Hit = {
     node: NodeId
     /** World units along the normalized ray. */
     distance: number
     point: [number, number, number]
     /** World-space geometric normal, facing the ray. */
-    normal?: [number, number, number]
+    normal: [number, number, number]
     /** Triangle index into the shape's index list. */
     face?: number
     uv?: [number, number]
@@ -151,21 +152,11 @@ declare module "flux:spatial" {
    * direction need not be normalized; distances are world units. Reads
    * the index as of the last flush. */
   export function raycast(origin: Float32Array, direction: Float32Array): Hit[]
-  /**
-   * Every shown node with bounds whose local box, carried through its
-   * world transform, overlaps the world-axis box `bounds` (a Float32Array
-   * of 6: [minX, minY, minZ, maxX, maxY, maxZ]; touching counts, a point
-   * is min == max). Tested by separating axes, so a rotated flat rect -
-   * the 2d marquee case - tests exactly, never by its world AABB.
-   * Unordered; reads the index as of the last flush, like raycast.
-   */
-  export function overlap(bounds: Float32Array): NodeId[]
-
-  /** A query volume's layout for overlapVolume/sweepVolume: "capsule" is
+  /** A query volume's layout for overlap/sweep: "capsule" is
    * 7 floats (a, b, radius; a sphere when a == b), "box" is 10 (center,
    * half extents, unit quaternion xyzw). */
   export type VolumeKind = "capsule" | "box"
-  /** One node overlapVolume() touches: its deepest contact - the point on
+  /** One node overlap() touches: its deepest contact - the point on
    * the node's surface, the unit direction out of it, and the depth along
    * that direction that clears the contact. */
   export type Overlap = {
@@ -174,7 +165,7 @@ declare module "flux:spatial" {
     normal: [number, number, number]
     depth: number
   }
-  /** One node sweepVolume() touches: `time` is the fraction of the motion
+  /** One node sweep() touches: `time` is the fraction of the motion
    * at first touch, `point` the touch point on the node's surface,
    * `normal` the unit normal there facing the volume. */
   export type Impact = {
@@ -187,20 +178,22 @@ declare module "flux:spatial" {
    * Every shown node with bounds the volume touches, each with its
    * deepest contact. A node with a shape is tested per triangle in world
    * space, so it holds under any transform; a node without one is its
-   * local box's twelve triangles. Surfaces, not solids: a volume wholly
-   * inside a closed mesh with no triangle in reach touches nothing.
-   * Unordered; reads the index as of the last flush, like raycast.
+   * local box's twelve triangles (a flat rect is four of them, so a
+   * rotated sprite tests exactly - the 2d marquee's box query is a "box"
+   * volume). Surfaces, not solids: a volume wholly inside a closed mesh
+   * with no triangle in reach touches nothing. Unordered; reads the index
+   * as of the last flush, like raycast.
    */
-  export function overlapVolume(kind: VolumeKind, volume: Float32Array): Overlap[]
+  export function overlap(kind: VolumeKind, volume: Float32Array): Overlap[]
   /**
    * The volume moved by `motion` (a Float32Array of 3): every shown node
    * with bounds it touches on the way, at its first touch, earliest
    * first. A node already in contact reports time 0 while the motion
    * closes in, and nothing while it leaves or slides along the contact;
    * a zero motion touches nothing. Same testing and index contract as
-   * overlapVolume.
+   * overlap.
    */
-  export function sweepVolume(kind: VolumeKind, volume: Float32Array, motion: Float32Array): Impact[]
+  export function sweep(kind: VolumeKind, volume: Float32Array, motion: Float32Array): Impact[]
 
   /**
    * Route the world DIRECTION of the node's local `vector` (a

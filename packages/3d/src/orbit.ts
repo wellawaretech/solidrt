@@ -27,9 +27,8 @@
 // pinch focal / wheel cursor to a world point, and the zoom scales the pose
 // about that point instead - the spot under the fingers stays under the
 // fingers, with the target sliding toward it. Only the app can own that
-// mapping: screen-to-ray needs the projection and the element's placement
-// (fov, aspect, designSize scaling), which live in the app's camera and layout,
-// not here.
+// mapping: screen-to-ray needs the projection (fov, aspect), which lives
+// in the app's camera, not here.
 //
 // Anchored zoom leaves the target wherever the zoom carried it - possibly a
 // point in empty air near the eye, and a drag orbiting THAT swings the scene
@@ -39,6 +38,13 @@
 // point is projected onto the view axis first, so re-seating moves only the
 // target's depth - the eye and the picture do not change, only what a drag
 // swings around.
+//
+// Every pointer coordinate here is in the input element's own frame: the
+// recognizer measures drag deltas in the element's parent frame and the
+// pinch focal in its local frame, and the wheel uses localX/localY, so a
+// viewport under a designSize fit or any scaled ancestor behaves the same
+// as one filling the window. `viewport().height` is therefore the
+// element's laid-out height, which the OrbitCamera component passes.
 //
 // Pose is plain mutable state advanced by update(dt) from the app's own
 // onFrame; the control registers no frame loop of its own, so whether
@@ -93,24 +99,25 @@ export type OrbitCameraOptions = {
   /** Multiplier over the two-finger pan (1 = the scene tracks the fingers
    * exactly at the target's depth). */
   panSpeed?: number
-  /** The viewport the pointer coordinates live in: height in the same
-   * logical units as clientX/clientY, and the camera's vertical fov in
-   * degrees; return null while neither is known yet. Providing it makes
-   * rotation viewport-relative (a drag across the viewport height is one
-   * full turn, whatever the window size) and enables two-finger pan;
-   * without it rotation is a fixed angle per pixel and two-finger
-   * translation rotates. */
+  /** The viewport the drag lives in: the input element's own height (its
+   * laid-out size, the frame the recognizer's deltas arrive in), and the
+   * camera's vertical fov in degrees; return null while neither is known
+   * yet. Providing it makes rotation viewport-relative (a drag across the
+   * viewport height is one full turn, whatever the window size) and
+   * enables two-finger pan; without it rotation is a fixed angle per pixel
+   * and two-finger translation rotates. */
   viewport?: () => { height: number; fov: number } | null
   /** Constrain where a pan may put the target - return the target to use.
    * The typical use: keep the pivot within a few radii of the subject so
    * panning cannot strand the camera. Zoom and rotation do not consult it. */
   clampTarget?: (target: Vec3) => Vec3
-  /** Map a screen point (window coordinates, the clientX/clientY frame) to
-   * the world point a zoom there should keep pinned. Called once per pinch
-   * gesture (at its first span change - the anchor then holds for the whole
-   * gesture, see the jitter note at `pinchAnchor`) and once per wheel event,
-   * with the pose the zoom is about to apply to. Return null to zoom toward
-   * the target as usual (also the default). */
+  /** Map a point in the input element's own pixels (the frame
+   * localX/localY report in) to the world point a zoom there should keep
+   * pinned. Called once per pinch gesture (at its first span change - the
+   * anchor then holds for the whole gesture, see the jitter note at
+   * `pinchAnchor`) and once per wheel event, with the pose the zoom is
+   * about to apply to. Return null to zoom toward the target as usual
+   * (also the default). */
   zoomAnchor?: (x: number, y: number, view: { eye: Vec3; target: Vec3 }) => Vec3 | null
   /** The world point rotation should pivot about - called when a drag or
    * pinch starts. It is projected onto the view axis and becomes the new
@@ -150,9 +157,10 @@ export type OrbitCamera = {
     onPointerDown(e: PointerEvent): void
     onPointerMove(e: PointerEvent): void
     onPointerUp(e: PointerEvent): void
-    /** Position is optional so a bare `{ deltaY }` still zooms; without it
-     * a zoomAnchor cannot apply and the zoom falls back to the target. */
-    onWheel(e: { deltaY: number; clientX?: number; clientY?: number }): void
+    /** Position (the element's own pixels) is optional so a bare
+     * `{ deltaY }` still zooms; without it a zoomAnchor cannot apply and
+     * the zoom falls back to the target. */
+    onWheel(e: { deltaY: number; localX?: number; localY?: number }): void
   }
 }
 
@@ -336,7 +344,7 @@ export function createOrbitCamera(camera: OrbitTarget, options: OrbitCameraOptio
     handlers: {
       ...transform.handlers,
       onWheel(e) {
-        zoomAbout(Math.exp(e.deltaY * wheelZoom), anchorAt(e.clientX, e.clientY))
+        zoomAbout(Math.exp(e.deltaY * wheelZoom), anchorAt(e.localX, e.localY))
         dirty = true
       },
     },

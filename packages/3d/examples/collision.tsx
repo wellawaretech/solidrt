@@ -94,9 +94,8 @@ function App() {
     nearNow = hit
     setNear(hit)
   }
-  // Walking: the camera asks for `next`, the collision answers.
-  let clamp = (next: Vec3): Vec3 => {
-    let eye = camera.pose().position
+  // Walking: the camera asks for `next` from `eye`, the collision answers.
+  let clamp = (next: Vec3, eye: Vec3): Vec3 => {
     let r = moveAndSlide(scene, bodyAt(eye), [next[0] - eye[0], next[1] - eye[1], next[2] - eye[2]], { layers: COLLIDER })
     let moved: Vec3 = [eye[0] + r.motion[0], eye[1] + r.motion[1], eye[2] + r.motion[2]]
     settle(moved, r.floor)

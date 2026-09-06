@@ -18,7 +18,13 @@ export interface PanOptions {
    */
   axis?: PanAxis
   onPanStart?: () => void
-  /** Pointer movement since the previous event; positive dx is rightward, positive dy downward. */
+  /**
+   * Pointer movement since the previous event, in the handler node's PARENT
+   * frame (the frame its own x/y live in: window pixels under no scaling
+   * ancestor, design pixels under a designSize fit), so it applies 1:1
+   * whether the consumer moves the node itself or content inside it.
+   * Positive dx is rightward, positive dy downward.
+   */
   onPanMove?: (dx: number, dy: number) => void
   onPanEnd?: () => void
 }
@@ -35,8 +41,17 @@ export interface PanOptions {
 // cancel() is the external-cancel hook; it ends an active pan without
 // onPanEnd. Options are read at event time. Single-pointer by design; for
 // multi-pointer pinch/rotate compose createTransform instead.
+//
+// Frames: the slop is finger travel, so it is measured in window pixels
+// (clientX/clientY); the deltas are measured in the node's parent frame
+// (parentX/parentY), the frame the node's own coordinates live in, so a
+// scaled ancestor (a designSize fit) is accounted for and both the drag
+// idiom (move the node) and the content idiom (scroll what is inside it)
+// apply the delta unchanged. The event carries both frames exactly, on
+// and off the node.
 export function createPan(options: PanOptions) {
-  // Down position while armed; last delivered position while active.
+  // Down position (window pixels) while armed; last delivered position
+  // (parent frame) while active.
   let origin: { x: number; y: number } | null = null
   let active: number | null = null
   let armed: number | null = null
@@ -78,7 +93,7 @@ export function createPan(options: PanOptions) {
         if (arena.steal(e.pointerId, owner)) {
           active = e.pointerId
           armed = null
-          origin = { x: e.clientX, y: e.clientY }
+          origin = { x: e.parentX, y: e.parentY }
           options.onPanStart?.()
         } else {
           // The arena is resolved against us; the drag belongs elsewhere.
@@ -87,8 +102,8 @@ export function createPan(options: PanOptions) {
         return
       }
       if (active === e.pointerId && origin) {
-        options.onPanMove?.(e.clientX - origin.x, e.clientY - origin.y)
-        origin = { x: e.clientX, y: e.clientY }
+        options.onPanMove?.(e.parentX - origin.x, e.parentY - origin.y)
+        origin = { x: e.parentX, y: e.parentY }
       }
     },
     onPointerUp: (e: PointerEvent) => {

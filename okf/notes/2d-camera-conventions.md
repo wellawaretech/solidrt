@@ -74,11 +74,11 @@ derived from canvas apps alone misses the follow camera entirely.
   own leaf, over core's `createTransform` (arena arbitration, slop
   swallowed, one delta per frame), exactly like the 3d orbit camera. A
   press with no recognizer engagement is a tap, reported as a world point.
-- Anchors use the event's `localX/localY` (the leaf's own pixels = layer
-  pixels); the recognizer's deltas are window-logical (`clientX/clientY`),
-  the convention ScrollView already follows. So the input leaf must not be
-  scaled relative to the window (a designSize fit scales it); translation
-  is fine.
+- Every coordinate arrives in the input element's own frames: core's
+  recognizers measure deltas in the node's parent frame and the focal
+  point in its local frame (slop stays in window pixels, it is finger
+  travel), and the wheel and taps use `localX/localY`. A leaf under a
+  designSize fit pans and zooms correctly; nothing converts.
 - The recognizer's slop is swallowed: the first move that crosses it
   contributes no delta. A synthetic 8-move drag therefore pans 7 moves'
   worth.

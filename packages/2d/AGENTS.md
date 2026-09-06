@@ -107,9 +107,9 @@ moved subtrees in Rust, and picking walks the core BVH.
   `cam.handlers` onto the layer's own leaf, call `cam.update(dt)` from
   onFrame (the only per-frame call: it pushes one setCamera per driven
   layer when the pose changed and reports that), read `cam.camera()` for
-  projectCamera. Anchors use the event's localX/localY (layer pixels);
-  deltas are window-logical, so the leaf must not be scaled relative to
-  the window (the ScrollView convention). The motion is camera-motion.ts,
+  projectCamera. Anchors and deltas arrive in the leaf's own frame
+  (core's recognizers measure in the node's frames), so a leaf under a
+  designSize fit pans and zooms correctly. The motion is camera-motion.ts,
   pure; checks/camera2d-check.ts pins the clamp, anchoring, glides,
   follow and inertia headless, examples/camera.tsx is the live guard.
   Not yet, all additive: a `<Camera2d>` component (needs the layer's

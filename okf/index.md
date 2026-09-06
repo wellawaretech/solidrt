@@ -1042,6 +1042,12 @@ Finished, kept for the reasoning.
   "Cut Android touch-drag latency and the 60/60 input-versus-frame stutter:
   fire the frame signal from an AChoreographer vsync callback, then late
   submit, then input resampling."
+- **[Recognizer deltas are window pixels, so a scaled input element pans at the wrong rate](done/gesture-deltas-window-logical.md)** [2026-09-06]
+  createPan and createTransform measure dx/dy in clientX/clientY while every
+  consumer applies them in the element's local frame; under a designSize fit
+  (or any scaled ancestor) a drag moves the content by the wrong amount, for
+  ScrollView and the 2d camera alike, even though each event already carries
+  exact localX/localY.
 - **[Go-client launcher](done/go-client-launcher.md)** [2026-07-21]
   "The default app becomes the client's compiled-in launcher: version-store
   apps with tap-to-launch and delete, manual address entry, and a boot rule

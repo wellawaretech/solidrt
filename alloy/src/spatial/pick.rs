@@ -7,7 +7,7 @@
 // instead of linear in its triangles.
 
 use super::bvh::ray_box_distance;
-use super::{transform_point, Box3, Mat4, NodeId};
+use super::{Box3, NodeId};
 
 /// Triangle count below which a shape stays brute-force: a handful of
 /// triangles tests faster flat than through a tree, and skipping the
@@ -40,8 +40,9 @@ pub struct Hit {
   /// World units along the (normalized) ray.
   pub distance: f32,
   pub point: [f32; 3],
-  /// World-space geometric normal facing the ray; None for a box hit.
-  pub normal: Option<[f32; 3]>,
+  /// World-space geometric normal facing the ray: the triangle's, or
+  /// the struck face's for a node tested by its box.
+  pub normal: [f32; 3],
   /// Triangle index into the shape's index list; None for a box hit.
   pub face: Option<u32>,
   /// Interpolated texture UV; None without a shape or shape UVs.
@@ -176,16 +177,25 @@ fn vertices(shape: &Shape, tri: &[u32]) -> [[f32; 3]; 3] {
 /// result before UV interpolation.
 type RawHit = (f32, u32, f32, f32, [f32; 3]);
 
-/// One triangle against the local-space ray (Moller-Trumbore, both
-/// sides): (t, u, v, unnormalized local normal), or None.
+/// One triangle of a shape against the local-space ray: (t, u, v,
+/// unnormalized local normal), or None.
 fn ray_triangle(positions: &[f32], tri: &[u32], o: [f32; 3], d: [f32; 3]) -> Option<(f32, f32, f32, [f32; 3])> {
   let at = |i: u32| -> [f32; 3] {
     let k = i as usize * 3;
     [positions[k], positions[k + 1], positions[k + 2]]
   };
-  let a = at(tri[0]);
-  let b = at(tri[1]);
-  let c = at(tri[2]);
+  ray_points(at(tri[0]), at(tri[1]), at(tri[2]), o, d)
+}
+
+/// Three points against the ray (Moller-Trumbore, both sides): (t, u, v,
+/// unnormalized normal), or None.
+pub(super) fn ray_points(
+  a: [f32; 3],
+  b: [f32; 3],
+  c: [f32; 3],
+  o: [f32; 3],
+  d: [f32; 3],
+) -> Option<(f32, f32, f32, [f32; 3])> {
   let e1 = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
   let e2 = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
   let h = cross(d, e2);
@@ -416,39 +426,6 @@ fn fill(nodes: &mut Vec<TriNode>, faces: &mut [u32], boxes: &[Box3], centers: &[
   nodes[node].count = 0;
   fill(nodes, faces, boxes, centers, left, lo, lo + mid);
   fill(nodes, faces, boxes, centers, left + 1, lo + mid, hi);
-}
-
-/// Does the node's LOCAL box, carried through its world matrix, overlap
-/// the world-axis box `query` (touching counts)? Separating axes of both
-/// boxes - the three world axes and the three transformed local axes
-/// (kept unnormalized, which stays valid under scale and shear). Exact
-/// for a rotated flat rect, the 2d picking case; a genuinely 3D pair can
-/// only err conservative on the edge-edge cross axes this skips.
-pub fn box_overlap(m: &Mat4, local: &Box3, query: &Box3) -> bool {
-  let lc = [(local[0] + local[3]) / 2.0, (local[1] + local[4]) / 2.0, (local[2] + local[5]) / 2.0];
-  let le = [(local[3] - local[0]) / 2.0, (local[4] - local[1]) / 2.0, (local[5] - local[2]) / 2.0];
-  let qc = [(query[0] + query[3]) / 2.0, (query[1] + query[4]) / 2.0, (query[2] + query[5]) / 2.0];
-  let qe = [(query[3] - query[0]) / 2.0, (query[4] - query[1]) / 2.0, (query[5] - query[2]) / 2.0];
-  let c = transform_point(m, lc);
-  let d = [c[0] - qc[0], c[1] - qc[1], c[2] - qc[2]];
-  let u = |j: usize| -> [f32; 3] { [m[j * 4], m[j * 4 + 1], m[j * 4 + 2]] };
-  for i in 0..3 {
-    let reach = qe[i] + (0..3).map(|j| le[j] * u(j)[i].abs()).sum::<f32>();
-    if d[i].abs() > reach {
-      return false;
-    }
-  }
-  for j in 0..3 {
-    let a = u(j);
-    let reach = (0..3).map(|k| le[k] * dot(u(k), a).abs()).sum::<f32>()
-      + qe[0] * a[0].abs()
-      + qe[1] * a[1].abs()
-      + qe[2] * a[2].abs();
-    if dot(d, a).abs() > reach {
-      return false;
-    }
-  }
-  true
 }
 
 pub(super) fn cross(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {

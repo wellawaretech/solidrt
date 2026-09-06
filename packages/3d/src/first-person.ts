@@ -72,12 +72,16 @@ export type FirstPersonCameraOptions = {
    * projection of the view; fly moves along the view itself, with Q/E for
    * down/up. */
   fly?: boolean
-  /** The viewport a drag lives in, height in the clientX/clientY units;
-   * makes the drag viewport-relative. Null while unknown. */
+  /** The viewport a drag lives in: the input element's own laid-out
+   * height (the frame the recognizer's deltas arrive in); makes the drag
+   * viewport-relative. Null while unknown. */
   viewport?: () => { height: number } | null
-  /** Constrain where a move may put the eye - return the position to use
-   * (a level's bounds, a floor height). Look does not consult it. */
-  clampPosition?: (position: Vec3) => Vec3
+  /** Constrain where a move may put the eye: called with the eye the
+   * move asks for and the eye it starts from (both fresh arrays), returns
+   * the position to use - a level's bounds, a floor height, a collision
+   * controller's `moveAndSlide` over the difference. Look does not
+   * consult it. */
+  clampPosition?: (next: Vec3, current: Vec3) => Vec3
 }
 
 export type FirstPersonPose = {
@@ -167,7 +171,7 @@ export function createFirstPersonCamera(camera: FirstPersonTarget, options: Firs
   }
   let moveBy = (dx: number, dy: number, dz: number) => {
     let next: Vec3 = [position[0] + dx, position[1] + dy, position[2] + dz]
-    position = options.clampPosition ? options.clampPosition(next) : next
+    position = options.clampPosition ? options.clampPosition(next, [position[0], position[1], position[2]]) : next
     dirty = true
   }
 

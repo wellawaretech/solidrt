@@ -50,9 +50,10 @@ question entirely, at the cost of requiring same-size, same-format sheets.
 
 **2. Packing at runtime.** A shelf allocator over an atlas texture:
 `packImage(atlas, bytes)` decodes, finds a shelf, uploads the sub-region and
-returns a `Frame`. Needs a texture sub-region upload in core - confirm
-whether one exists before shaping this; if it does not, that is the first
-step and it belongs in core rather than here.
+returns a `Frame`. Needs a texture sub-region upload in core, which does
+not exist (checked 2026-09-06: `uploadTexture` replaces whole frames, and
+its `offset` selects a frame in the SOURCE buffer, not a destination
+region), so that primitive is the first step and belongs in core.
 
 Open before implementing: whether a full atlas grows (allocate bigger, re-pack,
 re-emit frames - which invalidates every `Frame` an app is holding) or simply

@@ -124,14 +124,14 @@ let worldScratch = mat4()
  * triangle hit (every ordinary mesh - the test is per triangle, so a ray
  * through a knot's hole misses) the world-space geometric `normal` facing
  * the ray, the triangle index `face` and the interpolated texture `uv`.
- * An instanced mesh is picked by its explicit population box and a sprite
- * by a unit box around its center, so those three are absent on their
- * hits. */
+ * An instanced mesh is picked by the faces of its explicit population box
+ * and a sprite by those of a unit box around its center, so their hits
+ * carry the struck face's `normal` and no `face`/`uv`. */
 export type Hit = {
   mesh: Mesh
   distance: number
   point: Vec3
-  normal?: Vec3
+  normal: Vec3
   face?: number
   uv?: [number, number]
 }
@@ -672,7 +672,8 @@ export type Scene = {
    * mesh it hits, nearest first. An ordinary mesh tests per triangle
    * against its geometry (hits carry `face`, `uv`, a world-space `normal`
    * facing the ray, and a ray through a knot's hole misses); an instanced
-   * mesh or sprite is box-only. Broadphase runs over a BVH kept in step
+   * mesh or sprite is tested by its box's faces (a `normal`, no
+   * `face`/`uv`). Broadphase runs over a BVH kept in step
    * by the sync walk, and a large geometry's triangles are BVH-indexed
    * too (built by the first ray that reaches it), so merged static
    * geometry stays cheap to query. Reflects pending setTransform/add
@@ -1763,8 +1764,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       for (let h of spatial.raycast(rayOriginScratch, rayDirScratch)) {
         let mesh = admit(h.node)
         if (mesh === null) continue
-        let hit: Hit = { mesh, distance: h.distance, point: h.point }
-        if (h.normal !== undefined) hit.normal = h.normal
+        let hit: Hit = { mesh, distance: h.distance, point: h.point, normal: h.normal }
         if (h.face !== undefined) hit.face = h.face
         if (h.uv !== undefined) hit.uv = h.uv
         hits.push(hit)
@@ -1777,7 +1777,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       let admit = admitted(qopts, "overlap")
       let kind = packVolume(volume, "overlap")
       let out: Overlap[] = []
-      for (let h of spatial.overlapVolume(kind, kind === "box" ? boxScratch : capsuleScratch)) {
+      for (let h of spatial.overlap(kind, kind === "box" ? boxScratch : capsuleScratch)) {
         let mesh = admit(h.node)
         if (mesh !== null) out.push({ mesh, point: h.point, normal: h.normal, depth: h.depth })
       }
@@ -1792,7 +1792,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       motionScratch[1] = motion[1]
       motionScratch[2] = motion[2]
       let out: Impact[] = []
-      for (let h of spatial.sweepVolume(kind, kind === "box" ? boxScratch : capsuleScratch, motionScratch)) {
+      for (let h of spatial.sweep(kind, kind === "box" ? boxScratch : capsuleScratch, motionScratch)) {
         let mesh = admit(h.node)
         if (mesh !== null) out.push({ mesh, time: h.time, point: h.point, normal: h.normal })
       }
