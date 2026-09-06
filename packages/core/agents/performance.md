@@ -88,8 +88,11 @@ Rules, in order of leverage:
    springs need no pump at all - that is rule 1, and the runtime requests
    frames only while tracks run. For genuinely procedural per-frame motion,
    use a self-rechaining one-shot requestAnimationFrame that stops
-   re-requesting when its work list empties. (Registering onFrame outside a
-   component body also warns NO_OWNER_CLEANUP - it assumes a reactive owner.)
+   re-requesting when its work list empties. A loop that should run only
+   while a condition holds is an effect returning it:
+   `createEffect(() => active(), on => { if (!on) return; return onFrame(...) })`
+   - the apply phase has no owner, so onFrame registers nothing there and
+   the returned cleanup is the handle the effect disposes.
 5. repaintBoundary works like Flutter's: transforms and opacity on the
    boundary node itself (or any ancestor) are hoisted out of the cache and
    applied at composite time, so animating x/y/scale/rotate/opacity of a

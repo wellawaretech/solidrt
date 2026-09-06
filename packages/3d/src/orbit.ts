@@ -56,6 +56,14 @@
 // the scene's own shared write carries uViewProj and uCamPos), and reports
 // that, so per-frame dependents (reprojecting HUD overlays via
 // scene.project) can follow the camera without recomputing every frame.
+//
+// Options are read where they apply, not copied out: the clamps, the rates
+// (auto-orbit, rotate, zoom, pan), `viewport` and the anchor callbacks are
+// re-read from the options object on every input or update, so a caller
+// may change a field (or hand in an object of getters, which is what
+// `<OrbitCamera>` does with its props) and the next gesture or frame sees
+// it. Only the initial pose is copied at creation; later pose changes go
+// through set().
 
 import { createSignal } from "@solidjs/signals"
 import { createTransform } from "@solidrt/core"
@@ -73,25 +81,35 @@ const DRAG_TURNS = 1
 const DRAG_AZIMUTH = 0.008
 const DRAG_ELEVATION = 0.006
 const WHEEL_ZOOM = 0.0015
+// Default clamps: the distance floor keeps the eye off the target; the
+// elevation limits (radians) stop just short of the poles.
+const MIN_DISTANCE = 0.01
+const ELEVATION_LIMIT = 1.55
 
 /** What an orbit camera drives: a Scene, or one of its Views. */
 export type OrbitTarget = { setCamera(update: CameraUpdate): void }
 
+/** The pose fields (target, azimuth, elevation, distance) are initial
+ * values, copied at creation and changed through set() afterwards. Every
+ * other field is live: read from this object where it applies, so a
+ * change takes effect on the next gesture or update. */
 export type OrbitCameraOptions = {
-  /** The point the camera orbits and looks at (default origin). */
+  /** Initial point the camera orbits and looks at (default origin). */
   target?: Vec3
   /** Initial pose, radians and world units. */
   azimuth?: number
   elevation?: number
   distance?: number
+  /** Distance clamps, world units. */
   minDistance?: number
   maxDistance?: number
   /** Elevation clamps, radians; the defaults stop just short of the poles. */
   minElevation?: number
   maxElevation?: number
   /** Auto-orbit rate in radians/second (default 0: none). Runs while
-   * `orbiting()` and no drag/pinch is in progress; toggle with
-   * set({ orbiting }). */
+   * `orbiting()` and no drag/pinch is in progress; `orbiting` starts on
+   * when the initial rate is positive and toggles with set({ orbiting }).
+   * A new rate applies from the next update. */
   orbitSpeed?: number
   /** Multipliers over the built-in drag and zoom (wheel + pinch) sensitivities. */
   rotateSpeed?: number
@@ -178,22 +196,23 @@ export function createOrbitCamera(camera: OrbitTarget, options: OrbitCameraOptio
   let azimuth = options.azimuth ?? 0
   let elevation = options.elevation ?? 0
   let distance = options.distance ?? 5
-  let minDistance = options.minDistance ?? 0.01
-  let maxDistance = options.maxDistance ?? Infinity
-  let minElevation = options.minElevation ?? -1.55
-  let maxElevation = options.maxElevation ?? 1.55
-  let orbitSpeed = options.orbitSpeed ?? 0
-  let dragAzimuth = DRAG_AZIMUTH * (options.rotateSpeed ?? 1)
-  let dragElevation = DRAG_ELEVATION * (options.rotateSpeed ?? 1)
-  let wheelZoom = WHEEL_ZOOM * (options.zoomSpeed ?? 1)
+  // Everything below the pose is read from `options` where it applies.
+  let minDistance = () => options.minDistance ?? MIN_DISTANCE
+  let maxDistance = () => options.maxDistance ?? Infinity
+  let minElevation = () => options.minElevation ?? -ELEVATION_LIMIT
+  let maxElevation = () => options.maxElevation ?? ELEVATION_LIMIT
+  let orbitSpeed = () => options.orbitSpeed ?? 0
+  let rotateSpeed = () => options.rotateSpeed ?? 1
+  let zoomSpeed = () => options.zoomSpeed ?? 1
 
-  let [orbiting, setOrbiting] = createSignal(orbitSpeed > 0)
+  // The auto-orbit switch: starts on when the initial rate is positive.
+  let [orbiting, setOrbiting] = createSignal(orbitSpeed() > 0)
   let interacting = false
   let dirty = false
 
   let clampPose = () => {
-    elevation = clampNum(elevation, minElevation, maxElevation)
-    distance = clampNum(distance, minDistance, maxDistance)
+    elevation = clampNum(elevation, minElevation(), maxElevation())
+    distance = clampNum(distance, minDistance(), maxDistance())
   }
   // Slide eye and target together along the camera's right/up so the scene
   // tracks the fingers: dragged pixels map to world units through the
@@ -235,7 +254,7 @@ export function createOrbitCamera(camera: OrbitTarget, options: OrbitCameraOptio
     // Bounds widen to the current distance so a pose already outside them
     // (a rotateAnchor re-seat may land anywhere) zooms back toward range
     // instead of snap-jumping into it.
-    distance = clampNum(distance * ratio, Math.min(minDistance, prev), Math.max(maxDistance, prev))
+    distance = clampNum(distance * ratio, Math.min(minDistance(), prev), Math.max(maxDistance(), prev))
     if (!anchor) return
     let s = distance / prev
     target = [
@@ -295,9 +314,9 @@ export function createOrbitCamera(camera: OrbitTarget, options: OrbitCameraOptio
         pan(t.dx, t.dy, vp)
       } else {
         // Viewport-relative when the height is known, per-pixel otherwise.
-        let rel = vp !== null ? ((DRAG_TURNS * 2 * Math.PI) / vp.height) * (options.rotateSpeed ?? 1) : null
-        azimuth -= t.dx * (rel ?? dragAzimuth)
-        elevation = clampNum(elevation + t.dy * (rel ?? dragElevation), minElevation, maxElevation)
+        let rel = vp !== null ? (DRAG_TURNS * 2 * Math.PI) / vp.height : null
+        azimuth -= t.dx * (rel ?? DRAG_AZIMUTH) * rotateSpeed()
+        elevation = clampNum(elevation + t.dy * (rel ?? DRAG_ELEVATION) * rotateSpeed(), minElevation(), maxElevation())
       }
       if (t.scale !== 1) {
         // Fingers spreading (scale > 1) zooms in: the distance shrinks by the
@@ -307,7 +326,7 @@ export function createOrbitCamera(camera: OrbitTarget, options: OrbitCameraOptio
           pinchSeen = true
           pinchAnchor = anchorAt(t.x, t.y)
         }
-        zoomAbout(1 / Math.pow(t.scale, options.zoomSpeed ?? 1), pinchAnchor)
+        zoomAbout(1 / Math.pow(t.scale, zoomSpeed()), pinchAnchor)
       }
       dirty = true
     },
@@ -332,8 +351,9 @@ export function createOrbitCamera(camera: OrbitTarget, options: OrbitCameraOptio
       dirty = true
     },
     update(dt) {
-      if (orbitSpeed !== 0 && !interacting && orbiting()) {
-        azimuth += dt * orbitSpeed
+      let rate = orbitSpeed()
+      if (rate !== 0 && !interacting && orbiting()) {
+        azimuth += dt * rate
         dirty = true
       }
       if (!dirty) return false
@@ -344,7 +364,7 @@ export function createOrbitCamera(camera: OrbitTarget, options: OrbitCameraOptio
     handlers: {
       ...transform.handlers,
       onWheel(e) {
-        zoomAbout(Math.exp(e.deltaY * wheelZoom), anchorAt(e.localX, e.localY))
+        zoomAbout(Math.exp(e.deltaY * WHEEL_ZOOM * zoomSpeed()), anchorAt(e.localX, e.localY))
         dirty = true
       },
     },

@@ -1,4 +1,4 @@
-import { createSignal, onCleanup, onSettled, flush } from "@solidjs/signals"
+import { createSignal, getOwner, onCleanup, onSettled, flush } from "@solidjs/signals"
 import { requestFrame, setPointerLock } from "flux:rendertree"
 import { renderFrame } from "srt:render"
 import { on, once } from "srt:events"
@@ -44,7 +44,10 @@ let refreshRate = 60
  * control, but measure their delays against the wall clock, not this paced
  * timeline. performance.now() is not on it either: it is real elapsed time
  * for measuring work; Date.now() is calendar time.
- * Returns a cleanup function; also auto-cleans within a reactive scope.
+ * Returns a cleanup function; also auto-cleans within an owned scope. Outside
+ * one - an effect's apply phase, an event handler - the returned cleanup is
+ * the only handle, so return it from the apply (`return onFrame(...)`) to run
+ * a loop only while a condition holds.
  */
 export function onFrame(fn: (tick: number, frame: number, rate: number) => void) {
   let frameId: number = null!
@@ -77,7 +80,7 @@ export function onFrame(fn: (tick: number, frame: number, rate: number) => void)
     cancelled = true
     animationFrames.delete(frameId)
   }
-  onCleanup(cleanup)
+  if (getOwner()) onCleanup(cleanup)
   return cleanup
 }
 
@@ -101,7 +104,7 @@ interface ResizeEvent {
 
 export function onResize(fn: (data: ResizeEvent) => void) {
   let unsubscribe = on("resize", fn)
-  onCleanup(unsubscribe)
+  if (getOwner()) onCleanup(unsubscribe)
   return unsubscribe
 }
 
@@ -251,19 +254,19 @@ export function onLayout(fn: () => void) {
     let i = layoutHandlers.indexOf(fn)
     if (i >= 0) layoutHandlers.splice(i, 1)
   }
-  onCleanup(unsubscribe)
+  if (getOwner()) onCleanup(unsubscribe)
   return unsubscribe
 }
 
 export function onWindowFocus(fn: () => void) {
   let unsubscribe = on("windowFocus", fn)
-  onCleanup(unsubscribe)
+  if (getOwner()) onCleanup(unsubscribe)
   return unsubscribe
 }
 
 export function onWindowBlur(fn: () => void) {
   let unsubscribe = on("windowBlur", fn)
-  onCleanup(unsubscribe)
+  if (getOwner()) onCleanup(unsubscribe)
   return unsubscribe
 }
 
@@ -295,7 +298,8 @@ let backHandlers: ((e: BackEvent) => void)[] = []
  * handler that does not prevent must not act either - the event is still on its
  * way to whoever will handle it.
  *
- * Returns a cleanup function; also auto-cleans within a reactive scope.
+ * Returns a cleanup function; also auto-cleans within an owned scope (outside
+ * one the returned cleanup is the only handle).
  */
 export function onBack(fn: (e: BackEvent) => void) {
   backHandlers.push(fn)
@@ -303,7 +307,7 @@ export function onBack(fn: (e: BackEvent) => void) {
     let i = backHandlers.lastIndexOf(fn)
     if (i >= 0) backHandlers.splice(i, 1)
   }
-  onCleanup(cleanup)
+  if (getOwner()) onCleanup(cleanup)
   return cleanup
 }
 

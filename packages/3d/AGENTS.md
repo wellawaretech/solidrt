@@ -327,10 +327,14 @@ custom `output` leaf spreads `{...useScene().input.handlersFor(layout)}`
 beside its scene.handlersFor spread, same `layout`), defaults `viewport`
 to the leaf's laid-out size plus the scene camera's fov, and pushes input
 poses synchronously - no ref plumbing, no onFrame. Auto-orbit runs a
-frame loop only while `orbiting()`, so a paused camera keeps the app
-demand-driven idle. Options are read once at mount; runtime pose changes
-(and the debug-command hookup) go through `ref`'s handle, whose set()
-also pushes the pose.
+frame loop only while `orbiting()` and `orbitSpeed` is non-zero, so a
+paused camera keeps the app demand-driven idle. The pose props are
+initial values: runtime pose changes (and the debug-command hookup) go
+through `ref`'s handle, whose set() also pushes the pose. Every other
+prop is live - forwarded to the control as a getter and read where it
+applies, never snapshotted - so clamps, rates, anchors and `viewport`
+follow their props without a remount, and a clamp change re-clamps the
+pose at once.
 
 First-person control: `createFirstPersonCamera(scene, { position?, yaw?,
 pitch?, min/maxPitch?, moveSpeed?, lookSpeed?, fly?, viewport?,
@@ -342,8 +346,12 @@ movementX/movementY while `pointerLocked()`, from a one-finger drag
 (arena-arbitrated through createTransform, viewport-relative with
 `viewport`) while not, and from the right stick; move from WASD/arrows
 (physical codes and logical keys both), the left stick, and Q/E for
-down/up in `fly` mode. Walking (the default) flattens the heading onto
-the ground plane at fixed height. The control NEVER calls `lockPointer`
+down/up - bound always, inert unless `fly` is on. Walking (the default)
+flattens the heading onto the ground plane at fixed height. Every option
+but the initial pose is read where it applies (`fly` per update,
+`clampPosition` per move, the rates and pitch clamps per input), so a
+field changed on the options object takes effect on the next move: walk
+and fly are one control. The control NEVER calls `lockPointer`
 - click-to-lock and Escape-to-release are the app's window-level
 decisions (see `examples/first-person.tsx`) - and has no collision of
 its own: `clampPosition(next, current)` is the whole hook - bounds, a
@@ -361,7 +369,11 @@ and takes focus on pointer down (the web canvas gesture), which routes
 the keys to the control; a pointer-only scene (`<OrbitCamera>`) never
 steals focus. A custom `output` leaf spreads
 `useScene().input.handlersFor(layout, () => node)` and declares
-`focusable` itself. The frame loop runs only while `active()`.
+`focusable` itself. The frame loop runs only while `active()`. Every prop
+but the initial pose is live: `fly={flying()}` toggles walk/fly on the
+running control (pose and held keys carry over, no remount, and
+`clampPosition` may swap with it), `moveSpeed`/`lookSpeed` follow their
+props, and a pitch clamp change re-clamps at once.
 
 Overlay projection: `scene.project(point)` maps a world point to scene
 pixels (top-left origin, y down - the output texture's own space; `w` is

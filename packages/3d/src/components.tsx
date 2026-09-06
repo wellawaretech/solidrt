@@ -7,6 +7,7 @@
 // node with `ref` and call setTransform from onFrame - signals carry
 // structure and slow state, per-frame motion goes straight to the scene.
 
+import { merge } from "@solidjs/signals"
 import { createContext, createEffect, createSignal, displayScale, getBoundingBoxViewport, getLayoutBox, onCleanup, onFrame, onLayout, setFocus, untrack, useContext } from "@solidrt/core"
 import type { Element, KeyEvent, ParentComponent, PointerEvent, TextureId, VoidComponent, WheelEvent } from "@solidrt/core"
 import { createOrbitCamera } from "./orbit.ts"
@@ -672,24 +673,32 @@ export type OrbitCameraProps = OrbitCameraOptions & {
  * and takes its input from the scene's leaf through context - no ref
  * plumbing, no handler spreads, no onFrame of your own (with a custom
  * `output`, spread `useScene().input.handlersFor(layout)` on your leaf).
- * Options are read once at mount; change the pose at runtime through
- * `ref`'s set(). `viewport` defaults to the leaf's laid-out size plus the
- * scene camera's fov, so rotation is viewport-relative and two-finger pan
- * works out of the box (pass your own to override). Auto-orbit runs a
- * frame loop only while `orbiting()`; a paused or drag-only camera leaves
- * the app demand-driven idle.
+ * The pose props (target, azimuth, elevation, distance) are initial
+ * values - change the pose at runtime through `ref`'s set(); every other
+ * prop is live, forwarded to the control as a getter and read where it
+ * applies, so a clamp, a rate, an anchor callback or `viewport` follows
+ * its prop, and a clamp change re-clamps the pose at once. `viewport`
+ * defaults to the leaf's laid-out size plus the scene camera's fov, so
+ * rotation is viewport-relative and two-finger pan works out of the box
+ * (pass your own to override). Auto-orbit runs a frame loop only while
+ * `orbiting()` and `orbitSpeed` is non-zero; a paused or drag-only camera
+ * leaves the app demand-driven idle.
  */
 export let OrbitCamera: VoidComponent<OrbitCameraProps> = props => {
   let ctx = useContext(SceneContext)
-  let orbit = untrack(() => {
-    let viewport =
-      props.viewport ??
-      (() => {
-        let layout = ctx.input.layout()
-        return layout === null ? null : { height: layout.height, fov: ctx.scene.camera().fov }
-      })
-    return createOrbitCamera(ctx.scene, { ...props, viewport })
+  let leafViewport = () => {
+    let layout = ctx.input.layout()
+    return layout === null ? null : { height: layout.height, fov: ctx.scene.camera().fov }
+  }
+  // The control keeps this object and reads each option where it applies,
+  // so the props go through as getters (merge), never a spread: a spread
+  // would snapshot every prop once and a change could only remount.
+  let options: OrbitCameraOptions = merge(props, {
+    get viewport() {
+      return props.viewport ?? leafViewport
+    },
   })
+  let orbit = untrack(() => createOrbitCamera(ctx.scene, options))
   // Input pushes the pose synchronously (update(0)), so a drag needs no
   // frame loop and the next paint carries the new camera.
   onCleanup(
@@ -710,7 +719,7 @@ export let OrbitCamera: VoidComponent<OrbitCameraProps> = props => {
     }),
   )
   createEffect(
-    () => orbit.orbiting(),
+    () => orbit.orbiting() && (options.orbitSpeed ?? 0) !== 0,
     on => {
       if (!on) return
       let last: number | null = null
@@ -721,6 +730,22 @@ export let OrbitCamera: VoidComponent<OrbitCameraProps> = props => {
         orbit.update(dt)
       })
     },
+  )
+  // A clamp prop change re-clamps the pose at once (set({}) applies the
+  // clamps, update(0) pushes the result) - the update() call a Three
+  // OrbitControls app makes after setting minDistance, done by the prop.
+  // Deferred: the creation already clamped and pushed the initial pose.
+  // Untracked: the control reads the clamps through the getters while it
+  // applies them, and the apply wants the values of that moment (the
+  // compute above is what tracks them).
+  createEffect(
+    () => [options.minDistance, options.maxDistance, options.minElevation, options.maxElevation],
+    () =>
+      untrack(() => {
+        orbit.set({})
+        orbit.update(0)
+      }),
+    { defer: true },
   )
   untrack(() => props.ref)?.({
     ...orbit,
@@ -751,23 +776,30 @@ export type FirstPersonCameraProps = FirstPersonCameraOptions & {
  * scene is the same gesture a web canvas needs). With a custom `output`,
  * spread `useScene().input.handlersFor(layout, node)` on your leaf and
  * mark it `focusable`. Pointer lock stays yours: call `lockPointer(true)`
- * from a click and `lockPointer(false)` from Escape. Options are read
- * once at mount; change the pose at runtime through `ref`'s set().
- * `viewport` defaults to the leaf's laid-out size, so a drag is
- * viewport-relative. A frame loop runs only while `active()` - a key
- * held or a stick deflected - so a still scene stays demand-driven idle.
+ * from a click and `lockPointer(false)` from Escape. The pose props
+ * (position, yaw, pitch) are initial values - change the pose at runtime
+ * through `ref`'s set(); every other prop is live, forwarded to the
+ * control as a getter and read where it applies: `fly={flying()}` swaps
+ * walk and fly on the running control (pose and held keys carry over, no
+ * remount), `moveSpeed`, `lookSpeed` and `clampPosition` follow their
+ * props, and a pitch clamp change re-clamps at once. `viewport` defaults
+ * to the leaf's laid-out size, so a drag is viewport-relative. A frame
+ * loop runs only while `active()` - a key held or a stick deflected - so
+ * a still scene stays demand-driven idle.
  */
 export let FirstPersonCamera: VoidComponent<FirstPersonCameraProps> = props => {
   let ctx = useContext(SceneContext)
-  let camera = untrack(() => {
-    let viewport =
-      props.viewport ??
-      (() => {
-        let layout = ctx.input.layout()
-        return layout === null ? null : { height: layout.height }
-      })
-    return createFirstPersonCamera(ctx.scene, { ...props, viewport })
+  let leafViewport = () => {
+    let layout = ctx.input.layout()
+    return layout === null ? null : { height: layout.height }
+  }
+  // Getters, not a spread: see OrbitCamera.
+  let options: FirstPersonCameraOptions = merge(props, {
+    get viewport() {
+      return props.viewport ?? leafViewport
+    },
   })
+  let camera = untrack(() => createFirstPersonCamera(ctx.scene, options))
   // Look input applies synchronously inside the control's handlers, so a
   // mouse move under lock needs no frame loop; only movement integrates.
   onCleanup(ctx.input.add(camera.handlers))
@@ -783,6 +815,17 @@ export let FirstPersonCamera: VoidComponent<FirstPersonCameraProps> = props => {
         camera.update(dt)
       })
     },
+  )
+  // A pitch clamp change re-clamps the pose at once; deferred and
+  // untracked as OrbitCamera's.
+  createEffect(
+    () => [options.minPitch, options.maxPitch],
+    () =>
+      untrack(() => {
+        camera.set({})
+        camera.update(0)
+      }),
+    { defer: true },
   )
   untrack(() => props.ref)?.({
     ...camera,

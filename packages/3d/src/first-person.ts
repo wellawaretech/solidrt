@@ -29,6 +29,14 @@
 //
 // Collision is deliberately absent: a camera control cannot know the
 // level. Clamp or reject positions through `clampPosition`.
+//
+// Options are read where they apply, not copied out: `fly`, `moveSpeed`,
+// `lookSpeed`, the pitch clamps, `viewport` and `clampPosition` are
+// re-read from the options object on every input or update, so a caller
+// may change a field (or hand in an object of getters, which is what
+// `<FirstPersonCamera>` does with its props) and the next move sees it -
+// walk and fly are one control, not two mounts. Only the initial pose is
+// copied at creation; later pose changes go through set().
 
 import { createMemo, createSignal } from "@solidjs/signals"
 import { createTransform, gamepads, pointerLocked } from "@solidrt/core"
@@ -55,13 +63,19 @@ const PITCH_LIMIT = Math.PI / 2 - 0.01
 /** What a first-person camera drives: a Scene, or one of its Views. */
 export type FirstPersonTarget = { setCamera(update: CameraUpdate): void }
 
+/** The pose fields (position, yaw, pitch) are initial values, copied at
+ * creation and changed through set() afterwards. Every other field is
+ * live: read from this object where it applies, so a change takes effect
+ * on the next input or update. */
 export type FirstPersonCameraOptions = {
-  /** Eye position (default [0, 1.6, 0]: standing height at the origin). */
+  /** Initial eye position (default [0, 1.6, 0]: standing height at the
+   * origin). */
   position?: Vec3
   /** Initial look, radians. Yaw 0 faces -z (the camera default), positive
    * turns left; pitch 0 is level, positive looks up. */
   yaw?: number
   pitch?: number
+  /** Pitch clamps, radians; the defaults stop just short of the poles. */
   minPitch?: number
   maxPitch?: number
   /** Movement speed in world units per second (default 3). */
@@ -69,8 +83,9 @@ export type FirstPersonCameraOptions = {
   /** Multiplier over the built-in mouse, drag and stick look rates. */
   lookSpeed?: number
   /** Walk (default) keeps the height fixed and moves along the ground
-   * projection of the view; fly moves along the view itself, with Q/E for
-   * down/up. */
+   * projection of the view; fly moves along the view itself and arms Q/E
+   * for down/up (bound either way, inert while walking). Toggling it on a
+   * running control keeps the pose and the held keys. */
   fly?: boolean
   /** The viewport a drag lives in: the input element's own laid-out
    * height (the frame the recognizer's deltas arrive in); makes the drag
@@ -146,11 +161,11 @@ export function createFirstPersonCamera(camera: FirstPersonTarget, options: Firs
   let position: Vec3 = options.position ? [options.position[0], options.position[1], options.position[2]] : [0, 1.6, 0]
   let yaw = options.yaw ?? 0
   let pitch = options.pitch ?? 0
-  let minPitch = options.minPitch ?? -PITCH_LIMIT
-  let maxPitch = options.maxPitch ?? PITCH_LIMIT
-  let moveSpeed = options.moveSpeed ?? MOVE_SPEED
-  let lookMouse = LOOK_MOUSE * (options.lookSpeed ?? 1)
-  let lookStick = LOOK_STICK * (options.lookSpeed ?? 1)
+  // Everything below the pose is read from `options` where it applies.
+  let lookSpeed = () => options.lookSpeed ?? 1
+  let clampPitch = () => {
+    pitch = clampNum(pitch, options.minPitch ?? -PITCH_LIMIT, options.maxPitch ?? PITCH_LIMIT)
+  }
 
   let held = new Set<Move>()
   let [heldCount, setHeldCount] = createSignal(0)
@@ -166,7 +181,8 @@ export function createFirstPersonCamera(camera: FirstPersonTarget, options: Firs
   }
   let look = (dx: number, dy: number) => {
     yaw -= dx
-    pitch = clampNum(pitch - dy, minPitch, maxPitch)
+    pitch -= dy
+    clampPitch()
     dirty = true
   }
   let moveBy = (dx: number, dy: number, dz: number) => {
@@ -198,14 +214,14 @@ export function createFirstPersonCamera(camera: FirstPersonTarget, options: Firs
   let transform = createTransform({
     onTransformMove: t => {
       let vp = options.viewport?.() ?? null
-      let rate = vp !== null ? ((DRAG_TURNS * 2 * Math.PI) / vp.height) * (options.lookSpeed ?? 1) : lookMouse
+      let rate = (vp !== null ? (DRAG_TURNS * 2 * Math.PI) / vp.height : LOOK_MOUSE) * lookSpeed()
       look(t.dx * rate, t.dy * rate)
       apply()
       dirty = false
     },
   })
 
-  pitch = clampNum(pitch, minPitch, maxPitch)
+  clampPitch()
   apply()
 
   return {
@@ -217,26 +233,32 @@ export function createFirstPersonCamera(camera: FirstPersonTarget, options: Firs
       if (pose.position) position = [pose.position[0], pose.position[1], pose.position[2]]
       if (pose.yaw !== undefined) yaw = pose.yaw
       if (pose.pitch !== undefined) pitch = pose.pitch
-      pitch = clampNum(pitch, minPitch, maxPitch)
+      clampPitch()
       dirty = true
     },
     update(dt) {
       let s = sticks()
-      if (s.lookX !== 0 || s.lookY !== 0) look(s.lookX * lookStick * dt, s.lookY * lookStick * dt)
+      if (s.lookX !== 0 || s.lookY !== 0) {
+        let rate = LOOK_STICK * lookSpeed() * dt
+        look(s.lookX * rate, s.lookY * rate)
+      }
       // Key axes: -1..1 per axis, the stick added on top (stick up is -y,
       // the web convention, so forward is -leftY), then clamped so a key
       // and a stick together do not exceed full speed.
       let ahead = clampNum((held.has("forward") ? 1 : 0) - (held.has("back") ? 1 : 0) - s.moveY, -1, 1)
       let side = clampNum((held.has("right") ? 1 : 0) - (held.has("left") ? 1 : 0) + s.moveX, -1, 1)
-      let rise = options.fly ? (held.has("up") ? 1 : 0) - (held.has("down") ? 1 : 0) : 0
+      // One read per update, so a mode toggle lands between steps, never
+      // between the rise and the heading of the same step.
+      let fly = options.fly ?? false
+      let rise = fly ? (held.has("up") ? 1 : 0) - (held.has("down") ? 1 : 0) : 0
       if (ahead !== 0 || side !== 0 || rise !== 0) {
-        let step = moveSpeed * dt
+        let step = (options.moveSpeed ?? MOVE_SPEED) * dt
         let f = forward()
         // Walking projects the view onto the ground plane, so looking down
         // does not slow the walk; right is always horizontal.
-        let fx = options.fly ? f[0] : -Math.sin(yaw)
-        let fy = options.fly ? f[1] : 0
-        let fz = options.fly ? f[2] : -Math.cos(yaw)
+        let fx = fly ? f[0] : -Math.sin(yaw)
+        let fy = fly ? f[1] : 0
+        let fz = fly ? f[2] : -Math.cos(yaw)
         let rx = Math.cos(yaw)
         let rz = -Math.sin(yaw)
         moveBy((fx * ahead + rx * side) * step, (fy * ahead + rise) * step, (fz * ahead + rz * side) * step)
@@ -252,7 +274,8 @@ export function createFirstPersonCamera(camera: FirstPersonTarget, options: Firs
       },
       onPointerMove(e) {
         if (pointerLocked()) {
-          look(e.movementX * lookMouse, e.movementY * lookMouse)
+          let rate = LOOK_MOUSE * lookSpeed()
+          look(e.movementX * rate, e.movementY * rate)
           apply()
           dirty = false
         } else {

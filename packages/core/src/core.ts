@@ -1,6 +1,6 @@
 import * as tree from "flux:rendertree"
 import type { TextureId } from "flux:gpu"
-import { createSignal, onCleanup } from "@solidjs/signals"
+import { createSignal, getOwner, onCleanup } from "@solidjs/signals"
 import { on } from "srt:events"
 
 let handlers = new Map<number, Map<string, Function>>()
@@ -93,7 +93,7 @@ export function onPointerMove(fn: (e: GlobalPointerEvent) => void): () => void {
       if (interestRoot != null) syncInterest(interestRoot)
     }
   }
-  onCleanup(cleanup)
+  if (getOwner()) onCleanup(cleanup)
   return cleanup
 }
 

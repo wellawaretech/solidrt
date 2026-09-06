@@ -361,7 +361,8 @@ latest (solid-js 1.x, off Solid 2.0 entirely). The recipe that works is
   then bump `epoch`). See examples/stagger.tsx.
   Reach for per-frame work only for genuinely procedural motion:
   `onFrame((tick, frame, rate) => {})` is the native hook (runtime-paced,
-  returns a cleanup, auto-cleaned inside a reactive scope); `rate` is the
+  returns a cleanup, auto-cleaned inside an owned scope; from an effect's
+  apply, return it so the loop runs only while the condition holds); `rate` is the
   display's nominal refresh rate in Hz, which a fixed-timestep loop needs
   (see @solidrt/cli agents/debugging.md on stepping); `requestAnimationFrame`
   exists as a web-standard one-shot but is not the preferred driver. A JS
