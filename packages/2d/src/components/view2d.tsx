@@ -1,8 +1,9 @@
 import { createEffect, displayScale, getBoundingBoxViewport, onCleanup, onLayout, untrack, useContext } from "@solidrt/core"
-import type { Element, ParentComponent, TextureId } from "@solidrt/core"
+import type { Element, ParentComponent, PointerFeed, TextureId } from "@solidrt/core"
 import type { CameraUpdate } from "../camera.ts"
+import { feedPointer } from "../views.ts"
 import type { ViewHandle, ViewOptions } from "../views.ts"
-import { LayerContext, ViewportContext } from "./context.ts"
+import { LayerContext, PointerContext, ViewportContext } from "./context.ts"
 import type { LayerPointerProps } from "./sprite-layer.tsx"
 import { applyOversample } from "./auto-oversample.ts"
 
@@ -36,6 +37,11 @@ export type View2dProps = LayerPointerProps &
     /** Pointer events (default on): the built-in leaf carries the view's
      * handlers. `false` detaches them. */
     events?: boolean
+    /** The pointer feed of this view (createPointerFeed), fed from the
+     * view's root - the events the sprites let through - so a map bound
+     * to it drives the `<Camera2d>` inside this view and no other; inside,
+     * `useSpriteLayer().pointer` is this feed. Fixed at creation. */
+    pointer?: PointerFeed
   }
 
 /**
@@ -46,8 +52,10 @@ export type View2dProps = LayerPointerProps &
  * `<View2d>` children (split-screen: two side by side). Composites as an
  * ordinary `<texture>` leaf at the view size, or through `output`. A
  * `<Camera2d>`
- * child drives the VIEW's camera and listens at the view's root: inside,
- * `useSpriteLayer()` reports the view as `viewport`. `<Sprite>` and
+ * child drives the VIEW's camera from the map it is given, and the view's
+ * `pointer` feed carries the view's gestures to that map: inside,
+ * `useSpriteLayer()` reports the view as `viewport` and the feed as
+ * `pointer`. `<Sprite>` and
  * `<Group>` children mount to the layer as they would outside - a view
  * mirrors the layer's sprites, it has none of its own. Sprites under the
  * view's leaf get their ordinary pointer handlers, with the view's camera
@@ -90,6 +98,8 @@ export let View2d: ParentComponent<View2dProps> = props => {
   )
   untrack(() => props.ref)?.(view)
   onCleanup(() => view.dispose())
+  let pointer = untrack(() => props.pointer) ?? null
+  if (pointer) onCleanup(feedPointer(view, pointer))
   // The view's own handlers at the root of the walk; the props are read
   // per event, so a handler prop may change without re-registering.
   onCleanup(
@@ -118,6 +128,7 @@ export let View2d: ParentComponent<View2dProps> = props => {
   createEffect(() => [displayScale(), props.maxOversample], pick)
   return (
     <ViewportContext value={view}>
+      <PointerContext value={pointer}>
       {output ? (
         untrack(() => output(view.texture))
       ) : (
@@ -134,6 +145,7 @@ export let View2d: ParentComponent<View2dProps> = props => {
         />
       )}
       {props.children}
+      </PointerContext>
     </ViewportContext>
   )
 }

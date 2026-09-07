@@ -20,7 +20,9 @@
 import {
   capabilities,
   createEffect,
+  createInputMap,
   createMemo,
+  createPointerFeed,
   createSignal,
   env,
   flush,
@@ -30,13 +32,15 @@ import {
   untrack,
   windowSize,
 } from "@solidrt/core"
-import type { PointerEvent, TextureId, WheelEvent } from "@solidrt/core"
+import type { PointerEvent, PointerFeed, TextureId } from "@solidrt/core"
 import { createDrawTarget, glsl, limits, setTargetSize } from "@solidrt/core/gpu"
 import {
   Group,
   HemisphereLight,
   Mesh,
   OrbitCamera,
+  orbitActions,
+  orbitBindings,
   plane,
   Scene,
   setTransform,
@@ -47,7 +51,7 @@ import {
   View3d,
   STANDARD_FLOATS,
 } from "@solidrt/3d"
-import type { CameraUpdate, OrbitCameraHandle, SceneInput, SceneNode, SpotShadowOptions, Vec3 } from "@solidrt/3d"
+import type { CameraUpdate, OrbitCameraHandle, SceneNode, SpotShadowOptions, Vec3 } from "@solidrt/3d"
 import { FRESNEL, LIT_VERTEX, litFragment, SCENE } from "@solidrt/3d/glsl"
 import { registerDebug } from "srt:dev"
 
@@ -63,10 +67,10 @@ const ORBIT_PERIOD = 68 // seconds for one full revolution
 const ORBIT_SPEED = (Math.PI * 2) / ORBIT_PERIOD // radians per second, every panel
 const MIN_DISTANCE = 2.6
 const MAX_DISTANCE = 14
-// Wheel zoom is eased by the app, not taken from orbit.handlers: a notch
-// retargets the distance and the camera glides there over the next few
-// frames, so a scroll reads as one push instead of a staircase.
-const WHEEL_ZOOM = 0.0015 // exponent per wheel-delta unit, matching the library's sensitivity
+// Wheel zoom is eased by the app: each panel's map rebinds the wheel from
+// the orbit's `zoom` to an app action, a notch retargets the distance and
+// the camera glides there over the next few frames, so a scroll reads as
+// one push instead of a staircase.
 const ZOOM_EASE = 9 // e-foldings per second toward the pending distance
 const ZOOM_EPSILON = 0.0005 // world units; inside this the glide lands and stops
 // Lowest the eye may sit, world units. Eye height is target.y + distance *
@@ -454,23 +458,48 @@ function App() {
   // How many lights cast, for the subtitle.
   let casters = createMemo(() => casting().filter(Boolean).length)
 
+  // One pointer feed and one input map per panel, in the panels' order:
+  // the panel's drag rotates and its pinch zooms through the orbit's
+  // standard bindings, while its wheel is rebound from `zoom` to the app's
+  // own `dolly` action, eased in the frame loop below.
+  // The panel leaves are detached d-textures with no layout box, so each
+  // feed is told its panel's box to normalize a drag by (one panel height
+  // sweeps the same angle in the small panels as in the hero).
+  let boxes = [() => panels().main, () => panels().top, () => panels().bottom]
+  let feeds = boxes.map(box => createPointerFeed({ layout: () => ({ width: box().w, height: box().h }) }))
+  let maps = cameras.map((panel, i) => {
+    let pointer = feeds[i]!
+    let input = createInputMap({ ...orbitActions, dolly: "axis" })
+    input.bind(orbitBindings({ pointer }))
+    input.unbind("zoom", pointer.wheel)
+    input.bind("dolly", pointer.wheel)
+    // Compounding from the PENDING distance rather than the current one,
+    // so a fast scroll accumulates its notches instead of each one
+    // restarting the glide from wherever the last had reached. The feed
+    // delivers a notch in octaves, wheel up positive.
+    input.onGesture("dolly", {
+      delta: octaves => {
+        let from = panel.zoom ?? panel.cam.pose().distance
+        panel.zoom = clamp(from * Math.pow(2, -octaves), panel.minDistance, panel.maxDistance)
+      },
+    })
+    return input
+  })
+
   // One panel's leaf, a detached box over the window showing `tile`: the
-  // camera channel's drag and pinch, the tap that pauses this panel, and the
-  // wheel, which the app eases itself. Which panel a gesture belongs to is
+  // pointer feed's drag, pinch and wheel, and the tap that pauses this
+  // panel. Which panel a gesture belongs to is
   // the ENGINE's answer - the runtime freezes each pointer's hit path at the
   // down and delivers every later event along it, so a drag that runs off
   // its panel keeps arriving here with no capture to arrange, and two
   // fingers on one panel both land on it, which is what makes a pinch.
   let panelLeaf = (
     panel: PanelCamera,
-    input: SceneInput,
+    pointer: PointerFeed,
     box: () => { x: number; y: number; w: number; h: number },
     tile: () => { src: TextureId; srcX?: number; srcY?: number; srcW?: number; srcH?: number },
   ) => {
-    // The layout the channel scales against is the panel's own box, so the
-    // drag is viewport-relative per panel: one panel height sweeps the same
-    // angle in the small panels as in the hero.
-    let orbit = input.handlersFor(() => ({ width: box().w, height: box().h }))
+    let orbit = pointer.handlers
     return (
       <d-texture
         {...tile()}
@@ -494,13 +523,7 @@ function App() {
           // of the window carries on. Space is the global form.
           if (moved < TAP_SLOP && held < TAP_MS) panel.cam.set({ orbiting: !panel.cam.orbiting() })
         }}
-        // Compounding from the PENDING distance rather than the current
-        // one, so a fast scroll accumulates its notches instead of each one
-        // restarting the glide from wherever the last had reached.
-        onWheel={(e: WheelEvent) => {
-          let from = panel.zoom ?? panel.cam.pose().distance
-          panel.zoom = clamp(from * Math.exp(e.deltaY * WHEEL_ZOOM), panel.minDistance, panel.maxDistance)
-        }}
+        onWheel={orbit.onWheel}
       />
     )
   }
@@ -559,11 +582,13 @@ function App() {
         label="scene"
         background={BACKDROP_FRAGMENT}
         camera={CAMERA}
-        // The hero leaf takes the SCENE's input channel: its <OrbitCamera>
-        // sits directly under the Scene, so that is the channel it listens on.
-        output={texture => panelLeaf(cameras[0]!, useScene().input, () => panels().main, () => ({ src: texture }))}
+        // The hero leaf takes the SCENE's pointer feed: its <OrbitCamera>
+        // sits directly under the Scene and drives from that feed's map.
+        pointer={feeds[0]}
+        output={texture => panelLeaf(cameras[0]!, useScene().pointer!, () => panels().main, () => ({ src: texture }))}
       >
         <OrbitCamera
+          input={maps[0]}
           target={KNOT_CENTER}
           azimuth={HERO_AZIMUTH}
           elevation={0.34}
@@ -637,10 +662,11 @@ function App() {
           label="top-right"
           camera={CAMERA}
           into={atlas}
-          // Inside a <View3d>, useScene() hands out the VIEW's channel, so the
+          // Inside a <View3d>, useScene() hands out the VIEW's feed, so the
           // <OrbitCamera> inside hears this panel's drags and not the hero's.
+          pointer={feeds[1]}
           output={() =>
-            panelLeaf(cameras[1]!, useScene().input, () => panels().top, () => ({
+            panelLeaf(cameras[1]!, useScene().pointer!, () => panels().top, () => ({
               src: atlas,
               srcX: 0,
               srcY: 0,
@@ -650,6 +676,7 @@ function App() {
           }
         >
           <OrbitCamera
+            input={maps[1]}
             target={KNOT_CENTER}
             azimuth={SIDE_AZIMUTH}
             elevation={SIDE_ELEVATION}
@@ -670,8 +697,9 @@ function App() {
           camera={CAMERA}
           into={atlas}
           y={targetSize().top.height}
+          pointer={feeds[2]}
           output={() =>
-            panelLeaf(cameras[2]!, useScene().input, () => panels().bottom, () => ({
+            panelLeaf(cameras[2]!, useScene().pointer!, () => panels().bottom, () => ({
               src: atlas,
               srcX: 0,
               srcY: targetSize().top.height,
@@ -681,6 +709,7 @@ function App() {
           }
         >
           <OrbitCamera
+            input={maps[2]}
             target={KNOT_CENTER}
             azimuth={HERO_AZIMUTH}
             elevation={TOP_DOWN_ELEVATION}

@@ -1,59 +1,53 @@
-// A first-person camera for a scene: a position plus yaw/pitch, with mouse
-// look under pointer lock, drag-to-look without it (the touch path), and
-// walk (or fly) from keys and gamepad sticks - Unity's FirstPersonController
-// shape, look and move in one control, rather than Three's split into
-// PointerLockControls (look only) and a hand-written key loop.
+// A first-person camera for a scene: a position plus yaw/pitch, look and
+// move in one control - Unity's FirstPersonController shape, rather than
+// Three's split into PointerLockControls (look only) and a hand-written
+// key loop. The control is pure (ARCHITECTURE.md: controls through an
+// abstraction, never direct event handling): it consumes three axes,
+// `look` (vec2), `move` (vec2) and `rise` (axis), in device-free units,
+// and exposes pose verbs for scripted moves. Mouse look under pointer
+// lock, drag-to-look on touch, WASD, sticks: all of that is the app's
+// wiring through an input map, and `firstPersonBindings` in input.ts is
+// the standard set.
 //
-// Look input has three sources, all summed into the same yaw/pitch:
-// - pointer-move deltas (movementX/movementY) while the pointer is locked,
-//   the desktop mouse-look path; the control never engages the lock itself
-//   (click-to-lock and Escape-to-release are window-level decisions that
-//   stay app code, see lockPointer in @solidrt/core);
-// - a one-finger drag through core's transform recognizer while NOT locked,
-//   so a touch viewport looks around with the arena arbitration the orbit
-//   camera has, and viewport-relative like it;
-// - the right stick, read from core's gamepads() at update time.
-// Move input: WASD/arrows (physical codes AND logical keys, so a layout
-// or a synthetic event without a code both work), Q/E for down/up in fly
-// mode, and the left stick. Walking flattens the forward vector onto the
-// ground plane at fixed height; flying moves along the view direction.
+// `look` deltas are element heights of travel (a drag across the element
+// sweeps DRAG_TURNS turns) or the pointer feed's mouse-motion
+// equivalent; a rate (a stick) turns at LOOK_RATE turns per second at
+// full deflection. `move` is [right, forward] in the screen convention
+// (forward is -y, as a stick pushed up reads): a rate walks at
+// `moveSpeed`, a delta is a step in world units. `rise` moves along
+// world up at the same speed, in fly mode only. Walking flattens the
+// forward vector onto the ground plane at fixed height; flying moves
+// along the view direction.
 //
-// Pose is plain mutable state advanced by update(dt) from the app's own
-// onFrame, as in orbit.ts: only `active` is reactive - whether anything is
-// held or deflected, what a frame loop gates on; it derives from the held
-// count and core's gamepads() so a stick moved while the loop is off wakes
-// it - while the pose moves at frame rate and bypasses reactivity. Held
-// keys cannot be polled (there is no key-state accessor in core), so the
-// control tracks them from the down/up pair; an `onBlur` handler drops
-// them all, because the up never arrives once focus has left.
+// Pose is plain mutable state; a nudge or a verb pushes it at once (a
+// mouse move under lock needs no frame loop), and update(dt) integrates
+// the rates from the app's own onFrame. Only `active` is reactive: the
+// frame-loop gate, true while any rate reads non-zero (a held key, a
+// deflected stick), so a still scene renders nothing new. update()
+// returns whether the pose changed since the previous update.
 //
 // Collision is deliberately absent: a camera control cannot know the
 // level. Clamp or reject positions through `clampPosition`.
 //
 // Options are read where they apply, not copied out: `fly`, `moveSpeed`,
-// `lookSpeed`, the pitch clamps, `viewport` and `clampPosition` are
-// re-read from the options object on every input or update, so a caller
-// may change a field (or hand in an object of getters, which is what
-// `<FirstPersonCamera>` does with its props) and the next move sees it -
-// walk and fly are one control, not two mounts. Only the initial pose is
-// copied at creation; later pose changes go through set().
+// `lookSpeed`, the pitch clamps and `clampPosition` are re-read from the
+// options object on every input or update, so a caller may change a field
+// (or hand in an object of getters, which is what `<FirstPersonCamera>`
+// does with its props) and the next move sees it - walk and fly are one
+// control, not two mounts. Only the initial pose is copied at creation;
+// later pose changes go through set() and the verbs.
 
-import { createMemo, createSignal } from "@solidjs/signals"
-import { createTransform, gamepads, pointerLocked } from "@solidrt/core"
-import type { KeyEvent, PointerEvent } from "@solidrt/core"
+import { untrack } from "@solidjs/signals"
+import { createAxes } from "@solidrt/core/input"
+import type { Axes, Vec2 } from "@solidrt/core/input"
 import type { CameraUpdate } from "./camera.ts"
 import type { Vec3 } from "./math.ts"
 
-// Baseline sensitivities at lookSpeed 1. Mouse look is radians per moved
-// logical pixel under lock (Three's PointerLockControls figure); with a
-// `viewport` the drag is viewport-relative, one viewport height sweeping
-// DRAG_TURNS turns, and without one it falls back to the mouse figure.
-// The stick turns at LOOK_STICK radians/second at full deflection, with
-// a dead zone below which a resting stick reads as zero.
-const LOOK_MOUSE = 0.002
+// One element height of drag sweeps this many turns of look (half a turn:
+// a drag across the screen turns the walker around).
 const DRAG_TURNS = 0.5
-const LOOK_STICK = 2.5
-const STICK_DEADZONE = 0.15
+// Look rate at full stick deflection, turns per second.
+const LOOK_RATE = 0.4
 // Default walking speed, world units per second.
 const MOVE_SPEED = 3
 // Pitch clamps stop short of the poles so the look direction never
@@ -80,17 +74,14 @@ export type FirstPersonCameraOptions = {
   maxPitch?: number
   /** Movement speed in world units per second (default 3). */
   moveSpeed?: number
-  /** Multiplier over the built-in mouse, drag and stick look rates. */
+  /** Multiplier over the built-in look sensitivities (drags, mouse motion
+   * and rates alike). */
   lookSpeed?: number
   /** Walk (default) keeps the height fixed and moves along the ground
-   * projection of the view; fly moves along the view itself and arms Q/E
-   * for down/up (bound either way, inert while walking). Toggling it on a
-   * running control keeps the pose and the held keys. */
+   * projection of the view; fly moves along the view itself and lets
+   * `rise` move along world up. Toggling it on a running control keeps
+   * the pose. */
   fly?: boolean
-  /** The viewport a drag lives in: the input element's own laid-out
-   * height (the frame the recognizer's deltas arrive in); makes the drag
-   * viewport-relative. Null while unknown. */
-  viewport?: () => { height: number } | null
   /** Constrain where a move may put the eye: called with the eye the
    * move asks for and the eye it starts from (both fresh arrays), returns
    * the position to use - a level's bounds, a floor height, a collision
@@ -105,6 +96,8 @@ export type FirstPersonPose = {
   pitch?: number
 }
 
+export type FirstPersonAxes = { look: "vec2"; move: "vec2"; rise: "axis" }
+
 export type FirstPersonCamera = {
   /** Eye position (a fresh array per call). */
   eye(): Vec3
@@ -112,195 +105,154 @@ export type FirstPersonCamera = {
   forward(): Vec3
   /** Pose snapshot - the shape debug commands return and set() takes. */
   pose(): { position: Vec3; yaw: number; pitch: number }
-  /** Merge a pose in (clamps apply); reaches the scene at the next
-   * update(). */
+  /** Merge a pose in (clamps apply) and push it. */
   set(pose: FirstPersonPose): void
-  /** Whether a movement key is held or a stick deflected - what a frame
-   * loop should run on. Reactive (signal-backed). */
+  /** Whether any axis rate reads non-zero - what a frame loop should run
+   * on. Reactive. */
   active(): boolean
-  /** Integrate held keys and sticks over dt seconds and push any pose
-   * change to the driven camera; returns whether the pose changed. */
+  /** Integrate the axis rates over dt seconds and push any pose change;
+   * returns whether the pose changed since the previous update (nudges
+   * and verbs included). */
   update(dt: number): boolean
-  /** Spread onto the element that receives input. Keys route through the
-   * focused node, so that element must hold focus (or be the window). */
-  handlers: {
-    onPointerDown(e: PointerEvent): void
-    onPointerMove(e: PointerEvent): void
-    onPointerUp(e: PointerEvent): void
-    onKeyDown(e: KeyEvent): void
-    onKeyUp(e: KeyEvent): void
-    onBlur(): void
-  }
-}
-
-type Move = "forward" | "back" | "left" | "right" | "up" | "down"
-
-// Physical codes first (layout-independent), then the logical keys a
-// synthetic event or an odd layout reports.
-const KEY_MOVES: Record<string, Move> = {
-  KeyW: "forward", ArrowUp: "forward", w: "forward", W: "forward",
-  KeyS: "back", ArrowDown: "back", s: "back", S: "back",
-  KeyA: "left", ArrowLeft: "left", a: "left", A: "left",
-  KeyD: "right", ArrowRight: "right", d: "right", D: "right",
-  KeyE: "up", e: "up", E: "up",
-  KeyQ: "down", q: "down", Q: "down",
+  /** The input abstraction: `look` (vec2, element heights of drag / turns
+   * per second), `move` (vec2 [right, forward], forward = -y; world units
+   * per delta, `moveSpeed` per second) and `rise` (axis, fly only). */
+  axes: Axes<FirstPersonAxes>
+  /** Turn by radians (yaw positive left, pitch positive up; clamps
+   * apply) and push. */
+  lookBy(yaw: number, pitch: number): void
+  /** Step by world units in the walker's frame: right, forward (ground
+   * projection when walking, the view direction when flying) and up
+   * (world up, fly mode only), through `clampPosition`, and push. */
+  moveBy(right: number, forward: number, up?: number): void
 }
 
 let clampNum = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v))
-let deadzone = (v: number) => (Math.abs(v) < STICK_DEADZONE ? 0 : v)
+
+function finite(what: string, v: number): void {
+  if (!Number.isFinite(v)) throw new Error(`createFirstPersonCamera: ${what} must be a finite number, got ${v}`)
+}
 
 /**
  * Create a first-person camera driving `camera`'s position and target,
  * where `camera` is a Scene or one of its Views (fov, near, and far stay
  * yours via its setCamera). The initial pose applies immediately. In a
- * component tree, prefer the `<FirstPersonCamera>` component: it wires
- * scene, input, focus, viewport and the frame loop through the Scene
- * context.
+ * component tree, prefer the `<FirstPersonCamera>` component: it drives
+ * the enclosing scene or view through context and takes an input map as
+ * a prop.
  */
 export function createFirstPersonCamera(camera: FirstPersonTarget, options: FirstPersonCameraOptions = {}): FirstPersonCamera {
+  if (!camera || typeof camera.setCamera !== "function") throw new Error("createFirstPersonCamera: the target needs setCamera() (a Scene or a View)")
   let position: Vec3 = options.position ? [options.position[0], options.position[1], options.position[2]] : [0, 1.6, 0]
   let yaw = options.yaw ?? 0
   let pitch = options.pitch ?? 0
   // Everything below the pose is read from `options` where it applies.
   let lookSpeed = () => options.lookSpeed ?? 1
+  let moveSpeed = () => options.moveSpeed ?? MOVE_SPEED
   let clampPitch = () => {
     pitch = clampNum(pitch, options.minPitch ?? -PITCH_LIMIT, options.maxPitch ?? PITCH_LIMIT)
   }
-
-  let held = new Set<Move>()
-  let [heldCount, setHeldCount] = createSignal(0)
-  let dirty = false
+  let changed = false
 
   let forward = (): Vec3 => {
     let cp = Math.cos(pitch)
     return [-Math.sin(yaw) * cp, Math.sin(pitch), -Math.cos(yaw) * cp]
   }
-  let apply = () => {
+  let push = () => {
+    changed = true
     let f = forward()
     camera.setCamera({ position: [position[0], position[1], position[2]], target: [position[0] + f[0], position[1] + f[1], position[2] + f[2]] })
   }
-  let look = (dx: number, dy: number) => {
-    yaw -= dx
-    pitch -= dy
+  let look = (dYaw: number, dPitch: number) => {
+    yaw += dYaw
+    pitch += dPitch
     clampPitch()
-    dirty = true
   }
-  let moveBy = (dx: number, dy: number, dz: number) => {
-    let next: Vec3 = [position[0] + dx, position[1] + dy, position[2] + dz]
+  // A step in the walker's frame. Walking projects the view onto the
+  // ground plane, so looking down does not slow the walk; right is always
+  // horizontal; up applies in fly mode only.
+  let step = (right: number, ahead: number, up: number) => {
+    let fly = options.fly ?? false
+    let f = forward()
+    let fx = fly ? f[0] : -Math.sin(yaw)
+    let fy = fly ? f[1] : 0
+    let fz = fly ? f[2] : -Math.cos(yaw)
+    let rx = Math.cos(yaw)
+    let rz = -Math.sin(yaw)
+    let rise = fly ? up : 0
+    let next: Vec3 = [position[0] + fx * ahead + rx * right, position[1] + fy * ahead + rise, position[2] + fz * ahead + rz * right]
     position = options.clampPosition ? options.clampPosition(next, [position[0], position[1], position[2]]) : next
-    dirty = true
   }
 
-  // The stick axes of every connected pad, summed: a game with one player
-  // sees its one pad, and a pad at rest contributes nothing.
-  let sticks = () => {
-    let s = { moveX: 0, moveY: 0, lookX: 0, lookY: 0 }
-    for (let pad of gamepads()) {
-      if (!pad) continue
-      s.moveX += deadzone(pad.axes.leftX ?? 0)
-      s.moveY += deadzone(pad.axes.leftY ?? 0)
-      s.lookX += deadzone(pad.axes.rightX ?? 0)
-      s.lookY += deadzone(pad.axes.rightY ?? 0)
-    }
-    return s
-  }
-  let active = createMemo(() => {
-    let s = sticks()
-    return heldCount() > 0 || s.moveX !== 0 || s.moveY !== 0 || s.lookX !== 0 || s.lookY !== 0
-  })
-
-  // The unlocked look: a one-finger drag, arena-arbitrated. Two fingers
-  // have no first-person meaning and keep looking.
-  let transform = createTransform({
-    onTransformMove: t => {
-      let vp = options.viewport?.() ?? null
-      let rate = (vp !== null ? (DRAG_TURNS * 2 * Math.PI) / vp.height : LOOK_MOUSE) * lookSpeed()
-      look(t.dx * rate, t.dy * rate)
-      apply()
-      dirty = false
+  let axes = createAxes<FirstPersonAxes>(
+    { look: "vec2", move: "vec2", rise: "axis" },
+    {
+      onNudge: (name, delta) => {
+        if (name === "look") {
+          let d = delta as Vec2
+          let rel = DRAG_TURNS * 2 * Math.PI * lookSpeed()
+          look(-d[0] * rel, -d[1] * rel)
+        } else if (name === "move") {
+          let d = delta as Vec2
+          step(d[0], -d[1], 0)
+        } else {
+          step(0, 0, delta as number)
+        }
+        push()
+      },
     },
-  })
+  )
 
   clampPitch()
-  apply()
+  push()
+  changed = false
 
   return {
     eye: () => [position[0], position[1], position[2]],
     forward,
     pose: () => ({ position: [position[0], position[1], position[2]], yaw, pitch }),
-    active,
+    active: axes.active,
+    axes,
     set(pose) {
       if (pose.position) position = [pose.position[0], pose.position[1], pose.position[2]]
       if (pose.yaw !== undefined) yaw = pose.yaw
       if (pose.pitch !== undefined) pitch = pose.pitch
       clampPitch()
-      dirty = true
+      push()
     },
     update(dt) {
-      let s = sticks()
-      if (s.lookX !== 0 || s.lookY !== 0) {
-        let rate = LOOK_STICK * lookSpeed() * dt
-        look(s.lookX * rate, s.lookY * rate)
+      finite("update dt", dt)
+      let moved = false
+      let [lx, ly] = untrack(() => axes.rate("look"))
+      if (lx !== 0 || ly !== 0) {
+        let rate = LOOK_RATE * 2 * Math.PI * lookSpeed() * dt
+        look(-lx * rate, -ly * rate)
+        moved = true
       }
-      // Key axes: -1..1 per axis, the stick added on top (stick up is -y,
-      // the web convention, so forward is -leftY), then clamped so a key
-      // and a stick together do not exceed full speed.
-      let ahead = clampNum((held.has("forward") ? 1 : 0) - (held.has("back") ? 1 : 0) - s.moveY, -1, 1)
-      let side = clampNum((held.has("right") ? 1 : 0) - (held.has("left") ? 1 : 0) + s.moveX, -1, 1)
-      // One read per update, so a mode toggle lands between steps, never
-      // between the rise and the heading of the same step.
-      let fly = options.fly ?? false
-      let rise = fly ? (held.has("up") ? 1 : 0) - (held.has("down") ? 1 : 0) : 0
-      if (ahead !== 0 || side !== 0 || rise !== 0) {
-        let step = (options.moveSpeed ?? MOVE_SPEED) * dt
-        let f = forward()
-        // Walking projects the view onto the ground plane, so looking down
-        // does not slow the walk; right is always horizontal.
-        let fx = fly ? f[0] : -Math.sin(yaw)
-        let fy = fly ? f[1] : 0
-        let fz = fly ? f[2] : -Math.cos(yaw)
-        let rx = Math.cos(yaw)
-        let rz = -Math.sin(yaw)
-        moveBy((fx * ahead + rx * side) * step, (fy * ahead + rise) * step, (fz * ahead + rz * side) * step)
+      let [mx, my] = untrack(() => axes.rate("move"))
+      let rise = untrack(() => axes.rate("rise"))
+      if (mx !== 0 || my !== 0 || rise !== 0) {
+        let speed = moveSpeed() * dt
+        step(mx * speed, -my * speed, rise * speed)
+        moved = true
       }
-      if (!dirty) return false
-      dirty = false
-      apply()
-      return true
+      if (moved) push()
+      let result = changed
+      changed = false
+      return result
     },
-    handlers: {
-      onPointerDown(e) {
-        if (!pointerLocked()) transform.handlers.onPointerDown(e)
-      },
-      onPointerMove(e) {
-        if (pointerLocked()) {
-          let rate = LOOK_MOUSE * lookSpeed()
-          look(e.movementX * rate, e.movementY * rate)
-          apply()
-          dirty = false
-        } else {
-          transform.handlers.onPointerMove(e)
-        }
-      },
-      onPointerUp(e) {
-        transform.handlers.onPointerUp(e)
-      },
-      onKeyDown(e) {
-        let move = KEY_MOVES[e.code] ?? KEY_MOVES[e.key]
-        if (!move) return
-        held.add(move)
-        setHeldCount(held.size)
-      },
-      onKeyUp(e) {
-        let move = KEY_MOVES[e.code] ?? KEY_MOVES[e.key]
-        if (!move) return
-        held.delete(move)
-        setHeldCount(held.size)
-      },
-      onBlur() {
-        held.clear()
-        setHeldCount(0)
-      },
+    lookBy(dYaw, dPitch) {
+      finite("lookBy yaw", dYaw)
+      finite("lookBy pitch", dPitch)
+      look(dYaw, dPitch)
+      push()
+    },
+    moveBy(right, ahead, up = 0) {
+      finite("moveBy right", right)
+      finite("moveBy forward", ahead)
+      finite("moveBy up", up)
+      step(right, ahead, up)
+      push()
     },
   }
 }

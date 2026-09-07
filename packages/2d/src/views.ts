@@ -22,6 +22,7 @@ import type { BufferId, BufferUpdate, DrawId, InstanceOrder, RenderPipelineId, T
 import { applyCamera, cameraParams, checkCamera, defaultCamera, projectCamera, unprojectCamera } from "./camera.ts"
 import type { CameraState, CameraUpdate } from "./camera.ts"
 import { spriteDispatch } from "./dispatch.ts"
+import type { PointerFeed } from "@solidrt/core"
 import type { LayerPointerListener, Sprite, SpriteHandlers } from "./layer.ts"
 import { checkOversample, thrashSentinel } from "./oversample.ts"
 
@@ -273,4 +274,21 @@ export function createViews(deps: ViewDeps): Views {
       for (let v of [...views]) v.dispose()
     },
   }
+}
+
+/**
+ * Feed a pointer feed (createPointerFeed) from a view's root: the events
+ * the sprites let through - a sprite that claims its press
+ * (stopPropagation on its down) keeps a camera bound to the feed out of
+ * that drag, a drag on empty space or an unclaimed sprite pans, a wheel
+ * anywhere zooms. Returns the detach. The components do this for their
+ * `pointer` prop; an imperative view calls it directly.
+ */
+export function feedPointer(view: ViewHandle, feed: PointerFeed): () => void {
+  return view.listen({
+    onPointerDown: e => feed.handlers.onPointerDown(e.native),
+    onPointerMove: e => feed.handlers.onPointerMove(e.native),
+    onPointerUp: e => feed.handlers.onPointerUp(e.native),
+    onWheel: e => feed.handlers.onWheel(e.native),
+  })
 }

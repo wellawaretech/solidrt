@@ -1,6 +1,6 @@
 import { createEffect, onCleanup, untrack, useContext } from "@solidrt/core"
-import type { Element, ParentComponent, TextureId } from "@solidrt/core"
-import { SceneContext, createSceneInput } from "./context.tsx"
+import type { Element, ParentComponent, PointerFeed, TextureId } from "@solidrt/core"
+import { SceneContext } from "./context.tsx"
 import type { ViewHandle, ViewOptions } from "../scene.ts"
 import type { CameraUpdate } from "../camera.ts"
 
@@ -22,12 +22,16 @@ export type View3dProps = Pick<ViewOptions, "clearColor" | "label" | "overrideMa
   /**
    * Compose the leaf yourself: called once (untracked) with view.texture,
    * and its return renders in place of the built-in `<texture>` leaf.
-   * Spread `useScene().input.handlersFor(layout)` on it so the camera
-   * controls inside receive its input (inside a `<View3d>`, useScene's
-   * `input` is this view's). A tiled view's id is a draw target, not a
-   * texture: show `into` with srcX/srcY, as the built-in leaf does.
+   * Spread `useScene().pointer.handlers` on it so the view's pointer feed
+   * sees its gestures (inside a `<View3d>`, useScene's `pointer` is this
+   * view's). A tiled view's id is a draw target, not a texture: show
+   * `into` with srcX/srcY, as the built-in leaf does.
    */
   output?: (texture: TextureId) => Element
+  /** The pointer feed of this view's leaf (see Scene's `pointer`): the
+   * built-in leaf spreads its handlers, so a map bound to this feed drives
+   * the camera controls inside this view and no other. Fixed at creation. */
+  pointer?: PointerFeed
   ref?: (view: ViewHandle) => void
 }
 
@@ -38,9 +42,9 @@ export type View3dProps = Pick<ViewOptions, "clearColor" | "label" | "overrideMa
  * per-frame JS. Composites as an ordinary `<texture>` leaf at the target
  * size (a tile of `into` shown through srcX/srcY), or through `output`.
  * Camera-control children (`<OrbitCamera>`, `<FirstPersonCamera>`,
- * `<PerspectiveCamera>`) drive the VIEW's camera and take their input
- * from the view's leaf: inside, `useScene()` reports the view as `viewport`
- * and the view leaf's channel as `input`. Node children (`<Mesh>`) mount
+ * `<PerspectiveCamera>`) drive the VIEW's camera: inside, `useScene()`
+ * reports the view as `viewport` and the view leaf's feed as `pointer`,
+ * so a map over that feed moves this view alone. Node children (`<Mesh>`) mount
  * to the scene as they would outside - a view mirrors the scene's meshes,
  * it has none of its own. Mesh pointer events stay the scene leaf's
  * (picking is the scene camera's); a view leaf carries none.
@@ -95,19 +99,17 @@ export let View3d: ParentComponent<View3dProps> = props => {
   )
   untrack(() => props.ref)?.(view)
   onCleanup(() => view.dispose())
-  let { input, hasInput, hasKeys } = createSceneInput()
+  // The pointer feed the app handed in (see Scene): the built-in leaf
+  // feeds it, children reach it through useScene().pointer.
+  let pointer = untrack(() => props.pointer) ?? null
+  let feed = pointer?.handlers
   let output = untrack(() => props.output)
-  let leafNode: { id: number } | undefined
-  // The built-in leaf is laid out at the target size, so pointer
-  // coordinates and the controls' viewport are target pixels.
-  let leaf = output ? null : input.handlersFor(() => ({ width: props.width, height: props.height }), () => leafNode)
   return (
-    <SceneContext value={{ scene: ctx.scene, parent: ctx.parent, viewport: view, input }}>
+    <SceneContext value={{ scene: ctx.scene, parent: ctx.parent, viewport: view, pointer }}>
       {output ? (
         untrack(() => output(view.texture))
       ) : (
         <texture
-          ref={(n: { id: number }) => (leafNode = n)}
           src={tiled ? props.into : view.texture}
           width={props.width}
           height={props.height}
@@ -115,14 +117,11 @@ export let View3d: ParentComponent<View3dProps> = props => {
           srcY={tiled ? (props.y ?? 0) : undefined}
           srcW={tiled ? props.width : undefined}
           srcH={tiled ? props.height : undefined}
-          onPointerDown={hasInput() ? leaf!.onPointerDown : undefined}
-          onPointerMove={hasInput() ? leaf!.onPointerMove : undefined}
-          onPointerUp={hasInput() ? leaf!.onPointerUp : undefined}
-          onWheel={hasInput() ? leaf!.onWheel : undefined}
-          focusable={hasKeys()}
-          onKeyDown={hasKeys() ? leaf!.onKeyDown : undefined}
-          onKeyUp={hasKeys() ? leaf!.onKeyUp : undefined}
-          onBlur={hasKeys() ? leaf!.onBlur : undefined}
+          onPointerDown={feed ? feed.onPointerDown : undefined}
+          onPointerMove={feed ? feed.onPointerMove : undefined}
+          onPointerUp={feed ? feed.onPointerUp : undefined}
+          onPointerLeave={feed ? feed.onPointerLeave : undefined}
+          onWheel={feed ? feed.onWheel : undefined}
         />
       )}
       {props.children}

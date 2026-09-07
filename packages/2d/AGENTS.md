@@ -106,48 +106,80 @@ moved subtrees in Rust, and picking walks the core BVH.
   functions over it.
 - Camera control: `createCamera2d(view | views, { viewport: () =>
   ({ width, height }), world?: { width, height }, min/maxZoom?, pivot?,
-  deadZone?: { width, height }, zoomSpeed?, followSpeed?, inertia?,
-  x?, y?, zoom?, rotation? })` - Godot's Camera2D and Three's
-  MapControls in one control over the shared CameraUpdate: drag to pan
-  with inertia on release, wheel and pinch zoom about the pointer, eased
-  `glideTo`/`fit`, `follow(x, y)` through a dead zone with damping,
-  rotation about the pivot, and world bounds that CONTAIN the view (an
-  axis whose view is wider than the world centers; limits ignore
-  rotation, Godot's rule). The pose is "world point at the pivot", the
-  pivot a viewport fraction defaulting to the center, so `camera().x/y`
-  is the view center and glideTo/follow land there (without a `world`,
-  the default pose puts world 0,0 at the pivot: a fill layer that wants
-  world = screen at rest takes `pivot: { x: 0, y: 0 }`). The first
-  argument is anything with a view's `setCamera` (a view of a sprite
-  layer, of a record layer, several at once - one camera over a scene's
-  layers - or a signal setter feeding `<TileLayer camera>`). Input runs on core's `createTransform` recognizer like the
-  3d orbit camera (arena arbitration, slop swallowed, one delta per
-  FRAME - a synthetic drag under a frozen clock pans nothing until frames
-  step). Two ways in: `cam.attach(view)` listens at the view's root, so
-  the camera sees exactly the presses the sprites let through (a sprite
-  that stops its down keeps the camera out of that drag; a wheel
-  anywhere zooms) and pushes the pose synchronously on input; the raw
-  `cam.handlers` spread onto a leaf without a dispatch (a tile world on
-  its own). Call `cam.update(dt)` from a frame loop (it pushes one
-  setCamera per driven view when the pose changed and reports that),
-  gated on the reactive `cam.active()` (true while a glide, fling, fit
-  or follow needs frames, false at rest), read `cam.camera()` for
+  deadZone?: { width, height }, panSpeed?, zoomSpeed?, rollSpeed?,
+  followSpeed?, inertia?, x?, y?, zoom?, rotation? })` - Godot's Camera2D
+  and Three's MapControls in one control over the shared CameraUpdate:
+  pan with inertia on release, zoom about a point, eased `glideTo`/`fit`,
+  `follow(x, y)` through a dead zone with damping, roll about the pivot,
+  and world bounds that CONTAIN the view (an axis whose view is wider
+  than the world centers - so at the fit zoom a pan is a no-op, there is
+  nothing to pan; limits ignore rotation, Godot's rule). The pose is
+  "world point at the pivot", the pivot a viewport fraction defaulting to
+  the center, so `camera().x/y` is the view center and glideTo/follow
+  land there (without a `world`, the default pose puts world 0,0 at the
+  pivot: a fill layer that wants world = screen at rest takes `pivot: {
+  x: 0, y: 0 }`). The first argument is anything with a view's
+  `setCamera` (a view of a sprite layer, of a record layer, several at
+  once - one camera over a scene's layers - or a signal setter feeding
+  `<TileLayer camera>`).
+  Input, the rule (ARCHITECTURE.md): the control consumes a device-free
+  abstraction and never handles events itself. Its `axes` (core's
+  createAxes contract) are `pan` (vec2: a delta is finger travel in
+  viewport heights, applied as content travel - the world follows the
+  finger; a rate slides at one viewport height per second), `zoom` (axis,
+  octaves, positive in: a delta bracketed by a gesture - a pinch - applies
+  at once about its focal point, an unbracketed one - a wheel notch -
+  retargets an eased glide, which is how the control tells a finger from
+  an impulse; notches compound on the pending target) and `roll` (axis,
+  turns); a pan gesture's begin stops any glide (a finger landing on a
+  gliding view holds it) and its end flings with the drag's velocity. The
+  verbs, each pushing the pose at once: `panBy(dx, dy)` screen pixels,
+  `zoomAt(sx, sy, factor, { glide? })`, `rollBy(angle)`, `set(pose)`,
+  `glideTo`, `fit`, `follow`/`unfollow`, `interrupt`, `release`. An input
+  map (core AGENTS.md) drives the axes by name and the APP binds devices
+  to it: the view's pointer feed (`createPointerFeed()`, handed to
+  `<SpriteLayer pointer>` / `<View2d pointer>`, or bridged with
+  `feedPointer(view, feed)` for an imperative view - fed from the view's
+  ROOT, so a sprite that claims its press keeps the camera out of that
+  drag and a wheel anywhere zooms), a pad, the keyboard. Nothing binds
+  by default; `camera2dBindings({ pointer, gamepad?, keyboard? })` is the
+  standard set (drag and two fingers pan, pinch and wheel zoom, twist
+  rolls; the left stick and the arrows scroll the VIEW - bound through
+  invert(), since keys and sticks move the camera where a drag moves the
+  content - the triggers zoom, the right stick's x rolls) and
+  `camera2dActions` the declarations:
+
+  ```tsx
+  let pointer = createPointerFeed()
+  feedPointer(view, pointer)
+  let input = createInputMap(camera2dActions)
+  input.bind(camera2dBindings({ pointer, gamepad: gamepad() }))
+  input.drive(cam.axes)
+  ```
+
+  Call `cam.update(dt)` from a frame loop (it advances glides, follow,
+  inertia and the axis rates, pushes one setCamera per driven view when
+  the pose changed and reports that), gated on the reactive
+  `cam.active()` (true while a glide, fling, fit, follow or pan gesture
+  needs frames, or a rate drives; false at rest), read `cam.camera()` for
   projectCamera. The camera has NO tap of its own: taps are the
   dispatch's (`onTap` on the root with `e.sprite` null is "tap on empty
-  space"). `<Camera2d>` inside `<SpriteLayer>` is all of that wired
-  through context, the 3d `<OrbitCamera>` shape: options read at mount,
-  driving the nearest view (the `<SpriteLayer>`'s own or the enclosing
-  `<View2d>`), `viewport` defaulting to that view's size, frames only while
-  `active()`. Anchors and deltas arrive in the leaf's own frame (core's
-  recognizers measure in the node's frames), so a leaf under a
-  designSize fit pans and zooms correctly. The motion is
-  camera-motion.ts, pure; checks/camera2d-check.ts pins the clamp,
-  anchoring, glides, follow and inertia headless, examples/camera.tsx
-  (function face, attach) and examples/pick.tsx (`<Camera2d>`) are the
-  live guards. Not yet, all additive: two-finger twist rotation,
-  rotation glides, a contain origin other than center, live option
-  props on `<Camera2d>` (the motion reads them once; remount for new
-  bounds).
+  space"). `<Camera2d input={input}>` inside `<SpriteLayer>` is all of
+  that wired through context, the 3d `<OrbitCamera>` shape: options read
+  at mount, driving the nearest view (the `<SpriteLayer>`'s own or the
+  enclosing `<View2d>`), `viewport` defaulting to that view's size, the
+  map's `pan`/`zoom`/`roll` actions (or the names in `actions`) driving
+  the axes, frames only while `active()`. A view's feed normalizes a drag
+  by the leaf's own box, so a leaf under a designSize fit pans and zooms
+  correctly. camera2d.ts imports `@solidrt/core/input` only, so
+  checks/camera2d-check.ts pins the clamp, anchoring, glides, follow,
+  inertia and the axes headless; examples/camera.tsx (function face) and
+  examples/pick.tsx (`<Camera2d>`) are the live guards. The shared
+  vocabulary with @solidrt/3d, one kind and unit per word: `pan` vec2,
+  `zoom` axis (octaves), `roll` axis (turns) here; `rotate`, `look`,
+  `move`, `rise` there. Not yet, all additive: rotation glides, a contain
+  origin other than center, live option props on `<Camera2d>` (the
+  control reads them once; remount for new bounds).
 - Layer tint (`setTint(rgba)`/the `tint` option and prop, both layer
   kinds): one `uTint` shared-params write multiplied over every sprite's
   own tint - day/night, a dimmed parallax plane, a fade-in. Cheap to
@@ -178,7 +210,8 @@ moved subtrees in Rust, and picking walks the core BVH.
   as the root of the walk: a sprite under a minimap gets its ordinary
   handlers, `view.listen` is the last stop (a tap there with `e.x`/`e.y`
   in world pixels is "glide the main camera here"), and
-  `createCamera2d(view).attach(view)` drives any view. `<View2d>` is the
+  a camera bound to a feed `feedPointer(view, feed)` bridges drives any
+  view. `<View2d>` is the
   component form; the `<SpriteLayer>`'s built-in leaf is a view too, and
   `<SpriteLayer output={false}>` has none, showing only through its
   `<View2d>` children (examples/split-screen.tsx). examples/views.tsx is
@@ -273,11 +306,11 @@ on approach, evict) - okf/backlog/2d-baked-layers.md.
 
 | Component | Props |
 |---|---|
-| `SpriteLayer` | atlas (TextureId), capacity?, tint? ([r,g,b,a] 0..1, over the whole layer in every view), orderBy?, label?, ref?(layer) - the layer; plus its OWN VIEW, unless `output={false}`: width?, height? (view pixels - both, or neither = FILL: the leaf lays out at 100% of its sized parent and the view follows its box, so view pixels are the leaf's own coordinates; mount-fixed, a function `output` requires explicit sizes, matching `<Scene>` in @solidrt/3d), clearColor?, camera?, oversample?, maxOversample?, viewRef?(view), output? (a function composes the leaf from the texture id; `false` = no own view, the layer shows only through `<View2d>` children and the view props throw), events?, onPointer{Down,Move,Up}?, onWheel?, onTap? (the view's root: `event.sprite` is the hit sprite or null over empty space) |
+| `SpriteLayer` | atlas (TextureId), capacity?, tint? ([r,g,b,a] 0..1, over the whole layer in every view), orderBy?, label?, ref?(layer) - the layer; plus its OWN VIEW, unless `output={false}`: width?, height? (view pixels - both, or neither = FILL: the leaf lays out at 100% of its sized parent and the view follows its box, so view pixels are the leaf's own coordinates; mount-fixed, a function `output` requires explicit sizes, matching `<Scene>` in @solidrt/3d), clearColor?, camera?, oversample?, maxOversample?, viewRef?(view), output? (a function composes the leaf from the texture id; `false` = no own view, the layer shows only through `<View2d>` children and the view props throw), events?, pointer? (a createPointerFeed fed from the view's root, what a map over this view binds; `useSpriteLayer().pointer` inside), onPointer{Down,Move,Up}?, onWheel?, onTap? (the view's root: `event.sprite` is the hit sprite or null over empty space) |
 | `Sprite` | x, y (center; local to the enclosing `<Group>`), w, h, frame?, rotation? (radians, clockwise), tint? ([r,g,b,a] 0..1), visible?, transition?, onPointer{Down,Move,Up,Enter,Leave}?, onWheel?, onTap?, ref? |
 | `Group` | x?, y?, rotation?, scale? (uniform, scales the subtree), visible? (the whole subtree), transition?, onPointer{Down,Move,Up}?, onWheel?, onTap? (bubbled from hit child sprites), ref? |
-| `Camera2d` | createCamera2d's options minus `viewport` (world?, min/maxZoom?, pivot?, deadZone?, zoomSpeed?, followSpeed?, inertia?, x?, y?, zoom?, rotation?), viewport? (`() => { width, height }`, default: the driven viewport's size), ref? - a `<SpriteLayer>` child driving the nearest view's camera from its root (the `<SpriteLayer>`'s own, or inside a `<View2d>` that view); read at mount; throws under `output={false}` outside a `<View2d>` |
-| `View2d` | a `<SpriteLayer>` child: one more view of the layer from a camera of its own (layer.createView as a component): width, height (view pixels, live; fixed-size only for now), camera? (partial CameraUpdate on the view's camera, live; the same state a `<Camera2d>` child writes), oversample?, maxOversample? (the auto-pick, as SpriteLayer's), clearColor?, label? (createView's, fixed), ref?(view), output?(texture) (else a built-in `<texture>` leaf at the view size carrying the view's handlers), events?, onPointer{Down,Move,Up}?, onWheel?, onTap? (the view's root: `event.sprite` null over empty space); a `<Camera2d>` child drives the VIEW (inside, `useSpriteLayer()` reports the view as `viewport`); `<Sprite>`/`<Group>` children mount to the layer as outside |
+| `Camera2d` | createCamera2d's options minus `viewport` (world?, min/maxZoom?, pivot?, deadZone?, panSpeed?, zoomSpeed?, rollSpeed?, followSpeed?, inertia?, x?, y?, zoom?, rotation?), viewport? (`() => { width, height }`, default: the driven viewport's size), input? (the input map driving its `pan`/`zoom`/`roll` axes; live), actions? (action names per axis when the map's differ), ref? - a `<SpriteLayer>` child driving the nearest view's camera (the `<SpriteLayer>`'s own, or inside a `<View2d>` that view) from the map, nothing else; read at mount; throws under `output={false}` outside a `<View2d>` |
+| `View2d` | a `<SpriteLayer>` child: one more view of the layer from a camera of its own (layer.createView as a component): width, height (view pixels, live; fixed-size only for now), camera? (partial CameraUpdate on the view's camera, live; the same state a `<Camera2d>` child writes), oversample?, maxOversample? (the auto-pick, as SpriteLayer's), clearColor?, label? (createView's, fixed), ref?(view), output?(texture) (else a built-in `<texture>` leaf at the view size carrying the view's handlers), events?, pointer? (this view's feed, fed from its root), onPointer{Down,Move,Up}?, onWheel?, onTap? (the view's root: `event.sprite` null over empty space); a `<Camera2d>` child drives the VIEW from its map (inside, `useSpriteLayer()` reports the view as `viewport` and the feed as `pointer`); `<Sprite>`/`<Group>` children mount to the layer as outside |
 | `TileLayer` | cols, rows, tileW, tileH, atlas (TextureId), chunkClearColor?, filter?, chunkTiles?, tint? ([r,g,b,a] 0..1, over the whole layer), oversample?, maxOversample?, camera? (TileCamera: x, y, zoom, rotation, pivotX, pivotY), label?, ref? |
 
 `SpriteLayer` owns the layer and its own view, rendered as the built-in
@@ -285,12 +318,13 @@ on approach, evict) - okf/backlog/2d-baked-layers.md.
 `events={false}`; compose yourself with `output`, then spread
 `useSpriteLayer().viewport.handlers` onto your leaf; `output={false}` for
 no own view at all). `useSpriteLayer()` returns `{ layer, parent,
-viewport }` - the same shape as `useScene()` in `@solidrt/3d` - where
-`parent` is the enclosing `<Group>`'s handle (null at the layer root), so
-imperative `addSprite(layer, { parent })` mounts where the JSX sits, and
-`viewport` is the nearest view (the `<SpriteLayer>`'s own, or inside a
-`<View2d>` that view), what a `<Camera2d>` drives and listens at; read
-under `output={false}` outside a `<View2d>` it throws. `Sprite` renders
+viewport, pointer }` - the same shape as `useScene()` in `@solidrt/3d` -
+where `parent` is the enclosing `<Group>`'s handle (null at the layer
+root), so imperative `addSprite(layer, { parent })` mounts where the JSX
+sits, `viewport` is the nearest view (the `<SpriteLayer>`'s own, or
+inside a `<View2d>` that view), what a `<Camera2d>` drives, and
+`pointer` that view's feed (the owner's `pointer` prop, null without
+one); read under `output={false}` outside a `<View2d>` `viewport` throws. `Sprite` renders
 nothing - it allocates a record through context and syncs props into it.
 `GroupContext` is `createContext<SpriteGroup | null>(null)` on purpose: an
 optional parent needs a non-undefined default, since Solid 2 throws on a

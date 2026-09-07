@@ -8,8 +8,8 @@
 // pane zooms that pane alone (the follow keeps tracking under the zoom);
 // a tap on a sprite in either pane tints it in both, since there is only
 // one sprite. The `cameras` debug command reads both poses back.
-import { onFrame, render, windowSize, For } from "@solidrt/core"
-import { Camera2d, createAtlas, grid, setSprite, Sprite, SpriteLayer, View2d } from "@solidrt/2d"
+import { createInputMap, createPointerFeed, gamepad, onFrame, render, windowSize, For } from "@solidrt/core"
+import { Camera2d, camera2dActions, camera2dBindings, createAtlas, grid, setSprite, Sprite, SpriteLayer, View2d } from "@solidrt/2d"
 import type { Camera2dHandle, Frame, SpriteHandle } from "@solidrt/2d"
 import { registerDebug } from "srt:dev"
 import logoBytes from "./logo.png" with { type: "binary" }
@@ -56,11 +56,18 @@ function App() {
       cams[i]?.follow(x, y)
     }
   })
-  let paneView = (i: number) => (
-    <View2d width={pane().width} height={pane().height} clearColor={i === 0 ? [0.05, 0.05, 0.09, 1] : [0.09, 0.05, 0.05, 1]} label={`pane-${i}`}>
-      <Camera2d world={WORLD} zoom={PANE_ZOOM} maxZoom={MAX_ZOOM} deadZone={DEAD_ZONE} ref={c => (cams[i] = c)} />
-    </View2d>
-  )
+  // Two players, two maps: each pane's <Camera2d> takes its own pane's
+  // gestures and its own pad (slot i), and nothing crosses over.
+  let paneView = (i: number) => {
+    let pointer = createPointerFeed()
+    let input = createInputMap(camera2dActions)
+    input.bind(camera2dBindings({ pointer, gamepad: gamepad(i) }))
+    return (
+      <View2d width={pane().width} height={pane().height} clearColor={i === 0 ? [0.05, 0.05, 0.09, 1] : [0.09, 0.05, 0.05, 1]} label={`pane-${i}`} pointer={pointer}>
+        <Camera2d input={input} world={WORLD} zoom={PANE_ZOOM} maxZoom={MAX_ZOOM} deadZone={DEAD_ZONE} ref={c => (cams[i] = c)} />
+      </View2d>
+    )
+  }
   return (
     <window>
       <SpriteLayer atlas={atlas.texture} capacity={COUNT + 2} output={false}>

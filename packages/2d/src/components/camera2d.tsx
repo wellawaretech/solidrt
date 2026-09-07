@@ -1,14 +1,20 @@
 import { merge } from "@solidjs/signals"
-import { createEffect, onCleanup, onFrame, untrack } from "@solidrt/core"
-import type { VoidComponent } from "@solidrt/core"
+import { createEffect, onFrame, untrack } from "@solidrt/core"
+import type { InputMap, VoidComponent } from "@solidrt/core"
 import { createCamera2d } from "../camera2d.ts"
-import type { Camera2d as Camera2dHandle, Camera2dOptions } from "../camera2d.ts"
+import type { Camera2d as Camera2dHandle, Camera2dAxes, Camera2dOptions } from "../camera2d.ts"
 import { useSpriteLayer } from "./context.ts"
 
 export type Camera2dProps = Omit<Camera2dOptions, "viewport"> & {
   /** Viewport in layer pixels; defaults to the driven view's own size
    * (live: a fill layer's box, a setSize, a `<View2d>` resize). */
   viewport?: () => { width: number; height: number }
+  /** The input map driving the control (InputMap.drive): its `pan`,
+   * `zoom` and `roll` actions, or the ones `actions` names. Live: a new
+   * map reconnects. Without one the control moves only through `ref`. */
+  input?: InputMap<any>
+  /** Action names per axis when the map's differ (null skips an axis). */
+  actions?: Partial<Record<keyof Camera2dAxes, string | null>>
   ref?: (camera: Camera2dHandle) => void
 }
 
@@ -19,22 +25,22 @@ const MAX_CAMERA_DT = 0.1
 /**
  * createCamera2d as a SpriteLayer child: drives the nearest view's camera
  * - the `<SpriteLayer>`'s own, or inside a `<View2d>` that view
- * (useSpriteLayer's `viewport`) - and takes its input from its root
- * through context - no ref plumbing, no handler spreads, no onFrame of
- * your own. Under a `<SpriteLayer output={false}>` there is no view to
- * drive: put the `<Camera2d>` inside one of its `<View2d>` children. A sprite that
- * claims its press (stopPropagation on its down) keeps the camera out of
- * that drag; everything else pans, pinches and wheels. The options are
- * read at mount (the motion reads them once): change the pose at runtime
- * through `ref`'s set/glideTo/fit/follow, and remount (a keyed `<Show>`)
- * for new bounds. `viewport` defaults to the viewport's own size. Frames run
- * only while the camera moves (`active()`), so a resting camera leaves
- * the app demand-driven idle.
+ * (useSpriteLayer's `viewport`) - and takes its input from the map in
+ * `input`, nothing else (ARCHITECTURE.md: no device wiring in a
+ * component; the app binds the view's pointer feed, a pad or anything
+ * else to the map). Under a `<SpriteLayer output={false}>` there is no
+ * view to drive: put the `<Camera2d>` inside one of its `<View2d>`
+ * children. The options are read at mount (the control reads them once):
+ * change the pose at runtime through `ref`'s set/glideTo/fit/follow and
+ * the verbs, and remount (a keyed `<Show>`) for new bounds. `viewport`
+ * defaults to the view's own size. Frames run only while the camera
+ * moves (`active()`), so a resting camera leaves the app demand-driven
+ * idle.
  */
 export let Camera2d: VoidComponent<Camera2dProps> = props => {
   let target = useSpriteLayer().viewport
   // Through merge, not a spread: a props object hands out getters, and
-  // merge keeps them (the motion reads each once at creation, viewport
+  // merge keeps them (the control reads each once at creation, viewport
   // live).
   let options: Camera2dOptions = merge(props, {
     get viewport() {
@@ -42,7 +48,10 @@ export let Camera2d: VoidComponent<Camera2dProps> = props => {
     },
   })
   let cam = untrack(() => createCamera2d(target, options))
-  onCleanup(cam.attach(target))
+  createEffect(
+    () => props.input,
+    input => (input ? input.drive(cam.axes, untrack(() => props.actions)) : undefined),
+  )
   createEffect(
     () => cam.active(),
     on => {

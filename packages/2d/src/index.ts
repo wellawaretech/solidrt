@@ -22,8 +22,9 @@ export { pointInSprite } from "./pick.ts"
 export { projectCamera, unprojectCamera } from "./camera.ts"
 export type { CameraState, CameraUpdate } from "./camera.ts"
 export { createCamera2d } from "./camera2d.ts"
-export type { Camera2d as Camera2dHandle, Camera2dOptions } from "./camera2d.ts"
-export type { Camera2dPose, Camera2dTarget, Rect2d } from "./camera-motion.ts"
+export type { Camera2d as Camera2dHandle, Camera2dAxes, Camera2dOptions, Camera2dPose, Camera2dTarget, Rect2d } from "./camera2d.ts"
+export { camera2dActions, camera2dBindings } from "./input.ts"
+export type { CameraDevices } from "./input.ts"
 export type {
   AddSpriteOptions,
   GroupOptions,
@@ -42,6 +43,7 @@ export type {
   SpriteWheelEvent,
   TransitionEndEvent,
 } from "./layer.ts"
+export { feedPointer } from "./views.ts"
 export type { ViewHandle, ViewOptions } from "./views.ts"
 export { createTileLayer } from "./tiles.ts"
 export type { TileChunk, TileLayer as TileLayerHandle, TileLayerOptions } from "./tiles.ts"

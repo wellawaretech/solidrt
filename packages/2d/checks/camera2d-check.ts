@@ -1,23 +1,27 @@
-// Checks for the 2d camera's motion (camera-motion.ts): the contain clamp
-// and its centering, anchored zoom under any pivot and rotation, the eased
-// glides (wheel, glideTo, fit) landing exactly, follow through a dead zone,
-// drag inertia, Godot's limits-ignore-rotation rule, the deferred fit on an
-// unknown viewport, and the validation throws - hand-written cases plus a
-// seeded sweep. Pure-module input only (camera-motion.ts imports no GUI),
-// so it runs headless on flux, bundled from the repo root:
+// Checks for the 2d camera control (camera2d.ts): the contain clamp and
+// its centering, anchored zoom under any pivot and rotation, the eased
+// glides (a wheel notch, glideTo, fit) landing exactly, follow through a
+// dead zone, drag inertia, Godot's limits-ignore-rotation rule, the
+// deferred fit on an unknown viewport, the axes (a pan gesture's
+// brackets, a bracketed and an unbracketed zoom delta, rates integrated
+// by update) and the validation throws - hand-written cases plus a
+// seeded sweep. Pure-module input only (camera2d.ts imports no GUI or
+// runtime module), so it runs headless on flux, bundled from the repo
+// root:
 //
 //   bunx srt bundle -f --stdout packages/2d/checks/camera2d-check.ts | target/release/flux - [seed]
 //
 // A seeded PRNG keeps failures reproducible - rerun with the printed seed.
 // A failure prints FAIL lines and throws at the end, and the flux binary
 // exits 1 on the uncaught throw, so a CI step can gate on the exit code.
-// The input glue (createCamera2d's handlers over core's transform
+// The device side (the pointer feed's recognizer over core's transform
 // recognizer) needs the runtime's event bus and is exercised live by
 // examples/camera.tsx.
 
+import { flush } from "@solidjs/signals"
 import { argv } from "flux:process"
-import { createCameraMotion } from "../src/camera-motion.ts"
-import type { Camera2dMotion, Camera2dMotionOptions } from "../src/camera-motion.ts"
+import { createCamera2d } from "../src/camera2d.ts"
+import type { Camera2d, Camera2dOptions } from "../src/camera2d.ts"
 import { projectCamera } from "../src/camera.ts"
 import type { CameraUpdate } from "../src/camera.ts"
 
@@ -51,12 +55,12 @@ const SWEEP = 500
 
 let near = (a: number, b: number, eps = EPS) => Math.abs(a - b) <= eps
 
-type Rig = { cam: Camera2dMotion; view: { width: number; height: number }; last: () => CameraUpdate | null; writes: () => number }
+type Rig = { cam: Camera2d; view: { width: number; height: number }; last: () => CameraUpdate | null; writes: () => number }
 
-function make(opts: Partial<Camera2dMotionOptions> = {}, view = { width: 800, height: 600 }): Rig {
+function make(opts: Partial<Camera2dOptions> = {}, view = { width: 800, height: 600 }): Rig {
   let last: CameraUpdate | null = null
   let writes = 0
-  let cam = createCameraMotion(
+  let cam = createCamera2d(
     {
       setCamera: (u) => {
         last = u
@@ -68,9 +72,13 @@ function make(opts: Partial<Camera2dMotionOptions> = {}, view = { width: 800, he
   return { cam, view, last: () => last, writes: () => writes }
 }
 
+// A wheel notch as the pointer feed delivers it: an unbracketed zoom
+// delta of deltaY wheel units at the feed's exponent, an eased glide.
+let notch = (cam: Camera2d, sx: number, sy: number, deltaY: number) => cam.zoomAt(sx, sy, Math.exp(-deltaY * 0.0015), { glide: true })
+
 // Step until update reports rest; returns the ticks taken (SETTLE_TICKS+1
 // means it never rested).
-function settle(cam: Camera2dMotion): number {
+function settle(cam: Camera2d): number {
   for (let i = 0; i < SETTLE_TICKS; i++) {
     if (!cam.update(DT)) return i
   }
@@ -144,7 +152,7 @@ for (let i = 0; i < SWEEP; i++) {
   let sy = 456
   let [wx, wy] = [cam.camera().x! + 80, cam.camera().y! - 40]
   let [ax, ay] = projectCamera(cam.camera(), wx, wy)
-  cam.wheel(ax, ay, -400)
+  notch(cam, ax, ay, -400)
   let target = 1.5 * Math.exp(400 * 0.0015)
   let ticks = 0
   for (; ticks < SETTLE_TICKS; ticks++) {
@@ -158,17 +166,17 @@ for (let i = 0; i < SWEEP; i++) {
   if (ticks === 0 || ticks >= SETTLE_TICKS) fail(`wheel glide should run and then rest, ticks=${ticks}`)
   if (cam.camera().zoom !== target) fail(`wheel glide lands exactly on its target ${target}, got ${cam.camera().zoom}`)
   // Notches compound on the pending target.
-  cam.wheel(sx, sy, -100)
-  cam.wheel(sx, sy, -100)
+  notch(cam, sx, sy, -100)
+  notch(cam, sx, sy, -100)
   settle(cam)
   if (!near(cam.camera().zoom!, target * Math.exp(200 * 0.0015), 1e-9)) fail(`two notches compound: got ${cam.camera().zoom}`)
   // A rotation write mid-glide leaves the glide running; an x write cancels it.
-  cam.wheel(sx, sy, 100)
+  notch(cam, sx, sy, 100)
   cam.set({ rotation: 0.9 })
   let z = cam.camera().zoom!
   cam.update(DT)
   if (cam.camera().zoom === z) fail("set({ rotation }) must not cancel a glide")
-  cam.wheel(sx, sy, 100)
+  notch(cam, sx, sy, 100)
   cam.set({ x: 310 })
   z = cam.camera().zoom!
   cam.update(DT)
@@ -265,7 +273,7 @@ for (let i = 0; i < SWEEP; i++) {
   let { cam } = make({ minZoom: 0.01, maxZoom: 100, zoom: 2, x: 500, y: 250 })
   cam.follow(500, 250)
   settle(cam)
-  cam.wheel(400, 300, -200)
+  notch(cam, 400, 300, -200)
   let target = 2 * Math.exp(200 * 0.0015)
   // The target moves a pixel a tick for as long as any glide may take;
   // the follow never rests meanwhile (a moving target keeps it active),
@@ -289,7 +297,7 @@ for (let i = 0; i < SWEEP; i++) {
 
 // ---- Inertia: a flick keeps gliding and decays to rest; slow or disabled releases do not ----
 {
-  let drag = (cam: Camera2dMotion, perTick: number, ticks: number) => {
+  let drag = (cam: Camera2d, perTick: number, ticks: number) => {
     for (let i = 0; i < ticks; i++) {
       cam.panBy(perTick, 0)
       cam.update(DT)
@@ -299,7 +307,7 @@ for (let i = 0; i < SWEEP; i++) {
   }
   // The release's own frame still flushes the last pan; rest means nothing
   // after that.
-  let rests = (cam: Camera2dMotion) => {
+  let rests = (cam: Camera2d) => {
     cam.update(DT)
     return settle(cam) === 0
   }
@@ -358,6 +366,59 @@ for (let i = 0; i < SWEEP; i++) {
   throws("set NaN", () => make().cam.set({ x: NaN }))
   throws("zoomAt factor 0", () => make().cam.zoomAt(0, 0, 0))
   throws("fit without world or rect", () => make().cam.fit())
+}
+
+// ---- The axes: brackets, bracketed vs unbracketed zoom, rates ----
+{
+  let { cam, view } = make({ minZoom: 0.01, maxZoom: 100, x: 400, y: 300, zoom: 1 })
+  // A pan gesture: its begin stops a glide, its deltas are viewport heights
+  // of content travel (the world follows the finger, so the camera point
+  // moves the other way), its end flings.
+  cam.glideTo(900, 900)
+  cam.axes.begin("pan")
+  cam.update(DT)
+  if (cam.camera().x !== 400) fail(`a pan begin stops the glide, x=${cam.camera().x}`)
+  cam.axes.nudge("pan", [0.1, 0])
+  if (!near(cam.camera().x!, 400 - 0.1 * view.height)) fail(`a pan delta of 0.1 heights slides the camera 60 px, got ${cam.camera().x}`)
+  for (let i = 0; i < 5; i++) {
+    cam.axes.nudge("pan", [0.05, 0])
+    cam.update(DT)
+  }
+  let beforeRelease = cam.camera().x!
+  cam.axes.end("pan")
+  cam.update(DT)
+  if (settle(cam) === 0 || cam.camera().x! >= beforeRelease) fail("a pan end flings with the drag's velocity")
+  // A bracketed zoom delta (a pinch) applies at once about its focal; an
+  // unbracketed one (a wheel notch) eases there.
+  cam.set({ x: 400, y: 300, zoom: 1 })
+  cam.axes.begin("zoom")
+  cam.axes.nudge("zoom", 1, [0.5, 0.5])
+  cam.axes.end("zoom")
+  if (cam.camera().zoom !== 2) fail(`a bracketed zoom delta of one octave doubles at once, got ${cam.camera().zoom}`)
+  cam.axes.nudge("zoom", 1, [0.5, 0.5])
+  if (cam.camera().zoom !== 2) fail(`an unbracketed zoom delta glides, not snaps, got ${cam.camera().zoom}`)
+  settle(cam)
+  if (!near(cam.camera().zoom!, 4, 1e-9)) fail(`the unbracketed zoom lands at 4, got ${cam.camera().zoom}`)
+  // A roll delta in turns.
+  cam.axes.nudge("roll", 0.25)
+  if (!near(cam.camera().rotation!, Math.PI / 2)) fail(`a roll delta of a quarter turn, got ${cam.camera().rotation}`)
+  // Rates: a full deflection slides one viewport height per second and
+  // wakes active(); removing the source rests it.
+  cam.set({ x: 400, y: 300, zoom: 1, rotation: 0 })
+  settle(cam)
+  if (cam.active()) fail("a resting camera is not active")
+  let remove = cam.axes.add("pan", () => [1, 0])
+  flush()
+  if (!cam.active()) fail("a rate source wakes active()")
+  cam.update(0.5)
+  if (!near(cam.camera().x!, 400 - 0.5 * view.height)) fail(`a pan rate of 1 over half a second slides half a height, got ${cam.camera().x}`)
+  remove()
+  flush()
+  if (cam.active()) fail("removing the rate source rests active()")
+  let stopZoom = cam.axes.add("zoom", () => 1)
+  cam.update(1)
+  stopZoom()
+  if (!near(cam.camera().zoom!, 2, 1e-9)) fail(`a zoom rate of 1 doubles per second, got ${cam.camera().zoom}`)
 }
 
 console.log(failures === 0 ? "CAMERA2D-OK" : `CAMERA2D-FAIL ${failures}`)

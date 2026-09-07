@@ -15,7 +15,7 @@
 // the root re-exports it, nothing outside imports the files directly.
 
 export { useScene } from "./context.tsx"
-export type { CameraTarget, SceneInput, SceneInputListener } from "./context.tsx"
+export type { CameraTarget } from "./context.tsx"
 export type { PointerEventProps, TransformProps } from "./node-props.ts"
 export { Scene } from "./scene.tsx"
 export type { SceneProps } from "./scene.tsx"

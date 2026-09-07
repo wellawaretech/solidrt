@@ -12,9 +12,9 @@
 // Light intensities read as lit's: 1 lights a white matte surface to 1.
 // Drag to look around.
 
-import { pct, render } from "@solidrt/core"
+import { createInputMap, createPointerFeed, gamepad, pct, render } from "@solidrt/core"
 import { createCubeTexture } from "@solidrt/core/gpu"
-import { DirectionalLight, HemisphereLight, Mesh, OrbitCamera, plane, Scene, sphere, standard } from "@solidrt/3d"
+import { DirectionalLight, HemisphereLight, Mesh, OrbitCamera, orbitActions, orbitBindings, plane, Scene, sphere, standard } from "@solidrt/3d"
 import { normalize } from "@solidrt/3d/math"
 import type { Vec3 } from "@solidrt/3d/math"
 
@@ -91,6 +91,12 @@ function bakeSky(): Uint8Array[] {
 }
 
 function App() {
+  // The camera's input: the scene leaf's gestures and any pad, bound to the
+  // orbit control's actions - the app wires devices, the component takes
+  // the map (ARCHITECTURE.md).
+  let pointer = createPointerFeed()
+  let input = createInputMap(orbitActions)
+  input.bind(orbitBindings({ pointer, gamepad: gamepad() }))
   let cube = createCubeTexture(bakeSky(), FACE, { format: "rgba8-srgb", mipmap: true, label: "sky" })
   let ball = sphere({ radius: RADIUS, widthSegments: 48, heightSegments: 32 })
   let ground = standard({ color: [0.32, 0.33, 0.3], roughness: 0.9 })
@@ -109,8 +115,8 @@ function App() {
   return (
     <window>
       <view width={pct(100)} height={pct(100)}>
-        <Scene background={{ cube }} environment={{ cube }} samples={4} label="standard-demo">
-          <OrbitCamera target={center} azimuth={0.25} elevation={0.15} distance={9} />
+        <Scene background={{ cube }} environment={{ cube }} samples={4} label="standard-demo" pointer={pointer}>
+          <OrbitCamera input={input} target={center} azimuth={0.25} elevation={0.15} distance={9} />
           <HemisphereLight sky={[0.5, 0.6, 0.8]} ground={[0.3, 0.27, 0.24]} intensity={0.5} />
           <DirectionalLight
             position={[SUN[0] * SUN_DISTANCE, SUN[1] * SUN_DISTANCE, SUN[2] * SUN_DISTANCE]}

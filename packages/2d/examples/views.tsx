@@ -15,8 +15,8 @@
 // `camera` parks the main camera when given x/y/zoom and returns its
 // pose; `selected` the selected sprite's world position (null when none),
 // `first` the first sprite's - the one to aim a synthetic tap at.
-import { createEffect, createSignal, displayScale, onFrame, render, windowSize } from "@solidrt/core"
-import { addSprite, createAtlas, createCamera2d, createSpriteLayer, fitOversample, grid, setSprite } from "@solidrt/2d"
+import { createEffect, createInputMap, createPointerFeed, createSignal, displayScale, gamepad, onFrame, render, windowSize } from "@solidrt/core"
+import { addSprite, camera2dActions, camera2dBindings, createAtlas, createCamera2d, createSpriteLayer, feedPointer, fitOversample, grid, setSprite } from "@solidrt/2d"
 import type { Camera2dHandle, SpriteHandle, ViewHandle } from "@solidrt/2d"
 import { registerDebug } from "srt:dev"
 import logoBytes from "./logo.png" with { type: "binary" }
@@ -84,7 +84,13 @@ function App() {
   })
 
   cam = createCamera2d(main, { viewport: () => win, world: WORLD, maxZoom: MAX_ZOOM })
-  cam.attach(main)
+  // The main view's gestures and any pad drive the camera through a map;
+  // the minimap binds nothing (its tap glides through listen below).
+  let pointer = createPointerFeed()
+  feedPointer(main, pointer)
+  let input = createInputMap(camera2dActions)
+  input.bind(camera2dBindings({ pointer, gamepad: gamepad() }))
+  input.drive(cam.axes)
   main.listen({
     onTap: e => {
       if (e.sprite === null) select(null)

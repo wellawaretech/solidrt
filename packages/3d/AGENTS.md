@@ -278,9 +278,10 @@ while the target follows the leaf's on-screen size in DEVICE pixels -
 display scale, `designSize` fits and ancestor transforms included
 (getBoundingBoxViewport x displayScale, applied from onLayout, so no
 frame draws at a stale size). A bare `<Scene>` in a pane renders at
-native density on any display, mesh events and `<OrbitCamera>` input are
-wired automatically (event scaling reads the leaf's untransformed box
-back with `getLayoutBox`), and the camera aspect follows the box. Fill
+native density on any display, mesh events are wired automatically
+(event scaling reads the leaf's untransformed box back with
+`getLayoutBox`), the `pointer` feed you hand in is spread on the leaf,
+and the camera aspect follows the box. Fill
 or fixed is decided at mount; `output` requires explicit sizes (the
 target cannot follow a leaf it does not own), and giving exactly one of
 width/height throws.
@@ -295,100 +296,135 @@ examples fill; scene-views and scene-post-effect keep fixed sizes to
 show multi-view composition and supersampling). A custom `output` leaf
 whose layout differs from the target
 takes `handlersFor` (below), not `handlers`; `useScene()` works inside
-`output` because it runs in the scene context. With an `<OrbitCamera>`
-(or any SceneInput listener) in the scene, also spread
-`{...useScene().input.handlersFor(layout)}` on the leaf - the mesh-event
-and control-input channels are separate spreads with the same layout.
+`output` because it runs in the scene context. With a `pointer` feed on
+the Scene, also spread `{...useScene().pointer.handlers}` on the leaf -
+the mesh-event and gesture spreads are separate, and a detached leaf
+gives its feed a `layout` (it has no layout box to normalize by).
+
+Input, the rule (ARCHITECTURE.md): a camera control consumes a
+device-free abstraction and never handles events or reads a device
+itself. The controls expose `axes` (core's createAxes contract - rates
+sampled per frame, immediate deltas in device-free units) and pose verbs;
+an input map (`createInputMap`, core AGENTS.md) drives the axes by action
+name, and the APP binds devices to the map: the scene leaf's pointer feed
+(`createPointerFeed()`, handed to `<Scene pointer>` / `<View3d pointer>`,
+or spread on a custom leaf), a pad (`gamepad(0)`), the keyboard
+(`keyboard`, its key events through `input.handlers` on the window).
+Nothing binds by default: `<OrbitCamera />` without `input` moves only
+through its handle. The standard wiring is a preset, plain bindings the
+app applies and edits:
+
+```tsx
+let pointer = createPointerFeed()
+let input = createInputMap(orbitActions)
+input.bind(orbitBindings({ pointer, gamepad: gamepad() }))
+<Scene pointer={pointer}>
+  <OrbitCamera input={input} distance={7} />
+```
+
+The vocabulary is shared with @solidrt/2d, one kind and unit per word:
+`rotate` vec2 (orbit turns), `zoom` axis (octaves, positive in), `pan`
+vec2 (element heights), `look` vec2 (turns), `move` vec2 ([right,
+forward], forward = -y in the screen convention), `rise` axis. Keys and
+sticks move the CAMERA where a drag moves the content, so the presets
+bind them to `rotate`/`pan` through `invert()`; `look` is the exception,
+a drag and a stick both turn the eye.
 
 Camera control: `createOrbitCamera(scene, { target?, azimuth?, elevation?,
 distance?, min/maxDistance?, min/maxElevation?, orbitSpeed?, rotateSpeed?,
-zoomSpeed?, zoomAnchor?, rotateAnchor?, panSpeed?, viewport?, clampTarget? })`
-- drag-to-rotate, pinch- and wheel-to-zoom, two-finger pan, optional
-auto-orbit. The first argument is anything with the scene's `setCamera`: a
-Scene, or a View to drive one view's camera independently (one orbit per
-view, each handed the handlers of its own viewport element). Input runs on
-core's `createTransform` recognizer, so drag and pinch arbitrate in the
-app-wide gesture arena (a viewport inside a scroller
-does not double-handle) and rotation starts after the recognizer's slop;
-`zoomSpeed` weights both wheel and pinch. Two-finger translation pans (the
-scene tracks the fingers 1:1 at target depth, weighted by `panSpeed`) when
-`viewport()` supplies `{ height, fov }` for the pixel-to-world mapping -
-without it, it rotates like one finger; `clampTarget(target)` bounds where
-a pan may put the pivot. Zoom aims
-at the target unless `zoomAnchor(x, y, {eye, target})` maps the pinch focal
-/ wheel cursor to a world point (ground hit, target-depth plane, ...) - then
-that point stays pinned under the pointer and the target slides toward it;
-only the app can build that mapping, since fov and aspect are app state
-(the point arrives in the input element's own pixels). Pair it with `rotateAnchor({eye, target})`: called at gesture
-start, its point is projected onto the view axis and re-seats the pivot
-without moving the picture, so a drag after an anchored zoom orbits what the
-camera looks at, not wherever the zoom left the target. Spread
-`orbit.handlers` onto the input-owning element, call `orbit.update(dt)`
-from your onFrame (no frame loop of its own), and use its return - true
-when the pose changed - to gate per-frame dependents like reprojecting
-HUD overlays. `orbiting()` (the auto-orbit switch) and `active()` (the
-frame-loop gate: orbiting with a non-zero rate - the predicate the 2d
-camera and the first-person camera share) are reactive (HUD-safe); the
-pose is plain state via `pose()`/`set()` (also the debug-command shape). It drives position and
-target only; fov/near/far stay on scene.setCamera (or the Scene `camera`
-prop).
+zoomSpeed?, panSpeed?, clampTarget?, zoomAnchor?, rotateAnchor? })` -
+azimuth/elevation/distance around a target with optional auto-orbit. The
+first argument is anything with the scene's `setCamera` and `camera()`
+(the fov maps pan travel to world): a Scene, or a View to drive one view's
+camera independently. Its `axes` are `rotate` (a delta of one element
+height sweeps one full turn, Three's OrbitControls convention, so a drag
+feels the same on a phone and a 4k window; a rate turns at 0.5 turn/s at
+full deflection), `zoom` (octaves: a delta of 1 halves the distance, a
+rate of 1 halves it per second) and `pan` (the target slides so the scene
+tracks the fingers 1:1 at the target's depth, three.js DOLLY_PAN, weighted
+by `panSpeed`; `clampTarget(target)` bounds where a pan may put the
+pivot). The verbs: `rotateBy(azimuth, elevation)` radians, `zoomBy(factor,
+anchor?)` (factor > 1 in, as the 2d camera's zoomAt), `panBy(right, up)`
+world units, `setPivot(point)`, `set(pose)`; every one pushes the pose at
+once. Zoom aims at the target unless `zoomAnchor(focal, {eye, target})`
+maps the gesture's focal point - a FRACTION of the element, [0..1, 0..1] -
+to a world point (ground hit, target-depth plane, ...): then that point
+stays pinned under the pointer and the target slides toward it; only the
+app can build that mapping, since it needs the projection
+(scene.unproject over the scene's size). A pinch holds one anchor for its
+whole gesture (the fingers' interleaved events make the span oscillate,
+and re-anchoring per delta turns that into a crawl); the wheel, arriving
+unbracketed, anchors per notch. Pair it with `rotateAnchor({eye, target})`:
+called when a rotate gesture begins, its point is projected onto the
+view axis and re-seats the pivot without moving the picture, so a drag
+after an anchored zoom orbits what the camera looks at, not wherever the
+zoom left the target. Call `orbit.update(dt)` from your onFrame to
+integrate the rates and the auto-orbit (no frame loop of its own), and
+use its return - true when the pose changed since the previous update,
+nudges included - to gate per-frame dependents like reprojecting HUD
+overlays. `orbiting()` (the auto-orbit switch) and `active()` (the
+frame-loop gate: orbiting with a non-zero rate, or any rate driving - the
+predicate every camera control shares) are reactive (HUD-safe); the pose
+is plain state via `pose()`/`set()` (also the debug-command shape). It
+drives position and target only; fov/near/far stay on scene.setCamera
+(or the Scene `camera` prop). The auto-orbit pauses while a gesture is
+open.
 
-In a component tree, skip the wiring: `<OrbitCamera azimuth={1.2}
-distance={7} />` as a Scene child reaches the scene through context (as a
-`<View3d>` child, that view: the context's `viewport` and `input` are
-the nearest owner's), receives input from the owner's leaf (the built-in
-one automatically; a
-custom `output` leaf spreads `{...useScene().input.handlersFor(layout)}`
-beside its scene.handlersFor spread, same `layout`), defaults `viewport`
-to the leaf's laid-out size plus the scene camera's fov, and pushes input
-poses synchronously - no ref plumbing, no onFrame. Auto-orbit runs a
-frame loop only while `active()`, so a paused camera keeps the app
-demand-driven idle. The pose props are
-initial values: runtime pose changes (and the debug-command hookup) go
-through `ref`'s handle, whose set() also pushes the pose. Every other
-prop is live - forwarded to the control as a getter and read where it
-applies, never snapshotted - so clamps, rates, anchors and `viewport`
-follow their props without a remount, and a clamp change re-clamps the
-pose at once.
+In a component tree, skip the wiring: `<OrbitCamera input={input}
+azimuth={1.2} distance={7} />` as a Scene child reaches the scene through
+context (as a `<View3d>` child, that view: the context's `viewport` is
+the nearest owner's), drives from the map in `input` (its `rotate`,
+`zoom`, `pan` actions, or the names in `actions`; live - a new map
+reconnects) and nothing else, and runs a frame loop only while
+`active()`, so a camera moved by drags alone keeps the app demand-driven
+idle. The pose props are initial values: runtime pose changes (and the
+debug-command hookup) go through `ref`'s handle, whose set() and verbs
+push the pose. Every other prop is live - forwarded to the control as a
+getter and read where it applies, never snapshotted - so clamps, rates
+and anchors follow their props without a remount, and a clamp change
+re-clamps the pose at once.
 
 First-person control: `createFirstPersonCamera(scene, { position?, yaw?,
-pitch?, min/maxPitch?, moveSpeed?, lookSpeed?, fly?, viewport?,
-clampPosition? })` - a position plus yaw/pitch (yaw 0 faces -z, positive
-turns left; pitch positive looks up), Unity's FirstPersonController shape
-(look AND move in one control) where Three splits PointerLockControls
-from a hand-written key loop. Look comes from pointer-move
-movementX/movementY while `pointerLocked()`, from a one-finger drag
-(arena-arbitrated through createTransform, viewport-relative with
-`viewport`) while not, and from the right stick; move from WASD/arrows
-(physical codes and logical keys both), the left stick, and Q/E for
-down/up - bound always, inert unless `fly` is on. Walking (the default)
-flattens the heading onto the ground plane at fixed height. Every option
-but the initial pose is read where it applies (`fly` per update,
-`clampPosition` per move, the rates and pitch clamps per input), so a
-field changed on the options object takes effect on the next move: walk
-and fly are one control. The control NEVER calls `lockPointer`
-- click-to-lock and Escape-to-release are the app's window-level
-decisions (see `examples/first-person.tsx`) - and has no collision of
-its own: `clampPosition(next, current)` is the whole hook - bounds, a
-floor height, or `moveAndSlide` over `next - current` against the
-collision layer (see `examples/collision.tsx`). Spread `handlers` (pointer + key +
-onBlur; keys reach only the FOCUSED node, so that element must hold
-focus or be the window), call `update(dt)` from onFrame; `active()` is
-reactive - a key held or a stick deflected - and gates the loop. Keys
-cannot be polled (core has no key-state accessor), so held keys are
-tracked from the down/up pair and `onBlur` drops them.
+pitch?, min/maxPitch?, moveSpeed?, lookSpeed?, fly?, clampPosition? })` -
+a position plus yaw/pitch (yaw 0 faces -z, positive turns left; pitch
+positive looks up), Unity's FirstPersonController shape (look AND move in
+one control) where Three splits PointerLockControls from a hand-written
+key loop. Its `axes`: `look` (a delta of one element height sweeps half a
+turn - a drag across the screen turns the walker around - and the
+pointer feed's `mouseDelta` delivers mouse motion under pointer lock in
+the same unit; a rate turns at 0.4 turn/s), `move` ([right, forward],
+forward = -y: a stick pushed up or W reads [0, -1]; a rate walks at
+`moveSpeed`, a delta is a step in world units, diagonals clamped to unit
+length so they walk no faster) and `rise` (world up at `moveSpeed`, fly
+mode only). Walking (the default) flattens the heading onto the ground
+plane at fixed height; `fly` moves along the view. The verbs:
+`lookBy(yaw, pitch)` radians, `moveBy(right, forward, up?)` in the
+walker's frame, `set(pose)`. Every option but the initial pose is read
+where it applies (`fly` per step, `clampPosition` per move, the rates and
+pitch clamps per input), so a field changed on the options object takes
+effect on the next move: walk and fly are one control. The control NEVER
+calls `lockPointer` - click-to-lock and Escape-to-release are the app's
+window-level decisions (see `examples/first-person.tsx`) - and has no
+collision of its own: `clampPosition(next, current)` is the whole hook -
+bounds, a floor height, or `moveAndSlide` over `next - current` against
+the collision layer (see `examples/collision.tsx`, whose `jump` is one
+more action on the same map: Space or the pad's south button, read by
+name). Call `update(dt)` from onFrame; `active()` is reactive - a rate
+driving (a held key, a deflected stick) - and gates the loop. The map
+tracks held keys from the down/up pair through `input.handlers`; spread
+its `onBlur` too, since the up never arrives once focus has left.
 
-`<FirstPersonCamera>` as a Scene child wires all of it: with a
-key-driven control registered, the built-in leaf becomes `focusable`
-and takes focus on pointer down (the web canvas gesture), which routes
-the keys to the control; a pointer-only scene (`<OrbitCamera>`) never
-steals focus. A custom `output` leaf spreads
-`useScene().input.handlersFor(layout, () => node)` and declares
-`focusable` itself. The frame loop runs only while `active()`. Every prop
+`<FirstPersonCamera input={input}>` as a Scene child wires the control
+to the scene and the map, nothing else: the app spreads
+`input.handlers` on the window (keys bubble there from wherever focus
+is, so a click on the scene needs no focus dance) and hands the scene
+its `pointer` feed. The frame loop runs only while `active()`. Every prop
 but the initial pose is live: `fly={flying()}` toggles walk/fly on the
-running control (pose and held keys carry over, no remount, and
-`clampPosition` may swap with it), `moveSpeed`/`lookSpeed` follow their
-props, and a pitch clamp change re-clamps at once.
+running control (pose carries over, no remount, and `clampPosition` may
+swap with it), `moveSpeed`/`lookSpeed` follow their props, and a pitch
+clamp change re-clamps at once. checks/orbit-check.ts and
+checks/first-person-check.ts pin both controls headless (they import
+`@solidrt/core/input` only).
 
 Overlay projection: `scene.project(point)` maps a world point to scene
 pixels (top-left origin, y down - the output texture's own space; `w` is

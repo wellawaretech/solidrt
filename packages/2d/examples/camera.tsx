@@ -17,8 +17,8 @@
 // { follow, spin } or runs { fit: true }, `selected` returns the selected
 // sprite's world position (null when none), `first` the first sprite's -
 // the one to aim synthetic taps and drags at.
-import { createEffect, displayScale, onFrame, render, windowSize } from "@solidrt/core"
-import { addSprite, createAtlas, createCamera2d, createSpriteLayer, fitOversample, grid, setSprite } from "@solidrt/2d"
+import { createEffect, createInputMap, createPointerFeed, displayScale, gamepad, onFrame, render, windowSize } from "@solidrt/core"
+import { addSprite, camera2dActions, camera2dBindings, createAtlas, createCamera2d, createSpriteLayer, feedPointer, fitOversample, grid, setSprite } from "@solidrt/2d"
 import type { Camera2dHandle, SpriteHandle } from "@solidrt/2d"
 import { registerDebug } from "srt:dev"
 import logoBytes from "./logo.png" with { type: "binary" }
@@ -99,7 +99,14 @@ function App() {
     maxZoom: MAX_ZOOM,
     deadZone: DEAD_ZONE,
   })
-  cam.attach(view)
+  // The camera's input: the view's pointer feed (fed from the view's root,
+  // after the sprites' claims) and any pad, bound to the control's actions
+  // (ARCHITECTURE.md: the app wires devices, the control takes the map).
+  let pointer = createPointerFeed()
+  feedPointer(view, pointer)
+  let input = createInputMap(camera2dActions)
+  input.bind(camera2dBindings({ pointer, gamepad: gamepad() }))
+  input.drive(cam.axes)
   // A tap that reached the root landed on empty space (a sprite's tap
   // still bubbles here with e.sprite set, so the miss is the null case).
   view.listen({

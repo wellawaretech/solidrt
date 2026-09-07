@@ -56,8 +56,6 @@ export type {
   PointerEventProps,
   PointLightProps,
   RecordMeshProps,
-  SceneInput,
-  SceneInputListener,
   SceneProps,
   SpotLightProps,
   SpriteProps,
@@ -73,9 +71,11 @@ export { createMixer } from "./mixer.ts"
 export type { Mixer, MixerOptions, MixerPlayOptions } from "./mixer.ts"
 export { sampleChannel } from "./clip.ts"
 export { createOrbitCamera } from "./orbit.ts"
-export type { OrbitCamera as OrbitCameraHandle, OrbitCameraOptions, OrbitPose, OrbitTarget } from "./orbit.ts"
+export type { OrbitAxes, OrbitCamera as OrbitCameraHandle, OrbitCameraOptions, OrbitPose, OrbitTarget } from "./orbit.ts"
 export { createFirstPersonCamera } from "./first-person.ts"
-export type { FirstPersonCamera as FirstPersonCameraHandle, FirstPersonCameraOptions, FirstPersonPose, FirstPersonTarget } from "./first-person.ts"
+export type { FirstPersonAxes, FirstPersonCamera as FirstPersonCameraHandle, FirstPersonCameraOptions, FirstPersonPose, FirstPersonTarget } from "./first-person.ts"
+export { firstPersonActions, firstPersonBindings, orbitActions, orbitBindings } from "./input.ts"
+export type { CameraDevices } from "./input.ts"
 // math's lookAt (the camera view matrix) stays on the /math subpath: the
 // root's lookAt is the scene verb, the same split as `add`.
 export { rayBoxDistance, compose, copy, eulerFromQuat, identity, mat4, multiply, normalMatrix, orthographic, perspective, quat, quatFromAxisAngle, quatFromEuler, quatFromFrame, quatFromTo, quatMultiply, quatNormalize, quatSlerp } from "./math.ts"

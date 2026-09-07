@@ -12,8 +12,8 @@
 // (the chain is the frame's largest GPU item; see AGENTS.md). Drag to
 // look around.
 
-import { createSignal, onFrame, pct, render } from "@solidrt/core"
-import { DirectionalLight, HemisphereLight, Mesh, OrbitCamera, plane, Scene, sphere, standard, unlit } from "@solidrt/3d"
+import { createInputMap, createPointerFeed, createSignal, gamepad, onFrame, pct, render } from "@solidrt/core"
+import { DirectionalLight, HemisphereLight, Mesh, OrbitCamera, orbitActions, orbitBindings, plane, Scene, sphere, standard, unlit } from "@solidrt/3d"
 import type { ReflectionProbe, SceneHandle } from "@solidrt/3d"
 import type { Vec3 } from "@solidrt/3d/math"
 
@@ -58,6 +58,12 @@ const ORBITER_COLORS: [number, number, number][] = [
 ]
 
 function App() {
+  // The camera's input: the scene leaf's gestures and any pad, bound to the
+  // orbit control's actions - the app wires devices, the component takes
+  // the map (ARCHITECTURE.md).
+  let pointer = createPointerFeed()
+  let input = createInputMap(orbitActions)
+  input.bind(orbitBindings({ pointer, gamepad: gamepad() }))
   let [t, setT] = createSignal(0)
   let scene: SceneHandle | undefined
   let probe: ReflectionProbe | undefined
@@ -81,8 +87,8 @@ function App() {
   return (
     <window>
       <view width={pct(100)} height={pct(100)}>
-        <Scene clearColor={[0.05, 0.05, 0.06, 1]} samples={4} label="probe-demo" ref={s => (scene = s)}>
-          <OrbitCamera target={[0, 0, 0]} azimuth={0.5} elevation={0.2} distance={4} />
+        <Scene clearColor={[0.05, 0.05, 0.06, 1]} samples={4} label="probe-demo" ref={s => (scene = s)} pointer={pointer}>
+          <OrbitCamera input={input} target={[0, 0, 0]} azimuth={0.5} elevation={0.2} distance={4} />
           <HemisphereLight sky={[0.6, 0.65, 0.7]} ground={[0.3, 0.28, 0.26]} intensity={0.6} />
           <DirectionalLight direction={[0.4, -0.8, 0.3]} intensity={0.8} />
           {WALLS.map((w, i) => (

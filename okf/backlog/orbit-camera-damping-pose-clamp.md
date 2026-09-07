@@ -17,13 +17,14 @@ would be hand-written by any app with a wheel and a ground plane.
 
 ### 1. A wheel notch is a jump, so apps ease it themselves
 
-`handlers.onWheel` applies its exponent to the distance at once. On a
-mouse that turns a scroll into a staircase: each notch teleports the
+A wheel notch reaches the control as an unbracketed `zoom` delta
+(through the input map) and applies its octaves to the distance at once.
+On a mouse that turns a scroll into a staircase: each notch teleports the
 camera and the picture never moves between them.
 
-The demo therefore does not use the control's wheel at all. It keeps a
-pending distance per panel, retargets it on the wheel, and glides toward
-it in its own `onFrame`:
+The demo therefore rebinds the wheel from the orbit's `zoom` to an action
+of its own, keeps a pending distance per panel, retargets it on each
+notch, and glides toward it in its own `onFrame`:
 
 ```
 const WHEEL_ZOOM = 0.0015 // exponent per wheel-delta unit, matching the library's sensitivity
@@ -31,9 +32,10 @@ const ZOOM_EASE = 9       // e-foldings per second toward the pending distance
 const ZOOM_EPSILON = 0.0005
 ```
 
-That first constant is the tell: it is a copy of the control's own
-private `WHEEL_ZOOM` (orbit.ts), kept equal by a comment. Nothing fails
-when one of them changes, the two just drift apart.
+The zoom rate lives in the frame loop, apart from the control's own
+`zoomSpeed`; nothing fails when one of them changes, the two just drift
+apart. (The 2d camera already does this inside the control: a bracketed
+zoom delta applies at once, an unbracketed one glides.)
 
 Prior art: Three's OrbitControls has `enableDamping` + `dampingFactor`
 (damping the spherical delta, so rotate, zoom and pan all coast, with
@@ -80,9 +82,9 @@ ground plane, a table top or a bounded stage needs.
 number, off by default) that makes zoom - and, decided at design time,
 rotation and pan - coast to the target pose inside `update(dt)`, framerate
 independent (`1 - exp(-rate * dt)`, not a fixed fraction). The demo then
-forwards the wheel to `handlers.onWheel` again and deletes its pending
-distance, its glide, its two constants and the `entry.zoom = null` line in
-the `camera` debug command.
+drops its `dolly` rebinding and deletes its pending distance, its glide,
+its constants and the `entry.zoom = null` line in the `camera` debug
+command.
 
 The design point that is easy to miss: `active()` is the frame-loop gate
 (`<OrbitCamera>` mounts an `onFrame` only while it is true, so a paused
@@ -114,7 +116,7 @@ first; there is no compatibility reason to keep both.
 ## Involves
 
 `packages/3d/src/orbit.ts` (the pose write path is already funnelled
-through `clampPose()`/`zoomAbout`/`pan`, so both land in one place),
+through `clampPose()`/`zoomAbout`/`slide`, so both land in one place),
 `components/orbit-camera.tsx` for the props, the AGENTS.md camera-control
 section, and the demo cut-over as the check that the hand-rolled versions
 actually go away. `packages/2d`'s camera controller shares the

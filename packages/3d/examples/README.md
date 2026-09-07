@@ -85,10 +85,11 @@ depends on `@solidrt/3d` (or in-repo from the package directory).
   Drag to orbit; the `formation` and `state` debug commands drive it
   headlessly.
 - `first-person.tsx` - a first-person walk: `<FirstPersonCamera>` over
-  a walled courtyard of shadow-casting pillars, WASD/arrows and the pad
-  sticks to walk, mouse look under pointer lock (click locks, Escape
-  releases - the app's calls, not the control's), a drag to look on
-  touch; `clampPosition` keeps the walker inside the walls, the whole of
+  a walled courtyard of shadow-casting pillars, driven by an input map
+  the app binds (`firstPersonBindings`: WASD/arrows and the pad sticks
+  to walk, the scene's drag to look on touch, mouse motion while the
+  pointer is locked - click locks, Escape releases, the app's calls, not
+  the control's); `clampPosition` keeps the walker inside the walls, the whole of
   the collision a camera control offers; the `pose` debug command reads
   and sets the pose headlessly.
 - `collision.tsx` - collision without a physics engine: the same walker

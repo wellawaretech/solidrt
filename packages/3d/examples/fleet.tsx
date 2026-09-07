@@ -15,8 +15,8 @@
 // the last tapped instance, how many are flipped) and `pixel` ({ i }: the
 // scene pixel instance i projects to and what a pick there finds, for a
 // synthetic tap).
-import { createSignal, flush, For, pct, render } from "@solidrt/core"
-import { box, DirectionalLight, HemisphereLight, Instance, InstancedMesh, lit, Mesh, OrbitCamera, plane, Scene, worldPosition } from "@solidrt/3d"
+import { createInputMap, createPointerFeed, createSignal, flush, For, gamepad, pct, render } from "@solidrt/core"
+import { box, DirectionalLight, HemisphereLight, Instance, InstancedMesh, lit, Mesh, OrbitCamera, orbitActions, orbitBindings, plane, Scene, worldPosition } from "@solidrt/3d"
 import type { InstanceNode, NodeTransition, SceneHandle, Vec3 } from "@solidrt/3d"
 import { registerDebug } from "srt:dev"
 
@@ -143,12 +143,18 @@ registerDebug("pixel", (args?: Record<string, unknown>) => {
 })
 
 function App() {
+  // The camera's input: the scene leaf's gestures and any pad, bound to the
+  // orbit control's actions - the app wires devices, the component takes
+  // the map (ARCHITECTURE.md).
+  let pointer = createPointerFeed()
+  let input = createInputMap(orbitActions)
+  input.bind(orbitBindings({ pointer, gamepad: gamepad() }))
   let place = (i: number): Vec3 => FORMATIONS[formation()]!.at(i)
   return (
     <window>
       <view width={pct(100)} height={pct(100)}>
-        <Scene clearColor={[SKY[0], SKY[1], SKY[2], 1]} fog={{ color: SKY, near: 12, far: 30 }} label="fleet" ref={s => (scene = s)}>
-          <OrbitCamera target={[0, 2, 0]} distance={15} elevation={0.45} azimuth={0.6} />
+        <Scene clearColor={[SKY[0], SKY[1], SKY[2], 1]} fog={{ color: SKY, near: 12, far: 30 }} label="fleet" ref={s => (scene = s)} pointer={pointer}>
+          <OrbitCamera input={input} target={[0, 2, 0]} distance={15} elevation={0.45} azimuth={0.6} />
           <HemisphereLight sky={[0.45, 0.47, 0.5]} ground={[0.12, 0.13, 0.11]} />
           <DirectionalLight
             color={[1, 0.95, 0.85]}

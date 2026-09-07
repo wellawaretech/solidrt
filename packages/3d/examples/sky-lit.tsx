@@ -9,9 +9,9 @@
 // gradient. The sky is a scene param (uSunDir), so the bake sees the same
 // sun the backdrop draws. Drag to look around.
 
-import { pct, render } from "@solidrt/core"
+import { createInputMap, createPointerFeed, gamepad, pct, render } from "@solidrt/core"
 import { glsl } from "@solidrt/core/gpu"
-import { Mesh, OrbitCamera, Scene, sphere, standard } from "@solidrt/3d"
+import { Mesh, OrbitCamera, orbitActions, orbitBindings, Scene, sphere, standard } from "@solidrt/3d"
 import type { SceneHandle } from "@solidrt/3d"
 import { normalize } from "@solidrt/3d/math"
 import type { Vec3 } from "@solidrt/3d/math"
@@ -55,6 +55,12 @@ const SKY = glsl`
 `
 
 function App() {
+  // The camera's input: the scene leaf's gestures and any pad, bound to the
+  // orbit control's actions - the app wires devices, the component takes
+  // the map (ARCHITECTURE.md).
+  let pointer = createPointerFeed()
+  let input = createInputMap(orbitActions)
+  input.bind(orbitBindings({ pointer, gamepad: gamepad() }))
   let spheres: { position: Vec3; material: ReturnType<typeof standard> }[] = []
   for (let i = 0; i < COUNT; i++) {
     let roughness = i / (COUNT - 1)
@@ -72,8 +78,8 @@ function App() {
   return (
     <window>
       <view width={pct(100)} height={pct(100)}>
-        <Scene background={SKY} toneMapping="aces" samples={4} label="sky-lit" ref={lit}>
-          <OrbitCamera target={[0, 0, 0]} azimuth={0.3} elevation={0.15} distance={7} />
+        <Scene background={SKY} toneMapping="aces" samples={4} label="sky-lit" ref={lit} pointer={pointer}>
+          <OrbitCamera input={input} target={[0, 0, 0]} azimuth={0.3} elevation={0.15} distance={7} />
           {spheres.map(s => (
             <Mesh geometry={geometry} material={s.material} position={s.position} />
           ))}

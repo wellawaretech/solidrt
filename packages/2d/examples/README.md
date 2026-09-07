@@ -19,15 +19,17 @@ copy one and adapt it.
   rate) and a one-shot clip holds its last frame and fires `onEnd`.
   Self-asserting - watch the logs for ANIM-OK.
 - `camera.tsx` - the 2d camera (`createCamera2d`) over a world larger than
-  the window, driving the layer's one view and attached at its root
-  (`cam.attach(view)`): drag empty space to pan with inertia, wheel/pinch
-  to zoom about the pointer, tap empty space to glide there (the view's
-  `onTap` with `e.sprite` null), tap a sprite to select it, drag a sprite
-  to move it (the sprite stops its down, so the camera never pans under
-  it), F to follow a roaming sprite through a dead zone, R to spin the
-  view, Space to fit the world. The VIEW's `handlers` spread onto its
-  leaf; `update(dt)` from `onFrame` is the only per-frame call. Debug
-  commands `camera`, `mode`, `selected` and `first` drive it headless.
+  the window, driving the layer's one view from an input map the app
+  binds (`camera2dBindings` over the view's pointer feed, bridged from
+  the view's root with `feedPointer`, and any pad): drag empty space to
+  pan with inertia, wheel/pinch to zoom about the pointer, tap empty
+  space to glide there (the view's `onTap` with `e.sprite` null), tap a
+  sprite to select it, drag a sprite to move it (the sprite stops its
+  down, so the camera never pans under it), F to follow a roaming sprite
+  through a dead zone, R to spin the view, Space to fit the world. The
+  VIEW's `handlers` spread onto its leaf; `update(dt)` from `onFrame` is
+  the only per-frame call. Debug commands `camera`, `mode`, `selected`
+  and `first` drive it headless.
 - `pick.tsx` - the event model through the component face: exact
   rotated-rect hit testing topmost-first, `onTap` (the dispatch's own
   click, no slop bookkeeping), a claimed press dragging a sprite under a

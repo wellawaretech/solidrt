@@ -1,16 +1,17 @@
 // A first-person walk: `<FirstPersonCamera>` driving the scene camera from
-// WASD/arrows and the gamepad sticks, mouse look under pointer lock and
-// drag-to-look without it. Click the scene to lock the pointer (the scene
-// leaf takes focus on the same click, which routes the keys to the
-// control), Escape releases it; on a touch screen a drag looks around and
-// the left stick of a pad walks. Movement runs a frame loop only while a
-// key is held or a stick deflected - a still scene renders nothing new.
+// an input map the app wires - WASD/arrows and the sticks through the
+// standard bindings, the scene leaf's drag to look around on touch, and
+// mouse motion while the pointer is locked. Click the scene to lock the
+// pointer, Escape releases it; the keys reach the map through the window
+// (`input.handlers`), so nothing needs focus. Movement runs a frame loop
+// only while a key is held or a stick deflected - a still scene renders
+// nothing new.
 // `clampPosition` keeps the walker inside the courtyard walls, the whole
 // of the collision an app gets from a camera control. The `pose` debug
 // command reads and sets the pose for headless checks.
-import { createSignal, lockPointer, onFrame, pct, pointerLocked, render } from "@solidrt/core"
+import { createInputMap, createPointerFeed, createSignal, gamepad, keyboard, lockPointer, onFrame, pct, pointerLocked, render } from "@solidrt/core"
 import type { PointerEvent } from "@solidrt/core"
-import { box, cylinder, DirectionalLight, FirstPersonCamera, HemisphereLight, lit, Mesh, PerspectiveCamera, plane, Scene } from "@solidrt/3d"
+import { box, cylinder, DirectionalLight, FirstPersonCamera, firstPersonActions, firstPersonBindings, HemisphereLight, lit, Mesh, PerspectiveCamera, plane, Scene } from "@solidrt/3d"
 import type { FirstPersonCameraHandle, Vec3 } from "@solidrt/3d"
 import { registerDebug } from "srt:dev"
 
@@ -43,6 +44,12 @@ let inside = (p: Vec3): Vec3 => [clampNum(p[0], -COURT + WALL_GAP, COURT - WALL_
 
 function App() {
   let camera!: FirstPersonCameraHandle
+  // The walker's input: the scene leaf's gestures, the keyboard and any
+  // pad, bound to the control's actions (ARCHITECTURE.md: the app wires
+  // devices, the component takes the map).
+  let pointer = createPointerFeed()
+  let input = createInputMap(firstPersonActions)
+  input.bind(firstPersonBindings({ pointer, gamepad: gamepad(), keyboard }))
   let [hud, setHud] = createSignal("")
   let lastHud = 0
   onFrame(tick => {
@@ -77,8 +84,11 @@ function App() {
   return (
     <window
       onKeyDown={e => {
+        input.handlers.onKeyDown(e)
         if (e.key === "Escape") lockPointer(false)
       }}
+      onKeyUp={input.handlers.onKeyUp}
+      onBlur={input.handlers.onBlur}
     >
       <view
         width={pct(100)}
@@ -87,9 +97,9 @@ function App() {
           if (e.pointerType === "mouse") lockPointer(true)
         }}
       >
-        <Scene clearColor={[0.6, 0.72, 0.88, 1]} samples={4} label="first-person">
+        <Scene clearColor={[0.6, 0.72, 0.88, 1]} samples={4} label="first-person" pointer={pointer}>
           <PerspectiveCamera fov={70} near={0.1} far={60} />
-          <FirstPersonCamera ref={c => (camera = c)} position={[0, EYE, 7]} clampPosition={inside} />
+          <FirstPersonCamera input={input} ref={c => (camera = c)} position={[0, EYE, 7]} clampPosition={inside} />
           <HemisphereLight sky={[0.5, 0.56, 0.68]} ground={[0.25, 0.22, 0.18]} />
           <DirectionalLight
             color={[1, 0.95, 0.85]}

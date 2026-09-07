@@ -1,6 +1,6 @@
 import { createEffect, displayScale, getBoundingBoxViewport, getLayoutBox, onLayout, untrack } from "@solidrt/core"
-import type { Element, ParentComponent, PointerEvent, TextureId } from "@solidrt/core"
-import { SceneContext, createSceneInput } from "./context.tsx"
+import type { Element, ParentComponent, PointerEvent, PointerFeed, TextureId } from "@solidrt/core"
+import { SceneContext } from "./context.tsx"
 import { createScene } from "../scene.ts"
 import type { EnvironmentOptions, FogOptions, Scene as SceneHandle, SkyboxOptions, ToneMapping } from "../scene.ts"
 import type { CameraUpdate } from "../camera.ts"
@@ -72,7 +72,8 @@ export type SceneProps = {
    * a post-effect chain (a shader target sampling the id; created in the
    * callback it disposes with the Scene). Return null to render no leaf.
    * Mesh pointer events then need the scene's handlers on your leaf:
-   * `<texture src={texture} {...useScene().scene.handlers} />`.
+   * `<texture src={texture} {...useScene().scene.handlers} />`, and the
+   * pointer feed its handlers: `{...useScene().pointer.handlers}`.
    */
   output?: (texture: TextureId) => Element
   /**
@@ -81,6 +82,15 @@ export type SceneProps = {
    * detaches them - the leaf then costs no pointer routing at all.
    */
   events?: boolean
+  /**
+   * The pointer feed of the scene's leaf (createPointerFeed): the built-in
+   * leaf spreads its handlers, so the feed's gestures - drag, pinch, two-
+   * finger pan, wheel, mouse motion under lock - come from this scene, and
+   * an input map binds them to the camera controls inside. Fixed at
+   * creation. Without one the leaf feeds no gestures and the controls
+   * move only through their handles.
+   */
+  pointer?: PointerFeed
 }
 
 /**
@@ -172,9 +182,11 @@ export let Scene: ParentComponent<SceneProps> = props => {
     { defer: true },
   )
   untrack(() => props.ref)?.(scene)
-  // Camera-control input: controls register through context, the leaf
-  // dispatches to them (createSceneInput has the gating).
-  let { input, hasInput, hasKeys } = createSceneInput()
+  // The pointer feed the app handed in: the built-in leaf feeds it (a
+  // custom `output` leaf spreads `pointer.handlers` itself), and children
+  // reach it through useScene().pointer. Fixed at creation, like output.
+  let pointer = untrack(() => props.pointer) ?? null
+  let feed = pointer?.handlers
   let output = untrack(() => props.output)
   let events = untrack(() => props.events) !== false
   let leafNode: { id: number } | undefined
@@ -213,9 +225,8 @@ export let Scene: ParentComponent<SceneProps> = props => {
   // Mesh events on the built-in leaf: at target size the plain handlers,
   // in fill mode scaled from the laid-out box.
   let sceneHandlers = fill ? scene.handlersFor(builtinLayout) : scene.handlers
-  let leaf = output ? null : input.handlersFor(builtinLayout, () => leafNode)
   return (
-    <SceneContext value={{ scene, parent: scene.root, viewport: scene, input }}>
+    <SceneContext value={{ scene, parent: scene.root, viewport: scene, pointer }}>
       {output ? (
         untrack(() => output(scene.texture))
       ) : (
@@ -224,15 +235,11 @@ export let Scene: ParentComponent<SceneProps> = props => {
           src={scene.texture}
           width={fill ? "100%" : props.width}
           height={fill ? "100%" : props.height}
-          onPointerDown={events || hasInput() ? (e: PointerEvent) => { if (events) sceneHandlers.onPointerDown(e); leaf!.onPointerDown(e) } : undefined}
-          onPointerMove={events || hasInput() ? (e: PointerEvent) => { if (events) sceneHandlers.onPointerMove(e); leaf!.onPointerMove(e) } : undefined}
-          onPointerUp={events || hasInput() ? (e: PointerEvent) => { if (events) sceneHandlers.onPointerUp(e); leaf!.onPointerUp(e) } : undefined}
-          onPointerLeave={events ? sceneHandlers.onPointerLeave : undefined}
-          onWheel={hasInput() ? leaf!.onWheel : undefined}
-          focusable={hasKeys()}
-          onKeyDown={hasKeys() ? leaf!.onKeyDown : undefined}
-          onKeyUp={hasKeys() ? leaf!.onKeyUp : undefined}
-          onBlur={hasKeys() ? leaf!.onBlur : undefined}
+          onPointerDown={events || feed ? (e: PointerEvent) => { if (events) sceneHandlers.onPointerDown(e); feed?.onPointerDown(e) } : undefined}
+          onPointerMove={events || feed ? (e: PointerEvent) => { if (events) sceneHandlers.onPointerMove(e); feed?.onPointerMove(e) } : undefined}
+          onPointerUp={events || feed ? (e: PointerEvent) => { if (events) sceneHandlers.onPointerUp(e); feed?.onPointerUp(e) } : undefined}
+          onPointerLeave={events || feed ? (e: PointerEvent) => { if (events) sceneHandlers.onPointerLeave(e); feed?.onPointerLeave(e) } : undefined}
+          onWheel={feed ? feed.onWheel : undefined}
         />
       )}
       {props.children}

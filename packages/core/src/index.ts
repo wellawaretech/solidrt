@@ -28,6 +28,16 @@ export { createPan } from "./pan"
 export type { PanAxis, PanOptions } from "./pan"
 export { createTransform } from "./transform"
 export type { TransformDelta, TransformOptions } from "./transform"
+export { createInputMap, invert, scale } from "./input-map"
+export type { ActionKind, ActionValue, ActionsDecl, Binding, DeltaSink, GestureListener, InputMap, InputSource } from "./input-map"
+export { createAxes } from "./input-axes"
+export type { Axes, AxesDecl, AxesHooks, AxisKind, AxisValue, Vec2 } from "./input-axes"
+export { keyboard } from "./input-keyboard"
+export type { KeyboardDevice, KeyboardVec2Keys } from "./input-keyboard"
+export { gamepad } from "./input-gamepad"
+export type { GamepadDevice } from "./input-gamepad"
+export { createPointerFeed } from "./input-pointer"
+export type { PointerFeed, PointerFeedOptions } from "./input-pointer"
 export type {
   Element,
   LayoutProps,

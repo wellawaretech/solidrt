@@ -11,13 +11,15 @@
 // click locks the pointer, Escape releases it. Debug commands: `pose`
 // (read/set), `walk` ({ dx, dz } through the collision), `jump`, `fall`
 // ({ dt }: one airborne step by hand, for headless checks), `state`.
-import { createSignal, lockPointer, onFrame, pct, pointerLocked, render } from "@solidrt/core"
+import { createInputMap, createPointerFeed, createSignal, gamepad, keyboard, lockPointer, onFrame, pct, pointerLocked, render } from "@solidrt/core"
 import type { PointerEvent } from "@solidrt/core"
 import {
   box,
   cylinder,
   DirectionalLight,
   FirstPersonCamera,
+  firstPersonActions,
+  firstPersonBindings,
   HemisphereLight,
   lit,
   Mesh,
@@ -68,6 +70,14 @@ let feetOf = (eye: Vec3): Vec3 => [eye[0], eye[1] - EYE, eye[2]]
 function App() {
   let scene!: SceneHandle
   let camera!: FirstPersonCameraHandle
+  // The walker's input plus the game's own `jump` action: the standard
+  // first-person bindings, and Space or the pad's south button for the
+  // jump - one map, read by name (ARCHITECTURE.md).
+  let pointer = createPointerFeed()
+  let pad = gamepad()
+  let input = createInputMap({ ...firstPersonActions, jump: "button" })
+  input.bind(firstPersonBindings({ pointer, gamepad: pad, keyboard }))
+  input.bind("jump", keyboard.key("Space"), pad.button("south"))
   let [hud, setHud] = createSignal("")
   let [near, setNear] = createSignal<Set<number>>(new Set())
   // The same set, readable synchronously (a signal read right after its
@@ -135,6 +145,7 @@ function App() {
     grounded = false
     fall()
   }
+  input.onPress("jump", jump)
 
   let lastHud = 0
   onFrame(tick => {
@@ -204,9 +215,11 @@ function App() {
   return (
     <window
       onKeyDown={e => {
+        input.handlers.onKeyDown(e)
         if (e.key === "Escape") lockPointer(false)
-        if (e.key === " " || e.code === "Space") jump()
       }}
+      onKeyUp={input.handlers.onKeyUp}
+      onBlur={input.handlers.onBlur}
     >
       <view
         width={pct(100)}
@@ -215,9 +228,9 @@ function App() {
           if (e.pointerType === "mouse") lockPointer(true)
         }}
       >
-        <Scene ref={s => (scene = s)} clearColor={[0.6, 0.72, 0.88, 1]} samples={4} label="collision">
+        <Scene ref={s => (scene = s)} clearColor={[0.6, 0.72, 0.88, 1]} samples={4} label="collision" pointer={pointer}>
           <PerspectiveCamera fov={70} near={0.1} far={80} />
-          <FirstPersonCamera ref={c => (camera = c)} position={[0, EYE, 10]} clampPosition={clamp} />
+          <FirstPersonCamera input={input} ref={c => (camera = c)} position={[0, EYE, 10]} clampPosition={clamp} />
           <HemisphereLight sky={[0.5, 0.56, 0.68]} ground={[0.25, 0.22, 0.18]} />
           <DirectionalLight color={[1, 0.95, 0.85]} intensity={0.9} position={[8, 14, 6]} direction={[-8, -14, -6]} castShadow shadow={{ mapSize: 2048, normalBias: 0.02, cascades: 3, distance: 40 }} />
           <Mesh geometry={plane({ width: FLOOR * 2 + 2, height: FLOOR * 2 + 2 })} material={ground} rotation={[-Math.PI / 2, 0, 0]} layers={1 | COLLIDER} />

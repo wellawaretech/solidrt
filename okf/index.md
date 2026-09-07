@@ -426,6 +426,14 @@ Shaped, not started.
   change (or a control-API call) produced a frame, so a frame loop that
   integrates from tick deltas (a gravity fall that does not move the camera
   yet) stalls.
+- **[Input map stage 2 - action sets, rebinding, interactions, UI actions](backlog/input-map-stage-2.md)** [2026-09-07]
+  The map (core input-map.ts) covers actions, sources, presets, drive() and
+  by-name injection; what a full game or a settings screen wants next is
+  enabling and disabling whole action sets by context, a rebinding flow over
+  bindings(), hold/tap/chord interactions on buttons, a "press to join" pad
+  source for split screen, and the UI's own actions (navigate, select, back)
+  replacing the direct key/dpad reads in components' focus navigation and
+  Button.
 - **[Isolate transfer() and AbortSignal](backlog/isolate-transfer-and-abort.md)** [2026-08-20]
   Design proposal for the two isolate follow-ups that need new call-surface
   vocabulary - zero-copy buffer hand-over and abortable calls. Decides once
@@ -1755,6 +1763,11 @@ Knowledge. No lifecycle - true or wrong, not open or closed.
   Impeller never loads a wrapped FBO's existing content (every wrap_fbo draw
   starts cleared), so partial redraw must compose offscreen and blit;
   buffer-age and damage-extension availability as measured per stack.
+- **[Input map design - actions between devices and controls](notes/input-map-design.md)** [2026-09-07]
+  The decisions behind core's input map (createInputMap, createAxes, the
+  devices and the pointer feed), each against Godot's InputMap and Unity's
+  Input System, the shared control vocabulary, and the traps met cutting the
+  camera controls over.
 - **[Why offscreen rasters are multisampled](notes/offscreen-msaa-provenance.md)** [2026-08-13]
   Offscreen MSAA exists for one case - gradient emoji drawn through the svg
   path into a snapshot boundary - so that case is the regression test for any

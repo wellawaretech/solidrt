@@ -11,9 +11,9 @@
 // equirectToCube on a panorama. The sky turns slowly and the sun light
 // turns with it: `rotation` is a reactive prop the scene updates in
 // place, no recompile. Drag to look around, wheel to zoom.
-import { createSignal, onFrame, pct, render } from "@solidrt/core"
+import { createInputMap, createPointerFeed, createSignal, gamepad, onFrame, pct, render } from "@solidrt/core"
 import { createCubeTexture } from "@solidrt/core/gpu"
-import { box, DirectionalLight, HemisphereLight, lit, Mesh, OrbitCamera, plane, Scene, sphere, torusKnot } from "@solidrt/3d"
+import { box, DirectionalLight, HemisphereLight, lit, Mesh, OrbitCamera, orbitActions, orbitBindings, plane, Scene, sphere, torusKnot } from "@solidrt/3d"
 import { normalize } from "@solidrt/3d/math"
 import type { Vec3 } from "@solidrt/3d/math"
 
@@ -92,6 +92,12 @@ function turnedSun(angle: number): Vec3 {
 }
 
 function App() {
+  // The camera's input: the scene leaf's gestures and any pad, bound to the
+  // orbit control's actions - the app wires devices, the component takes
+  // the map (ARCHITECTURE.md).
+  let pointer = createPointerFeed()
+  let input = createInputMap(orbitActions)
+  input.bind(orbitBindings({ pointer, gamepad: gamepad() }))
   let cube = createCubeTexture(bakeSky(), FACE, { format: "rgba8-srgb", mipmap: true, label: "sky" })
   let [turn, setTurn] = createSignal(0)
   let last = 0
@@ -111,8 +117,8 @@ function App() {
   return (
     <window>
       <view width={pct(100)} height={pct(100)}>
-        <Scene background={{ cube, rotation: turn() }} environment={{ cube, rotation: turn() }} label="skybox-demo">
-          <OrbitCamera azimuth={0.4} elevation={0.12} distance={7} />
+        <Scene background={{ cube, rotation: turn() }} environment={{ cube, rotation: turn() }} label="skybox-demo" pointer={pointer}>
+          <OrbitCamera input={input} azimuth={0.4} elevation={0.12} distance={7} />
           <HemisphereLight sky={[0.5, 0.6, 0.8]} ground={[0.3, 0.27, 0.24]} />
           <DirectionalLight direction={[-sun()[0], -sun()[1], -sun()[2]]} color={SUN_COLOR} intensity={0.9} />
           <Mesh geometry={plane({ width: 12, height: 12 })} material={ground} rotation={[-Math.PI / 2, 0, 0]} />

@@ -1,10 +1,11 @@
 import { createEffect, displayScale, getBoundingBoxViewport, getLayoutBox, onCleanup, onLayout, untrack } from "@solidrt/core"
-import type { Element, ParentComponent, TextureId } from "@solidrt/core"
+import type { Element, ParentComponent, PointerFeed, TextureId } from "@solidrt/core"
 import { createSpriteLayer } from "../layer.ts"
+import { feedPointer } from "../views.ts"
 import type { LayerPointerEvent, LayerTapEvent, LayerWheelEvent, SpriteLayer as LayerHandle } from "../layer.ts"
 import type { CameraUpdate } from "../camera.ts"
 import type { ViewHandle } from "../views.ts"
-import { LayerContext, ViewportContext } from "./context.ts"
+import { LayerContext, PointerContext, ViewportContext } from "./context.ts"
 import { applyOversample } from "./auto-oversample.ts"
 
 /**
@@ -106,6 +107,14 @@ export type SpriteLayerProps = LayerPointerProps & {
    * then costs no pointer routing at all.
    */
   events?: boolean
+  /**
+   * The pointer feed of the layer's own view (createPointerFeed), fed
+   * from the view's root - the events the sprites let through: a sprite
+   * that claims its press keeps a camera bound to the feed out of that
+   * drag - so an input map over it drives the `<Camera2d>` child; inside,
+   * `useSpriteLayer().pointer` is this feed. Fixed at creation.
+   */
+  pointer?: PointerFeed
 }
 
 // Creation size of a fill-mode view: the first onLayout replaces it
@@ -122,6 +131,7 @@ const VIEW_PROPS = [
   "oversample",
   "maxOversample",
   "events",
+  "pointer",
   "viewRef",
   "onPointerDown",
   "onPointerMove",
@@ -217,6 +227,8 @@ export let SpriteLayer: ParentComponent<SpriteLayerProps> = props => {
     { defer: true },
   )
   untrack(() => props.viewRef)?.(view)
+  let pointer = untrack(() => props.pointer) ?? null
+  if (pointer) onCleanup(feedPointer(view, pointer))
   // The view's own handlers at the root of the walk; the props are read
   // per event, so a handler prop may change without re-registering.
   onCleanup(
@@ -276,22 +288,24 @@ export let SpriteLayer: ParentComponent<SpriteLayerProps> = props => {
   return (
     <LayerContext value={layer}>
       <ViewportContext value={view}>
-        {output ? (
-          untrack(() => output(view.texture))
-        ) : (
-          <texture
-            ref={(n: { id: number }) => (leaf = n)}
-            src={view.texture}
-            width={fill ? "100%" : props.width}
-            height={fill ? "100%" : props.height}
-            onPointerDown={events ? viewHandlers.onPointerDown : undefined}
-            onPointerMove={events ? viewHandlers.onPointerMove : undefined}
-            onPointerUp={events ? viewHandlers.onPointerUp : undefined}
-            onPointerLeave={events ? viewHandlers.onPointerLeave : undefined}
-            onWheel={events ? viewHandlers.onWheel : undefined}
-          />
-        )}
-        {props.children}
+        <PointerContext value={pointer}>
+          {output ? (
+            untrack(() => output(view.texture))
+          ) : (
+            <texture
+              ref={(n: { id: number }) => (leaf = n)}
+              src={view.texture}
+              width={fill ? "100%" : props.width}
+              height={fill ? "100%" : props.height}
+              onPointerDown={events ? viewHandlers.onPointerDown : undefined}
+              onPointerMove={events ? viewHandlers.onPointerMove : undefined}
+              onPointerUp={events ? viewHandlers.onPointerUp : undefined}
+              onPointerLeave={events ? viewHandlers.onPointerLeave : undefined}
+              onWheel={events ? viewHandlers.onWheel : undefined}
+            />
+          )}
+          {props.children}
+        </PointerContext>
       </ViewportContext>
     </LayerContext>
   )

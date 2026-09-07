@@ -13,6 +13,7 @@
     "./data": "./src/data.ts",
     "./gpu": "./src/gpu.ts",
     "./image": "./src/image.ts",
+    "./input": "./src/input.ts",
     "./audio": "./src/audio.ts",
     "./microphone": "./src/microphone.ts",
     "./speech-recognition": "./src/speech-recognition.ts",

@@ -312,6 +312,72 @@ latest (solid-js 1.x, off Solid 2.0 entirely). The recipe that works is
   rather than track pointers ad hoc, or they will double-handle against
   scrollers and pressables.
 
+- The input map (input-map.ts) is how anything drives a control:
+  ARCHITECTURE.md's rule is that a control (a camera, a character
+  controller) consumes a device-free abstraction and never handles events
+  or reads a device itself, and the map is the named, typed layer between
+  devices and consumers - Godot's InputMap and Unity's action maps in
+  reactive form. `createInputMap({ look: "vec2", move: "vec2", zoom:
+  "axis", jump: "button" })` declares the app's actions once; devices bind
+  to them by name (`input.bind("look", pointer.drag, gamepad(0).rightStick)`,
+  `input.bind("move", keyboard.wasd, gamepad(0).leftStick)`); consumers
+  read the action, never the device. Every axis/vec2 action carries TWO
+  channels: the RATE (the sum of every bound source's current value,
+  clamped - an axis to -1..1, a vec2 to unit length - reactive, sampled per
+  frame by the consumer and integrated over dt at its own speed) and the
+  DELTAS (immediate amounts a gesture produced, in device-free units: a
+  drag in element heights, a wheel notch or a pinch in octaves, a twist in
+  turns, with begin/end brackets around a finger's gesture and the focal
+  point as a fraction of the element). Values use the screen convention
+  throughout: x right, y down, a stick pushed up reads y = -1, and a
+  consumer that means "forward" by a vec2 reads -y. A button source may
+  bind to an axis action (1 while pressed); a vec2 source on an axis
+  action throws.
+  Devices are the nouns: `keyboard.key("Space")`, `keyboard.axis("KeyQ",
+  "KeyE")`, `keyboard.vec2({ up, down, left, right })`, `keyboard.wasd`,
+  `keyboard.arrows` (key events reach them through `input.handlers`,
+  spread on `<window>` for app-global keys or on the leaf that should hold
+  focus for them - keys bubble to the window, so a TextInput's consumed
+  keys never arrive); `gamepad(slot)` or `gamepad()` for every pad, with
+  `leftStick`, `rightStick`, `dpad`, `triggers` (right minus left),
+  `shoulders`, `axis(name)`, `button(name)`, reactive over gamepads() so a
+  stick wakes a control's frame loop; `createPointerFeed()` for the one
+  device that is not global - a pointer event belongs to the element
+  under it, so the feed is per element: spread `feed.handlers` on the
+  leaf (`<Scene pointer>`, `<View3d pointer>`, `<SpriteLayer pointer>` and
+  `<View2d pointer>` take a feed and spread it on their built-in leaf) and
+  bind its gestures `drag` (one pointer), `pan` (two), `pinch`, `twist`,
+  `wheel` and `mouseDelta` (raw motion while pointerLocked()). One
+  merged recognizer serves them, so they arbitrate in the arena as one. A
+  detached d-* leaf has no layout box: give the feed `{ layout }` or it
+  throws at the first press. `invert(source)` and `scale(source, k)` are
+  the two processors: keys and sticks move the CAMERA where a drag moves
+  the content, so a preset binds arrows or a stick to `pan`/`rotate`
+  through invert() and the action keeps one meaning.
+  Consumers with the axes contract (`createAxes({ rotate: "vec2", zoom:
+  "axis" }, { onNudge, onBegin, onEnd })`, what every camera control
+  exposes as `.axes`) are connected by name with `input.drive(control.axes,
+  names?)`: each axis takes the action of the same name, or the one
+  `names` gives it (null skips one), both channels; the camera components
+  take the map as their `input` prop and do exactly that. Injection by
+  name is the wire for scripts, debug commands, peers and replays:
+  `input.set("move", [0, -1])` holds a rate, `press`/`release` a button,
+  `nudge`/`begin`/`end` feed the delta channel. `bindings()` lists what is
+  bound (source labels are display strings), `unbind` removes one, and a
+  preset (`orbitBindings`, `firstPersonBindings` in @solidrt/3d,
+  `camera2dBindings` in @solidrt/2d) is a plain bindings list the app
+  applies and edits - nothing binds unless the app says so. The map is an
+  instance: two pads on two views is two maps. Create maps and feeds in an
+  owned scope (a component body): onPress/onRelease run effects under it
+  and the feed's recognizer registers its cleanup there. The vocabulary the
+  controls share, one kind and unit per word: `pan` vec2 (view heights),
+  `zoom` axis (octaves, positive in), `rotate` vec2 (orbit turns), `roll`
+  axis (turns about the view axis), `look` vec2 (turns), `move` vec2
+  ([right, forward], forward = -y), `rise` axis (up). The runtime-free
+  half (`createInputMap`, `createAxes`, `keyboard`, the processors) is
+  importable as `@solidrt/core/input` for headless checks;
+  checks/input-map-check.ts runs it on the bare flux binary.
+
 - Reactivity is SolidJS 2.0 (`@solidjs/signals`), NOT Solid 1.x. `createSignal`
   is as you expect, but `createEffect` takes the 2.0 two-function shape: a
   TRACKED compute that reads signals and returns a value, then an UNTRACKED

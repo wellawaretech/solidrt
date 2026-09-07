@@ -16,8 +16,8 @@
 // inset responds exactly as in the main view (the same handlers, the
 // view's camera undone). The `state` debug command returns both camera
 // poses and every sprite's world position.
-import { createSignal, render, For } from "@solidrt/core"
-import { Camera2d, createAtlas, grid, setSprite, Sprite, SpriteLayer, View2d } from "@solidrt/2d"
+import { createInputMap, createPointerFeed, createSignal, render, For } from "@solidrt/core"
+import { Camera2d, camera2dActions, camera2dBindings, createAtlas, grid, setSprite, Sprite, SpriteLayer, View2d } from "@solidrt/2d"
 import type { Camera2dHandle, Frame, SpriteHandle } from "@solidrt/2d"
 import { registerDebug } from "srt:dev"
 import logoBytes from "./logo.png" with { type: "binary" }
@@ -51,6 +51,14 @@ function App() {
     { id: 2, x: 300, y: 470, frame: frames[2]! },
     { id: 3, x: 520, y: 500, frame: frames[3]! },
   ])
+  // One pointer feed and map per view: the layer's own view and the inset
+  // each drive their <Camera2d> from their own gestures and no other's.
+  let pointer = createPointerFeed()
+  let input = createInputMap(camera2dActions)
+  input.bind(camera2dBindings({ pointer }))
+  let insetPointer = createPointerFeed()
+  let insetInput = createInputMap(camera2dActions)
+  insetInput.bind(camera2dBindings({ pointer: insetPointer }))
 
   return (
     <window>
@@ -58,13 +66,14 @@ function App() {
         atlas={atlas.texture}
         capacity={64}
         clearColor={[0.05, 0.05, 0.09, 1]}
+        pointer={pointer}
         onTap={e => {
           if (e.sprite === null) console.log(`tap on empty space at ${e.x.toFixed(0)}, ${e.y.toFixed(0)} (x${e.tapCount})`)
         }}
       >
         {/* A top-left pivot keeps world (0,0) at the leaf's corner, so the
             authored positions read as window coordinates until panned. */}
-        <Camera2d maxZoom={MAX_ZOOM} pivot={{ x: 0, y: 0 }} ref={c => (cam = c)} />
+        <Camera2d input={input} maxZoom={MAX_ZOOM} pivot={{ x: 0, y: 0 }} ref={c => (cam = c)} />
         <For each={items()}>
           {item => {
             let tintIndex = 0
@@ -108,8 +117,8 @@ function App() {
         {/* A laid-out element among the layer's children renders where it
             sits; the <View2d> inside stays a layer child through context. */}
         <view position="absolute" right={INSET_MARGIN} bottom={INSET_MARGIN}>
-          <View2d width={INSET_WIDTH} height={INSET_HEIGHT} clearColor={[0.12, 0.1, 0.16, 1]} label="inset">
-            <Camera2d zoom={INSET_ZOOM} maxZoom={MAX_ZOOM} pivot={{ x: 0, y: 0 }} ref={c => (insetCam = c)} />
+          <View2d width={INSET_WIDTH} height={INSET_HEIGHT} clearColor={[0.12, 0.1, 0.16, 1]} label="inset" pointer={insetPointer}>
+            <Camera2d input={insetInput} zoom={INSET_ZOOM} maxZoom={MAX_ZOOM} pivot={{ x: 0, y: 0 }} ref={c => (insetCam = c)} />
           </View2d>
         </view>
       </SpriteLayer>
