@@ -30,7 +30,7 @@ import type { PointerEvent as ElementPointerEvent, WheelEvent as ElementWheelEve
 import { beginBufferWrite, createBuffer, destroyBuffer, endBufferWrite } from "@solidrt/core/gpu"
 import type { BufferId, TextureId } from "@solidrt/core/gpu"
 import * as spatial from "flux:spatial"
-import type { NodeId, NodeTransition } from "flux:spatial"
+import type { Impact as CoreImpact, MoveOptions as CoreMoveOptions, NodeId, NodeTransition, QueryFilter } from "flux:spatial"
 import { on } from "srt:events"
 import type { CameraState, CameraUpdate } from "./camera.ts"
 import type { Frame } from "./frames.ts"
@@ -57,10 +57,31 @@ const RESOLVED = Promise.resolve()
 
 // Shared marshalling scratch (the bindings copy synchronously).
 const TRANSFORM = new Float32Array(10)
-const FLAT_BOUNDS = new Float32Array([-0.5, -0.5, 0, 0.5, 0.5, 0])
+// Half depth of a sprite's index box along z, node units (a sprite's z
+// scale is 1, so world units too). A sprite is a COLUMN in the index, not
+// a flat quad: a volume query at z = 0 then only ever meets its side
+// faces, so every contact normal and depth is in the plane, and a circle
+// whose center lies over a sprite pushes out sideways instead of along z
+// (the core's contact against a flat triangle is the plane normal). Far
+// larger than any volume's reach, so the end faces never take part.
+const SPRITE_DEPTH = 1e4
+const COLUMN_BOUNDS = new Float32Array([-0.5, -0.5, -SPRITE_DEPTH, 0.5, 0.5, SPRITE_DEPTH])
 const RAY_ORIGIN = new Float32Array(3)
-const RAY_DIR = new Float32Array([0, 0, 1])
-const BOX = new Float32Array([0, 0, 0, 0, 0, 1, 0, 0, 0, 1])
+const RAY_DIR = new Float32Array(3)
+// Volume scratch: a "capsule" is a, b, radius (7 floats), a "box" is
+// center, half extents, quaternion (10); both packed at z = 0.
+const CAPSULE = new Float32Array(7)
+const BOX = new Float32Array(10)
+const MOTION = new Float32Array(3)
+// A box volume's half depth: any positive value inside the columns.
+const BOX_HALF_DEPTH = 1
+// The pick ray starts this far in front of the plane; it crosses every
+// column at z = 0 whatever the start, but a start inside the column meets
+// only its far end face, which is fine for pick (draw order sorts, not
+// distance).
+const PICK_RAY_START = -1
+// The direction floors face in a y-down world.
+const UP_2D: [number, number] = [0, -1]
 // worldPosition's world-matrix scratch (column-major; translation at 12, 13).
 const WORLD = new Float32Array(16)
 
@@ -459,14 +480,129 @@ export type LayerBase = {
   _schedule(): void
 }
 
+/** A query volume for overlap/sweep/moveAndSlide, in layer pixels: a
+ * circle, a capsule (the radius swept along the segment a-b: a character)
+ * or a rect (`rotation` radians about its center, 0 when absent) - Godot's
+ * CircleShape2D/CapsuleShape2D/RectangleShape2D, @solidrt/3d's Volume one
+ * dimension down. */
+export type Circle = { x: number; y: number; radius: number }
+export type Capsule = { ax: number; ay: number; bx: number; by: number; radius: number }
+export type Rect = { x: number; y: number; width: number; height: number; rotation?: number }
+export type Volume = Circle | Capsule | Rect
+
+/** Filters for one raycast/overlap/sweep/moveAndSlide query. */
+export type QueryOptions = {
+  /** Only these sprites report hits (an include-list); every shown sprite
+   * of the layer otherwise. */
+  sprites?: Sprite[]
+}
+
+/** One sprite a raycast() ray strikes: the distance along the ray, the
+ * point on the sprite's edge and the unit edge normal facing the ray. */
+export type RayHit = { sprite: Sprite; distance: number; point: [number, number]; normal: [number, number] }
+
+/** One sprite an overlap() volume touches: its deepest contact - the
+ * point on the sprite's edge, the unit direction out of the sprite, and
+ * the depth along that direction that clears the contact. */
+export type Overlap = { sprite: Sprite; point: [number, number]; normal: [number, number]; depth: number }
+
+/** One sprite a sweep() volume touches on its way: `time` is the fraction
+ * of the motion at first touch (0 for a volume already in contact and
+ * moving in), `point` the touch point on the sprite's edge, `normal` the
+ * unit normal there facing the volume. */
+export type Impact = { sprite: Sprite; time: number; point: [number, number]; normal: [number, number] }
+
+export type MoveOptions = QueryOptions & {
+  /** The direction floors face (default [0, -1]: y-down, floors face up
+   * the screen). */
+  up?: [number, number]
+  /** Largest angle (radians) between a contact normal and `up` that still
+   * counts as floor (default 45 degrees). Steeper contacts are walls, and
+   * the body slides down them. */
+  floorMaxAngle?: number
+  /** Most contacts one call slides along (default 6). */
+  maxSlides?: number
+  /** Gap kept from every surface, layer pixels (default 0.01). */
+  skin?: number
+  /** How far below the body a floor is pulled to when the motion does not
+   * rise (default 0.1; 0 disables): what keeps a walker on a ramp going
+   * down, and what decides `floor` at the end of the move - a body that
+   * ends higher than this above its floor is airborne, whatever it
+   * touched on the way. A rising motion (a jump) never snaps. */
+  floorSnap?: number
+}
+
+export type MoveResult = {
+  /** The displacement the body gets: add it to the body's position. */
+  motion: [number, number]
+  /** The unit normal of the floor the body ends the move on - within
+   * `floorSnap` below it, snapped onto - else null (airborne, or on a
+   * slope too steep to stand on). With `floorSnap: 0` it is a floor met
+   * during the move instead. */
+  floor: [number, number] | null
+  /** Whether a wall (a contact steeper than a floor and flatter than a
+   * ceiling) or a ceiling was met. */
+  wall: boolean
+  ceiling: boolean
+  /** Every contact met, in order, the floor snap's last. */
+  hits: Impact[]
+}
+
 export type SpriteLayer = LayerBase & {
   /**
    * Every shown sprite whose rotated rect overlaps the layer-pixel rect
    * (the core BVH overlap query, exact for rotated sprites), unordered -
-   * the marquee query. Node layer only.
+   * the marquee query: `overlap` over an unrotated rect, sprites only.
+   * Node layer only.
    */
   pickRect(x: number, y: number, width: number, height: number): Sprite[]
+  /**
+   * Every shown sprite the ray from (x, y) along (dx, dy) strikes, nearest
+   * first, with the distance (layer pixels along the normalized
+   * direction), the point on the sprite's edge and the edge normal.
+   * `pick` is the point form; this is the shot and the line of sight.
+   * Reads the index as of the last flush, the pending batch run first,
+   * like pick.
+   */
+  raycast(x: number, y: number, dx: number, dy: number, opts?: QueryOptions): RayHit[]
+  /**
+   * Every shown sprite the volume touches, each with its deepest contact
+   * (Godot's intersect_shape, Unity's OverlapCircle/Box/Capsule: a blast
+   * radius, a pickup range, a melee arc), unordered. Sprites are tested
+   * as their rotated rects, so any rotation holds; a volume wholly inside
+   * a sprite touches it (a sprite is a solid rect to a volume, its
+   * push-out the nearest edge's). Same index contract as raycast.
+   */
+  overlap(volume: Volume, opts?: QueryOptions): Overlap[]
+  /**
+   * The volume moved by (dx, dy): every shown sprite it touches on the
+   * way, at its first touch, earliest first (Godot's cast_motion, Unity's
+   * CircleCast/BoxCast: a bullet, a dash). A volume already in contact
+   * reports time 0 while the motion closes in, and nothing while it leaves
+   * or slides along the contact, which is what lets a slide along a wall
+   * proceed. A zero motion touches nothing.
+   */
+  sweep(volume: Volume, dx: number, dy: number, opts?: QueryOptions): Impact[]
+  /**
+   * Move a body by (dx, dy) through the layer's sprites, sliding along
+   * what it hits (Godot's CharacterBody2D.move_and_slide, the platformer
+   * and top-down character mover), as one pure call: no sprite, no
+   * velocity state - it takes a volume where the body IS and the motion
+   * it WANTS, and returns the motion it gets plus what it touched. The
+   * body first pushes out of anything it starts inside, then sweeps and
+   * slides up to `maxSlides` times, then, unless the motion rises, snaps
+   * down onto a floor within `floorSnap` - the floor it reports is the
+   * one it ends on. The loop runs in the spatial core: one call per body
+   * per frame. Gravity is the caller's: fold the fall into the motion
+   * each frame and zero it while `floor` is set; a walkable floor absorbs
+   * the vertical part, so a body never creeps down a slope it can stand
+   * on. Colliders are the layer's shown sprites, or `opts.sprites`.
+   */
+  moveAndSlide(volume: Volume, dx: number, dy: number, opts?: MoveOptions): MoveResult
   _groups: Set<GroupState>
+  /** The core node every sprite and group of the layer sits under: what
+   * scopes the layer's queries in the arena shared with 3d scenes. */
+  _root: NodeId
 }
 
 /** The stored UVs at `at` un-mirrored by the sprite's flags: the frame as
@@ -492,6 +628,48 @@ function fillTransform(x: number, y: number, rot: number, sx: number, sy: number
   TRANSFORM[7] = sx
   TRANSFORM[8] = sy
   TRANSFORM[9] = 1
+}
+
+// The core mover's options, refilled per call (the binding reads it
+// synchronously); `up` is the 2d direction lifted into the plane.
+const MOVE_OPTIONS: CoreMoveOptions & { up: [number, number, number] } = { up: [0, -1, 0] }
+
+/** Pack a 2d volume into the core's scratch at z = 0: a circle is a
+ * capsule with a == b, a rect a "box" turned about z. Returns the kind. */
+function packVolume(volume: Volume, site: string): "capsule" | "box" {
+  if ("width" in volume) {
+    if (!(volume.width >= 0 && volume.height >= 0)) {
+      throw new Error(site + ": width and height must be >= 0, got " + volume.width + " x " + volume.height)
+    }
+    let half = (volume.rotation ?? 0) / 2
+    BOX[0] = volume.x + volume.width / 2
+    BOX[1] = volume.y + volume.height / 2
+    BOX[2] = 0
+    BOX[3] = volume.width / 2
+    BOX[4] = volume.height / 2
+    BOX[5] = BOX_HALF_DEPTH
+    BOX[6] = 0
+    BOX[7] = 0
+    BOX[8] = Math.sin(half)
+    BOX[9] = Math.cos(half)
+    return "box"
+  }
+  if (!(volume.radius >= 0)) throw new Error(site + ": radius must be >= 0, got " + volume.radius)
+  if ("x" in volume) {
+    CAPSULE[0] = volume.x
+    CAPSULE[1] = volume.y
+    CAPSULE[3] = volume.x
+    CAPSULE[4] = volume.y
+  } else {
+    CAPSULE[0] = volume.ax
+    CAPSULE[1] = volume.ay
+    CAPSULE[3] = volume.bx
+    CAPSULE[4] = volume.by
+  }
+  CAPSULE[2] = 0
+  CAPSULE[5] = 0
+  CAPSULE[6] = volume.radius
+  return "capsule"
 }
 
 /** Compose and push a node-backed sprite's local transform - through the
@@ -535,6 +713,30 @@ export function createSpriteLayer(atlas: TextureId, opts?: SpriteLayerOptions): 
   let gpuCapacity = capacity
   let styleData = new Float32Array(capacity * STYLE_FLOATS)
   let byNode = new Map<NodeId, SpriteState>()
+  // The layer's root node (identity): parentless sprites and groups hang
+  // off it, so a query scoped to it sees exactly this layer.
+  fillTransform(0, 0, 0, 1, 1)
+  let root = spatial.createNode(TRANSFORM, true)
+  let filter: QueryFilter = { root }
+  // Refill the layer's one filter for a query: the root always, the
+  // include-list as the sprites' nodes when given.
+  let queryFilter = (opts: QueryOptions | undefined, site: string): void => {
+    if (opts?.sprites === undefined) {
+      filter.nodes = undefined
+      return
+    }
+    let nodes: NodeId[] = []
+    for (let sprite of opts.sprites) {
+      if (sprite.layer !== layer) throw new Error(site + ": a sprite in `sprites` belongs to another layer")
+      nodes.push(sprite.node!)
+    }
+    filter.nodes = nodes
+  }
+  let impactOf = (h: CoreImpact): Impact | null => {
+    let sprite = byNode.get(h.node)
+    if (!sprite) return null
+    return { sprite, time: h.time, point: [h.point[0], h.point[1]], normal: [h.normal[0], h.normal[1]] }
+  }
 
   let flush = () => {
     scheduled = false
@@ -645,11 +847,13 @@ export function createSpriteLayer(atlas: TextureId, opts?: SpriteLayerOptions): 
       if (scheduled) flush()
       RAY_ORIGIN[0] = x
       RAY_ORIGIN[1] = y
-      RAY_ORIGIN[2] = -1
+      RAY_ORIGIN[2] = PICK_RAY_START
+      RAY_DIR[0] = 0
+      RAY_DIR[1] = 0
+      RAY_DIR[2] = 1
+      filter.nodes = undefined
       let out: Sprite[] = []
-      for (let hit of spatial.raycast(RAY_ORIGIN, RAY_DIR)) {
-        // The arena is shared (a 3d scene lives in the same index): only
-        // this layer's nodes count.
+      for (let hit of spatial.raycast(RAY_ORIGIN, RAY_DIR, filter)) {
         let sprite = byNode.get(hit.node)
         if (sprite) out.push(sprite)
       }
@@ -657,21 +861,78 @@ export function createSpriteLayer(atlas: TextureId, opts?: SpriteLayerOptions): 
       return out.sort((a, b) => b._slot - a._slot)
     },
     pickRect(x, y, width, height) {
-      if (scheduled) flush()
-      // The marquee as a "box" volume: center, half extents, no rotation,
-      // a unit deep so every sprite plane (z = 0) lies inside it.
-      BOX[0] = x + width / 2
-      BOX[1] = y + height / 2
-      BOX[2] = 0
-      BOX[3] = width / 2
-      BOX[4] = height / 2
-      BOX[5] = 1
       let out: Sprite[] = []
-      for (let hit of spatial.overlap("box", BOX)) {
-        let sprite = byNode.get(hit.node)
-        if (sprite) out.push(sprite)
+      for (let hit of layer.overlap({ x, y, width, height })) out.push(hit.sprite)
+      return out
+    },
+    raycast(x, y, dx, dy, opts) {
+      if (scheduled) flush()
+      RAY_ORIGIN[0] = x
+      RAY_ORIGIN[1] = y
+      RAY_ORIGIN[2] = 0
+      RAY_DIR[0] = dx
+      RAY_DIR[1] = dy
+      RAY_DIR[2] = 0
+      queryFilter(opts, "raycast")
+      let out: RayHit[] = []
+      for (let h of spatial.raycast(RAY_ORIGIN, RAY_DIR, filter)) {
+        let sprite = byNode.get(h.node)
+        if (sprite) out.push({ sprite, distance: h.distance, point: [h.point[0], h.point[1]], normal: [h.normal[0], h.normal[1]] })
       }
       return out
+    },
+    overlap(volume, opts) {
+      if (scheduled) flush()
+      let kind = packVolume(volume, "overlap")
+      queryFilter(opts, "overlap")
+      let out: Overlap[] = []
+      for (let h of spatial.overlap(kind, kind === "box" ? BOX : CAPSULE, filter)) {
+        let sprite = byNode.get(h.node)
+        if (sprite) out.push({ sprite, point: [h.point[0], h.point[1]], normal: [h.normal[0], h.normal[1]], depth: h.depth })
+      }
+      return out
+    },
+    sweep(volume, dx, dy, opts) {
+      if (scheduled) flush()
+      let kind = packVolume(volume, "sweep")
+      MOTION[0] = dx
+      MOTION[1] = dy
+      MOTION[2] = 0
+      queryFilter(opts, "sweep")
+      let out: Impact[] = []
+      for (let h of spatial.sweep(kind, kind === "box" ? BOX : CAPSULE, MOTION, filter)) {
+        let impact = impactOf(h)
+        if (impact) out.push(impact)
+      }
+      return out
+    },
+    moveAndSlide(volume, dx, dy, opts) {
+      if (scheduled) flush()
+      let kind = packVolume(volume, "moveAndSlide")
+      MOTION[0] = dx
+      MOTION[1] = dy
+      MOTION[2] = 0
+      queryFilter(opts, "moveAndSlide")
+      let up = opts?.up ?? UP_2D
+      MOVE_OPTIONS.up[0] = up[0]
+      MOVE_OPTIONS.up[1] = up[1]
+      MOVE_OPTIONS.floorMaxAngle = opts?.floorMaxAngle
+      MOVE_OPTIONS.maxSlides = opts?.maxSlides
+      MOVE_OPTIONS.skin = opts?.skin
+      MOVE_OPTIONS.floorSnap = opts?.floorSnap
+      let r = spatial.moveAndSlide(kind, kind === "box" ? BOX : CAPSULE, MOTION, MOVE_OPTIONS, filter)
+      let hits: Impact[] = []
+      for (let h of r.hits) {
+        let impact = impactOf(h)
+        if (impact) hits.push(impact)
+      }
+      return {
+        motion: [r.motion[0], r.motion[1]],
+        floor: r.floor === null ? null : [r.floor[0], r.floor[1]],
+        wall: r.wall,
+        ceiling: r.ceiling,
+        hits,
+      }
     },
     dispose() {
       if (disposed) return
@@ -688,6 +949,7 @@ export function createSpriteLayer(atlas: TextureId, opts?: SpriteLayerOptions): 
         spatial.destroyNode(group.node)
       }
       layer._groups.clear()
+      spatial.destroyNode(root)
       // Let the core emit its final slot-zeroing writes while the pose
       // buffer still exists, then free everything.
       spatial.flush()
@@ -721,8 +983,10 @@ export function createSpriteLayer(atlas: TextureId, opts?: SpriteLayerOptions): 
         if (opts.parent.layer !== layer) throw new Error("addSprite: parent group belongs to another layer")
         spatial.setParent(node, opts.parent.node)
         opts.parent._children.add(sprite)
+      } else {
+        spatial.setParent(node, root)
       }
-      spatial.setBounds(node, FLAT_BOUNDS)
+      spatial.setBounds(node, COLUMN_BOUNDS)
       spatial.bindPoseRecord(node, pose, slot)
       byNode.set(node, sprite)
       // renderOrder defaults to 0 explicitly: a recycled slot holds the
@@ -791,6 +1055,7 @@ export function createSpriteLayer(atlas: TextureId, opts?: SpriteLayerOptions): 
       RESOLVED.then(flush)
     },
     _groups: new Set(),
+    _root: root,
   }
   if (opts?.autoFree !== false && getOwner()) onCleanup(() => layer.dispose())
   return layer
@@ -861,7 +1126,9 @@ export function setSpriteParent(sprite: Sprite, parent: SpriteGroup | null): voi
   if (!layer) return
   if (sprite.node === null) throw new Error("setSpriteParent: record layers have no groups")
   if (parent && parent.layer !== layer) throw new Error("setSpriteParent: group belongs to another layer")
-  spatial.setParent(sprite.node, parent ? parent.node : null)
+  // A sprite with a node is on a node layer (the throw above), which TS
+  // cannot narrow through sprite.layer.
+  spatial.setParent(sprite.node, parent ? parent.node : (layer as SpriteLayer)._root)
   let s: SpriteState = sprite
   if (s._parent) s._parent._children.delete(s)
   s._parent = parent
@@ -916,6 +1183,8 @@ export function addGroup(layer: SpriteLayer, opts?: GroupOptions): SpriteGroup {
     if (opts.parent.layer !== layer) throw new Error("addGroup: parent group belongs to another layer")
     spatial.setParent(group.node, opts.parent.node)
     opts.parent._children.add(group)
+  } else {
+    spatial.setParent(group.node, layer._root)
   }
   layer._groups.add(group)
   layer._schedule()
@@ -947,7 +1216,7 @@ export function setGroup(group: SpriteGroup, opts: GroupOptions): void {
   }
   if (opts.parent !== undefined) {
     if (opts.parent && opts.parent.layer !== layer) throw new Error("setGroup: parent group belongs to another layer")
-    spatial.setParent(group.node, opts.parent ? opts.parent.node : null)
+    spatial.setParent(group.node, opts.parent ? opts.parent.node : layer._root)
     if (g._parent) g._parent._children.delete(g)
     g._parent = opts.parent
     if (opts.parent) opts.parent._children.add(g)

@@ -580,15 +580,15 @@ impl Obb {
   }
 }
 
-fn add(a: V3, b: V3) -> V3 {
+pub(crate) fn add(a: V3, b: V3) -> V3 {
   [a[0] + b[0], a[1] + b[1], a[2] + b[2]]
 }
 
-fn sub(a: V3, b: V3) -> V3 {
+pub(crate) fn sub(a: V3, b: V3) -> V3 {
   [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
 }
 
-fn scale(a: V3, s: f32) -> V3 {
+pub(crate) fn scale(a: V3, s: f32) -> V3 {
   [a[0] * s, a[1] * s, a[2] * s]
 }
 

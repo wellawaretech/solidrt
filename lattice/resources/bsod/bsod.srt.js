@@ -2360,6 +2360,12 @@ function createSignal(e, t) {
 function createMemo(e, t) {
   return accessor(computed(e, t));
 }
+function createEffect(e, t, n) {
+  effect(e, t.effect || t, t.error, {
+    user: true,
+    ...n
+  });
+}
 function createRenderEffect(e, t, n) {
   effect(e, t, undefined, n);
 }
@@ -3922,6 +3928,17 @@ import * as tree3 from "flux:rendertree";
 import { on as on3 } from "srt:events";
 // ../../packages/core/src/gamepad.ts
 import { on as on4 } from "srt:events";
+var gamepadsAccessor;
+function gamepads() {
+  if (!gamepadsAccessor) {
+    runWithOwner(null, () => {
+      let [pads, setPads] = createSignal([]);
+      on4("gamepads", (e) => setPads(e.pads ?? []));
+      gamepadsAccessor = pads;
+    });
+  }
+  return gamepadsAccessor();
+}
 // ../../packages/core/src/gpu.ts
 import * as gpu from "flux:gpu";
 import { depthTexture, destroyTexture as destroyTexture2, endBufferWrite, resizeTexture, setTargetParams as setTargetParams2, setTargetRect, setTargetSize as setTargetSize2, setTargetTextures, uploadTexture } from "flux:gpu";
@@ -3983,6 +4000,254 @@ var CYCLE = IN_DONE + LAST + FADE;
 var claims = new Map;
 // ../../packages/core/src/transform.ts
 import { on as on5 } from "srt:events";
+// ../../packages/core/src/input-keyboard.ts
+var MODIFIERS = {
+  Shift: "shiftKey",
+  Ctrl: "ctrlKey",
+  Control: "ctrlKey",
+  Alt: "altKey",
+  Meta: "metaKey"
+};
+function parse(what, text) {
+  if (typeof text !== "string" || text.length === 0)
+    throw new Error(`keyboard.${what}: expected a key code or key name, got ${String(text)}`);
+  let parts = text.split("+");
+  let key = parts.pop();
+  if (key.length === 0)
+    throw new Error(`keyboard.${what}: "${text}" names no key`);
+  let mods = [];
+  for (let part of parts) {
+    let mod = MODIFIERS[part];
+    if (!mod)
+      throw new Error(`keyboard.${what}: unknown modifier "${part}" in "${text}" (Shift, Ctrl, Alt or Meta)`);
+    if (!mods.includes(mod))
+      mods.push(mod);
+  }
+  return {
+    text,
+    key,
+    mods
+  };
+}
+var matches = (event, key) => {
+  if (event.code === key || event.key === key)
+    return true;
+  if (key === "Space" && event.key === " ")
+    return true;
+  if (event.key.length !== 1)
+    return false;
+  if (key.length === 1)
+    return event.key.toLowerCase() === key.toLowerCase();
+  return key.length === 4 && key.startsWith("Key") && event.key.toLowerCase() === key[3].toLowerCase();
+};
+function held(specs) {
+  let down = new Set;
+  let [count, setCount] = createSignal(0, {
+    ownedWrite: true
+  });
+  return {
+    count,
+    key(event, isDown) {
+      let onKey = specs.filter((s) => matches(event, s.key));
+      for (let s of onKey)
+        down.delete(s.text);
+      if (isDown) {
+        let hits = onKey.filter((s) => s.mods.every((m) => event[m]));
+        let most = hits.reduce((n, s) => Math.max(n, s.mods.length), 0);
+        for (let s of hits)
+          if (s.mods.length === most)
+            down.add(s.text);
+      }
+      setCount(down.size);
+    },
+    blur() {
+      down.clear();
+      setCount(0);
+    },
+    has(text) {
+      return down.has(text);
+    }
+  };
+}
+function key(spec) {
+  let state = held([parse("key", spec)]);
+  return {
+    kind: "button",
+    label: `keyboard ${spec}`,
+    rate: () => state.count() > 0,
+    key: state.key,
+    blur: state.blur
+  };
+}
+function axis(neg, pos) {
+  let state = held([parse("axis", neg), parse("axis", pos)]);
+  return {
+    kind: "axis",
+    label: `keyboard ${neg}/${pos}`,
+    rate: () => {
+      state.count();
+      return (state.has(pos) ? 1 : 0) - (state.has(neg) ? 1 : 0);
+    },
+    key: state.key,
+    blur: state.blur
+  };
+}
+function vec2(keys) {
+  let state = held(["up", "down", "left", "right"].map((side) => parse(`vec2 ${side}`, keys[side])));
+  return {
+    kind: "vec2",
+    label: `keyboard ${keys.up}/${keys.left}/${keys.down}/${keys.right}`,
+    rate: () => {
+      state.count();
+      return [(state.has(keys.right) ? 1 : 0) - (state.has(keys.left) ? 1 : 0), (state.has(keys.down) ? 1 : 0) - (state.has(keys.up) ? 1 : 0)];
+    },
+    key: state.key,
+    blur: state.blur
+  };
+}
+var keyboard = {
+  key,
+  axis,
+  vec2,
+  wasd: vec2({
+    up: "KeyW",
+    down: "KeyS",
+    left: "KeyA",
+    right: "KeyD"
+  }),
+  arrows: vec2({
+    up: "ArrowUp",
+    down: "ArrowDown",
+    left: "ArrowLeft",
+    right: "ArrowRight"
+  })
+};
+// ../../packages/core/src/input-gamepad-device.ts
+var STICK_DEADZONE = 0.15;
+var deadzone = (x, y) => Math.hypot(x, y) < STICK_DEADZONE ? [0, 0] : [x, y];
+function createGamepadDevice(pads, slot, who) {
+  let sumAxis = (read2) => () => {
+    let sum = 0;
+    for (let pad of pads())
+      sum += read2(pad);
+    return sum;
+  };
+  let sumVec2 = (read2) => () => {
+    let x = 0;
+    let y = 0;
+    for (let pad of pads()) {
+      let v = read2(pad);
+      x += v[0];
+      y += v[1];
+    }
+    return [x, y];
+  };
+  let anyButton = (name) => () => pads().some((pad) => pad.buttons.includes(name));
+  let pressed = (pad, name) => pad.buttons.includes(name) ? 1 : 0;
+  let stick = (side) => ({
+    kind: "vec2",
+    label: `${who} ${side} stick`,
+    rate: sumVec2((pad) => deadzone(pad.axes[`${side}X`] ?? 0, pad.axes[`${side}Y`] ?? 0))
+  });
+  return {
+    get slot() {
+      return slot();
+    },
+    leftStick: stick("left"),
+    rightStick: stick("right"),
+    dpad: {
+      kind: "vec2",
+      label: `${who} dpad`,
+      rate: sumVec2((pad) => [pressed(pad, "dpadRight") - pressed(pad, "dpadLeft"), pressed(pad, "dpadDown") - pressed(pad, "dpadUp")])
+    },
+    triggers: {
+      kind: "axis",
+      label: `${who} triggers`,
+      rate: sumAxis((pad) => (pad.axes.rightTrigger ?? 0) - (pad.axes.leftTrigger ?? 0))
+    },
+    shoulders: {
+      kind: "axis",
+      label: `${who} shoulders`,
+      rate: sumAxis((pad) => pressed(pad, "rightShoulder") - pressed(pad, "leftShoulder"))
+    },
+    axis(name) {
+      if (typeof name !== "string" || name.length === 0)
+        throw new Error(`gamepad.axis: expected an axis name, got ${String(name)}`);
+      return {
+        kind: "axis",
+        label: `${who} ${name}`,
+        rate: sumAxis((pad) => pad.axes[name] ?? 0)
+      };
+    },
+    button(name) {
+      if (typeof name !== "string" || name.length === 0)
+        throw new Error(`gamepad.button: expected a button name, got ${String(name)}`);
+      return {
+        kind: "button",
+        label: `${who} ${name}`,
+        rate: anyButton(name)
+      };
+    }
+  };
+}
+function createGamepadSlot(read2, slot) {
+  if (slot !== undefined && !(Number.isInteger(slot) && slot >= 0))
+    throw new Error(`gamepad: slot must be a non-negative integer, got ${String(slot)}`);
+  let pads = () => {
+    let all = read2();
+    if (slot === undefined)
+      return all.filter((p) => p !== null);
+    let pad = all[slot];
+    return pad ? [pad] : [];
+  };
+  return createGamepadDevice(pads, () => slot, slot === undefined ? "gamepad" : `gamepad ${slot}`);
+}
+var claimed = new Set;
+function createGamepadJoin(read2) {
+  let [slot, setSlot] = createSignal(undefined, {
+    ownedWrite: true
+  });
+  let mine;
+  let dispose2 = createRoot((dispose3) => {
+    createEffect(() => read2(), (pads2) => {
+      if (mine !== undefined)
+        return;
+      for (let i = 0;i < pads2.length; i++) {
+        let pad = pads2[i];
+        if (!pad || claimed.has(i) || pad.buttons.length === 0)
+          continue;
+        mine = i;
+        claimed.add(i);
+        setSlot(i);
+        return;
+      }
+    });
+    return dispose3;
+  });
+  if (getOwner()) {
+    onCleanup(() => {
+      dispose2();
+      if (mine !== undefined)
+        claimed.delete(mine);
+    });
+  }
+  let pads = () => {
+    let s = slot();
+    if (s === undefined)
+      return [];
+    let pad = read2()[s];
+    return pad ? [pad] : [];
+  };
+  return createGamepadDevice(pads, slot, "gamepad (joined)");
+}
+
+// ../../packages/core/src/input-gamepad.ts
+function gamepad(slot) {
+  return createGamepadSlot(gamepads, slot);
+}
+gamepad.next = () => createGamepadJoin(gamepads);
+// ../../packages/core/src/input-pointer.ts
+var WHEEL_OCTAVES = 0.0015 / Math.LN2;
 // src/bsod.tsx
 function Bsod() {
   var _el$ = createElement("window", {

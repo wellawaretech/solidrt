@@ -84,3 +84,40 @@ Tile-layer collision: tiles are baked records, not nodes, so a tile world
 needs its own collision surface (a solid-cell grid query) rather than the
 sprite index. Physics-core producers moving sprites
 (okf/backlog/physics-core.md) are the layer above this one.
+
+## Done 2026-09-07
+
+Shipped as shaped, with three decisions the implementation forced:
+
+- The filter moved into the core. Every query used to return hits from
+  the whole shared arena and each package discarded the foreign and
+  masked-out nodes in JS afterwards; a Rust mover needs the filter inside
+  its loop, so `flux:spatial`'s raycast/overlap/sweep/moveAndSlide take a
+  `{ root, layers, nodes }` filter, nodes carry a layer mask
+  (`setLayers`), and both packages scope queries to their root node (the
+  2d layer gained one; parentless sprites and groups hang off it). The
+  3d `meshes` include-list is the node-id list, instances expanded.
+- The mover is Rust (`alloy/src/spatial/mover.rs`), one FFI call per body
+  per frame instead of the JS loop's ten-odd overlaps and sweeps. The 3d
+  package's `moveAndSlide` is now `scene.moveAndSlide` plus the free
+  spelling, a pack-and-map wrapper; the 2d layer's is the same core call
+  with `up` lifted into the plane. The controller cases from
+  `packages/3d/tests/collision.test.ts` (analytic planes) moved to
+  `alloy/src/tests/spatial_collide.rs` over real quads.
+- Sprites are columns in the index, not flat quads. The shaping's "unit z
+  extent so every sprite plane lies inside it" packs the volume, but the
+  core's contact for a capsule whose segment lies in a flat triangle's
+  plane is the plane normal with depth = radius, so a circle over a
+  sprite would have pushed out along z. With a large z half-extent on the
+  sprite's index box every volume at z = 0 meets side faces only, and
+  contacts, sweeps and the mover stay in the plane with no 2d narrowphase.
+
+The mover is a layer method (`layer.moveAndSlide`), not a free function,
+matching `pick`. `QueryOptions` is the `sprites` include-list only:
+sprites carry no layer bits yet, and the core mask is in place for when
+they do. `packages/2d/checks/collision-check.tsx` is the probe from
+"done looks like": a capsule lands on a floor of tiles a skin short,
+stops at a wall with `wall` while keeping the floor, and climbs a slope
+(a rotated sprite) reporting it as floor; a blast circle finds three
+tiles with in-plane contacts; a shot's sweep and raycast agree on the
+first tile; `pickRect` equals `overlap` over the rect.

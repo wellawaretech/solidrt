@@ -78,11 +78,6 @@ Shaped, not started.
   though the core machinery - arena bones, the TextureSlot palette sink, the
   coming native clip evaluator - already exists or is planned with zero
   2d-specific core work.
-- **[2d spatial queries - overlap, sweep, raycast and move-and-slide for sprites](backlog/2d-spatial-queries.md)** [2026-09-06]
-  Every live sprite already sits in the core's picking index, but the 2d
-  package exposes only pick and pickRect, so a circle query, a cast along a
-  motion or a move-and-slide has no path while the 3d scene wraps all of them
-  with filters and a character mover on top.
 - **[World-space text for 2d layers (labels that ride the camera)](backlog/2d-world-space-text.md)** [2026-09-02]
   Text living IN a layer's world - node labels, cluster names, damage numbers
   - has no path: apps re-project laid-out <text> elements per camera change,
@@ -800,6 +795,11 @@ Finished, kept for the reasoning.
   walk; make each live sprite a spatial arena node whose InstanceRecord sink
   writes its instance-buffer slot, connecting 2d to the whole producer stack
   while rendering stays one instanced draw.
+- **[2d spatial queries - overlap, sweep, raycast and move-and-slide for sprites](done/2d-spatial-queries.md)** [2026-09-06]
+  Every live sprite already sits in the core's picking index, but the 2d
+  package exposes only pick and pickRect, so a circle query, a cast along a
+  motion or a move-and-slide has no path while the 3d scene wraps all of them
+  with filters and a character mover on top.
 - **[The sprite layer's camera cannot rotate, so sprites cannot ride a rotating world](done/2d-sprite-camera-rotation.md)** [2026-08-24]
   TileCamera rotates the baked world about a pivot, but the sprite layer's
   uCamera is offset + zoom only, so the ship and enemies drawn as sprites over

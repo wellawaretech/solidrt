@@ -27,7 +27,16 @@ export { camera2dActions, camera2dBindings } from "./input.ts"
 export type { CameraDevices } from "./input.ts"
 export type {
   AddSpriteOptions,
+  Capsule,
+  Circle,
   GroupOptions,
+  Impact,
+  MoveOptions,
+  MoveResult,
+  Overlap,
+  QueryOptions,
+  RayHit,
+  Rect,
   LayerPointerEvent,
   LayerPointerListener,
   LayerTapEvent,
@@ -42,6 +51,7 @@ export type {
   SpriteTapEvent,
   SpriteWheelEvent,
   TransitionEndEvent,
+  Volume,
 } from "./layer.ts"
 export { feedPointer } from "./views.ts"
 export type { ViewHandle, ViewOptions } from "./views.ts"

@@ -1,4 +1,6 @@
-use crate::spatial::{compose, multiply, DrawSink, Mat4, SinkWriter, Spatial, TextureSlotSink, Volume, IDENTITY};
+use crate::spatial::{
+  compose, multiply, DrawSink, Mat4, QueryFilter, SinkWriter, Spatial, TextureSlotSink, Volume, IDENTITY,
+};
 
 const Q: [f32; 4] = [0.0, 0.0, 0.0, 1.0];
 const ONE: [f32; 3] = [1.0, 1.0, 1.0];
@@ -317,7 +319,7 @@ fn box_hits_sorted_and_hidden_skipped() {
     s.set_bounds(n, Some([-0.5, -0.5, -0.5, 0.5, 0.5, 0.5])).expect("bounds");
   }
   flush(&mut s);
-  let hits = s.raycast([0.0, 0.0, 0.0], [0.0, 0.0, -2.0]);
+  let hits = s.raycast([0.0, 0.0, 0.0], [0.0, 0.0, -2.0], &QueryFilter::default()).expect("raycast");
   assert_eq!(hits.iter().map(|h| h.node).collect::<Vec<_>>(), vec![near, far]);
   assert!((hits[0].distance - 1.5).abs() < 1e-5);
   // The far box is scaled 2x: its near face sits at -6 + 1 = -5.
@@ -326,11 +328,11 @@ fn box_hits_sorted_and_hidden_skipped() {
   assert!((hits[0].normal[2] - 1.0).abs() < 1e-5, "a box hit carries the struck face's normal, facing the ray");
   s.set_visible(near, false).expect("hide");
   flush(&mut s);
-  let hits = s.raycast([0.0, 0.0, 0.0], [0.0, 0.0, -1.0]);
+  let hits = s.raycast([0.0, 0.0, 0.0], [0.0, 0.0, -1.0], &QueryFilter::default()).expect("raycast");
   assert_eq!(hits.iter().map(|h| h.node).collect::<Vec<_>>(), vec![far]);
   s.set_bounds(far, None).expect("clear");
   flush(&mut s);
-  assert!(s.raycast([0.0, 0.0, 0.0], [0.0, 0.0, -1.0]).is_empty());
+  assert!(s.raycast([0.0, 0.0, 0.0], [0.0, 0.0, -1.0], &QueryFilter::default()).expect("raycast").is_empty());
 }
 
 #[test]
@@ -359,20 +361,34 @@ fn box_overlap_is_exact_for_rotated_rects_and_skips_hidden() {
   };
   let mut expect = vec![spun, off];
   expect.sort_unstable();
-  assert_eq!(ids(s.overlap(&query([-1.0, -1.0, -1.0, 11.0, 1.0, 1.0]))), expect, "hidden nodes never report");
+  assert_eq!(
+    ids(s.overlap(&query([-1.0, -1.0, -1.0, 11.0, 1.0, 1.0]), &QueryFilter::default()).expect("overlap")),
+    expect,
+    "hidden nodes never report"
+  );
   // Inside the rotated square's world AABB but outside the square itself
   // (the 45-degree diamond ends at |x| + |y| = sqrt(0.5)): the separating
   // axes make the test exact, never AABB-conservative.
-  assert!(s.overlap(&query([0.55, 0.55, -1.0, 0.8, 0.8, 1.0])).is_empty());
+  assert!(s.overlap(&query([0.55, 0.55, -1.0, 0.8, 0.8, 1.0]), &QueryFilter::default()).expect("overlap").is_empty());
   // A point query is the degenerate box, same edge.
-  assert_eq!(ids(s.overlap(&query([0.6, 0.0, 0.0, 0.6, 0.0, 0.0]))), vec![spun]);
-  assert!(s.overlap(&query([0.6, 0.6, 0.0, 0.6, 0.6, 0.0])).is_empty());
+  assert_eq!(
+    ids(s.overlap(&query([0.6, 0.0, 0.0, 0.6, 0.0, 0.0]), &QueryFilter::default()).expect("overlap")),
+    vec![spun]
+  );
+  assert!(s.overlap(&query([0.6, 0.6, 0.0, 0.6, 0.6, 0.0]), &QueryFilter::default()).expect("overlap").is_empty());
   // Moves land at the flush, like raycast.
   s.set_transform(off, [20.0, 0.0, 0.0], Q, ONE).expect("move");
-  assert_eq!(ids(s.overlap(&query([9.0, -1.0, -1.0, 11.0, 1.0, 1.0]))), vec![off], "pre-flush query sees the old pose");
+  assert_eq!(
+    ids(s.overlap(&query([9.0, -1.0, -1.0, 11.0, 1.0, 1.0]), &QueryFilter::default()).expect("overlap")),
+    vec![off],
+    "pre-flush query sees the old pose"
+  );
   flush(&mut s);
-  assert!(s.overlap(&query([9.0, -1.0, -1.0, 11.0, 1.0, 1.0])).is_empty());
-  assert_eq!(ids(s.overlap(&query([19.0, -1.0, -1.0, 21.0, 1.0, 1.0]))), vec![off]);
+  assert!(s.overlap(&query([9.0, -1.0, -1.0, 11.0, 1.0, 1.0]), &QueryFilter::default()).expect("overlap").is_empty());
+  assert_eq!(
+    ids(s.overlap(&query([19.0, -1.0, -1.0, 21.0, 1.0, 1.0]), &QueryFilter::default()).expect("overlap")),
+    vec![off]
+  );
 }
 
 #[test]
@@ -385,7 +401,7 @@ fn triangle_hit_carries_face_uv_and_normal() {
   flush(&mut s);
   // Through the upper-left quadrant: world (-1, 1) is local (-0.5, 0.5)
   // after the 2x scale; that is the second triangle (0, 2, 3).
-  let hits = s.raycast([-1.0, 1.0, 0.0], [0.0, 0.0, -1.0]);
+  let hits = s.raycast([-1.0, 1.0, 0.0], [0.0, 0.0, -1.0], &QueryFilter::default()).expect("raycast");
   assert_eq!(hits.len(), 1);
   let h = &hits[0];
   assert!((h.distance - 3.0).abs() < 1e-5);
@@ -394,14 +410,14 @@ fn triangle_hit_carries_face_uv_and_normal() {
   assert!((uv[0] - 0.25).abs() < 1e-5 && (uv[1] - 0.75).abs() < 1e-5, "uv {uv:?}");
   assert_eq!(h.normal, [0.0, 0.0, 1.0], "normal faces the ray");
   // Outside the quad: the triangle test says miss.
-  assert!(s.raycast([2.5, 2.5, 0.0], [0.0, 0.0, -1.0]).is_empty());
+  assert!(s.raycast([2.5, 2.5, 0.0], [0.0, 0.0, -1.0], &QueryFilter::default()).expect("raycast").is_empty());
   // From behind, the normal flips to face the ray.
-  let back = s.raycast([0.0, 0.0, -6.0], [0.0, 0.0, 1.0]);
+  let back = s.raycast([0.0, 0.0, -6.0], [0.0, 0.0, 1.0], &QueryFilter::default()).expect("raycast");
   assert_eq!(back[0].normal, [0.0, 0.0, -1.0]);
   s.destroy_shape(shape).expect("destroy");
   assert!(s.set_shape(n, Some(shape)).is_err());
   // A node whose shape is gone falls back to its box.
-  assert_eq!(s.raycast([0.0, 0.0, 0.0], [0.0, 0.0, -1.0])[0].face, None);
+  assert_eq!(s.raycast([0.0, 0.0, 0.0], [0.0, 0.0, -1.0], &QueryFilter::default()).expect("raycast")[0].face, None);
 }
 
 // A heightfield over x/z, `side` cells square, two triangles per cell:
@@ -458,7 +474,7 @@ fn shape_bvh_matches_the_linear_oracle() {
     let d = [rand() * 0.2 - 0.1, -1.0, rand() * 0.2 - 0.1];
     let len = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt();
     let dn = [d[0] / len, d[1] / len, d[2] / len];
-    let got = s.raycast(o, d);
+    let got = s.raycast(o, d, &QueryFilter::default()).expect("raycast");
     match ray_shape(&oracle, o, dn) {
       Some((t, face, uv, _)) => {
         hit_count += 1;
@@ -485,7 +501,10 @@ fn shape_slots_rebuild_their_index_on_reuse() {
   s.set_bounds(n, Some([0.0, 0.0, 0.0, 12.0, 1.0, 12.0])).expect("bounds");
   s.set_shape(n, Some(big)).expect("set shape");
   flush(&mut s);
-  assert!(!s.raycast([6.0, 5.0, 6.0], [0.0, -1.0, 0.0]).is_empty(), "the first ray builds the index and hits");
+  assert!(
+    !s.raycast([6.0, 5.0, 6.0], [0.0, -1.0, 0.0], &QueryFilter::default()).expect("raycast").is_empty(),
+    "the first ray builds the index and hits"
+  );
   // Destroying frees the slot; the next create reuses it, and a stale
   // index from the old geometry must not survive into the new shape.
   s.set_shape(n, None).expect("clear shape");
@@ -498,8 +517,14 @@ fn shape_slots_rebuild_their_index_on_reuse() {
   s.set_bounds(n, Some([20.0, 0.0, 0.0, 32.0, 1.0, 12.0])).expect("bounds 2");
   s.set_shape(n, Some(again)).expect("set shape 2");
   flush(&mut s);
-  assert!(s.raycast([6.0, 5.0, 6.0], [0.0, -1.0, 0.0]).is_empty(), "the old geometry is gone");
-  assert!(!s.raycast([26.0, 5.0, 6.0], [0.0, -1.0, 0.0]).is_empty(), "the reused slot indexes the new shape");
+  assert!(
+    s.raycast([6.0, 5.0, 6.0], [0.0, -1.0, 0.0], &QueryFilter::default()).expect("raycast").is_empty(),
+    "the old geometry is gone"
+  );
+  assert!(
+    !s.raycast([26.0, 5.0, 6.0], [0.0, -1.0, 0.0], &QueryFilter::default()).expect("raycast").is_empty(),
+    "the reused slot indexes the new shape"
+  );
 }
 
 #[test]
@@ -520,7 +545,7 @@ fn identical_centroids_still_split_and_hit() {
   s.set_bounds(n, Some([-1.0, -1.0, 0.0, 1.0, 1.0, 0.0])).expect("bounds");
   s.set_shape(n, Some(sid)).expect("set shape");
   flush(&mut s);
-  let hits = s.raycast([0.0, 0.0, 0.0], [0.0, 0.0, -1.0]);
+  let hits = s.raycast([0.0, 0.0, 0.0], [0.0, 0.0, -1.0], &QueryFilter::default()).expect("raycast");
   assert_eq!(hits.len(), 1);
   assert!((hits[0].distance - 3.0).abs() < 1e-5);
   assert!(hits[0].face.is_some());
@@ -558,7 +583,8 @@ fn index_matches_linear_oracle() {
   for _ in 0..100 {
     let o = [rand() * 60.0 - 30.0, rand() * 60.0 - 30.0, rand() * 60.0 - 30.0];
     let d = [rand() - 0.5, rand() - 0.5, rand() - 0.5];
-    let got: Vec<NodeId> = s.raycast(o, d).into_iter().map(|h| h.node).collect();
+    let got: Vec<NodeId> =
+      s.raycast(o, d, &QueryFilter::default()).expect("raycast").into_iter().map(|h| h.node).collect();
     let len = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt();
     let dn = [d[0] / len, d[1] / len, d[2] / len];
     let mut want: Vec<(f32, NodeId)> = nodes
@@ -805,7 +831,8 @@ fn records_on_one_buffer_share_projection_and_anchor() {
   let a = s.create([0.0; 3], Q, ONE, true);
   let b = s.create([0.0; 3], Q, ONE, true);
   s.set_instance_record(a, matrix(4, 0), Some(anchor)).expect("bind");
-  let err = s.set_instance_record(b, record(4, 1), Some(anchor)).expect_err("a pose record on a matrix buffer must error");
+  let err =
+    s.set_instance_record(b, record(4, 1), Some(anchor)).expect_err("a pose record on a matrix buffer must error");
   assert!(err.contains("Matrix"), "{err}");
   let err = s.set_instance_record(b, matrix(4, 1), None).expect_err("another anchor must error");
   assert!(err.contains("anchored"), "{err}");
@@ -1088,7 +1115,10 @@ fn a_cull_group_follows_its_members_boxes() {
   // Culling-only boxes keep the joints out of the picking index.
   s.set_cull_bounds(joint_a, Some(UNIT)).expect("cull bounds");
   s.set_cull_bounds(joint_b, Some(UNIT)).expect("cull bounds");
-  assert!(s.overlap(&Volume::Box { center: [0.0; 3], half: [10.0; 3], rotation: Q }).is_empty());
+  assert!(s
+    .overlap(&Volume::Box { center: [0.0; 3], half: [10.0; 3], rotation: Q }, &QueryFilter::default())
+    .expect("overlap")
+    .is_empty());
   s.set_cull_group(part, &[joint_a, joint_b]).expect("group");
   s.bind_sink(part, sink(1)).expect("sink");
   // A frustum over joint B alone shows the part (the union spans both

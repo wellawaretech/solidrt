@@ -6841,6 +6841,570 @@ function createPan(options) {
 }
 // ../../packages/core/src/transform.ts
 import { on as on5 } from "srt:events";
+// ../../packages/core/src/input-axes.ts
+var clampNum = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+function combineRates(kind, values) {
+  if (kind === "axis") {
+    let sum = 0;
+    for (let v of values)
+      sum += v;
+    return clampNum(sum, -1, 1);
+  }
+  let x = 0;
+  let y = 0;
+  for (let v of values) {
+    x += v[0];
+    y += v[1];
+  }
+  let len = Math.hypot(x, y);
+  return len > 1 ? [x / len, y / len] : [x, y];
+}
+
+// ../../packages/core/src/input-map.ts
+var compatible = (source, action2) => source === action2 || source === "button" && action2 === "axis";
+var neutral = (kind) => kind === "button" ? false : kind === "axis" ? 0 : [0, 0];
+function checkValue(what, kind, v) {
+  if (kind === "button") {
+    if (typeof v !== "boolean")
+      throw new Error(`${what}: expected a boolean, got ${String(v)}`);
+  } else if (kind === "axis") {
+    if (typeof v !== "number" || !Number.isFinite(v))
+      throw new Error(`${what}: expected a finite number, got ${String(v)}`);
+  } else if (!Array.isArray(v) || v.length !== 2 || !Number.isFinite(v[0]) || !Number.isFinite(v[1])) {
+    throw new Error(`${what}: expected [x, y] finite numbers, got ${JSON.stringify(v)}`);
+  }
+}
+function checkSource(source) {
+  let s = source;
+  if (!s || typeof s !== "object" || s.kind !== "button" && s.kind !== "axis" && s.kind !== "vec2" || typeof s.label !== "string") {
+    throw new Error(`createInputMap: not an input source: ${String(source)}`);
+  }
+  return s;
+}
+function createInputMap(actions) {
+  if (!actions || typeof actions !== "object")
+    throw new Error("createInputMap: expected an object of action kinds");
+  let states = new Map;
+  for (let [name, kind] of Object.entries(actions)) {
+    if (kind !== "button" && kind !== "axis" && kind !== "vec2")
+      throw new Error(`createInputMap: action "${name}" has kind "${String(kind)}", expected "button", "axis" or "vec2"`);
+    let [version, setVersion] = createSignal(0, {
+      ownedWrite: true
+    });
+    let state2 = {
+      kind,
+      sources: [],
+      script: null,
+      enabled: true,
+      depth: 0,
+      version,
+      bump: () => setVersion(untrack(version) + 1),
+      value: () => {
+        version();
+        if (!state2.enabled)
+          return neutral(kind);
+        let s = state2.script;
+        if (kind === "button") {
+          if (s === true)
+            return true;
+          return state2.sources.some((src) => src.rate?.() === true);
+        }
+        let values = [];
+        if (s !== null)
+          values.push(s);
+        for (let src of state2.sources) {
+          if (!src.rate)
+            continue;
+          let v = src.rate();
+          if (src.kind === "button")
+            values.push(v ? 1 : 0);
+          else
+            values.push(v);
+        }
+        return combineRates(kind, values);
+      },
+      gesture: new Set,
+      live: new Map
+    };
+    states.set(name, state2);
+  }
+  let state = (name) => {
+    let s = states.get(name);
+    if (!s)
+      throw new Error(`createInputMap: no action "${name}" (declared: ${[...states.keys()].join(", ")})`);
+    return s;
+  };
+  let axisState = (name, what) => {
+    let s = state(name);
+    if (s.kind === "button")
+      throw new Error(`createInputMap: ${what} needs an axis or vec2 action, "${name}" is a button`);
+    return s;
+  };
+  let buttonState = (name, what) => {
+    let s = state(name);
+    if (s.kind !== "button")
+      throw new Error(`createInputMap: ${what} needs a button action, "${name}" is a ${s.kind}`);
+    return s;
+  };
+  let closeGesture = (s) => {
+    s.depth--;
+    s.gesture.forEach((g) => g.end?.());
+  };
+  let sink = (s) => ({
+    begin: () => {
+      if (!s.enabled)
+        return;
+      s.depth++;
+      s.gesture.forEach((g) => g.begin?.());
+    },
+    delta: (value, focal) => {
+      if (!s.enabled)
+        return;
+      s.gesture.forEach((g) => g.delta?.(value, focal));
+    },
+    end: () => {
+      if (s.depth > 0)
+        closeGesture(s);
+    }
+  });
+  let switchActions = (names, on6, what) => {
+    if (names.length === 0)
+      throw new Error(`createInputMap: ${what}() needs at least one action`);
+    for (let name of names) {
+      let s = state(name);
+      if (s.enabled === on6)
+        continue;
+      s.enabled = on6;
+      while (!on6 && s.depth > 0)
+        closeGesture(s);
+      s.bump();
+    }
+  };
+  let bindOne = (name, source) => {
+    let s = state(name);
+    checkSource(source);
+    if (!compatible(source.kind, s.kind))
+      throw new Error(`createInputMap: cannot bind ${source.kind} source "${source.label}" to ${s.kind} action "${name}"`);
+    if (s.sources.includes(source))
+      return;
+    s.sources.push(source);
+    s.bump();
+    if (source.deltas && s.kind !== "button")
+      s.live.set(source, source.deltas(sink(s)));
+  };
+  let unbindOne = (name, source) => {
+    let s = state(name);
+    let i = s.sources.indexOf(source);
+    if (i < 0)
+      return;
+    s.sources.splice(i, 1);
+    s.bump();
+    let stop = s.live.get(source);
+    if (stop) {
+      s.live.delete(source);
+      stop();
+    }
+  };
+  let edge = (name, want, callback) => {
+    let s = buttonState(name, want ? "onPress" : "onRelease");
+    if (typeof callback !== "function")
+      throw new Error(`createInputMap: ${want ? "onPress" : "onRelease"}("${name}") expects a function`);
+    return createRoot((dispose2) => {
+      createEffect(() => s.value(), (pressed, prev) => {
+        if (pressed === want && prev !== want)
+          untrack(callback);
+      }, {
+        defer: true
+      });
+      return dispose2;
+    });
+  };
+  let map = {
+    actions,
+    bind(actionOrList, ...sources) {
+      let list = Array.isArray(actionOrList) ? actionOrList : sources.map((source) => ({
+        action: actionOrList,
+        source
+      }));
+      if (list.length === 0)
+        throw new Error("createInputMap: bind() needs at least one source");
+      for (let b of list)
+        bindOne(b.action, b.source);
+      return () => {
+        for (let b of list)
+          unbindOne(b.action, b.source);
+      };
+    },
+    unbind: unbindOne,
+    bindings(action2) {
+      let out = [];
+      for (let [name, s] of states) {
+        if (action2 !== undefined && name !== action2)
+          continue;
+        for (let source of s.sources)
+          out.push({
+            action: name,
+            source
+          });
+      }
+      if (action2 !== undefined)
+        state(action2);
+      return out;
+    },
+    value(action2) {
+      return state(action2).value();
+    },
+    pressed(action2) {
+      return buttonState(action2, "pressed").value();
+    },
+    onPress: (action2, callback) => edge(action2, true, callback),
+    onRelease: (action2, callback) => edge(action2, false, callback),
+    onGesture(action2, listener) {
+      let s = axisState(action2, "onGesture");
+      if (!listener || typeof listener !== "object")
+        throw new Error(`createInputMap: onGesture("${action2}") expects a listener object`);
+      s.gesture.add(listener);
+      return () => {
+        s.gesture.delete(listener);
+      };
+    },
+    set(action2, value) {
+      let s = state(action2);
+      checkValue(`set("${action2}")`, s.kind, value);
+      s.script = value;
+      s.bump();
+    },
+    press(action2) {
+      let s = buttonState(action2, "press");
+      s.script = true;
+      s.bump();
+    },
+    release(action2) {
+      let s = buttonState(action2, "release");
+      s.script = false;
+      s.bump();
+    },
+    nudge(action2, delta, focal) {
+      let s = axisState(action2, "nudge");
+      checkValue(`nudge("${action2}")`, s.kind, delta);
+      if (focal !== undefined)
+        checkValue(`nudge("${action2}") focal`, "vec2", focal);
+      sink(s).delta(delta, focal);
+    },
+    begin(action2) {
+      sink(axisState(action2, "begin")).begin();
+    },
+    end(action2) {
+      sink(axisState(action2, "end")).end();
+    },
+    enable: (...actions2) => switchActions(actions2, true, "enable"),
+    disable: (...actions2) => switchActions(actions2, false, "disable"),
+    enabled(action2) {
+      let s = state(action2);
+      s.version();
+      return s.enabled;
+    },
+    handlers: {
+      onKeyDown: (event) => forwardKey(event, true),
+      onKeyUp: (event) => forwardKey(event, false),
+      onBlur: () => {
+        let seen = new Set;
+        for (let s of states.values()) {
+          for (let source of s.sources) {
+            if (seen.has(source))
+              continue;
+            seen.add(source);
+            source.blur?.();
+          }
+        }
+      }
+    },
+    drive(axes, names) {
+      let stops = [];
+      for (let [axis, kind] of Object.entries(axes.kinds)) {
+        let mapped = names && axis in names ? names[axis] : axis;
+        if (mapped === null)
+          continue;
+        if (mapped === undefined || !states.has(mapped)) {
+          throw new Error(`createInputMap: drive() has no action for axis "${axis}" (declared: ${[...states.keys()].join(", ")}); declare it, map it with names, or skip it with null`);
+        }
+        let s = state(mapped);
+        if (s.kind !== kind)
+          throw new Error(`createInputMap: drive() maps ${kind} axis "${axis}" to ${s.kind} action "${mapped}"`);
+        stops.push(axes.add(axis, () => s.value()));
+        stops.push(map.onGesture(mapped, {
+          begin: () => axes.begin(axis),
+          delta: (value, focal) => axes.nudge(axis, value, focal),
+          end: () => axes.end(axis)
+        }));
+      }
+      return () => {
+        for (let stop of stops)
+          stop();
+      };
+    }
+  };
+  let forwardKey = (event, down) => {
+    let seen = new Set;
+    for (let s of states.values()) {
+      for (let source of s.sources) {
+        if (seen.has(source) || !source.key)
+          continue;
+        seen.add(source);
+        source.key(event, down);
+      }
+    }
+  };
+  return map;
+}
+// ../../packages/core/src/input-keyboard.ts
+var MODIFIERS = {
+  Shift: "shiftKey",
+  Ctrl: "ctrlKey",
+  Control: "ctrlKey",
+  Alt: "altKey",
+  Meta: "metaKey"
+};
+function parse(what, text) {
+  if (typeof text !== "string" || text.length === 0)
+    throw new Error(`keyboard.${what}: expected a key code or key name, got ${String(text)}`);
+  let parts = text.split("+");
+  let key = parts.pop();
+  if (key.length === 0)
+    throw new Error(`keyboard.${what}: "${text}" names no key`);
+  let mods = [];
+  for (let part of parts) {
+    let mod = MODIFIERS[part];
+    if (!mod)
+      throw new Error(`keyboard.${what}: unknown modifier "${part}" in "${text}" (Shift, Ctrl, Alt or Meta)`);
+    if (!mods.includes(mod))
+      mods.push(mod);
+  }
+  return {
+    text,
+    key,
+    mods
+  };
+}
+var matches = (event, key) => {
+  if (event.code === key || event.key === key)
+    return true;
+  if (key === "Space" && event.key === " ")
+    return true;
+  if (event.key.length !== 1)
+    return false;
+  if (key.length === 1)
+    return event.key.toLowerCase() === key.toLowerCase();
+  return key.length === 4 && key.startsWith("Key") && event.key.toLowerCase() === key[3].toLowerCase();
+};
+function held(specs) {
+  let down = new Set;
+  let [count, setCount] = createSignal(0, {
+    ownedWrite: true
+  });
+  return {
+    count,
+    key(event, isDown) {
+      let onKey = specs.filter((s) => matches(event, s.key));
+      for (let s of onKey)
+        down.delete(s.text);
+      if (isDown) {
+        let hits = onKey.filter((s) => s.mods.every((m) => event[m]));
+        let most = hits.reduce((n, s) => Math.max(n, s.mods.length), 0);
+        for (let s of hits)
+          if (s.mods.length === most)
+            down.add(s.text);
+      }
+      setCount(down.size);
+    },
+    blur() {
+      down.clear();
+      setCount(0);
+    },
+    has(text) {
+      return down.has(text);
+    }
+  };
+}
+function key(spec) {
+  let state = held([parse("key", spec)]);
+  return {
+    kind: "button",
+    label: `keyboard ${spec}`,
+    rate: () => state.count() > 0,
+    key: state.key,
+    blur: state.blur
+  };
+}
+function axis(neg, pos) {
+  let state = held([parse("axis", neg), parse("axis", pos)]);
+  return {
+    kind: "axis",
+    label: `keyboard ${neg}/${pos}`,
+    rate: () => {
+      state.count();
+      return (state.has(pos) ? 1 : 0) - (state.has(neg) ? 1 : 0);
+    },
+    key: state.key,
+    blur: state.blur
+  };
+}
+function vec2(keys) {
+  let state = held(["up", "down", "left", "right"].map((side) => parse(`vec2 ${side}`, keys[side])));
+  return {
+    kind: "vec2",
+    label: `keyboard ${keys.up}/${keys.left}/${keys.down}/${keys.right}`,
+    rate: () => {
+      state.count();
+      return [(state.has(keys.right) ? 1 : 0) - (state.has(keys.left) ? 1 : 0), (state.has(keys.down) ? 1 : 0) - (state.has(keys.up) ? 1 : 0)];
+    },
+    key: state.key,
+    blur: state.blur
+  };
+}
+var keyboard = {
+  key,
+  axis,
+  vec2,
+  wasd: vec2({
+    up: "KeyW",
+    down: "KeyS",
+    left: "KeyA",
+    right: "KeyD"
+  }),
+  arrows: vec2({
+    up: "ArrowUp",
+    down: "ArrowDown",
+    left: "ArrowLeft",
+    right: "ArrowRight"
+  })
+};
+// ../../packages/core/src/input-gamepad-device.ts
+var STICK_DEADZONE = 0.15;
+var deadzone = (x, y) => Math.hypot(x, y) < STICK_DEADZONE ? [0, 0] : [x, y];
+function createGamepadDevice(pads, slot, who) {
+  let sumAxis = (read2) => () => {
+    let sum = 0;
+    for (let pad of pads())
+      sum += read2(pad);
+    return sum;
+  };
+  let sumVec2 = (read2) => () => {
+    let x = 0;
+    let y = 0;
+    for (let pad of pads()) {
+      let v = read2(pad);
+      x += v[0];
+      y += v[1];
+    }
+    return [x, y];
+  };
+  let anyButton = (name) => () => pads().some((pad) => pad.buttons.includes(name));
+  let pressed = (pad, name) => pad.buttons.includes(name) ? 1 : 0;
+  let stick = (side) => ({
+    kind: "vec2",
+    label: `${who} ${side} stick`,
+    rate: sumVec2((pad) => deadzone(pad.axes[`${side}X`] ?? 0, pad.axes[`${side}Y`] ?? 0))
+  });
+  return {
+    get slot() {
+      return slot();
+    },
+    leftStick: stick("left"),
+    rightStick: stick("right"),
+    dpad: {
+      kind: "vec2",
+      label: `${who} dpad`,
+      rate: sumVec2((pad) => [pressed(pad, "dpadRight") - pressed(pad, "dpadLeft"), pressed(pad, "dpadDown") - pressed(pad, "dpadUp")])
+    },
+    triggers: {
+      kind: "axis",
+      label: `${who} triggers`,
+      rate: sumAxis((pad) => (pad.axes.rightTrigger ?? 0) - (pad.axes.leftTrigger ?? 0))
+    },
+    shoulders: {
+      kind: "axis",
+      label: `${who} shoulders`,
+      rate: sumAxis((pad) => pressed(pad, "rightShoulder") - pressed(pad, "leftShoulder"))
+    },
+    axis(name) {
+      if (typeof name !== "string" || name.length === 0)
+        throw new Error(`gamepad.axis: expected an axis name, got ${String(name)}`);
+      return {
+        kind: "axis",
+        label: `${who} ${name}`,
+        rate: sumAxis((pad) => pad.axes[name] ?? 0)
+      };
+    },
+    button(name) {
+      if (typeof name !== "string" || name.length === 0)
+        throw new Error(`gamepad.button: expected a button name, got ${String(name)}`);
+      return {
+        kind: "button",
+        label: `${who} ${name}`,
+        rate: anyButton(name)
+      };
+    }
+  };
+}
+function createGamepadSlot(read2, slot) {
+  if (slot !== undefined && !(Number.isInteger(slot) && slot >= 0))
+    throw new Error(`gamepad: slot must be a non-negative integer, got ${String(slot)}`);
+  let pads = () => {
+    let all = read2();
+    if (slot === undefined)
+      return all.filter((p) => p !== null);
+    let pad = all[slot];
+    return pad ? [pad] : [];
+  };
+  return createGamepadDevice(pads, () => slot, slot === undefined ? "gamepad" : `gamepad ${slot}`);
+}
+var claimed = new Set;
+function createGamepadJoin(read2) {
+  let [slot, setSlot] = createSignal(undefined, {
+    ownedWrite: true
+  });
+  let mine;
+  let dispose2 = createRoot((dispose3) => {
+    createEffect(() => read2(), (pads2) => {
+      if (mine !== undefined)
+        return;
+      for (let i = 0;i < pads2.length; i++) {
+        let pad = pads2[i];
+        if (!pad || claimed.has(i) || pad.buttons.length === 0)
+          continue;
+        mine = i;
+        claimed.add(i);
+        setSlot(i);
+        return;
+      }
+    });
+    return dispose3;
+  });
+  if (getOwner()) {
+    onCleanup(() => {
+      dispose2();
+      if (mine !== undefined)
+        claimed.delete(mine);
+    });
+  }
+  let pads = () => {
+    let s = slot();
+    if (s === undefined)
+      return [];
+    let pad = read2()[s];
+    return pad ? [pad] : [];
+  };
+  return createGamepadDevice(pads, slot, "gamepad (joined)");
+}
+
+// ../../packages/core/src/input-gamepad.ts
+function gamepad(slot) {
+  return createGamepadSlot(gamepads, slot);
+}
+gamepad.next = () => createGamepadJoin(gamepads);
+// ../../packages/core/src/input-pointer.ts
+var WHEEL_OCTAVES = 0.0015 / Math.LN2;
 // ../../packages/components/src/theme.ts
 var SPACING_BASE = 4;
 function deriveSpacing(base) {
@@ -6906,14 +7470,14 @@ var ROLE_DEFAULTS = {
 };
 function defineTheme(def, scheme) {
   let color = {};
-  for (let key in def.color) {
-    let k = key;
+  for (let key2 in def.color) {
+    let k = key2;
     let value = def.color[k];
     if (value == null)
       continue;
     if (Array.isArray(value)) {
       if (!scheme)
-        throw new Error(`Theme color "${key}" is a [light, dark] pair; pass a scheme to defineTheme`);
+        throw new Error(`Theme color "${key2}" is a [light, dark] pair; pass a scheme to defineTheme`);
       color[k] = value[scheme === "light" ? 0 : 1];
     } else
       color[k] = value;
@@ -7002,8 +7566,8 @@ var [themeStore, setThemeStore] = createStore({
 var theme = themeStore;
 function setTheme(partial) {
   setThemeStore((s) => {
-    for (let key in partial) {
-      let k = key;
+    for (let key2 in partial) {
+      let k = key2;
       Object.assign(s[k], partial[k]);
     }
   });
@@ -7225,18 +7789,18 @@ function splitTransition(t, parts) {
   let root = {};
   let background = {};
   let border = {};
-  for (let [key, value] of Object.entries(t)) {
-    if (key === "all" || key === "stagger") {
-      root[key] = value;
-      background[key] = value;
-      border[key] = value;
-    } else if (key in STYLE_TO_BACKGROUND || key in STYLE_TO_BORDER) {
-      if (key in STYLE_TO_BACKGROUND)
-        background[STYLE_TO_BACKGROUND[key]] = value;
-      if (key in STYLE_TO_BORDER)
-        border[STYLE_TO_BORDER[key]] = value;
-    } else if (!parts?.includes(key)) {
-      root[key] = value;
+  for (let [key2, value] of Object.entries(t)) {
+    if (key2 === "all" || key2 === "stagger") {
+      root[key2] = value;
+      background[key2] = value;
+      border[key2] = value;
+    } else if (key2 in STYLE_TO_BACKGROUND || key2 in STYLE_TO_BORDER) {
+      if (key2 in STYLE_TO_BACKGROUND)
+        background[STYLE_TO_BACKGROUND[key2]] = value;
+      if (key2 in STYLE_TO_BORDER)
+        border[STYLE_TO_BORDER[key2]] = value;
+    } else if (!parts?.includes(key2)) {
+      root[key2] = value;
     }
   }
   let pick = (o) => Object.keys(o).length ? o : undefined;
@@ -7252,11 +7816,11 @@ function withTransitionDefaults(t, defaults) {
   if (t?.all !== undefined)
     return t;
   let filled;
-  for (let key in defaults) {
-    let spec = defaults[key];
-    if (spec === undefined || t && key in t)
+  for (let key2 in defaults) {
+    let spec = defaults[key2];
+    if (spec === undefined || t && key2 in t)
       continue;
-    (filled ??= {})[key] = spec;
+    (filled ??= {})[key2] = spec;
   }
   if (!filled)
     return t;
@@ -7488,9 +8052,9 @@ function Text(props) {
     if (!l)
       return {};
     let out = {};
-    for (let key in l) {
-      if (!FONT_KEYS.includes(key))
-        out[key] = l[key];
+    for (let key2 in l) {
+      if (!FONT_KEYS.includes(key2))
+        out[key2] = l[key2];
     }
     return out;
   });
@@ -8058,6 +8622,77 @@ function follow(current, pos, size, extent, content) {
 }
 
 // ../../packages/components/src/focus-nav.ts
+var NAV_REPEAT_DELAY = 400;
+var NAV_REPEAT_INTERVAL = 100;
+var NAV_THRESHOLD = 0.5;
+var uiActions = {
+  navigate: "vec2",
+  cycle: "axis",
+  select: "button"
+};
+function uiBindings(devices) {
+  let out = [];
+  let kb = devices.keyboard;
+  if (kb) {
+    out.push({
+      action: "navigate",
+      source: kb.arrows
+    }, {
+      action: "cycle",
+      source: kb.axis("Shift+Tab", "Tab")
+    }, {
+      action: "select",
+      source: kb.key("Enter")
+    }, {
+      action: "select",
+      source: kb.key("Space")
+    }, {
+      action: "select",
+      source: kb.key("Select")
+    });
+  }
+  let pad = devices.gamepad;
+  if (pad) {
+    out.push({
+      action: "navigate",
+      source: pad.dpad
+    }, {
+      action: "navigate",
+      source: pad.leftStick
+    }, {
+      action: "select",
+      source: pad.button("south")
+    });
+  }
+  return out;
+}
+function repeating(read2, step) {
+  let current = null;
+  let timer = null;
+  let stop = () => {
+    if (timer == null)
+      return;
+    clearTimeout(timer);
+    timer = null;
+  };
+  let later = (value, delay) => {
+    timer = setTimeout(() => {
+      step(value);
+      later(value, NAV_REPEAT_INTERVAL);
+    }, delay);
+  };
+  createEffect(read2, (value) => {
+    if (value === current)
+      return;
+    current = value;
+    stop();
+    if (value === null)
+      return;
+    untrack(() => step(value));
+    later(value, NAV_REPEAT_DELAY);
+  });
+  onCleanup(stop);
+}
 var navActions = new Map;
 function registerNavAction(nodeId, action2) {
   navActions.set(nodeId, action2);
@@ -8073,6 +8708,14 @@ function pushNavScope(node) {
   setScopeStack((s) => [...s, node]);
   return () => setScopeStack((s) => s.filter((n) => n !== node));
 }
+var defaultMap = () => {
+  let map = createInputMap(uiActions);
+  map.bind(uiBindings({
+    keyboard,
+    gamepad: gamepad()
+  }));
+  return map;
+};
 function createFocusNav(options) {
   let currentScope = () => options?.scope?.() ?? scopeStack()[scopeStack().length - 1];
   let reachable = () => {
@@ -8171,20 +8814,6 @@ function createFocusNav(options) {
     };
     navActions.get(hit.id)?.();
   };
-  let onKeyDown = (e) => {
-    if (e.key === "ArrowUp")
-      move("up");
-    else if (e.key === "ArrowDown")
-      move("down");
-    else if (e.key === "ArrowLeft")
-      move("left");
-    else if (e.key === "ArrowRight")
-      move("right");
-    else if (e.key === "Tab")
-      tab(e.shiftKey ? -1 : 1);
-    else if ((e.key === "Enter" || e.code === "Select") && !e.repeat)
-      activate();
-  };
   let prevFocused = null;
   let refocusPending = false;
   createEffect(() => focusedNode(), (id2) => {
@@ -8216,30 +8845,29 @@ function createFocusNav(options) {
     else if (focused != null)
       setFocus(null);
   });
-  let prevButtons = new Set;
-  createEffect(() => gamepads(), (pads) => {
-    let now = new Set;
-    for (let pad of pads)
-      for (let b of pad?.buttons ?? [])
-        now.add(b);
-    for (let b of now) {
-      if (prevButtons.has(b))
-        continue;
-      if (b === "dpadUp")
-        move("up");
-      else if (b === "dpadDown")
-        move("down");
-      else if (b === "dpadLeft")
-        move("left");
-      else if (b === "dpadRight")
-        move("right");
-      else if (b === "south")
-        activate();
-    }
-    prevButtons = now;
-  });
+  let input = options?.input ?? defaultMap();
+  for (let [name, kind] of Object.entries(uiActions)) {
+    if (input.actions[name] !== kind)
+      throw new Error(`createFocusNav: the input map needs a ${kind} action "${name}" (declare it with uiActions)`);
+  }
+  let direction = () => {
+    let [x, y] = input.value("navigate");
+    if (Math.max(Math.abs(x), Math.abs(y)) < NAV_THRESHOLD)
+      return null;
+    if (Math.abs(x) > Math.abs(y))
+      return x > 0 ? "right" : "left";
+    return y > 0 ? "down" : "up";
+  };
+  let cycleStep = () => {
+    let v = input.value("cycle");
+    return v >= NAV_THRESHOLD ? 1 : v <= -NAV_THRESHOLD ? -1 : null;
+  };
+  repeating(direction, move);
+  repeating(cycleStep, tab);
+  onCleanup(input.onPress("select", activate));
   return {
-    onKeyDown,
+    input,
+    handlers: input.handlers,
     move,
     tab,
     activate
@@ -8418,7 +9046,7 @@ function EditorField(props) {
     } else if (e.key === "Escape") {
       if (node)
         setFocus(null);
-    } else {
+    } else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && textInputActive()) {} else {
       consumed = false;
     }
     if (consumed)
@@ -9090,10 +9718,6 @@ function createPress(options) {
       options.onPointerLeave?.(e);
     },
     onKeyDown: (e) => {
-      if ((e.key === "Enter" || e.key === " " || e.code === "Select") && !e.repeat && !options.disabled) {
-        e.stopPropagation();
-        activate();
-      }
       options.onKeyDown?.(e);
     },
     onFocus: () => {
@@ -11579,21 +12203,21 @@ var gifImage = function(width, height) {
     const _map = {};
     let _size = 0;
     const _this2 = {};
-    _this2.add = function(key) {
-      if (_this2.contains(key)) {
-        throw "dup key:" + key;
+    _this2.add = function(key2) {
+      if (_this2.contains(key2)) {
+        throw "dup key:" + key2;
       }
-      _map[key] = _size;
+      _map[key2] = _size;
       _size += 1;
     };
     _this2.size = function() {
       return _size;
     };
-    _this2.indexOf = function(key) {
-      return _map[key];
+    _this2.indexOf = function(key2) {
+      return _map[key2];
     };
-    _this2.contains = function(key) {
-      return typeof _map[key] != "undefined";
+    _this2.contains = function(key2) {
+      return typeof _map[key2] != "undefined";
     };
     return _this2;
   };
@@ -12302,10 +12926,10 @@ function AppCard(props) {
     })
   });
 }
-function groupCache(entries, key) {
+function groupCache(entries, key2) {
   let groups = new Map;
   for (let e of entries) {
-    let k = key(e);
+    let k = key2(e);
     let g = groups.get(k);
     if (!g)
       groups.set(k, g = {
@@ -13143,9 +13767,9 @@ function ScanScreen(props) {
     } = env.windowSize;
     if (!cw || !ch || !w || !h)
       return null;
-    let scale = Math.max(w / cw, h / ch);
-    let srcW = w / scale;
-    let srcH = h / scale;
+    let scale2 = Math.max(w / cw, h / ch);
+    let srcW = w / scale2;
+    let srcH = h / scale2;
     return {
       w,
       h,
@@ -13337,7 +13961,7 @@ function App() {
     }
   });
   let nav = createFocusNav();
-  return createComponent2(Window, {
+  return createComponent2(Window, mergeProps({
     title: "SolidRT",
     get fullscreen() {
       return fullscreen();
@@ -13349,10 +13973,8 @@ function App() {
       return {
         backgroundColor: theme.color.background
       };
-    },
-    get onKeyDown() {
-      return nav.onKeyDown;
-    },
+    }
+  }, () => nav.handlers, {
     get children() {
       return createComponent2(SafeArea, {
         get children() {
@@ -13465,6 +14087,6 @@ function App() {
         }
       });
     }
-  });
+  }));
 }
 render(() => createComponent2(App, {}));

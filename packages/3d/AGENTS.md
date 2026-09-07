@@ -497,12 +497,21 @@ closed mesh with no triangle in reach touches nothing - the trimesh rule
 in every engine), and a sweep from a volume already in contact reports
 time 0 only while the motion closes in; leaving or sliding along the
 contact is no hit, which is what lets a slide along a wall proceed. A
-zero motion touches nothing.
-`moveAndSlide(scene, volume, motion, opts?)` is the controller over
-them: Godot's CharacterBody3D.move_and_slide and Unity's
-CharacterController.Move as one PURE function - no node, no velocity;
-the first-person camera composes it in `clampPosition`, a node-driven
-body applies `result.motion` with setTransform. It pushes the body out
+zero motion touches nothing. The filters run in the core: every query
+hands `flux:spatial` a `{ root, layers, nodes }` filter (the scene root,
+the mask, the `meshes` include-list as node ids - an instanced mesh
+contributing every instance node), and a mesh's `layers` is written to
+its core node (`setLayers`), so a query never sees another scene's or a
+2d layer's nodes and JS only maps hits back to meshes.
+`scene.moveAndSlide(volume, motion, opts?)` (and the free
+`moveAndSlide(scene, ...)` spelling of it) is the controller over them:
+Godot's CharacterBody3D.move_and_slide and Unity's
+CharacterController.Move as one PURE call - no node, no velocity; the
+first-person camera composes it in `clampPosition`, a node-driven body
+applies `result.motion` with setTransform. The loop runs in the spatial
+core (`alloy/src/spatial/mover.rs`, one FFI call per body per frame; the
+2d layer's mover is the same loop), the JS side only packs the volume
+and maps hits back to meshes. It pushes the body out
 of anything it starts inside, sweeps, stops a skin short, slides the
 rest along the contact plane up to `maxSlides` times, then snaps down
 onto a floor within `floorSnap` unless the motion rises - and the

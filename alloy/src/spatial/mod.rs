@@ -16,6 +16,7 @@ mod bvh;
 mod collide;
 mod cull;
 mod math;
+mod mover;
 mod pick;
 mod players;
 mod transitions;
@@ -25,6 +26,7 @@ use std::collections::HashMap;
 pub use bvh::{ray_box_distance, Box3};
 pub use collide::{Impact, Overlap, Volume};
 pub use math::{compose, invert_affine, multiply, normal_matrix, transform_point, transform_vector, IDENTITY};
+pub use mover::{MoveOptions, MoveResult};
 pub use pick::{Hit, Shape, ShapeId};
 // The per-triangle narrowphase, for tests: the brute-force oracle the
 // indexed volume queries are checked against.
@@ -52,6 +54,20 @@ pub type Mat4 = [f32; 16];
 /// A stable node handle: arena index in the low 32 bits, generation in the
 /// high 32 - a destroyed node's id never resolves again.
 pub type NodeId = u64;
+
+/// What one query (raycast, overlap, sweep, move_and_slide) admits, on top
+/// of "shown with bounds": only nodes under `root` (the consumer's own
+/// subtree in an arena shared by every scene and layer), whose `layers`
+/// intersect the mask, and, with `nodes`, only those listed. The default
+/// admits everything.
+#[derive(Clone, Debug, Default)]
+pub struct QueryFilter {
+  pub root: Option<NodeId>,
+  /// A layer mask; None admits every mask (a node's `layers` of 0 is then
+  /// still admitted, so a caller that wants the mask rule passes one).
+  pub layers: Option<u32>,
+  pub nodes: Option<Vec<NodeId>>,
+}
 
 /// Where a node's fresh world matrix goes: the `uModel` (+ `uNormal`) params
 /// of one draw entry, plus the entry's instance count as its visibility
@@ -397,6 +413,9 @@ struct Node {
   cull_owners: Vec<NodeId>,
   /// Triangle data for the picking narrowphase; None = box only.
   shape: Option<ShapeId>,
+  /// Layer membership bitmask the queries test against their mask
+  /// (default 1, Three's Object3D.layers).
+  layers: u32,
   /// One per target.
   slots: Vec<SharedSlotSink>,
   /// One per texture.
@@ -432,6 +451,9 @@ pub struct Spatial {
   /// inverse) are stamped with.
   flush_id: u64,
 }
+
+/// The layer mask a node starts with: layer 0 alone, Three's default.
+const DEFAULT_LAYERS: u32 = 1;
 
 fn index(id: NodeId) -> usize {
   (id & 0xffff_ffff) as usize
@@ -490,6 +512,7 @@ impl Spatial {
       cull_group: Vec::new(),
       cull_owners: Vec::new(),
       shape: None,
+      layers: DEFAULT_LAYERS,
       slots: Vec::new(),
       texture_slots: Vec::new(),
       record: None,
@@ -746,6 +769,14 @@ impl Spatial {
   /// on another param of the same target stays. Binding seeds the slot
   /// at the next flush. The caller flushes afterwards (the JS scheduler
   /// always does).
+  /// The node's layer mask, what a query's `layers` is tested against.
+  /// Query-only: no flush needed.
+  pub fn set_layers(&mut self, id: NodeId, layers: u32) -> Result<(), String> {
+    let i = self.resolve(id)?;
+    self.nodes[i as usize].layers = layers;
+    Ok(())
+  }
+
   pub fn bind_shared_slot(&mut self, id: NodeId, sink: SharedSlotSink) -> Result<(), String> {
     let i = self.resolve(id)?;
     if sink.len == 0 || sink.len % 3 != 0 {
@@ -1080,27 +1111,20 @@ impl Spatial {
   /// builds its triangle BVH (see pick.rs), so repeated rays against a
   /// merged scene stay log-cost. `direction` need not be normalized;
   /// distances are world units.
-  pub fn raycast(&mut self, origin: [f32; 3], direction: [f32; 3]) -> Vec<Hit> {
+  pub fn raycast(&mut self, origin: [f32; 3], direction: [f32; 3], filter: &QueryFilter) -> Result<Vec<Hit>, String> {
     let len = (direction[0] * direction[0] + direction[1] * direction[1] + direction[2] * direction[2]).sqrt();
     if len == 0.0 {
-      return Vec::new();
+      return Ok(Vec::new());
     }
+    let root = self.filter_root(filter)?;
     let d = [direction[0] / len, direction[1] / len, direction[2] / len];
     let mut candidates = Vec::new();
     self.bvh.raycast(origin, d, &mut |i| candidates.push(i));
     let mut hits = Vec::new();
     for i in candidates {
-      let n = &self.nodes[i as usize];
-      if !n.alive || !n.shown {
-        continue;
-      }
-      let Some(bounds) = n.bounds else {
+      let Some((bounds, world, shape)) = self.collider(i, filter, root) else {
         continue;
       };
-      let world = n.world;
-      // A shape id that no longer resolves (destroyed) falls back to the
-      // box, like a node that never had one.
-      let shape = n.shape.filter(|&sid| self.shapes.get(sid).is_some());
       // The ray in the node's local frame: an affine map preserves the
       // ray parameter, so with the local direction left unnormalized t
       // stays in world units.
@@ -1131,7 +1155,7 @@ impl Spatial {
       }
     }
     hits.sort_by(|a, b| a.distance.partial_cmp(&b.distance).unwrap_or(std::cmp::Ordering::Equal));
-    hits
+    Ok(hits)
   }
 
   /// Every shown node with bounds the volume touches, each with its
@@ -1142,14 +1166,15 @@ impl Spatial {
   /// wholly inside a closed mesh with no triangle in reach touches
   /// nothing, the trimesh contract everywhere. Unordered; reads the index
   /// as of the last flush, like `raycast`.
-  pub fn overlap(&mut self, volume: &Volume) -> Vec<Overlap> {
+  pub fn overlap(&mut self, volume: &Volume, filter: &QueryFilter) -> Result<Vec<Overlap>, String> {
+    let root = self.filter_root(filter)?;
     let query = collide::Query::new(volume);
     let aabb = query.bounds(None);
     let mut candidates = Vec::new();
     self.bvh.query(&aabb, &mut |i| candidates.push(i));
     let mut out = Vec::new();
     for i in candidates {
-      let Some((bounds, world, shape)) = self.collider(i) else {
+      let Some((bounds, world, shape)) = self.collider(i, filter, root) else {
         continue;
       };
       let mut best: Option<collide::Contact> = None;
@@ -1164,7 +1189,7 @@ impl Spatial {
         out.push(Overlap { node: self.id_of(i), point, normal, depth });
       }
     }
-    out
+    Ok(out)
   }
 
   /// The volume moved by `motion`: every shown node with bounds it
@@ -1174,14 +1199,15 @@ impl Spatial {
   /// closes in, and nothing while it leaves or slides along the contact.
   /// Same testing and index contract as `overlap`; a zero motion
   /// touches nothing.
-  pub fn sweep(&mut self, volume: &Volume, motion: [f32; 3]) -> Vec<Impact> {
+  pub fn sweep(&mut self, volume: &Volume, motion: [f32; 3], filter: &QueryFilter) -> Result<Vec<Impact>, String> {
+    let root = self.filter_root(filter)?;
     let query = collide::Query::new(volume);
     let aabb = query.bounds(Some(motion));
     let mut candidates = Vec::new();
     self.bvh.query(&aabb, &mut |i| candidates.push(i));
     let mut out = Vec::new();
     for i in candidates {
-      let Some((bounds, world, shape)) = self.collider(i) else {
+      let Some((bounds, world, shape)) = self.collider(i, filter, root) else {
         continue;
       };
       let mut first: Option<(f32, [f32; 3], [f32; 3])> = None;
@@ -1197,19 +1223,51 @@ impl Spatial {
       }
     }
     out.sort_by(|a, b| a.time.partial_cmp(&b.time).unwrap_or(std::cmp::Ordering::Equal));
-    out
+    Ok(out)
   }
 
-  /// What the volume queries test a node by: its local box, world matrix
-  /// and (resolvable) shape; None for a node the queries skip.
-  fn collider(&self, i: u32) -> Option<(Box3, Mat4, Option<ShapeId>)> {
+  /// The filter's root as an arena index (None without one); a root that
+  /// no longer resolves is the caller's error, not an empty answer.
+  fn filter_root(&self, filter: &QueryFilter) -> Result<Option<u32>, String> {
+    filter.root.map(|id| self.resolve(id)).transpose()
+  }
+
+  /// What the queries test a node by: its local box, world matrix and
+  /// (resolvable) shape; None for a node the queries skip - not shown,
+  /// no bounds, or outside the filter.
+  fn collider(&self, i: u32, filter: &QueryFilter, root: Option<u32>) -> Option<(Box3, Mat4, Option<ShapeId>)> {
     let n = &self.nodes[i as usize];
     if !n.alive || !n.shown {
       return None;
     }
     let bounds = n.bounds?;
+    if filter.layers.is_some_and(|mask| n.layers & mask == 0) {
+      return None;
+    }
+    if root.is_some_and(|r| !self.under(i, r)) {
+      return None;
+    }
+    if filter.nodes.as_ref().is_some_and(|ids| !ids.contains(&self.id_of(i))) {
+      return None;
+    }
+    // A shape id that no longer resolves (destroyed) falls back to the
+    // box, like a node that never had one.
     let shape = n.shape.filter(|&sid| self.shapes.get(sid).is_some());
     Some((bounds, n.world, shape))
+  }
+
+  /// Whether `i` is `root` or lies under it (the tree is shallow: a walk
+  /// up the parents per candidate, no cached ancestry to keep in step).
+  fn under(&self, mut i: u32, root: u32) -> bool {
+    loop {
+      if i == root {
+        return true;
+      }
+      match self.nodes[i as usize].parent {
+        Some(p) => i = p,
+        None => return false,
+      }
+    }
   }
 
   /// Re-parent a node (None = make it a root). Errs on a cycle.

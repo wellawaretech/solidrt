@@ -315,7 +315,10 @@ export function enterScene(node: SceneNode, scene: SceneHooks): void {
     }
   }
   if (node._cullBounds !== null) spatial.setCullBounds(node._node, node._cullBounds)
-  if (node.kind === "mesh") scene._attach(node as Mesh)
+  if (node.kind === "mesh") {
+    spatial.setLayers(node._node, (node as Mesh).layers)
+    scene._attach(node as Mesh)
+  }
   else if (node.kind === "light") scene._attachLight(node as Light)
   else if (node.kind === "instance") scene._attachInstance(node as InstanceNode)
   for (let c of node.children) enterScene(c, scene)

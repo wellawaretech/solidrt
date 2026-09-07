@@ -38,7 +38,7 @@
 
 import { addDraw, createCubeDrawTarget, createDrawTarget, depthTexture, destroyProgram, destroyRenderPipeline, destroyTexture, removeDraw, renderTarget, setDrawBuffers, setDrawOrder, setDrawParams, setDrawTextures, setTargetParams, setTargetRect, setTargetSize, setTargetTextures } from "@solidrt/core/gpu"
 import * as spatial from "flux:spatial"
-import type { NodeId } from "flux:spatial"
+import type { Impact as CoreImpact, NodeId, QueryFilter } from "flux:spatial"
 import type { DrawId, FilterMode, ProgramId, RenderPipelineId, ShaderParams, TextureId, WrapMode } from "@solidrt/core/gpu"
 import { getOwner, onCleanup } from "@solidrt/core"
 import type { PointerEvent as ElementPointerEvent, WheelEvent as ElementWheelEvent } from "@solidrt/core"
@@ -182,6 +182,41 @@ export type Overlap = { mesh: Mesh; instance?: InstanceNode; point: Vec3; normal
  * normal there facing the volume (Unity's RaycastHit from a cast,
  * Godot's KinematicCollision3D). `instance` as on Overlap. */
 export type Impact = { mesh: Mesh; instance?: InstanceNode; time: number; point: Vec3; normal: Vec3 }
+
+export type MoveOptions = QueryOptions & {
+  /** The direction floors face (default [0, 1, 0]). */
+  up?: Vec3
+  /** Largest angle (radians) between a contact normal and `up` that still
+   * counts as floor (default 45 degrees). Steeper contacts are walls, and
+   * the body slides down them. */
+  floorMaxAngle?: number
+  /** Most contacts one call slides along (default 6). */
+  maxSlides?: number
+  /** Gap kept from every surface, world units (default 0.01). */
+  skin?: number
+  /** How far below the body a floor is pulled to when the motion does not
+   * rise (default 0.1; 0 disables): what keeps a walker on a ramp going
+   * down, and what decides `floor` at the end of the move - a body that
+   * ends higher than this above its floor is airborne, whatever it
+   * touched on the way. A rising motion (a jump) never snaps. */
+  floorSnap?: number
+}
+
+export type MoveResult = {
+  /** The displacement the body gets: add it to the body's position. */
+  motion: Vec3
+  /** The unit normal of the floor the body ends the move on - within
+   * `floorSnap` below it, snapped onto - else null (airborne, or on a
+   * slope too steep to stand on). With `floorSnap: 0` it is a floor met
+   * during the move instead. */
+  floor: Vec3 | null
+  /** Whether a wall (a contact steeper than a floor and flatter than a
+   * ceiling) or a ceiling was met. */
+  wall: boolean
+  ceiling: boolean
+  /** Every contact met, in order, the floor snap's last. */
+  hits: Impact[]
+}
 
 /** Element handlers wiring a scene's (or a view's) pointer events: spread
  * onto whatever element shows its texture (the built-in `<Scene>` and
@@ -727,6 +762,21 @@ export type Scene = {
    */
   sweep(volume: Volume, motion: Vec3, opts?: QueryOptions): Impact[]
   /**
+   * Move a body `motion` through the scene's colliders, sliding along
+   * what it hits (Godot's move_and_slide, Unity's CharacterController.Move):
+   * a capsule for a character, a sphere for a ball, a box for a crate.
+   * The body first pushes out of anything it starts inside, then sweeps
+   * and slides up to `maxSlides` times, then, unless the motion rises,
+   * snaps down onto a floor within `floorSnap` - the floor it reports is
+   * the one it ends on. One core call per body per frame; the loop's
+   * sweeps and overlaps never leave the core. Colliders are whatever
+   * `opts` selects (`layers`/`meshes`, as for sweep). Gravity is the
+   * caller's: fold the fall into `motion` each frame, zero it while
+   * `floor` is set (the snap keeps reporting the floor while the body
+   * stands still); a walkable floor absorbs the vertical part.
+   */
+  moveAndSlide(volume: Volume, motion: Vec3, opts?: MoveOptions): MoveResult
+  /**
    * pick()'s ray half (Unity's ScreenPointToRay, Godot's
    * project_ray_origin/normal): the camera ray through a scene pixel,
    * fresh arrays each call, for intersection work pick() cannot do - a
@@ -888,23 +938,44 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
   // map turns a hit's core node back into the mesh, or the instance of an
   // instanced mesh (each instance node is its own leaf).
   let byNode = new Map<NodeId, Mesh | InstanceNode>()
-  // The per-query filter raycast/overlap/sweep share: a hit's core node
-  // back to its mesh (and instance), or null when the query mask excludes
-  // the mesh (skipped like an invisible one; the mask defaults to the
-  // scene's, so an undrawn layer needs an explicit opts.layers to report)
-  // or the include-list leaves it out.
-  let admitted = (qopts: QueryOptions | undefined, site: string) => {
-    let mask = qopts?.layers !== undefined ? checkMask(qopts.layers, site) : sceneMask
-    let include = qopts?.meshes !== undefined ? new Set(qopts.meshes) : null
-    return (node: NodeId): { mesh: Mesh; instance: InstanceNode | null } | null => {
-      let leaf = byNode.get(node)
-      if (leaf === undefined) return null
-      let instance = leaf.kind === "instance" ? leaf : null
-      let mesh = instance !== null ? instance.mesh : (leaf as Mesh)
-      if (mesh === null || (mesh.layers & mask) === 0) return null
-      if (include !== null && !include.has(mesh)) return null
-      return { mesh, instance }
+  // The filter raycast/overlap/sweep hand the core: the scene root (the
+  // arena is shared with other scenes and 2d layers), the query mask (the
+  // scene's by default, so an undrawn layer needs an explicit opts.layers
+  // to report) and, for an include-list, the meshes' nodes - an instanced
+  // mesh's instances each being a leaf of their own.
+  // One filter object per scene, refilled per query (the bindings read it
+  // synchronously), so a query allocates nothing but its hits.
+  let filter: QueryFilter = {}
+  let queryFilter = (qopts: QueryOptions | undefined, site: string): QueryFilter => {
+    filter.root = root._node!
+    filter.layers = qopts?.layers !== undefined ? checkMask(qopts.layers, site) : sceneMask
+    if (qopts?.meshes === undefined) {
+      filter.nodes = undefined
+    } else {
+      let nodes: NodeId[] = []
+      for (let mesh of qopts.meshes) {
+        if (mesh._node !== null) nodes.push(mesh._node)
+        if (mesh._instances !== null) nodes.push(...instanceGroup(mesh as InstancedMesh))
+      }
+      filter.nodes = nodes
     }
+    return filter
+  }
+  // A hit's core node back to its mesh (and instance).
+  let leafOf = (node: NodeId): { mesh: Mesh; instance: InstanceNode | null } | null => {
+    let leaf = byNode.get(node)
+    if (leaf === undefined) return null
+    let instance = leaf.kind === "instance" ? leaf : null
+    let mesh = instance !== null ? instance.mesh : (leaf as Mesh)
+    if (mesh === null) return null
+    return { mesh, instance }
+  }
+  let impactOf = (h: CoreImpact): Impact | null => {
+    let leaf = leafOf(h.node)
+    if (leaf === null) return null
+    let impact: Impact = { mesh: leaf.mesh, time: h.time, point: h.point, normal: h.normal }
+    if (leaf.instance !== null) impact.instance = leaf.instance
+    return impact
   }
   // Nodes whose transform changed since the last sync (deduped by the
   // _moved flag): what the light and transparent-order bookkeeping
@@ -1528,6 +1599,10 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     },
     _setLayers(mesh) {
       if (mesh._buffers === null || disposed) return
+      if (mesh._node !== null) spatial.setLayers(mesh._node, mesh.layers)
+      if (mesh._instances !== null) {
+        for (let n of instanceGroup(mesh as InstancedMesh)) spatial.setLayers(n, mesh.layers)
+      }
       if ((mesh.layers & sceneMask) !== 0) attachScene(mesh)
       else detachScene(mesh)
       for (let v of views) {
@@ -1639,6 +1714,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       if (mesh === null || mesh._buffers === null || mesh._node === null || instance._node === null) return
       spatial.setBounds(instance._node, geometryBounds(mesh.geometry))
       spatial.setShape(instance._node, mesh._buffers.shape)
+      spatial.setLayers(instance._node, mesh.layers)
       // The record is the instance's placement inside the mesh (the mesh
       // node is the anchor), staged by the core at the next flush.
       spatial.bindMatrixRecord(instance._node, mesh._instances.buffer, instance._slot, mesh._node)
@@ -1867,7 +1943,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       // microtask still runs and finds nothing dirty - harmless.)
       if (scheduled) sync()
       if (disposed) return []
-      let admit = admitted(rayOpts, "raycast")
+      let f = queryFilter(rayOpts, "raycast")
       let hits: Hit[] = []
       rayOriginScratch[0] = origin[0]
       rayOriginScratch[1] = origin[1]
@@ -1875,8 +1951,8 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       rayDirScratch[0] = direction[0]
       rayDirScratch[1] = direction[1]
       rayDirScratch[2] = direction[2]
-      for (let h of spatial.raycast(rayOriginScratch, rayDirScratch)) {
-        let leaf = admit(h.node)
+      for (let h of spatial.raycast(rayOriginScratch, rayDirScratch, f)) {
+        let leaf = leafOf(h.node)
         if (leaf === null) continue
         let hit: Hit = { mesh: leaf.mesh, distance: h.distance, point: h.point, normal: h.normal }
         if (leaf.instance !== null) hit.instance = leaf.instance
@@ -1889,11 +1965,11 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     overlap(volume, qopts) {
       if (scheduled) sync()
       if (disposed) return []
-      let admit = admitted(qopts, "overlap")
+      let f = queryFilter(qopts, "overlap")
       let kind = packVolume(volume, "overlap")
       let out: Overlap[] = []
-      for (let h of spatial.overlap(kind, kind === "box" ? boxScratch : capsuleScratch)) {
-        let leaf = admit(h.node)
+      for (let h of spatial.overlap(kind, kind === "box" ? boxScratch : capsuleScratch, f)) {
+        let leaf = leafOf(h.node)
         if (leaf === null) continue
         let contact: Overlap = { mesh: leaf.mesh, point: h.point, normal: h.normal, depth: h.depth }
         if (leaf.instance !== null) contact.instance = leaf.instance
@@ -1904,20 +1980,33 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     sweep(volume, motion, qopts) {
       if (scheduled) sync()
       if (disposed) return []
-      let admit = admitted(qopts, "sweep")
+      let f = queryFilter(qopts, "sweep")
       let kind = packVolume(volume, "sweep")
       motionScratch[0] = motion[0]
       motionScratch[1] = motion[1]
       motionScratch[2] = motion[2]
       let out: Impact[] = []
-      for (let h of spatial.sweep(kind, kind === "box" ? boxScratch : capsuleScratch, motionScratch)) {
-        let leaf = admit(h.node)
-        if (leaf === null) continue
-        let impact: Impact = { mesh: leaf.mesh, time: h.time, point: h.point, normal: h.normal }
-        if (leaf.instance !== null) impact.instance = leaf.instance
-        out.push(impact)
+      for (let h of spatial.sweep(kind, kind === "box" ? boxScratch : capsuleScratch, motionScratch, f)) {
+        let impact = impactOf(h)
+        if (impact !== null) out.push(impact)
       }
       return out
+    },
+    moveAndSlide(volume, motion, mopts) {
+      if (scheduled) sync()
+      let kind = packVolume(volume, "moveAndSlide")
+      motionScratch[0] = motion[0]
+      motionScratch[1] = motion[1]
+      motionScratch[2] = motion[2]
+      if (disposed) return { motion: [motion[0], motion[1], motion[2]], floor: null, wall: false, ceiling: false, hits: [] }
+      let f = queryFilter(mopts, "moveAndSlide")
+      let r = spatial.moveAndSlide(kind, kind === "box" ? boxScratch : capsuleScratch, motionScratch, mopts, f)
+      let hits: Impact[] = []
+      for (let h of r.hits) {
+        let impact = impactOf(h)
+        if (impact !== null) hits.push(impact)
+      }
+      return { motion: r.motion, floor: r.floor, wall: r.wall, ceiling: r.ceiling, hits }
     },
     get handlers() {
       return pointer.handlers

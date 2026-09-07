@@ -148,10 +148,25 @@ declare module "flux:spatial" {
   /** Free a shape; nodes still referencing it fall back to their box. */
   export function destroyShape(shape: ShapeId): void
   export function setShape(node: NodeId, shape: ShapeId | null): void
+  /** The node's layer membership bitmask (default 1), what a query's
+   * `layers` mask is tested against. Query-only: needs no flush. */
+  export function setLayers(node: NodeId, layers: number): void
+  /**
+   * The filter every query takes as its trailing argument, each field
+   * optional: `root` admits only the nodes under it (the caller's own
+   * subtree in the arena every scene and layer shares), `layers` only
+   * nodes whose mask intersects it (a node's mask of 0 then never
+   * reports), `nodes` only the listed ones. A dead root throws.
+   */
+  export type QueryFilter = {
+    root?: NodeId
+    layers?: number
+    nodes?: NodeId[]
+  }
   /** Every shown node with bounds the ray strikes, nearest first. The
    * direction need not be normalized; distances are world units. Reads
    * the index as of the last flush. */
-  export function raycast(origin: Float32Array, direction: Float32Array): Hit[]
+  export function raycast(origin: Float32Array, direction: Float32Array, filter?: QueryFilter): Hit[]
   /** A query volume's layout for overlap/sweep: "capsule" is
    * 7 floats (a, b, radius; a sphere when a == b), "box" is 10 (center,
    * half extents, unit quaternion xyzw). */
@@ -184,7 +199,7 @@ declare module "flux:spatial" {
    * with no triangle in reach touches nothing. Unordered; reads the index
    * as of the last flush, like raycast.
    */
-  export function overlap(kind: VolumeKind, volume: Float32Array): Overlap[]
+  export function overlap(kind: VolumeKind, volume: Float32Array, filter?: QueryFilter): Overlap[]
   /**
    * The volume moved by `motion` (a Float32Array of 3): every shown node
    * with bounds it touches on the way, at its first touch, earliest
@@ -193,7 +208,40 @@ declare module "flux:spatial" {
    * a zero motion touches nothing. Same testing and index contract as
    * overlap.
    */
-  export function sweep(kind: VolumeKind, volume: Float32Array, motion: Float32Array): Impact[]
+  export function sweep(kind: VolumeKind, volume: Float32Array, motion: Float32Array, filter?: QueryFilter): Impact[]
+  /** The mover's tuning, every field optional over the core's defaults:
+   * `up` (the direction floors face, [0, 1, 0]), `floorMaxAngle` (radians
+   * from `up` a contact still counts as floor, 45 degrees), `maxSlides`
+   * (6), `skin` (the gap kept from every surface, 0.01) and `floorSnap`
+   * (how far below a floor is pulled to when the motion does not rise,
+   * 0.1; 0 disables). */
+  export type MoveOptions = {
+    up?: [number, number, number]
+    floorMaxAngle?: number
+    maxSlides?: number
+    skin?: number
+    floorSnap?: number
+  }
+  /** What moveAndSlide() returns: the displacement the body gets, the
+   * unit normal of the floor it ends on (null when airborne or on a slope
+   * too steep to stand on), whether a wall or a ceiling was met, and
+   * every impact in order, the floor snap's last. */
+  export type MoveResult = {
+    motion: [number, number, number]
+    floor: [number, number, number] | null
+    wall: boolean
+    ceiling: boolean
+    hits: Impact[]
+  }
+  /**
+   * Move the volume by `motion` through the admitted nodes, sliding along
+   * what it hits (Godot's move_and_slide, Unity's CharacterController.Move
+   * as one pure call): a push out of anything it starts inside, then
+   * sweep, stop a skin short, slide the rest along the contact, up to
+   * `maxSlides` times, then unless the motion rises a snap down onto a
+   * floor within `floorSnap`. Same index and filter contract as sweep.
+   */
+  export function moveAndSlide(kind: VolumeKind, volume: Float32Array, motion: Float32Array, opts?: MoveOptions, filter?: QueryFilter): MoveResult
 
   /**
    * Route the world DIRECTION of the node's local `vector` (a

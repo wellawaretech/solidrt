@@ -12,8 +12,8 @@ use crate::alloy_plugins::value::PropValue;
 use crate::plugins::marshal::OptArg;
 use alloy::spatial::{
   ChannelInterpolation, ChannelPath, ClipChannel, ClipEvent, Component, DrawSink, InstanceProjection,
-  InstanceRecordSink, NodeTransitionConfig, PlayerUpdate, Projection, RootMotion, Shape, SharedSlotSink,
-  TextureSlotSink, Volume,
+  InstanceRecordSink, MoveOptions, NodeTransitionConfig, PlayerUpdate, Projection, QueryFilter, RootMotion, Shape,
+  SharedSlotSink, TextureSlotSink, Volume,
 };
 
 fn throw_str(ctx: &Ctx<'_>, msg: &str) -> rquickjs::Error {
@@ -61,9 +61,11 @@ impl ModuleDef for SpatialModule {
     decl.declare("createShape")?;
     decl.declare("destroyShape")?;
     decl.declare("setShape")?;
+    decl.declare("setLayers")?;
     decl.declare("raycast")?;
     decl.declare("overlap")?;
     decl.declare("sweep")?;
+    decl.declare("moveAndSlide")?;
     decl.declare("bindDirectionSlot")?;
     decl.declare("bindPositionSlot")?;
     decl.declare("unbindSlot")?;
@@ -105,9 +107,11 @@ impl ModuleDef for SpatialModule {
     exports.export("createShape", Function::new(ctx.clone(), create_shape)?)?;
     exports.export("destroyShape", Function::new(ctx.clone(), destroy_shape)?)?;
     exports.export("setShape", Function::new(ctx.clone(), set_shape)?)?;
+    exports.export("setLayers", Function::new(ctx.clone(), set_layers)?)?;
     exports.export("raycast", Function::new(ctx.clone(), raycast)?)?;
     exports.export("overlap", Function::new(ctx.clone(), overlap)?)?;
     exports.export("sweep", Function::new(ctx.clone(), sweep)?)?;
+    exports.export("moveAndSlide", Function::new(ctx.clone(), move_and_slide)?)?;
     exports.export("bindDirectionSlot", Function::new(ctx.clone(), bind_direction_slot)?)?;
     exports.export("bindPositionSlot", Function::new(ctx.clone(), bind_position_slot)?)?;
     exports.export("unbindSlot", Function::new(ctx.clone(), unbind_slot)?)?;
@@ -392,19 +396,45 @@ fn set_shape(ctx: Ctx<'_>, id: u64, shape: OptArg<u64>) -> rquickjs::Result<()> 
   super::gui(&ctx).alloy.spatial().set_shape(id, shape.0).map_err(|e| throw_str(&ctx, &format!("setShape: {e}")))
 }
 
+/// The node's layer mask (default 1), what a query's `layers` is tested
+/// against.
+fn set_layers(ctx: Ctx<'_>, id: u64, layers: u32) -> rquickjs::Result<()> {
+  super::gui(&ctx).alloy.spatial().set_layers(id, layers).map_err(|e| throw_str(&ctx, &format!("setLayers: {e}")))
+}
+
+/// The trailing filter object every query takes, `{ root?, layers?,
+/// nodes? }`: the subtree root, the layer mask and the node include-list,
+/// each optional.
+fn filter_arg(filter: OptArg<Object<'_>>) -> rquickjs::Result<QueryFilter> {
+  let Some(f) = filter.0 else {
+    return Ok(QueryFilter::default());
+  };
+  Ok(QueryFilter {
+    root: f.get::<_, Option<u64>>("root")?,
+    layers: f.get::<_, Option<u32>>("layers")?,
+    nodes: f.get::<_, Option<Vec<u64>>>("nodes")?,
+  })
+}
+
 /// Every shown node with bounds the ray strikes, nearest first, as
 /// `{ node, distance, point, normal, face?, uv? }` objects.
 fn raycast<'js>(
   ctx: Ctx<'js>,
   origin: TypedArray<'js, f32>,
   direction: TypedArray<'js, f32>,
+  filter: OptArg<Object<'js>>,
 ) -> rquickjs::Result<Array<'js>> {
   let o = floats(&ctx, &origin, "raycast")?;
   let d = floats(&ctx, &direction, "raycast")?;
   if o.len() != 3 || d.len() != 3 {
     return Err(throw_str(&ctx, "raycast: origin and direction must be Float32Arrays of 3"));
   }
-  let hits = super::gui(&ctx).alloy.spatial().raycast([o[0], o[1], o[2]], [d[0], d[1], d[2]]);
+  let filter = filter_arg(filter)?;
+  let hits = super::gui(&ctx)
+    .alloy
+    .spatial()
+    .raycast([o[0], o[1], o[2]], [d[0], d[1], d[2]], &filter)
+    .map_err(|e| throw_str(&ctx, &format!("raycast: {e}")))?;
   let arr = Array::new(ctx.clone())?;
   for (i, h) in hits.iter().enumerate() {
     let obj = Object::new(ctx.clone())?;
@@ -448,9 +478,19 @@ fn vec3(v: [f32; 3]) -> Vec<f64> {
 
 /// Every shown node with bounds the volume touches, each with its deepest
 /// contact, as `{ node, point, normal, depth }` objects (unordered).
-fn overlap<'js>(ctx: Ctx<'js>, kind: String, data: TypedArray<'js, f32>) -> rquickjs::Result<Array<'js>> {
+fn overlap<'js>(
+  ctx: Ctx<'js>,
+  kind: String,
+  data: TypedArray<'js, f32>,
+  filter: OptArg<Object<'js>>,
+) -> rquickjs::Result<Array<'js>> {
   let volume = volume_arg(&ctx, &kind, &data, "overlap")?;
-  let hits = super::gui(&ctx).alloy.spatial().overlap(&volume);
+  let filter = filter_arg(filter)?;
+  let hits = super::gui(&ctx)
+    .alloy
+    .spatial()
+    .overlap(&volume, &filter)
+    .map_err(|e| throw_str(&ctx, &format!("overlap: {e}")))?;
   let arr = Array::new(ctx.clone())?;
   for (i, h) in hits.iter().enumerate() {
     let obj = Object::new(ctx.clone())?;
@@ -471,23 +511,103 @@ fn sweep<'js>(
   kind: String,
   data: TypedArray<'js, f32>,
   motion: TypedArray<'js, f32>,
+  filter: OptArg<Object<'js>>,
 ) -> rquickjs::Result<Array<'js>> {
   let volume = volume_arg(&ctx, &kind, &data, "sweep")?;
   let m = floats(&ctx, &motion, "sweep")?;
   if m.len() != 3 {
     return Err(throw_str(&ctx, "sweep: motion must be a Float32Array of 3"));
   }
-  let hits = super::gui(&ctx).alloy.spatial().sweep(&volume, [m[0], m[1], m[2]]);
+  let filter = filter_arg(filter)?;
+  let hits = super::gui(&ctx)
+    .alloy
+    .spatial()
+    .sweep(&volume, [m[0], m[1], m[2]], &filter)
+    .map_err(|e| throw_str(&ctx, &format!("sweep: {e}")))?;
   let arr = Array::new(ctx.clone())?;
   for (i, h) in hits.iter().enumerate() {
-    let obj = Object::new(ctx.clone())?;
-    obj.set("node", h.node)?;
-    obj.set("time", h.time as f64)?;
-    obj.set("point", vec3(h.point))?;
-    obj.set("normal", vec3(h.normal))?;
-    arr.set(i, obj)?;
+    arr.set(i, impact_object(&ctx, h)?)?;
   }
   Ok(arr)
+}
+
+/// One sweep/moveAndSlide impact as a `{ node, time, point, normal }` object.
+fn impact_object<'js>(ctx: &Ctx<'js>, h: &alloy::spatial::Impact) -> rquickjs::Result<Object<'js>> {
+  let obj = Object::new(ctx.clone())?;
+  obj.set("node", h.node)?;
+  obj.set("time", h.time as f64)?;
+  obj.set("point", vec3(h.point))?;
+  obj.set("normal", vec3(h.normal))?;
+  Ok(obj)
+}
+
+/// The mover's options from a JS object, each field optional over the
+/// core's defaults: `up` (an array of 3), `floorMaxAngle`, `maxSlides`,
+/// `skin`, `floorSnap`.
+fn move_options(ctx: &Ctx<'_>, opts: OptArg<Object<'_>>) -> rquickjs::Result<MoveOptions> {
+  let mut out = MoveOptions::default();
+  let Some(opts) = opts.0 else {
+    return Ok(out);
+  };
+  if let Some(up) = opts.get::<_, Option<Vec<f32>>>("up")? {
+    if up.len() != 3 {
+      return Err(throw_str(ctx, "moveAndSlide: up must be an array of 3"));
+    }
+    out.up = [up[0], up[1], up[2]];
+  }
+  if let Some(v) = opts.get::<_, Option<f32>>("floorMaxAngle")? {
+    out.floor_max_angle = v;
+  }
+  if let Some(v) = opts.get::<_, Option<u32>>("maxSlides")? {
+    out.max_slides = v;
+  }
+  if let Some(v) = opts.get::<_, Option<f32>>("skin")? {
+    out.skin = v;
+  }
+  if let Some(v) = opts.get::<_, Option<f32>>("floorSnap")? {
+    out.floor_snap = v;
+  }
+  Ok(out)
+}
+
+/// The volume moved by `motion` through the admitted nodes, sliding along
+/// what it hits (the core's move_and_slide), as `{ motion, floor, wall,
+/// ceiling, hits }`: `floor` the floor normal or null, `hits` the
+/// impacts met in order.
+fn move_and_slide<'js>(
+  ctx: Ctx<'js>,
+  kind: String,
+  data: TypedArray<'js, f32>,
+  motion: TypedArray<'js, f32>,
+  opts: OptArg<Object<'js>>,
+  filter: OptArg<Object<'js>>,
+) -> rquickjs::Result<Object<'js>> {
+  let volume = volume_arg(&ctx, &kind, &data, "moveAndSlide")?;
+  let m = floats(&ctx, &motion, "moveAndSlide")?;
+  if m.len() != 3 {
+    return Err(throw_str(&ctx, "moveAndSlide: motion must be a Float32Array of 3"));
+  }
+  let options = move_options(&ctx, opts)?;
+  let filter = filter_arg(filter)?;
+  let r = super::gui(&ctx)
+    .alloy
+    .spatial()
+    .move_and_slide(&volume, [m[0], m[1], m[2]], &options, &filter)
+    .map_err(|e| throw_str(&ctx, &format!("moveAndSlide: {e}")))?;
+  let obj = Object::new(ctx.clone())?;
+  obj.set("motion", vec3(r.motion))?;
+  match r.floor {
+    Some(n) => obj.set("floor", vec3(n))?,
+    None => obj.set("floor", Value::new_null(ctx.clone()))?,
+  }
+  obj.set("wall", r.wall)?;
+  obj.set("ceiling", r.ceiling)?;
+  let hits = Array::new(ctx.clone())?;
+  for (i, h) in r.hits.iter().enumerate() {
+    hits.set(i, impact_object(&ctx, h)?)?;
+  }
+  obj.set("hits", hits)?;
+  Ok(obj)
 }
 
 /// Bind the node's shared-slot sink with the direction projection: slot
@@ -738,10 +858,7 @@ fn bind_matrix_record(ctx: Ctx<'_>, id: u64, buffer: u64, index: u32, anchor: Op
 }
 
 fn unbind_record(ctx: Ctx<'_>, id: u64) -> rquickjs::Result<()> {
-  super::gui(&ctx)
-    .alloy
-    .spatial_bind_record(id, None, None)
-    .map_err(|e| throw_str(&ctx, &format!("unbindRecord: {e}")))
+  super::gui(&ctx).alloy.spatial_bind_record(id, None, None).map_err(|e| throw_str(&ctx, &format!("unbindRecord: {e}")))
 }
 
 /// Move every record sink on buffer `old` to buffer `new` - the growth

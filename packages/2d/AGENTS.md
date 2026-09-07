@@ -45,9 +45,34 @@ moved subtrees in Rust, and picking walks the core BVH.
 - Picking is the core index: `pick` raycasts [x, y, -1] along +z (exact
   rotated-rect via the node's local box) and returns ALL hits topmost
   first (highest slot) - the all-hits shape of @solidrt/3d's pick, so
-  `pick(x, y)[0]` is the topmost; `pickRect` is the BVH overlap query
-  (exact for rotated sprites, the marquee), unordered. Both filter to the
-  layer's own nodes - the arena is shared with e.g. a 3d scene.
+  `pick(x, y)[0]` is the topmost; `pickRect` is `overlap` over an
+  unrotated rect, sprites only (exact for rotated sprites, the marquee),
+  unordered. Every query passes the core a filter with the layer's root
+  node (sprites and groups without a parent hang off it), so the arena
+  being shared with e.g. a 3d scene costs nothing in JS.
+- Spatial queries (`checks/collision-check.tsx` pins the contract): the
+  3d scene's trio one dimension down, Godot's PhysicsDirectSpaceState2D
+  and CharacterBody2D in their names. `layer.raycast(x, y, dx, dy,
+  opts?)` is every shown sprite the ray strikes, nearest first, with
+  distance, edge point and edge normal; `layer.overlap(volume, opts?)`
+  every sprite a volume touches with its deepest contact `{ sprite,
+  point, normal, depth }`, unordered; `layer.sweep(volume, dx, dy,
+  opts?)` every sprite the moving volume first touches `{ sprite, time,
+  point, normal }`, earliest first; `layer.moveAndSlide(volume, dx, dy,
+  opts?)` the character mover over them, one core call per body per
+  frame (the depenetration, slide and floor-snap loop runs in the spatial
+  core, the same one @solidrt/3d's mover uses), returning `{ motion,
+  floor, wall, ceiling, hits }` with `up` defaulting to [0, -1] (y-down).
+  A `Volume` is a `Circle` `{ x, y, radius }`, a `Capsule` `{ ax, ay,
+  bx, by, radius }` or a `Rect` `{ x, y, width, height, rotation? }`;
+  `QueryOptions.sprites` is an include-list. Results name sprites, never
+  node ids, and every query runs the pending batch first, like pick.
+  The trap behind the design: a sprite is a COLUMN in the index
+  (`SPRITE_DEPTH` half-depth along z), not a flat quad. Against a flat
+  triangle the core's contact for a circle whose center lies over the
+  sprite is the plane normal (z) with depth = radius; against a column
+  every volume at z = 0 meets only side faces, so contacts, sweeps and
+  the mover stay in the plane with no 2d narrowphase of their own.
 - Groups (`addGroup`/`<Group>`) are plain arena nodes (x, y, rotation,
   UNIFORM scale - a group is a frame, never a sprite size; sprite w/h
   lives in the sprite node's scale, which is why sprites cannot parent
@@ -427,18 +452,18 @@ hover, wheel and tap rules headless.
   mid-flight pose (what is on screen). Clearing the transition (null) keeps the
   mid-flight pose on the node while the mirror still holds the old
   target: the next setSprite write snaps to whatever it says.
-- Node layer picking reads the index as of the last core flush; `pick`/
-  `pickRect` run the layer's pending batch first, so write-then-pick in
-  one tick is coherent. Producers moving nodes between flushes are one
-  frame stale to picking, like every query.
-- `pick`/`pickRect` are the POINTER answer - a hit test, a marquee, a
-  few core queries per event - not a collision broadphase. A
+- Node layer picking reads the index as of the last core flush; every
+  query runs the layer's pending batch first, so write-then-query in one
+  tick is coherent. Producers moving nodes between flushes are one frame
+  stale to picking, like every query.
+- The queries are per-body answers - a hit test, a marquee, a blast
+  radius, one mover call per character - not a collision broadphase. A
   bullets-vs-crowd test at frame rate is hundreds of core queries per
   frame, and it is simulation logic anyway, which lives in plain
   TypeScript with no layer in sight (core's "keep the simulation out of
   the renderer"): the app's own arrays, a uniform grid over them,
-  runnable headless. Overlap, sweep and move-and-slide queries on the
-  index are okf/backlog/2d-spatial-queries.md.
+  runnable headless. Tile-layer collision (tiles are baked records, not
+  nodes) is a solid-cell grid query of its own, not the sprite index.
 - Records layer: record order is draw order: `removeSprite` shifts every
   later sprite down one slot (copyWithin + index fixup, O(later
   sprites)). Its flush publishes the WHOLE live prefix, not a dirty
