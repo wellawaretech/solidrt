@@ -86,7 +86,8 @@ function render(): string {
     "# okf",
     "",
     "Generated from frontmatter by `scripts/build-okf-index.ts`. The conventions",
-    "are in [README.md](README.md); loose ideas are in [ideas.md](ideas.md).",
+    "are in [README.md](README.md); loose ideas are in [ideas.md](ideas.md) and",
+    "small chores in [tiny.md](tiny.md).",
   ];
 
   for (let [directory, heading, blurb] of SECTIONS) {
