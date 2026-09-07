@@ -426,14 +426,12 @@ Shaped, not started.
   change (or a control-API call) produced a frame, so a frame loop that
   integrates from tick deltas (a gravity fall that does not move the camera
   yet) stalls.
-- **[Input map stage 2 - action sets, rebinding, interactions, UI actions](backlog/input-map-stage-2.md)** [2026-09-07]
-  The map (core input-map.ts) covers actions, sources, presets, drive() and
-  by-name injection; what a full game or a settings screen wants next is
-  enabling and disabling whole action sets by context, a rebinding flow over
-  bindings(), hold/tap/chord interactions on buttons, a "press to join" pad
-  source for split screen, and the UI's own actions (navigate, select, back)
-  replacing the direct key/dpad reads in components' focus navigation and
-  Button.
+- **[Input map stage 2 - rebinding and interactions](backlog/input-map-stage-2.md)** [2026-09-07]
+  The map (core input-map.ts) covers actions, sources, presets, drive(),
+  by-name injection, enable/disable contexts and gamepad.next() joining, and
+  components' focus navigation consumes it; what a settings screen and a game
+  want next is a rebinding flow over bindings() with a serializable form, and
+  hold/tap/chord interactions on buttons - both waiting for a consumer.
 - **[Isolate transfer() and AbortSignal](backlog/isolate-transfer-and-abort.md)** [2026-08-20]
   Design proposal for the two isolate follow-ups that need new call-surface
   vocabulary - zero-copy buffer hand-over and abortable calls. Decides once
@@ -651,6 +649,14 @@ Shaped, not started.
   partly-built subtree without freeing it, so every retry leaks the elements
   built before the suspend point - and the leak sentinel that catches it names
   the wrong cause.
+- **[Synthetic gamepads through the control API](backlog/synthetic-gamepad-input.md)** [2026-09-07]
+  An agent cannot verify anything a pad drives (the input map's gamepad
+  device, gamepad.next() joining, the camera presets' stick and trigger
+  bindings, focus navigation on the dpad) because /input and send_input know
+  pointer, key, wheel and text events only; the client should accept synthetic
+  pads (connect, buttons, axes, disconnect) that enter where SDL's do, so a
+  pad session is scriptable and headless-verifiable like a drag or a
+  keystroke.
 - **[Bidirectional text in the owned layout](backlog/text-bidi.md)** [2026-08-17]
   The owned text engine places wrap units on a line in logical order and
   treats "start" as left, so RTL rich text spanning styled runs on one line,

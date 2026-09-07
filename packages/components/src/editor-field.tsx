@@ -269,6 +269,10 @@ export function EditorField(props: EditorFieldProps) {
       activateField()
     } else if (e.key === "Escape") {
       if (node) setFocus(null)
+    } else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && textInputActive()) {
+      // A printable key is this field's text (it arrives as a text-input
+      // event); consumed here so a typed Space never reaches the window as
+      // the focus navigation's select.
     } else {
       consumed = false
     }

@@ -45,12 +45,12 @@ export interface PressOptions {
 // changes live. The host view must attach `ref` for retention bounds; without
 // it every position counts as inside (the up always fires).
 //
-// Keyboard/remote activation: when the host node holds focus (spatial nav or
-// setFocus), Enter, Space, or the remote center key fires onPress and stops
-// propagating; `focused` mirrors the node's focus for styling (a ring). The
-// ref also registers onPress as the node's nav action, the path a
-// controller's south button activates through (see focus-nav.ts). Key
-// activation shows no pressed state - the focus ring is the feedback.
+// Keyboard/remote/controller activation reads no key here: the ref registers
+// onPress as the node's nav action, and the focus navigation's `select`
+// action (Enter, Space, the remote center key, the pad's south button, or
+// whatever the app bound) runs it while the node holds focus (see
+// focus-nav.ts). `focused` mirrors the node's focus for styling (a ring).
+// Key activation shows no pressed state - the focus ring is the feedback.
 // The arena and the movement recognizers (createPan, createTransform) live in
 // core; press stays here because it couples to this package's focus-nav
 // (registerNavAction) and nothing outside components needs it yet
@@ -187,11 +187,6 @@ export function createPress(options: PressOptions) {
       options.onPointerLeave?.(e)
     },
     onKeyDown: (e: KeyEvent) => {
-      // The remote center key's `key` is "Unidentified"; match its code.
-      if ((e.key === "Enter" || e.key === " " || e.code === "Select") && !e.repeat && !options.disabled) {
-        e.stopPropagation()
-        activate()
-      }
       options.onKeyDown?.(e)
     },
     onFocus: () => {

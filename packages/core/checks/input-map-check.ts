@@ -3,7 +3,8 @@
 // combination and its clamps, the button-on-axis rule, kind mismatches
 // throwing, injection by name, the delta channel with its brackets,
 // drive() into createAxes, invert()/scale(), the bindings listing, and
-// the keyboard composites over synthetic key events. Pure-module input
+// the keyboard composites and modifier specs over synthetic key events,
+// and enable/disable contexts. Pure-module input
 // only (the `@solidrt/core/input` entry imports no runtime module), so it
 // runs headless on flux, bundled from the repo root:
 //
@@ -191,6 +192,106 @@ function valued<K extends "axis" | "vec2" | "button">(kind: K, label: string, in
   flush()
   if (!same(input.value("move"), [0, 0]) || input.value("rise") !== 0 || input.pressed("jump")) fail("blur releases every held key")
   throws("empty key", () => keyboard.key(""))
+}
+
+// ---- Modifier specs ----
+{
+  let input = createInputMap({ cycle: "axis", save: "button", jump: "button" })
+  input.bind("cycle", keyboard.axis("Shift+Tab", "Tab"))
+  input.bind("save", keyboard.key("Ctrl+KeyS"))
+  input.bind("jump", keyboard.key("Space"))
+  let h = input.handlers
+  h.onKeyDown(key("Tab"))
+  flush()
+  if (input.value("cycle") !== 1) fail("Tab cycles forward")
+  // Shift lands while Tab is held and the repeat carries it: the more
+  // specific spec supersedes the bare one instead of cancelling it.
+  h.onKeyDown({ ...key("Tab"), shiftKey: true, repeat: true })
+  flush()
+  if (input.value("cycle") !== -1) fail("Shift+Tab cycles back (most specific spec wins)")
+  // Shift let go first: the bare up still releases the modified spec.
+  h.onKeyUp(key("Tab"))
+  flush()
+  if (input.value("cycle") !== 0) fail("a bare Tab up releases Shift+Tab")
+  h.onKeyDown(key("KeyS", "s"))
+  flush()
+  if (input.pressed("save")) fail("S without Ctrl does not save")
+  h.onKeyUp(key("KeyS", "s"))
+  h.onKeyDown({ ...key("KeyS", "s"), ctrlKey: true })
+  flush()
+  if (!input.pressed("save")) fail("Ctrl+S saves")
+  h.onKeyUp(key("KeyS", "s"))
+  flush()
+  if (input.pressed("save")) fail("S up releases Ctrl+S")
+  // Space by its logical key (a synthetic event without a code).
+  h.onKeyDown(key("", " "))
+  flush()
+  if (!input.pressed("jump")) fail("logical ' ' matches Space")
+  h.onKeyUp(key("", " "))
+  flush()
+  if (input.pressed("jump")) fail("logical ' ' up releases Space")
+  throws("unknown modifier", () => keyboard.key("Foo+Tab"))
+  throws("modifier without a key", () => keyboard.key("Shift+"))
+}
+
+// ---- Contexts: enable/disable by action name ----
+{
+  let input = createInputMap({ move: "vec2", jump: "button", zoom: "axis" })
+  let stick = valued("vec2", "stick", [0.5, 0])
+  let btn = valued("button", "btn", true)
+  input.bind("move", stick.source)
+  input.bind("jump", btn.source)
+  let presses = 0
+  let releases = 0
+  input.onPress("jump", () => presses++)
+  input.onRelease("jump", () => releases++)
+  flush()
+  if (!input.enabled("move") || !input.pressed("jump")) fail("actions start enabled")
+  input.disable("move", "jump")
+  flush()
+  if (!same(input.value("move"), [0, 0])) fail(`a disabled vec2 reads neutral, got ${input.value("move")}`)
+  if (input.pressed("jump")) fail("a disabled button reads released")
+  if (input.enabled("jump")) fail("enabled() reports the switch")
+  if (releases !== 1) fail(`disabling a held button releases it once, got ${releases}`)
+  stick.set([0, 1])
+  input.enable("move", "jump")
+  flush()
+  if (!same(input.value("move"), [0, 1])) fail("a source moved while disabled reads its current value on enable")
+  if (!input.pressed("jump") || presses !== 1) fail(`a source still held presses on enable, got presses ${presses}`)
+  input.enable("jump")
+  flush()
+  if (presses !== 1) fail("enabling an enabled action is a no-op")
+  // The delta channel: a disable closes the open gesture, then drops
+  // everything; an end whose begin was never delivered reaches nobody.
+  let begins = 0
+  let deltas = 0
+  let ends = 0
+  input.onGesture("zoom", { begin: () => begins++, delta: () => deltas++, end: () => ends++ })
+  input.begin("zoom")
+  input.nudge("zoom", 1)
+  input.disable("zoom")
+  if (begins !== 1 || deltas !== 1 || ends !== 1) fail(`disable closes the open gesture, got ${begins} ${deltas} ${ends}`)
+  input.nudge("zoom", 1)
+  input.begin("zoom")
+  input.end("zoom")
+  if (begins !== 1 || deltas !== 1 || ends !== 1) fail("a disabled action drops its deltas and brackets")
+  input.enable("zoom")
+  input.end("zoom")
+  if (ends !== 1) fail("an end without a delivered begin is dropped")
+  input.nudge("zoom", 2)
+  input.begin("zoom")
+  input.end("zoom")
+  if (deltas !== 2 || begins !== 2 || ends !== 2) fail("enabled again, the channel flows")
+  // Through drive(): a disabled action stops driving the control's axes.
+  let axes = createAxes<{ move: "vec2" }>({ move: "vec2" }, {})
+  input.drive(axes, { move: "move" })
+  flush()
+  if (!same(axes.rate("move"), [0, 1])) fail("drive reads the enabled action")
+  input.disable("move")
+  flush()
+  if (!same(axes.rate("move"), [0, 0]) || axes.active()) fail("a disabled action reads neutral through drive()")
+  throws("enable nothing", () => (input.enable as () => void)())
+  throws("disable unknown", () => input.disable("fly" as never))
 }
 
 console.log(failures === 0 ? "INPUT-MAP-OK" : `INPUT-MAP-FAIL ${failures}`)

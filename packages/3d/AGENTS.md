@@ -308,8 +308,9 @@ sampled per frame, immediate deltas in device-free units) and pose verbs;
 an input map (`createInputMap`, core AGENTS.md) drives the axes by action
 name, and the APP binds devices to the map: the scene leaf's pointer feed
 (`createPointerFeed()`, handed to `<Scene pointer>` / `<View3d pointer>`,
-or spread on a custom leaf), a pad (`gamepad(0)`), the keyboard
-(`keyboard`, its key events through `input.handlers` on the window).
+or spread on a custom leaf), a pad (`gamepad(0)`, or `gamepad.next()`
+for the next pad to press a button), the keyboard (`keyboard`, its key
+events through `input.handlers` on the window).
 Nothing binds by default: `<OrbitCamera />` without `input` moves only
 through its handle. The standard wiring is a preset, plain bindings the
 app applies and edits:

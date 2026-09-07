@@ -335,11 +335,16 @@ latest (solid-js 1.x, off Solid 2.0 entirely). The recipe that works is
   action throws.
   Devices are the nouns: `keyboard.key("Space")`, `keyboard.axis("KeyQ",
   "KeyE")`, `keyboard.vec2({ up, down, left, right })`, `keyboard.wasd`,
-  `keyboard.arrows` (key events reach them through `input.handlers`,
-  spread on `<window>` for app-global keys or on the leaf that should hold
-  focus for them - keys bubble to the window, so a TextInput's consumed
-  keys never arrive); `gamepad(slot)` or `gamepad()` for every pad, with
-  `leftStick`, `rightStick`, `dpad`, `triggers` (right minus left),
+  `keyboard.arrows`, a spec with modifiers ahead of the key
+  ("Shift+Tab", "Ctrl+KeyS": the most specific spec in a source wins a
+  down, an up releases on the bare key) (key events reach them through
+  `input.handlers`, spread on `<window>` for app-global keys or on the
+  leaf that should hold focus for them - keys bubble to the window, so a
+  TextInput's consumed keys never arrive); `gamepad(slot)`, `gamepad()`
+  for every pad, or `gamepad.next()` for the next unclaimed pad to press
+  any button (split screen seats players in pick-up order; its `slot`
+  resolves reactively and frees when the creating scope is disposed),
+  with `leftStick`, `rightStick`, `dpad`, `triggers` (right minus left),
   `shoulders`, `axis(name)`, `button(name)`, reactive over gamepads() so a
   stick wakes a control's frame loop; `createPointerFeed()` for the one
   device that is not global - a pointer event belongs to the element
@@ -366,17 +371,27 @@ latest (solid-js 1.x, off Solid 2.0 entirely). The recipe that works is
   bound (source labels are display strings), `unbind` removes one, and a
   preset (`orbitBindings`, `firstPersonBindings` in @solidrt/3d,
   `camera2dBindings` in @solidrt/2d) is a plain bindings list the app
-  applies and edits - nothing binds unless the app says so. The map is an
-  instance: two pads on two views is two maps. Create maps and feeds in an
-  owned scope (a component body): onPress/onRelease run effects under it
-  and the feed's recognizer registers its cleanup there. The vocabulary the
+  applies and edits - nothing binds unless the app says so (the one
+  built-in default is the UI set inside components' createFocusNav, the
+  platform's own layer). The map is an instance: two pads on two views is
+  two maps. Contexts are a switch per action: `input.disable("move",
+  "jump")` / `enable(...)` (a set is a list of names, so
+  `disable(...Object.keys(gameActions))` when a menu opens); a disabled
+  action reads neutral, drops its deltas and closes the gesture it had
+  open, while its sources keep their state so a key still held when it
+  comes back reads at once; `enabled(name)` is reactive. Create maps and
+  feeds in an owned scope (a component body): onPress/onRelease run
+  effects under it and the feed's recognizer registers its cleanup there. The vocabulary the
   controls share, one kind and unit per word: `pan` vec2 (view heights),
   `zoom` axis (octaves, positive in), `rotate` vec2 (orbit turns), `roll`
   axis (turns about the view axis), `look` vec2 (turns), `move` vec2
   ([right, forward], forward = -y), `rise` axis (up). The runtime-free
   half (`createInputMap`, `createAxes`, `keyboard`, the processors) is
   importable as `@solidrt/core/input` for headless checks;
-  checks/input-map-check.ts runs it on the bare flux binary.
+  checks/input-map-check.ts runs it on the bare flux binary, and
+  checks/input-gamepad-check.ts drives the gamepad device and the join
+  order over a signal of pad snapshots (input-gamepad-device.ts is
+  runtime-free; input-gamepad.ts hands it gamepads()).
 
 - Reactivity is SolidJS 2.0 (`@solidjs/signals`), NOT Solid 1.x. `createSignal`
   is as you expect, but `createEffect` takes the 2.0 two-function shape: a

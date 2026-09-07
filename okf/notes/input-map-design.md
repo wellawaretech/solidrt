@@ -26,10 +26,11 @@ the app applies and edits, never a default.
 | Deltas | n/a | not actions (mouse motion read directly) | mouse delta shares the value with a stick, consumers scale by dt | a second channel per action, device-free units, brackets |
 | Combination | n/a | latest strength per action | most-actuated control wins | sum, then clamp (axis to -1..1, vec2 to unit length) |
 | Injection | fake DOM events | `action_press`, `parse_input_event` | virtual devices (an on-screen stick pretends to be a pad) | by name: set/press/nudge/begin/end |
-| Multiplayer | n/a | global singleton, `move_left_p2` action names | PlayerInput per player plus a join manager | one map per player, bound to `gamepad(slot)` |
+| Multiplayer | n/a | global singleton, `move_left_p2` action names | PlayerInput per player plus a join manager | one map per player, bound to `gamepad(slot)` or `gamepad.next()` |
 | Pointer scope | element | global | global (`Pointer/delta`) | per element feed: the tree holds UI and scene together |
 | Processors | n/a | deadzone per action | invert, scale, deadzone, normalize | invert, scale; dead zone in the pad device |
-| Presets | n/a | `ui_*` actions built in | Default Input Actions asset | code the app applies (`orbitBindings`, ...) |
+| Presets | n/a | `ui_*` actions built in | Default Input Actions asset | code the app applies (`orbitBindings`, ...); the UI set built into the focus nav |
+| Contexts | n/a | none | action maps enabled per scheme | enable/disable by action name on one map |
 
 ## Decisions
 
@@ -63,8 +64,33 @@ the app applies and edits, never a default.
 - **Sum-and-clamp** rather than most-actuated: keys and a stick on one
   action add, and the unit clamp on a vec2 fixes the classic 1.41x
   diagonal walk for every control at once.
-- **Map per instance**, not a singleton: split screen is two maps on two
-  pad slots; a "press south to join" source is an additive later step.
+- **Map per instance**, not a singleton: split screen is two maps, each
+  on a pad slot or on `gamepad.next()`, the device that claims the next
+  unclaimed pad to press any button (Unity's join manager) and frees it
+  when its scope is disposed. Runtime-free in input-gamepad-device.ts so
+  the join order is checked headless.
+- **Contexts are a switch per action, not a second map.** `enable` and
+  `disable` take action names; a set is a list of names, which a preset's
+  action object already is. A disabled action reads neutral, drops its
+  deltas and closes the gesture it had open (the map counts delivered
+  brackets, so raw onGesture listeners never see an unmatched end); its
+  sources keep their state, so a key still held when the action comes
+  back reads at once (Unreal keeps, Unity resets). Edge callbacks see the
+  switch as a release or a press.
+- **The UI layer binds a default; app controls do not.** Focus navigation
+  in components consumes `navigate` (vec2), `cycle` (axis) and `select`
+  (button) - Flutter's intents, Godot's ui_* actions, Unity's UI module -
+  and, created bare, binds `uiBindings` over the keyboard and every pad on
+  a map of its own (`nav.input`), because a component library must work
+  with nothing wired, as all three do. The cameras stay inert without a
+  map. Repeat is the nav's own timing over the rate (Unity's UI module),
+  so dpads and sticks walk the way keyboards did through key repeat, and
+  activation is one path (`select` into the nav-action registry) where
+  createPress used to read Enter and Space itself.
+- **Key specs carry modifiers** ("Shift+Tab", "Ctrl+KeyS"). Within one
+  source the most specific matching spec wins a down, so
+  `axis("Shift+Tab", "Tab")` reads -1 rather than 0; an up releases on the
+  bare key, so a modifier let go first cannot leave the key stuck.
 
 ## Traps
 
@@ -88,6 +114,10 @@ the app applies and edits, never a default.
   to pan) - zoom in first. A synthetic up right after the last move drops
   the last resampled segment (the recognizer resets on up), so a drag
   reads about 20% short of its pixels; give the up 40-80 ms.
+- With Space bound to `select`, a typed Space in a text field reached the
+  window (the editor consumed only the keys it handles) and submitted the
+  field through its own nav action. The editor now consumes every
+  printable key while a text session is active: they are its text.
 - Headless: `@solidrt/core/input` is the runtime-free entry (map, axes,
   keyboard, processors). The gamepad device and the pointer feed need the
   event bus.

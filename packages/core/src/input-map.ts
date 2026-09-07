@@ -29,6 +29,14 @@
 // Consumers with the Axes contract (createAxes; the camera controls) are
 // connected by name with drive(): each axis takes the action of the same
 // name, or the name given, for both channels.
+//
+// Contexts (a menu open, a cutscene) switch actions off and on by name:
+// enable/disable. A disabled action reads neutral, drops its deltas and
+// closes the gesture it had open, while its sources keep their state, so
+// a key still held when the action comes back reads at once. A set is a
+// list of names, which a preset's action object already is
+// (`input.disable(...Object.keys(gameActions))`): Unity's per-map enable
+// and Unreal's stacked contexts, on one map, with no extra concept.
 
 import { createEffect, createRoot, createSignal, untrack } from "@solidjs/signals"
 import type { KeyEvent } from "./types"
@@ -144,6 +152,16 @@ export interface InputMap<A extends ActionsDecl> {
   nudge<N extends AxisActions<A>>(action: N, delta: ActionValue<A[N]>, focal?: Vec2): void
   begin(action: AxisActions<A>): void
   end(action: AxisActions<A>): void
+  /** Switch actions on and off by name - a context. A disabled action
+   * reads neutral (false, 0, [0, 0]), drops its deltas and closes the
+   * gesture it had open (its listeners see the end); its sources keep
+   * their state, so a key still held when the action comes back reads at
+   * once. Edge callbacks see the switch as a release or a press. All
+   * actions start enabled. */
+  enable(...actions: (keyof A & string)[]): void
+  disable(...actions: (keyof A & string)[]): void
+  /** Reactive: whether the action is enabled. */
+  enabled(action: keyof A & string): boolean
   /** Key events for the bound keyboard sources: spread on the window
    * (app-global) or on the leaf that should hold focus for them. */
   handlers: {
@@ -168,6 +186,9 @@ type ActionState = {
   kind: ActionKind
   sources: InputSource[]
   script: boolean | number | Vec2 | null
+  enabled: boolean
+  /** Gesture brackets delivered to the listeners and not yet closed. */
+  depth: number
   version: () => number
   bump: () => void
   value: () => boolean | number | Vec2
@@ -177,6 +198,8 @@ type ActionState = {
 }
 
 let compatible = (source: ActionKind, action: ActionKind): boolean => source === action || (source === "button" && action === "axis")
+
+let neutral = (kind: ActionKind): boolean | number | Vec2 => (kind === "button" ? false : kind === "axis" ? 0 : [0, 0])
 
 function checkValue(what: string, kind: ActionKind, v: unknown): void {
   if (kind === "button") {
@@ -207,10 +230,13 @@ export function createInputMap<A extends ActionsDecl>(actions: A): InputMap<A> {
       kind,
       sources: [],
       script: null,
+      enabled: true,
+      depth: 0,
       version,
       bump: () => setVersion(untrack(version) + 1),
       value: (): boolean | number | Vec2 => {
         version()
+        if (!state.enabled) return neutral(kind)
         let s = state.script
         if (kind === "button") {
           if (s === true) return true
@@ -246,12 +272,37 @@ export function createInputMap<A extends ActionsDecl>(actions: A): InputMap<A> {
     if (s.kind !== "button") throw new Error(`createInputMap: ${what} needs a button action, "${name}" is a ${s.kind}`)
     return s
   }
-  // The delta channel fan-out for one action.
+  // The delta channel fan-out for one action. Brackets are counted as
+  // delivered, so a disable can close what is open and an end whose begin
+  // was dropped (or never delivered) reaches no listener.
+  let closeGesture = (s: ActionState): void => {
+    s.depth--
+    s.gesture.forEach(g => g.end?.())
+  }
   let sink = (s: ActionState): DeltaSink => ({
-    begin: () => s.gesture.forEach(g => g.begin?.()),
-    delta: (value, focal) => s.gesture.forEach(g => g.delta?.(value as never, focal)),
-    end: () => s.gesture.forEach(g => g.end?.()),
+    begin: () => {
+      if (!s.enabled) return
+      s.depth++
+      s.gesture.forEach(g => g.begin?.())
+    },
+    delta: (value, focal) => {
+      if (!s.enabled) return
+      s.gesture.forEach(g => g.delta?.(value as never, focal))
+    },
+    end: () => {
+      if (s.depth > 0) closeGesture(s)
+    },
   })
+  let switchActions = (names: string[], on: boolean, what: string): void => {
+    if (names.length === 0) throw new Error(`createInputMap: ${what}() needs at least one action`)
+    for (let name of names) {
+      let s = state(name)
+      if (s.enabled === on) continue
+      s.enabled = on
+      while (!on && s.depth > 0) closeGesture(s)
+      s.bump()
+    }
+  }
 
   let bindOne = (name: string, source: InputSource): void => {
     let s = state(name)
@@ -278,10 +329,12 @@ export function createInputMap<A extends ActionsDecl>(actions: A): InputMap<A> {
     let s = buttonState(name, want ? "onPress" : "onRelease")
     if (typeof callback !== "function") throw new Error(`createInputMap: ${want ? "onPress" : "onRelease"}("${name}") expects a function`)
     return createRoot(dispose => {
+      // The callback is a side effect that may read state of its own (a
+      // focus, a pose): a snapshot, not a dependency, so untracked.
       createEffect(
         () => s.value() as boolean,
         (pressed, prev) => {
-          if (pressed === want && prev !== want) callback()
+          if (pressed === want && prev !== want) untrack(callback)
         },
         { defer: true },
       )
@@ -352,6 +405,13 @@ export function createInputMap<A extends ActionsDecl>(actions: A): InputMap<A> {
     },
     end(action) {
       sink(axisState(action, "end")).end()
+    },
+    enable: (...actions) => switchActions(actions, true, "enable"),
+    disable: (...actions) => switchActions(actions, false, "disable"),
+    enabled(action) {
+      let s = state(action)
+      s.version()
+      return s.enabled
     },
     handlers: {
       onKeyDown: event => forwardKey(event, true),

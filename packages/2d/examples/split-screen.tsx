@@ -5,7 +5,8 @@
 // owns the sprites and no leaf; its two <View2d> children fill the window
 // half each and follow one roaming sprite apiece through a <Camera2d>
 // with a dead zone, so the two poses differ every frame. Wheel inside a
-// pane zooms that pane alone (the follow keeps tracking under the zoom);
+// pane zooms that pane alone (the follow keeps tracking under the zoom),
+// and so does the pad that joined it (press any button on it first);
 // a tap on a sprite in either pane tints it in both, since there is only
 // one sprite. The `cameras` debug command reads both poses back.
 import { createInputMap, createPointerFeed, gamepad, onFrame, render, windowSize, For } from "@solidrt/core"
@@ -57,11 +58,13 @@ function App() {
     }
   })
   // Two players, two maps: each pane's <Camera2d> takes its own pane's
-  // gestures and its own pad (slot i), and nothing crosses over.
+  // gestures and its own pad, and nothing crosses over. The pads seat in
+  // pick-up order: the first pad to press any button joins pane 0, the
+  // next joins pane 1 (gamepad.next(); gamepad(i) would pin the slots).
   let paneView = (i: number) => {
     let pointer = createPointerFeed()
     let input = createInputMap(camera2dActions)
-    input.bind(camera2dBindings({ pointer, gamepad: gamepad(i) }))
+    input.bind(camera2dBindings({ pointer, gamepad: gamepad.next() }))
     return (
       <View2d width={pane().width} height={pane().height} clearColor={i === 0 ? [0.05, 0.05, 0.09, 1] : [0.09, 0.05, 0.05, 1]} label={`pane-${i}`} pointer={pointer}>
         <Camera2d input={input} world={WORLD} zoom={PANE_ZOOM} maxZoom={MAX_ZOOM} deadZone={DEAD_ZONE} ref={c => (cams[i] = c)} />

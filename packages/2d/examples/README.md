@@ -56,4 +56,6 @@ copy one and adapt it.
   roaming sprites through a dead zone, so the two poses differ every
   frame; wheel zooms a pane alone while its follow keeps tracking, a tap
   on a sprite in either pane tints it in both (one sprite, two views).
-  The `cameras` debug command reads both poses back.
+  Each pane's map binds `gamepad.next()`: the first pad to press any
+  button drives pane 0, the next pane 1. The `cameras` debug command
+  reads both poses back.

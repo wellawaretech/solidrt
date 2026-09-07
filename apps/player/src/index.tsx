@@ -102,8 +102,9 @@ function App() {
   })
 
   // Focus navigation (TV remote, keyboard, gamepad) over the focusable
-  // controls. The window handler only sees keys nothing focused consumed;
-  // gamepad dpad/south and modal trapping come with it (see createFocusNav).
+  // controls, on the standard UI bindings. Its handlers on the window only
+  // see keys nothing focused consumed; modal trapping comes with it (see
+  // createFocusNav).
   let nav = createFocusNav()
 
   return (
@@ -112,7 +113,7 @@ function App() {
       fullscreen={fullscreen()}
       layout={{ flexDirection: "column" }}
       style={{ backgroundColor: theme.color.background }}
-      onKeyDown={nav.onKeyDown}
+      {...nav.handlers}
     >
       <SafeArea>
         <Switch>

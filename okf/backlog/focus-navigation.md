@@ -80,9 +80,16 @@ Traps for whoever picks this up:
   runtimes ignore the extra argument; effect needs a client rebuild.
   Device-unverified until then.
 
+DONE 2026-09-07 (input map stage 2, okf/notes/input-map-design.md): the
+nav consumes `navigate`/`cycle`/`select` from an input map instead of
+reading keys and gamepads(), binding the standard set itself when created
+bare; held-direction auto-repeat is the nav's own timing over the rate, so
+dpads and sticks walk like keyboards; createPress reads no key, activation
+is the `select` action alone.
+
 Deliberately deferred from the components stage (inherited from the
 player's own stage-1 gaps): scroll-into-view for a focused off-screen
-candidate, held-dpad auto-repeat on gamepads (keyboards repeat on their
-own), pressed-state visuals on key activation (the ring is the feedback),
-and `focusable` on the other press controls (Switch/Checkbox/Radio/...) -
-their keyboard activation already works via createPress once declared.
+candidate, pressed-state visuals on key activation (the ring is the
+feedback), and `focusable` on the other press controls
+(Switch/Checkbox/Radio/...) - their activation already works via the nav
+action registry once declared.

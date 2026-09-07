@@ -7,6 +7,13 @@
 // letter code matches its letter either way, so "KeyW" and "w" both take
 // a shifted "W".
 //
+// A spec may name modifiers ahead of the key ("Shift+Tab", "Ctrl+KeyS";
+// Shift, Ctrl, Alt, Meta): the down must carry them, while a bare spec
+// ignores them (a shifted W still walks). Within one source the most
+// specific matching spec wins a down, so `axis("Shift+Tab", "Tab")` reads
+// -1, not 0, on Shift+Tab; and an up releases on the key alone, so a
+// modifier let go first cannot leave the key stuck.
+//
 // Held state is a count behind a signal, so a source's rate is reactive
 // (a held key wakes a control's frame loop) and a blur - the up that never
 // arrives once focus has left - clears it. Composites clamp nothing: the
@@ -21,28 +28,57 @@ import type { KeyEvent } from "./types"
 import type { InputSource } from "./input-map"
 import type { Vec2 } from "./input-axes"
 
-// A key spec matches its physical code or its logical key; a letter code
-// ("KeyW") also matches the logical letter ("w", "W"), so a synthetic
-// event without a code (an agent's send_input, an odd layout) still walks.
+type Modifier = "shiftKey" | "ctrlKey" | "altKey" | "metaKey"
+
+const MODIFIERS: Record<string, Modifier> = { Shift: "shiftKey", Ctrl: "ctrlKey", Control: "ctrlKey", Alt: "altKey", Meta: "metaKey" }
+
+// A parsed spec: the text as given (the held-state key and the label),
+// the key it names, and the modifiers the down must carry.
+type Spec = { text: string; key: string; mods: Modifier[] }
+
+function parse(what: string, text: unknown): Spec {
+  if (typeof text !== "string" || text.length === 0) throw new Error(`keyboard.${what}: expected a key code or key name, got ${String(text)}`)
+  let parts = text.split("+")
+  let key = parts.pop()!
+  if (key.length === 0) throw new Error(`keyboard.${what}: "${text}" names no key`)
+  let mods: Modifier[] = []
+  for (let part of parts) {
+    let mod = MODIFIERS[part]
+    if (!mod) throw new Error(`keyboard.${what}: unknown modifier "${part}" in "${text}" (Shift, Ctrl, Alt or Meta)`)
+    if (!mods.includes(mod)) mods.push(mod)
+  }
+  return { text, key, mods }
+}
+
+// A key matches its physical code or its logical key; a letter code
+// ("KeyW") also matches the logical letter ("w", "W") and "Space" the
+// logical " ", so a synthetic event without a code (an agent's
+// send_input, an odd layout) still walks.
 let matches = (event: KeyEvent, key: string): boolean => {
   if (event.code === key || event.key === key) return true
+  if (key === "Space" && event.key === " ") return true
   if (event.key.length !== 1) return false
   if (key.length === 1) return event.key.toLowerCase() === key.toLowerCase()
   return key.length === 4 && key.startsWith("Key") && event.key.toLowerCase() === key[3]!.toLowerCase()
 }
 
-// A set of keys with a reactive "how many are held" count.
-function held(keys: string[]) {
+// A set of specs with a reactive "how many are held" count.
+function held(specs: Spec[]) {
   let down = new Set<string>()
   // ownedWrite: a map forwards key events from wherever its handlers sit.
   let [count, setCount] = createSignal(0, { ownedWrite: true })
   return {
     count,
     key(event: KeyEvent, isDown: boolean) {
-      for (let k of keys) {
-        if (!matches(event, k)) continue
-        if (isDown) down.add(k)
-        else down.delete(k)
+      // Every spec on this key is released first: a down settles the key
+      // on its most specific matches (a repeat under a newly held Shift
+      // moves "Tab" to "Shift+Tab" and back), an up frees them all.
+      let onKey = specs.filter(s => matches(event, s.key))
+      for (let s of onKey) down.delete(s.text)
+      if (isDown) {
+        let hits = onKey.filter(s => s.mods.every(m => event[m]))
+        let most = hits.reduce((n, s) => Math.max(n, s.mods.length), 0)
+        for (let s of hits) if (s.mods.length === most) down.add(s.text)
       }
       setCount(down.size)
     },
@@ -50,23 +86,18 @@ function held(keys: string[]) {
       down.clear()
       setCount(0)
     },
-    has(k: string) {
-      return down.has(k)
+    has(text: string) {
+      return down.has(text)
     },
   }
 }
 
-function checkKey(what: string, key: unknown): void {
-  if (typeof key !== "string" || key.length === 0) throw new Error(`keyboard.${what}: expected a key code or key name, got ${String(key)}`)
-}
-
 /** One key as a button source (pressed while held). */
-function key(code: string): InputSource<"button"> {
-  checkKey("key", code)
-  let state = held([code])
+function key(spec: string): InputSource<"button"> {
+  let state = held([parse("key", spec)])
   return {
     kind: "button",
-    label: `keyboard ${code}`,
+    label: `keyboard ${spec}`,
     rate: () => state.count() > 0,
     key: state.key,
     blur: state.blur,
@@ -75,9 +106,7 @@ function key(code: string): InputSource<"button"> {
 
 /** Two keys as an axis: `neg` reads -1, `pos` reads 1, both 0. */
 function axis(neg: string, pos: string): InputSource<"axis"> {
-  checkKey("axis", neg)
-  checkKey("axis", pos)
-  let state = held([neg, pos])
+  let state = held([parse("axis", neg), parse("axis", pos)])
   return {
     kind: "axis",
     label: `keyboard ${neg}/${pos}`,
@@ -95,8 +124,7 @@ export type KeyboardVec2Keys = { up: string; down: string; left: string; right: 
 /** Four keys as a vec2 in the screen convention: up reads [0, -1], right
  * reads [1, 0]; opposite keys cancel. */
 function vec2(keys: KeyboardVec2Keys): InputSource<"vec2"> {
-  for (let side of ["up", "down", "left", "right"] as const) checkKey(`vec2 ${side}`, keys[side])
-  let state = held([keys.up, keys.down, keys.left, keys.right])
+  let state = held((["up", "down", "left", "right"] as const).map(side => parse(`vec2 ${side}`, keys[side])))
   return {
     kind: "vec2",
     label: `keyboard ${keys.up}/${keys.left}/${keys.down}/${keys.right}`,
@@ -113,8 +141,9 @@ function vec2(keys: KeyboardVec2Keys): InputSource<"vec2"> {
  * The keyboard device: `keyboard.key("Space")`, `keyboard.axis("KeyQ",
  * "KeyE")`, `keyboard.vec2({ up, down, left, right })`, and the two
  * composites every game binds, `keyboard.wasd` and `keyboard.arrows`.
- * Each call makes an independent source with its own held state; the
- * composites are shared singletons.
+ * A spec may carry modifiers ("Shift+Tab", "Ctrl+KeyS"). Each call makes
+ * an independent source with its own held state; the composites are
+ * shared singletons.
  */
 export let keyboard = {
   key,

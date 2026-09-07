@@ -9,7 +9,7 @@ export { createDocumentBuffer, plainDocument, ATOM, type Document, type Document
 export { ScrollView, type ScrollViewProps } from "./scroll-view"
 export { Pressable, type PressableProps, type PressState } from "./pressable"
 export { Button, type ButtonProps, type ButtonVariant } from "./button"
-export { createFocusNav, type FocusNavOptions } from "./focus-nav"
+export { createFocusNav, uiActions, uiBindings, type FocusNavOptions, type UiActions, type UiDevices } from "./focus-nav"
 export { Switch, type SwitchProps } from "./switch"
 export { Checkbox, type CheckboxProps } from "./checkbox"
 export { RadioGroup, Radio, type RadioGroupProps, type RadioProps } from "./radio"

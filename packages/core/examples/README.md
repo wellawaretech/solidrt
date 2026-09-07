@@ -25,6 +25,9 @@ for the element/prop model see `@solidrt/core/AGENTS.md`.
 ## Pointer input
 - `pointer-local-coords.tsx` - the three pointer coordinate frames (`clientX` window, `localX` the handling node's own frame, `parentX` its path-parent's frame - where the node's x/y live) and the transform-proof drag idiom: grab offset from `localX` at down, place with `parentX - offset` on moves. Exact inside rotated/scaled ancestors and when the pointer leaves the node mid-drag.
 
+## Gamepads
+- `gamepad.tsx` - the pad test bed: every connected pad's raw `gamepads()` snapshot (slots, buttons, axes) and two players seated by `gamepad.next()` - press any button on a pad to join player 1, another pad joins player 2 - each an input map (`move` on the left stick and dpad, `zoom` on the triggers, `jump` on south) printing its values live and walking a marker with `move`. Nothing moves until a pad does.
+
 ## Performance
 - `snapshot-texture.tsx` - `snapshotTexture(ref)`: a `repaintBoundary="snapshot"` view's rasterized pixels as a live texture id; a shader texture samples the panel and a sibling `<texture>` shows the warped copy. The boundary re-rasterizes only when its content changes.
 - `repaint-boundary.tsx` - `repaintBoundary` on a `<view>` to keep static content from rebuilding while a neighbor animates: `{true}` retains the recorded draw list, `"snapshot"` also retains the rasterized pixels as a GPU texture (for raster-expensive, screen-aligned, static subtrees). `"snapshot-no-aa"` rasterizes without anti-aliasing: cheaper, fine for text and axis-aligned rects, hard-edged on vector content.
