@@ -39,7 +39,11 @@ settled, one dimension up, so the two packages are one habit:
   events it also carries.
 
 Involves: scene-pointer.ts gains the root, the tap tracker and wheel
-(the 2d dispatch.ts is the model, near-verbatim); `SceneInput` folds
-into it; `<OrbitCamera>`/`<FirstPersonCamera>` unchanged in shape. The
+(the 2d dispatch.ts is the model, near-verbatim, with one difference:
+the scene walk starts at the struck INSTANCE when the mesh is instanced,
+then the mesh, then its ancestors - instance citizenship landed after
+the 2d work, so the press target is `{ mesh, instance }`, and the root
+listeners see both on the event); `SceneInput` folds into it;
+`<OrbitCamera>`/`<FirstPersonCamera>` unchanged in shape. The
 first-person camera's mouse-look (relative mouse) and key routing stay
 on the input channel as they are; only pointer events join the walk.

@@ -68,7 +68,9 @@ the app applies and edits, never a default.
   on a pad slot or on `gamepad.next()`, the device that claims the next
   unclaimed pad to press any button (Unity's join manager) and frees it
   when its scope is disposed. Runtime-free in input-gamepad-device.ts so
-  the join order is checked headless.
+  the join order is checked headless; verified with physical pads on
+  packages/core/examples/gamepad.tsx (the pad test bed: raw snapshot, two
+  joining players, values live, a marker per player).
 - **Contexts are a switch per action, not a second map.** `enable` and
   `disable` take action names; a set is a list of names, which a preset's
   action object already is. A disabled action reads neutral, drops its

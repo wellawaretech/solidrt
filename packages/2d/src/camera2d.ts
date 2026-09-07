@@ -208,46 +208,61 @@ function checkFraction(what: string, v: number): void {
   if (!(Number.isFinite(v) && v >= 0 && v <= 1)) throw new Error(`createCamera2d: ${what} must be within 0..1, got ${v}`)
 }
 
-/**
- * Create a 2d camera driving `target`'s camera, where `target` is a sprite
- * or record layer's view (or several: a view and its overlay layer's
- * share one camera), or anything else with the layers' `setCamera`, such
- * as a signal setter feeding `<TileLayer camera>`. The initial pose
- * applies immediately: the world fitted when `world` is given and no
- * `zoom`. In a component tree, prefer `<Camera2d>`: it drives the nearest
- * view through context and takes an input map as a prop.
- */
-export function createCamera2d(target: Camera2dTarget | Camera2dTarget[], options: Camera2dOptions): Camera2d {
-  let targets = Array.isArray(target) ? target : [target]
-  if (typeof options.viewport !== "function") throw new Error("createCamera2d: viewport must be a function returning { width, height }")
-  let world = options.world ?? null
-  if (world) {
-    positive("world.width", world.width)
-    positive("world.height", world.height)
+/** The non-pose options, validated at creation and again at every set()
+ * (the live-option re-clamp entry). */
+function checkOptions(options: Camera2dOptions): void {
+  if (options.world) {
+    positive("world.width", options.world.width)
+    positive("world.height", options.world.height)
   }
   if (options.minZoom !== undefined) positive("minZoom", options.minZoom)
   if (options.maxZoom !== undefined) positive("maxZoom", options.maxZoom)
   if (options.minZoom !== undefined && options.maxZoom !== undefined && options.minZoom > options.maxZoom) {
     throw new Error(`createCamera2d: minZoom ${options.minZoom} exceeds maxZoom ${options.maxZoom}`)
   }
-  checkPose("", options)
-  let pivotFx = options.pivot?.x ?? 0.5
-  let pivotFy = options.pivot?.y ?? 0.5
-  finite("pivot.x", pivotFx)
-  finite("pivot.y", pivotFy)
-  let deadW = options.deadZone?.width ?? 0
-  let deadH = options.deadZone?.height ?? 0
-  checkFraction("deadZone.width", deadW)
-  checkFraction("deadZone.height", deadH)
-  let panSpeed = options.panSpeed ?? 1
-  let zoomExponent = options.zoomSpeed ?? 1
-  let rollSpeed = options.rollSpeed ?? 1
-  let followEase = FOLLOW_EASE * (options.followSpeed ?? 1)
-  let inertia = options.inertia ?? true
-  let maxZoom = options.maxZoom ?? Infinity
+  finite("pivot.x", options.pivot?.x)
+  finite("pivot.y", options.pivot?.y)
+  checkFraction("deadZone.width", options.deadZone?.width ?? 0)
+  checkFraction("deadZone.height", options.deadZone?.height ?? 0)
+}
 
-  let x = options.x ?? (world ? world.width / 2 : 0)
-  let y = options.y ?? (world ? world.height / 2 : 0)
+/**
+ * Create a 2d camera driving `target`'s camera, where `target` is a sprite
+ * or record layer's view (or several: a view and its overlay layer's
+ * share one camera), or anything else with the layers' `setCamera`, such
+ * as a signal setter feeding `<TileLayer camera>`. The initial pose
+ * applies immediately: the world fitted when `world` is given and no
+ * `zoom`. The pose options are initial values; every other option is read
+ * where it applies, so a caller holding the options object (or a props
+ * object handing out getters) changes bounds, pivot, dead zone and rates
+ * live - `set({})` re-clamps and pushes the pose under new bounds. In a
+ * component tree, prefer `<Camera2d>`: it drives the nearest view through
+ * context and takes an input map as a prop.
+ */
+export function createCamera2d(target: Camera2dTarget | Camera2dTarget[], options: Camera2dOptions): Camera2d {
+  let targets = Array.isArray(target) ? target : [target]
+  if (typeof options.viewport !== "function") throw new Error("createCamera2d: viewport must be a function returning { width, height }")
+  checkOptions(options)
+  checkPose("", options)
+  // Everything below the pose is read from `options` where it applies
+  // (the 3d orbit camera's rule): a prop object's getters stay live, so a
+  // clamp, a pivot or a rate follows its prop, and set({}) re-clamps the
+  // pose under new bounds.
+  let world = () => options.world ?? null
+  let maxZoom = () => options.maxZoom ?? Infinity
+  let pivotFx = () => options.pivot?.x ?? 0.5
+  let pivotFy = () => options.pivot?.y ?? 0.5
+  let deadW = () => options.deadZone?.width ?? 0
+  let deadH = () => options.deadZone?.height ?? 0
+  let panSpeed = () => options.panSpeed ?? 1
+  let zoomExponent = () => options.zoomSpeed ?? 1
+  let rollSpeed = () => options.rollSpeed ?? 1
+  let followEase = () => FOLLOW_EASE * (options.followSpeed ?? 1)
+  let inertia = () => options.inertia ?? true
+
+  let w0 = world()
+  let x = options.x ?? (w0 ? w0.width / 2 : 0)
+  let y = options.y ?? (w0 ? w0.height / 2 : 0)
   let zoom = options.zoom ?? 1
   let rotation = options.rotation ?? 0
 
@@ -264,28 +279,30 @@ export function createCamera2d(target: Camera2dTarget | Camera2dTarget[], option
     vw = v.width
     vh = v.height
   }
-  let px = () => vw * pivotFx
-  let py = () => vh * pivotFy
+  let px = () => vw * pivotFx()
+  let py = () => vh * pivotFy()
 
   let minZoom = () => {
-    let fit = world && known() ? Math.min(vw / world.width, vh / world.height) : 0
-    return Math.min(options.minZoom ?? fit, maxZoom)
+    let w = world()
+    let fit = w && known() ? Math.min(vw / w.width, vh / w.height) : 0
+    return Math.min(options.minZoom ?? fit, maxZoom())
   }
 
   // The contain clamp on an unrotated view rect (Godot's rule: limits
   // ignore rotation): returns the pose's x/y, moved inside the world.
   let contain = (cx: number, cy: number, z: number): [number, number] => {
-    if (!world || !known()) return [cx, cy]
+    let w = world()
+    if (!w || !known()) return [cx, cy]
     let viewW = vw / z
     let viewH = vh / z
     let left = cx - px() / z
     let top = cy - py() / z
-    left = viewW >= world.width ? (world.width - viewW) / 2 : clampNum(left, 0, world.width - viewW)
-    top = viewH >= world.height ? (world.height - viewH) / 2 : clampNum(top, 0, world.height - viewH)
+    left = viewW >= w.width ? (w.width - viewW) / 2 : clampNum(left, 0, w.width - viewW)
+    top = viewH >= w.height ? (w.height - viewH) / 2 : clampNum(top, 0, w.height - viewH)
     return [left + px() / z, top + py() / z]
   }
   let clamp = () => {
-    zoom = clampNum(zoom, minZoom(), maxZoom)
+    zoom = clampNum(zoom, minZoom(), maxZoom())
     ;[x, y] = contain(x, y, zoom)
   }
 
@@ -324,7 +341,7 @@ export function createCamera2d(target: Camera2dTarget | Camera2dTarget[], option
   let lastDt = FALLBACK_DT
   // A fit that waits for the viewport (the default pose when a world is
   // given, or an explicit fit() before the size is known).
-  let pendingFit: { rect: Rect2d | null; glide: boolean } | null = options.zoom === undefined && world ? { rect: null, glide: false } : null
+  let pendingFit: { rect: Rect2d | null; glide: boolean } | null = options.zoom === undefined && w0 ? { rect: null, glide: false } : null
 
   let touch = () => {
     dirty = true
@@ -363,7 +380,7 @@ export function createCamera2d(target: Camera2dTarget | Camera2dTarget[], option
 
   let zoomTo = (sx: number, sy: number, next: number) => {
     let [wx, wy] = unprojectCamera(camera(), sx, sy)
-    zoom = clampNum(next, minZoom(), maxZoom)
+    zoom = clampNum(next, minZoom(), maxZoom())
     ;[x, y] = anchorPose(wx, wy, sx, sy, zoom)
     clamp()
     touch()
@@ -375,14 +392,15 @@ export function createCamera2d(target: Camera2dTarget | Camera2dTarget[], option
     readViewport()
     fling = null
     followAt = null
-    let z = clampNum(tz ?? zoom, minZoom(), maxZoom)
+    let z = clampNum(tz ?? zoom, minZoom(), maxZoom())
     let [cx, cy] = contain(tx, ty, z)
     glide = { kind: "pose", x: cx, y: cy, zoom: z }
   }
   let fitNow = (rect: Rect2d | null, ease: boolean) => {
-    let r = rect ?? (world ? { x: 0, y: 0, width: world.width, height: world.height } : null)
+    let w = world()
+    let r = rect ?? (w ? { x: 0, y: 0, width: w.width, height: w.height } : null)
     if (!r) throw new Error("createCamera2d: fit() needs a rect when the camera has no world")
-    let z = clampNum(Math.min(vw / r.width, vh / r.height), minZoom(), maxZoom)
+    let z = clampNum(Math.min(vw / r.width, vh / r.height), minZoom(), maxZoom())
     let [nx, ny] = anchorPose(r.x + r.width / 2, r.y + r.height / 2, vw / 2, vh / 2, z)
     if (ease) {
       glideTo(nx, ny, z)
@@ -418,7 +436,7 @@ export function createCamera2d(target: Camera2dTarget | Camera2dTarget[], option
     dragDy = 0
     vx = 0
     vy = 0
-    if (!inertia || followAt !== null) return
+    if (!inertia() || followAt !== null) return
     if (smoothed < FLING_MIN_SPEED || Math.hypot(rvx, rvy) < FLING_MIN_SPEED) return
     fling = { vx: rvx, vy: rvy }
   }
@@ -435,7 +453,7 @@ export function createCamera2d(target: Camera2dTarget | Camera2dTarget[], option
     // Notches compound on the pending target, so a fast scroll is one
     // long push; the anchor is the world point under the pointer now.
     let from = glide !== null ? glide.target : zoom
-    let target = clampNum(from * factor, minZoom(), maxZoom)
+    let target = clampNum(from * factor, minZoom(), maxZoom())
     let [wx, wy] = unprojectCamera(camera(), sx, sy)
     glide = { kind: "anchor", target, sx, sy, wx, wy }
   }
@@ -467,12 +485,12 @@ export function createCamera2d(target: Camera2dTarget | Camera2dTarget[], option
         readViewport()
         if (name === "pan") {
           let d = delta as Vec2
-          panBy(d[0] * vh * panSpeed, d[1] * vh * panSpeed)
+          panBy(d[0] * vh * panSpeed(), d[1] * vh * panSpeed())
         } else if (name === "zoom") {
           let [sx, sy] = focalPx(focal)
-          zoomAt(sx, sy, Math.pow(2, (delta as number) * zoomExponent), !axes.inGesture("zoom"))
+          zoomAt(sx, sy, Math.pow(2, (delta as number) * zoomExponent()), !axes.inGesture("zoom"))
         } else {
-          rollBy((delta as number) * 2 * Math.PI * rollSpeed)
+          rollBy((delta as number) * 2 * Math.PI * rollSpeed())
         }
         flush()
         notify()
@@ -498,6 +516,9 @@ export function createCamera2d(target: Camera2dTarget | Camera2dTarget[], option
     axes,
     set(pose) {
       checkPose("set", pose)
+      // The re-clamp entry for live options too (set({}) after a bounds
+      // change), so the options are validated here as at creation.
+      checkOptions(options)
       readViewport()
       if (pose.x !== undefined || pose.y !== undefined || pose.zoom !== undefined) interrupt()
       if (pose.x !== undefined) x = pose.x
@@ -602,18 +623,18 @@ export function createCamera2d(target: Camera2dTarget | Camera2dTarget[], option
         let [rx, ry] = untrack(() => axes.rate("pan"))
         if (rx !== 0 || ry !== 0) {
           interrupt()
-          shift(rx * PAN_RATE * panSpeed * vh * dt, ry * PAN_RATE * panSpeed * vh * dt)
+          shift(rx * PAN_RATE * panSpeed() * vh * dt, ry * PAN_RATE * panSpeed() * vh * dt)
           clamp()
           touch()
         }
         let rz = untrack(() => axes.rate("zoom"))
         if (rz !== 0) {
           interrupt()
-          zoomTo(px(), py(), zoom * Math.pow(2, rz * ZOOM_RATE * zoomExponent * dt))
+          zoomTo(px(), py(), zoom * Math.pow(2, rz * ZOOM_RATE * zoomExponent() * dt))
         }
         let rr = untrack(() => axes.rate("roll"))
         if (rr !== 0) {
-          rotation += rr * ROLL_RATE * rollSpeed * 2 * Math.PI * dt
+          rotation += rr * ROLL_RATE * rollSpeed() * 2 * Math.PI * dt
           clamp()
           touch()
         }
@@ -661,8 +682,8 @@ export function createCamera2d(target: Camera2dTarget | Camera2dTarget[], option
         // the camera eases by that overshoot so the target rides the zone
         // edge, or snaps the last sub-pixel and settles.
         let [sx, sy] = projectCamera(camera(), followAt.x, followAt.y)
-        let hw = (deadW * vw) / 2
-        let hh = (deadH * vh) / 2
+        let hw = (deadW() * vw) / 2
+        let hh = (deadH() * vh) / 2
         let ox = sx < px() - hw ? sx - (px() - hw) : sx > px() + hw ? sx - (px() + hw) : 0
         let oy = sy < py() - hh ? sy - (py() - hh) : sy > py() + hh ? sy - (py() + hh) : 0
         if (Math.hypot(ox, oy) < LAND_PX) {
@@ -673,7 +694,7 @@ export function createCamera2d(target: Camera2dTarget | Camera2dTarget[], option
           }
           followSettled = true
         } else {
-          let k = 1 - Math.exp(-followEase * dt)
+          let k = 1 - Math.exp(-followEase() * dt)
           shift(-ox * k, -oy * k)
           clamp()
           dirty = true

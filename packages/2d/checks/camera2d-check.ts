@@ -55,11 +55,14 @@ const SWEEP = 500
 
 let near = (a: number, b: number, eps = EPS) => Math.abs(a - b) <= eps
 
-type Rig = { cam: Camera2d; view: { width: number; height: number }; last: () => CameraUpdate | null; writes: () => number }
+type Rig = { cam: Camera2d; view: { width: number; height: number }; options: Camera2dOptions; last: () => CameraUpdate | null; writes: () => number }
 
+// The options object is handed to the control as-is and returned, so a
+// case can change an option after creation the way a live prop does.
 function make(opts: Partial<Camera2dOptions> = {}, view = { width: 800, height: 600 }): Rig {
   let last: CameraUpdate | null = null
   let writes = 0
+  let options: Camera2dOptions = { viewport: () => view, ...opts }
   let cam = createCamera2d(
     {
       setCamera: (u) => {
@@ -67,9 +70,9 @@ function make(opts: Partial<Camera2dOptions> = {}, view = { width: 800, height: 
         writes++
       },
     },
-    { viewport: () => view, ...opts },
+    options,
   )
-  return { cam, view, last: () => last, writes: () => writes }
+  return { cam, view, options, last: () => last, writes: () => writes }
 }
 
 // A wheel notch as the pointer feed delivers it: an unbracketed zoom
@@ -203,6 +206,47 @@ for (let i = 0; i < SWEEP; i++) {
   if (!near(c.x!, 1000 - 400 / 3) || !near(c.y!, 400)) fail(`glideTo clamps its destination to (866.67,400), got ${c.x},${c.y}`)
   let r = cam.viewRect()
   if (r.x + r.width > 1000 + EPS || r.y + r.height > 500 + EPS) fail(`glide destination stays inside the world, view ${JSON.stringify(r)}`)
+}
+
+// ---- Live options: bounds, zoom range and pivot read where applied ----
+{
+  let { cam, options, last } = make({ world: { width: 1000, height: 500 }, maxZoom: 10, zoom: 5, x: 500, y: 250 })
+  if (!near(cam.camera().zoom!, 5)) fail(`live options: initial zoom 5, got ${cam.camera().zoom}`)
+  // A tighter maxZoom re-clamps on set({}) - the component's re-clamp entry.
+  options.maxZoom = 2
+  cam.set({})
+  if (!near(cam.camera().zoom!, 2)) fail(`live maxZoom re-clamps the zoom, got ${cam.camera().zoom}`)
+  // A smaller world re-contains: the view (400x300 at zoom 2) is wider
+  // than a 300x100 world on both axes, so the pose centers on it.
+  options.world = { width: 300, height: 100 }
+  cam.set({})
+  let c = cam.camera()
+  if (!near(c.x!, 150) || !near(c.y!, 50)) fail(`live world re-contains and centers, got ${c.x},${c.y}`)
+  // Dropping the world lifts the clamp: the same write now lands as given.
+  options.world = undefined
+  cam.set({ x: -400, y: -400 })
+  c = cam.camera()
+  if (!near(c.x!, -400) || !near(c.y!, -400)) fail(`live world removal unclamps, got ${c.x},${c.y}`)
+  // A pivot change reaches the pushed pose at once.
+  options.pivot = { x: 0, y: 0 }
+  cam.set({})
+  let pushed = last()
+  if (!pushed || pushed.pivotX !== 0 || pushed.pivotY !== 0) fail(`live pivot is pushed by set({}), got ${pushed?.pivotX},${pushed?.pivotY}`)
+  // A live rate applies where it is read: panSpeed scales the pan nudge.
+  let before = cam.camera().x!
+  options.panSpeed = 2
+  cam.axes.nudge("pan", [0.1, 0])
+  let travelled = before - cam.camera().x!
+  if (!near(travelled, (0.1 * 600 * 2) / cam.camera().zoom!)) fail(`live panSpeed scales the nudge, travelled ${travelled}`)
+  // A bad live value throws at the re-clamp, as at creation.
+  options.maxZoom = -1
+  let threw = false
+  try {
+    cam.set({})
+  } catch {
+    threw = true
+  }
+  if (!threw) fail("a bad live maxZoom throws at set({})")
 }
 
 // ---- fit(rect): snapping and gliding, maxZoom below the fit ----

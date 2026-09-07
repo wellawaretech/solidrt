@@ -1696,6 +1696,12 @@ Knowledge. No lifecycle - true or wrong, not open or closed.
   hit/routing) are covered by a 168-test suite. Remaining gaps are the
   unenforced unsafe Send/Sync (now four types), hot-path expect(&format!), and
   panics at the tree boundary.
+- **[ANGLE's ES 3.0 ceiling and per-platform Vulkan support](notes/angle-es-ceiling-and-vulkan-survey.md)** [2026-09-07]
+  ANGLE caps both the Metal and D3D11 backends at ES 3.0 in its own source, so
+  no compute shaders on macOS or Windows and rebuilding ANGLE would not change
+  it; every native-driver target is already ES 3.1+, and every target measured
+  has working Vulkan with a compute queue, including the 2017 Mali-T860 TV at
+  Vulkan 1.0.52.
 - **[App structure and performance](notes/app-structure-performance.md)** [2026-07-15]
   "Execution-structure review: the JS-decides/Rust-executes split is right;
   ranked costs are per-prop string-keyed FFI writes, per-frame JS animation,

@@ -177,9 +177,14 @@ moved subtrees in Rust, and picking walks the core BVH.
   examples/pick.tsx (`<Camera2d>`) are the live guards. The shared
   vocabulary with @solidrt/3d, one kind and unit per word: `pan` vec2,
   `zoom` axis (octaves), `roll` axis (turns) here; `rotate`, `look`,
-  `move`, `rise` there. Not yet, all additive: rotation glides, a contain
-  origin other than center, live option props on `<Camera2d>` (the
-  control reads them once; remount for new bounds).
+  `move`, `rise` there. The pose options are initial values; every other
+  option (world, zoom range, pivot, dead zone, the speeds, inertia) is
+  read where it applies, never snapshotted, so `<Camera2d>` props are
+  live - forwarded as getters, a bounds or pivot change re-clamping and
+  pushing the pose at once through `set({})` - and a function-face
+  caller mutates the options object it passed (the `<OrbitCamera>` rule,
+  pinned in the check's live-options case). Not yet, all additive:
+  rotation glides, a contain origin other than center.
 - Layer tint (`setTint(rgba)`/the `tint` option and prop, both layer
   kinds): one `uTint` shared-params write multiplied over every sprite's
   own tint - day/night, a dimmed parallax plane, a fade-in. Cheap to

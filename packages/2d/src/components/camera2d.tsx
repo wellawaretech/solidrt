@@ -30,18 +30,21 @@ const MAX_CAMERA_DT = 0.1
  * component; the app binds the view's pointer feed, a pad or anything
  * else to the map). Under a `<SpriteLayer output={false}>` there is no
  * view to drive: put the `<Camera2d>` inside one of its `<View2d>`
- * children. The options are read at mount (the control reads them once):
+ * children. The pose props (x, y, zoom, rotation) are initial values:
  * change the pose at runtime through `ref`'s set/glideTo/fit/follow and
- * the verbs, and remount (a keyed `<Show>`) for new bounds. `viewport`
- * defaults to the view's own size. Frames run only while the camera
- * moves (`active()`), so a resting camera leaves the app demand-driven
- * idle.
+ * the verbs. Every other prop is live, forwarded to the control as a
+ * getter and read where it applies, so a world, a zoom range, a pivot,
+ * a dead zone or a rate follows its prop, and a bounds or pivot change
+ * re-clamps and pushes the pose at once - the `<OrbitCamera>` rule.
+ * `viewport` defaults to the view's own size. Frames run only while the
+ * camera moves (`active()`), so a resting camera leaves the app
+ * demand-driven idle.
  */
 export let Camera2d: VoidComponent<Camera2dProps> = props => {
   let target = useSpriteLayer().viewport
   // Through merge, not a spread: a props object hands out getters, and
-  // merge keeps them (the control reads each once at creation, viewport
-  // live).
+  // merge keeps them, so the control reads each option live where it
+  // applies.
   let options: Camera2dOptions = merge(props, {
     get viewport() {
       return props.viewport ?? (() => ({ width: target.width, height: target.height }))
@@ -64,6 +67,16 @@ export let Camera2d: VoidComponent<Camera2dProps> = props => {
         cam.update(dt)
       })
     },
+  )
+  // A bounds or pivot prop change re-clamps and pushes the pose at once
+  // (set({}) applies the clamps). Deferred: the creation already clamped
+  // and pushed the initial pose. Untracked: the control reads the options
+  // through the getters while it applies them, and the apply wants the
+  // values of that moment (the compute above is what tracks them).
+  createEffect(
+    () => [options.world, options.minZoom, options.maxZoom, options.pivot],
+    () => untrack(() => cam.set({})),
+    { defer: true },
   )
   untrack(() => props.ref)?.(cam)
   return null

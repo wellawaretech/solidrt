@@ -15,7 +15,9 @@
 // moves only the inset's camera, while a sprite tapped or dragged in the
 // inset responds exactly as in the main view (the same handlers, the
 // view's camera undone). The `state` debug command returns both camera
-// poses and every sprite's world position.
+// poses and every sprite's world position; `maxZoom` sets the main
+// <Camera2d maxZoom> prop live (a tighter range re-clamps the pose at
+// once - the props are live, only the pose props are initial values).
 import { createInputMap, createPointerFeed, createSignal, render, For } from "@solidrt/core"
 import { Camera2d, camera2dActions, camera2dBindings, createAtlas, grid, setSprite, Sprite, SpriteLayer, View2d } from "@solidrt/2d"
 import type { Camera2dHandle, Frame, SpriteHandle } from "@solidrt/2d"
@@ -41,6 +43,7 @@ type Item = { id: number; x: number; y: number; frame: Frame }
 let cam: Camera2dHandle | undefined
 let insetCam: Camera2dHandle | undefined
 let handles = new Map<number, SpriteHandle>()
+let [maxZoom, setMaxZoom] = createSignal(MAX_ZOOM)
 
 function App() {
   let atlas = createAtlas(logoBytes, { label: "logo-atlas" })
@@ -73,7 +76,7 @@ function App() {
       >
         {/* A top-left pivot keeps world (0,0) at the leaf's corner, so the
             authored positions read as window coordinates until panned. */}
-        <Camera2d input={input} maxZoom={MAX_ZOOM} pivot={{ x: 0, y: 0 }} ref={c => (cam = c)} />
+        <Camera2d input={input} maxZoom={maxZoom()} pivot={{ x: 0, y: 0 }} ref={c => (cam = c)} />
         <For each={items()}>
           {item => {
             let tintIndex = 0
@@ -127,6 +130,11 @@ function App() {
 }
 
 render(() => <App />)
+
+registerDebug("maxZoom", (args?: { value?: number }) => {
+  if (typeof args?.value === "number") setMaxZoom(args.value)
+  return maxZoom()
+})
 
 registerDebug("state", () => ({
   camera: cam?.camera() ?? null,
