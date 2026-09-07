@@ -151,6 +151,12 @@ together, not just eviction:
    unbounded roaming even records can go: an app-provided re-fill callback
    regenerates a chunk's cells on approach (the procedural-world shape)
    instead of retaining them.
+   Evidence from [2d-tile-bulk-writes](../done/2d-tile-bulk-writes.md):
+   allocating a chunk (createBuffer + createPipelineTexture) costs 1-2 ms
+   on a desktop GPU, so residency must POOL the chunk resources (a freed
+   chunk's buffer and target go to a free list the next approach takes),
+   never create and destroy them per approach; the re-fill itself is
+   microseconds per chunk through `setTiles` over the chunk's rect.
 3. **Composition pruning**: `<TileLayer>` currently mounts a `d-texture`
    leaf per RESIDENT chunk, unconditionally - fully-clipped leaves are
    cheap but O(resident). The same view rect prunes the `<For>` to

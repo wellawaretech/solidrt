@@ -7,15 +7,23 @@
 // The camera flies a ship-style path: a fixed screen pivot near the bottom
 // of the viewport, the world panning and ROTATING under it so the flight
 // heading always points up - the <TileLayer> camera prop with rotation and
-// pivot (a leaf transform, never a re-bake). A timer edits tiles while it
-// runs: beacon markers along the road's center line blink, and each blink's
-// batch of setTile calls re-bakes only the chunks the beacons land in.
+// pivot (a leaf transform, never a re-bake). The world is seeded by ONE
+// setTiles rect write over a Uint16Array of frame indices (-1 where the
+// world is empty), the shape a generator or a worker produces; a timer
+// edits tiles while it runs: beacon markers along the road's center line
+// blink, and each blink's batch of setTile calls re-bakes only the chunks
+// the beacons land in.
 //
 // The atlas is the core logo sliced 2x2 by grid(); a real game would slice
-// a tileset sheet the same way.
+// a tileset sheet the same way, and the array is the layer's `frames`
+// table the indices name.
+//
+// Debug commands: `state` (resident chunk count) and `cell` ({ col, row }:
+// the frame at a cell, null when empty).
 import { createSignal, onFrame, pct, render, windowSize } from "@solidrt/core"
 import { createAtlas, grid, TileLayer } from "@solidrt/2d"
 import type { TileCamera, TileLayerHandle } from "@solidrt/2d"
+import { registerDebug } from "srt:dev"
 import logoBytes from "./logo.png" with { type: "binary" }
 
 const COLS = 128
@@ -37,15 +45,21 @@ function App() {
     layer = l
     // A solid ring "road" around the world center: continuous under the
     // flight path, empty everywhere else - the empty regions are the point,
-    // their chunks never allocate.
+    // their chunks never allocate, since a rect write allocates a chunk
+    // only for the first frame it carries there. -1 is the clear (a
+    // Uint16Array holds it as 0xffff, the same bits).
     let c = COLS / 2
+    let cells = new Uint16Array(COLS * ROWS).fill(-1)
     for (let row = 0; row < ROWS; row++) {
       for (let col = 0; col < COLS; col++) {
         let d = Math.hypot(col - c, row - c)
-        if (d > 40 && d < 52) l.setTile(col, row, frames[(col ^ row) % 4]!)
+        if (d > 40 && d < 52) cells[row * COLS + col] = (col ^ row) % 4
       }
     }
+    l.setTiles(0, 0, COLS, ROWS, cells)
   }
+  registerDebug("state", () => ({ chunks: layer.chunks.length }))
+  registerDebug("cell", (args?: { col?: number; row?: number }) => layer.getTile(args?.col ?? 0, args?.row ?? 0))
 
   // Beacon cells on the road's center line every 7.5 degrees; the interval
   // below blinks them between a marker frame and the road pattern.
@@ -99,6 +113,7 @@ function App() {
           tileW={TILE}
           tileH={TILE}
           atlas={atlas.texture}
+          frames={frames}
           camera={camera()}
           label="tile-world"
           ref={seed}

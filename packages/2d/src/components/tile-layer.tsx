@@ -2,6 +2,7 @@ import { createEffect, createSignal, displayScale, For, getBoundingBoxViewport, 
 import type { TextureId, VoidComponent } from "@solidrt/core"
 import type { FilterMode } from "@solidrt/core/gpu"
 import type { CameraUpdate } from "../camera.ts"
+import type { Frame } from "../frames.ts"
 import { tileWorldScale } from "../oversample-math.ts"
 import { createTileLayer } from "../tiles.ts"
 import type { TileChunk, TileLayer as TileLayerHandle } from "../tiles.ts"
@@ -25,6 +26,9 @@ export type TileLayerProps = {
   tileH: number
   /** The atlas texture every tile samples (create with createAtlas). */
   atlas: TextureId
+  /** The frames table `setTiles`' index cells name (a tileset, `grid()`'s
+   * array); see TileLayerOptions. Fixed at creation. */
+  frames?: Frame[]
   /** Per-chunk clear color (the name says the scope: never-written regions
    * have no chunk and render nothing, so a full-bleed ground color belongs
    * on the container behind the layer). */
@@ -71,9 +75,9 @@ export type TileLayerProps = {
  * camera transform - a handful of quads however many tiles exist. A layout
  * component: the world view is laid out, so it cannot sit inside a d-*
  * subtree. Tiles
- * are data, not children: write them through `ref` with `setTile` - there
- * is no `<Tile>` component on purpose (a component per tile would
- * re-introduce the per-element cost the bake removes).
+ * are data, not children: write them through `ref` with `setTile` and
+ * `setTiles` - there is no `<Tile>` component on purpose (a component per
+ * tile would re-introduce the per-element cost the bake removes).
  */
 export let TileLayer: VoidComponent<TileLayerProps> = props => {
   let layer = untrack(() =>
@@ -82,6 +86,7 @@ export let TileLayer: VoidComponent<TileLayerProps> = props => {
       filter: props.filter,
       chunkTiles: props.chunkTiles,
       tint: props.tint,
+      frames: props.frames,
       label: props.label,
     }),
   )

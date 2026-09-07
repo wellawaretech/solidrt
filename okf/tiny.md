@@ -22,6 +22,8 @@ symptom shows. A heading that outgrows this file splits into its own.
 `@solidrt/2d` and `@solidrt/3d`.
 
 - `@solidrt/2d` `Sprite` exports `_slot`, `_x`, `_y`, `_w`, `_h`, `_rot`, `_flipX`, `_flipY` on the public type; make them genuinely private or readonly accessors, so reading a flip state stops meaning `getSprite()` allocating a full `Required<SpriteOptions>`.
+- `@solidrt/2d` tiles.ts: the chunk math (checkCell, chunkOf, slot, the rect slicing in setTiles) is pure but lives beside the GPU imports, so the tile layer has no headless check; move it to a tiles-math.ts and pin it like oversample-math.ts (probes/2d-tiles-bulk-probe.tsx covers it live only).
+- `@solidrt/2d` `<SpriteLayer>`/`<View2d>` and `@solidrt/3d` `<Scene>`/`<View3d>`: `pointer` given together with `events={false}` silently feeds nothing (the feed listens at a root no event reaches); throw at mount, the dev validation policy.
 - `@solidrt/2d` AGENTS.md "30k sprites: 12.9 ms raw records vs 30.8 ms via setSprite" is a write-path comparison that reads as "30k is affordable"; add the clause that it excludes whatever computes the motion, usually the dominant cost (a 24k-particle sim measured ~25 ms, nearly all simulation).
 
 ## Components

@@ -82,11 +82,6 @@ Shaped, not started.
   package exposes only pick and pickRect, so a circle query, a cast along a
   motion or a move-and-slide has no path while the 3d scene wraps all of them
   with filters and a character mover on top.
-- **[Seeding a tile world is one setTile call per cell](backlog/2d-tile-bulk-writes.md)** [2026-08-29]
-  There is no bulk write, so an 18k-cell seed is 18k setTile calls each paying
-  locate() and a frame copy; fine today because the flush batches to a
-  microtask, but a larger world or a procedural refill on approach wants a
-  rect write from a typed array.
 - **[World-space text for 2d layers (labels that ride the camera)](backlog/2d-world-space-text.md)** [2026-09-02]
   Text living IN a layer's world - node labels, cluster names, damage numbers
   - has no path: apps re-project laid-out <text> elements per camera change,
@@ -137,6 +132,11 @@ Shaped, not started.
   compressed real-world files (Draco/meshopt, KTX2), morph targets,
   merge-by-material, vertex colors, per-material samplers and runtime-fetched
   content, each demand-gated.
+- **[A View3d is fixed-size and has no overlay projection of its own](backlog/3d-scene-views-additive.md)** [2026-09-07]
+  A <View3d> takes width and height only, so a second view cannot fill a box
+  the way <Scene> does, and a view handle has no project, unproject or
+  screenRay, so an overlay or a drag plane over a minimap has to redo the view
+  camera's math by hand; the 2d views have the same additive list.
 - **[Cascade split ratios are fixed](backlog/3d-shadow-cascade-splits.md)** [2026-09-06]
   A cascaded sun slices its range with one fixed practical split
   (CASCADE_SPLIT_LAMBDA 0.5), so a scene whose detail sits far from the camera
@@ -812,6 +812,12 @@ Finished, kept for the reasoning.
   sprite or depth-sorting a population by y - the ordinary case for a dense 2D
   scene - costs a record shift and an index fixup per element instead of a
   sort of an index array.
+- **[Seeding a tile world is one setTile call per cell](done/2d-tile-bulk-writes.md)** [2026-09-07]
+  There was no bulk write, so an 18k-cell seed was 18k setTile calls each
+  paying locate() and a frame copy; setTiles now writes a rect from a
+  row-major array - frames, or indices into a frames table the layer owns (a
+  Uint16Array for generated worlds) - one locate and one dirty mark per chunk,
+  and a chunk the rect only clears never allocates.
 - **[The tile camera's world-to-screen mapping is not exported, and its rotation convention is stated nowhere](done/2d-tile-camera-projection.md)** [2026-08-29]
   Anything drawn in world space over a rotating tile world (shadows, parallax
   motes, sprites until the sprite camera rotates) re-implements TileCamera's
@@ -1815,6 +1821,11 @@ Knowledge. No lifecycle - true or wrong, not open or closed.
   Whole-project session review (2026-08-28) vs Flutter/RN/Electron; core
   renderer bet right, product layer (tests, text editing, a11y, security,
   docs) is the gap; 8 ranked priorities.
+- **[Replacing Impeller with an own renderer](notes/replacing-impeller.md)** [2026-09-07]
+  What Impeller still does for us, what an own GL renderer would cost
+  (call-surface inventory, crate map, sizing, the parity tail), and what it
+  would buy; iOS is the event that turns Impeller from nearly free into a
+  Flutter-engine build we maintain.
 - **[A 3D scene graph above the pipeline](notes/scene-graph-3d.md)** [2026-08-03]
   How a Three.js-in-spirit retained scene graph (meshes, materials, cameras,
   lights) would be built over flux:gpu as a sibling library with a Solid

@@ -12,8 +12,10 @@ copy one and adapt it.
   one texture may be) baked into lazily-allocated chunks, flown over by a
   ship-style camera (fixed screen pivot, the world panning and ROTATING
   under it via the `<TileLayer>` camera prop - transform writes, never a
-  re-bake), and a timer editing tiles to show that a `setTile` batch
-  re-bakes only the chunks it touches.
+  re-bake), seeded by ONE `setTiles` rect write over a Uint16Array of
+  frame indices (the layer's `frames` table; -1 where the world is
+  empty, and those chunks never allocate), and a timer editing tiles to
+  show that a `setTile` batch re-bakes only the chunks it touches.
 - `anim.tsx` - frame animation with `createAnimation`: three sprites share
   one looping clip (one clock, stepped by wall time independent of display
   rate) and a one-shot clip holds its last frame and fires `onEnd`.

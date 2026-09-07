@@ -15,11 +15,11 @@
 // Chunks allocate lazily on the first setTile that gives them content: an
 // empty chunk costs nothing - no records, no buffer, no texture - so a
 // sparse world is bounded by its content, and world size is bounded by
-// memory, not maxTextureSize. setTile batches to a microtask; the flush
-// publishes and re-bakes ONLY dirty chunks. A layer nobody edits publishes
-// nothing, renders nothing, and costs nothing per frame. Camera-driven
-// residency (bake far chunks on approach, evict them) is deliberately not
-// here yet - see okf/backlog/2d-baked-layers.md.
+// memory, not maxTextureSize. setTile and setTiles batch to a microtask;
+// the flush publishes and re-bakes ONLY dirty chunks. A layer nobody edits
+// publishes nothing, renders nothing, and costs nothing per frame.
+// Camera-driven residency (bake far chunks on approach, evict them) is
+// deliberately not here yet - see okf/backlog/2d-baked-layers.md.
 import { getOwner, onCleanup } from "@solidrt/core"
 import {
   beginBufferWrite,
@@ -44,6 +44,19 @@ const RESOLVED = Promise.resolve()
 
 // Default chunk edge in pixels; the tile count per chunk derives from it.
 const CHUNK_TARGET_PX = 512
+// The index that clears a cell in setTiles' index form: -1, which a
+// Uint16Array holds as 0xffff (the same bits), so both spellings mean it
+// and a frames table stops one short of it.
+const CLEAR_INDEX = 0xffff
+
+export type Tint = [number, number, number, number]
+
+// Whether a value is a frame: four numeric UVs (the validation both write
+// paths run before touching a record).
+let isFrame = (f: unknown): f is Frame => {
+  let o = f as Frame | null
+  return typeof o === "object" && o !== null && typeof o.u0 === "number" && typeof o.v0 === "number" && typeof o.u1 === "number" && typeof o.v1 === "number"
+}
 
 export type TileLayerOptions = {
   /** Per-chunk clear color (the name says the scope: chunks that never
@@ -71,6 +84,13 @@ export type TileLayerOptions = {
   chunkTiles?: number
   /** Layer tint, [r, g, b, a] in 0..1; see TileLayer.setTint. */
   tint?: [number, number, number, number]
+  /**
+   * The frames table setTiles' index cells name - a tileset: `grid()`'s
+   * array, or any Frame[] (up to 65535 entries), so a generated world is
+   * a Uint16Array of indices and never an array of frame objects. Fixed
+   * at creation; setTile takes frames directly either way.
+   */
+  frames?: Frame[]
   label?: string
   /** Skip the owner-scoped auto-dispose (see createTileLayer). */
   autoFree?: boolean
@@ -126,9 +146,25 @@ export type TileLayer = {
    * Batched; the microtask flush publishes and re-bakes ONLY the chunks
    * that changed, however many tiles did.
    */
-  setTile(col: number, row: number, frame: Frame | null, opts?: { tint?: [number, number, number, number] }): void
+  setTile(col: number, row: number, frame: Frame | null, opts?: { tint?: Tint }): void
+  /**
+   * Set a rect of cells at once: `cols` x `rows` cells from `col`, `row`,
+   * `cells` in row-major order (`cols * rows` long) - frames (null clears)
+   * or, with a `frames` table on the layer, indices into it (-1 clears; a
+   * Uint16Array holds -1 as 0xffff, the same bits). Unity's SetTilesBlock,
+   * Phaser's putTilesAt: one locate and one dirty mark per chunk the rect
+   * touches, the per-cell loop inside the layer over its own records, the
+   * same batching and flush. A chunk the rect only clears never allocates,
+   * so a whole-world write of a sparse world stays sparse. `tint` applies
+   * to every cell set, as setTile's; absent, each cell keeps its own. A
+   * bad entry throws before any cell changes.
+   */
+  setTiles(col: number, row: number, cols: number, rows: number, cells: ArrayLike<Frame | null> | ArrayLike<number>, opts?: { tint?: Tint }): void
   /** The frame at a cell, or null when empty. */
   getTile(col: number, row: number): Frame | null
+  /** The frames table given at creation (what setTiles' indices name), or
+   * null. */
+  readonly frames: readonly Frame[] | null
   /**
    * Tint the whole layer, [r, g, b, a] in 0..1: a uniform multiplied over
    * every cell's own tint (day/night, a dimmed parallax plane). Not a
@@ -186,8 +222,27 @@ export function createTileLayer(
     )
   }
   let label = opts?.label ?? "tiles"
-  let tint: [number, number, number, number] = opts?.tint ?? [1, 1, 1, 1]
+  let tint: Tint = opts?.tint ?? [1, 1, 1, 1]
   checkTint("createTileLayer", tint)
+  // The frames table, copied (the caller's array may move on) and checked
+  // once, plus its UVs as four floats per entry: an index write copies by
+  // offset instead of reading a frame object per cell.
+  let frames: Frame[] | null = opts?.frames ? opts.frames.slice() : null
+  let tableUv: Float32Array | null = null
+  if (frames !== null) {
+    if (frames.length >= CLEAR_INDEX) {
+      throw new Error(`createTileLayer: a frames table holds at most ${CLEAR_INDEX - 1} frames, got ${frames.length}`)
+    }
+    tableUv = new Float32Array(frames.length * 4)
+    for (let i = 0; i < frames.length; i++) {
+      let f = frames[i]!
+      if (!isFrame(f)) throw new Error(`createTileLayer: frames[${i}] is not a frame, got ${JSON.stringify(f)}`)
+      tableUv[i * 4] = f.u0
+      tableUv[i * 4 + 1] = f.v0
+      tableUv[i * 4 + 2] = f.u1
+      tableUv[i * 4 + 3] = f.v1
+    }
+  }
   let oversample = opts?.oversample ?? 1
   checkOversample("createTileLayer", oversample, chunkW, chunkH)
   let thrash = thrashSentinel(`tile layer "${label}"`)
@@ -269,13 +324,45 @@ export function createTileLayer(
     return chunk
   }
 
-  let locate = (col: number, row: number, verb: string): [number, number] => {
+  let checkCell = (col: number, row: number, verb: string): void => {
     if (!(Number.isInteger(col) && Number.isInteger(row) && col >= 0 && col < cols && row >= 0 && row < rows)) {
       throw new Error(`${verb}: cell ${col}, ${row} outside the ${cols} x ${rows} grid`)
     }
-    let index = Math.floor(row / chunkTiles) * chunkCols + Math.floor(col / chunkTiles)
-    let at = ((row % chunkTiles) * chunkTiles + (col % chunkTiles)) * FLOATS_PER_SPRITE
-    return [index, at]
+  }
+  // A cell's chunk index, and its record offset inside that chunk.
+  let chunkOf = (col: number, row: number): number => Math.floor(row / chunkTiles) * chunkCols + Math.floor(col / chunkTiles)
+  let slot = (col: number, row: number): number => ((row % chunkTiles) * chunkTiles + (col % chunkTiles)) * FLOATS_PER_SPRITE
+  // Write one cell's record: the quad at the cell, the frame's UVs, and
+  // the tint - the one given, else the default when the cell comes up from
+  // empty (a re-set keeps its tint: absent keys keep their values, like
+  // every options object here).
+  let writeCell = (r: Float32Array, at: number, col: number, row: number, u0: number, v0: number, u1: number, v1: number, cellTint: Tint | undefined): void => {
+    let fresh = r[at + 2] === 0
+    r[at] = (col + 0.5) * tileW
+    r[at + 1] = (row + 0.5) * tileH
+    r[at + 2] = tileW
+    r[at + 3] = tileH
+    r[at + 4] = u0
+    r[at + 5] = v0
+    r[at + 6] = u1
+    r[at + 7] = v1
+    if (cellTint !== undefined) {
+      r[at + 9] = cellTint[0]
+      r[at + 10] = cellTint[1]
+      r[at + 11] = cellTint[2]
+      r[at + 12] = cellTint[3]
+    } else if (fresh) {
+      r[at + 9] = 1
+      r[at + 10] = 1
+      r[at + 11] = 1
+      r[at + 12] = 1
+    }
+  }
+  // Clear one cell: a zero-size quad draws nothing (the tint stays, and
+  // a later set from empty resets it).
+  let clearCell = (r: Float32Array, at: number): void => {
+    r[at + 2] = 0
+    r[at + 3] = 0
   }
 
   let layer: TileLayer = {
@@ -306,50 +393,116 @@ export function createTileLayer(
     },
     setTile(col, row, frame, opts) {
       if (disposed) return
-      let [index, at] = locate(col, row, "setTile")
+      checkCell(col, row, "setTile")
+      let index = chunkOf(col, row)
+      let at = slot(col, row)
       let chunk = resident.get(index)
       if (frame === null) {
         // Clearing a cell no chunk holds is a no-op, not an allocation.
         if (!chunk) return
-        chunk.records[at + 2] = 0
-        chunk.records[at + 3] = 0
+        clearCell(chunk.records, at)
       } else {
+        if (!isFrame(frame)) throw new Error(`setTile: not a frame, got ${JSON.stringify(frame)}`)
+        if (opts?.tint !== undefined) checkTint("setTile", opts.tint)
         chunk ??= allocate(index)
-        let r = chunk.records
-        // A cell coming up from empty starts at the default tint; a
-        // re-set keeps its tint unless opts carries one (absent keys keep
-        // their values, like every options object here).
-        let fresh = r[at + 2] === 0
-        r[at] = (col + 0.5) * tileW
-        r[at + 1] = (row + 0.5) * tileH
-        r[at + 2] = tileW
-        r[at + 3] = tileH
-        r[at + 4] = frame.u0
-        r[at + 5] = frame.v0
-        r[at + 6] = frame.u1
-        r[at + 7] = frame.v1
-        if (opts?.tint !== undefined) {
-          checkTint("setTile", opts.tint)
-          r[at + 9] = opts.tint[0]
-          r[at + 10] = opts.tint[1]
-          r[at + 11] = opts.tint[2]
-          r[at + 12] = opts.tint[3]
-        } else if (fresh) {
-          r[at + 9] = 1
-          r[at + 10] = 1
-          r[at + 11] = 1
-          r[at + 12] = 1
-        }
+        writeCell(chunk.records, at, col, row, frame.u0, frame.v0, frame.u1, frame.v1, opts?.tint)
       }
       touch(chunk)
     },
+    setTiles(col, row, w, h, cells, opts) {
+      if (disposed) return
+      if (!(Number.isInteger(col) && Number.isInteger(row) && Number.isInteger(w) && Number.isInteger(h) && w > 0 && h > 0 && col >= 0 && row >= 0 && col + w <= cols && row + h <= rows)) {
+        throw new Error(`setTiles: rect ${col}, ${row} of ${w} x ${h} outside the ${cols} x ${rows} grid`)
+      }
+      if (cells.length !== w * h) throw new Error(`setTiles: a ${w} x ${h} rect takes ${w * h} cells, got ${cells.length}`)
+      if (opts?.tint !== undefined) checkTint("setTiles", opts.tint)
+      let cellTint = opts?.tint
+      // The two forms: indices into the table, or frames. Every entry is
+      // checked before the first write, so a bad one changes nothing.
+      let idx = typeof cells[0] === "number" ? (cells as ArrayLike<number>) : null
+      let objs = idx === null ? (cells as ArrayLike<Frame | null>) : null
+      if (idx !== null) {
+        if (frames === null) throw new Error("setTiles: index cells need a frames table (createTileLayer's frames option)")
+        let count = frames.length
+        for (let i = 0; i < idx.length; i++) {
+          let k = idx[i]!
+          if (k === -1 || k === CLEAR_INDEX) continue
+          if (!(Number.isInteger(k) && k >= 0 && k < count)) throw new Error(`setTiles: index ${k} at cell ${i} outside the ${count}-frame table`)
+        }
+      } else {
+        for (let i = 0; i < objs!.length; i++) {
+          let f = objs![i]
+          if (f !== null && f !== undefined && !isFrame(f)) throw new Error(`setTiles: cell ${i} is neither a frame nor null, got ${JSON.stringify(f)}`)
+        }
+      }
+      let uv = tableUv
+      // Chunk by chunk over the rect: each chunk's slice of the rect is a
+      // sub-rect walked row by row with the record offset advancing, one
+      // dirty mark at the end. A chunk the slice only clears is never
+      // allocated.
+      let cr0 = Math.floor(row / chunkTiles)
+      let cr1 = Math.floor((row + h - 1) / chunkTiles)
+      let cc0 = Math.floor(col / chunkTiles)
+      let cc1 = Math.floor((col + w - 1) / chunkTiles)
+      for (let cr = cr0; cr <= cr1; cr++) {
+        let rowA = Math.max(row, cr * chunkTiles)
+        let rowB = Math.min(row + h, (cr + 1) * chunkTiles)
+        for (let cc = cc0; cc <= cc1; cc++) {
+          let colA = Math.max(col, cc * chunkTiles)
+          let colB = Math.min(col + w, (cc + 1) * chunkTiles)
+          let index = cr * chunkCols + cc
+          let chunk = resident.get(index)
+          let r = chunk ? chunk.records : null
+          for (let y = rowA; y < rowB; y++) {
+            let at = slot(colA, y)
+            let i = (y - row) * w + (colA - col)
+            for (let x = colA; x < colB; x++, at += FLOATS_PER_SPRITE, i++) {
+              let u0: number
+              let v0: number
+              let u1: number
+              let v1: number
+              if (idx !== null) {
+                let k = idx[i]!
+                if (k === -1 || k === CLEAR_INDEX) {
+                  if (r !== null) clearCell(r, at)
+                  continue
+                }
+                let b = k * 4
+                u0 = uv![b]!
+                v0 = uv![b + 1]!
+                u1 = uv![b + 2]!
+                v1 = uv![b + 3]!
+              } else {
+                let f = objs![i]
+                if (f === null || f === undefined) {
+                  if (r !== null) clearCell(r, at)
+                  continue
+                }
+                u0 = f.u0
+                v0 = f.v0
+                u1 = f.u1
+                v1 = f.v1
+              }
+              if (r === null) {
+                chunk = allocate(index)
+                r = chunk.records
+              }
+              writeCell(r, at, x, y, u0, v0, u1, v1, cellTint)
+            }
+          }
+          if (chunk) touch(chunk)
+        }
+      }
+    },
     getTile(col, row) {
-      let [index, at] = locate(col, row, "getTile")
-      let chunk = resident.get(index)
+      checkCell(col, row, "getTile")
+      let chunk = resident.get(chunkOf(col, row))
+      let at = slot(col, row)
       if (!chunk || chunk.records[at + 2] === 0) return null
       let r = chunk.records
       return { u0: r[at + 4]!, v0: r[at + 5]!, u1: r[at + 6]!, v1: r[at + 7]! }
     },
+    frames,
     setTint(next) {
       if (disposed) return
       checkTint("setTint", next)

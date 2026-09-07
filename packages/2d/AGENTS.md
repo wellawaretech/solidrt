@@ -296,6 +296,29 @@ empty chunks cost nothing). Tiles are data, not
 children: there is no `<Tile>` component on purpose - write cells through
 `ref` with `setTile`.
 
+Bulk writes: `setTiles(col, row, cols, rows, cells)` writes a rect at
+once - `cells` row-major, `cols * rows` long, either frames (null clears)
+or, with a `frames` table given at creation (`createTileLayer(..., {
+frames })`, the `<TileLayer frames>` prop: a tileset, `grid()`'s array,
+up to 65534 entries), indices into it (-1 clears; a Uint16Array holds -1
+as 0xffff, the same bits) - Unity's SetTilesBlock, Phaser's putTilesAt
+over the map's tileset. One locate and one dirty mark per chunk the rect
+touches, the per-cell loop inside the layer, the same flush; a chunk the
+rect only clears never allocates, so a whole-world write of a sparse
+world allocates exactly the chunks the per-cell seed would. A generated
+or worker-built world is a Uint16Array of indices, transferable, never an
+array of frame objects; a fill is `new Uint16Array(n).fill(i)`. `tint`
+in the options applies to every cell set. Every entry is validated before
+the first write, so a bad one changes nothing; the table is copied at
+creation. The rect form is the shape for worker transfer and chunk
+re-fill, not a large speedup: the per-cell floor is the record write
+itself, so a 16k-cell solid rect re-writes in ~14 ms against ~25 ms as a
+setTile loop and a sparse rect is at parity with the loop, while a first
+seed is dominated by chunk allocation at 1-2 ms per chunk
+(probes/2d-tiles-bulk-bench.tsx). probes/2d-tiles-bulk-probe.tsx holds
+the three seeds (setTile, index rect, frame rect) to the same cells,
+chunks and bakes.
+
 Tinting, two levels: `setTile(col, row, frame, { tint })` writes the
 cell's record tint (same `[r, g, b, a]` 0..1 semantics as a sprite's
 tint; absent keys keep their values, a cell set from empty starts at
@@ -316,7 +339,7 @@ on approach, evict) - okf/backlog/2d-baked-layers.md.
 | `Group` | x?, y?, rotation?, scale? (uniform, scales the subtree), visible? (the whole subtree), transition?, onPointer{Down,Move,Up}?, onWheel?, onTap? (bubbled from hit child sprites), ref? |
 | `Camera2d` | createCamera2d's options minus `viewport` (world?, min/maxZoom?, pivot?, deadZone?, panSpeed?, zoomSpeed?, rollSpeed?, followSpeed?, inertia?, x?, y?, zoom?, rotation?), viewport? (`() => { width, height }`, default: the driven viewport's size), input? (the input map driving its `pan`/`zoom`/`roll` axes; live), actions? (action names per axis when the map's differ), ref? - a `<SpriteLayer>` child driving the nearest view's camera (the `<SpriteLayer>`'s own, or inside a `<View2d>` that view) from the map, nothing else; read at mount; throws under `output={false}` outside a `<View2d>` |
 | `View2d` | a `<SpriteLayer>` child: one more view of the layer from a camera of its own (layer.createView as a component): width, height (view pixels, live; fixed-size only for now), camera? (partial CameraUpdate on the view's camera, live; the same state a `<Camera2d>` child writes), oversample?, maxOversample? (the auto-pick, as SpriteLayer's), clearColor?, label? (createView's, fixed), ref?(view), output?(texture) (else a built-in `<texture>` leaf at the view size carrying the view's handlers), events?, pointer? (this view's feed, fed from its root), onPointer{Down,Move,Up}?, onWheel?, onTap? (the view's root: `event.sprite` null over empty space); a `<Camera2d>` child drives the VIEW from its map (inside, `useSpriteLayer()` reports the view as `viewport` and the feed as `pointer`); `<Sprite>`/`<Group>` children mount to the layer as outside |
-| `TileLayer` | cols, rows, tileW, tileH, atlas (TextureId), chunkClearColor?, filter?, chunkTiles?, tint? ([r,g,b,a] 0..1, over the whole layer), oversample?, maxOversample?, camera? (TileCamera: x, y, zoom, rotation, pivotX, pivotY), label?, ref? |
+| `TileLayer` | cols, rows, tileW, tileH, atlas (TextureId), frames? (the tileset `setTiles` indices name), chunkClearColor?, filter?, chunkTiles?, tint? ([r,g,b,a] 0..1, over the whole layer), oversample?, maxOversample?, camera? (TileCamera: x, y, zoom, rotation, pivotX, pivotY), label?, ref? |
 
 `SpriteLayer` owns the layer and its own view, rendered as the built-in
 `<texture>` leaf carrying the view's pointer handlers (opt out with
