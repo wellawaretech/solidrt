@@ -1,5 +1,4 @@
-import { merge } from "@solidjs/signals"
-import { createEffect, onFrame, untrack, useContext } from "@solidrt/core"
+import { createEffect, merge, onFrame, untrack, useContext } from "@solidrt/core"
 import type { InputMap, VoidComponent } from "@solidrt/core"
 import { SceneContext } from "./context.tsx"
 import { createOrbitCamera } from "../orbit.ts"

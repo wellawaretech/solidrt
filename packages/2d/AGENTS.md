@@ -473,14 +473,14 @@ hover, wheel and tap rules headless.
   or pixels built in code) and passes the full sampler through (`filter`,
   `wrap`, `mipmap`, `anisotropy`); the record it returns is what `grid` and
   `namedFrames` slice.
-- Frames that share an edge bleed: a sprite at a fractional position (a
-  scrolling backdrop, an easing camera) samples, on the odd frame, a
-  one-texel line of the neighbouring cell along its edge - a flash that no
-  screenshot catches. A sheet with a transparent gutter passes it as
-  `spacing`; a sheet packed edge to edge passes `inset` to `grid` or
-  `namedFrames` instead (`{ inset: 0.5 }` for a nearest-filtered atlas, `{
-  inset: 1 }` for a linear one, whose 2x2 tap reaches a texel out). Never
-  hand-shave the rect table.
+- Frames that share an edge do not bleed: the fragment stage clamps every
+  sample into its frame, so a sprite at a fractional position (a scrolling
+  backdrop, an easing camera) never paints a line of the neighbouring cell,
+  and an edge-to-edge sheet needs no gutter and no shaved rect table. The
+  one case left is a `mipmap` atlas, whose mip texels average across cell
+  edges before sampling: pass `inset` to `grid`/`namedFrames` (2^k texels
+  keeps mip level k clean, losing that border) or pack a gutter as
+  `spacing`, until extrusion lands (okf/backlog/2d-atlas-extrude.md).
 - Tint multiplies the sampled texel (`texture * tint`) and the pipeline
   blends with `blend: "alpha"` in record order, the premultiplied composite.
   The atlas is premultiplied because `decodeImage` premultiplies by default;

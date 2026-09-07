@@ -1,5 +1,4 @@
-import { merge } from "@solidjs/signals"
-import { createEffect, onFrame, untrack } from "@solidrt/core"
+import { createEffect, merge, onFrame, untrack } from "@solidrt/core"
 import type { InputMap, VoidComponent } from "@solidrt/core"
 import { createCamera2d } from "../camera2d.ts"
 import type { Camera2d as Camera2dHandle, Camera2dAxes, Camera2dOptions } from "../camera2d.ts"

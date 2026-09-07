@@ -43,6 +43,12 @@ Decided and being worked on now. A plan nobody is working on goes back to backlo
 
 Shaped, not started.
 
+- **[Extrude atlas cells into gutters so a mipmapped sheet does not bleed](backlog/2d-atlas-extrude.md)** [2026-09-07]
+  The layer shaders clamp samples into their frame, which stops edge bleed at
+  mip level 0, but a mip chain averages blocks that straddle cell edges before
+  any sampling decision; the fix is a load-time repack that copies each cell
+  into a gutter of replicated edge pixels, the thing Unity's packer and
+  TexturePacker call extrude.
 - **[A sprite layer draws one pre-packed atlas, fixed at creation](backlog/2d-atlas-limits.md)** [2026-08-22]
   Every sprite in a layer samples one texture chosen at creation, and
   createAtlas only decodes an already-packed sheet, so a second sheet costs a

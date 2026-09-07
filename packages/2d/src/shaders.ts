@@ -31,6 +31,7 @@ export let VERTEX = glsl`
   in float iRot;
   in vec4 iTint;
   out vec2 vUv;
+  flat out vec4 vFrame;
   out vec4 vTint;
   uniform vec2 uViewport;
   uniform vec4 uCamera;
@@ -45,6 +46,7 @@ export let VERTEX = glsl`
     // World and clip are both y-down, so the mapping carries no flip.
     gl_Position = vec4(screen / uViewport * 2.0 - 1.0, 0.0, 1.0);
     vUv = mix(iUv.xy, iUv.zw, aPos + 0.5);
+    vFrame = iUv;
     vTint = iTint;
   }
 `
@@ -52,14 +54,31 @@ export let VERTEX = glsl`
 // uTint is the LAYER tint, multiplied over the per-instance vTint (identity
 // [1, 1, 1, 1] - GLSL uniforms default to ZERO, so every pipeline creation
 // must pin it explicitly or everything renders transparent black).
+//
+// The sample is clamped to its frame, pulled in by half a texel: a quad at
+// a fractional position lands edge samples so close to the frame's edge
+// that a linear tap (and float interpolation under nearest) reaches the
+// cell next door, painting a one-texel line of the neighbour along the
+// sprite's edge. The clamp keeps the quad's texel mapping 1:1 and only
+// moves those edge samples onto the edge texel, so touching cells do not
+// bleed and no gutter or inset is needed at mip level 0. It cannot help a
+// mip chain, whose texels straddle the cell edge before sampling - that is
+// okf/backlog/2d-atlas-extrude.md. min/max because a flipped frame stores
+// its UVs swapped, and the inner min/max because a sub-texel frame would
+// otherwise hand clamp() a lower bound above its upper one.
 export let FRAGMENT = glsl`
   in vec2 vUv;
+  flat in vec4 vFrame;
   in vec4 vTint;
   uniform sampler2D uAtlas;
   uniform vec4 uTint;
 
   void main() {
-    fragColor = texture(uAtlas, vUv) * vTint * uTint;
+    vec2 halfTexel = 0.5 / vec2(textureSize(uAtlas, 0));
+    vec2 lo = min(vFrame.xy, vFrame.zw) + halfTexel;
+    vec2 hi = max(vFrame.xy, vFrame.zw) - halfTexel;
+    vec2 uv = clamp(vUv, min(lo, hi), max(lo, hi));
+    fragColor = texture(uAtlas, uv) * vTint * uTint;
   }
 `
 
@@ -80,6 +99,7 @@ export let VERTEX_SPLIT = glsl`
   in vec4 iUv;
   in vec4 iTint;
   out vec2 vUv;
+  flat out vec4 vFrame;
   out vec4 vTint;
   uniform vec2 uViewport;
   uniform vec4 uCamera;
@@ -94,6 +114,7 @@ export let VERTEX_SPLIT = glsl`
     // World and clip are both y-down, so the mapping carries no flip.
     gl_Position = vec4(screen / uViewport * 2.0 - 1.0, 0.0, 1.0);
     vUv = mix(iUv.xy, iUv.zw, aPos + 0.5);
+    vFrame = iUv;
     vTint = iTint;
   }
 `

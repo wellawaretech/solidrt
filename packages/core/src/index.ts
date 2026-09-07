@@ -101,6 +101,8 @@ export {
   createRoot,
   createStore,
   reconcile,
+  merge,
+  omit,
   mapArray,
   repeat,
   untrack,

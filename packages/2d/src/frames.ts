@@ -48,9 +48,11 @@ export type GridOptions = {
   marginX?: number
   marginY?: number
   /**
-   * Texels shaved off every side of each frame; default 0. Half a texel
-   * stops edge bleed between touching cells with `filter: "nearest"`, a
-   * full texel with `"linear"` (its 2x2 tap reaches one texel out).
+   * Texels shaved off every side of each frame; default 0. Only a
+   * mipmapped atlas needs it: 2^k texels keep mip level k inside the cell
+   * (the layer shaders already clamp level-0 samples into the frame), at
+   * the cost of that border of every sprite. The stopgap until extrusion
+   * (okf/backlog/2d-atlas-extrude.md).
    */
   inset?: number
 }
@@ -76,11 +78,10 @@ function frameOf(atlas: AtlasSize, x: number, y: number, w: number, h: number, i
  * Frames are returned in cell order, so `frames[row * cols + col]` addresses
  * a cell and an animation is a slice of consecutive indices.
  *
- * Cells that touch bleed: a sprite at a fractional position samples, on
- * the odd frame, a texel of the cell next door along its edge (a one-texel
- * line of the neighbour, gone the next frame - see namedFrames). Pack the
- * sheet with a transparent gutter and pass it as `spacing`, or shave the
- * frames with `inset`.
+ * Cells that touch do not bleed at mip level 0: the layer shaders clamp
+ * every sample into its frame (shaders.ts). A mip chain is different - its
+ * texels straddle cell edges before sampling - so a mipmapped sheet packs
+ * a gutter (`spacing`) or shaves its frames (`inset`); see namedFrames.
  */
 export function grid(atlas: AtlasSize, cols: number, rows: number, opts?: GridOptions): Frame[] {
   if (!(cols > 0 && rows > 0 && Number.isInteger(cols) && Number.isInteger(rows))) {
@@ -117,15 +118,14 @@ export function grid(atlas: AtlasSize, cols: number, rows: number, opts?: GridOp
  * compiles, a typo included, and no `!` is needed on a lookup - the
  * scaffold's tsconfig does not set noUncheckedIndexedAccess.
  *
- * The oldest atlas trap: frames addressed as whole-pixel rects that share
- * an edge bleed into each other. A sprite drifting by fractions of a pixel
- * lands, on the odd frame, on a sample position that rounds into the cell
- * next door and paints a one-texel line of it - a solid cell beside a
- * sprite flashes a bright bar over it for a single frame, invisible in a
- * screenshot and easy to blame on the game. Pass `inset` (half a texel for
- * a nearest-filtered atlas, a full texel for a linear one) and every rect
- * is shaved on all sides, or pack a transparent gutter between cells and
- * keep full-bleed cells in a corner of their own.
+ * The oldest atlas trap - frames addressed as whole-pixel rects that share
+ * an edge bleed into each other, a sprite drifting by fractions of a pixel
+ * flashing a one-texel line of the cell next door - is handled in the
+ * layer shaders, which clamp every sample into its frame. What they cannot
+ * handle is a mip chain, whose texels average across cell edges before
+ * sampling: a mipmapped sheet passes `inset` (2^k texels keeps level k
+ * clean, losing that border) or packs a gutter, until extrusion lands
+ * (okf/backlog/2d-atlas-extrude.md).
  */
 export function namedFrames<K extends string>(
   atlas: AtlasSize,
