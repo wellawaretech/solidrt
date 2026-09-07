@@ -23,11 +23,8 @@ const SPRITE = 48
 function App() {
   let atlas = createAtlas(logoBytes, { label: "logo-atlas" })
   let frames = grid(2, 2, { width: atlas.width, height: atlas.height })
-  let layer = createSpriteLayer(W, H, atlas.texture, {
-    capacity: COUNT,
-    clearColor: [0.05, 0.05, 0.09, 1],
-    label: "bounce",
-  })
+  let layer = createSpriteLayer(atlas.texture, { capacity: COUNT, label: "bounce" })
+  let view = layer.createView({ width: W, height: H, clearColor: [0.05, 0.05, 0.09, 1] })
 
   // Simulation state lives in plain arrays; the layer holds the published
   // snapshot of it.
@@ -73,7 +70,7 @@ function App() {
 
   return (
     <window alignItems="center" justifyContent="center">
-      <texture src={layer.texture} width={W} height={H} />
+      <texture src={view.texture} width={W} height={H} />
     </window>
   )
 }

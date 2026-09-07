@@ -27,11 +27,8 @@ const SPRITE = 30
 function App() {
   let atlas = createAtlas(logoBytes, { label: "logo-atlas" })
   let frames = grid(2, 2, { width: atlas.width, height: atlas.height })
-  let layer = createSpriteLayer(W, H, atlas.texture, {
-    capacity: COUNT,
-    clearColor: [0.05, 0.05, 0.09, 1],
-    label: "springs",
-  })
+  let layer = createSpriteLayer(atlas.texture, { capacity: COUNT, label: "springs" })
+  let view = layer.createView({ width: W, height: H, clearColor: [0.05, 0.05, 0.09, 1] })
 
   let slotX = (slot: number) => ((slot % COLS) + 0.5) * (W / COLS)
   let slotY = (slot: number) => (Math.floor(slot / COLS) + 0.5) * (H / ROWS)
@@ -61,7 +58,7 @@ function App() {
 
   return (
     <window alignItems="center" justifyContent="center">
-      <texture src={layer.texture} width={W} height={H} />
+      <texture src={view.texture} width={W} height={H} />
     </window>
   )
 }

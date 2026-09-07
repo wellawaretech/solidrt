@@ -37,7 +37,7 @@ export let OrbitCamera: VoidComponent<OrbitCameraProps> = props => {
   let ctx = useContext(SceneContext)
   let leafViewport = () => {
     let layout = ctx.input.layout()
-    return layout === null ? null : { height: layout.height, fov: ctx.camera.camera().fov }
+    return layout === null ? null : { height: layout.height, fov: ctx.viewport.camera().fov }
   }
   // The control keeps this object and reads each option where it applies,
   // so the props go through as getters (merge), never a spread: a spread
@@ -47,7 +47,7 @@ export let OrbitCamera: VoidComponent<OrbitCameraProps> = props => {
       return props.viewport ?? leafViewport
     },
   })
-  let orbit = untrack(() => createOrbitCamera(ctx.camera, options))
+  let orbit = untrack(() => createOrbitCamera(ctx.viewport, options))
   // Input pushes the pose synchronously (update(0)), so a drag needs no
   // frame loop and the next paint carries the new camera.
   onCleanup(

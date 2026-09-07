@@ -1,5 +1,5 @@
-// Pointer dispatch behind layer.handlers, shared by both layer kinds: the
-// element event model one tree deeper, with the LAYER as the root of the
+// Pointer dispatch behind view.handlers, shared by both layer kinds: the
+// element event model one tree deeper, with the VIEW as the root of the
 // walk. Down, move, up and wheel dispatch on the topmost hit sprite,
 // bubble through its enclosing groups and end at the layer's listeners;
 // over empty space the walk is the layer alone (`sprite` null). Claiming
@@ -22,8 +22,7 @@
 import type { PointerEvent as ElementPointerEvent } from "@solidrt/core"
 import { unprojectCamera } from "./camera.ts"
 import type { CameraUpdate } from "./camera.ts"
-import type { LayerPointerListener, Sprite, SpriteGroup, SpriteHandlers, SpriteLayer, SpritePointerEvent } from "./layer.ts"
-import type { RecordLayer } from "./records.ts"
+import type { LayerPointerListener, Sprite, SpriteGroup, SpriteHandlers, SpritePointerEvent } from "./layer.ts"
 import type { ViewHandle } from "./views.ts"
 
 // Finger travel from the down point, in window pixels, past which a press
@@ -44,10 +43,8 @@ export type DispatchDeps = {
   size: () => [number, number]
   camera: () => CameraUpdate
   pick: (x: number, y: number) => Sprite[]
-  /** The layer, or a view of it: the walk's root and the listeners'
-   * currentTarget. Read per event: a layer is built after its own
-   * target's dispatch. */
-  root: () => SpriteLayer | RecordLayer | ViewHandle
+  /** The view: the walk's root and the listeners' currentTarget. */
+  root: ViewHandle
   /** The root's listeners, in registration order. */
   listeners: Set<LayerPointerListener>
   /** The clock for tap repeats (default performance.now; checks inject). */
@@ -61,7 +58,7 @@ type HandlerName = "onPointerDown" | "onPointerMove" | "onPointerUp" | "onWheel"
 // fields); the public types narrow it per handler.
 type InternalEvent = {
   sprite: Sprite | null
-  currentTarget: Sprite | SpriteGroup | SpriteLayer | RecordLayer | ViewHandle
+  currentTarget: Sprite | SpriteGroup | ViewHandle
   x: number
   y: number
   pointerId: number
@@ -111,7 +108,7 @@ export function spriteDispatch(deps: DispatchDeps): (layout: (() => { width: num
       }
     }
     if (event._stopped || !toRoot) return false
-    event.currentTarget = deps.root()
+    event.currentTarget = deps.root
     for (let listener of deps.listeners) {
       let handler = listener[name] as ((event: InternalEvent) => void) | undefined
       if (handler) handler(event)
@@ -135,7 +132,7 @@ export function spriteDispatch(deps: DispatchDeps): (layout: (() => { width: num
     let makeEvent = (sprite: Sprite | null, x: number, y: number, e: ElementPointerEvent): InternalEvent => {
       let event: InternalEvent = {
         sprite,
-        currentTarget: sprite ?? deps.root(),
+        currentTarget: sprite ?? deps.root,
         x,
         y,
         pointerId: e.pointerId,

@@ -26,7 +26,7 @@ export let PerspectiveCamera: VoidComponent<PerspectiveCameraProps> = props => {
   createEffect(
     () => [props.fov, props.near, props.far, props.position, props.lookAt, props.up] as const,
     ([fov, near, far, position, lookAt, up]) =>
-      ctx.camera.setCamera({ fov, near, far, position, target: lookAt, up }),
+      ctx.viewport.setCamera({ fov, near, far, position, target: lookAt, up }),
   )
   return null
 }

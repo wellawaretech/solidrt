@@ -2,7 +2,7 @@ import { createEffect, displayScale, getBoundingBoxViewport, onCleanup, onLayout
 import type { Element, ParentComponent, TextureId } from "@solidrt/core"
 import type { CameraUpdate } from "../camera.ts"
 import type { ViewHandle, ViewOptions } from "../views.ts"
-import { CameraContext, LayerContext } from "./context.ts"
+import { LayerContext, ViewportContext } from "./context.ts"
 import type { LayerPointerProps } from "./sprite-layer.tsx"
 import { applyOversample } from "./auto-oversample.ts"
 
@@ -39,12 +39,15 @@ export type View2dProps = LayerPointerProps &
   }
 
 /**
- * A second rendering of the enclosing layer from a camera of its own
- * (layer.createView as a component): the same sprites, one more target
- * and one entry, so it costs no per-frame JS. Composites as an ordinary
- * `<texture>` leaf at the view size, or through `output`. A `<Camera2d>`
+ * A view of the enclosing layer from a camera of its own (layer.createView
+ * as a component): the same sprites, one more target and one entry, so
+ * it costs no per-frame JS. The `<SpriteLayer>`'s own leaf is one of
+ * these too; a `<SpriteLayer output={false}>` shows ONLY through its
+ * `<View2d>` children (split-screen: two side by side). Composites as an
+ * ordinary `<texture>` leaf at the view size, or through `output`. A
+ * `<Camera2d>`
  * child drives the VIEW's camera and listens at the view's root: inside,
- * `useSpriteLayer()` reports the view as `camera`. `<Sprite>` and
+ * `useSpriteLayer()` reports the view as `viewport`. `<Sprite>` and
  * `<Group>` children mount to the layer as they would outside - a view
  * mirrors the layer's sprites, it has none of its own. Sprites under the
  * view's leaf get their ordinary pointer handlers, with the view's camera
@@ -114,7 +117,7 @@ export let View2d: ParentComponent<View2dProps> = props => {
   onLayout(pick)
   createEffect(() => [displayScale(), props.maxOversample], pick)
   return (
-    <CameraContext value={view}>
+    <ViewportContext value={view}>
       {output ? (
         untrack(() => output(view.texture))
       ) : (
@@ -131,6 +134,6 @@ export let View2d: ParentComponent<View2dProps> = props => {
         />
       )}
       {props.children}
-    </CameraContext>
+    </ViewportContext>
   )
 }

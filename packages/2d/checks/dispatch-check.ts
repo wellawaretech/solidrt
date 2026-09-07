@@ -18,6 +18,7 @@
 import type { PointerEvent as ElementPointerEvent, WheelEvent as ElementWheelEvent } from "@solidrt/core"
 import { spriteDispatch } from "../src/dispatch.ts"
 import type { LayerPointerListener, Sprite, SpriteGroup, SpriteLayer } from "../src/layer.ts"
+import type { ViewHandle } from "../src/views.ts"
 import { pointInSprite } from "../src/pick.ts"
 import type { CameraUpdate } from "../src/camera.ts"
 
@@ -38,7 +39,7 @@ function expect(name: string, got: string[], want: string[]) {
 // sprite rects, topmost (last added) first.
 type Fake = { name: string; x: number; y: number; w: number; h: number }
 let log: string[] = []
-let root = { name: "root" } as unknown as SpriteLayer
+let root = { name: "root" } as unknown as ViewHandle
 let listeners = new Set<LayerPointerListener>()
 let sprites: (Sprite & Fake)[] = []
 let camera: CameraUpdate = { x: 0, y: 0, zoom: 1, rotation: 0, pivotX: 0, pivotY: 0 }
@@ -96,7 +97,7 @@ let dispatch = spriteDispatch({
   size: () => size,
   camera: () => camera,
   pick,
-  root: () => root,
+  root,
   listeners,
   now: () => clock,
 })

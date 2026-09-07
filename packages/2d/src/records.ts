@@ -26,7 +26,6 @@ import { FULL_FRAME, writeFrame } from "./frames.ts"
 import { checkTint, readFrame } from "./layer.ts"
 import type { LayerBase, Sprite, SpriteLayerOptions, SpriteOptions, SpriteState } from "./layer.ts"
 import { pointInSprite } from "./pick.ts"
-import { checkOversample } from "./oversample.ts"
 import { createSpritePipeline, INSTANCE_ATTRIBUTES, VERTEX } from "./shaders.ts"
 import { createViews } from "./views.ts"
 
@@ -81,17 +80,12 @@ export type RecordLayer = LayerBase & {
 }
 
 /**
- * Create a records layer rendering into a `width` x `height` texture from
- * one atlas texture (same target shape as createSpriteLayer; the atlas is
- * NOT owned). Disposed automatically with the owning reactive scope (opt
- * out with `{ autoFree: false }`).
+ * Create a records layer over one atlas texture (the atlas is NOT owned).
+ * Like createSpriteLayer it renders nothing by itself: `createView` is
+ * where it shows. Disposed automatically with the owning reactive scope
+ * (opt out with `{ autoFree: false }`).
  */
-export function createRecordLayer(
-  width: number,
-  height: number,
-  atlas: TextureId,
-  opts?: RecordLayerOptions,
-): RecordLayer {
+export function createRecordLayer(atlas: TextureId, opts?: RecordLayerOptions): RecordLayer {
   let capacity = opts?.capacity ?? 1024
   if (!(capacity > 0 && Number.isInteger(capacity))) {
     throw new Error(`createRecordLayer: capacity must be a positive integer, got ${capacity}`)
@@ -101,8 +95,6 @@ export function createRecordLayer(
     label: `${label}-records`,
     autoFree: false,
   })
-  let oversample = opts?.oversample ?? 1
-  checkOversample("createRecordLayer", oversample, width, height)
   let tint = opts?.tint ?? [1, 1, 1, 1]
   checkTint("createRecordLayer", tint)
   let orderBy = opts?.orderBy
@@ -204,35 +196,13 @@ export function createRecordLayer(
     count: () => published,
     tint: () => tint,
     pick: (x, y) => layer.pick(x, y),
+    order: instanceOrder,
   })
-  // The layer's own target, the first view; its entry carries the order.
-  let main = views.create({ width, height, oversample, clearColor: opts?.clearColor, label }, { root: () => layer, order: instanceOrder })
 
-  // The viewport contract is the own target's; the layer adds the
-  // records, the tint fan-out and the lifetime.
   let layer: RecordLayer = {
-    texture: main.texture,
-    handlers: main.handlers,
     get count() {
       return layer._order.length
     },
-    get width() {
-      return main.width
-    },
-    get height() {
-      return main.height
-    },
-    get oversample() {
-      return main.oversample
-    },
-    setSize: main.setSize,
-    listen: main.listen,
-    setOversample: main.setOversample,
-    setCamera: main.setCamera,
-    camera: main.camera,
-    project: main.project,
-    unproject: main.unproject,
-    handlersFor: main.handlersFor,
     setTint(next) {
       if (disposed) return
       checkTint("setTint", next)

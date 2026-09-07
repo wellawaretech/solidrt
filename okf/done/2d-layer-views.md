@@ -102,3 +102,17 @@ Not done here, on purpose - the tile-map minimap with marker selection
 this note's "done looks like" named needs tile-layer views and the
 `layers` bitmask, both additive and filed as
 [2d-layer-views-additive](../backlog/2d-layer-views-additive.md).
+
+Later the same day the layer's OWN target went: a layer renders nothing
+by itself and shows only through its views (`createSpriteLayer(atlas,
+opts)` / `createRecordLayer(atlas, opts)` take no size; the
+`<SpriteLayer>`'s built-in leaf is one view, `<SpriteLayer
+output={false}>` has none and shows through `<View2d>` children -
+examples/split-screen.tsx). This is the Unity/Godot model (a scene
+renders only through Cameras, a World2D only through Viewports), and it
+removed the duplicated draw path and viewport methods `layer.ts` and
+`records.ts` had carried: `createSpritePipeline` (shaders.ts) owns quad,
+program and pipeline, views.ts owns every target. Key order lives on the
+first live view's entry and re-homes to the next when that view goes.
+`useSpriteLayer()` reports the nearest view as `viewport`; `useScene()`
+in 3d renamed its `camera` member to `viewport` to match.

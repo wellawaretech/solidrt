@@ -1,27 +1,28 @@
-// A layer's targets: every rendering of a layer's world is a view - one
+// A layer's views: every rendering of a layer's world is a view - one
 // draw target holding ONE entry over the layer's pipeline and instance
-// buffers, with a camera and a viewport of its own - and the layer's own
-// output is simply the first one (Unity's scene renders only through
-// Cameras, Godot's World2D only through Viewports; @solidrt/3d's
-// scene.createView one dimension down). Further views are the minimap,
-// the radar strip, the zoomed inset: no sprite is mirrored, no record is
-// written twice, and the core's key-order gather (the own entry's
-// instanceOrder - one ordered entry per buffer) happens in the buffers at
-// publish, so a view entry declaring no order reads them already sorted.
-// The layer fans buffer swaps (growth), the instance count and the tint
-// out to every target through the registry below, its own first; the
-// camera and the viewport are each target's own params. Pointer events
-// run the layer's dispatch (dispatch.ts) with the target's camera undone
-// over the layer's pick, the target as the root of the walk: a sprite
-// under a minimap gets its ordinary handlers, and the root's listeners
-// are the last stop.
-import { addDraw, createDrawTarget, destroyTexture, setDrawBuffers, setDrawRange, setTargetParams, setTargetSize } from "@solidrt/core/gpu"
+// buffers, with a camera and a viewport of its own - and a layer has no
+// output but its views (Unity's scene renders only through Cameras,
+// Godot's World2D only through Viewports; @solidrt/3d's scene.createView
+// one dimension down). The window-filling main view, the minimap, the
+// radar strip, the zoomed inset, two split-screen panes: all the same
+// object. No sprite is mirrored, no record is written twice, and the
+// core's key-order gather (the entry's instanceOrder) happens in the
+// buffers at publish: ONE entry per buffer declares the order - the first
+// live view's, re-homed to the next when that view goes - and every other
+// entry reads the buffers already sorted. The layer fans buffer swaps
+// (growth), the instance count and the tint out to every view through
+// the registry below; the camera and the viewport are each view's own
+// params, so a view costs no per-frame JS beyond its camera writes.
+// Pointer events run the layer's dispatch (dispatch.ts) with the view's
+// camera undone over the layer's pick, the view as the root of the walk:
+// a sprite under a minimap gets its ordinary handlers, and the view's
+// listeners are the last stop.
+import { addDraw, createDrawTarget, destroyTexture, removeDraw, setDrawBuffers, setDrawRange, setTargetParams, setTargetSize } from "@solidrt/core/gpu"
 import type { BufferId, BufferUpdate, DrawId, InstanceOrder, RenderPipelineId, TextureId } from "@solidrt/core/gpu"
 import { applyCamera, cameraParams, checkCamera, defaultCamera, projectCamera, unprojectCamera } from "./camera.ts"
-import type { CameraUpdate } from "./camera.ts"
+import type { CameraState, CameraUpdate } from "./camera.ts"
 import { spriteDispatch } from "./dispatch.ts"
-import type { LayerBase, LayerPointerListener, Sprite, SpriteHandlers, SpriteLayer } from "./layer.ts"
-import type { RecordLayer } from "./records.ts"
+import type { LayerPointerListener, Sprite, SpriteHandlers } from "./layer.ts"
 import { checkOversample, thrashSentinel } from "./oversample.ts"
 
 export type ViewOptions = {
@@ -30,27 +31,76 @@ export type ViewOptions = {
   height: number
   /** The camera to start from (a setCamera update); default the identity. */
   camera?: CameraUpdate
-  /** Target texels per view pixel (see LayerBase.setOversample); default 1. */
+  /** Target texels per view pixel (see ViewHandle.setOversample); default 1. */
   oversample?: number
   clearColor?: [number, number, number, number]
   label?: string
 }
 
 /**
- * A view of a layer (LayerBase.createView): the layer's own viewport
- * contract - texture, size, oversample, camera and pointer dispatch -
- * over the same sprites, with a camera of its own. The sprites are the
- * layer's: add, write and pick through the layer, tint through the layer
- * (a view follows it). `dispose` is idempotent; views also die with their
+ * A view of a layer (LayerBase.createView): the viewport contract -
+ * texture, size, oversample, camera and pointer dispatch - over the
+ * layer's sprites, with a camera of its own. The sprites are the layer's:
+ * add, write and pick through the layer, tint through the layer (every
+ * view follows it). `dispose` is idempotent; views also die with their
  * layer.
  */
-export type ViewHandle = Pick<
-  LayerBase,
-  "texture" | "handlers" | "width" | "height" | "setSize" | "listen" | "oversample" | "setOversample" | "setCamera" | "camera" | "project" | "unproject" | "handlersFor" | "dispose"
->
+export type ViewHandle = {
+  /** The view's output: an ordinary texture id (`<texture src>`). */
+  texture: TextureId
+  /** Element handlers wiring the view's pointer events (sprites, groups
+   * and the root listeners); see handlersFor. */
+  handlers: SpriteHandlers
+  /** View pixels, as created or last set by setSize. */
+  readonly width: number
+  readonly height: number
+  setSize(width: number, height: number): void
+  /**
+   * Listen at the root of the event walk. Every down, move, up, wheel and
+   * tap arrives here after the hit sprite and its enclosing groups
+   * (`sprite` set) or as the walk's only stop over empty space (`sprite`
+   * null), unless a handler stopped it on the way. Listeners run in
+   * registration order and all of them run - the root is the last stop,
+   * there is nothing left to claim. Returns the remover. The app's own
+   * root handling (deselect on a miss, a marquee) and controls
+   * (createCamera2d's attach) meet here, which is why the root is a list
+   * where a sprite has plain fields.
+   */
+  listen(listener: LayerPointerListener): () => void
+  /** Target texels per view pixel; see setOversample. */
+  readonly oversample: number
+  /**
+   * Re-render at `n` target texels per view pixel (positive integer): the
+   * target resizes in place at its stable id; view pixels, records, camera
+   * and picking are untouched. Pick `n` as the ceiling of the device pixels
+   * one view pixel covers on screen (display scale times any designSize
+   * fit or layout scaling), which the components do in onLayout.
+   */
+  setOversample(n: number): void
+  setCamera(update: CameraUpdate): void
+  /** The camera as last set (a fresh object per call, every field
+   * present): the argument for projectCamera/unprojectCamera -
+   * @solidrt/3d's scene.camera(). */
+  camera(): CameraState
+  /** World (layer) pixels -> view pixels under the current camera:
+   * projectCamera over camera(). */
+  project(x: number, y: number): [number, number]
+  /** View pixels -> world (layer) pixels, the inverse: what pointer
+   * dispatch applies to every event. */
+  unproject(x: number, y: number): [number, number]
+  /**
+   * handlers for a leaf whose LAYOUT size differs from the view size
+   * (events scale by view/layout; a leaf laid out AT view size just uses
+   * `handlers`). `layout` is read per event, so a resize-reactive layout
+   * just works - @solidrt/3d's handlersFor, one dimension down.
+   */
+  handlersFor(layout: () => { width: number; height: number }): SpriteHandlers
+  dispose(): void
+}
 
-// What a layer hands its targets: the pipeline and quad every entry draws
-// with, the atlas, and live reads of the state the layer fans out.
+// What a layer hands its views: the pipeline and quad every entry draws
+// with, the atlas, the key order one entry declares, and live reads of
+// the state the layer fans out.
 export type ViewDeps = {
   label: string
   pipeline: RenderPipelineId
@@ -63,21 +113,15 @@ export type ViewDeps = {
   count: () => number
   tint: () => [number, number, number, number]
   pick: (x: number, y: number) => Sprite[]
-}
-
-/** The layer's OWN target, created first: its entry declares the
- * instance order, and the walk's root is the layer itself - built after
- * the target, hence the getter. */
-export type OwnTarget = {
-  root: () => SpriteLayer | RecordLayer
+  /** The layer's key order (`orderBy`), declared by ONE live entry. */
   order?: InstanceOrder
 }
 
-/** The layer side of its targets: create, and fan out what changes. */
+/** The layer side of its views: create, and fan out what changes. */
 export type Views = {
-  create(opts: ViewOptions, own?: OwnTarget): ViewHandle
+  create(opts: ViewOptions): ViewHandle
   /** The layer swapped its instance buffers (growth): every entry
-   * follows, the layer's own first. */
+   * follows. */
   setBuffers(update: BufferUpdate): void
   setCount(count: number): void
   setTint(tint: [number, number, number, number]): void
@@ -88,12 +132,32 @@ type ViewRecord = { texture: TextureId; entry: DrawId; dispose(): void }
 
 export function createViews(deps: ViewDeps): Views {
   let views = new Set<ViewRecord>()
+  // The one entry declaring the key order (null until a view exists, or
+  // while the layer has no order).
+  let ordered: ViewRecord | null = null
+  let entryFor = (texture: TextureId, order: InstanceOrder | undefined): DrawId =>
+    addDraw(texture, deps.pipeline, null, {
+      buffer: deps.quad,
+      vertexCount: 4,
+      ...deps.buffers(),
+      instanceOrder: order,
+      instanceCount: deps.count(),
+    })
+  // The ordered view went: the next live view re-adds its entry with the
+  // order, so key order survives any one view's lifetime.
+  let rehome = () => {
+    if (deps.order === undefined) return
+    let next = views.values().next().value
+    if (!next) return
+    removeDraw(next.texture, next.entry)
+    next.entry = entryFor(next.texture, deps.order)
+    ordered = next
+  }
   return {
-    create(opts, own) {
+    create(opts) {
       let width = opts.width
       let height = opts.height
-      // The layer's own size is its caller's (a fill layer rounds it).
-      if (!own && !(Number.isInteger(width) && width > 0 && Number.isInteger(height) && height > 0)) {
+      if (!(Number.isInteger(width) && width > 0 && Number.isInteger(height) && height > 0)) {
         throw new Error(`createView: width and height must be positive integers, got ${width} x ${height}`)
       }
       let oversample = opts.oversample ?? 1
@@ -110,14 +174,9 @@ export function createViews(deps: ViewDeps): Views {
         { uViewport: [width, height], ...cameraParams(cam), uTint: deps.tint() },
         { textures: { uAtlas: deps.atlas }, clearColor: opts.clearColor ?? [0, 0, 0, 0], label, autoFree: false },
       )
-      let entry = addDraw(texture, deps.pipeline, null, {
-        buffer: deps.quad,
-        vertexCount: 4,
-        ...deps.buffers(),
-        instanceOrder: own?.order,
-        instanceCount: deps.count(),
-      })
-      let thrash = thrashSentinel(own ? `layer "${label}"` : `view "${label}"`)
+      let order = ordered === null ? deps.order : undefined
+      let entry = entryFor(texture, order)
+      let thrash = thrashSentinel(`view "${label}"`)
       let disposed = false
       let listeners = new Set<LayerPointerListener>()
       let record: ViewRecord = {
@@ -128,10 +187,15 @@ export function createViews(deps: ViewDeps): Views {
           disposed = true
           listeners.clear()
           views.delete(record)
-          // The entry dies with its target.
+          // The entry dies with its target, releasing the buffers' order.
           destroyTexture(texture)
+          if (ordered === record) {
+            ordered = null
+            rehome()
+          }
         },
       }
+      if (order !== undefined) ordered = record
       let view: ViewHandle = {
         texture,
         handlers: undefined as unknown as SpriteHandlers,
@@ -189,7 +253,7 @@ export function createViews(deps: ViewDeps): Views {
         size: () => [width, height],
         camera: () => cam,
         pick: deps.pick,
-        root: own?.root ?? (() => view),
+        root: view,
         listeners,
       })
       view.handlers = dispatch(null)

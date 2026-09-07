@@ -215,7 +215,7 @@ export let Scene: ParentComponent<SceneProps> = props => {
   let sceneHandlers = fill ? scene.handlersFor(builtinLayout) : scene.handlers
   let leaf = output ? null : input.handlersFor(builtinLayout, () => leafNode)
   return (
-    <SceneContext value={{ scene, parent: scene.root, camera: scene, input }}>
+    <SceneContext value={{ scene, parent: scene.root, viewport: scene, input }}>
       {output ? (
         untrack(() => output(scene.texture))
       ) : (

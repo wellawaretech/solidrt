@@ -23,10 +23,8 @@ const SHOT_FPS = 5
 function App() {
   let atlas = createAtlas(logoBytes, { label: "logo-atlas" })
   let frames = grid(2, 2, { width: atlas.width, height: atlas.height })
-  let layer = createSpriteLayer(W, H, atlas.texture, {
-    clearColor: [0.05, 0.05, 0.09, 1],
-    label: "anim",
-  })
+  let layer = createSpriteLayer(atlas.texture, { label: "anim" })
+  let view = layer.createView({ width: W, height: H, clearColor: [0.05, 0.05, 0.09, 1] })
 
   // Three sprites share the looping clip - one clock steps all of them.
   let looping = createAnimation(frames, LOOP_FPS)
@@ -78,7 +76,7 @@ function App() {
 
   return (
     <window alignItems="center" justifyContent="center">
-      <texture src={layer.texture} width={W} height={H} />
+      <texture src={view.texture} width={W} height={H} />
     </window>
   )
 }

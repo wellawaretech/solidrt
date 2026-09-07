@@ -59,11 +59,10 @@ function App() {
   let frames = grid(2, 2, { width: atlas.width, height: atlas.height })
   // The window's logical size, mirrored for the layer and the camera.
   let win = { width: 1, height: 1 }
-  let layer = createSpriteLayer(win.width, win.height, atlas.texture, {
-    capacity: COUNT + 1,
-    clearColor: [0.05, 0.05, 0.09, 1],
-    label: "camera",
-  })
+  let layer = createSpriteLayer(atlas.texture, { capacity: COUNT + 1, label: "camera" })
+  // The layer's one view here: the window. The camera drives it and
+  // listens at its root.
+  let view = layer.createView({ width: win.width, height: win.height, clearColor: [0.05, 0.05, 0.09, 1] })
   let select = (sprite: SpriteHandle | null) => {
     if (selected) setSprite(selected, { tint: TINT })
     selected = sprite
@@ -94,16 +93,16 @@ function App() {
   }
   let roamer = addSprite(layer, { x: WORLD.width / 2, y: WORLD.height / 2, w: ROAMER, h: ROAMER, frame: frames[0], tint: [1, 0.8, 0.3, 1] })
 
-  cam = createCamera2d(layer, {
+  cam = createCamera2d(view, {
     viewport: () => win,
     world: WORLD,
     maxZoom: MAX_ZOOM,
     deadZone: DEAD_ZONE,
   })
-  cam.attach(layer)
+  cam.attach(view)
   // A tap that reached the root landed on empty space (a sprite's tap
   // still bubbles here with e.sprite set, so the miss is the null case).
-  layer.listen({
+  view.listen({
     onTap: e => {
       if (e.sprite) return
       select(null)
@@ -117,8 +116,8 @@ function App() {
     ({ size, scale }) => {
       win.width = Math.max(1, size.width)
       win.height = Math.max(1, size.height)
-      layer.setSize(win.width, win.height)
-      layer.setOversample(fitOversample(scale, win.width, win.height, win.width * win.height * scale * scale))
+      view.setSize(win.width, win.height)
+      view.setOversample(fitOversample(scale, win.width, win.height, win.width * win.height * scale * scale))
     },
   )
 
@@ -152,7 +151,7 @@ function App() {
         }
       }}
     >
-      <texture src={layer.texture} position="absolute" left={0} top={0} width={windowSize().width} height={windowSize().height} {...layer.handlers} />
+      <texture src={view.texture} position="absolute" left={0} top={0} width={windowSize().width} height={windowSize().height} {...view.handlers} />
       <view pointerEvents="none" gap={6} padding={20}>
         <text color="#eef4ff" fontSize={24} fontWeight={700}>
           Camera

@@ -260,6 +260,33 @@ for (let i = 0; i < SWEEP; i++) {
   if (!near(cam.camera().x!, 200, 1e-3)) fail(`follow honors the world clamp (200), got ${cam.camera().x}`)
 }
 
+// ---- A wheel zoom survives a per-frame follow of a moving target ----
+{
+  let { cam } = make({ minZoom: 0.01, maxZoom: 100, zoom: 2, x: 500, y: 250 })
+  cam.follow(500, 250)
+  settle(cam)
+  cam.wheel(400, 300, -200)
+  let target = 2 * Math.exp(200 * 0.0015)
+  // The target moves a pixel a tick for as long as any glide may take;
+  // the follow never rests meanwhile (a moving target keeps it active),
+  // so the span is fixed rather than settled.
+  let last = 500
+  for (let tick = 0; tick < SETTLE_TICKS; tick++) {
+    last = 500 + tick
+    cam.follow(last, 250)
+    cam.update(DT)
+  }
+  if (cam.camera().zoom !== target) fail(`wheel zoom lands on its target ${target} under a moving follow, got ${cam.camera().zoom}`)
+  // The target stops: the follow, which trailed it by its ease, settles on it.
+  settle(cam)
+  if (!near(cam.camera().x!, last, 1e-3)) fail(`follow tracked the moving target to ${last}, got ${cam.camera().x}`)
+  // A pose glide still yields to the follow.
+  cam.glideTo(100, 100)
+  cam.follow(last, 250)
+  settle(cam)
+  if (!near(cam.camera().x!, last, 1e-3)) fail(`follow cancels a pose glide, got ${cam.camera().x}`)
+}
+
 // ---- Inertia: a flick keeps gliding and decays to rest; slow or disabled releases do not ----
 {
   let drag = (cam: Camera2dMotion, perTick: number, ticks: number) => {

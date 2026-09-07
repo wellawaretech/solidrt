@@ -6,7 +6,7 @@ import type { Camera2d as Camera2dHandle, Camera2dOptions } from "../camera2d.ts
 import { useSpriteLayer } from "./context.ts"
 
 export type Camera2dProps = Omit<Camera2dOptions, "viewport"> & {
-  /** Viewport in layer pixels; defaults to the driven viewport's own size
+  /** Viewport in layer pixels; defaults to the driven view's own size
    * (live: a fill layer's box, a setSize, a `<View2d>` resize). */
   viewport?: () => { width: number; height: number }
   ref?: (camera: Camera2dHandle) => void
@@ -17,10 +17,12 @@ export type Camera2dProps = Omit<Camera2dOptions, "viewport"> & {
 const MAX_CAMERA_DT = 0.1
 
 /**
- * createCamera2d as a SpriteLayer child: drives the nearest viewport's
- * camera - the layer's, or inside a `<View2d>` that view's
- * (useSpriteLayer's `camera`) - and takes its input from its root through
- * context - no ref plumbing, no handler spreads, no onFrame of your own. A sprite that
+ * createCamera2d as a SpriteLayer child: drives the nearest view's camera
+ * - the `<SpriteLayer>`'s own, or inside a `<View2d>` that view
+ * (useSpriteLayer's `viewport`) - and takes its input from its root
+ * through context - no ref plumbing, no handler spreads, no onFrame of
+ * your own. Under a `<SpriteLayer output={false}>` there is no view to
+ * drive: put the `<Camera2d>` inside one of its `<View2d>` children. A sprite that
  * claims its press (stopPropagation on its down) keeps the camera out of
  * that drag; everything else pans, pinches and wheels. The options are
  * read at mount (the motion reads them once): change the pose at runtime
@@ -30,7 +32,7 @@ const MAX_CAMERA_DT = 0.1
  * the app demand-driven idle.
  */
 export let Camera2d: VoidComponent<Camera2dProps> = props => {
-  let target = useSpriteLayer().camera
+  let target = useSpriteLayer().viewport
   // Through merge, not a spread: a props object hands out getters, and
   // merge keeps them (the motion reads each once at creation, viewport
   // live).

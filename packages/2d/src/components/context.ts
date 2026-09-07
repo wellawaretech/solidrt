@@ -5,31 +5,37 @@ import type { ViewHandle } from "../views.ts"
 export let LayerContext = createContext<LayerHandle>()
 export let GroupContext = createContext<SpriteGroup | null>(null)
 
-/**
- * The viewport a camera control drives and listens at: the layer, or a
- * view (a layer is a ViewHandle structurally). Wider than @solidrt/3d's
- * CameraTarget because a 2d control takes its input from the same
- * object's root (`listen`) and defaults its viewport to its size.
- */
-export type CameraTarget = Pick<ViewHandle, "width" | "height" | "setCamera" | "camera" | "project" | "unproject" | "listen">
+// The nearest view: the <SpriteLayer>'s own, or the enclosing <View2d>'s;
+// null under a leafless layer (output={false}) until a <View2d>
+// provides one. Null-default on purpose, like GroupContext.
+export let ViewportContext = createContext<ViewHandle | null>(null)
 
-// The nearest view (null at the layer root): set by <View2d>, so the
-// camera target below resolves to it inside one. Null-default on purpose,
-// like GroupContext.
-export let CameraContext = createContext<CameraTarget | null>(null)
-
-type LayerCtx = { layer: LayerHandle; parent: SpriteGroup | null; camera: CameraTarget }
+type LayerCtx = { layer: LayerHandle; parent: SpriteGroup | null; readonly viewport: ViewHandle }
 
 /**
- * The enclosing layer, parent group and camera target - the imperative
- * escape hatch inside a component subtree (throws outside a
- * `<SpriteLayer>`), the same shape as @solidrt/3d's useScene. `parent` is
- * the enclosing `<Group>`'s handle (null at the layer root); pass it on to
+ * The enclosing layer, parent group and view - the imperative escape
+ * hatch inside a component subtree (throws outside a `<SpriteLayer>`),
+ * the same shape as @solidrt/3d's useScene. `parent` is the enclosing
+ * `<Group>`'s handle (null at the layer root); pass it on to
  * addSprite/addGroup so imperative sprites mount where the JSX sits.
- * `camera` is the nearest OWNER's viewport: the layer's, or inside a
- * `<View2d>` that view's - what a `<Camera2d>` drives.
+ * `viewport` is the nearest view: the `<SpriteLayer>`'s own, or inside a
+ * `<View2d>` that view - what a `<Camera2d>` drives, and where a custom
+ * `output` leaf takes its `handlers`. Reading it under a
+ * `<SpriteLayer output={false}>` throws: such a layer shows only through
+ * its `<View2d>` children, so controls and leaves go inside one.
  */
 export function useSpriteLayer(): LayerCtx {
   let layer = useContext(LayerContext)
-  return { layer, parent: useContext(GroupContext), camera: useContext(CameraContext) ?? layer }
+  let parent = useContext(GroupContext)
+  let viewport = useContext(ViewportContext)
+  return {
+    layer,
+    parent,
+    get viewport() {
+      if (viewport === null) {
+        throw new Error("useSpriteLayer: no view here - a <SpriteLayer output={false}> shows only through its <View2d> children; put camera controls and leaves inside one")
+      }
+      return viewport
+    },
+  }
 }

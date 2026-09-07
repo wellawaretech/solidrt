@@ -48,7 +48,7 @@ export let FirstPersonCamera: VoidComponent<FirstPersonCameraProps> = props => {
       return props.viewport ?? leafViewport
     },
   })
-  let camera = untrack(() => createFirstPersonCamera(ctx.camera, options))
+  let camera = untrack(() => createFirstPersonCamera(ctx.viewport, options))
   // Look input applies synchronously inside the control's handlers, so a
   // mouse move under lock needs no frame loop; only movement integrates.
   onCleanup(ctx.input.add(camera.handlers))

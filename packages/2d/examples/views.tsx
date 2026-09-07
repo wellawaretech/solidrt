@@ -49,11 +49,9 @@ function App() {
   let atlas = createAtlas(logoBytes, { label: "logo-atlas" })
   let frames = grid(2, 2, { width: atlas.width, height: atlas.height })
   let win = { width: 1, height: 1 }
-  let layer = createSpriteLayer(win.width, win.height, atlas.texture, {
-    capacity: COUNT + 1,
-    clearColor: [0.05, 0.05, 0.09, 1],
-    label: "world",
-  })
+  let layer = createSpriteLayer(atlas.texture, { capacity: COUNT + 1, label: "world" })
+  // The main view: the window, under the pannable camera.
+  let main = layer.createView({ width: win.width, height: win.height, clearColor: [0.05, 0.05, 0.09, 1], label: "world" })
   let select = (sprite: SpriteHandle | null) => {
     if (selected) setSprite(selected, { tint: TINT })
     selected = sprite
@@ -85,9 +83,9 @@ function App() {
     label: "minimap",
   })
 
-  cam = createCamera2d(layer, { viewport: () => win, world: WORLD, maxZoom: MAX_ZOOM })
-  cam.attach(layer)
-  layer.listen({
+  cam = createCamera2d(main, { viewport: () => win, world: WORLD, maxZoom: MAX_ZOOM })
+  cam.attach(main)
+  main.listen({
     onTap: e => {
       if (e.sprite === null) select(null)
     },
@@ -101,9 +99,9 @@ function App() {
     ({ size, scale }) => {
       win.width = Math.max(1, size.width)
       win.height = Math.max(1, size.height)
-      layer.setSize(win.width, win.height)
+      main.setSize(win.width, win.height)
       let budget = win.width * win.height * scale * scale
-      layer.setOversample(fitOversample(scale, win.width, win.height, budget))
+      main.setOversample(fitOversample(scale, win.width, win.height, budget))
       map.setOversample(fitOversample(scale, MAP_WIDTH, MAP_HEIGHT, budget))
     },
   )
@@ -131,7 +129,7 @@ function App() {
 
   return (
     <window>
-      <texture src={layer.texture} position="absolute" left={0} top={0} width={windowSize().width} height={windowSize().height} {...layer.handlers} />
+      <texture src={main.texture} position="absolute" left={0} top={0} width={windowSize().width} height={windowSize().height} {...main.handlers} />
       <view pointerEvents="none" gap={6} padding={20}>
         <text color="#eef4ff" fontSize={24} fontWeight={700}>
           Views

@@ -1,9 +1,12 @@
 // @solidrt/2d - an instanced sprite layer above @solidrt/core/gpu.
-// One atlas, N quads in one draw. The live layer (createSpriteLayer/
-// addSprite) backs every sprite with a SPATIAL ARENA node whose Pose2D
-// record sink writes the pose instance buffer at the core flush, so core
-// producers reach sprites and picking walks the core BVH; style stays a
-// JS-written second instance buffer. The records layer (createRecordLayer)
+// One atlas, N quads in one draw per VIEW: a layer holds the sprites and
+// shows only through its views (layer.createView / <View2d>, each a target
+// with a camera of its own - a Unity scene renders only through Cameras,
+// a Godot World2D only through Viewports). The live layer
+// (createSpriteLayer/addSprite) backs every sprite with a SPATIAL ARENA
+// node whose Pose2D record sink writes the pose instance buffer at the
+// core flush, so core producers reach sprites and picking walks the core
+// BVH; style stays a JS-written second instance buffer. The records layer (createRecordLayer)
 // is the raw escape hatch for motion only JS can compute: 13 JS-owned
 // floats per sprite published through the zero-copy write lease. The baked
 // tile layer (createTileLayer/TileLayer) is the static sibling: a tile
@@ -52,4 +55,4 @@ export { fitOversample } from "./oversample.ts"
 export { createAtlas } from "./atlas.ts"
 export type { Atlas, AtlasOptions } from "./atlas.ts"
 export { Camera2d, Group, Sprite, SpriteLayer, TileLayer, View2d, useSpriteLayer } from "./components/index.ts"
-export type { Camera2dProps, CameraTarget, GroupProps, LayerPointerProps, SpriteLayerProps, SpritePointerProps, SpriteProps, TileCamera, TileLayerProps, View2dProps } from "./components/index.ts"
+export type { Camera2dProps, GroupProps, LayerPointerProps, SpriteLayerProps, SpritePointerProps, SpriteProps, TileCamera, TileLayerProps, View2dProps } from "./components/index.ts"

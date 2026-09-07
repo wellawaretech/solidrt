@@ -114,7 +114,9 @@ export type Camera2dMotion = {
    * viewport, snapping or gliding. Waits for the viewport if unknown. */
   fit(rect?: Rect2d, opts?: { glide?: boolean }): void
   /** Keep world (x, y) at the pivot through the dead zone and damping;
-   * call again whenever the target moves. Cancels a glide. */
+   * call again whenever the target moves (every frame for a moving one).
+   * Cancels a pose glide (glideTo, fit) and a fling; a wheel zoom keeps
+   * gliding - zoom and follow are separate axes. */
   follow(x: number, y: number): void
   unfollow(): void
   /** Stop a glide or fling in flight (a press landing). */
@@ -411,7 +413,10 @@ export function createCameraMotion(target: Camera2dTarget | Camera2dTarget[], op
     follow(tx, ty) {
       finite("follow x", tx)
       finite("follow y", ty)
-      glide = null
+      // A pose glide yields to the follow; an anchor glide (a wheel zoom)
+      // keeps running, as wheel itself lets one - a per-frame follow of a
+      // moving target must not cancel the zoom under it.
+      if (glide !== null && glide.kind === "pose") glide = null
       fling = null
       if (followAt === null) followAt = { x: tx, y: ty }
       else {

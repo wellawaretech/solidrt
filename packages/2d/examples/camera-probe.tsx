@@ -55,10 +55,12 @@ function rng(seed: number): () => number {
 function App() {
   let atlas = createAtlas(logoBytes, { label: "logo-atlas" })
   let frames = grid(2, 2, { width: atlas.width, height: atlas.height })
-  let nodes = createSpriteLayer(W, H, atlas.texture, { label: "cam-nodes" })
-  let records = createRecordLayer(W, H, atlas.texture, { label: "cam-records" })
-  nodes.setCamera(CAM)
-  records.setCamera(CAM)
+  let nodes = createSpriteLayer(atlas.texture, { label: "cam-nodes" })
+  let records = createRecordLayer(atlas.texture, { label: "cam-records" })
+  let nodeView = nodes.createView({ width: W, height: H, label: "cam-nodes" })
+  let recordView = records.createView({ width: W, height: H, label: "cam-records" })
+  nodeView.setCamera(CAM)
+  recordView.setCamera(CAM)
 
   // The same deterministic population on both layers, kept inside world
   // 20..100 so its reach (~145 with rotation) stays clear of both sample
@@ -103,8 +105,8 @@ function App() {
   }
 
   let shaderCheck = () => {
-    let img = readTexture(nodes.texture)
-    let n = nodes.oversample
+    let img = readTexture(nodeView.texture)
+    let n = nodeView.oversample
     let [sx, sy] = projectCamera(CAM, 320, 320)
     check(sx > 8 && sx < W - 8 && sy > 8 && sy < H - 8, `projected probe on screen (${sx.toFixed(1)}, ${sy.toFixed(1)})`)
     check(alphaAt(img, sx, sy, n) > 0, "probe center opaque at its PROJECTED pixel")
@@ -118,8 +120,8 @@ function App() {
   }
 
   let pixelParity = () => {
-    let a = readTexture(nodes.texture)
-    let b = readTexture(records.texture)
+    let a = readTexture(nodeView.texture)
+    let b = readTexture(recordView.texture)
     if (a.width !== b.width || a.height !== b.height) {
       check(false, `sizes differ: ${a.width}x${a.height} vs ${b.width}x${b.height}`)
       return
@@ -146,7 +148,7 @@ function App() {
     let [sx, sy] = projectCamera(CAM, 320, 320)
     // Synthesize the element event the built-in leaf would deliver (layout
     // null: localX/localY are layer pixels already).
-    nodes.handlers.onPointerDown({
+    nodeView.handlers.onPointerDown({
       localX: sx,
       localY: sy,
       pointerId: 1,
@@ -191,8 +193,8 @@ function App() {
 
   return (
     <window flexDirection="row" alignItems="center" justifyContent="center" gap={8}>
-      <texture src={nodes.texture} width={W} height={H} />
-      <texture src={records.texture} width={W} height={H} />
+      <texture src={nodeView.texture} width={W} height={H} />
+      <texture src={recordView.texture} width={W} height={H} />
     </window>
   )
 }

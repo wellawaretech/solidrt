@@ -54,15 +54,17 @@ export type SceneInput = {
  * expose setCamera and camera()). */
 export type CameraTarget = { setCamera(update: CameraUpdate): void; camera(): CameraState }
 
-export type SceneCtx = { scene: SceneHandle; parent: SceneNode; camera: CameraTarget; input: SceneInput }
+export type SceneCtx = { scene: SceneHandle; parent: SceneNode; viewport: CameraTarget; input: SceneInput }
 export let SceneContext = createContext<SceneCtx>()
 
 /**
- * The enclosing scene, parent node, camera target and input channel - the
+ * The enclosing scene, parent node, viewport and input channel - the
  * imperative escape hatch inside a component subtree (throws outside a
- * `<Scene>`). `camera` and `input` are the nearest OWNER's: the scene's,
- * or inside a `<View3d>` that view's - what the camera-control components
- * drive and listen on, and what a custom `output` leaf spreads from.
+ * `<Scene>`). `viewport` and `input` are the nearest OWNER's: the scene,
+ * or inside a `<View3d>` that view (as a camera target) - what the
+ * camera-control components drive and listen on, and what a custom
+ * `output` leaf spreads from. The same shape as @solidrt/2d's
+ * useSpriteLayer.
  */
 export function useScene(): SceneCtx {
   return useContext(SceneContext)
@@ -75,7 +77,7 @@ export function useScene(): SceneCtx {
 // (probes/3d-instance-mount-bench.tsx has the per-row cost).
 export function provide(ctx: SceneCtx, parent: SceneNode, props: { children?: Element }): Element | undefined {
   if (!("children" in props)) return undefined
-  return <SceneContext value={{ scene: ctx.scene, parent, camera: ctx.camera, input: ctx.input }}>{props.children}</SceneContext>
+  return <SceneContext value={{ scene: ctx.scene, parent, viewport: ctx.viewport, input: ctx.input }}>{props.children}</SceneContext>
 }
 
 // The input channel between a leaf and the camera controls under it (the

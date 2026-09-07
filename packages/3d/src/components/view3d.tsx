@@ -39,7 +39,7 @@ export type View3dProps = Pick<ViewOptions, "clearColor" | "label" | "overrideMa
  * size (a tile of `into` shown through srcX/srcY), or through `output`.
  * Camera-control children (`<OrbitCamera>`, `<FirstPersonCamera>`,
  * `<PerspectiveCamera>`) drive the VIEW's camera and take their input
- * from the view's leaf: inside, `useScene()` reports the view as `camera`
+ * from the view's leaf: inside, `useScene()` reports the view as `viewport`
  * and the view leaf's channel as `input`. Node children (`<Mesh>`) mount
  * to the scene as they would outside - a view mirrors the scene's meshes,
  * it has none of its own. Mesh pointer events stay the scene leaf's
@@ -102,7 +102,7 @@ export let View3d: ParentComponent<View3dProps> = props => {
   // coordinates and the controls' viewport are target pixels.
   let leaf = output ? null : input.handlersFor(() => ({ width: props.width, height: props.height }), () => leafNode)
   return (
-    <SceneContext value={{ scene: ctx.scene, parent: ctx.parent, camera: view, input }}>
+    <SceneContext value={{ scene: ctx.scene, parent: ctx.parent, viewport: view, input }}>
       {output ? (
         untrack(() => output(view.texture))
       ) : (

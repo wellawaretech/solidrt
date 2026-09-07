@@ -34,6 +34,17 @@ still lacks, each a separate additive step on that contract:
   view writes itself become view-owned and the layer's fan-out skips
   them.
 
+## The goal these serve: a viewport over several layers
+
+In Unity one Camera renders every sprite, tilemap and particle system of
+its mask in one pass; in Godot one Viewport draws every CanvasItem of its
+World2D under one Camera2D. Our view is per LAYER: a game with a tile
+map, a sprite layer and a particle record layer needs three views under
+one camera for one pane, composited by the app (`createCamera2d([a, b,
+c])` keeps them in step). The parity item is a viewport over several
+layers of any kind under one camera into one target - where tile-layer
+views, `into` tiling and the layer mask below converge.
+
 ## Done looks like
 
 A tile-map game shows a corner minimap: one tile-layer view at 1/16 zoom
@@ -45,5 +56,6 @@ target.
 ## Not in this item
 
 Post effects on views, camera-driven chunk residency
-([2d-baked-layers](2d-baked-layers.md)), the `<View2d>` component (the
-component face of the landed contract, its own step).
+([2d-baked-layers](2d-baked-layers.md)). The `<View2d>` component and a
+layer without a view of its own (`<SpriteLayer output={false}>`, views
+only) landed with [2d-layer-views](../done/2d-layer-views.md).

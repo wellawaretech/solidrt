@@ -44,8 +44,10 @@ function rng(seed: number): () => number {
 function App() {
   let atlas = createAtlas(logoBytes, { label: "logo-atlas" })
   let frames = grid(2, 2, { width: atlas.width, height: atlas.height })
-  let nodes = createSpriteLayer(W, H, atlas.texture, { capacity: 64, clearColor: [0.05, 0.05, 0.09, 1], label: "nodes" })
-  let records = createRecordLayer(W, H, atlas.texture, { capacity: 64, clearColor: [0.05, 0.05, 0.09, 1], label: "records" })
+  let nodes = createSpriteLayer(atlas.texture, { capacity: 64, label: "nodes" })
+  let records = createRecordLayer(atlas.texture, { capacity: 64, label: "records" })
+  let nodeView = nodes.createView({ width: W, height: H, clearColor: [0.05, 0.05, 0.09, 1], label: "nodes" })
+  let recordView = records.createView({ width: W, height: H, clearColor: [0.05, 0.05, 0.09, 1], label: "records" })
 
   let fields = (r: () => number) => ({
     x: 20 + r() * (W - 40),
@@ -89,8 +91,8 @@ function App() {
   }
 
   let pixelParity = () => {
-    let a = readTexture(nodes.texture)
-    let b = readTexture(records.texture)
+    let a = readTexture(nodeView.texture)
+    let b = readTexture(recordView.texture)
     if (a.width !== b.width || a.height !== b.height) {
       check(false, `sizes differ: ${a.width}x${a.height} vs ${b.width}x${b.height}`)
       return
@@ -195,8 +197,8 @@ function App() {
 
   return (
     <window flexDirection="row" alignItems="center" justifyContent="center" gap={8}>
-      <texture src={nodes.texture} width={W} height={H} />
-      <texture src={records.texture} width={W} height={H} />
+      <texture src={nodeView.texture} width={W} height={H} />
+      <texture src={recordView.texture} width={W} height={H} />
     </window>
   )
 }

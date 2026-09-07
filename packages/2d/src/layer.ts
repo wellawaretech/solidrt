@@ -2,12 +2,13 @@
 // SPATIAL ARENA node (arena slot: local pose, parent, world matrix, index
 // leaf, record sink - no layout, no paint, no rendertree element) whose
 // Pose2D record sink writes [x, y, angle, sx, sy] into the sprite's slot of
-// the pose instance buffer at the core's flush. Rendering stays one
-// instanced draw into one pipeline target, composited as a single
-// `<texture>` leaf; what changed is who owns the pose upstream of the
-// instance buffer - the arena, so every core producer (native transitions,
-// animation clips, physics) reaches sprites through `sprite.node`, and
-// picking walks the core BVH instead of a JS loop.
+// the pose instance buffer at the core's flush. Rendering is one
+// instanced draw per VIEW (views.ts: the layer shows through its views
+// only, each a target with a camera of its own); what changed is who owns
+// the pose upstream of the instance buffer - the arena, so every core
+// producer (native transitions, animation clips, physics) reaches sprites
+// through `sprite.node`, and picking walks the core BVH instead of a JS
+// loop.
 //
 // Two instance-buffer slots split ownership: slot 0 is the pose buffer,
 // written ONLY by the core (one coalesced write per flush however many
@@ -20,10 +21,10 @@
 // Sprites hold FIXED instance slots (freed slots recycle): draw order is
 // slot order, so removal never shifts records and pose sinks never rebind.
 // Layer space is pixels, top-left origin, y-down - the render tree's
-// frame. The camera (offset, zoom, rotation about a pivot - CameraUpdate
-// in camera.ts) is a shared-params write (uCamera + uCameraRot), never
-// per-sprite; pointer dispatch (dispatch.ts) undoes it with
-// unprojectCamera.
+// frame. A view's camera (offset, zoom, rotation about a pivot -
+// CameraUpdate in camera.ts) is a shared-params write (uCamera +
+// uCameraRot) on that view's target, never per-sprite; pointer dispatch
+// (dispatch.ts) undoes it with unprojectCamera.
 import { getOwner, onCleanup } from "@solidrt/core"
 import type { PointerEvent as ElementPointerEvent, WheelEvent as ElementWheelEvent } from "@solidrt/core"
 import { beginBufferWrite, createBuffer, destroyBuffer, endBufferWrite } from "@solidrt/core/gpu"
@@ -32,7 +33,6 @@ import * as spatial from "flux:spatial"
 import type { NodeId, NodeTransition } from "flux:spatial"
 import { on } from "srt:events"
 import type { CameraState, CameraUpdate } from "./camera.ts"
-import { checkOversample } from "./oversample.ts"
 import type { Frame } from "./frames.ts"
 import { FULL_FRAME, writeFrame } from "./frames.ts"
 import type { RecordLayer } from "./records.ts"
@@ -244,13 +244,13 @@ export type SpritePointerEvent = LayerEventBase & {
 }
 
 /**
- * The event as the LAYER's listeners see it (LayerBase.listen), the last
+ * The event as the VIEW's listeners see it (ViewHandle.listen), the last
  * stop of the walk: `sprite` is the hit sprite it bubbled from, or null
- * over empty space, where the layer is the only target.
+ * over empty space, where the view is the only target.
  */
 export type LayerPointerEvent = LayerEventBase & {
   sprite: Sprite | null
-  currentTarget: SpriteLayer | RecordLayer | ViewHandle
+  currentTarget: ViewHandle
 }
 
 type WheelFields = {
@@ -277,7 +277,7 @@ export type LayerWheelEvent = LayerPointerEvent & WheelFields
 export type SpriteTapEvent = SpritePointerEvent & TapFields
 export type LayerTapEvent = LayerPointerEvent & TapFields
 
-/** A listener at the layer root; see LayerBase.listen. */
+/** A listener at a view's root; see ViewHandle.listen. */
 export type LayerPointerListener = {
   onPointerDown?: (event: LayerPointerEvent) => void
   onPointerMove?: (event: LayerPointerEvent) => void
@@ -309,20 +309,13 @@ export type SpriteLayerOptions = {
    * limit.
    */
   capacity?: number
-  clearColor?: [number, number, number, number]
   /** Layer tint, [r, g, b, a] in 0..1, multiplied over every sprite's own
-   * tint; default opaque white (sprites as-is). See setTint. */
+   * tint in every view; default opaque white (sprites as-is). See
+   * setTint. */
   tint?: [number, number, number, number]
+  /** Names the GPU resources (buffers, pipeline; views default to
+   * `<label>-view`); default "sprites". */
   label?: string
-  /**
-   * Target texels per layer pixel (positive integer, default 1). The layer
-   * renders at `oversample` times its size and is composited down, so a
-   * fractional or HiDPI display scale resamples properly instead of snapping
-   * (nearest) or smearing (linear); see setOversample. The components pick
-   * it from the leaf's on-screen size - set it here when composing the
-   * output yourself.
-   */
-  oversample?: number
   /** Skip the owner-scoped auto-dispose (see createSpriteLayer). */
   autoFree?: boolean
   /**
@@ -413,57 +406,23 @@ export type GroupOptions = {
 }
 
 /** What both layer kinds share; the free sprite functions dispatch on it. */
+/**
+ * What both layer kinds share: the sprites and what applies to all of
+ * them. A layer has no output of its own - it shows through its views
+ * (createView), each a target with a camera, a size and pointer dispatch
+ * of its own (ViewHandle), as a Unity scene shows only through Cameras
+ * and a Godot World2D only through Viewports.
+ */
 export type LayerBase = {
-  /** The layer's output: an ordinary texture id (`<texture src>`). */
-  texture: TextureId
-  /** Element handlers wiring the layer's pointer events (sprites, groups
-   * and the root listeners); see handlersFor. */
-  handlers: SpriteHandlers
   /** Live sprite count. */
   readonly count: number
-  /** Layer pixels, as created or last set by setSize. */
-  readonly width: number
-  readonly height: number
-  setSize(width: number, height: number): void
-  /**
-   * Listen at the root of the event walk. Every down, move, up, wheel and
-   * tap arrives here after the hit sprite and its enclosing groups
-   * (`sprite` set) or as the walk's only stop over empty space (`sprite`
-   * null), unless a handler stopped it on the way. Listeners run in
-   * registration order and all of them run - the root is the last stop,
-   * there is nothing left to claim. Returns the remover. The app's own
-   * root handling (deselect on a miss, a marquee) and controls
-   * (createCamera2d's attach) meet here, which is why the root is a list
-   * where a sprite has plain fields.
-   */
-  listen(listener: LayerPointerListener): () => void
-  /** Target texels per layer pixel; see setOversample. */
-  readonly oversample: number
-  /**
-   * Re-render at `n` target texels per layer pixel (positive integer): the
-   * target resizes in place at its stable id, layer pixels, records, camera
-   * and picking are untouched. Pick `n` as the ceiling of the device pixels
-   * one layer pixel covers on screen (display scale times any designSize
-   * fit or layout scaling), which the components do in onLayout.
-   */
-  setOversample(n: number): void
-  setCamera(update: CameraUpdate): void
-  /** The camera as last set (a fresh object per call, every field
-   * present): the argument for projectCamera/unprojectCamera -
-   * @solidrt/3d's scene.camera(). */
-  camera(): CameraState
-  /** World (layer) pixels -> viewport pixels under the current camera:
-   * projectCamera over camera(). */
-  project(x: number, y: number): [number, number]
-  /** Viewport pixels -> world (layer) pixels, the inverse: what pointer
-   * dispatch applies to every event. */
-  unproject(x: number, y: number): [number, number]
   /**
    * Tint the whole layer, [r, g, b, a] in 0..1: a uniform multiplied over
    * every sprite's own tint (day/night, a dimmed parallax plane, a
-   * fade-in). One shared-params write - no record touches, cheap to
-   * animate - and the same contract as TileLayer.setTint, so one signal
-   * drives a whole scene across layer kinds.
+   * fade-in) in every view. One shared-params write per view - no record
+   * touches, cheap to animate - and the same contract as
+   * TileLayer.setTint, so one signal drives a whole scene across layer
+   * kinds.
    */
   setTint(tint: [number, number, number, number]): void
   /** Every shown sprite whose rotated rect contains the layer-pixel point
@@ -471,24 +430,19 @@ export type LayerBase = {
    * all-hits shape of @solidrt/3d's pick; `pick(x, y)[0]` is the topmost.
    * Topmost means draw order (highest slot on the node layer, last added
    * on a record layer); an `orderBy` key is not consulted (see
-   * SpriteLayerOptions.orderBy's known limitation). */
+   * SpriteLayerOptions.orderBy's known limitation). World space: a view
+   * undoes its camera before asking. */
   pick(x: number, y: number): Sprite[]
   /**
-   * handlers for a leaf whose LAYOUT size differs from the layer size
-   * (events scale by layer/layout; a leaf laid out AT layer size just uses
-   * `handlers`). `layout` is read per event, so a resize-reactive layout
-   * just works - @solidrt/3d's handlersFor, one dimension down.
-   */
-  handlersFor(layout: () => { width: number; height: number }): SpriteHandlers
-  /**
-   * A second rendering of the layer's world from a camera of its own - a
-   * minimap, a zoomed inset - @solidrt/3d's scene.createView one dimension
-   * down. One more target drawing the SAME instance buffers (no sprite is
-   * mirrored, no per-frame JS beyond the view's camera writes), key order
-   * included; the layer's tint fans out to it. The view carries the
-   * layer's viewport contract (texture, setSize, setOversample, setCamera,
-   * listen and handlers with sprite events walking to the view as root);
-   * sprites stay the layer's. Views die with the layer.
+   * A rendering of the layer's world from a camera of its own - the main
+   * view, a minimap, a zoomed inset, one split-screen pane -
+   * @solidrt/3d's scene.createView one dimension down. One more target
+   * drawing the SAME instance buffers (no sprite is mirrored, no per-frame
+   * JS beyond the view's camera writes), key order included; the layer's
+   * tint fans out to it. The view carries the viewport contract (texture,
+   * setSize, setOversample, setCamera, listen and handlers with sprite
+   * events walking to the view as root); sprites stay the layer's. Views
+   * die with the layer.
    */
   createView(opts: ViewOptions): ViewHandle
   dispose(): void
@@ -543,24 +497,19 @@ function writeTransform(sprite: Sprite): void {
 }
 
 /**
- * Create a sprite layer rendering into a `width` x `height` texture from one
- * atlas texture. Disposed automatically with the owning reactive scope (opt
- * out with `{ autoFree: false }`); the atlas is NOT owned - dispose it
- * yourself (it commonly outlives layers).
+ * Create a sprite layer over one atlas texture. It renders nothing by
+ * itself: `layer.createView({ width, height })` (or a `<SpriteLayer>` /
+ * `<View2d>`) is where it shows, once or many times. Disposed
+ * automatically with the owning reactive scope (opt out with
+ * `{ autoFree: false }`); the atlas is NOT owned - dispose it yourself
+ * (it commonly outlives layers).
  */
-export function createSpriteLayer(
-  width: number,
-  height: number,
-  atlas: TextureId,
-  opts?: SpriteLayerOptions,
-): SpriteLayer {
+export function createSpriteLayer(atlas: TextureId, opts?: SpriteLayerOptions): SpriteLayer {
   let capacity = opts?.capacity ?? 1024
   if (!(capacity > 0 && Number.isInteger(capacity))) {
     throw new Error(`createSpriteLayer: capacity must be a positive integer, got ${capacity}`)
   }
   let label = opts?.label ?? "sprites"
-  let oversample = opts?.oversample ?? 1
-  checkOversample("createSpriteLayer", oversample, width, height)
   let tint = opts?.tint ?? [1, 1, 1, 1]
   checkTint("createSpriteLayer", tint)
   let pose: BufferId = createBuffer(capacity * POSE_FLOATS * 4, { label: `${label}-pose`, autoFree: false })
@@ -657,50 +606,23 @@ export function createSpriteLayer(
     count: () => published,
     tint: () => tint,
     pick: (x, y) => layer.pick(x, y),
+    // The order key one view entry declares: "y" on world y in the pose
+    // record (slot 0), "renderOrder" on the app-owned key in the style
+    // record (slot 1); either way the core gathers BOTH buffers under the
+    // one permutation at every publish and republishes the sibling itself
+    // when the key buffer re-orders.
+    order:
+      opts?.orderBy === "y"
+        ? { field: POSE_Y_FIELD }
+        : opts?.orderBy === "renderOrder"
+          ? { field: STYLE_KEY_FIELD, slot: 1 }
+          : undefined,
   })
-  // The layer's own target, the first view; its entry carries the order
-  // key: "y" on world y in the pose record (slot 0), "renderOrder" on the
-  // app-owned key in the style record (slot 1); either way the core
-  // gathers BOTH buffers under the one permutation at every publish and
-  // republishes the sibling itself when the key buffer re-orders.
-  let main = views.create(
-    { width, height, oversample, clearColor: opts?.clearColor, label },
-    {
-      root: () => layer,
-      order:
-        opts?.orderBy === "y"
-          ? { field: POSE_Y_FIELD }
-          : opts?.orderBy === "renderOrder"
-            ? { field: STYLE_KEY_FIELD, slot: 1 }
-            : undefined,
-    },
-  )
 
-  // The viewport contract is the own target's; the layer adds the
-  // sprites, the tint fan-out and the lifetime.
   let layer: SpriteLayer = {
-    texture: main.texture,
-    handlers: main.handlers,
     get count() {
       return byNode.size
     },
-    get width() {
-      return main.width
-    },
-    get height() {
-      return main.height
-    },
-    get oversample() {
-      return main.oversample
-    },
-    setSize: main.setSize,
-    listen: main.listen,
-    setOversample: main.setOversample,
-    setCamera: main.setCamera,
-    camera: main.camera,
-    project: main.project,
-    unproject: main.unproject,
-    handlersFor: main.handlersFor,
     setTint(next) {
       if (disposed) return
       checkTint("setTint", next)
