@@ -52,10 +52,10 @@ function App() {
   let center: [number, number, number] = [(b[0]! + b[3]!) / 2, (b[1]! + b[4]!) / 2, (b[2]! + b[5]!) / 2]
   let radius = Math.hypot(b[3]! - b[0]!, b[4]! - b[1]!, b[5]! - b[2]!) / 2
 
-  // Parts are named after the glTF nodes: a click hides that part, a
-  // click on the body brings everything back.
+  // Parts are named after the glTF nodes: a tap hides that part, a tap
+  // on the body brings everything back.
   for (let part of model.parts) {
-    part.mesh.onPointerDown = () => {
+    part.mesh.onTap = () => {
       if (part.name === "body") for (let p of model.parts) setVisible(p.mesh, true)
       else setVisible(part.mesh, false)
     }

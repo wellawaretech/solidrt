@@ -42,6 +42,11 @@ Decided and being worked on now. A plan nobody is working on goes back to backlo
 
 Shaped, not started.
 
+- **[An inset option on grid and namedFrames for hand-packed atlases without gutters](backlog/2d-atlas-frame-inset.md)** [2026-09-07]
+  Frames addressed as whole-pixel rects that share an edge bleed a one-texel
+  line of the neighbouring cell on the odd frame of any fractional motion; the
+  fix is a half-texel inset or a gutter, and both slicers are the place to
+  apply it once instead of in every app's rect table.
 - **[A sprite layer draws one pre-packed atlas, fixed at creation](backlog/2d-atlas-limits.md)** [2026-08-22]
   Every sprite in a layer samples one texture chosen at creation, and
   createAtlas only decodes an already-packed sheet, so a second sheet costs a
@@ -131,13 +136,6 @@ Shaped, not started.
   compressed real-world files (Draco/meshopt, KTX2), morph targets,
   merge-by-material, vertex colors, per-material samplers and runtime-fetched
   content, each demand-gated.
-- **[The 3d scene is not the root of its pointer walk, and mesh drags also orbit](backlog/3d-scene-pointer-root-walk.md)** [2026-09-06]
-  Scene dispatch delivers to meshes only and the SceneInput channel to
-  controls only, with nothing between them, so a mesh drag orbits the camera
-  too, there is no mesh wheel or click, and no scene-level miss event; the 2d
-  layer now has the DOM model (the layer as the last stop, claiming by
-  stopPropagation, root capture, wheel, synthesized taps) and the scene should
-  carry the identical vocabulary.
 - **[Cascade split ratios are fixed](backlog/3d-shadow-cascade-splits.md)** [2026-09-06]
   A cascaded sun slices its range with one fixed practical split
   (CASCADE_SPLIT_LAMBDA 0.5), so a scene whose detail sits far from the camera
@@ -492,6 +490,11 @@ Shaped, not started.
   the Babel plugin, but it only lowers JSX, so adopting it means finding new
   homes for TypeScript stripping and the binary/text import inlining that live
   in our Babel pipeline.
+- **[A throwing onFrame callback needs a dev-mode banner, not just a log line](backlog/onframe-throw-dev-banner.md)** [2026-09-07]
+  A throw inside an onFrame callback is caught, logged and repeated every
+  frame while the app keeps presenting partial frames, so on screen it reads
+  as a logic bug (entities drawn after the throwing line vanish) and the only
+  trace is a log line the reader has to think to look for.
 - **[Orbit camera - zoom damping and a pose clamp hook](backlog/orbit-camera-damping-pose-clamp.md)** [2026-09-07]
   Two gaps the third-dimension demo hand-rolls around createOrbitCamera - an
   eased wheel zoom (Three's enableDamping) and a distance-dependent elevation
@@ -610,6 +613,11 @@ Shaped, not started.
   One defined home for cross-crate constants that today live as per-site
   literals (.srt-data, http-cache.db, the SolidRT/go identity, size caps);
   collects sites until designed.
+- **[The slow-frame warning fires on the first frame after every load](backlog/slow-frame-warning-first-frame-after-load.md)** [2026-09-07]
+  A load or reload's first frame carries texture uploads and the first raster
+  (paint 25-30 ms, js under 1 ms), so the "Slow frame" line fires on every
+  push and teaches the reader to ignore it; that frame is a known, honest cost
+  and should say so or stay quiet.
 - **[Snapshot diff helper](backlog/snapshot-diff-helper.md)** [2026-08-07]
   A numeric pixel-delta mode on get_snapshot against the previous capture of
   the same node, so "does it still render the same" is one call with a number
@@ -887,6 +895,14 @@ Finished, kept for the reasoning.
   (inPlace, by net drift) and, for games, moves it onto the model through a
   core binding (rootMotion "apply" | "report") - translation and yaw,
   continuous across loop wraps, verified on Mixamo's standing turns.
+- **[The 3d scene is the root of its pointer walk](done/3d-scene-pointer-root-walk.md)** [2026-09-07]
+  Scene dispatch delivered to meshes only and the pointer feed was spread
+  beside it, with nothing between them, so a mesh drag orbited the camera too,
+  there was no mesh wheel or click, no scene-level miss event, and a view leaf
+  carried no mesh events; the scene (and each view) is now the last stop of
+  every event, with claiming by stopPropagation, capture to the root, wheel,
+  synthesized taps and the feed listening at the root - the 2d layer's model
+  one dimension up.
 - **[Cascaded shadow maps](done/3d-shadow-cascades.md)** [2026-08-27]
   One shadow.camera box per casting light: a large outdoor scene either blurs
   (the box covers everything at one map's resolution) or clips (the box covers

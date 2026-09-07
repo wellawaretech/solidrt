@@ -197,6 +197,12 @@ export type SpriteOptions = {
   visible?: boolean
 }
 
+/**
+ * addSprite's bag: the sprite fields plus the mount point. The pool idiom
+ * for a game: reserve `capacity`, add every sprite at mount with `visible:
+ * false`, then show/hide - a hidden sprite keeps its slot, so draw order
+ * stays stable and a spawn is one setSprite, never an add.
+ */
 export type AddSpriteOptions = SpriteOptions & {
   /** Mount under this group (node layer only; null = the layer root, the
    * default); pose fields are then local to it. Reparent later with

@@ -132,6 +132,14 @@ latest (solid-js 1.x, off Solid 2.0 entirely). The recipe that works is
   window (message, stack, a Reset button that retries the failed
   computations) and logs `Uncaught error`. `<Errored>` gives a subtree its
   own in-place fallback.
+  An `onFrame` callback is its own boundary, event-listener style: a throw
+  is caught and logged (`Error in onFrame callback`, repeating every
+  frame), the subscription stays, and THE REST OF THAT CALLBACK IS
+  ABANDONED - what it wrote before the throw lands, what came after never
+  does, frame after frame while the app keeps presenting. A partial frame
+  is therefore a live possibility: every sprite drawn after the throwing
+  line simply stops appearing, which reads on screen as a logic bug, not a
+  crash. Check the logs before reasoning about a rendering symptom.
 
 - Two kinds of element:
   - Containers - `<window>`, `<view>`. Do layout + transform + pointer events.
@@ -428,7 +436,11 @@ latest (solid-js 1.x, off Solid 2.0 entirely). The recipe that works is
   TypeScript with no @solidrt imports, with the JSX reading it and the
   per-frame hook doing one state step plus a handful of property writes.
   That shape runs under bun with no window (tests, audits, replaying a whole
-  session in seconds) and it is what keeps per-frame work cheap.
+  session in seconds) and it is what keeps per-frame work cheap. For a game
+  it is the tuning loop itself: minutes of play run headless in a fraction
+  of a second, so a difficulty curve or a spawn table is tuned against
+  scripted policies in seconds instead of by playing, and the design bugs
+  that only show at scale surface there first.
 - Animation is target-shaped first: declare `transition` on the element and
   write targets, and the runtime animates natively with no per-frame JS.
   Enter and exit are per-property entries on that same spec: `from` is the
@@ -440,7 +452,11 @@ latest (solid-js 1.x, off Solid 2.0 entirely). The recipe that works is
   descendants declare `from`/`exit`. An enter plays once per mount; to
   replay it, remount the subtree (`<Show when={epoch()} keyed>` around it,
   then bump `epoch`). See examples/stagger.tsx.
-  Reach for per-frame work only for genuinely procedural motion:
+  Per-frame work is for genuinely procedural motion, and a game or a
+  simulation is that in full: its natural shape is ONE `onFrame` doing one
+  sim step and N property (or sprite) writes, which is not a smell but the
+  budget the runtime is built for - agents/performance.md rule 4 has the
+  rules, @solidrt/2d's notes the measured write costs at scale.
   `onFrame((tick, frame, rate) => {})` is the native hook (runtime-paced,
   returns a cleanup, auto-cleaned inside an owned scope; from an effect's
   apply, return it so the loop runs only while the condition holds); `rate` is the

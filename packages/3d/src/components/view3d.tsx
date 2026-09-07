@@ -1,10 +1,13 @@
 import { createEffect, onCleanup, untrack, useContext } from "@solidrt/core"
 import type { Element, ParentComponent, PointerFeed, TextureId } from "@solidrt/core"
 import { SceneContext } from "./context.tsx"
+import { feedPointer } from "../scene-pointer.ts"
 import type { ViewHandle, ViewOptions } from "../scene.ts"
 import type { CameraUpdate } from "../camera.ts"
+import type { ScenePointerProps } from "./scene.tsx"
 
-export type View3dProps = Pick<ViewOptions, "clearColor" | "label" | "overrideMaterial" | "fog" | "depth" | "samples" | "filter" | "wrap" | "into"> & {
+export type View3dProps = Pick<ViewOptions, "clearColor" | "label" | "overrideMaterial" | "fog" | "depth" | "samples" | "filter" | "wrap" | "into"> &
+  ScenePointerProps & {
   /** Target pixels, live: the view resizes, or its tile moves. Fixed
    * only, for now: a fill mode like Scene's is a later, additive step. */
   width: number
@@ -22,15 +25,20 @@ export type View3dProps = Pick<ViewOptions, "clearColor" | "label" | "overrideMa
   /**
    * Compose the leaf yourself: called once (untracked) with view.texture,
    * and its return renders in place of the built-in `<texture>` leaf.
-   * Spread `useScene().pointer.handlers` on it so the view's pointer feed
-   * sees its gestures (inside a `<View3d>`, useScene's `pointer` is this
-   * view's). A tiled view's id is a draw target, not a texture: show
-   * `into` with srcX/srcY, as the built-in leaf does.
+   * Pointer events through the view then need its handlers on your leaf:
+   * `<texture src={texture} {...view.handlers} />` (the view from `ref`);
+   * the view's pointer feed listens at its root. A tiled view's id is a
+   * draw target, not a texture: show `into` with srcX/srcY, as the
+   * built-in leaf does.
    */
   output?: (texture: TextureId) => Element
-  /** The pointer feed of this view's leaf (see Scene's `pointer`): the
-   * built-in leaf spreads its handlers, so a map bound to this feed drives
-   * the camera controls inside this view and no other. Fixed at creation. */
+  /** Pointer events (default on): the built-in leaf carries the view's
+   * handlers. `false` detaches them. */
+  events?: boolean
+  /** The pointer feed of this view's leaf (see Scene's `pointer`), fed
+   * from the view's root - the events the nodes let through - so a map
+   * bound to it drives the camera controls inside this view and no other;
+   * inside, `useScene().pointer` is this feed. Fixed at creation. */
   pointer?: PointerFeed
   ref?: (view: ViewHandle) => void
 }
@@ -46,8 +54,10 @@ export type View3dProps = Pick<ViewOptions, "clearColor" | "label" | "overrideMa
  * reports the view as `viewport` and the view leaf's feed as `pointer`,
  * so a map over that feed moves this view alone. Node children (`<Mesh>`) mount
  * to the scene as they would outside - a view mirrors the scene's meshes,
- * it has none of its own. Mesh pointer events stay the scene leaf's
- * (picking is the scene camera's); a view leaf carries none.
+ * it has none of its own. Nodes under the view's leaf get their ordinary
+ * pointer handlers, picked through the view's camera; the view's own
+ * `onPointer*`/`onWheel`/`onTap` are the last stop of that walk
+ * (`event.mesh` null over empty space).
  */
 export let View3d: ParentComponent<View3dProps> = props => {
   let ctx = useContext(SceneContext)
@@ -99,11 +109,23 @@ export let View3d: ParentComponent<View3dProps> = props => {
   )
   untrack(() => props.ref)?.(view)
   onCleanup(() => view.dispose())
-  // The pointer feed the app handed in (see Scene): the built-in leaf
-  // feeds it, children reach it through useScene().pointer.
+  // The pointer feed the app handed in (see Scene) listens at the view's
+  // root; children reach it through useScene().pointer.
   let pointer = untrack(() => props.pointer) ?? null
-  let feed = pointer?.handlers
+  if (pointer) onCleanup(feedPointer(view, pointer))
+  // The view's own handlers at the root of the walk; the props are read
+  // per event, so a handler prop may change without re-registering.
+  onCleanup(
+    view.listen({
+      onPointerDown: e => props.onPointerDown?.(e),
+      onPointerMove: e => props.onPointerMove?.(e),
+      onPointerUp: e => props.onPointerUp?.(e),
+      onWheel: e => props.onWheel?.(e),
+      onTap: e => props.onTap?.(e),
+    }),
+  )
   let output = untrack(() => props.output)
+  let events = untrack(() => props.events) !== false
   return (
     <SceneContext value={{ scene: ctx.scene, parent: ctx.parent, viewport: view, pointer }}>
       {output ? (
@@ -117,11 +139,11 @@ export let View3d: ParentComponent<View3dProps> = props => {
           srcY={tiled ? (props.y ?? 0) : undefined}
           srcW={tiled ? props.width : undefined}
           srcH={tiled ? props.height : undefined}
-          onPointerDown={feed ? feed.onPointerDown : undefined}
-          onPointerMove={feed ? feed.onPointerMove : undefined}
-          onPointerUp={feed ? feed.onPointerUp : undefined}
-          onPointerLeave={feed ? feed.onPointerLeave : undefined}
-          onWheel={feed ? feed.onWheel : undefined}
+          onPointerDown={events ? view.handlers.onPointerDown : undefined}
+          onPointerMove={events ? view.handlers.onPointerMove : undefined}
+          onPointerUp={events ? view.handlers.onPointerUp : undefined}
+          onPointerLeave={events ? view.handlers.onPointerLeave : undefined}
+          onWheel={events ? view.handlers.onWheel : undefined}
         />
       )}
       {props.children}

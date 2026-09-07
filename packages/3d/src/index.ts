@@ -6,7 +6,7 @@
 // PerspectiveCamera) on top. See AGENTS.md for the model and the traps.
 
 export { add, createGroup, getRotation, getTransform, lookAt, remove, setTransform, setTransition, setVisible, worldPosition } from "./node.ts"
-export type { SceneNode, ScenePointerEvent, TransformUpdate, TransitionEndEvent } from "./node.ts"
+export type { NodePointerEvent, NodeTapEvent, NodeWheelEvent, SceneEventBase, SceneNode, ScenePointerEvent, ScenePointerListener, SceneTapEvent, SceneWheelEvent, TransformUpdate, TransitionEndEvent } from "./node.ts"
 export { addInstance, createInstancedMesh, createMesh, createRecordMesh, createSprite, disposeInstances, removeInstance, setCastShadow, setCulling, setGeometry, setInstanceStyle, setLayers, setMaterial, setMeshParams, setRecordCount, setRecords, setRenderOrder, INSTANCE_FLOATS } from "./mesh.ts"
 export type { InstancedMesh as InstancedMeshNode, InstancedMeshOptions, InstanceNode, InstanceSlots, InstanceStyle, Mesh as MeshNode, MeshInstances, RecordMesh as RecordMeshNode, RecordMeshOptions } from "./mesh.ts"
 export { createDirectionalLight, createHemisphereLight, createPointLight, createSpotLight, setLight, MAX_SHADOWS } from "./light.ts"
@@ -26,6 +26,7 @@ export type {
   SpotShadowOptions,
 } from "./light.ts"
 export { createScene } from "./scene.ts"
+export { feedPointer } from "./scene-pointer.ts"
 export type { Capsule, EnvironmentOptions, FogOptions, Hit, Impact, OrientedBox, Overlap, QueryOptions, ReflectionProbe, ReflectionProbeOptions, Scene as SceneHandle, SceneHandlers, SceneOptions, ScreenRay, SkyboxOptions, Sphere, ToneMapping, ViewHandle, ViewOptions, Volume } from "./scene.ts"
 export { moveAndSlide } from "./collision.ts"
 export type { MoveOptions, MoveResult, MoveScene } from "./collision.ts"
@@ -56,6 +57,7 @@ export type {
   PointerEventProps,
   PointLightProps,
   RecordMeshProps,
+  ScenePointerProps,
   SceneProps,
   SpotLightProps,
   SpriteProps,

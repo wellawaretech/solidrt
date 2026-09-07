@@ -10,12 +10,14 @@ import * as spatial from "flux:spatial"
 import type { NodeId, NodeTransition } from "flux:spatial"
 import { on } from "srt:events"
 import type { ShaderParams, TextureId } from "@solidrt/core/gpu"
+import type { PointerEvent as ElementPointerEvent, WheelEvent as ElementWheelEvent } from "@solidrt/core"
 // The scene's lookAt() aims a node; math's builds a camera's view matrix -
 // the same pairing (and the same name) as Three's Object3D/Matrix4.
 import { compose, eulerFromQuat, identity, mat4, multiply, quat, quatFromFrame, transformPoint, updateRotation, updateScale } from "./math.ts"
 import type { Mat4, Quat, TransformUpdate, Vec3, Vec4 } from "./math.ts"
 import type { CastingLight, Light } from "./light.ts"
 import type { InstancedMesh, InstanceNode, Mesh } from "./mesh.ts"
+import type { Scene, ViewHandle } from "./scene.ts"
 
 // lookAt()'s default roll reference. Read-only: quatFromFrame never
 // writes its inputs, so one shared vector is safe.
@@ -107,15 +109,23 @@ export type SceneNode = {
   visible: boolean
   /** Pointer event handlers - plain fields, assign freely (they touch no
    * GPU state, so they need no setTransform-style write path; components
-   * sync their props here). Down/move/up dispatch on the hit mesh and
-   * bubble through its ancestors (stopPropagation stops the walk);
-   * enter/leave fire on the mesh alone. Events flow once the element
-   * showing the scene carries `scene.handlers`. */
-  onPointerDown?: (event: ScenePointerEvent) => void
-  onPointerMove?: (event: ScenePointerEvent) => void
-  onPointerUp?: (event: ScenePointerEvent) => void
-  onPointerEnter?: (event: ScenePointerEvent) => void
-  onPointerLeave?: (event: ScenePointerEvent) => void
+   * sync their props here). Down/move/up/wheel/tap dispatch on the
+   * nearest hit - the struck instance of an instanced mesh, else the mesh
+   * - bubble through its ancestors and end at the scene's listeners
+   * (stopPropagation stops the walk, and a stopped down claims the whole
+   * press); enter/leave fire on the struck node alone. Events flow once
+   * the element showing the scene carries `scene.handlers`. */
+  onPointerDown?: (event: NodePointerEvent) => void
+  onPointerMove?: (event: NodePointerEvent) => void
+  onPointerUp?: (event: NodePointerEvent) => void
+  onPointerEnter?: (event: NodePointerEvent) => void
+  onPointerLeave?: (event: NodePointerEvent) => void
+  /** The wheel over the node (NodeWheelEvent: `deltaX`/`deltaY`), bubbling
+   * like down/move/up. */
+  onWheel?: (event: NodeWheelEvent) => void
+  /** A press released on this node within the slop, alone for its whole
+   * press (NodeTapEvent: `tapCount`); bubbles like down/move/up. */
+  onTap?: (event: NodeTapEvent) => void
   /** A declared transition (setTransition) settled naturally on one
    * component; a cancel, snap or scene leave never fires. */
   onTransitionEnd?: (event: TransitionEndEvent) => void
@@ -146,26 +156,19 @@ export type TransitionEndEvent = {
   component: "position" | "rotation" | "scale"
 }
 
-/**
- * The event a mesh, instance or ancestor group handler receives: the
- * element pointer vocabulary carried over, plus the 3D fields.
- * `point`/`distance` are null exactly when the ray misses the dispatch
- * target - which happens only during a captured drag or on a leave.
- */
-export type ScenePointerEvent = {
-  /** The mesh the event is about (the hit, or the captured mesh during a
-   * drag) - constant while the event bubbles. */
-  mesh: Mesh
+/** What every scene pointer event carries, whichever handler sees it:
+ * the element pointer vocabulary carried over, plus the 3D fields. */
+export type SceneEventBase = {
   /** The instance struck when `mesh` is an instanced mesh (the walk
    * starts there), null otherwise - constant while the event bubbles. */
   instance: InstanceNode | null
-  /** Node whose handler is running; changes as the event bubbles. */
-  currentTarget: SceneNode
-  /** World-space hit point on `mesh`, or null when the ray misses it. */
+  /** World-space hit point on `mesh`, or null when there is no mesh or
+   * the ray misses it (a captured drag off the mesh, a leave). */
   point: Vec3 | null
   /** Camera-ray distance to `point` in world units, or null with it. */
   distance: number | null
-  /** Pointer position in scene pixels - project()'s coordinate space. */
+  /** Pointer position in scene pixels - project()'s coordinate space
+   * (a view's own pixels under a view leaf). */
   x: number
   y: number
   pointerId: number
@@ -175,8 +178,75 @@ export type ScenePointerEvent = {
   ctrlKey: boolean
   altKey: boolean
   metaKey: boolean
-  /** Stops the bubble walk after the current handler. */
+  /**
+   * The element event the scene's leaf received, in the leaf's own frame
+   * (localX/localY, clientX/clientY, movementX/Y): what core's
+   * recognizers consume, so a mesh drags itself through `createPan` and
+   * a camera control's feed rides the same events the walk carries.
+   */
+  native: ElementPointerEvent
+  /**
+   * Stops the walk after the current handler: no ancestor and none of the
+   * scene's listeners see the event. Stopping a DOWN claims the whole
+   * press - that pointer's move, up and tap never reach the scene either,
+   * so a mesh that drags itself stops its down once and an orbit control
+   * fed at the root never turns under it.
+   */
   stopPropagation(): void
+}
+
+/**
+ * The event a mesh, instance or ancestor group handler receives: `mesh`
+ * is the hit (or the captured mesh during a drag), constant while the
+ * event bubbles; `currentTarget` the node whose handler is running.
+ */
+export type NodePointerEvent = SceneEventBase & {
+  mesh: Mesh
+  currentTarget: SceneNode
+}
+
+/**
+ * The event as the SCENE's listeners see it (scene.listen, the `<Scene>`
+ * pointer props; a view's under its own leaf), the last stop of the walk:
+ * `mesh` is the hit it bubbled from, or null over empty space, where the
+ * scene is the only target.
+ */
+export type ScenePointerEvent = SceneEventBase & {
+  mesh: Mesh | null
+  currentTarget: Scene | ViewHandle
+}
+
+type WheelFields = {
+  /** The wheel delta as the element event reports it. */
+  deltaX: number
+  deltaY: number
+  native: ElementWheelEvent
+}
+type TapFields = {
+  /** 1 for a tap, 2 for the second of a double tap (the same target,
+   * within the repeat interval and distance), and so on - DOM's `detail`,
+   * Unity's `clickCount`. */
+  tapCount: number
+}
+
+export type NodeWheelEvent = NodePointerEvent & WheelFields
+export type SceneWheelEvent = ScenePointerEvent & WheelFields
+/**
+ * A press that released on the target it pressed without travelling past
+ * the slop, the only pointer down for its whole press (a pinch never
+ * taps). Dispatched after the up, bubbling the same way; `x`/`y` and
+ * `point` are the release point.
+ */
+export type NodeTapEvent = NodePointerEvent & TapFields
+export type SceneTapEvent = ScenePointerEvent & TapFields
+
+/** A listener at the scene's (or a view's) root; see Scene.listen. */
+export type ScenePointerListener = {
+  onPointerDown?: (event: ScenePointerEvent) => void
+  onPointerMove?: (event: ScenePointerEvent) => void
+  onPointerUp?: (event: ScenePointerEvent) => void
+  onWheel?: (event: SceneWheelEvent) => void
+  onTap?: (event: SceneTapEvent) => void
 }
 
 /** A bare node record (internal: the mesh and light constructors build on it). */

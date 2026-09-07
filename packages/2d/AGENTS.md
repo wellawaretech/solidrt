@@ -329,7 +329,13 @@ root), so imperative `addSprite(layer, { parent })` mounts where the JSX
 sits, `viewport` is the nearest view (the `<SpriteLayer>`'s own, or
 inside a `<View2d>` that view), what a `<Camera2d>` drives, and
 `pointer` that view's feed (the owner's `pointer` prop, null without
-one); read under `output={false}` outside a `<View2d>` `viewport` throws. `Sprite` renders
+one); read under `output={false}` outside a `<View2d>` `viewport` throws. A FILL-mode
+view is 1x1 until the first layout: `ref` fires at mount, before it, so
+`viewport.width`/`height` read 1 there. Sprites added and positioned from
+`ref` (the pool, the opening scene) are fine - the first layout resizes
+the view before the first paint - but anything that needs the real size
+(centering on the view) waits for `onLayout`, or works in a `designSize`
+that is known up front. `Sprite` renders
 nothing - it allocates a record through context and syncs props into it.
 `GroupContext` is `createContext<SpriteGroup | null>(null)` on purpose: an
 optional parent needs a non-undefined default, since Solid 2 throws on a
@@ -376,7 +382,12 @@ hover, wheel and tap rules headless.
   live app-long. Dispose atlases yourself (or let the reactive owner do it -
   createAtlas registers with the owning scope like every core texture).
 - `capacity` is a reservation, not a limit, on both layer kinds; reserve
-  realistically to skip the growth copies. On the records layer, do not
+  realistically to skip the growth copies. The pool idiom that fits a
+  game: reserve `capacity`, add every sprite at mount with `visible:
+  false`, then show/hide - a hidden sprite keeps its slot, so draw order
+  stays stable and a spawn is one setSprite, never an add. Keep a free
+  list of hidden handles; scanning the pool for one is the cost that
+  shows up first at a few hundred entities. On the records layer, do not
   cache `layer.records` across addSprite - growth replaces the array and
   a hoisted reference becomes a dead copy whose writes publish nothing.
   `layer.withRecords(fn)` is the hoist-proof read; a bare `layer.records`
@@ -397,6 +408,14 @@ hover, wheel and tap rules headless.
   `pickRect` run the layer's pending batch first, so write-then-pick in
   one tick is coherent. Producers moving nodes between flushes are one
   frame stale to picking, like every query.
+- `pick`/`pickRect` are the POINTER answer - a hit test, a marquee, a
+  few core queries per event - not a collision broadphase. A
+  bullets-vs-crowd test at frame rate is hundreds of core queries per
+  frame, and it is simulation logic anyway, which lives in plain
+  TypeScript with no layer in sight (core's "keep the simulation out of
+  the renderer"): the app's own arrays, a uniform grid over them,
+  runnable headless. Overlap, sweep and move-and-slide queries on the
+  index are okf/backlog/2d-spatial-queries.md.
 - Records layer: record order is draw order: `removeSprite` shifts every
   later sprite down one slot (copyWithin + index fixup, O(later
   sprites)). Its flush publishes the WHOLE live prefix, not a dirty

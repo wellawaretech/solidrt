@@ -185,7 +185,7 @@ function App() {
                   position={place(i)}
                   style={tints[i]![0]()}
                   transition={SPRING}
-                  onPointerDown={() => flip(i)}
+                  onTap={() => flip(i)}
                   ref={node => (nodes[i] = node)}
                 />
               )}

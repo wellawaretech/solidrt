@@ -50,6 +50,11 @@ export type GridOptions = {
  * top to bottom) - the layout every sheet packer and pixel-art tool emits.
  * Frames are returned in cell order, so `frames[row * cols + col]` addresses
  * a cell and an animation is a slice of consecutive indices.
+ *
+ * Cells that touch bleed: a sprite at a fractional position samples, on
+ * the odd frame, a texel of the cell next door along its edge (a one-texel
+ * line of the neighbour, gone the next frame - see namedFrames). Pack the
+ * sheet with a transparent gutter and pass it as `spacing`.
  */
 export function grid(cols: number, rows: number, opts: GridOptions): Frame[] {
   if (!(cols > 0 && rows > 0 && Number.isInteger(cols) && Number.isInteger(rows))) {
@@ -78,7 +83,21 @@ export function grid(cols: number, rows: number, opts: GridOptions): Frame[] {
 /**
  * Name frames from a pixel-rect map: `{ hero: [x, y, w, h], ... }` in atlas
  * pixels to `{ hero: Frame, ... }`. The named counterpart of `grid` for
- * hand-packed or tool-exported sheets.
+ * hand-packed or tool-exported sheets. The key union comes from the table
+ * you pass: an object literal (or a built table with `satisfies Record<...>`
+ * on the literal) gives a record whose every name is checked; a table
+ * typed `Record<string, ...>` gives back an index signature, so every name
+ * compiles, a typo included, and no `!` is needed on a lookup - the
+ * scaffold's tsconfig does not set noUncheckedIndexedAccess.
+ *
+ * The oldest atlas trap: frames addressed as whole-pixel rects that share
+ * an edge bleed into each other. A sprite drifting by fractions of a pixel
+ * lands, on the odd frame, on a sample position that rounds into the cell
+ * next door and paints a one-texel line of it - a solid cell beside a
+ * sprite flashes a bright bar over it for a single frame, invisible in a
+ * screenshot and easy to blame on the game. Inset every rect half a texel
+ * (`[x + 0.5, y + 0.5, w - 1, h - 1]`), or pack a transparent gutter
+ * between cells and keep full-bleed cells in a corner of their own.
  */
 export function namedFrames<K extends string>(
   atlasW: number,

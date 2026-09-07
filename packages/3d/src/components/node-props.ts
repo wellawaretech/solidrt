@@ -1,6 +1,6 @@
 import { createEffect } from "@solidrt/core"
 import { setTransform, setTransition, setVisible } from "../node.ts"
-import type { SceneNode, ScenePointerEvent, TransitionEndEvent } from "../node.ts"
+import type { NodePointerEvent, NodeTapEvent, NodeWheelEvent, SceneNode, TransitionEndEvent } from "../node.ts"
 import type { NodeTransition } from "flux:spatial"
 import type { Quat, Vec3 } from "../math.ts"
 
@@ -21,24 +21,32 @@ export type TransformProps = {
 }
 
 /**
- * Mesh pointer events, the element vocabulary one tree deeper: the nearest
- * hit mesh receives the event, down/move/up bubble to ancestor Groups
- * (stopPropagation stops the walk), enter/leave pair on the mesh alone.
+ * Node pointer events, the element vocabulary one tree deeper: the nearest
+ * hit (the struck instance, else the mesh) receives the event,
+ * down/move/up/wheel/tap bubble to ancestor Groups and end at the
+ * `<Scene>`'s own handlers (stopPropagation stops the walk; a stopped
+ * down claims the whole press, so a mesh that drags itself keeps an
+ * `<OrbitCamera>` still), enter/leave pair on the struck node alone.
  * Events flow while the element showing the scene carries scene.handlers -
  * the built-in <Scene> leaf does (opt out with events={false}); an `output`
  * leaf spreads them itself.
  */
 export type PointerEventProps = {
-  onPointerDown?: (event: ScenePointerEvent) => void
-  onPointerMove?: (event: ScenePointerEvent) => void
-  onPointerUp?: (event: ScenePointerEvent) => void
-  /** Meshes only: a Group never receives enter/leave. */
-  onPointerEnter?: (event: ScenePointerEvent) => void
-  onPointerLeave?: (event: ScenePointerEvent) => void
+  onPointerDown?: (event: NodePointerEvent) => void
+  onPointerMove?: (event: NodePointerEvent) => void
+  onPointerUp?: (event: NodePointerEvent) => void
+  /** Meshes and instances only: a Group never receives enter/leave. */
+  onPointerEnter?: (event: NodePointerEvent) => void
+  onPointerLeave?: (event: NodePointerEvent) => void
+  /** The wheel over the node: `deltaX`/`deltaY`. */
+  onWheel?: (event: NodeWheelEvent) => void
+  /** A press released on the node within the slop, alone for its whole
+   * press: DOM's click, with `tapCount` for repeats. */
+  onTap?: (event: NodeTapEvent) => void
 }
 
 export function syncNode(node: SceneNode, props: TransformProps & PointerEventProps): void {
-  // One effect for the transform and the handlers: re-assigning six
+  // One effect for the transform and the handlers: re-assigning eight
   // handler fields on a transform write is free, an effect of its own is
   // not (a node component's mount cost is mostly its effects and its
   // context provider, see probes/3d-instance-mount-bench.tsx).
@@ -55,9 +63,11 @@ export function syncNode(node: SceneNode, props: TransformProps & PointerEventPr
         props.onPointerUp,
         props.onPointerEnter,
         props.onPointerLeave,
+        props.onWheel,
+        props.onTap,
         props.onTransitionEnd,
       ] as const,
-    ([position, rotation, quaternion, scale, visible, down, move, up, enter, leave, end]) => {
+    ([position, rotation, quaternion, scale, visible, down, move, up, enter, leave, wheel, tap, end]) => {
       setTransform(node, { position, rotation, quaternion, scale })
       setVisible(node, visible !== false)
       node.onPointerDown = down
@@ -65,6 +75,8 @@ export function syncNode(node: SceneNode, props: TransformProps & PointerEventPr
       node.onPointerUp = up
       node.onPointerEnter = enter
       node.onPointerLeave = leave
+      node.onWheel = wheel
+      node.onTap = tap
       node.onTransitionEnd = end
     },
   )

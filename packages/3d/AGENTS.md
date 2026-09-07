@@ -229,8 +229,8 @@ blendMode and pointer events like any element.
   GPU-free BY DESIGN so they can be checked headless (and, for the two
   model modules, run under bun in `tools/model.ts`); keep them that way.
   The rigs under `checks/`
-  (`geometry-check`, `sweep-check`, `pick-check`, `order-check`,
-  `gltf-check`) run on
+  (`geometry-check`, `sweep-check`, `pick-check`, `dispatch-check`,
+  `order-check`, `gltf-check`) run on
   flux from the repo root: `bunx srt bundle -f --stdout
   packages/3d/checks/<name>.ts | target/release/flux -`. Run the ones
   touching what you changed. `raycast-check.tsx` and
@@ -248,8 +248,8 @@ blendMode and pointer events like any element.
 
 | Component | Props |
 | --- | --- |
-| `Scene` | `width?`, `height?` (target pixels - both, or neither = FILL, below), `clearColor?`, `camera?` (partial CameraUpdate, `ortho` included - the declarative scene.setCamera; same state as `PerspectiveCamera`, use one form), `background?` (fragment GLSL, or a skybox `{ cube, intensity?, rotation? }`), `environment?` (`{ cube, intensity?, rotation? }`, the cube reflective materials mirror), `fog?` (`{ color, near, far }`, linear by camera distance), `toneMapping?` (`"none"` default or `"aces"`), `exposure?` (default 1), `layers?` (target mask, default 1), `depth?` (`"texture"` exposes scene.depthTexture; not with samples), `samples?` (1/2/4/8 MSAA), `label?`, `ref?(scene)`, `output?(texture)`, `events?` (mesh pointer events, default on) |
-| `View3d` | a Scene child rendering the scene again from a camera of its own (scene.createView as a component): `width`, `height` (target pixels, live; fixed-size only for now), `x?`, `y?` (the tile's top-left in `into`, live), `into?` (tile an app-owned draw target - one pass for every view into it; fixed at creation), `camera?` (partial CameraUpdate on the view's camera, live; same state as a `PerspectiveCamera` child), `layers?` (the view's mask, live), `clearColor?`, `label?`, `overrideMaterial?`, `fog?` (FogOptions, or null for none), `depth?`, `samples?`, `filter?`, `wrap?` (createView's, fixed), `ref?(view)`, `output?(texture)` (else a built-in `<texture>` leaf at the target size, a tile shown through srcX/srcY); camera-control children drive the VIEW and listen on its leaf (inside, `useScene()` reports the view as `viewport` and the view leaf's channel as `input`); node children mount to the scene as outside; a view leaf carries no mesh pointer events |
+| `Scene` | `width?`, `height?` (target pixels - both, or neither = FILL, below), `clearColor?`, `camera?` (partial CameraUpdate, `ortho` included - the declarative scene.setCamera; same state as `PerspectiveCamera`, use one form), `background?` (fragment GLSL, or a skybox `{ cube, intensity?, rotation? }`), `environment?` (`{ cube, intensity?, rotation? }`, the cube reflective materials mirror), `fog?` (`{ color, near, far }`, linear by camera distance), `toneMapping?` (`"none"` default or `"aces"`), `exposure?` (default 1), `layers?` (target mask, default 1), `depth?` (`"texture"` exposes scene.depthTexture; not with samples), `samples?` (1/2/4/8 MSAA), `label?`, `ref?(scene)`, `output?(texture)`, `events?` (pointer events, default on), `pointer?` (the leaf's pointer feed, fed from the scene's root), `onPointerDown/Move/Up?`, `onWheel?`, `onTap?` (the scene's own handlers, the last stop of the walk - `event.mesh` null over empty space) |
+| `View3d` | a Scene child rendering the scene again from a camera of its own (scene.createView as a component): `width`, `height` (target pixels, live; fixed-size only for now), `x?`, `y?` (the tile's top-left in `into`, live), `into?` (tile an app-owned draw target - one pass for every view into it; fixed at creation), `camera?` (partial CameraUpdate on the view's camera, live; same state as a `PerspectiveCamera` child), `layers?` (the view's mask, live), `clearColor?`, `label?`, `overrideMaterial?`, `fog?` (FogOptions, or null for none), `depth?`, `samples?`, `filter?`, `wrap?` (createView's, fixed), `ref?(view)`, `output?(texture)` (else a built-in `<texture>` leaf at the target size, a tile shown through srcX/srcY), `events?`, `pointer?` (the view leaf's feed, fed from the view's root), `onPointerDown/Move/Up?`, `onWheel?`, `onTap?` (the view's own handlers); camera-control children drive the VIEW (inside, `useScene()` reports the view as `viewport` and the view's feed as `pointer`); node children mount to the scene as outside, and under the view's leaf get their ordinary pointer handlers, picked through the view's camera (`view.pick`), the view as the root of that walk |
 | `Group` | `position?`, `rotation?` (Euler radians, XYZ order), `quaternion?` (either, not both), `scale?` (number = uniform), `visible?`, pointer events (below), `ref?(node)` |
 | `Mesh` | `geometry`, `material`, transforms as Group, `params?` (per-mesh uniforms, merge semantics - no unset), `renderOrder?`, `castShadow?`, `layers?` (membership bitmask, default 1), pointer events (below), `ref?(mesh)` |
 | `Sprite` | as Mesh minus `geometry`: a camera-facing unit quad, `scale` is its world size, rotation is ignored; pair with a `sprite()` material |
@@ -296,10 +296,11 @@ examples fill; scene-views and scene-post-effect keep fixed sizes to
 show multi-view composition and supersampling). A custom `output` leaf
 whose layout differs from the target
 takes `handlersFor` (below), not `handlers`; `useScene()` works inside
-`output` because it runs in the scene context. With a `pointer` feed on
-the Scene, also spread `{...useScene().pointer.handlers}` on the leaf -
-the mesh-event and gesture spreads are separate, and a detached leaf
-gives its feed a `layout` (it has no layout box to normalize by).
+`output` because it runs in the scene context. One spread carries
+everything: the `pointer` feed listens at the scene's root, so
+`{...useScene().scene.handlers}` feeds the nodes, the scene's own
+handlers and the feed alike (a detached leaf gives its feed a `layout`,
+it has no layout box to normalize by).
 
 Input, the rule (ARCHITECTURE.md): a camera control consumes a
 device-free abstraction and never handles events or reads a device
@@ -308,7 +309,9 @@ sampled per frame, immediate deltas in device-free units) and pose verbs;
 an input map (`createInputMap`, core AGENTS.md) drives the axes by action
 name, and the APP binds devices to the map: the scene leaf's pointer feed
 (`createPointerFeed()`, handed to `<Scene pointer>` / `<View3d pointer>`,
-or spread on a custom leaf), a pad (`gamepad(0)`, or `gamepad.next()`
+where it listens at the root of the pointer walk, so a mesh that claims
+its press keeps the control out of that drag; an imperative scene or
+view feeds it with `feedPointer(scene, feed)`), a pad (`gamepad(0)`, or `gamepad.next()`
 for the next pad to press a button), the keyboard (`keyboard`, its key
 events through `input.handlers` on the window).
 Nothing binds by default: `<OrbitCamera />` without `input` moves only
@@ -519,25 +522,54 @@ one overlap per move. Deliberately absent and additive when asked: a
 step offset (Unity's stepOffset; Godot has none either) and a cylinder
 volume (Godot only).
 
-Mesh pointer events - the element vocabulary one tree deeper:
-`onPointerDown/Move/Up/Enter/Leave` as plain fields on any node (and as
-Mesh/Group props). The nearest hit mesh is the target; down/move/up
-bubble mesh -> ancestor groups (`stopPropagation()` stops the walk);
-enter/leave fire on the mesh alone, pairing on hover changes. A
-pointer-down CAPTURES its mesh until the up: moves and the up keep
-dispatching to it off-mesh (the platform's captured-drag rule), with
-`point`/`distance` null while the ray misses it. The event carries the
-element fields (pointerId, pointerType, button, modifiers) plus `mesh`,
-`currentTarget`, `point`, `distance`, and `x`/`y` in scene pixels.
-Wiring: the built-in `<Scene>` leaf carries `scene.handlers`
-automatically (opt out: `events={false}`); an `output` leaf or
-imperative composition spreads `{...scene.handlers}` onto the element
-showing the texture. `scene.handlers` assumes that leaf is LAID OUT at
-the target size - true for the built-in leaf and a d-texture at natural
-size, under any ancestor transforms or design-size fits (the hit test
-undoes them; localX/localY arrive in the leaf's layout frame). A leaf
-laid out at a different size (the supersampling pattern) uses
+Pointer events (scene-pointer.ts): the element event model one tree
+deeper, with the SCENE as the root of the walk (under a `<View3d>` leaf:
+the view). `onPointerDown/Move/Up/Enter/Leave/Wheel/Tap` are plain
+fields on any node (and Mesh/Group/Instance props); the nearest hit is
+the target - the struck instance of an instanced mesh, else the mesh -
+and down/move/up/wheel dispatch there, bubble through the ancestors and
+END AT THE SCENE's listeners (`scene.listen({...})`, the `<Scene>`
+`onPointer*`/`onWheel`/`onTap` props); over empty space the walk is the
+scene alone, with `event.mesh` null (a tap there is the deselect idiom).
+`event.mesh` stays the hit (`NodePointerEvent` in the chain,
+`ScenePointerEvent` at the root with `mesh` nullable), `currentTarget`
+the node whose handler runs (the scene at the end), `stopPropagation()`
+stops the walk, and a stopped DOWN claims the whole press: that
+pointer's move, up and tap never reach the scene either (the chain still
+bubbles). That one rule is how a mesh drags itself under an
+`<OrbitCamera>` without the view turning: stop the down, own the
+captured moves - the control's pointer feed listens at the root
+(`<Scene pointer>` does it, `feedPointer(scene, feed)` by hand) and sees
+only what the nodes let through. Capture is per pointerId to the press
+target, the scene included (a drag from empty space keeps delivering to
+the root as it crosses meshes; a drag from a mesh keeps naming it, with
+`point`/`distance` null while the ray misses it). Enter/leave fire on
+the struck node alone - a group never receives them - while the root
+sees every move, so "hovering empty space" is a root move with `mesh`
+null. Taps are synthesized by the dispatch (DOM click, Unity's click
+handler): `onTap` fires after the up when the press released on the
+target it pressed within the slop (8 window px, core's recognizer slop,
+so a press is never both a tap and a drag), was the only pointer down
+for its whole press (a pinch never taps), with `tapCount` counting
+repeats within 300 ms and 20 px on the same target (a double tap is
+`tapCount === 2`); a release on another instance of the same mesh is no
+tap. Wheel walks like a move with `deltaX/deltaY` (a node stopping it
+keeps the zoom out). Every event carries `native`, the leaf's element
+event, for core's recognizers, and the element fields (pointerId,
+pointerType, button, modifiers) plus `x`/`y` in scene pixels
+(screenRay's input - a drag plane is one intersection away). Root
+listeners all run, in registration order (the root is the last stop,
+nothing is left to claim). Wiring: the built-in `<Scene>` leaf carries
+`scene.handlers` automatically (opt out: `events={false}`); an `output`
+leaf or imperative composition spreads `{...scene.handlers}` onto the
+element showing the texture. `scene.handlers` assumes that leaf is LAID
+OUT at the target size - true for the built-in leaf and a d-texture at
+natural size, under any ancestor transforms or design-size fits (the hit
+test undoes them; localX/localY arrive in the leaf's layout frame). A
+leaf laid out at a different size (the supersampling pattern) uses
 `scene.handlersFor(() => ({ width, height }))` with its layout size.
+checks/dispatch-check.ts pins the walk, claiming, capture, hover, wheel
+and tap rules headless; examples/pick.tsx is the live guard.
 
 Geometry generators take ONE options object, every field optional with
 a default, named as Three names them: `box({ width, height, depth })`

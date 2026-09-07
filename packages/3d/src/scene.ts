@@ -41,7 +41,7 @@ import * as spatial from "flux:spatial"
 import type { NodeId } from "flux:spatial"
 import type { DrawId, FilterMode, ProgramId, RenderPipelineId, ShaderParams, TextureId, WrapMode } from "@solidrt/core/gpu"
 import { getOwner, onCleanup } from "@solidrt/core"
-import type { PointerEvent as ElementPointerEvent } from "@solidrt/core"
+import type { PointerEvent as ElementPointerEvent, WheelEvent as ElementWheelEvent } from "@solidrt/core"
 import { copy, mat4, transformPoint } from "./math.ts"
 import { linearColor } from "./color.ts"
 import type { Mat4, Quat, Vec3, Vec4 } from "./math.ts"
@@ -59,7 +59,7 @@ import type { Prefilter } from "./environment.ts"
 import type { Material } from "./material.ts"
 import { orderEntries } from "./order.ts"
 import { fillTransform, leaveScene, makeNode, worldInto } from "./node.ts"
-import type { SceneHooks, SceneNode, ScenePointerEvent } from "./node.ts"
+import type { SceneHooks, SceneNode, ScenePointerListener } from "./node.ts"
 import { checkInstancePairing, checkMask, instanceBinding, localBounds, publishInstanceStyle } from "./mesh.ts"
 import type { InstancedMesh, InstanceNode, Mesh } from "./mesh.ts"
 import type { CastingLight, Light } from "./light.ts"
@@ -183,15 +183,17 @@ export type Overlap = { mesh: Mesh; instance?: InstanceNode; point: Vec3; normal
  * Godot's KinematicCollision3D). `instance` as on Overlap. */
 export type Impact = { mesh: Mesh; instance?: InstanceNode; time: number; point: Vec3; normal: Vec3 }
 
-/** Element handlers wiring a scene's pointer events: spread onto whatever
- * element shows `scene.texture` (the built-in `<Scene>` leaf wires them
- * automatically). `scene.handlers` expects the leaf laid out at the target
- * size; a split-resolution leaf (supersampling) uses scene.handlersFor. */
+/** Element handlers wiring a scene's (or a view's) pointer events: spread
+ * onto whatever element shows its texture (the built-in `<Scene>` and
+ * `<View3d>` leaves wire them automatically). `scene.handlers` expects
+ * the leaf laid out at the target size; a split-resolution leaf
+ * (supersampling) uses scene.handlersFor. */
 export type SceneHandlers = {
   onPointerDown(event: ElementPointerEvent): void
   onPointerMove(event: ElementPointerEvent): void
   onPointerUp(event: ElementPointerEvent): void
   onPointerLeave(event: ElementPointerEvent): void
+  onWheel(event: ElementWheelEvent): void
 }
 
 /**
@@ -469,6 +471,22 @@ export type ViewHandle = {
   /** Replace the view's layer mask (bitmask): entries for newly admitted
    * meshes attach, masked-out ones detach. */
   setLayers(mask: number): void
+  /** The camera ray through one of the VIEW's pixels, hits nearest first:
+   * scene.pick through this view's camera and size, so a mesh under a
+   * minimap is picked where the minimap shows it (the scene's query
+   * filters apply: visibility, the view's own layer mask is not one). */
+  pick(x: number, y: number): Hit[]
+  /** Element pointer handlers for the element showing `texture`: the
+   * scene's dispatch with THIS VIEW as the root of the walk - nodes get
+   * their ordinary handlers, picked through the view's camera, the
+   * view's `listen` is the last stop, `x`/`y` are view pixels. The
+   * `<View3d>` leaf carries them; an `output` leaf spreads them itself. */
+  handlers: SceneHandlers
+  /** handlers for a leaf laid out at another size; exactly
+   * scene.handlersFor. */
+  handlersFor(layout: () => { width: number; height: number }): SceneHandlers
+  /** A listener at this view's root; exactly scene.listen. */
+  listen(listener: ScenePointerListener): () => void
   /** Destroy the view's target (its entries die with it). Idempotent;
    * views also die with their scene. */
   dispose(): void
@@ -719,17 +737,25 @@ export type Scene = {
    */
   screenRay(x: number, y: number): ScreenRay
   /**
-   * Element pointer handlers driving the mesh event fields
-   * (onPointerDown/Move/Up/Enter/Leave on nodes): spread onto the element
-   * that shows `scene.texture`. The `<Scene>` component's built-in leaf
-   * carries them automatically; with `output` (or imperative use), spread
-   * them yourself: `<texture src={scene.texture} {...scene.handlers} />`.
-   * Semantics mirror element pointer events: nearest hit wins, down/move/
-   * up bubble mesh -> ancestors, pointer-down captures the mesh until up
-   * (moves keep flowing to it off-mesh, the platform's captured-drag
-   * rule), enter/leave pair on hover changes. Hover reacts to pointer
-   * MOTION - a mesh animating under a still pointer fires nothing until
-   * the pointer moves (the element hit-test has the same limit).
+   * Element pointer handlers driving the node event fields
+   * (onPointerDown/Move/Up/Enter/Leave/Wheel/Tap on nodes) and the
+   * scene's listeners: spread onto the element that shows
+   * `scene.texture`. The `<Scene>` component's built-in leaf carries them
+   * automatically; with `output` (or imperative use), spread them
+   * yourself: `<texture src={scene.texture} {...scene.handlers} />`.
+   * The element event model one tree deeper, with the scene as the root
+   * of the walk: the nearest hit is the target (the struck instance of an
+   * instanced mesh, else the mesh), down/move/up/wheel bubble through its
+   * ancestors and end at the scene's listeners (`listen`); over empty
+   * space the walk is the scene alone. stopPropagation stops the walk,
+   * and a stopped down claims the whole press. Capture is per pointer to
+   * the press target, the scene included: a drag keeps delivering to what
+   * it pressed, with `point`/`distance` null while the ray misses it.
+   * Enter/leave pair on the struck node alone, on hover changes. Taps are
+   * synthesized (a same-target release within the slop, alone for the
+   * press, `tapCount` for repeats). Hover reacts to pointer MOTION - a
+   * mesh animating under a still pointer fires nothing until the pointer
+   * moves (the element hit-test has the same limit).
    *
    * Coordinates assume the leaf is LAID OUT at the target size - true for
    * the built-in leaf and a d-texture at natural size, under any ancestor
@@ -743,6 +769,19 @@ export type Scene = {
    * layout just works: `scene.handlersFor(() => ({ width: w(), height:
    * h() }))`. */
   handlersFor(layout: () => { width: number; height: number }): SceneHandlers
+  /**
+   * Add a listener at the root of the pointer walk (the `<Scene>`
+   * component's onPointerDown/Move/Up, onWheel and onTap props do this):
+   * it sees every event the node chain lets through, hit or miss -
+   * `event.mesh` is the hit it bubbled from, null over empty space - with
+   * `x`/`y` in scene pixels. Listeners all run, in registration order
+   * (the root is the last stop, nothing is left to claim); a stopped DOWN
+   * claims the whole press for the chain, so that pointer's move, up and
+   * tap never arrive. Returns the remover. A pointer feed listens here
+   * through feedPointer, so a camera control bound to the feed respects a
+   * mesh's claim.
+   */
+  listen(listener: ScenePointerListener): () => void
   /**
    * A second rendering of this scene: its own draw target and camera,
    * the same meshes and lights. Each mesh gets one entry in the view's
@@ -1070,44 +1109,46 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
   let clip: Vec4 = [0, 0, 0, 0]
   let pickOrigin: Vec3 = [0, 0, 0]
 
-  // The camera ray through a scene pixel, into the pickOrigin/pickDir
+  // The camera ray through a pixel of `cam` over a tw x th target, into the
+  // pickOrigin/pickDir
   // scratches. The direction keeps a camera-forward component of 1
   // (perspective: (cx, cy, -1) in the camera frame; ortho: unit forward),
   // so origin + w * direction is the world point at camera-forward
   // distance w - what unproject() banks on. pick()/screenRay()/
   // unproject() all cast exactly this ray.
-  let pixelRay = (x: number, y: number): void => {
-    ensureCamera(camera, width, height)
-    let v = camera.view
-    let o = camera.ortho
+  let pixelRayOf = (cam: Camera, tw: number, th: number, x: number, y: number): void => {
+    ensureCamera(cam, tw, th)
+    let v = cam.view
+    let o = cam.ortho
     if (o === null) {
       // The camera-frame ray through the pixel, inverting project()'s
       // mapping: the baked y-down clip flip is why pixel y converts with
       // no negation there and one here.
-      let f = 1 / Math.tan(((camera.fov * Math.PI) / 180) / 2)
-      let cx = (((x / width) * 2 - 1) * (width / height)) / f
-      let cy = -((y / height) * 2 - 1) / f
+      let f = 1 / Math.tan(((cam.fov * Math.PI) / 180) / 2)
+      let cx = (((x / tw) * 2 - 1) * (tw / th)) / f
+      let cy = -((y / th) * 2 - 1) / f
       // The view's upper 3x3 rows are the camera axes, so its transpose
       // carries the camera-space direction (cx, cy, -1) to world.
       pickDir[0] = cx * v[0] + cy * v[1] - v[2]
       pickDir[1] = cx * v[4] + cy * v[5] - v[6]
       pickDir[2] = cx * v[8] + cy * v[9] - v[10]
-      pickOrigin[0] = camera.eye[0]
-      pickOrigin[1] = camera.eye[1]
-      pickOrigin[2] = camera.eye[2]
+      pickOrigin[0] = cam.eye[0]
+      pickOrigin[1] = cam.eye[1]
+      pickOrigin[2] = cam.eye[2]
       return
     }
     // Orthographic: every ray runs along the camera's forward axis; the
     // pixel picks where on the camera plane it starts (top row = top).
-    let cx = o.left + (x / width) * (o.right - o.left)
-    let cy = o.top + (y / height) * (o.bottom - o.top)
-    pickOrigin[0] = camera.eye[0] + cx * v[0] + cy * v[1]
-    pickOrigin[1] = camera.eye[1] + cx * v[4] + cy * v[5]
-    pickOrigin[2] = camera.eye[2] + cx * v[8] + cy * v[9]
+    let cx = o.left + (x / tw) * (o.right - o.left)
+    let cy = o.top + (y / th) * (o.bottom - o.top)
+    pickOrigin[0] = cam.eye[0] + cx * v[0] + cy * v[1]
+    pickOrigin[1] = cam.eye[1] + cx * v[4] + cy * v[5]
+    pickOrigin[2] = cam.eye[2] + cx * v[8] + cy * v[9]
     pickDir[0] = -v[2]
     pickDir[1] = -v[6]
     pickDir[2] = -v[10]
   }
+  let pixelRay = (x: number, y: number): void => pixelRayOf(camera, width, height, x, y)
 
   // Views (scene.createView): more targets drawing the same meshes from
   // their own cameras. A view holds one entry per mesh in its target,
@@ -1674,13 +1715,9 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
   lightsDirty = true
   hooks._schedule()
 
-  // Pointer dispatch (scene.handlers): capture/hover bookkeeping and the
-  // bubble walk live in scene-pointer.ts; all it needs of the scene is
-  // pick() and the target size.
-  let pointer = makePointerInput({
-    pick: (x, y) => scene.pick(x, y),
-    targetSize: () => ({ width, height }),
-  })
+  // The scene's root listeners (scene.listen): the last stop of the
+  // pointer walk scene-pointer.ts runs behind scene.handlers.
+  let listeners = new Set<ScenePointerListener>()
 
   let scene: Scene = {
     texture,
@@ -1882,12 +1919,25 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       }
       return out
     },
-    handlers: pointer.handlers,
-    handlersFor: pointer.handlersFor,
+    get handlers() {
+      return pointer.handlers
+    },
+    handlersFor(layout) {
+      return pointer.handlersFor(layout)
+    },
+    listen(listener) {
+      listeners.add(listener)
+      return () => {
+        listeners.delete(listener)
+      }
+    },
     createView(vopts) {
       if (disposed) throw new Error("createView: the scene is disposed")
       let v = makeView(vopts, null)
-      return {
+      // The view's own walk: its listeners, its camera's pick, and a
+      // dispatch with its own capture and hover bookkeeping.
+      let viewListeners = new Set<ScenePointerListener>()
+      let handle: ViewHandle = {
         texture: v.texture,
         depthTexture: vopts.depth === "texture" && vopts.into === undefined ? depthTexture(v.texture) : null,
         setCamera(update) {
@@ -1927,10 +1977,35 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
           }
           hooks._schedule()
         },
+        pick(x, y) {
+          if (v.disposed) return []
+          pixelRayOf(v.camera, v.width, v.height, x, y)
+          return scene.raycast(pickOrigin, pickDir)
+        },
+        get handlers() {
+          return viewPointer.handlers
+        },
+        handlersFor(layout) {
+          return viewPointer.handlersFor(layout)
+        },
+        listen(listener) {
+          viewListeners.add(listener)
+          return () => {
+            viewListeners.delete(listener)
+          }
+        },
         dispose() {
+          viewListeners.clear()
           disposeView(v)
         },
       }
+      let viewPointer = makePointerInput({
+        pick: (x, y) => handle.pick(x, y),
+        targetSize: () => ({ width: v.width, height: v.height }),
+        root: handle,
+        listeners: viewListeners,
+      })
+      return handle
     },
     createReflectionProbe(popts) {
       if (disposed) throw new Error("createReflectionProbe: the scene is disposed")
@@ -1950,6 +2025,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     dispose() {
       if (disposed) return
       disposed = true
+      listeners.clear()
       // Full tree-side teardown, not just the target: every node leaves
       // the scene (entries' geometry-buffer references and pick leaves
       // dropped, core nodes freed), so a disposed scene leaves no
@@ -1977,6 +2053,15 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       }
     },
   }
+  // Pointer dispatch (scene.handlers): capture/hover bookkeeping, the
+  // walk and the tap tracker live in scene-pointer.ts; all it needs of
+  // the scene is pick(), the target size, and the root it ends at.
+  let pointer = makePointerInput({
+    pick: (x, y) => scene.pick(x, y),
+    targetSize: () => ({ width, height }),
+    root: scene,
+    listeners,
+  })
   // A reflection probe over layer mask `mask` (see createReflectionProbe):
   // the public object plus `finish`, which keeps the prefiltered chain and
   // drops everything else - the bake's one-shot use.

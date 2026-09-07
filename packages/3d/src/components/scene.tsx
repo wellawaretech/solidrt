@@ -1,11 +1,28 @@
-import { createEffect, displayScale, getBoundingBoxViewport, getLayoutBox, onLayout, untrack } from "@solidrt/core"
-import type { Element, ParentComponent, PointerEvent, PointerFeed, TextureId } from "@solidrt/core"
+import { createEffect, displayScale, getBoundingBoxViewport, getLayoutBox, onCleanup, onLayout, untrack } from "@solidrt/core"
+import type { Element, ParentComponent, PointerFeed, TextureId } from "@solidrt/core"
 import { SceneContext } from "./context.tsx"
 import { createScene } from "../scene.ts"
+import { feedPointer } from "../scene-pointer.ts"
 import type { EnvironmentOptions, FogOptions, Scene as SceneHandle, SkyboxOptions, ToneMapping } from "../scene.ts"
+import type { ScenePointerEvent, SceneTapEvent, SceneWheelEvent } from "../node.ts"
 import type { CameraUpdate } from "../camera.ts"
 
-export type SceneProps = {
+/**
+ * The scene's own pointer events, the root of the walk: every event the
+ * nodes let through arrives here last - `event.mesh` is the hit it
+ * bubbled from, or null over empty space (a tap there with `mesh` null is
+ * "deselect"), `x`/`y` scene pixels. scene.listen as props; an
+ * `<OrbitCamera>` child's feed listens at the same root.
+ */
+export type ScenePointerProps = {
+  onPointerDown?: (event: ScenePointerEvent) => void
+  onPointerMove?: (event: ScenePointerEvent) => void
+  onPointerUp?: (event: ScenePointerEvent) => void
+  onWheel?: (event: SceneWheelEvent) => void
+  onTap?: (event: SceneTapEvent) => void
+}
+
+export type SceneProps = ScenePointerProps & {
   /**
    * Target pixels - give both, or neither. Omitted, the scene FILLS: the
    * built-in leaf is laid out at 100% of its parent's box (give it a sized
@@ -71,24 +88,29 @@ export type SceneProps = {
    * leaf - a `<d-texture>`, a leaf carrying paint/pointer/layout props, or
    * a post-effect chain (a shader target sampling the id; created in the
    * callback it disposes with the Scene). Return null to render no leaf.
-   * Mesh pointer events then need the scene's handlers on your leaf:
-   * `<texture src={texture} {...useScene().scene.handlers} />`, and the
-   * pointer feed its handlers: `{...useScene().pointer.handlers}`.
+   * Pointer events then need the scene's handlers on your leaf:
+   * `<texture src={texture} {...useScene().scene.handlers} />` - one
+   * spread carries the node events, the scene's own and the pointer
+   * feed, which listens at the scene's root.
    */
   output?: (texture: TextureId) => Element
   /**
-   * Mesh pointer events (default on): the built-in leaf carries
-   * scene.handlers, so Mesh/Group onPointer* props receive events. `false`
-   * detaches them - the leaf then costs no pointer routing at all.
+   * Pointer events (default on): the built-in leaf carries scene.handlers,
+   * so nodes, the scene's own handlers and a camera control's feed
+   * receive input. `false` detaches them - the leaf then costs no pointer
+   * routing at all.
    */
   events?: boolean
   /**
-   * The pointer feed of the scene's leaf (createPointerFeed): the built-in
-   * leaf spreads its handlers, so the feed's gestures - drag, pinch, two-
-   * finger pan, wheel, mouse motion under lock - come from this scene, and
-   * an input map binds them to the camera controls inside. Fixed at
-   * creation. Without one the leaf feeds no gestures and the controls
-   * move only through their handles.
+   * The pointer feed of the scene's leaf (createPointerFeed), fed from
+   * the scene's root - the events the nodes let through: a mesh that
+   * claims its press (stopPropagation on its down) keeps a camera control
+   * bound to the feed out of that drag. The feed's gestures - drag,
+   * pinch, two-finger pan, wheel, mouse motion under lock - come from
+   * this scene, and an input map binds them to the camera controls
+   * inside; `useScene().pointer` is this feed. Fixed at creation. Without
+   * one the leaf feeds no gestures and the controls move only through
+   * their handles.
    */
   pointer?: PointerFeed
 }
@@ -182,11 +204,22 @@ export let Scene: ParentComponent<SceneProps> = props => {
     { defer: true },
   )
   untrack(() => props.ref)?.(scene)
-  // The pointer feed the app handed in: the built-in leaf feeds it (a
-  // custom `output` leaf spreads `pointer.handlers` itself), and children
-  // reach it through useScene().pointer. Fixed at creation, like output.
+  // The pointer feed the app handed in listens at the scene's root, and
+  // children reach it through useScene().pointer. Fixed at creation, like
+  // output.
   let pointer = untrack(() => props.pointer) ?? null
-  let feed = pointer?.handlers
+  if (pointer) onCleanup(feedPointer(scene, pointer))
+  // The scene's own handlers at the root of the walk; the props are read
+  // per event, so a handler prop may change without re-registering.
+  onCleanup(
+    scene.listen({
+      onPointerDown: e => props.onPointerDown?.(e),
+      onPointerMove: e => props.onPointerMove?.(e),
+      onPointerUp: e => props.onPointerUp?.(e),
+      onWheel: e => props.onWheel?.(e),
+      onTap: e => props.onTap?.(e),
+    }),
+  )
   let output = untrack(() => props.output)
   let events = untrack(() => props.events) !== false
   let leafNode: { id: number } | undefined
@@ -222,8 +255,8 @@ export let Scene: ParentComponent<SceneProps> = props => {
     onLayout(apply)
     createEffect(() => displayScale(), apply)
   }
-  // Mesh events on the built-in leaf: at target size the plain handlers,
-  // in fill mode scaled from the laid-out box.
+  // Pointer events on the built-in leaf: at target size the plain
+  // handlers, in fill mode scaled from the laid-out box.
   let sceneHandlers = fill ? scene.handlersFor(builtinLayout) : scene.handlers
   return (
     <SceneContext value={{ scene, parent: scene.root, viewport: scene, pointer }}>
@@ -235,11 +268,11 @@ export let Scene: ParentComponent<SceneProps> = props => {
           src={scene.texture}
           width={fill ? "100%" : props.width}
           height={fill ? "100%" : props.height}
-          onPointerDown={events || feed ? (e: PointerEvent) => { if (events) sceneHandlers.onPointerDown(e); feed?.onPointerDown(e) } : undefined}
-          onPointerMove={events || feed ? (e: PointerEvent) => { if (events) sceneHandlers.onPointerMove(e); feed?.onPointerMove(e) } : undefined}
-          onPointerUp={events || feed ? (e: PointerEvent) => { if (events) sceneHandlers.onPointerUp(e); feed?.onPointerUp(e) } : undefined}
-          onPointerLeave={events || feed ? (e: PointerEvent) => { if (events) sceneHandlers.onPointerLeave(e); feed?.onPointerLeave(e) } : undefined}
-          onWheel={feed ? feed.onWheel : undefined}
+          onPointerDown={events ? sceneHandlers.onPointerDown : undefined}
+          onPointerMove={events ? sceneHandlers.onPointerMove : undefined}
+          onPointerUp={events ? sceneHandlers.onPointerUp : undefined}
+          onPointerLeave={events ? sceneHandlers.onPointerLeave : undefined}
+          onWheel={events ? sceneHandlers.onWheel : undefined}
         />
       )}
       {props.children}

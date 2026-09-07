@@ -96,7 +96,7 @@ with inertia after release, a double tap counts 2; zero missed presents.
 
 The 3d package has the same gaps (no wheel, no click, and its mesh
 channel and `SceneInput` never coordinate, so a mesh drag also orbits):
-[3d-scene-pointer-root-walk](../backlog/3d-scene-pointer-root-walk.md).
+[3d-scene-pointer-root-walk](3d-scene-pointer-root-walk.md).
 Deliberately left out with the engine count: group enter/leave (DOM and
 Unity yes, r3f and Godot no; sprite-only is parity) and drag
 start/drag/end events (Unity only; a sprite drag composes core's

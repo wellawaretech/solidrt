@@ -8,8 +8,8 @@
 // structure and slow state, per-frame motion goes straight to the scene.
 //
 // One file per component (the lights, cameras and meshes each their own),
-// with the shared pieces beside them: context.tsx (the scene context, the
-// input channel and useScene), node-props.ts (the transform and pointer
+// with the shared pieces beside them: context.tsx (the scene context and
+// useScene), node-props.ts (the transform and pointer
 // props every node component syncs) and mesh.tsx (the mesh-side props the
 // populated meshes share). This index is the package's face: index.ts at
 // the root re-exports it, nothing outside imports the files directly.
@@ -18,7 +18,7 @@ export { useScene } from "./context.tsx"
 export type { CameraTarget } from "./context.tsx"
 export type { PointerEventProps, TransformProps } from "./node-props.ts"
 export { Scene } from "./scene.tsx"
-export type { SceneProps } from "./scene.tsx"
+export type { ScenePointerProps, SceneProps } from "./scene.tsx"
 export { View3d } from "./view3d.tsx"
 export type { View3dProps } from "./view3d.tsx"
 export { Group } from "./group.tsx"
