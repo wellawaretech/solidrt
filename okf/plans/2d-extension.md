@@ -73,7 +73,7 @@ packages/2d: frames.ts + pick.ts (pure, checked headless via
 packages/2d/checks/), atlas.ts (decode + nearest option - createImage never
 forwards sampler options), layer.ts (the retained layer: canonical
 Float32Array, microtask flush through the lease, camera as shared params,
-rotated-rect picking with capture/hover), components.tsx (SpriteLayer/Sprite
+rotated-rect picking with capture/hover), components/ (SpriteLayer/Sprite
 faces). Registered in the root workspace and the CI typecheck list (adding
 the previously-missing packages/3d as a drive-by).
 

@@ -3,7 +3,7 @@
 // never a quad per tile. On tiled GPUs the budget is primitive count, so a
 // 100x100 world must not be 10,000 quads per frame; baked, it is a few
 // chunk textures, and scrolling is a transform on the composited world
-// (see <TileLayer> in components.tsx), never a repaint.
+// (see <TileLayer> in components/tile-layer.tsx), never a repaint.
 //
 // Each chunk is a small copy of the sprite pipeline (shaders.ts) with fixed
 // record slots - record localRow * chunkTiles + localCol IS that tile, an

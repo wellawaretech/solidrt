@@ -43,7 +43,7 @@ function close(a: [number, number], b: [number, number]): boolean {
   return Math.abs(a[0] - b[0]) <= EPS && Math.abs(a[1] - b[1]) <= EPS
 }
 
-// Oracle: the <view> props exactly as <TileLayer> in components.tsx sets
+// Oracle: the <view> props exactly as <TileLayer> in components/tile-layer.tsx sets
 // them, applied with element-transform semantics (rotate + scale about the
 // origin point, then the x/y translation). If either spelling changes, the
 // sweep below catches the drift.

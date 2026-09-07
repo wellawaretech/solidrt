@@ -11,7 +11,7 @@ created: 2026-08-24
 `srt run packages/2d/examples/pick.tsx` logged `[REACTIVITY_HALTED] ...
 Error: Context must either be created with a default value or a value
 must be provided before accessing it` at mount, from `useContext(...)` at
-`packages/2d/src/components.tsx` inside `<Sprite>`; the window never
+`packages/2d/src/components/sprite.tsx` inside `<Sprite>`; the window never
 rendered. Any `<Sprite>` not nested in a `<Group>` hit it, so the whole
 component face of @solidrt/2d was unusable, while the function face
 (addSprite/setSprite) was unaffected.

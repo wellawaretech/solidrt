@@ -1,6 +1,6 @@
 // The pure oversample math: arithmetic on plain numbers, no GPU or window
 // imports, so the headless check (checks/oversample-check.ts) drives it
-// directly. oversample.ts wraps it with the device limits; components.tsx
+// directly. oversample.ts wraps it with the device limits; components/
 // adds the measured inputs (window box, display scale, camera).
 
 /** Tolerance under a whole number when rounding a display scale up, so a

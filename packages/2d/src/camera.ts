@@ -4,7 +4,7 @@
 // module headless on the flux binary. Three consumers implement or undo
 // exactly this mapping and must agree with it: the vertex stages
 // (shaders.ts, uCamera + uCameraRot), the tile layer's composite
-// transform (the <view> props in components.tsx) and the pointer inverse
+// transform (the <view> props in components/tile-layer.tsx) and the pointer inverse
 // (spriteDispatch in layer.ts, which calls unprojectCamera directly). The
 // check keeps the spellings from drifting.
 

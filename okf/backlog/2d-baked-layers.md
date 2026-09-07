@@ -73,7 +73,7 @@ only at hundreds of thousands of records.
 
 Stage A landed 2026-08-24 (uncommitted): `packages/2d/src/tiles.ts`
 (`createTileLayer(cols, rows, tileW, tileH, atlas)`), `<TileLayer>` in
-components.tsx, the sprite shaders factored into `shaders.ts` (shared
+components/tile-layer.tsx, the sprite shaders factored into `shaders.ts` (shared
 verbatim - the vertex stage's uCamera doubles as the chunk-rect bake
 mechanism stage B needs), example `examples/tiles.tsx`. Verified live via
 the control API: tree shape, two viewport snapshots showing pan + zoom +

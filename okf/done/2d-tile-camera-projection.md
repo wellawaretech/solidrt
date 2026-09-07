@@ -20,7 +20,7 @@ sy = pivotY + dx * sa + dy * ca
 ```
 
 Eight lines, written once per consumer, each a copy of the `<view>`
-transform in [components.tsx](../../packages/2d/src/components.tsx) that
+transform in [components/tile-layer.tsx](../../packages/2d/src/components/tile-layer.tsx) that
 silently rots if the layer's convention ever changes.
 
 ## Cause

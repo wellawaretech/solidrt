@@ -17,7 +17,7 @@ moved subtrees in Rust, and picking walks the core BVH.
   `addGroup`/`setGroup`/`setSpriteParent`/`setSpriteTransition`/
   `setGroupTransition` - plain objects, no signals, usable without
   components), the records layer (records.ts: `createRecordLayer` - the
-  raw escape hatch, below), and the component face (components.tsx:
+  raw escape hatch, below), and the component face (components/:
   `SpriteLayer`/`Sprite`/`Group`/`Camera2d` over context).
 - Node layer ownership split, two instance-buffer slots on one pipeline:
   slot 0 is the POSE buffer `[x, y, angle, sx, sy]` written ONLY by the
