@@ -10,7 +10,7 @@
 // world rendered once into textures and composited as a few quads,
 // re-baked on change. Two faces throughout: the imperative core (usable
 // without Solid components) and the components (SpriteLayer/Sprite/Group/
-// TileLayer) on top. See AGENTS.md for the model and the traps.
+// View2d/TileLayer) on top. See AGENTS.md for the model and the traps.
 
 export { addGroup, addSprite, createSpriteLayer, getSprite, removeGroup, removeSprite, setGroup, setGroupTransition, setSprite, setSpriteParent, setSpriteTransition, worldPosition, POSE_FLOATS, STYLE_FLOATS } from "./layer.ts"
 export { createRecordLayer, FLOATS_PER_SPRITE } from "./records.ts"
@@ -51,5 +51,5 @@ export type { AnimationOptions, SpriteAnimation } from "./animation.ts"
 export { fitOversample } from "./oversample.ts"
 export { createAtlas } from "./atlas.ts"
 export type { Atlas, AtlasOptions } from "./atlas.ts"
-export { Camera2d, Group, Sprite, SpriteLayer, TileLayer, useSpriteLayer } from "./components/index.ts"
-export type { Camera2dProps, GroupProps, LayerPointerProps, SpriteLayerProps, SpritePointerProps, SpriteProps, TileCamera, TileLayerProps } from "./components/index.ts"
+export { Camera2d, Group, Sprite, SpriteLayer, TileLayer, View2d, useSpriteLayer } from "./components/index.ts"
+export type { Camera2dProps, CameraTarget, GroupProps, LayerPointerProps, SpriteLayerProps, SpritePointerProps, SpriteProps, TileCamera, TileLayerProps, View2dProps } from "./components/index.ts"

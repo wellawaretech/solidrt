@@ -20,8 +20,8 @@
 // projectCamera in camera.ts. The differential checks guard the JS side
 // against oracles but NOT against these shaders - if you touch one
 // rotation, touch all.
-import { glsl } from "@solidrt/core/gpu"
-import type { InstanceAttribute, VertexAttribute } from "@solidrt/core/gpu"
+import { compileShader, createBuffer, createRenderPipeline, destroyBuffer, destroyProgram, destroyRenderPipeline, destroyShader, glsl, linkProgram } from "@solidrt/core/gpu"
+import type { BufferId, InstanceAttribute, RenderPipelineId, VertexAttribute } from "@solidrt/core/gpu"
 
 export let VERTEX = glsl`
   in vec2 aPos;
@@ -108,3 +108,44 @@ export const INSTANCE_ATTRIBUTES_SPLIT: InstanceAttribute[] = [
   { name: "iTint", format: "vec4", slot: 1 },
   { name: "iRenderOrder", format: "f32", slot: 1 },
 ]
+
+/** What a layer's targets draw with: the unit quad every instance reuses
+ * and the pipeline over one of the two layouts above. */
+export type SpritePipeline = { quad: BufferId; pipeline: RenderPipelineId; dispose(): void }
+
+/**
+ * Compile one sprite pipeline: `vertex` with its matching attribute list
+ * (VERTEX + INSTANCE_ATTRIBUTES, or the split pair) over the shared
+ * fragment stage, alpha-blended triangle strips. Spelled out (not the
+ * fused createPipelineTexture) so a layer's targets - its own and every
+ * view - add entries over the one pipeline. The program lives as long as
+ * the pipeline; `dispose` frees both and the quad.
+ */
+export function createSpritePipeline(label: string, vertex: string, instanceAttributes: InstanceAttribute[]): SpritePipeline {
+  // One unit quad (triangle strip), reused by every instance.
+  let quad = createBuffer(new Float32Array([-0.5, -0.5, 0.5, -0.5, -0.5, 0.5, 0.5, 0.5]), {
+    label: `${label}-quad`,
+    autoFree: false,
+  })
+  let vs = compileShader("vertex", vertex, { header: true })
+  let fs = compileShader("fragment", FRAGMENT, { header: true })
+  let program = linkProgram(vs, fs, { label })
+  destroyShader(vs)
+  destroyShader(fs)
+  let pipeline = createRenderPipeline(program, {
+    label,
+    topology: "triangle-strip",
+    attributes: [{ name: "aPos", format: "vec2" }],
+    instanceAttributes,
+    blend: "alpha",
+  })
+  return {
+    quad,
+    pipeline,
+    dispose() {
+      destroyRenderPipeline(pipeline)
+      destroyProgram(program)
+      destroyBuffer(quad)
+    },
+  }
+}

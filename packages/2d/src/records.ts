@@ -20,34 +20,14 @@
 // (addSprite/setSprite/...) are shared with the node layer; picking here is
 // the JS reverse walk (pointInSprite), since records have no nodes.
 import { getOwner, onCleanup } from "@solidrt/core"
-import {
-  addDraw,
-  beginBufferWrite,
-  compileShader,
-  createBuffer,
-  createDrawTarget,
-  createRenderPipeline,
-  destroyBuffer,
-  destroyProgram,
-  destroyRenderPipeline,
-  destroyShader,
-  destroyTexture,
-  endBufferWrite,
-  linkProgram,
-  setDrawBuffers,
-  setDrawRange,
-  setTargetParams,
-  setTargetSize,
-} from "@solidrt/core/gpu"
+import { beginBufferWrite, createBuffer, destroyBuffer, endBufferWrite } from "@solidrt/core/gpu"
 import type { BufferId, TextureId } from "@solidrt/core/gpu"
-import { applyCamera, cameraParams, checkCamera, defaultCamera, projectCamera, unprojectCamera } from "./camera.ts"
 import { FULL_FRAME, writeFrame } from "./frames.ts"
-import { spriteDispatch } from "./dispatch.ts"
 import { checkTint, readFrame } from "./layer.ts"
-import type { LayerBase, LayerPointerListener, Sprite, SpriteHandlers, SpriteLayerOptions, SpriteOptions, SpriteState } from "./layer.ts"
+import type { LayerBase, Sprite, SpriteLayerOptions, SpriteOptions, SpriteState } from "./layer.ts"
 import { pointInSprite } from "./pick.ts"
-import { checkOversample, thrashSentinel } from "./oversample.ts"
-import { FRAGMENT, INSTANCE_ATTRIBUTES, VERTEX } from "./shaders.ts"
+import { checkOversample } from "./oversample.ts"
+import { createSpritePipeline, INSTANCE_ATTRIBUTES, VERTEX } from "./shaders.ts"
 import { createViews } from "./views.ts"
 
 // Floats per instance record:
@@ -117,11 +97,6 @@ export function createRecordLayer(
     throw new Error(`createRecordLayer: capacity must be a positive integer, got ${capacity}`)
   }
   let label = opts?.label ?? "sprites"
-  // One unit quad (triangle strip), reused by every instance.
-  let quad = createBuffer(new Float32Array([-0.5, -0.5, 0.5, -0.5, -0.5, 0.5, 0.5, 0.5]), {
-    label: `${label}-quad`,
-    autoFree: false,
-  })
   let records: BufferId = createBuffer(capacity * FLOATS_PER_SPRITE * 4, {
     label: `${label}-records`,
     autoFree: false,
@@ -137,31 +112,7 @@ export function createRecordLayer(
       : orderBy === "y"
         ? { field: Y_FIELD_OFFSET }
         : { field: orderBy.field, descending: orderBy.descending }
-  let thrash = thrashSentinel(`record layer "${label}"`)
-  // The pipeline is the layer's own, spelled out (not the fused
-  // createPipelineTexture) so its views can add entries over it.
-  let vs = compileShader("vertex", VERTEX, { header: true })
-  let fs = compileShader("fragment", FRAGMENT, { header: true })
-  let program = linkProgram(vs, fs, { label })
-  destroyShader(vs)
-  destroyShader(fs)
-  let pipeline = createRenderPipeline(program, {
-    label,
-    topology: "triangle-strip",
-    attributes: [{ name: "aPos", format: "vec2" }],
-    instanceAttributes: INSTANCE_ATTRIBUTES,
-    blend: "alpha",
-  })
-  // The camera: one state for the shared params and for picking (the
-  // inverse mapping).
-  let cam = defaultCamera()
-  let texture = createDrawTarget(
-    width * oversample,
-    height * oversample,
-    { uViewport: [width, height], ...cameraParams(cam), uTint: tint },
-    { textures: { uAtlas: atlas }, clearColor: opts?.clearColor ?? [0, 0, 0, 0], label, autoFree: false },
-  )
-  let entry = addDraw(texture, pipeline, null, { buffer: quad, vertexCount: 4, instanceBuffer: records, instanceOrder, instanceCount: 0 })
+  let gpu = createSpritePipeline(label, VERTEX, INSTANCE_ATTRIBUTES)
 
   let disposed = false
   let dirty = false
@@ -189,8 +140,6 @@ export function createRecordLayer(
     out.set(layer.records.subarray(0, count * FLOATS_PER_SPRITE))
     endBufferWrite(target, count * FLOATS_PER_SPRITE * 4)
     if (grown !== null) {
-      setDrawBuffers(texture, entry, { instanceBuffer: grown })
-      setDrawRange(texture, entry, { instanceCount: count })
       views.setBuffers({ instanceBuffer: grown })
       views.setCount(count)
       if (instanceOrder !== undefined) {
@@ -207,7 +156,6 @@ export function createRecordLayer(
       records = grown
       published = count
     } else if (count !== published) {
-      setDrawRange(texture, entry, { instanceCount: count })
       views.setCount(count)
       published = count
     }
@@ -247,74 +195,48 @@ export function createRecordLayer(
     }
   }
 
-  let listeners = new Set<LayerPointerListener>()
   let views = createViews({
     label,
-    pipeline,
-    quad,
+    pipeline: gpu.pipeline,
+    quad: gpu.quad,
     atlas,
     buffers: () => ({ instanceBuffer: records }),
     count: () => published,
     tint: () => tint,
     pick: (x, y) => layer.pick(x, y),
   })
+  // The layer's own target, the first view; its entry carries the order.
+  let main = views.create({ width, height, oversample, clearColor: opts?.clearColor, label }, { root: () => layer, order: instanceOrder })
 
+  // The viewport contract is the own target's; the layer adds the
+  // records, the tint fan-out and the lifetime.
   let layer: RecordLayer = {
-    texture,
-    handlers: undefined as unknown as SpriteHandlers,
+    texture: main.texture,
+    handlers: main.handlers,
     get count() {
       return layer._order.length
     },
     get width() {
-      return width
+      return main.width
     },
     get height() {
-      return height
-    },
-    setSize(w, h) {
-      if (disposed || (w === width && h === height)) return
-      checkOversample("setSize", oversample, w, h)
-      width = w
-      height = h
-      setTargetSize(texture, w * oversample, h * oversample)
-      setTargetParams(texture, { uViewport: [w, h] })
-    },
-    listen(listener) {
-      listeners.add(listener)
-      return () => {
-        listeners.delete(listener)
-      }
+      return main.height
     },
     get oversample() {
-      return oversample
+      return main.oversample
     },
-    setOversample(n) {
-      if (disposed || n === oversample) return
-      checkOversample("setOversample", n, width, height)
-      thrash()
-      oversample = n
-      setTargetSize(texture, width * n, height * n)
-    },
-    setCamera(update) {
-      if (disposed) return
-      checkCamera(update)
-      applyCamera(cam, update)
-      setTargetParams(texture, cameraParams(cam))
-    },
-    camera() {
-      return { ...cam }
-    },
-    project(x, y) {
-      return projectCamera(cam, x, y)
-    },
-    unproject(x, y) {
-      return unprojectCamera(cam, x, y)
-    },
+    setSize: main.setSize,
+    listen: main.listen,
+    setOversample: main.setOversample,
+    setCamera: main.setCamera,
+    camera: main.camera,
+    project: main.project,
+    unproject: main.unproject,
+    handlersFor: main.handlersFor,
     setTint(next) {
       if (disposed) return
       checkTint("setTint", next)
       tint = next
-      setTargetParams(texture, { uTint: next })
       views.setTint(next)
     },
     createView(vopts) {
@@ -333,21 +255,14 @@ export function createRecordLayer(
       }
       return out
     },
-    handlersFor(layout) {
-      return dispatch(layout)
-    },
     dispose() {
       if (disposed) return
       disposed = true
-      listeners.clear()
       for (let sprite of layer._order) sprite.layer = null
       layer._order.length = 0
       views.dispose()
-      destroyTexture(texture)
       destroyBuffer(records)
-      destroyBuffer(quad)
-      destroyRenderPipeline(pipeline)
-      destroyProgram(program)
+      gpu.dispose()
     },
     _add(opts) {
       if (opts?.parent) {
@@ -424,15 +339,6 @@ export function createRecordLayer(
     },
     _order: [],
   }
-  let dispatch = spriteDispatch({
-    size: () => [width, height],
-    camera: () => cam,
-    pick: (x, y) => layer.pick(x, y),
-    root: layer,
-    listeners,
-  })
-  layer.handlers = dispatch(null)
-
   if (opts?.autoFree !== false && getOwner()) onCleanup(() => layer.dispose())
   return layer
 }

@@ -45,8 +45,9 @@ export type DispatchDeps = {
   camera: () => CameraUpdate
   pick: (x: number, y: number) => Sprite[]
   /** The layer, or a view of it: the walk's root and the listeners'
-   * currentTarget. */
-  root: SpriteLayer | RecordLayer | ViewHandle
+   * currentTarget. Read per event: a layer is built after its own
+   * target's dispatch. */
+  root: () => SpriteLayer | RecordLayer | ViewHandle
   /** The root's listeners, in registration order. */
   listeners: Set<LayerPointerListener>
   /** The clock for tap repeats (default performance.now; checks inject). */
@@ -110,7 +111,7 @@ export function spriteDispatch(deps: DispatchDeps): (layout: (() => { width: num
       }
     }
     if (event._stopped || !toRoot) return false
-    event.currentTarget = deps.root
+    event.currentTarget = deps.root()
     for (let listener of deps.listeners) {
       let handler = listener[name] as ((event: InternalEvent) => void) | undefined
       if (handler) handler(event)
@@ -134,7 +135,7 @@ export function spriteDispatch(deps: DispatchDeps): (layout: (() => { width: num
     let makeEvent = (sprite: Sprite | null, x: number, y: number, e: ElementPointerEvent): InternalEvent => {
       let event: InternalEvent = {
         sprite,
-        currentTarget: sprite ?? deps.root,
+        currentTarget: sprite ?? deps.root(),
         x,
         y,
         pointerId: e.pointerId,

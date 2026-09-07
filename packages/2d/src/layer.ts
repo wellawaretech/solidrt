@@ -26,37 +26,17 @@
 // unprojectCamera.
 import { getOwner, onCleanup } from "@solidrt/core"
 import type { PointerEvent as ElementPointerEvent, WheelEvent as ElementWheelEvent } from "@solidrt/core"
-import {
-  addDraw,
-  beginBufferWrite,
-  compileShader,
-  createBuffer,
-  createDrawTarget,
-  createRenderPipeline,
-  destroyBuffer,
-  destroyProgram,
-  destroyRenderPipeline,
-  destroyShader,
-  destroyTexture,
-  endBufferWrite,
-  linkProgram,
-  setDrawBuffers,
-  setDrawRange,
-  setTargetParams,
-  setTargetSize,
-} from "@solidrt/core/gpu"
+import { beginBufferWrite, createBuffer, destroyBuffer, endBufferWrite } from "@solidrt/core/gpu"
 import type { BufferId, TextureId } from "@solidrt/core/gpu"
 import * as spatial from "flux:spatial"
 import type { NodeId, NodeTransition } from "flux:spatial"
 import { on } from "srt:events"
-import { applyCamera, cameraParams, checkCamera, defaultCamera, projectCamera, unprojectCamera } from "./camera.ts"
 import type { CameraState, CameraUpdate } from "./camera.ts"
-import { spriteDispatch } from "./dispatch.ts"
-import { checkOversample, thrashSentinel } from "./oversample.ts"
+import { checkOversample } from "./oversample.ts"
 import type { Frame } from "./frames.ts"
 import { FULL_FRAME, writeFrame } from "./frames.ts"
 import type { RecordLayer } from "./records.ts"
-import { FRAGMENT, INSTANCE_ATTRIBUTES_SPLIT, VERTEX_SPLIT } from "./shaders.ts"
+import { createSpritePipeline, INSTANCE_ATTRIBUTES_SPLIT, VERTEX_SPLIT } from "./shaders.ts"
 import { createViews } from "./views.ts"
 import type { ViewHandle, ViewOptions } from "./views.ts"
 
@@ -583,53 +563,9 @@ export function createSpriteLayer(
   checkOversample("createSpriteLayer", oversample, width, height)
   let tint = opts?.tint ?? [1, 1, 1, 1]
   checkTint("createSpriteLayer", tint)
-  let thrash = thrashSentinel(`sprite layer "${label}"`)
-  // One unit quad (triangle strip), reused by every instance.
-  let quad = createBuffer(new Float32Array([-0.5, -0.5, 0.5, -0.5, -0.5, 0.5, 0.5, 0.5]), {
-    label: `${label}-quad`,
-    autoFree: false,
-  })
   let pose: BufferId = createBuffer(capacity * POSE_FLOATS * 4, { label: `${label}-pose`, autoFree: false })
   let style: BufferId = createBuffer(capacity * STYLE_FLOATS * 4, { label: `${label}-style`, autoFree: false })
-  // The pipeline is the layer's own, spelled out (not the fused
-  // createPipelineTexture) so its views can add entries over it.
-  let vs = compileShader("vertex", VERTEX_SPLIT, { header: true })
-  let fs = compileShader("fragment", FRAGMENT, { header: true })
-  let program = linkProgram(vs, fs, { label })
-  destroyShader(vs)
-  destroyShader(fs)
-  let pipeline = createRenderPipeline(program, {
-    label,
-    topology: "triangle-strip",
-    attributes: [{ name: "aPos", format: "vec2" }],
-    instanceAttributes: INSTANCE_ATTRIBUTES_SPLIT,
-    blend: "alpha",
-  })
-  // The camera: one state for the shared params and for picking (the
-  // inverse mapping).
-  let cam = defaultCamera()
-  let texture = createDrawTarget(
-    width * oversample,
-    height * oversample,
-    { uViewport: [width, height], ...cameraParams(cam), uTint: tint },
-    { textures: { uAtlas: atlas }, clearColor: opts?.clearColor ?? [0, 0, 0, 0], label, autoFree: false },
-  )
-  let entry = addDraw(texture, pipeline, null, {
-    buffer: quad,
-    vertexCount: 4,
-    instanceBuffers: [pose, style],
-    // "y" keys on world y in the pose record (slot 0), "renderOrder" on the
-    // app-owned key in the style record (slot 1); either way the core
-    // gathers BOTH buffers under the one permutation at every publish
-    // and republishes the sibling itself when the key buffer re-orders.
-    instanceOrder:
-      opts?.orderBy === "y"
-        ? { field: POSE_Y_FIELD }
-        : opts?.orderBy === "renderOrder"
-          ? { field: STYLE_KEY_FIELD, slot: 1 }
-          : undefined,
-    instanceCount: 0,
-  })
+  let gpu = createSpritePipeline(label, VERTEX_SPLIT, INSTANCE_ATTRIBUTES_SPLIT)
 
   let disposed = false
   let scheduled = false
@@ -655,7 +591,6 @@ export function createSpriteLayer(
       endBufferWrite(style, highWater * STYLE_FLOATS * 4)
     }
     if (published !== highWater) {
-      setDrawRange(texture, entry, { instanceCount: highWater })
       views.setCount(highWater)
       published = highWater
     }
@@ -676,7 +611,6 @@ export function createSpriteLayer(
     let grownStyle = new Float32Array(next * STYLE_FLOATS)
     grownStyle.set(styleData)
     styleData = grownStyle
-    setDrawBuffers(texture, entry, { instanceBuffers: [newPose, newStyle] })
     views.setBuffers({ instanceBuffers: [newPose, newStyle] })
     destroyBuffer(pose)
     destroyBuffer(style)
@@ -714,74 +648,63 @@ export function createSpriteLayer(
     }
   }
 
-  let listeners = new Set<LayerPointerListener>()
   let views = createViews({
     label,
-    pipeline,
-    quad,
+    pipeline: gpu.pipeline,
+    quad: gpu.quad,
     atlas,
     buffers: () => ({ instanceBuffers: [pose, style] }),
     count: () => published,
     tint: () => tint,
     pick: (x, y) => layer.pick(x, y),
   })
+  // The layer's own target, the first view; its entry carries the order
+  // key: "y" on world y in the pose record (slot 0), "renderOrder" on the
+  // app-owned key in the style record (slot 1); either way the core
+  // gathers BOTH buffers under the one permutation at every publish and
+  // republishes the sibling itself when the key buffer re-orders.
+  let main = views.create(
+    { width, height, oversample, clearColor: opts?.clearColor, label },
+    {
+      root: () => layer,
+      order:
+        opts?.orderBy === "y"
+          ? { field: POSE_Y_FIELD }
+          : opts?.orderBy === "renderOrder"
+            ? { field: STYLE_KEY_FIELD, slot: 1 }
+            : undefined,
+    },
+  )
 
+  // The viewport contract is the own target's; the layer adds the
+  // sprites, the tint fan-out and the lifetime.
   let layer: SpriteLayer = {
-    texture,
-    handlers: undefined as unknown as SpriteHandlers,
+    texture: main.texture,
+    handlers: main.handlers,
     get count() {
       return byNode.size
     },
     get width() {
-      return width
+      return main.width
     },
     get height() {
-      return height
-    },
-    setSize(w, h) {
-      if (disposed || (w === width && h === height)) return
-      checkOversample("setSize", oversample, w, h)
-      width = w
-      height = h
-      setTargetSize(texture, w * oversample, h * oversample)
-      setTargetParams(texture, { uViewport: [w, h] })
-    },
-    listen(listener) {
-      listeners.add(listener)
-      return () => {
-        listeners.delete(listener)
-      }
+      return main.height
     },
     get oversample() {
-      return oversample
+      return main.oversample
     },
-    setOversample(n) {
-      if (disposed || n === oversample) return
-      checkOversample("setOversample", n, width, height)
-      thrash()
-      oversample = n
-      setTargetSize(texture, width * n, height * n)
-    },
-    setCamera(update) {
-      if (disposed) return
-      checkCamera(update)
-      applyCamera(cam, update)
-      setTargetParams(texture, cameraParams(cam))
-    },
-    camera() {
-      return { ...cam }
-    },
-    project(x, y) {
-      return projectCamera(cam, x, y)
-    },
-    unproject(x, y) {
-      return unprojectCamera(cam, x, y)
-    },
+    setSize: main.setSize,
+    listen: main.listen,
+    setOversample: main.setOversample,
+    setCamera: main.setCamera,
+    camera: main.camera,
+    project: main.project,
+    unproject: main.unproject,
+    handlersFor: main.handlersFor,
     setTint(next) {
       if (disposed) return
       checkTint("setTint", next)
       tint = next
-      setTargetParams(texture, { uTint: next })
       views.setTint(next)
     },
     createView(vopts) {
@@ -822,13 +745,9 @@ export function createSpriteLayer(
       }
       return out
     },
-    handlersFor(layout) {
-      return dispatch(layout)
-    },
     dispose() {
       if (disposed) return
       disposed = true
-      listeners.clear()
       for (let sprite of byNode.values()) {
         sprite.layer = null
         declared.delete(sprite.node!)
@@ -845,12 +764,9 @@ export function createSpriteLayer(
       // buffer still exists, then free everything.
       spatial.flush()
       views.dispose()
-      destroyTexture(texture)
       destroyBuffer(pose)
       destroyBuffer(style)
-      destroyBuffer(quad)
-      destroyRenderPipeline(pipeline)
-      destroyProgram(program)
+      gpu.dispose()
     },
     _add(opts) {
       if (disposed) throw new Error("addSprite: layer is disposed")
@@ -948,15 +864,6 @@ export function createSpriteLayer(
     },
     _groups: new Set(),
   }
-  let dispatch = spriteDispatch({
-    size: () => [width, height],
-    camera: () => cam,
-    pick: (x, y) => layer.pick(x, y),
-    root: layer,
-    listeners,
-  })
-  layer.handlers = dispatch(null)
-
   if (opts?.autoFree !== false && getOwner()) onCleanup(() => layer.dispose())
   return layer
 }

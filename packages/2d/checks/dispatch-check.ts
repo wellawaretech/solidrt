@@ -96,7 +96,7 @@ let dispatch = spriteDispatch({
   size: () => size,
   camera: () => camera,
   pick,
-  root,
+  root: () => root,
   listeners,
   now: () => clock,
 })

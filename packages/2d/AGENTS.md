@@ -150,8 +150,10 @@ moved subtrees in Rust, and picking walks the core BVH.
   layer's world from a camera of its own - a minimap, a radar strip, a
   zoomed inset - @solidrt/3d's scene.createView one dimension down. One
   more draw target holding one entry over the layer's OWN pipeline and
-  instance buffers (views.ts): no sprite is mirrored, no record is written
-  twice, and key order (`orderBy`) comes along, since the core gathers
+  instance buffers (views.ts, where the layer's own output is simply the
+  first target - Unity's scene renders only through Cameras, Godot's
+  World2D only through Viewports): no sprite is mirrored, no record is
+  written twice, and key order (`orderBy`) comes along, since the core gathers
   the buffers themselves at publish and a view entry declares no order of
   its own. Growth, the instance count and the layer tint fan out to every
   view; the camera and the viewport are the view's own params, so a view
@@ -165,7 +167,8 @@ moved subtrees in Rust, and picking walks the core BVH.
   minimap gets its ordinary handlers, `view.listen` is the last stop (a
   tap there with `e.x`/`e.y` in world pixels is "glide the main camera
   here"), and `createCamera2d(view).attach(view)` drives a view like a
-  layer. examples/views.tsx is the live guard. Not yet, all additive:
+  layer. `<View2d>` is the component form (a `<SpriteLayer>` child, see
+  Components). examples/views.tsx is the live guard. Not yet, all additive:
   tile-layer views, a `layers` bitmask (a markers-only minimap), `into`
   tiling, per-view tint - okf/backlog/2d-layer-views-additive.md.
 - Retargeted motion is NATIVE: `setSpriteTransition(sprite, { position:
@@ -258,16 +261,19 @@ on approach, evict) - okf/backlog/2d-baked-layers.md.
 | `SpriteLayer` | width?, height? (layer pixels - both, or neither = FILL: the leaf lays out at 100% of its sized parent and the layer follows its box, so layer pixels are the leaf's own coordinates; mount-fixed, `output` requires explicit sizes, matching `<Scene>` in @solidrt/3d), atlas (TextureId), capacity?, clearColor?, camera?, tint? ([r,g,b,a] 0..1, over the whole layer), oversample?, maxOversample?, orderBy?, label?, ref?, output?, events?, onPointer{Down,Move,Up}?, onWheel?, onTap? (the root of the walk: `event.sprite` is the hit sprite or null over empty space) |
 | `Sprite` | x, y (center; local to the enclosing `<Group>`), w, h, frame?, rotation? (radians, clockwise), tint? ([r,g,b,a] 0..1), visible?, transition?, onPointer{Down,Move,Up,Enter,Leave}?, onWheel?, onTap?, ref? |
 | `Group` | x?, y?, rotation?, scale? (uniform, scales the subtree), visible? (the whole subtree), transition?, onPointer{Down,Move,Up}?, onWheel?, onTap? (bubbled from hit child sprites), ref? |
-| `Camera2d` | createCamera2d's options minus `viewport` (world?, min/maxZoom?, pivot?, deadZone?, zoomSpeed?, followSpeed?, inertia?, x?, y?, zoom?, rotation?), viewport? (`() => { width, height }`, default: the layer's size), ref? - a `<SpriteLayer>` child driving its camera from the layer's root; read at mount |
+| `Camera2d` | createCamera2d's options minus `viewport` (world?, min/maxZoom?, pivot?, deadZone?, zoomSpeed?, followSpeed?, inertia?, x?, y?, zoom?, rotation?), viewport? (`() => { width, height }`, default: the driven viewport's size), ref? - a `<SpriteLayer>` child driving the nearest viewport's camera from its root (the layer's, or inside a `<View2d>` that view's); read at mount |
+| `View2d` | a `<SpriteLayer>` child rendering the layer again from a camera of its own (layer.createView as a component): width, height (view pixels, live; fixed-size only for now), camera? (partial CameraUpdate on the view's camera, live; the same state a `<Camera2d>` child writes), oversample?, maxOversample? (the auto-pick, as SpriteLayer's), clearColor?, label? (createView's, fixed), ref?(view), output?(texture) (else a built-in `<texture>` leaf at the view size carrying the view's handlers), events?, onPointer{Down,Move,Up}?, onWheel?, onTap? (the view's root: `event.sprite` null over empty space); a `<Camera2d>` child drives the VIEW (inside, `useSpriteLayer()` reports the view as `camera`); `<Sprite>`/`<Group>` children mount to the layer as outside |
 | `TileLayer` | cols, rows, tileW, tileH, atlas (TextureId), chunkClearColor?, filter?, chunkTiles?, tint? ([r,g,b,a] 0..1, over the whole layer), oversample?, maxOversample?, camera? (TileCamera: x, y, zoom, rotation, pivotX, pivotY), label?, ref? |
 
 `SpriteLayer` owns the layer and renders the built-in `<texture>` leaf
 carrying the layer's pointer handlers (opt out with `events={false}`; compose
 yourself with `output`, then spread `useSpriteLayer().layer.handlers` onto
-your leaf). `useSpriteLayer()` returns `{ layer, parent }` - the same shape
-as `useScene()` in `@solidrt/3d` - where `parent` is the enclosing
-`<Group>`'s handle (null at the layer root), so imperative
-`addSprite(layer, { parent })` mounts where the JSX sits. `Sprite` renders
+your leaf). `useSpriteLayer()` returns `{ layer, parent, camera }` - the
+same shape as `useScene()` in `@solidrt/3d` - where `parent` is the
+enclosing `<Group>`'s handle (null at the layer root), so imperative
+`addSprite(layer, { parent })` mounts where the JSX sits, and `camera` is
+the nearest owner's viewport (`CameraTarget`: the layer, or inside a
+`<View2d>` that view), what a `<Camera2d>` drives and listens at. `Sprite` renders
 nothing - it allocates a record through context and syncs props into it.
 `GroupContext` is `createContext<SpriteGroup | null>(null)` on purpose: an
 optional parent needs a non-undefined default, since Solid 2 throws on a

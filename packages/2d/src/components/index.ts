@@ -14,6 +14,7 @@
 // files directly.
 
 export { useSpriteLayer } from "./context.ts"
+export type { CameraTarget } from "./context.ts"
 export { SpriteLayer } from "./sprite-layer.tsx"
 export type { LayerPointerProps, SpriteLayerProps } from "./sprite-layer.tsx"
 export { Group } from "./group.tsx"
@@ -22,5 +23,7 @@ export { Sprite } from "./sprite.tsx"
 export type { SpritePointerProps, SpriteProps } from "./sprite.tsx"
 export { Camera2d } from "./camera2d.tsx"
 export type { Camera2dProps } from "./camera2d.tsx"
+export { View2d } from "./view2d.tsx"
+export type { View2dProps } from "./view2d.tsx"
 export { TileLayer } from "./tile-layer.tsx"
 export type { TileCamera, TileLayerProps } from "./tile-layer.tsx"

@@ -1,23 +1,27 @@
-// Layer views: a second rendering of a layer's world from a camera of its
-// own - the minimap, the radar strip, the zoomed inset - mirroring
-// @solidrt/3d's scene.createView one dimension down. A view is one more
-// draw target holding ONE entry over the layer's own pipeline and instance
-// buffers: no sprite is mirrored, no record is written twice, and the
-// core's key-order gather (the entry's instanceOrder) happens in the
-// buffers at publish, so a view entry declaring no order reads them
-// already sorted. The layer fans buffer swaps (growth), the instance count
-// and the tint out to every view through the registry below; the camera
-// and the viewport are the view's own params. Pointer events run the
-// layer's dispatch (dispatch.ts) with the view's camera undone over the
-// layer's pick, the view as the root of the walk: a sprite under a
-// minimap gets its ordinary handlers, and the view's listeners are the
-// last stop.
+// A layer's targets: every rendering of a layer's world is a view - one
+// draw target holding ONE entry over the layer's pipeline and instance
+// buffers, with a camera and a viewport of its own - and the layer's own
+// output is simply the first one (Unity's scene renders only through
+// Cameras, Godot's World2D only through Viewports; @solidrt/3d's
+// scene.createView one dimension down). Further views are the minimap,
+// the radar strip, the zoomed inset: no sprite is mirrored, no record is
+// written twice, and the core's key-order gather (the own entry's
+// instanceOrder - one ordered entry per buffer) happens in the buffers at
+// publish, so a view entry declaring no order reads them already sorted.
+// The layer fans buffer swaps (growth), the instance count and the tint
+// out to every target through the registry below, its own first; the
+// camera and the viewport are each target's own params. Pointer events
+// run the layer's dispatch (dispatch.ts) with the target's camera undone
+// over the layer's pick, the target as the root of the walk: a sprite
+// under a minimap gets its ordinary handlers, and the root's listeners
+// are the last stop.
 import { addDraw, createDrawTarget, destroyTexture, setDrawBuffers, setDrawRange, setTargetParams, setTargetSize } from "@solidrt/core/gpu"
-import type { BufferId, BufferUpdate, DrawId, RenderPipelineId, TextureId } from "@solidrt/core/gpu"
+import type { BufferId, BufferUpdate, DrawId, InstanceOrder, RenderPipelineId, TextureId } from "@solidrt/core/gpu"
 import { applyCamera, cameraParams, checkCamera, defaultCamera, projectCamera, unprojectCamera } from "./camera.ts"
 import type { CameraUpdate } from "./camera.ts"
 import { spriteDispatch } from "./dispatch.ts"
-import type { LayerBase, LayerPointerListener, Sprite, SpriteHandlers } from "./layer.ts"
+import type { LayerBase, LayerPointerListener, Sprite, SpriteHandlers, SpriteLayer } from "./layer.ts"
+import type { RecordLayer } from "./records.ts"
 import { checkOversample, thrashSentinel } from "./oversample.ts"
 
 export type ViewOptions = {
@@ -45,7 +49,7 @@ export type ViewHandle = Pick<
   "texture" | "handlers" | "width" | "height" | "setSize" | "listen" | "oversample" | "setOversample" | "setCamera" | "camera" | "project" | "unproject" | "handlersFor" | "dispose"
 >
 
-// What a layer hands its views: the pipeline and quad every entry draws
+// What a layer hands its targets: the pipeline and quad every entry draws
 // with, the atlas, and live reads of the state the layer fans out.
 export type ViewDeps = {
   label: string
@@ -61,11 +65,19 @@ export type ViewDeps = {
   pick: (x: number, y: number) => Sprite[]
 }
 
-/** The layer side of its views: create, and fan out what changes. */
+/** The layer's OWN target, created first: its entry declares the
+ * instance order, and the walk's root is the layer itself - built after
+ * the target, hence the getter. */
+export type OwnTarget = {
+  root: () => SpriteLayer | RecordLayer
+  order?: InstanceOrder
+}
+
+/** The layer side of its targets: create, and fan out what changes. */
 export type Views = {
-  create(opts: ViewOptions): ViewHandle
-  /** The layer swapped its instance buffers (growth): every view entry
-   * follows, after the layer's own entry has. */
+  create(opts: ViewOptions, own?: OwnTarget): ViewHandle
+  /** The layer swapped its instance buffers (growth): every entry
+   * follows, the layer's own first. */
   setBuffers(update: BufferUpdate): void
   setCount(count: number): void
   setTint(tint: [number, number, number, number]): void
@@ -77,10 +89,11 @@ type ViewRecord = { texture: TextureId; entry: DrawId; dispose(): void }
 export function createViews(deps: ViewDeps): Views {
   let views = new Set<ViewRecord>()
   return {
-    create(opts) {
+    create(opts, own) {
       let width = opts.width
       let height = opts.height
-      if (!(Number.isInteger(width) && width > 0 && Number.isInteger(height) && height > 0)) {
+      // The layer's own size is its caller's (a fill layer rounds it).
+      if (!own && !(Number.isInteger(width) && width > 0 && Number.isInteger(height) && height > 0)) {
         throw new Error(`createView: width and height must be positive integers, got ${width} x ${height}`)
       }
       let oversample = opts.oversample ?? 1
@@ -97,8 +110,14 @@ export function createViews(deps: ViewDeps): Views {
         { uViewport: [width, height], ...cameraParams(cam), uTint: deps.tint() },
         { textures: { uAtlas: deps.atlas }, clearColor: opts.clearColor ?? [0, 0, 0, 0], label, autoFree: false },
       )
-      let entry = addDraw(texture, deps.pipeline, null, { buffer: deps.quad, vertexCount: 4, ...deps.buffers(), instanceCount: deps.count() })
-      let thrash = thrashSentinel(`view "${label}"`)
+      let entry = addDraw(texture, deps.pipeline, null, {
+        buffer: deps.quad,
+        vertexCount: 4,
+        ...deps.buffers(),
+        instanceOrder: own?.order,
+        instanceCount: deps.count(),
+      })
+      let thrash = thrashSentinel(own ? `layer "${label}"` : `view "${label}"`)
       let disposed = false
       let listeners = new Set<LayerPointerListener>()
       let record: ViewRecord = {
@@ -170,7 +189,7 @@ export function createViews(deps: ViewDeps): Views {
         size: () => [width, height],
         camera: () => cam,
         pick: deps.pick,
-        root: view,
+        root: own?.root ?? (() => view),
         listeners,
       })
       view.handlers = dispatch(null)

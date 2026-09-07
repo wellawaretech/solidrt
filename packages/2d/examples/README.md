@@ -34,8 +34,11 @@ copy one and adapt it.
   `<Camera2d>` that pans empty space and zooms on wheel, the layer's own
   `onTap` seeing misses with `e.sprite` null (and `tapCount` for double
   taps), and removal through a signal so `<For>` unmounts the `<Sprite>`
-  and the layer recycles the slot. The `state` debug command reads the
-  camera and sprite positions back.
+  and the layer recycles the slot. A corner `<View2d>` inset shows the
+  same sprites again under a `<Camera2d>` of its own (drag or wheel on
+  the inset moves only the inset's camera; a sprite tapped or dragged
+  there responds as in the main view). The `state` debug command reads
+  both cameras and the sprite positions back.
 - `views.tsx` - layer views (`layer.createView`): the world rendered
   twice from ONE set of sprites - the window-filling main view under a
   `createCamera2d` and a corner minimap showing the whole world at the
