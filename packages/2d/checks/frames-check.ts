@@ -77,6 +77,22 @@ assertThrows("non-positive sheet", () => grid({ width: 0, height: 32 }, 2, 2))
 assertThrows("cells eaten by spacing", () => grid({ width: 8, height: 8 }, 8, 1, { spacing: 4 }))
 assertThrows("named non-positive frame", () => namedFrames({ width: 32, height: 32 }, { bad: [0, 0, 0, 4] }))
 assertThrows("named non-positive atlas", () => namedFrames({ width: 0, height: 32 }, { a: [0, 0, 4, 4] }))
+assertThrows("grid inset inverts the cell", () => grid({ width: 32, height: 32 }, 4, 4, { inset: 4 }))
+assertThrows("named inset inverts the rect", () => namedFrames({ width: 32, height: 32 }, { a: [0, 0, 8, 2] }, { inset: 1 }))
+assertThrows("negative inset", () => grid({ width: 32, height: 32 }, 2, 2, { inset: -0.5 }))
+
+// inset shaves every side: a 16x16 cell at (16, 0) of a 32x16 sheet with a
+// half-texel inset spans pixels 16.5..31.5 by 0.5..15.5.
+{
+  let f = grid({ width: 32, height: 16 }, 2, 1, { inset: 0.5 })[1]!
+  if (!(close(f.u0 * 32, 16.5) && close(f.v0 * 16, 0.5) && close(f.u1 * 32, 31.5) && close(f.v1 * 16, 15.5))) {
+    fail(`grid inset frame is (${f.u0 * 32}, ${f.v0 * 16})-(${f.u1 * 32}, ${f.v1 * 16}) px`)
+  }
+  let g = namedFrames({ width: 64, height: 32 }, { hero: [16, 8, 32, 16] }, { inset: 1 }).hero
+  if (!(close(g.u0 * 64, 17) && close(g.v0 * 32, 9) && close(g.u1 * 64, 47) && close(g.v1 * 32, 23))) {
+    fail(`namedFrames inset hero is (${g.u0 * 64}, ${g.v0 * 32})-(${g.u1 * 64}, ${g.v1 * 32}) px`)
+  }
+}
 
 // namedFrames maps pixel rects to UVs.
 {

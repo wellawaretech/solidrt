@@ -50,7 +50,7 @@ export type { TileChunk, TileLayer as TileLayerHandle, TileLayerOptions } from "
 
 export type { NodeTransition, NodeTransitionSpec } from "flux:spatial"
 export { grid, namedFrames, FULL_FRAME } from "./frames.ts"
-export type { AtlasSize, Frame, GridOptions } from "./frames.ts"
+export type { AtlasSize, Frame, GridOptions, NamedFramesOptions } from "./frames.ts"
 export { createAnimation } from "./animation.ts"
 export type { AnimationOptions, SpriteAnimation } from "./animation.ts"
 export { fitOversample } from "./oversample.ts"

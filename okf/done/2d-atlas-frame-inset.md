@@ -2,6 +2,7 @@
 title: An inset option on grid and namedFrames for hand-packed atlases without gutters
 description: Frames addressed as whole-pixel rects that share an edge bleed a one-texel line of the neighbouring cell on the odd frame of any fractional motion; the fix is a half-texel inset or a gutter, and both slicers are the place to apply it once instead of in every app's rect table.
 created: 2026-09-07
+completed: 2026-09-07
 ---
 
 # An inset option on grid and namedFrames
@@ -35,13 +36,17 @@ One knob, applied by the slicer:
 - The trap paragraph in frames.ts then names the option instead of the
   arithmetic.
 
-## What it involves
+## What it involved
 
-Six lines in `frames.ts` and a case each in `checks/frames-check.ts`
-(the inset rect against the hand-computed UVs; a frame that would invert
-throws, matching the non-positive-size check). No layer change: the
-frame is normalized UVs either way.
+Landed 2026-09-07: `inset` on `GridOptions` and a new `NamedFramesOptions`
+(`packages/2d/src/frames.ts`), both slicers going through one `frameOf`
+that shaves the pixel rect before it becomes UVs. A negative inset or one
+that leaves no frame throws, matching the non-positive-size check. Cases
+in `checks/frames-check.ts` pin the shaved rect against hand-computed
+pixel edges and the three throws. No layer change: the frame is
+normalized UVs either way, and the trap paragraphs now name the option
+instead of the arithmetic.
 
-Open: whether `createAtlas` should take the inset too, so a sheet
-declares it once for both slicers. Probably not until a second consumer
-asks - the slicers are where rects become UVs.
+Non-goal: `createAtlas` does not take the inset. The slicers are where
+rects become UVs, and a sheet declaring it once for both is a second
+consumer's ask.

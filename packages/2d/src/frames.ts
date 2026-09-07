@@ -47,6 +47,27 @@ export type GridOptions = {
   /** Pixel offset of the first cell from the top-left corner; default 0. */
   marginX?: number
   marginY?: number
+  /**
+   * Texels shaved off every side of each frame; default 0. Half a texel
+   * stops edge bleed between touching cells with `filter: "nearest"`, a
+   * full texel with `"linear"` (its 2x2 tap reaches one texel out).
+   */
+  inset?: number
+}
+
+export type NamedFramesOptions = {
+  /** As GridOptions.inset: texels shaved off every side of each rect. */
+  inset?: number
+}
+
+/** A pixel rect to UVs, shrunk by `inset` on every side; `what` names the throw. */
+function frameOf(atlas: AtlasSize, x: number, y: number, w: number, h: number, inset: number, what: string): Frame {
+  if (!(inset >= 0)) throw new Error(`${what}: inset must be non-negative, got ${inset}`)
+  let iw = w - inset * 2
+  let ih = h - inset * 2
+  if (!(iw > 0 && ih > 0)) throw new Error(`${what}: inset ${inset} leaves no frame of a ${w} x ${h} rect`)
+  let { width, height } = atlas
+  return { u0: (x + inset) / width, v0: (y + inset) / height, u1: (x + inset + iw) / width, v1: (y + inset + ih) / height }
 }
 
 /**
@@ -58,7 +79,8 @@ export type GridOptions = {
  * Cells that touch bleed: a sprite at a fractional position samples, on
  * the odd frame, a texel of the cell next door along its edge (a one-texel
  * line of the neighbour, gone the next frame - see namedFrames). Pack the
- * sheet with a transparent gutter and pass it as `spacing`.
+ * sheet with a transparent gutter and pass it as `spacing`, or shave the
+ * frames with `inset`.
  */
 export function grid(atlas: AtlasSize, cols: number, rows: number, opts?: GridOptions): Frame[] {
   if (!(cols > 0 && rows > 0 && Number.isInteger(cols) && Number.isInteger(rows))) {
@@ -68,7 +90,7 @@ export function grid(atlas: AtlasSize, cols: number, rows: number, opts?: GridOp
   if (!(width > 0 && height > 0)) {
     throw new Error(`grid: atlas size must be positive, got ${width} x ${height}`)
   }
-  let { spacing = 0, marginX = 0, marginY = 0 } = opts ?? {}
+  let { spacing = 0, marginX = 0, marginY = 0, inset = 0 } = opts ?? {}
   let cellW = opts?.cellW ?? (width - marginX * 2 - spacing * (cols - 1)) / cols
   let cellH = opts?.cellH ?? (height - marginY * 2 - spacing * (rows - 1)) / rows
   if (!(cellW > 0 && cellH > 0)) {
@@ -79,7 +101,7 @@ export function grid(atlas: AtlasSize, cols: number, rows: number, opts?: GridOp
     for (let col = 0; col < cols; col++) {
       let x = marginX + col * (cellW + spacing)
       let y = marginY + row * (cellH + spacing)
-      frames.push({ u0: x / width, v0: y / height, u1: (x + cellW) / width, v1: (y + cellH) / height })
+      frames.push(frameOf(atlas, x, y, cellW, cellH, inset, "grid"))
     }
   }
   return frames
@@ -100,23 +122,26 @@ export function grid(atlas: AtlasSize, cols: number, rows: number, opts?: GridOp
  * lands, on the odd frame, on a sample position that rounds into the cell
  * next door and paints a one-texel line of it - a solid cell beside a
  * sprite flashes a bright bar over it for a single frame, invisible in a
- * screenshot and easy to blame on the game. Inset every rect half a texel
- * (`[x + 0.5, y + 0.5, w - 1, h - 1]`), or pack a transparent gutter
- * between cells and keep full-bleed cells in a corner of their own.
+ * screenshot and easy to blame on the game. Pass `inset` (half a texel for
+ * a nearest-filtered atlas, a full texel for a linear one) and every rect
+ * is shaved on all sides, or pack a transparent gutter between cells and
+ * keep full-bleed cells in a corner of their own.
  */
 export function namedFrames<K extends string>(
   atlas: AtlasSize,
   rects: Record<K, [number, number, number, number]>,
+  opts?: NamedFramesOptions,
 ): Record<K, Frame> {
   let { width, height } = atlas
   if (!(width > 0 && height > 0)) {
     throw new Error(`namedFrames: atlas size must be positive, got ${width} x ${height}`)
   }
+  let inset = opts?.inset ?? 0
   let out = {} as Record<K, Frame>
   for (let name in rects) {
     let [x, y, w, h] = rects[name]
     if (!(w > 0 && h > 0)) throw new Error(`namedFrames: frame '${name}' has non-positive size ${w} x ${h}`)
-    out[name] = { u0: x / width, v0: y / height, u1: (x + w) / width, v1: (y + h) / height }
+    out[name] = frameOf(atlas, x, y, w, h, inset, `namedFrames: frame '${name}'`)
   }
   return out
 }

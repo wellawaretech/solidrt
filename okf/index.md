@@ -43,11 +43,6 @@ Decided and being worked on now. A plan nobody is working on goes back to backlo
 
 Shaped, not started.
 
-- **[An inset option on grid and namedFrames for hand-packed atlases without gutters](backlog/2d-atlas-frame-inset.md)** [2026-09-07]
-  Frames addressed as whole-pixel rects that share an edge bleed a one-texel
-  line of the neighbouring cell on the odd frame of any fractional motion; the
-  fix is a half-texel inset or a gutter, and both slicers are the place to
-  apply it once instead of in every app's rect table.
 - **[A sprite layer draws one pre-packed atlas, fixed at creation](backlog/2d-atlas-limits.md)** [2026-08-22]
   Every sprite in a layer samples one texture chosen at creation, and
   createAtlas only decodes an already-packed sheet, so a second sheet costs a
@@ -758,6 +753,11 @@ Shaped, not started.
 
 Finished, kept for the reasoning.
 
+- **[An inset option on grid and namedFrames for hand-packed atlases without gutters](done/2d-atlas-frame-inset.md)** [2026-09-07]
+  Frames addressed as whole-pixel rects that share an edge bleed a one-texel
+  line of the neighbouring cell on the odd frame of any fractional motion; the
+  fix is a half-texel inset or a gutter, and both slicers are the place to
+  apply it once instead of in every app's rect table.
 - **[A 2d camera controller - fit, clamp, zoom-at-cursor, pinch, glide](done/2d-camera-controller.md)** [2026-09-02]
   Every pannable/zoomable app re-derived the same hundred lines of camera math
   (fit-to-world min zoom, pan clamping, wheel zoom anchored under the cursor
