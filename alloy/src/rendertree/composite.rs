@@ -649,6 +649,7 @@ pub(super) fn record_node<'a>(
 ) {
   let element = scene.node(node_id);
   ctx.nodes_painted += 1;
+  element.painted.set(true);
 
   let (clip_x, clip_y) = overflow_clips(element);
   let record_clip = (clip_x || clip_y) && hoist != Hoist::Full;

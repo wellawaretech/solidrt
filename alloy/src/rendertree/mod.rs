@@ -371,6 +371,12 @@ pub struct Element {
   // animate on write, and how. None (the overwhelmingly common case) makes
   // every write snap, as ever.
   pub transitions: Option<Box<TransitionConfig>>,
+  // The paint walk has entered the node at least once (composite.rs
+  // record_node): it has been shown. Property writes before that snap, so
+  // an element's first painted state is what it holds then and never the
+  // tail of an animation from the kind's defaults (tree/transitions.rs
+  // transition_write). A Cell because the walk traverses a shared tree.
+  pub painted: Cell<bool>,
   // The node has been inserted under a parent at least once. Guards the
   // mount-time `from` enter animation: it fires on the first attach only,
   // never again on a move or reorder.
@@ -401,6 +407,7 @@ impl Element {
       envelope: cull::EnvelopeCache::default(),
       last_extent: Cell::new(cull::Extent::Empty),
       transitions: None,
+      painted: Cell::new(false),
       entered: false,
       exiting: false,
       doomed: false,
@@ -428,6 +435,7 @@ impl Element {
       envelope: cull::EnvelopeCache::default(),
       last_extent: Cell::new(cull::Extent::Empty),
       transitions: None,
+      painted: Cell::new(false),
       entered: false,
       exiting: false,
       doomed: false,

@@ -1,7 +1,8 @@
 use crate::rendertree::{transitions, *};
 
-// A detached rect under a root view, with a transition declared for every
-// property: the shape a `<d-rect transition={{ all: ... }}>` write hits.
+// A detached rect under a root view, painted once, with a transition declared
+// for every property: the shape a `<d-rect transition={{ all: ... }}>` write
+// hits after the element's first frame.
 fn tree_with_animated_rect(spec: TransitionSpec) -> RenderTree {
   tree_with_entry(spec.into())
 }
@@ -15,6 +16,7 @@ fn tree_with_entry(entry: TransitionEntry) -> RenderTree {
     el.transitions = Some(Box::new(TransitionConfig { props: vec![], all: Some(entry), stagger_ms: None }));
     Damage::None
   });
+  paint(&tree, 2);
   tree
 }
 
@@ -27,6 +29,12 @@ fn rect_x(tree: &RenderTree, id: u64) -> f32 {
 
 fn scalar(v: f32) -> transitions::AnimValue {
   transitions::AnimValue::Scalar(v)
+}
+
+// Stands in for the frame that painted the node: only a shown node animates
+// its writes (Element::painted, stamped by the paint walk).
+fn paint(tree: &RenderTree, id: u64) {
+  tree.node(id).painted.set(true);
 }
 
 const LINEAR_100: TransitionSpec = TransitionSpec::Tween { duration_ms: 100.0, curve: Curve::Linear };
@@ -139,6 +147,8 @@ fn spring_retarget_keeps_velocity() {
 #[test]
 fn mount_writes_snap() {
   let mut tree = RenderTree::new();
+  tree.set_transition_now(0.0);
+  tree.create_node(1, View::default().with_layout());
   tree.create_node(2, Rectangle::default().no_layout());
   tree.edit(2, |el| {
     el.transitions = Some(Box::new(TransitionConfig { props: vec![], all: Some(LINEAR_100.into()), stagger_ms: None }));
@@ -146,6 +156,49 @@ fn mount_writes_snap() {
   });
   // Not inserted yet: the write is not consumed, the normal path snaps it.
   assert!(!tree.transition_write(2, AnimProp::X, Some(scalar(80.0))));
+  // Inserted but not painted since (JSX attaches a template's children
+  // before the effect that writes their props runs): still a mount write,
+  // still a snap.
+  tree.insert_node(1, 2, None).expect("insert");
+  assert!(!tree.transition_write(2, AnimProp::X, Some(scalar(80.0))), "unpainted node snaps");
+  assert!(!tree.advance_transitions(), "no track started");
+  // Painted once: the same write animates.
+  paint(&tree, 2);
+  assert!(tree.transition_write(2, AnimProp::X, Some(scalar(80.0))), "painted node animates");
+  assert!(tree.advance_transitions());
+}
+
+#[test]
+fn unpainted_write_retargets_enter_animation() {
+  // The explicit enter animation is the one track that runs before the
+  // first paint; a mount-tick write joins it instead of snapping it away.
+  let mut tree = RenderTree::new();
+  tree.set_transition_now(0.0);
+  tree.create_node(1, View::default().with_layout());
+  tree.create_node(2, Rectangle::default().no_layout());
+  tree.edit(2, |el| {
+    el.transitions = Some(Box::new(TransitionConfig {
+      props: vec![(
+        AnimProp::X,
+        TransitionEntry { spec: LINEAR_100, delay_ms: 0.0, from: Some(scalar(100.0)), exit: None },
+      )],
+      all: None,
+      stagger_ms: None,
+    }));
+    match &mut el.kind {
+      ElementKind::Rectangle(r) => r.set_x(Some(40.0)),
+      _ => unreachable!(),
+    }
+  });
+  tree.insert_node(1, 2, None).expect("insert");
+  assert_eq!(rect_x(&tree, 2), 100.0, "attach snaps to from");
+  assert!(tree.transition_write(2, AnimProp::X, Some(scalar(0.0))), "retargets the enter track");
+  tree.set_transition_now(50.0);
+  assert!(tree.advance_transitions());
+  assert!((rect_x(&tree, 2) - 50.0).abs() < 0.01, "halfway from 100 to the new target, got {}", rect_x(&tree, 2));
+  tree.set_transition_now(100.0);
+  assert!(!tree.advance_transitions());
+  assert_eq!(rect_x(&tree, 2), 0.0);
 }
 
 #[test]
@@ -167,6 +220,7 @@ fn undeclared_property_is_not_consumed() {
   tree.create_node(1, View::default().with_layout());
   tree.create_node(2, Rectangle::default().no_layout());
   tree.insert_node(1, 2, None).expect("insert");
+  paint(&tree, 2);
   assert!(!tree.transition_write(2, AnimProp::X, Some(scalar(80.0))), "no transition declared");
 }
 
@@ -178,6 +232,7 @@ fn attached_geometry_is_not_animatable() {
   tree.create_node(1, View::default().with_layout());
   tree.create_node(2, Rectangle::default().with_layout());
   tree.insert_node(1, 2, None).expect("insert");
+  paint(&tree, 2);
   tree.edit(2, |el| {
     el.transitions = Some(Box::new(TransitionConfig { props: vec![], all: Some(LINEAR_100.into()), stagger_ms: None }));
     Damage::None
@@ -293,6 +348,7 @@ fn batched_advance_bumps_revision_once() {
   let mut tree = tree_with_animated_rect(LINEAR_100);
   tree.create_node(3, Rectangle::default().no_layout());
   tree.insert_node(1, 3, None).expect("insert");
+  paint(&tree, 3);
   tree.edit(3, |el| {
     el.transitions = Some(Box::new(TransitionConfig { props: vec![], all: Some(LINEAR_100.into()), stagger_ms: None }));
     Damage::None

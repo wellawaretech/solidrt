@@ -18,8 +18,13 @@ in the spatial-node-transitions stage-2 probe
 mount was visibly most of the way to its target at an 80 ms wall-clock
 sample, and a 200 ms tween effectively skipped its first half.
 
-Element transitions carry the same artifact (the stamp site and semantics
-are shared), but rarely show it: element targets mostly come from event
+Element transitions share the stamp site and semantics, but since the
+first-paint guard (`Element::painted`, tree/transitions.rs transition_write)
+a property write before the element's first paint snaps and starts no
+track, so a plain mount-time write no longer carries the artifact at all.
+The element exposure that remains is the explicit enter animation: a
+`from` entry on a node mounted before the first frame starts its track at
+clock 0 exactly as described above. Later element targets come from event
 handlers and effects, which run inside stamped ticks and are at most one
 frame period stale. Spatial node transitions invite mount-time writes -
 "create the scene, declare springs, write where things should be" - which

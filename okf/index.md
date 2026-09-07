@@ -282,6 +282,13 @@ Shaped, not started.
   Cursor enum but have no sender anywhere; give apps the web's cursor model -
   a per-element cursor prop resolved against the hover path, innermost wins,
   "none" hides.
+- **[Enter animations (from) fire only on template roots](backlog/enter-from-template-children.md)** [2026-09-07]
+  A transition entry's `from` runs at insert, but JSX inserts a template's
+  children before the effect that writes their props, so a child's transition
+  config is not there yet when it attaches and its enter animation never
+  plays; only the template root (inserted after its props effect) gets one.
+  Done means a `from` on any element plays on its first frame regardless of
+  where it sits in the template.
 - **[Move the fetch disk cache out of forge?](backlog/fetch-cache-out-of-forge.md)** [2026-07-24]
   Lattice is now the only cache configurer, so should the mechanism follow the
   policy out of forge, and which of the three candidate shapes pays for

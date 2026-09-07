@@ -185,14 +185,19 @@ impl RenderTree {
   /// track or held write for the pair has been cancelled so it cannot
   /// overwrite the snap on the next frame.
   ///
-  /// Initial values never animate: a node not yet inserted (no parent) has
-  /// never been painted, so its mount-time writes snap. This is what keeps
-  /// `transition` listed before other props in JSX from animating the mount.
-  /// (Enter animations opt in explicitly via `from`; see `insert_node`.)
+  /// Initial values never animate: a write to a node the paint walk has not
+  /// entered yet (detached, or attached but not painted since) snaps, so an
+  /// element's first painted state is what it holds then and never a fade
+  /// from the kind's defaults. The attach check alone is not enough: JSX
+  /// inserts a template's children into their parent before the effect that
+  /// writes their props runs, so a child's mount-time writes land on an
+  /// attached node. The one thing that animates before the first paint is
+  /// an explicit enter animation (`from`, see `insert_node`): a mount-tick
+  /// write while its track runs retargets it instead of snapping it away.
   pub fn transition_write(&mut self, id: u64, prop: AnimProp, value: Option<AnimValue>) -> bool {
     let animate = value.and_then(|to| {
       let el = self.nodes.get(&id)?;
-      if el.parent.is_none() {
+      if el.parent.is_none() || (!el.painted.get() && !self.transitions.any_running(id, &[prop])) {
         return None;
       }
       let entry = el.transitions.as_ref()?.entry_for(prop)?;

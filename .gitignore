@@ -29,3 +29,4 @@ packages/*/flux*
 packages/*/*.dll
 packages/*/*.dylib
 packages/*/*.apk
+frame-00*

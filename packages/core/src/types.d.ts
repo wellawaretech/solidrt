@@ -590,9 +590,10 @@ export interface TransitionProps {
    * `all` covers every animatable property the element has, and a bare
    * string is shorthand for it: `transition="300ms ease-out"`. Only
    * properties the element carries animate (a d-rect has x, a view's x is
-   * its transform); the initial value never animates unless the entry sets
-   * `from` (an enter animation), and a non-numeric write (e.g. null)
-   * cancels the running animation and snaps. `null` clears the
+   * its transform); the initial values (every write before the element's
+   * first paint) never animate unless the entry sets `from` (an enter
+   * animation), and a non-numeric write (e.g. null) cancels the running
+   * animation and snaps. `null` clears the
    * declaration; already-running animations finish. A spec built in a
    * conditional widens `curve` to `string` for TypeScript; write
    * `satisfies Transition` on the branch.
