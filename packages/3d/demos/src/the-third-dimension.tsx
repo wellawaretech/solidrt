@@ -1,49 +1,22 @@
 // The Third Dimension - a GPU demo on @solidrt/3d.
 //
-// One file: the scene, its GLSL and the debug commands. The shader
-// sources are the "Shaders" section below.
+// One scene - a torus knot and a checkered ground, each drawn by its own
+// shaderMaterial over a backdrop shader - rendered three times into three
+// panels: a large orbiting hero shot, a side view where the knot's weave
+// reads, and a top-down view where the shadows cross. The two side panels
+// are <View3d>s sharing the scene's geometry, materials, lights and shadow
+// maps, so they cost another target and one entry per mesh, not a second
+// scene. Per-frame JS stays constant however much the passes cover.
 //
-// The scene is two meshes - a stock torusKnot() placed by transform and a
-// stock plane() rotated flat - each drawn by its own shaderMaterial (custom
-// GLSL), depth tested and back-face culled in the scene's own GPU pass,
-// over a backdrop shader drawn as that pass's first entry. Three real
-// spot lights (red, green and blue, evenly spaced in azimuth) plus a
-// hemisphere ambient are scene light NODES: the custom shaders read them
-// through @solidrt/3d's standard light uniforms (LIGHT_SLOTS and the
-// lightVector step of LIGHT_LOOKUP), so nothing about the shading is a
-// constant baked into the GLSL, and the lights themselves cost no pass.
-// All three CAST (castShadow), which a scene allows up to MAX_SHADOWS =
-// MAX_LIGHTS: each owns a tile of the scene's shadow atlas (one depth
-// texture, ONE pass for all three maps) drawn from its own perspective
-// cone camera, and both custom fragments read the whole set back with
-// SHADOW_SLOTS, SHADOW and SHADOW_LOOKUP from @solidrt/3d/glsl - the
-// same constants the lit material composes. A shadow is therefore
-// the COMPLEMENT of the light it blocks - red's is cyan - where two cross
-// only the third light survives and the colour goes pure, and where all
-// three cross the floor falls to the ambient alone. The rig hangs off one
-// Group that turns slowly, so the three shadows sweep and cross from a
-// single setTransform per frame.
+// Four casting spot lights: a triangle of pure red, green and blue turning
+// on one Group, plus a neutral overhead key. Each owns a tile of the
+// scene's shadow atlas (one depth texture, one pass), so a shadow is the
+// COMPLEMENT of the light it blocks - where two cross, the third survives
+// alone, and where all cross the floor falls to the ambient.
 //
-// The window is a split of THREE renderings of that one scene: the scene's
-// own target taking the larger share, plus two scene.createView panels
-// beside it - a side view, where the knot's weave reads because it lies
-// flat, and straight down from above, where the three shadows cross. The
-// split follows the window: the two panels stack down the right in
-// landscape and sit side by side along the bottom in portrait. All three are draggable
-// orbits with poses of their own. A view shares the scene's geometry, materials, lights and
-// shadow maps; it is another target, another camera and one entry per mesh,
-// and one core flush writes every entry's world matrix, so two more panels
-// cost no per-frame JS. All three keep the scene's perspective projection.
-// An orbit
-// camera (createOrbitCamera) per panel owns its pose: drag to rotate, wheel
-// or pinch to zoom, and an auto-orbit that pauses while dragging. A click or
-// tap pauses the panel it lands on and only that one; space is the keyboard
-// form and is global, the large view leading and the small ones taking its
-// new state. The light rig follows the large view. Per-frame JS cost is
-// constant no matter how many triangles the passes cover - one update(dt),
-// one setTransform on the rig, and the scene's own shared camera writes
-// when a pose changed.
-
+// Drag a panel to orbit it, wheel or pinch to zoom, click or tap to pause
+// that one, space to pause all three. The debug commands at the bottom
+// park the camera and the rig, and switch casters off, over MCP.
 import {
   capabilities,
   createEffect,
@@ -57,25 +30,24 @@ import {
   untrack,
   windowSize,
 } from "@solidrt/core"
-import type { PointerEvent, WheelEvent } from "@solidrt/core"
+import type { PointerEvent, TextureId, WheelEvent } from "@solidrt/core"
 import { createDrawTarget, glsl, limits, setTargetSize } from "@solidrt/core/gpu"
 import {
-  add,
-  createSpotLight,
-  createGroup,
-  createHemisphereLight,
-  createMesh,
-  createOrbitCamera,
-  createScene,
+  Group,
+  HemisphereLight,
+  Mesh,
+  OrbitCamera,
   plane,
-  setCastShadow,
-  setLight,
+  Scene,
   setTransform,
   shaderMaterial,
+  SpotLight,
   torusKnot,
+  useScene,
+  View3d,
   STANDARD_FLOATS,
 } from "@solidrt/3d"
-import type { OrbitCameraHandle, SceneNode, SpotLightNode, Vec3 } from "@solidrt/3d"
+import type { CameraUpdate, OrbitCameraHandle, SceneInput, SceneNode, SpotShadowOptions, Vec3 } from "@solidrt/3d"
 import { FRESNEL, LIT_VERTEX, litFragment, SCENE } from "@solidrt/3d/glsl"
 import { registerDebug } from "srt:dev"
 
@@ -85,120 +57,81 @@ const KNOT_Q = 3
 const KNOT_CENTER: Vec3 = [0, 1.4, 0]
 const FLOOR_SIZE = 36 // world units across; GROUND_FRAGMENT interpolates it
 const FOV = 0.85 // vertical field of view, radians (the scene camera speaks degrees)
+// What every panel projects with; near and far bracket the floor's visible disc.
+const CAMERA: CameraUpdate = { fov: (FOV * 180) / Math.PI, near: 0.1, far: 80 }
 const ORBIT_PERIOD = 68 // seconds for one full revolution
+const ORBIT_SPEED = (Math.PI * 2) / ORBIT_PERIOD // radians per second, every panel
 const MIN_DISTANCE = 2.6
 const MAX_DISTANCE = 14
 // Wheel zoom is eased by the app, not taken from orbit.handlers: a notch
 // retargets the distance and the camera glides there over the next few
-// frames, so a scroll reads as one continuous push instead of a staircase.
-// The exponent per wheel-delta unit matches the library's own sensitivity.
-const WHEEL_ZOOM = 0.0015
+// frames, so a scroll reads as one push instead of a staircase.
+const WHEEL_ZOOM = 0.0015 // exponent per wheel-delta unit, matching the library's sensitivity
 const ZOOM_EASE = 9 // e-foldings per second toward the pending distance
 const ZOOM_EPSILON = 0.0005 // world units; inside this the glide lands and stops
-// Lowest the eye may sit, world units. The ground is one back-face-culled
-// quad, so the picture falls apart the instant the camera dips under y=0 -
-// the floor just vanishes. A fixed elevation clamp cannot hold that line:
-// eye height is target.y + distance * sin(elevation), so an elevation that
-// sits comfortably high up close digs under the floor at full zoom-out.
-// Hence a floor on the eye instead, turned back into an elevation clamp
-// against the distance of the moment.
+// Lowest the eye may sit, world units. Eye height is target.y + distance *
+// sin(elevation), so an elevation that sits comfortably high up close digs
+// under the floor at full zoom-out: hence a floor on the EYE, turned back
+// into an elevation clamp against the distance of the moment. The ground is
+// one back-face-culled quad, so under it the picture simply vanishes.
 const EYE_MIN_Y = 0.35
 
-// Three real spot lights, evenly spaced in azimuth and tilted down by the
-// same angle: a triangular rig, so the knot is lit from every side and no
-// face falls to ambient alone. These are scene light NODES, not constants
-// in a shader - the materials read them through the standard uniform set, so
-// setLight/setTransform on one of these re-shades the scene.
+// Three spot lights evenly spaced in azimuth and tilted down by the same
+// angle: a triangular rig, so no face of the knot falls to ambient alone.
+// These are scene light NODES, so setLight/setTransform on one re-shades.
 const LIGHT_ELEVATION = 0.62 // radians above the horizon
-// Pure primaries, one per corner of the triangle. All three cones cover the
-// knot and overlap on the centre of the floor, so the tints sum back toward
-// neutral there - the colour separation is a curvature effect on the knot,
-// and a falloff effect toward the pool rims on the floor.
+// Pure primaries, one per corner. All three cones overlap on the centre of
+// the floor, so the tints sum back toward neutral there.
 const LIGHT_TINTS: Vec3[] = [
   [1, 0, 0],
   [0, 1, 0],
   [0, 0, 1],
 ]
 // The strength each light lands on the knot with. A spot attenuates by
-// inverse-square distance, so the node intensity is this times
-// LIGHT_DISTANCE^2 (the falloff window's few percent at the knot ignored).
+// inverse-square distance, so the node intensity is this times LIGHT_DISTANCE^2.
 const LIGHT_INTENSITY = 0.72
-// Where the triangle starts, so a light is not aimed straight down the
-// camera's opening azimuth.
-const LIGHT_PHASE = 0.6
-// How far back up its own ray each light NODE sits: a spot shines (and a
-// casting one renders its shadow map) from the node's world position, so it
-// has to stand off the scene. They are one rig, so all three get the same
-// placement.
+const LIGHT_PHASE = 0.6 // where the triangle starts, so no light aims down the opening azimuth
+// How far back up its own ray each light NODE sits: a spot shines, and
+// renders its shadow map, from the node's world position.
 const LIGHT_DISTANCE = 10
-// Seconds for one full turn of the light rig - slower than the camera
-// orbit, so the two motions stay legible as two.
-const RIG_PERIOD = 120
-// Every light casts. A scene takes MAX_SHADOWS = MAX_LIGHTS casting
-// lights, so all three corners of the triangle get a map (a tile of the
-// scene's shadow atlas) of their own, and each shadow is the COMPLEMENT of
-// the light it blocks. The `shadow` debug command switches individual
-// casters off to take the effect apart.
-// The cone's half-angle: wide enough that the three pools overlap on the
-// centre of the floor and each covers the other two lights' cast shadows
-// (the complement effect needs a shadow to fall where the OTHER pools
-// still reach), narrow enough that the shadow map - a perspective camera
-// at fov = 2 * angle - keeps its texels near the caster, and that floor
-// fragments outside the cone skip their shadow taps (the frustum, not the
-// cone, is what gates the tap). The old ortho box spent 1024 texels over
-// 5.2 units; the cone spreads them over its whole footprint, so the map
-// is coarser and the penumbra is what hides it.
+const RIG_PERIOD = 120 // seconds per turn of the rig; slower than the orbit, so the two read as two
+// The cone's half-angle: wide enough that the pools overlap and each covers
+// the other lights' cast shadows, narrow enough that the map's texels stay
+// near the caster and fragments outside the frustum skip their taps.
 const SPOT_ANGLE = 28
-// The outer fraction of the cone that fades to the rim: enough blur to
-// hide the coarser perspective map, low enough that the pool rims stay
-// readable as three distinct circles where they part.
-const SPOT_PENUMBRA = 0.25
-// Falloff cutoff (and the shadow camera's far plane): past the far rim of
-// the floor pools, so the window dims the pools toward their edges without
-// clipping anything visible.
-const SPOT_DISTANCE = 22
-// The overhead key: a fourth, neutral spot straight above the knot shining
-// down. It lifts the knot's upper surfaces out of the tinted triangle -
-// kept well below the tints so the RGB separation stays the picture - and
-// its cast shadow is the contact patch that grounds the knot.
+const SPOT_PENUMBRA = 0.25 // outer fraction of the cone that fades to the rim
+const SPOT_DISTANCE = 22 // falloff cutoff, and the shadow camera's far plane
+// The overhead key: neutral, straight above the knot, lifting its upper
+// surfaces out of the tinted triangle. Kept well below the tints so the RGB
+// separation stays the picture; its shadow is the knot's contact patch.
 const KEY_INTENSITY = 0.35
-// Narrower than the rig's cones: the key only needs the knot and its
-// contact shadow, and a tight cone keeps its map texels dense and its
-// floor taps few.
-const KEY_ANGLE = 22
-// Per-caster map resolution. 2048, not the old 1024: a spot's perspective
-// map spreads its texels over the whole cone footprint (the old ortho box
-// packed them into 5.2 world units), so the same count reads blocky at
-// the shadow edge - quality first for the demo, and the extra depth
-// raster measured cheap next to the fill. Four casters tile a
-// 4096x4096 atlas; scene-shadows downscales uniformly where
-// maxTextureSize cannot hold it.
+const KEY_ANGLE = 22 // narrower than the rig's: the key only needs the knot and its contact shadow
+// Per-caster map resolution. A spot's perspective map spreads its texels
+// over the whole cone footprint, so this is what the shadow edge costs.
+// Four casters tile a 4096x4096 atlas; scene-shadows downscales uniformly
+// where maxTextureSize cannot hold it.
 const SHADOW_MAP = 2048
-// The shadow camera's near plane: the caster sits LIGHT_DISTANCE up the ray.
-const SHADOW_NEAR = 2
-// The split: one large panel taking SPLIT of the window's long axis, the
-// two others sharing what is left across the short one - stacked down the
-// right in landscape, side by side along the bottom in portrait. They share
-// edges with no gap: the rounding leftovers go to the two small panels, so
-// the three tile the window exactly whichever way it turns.
+const SHADOW_NEAR = 2 // the caster sits LIGHT_DISTANCE up its own ray
+// Along the receiving surface's own normal, the knob to reach for first. The
+// depth pass culls FRONT faces, so a closed caster needs no depth bias too.
+const SHADOW_NORMAL_BIAS = 0.02
+const SHADOW: SpotShadowOptions = { mapSize: SHADOW_MAP, normalBias: SHADOW_NORMAL_BIAS, near: SHADOW_NEAR }
+// The hero panel's share of the window's long axis; the other two split what
+// is left. The rounding leftovers go to the small panels, so the three tile
+// the window exactly whichever way it turns.
 const SPLIT = 0.66
 // Where the lower-right panel opens: all but straight down (1.55 is the
-// library's own pole guard), far enough back that the vertical FOV covers
-// the whole shadow spread, about +-4 world units at the floor.
+// library's own pole guard), far enough back to cover the shadow spread.
 const TOP_DOWN_ELEVATION = 1.5
 const TOP_DOWN_DISTANCE = 11.6
-// The hero panel's opening azimuth. The side panel is placed RELATIVE to it
-// rather than in world terms: every panel sweeps at the same rate, so what
-// stays visible between two of them is how far apart they sit, never where
-// either happens to point at t = 0.
+// The hero panel's opening azimuth. The side panel is placed RELATIVE to it:
+// every panel sweeps at the same rate, so what stays visible between two of
+// them is how far apart they sit, never where either points at t = 0.
 const HERO_AZIMUTH = 0.9
-// Where the upper-right panel opens, tuned on screen. The knot is a flat
-// disc in the xz plane, so a side view catches it edge-on and its weave -
-// which loop passes over which - reads there and nowhere else. The eye sits
-// just BELOW the knot's centre (about y = 0.73 at this distance) looking
-// slightly up at it, which stands the knot clear of the floor instead of
-// laying it into the checker. Well inside the floor clamp: at this distance
-// holdAboveFloor would not bite until about -0.124.
+// Where the upper-right panel opens, tuned on screen. The knot is a flat disc
+// in the xz plane, so a side view is the only place its weave reads. The eye
+// sits just below the knot's centre looking slightly up, which stands the
+// knot clear of the floor instead of laying it into the checker.
 const SIDE_OFFSET = -3.096 // radians round from the hero
 const SIDE_AZIMUTH = HERO_AZIMUTH + SIDE_OFFSET
 const SIDE_ELEVATION = -0.079
@@ -206,34 +139,23 @@ const SIDE_DISTANCE = 8.5
 // How far the two right-hand panels may be pushed and pulled.
 const PANEL_MIN_DISTANCE = 3.5
 const PANEL_MAX_DISTANCE = 30
-// The extra views get no background entry of their own (a view mirrors the
-// scene's meshes, not its backdrop), so this stands in for the backdrop
-// shader's outer tone where the ground has faded away.
+// A view mirrors the scene's meshes, not its backdrop, so this stands in for
+// the backdrop shader's outer tone where the ground has faded away.
 const VIEW_CLEAR: [number, number, number, number] = [0.02, 0.028, 0.048, 1]
-// Floor under the display's own scale: on a 1x display there is no downscale
-// to soften polygon edges (targets have no MSAA), so render the scene larger
-// than the box it is drawn into and let the texture filter resolve it.
+// Floor under the display's own scale: on a 1x display nothing softens the
+// polygon edges (targets have no MSAA), so render the scene larger than the
+// box it is drawn into and let the texture filter resolve it.
 const MIN_RENDER_SCALE = 1.5
 
 // ------ Shaders ------
 //
-// GLSL ES 3.00 sources for the scene. None declares `#version`, so the
-// runtime injects its own preamble: `fragColor` and `iResolution` for the
-// fragment stages, plus `vUV` for the fragment-only backdrop (a pipeline's
-// varyings are its own vertex stage's job). Every other uniform below is
-// part of @solidrt/3d's standard set, opt-in by declare-and-use.
-//
-// The knot and the ground are two @solidrt/3d shaderMaterials sharing one
-// vertex stage - LIT_VERTEX from @solidrt/3d/glsl, the package's standard
-// stage: it transforms by the per-mesh `uModel` and the target-shared
-// `uViewProj`, and hands the fragments world position (vWorldPos), world
-// normal (vNormal, through mat3(uNormal)) and UV (vUv). Lighting comes
-// from the scene's real light nodes through the scene set (SCENE): the
-// same source the stock materials compile, so there are no app-written
-// light uniforms and no baked-in light directions - the meshes may be
-// placed by any transform without the shaders caring, moving a light node
-// re-shades everything, and a spot light is a cone here because the set's
-// light loop is the one that knows what a spot is.
+// GLSL ES 3.00. None declares `#version`: the runtime injects its own
+// preamble - `fragColor` and `iResolution` for the fragment stages, plus
+// `vUV` for the fragment-only backdrop. Every other uniform is part of
+// @solidrt/3d's standard set, opt-in by declare-and-use. The knot and the
+// ground share one vertex stage (LIT_VERTEX) and take their lighting from
+// the scene's real light nodes through SCENE, so no light direction is
+// baked into the GLSL and moving a light node re-shades everything.
 
 // The knot's own material terms, and its rim: a view-dependent term of
 // the shading model added after the scene's shade, not a stand-in light.
@@ -296,12 +218,9 @@ let KNOT_FRAGMENT = glsl`
 
 /**
  * Ground: the stock lit fragment with a `surface` function - the material
- * describes the surface (a distance-faded checkerboard over the plane's
- * own UVs scaled to its world footprint, FLOOR_SIZE) and the package
- * shades it with the same lights, shadows and fog as the knot. Output is
- * premultiplied alpha - the ground fades to fully transparent so the
- * scene's background entry shows through it. That fade is why the
- * material is `transparent`.
+ * describes the surface and the package shades it with the same lights,
+ * shadows and fog as the knot. Output is premultiplied alpha, the ground
+ * fading to fully transparent at the rim, which is why it is `transparent`.
  */
 let GROUND_PRELUDE = glsl`
   // World units per square.
@@ -329,13 +248,7 @@ let GROUND_SURFACE = glsl`
   void surface(inout Surface s) {
     vec2 p = (vUv - 0.5) * ${FLOOR_SIZE.toFixed(1)};
     float fade = 1.0 - smoothstep(6.0, 17.0, length(p));
-    // Albedo, not final colour: the scene's shade multiplies it. Under the
-    // spot rig the three cones overlap on the centre of the floor, so the
-    // tints still sum toward neutral there - until the maps take them away
-    // one at a time: three shadows, each keeping the two lights it does
-    // not block, crossing into pure primaries where two overlap and into
-    // the ambient alone where all three do, inside pools that fall off
-    // toward the rim instead of a flat wash.
+    // Albedo, not final colour: the scene's shade multiplies it.
     vec3 tile = mix(vec3(0.16, 0.18, 0.22), vec3(0.52, 0.55, 0.60), checker(p / TILE));
     // Premultiplied, alpha being the distance fade: the floor is a solid
     // surface that dissolves into the background at the rim, so a shadow
@@ -348,11 +261,9 @@ let GROUND_FRAGMENT = litFragment({ transparent: true, prelude: GROUND_PRELUDE, 
 
 /**
  * Backdrop: a static radial gradient with a touch of hash grain so the ramp
- * does not band. Handed to createScene as `background`, so it is the scene
+ * does not band. Handed to <Scene> as `background`, so it is the scene
  * pass's FIRST entry - an attributeless fullscreen triangle with depth off,
- * redrawn with the pass rather than cached in a texture of its own. It takes
- * the shader-target contract (vUV, iResolution, fragColor) either way, so
- * this source is unchanged from when it fed createShaderTexture.
+ * redrawn with the pass rather than cached in a texture of its own.
  */
 let BACKDROP_FRAGMENT = glsl`
   void main() {
@@ -368,17 +279,17 @@ let BACKDROP_FRAGMENT = glsl`
 
 // Pixels per logical unit the scene renders at; 0 means "follow the display".
 let [renderScale, setRenderScale] = createSignal(0)
-// How many lights currently cast: the subtitle reads it, the `shadow`
-// debug command writes it.
-// The triangle's three tints plus the overhead key.
-let [casters, setCasters] = createSignal(LIGHT_TINTS.length + 1)
-// Assigned in App; the debug commands below only run once the app is up.
-// One orbit camera per panel: the large one on the left, then the two on
-// the right. Only the left one auto-orbits.
+// Which lights cast, the triangle's three tints then the overhead key: the
+// `shadow` debug command writes it, each <SpotLight castShadow> and the
+// subtitle's count read it.
+const KEY_LIGHT = LIGHT_TINTS.length // the key's index in `casting`
+let [casting, setCasting] = createSignal<boolean[]>([...LIGHT_TINTS.map(() => true), true])
+// Handed out by the <OrbitCamera ref>s as the app mounts; the debug
+// commands below only run once it is up. One orbit camera per panel: the
+// large one on the left, then the two on the right.
 let orbit!: OrbitCameraHandle
 let topOrbit!: OrbitCameraHandle
 let bottomOrbit!: OrbitCameraHandle
-let lights: SpotLightNode[] = []
 // The light rig and where it has turned to. Module scope so the `rig` debug
 // command can park it: the spin pauses with the orbit, so a parked pose and
 // a parked rig together are one repeatable frame.
@@ -386,9 +297,14 @@ let rig!: SceneNode
 let rigAngle = 0
 // A panel as input and the frame loop see it: its camera, the distance range
 // its wheel may steer within, and the eased zoom in flight (null when there
-// is none). Assigned in App, in left-then-right order.
-type PanelCamera = { cam: OrbitCameraHandle; minDistance: number; maxDistance: number; zoom: number | null }
-let cameras: PanelCamera[] = []
+// is none). Left-then-right order. `cam` is a getter because the handles
+// above arrive after this array exists; nothing reads it before the app is up.
+type PanelCamera = { readonly cam: OrbitCameraHandle; minDistance: number; maxDistance: number; zoom: number | null }
+let cameras: PanelCamera[] = [
+  { get cam() { return orbit }, minDistance: MIN_DISTANCE, maxDistance: MAX_DISTANCE, zoom: null },
+  { get cam() { return topOrbit }, minDistance: PANEL_MIN_DISTANCE, maxDistance: PANEL_MAX_DISTANCE, zoom: null },
+  { get cam() { return bottomOrbit }, minDistance: PANEL_MIN_DISTANCE, maxDistance: PANEL_MAX_DISTANCE, zoom: null },
+]
 
 // A tap toggles the auto-orbit, so tablets have a pause too. A tap is one
 // pointer that goes down and up within TAP_SLOP and TAP_MS without a second
@@ -403,7 +319,7 @@ let clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v))
 // The keyboard's pause, and the only global one: the LARGE view leads and
 // the two small ones are handed its new state, so one key puts the whole
 // window in step and a paused scene is a still frame end to end. A click or
-// tap is local to the panel it lands on (see panelInput). The large view's
+// tap is local to the panel it lands on (see panelLeaf). The large view's
 // signal is what the hint text reads, and what the light rig follows.
 let setAllOrbiting = (orbiting: boolean) => {
   orbit.set({ orbiting })
@@ -418,6 +334,23 @@ let holdAboveFloor = (cam: OrbitCameraHandle) => {
   let pose = cam.pose()
   let minElevation = Math.asin(clamp((EYE_MIN_Y - KNOT_CENTER[1]) / pose.distance, -1, 1))
   if (pose.elevation < minElevation) cam.set({ elevation: minElevation })
+}
+
+// The i-th rig light's local frame: evenly spaced in azimuth, tilted down
+// by LIGHT_ELEVATION, and standing LIGHT_DISTANCE back up its own ray from
+// the knot. Each casting light's shadow camera sits AT its node's world
+// position (Three's rule), so a light at the origin would render its map
+// from inside the caster and shadow nothing.
+let rigLight = (i: number): { direction: Vec3; position: Vec3 } => {
+  let azimuth = LIGHT_PHASE + (i / LIGHT_TINTS.length) * Math.PI * 2
+  let horizontal = Math.cos(LIGHT_ELEVATION)
+  let direction: Vec3 = [-horizontal * Math.cos(azimuth), -Math.sin(LIGHT_ELEVATION), -horizontal * Math.sin(azimuth)]
+  let position: Vec3 = [
+    KNOT_CENTER[0] - direction[0] * LIGHT_DISTANCE,
+    KNOT_CENTER[1] - direction[1] * LIGHT_DISTANCE,
+    KNOT_CENTER[2] - direction[2] * LIGHT_DISTANCE,
+  ]
+  return { direction, position }
 }
 
 function App() {
@@ -476,9 +409,7 @@ function App() {
   // Render at device pixels so the knot's silhouette stays crisp on hi-DPI,
   // clamped to what the device can actually allocate. The hero panel is its
   // own target; the two side panels are tiles of ONE atlas target, stacked
-  // (top above bottom), so they cost one render pass between them instead
-  // of two - and the three together cover about the pixels one full-window
-  // view used to.
+  // top above bottom, so they cost one render pass between them, not two.
   let targetSize = createMemo(() => {
     let box = panels()
     let scale = renderScale() || Math.max(env.displayScale, MIN_RENDER_SCALE)
@@ -496,245 +427,83 @@ function App() {
   })
   let initial = untrack(targetSize)
 
-  // The backdrop is the scene pass's first entry (depth off, covering the
-  // target), so there is no second texture layer and no resize plumbing of
-  // its own - the ground's fade blends straight onto it.
-  let scene = createScene(initial.main.width, initial.main.height, {
-    label: "scene",
-    background: BACKDROP_FRAGMENT,
+  // Transparent, so the scene draws the ground after the opaque knot with
+  // depth writes off. Made once, here, not in a JSX prop: a shaderMaterial
+  // is a pipeline, and a prop expression is re-read.
+  let groundMaterial = shaderMaterial({
+    vertex: LIT_VERTEX,
+    fragment: GROUND_FRAGMENT,
+    transparent: true,
+    // lit's per-entry uniforms: the surface function replaces the base,
+    // so the color is moot; no highlight on the floor.
+    params: { uColor: [1, 1, 1, 1], uSpecular: 0, uShininess: 30 },
+    label: "ground",
   })
-  scene.setCamera({ fov: (FOV * 180) / Math.PI, near: 0.1, far: 80 })
-  orbit = createOrbitCamera(scene, {
-    target: KNOT_CENTER,
-    azimuth: HERO_AZIMUTH,
-    elevation: 0.34,
-    distance: 5.4,
-    minDistance: MIN_DISTANCE,
-    maxDistance: MAX_DISTANCE,
-    minElevation: -0.15,
-    maxElevation: 1.35,
-    orbitSpeed: (Math.PI * 2) / ORBIT_PERIOD,
-  })
-  // The rig: direction is the way each light SHINES (down and inward), which
-  // the scene negates into the uLightDir the shaders read. The hemisphere
-  // light is the floor under all of it: with three shadows crossing, the
-  // patch where all three lights are blocked would otherwise be pure black,
-  // and this is what it falls to instead.
-  add(
-    scene.root,
-    // Kept LOW under the spot rig: the ambient is only what a fully
-    // shadowed patch falls to, and the dimmer it is the harder the pools
-    // and the complement shadows read against it.
-    createHemisphereLight({ sky: [0.42, 0.48, 0.60], ground: [0.14, 0.15, 0.19], intensity: 0.4 }),
-  )
-  // The three lights hang off ONE Group, so the slow turn in the frame loop
-  // stays a single setTransform however many corners the triangle grows. A
-  // parent rotation carries both halves of a light: the direction it shines
-  // and the position its shadow camera is placed at.
-  rig = createGroup()
-  add(scene.root, rig)
-  lights = []
-  for (let i = 0; i < LIGHT_TINTS.length; i++) {
-    let azimuth = LIGHT_PHASE + (i / LIGHT_TINTS.length) * Math.PI * 2
-    let horizontal = Math.cos(LIGHT_ELEVATION)
-    let direction: Vec3 = [
-      -horizontal * Math.cos(azimuth),
-      -Math.sin(LIGHT_ELEVATION),
-      -horizontal * Math.sin(azimuth),
-    ]
-    let light = createSpotLight({
-      direction,
-      color: LIGHT_TINTS[i]!,
-      // Inverse-square compensation: what LIGHT_INTENSITY means at the
-      // knot, LIGHT_DISTANCE away (see the constant).
-      intensity: LIGHT_INTENSITY * LIGHT_DISTANCE * LIGHT_DISTANCE,
-      angle: SPOT_ANGLE,
-      penumbra: SPOT_PENUMBRA,
-      distance: SPOT_DISTANCE,
-      castShadow: true,
-      shadow: {
-        mapSize: SHADOW_MAP,
-        // Along the receiving surface's own normal, the knob to reach for
-        // first. The depth pass culls FRONT faces, so a closed caster like
-        // the knot needs no depth bias at all on top of it.
-        normalBias: 0.02,
-        near: SHADOW_NEAR,
-      },
-    })
-    // Each casting light's shadow camera sits AT its node's world position
-    // (Three's rule), so back the light up its own ray from the knot: at
-    // the origin it would render its map from inside the caster and shadow
-    // nothing.
-    setTransform(light, {
-      position: [
-        KNOT_CENTER[0] - direction[0] * LIGHT_DISTANCE,
-        KNOT_CENTER[1] - direction[1] * LIGHT_DISTANCE,
-        KNOT_CENTER[2] - direction[2] * LIGHT_DISTANCE,
-      ],
-    })
-    add(rig, light)
-    lights.push(light)
-  }
-  // The overhead key hangs off the scene root, not the rig: aimed straight
-  // down its default [0, -1, 0] from directly above the knot, the rig's
-  // turn has nothing to carry for it.
-  let key = createSpotLight({
-    color: [1, 1, 1],
-    intensity: KEY_INTENSITY * LIGHT_DISTANCE * LIGHT_DISTANCE,
-    angle: KEY_ANGLE,
-    penumbra: SPOT_PENUMBRA,
-    distance: SPOT_DISTANCE,
-    castShadow: true,
-    shadow: { mapSize: SHADOW_MAP, normalBias: 0.02, near: SHADOW_NEAR },
-  })
-  setTransform(key, {
-    position: [KNOT_CENTER[0], KNOT_CENTER[1] + LIGHT_DISTANCE, KNOT_CENTER[2]],
-  })
-  add(scene.root, key)
-  lights.push(key)
+  let knotMaterial = shaderMaterial({ vertex: LIT_VERTEX, fragment: KNOT_FRAGMENT, label: "knot" })
 
-  // The ground writes premultiplied alpha and fades to clear, so it is a
-  // transparent material: the scene draws it after the opaque knot with
-  // depth writes off, and the depth test keeps it behind the knot's pixels.
-  // Both materials default to cull "back", so the ground quad would vanish if
-  // the camera dipped below the floor plane - which the EYE_MIN_Y clamp in
-  // the frame loop is there to prevent.
-  let ground = createMesh(
-    groundGeometry,
-    shaderMaterial({
-      vertex: LIT_VERTEX,
-      fragment: GROUND_FRAGMENT,
-      transparent: true,
-      // lit's per-entry uniforms: the surface function replaces the base,
-      // so the color is moot; no highlight on the floor.
-      params: { uColor: [1, 1, 1, 1], uSpecular: 0, uShininess: 30 },
-      label: "ground",
-    }),
-  )
-  let knot = createMesh(
-    knotGeometry,
-    shaderMaterial({ vertex: LIT_VERTEX, fragment: KNOT_FRAGMENT, label: "knot" }),
-  )
-  add(scene.root, ground)
-  add(scene.root, knot)
-  setTransform(ground, { rotation: [-Math.PI / 2, 0, 0] })
-  setTransform(knot, { position: KNOT_CENTER })
-  // Only the knot casts. The ground is one single-sided quad and the depth
-  // pass culls front faces, so it would draw nothing into the map anyway -
-  // and its entry in the shadow view would cost a draw for nothing.
-  setCastShadow(knot, true)
-
-  // The three renderings of ONE scene. A view shares the scene's geometry,
-  // materials, lights and shadow maps - it is another camera and one entry
-  // per mesh, and the core's flush writes every entry's world matrix at
-  // once, so the extra panels cost the app nothing per frame. Both side
-  // views render `into` one atlas target as tiles: one pass for the pair,
-  // each panel's <d-texture> showing its tile through srcX/srcY.
+  // Both side views render `into` this one target as tiles: one pass for the
+  // pair, each panel's <d-texture> showing its tile through srcX/srcY. The id
+  // stays stable across a resize, so the <d-texture src> bindings and the
+  // owner-scoped auto-free keep working.
   let atlas = createDrawTarget(initial.atlas.width, initial.atlas.height, null, {
     depth: true,
     clearColor: VIEW_CLEAR,
     label: "side-atlas",
   })
-  let topView = scene.createView({
-    width: initial.top.width,
-    height: initial.top.height,
-    clearColor: VIEW_CLEAR,
-    label: "top-right",
-    into: atlas,
-  })
-  topView.setCamera({ fov: (FOV * 180) / Math.PI, near: 0.1, far: 80 })
-  let bottomView = scene.createView({
-    width: initial.bottom.width,
-    height: initial.bottom.height,
-    clearColor: VIEW_CLEAR,
-    label: "bottom-right",
-    into: atlas,
-    y: initial.top.height,
-  })
-  bottomView.setCamera({ fov: (FOV * 180) / Math.PI, near: 0.1, far: 80 })
-  // A view has the same setCamera as a scene, which is all an orbit camera
-  // ever touches, so each panel gets a real one: drag, pinch and wheel, and
-  // a pose of its own. The upper panel opens from the side and the lower one
-  // all but straight down - the two orthogonal readings a single orbiting
-  // hero shot keeps sweeping past. All three auto-orbit at the same rate, so
-  // they hold their phase offsets and read as three cameras on one
-  // turntable. Each pauses on its own click; space stops all three.
-  topOrbit = createOrbitCamera(topView, {
-    target: KNOT_CENTER,
-    azimuth: SIDE_AZIMUTH,
-    elevation: SIDE_ELEVATION,
-    distance: SIDE_DISTANCE,
-    minDistance: PANEL_MIN_DISTANCE,
-    maxDistance: PANEL_MAX_DISTANCE,
-    minElevation: -0.15,
-    maxElevation: 1.55,
-    orbitSpeed: (Math.PI * 2) / ORBIT_PERIOD,
-  })
-  bottomOrbit = createOrbitCamera(bottomView, {
-    target: KNOT_CENTER,
-    azimuth: HERO_AZIMUTH,
-    elevation: TOP_DOWN_ELEVATION,
-    distance: TOP_DOWN_DISTANCE,
-    minDistance: PANEL_MIN_DISTANCE,
-    maxDistance: PANEL_MAX_DISTANCE,
-    minElevation: -0.15,
-    maxElevation: 1.55,
-    orbitSpeed: (Math.PI * 2) / ORBIT_PERIOD,
-  })
-  cameras = [
-    { cam: orbit, minDistance: MIN_DISTANCE, maxDistance: MAX_DISTANCE, zoom: null },
-    { cam: topOrbit, minDistance: PANEL_MIN_DISTANCE, maxDistance: PANEL_MAX_DISTANCE, zoom: null },
-    { cam: bottomOrbit, minDistance: PANEL_MIN_DISTANCE, maxDistance: PANEL_MAX_DISTANCE, zoom: null },
-  ]
+  createEffect(targetSize, size => setTargetSize(atlas, size.atlas.width, size.atlas.height))
+  // How many lights cast, for the subtitle.
+  let casters = createMemo(() => casting().filter(Boolean).length)
 
-  // Every target follows its own panel; the ids are stable across a resize,
-  // so the <d-texture src> bindings and the owner-scoped auto-free keep
-  // working.
-  createEffect(targetSize, size => {
-    scene.setSize(size.main.width, size.main.height)
-    setTargetSize(atlas, size.atlas.width, size.atlas.height)
-    topView.setRect({ x: 0, y: 0, width: size.top.width, height: size.top.height })
-    bottomView.setRect({ x: 0, y: size.top.height, width: size.bottom.width, height: size.bottom.height })
-  })
-
-  // One panel's input, spread onto its own texture leaf: that camera's drag
-  // and pinch, an eased wheel, and the tap that toggles the global pause.
-  // Which panel a gesture belongs to is the ENGINE's answer, not the app's -
-  // the runtime freezes each pointer's hit path at the down and delivers
-  // every later event along it, so a drag that runs off its panel keeps
-  // arriving here with no capture to arrange, and two fingers on one panel
-  // both land on it, which is what makes the pinch work.
-  let panelInput = (panel: PanelCamera) => ({
-    onPointerDown: (e: PointerEvent) => {
-      // A pinch drives distance directly; drop this panel's glide so the two
-      // do not fight over the pose.
-      panel.zoom = null
-      tap = tap === null ? { id: e.pointerId, x: e.clientX, y: e.clientY, at: performance.now() } : null
-      panel.cam.handlers.onPointerDown(e)
-    },
-    onPointerMove: (e: PointerEvent) => panel.cam.handlers.onPointerMove(e),
-    onPointerUp: (e: PointerEvent) => {
-      panel.cam.handlers.onPointerUp(e)
-      if (tap === null || tap.id !== e.pointerId) return
-      let moved = Math.hypot(e.clientX - tap.x, e.clientY - tap.y)
-      let held = performance.now() - tap.at
-      tap = null
-      // A tap pauses THIS panel and nothing else - the other two keep
-      // sweeping, so one view can be held still to study while the rest of
-      // the window carries on. Space is the global form.
-      if (moved < TAP_SLOP && held < TAP_MS) panel.cam.set({ orbiting: !panel.cam.orbiting() })
-    },
-    // A notch retargets this panel's distance and the camera glides there
-    // over the next few frames, so a scroll reads as one continuous push
-    // instead of a staircase. Compounding from the PENDING distance rather
-    // than the current one, so a fast scroll accumulates its notches instead
-    // of each one restarting the glide from wherever the last had reached.
-    onWheel: (e: WheelEvent) => {
-      let from = panel.zoom ?? panel.cam.pose().distance
-      panel.zoom = clamp(from * Math.exp(e.deltaY * WHEEL_ZOOM), panel.minDistance, panel.maxDistance)
-    },
-  })
-  let input = cameras.map(panelInput)
+  // One panel's leaf, a detached box over the window showing `tile`: the
+  // camera channel's drag and pinch, the tap that pauses this panel, and the
+  // wheel, which the app eases itself. Which panel a gesture belongs to is
+  // the ENGINE's answer - the runtime freezes each pointer's hit path at the
+  // down and delivers every later event along it, so a drag that runs off
+  // its panel keeps arriving here with no capture to arrange, and two
+  // fingers on one panel both land on it, which is what makes a pinch.
+  let panelLeaf = (
+    panel: PanelCamera,
+    input: SceneInput,
+    box: () => { x: number; y: number; w: number; h: number },
+    tile: () => { src: TextureId; srcX?: number; srcY?: number; srcW?: number; srcH?: number },
+  ) => {
+    // The layout the channel scales against is the panel's own box, so the
+    // drag is viewport-relative per panel: one panel height sweeps the same
+    // angle in the small panels as in the hero.
+    let orbit = input.handlersFor(() => ({ width: box().w, height: box().h }))
+    return (
+      <d-texture
+        {...tile()}
+        {...box()}
+        onPointerDown={(e: PointerEvent) => {
+          // A pinch drives distance directly; drop this panel's glide so the
+          // two do not fight over the pose.
+          panel.zoom = null
+          tap = tap === null ? { id: e.pointerId, x: e.clientX, y: e.clientY, at: performance.now() } : null
+          orbit.onPointerDown(e)
+        }}
+        onPointerMove={orbit.onPointerMove}
+        onPointerUp={(e: PointerEvent) => {
+          orbit.onPointerUp(e)
+          if (tap === null || tap.id !== e.pointerId) return
+          let moved = Math.hypot(e.clientX - tap.x, e.clientY - tap.y)
+          let held = performance.now() - tap.at
+          tap = null
+          // A tap pauses THIS panel and nothing else - the other two keep
+          // sweeping, so one view can be held still to study while the rest
+          // of the window carries on. Space is the global form.
+          if (moved < TAP_SLOP && held < TAP_MS) panel.cam.set({ orbiting: !panel.cam.orbiting() })
+        }}
+        // Compounding from the PENDING distance rather than the current
+        // one, so a fast scroll accumulates its notches instead of each one
+        // restarting the glide from wherever the last had reached.
+        onWheel={(e: WheelEvent) => {
+          let from = panel.zoom ?? panel.cam.pose().distance
+          panel.zoom = clamp(from * Math.exp(e.deltaY * WHEEL_ZOOM), panel.minDistance, panel.maxDistance)
+        }}
+      />
+    )
+  }
 
   let last = 0
   onFrame(tick => {
@@ -744,11 +513,12 @@ function App() {
     let dt = clamp(now - last, 0, 0.1)
     last = now
     // Every panel in turn: glide its pending wheel zoom, then hold its eye
-    // above the floor.
+    // above the floor. Both go through the <OrbitCamera> handle's set(),
+    // which pushes the pose itself; the auto-orbit is each component's own
+    // loop, running only while that panel is orbiting.
     for (let panel of cameras) {
       // The glide is an exponential ease, framerate independent because the
-      // step is 1 - e^(-rate*dt) rather than a fixed fraction. It writes the
-      // pose, which the camera's own update() then pushes once.
+      // step is 1 - e^(-rate*dt) rather than a fixed fraction.
       if (panel.zoom !== null) {
         let distance = panel.cam.pose().distance
         let next = distance + (panel.zoom - distance) * (1 - Math.exp(-ZOOM_EASE * dt))
@@ -758,11 +528,8 @@ function App() {
         }
         panel.cam.set({ distance: next })
       }
-      // Keep the eye above the floor: the lowest elevation that still clears
-      // EYE_MIN_Y at this camera's distance. It tightens as the zoom pulls
-      // out, so a camera slides up along the limit instead of sinking through
-      // the ground - and the ground is one back-face-culled quad, so under it
-      // the floor and its shadows simply vanish.
+      // The clamp tightens as the zoom pulls out, so a camera slides up
+      // along the limit instead of sinking through the ground.
       holdAboveFloor(panel.cam)
     }
     // Turn the light rig, on the same pause as the orbit so a parked scene
@@ -774,9 +541,6 @@ function App() {
       rigAngle = (rigAngle + (dt * Math.PI * 2) / RIG_PERIOD) % (Math.PI * 2)
       setTransform(rig, { rotation: [0, rigAngle, 0] })
     }
-    // Each panel's target gets its own uViewProj/uCamPos write, and only
-    // when that pose actually changed - update() reports it and skips.
-    for (let panel of cameras) panel.cam.update(dt)
   })
 
   return (
@@ -787,25 +551,149 @@ function App() {
         if (e.code === "Space" || e.key === " ") setAllOrbiting(!orbit.orbiting())
       }}
     >
-      <d-texture src={scene.texture} {...panels().main} {...input[0]} />
-      <d-texture
-        src={atlas}
-        srcX={0}
-        srcY={0}
-        srcW={targetSize().top.width}
-        srcH={targetSize().top.height}
-        {...panels().top}
-        {...input[1]}
-      />
-      <d-texture
-        src={atlas}
-        srcX={0}
-        srcY={targetSize().top.height}
-        srcW={targetSize().bottom.width}
-        srcH={targetSize().bottom.height}
-        {...panels().bottom}
-        {...input[2]}
-      />
+      {/* The target is the hero panel at device pixels, shown by the
+          detached leaf `output` returns. */}
+      <Scene
+        width={targetSize().main.width}
+        height={targetSize().main.height}
+        label="scene"
+        background={BACKDROP_FRAGMENT}
+        camera={CAMERA}
+        // The hero leaf takes the SCENE's input channel: its <OrbitCamera>
+        // sits directly under the Scene, so that is the channel it listens on.
+        output={texture => panelLeaf(cameras[0]!, useScene().input, () => panels().main, () => ({ src: texture }))}
+      >
+        <OrbitCamera
+          target={KNOT_CENTER}
+          azimuth={HERO_AZIMUTH}
+          elevation={0.34}
+          distance={5.4}
+          minDistance={MIN_DISTANCE}
+          maxDistance={MAX_DISTANCE}
+          minElevation={-0.15}
+          maxElevation={1.35}
+          orbitSpeed={ORBIT_SPEED}
+          ref={o => (orbit = o)}
+        />
+        {/* The hemisphere light is the floor under the rig: with three
+            shadows crossing, the patch where all three lights are blocked
+            would otherwise be pure black, and this is what it falls to
+            instead. Kept LOW under the spot rig - the dimmer it is, the
+            harder the pools and the complement shadows read against it. */}
+        <HemisphereLight sky={[0.42, 0.48, 0.6]} ground={[0.14, 0.15, 0.19]} intensity={0.4} />
+        {/* The three lights hang off ONE Group, so the slow turn in the
+            frame loop stays a single setTransform however many corners the
+            triangle grows. A parent rotation carries both halves of a
+            light: the direction it SHINES (down and inward, which the scene
+            negates into the uLightDir the shaders read) and the position
+            its shadow camera is placed at. */}
+        <Group ref={n => (rig = n)}>
+          {LIGHT_TINTS.map((tint, i) => {
+            let { direction, position } = rigLight(i)
+            return (
+              <SpotLight
+                direction={direction}
+                position={position}
+                color={tint}
+                // Inverse-square compensation: what LIGHT_INTENSITY means
+                // at the knot, LIGHT_DISTANCE away (see the constant).
+                intensity={LIGHT_INTENSITY * LIGHT_DISTANCE * LIGHT_DISTANCE}
+                angle={SPOT_ANGLE}
+                penumbra={SPOT_PENUMBRA}
+                distance={SPOT_DISTANCE}
+                castShadow={casting()[i]}
+                shadow={SHADOW}
+              />
+            )
+          })}
+        </Group>
+        {/* The overhead key hangs off the scene root, not the rig: aimed
+            straight down its default [0, -1, 0] from directly above the
+            knot, the rig's turn has nothing to carry for it. */}
+        <SpotLight
+          position={[KNOT_CENTER[0], KNOT_CENTER[1] + LIGHT_DISTANCE, KNOT_CENTER[2]]}
+          color={[1, 1, 1]}
+          intensity={KEY_INTENSITY * LIGHT_DISTANCE * LIGHT_DISTANCE}
+          angle={KEY_ANGLE}
+          penumbra={SPOT_PENUMBRA}
+          distance={SPOT_DISTANCE}
+          castShadow={casting()[KEY_LIGHT]}
+          shadow={SHADOW}
+        />
+        <Mesh geometry={groundGeometry} material={groundMaterial} rotation={[-Math.PI / 2, 0, 0]} />
+        {/* Only the knot casts. The ground is one single-sided quad and the
+            depth pass culls front faces, so it would draw nothing into the
+            map anyway - and its entry in the shadow view would cost a draw
+            for nothing. */}
+        <Mesh geometry={knotGeometry} material={knotMaterial} position={KNOT_CENTER} castShadow />
+        {/* A view has the same setCamera as a scene, which is all an orbit
+            camera ever touches. All three sweep at the same rate, so they
+            hold their phase offsets and read as three cameras on one
+            turntable. */}
+        <View3d
+          width={targetSize().top.width}
+          height={targetSize().top.height}
+          clearColor={VIEW_CLEAR}
+          label="top-right"
+          camera={CAMERA}
+          into={atlas}
+          // Inside a <View3d>, useScene() hands out the VIEW's channel, so the
+          // <OrbitCamera> inside hears this panel's drags and not the hero's.
+          output={() =>
+            panelLeaf(cameras[1]!, useScene().input, () => panels().top, () => ({
+              src: atlas,
+              srcX: 0,
+              srcY: 0,
+              srcW: targetSize().top.width,
+              srcH: targetSize().top.height,
+            }))
+          }
+        >
+          <OrbitCamera
+            target={KNOT_CENTER}
+            azimuth={SIDE_AZIMUTH}
+            elevation={SIDE_ELEVATION}
+            distance={SIDE_DISTANCE}
+            minDistance={PANEL_MIN_DISTANCE}
+            maxDistance={PANEL_MAX_DISTANCE}
+            minElevation={-0.15}
+            maxElevation={1.55}
+            orbitSpeed={ORBIT_SPEED}
+            ref={o => (topOrbit = o)}
+          />
+        </View3d>
+        <View3d
+          width={targetSize().bottom.width}
+          height={targetSize().bottom.height}
+          clearColor={VIEW_CLEAR}
+          label="bottom-right"
+          camera={CAMERA}
+          into={atlas}
+          y={targetSize().top.height}
+          output={() =>
+            panelLeaf(cameras[2]!, useScene().input, () => panels().bottom, () => ({
+              src: atlas,
+              srcX: 0,
+              srcY: targetSize().top.height,
+              srcW: targetSize().bottom.width,
+              srcH: targetSize().bottom.height,
+            }))
+          }
+        >
+          <OrbitCamera
+            target={KNOT_CENTER}
+            azimuth={HERO_AZIMUTH}
+            elevation={TOP_DOWN_ELEVATION}
+            distance={TOP_DOWN_DISTANCE}
+            minDistance={PANEL_MIN_DISTANCE}
+            maxDistance={PANEL_MAX_DISTANCE}
+            minElevation={-0.15}
+            maxElevation={1.55}
+            orbitSpeed={ORBIT_SPEED}
+            ref={o => (bottomOrbit = o)}
+          />
+        </View3d>
+      </Scene>
       <view
         // Decoration only: without this a drag over the title would hit the
         // overlay and never reach the texture leaf behind it.
@@ -847,11 +735,10 @@ function App() {
 }
 
 // Debug commands for driving the app over MCP (list_debug / call_debug): park
-// the camera at an exact pose, then snapshot. The pose reaches the scene on
-// the next frame (onFrame updates the orbit every frame), and get_snapshot's
-// own requested frame runs that callback first, so a park-then-snapshot
-// sequence sees the parked pose. flush() applies the orbiting signal write
-// before the command returns its result.
+// the camera at an exact pose, then snapshot. The handle's set() pushes the
+// pose to the target at once, so a park-then-snapshot sequence sees the
+// parked pose. flush() applies the orbiting signal write before the command
+// returns its result.
 registerDebug("camera", (args?: Record<string, unknown>) => {
   // Which panel to park: "top" or "bottom" for the right-hand pair, the
   // large one otherwise. A pose is always one panel's; `orbiting` follows the
@@ -894,14 +781,16 @@ registerDebug("rig", (args?: Record<string, unknown>) => {
 // light casts by default now that a scene takes MAX_SHADOWS = MAX_LIGHTS of
 // them, so this is how the effect comes apart - leave one caster and its
 // shadow is a plain complement, leave none and the floor is flat again.
+// One signal write: the light's <SpotLight castShadow> prop and the
+// subtitle's count both follow it.
 registerDebug("shadow", (args?: Record<string, unknown>) => {
   if (typeof args?.light === "number" && typeof args?.cast === "boolean") {
-    let i = clamp(Math.round(args.light), 0, lights.length - 1)
-    setLight(lights[i]!, { castShadow: args.cast })
-    setCasters(lights.filter(l => l.castShadow).length)
+    let i = clamp(Math.round(args.light), 0, casting().length - 1)
+    let cast = args.cast
+    setCasting(casting().map((on, j) => (j === i ? cast : on)))
   }
   flush()
-  return { casting: lights.map(l => l.castShadow), tints: LIGHT_TINTS }
+  return { casting: casting(), tints: LIGHT_TINTS }
 })
 
 // Pixels per logical unit the scene renders at (0 follows the display): the

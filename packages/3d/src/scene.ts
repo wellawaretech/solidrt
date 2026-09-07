@@ -1,6 +1,6 @@
 // The retained scene: plain objects, no signals - the hot path (a moved
 // node) is flat imperative code, and reactivity stays at the component
-// boundary (components.tsx). The transform hierarchy itself lives in the
+// boundary (components/). The transform hierarchy itself lives in the
 // spatial core (flux:spatial): every node in a scene has a core node, JS
 // keeps the LOCAL transform as the readable source of truth and forwards
 // each write, and the core's flush recomputes only the moved subtrees and

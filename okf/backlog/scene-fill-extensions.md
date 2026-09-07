@@ -31,7 +31,7 @@ design time: for `<SpriteLayer>` this is arguably just `maxOversample`/
 `oversample` already - decide whether 2d gets `resolution` too or the docs
 point at the oversample knobs.
 
-Involves: one multiplier in the 3d fill apply (components.tsx), prop
+Involves: one multiplier in the 3d fill apply (components/scene.tsx), prop
 plumbing + docs; a 2d decision. This carries the remainder of stage 3 of
 [[2d-layer-display-scale]] (the explicit 3d knob; the auto default half
 landed with fill).

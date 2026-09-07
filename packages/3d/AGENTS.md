@@ -21,7 +21,7 @@ blendMode and pointer events like any element.
   change, however many meshes. World matrices live in the core only:
   `worldPosition`/`lookAt`/picking read them back (`worldMatrix`, pending
   writes included). See okf/backlog/spatial-core.md for what still runs
-  in JS and why. The component face (`Scene`/`Group`/`Mesh`/
+  in JS and why. The component face (`Scene`/`View3d`/`Group`/`Mesh`/
   `PerspectiveCamera`) syncs props into that core over context and renders
   nothing itself.
 - Node lifecycle: `add(parent, child)` attaches (re-parenting detaches
@@ -42,8 +42,9 @@ blendMode and pointer events like any element.
   structure, per-frame motion goes straight to the scene).
 - VIEWS: `scene.createView({ width, height, overrideMaterial?, depth?,
   clearColor?, ... })` renders the same scene into a second target from
-  its own camera (`view.setCamera`, the scene's CameraUpdate shape). Each
-  mesh gets one entry in the view's target bound as one more draw sink of
+  its own camera (`view.setCamera`, the scene's CameraUpdate shape; in a
+  component tree `<View3d>` is the same as a Scene child, see Components).
+  Each mesh gets one entry in the view's target bound as one more draw sink of
   its CORE node, so the one flush writes every target - the app writes
   nothing per view. Geometry buffers and (without an override) materials
   are shared; the light set and `scene.setParams` names fan out to every
@@ -248,6 +249,7 @@ blendMode and pointer events like any element.
 | Component | Props |
 | --- | --- |
 | `Scene` | `width?`, `height?` (target pixels - both, or neither = FILL, below), `clearColor?`, `camera?` (partial CameraUpdate, `ortho` included - the declarative scene.setCamera; same state as `PerspectiveCamera`, use one form), `background?` (fragment GLSL, or a skybox `{ cube, intensity?, rotation? }`), `environment?` (`{ cube, intensity?, rotation? }`, the cube reflective materials mirror), `fog?` (`{ color, near, far }`, linear by camera distance), `toneMapping?` (`"none"` default or `"aces"`), `exposure?` (default 1), `layers?` (target mask, default 1), `depth?` (`"texture"` exposes scene.depthTexture; not with samples), `samples?` (1/2/4/8 MSAA), `label?`, `ref?(scene)`, `output?(texture)`, `events?` (mesh pointer events, default on) |
+| `View3d` | a Scene child rendering the scene again from a camera of its own (scene.createView as a component): `width`, `height` (target pixels, live; fixed-size only for now), `x?`, `y?` (the tile's top-left in `into`, live), `into?` (tile an app-owned draw target - one pass for every view into it; fixed at creation), `camera?` (partial CameraUpdate on the view's camera, live; same state as a `PerspectiveCamera` child), `layers?` (the view's mask, live), `clearColor?`, `label?`, `overrideMaterial?`, `fog?` (FogOptions, or null for none), `depth?`, `samples?`, `filter?`, `wrap?` (createView's, fixed), `ref?(view)`, `output?(texture)` (else a built-in `<texture>` leaf at the target size, a tile shown through srcX/srcY); camera-control children drive the VIEW and listen on its leaf (inside, `useScene()` reports the view as `camera` and the view leaf's channel as `input`); node children mount to the scene as outside; a view leaf carries no mesh pointer events |
 | `Group` | `position?`, `rotation?` (Euler radians, XYZ order), `quaternion?` (either, not both), `scale?` (number = uniform), `visible?`, pointer events (below), `ref?(node)` |
 | `Mesh` | `geometry`, `material`, transforms as Group, `params?` (per-mesh uniforms, merge semantics - no unset), `renderOrder?`, `castShadow?`, `layers?` (membership bitmask, default 1), pointer events (below), `ref?(mesh)` |
 | `Sprite` | as Mesh minus `geometry`: a camera-facing unit quad, `scale` is its world size, rotation is ignored; pair with a `sprite()` material |
@@ -332,8 +334,10 @@ target only; fov/near/far stay on scene.setCamera (or the Scene `camera`
 prop).
 
 In a component tree, skip the wiring: `<OrbitCamera azimuth={1.2}
-distance={7} />` as a Scene child reaches the scene through context,
-receives input from the scene's leaf (the built-in one automatically; a
+distance={7} />` as a Scene child reaches the scene through context (as a
+`<View3d>` child, that view: the context's camera target and input are
+the nearest owner's), receives input from the owner's leaf (the built-in
+one automatically; a
 custom `output` leaf spreads `{...useScene().input.handlersFor(layout)}`
 beside its scene.handlersFor spread, same `layout`), defaults `viewport`
 to the leaf's laid-out size plus the scene camera's fov, and pushes input

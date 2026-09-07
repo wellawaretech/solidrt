@@ -42,8 +42,9 @@ export { extrude, lathe, pathFrames, sweep, tube } from "./sweep.ts"
 export type { ExtrudeOptions, LatheOptions, PathFrames, PathPoint, SweepPath, TubeOptions } from "./sweep.ts"
 export { lit, shaderMaterial, shaderMaterialClass, sprite, standard, unlit } from "./material.ts"
 export type { LitOptions, Material, ShaderMaterialClass, ShaderMaterialClassOptions, ShaderMaterialInstanceOptions, ShaderMaterialOptions, SpriteOptions, StandardOptions, UnlitOptions } from "./material.ts"
-export { DirectionalLight, FirstPersonCamera, Group, HemisphereLight, Instance, InstancedMesh, Mesh, OrbitCamera, PerspectiveCamera, PointLight, RecordMesh, Scene, SpotLight, Sprite, useScene } from "./components.tsx"
+export { DirectionalLight, FirstPersonCamera, Group, HemisphereLight, Instance, InstancedMesh, Mesh, OrbitCamera, PerspectiveCamera, PointLight, RecordMesh, Scene, SpotLight, Sprite, View3d, useScene } from "./components/index.ts"
 export type {
+  CameraTarget,
   DirectionalLightProps,
   FirstPersonCameraProps,
   HemisphereLightProps,
@@ -61,7 +62,8 @@ export type {
   SpotLightProps,
   SpriteProps,
   TransformProps,
-} from "./components.tsx"
+  View3dProps,
+} from "./components/index.ts"
 export { gltfExternalUris, isGlb, parseGltf } from "./gltf.ts"
 export type { ModelChannel, ModelClip, ModelData, ModelMaterial, ModelNode, ModelPart, ModelSkin, UriResolver } from "./gltf.ts"
 export { decodeModel, encodeModel } from "./model-file.ts"
