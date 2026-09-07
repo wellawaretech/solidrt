@@ -84,3 +84,28 @@ export function unprojectCamera(camera: CameraUpdate, screenX: number, screenY: 
   let dy = screenY - (camera.pivotY ?? 0)
   return [(camera.x ?? 0) + (dx * c + dy * s) / zoom, (camera.y ?? 0) + (dy * c - dx * s) / zoom]
 }
+
+/** A camera at the defaults: what a layer or view starts with. */
+export function defaultCamera(): CameraState {
+  return { x: 0, y: 0, zoom: 1, rotation: 0, pivotX: 0, pivotY: 0 }
+}
+
+/** Apply a setCamera update in place: absent keys keep their values (the
+ * params rule). Validate with checkCamera first. */
+export function applyCamera(camera: CameraState, update: CameraUpdate): void {
+  if (update.x !== undefined) camera.x = update.x
+  if (update.y !== undefined) camera.y = update.y
+  if (update.zoom !== undefined) camera.zoom = update.zoom
+  if (update.rotation !== undefined) camera.rotation = update.rotation
+  if (update.pivotX !== undefined) camera.pivotX = update.pivotX
+  if (update.pivotY !== undefined) camera.pivotY = update.pivotY
+}
+
+/** The shared params the vertex stages (shaders.ts) read for a camera:
+ * uCamera [x, y, zoom, zoom] and uCameraRot [cos, sin, pivotX, pivotY]. */
+export function cameraParams(camera: CameraState): { uCamera: [number, number, number, number]; uCameraRot: [number, number, number, number] } {
+  return {
+    uCamera: [camera.x, camera.y, camera.zoom, camera.zoom],
+    uCameraRot: [Math.cos(camera.rotation), Math.sin(camera.rotation), camera.pivotX, camera.pivotY],
+  }
+}

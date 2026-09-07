@@ -51,13 +51,11 @@ Shaped, not started.
   Static 2D bulk (tile worlds, backgrounds) rendered once into a texture and
   drawn as ONE quad, with incremental re-bake - the primitive-count answer for
   tiled GPUs
-- **[2D layer views - a second rendering of a layer world (the minimap)](backlog/2d-layer-views.md)** [2026-08-31]
-  A minimap, a zoomed radar strip or a picture-in-picture is common in 2D
-  games, and today the only way to render a layer's world twice is a second
-  layer with every sprite duplicated and double the writes. Mirror the 3d
-  scene.createView contract on the sprite and tile layers - same world, its
-  own camera and size - with the layers bitmask from the 3d view work when the
-  second view needs a different mesh set (markers only).
+- **[2D layer views, the additive half - tile-layer views, the layers bitmask, into tiling, per-view tint](backlog/2d-layer-views-additive.md)** [2026-09-07]
+  A view of a sprite or record layer exists (2d-layer-views), but a tile map
+  cannot be shown twice, a minimap cannot admit marker sprites only, several
+  views cannot share one atlas target, and a view cannot tint itself apart
+  from the layer. Each is an additive step on the landed view contract.
 - **[Retro presets for @solidrt/2d](backlog/2d-retro-presets.md)** [2026-08-19]
   The pixel-art identity kit - fixed logical resolution with integer nearest
   scaling, palette LUT, and scanline/CRT passes - as thin layers over what
@@ -488,6 +486,10 @@ Shaped, not started.
   the Babel plugin, but it only lowers JSX, so adopting it means finding new
   homes for TypeScript stripping and the binary/text import inlining that live
   in our Babel pipeline.
+- **[Orbit camera - zoom damping and a pose clamp hook](backlog/orbit-camera-damping-pose-clamp.md)** [2026-09-07]
+  Two gaps the third-dimension demo hand-rolls around createOrbitCamera - an
+  eased wheel zoom (Three's enableDamping) and a distance-dependent elevation
+  floor (a clampPose hook beside the pan-only clampTarget).
 - **[Children drawn outside their parent's box are not hit-testable](backlog/overflow-visible-hit-testing.md)** [2026-08-14]
   A parent's bounds check gates descent into its children as well as its own
   hit, so a child painted outside the parent's layout box under overflow
@@ -756,6 +758,13 @@ Finished, kept for the reasoning.
   sampler doing the whole resample - nearest snaps pixels to uneven widths and
   boils under motion, linear blurs. Render the layer at an integer oversample
   of its own resolution, composite linear.
+- **[2D layer views - a second rendering of a layer world (the minimap)](done/2d-layer-views.md)** [2026-09-07]
+  A minimap, a zoomed radar strip or a picture-in-picture is common in 2D
+  games, and today the only way to render a layer's world twice is a second
+  layer with every sprite duplicated and double the writes. Mirror the 3d
+  scene.createView contract on the sprite and tile layers - same world, its
+  own camera and size - with the layers bitmask from the 3d view work when the
+  second view needs a different mesh set (markers only).
 - **[Sprites as spatial-core citizens](done/2d-spatial-citizenship.md)** [2026-08-31]
   Sprite poses are JS-owned floats, so no core producer (native transitions,
   animation clips, physics) can ever move a sprite and picking is an O(n) JS

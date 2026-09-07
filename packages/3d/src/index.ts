@@ -26,7 +26,7 @@ export type {
   SpotShadowOptions,
 } from "./light.ts"
 export { createScene } from "./scene.ts"
-export type { Capsule, EnvironmentOptions, FogOptions, Hit, Impact, OrientedBox, Overlap, QueryOptions, ReflectionProbe, ReflectionProbeOptions, Scene as SceneHandle, SceneHandlers, SceneOptions, ScreenRay, SkyboxOptions, Sphere, ToneMapping, View, ViewOptions, Volume } from "./scene.ts"
+export type { Capsule, EnvironmentOptions, FogOptions, Hit, Impact, OrientedBox, Overlap, QueryOptions, ReflectionProbe, ReflectionProbeOptions, Scene as SceneHandle, SceneHandlers, SceneOptions, ScreenRay, SkyboxOptions, Sphere, ToneMapping, ViewHandle, ViewOptions, Volume } from "./scene.ts"
 export { moveAndSlide } from "./collision.ts"
 export type { MoveOptions, MoveResult, MoveScene } from "./collision.ts"
 export { equirectToCube, loadEnvironment } from "./environment.ts"

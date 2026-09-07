@@ -145,6 +145,29 @@ moved subtrees in Rust, and picking walks the core BVH.
   animate (no record touches), unlike TileLayer's, which re-renders
   resident chunks. The same contract as TileLayer.setTint, so one signal
   drives a whole scene across layer kinds.
+- Views (`layer.createView({ width, height, camera?, oversample?,
+  clearColor?, label? })`, both layer kinds): a second rendering of the
+  layer's world from a camera of its own - a minimap, a radar strip, a
+  zoomed inset - @solidrt/3d's scene.createView one dimension down. One
+  more draw target holding one entry over the layer's OWN pipeline and
+  instance buffers (views.ts): no sprite is mirrored, no record is written
+  twice, and key order (`orderBy`) comes along, since the core gathers
+  the buffers themselves at publish and a view entry declares no order of
+  its own. Growth, the instance count and the layer tint fan out to every
+  view; the camera and the viewport are the view's own params, so a view
+  costs no per-frame JS beyond its camera writes. The `ViewHandle` is the
+  layer's viewport contract (texture, width/height/setSize,
+  oversample/setOversample, setCamera/camera/project/unproject,
+  listen/handlers/handlersFor, dispose - views also die with the layer)
+  minus the sprites, which stay the layer's. Pointer events on a view
+  leaf run the same dispatch with the VIEW's camera undone over the
+  layer's pick, the view as the root of the walk: a sprite under a
+  minimap gets its ordinary handlers, `view.listen` is the last stop (a
+  tap there with `e.x`/`e.y` in world pixels is "glide the main camera
+  here"), and `createCamera2d(view).attach(view)` drives a view like a
+  layer. examples/views.tsx is the live guard. Not yet, all additive:
+  tile-layer views, a `layers` bitmask (a markers-only minimap), `into`
+  tiling, per-view tint - okf/backlog/2d-layer-views-additive.md.
 - Retargeted motion is NATIVE: `setSpriteTransition(sprite, { position:
   { duration: 700, bounce: 0.3 }, ... })` (or the `transition` prop) makes
   setSprite writes TARGETS the core animates toward - position/scale

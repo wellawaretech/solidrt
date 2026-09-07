@@ -21,18 +21,26 @@
 // the JS reverse walk (pointInSprite), since records have no nodes.
 import { getOwner, onCleanup } from "@solidrt/core"
 import {
+  addDraw,
   beginBufferWrite,
+  compileShader,
   createBuffer,
-  createPipelineTexture,
+  createDrawTarget,
+  createRenderPipeline,
   destroyBuffer,
+  destroyProgram,
+  destroyRenderPipeline,
+  destroyShader,
   destroyTexture,
   endBufferWrite,
-  setDraw,
+  linkProgram,
+  setDrawBuffers,
+  setDrawRange,
   setTargetParams,
   setTargetSize,
 } from "@solidrt/core/gpu"
 import type { BufferId, TextureId } from "@solidrt/core/gpu"
-import { checkCamera, projectCamera, unprojectCamera } from "./camera.ts"
+import { applyCamera, cameraParams, checkCamera, defaultCamera, projectCamera, unprojectCamera } from "./camera.ts"
 import { FULL_FRAME, writeFrame } from "./frames.ts"
 import { spriteDispatch } from "./dispatch.ts"
 import { checkTint, readFrame } from "./layer.ts"
@@ -40,6 +48,7 @@ import type { LayerBase, LayerPointerListener, Sprite, SpriteHandlers, SpriteLay
 import { pointInSprite } from "./pick.ts"
 import { checkOversample, thrashSentinel } from "./oversample.ts"
 import { FRAGMENT, INSTANCE_ATTRIBUTES, VERTEX } from "./shaders.ts"
+import { createViews } from "./views.ts"
 
 // Floats per instance record:
 // [cx, cy, w, h, u0, v0, u1, v1, rot, tintR, tintG, tintB, tintA]
@@ -129,36 +138,31 @@ export function createRecordLayer(
         ? { field: Y_FIELD_OFFSET }
         : { field: orderBy.field, descending: orderBy.descending }
   let thrash = thrashSentinel(`record layer "${label}"`)
-  let texture = createPipelineTexture(
-    VERTEX,
-    FRAGMENT,
+  // The pipeline is the layer's own, spelled out (not the fused
+  // createPipelineTexture) so its views can add entries over it.
+  let vs = compileShader("vertex", VERTEX, { header: true })
+  let fs = compileShader("fragment", FRAGMENT, { header: true })
+  let program = linkProgram(vs, fs, { label })
+  destroyShader(vs)
+  destroyShader(fs)
+  let pipeline = createRenderPipeline(program, {
+    label,
+    topology: "triangle-strip",
+    attributes: [{ name: "aPos", format: "vec2" }],
+    instanceAttributes: INSTANCE_ATTRIBUTES,
+    blend: "alpha",
+  })
+  // The camera: one state for the shared params and for picking (the
+  // inverse mapping).
+  let cam = defaultCamera()
+  let texture = createDrawTarget(
     width * oversample,
     height * oversample,
-    { uViewport: [width, height], uCamera: [0, 0, 1, 1], uCameraRot: [1, 0, 0, 0], uTint: tint },
-    {
-      label,
-      topology: "triangle-strip",
-      vertexCount: 4,
-      attributes: [{ name: "aPos", format: "vec2" }],
-      buffer: quad,
-      instanceAttributes: INSTANCE_ATTRIBUTES,
-      instanceBuffer: records,
-      instanceOrder,
-      instanceCount: 0,
-      blend: "alpha",
-      textures: { uAtlas: atlas },
-      clearColor: opts?.clearColor ?? [0, 0, 0, 0],
-      autoFree: false,
-    },
+    { uViewport: [width, height], ...cameraParams(cam), uTint: tint },
+    { textures: { uAtlas: atlas }, clearColor: opts?.clearColor ?? [0, 0, 0, 0], label, autoFree: false },
   )
+  let entry = addDraw(texture, pipeline, null, { buffer: quad, vertexCount: 4, instanceBuffer: records, instanceOrder, instanceCount: 0 })
 
-  // Camera state, mirrored for picking (the inverse mapping).
-  let camX = 0
-  let camY = 0
-  let camZoom = 1
-  let camRot = 0
-  let camPivotX = 0
-  let camPivotY = 0
   let disposed = false
   let dirty = false
   let scheduled = false
@@ -167,7 +171,7 @@ export function createRecordLayer(
   // The GPU buffer's record capacity; the canonical array grows ahead of it
   // (addSprite) and the publish catches the buffer up: a larger buffer is
   // created, written in full, swapped in, and the old one destroyed. The
-  // entry holds the old buffer alive until the swap lands, so the destroy
+  // entries hold the old buffer alive until the swaps land, so the destroy
   // is safe to issue right after.
   let gpuCapacity = capacity
   let flush = () => {
@@ -185,7 +189,10 @@ export function createRecordLayer(
     out.set(layer.records.subarray(0, count * FLOATS_PER_SPRITE))
     endBufferWrite(target, count * FLOATS_PER_SPRITE * 4)
     if (grown !== null) {
-      setDraw(texture, { instanceBuffer: grown, instanceCount: count })
+      setDrawBuffers(texture, entry, { instanceBuffer: grown })
+      setDrawRange(texture, entry, { instanceCount: count })
+      views.setBuffers({ instanceBuffer: grown })
+      views.setCount(count)
       if (instanceOrder !== undefined) {
         // The growth publish above landed BEFORE the swap (the entry must
         // never point at an unwritten buffer), so the order had not yet
@@ -200,7 +207,8 @@ export function createRecordLayer(
       records = grown
       published = count
     } else if (count !== published) {
-      setDraw(texture, { instanceCount: count })
+      setDrawRange(texture, entry, { instanceCount: count })
+      views.setCount(count)
       published = count
     }
   }
@@ -240,6 +248,16 @@ export function createRecordLayer(
   }
 
   let listeners = new Set<LayerPointerListener>()
+  let views = createViews({
+    label,
+    pipeline,
+    quad,
+    atlas,
+    buffers: () => ({ instanceBuffer: records }),
+    count: () => published,
+    tint: () => tint,
+    pick: (x, y) => layer.pick(x, y),
+  })
 
   let layer: RecordLayer = {
     texture,
@@ -280,30 +298,28 @@ export function createRecordLayer(
     setCamera(update) {
       if (disposed) return
       checkCamera(update)
-      if (update.x !== undefined) camX = update.x
-      if (update.y !== undefined) camY = update.y
-      if (update.zoom !== undefined) camZoom = update.zoom
-      if (update.rotation !== undefined) camRot = update.rotation
-      if (update.pivotX !== undefined) camPivotX = update.pivotX
-      if (update.pivotY !== undefined) camPivotY = update.pivotY
-      setTargetParams(texture, {
-        uCamera: [camX, camY, camZoom, camZoom],
-        uCameraRot: [Math.cos(camRot), Math.sin(camRot), camPivotX, camPivotY],
-      })
+      applyCamera(cam, update)
+      setTargetParams(texture, cameraParams(cam))
     },
     camera() {
-      return { x: camX, y: camY, zoom: camZoom, rotation: camRot, pivotX: camPivotX, pivotY: camPivotY }
+      return { ...cam }
     },
     project(x, y) {
-      return projectCamera(layer.camera(), x, y)
+      return projectCamera(cam, x, y)
     },
     unproject(x, y) {
-      return unprojectCamera(layer.camera(), x, y)
+      return unprojectCamera(cam, x, y)
     },
     setTint(next) {
       if (disposed) return
       checkTint("setTint", next)
+      tint = next
       setTargetParams(texture, { uTint: next })
+      views.setTint(next)
+    },
+    createView(vopts) {
+      if (disposed) throw new Error("createView: layer is disposed")
+      return views.create(vopts)
     },
     pick(x, y) {
       // Topmost first: reverse draw order, exact rotated-rect containment.
@@ -326,9 +342,12 @@ export function createRecordLayer(
       listeners.clear()
       for (let sprite of layer._order) sprite.layer = null
       layer._order.length = 0
+      views.dispose()
       destroyTexture(texture)
       destroyBuffer(records)
       destroyBuffer(quad)
+      destroyRenderPipeline(pipeline)
+      destroyProgram(program)
     },
     _add(opts) {
       if (opts?.parent) {
@@ -407,7 +426,7 @@ export function createRecordLayer(
   }
   let dispatch = spriteDispatch({
     size: () => [width, height],
-    camera: () => layer.camera(),
+    camera: () => cam,
     pick: (x, y) => layer.pick(x, y),
     root: layer,
     listeners,

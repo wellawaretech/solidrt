@@ -36,3 +36,12 @@ copy one and adapt it.
   taps), and removal through a signal so `<For>` unmounts the `<Sprite>`
   and the layer recycles the slot. The `state` debug command reads the
   camera and sprite positions back.
+- `views.tsx` - layer views (`layer.createView`): the world rendered
+  twice from ONE set of sprites - the window-filling main view under a
+  `createCamera2d` and a corner minimap showing the whole world at the
+  fit zoom, a stroked rect outlining the main view rect through
+  `map.project`. A tap on the minimap glides the main camera there (the
+  view's root listener, `e.x`/`e.y` in world pixels), and a tap on a
+  sprite in the minimap selects it as in the main view (the same sprite
+  handlers, the walk ending at the view). Debug commands `state`,
+  `camera`, `selected` and `first` drive it headless.

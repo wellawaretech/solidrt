@@ -39,6 +39,7 @@ export type {
   SpriteWheelEvent,
   TransitionEndEvent,
 } from "./layer.ts"
+export type { ViewHandle, ViewOptions } from "./views.ts"
 export { createTileLayer } from "./tiles.ts"
 export type { TileChunk, TileLayer as TileLayerHandle, TileLayerOptions } from "./tiles.ts"
 

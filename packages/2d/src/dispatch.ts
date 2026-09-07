@@ -24,6 +24,7 @@ import { unprojectCamera } from "./camera.ts"
 import type { CameraUpdate } from "./camera.ts"
 import type { LayerPointerListener, Sprite, SpriteGroup, SpriteHandlers, SpriteLayer, SpritePointerEvent } from "./layer.ts"
 import type { RecordLayer } from "./records.ts"
+import type { ViewHandle } from "./views.ts"
 
 // Finger travel from the down point, in window pixels, past which a press
 // is a drag and never a tap. Core's pan and transform recognizers engage
@@ -43,8 +44,9 @@ export type DispatchDeps = {
   size: () => [number, number]
   camera: () => CameraUpdate
   pick: (x: number, y: number) => Sprite[]
-  /** The layer: the walk's root and the listeners' currentTarget. */
-  root: SpriteLayer | RecordLayer
+  /** The layer, or a view of it: the walk's root and the listeners'
+   * currentTarget. */
+  root: SpriteLayer | RecordLayer | ViewHandle
   /** The root's listeners, in registration order. */
   listeners: Set<LayerPointerListener>
   /** The clock for tap repeats (default performance.now; checks inject). */
@@ -58,7 +60,7 @@ type HandlerName = "onPointerDown" | "onPointerMove" | "onPointerUp" | "onWheel"
 // fields); the public types narrow it per handler.
 type InternalEvent = {
   sprite: Sprite | null
-  currentTarget: Sprite | SpriteGroup | SpriteLayer | RecordLayer
+  currentTarget: Sprite | SpriteGroup | SpriteLayer | RecordLayer | ViewHandle
   x: number
   y: number
   pointerId: number

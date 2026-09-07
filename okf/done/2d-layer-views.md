@@ -2,6 +2,7 @@
 title: 2D layer views - a second rendering of a layer world (the minimap)
 description: A minimap, a zoomed radar strip or a picture-in-picture is common in 2D games, and today the only way to render a layer's world twice is a second layer with every sprite duplicated and double the writes. Mirror the 3d scene.createView contract on the sprite and tile layers - same world, its own camera and size - with the layers bitmask from the 3d view work when the second view needs a different mesh set (markers only).
 created: 2026-08-31
+completed: 2026-09-07
 ---
 
 # 2D layer views - a second rendering of a layer world (the minimap)
@@ -59,3 +60,45 @@ Post effects on views, per-view tint (layer tint already fans out;
 follow the 3d view-owned-params rule if a consumer wants a per-view
 override), camera-driven chunk residency
 ([2d-baked-layers](2d-baked-layers.md)).
+
+## Done
+
+Landed 2026-09-07 on the sprite layer and the record layer:
+`layer.createView({ width, height, camera?, oversample?, clearColor?,
+label? })` returning a `ViewHandle` (the layer's viewport contract - texture,
+size, oversample, camera, project/unproject, listen/handlers/handlersFor,
+dispose - minus the sprites, which stay the layer's), in
+[views.ts](../../packages/2d/src/views.ts). The 3d handle type `View` was
+renamed `ViewHandle` in scene.ts, so both packages read the same.
+
+What it took, and why: `createPipelineTexture` hides its pipeline, so both
+layers now spell the draw out - `linkProgram` + `createRenderPipeline` once
+per layer, the layer's own target a `createDrawTarget` with one `addDraw`
+entry carrying what the fused call carried (quad, instance buffers,
+`instanceOrder`, blend, atlas, clear). A view is one more draw target with
+one entry over the same pipeline and buffers and NO order of its own: the
+core gathers the buffers themselves into key order at publish (one ordered
+entry per buffer is the registry's rule, and a view entry declares none),
+so the view reads them sorted for free. Growth fans `setDrawBuffers` out to
+every view entry after the layer's own `setDraw`, the instance count and the
+tint likewise; the camera and viewport are the view's own target params.
+The six camera fields and the `uCamera`/`uCameraRot` write that `layer.ts`
+and `records.ts` each carried are now `defaultCamera`/`applyCamera`/
+`cameraParams` in camera.ts (pure), which a view is the third user of.
+Pointer events on a view leaf are the layer's `spriteDispatch` with the
+view's camera, over the layer's pick, the view as root - so
+`createCamera2d(view).attach(view)` and sprite handlers under a minimap
+work unchanged; only the root type widened.
+
+Verified: the refactored main target is byte-identical to the pre-change
+capture on examples/pick.tsx (`/texture` PNG, `cmp`); examples/parity.tsx
+and examples/camera-probe.tsx end in PARITY-OK / CAMERA-OK on the new
+path; examples/views.tsx (the minimap over a 2400x1600 world) shows 301
+instances in the view entry, a synthetic tap on the minimap glides the
+main camera to the tapped world point exactly, and a tap on a sprite
+through the minimap selects it.
+
+Not done here, on purpose - the tile-map minimap with marker selection
+this note's "done looks like" named needs tile-layer views and the
+`layers` bitmask, both additive and filed as
+[2d-layer-views-additive](../backlog/2d-layer-views-additive.md).

@@ -447,7 +447,7 @@ export type ViewOptions = {
 }
 
 /** A second rendering of a scene from its own camera; see Scene.createView. */
-export type View = {
+export type ViewHandle = {
   /** The view's output, an ordinary texture id. */
   texture: TextureId
   /** The view target's depth as a sampler-only texture id when created
@@ -756,7 +756,7 @@ export type Scene = {
    * or pointer events. Views die with the scene; `view.dispose()` drops
    * one early.
    */
-  createView(opts: ViewOptions): View
+  createView(opts: ViewOptions): ViewHandle
   /**
    * A reflection probe: the scene rendered into a cube map from a point,
    * six faces at 90 degrees - Three's CubeCamera, Unity's and Godot's

@@ -27,13 +27,21 @@
 import { getOwner, onCleanup } from "@solidrt/core"
 import type { PointerEvent as ElementPointerEvent, WheelEvent as ElementWheelEvent } from "@solidrt/core"
 import {
+  addDraw,
   beginBufferWrite,
+  compileShader,
   createBuffer,
-  createPipelineTexture,
+  createDrawTarget,
+  createRenderPipeline,
   destroyBuffer,
+  destroyProgram,
+  destroyRenderPipeline,
+  destroyShader,
   destroyTexture,
   endBufferWrite,
-  setDraw,
+  linkProgram,
+  setDrawBuffers,
+  setDrawRange,
   setTargetParams,
   setTargetSize,
 } from "@solidrt/core/gpu"
@@ -41,7 +49,7 @@ import type { BufferId, TextureId } from "@solidrt/core/gpu"
 import * as spatial from "flux:spatial"
 import type { NodeId, NodeTransition } from "flux:spatial"
 import { on } from "srt:events"
-import { checkCamera, projectCamera, unprojectCamera } from "./camera.ts"
+import { applyCamera, cameraParams, checkCamera, defaultCamera, projectCamera, unprojectCamera } from "./camera.ts"
 import type { CameraState, CameraUpdate } from "./camera.ts"
 import { spriteDispatch } from "./dispatch.ts"
 import { checkOversample, thrashSentinel } from "./oversample.ts"
@@ -49,6 +57,8 @@ import type { Frame } from "./frames.ts"
 import { FULL_FRAME, writeFrame } from "./frames.ts"
 import type { RecordLayer } from "./records.ts"
 import { FRAGMENT, INSTANCE_ATTRIBUTES_SPLIT, VERTEX_SPLIT } from "./shaders.ts"
+import { createViews } from "./views.ts"
+import type { ViewHandle, ViewOptions } from "./views.ts"
 
 /** Floats per pose record (the core's Pose2D projection). */
 export const POSE_FLOATS = 5
@@ -260,7 +270,7 @@ export type SpritePointerEvent = LayerEventBase & {
  */
 export type LayerPointerEvent = LayerEventBase & {
   sprite: Sprite | null
-  currentTarget: SpriteLayer | RecordLayer
+  currentTarget: SpriteLayer | RecordLayer | ViewHandle
 }
 
 type WheelFields = {
@@ -490,6 +500,17 @@ export type LayerBase = {
    * just works - @solidrt/3d's handlersFor, one dimension down.
    */
   handlersFor(layout: () => { width: number; height: number }): SpriteHandlers
+  /**
+   * A second rendering of the layer's world from a camera of its own - a
+   * minimap, a zoomed inset - @solidrt/3d's scene.createView one dimension
+   * down. One more target drawing the SAME instance buffers (no sprite is
+   * mirrored, no per-frame JS beyond the view's camera writes), key order
+   * included; the layer's tint fans out to it. The view carries the
+   * layer's viewport contract (texture, setSize, setOversample, setCamera,
+   * listen and handlers with sprite events walking to the view as root);
+   * sprites stay the layer's. Views die with the layer.
+   */
+  createView(opts: ViewOptions): ViewHandle
   dispose(): void
   _add(opts?: AddSpriteOptions): Sprite
   _write(sprite: SpriteState, opts: SpriteOptions): void
@@ -570,45 +591,46 @@ export function createSpriteLayer(
   })
   let pose: BufferId = createBuffer(capacity * POSE_FLOATS * 4, { label: `${label}-pose`, autoFree: false })
   let style: BufferId = createBuffer(capacity * STYLE_FLOATS * 4, { label: `${label}-style`, autoFree: false })
-  let texture = createPipelineTexture(
-    VERTEX_SPLIT,
-    FRAGMENT,
+  // The pipeline is the layer's own, spelled out (not the fused
+  // createPipelineTexture) so its views can add entries over it.
+  let vs = compileShader("vertex", VERTEX_SPLIT, { header: true })
+  let fs = compileShader("fragment", FRAGMENT, { header: true })
+  let program = linkProgram(vs, fs, { label })
+  destroyShader(vs)
+  destroyShader(fs)
+  let pipeline = createRenderPipeline(program, {
+    label,
+    topology: "triangle-strip",
+    attributes: [{ name: "aPos", format: "vec2" }],
+    instanceAttributes: INSTANCE_ATTRIBUTES_SPLIT,
+    blend: "alpha",
+  })
+  // The camera: one state for the shared params and for picking (the
+  // inverse mapping).
+  let cam = defaultCamera()
+  let texture = createDrawTarget(
     width * oversample,
     height * oversample,
-    { uViewport: [width, height], uCamera: [0, 0, 1, 1], uCameraRot: [1, 0, 0, 0], uTint: tint },
-    {
-      label,
-      topology: "triangle-strip",
-      vertexCount: 4,
-      attributes: [{ name: "aPos", format: "vec2" }],
-      buffer: quad,
-      instanceAttributes: INSTANCE_ATTRIBUTES_SPLIT,
-      instanceBuffers: [pose, style],
-      // "y" keys on world y in the pose record (slot 0), "renderOrder" on the
-      // app-owned key in the style record (slot 1); either way the core
-      // gathers BOTH buffers under the one permutation at every publish
-      // and republishes the sibling itself when the key buffer re-orders.
-      instanceOrder:
-        opts?.orderBy === "y"
-          ? { field: POSE_Y_FIELD }
-          : opts?.orderBy === "renderOrder"
-            ? { field: STYLE_KEY_FIELD, slot: 1 }
-            : undefined,
-      instanceCount: 0,
-      blend: "alpha",
-      textures: { uAtlas: atlas },
-      clearColor: opts?.clearColor ?? [0, 0, 0, 0],
-      autoFree: false,
-    },
+    { uViewport: [width, height], ...cameraParams(cam), uTint: tint },
+    { textures: { uAtlas: atlas }, clearColor: opts?.clearColor ?? [0, 0, 0, 0], label, autoFree: false },
   )
+  let entry = addDraw(texture, pipeline, null, {
+    buffer: quad,
+    vertexCount: 4,
+    instanceBuffers: [pose, style],
+    // "y" keys on world y in the pose record (slot 0), "renderOrder" on the
+    // app-owned key in the style record (slot 1); either way the core
+    // gathers BOTH buffers under the one permutation at every publish
+    // and republishes the sibling itself when the key buffer re-orders.
+    instanceOrder:
+      opts?.orderBy === "y"
+        ? { field: POSE_Y_FIELD }
+        : opts?.orderBy === "renderOrder"
+          ? { field: STYLE_KEY_FIELD, slot: 1 }
+          : undefined,
+    instanceCount: 0,
+  })
 
-  // Camera state, mirrored for picking (the inverse mapping).
-  let camX = 0
-  let camY = 0
-  let camZoom = 1
-  let camRot = 0
-  let camPivotX = 0
-  let camPivotY = 0
   let disposed = false
   let scheduled = false
   let styleDirty = false
@@ -633,7 +655,8 @@ export function createSpriteLayer(
       endBufferWrite(style, highWater * STYLE_FLOATS * 4)
     }
     if (published !== highWater) {
-      setDraw(texture, { instanceCount: highWater })
+      setDrawRange(texture, entry, { instanceCount: highWater })
+      views.setCount(highWater)
       published = highWater
     }
     // The core recomputes moved subtrees and publishes every dirty pose
@@ -644,7 +667,7 @@ export function createSpriteLayer(
   // Grow both instance buffers to `next` slots: the pose sinks move in one
   // retargetRecords call (the whole used range republishes at the next
   // flush), the style mirror grows in JS and republishes through the lease.
-  // The entry holds the old buffers alive until the swap lands, so the
+  // The entries hold the old buffers alive until the swaps land, so the
   // destroys are safe to issue right after.
   let grow = (next: number) => {
     let newPose = createBuffer(next * POSE_FLOATS * 4, { label: `${label}-pose`, autoFree: false })
@@ -653,7 +676,8 @@ export function createSpriteLayer(
     let grownStyle = new Float32Array(next * STYLE_FLOATS)
     grownStyle.set(styleData)
     styleData = grownStyle
-    setDraw(texture, { instanceBuffers: [newPose, newStyle] })
+    setDrawBuffers(texture, entry, { instanceBuffers: [newPose, newStyle] })
+    views.setBuffers({ instanceBuffers: [newPose, newStyle] })
     destroyBuffer(pose)
     destroyBuffer(style)
     pose = newPose
@@ -691,6 +715,16 @@ export function createSpriteLayer(
   }
 
   let listeners = new Set<LayerPointerListener>()
+  let views = createViews({
+    label,
+    pipeline,
+    quad,
+    atlas,
+    buffers: () => ({ instanceBuffers: [pose, style] }),
+    count: () => published,
+    tint: () => tint,
+    pick: (x, y) => layer.pick(x, y),
+  })
 
   let layer: SpriteLayer = {
     texture,
@@ -731,30 +765,28 @@ export function createSpriteLayer(
     setCamera(update) {
       if (disposed) return
       checkCamera(update)
-      if (update.x !== undefined) camX = update.x
-      if (update.y !== undefined) camY = update.y
-      if (update.zoom !== undefined) camZoom = update.zoom
-      if (update.rotation !== undefined) camRot = update.rotation
-      if (update.pivotX !== undefined) camPivotX = update.pivotX
-      if (update.pivotY !== undefined) camPivotY = update.pivotY
-      setTargetParams(texture, {
-        uCamera: [camX, camY, camZoom, camZoom],
-        uCameraRot: [Math.cos(camRot), Math.sin(camRot), camPivotX, camPivotY],
-      })
+      applyCamera(cam, update)
+      setTargetParams(texture, cameraParams(cam))
     },
     camera() {
-      return { x: camX, y: camY, zoom: camZoom, rotation: camRot, pivotX: camPivotX, pivotY: camPivotY }
+      return { ...cam }
     },
     project(x, y) {
-      return projectCamera(layer.camera(), x, y)
+      return projectCamera(cam, x, y)
     },
     unproject(x, y) {
-      return unprojectCamera(layer.camera(), x, y)
+      return unprojectCamera(cam, x, y)
     },
     setTint(next) {
       if (disposed) return
       checkTint("setTint", next)
+      tint = next
       setTargetParams(texture, { uTint: next })
+      views.setTint(next)
+    },
+    createView(vopts) {
+      if (disposed) throw new Error("createView: layer is disposed")
+      return views.create(vopts)
     },
     pick(x, y) {
       // The index reads as of the last core flush; run any pending batch
@@ -812,10 +844,13 @@ export function createSpriteLayer(
       // Let the core emit its final slot-zeroing writes while the pose
       // buffer still exists, then free everything.
       spatial.flush()
+      views.dispose()
       destroyTexture(texture)
       destroyBuffer(pose)
       destroyBuffer(style)
       destroyBuffer(quad)
+      destroyRenderPipeline(pipeline)
+      destroyProgram(program)
     },
     _add(opts) {
       if (disposed) throw new Error("addSprite: layer is disposed")
@@ -915,7 +950,7 @@ export function createSpriteLayer(
   }
   let dispatch = spriteDispatch({
     size: () => [width, height],
-    camera: () => layer.camera(),
+    camera: () => cam,
     pick: (x, y) => layer.pick(x, y),
     root: layer,
     listeners,

@@ -1,7 +1,7 @@
 import { createEffect, onCleanup, untrack, useContext } from "@solidrt/core"
 import type { Element, ParentComponent, TextureId } from "@solidrt/core"
 import { SceneContext, createSceneInput } from "./context.tsx"
-import type { View, ViewOptions } from "../scene.ts"
+import type { ViewHandle, ViewOptions } from "../scene.ts"
 import type { CameraUpdate } from "../camera.ts"
 
 export type View3dProps = Pick<ViewOptions, "clearColor" | "label" | "overrideMaterial" | "fog" | "depth" | "samples" | "filter" | "wrap" | "into"> & {
@@ -28,7 +28,7 @@ export type View3dProps = Pick<ViewOptions, "clearColor" | "label" | "overrideMa
    * texture: show `into` with srcX/srcY, as the built-in leaf does.
    */
   output?: (texture: TextureId) => Element
-  ref?: (view: View) => void
+  ref?: (view: ViewHandle) => void
 }
 
 /**
