@@ -20,7 +20,7 @@
 //
 // Debug commands: `state` (resident chunk count) and `cell` ({ col, row }:
 // the frame at a cell, null when empty).
-import { createSignal, onFrame, pct, render, windowSize } from "@solidrt/core"
+import { createSignal, decodeImage, onFrame, pct, render, windowSize } from "@solidrt/core"
 import { createAtlas, grid, TileLayer } from "@solidrt/2d"
 import type { TileCamera, TileLayerHandle } from "@solidrt/2d"
 import { registerDebug } from "srt:dev"
@@ -37,8 +37,8 @@ const WORLD = COLS * TILE
 const HITCH_FACTOR = 1.5
 
 function App() {
-  let atlas = createAtlas(logoBytes, { label: "logo-atlas" })
-  let frames = grid(2, 2, { width: atlas.width, height: atlas.height })
+  let atlas = createAtlas(decodeImage(logoBytes), { label: "logo-atlas" })
+  let frames = grid(atlas, 2, 2)
 
   let layer!: TileLayerHandle
   let seed = (l: TileLayerHandle) => {

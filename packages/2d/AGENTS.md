@@ -468,14 +468,16 @@ hover, wheel and tap rules headless.
   slot recycles. Do not read style truth from the buffer; getSprite reads
   the JS mirror.
 - `createImage` is the wrong loader for pixel-art atlases: it never forwards
-  sampler options, so it is always `filter: "linear"`. `createAtlas` decodes
-  bytes and passes `filter: "nearest"` through - use it, or `decodeImage` +
-  `createTexture` directly.
+  sampler options, so it is always `filter: "linear"`. `createAtlas` takes
+  decoded pixels (`createAtlas(decodeImage(bytes), { filter: "nearest" })`,
+  or pixels built in code) and passes the full sampler through (`filter`,
+  `wrap`, `mipmap`, `anisotropy`); the record it returns is what `grid` and
+  `namedFrames` slice.
 - Tint multiplies the sampled texel (`texture * tint`) and the pipeline
   blends with `blend: "alpha"` in record order, the premultiplied composite.
   The atlas is premultiplied because `decodeImage` premultiplies by default;
   an atlas uploaded from straight-alpha pixels (`decodeImage(bytes, { alpha:
-  "straight" })` + `createTexture`) draws color under transparent texels
+  "straight" })` into `createAtlas`) draws color under transparent texels
   as opaque - the classic "keyed-out backdrop becomes a wash" symptom.
 - Every rotation must agree on direction (clockwise, y-down):
   `pointInSprite` in pick.ts with the vertex stage's `iRot`, and

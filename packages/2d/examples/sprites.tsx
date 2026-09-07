@@ -8,10 +8,10 @@
 // instance-buffer write per frame.
 //
 // The atlas is a real image (core's logo) sliced 2x2 by grid(): four frames,
-// each sprite drawing one quarter. An atlas from raw pixel bytes would use
-// createTexture directly; this path (createAtlas) decodes PNG bytes imported
-// with { type: "binary" }.
-import { onFrame, render } from "@solidrt/core"
+// each sprite drawing one quarter. Pixels built in code go to createAtlas as
+// they are; this path decodes PNG bytes imported with { type: "binary" }
+// first.
+import { decodeImage, onFrame, render } from "@solidrt/core"
 import { addSprite, createAtlas, createSpriteLayer, grid, setSprite } from "@solidrt/2d"
 import logoBytes from "./logo.png" with { type: "binary" }
 
@@ -21,8 +21,8 @@ const H = 720
 const SPRITE = 48
 
 function App() {
-  let atlas = createAtlas(logoBytes, { label: "logo-atlas" })
-  let frames = grid(2, 2, { width: atlas.width, height: atlas.height })
+  let atlas = createAtlas(decodeImage(logoBytes), { label: "logo-atlas" })
+  let frames = grid(atlas, 2, 2)
   let layer = createSpriteLayer(atlas.texture, { capacity: COUNT, label: "bounce" })
   let view = layer.createView({ width: W, height: H, clearColor: [0.05, 0.05, 0.09, 1] })
 

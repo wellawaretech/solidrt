@@ -7,7 +7,7 @@
 // The atlas is the core logo sliced 2x2 by grid(): a 4-frame "clip". Real
 // art would slice a sheet the same way and pass a consecutive slice of the
 // frames array per animation.
-import { render } from "@solidrt/core"
+import { decodeImage, render } from "@solidrt/core"
 import { addSprite, createAnimation, createAtlas, createSpriteLayer, getSprite, grid } from "@solidrt/2d"
 import type { Frame, SpriteHandle } from "@solidrt/2d"
 import logoBytes from "./logo.png" with { type: "binary" }
@@ -21,8 +21,8 @@ const LOOP_FPS = 2
 const SHOT_FPS = 5
 
 function App() {
-  let atlas = createAtlas(logoBytes, { label: "logo-atlas" })
-  let frames = grid(2, 2, { width: atlas.width, height: atlas.height })
+  let atlas = createAtlas(decodeImage(logoBytes), { label: "logo-atlas" })
+  let frames = grid(atlas, 2, 2)
   let layer = createSpriteLayer(atlas.texture, { label: "anim" })
   let view = layer.createView({ width: W, height: H, clearColor: [0.05, 0.05, 0.09, 1] })
 

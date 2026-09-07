@@ -15,7 +15,7 @@
 // `camera` parks the main camera when given x/y/zoom and returns its
 // pose; `selected` the selected sprite's world position (null when none),
 // `first` the first sprite's - the one to aim a synthetic tap at.
-import { createEffect, createInputMap, createPointerFeed, createSignal, displayScale, gamepad, onFrame, render, windowSize } from "@solidrt/core"
+import { createEffect, createInputMap, createPointerFeed, createSignal, decodeImage, displayScale, gamepad, onFrame, render, windowSize } from "@solidrt/core"
 import { addSprite, camera2dActions, camera2dBindings, createAtlas, createCamera2d, createSpriteLayer, feedPointer, fitOversample, grid, setSprite } from "@solidrt/2d"
 import type { Camera2dHandle, SpriteHandle, ViewHandle } from "@solidrt/2d"
 import { registerDebug } from "srt:dev"
@@ -46,8 +46,8 @@ let first: SpriteHandle | null = null
 let outline = { x: 0, y: 0, width: 0, height: 0 }
 
 function App() {
-  let atlas = createAtlas(logoBytes, { label: "logo-atlas" })
-  let frames = grid(2, 2, { width: atlas.width, height: atlas.height })
+  let atlas = createAtlas(decodeImage(logoBytes), { label: "logo-atlas" })
+  let frames = grid(atlas, 2, 2)
   let win = { width: 1, height: 1 }
   let layer = createSpriteLayer(atlas.texture, { capacity: COUNT + 1, label: "world" })
   // The main view: the window, under the pannable camera.

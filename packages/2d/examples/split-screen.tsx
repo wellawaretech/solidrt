@@ -9,7 +9,7 @@
 // and so does the pad that joined it (press any button on it first);
 // a tap on a sprite in either pane tints it in both, since there is only
 // one sprite. The `cameras` debug command reads both poses back.
-import { createInputMap, createPointerFeed, gamepad, onFrame, render, windowSize, For } from "@solidrt/core"
+import { createInputMap, createPointerFeed, decodeImage, gamepad, onFrame, render, windowSize, For } from "@solidrt/core"
 import { Camera2d, camera2dActions, camera2dBindings, createAtlas, grid, setSprite, Sprite, SpriteLayer, View2d } from "@solidrt/2d"
 import type { Camera2dHandle, Frame, SpriteHandle } from "@solidrt/2d"
 import { registerDebug } from "srt:dev"
@@ -36,8 +36,8 @@ let cams: (Camera2dHandle | undefined)[] = [undefined, undefined]
 let roamers: (SpriteHandle | undefined)[] = [undefined, undefined]
 
 function App() {
-  let atlas = createAtlas(logoBytes, { label: "logo-atlas" })
-  let frames = grid(2, 2, { width: atlas.width, height: atlas.height })
+  let atlas = createAtlas(decodeImage(logoBytes), { label: "logo-atlas" })
+  let frames = grid(atlas, 2, 2)
   let items: Item[] = []
   for (let i = 0; i < COUNT; i++) {
     items.push({ id: i, x: Math.random() * WORLD.width, y: Math.random() * WORLD.height, frame: frames[i % 4]! })

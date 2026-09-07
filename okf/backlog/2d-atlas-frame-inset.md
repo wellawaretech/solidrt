@@ -27,7 +27,7 @@ rect of every table.
 
 One knob, applied by the slicer:
 
-- `grid(cols, rows, { ..., inset?: number })` and `namedFrames(w, h,
+- `grid(atlas, cols, rows, { ..., inset?: number })` and `namedFrames(atlas,
   rects, { inset?: number })` in atlas texels, default 0. The UV rect
   shrinks by `inset` on every side. Half a texel is the value that stops
   the bleed with `filter: "nearest"`; a linear atlas wants a full texel

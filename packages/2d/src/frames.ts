@@ -31,10 +31,14 @@ export function writeFrame(
   data[at + 3] = flipY ? v0 : v1
 }
 
+/**
+ * What the slicers need of an atlas: its pixel size, the space every rect
+ * and gap below is measured in. An `Atlas` fits as it is; a texture from
+ * anywhere else (a render target, a camera) passes `{ width, height }`.
+ */
+export type AtlasSize = { width: number; height: number }
+
 export type GridOptions = {
-  /** Pixel size of the atlas the pixel-space options below refer to. */
-  width: number
-  height: number
   /** Cell size in pixels; defaults to width/cols x height/rows. */
   cellW?: number
   cellH?: number
@@ -56,16 +60,17 @@ export type GridOptions = {
  * line of the neighbour, gone the next frame - see namedFrames). Pack the
  * sheet with a transparent gutter and pass it as `spacing`.
  */
-export function grid(cols: number, rows: number, opts: GridOptions): Frame[] {
+export function grid(atlas: AtlasSize, cols: number, rows: number, opts?: GridOptions): Frame[] {
   if (!(cols > 0 && rows > 0 && Number.isInteger(cols) && Number.isInteger(rows))) {
     throw new Error(`grid: cols and rows must be positive integers, got ${cols} x ${rows}`)
   }
-  let { width, height, spacing = 0, marginX = 0, marginY = 0 } = opts
+  let { width, height } = atlas
   if (!(width > 0 && height > 0)) {
     throw new Error(`grid: atlas size must be positive, got ${width} x ${height}`)
   }
-  let cellW = opts.cellW ?? (width - marginX * 2 - spacing * (cols - 1)) / cols
-  let cellH = opts.cellH ?? (height - marginY * 2 - spacing * (rows - 1)) / rows
+  let { spacing = 0, marginX = 0, marginY = 0 } = opts ?? {}
+  let cellW = opts?.cellW ?? (width - marginX * 2 - spacing * (cols - 1)) / cols
+  let cellH = opts?.cellH ?? (height - marginY * 2 - spacing * (rows - 1)) / rows
   if (!(cellW > 0 && cellH > 0)) {
     throw new Error(`grid: derived cell size ${cellW} x ${cellH} is not positive`)
   }
@@ -100,18 +105,18 @@ export function grid(cols: number, rows: number, opts: GridOptions): Frame[] {
  * between cells and keep full-bleed cells in a corner of their own.
  */
 export function namedFrames<K extends string>(
-  atlasW: number,
-  atlasH: number,
+  atlas: AtlasSize,
   rects: Record<K, [number, number, number, number]>,
 ): Record<K, Frame> {
-  if (!(atlasW > 0 && atlasH > 0)) {
-    throw new Error(`namedFrames: atlas size must be positive, got ${atlasW} x ${atlasH}`)
+  let { width, height } = atlas
+  if (!(width > 0 && height > 0)) {
+    throw new Error(`namedFrames: atlas size must be positive, got ${width} x ${height}`)
   }
   let out = {} as Record<K, Frame>
   for (let name in rects) {
     let [x, y, w, h] = rects[name]
     if (!(w > 0 && h > 0)) throw new Error(`namedFrames: frame '${name}' has non-positive size ${w} x ${h}`)
-    out[name] = { u0: x / atlasW, v0: y / atlasH, u1: (x + w) / atlasW, v1: (y + h) / atlasH }
+    out[name] = { u0: x / width, v0: y / height, u1: (x + w) / width, v1: (y + h) / height }
   }
   return out
 }

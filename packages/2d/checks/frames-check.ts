@@ -45,7 +45,7 @@ function assertThrows(what: string, fn: () => void) {
 
 // Hand-written: a 2x2 grid over a 32x32 sheet is quarters.
 {
-  let frames = grid(2, 2, { width: 32, height: 32 })
+  let frames = grid({ width: 32, height: 32 }, 2, 2)
   if (frames.length !== 4) fail(`2x2 grid has ${frames.length} frames`)
   let f = frames[3]!
   if (!(close(f.u0, 0.5) && close(f.v0, 0.5) && close(f.u1, 1) && close(f.v1, 1))) {
@@ -54,9 +54,16 @@ function assertThrows(what: string, fn: () => void) {
 }
 // Row-major order: frame[cols] starts the second row.
 {
-  let frames = grid(3, 2, { width: 48, height: 32 })
+  let frames = grid({ width: 48, height: 32 }, 3, 2)
   let second = frames[3]!
   if (!(close(second.u0, 0) && close(second.v0, 0.5))) fail("grid is not row-major")
+}
+// An Atlas record (texture plus size) slices as it is: the slicers read
+// only width and height, so extra fields pass.
+{
+  let atlas = { texture: 1, width: 64, height: 64 }
+  let f = grid(atlas, 4, 4)[5]!
+  if (!(close(f.u0, 0.25) && close(f.v0, 0.25))) fail("grid over an atlas record")
 }
 // FULL_FRAME is the unit rect.
 if (!(FULL_FRAME.u0 === 0 && FULL_FRAME.v0 === 0 && FULL_FRAME.u1 === 1 && FULL_FRAME.v1 === 1)) {
@@ -64,16 +71,16 @@ if (!(FULL_FRAME.u0 === 0 && FULL_FRAME.v0 === 0 && FULL_FRAME.u1 === 1 && FULL_
 }
 
 // Validation throws.
-assertThrows("zero cols", () => grid(0, 2, { width: 32, height: 32 }))
-assertThrows("fractional rows", () => grid(2, 1.5, { width: 32, height: 32 }))
-assertThrows("non-positive sheet", () => grid(2, 2, { width: 0, height: 32 }))
-assertThrows("cells eaten by spacing", () => grid(8, 1, { width: 8, height: 8, spacing: 4 }))
-assertThrows("named non-positive frame", () => namedFrames(32, 32, { bad: [0, 0, 0, 4] }))
-assertThrows("named non-positive atlas", () => namedFrames(0, 32, { a: [0, 0, 4, 4] }))
+assertThrows("zero cols", () => grid({ width: 32, height: 32 }, 0, 2))
+assertThrows("fractional rows", () => grid({ width: 32, height: 32 }, 2, 1.5))
+assertThrows("non-positive sheet", () => grid({ width: 0, height: 32 }, 2, 2))
+assertThrows("cells eaten by spacing", () => grid({ width: 8, height: 8 }, 8, 1, { spacing: 4 }))
+assertThrows("named non-positive frame", () => namedFrames({ width: 32, height: 32 }, { bad: [0, 0, 0, 4] }))
+assertThrows("named non-positive atlas", () => namedFrames({ width: 0, height: 32 }, { a: [0, 0, 4, 4] }))
 
 // namedFrames maps pixel rects to UVs.
 {
-  let frames = namedFrames(64, 32, { hero: [16, 8, 32, 16] })
+  let frames = namedFrames({ width: 64, height: 32 }, { hero: [16, 8, 32, 16] })
   let f = frames.hero
   if (!(close(f.u0, 0.25) && close(f.v0, 0.25) && close(f.u1, 0.75) && close(f.v1, 0.75))) {
     fail(`namedFrames hero is (${f.u0}, ${f.v0})-(${f.u1}, ${f.v1})`)
@@ -94,7 +101,7 @@ for (let i = 0; i < SWEEPS; i++) {
   let marginY = int(0, 6)
   let width = marginX * 2 + cols * cellW + (cols - 1) * spacing
   let height = marginY * 2 + rows * cellH + (rows - 1) * spacing
-  let frames = grid(cols, rows, { width, height, cellW, cellH, spacing, marginX, marginY })
+  let frames = grid({ width, height }, cols, rows, { cellW, cellH, spacing, marginX, marginY })
   if (frames.length !== cols * rows) {
     fail(`grid(${cols}, ${rows}) returned ${frames.length} frames`)
     continue

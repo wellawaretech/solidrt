@@ -17,7 +17,7 @@
 // { follow, spin } or runs { fit: true }, `selected` returns the selected
 // sprite's world position (null when none), `first` the first sprite's -
 // the one to aim synthetic taps and drags at.
-import { createEffect, createInputMap, createPointerFeed, displayScale, gamepad, onFrame, render, windowSize } from "@solidrt/core"
+import { createEffect, createInputMap, createPointerFeed, decodeImage, displayScale, gamepad, onFrame, render, windowSize } from "@solidrt/core"
 import { addSprite, camera2dActions, camera2dBindings, createAtlas, createCamera2d, createSpriteLayer, feedPointer, fitOversample, grid, setSprite } from "@solidrt/2d"
 import type { Camera2dHandle, SpriteHandle } from "@solidrt/2d"
 import { registerDebug } from "srt:dev"
@@ -55,8 +55,8 @@ let first: SpriteHandle | null = null
 let dragging: SpriteHandle | null = null
 
 function App() {
-  let atlas = createAtlas(logoBytes, { label: "logo-atlas" })
-  let frames = grid(2, 2, { width: atlas.width, height: atlas.height })
+  let atlas = createAtlas(decodeImage(logoBytes), { label: "logo-atlas" })
+  let frames = grid(atlas, 2, 2)
   // The window's logical size, mirrored for the layer and the camera.
   let win = { width: 1, height: 1 }
   let layer = createSpriteLayer(atlas.texture, { capacity: COUNT + 1, label: "camera" })

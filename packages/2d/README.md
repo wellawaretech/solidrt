@@ -7,12 +7,12 @@ texture element.
 *Status: experimental. Expect API churn.*
 
 ```tsx
-import { render } from "@solidrt/core"
+import { decodeImage, render } from "@solidrt/core"
 import { createAtlas, grid, Sprite, SpriteLayer } from "@solidrt/2d"
 import sheet from "./sheet.png" with { type: "binary" }
 
-let atlas = createAtlas(sheet, { filter: "nearest" })
-let frames = grid(4, 4, { width: atlas.width, height: atlas.height })
+let atlas = createAtlas(decodeImage(sheet), { filter: "nearest" })
+let frames = grid(atlas, 4, 4)
 
 render(() => (
   <window>

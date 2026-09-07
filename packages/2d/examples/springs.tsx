@@ -13,7 +13,7 @@
 // random angle always takes the short arc, and the position spring keeps
 // its velocity when a shuffle lands mid-flight - retarget as fast as you
 // like, the motion stays continuous.
-import { render } from "@solidrt/core"
+import { decodeImage, render } from "@solidrt/core"
 import { addSprite, createAtlas, createSpriteLayer, grid, setSprite, setSpriteTransition } from "@solidrt/2d"
 import logoBytes from "./logo.png" with { type: "binary" }
 
@@ -25,8 +25,8 @@ const H = 720
 const SPRITE = 30
 
 function App() {
-  let atlas = createAtlas(logoBytes, { label: "logo-atlas" })
-  let frames = grid(2, 2, { width: atlas.width, height: atlas.height })
+  let atlas = createAtlas(decodeImage(logoBytes), { label: "logo-atlas" })
+  let frames = grid(atlas, 2, 2)
   let layer = createSpriteLayer(atlas.texture, { capacity: COUNT, label: "springs" })
   let view = layer.createView({ width: W, height: H, clearColor: [0.05, 0.05, 0.09, 1] })
 

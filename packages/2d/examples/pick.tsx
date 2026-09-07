@@ -18,7 +18,7 @@
 // poses and every sprite's world position; `maxZoom` sets the main
 // <Camera2d maxZoom> prop live (a tighter range re-clamps the pose at
 // once - the props are live, only the pose props are initial values).
-import { createInputMap, createPointerFeed, createSignal, render, For } from "@solidrt/core"
+import { createInputMap, createPointerFeed, createSignal, decodeImage, render, For } from "@solidrt/core"
 import { Camera2d, camera2dActions, camera2dBindings, createAtlas, grid, setSprite, Sprite, SpriteLayer, View2d } from "@solidrt/2d"
 import type { Camera2dHandle, Frame, SpriteHandle } from "@solidrt/2d"
 import { registerDebug } from "srt:dev"
@@ -46,8 +46,8 @@ let handles = new Map<number, SpriteHandle>()
 let [maxZoom, setMaxZoom] = createSignal(MAX_ZOOM)
 
 function App() {
-  let atlas = createAtlas(logoBytes, { label: "logo-atlas" })
-  let frames = grid(2, 2, { width: atlas.width, height: atlas.height })
+  let atlas = createAtlas(decodeImage(logoBytes), { label: "logo-atlas" })
+  let frames = grid(atlas, 2, 2)
   let [items, setItems] = createSignal<Item[]>([
     { id: 0, x: 200, y: 240, frame: frames[0]! },
     { id: 1, x: 420, y: 300, frame: frames[1]! },

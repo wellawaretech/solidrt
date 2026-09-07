@@ -7,7 +7,7 @@
 // picking at random points, exercises pickRect, groups and slot recycling,
 // and benches addSprite plus a move-everything frame on both layers. Watch
 // the logs for PARITY/BENCH lines ending in PARITY-OK.
-import { onFrame, render } from "@solidrt/core"
+import { decodeImage, onFrame, render } from "@solidrt/core"
 import { readTexture } from "@solidrt/core/gpu"
 import {
   addGroup,
@@ -42,8 +42,8 @@ function rng(seed: number): () => number {
 }
 
 function App() {
-  let atlas = createAtlas(logoBytes, { label: "logo-atlas" })
-  let frames = grid(2, 2, { width: atlas.width, height: atlas.height })
+  let atlas = createAtlas(decodeImage(logoBytes), { label: "logo-atlas" })
+  let frames = grid(atlas, 2, 2)
   let nodes = createSpriteLayer(atlas.texture, { capacity: 64, label: "nodes" })
   let records = createRecordLayer(atlas.texture, { capacity: 64, label: "records" })
   let nodeView = nodes.createView({ width: W, height: H, clearColor: [0.05, 0.05, 0.09, 1], label: "nodes" })

@@ -16,7 +16,7 @@
 // 3. Pointer dispatch round-trips: a pointer at the projected screen
 //    point hits the sprite and reports its world coordinates.
 // 4. Tile chunks bake with the pinned identity camera rotation.
-import { onFrame, render } from "@solidrt/core"
+import { decodeImage, onFrame, render } from "@solidrt/core"
 import { readTexture } from "@solidrt/core/gpu"
 import {
   addSprite,
@@ -53,8 +53,8 @@ function rng(seed: number): () => number {
 }
 
 function App() {
-  let atlas = createAtlas(logoBytes, { label: "logo-atlas" })
-  let frames = grid(2, 2, { width: atlas.width, height: atlas.height })
+  let atlas = createAtlas(decodeImage(logoBytes), { label: "logo-atlas" })
+  let frames = grid(atlas, 2, 2)
   let nodes = createSpriteLayer(atlas.texture, { label: "cam-nodes" })
   let records = createRecordLayer(atlas.texture, { label: "cam-records" })
   let nodeView = nodes.createView({ width: W, height: H, label: "cam-nodes" })
