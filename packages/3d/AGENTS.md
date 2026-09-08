@@ -1395,6 +1395,32 @@ transform on top of the authored placement. Skinned PARTS are the one
 thing that never needs this: they hang off the model root and the
 palette places them.
 
+Wardrobe pieces (a hood, a cape, cuffs) are the third case: exported
+WITH a skin over the body's joints and WITHOUT clips, so beside an
+animated body they hold their bind pose. `bindSkeleton(body, piece)`
+drives them from the body's skeleton - Three's SkinnedMesh.bind, Unity's
+`bones =`, Godot's shared Skeleton3D. The piece's palette rows re-bind
+onto the body's joint nodes (matched by name, case-insensitive) with
+the piece's own inverse binds, so the flush writes the body's pose into
+the piece's skin and no per-frame code exists; joints with no body
+counterpart (a hat's internal bones) and rigid parts hanging off a
+matched node are grafted under the matched body joint and ride it. The
+piece then hangs under the body at the body's placement (its skinned
+vertices are in the body's model space), and its own joint nodes are no
+longer posed by anything: read poses from and socket items on the
+BODY's joints. The piece's node tree is never composed - exporters
+truncate it above the spine or skip an ancestor in the middle, and
+copying locals through such a tree hangs joints off the wrong place
+while looking right for every piece whose tree happens to match; the
+body's world matrices are what a bone matrix needs. A shared joint
+whose bind pose differs (a piece exported against another rest pose or
+scale) throws at bind instead of rendering wrong. A piece comes off by
+disposing it; disposing a body disposes what it wears. Culling follows
+the wear: a body joint's box is the union of every skin reaching it,
+its own and the pieces'. Verified in `probes/skeleton-share-probe.tsx`:
+a hat whose table starts at the spine and a cape that skips an ancestor
+render pixel-identical to the body's own part, posed.
+
 Applied: `doubleSided` (the default material draws it with `cull:
 "none"`), alphaMode MASK (`alphaTest: alphaCutoff`), `normalTexture`
 (+ scale; the derivative frame needs no tangents), `emissiveFactor` x
@@ -1499,6 +1525,9 @@ older bakes are rejected - re-bake with `srt tool 3d/model`.
   subtree. The winding flip for a mirroring node chain is baked into the
   index order from the REST pose - re-scaling a node across zero at
   runtime shows mesh interiors, so do not do that.
+- A worn piece's joints are dead after `bindSkeleton`: `piece.nodes`
+  still lists them, but nothing poses them and their palette rows sit
+  on the body's nodes now. Pose, read and socket on the body.
 - Skinning is a VERTEX-STAGE effect: everything that runs off the
   retained tree sees the bind pose. A skinned mesh picks by its
   bind-pose triangles at the model root and its transparent sort key is

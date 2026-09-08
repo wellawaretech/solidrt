@@ -143,7 +143,8 @@ export type SceneNode = {
    * skin): bound to the core at every scene enter, so the flush writes
    * `inverse(anchorWorld) * world * post` - the model-local bone matrix -
    * to the palette texture's row whenever the node moves. `anchor` is the
-   * model root; null for non-joints (the common case pays one null check). */
+   * model root - the body's, for a piece bound onto its skeleton - and
+   * null for non-joints (the common case pays one null check). */
   _palettes: { texture: TextureId; row: number; post: Float32Array; anchor: SceneNode }[] | null
   /** A culling-only local box (a model joint's influence region, in joint
    * space): bound at every scene enter so the joint's world box follows

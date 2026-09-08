@@ -139,12 +139,6 @@ Shaped, not started.
   (a high viewpoint, a driving game) cannot push resolution outward and a
   close-quarters one cannot pull it in; Godot's shadow_split_1..3 and Unity's
   cascade splits are per-light ratios, Three's CSM addon a mode switch.
-- **[Shared skeletons - drive a channel-less rigged piece from a body's clips](backlog/3d-skeleton-sharing.md)** [2026-09-03]
-  Cosmetic and attachment models ship with a skin but zero animation channels
-  (clips live on the body), so a dressed character needs app code copying the
-  body's posed joints across every frame; give the library a
-  bindSkeleton/drives path built on the evaluator's target tables, where
-  retargeting a clip is handing it the piece's nodes.
 - **[Adaptive present-fence depth](backlog/adaptive-present-fence-depth.md)** [2026-07-27]
   Fallback design if unconditional two-deep present fencing ever shows up as
   desktop drag latency - allow the second in-flight frame only when observed
@@ -936,6 +930,12 @@ Finished, kept for the reasoning.
   spatial core, and a scene VIEW (render this scene into that target from this
   camera) in the library - with the view settled first because split-screen,
   minimaps and reflections hit the same wall.
+- **[Shared skeletons - a channel-less rigged piece reads the body's joints](done/3d-skeleton-sharing.md)** [2026-09-08]
+  Wardrobe pieces ship with a skin but no clips, so a dressed character needed
+  app code copying the body's posed joints every frame; bindSkeleton(body,
+  piece) re-binds the piece's palette rows onto the body's joint nodes
+  (Three's bind, Unity's bones, Godot's shared Skeleton3D), zero per-frame
+  work and no core change.
 - **[Surface maps on lit - normal, emissive, specular and light maps, plus a UV transform](done/3d-surface-maps.md)** [2026-08-31]
   lit took ONE map, the base color; every other pre-PBR slot (normal,
   emissive, specular mask, baked light, a UV transform) forced a hand-written

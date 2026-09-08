@@ -24,6 +24,8 @@ import { add, createGroup, remove, setTransform } from "./node.ts"
 import type { SceneNode } from "./node.ts"
 import { createMesh } from "./mesh.ts"
 import type { Mesh } from "./mesh.ts"
+import { refreshJointBounds, unbindSkeleton } from "./skeleton.ts"
+import type { WornPiece } from "./skeleton.ts"
 
 /** Anisotropic filtering level for a model's textures: the engines' usual
  * default (Godot ships 2x, Unity's quality presets 2-8x) - enough to keep a
@@ -80,8 +82,30 @@ export type Model = SceneNode & {
   /** Local rest-pose [minX, minY, minZ, maxX, maxY, maxZ] over every part
    * (conservative for parts under rotated nodes). */
   bounds: Float32Array
-  /** Detach the model and free its geometry buffers and textures. */
+  /** Detach the model and free its geometry buffers and textures. A
+   * worn piece (bindSkeleton) comes off its body; a body takes the
+   * pieces it wears with it. */
   dispose(): void
+  /** @internal The skins the parts draw, in file order: the palette
+   * texture (shared by identical skins), the joint nodes in row order,
+   * their inverse binds and joint-space influence boxes. */
+  _skins: ModelSkinNodes[]
+  /** @internal The pieces bound onto this model's skeleton. */
+  _worn: WornPiece[]
+  /** @internal The body this model is bound onto, or null. */
+  _body: Model | null
+  /** @internal Subtrees bindSkeleton moved under the body's joints (no
+   * longer under this model); detached again by dispose. */
+  _grafts: SceneNode[]
+}
+
+/** @internal One skin of a built model: ModelSkin with its joints
+ * resolved to the model's nodes and its palette texture. */
+export type ModelSkinNodes = {
+  texture: TextureId
+  joints: SceneNode[]
+  inverseBind: Float32Array
+  jointBounds: Float32Array
 }
 
 /**
@@ -162,6 +186,10 @@ export function createModel(data: ModelData, opts: ModelOptions = {}): Model {
   let materials = data.materials.map((_, i) => materialFor(i, false))
 
   let model = createGroup() as Model
+  model._skins = []
+  model._worn = []
+  model._body = null
+  model._grafts = []
   // The node table is pre-order, so every parent group exists before its
   // children reference it.
   let groups: SceneNode[] = data.nodes.map((n) => {
@@ -183,39 +211,38 @@ export function createModel(data: ModelData, opts: ModelOptions = {}): Model {
   // joints move - there is no JS palette walk, and posing joints with
   // setTransform is always enough. Identical skins (same joints, same
   // inverse binds - the body/legs and LOD splits exporters produce) share
-  // one texture, so their palette is computed and uploaded once.
-  let skinTextures: TextureId[] = []
+  // one texture, so their palette is computed and uploaded once. A worn
+  // piece's rows move onto another model's joints (bindSkeleton).
   data.skins.forEach((skin, i) => {
-    let joints = skin.joints.join(",")
-    for (let j = 0; j < i; j++) {
-      let other = data.skins[j]!
-      if (
-        other.joints.join(",") === joints &&
-        other.inverseBind.length === skin.inverseBind.length &&
-        other.inverseBind.every((v, k) => v === skin.inverseBind[k])
-      ) {
-        skinTextures.push(skinTextures[j]!)
-        return
-      }
-    }
-    let texture = createMutableTexture(new Float32Array(skin.joints.length * 16), 4, skin.joints.length, {
-      format: "rgba32f",
-      autoFree: false,
-      label: label ? label + "-skin" + i : "skin" + i,
+    let joints = skin.joints.map((n) => {
+      let joint = groups[n]
+      if (joint === undefined) throw new Error("createModel: skin " + i + " names a missing node " + n)
+      return joint
     })
+    let key = skin.joints.join(",")
+    let same = model._skins.find(
+      (other, j) =>
+        data.skins[j]!.joints.join(",") === key &&
+        other.inverseBind.length === skin.inverseBind.length &&
+        other.inverseBind.every((v, k) => v === skin.inverseBind[k]),
+    )
+    let texture =
+      same?.texture ??
+      createMutableTexture(new Float32Array(skin.joints.length * 16), 4, skin.joints.length, {
+        format: "rgba32f",
+        autoFree: false,
+        label: label ? label + "-skin" + i : "skin" + i,
+      })
+    model._skins.push({ texture, joints, inverseBind: skin.inverseBind, jointBounds: skin.jointBounds })
+    if (same !== undefined) return
     textures.push(texture)
-    skinTextures.push(texture)
-    for (let j = 0; j < skin.joints.length; j++) {
-      let joint = groups[skin.joints[j]!]
-      if (joint === undefined) throw new Error("createModel: skin " + i + " names a missing node " + skin.joints[j])
+    joints.forEach((joint, j) => {
       ;(joint._palettes ??= []).push({ texture, row: j, post: skin.inverseBind.slice(j * 16, j * 16 + 16), anchor: model })
-      // The joint's influence box, in joint space: culling-only bounds the
-      // flush carries through the pose. A joint influencing nothing (an
-      // inverted box) gets none and contributes nothing to the union.
-      let jb = skin.jointBounds.subarray(j * 6, j * 6 + 6)
-      if (jb[0]! <= jb[3]! && jb[1]! <= jb[4]! && jb[2]! <= jb[5]!) joint._cullBounds = Float32Array.from(jb)
-    }
+    })
   })
+  // Each joint's influence box, in joint space: culling-only bounds the
+  // flush carries through the pose, united over every skin reaching it.
+  refreshJointBounds(model)
   model.parts = data.parts.map((part) => {
     let skinned = part.skin !== null
     let material = materialFor(part.material, skinned)
@@ -225,11 +252,11 @@ export function createModel(data: ModelData, opts: ModelOptions = {}): Model {
       // matrices place them, so its mesh hangs off the model root (the
       // spec ignores the node's transform for skinned meshes) and uModel
       // stays the model's own placement.
-      let texture = skinTextures[part.skin!]
-      if (texture === undefined) throw new Error("createModel: part '" + part.name + "' names a missing skin " + part.skin)
-      mesh._textures = { uBones: texture }
+      let skin = model._skins[part.skin!]
+      if (skin === undefined) throw new Error("createModel: part '" + part.name + "' names a missing skin " + part.skin)
+      mesh._textures = { uBones: skin.texture }
       // Culled by its joints' boxes, so the box follows the animation.
-      mesh._cullJoints = data.skins[part.skin!]!.joints.map((n) => groups[n]!)
+      mesh._cullJoints = skin.joints.slice()
       add(model, mesh)
     } else {
       let node = groups[part.node]
@@ -242,6 +269,11 @@ export function createModel(data: ModelData, opts: ModelOptions = {}): Model {
   model.clips = data.clips
   model.bounds = data.bounds
   model.dispose = () => {
+    // A worn piece comes off first (its rows sit on the body's joints);
+    // a body takes its pieces with it (their skins read joints that are
+    // about to go).
+    if (model._body !== null) unbindSkeleton(model)
+    for (let worn of model._worn.slice()) worn.piece.dispose()
     if (model.parent !== null) remove(model)
     for (let part of model.parts) disposeGeometry(part.mesh.geometry)
     for (let id of textures) destroyTexture(id)

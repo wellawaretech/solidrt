@@ -69,6 +69,7 @@ export type { ModelChannel, ModelClip, ModelData, ModelMaterial, ModelNode, Mode
 export { decodeModel, encodeModel } from "./model-file.ts"
 export { createModel, loadGltf, loadModel } from "./model.ts"
 export type { Model, ModelMaps, ModelOptions } from "./model.ts"
+export { bindSkeleton } from "./skeleton.ts"
 export { createMixer } from "./mixer.ts"
 export type { Mixer, MixerOptions, MixerPlayOptions } from "./mixer.ts"
 export { sampleChannel } from "./clip.ts"
