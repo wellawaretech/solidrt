@@ -89,6 +89,11 @@ Shaped, not started.
   modulo that must SNAP (native transitions animate the wrap jump across the
   world), ghost copies at the seams - and the chunked tile layer has no way to
   draw the seam at all.
+- **[The 3d agent doc is 1900 lines under four headings](backlog/3d-agents-doc-navigability.md)** [2026-09-08]
+  packages/3d/AGENTS.md is excellent material presented as a wall - four
+  top-level headings across 1910 lines, with individual APIs documented inside
+  multi-hundred-word paragraphs, so finding one prop means grepping the source
+  instead.
 - **[Environment tier leftovers - SH9, aoMap, packed .srte, EXR, loadCubeImages](backlog/3d-environment-additive.md)** [2026-09-06]
   The environment tier is complete (skybox, HDR environments, PBR, prefiltered
   HDR probes and sky bakes) and each of these is a deliberate non-goal of that
@@ -128,11 +133,21 @@ Shaped, not started.
   compressed real-world files (Draco/meshopt, KTX2), morph targets,
   merge-by-material, vertex colors, per-material samplers and runtime-fetched
   content, each demand-gated.
+- **[No way to ask why a mesh did not draw](backlog/3d-scene-draw-introspection.md)** [2026-09-08]
+  Four independent mechanisms silently drop a mesh from a target - frustum
+  culling, the layer mask, overrideMaterial skipping instanced meshes, and the
+  shadow view's caster filter - and the scene exposes no introspection at all,
+  so the only diagnosis is a screenshot and a guess.
 - **[A View3d is fixed-size and has no overlay projection of its own](backlog/3d-scene-views-additive.md)** [2026-09-07]
   A <View3d> takes width and height only, so a second view cannot fill a box
   the way <Scene> does, and a view handle has no project, unproject or
   screenRay, so an overlay or a drag plane over a minimap has to redo the view
   camera's math by hand; the 2d views have the same additive list.
+- **[A transient shadow-slot overlap during a subtree swap kills the app](backlog/3d-shadow-budget-mount-overlap.md)** [2026-09-08]
+  Shadow placement runs synchronously at light attach, so a declarative swap
+  whose incoming branch attaches before the outgoing one detaches sums both
+  branches against the 8-slot budget and throws; a casting point light (6
+  slots) is unusable in any app that swaps scene content.
 - **[Cascade split ratios are fixed](backlog/3d-shadow-cascade-splits.md)** [2026-09-06]
   A cascaded sun slices its range with one fixed practical split
   (CASCADE_SPLIT_LAMBDA 0.5), so a scene whose detail sits far from the camera
@@ -381,6 +396,11 @@ Shaped, not started.
   what the runtime fills). Still open - the composition questions - whether
   the fused paths become thin compositions of the raw layer, whether a
   mid-level program shorthand is wanted, and the two-dialect preamble story.
+- **[Pass counters are whole-frame, so no one target can be blamed](backlog/gpu-per-target-pass-attribution.md)** [2026-09-08]
+  get_stats reports gpuPassesPerFrame and gpuPassExecMsPerFrame for the whole
+  client, but an app drawing a scene, two views, a shadow atlas and a probe
+  has five candidates and no way to tell which one is expensive; every target
+  already carries a label.
 - **[More pipeline blend modes](backlog/gpu-pipeline-blend-modes.md)** [2026-07-29]
   The blend vocabulary on createPipeline is "none", "add", "multiply" and
   "alpha"; the rest of GL's fixed-function space (screen, subtract, min/max)
@@ -614,6 +634,11 @@ Shaped, not started.
   A numeric pixel-delta mode on get_snapshot against the previous capture of
   the same node, so "does it still render the same" is one call with a number
   instead of two images an agent has to eyeball.
+- **[Reactivity diagnostics carry no source location](backlog/solid-diagnostics-source-location.md)** [2026-09-08]
+  A STRICT_READ_UNTRACKED warning names the shape of the mistake but not the
+  file or line, so finding it in an app with a dozen effects is a manual hunt;
+  the diagnostics are subscribable and the dev server already remaps stack
+  frames, so a location is attachable on our side.
 - **[Spatial audio - emitter and listener nodes on the spatial core](backlog/spatial-audio-emitters.md)** [2026-08-30]
   Every voice knob a positional sound needs exists (pan, gain, rate, all
   ramped) but nothing places a sound in the world, so an engine note or a
@@ -1899,6 +1924,11 @@ Knowledge. No lifecycle - true or wrong, not open or closed.
   width, and what the shared word cache changes; the numbers under the owned
   text engine's claims (pixel parity, cold shaping a wash, re-layout 14x
   cheaper, edits re-shape only their words).
+- **[Three.js feature survey - the inventory behind the roadmap](notes/three-feature-survey.md)** [2026-09-08]
+  A fine-grained inventory of what Three.js has and @solidrt/3d does not,
+  taken 2026-09-08 across geometry, materials, renderer features, objects,
+  animation, loaders, textures, controls and math, marking each entry as
+  already tracked or untracked, plus the items our model makes unnecessary.
 - **[Postmortem - a bad GPU counter steered a day of TV perf work](notes/tv-gpu-measurement-postmortem.md)** [2026-09-02]
   gpuFrameExecMs on the MediaTek TV produced a plausible-looking "40 ms GPU
   fill" number that spawned a mis-attributed backlog item, a probe
