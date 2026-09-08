@@ -6,258 +6,353 @@ one `addDraw` entry per mesh); the scene's output is an ordinary texture
 id composited as a `<texture>` leaf, so it takes layout, transforms,
 blendMode and pointer events like any element.
 
+Contents:
+
+- [The model](#the-model)
+  - [Two layers: core and components](#two-layers-core-and-components)
+  - [Node lifecycle](#node-lifecycle)
+  - [Rendering is the runtime's](#rendering-is-the-runtimes)
+  - [Views and layers](#views-and-layers)
+  - [Culling](#culling)
+  - [Shadows](#shadows)
+  - [Retargeted motion](#retargeted-motion)
+  - [Geometry layout, indices and topology](#geometry-layout-indices-and-topology)
+  - [Material classes](#material-classes)
+  - [Pure pieces and checks](#pure-pieces-and-checks)
+- [Components](#components)
+  - [Component props](#component-props)
+  - [Output composition](#output-composition)
+  - [Fill and fixed sizes](#fill-and-fixed-sizes)
+  - [Input](#input)
+  - [Orbit camera](#orbit-camera)
+  - [First-person camera](#first-person-camera)
+  - [Overlay projection](#overlay-projection)
+  - [Picking](#picking)
+  - [Collision](#collision)
+  - [Pointer events](#pointer-events)
+  - [Geometry generators](#geometry-generators)
+  - [Geometry as data](#geometry-as-data)
+  - [Profile kit](#profile-kit)
+  - [Materials](#materials)
+  - [Instancing](#instancing)
+  - [Background](#background)
+  - [Cube-map convention](#cube-map-convention)
+  - [Environment](#environment)
+  - [Reflection probes](#reflection-probes)
+  - [Baked sky](#baked-sky)
+  - [Panoramas](#panoramas)
+  - [Fog](#fog)
+  - [Color](#color)
+  - [Lighting GLSL](#lighting-glsl)
+  - [Custom looks: three tiers](#custom-looks-three-tiers)
+  - [Lights](#lights)
+  - [lit](#lit)
+  - [standard](#standard)
+- [Models](#models)
+  - [Three layers](#three-layers)
+  - [Async loading](#async-loading)
+  - [Placement and sockets](#placement-and-sockets)
+  - [Wardrobe pieces](#wardrobe-pieces)
+  - [Applied glTF material fields](#applied-gltf-material-fields)
+  - [Animation](#animation)
+  - [Root motion](#root-motion)
+  - [Skins](#skins)
+  - [Not in the subset](#not-in-the-subset)
+- [Traps](#traps)
+  - [Models and skinning](#models-and-skinning)
+  - [Materials and color](#materials-and-color)
+  - [Environment and background](#environment-and-background)
+  - [Coordinates and rotation](#coordinates-and-rotation)
+  - [Visibility and instancing](#visibility-and-instancing)
+  - [Shadows](#shadows)
+  - [Views and scene params](#views-and-scene-params)
+  - [Shader materials](#shader-materials)
+  - [Picking, pointer and collision](#picking-pointer-and-collision)
+  - [Geometry and components](#geometry-and-components)
+
 ## The model
 
-- Two layers. The imperative core is Solid-free: `createScene`,
-  `createMesh(geometry, material)`, `add`/`remove`, `setTransform`,
-  `lookAt`, `getRotation`, `setVisible`, `setRenderOrder` - plain objects
-  over the spatial core (`flux:spatial`, `alloy/src/spatial/`): every node
-  in a scene has a core node, JS keeps the LOCAL position/quaternion/scale
-  as the readable truth and forwards each write, and the core's flush
-  (one call per microtask) recomputes only the moved subtrees and writes
-  each entry's uModel (plus uNormal for materials declaring it) and its
-  visibility switch itself - a move costs its subtree, never the scene.
-  ONE `setTargetParams` (the shared uViewProj + uCamPos) per camera
-  change, however many meshes. World matrices live in the core only:
-  `worldPosition`/`lookAt`/picking read them back (`worldMatrix`, pending
-  writes included). See okf/backlog/spatial-core.md for what still runs
-  in JS and why. The component face (`Scene`/`View3d`/`Group`/`Mesh`/
-  `PerspectiveCamera`) syncs props into that core over context and renders
-  nothing itself.
-- Node lifecycle: `add(parent, child)` attaches (re-parenting detaches
-  first), `remove(child)` DETACHES an intact subtree - children stay
-  under the removed node, core nodes free on leave and recreate on
-  re-enter, so a removed subtree re-adds cleanly. Nothing is destroyed
-  except instance record buffers (`disposeInstances`) and the scene
-  itself. (@solidrt/2d's `removeGroup` DESTROYS its subtree instead - a
-  sprite cannot exist outside its layer, so there remove means destroy.)
-  An instance node (addInstance on an instanced mesh) follows the 2d
-  rule: slot-bound to its mesh, `removeInstance` destroys it, and the
-  generic add/remove throw on it.
-- Rendering is the runtime's. The target is `render: "auto"`: it
-  re-renders when entries change, so a STATIC scene costs zero passes and
-  the library registers no frame loop. Continuous animation is the app's
-  own `onFrame` writing a signal (declarative) or `setTransform` on a
-  `ref`-grabbed node (the frame-rate escape hatch - signals carry
-  structure, per-frame motion goes straight to the scene).
-- VIEWS: `scene.createView({ width, height, overrideMaterial?, depth?,
-  clearColor?, ... })` renders the same scene into a second target from
-  its own camera (`view.setCamera`, the scene's CameraUpdate shape; in a
-  component tree `<View3d>` is the same as a Scene child, see Components).
-  Each mesh gets one entry in the view's target bound as one more draw sink of
-  its CORE node, so the one flush writes every target - the app writes
-  nothing per view. Geometry buffers and (without an override) materials
-  are shared; the light set and `scene.setParams` names fan out to every
-  view, `view.setParams` is the view's own channel - and names a view
-  sets itself (or its `fog` option, below) become VIEW-OWNED: the
-  scene's setParams/setFog fan-out skips them from then on, so a view
-  override survives scene-wide writes. A view's backdrop is its
-  clearColor (the scene background draws on PROBES, not views); a view
-  has no picking. LAYERS select what a target
-  draws, Three's model exactly: `layers` on a mesh is its membership
-  bitmask (default 1, `setLayers`/the `layers` prop, NOT inherited from
-  Groups), and each target carries a mask (default 1) - `layers` on
-  createScene/createView, live via `setLayers` on the scene handle and
-  each view. A mesh draws where mask & layers is non-zero, so a minimap's
-  marker meshes live on bit 2: invisible in the main render, drawn by
-  the map view whose mask admits them. Shadow views follow the SCENE's
-  mask (what the scene cannot see must not darken it), and
-  pick()/raycast()/overlap()/sweep() skip scene-masked-out meshes like
-  invisible ones - unless the query passes its own `{ layers }`, which is
-  how a low-poly collision mesh lives undrawn in the scene yet answers
-  ground and collision queries (the physics-collider pattern).
-  Per-view fog: `fog: FogOptions | null` on createView overrides the
-  scene's fog for that view (null = unfogged - the clear minimap over a
-  fogged scene); absent follows the scene. `overrideMaterial` (Three's
-  `scene.overrideMaterial`, scoped to the view) draws every mesh with one
-  material - a depth pass, a normal/id visualizer - skips instanced
-  meshes (unless the override itself declares their exact
-  `instanceAttributes` record layout) and draws in add order. `depth: "texture"` exposes `view.depthTexture`, the shadow-map
-  input; the same option on createScene exposes `scene.depthTexture`,
-  the input for a depth-reading post effect in `output` (not combinable
-  with `samples` - no multisampled sampleable depth). `ortho: { left, right, top, bottom }` on any camera swaps
-  perspective for `orthographic()` (`fov` ignored; `ortho: null` returns);
-  the scene's own camera takes it too, and pick() follows.
-  `examples/scene-views.tsx` is the shape.
-- CULLING is the core's, per target, on by default: every camera write
-  (the scene's, a view's, a shadow tile's) also sets that target's
-  frustum in the spatial core, and the flush switches an entry whose
-  world box falls wholly outside it to instance count 0 - the same
-  switch as `visible`, so a culled mesh costs nothing per frame and a
-  still camera re-tests nothing (a camera move re-tests every sink on
-  that target, in Rust; a node move re-tests its own). The box is the
-  picking box (the local bounds through the world matrix, the
-  Godot/Unity AABB test; Three uses spheres); an instanced mesh without
-  explicit `bounds` is culled by the union of its live instances' boxes
-  (the joint group below over the instance nodes, so the box follows
-  them: Godot's MultiMesh AABB, with `bounds` as its custom_aabb; Three
-  computes an InstancedMesh sphere once and leaves it stale, Unity wants
-  worldBounds), and a record mesh without `bounds` is never culled. Per
-  mesh: `frustumCulled: false` (Three's name; `setCulling`) for geometry
-  a vertex stage moves beyond its box - a fullscreen quad, a custom
-  displacement - and `cullMargin` (world units, Godot's
-  `extra_cull_margin`) for bounded displacement such as wind. Sprites
-  cull by their quad's reach at any facing. A SKINNED part is culled by
-  the union of its joints' boxes (the bake computes each joint's
-  influence box in joint space, `ModelSkin.jointBounds`, .srtm VERSION
-  5; the joint nodes carry them as culling-only bounds, outside the
-  picking index), so the box follows the pose with no per-frame JS -
-  Unity's bone bounds, Godot's per-bone AABBs; no `updateWhenOffscreen`
-  knob is needed. Probe faces set no frustum (six cameras, one target).
-  Shadow tiles cull casters against their light frustum, which is what
-  makes `shadow.distance` and cascades cheaper.
-- SHADOWS are a view: `<DirectionalLight castShadow shadow={{ mapSize?,
-  bias?, normalBias?, radius?, camera? }}>` (`createDirectionalLight({ castShadow,
-  shadow })`, `setLight`) makes the scene own an internal
-  `createView({ depth: "texture", overrideMaterial: depth pass })` drawing
-  the `castShadow` meshes (`<Mesh castShadow>`, `setCastShadow`) from an
-  orthographic camera at the light's WORLD position along its world
-  direction, `shadow.camera` (+-5, 0.5..500 by default) as the frustum.
-  Any light may cast, bounded by the shadow-slot budget
-  (MAX_SHADOW_MAPS = 8, its own constant: a directional light claims
-  `shadow.cascades` consecutive slots, a point light six, a spot one,
-  and a caster past the budget throws at attach). `<SpotLight castShadow
-  shadow={{ mapSize?, bias?, normalBias?, near? }}>` is the same
-  machinery with a PERSPECTIVE camera: at the light's world position
-  along its world direction, fov = its cone (2 * angle), near from
-  `shadow.near` (default 0.5), far from the light's `distance` (or the
-  directional default 500 when 0) - one map, one slot, the same atlas
-  and lookup. A perspective map's depth is nonlinear, so `normalBias`
-  (world units) is the acne knob to reach for; `bias` acts in that
-  nonlinear depth. `<PointLight castShadow>` casts in every direction
-  with the same option set: six 90-degree face maps (world-axis
-  aligned, slot order +X, -X, +Y, -Y, +Z, -Z) as six consecutive tiles
-  of the same atlas, far from `distance` like a spot - so give a
-  casting bulb a distance. No cube map: a receiver picks the face by
-  the dominant axis of the light-to-point vector (SHADOW_LOOKUP), one
-  projection, one hardware-compare tap - the Three/Godot/Unity-URP
-  atlas route. `shadow.radius` (every casting light, default 1 = that
-  one tap, a 2x2 bilinear compare) softens the edge: above 1 a 3x3 grid
-  of hardware taps `radius` texels apart, Three's `shadow.radius` /
-  Godot's `shadow_blur`, nine taps per receiver fragment. A first-person
-  eye over a floor shows the texel stairs at any map size; 2 is the
-  usual figure, past ~3 the taps separate into bands. Each face map renders a few degrees wider than its face
-  (URP's fovBias) so a seam fragment's occluder is inside the map it
-  samples - without the guard band every seam shows a lit slit - and
-  PCF taps clamp at face-tile edges, so a face seam hardens slightly
-  instead of bleeding into the neighbour.
-  `shadow: { cascades: N }` (1..MAX_CASCADES = 4) replaces the box with
-  N maps fitted to slices of the SCENE camera's frustum (near ..
-  `shadow.distance`, default the camera far; the practical split; each
-  slice's bounding sphere as an ortho box along the light, its centre
-  snapped to the map's texel grid so edges do not swim; re-fitted
-  whenever the scene camera or the light moves) - a receiver samples the
-  tightest map that covers the point, fading into the next over the
-  map's outer 10% (`SHADOW_BLEND`) so the hand-over is a band, not a
-  seam; contact shadows stay sharp near the camera while the horizon
-  still has coarse ones, and pulling `distance` in sharpens all of them.
-  The box is the honest tier for a bounded scene; cascades are for a
-  scene that outgrows it, at N times the shadow fill. Every map is a
-  TILE of the scene's one shadow atlas (a `depth: "texture"` draw target,
-  a grid of cells the largest `mapSize` wide, scaled down uniformly
-  against `limits.maxTextureSize`), so N maps are ONE pass: the atlas
-  depth binds as the target-level `uShadowAtlas` of the scene and every
-  non-shadow view (a white texel when nothing casts); maps are MAP slots
-  dealt in light order, a light's cascades consecutive and tightest
-  first - `uShadowRect[j]` slot j's tile in atlas UV, `uShadowMatrix[j]`
-  its view's own view-projection (the whole array is one write per
-  shadow-camera move) - and per light i `uShadowFirst[i]`/`uShadowCount[i]`
-  name its slots (count 0 = it does not cast) with
-  `uShadowBias[i]`/`uShadowNormalBias[i]` its knobs; `SHADOW_SLOTS` in
-  glsl declares the set. Every `lit` material RECEIVES by default
-  (Godot's and Three's default); `lit({ receiveShadow: false })` opts a
-  material out and drops the map from its program - a material option,
-  as with vertexColors/triplanar, because the material picks the program
-  (Godot's `disable_receive_shadows`). The factor is `SHADOW`'s one
-  hardware-compare tap (sampler2DShadow, LEQUAL, the driver's 2x2 PCF)
-  on each casting light's own term. `examples/shadows.tsx` (three
-  casting lights) is the shape; `examples/cascades.tsx` the cascaded sun.
-- RETARGETED motion is native: `setTransition(node, { position:
-  { duration: 400 }, ... })` makes setTransform writes TARGETS the core
-  animates toward every frame (position/scale per lane, rotation along
-  the quaternion geodesic - a spring keeps its velocity through
-  retargets), so a mesh gliding to a slot or a camera rig easing costs
-  one JS write per target change, zero per frame. The declaration lives
-  on the SceneNode and re-applies on every scene enter; the pose a node
-  enters with always snaps. Each natural settle calls the node's
-  `onTransitionEnd` (plain field like the pointer handlers) with
-  `{ component }`; the raw "spatialTransitionEnd" engine event
-  (srt:events, carrying the CORE node id `_node`) stays for flux:spatial
-  consumers.
-- One interleaved vertex buffer per geometry, described by an open layout
-  (`Geometry.layout`, absent = "standard"): an ordered attribute list that
-  always starts with the standard prefix `aPos` vec3 + `aNormal` vec3 +
-  `aUV` vec2 (what every generator emits) and may carry any named channels
-  after it. `withAttribute(geometry, { name, format }, fill)` appends one
-  (Three's `setAttribute` for an interleave); "colored" names the common
-  case, the prefix plus `aColor` vec4 - the per-vertex data channel (a
-  tint, baked AO, any four scalars; standard name, your contents) - and
-  `withColors(geometry, fill)` is its spelling. Fill is a flat
-  size-per-vertex array or a per-vertex callback receiving `(index, pos,
-  normal, uv)`. Materials read attributes BY NAME: a material's vertex
-  stage may declare any subset of its geometry's channels, and a channel
-  the program reads that the geometry lacks (name + format) throws at
-  add(). What a program reads is the ENGINE's word (`material.attributes()`
-  = `programAttributes` reflection of the linked program, instance
-  attributes excluded), not a parse of the GLSL: an `in` the compiler
-  dropped does not count, and the engine also rejects a pipeline whose
-  attribute lists leave a read attribute uncovered. The material
-  keeps one program and builds one pipeline per layout its meshes bring,
-  so a geometry may carry more than a material reads. The whole layout
-  ships whether a material reads every attribute or not (inactive
-  attributes only keep the stride), so extra channels cost their floats on
-  every draw of that geometry - keep data-light passes (a wireframe
-  reading only aPos) on standard geometry. `layoutStride`/`layoutSlot`/
-  `layoutKey`/`layoutAttributes` are the layout arithmetic; two layouts
-  with equal keys interleave identically (merge requires that).
-  Indices are uint16 or uint32 - the `Geometry.indices` array type picks
-  the draw's index format, so hand-built geometry past 64k vertices just
-  uses a Uint32Array (generators emit uint16). What the indices LIST is
-  `Geometry.topology` (`"triangles"` when absent; `"lines"`,
-  `"line-strip"`, `"points"`, `"triangle-strip"`): the index buffer and
-  its primitive travel together (Godot's surface primitive, Unity's
-  SetIndices topology), a material builds one pipeline per (layout,
-  topology) pair its meshes bring, and validateGeometry enforces the
-  count rule at add() (a whole number of triangles or lines, one
-  primitive's worth for a strip). Materials have no topology of their
-  own. Only a triangle list gets a picking shape; lines and points pick
-  and collide by their bounds box, and cast no shadow. `geometryTopology`
-  reads the field with the default applied. Geometry GPU buffers are
-  lazy, shared, and reference-counted by draw entries: removing the last
-  entry frees them at the end of the microtask (a same-tick rebuild keeps
-  the upload), so swapping `<Mesh geometry>` reactively never accumulates
-  old generations; the vertex upload is keyed on the `Float32Array`
-  itself, so geometries sharing a vertex array (a wireframe over its
-  source) share one buffer. `disposeGeometry` is the immediate explicit
-  free.
-- Materials dedupe hard: one program + one pipeline per material CLASS
-  (a `shaderMaterialClass` per option combination for unlit, lit and
-  sprite alike: map x transparent x cull x alphaTest, lit's extras on
-  top), `depth: true` + `cull: "back"` unless the material says otherwise
-  (`cull: "none"` for double-sided geometry; lit flips the normal on back
-  faces); an instance is just per-entry uniforms (`uColor`) and bindings
-  (`uMap`).
-- The pure pieces (`math.ts`, `order.ts`, `geometry.ts`,
-  `profile.ts`, `sweep.ts`, `gltf.ts`, `model-file.ts`) are Solid-free and
-  GPU-free BY DESIGN so they can be checked headless (and, for the two
-  model modules, run under bun in `tools/model.ts`); keep them that way.
-  The rigs under `checks/`
-  (`geometry-check`, `sweep-check`, `pick-check`, `dispatch-check`,
-  `order-check`, `gltf-check`) run on
-  flux from the repo root: `bunx srt bundle -f --stdout
-  packages/3d/checks/<name>.ts | target/release/flux -`. Run the ones
-  touching what you changed. `raycast-check.tsx` and
-  `collision-check.tsx` are the exceptions: they assert the documented
-  picking contract (triangle accuracy, the box tier, pick/raycast
-  parity, layer masks, the `{ meshes }` filter) and collision contract
-  (exact sweep times, the surface rule, the slide filter, layers and
-  meshes on overlap/sweep, moveAndSlide's landing) against a real scene,
-  so they run on the playback client instead:
-  `bunx srt render packages/3d/checks/<name>.tsx --project --duration 3
-  --size 128x128`. Run them whenever a doc edit touches picking or
-  collision claims - two copies of this contract have drifted before.
+### Two layers: core and components
+
+Two layers. The imperative core is Solid-free: `createScene`,
+`createMesh(geometry, material)`, `add`/`remove`, `setTransform`,
+`lookAt`, `getRotation`, `setVisible`, `setRenderOrder` - plain objects
+over the spatial core (`flux:spatial`, `alloy/src/spatial/`): every node
+in a scene has a core node, JS keeps the LOCAL position/quaternion/scale
+as the readable truth and forwards each write, and the core's flush
+(one call per microtask) recomputes only the moved subtrees and writes
+each entry's uModel (plus uNormal for materials declaring it) and its
+visibility switch itself - a move costs its subtree, never the scene.
+ONE `setTargetParams` (the shared uViewProj + uCamPos) per camera
+change, however many meshes. World matrices live in the core only:
+`worldPosition`/`lookAt`/picking read them back (`worldMatrix`, pending
+writes included). See okf/backlog/spatial-core.md for what still runs
+in JS and why. The component face (`Scene`/`View3d`/`Group`/`Mesh`/
+`PerspectiveCamera`) syncs props into that core over context and renders
+nothing itself.
+
+### Node lifecycle
+
+Node lifecycle: `add(parent, child)` attaches (re-parenting detaches
+first), `remove(child)` DETACHES an intact subtree - children stay
+under the removed node, core nodes free on leave and recreate on
+re-enter, so a removed subtree re-adds cleanly. Nothing is destroyed
+except instance record buffers (`disposeInstances`) and the scene
+itself. (@solidrt/2d's `removeGroup` DESTROYS its subtree instead - a
+sprite cannot exist outside its layer, so there remove means destroy.)
+An instance node (addInstance on an instanced mesh) follows the 2d
+rule: slot-bound to its mesh, `removeInstance` destroys it, and the
+generic add/remove throw on it.
+
+### Rendering is the runtime's
+
+Rendering is the runtime's. The target is `render: "auto"`: it
+re-renders when entries change, so a STATIC scene costs zero passes and
+the library registers no frame loop. Continuous animation is the app's
+own `onFrame` writing a signal (declarative) or `setTransform` on a
+`ref`-grabbed node (the frame-rate escape hatch - signals carry
+structure, per-frame motion goes straight to the scene).
+
+### Views and layers
+
+VIEWS: `scene.createView({ width, height, overrideMaterial?, depth?,
+clearColor?, ... })` renders the same scene into a second target from
+its own camera (`view.setCamera`, the scene's CameraUpdate shape; in a
+component tree `<View3d>` is the same as a Scene child, see Components).
+Each mesh gets one entry in the view's target bound as one more draw sink of
+its CORE node, so the one flush writes every target - the app writes
+nothing per view. Geometry buffers and (without an override) materials
+are shared; the light set and `scene.setParams` names fan out to every
+view, `view.setParams` is the view's own channel - and names a view
+sets itself (or its `fog` option, below) become VIEW-OWNED: the
+scene's setParams/setFog fan-out skips them from then on, so a view
+override survives scene-wide writes. A view's backdrop is its
+clearColor (the scene background draws on PROBES, not views); a view
+has no picking. LAYERS select what a target
+draws, Three's model exactly: `layers` on a mesh is its membership
+bitmask (default 1, `setLayers`/the `layers` prop, NOT inherited from
+Groups), and each target carries a mask (default 1) - `layers` on
+createScene/createView, live via `setLayers` on the scene handle and
+each view. A mesh draws where mask & layers is non-zero, so a minimap's
+marker meshes live on bit 2: invisible in the main render, drawn by
+the map view whose mask admits them. Shadow views follow the SCENE's
+mask (what the scene cannot see must not darken it), and
+pick()/raycast()/overlap()/sweep() skip scene-masked-out meshes like
+invisible ones - unless the query passes its own `{ layers }`, which is
+how a low-poly collision mesh lives undrawn in the scene yet answers
+ground and collision queries (the physics-collider pattern).
+Per-view fog: `fog: FogOptions | null` on createView overrides the
+scene's fog for that view (null = unfogged - the clear minimap over a
+fogged scene); absent follows the scene. `overrideMaterial` (Three's
+`scene.overrideMaterial`, scoped to the view) draws every mesh with one
+material - a depth pass, a normal/id visualizer - skips instanced
+meshes (unless the override itself declares their exact
+`instanceAttributes` record layout) and draws in add order. `depth: "texture"` exposes `view.depthTexture`, the shadow-map
+input; the same option on createScene exposes `scene.depthTexture`,
+the input for a depth-reading post effect in `output` (not combinable
+with `samples` - no multisampled sampleable depth). `ortho: { left, right, top, bottom }` on any camera swaps
+perspective for `orthographic()` (`fov` ignored; `ortho: null` returns);
+the scene's own camera takes it too, and pick() follows.
+`examples/scene-views.tsx` is the shape.
+
+### Culling
+
+CULLING is the core's, per target, on by default: every camera write
+(the scene's, a view's, a shadow tile's) also sets that target's
+frustum in the spatial core, and the flush switches an entry whose
+world box falls wholly outside it to instance count 0 - the same
+switch as `visible`, so a culled mesh costs nothing per frame and a
+still camera re-tests nothing (a camera move re-tests every sink on
+that target, in Rust; a node move re-tests its own). The box is the
+picking box (the local bounds through the world matrix, the
+Godot/Unity AABB test; Three uses spheres); an instanced mesh without
+explicit `bounds` is culled by the union of its live instances' boxes
+(the joint group below over the instance nodes, so the box follows
+them: Godot's MultiMesh AABB, with `bounds` as its custom_aabb; Three
+computes an InstancedMesh sphere once and leaves it stale, Unity wants
+worldBounds), and a record mesh without `bounds` is never culled. Per
+mesh: `frustumCulled: false` (Three's name; `setCulling`) for geometry
+a vertex stage moves beyond its box - a fullscreen quad, a custom
+displacement - and `cullMargin` (world units, Godot's
+`extra_cull_margin`) for bounded displacement such as wind. Sprites
+cull by their quad's reach at any facing. A SKINNED part is culled by
+the union of its joints' boxes (the bake computes each joint's
+influence box in joint space, `ModelSkin.jointBounds`, .srtm VERSION
+5; the joint nodes carry them as culling-only bounds, outside the
+picking index), so the box follows the pose with no per-frame JS -
+Unity's bone bounds, Godot's per-bone AABBs; no `updateWhenOffscreen`
+knob is needed. Probe faces set no frustum (six cameras, one target).
+Shadow tiles cull casters against their light frustum, which is what
+makes `shadow.distance` and cascades cheaper.
+
+### Shadows
+
+SHADOWS are a view: `<DirectionalLight castShadow shadow={{ mapSize?,
+bias?, normalBias?, radius?, camera? }}>` (`createDirectionalLight({ castShadow,
+shadow })`, `setLight`) makes the scene own an internal
+`createView({ depth: "texture", overrideMaterial: depth pass })` drawing
+the `castShadow` meshes (`<Mesh castShadow>`, `setCastShadow`) from an
+orthographic camera at the light's WORLD position along its world
+direction, `shadow.camera` (+-5, 0.5..500 by default) as the frustum.
+Any light may cast, bounded by the shadow-slot budget
+(MAX_SHADOW_MAPS = 8, its own constant: a directional light claims
+`shadow.cascades` consecutive slots, a point light six, a spot one,
+and a caster past the budget throws at attach). `<SpotLight castShadow
+shadow={{ mapSize?, bias?, normalBias?, near? }}>` is the same
+machinery with a PERSPECTIVE camera: at the light's world position
+along its world direction, fov = its cone (2 * angle), near from
+`shadow.near` (default 0.5), far from the light's `distance` (or the
+directional default 500 when 0) - one map, one slot, the same atlas
+and lookup. A perspective map's depth is nonlinear, so `normalBias`
+(world units) is the acne knob to reach for; `bias` acts in that
+nonlinear depth. `<PointLight castShadow>` casts in every direction
+with the same option set: six 90-degree face maps (world-axis
+aligned, slot order +X, -X, +Y, -Y, +Z, -Z) as six consecutive tiles
+of the same atlas, far from `distance` like a spot - so give a
+casting bulb a distance. No cube map: a receiver picks the face by
+the dominant axis of the light-to-point vector (SHADOW_LOOKUP), one
+projection, one hardware-compare tap - the Three/Godot/Unity-URP
+atlas route. `shadow.radius` (every casting light, default 1 = that
+one tap, a 2x2 bilinear compare) softens the edge: above 1 a 3x3 grid
+of hardware taps `radius` texels apart, Three's `shadow.radius` /
+Godot's `shadow_blur`, nine taps per receiver fragment. A first-person
+eye over a floor shows the texel stairs at any map size; 2 is the
+usual figure, past ~3 the taps separate into bands. Each face map renders a few degrees wider than its face
+(URP's fovBias) so a seam fragment's occluder is inside the map it
+samples - without the guard band every seam shows a lit slit - and
+PCF taps clamp at face-tile edges, so a face seam hardens slightly
+instead of bleeding into the neighbour.
+`shadow: { cascades: N }` (1..MAX_CASCADES = 4) replaces the box with
+N maps fitted to slices of the SCENE camera's frustum (near ..
+`shadow.distance`, default the camera far; the practical split; each
+slice's bounding sphere as an ortho box along the light, its centre
+snapped to the map's texel grid so edges do not swim; re-fitted
+whenever the scene camera or the light moves) - a receiver samples the
+tightest map that covers the point, fading into the next over the
+map's outer 10% (`SHADOW_BLEND`) so the hand-over is a band, not a
+seam; contact shadows stay sharp near the camera while the horizon
+still has coarse ones, and pulling `distance` in sharpens all of them.
+The box is the honest tier for a bounded scene; cascades are for a
+scene that outgrows it, at N times the shadow fill. Every map is a
+TILE of the scene's one shadow atlas (a `depth: "texture"` draw target,
+a grid of cells the largest `mapSize` wide, scaled down uniformly
+against `limits.maxTextureSize`), so N maps are ONE pass: the atlas
+depth binds as the target-level `uShadowAtlas` of the scene and every
+non-shadow view (a white texel when nothing casts); maps are MAP slots
+dealt in light order, a light's cascades consecutive and tightest
+first - `uShadowRect[j]` slot j's tile in atlas UV, `uShadowMatrix[j]`
+its view's own view-projection (the whole array is one write per
+shadow-camera move) - and per light i `uShadowFirst[i]`/`uShadowCount[i]`
+name its slots (count 0 = it does not cast) with
+`uShadowBias[i]`/`uShadowNormalBias[i]` its knobs; `SHADOW_SLOTS` in
+glsl declares the set. Every `lit` material RECEIVES by default
+(Godot's and Three's default); `lit({ receiveShadow: false })` opts a
+material out and drops the map from its program - a material option,
+as with vertexColors/triplanar, because the material picks the program
+(Godot's `disable_receive_shadows`). The factor is `SHADOW`'s one
+hardware-compare tap (sampler2DShadow, LEQUAL, the driver's 2x2 PCF)
+on each casting light's own term. `examples/shadows.tsx` (three
+casting lights) is the shape; `examples/cascades.tsx` the cascaded sun.
+
+### Retargeted motion
+
+RETARGETED motion is native: `setTransition(node, { position:
+{ duration: 400 }, ... })` makes setTransform writes TARGETS the core
+animates toward every frame (position/scale per lane, rotation along
+the quaternion geodesic - a spring keeps its velocity through
+retargets), so a mesh gliding to a slot or a camera rig easing costs
+one JS write per target change, zero per frame. The declaration lives
+on the SceneNode and re-applies on every scene enter; the pose a node
+enters with always snaps. Each natural settle calls the node's
+`onTransitionEnd` (plain field like the pointer handlers) with
+`{ component }`; the raw "spatialTransitionEnd" engine event
+(srt:events, carrying the CORE node id `_node`) stays for flux:spatial
+consumers.
+
+### Geometry layout, indices and topology
+
+One interleaved vertex buffer per geometry, described by an open layout
+(`Geometry.layout`, absent = "standard"): an ordered attribute list that
+always starts with the standard prefix `aPos` vec3 + `aNormal` vec3 +
+`aUV` vec2 (what every generator emits) and may carry any named channels
+after it. `withAttribute(geometry, { name, format }, fill)` appends one
+(Three's `setAttribute` for an interleave); "colored" names the common
+case, the prefix plus `aColor` vec4 - the per-vertex data channel (a
+tint, baked AO, any four scalars; standard name, your contents) - and
+`withColors(geometry, fill)` is its spelling. Fill is a flat
+size-per-vertex array or a per-vertex callback receiving `(index, pos,
+normal, uv)`. Materials read attributes BY NAME: a material's vertex
+stage may declare any subset of its geometry's channels, and a channel
+the program reads that the geometry lacks (name + format) throws at
+add(). What a program reads is the ENGINE's word (`material.attributes()`
+= `programAttributes` reflection of the linked program, instance
+attributes excluded), not a parse of the GLSL: an `in` the compiler
+dropped does not count, and the engine also rejects a pipeline whose
+attribute lists leave a read attribute uncovered. The material
+keeps one program and builds one pipeline per layout its meshes bring,
+so a geometry may carry more than a material reads. The whole layout
+ships whether a material reads every attribute or not (inactive
+attributes only keep the stride), so extra channels cost their floats on
+every draw of that geometry - keep data-light passes (a wireframe
+reading only aPos) on standard geometry. `layoutStride`/`layoutSlot`/
+`layoutKey`/`layoutAttributes` are the layout arithmetic; two layouts
+with equal keys interleave identically (merge requires that).
+Indices are uint16 or uint32 - the `Geometry.indices` array type picks
+the draw's index format, so hand-built geometry past 64k vertices just
+uses a Uint32Array (generators emit uint16). What the indices LIST is
+`Geometry.topology` (`"triangles"` when absent; `"lines"`,
+`"line-strip"`, `"points"`, `"triangle-strip"`): the index buffer and
+its primitive travel together (Godot's surface primitive, Unity's
+SetIndices topology), a material builds one pipeline per (layout,
+topology) pair its meshes bring, and validateGeometry enforces the
+count rule at add() (a whole number of triangles or lines, one
+primitive's worth for a strip). Materials have no topology of their
+own. Only a triangle list gets a picking shape; lines and points pick
+and collide by their bounds box, and cast no shadow. `geometryTopology`
+reads the field with the default applied. Geometry GPU buffers are
+lazy, shared, and reference-counted by draw entries: removing the last
+entry frees them at the end of the microtask (a same-tick rebuild keeps
+the upload), so swapping `<Mesh geometry>` reactively never accumulates
+old generations; the vertex upload is keyed on the `Float32Array`
+itself, so geometries sharing a vertex array (a wireframe over its
+source) share one buffer. `disposeGeometry` is the immediate explicit
+free.
+
+### Material classes
+
+Materials dedupe hard: one program + one pipeline per material CLASS
+(a `shaderMaterialClass` per option combination for unlit, lit and
+sprite alike: map x transparent x cull x alphaTest, lit's extras on
+top), `depth: true` + `cull: "back"` unless the material says otherwise
+(`cull: "none"` for double-sided geometry; lit flips the normal on back
+faces); an instance is just per-entry uniforms (`uColor`) and bindings
+(`uMap`).
+
+### Pure pieces and checks
+
+The pure pieces (`math.ts`, `order.ts`, `geometry.ts`,
+`profile.ts`, `sweep.ts`, `gltf.ts`, `model-file.ts`) are Solid-free and
+GPU-free BY DESIGN so they can be checked headless (and, for the two
+model modules, run under bun in `tools/model.ts`); keep them that way.
+The rigs under `checks/`
+(`geometry-check`, `sweep-check`, `pick-check`, `dispatch-check`,
+`order-check`, `gltf-check`) run on
+flux from the repo root: `bunx srt bundle -f --stdout
+packages/3d/checks/<name>.ts | target/release/flux -`. Run the ones
+touching what you changed. `raycast-check.tsx` and
+`collision-check.tsx` are the exceptions: they assert the documented
+picking contract (triangle accuracy, the box tier, pick/raycast
+parity, layer masks, the `{ meshes }` filter) and collision contract
+(exact sweep times, the surface rule, the slide filter, layers and
+meshes on overlap/sweep, moveAndSlide's landing) against a real scene,
+so they run on the playback client instead:
+`bunx srt render packages/3d/checks/<name>.tsx --project --duration 3
+--size 128x128`. Run them whenever a doc edit touches picking or
+collision claims - two copies of this contract have drifted before.
 
 ## Components
+
+### Component props
 
 | Component | Props |
 | --- | --- |
@@ -273,6 +368,8 @@ blendMode and pointer events like any element.
 | `SpotLight` | transforms as Group, `direction?` (local aim, default [0, -1, 0]), `color?`, `intensity?`, `distance?` (falloff cutoff, 0 = none), `angle?` (cone half-angle DEGREES, default 60), `penumbra?` (0..1 rim fade, default 0), `decay?` (falloff exponent, default 2), `castShadow?`, `shadow?` (mapSize, bias, normalBias, near), `ref?(light)` |
 | `PointLight` | transforms as Group (position is what matters), `color?`, `intensity?`, `distance?`, `decay?`, `castShadow?` (six face maps, six shadow slots), `shadow?` (mapSize, bias, normalBias, near), `ref?(light)` |
 
+### Output composition
+
 Output composition: without `output`, `Scene` emits a minimal
 `<texture width height>` leaf and nothing else is forwarded - anything
 more goes through `output(texture)`, which renders in place of that leaf:
@@ -284,6 +381,8 @@ elsewhere. Called once, untracked, inside the scene context. Scene
 `width`/`height` are target pixels and the leaf's own width/height are
 layout, so render and display size separate - render at 2x and display
 smaller for supersampling.
+
+### Fill and fixed sizes
 
 Fill (the default): omit `width`/`height` and the built-in leaf is laid
 out at 100% of its parent's box (give it a sized parent, as on the web)
@@ -314,6 +413,8 @@ everything: the `pointer` feed listens at the scene's root, so
 `{...useScene().scene.handlers}` feeds the nodes, the scene's own
 handlers and the feed alike (a detached leaf gives its feed a `layout`,
 it has no layout box to normalize by).
+
+### Input
 
 Input, the rule (ARCHITECTURE.md): a camera control consumes a
 device-free abstraction and never handles events or reads a device
@@ -346,6 +447,8 @@ forward], forward = -y in the screen convention), `rise` axis. Keys and
 sticks move the CAMERA where a drag moves the content, so the presets
 bind them to `rotate`/`pan` through `invert()`; `look` is the exception,
 a drag and a stick both turn the eye.
+
+### Orbit camera
 
 Camera control: `createOrbitCamera(scene, { target?, azimuth?, elevation?,
 distance?, min/maxDistance?, min/maxElevation?, orbitSpeed?, rotateSpeed?,
@@ -401,6 +504,8 @@ getter and read where it applies, never snapshotted - so clamps, rates
 and anchors follow their props without a remount, and a clamp change
 re-clamps the pose at once.
 
+### First-person camera
+
 First-person control: `createFirstPersonCamera(scene, { position?, yaw?,
 pitch?, min/maxPitch?, moveSpeed?, lookSpeed?, fly?, clampPosition? })` -
 a position plus yaw/pitch (yaw 0 faces -z, positive turns left; pitch
@@ -443,6 +548,8 @@ clamp change re-clamps at once. checks/orbit-check.ts and
 checks/first-person-check.ts pin both controls headless (they import
 `@solidrt/core/input` only).
 
+### Overlay projection
+
 Overlay projection: `scene.project(point)` maps a world point to scene
 pixels (top-left origin, y down - the output texture's own space; `w` is
 the camera-forward distance in world units under either projection) and
@@ -456,6 +563,8 @@ drag-at-depth recipe: project the grabbed point once, keep its `w`,
 unproject each move). `scene.viewProj(out?)` copies the view-projection
 matrix for batch work. Never rebuild the camera matrices by hand for a
 HUD.
+
+### Picking
 
 Picking: `scene.pick(x, y)` is project()'s inverse - the camera ray
 through a scene pixel, returning `Hit[]` (`{ mesh, distance, point }`,
@@ -488,6 +597,8 @@ no `face`/`uv` - and a ray from inside it meets the far side, the
 surface contract overlap/sweep share. Both methods
 flush pending writes first (the lookAt/project immediacy contract), and
 both skip invisible meshes.
+
+### Collision
 
 Collision: `scene.overlap(volume, opts?)` and `scene.sweep(volume,
 motion, opts?)` are the same index's other two questions - what a volume
@@ -546,6 +657,8 @@ one overlap per move. Deliberately absent and additive when asked: a
 step offset (Unity's stepOffset; Godot has none either) and a cylinder
 volume (Godot only).
 
+### Pointer events
+
 Pointer events (scene-pointer.ts): the element event model one tree
 deeper, with the SCENE as the root of the walk (under a `<View3d>` leaf:
 the view). `onPointerDown/Move/Up/Enter/Leave/Wheel/Tap` are plain
@@ -595,6 +708,8 @@ leaf laid out at a different size (the supersampling pattern) uses
 checks/dispatch-check.ts pins the walk, claiming, capture, hover, wheel
 and tap rules headless; examples/pick.tsx is the live guard.
 
+### Geometry generators
+
 Geometry generators take ONE options object, every field optional with
 a default, named as Three names them: `box({ width, height, depth })`
 (1x1x1); `plane({ width, height })`, `circle({ radius, segments })` and
@@ -625,6 +740,8 @@ already carries (withAttribute ADDS one), reading pos/normal/uv from the
 buffer itself - so a builder that bakes transforms while writing hands
 the baker world-space vertices. `fill` indexes relative to `first`.
 `fillColors(geometry, fill, first?, count?)` is its aColor spelling.
+
+### Geometry as data
 
 Geometry as data: `transformGeometry(geometry, { position?, rotation?,
 quaternion?, scale? }, label?)` bakes a placement into a copy (the
@@ -660,6 +777,8 @@ slab test (entry t >= 0 in units of the direction's length, 0 from
 inside, -1 for a miss) - for ray-testing boxes you keep yourself
 (triggers, collision volumes) without meshes you do not want to draw.
 
+### Profile kit
+
 Profile kit (2D outlines to solids, real texture UVs): a `Profile` is a
 closed XY polygon, bare `[x, y]` points crease, `{ p, smooth }` points
 share an averaged normal - `fillet(points, radius, segs?)` and
@@ -685,86 +804,104 @@ like circle); `triangulate(points)` is the ear-clipping core (fan
 fallback, never drops a cap), exported for custom flat work. These pick
 uint16/uint32 indices by vertex count automatically.
 
-Materials:
+### Materials
 
-- `unlit({ color?, map?, transparent?, cull?, alphaTest?, fog? })` -
-  straight `[r, g, b, a?]` 0..1 sRGB (decoded to linear light, see Color
-  below), premultiplied internally; `cull` and
-  `alphaTest` as on lit (a mapped cutout casts its cutout); `fog: false`
-  opts out of the scene's fog (all four library materials take it).
-- `sprite({ color?, map?, transparent?, billboard? })` - unlit on a quad
-  that turns to face the camera IN THE VERTEX STAGE (off the shared
-  uCamRight/uCamUp, or uCamPos for `billboard: "fixed-y"`, which yaws
-  only and stays upright on world y - Godot's BILLBOARD_FIXED_Y, the
-  tree/character sprite; the default `"full"` is Three's Sprite, flat to
-  the screen). No per-frame JS however many sprites. `transparent`
-  defaults to TRUE here (cutouts; Three's SpriteMaterial default), cull is
-  off. Draw with `createSprite(material)` / `<Sprite>`: a Mesh over a
-  shared unit plane, no geometry argument, `scale` = world size, rotation
-  ignored. Picks by a unit box around its center (its reach at any
-  facing), so hits carry no normal/face/uv. `examples/sprites.tsx`.
-- `shaderMaterial({ vertex, fragment, params?, textures?, depth?,
-  depthWrite?, blend?, cull?, label? })` - your own GLSL, the
-  custom-look escape hatch. The STANDARD UNIFORM SET: the vertex stage
-  MUST declare and use `uniform mat4 uModel` (the mesh's world matrix,
-  per entry) and `uniform mat4 uViewProj` (the camera, shared
-  target-level params) - transform with
-  `uViewProj * uModel * vec4(aPos, 1.0)`; a source missing either throws
-  at shaderMaterial() creation. The rest is opt-in by declare-and-use:
-  `uniform vec3 uCamPos` (the camera's world position, shared and written
-  with uViewProj - the specular/fresnel view vector is
-  `normalize(uCamPos - worldPos)`), `uniform vec3 uCamRight` / `uCamUp`
-  (the camera's world-space view axes, shared likewise - a billboard is
-  `center + uCamRight * x + uCamUp * y`; do NOT rebuild them from
-  uViewProj rows, that carries the clip flip), `uniform mat4
-  uInvViewProj` (the camera's inverse view-projection, shared likewise -
-  a clip position back to world, the world-space ray through a pixel
-  without knowing the projection), the output stage's `uniform float
-  uExposure` / `uToneMapping` (compose `OUTPUT` from `/glsl` and end with
-  `fragColor = outputColor(rgb, alpha)` to take the scene's exposure and
-  tone mapping and encode like the library materials do; a fragment
-  writing fragColor directly writes final encoded pixels) and `uniform
-  mat4 uNormal` (the world
-  inverse-transpose, written beside uModel for this material's meshes;
-  take `mat3(uNormal)` - correct under non-uniform scale, where
-  mat3(uModel) bends normals off the surface). Attributes come from the
-  geometry's layout by name; the ones the linked program actually reads
-  (engine reflection, instance attributes excluded) must all be in the
-  mesh's geometry layout or add() throws - so a used `in vec4 aColor`
-  needs `withColors()` geometry and a custom channel needs
-  `withAttribute()`. One program per class, one pipeline per layout met. Sources without `#version` get the standard
-  pipeline preamble. App-driven uniforms beyond the standard set: seed
-  via `params`, then write per mesh with
-  `setMeshParams(mesh, { name: value })` (validated names; values persist
-  across entry rebuilds; frame-rate-safe like setTransform) or declaratively
-  with the `Mesh` `params` prop (same merge semantics - a key that
-  disappears from the object keeps its old value; for per-frame values
-  prefer `ref` + setMeshParams from onFrame, the setTransform split).
-  Scene-wide values (a clock, a sun direction, fog) go through
-  `scene.setParams({ uTime })` instead - one write for every mesh.
-- `shaderMaterialClass({ vertex, fragment, ...pipeline state })` - the
-  class/instance split for your own GLSL: compiles once, and
-  `cls.instance({ params?, textures? })` returns a Material sharing that
-  pipeline with its own values. `dispose()` lives on the class alone.
-  `shaderMaterial(opts)` is exactly a class with one instance (its
-  `dispose` forwards to the class).
-- `instanceAttributes: [{ name, format, slot? }]` on either shader-material
-  form makes an INSTANCED material: the vertex stage reads them as `in`
-  variables beside the layout's own, and each drawn instance gets one
-  record per slot from the mesh's instance buffers - slot 0 (default)
-  is the record buffer, slot 1 an instanced mesh's STYLE buffer (below).
-  Its meshes come from `createInstancedMesh` or `createRecordMesh`; a
-  `createMesh` mesh is rejected at add(). `instanceStyle: [..]` is the
-  slot-1 record a fresh instance starts with. The stock materials do
-  the same with one flag: `lit/standard/unlit({ instanced: true })`
-  places by the instance matrix (the shadow pass too, so the fleet
-  casts), and `{ instanceColors: true }` adds a per-instance
-  premultiplied `[r, g, b, a]` style record starting white - Unity's
-  per-material instancing switch with Three's setColorAt.
+#### unlit
+
+`unlit({ color?, map?, transparent?, cull?, alphaTest?, fog? })` -
+straight `[r, g, b, a?]` 0..1 sRGB (decoded to linear light, see Color
+below), premultiplied internally; `cull` and
+`alphaTest` as on lit (a mapped cutout casts its cutout); `fog: false`
+opts out of the scene's fog (all four library materials take it).
+
+#### sprite
+
+`sprite({ color?, map?, transparent?, billboard? })` - unlit on a quad
+that turns to face the camera IN THE VERTEX STAGE (off the shared
+uCamRight/uCamUp, or uCamPos for `billboard: "fixed-y"`, which yaws
+only and stays upright on world y - Godot's BILLBOARD_FIXED_Y, the
+tree/character sprite; the default `"full"` is Three's Sprite, flat to
+the screen). No per-frame JS however many sprites. `transparent`
+defaults to TRUE here (cutouts; Three's SpriteMaterial default), cull is
+off. Draw with `createSprite(material)` / `<Sprite>`: a Mesh over a
+shared unit plane, no geometry argument, `scale` = world size, rotation
+ignored. Picks by a unit box around its center (its reach at any
+facing), so hits carry no normal/face/uv. `examples/sprites.tsx`.
+
+#### shaderMaterial
+
+`shaderMaterial({ vertex, fragment, params?, textures?, depth?,
+depthWrite?, blend?, cull?, label? })` - your own GLSL, the
+custom-look escape hatch. The STANDARD UNIFORM SET: the vertex stage
+MUST declare and use `uniform mat4 uModel` (the mesh's world matrix,
+per entry) and `uniform mat4 uViewProj` (the camera, shared
+target-level params) - transform with
+`uViewProj * uModel * vec4(aPos, 1.0)`; a source missing either throws
+at shaderMaterial() creation. The rest is opt-in by declare-and-use:
+`uniform vec3 uCamPos` (the camera's world position, shared and written
+with uViewProj - the specular/fresnel view vector is
+`normalize(uCamPos - worldPos)`), `uniform vec3 uCamRight` / `uCamUp`
+(the camera's world-space view axes, shared likewise - a billboard is
+`center + uCamRight * x + uCamUp * y`; do NOT rebuild them from
+uViewProj rows, that carries the clip flip), `uniform mat4
+uInvViewProj` (the camera's inverse view-projection, shared likewise -
+a clip position back to world, the world-space ray through a pixel
+without knowing the projection), the output stage's `uniform float
+uExposure` / `uToneMapping` (compose `OUTPUT` from `/glsl` and end with
+`fragColor = outputColor(rgb, alpha)` to take the scene's exposure and
+tone mapping and encode like the library materials do; a fragment
+writing fragColor directly writes final encoded pixels) and `uniform
+mat4 uNormal` (the world
+inverse-transpose, written beside uModel for this material's meshes;
+take `mat3(uNormal)` - correct under non-uniform scale, where
+mat3(uModel) bends normals off the surface). Attributes come from the
+geometry's layout by name; the ones the linked program actually reads
+(engine reflection, instance attributes excluded) must all be in the
+mesh's geometry layout or add() throws - so a used `in vec4 aColor`
+needs `withColors()` geometry and a custom channel needs
+`withAttribute()`. One program per class, one pipeline per layout met. Sources without `#version` get the standard
+pipeline preamble. App-driven uniforms beyond the standard set: seed
+via `params`, then write per mesh with
+`setMeshParams(mesh, { name: value })` (validated names; values persist
+across entry rebuilds; frame-rate-safe like setTransform) or declaratively
+with the `Mesh` `params` prop (same merge semantics - a key that
+disappears from the object keeps its old value; for per-frame values
+prefer `ref` + setMeshParams from onFrame, the setTransform split).
+Scene-wide values (a clock, a sun direction, fog) go through
+`scene.setParams({ uTime })` instead - one write for every mesh.
+
+#### shaderMaterialClass
+
+`shaderMaterialClass({ vertex, fragment, ...pipeline state })` - the
+class/instance split for your own GLSL: compiles once, and
+`cls.instance({ params?, textures? })` returns a Material sharing that
+pipeline with its own values. `dispose()` lives on the class alone.
+`shaderMaterial(opts)` is exactly a class with one instance (its
+`dispose` forwards to the class).
+
+#### Instanced materials
+
+`instanceAttributes: [{ name, format, slot? }]` on either shader-material
+form makes an INSTANCED material: the vertex stage reads them as `in`
+variables beside the layout's own, and each drawn instance gets one
+record per slot from the mesh's instance buffers - slot 0 (default)
+is the record buffer, slot 1 an instanced mesh's STYLE buffer (below).
+Its meshes come from `createInstancedMesh` or `createRecordMesh`; a
+`createMesh` mesh is rejected at add(). `instanceStyle: [..]` is the
+slot-1 record a fresh instance starts with. The stock materials do
+the same with one flag: `lit/standard/unlit({ instanced: true })`
+places by the instance matrix (the shadow pass too, so the fleet
+casts), and `{ instanceColors: true }` adds a per-instance
+premultiplied `[r, g, b, a]` style record starting white - Unity's
+per-material instancing switch with Three's setColorAt.
+
+### Instancing
 
 Instancing - one draw entry covering a population, in two forms. The
 axis between them is WHERE MOTION IS COMPUTED, the same split as
 @solidrt/2d's sprite and record layers.
+
+#### createInstancedMesh
 
 `createInstancedMesh(geometry, material, { capacity?, bounds?, label? })`
 draws the geometry once per instance NODE: `addInstance(mesh,
@@ -823,6 +960,8 @@ saving), so a few thousand
 mount in tens of milliseconds either way; populations spawned per frame,
 or in five figures, belong to the function face.
 
+#### createRecordMesh
+
 `createRecordMesh(geometry, material, records, count?, { bounds?,
 label? })` is the raw form: `records` is the interleaved per-instance
 data (stride = the material's slot-0 instanceAttributes summed, a
@@ -841,12 +980,16 @@ then it picks and transparent-sorts conservatively as one box. The
 escape hatch for motion only JS can compute at scale (a particle sim, a
 crowd stepped in a worker).
 
+#### Common to both
+
 Everything mesh works on both: setTransform moves the whole population
 through one uModel, setVisible zeroes the drawn count and restores it on
 unhide, renderOrder/params/geometry/material swaps apply, and
 `disposeInstances(mesh)` detaches and frees the record buffers - the one
 explicit free, geometry-buffer rule. `examples/fleet.tsx` (instances,
 components) and `examples/instanced.tsx` (records) are the live proofs.
+
+### Background
 
 Background: `scene.setBackground(source | null)`, the `background` option
 on createScene, and the reactive `Scene` prop. Drawn as the FIRST entry
@@ -882,6 +1025,8 @@ no separate resize plumbing. Two forms:
   the same way, so a skybox is one flat color there. A 2D texture id
   throws at the samplerCube binding. `examples/skybox.tsx`.
 
+### Cube-map convention
+
 The cube-map convention: a cube map holds what a GL lookup returns -
 each face as seen from OUTSIDE the cube, GL's own (RenderMan) frame -
 and every library lookup is a plain `texture(cube, dir)` in world space.
@@ -896,6 +1041,8 @@ image form can widen the signature later (a branded TextureId is a
 number, so the object form keeps it unambiguous). Translucent grounds
 over a background still need blend factors (a separate shader texture
 underneath until then).
+
+### Environment
 
 Environment: `scene.setEnvironment({ cube, intensity?, rotation? } |
 null)`, the `environment` option on createScene and the reactive `Scene`
@@ -946,6 +1093,8 @@ environment set contributes nothing (uEnvOn 0), not a black reflection.
 `examples/skybox.tsx` (a JS-baked sky), `examples/environment.tsx` (a
 baked HDRI lighting the scene alone).
 
+### Reflection probes
+
 Reflection probes: `scene.createReflectionProbe({ position, size?,
 near?, far?, layers?, clearColor?, label? })` renders the scene into a
 cube map from a point - Three's CubeCamera, Unity's and Godot's
@@ -991,6 +1140,8 @@ x-mirrored projection (`Camera.mirror`), because a GL cube face is seen
 from outside; the engine inverts the front-face rule on cube target
 passes so cull modes keep their meaning. `examples/probe.tsx`.
 
+### Baked sky
+
 Baked sky: `scene.bakeBackground(size?)` is a reflection probe at the
 origin that sees no mesh (layer mask 0): the scene's background - the
 GLSL sky or the skybox - alone on its six faces, LINEAR (a sky ending in
@@ -1010,6 +1161,8 @@ that HDR is for. A sky that reads
 `uCamPos` bakes from the origin; scene params (an app clock) are seen as
 of the call. `examples/sky-lit.tsx`.
 
+### Panoramas
+
 Panoramas: `equirectToCube(map, size, opts?)` converts an uploaded
 equirectangular 2D texture (createImage, createTexture) into a cube
 TextureId on the GPU, synchronously (six face passes straight into a
@@ -1024,6 +1177,8 @@ a skybox, or `mipmap: true` for the box chain); its PREFILTERED form is
 the bake tool above, whose CPU pipeline (`src/environment-bake.ts`:
 decodeHdr, panoramaToCube, prefilterCube, the .srte encode/decode) is
 pure TypeScript and bun-tested - there is no runtime .hdr decoder.
+
+### Fog
 
 Fog: `scene.setFog(fog | null)`, the `fog` option on createScene and
 the reactive `Scene` prop, in Three's two shapes: linear `{ color, near,
@@ -1056,6 +1211,8 @@ horizon, and put `far` at or inside the camera's far plane to hide the
 clip. `examples/fog.tsx` cycles the forms over a valley;
 `examples/cascades.tsx` fogs its field to the sky.
 
+### Color
+
 Color: the scene shades in LINEAR light and outputs sRGB, like Three
 (ColorManagement), Godot and Unity's linear space - no gamma mode. Every
 `[r, g, b]` color option is sRGB, what a color picker shows: material
@@ -1080,6 +1237,8 @@ hardware-encode alternative would display wrong through the runtime's
 raw sampling). What changed for a scene tuned before this: terminators
 soften, mid-tones brighten, highlights widen - drop ambient rather than
 lights. `emissiveIntensity` scales the emissive in linear light.
+
+### Lighting GLSL
 
 Lighting GLSL (`@solidrt/3d/glsl`): exported string constants composed
 into shaderMaterial sources with plain template literals - `LIT_VERTEX`
@@ -1115,6 +1274,8 @@ composes; a non-receiving one composes none of the three and declares no
 samplers. Lights, colors and exponents are arguments, so
 nothing is pinned but the function names; `lit` is composed from these
 same constants - customizing never means leaving the system.
+
+### Custom looks: three tiers
 
 A custom look is a citizen of the scene - lit by its lights, shadowed,
 fogged, exposed and tone mapped like the stock materials - at one of
@@ -1177,6 +1338,8 @@ a shadow program that never reads `n` (no triplanar, no surface function
 using it) reflects `uNormal` inactive - set `normalMatrix: false` on that
 instance or every caster move warns about the skipped write.
 
+### Lights
+
 Lights and `lit`: lights are graph NODES, like Three. `createDirectionalLight({
 direction?, color?, intensity? })` / `<DirectionalLight>` is parallel light
 travelling along `direction` in the node's LOCAL space (default `[0, -1,
@@ -1222,6 +1385,8 @@ scenes. Everything starts black: a lit scene with no light shows
 nothing, on purpose, like Three. `examples/lamps.tsx` is the spot/point
 shape (soft vs hard cone, casting spots, an orbiting bulb).
 
+### lit
+
 `lit(opts)` is the standard look beside `unlit`: hemisphere ambient plus
 the directional list, Lambert diffuse, Blinn-Phong highlight when
 `specular` (0..1 strength) is set with `shininess` (default 30), a
@@ -1246,6 +1411,8 @@ surface seen at a grazing angle (a floor, a road) wants `anisotropy: 4`
 or more beside it, or trilinear smears the far half into the mip its long
 axis picked (`createModel` uploads its images with both; the device clamps
 the level, `limits.maxAnisotropy` reports it).
+
+#### Surface maps
 
 The surface maps, each an option beside `map` and sampled at its uv:
 
@@ -1280,6 +1447,8 @@ The surface maps, each an option beside `map` and sampled at its uv:
   triplanar value). A cutout's shadow transforms the same way.
 
 `examples/materials.tsx` shows all five.
+
+### standard
 
 `standard(opts)` is the metalness/roughness material, the look authored
 assets expect (Three's MeshStandardMaterial, Godot's StandardMaterial3D,
@@ -1319,70 +1488,82 @@ classes do not warn about an inactive uniform.
 
 ## Models
 
+### Three layers
+
 Authored models come in as glTF 2.0 (.gltf with its .bin and image files
 next to it, or single-file .glb) and become a Group carrying the file's
 node hierarchy, Three's `gltf.scene`. Three layers, use the lowest that
 fits:
 
-- `parseGltf(bytes, resolve?)` - the pure parser (no engine, runs under
-  bun and on flux): `ModelData` = `nodes` (the retained hierarchy in
-  pre-order - name, parent index, local TRS; matrix-form nodes are
-  TRS-decomposed, shear dropped; nodes that carry no part, joint or
-  animation target anywhere - cameras, lights, unused empties - are
-  pruned), `parts` (one per mesh primitive, its node's NAME kept, `node`
-  index, vertices in the standard layout LOCAL to the node - except
-  skinned parts: "skinned" layout, model-space bind pose, `skin` index),
-  `skins` (joint node indices + inverse binds), `clips` (the animations
-  as baked channel buffers: node/path/interpolation, times, values),
-  `materials` (base color factor, `map` =
-  index into `images`, `doubleSided`, `transparent` = alphaMode BLEND,
-  `alphaMode` as written and `alphaCutoff`, spec default 0.5, the
-  normal and emissive slots, `metalness`/`roughness` factors and the
-  packed `metalnessRoughnessMap` - standard's inputs), `images`
-  (the encoded PNG/JPEG bytes, undecoded) and `bounds` (world-space rest
-  pose, conservative for parts under rotated nodes). External
-  files come through `resolve(uri)` (uri as written, still
-  percent-encoded; `gltfExternalUris(bytes)` lists them so an async
-  caller can read them first) - for a .gltf AND for a .glb, which is
-  usually self-contained but may legally reference external images
-  (real exporters do); data: uris need no resolver. Missing
-  normals produce FLAT shading (the spec's rule): the primitive is
-  un-indexed, one vertex per corner. A mirroring node chain (negative
-  rest-pose world determinant) flips the part's index winding so
-  `cull: "back"` still keeps the outside. Non-triangle primitives are
-  skipped; a required extension the parser does not implement throws
-  naming it, and Draco or meshopt compression throws "re-export without
-  mesh compression" - Blender exports Draco by DEFAULT, so that is the
-  first error a real file hits.
-- `createModel(data, { material?, label? })` - uploads the images (repeat
-  wrap, mipmapped, 4x anisotropic), makes one material per glTF material (default `standard`
-  with the file's color, maps, normal scale, metalness/roughness and
-  packed map, emissive and transparency - the glTF material model, so a
-  scene showing a model wants an `environment` (a glTF metal in a scene
-  with none renders near black); `material: (m, maps, skinned) =>
-  lit({ color: m.color, map: maps.map ?? undefined, skinned })` for the
-  Blinn-Phong look, or any other material; it is called once per material and shared), the node table as nested
-  Groups with the file's local TRS, and one mesh per part under its node,
-  all inside the returned `Model` (a Group): `add(scene.root, model)`,
-  place it with `setTransform`, find parts by name in `model.parts`
-  (`{ name, mesh }`), spin a wheel relative to its axle through
-  `model.nodes` (`{ name, node }` in table order, parents first; names
-  repeat when the file's do - `.find()` yours), `model.bounds` for
-  framing a camera. Skinned parts get the `skinned: true` material
-  variant and hang off the model ROOT (the spec ignores their node's
-  transform; the palette places them - see the mixer below). `dispose()`
-  detaches it and frees the geometry buffers and textures - the model owns
-  them, nothing else frees them.
-- `loadGltf(path)` / `loadModel(path)` - read from `assets/` with flux:fs
-  and build. `loadModel` reads the baked `.srtm` written by `srt tool
-  3d/model <in.gltf|glb> -o assets/<name>.srtm`: the same parse run once
-  under bun, stored in the GPU layout, so loading is views onto the file's
-  bytes plus the image decodes. Numbers from a 32k-vertex, 6-texture model
-  on a release client: `parseGltf` 124 ms on flux (22 ms under bun) against
-  40 ms for the whole baked load - the runtime parse is fine for small
-  models and a binary import (`import bytes from "./x.glb" with { type:
-  "binary" }` then `createModel(parseGltf(bytes))`, see
-  `examples/model.tsx`); bake anything big.
+#### parseGltf
+
+`parseGltf(bytes, resolve?)` - the pure parser (no engine, runs under
+bun and on flux): `ModelData` = `nodes` (the retained hierarchy in
+pre-order - name, parent index, local TRS; matrix-form nodes are
+TRS-decomposed, shear dropped; nodes that carry no part, joint or
+animation target anywhere - cameras, lights, unused empties - are
+pruned), `parts` (one per mesh primitive, its node's NAME kept, `node`
+index, vertices in the standard layout LOCAL to the node - except
+skinned parts: "skinned" layout, model-space bind pose, `skin` index),
+`skins` (joint node indices + inverse binds), `clips` (the animations
+as baked channel buffers: node/path/interpolation, times, values),
+`materials` (base color factor, `map` =
+index into `images`, `doubleSided`, `transparent` = alphaMode BLEND,
+`alphaMode` as written and `alphaCutoff`, spec default 0.5, the
+normal and emissive slots, `metalness`/`roughness` factors and the
+packed `metalnessRoughnessMap` - standard's inputs), `images`
+(the encoded PNG/JPEG bytes, undecoded) and `bounds` (world-space rest
+pose, conservative for parts under rotated nodes). External
+files come through `resolve(uri)` (uri as written, still
+percent-encoded; `gltfExternalUris(bytes)` lists them so an async
+caller can read them first) - for a .gltf AND for a .glb, which is
+usually self-contained but may legally reference external images
+(real exporters do); data: uris need no resolver. Missing
+normals produce FLAT shading (the spec's rule): the primitive is
+un-indexed, one vertex per corner. A mirroring node chain (negative
+rest-pose world determinant) flips the part's index winding so
+`cull: "back"` still keeps the outside. Non-triangle primitives are
+skipped; a required extension the parser does not implement throws
+naming it, and Draco or meshopt compression throws "re-export without
+mesh compression" - Blender exports Draco by DEFAULT, so that is the
+first error a real file hits.
+
+#### createModel
+
+`createModel(data, { material?, label? })` - uploads the images (repeat
+wrap, mipmapped, 4x anisotropic), makes one material per glTF material (default `standard`
+with the file's color, maps, normal scale, metalness/roughness and
+packed map, emissive and transparency - the glTF material model, so a
+scene showing a model wants an `environment` (a glTF metal in a scene
+with none renders near black); `material: (m, maps, skinned) =>
+lit({ color: m.color, map: maps.map ?? undefined, skinned })` for the
+Blinn-Phong look, or any other material; it is called once per material and shared), the node table as nested
+Groups with the file's local TRS, and one mesh per part under its node,
+all inside the returned `Model` (a Group): `add(scene.root, model)`,
+place it with `setTransform`, find parts by name in `model.parts`
+(`{ name, mesh }`), spin a wheel relative to its axle through
+`model.nodes` (`{ name, node }` in table order, parents first; names
+repeat when the file's do - `.find()` yours), `model.bounds` for
+framing a camera. Skinned parts get the `skinned: true` material
+variant and hang off the model ROOT (the spec ignores their node's
+transform; the palette places them - see the mixer below). `dispose()`
+detaches it and frees the geometry buffers and textures - the model owns
+them, nothing else frees them.
+
+#### loadGltf and loadModel
+
+`loadGltf(path)` / `loadModel(path)` - read from `assets/` with flux:fs
+and build. `loadModel` reads the baked `.srtm` written by `srt tool
+3d/model <in.gltf|glb> -o assets/<name>.srtm`: the same parse run once
+under bun, stored in the GPU layout, so loading is views onto the file's
+bytes plus the image decodes. Numbers from a 32k-vertex, 6-texture model
+on a release client: `parseGltf` 124 ms on flux (22 ms under bun) against
+40 ms for the whole baked load - the runtime parse is fine for small
+models and a binary import (`import bytes from "./x.glb" with { type:
+"binary" }` then `createModel(parseGltf(bytes))`, see
+`examples/model.tsx`); bake anything big.
+
+### Async loading
 
 Loading is async everywhere but the binary import: loadGltf/loadModel
 return promises, and the async value must be read the way Solid 2 async
@@ -1402,6 +1583,8 @@ a source glTF must be parsed at runtime, do the parse in an isolate
 (parseGltf's result is plain data and copies across) and keep
 createModel on main.
 
+### Placement and sockets
+
 Placement: pieces of one authored set (a body and its fitted cosmetics)
 export in one world space, so composing them is `add(group, model)` per
 piece and nothing else - no placement math. SOCKETED items (a weapon in
@@ -1418,6 +1601,8 @@ authored, posed it follows), since parenting stacks the joint's
 transform on top of the authored placement. Skinned PARTS are the one
 thing that never needs this: they hang off the model root and the
 palette places them.
+
+### Wardrobe pieces
 
 Wardrobe pieces (a hood, a cape, cuffs) are the third case: exported
 WITH a skin over the body's joints and WITHOUT clips, so beside an
@@ -1443,6 +1628,8 @@ disposing it; disposing a body disposes what it wears. Culling follows
 the wear: a body joint's box is the union of every skin reaching it,
 its own and the pieces'.
 
+### Applied glTF material fields
+
 Applied: `doubleSided` (the default material draws it with `cull:
 "none"`), alphaMode MASK (`alphaTest: alphaCutoff`), `normalTexture`
 (+ scale; the derivative frame needs no tangents), `emissiveFactor` x
@@ -1458,6 +1645,9 @@ by lit()/standard() option name (`maps.map`/`maps.normalMap`/
 A `.srtm` baked before the material records carried the PBR fields
 (file version 3) is rejected by loadModel - re-bake with `srt tool
 3d/model`.
+
+### Animation
+
 Animation: `createMixer(model)` plays `model.clips` by name -
 `mixer.play(name, { loop?, speed?, fadeMs? })` (fadeMs crossfades: the
 named clip fades in, everything else fades out - Unity's CrossFade,
@@ -1485,6 +1675,9 @@ so a TRANSPARENT mesh parented under a player-animated joint does not
 re-trigger the back-to-front re-sort while it animates (opaque meshes,
 palettes and picking are unaffected) - nudge the scene with any
 setTransform if it shows, until the core-side transparent sort lands.
+
+### Root motion
+
 Root motion: `play(name, { inPlace? })` strips a clip's root travel
 (Unity's applyRootMotion off, Godot's root_motion_track): the root's
 x/z hold at the clip's first key and its height rebases onto the root's
@@ -1521,7 +1714,11 @@ horizontal travel (Unity's bake-into-pose Y - for a controller that
 owns gravity). `inPlace` is ignored while rootMotion is set. Yaw is
 the swing-twist about up (exact under any lean); a cubic rotation
 track is linearized at 60 keys/s before its yaw is held. Verified on
-Mixamo's standing turns (external/mixamo-turn). Skins need nothing further: each skin's uBones palette
+Mixamo's standing turns (external/mixamo-turn).
+
+### Skins
+
+Skins need nothing further: each skin's uBones palette
 (model-local jointWorld x inverseBind, sized to the RIG - an rgba32f
 float texture, 4 texels wide, one row per joint, sampled in the vertex
 stage via texelFetch, so there is no joint cap) is composed by the
@@ -1531,6 +1728,8 @@ computed-once texture. `sampleChannel` (pure, from the root) stays the
 JS sampling core for checks and custom drivers;
 okf/done/animation-core.md records the design.
 
+### Not in the subset
+
 Not in the subset, dropped: vertex colors, tangents and further UV sets;
 morph targets (the "weights" channel path); samplers are ignored (every
 texture repeats); additive blending draws as base color. The follow-ups
@@ -1539,6 +1738,8 @@ VERSION 3 (node table in the header, node-local vertices, skins, clips);
 older bakes are rejected - re-bake with `srt tool 3d/model`.
 
 ## Traps
+
+### Models and skinning
 
 - A model's vertices are LOCAL to their node; the file's placement lives
   in the node-table TRS, composed by the scene like any Group chain. So
@@ -1557,6 +1758,9 @@ older bakes are rejected - re-bake with `srt tool 3d/model`.
   MODEL moves both. Shadows are the exception: the shadow variants
   (depth and cutout) skin by the same uBones palette, so a caster casts
   its pose.
+
+### Materials and color
+
 - A `standard` metal in a scene with no environment renders near black:
   its diffuse is zero and the black placeholder cube is all there is to
   reflect (Three and Godot render the same; Unity falls back to an
@@ -1564,74 +1768,9 @@ older bakes are rejected - re-bake with `srt tool 3d/model`.
   so an untextured asset is all metal, and createModel's default is
   `standard`: give a model scene an `environment` (loadEnvironment's
   baked .srte, or the skybox's cube), or pass `lit` as the material.
-- A reflection probe is a mirrored render (x-flipped projection, winding
-  inverted by the engine): anything built from screen-space derivatives
-  flips with it, so a normal-mapped surface shows its bumps INVERTED in
-  a probe's reflection. Known and shared with every engine's mirrored
-  views; a `uMirror` sign on the derivative frame is the fix when it
-  matters.
-- A generated cube chain (`mipmap: true` from six faces) is a box
-  filter, not the GGX convolution the roughness-to-level rule assumes:
-  rough reflections read too sharp and the diffuse `envIrradiance` is a
-  4x4 average. Bake with `srt tool 3d/environment` for anything
-  photographed; the JS sky gradients in the examples get away with it.
 - Light intensities are the same numbers for `lit` and `standard`: 1
   lights a white matte surface to 1 face-on. A Three scene's intensities
   are a factor pi larger for the same look; divide when porting.
-- The y-down clip flip is baked into `perspective()`; scene code and
-  geometry are plain y-up right-handed, and CCW-outward winding culls
-  correctly with `cull: "back"`. Do NOT negate y anywhere else, and do not
-  "fix" the negated row of `perspective()` - both would mirror the winding
-  and show mesh interiors.
-- `visible: false` keeps the entry, drawn with `instanceCount: 0` (a
-  cheap off switch); unhiding writes 1, or the mesh's own record count
-  when it is instanced - never a bare 1 into an instanced entry. Hidden
-  meshes skip uModel writes; the fresh matrix is
-  written on unhide. A freshly attached entry starts off the same way and
-  the core's flush turns it on when it writes uModel - never add one
-  live: it has no world matrix yet, and drawn before the sync microtask it
-  flashes at the world origin for a frame.
-- Instancing pairs strictly at add(), like layout: an instanced material
-  needs a createInstancedMesh or createRecordMesh mesh and vice versa,
-  and the record strides must match the material's attributes per slot
-  (the 16 floats of INSTANCE_MATRIX_ATTRIBUTES in slot 0 on an instanced
-  mesh, its style stride in slot 1; a record mesh is slot 0 only) - each
-  mismatch throws there, at creation for the mesh's own material and at
-  add() for a swapped one. The instance buffers are MESH-owned (unlike
-  shared geometry buffers): `disposeInstances` is their one free, and
-  the mesh cannot be re-added afterwards. Capacity grows by REPLACEMENT,
-  never resize: an addInstance or setRecords past capacity doubles into
-  new buffers and swaps them in (an instanced mesh's live records move
-  in one core `retargetRecords`, its style mirror republishes) -
-  amortized like a dynamic array, same policy as @solidrt/2d; size
-  `capacity` or the initial records to skip the copies. An instanced
-  mesh's style stride comes from its material AT CREATION: a later
-  setMaterial to a class with another slot-1 layout throws at the
-  rebuild.
-- Style writes are mirrored, not immediate: `setInstanceStyle` lands in
-  `MeshInstances.style.data` and the scene's sync publishes the dirty
-  range - so a write on a mesh outside any scene shows once it is added
-  (the attach republishes the whole mirror), and reading the GPU buffer
-  back mid-frame can lag the mirror by one sync.
-- Instanced casters: `castShadow` on a populated mesh needs a depth pass
-  with the instance placement in it - the stock materials' `instanced`
-  carries one, a custom class needs `shadowVertex` (see shadows below);
-  a class without one is skipped by shadow views, silently.
-- A record mesh without explicit `bounds` has no BVH leaf: it never
-  picks, pointer events never target it, and its transparent sort key
-  falls back to the node's world position. That is deliberate - records
-  are opaque to the library, so any inferred box would be a guess. Supply
-  `bounds` for anything pickable or transparent. An instanced mesh picks
-  per instance regardless and culls by its instances' union; its
-  `bounds` replace that union and give the transparent sort a center.
-- An instance node's own fields hold its LOCAL pose (relative to its
-  parent, as for any node); the record the core writes is its pose
-  relative to the MESH, composed through any group between them. A
-  removed instance's children stay parented to the dead node: remove()
-  one to re-use it. `disposeInstances` on an instanced mesh flushes the
-  core before freeing the buffer, so the destroyed instances' hiding
-  writes land in a live buffer; keep that order if you ever free a
-  record buffer by hand.
 - Transparency is an EXPLICIT material flag, Three's rule: `unlit({ color:
   [r, g, b, 0.5] })` still draws opaque, and opaque means it: the standard
   classes write alpha 1 when not `transparent` (the scene target is
@@ -1658,6 +1797,54 @@ older bakes are rejected - re-bake with `srt tool 3d/model`.
   translucents can sort wrong (center distance, not per-pixel) - that is the
   engine contract, no OIT. A `shaderMaterial({ transparent: true })`
   fragment must write PREMULTIPLIED output (`vec4(rgb * a, a)`).
+- A color map created as plain rgba8 renders WASHED OUT: the fragment
+  reads its encoded bytes as linear light and encodes them again. Create
+  color images (base color, emissive, a sky's faces or panorama) with
+  `format: "rgba8-srgb"`; keep data maps rgba8. A rendered rgba8 texture
+  (a scene view, a shader target, a UI capture) holds encoded pixels and
+  cannot be tagged, so as a `map` it needs `srgbToLinear` from SRGB in a
+  custom fragment (no material option yet); a draw target you create
+  yourself can be `format: "rgba8-srgb"` and then decodes on sample (it
+  is sampler-only: no display, readback or copy).
+- Reading the scene texture back (a probe's readTexture, a snapshot)
+  gives ENCODED pixels: an expected linear value v shows as
+  `linearToSrgb(v) * 255` - intensity 0.5 reads 188, not 128.
+
+### Environment and background
+
+- A reflection probe is a mirrored render (x-flipped projection, winding
+  inverted by the engine): anything built from screen-space derivatives
+  flips with it, so a normal-mapped surface shows its bumps INVERTED in
+  a probe's reflection. Known and shared with every engine's mirrored
+  views; a `uMirror` sign on the derivative frame is the fix when it
+  matters.
+- A generated cube chain (`mipmap: true` from six faces) is a box
+  filter, not the GGX convolution the roughness-to-level rule assumes:
+  rough reflections read too sharp and the diffuse `envIrradiance` is a
+  4x4 average. Bake with `srt tool 3d/environment` for anything
+  photographed; the JS sky gradients in the examples get away with it.
+- The background covers the whole target with depth off, drawn first: it
+  REPLACES the clearColor visually (the clear still runs; you just never
+  see it), and a `transparent: true` mesh blends over it in-pass since the
+  background is always entry zero.
+- The background pipeline/program are SCENE-OWNED (unlike shared
+  material pipelines): setBackground(null), replacement, and dispose()
+  destroy them. Do not hand the background's pipeline to anything else.
+  A skybox is the same slot with the library's fragment; only a
+  skybox-to-skybox replace keeps the entry (params and cube rewritten).
+- The environment binds through the light rewrite's map set (uEnv
+  beside uShadowAtlas on every receiving target, new views included) and
+  directly on setEnvironment; the placeholder cube is app-lifetime like
+  the shadow placeholder. A `lit` without `reflectivity` declares no
+  environment sampler - the flag is part of the class key.
+
+### Coordinates and rotation
+
+- The y-down clip flip is baked into `perspective()`; scene code and
+  geometry are plain y-up right-handed, and CCW-outward winding culls
+  correctly with `cull: "back"`. Do NOT negate y anywhere else, and do not
+  "fix" the negated row of `perspective()` - both would mirror the winding
+  and show mesh interiors.
 - Rotation is stored as a QUATERNION (`node.quaternion`, `[x, y, z, w]`,
   always unit). There is exactly one rotation field: no `node.rotation`
   shadowing it, because a second field is a second thing to go stale (an
@@ -1729,14 +1916,70 @@ older bakes are rejected - re-bake with `srt tool 3d/model`.
 - Transforms have ONE write path: `setTransform`/`lookAt`/`setVisible` (or
   the props that call them). Mutating `node.position` directly does not
   sync. Components have no `lookAt` prop - aim through a `ref`.
-- A camera change is ONE `setTargetParams` write (uViewProj + uCamPos are
-  target state), independent of mesh count - never reintroduce per-mesh
-  camera writes (uEye-style per-mesh params are exactly the O(scene) cost
-  the shared channel removed). Scene scale honestly: hundreds to a
-  few thousand objects, bounded by the interpreter, not the GPU. A view
-  is one more such write per camera change and one more entry per mesh
-  at attach; a view's per-frame cost is the core's (one params write per
-  sink per moved node), never JS.
+- Vec3/Quat arguments are COPIED IN everywhere (`setTransform`, `lookAt`,
+  `setCamera`, params), so ONE scratch array reused every frame is safe -
+  allocating three arrays per node per frame is pure waste. The node's own
+  `position`/`quaternion`/`scale` are the live arrays: read them, do not
+  hand them out and do not mutate them (that write does not sync).
+- `setTransform` early-outs on an unchanged value (rotation compared AFTER
+  euler conversion), so driving every node unconditionally from `onFrame`
+  costs only the compare for nodes that did not move. Compares are exact,
+  like `setVisible`.
+
+### Visibility and instancing
+
+- `visible: false` keeps the entry, drawn with `instanceCount: 0` (a
+  cheap off switch); unhiding writes 1, or the mesh's own record count
+  when it is instanced - never a bare 1 into an instanced entry. Hidden
+  meshes skip uModel writes; the fresh matrix is
+  written on unhide. A freshly attached entry starts off the same way and
+  the core's flush turns it on when it writes uModel - never add one
+  live: it has no world matrix yet, and drawn before the sync microtask it
+  flashes at the world origin for a frame.
+- Instancing pairs strictly at add(), like layout: an instanced material
+  needs a createInstancedMesh or createRecordMesh mesh and vice versa,
+  and the record strides must match the material's attributes per slot
+  (the 16 floats of INSTANCE_MATRIX_ATTRIBUTES in slot 0 on an instanced
+  mesh, its style stride in slot 1; a record mesh is slot 0 only) - each
+  mismatch throws there, at creation for the mesh's own material and at
+  add() for a swapped one. The instance buffers are MESH-owned (unlike
+  shared geometry buffers): `disposeInstances` is their one free, and
+  the mesh cannot be re-added afterwards. Capacity grows by REPLACEMENT,
+  never resize: an addInstance or setRecords past capacity doubles into
+  new buffers and swaps them in (an instanced mesh's live records move
+  in one core `retargetRecords`, its style mirror republishes) -
+  amortized like a dynamic array, same policy as @solidrt/2d; size
+  `capacity` or the initial records to skip the copies. An instanced
+  mesh's style stride comes from its material AT CREATION: a later
+  setMaterial to a class with another slot-1 layout throws at the
+  rebuild.
+- Style writes are mirrored, not immediate: `setInstanceStyle` lands in
+  `MeshInstances.style.data` and the scene's sync publishes the dirty
+  range - so a write on a mesh outside any scene shows once it is added
+  (the attach republishes the whole mirror), and reading the GPU buffer
+  back mid-frame can lag the mirror by one sync.
+- Instanced casters: `castShadow` on a populated mesh needs a depth pass
+  with the instance placement in it - the stock materials' `instanced`
+  carries one, a custom class needs `shadowVertex` (see shadows below);
+  a class without one is skipped by shadow views, silently.
+- A record mesh without explicit `bounds` has no BVH leaf: it never
+  picks, pointer events never target it, and its transparent sort key
+  falls back to the node's world position. That is deliberate - records
+  are opaque to the library, so any inferred box would be a guess. Supply
+  `bounds` for anything pickable or transparent. An instanced mesh picks
+  per instance regardless and culls by its instances' union; its
+  `bounds` replace that union and give the transparent sort a center.
+- An instance node's own fields hold its LOCAL pose (relative to its
+  parent, as for any node); the record the core writes is its pose
+  relative to the MESH, composed through any group between them. A
+  removed instance's children stay parented to the dead node: remove()
+  one to re-use it. `disposeInstances` on an instanced mesh flushes the
+  core before freeing the buffer, so the destroyed instances' hiding
+  writes land in a live buffer; keep that order if you ever free a
+  record buffer by hand.
+
+### Shadows
+
 - A CASTING light's position matters (nothing else about a directional
   light's position does): the shadow camera is placed AT the light node's
   world position, Three's rule, so a `castShadow` sun at the origin
@@ -1766,6 +2009,17 @@ older bakes are rejected - re-bake with `srt tool 3d/model`.
   is a full extra pass over the casters plus a sampler unit on every
   receiving program (MAX_LIGHTS of those are always bound, placeholders
   included), so cast from the lights that matter, not all of them.
+
+### Views and scene params
+
+- A camera change is ONE `setTargetParams` write (uViewProj + uCamPos are
+  target state), independent of mesh count - never reintroduce per-mesh
+  camera writes (uEye-style per-mesh params are exactly the O(scene) cost
+  the shared channel removed). Scene scale honestly: hundreds to a
+  few thousand objects, bounded by the interpreter, not the GPU. A view
+  is one more such write per camera change and one more entry per mesh
+  at attach; a view's per-frame cost is the core's (one params write per
+  sink per moved node), never JS.
 - A mesh's entries are mirrored into every view at attach and dropped at
   detach; `setGeometry`/`setMaterial` rebuild them everywhere. An
   `overrideMaterial` is validated against every mesh's layout (at
@@ -1786,31 +2040,9 @@ older bakes are rejected - re-bake with `srt tool 3d/model`.
   differs per mesh. (`scene.texture` IS the draw target id, so
   `setTargetParams(scene.texture, ...)` is the same write - setParams is
   the sanctioned spelling.)
-- Vec3/Quat arguments are COPIED IN everywhere (`setTransform`, `lookAt`,
-  `setCamera`, params), so ONE scratch array reused every frame is safe -
-  allocating three arrays per node per frame is pure waste. The node's own
-  `position`/`quaternion`/`scale` are the live arrays: read them, do not
-  hand them out and do not mutate them (that write does not sync).
-- `setTransform` early-outs on an unchanged value (rotation compared AFTER
-  euler conversion), so driving every node unconditionally from `onFrame`
-  costs only the compare for nodes that did not move. Compares are exact,
-  like `setVisible`.
-- Per-generator conventions - orientation, UV mapping, which axis a solid
-  stands on, what a cap looks like - live on each generator's doc comment,
-  not here. They are consistent (`plane`/`circle`/`ring` face +z, `torus`
-  lies flat with the hole on y, discs and cylinder caps get a PLANAR disc
-  map inscribed in the unit square) but the doc comment is the source.
-- Entry rebuild order: `setGeometry`/`setMaterial` re-add the entry at the
-  list END and dirty the order, so the next sync() re-sorts and the mesh
-  keeps its place. `_transparent` on the mesh is the flag AS ATTACHED
-  (setMaterial swaps `mesh.material` before the rebuild, so _detach must
-  not read the new material's flag).
-- `lathe` takes a CLOSED profile (a cross-section with thickness, or run
-  to the axis at x = 0) - it is a solid of revolution, NOT Three's open
-  polyline shell. An "open" outline must be closed by the author;
-  otherwise the shape is simply wrong, there is no open-profile mode.
-- `useScene()`/`Group`/`Mesh` throw outside `<Scene>` (default-less
-  context).
+
+### Shader materials
+
 - A `shaderMaterial` INSTANCE is the pipeline handle: identical sources
   compile twice - no dedupe by source value (deliberate; hidden
   content-keyed caches are the anti-pattern the GPU layer avoids). Create
@@ -1837,6 +2069,19 @@ older bakes are rejected - re-bake with `srt tool 3d/model`.
   vertex source - a comment counts - selects the "colored" layout, and
   the material then rejects standard geometry at add(). Do not mention
   aColor you do not read.
+- A custom fragment that ends in `fragColor = vec4(...)` bypasses the
+  scene: no fog, no exposure or tone mapping, no encode - and a
+  hand-rolled loop over `uLightDir` renders a spot light as a
+  directional one (a lit rectangle on the floor, no cone). What you
+  declare is what runs, and the engine injects nothing, so pick a tier
+  (the three after the GLSL exports under "The model"): a stock fragment
+  on your vertex stage,
+  a `surface` function, or `SCENE` with `shadeBlinn`/`shadePbr` or
+  `sceneLight` and `sceneOutput` at the end. Composing `FOG` and the
+  `SHADOW_*` trio by hand still works and is no longer the shape.
+
+### Picking, pointer and collision
+
 - Picking is triangle-accurate for ordinary meshes (`point` is a surface
   point, hits carry `face`/`uv`/`normal`) but box-only for instanced
   meshes and for lines/points geometry: there `point` is where the ray
@@ -1853,50 +2098,10 @@ older bakes are rejected - re-bake with `srt tool 3d/model`.
   leaf under a design size. Only a leaf whose layout size deliberately
   differs from the target (supersampling) needs `handlersFor`, fed the
   layout size the app itself set.
-- A custom fragment that ends in `fragColor = vec4(...)` bypasses the
-  scene: no fog, no exposure or tone mapping, no encode - and a
-  hand-rolled loop over `uLightDir` renders a spot light as a
-  directional one (a lit rectangle on the floor, no cone). What you
-  declare is what runs, and the engine injects nothing, so pick a tier
-  (the three after the GLSL exports under "The model"): a stock fragment
-  on your vertex stage,
-  a `surface` function, or `SCENE` with `shadeBlinn`/`shadePbr` or
-  `sceneLight` and `sceneOutput` at the end. Composing `FOG` and the
-  `SHADOW_*` trio by hand still works and is no longer the shape.
 - Hover (enter/leave) reacts to pointer MOTION only: a mesh animating
   under a still pointer fires nothing until the next move - the same
   limit the element hit test has (hit-test-per-frame is an open platform
   item). Do not poll pick() per frame to fake it.
-- Geometry local bounds cache on the Geometry (like its GPU buffers):
-  geometry is immutable after creation. Mutating `vertices` after a mesh
-  used them leaves stale bounds AND a stale GPU buffer - make a new
-  Geometry instead.
-- The background covers the whole target with depth off, drawn first: it
-  REPLACES the clearColor visually (the clear still runs; you just never
-  see it), and a `transparent: true` mesh blends over it in-pass since the
-  background is always entry zero.
-- A color map created as plain rgba8 renders WASHED OUT: the fragment
-  reads its encoded bytes as linear light and encodes them again. Create
-  color images (base color, emissive, a sky's faces or panorama) with
-  `format: "rgba8-srgb"`; keep data maps rgba8. A rendered rgba8 texture
-  (a scene view, a shader target, a UI capture) holds encoded pixels and
-  cannot be tagged, so as a `map` it needs `srgbToLinear` from SRGB in a
-  custom fragment (no material option yet); a draw target you create
-  yourself can be `format: "rgba8-srgb"` and then decodes on sample (it
-  is sampler-only: no display, readback or copy).
-- Reading the scene texture back (a probe's readTexture, a snapshot)
-  gives ENCODED pixels: an expected linear value v shows as
-  `linearToSrgb(v) * 255` - intensity 0.5 reads 188, not 128.
-- The background pipeline/program are SCENE-OWNED (unlike shared
-  material pipelines): setBackground(null), replacement, and dispose()
-  destroy them. Do not hand the background's pipeline to anything else.
-  A skybox is the same slot with the library's fragment; only a
-  skybox-to-skybox replace keeps the entry (params and cube rewritten).
-- The environment binds through the light rewrite's map set (uEnv
-  beside uShadowAtlas on every receiving target, new views included) and
-  directly on setEnvironment; the placeholder cube is app-lifetime like
-  the shadow placeholder. A `lit` without `reflectivity` declares no
-  environment sampler - the flag is part of the class key.
 - overlap()/sweep() test SURFACES, the trimesh contract everywhere: a
   volume wholly inside a closed mesh with no triangle in reach touches
   nothing, and a body whose center has passed through a wall reports
@@ -1908,3 +2113,26 @@ older bakes are rejected - re-bake with `srt tool 3d/model`.
   floor absorbs the vertical part (a body never creeps down a slope it
   can stand on), and with `floorSnap: 0` a standing body reports no
   floor unless its motion presses into one.
+
+### Geometry and components
+
+- Per-generator conventions - orientation, UV mapping, which axis a solid
+  stands on, what a cap looks like - live on each generator's doc comment,
+  not here. They are consistent (`plane`/`circle`/`ring` face +z, `torus`
+  lies flat with the hole on y, discs and cylinder caps get a PLANAR disc
+  map inscribed in the unit square) but the doc comment is the source.
+- Entry rebuild order: `setGeometry`/`setMaterial` re-add the entry at the
+  list END and dirty the order, so the next sync() re-sorts and the mesh
+  keeps its place. `_transparent` on the mesh is the flag AS ATTACHED
+  (setMaterial swaps `mesh.material` before the rebuild, so _detach must
+  not read the new material's flag).
+- `lathe` takes a CLOSED profile (a cross-section with thickness, or run
+  to the axis at x = 0) - it is a solid of revolution, NOT Three's open
+  polyline shell. An "open" outline must be closed by the author;
+  otherwise the shape is simply wrong, there is no open-profile mode.
+- `useScene()`/`Group`/`Mesh` throw outside `<Scene>` (default-less
+  context).
+- Geometry local bounds cache on the Geometry (like its GPU buffers):
+  geometry is immutable after creation. Mutating `vertices` after a mesh
+  used them leaves stale bounds AND a stale GPU buffer - make a new
+  Geometry instead.

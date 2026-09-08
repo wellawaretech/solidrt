@@ -2,6 +2,7 @@
 title: The 3d agent doc is 1900 lines under four headings
 description: packages/3d/AGENTS.md is excellent material presented as a wall - four top-level headings across 1910 lines, with individual APIs documented inside multi-hundred-word paragraphs, so finding one prop means grepping the source instead.
 created: 2026-09-08
+completed: 2026-09-08
 ---
 
 # The 3d agent doc is 1900 lines under four headings
@@ -42,3 +43,23 @@ this applies to all of them.
 Not in scope: changing what the document says. Also not a docs-generation
 item - `core-docs-generated-props.md` covers generating a props reference
 from the types, which is a different file and a different failure.
+
+## Outcome
+
+Both `packages/3d/AGENTS.md` and `packages/2d/AGENTS.md` restructured,
+wording untouched (verified by word-multiset comparison against the
+previous revision). `packages/core/AGENTS.md` already had the shape.
+
+The convention for the `packages/*/AGENTS.md` chain:
+
+- `##` per area (the model, components, traps, ...), unchanged.
+- `###` per subject a reader would look up: a component, a stock
+  material, a subsystem (views, culling, shadows, instancing, models).
+  `####` only where a `###` subject lists several APIs of its own (the
+  materials, the instancing forms, the model loading layers).
+- A paragraph documents one subject and starts where its heading does;
+  the "The model" bullet walls became one `###` paragraph per bullet.
+- Traps stay bullets, grouped under `###` by subject. Grouping moved
+  bullets; it did not change them.
+- A `Contents:` list of `##` and `###` anchors under the intro once the
+  file is past a few hundred lines.

@@ -89,11 +89,6 @@ Shaped, not started.
   modulo that must SNAP (native transitions animate the wrap jump across the
   world), ghost copies at the seams - and the chunked tile layer has no way to
   draw the seam at all.
-- **[The 3d agent doc is 1900 lines under four headings](backlog/3d-agents-doc-navigability.md)** [2026-09-08]
-  packages/3d/AGENTS.md is excellent material presented as a wall - four
-  top-level headings across 1910 lines, with individual APIs documented inside
-  multi-hundred-word paragraphs, so finding one prop means grepping the source
-  instead.
 - **[Environment tier leftovers - SH9, aoMap, packed .srte, EXR, loadCubeImages](backlog/3d-environment-additive.md)** [2026-09-06]
   The environment tier is complete (skybox, HDR environments, PBR, prefiltered
   HDR probes and sky bakes) and each of these is a deliberate non-goal of that
@@ -864,6 +859,11 @@ Finished, kept for the reasoning.
   Decide whether the TileLayer's creation-fixed cols x rows grid is the
   contract, or sketch the additive route to an unbounded world before
   something depends on the bound
+- **[The 3d agent doc is 1900 lines under four headings](done/3d-agents-doc-navigability.md)** [2026-09-08]
+  packages/3d/AGENTS.md is excellent material presented as a wall - four
+  top-level headings across 1910 lines, with individual APIs documented inside
+  multi-hundred-word paragraphs, so finding one prop means grepping the source
+  instead.
 - **[Colored geometry generates twice](done/3d-colored-generators.md)** [2026-08-19]
   Building coloured geometry generated twice (generate, then withColors
   repacked). Fixed in two stages 2026-08-23 - vertex layouts became open
