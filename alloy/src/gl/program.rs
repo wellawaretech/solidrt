@@ -66,10 +66,23 @@ fn compile_shader(gl: &glow::Context, kind: u32, src: &str) -> Result<glow::Shad
     if !gl.get_shader_compile_status(shader) {
       let log = gl.get_shader_info_log(shader);
       gl.delete_shader(shader);
-      return Err(format!("shader compile failed: {log}"));
+      return Err(log);
     }
     Ok(shader)
   }
+}
+
+// The compile error message: stage, the driver's log, an optional hint, then
+// the compiled source numbered from 1. The driver locates an error by line
+// into the string it compiled, which is the assembled one: preamble plus
+// body, or a source composed from fragments that exists nowhere the author
+// can read. Numbering that exact string, preamble included, makes the
+// driver's line directly usable.
+fn compile_failure(stage: &str, log: &str, hint: &str, src: &str) -> String {
+  let width = src.lines().count().to_string().len();
+  let numbered =
+    src.lines().enumerate().map(|(i, line)| format!("{:>width$} | {line}", i + 1)).collect::<Vec<_>>().join("\n");
+  format!("{stage} shader compile failed: {}{hint}\n{numbered}", log.trim_end())
 }
 
 /// Compile a single stage: the raw primitive under `from_stages`. By default
@@ -92,21 +105,19 @@ pub fn compile_stage(gl: &glow::Context, stage: ShaderStage, src: &str, header: 
   } else {
     src
   };
-  let shader = compile_shader(gl, stage.gl_kind(), src).map_err(|e| {
+  let shader = compile_shader(gl, stage.gl_kind(), src).map_err(|log| {
     // A redefinition under the header is the source declaring a name the
     // header already declared (iResolution from a ported shader, mostly);
     // the GL log names the symbol but not where the other declaration is.
     // ANGLE says "redefinition", Mesa says "redeclared".
-    if header && (e.contains("redefinition") || e.contains("redeclared")) {
-      format!("{} {e} (declared by the standard header: remove your declaration, or drop header: true)", stage.name())
+    let hint = if header && (log.contains("redefinition") || log.contains("redeclared")) {
+      " (declared by the standard header: remove your declaration, or drop header: true)"
     } else if header || src.trim_start().starts_with("#version") {
-      format!("{} {e}", stage.name())
+      ""
     } else {
-      format!(
-        "{} {e} (raw sources are complete GLSL ES: start with `#version 300 es`, or pass header: true)",
-        stage.name()
-      )
-    }
+      " (raw sources are complete GLSL ES: start with `#version 300 es`, or pass header: true)"
+    };
+    compile_failure(stage.name(), &log, hint, src)
   })?;
   Ok(CompiledStage { shader, declared: declared_uniform_names(src) })
 }
@@ -185,12 +196,13 @@ fn with_preamble(src: &str, preamble: &str) -> String {
 
 fn link_program(gl: &glow::Context, vertex_full: &str, fragment_full: &str) -> Result<glow::Program, String> {
   unsafe {
-    let vs = compile_shader(gl, glow::VERTEX_SHADER, vertex_full).map_err(|e| format!("vertex {e}"))?;
+    let vs = compile_shader(gl, glow::VERTEX_SHADER, vertex_full)
+      .map_err(|log| compile_failure("vertex", &log, "", vertex_full))?;
     let fs = match compile_shader(gl, glow::FRAGMENT_SHADER, fragment_full) {
       Ok(fs) => fs,
-      Err(e) => {
+      Err(log) => {
         gl.delete_shader(vs);
-        return Err(format!("fragment {e}"));
+        return Err(compile_failure("fragment", &log, "", fragment_full));
       }
     };
     let program = gl.create_program().map_err(|e| format!("glCreateProgram failed: {e}"))?;

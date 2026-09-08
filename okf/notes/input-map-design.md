@@ -93,6 +93,35 @@ the app applies and edits, never a default.
   source the most specific matching spec wins a down, so
   `axis("Shift+Tab", "Tab")` reads -1 rather than 0; an up releases on the
   bare key, so a modifier let go first cannot leave the key stuck.
+- **Pointer gestures take the same chord, on the device, not as a
+  processor.** `pointer.drag("Ctrl")` is the variant the feed opens
+  instead of the bare `drag` when the event opening the bracket carries
+  Ctrl (input-chord.ts is the one grammar for both devices). Three rules
+  exist for a button bound bare and chorded: both fire (Godot's
+  `is_action_pressed` without `exact_match`, Unity by default), exact
+  match where bare means no modifiers (Blender's keymap items), and
+  most-specific-wins (Unreal's automatic ChordBlocker, Unity's
+  `shortcutKeysConsumeInput`, Three's OrbitControls choosing PAN over
+  ROTATE at mousedown). Both-fire is the bug every viewport then fixes by
+  hand; exact match kills a bare gesture under any stray modifier and
+  contradicts the keyboard rule above (Shift-run must keep WASD walking);
+  most-specific-wins changes nothing until a chord is bound. A processor
+  (`chord(pointer.drag, "Ctrl")`) cannot give it: a wrapper does not see
+  its sibling bindings, and carrying modifier flags through DeltaSink
+  would put a pointer+keyboard concept on the contract gamepads and
+  by-name injection share. Resolved once per bracket at its opening event
+  and held (Three decides at mousedown; Unreal's continuous chord splits
+  one gesture across two actions); wheel and mouseDelta per event. Touch
+  has no modifiers, so a chord is the desktop path and presets keep the
+  bare or two-finger binding for fingers. A bracketed spec may end in
+  its button (`drag("Right")`, `drag("Shift+Middle")`), as a key spec
+  ends in its key; a button is a discriminator, not a modifier (a right
+  drag never feeds a Left spec), and bare means Left, so nothing bound
+  before buttons changed. One button per pointer: a second button on a
+  held mouse joins nothing and only the held button's release closes the
+  gesture. Three's middle-drag dolly is still not a preset binding: zoom
+  is an axis and a drag is a vec2, and no processor projects one onto
+  the other yet.
 
 ## Traps
 

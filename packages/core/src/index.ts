@@ -37,7 +37,7 @@ export type { KeyboardDevice, KeyboardVec2Keys } from "./input-keyboard"
 export { gamepad } from "./input-gamepad"
 export type { GamepadDevice } from "./input-gamepad"
 export { createPointerFeed } from "./input-pointer"
-export type { PointerFeed, PointerFeedOptions } from "./input-pointer"
+export type { PointerFeed, PointerFeedOptions, PointerSource } from "./input-pointer"
 export type {
   Element,
   LayoutProps,

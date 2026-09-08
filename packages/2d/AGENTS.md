@@ -339,10 +339,7 @@ creation. The rect form is the shape for worker transfer and chunk
 re-fill, not a large speedup: the per-cell floor is the record write
 itself, so a 16k-cell solid rect re-writes in ~14 ms against ~25 ms as a
 setTile loop and a sparse rect is at parity with the loop, while a first
-seed is dominated by chunk allocation at 1-2 ms per chunk
-(probes/2d-tiles-bulk-bench.tsx). probes/2d-tiles-bulk-probe.tsx holds
-the three seeds (setTile, index rect, frame rect) to the same cells,
-chunks and bakes.
+seed is dominated by chunk allocation at 1-2 ms per chunk.
 
 Tinting, two levels: `setTile(col, row, frame, { tint })` writes the
 cell's record tint (same `[r, g, b, a]` 0..1 semantics as a sprite's

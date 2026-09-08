@@ -25,6 +25,7 @@ symptom shows. A heading that outgrows this file splits into its own.
 - `@solidrt/2d` tiles.ts: the chunk math (checkCell, chunkOf, slot, the rect slicing in setTiles) is pure but lives beside the GPU imports, so the tile layer has no headless check; move it to a tiles-math.ts and pin it like oversample-math.ts (probes/2d-tiles-bulk-probe.tsx covers it live only).
 - `@solidrt/2d` `<SpriteLayer>`/`<View2d>` and `@solidrt/3d` `<Scene>`/`<View3d>`: `pointer` given together with `events={false}` silently feeds nothing (the feed listens at a root no event reaches); throw at mount, the dev validation policy.
 - `@solidrt/2d` AGENTS.md "30k sprites: 12.9 ms raw records vs 30.8 ms via setSprite" is a write-path comparison that reads as "30k is affordable"; add the clause that it excludes whatever computes the motion, usually the dominant cost (a 24k-particle sim measured ~25 ms, nearly all simulation).
+- `@solidrt/3d` bindSkeleton matches joints by case-insensitive name only; a pipeline that differs by prefix or suffix (Mixamo's `mixamorig:`, a one-sided `_JNT`) needs a `match` option mapping a piece name to a body name - Unity matches exact names and leaves the rest to the app, so add it when a consumer shows up.
 
 ## Components
 
@@ -43,3 +44,4 @@ The `srt` CLI, the dev server, MCP, debug commands, examples and probes.
 alloy, forge, flux, lattice.
 
 - alloy examples: a panic inside the `app.run` closure (srt-ui thread) strands the SDL window black until killed, since main keeps pumping events; `alloy/examples/depth_texture.rs` installs an exiting panic hook locally, lift that into `alloy::setup` for `Mode::Run` so every probe fails fast.
+- alloy spatial `bind_texture_slot`: the palette anchor must be an ancestor of every bound node (documented, unchecked; createModel and bindSkeleton both rely on it); add a debug-build ancestry check so a row bound across hierarchies errors instead of posing wrong.

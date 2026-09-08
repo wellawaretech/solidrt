@@ -8,11 +8,12 @@
 // a shifted "W".
 //
 // A spec may name modifiers ahead of the key ("Shift+Tab", "Ctrl+KeyS";
-// Shift, Ctrl, Alt, Meta): the down must carry them, while a bare spec
-// ignores them (a shifted W still walks). Within one source the most
-// specific matching spec wins a down, so `axis("Shift+Tab", "Tab")` reads
-// -1, not 0, on Shift+Tab; and an up releases on the key alone, so a
-// modifier let go first cannot leave the key stuck.
+// the chord vocabulary of input-chord.ts, shared with the pointer feed):
+// the down must carry them, while a bare spec ignores them (a shifted W
+// still walks). Within one source the most specific matching spec wins
+// a down, so `axis("Shift+Tab", "Tab")` reads -1, not 0, on Shift+Tab;
+// and an up releases on the key alone, so a modifier let go first
+// cannot leave the key stuck.
 //
 // Held state is a count behind a signal, so a source's rate is reactive
 // (a held key wakes a control's frame loop) and a blur - the up that never
@@ -27,10 +28,8 @@ import { createSignal } from "@solidjs/signals"
 import type { KeyEvent } from "./types"
 import type { InputSource } from "./input-map"
 import type { Vec2 } from "./input-axes"
-
-type Modifier = "shiftKey" | "ctrlKey" | "altKey" | "metaKey"
-
-const MODIFIERS: Record<string, Modifier> = { Shift: "shiftKey", Ctrl: "ctrlKey", Control: "ctrlKey", Alt: "altKey", Meta: "metaKey" }
+import { mostSpecific, parseModifiers } from "./input-chord"
+import type { Modifier } from "./input-chord"
 
 // A parsed spec: the text as given (the held-state key and the label),
 // the key it names, and the modifiers the down must carry.
@@ -41,13 +40,7 @@ function parse(what: string, text: unknown): Spec {
   let parts = text.split("+")
   let key = parts.pop()!
   if (key.length === 0) throw new Error(`keyboard.${what}: "${text}" names no key`)
-  let mods: Modifier[] = []
-  for (let part of parts) {
-    let mod = MODIFIERS[part]
-    if (!mod) throw new Error(`keyboard.${what}: unknown modifier "${part}" in "${text}" (Shift, Ctrl, Alt or Meta)`)
-    if (!mods.includes(mod)) mods.push(mod)
-  }
-  return { text, key, mods }
+  return { text, key, mods: parseModifiers(`keyboard.${what}`, text, parts) }
 }
 
 // A key matches its physical code or its logical key; a letter code
@@ -75,11 +68,7 @@ function held(specs: Spec[]) {
       // moves "Tab" to "Shift+Tab" and back), an up frees them all.
       let onKey = specs.filter(s => matches(event, s.key))
       for (let s of onKey) down.delete(s.text)
-      if (isDown) {
-        let hits = onKey.filter(s => s.mods.every(m => event[m]))
-        let most = hits.reduce((n, s) => Math.max(n, s.mods.length), 0)
-        for (let s of hits) if (s.mods.length === most) down.add(s.text)
-      }
+      if (isDown) for (let s of mostSpecific(onKey, s => s.mods, event)) down.add(s.text)
       setCount(down.size)
     },
     blur() {

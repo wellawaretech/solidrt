@@ -213,7 +213,8 @@ function checkValue(what: string, kind: ActionKind, v: unknown): void {
 
 function checkSource(source: unknown): InputSource {
   let s = source as InputSource
-  if (!s || typeof s !== "object" || (s.kind !== "button" && s.kind !== "axis" && s.kind !== "vec2") || typeof s.label !== "string") {
+  // A pointer gesture is a callable source (`pointer.drag("Ctrl")` is its chord variant).
+  if (!s || (typeof s !== "object" && typeof s !== "function") || (s.kind !== "button" && s.kind !== "axis" && s.kind !== "vec2") || typeof s.label !== "string") {
     throw new Error(`createInputMap: not an input source: ${String(source)}`)
   }
   return s

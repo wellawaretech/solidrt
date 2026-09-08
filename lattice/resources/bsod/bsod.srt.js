@@ -4000,7 +4000,7 @@ var CYCLE = IN_DONE + LAST + FADE;
 var claims = new Map;
 // ../../packages/core/src/transform.ts
 import { on as on5 } from "srt:events";
-// ../../packages/core/src/input-keyboard.ts
+// ../../packages/core/src/input-chord.ts
 var MODIFIERS = {
   Shift: "shiftKey",
   Ctrl: "ctrlKey",
@@ -4008,6 +4008,24 @@ var MODIFIERS = {
   Alt: "altKey",
   Meta: "metaKey"
 };
+var ORDER = ["shiftKey", "ctrlKey", "altKey", "metaKey"];
+function parseModifiers(what, text, parts) {
+  let mods = new Set;
+  for (let part of parts) {
+    let mod = MODIFIERS[part];
+    if (!mod)
+      throw new Error(`${what}: unknown modifier "${part}" in "${text}" (Shift, Ctrl, Alt or Meta)`);
+    mods.add(mod);
+  }
+  return ORDER.filter((m) => mods.has(m));
+}
+function mostSpecific(items, mods, event) {
+  let hits = items.filter((item) => mods(item).every((m) => event[m]));
+  let most = hits.reduce((n, item) => Math.max(n, mods(item).length), 0);
+  return hits.filter((item) => mods(item).length === most);
+}
+
+// ../../packages/core/src/input-keyboard.ts
 function parse(what, text) {
   if (typeof text !== "string" || text.length === 0)
     throw new Error(`keyboard.${what}: expected a key code or key name, got ${String(text)}`);
@@ -4015,18 +4033,10 @@ function parse(what, text) {
   let key = parts.pop();
   if (key.length === 0)
     throw new Error(`keyboard.${what}: "${text}" names no key`);
-  let mods = [];
-  for (let part of parts) {
-    let mod = MODIFIERS[part];
-    if (!mod)
-      throw new Error(`keyboard.${what}: unknown modifier "${part}" in "${text}" (Shift, Ctrl, Alt or Meta)`);
-    if (!mods.includes(mod))
-      mods.push(mod);
-  }
   return {
     text,
     key,
-    mods
+    mods: parseModifiers(`keyboard.${what}`, text, parts)
   };
 }
 var matches = (event, key) => {
@@ -4051,13 +4061,9 @@ function held(specs) {
       let onKey = specs.filter((s) => matches(event, s.key));
       for (let s of onKey)
         down.delete(s.text);
-      if (isDown) {
-        let hits = onKey.filter((s) => s.mods.every((m) => event[m]));
-        let most = hits.reduce((n, s) => Math.max(n, s.mods.length), 0);
-        for (let s of hits)
-          if (s.mods.length === most)
-            down.add(s.text);
-      }
+      if (isDown)
+        for (let s of mostSpecific(onKey, (s2) => s2.mods, event))
+          down.add(s.text);
       setCount(down.size);
     },
     blur() {

@@ -47,6 +47,9 @@ export type TransformDelta = {
 }
 
 export interface TransformOptions {
+  /** Which mouse buttons open a gesture: the primary only (default), or
+   * any - the pointer feed's choice, which tells its buttons apart itself. */
+  buttons?: "primary" | "any"
   onTransformStart?: () => void
   /** Streams one delta per frame; compose them multiplicatively (scale) / additively (dx, dy, rotation). */
   onTransformMove?: (t: TransformDelta) => void
@@ -251,7 +254,7 @@ export function createTransform(options: TransformOptions) {
 
   let handlers = {
     onPointerDown: (e: PointerEvent) => {
-      if (e.button != null && e.button !== 0) return
+      if (options.buttons !== "any" && e.button != null && e.button !== 0) return
       if (pointers.has(e.pointerId)) return
       if (active) {
         // A finger joining an established gesture belongs to it outright; if

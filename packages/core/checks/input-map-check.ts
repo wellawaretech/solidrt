@@ -16,6 +16,7 @@
 
 import { flush } from "@solidjs/signals"
 import { createAxes, createInputMap, invert, keyboard, scale } from "../src/input.ts"
+import { chordName, mostSpecific, parseModifiers } from "../src/input-chord.ts"
 import type { InputSource, Vec2 } from "../src/input.ts"
 import type { KeyEvent } from "../src/types"
 
@@ -36,6 +37,23 @@ let throws = (what: string, f: () => void) => {
 }
 
 let key = (code: string, k = code): KeyEvent => ({ key: k, code, repeat: false, shiftKey: false, ctrlKey: false, altKey: false, metaKey: false, currentTarget: 0, target: 0, stopPropagation() {} })
+
+// The chord vocabulary both devices share: canonical order and name,
+// most specific wins, unknown names throw.
+{
+  let mods = parseModifiers("chord", "Ctrl+Shift", ["Ctrl", "Shift"])
+  if (chordName(mods) !== "Shift+Ctrl") fail(`chord canonical order: ${chordName(mods)}`)
+  if (chordName(parseModifiers("chord", "Control+Ctrl", ["Control", "Ctrl"])) !== "Ctrl") fail("chord dedupes Control/Ctrl")
+  if (chordName([]) !== "") fail("bare chord name")
+  throws('parseModifiers("Hyper")', () => parseModifiers("chord", "Hyper", ["Hyper"]))
+  let specs = [{ mods: parseModifiers("chord", "", []) }, { mods: parseModifiers("chord", "Ctrl", ["Ctrl"]) }, { mods: parseModifiers("chord", "Ctrl+Shift", ["Ctrl", "Shift"]) }]
+  let ev = (ctrl: boolean, shift: boolean) => ({ shiftKey: shift, ctrlKey: ctrl, altKey: false, metaKey: false })
+  let pick = (ctrl: boolean, shift: boolean) => mostSpecific(specs, s => s.mods, ev(ctrl, shift)).map(s => chordName(s.mods))
+  if (pick(false, false).join() !== "") fail(`mostSpecific bare: ${pick(false, false)}`)
+  if (pick(true, false).join() !== "Ctrl") fail(`mostSpecific Ctrl: ${pick(true, false)}`)
+  if (pick(true, true).join() !== "Shift+Ctrl") fail(`mostSpecific Ctrl+Shift: ${pick(true, true)}`)
+  if (pick(false, true).join() !== "") fail(`mostSpecific Shift alone falls to bare: ${pick(false, true)}`)
+}
 
 // A value source of one kind with a settable value.
 function valued<K extends "axis" | "vec2" | "button">(kind: K, label: string, initial: number | Vec2 | boolean) {

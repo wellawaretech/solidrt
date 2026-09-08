@@ -2,6 +2,7 @@
 title: Shader compile errors on .tsx lines via #line injection
 description: A shader compile error reports the line inside the string plus the injected preamble (offset 19 in the trails example), leaving the author to hand-count; a bundler pass that injects a #line directive into glsl-tagged template literals would make the driver report the .tsx line itself, closing the last unmapped diagnostic in the dev loop.
 created: 2026-07-30
+completed: 2026-09-08
 ---
 
 # Shader compile errors on .tsx lines via #line injection
@@ -74,3 +75,20 @@ regardless of tagging, and is strictly better than a correct line number into
 a string nobody has. Worth doing first, and independently: it is the fallback
 for exactly the cases `#line` is documented not to reach. Line-numbering the
 emitted text makes the driver's number directly usable.
+
+## Outcome (2026-09-08)
+
+The fallback shipped, and only the fallback: `compile_stage` and the
+effect-program path in `alloy/src/gl/program.rs` now append the compiled
+string, numbered from 1 with the preamble included, after the driver's log
+and the existing hints. Verified on Mesa: a `0:9(35)` error points at
+numbered line 9 of the dump, for raw, `header: true` and composed sources
+alike, and the multi-line message reaches the app's catch, the run log and
+`/logs` unchanged.
+
+`#line` injection is a deliberate non-goal, not a leftover. Composed
+sources (`@solidrt/3d/glsl` fragments) are now the common case and it
+cannot reach them, and a driver that honors it would report .tsx lines
+while the dump is numbered in string space, so the two would need
+reconciling. The calibration probe and the Babel visitor above stay as the
+design if the single-literal case ever proves to hurt with the dump in hand.

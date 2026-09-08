@@ -31,7 +31,9 @@ export type CameraDevices = {
 export let orbitActions = { rotate: "vec2", zoom: "axis", pan: "vec2" } as const
 
 /**
- * The orbit camera's standard bindings: a drag rotates, a pinch and the
+ * The orbit camera's standard bindings: a drag rotates, a Ctrl-drag or a
+ * right-drag pans (the desktop pans, Three's and Blender's; a chorded or
+ * right-button drag feeds only `pan`, never `rotate`), a pinch and the
  * wheel zoom, two fingers pan; the right stick rotates, the triggers
  * zoom, the left stick pans; the arrow keys rotate and minus/equals zoom.
  */
@@ -39,7 +41,14 @@ export function orbitBindings(devices: CameraDevices): Binding[] {
   let out: Binding[] = []
   let { pointer, gamepad, keyboard } = devices
   if (pointer) {
-    out.push({ action: "rotate", source: pointer.drag }, { action: "zoom", source: pointer.pinch }, { action: "zoom", source: pointer.wheel }, { action: "pan", source: pointer.pan })
+    out.push(
+      { action: "rotate", source: pointer.drag },
+      { action: "pan", source: pointer.drag("Ctrl") },
+      { action: "pan", source: pointer.drag("Right") },
+      { action: "pan", source: pointer.pan },
+      { action: "zoom", source: pointer.pinch },
+      { action: "zoom", source: pointer.wheel },
+    )
   }
   if (gamepad) {
     out.push({ action: "rotate", source: invert(gamepad.rightStick) }, { action: "zoom", source: gamepad.triggers }, { action: "pan", source: invert(gamepad.leftStick) })

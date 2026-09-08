@@ -787,12 +787,12 @@ MultiMesh is the record form. The components: `<InstancedMesh capacity>`
 with `<Instance position style transition onPointerDown>` children
 (`<Group>` children are squads, an `<Instance>` is a parent too);
 `examples/fleet.tsx` is a thousand of them springing between formations
-with tap-to-tint, `probes/3d-instance-probe.tsx` the function face.
+with tap-to-tint.
 Mount cost is the one difference between the faces: an `<Instance>` row
 costs about eight times an `addInstance` call (the component machinery -
 a Solid row, two effects, the style effect; a node component's context
-provider is built only when it has children, the biggest single saving -
-`probes/3d-instance-mount-bench.tsx` measures it), so a few thousand
+provider is built only when it has children, the biggest single
+saving), so a few thousand
 mount in tens of milliseconds either way; populations spawned per frame,
 or in five figures, belong to the function face.
 
@@ -819,8 +819,7 @@ through one uModel, setVisible zeroes the drawn count and restores it on
 unhide, renderOrder/params/geometry/material swaps apply, and
 `disposeInstances(mesh)` detaches and frees the record buffers - the one
 explicit free, geometry-buffer rule. `examples/fleet.tsx` (instances,
-components), `probes/3d-instance-probe.tsx` (instances, functions) and
-`examples/instanced.tsx` (records) are the live proofs.
+components) and `examples/instanced.tsx` (records) are the live proofs.
 
 Background: `scene.setBackground(source | null)`, the `background` option
 on createScene, and the reactive `Scene` prop. Drawn as the FIRST entry
@@ -1131,11 +1130,9 @@ three tiers, top first:
    loops `sceneLight(i, position, normal)` to `uLightCount` instead of a
    shade function: light i's direction and its color already attenuated,
    cone-faded and shadowed (zero when it cannot reach). The stock
-   materials are built from this same set, so the tiers cannot drift;
-   `probes/scene-set-probe.tsx` is the byte-identity rig that checks it.
+   materials are built from this same set, so the tiers cannot drift.
    The demo `the-third-dimension.tsx` has tier 2 (the ground) and tier 3
-   (the knot's rim term); `probes/spot-custom-material-probe.tsx` a
-   sceneLight loop beside a lit() floor.
+   (the knot's rim term).
 `standardFragment(options)` is the same for `standard`: lit's options
 minus `specularMap`/`env` (the environment is always composed) plus
 `metalnessMap`/`roughnessMap`, on the same `litVertex(options)`, with
@@ -1385,8 +1382,8 @@ a hand) are different: they bind to a joint, so they only land once a
 skeleton exists (a rig-less export cannot place them at all). The joint
 is an ordinary Group in `model.nodes` - find it by name and `add()` the
 item under it; it then follows the pose, mixer-driven or hand-posed,
-like any child transform. Two authoring cases (verified in
-`probes/joint-cap-probe.tsx`): an item authored about its own socket
+like any child transform. Two authoring cases: an item authored about
+its own socket
 origin needs the plain `add()` and nothing more; one authored in the
 RIG'S model space needs a socket Group between joint and item carrying
 the joint's rest-pose inverse (at rest the item then sits exactly where
@@ -1417,9 +1414,7 @@ whose bind pose differs (a piece exported against another rest pose or
 scale) throws at bind instead of rendering wrong. A piece comes off by
 disposing it; disposing a body disposes what it wears. Culling follows
 the wear: a body joint's box is the union of every skin reaching it,
-its own and the pieces'. Verified in `probes/skeleton-share-probe.tsx`:
-a hat whose table starts at the spine and a cape that skips an ancestor
-render pixel-identical to the body's own part, posed.
+its own and the pieces'.
 
 Applied: `doubleSided` (the default material draws it with `cull:
 "none"`), alphaMode MASK (`alphaTest: alphaCutoff`), `normalTexture`

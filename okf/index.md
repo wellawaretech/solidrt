@@ -330,12 +330,6 @@ Shaped, not started.
   strict back-to-front instance order per camera move, which is the one real
   gap and lands as the projected-key mode of gpu-instance-order. Staged so a
   demo-tier viewer is library-only work today.
-- **[Shader compile errors on .tsx lines via #line injection](backlog/glsl-line-injection.md)** [2026-07-30]
-  A shader compile error reports the line inside the string plus the injected
-  preamble (offset 19 in the trails example), leaving the author to
-  hand-count; a bundler pass that injects a #line directive into glsl-tagged
-  template literals would make the driver report the .tsx line itself, closing
-  the last unmapped diagnostic in the dev loop.
 - **[loadGltf reads every image a .gltf names, not the ones the parser opens](backlog/gltf-image-prefetch-overreads.md)** [2026-08-27]
   parseGltf's resolver is synchronous so loadGltf prefetches everything
   gltfExternalUris lists, which is all of gltf.images, while the parser only
@@ -1142,6 +1136,12 @@ Finished, kept for the reasoning.
   (or any scaled ancestor) a drag moves the content by the wrong amount, for
   ScrollView and the 2d camera alike, even though each event already carries
   exact localX/localY.
+- **[Shader compile errors on .tsx lines via #line injection](done/glsl-line-injection.md)** [2026-09-08]
+  A shader compile error reports the line inside the string plus the injected
+  preamble (offset 19 in the trails example), leaving the author to
+  hand-count; a bundler pass that injects a #line directive into glsl-tagged
+  template literals would make the driver report the .tsx line itself, closing
+  the last unmapped diagnostic in the dev loop.
 - **[Go-client launcher](done/go-client-launcher.md)** [2026-07-21]
   "The default app becomes the client's compiled-in launcher: version-store
   apps with tap-to-launch and delete, manual address entry, and a boot rule
@@ -1516,6 +1516,17 @@ Finished, kept for the reasoning.
   --fps); the 0x0 windowSize() was the general mount-time first-read trap, not
   a playback drop. Closed by drawing but not writing the mount frame and a
   pinned playback init bundle; --step stays an idea.
+- **[Pointer gestures ignore every button but the primary](done/pointer-gesture-buttons.md)** [2026-09-08]
+  createPointerFeed returns early on any non-primary button, so Three's
+  right-drag pan and middle-drag dolly cannot be bound; a button qualifier
+  wants the chord grammar the feed now has, with the button as the trailing
+  part ("Shift+Middle") the way a key spec ends in its key.
+- **[Pointer gestures cannot carry a modifier chord](done/pointer-gesture-modifiers.md)** [2026-09-08]
+  Ctrl-drag pans while plain drag orbits is the default of every 3d viewport,
+  and it cannot be a binding - createPointerFeed reads the whole PointerEvent
+  on the down that opens a gesture and forwards only the pointer id, so an app
+  has to reconstruct the modifier state one call later through a phantom
+  keyboard action or a handler-ordering trick.
 - **[Portals cannot mount at initial render](done/portal-initial-mount.md)** [2026-07-27]
   A portal visible at first mount throws "no mount target" because windowRoot
   is set only after the initial build; decided as by design, documented with a

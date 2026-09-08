@@ -361,7 +361,17 @@ latest (solid-js 1.x, off Solid 2.0 entirely). The recipe that works is
   `<View2d pointer>` take a feed and spread it on their built-in leaf) and
   bind its gestures `drag` (one pointer), `pan` (two), `pinch`, `twist`,
   `wheel` and `mouseDelta` (raw motion while pointerLocked()). One
-  merged recognizer serves them, so they arbitrate in the arena as one. A
+  merged recognizer serves them, so they arbitrate in the arena as one.
+  Each gesture takes a chord in the key-spec grammar: `pointer.drag("Ctrl")`
+  fires only when the event that opens the gesture carries Ctrl, and then
+  instead of the bare `drag` (the most specific bound chord wins, as a
+  key spec does), held for the whole gesture - so plain drag on `rotate`
+  and `drag("Ctrl")` on `pan` is one binding each, the every-viewport
+  default. A bracketed spec may end in its button (`drag("Right")`,
+  `drag("Shift+Middle")`; bare means Left), a discriminator rather than
+  a modifier: a right drag feeds only Right specs. Touch carries no
+  modifiers or buttons: a chord is the desktop path, the bare binding
+  stays for fingers. A
   detached d-* leaf has no layout box: give the feed `{ layout }` or it
   throws at the first press. `invert(source)` and `scale(source, k)` are
   the two processors: keys and sticks move the CAMERA where a drag moves
