@@ -8,7 +8,7 @@
 //
 // A failure prints FAIL lines and throws at the end, so the run exits nonzero.
 
-import { box, cylinder, validateGeometry, fillAttribute, fillColors, packGeometry, sphere, torus, torusKnot, geometryBounds, layoutKey, layoutSlot, layoutStride, mergeGeometries, plane, transformGeometry, withAttribute, withColors, STANDARD_FLOATS } from "../src/geometry.ts"
+import { box, cylinder, edgesGeometry, validateGeometry, fillAttribute, fillColors, packGeometry, sphere, torus, torusKnot, geometryBounds, layoutKey, layoutSlot, layoutStride, mergeGeometries, plane, transformGeometry, wireframeGeometry, withAttribute, withColors, STANDARD_FLOATS } from "../src/geometry.ts"
 import { rayBoxDistance } from "../src/math.ts"
 import type { Geometry } from "../src/geometry.ts"
 
@@ -206,6 +206,56 @@ throws("merge empty", () => mergeGeometries([]))
   if (!near(rayBoxDistance(-2, 0, 0, 1, 0, 0, -1, -1, -1, 1, 1, 1), 1)) fail("ray enters at 1")
   if (rayBoxDistance(0, 0, 0, 1, 0, 0, -1, -1, -1, 1, 1, 1) !== 0) fail("ray inside is 0")
   if (rayBoxDistance(-2, 5, 0, 1, 0, 0, -1, -1, -1, 1, 1, 1) !== -1) fail("ray misses")
+}
+
+// Topology: the count rule per topology at validate, the wireframe and
+// edge builders over the source's own vertices (welded by position, so a
+// split vertex never draws an edge twice), and what carries it through.
+{
+  let b = box()
+  let wire = wireframeGeometry(b)
+  if (wire.topology !== "lines") fail(`wireframe topology: ${String(wire.topology)}`)
+  if (wire.vertices !== b.vertices || wire.layout !== b.layout) fail("wireframe: vertices and layout are not shared by reference")
+  if (wire.indices.length !== 36) fail(`wireframe box: ${wire.indices.length / 2} lines, expected 18 (12 edges + 6 diagonals)`)
+  validateGeometry(wire)
+  // No welded edge twice: the box's 24 split vertices name each cube
+  // edge from two faces, and only one may survive.
+  let posKey = (i: number): string => Array.from(b.vertices.subarray(i * STANDARD_FLOATS, i * STANDARD_FLOATS + 3)).join()
+  let seen = new Set<string>()
+  for (let i = 0; i < wire.indices.length; i += 2) {
+    let key = [posKey(wire.indices[i]!), posKey(wire.indices[i + 1]!)].sort().join("|")
+    if (seen.has(key)) fail(`wireframe: edge ${key} listed twice`)
+    seen.add(key)
+  }
+  let edges = edgesGeometry(b)
+  if (edges.topology !== "lines" || edges.indices.length !== 24) fail(`edges box: ${edges.indices.length / 2} lines, expected 12`)
+  if (edgesGeometry(plane()).indices.length !== 8) fail("edges plane: expected the 4 border lines")
+  // A generated round shape is faceted: past its facet angle only the
+  // borders and creases stay.
+  if (edgesGeometry(cylinder(), 16).indices.length !== 96) fail(`edges cylinder at 16 degrees: ${edgesGeometry(cylinder(), 16).indices.length / 2} lines, expected the two 24-segment rims`)
+  if (edgesGeometry(cylinder()).indices.length <= 96) fail("edges cylinder at the default threshold: expected the side seams too")
+  throws("wireframe of lines", () => wireframeGeometry(wire))
+  throws("edges of lines", () => edgesGeometry(wire))
+  // Carry-through and merge.
+  if (transformGeometry(wire, { position: [1, 0, 0] }).topology !== "lines") fail("transformGeometry drops topology")
+  if (withColors(wire, () => [1, 1, 1, 1]).topology !== "lines") fail("withColors drops topology")
+  let merged = mergeGeometries([wire, wireframeGeometry(cylinder())])
+  if (merged.topology !== "lines" || merged.indices.length !== wire.indices.length + wireframeGeometry(cylinder()).indices.length) fail("mergeGeometries of lines")
+  throws("merge mixed topologies", () => mergeGeometries([b, wire]))
+  throws("merge strips", () => mergeGeometries([{ vertices: b.vertices, indices: new Uint16Array([0, 1, 2, 3]), topology: "triangle-strip" }]))
+  // validateGeometry's count rule per topology.
+  let v = b.vertices
+  validateGeometry({ vertices: v, indices: new Uint16Array([0, 1, 2, 3]), topology: "triangle-strip" })
+  validateGeometry({ vertices: v, indices: new Uint16Array([0, 1, 2]), topology: "line-strip" })
+  validateGeometry({ vertices: v, indices: new Uint16Array([0]), topology: "points" })
+  validateGeometry({ vertices: v, indices: new Uint16Array(0), topology: "lines" })
+  validateGeometry({ vertices: v, indices: new Uint16Array(0), topology: "points" })
+  if (edgesGeometry(sphere(), 16).indices.length !== 0) fail("edges sphere at 16 degrees: expected no lines")
+  throws("validate triangles not a multiple of 3", () => validateGeometry({ vertices: v, indices: new Uint16Array([0, 1, 2, 3]) }))
+  throws("validate lines not a multiple of 2", () => validateGeometry({ vertices: v, indices: new Uint16Array([0, 1, 2]), topology: "lines" }))
+  throws("validate short line strip", () => validateGeometry({ vertices: v, indices: new Uint16Array([0]), topology: "line-strip" }))
+  throws("validate short triangle strip", () => validateGeometry({ vertices: v, indices: new Uint16Array([0, 1]), topology: "triangle-strip" }))
+  throws("validate unknown topology", () => validateGeometry({ vertices: v, indices: new Uint16Array([0]), topology: "fans" as never }))
 }
 
 if (failures > 0) throw new Error(failures + " geometry check(s) failed")

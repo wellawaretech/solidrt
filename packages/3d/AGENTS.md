@@ -212,11 +212,24 @@ blendMode and pointer events like any element.
   with equal keys interleave identically (merge requires that).
   Indices are uint16 or uint32 - the `Geometry.indices` array type picks
   the draw's index format, so hand-built geometry past 64k vertices just
-  uses a Uint32Array (generators emit uint16). Geometry GPU buffers are
+  uses a Uint32Array (generators emit uint16). What the indices LIST is
+  `Geometry.topology` (`"triangles"` when absent; `"lines"`,
+  `"line-strip"`, `"points"`, `"triangle-strip"`): the index buffer and
+  its primitive travel together (Godot's surface primitive, Unity's
+  SetIndices topology), a material builds one pipeline per (layout,
+  topology) pair its meshes bring, and validateGeometry enforces the
+  count rule at add() (a whole number of triangles or lines, one
+  primitive's worth for a strip). Materials have no topology of their
+  own. Only a triangle list gets a picking shape; lines and points pick
+  and collide by their bounds box, and cast no shadow. `geometryTopology`
+  reads the field with the default applied. Geometry GPU buffers are
   lazy, shared, and reference-counted by draw entries: removing the last
   entry frees them at the end of the microtask (a same-tick rebuild keeps
   the upload), so swapping `<Mesh geometry>` reactively never accumulates
-  old generations. `disposeGeometry` is the immediate explicit free.
+  old generations; the vertex upload is keyed on the `Float32Array`
+  itself, so geometries sharing a vertex array (a wireframe over its
+  source) share one buffer. `disposeGeometry` is the immediate explicit
+  free.
 - Materials dedupe hard: one program + one pipeline per material CLASS
   (a `shaderMaterialClass` per option combination for unlit, lit and
   sprite alike: map x transparent x cull x alphaTest, lit's extras on
@@ -467,7 +480,9 @@ a ray through a knot's hole misses. A large geometry's triangles are
 BVH-indexed too - built by the first ray that reaches the shape, log-cost
 after - so raycasting a merged static scene stays cheap (see the batching
 advice). An instanced mesh is box-only (its
-explicit population bounds; records are opaque): it is tested by the
+explicit population bounds; records are opaque), and so is a mesh whose
+geometry is not a triangle list (lines, points, strips have no triangle
+narrowphase): it is tested by the
 box's twelve triangles, so its hits carry the struck face's `normal` and
 no `face`/`uv` - and a ray from inside it meets the far side, the
 surface contract overlap/sweep share. Both methods
@@ -626,7 +641,19 @@ does not tax picking: a merged geometry's raycast narrowphase runs
 through its triangle BVH (built on the first ray), so merge for draw
 count without giving up ground queries. Both are
 pure array math (Three's `applyMatrix4` + `mergeGeometries`), no GPU
-call, and the source geometries are untouched. `geometryBounds(geometry)`
+call, and the source geometries are untouched. `wireframeGeometry(geometry,
+label?)` and `edgesGeometry(geometry, thresholdAngle?, label?)` (Three's
+WireframeGeometry/EdgesGeometry) build `"lines"` geometry over a triangle
+geometry's OWN vertex array and layout, shared by reference: every edge
+once for the wireframe, for the edges only those where two faces meet at
+the threshold (degrees, default 1) or more plus the open borders. Edges
+are matched by position, so a uv seam or a per-face normal split draws
+one line; a generated round shape is faceted and keeps its facet lines
+until the threshold passes 360 / radialSegments. The wireframe of a
+"skinned" part draws in its pose under `unlit({ skinned: true })` with
+the mesh's palette, and the swap onto a live mesh is
+`setGeometry` + `setMaterial` (`examples/wireframe.tsx`). Lines are one
+pixel wide on GL ES; thick lines are quad geometry. `geometryBounds(geometry)`
 returns the cached local AABB `[minX, minY, minZ, maxX, maxY, maxZ]`, and
 `rayBoxDistance(ox, oy, oz, dx, dy, dz, minX, .., maxZ)` is the picking
 slab test (entry t >= 0 in units of the direction's length, 0 from
@@ -677,7 +704,7 @@ Materials:
   ignored. Picks by a unit box around its center (its reach at any
   facing), so hits carry no normal/face/uv. `examples/sprites.tsx`.
 - `shaderMaterial({ vertex, fragment, params?, textures?, depth?,
-  depthWrite?, blend?, cull?, topology?, label? })` - your own GLSL, the
+  depthWrite?, blend?, cull?, label? })` - your own GLSL, the
   custom-look escape hatch. The STANDARD UNIFORM SET: the vertex stage
   MUST declare and use `uniform mat4 uModel` (the mesh's world matrix,
   per entry) and `uniform mat4 uViewProj` (the camera, shared
@@ -1812,8 +1839,9 @@ older bakes are rejected - re-bake with `srt tool 3d/model`.
   aColor you do not read.
 - Picking is triangle-accurate for ordinary meshes (`point` is a surface
   point, hits carry `face`/`uv`/`normal`) but box-only for instanced
-  meshes: there `point` is where the ray meets the population `bounds`
-  box, `normal` that face's, and `face`/`uv` are absent. Never present an
+  meshes and for lines/points geometry: there `point` is where the ray
+  meets the population `bounds` box (the geometry's box for lines),
+  `normal` that face's, and `face`/`uv` are absent. Never present an
   instanced hit as a surface hit. Both tiers run in the spatial core (Rust); never
   add a per-triangle path in JS - rays at mesh scale are
   interpreter-hostile, and the core already does it.

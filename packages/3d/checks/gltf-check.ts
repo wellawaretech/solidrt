@@ -245,6 +245,67 @@ if (gltfExternalUris(file).length !== 0) fail("gltfExternalUris: a self-containe
   }
 }
 
+// --- primitive modes ------------------------------------------------------
+// Lines and points keep their topology on the geometry (still indexed,
+// zero normals when the file has none: the flat-shading un-index is for
+// triangles), a triangle strip unrolls to a list that the mirror flip then
+// applies to, a line loop closes into a strip, an unknown mode throws.
+{
+  let modes = parseGltf(
+    glb(
+      {
+        ...document,
+        scenes: [{ nodes: [0, 1, 2, 3] }],
+        nodes: [
+          { name: "wires", mesh: 0 },
+          { name: "dots", mesh: 1 },
+          { name: "strip", mesh: 2, scale: [-1, 1, 1] },
+          { name: "loop", mesh: 3 },
+        ],
+        meshes: [
+          { primitives: [{ attributes: { POSITION: 0 }, indices: 3, mode: 1 }] },
+          { primitives: [{ attributes: { POSITION: 0 }, indices: 3, mode: 0 }] },
+          { primitives: [{ attributes: { POSITION: 0, NORMAL: 1 }, indices: 3, mode: 5 }] },
+          { primitives: [{ attributes: { POSITION: 0 }, indices: 3, mode: 2 }] },
+        ],
+        skins: [],
+        animations: [],
+      },
+      binBlocks,
+      binLength,
+    ),
+  )
+  for (let part of modes.parts) validateGeometry(part.geometry)
+  if (modes.parts.map((p) => p.name).join() !== "wires,dots,strip,loop") fail(`mode part names: ${modes.parts.map((p) => p.name).join()}`)
+  let geometryOf = (name: string) => modes.parts.find((p) => p.name === name)!.geometry
+  let wires = geometryOf("wires")
+  if (wires.topology !== "lines") fail(`wires topology: ${String(wires.topology)}`)
+  if (wires.indices.join() !== cube.indices.join()) fail("wires: indices changed")
+  if (wires.vertices.length !== vertexCount * STANDARD_FLOATS) fail("wires: un-indexed, the flat-shading path ran on lines")
+  if (wires.vertices[3] !== 0 || wires.vertices[4] !== 0 || wires.vertices[5] !== 0) fail("wires: normals are not zero")
+  if (geometryOf("dots").topology !== "points") fail("dots topology")
+  let strip = geometryOf("strip")
+  if (strip.topology !== undefined) fail(`strip topology: ${String(strip.topology)}, expected a triangle list`)
+  if (strip.indices.length !== (cube.indices.length - 2) * 3) fail(`strip: ${strip.indices.length} indices, expected ${(cube.indices.length - 2) * 3}`)
+  // Triangle 0 of the strip is (s0, s1, s2) and triangle 1 is (s1, s3, s2)
+  // (the odd swap); under the mirror both flip their last two.
+  let s = cube.indices
+  if (Array.from(strip.indices.subarray(0, 6)).join() !== [s[0], s[2], s[1], s[1], s[2], s[3]].join()) {
+    fail(`strip under a mirror: first triangles ${Array.from(strip.indices.subarray(0, 6)).join()}`)
+  }
+  let loop = geometryOf("loop")
+  if (loop.topology !== "line-strip") fail(`loop topology: ${String(loop.topology)}`)
+  if (loop.indices.length !== cube.indices.length + 1 || loop.indices[loop.indices.length - 1] !== loop.indices[0]) fail("loop: not closed into a strip")
+  throws(
+    "unknown primitive mode",
+    () =>
+      parseGltf(
+        glb({ ...document, scenes: [{ nodes: [0] }], nodes: [{ name: "odd", mesh: 0 }], meshes: [{ primitives: [{ attributes: { POSITION: 0 }, indices: 3, mode: 7 }] }], skins: [], animations: [] }, binBlocks, binLength),
+      ),
+    "primitive mode",
+  )
+}
+
 // --- parse ----------------------------------------------------------------
 
 let model = parseGltf(file)

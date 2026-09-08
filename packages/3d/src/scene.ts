@@ -50,7 +50,7 @@ import { cameraParams, cameraState, ensureCamera, makeCamera, updateCamera } fro
 import type { Camera, CameraState, CameraUpdate } from "./camera.ts"
 import { makeShadowSystem } from "./scene-shadows.ts"
 import { makePointerInput } from "./scene-pointer.ts"
-import { geometryBounds, layoutKey, validateGeometry } from "./geometry.ts"
+import { geometryBounds, geometryTopology, layoutKey, validateGeometry } from "./geometry.ts"
 import type { Geometry } from "./geometry.ts"
 import { acquireGeometryBuffers, releaseGeometryBuffers } from "./geometry-gpu.ts"
 import { backgroundPipeline, missingAttributes, SKYBOX_FRAGMENT } from "./material.ts"
@@ -1289,7 +1289,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     // so added live it would draw at the seeded identity until then. The
     // mismatch branch in sync() turns it on in the same pass that writes
     // uModel.
-    mesh._entry = addDraw(texture, mesh.material.pipeline(mesh.geometry.layout), entrySeed(mesh.material, mesh._params), {
+    mesh._entry = addDraw(texture, mesh.material.pipeline(mesh.geometry.layout, geometryTopology(mesh.geometry)), entrySeed(mesh.material, mesh._params), {
       buffer: bufs.buffer,
       indexBuffer: bufs.index,
       indexFormat: bufs.indexFormat,
@@ -1319,6 +1319,9 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     if (v.entries.has(mesh)) return
     let inst = mesh._instances
     if (v.shadowFilter !== null && !v.shadowFilter(mesh)) return
+    // Lines and points cast nothing: a one-pixel wireframe in a shadow
+    // map is speckle on the floor, never a shadow anyone wanted.
+    if (v.shadowFilter !== null && geometryTopology(mesh.geometry) !== "triangles") return
     if ((mesh.layers & v.mask) === 0) return
     let material = viewMaterial(v, mesh)
     // An override pipeline cannot know a populated mesh's record layout,
@@ -1331,7 +1334,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       checkInstancePairing(material, inst, "Shadow material")
     }
     let bufs = mesh._buffers!
-    let entry = addDraw(v.texture, material.pipeline(mesh.geometry.layout), entrySeed(material, v.override !== null ? null : mesh._params), {
+    let entry = addDraw(v.texture, material.pipeline(mesh.geometry.layout, geometryTopology(mesh.geometry)), entrySeed(material, v.override !== null ? null : mesh._params), {
       buffer: bufs.buffer,
       indexBuffer: bufs.index,
       indexFormat: bufs.indexFormat,

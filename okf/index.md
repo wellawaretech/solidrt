@@ -872,6 +872,13 @@ Finished, kept for the reasoning.
   static scene authored as data has to become one Mesh node per part;
   transformGeometry and mergeGeometries are pure array math with no runtime
   dependency, and geometryBounds plus rayBoxDistance already exist unexported.
+- **[Geometry carries its topology, so the picking shape stops assuming triangles](done/3d-geometry-topology.md)** [2026-09-08]
+  Every geometry attached to a 3d scene gets a triangle picking shape built
+  from its index buffer, so a lines or points geometry throws "shape indices
+  must be a triangle list" from a call the app never made, and a strip
+  geometry that happens to divide by three gets a shape of garbage triangles;
+  topology belongs on the geometry (as it does in Three, Godot and Unity), and
+  the shape should follow it.
 - **[Export the shadow lookup from @solidrt/3d/glsl](done/3d-glsl-shadow-lookup.md)** [2026-08-27]
   SHADOW_LOOKUP (shadowAt + lightShadow) joined SHADOW_SLOTS and SHADOW in
   @solidrt/3d/glsl on 2026-08-27; lit and the one custom receiver compose it,
@@ -1797,6 +1804,10 @@ Knowledge. No lifecycle - true or wrong, not open or closed.
   Engine-free layering upheld, docs excellent, clippy clean; gaps are untested
   subprocess/p2p/ffi, stale docs, an implicit single-thread contract and
   IPv4-only skew.
+- **[Geometry topology and edge builders - what the implementation taught](notes/geometry-topology-edges.md)** [2026-09-08]
+  Why topology belongs on the geometry and not the material, why edge builders
+  must weld by position, the facet-angle rule for edgesGeometry thresholds,
+  and the glTF primitive-mode mapping.
 - **[Measuring which process burns the GPU, on Linux](notes/gpu-burn-attribution-linux.md)** [2026-08-13]
   The /proc fdinfo probe that unravelled the idle-GPU burn, its three caveats,
   and the compositor knock-on rule - every client present makes the OS

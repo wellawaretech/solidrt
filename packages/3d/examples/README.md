@@ -142,6 +142,12 @@ depends on `@solidrt/3d` (or in-repo from the package directory).
   transparent dome and a mesh without normals) parsed with `parseGltf`
   from a binary import and built by `createModel` into a Group of named
   parts; clicking a part hides it, clicking the body restores all.
+- `wireframe.tsx` - the rover drawn solid, as a wireframe or as its
+  feature edges: `wireframeGeometry`/`edgesGeometry` build "lines"
+  geometry over each part's own vertices (one shared vertex upload, a
+  second index buffer) and `setGeometry`/`setMaterial` swap it onto the
+  live mesh, no node touched. Space, a tap on the rover, or the `wire`
+  debug command (`{ mode: "solid" | "wireframe" | "edges" }`) cycles.
 - `model-load.tsx` - the same rover loaded ASYNC with `loadModel` from
   `assets/` under a `<Loading>` boundary: the async read lives in a memo,
   a second memo derives the scene JSX after that read, and the shell

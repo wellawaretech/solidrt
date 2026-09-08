@@ -63,9 +63,10 @@ import {
 } from "./glsl.ts"
 
 export type Material = {
-  /** The pipeline this material draws with for geometry of `layout`
-   * (lazily created, one per layout met). */
-  pipeline(layout: VertexLayout | undefined): RenderPipelineId
+  /** The pipeline this material draws with for geometry of `layout` and
+   * `topology` (lazily created, one per pair met): the geometry says what
+   * its indices are, the material draws them that way. */
+  pipeline(layout: VertexLayout | undefined, topology: Topology): RenderPipelineId
   /** Per-entry uniform values this material contributes at addDraw. */
   params: ShaderParams
   /** Per-entry sampler bindings, when the material samples textures. */
@@ -1072,7 +1073,6 @@ export type ShaderMaterialClassOptions = {
   depthWrite?: boolean
   blend?: BlendMode
   cull?: CullMode
-  topology?: Topology
   label?: string
 }
 
@@ -1192,8 +1192,8 @@ export function shaderMaterialClass(opts: ShaderMaterialClassOptions): ShaderMat
   // record buffer, declared on the pipeline beside the layout).
   let attributes = (): VertexAttribute[] =>
     programAttributes(programFor()).filter(a => !instanceAttributes?.some(i => i.name === a.name))
-  let pipelineFor = (layout: VertexLayout | undefined): RenderPipelineId => {
-    let key = layoutKey(layout)
+  let pipelineFor = (layout: VertexLayout | undefined, topology: Topology): RenderPipelineId => {
+    let key = layoutKey(layout) + "|" + topology
     let pipeline = pipelines.get(key)
     if (pipeline === undefined) {
       pipeline = createRenderPipeline(programFor(), {
@@ -1205,7 +1205,7 @@ export function shaderMaterialClass(opts: ShaderMaterialClassOptions): ShaderMat
         depthWrite: opts.depthWrite ?? (transparent && depth ? false : undefined),
         blend: opts.blend ?? (transparent ? "alpha" : undefined),
         cull,
-        topology: opts.topology,
+        topology,
         label: opts.label,
       })
       pipelines.set(key, pipeline)

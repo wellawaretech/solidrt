@@ -21,7 +21,7 @@
 // array math (the check rig checks/geometry-check.ts runs it headless on
 // flux). The GPU buffer step lives in geometry-gpu.ts.
 
-import type { VertexAttribute } from "@solidrt/core/gpu"
+import type { Topology, VertexAttribute } from "@solidrt/core/gpu"
 import { add, compose, cross, mat4, normalize, normalMatrix, sub, updateRotation, updateScale } from "./math.ts"
 import type { Quat, TransformUpdate, Vec2, Vec3 } from "./math.ts"
 
@@ -123,7 +123,35 @@ export function validateGeometry(geometry: Geometry): void {
       name + ": " + geometry.vertices.length + " vertex floats is not a whole number of " + stride + "-float (" + layoutKey(layout) + ") vertices",
     )
   }
-  if (geometry.indices.length === 0) throw new Error(name + ": no indices")
+  let topology = geometryTopology(geometry)
+  let count = geometry.indices.length
+  // Lines and points may be empty: a feature-edge pass over a smooth
+  // closed shape has nothing to draw, and that is a result, not a bug.
+  switch (topology) {
+    case "triangles":
+      if (count === 0) throw new Error(name + ": no indices")
+      if (count % 3 !== 0) throw new Error(name + ": " + count + " indices is not a whole number of triangles")
+      break
+    case "lines":
+      if (count % 2 !== 0) throw new Error(name + ": " + count + " indices is not a whole number of lines")
+      break
+    case "line-strip":
+      if (count < 2) throw new Error(name + ": a line strip needs at least 2 indices")
+      break
+    case "triangle-strip":
+      if (count < 3) throw new Error(name + ": a triangle strip needs at least 3 indices")
+      break
+    case "points":
+      break
+    default:
+      throw new Error(name + ": unknown topology '" + String(topology) + "'")
+  }
+}
+
+/** The geometry's topology with the default applied: what its indices
+ * list, "triangles" unless it says otherwise. */
+export function geometryTopology(geometry: Geometry): Topology {
+  return geometry.topology ?? "triangles"
 }
 
 /** The options every generator shares (each generator's own options type
@@ -194,6 +222,20 @@ export type Geometry = {
   /** The array type picks the draw's index format: Uint32Array past 64k
    * vertices. */
   indices: Uint16Array | Uint32Array
+  /** What the indices describe; absent means "triangles". The index
+   * buffer and the primitive it lists travel together (Godot's surface
+   * primitive, Unity's Mesh.SetIndices topology, Three's Line/Points
+   * object types over one BufferGeometry): the material draws whatever
+   * topology its geometry carries, one pipeline per (layout, topology)
+   * pair. Only a triangle list gets the picking shape - a lines, points
+   * or strip geometry picks (and collides) by its bounds box, the tier a
+   * sprite or an instanced mesh is at, so hits carry no face/uv. Lines
+   * are one pixel wide on GL ES whatever the display density. A lines
+   * or points geometry may have no indices at all (it then draws
+   * nothing; the other topologies reject that at add()).
+   * wireframeGeometry/edgesGeometry build "lines" over a triangle
+   * geometry's own vertices. */
+  topology?: Topology
   /** Vertex layout; absent means "standard". Must match the material's
    * layout - the scene rejects a mismatched pair at add(). */
   layout?: VertexLayout
@@ -270,6 +312,7 @@ export function withAttribute(geometry: Geometry, attr: VertexAttribute, fill: A
   return {
     vertices: out,
     indices: geometry.indices,
+    topology: geometry.topology,
     layout,
     label: label ?? (geometry.label ? geometry.label + "-" + attr.name : undefined),
   }
@@ -394,6 +437,7 @@ export function transformGeometry(geometry: Geometry, transform: TransformUpdate
   return {
     vertices: out,
     indices: geometry.indices,
+    topology: geometry.topology,
     layout: geometry.layout,
     label: label ?? (geometry.label ? geometry.label + "-transformed" : undefined),
   }
@@ -403,7 +447,9 @@ export function transformGeometry(geometry: Geometry, transform: TransformUpdate
  * Concatenate geometries into one: vertices appended in order, indices
  * offset to match, uint32 indices past 64k vertices. Every part must share
  * one layout - a mixed list throws, because the strides differ and a merge
- * that picked one would draw garbage, not a mesh missing a channel. The
+ * that picked one would draw garbage, not a mesh missing a channel - and
+ * one list topology (a mixed list throws the same way; strips cannot be
+ * concatenated at all, the seam would join them). The
  * second half of authoring a static scene as data (Three's
  * `BufferGeometryUtils.mergeGeometries`): the result is one draw entry and
  * one uModel write however many parts went in, so only what actually moves
@@ -414,11 +460,16 @@ export function mergeGeometries(parts: Geometry[], label?: string): Geometry {
   let layout = parts[0]!.layout
   let key = layoutKey(layout)
   let stride = layoutStride(layout)
+  let topology = geometryTopology(parts[0]!)
+  if (topology === "line-strip" || topology === "triangle-strip") throw new Error("mergeGeometries: cannot merge " + topology + " geometry")
   let floats = 0
   let indexCount = 0
   for (let part of parts) {
     if (layoutKey(part.layout) !== key) {
       throw new Error("mergeGeometries: mixed layouts (" + key + " and " + layoutKey(part.layout) + ")")
+    }
+    if (geometryTopology(part) !== topology) {
+      throw new Error("mergeGeometries: mixed topologies (" + topology + " and " + geometryTopology(part) + ")")
     }
     if (part.vertices.length % stride !== 0) {
       throw new Error("mergeGeometries: a part's vertex data is not a whole number of " + key + " vertices")
@@ -439,7 +490,134 @@ export function mergeGeometries(parts: Geometry[], label?: string): Geometry {
     vOffset += part.vertices.length
     iOffset += src.length
   }
-  return { vertices, indices, layout, label }
+  return { vertices, indices, topology: parts[0]!.topology, layout, label }
+}
+
+/** Positions closer than this (model units) are one vertex to the edge
+ * builders: a uv seam or a per-face normal split duplicates a position,
+ * and an edge is the same edge whichever copy a triangle names. */
+const WELD_PRECISION = 1e-4
+
+/** Degrees between two faces' normals from which the edge between them
+ * counts as a feature edge in edgesGeometry; under it the faces read as
+ * one smooth surface and the edge stays hidden. Three's default. */
+const EDGES_THRESHOLD_ANGLE = 1
+
+/** One id per vertex, shared by every vertex at the same position (to
+ * WELD_PRECISION) whatever its normal and uv; plus the id count. */
+function weldPositions(geometry: Geometry): { ids: Uint32Array; count: number } {
+  let v = geometry.vertices
+  let stride = layoutStride(geometry.layout)
+  let count = v.length / stride
+  let ids = new Uint32Array(count)
+  let seen = new Map<string, number>()
+  let scale = 1 / WELD_PRECISION
+  for (let i = 0; i < count; i++) {
+    let b = i * stride
+    let key = Math.round(v[b]! * scale) + "," + Math.round(v[b + 1]! * scale) + "," + Math.round(v[b + 2]! * scale)
+    let id = seen.get(key)
+    if (id === undefined) {
+      id = seen.size
+      seen.set(key, id)
+    }
+    ids[i] = id
+  }
+  return { ids, count: seen.size }
+}
+
+/** The edge table of a triangle geometry, welded by position, as a lines
+ * index list: every edge once for `cosThreshold` null, else the feature
+ * edges - those with one face (a border) or whose two faces' normals
+ * dot at or below the threshold. Each edge names the vertex pair of the
+ * first triangle that had it. */
+function edgeIndices(geometry: Geometry, name: string, cosThreshold: number | null): Uint16Array | Uint32Array {
+  if (geometryTopology(geometry) !== "triangles") {
+    throw new Error(name + ": needs a triangle geometry, got " + geometryTopology(geometry))
+  }
+  let v = geometry.vertices
+  let stride = layoutStride(geometry.layout)
+  let weld = weldPositions(geometry)
+  let src = geometry.indices
+  type Edge = { a: number; b: number; nx: number; ny: number; nz: number; faces: number; sharp: boolean }
+  let edges = new Map<number, Edge>()
+  for (let t = 0; t + 2 < src.length; t += 3) {
+    let i0 = src[t]!, i1 = src[t + 1]!, i2 = src[t + 2]!
+    let p0 = i0 * stride, p1 = i1 * stride, p2 = i2 * stride
+    // The face normal, for the feature test.
+    let ux = v[p1]! - v[p0]!, uy = v[p1 + 1]! - v[p0 + 1]!, uz = v[p1 + 2]! - v[p0 + 2]!
+    let wx = v[p2]! - v[p0]!, wy = v[p2 + 1]! - v[p0 + 1]!, wz = v[p2 + 2]! - v[p0 + 2]!
+    let nx = uy * wz - uz * wy, ny = uz * wx - ux * wz, nz = ux * wy - uy * wx
+    let len = Math.hypot(nx, ny, nz) || 1
+    nx /= len
+    ny /= len
+    nz /= len
+    for (let k = 0; k < 3; k++) {
+      let ia = k === 0 ? i0 : k === 1 ? i1 : i2
+      let ib = k === 0 ? i1 : k === 1 ? i2 : i0
+      let wa = weld.ids[ia]!, wb = weld.ids[ib]!
+      if (wa === wb) continue
+      let key = Math.min(wa, wb) * weld.count + Math.max(wa, wb)
+      let e = edges.get(key)
+      if (e === undefined) {
+        edges.set(key, { a: ia, b: ib, nx, ny, nz, faces: 1, sharp: false })
+      } else {
+        e.faces++
+        if (cosThreshold !== null && !e.sharp && e.nx * nx + e.ny * ny + e.nz * nz <= cosThreshold) e.sharp = true
+      }
+    }
+  }
+  let out: number[] = []
+  for (let e of edges.values()) {
+    if (cosThreshold === null || e.faces === 1 || e.sharp) out.push(e.a, e.b)
+  }
+  return packIndices(out, v.length / stride)
+}
+
+/**
+ * Every edge of a triangle geometry as a "lines" geometry over the SAME
+ * vertices (Three's WireframeGeometry): each triangle's three sides, once
+ * each - edges are matched by position, so a uv seam or a per-face
+ * normal split draws one line, not two on top of each other. The
+ * source's vertex array and layout are shared by reference, and so is
+ * their GPU upload, which makes the wireframe a second index buffer over
+ * the same vertices: a "skinned" part's wireframe draws in its pose
+ * under `unlit({ skinned: true })` with the mesh's own palette, and any
+ * material draws it as lines because the topology rides on the
+ * geometry. Lines are one pixel wide.
+ */
+export function wireframeGeometry(geometry: Geometry, label?: string): Geometry {
+  return {
+    vertices: geometry.vertices,
+    indices: edgeIndices(geometry, "wireframeGeometry", null),
+    topology: "lines",
+    layout: geometry.layout,
+    label: label ?? (geometry.label ? geometry.label + "-wireframe" : undefined),
+  }
+}
+
+/**
+ * The feature edges of a triangle geometry as a "lines" geometry over the
+ * same vertices (Three's EdgesGeometry): an edge draws when its two faces
+ * meet at `thresholdAngle` degrees or more, or when only one face has it
+ * (an open border): the outline that a dense mesh's wireframe, a solid
+ * blob, cannot give. A box draws its twelve edges and no face diagonals
+ * at any threshold; a generated round shape is faceted, so its facet
+ * lines show until the threshold passes its facet angle (360 divided by
+ * the radial segments: a default cylinder loses its side seams and keeps
+ * its two rims from 16 degrees, a default sphere draws nothing from 16).
+ * A smooth closed shape above its facet angle has no edges at all, and
+ * the empty lines geometry that comes back attaches and draws nothing.
+ * Shares vertices, layout and GPU upload with the source like
+ * wireframeGeometry.
+ */
+export function edgesGeometry(geometry: Geometry, thresholdAngle = EDGES_THRESHOLD_ANGLE, label?: string): Geometry {
+  return {
+    vertices: geometry.vertices,
+    indices: edgeIndices(geometry, "edgesGeometry", Math.cos((thresholdAngle * Math.PI) / 180)),
+    topology: "lines",
+    layout: geometry.layout,
+    label: label ?? (geometry.label ? geometry.label + "-edges" : undefined),
+  }
 }
 
 // Indices for a row-major (cellRows + 1) x (cellCols + 1) vertex grid: two

@@ -24,7 +24,8 @@ export type Mesh = SceneNode & {
   renderOrder: number
   /** Draw into the scene's shadow map (default false, Three's default).
    * Set with setCastShadow. A casting instanced mesh is skipped (the
-   * depth pass cannot know its record layout). */
+   * depth pass cannot know its record layout), and so is any geometry
+   * that is not a triangle list: lines and points cast nothing. */
   castShadow: boolean
   /** Layer membership bitmask (default 1, Three's `object.layers`): a
    * target draws the mesh when its mask intersects this. Not inherited

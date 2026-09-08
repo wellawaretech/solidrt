@@ -1,9 +1,12 @@
 // glTF 2.0, the subset an app needs to show authored models: the scene's
 // node tree RETAINED - a node table of local TRS with parent links (matrix
 // nodes decomposed; shear dropped), vertices in NODE-LOCAL space, one part
-// per mesh primitive referencing its node - triangles with positions,
-// normals (flat ones generated when absent, per the spec), one UV set and
-// indices, and materials reduced to what lit()/unlit() draw - base color
+// per mesh primitive referencing its node - positions, normals (flat ones
+// generated when absent, per the spec, for triangles), one UV set and
+// indices in the primitive's topology (strips and fans unrolled to
+// triangle lists, a line loop closed into a strip; lines and points keep
+// theirs on the geometry), and materials reduced to what lit()/unlit()
+// draw - base color
 // factor and texture, normal map (with scale), emissive factor and map
 // (KHR_materials_emissive_strength as the intensity), double-sidedness, alpha
 // blending and masking - plus the file's animations as baked clips
@@ -19,8 +22,8 @@
 // bytes in `images`, and uploading is the engine side's job.
 //
 // Outside the subset: Draco/meshopt-compressed meshes and any other
-// required extension throw naming it; non-triangle primitives, sparse
-// accessors and morph targets (the "weights" channel path) are skipped
+// required extension throw naming it; sparse accessors and morph
+// targets (the "weights" channel path) are skipped
 // or ignored; vertex colors, tangents and further UV sets are dropped
 // (the standard layout has no slot for them yet). Skins ARE parsed:
 // joints, inverse binds, and the "skinned" vertex layout.
@@ -30,6 +33,7 @@ import { linearToSrgb } from "./color.ts"
 import type { Mat4, Quat, Vec3 } from "./math.ts"
 import { layoutStride, packGeometry, packIndices, STANDARD_FLOATS } from "./geometry.ts"
 import type { Geometry } from "./geometry.ts"
+import type { Topology } from "@solidrt/core/gpu"
 
 /** What lit()/unlit() take from a glTF material. */
 export type ModelMaterial = {
@@ -182,7 +186,39 @@ export type UriResolver = (uri: string) => Uint8Array
 const GLB_MAGIC = 0x46546c67
 const CHUNK_JSON = 0x4e4f534a
 const CHUNK_BIN = 0x004e4942
+// glTF primitive modes (the GL enum values).
+const MODE_POINTS = 0
+const MODE_LINES = 1
+const MODE_LINE_LOOP = 2
+const MODE_LINE_STRIP = 3
 const MODE_TRIANGLES = 4
+const MODE_TRIANGLE_STRIP = 5
+const MODE_TRIANGLE_FAN = 6
+
+/** A triangle strip unrolled to a list: triangle t is (t, t+1, t+2),
+ * every odd one with its last two swapped so the winding stays put. */
+function stripTriangles(strip: ArrayLike<number>): number[] {
+  let out: number[] = []
+  for (let t = 0; t + 2 < strip.length; t++) {
+    if (t % 2 === 0) out.push(strip[t]!, strip[t + 1]!, strip[t + 2]!)
+    else out.push(strip[t]!, strip[t + 2]!, strip[t + 1]!)
+  }
+  return out
+}
+
+/** A triangle fan unrolled to a list: every triangle shares the hub. */
+function fanTriangles(fan: ArrayLike<number>): number[] {
+  let out: number[] = []
+  for (let t = 1; t + 1 < fan.length; t++) out.push(fan[0]!, fan[t]!, fan[t + 1]!)
+  return out
+}
+
+/** A line loop as a strip that returns to its first vertex. */
+function closeLoop(loop: ArrayLike<number>): number[] {
+  let out = Array.from(loop)
+  if (loop.length > 0) out.push(loop[0]!)
+  return out
+}
 
 // The spec's alphaCutoff when a MASK material leaves it out.
 const GLTF_ALPHA_CUTOFF = 0.5
@@ -383,8 +419,8 @@ export function parseGltf(bytes: Uint8Array, resolve?: UriResolver): ModelData {
   let bounds = new Float32Array([Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity])
 
   let emit = (prim: any, name: string, node: number, world: Mat4, skin: number | null): void => {
-    if ((prim.mode ?? MODE_TRIANGLES) !== MODE_TRIANGLES) return
     if (prim.attributes?.POSITION === undefined) return
+    let mode: number = prim.mode ?? MODE_TRIANGLES
     let pos = accessorFloats(prim.attributes.POSITION, name + " POSITION")
     if (pos.elements !== 3) throw new Error("parseGltf: " + name + " POSITION is not VEC3")
     let count = pos.count
@@ -408,17 +444,57 @@ export function parseGltf(bytes: Uint8Array, resolve?: UriResolver): ModelData {
       weights = w.data
     }
     let stride = skinned ? SKINNED_FLOATS : STANDARD_FLOATS
-    let indices: ArrayLike<number> =
+    let raw: ArrayLike<number> =
       prim.indices !== undefined ? accessorFloats(prim.indices, name + " indices").data : Array.from({ length: count }, (_, i) => i)
-    if (indices.length % 3 !== 0) throw new Error("parseGltf: " + name + " index count is not a multiple of 3")
+    // The primitive's topology, carried on the geometry. Triangle strips
+    // and fans are unrolled to lists (what the winding flip, the
+    // flat-shading un-index and the picking shape expect) and a line
+    // loop, which has no GPU topology, is closed into a strip.
+    let topology: Topology
+    let indices: ArrayLike<number>
+    switch (mode) {
+      case MODE_TRIANGLES:
+        topology = "triangles"
+        indices = raw
+        break
+      case MODE_TRIANGLE_STRIP:
+        topology = "triangles"
+        indices = stripTriangles(raw)
+        break
+      case MODE_TRIANGLE_FAN:
+        topology = "triangles"
+        indices = fanTriangles(raw)
+        break
+      case MODE_LINES:
+        topology = "lines"
+        indices = raw
+        break
+      case MODE_LINE_STRIP:
+        topology = "line-strip"
+        indices = raw
+        break
+      case MODE_LINE_LOOP:
+        topology = "line-strip"
+        indices = closeLoop(raw)
+        break
+      case MODE_POINTS:
+        topology = "points"
+        indices = raw
+        break
+      default:
+        throw new Error("parseGltf: " + name + " has an unknown primitive mode " + mode)
+    }
+    let triangles = topology === "triangles"
+    if (triangles && indices.length % 3 !== 0) throw new Error("parseGltf: " + name + " index count is not a multiple of 3")
 
     // A mirroring chain (negative world determinant at the rest pose)
     // flips the displayed winding, so the index order is flipped here to
     // compensate - cull: "back" keeps the outside. Stored normals stay the
     // authored ones: the runtime's inverse-transpose maps them outward for
     // the flipped winding. Baked from the REST pose; a scale animated
-    // across zero would unbake it, which is pathological.
-    let flip = !skinned && det3(world) < 0
+    // across zero would unbake it, which is pathological. Lines and
+    // points have no winding.
+    let flip = triangles && !skinned && det3(world) < 0
     // Joint boxes need the skin's inverse binds, and skins are built after
     // the walk (their joints are ordinary nodes the walk registers), so
     // the arrays are parked under the FILE's skin index and grown then.
@@ -426,14 +502,18 @@ export function parseGltf(bytes: Uint8Array, resolve?: UriResolver): ModelData {
 
     let vertices: Float32Array
     let packedIndices: number[]
-    if (nrm !== null) {
+    if (nrm !== null || !triangles) {
+      // Indexed as authored. Lines and points without normals get zero
+      // ones (there is no face to take one from; nothing lights them).
       vertices = new Float32Array(count * stride)
       for (let i = 0; i < count; i++) writeVertex(vertices, i, pos.data, nrm, uv, i, stride, joints, weights)
-      packedIndices = new Array(indices.length)
-      for (let i = 0; i < indices.length; i += 3) {
-        packedIndices[i] = indices[i]!
-        packedIndices[i + 1] = flip ? indices[i + 2]! : indices[i + 1]!
-        packedIndices[i + 2] = flip ? indices[i + 1]! : indices[i + 2]!
+      packedIndices = Array.from(indices)
+      if (flip) {
+        for (let i = 0; i < packedIndices.length; i += 3) {
+          let b = packedIndices[i + 1]!
+          packedIndices[i + 1] = packedIndices[i + 2]!
+          packedIndices[i + 2] = b
+        }
       }
     } else {
       // No normals: the spec asks for flat shading, which needs one vertex
@@ -508,6 +588,7 @@ export function parseGltf(bytes: Uint8Array, resolve?: UriResolver): ModelData {
     let geometry: Geometry = skinned
       ? { vertices, indices: packIndices(packedIndices, count), layout: "skinned", label: name }
       : packGeometry(vertices, packedIndices, { label: name })
+    if (!triangles) geometry.topology = topology
     parts.push({ name, node, skin, geometry, material })
   }
 

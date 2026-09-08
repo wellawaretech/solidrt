@@ -15,7 +15,7 @@ import { createBuffer, destroyBuffer } from "@solidrt/core/gpu"
 import type { BufferId, IndexFormat } from "@solidrt/core/gpu"
 import { createShape, destroyShape } from "flux:spatial"
 import type { ShapeId } from "flux:spatial"
-import { layoutStride } from "./geometry.ts"
+import { geometryTopology, layoutStride } from "./geometry.ts"
 import type { Geometry } from "./geometry.ts"
 
 /** An acquired reference to a geometry's GPU buffers: what a draw entry
@@ -26,13 +26,44 @@ export type GeometryBuffers = {
   buffer: BufferId
   index: BufferId
   indexFormat: IndexFormat
-  /** The picking shape (positions at 0, uv at 6 of every layout). */
-  shape: ShapeId
+  /** The picking shape (positions at 0, uv at 6 of every layout); null
+   * for anything but a triangle list, which picks by its box. */
+  shape: ShapeId | null
 }
 
-type GpuEntry = GeometryBuffers & { geometry: Geometry; refs: number }
+type GpuEntry = GeometryBuffers & { geometry: Geometry; vertices: Float32Array; refs: number }
 
 let entries = new WeakMap<Geometry, GpuEntry>()
+
+/** Vertex uploads keyed by the array itself: geometries sharing one
+ * vertex array (a wireframe or edges geometry over its source's) share
+ * one GPU buffer, each entry holding a reference to it. */
+let vertexUploads = new WeakMap<Float32Array, { buffer: BufferId; refs: number }>()
+
+function acquireVertices(geometry: Geometry): BufferId {
+  let upload = vertexUploads.get(geometry.vertices)
+  if (upload === undefined) {
+    upload = {
+      buffer: createBuffer(geometry.vertices, {
+        autoFree: false,
+        label: geometry.label ? geometry.label + "-verts" : undefined,
+      }),
+      refs: 0,
+    }
+    vertexUploads.set(geometry.vertices, upload)
+  }
+  upload.refs++
+  return upload.buffer
+}
+
+function releaseVertices(vertices: Float32Array): void {
+  let upload = vertexUploads.get(vertices)
+  if (upload === undefined) return
+  upload.refs--
+  if (upload.refs > 0) return
+  vertexUploads.delete(vertices)
+  destroyBuffer(upload.buffer)
+}
 
 /** The geometry's GPU buffers, created on first use, plus the index format
  * the draw entry must bind them with. Takes a reference - pair every
@@ -43,16 +74,17 @@ export function acquireGeometryBuffers(geometry: Geometry): GeometryBuffers {
   if (entry === undefined) {
     entry = {
       geometry,
-      buffer: createBuffer(geometry.vertices, {
-        autoFree: false,
-        label: geometry.label ? geometry.label + "-verts" : undefined,
-      }),
+      vertices: geometry.vertices,
+      buffer: acquireVertices(geometry),
       index: createBuffer(geometry.indices, {
         autoFree: false,
         label: geometry.label ? geometry.label + "-indices" : undefined,
       }),
       indexFormat: geometry.indices instanceof Uint32Array ? "uint32" : "uint16",
-      shape: createShape(geometry.vertices, layoutStride(geometry.layout), 0, 6, geometry.indices),
+      shape:
+        geometryTopology(geometry) === "triangles"
+          ? createShape(geometry.vertices, layoutStride(geometry.layout), 0, 6, geometry.indices)
+          : null,
       refs: 0,
     }
     entries.set(geometry, entry)
@@ -74,9 +106,9 @@ export function releaseGeometryBuffers(acquired: GeometryBuffers): void {
   queueMicrotask(() => {
     if (entries.get(entry.geometry) !== entry || entry.refs > 0) return
     entries.delete(entry.geometry)
-    destroyBuffer(entry.buffer)
+    releaseVertices(entry.vertices)
     destroyBuffer(entry.index)
-    destroyShape(entry.shape)
+    if (entry.shape !== null) destroyShape(entry.shape)
   })
 }
 
@@ -91,7 +123,7 @@ export function disposeGeometry(geometry: Geometry): void {
   let entry = entries.get(geometry)
   if (entry === undefined) return
   entries.delete(geometry)
-  destroyBuffer(entry.buffer)
+  releaseVertices(entry.vertices)
   destroyBuffer(entry.index)
-  destroyShape(entry.shape)
+  if (entry.shape !== null) destroyShape(entry.shape)
 }
