@@ -535,6 +535,16 @@ impl App {
       if let Some(g) = gamepads.as_mut() {
         g.set_muted(muted);
       }
+      // A muted client must not hold the user's mouse captive: their input is
+      // dropped below anyway, so the capture buys nothing, and the Escape an
+      // app releases the lock on is itself a muted keydown - without this the
+      // mouse is stuck until the mute lifts. The SDL read is the transition
+      // check; the app sees a plain unlock and can lock again once unmuted.
+      if muted && sdl_context.mouse().relative_mouse_mode(&window) {
+        sdl_context.mouse().set_relative_mouse_mode(&window, false);
+        pointer_lock_frozen = None;
+        event_tx.send(AlloyEvent::PointerLock { locked: false }).ok();
+      }
       liveness.begin_pump();
       for sdl_event in first_event.into_iter().chain(event_pump.poll_iter()) {
         if let sdl3::event::Event::Display { display_event, .. } = &sdl_event {
