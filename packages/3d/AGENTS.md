@@ -6,6 +6,16 @@ one `addDraw` entry per mesh); the scene's output is an ordinary texture
 id composited as a `<texture>` leaf, so it takes layout, transforms,
 blendMode and pointer events like any element.
 
+The layer below is worth knowing by name: `@solidrt/core`'s
+`examples/gpu-*.tsx` are the raw pipeline vocabulary this package
+composes - `gpu-particles.tsx` (points topology, `gl_PointSize` /
+`gl_PointCoord` splats, additive blend), `gpu-instancing.tsx`
+(`instanceCount` and `gl_InstanceID`), `gpu-pipeline.tsx` (a custom
+vertex + fragment pair over an interleaved buffer), `gpu-draw-list.tsx`
+(a mutable list of draws sharing one depth buffer), `gpu-raw-program.tsx`
+(compile/link/pipeline by hand). What the GPU layer can do is answered
+there, not here.
+
 Contents:
 
 - [The model](#the-model)
@@ -294,7 +304,11 @@ so a geometry may carry more than a material reads. The whole layout
 ships whether a material reads every attribute or not (inactive
 attributes only keep the stride), so extra channels cost their floats on
 every draw of that geometry - keep data-light passes (a wireframe
-reading only aPos) on standard geometry. `layoutStride`/`layoutSlot`/
+reading only aPos) on standard geometry. The prefix has no opt-out, so
+geometry that is not a surface pays for it anyway: a lidar point
+carrying a position and one packed channel still costs the 8-float
+prefix, doubling a large cloud's vertex buffer
+(okf/backlog/non-surface-vertex-layouts.md). `layoutStride`/`layoutSlot`/
 `layoutKey`/`layoutAttributes` are the layout arithmetic; two layouts
 with equal keys interleave identically (merge requires that).
 Indices are uint16 or uint32 - the `Geometry.indices` array type picks
@@ -309,8 +323,17 @@ count rule at add() (a whole number of triangles or lines, one
 primitive's worth for a strip). Materials have no topology of their
 own. Only a triangle list gets a picking shape; lines and points pick
 and collide by their bounds box, and cast no shadow. `geometryTopology`
-reads the field with the default applied. Geometry GPU buffers are
-lazy, shared, and reference-counted by draw entries: removing the last
+reads the field with the default applied. POINTS: a point cloud is
+ordinary indexed geometry - one vertex per point, the index buffer
+listing them, `topology: "points"`, no constraint on the index count.
+Under `"points"` the vertex stage writes `gl_PointSize` (honored to the
+pixel; `size / gl_Position.w` attenuates it with distance) and the
+fragment reads `gl_PointCoord` (0..1 across the sprite) to shape the
+splat - `discard` outside the inscribed circle for round ones. The
+worked example is `@solidrt/core`'s `examples/gpu-particles.tsx`. Do
+NOT reach for instancing to draw a cloud (Instancing, below, has the
+cost model). Geometry GPU buffers are lazy, shared, and
+reference-counted by draw entries: removing the last
 entry frees them at the end of the microtask (a same-tick rebuild keeps
 the upload), so swapping `<Mesh geometry>` reactively never accumulates
 old generations; the vertex upload is keyed on the `Float32Array`
@@ -356,7 +379,7 @@ collision claims - two copies of this contract have drifted before.
 
 | Component | Props |
 | --- | --- |
-| `Scene` | `width?`, `height?` (target pixels - both, or neither = FILL, below), `clearColor?`, `camera?` (partial CameraUpdate, `ortho` included - the declarative scene.setCamera; same state as `PerspectiveCamera`, use one form), `background?` (fragment GLSL, or a skybox `{ cube, intensity?, rotation? }`), `environment?` (`{ cube, intensity?, rotation? }`, the cube reflective materials mirror), `fog?` (`{ color, near, far }`, linear by camera distance), `toneMapping?` (`"none"` default or `"aces"`), `exposure?` (default 1), `layers?` (target mask, default 1), `depth?` (`"texture"` exposes scene.depthTexture; not with samples), `samples?` (1/2/4/8 MSAA), `label?`, `ref?(scene)`, `output?(texture)`, `events?` (pointer events, default on), `pointer?` (the leaf's pointer feed, fed from the scene's root), `onPointerDown/Move/Up?`, `onWheel?`, `onTap?` (the scene's own handlers, the last stop of the walk - `event.mesh` null over empty space) |
+| `Scene` | `width?`, `height?` (target pixels - both, or neither = FILL, below), `clearColor?`, `camera?` (partial CameraUpdate, `ortho` included - the declarative scene.setCamera; same state as `PerspectiveCamera`, use one form; the camera CONTROLS are not a third form - `OrbitCamera`/`FirstPersonCamera` drive position and target only, so `fov`/`near`/`far` come from here even while a control moves the camera, and the default `far` of 100 is what clips a scene in metres), `background?` (fragment GLSL, or a skybox `{ cube, intensity?, rotation? }`), `environment?` (`{ cube, intensity?, rotation? }`, the cube reflective materials mirror), `fog?` (`{ color, near, far }`, linear by camera distance), `toneMapping?` (`"none"` default or `"aces"`), `exposure?` (default 1), `layers?` (target mask, default 1), `depth?` (`"texture"` exposes scene.depthTexture; not with samples), `samples?` (1/2/4/8 MSAA), `label?`, `ref?(scene)`, `output?(texture)`, `events?` (pointer events, default on), `pointer?` (the leaf's pointer feed, fed from the scene's root), `onPointerDown/Move/Up?`, `onWheel?`, `onTap?` (the scene's own handlers, the last stop of the walk - `event.mesh` null over empty space) |
 | `View3d` | a Scene child rendering the scene again from a camera of its own (scene.createView as a component): `width`, `height` (target pixels, live; fixed-size only for now), `x?`, `y?` (the tile's top-left in `into`, live), `into?` (tile an app-owned draw target - one pass for every view into it; fixed at creation), `camera?` (partial CameraUpdate on the view's camera, live; same state as a `PerspectiveCamera` child), `layers?` (the view's mask, live), `clearColor?`, `label?`, `overrideMaterial?`, `fog?` (FogOptions, or null for none), `depth?`, `samples?`, `filter?`, `wrap?` (createView's, fixed), `ref?(view)`, `output?(texture)` (else a built-in `<texture>` leaf at the target size, a tile shown through srcX/srcY), `events?`, `pointer?` (the view leaf's feed, fed from the view's root), `onPointerDown/Move/Up?`, `onWheel?`, `onTap?` (the view's own handlers); camera-control children drive the VIEW (inside, `useScene()` reports the view as `viewport` and the view's feed as `pointer`); node children mount to the scene as outside, and under the view's leaf get their ordinary pointer handlers, picked through the view's camera (`view.pick`), the view as the root of that walk |
 | `Group` | `position?`, `rotation?` (Euler radians, XYZ order), `quaternion?` (either, not both), `scale?` (number = uniform), `visible?`, pointer events (below), `ref?(node)` |
 | `Mesh` | `geometry`, `material`, transforms as Group, `params?` (per-mesh uniforms, merge semantics - no unset), `renderOrder?`, `castShadow?`, `layers?` (membership bitmask, default 1), pointer events (below), `ref?(mesh)` |
@@ -544,7 +567,10 @@ its `pointer` feed. The frame loop runs only while `active()`. Every prop
 but the initial pose is live: `fly={flying()}` toggles walk/fly on the
 running control (pose carries over, no remount, and `clampPosition` may
 swap with it), `moveSpeed`/`lookSpeed` follow their props, and a pitch
-clamp change re-clamps at once. checks/orbit-check.ts and
+clamp change re-clamps at once. Like the orbit control it drives
+position and yaw/pitch only: fov/near/far stay on scene.setCamera (or
+the Scene `camera` prop), so a walker in a scene bigger than the default
+`far` of 100 sets one there. checks/orbit-check.ts and
 checks/first-person-check.ts pin both controls headless (they import
 `@solidrt/core/input` only).
 
@@ -881,9 +907,11 @@ pipeline with its own values. `dispose()` lives on the class alone.
 
 #### Instanced materials
 
-`instanceAttributes: [{ name, format, slot? }]` on either shader-material
-form makes an INSTANCED material: the vertex stage reads them as `in`
-variables beside the layout's own, and each drawn instance gets one
+`instanceAttributes: [{ name, format, slot? }]` (`format` is the vertex
+vocabulary, `"f32" | "vec2" | "vec3" | "vec4"`, NOT WebGPU's
+`float32x3` spelling) on either shader-material form makes an INSTANCED
+material: the vertex stage reads them as `in` variables beside the
+layout's own, and each drawn instance gets one
 record per slot from the mesh's instance buffers - slot 0 (default)
 is the record buffer, slot 1 an instanced mesh's STYLE buffer (below).
 Its meshes come from `createInstancedMesh` or `createRecordMesh`; a
@@ -900,6 +928,19 @@ per-material instancing switch with Three's setColorAt.
 Instancing - one draw entry covering a population, in two forms. The
 axis between them is WHERE MOTION IS COMPUTED, the same split as
 @solidrt/2d's sprite and record layers.
+
+FIRST, whether to instance at all. An instance costs the GPU a fixed
+per-instance setup, so records buy cheap MOTION, not cheap VERTICES:
+below roughly a hundred vertices per instance that setup dominates, and
+a plain geometry with a bigger vertex buffer draws faster. A point cloud
+is the extreme case - one vertex per point in an ordinary indexed
+`topology: "points"` geometry, no instancing, measured at 4x the frame
+rate of the same points as records. Packing more points per record does
+not recover it: every vertex of an instance fetches ALL of that
+instance's attributes, so attribute bandwidth grows with the packing.
+Reach for instancing when each instance is a real object (a ship, a
+tree, a crowd member), not to submit a lot of vertices. The tell in
+`/gpu` is a large `instanceCount` beside a tiny `indexCount`.
 
 #### createInstancedMesh
 
@@ -1290,7 +1331,12 @@ three tiers, top first:
    mesh keeps the stock shading whole (`examples/instanced.tsx`: the
    per-instance tint rides vColor). Instance it with the per-entry
    uniforms the source declares (uColor, uSpecular/uShininess or
-   uMetalness/uRoughness, the maps opted into).
+   uMetalness/uRoughness, the maps opted into) - SEED THEM: a uniform
+   no one wrote is zero, and the program shades `base * uColor`, so an
+   unseeded uColor renders pure black with no error. `instance({
+   params: { uColor: [1, 1, 1, 1], uSpecular: 0.12, uShininess: 24 } })`
+   is the white starting point (the stock materials seed exactly this
+   from their `color` option).
 2. A SURFACE FUNCTION inside the stock fragment. `litFragment({ surface,
    prelude })`: `prelude` is file scope (uniforms and helpers; a uniform
    it declares is an ordinary `instance()` param), `surface` declares
@@ -1304,7 +1350,12 @@ three tiers, top first:
    generated program is; colors are linear light, premultiplied
    throughout, `Surface.base` included. The material describes the
    surface, the package shades it (Godot's fragment(), Filament's
-   material()).
+   material()). This is the tier for anything whose geometry is not a
+   surface: a point splat discarding outside `gl_PointCoord`'s inscribed
+   circle and flipping a fitted normal towards the viewer keeps the
+   scene's whole light model in about fifteen lines, where hand-rolling
+   the light loop (tier 3) would have to match the tone mapping and
+   output encoding by hand.
 3. A FRAGMENT OF YOUR OWN over the scene set. Compose `SCENE` (or
    `sceneSource({ lights, receiveShadow, env, fog })`, each flag leaving a
    declaration out): it declares uCamPos, uHemiSky/uHemiGround, the

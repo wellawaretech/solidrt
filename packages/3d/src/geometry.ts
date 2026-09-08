@@ -50,7 +50,10 @@ export const VERTEX_LAYOUTS: Record<"standard" | "colored" | "skinned", VertexAt
  * format before packing). */
 export const STANDARD_FLOATS = 8
 
-const FORMAT_FLOATS: Record<VertexAttribute["format"], number> = { f32: 1, vec2: 2, vec3: 3, vec4: 4 }
+/** Floats per attribute format: the vertex vocabulary itself, so it is
+ * also the list a declared format must be one of (vertex attributes and
+ * instance attributes both). */
+export const FORMAT_FLOATS: Record<VertexAttribute["format"], number> = { f32: 1, vec2: 2, vec3: 3, vec4: 4 }
 
 /** The attribute list of a layout (a preset name resolves to its list). */
 export function layoutAttributes(layout?: VertexLayout): VertexAttribute[] {

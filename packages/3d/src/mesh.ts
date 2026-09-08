@@ -4,8 +4,8 @@
 // scene side is reached through the node's SceneHooks (node.ts).
 
 import { createBuffer, destroyBuffer, writeBuffer } from "@solidrt/core/gpu"
-import type { BufferId, DrawId, InstanceAttribute, ShaderParams, TextureBindings, VertexAttribute } from "@solidrt/core/gpu"
-import { geometryBounds, plane } from "./geometry.ts"
+import type { BufferId, DrawId, InstanceAttribute, ShaderParams, TextureBindings } from "@solidrt/core/gpu"
+import { FORMAT_FLOATS, geometryBounds, plane } from "./geometry.ts"
 import type { Geometry } from "./geometry.ts"
 import type { GeometryBuffers } from "./geometry-gpu.ts"
 import type { Material } from "./material.ts"
@@ -226,13 +226,11 @@ export function localBounds(mesh: Mesh): Float32Array | null {
   return mesh._sprite ? SPRITE_BOUNDS : geometryBounds(mesh.geometry)
 }
 
-const ATTRIBUTE_FLOATS: Record<VertexAttribute["format"], number> = { f32: 1, vec2: 2, vec3: 3, vec4: 4 }
-
 /** Floats per record of one instance slot of an attribute list (slot 0
  * by default; the list's `slot` keys pick the others). */
 export function instanceStride(attributes: InstanceAttribute[], slot = 0): number {
   let stride = 0
-  for (let a of attributes) if ((a.slot ?? 0) === slot) stride += ATTRIBUTE_FLOATS[a.format]
+  for (let a of attributes) if ((a.slot ?? 0) === slot) stride += FORMAT_FLOATS[a.format]
   return stride
 }
 

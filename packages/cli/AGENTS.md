@@ -75,9 +75,13 @@ Two reliable checks that need no GUI:
 
 1. `bunx srt bundle` - exit 0 means the app compiles. Fast.
 2. `bunx srt render --size 480x640 --duration 1 --fps 2` -
-   renders offscreen via EGL and writes `frame-NNNNNN.png`. This actually
-   proves the app renders: exit 0 means every frame was written (an app
-   that calls `exit()` ends the run early, also with 0). Combine with
+   renders offscreen via EGL and writes `frame-NNNNNN.png`. It proves the
+   app draws: exit 0 means every frame was written (an app that calls
+   `exit()` ends the run early, also with 0). It is NOT a pass/fail gate
+   for what is IN the frames - a scene whose build throws is contained per
+   the error model, logs one `Contained error` and writes an empty frame,
+   still exiting 0 (okf/backlog/render-as-a-verification-gate.md). Read
+   the log, or look at a frame, before believing a run. Combine with
    `--fps`/`--duration` (defaults
    1280x720, 60fps, 1s). No display needed: rendering uses SDL's offscreen
    driver, or alloy's own EGL pbuffer where that driver cannot go headless
@@ -99,6 +103,13 @@ behavior in isolation.
   callback) is drawn but never written. `onFrame`'s `rate` is the capture
   fps. A mount-time `windowSize()` read is 0x0, as on a live client (the
   first resize lands after the module has evaluated); read it reactively.
+- `--duration` is APP time, not wall clock: the capture is lockstep on the
+  virtual frame clock and waits for nothing, so 40 frames at `--fps 1` can
+  render in two real seconds. An app that fetches, reads files or builds in
+  an isolate will still be LOADING in every frame, however long a duration
+  is asked for. Verify async apps against a live client over MCP instead.
+- `--fps` is a positive INTEGER (`--fps 0.5` is rejected); slow a scene down
+  with fewer frames over a longer `--duration`, or with the app's own clock.
 - Run from the project directory. There is no `bunx --cwd` flag.
 - On ANGLE stacks (Windows, macOS) SDL's offscreen driver cannot go
   headless (no EGL device enumeration), so `render` there builds its own

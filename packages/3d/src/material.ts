@@ -41,7 +41,7 @@ import type {
   Topology,
   VertexAttribute,
 } from "@solidrt/core/gpu"
-import { layoutAttributes, layoutKey, layoutSlot } from "./geometry.ts"
+import { FORMAT_FLOATS, layoutAttributes, layoutKey, layoutSlot } from "./geometry.ts"
 import type { VertexLayout } from "./geometry.ts"
 import { linearColor } from "./color.ts"
 import {
@@ -1142,6 +1142,24 @@ export function shaderMaterialClass(opts: ShaderMaterialClassOptions): ShaderMat
   let transparent = opts.transparent ?? (opts.blend !== undefined && opts.blend !== "none")
   let depth = opts.depth ?? true
   let cull = opts.cull ?? "back"
+  // Formats are the vertex vocabulary (f32/vec2/vec3/vec4), not WebGPU's
+  // spelling, and an unknown one has no float count: it would leave here
+  // intact, make a NaN record stride at the mesh, and fail as an arithmetic
+  // complaint from createRecordMesh naming neither the attribute nor the
+  // format. Checked where the name is written instead.
+  for (let attr of opts.instanceAttributes ?? []) {
+    if (!(attr.format in FORMAT_FLOATS)) {
+      throw new Error(
+        "shaderMaterial unknown instance attribute format '" +
+          String(attr.format) +
+          "' for " +
+          attr.name +
+          " (expected " +
+          Object.keys(FORMAT_FLOATS).join(", ") +
+          ")",
+      )
+    }
+  }
   // An empty list declares nothing - same as absent (the engine requires an
   // instance buffer exactly when attributes are declared).
   let instanceAttributes = opts.instanceAttributes?.length ? opts.instanceAttributes.map(a => ({ ...a })) : undefined

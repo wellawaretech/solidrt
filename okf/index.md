@@ -415,6 +415,11 @@ Shaped, not started.
   Answering "who else is burning the GPU" needs a different mechanism on every
   OS, so it wants a documented per-platform recipe or an srt doctor helper
   rather than an engine feature.
+- **[A pass's execMs does not say whether the cost is vertices or fill](backlog/gpu-vertex-fill-attribution.md)** [2026-09-08]
+  gpuPassExecMs is one number per pass, so "is this point cloud vertex-bound
+  or fill-bound" can only be answered by changing a variable and differencing
+  twice; primitives submitted is already known CPU-side and could be reported,
+  while a real fragment count is not available on the GLES 3.0 baseline.
 - **[Color math is unreachable headless](backlog/headless-color-math.md)** [2026-08-19]
   parseColor/mixColors/brightness live only on flux:rendertree (gui feature),
   so site tooling, tests, and theme builders cannot call them; the components
@@ -497,6 +502,11 @@ Shaped, not started.
   the Babel plugin, but it only lowers JSX, so adopting it means finding new
   homes for TypeScript stripping and the binary/text import inlining that live
   in our Babel pipeline.
+- **[The standard vertex prefix has no opt-out, so a point cloud pays double](backlog/non-surface-vertex-layouts.md)** [2026-09-08]
+  Every layout must start with aPos/aNormal/aUV, 8 floats a vertex, but a
+  lidar point is 4 (position plus one packed channel) and has neither a normal
+  nor a UV; a 14.3M-point cloud therefore carries 458 MB of vertex buffer for
+  229 MB of data, structurally unusable.
 - **[A throwing onFrame callback needs a dev-mode banner, not just a log line](backlog/onframe-throw-dev-banner.md)** [2026-09-07]
   A throw inside an onFrame callback is caught, logged and repeated every
   frame while the app keeps presenting partial frames, so on screen it reads
@@ -588,6 +598,11 @@ Shaped, not started.
   load/reload, because the backlog lives in the raster command channel rather
   than in the app; the dev has no way out short of restarting the process, and
   no reason to suspect the runtime.
+- **[srt render cannot fail, so it is not the gate the docs sell](backlog/render-as-a-verification-gate.md)** [2026-09-08]
+  A scene whose build throws is contained, writes an empty frame and exits 0,
+  and --duration is app time so an app that loads asynchronously is captured
+  mid-load; both make a green headless check that proves nothing, and both
+  want one flag (--strict, --settle/--wait-idle).
 - **[Node lifetime is a deferred sweep, not reference lifetime](backlog/renderer-node-lifetime.md)** [2026-08-14]
   removeNode detaches and a microtask sweep frees, so control-flow reuse
   inside one tick survives but a node re-inserted in a later async tick is
@@ -749,6 +764,11 @@ Shaped, not started.
   constant factor over JavaScript on tight compute", but nobody has measured
   wasmi against QuickJS in flux; a small benchmark would back that claim with
   a number.
+- **[An asset-generating script reloads the app on every write](backlog/watch-settle-asset-write-bursts.md)** [2026-09-08]
+  The dev server watches the assets/ tree with a 100 ms debounce, so a
+  data-prep script writing hundreds of MB over two minutes rebuilds and pushes
+  the app on every file, and the client thrashes reloading half-written data;
+  the watch should settle a burst instead of chasing it.
 - **[Nothing builds the website in CI](backlog/website-build-in-ci.md)** [2026-08-19]
   A broken site build goes unnoticed until someone runs make build locally;
   the components theme.ts headless-import break sat undetected from the colord

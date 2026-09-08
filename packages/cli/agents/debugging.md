@@ -273,6 +273,20 @@ The loop is the same as over MCP: `/reload`, then `/logs?since=`, then
   all correct (so the bug is in producing it, or in the shader), reproduce
   the math CPU-side in a scratch bun script against the app's real data and
   print values.
+- "The draw is slow and JS is idle" is answered by get_gpu_resources, in one
+  line: each entry reports `indexCount` and `instanceCount` beside `execMs`,
+  so a big instanceCount next to a tiny indexCount is per-instance setup
+  cost, not shading (a point cloud drawn as 1.2M instances of a 3-vertex
+  primitive ran 4x slower than the same points as one indexed geometry).
+  Vertex cost versus fill is not reported and still needs subtraction:
+  change the splat size or the vertex count, take the execMs delta
+  (okf/backlog/gpu-vertex-fill-attribution.md).
+- Generating files counts as editing: pause_watch before a data-prep script
+  writes into `assets/`, not just before source edits. The dev server watches
+  the assets tree, so a script writing a few hundred MB rebuilds and pushes
+  the app on every write, and the human watches their window thrash while the
+  app reloads half a gigabyte over and over. Nothing in the tool output says
+  this happened - `generation` in get_logs/list_clients is the only tell.
 - Validate assets at load time and log anomalies (missing lumps/files,
   fully-transparent composites, zero-sized images). Silent fallbacks hide
   bugs for days; a one-line warning surfaces them the first run.
