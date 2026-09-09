@@ -10,29 +10,23 @@
 // PLAYER_SOURCE).
 //
 // This module owns the theme, the screen routing, the back stack (every level of
-// it, including the leave-the-player confirmation), and the app selection and
+// it, leaving only the last press to core), and the app selection and
 // status notice (lifted so they survive a scan). Routing is two screens deep
 // only: the home screen and the full-bleed camera scan. Settings and connect are
 // panels of the home screen, each replacing one of its panes, and HomeScreen
 // renders them (see HomePanel in parts/types). The dev-server connection is
 // app-wide module state in parts/dev-connection; the screens and panels
 // themselves live in parts/.
-import { render, env, exit, createSignal, createEffect, onBack } from "@solidrt/core"
-import { Switch, Match, Show } from "solid-js"
+import { render, env, createSignal, createEffect, onBack } from "@solidrt/core"
+import { Switch, Match } from "solid-js"
 import {
   Window,
   SafeArea,
-  View,
-  Card,
-  Text,
-  Button,
-  Modal,
   createFocusNav,
   theme,
   setTheme,
   darkTheme,
   lightTheme,
-  space,
 } from "@solidrt/components"
 import { HomeScreen } from "./parts/home-screen"
 import { ScanScreen } from "./parts/scan-screen"
@@ -72,10 +66,6 @@ function App() {
   // screen surfaces in the home status line).
   let [selectedId, setSelectedId] = createSignal<string | null>(null)
   let [notice, setNotice] = createSignal<string | null>(null)
-  // Whether the leave-the-player confirmation is up. Starts false, as every
-  // Modal's gating signal must (portals cannot mount during the initial render).
-  let [confirmExit, setConfirmExit] = createSignal(false)
-
   let dial = (addr: string) => {
     setNotice(null)
     setScreen("home")
@@ -85,19 +75,15 @@ function App() {
   // The root of the back stack, so this handler registers first and runs last:
   // everything mounted above it (the home screen's detail selection, a dialog
   // inside it) gets the event first and takes it if it is theirs. What is left
-  // over is App's own: dismiss the exit dialog, close a panel or leave the scan,
-  // or ask about leaving. The one thing never left to core is its default action
-  // - it exits on the spot, and the last back press should ask first, so exit()
-  // runs only from the dialog (it quits the client, backgrounding it on Android,
-  // the stock back-at-root feel).
+  // over is App's own: close a panel or leave the scan, landing on home.
+  //
+  // Back at home is not ours and is left unprevented, so core's default action
+  // runs and the client leaves. No confirmation: asking permission to go back is
+  // not a platform idiom, and the stock behavior is to leave.
   onBack((e) => {
-    e.preventDefault()
-    if (confirmExit()) {
-      setConfirmExit(false)
-    } else if (screen() !== "home") {
+    if (screen() !== "home") {
+      e.preventDefault()
       setScreen("home")
-    } else {
-      setConfirmExit(true)
     }
   })
 
@@ -155,22 +141,6 @@ function App() {
             />
           </Match>
         </Switch>
-
-        <Show when={confirmExit()}>
-          <Modal onClose={() => setConfirmExit(false)}>
-            <View layout={{ width: "100%", maxWidth: 380, padding: space("xl") }}>
-              <Card layout={{ gap: space("lg") }}>
-                <Text variant="title">Exit SolidRT?</Text>
-                <View layout={{ flexDirection: "row", gap: space("md") }}>
-                  <Button variant="ghost" onPress={() => setConfirmExit(false)}>
-                    Cancel
-                  </Button>
-                  <Button onPress={() => exit()}>Exit</Button>
-                </View>
-              </Card>
-            </View>
-          </Modal>
-        </Show>
       </SafeArea>
     </Window>
   )
