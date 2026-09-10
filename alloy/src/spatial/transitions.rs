@@ -10,7 +10,7 @@
 // the exponential map at the target, the retargeting-safe rotational
 // primitive. Spec vocabulary and semantics match the element transitions
 // (spring default, retarget keeps spring state, settles land exactly), and
-// so does the lifecycle vocabulary, whole minus stagger (okf/done/
+// so does the lifecycle vocabulary, whole (okf/done/
 // spatial-node-exit-transitions.md): a component's `from` is where a node
 // starts at creation, animating to the transform it holds at the first
 // advance after `create`; its `exit` is where it animates to when the
@@ -18,7 +18,9 @@
 // LEAVING one - painted, invisible to every query - until the last exit
 // track settles; `delay` holds a write (or an endpoint's start) on the
 // animation clock, and a held write starting late runs as if started on
-// time. Stagger stays out: arena nodes have no tree order to cascade in.
+// time; `stagger` on an ancestor spaces the enters and exits beginning
+// under it in one frame, the children order of the arena's hierarchy
+// standing in for the element tree's.
 
 use std::collections::HashMap;
 
@@ -88,6 +90,13 @@ pub struct NodeTransitionConfig {
   pub rotation: Option<NodeTransitionEntry<4>>,
   pub scale: Option<NodeTransitionEntry<3>>,
   pub all: Option<NodeMotion>,
+  /// Makes the node a stagger group: every descendant enter (`from`) or
+  /// exit that begins in the same frame under it gets `index * stagger_ms`
+  /// of extra delay, indexed in occurrence order (enters and exits count
+  /// separately). The nearest declaring ancestor wins; nested groups never
+  /// compound. It orchestrates descendants only - the node's own lifecycle
+  /// is staggered by ITS ancestors, and ordinary writes never stagger.
+  pub stagger_ms: Option<f32>,
 }
 
 impl NodeTransitionConfig {
@@ -304,9 +313,24 @@ pub(super) struct NodeTransitions {
   // Leaving nodes freed since the last drain, however the free came (the
   // gate emptying, a cascade from the parent's, a `destroy`).
   pub freed: Vec<NodeId>,
+  // Per-frame stagger counters, keyed by (group ancestor, is_exit): how
+  // many descendant enters/exits the group has seen this frame. Cleared
+  // at every clock stamp (mod.rs set_transition_now), so a batch created
+  // or let go of in one tick cascades and later frames start at zero.
+  pub stagger_counts: HashMap<(NodeId, bool), u32>,
 }
 
 impl NodeTransitions {
+  /// The next stagger index for a lifecycle event under `group` this
+  /// frame (post-incremented). Enters and exits count separately, so a
+  /// swap that frees and creates in one tick runs two clean cascades.
+  pub fn stagger_index(&mut self, group: NodeId, exit: bool) -> u32 {
+    let count = self.stagger_counts.entry((group, exit)).or_insert(0);
+    let index = *count;
+    *count += 1;
+    index
+  }
+
   /// Nothing to advance: no track runs and no write is held. A held write
   /// keeps the advance live so its activation frame comes.
   pub fn is_empty(&self) -> bool {

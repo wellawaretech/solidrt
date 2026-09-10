@@ -106,12 +106,21 @@ declare module "flux:spatial" {
       }
     | string
   /** The declaration setTransition takes: a spec per transform component
-   * plus `all` as a catch-all (per-component entries win). */
+   * plus `all` as a catch-all (per-component entries win). `stagger`
+   * (ms) makes the node a stagger group: every descendant enter (`from`)
+   * or exit that begins in the same frame under it gets `index * stagger`
+   * of extra delay, indexed in occurrence order - creation order for
+   * enters, the teardown order (children first, in children order) for
+   * exits; enters and exits count separately. The nearest declaring
+   * ancestor wins, nested groups never compound, and it orchestrates
+   * descendants only: the node's own lifecycle is staggered by ITS
+   * ancestors, and ordinary writes never stagger. */
   export interface NodeTransition {
     position?: NodeTransitionSpec
     rotation?: NodeTransitionSpec
     scale?: NodeTransitionSpec
     all?: NodeTransitionSpec
+    stagger?: number
   }
   /**
    * Declare (or with null clear) the node's transitions: with a config

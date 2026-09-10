@@ -3,7 +3,7 @@ import type { VoidComponent } from "@solidrt/core"
 import { SceneContext } from "./context.tsx"
 import { syncMesh } from "./mesh.tsx"
 import type { PopulatedMeshProps } from "./mesh.tsx"
-import { add } from "../node.ts"
+import { add, destroy } from "../node.ts"
 import { createRecordMesh, disposeInstances, setCastShadow, setGeometry, setRecordCount, setRecords } from "../mesh.ts"
 import type { RecordMesh as RecordMeshNode } from "../mesh.ts"
 import type { Geometry } from "../geometry.ts"
@@ -63,6 +63,9 @@ export let RecordMesh: VoidComponent<RecordMeshProps> = props => {
   )
   syncMesh(mesh, props)
   untrack(() => props.ref)?.(mesh)
-  onCleanup(() => disposeInstances(mesh))
+  onCleanup(() => {
+    destroy(mesh)
+    disposeInstances(mesh)
+  })
   return null
 }

@@ -67,7 +67,7 @@ in @solidrt/2d and @solidrt/3d, the peers' spelling:
   sprite that should come back is hidden), so after the rename no 2d verb
   is called remove and nothing is left to mean two things.
 
-Node transition entries take the element vocabulary whole minus stagger
+Node transition entries take the element vocabulary whole
 (`NodeTransitionEntry { motion, from, exit }` with `NodeEndpoint { value,
 motion }` per component in alloy/src/spatial/transitions.rs, the element
 `TransitionEntry`'s shape): `from` and `exit` as a bare lane array or the
@@ -77,7 +77,15 @@ the element decoder's rule through one shared endpoint decoder
 `delay` on entries and endpoints, riding a per-track clock (`since_ms`)
 and a held-write list, so a late frame catches up as the element tracks
 do. 2d lifts endpoint values through the same lane lift as `from`, bare
-or inside the object.
+or inside the object. `stagger` too, on an ancestor's declaration (a 2d or
+3d Group): the item first said arena nodes have no tree order to cascade
+in, but stagger needs only a parent chain, a per-frame occurrence order
+and a delay mechanism, and the arena has all three - `set_parent` is the
+hierarchy, `children` is attach order (JSX order for template children),
+enters drain in creation order and exits start in the consumer's
+children-first teardown order, and the held-write list is the delay. It
+is the element rule verbatim: nearest declaring ancestor, per-frame
+counts, enters and exits counted apart, descendants only.
 
 The arena (alloy/src/spatial/mod.rs): `Spatial::exit(id)` starts each
 declared exit from the component's current mid-flight value on the exit's
@@ -104,11 +112,24 @@ check stay right). Every dispose path (`layer.dispose`, `scene.dispose`,
 `disposeInstances`, `model.dispose`) frees its corpses on the spot first,
 so nothing draws with a freed buffer or texture.
 
+A follow-up closed the holes a review found: the populated meshes'
+components unmounted through `disposeInstances` alone (a detach plus the
+buffer free, cutting their instances' exits short), so they now unmount as
+`destroy(mesh)` then `disposeInstances(mesh)`, and a disposer reaching a
+node still leaving waits for its free (`afterFree` in
+packages/3d/src/node.ts; `disposeInstances` and `model.dispose` use it,
+while a scene's or a layer's `dispose` still cuts corpses short, the whole
+target being torn down); the layer and scene roots can carry `stagger`
+(`createSpriteLayer({ stagger })` / `layer.setStagger`, `createScene({
+stagger })` / `<Scene stagger>`), so a cascade needs no wrapping group.
+
 Docs: the lifecycle and retargeted-motion paragraphs of both packages'
 AGENTS.md, the rule in packages/core/AGENTS.md, the flux-types
-declarations. packages/2d/examples/springs.tsx is the live example: tap a
-sprite and it leaves through its `exit`, a replacement pops in through
-its `from`.
+declarations. packages/2d/examples/springs.tsx and
+packages/3d/examples/exits.tsx are the live examples: tap a sprite or a
+crate and it leaves through its `exit`, a replacement pops in through its
+`from`; the 3d shelf cascades out and back through `<Show>` on the
+Group's `stagger`.
 
 ## Verified
 
@@ -123,9 +144,13 @@ running without gating; clearing a leaving node's declaration frees it;
 an exit in the creating tick skips the enter; held writes run on schedule
 and catch up after a late frame; a newer write restarts the hold and an
 immediate one supersedes it; enter and exit delays hold; a held exit to
-the current value frees when due) and flux/src/tests/properties.rs (the
-node entry decoder: delay, bare and object endpoints, the merge rule, lane
-counts, endpoints refused on `all`).
+the current value frees when due; stagger spaces enters and exits under
+the declaring ancestor, the group waits for the last of a staggered
+cascade, counts are per frame with the nearest ancestor winning, and a
+group's own lifecycle and ordinary writes never stagger) and
+flux/src/tests/properties.rs (the node entry decoder: delay, bare and
+object endpoints, the merge rule, lane counts, endpoints refused on
+`all`, `stagger` a positive number of ms).
 
 Live, over the control API with the clock frozen (probes/2d-exit-probe.tsx,
 probes/3d-exit-probe.tsx; one `clock?step=1` request per frame - at scale
@@ -144,13 +169,18 @@ crate with a scale exit and a ball without one frees the ball at once
 (its draw entry gone from `/gpu`), keeps the crate leaving and drawing
 while `pick` misses it, holds the group waiting on the crate, then frees
 crate and group in that order and the GPU inventory drops to no entries.
-No errors logged in either run.
+Stagger, live: a group declaring `stagger: 40` with three sprites added
+in one frozen frame holds their enters at +0, +40 and +80 ms in add
+order; `destroyGroup` holds their exits the same way in destroy order and
+frees the sprites in order, the group last. The populated-mesh unmount,
+live: an `<InstancedMesh transition={{ stagger: 30 }}>` with three
+`<Instance>`s declaring scale exits, flipped off through `<Show>`, keeps
+its instanced draw entry (count 3) while the instances leave with their
+exits held at +0, +30 and +60 by teardown order, and drops the entry only
+after the last free; no freed-buffer warning. No errors logged in any run.
 
 ## Not done, on purpose
 
-- Stagger on nodes: arena nodes have no tree order to cascade in, and a
-  burst of dying enemies is not a list; an app that wants spacing uses
-  `delay`.
 - A 2d detach verb: a sprite cannot exist outside its layer; hiding is the
   pooling idiom, as it was.
 - A raw flux:spatial consumer that leaves a live child under a node it

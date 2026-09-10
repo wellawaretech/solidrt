@@ -7,7 +7,9 @@
 use rquickjs::module::{Declarations, Exports, ModuleDef};
 use rquickjs::{Array, Ctx, Function, Object, TypedArray, Value};
 
-use crate::alloy_plugins::properties::transition::{decode_node_entry, decode_node_motion, NodeEntryDecoded};
+use crate::alloy_plugins::properties::transition::{
+  decode_node_entry, decode_node_motion, decode_stagger, NodeEntryDecoded,
+};
 use crate::alloy_plugins::value::PropValue;
 use crate::plugins::marshal::OptArg;
 use alloy::spatial::{
@@ -205,10 +207,11 @@ fn set_transform(ctx: Ctx<'_>, id: u64, data: TypedArray<'_, f32>) -> rquickjs::
 
 /// The node transition declaration: an object keyed by transform component
 /// (position, rotation, scale, plus `all` as a catch-all) whose values
-/// speak the element transition vocabulary minus stagger - `from`/`exit`
-/// on a component entry are its enter and exit values, the lanes of that
-/// component, bare or in the endpoint object form - or a bare shorthand
-/// string as the `all` catch-all.
+/// speak the element transition vocabulary whole - `from`/`exit` on a
+/// component entry are its enter and exit values, the lanes of that
+/// component, bare or in the endpoint object form; `stagger` (ms) makes
+/// the node a stagger group for descendant enters and exits - or a bare
+/// shorthand string as the `all` catch-all.
 fn decode_node_transition(value: &PropValue) -> Result<NodeTransitionConfig, String> {
   if value.as_str().is_some() {
     return Ok(NodeTransitionConfig { all: Some(decode_node_motion("transition", value)?), ..Default::default() });
@@ -224,9 +227,10 @@ fn decode_node_transition(value: &PropValue) -> Result<NodeTransitionConfig, Str
       "scale" => config.scale = Some(node_entry::<3>(decode_node_entry(&at, entry, Some(3))?)),
       "rotation" => config.rotation = Some(node_entry::<4>(decode_node_entry(&at, entry, Some(4))?)),
       "all" => config.all = Some(decode_node_motion(&at, entry)?),
+      "stagger" => config.stagger_ms = Some(decode_stagger(entry)?),
       other => {
         return Err(format!(
-          "transition.{other}: '{other}' is not a transform component (expected position, rotation, scale or all)"
+          "transition.{other}: '{other}' is not a transform component (expected position, rotation, scale, all or stagger)"
         ))
       }
     }

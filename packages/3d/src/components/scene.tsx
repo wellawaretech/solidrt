@@ -59,6 +59,11 @@ export type SceneProps = ScenePointerProps & {
    * `{ cube, intensity?, rotation? }`, typically the skybox's own cube
    * turned with it. Reactive; undefined removes it. */
   environment?: EnvironmentOptions
+  /** Stagger (ms) for the nodes straight under the scene root: their
+   * enters and exits beginning in one frame are spaced by `index *
+   * stagger`, the whole-scene form of `<Group transition={{ stagger }}>`
+   * (see SceneOptions.stagger). Set at creation. */
+  stagger?: number
   /** Scene-wide fog (scene.setFog): linear `{ color, near, far }` or exp2
    * `{ color, density }`, optionally thinning above `height` by
    * `heightFalloff`; every standard material fades toward `color` by
@@ -153,6 +158,7 @@ export let Scene: ParentComponent<SceneProps> = props => {
       toneMapping: props.toneMapping,
       exposure: props.exposure,
       layers: props.layers,
+      stagger: props.stagger,
     })
     if (props.camera) s.setCamera(props.camera)
     return s

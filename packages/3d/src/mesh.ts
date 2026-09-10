@@ -11,7 +11,7 @@ import type { GeometryBuffers } from "./geometry-gpu.ts"
 import type { Material } from "./material.ts"
 import type { TransformUpdate, Vec3 } from "./math.ts"
 import * as spatial from "flux:spatial"
-import { enterScene, freeLeaving, makeNode, remove, setTransform } from "./node.ts"
+import { afterFree, enterScene, makeNode, remove, setTransform } from "./node.ts"
 import type { SceneNode } from "./node.ts"
 
 export type Mesh = SceneNode & {
@@ -602,16 +602,22 @@ export function setRecordCount(mesh: RecordMesh, count: number): void {
  * buffer with the matrix one). The buffers are mesh-owned with no
  * reference count (unlike geometry buffers they are never shared), so
  * this is the one explicit free; the mesh cannot be re-added afterwards.
- * An instanced mesh's instances go inert with it.
+ * An instanced mesh's instances go inert with it. On a mesh `destroy`
+ * just let go of, with an exit still playing (its own or an instance's),
+ * the free waits for the last of them - the components unmount as
+ * `destroy(mesh)` then `disposeInstances(mesh)`, so an `<Instance>`'s
+ * exit plays through its mesh's unmount.
  */
 export function disposeInstances(mesh: InstancedMesh | RecordMesh): void {
   let inst: MeshInstances | null = mesh._instances
   if (inst === null) return
+  // A destroyed mesh still animating out (its own exit, or its instances'
+  // - it waits for them) keeps the buffers until it is gone: the
+  // component unmount is destroy then dispose, and an exit that dispose
+  // cut short would be no exit at all.
+  if (afterFree(mesh, () => disposeInstances(mesh))) return
   if (mesh._scene) remove(mesh)
   if (inst.nodes !== null) {
-    // Instances still animating out are freed on the spot: their records
-    // point into the buffer about to go.
-    freeLeaving(n => n.kind === "instance" && (n as InstanceNode).mesh === mesh)
     for (let n of inst.nodes.slots) if (n !== null) n.mesh = null
     // The destroyed instance nodes' hiding writes land now, while the
     // buffer still exists (a write into a freed buffer warns).

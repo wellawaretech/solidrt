@@ -63,7 +63,10 @@ export let InstancedMesh: ParentComponent<InstancedMeshProps> = props => {
   )
   syncMesh(mesh, props)
   untrack(() => props.ref)?.(mesh)
-  onCleanup(() => disposeInstances(mesh))
+  onCleanup(() => {
+    destroy(mesh)
+    disposeInstances(mesh)
+  })
   return (
     <SceneContext value={{ scene: ctx.scene, parent: mesh, viewport: ctx.viewport, pointer: ctx.pointer }}>
       <InstancedMeshContext value={mesh}>{props.children}</InstancedMeshContext>

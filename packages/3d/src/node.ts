@@ -50,36 +50,62 @@ let subscribed = false
 // `exit` in the core as a LEAVING one (drawn, picked by nothing) until its
 // exits settle, and the core's "spatialNodeFreed" event says when it is
 // gone - the cue to detach its entries and recycle what was kept for it
-// (an instance's record slot). Keyed by core id, with the scene the node
-// was in (the handle's own `_scene` is already null: a destroyed handle
-// routes no writes). One lazy subscription.
-let leaving = new Map<NodeId, { node: SceneNode; scene: SceneHooks }>()
+// (an instance's record slot), then to run what was deferred to that
+// moment (`then`: a disposer that reached the node mid-exit). Keyed by
+// core id, with the scene the node was in (the handle's own `_scene` is
+// already null: a destroyed handle routes no writes). One lazy
+// subscription.
+type Leaving = { node: SceneNode; scene: SceneHooks; then: (() => void)[] }
+let leaving = new Map<NodeId, Leaving>()
 let freeingSubscribed = false
 
 function awaitFree(id: NodeId, node: SceneNode, scene: SceneHooks): void {
-  leaving.set(id, { node, scene })
+  leaving.set(id, { node, scene, then: [] })
   if (freeingSubscribed) return
   freeingSubscribed = true
   on("spatialNodeFreed", (event: { node: NodeId }) => {
     let entry = leaving.get(event.node)
     if (!entry) return
     leaving.delete(event.node)
-    finishLeave(entry.node, entry.scene)
+    finishLeaving(entry)
   })
+}
+
+function finishLeaving(entry: Leaving): void {
+  finishLeave(entry.node, entry.scene)
+  for (let fn of entry.then) fn()
+}
+
+/**
+ * Run `fn` once `node` has finished leaving, if it is on its way out
+ * (destroyed, its exit still playing): returns true and holds `fn` for
+ * the free; false when the node is not leaving, and the caller does its
+ * work now. What a disposer uses when destroy may just have let the node
+ * go: `disposeInstances` and `model.dispose` free buffers and textures
+ * the corpse still draws with, so on a leaving node they wait for it
+ * instead of cutting the exit short. A corpse freed early (`freeLeaving`,
+ * a parent's `destroy`) runs the held work at that point.
+ */
+export function afterFree(node: SceneNode, fn: () => void): boolean {
+  if (node._node === null) return false
+  let entry = leaving.get(node._node)
+  if (!entry) return false
+  entry.then.push(fn)
+  return true
 }
 
 /**
  * Free every leaving node `where` admits NOW (its exit cut short where it
- * stands) and finish its leave: the dispose paths call this before they
- * free what a corpse still draws with - a scene's targets, an instance
- * buffer, a model's textures.
+ * stands) and finish its leave, held work included: the teardown paths
+ * call this before they free what a corpse still draws with - a scene's
+ * targets, a layer's buffers.
  */
 export function freeLeaving(where: (node: SceneNode, scene: SceneHooks) => boolean): void {
   for (let [id, entry] of [...leaving]) {
     if (!where(entry.node, entry.scene)) continue
     leaving.delete(id)
     spatial.destroyNode(id)
-    finishLeave(entry.node, entry.scene)
+    finishLeaving(entry)
   }
 }
 
@@ -513,9 +539,11 @@ export type { TransformUpdate } from "./math.ts"
  * scene enter; a component's `exit` is where it animates to when
  * `destroy` lets go of the node (see there). Either endpoint takes the
  * object form `{ value, duration?, curve?, bounce?, delay? }` to own its
- * direction's motion, and `delay` on an entry holds its writes. Clearing
- * cancels running tracks in place (the node keeps its mid-flight
- * transform) and later writes snap. Each natural settle calls the node's
+ * direction's motion, and `delay` on an entry holds its writes; `stagger`
+ * (ms) on a node spaces the enters and exits of its descendants that
+ * begin in one frame (a Group's declaration, the element rule: the
+ * orchestrator is always an ancestor). Clearing cancels running tracks in
+ * place (the node keeps its mid-flight transform) and later writes snap. Each natural settle calls the node's
  * `onTransitionEnd` with the component (the raw "spatialTransitionEnd"
  * engine event on srt:events stays for flux:spatial consumers; it carries
  * the core id, `_node`).

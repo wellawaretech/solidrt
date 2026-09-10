@@ -6,7 +6,7 @@
 use std::sync::mpsc::channel;
 
 use crate::alloy_plugins::properties::apply_jsx;
-use crate::alloy_plugins::properties::transition::decode_node_entry;
+use crate::alloy_plugins::properties::transition::{decode_node_entry, decode_stagger};
 use crate::alloy_plugins::value::PropValue;
 use alloy::rendertree::{AnimProp, AnimValue, Curve, Damage, Element, ElementKind, TransitionEntry, TransitionSpec};
 
@@ -941,4 +941,11 @@ fn node_entry_rejects_wrong_lanes_and_endpoints_on_all() {
   let shorthand = text("300ms ease-out 100ms");
   let d = decode_node_entry("transition.all", &shorthand, None).expect("shorthand with delay");
   assert_eq!(d.motion.delay_ms, 100.0);
+}
+
+#[test]
+fn stagger_is_a_positive_number_of_ms_on_either_tree() {
+  assert_eq!(decode_stagger(&num(40.0)), Ok(40.0));
+  assert!(decode_stagger(&num(0.0)).unwrap_err().contains("positive"));
+  assert!(decode_stagger(&text("40ms")).unwrap_err().contains("number of ms"));
 }

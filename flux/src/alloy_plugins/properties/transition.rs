@@ -114,16 +114,7 @@ pub fn decode(value: &PropValue) -> Result<Option<Box<TransitionConfig>>, String
   let mut config = TransitionConfig::default();
   for (key, entry_value) in entries {
     if key == "stagger" {
-      // Group stagger: descendant enters/exits beginning in the same frame
-      // under this element get index * stagger ms of extra delay.
-      let n = entry_value
-        .as_f64()
-        .ok_or_else(|| format!("transition.stagger: must be a number of ms, got {}", describe(entry_value)))?
-        as f32;
-      if !(n > 0.0 && n.is_finite()) {
-        return Err(format!("transition.stagger: must be a positive number of ms, got {n}"));
-      }
-      config.stagger_ms = Some(n);
+      config.stagger_ms = Some(decode_stagger(entry_value)?);
     } else if key == "all" {
       config.all = Some(decode_entry(key, entry_value, None)?);
     } else {
@@ -263,6 +254,19 @@ fn decode_duration_spec(
       Ok(TransitionSpec::spring(duration, bounce))
     }
   }
+}
+
+/// The `stagger` key of a declaration, element or node: descendant
+/// enters/exits beginning in the same frame under the declaring node get
+/// index * stagger ms of extra delay. A positive number of ms.
+pub fn decode_stagger(value: &PropValue) -> Result<f32, String> {
+  let n = value
+    .as_f64()
+    .ok_or_else(|| format!("transition.stagger: must be a number of ms, got {}", describe(value)))? as f32;
+  if !(n > 0.0 && n.is_finite()) {
+    return Err(format!("transition.stagger: must be a positive number of ms, got {n}"));
+  }
+  Ok(n)
 }
 
 /// A node transition entry decoded: the motion its writes play, and the

@@ -58,7 +58,7 @@ import { createEnvironmentPlaceholder, createPrefilter, probeFormat } from "./en
 import type { Prefilter } from "./environment.ts"
 import type { Material } from "./material.ts"
 import { orderEntries } from "./order.ts"
-import { fillTransform, freeLeaving, leaveScene, makeNode, worldInto } from "./node.ts"
+import { fillTransform, freeLeaving, leaveScene, makeNode, setTransition, worldInto } from "./node.ts"
 import type { SceneHooks, SceneNode, ScenePointerListener } from "./node.ts"
 import { checkInstancePairing, checkMask, instanceBinding, localBounds, publishInstanceStyle } from "./mesh.ts"
 import type { InstancedMesh, InstanceNode, Mesh } from "./mesh.ts"
@@ -431,6 +431,12 @@ export type SceneOptions = {
   /** The cube map reflective materials mirror; see setEnvironment. */
   environment?: EnvironmentOptions
   label?: string
+  /** `stagger` (ms) on the scene's root node - `setTransition(scene.root,
+   * { stagger })` at creation: every node added straight under the root
+   * that enters or leaves in one frame is spaced by `index * stagger`,
+   * the whole-scene form of a Group's stagger (nested groups declaring
+   * their own win for what is under them). */
+  stagger?: number
   /** `autoFree: false` opts out of owner-scoped auto-dispose (then call dispose yourself). */
   autoFree?: boolean
   filter?: FilterMode
@@ -1792,6 +1798,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
   let root = makeNode("group")
   root._scene = hooks
   root._node = spatial.createNode(fillTransform(root), true)
+  if (opts?.stagger !== undefined) setTransition(root, { stagger: opts.stagger })
   // The first light rewrite seeds the (empty) light set and the shadow
   // slots - placeholders, no casts - so receivers draw plain from the
   // first frame.

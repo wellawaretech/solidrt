@@ -375,8 +375,15 @@ first frame, whatever `from` it passes through). Either endpoint takes
 the object form `{ value, duration?, curve?, bounce?, delay? }` to own
 its direction's motion (an ease-out enter, an ease-in exit), and `delay`
 on an entry holds its writes that long on the animation clock (a late
-frame catches up, so a hitch never shifts a held start). No stagger:
-sprites have no tree order to cascade in; space a burst with `delay`.
+frame catches up, so a hitch never shifts a held start). `stagger` (ms)
+goes on a GROUP's declaration (`setGroupTransition` / `<Group
+transition>`), never on the sprites: it spaces the enters and exits of
+everything under the group that begin in one frame by `index * stagger`
+(add order in, destroy order out; nearest declaring group wins), and
+cascades nothing unless the sprites declare `from`/`exit` - a hand of
+cards fanning in, a menu popping in, is one `stagger` on the group. For
+the sprites straight under the layer (no group) the layer's root carries
+it: `createSpriteLayer(texture, { stagger })` / `layer.setStagger(ms)`.
 Each natural settle calls the handle's `onTransitionEnd` (plain field,
 or the `<Sprite>`/`<Group>` prop) with `{ component }` - target-only,
 never on a cancel, snap or exit; the raw "spatialTransitionEnd" engine

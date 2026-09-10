@@ -779,3 +779,123 @@ fn held_exit_to_the_current_value_frees_when_due() {
   assert!(!s.advance_transitions());
   assert_eq!(s.take_freed(), vec![id], "due, nothing to move: freed");
 }
+
+// Stagger: `stagger_ms` on an ancestor spaces the enters and exits that
+// begin under it in one frame by `index * stagger_ms`, nearest declaring
+// ancestor, occurrence order, counts per frame (mod.rs stagger_delay_for).
+
+fn stagger_group(ms: f32) -> Option<NodeTransitionConfig> {
+  Some(NodeTransitionConfig { stagger_ms: Some(ms), ..Default::default() })
+}
+
+#[test]
+fn stagger_spaces_enters_under_the_declaring_ancestor() {
+  let mut s = Spatial::new();
+  s.set_transition_now(0.0);
+  let group = s.create([0.0; 3], Q, ONE, true);
+  s.set_node_transition(group, stagger_group(50.0)).expect("config");
+  let kids: Vec<u64> = (0..3)
+    .map(|_| {
+      let id = s.create([100.0, 0.0, 0.0], Q, ONE, true);
+      s.set_parent(id, Some(group)).expect("parent");
+      s.set_node_transition(id, enter_from_x(0.0)).expect("config");
+      id
+    })
+    .collect();
+  assert!(s.advance_transitions());
+  for &k in &kids {
+    assert_eq!(pos_x(&s, k), 0.0, "every child snaps to from at the first advance");
+  }
+  s.set_transition_now(50.0);
+  s.advance_transitions();
+  assert!((pos_x(&s, kids[0]) - 50.0).abs() < 1e-3, "index 0 runs at once");
+  assert_eq!(pos_x(&s, kids[1]), 0.0, "index 1 is held 50 ms");
+  assert_eq!(pos_x(&s, kids[2]), 0.0, "index 2 is held 100 ms");
+  s.set_transition_now(100.0);
+  s.advance_transitions();
+  assert_eq!(pos_x(&s, kids[0]), 100.0);
+  assert!((pos_x(&s, kids[1]) - 50.0).abs() < 1e-3);
+  assert_eq!(pos_x(&s, kids[2]), 0.0);
+  s.set_transition_now(200.0);
+  assert!(!s.advance_transitions());
+  assert_eq!(pos_x(&s, kids[2]), 100.0, "the last of the cascade lands");
+}
+
+#[test]
+fn stagger_spaces_exits_and_the_group_waits_for_the_last() {
+  let mut s = Spatial::new();
+  s.set_transition_now(0.0);
+  let group = s.create([0.0; 3], Q, ONE, true);
+  s.set_node_transition(group, stagger_group(50.0)).expect("config");
+  let a = s.create([10.0, 0.0, 0.0], Q, ONE, true);
+  let b = s.create([10.0, 0.0, 0.0], Q, ONE, true);
+  for &k in &[a, b] {
+    s.set_parent(k, Some(group)).expect("parent");
+    s.set_node_transition(k, exit_to_x(LINEAR_100, 0.0)).expect("config");
+  }
+  // The consumer's teardown order: children first, then the group.
+  assert!(s.exit(a).expect("exit"));
+  assert!(s.exit(b).expect("exit"), "a held exit keeps the node");
+  assert!(s.exit(group).expect("exit"), "the group waits on its staggered children");
+  s.set_transition_now(50.0);
+  s.advance_transitions();
+  assert!((pos_x(&s, a) - 5.0).abs() < 1e-3, "index 0 left at once");
+  assert_eq!(pos_x(&s, b), 10.0, "index 1 is still held");
+  s.set_transition_now(100.0);
+  s.advance_transitions();
+  assert_eq!(s.take_freed(), vec![a], "a settles; b runs, the group waits");
+  s.set_transition_now(150.0);
+  assert!(!s.advance_transitions());
+  assert_eq!(s.take_freed(), vec![b, group]);
+}
+
+#[test]
+fn stagger_counts_per_frame_and_the_nearest_ancestor_wins() {
+  let mut s = Spatial::new();
+  s.set_transition_now(0.0);
+  let outer = s.create([0.0; 3], Q, ONE, true);
+  s.set_node_transition(outer, stagger_group(1000.0)).expect("config");
+  let inner = s.create([0.0; 3], Q, ONE, true);
+  s.set_parent(inner, Some(outer)).expect("parent");
+  s.set_node_transition(inner, stagger_group(10.0)).expect("config");
+  let make = |s: &mut Spatial, parent: u64| {
+    let id = s.create([100.0, 0.0, 0.0], Q, ONE, true);
+    s.set_parent(id, Some(parent)).expect("parent");
+    s.set_node_transition(id, enter_from_x(0.0)).expect("config");
+    id
+  };
+  let deep0 = make(&mut s, inner);
+  let deep1 = make(&mut s, inner);
+  let shallow = make(&mut s, outer);
+  s.advance_transitions();
+  let held = |s: &Spatial, id: u64| s.motion_of(id).expect("motion")[0].held_until_ms;
+  assert_eq!(held(&s, deep0), None, "inner index 0: immediate");
+  assert_eq!(held(&s, deep1), Some(10.0), "inner index 1: the inner group's spacing, never the outer's");
+  assert_eq!(held(&s, shallow), None, "the outer group's own first item");
+  // A later frame starts its own count at zero.
+  s.set_transition_now(16.0);
+  let deep2 = make(&mut s, inner);
+  s.advance_transitions();
+  assert_eq!(held(&s, deep2), None, "a fresh frame, index 0 again");
+}
+
+#[test]
+fn stagger_orchestrates_descendants_only() {
+  let mut s = Spatial::new();
+  s.set_transition_now(0.0);
+  let group = s.create([100.0, 0.0, 0.0], Q, ONE, true);
+  let config = NodeTransitionConfig {
+    stagger_ms: Some(50.0),
+    position: Some(position_entry(LINEAR_100, Some([0.0; 3]), None)),
+    ..Default::default()
+  };
+  s.set_node_transition(group, Some(config)).expect("config");
+  let plain = s.create([100.0, 0.0, 0.0], Q, ONE, true);
+  s.set_parent(plain, Some(group)).expect("parent");
+  s.set_node_transition(plain, all(LINEAR_100)).expect("config");
+  s.advance_transitions();
+  assert_eq!(s.motion_of(group).expect("motion")[0].held_until_ms, None, "its own enter is not staggered by itself");
+  // An ordinary write under the group never staggers.
+  s.write_transform(plain, [0.0; 3], Q, ONE).expect("write");
+  assert_eq!(s.motion_of(plain).expect("motion")[0].held_until_ms, None);
+}

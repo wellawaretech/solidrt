@@ -21,6 +21,11 @@ depends on `@solidrt/3d` (or in-repo from the package directory).
   target: `lookAt` for a +z solid, `quatFromTo` for aiming a y-axis cone,
   and a `quatSlerp` damped follow that visibly lags; all driven from
   onFrame through refs, no per-frame signals.
+- `exits.tsx` - lifecycle animation on nodes: crates that pop in
+  (`from`) and shrink away (`exit`, an ease-in of its own) when tapped,
+  the component unmount being the `destroy` the exit rides on, a ghost
+  while it leaves; a tap on empty space toggles the whole shelf through
+  `<Show>`, and the Group's `stagger` cascades its crates out and back in.
 - `pick.tsx` - mesh pointer events under an `<OrbitCamera>`, the scene
   as the root of the walk: hover tints (enter/leave), a tap pops, a drag
   on the crate slides it over the floor without orbiting (its down claims

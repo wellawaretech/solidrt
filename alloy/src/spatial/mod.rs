@@ -640,10 +640,17 @@ impl Spatial {
         (Component::Scale, cur_s, config.scale.and_then(|e| e.exit.map(|x| (lanes3(x.value), x.motion)))),
         (Component::Rotation, cur_q, config.rotation.and_then(|e| e.exit.map(|x| (x.value, x.motion)))),
       ];
+      // One stagger index per node, shared by all its exiting components,
+      // taken only when the node has an exit to play.
+      let mut stagger: Option<f32> = None;
       for (component, current, end) in ends {
         let Some((to, motion)) = end else { continue };
-        if motion.delay_ms > 0.0 {
-          let at_ms = now + motion.delay_ms as f64;
+        if stagger.is_none() {
+          stagger = Some(self.stagger_delay_for(i, true));
+        }
+        let delay_ms = motion.delay_ms + stagger.unwrap_or(0.0);
+        if delay_ms > 0.0 {
+          let at_ms = now + delay_ms as f64;
           self.transitions.schedule(PendingWrite { node: id, component, to, spec: motion.spec, at_ms });
           started = true;
         } else {
@@ -1554,6 +1561,26 @@ impl Spatial {
   /// agree on time; pause/scale/step semantics ride in with the stamp.
   pub fn set_transition_now(&mut self, now_ms: f64) {
     self.transitions.now_ms = now_ms;
+    // Stagger indices are per frame: each stamp opens a fresh count.
+    self.transitions.stagger_counts.clear();
+  }
+
+  /// The extra delay a stagger group imposes on this node's lifecycle
+  /// event (enter when `exit` is false, exit when true): `index *
+  /// stagger_ms` under the nearest ancestor declaring `stagger_ms`, zero
+  /// without one. Counting is per group per frame, in occurrence order:
+  /// creation order for enters, the consumer's teardown order (children
+  /// first, in children order, for both trees' destroy verbs) for exits.
+  fn stagger_delay_for(&mut self, i: u32, exit: bool) -> f32 {
+    let mut cursor = self.nodes[i as usize].parent;
+    while let Some(p) = cursor {
+      let pid = self.id_of(p);
+      if let Some(stagger_ms) = self.transitions.configs.get(&pid).and_then(|c| c.stagger_ms) {
+        return self.transitions.stagger_index(pid, exit) as f32 * stagger_ms;
+      }
+      cursor = self.nodes[p as usize].parent;
+    }
+    0.0
   }
 
   /// Advance every running track to the stamped clock, writing the
@@ -1690,8 +1717,14 @@ impl Spatial {
         (Component::Rotation, n.rotation, config.rotation.and_then(|e| e.from.map(|f| (f.value, f.motion)))),
       ];
       let mut snapped = false;
+      // One stagger index per node, shared by all its entering components,
+      // so a multi-component enter moves as one item of the cascade.
+      let mut stagger: Option<f32> = None;
       for (component, held, enter) in enters {
         let Some((from, motion)) = enter else { continue };
+        if stagger.is_none() {
+          stagger = Some(self.stagger_delay_for(i, false));
+        }
         let target = self.transitions.take_target(id, component).unwrap_or(held);
         if targets_match(component, from, target) {
           continue;
@@ -1703,8 +1736,9 @@ impl Spatial {
           Component::Rotation => n.rotation = from,
         }
         snapped = true;
-        if motion.delay_ms > 0.0 {
-          let at_ms = now + motion.delay_ms as f64;
+        let delay_ms = motion.delay_ms + stagger.unwrap_or(0.0);
+        if delay_ms > 0.0 {
+          let at_ms = now + delay_ms as f64;
           self.transitions.schedule(PendingWrite { node: id, component, to: target, spec: motion.spec, at_ms });
         } else {
           self.transitions.apply(id, component, from, target, motion.spec, now);

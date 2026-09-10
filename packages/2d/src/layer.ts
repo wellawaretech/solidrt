@@ -371,6 +371,12 @@ export type SpriteLayerOptions = {
   /** Names the GPU resources (buffers, pipeline; views default to
    * `<label>-view`); default "sprites". */
   label?: string
+  /** Stagger (ms) on the layer's root: every sprite or group added
+   * straight under the layer (no group) that enters or leaves in one
+   * frame is spaced by `index * stagger` - the whole-layer form of a
+   * group's `stagger` (a group declaring its own wins for what is under
+   * it). See setStagger. */
+  stagger?: number
   /** Skip the owner-scoped auto-dispose (see createSpriteLayer). */
   autoFree?: boolean
   /**
@@ -628,6 +634,11 @@ export type SpriteLayer = LayerBase & {
    */
   moveAndSlide(volume: Volume, dx: number, dy: number, opts?: MoveOptions): MoveResult
   _groups: Set<GroupState>
+  /** Set (or with null clear) the stagger on the layer's root: the
+   * spacing, in ms, of the enters and exits of the sprites and groups
+   * straight under the layer that begin in one frame (SpriteLayerOptions
+   * `stagger`). */
+  setStagger(ms: number | null): void
   /** The core node every sprite and group of the layer sits under: what
    * scopes the layer's queries in the arena shared with 3d scenes. */
   _root: NodeId
@@ -750,6 +761,7 @@ export function createSpriteLayer(atlas: TextureId, opts?: SpriteLayerOptions): 
   fillTransform(0, 0, 0, 1, 1)
   let root = spatial.createNode(TRANSFORM, true)
   let filter: QueryFilter = { root }
+  if (opts?.stagger !== undefined) spatial.setTransition(root, { stagger: opts.stagger })
   // Refill the layer's one filter for a query: the root always, the
   // include-list as the sprites' nodes when given.
   let queryFilter = (opts: QueryOptions | undefined, site: string): void => {
@@ -1108,6 +1120,10 @@ export function createSpriteLayer(atlas: TextureId, opts?: SpriteLayerOptions): 
       }
       layer._schedule()
     },
+    setStagger(ms) {
+      if (disposed) return
+      spatial.setTransition(root, ms === null ? null : { stagger: ms })
+    },
     _schedule() {
       if (disposed || scheduled) return
       scheduled = true
@@ -1238,12 +1254,17 @@ export type SpriteTransitionSpec<Value> =
  * plus `all` as a catch-all. `position` is x/y (`from: [x, y]`),
  * `rotation` the rotation in radians (`from: angle`), `scale` a sprite's
  * w/h (`from: [w, h]`) or a group's uniform scale (`from: s`); `exit`
- * takes the same units. */
+ * takes the same units. `stagger` (ms) goes on a GROUP's declaration and
+ * spaces the enters and exits of the sprites and groups under it that
+ * begin in one frame by `index * stagger` (add order for enters, destroy
+ * order for exits; the nearest declaring group wins); a sprite has no
+ * children, so on a sprite it does nothing. */
 export type SpriteTransition = {
   position?: SpriteTransitionSpec<[number, number]>
   rotation?: SpriteTransitionSpec<number>
   scale?: SpriteTransitionSpec<[number, number] | number>
   all?: NodeTransitionSpec
+  stagger?: number
 }
 
 /** The 2d declaration in the arena's own lanes: endpoint values lifted
@@ -1254,6 +1275,7 @@ function toNodeTransition(transition: SpriteTransition | string | null): NodeTra
   if (transition === null || typeof transition === "string") return transition
   let out: NodeTransition = {}
   if (transition.all !== undefined) out.all = transition.all
+  if (transition.stagger !== undefined) out.stagger = transition.stagger
   if (transition.position !== undefined) out.position = liftSpec(transition.position, ([x, y]) => [x, y, 0])
   if (transition.rotation !== undefined) {
     out.rotation = liftSpec(transition.rotation, angle => [0, 0, Math.sin(angle / 2), Math.cos(angle / 2)])
@@ -1311,7 +1333,8 @@ export function setSpriteTransition(sprite: Sprite, transition: SpriteTransition
 }
 
 /** The group counterpart of setSpriteTransition (`scale` is the group's
- * uniform scale). */
+ * uniform scale), and the home of `stagger`: a group declaring one spaces
+ * the enters and exits of everything under it (see SpriteTransition). */
 export function setGroupTransition(group: SpriteGroup, transition: SpriteTransition | string | null): void {
   if (group.layer === null) return
   let node = toNodeTransition(transition)

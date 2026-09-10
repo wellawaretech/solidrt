@@ -293,8 +293,21 @@ leave in its frame (a mixer driving its joints keeps driving them). Either
 endpoint takes `{ value, duration?, curve?, bounce?, delay? }` to own its
 direction's motion (an ease-out enter, an ease-in exit), and `delay` on
 an entry holds its writes on the animation clock (a late frame catches
-up). No stagger: nodes have no tree order to cascade in; space a burst
-with `delay`. Each natural settle calls the node's `onTransitionEnd`
+up). `stagger` (ms) goes on an ANCESTOR's declaration (a `<Group
+transition={{ stagger: 40 }}>`), never on the animating nodes: it spaces
+the enters and exits of its descendants that begin in one frame by
+`index * stagger` (add order in, destroy order out; nearest declaring
+ancestor wins) and cascades nothing unless they declare `from`/`exit` -
+a squad of instances spawning in is one `stagger` on their group, and
+for the nodes straight under the scene root it is `<Scene stagger>` /
+`createScene({ stagger })` (a declaration on `scene.root`). A populated
+mesh unmounts as `destroy(mesh)` then `disposeInstances(mesh)`, and the
+dispose waits for a mesh still animating out, so an `<Instance>`'s exit
+plays through its `<InstancedMesh>`'s unmount (`model.dispose` waits the
+same way); the scene's and a layer's `dispose` cut a corpse short - the
+whole target is going. `examples/exits.tsx` is the live example: crates
+that pop in and shrink away on tap, the shelf cascading out and back
+through `<Show>`. Each natural settle calls the node's `onTransitionEnd`
 (plain field like the pointer handlers) with `{ component }` - never on
 a cancel, snap, leave or exit; the raw "spatialTransitionEnd" engine
 event (srt:events, carrying the CORE node id `_node`) stays for
