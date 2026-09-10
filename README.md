@@ -95,6 +95,7 @@ markdown file per page.
 - `@solidrt/win32-x64-msvc` - Windows x64 (MSVC)
 - `@solidrt/android-arm64-v8a` - Android arm64
 - `@solidrt/android-armeabi-v7a` - Android arm 32-bit
+- `@solidrt/android-x86_64` - Android x86_64 (emulators, Chromebooks)
 
 ## Development
 

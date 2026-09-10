@@ -81,6 +81,7 @@ let DEFAULT_ANDROID_ABI = "arm64-v8a"
 export let ANDROID_PKG_MAP: Record<string, string> = {
   "arm64-v8a": "@solidrt/android-arm64-v8a",
   "armeabi-v7a": "@solidrt/android-armeabi-v7a",
+  x86_64: "@solidrt/android-x86_64",
 }
 
 // The client version the project expects on an `abi` device: the version of

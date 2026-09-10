@@ -175,17 +175,21 @@ jobs:
 
       - uses: ./.github/actions/js-install
 
-      - name: Build fat APK (arm64-v8a + x86_64)
+      # Each dist goal builds both APKs for its ABI: the client
+      # (solidrt-go.apk) and the production runner `srt pack --apk` patches
+      # (solidrt.apk). Both are per-ABI by decision, no fat APK
+      # (okf/backlog/standalone-android-apk.md). The Makefile stages them
+      # into packages/android-<abi>/ itself.
+      - name: Build APKs (arm64-v8a)
         run: NDK_HOME="$ANDROID_NDK_ROOT" make android-dist VERSION="${GITHUB_REF_NAME#v}"
 
-      - name: Build 32-bit APK (armeabi-v7a)
+      - name: Build APKs (armeabi-v7a)
         run: NDK_HOME="$ANDROID_NDK_ROOT" make android-dist-armeabi-v7a VERSION="${GITHUB_REF_NAME#v}"
 
-      # The production runner APK `srt pack --apk` patches: per-ABI by
-      # decision, arm64-v8a first (okf/backlog/standalone-android-apk.md).
-      # The Makefile stages it into packages/android-arm64-v8a/ itself.
-      - name: Build runner APK (arm64-v8a)
-        run: NDK_HOME="$ANDROID_NDK_ROOT" make android-runtime VERSION="${GITHUB_REF_NAME#v}"
+      # x86_64 is the emulator and Intel/AMD Chromebook ABI. No physical phone
+      # ships it, but without it neither can run a SolidRT app from npm.
+      - name: Build APKs (x86_64)
+        run: NDK_HOME="$ANDROID_NDK_ROOT" make android-dist ANDROID_ABI=x86_64 VERSION="${GITHUB_REF_NAME#v}"
 
       - name: Upload arm64-v8a APK
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -199,7 +203,17 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: android-armeabi-v7a
-          path: packages/android-armeabi-v7a/solidrt-go.apk
+          path: |
+            packages/android-armeabi-v7a/solidrt-go.apk
+            packages/android-armeabi-v7a/solidrt.apk
+
+      - name: Upload x86_64 APKs
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: android-x86_64
+          path: |
+            packages/android-x86_64/solidrt-go.apk
+            packages/android-x86_64/solidrt.apk
 
   build-windows:
     runs-on: windows-latest
@@ -251,7 +265,7 @@ jobs:
         packages/core packages/components packages/2d packages/3d packages/flux-types
         packages/darwin-arm64 packages/linux-x64-gnu packages/linux-arm64-gnu
         packages/win32-x64-msvc
-        packages/android-arm64-v8a packages/android-armeabi-v7a
+        packages/android-arm64-v8a packages/android-armeabi-v7a packages/android-x86_64
         packages/cli packages/create-solidrt
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
