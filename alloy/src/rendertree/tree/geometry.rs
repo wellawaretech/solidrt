@@ -93,9 +93,10 @@ impl RenderTree {
     };
 
     // Detached nodes have no layout placement; they inherit position from the
-    // ancestor walk below.
-    if let Some(layout) = node.layout.as_ref() {
-      let loc = layout.location().to_vector();
+    // ancestor walk below. A laid-out node's placement is where it is
+    // painted (a layout slide in flight included, Element::location).
+    if node.has_layout() {
+      let loc = node.location().to_vector();
       for p in corners.iter_mut() {
         *p += loc;
       }
@@ -144,8 +145,8 @@ impl RenderTree {
           }
         }
       }
-      if let Some(parent_layout) = parent.layout.as_ref() {
-        let loc = parent_layout.location().to_vector();
+      if parent.has_layout() {
+        let loc = parent.location().to_vector();
         for p in corners.iter_mut() {
           *p += loc;
         }

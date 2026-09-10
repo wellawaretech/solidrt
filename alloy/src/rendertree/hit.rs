@@ -133,7 +133,7 @@ pub fn locals_along_path(tree: &RenderTree, chain: &[u64], point: Point) -> Vec<
     let size = element.frame_size(parent_size);
     let content = element.layout.as_ref().map(|l| l.content_box()).unwrap_or(Rect::new(Point::zero(), size));
     if i > 0 {
-      let pos = element.layout.as_ref().map(|l| l.location()).unwrap_or_default();
+      let pos = element.location();
       point = point - pos.to_vector() + parent_scroll;
     }
     let local = element.kind.transform_to_local(point, &HitContext { size, content });
@@ -283,7 +283,7 @@ fn hit_recursive(
       continue;
     }
     let child_size = child.frame_size(local_size);
-    let child_pos = child.layout.as_ref().map(|l| l.location()).unwrap_or_default();
+    let child_pos = child.location();
     let child_point = local - child_pos.to_vector() + scroll;
     if hit_recursive(tree, child_id, child_point, child_size, pointer_events, path) {
       if pointer_events == PointerEvents::None {

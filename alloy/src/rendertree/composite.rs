@@ -31,6 +31,8 @@ pub fn layout_phase(tree: &mut RenderTree, platform: &PlatformContext, alloy: &c
     taffy::Size { width: AvailableSpace::Definite(width), height: AvailableSpace::Definite(height) };
   let mut layout_ctx = LayoutContext { render_tree: tree, platform, alloy };
   taffy::compute_root_layout(&mut layout_ctx, NodeId::from(root_id), available_space);
+  // Declaring nodes the pass moved slide from where they were painted.
+  tree.start_layout_slides();
 }
 
 /// Repaint-boundary counts for one painted frame: subtrees drawn from their
@@ -785,7 +787,7 @@ pub(super) fn record_node<'a>(
       continue;
     }
 
-    let pos = child.layout.as_ref().map(|l| l.location()).unwrap_or_default();
+    let pos = child.location();
 
     // The child's current window extent, kept on the element for damage
     // resolves (see paint_phase). Written for culled children too - their

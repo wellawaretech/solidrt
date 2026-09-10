@@ -6,7 +6,7 @@
 
 use super::RenderTree;
 use crate::rendertree::transitions::{AnimValue, PendingWrite};
-use crate::rendertree::{AnimProp, Damage};
+use crate::rendertree::{AnimProp, Damage, Point, Slide, Vector};
 
 impl RenderTree {
   /// Mount-time enter animations: a per-property `from` in the node's
@@ -338,6 +338,96 @@ impl RenderTree {
         false
       }
     }
+  }
+
+  /// Note that a layout pass moved a node declaring a `layout` transition:
+  /// the location it had (None for the empty box) is what
+  /// `start_layout_slides` slides it from.
+  pub(crate) fn note_reflow(&mut self, id: u64, old: Option<Point>) {
+    self.reflowed.push((id, old));
+  }
+
+  /// Layout slides (okf/backlog/transition-layout-animations.md): after a
+  /// layout pass, every declaring node the pass moved slides from where it
+  /// was painted to its new solved location. The slide lane is the painted
+  /// location itself, so a reflow mid-slide is the ordinary retarget (a
+  /// spring keeps position and velocity, a tween restarts from the painted
+  /// point), and the paint that follows this pass draws the node where it
+  /// was (`Slide::at` snapped, the enter pass's snap-to-from) with motion
+  /// starting at the next advance. Nothing slides from nowhere: a node's
+  /// first layout, a reparent (the old box is in another parent's frame),
+  /// a node not yet painted and taffy's hidden pass (the empty box, either
+  /// side) all snap and anchor the node where it now is. Runs from
+  /// `layout_phase`, which the frame builder and the paint phase both call:
+  /// a post-layout hook that reflows again is picked up, and an unchanged
+  /// second run has nothing to drain.
+  pub(crate) fn start_layout_slides(&mut self) {
+    if self.reflowed.is_empty() {
+      return;
+    }
+    let reflowed = std::mem::take(&mut self.reflowed);
+    let now = self.transitions.now_ms;
+    for (id, old) in reflowed {
+      let Some(el) = self.nodes.get_mut(&id) else { continue };
+      let Some(entry) = el.transitions.as_ref().and_then(|t| t.layout) else { continue };
+      let Some(layout) = el.layout.as_ref() else { continue };
+      let hidden = layout.computed == taffy::Layout::new();
+      let to = layout.location();
+      let parent = el.parent;
+      let painted = el.painted.get();
+      let slide = el.slide.get_or_insert_with(Slide::default);
+      let anchored = parent.is_some() && slide.under == parent;
+      slide.under = parent;
+      let from = match old {
+        Some(old) if anchored && painted && !hidden => slide.at.unwrap_or(old),
+        _ => {
+          slide.at = None;
+          self.transitions.cancel(id, AnimProp::Layout);
+          continue;
+        }
+      };
+      slide.at = Some(from);
+      let running = if entry.delay_ms > 0.0 {
+        let at_ms = now + entry.delay_ms as f64;
+        let write =
+          PendingWrite { node: id, prop: AnimProp::Layout, to: AnimValue::Point(to), spec: entry.spec, at_ms };
+        self.transitions.schedule(write);
+        true
+      } else {
+        self.transitions.unschedule(id, AnimProp::Layout);
+        self.transitions.retarget(id, AnimProp::Layout, AnimValue::Point(from), AnimValue::Point(to), entry.spec, now)
+      };
+      if !running {
+        // Nowhere to move (the painted point is the new box): on it.
+        slide.at = None;
+      }
+    }
+  }
+
+  /// Keeps a node's slide state in step with its declaration, after every
+  /// edit: declaring `layout` anchors the node under its current parent, so
+  /// its next reflow slides; clearing it drops the state and any running
+  /// slide, so the node snaps to its solved box and no stale track can
+  /// write it again.
+  pub(super) fn reconcile_slide(&mut self, node_id: u64) {
+    let Some(el) = self.nodes.get_mut(&node_id) else { return };
+    let declares = el.transitions.as_ref().is_some_and(|t| t.layout.is_some());
+    match (declares, el.slide.is_some()) {
+      (true, false) => el.slide = Some(Slide { under: el.parent, at: None }),
+      (false, true) => {
+        el.slide = None;
+        self.transitions.cancel(node_id, AnimProp::Layout);
+      }
+      _ => {}
+    }
+  }
+
+  /// The offset a sliding node has still to cover, solved minus painted
+  /// location, for the dev tooling's dump; None when it sits on its box.
+  pub fn slide_remaining(&self, node_id: u64) -> Option<Vector> {
+    let el = self.nodes.get(&node_id)?;
+    let at = el.slide?.at?;
+    Some(el.layout.as_ref()?.location() - at)
   }
 
   /// Settled (node, prop) pairs since the last drain, for the embedder's

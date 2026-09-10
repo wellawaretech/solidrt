@@ -6,7 +6,7 @@
 use std::sync::mpsc::channel;
 
 use crate::alloy_plugins::properties::apply_jsx;
-use crate::alloy_plugins::properties::transition::{decode_node_entry, decode_stagger};
+use crate::alloy_plugins::properties::transition::{anim_prop, decode_node_entry, decode_stagger};
 use crate::alloy_plugins::value::PropValue;
 use alloy::rendertree::{AnimProp, AnimValue, Curve, Damage, Element, ElementKind, TransitionEntry, TransitionSpec};
 
@@ -465,6 +465,52 @@ fn transition_exit_decodes_per_property_only() {
   let under_all =
     apply_el(&mut el, "transition", map(&[("all", map(&[("duration", num(1.0)), ("exit", num(0.0))]))])).unwrap_err();
   assert!(under_all.contains("exit is per-property"), "{under_all}");
+}
+
+fn layout_of(el: &Element) -> Option<TransitionEntry> {
+  el.transitions.as_ref().expect("config").layout
+}
+
+#[test]
+fn transition_layout_forms() {
+  let mut el = Element::from_kind("view").expect("known kind");
+  // An entry of its own: object or shorthand, delay included.
+  let own = map(&[("layout", map(&[("duration", num(250.0)), ("curve", text("ease-out")), ("delay", num(20.0))]))]);
+  apply_el(&mut el, "transition", own).expect("layout object");
+  let entry = layout_of(&el).expect("layout entry");
+  assert!(matches!(entry.spec, TransitionSpec::Tween { duration_ms, .. } if duration_ms == 250.0));
+  assert_eq!(entry.delay_ms, 20.0);
+  apply_el(&mut el, "transition", map(&[("layout", text("100ms linear"))])).expect("layout shorthand");
+  assert!(
+    matches!(layout_of(&el).expect("layout entry").spec, TransitionSpec::Tween { duration_ms, .. } if duration_ms == 100.0)
+  );
+
+  // `true` borrows the all entry's motion, in either key order, and needs one.
+  let all = map(&[("duration", num(300.0))]);
+  apply_el(&mut el, "transition", map(&[("layout", PropValue::Bool(true)), ("all", all.clone())]))
+    .expect("layout true");
+  assert!(matches!(layout_of(&el).expect("borrowed").spec, TransitionSpec::Spring { .. }));
+  let missing = apply_el(&mut el, "transition", map(&[("layout", PropValue::Bool(true))])).unwrap_err();
+  assert!(missing.contains("no all"), "{missing}");
+
+  // false and null declare none; a bare all never covers layout.
+  apply_el(&mut el, "transition", map(&[("all", all.clone()), ("layout", PropValue::Bool(false))]))
+    .expect("layout false");
+  assert!(layout_of(&el).is_none());
+  apply_el(&mut el, "transition", map(&[("all", all)])).expect("all alone");
+  assert!(layout_of(&el).is_none());
+  apply_el(&mut el, "transition", text("300ms")).expect("shorthand alone");
+  assert!(layout_of(&el).is_none());
+
+  // Lifecycle endpoints do not apply: a slide's endpoints are the boxes.
+  for key in ["from", "exit"] {
+    let bad = map(&[("layout", map(&[("duration", num(1.0)), (key, num(0.0))]))]);
+    let err = apply_el(&mut el, "transition", bad).unwrap_err();
+    assert!(err.contains("layout") && err.contains(key), "{err}");
+  }
+
+  // Never a property write target: the slide lane is the tree's alone.
+  assert!(anim_prop("layout").is_none());
 }
 
 fn curve(name: &str) -> Curve {

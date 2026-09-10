@@ -21,6 +21,7 @@ for the element/prop model see `@solidrt/core/AGENTS.md`.
 - `frame-animation.tsx` - `onFrame` driving a transform animation each frame.
 - `on-layout-connect.tsx` - `onLayout` + `getBoundingBox` connecting laid-out boxes with a `d-path`.
 - `stagger.tsx` - enter/exit/stagger with no per-frame JS: `from` and `exit` per property on each row's own `transition`, `stagger` on the ANCESTOR cascading them in occurrence order, and the replay idiom - a keyed `<Show>` remounts the subtree when its `when` value changes, so bumping an epoch replays the whole cascade. Exiting rows stay painted until they settle.
+- `layout-slide.tsx` - the `layout` transition, the companion to exit: rows declaring it slide from the box they had to the box a layout gives them instead of jumping - tap a row to remove it (its exit plays where it was while the rows below slide up), the header to shuffle the order (a `<For>` reorder), the footer to add one back. No per-frame JS, no hand-animated `y`.
 
 ## Pointer input
 - `pointer-local-coords.tsx` - the three pointer coordinate frames (`clientX` window, `localX` the handling node's own frame, `parentX` its path-parent's frame - where the node's x/y live) and the transform-proof drag idiom: grab offset from `localX` at down, place with `parentX - offset` on moves. Exact inside rotated/scaled ancestors and when the pointer leaves the node mid-drag.

@@ -13,7 +13,8 @@ fn tree_with_entry(entry: TransitionEntry) -> RenderTree {
   tree.create_node(2, Rectangle::default().no_layout());
   tree.insert_node(1, 2, None).expect("insert");
   tree.edit(2, |el| {
-    el.transitions = Some(Box::new(TransitionConfig { props: vec![], all: Some(entry), stagger_ms: None }));
+    el.transitions =
+      Some(Box::new(TransitionConfig { props: vec![], all: Some(entry), stagger_ms: None, layout: None }));
     Damage::None
   });
   paint(&tree, 2);
@@ -161,7 +162,8 @@ fn mount_writes_snap() {
   tree.create_node(1, View::default().with_layout());
   tree.create_node(2, Rectangle::default().no_layout());
   tree.edit(2, |el| {
-    el.transitions = Some(Box::new(TransitionConfig { props: vec![], all: Some(LINEAR_100.into()), stagger_ms: None }));
+    el.transitions =
+      Some(Box::new(TransitionConfig { props: vec![], all: Some(LINEAR_100.into()), stagger_ms: None, layout: None }));
     Damage::None
   });
   // Not inserted yet: the write is not consumed, the normal path snaps it.
@@ -195,6 +197,7 @@ fn unpainted_write_retargets_enter_animation() {
       )],
       all: None,
       stagger_ms: None,
+      layout: None,
     }));
     match &mut el.kind {
       ElementKind::Rectangle(r) => r.set_x(Some(40.0)),
@@ -246,7 +249,8 @@ fn attached_geometry_is_not_animatable() {
   tree.insert_node(1, 2, None).expect("insert");
   paint(&tree, 2);
   tree.edit(2, |el| {
-    el.transitions = Some(Box::new(TransitionConfig { props: vec![], all: Some(LINEAR_100.into()), stagger_ms: None }));
+    el.transitions =
+      Some(Box::new(TransitionConfig { props: vec![], all: Some(LINEAR_100.into()), stagger_ms: None, layout: None }));
     Damage::None
   });
   assert!(!tree.transition_write(2, AnimProp::X, Some(scalar(80.0))));
@@ -362,7 +366,8 @@ fn batched_advance_bumps_revision_once() {
   tree.insert_node(1, 3, None).expect("insert");
   paint(&tree, 3);
   tree.edit(3, |el| {
-    el.transitions = Some(Box::new(TransitionConfig { props: vec![], all: Some(LINEAR_100.into()), stagger_ms: None }));
+    el.transitions =
+      Some(Box::new(TransitionConfig { props: vec![], all: Some(LINEAR_100.into()), stagger_ms: None, layout: None }));
     Damage::None
   });
   tree.set_transition_now(0.0);
@@ -494,6 +499,7 @@ fn enter_from_animates_first_attach_only() {
       )],
       all: None,
       stagger_ms: None,
+      layout: None,
     }));
     match &mut el.kind {
       ElementKind::Rectangle(r) => r.set_x(Some(40.0)),
@@ -538,6 +544,7 @@ fn enter_from_plays_when_config_lands_after_attach() {
       )],
       all: None,
       stagger_ms: None,
+      layout: None,
     }));
     Damage::None
   });
@@ -574,6 +581,7 @@ fn enter_queue_skips_destroyed_and_detached_nodes() {
         )],
         all: None,
         stagger_ms: None,
+        layout: None,
       }));
       match &mut el.kind {
         ElementKind::Rectangle(r) => r.set_x(Some(40.0)),
@@ -606,6 +614,7 @@ fn enter_from_with_delay_holds_at_from() {
       )],
       all: None,
       stagger_ms: None,
+      layout: None,
     }));
     match &mut el.kind {
       ElementKind::Rectangle(r) => r.set_x(Some(40.0)),
@@ -634,7 +643,7 @@ fn tree_with_exit_rect(entry: TransitionEntry) -> RenderTree {
   tree.insert_node(1, 2, None).expect("insert");
   tree.edit(2, |el| {
     el.transitions =
-      Some(Box::new(TransitionConfig { props: vec![(AnimProp::X, entry)], all: None, stagger_ms: None }));
+      Some(Box::new(TransitionConfig { props: vec![(AnimProp::X, entry)], all: None, stagger_ms: None, layout: None }));
     Damage::None
   });
   tree
@@ -779,6 +788,7 @@ fn enter_plays_its_own_motion() {
       )],
       all: None,
       stagger_ms: None,
+      layout: None,
     }));
     match &mut el.kind {
       ElementKind::Rectangle(r) => r.set_x(Some(0.0)),
@@ -809,14 +819,19 @@ fn tree_with_stagger_group(n: u64) -> RenderTree {
   tree.set_transition_now(0.0);
   tree.create_node(1, View::default().with_layout());
   tree.edit(1, |el| {
-    el.transitions = Some(Box::new(TransitionConfig { props: vec![], all: None, stagger_ms: Some(50.0) }));
+    el.transitions =
+      Some(Box::new(TransitionConfig { props: vec![], all: None, stagger_ms: Some(50.0), layout: None }));
     Damage::None
   });
   for id in 10..10 + n {
     tree.create_node(id, Rectangle::default().no_layout());
     tree.edit(id, |el| {
-      el.transitions =
-        Some(Box::new(TransitionConfig { props: vec![(AnimProp::X, entry_from_100())], all: None, stagger_ms: None }));
+      el.transitions = Some(Box::new(TransitionConfig {
+        props: vec![(AnimProp::X, entry_from_100())],
+        all: None,
+        stagger_ms: None,
+        layout: None,
+      }));
       match &mut el.kind {
         ElementKind::Rectangle(r) => r.set_x(Some(40.0)),
         _ => unreachable!(),
@@ -870,8 +885,12 @@ fn stagger_counts_per_frame() {
   tree.set_transition_now(16.0);
   tree.create_node(20, Rectangle::default().no_layout());
   tree.edit(20, |el| {
-    el.transitions =
-      Some(Box::new(TransitionConfig { props: vec![(AnimProp::X, entry_from_100())], all: None, stagger_ms: None }));
+    el.transitions = Some(Box::new(TransitionConfig {
+      props: vec![(AnimProp::X, entry_from_100())],
+      all: None,
+      stagger_ms: None,
+      layout: None,
+    }));
     match &mut el.kind {
       ElementKind::Rectangle(r) => r.set_x(Some(40.0)),
       _ => unreachable!(),
@@ -892,14 +911,19 @@ fn stagger_spreads_group_exits() {
   tree.set_transition_now(0.0);
   tree.create_node(1, View::default().with_layout());
   tree.edit(1, |el| {
-    el.transitions = Some(Box::new(TransitionConfig { props: vec![], all: None, stagger_ms: Some(50.0) }));
+    el.transitions =
+      Some(Box::new(TransitionConfig { props: vec![], all: None, stagger_ms: Some(50.0), layout: None }));
     Damage::None
   });
   for id in 10..13 {
     tree.create_node(id, Rectangle::default().no_layout());
     tree.edit(id, |el| {
-      el.transitions =
-        Some(Box::new(TransitionConfig { props: vec![(AnimProp::X, EXIT_200)], all: None, stagger_ms: None }));
+      el.transitions = Some(Box::new(TransitionConfig {
+        props: vec![(AnimProp::X, EXIT_200)],
+        all: None,
+        stagger_ms: None,
+        layout: None,
+      }));
       Damage::None
     });
     tree.insert_node(1, id, None).expect("insert");
@@ -952,7 +976,7 @@ fn tree_with_exit_panel(stagger_ms: Option<f32>) -> RenderTree {
   tree.insert_node(1, 2, None).expect("insert");
   if stagger_ms.is_some() {
     tree.edit(2, |el| {
-      el.transitions = Some(Box::new(TransitionConfig { props: vec![], all: None, stagger_ms }));
+      el.transitions = Some(Box::new(TransitionConfig { props: vec![], all: None, stagger_ms, layout: None }));
       Damage::None
     });
   }
@@ -960,8 +984,12 @@ fn tree_with_exit_panel(stagger_ms: Option<f32>) -> RenderTree {
     tree.create_node(id, Rectangle::default().no_layout());
     tree.insert_node(2, id, None).expect("insert");
     tree.edit(id, |el| {
-      el.transitions =
-        Some(Box::new(TransitionConfig { props: vec![(AnimProp::X, EXIT_200)], all: None, stagger_ms: None }));
+      el.transitions = Some(Box::new(TransitionConfig {
+        props: vec![(AnimProp::X, EXIT_200)],
+        all: None,
+        stagger_ms: None,
+        layout: None,
+      }));
       Damage::None
     });
   }
@@ -1075,6 +1103,7 @@ fn nested_exit_root_keeps_its_cascade_and_the_outer_waits() {
       )],
       all: None,
       stagger_ms: None,
+      layout: None,
     }));
     Damage::None
   });
@@ -1115,6 +1144,7 @@ fn enter_owed_to_a_leaving_node_is_spent() {
       )],
       all: None,
       stagger_ms: None,
+      layout: None,
     }));
     Damage::None
   });

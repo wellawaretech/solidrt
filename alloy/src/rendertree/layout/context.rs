@@ -257,17 +257,28 @@ impl<'a> LayoutPartialTree for LayoutContext<'a> {
 
   fn set_unrounded_layout(&mut self, node_id: NodeId, layout: &Layout) {
     let id = u64::from(node_id);
-    let data = self.render_tree.node_mut(id).layout_data_mut();
+    let element = self.render_tree.node_mut(id);
+    let slides = element.transitions.as_ref().is_some_and(|t| t.layout.is_some());
+    let data = element.layout_data_mut();
     // A changed layout moves or resizes painted content without any element
     // mutation (e.g. a sibling grew); retained boundary recordings above this
     // node are stale.
     if data.computed != *layout {
+      // The layout slide (tree/transitions.rs start_layout_slides) needs
+      // the location a declaring node had before this write, and this is
+      // the one seam a solved box changes at. The empty box - never laid
+      // out, or taffy's hidden pass - is no previous position.
+      let moved = slides && data.computed.location != layout.location;
+      let old = (data.computed != Layout::new()).then(|| data.location());
       data.computed = *layout;
       // Partial repaint: this is the one place a node moved by someone
       // else's relayout (a sibling grew) becomes visible, so its old and
       // new extents join the frame damage.
       self.render_tree.note_damage(id);
       self.render_tree.invalidate_paint(id);
+      if moved {
+        self.render_tree.note_reflow(id, old);
+      }
     }
   }
 

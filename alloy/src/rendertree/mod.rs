@@ -24,7 +24,7 @@ pub use layout::{LayoutCache, LayoutContext, LayoutData};
 pub use platform::{FontPayload, PlatformContext};
 pub use router::{InputEvent, PointerKey, PointerRouter, RoutedKind, RoutedPointer};
 pub use text::{OverflowWrap, RunOverrides, RunStyle, Span, Text, TextAnchor, TextOverflow, TextRun, ATOM_CHAR};
-pub use transitions::{AnimProp, AnimValue, Curve, Endpoint, TransitionConfig, TransitionEntry, TransitionSpec};
+pub use transitions::{AnimProp, AnimValue, Curve, Endpoint, Slide, TransitionConfig, TransitionEntry, TransitionSpec};
 pub use tree::{NodeMatch, NodeSnapshot, RenderTree};
 
 use crate::impellers::DisplayListBuilder;
@@ -395,6 +395,10 @@ pub struct Element {
   // that turned out to be a move) instead of deferring to a destroy that
   // already happened.
   pub doomed: bool,
+  // Layout slide state (transitions.rs `Slide`) on the nodes declaring a
+  // `layout` transition, None on every other node; the tree keeps it in
+  // step with the declaration (tree/transitions.rs reconcile_slide).
+  pub slide: Option<Slide>,
 }
 
 impl Element {
@@ -417,6 +421,7 @@ impl Element {
       entered: false,
       exiting: false,
       doomed: false,
+      slide: None,
     }
   }
 
@@ -445,6 +450,7 @@ impl Element {
       entered: false,
       exiting: false,
       doomed: false,
+      slide: None,
     }
   }
 
@@ -476,6 +482,21 @@ impl Element {
 
   pub fn has_layout(&self) -> bool {
     self.layout.is_some()
+  }
+
+  /// Where the node is in its parent's frame: its solved layout location,
+  /// or the painted one while a layout slide runs (`Slide::at`). Zero for a
+  /// detached node, which has no placement of its own. Every consumer of a
+  /// node's position - the paint walk, the envelope, hit testing, bounding
+  /// boxes and so the tree dump - reads through here, so they cannot
+  /// disagree on where a sliding node is. `LayoutData::location` is the
+  /// solved box alone (the offsetLeft-style `layout_box` query).
+  pub fn location(&self) -> crate::impellers::Point {
+    match (&self.layout, self.slide.and_then(|s| s.at)) {
+      (Some(_), Some(at)) => at,
+      (Some(layout), None) => layout.location(),
+      (None, _) => crate::impellers::Point::zero(),
+    }
   }
 
   /// The element's frame: its border box when laid out, else the size it

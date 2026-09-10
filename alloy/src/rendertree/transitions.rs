@@ -1,5 +1,5 @@
 use crate::color::{color_to_oklab, oklab_to_color};
-use crate::impellers::Color;
+use crate::impellers::{Color, Point};
 use crate::motion::spring_step;
 use crate::rendertree::{Damage, Element, ElementKind, OriginCoord};
 
@@ -64,15 +64,23 @@ pub enum AnimProp {
   Color,
   // Rect corner radius, single-number form only.
   Radius,
+  // The layout slide (okf/backlog/transition-layout-animations.md): the
+  // node's painted location in its parent's frame, animated toward the
+  // solved one after a reflow. Not a writable property - the JSX name table
+  // never maps to it and the lifecycle passes never seed it; the tree
+  // starts its tracks itself (tree/transitions.rs start_layout_slides).
+  Layout,
 }
 
-/// A value an animatable property carries: the scalar set, plus solid
-/// colors. Colors interpolate in oklab (with alpha as its own linear lane),
-/// so a red-to-blue transition passes through neither gray nor purple mud.
+/// A value an animatable property carries: the scalar set, solid colors,
+/// and a point (the layout slide's location). Colors interpolate in oklab
+/// (with alpha as its own linear lane), so a red-to-blue transition passes
+/// through neither gray nor purple mud.
 #[derive(Clone, Copy, Debug)]
 pub enum AnimValue {
   Scalar(f32),
   Color(Color),
+  Point(Point),
 }
 
 /// A lifecycle endpoint (`from` at mount, `exit` at removal): the value the
@@ -128,12 +136,33 @@ pub struct TransitionConfig {
   pub props: Vec<(AnimProp, TransitionEntry)>,
   pub all: Option<TransitionEntry>,
   pub stagger_ms: Option<f32>,
+  // The layout slide's motion (`layout` in the declaration): a reflow moves
+  // the node from where it was painted to its new solved location on it.
+  // Not a property entry - `entry_for` never answers with it, and its
+  // `from`/`exit` are always None.
+  pub layout: Option<TransitionEntry>,
 }
 
 impl TransitionConfig {
   pub fn entry_for(&self, prop: AnimProp) -> Option<TransitionEntry> {
     self.props.iter().find(|(p, _)| *p == prop).map(|(_, e)| *e).or(self.all)
   }
+}
+
+/// Layout slide state, carried by the nodes declaring a `layout` transition
+/// (okf/backlog/transition-layout-animations.md); the tree keeps it in step
+/// with the declaration on every edit (tree/transitions.rs reconcile_slide).
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Slide {
+  /// The parent the node was last laid out under. A reflow under another
+  /// parent has no previous box in this frame to slide from, so the node
+  /// snaps there and anchors; None until its first layout under the
+  /// current parent.
+  pub under: Option<u64>,
+  /// The painted location while a slide runs, in the parent's frame: the
+  /// slide lane's value, written by its track. None when the node sits on
+  /// its solved box.
+  pub at: Option<Point>,
 }
 
 /// A write held by `delay`: it applies (starts or retargets a track) when
@@ -151,23 +180,33 @@ pub struct PendingWrite {
   pub at_ms: f64,
 }
 
-// Track values are lane vectors: scalars use one lane, colors four (oklab
-// L/a/b plus alpha). Tween and spring math run per lane; a color spring is
-// four independent oscillators sharing one spec.
+// Track values are lane vectors: scalars use one lane, points two, colors
+// four (oklab L/a/b plus alpha). Tween and spring math run per lane; a
+// color spring is four independent oscillators sharing one spec.
 pub type Lanes = [f32; 4];
 
-fn to_lanes(v: AnimValue) -> (Lanes, bool) {
+/// What a track's lanes encode, so the advance writes the value back in
+/// the kind it was given.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum LaneKind {
+  Scalar,
+  Color,
+  Point,
+}
+
+fn to_lanes(v: AnimValue) -> (Lanes, LaneKind) {
   match v {
-    AnimValue::Scalar(s) => ([s, 0.0, 0.0, 0.0], false),
-    AnimValue::Color(c) => (color_to_oklab(c), true),
+    AnimValue::Scalar(s) => ([s, 0.0, 0.0, 0.0], LaneKind::Scalar),
+    AnimValue::Color(c) => (color_to_oklab(c), LaneKind::Color),
+    AnimValue::Point(p) => ([p.x, p.y, 0.0, 0.0], LaneKind::Point),
   }
 }
 
-fn from_lanes(lanes: Lanes, color: bool) -> AnimValue {
-  if color {
-    AnimValue::Color(oklab_to_color(lanes))
-  } else {
-    AnimValue::Scalar(lanes[0])
+fn from_lanes(lanes: Lanes, kind: LaneKind) -> AnimValue {
+  match kind {
+    LaneKind::Scalar => AnimValue::Scalar(lanes[0]),
+    LaneKind::Color => AnimValue::Color(oklab_to_color(lanes)),
+    LaneKind::Point => AnimValue::Point(Point::new(lanes[0], lanes[1])),
   }
 }
 
@@ -198,8 +237,8 @@ pub struct Track {
   // advance otherwise. A spring integrates from here to the advance clock.
   since_ms: f64,
   to: Lanes,
-  // Lanes encode a color (write back as Color) rather than a scalar.
-  color: bool,
+  // What the lanes encode, for the write-back.
+  kind: LaneKind,
   // Settle threshold, scaled to the animated distance so pixels and
   // unit-scale values (opacity, oklab) both settle promptly.
   eps: f32,
@@ -215,15 +254,15 @@ fn eps_for(from: Lanes, to: Lanes) -> f32 {
 
 impl Track {
   pub fn target(&self) -> AnimValue {
-    from_lanes(self.to, self.color)
+    from_lanes(self.to, self.kind)
   }
 
   /// Advance to `now_ms`. Returns the value to write and whether the track
   /// settled; a settled track reports the target exactly.
   pub fn advance(&mut self, now_ms: f64) -> (AnimValue, bool) {
-    let color = self.color;
+    let kind = self.kind;
     let (lanes, settled) = self.advance_lanes(now_ms);
-    (from_lanes(lanes, color), settled)
+    (from_lanes(lanes, kind), settled)
   }
 
   fn advance_lanes(&mut self, now_ms: f64) -> (Lanes, bool) {
@@ -362,7 +401,7 @@ impl Transitions {
     spec: TransitionSpec,
     at_ms: f64,
   ) -> bool {
-    let (cur, color) = to_lanes(current);
+    let (cur, kind) = to_lanes(current);
     let (to, _) = to_lanes(to);
     if let Some(t) = self.tracks.iter_mut().find(|t| t.node == node && t.prop == prop) {
       t.to = to;
@@ -385,7 +424,7 @@ impl Transitions {
       TransitionSpec::Tween { .. } => TrackState::Tween { from: cur, start_ms: at_ms },
       TransitionSpec::Spring { .. } => TrackState::Spring { pos: cur, vel: [0.0; 4] },
     };
-    self.tracks.push(Track { node, prop, spec, state, since_ms: at_ms, to, color, eps: eps_for(cur, to) });
+    self.tracks.push(Track { node, prop, spec, state, since_ms: at_ms, to, kind, eps: eps_for(cur, to) });
     true
   }
 
@@ -449,6 +488,11 @@ impl Element {
         return None;
       }
       return Some(AnimValue::Color(paint.color));
+    }
+    if prop == Layout {
+      // The slide lane reads where the node is painted; only a laid-out
+      // node has a box to slide.
+      return self.layout.as_ref().map(|_| AnimValue::Point(self.location()));
     }
     let scalar = match (&self.kind, prop) {
       (ElementKind::View(v), X) => Some(v.translate.map(|t| t.x).unwrap_or(0.0)),
@@ -549,6 +593,21 @@ impl Element {
     if let AnimValue::Color(c) = value {
       return match (prop, self.kind.paint_mut()) {
         (Color, Some(p)) => p.set_color(Some(c)),
+        _ => Damage::None,
+      };
+    }
+    if let AnimValue::Point(p) = value {
+      return match (prop, &self.layout) {
+        (Layout, Some(layout)) => {
+          // Back on the solved box (a settle writes the target exactly)
+          // the lane drops, so the node reads as not sliding.
+          let at = (p != layout.location()).then_some(p);
+          self.slide.get_or_insert_with(Slide::default).at = at;
+          // The parent's walk places the child, so the parent's recording
+          // is what goes stale; the node's own content is untouched (a
+          // translate write's damage).
+          Damage::Compose
+        }
         _ => Damage::None,
       };
     }

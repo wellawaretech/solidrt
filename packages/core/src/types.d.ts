@@ -600,9 +600,12 @@ export type TransitionPropName =
   | "radius"
   | "color"
 
-/** Payload of onTransitionEnd: which animated property finished. */
+/**
+ * Payload of onTransitionEnd: which animated property finished. `"layout"`
+ * is the layout slide settling on its box.
+ */
 export interface TransitionEndEvent {
-  property: TransitionPropName
+  property: TransitionPropName | "layout"
 }
 
 export interface TransitionProps {
@@ -639,6 +642,20 @@ export interface TransitionProps {
          * lifecycle are unaffected. Adds on top of a per-entry `delay`.
          */
         stagger?: number
+        /**
+         * Layout slide: when a layout moves this element (a row removed
+         * above it, one inserted, a `<For>` reorder, a resize), it slides
+         * from where it was painted to its new box on this motion instead
+         * of jumping, and is hit-tested where it is drawn. A reflow
+         * mid-slide retargets (a spring keeps its velocity). Its first
+         * layout, a reparent and a `display: none` toggle snap. The slide is
+         * parent-relative: a parent that moves carries its children at
+         * once, so declare it on every level that should glide. `true`
+         * borrows the `all` entry's motion (an error without one); `all`
+         * alone never slides. Position only today: a size change snaps.
+         * Settles with onTransitionEnd property `"layout"`.
+         */
+        layout?: Omit<TransitionSpring, "from" | "exit"> | Omit<TransitionTween, "from" | "exit"> | TransitionShorthand | boolean
       } & {
         [P in TransitionPropName]?: Transition
       })

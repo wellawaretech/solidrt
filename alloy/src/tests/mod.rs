@@ -15,6 +15,7 @@ mod hit;
 mod keymap;
 mod layout;
 mod layout_cache;
+mod layout_slides;
 mod line;
 mod liveness;
 mod paint;

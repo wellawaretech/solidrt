@@ -472,7 +472,15 @@ latest (solid-js 1.x, off Solid 2.0 entirely). The recipe that works is
   enter/exit by `index * stagger`, and cascades nothing unless the
   descendants declare `from`/`exit`. An enter plays once per mount; to
   replay it, remount the subtree (`<Show when={epoch()} keyed>` around it,
-  then bump `epoch`). See examples/stagger.tsx.
+  then bump `epoch`). See examples/stagger.tsx. The companion to the exit
+  pop-out is `layout` on the same spec: an element declaring it slides
+  from where it was painted to the box a layout gives it (a row removed
+  above it, one inserted, a `<For>` reorder) instead of jumping, retargets
+  if the layout changes again mid-slide, and is hit-tested where it is
+  drawn. It is parent-relative, so declare it on every level that should
+  glide; `layout: true` borrows the `all` motion, and `all` alone never
+  slides. Position only today, a size change snaps. See
+  examples/layout-slide.tsx.
   Per-frame work is for genuinely procedural motion, and a game or a
   simulation is that in full: its natural shape is ONE `onFrame` doing one
   sim step and N property (or sprite) writes, which is not a smell but the

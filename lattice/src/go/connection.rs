@@ -1888,7 +1888,8 @@ fn debug_call_reply(ctx: &flux::rquickjs::Ctx<'_>, id: u64, name: &str, args: Op
 /// [x0,y0, x1,y1, x2,y2, x3,y3] from pre-transform top-left clockwise). The
 /// box x/y/width/height stay the quad's axis-aligned bounds either way. A
 /// node on its way out carries `exiting` (the exit root) and `exit`, the
-/// motion in force per exiting property (`"200ms ease-in delay 70ms"`).
+/// motion in force per exiting property (`"200ms ease-in delay 70ms"`); a
+/// node mid-slide carries `slide`, the offset it has still to cover.
 fn node_json(node: &alloy::rendertree::NodeSnapshot, props: Option<&alloy::rendertree::RenderTree>) -> serde_json::Value {
   let mut obj = serde_json::json!({
     "id": node.id,
@@ -1939,6 +1940,12 @@ fn node_json(node: &alloy::rendertree::NodeSnapshot, props: Option<&alloy::rende
         if !exits.is_empty() {
           map.insert("exit".into(), exits.into());
         }
+      }
+      // A layout slide in flight: the box above is where the node is
+      // painted, `slide` what it has still to cover to its solved box, so
+      // a slide and a jump read apart frame by frame.
+      if let Some(remaining) = tree.slide_remaining(node.id) {
+        map.insert("slide".into(), serde_json::json!({ "x": round2(remaining.x), "y": round2(remaining.y) }));
       }
     }
     if let Some(quad) = tree.painted_quad(node.id) {

@@ -746,12 +746,12 @@ Shaped, not started.
   Element and node transitions share the artifact; spatial is more exposed
   because writing initial targets during scene setup is a natural pattern. An
   install-time (or first-JS-entry) clock stamp is the likely few-line fix.
-- **[A node cannot animate from its previous laid-out box to its new one](backlog/transition-layout-animations.md)** [2026-09-10]
-  Layout writes the solved box straight through, so every reflow is a jump -
-  siblings snap closed behind an exiting node, snap apart around an inserted
-  one, and a reordered list teleports; done means a node declaring a layout
-  transition slides from the box it had to the box it gets, the piece every
-  peer pairs with exit pop-out.
+- **[A node whose box changes size snaps to it while its position slides](backlog/transition-layout-size.md)** [2026-09-10]
+  The layout slide covers position only, so a row that grows or shrinks (an
+  expanding card, a re-wrapped line, a column that widens) jumps to its new
+  size while its neighbours glide; done means `layout` covers the whole box,
+  the meaning it has in every peer, on the child model that owning layout
+  makes a choice rather than a constraint.
 - **[The dev-server repl has only run on Linux](backlog/tty-repl-platform-runs.md)** [2026-08-26]
   flux:tty raw mode and the srt repl are crossterm-backed and compile for
   Windows and Android, but neither has been run there - the Windows console
@@ -1796,6 +1796,12 @@ Finished, kept for the reasoning.
   shifts the whole motion instead of being absorbed; done means the track
   behaves as if it started at its scheduled time, as every timeline-based peer
   does.
+- **[A node cannot animate from its previous laid-out box to its new one](done/transition-layout-animations.md)** [2026-09-10]
+  Layout writes the solved box straight through, so every reflow is a jump -
+  siblings snap closed behind an exiting node, snap apart around an inserted
+  one, and a reordered list teleports; done means a node declaring a layout
+  transition slides from the box it had to the box it gets, the piece every
+  peer pairs with exit pop-out.
 - **[An exit plays the enter's curve backwards](done/transition-per-direction-curves.md)** [2026-09-10]
   A transition entry carries one curve and serves the property both ways, so
   an ease-out enter runs its exit with all the motion in the first frames;

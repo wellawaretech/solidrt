@@ -12,7 +12,7 @@ use taffy::NodeId;
 use crate::rendertree::damage::DamageLedger;
 use crate::rendertree::transitions::Transitions;
 use crate::rendertree::{
-  BoundaryMode, Damage, Element, ElementKind, FrameDamage, PaintCache, RunOverrides, Size, TextRun, ATOM_CHAR,
+  BoundaryMode, Damage, Element, ElementKind, FrameDamage, PaintCache, Point, RunOverrides, Size, TextRun, ATOM_CHAR,
 };
 
 pub struct RenderTree {
@@ -43,6 +43,12 @@ pub struct RenderTree {
   // (see damage.rs). Every damage and structural mutation path funnels into
   // note_damage; the composite damage resolves drain and settle it.
   damage: DamageLedger,
+  // Nodes declaring a `layout` transition whose solved location a layout
+  // pass changed, with the location they had (None: the empty box, never
+  // laid out or hidden). Filled at the one seam a solved box changes
+  // (layout/context.rs set_unrounded_layout), drained by the pass that ran
+  // (tree/transitions.rs start_layout_slides).
+  reflowed: Vec<(u64, Option<Point>)>,
 }
 
 // Taffy's CompactLength stores f32 values as tagged pointers (*const ()),
@@ -60,6 +66,7 @@ impl RenderTree {
       released_snapshot_textures: RefCell::new(Vec::new()),
       texture_referencers: HashSet::new(),
       damage: DamageLedger::new(),
+      reflowed: Vec::new(),
     }
   }
 
@@ -322,6 +329,7 @@ impl RenderTree {
   pub fn edit(&mut self, id: u64, f: impl FnOnce(&mut Element) -> Damage) {
     let damage = f(self.node_mut(id));
     self.reconcile_texture_referencer(id);
+    self.reconcile_slide(id);
     self.apply_damage(id, damage);
     self.sync_span_parent(id);
   }
@@ -399,6 +407,7 @@ impl RenderTree {
     // Even on Err: the closure may have mutated before failing, and the
     // referencer index must track element state, not the damage outcome.
     self.reconcile_texture_referencer(id);
+    self.reconcile_slide(id);
     let damage = result?;
     self.apply_damage(id, damage);
     self.sync_span_parent(id);

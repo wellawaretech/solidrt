@@ -83,6 +83,7 @@ pub fn anim_prop_name(prop: AnimProp) -> &'static str {
     AnimProp::StrokeWidth => "strokeWidth",
     AnimProp::Radius => "radius",
     AnimProp::Color => "color",
+    AnimProp::Layout => "layout",
   }
 }
 
@@ -95,7 +96,8 @@ pub fn anim_prop_name(prop: AnimProp) -> &'static str {
 /// and a bare `{ duration }` is a critically damped (bounce 0) spring.
 /// A bare string is the `all` catch-all: `transition="300ms ease-out"`.
 /// A `stagger` key (ms) makes the element a stagger group for descendant
-/// enters and exits. Durations and delays are milliseconds. `null` clears
+/// enters and exits; a `layout` key declares the layout slide
+/// (`decode_layout`). Durations and delays are milliseconds. `null` clears
 /// the declaration.
 pub fn decode(value: &PropValue) -> Result<Option<Box<TransitionConfig>>, String> {
   if value.is_null() {
@@ -106,23 +108,63 @@ pub fn decode(value: &PropValue) -> Result<Option<Box<TransitionConfig>>, String
       props: vec![],
       all: Some(parse_shorthand("transition", s)?),
       stagger_ms: None,
+      layout: None,
     })));
   }
   let entries = value.as_map().ok_or_else(|| {
     format!("transition must be a shorthand string or an object keyed by property name, got {}", describe(value))
   })?;
   let mut config = TransitionConfig::default();
+  let mut layout = None;
   for (key, entry_value) in entries {
     if key == "stagger" {
       config.stagger_ms = Some(decode_stagger(entry_value)?);
     } else if key == "all" {
       config.all = Some(decode_entry(key, entry_value, None)?);
+    } else if key == "layout" {
+      // Resolved after the loop: `true` borrows `all`, whichever is first.
+      layout = Some(entry_value);
     } else {
       let prop = anim_prop(key).ok_or_else(|| format!("transition.{key}: '{key}' is not an animatable property"))?;
       config.props.push((prop, decode_entry(key, entry_value, Some(prop))?));
     }
   }
+  if let Some(value) = layout {
+    config.layout = decode_layout(value, config.all)?;
+  }
   Ok(Some(Box::new(config)))
+}
+
+/// The `layout` key: the layout slide's motion
+/// (okf/backlog/transition-layout-animations.md). An entry object or
+/// shorthand of its own, or `true` to borrow the `all` entry's motion - an
+/// error without one, since `all` never covers layout by itself (a bare
+/// `transition="300ms"` on every button must not make buttons slide on
+/// every reflow); `false` and `null` declare none. `from` and `exit` do not
+/// apply: a slide's endpoints are the boxes layout gives the node.
+fn decode_layout(value: &PropValue, all: Option<TransitionEntry>) -> Result<Option<TransitionEntry>, String> {
+  if value.is_null() {
+    return Ok(None);
+  }
+  if let Some(borrow) = value.as_bool() {
+    if !borrow {
+      return Ok(None);
+    }
+    return match all {
+      Some(entry) => Ok(Some(entry)),
+      None => {
+        Err("transition.layout: true borrows the all entry's motion and there is no all; give layout its own".into())
+      }
+    };
+  }
+  if let Some(map) = value.as_map() {
+    if let Some((key, _)) = map.iter().find(|(k, _)| matches!(k.as_str(), "from" | "exit")) {
+      return Err(format!(
+        "transition.layout: {key} does not apply to layout (a slide runs from the box the node had to the box it gets)"
+      ));
+    }
+  }
+  decode_entry("layout", value, None).map(Some)
 }
 
 /// One entry: a shorthand string or the spec object. `prop` is the entry's

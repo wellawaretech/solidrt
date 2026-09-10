@@ -153,7 +153,10 @@ when exactly one client is connected.
   `/reload`. With `props`, a node on its way out carries `exiting: true`
   (the unmounted root) and `exit: { <prop>: "200ms ease-in delay 70ms" }`,
   the motion in force per exiting property on every node of the cascade;
-  freeze the clock and step to read the curve off `props`.
+  freeze the clock and step to read the curve off `props`. A node mid-slide
+  (a `layout` transition) is reported at its painted box and carries
+  `slide: { x, y }`, the offset it has still to cover to its solved box, so
+  a slide and a jump read apart frame by frame.
 - `/snapshot?node=<id>` - `{ width, height, pngBase64 }`, display-scaled;
   add `&format=raw` for `rgbaBase64` (RGBA8 bytes, no decoder needed for
   pixel assertions), `&x=&y=&width=&height=` (all four) to crop,

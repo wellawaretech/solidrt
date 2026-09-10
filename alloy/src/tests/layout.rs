@@ -375,8 +375,7 @@ fn layout_box_ignores_ancestor_transforms() {
   tree.root = Some(1);
   size(&mut tree, 1, 400.0, 300.0);
   size(&mut tree, 2, 200.0, 100.0);
-  tree.node_mut(3).style_mut().expect("child").size =
-    taffy::Size { width: percent(1.0), height: percent(1.0) };
+  tree.node_mut(3).style_mut().expect("child").size = taffy::Size { width: percent(1.0), height: percent(1.0) };
   let platform = PlatformContext::new(Vec::new());
   let alloy = headless();
 
@@ -448,6 +447,7 @@ fn exiting_row_pops_out_of_the_column() {
       )],
       all: None,
       stagger_ms: None,
+      layout: None,
     }));
     Damage::None
   });
