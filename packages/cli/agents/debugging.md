@@ -9,8 +9,10 @@ shell or a CI step ("The control API without MCP" below).
 The project ships an MCP server (`srt mcp`) that talks to the dev server
 `bunx srt run` starts. If your client lists no `solidrt` tools, it has not
 been pointed at the server yet - see "Wiring up an agent client" below. Each
-tool documents itself in full - read the tool description rather than guessing
-at its arguments. What the individual descriptions cannot tell you:
+tool documents its arguments in full - read the tool description rather than
+guessing at them; the records the tools return are the control API's, and
+their fields are documented once, under "The control API without MCP" below.
+What the individual descriptions cannot tell you:
 
 - If `list_clients` is empty, no app is running: ask the user to start
   `bunx srt run` rather than starting a second one yourself.
@@ -149,14 +151,31 @@ when exactly one client is connected.
   ids are stale.
 - `/tree?query=<text>&root=<id>&depth=<n>&props=true` - `{ limit, matches:
   [{ id, kind, path, x, y, width, height }] }` for a query, the nested tree
-  otherwise. Node ids are per client and change on reload; re-query after
-  `/reload`. With `props`, a node on its way out carries `exiting: true`
-  (the unmounted root) and `exit: { <prop>: "200ms ease-in delay 70ms" }`,
-  the motion in force per exiting property on every node of the cascade;
-  freeze the clock and step to read the curve off `props`. A node mid-slide
-  (a `layout` transition) is reported at its painted box and carries
-  `slide: { x, y }`, the offset it has still to cover to its solved box, so
-  a slide and a jump read apart frame by frame.
+  otherwise (the `get_render_tree` tool returns it verbatim). Node ids are
+  per client and change on reload; re-query after `/reload`. The per-node
+  record, documented here and nowhere else:
+  - `id`, `kind`, `x`, `y`, `width`, `height`: the window-relative box of
+    the node as painted, the axis-aligned bounds of its painted corners;
+    zero before the first layout. `detached: true` marks a d-* node.
+  - `text`: a text's content; `children`, cut off past `depth`, with
+    `childCount` saying how many the node has (descend with `root=<id>`).
+  - `props` (with `props=true`): the node's current property values under
+    their JSX names, off-default values only - an absent or empty `props`
+    means everything is at its default. Answers "is rotate/color/d applied
+    right now" in one call.
+  - `quad`: when a rotate, scale or 3D transform anywhere on the ancestor
+    chain moved the node off its box, the four painted corners in window
+    coordinates `[x0,y0, x1,y1, x2,y2, x3,y3]` (pre-transform top-left,
+    top-right, bottom-right, bottom-left). The box is the quad's
+    axis-aligned bounds, so under a transform it overstates the footprint:
+    read the quad for where edges landed.
+  - `exiting: true` on the root of a removal cascade, and
+    `exit: { <prop>: "200ms ease-in delay 70ms" }` on every node of it, the
+    motion in force per exiting property; freeze the clock
+    (`/clock?scale=0`) and step to read an exit's curve off `props`.
+  - `slide: { x, y }` on a node mid-slide (a `layout` transition): the box
+    above is where it is painted, `slide` the offset it has still to cover
+    to its solved box, so a slide and a jump read apart frame by frame.
 - `/snapshot?node=<id>` - `{ width, height, pngBase64 }`, display-scaled;
   add `&format=raw` for `rgbaBase64` (RGBA8 bytes, no decoder needed for
   pixel assertions), `&x=&y=&width=&height=` (all four) to crop,

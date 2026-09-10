@@ -24,7 +24,9 @@ pub use layout::{LayoutCache, LayoutContext, LayoutData};
 pub use platform::{FontPayload, PlatformContext};
 pub use router::{InputEvent, PointerKey, PointerRouter, RoutedKind, RoutedPointer};
 pub use text::{OverflowWrap, RunOverrides, RunStyle, Span, Text, TextAnchor, TextOverflow, TextRun, ATOM_CHAR};
-pub use transitions::{AnimProp, AnimValue, Curve, Endpoint, Slide, TransitionConfig, TransitionEntry, TransitionSpec};
+pub use transitions::{
+  AnimKind, AnimProp, AnimValue, Curve, Endpoint, Lifecycle, Slide, TransitionConfig, TransitionEntry, TransitionSpec,
+};
 pub use tree::{NodeMatch, NodeSnapshot, RenderTree};
 
 use crate::impellers::DisplayListBuilder;
@@ -371,34 +373,10 @@ pub struct Element {
   // animate on write, and how. None (the overwhelmingly common case) makes
   // every write snap, as ever.
   pub transitions: Option<Box<TransitionConfig>>,
-  // The paint walk has entered the node at least once (composite.rs
-  // record_node): it has been shown. Property writes before that snap, so
-  // an element's first painted state is what it holds then and never the
-  // tail of an animation from the kind's defaults (tree/transitions.rs
-  // transition_write). A Cell because the walk traverses a shared tree.
-  pub painted: Cell<bool>,
-  // The enter pass has run for this node (tree/transitions.rs
-  // apply_enter_transitions, at the first advance after its first attach).
-  // Guards the mount-time `from` enter animation: it fires on the first
-  // attach only, never again on a move or reorder.
-  pub entered: bool,
-  // An exit root: detached by the renderer but kept in the tree, with its
-  // whole subtree, until every `exit` track under it settles - out of the
-  // parent's layout flow, painted at its last computed box. Only the
-  // node the renderer removed carries the mark; a descendant's membership
-  // is the tree itself (tree/transitions.rs exit_root_of). Exiting subtrees
-  // are hit-test invisible; a re-insert clears the flag and abandons the
-  // exit (a move, not a removal). See tree.rs detach_node.
-  pub exiting: bool,
-  // destroy_node was called while the node was under an exit root: free it
-  // when the cascade resolves (the root's settle, or the abandon of a root
-  // that turned out to be a move) instead of deferring to a destroy that
-  // already happened.
-  pub doomed: bool,
-  // Layout slide state (transitions.rs `Slide`) on the nodes declaring a
-  // `layout` transition, None on every other node; the tree keeps it in
-  // step with the declaration (tree/transitions.rs reconcile_slide).
-  pub slide: Option<Slide>,
+  // The runtime state beside that declaration: shown, entered, exiting,
+  // doomed, sliding (transitions.rs `Lifecycle`, each fact documented on
+  // its field).
+  pub lifecycle: Lifecycle,
 }
 
 impl Element {
@@ -417,11 +395,7 @@ impl Element {
       envelope: cull::EnvelopeCache::default(),
       last_extent: Cell::new(cull::Extent::Empty),
       transitions: None,
-      painted: Cell::new(false),
-      entered: false,
-      exiting: false,
-      doomed: false,
-      slide: None,
+      lifecycle: Lifecycle::default(),
     }
   }
 
@@ -446,11 +420,7 @@ impl Element {
       envelope: cull::EnvelopeCache::default(),
       last_extent: Cell::new(cull::Extent::Empty),
       transitions: None,
-      painted: Cell::new(false),
-      entered: false,
-      exiting: false,
-      doomed: false,
-      slide: None,
+      lifecycle: Lifecycle::default(),
     }
   }
 
@@ -484,15 +454,15 @@ impl Element {
     self.layout.is_some()
   }
 
-  /// Where the node is in its parent's frame: its solved layout location,
-  /// or the painted one while a layout slide runs (`Slide::at`). Zero for a
-  /// detached node, which has no placement of its own. Every consumer of a
-  /// node's position - the paint walk, the envelope, hit testing, bounding
-  /// boxes and so the tree dump - reads through here, so they cannot
-  /// disagree on where a sliding node is. `LayoutData::location` is the
-  /// solved box alone (the offsetLeft-style `layout_box` query).
-  pub fn location(&self) -> crate::impellers::Point {
-    match (&self.layout, self.slide.and_then(|s| s.at)) {
+  /// Where the node is placed in its parent's frame: its solved layout
+  /// location, or the painted one while a layout slide runs (`Slide::at`).
+  /// Zero for a detached node, which has no placement of its own. Every
+  /// consumer of a node's position - the paint walk, the envelope, hit
+  /// testing, bounding boxes and so the tree dump - reads through here, so
+  /// they cannot disagree on where a sliding node is. `LayoutData::location`
+  /// is the solved box alone (the offsetLeft-style `layout_box` query).
+  pub fn placement(&self) -> crate::impellers::Point {
+    match (&self.layout, self.lifecycle.slide.and_then(|s| s.at)) {
       (Some(_), Some(at)) => at,
       (Some(layout), None) => layout.location(),
       (None, _) => crate::impellers::Point::zero(),

@@ -6,7 +6,7 @@
 
 use super::RenderTree;
 use crate::rendertree::transitions::{AnimValue, PendingWrite};
-use crate::rendertree::{AnimProp, Damage, Point, Slide, Vector};
+use crate::rendertree::{AnimProp, Damage, Endpoint, Point, Slide, Vector};
 
 impl RenderTree {
   /// Mount-time enter animations: a per-property `from` in the node's
@@ -28,10 +28,10 @@ impl RenderTree {
     let leaving = self.exit_root_of(node_id).is_some();
     let entries: Vec<(AnimProp, crate::rendertree::TransitionEntry)> = {
       let Some(el) = self.nodes.get_mut(&node_id) else { return };
-      if el.entered || el.parent.is_none() {
+      if el.lifecycle.entered || el.parent.is_none() {
         return;
       }
-      el.entered = true;
+      el.lifecycle.entered = true;
       if leaving {
         return;
       }
@@ -51,7 +51,7 @@ impl RenderTree {
       let Some(enter) = entry.from else { continue };
       let from = enter.value;
       let Some(target) = self.nodes.get(&node_id).and_then(|el| el.anim_value(prop)) else { continue };
-      if std::mem::discriminant(&from) != std::mem::discriminant(&target) {
+      if from.kind() != target.kind() {
         continue;
       }
       let damage = self.nodes.get_mut(&node_id).map(|el| el.set_anim_value(prop, from)).unwrap_or(Damage::None);
@@ -76,7 +76,7 @@ impl RenderTree {
     let mut cursor = Some(node_id);
     while let Some(id) = cursor {
       let el = self.nodes.get(&id)?;
-      if el.exiting {
+      if el.lifecycle.exiting {
         return Some(id);
       }
       cursor = el.parent;
@@ -92,7 +92,7 @@ impl RenderTree {
     let mut stack = vec![root];
     while let Some(id) = stack.pop() {
       let Some(el) = self.nodes.get(&id) else { continue };
-      if skip_nested_exits && id != root && el.exiting {
+      if skip_nested_exits && id != root && el.lifecycle.exiting {
         continue;
       }
       out.push(id);
@@ -130,7 +130,7 @@ impl RenderTree {
     }
     if started {
       if let Some(el) = self.nodes.get_mut(&node_id) {
-        el.exiting = true;
+        el.lifecycle.exiting = true;
       }
       self.pop_from_layout(parent_id, node_id);
     }
@@ -159,7 +159,7 @@ impl RenderTree {
       let Some(exit) = entry.exit else { continue };
       let to = exit.value;
       let Some(current) = self.nodes.get(&node_id).and_then(|el| el.anim_value(prop)) else { continue };
-      if std::mem::discriminant(&current) != std::mem::discriminant(&to) {
+      if current.kind() != to.kind() {
         continue;
       }
       let delay_ms = exit.delay_ms + stagger;
@@ -209,12 +209,12 @@ impl RenderTree {
       self.transitions.cancel_props(id, &props);
     }
     if let Some(el) = self.nodes.get_mut(&node_id) {
-      el.exiting = false;
-      el.doomed = false;
+      el.lifecycle.exiting = false;
+      el.lifecycle.doomed = false;
     }
     let orphans: Vec<u64> = members
       .into_iter()
-      .filter(|&id| id != node_id && self.nodes.get(&id).map(|el| el.doomed).unwrap_or(false))
+      .filter(|&id| id != node_id && self.nodes.get(&id).map(|el| el.lifecycle.doomed).unwrap_or(false))
       .collect();
     for id in orphans {
       if self.nodes.contains_key(&id) {
@@ -236,8 +236,8 @@ impl RenderTree {
       self.transitions.cancel_node(id);
     }
     let el = self.nodes.get_mut(&node_id)?;
-    el.exiting = false;
-    let doomed = el.doomed;
+    el.lifecycle.exiting = false;
+    let doomed = el.lifecycle.doomed;
     let parent = el.parent;
     let outer = parent.and_then(|p| self.exit_root_of(p));
     if let Some(parent_id) = parent {
@@ -307,14 +307,14 @@ impl RenderTree {
   pub fn transition_write(&mut self, id: u64, prop: AnimProp, value: Option<AnimValue>) -> bool {
     let animate = value.and_then(|to| {
       let el = self.nodes.get(&id)?;
-      if el.parent.is_none() || (!el.painted.get() && !self.transitions.any_running(id, &[prop])) {
+      if el.parent.is_none() || (!el.lifecycle.painted.get() && !self.transitions.any_running(id, &[prop])) {
         return None;
       }
       let entry = el.transitions.as_ref()?.entry_for(prop)?;
       let current = el.anim_value(prop)?;
       // A kind mismatch (a scalar arriving for the color prop or vice
       // versa) is not animatable; the normal path sorts it out.
-      if std::mem::discriminant(&current) != std::mem::discriminant(&to) {
+      if current.kind() != to.kind() {
         return None;
       }
       Some((current, to, entry))
@@ -356,8 +356,9 @@ impl RenderTree {
   /// was (`Slide::at` snapped, the enter pass's snap-to-from) with motion
   /// starting at the next advance. Nothing slides from nowhere: a node's
   /// first layout, a reparent (the old box is in another parent's frame),
-  /// a node not yet painted and taffy's hidden pass (the empty box, either
-  /// side) all snap and anchor the node where it now is. Runs from
+  /// a node not yet painted and a hidden box on either side (the pass
+  /// says which, `LayoutData::laid_out`) all snap and anchor the node
+  /// where it now is. Runs from
   /// `layout_phase`, which the frame builder and the paint phase both call:
   /// a post-layout hook that reflows again is picked up, and an unchanged
   /// second run has nothing to drain.
@@ -371,15 +372,15 @@ impl RenderTree {
       let Some(el) = self.nodes.get_mut(&id) else { continue };
       let Some(entry) = el.transitions.as_ref().and_then(|t| t.layout) else { continue };
       let Some(layout) = el.layout.as_ref() else { continue };
-      let hidden = layout.computed == taffy::Layout::new();
+      let placed = layout.laid_out;
       let to = layout.location();
       let parent = el.parent;
-      let painted = el.painted.get();
-      let slide = el.slide.get_or_insert_with(Slide::default);
+      let painted = el.lifecycle.painted.get();
+      let slide = el.lifecycle.slide.get_or_insert_with(Slide::default);
       let anchored = parent.is_some() && slide.under == parent;
       slide.under = parent;
       let from = match old {
-        Some(old) if anchored && painted && !hidden => slide.at.unwrap_or(old),
+        Some(old) if anchored && painted && placed => slide.at.unwrap_or(old),
         _ => {
           slide.at = None;
           self.transitions.cancel(id, AnimProp::Layout);
@@ -412,21 +413,37 @@ impl RenderTree {
   pub(super) fn reconcile_slide(&mut self, node_id: u64) {
     let Some(el) = self.nodes.get_mut(&node_id) else { return };
     let declares = el.transitions.as_ref().is_some_and(|t| t.layout.is_some());
-    match (declares, el.slide.is_some()) {
-      (true, false) => el.slide = Some(Slide { under: el.parent, at: None }),
+    match (declares, el.lifecycle.slide.is_some()) {
+      (true, false) => el.lifecycle.slide = Some(Slide { under: el.parent, at: None }),
       (false, true) => {
-        el.slide = None;
+        el.lifecycle.slide = None;
         self.transitions.cancel(node_id, AnimProp::Layout);
       }
       _ => {}
     }
   }
 
+  /// The exit endpoints in force on a node on its way out - for each
+  /// property of its declaration with an `exit`, that endpoint - the motion
+  /// the dev tooling names per node of a cascade. Empty for a node not
+  /// under an exit root.
+  pub fn exit_motions(&self, node_id: u64) -> Vec<(AnimProp, Endpoint)> {
+    if self.exit_root_of(node_id).is_none() {
+      return Vec::new();
+    }
+    self
+      .nodes
+      .get(&node_id)
+      .and_then(|el| el.transitions.as_ref())
+      .map(|t| t.props.iter().filter_map(|(prop, entry)| entry.exit.map(|exit| (*prop, exit))).collect())
+      .unwrap_or_default()
+  }
+
   /// The offset a sliding node has still to cover, solved minus painted
   /// location, for the dev tooling's dump; None when it sits on its box.
   pub fn slide_remaining(&self, node_id: u64) -> Option<Vector> {
     let el = self.nodes.get(&node_id)?;
-    let at = el.slide?.at?;
+    let at = el.lifecycle.slide?.at?;
     Some(el.layout.as_ref()?.location() - at)
   }
 
@@ -465,7 +482,7 @@ impl RenderTree {
       let current = self.nodes.get(&w.node).and_then(|el| el.anim_value(w.prop));
       let mut running = false;
       if let Some(current) = current {
-        if std::mem::discriminant(&current) == std::mem::discriminant(&w.to) {
+        if current.kind() == w.to.kind() {
           running = self.transitions.retarget(w.node, w.prop, current, w.to, w.spec, w.at_ms);
         }
       }
@@ -510,7 +527,7 @@ impl RenderTree {
     // A worklist: an inner root finishing may empty the gate of the root it
     // was nested in, which then frees in the same pass.
     while let Some(root) = exit_checks.pop() {
-      let exiting = self.nodes.get(&root).map(|el| el.exiting).unwrap_or(false);
+      let exiting = self.nodes.get(&root).map(|el| el.lifecycle.exiting).unwrap_or(false);
       if exiting && !self.subtree_exit_running(root) {
         if let Some(outer) = self.finish_exit(root) {
           exit_checks.push(outer);

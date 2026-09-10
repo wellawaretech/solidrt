@@ -29,7 +29,7 @@ pub fn layout_phase(tree: &mut RenderTree, platform: &PlatformContext, alloy: &c
 
   let available_space =
     taffy::Size { width: AvailableSpace::Definite(width), height: AvailableSpace::Definite(height) };
-  let mut layout_ctx = LayoutContext { render_tree: tree, platform, alloy };
+  let mut layout_ctx = LayoutContext { render_tree: tree, platform, alloy, hidden_depth: 0 };
   taffy::compute_root_layout(&mut layout_ctx, NodeId::from(root_id), available_space);
   // Declaring nodes the pass moved slide from where they were painted.
   tree.start_layout_slides();
@@ -651,7 +651,7 @@ pub(super) fn record_node<'a>(
 ) {
   let element = scene.node(node_id);
   ctx.nodes_painted += 1;
-  element.painted.set(true);
+  element.lifecycle.painted.set(true);
 
   let (clip_x, clip_y) = overflow_clips(element);
   let record_clip = (clip_x || clip_y) && hoist != Hoist::Full;
@@ -787,7 +787,7 @@ pub(super) fn record_node<'a>(
       continue;
     }
 
-    let pos = child.location();
+    let pos = child.placement();
 
     // The child's current window extent, kept on the element for damage
     // resolves (see paint_phase). Written for culled children too - their

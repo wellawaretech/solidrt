@@ -27,12 +27,13 @@ impl RenderTree {
   /// transform composes (DOM offsetLeft/offsetTop/offsetWidth/offsetHeight
   /// semantics). The untransformed companion to bounding_box: pointer events
   /// report local coordinates in this box's units, whatever designSize fits
-  /// or transforms sit on the ancestor chain. None for detached nodes and
-  /// before the first layout.
+  /// or transforms sit on the ancestor chain. None for detached nodes,
+  /// before the first layout and while hidden (no box is generated); a
+  /// style write pending its layout still reads the last solved box.
   pub fn layout_box(&self, id: u64) -> Option<Rect> {
     let node = self.try_node(id)?;
     let layout = node.layout.as_ref()?;
-    if layout.cache.is_empty() {
+    if !layout.laid_out {
       return None;
     }
     Some(Rect::new(layout.location(), layout.size()))
@@ -94,9 +95,9 @@ impl RenderTree {
 
     // Detached nodes have no layout placement; they inherit position from the
     // ancestor walk below. A laid-out node's placement is where it is
-    // painted (a layout slide in flight included, Element::location).
+    // painted (a layout slide in flight included, Element::placement).
     if node.has_layout() {
-      let loc = node.location().to_vector();
+      let loc = node.placement().to_vector();
       for p in corners.iter_mut() {
         *p += loc;
       }
@@ -146,7 +147,7 @@ impl RenderTree {
         }
       }
       if parent.has_layout() {
-        let loc = parent.location().to_vector();
+        let loc = parent.placement().to_vector();
         for p in corners.iter_mut() {
           *p += loc;
         }
@@ -176,7 +177,7 @@ impl RenderTree {
         }
       }
       if let Some(layout) = node.layout.as_ref() {
-        if layout.cache.is_empty() {
+        if !layout.laid_out {
           return None;
         }
         return Some(layout.size());

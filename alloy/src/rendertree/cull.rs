@@ -226,7 +226,7 @@ fn compute_envelope(scene: &RenderTree, element: &Element, platform: &PlatformCo
       if text_atoms && !child.has_layout() {
         continue;
       }
-      let pos = child.location();
+      let pos = child.placement();
       children = children.union(envelope(scene, child_id, platform, frame).translate(pos.to_vector()));
       if children == Extent::Unbounded {
         break;

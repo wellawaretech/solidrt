@@ -108,7 +108,7 @@ The pieces, each documented where it lives:
   a slide runs, absent when the node sits on its solved box. The lane's
   write reports `Damage::Compose`, a translate write's damage: the parent's
   walk places the child, so the parent's recording is what goes stale.
-- `Element::location`, the one accessor for where a node is (the painted
+- `Element::placement`, the one accessor for where a node is (the painted
   location, else the solved one), behind the paint walk, the envelope, hit
   testing and the bounding box, so they cannot disagree (the padding-box
   rule, okf/done/padding-box-divergence.md). `LayoutData::location` stays

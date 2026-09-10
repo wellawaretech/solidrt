@@ -210,7 +210,7 @@ impl RenderTree {
 
     // The enter pass (`from`) runs at the frame's advance, not here: the
     // config and the mounted values may still be on their way.
-    if !self.node(node_id).entered {
+    if !self.node(node_id).lifecycle.entered {
       self.transitions.entering.push(node_id);
     }
     Ok(())
@@ -290,7 +290,7 @@ impl RenderTree {
   pub fn destroy_node(&mut self, node_id: u64) {
     if self.exit_root_of(node_id).is_some() {
       if let Some(el) = self.nodes.get_mut(&node_id) {
-        el.doomed = true;
+        el.lifecycle.doomed = true;
       }
       return;
     }

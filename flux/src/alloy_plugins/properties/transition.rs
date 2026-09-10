@@ -1,6 +1,8 @@
 use super::describe;
 use crate::alloy_plugins::value::PropValue;
-use alloy::rendertree::{AnimProp, AnimValue, Curve, Endpoint, TransitionConfig, TransitionEntry, TransitionSpec};
+use alloy::rendertree::{
+  AnimKind, AnimProp, AnimValue, Curve, Endpoint, TransitionConfig, TransitionEntry, TransitionSpec,
+};
 use alloy::spatial::NodeMotion;
 
 // The `transition` property (okf/done/native-transitions.md): decodes the
@@ -104,12 +106,7 @@ pub fn decode(value: &PropValue) -> Result<Option<Box<TransitionConfig>>, String
     return Ok(None);
   }
   if let Some(s) = value.as_str() {
-    return Ok(Some(Box::new(TransitionConfig {
-      props: vec![],
-      all: Some(parse_shorthand("transition", s)?),
-      stagger_ms: None,
-      layout: None,
-    })));
+    return Ok(Some(Box::new(TransitionConfig { all: Some(parse_shorthand("transition", s)?), ..Default::default() })));
   }
   let entries = value.as_map().ok_or_else(|| {
     format!("transition must be a shorthand string or an object keyed by property name, got {}", describe(value))
@@ -404,15 +401,20 @@ fn decode_delay(at: &str, value: Option<&PropValue>) -> Result<f32, String> {
 
 /// A lifecycle endpoint's value: a number for the scalar properties; the
 /// color property takes a CSS color string or a packed 0xRRGGBBAA number.
+/// The slide lane takes no endpoint (`decode_layout` refuses `from`/`exit`
+/// before a value is read), so the point arm is an error, not a decoder.
 fn decode_endpoint_value(at: &str, key: &str, value: &PropValue, prop: AnimProp) -> Result<AnimValue, String> {
-  if prop == AnimProp::Color {
-    return super::decode_color(value).map(AnimValue::Color).map_err(|e| format!("{at}: {key}: {e}"));
+  match prop.kind() {
+    AnimKind::Color => super::decode_color(value).map(AnimValue::Color).map_err(|e| format!("{at}: {key}: {e}")),
+    AnimKind::Scalar => {
+      let n = value.as_f64().ok_or_else(|| format!("{at}: {key} must be a number, got {}", describe(value)))? as f32;
+      if !n.is_finite() {
+        return Err(format!("{at}: {key} must be finite, got {n}"));
+      }
+      Ok(AnimValue::Scalar(n))
+    }
+    AnimKind::Point => Err(format!("{at}: {key} does not apply to layout")),
   }
-  let n = value.as_f64().ok_or_else(|| format!("{at}: {key} must be a number, got {}", describe(value)))? as f32;
-  if !n.is_finite() {
-    return Err(format!("{at}: {key} must be finite, got {n}"));
-  }
-  Ok(AnimValue::Scalar(n))
 }
 
 /// The shorthand string: `"<duration>ms [curve] [<delay>ms]"`, e.g.

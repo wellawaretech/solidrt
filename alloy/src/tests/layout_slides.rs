@@ -35,8 +35,7 @@ fn slide_entry(delay_ms: f32) -> TransitionEntry {
 
 fn declare_layout(tree: &mut RenderTree, id: u64) {
   tree.edit(id, |el| {
-    el.transitions =
-      Some(Box::new(TransitionConfig { props: vec![], all: None, stagger_ms: None, layout: Some(slide_entry(0.0)) }));
+    el.transitions = Some(Box::new(TransitionConfig { layout: Some(slide_entry(0.0)), ..Default::default() }));
     Damage::None
   });
 }
@@ -66,7 +65,7 @@ fn layout(tree: &mut RenderTree, platform: &PlatformContext, alloy: &crate::Cont
 // Stands in for the paint walk having shown the nodes (Element::painted).
 fn paint(tree: &RenderTree, ids: &[u64]) {
   for &id in ids {
-    tree.node(id).painted.set(true);
+    tree.node(id).lifecycle.painted.set(true);
   }
 }
 
@@ -82,7 +81,7 @@ fn shown() -> (RenderTree, PlatformContext, crate::Context) {
 }
 
 fn painted_y(tree: &RenderTree, id: u64) -> f32 {
-  tree.node(id).location().y
+  tree.node(id).placement().y
 }
 
 fn solved_y(tree: &RenderTree, id: u64) -> f32 {
@@ -268,11 +267,11 @@ fn clearing_the_declaration_snaps_to_the_solved_box() {
     Damage::None
   });
   assert_eq!(painted_y(&tree, 3), 0.0);
-  assert!(tree.node(3).slide.is_none());
+  assert!(tree.node(3).lifecycle.slide.is_none());
   tree.set_transition_now(1075.0);
   tree.advance_transitions();
   assert_eq!(painted_y(&tree, 3), 0.0, "no stale track writes the lane");
-  assert!(tree.node(3).slide.is_none());
+  assert!(tree.node(3).lifecycle.slide.is_none());
 }
 
 #[test]
@@ -307,15 +306,14 @@ fn an_exiting_row_keeps_its_box_while_the_rows_below_slide() {
         AnimProp::Opacity,
         TransitionEntry { spec: LINEAR_100, delay_ms: 0.0, from: None, exit: Some(exit) },
       )],
-      all: None,
-      stagger_ms: None,
       layout: Some(slide_entry(0.0)),
+      ..Default::default()
     }));
     Damage::None
   });
   tree.set_transition_now(1000.0);
   tree.detach_node(1, 2);
-  assert!(tree.node(2).exiting);
+  assert!(tree.node(2).lifecycle.exiting);
   layout(&mut tree, &platform, &alloy);
   assert_eq!(painted_y(&tree, 2), 0.0);
   assert!(!sliding(&tree, 2), "out of the flow, painted at its last box");

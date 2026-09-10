@@ -1881,15 +1881,11 @@ fn debug_call_reply(ctx: &flux::rquickjs::Ctx<'_>, id: u64, name: &str, args: Op
   }
 }
 
-/// `props`, when set, is the live tree: each node additionally carries its
-/// current off-default property values (JSX names, see flux read_jsx) and,
-/// when a transform anywhere on its ancestor chain moved it off its
-/// axis-aligned box, the painted `quad` (four corners, window coordinates,
-/// [x0,y0, x1,y1, x2,y2, x3,y3] from pre-transform top-left clockwise). The
-/// box x/y/width/height stay the quad's axis-aligned bounds either way. A
-/// node on its way out carries `exiting` (the exit root) and `exit`, the
-/// motion in force per exiting property (`"200ms ease-in delay 70ms"`); a
-/// node mid-slide carries `slide`, the offset it has still to cover.
+/// One node of the `/tree` control endpoint's record. What each field
+/// means is documented once, in packages/cli/agents/debugging.md ("The
+/// control API without MCP", the `/tree` entry); a field added here is
+/// added there. `props`, when set, is the live tree, and the fields that
+/// need it (`props`, `quad`, `exiting`/`exit`, `slide`) come from it.
 fn node_json(node: &alloy::rendertree::NodeSnapshot, props: Option<&alloy::rendertree::RenderTree>) -> serde_json::Value {
   let mut obj = serde_json::json!({
     "id": node.id,
@@ -1920,26 +1916,22 @@ fn node_json(node: &alloy::rendertree::NodeSnapshot, props: Option<&alloy::rende
       // the cascade names the motion in force per exiting property, so a
       // per-direction curve is a one-line read rather than a curve fit on
       // stepped values.
-      if element.exiting {
+      if element.lifecycle.exiting {
         map.insert("exiting".into(), true.into());
       }
-      if tree.exit_root_of(node.id).is_some() {
-        let exits: serde_json::Map<String, serde_json::Value> = element
-          .transitions
-          .iter()
-          .flat_map(|config| config.props.iter())
-          .filter_map(|(prop, entry)| {
-            let exit = entry.exit?;
-            let mut motion = exit.spec.to_string();
-            if exit.delay_ms > 0.0 {
-              motion.push_str(&format!(" delay {}ms", exit.delay_ms));
-            }
-            Some((flux::gui::anim_prop_name(*prop).to_string(), motion.into()))
-          })
-          .collect();
-        if !exits.is_empty() {
-          map.insert("exit".into(), exits.into());
-        }
+      let exits: serde_json::Map<String, serde_json::Value> = tree
+        .exit_motions(node.id)
+        .into_iter()
+        .map(|(prop, exit)| {
+          let mut motion = exit.spec.to_string();
+          if exit.delay_ms > 0.0 {
+            motion.push_str(&format!(" delay {}ms", exit.delay_ms));
+          }
+          (flux::gui::anim_prop_name(prop).to_string(), motion.into())
+        })
+        .collect();
+      if !exits.is_empty() {
+        map.insert("exit".into(), exits.into());
       }
       // A layout slide in flight: the box above is where the node is
       // painted, `slide` what it has still to cover to its solved box, so

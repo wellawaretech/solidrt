@@ -133,7 +133,7 @@ pub fn locals_along_path(tree: &RenderTree, chain: &[u64], point: Point) -> Vec<
     let size = element.frame_size(parent_size);
     let content = element.layout.as_ref().map(|l| l.content_box()).unwrap_or(Rect::new(Point::zero(), size));
     if i > 0 {
-      let pos = element.location();
+      let pos = element.placement();
       point = point - pos.to_vector() + parent_scroll;
     }
     let local = element.kind.transform_to_local(point, &HitContext { size, content });
@@ -186,7 +186,7 @@ fn hit_recursive(
   // An exiting node (playing its removal animation, see tree.rs
   // detach_node) is hit-test invisible: its component is already disposed,
   // so it must not swallow input on the way out.
-  if element.exiting {
+  if element.lifecycle.exiting {
     return false;
   }
 
@@ -283,7 +283,7 @@ fn hit_recursive(
       continue;
     }
     let child_size = child.frame_size(local_size);
-    let child_pos = child.location();
+    let child_pos = child.placement();
     let child_point = local - child_pos.to_vector() + scroll;
     if hit_recursive(tree, child_id, child_point, child_size, pointer_events, path) {
       if pointer_events == PointerEvents::None {

@@ -20,6 +20,13 @@ pub struct LayoutData {
   // deliberately declared positioning context from the implicit default. It is
   // the stop point when resolving a node's container-relative bounding box.
   pub positioning_context: bool,
+  // `computed` is a real placement: written by a performing layout pass, not
+  // the zero box taffy's hidden pass writes under a `display: none`. False
+  // until the first layout and while hidden. Stated by the pass that wrote
+  // the box (set_unrounded_layout), so no consumer has to infer it from the
+  // box's values or from the cache: the layout-box queries (geometry.rs) and
+  // the layout slide's diff (tree/transitions.rs) key on it.
+  pub laid_out: bool,
 }
 
 impl LayoutData {
@@ -30,6 +37,7 @@ impl LayoutData {
       cache: LayoutCache::new(),
       layout_children: vec![],
       positioning_context: false,
+      laid_out: false,
     }
   }
 
@@ -66,6 +74,10 @@ pub struct LayoutContext<'a> {
   pub render_tree: &'a mut RenderTree,
   pub platform: &'a PlatformContext,
   pub alloy: &'a crate::Context,
+  // Nesting depth of hidden passes in flight (`hidden_layout`): while it is
+  // above zero every box written is the hidden pass's zero box, which
+  // set_unrounded_layout records as not laid out.
+  pub hidden_depth: u32,
 }
 
 impl<'a> LayoutContext<'a> {
@@ -176,13 +188,22 @@ impl<'a> CacheTree for LayoutContext<'a> {
 }
 
 impl<'a> LayoutContext<'a> {
+  // taffy's hidden pass over `node_id` and its subtree, bracketed so every
+  // box it writes is recorded as not laid out.
+  fn hidden_layout(&mut self, node_id: NodeId) -> taffy::LayoutOutput {
+    self.hidden_depth += 1;
+    let output = compute_hidden_layout(self, node_id);
+    self.hidden_depth -= 1;
+    output
+  }
+
   // taffy's container algorithm for a display.
   fn container_layout(&mut self, node_id: NodeId, display: Display, inputs: LayoutInput) -> taffy::LayoutOutput {
     match display {
       Display::Flex => compute_flexbox_layout(self, node_id, inputs),
       Display::Block => compute_block_layout(self, node_id, inputs, None),
       Display::Grid => compute_grid_layout(self, node_id, inputs),
-      Display::None => compute_hidden_layout(self, node_id),
+      Display::None => self.hidden_layout(node_id),
     }
   }
 
@@ -257,6 +278,7 @@ impl<'a> LayoutPartialTree for LayoutContext<'a> {
 
   fn set_unrounded_layout(&mut self, node_id: NodeId, layout: &Layout) {
     let id = u64::from(node_id);
+    let laid_out = self.hidden_depth == 0;
     let element = self.render_tree.node_mut(id);
     let slides = element.transitions.as_ref().is_some_and(|t| t.layout.is_some());
     let data = element.layout_data_mut();
@@ -266,10 +288,11 @@ impl<'a> LayoutPartialTree for LayoutContext<'a> {
     if data.computed != *layout {
       // The layout slide (tree/transitions.rs start_layout_slides) needs
       // the location a declaring node had before this write, and this is
-      // the one seam a solved box changes at. The empty box - never laid
-      // out, or taffy's hidden pass - is no previous position.
+      // the one seam a solved box changes at. A box that was never a
+      // placement (before the first layout, or hidden) is no previous
+      // position.
       let moved = slides && data.computed.location != layout.location;
-      let old = (data.computed != Layout::new()).then(|| data.location());
+      let old = data.laid_out.then(|| data.location());
       data.computed = *layout;
       // Partial repaint: this is the one place a node moved by someone
       // else's relayout (a sibling grew) becomes visible, so its old and
@@ -280,6 +303,7 @@ impl<'a> LayoutPartialTree for LayoutContext<'a> {
         self.render_tree.note_reflow(id, old);
       }
     }
+    self.render_tree.node_mut(id).layout_data_mut().laid_out = laid_out;
   }
 
   fn compute_child_layout(&mut self, node_id: NodeId, inputs: LayoutInput) -> taffy::LayoutOutput {
@@ -287,7 +311,7 @@ impl<'a> LayoutPartialTree for LayoutContext<'a> {
     // recurses into its children whatever its own display says. Ahead of the
     // leaf branch as well, since compute_leaf_layout has no hidden arm.
     if inputs.run_mode == RunMode::PerformHiddenLayout {
-      return compute_hidden_layout(self, node_id);
+      return self.hidden_layout(node_id);
     }
     compute_cached_layout(self, node_id, inputs, |tree, node_id, inputs| {
       let id = u64::from(node_id);

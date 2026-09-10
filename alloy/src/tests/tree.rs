@@ -423,25 +423,14 @@ fn referenced_texture_ids_covers_attached_and_detached() {
 // --- bounding box -----------------------------------------------------------
 
 // Writes a computed layout directly: unit tests have no GPU/platform context,
-// so taffy never runs and placements are set by hand. The cache is seeded with
-// one entry because content_fallback treats an empty cache as "not laid out".
+// so taffy never runs and placements are set by hand, marked laid out as a
+// pass would leave them (LayoutData::laid_out).
 fn place(tree: &mut RenderTree, id: u64, x: f32, y: f32, w: f32, h: f32) {
   let l = tree.node_mut(id).layout_data_mut();
   l.computed.location = taffy::Point { x, y };
   l.computed.size = taffy::Size { width: w, height: h };
-  let input = taffy::tree::LayoutInput {
-    run_mode: taffy::RunMode::PerformLayout,
-    sizing_mode: taffy::SizingMode::InherentSize,
-    axis: taffy::RequestedAxis::Both,
-    known_dimensions: taffy::Size::NONE,
-    parent_size: taffy::Size::NONE,
-    available_space: taffy::Size {
-      width: taffy::AvailableSpace::Definite(w),
-      height: taffy::AvailableSpace::Definite(h),
-    },
-    vertical_margins_are_collapsible: taffy::Line::FALSE,
-  };
-  l.cache.store(&input, taffy::tree::LayoutOutput::from_outer_size(taffy::Size { width: w, height: h }));
+  // Placed, as a layout pass would have left it.
+  l.laid_out = true;
 }
 
 fn assert_box(b: Rect, x: f32, y: f32, w: f32, h: f32) {

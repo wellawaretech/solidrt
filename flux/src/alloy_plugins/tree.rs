@@ -9,8 +9,7 @@ use crate::alloy_plugins::value::PropValue;
 use crate::plugins::marshal::OptArg;
 use alloy::rendertree::text::{prepare_units, PreparedRun};
 use alloy::rendertree::{
-  AnimProp, AnimValue, Damage, Element, EventInterest, FrameDriver, Measurable, MeasureContext, Rect, RenderTree, Text,
-  Window,
+  AnimValue, Damage, Element, EventInterest, FrameDriver, Measurable, MeasureContext, Rect, RenderTree, Text, Window,
 };
 
 thread_local! {
@@ -203,9 +202,7 @@ pub(crate) fn emit_transition_ends(ctx: &Ctx<'_>, settled: &[(u64, alloy::render
   for &(node, prop) in settled {
     let obj = Object::new(ctx.clone()).expect("create transitionEnd object");
     obj.set("target", node).expect("set target");
-    obj
-      .set("property", super::properties::transition::anim_prop_name(prop))
-      .expect("set property");
+    obj.set("property", super::properties::transition::anim_prop_name(prop)).expect("set property");
     crate::emit_event(ctx, "transitionEnd", obj);
   }
 }
@@ -412,12 +409,13 @@ fn set_property(ctx: Ctx<'_>, node_id: u64, property: String, value: Value<'_>) 
   // the pair, so the normal write below is authoritative.
   if let Some(prop) = super::properties::transition::anim_prop(&property) {
     // Colors arrive as raw CSS strings (or packed 0xRRGGBBAA numbers
-    // for compatibility); everything else animatable is a plain
-    // scalar. Anything else (null, a gradient object, an unparsable
-    // string) never animates - the normal write path raises the
-    // proper error for the bad string.
-    let target = match prop {
-      AnimProp::Color => {
+    // for compatibility); the scalar properties as plain numbers. Anything
+    // else (null, a gradient object, an unparsable string) never animates
+    // - the normal write path raises the proper error for the bad string.
+    // A point is the layout slide's, which anim_prop never maps a name to:
+    // no JS write reaches that arm.
+    let target = match prop.kind() {
+      alloy::rendertree::AnimKind::Color => {
         let packed = value.as_number().map(|n| super::properties::packed_to_color(n as u32));
         let parsed = || {
           let css = value.as_string()?.to_string().ok()?;
@@ -425,7 +423,8 @@ fn set_property(ctx: Ctx<'_>, node_id: u64, property: String, value: Value<'_>) 
         };
         packed.or_else(parsed).map(AnimValue::Color)
       }
-      _ => value.as_number().map(|n| AnimValue::Scalar(n as f32)),
+      alloy::rendertree::AnimKind::Scalar => value.as_number().map(|n| AnimValue::Scalar(n as f32)),
+      alloy::rendertree::AnimKind::Point => None,
     };
     if s.tree.borrow_mut().transition_write(node_id, prop, target) {
       s.gui.platform.request_frame();

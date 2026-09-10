@@ -3829,6 +3829,12 @@ var renderer = createRenderer({
         tree2.insertNode(parent.id, node.id, anchor.id);
       else
         tree2.insertNode(parent.id, node.id);
+      let previous = node.parent;
+      if (previous) {
+        let at = previous.children.indexOf(node);
+        if (at !== -1)
+          previous.children.splice(at, 1);
+      }
       node.parent = parent;
       if (!anchor) {
         parent.children.push(node);

@@ -445,9 +445,7 @@ fn exiting_row_pops_out_of_the_column() {
           }),
         },
       )],
-      all: None,
-      stagger_ms: None,
-      layout: None,
+      ..Default::default()
     }));
     Damage::None
   });
@@ -470,4 +468,27 @@ fn exiting_row_pops_out_of_the_column() {
   assert!(tree.try_node(2).is_none(), "freed at the settle");
   layout(&mut tree, &platform, &alloy);
   assert_eq!(tree.node(3).layout_data().location().y, 0.0);
+}
+
+// A node's layout box is its placement, a fact the layout pass states
+// (LayoutData::laid_out), not the state of its cache: None before the first
+// layout and while hidden (no box is generated), and still the last solved
+// box between a style write and the layout that absorbs it.
+#[test]
+fn layout_box_follows_placement_not_the_cache() {
+  let mut tree = split();
+  let platform = PlatformContext::new(Vec::new());
+  let alloy = headless();
+  assert!(tree.layout_box(3).is_none(), "before the first layout");
+  layout(&mut tree, &platform, &alloy);
+  assert_eq!(tree.layout_box(3).expect("laid out").size, Size::new(320.0, 51.0));
+  size(&mut tree, 3, 320.0, 60.0);
+  tree.invalidate_cache(3);
+  assert!(tree.layout_box(3).is_some(), "a pending relayout keeps the last box");
+  display(&mut tree, 2, Display::None);
+  layout(&mut tree, &platform, &alloy);
+  assert!(tree.layout_box(3).is_none(), "hidden under its pane: no box");
+  display(&mut tree, 2, Display::Flex);
+  layout(&mut tree, &platform, &alloy);
+  assert_eq!(tree.layout_box(3).expect("shown again").size, Size::new(320.0, 60.0));
 }
