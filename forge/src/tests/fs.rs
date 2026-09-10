@@ -49,6 +49,38 @@ fn window_seeks_are_window_relative() {
 }
 
 #[tokio::test]
+async fn rename_moves_files_and_dirs() {
+  let dir = std::env::temp_dir().join(format!("forge-fs-rename-{}", std::process::id()));
+  let _ = std::fs::remove_dir_all(&dir);
+  std::fs::create_dir_all(&dir).expect("create test dir");
+  let at = |name: &str| dir.join(name).to_string_lossy().into_owned();
+
+  // A file moves: the source is gone, the contents arrive under the new name.
+  crate::fs::write(&at("draft.txt"), b"hello").await.expect("write draft");
+  crate::fs::rename(&at("draft.txt"), &at("final.txt")).await.expect("rename file");
+  assert!(!crate::fs::file_exists(&at("draft.txt")).await);
+  assert_eq!(crate::fs::read(&at("final.txt")).await.expect("read final"), b"hello");
+
+  // A directory moves whole, with what is inside it.
+  crate::fs::create_dir(&at("old/inner")).await.expect("create dir");
+  crate::fs::write(&at("old/inner/note.txt"), b"kept").await.expect("write nested");
+  crate::fs::rename(&at("old"), &at("new")).await.expect("rename dir");
+  assert!(!crate::fs::dir_exists(&at("old")).await);
+  assert_eq!(crate::fs::read(&at("new/inner/note.txt")).await.expect("read moved"), b"kept");
+
+  // An existing target is replaced, not refused (what the OS rename does).
+  crate::fs::write(&at("other.txt"), b"replacement").await.expect("write other");
+  crate::fs::rename(&at("other.txt"), &at("final.txt")).await.expect("rename over target");
+  assert_eq!(crate::fs::read(&at("final.txt")).await.expect("read replaced"), b"replacement");
+
+  // A missing source is an error: nothing moved, unlike remove's missing path.
+  let gone = crate::fs::rename(&at("missing.txt"), &at("wherever.txt")).await;
+  assert!(gone.is_err(), "rename of a missing source should error");
+
+  let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
 async fn realpath_resolves_symlinks_and_dots() {
   let dir = std::env::temp_dir().join(format!("forge-fs-realpath-{}", std::process::id()));
   let _ = std::fs::remove_dir_all(&dir);

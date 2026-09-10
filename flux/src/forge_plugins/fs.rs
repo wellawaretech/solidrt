@@ -14,6 +14,13 @@ fn realpath<'js>(ctx: Ctx<'js>, path: String) -> rquickjs::Result<Promised<impl 
   Ok(with_pending(&ctx, async move { fs::realpath(&path).await }))
 }
 
+// `rename(from, to)`: move a file or directory. A plain forward to
+// forge::fs; both arguments are strings and the result is void, so nothing to
+// encode.
+fn rename<'js>(ctx: Ctx<'js>, from: String, to: String) -> rquickjs::Result<Promised<impl Future<Output = JsResult<()>>>> {
+  Ok(with_pending(&ctx, async move { fs::rename(&from, &to).await }))
+}
+
 pub struct FsModule;
 
 impl ModuleDef for FsModule {
@@ -21,6 +28,7 @@ impl ModuleDef for FsModule {
     decl.declare("file")?;
     decl.declare("dir")?;
     decl.declare("realpath")?;
+    decl.declare("rename")?;
     Ok(())
   }
 
@@ -29,6 +37,7 @@ impl ModuleDef for FsModule {
     exports.export("file", file::file_fn(ctx))?;
     exports.export("dir", dir::dir_fn(ctx))?;
     exports.export("realpath", Function::new(ctx.clone(), realpath)?)?;
+    exports.export("rename", Function::new(ctx.clone(), rename)?)?;
     Ok(())
   }
 }

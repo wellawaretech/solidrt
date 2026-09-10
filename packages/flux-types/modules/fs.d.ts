@@ -99,4 +99,14 @@ declare module "flux:fs" {
    * @param path  Path to a file or directory.
    */
   export function realpath(path: string): Promise<string>
+  /**
+   * Move a file or directory from `from` to `to`. The OS rename: an existing
+   * target is replaced, a missing source rejects (nothing moved), and a move
+   * across filesystems rejects rather than falling back to a copy. Parent
+   * directories of `to` are not created.
+   *
+   * @param from  Path of the file or directory to move.
+   * @param to    Path it should have afterwards.
+   */
+  export function rename(from: string, to: string): Promise<void>
 }

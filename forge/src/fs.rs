@@ -197,6 +197,16 @@ pub async fn remove(path: &str) -> Result<(), String> {
   }
 }
 
+/// Move a file or directory from `from` to `to`. The OS rename: an existing
+/// target is replaced, a missing source is an error (nothing moved), and a
+/// move across filesystems fails rather than falling back to a copy. Parent
+/// directories of `to` are not created.
+pub async fn rename(from: &str, to: &str) -> Result<(), String> {
+  check_writable(from, "rename")?;
+  check_writable(to, "rename to")?;
+  tokio::fs::rename(from, to).await.map_err(|e| format!("rename {from} to {to}: {e}"))
+}
+
 /// Append bytes to a file, creating it if missing.
 pub async fn append(path: &str, bytes: &[u8]) -> Result<(), String> {
   use tokio::io::AsyncWriteExt;
