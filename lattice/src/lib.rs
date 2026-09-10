@@ -39,16 +39,24 @@ enum EngineCmd {
   Reload { code: String, app_id: Option<String>, args: Vec<String> },
 }
 
-// What "exit the current app" means, decided by host context (see
-// okf/done/exit-to-launcher.md): with the player hosting an app (or the
-// BSOD), Stop returns to the player, dropping the dev connection on the
-// way (see DevExitHandle); at the player root, and always in
-// player-less runtime builds, the client quits - process exit on desktop,
-// backgrounding the activity on Android (the platform's back-at-root
-// convention). Backs the srt:app exit() verb, which is core's default action
-// for an unprevented `back` event. In playback mode exit() ends the recording
-// run instead: the frame budget is only an upper bound, and there is no
-// player to return to.
+// What leaving the current app means, decided by host context (see
+// okf/done/exit-to-launcher.md), behind the two srt:app verbs.
+//
+// exit() ends the app instance: with the player hosting an app (or the
+// BSOD), Stop returns to the player, dropping the dev connection on the way
+// (see DevExitHandle); at the player root, and always in player-less runtime
+// builds, the client quits - process exit on desktop, on Android the
+// activity finishes so the next launch starts fresh. In playback mode it
+// ends the recording run instead: the frame budget is only an upper bound,
+// and there is no player to return to.
+//
+// background() leaves the app without ending it: under the player it is
+// the same return to the player (leaving a hosted app means the player);
+// otherwise the OS takes the client to the background - moveTaskToBack on
+// Android, which is what the system does for back at the root since
+// Android 12 and core's default action for an unprevented `back` there; a
+// minimized window on desktop. The suspend hook runs on the way on Android,
+// through the event watch, and no quit hook does: the app is not ending.
 #[derive(Clone)]
 struct ExitPolicy {
   playback: bool,
@@ -57,11 +65,30 @@ struct ExitPolicy {
   #[cfg(feature = "go")]
   player_active: Arc<std::sync::atomic::AtomicBool>,
   engine_tx: tokio::sync::mpsc::UnboundedSender<EngineCmd>,
+  alloy_cmd_tx: std::sync::mpsc::Sender<alloy::AlloyCommand>,
   #[cfg(feature = "go")]
   dev: Option<go::DevExitHandle>,
 }
 
 impl ExitPolicy {
+  fn background(&self) {
+    if self.playback {
+      // A recording has no background to go to; ending the run is the only
+      // honest reading.
+      self.exit();
+      return;
+    }
+    #[cfg(feature = "go")]
+    if !self.player_active.load(Ordering::Relaxed) {
+      if let Some(dev) = &self.dev {
+        dev.disconnect();
+      }
+      let _ = self.engine_tx.send(EngineCmd::Stop);
+      return;
+    }
+    let _ = self.alloy_cmd_tx.send(alloy::AlloyCommand::Background);
+  }
+
   fn exit(&self) {
     if self.playback {
       // Nothing may be drawing when the process exits: the draw the last
@@ -822,6 +849,7 @@ fn ui_thread(
       #[cfg(feature = "go")]
       player_active: player_active.clone(),
       engine_tx: cmd_tx.clone(),
+      alloy_cmd_tx: alloy_cmd_tx.clone(),
       #[cfg(feature = "go")]
       dev: dev_session.as_ref().map(|d| d.exit_handle()),
     };
@@ -972,14 +1000,19 @@ fn ui_thread(
         }
         None => builder,
       };
-      // The running app's own surface (exit()), in every build: the
-      // production runtime exits too, it just always quits.
+      // The running app's own surface (exit(), background()), in every
+      // build: the production runtime leaves too, it just never has a
+      // player to return to.
       let builder = {
-        let policy = exit_policy.clone();
+        let exit_policy_exit = exit_policy.clone();
+        let exit_policy_background = exit_policy.clone();
         builder.plugin(move |ctx| {
           plugins::app::install(
             &ctx,
-            plugins::app::AppControl::new(plugins::app::AppControlInner { exit: Box::new(move || policy.exit()) }),
+            plugins::app::AppControl::new(plugins::app::AppControlInner {
+              exit: Box::new(move || exit_policy_exit.exit()),
+              background: Box::new(move || exit_policy_background.background()),
+            }),
           )
         })
       };

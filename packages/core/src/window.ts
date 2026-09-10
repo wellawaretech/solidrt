@@ -2,7 +2,8 @@ import { createSignal, getOwner, onCleanup, onSettled, runWithOwner, flush } fro
 import { requestFrame, setPointerLock } from "flux:rendertree"
 import { renderFrame } from "srt:render"
 import { on, once } from "srt:events"
-import { exit as nativeExit } from "srt:app"
+import { exit as nativeExit, background as nativeBackground } from "srt:app"
+import { platform } from "flux:process"
 import { getEventHandler, focusedNode, setFocus, activateTextInput, setInterestRoot } from "./core"
 import { scanForOrphans, getNodePath } from "./renderer"
 
@@ -97,8 +98,9 @@ export function onSuspend(fn: LifecycleHandler) {
 
 /**
  * Calls `fn` when this app instance is ending: `exit()` (including the
- * default action of an unprevented `back`), the desktop window closing, the
- * Android activity finishing. Not a last chance to save - on mobile the
+ * default action of an unprevented `back` on desktop), the desktop window
+ * closing, the Android activity finishing. Not when the app goes to the
+ * background (`background()`, or back at the root on Android). Not a last chance to save - on mobile the
  * suspend hook has already run, and a user who quits usually does not want
  * a session kept - but the place for work that needs a real close, and the
  * runtime waits for a returned promise up to its deadline (well under a
@@ -113,17 +115,38 @@ export function onQuit(fn: LifecycleHandler) {
 }
 
 /**
- * Leaves the current app: back to the player in a dev client, quitting when
+ * Ends the current app: back to the player in a dev client, quitting when
  * standalone or at the player itself (on Android the activity finishes, so
  * the next launch starts fresh). The default action of an unprevented `back`
- * event; call it directly to exit programmatically, e.g. after intercepting
- * back for an unsaved-changes dialog. Runs the `onQuit` handlers first and
- * leaves once their promises settle (or the deadline passes); returns
- * immediately.
+ * event on desktop; call it directly to exit programmatically, e.g. after
+ * intercepting back for an unsaved-changes dialog. Runs the `onQuit`
+ * handlers first and leaves once their promises settle (or the deadline
+ * passes); returns immediately.
  */
 export function exit() {
   let deadline = new Promise<void>((resolve) => setTimeout(resolve, EXIT_HOOK_DEADLINE_MS))
   Promise.race([dispatchQuit(), deadline]).then(nativeExit, nativeExit)
+}
+
+/**
+ * Leaves the current app without ending it: back to the player in a dev
+ * client; otherwise the OS takes the app to the background - on Android the
+ * task moves behind the others with the process kept, on desktop the window
+ * minimizes. The default action of an unprevented `back` event on Android,
+ * where that is what the system itself does at the root of an app. No
+ * `onQuit` runs (the app is not ending); `onSuspend` fires on Android on the
+ * way, as for any background.
+ */
+export function background() {
+  nativeBackground()
+}
+
+// The default action of an unprevented back event: what the platform itself
+// does at the root of an app. Android backgrounds (since Android 12);
+// everywhere else back at the root ends the app.
+function backDefault() {
+  if (platform === "android") background()
+  else exit()
 }
 
 // ------ Pointer routing -----------------
@@ -412,8 +435,10 @@ let backHandlers: ((e: BackEvent) => void)[] = []
  * desktop dev chord). Call `e.preventDefault()` when back means in-app
  * navigation right now (close a modal, previous screen); unprevented, the
  * event passes to the handler registered before this one, and if none of them
- * prevents it either, to the default action: exit(). Apps without a handler
- * exit on back everywhere, which is the correct zero-effort default.
+ * prevents it either, to the default action: what the platform does at the
+ * root of an app - `background()` on Android, `exit()` elsewhere. Apps
+ * without a handler get the platform's behavior, which is the correct
+ * zero-effort default.
  *
  * Handlers form a stack: the most recently registered runs first and the first
  * to prevent ends the dispatch, so each screen or overlay owns one step of the
@@ -627,7 +652,7 @@ export function attachWindow(nodeId: number) {
       // Top of the stack down, stopping as soon as one takes the event.
       let stack = [...backHandlers]
       for (let i = stack.length - 1; i >= 0 && !prevented; i--) stack[i]!(e)
-      if (!prevented) exit()
+      if (!prevented) backDefault()
     })
 
     unsubTextInput = on("textInput", (e: any) => {

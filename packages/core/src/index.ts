@@ -3,7 +3,7 @@ export { setFocus, focusedNode, startTextInput, textInputActive, getFocusables, 
 export type { BoundingBox, GlobalPointerEvent, TextLine } from "./core"
 export { parseColor, mixColors, withAlpha, brightness, createLinearGradient, createRadialGradient } from "./color"
 export type { Gradient, GradientStop } from "./color"
-export { onFrame, onLayout, onResize, onWindowFocus, onWindowBlur, onBack, onSuspend, onQuit, exit } from "./window"
+export { onFrame, onLayout, onResize, onWindowFocus, onWindowBlur, onBack, onSuspend, onQuit, exit, background } from "./window"
 export type { BackEvent, LifecycleHandler } from "./window"
 export { windowSize, safeArea, displayScale, windowFocused, keyboardHeight, lockPointer, pointerLocked } from "./window"
 export { env } from "./environment"

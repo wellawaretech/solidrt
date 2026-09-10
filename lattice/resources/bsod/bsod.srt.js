@@ -3264,7 +3264,8 @@ import * as tree2 from "flux:rendertree";
 import { requestFrame, setPointerLock } from "flux:rendertree";
 import { renderFrame } from "srt:render";
 import { on as on2, once } from "srt:events";
-import { exit as nativeExit } from "srt:app";
+import { exit as nativeExit, background as nativeBackground } from "srt:app";
+import { platform } from "flux:process";
 
 // ../../packages/core/src/core.ts
 import * as tree from "flux:rendertree";
@@ -3442,6 +3443,15 @@ function exit() {
   let deadline = new Promise((resolve2) => setTimeout(resolve2, EXIT_HOOK_DEADLINE_MS));
   Promise.race([dispatchQuit(), deadline]).then(nativeExit, nativeExit);
 }
+function background() {
+  nativeBackground();
+}
+function backDefault() {
+  if (platform === "android")
+    background();
+  else
+    exit();
+}
 var animationFrames = new Map;
 var refreshRate = 60;
 var backHandlers = [];
@@ -3591,7 +3601,7 @@ function attachWindow(nodeId) {
       for (let i = stack.length - 1;i >= 0 && !prevented; i--)
         stack[i](e);
       if (!prevented)
-        exit();
+        backDefault();
     });
     unsubTextInput = on2("textInput", (e) => {
       let id = focusedNode();

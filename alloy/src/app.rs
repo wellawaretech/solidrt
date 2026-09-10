@@ -769,6 +769,11 @@ impl App {
               .and_then(|video| video.clipboard().clipboard_text().map_err(|e| e.to_string()));
             respond(result);
           }
+          AlloyCommand::Background => {
+            if !window.minimize() {
+              log::warn!("[alloy] background (minimize) failed: {}", crate::sdl_utils::sdl_error());
+            }
+          }
         }
       }
 

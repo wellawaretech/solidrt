@@ -5335,7 +5335,8 @@ import * as tree2 from "flux:rendertree";
 import { requestFrame, setPointerLock } from "flux:rendertree";
 import { renderFrame } from "srt:render";
 import { on as on2, once } from "srt:events";
-import { exit as nativeExit } from "srt:app";
+import { exit as nativeExit, background as nativeBackground } from "srt:app";
+import { platform } from "flux:process";
 
 // ../../packages/core/src/core.ts
 import * as tree from "flux:rendertree";
@@ -5612,6 +5613,15 @@ on2("quit", (e) => {
 function exit() {
   let deadline = new Promise((resolve2) => setTimeout(resolve2, EXIT_HOOK_DEADLINE_MS));
   Promise.race([dispatchQuit(), deadline]).then(nativeExit, nativeExit);
+}
+function background() {
+  nativeBackground();
+}
+function backDefault() {
+  if (platform === "android")
+    background();
+  else
+    exit();
 }
 var nextFrameId = 1;
 var animationFrames = new Map;
@@ -5899,7 +5909,7 @@ function attachWindow(nodeId) {
       for (let i = stack.length - 1;i >= 0 && !prevented; i--)
         stack[i](e);
       if (!prevented)
-        exit();
+        backDefault();
     });
     unsubTextInput = on2("textInput", (e) => {
       let id = focusedNode();
@@ -7849,16 +7859,16 @@ function splitTransition(t, parts) {
       border: t
     };
   let root = {};
-  let background = {};
+  let background2 = {};
   let border = {};
   for (let [key2, value] of Object.entries(t)) {
     if (key2 === "all" || key2 === "stagger") {
       root[key2] = value;
-      background[key2] = value;
+      background2[key2] = value;
       border[key2] = value;
     } else if (key2 in STYLE_TO_BACKGROUND || key2 in STYLE_TO_BORDER) {
       if (key2 in STYLE_TO_BACKGROUND)
-        background[STYLE_TO_BACKGROUND[key2]] = value;
+        background2[STYLE_TO_BACKGROUND[key2]] = value;
       if (key2 in STYLE_TO_BORDER)
         border[STYLE_TO_BORDER[key2]] = value;
     } else if (!parts?.includes(key2)) {
@@ -7868,7 +7878,7 @@ function splitTransition(t, parts) {
   let pick = (o) => Object.keys(o).length ? o : undefined;
   return {
     root: pick(root),
-    background: pick(background),
+    background: pick(background2),
     border: pick(border)
   };
 }

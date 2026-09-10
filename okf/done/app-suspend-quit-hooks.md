@@ -108,6 +108,14 @@ and the same mechanism serves both.
 
 ## Decided: Android exits for real, by respecting the platform
 
+Corrected the same day, see the last finding: the "stock Android
+back-at-root is finish()" premise below is pre-Android 12. Since Android 12
+the system backgrounds the task at the root, which is what the removed
+`moveTaskToBack` did. The outcome is two verbs: `exit()` ends the app (on
+Android the activity finishes, as decided here), and `background()` leaves
+it to the OS; an unprevented `back` defaults to `background()` on Android
+and `exit()` elsewhere.
+
 Today `exit()` on Android does not exit. `ExitPolicy::exit` sends
 `AlloyCommand::Background`, which is `window.minimize()` and routes to
 `Activity.moveTaskToBack`. The process, the QuickJS heap and every signal survive,
@@ -306,4 +314,17 @@ amount of dev-loop tidying removes.
 - The "GPU context lost" exit the demo hit on background was real for a
   raster-bound app and is fixed in alloy (a backgrounded flag set by the
   same event watch; see okf/backlog/gpu-context-loss.md findings).
+- Correction (2026-09-10, after closing): making `exit()` the default back
+  action on Android turned back-at-root into a finish, and that was the
+  deviation, not the old backgrounding. Android 12+ backgrounds a root
+  activity on back and keeps the process. Restored as a second verb:
+  `AlloyCommand::Background` (SDL minimize, moveTaskToBack on Android) behind
+  `srt:app` `background()` and core's `background()`; `ExitPolicy` in
+  lattice/src/lib.rs has `background()` next to `exit()` (under the player
+  both return to the player). Core's default back action (`backDefault` in
+  packages/core/src/window.ts) reads `platform` from `flux:process`:
+  `background()` on Android, `exit()` elsewhere. `exit()` keeps finishing
+  the activity for an app that wants a real end. No quit hook runs on a
+  background; the suspend hook does, through the watch, as for any
+  background.
 

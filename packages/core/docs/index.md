@@ -151,7 +151,8 @@ The same pattern covers `@solidrt/core/microphone`, `/sound`,
 The runtime reports the platform's lifecycle facts and holds the platform
 open while the app acts on them; what to do with them is the app's policy.
 `onBack` is the user's back intent (prevent it for in-app navigation, or let
-it fall through to `exit()`). `onSuspend` fires when the app is being
+it fall through to the platform's default: `background()` on Android, where
+the system keeps the app behind the others, `exit()` elsewhere). `onSuspend` fires when the app is being
 suspended and may be killed without notice (switching away on Android or
 iOS; never on desktop): persist session state there, async is fine, the
 runtime waits for the returned promise up to its deadline. `onQuit` fires

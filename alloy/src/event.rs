@@ -39,6 +39,12 @@ pub enum AlloyCommand {
   // latency.
   SetClipboardText(String, Box<dyn FnOnce(Result<(), String>) + Send>),
   GetClipboardText(Box<dyn FnOnce(Result<String, String>) + Send>),
+  // Leave the app at the OS level without ending it: SDL's minimize, which
+  // on Android routes to Activity.moveTaskToBack - what the system itself
+  // does for back at the root since Android 12 (the process stays, the
+  // suspend hook has run through the event watch on the way) - and on
+  // desktop minimizes the window.
+  Background,
 }
 
 // Standard cursor shape (SetCursor), in the CSS `cursor` vocabulary - the
