@@ -21,14 +21,20 @@ impl RenderTree {
   /// property whose mounted value is unreadable (no explicit value, a
   /// gradient) skips its enter animation and simply shows the mounted
   /// state. A node detached again before the advance enters at its next
-  /// attach.
+  /// attach; one already on its way out (removed the same tick, under an
+  /// exit root) spends its enter and leaves from its mounted state, so the
+  /// enter pass never retargets an exit track back toward the mount.
   fn apply_enter_transitions(&mut self, node_id: u64) {
+    let leaving = self.exit_root_of(node_id).is_some();
     let entries: Vec<(AnimProp, crate::rendertree::TransitionEntry)> = {
       let Some(el) = self.nodes.get_mut(&node_id) else { return };
       if el.entered || el.parent.is_none() {
         return;
       }
       el.entered = true;
+      if leaving {
+        return;
+      }
       match &el.transitions {
         Some(t) => t.props.iter().filter(|(_, e)| e.from.is_some()).cloned().collect(),
         None => return,
@@ -60,18 +66,87 @@ impl RenderTree {
   }
 
 
-  /// Start the exit animation instead of detaching, when the node declares
-  /// `exit` values and at least one of them has somewhere to move. Returns
-  /// whether the node is now exiting (still linked). A node whose exit
-  /// values all already hold (or are unreadable) detaches instantly - an
-  /// exit that animates nothing must not defer the removal.
+  /// The exit root that owns `node_id`'s removal, if any: the nearest
+  /// ancestor-or-self marked `exiting`. Structure is membership - a node
+  /// under an exit root leaves with it, whatever its own tracks do - so
+  /// there is no per-member state to keep in step, and every event on the
+  /// way out (a settle, a destroy, a second detach, a re-insert, an owed
+  /// enter) finds its cascade through this climb.
+  pub(super) fn exit_root_of(&self, node_id: u64) -> Option<u64> {
+    let mut cursor = Some(node_id);
+    while let Some(id) = cursor {
+      let el = self.nodes.get(&id)?;
+      if el.exiting {
+        return Some(id);
+      }
+      cursor = el.parent;
+    }
+    None
+  }
+
+  /// `root` and its descendants in tree order (pre-order, children order).
+  /// `skip_nested_exits` leaves out any subtree under an exiting node other
+  /// than `root` itself: a cascade of its own, already running.
+  fn subtree(&self, root: u64, skip_nested_exits: bool) -> Vec<u64> {
+    let mut out = Vec::new();
+    let mut stack = vec![root];
+    while let Some(id) = stack.pop() {
+      let Some(el) = self.nodes.get(&id) else { continue };
+      if skip_nested_exits && id != root && el.exiting {
+        continue;
+      }
+      out.push(id);
+      stack.extend(el.children.iter().rev().copied());
+    }
+    out
+  }
+
+  /// Start the exit animation instead of detaching, when the removed
+  /// subtree declares `exit` values and at least one has somewhere to move.
+  /// Every node under `node_id` that declares exits starts them, in tree
+  /// order so the stagger cascade mirrors the enter's, and `node_id`
+  /// becomes the exit root: it stays linked, out of the layout flow and
+  /// hit-test invisible with its subtree, until the last of those tracks
+  /// settles (`advance_transitions` -> `finish_exit`). Returns whether the
+  /// node is now exiting (still linked). A subtree whose exit values all
+  /// already hold (or are unreadable) detaches instantly - an exit that
+  /// animates nothing must not defer the removal.
+  ///
+  /// A second removal reaching a cascade in flight (the node is under an
+  /// exit root already) starts nothing and keeps the node where it is: the
+  /// root's free takes it. A nested root already exiting keeps its own
+  /// cascade, skipped by the walk; the outer gate waits for it all the same.
   pub(super) fn begin_exit(&mut self, parent_id: u64, node_id: u64) -> bool {
+    match self.nodes.get(&node_id) {
+      Some(el) if el.parent == Some(parent_id) => {}
+      _ => return false,
+    }
+    if self.exit_root_of(node_id).is_some() {
+      return true;
+    }
+    let mut started = false;
+    for id in self.subtree(node_id, true) {
+      started |= self.start_exit_tracks(id);
+    }
+    if started {
+      if let Some(el) = self.nodes.get_mut(&node_id) {
+        el.exiting = true;
+      }
+      self.pop_from_layout(parent_id, node_id);
+    }
+    started
+  }
+
+  /// One node's share of a cascade: a track (or a held write, with the
+  /// entry's delay plus the stagger slot) per declared `exit` value that
+  /// has somewhere to move. Returns whether anything started.
+  fn start_exit_tracks(&mut self, node_id: u64) -> bool {
     let entries: Vec<(AnimProp, crate::rendertree::TransitionEntry)> = match self.nodes.get(&node_id) {
-      Some(el) if !el.exiting && el.parent == Some(parent_id) => match &el.transitions {
+      Some(el) => match &el.transitions {
         Some(t) => t.props.iter().filter(|(_, e)| e.exit.is_some()).cloned().collect(),
         None => return false,
       },
-      _ => return false,
+      None => return false,
     };
     if entries.is_empty() {
       return false;
@@ -95,16 +170,11 @@ impl RenderTree {
         started |= self.transitions.retarget(node_id, prop, current, to, entry.spec);
       }
     }
-    if started {
-      if let Some(el) = self.nodes.get_mut(&node_id) {
-        el.exiting = true;
-      }
-    }
     started
   }
 
   /// The properties of a node's transition declaration that carry an `exit`
-  /// value - the set whose tracks gate the exiting node's free.
+  /// value - the set whose tracks gate its exit root's free.
   fn exit_props(&self, node_id: u64) -> Vec<AnimProp> {
     self
       .nodes
@@ -114,31 +184,61 @@ impl RenderTree {
       .unwrap_or_default()
   }
 
-  /// A re-insert reached an exiting node: the removal turned out to be a
-  /// move. Drop the exit tracks (the node holds its current values; later
-  /// writes take over as usual) and clear the marks.
+  /// The exit root's liveness gate: whether any declared exit under `root`
+  /// still runs. The walk includes nested roots, so an outer removal waits
+  /// for an inner cascade already in flight instead of cutting it short.
+  fn subtree_exit_running(&self, root: u64) -> bool {
+    self.subtree(root, false).into_iter().any(|id| self.transitions.any_running(id, &self.exit_props(id)))
+  }
+
+  /// A re-insert reached a node on its way out: the removal turned out to
+  /// be a move. Drops the exit tracks under the node (it holds its current
+  /// values; later writes take over as usual) and clears its root marks. A
+  /// nested root exiting on its own keeps its cascade. A descendant the
+  /// renderer already destroyed while the cascade ran (`doomed` under a
+  /// root) has no proxy left to move, so it is freed here instead of
+  /// travelling with the subtree. A member moved out of a root leaves the
+  /// root's gate to the next advance, which frees the root if that was its
+  /// last running exit.
   pub(super) fn abandon_exit(&mut self, node_id: u64) {
-    let exiting = self.nodes.get(&node_id).map(|el| el.exiting).unwrap_or(false);
-    if !exiting {
-      return;
+    let Some(root) = self.exit_root_of(node_id) else { return };
+    let members = self.subtree(node_id, true);
+    for &id in &members {
+      let props = self.exit_props(id);
+      self.transitions.cancel_props(id, &props);
     }
-    let props = self.exit_props(node_id);
-    self.transitions.cancel_props(node_id, &props);
     if let Some(el) = self.nodes.get_mut(&node_id) {
       el.exiting = false;
       el.doomed = false;
     }
+    let orphans: Vec<u64> = members
+      .into_iter()
+      .filter(|&id| id != node_id && self.nodes.get(&id).map(|el| el.doomed).unwrap_or(false))
+      .collect();
+    for id in orphans {
+      if self.nodes.contains_key(&id) {
+        self.destroy_node(id);
+      }
+    }
+    if root != node_id {
+      self.transitions.exit_checks.push(root);
+    }
   }
 
-  /// The last exit track of an exiting node settled: complete the removal
-  /// that was deferred at detach - unlink, and free if the deferred destroy
-  /// already ran (the renderer's sweep found the node exiting).
-  fn finish_exit(&mut self, node_id: u64) {
-    self.transitions.cancel_node(node_id);
-    let Some(el) = self.nodes.get_mut(&node_id) else { return };
+  /// The last exit track under an exit root settled: complete the removal
+  /// that was deferred at detach - unlink, and free the subtree if the
+  /// deferred destroy already ran (the renderer's sweep found the node
+  /// exiting). Returns the exit root the node was nested in, if any: its
+  /// gate may have just emptied and wants the same check.
+  fn finish_exit(&mut self, node_id: u64) -> Option<u64> {
+    for id in self.subtree(node_id, false) {
+      self.transitions.cancel_node(id);
+    }
+    let el = self.nodes.get_mut(&node_id)?;
     el.exiting = false;
     let doomed = el.doomed;
     let parent = el.parent;
+    let outer = parent.and_then(|p| self.exit_root_of(p));
     if let Some(parent_id) = parent {
       if self.nodes.contains_key(&parent_id) {
         self.detach_node_now(parent_id, node_id);
@@ -148,6 +248,7 @@ impl RenderTree {
       self.delete_recursive(node_id);
       self.bump_revision();
     }
+    outer
   }
 
 
@@ -257,13 +358,14 @@ impl RenderTree {
     for node_id in std::mem::take(&mut self.transitions.entering) {
       self.apply_enter_transitions(node_id);
     }
-    if self.transitions.is_empty() {
+    // Exit roots whose gate may have emptied this pass; each is checked
+    // (and freed when the gate is empty) after the advance. A member moved
+    // out mid-cascade queued its root ahead of time (abandon_exit).
+    let mut exit_checks: Vec<u64> = std::mem::take(&mut self.transitions.exit_checks);
+    if self.transitions.is_empty() && exit_checks.is_empty() {
       return false;
     }
     let now = self.transitions.now_ms;
-    // Exiting nodes whose exit-track gate may have emptied this pass; each
-    // is checked (and freed when the gate is empty) after the advance.
-    let mut exit_checks: Vec<u64> = Vec::new();
     // Delayed writes whose hold expired apply now, exactly as a JS write
     // this frame would: retarget from the property's present value. State
     // may have shifted during the hold (a gradient took over, the node
@@ -277,9 +379,11 @@ impl RenderTree {
         }
       }
       // A due exit write that starts no track (value already there, state
-      // shifted) may have been the last thing keeping the node around.
-      if !running && self.nodes.get(&w.node).map(|el| el.exiting).unwrap_or(false) {
-        exit_checks.push(w.node);
+      // shifted) may have been the last thing keeping its root around.
+      if !running {
+        if let Some(root) = self.exit_root_of(w.node) {
+          exit_checks.push(root);
+        }
       }
     }
     let (mut tracks, dt) = self.transitions.begin_advance();
@@ -296,23 +400,28 @@ impl RenderTree {
       let damage = self.nodes.get_mut(&t.node).map(|el| el.set_anim_value(t.prop, value)).unwrap_or(Damage::None);
       damages.push((t.node, damage));
       if settled {
-        // Exiting nodes settle into their free, not into onTransitionEnd:
-        // the component that could observe the event is already disposed.
-        if self.nodes.get(&t.node).map(|el| el.exiting).unwrap_or(false) {
-          exit_checks.push(t.node);
-        } else {
-          self.transitions.settled.push((t.node, t.prop));
+        // Anything under an exit root settles into the root's free, not
+        // into onTransitionEnd: the components that could observe the
+        // event are already disposed.
+        match self.exit_root_of(t.node) {
+          Some(root) => exit_checks.push(root),
+          None => self.transitions.settled.push((t.node, t.prop)),
         }
       }
       !settled
     });
     self.apply_damage_batch(&damages);
     self.transitions.end_advance(tracks);
+    exit_checks.sort_unstable();
     exit_checks.dedup();
-    for node_id in exit_checks {
-      let exiting = self.nodes.get(&node_id).map(|el| el.exiting).unwrap_or(false);
-      if exiting && !self.transitions.any_running(node_id, &self.exit_props(node_id)) {
-        self.finish_exit(node_id);
+    // A worklist: an inner root finishing may empty the gate of the root it
+    // was nested in, which then frees in the same pass.
+    while let Some(root) = exit_checks.pop() {
+      let exiting = self.nodes.get(&root).map(|el| el.exiting).unwrap_or(false);
+      if exiting && !self.subtree_exit_running(root) {
+        if let Some(outer) = self.finish_exit(root) {
+          exit_checks.push(outer);
+        }
       }
     }
     !self.transitions.is_empty()

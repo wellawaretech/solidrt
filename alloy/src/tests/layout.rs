@@ -414,3 +414,56 @@ fn span_insert_and_detach_invalidate_the_text_layout() {
   tree.detach_node(2, 3);
   assert!(!cached(&tree));
 }
+
+// An exiting node leaves the layout flow at exit start
+// (okf/done/exit-transitions-subtree.md): the row below moves up at the next
+// layout while the exiting row is painted at its last box.
+#[test]
+fn exiting_row_pops_out_of_the_column() {
+  let mut tree = RenderTree::new();
+  tree.create_node(1, attached());
+  tree.create_node(2, attached());
+  tree.create_node(3, attached());
+  tree.insert_node(1, 2, None).expect("insert");
+  tree.insert_node(1, 3, None).expect("insert");
+  tree.root = Some(1);
+  tree.node_mut(1).style_mut().expect("root").flex_direction = FlexDirection::Column;
+  size(&mut tree, 1, 400.0, 300.0);
+  size(&mut tree, 2, 400.0, 100.0);
+  size(&mut tree, 3, 400.0, 100.0);
+  tree.edit(2, |el| {
+    el.transitions = Some(Box::new(TransitionConfig {
+      props: vec![(
+        AnimProp::Opacity,
+        TransitionEntry {
+          spec: TransitionSpec::Tween { duration_ms: 100.0, curve: Curve::Linear },
+          delay_ms: 0.0,
+          from: None,
+          exit: Some(crate::rendertree::transitions::AnimValue::Scalar(0.0)),
+        },
+      )],
+      all: None,
+      stagger_ms: None,
+    }));
+    Damage::None
+  });
+  let platform = PlatformContext::new(Vec::new());
+  let alloy = headless();
+  layout(&mut tree, &platform, &alloy);
+  assert_eq!(tree.node(3).layout_data().location().y, 100.0);
+
+  tree.set_transition_now(0.0);
+  tree.detach_node(1, 2);
+  tree.destroy_node(2);
+  assert!(tree.try_node(2).is_some(), "exiting");
+  layout(&mut tree, &platform, &alloy);
+  assert_eq!(tree.node(3).layout_data().location().y, 0.0, "the sibling moves up at once");
+  assert_eq!(tree.node(2).layout_data().location().y, 0.0);
+  assert_eq!(box_of(&tree, 2), Size::new(400.0, 100.0), "the exiting row keeps its last box");
+
+  tree.set_transition_now(100.0);
+  tree.advance_transitions();
+  assert!(tree.try_node(2).is_none(), "freed at the settle");
+  layout(&mut tree, &platform, &alloy);
+  assert_eq!(tree.node(3).layout_data().location().y, 0.0);
+}

@@ -817,3 +817,217 @@ fn stagger_spreads_group_exits() {
   }
   assert!(tree.node(1).children.is_empty());
 }
+
+// Subtree exits: a removal starts every `exit` declared under the removed
+// node, and the removed node (the exit root) frees when the last of them
+// settles. See tree/transitions.rs begin_exit / exit_root_of.
+
+// A panel (1 > 2) with no exit of its own holding two cards (3, 4) that
+// declare one; the root view 1 owns the stagger when `stagger_ms` is set.
+fn tree_with_exit_panel(stagger_ms: Option<f32>) -> RenderTree {
+  let mut tree = RenderTree::new();
+  tree.set_transition_now(0.0);
+  tree.create_node(1, View::default().with_layout());
+  tree.create_node(2, View::default().with_layout());
+  tree.insert_node(1, 2, None).expect("insert");
+  if stagger_ms.is_some() {
+    tree.edit(2, |el| {
+      el.transitions = Some(Box::new(TransitionConfig { props: vec![], all: None, stagger_ms }));
+      Damage::None
+    });
+  }
+  for id in [3, 4] {
+    tree.create_node(id, Rectangle::default().no_layout());
+    tree.insert_node(2, id, None).expect("insert");
+    tree.edit(id, |el| {
+      el.transitions =
+        Some(Box::new(TransitionConfig { props: vec![(AnimProp::X, EXIT_200)], all: None, stagger_ms: None }));
+      Damage::None
+    });
+  }
+  tree.advance_transitions();
+  tree
+}
+
+#[test]
+fn subtree_exits_play_and_gate_the_root() {
+  let mut tree = tree_with_exit_panel(None);
+  tree.set_transition_now(1000.0);
+  tree.detach_node(1, 2);
+  tree.destroy_node(2);
+  assert!(tree.node(1).children.contains(&2), "an undeclared panel stays for its cards' exits");
+  assert!(tree.node(2).exiting, "the removed node is the exit root");
+  assert!(!tree.node(3).exiting, "a card carries no mark of its own");
+
+  tree.set_transition_now(1050.0);
+  assert!(tree.advance_transitions());
+  for id in [3, 4] {
+    assert!((rect_x(&tree, id) - 100.0).abs() < 0.01, "card {id} halfway out, got {}", rect_x(&tree, id));
+  }
+  tree.set_transition_now(1100.0);
+  tree.advance_transitions();
+  assert!(tree.try_node(2).is_none(), "the panel frees at the last settle");
+  assert!(tree.try_node(3).is_none() && tree.try_node(4).is_none(), "cards go with it");
+  assert!(tree.node(1).children.is_empty());
+  assert!(tree.take_settled_transitions().is_empty(), "card exits never fire onTransitionEnd");
+}
+
+#[test]
+fn subtree_exits_cascade_under_a_stagger_group() {
+  let mut tree = tree_with_exit_panel(Some(50.0));
+  tree.set_transition_now(1000.0);
+  tree.detach_node(1, 2);
+  tree.destroy_node(2);
+  tree.set_transition_now(1025.0);
+  tree.advance_transitions();
+  assert!(rect_x(&tree, 3) > 0.0, "first card leaves at once");
+  assert_eq!(rect_x(&tree, 4), 0.0, "second card holds its stagger slot");
+  // 1050 activates the second card. The first settles at 1100 and holds its
+  // exit value, painted, until the second settles at 1150 and frees the panel.
+  tree.set_transition_now(1050.0);
+  tree.advance_transitions();
+  tree.set_transition_now(1120.0);
+  tree.advance_transitions();
+  assert_eq!(rect_x(&tree, 3), 200.0, "settled card stays at its exit value");
+  assert!(tree.try_node(2).is_some(), "panel waits for the slower card");
+  assert!((rect_x(&tree, 4) - 140.0).abs() < 0.01, "second card mid-flight, got {}", rect_x(&tree, 4));
+  tree.set_transition_now(1200.0);
+  tree.advance_transitions();
+  assert!(tree.try_node(2).is_none(), "panel frees after the cascade");
+}
+
+#[test]
+fn subtree_exit_reinsert_abandons_every_member() {
+  let mut tree = tree_with_exit_panel(None);
+  tree.set_transition_now(1000.0);
+  tree.detach_node(1, 2);
+  tree.insert_node(1, 2, None).expect("re-insert");
+  assert!(!tree.node(2).exiting);
+  tree.set_transition_now(1100.0);
+  assert!(!tree.advance_transitions(), "no card track survives the move");
+  assert_eq!(rect_x(&tree, 3), 0.0);
+  assert_eq!(rect_x(&tree, 4), 0.0);
+  assert!(tree.try_node(3).is_some() && tree.try_node(4).is_some());
+}
+
+#[test]
+fn removal_inside_a_running_cascade_joins_it() {
+  // The panel closes, then a card's own branch closes in the same tick: the
+  // card neither restarts its exit nor frees early - the panel's free takes
+  // it.
+  let mut tree = tree_with_exit_panel(None);
+  tree.set_transition_now(1000.0);
+  tree.detach_node(1, 2);
+  tree.set_transition_now(1050.0);
+  tree.advance_transitions();
+  tree.detach_node(2, 3);
+  tree.destroy_node(3);
+  assert!(tree.node(2).children.contains(&3), "the card stays in the cascade");
+  assert!(!tree.node(3).exiting, "no second root");
+  tree.destroy_node(2);
+  tree.set_transition_now(1075.0);
+  tree.advance_transitions();
+  assert!((rect_x(&tree, 3) - 150.0).abs() < 0.01, "the card's track ran on unbroken, got {}", rect_x(&tree, 3));
+  tree.set_transition_now(1100.0);
+  tree.advance_transitions();
+  assert!(tree.try_node(3).is_none() && tree.try_node(2).is_none());
+}
+
+#[test]
+fn nested_exit_root_keeps_its_cascade_and_the_outer_waits() {
+  // A card's branch closes first (its own root), then the panel: the walk
+  // leaves the card's cascade alone, and the panel's gate includes it.
+  let mut tree = tree_with_exit_panel(None);
+  tree.edit(4, |el| {
+    el.transitions = Some(Box::new(TransitionConfig {
+      props: vec![(
+        AnimProp::X,
+        TransitionEntry {
+          spec: TransitionSpec::Tween { duration_ms: 300.0, curve: Curve::Linear },
+          delay_ms: 0.0,
+          from: None,
+          exit: Some(scalar(200.0)),
+        },
+      )],
+      all: None,
+      stagger_ms: None,
+    }));
+    Damage::None
+  });
+  tree.set_transition_now(1000.0);
+  tree.detach_node(2, 4);
+  tree.destroy_node(4);
+  tree.detach_node(1, 2);
+  tree.destroy_node(2);
+  assert!(tree.node(4).exiting, "the card stays its own root");
+  tree.set_transition_now(1150.0);
+  tree.advance_transitions();
+  assert!(tree.try_node(3).is_some(), "the panel's card settled but the panel waits");
+  assert!(tree.try_node(2).is_some(), "the panel waits for the slower nested cascade");
+  assert!((rect_x(&tree, 4) - 100.0).abs() < 0.01, "nested card halfway, got {}", rect_x(&tree, 4));
+  tree.set_transition_now(1300.0);
+  tree.advance_transitions();
+  assert!(tree.try_node(4).is_none() && tree.try_node(2).is_none(), "everything freed after the nested settle");
+}
+
+#[test]
+fn enter_owed_to_a_leaving_node_is_spent() {
+  // Mounted and removed in one tick: the advance must not snap the leaving
+  // node to `from` and drag its exit track back toward the mount.
+  let mut tree = RenderTree::new();
+  tree.set_transition_now(0.0);
+  tree.create_node(1, View::default().with_layout());
+  tree.create_node(2, Rectangle::default().no_layout());
+  tree.edit(2, |el| {
+    el.transitions = Some(Box::new(TransitionConfig {
+      props: vec![(
+        AnimProp::X,
+        TransitionEntry { spec: LINEAR_100, delay_ms: 0.0, from: Some(scalar(100.0)), exit: Some(scalar(200.0)) },
+      )],
+      all: None,
+      stagger_ms: None,
+    }));
+    Damage::None
+  });
+  tree.insert_node(1, 2, None).expect("insert");
+  tree.detach_node(1, 2);
+  tree.destroy_node(2);
+  assert!(tree.advance_transitions());
+  assert_eq!(rect_x(&tree, 2), 0.0, "no snap to from");
+  tree.set_transition_now(50.0);
+  tree.advance_transitions();
+  assert!((rect_x(&tree, 2) - 100.0).abs() < 0.01, "halfway to the exit value, got {}", rect_x(&tree, 2));
+  tree.set_transition_now(100.0);
+  tree.advance_transitions();
+  assert!(tree.try_node(2).is_none(), "freed at the exit settle");
+}
+
+// Layout pop-out: an exit root leaves its parent's layout flow at exit
+// start and stays a painted child; a re-insert (a move) puts it back.
+#[test]
+fn exit_root_leaves_the_layout_flow_until_reinserted() {
+  let in_flow =
+    |tree: &RenderTree, id: u64| tree.node(1).layout_data().layout_children.iter().any(|&n| u64::from(n) == id);
+  let mut tree = tree_with_exit_panel(None);
+  assert!(in_flow(&tree, 2));
+  tree.set_transition_now(1000.0);
+  tree.detach_node(1, 2);
+  assert!(tree.node(1).children.contains(&2), "still painted");
+  assert!(!in_flow(&tree, 2), "out of the layout flow at exit start");
+  tree.insert_node(1, 2, None).expect("re-insert");
+  assert!(in_flow(&tree, 2), "a move puts it back");
+}
+
+#[test]
+fn insert_before_an_exiting_anchor_takes_the_next_flow_slot() {
+  let mut tree = tree_with_exit_panel(None);
+  tree.create_node(5, View::default().with_layout());
+  tree.insert_node(1, 5, None).expect("insert");
+  tree.set_transition_now(1000.0);
+  tree.detach_node(1, 2);
+  tree.create_node(6, View::default().with_layout());
+  tree.insert_node(1, 6, Some(2)).expect("insert before the exiting node");
+  assert_eq!(tree.node(1).children, vec![6, 2, 5]);
+  let flow: Vec<u64> = tree.node(1).layout_data().layout_children.iter().map(|&n| u64::from(n)).collect();
+  assert_eq!(flow, vec![6, 5], "the layout slot is before the next sibling in the flow");
+}

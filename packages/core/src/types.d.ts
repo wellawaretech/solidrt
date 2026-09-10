@@ -484,13 +484,16 @@ export interface TransitionSpring {
    */
   from?: number | string
   /**
-   * Removal exit animation: an unmounted element stays visible, animates
-   * the property to this value (honoring `delay`), and is freed when its
-   * exit animations settle. Same value forms as `from`, per-property only.
-   * A move never plays it, the exiting element is hit-test invisible, its
-   * whole subtree stays painted with it, and no onTransitionEnd fires (the
-   * component is already disposed). An attached element keeps its layout
-   * slot until the exit finishes.
+   * Removal exit animation: when an element unmounts, every `exit`
+   * declared on it or under it animates its property to this value
+   * (honoring `delay`), and the unmounted element stays visible, subtree
+   * and all, until the last of them settles, then frees. Same value forms
+   * as `from`, per-property only. A move never plays it, the exiting
+   * subtree is hit-test invisible, and no onTransitionEnd fires (the
+   * components are already disposed). An exiting element leaves the layout
+   * flow at once: its siblings reflow as if it were gone, and it is painted
+   * at its last box, which follows its parent's moves but not the parent's
+   * own reflow.
    */
   exit?: number | string
 }
@@ -516,13 +519,16 @@ export interface TransitionTween {
    */
   from?: number | string
   /**
-   * Removal exit animation: an unmounted element stays visible, animates
-   * the property to this value (honoring `delay`), and is freed when its
-   * exit animations settle. Same value forms as `from`, per-property only.
-   * A move never plays it, the exiting element is hit-test invisible, its
-   * whole subtree stays painted with it, and no onTransitionEnd fires (the
-   * component is already disposed). An attached element keeps its layout
-   * slot until the exit finishes.
+   * Removal exit animation: when an element unmounts, every `exit`
+   * declared on it or under it animates its property to this value
+   * (honoring `delay`), and the unmounted element stays visible, subtree
+   * and all, until the last of them settles, then frees. Same value forms
+   * as `from`, per-property only. A move never plays it, the exiting
+   * subtree is hit-test invisible, and no onTransitionEnd fires (the
+   * components are already disposed). An exiting element leaves the layout
+   * flow at once: its siblings reflow as if it were gone, and it is painted
+   * at its last box, which follows its parent's moves but not the parent's
+   * own reflow.
    */
   exit?: number | string
 }

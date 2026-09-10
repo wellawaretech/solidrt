@@ -455,8 +455,11 @@ latest (solid-js 1.x, off Solid 2.0 entirely). The recipe that works is
   write targets, and the runtime animates natively with no per-frame JS.
   Enter and exit are per-property entries on that same spec: `from` is the
   value the property animates in from at first attach, `exit` the value it
-  animates to on removal (the node stays painted until it settles, then
-  frees - no AnimatePresence equivalent needed). `stagger` (ms) goes on an
+  animates to on removal. An exit reaches the whole unmounted subtree: every
+  `exit` declared under the node that unmounts plays, and the node stays
+  painted until the last of them settles, then frees - a panel's contents
+  leave with `exit` beside their `from`, no closing signal, held mount or
+  settle cue (no AnimatePresence equivalent needed). `stagger` (ms) goes on an
   ANCESTOR, never on the animating elements: it delays each descendant's
   enter/exit by `index * stagger`, and cascades nothing unless the
   descendants declare `from`/`exit`. An enter plays once per mount; to

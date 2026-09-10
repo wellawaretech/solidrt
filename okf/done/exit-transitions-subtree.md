@@ -92,3 +92,26 @@ expresses it today is `transition={{ rotateY: closing() ? OUT : IN }}`:
 the enter pass now runs at the mount frame's advance, so a dynamic spec
 no longer costs the enter (see
 [enter-from-template-children](../done/enter-from-template-children.md)).
+
+## Layout pop-out
+
+Landed with it: an exiting root leaves its parent's layout flow at exit
+start instead of at the settle. With the panel as the removed node, a
+re-mount mid-exit stacked the new panel under the old one for the length of
+the cascade and the column jumped closed when it freed. Now siblings reflow
+at once and the exiting subtree is painted at its last box relative to its
+parent, so it follows the parent's moves but not the parent's own reflow -
+the same trade Reanimated's exiting animations and Framer Motion's popLayout
+make. An insert whose anchor is out of the flow (an exiting node, a d-*
+element) lands before the next sibling that is in it.
+
+## Findings
+
+Kept beside the code they govern, per okf/README.md: the membership model
+and why track tags were rejected (`exit_root_of` in
+alloy/src/rendertree/tree/transitions.rs), the worklist that lets an inner
+root's finish free the outer in the same pass (`advance_transitions`), the
+enter pass spending the enter of a node already leaving
+(`apply_enter_transitions`), and a held write activating at the first
+advance that finds it due rather than at its scheduled time
+(`Transitions::schedule` in alloy/src/rendertree/transitions.rs).

@@ -268,6 +268,10 @@ pub struct Transitions {
   // template's children before their props effect, and a dynamic
   // `transition` prop lands from an effect after the root's insert.
   pub entering: Vec<u64>,
+  // Exit roots whose gate needs a look at the next advance without a
+  // settle to prompt it: a member re-inserted elsewhere mid-cascade may
+  // have carried the root's last running exit away (tree.rs abandon_exit).
+  pub exit_checks: Vec<u64>,
   // Per-frame stagger counters, keyed by (group ancestor, is_exit): how many
   // descendant enters/exits the group has seen this frame. Cleared at every
   // clock stamp (tree.rs set_transition_now), so a batch mounted in one tick
@@ -295,7 +299,10 @@ impl Transitions {
   }
 
   /// Hold a delayed write until its activation time. One hold per
-  /// (node, prop): a newer write replaces it, delay restarted.
+  /// (node, prop): a newer write replaces it, delay restarted. The write
+  /// applies at the first advance that finds it due, and its track starts
+  /// at that advance's clock, not at `at_ms`: a frame that lands late past
+  /// the slot starts the motion late rather than mid-flight.
   pub fn schedule(&mut self, write: PendingWrite) {
     self.unschedule(write.node, write.prop);
     self.pending.push(write);

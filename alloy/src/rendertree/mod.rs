@@ -382,13 +382,18 @@ pub struct Element {
   // Guards the mount-time `from` enter animation: it fires on the first
   // attach only, never again on a move or reorder.
   pub entered: bool,
-  // Playing its `exit` transition: detached by the renderer but kept in the
-  // tree until the exit tracks settle. Exiting nodes are hit-test invisible;
-  // a re-insert clears the flag and abandons the exit (a move, not a
-  // removal). See tree.rs detach_node.
+  // An exit root: detached by the renderer but kept in the tree, with its
+  // whole subtree, until every `exit` track under it settles - out of the
+  // parent's layout flow, painted at its last computed box. Only the
+  // node the renderer removed carries the mark; a descendant's membership
+  // is the tree itself (tree/transitions.rs exit_root_of). Exiting subtrees
+  // are hit-test invisible; a re-insert clears the flag and abandons the
+  // exit (a move, not a removal). See tree.rs detach_node.
   pub exiting: bool,
-  // destroy_node was called while exiting: free the node when the exit
-  // settles instead of deferring to a destroy that already happened.
+  // destroy_node was called while the node was under an exit root: free it
+  // when the cascade resolves (the root's settle, or the abandon of a root
+  // that turned out to be a move) instead of deferring to a destroy that
+  // already happened.
   pub doomed: bool,
 }
 

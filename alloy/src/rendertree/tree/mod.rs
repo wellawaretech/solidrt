@@ -151,19 +151,28 @@ impl RenderTree {
 
     match anchor_id {
       Some(anchor) => {
-        if let Some(pos) = parent.children.iter().position(|&id| id == anchor) {
-          parent.children.insert(pos, node_id);
-        } else {
-          parent.children.push(node_id);
-        }
+        let pos = match parent.children.iter().position(|&id| id == anchor) {
+          Some(pos) => {
+            parent.children.insert(pos, node_id);
+            pos
+          }
+          None => {
+            parent.children.push(node_id);
+            parent.children.len() - 1
+          }
+        };
         if child_has_layout {
           if let Some(layout) = &mut parent.layout {
-            let anchor_nid = NodeId::from(anchor);
+            // The anchor may sit outside the layout flow (a d-* element, an
+            // exiting node): the layout slot is before the first sibling
+            // after it that is in the flow.
             let node_nid = NodeId::from(node_id);
-            if let Some(pos) = layout.layout_children.iter().position(|&id| id == anchor_nid) {
-              layout.layout_children.insert(pos, node_nid);
-            } else {
-              layout.layout_children.push(node_nid);
+            let layout_pos = parent.children[pos + 1..]
+              .iter()
+              .find_map(|&id| layout.layout_children.iter().position(|&lid| lid == NodeId::from(id)));
+            match layout_pos {
+              Some(lpos) => layout.layout_children.insert(lpos, node_nid),
+              None => layout.layout_children.push(node_nid),
             }
           }
         }
@@ -206,16 +215,38 @@ impl RenderTree {
   /// rather than destroys; the renderer frees the node later via destroy_node if
   /// nothing re-attaches it. See renderer.ts for the deferred-destroy sweep.
   ///
-  /// Exit animations hook in here: a node whose transition declares `exit`
-  /// values stays linked and animates them instead (see `begin_exit`). If the
-  /// same tick re-inserts the node - a move - the exit is abandoned and the
-  /// unlink happens then, so moves never play removal animations. The
-  /// deferred destroy finding the node exiting defers the free to the settle.
+  /// Exit animations hook in here: a subtree that declares `exit` values
+  /// anywhere in it stays linked and animates them instead, the removed node
+  /// as the exit root (see `begin_exit`). It leaves the layout flow at once
+  /// (`pop_from_layout`), so siblings reflow as if it were gone while it is
+  /// painted at its last box. If the same tick re-inserts the node - a move
+  /// - the exit is abandoned and the unlink happens then, so moves never
+  /// play removal animations. The deferred destroy finding the node under an
+  /// exit root defers the free to the settle.
   pub fn detach_node(&mut self, parent_id: u64, node_id: u64) {
     if self.begin_exit(parent_id, node_id) {
       return;
     }
     self.detach_node_now(parent_id, node_id);
+  }
+
+  /// Takes `node_id` out of `parent_id`'s layout flow while it stays a
+  /// painted child: the exit pop-out. Siblings reflow at the next layout;
+  /// the node keeps its last computed box, relative to the parent, so it
+  /// follows the parent's moves but not the parent's own reflow. A detached
+  /// (d-*) child was never in the flow and needs nothing.
+  fn pop_from_layout(&mut self, parent_id: u64, node_id: u64) {
+    let child_has_layout = self.try_node(node_id).map(|n| n.has_layout()).unwrap_or(false);
+    if !child_has_layout {
+      return;
+    }
+    if let Some(layout) = &mut self.node_mut(parent_id).layout {
+      layout.layout_children.retain(|&id| id != NodeId::from(node_id));
+    }
+    self.invalidate_cache(parent_id);
+    self.note_damage(parent_id);
+    self.invalidate_paint(parent_id);
+    self.bump_revision();
   }
 
   fn detach_node_now(&mut self, parent_id: u64, node_id: u64) {
@@ -244,16 +275,17 @@ impl RenderTree {
   /// is confirmed dead (not moved). Defensively unlinks from any parent still
   /// referencing it, so a direct destroy leaves no dangling child entry.
   ///
-  /// A node mid-exit is not freed yet: the destroy is remembered (`doomed`)
-  /// and happens when the exit settles. Descendants of a destroyed node never
-  /// exit-animate on their own - only the node the renderer removes does, and
-  /// its whole subtree stays painted with it until the settle.
+  /// A node under an exit root - the exiting node itself, or a descendant
+  /// of one whose own removal reached the cascade in flight - is not freed
+  /// yet: the destroy is remembered (`doomed`) and happens when the cascade
+  /// settles, the root freeing its whole subtree. A doomed descendant whose
+  /// root turns out to be a move is freed at the abandon instead.
   pub fn destroy_node(&mut self, node_id: u64) {
-    if let Some(el) = self.nodes.get_mut(&node_id) {
-      if el.exiting {
+    if self.exit_root_of(node_id).is_some() {
+      if let Some(el) = self.nodes.get_mut(&node_id) {
         el.doomed = true;
-        return;
       }
+      return;
     }
     if let Some(parent_id) = self.try_node(node_id).and_then(|n| n.parent) {
       let child_has_layout = self.try_node(node_id).map(|n| n.has_layout()).unwrap_or(false);

@@ -286,11 +286,6 @@ Shaped, not started.
   Cursor enum but have no sender anywhere; give apps the web's cursor model -
   a per-element cursor prop resolved against the hover path, innermost wins,
   "none" hides.
-- **[An exit transition reaches only the removed node, never its descendants](backlog/exit-transitions-subtree.md)** [2026-09-10]
-  begin_exit runs from detach_node, and the renderer detaches only the node it
-  was asked to remove, so a panel whose children should animate out has to
-  hand-roll a closing signal, a held mount and a settle cue; done means a
-  detached subtree's declared exits all play and gate the root's free.
 - **[Move the fetch disk cache out of forge?](backlog/fetch-cache-out-of-forge.md)** [2026-07-24]
   Lattice is now the only cache configurer, so should the mechanism follow the
   policy out of forge, and which of the three candidate shapes pays for
@@ -1138,6 +1133,11 @@ Finished, kept for the reasoning.
   "Leave the running app without a client restart: one native ExitRequest
   dispatching a preventable window-level back event, with a watchdog that
   exits anyway if the engine wedges."
+- **[An exit transition reaches only the removed node, never its descendants](done/exit-transitions-subtree.md)** [2026-09-10]
+  begin_exit runs from detach_node, and the renderer detaches only the node it
+  was asked to remove, so a panel whose children should animate out has to
+  hand-roll a closing signal, a held mount and a settle cue; done means a
+  detached subtree's declared exits all play and gate the root's free.
 - **[Fetch disk cache](done/fetch-cache.md)** [2026-07-17]
   Explicit opt-in caching in the forge fetch core (server cache headers
   ignored) with a per-app store and an LRU size cap, then GET coalescing and
