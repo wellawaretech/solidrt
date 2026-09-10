@@ -38,7 +38,6 @@ symptom shows. A heading that outgrows this file splits into its own.
 - `@solidrt/2d` AGENTS.md "30k sprites: 12.9 ms raw records vs 30.8 ms via setSprite" is a write-path comparison that reads as "30k is affordable"; add the clause that it excludes whatever computes the motion, usually the dominant cost (a 24k-particle sim measured ~25 ms, nearly all simulation).
 - `@solidrt/3d` bindSkeleton matches joints by case-insensitive name only; a pipeline that differs by prefix or suffix (Mixamo's `mixamorig:`, a one-sided `_JNT`) needs a `match` option mapping a piece name to a body name - Unity matches exact names and leaves the rest to the app, so add it when a consumer shows up.
 - `@solidrt/3d` scene.ts: an `overrideMaterial` view silently drops every instanced mesh whose record layout the override does not declare (the documented rule), which is invisible in the output - warn once per view in dev, naming the view label and the count.
-- `@solidrt/3d` `unlit()` takes no `blend`, so there is no stock additive material and a glow drops to `shaderMaterial`; `shaderMaterial` already has the option and the fog docs call `blend: "add"` out, so pass it through the unlit class key.
 - `@solidrt/3d` a ReflectionProbe's `dispose()` destroys its chain cube while the scene may still be pointing at it as the environment (a subtree that owns the environment leaves the scene sampling a destroyed texture until something re-bakes); clear the environment when the cube it names is the one being destroyed.
 
 ## Components

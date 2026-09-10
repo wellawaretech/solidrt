@@ -811,8 +811,10 @@ export type SceneSourceOptions = {
    * diffuse and the split-sum specular. False declares no environment
    * cube and shades with the lights alone. Needs `lights`. */
   env?: boolean
-  /** Fog inside sceneOutput. False leaves the fog set out. */
-  fog?: boolean
+  /** Fog inside sceneOutput. False leaves the fog set out; "additive"
+   * composes fogAdditive instead of fog, the form a `blend: "add"` draw
+   * needs (it fades toward black, not the fog color). */
+  fog?: boolean | "additive"
 }
 
 /**
@@ -866,7 +868,7 @@ export function sceneSource(o: SceneSourceOptions = {}): string {
   let lights = o.lights !== false
   let receiveShadow = lights && o.receiveShadow !== false
   let env = lights && o.env !== false
-  let fog = o.fog !== false
+  let fog = o.fog ?? true
   return glsl`
     ${SURFACE}
     ${lights || fog ? "uniform vec3 uCamPos;" : ""}
@@ -899,7 +901,7 @@ export function sceneSource(o: SceneSourceOptions = {}): string {
     ${lights ? sceneShadeSource(receiveShadow, env) : ""}
 
     vec4 sceneOutput(vec3 rgb, float alpha, vec3 position) {
-      ${fog ? "rgb = fog(rgb, alpha, position, uCamPos);" : ""}
+      ${fog === "additive" ? "rgb = fogAdditive(rgb, position, uCamPos);" : fog ? "rgb = fog(rgb, alpha, position, uCamPos);" : ""}
       return outputColor(rgb, alpha);
     }
   `
@@ -1021,8 +1023,10 @@ export type LitSourceOptions = {
    * alpha falls below it (the cutoff is a per-entry uniform, so one
    * program serves every value). */
   alphaTest?: boolean
-  /** Compose the scene's fog over the result (default true). */
-  fog?: boolean
+  /** Compose the scene's fog over the result (default true); "additive"
+   * for a `blend: "add"` program, which fades toward black instead of the
+   * fog color (see FOG). */
+  fog?: boolean | "additive"
   /** Bend the lit normal by a tangent-space normal map (NORMAL_MAP:
    * `uniform sampler2D uNormalMap` scaled by `uniform float
    * uNormalScale`), sampled at the same uv as uMap. The frame comes from
@@ -1114,7 +1118,7 @@ type LitSource = {
   receiveShadow: boolean
   cull: CullMode
   alphaTest: boolean
-  fog: boolean
+  fog: boolean | "additive"
   normalMap: boolean
   emissive: boolean
   emissiveMap: boolean
@@ -1143,7 +1147,7 @@ function resolveLit(o: LitSourceOptions): LitSource {
     receiveShadow: o.receiveShadow !== false,
     cull: o.cull ?? "back",
     alphaTest: o.alphaTest === true,
-    fog: o.fog !== false,
+    fog: o.fog ?? true,
     normalMap: o.normalMap === true,
     emissive: o.emissive === true || o.emissiveMap === true,
     emissiveMap: o.emissiveMap === true,
@@ -1383,7 +1387,7 @@ export const UNLIT_VERTEX = glsl`
 
 /**
  * The option set the unlit builders take: LitSourceOptions minus
- * everything lighting decides (no vertexColors, triplanar, receiveShadow)
+ * everything lighting decides (no triplanar, receiveShadow)
  * and minus cull (the unlit fragment has no facing-dependent code - cull
  * is pure pipeline state, passed to shaderMaterialClass directly). The
  * slots follow the lit contract; the varyings here are vUv and vWorldPos
@@ -1392,13 +1396,19 @@ export const UNLIT_VERTEX = glsl`
 export type UnlitSourceOptions = {
   /** The fragment samples a `uniform sampler2D uMap`, tinted by uColor. */
   map?: boolean
+  /** Multiply the base by the "colored" layout's per-vertex aColor (see
+   * the lit option): unlitVertex(o) forwards it as vColor, times iColor
+   * under instanceColors. */
+  vertexColors?: boolean
   /** Write the base alpha through and blend; opaque (the default) writes
    * alpha 1. */
   transparent?: boolean
   /** Declare `uniform float uAlphaTest` and discard below it. */
   alphaTest?: boolean
-  /** Compose the scene's fog over the result (default true). */
-  fog?: boolean
+  /** Compose the scene's fog over the result (default true); "additive"
+   * for a `blend: "add"` program, which fades toward black instead of the
+   * fog color (see FOG). */
+  fog?: boolean | "additive"
   /** Declare `uniform vec4 uMapTransform` ([repeatU, repeatV, offsetU,
    * offsetV]) and sample the map at `vUv * repeat + offset` (see the lit
    * option of the same name). Needs `map`. */
@@ -1423,9 +1433,10 @@ export type UnlitSourceOptions = {
 
 type UnlitSource = {
   map: boolean
+  vertexColors: boolean
   transparent: boolean
   alphaTest: boolean
-  fog: boolean
+  fog: boolean | "additive"
   mapTransform: boolean
   skinned: boolean
   instanced: boolean
@@ -1437,9 +1448,10 @@ type UnlitSource = {
 function resolveUnlit(o: UnlitSourceOptions): UnlitSource {
   return {
     map: o.map === true,
+    vertexColors: o.vertexColors === true,
     transparent: o.transparent === true,
     alphaTest: o.alphaTest === true,
-    fog: o.fog !== false,
+    fog: o.fog ?? true,
     mapTransform: o.mapTransform === true && o.map === true,
     skinned: o.skinned === true,
     instanced: o.instanced === true || o.instanceColors === true,
@@ -1451,22 +1463,26 @@ function resolveUnlit(o: UnlitSourceOptions): UnlitSource {
 
 /**
  * The vertex stage `unlit` pairs with an option set: UNLIT_VERTEX, or its
+ * colored form (aColor forwarded as vColor) when `vertexColors`, its
  * skinned form (the skin matrix applied before uModel) when `skinned`,
  * its instanced form (the instance matrix under uModel, iColor forwarded
- * as vColor under `instanceColors`) when `instanced`.
+ * as vColor under `instanceColors`) when `instanced`. vColor carries the
+ * vertex color, the instance color, or their product, as in lit.
  */
 export function unlitVertex(o: UnlitSourceOptions = {}): string {
   let c = resolveUnlit(o)
-  if (!c.skinned && !c.instanced) return UNLIT_VERTEX
+  if (!c.vertexColors && !c.skinned && !c.instanced) return UNLIT_VERTEX
+  let color = c.vertexColors && c.instanceColors ? "aColor * iColor" : c.vertexColors ? "aColor" : c.instanceColors ? "iColor" : ""
   return glsl`
   in vec3 aPos;
   in vec2 aUV;
+  ${c.vertexColors ? "in vec4 aColor;" : ""}
   ${c.skinned ? SKIN_DECLS : ""}
   ${c.instanced ? INSTANCE_MATRIX : ""}
   ${c.instanceColors ? "in vec4 iColor;" : ""}
   out vec2 vUv;
   out vec3 vWorldPos;
-  ${c.instanceColors ? "out vec4 vColor;" : ""}
+  ${color ? "out vec4 vColor;" : ""}
   uniform mat4 uModel;
   uniform mat4 uViewProj;
 
@@ -1476,17 +1492,17 @@ export function unlitVertex(o: UnlitSourceOptions = {}): string {
     vWorldPos = world.xyz;
     gl_Position = uViewProj * world;
     vUv = aUV;
-    ${c.instanceColors ? "vColor = iColor;" : ""}
+    ${color ? `vColor = ${color};` : ""}
   }
 `
 }
 
 /** The unlit base sample: uColor times the (possibly transformed) map,
- * times the instance color when the material carries one. */
+ * times the vertex and instance colors when the material carries them. */
 function unlitBase(c: UnlitSource): string {
   let uv = c.mapTransform ? "vUv * uMapTransform.xy + uMapTransform.zw" : "vUv"
   let base = c.map ? `vec4 base = texture(uMap, ${uv}) * uColor;` : "vec4 base = uColor;"
-  return c.instanceColors ? base + "\n      base *= vColor;" : base
+  return c.vertexColors || c.instanceColors ? base + "\n      base *= vColor;" : base
 }
 
 /**
@@ -1509,7 +1525,7 @@ export function unlitFragment(o: UnlitSourceOptions = {}): string {
   return glsl`
     ${c.map ? "in vec2 vUv;" : ""}
     in vec3 vWorldPos;
-    ${c.instanceColors ? "in vec4 vColor;" : ""}
+    ${c.vertexColors || c.instanceColors ? "in vec4 vColor;" : ""}
     ${c.map ? "uniform sampler2D uMap;" : ""}
     uniform vec4 uColor;
     ${c.alphaTest ? "uniform float uAlphaTest;" : ""}
@@ -1537,7 +1553,7 @@ export function unlitShadowFragment(o: UnlitSourceOptions = {}): string | undefi
   if (!c.alphaTest && !c.surface) return undefined
   return glsl`
     ${c.map ? "in vec2 vUv;" : ""}
-    ${c.instanceColors ? "in vec4 vColor;" : ""}
+    ${c.vertexColors || c.instanceColors ? "in vec4 vColor;" : ""}
     uniform vec4 uColor;
     ${c.map ? "uniform sampler2D uMap;" : ""}
     ${c.alphaTest ? "uniform float uAlphaTest;" : ""}

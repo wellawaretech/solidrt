@@ -10,7 +10,8 @@
 // directly. Images travel as their encoded files (PNG/JPEG bytes).
 
 import type { ModelChannel, ModelData, ModelMaterial, ModelNode, ModelSkin } from "./gltf.ts"
-import { layoutStride } from "./geometry.ts"
+import { layoutStride, FORMAT_FLOATS } from "./geometry.ts"
+import type { VertexAttribute } from "@solidrt/core/gpu"
 import type { VertexLayout } from "./geometry.ts"
 
 /** "SRTM" read as a little-endian u32. */
@@ -26,9 +27,23 @@ const MAGIC = 0x4d545253
 // them, so it is rejected the same way rather than read as all-metal.
 const VERSION = 5
 
-// The named layouts the container writes; a custom attribute-list layout
-// has no name to store, so encodeModel rejects it.
+// The named layouts the container writes by name; a custom attribute-list
+// layout (a skinned primitive with COLOR_0, a withAttribute channel) is
+// written as its list.
 const NAMED_LAYOUTS = ["standard", "colored", "skinned"]
+
+// A part's layout as written: a named preset, or a custom attribute list
+// checked to the shape the stride and the pipeline are built from.
+function decodeLayout(layout: string | VertexAttribute[], name: string): VertexLayout {
+  if (typeof layout === "string") {
+    if (!NAMED_LAYOUTS.includes(layout)) throw new Error("decodeModel: part '" + name + "' has an unsupported layout " + layout)
+    return layout as VertexLayout
+  }
+  if (!Array.isArray(layout) || !layout.every((a) => typeof a.name === "string" && a.format in FORMAT_FLOATS)) {
+    throw new Error("decodeModel: part '" + name + "' has a malformed attribute list")
+  }
+  return layout
+}
 
 type Block = { offset: number; bytes: number }
 
@@ -37,7 +52,7 @@ type PartHeader = Block & {
   node: number
   skin: number | null
   material: number
-  layout: string
+  layout: string | VertexAttribute[]
   vertexCount: number
   indexBits: 16 | 32
   index: Block
@@ -84,9 +99,6 @@ export function encodeModel(data: ModelData): Uint8Array {
   let parts: PartHeader[] = data.parts.map((part) => {
     let g = part.geometry
     let layout = g.layout === undefined ? "standard" : g.layout
-    if (typeof layout !== "string") {
-      throw new Error("encodeModel: part '" + part.name + "' has a custom attribute-list layout; only the named layouts are written")
-    }
     let vertices = push(new Uint8Array(g.vertices.buffer, g.vertices.byteOffset, g.vertices.byteLength))
     let index = push(new Uint8Array(g.indices.buffer, g.indices.byteOffset, g.indices.byteLength))
     return {
@@ -152,8 +164,7 @@ export function decodeModel(bytes: Uint8Array): ModelData {
   let payload = base + 12 + jsonLength + ((4 - (jsonLength % 4)) % 4)
 
   let parts = header.parts.map((part) => {
-    if (!NAMED_LAYOUTS.includes(part.layout)) throw new Error("decodeModel: part '" + part.name + "' has an unsupported layout " + part.layout)
-    let layout = part.layout as VertexLayout
+    let layout = decodeLayout(part.layout, part.name)
     let indexCount = part.index.bytes / (part.indexBits / 8)
     let geometry: ModelData["parts"][0]["geometry"] = {
       vertices: new Float32Array(buffer, payload + part.offset, part.vertexCount * layoutStride(layout)),

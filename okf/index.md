@@ -126,8 +126,8 @@ Shaped, not started.
   container with retained hierarchy, skins and animation clips plus the JS
   mixer since 2026-08-31) covers rigged models end to end; still open are the
   compressed real-world files (Draco/meshopt, KTX2), morph targets,
-  merge-by-material, vertex colors, per-material samplers and runtime-fetched
-  content, each demand-gated.
+  merge-by-material, per-material samplers and runtime-fetched content, each
+  demand-gated.
 - **[No way to ask why a mesh did not draw](backlog/3d-scene-draw-introspection.md)** [2026-09-08]
   Four independent mechanisms silently drop a mesh from a target - frustum
   culling, the layer mask, overrideMaterial skipping instanced meshes, and the
@@ -909,6 +909,13 @@ Finished, kept for the reasoning.
   (sceneSource) with a Surface struct, shade functions, a light accessor and
   one output tail, the stock materials built from it, custom looks joining at
   one of three tiers.
+- **[Debug helper builders - grid, axes, bounds box and plane as lines geometry](done/3d-debug-helper-builders.md)** [2026-09-10]
+  Nothing in @solidrt/3d draws a grid, an axis triad, a bounds box or a ground
+  plane, which is the first cluster a porter reaches for because it is what
+  you use while debugging the port itself. With topology "lines" on Geometry
+  these are pure builders next to wireframeGeometry, so the item is four
+  functions plus the one missing material flag - vertexColors on unlit - and
+  no components, renderer or Rust work.
 - **[Environment tier - skybox and environment reflections](done/3d-environment.md)** [2026-09-06]
   "Done 2026-09-06 in four stages: skybox and vRay background, scene
   environment with lit reflectivity, the linear-only color pipeline with

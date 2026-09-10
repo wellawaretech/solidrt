@@ -22,6 +22,7 @@
 // flux). The GPU buffer step lives in geometry-gpu.ts.
 
 import type { Topology, VertexAttribute } from "@solidrt/core/gpu"
+import { premultipliedColor } from "./color.ts"
 import { add, compose, cross, mat4, normalize, normalMatrix, sub, updateRotation, updateScale } from "./math.ts"
 import type { Quat, TransformUpdate, Vec2, Vec3 } from "./math.ts"
 
@@ -326,7 +327,9 @@ export function withAttribute(geometry: Geometry, attr: VertexAttribute, fill: A
  * positions, normals, uvs and indices, plus an aColor vec4 per vertex -
  * the data channel for materials whose vertex stage reads `in vec4 aColor`
  * (a tint, baked ambient occlusion, any four scalars; the name is the
- * standard vocabulary, the contents are yours). `withAttribute` with the
+ * standard vocabulary, the contents are yours - raw floats, so a tint the
+ * stock materials read under `vertexColors` is premultiplied linear:
+ * encode an sRGB pick with premultipliedColor). `withAttribute` with the
  * aColor channel; the "colored" preset name is kept on the result.
  */
 export function withColors(geometry: Geometry, fill: ColorFill, label?: string): Geometry {
@@ -621,6 +624,209 @@ export function edgesGeometry(geometry: Geometry, thresholdAngle = EDGES_THRESHO
     layout: geometry.layout,
     label: label ?? (geometry.label ? geometry.label + "-edges" : undefined),
   }
+}
+
+// The debug helpers: Three's GridHelper, AxesHelper, Box3Helper and
+// PlaneHelper as "lines" builders (Godot and Unity keep the equivalents in
+// the editor; with no editor and topology on the geometry they are plain
+// data here). A helper is a Geometry like any other: a node places it, a
+// material draws it. Normals and uvs fill the standard prefix and mean
+// nothing on a line.
+
+// Three's GridHelper defaults, sRGB: the subdivision lines (0x888888) and
+// the two through the origin (0x444444).
+const GRID_COLOR: [number, number, number] = [0.53, 0.53, 0.53]
+const GRID_CENTER_COLOR: [number, number, number] = [0.27, 0.27, 0.27]
+// Three's defaults: a 10 by 10 grid of unit cells.
+const GRID_SIZE = 10
+const GRID_DIVISIONS = 10
+// X red, Y green, Z blue: the axis colors of every engine.
+const AXIS_COLORS: [number, number, number][] = [[1, 0, 0], [0, 1, 0], [0, 0, 1]]
+
+// The layout a colored helper emits: "colored" unless the caller asked for
+// a wider one, which must still carry the aColor channel the helper writes.
+function helperLayout(options: GeometryOptions, name: string): VertexLayout {
+  let layout = options.layout ?? "colored"
+  if (layoutSlot(layout, "aColor") === null) throw new Error(name + ": layout has no aColor channel to write")
+  return layout
+}
+
+// The helper tail: pack, mark as lines, write the colors when there are any.
+function packLines(verts: number[], indices: number[], options: GeometryOptions, colors?: number[]): Geometry {
+  let geometry = packGeometry(verts, indices, options)
+  geometry.topology = "lines"
+  if (colors !== undefined) fillColors(geometry, colors)
+  return geometry
+}
+
+/**
+ * A square grid of lines in the XZ plane at y 0, centered on the origin
+ * (Three's GridHelper with its defaults): `divisions` cells of
+ * `size / divisions` along each side, the subdivision lines in `color`
+ * and the two lines through the origin in `centerColor`, which exist only
+ * when `divisions` is even. Colors are sRGB 0..1 like a material's,
+ * written premultiplied linear into the "colored" layout's aColor:
+ * `unlit({ vertexColors: true })` draws them, and a material that reads no
+ * aColor (a plain `unlit({ color })`) draws the grid in its own color.
+ * (divisions + 1) * 4 vertices, one per line end. Lines are one pixel
+ * wide.
+ */
+export type GridHelperOptions = GeometryOptions & {
+  /** Side length of the square, default 10. */
+  size?: number
+  /** Cells along each side, default 10 (unit cells). */
+  divisions?: number
+  /** sRGB color of the subdivision lines, default Three's 0x888888. */
+  color?: [number, number, number] | [number, number, number, number]
+  /** sRGB color of the two lines through the origin (present when
+   * `divisions` is even), default Three's 0x444444. */
+  centerColor?: [number, number, number] | [number, number, number, number]
+}
+
+export function gridHelper(options: GridHelperOptions = {}): Geometry {
+  let { size = GRID_SIZE, divisions = GRID_DIVISIONS, color = GRID_COLOR, centerColor = GRID_CENTER_COLOR } = options
+  if (!(Number.isInteger(divisions) && divisions >= 1)) throw new Error("gridHelper: divisions must be a whole number of 1 or more, got " + divisions)
+  let half = size / 2
+  let step = size / divisions
+  let line = premultipliedColor(color)
+  let center = premultipliedColor(centerColor)
+  let verts: number[] = []
+  let colors: number[] = []
+  for (let i = 0; i <= divisions; i++) {
+    let k = -half + i * step
+    let t = i / divisions
+    // The line across x at z = k, then the line across z at x = k.
+    verts.push(-half, 0, k, 0, 1, 0, 0, t, half, 0, k, 0, 1, 0, 1, t)
+    verts.push(k, 0, -half, 0, 1, 0, t, 0, k, 0, half, 0, 1, 0, t, 1)
+    let c = i * 2 === divisions ? center : line
+    for (let end = 0; end < 4; end++) colors.push(c[0]!, c[1]!, c[2]!, c[3]!)
+  }
+  let indices: number[] = []
+  for (let i = 0; i < verts.length / STANDARD_FLOATS; i++) indices.push(i)
+  return packLines(verts, indices, { label: options.label, layout: helperLayout(options, "gridHelper") }, colors)
+}
+
+/** Three segments from the origin along +x, +y and +z, X red, Y green,
+ * Z blue (the axis colors of every engine; Three's AxesHelper), in the
+ * "colored" layout like gridHelper: 6 vertices. */
+export type AxesHelperOptions = GeometryOptions & {
+  /** Length of each axis segment, default 1. */
+  size?: number
+}
+
+export function axesHelper(options: AxesHelperOptions = {}): Geometry {
+  let { size = 1 } = options
+  let verts: number[] = []
+  let colors: number[] = []
+  AXIS_COLORS.forEach((axis, i) => {
+    let d = [0, 0, 0]
+    d[i] = 1
+    verts.push(0, 0, 0, d[0]!, d[1]!, d[2]!, 0, 0)
+    verts.push(d[0]! * size, d[1]! * size, d[2]! * size, d[0]!, d[1]!, d[2]!, 1, 0)
+    let c = premultipliedColor(axis)
+    colors.push(c[0]!, c[1]!, c[2]!, c[3]!, c[0]!, c[1]!, c[2]!, c[3]!)
+  })
+  return packLines(verts, [0, 1, 2, 3, 4, 5], { label: options.label, layout: helperLayout(options, "axesHelper") }, colors)
+}
+
+/**
+ * The twelve edges of an axis-aligned box given as `[minX, minY, minZ,
+ * maxX, maxY, maxZ]` - what geometryBounds, a model's `bounds` and the
+ * spatial queries return - as "lines" geometry (Three's Box3Helper): 8
+ * vertices, 24 indices, standard layout, so a plain `unlit({ color })`
+ * draws it. The bounds are baked in local space: put the helper under the
+ * node whose bounds they are. For a box that moves every frame do what
+ * Three does - draw `edgesGeometry(box())`, a unit cube's edges, on a
+ * node whose position is the box center and whose scale is its size, and
+ * update the transform instead of rebuilding geometry.
+ */
+export function box3Helper(bounds: ArrayLike<number>, options: GeometryOptions = {}): Geometry {
+  if (bounds.length !== 6) throw new Error("box3Helper: bounds must be [minX, minY, minZ, maxX, maxY, maxZ], got " + bounds.length + " values")
+  let verts: number[] = []
+  let indices: number[] = []
+  // Corner i has bit 0 for x, bit 1 for y, bit 2 for z (set = the max
+  // side); an edge joins two corners that differ in exactly one bit. The
+  // normal is the corner's outward diagonal.
+  let n = 1 / Math.sqrt(3)
+  for (let i = 0; i < 8; i++) {
+    let x = (i & 1) !== 0, y = (i & 2) !== 0, z = (i & 4) !== 0
+    verts.push(bounds[x ? 3 : 0]!, bounds[y ? 4 : 1]!, bounds[z ? 5 : 2]!, x ? n : -n, y ? n : -n, z ? n : -n, 0, 0)
+    for (let bit = 1; bit < 8; bit <<= 1) if ((i & bit) === 0) indices.push(i, i | bit)
+  }
+  return packLines(verts, indices, options)
+}
+
+/**
+ * A plane marker as "lines" geometry (Three's PlaneHelper without its
+ * translucent fill): a `size` square in the XY plane at the origin facing
+ * +z exactly like plane(), its two diagonals, and a unit segment from the
+ * center along the normal so the facing reads. Place it with the node
+ * transform the way plane() is placed (Three's takes a Plane and does the
+ * lookAt itself; there is no Plane type here). 6 vertices, 14 indices,
+ * standard layout.
+ */
+export type PlaneHelperOptions = GeometryOptions & {
+  /** Side length of the square, default 1. */
+  size?: number
+}
+
+export function planeHelper(options: PlaneHelperOptions = {}): Geometry {
+  let { size = 1 } = options
+  let h = size / 2
+  // prettier-ignore
+  let verts = [
+    -h, -h, 0, 0, 0, 1, 0, 1,
+    h, -h, 0, 0, 0, 1, 1, 1,
+    h, h, 0, 0, 0, 1, 1, 0,
+    -h, h, 0, 0, 0, 1, 0, 0,
+    0, 0, 0, 0, 0, 1, 0.5, 0.5,
+    0, 0, 1, 0, 0, 1, 0.5, 0.5,
+  ]
+  // The outline, the two diagonals, the normal tick.
+  return packLines(verts, [0, 1, 1, 2, 2, 3, 3, 0, 0, 2, 1, 3, 4, 5], options)
+}
+
+// Three's ArrowHelper proportions: the head is a fifth of the length and
+// a fifth as wide as it is long.
+const ARROW_HEAD_LENGTH = 0.2
+const ARROW_HEAD_WIDTH = 0.2
+
+/**
+ * An arrow from the origin along +y as "lines" geometry (Three's
+ * ArrowHelper, whose local arrow points up +y too, with its solid cone
+ * replaced by a pyramid outline): the shaft, four lines from the tip to a
+ * diamond base, and the base itself. Aim it with the node transform -
+ * `quatFromTo(out, [0, 1, 0], direction)` is the rotation - and put the
+ * origin in `position`; Three's constructor takes both, here they are the
+ * node's. 7 vertices, 18 indices, standard layout.
+ */
+export type ArrowHelperOptions = GeometryOptions & {
+  /** Tip distance from the origin, default 1. */
+  length?: number
+  /** Head length from base to tip, default a fifth of `length`. */
+  headLength?: number
+  /** Head width across the base, default a fifth of `headLength`. */
+  headWidth?: number
+}
+
+export function arrowHelper(options: ArrowHelperOptions = {}): Geometry {
+  let { length = 1 } = options
+  let headLength = options.headLength ?? length * ARROW_HEAD_LENGTH
+  let headWidth = options.headWidth ?? headLength * ARROW_HEAD_WIDTH
+  let base = length - headLength
+  let w = headWidth / 2
+  // prettier-ignore
+  let verts = [
+    0, 0, 0, 0, 1, 0, 0, 0,
+    0, base, 0, 0, 1, 0, 0, 1,
+    0, length, 0, 0, 1, 0, 0, 1,
+    w, base, 0, 0, 1, 0, 1, 1,
+    0, base, w, 0, 1, 0, 1, 1,
+    -w, base, 0, 0, 1, 0, 1, 1,
+    0, base, -w, 0, 1, 0, 1, 1,
+  ]
+  // The shaft, the four tip lines, the base diamond.
+  return packLines(verts, [0, 1, 2, 3, 2, 4, 2, 5, 2, 6, 3, 4, 4, 5, 5, 6, 6, 3], options)
 }
 
 // Indices for a row-major (cellRows + 1) x (cellCols + 1) vertex grid: two

@@ -326,7 +326,9 @@ case, the prefix plus `aColor` vec4 - the per-vertex data channel (a
 tint, baked AO, any four scalars; standard name, your contents) - and
 `withColors(geometry, fill)` is its spelling. Fill is a flat
 size-per-vertex array or a per-vertex callback receiving `(index, pos,
-normal, uv)`. Materials read attributes BY NAME: a material's vertex
+normal, uv)`. The fill is raw floats: a tint the stock materials read
+under `vertexColors` is premultiplied linear like every shader color,
+so encode an sRGB pick with `premultipliedColor(color)`. Materials read attributes BY NAME: a material's vertex
 stage may declare any subset of its geometry's channels, and a channel
 the program reads that the geometry lacks (name + format) throws at
 add(). What a program reads is the ENGINE's word (`material.attributes()`
@@ -831,7 +833,30 @@ until the threshold passes 360 / radialSegments. The wireframe of a
 "skinned" part draws in its pose under `unlit({ skinned: true })` with
 the mesh's palette, and the swap onto a live mesh is
 `setGeometry` + `setMaterial` (`examples/wireframe.tsx`). Lines are one
-pixel wide on GL ES; thick lines are quad geometry. `geometryBounds(geometry)`
+pixel wide on GL ES; thick lines are quad geometry. The debug helpers are
+`"lines"` builders too, Three's helper classes camelCased:
+`gridHelper({ size?, divisions?, color?, centerColor? })` is the XZ grid
+at y 0 (defaults 10 by 10, Three's grays; the two lines through the
+origin take `centerColor` and exist only for an even `divisions`),
+`axesHelper({ size? })` the X red, Y green, Z blue triad from the origin,
+`box3Helper(bounds, options?)` the twelve edges of a
+`[minX, minY, minZ, maxX, maxY, maxZ]` box in local space, and
+`planeHelper({ size? })` a square outline with its diagonals and a unit
+normal tick in the XY plane facing +z, placed like `plane()`, and
+`arrowHelper({ length?, headLength?, headWidth? })` an arrow along +y
+with a pyramid-outline head, aimed by the node's rotation
+(`quatFromTo(out, [0, 1, 0], direction)`). Godot and
+Unity keep these in the editor and Three makes them scene objects; here
+they are plain geometry a node places and a material draws. The grid and
+the triad are "colored" layout (sRGB colors in, premultiplied linear
+aColor out, the material contract) drawn by `unlit({ vertexColors:
+true })`; a material that reads no aColor draws them in its own color.
+The box, the plane and the arrow are standard layout. For a bounds box that moves
+every frame, draw `edgesGeometry(box())` on a node whose position is the
+box center and whose scale is its size and update the transform (Three's
+Box3Helper does exactly that) instead of rebuilding.
+`examples/wireframe.tsx` draws a grid, the triad and the rover's bounds
+box. `geometryBounds(geometry)`
 returns the cached local AABB `[minX, minY, minZ, maxX, maxY, maxZ]`, and
 `rayBoxDistance(ox, oy, oz, dx, dy, dz, minX, .., maxZ)` is the picking
 slab test (entry t >= 0 in units of the direction's length, 0 from
@@ -869,15 +894,20 @@ uint16/uint32 indices by vertex count automatically.
 
 #### unlit
 
-`unlit({ color?, map?, transparent?, cull?, alphaTest?, fog? })` -
+`unlit({ color?, map?, vertexColors?, transparent?, blend?, cull?, alphaTest?, fog? })` -
 straight `[r, g, b, a?]` 0..1 sRGB (decoded to linear light, see Color
-below), premultiplied internally; `cull` and
+below), premultiplied internally; `vertexColors: true` multiplies by the
+"colored" layout's aColor (the geometry must carry it: withColors, a
+gridHelper or axesHelper); `blend` the factors of a transparent draw,
+"alpha" when absent, `"add"` for a glow (any mode but "none" implies
+`transparent` unless told `transparent: false`, the shaderMaterial
+rule); `cull` and
 `alphaTest` as on lit (a mapped cutout casts its cutout); `fog: false`
 opts out of the scene's fog (all four library materials take it).
 
 #### sprite
 
-`sprite({ color?, map?, transparent?, billboard? })` - unlit on a quad
+`sprite({ color?, map?, transparent?, blend?, billboard? })` - unlit on a quad
 that turns to face the camera IN THE VERTEX STAGE (off the shared
 uCamRight/uCamUp, or uCamPos for `billboard: "fixed-y"`, which yaws
 only and stays upright on world y - Godot's BILLBOARD_FIXED_Y, the
@@ -1280,7 +1310,8 @@ material drops the code from the program (Three's `material.fog`) - a
 sky sphere, a far backdrop. A shaderMaterial opts in by composing `FOG`
 from `/glsl` (declares the set; `fog(rgb, alpha, worldPos, camPos)`, or
 `fogAdditive(rgb, worldPos, camPos)` for a `blend: "add"` look, which
-fades toward black instead of the fog color).
+fades toward black instead of the fog color; a stock material with
+`blend: "add"` composes that form by itself).
 The BACKGROUND is not fogged: it is entry zero with no depth or
 distance, so match the fog color to `clearColor` or the background's
 horizon, and put `far` at or inside the camera's far plane to hide the
@@ -1478,8 +1509,7 @@ the directional list, Lambert diffuse, Blinn-Phong highlight when
 `specular` (0..1 strength) is set with `shininess` (default 30), a
 mirror of the scene's environment when `reflectivity` (0..1, the
 face-on weight; see Environment above) is set, blurred by the same
-`shininess`, the same `color`/`map`/`transparent` as unlit, `vertexColors: true` to
-multiply by the colored layout's aColor (so the geometry must carry it),
+`shininess`, the same `color`/`map`/`transparent`/`blend`/`vertexColors` as unlit,
 `triplanar: n` to sample `map` by world position at `n` repeats per
 world unit, blended across the three axis planes by the normal, and
 `alphaTest: t` for a cutout (a fragment whose final alpha is below `t`
@@ -1724,10 +1754,16 @@ factor (a zero factor skips the map too - glTF's product rule, emission
 off), `pbrMetallicRoughness` factors as `m.metalness`/`m.roughness` and
 its packed texture as BOTH `maps.metalnessMap` and `maps.roughnessMap`
 (standard's channel-select options; the default `lit` ignores them).
-The `material(m, maps)` callback receives every uploaded texture
-by lit()/standard() option name (`maps.map`/`maps.normalMap`/
-`maps.emissiveMap`/`maps.metalnessMap`/`maps.roughnessMap`);
-`data.materials` is in file order, so the calls arrive in file order.
+The `material(m, maps, skinned, vertexColors)` callback receives every
+uploaded texture by lit()/standard() option name (`maps.map`/
+`maps.normalMap`/`maps.emissiveMap`/`maps.metalnessMap`/
+`maps.roughnessMap`); `data.materials` is in file order, so the calls
+arrive in file order. A primitive's `COLOR_0` lands in its geometry's
+aColor (the "colored" layout, or the skinned list plus aColor for a
+rigged one; linear and premultiplied as glTF stores it) and the default
+material takes `vertexColors: true` for such parts - the callback's
+fourth argument says so, and a material shared by painted and unpainted
+parts is made once per variant, like the skinned split.
 A `.srtm` baked before the material records carried the PBR fields
 (file version 3) is rejected by loadModel - re-bake with `srt tool
 3d/model`.
@@ -1816,7 +1852,7 @@ okf/done/animation-core.md records the design.
 
 ### Not in the subset
 
-Not in the subset, dropped: vertex colors, tangents and further UV sets;
+Not in the subset, dropped: tangents and further UV sets;
 morph targets (the "weights" channel path); samplers are ignored (every
 texture repeats); additive blending draws as base color. The follow-ups
 are filed in okf/backlog/3d-model-loader.md. The `.srtm` container is
@@ -1868,8 +1904,8 @@ older bakes are rejected - re-bake with `srt tool 3d/model`.
   (or `shaderMaterial({ transparent: true })`) builds the pipeline with
   `blend: "alpha"` and `depthWrite: false` (depth test stays on, so it hides
   behind opaques without occluding other translucents). The one inference:
-  a `shaderMaterial` with any `blend` but "none" is transparent unless told
-  `transparent: false` - every blended draw belongs after the opaques, and
+  a stock material or `shaderMaterial` with any `blend` but "none" is transparent
+  unless told `transparent: false` - every blended draw belongs after the opaques, and
   back-to-front is harmless for add/multiply. The scene owns the
   order: background, opaque meshes by `renderOrder` then add order,
   transparent meshes by `renderOrder` then back-to-front by the CENTER of

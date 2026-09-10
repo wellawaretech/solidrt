@@ -153,6 +153,9 @@ depends on `@solidrt/3d` (or in-repo from the package directory).
   second index buffer) and `setGeometry`/`setMaterial` swap it onto the
   live mesh, no node touched. Space, a tap on the rover, or the `wire`
   debug command (`{ mode: "solid" | "wireframe" | "edges" }`) cycles.
+  Under it the debug helpers: `gridHelper` on the rover's floor and
+  `axesHelper` at the origin through one `unlit({ vertexColors: true })`,
+  and `box3Helper` around its bounds, turning with it.
 - `model-load.tsx` - the same rover loaded ASYNC with `loadModel` from
   `assets/` under a `<Loading>` boundary: the async read lives in a memo,
   a second memo derives the scene JSX after that read, and the shell

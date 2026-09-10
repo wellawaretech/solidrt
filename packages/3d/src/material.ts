@@ -43,7 +43,7 @@ import type {
 } from "@solidrt/core/gpu"
 import { FORMAT_FLOATS, layoutAttributes, layoutKey, layoutSlot } from "./geometry.ts"
 import type { VertexLayout } from "./geometry.ts"
-import { linearColor } from "./color.ts"
+import { linearColor, premultipliedColor } from "./color.ts"
 import {
   INSTANCE_COLOR_ATTRIBUTES,
   INSTANCE_MATRIX,
@@ -82,7 +82,8 @@ export type Material = {
    * channels in the geometry are fine (inactive attributes keep the
    * stride). */
   attributes(): VertexAttribute[]
-  /** True when the pipeline blends over (blend "alpha", depthWrite off):
+  /** True when the pipeline blends over (its `blend`, "alpha" by default,
+   * with depthWrite off):
    * the scene draws this material's meshes after every opaque one, sorted
    * back-to-front by mesh origin, and re-sorts them when the camera moves. */
   transparent?: boolean
@@ -124,14 +125,6 @@ export type Material = {
 // pipeline per vertex layout inside each.
 let unlitClasses = new Map<string, ShaderMaterialClass>()
 
-// The uColor a color option compiles to: sRGB decoded to linear light,
-// then premultiplied by its alpha (the target's contract).
-function colorParam(color: readonly number[]): number[] {
-  let a = color.length === 4 ? color[3]! : 1
-  let c = linearColor(color)
-  return [c[0]! * a, c[1]! * a, c[2]! * a, a]
-}
-
 export type UnlitOptions = {
   /** Straight [r, g, b] or [r, g, b, a], 0..1, sRGB - a color picker's
    * values. The library decodes it to linear light for shading and the
@@ -144,16 +137,28 @@ export type UnlitOptions = {
    * linear light like `color`; a plain rgba8 map reads as linear data and
    * shows washed out. */
   map?: TextureId
+  /** Multiply the base by the geometry's per-vertex aColor - the "colored"
+   * layout: withColors geometry, a gridHelper or axesHelper (add() throws
+   * without the channel). Three's vertexColors, Godot's
+   * vertex_color_use_as_albedo. */
+  vertexColors?: boolean
   /** Blend over what is behind (color alpha and map alpha both count).
-   * Without it an alpha below 1 still draws opaque. See Material.transparent. */
+   * Without it an alpha below 1 still draws opaque. See Material.transparent.
+   * Implied by any `blend` but "none". */
   transparent?: boolean
+  /** The blend factors of a transparent draw, "alpha" when absent
+   * (Three's blending, Godot's blend_mode): "add" for glows and additive
+   * particles, "multiply" to darken. Any mode but "none" makes the
+   * material transparent - drawn after the opaques, depthWrite off -
+   * unless `transparent: false` says otherwise, the shaderMaterial rule. */
+  blend?: BlendMode
   /** Which faces to drop; default "back". "none" draws both sides of
    * single-layer geometry (foliage cards, glass, a mirrored part), and
    * lit materials then light a back face with its normal flipped, as
    * Three's DoubleSide and Godot's CULL_DISABLED do. */
   cull?: CullMode
-  /** Cutout: drop a fragment whose final alpha (color x map, and for lit
-   * the vertex color too) is below this, 0..1 (Three's alphaTest, glTF
+  /** Cutout: drop a fragment whose final alpha (color x map, and the
+   * vertex color under vertexColors) is below this, 0..1 (Three's alphaTest, glTF
    * alphaMode MASK with its alphaCutoff). Opaque otherwise:
    * depth-written, not sorted, unlike `transparent`. Foliage cards and
    * fences want it with `cull: "none"`; a mapped cutout casts its cutout
@@ -200,6 +205,14 @@ export type UnlitOptions = {
   instanceColors?: boolean
 }
 
+// The fog an unlit program composes: none when opted out, the additive
+// form (fading toward black, see FOG) for an additive blend, else the
+// scene's fog.
+function fogForm(fog: boolean | undefined, blend: BlendMode | undefined): boolean | "additive" {
+  if (fog === false) return false
+  return blend === "add" ? "additive" : true
+}
+
 // The instance attributes a stock instanced material declares: the
 // matrix always, the color record beside it under instanceColors.
 function stockInstanceAttributes(instanced: boolean, instanceColors: boolean): InstanceAttribute[] | undefined {
@@ -220,32 +233,35 @@ function mapTransformParam(t: { offset?: [number, number]; repeat?: [number, num
 }
 
 /**
- * An unlit material: flat color, textured when `map` is given. Unlit is
- * the complete v1 set - lit materials arrive with uniform arrays (the
- * light list); see the scene-graph research note.
+ * An unlit material: flat color, textured when `map` is given; lines,
+ * the debug helpers and additive glows (`blend: "add"`) all draw with
+ * it.
  */
 export function unlit(opts: UnlitOptions = {}): Material {
-  let uColor = colorParam(opts.color ?? [1, 1, 1])
+  let uColor = premultipliedColor(opts.color ?? [1, 1, 1])
   let map = opts.map !== undefined
-  let transparent = opts.transparent === true
+  let blend = opts.blend
+  let transparent = opts.transparent ?? (blend !== undefined && blend !== "none")
   let cull = opts.cull ?? "back"
   let alphaTest = opts.alphaTest !== undefined
-  let fog = opts.fog !== false
+  let fog = fogForm(opts.fog, blend)
   let mapTransform = opts.mapTransform !== undefined
   let skinned = opts.skinned === true
   let instanceColors = opts.instanceColors === true
   let instanced = opts.instanced === true || instanceColors
+  let vertexColors = opts.vertexColors === true
   if (mapTransform && !map) throw new Error("unlit: mapTransform without a map to transform")
-  let key = [map, transparent, cull, alphaTest, fog, mapTransform, skinned, instanced, instanceColors].join("|")
+  let key = [map, vertexColors, transparent, blend, cull, alphaTest, fog, mapTransform, skinned, instanced, instanceColors].join("|")
   let cls = unlitClasses.get(key)
   if (cls === undefined) {
     cls = shaderMaterialClass({
-      vertex: unlitVertex({ skinned, instanced, instanceColors }),
-      fragment: unlitFragment({ map, alphaTest, transparent, fog, mapTransform, instanceColors }),
+      vertex: unlitVertex({ vertexColors, skinned, instanced, instanceColors }),
+      fragment: unlitFragment({ map, vertexColors, alphaTest, transparent, fog, mapTransform, instanceColors }),
       shadowVertex: instanced ? shadowDepthVertex(skinned, true) : undefined,
       instanceAttributes: stockInstanceAttributes(instanced, instanceColors),
       instanceStyle: instanceColors ? INSTANCE_COLOR_DEFAULT : undefined,
       transparent,
+      blend,
       cull,
       label: "scene-unlit-" + key,
     })
@@ -259,15 +275,12 @@ export function unlit(opts: UnlitOptions = {}): Material {
     textures: map ? { uMap: opts.map! } : undefined,
     shadow:
       alphaTest && map
-        ? unlitShadowMaterial(shadowCull(cull), skinned, instanced, instanceColors, uColor, opts.alphaTest!, opts.map!, mapTransform ? params.uMapTransform as number[] : undefined)
+        ? unlitShadowMaterial(shadowCull(cull), vertexColors, skinned, instanced, instanceColors, uColor, opts.alphaTest!, opts.map!, mapTransform ? params.uMapTransform as number[] : undefined)
         : undefined,
   })
 }
 
 export type LitOptions = UnlitOptions & {
-  /** Multiply the base by the geometry's per-vertex aColor (withColors
-   * geometry; add() throws without it). */
-  vertexColors?: boolean
   /** Blinn-Phong highlight strength, 0..1 (default 0: pure diffuse). */
   specular?: number
   /** Highlight tightness, wide sheen (~8) to mirror dot (~150); default 30. */
@@ -348,7 +361,7 @@ export type LitOptions = UnlitOptions & {
 // The lit program is built by litFragment in ./glsl - the same builder an
 // app calls to get a lit material with its own GLSL in it, composed from
 // the same exported constants. What varies per flag: map x vertexColors x
-// triplanar x receiveShadow x transparent x cull (a class that shows back
+// triplanar x receiveShadow x transparent x blend x cull (a class that shows back
 // faces lights them with the normal flipped, else a double-sided leaf's
 // back is black) x alphaTest (the cutoff itself is a per-entry uniform,
 // one class for every value) x fog (the scene's fog composed last, or
@@ -374,10 +387,11 @@ type LitClass = {
   vertexColors: boolean
   triplanar: boolean
   transparent: boolean
+  blend: BlendMode | undefined
   receiveShadow: boolean
   cull: CullMode
   alphaTest: boolean
-  fog: boolean
+  fog: boolean | "additive"
   normalMap: boolean
   emissive: boolean
   emissiveMap: boolean
@@ -406,7 +420,7 @@ let litClasses = new Map<string, ShaderMaterialClass>()
  * starts at zero: set at least one of the two.
  */
 export function lit(opts: LitOptions = {}): Material {
-  let uColor = colorParam(opts.color ?? [1, 1, 1])
+  let uColor = premultipliedColor(opts.color ?? [1, 1, 1])
   let map = opts.map !== undefined
   let triplanar = map && opts.triplanar !== undefined
   let alphaTest = opts.alphaTest !== undefined
@@ -430,11 +444,12 @@ export function lit(opts: LitOptions = {}): Material {
     map,
     vertexColors: opts.vertexColors === true,
     triplanar,
-    transparent: opts.transparent === true,
+    transparent: opts.transparent ?? (opts.blend !== undefined && opts.blend !== "none"),
+    blend: opts.blend,
     receiveShadow: opts.receiveShadow !== false,
     cull,
     alphaTest,
-    fog: opts.fog !== false,
+    fog: fogForm(opts.fog, opts.blend),
     normalMap,
     emissive,
     emissiveMap,
@@ -456,6 +471,7 @@ export function lit(opts: LitOptions = {}): Material {
       instanceAttributes: stockInstanceAttributes(flags.instanced, flags.instanceColors),
       instanceStyle: flags.instanceColors ? INSTANCE_COLOR_DEFAULT : undefined,
       transparent: flags.transparent,
+      blend: flags.blend,
       cull,
       label: "scene-lit-" + key,
     })
@@ -536,6 +552,7 @@ function standardShadowFlags(c: StandardClass): LitClass {
     vertexColors: c.vertexColors,
     triplanar: c.triplanar,
     transparent: c.transparent,
+    blend: c.blend,
     receiveShadow: c.receiveShadow,
     cull: c.cull,
     alphaTest: c.alphaTest,
@@ -567,7 +584,7 @@ function standardShadowFlags(c: StandardClass): LitClass {
  * combination, shared by every instance, like lit.
  */
 export function standard(opts: StandardOptions = {}): Material {
-  let uColor = colorParam(opts.color ?? [1, 1, 1])
+  let uColor = premultipliedColor(opts.color ?? [1, 1, 1])
   let map = opts.map !== undefined
   let triplanar = map && opts.triplanar !== undefined
   let alphaTest = opts.alphaTest !== undefined
@@ -599,11 +616,12 @@ export function standard(opts: StandardOptions = {}): Material {
     map,
     vertexColors: opts.vertexColors === true,
     triplanar,
-    transparent: opts.transparent === true,
+    transparent: opts.transparent ?? (opts.blend !== undefined && opts.blend !== "none"),
+    blend: opts.blend,
     receiveShadow: opts.receiveShadow !== false,
     cull,
     alphaTest,
-    fog: opts.fog !== false,
+    fog: fogForm(opts.fog, opts.blend),
     normalMap,
     emissive,
     emissiveMap,
@@ -625,6 +643,7 @@ export function standard(opts: StandardOptions = {}): Material {
       instanceAttributes: stockInstanceAttributes(flags.instanced, flags.instanceColors),
       instanceStyle: flags.instanceColors ? INSTANCE_COLOR_DEFAULT : undefined,
       transparent: flags.transparent,
+      blend: flags.blend,
       cull,
       label: "scene-standard-" + key,
     })
@@ -781,6 +800,7 @@ let unlitShadowClasses = new Map<string, ShaderMaterialClass>()
  * transform). */
 function unlitShadowMaterial(
   cull: CullMode,
+  vertexColors: boolean,
   skinned: boolean,
   instanced: boolean,
   instanceColors: boolean,
@@ -789,13 +809,13 @@ function unlitShadowMaterial(
   uMap: TextureId,
   uMapTransform?: number[],
 ): Material {
-  let key = [cull, uMapTransform !== undefined, skinned, instanced, instanceColors].join("|")
+  let key = [cull, uMapTransform !== undefined, vertexColors, skinned, instanced, instanceColors].join("|")
   let cls = unlitShadowClasses.get(key)
   if (cls === undefined) {
-    let fragment = unlitShadowFragment({ map: true, alphaTest: true, mapTransform: uMapTransform !== undefined, instanceColors })
+    let fragment = unlitShadowFragment({ map: true, vertexColors, alphaTest: true, mapTransform: uMapTransform !== undefined, instanceColors })
     if (fragment === undefined) throw new Error("unlitShadowMaterial: the cutout options cannot discard")
     cls = shaderMaterialClass({
-      vertex: unlitVertex({ skinned, instanced, instanceColors }),
+      vertex: unlitVertex({ vertexColors, skinned, instanced, instanceColors }),
       fragment,
       cull,
       instanceAttributes: stockInstanceAttributes(instanced, instanceColors),
@@ -810,8 +830,9 @@ function unlitShadowMaterial(
 
 /** A sprite's options: unlit's, minus instancing (the billboard stage
  * places one quad per mesh; an instanced billboard field is a custom
- * class's vertex stage). */
-export type SpriteOptions = Omit<UnlitOptions, "instanced" | "instanceColors"> & {
+ * class's vertex stage) and minus vertexColors (the quad is the stage's
+ * own, with no color channel). */
+export type SpriteOptions = Omit<UnlitOptions, "instanced" | "instanceColors" | "vertexColors"> & {
   /** Which way the quad turns to face the camera. `"full"` (default,
    * Three's Sprite): both axes follow the view, the quad is always flat
    * to the screen. `"fixed-y"` (Godot's BILLBOARD_FIXED_Y): only the yaw
@@ -884,22 +905,25 @@ let spriteClasses = new Map<string, ShaderMaterialClass>()
  */
 export function sprite(opts: SpriteOptions = {}): Material {
   // Excluded by the type and checked for a JS caller: the billboard stage
-  // has no instance placement, so the flags would otherwise be ignored.
-  if ((opts as UnlitOptions).instanced || (opts as UnlitOptions).instanceColors) {
-    throw new Error("sprite: instanced and instanceColors are not sprite options (one billboard per mesh)")
+  // has no instance placement and no vertex channel, so the flags would
+  // otherwise be ignored.
+  if ((opts as UnlitOptions).instanced || (opts as UnlitOptions).instanceColors || (opts as UnlitOptions).vertexColors) {
+    throw new Error("sprite: instanced, instanceColors and vertexColors are not sprite options (one billboard quad per mesh)")
   }
-  let uColor = colorParam(opts.color ?? [1, 1, 1])
+  let uColor = premultipliedColor(opts.color ?? [1, 1, 1])
   let map = opts.map !== undefined
+  let blend = opts.blend
   let transparent = opts.transparent !== false
   let fixedY = opts.billboard === "fixed-y"
-  let fog = opts.fog !== false
-  let key = [map, transparent, fixedY, fog].join("|")
+  let fog = fogForm(opts.fog, blend)
+  let key = [map, transparent, blend, fixedY, fog].join("|")
   let cls = spriteClasses.get(key)
   if (cls === undefined) {
     cls = shaderMaterialClass({
       vertex: fixedY ? SPRITE_FIXED_Y_VERTEX_SRC : SPRITE_VERTEX_SRC,
       fragment: unlitFragment({ map, transparent, fog }),
       transparent,
+      blend,
       cull: "none",
       label: "scene-sprite-" + key,
     })

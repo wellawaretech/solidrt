@@ -18,6 +18,7 @@ import { gltfExternalUris, parseGltf } from "./gltf.ts"
 import type { ModelClip, ModelData, ModelMaterial } from "./gltf.ts"
 import { decodeModel } from "./model-file.ts"
 import { disposeGeometry } from "./geometry-gpu.ts"
+import { layoutSlot } from "./geometry.ts"
 import { standard } from "./material.ts"
 import type { Material } from "./material.ts"
 import { add, afterFree, createGroup, remove, setTransform } from "./node.ts"
@@ -52,13 +53,14 @@ export type ModelOptions = {
    * renders its metals near black, so set one, or return `lit` here for
    * the Blinn-Phong look). `maps` holds the uploaded textures by
    * lit()/standard() option name. Called once per material -
-   * or once per (material, skinned) combination when skinned parts share
-   * a material with static ones - and shared by every part using it.
-   * `skinned` is true when the material must skin (pass it through to
-   * `lit`/`unlit`, or read aJoints/aWeights + uBones yourself).
-   * `data.materials` is in file order, so the calls arrive in file order
-   * too. */
-  material?: (material: ModelMaterial, maps: ModelMaps, skinned: boolean) => Material
+   * or once per (material, skinned, vertexColors) combination when parts
+   * that differ in either share a material - and shared by every part
+   * using it. `skinned` is true when the material must skin (pass it
+   * through to `lit`/`unlit`, or read aJoints/aWeights + uBones yourself);
+   * `vertexColors` is true when the part carries COLOR_0 in aColor (pass
+   * it through, or read aColor yourself). `data.materials` is in file
+   * order, so the calls arrive in file order too. */
+  material?: (material: ModelMaterial, maps: ModelMaps, skinned: boolean, vertexColors: boolean) => Material
   /** Debug name for the textures. */
   label?: string
 }
@@ -134,7 +136,7 @@ export function createModel(data: ModelData, opts: ModelOptions = {}): Model {
       label: label ? label + "-image" + i : undefined,
     })
   })
-  let make = opts.material ?? ((m: ModelMaterial, maps: ModelMaps, skinned: boolean): Material => {
+  let make = opts.material ?? ((m: ModelMaterial, maps: ModelMaps, skinned: boolean, vertexColors: boolean): Material => {
     // An emissive factor of zero is emission OFF (the glTF product rule:
     // factor times texture), so the map is skipped too - no sampler for
     // a term that cannot show.
@@ -155,17 +157,19 @@ export function createModel(data: ModelData, opts: ModelOptions = {}): Model {
       cull: m.doubleSided ? "none" : "back",
       alphaTest: m.alphaMode === "MASK" ? m.alphaCutoff : undefined,
       skinned: skinned || undefined,
+      vertexColors: vertexColors || undefined,
     })
   })
   let slot = (index: number | null): TextureId | null => (index === null ? null : textures[index]!)
   // One instance per glTF material as today, plus a skinned variant per
-  // material the skinned parts bring (a material shared by a static and
-  // a skinned part needs two programs - different vertex stages).
+  // material the skinned parts bring and a vertex-colored one per material
+  // the COLOR_0 parts bring (a material shared by parts that differ in
+  // either needs two programs - different vertex stages).
   let variants = new Map<string, Material>()
-  let materialFor = (index: number, skinned: boolean): Material => {
+  let materialFor = (index: number, skinned: boolean, vertexColors: boolean): Material => {
     let m = data.materials[index]
     if (m === undefined) throw new Error("createModel: a part names a missing material " + index)
-    let key = index + (skinned ? "|skinned" : "")
+    let key = index + (skinned ? "|skinned" : "") + (vertexColors ? "|colored" : "")
     let made = variants.get(key)
     if (made === undefined) {
       made = make(
@@ -178,12 +182,13 @@ export function createModel(data: ModelData, opts: ModelOptions = {}): Model {
           roughnessMap: slot(m.metalnessRoughnessMap),
         },
         skinned,
+        vertexColors,
       )
       variants.set(key, made)
     }
     return made
   }
-  let materials = data.materials.map((_, i) => materialFor(i, false))
+  let materials = data.materials.map((_, i) => materialFor(i, false, false))
 
   let model = createGroup() as Model
   model._skins = []
@@ -245,7 +250,7 @@ export function createModel(data: ModelData, opts: ModelOptions = {}): Model {
   refreshJointBounds(model)
   model.parts = data.parts.map((part) => {
     let skinned = part.skin !== null
-    let material = materialFor(part.material, skinned)
+    let material = materialFor(part.material, skinned, layoutSlot(part.geometry.layout, "aColor") !== null)
     let mesh = createMesh(part.geometry, material)
     if (skinned) {
       // A skinned part's vertices are model-space bind pose and the skin

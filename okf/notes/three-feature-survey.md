@@ -31,11 +31,11 @@ Three ships as `LineSegments` subclasses. With `topology: "lines"` on
 
 | Three | us |
 | --- | --- |
-| `GridHelper`, `PolarGridHelper` | missing |
-| `AxesHelper` | missing |
-| `BoxHelper`, `Box3Helper` | missing (`geometryBounds` exists, nothing draws it) |
-| `ArrowHelper` | missing |
-| `PlaneHelper` | missing |
+| `GridHelper`, `PolarGridHelper` | `gridHelper`; polar missing |
+| `AxesHelper` | `axesHelper` |
+| `BoxHelper`, `Box3Helper` | `box3Helper(bounds)`; the live subtree-bounds half missing |
+| `ArrowHelper` | `arrowHelper`, a pyramid-outline head (one lines geometry) |
+| `PlaneHelper` | `planeHelper`, no fill quad |
 | `CameraHelper` (frustum lines) | missing |
 | `Directional/Point/Spot/HemisphereLightHelper` | missing |
 | `SkeletonHelper` | missing, though skeletons and `bindSkeleton` exist |
@@ -44,14 +44,15 @@ Three ships as `LineSegments` subclasses. With `topology: "lines"` on
 This is the largest single cluster and the one a porter hits first,
 because it is what you reach for while debugging the port itself.
 
-One shape decision to settle before building any of it: Three makes these
-scene objects, while Godot and Unity keep the equivalents in the editor
-rather than the runtime API. Splitting the difference matches our
-layering: the static ones (`grid`, `axes`, `box`, `plane`, `arrow`) are
-geometry builders next to `wireframeGeometry` plus a stock line material,
-while the live ones (camera, light, skeleton gizmos) have to follow a
-node every frame and would be components, which is a much larger
-commitment for a debug aid.
+The shape decision (settled 2026-09-10, okf/done/3d-debug-helper-builders.md):
+Three makes these scene objects, while Godot and Unity keep the
+equivalents in the editor rather than the runtime API. Splitting the
+difference matches our layering: the static ones (grid, axes, box,
+plane, arrow) are geometry builders next to `wireframeGeometry`, drawn by
+`unlit` (which took `vertexColors` for the two colored ones, so there is
+no line material), while the live ones (camera, light, skeleton gizmos)
+have to follow a node every frame and would be components, which is a
+much larger commitment for a debug aid; those stay open.
 
 Adjacent: neither Three's native lines nor ours have line width (1px GL
 lines, the ES core guarantee). Three answers with the `Line2`/
@@ -282,8 +283,8 @@ Not a decision, a suggested order for turning the untracked entries into
 backlog files, by how many ports each one unblocks:
 
 1. Stock-material extension hooks (the `onBeforeCompile` slot).
-2. The debug helper builders (grid, axes, box, arrow, plane), plus a
-   stock line material and the line-width question.
+2. The line-width question (the debug helper builders landed 2026-09-10,
+   with no line material needed: `unlit` draws lines).
 3. `computeVertexNormals` and `toNonIndexed`.
 4. Clipping planes.
 5. Point size.

@@ -30,3 +30,12 @@ export function linearColor(color: readonly number[]): number[] {
   for (let i = 0; i < 3 && i < out.length; i++) out[i] = srgbToLinear(out[i]!)
   return out
 }
+
+/** An [r, g, b] or [r, g, b, a] sRGB color as the premultiplied linear
+ * vec4 the shaders take (uColor, aColor, iColor): rgb decoded to linear
+ * light and multiplied by the alpha, which is 1 when absent. */
+export function premultipliedColor(color: readonly number[]): number[] {
+  let a = color.length === 4 ? color[3]! : 1
+  let c = linearColor(color)
+  return [c[0]! * a, c[1]! * a, c[2]! * a, a]
+}

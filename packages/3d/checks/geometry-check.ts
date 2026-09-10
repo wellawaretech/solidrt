@@ -1,14 +1,15 @@
 // Check rig for the geometry-as-data ops (src/geometry.ts): transformGeometry
 // against hand-computed points and normals (non-uniform scale included),
 // mergeGeometries offsets, uint32 widening and the mixed-layout rejection,
-// and the exported bounds/ray helpers. Pure-module inputs only, so it runs
+// the exported bounds/ray helpers, and the debug helper builders (counts,
+// bounds, the color channel). Pure-module inputs only, so it runs
 // headless on flux, bundled from the repo root:
 //
 //   bunx srt bundle -f --stdout packages/3d/checks/geometry-check.ts | target/release/flux -
 //
 // A failure prints FAIL lines and throws at the end, so the run exits nonzero.
 
-import { box, cylinder, edgesGeometry, validateGeometry, fillAttribute, fillColors, packGeometry, sphere, torus, torusKnot, geometryBounds, layoutKey, layoutSlot, layoutStride, mergeGeometries, plane, transformGeometry, wireframeGeometry, withAttribute, withColors, STANDARD_FLOATS } from "../src/geometry.ts"
+import { arrowHelper, axesHelper, box, box3Helper, cylinder, edgesGeometry, validateGeometry, fillAttribute, fillColors, gridHelper, packGeometry, planeHelper, sphere, torus, torusKnot, geometryBounds, layoutKey, layoutSlot, layoutStride, mergeGeometries, plane, transformGeometry, wireframeGeometry, withAttribute, withColors, STANDARD_FLOATS, VERTEX_LAYOUTS } from "../src/geometry.ts"
 import { rayBoxDistance } from "../src/math.ts"
 import type { Geometry } from "../src/geometry.ts"
 
@@ -256,6 +257,82 @@ throws("merge empty", () => mergeGeometries([]))
   throws("validate short line strip", () => validateGeometry({ vertices: v, indices: new Uint16Array([0]), topology: "line-strip" }))
   throws("validate short triangle strip", () => validateGeometry({ vertices: v, indices: new Uint16Array([0, 1]), topology: "triangle-strip" }))
   throws("validate unknown topology", () => validateGeometry({ vertices: v, indices: new Uint16Array([0]), topology: "fans" as never }))
+}
+
+// The debug helpers: lines topology, counts, bounds, and the color channel
+// where there is one (pure primaries survive the sRGB decode exactly).
+{
+  let stride = layoutStride("colored")
+  let slot = layoutSlot("colored", "aColor")!
+  let colorAt = (g: Geometry, i: number): Float32Array => g.vertices.subarray(i * stride + slot.offset, i * stride + slot.offset + 4)
+  let posAt = (g: Geometry, i: number): Float32Array => g.vertices.subarray(i * stride, i * stride + 3)
+
+  let grid = gridHelper({ size: 2, divisions: 2, color: [1, 0, 0], centerColor: [0, 0, 1] })
+  if (grid.topology !== "lines" || grid.layout !== "colored") fail("gridHelper shape")
+  if (grid.vertices.length !== 12 * stride || grid.indices.length !== 12) fail("gridHelper counts")
+  validateGeometry(grid)
+  expectVec("gridHelper bounds", geometryBounds(grid), [-1, 0, -1, 1, 0, 1])
+  expectVec("gridHelper first line start", posAt(grid, 0), [-1, 0, -1])
+  expectVec("gridHelper first line end", posAt(grid, 1), [1, 0, -1])
+  expectVec("gridHelper edge color", colorAt(grid, 0), [1, 0, 0, 1])
+  expectVec("gridHelper center color x", colorAt(grid, 4), [0, 0, 1, 1])
+  expectVec("gridHelper center color z", colorAt(grid, 7), [0, 0, 1, 1])
+  let dflt = gridHelper()
+  if (dflt.vertices.length !== 44 * stride || dflt.indices.length !== 44) fail("gridHelper default counts")
+  expectVec("gridHelper default bounds", geometryBounds(dflt), [-5, 0, -5, 5, 0, 5])
+  let odd = gridHelper({ divisions: 3, color: [1, 0, 0], centerColor: [0, 0, 1] })
+  for (let i = 0; i < 16; i++) if (colorAt(odd, i)[2] !== 0) fail("gridHelper odd divisions has a center line at vertex " + i)
+  throws("gridHelper standard layout", () => gridHelper({ layout: "standard" }))
+  throws("gridHelper zero divisions", () => gridHelper({ divisions: 0 }))
+
+  let axes = axesHelper({ size: 2 })
+  if (axes.topology !== "lines" || axes.layout !== "colored") fail("axesHelper shape")
+  if (axes.vertices.length !== 6 * stride || axes.indices.length !== 6) fail("axesHelper counts")
+  validateGeometry(axes)
+  expectVec("axesHelper x tip", posAt(axes, 1), [2, 0, 0])
+  expectVec("axesHelper y tip", posAt(axes, 3), [0, 2, 0])
+  expectVec("axesHelper z tip", posAt(axes, 5), [0, 0, 2])
+  expectVec("axesHelper x red", colorAt(axes, 1), [1, 0, 0, 1])
+  expectVec("axesHelper y green", colorAt(axes, 3), [0, 1, 0, 1])
+  expectVec("axesHelper z blue", colorAt(axes, 5), [0, 0, 1, 1])
+  // A wider layout that still carries aColor takes the colors at its slot.
+  let wide = axesHelper({ layout: [...VERTEX_LAYOUTS.colored, { name: "aW", format: "f32" }] })
+  let wideSlot = layoutSlot(wide.layout, "aColor")!
+  expectVec("axesHelper wide layout color", wide.vertices.subarray(wideSlot.offset, wideSlot.offset + 4), [1, 0, 0, 1])
+  throws("axesHelper skinned layout", () => axesHelper({ layout: "skinned" }))
+
+  let bounds = [-1, -2, -3, 4, 5, 6]
+  let b3 = box3Helper(bounds, { label: "b3" })
+  if (b3.topology !== "lines" || b3.layout !== undefined || b3.label !== "b3") fail("box3Helper shape")
+  if (b3.vertices.length !== 8 * STANDARD_FLOATS || b3.indices.length !== 24) fail("box3Helper counts")
+  validateGeometry(b3)
+  expectVec("box3Helper bounds", geometryBounds(b3), bounds)
+  for (let e = 0; e < 24; e += 2) {
+    let a = b3.indices[e]! * STANDARD_FLOATS, b = b3.indices[e + 1]! * STANDARD_FLOATS
+    let differ = 0
+    for (let k = 0; k < 3; k++) if (b3.vertices[a + k] !== b3.vertices[b + k]) differ++
+    if (differ !== 1) fail("box3Helper edge " + e / 2 + " is not axis-aligned")
+  }
+  throws("box3Helper short bounds", () => box3Helper([1, 2, 3]))
+
+  let pl = planeHelper({ size: 4 })
+  if (pl.topology !== "lines" || pl.layout !== undefined) fail("planeHelper shape")
+  if (pl.vertices.length !== 6 * STANDARD_FLOATS || pl.indices.length !== 14) fail("planeHelper counts")
+  validateGeometry(pl)
+  expectVec("planeHelper bounds", geometryBounds(pl), [-2, -2, 0, 2, 2, 1])
+  expectVec("planeHelper normal tick", pl.vertices.subarray(5 * STANDARD_FLOATS, 5 * STANDARD_FLOATS + 3), [0, 0, 1])
+
+  // Head a fifth of the length (0.4) and a fifth as wide (0.08): the base
+  // sits at y 1.6 with a half-width of 0.04.
+  let arrow = arrowHelper({ length: 2 })
+  if (arrow.topology !== "lines" || arrow.layout !== undefined) fail("arrowHelper shape")
+  if (arrow.vertices.length !== 7 * STANDARD_FLOATS || arrow.indices.length !== 18) fail("arrowHelper counts")
+  validateGeometry(arrow)
+  expectVec("arrowHelper bounds", geometryBounds(arrow), [-0.04, 0, -0.04, 0.04, 2, 0.04])
+  expectVec("arrowHelper tip", arrow.vertices.subarray(2 * STANDARD_FLOATS, 2 * STANDARD_FLOATS + 3), [0, 2, 0])
+  expectVec("arrowHelper base corner", arrow.vertices.subarray(3 * STANDARD_FLOATS, 3 * STANDARD_FLOATS + 3), [0.04, 1.6, 0])
+  let custom = arrowHelper({ length: 1, headLength: 0.5, headWidth: 1 })
+  expectVec("arrowHelper custom head", geometryBounds(custom), [-0.5, 0, -0.5, 0.5, 1, 0.5])
 }
 
 if (failures > 0) throw new Error(failures + " geometry check(s) failed")

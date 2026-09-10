@@ -24,14 +24,18 @@
 // Outside the subset: Draco/meshopt-compressed meshes and any other
 // required extension throw naming it; sparse accessors and morph
 // targets (the "weights" channel path) are skipped
-// or ignored; vertex colors, tangents and further UV sets are dropped
-// (the standard layout has no slot for them yet). Skins ARE parsed:
-// joints, inverse binds, and the "skinned" vertex layout.
+// or ignored; tangents and further UV sets are dropped. COLOR_0 IS
+// parsed, linear and premultiplied as glTF stores it, into the aColor
+// channel the stock materials read under vertexColors: the "colored"
+// layout for a static primitive, the skinned list plus aColor for a
+// rigged one. Skins ARE parsed: joints, inverse binds, and the "skinned"
+// vertex layout.
 
 import { compose, decompose, det3, mat4, multiply } from "./math.ts"
 import { linearToSrgb } from "./color.ts"
 import type { Mat4, Quat, Vec3 } from "./math.ts"
-import { layoutStride, packGeometry, packIndices, STANDARD_FLOATS } from "./geometry.ts"
+import { layoutSlot, layoutStride, packGeometry, packIndices, STANDARD_FLOATS, VERTEX_LAYOUTS } from "./geometry.ts"
+import type { VertexLayout } from "./geometry.ts"
 import type { Geometry } from "./geometry.ts"
 import type { Topology } from "@solidrt/core/gpu"
 
@@ -105,6 +109,10 @@ export type ModelPart = {
   /** Index into ModelData.skins, or null. A skinned part's geometry has
    * the "skinned" layout (aJoints/aWeights after the standard prefix). */
   skin: number | null
+  /** The part's vertices and indices: the "standard" layout, "colored"
+   * for a primitive with COLOR_0 (aColor premultiplied linear), "skinned"
+   * for a rigged one, and the skinned list plus aColor for a rigged one
+   * with COLOR_0. */
   geometry: Geometry
   /** Index into ModelData.materials. */
   material: number
@@ -225,6 +233,9 @@ const GLTF_ALPHA_CUTOFF = 0.5
 
 // The "skinned" layout's stride (standard prefix + aJoints + aWeights).
 const SKINNED_FLOATS = layoutStride("skinned")
+// The layout of a skinned primitive with COLOR_0: the skinned preset plus
+// the aColor channel (a custom list; the container writes it as such).
+const SKINNED_COLORED: VertexLayout = [...VERTEX_LAYOUTS.skinned, { name: "aColor", format: "vec4" }]
 
 const IDENTITY = mat4()
 
@@ -426,6 +437,8 @@ export function parseGltf(bytes: Uint8Array, resolve?: UriResolver): ModelData {
     let count = pos.count
     let nrm = prim.attributes.NORMAL !== undefined ? accessorFloats(prim.attributes.NORMAL, name + " NORMAL").data : null
     let uv = prim.attributes.TEXCOORD_0 !== undefined ? accessorFloats(prim.attributes.TEXCOORD_0, name + " TEXCOORD_0").data : null
+    let color = prim.attributes.COLOR_0 !== undefined ? accessorFloats(prim.attributes.COLOR_0, name + " COLOR_0") : null
+    if (color !== null && color.elements !== 3 && color.elements !== 4) throw new Error("parseGltf: " + name + " COLOR_0 is not VEC3 or VEC4")
     // A skinned primitive: joints and weights become the "skinned"
     // layout's extra channels; its vertices are ALREADY model-space bind
     // pose (the node transform is ignored, per spec), so no flip and
@@ -443,7 +456,11 @@ export function parseGltf(bytes: Uint8Array, resolve?: UriResolver): ModelData {
       joints = j.data
       weights = w.data
     }
-    let stride = skinned ? SKINNED_FLOATS : STANDARD_FLOATS
+    // The layout the vertices are written in: the skin channels for a
+    // skinned primitive, aColor after them for one with COLOR_0.
+    let layout: VertexLayout | undefined = skinned ? (color !== null ? SKINNED_COLORED : "skinned") : color !== null ? "colored" : undefined
+    let stride = layoutStride(layout)
+    let colorWrite = color === null ? null : { data: color.data, elements: color.elements, at: layoutSlot(layout, "aColor")!.offset }
     let raw: ArrayLike<number> =
       prim.indices !== undefined ? accessorFloats(prim.indices, name + " indices").data : Array.from({ length: count }, (_, i) => i)
     // The primitive's topology, carried on the geometry. Triangle strips
@@ -506,7 +523,7 @@ export function parseGltf(bytes: Uint8Array, resolve?: UriResolver): ModelData {
       // Indexed as authored. Lines and points without normals get zero
       // ones (there is no face to take one from; nothing lights them).
       vertices = new Float32Array(count * stride)
-      for (let i = 0; i < count; i++) writeVertex(vertices, i, pos.data, nrm, uv, i, stride, joints, weights)
+      for (let i = 0; i < count; i++) writeVertex(vertices, i, pos.data, nrm, uv, i, stride, joints, weights, colorWrite)
       packedIndices = Array.from(indices)
       if (flip) {
         for (let i = 0; i < packedIndices.length; i += 3) {
@@ -529,9 +546,9 @@ export function parseGltf(bytes: Uint8Array, resolve?: UriResolver): ModelData {
         let a = indices[t * 3]!, b = indices[t * 3 + 1]!, c = indices[t * 3 + 2]!
         if (flip) [b, c] = [c, b]
         let out = t * 3
-        writeVertex(vertices, out, pos.data, null, uv, a, stride, joints, weights)
-        writeVertex(vertices, out + 1, pos.data, null, uv, b, stride, joints, weights)
-        writeVertex(vertices, out + 2, pos.data, null, uv, c, stride, joints, weights)
+        writeVertex(vertices, out, pos.data, null, uv, a, stride, joints, weights, colorWrite)
+        writeVertex(vertices, out + 1, pos.data, null, uv, b, stride, joints, weights, colorWrite)
+        writeVertex(vertices, out + 2, pos.data, null, uv, c, stride, joints, weights, colorWrite)
         faceNormal(face, vertices, out, stride)
         if (flip) {
           face[0] = -face[0]
@@ -585,9 +602,10 @@ export function parseGltf(bytes: Uint8Array, resolve?: UriResolver): ModelData {
       }
       material = defaultMaterial
     }
-    let geometry: Geometry = skinned
-      ? { vertices, indices: packIndices(packedIndices, count), layout: "skinned", label: name }
-      : packGeometry(vertices, packedIndices, { label: name })
+    let geometry: Geometry =
+      layout === undefined
+        ? packGeometry(vertices, packedIndices, { label: name })
+        : { vertices, indices: packIndices(packedIndices, count), layout, label: name }
     if (!triangles) geometry.topology = topology
     parts.push({ name, node, skin, geometry, material })
   }
@@ -795,7 +813,9 @@ function readerFor(componentType: number, normalized: boolean): (dv: DataView, a
 // authored (the runtime's uModel/uNormal do the placing), uv copied or
 // zero, and for the skinned layout the joint indices plus their weights
 // RENORMALIZED to sum 1 (quantized exports drift a little; the spec asks
-// for normalized weights).
+// for normalized weights). A COLOR_0 (VEC3 or VEC4, already 0..1 - the
+// normalized-integer path unpacks quantized exports) lands at the
+// layout's aColor slot premultiplied, alpha 1 for VEC3.
 function writeVertex(
   out: Float32Array,
   slot: number,
@@ -806,6 +826,7 @@ function writeVertex(
   stride: number,
   joints: Float32Array | null = null,
   weights: Float32Array | null = null,
+  color: { data: Float32Array; elements: number; at: number } | null = null,
 ): void {
   let at = slot * stride
   out[at] = pos[src * 3]!
@@ -819,6 +840,14 @@ function writeVertex(
   if (uv !== null) {
     out[at + 6] = uv[src * 2]!
     out[at + 7] = uv[src * 2 + 1]!
+  }
+  if (color !== null) {
+    let c = src * color.elements
+    let a = color.elements === 4 ? color.data[c + 3]! : 1
+    out[at + color.at] = color.data[c]! * a
+    out[at + color.at + 1] = color.data[c + 1]! * a
+    out[at + color.at + 2] = color.data[c + 2]! * a
+    out[at + color.at + 3] = a
   }
   if (joints !== null && weights !== null) {
     let j = src * 4

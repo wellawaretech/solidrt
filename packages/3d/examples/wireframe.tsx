@@ -8,12 +8,18 @@
 // The swap is setGeometry + setMaterial on the live mesh: the node, its
 // transform and its pointer handlers are untouched. Space, a tap on the
 // rover or the `wire` debug command ({ mode }) cycles the modes.
+//
+// Under the rover, the debug helpers: gridHelper on its floor and
+// axesHelper at the origin (world space, so they stand still while the
+// rover turns) and box3Helper around its bounds, turning with it. Lines
+// geometry too; the two colored ones draw through one
+// unlit({ vertexColors: true }) material.
 
 import { createSignal, onFrame, pct, render } from "@solidrt/core"
 import { createTexture } from "@solidrt/core/gpu"
 import type { TextureId } from "@solidrt/core/gpu"
 import { registerDebug } from "srt:dev"
-import { add, createModel, DirectionalLight, edgesGeometry, equirectToCube, Group, parseGltf, PerspectiveCamera, Scene, setGeometry, setMaterial, unlit, wireframeGeometry } from "@solidrt/3d"
+import { add, axesHelper, box3Helper, createModel, DirectionalLight, edgesGeometry, equirectToCube, gridHelper, Group, Mesh, parseGltf, PerspectiveCamera, Scene, setGeometry, setMaterial, unlit, wireframeGeometry } from "@solidrt/3d"
 import type { SceneNode } from "@solidrt/3d"
 import modelBytes from "./model.glb" with { type: "binary" }
 
@@ -23,6 +29,13 @@ type Mode = (typeof MODES)[number]
 // rounded parts, so their seams stay hidden and only rims and creases draw.
 const EDGE_ANGLE = 20
 const LINE_COLOR: [number, number, number] = [0.85, 0.95, 1]
+// The grid's subdivision lines and its two center lines, and the bounds
+// box (Three's Box3Helper yellow), against the dark clear color.
+const GRID_COLOR: [number, number, number] = [0.3, 0.33, 0.4]
+const GRID_CENTER_COLOR: [number, number, number] = [0.6, 0.66, 0.8]
+const BOUNDS_COLOR: [number, number, number] = [1, 1, 0]
+// Grid cells across the rover's floor.
+const GRID_DIVISIONS = 20
 // Face edge of the gradient environment cube: a gradient needs no detail.
 const ENV_FACE = 16
 // The gradient, zenith to nadir, sRGB bytes: sky, horizon, ground, below.
@@ -53,6 +66,11 @@ function App() {
   let b = model.bounds
   let center: [number, number, number] = [(b[0]! + b[3]!) / 2, (b[1]! + b[4]!) / 2, (b[2]! + b[5]!) / 2]
   let radius = Math.hypot(b[3]! - b[0]!, b[4]! - b[1]!, b[5]! - b[2]!) / 2
+
+  let helperLines = unlit({ vertexColors: true })
+  let grid = gridHelper({ size: radius * 4, divisions: GRID_DIVISIONS, color: GRID_COLOR, centerColor: GRID_CENTER_COLOR })
+  let axes = axesHelper({ size: radius })
+  let bounds = box3Helper(b)
 
   // One line material for every part and both line modes. Per part, what
   // each mode swaps in: the line geometries share the solid's vertices,
@@ -97,7 +115,11 @@ function App() {
         <Scene clearColor={[0.1, 0.11, 0.14, 1]} environment={{ cube }} samples={4} label="wireframe">
           <PerspectiveCamera fov={40} position={[center[0] + radius * 1.4, center[1] + radius * 1.1, center[2] + radius * 2.2]} lookAt={center} />
           <DirectionalLight direction={[0.5, -0.8, 0.3]} color={[1, 0.95, 0.85]} intensity={0.9} />
-          <Group rotation={[0, t() / 3, 0]} ref={(g: SceneNode) => add(g, model)} />
+          <Mesh geometry={grid} material={helperLines} position={[0, b[1]!, 0]} />
+          <Mesh geometry={axes} material={helperLines} />
+          <Group rotation={[0, t() / 3, 0]} ref={(g: SceneNode) => add(g, model)}>
+            <Mesh geometry={bounds} material={unlit({ color: BOUNDS_COLOR })} />
+          </Group>
         </Scene>
       </view>
     </window>
