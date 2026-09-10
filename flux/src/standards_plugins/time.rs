@@ -117,6 +117,20 @@ pub fn set_virtual_now_source(ctx: &Ctx<'_>, f: impl Fn() -> f64 + 'static) {
   }
 }
 
+/// Advance virtual time to the now-source's current reading (see
+/// `set_virtual_now_source`) and fire what is due: a task-queue turn for a
+/// host whose frame clock has stopped driving `advance_virtual_time` (a
+/// lifecycle hook running while the platform pump is blocked). No-op without
+/// a source.
+pub fn advance_virtual_time_to_now(ctx: &Ctx<'_>) {
+  let Some(vt) = ctx.userdata::<VirtualTime>() else { return };
+  let now = match vt.0.now_source.borrow().as_ref() {
+    Some(source) => source(),
+    None => return,
+  };
+  advance_virtual_time(ctx, now);
+}
+
 /// Advance virtual time to `now_ms` and fire everything due at or before it,
 /// in deadline order (ties in registration order). Timers registered by the
 /// fired callbacks - including a re-armed interval - wait for the next

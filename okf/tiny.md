@@ -19,6 +19,12 @@ symptom shows. A heading that outgrows this file splits into its own.
 
 - renderer.ts leak sentinel (scanForOrphans): it warns only when a NEW element type joins the orphans, so a leak that keeps growing at a stable set of types goes silent after the first warning (one was caught only by reading `orphanNodes` in get_stats); warn again when the total crosses an order of magnitude.
 
+## Flux
+
+`flux/` - the JavaScript runtime and its plugins.
+
+- `flux:fs` has no `rename`, so an app doing its own atomic write (temp file, then replace) cannot; add `FluxFile.rename(to)` over `std::fs::rename`. Load-bearing now that `onSuspend`/`onQuit` make the app own its persistence.
+
 ## Extensions
 
 `@solidrt/2d` and `@solidrt/3d`.

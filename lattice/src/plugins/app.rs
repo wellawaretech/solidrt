@@ -4,15 +4,13 @@ use flux::rquickjs::module::{Declarations, Exports, ModuleDef};
 use flux::rquickjs::{Ctx, Exception, Function, JsLifetime};
 
 // The `srt:app` module: the running application's own surface. One verb
-// today: exit() - leave the current app, unconditionally. What leaving means
+// today: exit() - leave the current app now. What leaving means
 // is the host's policy (see ExitPolicy in lib.rs): a client with an app
 // running returns to the player; the player root and the standalone
-// runtime quit (Android backgrounds the activity instead of dying).
-//
-// Core's default action for an unprevented `back` event calls exit(); apps
-// call it directly to leave programmatically, e.g. after intercepting back
-// for an unsaved-changes dialog. Not the player-only store surface - that
-// is `srt:apps`.
+// runtime quit (on Android by finishing the activity). The quit hook is not
+// run here: core's exit() wrapper dispatches onQuit and calls this verb once
+// the handlers settled, so this stays the bare native end. Not the
+// player-only store surface - that is `srt:apps`.
 
 // The app control installed as context userdata: the engine-agnostic exit
 // closure, so this module never references runner policy directly.

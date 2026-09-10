@@ -24,6 +24,12 @@ enum EngineCmd {
   // Return to the player; only the dev session sends this.
   #[cfg(feature = "go")]
   Stop,
+  // End the engine loop: ui_thread returns, the event receiver drops, alloy's
+  // run loop winds down on its next send and `run` returns to main. The
+  // graceful process end, used where the platform wants the run loop to
+  // return rather than a process exit (Android: SDL_main returning lets
+  // SDLActivity finish the activity itself).
+  Quit,
   // `app_id` names the app a dev push belongs to (from its installed
   // manifest); the runtime re-anchors into that app's data sandbox before the
   // reload applies. None for pushes without a manifest (bytecode one-shots,
@@ -50,11 +56,9 @@ struct ExitPolicy {
   alloy: Arc<alloy::Context>,
   #[cfg(feature = "go")]
   player_active: Arc<std::sync::atomic::AtomicBool>,
-  #[cfg(feature = "go")]
   engine_tx: tokio::sync::mpsc::UnboundedSender<EngineCmd>,
   #[cfg(feature = "go")]
   dev: Option<go::DevExitHandle>,
-  alloy_cmd_tx: std::sync::mpsc::Sender<alloy::AlloyCommand>,
 }
 
 impl ExitPolicy {
@@ -79,9 +83,80 @@ impl ExitPolicy {
       return;
     }
     if cfg!(target_os = "android") {
-      let _ = self.alloy_cmd_tx.send(alloy::AlloyCommand::Background);
+      // Finish the activity the way the platform does it: SDL_main returns
+      // and SDLActivity calls finish() (its SDLMain runnable), so the next
+      // launch starts a fresh process instead of resuming this one. A
+      // failed send means the engine loop is already gone.
+      let _ = self.engine_tx.send(EngineCmd::Quit);
     } else {
       std::process::exit(0);
+    }
+  }
+}
+
+// How long the runner waits for the app's lifecycle hooks (see run_hook)
+// before letting the platform proceed without them.
+//
+// Quit: bounded by the platform's close budget. On Android,
+// SDLActivity.onDestroy joins the SDL thread for 1000 ms and then continues
+// regardless, so the hook plus the process end must fit inside that. Desktop
+// has no hard budget; the bound is what a closing window may keep the
+// process alive for.
+#[cfg(target_os = "android")]
+const QUIT_HOOK_DEADLINE: std::time::Duration = std::time::Duration::from_millis(700);
+#[cfg(not(target_os = "android"))]
+const QUIT_HOOK_DEADLINE: std::time::Duration = std::time::Duration::from_secs(2);
+// Suspend: bounded by what the suspend hold buys (see alloy::SuspendHold).
+// iOS grants a background task about 30 s; Android keeps a backgrounded
+// process running anyway. A finishing Android activity gets onDestroy's
+// Quit within this window, and the quit hook waits for the suspend work
+// still in flight under its own, tighter, deadline.
+const SUSPEND_HOOK_DEADLINE: std::time::Duration = std::time::Duration::from_secs(10);
+// How often the gate advances JS virtual time while a hook is pending. The
+// timers are frame-driven (the frame verb advances them on every tick), and
+// a suspended platform produces no ticks (Android blocks the pump while
+// paused), so a handler's setTimeout would never fire; the gate pumps time
+// itself at about a frame's cadence meanwhile.
+const HOOK_TIMER_PUMP: std::time::Duration = std::time::Duration::from_millis(16);
+
+// The lifecycle gate: tell the app (`suspend` or `quit` on the event bus,
+// carrying a `done()` the JS side calls once its handlers' promises settled)
+// and wait for the answer up to `deadline`, keeping JS timers marching
+// meanwhile. Both platform-initiated ends go through here; the app-initiated
+// exit() runs the same JS dispatch on its own before calling the native
+// verb. Returns whether the app finished in time; on expiry the platform
+// proceeds anyway and the miss is logged, since fighting the platform there
+// gets the app killed outright. No engine means nothing to ask. Runs as its
+// own task beside the events task, never inside it: the events task is what
+// forwards frame signals and later events, and a hook that stalled it would
+// stall the app it is waiting for.
+async fn run_hook(exec: Option<ExecHandle>, name: &'static str, deadline: std::time::Duration) -> bool {
+  let Some(exec) = exec else {
+    return true;
+  };
+  let (done_tx, mut done_rx) = tokio::sync::oneshot::channel::<()>();
+  flux::gui::events::emit_hook(
+    &exec,
+    name,
+    Box::new(move || {
+      let _ = done_tx.send(());
+    }),
+  );
+  let wait = async {
+    loop {
+      tokio::select! {
+        // A closed channel means the engine went away with the hook
+        // unanswered; that is as final as an answer.
+        _ = &mut done_rx => break,
+        _ = tokio::time::sleep(HOOK_TIMER_PUMP) => exec.exec(|ctx| flux::advance_virtual_time_to_now(&ctx)),
+      }
+    }
+  };
+  match tokio::time::timeout(deadline, wait).await {
+    Ok(()) => true,
+    Err(_) => {
+      log::warn!("[srt] {name} handler did not finish within {} ms", deadline.as_millis());
+      false
     }
   }
 }
@@ -103,13 +178,15 @@ use std::sync::Arc;
 #[cfg(all(target_os = "android", feature = "go"))]
 #[no_mangle]
 pub extern "C" fn SDL_main(argc: i32, argv: *mut *mut i8) -> i32 {
-  let dev_server = parse_dev_server_arg(argc, argv);
+  let args = android_args(argc, argv);
+  let dev_server = dev_server_arg(&args);
+  let launch = launch_arg(&args);
   let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().expect("build tokio runtime");
   // Android resolves its own sandboxed root; no flags, no packed identity.
   // No app argument channel either: the activity is launched by intent, not
   // from a command line.
   let storage = storage::StorageSpec { data_root: None, client: None, app_id: None };
-  start(&rt, None, alloy::Mode::Run, (1280, 720), false, dev_server, embedded_fonts(), storage, Vec::new());
+  start(&rt, None, launch, alloy::Mode::Run, (1280, 720), false, dev_server, embedded_fonts(), storage, Vec::new());
   0
 }
 
@@ -125,7 +202,8 @@ const PACKED_PAYLOAD_ASSET: &str = "app.srtapp";
 // code is for the packager's bring-up.
 #[cfg(all(target_os = "android", not(feature = "go")))]
 #[no_mangle]
-pub extern "C" fn SDL_main(_argc: i32, _argv: *mut *mut i8) -> i32 {
+pub extern "C" fn SDL_main(argc: i32, argv: *mut *mut i8) -> i32 {
+  let launch = launch_arg(&android_args(argc, argv));
   let Some((apk, offset, len)) = alloy::sdl_utils::packed_asset_location(PACKED_PAYLOAD_ASSET) else {
     eprintln!("[srt] no {PACKED_PAYLOAD_ASSET} asset in this APK; nothing to run");
     return 1;
@@ -140,19 +218,19 @@ pub extern "C" fn SDL_main(_argc: i32, _argv: *mut *mut i8) -> i32 {
   // root, keyed by the packed identity like every packed distribution. No
   // argument channel: the activity is launched by intent.
   let storage = storage::StorageSpec { data_root: None, client: None, app_id: Some(payload.app_id) };
-  start(&rt, Some(payload.app), alloy::Mode::Run, (1280, 720), false, None, payload.fonts, storage, Vec::new());
+  start(&rt, Some(payload.app), launch, alloy::Mode::Run, (1280, 720), false, None, payload.fonts, storage, Vec::new());
   0
 }
 
-// Pull `--dev-server <addr>` out of the C argv SDL hands SDL_main (populated from
-// MainActivity.getArguments). The address is the dev server the go client should
-// auto-dial; None when launched without it (e.g. tapping the app icon).
-#[cfg(all(target_os = "android", feature = "go"))]
-fn parse_dev_server_arg(argc: i32, argv: *mut *mut i8) -> Option<String> {
+// The C argv SDL hands SDL_main, populated from the activity's
+// getArguments(): the launch fact from SolidRTActivity, plus the go client's
+// dev-server address.
+#[cfg(target_os = "android")]
+fn android_args(argc: i32, argv: *mut *mut i8) -> Vec<String> {
   if argv.is_null() || argc <= 0 {
-    return None;
+    return Vec::new();
   }
-  let args: Vec<String> = (0..argc as isize)
+  (0..argc as isize)
     .filter_map(|i| {
       let ptr = unsafe { *argv.offset(i) };
       if ptr.is_null() {
@@ -161,7 +239,23 @@ fn parse_dev_server_arg(argc: i32, argv: *mut *mut i8) -> Option<String> {
       // c_char is u8 on Android ARM, i8 elsewhere; cast so this builds on both.
       unsafe { std::ffi::CStr::from_ptr(ptr as *const std::ffi::c_char) }.to_str().ok().map(str::to_owned)
     })
-    .collect();
+    .collect()
+}
+
+// `--restored`: the activity was recreated from saved state (see Launch).
+#[cfg(target_os = "android")]
+fn launch_arg(args: &[String]) -> Launch {
+  if args.iter().any(|arg| arg == "--restored") {
+    Launch::Restored
+  } else {
+    Launch::Fresh
+  }
+}
+
+// `--dev-server <addr>`: the dev server the go client should auto-dial; None
+// when launched without it (e.g. tapping the app icon).
+#[cfg(all(target_os = "android", feature = "go"))]
+fn dev_server_arg(args: &[String]) -> Option<String> {
   let mut it = args.iter();
   while let Some(arg) = it.next() {
     if arg == "--dev-server" {
@@ -253,8 +347,21 @@ pub enum AppSource {
 
 /// What to run, threaded from `start` into the UI thread (kept distinct from the
 /// runtime plumbing it travels with: the tokio handle, alloy context, channels).
+/// How this process came to run: launched anew, or recreated by the system
+/// from a session it ended on its own (a suspended app reclaimed in the
+/// background). Reported to the app as the sticky `launch` event behind
+/// `env.launch`, never interpreted by the runtime. Only Android reports
+/// Restored today (SolidRTActivity's savedInstanceState); desktop launches
+/// are always fresh.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Launch {
+  Fresh,
+  Restored,
+}
+
 struct RunOptions {
   app: Option<AppSource>,
+  launch: Launch,
   playback_fps: Option<u32>,
   stats: bool,
   // Dev-server address to auto-connect on launch (go client only; see plugins::dev).
@@ -344,7 +451,7 @@ fn ui_thread(
   user_input_muted: Arc<AtomicBool>,
   opts: RunOptions,
 ) {
-  let RunOptions { app, playback_fps, stats, dev_server, fonts, storage: storage_spec, args } = opts;
+  let RunOptions { app, launch, playback_fps, stats, dev_server, fonts, storage: storage_spec, args } = opts;
   // Only the go dev client consumes the launch dev-server address.
   #[cfg(not(feature = "go"))]
   let _ = dev_server;
@@ -427,6 +534,8 @@ fn ui_thread(
     let local = tokio::task::LocalSet::new();
     let current_exec: Rc<RefCell<Option<ExecHandle>>> = Rc::new(RefCell::new(None));
     let current_exec_events = current_exec.clone();
+    // The lifecycle gate's view of the engine (see run_hook).
+    let current_exec_hooks = current_exec.clone();
     // The back watchdog's probe handle and its engine-change guard: bumped on
     // every engine build so a watchdog armed against a dead app never fires
     // into its successor.
@@ -545,7 +654,19 @@ fn ui_thread(
           // window geometry, fps). Everything engine-facing happens behind the
           // UiRuntime verbs below.
           match &event {
-            AlloyEvent::Quit => std::process::exit(0),
+            AlloyEvent::Quit => {
+              // The platform is ending the app: run the quit hook (which
+              // waits for any suspend work still in flight on the JS side),
+              // then end the process as before. Beside this task, not in it
+              // (see run_hook): frames keep ticking until the exit.
+              log::info!("[srt] quit");
+              let exec = current_exec_hooks.borrow().clone();
+              tokio::task::spawn_local(async move {
+                run_hook(exec, "quit", QUIT_HOOK_DEADLINE).await;
+                std::process::exit(0)
+              });
+              continue;
+            }
             AlloyEvent::Key { modifiers, .. } => {
               input_state_events.set_modifiers(*modifiers);
             }
@@ -644,6 +765,19 @@ fn ui_thread(
               // the Android background watch); core's env signal dedupes.
               ui_runtime.event(&AlloyEvent::Visibility { visible });
             }
+            AlloyEvent::Suspend { hold } => {
+              log::info!("[srt] suspend");
+              // The hook runs beside this task, not in it: events keep
+              // flowing (the Quit that follows a finishing Android activity
+              // must get through), and the hold releases when the hook
+              // answers or times out. Same LocalSet as the engine, so the
+              // JS side progresses meanwhile.
+              let exec = current_exec_hooks.borrow().clone();
+              tokio::task::spawn_local(async move {
+                run_hook(exec, "suspend", SUSPEND_HOOK_DEADLINE).await;
+                drop(hold);
+              });
+            }
             event => ui_runtime.event(&event),
           }
         }
@@ -687,11 +821,9 @@ fn ui_thread(
       alloy: atx.clone(),
       #[cfg(feature = "go")]
       player_active: player_active.clone(),
-      #[cfg(feature = "go")]
       engine_tx: cmd_tx.clone(),
       #[cfg(feature = "go")]
       dev: dev_session.as_ref().map(|d| d.exit_handle()),
-      alloy_cmd_tx: alloy_cmd_tx.clone(),
     };
 
     // flux::Timeline is the frame timeline the rAF/render timestamps march
@@ -868,6 +1000,9 @@ fn ui_thread(
       };
       let engine = builder.build();
       *current_exec.borrow_mut() = Some(engine.exec_handle());
+      // A process-level fact, replayed into every engine (a dev reload runs
+      // in the same process and the answer has not changed).
+      flux::gui::events::emit_launch(&engine.exec_handle(), launch == Launch::Restored);
       engine_generation.fetch_add(1, Ordering::Relaxed);
       #[cfg(feature = "go")]
       player_active.store(
@@ -903,6 +1038,7 @@ fn ui_thread(
       log::info!("[srt] flux engine start");
       let mut next_app: Option<AppSource> = None;
       let mut next_app_id: Option<String> = None;
+      let mut quit = false;
       local
         .run_until(async {
           tokio::select! {
@@ -931,11 +1067,16 @@ fn ui_thread(
                   current_app_id = Some(default_app_id.clone());
                   platform.reset_fonts(base_fonts.clone());
                 }
+                EngineCmd::Quit => quit = true,
               }
             }
           }
         })
         .await;
+      if quit {
+        log::info!("[srt] engine loop quit");
+        break;
+      }
       if let Some(app) = next_app {
         if let Some(app_id) = &next_app_id {
           anchor_app(app_id, &mut current_app_id);
@@ -976,7 +1117,7 @@ fn ui_thread(
             current_app_id = Some(default_app_id.clone());
             platform.reset_fonts(base_fonts.clone());
           }
-          None => break,
+          Some(EngineCmd::Quit) | None => break,
         }
       }
     }
@@ -1006,6 +1147,7 @@ fn install_panic_hook() {
 pub fn start(
   rt: &tokio::runtime::Runtime,
   app_source: Option<AppSource>,
+  launch: Launch,
   mode: alloy::Mode,
   size: (u32, u32),
   stats: bool,
@@ -1025,7 +1167,7 @@ pub fn start(
   };
   let app = alloy::setup("SolidRT", ISize::new(size.0 as i64, size.1 as i64), mode);
 
-  let opts = RunOptions { app: app_source, playback_fps, stats, dev_server, fonts, storage, args };
+  let opts = RunOptions { app: app_source, launch, playback_fps, stats, dev_server, fonts, storage, args };
   let resampler = app.resampler();
   let user_input_muted = app.user_input_mute();
   app.run(move |atx, alloy_cmd_tx, event_rx| {

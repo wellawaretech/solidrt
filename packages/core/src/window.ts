@@ -2,18 +2,129 @@ import { createSignal, getOwner, onCleanup, onSettled, runWithOwner, flush } fro
 import { requestFrame, setPointerLock } from "flux:rendertree"
 import { renderFrame } from "srt:render"
 import { on, once } from "srt:events"
-import { exit } from "srt:app"
+import { exit as nativeExit } from "srt:app"
 import { getEventHandler, focusedNode, setFocus, activateTextInput, setInterestRoot } from "./core"
 import { scanForOrphans, getNodePath } from "./renderer"
 
+// ------ Lifecycle hooks ----------------
+
+// A suspend or quit handler; the runtime waits for a returned promise.
+export type LifecycleHandler = () => void | Promise<void>
+
+// How long exit() waits for the quit handlers before leaving anyway. The
+// platform-initiated ends (window close, Android onDestroy) are bounded by the
+// runtime's own deadline instead; this one only keeps a hung handler from
+// pinning an app that asked to leave.
+const EXIT_HOOK_DEADLINE_MS = 2000
+
+let suspendHandlers: LifecycleHandler[] = []
+let quitHandlers: LifecycleHandler[] = []
+// The suspend dispatch still in flight, if any: a quit that follows a
+// suspend (a finishing Android activity runs onPause, then onDestroy) waits
+// for it before its own handlers, so the persist that suspend started lands
+// before the process ends.
+let pendingSuspend: Promise<void> | null = null
+
+function registerLifecycle(list: LifecycleHandler[], fn: LifecycleHandler) {
+  list.push(fn)
+  let cleanup = () => {
+    let i = list.lastIndexOf(fn)
+    if (i >= 0) list.splice(i, 1)
+  }
+  if (getOwner()) onCleanup(cleanup)
+  return cleanup
+}
+
+// Runs every handler (a throw counts as a rejected promise) and settles once
+// all of them have, logging the failures: one handler's error must not cut
+// another's write short.
+function settleHandlers(name: string, list: LifecycleHandler[]): Promise<void> {
+  let results = [...list].map((fn) => {
+    try {
+      return Promise.resolve(fn())
+    } catch (err) {
+      return Promise.reject(err)
+    }
+  })
+  return Promise.allSettled(results).then((settled) => {
+    for (let r of settled) {
+      if (r.status === "rejected") console.error(`Error in ${name} handler:`, r.reason)
+    }
+  })
+}
+
+function dispatchSuspend(): Promise<void> {
+  let p = settleHandlers("onSuspend", suspendHandlers).finally(() => {
+    if (pendingSuspend === p) pendingSuspend = null
+  })
+  pendingSuspend = p
+  return p
+}
+
+function dispatchQuit(): Promise<void> {
+  let inflight = pendingSuspend ?? Promise.resolve()
+  return inflight.then(() => settleHandlers("onQuit", quitHandlers))
+}
+
+// The runtime asks through the event bus and waits for `done()`: the
+// platform is held open (or its close budget spent) until then, so this must
+// answer exactly once, whatever the handlers do. Subscribed at module load:
+// core is always present, and a hook nobody listens to would leave the
+// runtime waiting out its deadline on every close.
+on("suspend", (e: { done: () => void }) => {
+  dispatchSuspend().then(e.done, e.done)
+})
+on("quit", (e: { done: () => void }) => {
+  dispatchQuit().then(e.done, e.done)
+})
+
 /**
- * Leaves the current app, unconditionally: back to the player in a dev
- * client, quitting when standalone or at the player itself (on Android the
- * client backgrounds instead of dying). The default action of an unprevented
- * `back` event; call it directly to exit programmatically, e.g. after
- * intercepting back for an unsaved-changes dialog.
+ * Calls `fn` when the app is being suspended and may be killed without
+ * further notice: the user switches away on Android or iOS (the platform's
+ * "will enter background" moment). Never fires on desktop, where a minimized
+ * app is not killed. This is the moment to persist session state - a file, a
+ * database row, an HTTP request - so a later launch can pick the session up;
+ * the runtime holds the platform open and waits for a returned promise, up to
+ * its deadline (about ten seconds, platform-dependent), then lets the
+ * platform proceed. Nothing decides for you whether to restore afterwards;
+ * that is the app's call.
+ *
+ * Returns a cleanup function; also auto-cleans within an owned scope.
  */
-export { exit }
+export function onSuspend(fn: LifecycleHandler) {
+  return registerLifecycle(suspendHandlers, fn)
+}
+
+/**
+ * Calls `fn` when this app instance is ending: `exit()` (including the
+ * default action of an unprevented `back`), the desktop window closing, the
+ * Android activity finishing. Not a last chance to save - on mobile the
+ * suspend hook has already run, and a user who quits usually does not want
+ * a session kept - but the place for work that needs a real close, and the
+ * runtime waits for a returned promise up to its deadline (well under a
+ * second on Android, where the platform's close budget is fixed; a couple of
+ * seconds on desktop). A force quit or a crash gives no signal on any
+ * platform.
+ *
+ * Returns a cleanup function; also auto-cleans within an owned scope.
+ */
+export function onQuit(fn: LifecycleHandler) {
+  return registerLifecycle(quitHandlers, fn)
+}
+
+/**
+ * Leaves the current app: back to the player in a dev client, quitting when
+ * standalone or at the player itself (on Android the activity finishes, so
+ * the next launch starts fresh). The default action of an unprevented `back`
+ * event; call it directly to exit programmatically, e.g. after intercepting
+ * back for an unsaved-changes dialog. Runs the `onQuit` handlers first and
+ * leaves once their promises settle (or the deadline passes); returns
+ * immediately.
+ */
+export function exit() {
+  let deadline = new Promise<void>((resolve) => setTimeout(resolve, EXIT_HOOK_DEADLINE_MS))
+  Promise.race([dispatchQuit(), deadline]).then(nativeExit, nativeExit)
+}
 
 // ------ Pointer routing -----------------
 

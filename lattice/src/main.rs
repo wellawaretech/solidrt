@@ -28,7 +28,7 @@ fn main() {
     let storage = lattice::storage::StorageSpec { data_root: None, client: None, app_id: Some(payload.app_id) };
     // Mode::Run never returns Err (only playback does); ignore rather than
     // invent an exit path the interactive loop does not have.
-    let _ = lattice::start(&rt, Some(payload.app), alloy::Mode::Run, (1280, 720), false, None, payload.fonts, storage, app_args);
+    let _ = lattice::start(&rt, Some(payload.app), lattice::Launch::Fresh, alloy::Mode::Run, (1280, 720), false, None, payload.fonts, storage, app_args);
     return;
   }
 
@@ -160,7 +160,7 @@ fn main() {
   };
   let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().expect("Failed to build Tokio runtime");
   let storage = lattice::storage::StorageSpec { data_root: data_root.map(Into::into), client, app_id };
-  let result = lattice::start(&rt, app, mode, size, stats, dev_server, fonts, storage, app_args);
+  let result = lattice::start(&rt, app, lattice::Launch::Fresh, mode, size, stats, dev_server, fonts, storage, app_args);
   // Playback exits hard, here in the binary: headless callers gate on the
   // exit code (srt render verification), so an incomplete capture must read
   // nonzero - and a plain return would run the runtime's drop, which can

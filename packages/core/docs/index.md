@@ -146,6 +146,28 @@ let camera = createCamera()
 The same pattern covers `@solidrt/core/microphone`, `/sound`,
 `/speech-recognition`, `/text-input`, `/image`, `/color`, and `/gpu`.
 
+## Lifecycle
+
+The runtime reports the platform's lifecycle facts and holds the platform
+open while the app acts on them; what to do with them is the app's policy.
+`onBack` is the user's back intent (prevent it for in-app navigation, or let
+it fall through to `exit()`). `onSuspend` fires when the app is being
+suspended and may be killed without notice (switching away on Android or
+iOS; never on desktop): persist session state there, async is fine, the
+runtime waits for the returned promise up to its deadline. `onQuit` fires
+when this app instance is ending (`exit()`, the window closing, the Android
+activity finishing) and waits the same way, inside the platform's close
+budget. `env.launch` says how this process came to run: "restored" when the
+system recreated the app from a session it ended on its own, "fresh" for a
+launch the user started. Whether to load what `onSuspend` saved is the app's
+call. `env.visibility` is only whether anything is on screen, for pausing
+animation and audio, not the persistence moment.
+
+```tsx
+onSuspend(() => file("session.json").write(JSON.stringify(state)))
+if (env.launch === "restored") state = JSON.parse(await file("session.json").text())
+```
+
 ## Reference
 
 The [reference](/core/reference/) covers the API by subject: the element

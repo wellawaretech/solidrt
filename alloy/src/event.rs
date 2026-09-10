@@ -39,10 +39,6 @@ pub enum AlloyCommand {
   // latency.
   SetClipboardText(String, Box<dyn FnOnce(Result<(), String>) + Send>),
   GetClipboardText(Box<dyn FnOnce(Result<String, String>) + Send>),
-  // Leave the app at the OS level without dying: on Android SDL's minimize
-  // routes to Activity.moveTaskToBack, the platform's back-at-root
-  // convention. Desktop quits by process exit instead and never sends this.
-  Background,
 }
 
 // Standard cursor shape (SetCursor), in the CSS `cursor` vocabulary - the
@@ -204,9 +200,53 @@ pub struct GamepadState {
   pub mapped: bool,
 }
 
+// Held while the app's suspend handlers run: the platform's permission to
+// keep executing after it has asked the app to background. Taken by the event
+// watch at push time of WILL_ENTER_BACKGROUND (the last moment the platform
+// still listens), carried inside AlloyEvent::Suspend, and released when the
+// last clone drops - the embedder drops it once the handlers finished or
+// their deadline passed. iOS is the platform that needs it: a UIApplication
+// background task assertion begun in the delegate callback keeps every thread
+// running for the system's budget (about 30 s) instead of freezing the
+// process moments after the callback returns; that assertion is this guard's
+// implementation when the iOS port lands. Android does not freeze a
+// backgrounded task's process, so the hold has nothing to do there, and
+// desktop never suspends.
+#[derive(Clone)]
+pub struct SuspendHold {
+  _platform: std::sync::Arc<SuspendHoldInner>,
+}
+
+struct SuspendHoldInner;
+
+impl SuspendHold {
+  pub fn take() -> Self {
+    Self { _platform: std::sync::Arc::new(SuspendHoldInner) }
+  }
+}
+
+impl Drop for SuspendHoldInner {
+  fn drop(&mut self) {
+    // No platform assertion to end yet (see SuspendHold).
+  }
+}
+
 #[derive(Clone)]
 pub enum AlloyEvent {
+  // The platform is ending this app instance: desktop window close or
+  // SIGTERM, Android onDestroy, iOS applicationWillTerminate. A command, not
+  // a request (compare Back): the embedder runs the app's quit hook under a
+  // deadline and then ends the process.
   Quit,
+  // The app is being suspended and may be killed without further notice:
+  // WILL_ENTER_BACKGROUND, delivered at push time by the event watch (the
+  // queued copy is not translated, so a resume never replays it). Carries the
+  // hold that keeps the platform running while the app's suspend handlers
+  // execute; see SuspendHold. Never fires on desktop: a minimized desktop app
+  // is not killed, so there is nothing to report.
+  Suspend {
+    hold: SuspendHold,
+  },
   // The user's back intent: Android's back button/gesture (AC_BACK), or the
   // desktop chord (see `is_back_trigger`). Unlike Quit this is a request, not
   // a command: it surfaces to the app as the preventable `back` event (in-app
@@ -489,6 +529,9 @@ pub(crate) fn is_muted_input(event: &AlloyEvent) -> bool {
 pub(crate) fn translate_event(sdl_event: SdlEvent, window: &sdl3::video::Window) -> Option<AlloyEvent> {
   match sdl_event {
     SdlEvent::Quit { .. } => Some(AlloyEvent::Quit),
+    // iOS applicationWillTerminate (Android sends it alongside Quit at
+    // destroy, where the second copy is moot: Quit ends the process).
+    SdlEvent::AppTerminating { .. } => Some(AlloyEvent::Quit),
     SdlEvent::KeyDown { keycode, scancode, keymod, repeat, .. } => {
       if is_back_trigger(scancode, keymod) {
         // Repeats collapse: holding the trigger is one request.

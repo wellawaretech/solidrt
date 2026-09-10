@@ -1,8 +1,8 @@
 use alloy::sdl_utils::{PowerState, SystemTheme};
 use alloy::{AlloyEvent, Modifiers, Orientation};
-use rquickjs::{Array, Null, Object};
+use rquickjs::{Array, Function, Null, Object};
 
-use crate::{emit_event, emit_sticky, ExecHandle};
+use crate::{emit_event, emit_sticky, has_listeners, ExecHandle};
 
 /// Marshal the engine-agnostic window / keyboard / device events into the JS
 /// event bus, including the sticky window facts (resize, refresh rate, theme,
@@ -199,9 +199,52 @@ pub fn forward(exec: &ExecHandle, event: &AlloyEvent) -> bool {
     | AlloyEvent::FrameRendered { .. }
     | AlloyEvent::Tick { .. }
     | AlloyEvent::Quit
+    | AlloyEvent::Suspend { .. }
     | AlloyEvent::Exposed => return false,
   }
   true
+}
+
+/// The launch fact, sticky: how this process came to run. `restored` means
+/// the system recreated the app from a session it ended on its own (a
+/// suspended app reclaimed in the background); otherwise the launch is fresh
+/// (first start, or after exit()/close ended the previous instance). Emitted
+/// once per engine by the runner; core exposes it as `env.launch`.
+pub fn emit_launch(exec: &ExecHandle, restored: bool) {
+  let state = if restored { "restored" } else { "fresh" };
+  exec.exec(move |ctx| {
+    let obj = Object::new(ctx.clone()).expect("create object");
+    obj.set("state", state).expect("set state");
+    emit_sticky(&ctx, "launch", obj);
+  });
+}
+
+/// Emit a lifecycle hook event (`suspend`, `quit`): the event object carries
+/// a `done()` function the JS side calls once every handler's promise has
+/// settled, which runs `done` on the JS thread. With no listener for the
+/// event, `done` runs right away: an app that registered no handler must not
+/// hold the platform for the runner's deadline. The runner owns the deadline
+/// and whatever the platform needs held open meanwhile; this is only the
+/// marshalling of "tell the app, hear back once".
+pub fn emit_hook(exec: &ExecHandle, name: &'static str, done: Box<dyn FnOnce() + Send>) {
+  exec.exec(move |ctx| {
+    if !has_listeners(&ctx, name) {
+      done();
+      return;
+    }
+    // Call-once: a second `done()` from JS is ignored rather than a double
+    // completion.
+    let done = std::cell::RefCell::new(Some(done));
+    let done_fn = Function::new(ctx.clone(), move || {
+      if let Some(done) = done.borrow_mut().take() {
+        done();
+      }
+    })
+    .expect("create done function");
+    let obj = Object::new(ctx.clone()).expect("create object");
+    obj.set("done", done_fn).expect("set done");
+    emit_event(&ctx, name, obj);
+  });
 }
 
 fn emit_named(exec: &ExecHandle, name: &'static str) {

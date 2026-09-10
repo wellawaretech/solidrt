@@ -4,6 +4,7 @@ import android.content.Context;
 import android.hardware.input.InputManager;
 import android.os.Build;
 import android.os.Bundle;
+import android.util.Log;
 import android.view.InputDevice;
 import android.view.View;
 import android.view.WindowInsets;
@@ -18,6 +19,13 @@ import org.libsdl.app.SDLActivity;
 // extraction and dev-server intent extra) lives in the subclasses.
 public class SolidRTActivity extends SDLActivity {
     protected static final String TAG = "SolidRT";
+
+    // Whether this activity is being recreated from saved state: the system
+    // ended the previous instance on its own (a background kill) and is
+    // restoring the task, as opposed to a launch the user started (first
+    // start, or after exit()/close finished the activity). Captured in
+    // onCreate; getArguments runs later, on the SDL thread.
+    private boolean restored;
 
     @Override
     protected String[] getLibraries() {
@@ -87,6 +95,14 @@ public class SolidRTActivity extends SDLActivity {
         }, null);
     }
 
+    // The launch fact for native (SDL hands getArguments() to SDL_main as
+    // argv); the runtime reports it to the app as env.launch. Flavors that
+    // add arguments of their own extend this list.
+    @Override
+    protected String[] getArguments() {
+        return restored ? new String[] { "--restored" } : new String[0];
+    }
+
     // Flavor hook, run before SDL comes up: the go client extracts its
     // player assets here; the production runtime does nothing (its payload
     // is read in place from the APK, never extracted).
@@ -95,6 +111,10 @@ public class SolidRTActivity extends SDLActivity {
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
+        restored = savedInstanceState != null;
+        // A rare lifecycle fact; logged so device traces show which launch
+        // the runtime reported (the app's restore decision depends on it).
+        Log.v(TAG, "launch " + (restored ? "restored" : "fresh"));
         prepareAssets();
         super.onCreate(savedInstanceState);
         nativeHardwareKeyboard(hasHardwareKeyboard());

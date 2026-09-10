@@ -619,10 +619,13 @@ impl RasterState {
             self.demand_latch = Some(latch);
           }
           RasterCmd::RebindWindowSurface => {
-            // Event-driven (return-to-visible): a failure recorded against
-            // the surface that died with the background (a frame in flight
-            // at pause) is stale evidence; reset so the exit threshold
-            // cannot misfire across a background/resume.
+            // Event-driven (return-to-visible): the window is back, so
+            // frames queued from here on draw again (see WINDOW_BACKGROUNDED
+            // in lib.rs), and a failure recorded against the surface that
+            // died with the background (a frame in flight at pause) is stale
+            // evidence; reset so the exit threshold cannot misfire across a
+            // background/resume.
+            crate::set_window_backgrounded(false);
             if self.rebind_window_surface() {
               self.present_failures = 0;
             }

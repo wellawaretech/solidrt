@@ -52,7 +52,11 @@ impl RasterState {
     let wait_ms = wait_start.elapsed().as_secs_f32() * 1000.0;
     let draw_start = std::time::Instant::now();
     self.pass_timer.begin(&self.gl);
-    let drawn = self.draw_to_window(&dl, size, route);
+    // A backgrounded window has no surface to draw to (see WINDOW_BACKGROUNDED
+    // in lib.rs): the frame is dropped like an undrawn one, its damage kept
+    // for the frame that follows the return-to-visible rebind.
+    let backgrounded = crate::window_backgrounded();
+    let drawn = !backgrounded && self.draw_to_window(&dl, size, route);
     self.pass_timer.end(&self.gl, Timed::Frame);
     let draw_ms = draw_start.elapsed().as_secs_f32() * 1000.0;
     // The overlay composites over the finished frame (shaded or not),
@@ -70,7 +74,7 @@ impl RasterState {
       if drawn {
         if self.present() {
           presented = true;
-        } else if self.rebind_window_surface() {
+        } else if !crate::window_backgrounded() && self.rebind_window_surface() {
           // The failed swap's frame is lost with the dead binding (Android
           // replaces the EGL surface across background/resume, and a frame
           // latched by resize or expose can reach this thread before the
@@ -260,6 +264,12 @@ impl RasterState {
         unsafe { glow::HasContext::flush(&self.gl) };
       }
       return true;
+    }
+    // The surface went away under this swap (the window was backgrounded
+    // while the frame was drawing): expected, not evidence of a loss.
+    if crate::window_backgrounded() {
+      log::debug!("[alloy] present skipped: window backgrounded ({})", self.binding.error());
+      return false;
     }
     self.present_failures += 1;
     if self.present_failures == 1 {

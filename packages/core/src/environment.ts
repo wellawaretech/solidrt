@@ -37,6 +37,8 @@ export type SystemTheme = "dark" | "light" | "unknown"
 
 export type Visibility = "visible" | "hidden"
 
+export type Launch = "fresh" | "restored"
+
 export type Orientation = "portrait" | "portraitFlipped" | "landscape" | "landscapeFlipped" | "unknown"
 
 let devicesAccessor: (() => InputDevices | undefined) | undefined
@@ -63,6 +65,22 @@ function ensureSystemThemeState() {
     on("systemTheme", (e: { theme?: SystemTheme }) => setTheme(e.theme ?? "unknown"))
     systemThemeAccessor = theme
   })
+}
+
+// Fixed for the process, so a plain value rather than a signal: the sticky
+// `launch` event replays synchronously on subscribe, and the runner emits it
+// before any app code runs.
+let launchValue: Launch | undefined
+
+function ensureLaunchState() {
+  if (launchValue) return
+  runWithOwner(null, () => {
+    on("launch", (e: { state?: Launch }) => {
+      launchValue = e.state === "restored" ? "restored" : "fresh"
+    })
+  })
+  // A runtime that reports no launch fact (desktop today) launches fresh.
+  launchValue ??= "fresh"
 }
 
 let visibilityAccessor: (() => Visibility) | undefined
@@ -218,14 +236,26 @@ export let env = {
    * `visibilityState` vocabulary without the `document` machinery - react
    * to it in a tracked scope (JSX, memo, effect).
    *
-   * This is the persistence moment: there is no close event on any
-   * platform (Android gives no time, desktop window close never enters
-   * JS), so save state when this goes "hidden". While hidden, timers keep
-   * running but no frames are produced.
+   * A rendering and UI fact (nothing is on screen: stop animating, pause
+   * the audio), not the persistence moment - that is `onSuspend`, which the
+   * runtime waits for. While hidden no frames are produced.
    */
   get visibility(): Visibility {
     ensureVisibilityState()
     return visibilityAccessor!()
+  },
+  /**
+   * How this process came to run. "restored": the system recreated the app
+   * from a session it ended on its own (a suspended app reclaimed in the
+   * background; Android's saved instance state). "fresh": launched anew, a
+   * first start or one after `exit()` or a close ended the previous
+   * instance, and always on desktop. Reported, not interpreted: whether to
+   * load what `onSuspend` saved is the app's decision. Fixed for the
+   * process, so it needs no tracked scope.
+   */
+  get launch(): Launch {
+    ensureLaunchState()
+    return launchValue!
   },
   /** Orientation of the display the window is on. */
   get orientation(): Orientation {

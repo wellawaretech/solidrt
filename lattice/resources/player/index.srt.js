@@ -5335,7 +5335,7 @@ import * as tree2 from "flux:rendertree";
 import { requestFrame, setPointerLock } from "flux:rendertree";
 import { renderFrame } from "srt:render";
 import { on as on2, once } from "srt:events";
-import { exit } from "srt:app";
+import { exit as nativeExit } from "srt:app";
 
 // ../../packages/core/src/core.ts
 import * as tree from "flux:rendertree";
@@ -5572,6 +5572,47 @@ function layoutNextLine(prepared, cursor, width) {
 }
 
 // ../../packages/core/src/window.ts
+var EXIT_HOOK_DEADLINE_MS = 2000;
+var suspendHandlers = [];
+var quitHandlers = [];
+var pendingSuspend = null;
+function settleHandlers(name, list) {
+  let results = [...list].map((fn) => {
+    try {
+      return Promise.resolve(fn());
+    } catch (err) {
+      return Promise.reject(err);
+    }
+  });
+  return Promise.allSettled(results).then((settled) => {
+    for (let r of settled) {
+      if (r.status === "rejected")
+        console.error(`Error in ${name} handler:`, r.reason);
+    }
+  });
+}
+function dispatchSuspend() {
+  let p = settleHandlers("onSuspend", suspendHandlers).finally(() => {
+    if (pendingSuspend === p)
+      pendingSuspend = null;
+  });
+  pendingSuspend = p;
+  return p;
+}
+function dispatchQuit() {
+  let inflight = pendingSuspend ?? Promise.resolve();
+  return inflight.then(() => settleHandlers("onQuit", quitHandlers));
+}
+on2("suspend", (e) => {
+  dispatchSuspend().then(e.done, e.done);
+});
+on2("quit", (e) => {
+  dispatchQuit().then(e.done, e.done);
+});
+function exit() {
+  let deadline = new Promise((resolve2) => setTimeout(resolve2, EXIT_HOOK_DEADLINE_MS));
+  Promise.race([dispatchQuit(), deadline]).then(nativeExit, nativeExit);
+}
 var nextFrameId = 1;
 var animationFrames = new Map;
 var refreshRate = 60;
@@ -6335,6 +6376,17 @@ function ensureSystemThemeState() {
     systemThemeAccessor = theme;
   });
 }
+var launchValue;
+function ensureLaunchState() {
+  if (launchValue)
+    return;
+  runWithOwner(null, () => {
+    on3("launch", (e) => {
+      launchValue = e.state === "restored" ? "restored" : "fresh";
+    });
+  });
+  launchValue ??= "fresh";
+}
 var visibilityAccessor;
 function ensureVisibilityState() {
   if (visibilityAccessor)
@@ -6444,6 +6496,10 @@ var env = {
   get visibility() {
     ensureVisibilityState();
     return visibilityAccessor();
+  },
+  get launch() {
+    ensureLaunchState();
+    return launchValue;
   },
   get orientation() {
     ensureOrientationState();
@@ -13950,20 +14006,15 @@ function App() {
   };
   let [selectedId, setSelectedId] = createSignal(null);
   let [notice, setNotice] = createSignal(null);
-  let [confirmExit, setConfirmExit] = createSignal(false);
   let dial = (addr) => {
     setNotice(null);
     setScreen("home");
     connect(addr);
   };
   onBack((e) => {
-    e.preventDefault();
-    if (confirmExit()) {
-      setConfirmExit(false);
-    } else if (screen() !== "home") {
+    if (screen() !== "home") {
+      e.preventDefault();
       setScreen("home");
-    } else {
-      setConfirmExit(true);
     }
   });
   let nav = createFocusNav();
@@ -13984,7 +14035,7 @@ function App() {
     get children() {
       return createComponent2(SafeArea, {
         get children() {
-          return [createComponent2(Switch, {
+          return createComponent2(Switch, {
             get children() {
               return [createComponent2(Match, {
                 get when() {
@@ -14037,59 +14088,7 @@ function App() {
                 }
               })];
             }
-          }), createComponent2(Show, {
-            get when() {
-              return confirmExit();
-            },
-            get children() {
-              return createComponent2(Modal, {
-                onClose: () => setConfirmExit(false),
-                get children() {
-                  return createComponent2(View, {
-                    get layout() {
-                      return {
-                        width: "100%",
-                        maxWidth: 380,
-                        padding: space("xl")
-                      };
-                    },
-                    get children() {
-                      return createComponent2(Card, {
-                        get layout() {
-                          return {
-                            gap: space("lg")
-                          };
-                        },
-                        get children() {
-                          return [createComponent2(Text, {
-                            variant: "title",
-                            children: "Exit SolidRT?"
-                          }), createComponent2(View, {
-                            get layout() {
-                              return {
-                                flexDirection: "row",
-                                gap: space("md")
-                              };
-                            },
-                            get children() {
-                              return [createComponent2(Button, {
-                                variant: "ghost",
-                                onPress: () => setConfirmExit(false),
-                                children: "Cancel"
-                              }), createComponent2(Button, {
-                                onPress: () => exit(),
-                                children: "Exit"
-                              })];
-                            }
-                          })];
-                        }
-                      });
-                    }
-                  });
-                }
-              });
-            }
-          })];
+          });
         }
       });
     }

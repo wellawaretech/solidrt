@@ -371,8 +371,9 @@ Shaped, not started.
   standards gate the feature.
 - **[GPU context loss](backlog/gpu-context-loss.md)** [2026-07-27]
   A lost GL context used to leave the app running against a dead swapchain;
-  swap-result checking and exit after two failed presents shipped, real
-  recreation still open.
+  swap-result checking, exit after two failed presents and the Android
+  background case (no window work while backgrounded) shipped; real recreation
+  after a genuine loss still open.
 - **[Depth func option](backlog/gpu-depth-func.md)** [2026-08-11]
   The depth comparison is fixed at LESS with no override, which blocks
   equal-depth multi-pass tricks (LEQUAL) and reversed-z; a depthCompare option
@@ -442,6 +443,11 @@ Shaped, not started.
   components' focus navigation consumes it; what a settings screen and a game
   want next is a rebinding flow over bindings() with a serializable form, and
   hold/tap/chord interactions on buttons - both waiting for a consumer.
+- **[iOS port readiness](backlog/ios-port-readiness.md)** [2026-09-10]
+  The app-facing contracts are designed so an iOS port changes no app code;
+  this lists what the port itself still has to supply behind them (the suspend
+  hold, the launch fact's source, no GPU work in the background), so nothing
+  is rediscovered when the port starts.
 - **[Isolate transfer() and AbortSignal](backlog/isolate-transfer-and-abort.md)** [2026-08-20]
   Design proposal for the two isolate follow-ups that need new call-surface
   vocabulary - zero-copy buffer hand-over and abortable calls. Decides once
@@ -1018,6 +1024,12 @@ Finished, kept for the reasoning.
   lattice installs ProcessArgs from the source-path tail, packed payloads own
   their whole command line, dev pushes carry the session's args, and exit()
   ends a playback run early.
+- **[App suspend and quit hooks](done/app-suspend-quit-hooks.md)** [2026-09-10]
+  "The env.visibility persist contract is racy today and structurally broken
+  on iOS; replace it with a suspend hook and a quit hook whose async work the
+  runtime waits for, plus a launch fact saying whether the system killed the
+  previous session. Includes making Android exit() finish the activity instead
+  of backgrounding it."
 - **[Bindings reject an explicitly passed undefined for an optional argument](done/binding-optional-arg-undefined.md)** [2026-08-13]
   An omitted option object arrives at the binding as an explicit undefined,
   which Opt<Object> refuses - so createTexture without opts throws and every

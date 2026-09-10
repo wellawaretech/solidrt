@@ -41,8 +41,8 @@ pub use app::{setup, App};
 pub use backend::DisplayContext;
 pub use context::{CaptureDone, CaptureInfo, Context, Overlay};
 pub use event::{
-  AlloyCommand, AlloyEvent, Cursor, GamepadState, Modifiers, Orientation, PointerType, TextCapitalization,
-  TextInputOptions, TextInputType,
+  AlloyCommand, AlloyEvent, Cursor, GamepadState, Modifiers, Orientation, PointerType, SuspendHold,
+  TextCapitalization, TextInputOptions, TextInputType,
 };
 pub use gpu::{
   parse_blend, parse_cull, AttrFormat, BlendMode, BufferIds, BufferUpdate, CullMode, DepthState, DepthStorage,
@@ -153,4 +153,28 @@ pub fn set_hardware_keyboard(present: bool) {
 /// SDL's own device list covers it; see [`set_hardware_keyboard`]).
 pub fn hardware_keyboard() -> bool {
   HARDWARE_KEYBOARD.load(Ordering::Relaxed)
+}
+
+// Whether the window is backgrounded. Set at push time of
+// WILL_ENTER_BACKGROUND by the event watch (app.rs), the last moment the
+// platform still listens, and cleared by the raster thread when it runs the
+// return-to-visible rebind (liveness.rs decides that; the raster thread's
+// RebindWindowSurface arm clears). While set, the raster thread does no
+// window work: Android has destroyed the surface, so a present fails with
+// EGL_BAD_SURFACE, which is not a context loss, and iOS kills an app that
+// touches the GPU in the background. The case is a raster-bound app, whose
+// queue still holds frames when the surface goes away: without the flag they
+// present into the dead surface, the rebind-and-retry fails the same way, and
+// two failures in a row is the context-loss exit (seen live: a 23 fps app
+// died 0.4 s after the home press). Desktop never sets it: the event does not
+// fire there. A flag rather than a raster command because a command would
+// queue behind the very frames that must be dropped.
+static WINDOW_BACKGROUNDED: AtomicBool = AtomicBool::new(false);
+
+pub(crate) fn set_window_backgrounded(backgrounded: bool) {
+  WINDOW_BACKGROUNDED.store(backgrounded, Ordering::Relaxed);
+}
+
+pub(crate) fn window_backgrounded() -> bool {
+  WINDOW_BACKGROUNDED.load(Ordering::Relaxed)
 }

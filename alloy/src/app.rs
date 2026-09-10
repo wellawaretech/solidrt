@@ -345,22 +345,38 @@ impl App {
     }
     event_tx.send(initial).ok();
 
-    // Timely "hidden" on Android: with BLOCK_ON_PAUSE the pump blocks before
-    // the queued background events are drained, so through the normal path
-    // the app would learn about backgrounding only at resume
+    // Timely background delivery on Android: with BLOCK_ON_PAUSE the pump
+    // blocks before the queued background events are drained, so through the
+    // normal path the app would learn about backgrounding only at resume
     // (device-observed). An event watch runs synchronously on the thread
-    // pushing the event - for DID_ENTER_BACKGROUND that is this thread,
-    // inside the blocking wait - so the transition is forwarded the moment
-    // it is queued and the JS side (which keeps running while the pump is
-    // blocked) can persist state. The queue's own copy still arrives at
+    // pushing the event - for the background events that is this thread,
+    // inside the blocking wait - so each transition is forwarded the moment
+    // it is queued. DID_ENTER_BACKGROUND's queued copy still arrives at
     // resume; consumers tolerate the repeat (see AlloyEvent::Visibility).
     // The binding must outlive the loop: dropping an EventWatch removes it.
+    //
+    // WILL_ENTER_BACKGROUND is the suspend signal on both mobile platforms
+    // (SDL's Android_OnPause sends it right before the DID event, and its
+    // comment names an event filter at queue time as the place for lifecycle
+    // handling), and the watch is its only source: Android_OnDestroy flushes
+    // the queue before sending Quit, so a queued copy never reaches a
+    // finishing app, and translating the copy would replay the suspend at
+    // resume. The hold is taken here, inside the platform callback, which is
+    // the last moment the platform still listens (see SuspendHold).
     let watch_event_tx = event_tx.clone();
     let _event_watch = sdl_context.event().expect("Failed to get SDL event subsystem").add_event_watch(
-      move |event: sdl3::event::Event| {
-        if matches!(event, sdl3::event::Event::AppDidEnterBackground { .. }) {
+      move |event: sdl3::event::Event| match event {
+        sdl3::event::Event::AppWillEnterBackground { .. } => {
+          // Before the suspend goes out: frames already queued on the raster
+          // thread must stop touching the window from here on (see
+          // WINDOW_BACKGROUNDED in lib.rs).
+          crate::set_window_backgrounded(true);
+          watch_event_tx.send(AlloyEvent::Suspend { hold: crate::event::SuspendHold::take() }).ok();
+        }
+        sdl3::event::Event::AppDidEnterBackground { .. } => {
           watch_event_tx.send(AlloyEvent::Visibility { visible: false }).ok();
         }
+        _ => {}
       },
     );
 
@@ -752,11 +768,6 @@ impl App {
               .map_err(|e| e.to_string())
               .and_then(|video| video.clipboard().clipboard_text().map_err(|e| e.to_string()));
             respond(result);
-          }
-          AlloyCommand::Background => {
-            if !window.minimize() {
-              log::warn!("background (minimize) failed: {}", crate::sdl_utils::sdl_error());
-            }
           }
         }
       }

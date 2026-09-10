@@ -66,10 +66,10 @@ declare module "srt:events" {
 // The running application's own surface (lattice), present in every build.
 declare module "srt:app" {
   /**
-   * Leave the current app, unconditionally: back to the player in a dev
-   * client, quit when standalone or at the player root (on Android the
-   * client backgrounds instead of dying). The default action of an
-   * unprevented `back` event; prefer the @solidrt/core re-export.
+   * Leave the current app now, without running the quit hooks: back to the
+   * player in a dev client, quit when standalone or at the player root (on
+   * Android the activity finishes). Prefer the @solidrt/core `exit`, which
+   * runs `onQuit` first and is the default action of an unprevented `back`.
    */
   export function exit(): void
 }
