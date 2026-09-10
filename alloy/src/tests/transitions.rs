@@ -171,7 +171,8 @@ fn mount_writes_snap() {
 #[test]
 fn unpainted_write_retargets_enter_animation() {
   // The explicit enter animation is the one track that runs before the
-  // first paint; a mount-tick write joins it instead of snapping it away.
+  // first paint; a write reaching the node after the advance started it
+  // (a transition-end handler's) joins it instead of snapping it away.
   let mut tree = RenderTree::new();
   tree.set_transition_now(0.0);
   tree.create_node(1, View::default().with_layout());
@@ -191,7 +192,8 @@ fn unpainted_write_retargets_enter_animation() {
     }
   });
   tree.insert_node(1, 2, None).expect("insert");
-  assert_eq!(rect_x(&tree, 2), 100.0, "attach snaps to from");
+  assert!(tree.advance_transitions());
+  assert_eq!(rect_x(&tree, 2), 100.0, "the advance snaps to from");
   assert!(tree.transition_write(2, AnimProp::X, Some(scalar(0.0))), "retargets the enter track");
   tree.set_transition_now(50.0);
   assert!(tree.advance_transitions());
@@ -447,7 +449,9 @@ fn enter_from_animates_first_attach_only() {
     }
   });
   tree.insert_node(1, 2, None).expect("insert");
-  assert_eq!(rect_x(&tree, 2), 100.0, "attach snaps to from");
+  assert_eq!(rect_x(&tree, 2), 40.0, "the attach itself leaves the mounted value");
+  assert!(tree.advance_transitions(), "the enter starts at the frame's advance");
+  assert_eq!(rect_x(&tree, 2), 100.0, "the first advance snaps to from");
   tree.set_transition_now(50.0);
   assert!(tree.advance_transitions());
   assert!((rect_x(&tree, 2) - 70.0).abs() < 0.01, "halfway from 100 to the mounted 40, got {}", rect_x(&tree, 2));
@@ -462,6 +466,78 @@ fn enter_from_animates_first_attach_only() {
   assert_eq!(rect_x(&tree, 2), 40.0);
   tree.set_transition_now(150.0);
   assert!(!tree.advance_transitions(), "no track after a re-insert");
+}
+
+// The config and the mounted value may land after the insert (a template
+// child's props effect, a dynamic `transition` prop on a template root):
+// the enter still plays, from `from` to what the node holds at the advance.
+#[test]
+fn enter_from_plays_when_config_lands_after_attach() {
+  let mut tree = RenderTree::new();
+  tree.set_transition_now(0.0);
+  tree.create_node(1, View::default().with_layout());
+  tree.create_node(2, Rectangle::default().no_layout());
+  tree.insert_node(1, 2, None).expect("insert");
+  tree.edit(2, |el| {
+    el.transitions = Some(Box::new(TransitionConfig {
+      props: vec![(
+        AnimProp::X,
+        TransitionEntry { spec: LINEAR_100, delay_ms: 0.0, from: Some(scalar(100.0)), exit: None },
+      )],
+      all: None,
+      stagger_ms: None,
+    }));
+    Damage::None
+  });
+  assert!(!tree.transition_write(2, AnimProp::X, Some(scalar(40.0))), "a mount-tick write snaps");
+  tree.edit(2, |el| match &mut el.kind {
+    ElementKind::Rectangle(r) => r.set_x(Some(40.0)),
+    _ => unreachable!(),
+  });
+  assert!(tree.advance_transitions());
+  assert_eq!(rect_x(&tree, 2), 100.0, "the advance snaps to from");
+  tree.set_transition_now(50.0);
+  assert!(tree.advance_transitions());
+  assert!((rect_x(&tree, 2) - 70.0).abs() < 0.01, "halfway to the late-written 40, got {}", rect_x(&tree, 2));
+  tree.set_transition_now(100.0);
+  assert!(!tree.advance_transitions());
+  assert_eq!(rect_x(&tree, 2), 40.0);
+}
+
+// A node gone from the tree again before the advance (destroyed, or
+// detached with its enter still owed) is skipped; a later attach enters.
+#[test]
+fn enter_queue_skips_destroyed_and_detached_nodes() {
+  let mut tree = RenderTree::new();
+  tree.set_transition_now(0.0);
+  tree.create_node(1, View::default().with_layout());
+  tree.create_node(2, Rectangle::default().no_layout());
+  tree.create_node(3, Rectangle::default().no_layout());
+  for id in [2, 3] {
+    tree.edit(id, |el| {
+      el.transitions = Some(Box::new(TransitionConfig {
+        props: vec![(
+          AnimProp::X,
+          TransitionEntry { spec: LINEAR_100, delay_ms: 0.0, from: Some(scalar(100.0)), exit: None },
+        )],
+        all: None,
+        stagger_ms: None,
+      }));
+      match &mut el.kind {
+        ElementKind::Rectangle(r) => r.set_x(Some(40.0)),
+        _ => unreachable!(),
+      }
+    });
+  }
+  tree.insert_node(1, 2, None).expect("insert");
+  tree.insert_node(1, 3, None).expect("insert");
+  tree.destroy_node(2);
+  tree.detach_node(1, 3);
+  assert!(!tree.advance_transitions(), "nothing entered");
+  assert_eq!(rect_x(&tree, 3), 40.0, "a detached node is left alone");
+  tree.insert_node(1, 3, None).expect("re-insert");
+  assert!(tree.advance_transitions(), "the enter is owed until the node is attached at an advance");
+  assert_eq!(rect_x(&tree, 3), 100.0);
 }
 
 #[test]
@@ -628,13 +704,15 @@ fn tree_with_stagger_group(n: u64) -> RenderTree {
     });
     tree.insert_node(1, id, None).expect("insert");
   }
+  // The mount frame's advance starts the enters (one stagger count).
+  tree.advance_transitions();
   tree
 }
 
 #[test]
 fn stagger_spreads_group_enters() {
   let mut tree = tree_with_stagger_group(3);
-  // All three sit at `from` after the mount.
+  // All three sit at `from` after the mount frame.
   for id in 10..13 {
     assert_eq!(rect_x(&tree, id), 100.0, "node {id} snapped to from");
   }
@@ -681,6 +759,9 @@ fn stagger_counts_per_frame() {
   });
   tree.insert_node(1, 20, None).expect("insert");
   tree.set_transition_now(30.0);
+  tree.advance_transitions();
+  assert_eq!(rect_x(&tree, 20), 100.0, "the mount frame's advance snaps to from");
+  tree.set_transition_now(46.0);
   tree.advance_transitions();
   assert!(rect_x(&tree, 20) < 100.0, "index restarted at 0: moves without a held delay");
 }

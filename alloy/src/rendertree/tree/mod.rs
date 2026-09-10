@@ -192,7 +192,11 @@ impl RenderTree {
     self.invalidate_paint(parent_id);
     self.bump_revision();
 
-    self.apply_enter_transitions(node_id);
+    // The enter pass (`from`) runs at the frame's advance, not here: the
+    // config and the mounted values may still be on their way.
+    if !self.node(node_id).entered {
+      self.transitions.entering.push(node_id);
+    }
     Ok(())
   }
 

@@ -30,7 +30,14 @@ import type { PointerEvent as ElementPointerEvent, WheelEvent as ElementWheelEve
 import { beginBufferWrite, createBuffer, destroyBuffer, endBufferWrite } from "@solidrt/core/gpu"
 import type { BufferId, TextureId } from "@solidrt/core/gpu"
 import * as spatial from "flux:spatial"
-import type { Impact as CoreImpact, MoveOptions as CoreMoveOptions, NodeId, NodeTransition, QueryFilter } from "flux:spatial"
+import type {
+  Impact as CoreImpact,
+  MoveOptions as CoreMoveOptions,
+  NodeId,
+  NodeTransition,
+  NodeTransitionSpec,
+  QueryFilter,
+} from "flux:spatial"
 import { on } from "srt:events"
 import type { CameraState, CameraUpdate } from "./camera.ts"
 import type { Frame } from "./frames.ts"
@@ -1136,6 +1143,50 @@ export function setSpriteParent(sprite: Sprite, parent: SpriteGroup | null): voi
   layer._schedule()
 }
 
+/** One spec of a sprite or group transition: the node vocabulary
+ * (`{ duration, bounce? }` a spring, `{ duration, curve }` a tween, or a
+ * shorthand string like "300ms ease-out") with `from` in 2d units - the
+ * component's enter value, where a freshly added sprite starts before
+ * animating to its mount pose. */
+export type SpriteTransitionSpec<From> =
+  | { duration: number; bounce?: number; from?: From }
+  | { duration: number; curve: Extract<NodeTransitionSpec, { curve: unknown }>["curve"]; from?: From }
+  | string
+
+/** A sprite or group transition declaration: a spec per pose component
+ * plus `all` as a catch-all. `position` is x/y (`from: [x, y]`),
+ * `rotation` the rotation in radians (`from: angle`), `scale` a sprite's
+ * w/h (`from: [w, h]`) or a group's uniform scale (`from: s`). */
+export type SpriteTransition = {
+  position?: SpriteTransitionSpec<[number, number]>
+  rotation?: SpriteTransitionSpec<number>
+  scale?: SpriteTransitionSpec<[number, number] | number>
+  all?: NodeTransitionSpec
+}
+
+/** The 2d declaration in the arena's own lanes: `from` values lifted
+ * into the plane (z = 0, a unit z scale, the rotation a quaternion about
+ * z); everything else passes through. */
+function toNodeTransition(transition: SpriteTransition | string | null): NodeTransition | string | null {
+  if (transition === null || typeof transition === "string") return transition
+  let out: NodeTransition = {}
+  if (transition.all !== undefined) out.all = transition.all
+  if (transition.position !== undefined) out.position = liftSpec(transition.position, ([x, y]) => [x, y, 0])
+  if (transition.rotation !== undefined) {
+    out.rotation = liftSpec(transition.rotation, angle => [0, 0, Math.sin(angle / 2), Math.cos(angle / 2)])
+  }
+  if (transition.scale !== undefined) {
+    out.scale = liftSpec(transition.scale, s => (typeof s === "number" ? [s, s, 1] : [s[0], s[1], 1]))
+  }
+  return out
+}
+
+function liftSpec<From>(spec: SpriteTransitionSpec<From>, lift: (from: From) => number[]): NodeTransitionSpec {
+  if (typeof spec === "string") return spec
+  let { from, ...rest } = spec
+  return from === undefined ? rest : { ...rest, from: lift(from) }
+}
+
 /**
  * Declare (or with null clear) how the sprite's pose writes animate: once
  * set, setSprite writes are TARGETS the core animates toward - JS writes
@@ -1145,24 +1196,28 @@ export function setSpriteParent(sprite: Sprite, parent: SpriteGroup | null): voi
  * rotation (always the short arc) and `scale` its w/h; each spec is
  * `{ duration, bounce? }` (a spring, the retargeting-safe default) /
  * `{ duration, curve }` (a tween) / a shorthand string like
- * "300ms ease-out". Clearing cancels running tracks in place (the sprite
- * keeps its mid-flight pose) and later writes snap. Each natural settle
- * calls the sprite's `onTransitionEnd` with the component. Node layer
- * only.
+ * "300ms ease-out". A `from` on a component is its enter value: a sprite
+ * declared in the tick that added it starts there and animates to its
+ * mount pose (once, at add; a later declaration animates writes only).
+ * Clearing cancels running tracks in place (the sprite keeps its
+ * mid-flight pose) and later writes snap. Each natural settle calls the
+ * sprite's `onTransitionEnd` with the component. Node layer only.
  */
-export function setSpriteTransition(sprite: Sprite, transition: NodeTransition | string | null): void {
+export function setSpriteTransition(sprite: Sprite, transition: SpriteTransition | string | null): void {
   if (sprite.layer === null) return
   if (sprite.node === null) throw new Error("setSpriteTransition: record sprites have no node transitions")
-  spatial.setTransition(sprite.node, transition)
-  declareTransition(sprite.node, sprite, transition)
+  let node = toNodeTransition(transition)
+  spatial.setTransition(sprite.node, node)
+  declareTransition(sprite.node, sprite, node)
 }
 
 /** The group counterpart of setSpriteTransition (`scale` is the group's
  * uniform scale). */
-export function setGroupTransition(group: SpriteGroup, transition: NodeTransition | string | null): void {
+export function setGroupTransition(group: SpriteGroup, transition: SpriteTransition | string | null): void {
   if (group.layer === null) return
-  spatial.setTransition(group.node, transition)
-  declareTransition(group.node, group, transition)
+  let node = toNodeTransition(transition)
+  spatial.setTransition(group.node, node)
+  declareTransition(group.node, group, node)
 }
 
 /** Add a transform group (see SpriteGroup). */

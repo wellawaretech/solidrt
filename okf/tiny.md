@@ -18,6 +18,7 @@ symptom shows. A heading that outgrows this file splits into its own.
 `packages/core` - the renderer and the reactivity surface.
 
 - renderer.ts leak sentinel (scanForOrphans): it warns only when a NEW element type joins the orphans, so a leak that keeps growing at a stable set of types goes silent after the first warning (one was caught only by reading `orphanNodes` in get_stats); warn again when the total crosses an order of magnitude.
+- Enter animations: warn (properties/mod.rs, the `transition` branch) when a config declaring `from` lands on a node already entered whose previous config declared none - a `from` that arrives after the mount frame's advance never plays and nothing says so. Not on a from-to-from swap: `closing() ? OUT : IN` toggles are legitimate.
 
 ## Flux
 

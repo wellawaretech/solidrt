@@ -369,7 +369,9 @@ export type { TransformUpdate } from "./math.ts"
  * `{ duration, bounce? }` (a spring, the default) / `{ duration, curve }`
  * (a tween) / a shorthand string like "300ms ease-out". The declaration
  * lives on the node and re-applies whenever it enters a scene; the pose
- * it enters with always snaps. Clearing cancels running tracks in place
+ * it enters with snaps, unless a component's `from` (its lanes: `[x, y,
+ * z]`, a quaternion for rotation) animates it in from there at every
+ * scene enter. Clearing cancels running tracks in place
  * (the node keeps its mid-flight transform) and later writes snap. Each
  * natural settle calls the node's `onTransitionEnd` with the component
  * (the raw "spatialTransitionEnd" engine event on srt:events stays for

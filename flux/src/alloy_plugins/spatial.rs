@@ -7,7 +7,7 @@
 use rquickjs::module::{Declarations, Exports, ModuleDef};
 use rquickjs::{Array, Ctx, Function, Object, TypedArray, Value};
 
-use crate::alloy_plugins::properties::transition::decode_spec;
+use crate::alloy_plugins::properties::transition::{decode_node_entry, decode_spec};
 use crate::alloy_plugins::value::PropValue;
 use crate::plugins::marshal::OptArg;
 use alloy::spatial::{
@@ -156,8 +156,9 @@ fn set_transform(ctx: Ctx<'_>, id: u64, data: TypedArray<'_, f32>) -> rquickjs::
 
 /// The node transition declaration: an object keyed by transform component
 /// (position, rotation, scale, plus `all` as a catch-all) whose values
-/// speak the element transition vocabulary minus the lifecycle
-/// conveniences, or a bare shorthand string as the `all` catch-all.
+/// speak the element transition vocabulary minus delay and exit - `from`
+/// on a component entry is its enter value, the lanes of that component -
+/// or a bare shorthand string as the `all` catch-all.
 fn decode_node_transition(value: &PropValue) -> Result<NodeTransitionConfig, String> {
   if value.as_str().is_some() {
     return Ok(NodeTransitionConfig { all: Some(decode_spec("transition", value)?), ..Default::default() });
@@ -167,12 +168,24 @@ fn decode_node_transition(value: &PropValue) -> Result<NodeTransitionConfig, Str
   })?;
   let mut config = NodeTransitionConfig::default();
   for (key, entry) in entries {
-    let spec = Some(decode_spec(&format!("transition.{key}"), entry)?);
+    let at = format!("transition.{key}");
     match key.as_str() {
-      "position" => config.position = spec,
-      "rotation" => config.rotation = spec,
-      "scale" => config.scale = spec,
-      "all" => config.all = spec,
+      "position" => {
+        let (spec, from) = decode_node_entry(&at, entry, Some(3))?;
+        config.position = Some(spec);
+        config.enter_position = from.map(|v| [v[0], v[1], v[2]]);
+      }
+      "scale" => {
+        let (spec, from) = decode_node_entry(&at, entry, Some(3))?;
+        config.scale = Some(spec);
+        config.enter_scale = from.map(|v| [v[0], v[1], v[2]]);
+      }
+      "rotation" => {
+        let (spec, from) = decode_node_entry(&at, entry, Some(4))?;
+        config.rotation = Some(spec);
+        config.enter_rotation = from.map(|v| [v[0], v[1], v[2], v[3]]);
+      }
+      "all" => config.all = Some(decode_spec(&at, entry)?),
       other => {
         return Err(format!(
           "transition.{other}: '{other}' is not a transform component (expected position, rotation, scale or all)"

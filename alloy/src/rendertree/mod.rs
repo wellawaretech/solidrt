@@ -377,9 +377,10 @@ pub struct Element {
   // tail of an animation from the kind's defaults (tree/transitions.rs
   // transition_write). A Cell because the walk traverses a shared tree.
   pub painted: Cell<bool>,
-  // The node has been inserted under a parent at least once. Guards the
-  // mount-time `from` enter animation: it fires on the first attach only,
-  // never again on a move or reorder.
+  // The enter pass has run for this node (tree/transitions.rs
+  // apply_enter_transitions, at the first advance after its first attach).
+  // Guards the mount-time `from` enter animation: it fires on the first
+  // attach only, never again on a move or reorder.
   pub entered: bool,
   // Playing its `exit` transition: detached by the renderer but kept in the
   // tree until the exit tracks settle. Exiting nodes are hit-test invisible;

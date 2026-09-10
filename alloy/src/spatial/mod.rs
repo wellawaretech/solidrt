@@ -530,7 +530,11 @@ impl Spatial {
       }
     };
     self.enqueue(i);
-    ((self.nodes[i as usize].generation as u64) << 32) | i as u64
+    let id = ((self.nodes[i as usize].generation as u64) << 32) | i as u64;
+    // Owed an enter animation at the next advance, should its declaration
+    // (set any time before then) carry `from` values.
+    self.transitions.entering.push(id);
+    id
   }
 
   /// Free a node. Its children become roots (the consumer tears a subtree
@@ -1419,6 +1423,7 @@ impl Spatial {
   /// signal to keep requesting frames. A repeated call at an unchanged
   /// clock (the paused path) writes nothing.
   pub fn advance_transitions(&mut self) -> bool {
+    self.start_enter_transitions();
     let now = self.transitions.now_ms;
     if self.transitions.is_empty() {
       self.transitions.last_ms = now;
@@ -1473,6 +1478,51 @@ impl Spatial {
     rotation.append(&mut self.transitions.rotation);
     self.transitions.rotation = rotation;
     !self.transitions.is_empty()
+  }
+
+  /// Enter animations: a node created since the last advance whose
+  /// declaration carries `enter_*` values (with a spec for the component)
+  /// snaps those components to them and animates toward the transform it
+  /// holds now - the created one, or the target of a write the creating
+  /// tick already made. Runs first thing in the advance, so the creating
+  /// tick may set the declaration and the pose in any order, and the
+  /// node's first flushed transform is the `from` one. Once per node: a
+  /// freed node is skipped, and creation is the only way onto the queue.
+  fn start_enter_transitions(&mut self) {
+    for id in std::mem::take(&mut self.transitions.entering) {
+      let Ok(i) = self.resolve(id) else {
+        continue;
+      };
+      let Some(config) = self.transitions.configs.get(&id).copied() else {
+        continue;
+      };
+      let mut snapped = false;
+      if let (Some(from), Some(spec)) = (config.enter_position, config.entry_for(Component::Position)) {
+        let target = self.transitions.take_linear(id, Component::Position).unwrap_or(self.nodes[i as usize].position);
+        if self.transitions.retarget_linear(id, Component::Position, from, target, spec) {
+          self.nodes[i as usize].position = from;
+          snapped = true;
+        }
+      }
+      if let (Some(from), Some(spec)) = (config.enter_scale, config.entry_for(Component::Scale)) {
+        let target = self.transitions.take_linear(id, Component::Scale).unwrap_or(self.nodes[i as usize].scale);
+        if self.transitions.retarget_linear(id, Component::Scale, from, target, spec) {
+          self.nodes[i as usize].scale = from;
+          snapped = true;
+        }
+      }
+      if let (Some(from), Some(spec)) = (config.enter_rotation, config.entry_for(Component::Rotation)) {
+        let target = self.transitions.take_rotation(id).unwrap_or(self.nodes[i as usize].rotation);
+        if self.transitions.retarget_rotation(id, from, target, spec) {
+          self.nodes[i as usize].rotation = from;
+          snapped = true;
+        }
+      }
+      if snapped {
+        self.nodes[i as usize].local_dirty = true;
+        self.enqueue(i);
+      }
+    }
   }
 
   /// The (node, component) pairs whose tracks settled since the last drain

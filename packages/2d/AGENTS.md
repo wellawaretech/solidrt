@@ -357,9 +357,13 @@ moving the same population imperatively). Retargeting every frame is
 also a legitimate pattern, not an abuse: rewriting a spring's TARGET
 each frame to chase a moving point (a follow-camera trailing a moving
 sprite) rides the spring's smoothing for free - a spring keeps its
-velocity through retargets, so the chase stays fluid. Mount poses always snap (the
-component declares the transition after the first pose sync; the
-function face sets it after addSprite). Each natural settle calls the
+velocity through retargets, so the chase stays fluid. A mount pose snaps
+unless a component's `from` (2d units: `position: { from: [x, y] }`,
+`rotation: { from: angle }`, `scale: { from: [w, h] }`, a group's
+`from: s`) animates the sprite in from there - once, and only when the
+declaration lands in the tick that added the sprite (the `<Sprite>` prop
+or a setSpriteTransition right after addSprite; a later one animates
+writes only). Each natural settle calls the
 handle's `onTransitionEnd` (plain field, or the `<Sprite>`/`<Group>` prop)
 with `{ component }` - target-only, never on a cancel, snap or removal;
 the raw "spatialTransitionEnd" engine event (srt:events, node =

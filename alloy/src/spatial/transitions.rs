@@ -9,9 +9,12 @@
 // slerps the geodesic and whose spring is an angular-velocity spring in
 // the exponential map at the target, the retargeting-safe rotational
 // primitive. Spec vocabulary and semantics match the element transitions
-// (spring default, retarget keeps spring state, settles land exactly);
-// the element lifecycle conveniences (delay, from, exit, stagger) do not
-// apply to nodes and are deliberately absent.
+// (spring default, retarget keeps spring state, settles land exactly), and
+// so does the enter animation: a component's `from` is where a node starts
+// at creation, animating to the transform it holds at the first advance
+// after `create` (the declaration and the mount pose may land in any order
+// in the creating tick). The other element lifecycle conveniences (delay,
+// exit, stagger) do not apply to nodes and are deliberately absent.
 
 use std::collections::HashMap;
 
@@ -29,13 +32,21 @@ pub enum Component {
 /// The transition declaration a node carries: a spec per component plus an
 /// `all` catch-all (the element TransitionConfig shape). Applies to
 /// `write_transform` calls from the moment it is set; it does not
-/// retroactively affect running tracks.
+/// retroactively affect running tracks. The `enter_*` values are the
+/// components' `from`: where the node starts its enter animation, played
+/// at the first advance after `create` toward the transform it holds then
+/// (mod.rs start_enter_transitions). One needs a spec for its component
+/// (else it is ignored) and the declaration must be set before that
+/// advance.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct NodeTransitionConfig {
   pub position: Option<TransitionSpec>,
   pub rotation: Option<TransitionSpec>,
   pub scale: Option<TransitionSpec>,
   pub all: Option<TransitionSpec>,
+  pub enter_position: Option<[f32; 3]>,
+  pub enter_rotation: Option<[f32; 4]>,
+  pub enter_scale: Option<[f32; 3]>,
 }
 
 impl NodeTransitionConfig {
@@ -192,6 +203,10 @@ pub(super) struct NodeTransitions {
   // (node, component) pairs whose track settled, awaiting the embedder's
   // drain. Cancelled tracks never land here.
   pub settled: Vec<(NodeId, Component)>,
+  // Nodes created since the last advance, owed their enter animation
+  // (mod.rs start_enter_transitions drains it; a node without enter
+  // values, or freed again already, costs one lookup).
+  pub entering: Vec<NodeId>,
 }
 
 impl NodeTransitions {
@@ -301,6 +316,18 @@ impl NodeTransitions {
   pub fn cancel_node(&mut self, node: NodeId) {
     self.linear.retain(|t| t.node != node);
     self.rotation.retain(|t| t.node != node);
+  }
+
+  /// Drop one component's track and hand back its target, if one ran: the
+  /// enter animation restarts the component from `from` toward it.
+  pub fn take_linear(&mut self, node: NodeId, component: Component) -> Option<[f32; 3]> {
+    let i = self.linear.iter().position(|t| t.node == node && t.component == component)?;
+    Some(self.linear.swap_remove(i).to)
+  }
+
+  pub fn take_rotation(&mut self, node: NodeId) -> Option<[f32; 4]> {
+    let i = self.rotation.iter().position(|t| t.node == node)?;
+    Some(self.rotation.swap_remove(i).to)
   }
 }
 

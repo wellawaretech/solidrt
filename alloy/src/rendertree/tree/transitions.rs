@@ -12,14 +12,20 @@ impl RenderTree {
   /// Mount-time enter animations: a per-property `from` in the node's
   /// transition declaration snaps the property to `from` and starts a track
   /// toward the value it mounted with (with the entry's delay honored - the
-  /// element sits at `from` until the hold expires). Fires on the node's
-  /// first attach only; a move or reorder re-runs nothing. A property whose
-  /// mounted value is unreadable (no explicit value, a gradient) skips its
-  /// enter animation and simply shows the mounted state.
-  pub(super) fn apply_enter_transitions(&mut self, node_id: u64) {
+  /// element sits at `from` until the hold expires). Runs from the advance
+  /// of the frame that attached the node (insert_node queues it), after the
+  /// tick's script work and before the paint: whatever the mount tick wrote
+  /// after the insert - the config itself, the mounted values - has landed
+  /// and snapped, and the node's first painted frame is at `from`. Fires
+  /// on the node's first attach only; a move or reorder re-runs nothing. A
+  /// property whose mounted value is unreadable (no explicit value, a
+  /// gradient) skips its enter animation and simply shows the mounted
+  /// state. A node detached again before the advance enters at its next
+  /// attach.
+  fn apply_enter_transitions(&mut self, node_id: u64) {
     let entries: Vec<(AnimProp, crate::rendertree::TransitionEntry)> = {
       let Some(el) = self.nodes.get_mut(&node_id) else { return };
-      if el.entered {
+      if el.entered || el.parent.is_none() {
         return;
       }
       el.entered = true;
@@ -192,8 +198,11 @@ impl RenderTree {
   /// inserts a template's children into their parent before the effect that
   /// writes their props runs, so a child's mount-time writes land on an
   /// attached node. The one thing that animates before the first paint is
-  /// an explicit enter animation (`from`, see `insert_node`): a mount-tick
-  /// write while its track runs retargets it instead of snapping it away.
+  /// an explicit enter animation (`from`, see `apply_enter_transitions`),
+  /// started at the advance after the mount tick's writes have snapped: a
+  /// write that reaches the node between that advance and the paint (a
+  /// transition-end handler's) retargets the track instead of snapping it
+  /// away.
   pub fn transition_write(&mut self, id: u64, prop: AnimProp, value: Option<AnimValue>) -> bool {
     let animate = value.and_then(|to| {
       let el = self.nodes.get(&id)?;
@@ -243,6 +252,11 @@ impl RenderTree {
   /// signal to keep requesting frames. A repeated call at an unchanged clock
   /// (the paused path) writes nothing.
   pub fn advance_transitions(&mut self) -> bool {
+    // Nodes attached since the last advance start their enter animations
+    // first, so a `from` snap never shows and its track advances below.
+    for node_id in std::mem::take(&mut self.transitions.entering) {
+      self.apply_enter_transitions(node_id);
+    }
     if self.transitions.is_empty() {
       return false;
     }

@@ -49,6 +49,8 @@ export type {
   SpriteOptions,
   SpritePointerEvent,
   SpriteTapEvent,
+  SpriteTransition,
+  SpriteTransitionSpec,
   SpriteWheelEvent,
   TransitionEndEvent,
   Volume,

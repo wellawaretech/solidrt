@@ -30,16 +30,26 @@ declare module "flux:spatial" {
   export function setTransform(node: NodeId, transform: Float32Array): void
   /**
    * One node-transition spec, the element `transition` vocabulary minus
-   * the lifecycle conveniences: `{ duration }` / `{ duration, bounce }`
-   * is a spring (the default kind; retargets keep position and velocity,
-   * rotation springs keep angular velocity along the geodesic),
-   * `{ duration, curve }` a tween (rotation tweens slerp the geodesic;
-   * retargets restart from the current value), or the shorthand string
-   * `"<duration>ms [curve]"`. Durations in ms; no delay, from or exit.
+   * delay and exit: `{ duration }` / `{ duration, bounce }` is a spring
+   * (the default kind; retargets keep position and velocity, rotation
+   * springs keep angular velocity along the geodesic), `{ duration, curve }`
+   * a tween (rotation tweens slerp the geodesic; retargets restart from
+   * the current value), or the shorthand string `"<duration>ms [curve]"`.
+   * Durations in ms. `from` on a component entry (not on `all`) is the
+   * enter value: the node starts there and animates to the transform it
+   * holds at its first frame - its created transform, or the target of a
+   * write made in the creating tick. The lanes of the component:
+   * position and scale `[x, y, z]`, rotation a quaternion `[x, y, z, w]`.
+   * An enter plays once per node, at creation, so the declaration must be
+   * set in the creating tick (a later one animates writes only).
    */
   export type NodeTransitionSpec =
-    | { duration: number; bounce?: number }
-    | { duration: number; curve: "linear" | "ease" | "ease-in" | "ease-out" | "ease-in-out" | [number, number, number, number] }
+    | { duration: number; bounce?: number; from?: number[] }
+    | {
+        duration: number
+        curve: "linear" | "ease" | "ease-in" | "ease-out" | "ease-in-out" | [number, number, number, number]
+        from?: number[]
+      }
     | string
   /** The declaration setTransition takes: a spec per transform component
    * plus `all` as a catch-all (per-component entries win). */

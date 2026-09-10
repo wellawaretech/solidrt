@@ -286,13 +286,11 @@ Shaped, not started.
   Cursor enum but have no sender anywhere; give apps the web's cursor model -
   a per-element cursor prop resolved against the hover path, innermost wins,
   "none" hides.
-- **[Enter animations (from) fire only on template roots](backlog/enter-from-template-children.md)** [2026-09-07]
-  A transition entry's `from` runs at insert, but JSX inserts a template's
-  children before the effect that writes their props, so a child's transition
-  config is not there yet when it attaches and its enter animation never
-  plays; only the template root (inserted after its props effect) gets one.
-  Done means a `from` on any element plays on its first frame regardless of
-  where it sits in the template.
+- **[An exit transition reaches only the removed node, never its descendants](backlog/exit-transitions-subtree.md)** [2026-09-10]
+  begin_exit runs from detach_node, and the renderer detaches only the node it
+  was asked to remove, so a panel whose children should animate out has to
+  hand-roll a closing signal, a held mount and a settle cue; done means a
+  detached subtree's declared exits all play and gate the root's free.
 - **[Move the fetch disk cache out of forge?](backlog/fetch-cache-out-of-forge.md)** [2026-07-24]
   Lattice is now the only cache configurer, so should the mechanism follow the
   policy out of forge, and which of the three candidate shapes pays for
@@ -679,6 +677,11 @@ Shaped, not started.
   Button picks fill/hover/label with a switch over its variant and derives the
   background from press state by hand, and every other widget repeats the
   pattern; a helper that selects a prop bundle from state would collapse it.
+- **[The stats overlay reads GPU 0% while the same counters say 16%](backlog/stats-overlay-gpu-share.md)** [2026-09-10]
+  The HUD's GPU line sits at 0% whatever is on screen, though get_stats over
+  the same window computes a 16% share from the same two counters; the
+  arithmetic in both paths is identical on inspection, so the fault is in what
+  record_gpu observes and needs instrumenting rather than reading.
 - **[The stats window has no present-interval jank counter, so a repeated frame can pass every figure clean](backlog/stats-present-interval-jank.md)** [2026-08-31]
   missedPresents (raster-side, demand-gated, run-based counting) is
   implemented and is the figure probes quote; remaining are maxPresentGapMs
@@ -1116,6 +1119,13 @@ Finished, kept for the reasoning.
   Explicit opt-in disk cache in the forge fetch layer, needed by a production
   app doing many image fetches; designed and shipped as
   okf/plans/fetch-cache.md.
+- **[Enter animations (from) are lost whenever the transition config lands after the insert](done/enter-from-template-children.md)** [2026-09-07]
+  A transition entry's `from` runs at insert, and `entered` is set before the
+  config is even looked at, so any element whose config arrives a step later
+  never animates in - a template child always, and a template root whose
+  `transition` prop the compiler classified as dynamic. Done means a `from`
+  plays on the element's first frame wherever it sits and however its spec was
+  written.
 - **[Guarantee a microtask checkpoint between event dispatches](done/event-burst-stale-signal-reads.md)** [2026-08-14]
   Events dispatched in one run-loop drain run without a microtask flush
   between them, so a handler reads stale signal values written by the previous

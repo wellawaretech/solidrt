@@ -199,23 +199,58 @@ fn decode_duration_spec(at: &str, value: &PropValue) -> Result<TransitionSpec, S
 /// One spec of the shared vocabulary WITHOUT the element lifecycle
 /// conveniences: `{ duration, bounce? }` (a spring), `{ duration, curve }`
 /// (a tween) or the shorthand string - no delay, from or exit. The node
-/// transitions (flux:spatial setTransition) speak exactly this subset.
+/// transitions (flux:spatial setTransition) speak this subset, plus
+/// `from` on a component entry (decode_node_entry).
 pub fn decode_spec(at: &str, value: &PropValue) -> Result<TransitionSpec, String> {
+  decode_node_entry(at, value, None).map(|(spec, _)| spec)
+}
+
+/// A node transition entry: `decode_spec` plus the enter value `from` of a
+/// component with `lanes` lanes (position and scale 3, rotation 4 as a
+/// quaternion); `None` rejects `from` (the `all` catch-all, where which
+/// component it would seed is unanswerable). Delay and exit stay rejected.
+pub fn decode_node_entry(
+  at: &str,
+  value: &PropValue,
+  lanes: Option<usize>,
+) -> Result<(TransitionSpec, Option<Vec<f32>>), String> {
   if let Some(s) = value.as_str() {
     let entry = parse_shorthand(at, s)?;
     if entry.delay_ms != 0.0 {
       return Err(format!("{at}: delay does not apply to node transitions"));
     }
-    return Ok(entry.spec);
+    return Ok((entry.spec, None));
   }
   let map =
     value.as_map().ok_or_else(|| format!("{at} must be an object or a shorthand string, got {}", describe(value)))?;
   for (k, _) in map {
-    if !matches!(k.as_str(), "duration" | "curve" | "bounce") {
-      return Err(format!("{at}: unknown key '{k}' (expected duration, bounce or curve)"));
+    if !matches!(k.as_str(), "duration" | "curve" | "bounce" | "from") {
+      return Err(format!("{at}: unknown key '{k}' (expected duration, bounce, curve or from)"));
     }
   }
-  decode_duration_spec(at, value)
+  let spec = decode_duration_spec(at, value)?;
+  let from = match value.get("from") {
+    None => None,
+    Some(v) => {
+      let Some(lanes) = lanes else {
+        return Err(format!("{at}: from is per-component; name the component instead of 'all'"));
+      };
+      let list = v
+        .as_list()
+        .filter(|l| l.len() == lanes)
+        .ok_or_else(|| format!("{at}: from must be an array of {lanes} numbers, got {}", describe(v)))?;
+      let mut out = Vec::with_capacity(lanes);
+      for x in list {
+        let n = x.as_f64().ok_or_else(|| format!("{at}: from must be an array of numbers, got {}", describe(x)))? as f32;
+        if !n.is_finite() {
+          return Err(format!("{at}: from must be finite, got {n}"));
+        }
+        out.push(n);
+      }
+      Some(out)
+    }
+  };
+  Ok((spec, from))
 }
 
 fn decode_delay(at: &str, value: Option<&PropValue>) -> Result<f32, String> {

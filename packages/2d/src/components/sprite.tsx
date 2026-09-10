@@ -2,7 +2,7 @@ import { createEffect, onCleanup, untrack, useContext } from "@solidrt/core"
 import type { VoidComponent } from "@solidrt/core"
 import { addSprite, removeSprite, setSprite, setSpriteTransition } from "../layer.ts"
 import type { Sprite as SpriteHandle, SpriteOptions, SpritePointerEvent, SpriteTapEvent, SpriteWheelEvent, TransitionEndEvent } from "../layer.ts"
-import type { NodeTransition } from "flux:spatial"
+import type { SpriteTransition } from "../layer.ts"
 import { GroupContext, LayerContext } from "./context.ts"
 
 /**
@@ -29,9 +29,9 @@ export type SpritePointerProps = {
 
 export type SpriteProps = SpriteOptions &
   SpritePointerProps & {
-    /** How pose-prop changes animate (see setSpriteTransition); the mount
-     * pose always snaps. */
-    transition?: NodeTransition | string | null
+    /** How pose-prop changes animate (see setSpriteTransition). The mount
+     * pose snaps, unless a component's `from` animates it in from there. */
+    transition?: SpriteTransition | string | null
     /** A declared transition settled on one component. */
     onTransitionEnd?: (event: TransitionEndEvent) => void
     ref?: (sprite: SpriteHandle) => void

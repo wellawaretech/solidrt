@@ -273,7 +273,10 @@ the quaternion geodesic - a spring keeps its velocity through
 retargets), so a mesh gliding to a slot or a camera rig easing costs
 one JS write per target change, zero per frame. The declaration lives
 on the SceneNode and re-applies on every scene enter; the pose a node
-enters with always snaps. Each natural settle calls the node's
+enters with snaps, unless a component's `from` (`position: { duration,
+from: [x, y, z] }`, a quaternion for `rotation`) animates it in from
+there - at every scene enter, since each enter creates the core node
+anew. Each natural settle calls the node's
 `onTransitionEnd` (plain field like the pointer handlers) with
 `{ component }`; the raw "spatialTransitionEnd" engine event
 (srt:events, carrying the CORE node id `_node`) stays for flux:spatial

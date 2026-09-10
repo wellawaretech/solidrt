@@ -249,3 +249,86 @@ fn hidden_nodes_still_animate() {
   assert!(s.advance_transitions());
   assert!(pos_x(&s, id) > 0.0, "visibility gates sinks, not motion");
 }
+
+// Enter animations: a component's `from` in the declaration is where a
+// node starts, played at the first advance after `create` toward the
+// transform it holds then. See spatial/mod.rs start_enter_transitions.
+
+fn enter_from_x(x: f32) -> Option<NodeTransitionConfig> {
+  Some(NodeTransitionConfig { all: Some(LINEAR_100), enter_position: Some([x, 0.0, 0.0]), ..Default::default() })
+}
+
+#[test]
+fn enter_from_plays_at_first_advance() {
+  let mut s = Spatial::new();
+  s.set_transition_now(0.0);
+  let id = s.create([100.0, 0.0, 0.0], Q, ONE, true);
+  s.set_node_transition(id, enter_from_x(0.0)).expect("config");
+  assert_eq!(pos_x(&s, id), 100.0, "creation holds the created pose");
+  assert!(s.advance_transitions(), "the enter starts at the advance");
+  assert_eq!(pos_x(&s, id), 0.0, "the first advance snaps to from");
+  s.set_transition_now(50.0);
+  assert!(s.advance_transitions());
+  assert!((pos_x(&s, id) - 50.0).abs() < 0.01, "halfway to the created pose, got {}", pos_x(&s, id));
+  s.set_transition_now(100.0);
+  assert!(!s.advance_transitions());
+  assert_eq!(pos_x(&s, id), 100.0, "settles on the created pose");
+  assert_eq!(s.take_settled_transitions(), vec![(id, Component::Position)]);
+}
+
+#[test]
+fn enter_from_rotation_slerps_to_created_pose() {
+  let mut s = Spatial::new();
+  s.set_transition_now(0.0);
+  let id = s.create([0.0; 3], qz(1.0), ONE, true);
+  let config = NodeTransitionConfig { all: Some(LINEAR_100), enter_rotation: Some(Q), ..Default::default() };
+  s.set_node_transition(id, Some(config)).expect("config");
+  assert!(s.advance_transitions());
+  assert!(angle_z(&s, id).abs() < 1e-5, "snapped to the from rotation");
+  s.set_transition_now(50.0);
+  s.advance_transitions();
+  assert!((angle_z(&s, id) - 0.5).abs() < 1e-3, "halfway along the arc, got {}", angle_z(&s, id));
+  s.set_transition_now(100.0);
+  assert!(!s.advance_transitions());
+  assert!((angle_z(&s, id) - 1.0).abs() < 1e-5);
+}
+
+#[test]
+fn enter_from_targets_a_write_made_in_the_creating_tick() {
+  // The declaration and the pose may land in any order before the advance:
+  // a write that already started a track becomes the enter's target.
+  let mut s = Spatial::new();
+  s.set_transition_now(0.0);
+  let id = s.create([0.0; 3], Q, ONE, true);
+  s.set_node_transition(id, enter_from_x(-100.0)).expect("config");
+  assert!(s.write_transform(id, [100.0, 0.0, 0.0], Q, ONE).expect("write"));
+  assert!(s.advance_transitions());
+  assert_eq!(pos_x(&s, id), -100.0, "from wins over the written target for the first frame");
+  s.set_transition_now(50.0);
+  s.advance_transitions();
+  assert!((pos_x(&s, id) - 0.0).abs() < 0.01, "halfway from -100 to the written 100, got {}", pos_x(&s, id));
+  s.set_transition_now(100.0);
+  assert!(!s.advance_transitions());
+  assert_eq!(pos_x(&s, id), 100.0);
+}
+
+#[test]
+fn enter_runs_once_and_skips_nodes_without_from_or_gone() {
+  let mut s = Spatial::new();
+  s.set_transition_now(0.0);
+  let plain = s.create([5.0, 0.0, 0.0], Q, ONE, true);
+  s.set_node_transition(plain, all(LINEAR_100)).expect("config");
+  let same = s.create([0.0; 3], Q, ONE, true);
+  s.set_node_transition(same, enter_from_x(0.0)).expect("config");
+  let gone = s.create([9.0, 0.0, 0.0], Q, ONE, true);
+  s.set_node_transition(gone, enter_from_x(0.0)).expect("config");
+  s.destroy(gone).expect("destroy");
+  assert!(!s.advance_transitions(), "no from, from == pose, or freed: nothing to animate");
+  assert_eq!(pos_x(&s, plain), 5.0);
+  // A later declaration with from does not replay: creation is the one
+  // way onto the enter queue.
+  s.set_node_transition(plain, enter_from_x(0.0)).expect("config");
+  s.set_transition_now(16.0);
+  assert!(!s.advance_transitions());
+  assert_eq!(pos_x(&s, plain), 5.0);
+}

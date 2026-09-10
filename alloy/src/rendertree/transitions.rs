@@ -261,6 +261,13 @@ pub struct Transitions {
   // (node, prop) pairs whose track settled, awaiting the embedder's drain
   // (the onTransitionEnd dispatch). Cancelled tracks never land here.
   pub settled: Vec<(u64, AnimProp)>,
+  // Nodes attached this tick whose enter pass has not run: insert_node
+  // queues, the next advance drains (tree.rs apply_enter_transitions).
+  // The tick's effects have all run by then, so a transition config or a
+  // mounted value that lands after the insert is in place - JSX attaches a
+  // template's children before their props effect, and a dynamic
+  // `transition` prop lands from an effect after the root's insert.
+  pub entering: Vec<u64>,
   // Per-frame stagger counters, keyed by (group ancestor, is_exit): how many
   // descendant enters/exits the group has seen this frame. Cleared at every
   // clock stamp (tree.rs set_transition_now), so a batch mounted in one tick

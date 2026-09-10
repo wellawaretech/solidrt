@@ -2,7 +2,7 @@ import { createEffect, onCleanup, untrack, useContext } from "@solidrt/core"
 import type { ParentComponent } from "@solidrt/core"
 import { addGroup, removeGroup, setGroup, setGroupTransition } from "../layer.ts"
 import type { SpriteGroup, SpritePointerEvent, SpriteTapEvent, SpriteWheelEvent, TransitionEndEvent } from "../layer.ts"
-import type { NodeTransition } from "flux:spatial"
+import type { SpriteTransition } from "../layer.ts"
 import { GroupContext, LayerContext } from "./context.ts"
 
 export type GroupProps = {
@@ -23,9 +23,9 @@ export type GroupProps = {
   onPointerUp?: (event: SpritePointerEvent) => void
   onWheel?: (event: SpriteWheelEvent) => void
   onTap?: (event: SpriteTapEvent) => void
-  /** How pose-prop changes animate (see setGroupTransition); the mount
-   * pose always snaps. */
-  transition?: NodeTransition | string | null
+  /** How pose-prop changes animate (see setGroupTransition). The mount
+   * pose snaps, unless a component's `from` animates it in from there. */
+  transition?: SpriteTransition | string | null
   /** A declared transition settled on one component. */
   onTransitionEnd?: (event: TransitionEndEvent) => void
   ref?: (group: SpriteGroup) => void
