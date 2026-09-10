@@ -75,6 +75,20 @@ pub enum AnimValue {
   Color(Color),
 }
 
+/// A lifecycle endpoint (`from` at mount, `exit` at removal): the value the
+/// property animates from or to, with the motion that direction plays -
+/// resolved by the decoder, so an endpoint without its own `curve`,
+/// `duration`, `bounce` or `delay` carries its entry's, and the runtime
+/// never falls back. Each direction owning its motion is what lets an
+/// ease-out enter pair with an ease-in exit instead of playing its curve
+/// backwards.
+#[derive(Clone, Copy, Debug)]
+pub struct Endpoint {
+  pub value: AnimValue,
+  pub spec: TransitionSpec,
+  pub delay_ms: f32,
+}
+
 /// One declared transition: the motion spec plus the conveniences that ride
 /// with it. `delay_ms` holds each write for that long (animation-clock time)
 /// before it applies; `from` seeds a mount-time enter animation - at the
@@ -88,8 +102,8 @@ pub enum AnimValue {
 pub struct TransitionEntry {
   pub spec: TransitionSpec,
   pub delay_ms: f32,
-  pub from: Option<AnimValue>,
-  pub exit: Option<AnimValue>,
+  pub from: Option<Endpoint>,
+  pub exit: Option<Endpoint>,
 }
 
 impl From<TransitionSpec> for TransitionEntry {

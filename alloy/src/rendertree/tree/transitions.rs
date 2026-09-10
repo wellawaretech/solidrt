@@ -48,19 +48,20 @@ impl RenderTree {
     let stagger = self.stagger_delay_for(node_id, false);
     let now = self.transitions.now_ms;
     for (prop, entry) in entries {
-      let Some(from) = entry.from else { continue };
+      let Some(enter) = entry.from else { continue };
+      let from = enter.value;
       let Some(target) = self.nodes.get(&node_id).and_then(|el| el.anim_value(prop)) else { continue };
       if std::mem::discriminant(&from) != std::mem::discriminant(&target) {
         continue;
       }
       let damage = self.nodes.get_mut(&node_id).map(|el| el.set_anim_value(prop, from)).unwrap_or(Damage::None);
       self.apply_damage(node_id, damage);
-      let delay_ms = entry.delay_ms + stagger;
+      let delay_ms = enter.delay_ms + stagger;
       if delay_ms > 0.0 {
         let at_ms = now + delay_ms as f64;
-        self.transitions.schedule(PendingWrite { node: node_id, prop, to: target, spec: entry.spec, at_ms });
+        self.transitions.schedule(PendingWrite { node: node_id, prop, to: target, spec: enter.spec, at_ms });
       } else {
-        self.transitions.retarget(node_id, prop, from, target, entry.spec);
+        self.transitions.retarget(node_id, prop, from, target, enter.spec);
       }
     }
   }
@@ -72,7 +73,7 @@ impl RenderTree {
   /// there is no per-member state to keep in step, and every event on the
   /// way out (a settle, a destroy, a second detach, a re-insert, an owed
   /// enter) finds its cascade through this climb.
-  pub(super) fn exit_root_of(&self, node_id: u64) -> Option<u64> {
+  pub fn exit_root_of(&self, node_id: u64) -> Option<u64> {
     let mut cursor = Some(node_id);
     while let Some(id) = cursor {
       let el = self.nodes.get(&id)?;
@@ -138,7 +139,7 @@ impl RenderTree {
   }
 
   /// One node's share of a cascade: a track (or a held write, with the
-  /// entry's delay plus the stagger slot) per declared `exit` value that
+  /// exit's delay plus the stagger slot) per declared `exit` value that
   /// has somewhere to move. Returns whether anything started.
   fn start_exit_tracks(&mut self, node_id: u64) -> bool {
     let entries: Vec<(AnimProp, crate::rendertree::TransitionEntry)> = match self.nodes.get(&node_id) {
@@ -156,18 +157,19 @@ impl RenderTree {
     let now = self.transitions.now_ms;
     let mut started = false;
     for (prop, entry) in entries {
-      let Some(to) = entry.exit else { continue };
+      let Some(exit) = entry.exit else { continue };
+      let to = exit.value;
       let Some(current) = self.nodes.get(&node_id).and_then(|el| el.anim_value(prop)) else { continue };
       if std::mem::discriminant(&current) != std::mem::discriminant(&to) {
         continue;
       }
-      let delay_ms = entry.delay_ms + stagger;
+      let delay_ms = exit.delay_ms + stagger;
       if delay_ms > 0.0 {
         let at_ms = now + delay_ms as f64;
-        self.transitions.schedule(PendingWrite { node: node_id, prop, to, spec: entry.spec, at_ms });
+        self.transitions.schedule(PendingWrite { node: node_id, prop, to, spec: exit.spec, at_ms });
         started = true;
       } else {
-        started |= self.transitions.retarget(node_id, prop, current, to, entry.spec);
+        started |= self.transitions.retarget(node_id, prop, current, to, exit.spec);
       }
     }
     started

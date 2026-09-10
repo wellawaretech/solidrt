@@ -31,6 +31,16 @@ fn scalar(v: f32) -> transitions::AnimValue {
   transitions::AnimValue::Scalar(v)
 }
 
+// A lifecycle endpoint on the entry's own motion (LINEAR_100, no delay),
+// the shape the decoder builds for a bare `from`/`exit` value.
+fn endpoint(value: transitions::AnimValue) -> Endpoint {
+  Endpoint { value, spec: LINEAR_100, delay_ms: 0.0 }
+}
+
+fn held(value: transitions::AnimValue, delay_ms: f32) -> Endpoint {
+  Endpoint { value, spec: LINEAR_100, delay_ms }
+}
+
 // Stands in for the frame that painted the node: only a shown node animates
 // its writes (Element::painted, stamped by the paint walk).
 fn paint(tree: &RenderTree, id: u64) {
@@ -181,7 +191,7 @@ fn unpainted_write_retargets_enter_animation() {
     el.transitions = Some(Box::new(TransitionConfig {
       props: vec![(
         AnimProp::X,
-        TransitionEntry { spec: LINEAR_100, delay_ms: 0.0, from: Some(scalar(100.0)), exit: None },
+        TransitionEntry { spec: LINEAR_100, delay_ms: 0.0, from: Some(endpoint(scalar(100.0))), exit: None },
       )],
       all: None,
       stagger_ms: None,
@@ -438,7 +448,7 @@ fn enter_from_animates_first_attach_only() {
     el.transitions = Some(Box::new(TransitionConfig {
       props: vec![(
         AnimProp::X,
-        TransitionEntry { spec: LINEAR_100, delay_ms: 0.0, from: Some(scalar(100.0)), exit: None },
+        TransitionEntry { spec: LINEAR_100, delay_ms: 0.0, from: Some(endpoint(scalar(100.0))), exit: None },
       )],
       all: None,
       stagger_ms: None,
@@ -482,7 +492,7 @@ fn enter_from_plays_when_config_lands_after_attach() {
     el.transitions = Some(Box::new(TransitionConfig {
       props: vec![(
         AnimProp::X,
-        TransitionEntry { spec: LINEAR_100, delay_ms: 0.0, from: Some(scalar(100.0)), exit: None },
+        TransitionEntry { spec: LINEAR_100, delay_ms: 0.0, from: Some(endpoint(scalar(100.0))), exit: None },
       )],
       all: None,
       stagger_ms: None,
@@ -518,7 +528,7 @@ fn enter_queue_skips_destroyed_and_detached_nodes() {
       el.transitions = Some(Box::new(TransitionConfig {
         props: vec![(
           AnimProp::X,
-          TransitionEntry { spec: LINEAR_100, delay_ms: 0.0, from: Some(scalar(100.0)), exit: None },
+          TransitionEntry { spec: LINEAR_100, delay_ms: 0.0, from: Some(endpoint(scalar(100.0))), exit: None },
         )],
         all: None,
         stagger_ms: None,
@@ -550,7 +560,7 @@ fn enter_from_with_delay_holds_at_from() {
     el.transitions = Some(Box::new(TransitionConfig {
       props: vec![(
         AnimProp::X,
-        TransitionEntry { spec: LINEAR_100, delay_ms: 50.0, from: Some(scalar(100.0)), exit: None },
+        TransitionEntry { spec: LINEAR_100, delay_ms: 50.0, from: Some(held(scalar(100.0), 50.0)), exit: None },
       )],
       all: None,
       stagger_ms: None,
@@ -588,8 +598,12 @@ fn tree_with_exit_rect(entry: TransitionEntry) -> RenderTree {
   tree
 }
 
-const EXIT_200: TransitionEntry =
-  TransitionEntry { spec: LINEAR_100, delay_ms: 0.0, from: None, exit: Some(transitions::AnimValue::Scalar(200.0)) };
+const EXIT_200: TransitionEntry = TransitionEntry {
+  spec: LINEAR_100,
+  delay_ms: 0.0,
+  from: None,
+  exit: Some(Endpoint { value: transitions::AnimValue::Scalar(200.0), spec: LINEAR_100, delay_ms: 0.0 }),
+};
 
 #[test]
 fn exit_animates_removal_then_frees() {
@@ -658,7 +672,7 @@ fn exit_with_delay_holds_then_leaves() {
     spec: LINEAR_100,
     delay_ms: 50.0,
     from: None,
-    exit: Some(transitions::AnimValue::Scalar(200.0)),
+    exit: Some(held(scalar(200.0), 50.0)),
   });
   tree.detach_node(1, 2);
   tree.destroy_node(2);
@@ -675,11 +689,75 @@ fn exit_with_delay_holds_then_leaves() {
   assert!(tree.try_node(2).is_none(), "freed after the delayed exit settles");
 }
 
+const LINEAR_200: TransitionSpec = TransitionSpec::Tween { duration_ms: 200.0, curve: Curve::Linear };
+
+#[test]
+fn exit_plays_its_own_motion() {
+  // The exit endpoint owns its motion: a 200ms exit held 50ms under a
+  // 100ms undelayed entry never consults the entry.
+  let mut tree = tree_with_exit_rect(TransitionEntry {
+    spec: LINEAR_100,
+    delay_ms: 0.0,
+    from: None,
+    exit: Some(Endpoint { value: scalar(200.0), spec: LINEAR_200, delay_ms: 50.0 }),
+  });
+  tree.detach_node(1, 2);
+  tree.destroy_node(2);
+  tree.set_transition_now(30.0);
+  tree.advance_transitions();
+  assert_eq!(rect_x(&tree, 2), 0.0, "held by the exit's own delay");
+  tree.set_transition_now(50.0);
+  tree.advance_transitions();
+  tree.set_transition_now(150.0);
+  tree.advance_transitions();
+  assert!((rect_x(&tree, 2) - 100.0).abs() < 0.01, "halfway through the 200ms exit, got {}", rect_x(&tree, 2));
+  assert!(tree.try_node(2).is_some(), "the entry's 100ms is not the exit's clock");
+  tree.set_transition_now(250.0);
+  tree.advance_transitions();
+  assert!(tree.try_node(2).is_none(), "freed when the exit's own motion settles");
+}
+
+#[test]
+fn enter_plays_its_own_motion() {
+  // The from endpoint, likewise: a 200ms enter under a 100ms entry.
+  let mut tree = RenderTree::new();
+  tree.set_transition_now(0.0);
+  tree.create_node(1, View::default().with_layout());
+  tree.create_node(2, Rectangle::default().no_layout());
+  tree.edit(2, |el| {
+    el.transitions = Some(Box::new(TransitionConfig {
+      props: vec![(
+        AnimProp::X,
+        TransitionEntry {
+          spec: LINEAR_100,
+          delay_ms: 0.0,
+          from: Some(Endpoint { value: scalar(100.0), spec: LINEAR_200, delay_ms: 0.0 }),
+          exit: None,
+        },
+      )],
+      all: None,
+      stagger_ms: None,
+    }));
+    match &mut el.kind {
+      ElementKind::Rectangle(r) => r.set_x(Some(0.0)),
+      _ => unreachable!(),
+    }
+  });
+  tree.insert_node(1, 2, None).expect("insert");
+  tree.advance_transitions();
+  tree.set_transition_now(100.0);
+  assert!(tree.advance_transitions(), "still moving where the entry's spec would have settled");
+  assert!((rect_x(&tree, 2) - 50.0).abs() < 0.01, "halfway through the 200ms enter, got {}", rect_x(&tree, 2));
+  tree.set_transition_now(200.0);
+  assert!(!tree.advance_transitions());
+  assert_eq!(rect_x(&tree, 2), 0.0);
+}
+
 // Group stagger: a `stagger` declaration on an ancestor spreads descendant
 // enters and exits across time, index * stagger_ms each, counted per frame.
 
 fn entry_from_100() -> TransitionEntry {
-  TransitionEntry { spec: LINEAR_100, delay_ms: 0.0, from: Some(scalar(100.0)), exit: None }
+  TransitionEntry { spec: LINEAR_100, delay_ms: 0.0, from: Some(endpoint(scalar(100.0))), exit: None }
 }
 
 // A root view marked as a stagger group (50ms), with `n` detached rects
@@ -946,7 +1024,11 @@ fn nested_exit_root_keeps_its_cascade_and_the_outer_waits() {
           spec: TransitionSpec::Tween { duration_ms: 300.0, curve: Curve::Linear },
           delay_ms: 0.0,
           from: None,
-          exit: Some(scalar(200.0)),
+          exit: Some(Endpoint {
+            value: scalar(200.0),
+            spec: TransitionSpec::Tween { duration_ms: 300.0, curve: Curve::Linear },
+            delay_ms: 0.0,
+          }),
         },
       )],
       all: None,
@@ -982,7 +1064,12 @@ fn enter_owed_to_a_leaving_node_is_spent() {
     el.transitions = Some(Box::new(TransitionConfig {
       props: vec![(
         AnimProp::X,
-        TransitionEntry { spec: LINEAR_100, delay_ms: 0.0, from: Some(scalar(100.0)), exit: Some(scalar(200.0)) },
+        TransitionEntry {
+          spec: LINEAR_100,
+          delay_ms: 0.0,
+          from: Some(endpoint(scalar(100.0))),
+          exit: Some(endpoint(scalar(200.0))),
+        },
       )],
       all: None,
       stagger_ms: None,

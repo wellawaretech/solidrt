@@ -7,7 +7,10 @@
 // settles, then frees. It leaves the layout at once, so a fresh panel
 // mounted mid-exit takes its place while the old one fades over it. The
 // rows below never unmount one by one - the panel around them does - and
-// they still leave the way they arrived.
+// they still leave the way they arrived. Each direction owns its motion:
+// `from`/`exit` take a bare value (the entry's curve, duration and delay)
+// or `{ value, curve?, duration?, bounce?, delay? }`, so the fade below
+// eases out on the way in and eases in, shorter, on the way out.
 // `stagger` (ms) goes on an ANCESTOR, never on the animating elements: every
 // descendant enter or exit that begins in the same frame gets index * stagger
 // of extra delay, in tree order. It cascades nothing on its own - the
@@ -23,9 +26,15 @@ import type { Transition } from "@solidrt/core"
 const ROWS = ["Signals", "Effects", "Memos", "Stores", "Boundaries"]
 // Extra delay per row before its enter or exit starts.
 const STAGGER_MS = 70
-// Slide in from the left, out to the right; fade both ways.
+// Slide in from the left, out to the right; fade both ways, the exit on
+// its own curve and clock.
 const SLIDE = { duration: 500, bounce: 0.2, from: -80, exit: 80 } satisfies Transition
-const FADE = { duration: 350, curve: "ease-out", from: 0, exit: 0 } satisfies Transition
+const FADE = {
+  duration: 350,
+  curve: "ease-out",
+  from: 0,
+  exit: { value: 0, curve: "ease-in", duration: 200 },
+} satisfies Transition
 
 function App() {
   let [epoch, setEpoch] = createSignal(1)

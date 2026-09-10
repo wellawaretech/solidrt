@@ -1,6 +1,6 @@
 use super::describe;
 use crate::alloy_plugins::value::PropValue;
-use alloy::rendertree::{AnimProp, AnimValue, Curve, TransitionConfig, TransitionEntry, TransitionSpec};
+use alloy::rendertree::{AnimProp, AnimValue, Curve, Endpoint, TransitionConfig, TransitionEntry, TransitionSpec};
 
 // The `transition` property (okf/done/native-transitions.md): decodes the
 // JS declaration into the native TransitionConfig the rendertree consumes,
@@ -148,16 +148,16 @@ fn decode_entry(key: &str, value: &PropValue, prop: Option<AnimProp>) -> Result<
       return Err(format!("{at}: unknown key '{k}' (expected duration, bounce, curve, delay, from or exit)"));
     }
   }
-  let spec = decode_duration_spec(&at, value)?;
+  let spec = decode_duration_spec(&at, value.get("duration"), value.get("curve"), value.get("bounce"))?;
   let delay_ms = decode_delay(&at, value.get("delay"))?;
-  let endpoint = |key: &str| -> Result<Option<AnimValue>, String> {
+  let endpoint = |key: &str| -> Result<Option<Endpoint>, String> {
     match value.get(key) {
       None => Ok(None),
       Some(v) => {
         let Some(prop) = prop else {
           return Err(format!("{at}: {key} is per-property; name the property instead of 'all'"));
         };
-        decode_endpoint(&at, key, v, prop).map(Some)
+        decode_endpoint(&at, key, v, prop, value, spec, delay_ms).map(Some)
       }
     }
   };
@@ -166,11 +166,61 @@ fn decode_entry(key: &str, value: &PropValue, prop: Option<AnimProp>) -> Result<
   Ok(TransitionEntry { spec, delay_ms, from, exit })
 }
 
-/// The duration + kind core of an entry object: `duration` (ms) required,
-/// a `curve` makes it a tween, otherwise it is a spring (`bounce` defaults
-/// to 0, critically damped). The two never mix.
-fn decode_duration_spec(at: &str, value: &PropValue) -> Result<TransitionSpec, String> {
-  let duration = match value.get("duration") {
+/// A lifecycle endpoint (`from` at mount, `exit` at removal). The bare
+/// value form plays the entry's motion; the object form
+/// `{ value, duration?, curve?, bounce?, delay? }` gives that direction
+/// its own, so an ease-out enter can pair with an ease-in exit. A field
+/// left out is the entry's (`entry` is the raw entry object, `spec` and
+/// `delay_ms` its decoded motion), except that naming a `curve` or a
+/// `bounce` decides the kind outright: an ease-in exit on a spring entry
+/// is a tween of the entry's duration, not a clash.
+fn decode_endpoint(
+  at: &str,
+  key: &str,
+  value: &PropValue,
+  prop: AnimProp,
+  entry: &PropValue,
+  spec: TransitionSpec,
+  delay_ms: f32,
+) -> Result<Endpoint, String> {
+  let Some(map) = value.as_map() else {
+    return Ok(Endpoint { value: decode_endpoint_value(at, key, value, prop)?, spec, delay_ms });
+  };
+  let at = format!("{at}.{key}");
+  for (k, _) in map {
+    if !matches!(k.as_str(), "value" | "duration" | "curve" | "bounce" | "delay") {
+      return Err(format!("{at}: unknown key '{k}' (expected value, duration, bounce, curve or delay)"));
+    }
+  }
+  let Some(inner) = value.get("value") else {
+    return Err(format!("{at}: value is required (the number or color to animate {key})"));
+  };
+  let endpoint_value = decode_endpoint_value(&at, "value", inner, prop)?;
+  let own_kind = value.get("curve").is_some() || value.get("bounce").is_some();
+  let inherited = |k: &str| if own_kind { None } else { entry.get(k) };
+  let spec = decode_duration_spec(
+    &at,
+    value.get("duration").or(entry.get("duration")),
+    value.get("curve").or(inherited("curve")),
+    value.get("bounce").or(inherited("bounce")),
+  )?;
+  let delay_ms = match value.get("delay") {
+    None => delay_ms,
+    Some(d) => decode_delay(&at, Some(d))?,
+  };
+  Ok(Endpoint { value: endpoint_value, spec, delay_ms })
+}
+
+/// The duration + kind core of an entry object, from its three raw fields:
+/// `duration` (ms) required, a `curve` makes it a tween, otherwise it is a
+/// spring (`bounce` defaults to 0, critically damped). The two never mix.
+fn decode_duration_spec(
+  at: &str,
+  duration: Option<&PropValue>,
+  curve: Option<&PropValue>,
+  bounce: Option<&PropValue>,
+) -> Result<TransitionSpec, String> {
+  let duration = match duration {
     None => return Err(format!("{at}: duration (ms) is required")),
     Some(v) => {
       let n = v.as_f64().ok_or_else(|| format!("{at}: duration must be a number of ms, got {}", describe(v)))? as f32;
@@ -180,7 +230,7 @@ fn decode_duration_spec(at: &str, value: &PropValue) -> Result<TransitionSpec, S
       n
     }
   };
-  match (value.get("curve"), value.get("bounce")) {
+  match (curve, bounce) {
     (Some(_), Some(_)) => Err(format!("{at}: curve (tween) and bounce (spring) are mutually exclusive")),
     (Some(c), None) => Ok(TransitionSpec::Tween { duration_ms: duration, curve: decode_curve(at, c)? }),
     (None, bounce) => {
@@ -228,7 +278,7 @@ pub fn decode_node_entry(
       return Err(format!("{at}: unknown key '{k}' (expected duration, bounce, curve or from)"));
     }
   }
-  let spec = decode_duration_spec(at, value)?;
+  let spec = decode_duration_spec(at, value.get("duration"), value.get("curve"), value.get("bounce"))?;
   let from = match value.get("from") {
     None => None,
     Some(v) => {
@@ -266,10 +316,9 @@ fn decode_delay(at: &str, value: Option<&PropValue>) -> Result<f32, String> {
   }
 }
 
-/// A lifecycle endpoint value (`from` at mount, `exit` at removal): a number
-/// for the scalar properties; the color property takes a CSS color string or
-/// a packed 0xRRGGBBAA number.
-fn decode_endpoint(at: &str, key: &str, value: &PropValue, prop: AnimProp) -> Result<AnimValue, String> {
+/// A lifecycle endpoint's value: a number for the scalar properties; the
+/// color property takes a CSS color string or a packed 0xRRGGBBAA number.
+fn decode_endpoint_value(at: &str, key: &str, value: &PropValue, prop: AnimProp) -> Result<AnimValue, String> {
   if prop == AnimProp::Color {
     return super::decode_color(value).map(AnimValue::Color).map_err(|e| format!("{at}: {key}: {e}"));
   }
@@ -298,7 +347,7 @@ fn parse_shorthand(at: &str, s: &str) -> Result<TransitionEntry, String> {
       } else {
         return Err(format!("{at}: too many time values in \"{s}\" (duration, then an optional delay)"));
       }
-    } else if let Some(c) = named_curve(token) {
+    } else if let Some(c) = Curve::named(token) {
       if curve.is_some() {
         return Err(format!("{at}: more than one curve in \"{s}\""));
       }
@@ -326,21 +375,9 @@ fn parse_shorthand(at: &str, s: &str) -> Result<TransitionEntry, String> {
   Ok(TransitionEntry { spec, delay_ms, from: None, exit: None })
 }
 
-/// The CSS named curves, by their bezier control points.
-fn named_curve(name: &str) -> Option<Curve> {
-  Some(match name {
-    "linear" => Curve::Linear,
-    "ease" => Curve::Bezier(0.25, 0.1, 0.25, 1.0),
-    "ease-in" => Curve::Bezier(0.42, 0.0, 1.0, 1.0),
-    "ease-out" => Curve::Bezier(0.0, 0.0, 0.58, 1.0),
-    "ease-in-out" => Curve::Bezier(0.42, 0.0, 0.58, 1.0),
-    _ => return None,
-  })
-}
-
 fn decode_curve(at: &str, value: &PropValue) -> Result<Curve, String> {
   if let Some(name) = value.as_str() {
-    return named_curve(name).ok_or_else(|| {
+    return Curve::named(name).ok_or_else(|| {
       format!(
         "{at}: unknown curve \"{name}\"; expected linear, ease, ease-in, ease-out, ease-in-out or [x1, y1, x2, y2]"
       )

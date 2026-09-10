@@ -7,7 +7,7 @@ use std::sync::mpsc::channel;
 
 use crate::alloy_plugins::properties::apply_jsx;
 use crate::alloy_plugins::value::PropValue;
-use alloy::rendertree::{AnimProp, AnimValue, Damage, Element, ElementKind, TransitionEntry, TransitionSpec};
+use alloy::rendertree::{AnimProp, AnimValue, Curve, Damage, Element, ElementKind, TransitionEntry, TransitionSpec};
 
 fn apply(kind: &str, name: &str, value: PropValue) -> Result<Damage, String> {
   let mut el = Element::from_kind(kind).expect("known kind");
@@ -435,12 +435,12 @@ fn transition_from_decodes_per_property_only() {
   let mut el = Element::from_kind("d-rect").expect("known kind");
   let cfg = map(&[("x", map(&[("duration", num(300.0)), ("from", num(-40.0))]))]);
   apply_el(&mut el, "transition", cfg).expect("scalar from applies");
-  assert!(matches!(entry_of(&el).from, Some(AnimValue::Scalar(v)) if v == -40.0));
+  assert!(matches!(entry_of(&el).from, Some(ep) if matches!(ep.value, AnimValue::Scalar(v) if v == -40.0)));
 
   // The color property takes a CSS string (or a packed number).
   let cfg = map(&[("color", map(&[("duration", num(300.0)), ("from", text("tomato"))]))]);
   apply_el(&mut el, "transition", cfg).expect("color from applies");
-  assert!(matches!(entry_of(&el).from, Some(AnimValue::Color(_))));
+  assert!(matches!(entry_of(&el).from, Some(ep) if matches!(ep.value, AnimValue::Color(_))));
 
   let under_all =
     apply_el(&mut el, "transition", map(&[("all", map(&[("duration", num(1.0)), ("from", num(0.0))]))])).unwrap_err();
@@ -455,15 +455,105 @@ fn transition_exit_decodes_per_property_only() {
   let mut el = Element::from_kind("d-rect").expect("known kind");
   let cfg = map(&[("y", map(&[("duration", num(500.0)), ("exit", num(640.0))]))]);
   apply_el(&mut el, "transition", cfg).expect("scalar exit applies");
-  assert!(matches!(entry_of(&el).exit, Some(AnimValue::Scalar(v)) if v == 640.0));
+  assert!(matches!(entry_of(&el).exit, Some(ep) if matches!(ep.value, AnimValue::Scalar(v) if v == 640.0)));
 
   let cfg = map(&[("color", map(&[("duration", num(300.0)), ("exit", text("transparent"))]))]);
   apply_el(&mut el, "transition", cfg).expect("color exit applies");
-  assert!(matches!(entry_of(&el).exit, Some(AnimValue::Color(_))));
+  assert!(matches!(entry_of(&el).exit, Some(ep) if matches!(ep.value, AnimValue::Color(_))));
 
   let under_all =
     apply_el(&mut el, "transition", map(&[("all", map(&[("duration", num(1.0)), ("exit", num(0.0))]))])).unwrap_err();
   assert!(under_all.contains("exit is per-property"), "{under_all}");
+}
+
+fn curve(name: &str) -> Curve {
+  Curve::named(name).expect("a CSS curve name")
+}
+
+#[test]
+fn transition_endpoint_object_owns_its_direction() {
+  // A bare endpoint value rides on the entry's motion; the object form
+  // overrides per field, the rest inherited (delay included).
+  let mut el = Element::from_kind("d-rect").expect("known kind");
+  let cfg = map(&[(
+    "opacity",
+    map(&[
+      ("duration", num(350.0)),
+      ("curve", text("ease-out")),
+      ("delay", num(20.0)),
+      ("from", num(0.0)),
+      ("exit", map(&[("value", num(0.0)), ("curve", text("ease-in")), ("duration", num(200.0))])),
+    ]),
+  )]);
+  apply_el(&mut el, "transition", cfg).expect("endpoint object applies");
+  let entry = entry_of(&el);
+  let from = entry.from.expect("from set");
+  assert!(matches!(from.value, AnimValue::Scalar(v) if v == 0.0));
+  assert!(
+    matches!(from.spec, TransitionSpec::Tween { duration_ms, curve: c } if duration_ms == 350.0 && c == curve("ease-out"))
+  );
+  assert_eq!(from.delay_ms, 20.0);
+  let exit = entry.exit.expect("exit set");
+  assert!(
+    matches!(exit.spec, TransitionSpec::Tween { duration_ms, curve: c } if duration_ms == 200.0 && c == curve("ease-in"))
+  );
+  assert_eq!(exit.delay_ms, 20.0, "delay inherited from the entry");
+
+  // Naming a curve on a spring entry (or a bounce on a tween entry) decides
+  // the kind, with the entry's duration; an own delay replaces the entry's.
+  let cfg = map(&[(
+    "x",
+    map(&[
+      ("duration", num(500.0)),
+      ("bounce", num(0.2)),
+      ("delay", num(20.0)),
+      ("exit", map(&[("value", num(80.0)), ("curve", text("ease-in")), ("delay", num(5.0))])),
+    ]),
+  )]);
+  apply_el(&mut el, "transition", cfg).expect("tween exit on a spring entry");
+  let exit = entry_of(&el).exit.expect("exit set");
+  assert!(
+    matches!(exit.spec, TransitionSpec::Tween { duration_ms, curve: c } if duration_ms == 500.0 && c == curve("ease-in"))
+  );
+  assert_eq!(exit.delay_ms, 5.0);
+  let cfg = map(&[(
+    "x",
+    map(&[
+      ("duration", num(300.0)),
+      ("curve", text("ease")),
+      ("from", map(&[("value", num(-40.0)), ("bounce", num(0.3))])),
+    ]),
+  )]);
+  apply_el(&mut el, "transition", cfg).expect("spring enter on a tween entry");
+  assert!(matches!(entry_of(&el).from.expect("from set").spec, TransitionSpec::Spring { .. }));
+
+  let no_value = apply_el(
+    &mut el,
+    "transition",
+    map(&[("x", map(&[("duration", num(1.0)), ("exit", map(&[("curve", text("ease-in"))]))]))]),
+  )
+  .unwrap_err();
+  assert!(no_value.contains("transition.x.exit: value is required"), "{no_value}");
+  let unknown = apply_el(
+    &mut el,
+    "transition",
+    map(&[("x", map(&[("duration", num(1.0)), ("exit", map(&[("value", num(0.0)), ("speed", num(1.0))]))]))]),
+  )
+  .unwrap_err();
+  assert!(unknown.contains("transition.x.exit: unknown key 'speed'"), "{unknown}");
+  let clash = apply_el(
+    &mut el,
+    "transition",
+    map(&[(
+      "x",
+      map(&[
+        ("duration", num(1.0)),
+        ("exit", map(&[("value", num(0.0)), ("curve", text("ease")), ("bounce", num(0.1))])),
+      ]),
+    )]),
+  )
+  .unwrap_err();
+  assert!(clash.contains("mutually exclusive"), "{clash}");
 }
 
 #[test]

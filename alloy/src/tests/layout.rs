@@ -439,7 +439,11 @@ fn exiting_row_pops_out_of_the_column() {
           spec: TransitionSpec::Tween { duration_ms: 100.0, curve: Curve::Linear },
           delay_ms: 0.0,
           from: None,
-          exit: Some(crate::rendertree::transitions::AnimValue::Scalar(0.0)),
+          exit: Some(crate::rendertree::Endpoint {
+            value: crate::rendertree::transitions::AnimValue::Scalar(0.0),
+            spec: TransitionSpec::Tween { duration_ms: 100.0, curve: Curve::Linear },
+            delay_ms: 0.0,
+          }),
         },
       )],
       all: None,

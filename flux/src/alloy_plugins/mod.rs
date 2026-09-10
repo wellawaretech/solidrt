@@ -22,6 +22,7 @@ pub mod video;
 // The read half of the property adapter, for inspection surfaces (the dev
 // connection's tree query); the write half stays crate-internal behind
 // setProperty.
+pub use properties::transition::anim_prop_name;
 pub use properties::{read_jsx, ReadValue};
 
 use std::rc::Rc;

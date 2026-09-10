@@ -459,7 +459,9 @@ latest (solid-js 1.x, off Solid 2.0 entirely). The recipe that works is
   `exit` declared under the node that unmounts plays, and the node stays
   painted until the last of them settles, then frees - a panel's contents
   leave with `exit` beside their `from`, no closing signal, held mount or
-  settle cue (no AnimatePresence equivalent needed). `stagger` (ms) goes on an
+  settle cue (no AnimatePresence equivalent needed). Either endpoint takes
+  `{ value, curve?, duration?, bounce?, delay? }` to own its direction's
+  motion (an ease-out enter, an ease-in exit). `stagger` (ms) goes on an
   ANCESTOR, never on the animating elements: it delays each descendant's
   enter/exit by `index * stagger`, and cascades nothing unless the
   descendants declare `from`/`exit`. An enter plays once per mount; to

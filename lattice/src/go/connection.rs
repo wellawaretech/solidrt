@@ -1886,7 +1886,9 @@ fn debug_call_reply(ctx: &flux::rquickjs::Ctx<'_>, id: u64, name: &str, args: Op
 /// when a transform anywhere on its ancestor chain moved it off its
 /// axis-aligned box, the painted `quad` (four corners, window coordinates,
 /// [x0,y0, x1,y1, x2,y2, x3,y3] from pre-transform top-left clockwise). The
-/// box x/y/width/height stay the quad's axis-aligned bounds either way.
+/// box x/y/width/height stay the quad's axis-aligned bounds either way. A
+/// node on its way out carries `exiting` (the exit root) and `exit`, the
+/// motion in force per exiting property (`"200ms ease-in delay 70ms"`).
 fn node_json(node: &alloy::rendertree::NodeSnapshot, props: Option<&alloy::rendertree::RenderTree>) -> serde_json::Value {
   let mut obj = serde_json::json!({
     "id": node.id,
@@ -1912,6 +1914,31 @@ fn node_json(node: &alloy::rendertree::NodeSnapshot, props: Option<&alloy::rende
           props_map.insert(name.into(), read_value_json(value));
         }
         map.insert("props".into(), props_map.into());
+      }
+      // An exit in flight: the root carries `exiting`, and every node in
+      // the cascade names the motion in force per exiting property, so a
+      // per-direction curve is a one-line read rather than a curve fit on
+      // stepped values.
+      if element.exiting {
+        map.insert("exiting".into(), true.into());
+      }
+      if tree.exit_root_of(node.id).is_some() {
+        let exits: serde_json::Map<String, serde_json::Value> = element
+          .transitions
+          .iter()
+          .flat_map(|config| config.props.iter())
+          .filter_map(|(prop, entry)| {
+            let exit = entry.exit?;
+            let mut motion = exit.spec.to_string();
+            if exit.delay_ms > 0.0 {
+              motion.push_str(&format!(" delay {}ms", exit.delay_ms));
+            }
+            Some((flux::gui::anim_prop_name(*prop).to_string(), motion.into()))
+          })
+          .collect();
+        if !exits.is_empty() {
+          map.insert("exit".into(), exits.into());
+        }
       }
     }
     if let Some(quad) = tree.painted_quad(node.id) {

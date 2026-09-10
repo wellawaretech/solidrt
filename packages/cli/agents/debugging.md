@@ -150,7 +150,10 @@ when exactly one client is connected.
 - `/tree?query=<text>&root=<id>&depth=<n>&props=true` - `{ limit, matches:
   [{ id, kind, path, x, y, width, height }] }` for a query, the nested tree
   otherwise. Node ids are per client and change on reload; re-query after
-  `/reload`.
+  `/reload`. With `props`, a node on its way out carries `exiting: true`
+  (the unmounted root) and `exit: { <prop>: "200ms ease-in delay 70ms" }`,
+  the motion in force per exiting property on every node of the cascade;
+  freeze the clock and step to read the curve off `props`.
 - `/snapshot?node=<id>` - `{ width, height, pngBase64 }`, display-scaled;
   add `&format=raw` for `rgbaBase64` (RGBA8 bytes, no decoder needed for
   pixel assertions), `&x=&y=&width=&height=` (all four) to crop,

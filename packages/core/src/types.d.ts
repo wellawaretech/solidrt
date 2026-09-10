@@ -462,6 +462,23 @@ export interface LineGeometryProps extends PositionProps {
 export type TransitionCurve = "linear" | "ease" | "ease-in" | "ease-out" | "ease-in-out" | [number, number, number, number]
 
 /**
+ * The object form of `from`/`exit`: the endpoint value plus that
+ * direction's own motion, so an ease-out enter pairs with an ease-in exit
+ * instead of playing the entry's curve backwards. Every field but `value`
+ * is optional and falls back to the entry's (`delay` included, so a
+ * staggered list needs no change), except that naming a `curve` or a
+ * `bounce` decides the kind outright: `{ value: 0, curve: "ease-in" }` on a
+ * spring entry is a tween of the entry's duration.
+ */
+export interface TransitionEndpoint {
+  value: number | string
+  duration?: number
+  curve?: TransitionCurve
+  bounce?: number
+  delay?: number
+}
+
+/**
  * A perceptual spring - the default kind: a bare `{ duration }` is a
  * critically damped spring. `duration` (ms) is the perceptual settling
  * time, `bounce` in (-1, 1] the springiness - 0 (the default) settles
@@ -479,10 +496,11 @@ export interface TransitionSpring {
    * Mount-time enter animation: at the element's first attach the property
    * snaps to this value and animates to the value it mounted with. Numbers
    * for the scalar properties; the color property takes a CSS color string
-   * or packed number. Per-property entries only (not under `all`); a later
-   * move or reorder re-runs nothing.
+   * or packed number, or a {@link TransitionEndpoint} giving the enter its
+   * own curve, duration, bounce or delay. Per-property entries only (not
+   * under `all`); a later move or reorder re-runs nothing.
    */
-  from?: number | string
+  from?: number | string | TransitionEndpoint
   /**
    * Removal exit animation: when an element unmounts, every `exit`
    * declared on it or under it animates its property to this value
@@ -493,9 +511,11 @@ export interface TransitionSpring {
    * components are already disposed). An exiting element leaves the layout
    * flow at once: its siblings reflow as if it were gone, and it is painted
    * at its last box, which follows its parent's moves but not the parent's
-   * own reflow.
+   * own reflow. The {@link TransitionEndpoint} form gives the exit its own
+   * motion: an ease-out enter reads wrong played backwards, so pair it with
+   * `exit: { value, curve: "ease-in" }`.
    */
-  exit?: number | string
+  exit?: number | string | TransitionEndpoint
 }
 
 /**
@@ -514,10 +534,11 @@ export interface TransitionTween {
    * Mount-time enter animation: at the element's first attach the property
    * snaps to this value and animates to the value it mounted with. Numbers
    * for the scalar properties; the color property takes a CSS color string
-   * or packed number. Per-property entries only (not under `all`); a later
-   * move or reorder re-runs nothing.
+   * or packed number, or a {@link TransitionEndpoint} giving the enter its
+   * own curve, duration, bounce or delay. Per-property entries only (not
+   * under `all`); a later move or reorder re-runs nothing.
    */
-  from?: number | string
+  from?: number | string | TransitionEndpoint
   /**
    * Removal exit animation: when an element unmounts, every `exit`
    * declared on it or under it animates its property to this value
@@ -528,9 +549,11 @@ export interface TransitionTween {
    * components are already disposed). An exiting element leaves the layout
    * flow at once: its siblings reflow as if it were gone, and it is painted
    * at its last box, which follows its parent's moves but not the parent's
-   * own reflow.
+   * own reflow. The {@link TransitionEndpoint} form gives the exit its own
+   * motion: an ease-out enter reads wrong played backwards, so pair it with
+   * `exit: { value, curve: "ease-in" }`.
    */
-  exit?: number | string
+  exit?: number | string | TransitionEndpoint
 }
 
 /**

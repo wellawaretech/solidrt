@@ -746,6 +746,18 @@ Shaped, not started.
   Element and node transitions share the artifact; spatial is more exposed
   because writing initial targets during scene setup is a natural pattern. An
   install-time (or first-JS-entry) clock stamp is the likely few-line fix.
+- **[A delayed transition starts late when the frame that activates it lands late](backlog/transition-delay-catch-up.md)** [2026-09-10]
+  A held write (a `delay`, a stagger slot) applies at the first advance that
+  finds it due and its track starts at that frame's clock, so a frame hitch
+  shifts the whole motion instead of being absorbed; done means the track
+  behaves as if it started at its scheduled time, as every timeline-based peer
+  does.
+- **[A node cannot animate from its previous laid-out box to its new one](backlog/transition-layout-animations.md)** [2026-09-10]
+  Layout writes the solved box straight through, so every reflow is a jump -
+  siblings snap closed behind an exiting node, snap apart around an inserted
+  one, and a reordered list teleports; done means a node declaring a layout
+  transition slides from the box it had to the box it gets, the piece every
+  peer pairs with exit pop-out.
 - **[The dev-server repl has only run on Linux](backlog/tty-repl-platform-runs.md)** [2026-08-26]
   flux:tty raw mode and the srt repl are crossterm-backed and compile for
   Windows and Android, but neither has been run there - the Windows console
@@ -1777,6 +1789,11 @@ Finished, kept for the reasoning.
   gated or slow frames a 1.5 s timer observably fires ~0.5-1 s late - async UI
   (pending buttons, toasts, polls) feels laggy while the app idles or animates
   lightly.
+- **[An exit plays the enter's curve backwards](done/transition-per-direction-curves.md)** [2026-09-10]
+  A transition entry carries one curve and serves the property both ways, so
+  an ease-out enter runs its exit with all the motion in the first frames;
+  done means `exit` (and `from`) can carry their own curve, duration and
+  delay, the shape every peer uses.
 - **[Node/memory leak on unmount](done/unmount-node-leak.md)** [2026-07-27]
   Element-valued props built a native subtree on every read, so typeof probes
   orphaned unmounted builds forever; fixed by resolving once through

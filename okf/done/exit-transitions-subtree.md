@@ -81,6 +81,12 @@ belongs in notes/ rather than here if it is where this lands.
 
 ## Related
 
+Open work against the peers (Framer Motion, Reanimated, Vue, Svelte,
+SwiftUI), shaped after this landed: transition-layout-animations.md
+(siblings slide instead of jump, the companion to the pop-out),
+transition-per-direction-curves.md (the shared curve below) and
+transition-delay-catch-up.md (a held write starts late under a hitch).
+
 The shared curve. A transition entry carries one `curve`, and the same
 entry serves the property in both directions. `ease-out` is the natural
 enter and is wrong played backwards; `ease-in-out` reads acceptably both

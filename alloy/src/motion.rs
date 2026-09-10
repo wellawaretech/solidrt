@@ -6,9 +6,9 @@
 // `{ duration, bounce }` / `{ duration, curve }` model everywhere. Pure
 // math: no tree, no arena, no engine types.
 
-/// A tween's easing curve. Named CSS curves are decoded to their bezier
-/// control points in the plugin layer; `Linear` is the identity.
-#[derive(Clone, Copy, Debug)]
+/// A tween's easing curve: the CSS timing functions, with the named ones
+/// held as their bezier control points (`named`); `Linear` is the identity.
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Curve {
   Linear,
   /// cubic-bezier(x1, y1, x2, y2), the CSS timing function: endpoints fixed
@@ -16,7 +16,26 @@ pub enum Curve {
   Bezier(f32, f32, f32, f32),
 }
 
+/// The CSS named curves, by their control points.
+const NAMED_CURVES: [(&str, Curve); 5] = [
+  ("linear", Curve::Linear),
+  ("ease", Curve::Bezier(0.25, 0.1, 0.25, 1.0)),
+  ("ease-in", Curve::Bezier(0.42, 0.0, 1.0, 1.0)),
+  ("ease-out", Curve::Bezier(0.0, 0.0, 0.58, 1.0)),
+  ("ease-in-out", Curve::Bezier(0.42, 0.0, 0.58, 1.0)),
+];
+
 impl Curve {
+  /// The curve a CSS name stands for, `None` for an unknown name.
+  pub fn named(name: &str) -> Option<Curve> {
+    NAMED_CURVES.iter().find(|(n, _)| *n == name).map(|(_, c)| *c)
+  }
+
+  /// The CSS name of this curve, `None` for a custom bezier.
+  pub fn name(&self) -> Option<&'static str> {
+    NAMED_CURVES.iter().find(|(_, c)| c == self).map(|(n, _)| *n)
+  }
+
   /// Eased progress for linear progress `p` in [0, 1]. The bezier is solved
   /// for the parameter t with x(t) = p (Newton with a bisection fallback,
   /// the standard UnitBezier scheme), then evaluated on y.
@@ -105,6 +124,37 @@ impl TransitionSpec {
     let omega = 2.0 * std::f32::consts::PI / (duration_ms / 1000.0);
     let zeta = if bounce >= 0.0 { 1.0 - bounce } else { 1.0 / (1.0 + bounce) };
     TransitionSpec::Spring { omega, zeta }
+  }
+}
+
+// A recovered bounce below this prints as a plain spring: the omega/zeta
+// inverse rounds a bounce-0 declaration to a few thousandths.
+const BOUNCE_PRINT_EPS: f32 = 0.005;
+
+/// The spec in the shorthand vocabulary it was declared in, for dumps and
+/// diagnostics: `"350ms ease-in"`, `"350ms cubic-bezier(0.3, 0, 1, 1)"`,
+/// `"500ms spring"`, `"500ms spring bounce 0.2"` (the perceptual pair
+/// recovered from omega/zeta, the inverse of `spring`).
+impl std::fmt::Display for TransitionSpec {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    match *self {
+      TransitionSpec::Tween { duration_ms, curve } => match curve.name() {
+        Some(name) => write!(f, "{duration_ms}ms {name}"),
+        None => {
+          let Curve::Bezier(x1, y1, x2, y2) = curve else { unreachable!("linear is named") };
+          write!(f, "{duration_ms}ms cubic-bezier({x1}, {y1}, {x2}, {y2})")
+        }
+      },
+      TransitionSpec::Spring { omega, zeta } => {
+        let duration_ms = (2.0 * std::f32::consts::PI / omega * 1000.0).round();
+        let bounce = if zeta <= 1.0 { 1.0 - zeta } else { 1.0 / zeta - 1.0 };
+        write!(f, "{duration_ms}ms spring")?;
+        if bounce.abs() > BOUNCE_PRINT_EPS {
+          write!(f, " bounce {bounce:.2}")?;
+        }
+        Ok(())
+      }
+    }
   }
 }
 

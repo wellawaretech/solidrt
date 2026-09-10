@@ -24,7 +24,7 @@ pub use layout::{LayoutCache, LayoutContext, LayoutData};
 pub use platform::{FontPayload, PlatformContext};
 pub use router::{InputEvent, PointerKey, PointerRouter, RoutedKind, RoutedPointer};
 pub use text::{OverflowWrap, RunOverrides, RunStyle, Span, Text, TextAnchor, TextOverflow, TextRun, ATOM_CHAR};
-pub use transitions::{AnimProp, AnimValue, Curve, TransitionConfig, TransitionEntry, TransitionSpec};
+pub use transitions::{AnimProp, AnimValue, Curve, Endpoint, TransitionConfig, TransitionEntry, TransitionSpec};
 pub use tree::{NodeMatch, NodeSnapshot, RenderTree};
 
 use crate::impellers::DisplayListBuilder;
