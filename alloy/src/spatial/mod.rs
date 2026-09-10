@@ -43,11 +43,13 @@ pub use players::{
 // The pure sampler, for the differential tests.
 #[cfg(test)]
 pub(crate) use players::sample as sample_channel;
-pub use transitions::{Component, NodeTransitionConfig};
+pub use transitions::{
+  Component, Lanes, MotionState, NodeEndpoint, NodeMotion, NodeTransitionConfig, NodeTransitionEntry,
+};
 
 use bvh::Bvh;
 use cull::{union, world_box, Frustum};
-use transitions::NodeTransitions;
+use transitions::{lanes3, targets_match, NodeTransitions, PendingWrite};
 
 pub type Mat4 = [f32; 16];
 
@@ -388,6 +390,9 @@ struct Node {
   visible: bool,
   /// Effective visibility as of the last flush (every ancestor visible too).
   shown: bool,
+  /// On its way out (`exit`): still painted, invisible to every query,
+  /// freed when its exit tracks settle and its leaving children are gone.
+  leaving: bool,
   /// One per target.
   sinks: Vec<BoundSink>,
   /// Local-space tight box; with one the node has a leaf in the index.
@@ -502,6 +507,7 @@ impl Spatial {
       queued_touch: false,
       visible,
       shown: false,
+      leaving: false,
       sinks: Vec::new(),
       bounds: None,
       leaf: None,
@@ -537,19 +543,41 @@ impl Spatial {
     id
   }
 
-  /// Free a node. Its children become roots (the consumer tears a subtree
-  /// down node by node, so they are usually gone in the same batch). Its
-  /// draw sinks are dropped without a write: the entries they pointed at
-  /// are the consumer's to remove.
+  /// Free a node NOW, exit or no exit: its children become roots (the
+  /// consumer tears a subtree down node by node, so they are usually gone
+  /// in the same batch), except leaving ones, which are freed with it - a
+  /// corpse never outlives the parent whose frame it was animating in.
+  /// Draw sinks are dropped without a write: the entries they pointed at
+  /// are the consumer's to remove. On a leaving node this is the cancel
+  /// (a re-add, a dispose): the node frees where it stands and lands in
+  /// `take_freed` like a settled exit would.
   pub fn destroy(&mut self, id: NodeId) -> Result<(), String> {
     let i = self.resolve(id)?;
+    let parent = self.nodes[i as usize].parent;
+    self.free_node(i);
+    // The parent may have been waiting on this child alone.
+    if let Some(p) = parent {
+      if self.nodes[p as usize].leaving {
+        self.check_exit(p);
+      }
+    }
+    Ok(())
+  }
+
+  fn free_node(&mut self, i: u32) {
+    let id = self.id_of(i);
     if let Some(p) = self.nodes[i as usize].parent {
       self.nodes[p as usize].children.retain(|&c| c != i);
     }
     let children = std::mem::take(&mut self.nodes[i as usize].children);
     for c in children {
-      self.nodes[c as usize].parent = None;
-      self.enqueue(c);
+      if self.nodes[c as usize].leaving {
+        self.nodes[c as usize].parent = None;
+        self.free_node(c);
+      } else {
+        self.nodes[c as usize].parent = None;
+        self.enqueue(c);
+      }
     }
     if let Some(leaf) = self.nodes[i as usize].leaf.take() {
       self.bvh.remove(leaf);
@@ -566,7 +594,11 @@ impl Spatial {
     self.transitions.configs.remove(&id);
     self.transitions.cancel_node(id);
     let n = &mut self.nodes[i as usize];
+    if n.leaving {
+      self.transitions.freed.push(id);
+    }
     n.alive = false;
+    n.leaving = false;
     n.parent = None;
     n.sinks.clear();
     n.bounds = None;
@@ -576,7 +608,102 @@ impl Spatial {
     n.cull_owners.clear();
     n.shape = None;
     self.free.push(i);
-    Ok(())
+  }
+
+  /// Let go of a node the way its declaration says: every component with
+  /// an `exit` animates from where it is now (mid-flight included) to its
+  /// exit value, on the exit's own motion, and the node becomes LEAVING -
+  /// still painted and flushed, skipped by every query (`collider`),
+  /// refused as a parent - until its exit tracks have settled and no
+  /// leaving child remains under it, when it frees and lands in
+  /// `take_freed`. Children the consumer let go of first are those leaving
+  /// children, so a subtree torn down children-first frees root-last, each
+  /// corpse in its parent's frame to the end; a child still alive stays
+  /// put and becomes a root at the free, as with `destroy`. Returns whether
+  /// the node is now leaving: nothing to animate (no exit declared, every
+  /// exit value already held, nothing leaving below) frees it at once and
+  /// returns false, so the caller can clean up synchronously. No settle
+  /// event fires for an exit track, and a second `exit` on a leaving node
+  /// changes nothing.
+  pub fn exit(&mut self, id: NodeId) -> Result<bool, String> {
+    let i = self.resolve(id)?;
+    if self.nodes[i as usize].leaving {
+      return Ok(true);
+    }
+    let now = self.transitions.now_ms;
+    let mut started = false;
+    if let Some(config) = self.transitions.configs.get(&id).copied() {
+      let n = &self.nodes[i as usize];
+      let (cur_p, cur_q, cur_s) = (lanes3(n.position), n.rotation, lanes3(n.scale));
+      let ends = [
+        (Component::Position, cur_p, config.position.and_then(|e| e.exit.map(|x| (lanes3(x.value), x.motion)))),
+        (Component::Scale, cur_s, config.scale.and_then(|e| e.exit.map(|x| (lanes3(x.value), x.motion)))),
+        (Component::Rotation, cur_q, config.rotation.and_then(|e| e.exit.map(|x| (x.value, x.motion)))),
+      ];
+      for (component, current, end) in ends {
+        let Some((to, motion)) = end else { continue };
+        if motion.delay_ms > 0.0 {
+          let at_ms = now + motion.delay_ms as f64;
+          self.transitions.schedule(PendingWrite { node: id, component, to, spec: motion.spec, at_ms });
+          started = true;
+        } else {
+          self.transitions.unschedule(id, component);
+          started |= self.transitions.apply(id, component, current, to, motion.spec, now);
+        }
+      }
+    }
+    let waiting = self.nodes[i as usize].children.iter().any(|&c| self.nodes[c as usize].leaving);
+    if !started && !waiting {
+      self.free_node(i);
+      return Ok(false);
+    }
+    self.nodes[i as usize].leaving = true;
+    Ok(true)
+  }
+
+  /// A leaving node's free gate: free it once no declared exit still
+  /// runs or waits on it and no leaving child remains, then look at its
+  /// parent, which may have been waiting on exactly this child.
+  fn check_exit(&mut self, i: u32) {
+    let n = &self.nodes[i as usize];
+    if !n.alive || !n.leaving {
+      return;
+    }
+    let id = self.id_of(i);
+    if let Some(config) = self.transitions.configs.get(&id) {
+      for component in [Component::Position, Component::Rotation, Component::Scale] {
+        if config.has_exit(component) && self.transitions.any_running(id, component) {
+          return;
+        }
+      }
+    }
+    if n.children.iter().any(|&c| self.nodes[c as usize].leaving) {
+      return;
+    }
+    let parent = n.parent;
+    self.free_node(i);
+    if let Some(p) = parent {
+      self.check_exit(p);
+    }
+  }
+
+  /// The leaving nodes freed since the last drain (their exits settled, or
+  /// a `destroy` cut them short): the consumer's cue to release what it
+  /// kept for them (a record slot, a draw entry).
+  pub fn take_freed(&mut self) -> Vec<NodeId> {
+    std::mem::take(&mut self.transitions.freed)
+  }
+
+  /// Whether the node is on its way out (see `exit`).
+  pub fn leaving(&self, id: NodeId) -> Result<bool, String> {
+    Ok(self.nodes[self.resolve(id)? as usize].leaving)
+  }
+
+  /// The motion in force on the node, per component: running tracks and
+  /// held writes (the node dump for probing).
+  pub fn motion_of(&self, id: NodeId) -> Result<Vec<MotionState>, String> {
+    self.resolve(id)?;
+    Ok(self.transitions.motion_of(id))
   }
 
   fn id_of(&self, i: u32) -> NodeId {
@@ -717,7 +844,9 @@ impl Spatial {
     let candidates: Vec<u32> = if dirty.is_empty() {
       touched
     } else {
-      (0..self.nodes.len() as u32).filter(|&i| self.nodes[i as usize].alive && !self.nodes[i as usize].sinks.is_empty()).collect()
+      (0..self.nodes.len() as u32)
+        .filter(|&i| self.nodes[i as usize].alive && !self.nodes[i as usize].sinks.is_empty())
+        .collect()
     };
     for i in candidates {
       let n = &self.nodes[i as usize];
@@ -1238,10 +1367,11 @@ impl Spatial {
 
   /// What the queries test a node by: its local box, world matrix and
   /// (resolvable) shape; None for a node the queries skip - not shown,
+  /// leaving (a node animating out is a ghost: painted and nothing else),
   /// no bounds, or outside the filter.
   fn collider(&self, i: u32, filter: &QueryFilter, root: Option<u32>) -> Option<(Box3, Mat4, Option<ShapeId>)> {
     let n = &self.nodes[i as usize];
-    if !n.alive || !n.shown {
+    if !n.alive || !n.shown || n.leaving {
       return None;
     }
     let bounds = n.bounds?;
@@ -1281,6 +1411,15 @@ impl Spatial {
       Some(pid) => Some(self.resolve(pid)?),
       None => None,
     };
+    // A corpse is nobody's frame and nobody's child: re-parenting under
+    // one would gate its free on a node that never leaves, and moving one
+    // would tear it out of the frame its exit plays in.
+    if self.nodes[i as usize].leaving {
+      return Err(format!("spatial node {id} is leaving"));
+    }
+    if p.is_some_and(|p| self.nodes[p as usize].leaving) {
+      return Err(format!("spatial node {} is leaving", parent.unwrap_or(0)));
+    }
     if let Some(p) = p {
       let mut cursor = Some(p);
       while let Some(c) = cursor {
@@ -1329,7 +1468,7 @@ impl Spatial {
   /// no settled events fire, and later writes snap. Replacing a config does
   /// not retroactively affect running tracks (element semantics).
   pub fn set_node_transition(&mut self, id: NodeId, config: Option<NodeTransitionConfig>) -> Result<(), String> {
-    self.resolve(id)?;
+    let i = self.resolve(id)?;
     match config {
       Some(c) => {
         self.transitions.configs.insert(id, c);
@@ -1339,20 +1478,26 @@ impl Spatial {
         self.transitions.cancel_node(id);
       }
     }
+    // A leaving node's gate is its declaration's exit set: a change to
+    // it (a clear drops the tracks) may have emptied the gate.
+    if self.nodes[i as usize].leaving {
+      self.transitions.exit_checks.push(id);
+    }
     Ok(())
   }
 
   /// Replace the local transform THROUGH the node's transition declaration:
-  /// a component with a declared spec animates toward the written value
-  /// (the write is a target), one without snaps. Without a declaration the
-  /// whole write snaps, exactly `set_transform`. A component matching its
-  /// running track's target (or its resting value) is left alone - the
-  /// full-TRS write shape re-sends unchanged components on every call.
-  /// Returns whether anything changed (a track started or retargeted, or a
-  /// snap moved the node) - the caller's frame-demand signal. A raw
-  /// `set_transform` never consults or cancels tracks: a running track
-  /// overwrites it at the next advance (last write wins, the producer
-  /// rule).
+  /// a component with a declared motion animates toward the written value
+  /// (the write is a target; with a `delay` it is held that long first),
+  /// one without snaps. Without a declaration the whole write snaps,
+  /// exactly `set_transform`. A component matching its running track's
+  /// target, its held write's target or its resting value is left alone -
+  /// the full-TRS write shape re-sends unchanged components on every call.
+  /// Returns whether anything changed (a track started or retargeted, a
+  /// write held, or a snap moved the node) - the caller's frame-demand
+  /// signal. A raw `set_transform` never consults or cancels tracks: a
+  /// running track overwrites it at the next advance (last write wins, the
+  /// producer rule).
   pub fn write_transform(
     &mut self,
     id: NodeId,
@@ -1370,33 +1515,29 @@ impl Spatial {
       return Ok(true);
     };
     let n = &self.nodes[i as usize];
-    let (cur_p, cur_q, cur_s) = (n.position, n.rotation, n.scale);
+    let writes = [
+      (Component::Position, lanes3(n.position), lanes3(position)),
+      (Component::Scale, lanes3(n.scale), lanes3(scale)),
+      (Component::Rotation, n.rotation, rotation),
+    ];
     let mut animated = false;
     let mut snapped = false;
-    match config.entry_for(Component::Position) {
-      Some(spec) => animated |= self.transitions.retarget_linear(id, Component::Position, cur_p, position, spec),
-      None => {
-        if cur_p != position {
-          self.nodes[i as usize].position = position;
-          snapped = true;
+    for (component, current, to) in writes {
+      match config.motion_for(component) {
+        Some(motion) => {
+          let unchanged = targets_match(component, current, to) && !self.transitions.any_running(id, component);
+          animated |= self.transitions.write(id, component, current, to, motion, unchanged);
         }
-      }
-    }
-    match config.entry_for(Component::Scale) {
-      Some(spec) => animated |= self.transitions.retarget_linear(id, Component::Scale, cur_s, scale, spec),
-      None => {
-        if cur_s != scale {
-          self.nodes[i as usize].scale = scale;
-          snapped = true;
-        }
-      }
-    }
-    match config.entry_for(Component::Rotation) {
-      Some(spec) => animated |= self.transitions.retarget_rotation(id, cur_q, rotation, spec),
-      None => {
-        if cur_q != rotation {
-          self.nodes[i as usize].rotation = rotation;
-          snapped = true;
+        None => {
+          if !targets_match(component, current, to) {
+            let n = &mut self.nodes[i as usize];
+            match component {
+              Component::Position => n.position = position,
+              Component::Scale => n.scale = scale,
+              Component::Rotation => n.rotation = rotation,
+            }
+            snapped = true;
+          }
         }
       }
     }
@@ -1417,26 +1558,47 @@ impl Spatial {
 
   /// Advance every running track to the stamped clock, writing the
   /// interpolated TRS through the ordinary snap path (nodes queue; the
-  /// next flush propagates). Settled tracks land the target exactly and
-  /// report via `take_settled_transitions`; tracks of freed nodes drop
-  /// silently. Returns whether any track still runs - the embedder's
-  /// signal to keep requesting frames. A repeated call at an unchanged
-  /// clock (the paused path) writes nothing.
+  /// next flush propagates). Held writes whose delay expired apply first,
+  /// as of their scheduled time. Settled tracks land the target exactly
+  /// and report via `take_settled_transitions`, except on a leaving node,
+  /// whose settles feed its free gate instead (`check_exit`, run after the
+  /// pass; a freed node lands in `take_freed`). Tracks of freed nodes drop
+  /// silently. Returns whether any track still runs or any write still
+  /// waits - the embedder's signal to keep requesting frames. A repeated
+  /// call at an unchanged clock (the paused path) writes nothing.
   pub fn advance_transitions(&mut self) -> bool {
     self.start_enter_transitions();
     let now = self.transitions.now_ms;
-    if self.transitions.is_empty() {
-      self.transitions.last_ms = now;
+    let mut exit_checks = std::mem::take(&mut self.transitions.exit_checks);
+    if self.transitions.is_empty() && exit_checks.is_empty() {
       return false;
     }
-    let dt = (now - self.transitions.last_ms).max(0.0);
-    self.transitions.last_ms = now;
+    // Due writes apply exactly as a write this frame would, from the
+    // component's present value; state may have shifted during the hold
+    // (the node died), and a write that no longer applies is dropped.
+    for w in self.transitions.take_due(now) {
+      let Ok(i) = self.resolve(w.node) else {
+        continue;
+      };
+      let n = &self.nodes[i as usize];
+      let current = match w.component {
+        Component::Position => lanes3(n.position),
+        Component::Scale => lanes3(n.scale),
+        Component::Rotation => n.rotation,
+      };
+      let running = self.transitions.apply(w.node, w.component, current, w.to, w.spec, w.at_ms);
+      // A due exit write that starts nothing (the value already there)
+      // may have been the last thing keeping its node around.
+      if !running && n.leaving {
+        exit_checks.push(w.node);
+      }
+    }
     let mut linear = std::mem::take(&mut self.transitions.linear);
     linear.retain_mut(|track| {
       let Ok(i) = self.resolve(track.node) else {
         return false;
       };
-      let (value, settled) = track.advance(now, dt);
+      let (value, settled) = track.advance(now);
       let n = &mut self.nodes[i as usize];
       let slot = match track.component {
         Component::Position => &mut n.position,
@@ -1450,7 +1612,11 @@ impl Spatial {
         self.enqueue(i);
       }
       if settled {
-        self.transitions.settled.push((track.node, track.component));
+        if self.nodes[i as usize].leaving {
+          exit_checks.push(track.node);
+        } else {
+          self.transitions.settled.push((track.node, track.component));
+        }
         return false;
       }
       true
@@ -1462,7 +1628,7 @@ impl Spatial {
       let Ok(i) = self.resolve(track.node) else {
         return false;
       };
-      let (value, settled) = track.advance(now, dt);
+      let (value, settled) = track.advance(now);
       let n = &mut self.nodes[i as usize];
       if n.rotation != value {
         n.rotation = value;
@@ -1470,52 +1636,78 @@ impl Spatial {
         self.enqueue(i);
       }
       if settled {
-        self.transitions.settled.push((track.node, Component::Rotation));
+        if self.nodes[i as usize].leaving {
+          exit_checks.push(track.node);
+        } else {
+          self.transitions.settled.push((track.node, Component::Rotation));
+        }
         return false;
       }
       true
     });
     rotation.append(&mut self.transitions.rotation);
     self.transitions.rotation = rotation;
+    exit_checks.sort_unstable();
+    exit_checks.dedup();
+    for id in exit_checks {
+      if let Ok(i) = self.resolve(id) {
+        self.check_exit(i);
+      }
+    }
     !self.transitions.is_empty()
   }
 
   /// Enter animations: a node created since the last advance whose
-  /// declaration carries `enter_*` values (with a spec for the component)
-  /// snaps those components to them and animates toward the transform it
-  /// holds now - the created one, or the target of a write the creating
-  /// tick already made. Runs first thing in the advance, so the creating
-  /// tick may set the declaration and the pose in any order, and the
-  /// node's first flushed transform is the `from` one. Once per node: a
-  /// freed node is skipped, and creation is the only way onto the queue.
+  /// declaration carries `from` endpoints snaps those components to them
+  /// and animates (or, with a delay on the endpoint, waits, then animates)
+  /// toward the transform it holds now - the created one, or the target of
+  /// a write the creating tick already made. Runs first thing in the
+  /// advance, so the creating tick may set the declaration and the pose in
+  /// any order, and the node's first flushed transform is the `from` one.
+  /// Once per node: a freed node is skipped, one already leaving (let go
+  /// of in its creating tick) spends its enter and leaves from where it
+  /// is, and creation is the only way onto the queue.
   fn start_enter_transitions(&mut self) {
+    let now = self.transitions.now_ms;
     for id in std::mem::take(&mut self.transitions.entering) {
       let Ok(i) = self.resolve(id) else {
         continue;
       };
+      if self.nodes[i as usize].leaving {
+        continue;
+      }
       let Some(config) = self.transitions.configs.get(&id).copied() else {
         continue;
       };
+      let n = &self.nodes[i as usize];
+      let enters = [
+        (
+          Component::Position,
+          lanes3(n.position),
+          config.position.and_then(|e| e.from.map(|f| (lanes3(f.value), f.motion))),
+        ),
+        (Component::Scale, lanes3(n.scale), config.scale.and_then(|e| e.from.map(|f| (lanes3(f.value), f.motion)))),
+        (Component::Rotation, n.rotation, config.rotation.and_then(|e| e.from.map(|f| (f.value, f.motion)))),
+      ];
       let mut snapped = false;
-      if let (Some(from), Some(spec)) = (config.enter_position, config.entry_for(Component::Position)) {
-        let target = self.transitions.take_linear(id, Component::Position).unwrap_or(self.nodes[i as usize].position);
-        if self.transitions.retarget_linear(id, Component::Position, from, target, spec) {
-          self.nodes[i as usize].position = from;
-          snapped = true;
+      for (component, held, enter) in enters {
+        let Some((from, motion)) = enter else { continue };
+        let target = self.transitions.take_target(id, component).unwrap_or(held);
+        if targets_match(component, from, target) {
+          continue;
         }
-      }
-      if let (Some(from), Some(spec)) = (config.enter_scale, config.entry_for(Component::Scale)) {
-        let target = self.transitions.take_linear(id, Component::Scale).unwrap_or(self.nodes[i as usize].scale);
-        if self.transitions.retarget_linear(id, Component::Scale, from, target, spec) {
-          self.nodes[i as usize].scale = from;
-          snapped = true;
+        let n = &mut self.nodes[i as usize];
+        match component {
+          Component::Position => n.position = [from[0], from[1], from[2]],
+          Component::Scale => n.scale = [from[0], from[1], from[2]],
+          Component::Rotation => n.rotation = from,
         }
-      }
-      if let (Some(from), Some(spec)) = (config.enter_rotation, config.entry_for(Component::Rotation)) {
-        let target = self.transitions.take_rotation(id).unwrap_or(self.nodes[i as usize].rotation);
-        if self.transitions.retarget_rotation(id, from, target, spec) {
-          self.nodes[i as usize].rotation = from;
-          snapped = true;
+        snapped = true;
+        if motion.delay_ms > 0.0 {
+          let at_ms = now + motion.delay_ms as f64;
+          self.transitions.schedule(PendingWrite { node: id, component, to: target, spec: motion.spec, at_ms });
+        } else {
+          self.transitions.apply(id, component, from, target, motion.spec, now);
         }
       }
       if snapped {

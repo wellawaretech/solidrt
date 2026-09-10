@@ -3,7 +3,7 @@ import type { ParentComponent } from "@solidrt/core"
 import { SceneContext, provide } from "./context.tsx"
 import { syncNode } from "./node-props.ts"
 import type { TransformProps, PointerEventProps } from "./node-props.ts"
-import { add, createGroup, remove } from "../node.ts"
+import { add, createGroup, destroy } from "../node.ts"
 import type { SceneNode } from "../node.ts"
 
 /** A transform node: children inherit its position/rotation/scale. */
@@ -13,6 +13,6 @@ export let Group: ParentComponent<TransformProps & PointerEventProps & { ref?: (
   add(ctx.parent, node)
   syncNode(node, props)
   untrack(() => props.ref)?.(node)
-  onCleanup(() => remove(node))
+  onCleanup(() => destroy(node))
   return provide(ctx, node, props)
 }

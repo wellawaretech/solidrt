@@ -5,9 +5,9 @@
 // without Solid components) and the component face (Scene/Mesh/Group/
 // PerspectiveCamera) on top. See AGENTS.md for the model and the traps.
 
-export { add, createGroup, getRotation, getTransform, lookAt, remove, setTransform, setTransition, setVisible, worldPosition } from "./node.ts"
+export { add, createGroup, destroy, getRotation, getTransform, lookAt, remove, setTransform, setTransition, setVisible, worldPosition } from "./node.ts"
 export type { NodePointerEvent, NodeTapEvent, NodeWheelEvent, SceneEventBase, SceneNode, ScenePointerEvent, ScenePointerListener, SceneTapEvent, SceneWheelEvent, TransformUpdate, TransitionEndEvent } from "./node.ts"
-export { addInstance, createInstancedMesh, createMesh, createRecordMesh, createSprite, disposeInstances, removeInstance, setCastShadow, setCulling, setGeometry, setInstanceStyle, setLayers, setMaterial, setMeshParams, setRecordCount, setRecords, setRenderOrder, INSTANCE_FLOATS } from "./mesh.ts"
+export { addInstance, createInstancedMesh, createMesh, createRecordMesh, createSprite, disposeInstances, setCastShadow, setCulling, setGeometry, setInstanceStyle, setLayers, setMaterial, setMeshParams, setRecordCount, setRecords, setRenderOrder, INSTANCE_FLOATS } from "./mesh.ts"
 export type { InstancedMesh as InstancedMeshNode, InstancedMeshOptions, InstanceNode, InstanceSlots, InstanceStyle, Mesh as MeshNode, MeshInstances, RecordMesh as RecordMeshNode, RecordMeshOptions } from "./mesh.ts"
 export { createDirectionalLight, createHemisphereLight, createPointLight, createSpotLight, setLight, MAX_SHADOWS } from "./light.ts"
 export type {

@@ -1,6 +1,7 @@
 use super::describe;
 use crate::alloy_plugins::value::PropValue;
 use alloy::rendertree::{AnimProp, AnimValue, Curve, Endpoint, TransitionConfig, TransitionEntry, TransitionSpec};
+use alloy::spatial::NodeMotion;
 
 // The `transition` property (okf/done/native-transitions.md): decodes the
 // JS declaration into the native TransitionConfig the rendertree consumes,
@@ -183,8 +184,26 @@ fn decode_endpoint(
   spec: TransitionSpec,
   delay_ms: f32,
 ) -> Result<Endpoint, String> {
+  let (value, spec, delay_ms) =
+    decode_endpoint_with(at, key, value, entry, spec, delay_ms, |at, key, v| decode_endpoint_value(at, key, v, prop))?;
+  Ok(Endpoint { value, spec, delay_ms })
+}
+
+/// The endpoint decoder both trees share (the element properties and the
+/// node components speak the same object form; only the value differs,
+/// which `decode_value` reads): the endpoint's value with the motion it
+/// resolved to - its own fields merged over the entry's by the rule above.
+fn decode_endpoint_with<T>(
+  at: &str,
+  key: &str,
+  value: &PropValue,
+  entry: &PropValue,
+  spec: TransitionSpec,
+  delay_ms: f32,
+  decode_value: impl Fn(&str, &str, &PropValue) -> Result<T, String>,
+) -> Result<(T, TransitionSpec, f32), String> {
   let Some(map) = value.as_map() else {
-    return Ok(Endpoint { value: decode_endpoint_value(at, key, value, prop)?, spec, delay_ms });
+    return Ok((decode_value(at, key, value)?, spec, delay_ms));
   };
   let at = format!("{at}.{key}");
   for (k, _) in map {
@@ -193,9 +212,9 @@ fn decode_endpoint(
     }
   }
   let Some(inner) = value.get("value") else {
-    return Err(format!("{at}: value is required (the number or color to animate {key})"));
+    return Err(format!("{at}: value is required (what to animate {key})"));
   };
-  let endpoint_value = decode_endpoint_value(&at, "value", inner, prop)?;
+  let endpoint_value = decode_value(&at, "value", inner)?;
   let own_kind = value.get("curve").is_some() || value.get("bounce").is_some();
   let inherited = |k: &str| if own_kind { None } else { entry.get(k) };
   let spec = decode_duration_spec(
@@ -208,7 +227,7 @@ fn decode_endpoint(
     None => delay_ms,
     Some(d) => decode_delay(&at, Some(d))?,
   };
-  Ok(Endpoint { value: endpoint_value, spec, delay_ms })
+  Ok((endpoint_value, spec, delay_ms))
 }
 
 /// The duration + kind core of an entry object, from its three raw fields:
@@ -246,61 +265,82 @@ fn decode_duration_spec(
   }
 }
 
-/// One spec of the shared vocabulary WITHOUT the element lifecycle
-/// conveniences: `{ duration, bounce? }` (a spring), `{ duration, curve }`
-/// (a tween) or the shorthand string - no delay, from or exit. The node
-/// transitions (flux:spatial setTransition) speak this subset, plus
-/// `from` on a component entry (decode_node_entry).
-pub fn decode_spec(at: &str, value: &PropValue) -> Result<TransitionSpec, String> {
-  decode_node_entry(at, value, None).map(|(spec, _)| spec)
+/// A node transition entry decoded: the motion its writes play, and the
+/// lifecycle endpoints as lane vectors (the component's lane count, checked
+/// here) with the motion each resolved to.
+#[derive(Debug)]
+pub struct NodeEntryDecoded {
+  pub motion: NodeMotion,
+  pub from: Option<(Vec<f32>, NodeMotion)>,
+  pub exit: Option<(Vec<f32>, NodeMotion)>,
 }
 
-/// A node transition entry: `decode_spec` plus the enter value `from` of a
-/// component with `lanes` lanes (position and scale 3, rotation 4 as a
-/// quaternion); `None` rejects `from` (the `all` catch-all, where which
-/// component it would seed is unanswerable). Delay and exit stay rejected.
-pub fn decode_node_entry(
-  at: &str,
-  value: &PropValue,
-  lanes: Option<usize>,
-) -> Result<(TransitionSpec, Option<Vec<f32>>), String> {
+/// The motion alone: what the node `all` catch-all speaks - `{ duration,
+/// bounce?, delay? }` (a spring), `{ duration, curve, delay? }` (a tween)
+/// or the shorthand string; `from` and `exit` are rejected there (which
+/// component they would seed is unanswerable).
+pub fn decode_node_motion(at: &str, value: &PropValue) -> Result<NodeMotion, String> {
+  decode_node_entry(at, value, None).map(|d| d.motion)
+}
+
+/// A node transition entry: the element entry vocabulary whole, minus
+/// nothing - `duration`, `curve`/`bounce`, `delay`, and the `from`/`exit`
+/// endpoints of a component with `lanes` lanes (position and scale 3,
+/// rotation 4 as a quaternion), each a bare lane array or the endpoint
+/// object `{ value, duration?, curve?, bounce?, delay? }` merged by the
+/// element rule (`decode_endpoint_with`). `lanes` None rejects the
+/// endpoints (the `all` catch-all).
+pub fn decode_node_entry(at: &str, value: &PropValue, lanes: Option<usize>) -> Result<NodeEntryDecoded, String> {
   if let Some(s) = value.as_str() {
     let entry = parse_shorthand(at, s)?;
-    if entry.delay_ms != 0.0 {
-      return Err(format!("{at}: delay does not apply to node transitions"));
-    }
-    return Ok((entry.spec, None));
+    return Ok(NodeEntryDecoded {
+      motion: NodeMotion { spec: entry.spec, delay_ms: entry.delay_ms },
+      from: None,
+      exit: None,
+    });
   }
   let map =
     value.as_map().ok_or_else(|| format!("{at} must be an object or a shorthand string, got {}", describe(value)))?;
   for (k, _) in map {
-    if !matches!(k.as_str(), "duration" | "curve" | "bounce" | "from") {
-      return Err(format!("{at}: unknown key '{k}' (expected duration, bounce, curve or from)"));
+    if !matches!(k.as_str(), "duration" | "curve" | "bounce" | "delay" | "from" | "exit") {
+      return Err(format!("{at}: unknown key '{k}' (expected duration, bounce, curve, delay, from or exit)"));
     }
   }
   let spec = decode_duration_spec(at, value.get("duration"), value.get("curve"), value.get("bounce"))?;
-  let from = match value.get("from") {
-    None => None,
-    Some(v) => {
-      let Some(lanes) = lanes else {
-        return Err(format!("{at}: from is per-component; name the component instead of 'all'"));
-      };
-      let list = v
-        .as_list()
-        .filter(|l| l.len() == lanes)
-        .ok_or_else(|| format!("{at}: from must be an array of {lanes} numbers, got {}", describe(v)))?;
-      let mut out = Vec::with_capacity(lanes);
-      for x in list {
-        let n = x.as_f64().ok_or_else(|| format!("{at}: from must be an array of numbers, got {}", describe(x)))? as f32;
-        if !n.is_finite() {
-          return Err(format!("{at}: from must be finite, got {n}"));
-        }
-        out.push(n);
+  let delay_ms = decode_delay(at, value.get("delay"))?;
+  let endpoint = |key: &str| -> Result<Option<(Vec<f32>, NodeMotion)>, String> {
+    match value.get(key) {
+      None => Ok(None),
+      Some(v) => {
+        let Some(lanes) = lanes else {
+          return Err(format!("{at}: {key} is per-component; name the component instead of 'all'"));
+        };
+        let (lanes, spec, delay_ms) =
+          decode_endpoint_with(at, key, v, value, spec, delay_ms, |at, key, v| decode_lanes(at, key, v, lanes))?;
+        Ok(Some((lanes, NodeMotion { spec, delay_ms })))
       }
-      Some(out)
     }
   };
-  Ok((spec, from))
+  let from = endpoint("from")?;
+  let exit = endpoint("exit")?;
+  Ok(NodeEntryDecoded { motion: NodeMotion { spec, delay_ms }, from, exit })
+}
+
+/// A node endpoint's value: the component's lanes, finite numbers.
+fn decode_lanes(at: &str, key: &str, value: &PropValue, lanes: usize) -> Result<Vec<f32>, String> {
+  let list = value
+    .as_list()
+    .filter(|l| l.len() == lanes)
+    .ok_or_else(|| format!("{at}: {key} must be an array of {lanes} numbers, got {}", describe(value)))?;
+  let mut out = Vec::with_capacity(lanes);
+  for x in list {
+    let n = x.as_f64().ok_or_else(|| format!("{at}: {key} must be an array of numbers, got {}", describe(x)))? as f32;
+    if !n.is_finite() {
+      return Err(format!("{at}: {key} must be finite, got {n}"));
+    }
+    out.push(n);
+  }
+  Ok(out)
 }
 
 fn decode_delay(at: &str, value: Option<&PropValue>) -> Result<f32, String> {

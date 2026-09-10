@@ -11,7 +11,7 @@ import type { GeometryBuffers } from "./geometry-gpu.ts"
 import type { Material } from "./material.ts"
 import type { TransformUpdate, Vec3 } from "./math.ts"
 import * as spatial from "flux:spatial"
-import { enterScene, leaveScene, makeNode, remove, setTransform } from "./node.ts"
+import { enterScene, freeLeaving, makeNode, remove, setTransform } from "./node.ts"
 import type { SceneNode } from "./node.ts"
 
 export type Mesh = SceneNode & {
@@ -74,7 +74,7 @@ export type Mesh = SceneNode & {
 
 /** The per-mesh half of instancing: the record buffer and its bookkeeping.
  * Read the public fields freely; write through the population's own
- * functions (addInstance/removeInstance, setRecords/setRecordCount) so
+ * functions (addInstance/destroy, setRecords/setRecordCount) so
  * the draw range follows. */
 export type MeshInstances = {
   /** The GPU record buffer (instance slot 0), owned by the mesh
@@ -153,7 +153,7 @@ export type RecordMesh = Mesh & { _instances: MeshInstances & { nodes: null } }
  * coalesced buffer write per flush however many instances moved. A
  * hidden instance draws nothing (its record collapses to zero scale).
  * Slot-bound to its mesh: created by addInstance, destroyed by
- * removeInstance; the generic add/remove reject it.
+ * destroy; the generic add/remove reject it.
  */
 export type InstanceNode = SceneNode & {
   kind: "instance"
@@ -454,7 +454,9 @@ export function publishInstanceStyle(mesh: InstancedMesh): void {
  * reservation the buffer doubles. From here on it is a node like any
  * other: setTransform/setTransition/setVisible, lookAt, worldPosition,
  * pointer handlers, children of its own (a headlight mesh under a car
- * instance) - and removeInstance, never remove.
+ * instance) - and `destroy` (its slot hides at the next flush and recycles
+ * to the next addInstance; with an `exit` it animates out first), never
+ * remove: an instance cannot exist outside its mesh.
  */
 export function addInstance(mesh: InstancedMesh, update?: TransformUpdate, parent: SceneNode = mesh): InstanceNode {
   let inst: (MeshInstances & { nodes: InstanceSlots }) | null = mesh._instances
@@ -512,30 +514,6 @@ function growInstances(mesh: InstancedMesh, next: number): void {
   mesh._scene?._setBuffer(mesh)
   destroyBuffer(previous)
   if (previousStyle !== null) destroyBuffer(previousStyle)
-}
-
-/**
- * Destroy an instance: its slot hides at the next flush and recycles to
- * the next addInstance, and the handle goes inert (`mesh` null; later
- * writes are no-ops). Its children leave the scene with it and stay
- * parented to the dead node - remove() one to re-add it elsewhere. Remove
- * means destroy here, as for a 2d sprite: an instance cannot exist
- * outside its mesh.
- */
-export function removeInstance(instance: InstanceNode): void {
-  let mesh = instance.mesh
-  if (mesh === null) return
-  if (instance._scene) leaveScene(instance)
-  let parent = instance.parent
-  if (parent !== null) {
-    let i = parent.children.indexOf(instance)
-    if (i >= 0) parent.children.splice(i, 1)
-    instance.parent = null
-  }
-  let nodes = mesh._instances.nodes
-  nodes.slots[instance._slot] = null
-  nodes.free.push(instance._slot)
-  instance.mesh = null
 }
 
 /**
@@ -631,6 +609,9 @@ export function disposeInstances(mesh: InstancedMesh | RecordMesh): void {
   if (inst === null) return
   if (mesh._scene) remove(mesh)
   if (inst.nodes !== null) {
+    // Instances still animating out are freed on the spot: their records
+    // point into the buffer about to go.
+    freeLeaving(n => n.kind === "instance" && (n as InstanceNode).mesh === mesh)
     for (let n of inst.nodes.slots) if (n !== null) n.mesh = null
     // The destroyed instance nodes' hiding writes land now, while the
     // buffer still exists (a write into a freed buffer warns).

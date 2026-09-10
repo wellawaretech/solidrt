@@ -3,7 +3,7 @@ import type { VoidComponent } from "@solidrt/core"
 import { SceneContext } from "./context.tsx"
 import { syncNode } from "./node-props.ts"
 import type { TransformProps } from "./node-props.ts"
-import { add, remove } from "../node.ts"
+import { add, destroy } from "../node.ts"
 import { createSpotLight, setLight } from "../light.ts"
 import type { SpotLight as SpotLightNode, SpotShadowOptions } from "../light.ts"
 import type { Vec3 } from "../math.ts"
@@ -60,6 +60,6 @@ export let SpotLight: VoidComponent<SpotLightProps> = props => {
       setLight(light, { direction, color, intensity, distance, angle, penumbra, decay, castShadow, shadow }),
   )
   untrack(() => props.ref)?.(light)
-  onCleanup(() => remove(light))
+  onCleanup(() => destroy(light))
   return null
 }

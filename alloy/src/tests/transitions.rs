@@ -398,6 +398,48 @@ fn delayed_write_holds_then_animates() {
 }
 
 #[test]
+fn held_write_catches_up_past_a_late_frame() {
+  // The activating frame lands 50ms past the slot: the track runs as if it
+  // had started at the slot, not at the frame.
+  let mut tree = tree_with_entry(TransitionEntry { spec: LINEAR_100, delay_ms: 50.0, from: None, exit: None });
+  tree.set_transition_now(0.0);
+  tree.transition_write(2, AnimProp::X, Some(scalar(80.0)));
+  tree.advance_transitions();
+  tree.set_transition_now(100.0);
+  assert!(tree.advance_transitions());
+  assert!((rect_x(&tree, 2) - 40.0).abs() < 0.01, "halfway at the late frame, got {}", rect_x(&tree, 2));
+  tree.set_transition_now(150.0);
+  assert!(!tree.advance_transitions(), "settles on the slot's clock");
+  assert_eq!(rect_x(&tree, 2), 80.0);
+}
+
+#[test]
+fn held_spring_catches_up_past_a_late_frame() {
+  // The same for a spring: one late frame integrates the overshoot too, so
+  // the state matches a spring written at the slot and advanced since.
+  let spec = TransitionSpec::spring(300.0, 0.0);
+  let mut held = tree_with_entry(TransitionEntry { spec, delay_ms: 50.0, from: None, exit: None });
+  held.set_transition_now(0.0);
+  held.transition_write(2, AnimProp::X, Some(scalar(80.0)));
+  held.advance_transitions();
+  held.set_transition_now(200.0);
+  held.advance_transitions();
+
+  let mut reference = tree_with_animated_rect(spec);
+  reference.set_transition_now(50.0);
+  reference.transition_write(2, AnimProp::X, Some(scalar(80.0)));
+  reference.advance_transitions();
+  reference.set_transition_now(200.0);
+  reference.advance_transitions();
+  assert!(
+    (rect_x(&held, 2) - rect_x(&reference, 2)).abs() < 1e-3,
+    "held {} vs written at the slot {}",
+    rect_x(&held, 2),
+    rect_x(&reference, 2)
+  );
+}
+
+#[test]
 fn newer_write_replaces_held_write() {
   let mut tree = tree_with_entry(TransitionEntry { spec: LINEAR_100, delay_ms: 50.0, from: None, exit: None });
   tree.set_transition_now(0.0);

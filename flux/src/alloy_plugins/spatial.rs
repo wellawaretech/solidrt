@@ -7,13 +7,13 @@
 use rquickjs::module::{Declarations, Exports, ModuleDef};
 use rquickjs::{Array, Ctx, Function, Object, TypedArray, Value};
 
-use crate::alloy_plugins::properties::transition::{decode_node_entry, decode_spec};
+use crate::alloy_plugins::properties::transition::{decode_node_entry, decode_node_motion, NodeEntryDecoded};
 use crate::alloy_plugins::value::PropValue;
 use crate::plugins::marshal::OptArg;
 use alloy::spatial::{
   ChannelInterpolation, ChannelPath, ClipChannel, ClipEvent, Component, DrawSink, InstanceProjection,
-  InstanceRecordSink, MoveOptions, NodeTransitionConfig, PlayerUpdate, Projection, QueryFilter, RootMotion, Shape,
-  SharedSlotSink, TextureSlotSink, Volume,
+  InstanceRecordSink, MoveOptions, NodeEndpoint, NodeMotion, NodeTransitionConfig, NodeTransitionEntry, PlayerUpdate,
+  Projection, QueryFilter, RootMotion, Shape, SharedSlotSink, TextureSlotSink, Volume,
 };
 
 fn throw_str(ctx: &Ctx<'_>, msg: &str) -> rquickjs::Error {
@@ -42,6 +42,8 @@ impl ModuleDef for SpatialModule {
   fn declare<'js>(decl: &Declarations<'js>) -> rquickjs::Result<()> {
     decl.declare("createNode")?;
     decl.declare("destroyNode")?;
+    decl.declare("exitNode")?;
+    decl.declare("describeNode")?;
     decl.declare("setParent")?;
     decl.declare("setTransform")?;
     decl.declare("setTransition")?;
@@ -88,6 +90,8 @@ impl ModuleDef for SpatialModule {
   fn evaluate<'js>(ctx: &Ctx<'js>, exports: &Exports<'js>) -> rquickjs::Result<()> {
     exports.export("createNode", Function::new(ctx.clone(), create_node)?)?;
     exports.export("destroyNode", Function::new(ctx.clone(), destroy_node)?)?;
+    exports.export("exitNode", Function::new(ctx.clone(), exit_node)?)?;
+    exports.export("describeNode", Function::new(ctx.clone(), describe_node)?)?;
     exports.export("setParent", Function::new(ctx.clone(), set_parent)?)?;
     exports.export("setTransform", Function::new(ctx.clone(), set_transform)?)?;
     exports.export("setTransition", Function::new(ctx.clone(), set_transition)?)?;
@@ -141,6 +145,51 @@ fn destroy_node(ctx: Ctx<'_>, id: u64) -> rquickjs::Result<()> {
   super::gui(&ctx).alloy.spatial().destroy(id).map_err(|e| throw_str(&ctx, &format!("destroyNode: {e}")))
 }
 
+/// Let go of a node through its declaration's exits (alloy `Spatial::exit`):
+/// returns whether it is now leaving - kept in the arena until its exits
+/// settle, then freed and reported by the "spatialNodeFreed" event - or
+/// was freed on the spot (false), the caller's cue to clean up now.
+fn exit_node(ctx: Ctx<'_>, id: u64) -> rquickjs::Result<bool> {
+  super::gui(&ctx).alloy.spatial().exit(id).map_err(|e| throw_str(&ctx, &format!("exitNode: {e}")))
+}
+
+/// The node's lifecycle state for probing: `{ leaving, shown, motion }`,
+/// `motion` one `{ component, to, heldUntil }` per track running or write
+/// held on it (`to` the target lanes, `heldUntil` the clock a held write
+/// applies at, null for a running track).
+fn describe_node<'js>(ctx: Ctx<'js>, id: u64) -> rquickjs::Result<Object<'js>> {
+  let st = super::gui(&ctx);
+  let spatial = st.alloy.spatial();
+  let leaving = spatial.leaving(id).map_err(|e| throw_str(&ctx, &format!("describeNode: {e}")))?;
+  let shown = spatial.shown(id).map_err(|e| throw_str(&ctx, &format!("describeNode: {e}")))?;
+  let motion = spatial.motion_of(id).map_err(|e| throw_str(&ctx, &format!("describeNode: {e}")))?;
+  let obj = Object::new(ctx.clone())?;
+  obj.set("leaving", leaving)?;
+  obj.set("shown", shown)?;
+  let list = rquickjs::Array::new(ctx.clone())?;
+  for (i, m) in motion.iter().enumerate() {
+    let entry = Object::new(ctx.clone())?;
+    entry.set("component", component_name(m.component))?;
+    let lanes = if m.component == Component::Rotation { 4 } else { 3 };
+    entry.set("to", m.to[..lanes].iter().map(|&x| x as f64).collect::<Vec<f64>>())?;
+    match m.held_until_ms {
+      Some(at) => entry.set("heldUntil", at)?,
+      None => entry.set("heldUntil", rquickjs::Null)?,
+    }
+    list.set(i, entry)?;
+  }
+  obj.set("motion", list)?;
+  Ok(obj)
+}
+
+fn component_name(component: Component) -> &'static str {
+  match component {
+    Component::Position => "position",
+    Component::Rotation => "rotation",
+    Component::Scale => "scale",
+  }
+}
+
 fn set_parent(ctx: Ctx<'_>, id: u64, parent: OptArg<u64>) -> rquickjs::Result<()> {
   super::gui(&ctx).alloy.spatial().set_parent(id, parent.0).map_err(|e| throw_str(&ctx, &format!("setParent: {e}")))
 }
@@ -156,12 +205,13 @@ fn set_transform(ctx: Ctx<'_>, id: u64, data: TypedArray<'_, f32>) -> rquickjs::
 
 /// The node transition declaration: an object keyed by transform component
 /// (position, rotation, scale, plus `all` as a catch-all) whose values
-/// speak the element transition vocabulary minus delay and exit - `from`
-/// on a component entry is its enter value, the lanes of that component -
-/// or a bare shorthand string as the `all` catch-all.
+/// speak the element transition vocabulary minus stagger - `from`/`exit`
+/// on a component entry are its enter and exit values, the lanes of that
+/// component, bare or in the endpoint object form - or a bare shorthand
+/// string as the `all` catch-all.
 fn decode_node_transition(value: &PropValue) -> Result<NodeTransitionConfig, String> {
   if value.as_str().is_some() {
-    return Ok(NodeTransitionConfig { all: Some(decode_spec("transition", value)?), ..Default::default() });
+    return Ok(NodeTransitionConfig { all: Some(decode_node_motion("transition", value)?), ..Default::default() });
   }
   let entries = value.as_map().ok_or_else(|| {
     "transition must be a shorthand string or an object keyed by component (position, rotation, scale, all)".to_string()
@@ -170,22 +220,10 @@ fn decode_node_transition(value: &PropValue) -> Result<NodeTransitionConfig, Str
   for (key, entry) in entries {
     let at = format!("transition.{key}");
     match key.as_str() {
-      "position" => {
-        let (spec, from) = decode_node_entry(&at, entry, Some(3))?;
-        config.position = Some(spec);
-        config.enter_position = from.map(|v| [v[0], v[1], v[2]]);
-      }
-      "scale" => {
-        let (spec, from) = decode_node_entry(&at, entry, Some(3))?;
-        config.scale = Some(spec);
-        config.enter_scale = from.map(|v| [v[0], v[1], v[2]]);
-      }
-      "rotation" => {
-        let (spec, from) = decode_node_entry(&at, entry, Some(4))?;
-        config.rotation = Some(spec);
-        config.enter_rotation = from.map(|v| [v[0], v[1], v[2], v[3]]);
-      }
-      "all" => config.all = Some(decode_spec(&at, entry)?),
+      "position" => config.position = Some(node_entry::<3>(decode_node_entry(&at, entry, Some(3))?)),
+      "scale" => config.scale = Some(node_entry::<3>(decode_node_entry(&at, entry, Some(3))?)),
+      "rotation" => config.rotation = Some(node_entry::<4>(decode_node_entry(&at, entry, Some(4))?)),
+      "all" => config.all = Some(decode_node_motion(&at, entry)?),
       other => {
         return Err(format!(
           "transition.{other}: '{other}' is not a transform component (expected position, rotation, scale or all)"
@@ -194,6 +232,17 @@ fn decode_node_transition(value: &PropValue) -> Result<NodeTransitionConfig, Str
     }
   }
   Ok(config)
+}
+
+/// A decoded entry in the arena's per-component shape; the decoder checked
+/// the lane counts, so the arrays fill exactly.
+fn node_entry<const N: usize>(d: NodeEntryDecoded) -> NodeTransitionEntry<N> {
+  let endpoint = |(lanes, motion): (Vec<f32>, NodeMotion)| {
+    let mut value = [0.0f32; N];
+    value.copy_from_slice(&lanes);
+    NodeEndpoint { value, motion }
+  };
+  NodeTransitionEntry { motion: d.motion, from: d.from.map(endpoint), exit: d.exit.map(endpoint) }
 }
 
 /// Declare (or with null clear) the node's transition config; with one set,
@@ -949,14 +998,16 @@ pub(crate) fn advance_players(ctx: &Ctx<'_>) -> PlayersTick {
 /// moved: steps every running track (writing node TRS through the arena's
 /// ordinary snap path), flushes the arena when anything was written, and
 /// emits one "spatialTransitionEnd" engine event per settled track,
-/// payload `{ node, component }`. `frame::draw` calls this beside the
-/// render tree's transition advance, before the frame's demand gate.
+/// payload `{ node, component }`, then one "spatialNodeFreed" per leaving
+/// node the advance freed. `frame::draw` calls this beside the render
+/// tree's transition advance, before the frame's demand gate.
 pub(crate) fn tick(ctx: &Ctx<'_>) -> SpatialTick {
   let Some(st) = super::try_gui(ctx) else {
     return SpatialTick { active: false, wrote: false };
   };
   let active = st.alloy.spatial().advance_transitions();
   let settled = st.alloy.spatial().take_settled_transitions();
+  let freed = st.alloy.spatial().take_freed();
   // The flush is unconditional: besides transition writes, the queue may
   // hold clip-player poses (advanced before the frame's JS) and whatever
   // that JS wrote without its own microtask flush landing yet. An empty
@@ -965,13 +1016,17 @@ pub(crate) fn tick(ctx: &Ctx<'_>) -> SpatialTick {
   for (node, component) in settled {
     let obj = Object::new(ctx.clone()).expect("create spatialTransitionEnd object");
     obj.set("node", node).expect("set node");
-    let name = match component {
-      Component::Position => "position",
-      Component::Rotation => "rotation",
-      Component::Scale => "scale",
-    };
-    obj.set("component", name).expect("set component");
+    obj.set("component", component_name(component)).expect("set component");
     crate::emit_event(ctx, "spatialTransitionEnd", obj);
+  }
+  // Leaving nodes the advance freed: their slot-zeroing writes landed in
+  // the flush above, so a consumer recycling a record slot on this event
+  // never races the corpse's last frame. One "spatialNodeFreed" per node,
+  // payload `{ node }`.
+  for node in freed {
+    let obj = Object::new(ctx.clone()).expect("create spatialNodeFreed object");
+    obj.set("node", node).expect("set node");
+    crate::emit_event(ctx, "spatialNodeFreed", obj);
   }
   SpatialTick { active, wrote }
 }

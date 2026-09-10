@@ -17,7 +17,7 @@ import {
   createSpriteLayer,
   getSprite,
   grid,
-  removeSprite,
+  destroySprite,
   setGroup,
   setSprite,
 } from "@solidrt/2d"
@@ -83,11 +83,11 @@ function App() {
   {
     let extra = addSprite(nodes, { x: 10, y: 10, w: 8, h: 8 })
     let slotBefore = extra._slot
-    removeSprite(extra)
+    destroySprite(extra)
     let reused = addSprite(nodes, { x: -100, y: -100, w: 0, h: 0 })
     check(reused._slot === slotBefore, "removed slot recycles to the next add")
     check(getSprite(extra) === null, "removed handle is inert")
-    removeSprite(reused)
+    destroySprite(reused)
   }
 
   let pixelParity = () => {
@@ -158,7 +158,7 @@ function App() {
       check(nodes.pick(150, 100)[0] !== child, "the ungrouped position no longer hits")
       let f = getSprite(child)!
       check(f.x === 50 && f.y === 0, "getSprite reads the local pose")
-      removeSprite(child)
+      destroySprite(child)
       // The group node stays for the layer to dispose.
     })
   }

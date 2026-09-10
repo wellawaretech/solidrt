@@ -3,7 +3,7 @@ import type { VoidComponent } from "@solidrt/core"
 import { SceneContext } from "./context.tsx"
 import { syncNode } from "./node-props.ts"
 import type { TransformProps } from "./node-props.ts"
-import { add, remove } from "../node.ts"
+import { add, destroy } from "../node.ts"
 import { createDirectionalLight, setLight } from "../light.ts"
 import type { DirectionalLight as DirectionalLightNode, ShadowOptions } from "../light.ts"
 import type { Vec3 } from "../math.ts"
@@ -43,6 +43,6 @@ export let DirectionalLight: VoidComponent<DirectionalLightProps> = props => {
     ([direction, color, intensity, castShadow, shadow]) => setLight(light, { direction, color, intensity, castShadow, shadow }),
   )
   untrack(() => props.ref)?.(light)
-  onCleanup(() => remove(light))
+  onCleanup(() => destroy(light))
   return null
 }

@@ -5,8 +5,8 @@ import { syncNode } from "./node-props.ts"
 import type { TransformProps, PointerEventProps } from "./node-props.ts"
 import { syncMesh } from "./mesh.tsx"
 import type { PopulatedMeshProps } from "./mesh.tsx"
-import { add } from "../node.ts"
-import { addInstance, createInstancedMesh, disposeInstances, removeInstance, setCastShadow, setGeometry, setInstanceStyle } from "../mesh.ts"
+import { add, destroy } from "../node.ts"
+import { addInstance, createInstancedMesh, disposeInstances, setCastShadow, setGeometry, setInstanceStyle } from "../mesh.ts"
 import type { InstancedMesh as InstancedMeshNode, InstanceNode } from "../mesh.ts"
 import type { Geometry } from "../geometry.ts"
 import type { Material } from "../material.ts"
@@ -100,6 +100,6 @@ export let Instance: ParentComponent<InstanceProps> = props => {
     },
   )
   untrack(() => props.ref)?.(instance)
-  onCleanup(() => removeInstance(instance))
+  onCleanup(() => destroy(instance))
   return provide(ctx, instance, props)
 }

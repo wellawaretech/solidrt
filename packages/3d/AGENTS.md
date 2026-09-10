@@ -103,16 +103,24 @@ nothing itself.
 
 ### Node lifecycle
 
-Node lifecycle: `add(parent, child)` attaches (re-parenting detaches
-first), `remove(child)` DETACHES an intact subtree - children stay
-under the removed node, core nodes free on leave and recreate on
-re-enter, so a removed subtree re-adds cleanly. Nothing is destroyed
-except instance record buffers (`disposeInstances`) and the scene
-itself. (@solidrt/2d's `removeGroup` DESTROYS its subtree instead - a
-sprite cannot exist outside its layer, so there remove means destroy.)
-An instance node (addInstance on an instanced mesh) follows the 2d
-rule: slot-bound to its mesh, `removeInstance` destroys it, and the
-generic add/remove throw on it.
+Two removal verbs, one meaning each, the same words with the same
+meanings in @solidrt/2d. `remove(child)` DETACHES an intact subtree -
+Three's `parent.remove`, Godot's remove_child: children stay under the
+removed node, core nodes free on leave and recreate on re-enter, so a
+removed subtree re-adds cleanly (`add(parent, child)` re-parents through
+it); it SNAPS, since a detached node is coming back. `destroy(node)` is
+Unity's Destroy, Godot's queue_free: the subtree is gone for good, every
+handle in it inert (writes are no-ops, add throws, remove skips), and it
+is the removal an `exit` rides on (see Retargeted motion). The components
+destroy on unmount. Nothing else is destroyed: GPU resources stay on
+their own disposers (`disposeGeometry`, `disposeInstances`,
+`model.dispose`, the scene's `dispose`), each of which frees a node still
+animating out on the spot. An instance node (addInstance on an instanced
+mesh) is slot-bound to its mesh: `destroy` frees it (the slot recycles at
+the free) and the generic add/remove throw on it. (@solidrt/2d has no
+detach - a sprite cannot exist outside its layer - so `destroySprite` /
+`destroyGroup` are its only removal, and a sprite that should come back
+is hidden.)
 
 ### Rendering is the runtime's
 
@@ -276,11 +284,21 @@ on the SceneNode and re-applies on every scene enter; the pose a node
 enters with snaps, unless a component's `from` (`position: { duration,
 from: [x, y, z] }`, a quaternion for `rotation`) animates it in from
 there - at every scene enter, since each enter creates the core node
-anew. Each natural settle calls the node's
-`onTransitionEnd` (plain field like the pointer handlers) with
-`{ component }`; the raw "spatialTransitionEnd" engine event
-(srt:events, carrying the CORE node id `_node`) stays for flux:spatial
-consumers.
+anew. A component's `exit` is where it animates to when `destroy` lets
+go of the node: it stays drawn while it leaves and is a GHOST meanwhile -
+no pick, raycast, overlap, sweep or pointer event sees it - then frees
+when the last exit settles; children go first and the parent stays their
+frame until the last of them has settled, so a dying character's parts
+leave in its frame (a mixer driving its joints keeps driving them). Either
+endpoint takes `{ value, duration?, curve?, bounce?, delay? }` to own its
+direction's motion (an ease-out enter, an ease-in exit), and `delay` on
+an entry holds its writes on the animation clock (a late frame catches
+up). No stagger: nodes have no tree order to cascade in; space a burst
+with `delay`. Each natural settle calls the node's `onTransitionEnd`
+(plain field like the pointer handlers) with `{ component }` - never on
+a cancel, snap, leave or exit; the raw "spatialTransitionEnd" engine
+event (srt:events, carrying the CORE node id `_node`) stays for
+flux:spatial consumers.
 
 ### Geometry layout, indices and topology
 
@@ -976,9 +994,9 @@ multiplies by the same color, so an instance faded below the cutoff
 casts nothing, like its pixels (Godot's alpha scissor holds in its
 shadow pass too). The core's pose slot and the app's style slot are
 @solidrt/2d's split one dimension up. Slots are fixed
-for an instance's life and recycle on `removeInstance` (remove means
-destroy: an instance cannot exist outside its mesh, and the generic
-add/remove throw on one), the drawn count is the slot high-water mark,
+for an instance's life and recycle on `destroy` (at the free: an
+instance cannot exist outside its mesh, so the generic add/remove throw
+on one), the drawn count is the slot high-water mark,
 and past `capacity` (default 64) both buffers double into replacements
 with the live records retargeted in one core call and the style mirror
 republished. `parent` may be a group inside the mesh's subtree (a squad
@@ -2026,8 +2044,8 @@ older bakes are rejected - re-bake with `srt tool 3d/model`.
 - An instance node's own fields hold its LOCAL pose (relative to its
   parent, as for any node); the record the core writes is its pose
   relative to the MESH, composed through any group between them. A
-  removed instance's children stay parented to the dead node: remove()
-  one to re-use it. `disposeInstances` on an instanced mesh flushes the
+  destroyed instance takes its children with it, like any destroyed
+  node. `disposeInstances` on an instanced mesh flushes the
   core before freeing the buffer, so the destroyed instances' hiding
   writes land in a live buffer; keep that order if you ever free a
   record buffer by hand.

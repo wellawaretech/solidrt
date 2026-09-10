@@ -1,7 +1,7 @@
 import { createEffect, onCleanup, untrack, useContext } from "@solidrt/core"
 import type { VoidComponent } from "@solidrt/core"
 import { SceneContext } from "./context.tsx"
-import { add, remove } from "../node.ts"
+import { add, destroy } from "../node.ts"
 import { createHemisphereLight, setLight } from "../light.ts"
 import type { HemisphereLight as HemisphereLightNode } from "../light.ts"
 import type { Vec3 } from "../math.ts"
@@ -19,6 +19,6 @@ export let HemisphereLight: VoidComponent<HemisphereLightProps> = props => {
     ([sky, ground, intensity]) => setLight(light, { sky, ground, intensity }),
   )
   untrack(() => props.ref)?.(light)
-  onCleanup(() => remove(light))
+  onCleanup(() => destroy(light))
   return null
 }

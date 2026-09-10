@@ -15,7 +15,7 @@
 // without Solid components) and the components (SpriteLayer/Sprite/Group/
 // View2d/TileLayer) on top. See AGENTS.md for the model and the traps.
 
-export { addGroup, addSprite, createSpriteLayer, getSprite, removeGroup, removeSprite, setGroup, setGroupTransition, setSprite, setSpriteParent, setSpriteTransition, worldPosition, POSE_FLOATS, STYLE_FLOATS } from "./layer.ts"
+export { addGroup, addSprite, createSpriteLayer, getSprite, destroyGroup, destroySprite, setGroup, setGroupTransition, setSprite, setSpriteParent, setSpriteTransition, worldPosition, POSE_FLOATS, STYLE_FLOATS } from "./layer.ts"
 export { createRecordLayer, FLOATS_PER_SPRITE } from "./records.ts"
 export type { RecordLayer as RecordLayerHandle, RecordLayerOptions } from "./records.ts"
 export { pointInSprite } from "./pick.ts"
@@ -49,6 +49,7 @@ export type {
   SpriteOptions,
   SpritePointerEvent,
   SpriteTapEvent,
+  SpriteEndpoint,
   SpriteTransition,
   SpriteTransitionSpec,
   SpriteWheelEvent,

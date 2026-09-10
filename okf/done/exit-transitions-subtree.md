@@ -118,6 +118,7 @@ and why track tags were rejected (`exit_root_of` in
 alloy/src/rendertree/tree/transitions.rs), the worklist that lets an inner
 root's finish free the outer in the same pass (`advance_transitions`), the
 enter pass spending the enter of a node already leaving
-(`apply_enter_transitions`), and a held write activating at the first
-advance that finds it due rather than at its scheduled time
-(`Transitions::schedule` in alloy/src/rendertree/transitions.rs).
+(`apply_enter_transitions`), and a held write running as if started at
+its scheduled time however late the activating frame lands
+(`Transitions::schedule` in alloy/src/rendertree/transitions.rs, since
+transition-delay-catch-up.md).

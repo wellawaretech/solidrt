@@ -56,6 +56,33 @@ item mid-flight in the tree dump with `props`, at the value it would hold
 had every frame landed; today it reads at its start value. That is the
 whole check, and it doubles as the regression test for the probe trap.
 
+## Findings
+
+The cause was two-sided, not one: a late tween started at the frame's
+clock (the drift described above), while a late spring was created fresh
+and then integrated the whole frame's `dt` measured from the previous
+advance, so it ran ahead by the part of the frame before its slot. Both
+came from one global "time of the previous advance" serving every track.
+The fix gives each `Track` its own clock (`since_ms` in
+alloy/src/rendertree/transitions.rs): the scheduled time when a held write
+starts, the previous advance otherwise; `retarget` takes the start time
+and a spring integrates from its own clock to the frame's. The global
+clock went away with it, including its "reset when the list becomes
+non-empty" rule, since a fresh track starts at its own time and an idle
+gap cannot enter it. No `dt` cap was needed: the oscillator step is
+closed-form, so a long stall lands the spring exactly.
+
+The advance pass's early-out ("nothing moved since the last advance")
+now derives from the tracks and fires only when tracks exist and all
+started at this clock; with no tracks it must fall through to report
+idle, which the held-write-of-a-dead-node test pinned.
+
+Read from the stagger example over the control API with the clock frozen,
+one `step=12` after the tap: the rows' opacities inverted through the
+ease-in gave elapsed times 176.1, 106.3 and 35.5 ms, gaps of 69.8 and
+70.8 ms for a 70 ms stagger, where the old start-at-the-frame rule would
+have read 83.3 and 66.7 ms.
+
 ## Related
 
 - transition-per-direction-curves.md, transition-layout-animations.md.

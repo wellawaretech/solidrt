@@ -459,7 +459,13 @@ latest (solid-js 1.x, off Solid 2.0 entirely). The recipe that works is
   `exit` declared under the node that unmounts plays, and the node stays
   painted until the last of them settles, then frees - a panel's contents
   leave with `exit` beside their `from`, no closing signal, held mount or
-  settle cue (no AnimatePresence equivalent needed). Either endpoint takes
+  settle cue (no AnimatePresence equivalent needed). One rule in both
+  trees: a node animating out is a ghost, painted and nothing else -
+  hit-test invisible here, and in the spatial arena (a @solidrt/2d sprite,
+  a @solidrt/3d node, whose `destroy` verbs carry the same `exit`)
+  invisible to every pick, raycast, overlap and sweep - while an entering
+  node is live from its first frame, whatever `from` it passes through.
+  Either endpoint takes
   `{ value, curve?, duration?, bounce?, delay? }` to own its direction's
   motion (an ease-out enter, an ease-in exit). `stagger` (ms) goes on an
   ANCESTOR, never on the animating elements: it delays each descendant's

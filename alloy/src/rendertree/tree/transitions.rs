@@ -61,11 +61,10 @@ impl RenderTree {
         let at_ms = now + delay_ms as f64;
         self.transitions.schedule(PendingWrite { node: node_id, prop, to: target, spec: enter.spec, at_ms });
       } else {
-        self.transitions.retarget(node_id, prop, from, target, enter.spec);
+        self.transitions.retarget(node_id, prop, from, target, enter.spec, now);
       }
     }
   }
-
 
   /// The exit root that owns `node_id`'s removal, if any: the nearest
   /// ancestor-or-self marked `exiting`. Structure is membership - a node
@@ -169,7 +168,7 @@ impl RenderTree {
         self.transitions.schedule(PendingWrite { node: node_id, prop, to, spec: exit.spec, at_ms });
         started = true;
       } else {
-        started |= self.transitions.retarget(node_id, prop, current, to, exit.spec);
+        started |= self.transitions.retarget(node_id, prop, current, to, exit.spec, now);
       }
     }
     started
@@ -253,7 +252,6 @@ impl RenderTree {
     outer
   }
 
-
   /// `edit` for writes decoded from untrusted input (the FFI property path):
   /// on Err nothing is invalidated and the error returns to the caller to
   /// surface as a script error instead of a process abort.
@@ -330,7 +328,8 @@ impl RenderTree {
           // Last write wins: an immediate write supersedes a held one (the
           // config may have changed since the hold was scheduled).
           self.transitions.unschedule(id, prop);
-          self.transitions.retarget(id, prop, current, to, entry.spec);
+          let now = self.transitions.now_ms;
+          self.transitions.retarget(id, prop, current, to, entry.spec, now);
         }
         true
       }
@@ -377,7 +376,7 @@ impl RenderTree {
       let mut running = false;
       if let Some(current) = current {
         if std::mem::discriminant(&current) == std::mem::discriminant(&w.to) {
-          running = self.transitions.retarget(w.node, w.prop, current, w.to, w.spec);
+          running = self.transitions.retarget(w.node, w.prop, current, w.to, w.spec, w.at_ms);
         }
       }
       // A due exit write that starts no track (value already there, state
@@ -389,7 +388,9 @@ impl RenderTree {
       }
     }
     let (mut tracks, dt) = self.transitions.begin_advance();
-    if dt <= 0.0 && exit_checks.is_empty() {
+    // Every track started at this very clock: nothing can move yet, and
+    // the pass stays active for the next frame.
+    if dt <= 0.0 && !tracks.is_empty() && exit_checks.is_empty() {
       self.transitions.end_advance(tracks);
       return true;
     }
@@ -398,7 +399,7 @@ impl RenderTree {
       if !self.nodes.contains_key(&t.node) {
         return false;
       }
-      let (value, settled) = t.advance(now, dt);
+      let (value, settled) = t.advance(now);
       let damage = self.nodes.get_mut(&t.node).map(|el| el.set_anim_value(t.prop, value)).unwrap_or(Damage::None);
       damages.push((t.node, damage));
       if settled {
@@ -428,5 +429,4 @@ impl RenderTree {
     }
     !self.transitions.is_empty()
   }
-
 }

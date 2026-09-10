@@ -33,6 +33,7 @@ import * as spatial from "flux:spatial"
 import type {
   Impact as CoreImpact,
   MoveOptions as CoreMoveOptions,
+  NodeEndpoint,
   NodeId,
   NodeTransition,
   NodeTransitionSpec,
@@ -100,6 +101,26 @@ const WORLD = new Float32Array(16)
 let declared = new Map<NodeId, Sprite | SpriteGroup>()
 let subscribed = false
 
+// Free routing: a destroyed sprite or group whose declaration carries an
+// `exit` stays in the core as a LEAVING node (drawn, picked by nothing)
+// until its exits settle, and the core's "spatialNodeFreed" event says
+// when it is gone - the cue to recycle what the layer kept for it (a
+// sprite's pose slot). One lazy subscription, keyed by node.
+let freeing = new Map<NodeId, () => void>()
+let freeingSubscribed = false
+
+function onFreed(node: NodeId, done: () => void): void {
+  freeing.set(node, done)
+  if (freeingSubscribed) return
+  freeingSubscribed = true
+  on("spatialNodeFreed", (event: { node: NodeId }) => {
+    let done = freeing.get(event.node)
+    if (!done) return
+    freeing.delete(event.node)
+    done()
+  })
+}
+
 function declareTransition(node: NodeId, handle: Sprite | SpriteGroup, transition: NodeTransition | string | null): void {
   if (transition === null) {
     declared.delete(node)
@@ -125,12 +146,12 @@ function declareTransition(node: NodeId, handle: Sprite | SpriteGroup, transitio
  * fields - they touch no GPU state (the scene-graph handler rule).
  */
 export type Sprite = {
-  /** The owning layer, null after removeSprite (which owns the write). */
+  /** The owning layer, null after destroySprite (which owns the write). */
   readonly layer: SpriteLayer | RecordLayer | null
   /**
    * The sprite's SPATIAL ARENA node - the citizenship handle: bind core
    * producers to it or reach it through flux:spatial directly (the layer
-   * still owns the node's life; destroy it only via removeSprite). Null
+   * still owns the node's life; destroy it only via destroySprite). Null
    * on a record layer's sprites.
    */
   readonly node: NodeId | null
@@ -388,7 +409,7 @@ export type SpriteLayerOptions = {
  * on the sprite alone), so one group handler covers a whole assembly.
  */
 export type SpriteGroup = {
-  /** The owning layer, null after removeGroup (which owns the write). */
+  /** The owning layer, null after destroyGroup (which owns the write). */
   readonly layer: SpriteLayer | null
   /** The group's spatial arena node. */
   readonly node: NodeId
@@ -402,7 +423,7 @@ export type SpriteGroup = {
   readonly _visible: boolean
   /** See Sprite._parent. */
   readonly _parent: SpriteGroup | null
-  /** The handles parented here (removeGroup removes them with it);
+  /** The handles parented here (destroyGroup removes them with it);
    * internal -
    * membership writes go through addSprite/addGroup/setSpriteParent/
    * setGroup. */
@@ -483,7 +504,7 @@ export type LayerBase = {
   _add(opts?: AddSpriteOptions): Sprite
   _write(sprite: SpriteState, opts: SpriteOptions): void
   _read(sprite: Sprite): Required<SpriteOptions>
-  _remove(sprite: SpriteState): void
+  _destroy(sprite: SpriteState): void
   _schedule(): void
 }
 
@@ -610,6 +631,7 @@ export type SpriteLayer = LayerBase & {
   /** The core node every sprite and group of the layer sits under: what
    * scopes the layer's queries in the arena shared with 3d scenes. */
   _root: NodeId
+  _destroyGroup(group: GroupState): void
 }
 
 /** The stored UVs at `at` un-mirrored by the sprite's flags: the frame as
@@ -717,6 +739,9 @@ export function createSpriteLayer(atlas: TextureId, opts?: SpriteLayerOptions): 
   // collapses the instance - so holes draw nothing).
   let highWater = 0
   let freeSlots: number[] = []
+  // Destroyed handles still leaving in the core (see onFreed): a sprite's
+  // slot stays taken until the core says it is gone; dispose frees them.
+  let leaving = new Set<NodeId>()
   let gpuCapacity = capacity
   let styleData = new Float32Array(capacity * STYLE_FLOATS)
   let byNode = new Map<NodeId, SpriteState>()
@@ -956,6 +981,12 @@ export function createSpriteLayer(atlas: TextureId, opts?: SpriteLayerOptions): 
         spatial.destroyNode(group.node)
       }
       layer._groups.clear()
+      // Corpses mid-exit go now: their slots must not outlive the buffer.
+      for (let node of leaving) {
+        freeing.delete(node)
+        spatial.destroyNode(node)
+      }
+      leaving.clear()
       spatial.destroyNode(root)
       // Let the core emit its final slot-zeroing writes while the pose
       // buffer still exists, then free everything.
@@ -1042,18 +1073,39 @@ export function createSpriteLayer(atlas: TextureId, opts?: SpriteLayerOptions): 
         visible: sprite._visible,
       }
     },
-    _remove(sprite) {
+    _destroy(sprite) {
       sprite.layer = null
       if (sprite._parent) {
         sprite._parent._children.delete(sprite)
         sprite._parent = null
       }
-      // Destroying the node zeroes its pose slot at the next core flush
-      // (zero scale = nothing drawn); the slot then recycles.
-      byNode.delete(sprite.node!)
-      declared.delete(sprite.node!)
-      spatial.destroyNode(sprite.node!)
-      freeSlots.push(sprite._slot)
+      let node = sprite.node!
+      byNode.delete(node)
+      declared.delete(node)
+      // A declared exit keeps the node leaving: its slot keeps drawing the
+      // exit until the core frees it (the freed event lands after the
+      // flush that zeroed the slot), then recycles. Otherwise the free is
+      // immediate: the slot zeroes at the next core flush (zero scale =
+      // nothing drawn) and recycles now.
+      let slot = sprite._slot
+      if (spatial.exitNode(node)) {
+        leaving.add(node)
+        onFreed(node, () => {
+          leaving.delete(node)
+          freeSlots.push(slot)
+        })
+      } else {
+        freeSlots.push(slot)
+      }
+      layer._schedule()
+    },
+    _destroyGroup(group) {
+      let node = group.node
+      declared.delete(node)
+      if (spatial.exitNode(node)) {
+        leaving.add(node)
+        onFreed(node, () => leaving.delete(node))
+      }
       layer._schedule()
     },
     _schedule() {
@@ -1093,11 +1145,19 @@ export function getSprite(sprite: Sprite): Required<SpriteOptions> | null {
 }
 
 /**
- * Remove a sprite. The handle goes inert (layer null); further setSprite
- * calls are no-ops.
+ * Destroy a sprite - PixiJS's `sprite.destroy()`, Unity's Destroy: the
+ * handle goes inert (layer null; further setSprite calls are no-ops) and
+ * the sprite is gone for good. With an `exit` in its transition
+ * declaration it animates out first: each component with one plays to
+ * its exit value and the sprite stays drawn meanwhile, a ghost that no
+ * pick, raycast, overlap or sweep sees, then frees when the last exit
+ * settles (no onTransitionEnd fires for an exit: the app already let go).
+ * The one removal verb on a sprite: it cannot exist outside its layer, so
+ * there is no detach; a sprite that should come back is hidden
+ * (`visible: false`), Unity's SetActive.
  */
-export function removeSprite(sprite: Sprite): void {
-  sprite.layer?._remove(sprite)
+export function destroySprite(sprite: Sprite): void {
+  sprite.layer?._destroy(sprite)
 }
 
 /**
@@ -1113,7 +1173,7 @@ export function removeSprite(sprite: Sprite): void {
 export function worldPosition(target: Sprite | SpriteGroup): [number, number] | null {
   if (target.layer === null) return null
   // The set only groups carry tells the two handle kinds apart (as in
-  // removeGroup); a node-less sprite is a record layer's.
+  // destroyGroup); a node-less sprite is a record layer's.
   if (!("_children" in target) && target.node === null) {
     let s = target.layer._read(target)
     return [s.x, s.y]
@@ -1143,20 +1203,42 @@ export function setSpriteParent(sprite: Sprite, parent: SpriteGroup | null): voi
   layer._schedule()
 }
 
+/** A lifecycle endpoint in the object form: the value (2d units, as the
+ * bare form) plus the motion that direction plays - a field left out is
+ * the entry's; naming a `curve` or a `bounce` decides the kind outright,
+ * so an ease-out enter pairs with an ease-in exit. */
+export type SpriteEndpoint<Value> = {
+  value: Value
+  duration?: number
+  curve?: Extract<NodeTransitionSpec, { curve: unknown }>["curve"]
+  bounce?: number
+  delay?: number
+}
+
 /** One spec of a sprite or group transition: the node vocabulary
  * (`{ duration, bounce? }` a spring, `{ duration, curve }` a tween, or a
- * shorthand string like "300ms ease-out") with `from` in 2d units - the
- * component's enter value, where a freshly added sprite starts before
- * animating to its mount pose. */
-export type SpriteTransitionSpec<From> =
-  | { duration: number; bounce?: number; from?: From }
-  | { duration: number; curve: Extract<NodeTransitionSpec, { curve: unknown }>["curve"]; from?: From }
+ * shorthand string like "300ms ease-out 100ms"; `delay` in ms holds every
+ * write that long first) with the lifecycle endpoints in 2d units, each a
+ * bare value or a SpriteEndpoint: `from` is the component's enter value,
+ * where a freshly added sprite starts before animating to its mount pose;
+ * `exit` where it animates to when destroySprite/destroyGroup lets go of
+ * it. */
+export type SpriteTransitionSpec<Value> =
+  | { duration: number; bounce?: number; delay?: number; from?: Value | SpriteEndpoint<Value>; exit?: Value | SpriteEndpoint<Value> }
+  | {
+      duration: number
+      curve: Extract<NodeTransitionSpec, { curve: unknown }>["curve"]
+      delay?: number
+      from?: Value | SpriteEndpoint<Value>
+      exit?: Value | SpriteEndpoint<Value>
+    }
   | string
 
 /** A sprite or group transition declaration: a spec per pose component
  * plus `all` as a catch-all. `position` is x/y (`from: [x, y]`),
  * `rotation` the rotation in radians (`from: angle`), `scale` a sprite's
- * w/h (`from: [w, h]`) or a group's uniform scale (`from: s`). */
+ * w/h (`from: [w, h]`) or a group's uniform scale (`from: s`); `exit`
+ * takes the same units. */
 export type SpriteTransition = {
   position?: SpriteTransitionSpec<[number, number]>
   rotation?: SpriteTransitionSpec<number>
@@ -1164,9 +1246,10 @@ export type SpriteTransition = {
   all?: NodeTransitionSpec
 }
 
-/** The 2d declaration in the arena's own lanes: `from` values lifted
+/** The 2d declaration in the arena's own lanes: endpoint values lifted
  * into the plane (z = 0, a unit z scale, the rotation a quaternion about
- * z); everything else passes through. */
+ * z), bare or inside the endpoint object; everything else passes
+ * through. */
 function toNodeTransition(transition: SpriteTransition | string | null): NodeTransition | string | null {
   if (transition === null || typeof transition === "string") return transition
   let out: NodeTransition = {}
@@ -1181,10 +1264,23 @@ function toNodeTransition(transition: SpriteTransition | string | null): NodeTra
   return out
 }
 
-function liftSpec<From>(spec: SpriteTransitionSpec<From>, lift: (from: From) => number[]): NodeTransitionSpec {
+function liftSpec<Value>(spec: SpriteTransitionSpec<Value>, lift: (value: Value) => number[]): NodeTransitionSpec {
   if (typeof spec === "string") return spec
-  let { from, ...rest } = spec
-  return from === undefined ? rest : { ...rest, from: lift(from) }
+  let { from, exit, ...rest } = spec
+  let out: NodeTransitionSpec = rest
+  if (from !== undefined) out.from = liftEndpoint(from, lift)
+  if (exit !== undefined) out.exit = liftEndpoint(exit, lift)
+  return out
+}
+
+function liftEndpoint<Value>(endpoint: Value | SpriteEndpoint<Value>, lift: (value: Value) => number[]): number[] | NodeEndpoint {
+  // The object form is the one shape here with a `value` key; a bare
+  // value is a number or a pair.
+  if (typeof endpoint === "object" && endpoint !== null && !Array.isArray(endpoint)) {
+    let { value, ...motion } = endpoint as SpriteEndpoint<Value>
+    return { ...motion, value: lift(value) }
+  }
+  return lift(endpoint as Value)
 }
 
 /**
@@ -1199,9 +1295,12 @@ function liftSpec<From>(spec: SpriteTransitionSpec<From>, lift: (from: From) => 
  * "300ms ease-out". A `from` on a component is its enter value: a sprite
  * declared in the tick that added it starts there and animates to its
  * mount pose (once, at add; a later declaration animates writes only).
- * Clearing cancels running tracks in place (the sprite keeps its
- * mid-flight pose) and later writes snap. Each natural settle calls the
- * sprite's `onTransitionEnd` with the component. Node layer only.
+ * An `exit` is where it animates to when destroySprite lets go of it
+ * (see there); either endpoint takes a SpriteEndpoint to own its
+ * direction's motion, and `delay` holds writes. Clearing cancels running
+ * tracks in place (the sprite keeps its mid-flight pose) and later writes
+ * snap. Each natural settle calls the sprite's `onTransitionEnd` with the
+ * component. Node layer only.
  */
 export function setSpriteTransition(sprite: Sprite, transition: SpriteTransition | string | null): void {
   if (sprite.layer === null) return
@@ -1281,24 +1380,26 @@ export function setGroup(group: SpriteGroup, opts: GroupOptions): void {
 }
 
 /**
- * Remove a group AND everything under it: child sprites and groups are
- * removed with it - Unity's Destroy, Godot's free, the subtree form of
- * removeSprite. To keep a child, re-parent it out first (setSpriteParent /
- * setGroup's `parent`). Every removed handle goes inert. A component tree
- * unmounts children first and never sees the recursion. (@solidrt/3d's
- * `remove` DETACHES a re-addable subtree instead - its nodes exist outside
- * a scene; a sprite cannot exist outside its layer, so here remove means
- * destroy, exactly as it does for removeSprite.)
+ * Destroy a group AND everything under it: child sprites and groups die
+ * with it - Unity's Destroy, Godot's queue_free, the subtree form of
+ * destroySprite (@solidrt/3d's `destroy` is the same verb one dimension
+ * up). To keep a child, re-parent it out first (setSpriteParent /
+ * setGroup's `parent`). Every destroyed handle goes inert. Exits play
+ * through the whole subtree: children are let go of first, each
+ * animating its own `exit`, and the group - its own exit or not - stays
+ * in the core as their frame until the last of them has settled, then
+ * frees. A component tree unmounts children first and never sees the
+ * recursion.
  */
-export function removeGroup(group: SpriteGroup): void {
+export function destroyGroup(group: SpriteGroup): void {
   let layer = group.layer
   if (!layer) return
   let g: GroupState = group
   // Children first, over a snapshot (each removal edits _children); the
   // set only groups carry tells the two handle kinds apart.
   for (let child of [...g._children]) {
-    if ("_children" in child) removeGroup(child)
-    else removeSprite(child)
+    if ("_children" in child) destroyGroup(child)
+    else destroySprite(child)
   }
   g.layer = null
   if (g._parent) {
@@ -1306,7 +1407,5 @@ export function removeGroup(group: SpriteGroup): void {
     g._parent = null
   }
   layer._groups.delete(group)
-  declared.delete(group.node)
-  spatial.destroyNode(group.node)
-  layer._schedule()
+  layer._destroyGroup(g)
 }

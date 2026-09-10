@@ -46,6 +46,43 @@ let scaleScratch: Vec3 = [1, 1, 1]
 let declared = new Map<NodeId, SceneNode>()
 let subscribed = false
 
+// Free routing: destroy() leaves a node whose declaration carries an
+// `exit` in the core as a LEAVING one (drawn, picked by nothing) until its
+// exits settle, and the core's "spatialNodeFreed" event says when it is
+// gone - the cue to detach its entries and recycle what was kept for it
+// (an instance's record slot). Keyed by core id, with the scene the node
+// was in (the handle's own `_scene` is already null: a destroyed handle
+// routes no writes). One lazy subscription.
+let leaving = new Map<NodeId, { node: SceneNode; scene: SceneHooks }>()
+let freeingSubscribed = false
+
+function awaitFree(id: NodeId, node: SceneNode, scene: SceneHooks): void {
+  leaving.set(id, { node, scene })
+  if (freeingSubscribed) return
+  freeingSubscribed = true
+  on("spatialNodeFreed", (event: { node: NodeId }) => {
+    let entry = leaving.get(event.node)
+    if (!entry) return
+    leaving.delete(event.node)
+    finishLeave(entry.node, entry.scene)
+  })
+}
+
+/**
+ * Free every leaving node `where` admits NOW (its exit cut short where it
+ * stands) and finish its leave: the dispose paths call this before they
+ * free what a corpse still draws with - a scene's targets, an instance
+ * buffer, a model's textures.
+ */
+export function freeLeaving(where: (node: SceneNode, scene: SceneHooks) => boolean): void {
+  for (let [id, entry] of [...leaving]) {
+    if (!where(entry.node, entry.scene)) continue
+    leaving.delete(id)
+    spatial.destroyNode(id)
+    finishLeave(entry.node, entry.scene)
+  }
+}
+
 function declareTransition(id: NodeId, node: SceneNode): void {
   declared.set(id, node)
   if (subscribed) return
@@ -74,6 +111,10 @@ export type SceneHooks = {
    * and record binding. */
   _attachInstance(instance: InstanceNode): void
   _detachInstance(instance: InstanceNode): void
+  /** A mesh is on its way out (destroy with an `exit`): drop it from pick
+   * routing now - the core skips a leaving node anyway - while its entries
+   * keep drawing until `_detach` at the free. */
+  _exiting(mesh: Mesh): void
   _attachLight(light: Light): void
   _detachLight(light: Light): void
   _lightChanged(): void
@@ -127,10 +168,16 @@ export type SceneNode = {
    * press (NodeTapEvent: `tapCount`); bubbles like down/move/up. */
   onTap?: (event: NodeTapEvent) => void
   /** A declared transition (setTransition) settled naturally on one
-   * component; a cancel, snap or scene leave never fires. */
+   * component; a cancel, snap, scene leave or exit never fires. */
   onTransitionEnd?: (event: TransitionEndEvent) => void
-  /** The core node while in a scene (created at add, freed at remove). */
+  /** The core node while in a scene (created at add, freed at remove or
+   * at destroy's free - a destroyed node with an `exit` keeps it while
+   * it animates out). */
   _node: NodeId | null
+  /** Gone for good (destroy): every write is a no-op, add/remove throw or
+   * skip, and the core node - if one is still animating out - is nobody's
+   * to write. */
+  _destroyed: boolean
   _moved: boolean
   /** The core writes this node's TRS itself (a clip player's target, a
    * root-motion anchor), so the JS mirror above is stale: setTransform
@@ -261,6 +308,7 @@ export function makeNode(kind: SceneNode["kind"]): SceneNode {
     scale: [1, 1, 1],
     visible: true,
     _node: null,
+    _destroyed: false,
     _native: false,
     _moved: false,
     _scene: null,
@@ -275,26 +323,117 @@ export function createGroup(): SceneNode {
 }
 
 /** Attach `child` under `parent` (re-parenting detaches it first). An
- * instance is slot-bound to its mesh: addInstance places it. */
+ * instance is slot-bound to its mesh: addInstance places it. A destroyed
+ * node, on either side, is gone for good and throws. */
 export function add(parent: SceneNode, child: SceneNode): void {
-  if (child.kind === "instance") throw new Error("add: an instance is slot-bound to its mesh - addInstance places it, removeInstance destroys it")
+  if (child.kind === "instance") throw new Error("add: an instance is slot-bound to its mesh - addInstance places it, destroy destroys it")
+  if (child._destroyed) throw new Error("add: the child was destroyed")
+  if (parent._destroyed) throw new Error("add: the parent was destroyed")
   if (child.parent !== null) remove(child)
   child.parent = parent
   parent.children.push(child)
   if (parent._scene) enterScene(child, parent._scene)
 }
 
-/** Detach `child` from its parent (and its meshes from the scene). An
- * instance is destroyed instead, by removeInstance. */
+/**
+ * Detach `child` from its parent (and its meshes from the scene) - Three's
+ * `parent.remove(child)`, Godot's remove_child: the subtree stays intact
+ * and re-adds cleanly, so this is the verb for a node that is coming back
+ * (or about to be disposed). It SNAPS: a detached node plays no exit,
+ * that is `destroy`'s. An instance is slot-bound to its mesh and cannot
+ * be detached (destroy it); a destroyed node is already gone (no-op).
+ */
 export function remove(child: SceneNode): void {
-  if (child.kind === "instance") throw new Error("remove: an instance is slot-bound to its mesh - removeInstance destroys it")
+  if (child.kind === "instance") throw new Error("remove: an instance is slot-bound to its mesh - destroy destroys it")
+  if (child._destroyed) return
   if (child._scene) leaveScene(child)
-  let parent = child.parent
+  unlink(child)
+}
+
+/**
+ * Destroy a node and everything under it - Unity's Destroy, Godot's
+ * queue_free, @solidrt/2d's destroySprite/destroyGroup one dimension up:
+ * the subtree is gone for good and every handle in it goes inert (writes
+ * are no-ops, add throws, remove skips). This is the removal an `exit`
+ * rides on: a node whose transition declares one animates each such
+ * component to its exit value first and stays drawn meanwhile, a ghost
+ * that no pick, raycast, overlap or sweep sees, then frees when the last
+ * settles (no onTransitionEnd fires for an exit: the app already let go).
+ * Children go first, each animating its own exit, and their parent - an
+ * exit of its own or not - stays in the core as their frame until the
+ * last of them has settled, so a dying character's parts leave in its
+ * frame to the end; a mixer targeting a joint of the subtree keeps
+ * driving it while it goes. An instance is destroyed like any node here
+ * (its record slot recycles at the free). GPU resources stay on their own
+ * disposers (disposeGeometry, disposeInstances, model.dispose), as a
+ * sprite's atlas does; a disposer reaching a node still animating out
+ * frees it on the spot. Outside a scene there is nothing to animate: the
+ * subtree just goes inert.
+ */
+export function destroy(node: SceneNode): void {
+  if (node._destroyed) return
+  for (let c of node.children.slice()) destroy(c)
+  letGo(node)
+  unlink(node)
+}
+
+function unlink(node: SceneNode): void {
+  let parent = node.parent
   if (parent !== null) {
-    let i = parent.children.indexOf(child)
+    let i = parent.children.indexOf(node)
     if (i >= 0) parent.children.splice(i, 1)
-    child.parent = null
+    node.parent = null
   }
+}
+
+/**
+ * The per-node half of destroy: mark the handle inert and let the core
+ * node go through its declaration's exits (flux:spatial exitNode). A node
+ * kept leaving finishes at the free (awaitFree); one freed on the spot,
+ * or outside a scene, finishes now. The handle's scene reference goes
+ * here so every scene-routed setter is a no-op from this point; the entry
+ * on the leaving map carries the scene to the finish.
+ */
+function letGo(node: SceneNode): void {
+  node._destroyed = true
+  let scene = node._scene
+  let id = node._node
+  node._scene = null
+  if (scene === null || id === null) {
+    finishLeave(node, null)
+    return
+  }
+  declared.delete(id)
+  if (node.kind === "mesh") scene._exiting(node as Mesh)
+  else if (node.kind === "instance") scene._detachInstance(node as InstanceNode)
+  if (spatial.exitNode(id)) awaitFree(id, node, scene)
+  else finishLeave(node, scene)
+}
+
+/**
+ * The end of a destroyed node's leave, once its core node is gone (or
+ * never was): its entries come off the scene, an instance's slot recycles
+ * and the handle drops its core id. `scene` is null for a node that was
+ * not in one.
+ */
+function finishLeave(node: SceneNode, scene: SceneHooks | null): void {
+  node._node = null
+  if (node.kind === "instance") {
+    let instance = node as InstanceNode
+    let mesh = instance.mesh
+    if (mesh !== null) {
+      let nodes = mesh._instances?.nodes
+      if (nodes) {
+        nodes.slots[instance._slot] = null
+        nodes.free.push(instance._slot)
+      }
+      instance.mesh = null
+    }
+    return
+  }
+  if (scene === null) return
+  if (node.kind === "mesh") scene._detach(node as Mesh)
+  else if (node.kind === "light") scene._detachLight(node as Light)
 }
 
 export function enterScene(node: SceneNode, scene: SceneHooks): void {
@@ -371,13 +510,18 @@ export type { TransformUpdate } from "./math.ts"
  * lives on the node and re-applies whenever it enters a scene; the pose
  * it enters with snaps, unless a component's `from` (its lanes: `[x, y,
  * z]`, a quaternion for rotation) animates it in from there at every
- * scene enter. Clearing cancels running tracks in place
- * (the node keeps its mid-flight transform) and later writes snap. Each
- * natural settle calls the node's `onTransitionEnd` with the component
- * (the raw "spatialTransitionEnd" engine event on srt:events stays for
- * flux:spatial consumers; it carries the core id, `_node`).
+ * scene enter; a component's `exit` is where it animates to when
+ * `destroy` lets go of the node (see there). Either endpoint takes the
+ * object form `{ value, duration?, curve?, bounce?, delay? }` to own its
+ * direction's motion, and `delay` on an entry holds its writes. Clearing
+ * cancels running tracks in place (the node keeps its mid-flight
+ * transform) and later writes snap. Each natural settle calls the node's
+ * `onTransitionEnd` with the component (the raw "spatialTransitionEnd"
+ * engine event on srt:events stays for flux:spatial consumers; it carries
+ * the core id, `_node`).
  */
 export function setTransition(node: SceneNode, transition: NodeTransition | string | null): void {
+  if (node._destroyed) return
   node._transition = transition
   if (node._node !== null) {
     spatial.setTransition(node._node, transition)
@@ -398,6 +542,7 @@ export function setTransition(node: SceneNode, transition: NodeTransition | stri
  * equal to the node's current quaternion is also a no-op.
  */
 export function setTransform(node: SceneNode, update: TransformUpdate): void {
+  if (node._destroyed) return
   // A no-op write costs nothing: driving every node from onFrame is the
   // intended shape, and most nodes did not move. Exact compares, like
   // setVisible - a value that survives a float round trip unchanged is the
@@ -459,6 +604,7 @@ export function setTransform(node: SceneNode, update: TransformUpdate): void {
  * if it were a rotation).
  */
 export function lookAt(node: SceneNode, target: Vec3, up: Vec3 = WORLD_UP): void {
+  if (node._destroyed) return
   let parent = node.parent
   if (parent === null) {
     // No ancestors: parent space IS world space, aim straight from the
@@ -573,7 +719,7 @@ function unrotate(out: Vec3, m: Mat4, v: Vec3): Vec3 {
 /** Show or hide a node and its whole subtree (a hidden mesh costs one
  * `instanceCount: 0` draw range - the entry stays, drawing nothing). */
 export function setVisible(node: SceneNode, visible: boolean): void {
-  if (node.visible === visible) return
+  if (node._destroyed || node.visible === visible) return
   node.visible = visible
   if (node._node !== null) {
     spatial.setVisible(node._node, visible)

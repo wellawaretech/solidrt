@@ -3,7 +3,7 @@ import type { VoidComponent } from "@solidrt/core"
 import { SceneContext } from "./context.tsx"
 import type { TransformProps, PointerEventProps } from "./node-props.ts"
 import { syncMesh } from "./mesh.tsx"
-import { add, remove } from "../node.ts"
+import { add, destroy } from "../node.ts"
 import { createSprite } from "../mesh.ts"
 import type { Mesh as MeshNode } from "../mesh.ts"
 import type { ShaderParams } from "@solidrt/core/gpu"
@@ -33,6 +33,6 @@ export let Sprite: VoidComponent<SpriteProps> = props => {
   add(ctx.parent, mesh)
   syncMesh(mesh, props)
   untrack(() => props.ref)?.(mesh)
-  onCleanup(() => remove(mesh))
+  onCleanup(() => destroy(mesh))
   return null
 }

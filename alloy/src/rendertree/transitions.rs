@@ -192,6 +192,11 @@ pub struct Track {
   pub prop: AnimProp,
   pub spec: TransitionSpec,
   pub state: TrackState,
+  // The clock `state` is valid at: the scheduled time of a held write when
+  // it starts (so an activating frame that lands late finds the motion
+  // already under way, never a start shifted by the hitch), the previous
+  // advance otherwise. A spring integrates from here to the advance clock.
+  since_ms: f64,
   to: Lanes,
   // Lanes encode a color (write back as Color) rather than a scalar.
   color: bool,
@@ -213,16 +218,17 @@ impl Track {
     from_lanes(self.to, self.color)
   }
 
-  /// Advance to `now_ms` (`dt_ms` since the previous advance, for the
-  /// spring). Returns the value to write and whether the track settled; a
-  /// settled track reports the target exactly.
-  pub fn advance(&mut self, now_ms: f64, dt_ms: f64) -> (AnimValue, bool) {
+  /// Advance to `now_ms`. Returns the value to write and whether the track
+  /// settled; a settled track reports the target exactly.
+  pub fn advance(&mut self, now_ms: f64) -> (AnimValue, bool) {
     let color = self.color;
-    let (lanes, settled) = self.advance_lanes(now_ms, dt_ms);
+    let (lanes, settled) = self.advance_lanes(now_ms);
     (from_lanes(lanes, color), settled)
   }
 
-  fn advance_lanes(&mut self, now_ms: f64, dt_ms: f64) -> (Lanes, bool) {
+  fn advance_lanes(&mut self, now_ms: f64) -> (Lanes, bool) {
+    let dt_ms = (now_ms - self.since_ms).max(0.0);
+    self.since_ms = now_ms;
     match (&mut self.state, self.spec) {
       (TrackState::Tween { from, start_ms }, TransitionSpec::Tween { duration_ms, curve }) => {
         let p = ((now_ms - *start_ms) / duration_ms as f64).clamp(0.0, 1.0) as f32;
@@ -265,9 +271,6 @@ impl Track {
 #[derive(Default)]
 pub struct Transitions {
   pub now_ms: f64,
-  // Time of the previous advance, the spring dt reference. Reset when the
-  // track list becomes non-empty so an idle gap never enters a spring.
-  last_ms: f64,
   tracks: Vec<Track>,
   // Delayed writes waiting for their activation time (tree.rs drains the
   // due ones at the top of each advance).
@@ -314,9 +317,10 @@ impl Transitions {
 
   /// Hold a delayed write until its activation time. One hold per
   /// (node, prop): a newer write replaces it, delay restarted. The write
-  /// applies at the first advance that finds it due, and its track starts
-  /// at that advance's clock, not at `at_ms`: a frame that lands late past
-  /// the slot starts the motion late rather than mid-flight.
+  /// applies at the first advance that finds it due, and its track runs as
+  /// if started at `at_ms`: a frame that lands late past the slot finds
+  /// the motion already that far along, so a hitch never shifts a
+  /// cascade's spacing.
   pub fn schedule(&mut self, write: PendingWrite) {
     self.unschedule(write.node, write.prop);
     self.pending.push(write);
@@ -340,13 +344,15 @@ impl Transitions {
     due
   }
 
-  /// Start or retarget the track for (node, prop). `current` is the
-  /// property's present value (the from-value for a fresh or restarted
-  /// tween); a running spring keeps its position and velocity and only moves
-  /// its equilibrium. `current` and `to` must be the same AnimValue kind
-  /// (the caller guarantees it by reading `current` for the same property).
-  /// Returns whether a track now runs for the pair - false means the value
-  /// already sits on the target and there was nothing to animate.
+  /// Start or retarget the track for (node, prop), as of `at_ms`: the
+  /// current clock for a write landing now, the scheduled time for a held
+  /// write coming due (see `schedule`). `current` is the property's present
+  /// value (the from-value for a fresh or restarted tween); a running
+  /// spring keeps its position and velocity and only moves its equilibrium.
+  /// `current` and `to` must be the same AnimValue kind (the caller
+  /// guarantees it by reading `current` for the same property). Returns
+  /// whether a track now runs for the pair - false means the value already
+  /// sits on the target and there was nothing to animate.
   pub fn retarget(
     &mut self,
     node: u64,
@@ -354,8 +360,8 @@ impl Transitions {
     current: AnimValue,
     to: AnimValue,
     spec: TransitionSpec,
+    at_ms: f64,
   ) -> bool {
-    let now = self.now_ms;
     let (cur, color) = to_lanes(current);
     let (to, _) = to_lanes(to);
     if let Some(t) = self.tracks.iter_mut().find(|t| t.node == node && t.prop == prop) {
@@ -365,23 +371,21 @@ impl Transitions {
       t.spec = spec;
       if !keep_spring_state {
         t.state = match spec {
-          TransitionSpec::Tween { .. } => TrackState::Tween { from: cur, start_ms: now },
+          TransitionSpec::Tween { .. } => TrackState::Tween { from: cur, start_ms: at_ms },
           TransitionSpec::Spring { .. } => TrackState::Spring { pos: cur, vel: [0.0; 4] },
         };
+        t.since_ms = at_ms;
       }
       return true;
     }
     if to == cur {
       return false;
     }
-    if self.tracks.is_empty() {
-      self.last_ms = now;
-    }
     let state = match spec {
-      TransitionSpec::Tween { .. } => TrackState::Tween { from: cur, start_ms: now },
+      TransitionSpec::Tween { .. } => TrackState::Tween { from: cur, start_ms: at_ms },
       TransitionSpec::Spring { .. } => TrackState::Spring { pos: cur, vel: [0.0; 4] },
     };
-    self.tracks.push(Track { node, prop, spec, state, to, color, eps: eps_for(cur, to) });
+    self.tracks.push(Track { node, prop, spec, state, since_ms: at_ms, to, color, eps: eps_for(cur, to) });
     true
   }
 
@@ -412,10 +416,12 @@ impl Transitions {
   }
 
   /// Take the track list for an advance pass (tree.rs), leaving the clock in
-  /// place. Returns the tracks and the dt since the previous advance.
+  /// place. Returns the tracks and the longest stretch any of them has yet
+  /// to cover up to the clock - zero when every track is already at it
+  /// (all started this very frame), so the pass can skip the walk.
   pub fn begin_advance(&mut self) -> (Vec<Track>, f64) {
-    let dt = (self.now_ms - self.last_ms).max(0.0);
-    self.last_ms = self.now_ms;
+    let now = self.now_ms;
+    let dt = self.tracks.iter().map(|t| now - t.since_ms).fold(0.0, f64::max);
     (std::mem::take(&mut self.tracks), dt)
   }
 

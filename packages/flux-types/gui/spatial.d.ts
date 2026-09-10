@@ -18,9 +18,43 @@ declare module "flux:spatial" {
 
   /** A new root node. `visible: false` hides the node's whole subtree. */
   export function createNode(transform: Float32Array, visible: boolean): NodeId
-  /** Free a node; its children become roots. A bound sink is dropped
-   * without a write (removing the entry is the caller's job). */
+  /** Free a node NOW, exit or no exit; its children become roots, except
+   * leaving ones (exitNode), which go with it. A bound sink is dropped
+   * without a write (removing the entry is the caller's job). On a leaving
+   * node this is the cancel: it frees where it stands and still reports
+   * through "spatialNodeFreed". */
   export function destroyNode(node: NodeId): void
+  /**
+   * Let go of a node the way its declaration says (the removal every
+   * consumer's destroy verb rides on): each component with an `exit`
+   * animates from where it is now to that value on the exit's own motion,
+   * and the node is LEAVING meanwhile - still drawn and flushed, invisible
+   * to raycast/overlap/sweep/moveAndSlide and every pick built on them,
+   * refused by setParent on either side - until its exit tracks settle and
+   * no leaving child remains under it, when it frees and one
+   * "spatialNodeFreed" engine event (payload `{ node }`) reports it.
+   * Children let go of first are those leaving children, so a subtree
+   * torn down children-first frees root-last with each corpse in its
+   * parent's frame to the end. Returns whether the node is now leaving:
+   * with nothing to animate (no exit declared, every exit value already
+   * held, nothing leaving below) it frees at once and returns false, so
+   * the caller cleans up synchronously and no event follows. No
+   * "spatialTransitionEnd" fires for an exit track; a second exitNode on
+   * a leaving node changes nothing.
+   */
+  export function exitNode(node: NodeId): boolean
+  /**
+   * The node's lifecycle state, for probing: whether it is leaving, its
+   * effective visibility as of the last flush, and the motion in force
+   * per component - one entry per running track or held write, `to` the
+   * target lanes, `heldUntil` the animation-clock ms a held write applies
+   * at (null for a running track).
+   */
+  export function describeNode(node: NodeId): {
+    leaving: boolean
+    shown: boolean
+    motion: { component: "position" | "rotation" | "scale"; to: number[]; heldUntil: number | null }[]
+  }
   /** Re-parent (null = make a root). Throws on a cycle. */
   export function setParent(node: NodeId, parent: NodeId | null): void
   /** Replace the local transform (compare before calling; an unchanged
@@ -29,26 +63,46 @@ declare module "flux:spatial" {
    * (last write wins - the producer rule). */
   export function setTransform(node: NodeId, transform: Float32Array): void
   /**
-   * One node-transition spec, the element `transition` vocabulary minus
-   * delay and exit: `{ duration }` / `{ duration, bounce }` is a spring
+   * One node-transition spec, the element `transition` vocabulary whole
+   * minus stagger: `{ duration }` / `{ duration, bounce }` is a spring
    * (the default kind; retargets keep position and velocity, rotation
    * springs keep angular velocity along the geodesic), `{ duration, curve }`
    * a tween (rotation tweens slerp the geodesic; retargets restart from
-   * the current value), or the shorthand string `"<duration>ms [curve]"`.
-   * Durations in ms. `from` on a component entry (not on `all`) is the
-   * enter value: the node starts there and animates to the transform it
-   * holds at its first frame - its created transform, or the target of a
-   * write made in the creating tick. The lanes of the component:
-   * position and scale `[x, y, z]`, rotation a quaternion `[x, y, z, w]`.
-   * An enter plays once per node, at creation, so the declaration must be
-   * set in the creating tick (a later one animates writes only).
+   * the current value), or the shorthand string
+   * `"<duration>ms [curve] [<delay>ms]"`. Durations and delays in ms; a
+   * `delay` holds every write to the component that long on the animation
+   * clock before it applies, and a held write that starts late (a hitch)
+   * runs as if started on time.
+   *
+   * `from` and `exit` on a component entry (not on `all`) are its
+   * lifecycle endpoints, in the lanes of the component - position and
+   * scale `[x, y, z]`, rotation a quaternion `[x, y, z, w]` - each a bare
+   * lane array (the entry's motion) or the endpoint object
+   * `{ value, duration?, curve?, bounce?, delay? }` owning its direction's
+   * motion (a field left out is the entry's; naming a curve or a bounce
+   * decides the kind outright). `from` is the enter value: the node starts
+   * there and animates to the transform it holds at its first frame - its
+   * created transform, or the target of a write made in the creating
+   * tick; an enter plays once per node, at creation, so the declaration
+   * must be set in the creating tick (a later one animates writes only).
+   * `exit` is where the component animates to when exitNode lets go of
+   * the node.
    */
+  export type NodeEndpoint = {
+    value: number[]
+    duration?: number
+    curve?: "linear" | "ease" | "ease-in" | "ease-out" | "ease-in-out" | [number, number, number, number]
+    bounce?: number
+    delay?: number
+  }
   export type NodeTransitionSpec =
-    | { duration: number; bounce?: number; from?: number[] }
+    | { duration: number; bounce?: number; delay?: number; from?: number[] | NodeEndpoint; exit?: number[] | NodeEndpoint }
     | {
         duration: number
         curve: "linear" | "ease" | "ease-in" | "ease-out" | "ease-in-out" | [number, number, number, number]
-        from?: number[]
+        delay?: number
+        from?: number[] | NodeEndpoint
+        exit?: number[] | NodeEndpoint
       }
     | string
   /** The declaration setTransition takes: a spec per transform component
@@ -73,9 +127,11 @@ declare module "flux:spatial" {
    * target), an undeclared one snaps. Without a declaration this is
    * setTransform. A component matching its running track's target is
    * left alone, so rewriting the whole array to move one component never
-   * restarts the others. Each settled component fires one
+   * restarts the others (a held write's target counts, so re-sending it
+   * does not restart its delay). Each settled component fires one
    * "spatialTransitionEnd" engine event (srt:events), payload
-   * `{ node, component: "position" | "rotation" | "scale" }`.
+   * `{ node, component: "position" | "rotation" | "scale" }` - on a live
+   * node; a leaving node's settles feed its free instead (exitNode).
    */
   export function writeTransform(node: NodeId, transform: Float32Array): void
   export function setVisible(node: NodeId, visible: boolean): void

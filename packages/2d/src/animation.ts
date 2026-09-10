@@ -3,7 +3,7 @@
 // playing clip and one frame write per attached sprite per STEP (not per
 // display frame), so an 8fps walk cycle generates 8 publishes a second and
 // a paused clip costs nothing - the demand-gate story unchanged. The clip
-// does not own its sprites (removeSprite prunes lazily on the next step),
+// does not own its sprites (destroySprite prunes lazily on the next step),
 // and a sprite belongs to at most one animation. Plain JS over setSprite,
 // so it works on both layer kinds and composes with <Sprite> via ref (leave
 // the frame prop off - the clip owns that field).

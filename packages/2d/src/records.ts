@@ -47,7 +47,7 @@ export type RecordLayerOptions = Omit<SpriteLayerOptions, "orderBy"> & {
    * further up the screen = drawn first); or an explicit `{ field,
    * descending? }` float offset into the record for a custom sort key.
    * Record slots stay stable - record i keeps meaning sprite i, and
-   * removeSprite still shifts - only the draw order changes. Ties keep
+   * destroySprite still shifts - only the draw order changes. Ties keep
    * record order, so an unset key draws exactly as before. Known
    * limitation: pick() resolves overlapping sprites by record order, not
    * visual order, when a key is set.
@@ -63,7 +63,7 @@ export type RecordLayer = LayerBase & {
    * is draw order - unless the layer was created with `orderBy`, which
    * draws in key order while record i keeps meaning sprite i. Write fields
    * directly for large per-frame populations, then call touch() once. Do
-   * not cache indices across removeSprite - records shift - and do not
+   * not cache indices across destroySprite - records shift - and do not
    * cache the array across addSprite - growth replaces it.
    */
   records: Float32Array
@@ -282,7 +282,7 @@ export function createRecordLayer(atlas: TextureId, opts?: RecordLayerOptions): 
         visible: true,
       }
     },
-    _remove(sprite) {
+    _destroy(sprite) {
       // Later sprites shift down one draw slot (order preserved).
       sprite.layer = null
       let index = sprite._slot

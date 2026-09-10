@@ -746,12 +746,6 @@ Shaped, not started.
   Element and node transitions share the artifact; spatial is more exposed
   because writing initial targets during scene setup is a natural pattern. An
   install-time (or first-JS-entry) clock stamp is the likely few-line fix.
-- **[A delayed transition starts late when the frame that activates it lands late](backlog/transition-delay-catch-up.md)** [2026-09-10]
-  A held write (a `delay`, a stagger slot) applies at the first advance that
-  finds it due and its track starts at that frame's clock, so a frame hitch
-  shifts the whole motion instead of being absorbed; done means the track
-  behaves as if it started at its scheduled time, as every timeline-based peer
-  does.
 - **[A node cannot animate from its previous laid-out box to its new one](backlog/transition-layout-animations.md)** [2026-09-10]
   Layout writes the solved box straight through, so every reflow is a jump -
   siblings snap closed behind an exiting node, snap apart around an inserted
@@ -1682,6 +1676,13 @@ Finished, kept for the reasoning.
   dying app's GPU resources are destroyed on engine drop. Leaving an animated
   3d app leaves its clip players running against destroyed textures: a warning
   per frame and a launcher stuck at full frame rate forever.
+- **[A spatial node cannot animate out, and its enter cannot own its motion](done/spatial-node-exit-transitions.md)** [2026-09-10]
+  The 2d and 3d node transitions carried `from` but no `exit`, no `delay` and
+  no endpoint object form, so a dying enemy or a collected coin was kept
+  alive, closed and freed by hand, and the two trees disagreed on what
+  "remove" meant; done means arena nodes carry the element tree's lifecycle
+  vocabulary minus stagger, both trees destroy through one verb the exit rides
+  on, and a node animating out is a ghost to every hit test and query.
 - **[Native transitions on spatial node transforms](done/spatial-node-transitions.md)** [2026-08-24]
   A spatial arena node moves only when something writes its local TRS every
   frame, so a mesh gliding somewhere or a sprite springing to its square costs
@@ -1789,6 +1790,12 @@ Finished, kept for the reasoning.
   gated or slow frames a 1.5 s timer observably fires ~0.5-1 s late - async UI
   (pending buttons, toasts, polls) feels laggy while the app idles or animates
   lightly.
+- **[A delayed transition starts late when the frame that activates it lands late](done/transition-delay-catch-up.md)** [2026-09-10]
+  A held write (a `delay`, a stagger slot) applies at the first advance that
+  finds it due and its track starts at that frame's clock, so a frame hitch
+  shifts the whole motion instead of being absorbed; done means the track
+  behaves as if it started at its scheduled time, as every timeline-based peer
+  does.
 - **[An exit plays the enter's curve backwards](done/transition-per-direction-curves.md)** [2026-09-10]
   A transition entry carries one curve and serves the property both ways, so
   an ease-out enter runs its exit with all the motion in the first frames;

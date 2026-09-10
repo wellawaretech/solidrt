@@ -58,7 +58,7 @@ import { createEnvironmentPlaceholder, createPrefilter, probeFormat } from "./en
 import type { Prefilter } from "./environment.ts"
 import type { Material } from "./material.ts"
 import { orderEntries } from "./order.ts"
-import { fillTransform, leaveScene, makeNode, worldInto } from "./node.ts"
+import { fillTransform, freeLeaving, leaveScene, makeNode, worldInto } from "./node.ts"
 import type { SceneHooks, SceneNode, ScenePointerListener } from "./node.ts"
 import { checkInstancePairing, checkMask, instanceBinding, localBounds, publishInstanceStyle } from "./mesh.ts"
 import type { InstancedMesh, InstanceNode, Mesh } from "./mesh.ts"
@@ -1725,11 +1725,15 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       if (mesh._instances.bounds === null) groupDirty.add(mesh)
       this._schedule()
     },
+    _exiting(mesh) {
+      if (mesh._node !== null) byNode.delete(mesh._node)
+    },
     _detachInstance(instance) {
-      // The core node is destroyed right after: its box, shape and record
-      // binding go with it, and the slot hides at the next flush. The
-      // mesh's group loses the member at the sync (a mesh leaving with
-      // its instances is skipped there: its node is gone by then).
+      // The core node is destroyed right after (or animates out, picked
+      // by nothing): its box, shape and record binding go with it, and
+      // the slot hides at the next flush. The mesh's group loses the
+      // member at the sync (a mesh leaving with its instances is skipped
+      // there: its node is gone by then).
       if (instance._node !== null) byNode.delete(instance._node)
       let mesh = instance.mesh
       if (mesh !== null && mesh._instances !== null && mesh._instances.bounds === null) groupDirty.add(mesh)
@@ -2122,6 +2126,9 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       // the scene (entries' geometry-buffer references and pick leaves
       // dropped, core nodes freed), so a disposed scene leaves no
       // bookkeeping behind and the JS tree survives as plain data.
+      // Destroyed nodes still animating out are no longer in the tree:
+      // they free on the spot first.
+      freeLeaving((_, s) => s === hooks)
       for (let c of root.children.slice()) leaveScene(c)
       root._scene = null
       if (root._node !== null) {

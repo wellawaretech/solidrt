@@ -1,6 +1,6 @@
 import { createEffect, onCleanup, untrack, useContext } from "@solidrt/core"
 import type { VoidComponent } from "@solidrt/core"
-import { addSprite, removeSprite, setSprite, setSpriteTransition } from "../layer.ts"
+import { addSprite, destroySprite, setSprite, setSpriteTransition } from "../layer.ts"
 import type { Sprite as SpriteHandle, SpriteOptions, SpritePointerEvent, SpriteTapEvent, SpriteWheelEvent, TransitionEndEvent } from "../layer.ts"
 import type { SpriteTransition } from "../layer.ts"
 import { GroupContext, LayerContext } from "./context.ts"
@@ -67,6 +67,6 @@ export let Sprite: VoidComponent<SpriteProps> = props => {
     },
   )
   untrack(() => props.ref)?.(sprite)
-  onCleanup(() => removeSprite(sprite))
+  onCleanup(() => destroySprite(sprite))
   return null
 }

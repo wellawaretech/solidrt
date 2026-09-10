@@ -6,6 +6,7 @@
 use std::sync::mpsc::channel;
 
 use crate::alloy_plugins::properties::apply_jsx;
+use crate::alloy_plugins::properties::transition::decode_node_entry;
 use crate::alloy_plugins::value::PropValue;
 use alloy::rendertree::{AnimProp, AnimValue, Curve, Damage, Element, ElementKind, TransitionEntry, TransitionSpec};
 
@@ -860,4 +861,84 @@ fn backdrop_filter_decodes_like_filter() {
   assert!(err.contains("'sharpen'"), "{err}");
   let err = apply("rect", "backdropFilter", map(&[("blur", num(4.0))])).unwrap_err();
   assert!(err.starts_with("Unknown property"), "{err}");
+}
+
+// The node transition entry (flux:spatial setTransition): the element
+// vocabulary minus stagger, with the endpoints as lane arrays or endpoint
+// objects merged by the same rule as the element decoder's.
+
+fn lanes(v: &[f64]) -> PropValue {
+  PropValue::List(v.iter().map(|&x| num(x)).collect())
+}
+
+#[test]
+fn node_entry_takes_delay_and_bare_endpoints_on_the_entry_motion() {
+  let entry = map(&[
+    ("duration", num(300.0)),
+    ("delay", num(50.0)),
+    ("from", lanes(&[0.0, 0.0, 0.0])),
+    ("exit", lanes(&[1.0, 2.0, 3.0])),
+  ]);
+  let d = decode_node_entry("transition.position", &entry, Some(3)).expect("decodes");
+  assert!(matches!(d.motion.spec, TransitionSpec::Spring { .. }));
+  assert_eq!(d.motion.delay_ms, 50.0);
+  let (from, from_motion) = d.from.expect("from");
+  assert_eq!(from, vec![0.0, 0.0, 0.0]);
+  assert_eq!(from_motion.delay_ms, 50.0, "a bare endpoint carries the entry's delay");
+  let (exit, _) = d.exit.expect("exit");
+  assert_eq!(exit, vec![1.0, 2.0, 3.0]);
+}
+
+#[test]
+fn node_endpoint_object_owns_its_direction() {
+  let entry = map(&[
+    ("duration", num(300.0)),
+    ("curve", text("ease-out")),
+    (
+      "exit",
+      map(&[
+        ("value", lanes(&[0.0, 0.0, 0.0])),
+        ("curve", text("ease-in")),
+        ("duration", num(150.0)),
+        ("delay", num(100.0)),
+      ]),
+    ),
+  ]);
+  let d = decode_node_entry("transition.scale", &entry, Some(3)).expect("decodes");
+  assert!(
+    matches!(d.motion.spec, TransitionSpec::Tween { duration_ms, curve } if duration_ms == 300.0 && curve.name() == Some("ease-out"))
+  );
+  let (_, exit) = d.exit.expect("exit");
+  assert!(
+    matches!(exit.spec, TransitionSpec::Tween { duration_ms, curve } if duration_ms == 150.0 && curve.name() == Some("ease-in"))
+  );
+  assert_eq!(exit.delay_ms, 100.0);
+  // Naming a curve on a spring entry decides the kind outright.
+  let entry = map(&[
+    ("duration", num(300.0)),
+    ("bounce", num(0.3)),
+    ("exit", map(&[("value", lanes(&[0.0, 0.0, 0.0])), ("curve", text("ease-in"))])),
+  ]);
+  let d = decode_node_entry("transition.scale", &entry, Some(3)).expect("decodes");
+  let (_, exit) = d.exit.expect("exit");
+  assert!(
+    matches!(exit.spec, TransitionSpec::Tween { duration_ms, .. } if duration_ms == 300.0),
+    "a tween of the entry's duration"
+  );
+}
+
+#[test]
+fn node_entry_rejects_wrong_lanes_and_endpoints_on_all() {
+  let short = map(&[("duration", num(300.0)), ("from", lanes(&[0.0, 0.0]))]);
+  let err = decode_node_entry("transition.position", &short, Some(3)).unwrap_err();
+  assert!(err.contains("array of 3 numbers"), "{err}");
+  let quat = map(&[("duration", num(300.0)), ("exit", map(&[("value", lanes(&[0.0, 0.0, 0.0]))]))]);
+  let err = decode_node_entry("transition.rotation", &quat, Some(4)).unwrap_err();
+  assert!(err.contains("array of 4 numbers"), "{err}");
+  let on_all = map(&[("duration", num(300.0)), ("exit", lanes(&[0.0, 0.0, 0.0]))]);
+  let err = decode_node_entry("transition.all", &on_all, None).unwrap_err();
+  assert!(err.contains("name the component"), "{err}");
+  let shorthand = text("300ms ease-out 100ms");
+  let d = decode_node_entry("transition.all", &shorthand, None).expect("shorthand with delay");
+  assert_eq!(d.motion.delay_ms, 100.0);
 }

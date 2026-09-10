@@ -55,7 +55,7 @@ Contents:
 ### Three faces
 
 THREE faces, layered: the node-backed live layer (layer.ts:
-`createSpriteLayer`/`addSprite`/`setSprite`/`removeSprite` plus
+`createSpriteLayer`/`addSprite`/`setSprite`/`destroySprite` plus
 `addGroup`/`setGroup`/`setSpriteParent`/`setSpriteTransition`/
 `setGroupTransition` - plain objects, no signals, usable without
 components), the records layer (records.ts: `createRecordLayer` - the
@@ -139,11 +139,14 @@ the mover stay in the plane with no 2d narrowphase of their own.
 Groups (`addGroup`/`<Group>`) are plain arena nodes (x, y, rotation,
 UNIFORM scale - a group is a frame, never a sprite size; sprite w/h
 lives in the sprite node's scale, which is why sprites cannot parent
-sprites). Child sprite pose fields are local to the group. `removeGroup`
-removes the SUBTREE: child sprites and groups die with it (remove means
-destroy here, as for removeSprite; re-parent a child out first to keep
-it). @solidrt/3d's `remove` instead DETACHES a re-addable subtree - its
-nodes exist outside a scene, sprites cannot exist outside their layer.
+sprites). Child sprite pose fields are local to the group. `destroyGroup`
+destroys the SUBTREE: child sprites and groups die with it (re-parent a
+child out first to keep it), children first so each plays its own
+`exit` and the group stays their frame until the last has settled. One
+removal verb, the same word with the same meaning as @solidrt/3d's
+`destroy`: a sprite cannot exist outside its layer, so there is no
+detach here (3d's `remove`), and a sprite that should come back is
+hidden (`visible: false`).
 A handle's x/y are local to its group; `worldPosition(sprite | group)`
 reads the layer-pixel position composed through every enclosing group
 from the core's world matrix (@solidrt/3d's worldPosition).
@@ -186,7 +189,7 @@ the WRITE path only - whatever computes the motion is excluded and is
 usually the dominant cost, e.g. a 24k-particle sim measured ~25ms with
 a near-free publish) - the axis is
 WHERE MOTION IS COMPUTED, not retained-vs-dynamic. The sprite functions
-(addSprite/setSprite/getSprite/removeSprite) work on both layer kinds;
+(addSprite/setSprite/getSprite/destroySprite) work on both layer kinds;
 record sprites have `node: null` and no groups.
 
 ### Layer space
@@ -363,11 +366,22 @@ unless a component's `from` (2d units: `position: { from: [x, y] }`,
 `from: s`) animates the sprite in from there - once, and only when the
 declaration lands in the tick that added the sprite (the `<Sprite>` prop
 or a setSpriteTransition right after addSprite; a later one animates
-writes only). Each natural settle calls the
-handle's `onTransitionEnd` (plain field, or the `<Sprite>`/`<Group>` prop)
-with `{ component }` - target-only, never on a cancel, snap or removal;
-the raw "spatialTransitionEnd" engine event (srt:events, node =
-sprite.node) stays for flux:spatial consumers. See examples/springs.tsx.
+writes only). A component's `exit` (same units) is where it animates to
+when destroySprite/destroyGroup lets go of it: the sprite stays drawn
+while it leaves and is a GHOST meanwhile - no pick, raycast, overlap,
+sweep or pointer event sees it - then frees when the last exit settles
+(a bullet never hits a corpse; an entering sprite is live from its
+first frame, whatever `from` it passes through). Either endpoint takes
+the object form `{ value, duration?, curve?, bounce?, delay? }` to own
+its direction's motion (an ease-out enter, an ease-in exit), and `delay`
+on an entry holds its writes that long on the animation clock (a late
+frame catches up, so a hitch never shifts a held start). No stagger:
+sprites have no tree order to cascade in; space a burst with `delay`.
+Each natural settle calls the handle's `onTransitionEnd` (plain field,
+or the `<Sprite>`/`<Group>` prop) with `{ component }` - target-only,
+never on a cancel, snap or exit; the raw "spatialTransitionEnd" engine
+event (srt:events, node = sprite.node) stays for flux:spatial consumers.
+See examples/springs.tsx (tap a sprite: it leaves through its `exit`).
 
 ### Frame-rate motion
 
@@ -615,7 +629,7 @@ hover, wheel and tap rules headless.
   a hoisted reference becomes a dead copy whose writes publish nothing.
   `layer.withRecords(fn)` is the hoist-proof read; a bare `layer.records`
   at use time is equally live.
-- Records layer: record order is draw order: `removeSprite` shifts every
+- Records layer: record order is draw order: `destroySprite` shifts every
   later sprite down one slot (copyWithin + index fixup, O(later
   sprites)). Its flush publishes the WHOLE live prefix, not a dirty
   range: one moved sprite re-publishes count x 52 bytes - a single
@@ -654,7 +668,7 @@ hover, wheel and tap rules headless.
 ### Nodes, transitions and queries
 
 - Node layer: `sprite.node` is public FOR BINDING PRODUCERS, not for
-  lifecycle - never destroyNode it yourself (removeSprite owns that), and
+  lifecycle - never destroyNode it yourself (destroySprite owns that), and
   a transform written through flux:spatial directly bypasses the sprite's
   pose mirror, so a later setSprite with the old x wins (its compare sees
   no change to skip, but partial writes compose from the mirror).

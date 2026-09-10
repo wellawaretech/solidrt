@@ -20,7 +20,7 @@ import { decodeModel } from "./model-file.ts"
 import { disposeGeometry } from "./geometry-gpu.ts"
 import { standard } from "./material.ts"
 import type { Material } from "./material.ts"
-import { add, createGroup, remove, setTransform } from "./node.ts"
+import { add, createGroup, remove, setTransform, freeLeaving } from "./node.ts"
 import type { SceneNode } from "./node.ts"
 import { createMesh } from "./mesh.ts"
 import type { Mesh } from "./mesh.ts"
@@ -275,6 +275,11 @@ export function createModel(data: ModelData, opts: ModelOptions = {}): Model {
     if (model._body !== null) unbindSkeleton(model)
     for (let worn of model._worn.slice()) worn.piece.dispose()
     if (model.parent !== null) remove(model)
+    // A destroyed model still animating out frees now: its textures go
+    // below, and a corpse must not sample them.
+    let mine = new Set<SceneNode>(model.nodes.map(n => n.node))
+    for (let part of model.parts) mine.add(part.mesh)
+    freeLeaving(n => mine.has(n))
     for (let part of model.parts) disposeGeometry(part.mesh.geometry)
     for (let id of textures) destroyTexture(id)
     textures.length = 0

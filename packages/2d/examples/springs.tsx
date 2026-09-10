@@ -13,8 +13,15 @@
 // random angle always takes the short arc, and the position spring keeps
 // its velocity when a shuffle lands mid-flight - retarget as fast as you
 // like, the motion stays continuous.
+//
+// Tap a sprite and it LEAVES: destroySprite lets go of the handle, and the
+// `exit` on its scale entry shrinks it away on an ease-in of its own while
+// the sprite is a ghost - drawn, but no tap or pick reaches it - then the
+// core frees it. A fresh sprite pops into the empty slot a moment later,
+// entering from scale zero (`from`); no settle callback, no bookkeeping.
 import { decodeImage, render } from "@solidrt/core"
-import { addSprite, createAtlas, createSpriteLayer, grid, setSprite, setSpriteTransition } from "@solidrt/2d"
+import { addSprite, createAtlas, createSpriteLayer, destroySprite, grid, setSprite, setSpriteTransition } from "@solidrt/2d"
+import type { SpriteHandle, SpriteTransition } from "@solidrt/2d"
 import logoBytes from "./logo.png" with { type: "binary" }
 
 const COLS = 20
@@ -23,6 +30,16 @@ const COUNT = COLS * ROWS
 const W = 720
 const H = 720
 const SPRITE = 30
+// The pop-in / shrink-out of a sprite's size, and the pause before a
+// tapped-away sprite is replaced.
+const POP_MS = 300
+const RESPAWN_MS = 600
+
+const TRANSITION: SpriteTransition = {
+  position: { duration: 700, bounce: 0.3 },
+  rotation: { duration: 700 },
+  scale: { duration: POP_MS, bounce: 0.4, from: [0, 0], exit: { value: [0, 0], curve: "ease-in", duration: POP_MS / 2 } },
+}
 
 function App() {
   let atlas = createAtlas(decodeImage(logoBytes), { label: "logo-atlas" })
@@ -35,12 +52,17 @@ function App() {
 
   // Sprite k sits at grid slot slots[k]; each shuffle re-deals the slots.
   let slots = Array.from({ length: COUNT }, (_, i) => i)
-  let sprites = slots.map(slot =>
-    addSprite(layer, { x: slotX(slot), y: slotY(slot), w: SPRITE, h: SPRITE, frame: frames[slot % 4] }),
-  )
-  for (let sprite of sprites) {
-    setSpriteTransition(sprite, { position: { duration: 700, bounce: 0.3 }, rotation: { duration: 700 } })
+  let spawn = (k: number): SpriteHandle => {
+    let sprite = addSprite(layer, { x: slotX(slots[k]!), y: slotY(slots[k]!), w: SPRITE, h: SPRITE, frame: frames[k % 4] })
+    // Declared in the adding tick, so the `from` plays: the sprite pops in.
+    setSpriteTransition(sprite, TRANSITION)
+    sprite.onTap = () => {
+      destroySprite(sprite)
+      setTimeout(() => (sprites[k] = spawn(k)), RESPAWN_MS)
+    }
+    return sprite
   }
+  let sprites = slots.map((_, k) => spawn(k))
 
   let shuffle = () => {
     for (let i = slots.length - 1; i > 0; i--) {
@@ -58,7 +80,7 @@ function App() {
 
   return (
     <window alignItems="center" justifyContent="center">
-      <texture src={view.texture} width={W} height={H} />
+      <texture src={view.texture} width={W} height={H} {...view.handlers} />
     </window>
   )
 }
