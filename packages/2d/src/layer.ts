@@ -1256,7 +1256,7 @@ export type SpriteTransitionSpec<Value> =
  * w/h (`from: [w, h]`) or a group's uniform scale (`from: s`); `exit`
  * takes the same units. `stagger` (ms) goes on a GROUP's declaration and
  * spaces the enters and exits of the sprites and groups under it that
- * begin in one frame by `index * stagger` (add order for enters, destroy
+ * begin in one frame by `index * stagger` (add order for enters, tree
  * order for exits; the nearest declaring group wins); a sprite has no
  * children, so on a sprite it does nothing. */
 export type SpriteTransition = {

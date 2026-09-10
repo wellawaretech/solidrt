@@ -82,10 +82,16 @@ or inside the object. `stagger` too, on an ancestor's declaration (a 2d or
 in, but stagger needs only a parent chain, a per-frame occurrence order
 and a delay mechanism, and the arena has all three - `set_parent` is the
 hierarchy, `children` is attach order (JSX order for template children),
-enters drain in creation order and exits start in the consumer's
-children-first teardown order, and the held-write list is the delay. It
-is the element rule verbatim: nearest declaring ancestor, per-frame
-counts, enters and exits counted apart, descendants only.
+enters drain in creation order, and the held-write list is the delay.
+Exits are the one place call order is not tree order - Solid disposes a
+component's children last-first, an imperative destroy goes first-to-last
+- so an exit under a stagger group does not start at the call: the node
+is leaving at once and the advance starts every exit let go of under the
+group that frame in pre-order (`start_staggered_exits`), each as of the
+clock it was let go of at. A cascade out then reads like the cascade in,
+whoever tore the subtree down. Otherwise the element rule verbatim:
+nearest declaring ancestor, per-frame counts, enters and exits counted
+apart, descendants only.
 
 The arena (alloy/src/spatial/mod.rs): `Spatial::exit(id)` starts each
 declared exit from the component's current mid-flight value on the exit's
@@ -176,7 +182,9 @@ frees the sprites in order, the group last. The populated-mesh unmount,
 live: an `<InstancedMesh transition={{ stagger: 30 }}>` with three
 `<Instance>`s declaring scale exits, flipped off through `<Show>`, keeps
 its instanced draw entry (count 3) while the instances leave with their
-exits held at +0, +30 and +60 by teardown order, and drops the entry only
+exits held at +0, +30 and +60 in mount order (Solid unmounts them
+last-first; the arena orders the cascade by the tree), and drops the
+entry only
 after the last free; no freed-buffer warning. No errors logged in any run.
 
 ## Not done, on purpose

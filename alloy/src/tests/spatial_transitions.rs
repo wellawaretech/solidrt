@@ -899,3 +899,63 @@ fn stagger_orchestrates_descendants_only() {
   s.write_transform(plain, [0.0; 3], Q, ONE).expect("write");
   assert_eq!(s.motion_of(plain).expect("motion")[0].held_until_ms, None);
 }
+
+#[test]
+fn staggered_exits_index_by_tree_order_whatever_the_call_order() {
+  let mut s = Spatial::new();
+  s.set_transition_now(0.0);
+  let group = s.create([0.0; 3], Q, ONE, true);
+  s.set_node_transition(group, stagger_group(50.0)).expect("config");
+  let kids: Vec<u64> = (0..3)
+    .map(|_| {
+      let id = s.create([10.0, 0.0, 0.0], Q, ONE, true);
+      s.set_parent(id, Some(group)).expect("parent");
+      s.set_node_transition(id, exit_to_x(LINEAR_100, 0.0)).expect("config");
+      id
+    })
+    .collect();
+  // A component unmount lets children go last-first; the cascade must
+  // still run first-to-last, as the element tree's does.
+  for &k in kids.iter().rev() {
+    assert!(s.exit(k).expect("exit"), "leaving at once, the exit itself waits for the advance");
+    assert!(s.leaving(k).expect("leaving"));
+  }
+  assert!(s.exit(group).expect("exit"));
+  assert!(s.motion_of(kids[0]).expect("motion").is_empty(), "nothing starts before the advance");
+  assert!(s.advance_transitions());
+  let held = |s: &Spatial, id: u64| s.motion_of(id).expect("motion")[0].held_until_ms;
+  assert_eq!(held(&s, kids[0]), None, "the first child is index 0");
+  assert_eq!(held(&s, kids[1]), Some(50.0));
+  assert_eq!(held(&s, kids[2]), Some(100.0));
+  // And they run as of the clock they were let go of at: the first is
+  // halfway at 50 even though the advance that started it came at 0.
+  s.set_transition_now(50.0);
+  s.advance_transitions();
+  assert!((pos_x(&s, kids[0]) - 5.0).abs() < 1e-3);
+  assert!(!run_to(&mut s, 50.0, 250.0));
+  assert_eq!(s.take_freed(), vec![kids[0], kids[1], kids[2], group]);
+}
+
+#[test]
+fn a_deferred_exit_gates_its_node_until_it_runs() {
+  let mut s = Spatial::new();
+  s.set_transition_now(0.0);
+  let outer = s.create([0.0; 3], Q, ONE, true);
+  s.set_node_transition(outer, stagger_group(50.0)).expect("config");
+  let parent = s.create([10.0, 0.0, 0.0], Q, ONE, true);
+  s.set_parent(parent, Some(outer)).expect("parent");
+  s.set_node_transition(parent, exit_to_x(LINEAR_100, 0.0)).expect("config");
+  let child = s.create([10.0, 0.0, 0.0], Q, ONE, true);
+  s.set_parent(child, Some(parent)).expect("parent");
+  s.set_node_transition(child, exit_to_x(LINEAR_100, 0.0)).expect("config");
+  assert!(s.exit(child).expect("exit"));
+  assert!(s.exit(parent).expect("exit"));
+  // The corpse under it is cut short before the advance: the parent's own
+  // exit has not run yet, so its gate must hold.
+  s.destroy(child).expect("destroy");
+  assert!(s.world(parent).is_ok(), "a deferred exit is not an empty gate");
+  assert!(s.advance_transitions());
+  assert!(s.motion_of(parent).expect("motion").len() == 1, "the parent's exit runs at the advance");
+  assert!(!run_to(&mut s, 0.0, 150.0));
+  assert_eq!(s.take_freed(), vec![child, parent]);
+}

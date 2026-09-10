@@ -296,8 +296,9 @@ an entry holds its writes on the animation clock (a late frame catches
 up). `stagger` (ms) goes on an ANCESTOR's declaration (a `<Group
 transition={{ stagger: 40 }}>`), never on the animating nodes: it spaces
 the enters and exits of its descendants that begin in one frame by
-`index * stagger` (add order in, destroy order out; nearest declaring
-ancestor wins) and cascades nothing unless they declare `from`/`exit` -
+`index * stagger` (add order in, tree order out whatever order the
+unmount lets them go in; nearest declaring ancestor wins) and cascades
+nothing unless they declare `from`/`exit` -
 a squad of instances spawning in is one `stagger` on their group, and
 for the nodes straight under the scene root it is `<Scene stagger>` /
 `createScene({ stagger })` (a declaration on `scene.root`). A populated

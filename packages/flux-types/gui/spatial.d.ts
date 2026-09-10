@@ -110,8 +110,9 @@ declare module "flux:spatial" {
    * (ms) makes the node a stagger group: every descendant enter (`from`)
    * or exit that begins in the same frame under it gets `index * stagger`
    * of extra delay, indexed in occurrence order - creation order for
-   * enters, the teardown order (children first, in children order) for
-   * exits; enters and exits count separately. The nearest declaring
+   * enters, TREE order (children order, depth first) for exits whatever
+   * order the exits were let go of in, so a cascade out reads like the
+   * cascade in; enters and exits count separately. The nearest declaring
    * ancestor wins, nested groups never compound, and it orchestrates
    * descendants only: the node's own lifecycle is staggered by ITS
    * ancestors, and ordinary writes never stagger. */

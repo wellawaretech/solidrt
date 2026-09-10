@@ -379,7 +379,8 @@ frame catches up, so a hitch never shifts a held start). `stagger` (ms)
 goes on a GROUP's declaration (`setGroupTransition` / `<Group
 transition>`), never on the sprites: it spaces the enters and exits of
 everything under the group that begin in one frame by `index * stagger`
-(add order in, destroy order out; nearest declaring group wins), and
+(add order in, tree order out whatever the destroy order; nearest
+declaring group wins), and
 cascades nothing unless the sprites declare `from`/`exit` - a hand of
 cards fanning in, a menu popping in, is one `stagger` on the group. For
 the sprites straight under the layer (no group) the layer's root carries

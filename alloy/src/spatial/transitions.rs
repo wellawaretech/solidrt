@@ -318,6 +318,11 @@ pub(super) struct NodeTransitions {
   // at every clock stamp (mod.rs set_transition_now), so a batch created
   // or let go of in one tick cascades and later frames start at zero.
   pub stagger_counts: HashMap<(NodeId, bool), u32>,
+  // Exits let go of under a stagger group since the last advance, with
+  // the clock they were let go of at: the advance orders them by their
+  // place in the tree and starts them (mod.rs start_staggered_exits), so
+  // the cascade never depends on the order the consumer tore down in.
+  pub staggered_exits: Vec<(NodeId, f64)>,
 }
 
 impl NodeTransitions {
@@ -331,10 +336,11 @@ impl NodeTransitions {
     index
   }
 
-  /// Nothing to advance: no track runs and no write is held. A held write
-  /// keeps the advance live so its activation frame comes.
+  /// Nothing to advance: no track runs, no write is held and no exit
+  /// waits for its place in a cascade. A held write keeps the advance
+  /// live so its activation frame comes.
   pub fn is_empty(&self) -> bool {
-    self.linear.is_empty() && self.rotation.is_empty() && self.pending.is_empty()
+    self.linear.is_empty() && self.rotation.is_empty() && self.pending.is_empty() && self.staggered_exits.is_empty()
   }
 
   /// Start or retarget the position/scale track for (node, component), as
@@ -536,6 +542,7 @@ impl NodeTransitions {
     self.linear.retain(|t| t.node != node);
     self.rotation.retain(|t| t.node != node);
     self.pending.retain(|w| w.node != node);
+    self.staggered_exits.retain(|(n, _)| *n != node);
   }
 
   /// Drop the pair's track or held write and hand back its target, if one

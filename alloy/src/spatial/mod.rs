@@ -625,40 +625,30 @@ impl Spatial {
   /// returns false, so the caller can clean up synchronously. No settle
   /// event fires for an exit track, and a second `exit` on a leaving node
   /// changes nothing.
+  ///
+  /// Under a stagger group (an ancestor declaring `stagger_ms`) the exit
+  /// does not start here: the node is leaving at once, and the advance
+  /// starts every exit let go of under the group this frame in TREE order
+  /// (`start_staggered_exits`), so the cascade reads the same whoever tore
+  /// the subtree down and in whatever order - a component unmount (Solid
+  /// disposes children last-first), an imperative destroy (first-to-last)
+  /// and the element tree's own exit walk all leave first-to-last.
   pub fn exit(&mut self, id: NodeId) -> Result<bool, String> {
     let i = self.resolve(id)?;
     if self.nodes[i as usize].leaving {
       return Ok(true);
     }
     let now = self.transitions.now_ms;
-    let mut started = false;
-    if let Some(config) = self.transitions.configs.get(&id).copied() {
-      let n = &self.nodes[i as usize];
-      let (cur_p, cur_q, cur_s) = (lanes3(n.position), n.rotation, lanes3(n.scale));
-      let ends = [
-        (Component::Position, cur_p, config.position.and_then(|e| e.exit.map(|x| (lanes3(x.value), x.motion)))),
-        (Component::Scale, cur_s, config.scale.and_then(|e| e.exit.map(|x| (lanes3(x.value), x.motion)))),
-        (Component::Rotation, cur_q, config.rotation.and_then(|e| e.exit.map(|x| (x.value, x.motion)))),
-      ];
-      // One stagger index per node, shared by all its exiting components,
-      // taken only when the node has an exit to play.
-      let mut stagger: Option<f32> = None;
-      for (component, current, end) in ends {
-        let Some((to, motion)) = end else { continue };
-        if stagger.is_none() {
-          stagger = Some(self.stagger_delay_for(i, true));
-        }
-        let delay_ms = motion.delay_ms + stagger.unwrap_or(0.0);
-        if delay_ms > 0.0 {
-          let at_ms = now + delay_ms as f64;
-          self.transitions.schedule(PendingWrite { node: id, component, to, spec: motion.spec, at_ms });
-          started = true;
-        } else {
-          self.transitions.unschedule(id, component);
-          started |= self.transitions.apply(id, component, current, to, motion.spec, now);
-        }
-      }
+    let config = self.transitions.configs.get(&id).copied();
+    let has_exit = config.is_some_and(|c| {
+      c.has_exit(Component::Position) || c.has_exit(Component::Scale) || c.has_exit(Component::Rotation)
+    });
+    if has_exit && self.stagger_group_of(i).is_some() {
+      self.transitions.staggered_exits.push((id, now));
+      self.nodes[i as usize].leaving = true;
+      return Ok(true);
     }
+    let started = self.start_exit_tracks(i, now, 0.0);
     let waiting = self.nodes[i as usize].children.iter().any(|&c| self.nodes[c as usize].leaving);
     if !started && !waiting {
       self.free_node(i);
@@ -666,6 +656,97 @@ impl Spatial {
     }
     self.nodes[i as usize].leaving = true;
     Ok(true)
+  }
+
+  /// One node's exit tracks: per declared exit, a track from the
+  /// component's current value (or a held write, with the exit's delay plus
+  /// `stagger_ms`) as of `at_ms`. Returns whether anything started or
+  /// waits.
+  fn start_exit_tracks(&mut self, i: u32, at_ms: f64, stagger_ms: f32) -> bool {
+    let id = self.id_of(i);
+    let Some(config) = self.transitions.configs.get(&id).copied() else {
+      return false;
+    };
+    let n = &self.nodes[i as usize];
+    let (cur_p, cur_q, cur_s) = (lanes3(n.position), n.rotation, lanes3(n.scale));
+    let ends = [
+      (Component::Position, cur_p, config.position.and_then(|e| e.exit.map(|x| (lanes3(x.value), x.motion)))),
+      (Component::Scale, cur_s, config.scale.and_then(|e| e.exit.map(|x| (lanes3(x.value), x.motion)))),
+      (Component::Rotation, cur_q, config.rotation.and_then(|e| e.exit.map(|x| (x.value, x.motion)))),
+    ];
+    let mut started = false;
+    for (component, current, end) in ends {
+      let Some((to, motion)) = end else { continue };
+      let delay_ms = motion.delay_ms + stagger_ms;
+      if delay_ms > 0.0 {
+        let at = at_ms + delay_ms as f64;
+        self.transitions.schedule(PendingWrite { node: id, component, to, spec: motion.spec, at_ms: at });
+        started = true;
+      } else {
+        self.transitions.unschedule(id, component);
+        started |= self.transitions.apply(id, component, current, to, motion.spec, at_ms);
+      }
+    }
+    started
+  }
+
+  /// The exits let go of under stagger groups since the last advance,
+  /// started now: grouped by their stagger ancestor, each group's members
+  /// in pre-order under it (children order, depth first), indexed in that
+  /// order. Each runs as of the clock it was let go of at, so a late
+  /// advance changes nothing. A member whose group is gone since plays
+  /// unstaggered; one that starts nothing (its exit value already held,
+  /// index 0) goes to `exit_checks`, which may free it.
+  fn start_staggered_exits(&mut self, exit_checks: &mut Vec<NodeId>) {
+    let batch = std::mem::take(&mut self.transitions.staggered_exits);
+    if batch.is_empty() {
+      return;
+    }
+    let mut groups: Vec<(u32, Vec<(NodeId, f64)>)> = Vec::new();
+    for (id, at_ms) in batch {
+      let Ok(i) = self.resolve(id) else {
+        continue;
+      };
+      match self.stagger_group_of(i) {
+        Some((g, _)) => match groups.iter_mut().find(|(gi, _)| *gi == g) {
+          Some((_, members)) => members.push((id, at_ms)),
+          None => groups.push((g, vec![(id, at_ms)])),
+        },
+        None => {
+          if !self.start_exit_tracks(i, at_ms, 0.0) {
+            exit_checks.push(id);
+          }
+        }
+      }
+    }
+    for (g, mut members) in groups {
+      let ranks = self.preorder_ranks(g);
+      members.sort_by_key(|(id, _)| ranks.get(&(index(*id) as u32)).copied().unwrap_or(usize::MAX));
+      let gid = self.id_of(g);
+      let stagger_ms = self.transitions.configs.get(&gid).and_then(|c| c.stagger_ms).unwrap_or(0.0);
+      for (id, at_ms) in members {
+        let Ok(i) = self.resolve(id) else {
+          continue;
+        };
+        let stagger = self.transitions.stagger_index(gid, true) as f32 * stagger_ms;
+        if !self.start_exit_tracks(i, at_ms, stagger) {
+          exit_checks.push(id);
+        }
+      }
+    }
+  }
+
+  /// Every node under `root` (itself excluded) by its pre-order rank:
+  /// children order, depth first - the order the element tree's exit walk
+  /// numbers a cascade in.
+  fn preorder_ranks(&self, root: u32) -> HashMap<u32, usize> {
+    let mut ranks = HashMap::new();
+    let mut stack: Vec<u32> = self.nodes[root as usize].children.iter().rev().copied().collect();
+    while let Some(i) = stack.pop() {
+      ranks.insert(i, ranks.len());
+      stack.extend(self.nodes[i as usize].children.iter().rev().copied());
+    }
+    ranks
   }
 
   /// A leaving node's free gate: free it once no declared exit still
@@ -677,6 +758,10 @@ impl Spatial {
       return;
     }
     let id = self.id_of(i);
+    // An exit still waiting for its place in a cascade has not run yet.
+    if self.transitions.staggered_exits.iter().any(|(node, _)| *node == id) {
+      return;
+    }
     if let Some(config) = self.transitions.configs.get(&id) {
       for component in [Component::Position, Component::Rotation, Component::Scale] {
         if config.has_exit(component) && self.transitions.any_running(id, component) {
@@ -1565,22 +1650,31 @@ impl Spatial {
     self.transitions.stagger_counts.clear();
   }
 
-  /// The extra delay a stagger group imposes on this node's lifecycle
-  /// event (enter when `exit` is false, exit when true): `index *
-  /// stagger_ms` under the nearest ancestor declaring `stagger_ms`, zero
-  /// without one. Counting is per group per frame, in occurrence order:
-  /// creation order for enters, the consumer's teardown order (children
-  /// first, in children order, for both trees' destroy verbs) for exits.
-  fn stagger_delay_for(&mut self, i: u32, exit: bool) -> f32 {
+  /// The nearest ancestor declaring `stagger_ms` (its arena index and
+  /// spacing), None without one.
+  fn stagger_group_of(&self, i: u32) -> Option<(u32, f32)> {
     let mut cursor = self.nodes[i as usize].parent;
     while let Some(p) = cursor {
       let pid = self.id_of(p);
       if let Some(stagger_ms) = self.transitions.configs.get(&pid).and_then(|c| c.stagger_ms) {
-        return self.transitions.stagger_index(pid, exit) as f32 * stagger_ms;
+        return Some((p, stagger_ms));
       }
       cursor = self.nodes[p as usize].parent;
     }
-    0.0
+    None
+  }
+
+  /// The extra delay a stagger group imposes on this node's lifecycle
+  /// event (enter when `exit` is false, exit when true): `index *
+  /// stagger_ms` under the nearest ancestor declaring `stagger_ms`, zero
+  /// without one. Counting is per group per frame in occurrence order:
+  /// creation order for enters (JSX order for template children), tree
+  /// order for exits (`start_staggered_exits` assigns those).
+  fn stagger_delay_for(&mut self, i: u32, exit: bool) -> f32 {
+    match self.stagger_group_of(i) {
+      Some((g, stagger_ms)) => self.transitions.stagger_index(self.id_of(g), exit) as f32 * stagger_ms,
+      None => 0.0,
+    }
   }
 
   /// Advance every running track to the stamped clock, writing the
@@ -1597,6 +1691,7 @@ impl Spatial {
     self.start_enter_transitions();
     let now = self.transitions.now_ms;
     let mut exit_checks = std::mem::take(&mut self.transitions.exit_checks);
+    self.start_staggered_exits(&mut exit_checks);
     if self.transitions.is_empty() && exit_checks.is_empty() {
       return false;
     }
