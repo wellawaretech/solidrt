@@ -64,6 +64,10 @@
       "name": "@solidrt/android-armeabi-v7a",
       "version": "0.0.0",
     },
+    "packages/android-x86_64": {
+      "name": "@solidrt/android-x86_64",
+      "version": "0.0.0",
+    },
     "packages/cli": {
       "name": "@solidrt/cli",
       "version": "0.0.0",
@@ -253,6 +257,8 @@
     "@solidrt/android-arm64-v8a": ["@solidrt/android-arm64-v8a@workspace:packages/android-arm64-v8a"],
 
     "@solidrt/android-armeabi-v7a": ["@solidrt/android-armeabi-v7a@workspace:packages/android-armeabi-v7a"],
+
+    "@solidrt/android-x86_64": ["@solidrt/android-x86_64@workspace:packages/android-x86_64"],
 
     "@solidrt/cli": ["@solidrt/cli@workspace:packages/cli"],
 
