@@ -288,6 +288,17 @@ let renderer = createRenderer<ProxyNode>({
       if (anchor) tree.insertNode(parent.id, node.id, anchor.id)
       else tree.insertNode(parent.id, node.id)
 
+      // A bare move - Solid reorders a <For> with insertBefore on a node
+      // that is still attached, no removeNode first - unlinks the node from
+      // wherever it was on the native side (a same-parent reorder included).
+      // The mirror must drop the old entry too, or it keeps both and
+      // getNextSibling hands Solid stale anchors from then on, so every
+      // later insert lands in the wrong place.
+      let previous = node.parent
+      if (previous) {
+        let at = previous.children.indexOf(node)
+        if (at !== -1) previous.children.splice(at, 1)
+      }
       node.parent = parent
 
       if (!anchor) {

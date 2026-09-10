@@ -169,14 +169,16 @@ no fence timeouts, no errors logged.
 - Slides on a window resize are the declaration doing what it says, as
   under Framer; nothing suppresses them.
 
-Found on the way, not this item's: after a `<For>` reorder the renderer's
-JS mirror of a parent's children keeps the moved node's old entry
-(`insertNode` in packages/core/src/renderer.ts never removes a same-parent
-node's previous slot, while the native tree does), so `getNextSibling`
-hands Solid stale anchors and later inserts land in the wrong place - in
-the probe, a row appended after a rotate landed at the top and the footer
-drifted into the list. The slides were right for the order the tree had;
-the order was wrong. Noted in okf/tiny.md.
+Fixed on the way: after a `<For>` reorder the renderer's JS mirror of a
+parent's children kept the moved node's old entry (`insertNode` in
+packages/core/src/renderer.ts never removed a same-parent node's previous
+slot, while the native tree does), so `getNextSibling` handed Solid stale
+anchors and later inserts landed in the wrong place - in the probe, a row
+appended after a rotate landed at the top and the footer drifted into the
+list. The slides were right for the order the tree had; the order was
+wrong. The mirror now unlinks a moved node from wherever it was, as the
+native insert does; reset, remove, rotate and add sequences in the probe
+read the expected order after it, with the slides intact.
 
 ## Related
 
