@@ -89,6 +89,12 @@ Shaped, not started.
   modulo that must SNAP (native transitions animate the wrap jump across the
   world), ghost copies at the seams - and the chunked tile layer has no way to
   draw the seam at all.
+- **[Normals cannot be computed or recomputed](backlog/3d-compute-vertex-normals.md)** [2026-09-11]
+  Nothing in the geometry surface generates normals, so a hand-authored vertex
+  array, a geometry deformed through updateVertices and anything wanting flat
+  shading all have no path; Three, Godot and Unity all ship it and all mutate
+  in place, where our packed Geometry wants the withColors/transformGeometry
+  copy shape instead.
 - **[Environment tier leftovers - SH9, aoMap, packed .srte, EXR, loadCubeImages](backlog/3d-environment-additive.md)** [2026-09-06]
   The environment tier is complete (skybox, HDR environments, PBR, prefiltered
   HDR probes and sky bakes) and each of these is a deliberate non-goal of that
@@ -116,6 +122,12 @@ Shaped, not started.
   compressed real-world files (Draco/meshopt, KTX2), merge-by-material,
   per-material samplers and runtime-fetched content, each demand-gated (morph
   targets have their own item).
+- **[Four names in the 3d public surface say the wrong thing](backlog/3d-naming-inconsistencies.md)** [2026-09-11]
+  shape() wears Three's name for the INPUT class on a geometry output,
+  MAX_SHADOWS is the light cap rather than the shadow budget it names, the
+  lit/standard pair mixes two engine vocabularies with URP's meaning of Lit
+  inverted, and "standard" names both a vertex layout and the PBR material on
+  axes that never correlate; each is a rename with no compat constraint.
 - **[No way to ask why a mesh did not draw](backlog/3d-scene-draw-introspection.md)** [2026-09-08]
   Four independent mechanisms silently drop a mesh from a target - frustum
   culling, the layer mask, overrideMaterial skipping instanced meshes, and the
@@ -2065,9 +2077,10 @@ Knowledge. No lifecycle - true or wrong, not open or closed.
   cheaper, edits re-shape only their words).
 - **[Three.js feature survey - the inventory behind the roadmap](notes/three-feature-survey.md)** [2026-09-08]
   A fine-grained inventory of what Three.js has and @solidrt/3d does not,
-  taken 2026-09-08 across geometry, materials, renderer features, objects,
-  animation, loaders, textures, controls and math, marking each entry as
-  already tracked or untracked, plus the items our model makes unnecessary.
+  first taken 2026-09-08 and revised 2026-09-11 once the last roadmap
+  capabilities landed, across geometry, materials, renderer features, objects,
+  animation, loaders, textures, controls and math, plus the items our model
+  makes unnecessary.
 - **[Postmortem - a bad GPU counter steered a day of TV perf work](notes/tv-gpu-measurement-postmortem.md)** [2026-09-02]
   gpuFrameExecMs on the MediaTek TV produced a plausible-looking "40 ms GPU
   fill" number that spawned a mis-attributed backlog item, a probe
