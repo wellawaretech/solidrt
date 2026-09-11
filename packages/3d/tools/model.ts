@@ -45,9 +45,11 @@ let encoded = encodeModel(data)
 writeFileSync(output, encoded)
 
 let triangles = data.parts.reduce((n, p) => n + p.geometry.indices.length / 3, 0)
-let vertices = data.parts.reduce((n, p) => n + p.geometry.vertices.length / layoutStride(p.geometry.layout), 0)
+let vertices = data.parts.reduce((n, p) => n + p.geometry.vertices.byteLength / layoutStride(p.geometry.layout), 0)
+let targets = data.parts.reduce((n, p) => n + (p.geometry.morphs?.names.length ?? 0), 0)
 console.log(
   `${output}: ${data.nodes.length} nodes, ${data.parts.length} parts, ${vertices} vertices, ${triangles} triangles, ` +
+    (targets > 0 ? `${targets} morph targets, ` : "") +
     `${data.clips.length} clips, ${data.materials.length} materials, ${data.images.length} images, ${(encoded.byteLength / 1024).toFixed(0)} KiB ` +
     `(parsed in ${parsed.toFixed(0)} ms)`,
 )

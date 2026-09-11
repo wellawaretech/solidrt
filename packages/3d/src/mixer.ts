@@ -9,9 +9,11 @@
 // (getTransform) and may overwrite them (root-motion strips, skeleton
 // copies), last write wins, palettes and uModel following at the frame's
 // flush. A channel the active clips do not animate keeps the node's
-// current pose. Playing requires the model to be IN A SCENE (players
-// bind live arena nodes); removing it drops the players, and a re-added
-// model plays again from play().
+// current pose. A weights channel (morph targets) plays the same way,
+// into the owning node's weights register (`getMorphWeights` reads it),
+// blended across players like a TRS path. Playing requires the model
+// to be IN A SCENE (players bind live arena nodes); removing it drops
+// the players, and a re-added model plays again from play().
 //
 // Root motion: a locomotion clip translates its root, which is what a game
 // consumes to move the character and what sends a viewer's model through
@@ -44,7 +46,7 @@ import * as spatial from "flux:spatial"
 import type { NodeId } from "flux:spatial"
 import { on } from "srt:events"
 import type { ModelChannel, ModelClip } from "./gltf.ts"
-import { sampleChannel } from "./clip.ts"
+import { channelElements, sampleChannel } from "./clip.ts"
 import type { Vec3 } from "./math.ts"
 import type { Model } from "./model.ts"
 
@@ -111,8 +113,10 @@ export type Mixer = {
 }
 
 // The packed-clip codes of flux:spatial's createClip layout.
-const PATH_CODE = { position: 0, rotation: 1, scale: 2 } as const
+const PATH_CODE = { position: 0, rotation: 1, scale: 2, weights: 3 } as const
 const INTERP_CODE = { step: 0, linear: 1, cubic: 2 } as const
+// Meta words per channel in that layout.
+const CLIP_META_WORDS = 5
 
 // Net root x/z drift, as a fraction of the model's rest height, above
 // which a clip counts as travelling. Measured on a stock rig: run cycles
@@ -141,16 +145,18 @@ on("spatialRootMotion", (event: { player: number; x: number; y: number; z: numbe
 
 /** Pack channels into the core's createClip layout. */
 function registerClip(duration: number, channels: ModelChannel[]): number {
-  let meta = new Uint32Array(channels.length * 4)
+  let meta = new Uint32Array(channels.length * CLIP_META_WORDS)
   let timeCount = 0
   let valueCount = 0
   channels.forEach((c, i) => {
     // Target slot = channel index: the player's target table below is
     // built in the same order.
-    meta[i * 4] = i
-    meta[i * 4 + 1] = PATH_CODE[c.path]
-    meta[i * 4 + 2] = INTERP_CODE[c.interpolation]
-    meta[i * 4 + 3] = c.times.length
+    let at = i * CLIP_META_WORDS
+    meta[at] = i
+    meta[at + 1] = PATH_CODE[c.path]
+    meta[at + 2] = INTERP_CODE[c.interpolation]
+    meta[at + 3] = c.times.length
+    meta[at + 4] = channelElements(c)
     timeCount += c.times.length
     valueCount += c.values.length
   })
@@ -211,7 +217,7 @@ function axisQuat(up: Vec3, angle: number): [number, number, number, number] {
  * linear or step channel is returned as is). */
 function linearized(c: ModelChannel, duration: number): ModelChannel {
   if (c.interpolation !== "cubic") return c
-  let elements = c.path === "rotation" ? 4 : 3
+  let elements = channelElements(c)
   let keys = Math.max(2, Math.ceil(duration * YAW_HOLD_RESAMPLE_HZ) + 1)
   let times = new Float32Array(keys)
   let values = new Float32Array(keys * elements)
@@ -249,7 +255,7 @@ function holdYaw(rotation: ModelChannel, duration: number, up: Vec3): ModelChann
 // Floats per key and the value's offset within a key: a key's value sits
 // at [in, value, out] for cubic keys; rotations are four floats.
 function keyLayout(c: ModelChannel): { stride: number; mid: number } {
-  let elements = c.path === "rotation" ? 4 : 3
+  let elements = channelElements(c)
   let cubic = c.interpolation === "cubic"
   return { stride: cubic ? elements * 3 : elements, mid: cubic ? elements : 0 }
 }
@@ -369,14 +375,21 @@ export function createMixer(model: Model, mixerOpts: MixerOptions = {}): Mixer {
   let rootAcc = { position: [0, 0, 0] as [number, number, number], yaw: 0 }
   // Channel targets resolve at play: clips index the model's node table,
   // and the arena ids are per scene-entry, so a re-added model binds
-  // fresh ones.
+  // fresh ones. A weights channel targets the node's weights register
+  // (the glTF node owning its mesh's morph targets, model.ts); its key
+  // width must be the node's target count.
   let targetsFor = (clip: ModelClip): NodeId[] =>
     clip.channels.map((c) => {
       let entry = model.nodes[c.node]
       if (entry === undefined) throw new Error("createMixer: clip '" + clip.name + "' targets a missing node " + c.node)
       let id = entry.node._node
       if (id === null) throw new Error("play: the model must be in a scene (add() it first) before clips can play")
-      entry.node._native = true
+      if (c.path === "weights") {
+        let targets = entry.node._morph?.names.length ?? 0
+        if (channelElements(c) !== targets) {
+          throw new Error("play: clip '" + clip.name + "' has " + channelElements(c) + " weights per key for node '" + entry.name + "' with " + targets + " morph targets")
+        }
+      } else entry.node._native = true
       return id
     })
 

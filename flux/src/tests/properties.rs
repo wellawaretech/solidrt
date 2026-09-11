@@ -6,7 +6,7 @@
 use std::sync::mpsc::channel;
 
 use crate::alloy_plugins::properties::apply_jsx;
-use crate::alloy_plugins::properties::transition::{anim_prop, decode_node_entry, decode_stagger};
+use crate::alloy_plugins::properties::transition::{anim_prop, decode_node_entry, decode_stagger, LaneRule};
 use crate::alloy_plugins::value::PropValue;
 use alloy::rendertree::{AnimProp, AnimValue, Curve, Damage, Element, ElementKind, TransitionEntry, TransitionSpec};
 
@@ -925,7 +925,7 @@ fn node_entry_takes_delay_and_bare_endpoints_on_the_entry_motion() {
     ("from", lanes(&[0.0, 0.0, 0.0])),
     ("exit", lanes(&[1.0, 2.0, 3.0])),
   ]);
-  let d = decode_node_entry("transition.position", &entry, Some(3)).expect("decodes");
+  let d = decode_node_entry("transition.position", &entry, LaneRule::Exactly(3)).expect("decodes");
   assert!(matches!(d.motion.spec, TransitionSpec::Spring { .. }));
   assert_eq!(d.motion.delay_ms, 50.0);
   let (from, from_motion) = d.from.expect("from");
@@ -950,7 +950,7 @@ fn node_endpoint_object_owns_its_direction() {
       ]),
     ),
   ]);
-  let d = decode_node_entry("transition.scale", &entry, Some(3)).expect("decodes");
+  let d = decode_node_entry("transition.scale", &entry, LaneRule::Exactly(3)).expect("decodes");
   assert!(
     matches!(d.motion.spec, TransitionSpec::Tween { duration_ms, curve } if duration_ms == 300.0 && curve.name() == Some("ease-out"))
   );
@@ -965,7 +965,7 @@ fn node_endpoint_object_owns_its_direction() {
     ("bounce", num(0.3)),
     ("exit", map(&[("value", lanes(&[0.0, 0.0, 0.0])), ("curve", text("ease-in"))])),
   ]);
-  let d = decode_node_entry("transition.scale", &entry, Some(3)).expect("decodes");
+  let d = decode_node_entry("transition.scale", &entry, LaneRule::Exactly(3)).expect("decodes");
   let (_, exit) = d.exit.expect("exit");
   assert!(
     matches!(exit.spec, TransitionSpec::Tween { duration_ms, .. } if duration_ms == 300.0),
@@ -976,16 +976,24 @@ fn node_endpoint_object_owns_its_direction() {
 #[test]
 fn node_entry_rejects_wrong_lanes_and_endpoints_on_all() {
   let short = map(&[("duration", num(300.0)), ("from", lanes(&[0.0, 0.0]))]);
-  let err = decode_node_entry("transition.position", &short, Some(3)).unwrap_err();
+  let err = decode_node_entry("transition.position", &short, LaneRule::Exactly(3)).unwrap_err();
   assert!(err.contains("array of 3 numbers"), "{err}");
   let quat = map(&[("duration", num(300.0)), ("exit", map(&[("value", lanes(&[0.0, 0.0, 0.0]))]))]);
-  let err = decode_node_entry("transition.rotation", &quat, Some(4)).unwrap_err();
+  let err = decode_node_entry("transition.rotation", &quat, LaneRule::Exactly(4)).unwrap_err();
   assert!(err.contains("array of 4 numbers"), "{err}");
   let on_all = map(&[("duration", num(300.0)), ("exit", lanes(&[0.0, 0.0, 0.0]))]);
-  let err = decode_node_entry("transition.all", &on_all, None).unwrap_err();
+  let err = decode_node_entry("transition.all", &on_all, LaneRule::Forbidden).unwrap_err();
   assert!(err.contains("name the component"), "{err}");
+  // The weights entry takes any positive lane count (one per target).
+  let two = map(&[("duration", num(300.0)), ("from", lanes(&[0.0, 0.0])), ("exit", lanes(&[1.0, 0.5, 0.25]))]);
+  let d = decode_node_entry("transition.weights", &two, LaneRule::Any).expect("decodes");
+  assert_eq!(d.from.expect("from").0, vec![0.0, 0.0]);
+  assert_eq!(d.exit.expect("exit").0, vec![1.0, 0.5, 0.25]);
+  let empty = map(&[("duration", num(300.0)), ("from", lanes(&[]))]);
+  let err = decode_node_entry("transition.weights", &empty, LaneRule::Any).unwrap_err();
+  assert!(err.contains("non-empty array"), "{err}");
   let shorthand = text("300ms ease-out 100ms");
-  let d = decode_node_entry("transition.all", &shorthand, None).expect("shorthand with delay");
+  let d = decode_node_entry("transition.all", &shorthand, LaneRule::Forbidden).expect("shorthand with delay");
   assert_eq!(d.motion.delay_ms, 100.0);
 }
 

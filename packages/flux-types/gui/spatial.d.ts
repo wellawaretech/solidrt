@@ -53,7 +53,7 @@ declare module "flux:spatial" {
   export function describeNode(node: NodeId): {
     leaving: boolean
     shown: boolean
-    motion: { component: "position" | "rotation" | "scale"; to: number[]; heldUntil: number | null }[]
+    motion: { component: NodeComponent; to: number[]; heldUntil: number | null }[]
   }
   /** Re-parent (null = make a root). Throws on a cycle. */
   export function setParent(node: NodeId, parent: NodeId | null): void
@@ -76,8 +76,9 @@ declare module "flux:spatial" {
    *
    * `from` and `exit` on a component entry (not on `all`) are its
    * lifecycle endpoints, in the lanes of the component - position and
-   * scale `[x, y, z]`, rotation a quaternion `[x, y, z, w]` - each a bare
-   * lane array (the entry's motion) or the endpoint object
+   * scale `[x, y, z]`, rotation a quaternion `[x, y, z, w]`, weights one
+   * number per morph target - each a bare lane array (the entry's motion)
+   * or the endpoint object
    * `{ value, duration?, curve?, bounce?, delay? }` owning its direction's
    * motion (a field left out is the entry's; naming a curve or a bounce
    * decides the kind outright). `from` is the enter value: the node starts
@@ -105,8 +106,22 @@ declare module "flux:spatial" {
         exit?: number[] | NodeEndpoint
       }
     | string
-  /** The declaration setTransition takes: a spec per transform component
-   * plus `all` as a catch-all (per-component entries win). `stagger`
+  /** A motion alone - a spec without lifecycle endpoints: what `all` and
+   * a one-off motion on a write (writeWeights) take. */
+  export type NodeMotionSpec =
+    | { duration: number; bounce?: number; delay?: number }
+    | {
+        duration: number
+        curve: "linear" | "ease" | "ease-in" | "ease-out" | "ease-in-out" | [number, number, number, number]
+        delay?: number
+      }
+    | string
+  /** The registers a node transition animates: the local TRS components
+   * (writeTransform) and the weights register (writeWeights). */
+  export type NodeComponent = "position" | "rotation" | "scale" | "weights"
+  /** The declaration setTransition takes: a spec per node component
+   * (the TRS components and `weights`, the morph target weights
+   * register) plus `all` as a catch-all (per-component entries win). `stagger`
    * (ms) makes the node a stagger group: every descendant enter (`from`)
    * or exit that begins in the same frame under it gets `index * stagger`
    * of extra delay, indexed in occurrence order - creation order for
@@ -120,7 +135,8 @@ declare module "flux:spatial" {
     position?: NodeTransitionSpec
     rotation?: NodeTransitionSpec
     scale?: NodeTransitionSpec
-    all?: NodeTransitionSpec
+    weights?: NodeTransitionSpec
+    all?: NodeMotionSpec
     stagger?: number
   }
   /**
@@ -140,8 +156,8 @@ declare module "flux:spatial" {
    * restarts the others (a held write's target counts, so re-sending it
    * does not restart its delay). Each settled component fires one
    * "spatialTransitionEnd" engine event (srt:events), payload
-   * `{ node, component: "position" | "rotation" | "scale" }` - on a live
-   * node; a leaving node's settles feed its free instead (exitNode).
+   * `{ node, component: NodeComponent }` - on a live node; a leaving
+   * node's settles feed its free instead (exitNode).
    */
   export function writeTransform(node: NodeId, transform: Float32Array): void
   export function setVisible(node: NodeId, visible: boolean): void
@@ -424,6 +440,46 @@ declare module "flux:spatial" {
   /** Remove the node's texture slot on `texture`, or every texture slot
    * without one (abandoned rows keep their last value). */
   export function unbindTextureSlot(node: NodeId, texture?: TextureId): void
+  /**
+   * Bind the node's WEIGHTS register (setWeights - a mesh's morph target
+   * weights) to row `row` of `texture`: four weights per texel across the
+   * texture's width, the register padded with zeros to the row (or cut
+   * to it), one whole-texture upload per texture per flush like a
+   * palette. Weights rows stage from the register, not the transform
+   * walk, so a weights write costs no matrix recompute. A texture holds
+   * one row kind - matrix rows (bindTextureSlot) or weights rows - never
+   * both. Validated at bind time: an uploadable rgba32f texture with
+   * `row` inside it. Rebinding the same texture replaces the node's slot
+   * there; another texture adds one.
+   */
+  export function bindWeightsSlot(node: NodeId, texture: TextureId, row: number): void
+  /** Remove the node's weights slot on `texture`, or every weights slot
+   * without one (abandoned rows keep their last value). */
+  export function unbindWeightsSlot(node: NodeId, texture?: TextureId): void
+  /** Write the node's weights register, any length; an equal write is
+   * free. Published through its weights slots at the next flush. Never
+   * consults or cancels a weights track (setTransform's rule): a running
+   * track overwrites it at the next frame. */
+  export function setWeights(node: NodeId, weights: Float32Array): void
+  /**
+   * Write the weights register THROUGH a motion, the writeTransform of
+   * the weights lane: with `transition` (a motion spec, the `all`
+   * vocabulary: `{ duration, bounce? | curve, delay? }` or a shorthand
+   * string) the write animates on it whatever the node declares - a
+   * one-off motion for this write; without one the declaration's
+   * `weights` entry (or `all`) decides, and with neither the write snaps
+   * like setWeights. One lane per target: a write shorter or longer than
+   * the register widens the track to the longer of the two, the missing
+   * lanes at zero. A write matching the running track's target is left
+   * alone (a tween never restarts on a re-send); each settle fires one
+   * "spatialTransitionEnd" with component "weights". The clip players
+   * write the same register (a weights channel, path code 3): both are
+   * producers, last write wins at each frame.
+   */
+  export function writeWeights(node: NodeId, weights: Float32Array, transition?: NodeMotionSpec | null): void
+  /** Fill `out` from the node's weights register as the arena holds it
+   * (zeros past the register's length) and return the register's length. */
+  export function readWeights(node: NodeId, out: Float32Array): number
 
   /**
    * Route the node's world pose to record slot `index` of vertex buffer
@@ -479,13 +535,17 @@ declare module "flux:spatial" {
   export type PlayerId = number
 
   /**
-   * Register a baked animation clip: `duration` in seconds, `meta` four
+   * Register a baked animation clip: `duration` in seconds, `meta` five
    * words per channel - [targetSlot, path (0 position, 1 rotation,
-   * 2 scale), interpolation (0 step, 1 linear, 2 cubic), keyCount] - and
-   * `times`/`values` every channel's key arrays concatenated in meta
-   * order (3 floats per key, 4 for rotation; cubic stores three elements
-   * per key: in-tangent, value, out-tangent, tangents per second - the
-   * glTF CUBICSPLINE layout). A clip is shared data: `targetSlot`
+   * 2 scale, 3 weights), interpolation (0 step, 1 linear, 2 cubic),
+   * keyCount, elements] - and `times`/`values` every channel's key arrays
+   * concatenated in meta order (`elements` floats per key: 3 for position
+   * and scale, 4 for rotation, one per morph target for weights - the
+   * TRS counts are checked; cubic stores three elements per key:
+   * in-tangent, value, out-tangent, tangents per second - the glTF
+   * CUBICSPLINE layout). A weights channel writes the target node's
+   * weights register (setWeights), blended across players like a TRS
+   * path. A clip is shared data: `targetSlot`
    * indexes the target table each PLAYER supplies, so one clip drives
    * any number of instances, and retargeting is a different table.
    */

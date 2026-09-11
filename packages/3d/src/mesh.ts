@@ -3,8 +3,8 @@
 // setter write paths that keep a live scene's draw entries in step. The
 // scene side is reached through the node's SceneHooks (node.ts).
 
-import { createBuffer, destroyBuffer, writeBuffer } from "@solidrt/core/gpu"
-import type { BufferId, DrawId, ShaderParams, TextureBindings, VertexAttribute, VertexBufferLayout } from "@solidrt/core/gpu"
+import { createBuffer, destroyBuffer, destroyTexture, writeBuffer } from "@solidrt/core/gpu"
+import type { BufferId, DrawId, ShaderParams, TextureBindings, TextureId, VertexAttribute, VertexBufferLayout } from "@solidrt/core/gpu"
 import { geometryBounds, isFloatLayout, layoutKey, layoutStride, plane, vertexBytes, vertexView, VERTEX_FORMATS } from "./geometry.ts"
 import type { AttributeAccess, Geometry } from "./geometry.ts"
 import { INSTANCE_MATRIX_ATTRIBUTES } from "./glsl.ts"
@@ -12,7 +12,7 @@ import type { GeometryBuffers } from "./geometry-gpu.ts"
 import type { Material } from "./material.ts"
 import type { TransformUpdate, Vec3 } from "./math.ts"
 import * as spatial from "flux:spatial"
-import { afterFree, enterScene, makeNode, remove, setTransform } from "./node.ts"
+import { activateMorph, afterFree, createWeightsTexture, enterScene, makeNode, rebindMorph, remove, resetMorph, setTransform } from "./node.ts"
 import type { SceneNode } from "./node.ts"
 
 export type Mesh = SceneNode & {
@@ -68,6 +68,12 @@ export type Mesh = SceneNode & {
    * variant declares uBones) - any other override validates its bindings
    * against a program that may not declare these names. */
   _textures: TextureBindings | null
+  /** The node whose weights register drives this mesh's morph targets
+   * (its weights texture is bound as uMorphWeights): the mesh itself for
+   * a standalone mesh whose geometry carries targets, the glTF node's
+   * group for a model part - one write and one clip track for every part
+   * of that mesh. null for geometry without targets. */
+  _morphOwner: SceneNode | null
   /** Instance state when the mesh was made by createInstancedMesh; null on
    * an ordinary mesh. */
   _instances: MeshInstances | null
@@ -118,6 +124,14 @@ export type MeshInstances = {
    * of its own the core stages an instance into by its projected size.
    * null on a plain population. */
   levels: InstancedMesh[] | null
+  /** The population's morph weights texture when the geometry carries
+   * targets (an instanced mesh; a record mesh has no nodes to own
+   * weights): one row per record slot, `capacity` rows, each instance
+   * node's register published into its slot's row (setMorphWeights on
+   * the instance), what a morphing entry binds as uMorphWeights and the
+   * shader reads at row gl_InstanceID. Replaced on growth (the entries
+   * re-point), freed by disposeInstances. */
+  morph: { texture: TextureId; rows: number } | null
 }
 
 export type InstanceSlots = { slots: (InstanceNode | null)[]; free: number[] }
@@ -211,6 +225,7 @@ export function createMesh(geometry: Geometry, material: Material): Mesh {
   mesh._center = [0, 0, 0]
   mesh._params = null
   mesh._textures = null
+  mesh._morphOwner = geometry.morphs === undefined ? null : mesh
   mesh._instances = null
   mesh._sprite = false
   return mesh
@@ -492,8 +507,40 @@ export function createInstancedMesh(geometry: Geometry, material: Material, opts
     bounds: copyBounds(opts?.bounds, "createInstancedMesh"),
     nodes: { slots: [], free: [] },
     levels: null,
+    morph: populationMorph(geometry, capacity, opts?.label),
   }
   return mesh
+}
+
+// The population's weights texture over `geometry`'s targets, `rows`
+// slots deep; null for geometry without targets.
+function populationMorph(geometry: Geometry, rows: number, label: string | undefined): { texture: TextureId; rows: number } | null {
+  if (geometry.morphs === undefined) return null
+  return { texture: createWeightsTexture(geometry.morphs.names.length, rows, label === undefined ? undefined : label + "-weights"), rows }
+}
+
+// Replace the population's weights texture: grown (`sameTargets`), every
+// live instance's register moves to the new texture's row, its weights
+// and any running track intact; the geometry changed, every instance
+// drops its state (a fresh, zeroed one binds the new row at its next
+// activation - now, for one in a scene). The entries re-point, then the
+// old texture goes.
+function replacePopulationMorph(mesh: InstancedMesh | RecordMesh, next: { texture: TextureId; rows: number } | null, sameTargets: boolean): void {
+  let inst: MeshInstances = mesh._instances
+  let previous = inst.morph
+  inst.morph = next
+  if (inst.nodes !== null) {
+    for (let n of inst.nodes.slots) {
+      if (n === null) continue
+      if (sameTargets && next !== null) rebindMorph(n, next.texture)
+      else {
+        resetMorph(n)
+        if (next !== null && n._scene !== null) activateMorph(n)
+      }
+    }
+  }
+  mesh._scene?._setMorphTexture(mesh)
+  if (previous !== null) destroyTexture(previous.texture)
 }
 
 /** The meshes sharing a population's instance slots: the LOD levels of an
@@ -666,6 +713,7 @@ function growInstances(mesh: InstancedMesh | RecordMesh, next: number): void {
   })
   mesh._scene?._setBuffer(mesh)
   for (let b of freed) destroyBuffer(b)
+  if (inst.morph !== null) replacePopulationMorph(mesh, populationMorph(mesh.geometry, next, inst.label), true)
 }
 
 /**
@@ -702,6 +750,7 @@ export function createRecordMesh(
     bounds: copyBounds(opts?.bounds, "createRecordMesh"),
     nodes: null,
     levels: null,
+    morph: null,
   }
   copyRecords(mesh, records, capacity)
   return mesh
@@ -785,6 +834,7 @@ export function disposeInstances(mesh: InstancedMesh | RecordMesh): void {
   }
   if (inst.matrix !== null) destroyBuffer(inst.matrix)
   for (let s of inst.streams) destroyBuffer(s.buffer)
+  if (inst.morph !== null) destroyTexture(inst.morph.texture)
   ;(mesh as Mesh)._instances = null
 }
 
@@ -844,6 +894,18 @@ export function setGeometry(mesh: Mesh, geometry: Geometry): void {
   if (mesh.geometry === geometry) return
   mesh.geometry = geometry
   mesh._range = null
+  // A standalone mesh owns its own weights: a geometry with different
+  // targets (or none) replaces or drops them; a model part keeps its
+  // node as the owner, whatever the geometry.
+  if (mesh._morphOwner === mesh || mesh._morphOwner === null) {
+    mesh._morphOwner = geometry.morphs === undefined ? null : mesh
+    resetMorph(mesh)
+  }
+  // A population's weights texture follows its geometry's target list.
+  let inst = mesh._instances
+  if (inst !== null && inst.nodes !== null && (inst.morph !== null || geometry.morphs !== undefined)) {
+    replacePopulationMorph(mesh as InstancedMesh, populationMorph(geometry, inst.capacity, inst.label), false)
+  }
   rebuildEntry(mesh)
 }
 

@@ -172,7 +172,7 @@ what it delivered is documented in `packages/3d/AGENTS.md`, not here.
     The depth-func option
     ([gpu-depth-func](../backlog/gpu-depth-func.md)) turned out not to be
     a dependency.
-16. [ ] **Skinning and morph targets.** Skinning shipped 2026-08-31 with
+16. [x] **Skinning and morph targets.** Skinning shipped 2026-08-31 with
     the model loader's skins and the JS mixer, and moved to float-texture
     palettes 2026-09-01 (`uBones` an rgba32f texture sized to the rig,
     texelFetched in the vertex stage - built on
@@ -181,9 +181,14 @@ what it delivered is documented in `packages/3d/AGENTS.md`, not here.
     `packages/3d/AGENTS.md`). Palette composition moved into the spatial
     core 2026-09-02 (the `TextureSlot` sink: joints bound row by row with
     their inverse bind, palettes composed and uploaded at the flush,
-    `updateSkins` deleted, identical skins deduped); what keeps the box
-    open: morph targets, since per-vertex JS is ruled out by the
-    interpreter. The crowd-scale evaluator is
+    `updateSkins` deleted, identical skins deduped). Morph targets
+    shipped 2026-09-11 ([3d-morph-targets](../done/3d-morph-targets.md)):
+    deltas packed sparse by vertex into one rgba32f texture per geometry,
+    weights a node register the core publishes as a row of a weights
+    texture through the same palette sink - written by `setMorphWeights`,
+    by clip weights tracks through the mixer, by a `weights` lane of the
+    node transitions, and per instance by the instance index. The
+    crowd-scale evaluator is
     [animation-core](../done/animation-core.md), not this item
     (clip evaluator DELIVERED 2026-09-03; the crowd tier is open until an
     app pushes it).

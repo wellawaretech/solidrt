@@ -2073,14 +2073,66 @@ computed-once texture. `sampleChannel` (pure, from the root) stays the
 JS sampling core for checks and custom drivers;
 okf/done/animation-core.md records the design.
 
+### Morph targets
+
+Morph targets (blend shapes): a geometry carries named per-vertex
+deltas - `withMorphTargets(geometry, [{ name, position, normal? }])`
+for a hand-built shape, the loader's primitive targets for a glTF (its
+`extras.targetNames`, else `target<i>`; sparse accessors read) - packed
+SPARSE BY VERTEX on `geometry.morphs` (a header texel per vertex, then
+only the entries of the targets that move it; memory follows the
+authored deltas, never vertices x targets) and uploaded once per
+geometry as one rgba32f texture. A `morph: true` material (`lit`,
+`unlit`, `standard`; a custom class splices MORPH_DECLS and MORPH_APPLY
+from `@solidrt/3d/glsl` before its skin math) walks each vertex's
+entries in the vertex stage, before any skinning; a mesh under it
+whose geometry carries no targets is rejected at add(), and a plain
+material over morphed geometry draws the base shape. WEIGHTS belong to
+a NODE, glTF's `node.weights` model: a standalone mesh owns its own; a
+model's parts follow their glTF node (`model.nodes`), so a face split
+into skin, eyes and teeth parts takes one write. `setMorphWeights(node,
+{ smile: 0.7 })` writes by name (the others untouched), an array writes
+every target in order, the `<Mesh morphWeights>` prop is the
+declarative form; `getMorphWeights(node)` reads them back (from the
+core while in a scene), `getMorphNames(node)` lists the targets. The
+write lands in the spatial core's register (a row of a small weights
+texture, published at the flush like a skin palette - Three's
+morphTargetInfluences, Godot's set_blend_shape_value); a file's
+`mesh.weights` seed it. Weights ANIMATE two ways, both native: a glTF
+`weights` animation channel plays through the mixer like a TRS
+channel (into the owning node's register, crossfading across players
+by the same weighted average), and a write is a TARGET like a
+transform write - `setTransition(node, { weights: { duration: 300 } })`
+makes every setMorphWeights animate (springs by default; `from`/`exit`
+endpoints are one number per target, `delay` and `stagger` apply), and
+`setMorphWeights(node, { smile: 1 }, { duration: 300, bounce: 0.2 })`
+animates that one write on its own motion, declaration or not; a
+settle calls `onTransitionEnd` with component "weights". A playing
+weights track and a JS write are both producers of the register: the
+players advance before the frame's JS, so a write from onFrame wins
+that frame. `getMorphWeights` reads the core, so it shows a playing
+track and a mid-flight transition; the by-name partial write merges
+into the last JS-WRITTEN set, not the core's - write every target
+while a clip plays. An INSTANCED mesh morphs per instance: the
+population owns one weights texture with a row per record slot, each
+`<Instance>` (or addInstance node) owns a register published into its
+slot's row, and the shader reads the row by `gl_InstanceID` - so
+`setMorphWeights(instance, { smile: 1 })`, the `<Instance morphWeights>`
+prop, a `transition.weights` spring and a clip's weights track all work
+per copy, the shadow variants included, with no per-record data
+(Three's InstancedMesh morphs). Skinned plus morphed plus instanced
+composes. A custom class splicing MORPH_DECLS reads the row as
+`uMorphRow + gl_InstanceID`, which the stock decls already do. A record
+mesh (JS-written records, no nodes) cannot morph: rejected at add().
+
 ### Not in the subset
 
-Not in the subset, dropped: tangents and further UV sets;
-morph targets (the "weights" channel path); samplers are ignored (every
-texture repeats); additive blending draws as base color. The follow-ups
-are filed in okf/backlog/3d-model-loader.md. The `.srtm` container is
-VERSION 3 (node table in the header, node-local vertices, skins, clips);
-older bakes are rejected - re-bake with `srt tool 3d/model`.
+Not in the subset, dropped: tangents and further UV sets; samplers are
+ignored (every texture repeats); additive blending draws as base color.
+The follow-ups are filed in okf/backlog/3d-model-loader.md. The `.srtm`
+container is VERSION 8 (node table in the header, node-local vertices,
+skins, clips, packed morph targets); older bakes are rejected - re-bake
+with `srt tool 3d/model`.
 
 ## Traps
 
@@ -2103,6 +2155,16 @@ older bakes are rejected - re-bake with `srt tool 3d/model`.
   MODEL moves both. Shadows are the exception: the shadow variants
   (depth and cutout) skin by the same uBones palette, so a caster casts
   its pose.
+- Morphing is the same kind of effect: picking and the transparent sort
+  see the base shape, the shadow variants morph. The one thing the
+  retained side knows is the box: `geometryBounds` (and a model's
+  bounds) grow by the targets' extent, so a morphed shape is never
+  culled while its weights stay in 0..1 - a weight past 1 can leave it.
+  Normal deltas blend linearly like positions (Three's, Godot's and
+  glTF's rule): exact at a target, an approximation between two, so a
+  half-blend of EXTREME targets can show a ragged self-shadow
+  terminator where the lit and shadowed halves disagree; a modeller's
+  blend shapes are far too small for it to show.
 
 ### Materials and color
 

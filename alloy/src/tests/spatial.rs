@@ -1,5 +1,5 @@
 use crate::spatial::{
-  compose, multiply, DrawSink, Mat4, QueryFilter, SinkWriter, Spatial, TextureSlotSink, Volume, IDENTITY,
+  compose, multiply, DrawSink, Mat4, QueryFilter, SinkWriter, Spatial, TextureSlotSink, Volume, WeightsSlotSink, IDENTITY,
 };
 
 const Q: [f32; 4] = [0.0, 0.0, 0.0, 1.0];
@@ -1456,4 +1456,45 @@ fn population_members_pick_a_record_buffer_per_level() {
   s.set_transform(m, [0.0, 0.0, 99.0], Q, ONE).expect("move");
   let w = flush(&mut s);
   assert!(matches!(&w[0], Write::Instances { buffer: 4, values, .. } if values[0] == 1.0), "{w:?}");
+}
+
+// Weights rows: a node's register lands in its row padded to the texture
+// width, whole-texture per flush, written only when a register changed,
+// with no transform recompute (no params write) behind it.
+#[test]
+fn weights_rows_publish_the_register_padded_and_only_on_change() {
+  let mut s = Spatial::default();
+  let a = s.create([0.0; 3], Q, ONE, true);
+  let b = s.create([0.0; 3], Q, ONE, true);
+  s.bind_sink(a, sink(1)).expect("bind");
+  // Two texels wide (8 floats a row), two rows.
+  s.bind_weights_slot(a, WeightsSlotSink { texture: 7, row: 0, row_floats: 8 }).expect("bind a");
+  s.bind_weights_slot(b, WeightsSlotSink { texture: 7, row: 1, row_floats: 8 }).expect("bind b");
+  s.set_weights(a, &[0.25, 0.5, 0.75]).expect("weights a");
+  let writes = flush(&mut s);
+  let texture: Vec<&Write> = writes.iter().filter(|w| matches!(w, Write::Texture { .. })).collect();
+  assert_eq!(
+    texture,
+    vec![&Write::Texture { texture: 7, values: vec![0.25, 0.5, 0.75, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0] }]
+  );
+  // An equal write and a flush with nothing changed publish nothing.
+  s.set_weights(a, &[0.25, 0.5, 0.75]).expect("weights a again");
+  assert!(flush(&mut s).is_empty(), "an equal weights write is free");
+  // A register longer than the row is cut to it; the other row keeps its
+  // value; the node's draw entry gets no params write for a weights change.
+  s.set_weights(b, &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0]).expect("weights b");
+  let writes = flush(&mut s);
+  assert_eq!(
+    writes,
+    vec![Write::Texture { texture: 7, values: vec![0.25, 0.5, 0.75, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0] }]
+  );
+  assert_eq!(s.weights_of(b).expect("read b"), &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0][..]);
+  // One row kind per texture, one width per texture.
+  assert!(s.bind_texture_slot(a, TextureSlotSink { texture: 7, row: 0, post: IDENTITY }, None).is_err());
+  assert!(s.bind_weights_slot(a, WeightsSlotSink { texture: 7, row: 0, row_floats: 4 }).is_err());
+  // Destroying a node releases its slot; the group goes once unreferenced.
+  s.destroy(a).expect("destroy a");
+  s.destroy(b).expect("destroy b");
+  flush(&mut s);
+  assert!(s.bind_texture_slot(a, TextureSlotSink { texture: 7, row: 0, post: IDENTITY }, None).is_err(), "a is dead");
 }

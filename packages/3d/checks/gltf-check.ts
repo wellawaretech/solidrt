@@ -15,8 +15,8 @@
 import { gltfExternalUris, isGlb, parseGltf } from "../src/gltf.ts"
 import type { ModelData } from "../src/gltf.ts"
 import { decodeModel, encodeModel } from "../src/model-file.ts"
-import { sampleChannel } from "../src/clip.ts"
-import { box, geometryAttribute, layoutKey, layoutStride, validateGeometry, vertexBytes, withAttribute, STANDARD_FLOATS, VERTEX_LAYOUTS } from "../src/geometry.ts"
+import { channelElements, sampleChannel } from "../src/clip.ts"
+import { box, geometryAttribute, geometryBounds, layoutKey, layoutStride, validateGeometry, vertexBytes, withAttribute, MORPH_ENTRY_TEXELS, MORPH_TEXEL_FLOATS, STANDARD_FLOATS, VERTEX_LAYOUTS } from "../src/geometry.ts"
 import type { Geometry } from "../src/geometry.ts"
 import { linearToSrgb } from "../src/color.ts"
 
@@ -133,6 +133,26 @@ for (let i = 0; i < vertexCount; i++) {
 let jointsU8View = pushView(asBytes(jointsU8))
 let weightsU8View = pushView(asBytes(weightsU8))
 
+// Morph target accessors: "puff" as a SPARSE accessor the way exporters
+// write targets (no bufferView - a zero base - with two overrides: vertex
+// 0 up by 1, vertex 5 right by 0.5), "lift" dense (every vertex +z by 1,
+// its normal delta +z by 0.5), and a weights track: three keys of two
+// weights each, [0, 0] -> [1, 0] -> [0.5, 1].
+let sparseIndices = new Uint16Array([0, 5])
+let sparseValues = new Float32Array([0, 1, 0, 0.5, 0, 0])
+let liftPositions = new Float32Array(vertexCount * 3)
+let liftNormals = new Float32Array(vertexCount * 3)
+for (let i = 0; i < vertexCount; i++) {
+  liftPositions[i * 3 + 2] = 1
+  liftNormals[i * 3 + 2] = 0.5
+}
+let morphWeights = new Float32Array([0, 0, 1, 0, 0.5, 1])
+let sparseIndicesView = pushView(asBytes(sparseIndices))
+let sparseValuesView = pushView(asBytes(sparseValues))
+let liftPositionsView = pushView(asBytes(liftPositions))
+let liftNormalsView = pushView(asBytes(liftNormals))
+let morphWeightsView = pushView(asBytes(morphWeights))
+
 // Vertex i of channel `name` as floats, through the accessor.
 let read = (g: Geometry, name: string, i: number): number[] => {
   let a = geometryAttribute(g, name)
@@ -198,6 +218,15 @@ let document = {
     { bufferView: colorView, componentType: 5121, normalized: true, count: vertexCount, type: "VEC4" },
     { bufferView: jointsU8View, componentType: 5121, count: vertexCount, type: "VEC4" },
     { bufferView: weightsU8View, componentType: 5121, normalized: true, count: vertexCount, type: "VEC4" },
+    {
+      componentType: 5126,
+      count: vertexCount,
+      type: "VEC3",
+      sparse: { count: 2, indices: { bufferView: sparseIndicesView, componentType: 5123 }, values: { bufferView: sparseValuesView } },
+    },
+    { bufferView: liftPositionsView, componentType: 5126, count: vertexCount, type: "VEC3" },
+    { bufferView: liftNormalsView, componentType: 5126, count: vertexCount, type: "VEC3" },
+    { bufferView: morphWeightsView, componentType: 5126, count: 6, type: "SCALAR" },
   ],
   animations: [
     {
@@ -507,8 +536,9 @@ if (model.clips.map((c) => c.name).join() !== "move,bounce") fail(`clips: ${mode
 let move = model.clips[0]!
 let bounce = model.clips[1]!
 if (!near(move.duration, 2) || !near(bounce.duration, 2)) fail(`clip durations: ${move.duration}, ${bounce.duration}`)
-// The weights channel (morph targets) is skipped, the other three kept;
-// targets remap to the compact node table.
+// The weights channel targets a node WITHOUT morph targets, so it has
+// nothing to weigh and is skipped; the other three are kept, their
+// targets remapped to the compact node table.
 if (move.channels.length !== 3) fail(`move channels: ${move.channels.length}, expected 3`)
 if (move.channels.map((c) => c.node + ":" + c.path + ":" + c.interpolation).join() !== "1:position:linear,5:rotation:linear,2:scale:step") {
   fail(`move channel headers: ${move.channels.map((c) => c.node + ":" + c.path + ":" + c.interpolation).join()}`)
@@ -556,6 +586,13 @@ let sameModel = (a: ModelData, b: ModelData, label: string): void => {
     if (floats(p.geometry).join() !== floats(q.geometry).join()) fail(`${label}: part ${i} vertices`)
     if (p.geometry.indices.join() !== q.geometry.indices.join()) fail(`${label}: part ${i} indices`)
     if (p.geometry.indices.constructor !== q.geometry.indices.constructor) fail(`${label}: part ${i} index type`)
+    let pm = p.geometry.morphs, qm = q.geometry.morphs
+    if ((pm === undefined) !== (qm === undefined)) fail(`${label}: part ${i} morphs presence`)
+    else if (pm !== undefined && qm !== undefined) {
+      if (pm.names.join() !== qm.names.join()) fail(`${label}: part ${i} morph names`)
+      if (pm.texels.join() !== qm.texels.join()) fail(`${label}: part ${i} morph texels`)
+      if (pm.extent.join() !== qm.extent.join()) fail(`${label}: part ${i} morph extent`)
+    }
   }
   if (JSON.stringify(a.materials) !== JSON.stringify(b.materials)) fail(`${label}: materials`)
   if (a.skins.length !== b.skins.length) fail(`${label}: skin count`)
@@ -665,6 +702,104 @@ throws("unknown required extension", () => parseGltf(glb(unknownExt, binBlocks, 
   if (vertexBytes(back.parts[1]!.geometry.vertices).join() !== vertexBytes(rig.vertices).join()) fail("container: packed bytes changed")
   if (!nearAll(read(back.parts[1]!.geometry, "aWeights", 0), [0.6, 0.4, 0, 0])) fail("container: packed weights")
   throws("COLOR_0 not VEC3/VEC4", () => parseGltf(glb({ ...document, scenes: [{ nodes: [0] }], nodes: [{ mesh: 0 }], meshes: [{ primitives: [{ attributes: { POSITION: 0, COLOR_0: 2 }, indices: 3 }] }], skins: [], animations: [] }, binBlocks, binLength)), "COLOR_0")
+}
+
+// --- morph targets ----------------------------------------------------------
+// A mesh with two targets ("puff" sparse, "lift" dense with normal
+// deltas) and mesh weights, named through extras.targetNames; a second
+// node of the same mesh overriding the weights; a flat-shaded mesh whose
+// targets must follow the un-index; a weights clip on the first node.
+{
+  let morphMesh = {
+    weights: [0.25, 0.5],
+    extras: { targetNames: ["puff", "lift"] },
+    primitives: [{ attributes: { POSITION: 0, NORMAL: 1, TEXCOORD_0: 2 }, indices: 3, material: 0, targets: [{ POSITION: 16 }, { POSITION: 17, NORMAL: 18 }] }],
+  }
+  let flatMorphMesh = { primitives: [{ attributes: { POSITION: 0 }, indices: 3, material: 0, targets: [{ POSITION: 16 }] }] }
+  let morphDocument = {
+    ...document,
+    scenes: [{ nodes: [0, 1, 2] }],
+    nodes: [
+      { name: "face", mesh: 0 },
+      { name: "face2", mesh: 0, translation: [3, 0, 0], weights: [0.75, 0.25] },
+      { name: "flatface", mesh: 1, translation: [0, 3, 0] },
+    ],
+    meshes: [morphMesh, flatMorphMesh],
+    skins: [],
+    animations: [
+      {
+        name: "smile",
+        channels: [{ sampler: 0, target: { node: 0, path: "weights" } }],
+        samplers: [{ input: 4, output: 19, interpolation: "LINEAR" }],
+      },
+    ],
+  }
+  let morphed = parseGltf(glb(morphDocument, binBlocks, binLength))
+  for (let part of morphed.parts) validateGeometry(part.geometry)
+  if (morphed.parts.map((p) => p.name).join() !== "face,face2,flatface") fail(`morph parts: ${morphed.parts.map((p) => p.name).join()}`)
+  if (morphed.nodes[0]!.weights?.join() !== "0.25,0.5") fail(`face weights (the mesh's): ${morphed.nodes[0]!.weights?.join()}`)
+  if (morphed.nodes[1]!.weights?.join() !== "0.75,0.25") fail(`face2 weights (the node's override): ${morphed.nodes[1]!.weights?.join()}`)
+  if (morphed.nodes[2]!.weights?.join() !== "0") fail(`flatface weights (zeros by default): ${morphed.nodes[2]!.weights?.join()}`)
+  let face = morphed.parts[0]!.geometry
+  let morphs = face.morphs
+  if (morphs === undefined) fail("face: no morphs on the geometry")
+  else {
+    if (morphs.names.join() !== "puff,lift") fail(`morph names: ${morphs.names.join()}`)
+    // Every vertex is lifted, vertices 0 and 5 are puffed too: headers
+    // count 2 there and 1 elsewhere, entries laid out in vertex order and
+    // in target order within a vertex, two texels each.
+    let entries = vertexCount + 2
+    if (morphs.texels.length !== (vertexCount + entries * MORPH_ENTRY_TEXELS) * MORPH_TEXEL_FLOATS) fail(`morph texels: ${morphs.texels.length} floats`)
+    let header = (v: number): number[] => [morphs!.texels[v * MORPH_TEXEL_FLOATS]!, morphs!.texels[v * MORPH_TEXEL_FLOATS + 1]!]
+    let entry = (texel: number): number[] => Array.from(morphs!.texels.subarray(texel * MORPH_TEXEL_FLOATS, (texel + MORPH_ENTRY_TEXELS) * MORPH_TEXEL_FLOATS))
+    if (header(0).join() !== `${vertexCount},2`) fail(`vertex 0 header: ${header(0).join()}`)
+    if (header(1).join() !== `${vertexCount + 2 * MORPH_ENTRY_TEXELS},1`) fail(`vertex 1 header: ${header(1).join()}`)
+    if (header(5)[1] !== 2) fail(`vertex 5 header: ${header(5).join()}`)
+    if (!nearAll(entry(header(0)[0]!), [0, 0, 1, 0, 0, 0, 0, 0])) fail(`vertex 0 puff entry: ${entry(header(0)[0]!).join()}`)
+    if (!nearAll(entry(header(0)[0]! + MORPH_ENTRY_TEXELS), [1, 0, 0, 1, 0, 0, 0.5, 0])) fail(`vertex 0 lift entry: ${entry(header(0)[0]! + MORPH_ENTRY_TEXELS).join()}`)
+    if (!nearAll(entry(header(5)[0]!), [0, 0.5, 0, 0, 0, 0, 0, 0])) fail(`vertex 5 puff entry (sparse): ${entry(header(5)[0]!).join()}`)
+    if (!nearAll(entry(header(1)[0]!), [1, 0, 0, 1, 0, 0, 0.5, 0])) fail(`vertex 1 lift entry: ${entry(header(1)[0]!).join()}`)
+    if (!nearAll(morphs.extent, [0, 0, 0, 0.5, 1, 1])) fail(`morph extent: ${morphs.extent.join()}`)
+    // The extent grows the geometry's box and the model's rest bounds.
+    if (!nearAll(geometryBounds(face), [-0.5, -0.5, -0.5, 1, 1.5, 1.5])) fail(`morphed geometry bounds: ${geometryBounds(face).join()}`)
+  }
+  if (!nearAll(morphed.bounds, [-0.5, -0.5, -0.5, 4, 4.5, 1.5])) fail(`morphed model bounds: ${morphed.bounds.join()}`)
+  // The un-indexed part: a corner whose source vertex is 0 or 5 carries
+  // the puff delta of that vertex, every other corner none.
+  let flatFace = morphed.parts[2]!.geometry
+  if (flatFace.morphs === undefined) fail("flatface: no morphs")
+  else {
+    let corners = cube.indices.length
+    for (let slot = 0; slot < corners; slot++) {
+      let source = cube.indices[slot]!
+      let count = flatFace.morphs.texels[slot * MORPH_TEXEL_FLOATS + 1]
+      if (count !== (source === 0 || source === 5 ? 1 : 0)) {
+        fail(`flatface corner ${slot} (source ${source}): ${count} entries`)
+        break
+      }
+    }
+  }
+  // The weights clip: one channel of two elements per key, sampled by
+  // the JS core like any other.
+  let smile = morphed.clips[0]!
+  if (morphed.clips.length !== 1 || smile.channels.length !== 1) fail(`smile clip: ${morphed.clips.length} clips, ${smile?.channels.length} channels`)
+  let weightsChannel = smile.channels[0]!
+  if (weightsChannel.node !== 0 || weightsChannel.path !== "weights" || weightsChannel.values.length !== 6) fail(`weights channel: ${JSON.stringify({ node: weightsChannel.node, path: weightsChannel.path, values: weightsChannel.values.length })}`)
+  if (channelElements(weightsChannel) !== 2) fail(`weights channel elements: ${channelElements(weightsChannel)}`)
+  expectSample("weights", weightsChannel, 0.5, [0.5, 0])
+  expectSample("weights", weightsChannel, 1.5, [0.75, 0.5])
+  // The container carries it all through.
+  let back = decodeModel(encodeModel(morphed))
+  sameModel(morphed, back, "morph round trip")
+  if (back.nodes[1]!.weights?.join() !== "0.75,0.25") fail("container: node weights")
+  // A weights track sized for the wrong target count, and node weights
+  // sized for the wrong target count, both throw.
+  throws(
+    "weights channel count",
+    () => parseGltf(glb({ ...morphDocument, animations: [{ name: "bad", channels: [{ sampler: 0, target: { node: 0, path: "weights" } }], samplers: [{ input: 4, output: 5 }] }] }, binBlocks, binLength)),
+    "weights",
+  )
+  throws("node weights count", () => parseGltf(glb({ ...morphDocument, nodes: [{ name: "face", mesh: 0, weights: [1] }] }, binBlocks, binLength)), "weights")
 }
 
 let noMaterial = { ...document, meshes: [{ primitives: [{ attributes: { POSITION: 0, NORMAL: 1 }, indices: 3 }] }], nodes: [{ mesh: 0 }], scenes: [{ nodes: [0] }], materials: [] }

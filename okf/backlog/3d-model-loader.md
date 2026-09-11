@@ -1,6 +1,6 @@
 ---
 title: Model loader follow-ups
-description: The glTF subset loader (roadmap item 7, shipped 2026-08-26 as parseGltf/createModel at runtime plus the srt tool 3d/model bake; v3 container with retained hierarchy, skins and animation clips plus the JS mixer since 2026-08-31) covers rigged models end to end; still open are the compressed real-world files (Draco/meshopt, KTX2), morph targets, merge-by-material, per-material samplers and runtime-fetched content, each demand-gated.
+description: The glTF subset loader (roadmap item 7, shipped 2026-08-26 as parseGltf/createModel at runtime plus the srt tool 3d/model bake; v3 container with retained hierarchy, skins and animation clips plus the JS mixer since 2026-08-31) covers rigged models end to end; still open are the compressed real-world files (Draco/meshopt, KTX2), merge-by-material, per-material samplers and runtime-fetched content, each demand-gated (morph targets have their own item).
 created: 2026-08-26
 ---
 
@@ -51,10 +51,9 @@ was added: the bake already removes the cost where it matters.
   attribute list as its list).
 - **Samplers.** Every texture uploads repeat-wrapped, mipmapped and 4x
   anisotropic; per-material wrap/filter is ignored.
-- **Morph targets.** The `weights` channel path and primitive targets
-  are skipped (the one animation feature left out when skins landed);
-  they ride the float-texture machinery of roadmap item 16 and stay out
-  of scope until a model demands them.
+- **Morph targets** moved to their own item,
+  [3d-morph-targets](../done/3d-morph-targets.md): the loader parses primitive
+  targets, sparse accessors and the `weights` channel since 2026-09-11.
 - **Runtime-fetched content.** The bake tool runs under bun on the
   developer's machine, so a model the APP downloads (user-made tracks and
   karts, a mod browser, a level editor's exports) meets the runtime

@@ -137,17 +137,73 @@ export const SKIN_MATRIX = glsl`
       aWeights.z * boneAt(aJoints.z) + aWeights.w * boneAt(aJoints.w);
 `
 
+/** The morph-target declarations a vertex stage splices in: `uMorphs`,
+ * the geometry's targets packed sparse by vertex (see MorphTargets in
+ * geometry.ts: a header texel per vertex, then two-texel entries), laid
+ * into rows of `uMorphWidth` texels; `uMorphWeights`, the weights texture
+ * (four weights per texel, one row per weights owner - the spatial core
+ * writes it from the node's register), read at row `uMorphRow +
+ * gl_InstanceID`: a plain mesh's one row, or on an instanced mesh the
+ * instance's own row, its record slot (the population's texture has a
+ * row per slot), so every copy morphs by its own weights with no
+ * per-record data. Pair with MORPH_APPLY in main(). The geometry's GPU
+ * buffers bind uMorphs, the mesh's morph owner (the population, when
+ * instanced) binds uMorphWeights and the two ints. */
+export const MORPH_DECLS = glsl`
+  uniform sampler2D uMorphs;
+  uniform sampler2D uMorphWeights;
+  uniform int uMorphWidth;
+  uniform int uMorphRow;
+  vec4 morphTexel(int i) {
+    return texelFetch(uMorphs, ivec2(i % uMorphWidth, i / uMorphWidth), 0);
+  }
+  float morphWeight(int t) {
+    vec4 four = texelFetch(uMorphWeights, ivec2(t >> 2, uMorphRow + gl_InstanceID), 0);
+    int c = t & 3;
+    return c == 0 ? four.x : c == 1 ? four.y : c == 2 ? four.z : four.w;
+  }
+`
+/** The morph displacement, spliced into main() after MORPH_DECLS: walks
+ * this vertex's entries (gl_VertexID indexes the headers) and leaves
+ * `vec3 morphPos` and `vec3 morphNormal`, the base channels plus each
+ * target's delta times its weight - apply the skin matrix (when any) and
+ * uModel to THESE. Zero-weight targets still cost their fetches; a
+ * vertex no target moves costs one. The normal form needs `aNormal`;
+ * MORPH_APPLY_POSITION is the same walk for a stage without one. */
+export const MORPH_APPLY = morphApply(true)
+export const MORPH_APPLY_POSITION = morphApply(false)
+
+function morphApply(normals: boolean): string {
+  return glsl`
+    vec3 morphPos = aPos;
+    ${normals ? "vec3 morphNormal = aNormal;" : ""}
+    {
+      vec4 morphHead = morphTexel(gl_VertexID);
+      int morphAt = int(morphHead.x);
+      int morphCount = int(morphHead.y);
+      for (int k = 0; k < morphCount; k++) {
+        vec4 entry = morphTexel(morphAt + 2 * k);
+        float w = morphWeight(int(entry.x));
+        morphPos += w * entry.yzw;
+        ${normals ? "morphNormal += w * morphTexel(morphAt + 2 * k + 1).xyz;" : ""}
+      }
+    }
+`
+}
+
 // The per-instance placement, spliced into a vertex stage's position and
-// normal math for an instanced material: the skin (when any) first, then
-// the instance's matrix inside the mesh, then uModel - so a skinned
-// instanced fleet poses every copy by the one shared palette and places
-// each by its own record.
-function instancedPosition(skinned: boolean, instanced: boolean): string {
-  let local = skinned ? "(skin * vec4(aPos, 1.0))" : "vec4(aPos, 1.0)"
+// normal math for an instanced material: the morph (when any) and then
+// the skin (when any) first, then the instance's matrix inside the mesh,
+// then uModel - so a skinned instanced fleet poses every copy by the one
+// shared palette and places each by its own record.
+function instancedPosition(skinned: boolean, instanced: boolean, morphed = false): string {
+  let base = morphed ? "morphPos" : "aPos"
+  let local = skinned ? `(skin * vec4(${base}, 1.0))` : `vec4(${base}, 1.0)`
   return instanced ? `uModel * (instanceMatrix() * ${local})` : `uModel * ${local}`
 }
-function instancedNormal(skinned: boolean, instanced: boolean): string {
-  let local = skinned ? "(mat3(skin) * aNormal)" : "aNormal"
+function instancedNormal(skinned: boolean, instanced: boolean, morphed = false): string {
+  let base = morphed ? "morphNormal" : "aNormal"
+  let local = skinned ? `(mat3(skin) * ${base})` : base
   return instanced ? `mat3(uNormal) * (instanceNormalMatrix() * ${local})` : `mat3(uNormal) * ${local}`
 }
 
@@ -159,7 +215,7 @@ function instancedNormal(skinned: boolean, instanced: boolean): string {
 // and color only for an instanced one. vColor carries the vertex color,
 // the instance color, or their product. LIT_VERTEX / LIT_VERTEX_COLORED
 // are its two named forms; litVertex(o) picks per option set.
-function litVertexSource(colored: boolean, uv2: boolean, skinned: boolean, instanced: boolean, instanceColors: boolean): string {
+function litVertexSource(colored: boolean, uv2: boolean, skinned: boolean, instanced: boolean, instanceColors: boolean, morphed = false): string {
   let color = colored && instanceColors ? "aColor * iColor" : colored ? "aColor" : instanceColors ? "iColor" : ""
   return glsl`
   in vec3 aPos;
@@ -167,6 +223,7 @@ function litVertexSource(colored: boolean, uv2: boolean, skinned: boolean, insta
   in vec2 aUV;
   ${colored ? "in vec4 aColor;" : ""}
   ${uv2 ? "in vec2 aUV2;" : ""}
+  ${morphed ? MORPH_DECLS : ""}
   ${skinned ? SKIN_DECLS : ""}
   ${instanced ? INSTANCE_MATRIX : ""}
   ${instanceColors ? "in vec4 iColor;" : ""}
@@ -180,11 +237,12 @@ function litVertexSource(colored: boolean, uv2: boolean, skinned: boolean, insta
   ${uv2 ? "out vec2 vUv2;" : ""}
 
   void main() {
+    ${morphed ? MORPH_APPLY : ""}
     ${skinned ? SKIN_MATRIX : ""}
-    vec4 world = ${instancedPosition(skinned, instanced)};
+    vec4 world = ${instancedPosition(skinned, instanced, morphed)};
     gl_Position = uViewProj * world;
     vWorldPos = world.xyz;
-    vNormal = ${instancedNormal(skinned, instanced)};
+    vNormal = ${instancedNormal(skinned, instanced, morphed)};
     vUv = aUV;
     ${color ? `vColor = ${color};` : ""}
     ${uv2 ? "vUv2 = aUV2;" : ""}
@@ -1257,6 +1315,13 @@ export type LitSourceOptions = {
    * the spatial flush writes it). The vertex stage then requires that layout
    * and something must bind `uBones`; the fragment is unchanged. */
   skinned?: boolean
+  /** Displace positions and normals by the geometry's morph targets
+   * (MORPH_DECLS and MORPH_APPLY, before the skin): the vertex stage then
+   * declares `uMorphs`, `uMorphWeights`, `uMorphWidth` and `uMorphRow`,
+   * which the scene binds from the geometry's packed targets and the
+   * mesh's morph owner (a mesh whose geometry carries none is rejected
+   * at add()); the fragment is unchanged. */
+  morph?: boolean
   /** Place each copy by its instance matrix (INSTANCE_MATRIX under
    * uModel, normals through instanceNormalMatrix): the vertex stage of a
    * material for createInstancedMesh. The class then declares
@@ -1318,6 +1383,7 @@ type LitSource = {
   skinned: boolean
   instanced: boolean
   instanceColors: boolean
+  morph: boolean
   prelude: string
   surface: string
   // The light model: Blinn-Phong (`lit`) or GGX metalness/roughness
@@ -1347,6 +1413,7 @@ function resolveLit(o: LitSourceOptions): LitSource {
     skinned: o.skinned === true,
     instanced: o.instanced === true || o.instanceColors === true,
     instanceColors: o.instanceColors === true,
+    morph: o.morph === true,
     prelude: o.prelude ?? "",
     surface: o.surface ?? "",
     brdf: "blinn",
@@ -1421,7 +1488,7 @@ function litBase(c: LitSource, flip: boolean): string {
  */
 export function litVertex(o: LitSourceOptions = {}): string {
   let c = resolveLit(o)
-  return litVertexSource(c.vertexColors, c.lightMap, c.skinned, c.instanced, c.instanceColors)
+  return litVertexSource(c.vertexColors, c.lightMap, c.skinned, c.instanced, c.instanceColors, c.morph)
 }
 
 /**
@@ -1607,6 +1674,9 @@ export type UnlitSourceOptions = {
   /** Skin positions by the "skinned" layout against uBones (see the lit
    * option); unlitVertex(o) reads it, the fragment is unchanged. */
   skinned?: boolean
+  /** Displace positions by the geometry's morph targets (see the lit
+   * option); unlitVertex(o) reads it, the fragment is unchanged. */
+  morph?: boolean
   /** Place each copy by its instance matrix (see the lit option);
    * unlitVertex(o) reads it, the fragment is unchanged. */
   instanced?: boolean
@@ -1632,6 +1702,7 @@ type UnlitSource = {
   skinned: boolean
   instanced: boolean
   instanceColors: boolean
+  morph: boolean
   prelude: string
   surface: string
 }
@@ -1647,6 +1718,7 @@ function resolveUnlit(o: UnlitSourceOptions): UnlitSource {
     skinned: o.skinned === true,
     instanced: o.instanced === true || o.instanceColors === true,
     instanceColors: o.instanceColors === true,
+    morph: o.morph === true,
     prelude: o.prelude ?? "",
     surface: o.surface ?? "",
   }
@@ -1662,12 +1734,13 @@ function resolveUnlit(o: UnlitSourceOptions): UnlitSource {
  */
 export function unlitVertex(o: UnlitSourceOptions = {}): string {
   let c = resolveUnlit(o)
-  if (!c.vertexColors && !c.skinned && !c.instanced) return UNLIT_VERTEX
+  if (!c.vertexColors && !c.skinned && !c.instanced && !c.morph) return UNLIT_VERTEX
   let color = c.vertexColors && c.instanceColors ? "aColor * iColor" : c.vertexColors ? "aColor" : c.instanceColors ? "iColor" : ""
   return glsl`
   in vec3 aPos;
   in vec2 aUV;
   ${c.vertexColors ? "in vec4 aColor;" : ""}
+  ${c.morph ? MORPH_DECLS : ""}
   ${c.skinned ? SKIN_DECLS : ""}
   ${c.instanced ? INSTANCE_MATRIX : ""}
   ${c.instanceColors ? "in vec4 iColor;" : ""}
@@ -1678,8 +1751,9 @@ export function unlitVertex(o: UnlitSourceOptions = {}): string {
   uniform mat4 uViewProj;
 
   void main() {
+    ${c.morph ? MORPH_APPLY_POSITION : ""}
     ${c.skinned ? SKIN_MATRIX : ""}
-    vec4 world = ${instancedPosition(c.skinned, c.instanced)};
+    vec4 world = ${instancedPosition(c.skinned, c.instanced, c.morph)};
     vWorldPos = world.xyz;
     gl_Position = uViewProj * world;
     vUv = aUV;

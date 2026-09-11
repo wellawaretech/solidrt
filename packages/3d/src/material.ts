@@ -61,6 +61,8 @@ import {
   unlitShadowFragment,
   unlitVertex,
   resolveFragment,
+  MORPH_APPLY_POSITION,
+  MORPH_DECLS,
 } from "./glsl.ts"
 
 export type Material = {
@@ -119,6 +121,12 @@ export type Material = {
    * so a shadow or override entry for a skinned mesh merges the mesh's
    * own uBones binding even though this material is not the mesh's. */
   skinned?: boolean
+  /** True when the vertex stage declares `uMorphs` (read from the source,
+   * like skinned): the program morphs by the geometry's packed targets
+   * and the mesh's weights row, so a shadow or override entry for a
+   * morphed mesh merges the mesh's morph bindings and params even though
+   * this material is not the mesh's. */
+  morphed?: boolean
   /** True when the fragment stage declares `uLodFade` (read from the
    * source, like normalMatrix): the scene then writes the LOD cross-fade
    * band to entries drawn with this material (every stock material; a
@@ -198,6 +206,15 @@ export type UnlitOptions = {
    * the spatial flush writes it from the joints). The shadow variants
    * (depth and cutout) skin the same way, so a caster casts its pose. */
   skinned?: boolean
+  /** Displace positions (and lit normals) by the geometry's morph targets
+   * (`geometry.morphs` - a glTF's blend shapes, or withMorphTargets)
+   * weighted by the mesh's morph owner (setMorphWeights, a clip's weights
+   * track): the vertex stage walks each vertex's packed entries before
+   * any skinning. The material then requires geometry carrying targets
+   * (a mesh without is rejected at add()); the shadow variants morph the
+   * same way, so a caster casts its shape. Picking and the transparent
+   * sort see the base shape, like skinning. */
+  morph?: boolean
   /** Draw instanced meshes (createInstancedMesh / `<InstancedMesh>`):
    * the vertex stage places each copy by its instance matrix under the
    * mesh's uModel, and the material declares INSTANCE_MATRIX_ATTRIBUTES,
@@ -258,17 +275,18 @@ export function unlit(opts: UnlitOptions = {}): Material {
   let fog = fogForm(opts.fog, blend)
   let mapTransform = opts.mapTransform !== undefined
   let skinned = opts.skinned === true
+  let morph = opts.morph === true
   let instanceColors = opts.instanceColors === true
   let instanced = opts.instanced === true || instanceColors
   let vertexColors = opts.vertexColors === true
   if (mapTransform && !map) throw new Error("unlit: mapTransform without a map to transform")
-  let key = [map, vertexColors, transparent, blend, cull, alphaTest, fog, mapTransform, skinned, instanced, instanceColors].join("|")
+  let key = [map, vertexColors, transparent, blend, cull, alphaTest, fog, mapTransform, skinned, instanced, instanceColors, morph].join("|")
   let cls = unlitClasses.get(key)
   if (cls === undefined) {
     cls = shaderMaterialClass({
-      vertex: unlitVertex({ vertexColors, skinned, instanced, instanceColors }),
+      vertex: unlitVertex({ vertexColors, skinned, instanced, instanceColors, morph }),
       fragment: unlitFragment({ map, vertexColors, alphaTest, transparent, fog, mapTransform, instanceColors }),
-      shadowVertex: instanced ? shadowDepthVertex(skinned, true) : undefined,
+      shadowVertex: instanced ? shadowDepthVertex(skinned, true, morph) : undefined,
       instanceBuffers: stockInstanceBuffers(instanced, instanceColors),
       instanceStyle: instanceColors ? INSTANCE_COLOR_DEFAULT : undefined,
       transparent,
@@ -286,7 +304,7 @@ export function unlit(opts: UnlitOptions = {}): Material {
     textures: map ? { uMap: opts.map! } : undefined,
     shadow:
       alphaTest && map
-        ? unlitShadowMaterial(shadowCull(cull), vertexColors, skinned, instanced, instanceColors, uColor, opts.alphaTest!, opts.map!, mapTransform ? params.uMapTransform as number[] : undefined)
+        ? unlitShadowMaterial(shadowCull(cull), vertexColors, skinned, instanced, instanceColors, morph, uColor, opts.alphaTest!, opts.map!, mapTransform ? params.uMapTransform as number[] : undefined)
         : undefined,
   })
 }
@@ -413,6 +431,7 @@ type LitClass = {
   skinned: boolean
   instanced: boolean
   instanceColors: boolean
+  morph: boolean
 }
 
 function litClassKey(c: LitClass): string {
@@ -471,6 +490,7 @@ export function lit(opts: LitOptions = {}): Material {
     skinned: opts.skinned === true,
     instanced: opts.instanced === true || opts.instanceColors === true,
     instanceColors: opts.instanceColors === true,
+    morph: opts.morph === true,
   }
   let key = litClassKey(flags)
   let cls = litClasses.get(key)
@@ -478,7 +498,7 @@ export function lit(opts: LitOptions = {}): Material {
     cls = shaderMaterialClass({
       vertex: litVertex(flags),
       fragment: litFragment(flags),
-      shadowVertex: flags.instanced ? shadowDepthVertex(flags.skinned, true) : undefined,
+      shadowVertex: flags.instanced ? shadowDepthVertex(flags.skinned, true, flags.morph) : undefined,
       instanceBuffers: stockInstanceBuffers(flags.instanced, flags.instanceColors),
       instanceStyle: flags.instanceColors ? INSTANCE_COLOR_DEFAULT : undefined,
       transparent: flags.transparent,
@@ -578,6 +598,7 @@ function standardShadowFlags(c: StandardClass): LitClass {
     skinned: c.skinned,
     instanced: c.instanced,
     instanceColors: c.instanceColors,
+    morph: c.morph,
   }
 }
 
@@ -641,6 +662,7 @@ export function standard(opts: StandardOptions = {}): Material {
     skinned: opts.skinned === true,
     instanced: opts.instanced === true || opts.instanceColors === true,
     instanceColors: opts.instanceColors === true,
+    morph: opts.morph === true,
     metalnessMap,
     roughnessMap,
   }
@@ -650,7 +672,7 @@ export function standard(opts: StandardOptions = {}): Material {
     cls = shaderMaterialClass({
       vertex: litVertex(flags),
       fragment: standardFragment(flags),
-      shadowVertex: flags.instanced ? shadowDepthVertex(flags.skinned, true) : undefined,
+      shadowVertex: flags.instanced ? shadowDepthVertex(flags.skinned, true, flags.morph) : undefined,
       instanceBuffers: stockInstanceBuffers(flags.instanced, flags.instanceColors),
       instanceStyle: flags.instanceColors ? INSTANCE_COLOR_DEFAULT : undefined,
       transparent: flags.transparent,
@@ -744,15 +766,18 @@ function litShadowMaterial(
 // Material.skinned); the instanced form places each copy by its instance
 // matrix, so a fleet casts where its records stand - the stock instanced
 // materials pass it as their class's shadowVertex.
-function shadowDepthVertex(skinned: boolean, instanced: boolean): string {
-  let local = skinned ? "(skin * vec4(aPos, 1.0))" : "vec4(aPos, 1.0)"
+function shadowDepthVertex(skinned: boolean, instanced: boolean, morphed = false): string {
+  let base = morphed ? "morphPos" : "aPos"
+  let local = skinned ? `(skin * vec4(${base}, 1.0))` : `vec4(${base}, 1.0)`
   return glsl`
   in vec3 aPos;
+  ${morphed ? MORPH_DECLS : ""}
   ${skinned ? SKIN_DECLS : ""}
   ${instanced ? INSTANCE_MATRIX : ""}
   uniform mat4 uModel;
   uniform mat4 uViewProj;
   void main() {
+    ${morphed ? MORPH_APPLY_POSITION : ""}
     ${skinned ? SKIN_MATRIX : ""}
     gl_Position = uViewProj * uModel * ${instanced ? `(instanceMatrix() * ${local})` : local};
   }
@@ -771,12 +796,12 @@ let shadowDepth = new Map<string, Material>()
  * per cull mode x skinned for the app, built on first use. The default,
  * "front", is the caster's back surface (see above); a material culling
  * or skinning otherwise carries its own variant as Material.shadow. */
-export function shadowDepthMaterial(cull: CullMode = "front", skinned = false): Material {
-  let key = cull + (skinned ? "|skinned" : "")
+export function shadowDepthMaterial(cull: CullMode = "front", skinned = false, morphed = false): Material {
+  let key = cull + (skinned ? "|skinned" : "") + (morphed ? "|morphed" : "")
   let material = shadowDepth.get(key)
   if (material === undefined) {
     material = shaderMaterialClass({
-      vertex: shadowDepthVertex(skinned, false),
+      vertex: shadowDepthVertex(skinned, false, morphed),
       fragment: SHADOW_DEPTH_FRAGMENT,
       cull,
       label: "scene-shadow-depth-" + key,
@@ -792,12 +817,12 @@ function shadowCull(cull: CullMode): CullMode {
   return cull === "none" ? "none" : cull === "back" ? "front" : "back"
 }
 
-/** "back" unskinned maps to the default depth material, so its variant
- * is undefined; a skinned class always needs its own (the default does
- * not skin). */
-function shadowVariant(cull: CullMode, skinned: boolean): Material | undefined {
-  if (cull === "back" && !skinned) return undefined
-  return shadowDepthMaterial(shadowCull(cull), skinned)
+/** "back" unskinned unmorphed maps to the default depth material, so its
+ * variant is undefined; a skinned or morphed class always needs its own
+ * (the default does neither). */
+function shadowVariant(cull: CullMode, skinned: boolean, morphed: boolean): Material | undefined {
+  if (cull === "back" && !skinned && !morphed) return undefined
+  return shadowDepthMaterial(shadowCull(cull), skinned, morphed)
 }
 
 let unlitShadowClasses = new Map<string, ShaderMaterialClass>()
@@ -815,18 +840,19 @@ function unlitShadowMaterial(
   skinned: boolean,
   instanced: boolean,
   instanceColors: boolean,
+  morph: boolean,
   uColor: number[],
   uAlphaTest: number,
   uMap: TextureId,
   uMapTransform?: number[],
 ): Material {
-  let key = [cull, uMapTransform !== undefined, vertexColors, skinned, instanced, instanceColors].join("|")
+  let key = [cull, uMapTransform !== undefined, vertexColors, skinned, instanced, instanceColors, morph].join("|")
   let cls = unlitShadowClasses.get(key)
   if (cls === undefined) {
     let fragment = unlitShadowFragment({ map: true, vertexColors, alphaTest: true, mapTransform: uMapTransform !== undefined, instanceColors })
     if (fragment === undefined) throw new Error("unlitShadowMaterial: the cutout options cannot discard")
     cls = shaderMaterialClass({
-      vertex: unlitVertex({ vertexColors, skinned, instanced, instanceColors }),
+      vertex: unlitVertex({ vertexColors, skinned, instanced, instanceColors, morph }),
       fragment,
       cull,
       instanceBuffers: stockInstanceBuffers(instanced, instanceColors),
@@ -1158,7 +1184,7 @@ export type ShaderMaterialInstanceOptions = {
    * `shadowVertex` cannot express. Default: the class's shadowVertex
    * depth material when one is declared, else the depth pass with this
    * class's cull side, skinned like the class when its vertex skins by
-   * uBones. */
+   * uBones and morphed like it when its vertex morphs by uMorphs. */
   shadow?: Material
 }
 
@@ -1209,6 +1235,9 @@ export function shaderMaterialClass(opts: ShaderMaterialClassOptions): ShaderMat
   // Skinning is a vertex-stage affair like the attributes; a source that
   // mentions uBones skins by the mesh's palette texture (Material.skinned).
   let skinned = /\buBones\b/.test(opts.vertex)
+  // Morphing likewise: a source that mentions uMorphs walks the
+  // geometry's packed targets (Material.morphed).
+  let morphed = /\buMorphs\b/.test(opts.vertex)
   // The LOD cross-fade is a fragment-stage discard (Material.lodFade).
   let lodFade = /\buLodFade\b/.test(opts.fragment)
   let transparent = opts.transparent ?? (opts.blend !== undefined && opts.blend !== "none")
@@ -1308,6 +1337,7 @@ export function shaderMaterialClass(opts: ShaderMaterialClassOptions): ShaderMat
       return {
         normalMatrix,
         skinned,
+        morphed,
         lodFade,
         attributes,
         transparent,
@@ -1319,7 +1349,7 @@ export function shaderMaterialClass(opts: ShaderMaterialClassOptions): ShaderMat
         // Lazy: the depth materials are shaderMaterialClass instances
         // themselves, so an eager variant would recurse into its own cache.
         get shadow() {
-          return inst.shadow ?? shadowFor() ?? shadowVariant(cull, skinned)
+          return inst.shadow ?? shadowFor() ?? shadowVariant(cull, skinned, morphed)
         },
       }
     },

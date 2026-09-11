@@ -1,7 +1,7 @@
 use crate::gpu::{validate_params, DrawUpdate, ParamValue, TextureFormat};
 use crate::raster::RasterCmd;
 use crate::spatial::{
-  DrawSink, InstanceRecordSink, Mat4, NodeId, SharedSlotSink, SinkWriter, Spatial, TextureSlotSink,
+  DrawSink, InstanceRecordSink, Mat4, NodeId, SharedSlotSink, SinkWriter, Spatial, TextureSlotSink, WeightsSlotSink,
 };
 
 use super::mirror::entry_mirror;
@@ -197,6 +197,32 @@ impl Context {
 
   /// Remove a node's texture slot on `texture`, or every texture slot with
   /// None.
+  /// Bind a node's weights register to row `row` of `texture` (see
+  /// `WeightsSlotSink`): an uploadable rgba32f texture, the row inside it;
+  /// the row width is the texture's (four weights per texel).
+  pub fn spatial_bind_weights_slot(&self, node: NodeId, texture: u64, row: u32) -> Result<(), String> {
+    let row_floats = {
+      let entry = self.textures.get(texture).ok_or_else(|| format!("texture {texture} not found"))?;
+      if entry.format != TextureFormat::Rgba32f {
+        return Err(format!("texture {} is {}, weights rows need rgba32f", texture, entry.format.name()));
+      }
+      if row >= entry.height() {
+        return Err(format!("row {} is outside texture {} ({} rows)", row, texture, entry.height()));
+      }
+      if self.depth_owner(texture).is_some() || self.targets.borrow().contains_key(&texture) {
+        return Err(format!("texture {texture} is render-written, not uploadable"));
+      }
+      entry.width() * 4
+    };
+    self.spatial.borrow_mut().bind_weights_slot(node, WeightsSlotSink { texture, row, row_floats })
+  }
+
+  /// Remove a node's weights slot on `texture`, or every weights slot
+  /// with None.
+  pub fn spatial_unbind_weights_slot(&self, node: NodeId, texture: Option<u64>) -> Result<(), String> {
+    self.spatial.borrow_mut().unbind_weights_slot(node, texture)
+  }
+
   pub fn spatial_unbind_texture_slot(&self, node: NodeId, texture: Option<u64>) -> Result<(), String> {
     self.spatial.borrow_mut().unbind_texture_slot(node, texture)
   }

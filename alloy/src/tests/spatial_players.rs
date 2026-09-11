@@ -5,8 +5,12 @@ use crate::spatial::{
 const Q: [f32; 4] = [0.0, 0.0, 0.0, 1.0];
 const ONE: [f32; 3] = [1.0, 1.0, 1.0];
 
+/// A channel whose element count is read off the data (the JS baker's
+/// rule): values per key over the cubic triple.
 fn channel(path: ChannelPath, interpolation: ChannelInterpolation, times: &[f32], values: &[f32]) -> ClipChannel {
-  ClipChannel { target_slot: 0, path, interpolation, times: times.to_vec(), values: values.to_vec() }
+  let per_key = if interpolation == ChannelInterpolation::Cubic { 3 } else { 1 };
+  let elements = values.len() / (times.len() * per_key);
+  ClipChannel { target_slot: 0, path, interpolation, elements, times: times.to_vec(), values: values.to_vec() }
 }
 
 fn sampled(c: &ClipChannel, time: f32, cursor: &mut u32) -> [f32; 4] {
@@ -293,4 +297,56 @@ fn root_motion_without_vertical_keeps_the_rise_out_of_the_delta() {
   assert_eq!(reports.len(), 1);
   let d = reports[0].1;
   assert!((d[0] - 2.0).abs() < 1e-5 && d[1].abs() < 1e-6, "{d:?}");
+}
+
+#[test]
+fn weights_channels_blend_into_the_register() {
+  let mut s = Spatial::new();
+  let n = s.create([0.0; 3], Q, ONE, true);
+  s.set_weights(n, &[0.0, 0.0]).expect("weights");
+  // Two targets over 1 s: [0, 0] -> [1, 0]; a second, constant clip at
+  // [0, 1]; a third, one target wide, at [4].
+  let a = s
+    .create_clip(
+      1.0,
+      vec![channel(ChannelPath::Weights, ChannelInterpolation::Linear, &[0.0, 1.0], &[0.0, 0.0, 1.0, 0.0])],
+    )
+    .expect("clip a");
+  let b = s
+    .create_clip(1.0, vec![channel(ChannelPath::Weights, ChannelInterpolation::Linear, &[0.0], &[0.0, 1.0])])
+    .expect("clip b");
+  let c = s
+    .create_clip(1.0, vec![channel(ChannelPath::Weights, ChannelInterpolation::Step, &[0.0], &[4.0])])
+    .expect("clip c");
+  // The path fixes nothing about the width, but a TRS path does.
+  let bad = ClipChannel {
+    target_slot: 0,
+    path: ChannelPath::Position,
+    interpolation: ChannelInterpolation::Linear,
+    elements: 2,
+    times: vec![0.0],
+    values: vec![0.0, 0.0],
+  };
+  assert!(s.create_clip(1.0, vec![bad]).unwrap_err().contains("elements per key"));
+  advance_at(&mut s, 0.0);
+  s.create_player(a, vec![n], 1.0, true, 1.0, 0.0).expect("player a");
+  let tick = advance_at(&mut s, 500.0);
+  assert!(tick.active && tick.wrote);
+  assert_eq!(s.weights_of(n).expect("read"), &[0.5, 0.0][..]);
+  // A frozen clock rewrites nothing.
+  assert!(!advance_at(&mut s, 500.0).wrote, "frozen clock must write nothing");
+  // A second player at equal weight: the average, target by target.
+  let pb = s.create_player(b, vec![n], 1.0, true, 1.0, 0.0).expect("player b");
+  advance_at(&mut s, 500.0);
+  assert_eq!(s.weights_of(n).expect("read"), &[0.25, 0.5][..]);
+  // A narrower clip weighs zeros for the targets it lacks; the register
+  // keeps the widest width.
+  s.destroy_player(pb);
+  let pc = s.create_player(c, vec![n], 1.0, true, 1.0, 0.0).expect("player c");
+  advance_at(&mut s, 500.0);
+  assert_eq!(s.weights_of(n).expect("read"), &[2.25, 0.0][..]);
+  // Gone, the register keeps the last blend until something writes it.
+  s.destroy_player(pc);
+  advance_at(&mut s, 500.0);
+  assert_eq!(s.weights_of(n).expect("read"), &[0.5, 0.0][..]);
 }

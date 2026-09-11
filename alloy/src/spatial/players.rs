@@ -30,13 +30,19 @@ pub enum ChannelPath {
   Position,
   Rotation,
   Scale,
+  /// The node's weights register (morph target weights): one element per
+  /// target, the count the channel's data fixes.
+  Weights,
 }
 
 impl ChannelPath {
-  fn elements(self) -> usize {
+  /// The element count the path dictates: 3, 4 for a rotation, none for
+  /// weights (a weights channel carries as many as the mesh has targets).
+  fn fixed_elements(self) -> Option<usize> {
     match self {
-      ChannelPath::Rotation => 4,
-      _ => 3,
+      ChannelPath::Rotation => Some(4),
+      ChannelPath::Weights => None,
+      _ => Some(3),
     }
   }
 }
@@ -57,10 +63,12 @@ pub struct ClipChannel {
   pub target_slot: u32,
   pub path: ChannelPath,
   pub interpolation: ChannelInterpolation,
+  /// Floats per key value: 3, 4 for a rotation, one per morph target for
+  /// weights.
+  pub elements: usize,
   /// Key times in seconds, ascending.
   pub times: Vec<f32>,
-  /// `elements` floats per key (3, or 4 for rotation); cubic stores three
-  /// elements per key.
+  /// `elements` floats per key; cubic stores three elements per key.
   pub values: Vec<f32>,
 }
 
@@ -175,8 +183,15 @@ pub(super) struct PlayerSet {
   /// Root-motion deltas of the last advance, per bound player:
   /// translation and yaw (radians).
   root_deltas: Vec<(PlayerId, [f32; 3], f32)>,
-  /// Blend accumulator, keyed (node, path index), reused across frames.
+  /// Blend accumulator of the TRS paths, keyed (node, path index), reused
+  /// across frames.
   slots: HashMap<(NodeId, u8), BlendSlot>,
+  /// The weights paths' accumulator, per node: kept across frames with
+  /// its buffers (a slot whose players are gone is pruned at the write).
+  weight_slots: HashMap<NodeId, WeightSlot>,
+  /// Sampling scratch for weights channels (as many floats as the widest
+  /// one).
+  scratch: Vec<f32>,
 }
 
 struct BlendSlot {
@@ -184,10 +199,14 @@ struct BlendSlot {
   value: [f32; 4],
 }
 
-/// Sample one channel at `time` (seconds, clamped to the key range) into
-/// `out[..elements]`. `cursor` caches the last lo key index; a time at or
-/// past it advances linearly, a time before it (seek, loop wrap) falls
-/// back to binary search.
+struct WeightSlot {
+  sum: f32,
+  value: Vec<f32>,
+  /// Whether a player fed the slot this advance (the first contributor
+  /// sets the value outright, like a fresh TRS slot).
+  fed: bool,
+}
+
 /// The twist of a unit quaternion ([x, y, z, w]) about the unit axis
 /// `up`, in radians, -pi..pi: the swing-twist split, exact under any
 /// lean (an Euler yaw is not).
@@ -229,7 +248,7 @@ fn quat_multiply(a: [f32; 4], b: [f32; 4]) -> [f32; 4] {
 /// Floats per key and the value's offset within a key (cubic keys are
 /// [in, value, out]).
 fn key_layout(channel: &ClipChannel) -> (usize, usize) {
-  let elements = channel.path.elements();
+  let elements = channel.elements;
   if channel.interpolation == ChannelInterpolation::Cubic {
     (elements * 3, elements)
   } else {
@@ -237,15 +256,16 @@ fn key_layout(channel: &ClipChannel) -> (usize, usize) {
   }
 }
 
-pub(crate) fn sample(channel: &ClipChannel, time: f32, cursor: &mut u32, out: &mut [f32; 4]) {
+/// Sample one channel at `time` (seconds, clamped to the key range) into
+/// `out[..elements]` (`out` at least `channel.elements` long). `cursor`
+/// caches the last lo key index; a time at or past it advances linearly,
+/// a time before it (seek, loop wrap) falls back to binary search.
+pub(crate) fn sample(channel: &ClipChannel, time: f32, cursor: &mut u32, out: &mut [f32]) {
   let times = &channel.times;
   let values = &channel.values;
   let keys = times.len();
-  let elements = channel.path.elements();
-  let cubic = channel.interpolation == ChannelInterpolation::Cubic;
-  let stride = if cubic { elements * 3 } else { elements };
-  // The value element offset within a key: cubic keys are [in, value, out].
-  let mid = if cubic { elements } else { 0 };
+  let elements = channel.elements;
+  let (stride, mid) = key_layout(channel);
   if keys == 0 {
     return;
   }
@@ -292,7 +312,7 @@ pub(crate) fn sample(channel: &ClipChannel, time: f32, cursor: &mut u32, out: &m
       if channel.path == ChannelPath::Rotation {
         let qa = [values[a], values[a + 1], values[a + 2], values[a + 3]];
         let qb = [values[b], values[b + 1], values[b + 2], values[b + 3]];
-        out.copy_from_slice(&slerp(qa, qb, s));
+        out[..4].copy_from_slice(&slerp(qa, qb, s));
       } else {
         for e in 0..elements {
           out[e] = values[a + e] + (values[b + e] - values[a + e]) * s;
@@ -319,7 +339,7 @@ pub(crate) fn sample(channel: &ClipChannel, time: f32, cursor: &mut u32, out: &m
       }
       if channel.path == ChannelPath::Rotation {
         let q = quat_normalize([out[0], out[1], out[2], out[3]]);
-        out.copy_from_slice(&q);
+        out[..4].copy_from_slice(&q);
       }
     }
   }
@@ -334,8 +354,14 @@ impl Spatial {
       if keys == 0 {
         return Err(format!("clip channel {i} has no keys"));
       }
-      let stride =
-        if c.interpolation == ChannelInterpolation::Cubic { c.path.elements() * 3 } else { c.path.elements() };
+      match c.path.fixed_elements() {
+        Some(fixed) if c.elements != fixed => {
+          return Err(format!("clip channel {i} has {} elements per key, its path takes {fixed}", c.elements));
+        }
+        None if c.elements == 0 => return Err(format!("clip channel {i} is a weights channel with no targets")),
+        _ => {}
+      }
+      let (stride, _) = key_layout(c);
       if c.values.len() != keys * stride {
         return Err(format!(
           "clip channel {i} has {} keys but {} values ({} per key expected)",
@@ -634,9 +660,19 @@ impl Spatial {
     }
 
     // Blend: per (node, path), the weighted average over the players that
-    // animate it - the mixer's incremental accumulation, verbatim.
+    // animate it - the mixer's incremental accumulation, verbatim. The
+    // weights path accumulates the same way into its own per-node slot,
+    // as wide as the widest channel on the node (a shorter one weighs
+    // zeros for the targets it lacks).
     let mut slots = std::mem::take(&mut self.players.slots);
     slots.clear();
+    let mut weight_slots = std::mem::take(&mut self.players.weight_slots);
+    for slot in weight_slots.values_mut() {
+      slot.sum = 0.0;
+      slot.value.clear();
+      slot.fed = false;
+    }
+    let mut scratch = std::mem::take(&mut self.players.scratch);
     let mut out = [0.0f32; 4];
     for pi in 0..self.players.players.len() {
       let set = &mut self.players;
@@ -644,8 +680,33 @@ impl Spatial {
       let (time, weight) = (set.players[pi].time as f32, set.players[pi].weight);
       for (ci, channel) in clip.channels.iter().enumerate() {
         let target = set.players[pi].targets[channel.target_slot as usize];
+        if channel.path == ChannelPath::Weights {
+          scratch.clear();
+          scratch.resize(channel.elements, 0.0);
+          sample(channel, time, &mut set.players[pi].cursors[ci], &mut scratch);
+          let slot =
+            weight_slots.entry(target).or_insert_with(|| WeightSlot { sum: 0.0, value: Vec::new(), fed: false });
+          if slot.value.len() < channel.elements {
+            slot.value.resize(channel.elements, 0.0);
+          }
+          let total = slot.sum + weight;
+          let share = if !slot.fed {
+            1.0
+          } else if total > 0.0 {
+            weight / total
+          } else {
+            0.0
+          };
+          slot.fed = true;
+          slot.sum = total;
+          for (e, v) in slot.value.iter_mut().enumerate() {
+            let sampled = scratch.get(e).copied().unwrap_or(0.0);
+            *v += (sampled - *v) * share;
+          }
+          continue;
+        }
         sample(channel, time, &mut set.players[pi].cursors[ci], &mut out);
-        let elements = channel.path.elements();
+        let elements = channel.elements;
         let key = (target, channel.path as u8);
         match slots.get_mut(&key) {
           None => {
@@ -710,6 +771,24 @@ impl Spatial {
       }
     }
     self.players.slots = slots;
+    self.players.scratch = scratch;
+    // Weights land in the register, staged to the node's weights rows at
+    // the flush; a slot no player fed this advance is pruned.
+    weight_slots.retain(|&node, slot| {
+      if !slot.fed {
+        return false;
+      }
+      let Ok(idx) = self.resolve(node) else { return false };
+      if self.nodes[idx as usize].weights != slot.value {
+        let n = &mut self.nodes[idx as usize];
+        n.weights.clear();
+        n.weights.extend_from_slice(&slot.value);
+        self.mark_weights(idx);
+        wrote = true;
+      }
+      true
+    });
+    self.players.weight_slots = weight_slots;
 
     // Root motion onto the anchors: the delta is in the root's parent
     // space, which is the anchor's own local frame, so it turns with the

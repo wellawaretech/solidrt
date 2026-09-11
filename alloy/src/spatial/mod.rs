@@ -49,7 +49,7 @@ pub use transitions::{
 
 use bvh::Bvh;
 use cull::{union, world_box, Frustum};
-use transitions::{lanes3, targets_match, NodeTransitions, PendingWrite};
+use transitions::{lanes3, targets_match, NodeTransitions, PendingWeights, PendingWrite, COMPONENTS};
 
 pub type Mat4 = [f32; 16];
 
@@ -399,13 +399,32 @@ pub struct TextureSlotSink {
   pub post: Mat4,
 }
 
-/// One palette texture's staging mirror and the sinks feeding it. `values`
-/// holds `nodeWorld * post` per row; the anchor inverse applies at publish.
+/// The palette sink's second row kind: the node's WEIGHTS register (a
+/// mesh's morph target weights, `set_weights`) published as row `row` of
+/// an rgba32f texture `row_floats / 4` texels wide - four weights per
+/// texel, the register padded with zeros to the row (or cut to it). A
+/// texture holds one kind of row: matrix rows or weights rows, never
+/// both. Weights rows stage from the register, not the transform walk,
+/// so a weights write costs no matrix recompute; the publish batches like
+/// the matrix palettes - one whole-texture write per texture per flush.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct WeightsSlotSink {
+  pub texture: u64,
+  pub row: u32,
+  pub row_floats: u32,
+}
+
+/// One palette texture's staging mirror and the sinks feeding it. For
+/// matrix rows `values` holds `nodeWorld * post` per row (16 floats) and
+/// the anchor inverse applies at publish; for weights rows it holds the
+/// registers, `row_floats` per row, published as they are.
 struct PaletteGroup {
   anchor: Option<NodeId>,
   values: Vec<f32>,
   refs: u32,
   dirty: bool,
+  row_floats: usize,
+  weights: bool,
 }
 
 /// One instance buffer's staging mirror and the sinks feeding it: one
@@ -584,6 +603,13 @@ struct Node {
   slots: Vec<SharedSlotSink>,
   /// One per texture.
   texture_slots: Vec<TextureSlotSink>,
+  /// The node's weights register (morph target weights): written by
+  /// `set_weights`, published through `weights_slots`.
+  weights: Vec<f32>,
+  /// One per texture.
+  weights_slots: Vec<WeightsSlotSink>,
+  /// In `weights_dirty` already.
+  weights_queued: bool,
   /// One per LOD level (one for a plain population); `record_level`
   /// names the one holding the pose, the others hold the hidden record.
   records: Vec<InstanceRecordSink>,
@@ -613,6 +639,10 @@ pub struct Spatial {
   shared: HashMap<(u64, String), SharedGroup>,
   instances: HashMap<u64, InstanceGroup>,
   palettes: HashMap<u64, PaletteGroup>,
+  /// Nodes whose weights register changed since the last flush.
+  weights_dirty: Vec<u32>,
+  /// The weights tracks' advance buffer, reused across frames.
+  weights_scratch: Vec<f32>,
   transitions: NodeTransitions,
   players: players::PlayerSet,
   /// Per target, the clip volume its draw sinks are gated by (a target
@@ -706,6 +736,9 @@ impl Spatial {
       layers: DEFAULT_LAYERS,
       slots: Vec::new(),
       texture_slots: Vec::new(),
+      weights: Vec::new(),
+      weights_slots: Vec::new(),
+      weights_queued: false,
       records: Vec::new(),
       record_level: 0,
       record_on: false,
@@ -778,6 +811,9 @@ impl Spatial {
     for slot in std::mem::take(&mut self.nodes[i as usize].texture_slots) {
       self.release_texture_slot(&slot);
     }
+    for slot in std::mem::take(&mut self.nodes[i as usize].weights_slots) {
+      self.release_weights_slot(&slot);
+    }
     for record in std::mem::take(&mut self.nodes[i as usize].records) {
       self.release_record(&record);
     }
@@ -834,10 +870,8 @@ impl Spatial {
       return Ok(true);
     }
     let now = self.transitions.now_ms;
-    let config = self.transitions.configs.get(&id).copied();
-    let has_exit = config.is_some_and(|c| {
-      c.has_exit(Component::Position) || c.has_exit(Component::Scale) || c.has_exit(Component::Rotation)
-    });
+    let has_exit =
+      self.transitions.configs.get(&id).is_some_and(|c| COMPONENTS.iter().any(|&component| c.has_exit(component)));
     if has_exit && self.stagger_group_of(i).is_some() {
       self.transitions.staggered_exits.push((id, now));
       self.nodes[i as usize].leaving = true;
@@ -859,7 +893,7 @@ impl Spatial {
   /// waits.
   fn start_exit_tracks(&mut self, i: u32, at_ms: f64, stagger_ms: f32) -> bool {
     let id = self.id_of(i);
-    let Some(config) = self.transitions.configs.get(&id).copied() else {
+    let Some(config) = self.transitions.configs.get(&id).cloned() else {
       return false;
     };
     let n = &self.nodes[i as usize];
@@ -880,6 +914,18 @@ impl Spatial {
       } else {
         self.transitions.unschedule(id, component);
         started |= self.transitions.apply(id, component, current, to, motion.spec, at_ms);
+      }
+    }
+    if let Some(x) = config.weights.and_then(|e| e.exit) {
+      let delay_ms = x.motion.delay_ms + stagger_ms;
+      if delay_ms > 0.0 {
+        let at_ms = at_ms + delay_ms as f64;
+        self.transitions.schedule_weights(PendingWeights { node: id, to: x.value, spec: x.motion.spec, at_ms });
+        started = true;
+      } else {
+        self.transitions.unschedule_weights(id);
+        let current = self.nodes[i as usize].weights.clone();
+        started |= self.transitions.retarget_weights(id, &current, &x.value, x.motion.spec, at_ms);
       }
     }
     started
@@ -958,7 +1004,7 @@ impl Spatial {
       return;
     }
     if let Some(config) = self.transitions.configs.get(&id) {
-      for component in [Component::Position, Component::Rotation, Component::Scale] {
+      for component in COMPONENTS {
         if config.has_exit(component) && self.transitions.any_running(id, component) {
           return;
         }
@@ -1613,7 +1659,12 @@ impl Spatial {
       values: Vec::new(),
       refs: 0,
       dirty: false,
+      row_floats: 16,
+      weights: false,
     });
+    if group.refs > 0 && group.weights {
+      return Err(format!("texture {} holds weights rows, not matrix rows (one row kind per texture)", sink.texture));
+    }
     if group.refs > 0 && group.anchor != anchor {
       return Err(format!(
         "texture {} palette is anchored to {:?}, not {:?} (one anchor per texture)",
@@ -1621,6 +1672,12 @@ impl Spatial {
       ));
     }
     group.anchor = anchor;
+    if group.refs == 0 {
+      // An unreferenced group (released, not yet dropped by the flush)
+      // takes the kind of its next bind.
+      group.weights = false;
+      group.row_floats = 16;
+    }
     let need = (sink.row as usize + 1) * 16;
     if group.values.len() < need {
       group.values.resize(need, 0.0);
@@ -1668,6 +1725,170 @@ impl Spatial {
   fn release_texture_slot(&mut self, sink: &TextureSlotSink) {
     if let Some(group) = self.palettes.get_mut(&sink.texture) {
       group.refs = group.refs.saturating_sub(1);
+    }
+  }
+
+  /// Write the node's weights register (see `WeightsSlotSink`): staged to
+  /// its weights rows at the next flush, and what `weights_of` reads back.
+  /// An equal write is free.
+  pub fn set_weights(&mut self, id: NodeId, weights: &[f32]) -> Result<(), String> {
+    let i = self.resolve(id)?;
+    let n = &mut self.nodes[i as usize];
+    if n.weights.as_slice() == weights {
+      return Ok(());
+    }
+    n.weights.clear();
+    n.weights.extend_from_slice(weights);
+    self.mark_weights(i);
+    Ok(())
+  }
+
+  /// Write the weights register THROUGH a motion: `motion` given, the
+  /// write animates on it whatever the node declares (a one-off spec on
+  /// the write); otherwise the declaration's weights entry (or `all`)
+  /// decides, and without one the write snaps, exactly `set_weights`.
+  /// A write matching the running track's target, the held write's
+  /// target or the register at rest is left alone. Returns whether
+  /// anything changed - the caller's frame-demand signal. A raw
+  /// `set_weights` never consults or cancels the track: it overwrites at
+  /// the next advance (last write wins).
+  pub fn write_weights(&mut self, id: NodeId, weights: &[f32], motion: Option<NodeMotion>) -> Result<bool, String> {
+    let i = self.resolve(id)?;
+    let motion = match motion {
+      Some(m) => Some(m),
+      None => self.transitions.configs.get(&id).and_then(|c| c.motion_for(Component::Weights)),
+    };
+    let Some(motion) = motion else {
+      if self.nodes[i as usize].weights.as_slice() == weights {
+        return Ok(false);
+      }
+      self.set_weights(id, weights)?;
+      return Ok(true);
+    };
+    let current = self.nodes[i as usize].weights.clone();
+    let unchanged = current.as_slice() == weights && !self.transitions.any_running(id, Component::Weights);
+    Ok(self.transitions.write_weights(id, &current, weights, motion, unchanged))
+  }
+
+  /// The node's weights register as the arena holds it.
+  pub fn weights_of(&self, id: NodeId) -> Result<&[f32], String> {
+    let i = self.resolve(id)?;
+    Ok(&self.nodes[i as usize].weights)
+  }
+
+  fn mark_weights(&mut self, i: u32) {
+    let n = &mut self.nodes[i as usize];
+    if !n.weights_queued {
+      n.weights_queued = true;
+      self.weights_dirty.push(i);
+    }
+  }
+
+  /// Bind the node's weights register to row `sink.row` of `sink.texture`
+  /// (see `WeightsSlotSink`). Every bind on one texture must carry the
+  /// same `row_floats` (one width per texture); fit against the actual
+  /// texture is the caller's check (Context validates at bind). The row
+  /// is staged at the next flush. Rebinding the same texture replaces the
+  /// node's slot there; another texture adds one.
+  pub fn bind_weights_slot(&mut self, id: NodeId, sink: WeightsSlotSink) -> Result<(), String> {
+    let i = self.resolve(id)?;
+    if sink.row_floats == 0 || sink.row_floats % 4 != 0 {
+      return Err(format!("weights rows are whole rgba32f texels, not {} floats", sink.row_floats));
+    }
+    let group = self.palettes.entry(sink.texture).or_insert_with(|| PaletteGroup {
+      anchor: None,
+      values: Vec::new(),
+      refs: 0,
+      dirty: false,
+      row_floats: sink.row_floats as usize,
+      weights: true,
+    });
+    if group.refs > 0 && !group.weights {
+      return Err(format!("texture {} holds matrix rows, not weights rows (one row kind per texture)", sink.texture));
+    }
+    if group.refs > 0 && group.row_floats != sink.row_floats as usize {
+      return Err(format!(
+        "texture {} weights rows are {} floats wide, not {} (one width per texture)",
+        sink.texture, group.row_floats, sink.row_floats
+      ));
+    }
+    if group.refs == 0 {
+      group.weights = true;
+      group.row_floats = sink.row_floats as usize;
+      group.anchor = None;
+    }
+    let need = (sink.row as usize + 1) * group.row_floats;
+    if group.values.len() < need {
+      group.values.resize(need, 0.0);
+    }
+    group.refs += 1;
+    let slots = &mut self.nodes[i as usize].weights_slots;
+    let mut released = Vec::new();
+    slots.retain(|s| {
+      let replaced = s.texture == sink.texture;
+      if replaced {
+        released.push(*s);
+      }
+      !replaced
+    });
+    for slot in &released {
+      self.release_weights_slot(slot);
+    }
+    self.nodes[i as usize].weights_slots.push(sink);
+    self.mark_weights(i);
+    Ok(())
+  }
+
+  /// Remove the node's weights slot on `texture` (or every weights slot
+  /// with None); the abandoned rows keep their last value.
+  pub fn unbind_weights_slot(&mut self, id: NodeId, texture: Option<u64>) -> Result<(), String> {
+    let i = self.resolve(id)?;
+    let slots = &mut self.nodes[i as usize].weights_slots;
+    let mut released = Vec::new();
+    slots.retain(|s| {
+      let keep = texture.is_some_and(|t| t != s.texture);
+      if !keep {
+        released.push(*s);
+      }
+      keep
+    });
+    for slot in &released {
+      self.release_weights_slot(slot);
+    }
+    Ok(())
+  }
+
+  fn release_weights_slot(&mut self, sink: &WeightsSlotSink) {
+    if let Some(group) = self.palettes.get_mut(&sink.texture) {
+      group.refs = group.refs.saturating_sub(1);
+    }
+  }
+
+  /// Stage every changed weights register into its rows: the register
+  /// padded with zeros to the row width, or cut to it.
+  fn stage_weights(&mut self) {
+    if self.weights_dirty.is_empty() {
+      return;
+    }
+    let dirty = std::mem::take(&mut self.weights_dirty);
+    for i in dirty {
+      let n = &mut self.nodes[i as usize];
+      n.weights_queued = false;
+      if !n.alive {
+        continue;
+      }
+      for slot in &n.weights_slots {
+        let Some(group) = self.palettes.get_mut(&slot.texture) else { continue };
+        let width = group.row_floats;
+        let at = slot.row as usize * width;
+        for k in 0..width {
+          let v = n.weights.get(k).copied().unwrap_or(0.0);
+          if group.values[at + k] != v {
+            group.values[at + k] = v;
+            group.dirty = true;
+          }
+        }
+      }
     }
   }
 
@@ -2196,7 +2417,7 @@ impl Spatial {
     scale: [f32; 3],
   ) -> Result<bool, String> {
     let i = self.resolve(id)?;
-    let Some(config) = self.transitions.configs.get(&id).copied() else {
+    let Some(config) = self.transitions.configs.get(&id).cloned() else {
       let n = &self.nodes[i as usize];
       if n.position == position && n.rotation == rotation && n.scale == scale {
         return Ok(false);
@@ -2225,6 +2446,8 @@ impl Spatial {
               Component::Position => n.position = position,
               Component::Scale => n.scale = scale,
               Component::Rotation => n.rotation = rotation,
+              // The weights register has its own write (`write_weights`).
+              Component::Weights => {}
             }
             snapped = true;
           }
@@ -2305,11 +2528,23 @@ impl Spatial {
         Component::Position => lanes3(n.position),
         Component::Scale => lanes3(n.scale),
         Component::Rotation => n.rotation,
+        // Held weights writes live in their own list (take_due_weights).
+        Component::Weights => continue,
       };
       let running = self.transitions.apply(w.node, w.component, current, w.to, w.spec, w.at_ms);
       // A due exit write that starts nothing (the value already there)
       // may have been the last thing keeping its node around.
       if !running && n.leaving {
+        exit_checks.push(w.node);
+      }
+    }
+    for w in self.transitions.take_due_weights(now) {
+      let Ok(i) = self.resolve(w.node) else {
+        continue;
+      };
+      let current = self.nodes[i as usize].weights.clone();
+      let running = self.transitions.retarget_weights(w.node, &current, &w.to, w.spec, w.at_ms);
+      if !running && self.nodes[i as usize].leaving {
         exit_checks.push(w.node);
       }
     }
@@ -2323,8 +2558,8 @@ impl Spatial {
       let slot = match track.component {
         Component::Position => &mut n.position,
         Component::Scale => &mut n.scale,
-        // Rotation tracks live in their own list.
-        Component::Rotation => unreachable!("rotation track in the linear list"),
+        // Rotation and weights tracks live in their own lists.
+        Component::Rotation | Component::Weights => unreachable!("only position and scale tracks are linear"),
       };
       if *slot != value {
         *slot = value;
@@ -2367,6 +2602,32 @@ impl Spatial {
     });
     rotation.append(&mut self.transitions.rotation);
     self.transitions.rotation = rotation;
+    let mut weights = std::mem::take(&mut self.transitions.weights);
+    let mut value = std::mem::take(&mut self.weights_scratch);
+    weights.retain_mut(|track| {
+      let Ok(i) = self.resolve(track.node) else {
+        return false;
+      };
+      let settled = track.advance(now, &mut value);
+      if self.nodes[i as usize].weights != value {
+        let n = &mut self.nodes[i as usize];
+        n.weights.clear();
+        n.weights.extend_from_slice(&value);
+        self.mark_weights(i);
+      }
+      if settled {
+        if self.nodes[i as usize].leaving {
+          exit_checks.push(track.node);
+        } else {
+          self.transitions.settled.push((track.node, Component::Weights));
+        }
+        return false;
+      }
+      true
+    });
+    self.weights_scratch = value;
+    weights.append(&mut self.transitions.weights);
+    self.transitions.weights = weights;
     exit_checks.sort_unstable();
     exit_checks.dedup();
     for id in exit_checks {
@@ -2396,7 +2657,7 @@ impl Spatial {
       if self.nodes[i as usize].leaving {
         continue;
       }
-      let Some(config) = self.transitions.configs.get(&id).copied() else {
+      let Some(config) = self.transitions.configs.get(&id).cloned() else {
         continue;
       };
       let n = &self.nodes[i as usize];
@@ -2427,6 +2688,8 @@ impl Spatial {
           Component::Position => n.position = [from[0], from[1], from[2]],
           Component::Scale => n.scale = [from[0], from[1], from[2]],
           Component::Rotation => n.rotation = from,
+          // The weights enter follows below, on its own lanes.
+          Component::Weights => {}
         }
         snapped = true;
         let delay_ms = motion.delay_ms + stagger.unwrap_or(0.0);
@@ -2440,6 +2703,32 @@ impl Spatial {
       if snapped {
         self.nodes[i as usize].local_dirty = true;
         self.enqueue(i);
+      }
+      // The weights register enters the same way: snapped to `from`,
+      // animating to what it holds (or a write already heads for).
+      if let Some(f) = config.weights.and_then(|e| e.from) {
+        if stagger.is_none() {
+          stagger = Some(self.stagger_delay_for(i, false));
+        }
+        let held = self.nodes[i as usize].weights.clone();
+        let target = self.transitions.take_weights_target(id).unwrap_or(held);
+        let len = f.value.len().max(target.len());
+        let mut from = f.value.clone();
+        from.resize(len, 0.0);
+        let mut target = target;
+        target.resize(len, 0.0);
+        if from == target {
+          continue;
+        }
+        self.nodes[i as usize].weights = from.clone();
+        self.mark_weights(i);
+        let delay_ms = f.motion.delay_ms + stagger.unwrap_or(0.0);
+        if delay_ms > 0.0 {
+          let at_ms = now + delay_ms as f64;
+          self.transitions.schedule_weights(PendingWeights { node: id, to: target, spec: f.motion.spec, at_ms });
+        } else {
+          self.transitions.retarget_weights(id, &from, &target, f.motion.spec, now);
+        }
       }
     }
   }
@@ -2601,6 +2890,9 @@ impl Spatial {
     // one inverse covers the palette. A dead anchor falls back to identity
     // (the consumer tears joints down before their model root, so live
     // sinks never see it).
+    // Weights rows stage from the registers, beside the matrix rows the
+    // walk staged.
+    self.stage_weights();
     if self.palettes.values().any(|g| g.dirty || g.refs == 0) {
       let mut palettes = std::mem::take(&mut self.palettes);
       let mut scratch: Vec<f32> = Vec::new();

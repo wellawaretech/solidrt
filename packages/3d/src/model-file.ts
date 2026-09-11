@@ -32,7 +32,11 @@ const MAGIC = 0x4d545253
 // uint8x4 (an integer shader input), so a version-6 skinned part would
 // decode at the wrong stride; it is rejected. Re-bake with `srt tool
 // 3d/model`.
-const VERSION = 7
+// Version 8 carries morph targets: a part's packed targets block (names,
+// the sparse-by-vertex texels, the extent - see packMorphTargets), the
+// mesh weights on the node table, and clip channels on the "weights"
+// path. A version-7 file has none, so it is rejected the same way.
+const VERSION = 8
 
 // The named layouts the container writes by name; a custom attribute-list
 // layout (a skinned primitive with COLOR_0, a withAttribute channel) is
@@ -63,6 +67,8 @@ type PartHeader = Block & {
   vertexCount: number
   indexBits: 16 | 32
   index: Block
+  /** The part's packed morph targets, when it has any. */
+  morphs?: { names: string[]; texels: Block; extent: number[] }
 }
 
 type SkinHeader = { joints: number[]; inverseBind: Block; jointBounds: Block }
@@ -111,7 +117,7 @@ export function encodeModel(data: ModelData): Uint8Array {
     let layout = g.layout === undefined ? "standard" : g.layout
     let vertices = push(new Uint8Array(g.vertices.buffer, g.vertices.byteOffset, g.vertices.byteLength))
     let index = push(new Uint8Array(g.indices.buffer, g.indices.byteOffset, g.indices.byteLength))
-    return {
+    let header: PartHeader = {
       ...vertices,
       name: part.name,
       node: part.node,
@@ -122,6 +128,11 @@ export function encodeModel(data: ModelData): Uint8Array {
       indexBits: g.indices instanceof Uint32Array ? 32 : 16,
       index,
     }
+    if (g.morphs !== undefined) {
+      let texels = push(new Uint8Array(g.morphs.texels.buffer, g.morphs.texels.byteOffset, g.morphs.texels.byteLength))
+      header.morphs = { names: g.morphs.names, texels, extent: Array.from(g.morphs.extent) }
+    }
+    return header
   })
   let images = data.images.map((image) => push(image))
   let floats = (f: Float32Array): Block => push(new Uint8Array(f.buffer, f.byteOffset, f.byteLength))
@@ -182,6 +193,10 @@ export function decodeModel(bytes: Uint8Array): ModelData {
       label: part.name,
     }
     if (part.layout !== "standard") geometry.layout = layout
+    if (part.morphs !== undefined) {
+      let m = part.morphs
+      geometry.morphs = { names: m.names, texels: new Float32Array(buffer, payload + m.texels.offset, m.texels.bytes / 4), extent: Float32Array.from(m.extent) }
+    }
     return {
       name: part.name,
       node: part.node,

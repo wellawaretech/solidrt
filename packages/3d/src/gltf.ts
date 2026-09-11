@@ -22,9 +22,11 @@
 // bytes in `images`, and uploading is the engine side's job.
 //
 // Outside the subset: Draco/meshopt-compressed meshes and any other
-// required extension throw naming it; sparse accessors and morph
-// targets (the "weights" channel path) are skipped
-// or ignored; tangents and further UV sets are dropped. COLOR_0 IS
+// required extension throw naming it; tangents (the base channel and
+// the morph target one) and further UV sets are dropped. Sparse
+// accessors are read (what exporters write morph targets as), and
+// morph targets land packed on the part's geometry with the mesh's
+// weights on its node and the "weights" channel path kept. COLOR_0 IS
 // parsed, linear and premultiplied as glTF stores it, into the aColor
 // channel the stock materials read under vertexColors: the "colored"
 // layout for a static primitive, the skinned list plus aColor for a
@@ -34,8 +36,8 @@
 import { compose, decompose, det3, mat4, multiply } from "./math.ts"
 import { linearToSrgb } from "./color.ts"
 import type { Mat4, Quat, Vec3 } from "./math.ts"
-import { attributeAccess, layoutKey, layoutStride, packIndices, vertexView } from "./geometry.ts"
-import type { AttributeAccess, VertexLayout } from "./geometry.ts"
+import { attributeAccess, layoutKey, layoutStride, packIndices, packMorphTargets, vertexView } from "./geometry.ts"
+import type { AttributeAccess, MorphTarget, VertexLayout } from "./geometry.ts"
 import type { Geometry } from "./geometry.ts"
 import type { Topology, VertexAttribute, VertexFormat } from "@solidrt/core/gpu"
 
@@ -93,6 +95,11 @@ export type ModelNode = {
   /** Unit quaternion [x, y, z, w]. */
   rotation: Quat
   scale: Vec3
+  /** Present on a node whose mesh carries morph targets: the initial
+   * weight per target (the node's own `weights`, else the mesh's, else
+   * zeros), what the node's parts draw with until a clip or
+   * setMorphWeights writes them. */
+  weights?: number[]
 }
 
 /** One drawable: a mesh node's primitive. Vertices are LOCAL to its
@@ -143,15 +150,18 @@ export type ModelSkin = {
 export type ModelChannel = {
   /** Index into ModelData.nodes. */
   node: number
-  path: "position" | "rotation" | "scale"
+  /** The node's local TRS, or "weights": the morph target weights of the
+   * node's mesh (glTF's weights path). */
+  path: "position" | "rotation" | "scale" | "weights"
   /** glTF's three: "step" holds each key, "linear" lerps (a rotation
    * slerps), "cubic" is CUBICSPLINE - a Hermite with per-key tangents. */
   interpolation: "step" | "linear" | "cubic"
   /** Key times in seconds, ascending. */
   times: Float32Array
   /** One element per key: 3 floats for position/scale, 4 (a quaternion)
-   * for rotation. "cubic" stores THREE elements per key - in-tangent,
-   * value, out-tangent, in that order. */
+   * for rotation, one per morph target for weights (`channelElements`
+   * reads it off the data). "cubic" stores THREE elements per key -
+   * in-tangent, value, out-tangent, in that order. */
   values: Float32Array
 }
 
@@ -431,23 +441,46 @@ export function parseGltf(bytes: Uint8Array, resolve?: UriResolver): ModelData {
   let accessorFloats = (index: number, what: string): { data: Float32Array; elements: number; count: number; format: VertexFormat | null } => {
     let acc = gltf.accessors[index]
     if (acc === undefined) throw new Error("parseGltf: " + what + " names a missing accessor " + index)
-    if (acc.sparse !== undefined) throw new Error("parseGltf: " + what + " uses a sparse accessor, which is not supported")
     let elements = TYPE_ELEMENTS[acc.type]
     let compBytes = COMPONENT_BYTES[acc.componentType]
     if (elements === undefined || compBytes === undefined) throw new Error("parseGltf: " + what + " has an unknown accessor type")
     let out = new Float32Array(acc.count * elements)
     let normalized = acc.normalized === true
     let format = ACCESSOR_FORMATS[acc.componentType + (normalized ? "n" : "") + "x" + elements] ?? null
-    if (acc.bufferView === undefined) return { data: out, elements, count: acc.count, format }
-    let view = gltf.bufferViews[acc.bufferView]
-    let bytes = bufferViewBytes(acc.bufferView)
-    let stride = view.byteStride ?? compBytes * elements
-    let dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
-    let base = acc.byteOffset ?? 0
     let read = readerFor(acc.componentType, normalized)
-    for (let i = 0; i < acc.count; i++) {
-      let at = base + i * stride
-      for (let e = 0; e < elements; e++) out[i * elements + e] = read(dv, at + e * compBytes)
+    if (acc.bufferView !== undefined) {
+      let view = gltf.bufferViews[acc.bufferView]
+      let bytes = bufferViewBytes(acc.bufferView)
+      let stride = view.byteStride ?? compBytes * elements
+      let dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+      let base = acc.byteOffset ?? 0
+      for (let i = 0; i < acc.count; i++) {
+        let at = base + i * stride
+        for (let e = 0; e < elements; e++) out[i * elements + e] = read(dv, at + e * compBytes)
+      }
+    }
+    // A sparse accessor overrides `sparse.count` elements of the base
+    // (the bufferView, or zeros without one): tightly packed indices in
+    // their own component type and values in the accessor's - the form
+    // exporters write morph targets in.
+    let sparse = acc.sparse
+    if (sparse !== undefined) {
+      let indexBytes = COMPONENT_BYTES[sparse.indices?.componentType]
+      if (indexBytes === undefined || sparse.indices.bufferView === undefined || sparse.values?.bufferView === undefined) {
+        throw new Error("parseGltf: " + what + " has a malformed sparse accessor")
+      }
+      let ib = bufferViewBytes(sparse.indices.bufferView)
+      let idv = new DataView(ib.buffer, ib.byteOffset, ib.byteLength)
+      let ibase = sparse.indices.byteOffset ?? 0
+      let readIndex = readerFor(sparse.indices.componentType, false)
+      let vb = bufferViewBytes(sparse.values.bufferView)
+      let vdv = new DataView(vb.buffer, vb.byteOffset, vb.byteLength)
+      let vbase = sparse.values.byteOffset ?? 0
+      for (let i = 0; i < sparse.count; i++) {
+        let target = readIndex(idv, ibase + i * indexBytes)
+        if (target >= acc.count) throw new Error("parseGltf: " + what + " sparse index " + target + " is past the accessor's " + acc.count + " elements")
+        for (let e = 0; e < elements; e++) out[target * elements + e] = read(vdv, vbase + (i * elements + e) * compBytes)
+      }
     }
     return { data: out, elements, count: acc.count, format }
   }
@@ -467,7 +500,7 @@ export function parseGltf(bytes: Uint8Array, resolve?: UriResolver): ModelData {
   }
 
   let parts: ModelPart[] = []
-  let pendingJointBounds: { skin: number; positions: Float32Array; count: number; joints: Float32Array; weights: Float32Array }[] = []
+  let pendingJointBounds: { skin: number; positions: Float32Array; count: number; joints: Float32Array; weights: Float32Array; slack: number }[] = []
   let bounds = new Float32Array([Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity])
   // Grow a bounds box by a local box through a transform: its 8 corners,
   // conservative under rotation, exact under translation and axis-aligned
@@ -488,7 +521,7 @@ export function parseGltf(bytes: Uint8Array, resolve?: UriResolver): ModelData {
     }
   }
 
-  let emit = (prim: any, name: string, node: number, world: Mat4, skin: number | null): void => {
+  let emit = (prim: any, name: string, node: number, world: Mat4, skin: number | null, targetNames: string[] | null): void => {
     if (prim.attributes?.POSITION === undefined) return
     let mode: number = prim.mode ?? MODE_TRIANGLES
     let pos = accessorFloats(prim.attributes.POSITION, name + " POSITION")
@@ -582,10 +615,6 @@ export function parseGltf(bytes: Uint8Array, resolve?: UriResolver): ModelData {
     // across zero would unbake it, which is pathological. Lines and
     // points have no winding.
     let flip = triangles && !skinned && det3(world) < 0
-    // Joint boxes need the skin's inverse binds, and skins are built after
-    // the walk (their joints are ordinary nodes the walk registers), so
-    // the arrays are parked under the FILE's skin index and grown then.
-    if (skinned) pendingJointBounds.push({ skin: skin!, positions: pos.data, count: pos.count, joints: joints!.data, weights: weights!.data })
 
     // The channels of the part's buffer, written through the accessors:
     // whatever a channel's format, the writer takes floats.
@@ -593,6 +622,10 @@ export function parseGltf(bytes: Uint8Array, resolve?: UriResolver): ModelData {
     let vertices: ArrayBufferView
     let writer: VertexWriter
     let packedIndices: number[]
+    // Output slot -> source vertex, for the channels written after the
+    // interleave (the morph targets): null while the slots are the
+    // source order, the un-index's corner table otherwise.
+    let remap: number[] | null = null
     if (nrm !== null || !triangles) {
       // Indexed as authored. Lines and points without normals get zero
       // ones (there is no face to take one from; nothing lights them).
@@ -617,6 +650,7 @@ export function parseGltf(bytes: Uint8Array, resolve?: UriResolver): ModelData {
       vertices = vertexView(layout, new ArrayBuffer(triangles * 3 * layoutStride(layout)))
       writer = vertexWriter(vertices, layout)
       packedIndices = new Array(triangles * 3)
+      remap = new Array(triangles * 3)
       let face: Vec3 = [0, 0, 0]
       for (let t = 0; t < triangles; t++) {
         let a = indices[t * 3]!, b = indices[t * 3 + 1]!, c = indices[t * 3 + 2]!
@@ -625,6 +659,9 @@ export function parseGltf(bytes: Uint8Array, resolve?: UriResolver): ModelData {
         writeVertex(writer, out, source, a)
         writeVertex(writer, out + 1, source, b)
         writeVertex(writer, out + 2, source, c)
+        remap[out] = a
+        remap[out + 1] = b
+        remap[out + 2] = c
         faceNormal(face, writer.pos, out)
         if (flip) {
           face[0] = -face[0]
@@ -639,9 +676,37 @@ export function parseGltf(bytes: Uint8Array, resolve?: UriResolver): ModelData {
       count = triangles * 3
     }
 
+    // Morph targets: each target's POSITION and NORMAL deltas (a target
+    // may carry either; TANGENT is dropped with the base tangents), read
+    // dense through the accessors (sparse ones expand there), remapped
+    // through the un-index when the primitive was flattened - normal
+    // deltas are dropped then, as flat normals are generated - and packed
+    // sparse by vertex onto the geometry. Names come from the mesh's
+    // extras.targetNames (what Blender writes), else "target<t>".
+    let targets: any[] = prim.targets ?? []
+    let morphs = targets.length === 0 ? undefined : packMorphTargets(count, targets.map((target: any, t: number): MorphTarget => {
+      let what = name + " target " + t
+      let deltas = (attribute: string): Float32Array | null => {
+        if (target?.[attribute] === undefined) return null
+        let acc = accessorFloats(target[attribute], what + " " + attribute)
+        if (acc.elements !== 3 || acc.count !== pos.count) throw new Error("parseGltf: " + what + " " + attribute + " is not VEC3 over the primitive's vertices")
+        if (remap === null) return acc.data
+        let out = new Float32Array(count * 3)
+        for (let slot = 0; slot < count; slot++) {
+          let from = remap[slot]! * 3
+          out[slot * 3] = acc.data[from]!
+          out[slot * 3 + 1] = acc.data[from + 1]!
+          out[slot * 3 + 2] = acc.data[from + 2]!
+        }
+        return out
+      }
+      return { name: targetNames?.[t] ?? "target" + t, position: deltas("POSITION") ?? new Float32Array(count * 3), normal: remap === null ? deltas("NORMAL") : null }
+    }))
+
     // Model bounds: the part's local box through the node's rest-pose
     // world transform (8 corners - conservative under rotation, exact
-    // under translation and axis-aligned scale). A skinned part's
+    // under translation and axis-aligned scale), grown by the morph
+    // extent first so a morphed shape stays inside. A skinned part's
     // vertices are placed by its joints, not its node, so its box is
     // folded in after the skins exist (growBounds over the joint boxes).
     if (!skinned) {
@@ -654,7 +719,21 @@ export function parseGltf(bytes: Uint8Array, resolve?: UriResolver): ModelData {
           if (v > hi[k]!) hi[k] = v
         }
       }
+      if (morphs !== undefined) {
+        for (let k = 0; k < 3; k++) {
+          lo[k] = lo[k]! + morphs.extent[k]!
+          hi[k] = hi[k]! + morphs.extent[3 + k]!
+        }
+      }
       growBounds(bounds, [lo[0], lo[1], lo[2], hi[0], hi[1], hi[2]], world)
+    } else {
+      // Joint boxes need the skin's inverse binds, and skins are built
+      // after the walk (their joints are ordinary nodes the walk
+      // registers), so the arrays are parked under the FILE's skin index
+      // and grown then - each box padded by the largest morph delta, as
+      // a morph moves a vertex in whichever joint's space.
+      let slack = morphs === undefined ? 0 : Math.max(...Array.from(morphs.extent, Math.abs))
+      pendingJointBounds.push({ skin: skin!, positions: pos.data, count: pos.count, joints: joints!.data, weights: weights!.data, slack })
     }
 
     let material = prim.material
@@ -667,6 +746,7 @@ export function parseGltf(bytes: Uint8Array, resolve?: UriResolver): ModelData {
     }
     let geometry: Geometry = { vertices, indices: packIndices(packedIndices, count), label: name }
     if (layout !== undefined) geometry.layout = layout
+    if (morphs !== undefined) geometry.morphs = morphs
     if (!triangles) geometry.topology = topology
     parts.push({ name, node, skin, geometry, material })
   }
@@ -700,7 +780,20 @@ export function parseGltf(bytes: Uint8Array, resolve?: UriResolver): ModelData {
       let slot = materialize(pending)
       let skin = typeof node.skin === "number" ? node.skin : null
       let prims: any[] = mesh.primitives ?? []
-      for (let k = 0; k < prims.length; k++) emit(prims[k], prims.length > 1 ? pending.name + "#" + k : pending.name, slot, world, skin)
+      // Morph target names and the initial weights are the MESH's (a
+      // node may override the weights); the weights land on the node,
+      // which is what a weights channel and setMorphWeights address.
+      let targetCount = Math.max(0, ...prims.map((p: any): number => p?.targets?.length ?? 0))
+      let targetNames: string[] | null = Array.isArray(mesh.extras?.targetNames) ? mesh.extras.targetNames.map(String) : null
+      if (targetCount > 0) {
+        let weights: number[] = Array.isArray(node.weights) ? node.weights : Array.isArray(mesh.weights) ? mesh.weights : []
+        if (weights.length !== targetCount) {
+          if (weights.length !== 0) throw new Error("parseGltf: node " + pending.name + " has " + weights.length + " weights for " + targetCount + " morph targets")
+          weights = new Array(targetCount).fill(0)
+        }
+        nodes[slot]!.weights = weights.map(Number)
+      }
+      for (let k = 0; k < prims.length; k++) emit(prims[k], prims.length > 1 ? pending.name + "#" + k : pending.name, slot, world, skin, targetNames)
     }
     for (let child of node.children ?? []) walk(child, pending, world)
   }
@@ -718,7 +811,7 @@ export function parseGltf(bytes: Uint8Array, resolve?: UriResolver): ModelData {
   // compact skins exist: each influenced vertex (weight above zero) goes
   // through the joint's inverse bind into joint space and grows that
   // joint's box.
-  let growJointBounds = (skin: ModelSkin, positions: Float32Array, count: number, joints: Float32Array, weights: Float32Array): void => {
+  let growJointBounds = (skin: ModelSkin, positions: Float32Array, count: number, joints: Float32Array, weights: Float32Array, slack: number): void => {
     let jb = skin.jointBounds
     let ib = skin.inverseBind
     for (let i = 0; i < count; i++) {
@@ -732,12 +825,12 @@ export function parseGltf(bytes: Uint8Array, resolve?: UriResolver): ModelData {
         let py = ib[m + 1]! * x + ib[m + 5]! * y + ib[m + 9]! * z + ib[m + 13]!
         let pz = ib[m + 2]! * x + ib[m + 6]! * y + ib[m + 10]! * z + ib[m + 14]!
         let b = j * 6
-        if (px < jb[b]!) jb[b] = px
-        if (py < jb[b + 1]!) jb[b + 1] = py
-        if (pz < jb[b + 2]!) jb[b + 2] = pz
-        if (px > jb[b + 3]!) jb[b + 3] = px
-        if (py > jb[b + 4]!) jb[b + 4] = py
-        if (pz > jb[b + 5]!) jb[b + 5] = pz
+        if (px - slack < jb[b]!) jb[b] = px - slack
+        if (py - slack < jb[b + 1]!) jb[b + 1] = py - slack
+        if (pz - slack < jb[b + 2]!) jb[b + 2] = pz - slack
+        if (px + slack > jb[b + 3]!) jb[b + 3] = px + slack
+        if (py + slack > jb[b + 4]!) jb[b + 4] = py + slack
+        if (pz + slack > jb[b + 5]!) jb[b + 5] = pz + slack
       }
     }
   }
@@ -786,7 +879,7 @@ export function parseGltf(bytes: Uint8Array, resolve?: UriResolver): ModelData {
   }
   for (let parked of pendingJointBounds) {
     let slot = skinSlots.get(parked.skin)
-    if (slot !== undefined) growJointBounds(skins[slot]!, parked.positions, parked.count, parked.joints, parked.weights)
+    if (slot !== undefined) growJointBounds(skins[slot]!, parked.positions, parked.count, parked.joints, parked.weights, parked.slack)
   }
   // Skinned parts' share of the model bounds: each joint's box (joint
   // space) through that joint's rest-pose world transform, which is where
@@ -801,18 +894,21 @@ export function parseGltf(bytes: Uint8Array, resolve?: UriResolver): ModelData {
 
   // Animations, after the walk so channels can materialize their target
   // nodes (a channel may target a meshless node - a joint, a rig pivot).
-  const CHANNEL_PATHS: Record<string, ModelChannel["path"]> = { translation: "position", rotation: "rotation", scale: "scale" }
+  const CHANNEL_PATHS: Record<string, ModelChannel["path"]> = { translation: "position", rotation: "rotation", scale: "scale", weights: "weights" }
   let clips: ModelClip[] = (gltf.animations ?? []).map((anim: any, ai: number): ModelClip => {
     let clipName = anim.name ?? "clip" + ai
     let channels: ModelChannel[] = []
     let duration = 0
     for (let ch of anim.channels ?? []) {
-      // Outside the subset: "weights" (morph targets) and extension paths.
+      // Extension paths (KHR_animation_pointer) are outside the subset.
       let path = CHANNEL_PATHS[ch.target?.path]
       if (path === undefined) continue
-      // A target outside the walked scene has nothing to move.
+      // A target outside the walked scene has nothing to move, and a
+      // weights channel on a node without morph targets nothing to weigh.
       let pending = pendingByIndex.get(ch.target.node)
       if (pending === undefined) continue
+      let targetCount = pending.index === null ? undefined : nodes[pending.index]!.weights?.length
+      if (path === "weights" && targetCount === undefined) continue
       let sampler = anim.samplers?.[ch.sampler]
       if (sampler === undefined) throw new Error("parseGltf: animation " + clipName + " channel names a missing sampler " + ch.sampler)
       let what = "animation " + clipName
@@ -820,11 +916,20 @@ export function parseGltf(bytes: Uint8Array, resolve?: UriResolver): ModelData {
       let output = accessorFloats(sampler.output, what + " output")
       let interpolation: ModelChannel["interpolation"] =
         sampler.interpolation === "STEP" ? "step" : sampler.interpolation === "CUBICSPLINE" ? "cubic" : "linear"
-      let elements = path === "rotation" ? 4 : 3
-      if (output.elements !== elements) throw new Error("parseGltf: " + what + " " + path + " output is not " + (elements === 4 ? "VEC4" : "VEC3"))
       let perKey = interpolation === "cubic" ? 3 : 1
-      if (output.count !== input.count * perKey) {
-        throw new Error("parseGltf: " + what + " " + path + " has " + output.count + " values for " + input.count + " keys")
+      if (path === "weights") {
+        // Scalars, one per target per key: the output is as long as the
+        // key count times the node's target count.
+        if (output.elements !== 1) throw new Error("parseGltf: " + what + " weights output is not SCALAR")
+        if (output.count !== input.count * perKey * targetCount!) {
+          throw new Error("parseGltf: " + what + " weights has " + output.count + " values for " + input.count + " keys of " + targetCount + " targets")
+        }
+      } else {
+        let elements = path === "rotation" ? 4 : 3
+        if (output.elements !== elements) throw new Error("parseGltf: " + what + " " + path + " output is not " + (elements === 4 ? "VEC4" : "VEC3"))
+        if (output.count !== input.count * perKey) {
+          throw new Error("parseGltf: " + what + " " + path + " has " + output.count + " values for " + input.count + " keys")
+        }
       }
       if (input.count > 0) duration = Math.max(duration, input.data[input.count - 1]!)
       channels.push({ node: materialize(pending), path, interpolation, times: input.data, values: output.data })

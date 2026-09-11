@@ -3,7 +3,8 @@ import type { VoidComponent } from "@solidrt/core"
 import { SceneContext } from "./context.tsx"
 import { syncNode } from "./node-props.ts"
 import type { TransformProps, PointerEventProps } from "./node-props.ts"
-import { add, destroy } from "../node.ts"
+import { add, destroy, setMorphWeights } from "../node.ts"
+import type { MorphWeights } from "../node.ts"
 import { createMesh, setCastShadow, setCulling, setGeometry, setLayers, setMaterial, setMeshParams, setRenderOrder } from "../mesh.ts"
 import type { Mesh as MeshNode } from "../mesh.ts"
 import type { ShaderParams } from "@solidrt/core/gpu"
@@ -32,6 +33,13 @@ export type MeshProps = TransformProps & PointerEventProps & {
   frustumCulled?: boolean
   /** World units the culled box grows by (setCulling as a prop; default 0). */
   cullMargin?: number
+  /** Morph target weights (setMorphWeights as a prop) for geometry that
+   * carries `morphs` under a `morph: true` material: by name (keys merge,
+   * a key that disappears keeps its weight) or every weight in target
+   * order. A `weights` entry in `transition` animates each change. For
+   * weights changing every frame prefer `ref` + setMorphWeights from
+   * onFrame, the same split as setTransform. */
+  morphWeights?: MorphWeights
   ref?: (mesh: MeshNode) => void
 }
 
@@ -84,6 +92,12 @@ export let Mesh: VoidComponent<MeshProps> = props => {
     () => props.castShadow,
     c => setCastShadow(mesh, c === true),
   )
+  createEffect(
+    () => props.morphWeights,
+    w => {
+      if (w !== undefined) setMorphWeights(mesh, w)
+    },
+  )
   syncMesh(mesh, props)
   untrack(() => props.ref)?.(mesh)
   onCleanup(() => destroy(mesh))
@@ -91,5 +105,6 @@ export let Mesh: VoidComponent<MeshProps> = props => {
 }
 
 // The props both populated meshes share with Mesh: everything but the
-// geometry/material pair (documented per component) and the ref.
-export type PopulatedMeshProps = Omit<MeshProps, "geometry" | "material" | "ref">
+// geometry/material pair (documented per component), the ref and the
+// morph weights (a populated mesh does not morph yet).
+export type PopulatedMeshProps = Omit<MeshProps, "geometry" | "material" | "ref" | "morphWeights">

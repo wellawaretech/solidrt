@@ -39,7 +39,7 @@
 import { addDraw, createCubeDrawTarget, createDrawTarget, depthTexture, destroyProgram, destroyRenderPipeline, destroyTexture, removeDraw, renderTarget, setDrawBuffers, setDrawOrder, setDrawParams, setDrawRange, setDrawTextures, setTargetParams, setTargetRect, setTargetSize, setTargetTextures } from "@solidrt/core/gpu"
 import * as spatial from "flux:spatial"
 import type { Impact as CoreImpact, NodeId, QueryFilter } from "flux:spatial"
-import type { BufferId, DrawId, FilterMode, ProgramId, RenderPipelineId, ShaderParams, TextureId, WrapMode } from "@solidrt/core/gpu"
+import type { BufferId, DrawId, FilterMode, ProgramId, RenderPipelineId, ShaderParams, TextureBindings, TextureId, WrapMode } from "@solidrt/core/gpu"
 import { getOwner, onCleanup } from "@solidrt/core"
 import type { PointerEvent as ElementPointerEvent, WheelEvent as ElementWheelEvent } from "@solidrt/core"
 import { copy, mat4, transformPoint } from "./math.ts"
@@ -60,7 +60,7 @@ import { createEnvironmentPlaceholder, createPrefilter, bufferFormat } from "./e
 import type { Prefilter } from "./environment.ts"
 import type { Material } from "./material.ts"
 import { orderEntries } from "./order.ts"
-import { fillTransform, freeLeaving, leaveScene, makeNode, setTransition, worldInto } from "./node.ts"
+import { activateMorph, fillTransform, freeLeaving, leaveScene, makeNode, setTransition, worldInto } from "./node.ts"
 import type { SceneHooks, SceneNode, ScenePointerListener } from "./node.ts"
 import { checkInstancePairing, checkMask, instanceBinding, localBounds, publishRecords } from "./mesh.ts"
 import type { InstancedMesh, InstanceNode, Mesh } from "./mesh.ts"
@@ -1019,6 +1019,59 @@ function entrySeed(material: Material, params: ShaderParams | null): ShaderParam
   return { ...seed, ...material.params, ...params }
 }
 
+// A morphing entry's bindings: the geometry's packed targets (uMorphs and
+// its width) and the weights texture (uMorphWeights): the mesh's owner's
+// one row, or the population's row-per-slot texture on an instanced mesh
+// (the shader reads row uMorphRow + gl_InstanceID). Only for a material
+// whose program declares them (Material.morphed - the mesh's own, a
+// morphed shadow stand-in); any other validates its bindings strictly.
+// A plain owner's register is bound here if it was not yet (a mesh owner
+// nothing wrote before its first morphing entry).
+type MorphEntry = { textures: TextureBindings; params: ShaderParams }
+function morphEntry(material: Material, mesh: Mesh): MorphEntry | null {
+  if (material.morphed !== true) return null
+  let packed = mesh._buffers?.morphs
+  if (packed === null || packed === undefined) return null
+  let weights = morphWeightsTexture(mesh)
+  if (weights === null) return null
+  return {
+    textures: { uMorphs: packed.texture, uMorphWeights: weights },
+    params: { uMorphWidth: packed.width, uMorphRow: 0 },
+  }
+}
+
+// The weights texture a mesh's morphing entries bind, activating a plain
+// owner's register on the way; null when nothing owns weights.
+function morphWeightsTexture(mesh: Mesh): TextureId | null {
+  let inst = mesh._instances
+  if (inst !== null) return inst.morph?.texture ?? null
+  return mesh._morphOwner === null ? null : activateMorph(mesh._morphOwner).texture
+}
+
+// An entry's sampler bindings: the material's, the mesh's own (a skin's
+// uBones) when the material is the mesh's or a skinned stand-in (a
+// skinned shadow variant declares uBones and needs the mesh's palette;
+// other override programs may not declare the names, and per-entry
+// bindings validate strictly), and the morph bindings when it morphs.
+// A morphing material over geometry without targets has nothing to walk
+// (and its uMorphs binding nothing to bind): rejected at add(), like a
+// layout mismatch. A record mesh has no instance nodes to own weights,
+// so its records cannot morph; an instanced mesh morphs per instance.
+function checkMorph(material: Material, mesh: Mesh, site: string): void {
+  if (material.morphed !== true) return
+  if (mesh.geometry.morphs === undefined) throw new Error(site + " morphs (morph: true) but the geometry carries no morph targets")
+  let inst = mesh._instances
+  if (inst !== null && inst.nodes === null) throw new Error(site + " morphs, but a record mesh has no instance nodes to own weights (createInstancedMesh morphs per instance)")
+  if (inst === null && mesh._morphOwner === null) throw new Error(site + " morphs but the mesh has no morph owner")
+}
+
+function entryTextures(material: Material, mesh: Mesh, morph: MorphEntry | null): TextureBindings | undefined {
+  let textures = material.textures
+  if ((material === mesh.material || material.skinned === true) && mesh._textures !== null) textures = { ...textures, ...mesh._textures }
+  if (morph !== null) textures = { ...textures, ...morph.textures }
+  return textures
+}
+
 // A buffer's clear color: the sRGB option decoded to premultiplied linear
 // light, what the buffer holds and the resolve tone maps.
 function bufferClear(color: [number, number, number, number] | undefined): [number, number, number, number] | undefined {
@@ -1436,12 +1489,13 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     // so added live it would draw at the seeded identity until then. The
     // mismatch branch in sync() turns it on in the same pass that writes
     // uModel.
-    mesh._entry = addDraw(texture, mesh.material.pipeline(mesh.geometry, geometryTopology(mesh.geometry)), entrySeed(mesh.material, mesh._params), {
+    let morph = morphEntry(mesh.material, mesh)
+    mesh._entry = addDraw(texture, mesh.material.pipeline(mesh.geometry, geometryTopology(mesh.geometry)), entrySeed(mesh.material, morph === null ? mesh._params : { ...morph.params, ...mesh._params }), {
       buffers: [...bufs.buffers, ...(inst !== null ? instanceBinding(mesh.material, inst) : [])],
       indexBuffer: bufs.index,
       indexFormat: bufs.indexFormat,
       ...meshRange(mesh),
-      textures: mesh._textures !== null ? { ...mesh.material.textures, ...mesh._textures } : mesh.material.textures,
+      textures: entryTextures(mesh.material, mesh, morph),
       instanceCount: 0,
     })
     // The core turns the entry on (with the world matrix) at the next
@@ -1481,16 +1535,14 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       checkInstancePairing(material, inst, "Shadow material")
     }
     let bufs = mesh._buffers!
-    let entry = addDraw(v.texture, material.pipeline(mesh.geometry, geometryTopology(mesh.geometry)), entrySeed(material, v.override !== null ? null : mesh._params), {
+    let morph = morphEntry(material, mesh)
+    let params = v.override !== null ? (morph === null ? null : morph.params) : morph === null ? mesh._params : { ...morph.params, ...mesh._params }
+    let entry = addDraw(v.texture, material.pipeline(mesh.geometry, geometryTopology(mesh.geometry)), entrySeed(material, params), {
       buffers: [...bufs.buffers, ...(inst !== null ? instanceBinding(material, inst) : [])],
       indexBuffer: bufs.index,
       indexFormat: bufs.indexFormat,
       ...meshRange(mesh),
-      // The mesh's own bindings ride with its own material and with any
-      // skinned stand-in (a skinned shadow variant declares uBones and
-      // needs the mesh's palette); other override programs may not
-      // declare the names, and per-entry bindings validate strictly.
-      textures: (material === mesh.material || material.skinned === true) && mesh._textures !== null ? { ...material.textures, ...mesh._textures } : material.textures,
+      textures: entryTextures(material, mesh, morph),
       instanceCount: 0,
     })
     spatial.bindDraw(mesh._node!, v.texture, entry, material.normalMatrix === true, inst !== null ? inst.count : 1, material.lodFade === true)
@@ -1845,10 +1897,14 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       if (disposed) return
       validateGeometry(mesh.geometry)
       checkLayout(mesh.material, mesh.geometry, "Mesh material")
+      checkMorph(mesh.material, mesh, "Mesh material")
       // Every check before any mutation, so a rejected mesh is attached
       // nowhere - the views' override materials included.
       for (let v of views) {
-        if (v.override !== null && mesh._instances === null) checkLayout(v.override, mesh.geometry, "View override material")
+        if (v.override !== null && mesh._instances === null) {
+          checkLayout(v.override, mesh.geometry, "View override material")
+          checkMorph(v.override, mesh, "View override material")
+        }
       }
       // Instancing pairs the same way layout does: the pipeline's instance
       // attributes describe the mesh's record buffers, so one without the
@@ -1944,6 +2000,9 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       if (levels === null) instanceBuffers.push(mesh._instances.matrix)
       else for (let l of levels) instanceBuffers.push(l._instances.matrix)
       spatial.bindMatrixRecord(instance._node, instanceBuffers, instance._slot, mesh._node)
+      // A morphing population: the instance's register takes its slot's
+      // row now (a recycled slot's row is overwritten, not inherited).
+      if (mesh._instances.morph !== null) activateMorph(instance)
       byNode.set(instance._node, instance)
       if (mesh._instances.bounds === null) groupDirty.add(mesh)
       this._schedule()
@@ -1994,6 +2053,18 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
           let entry = v.entries.get(mesh)
           if (entry !== undefined) setDrawBuffers(v.texture, entry, { buffers: [...bufs.buffers, ...instanceBinding(viewMaterial(v, mesh), inst)] })
         }
+      }
+    },
+    _setMorphTexture(mesh) {
+      // The replaced population texture goes to every morphing entry of
+      // the mesh (its own, a morphed shadow stand-in's); the caller
+      // destroys the old texture after this.
+      let weights = mesh._instances?.morph?.texture
+      if (weights === undefined || mesh._buffers === null || disposed) return
+      if (mesh._entry !== null && mesh.material.morphed === true) setDrawTextures(texture, mesh._entry, { uMorphWeights: weights })
+      for (let v of views) {
+        let entry = v.entries.get(mesh)
+        if (entry !== undefined && viewMaterial(v, mesh).morphed === true) setDrawTextures(v.texture, entry, { uMorphWeights: weights })
       }
     },
     _setRange(mesh) {

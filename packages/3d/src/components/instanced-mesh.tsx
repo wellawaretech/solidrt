@@ -5,7 +5,8 @@ import { syncNode } from "./node-props.ts"
 import type { TransformProps, PointerEventProps } from "./node-props.ts"
 import { syncMesh } from "./mesh.tsx"
 import type { PopulatedMeshProps } from "./mesh.tsx"
-import { add, destroy } from "../node.ts"
+import { add, destroy, setMorphWeights } from "../node.ts"
+import type { MorphWeights } from "../node.ts"
 import { addInstance, createInstancedMesh, disposeInstances, setCastShadow, setGeometry, setInstanceStyle } from "../mesh.ts"
 import type { InstancedMesh as InstancedMeshNode, InstanceNode } from "../mesh.ts"
 import type { Geometry } from "../geometry.ts"
@@ -83,6 +84,11 @@ export type InstanceProps = TransformProps & PointerEventProps & {
    * absent, the instance keeps the material's instanceStyle (white for
    * a tint). */
   style?: ArrayLike<number>
+  /** The instance's morph target weights (setMorphWeights as a prop),
+   * for a population over geometry with `morphs` under a `morph: true`
+   * material: by name (keys merge) or every weight in target order; a
+   * `weights` entry in `transition` animates each change. */
+  morphWeights?: MorphWeights
   ref?: (instance: InstanceNode) => void
 }
 
@@ -103,6 +109,12 @@ export let Instance: ParentComponent<InstanceProps> = props => {
     () => props.style,
     s => {
       if (s !== undefined) setInstanceStyle(instance, s)
+    },
+  )
+  createEffect(
+    () => props.morphWeights,
+    w => {
+      if (w !== undefined) setMorphWeights(instance, w)
     },
   )
   untrack(() => props.ref)?.(instance)

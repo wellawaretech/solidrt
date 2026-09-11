@@ -7,8 +7,9 @@
 // types only).
 
 import * as spatial from "flux:spatial"
-import type { NodeId, NodeTransition } from "flux:spatial"
+import type { NodeId, NodeMotionSpec, NodeTransition } from "flux:spatial"
 import { on } from "srt:events"
+import { createMutableTexture, destroyTexture } from "@solidrt/core/gpu"
 import type { ShaderParams, TextureId } from "@solidrt/core/gpu"
 import type { PointerEvent as ElementPointerEvent, WheelEvent as ElementWheelEvent } from "@solidrt/core"
 // The scene's lookAt() aims a node; math's builds a camera's view matrix -
@@ -148,6 +149,9 @@ export type SceneHooks = {
   _setCount(mesh: Mesh): void
   /** Re-point the mesh's entries at its (replaced) instance buffers. */
   _setBuffer(mesh: Mesh): void
+  /** Re-point the mesh's morphing entries at its population's (replaced)
+   * weights texture. */
+  _setMorphTexture(mesh: Mesh): void
   /** The mesh's draw range changed (setDrawRange): apply it to its entries. */
   _setRange(mesh: Mesh): void
   /** One of the mesh's record streams has a dirty range: publish it at
@@ -230,6 +234,12 @@ export type SceneNode = {
    * model root - the body's, for a piece bound onto its skeleton - and
    * null for non-joints (the common case pays one null check). */
   _palettes: { texture: TextureId; row: number; post: Float32Array; anchor: SceneNode }[] | null
+  /** The morph weights this node owns (see Mesh._morphOwner): the target
+   * names, the weights texture its core register is published to, and
+   * the JS-side weights a scene enter restores. null for the common case;
+   * created on demand for a mesh whose geometry carries targets, by
+   * createModel for a glTF node with them. */
+  _morph: MorphState | null
   /** A culling-only local box (a model joint's influence region, in joint
    * space): bound at every scene enter so the joint's world box follows
    * the pose without joining the picking index. null for the common case. */
@@ -239,9 +249,10 @@ export type SceneNode = {
   _lod: LodConfig | null
 }
 
-/** The settled component of a node transition. */
+/** The settled component of a node transition: a transform component,
+ * or "weights" for the morph target weights lane. */
 export type TransitionEndEvent = {
-  component: "position" | "rotation" | "scale"
+  component: "position" | "rotation" | "scale" | "weights"
 }
 
 /** What every scene pointer event carries, whichever handler sees it:
@@ -337,6 +348,31 @@ export type ScenePointerListener = {
   onTap?: (event: SceneTapEvent) => void
 }
 
+/** A node's morph weights (internal; see SceneNode._morph). */
+export type MorphState = {
+  /** One name per target, in the geometry's order. */
+  names: string[]
+  /** The weights texture: rgba32f, ceil(n / 4) texels wide - the node's
+   * core register published into `row` of it (bindWeightsSlot), what the
+   * entries bind as uMorphWeights. A plain owner's own one-row texture;
+   * an instance's is its population's (one row per record slot, the
+   * shader reads row gl_InstanceID), shared and owned by the mesh. */
+  texture: TextureId
+  row: number
+  /** The texture is the population's, not this node's to free. */
+  shared: boolean
+  /** The last JS write: what a scene enter pushes to the core. In a
+   * scene the core register is authoritative (getMorphWeights reads it). */
+  weights: Float32Array
+  /** The core node the texture's row is bound to (activateMorph), null
+   * when none is - the guard against rebinding at every entry build. */
+  bound: NodeId | null
+}
+
+/** The per-target weights of a setMorphWeights write: by name (a partial
+ * write, the other targets untouched) or every weight in target order. */
+export type MorphWeights = Record<string, number> | ArrayLike<number>
+
 /** A bare node record (internal: the mesh and light constructors build on it). */
 export function makeNode(kind: SceneNode["kind"]): SceneNode {
   return {
@@ -354,6 +390,7 @@ export function makeNode(kind: SceneNode["kind"]): SceneNode {
     _scene: null,
     _transition: null,
     _palettes: null,
+    _morph: null,
     _cullBounds: null,
     _lod: null,
   }
@@ -472,9 +509,18 @@ function finishLeave(node: SceneNode, scene: SceneHooks | null): void {
     }
     return
   }
-  if (scene === null) return
-  if (node.kind === "mesh") scene._detach(node as Mesh)
-  else if (node.kind === "light") scene._detachLight(node as Light)
+  if (scene !== null) {
+    if (node.kind === "mesh") scene._detach(node as Mesh)
+    else if (node.kind === "light") scene._detachLight(node as Light)
+  }
+  // A destroyed owner's weights texture goes with it: its entries (and
+  // those of the parts under a group owner, destroyed before it) are
+  // off the scene by now. An instance's row lives in its population's
+  // texture, which stays.
+  if (node._morph !== null) {
+    if (!node._morph.shared) destroyTexture(node._morph.texture)
+    node._morph = null
+  }
 }
 
 export function enterScene(node: SceneNode, scene: SceneHooks): void {
@@ -495,6 +541,10 @@ export function enterScene(node: SceneNode, scene: SceneHooks): void {
       if (p.anchor._node !== null) spatial.bindTextureSlot(node._node, p.texture, p.row, p.post, p.anchor._node)
     }
   }
+  // A morph owner with weights already (a model's node, a mesh written
+  // before its first enter) binds them now; a mesh owner nothing wrote
+  // gets its state when a morphing entry first needs it (activateMorph).
+  if (node._morph !== null) activateMorph(node)
   if (node._cullBounds !== null) spatial.setCullBounds(node._node, node._cullBounds)
   if (node.kind === "mesh") {
     spatial.setLayers(node._node, (node as Mesh).layers)
@@ -522,6 +572,160 @@ export function leaveScene(node: SceneNode): void {
   }
 }
 
+/** A weights texture over `targets` targets and `rows` owners: rgba32f,
+ * four weights per texel, zeroed (the core writes the rows). */
+export function createWeightsTexture(targets: number, rows: number, label?: string): TextureId {
+  let width = Math.max(1, Math.ceil(targets / 4))
+  return createMutableTexture(new Float32Array(width * 4 * rows), width, rows, { format: "rgba32f", filter: "nearest", autoFree: false, label: label ?? "morph-weights" })
+}
+
+/** Build a morph state for `names` seeded with `initial` (zeros without):
+ * the one-row weights texture is created here, freed when the owner is
+ * destroyed (finishLeave) or its geometry changes (resetMorph). */
+export function createMorphState(names: string[], initial: ArrayLike<number> | null, label?: string): MorphState {
+  let weights = new Float32Array(names.length)
+  if (initial !== null) {
+    if (initial.length !== names.length) throw new Error("createMorphState: " + initial.length + " weights for " + names.length + " targets")
+    weights.set(initial)
+  }
+  return { names, texture: createWeightsTexture(names.length, 1, label), row: 0, shared: false, weights, bound: null }
+}
+
+/** The owner's morph state with its register bound to the weights
+ * texture and seeded, for a node in a scene (a scene enter, a morphing
+ * entry's build, an instance's attach): idempotent per core node. An
+ * instance binds its slot's row on every level's population texture
+ * (an instanced LOD's levels share the register). Outside a scene it
+ * only makes the state. */
+export function activateMorph(node: SceneNode): MorphState {
+  let m = ensureMorph(node)
+  if (node._node !== null && m.bound !== node._node) {
+    for (let texture of morphTextures(node, m)) spatial.bindWeightsSlot(node._node, texture, m.row)
+    spatial.setWeights(node._node, m.weights)
+    m.bound = node._node
+  }
+  return m
+}
+
+/** Every weights texture the node's register publishes into: its own,
+ * plus for an instance the other levels' population textures. */
+function morphTextures(node: SceneNode, m: MorphState): TextureId[] {
+  let textures = [m.texture]
+  let mesh = node.kind === "instance" ? (node as InstanceNode).mesh : null
+  for (let level of mesh?._instances.levels ?? []) {
+    let texture = level._instances?.morph?.texture
+    if (texture !== undefined && !textures.includes(texture)) textures.push(texture)
+  }
+  return textures
+}
+
+/** The node's morph state, made on first use for a mesh that owns its
+ * own targets or an instance of a population with targets; throws for a
+ * node without targets. */
+export function ensureMorph(node: SceneNode): MorphState {
+  if (node._morph !== null) return node._morph
+  if (node.kind === "instance") {
+    let instance = node as InstanceNode
+    let population = instance.mesh?._instances.morph ?? null
+    if (instance.mesh === null || population === null) throw new Error("The instance's mesh has no morph targets (geometry with `morphs`)")
+    let names = instance.mesh.geometry.morphs!.names
+    node._morph = { names, texture: population.texture, row: instance._slot, shared: true, weights: new Float32Array(names.length), bound: null }
+    return node._morph
+  }
+  let mesh = node.kind === "mesh" ? (node as Mesh) : null
+  if (mesh === null || mesh._morphOwner !== mesh || mesh.geometry.morphs === undefined) {
+    throw new Error("The node has no morph targets (a mesh over geometry with `morphs`, or a model node with targets)")
+  }
+  node._morph = createMorphState(mesh.geometry.morphs.names, null, mesh.geometry.label ? mesh.geometry.label + "-weights" : undefined)
+  return node._morph
+}
+
+/** Move an instance's morph state to its population's replacement
+ * texture (growth: same targets, same row): the core register keeps its
+ * weights and any running track, only the slot moves - unbound from the
+ * old texture, bound to the new, staged at the next flush. */
+export function rebindMorph(node: SceneNode, texture: TextureId): void {
+  let m = node._morph
+  if (m === null) return
+  let previous = m.texture
+  m.texture = texture
+  if (node._node !== null && m.bound === node._node) {
+    spatial.unbindWeightsSlot(node._node, previous)
+    spatial.bindWeightsSlot(node._node, texture, m.row)
+  }
+}
+
+/** Drop a node's morph state (setGeometry, a population's texture
+ * replaced): the next enter, or the next setMorphWeights, makes a fresh
+ * one. In a scene the core slots are unbound first; the entries rebuild
+ * after. An owner's own texture is freed, a shared one is the mesh's. */
+export function resetMorph(node: SceneNode): void {
+  if (node._morph === null) return
+  if (node._node !== null) spatial.unbindWeightsSlot(node._node)
+  if (!node._morph.shared) destroyTexture(node._morph.texture)
+  node._morph = null
+}
+
+/**
+ * Write morph target weights on a node that owns them - a mesh whose
+ * geometry carries `morphs`, an instance of an instanced mesh over such
+ * geometry (each copy morphs by its own weights), or a model's node for
+ * a glTF mesh with targets (`model.nodes`; every part of that mesh
+ * follows it). By name,
+ * `{ smile: 0.7 }` leaves the other targets at their last written
+ * value; an array writes them all in target order. Weights are
+ * unbounded (glTF's model: 0..1 is the authored range, past it
+ * extrapolates). The write lands in the spatial core's register and
+ * reaches the vertex stage at the next flush. It is a TARGET like a
+ * setTransform write: a `weights` entry in the node's transition
+ * declaration (setTransition, `{ weights: { duration: 300 } }`) makes
+ * every write animate, and `transition` here animates this one write
+ * on a motion of its own (`{ duration, bounce? | curve, delay? }` or a
+ * shorthand string), declaration or not - a smile springs in; a settle
+ * calls `onTransitionEnd` with component "weights". A clip's weights
+ * track writes the same register, last write wins each frame (the
+ * players advance first, so a write from onFrame wins). Three's
+ * `morphTargetInfluences`, Godot's `set_blend_shape_value`, Unity's
+ * `SetBlendShapeWeight` (Unity's scale is 0..100).
+ */
+export function setMorphWeights(node: SceneNode, weights: MorphWeights, transition?: NodeMotionSpec): void {
+  let m = ensureMorph(node)
+  if (typeof (weights as ArrayLike<number>).length === "number") {
+    let all = weights as ArrayLike<number>
+    if (all.length !== m.names.length) {
+      throw new Error("setMorphWeights: " + all.length + " weights for " + m.names.length + " targets (" + m.names.join(", ") + ")")
+    }
+    m.weights.set(all)
+  } else {
+    for (let [name, value] of Object.entries(weights as Record<string, number>)) {
+      let i = m.names.indexOf(name)
+      if (i < 0) throw new Error("setMorphWeights: no morph target '" + name + "' (targets: " + m.names.join(", ") + ")")
+      if (typeof value !== "number" || !Number.isFinite(value)) throw new Error("setMorphWeights: weight '" + name + "' must be a finite number, got " + value)
+      m.weights[i] = value
+    }
+  }
+  if (node._node !== null) spatial.writeWeights(node._node, m.weights, transition)
+}
+
+/** The node's morph weights, one per target in target order - a copy,
+ * read from the spatial core while the node is in a scene (a playing
+ * weights track shows here), from the last JS write otherwise. */
+export function getMorphWeights(node: SceneNode): Float32Array {
+  let m = ensureMorph(node)
+  let out = new Float32Array(m.names.length)
+  if (node._node !== null) spatial.readWeights(node._node, out)
+  else out.set(m.weights)
+  return out
+}
+
+/** The node's morph target names, in target order (the index of each
+ * weight); empty for a node without targets. */
+export function getMorphNames(node: SceneNode): string[] {
+  if (node._morph !== null) return node._morph.names.slice()
+  let mesh = node.kind === "mesh" ? (node as Mesh) : node.kind === "instance" ? (node as InstanceNode).mesh : null
+  return mesh !== null && (mesh._morphOwner === mesh || node.kind === "instance") && mesh.geometry.morphs !== undefined ? mesh.geometry.morphs.names.slice() : []
+}
+
 /** The node's local transform in the FFI carrier. */
 export function fillTransform(node: SceneNode): Float32Array {
   let t = transformScratch
@@ -547,14 +751,16 @@ export type { TransformUpdate } from "./math.ts"
  * (position/scale per lane, rotation along the quaternion geodesic - a
  * spring keeps its velocity through retargets, the pursuit-safe shape),
  * so JS writes once per target change instead of once per frame. A spec
- * per component (position, rotation, scale) plus `all`; each
+ * per component (position, rotation, scale, and `weights` for a morph
+ * owner's setMorphWeights writes, one lane per target) plus `all`; each
  * `{ duration, bounce? }` (a spring, the default) / `{ duration, curve }`
  * (a tween) / a shorthand string like "300ms ease-out". The declaration
  * lives on the node and re-applies whenever it enters a scene; the pose
  * it enters with snaps, unless a component's `from` (its lanes: `[x, y,
  * z]`, a quaternion for rotation) animates it in from there at every
- * scene enter; a component's `exit` is where it animates to when
- * `destroy` lets go of the node (see there). Either endpoint takes the
+ * scene enter (a weights `from` is one number per target); a
+ * component's `exit` is where it animates to when `destroy` lets go of
+ * the node (see there). Either endpoint takes the
  * object form `{ value, duration?, curve?, bounce?, delay? }` to own its
  * direction's motion, and `delay` on an entry holds its writes; `stagger`
  * (ms) on a node spaces the enters and exits of its descendants that

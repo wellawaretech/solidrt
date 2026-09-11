@@ -21,7 +21,7 @@ import { disposeGeometry } from "./geometry-gpu.ts"
 import { layoutSlot } from "./geometry.ts"
 import { standard } from "./material.ts"
 import type { Material } from "./material.ts"
-import { add, afterFree, createGroup, remove, setTransform } from "./node.ts"
+import { add, afterFree, createGroup, createMorphState, remove, setTransform } from "./node.ts"
 import type { SceneNode } from "./node.ts"
 import { createMesh } from "./mesh.ts"
 import type { Mesh } from "./mesh.ts"
@@ -53,14 +53,16 @@ export type ModelOptions = {
    * renders its metals near black, so set one, or return `lit` here for
    * the Blinn-Phong look). `maps` holds the uploaded textures by
    * lit()/standard() option name. Called once per material -
-   * or once per (material, skinned, vertexColors) combination when parts
-   * that differ in either share a material - and shared by every part
-   * using it. `skinned` is true when the material must skin (pass it
+   * or once per (material, skinned, vertexColors, morphed) combination
+   * when parts that differ in any share a material - and shared by every
+   * part using it. `skinned` is true when the material must skin (pass it
    * through to `lit`/`unlit`, or read aJoints/aWeights + uBones yourself);
    * `vertexColors` is true when the part carries COLOR_0 in aColor (pass
-   * it through, or read aColor yourself). `data.materials` is in file
-   * order, so the calls arrive in file order too. */
-  material?: (material: ModelMaterial, maps: ModelMaps, skinned: boolean, vertexColors: boolean) => Material
+   * it through, or read aColor yourself); `morphed` is true when the part
+   * carries morph targets (pass it through as `morph`, or splice
+   * MORPH_DECLS/MORPH_APPLY yourself). `data.materials` is in file order,
+   * so the calls arrive in file order too. */
+  material?: (material: ModelMaterial, maps: ModelMaps, skinned: boolean, vertexColors: boolean, morphed: boolean) => Material
   /** Debug name for the textures. */
   label?: string
 }
@@ -136,7 +138,7 @@ export function createModel(data: ModelData, opts: ModelOptions = {}): Model {
       label: label ? label + "-image" + i : undefined,
     })
   })
-  let make = opts.material ?? ((m: ModelMaterial, maps: ModelMaps, skinned: boolean, vertexColors: boolean): Material => {
+  let make = opts.material ?? ((m: ModelMaterial, maps: ModelMaps, skinned: boolean, vertexColors: boolean, morphed: boolean): Material => {
     // An emissive factor of zero is emission OFF (the glTF product rule:
     // factor times texture), so the map is skipped too - no sampler for
     // a term that cannot show.
@@ -158,6 +160,7 @@ export function createModel(data: ModelData, opts: ModelOptions = {}): Model {
       alphaTest: m.alphaMode === "MASK" ? m.alphaCutoff : undefined,
       skinned: skinned || undefined,
       vertexColors: vertexColors || undefined,
+      morph: morphed || undefined,
     })
   })
   let slot = (index: number | null): TextureId | null => (index === null ? null : textures[index]!)
@@ -166,10 +169,10 @@ export function createModel(data: ModelData, opts: ModelOptions = {}): Model {
   // the COLOR_0 parts bring (a material shared by parts that differ in
   // either needs two programs - different vertex stages).
   let variants = new Map<string, Material>()
-  let materialFor = (index: number, skinned: boolean, vertexColors: boolean): Material => {
+  let materialFor = (index: number, skinned: boolean, vertexColors: boolean, morphed: boolean): Material => {
     let m = data.materials[index]
     if (m === undefined) throw new Error("createModel: a part names a missing material " + index)
-    let key = index + (skinned ? "|skinned" : "") + (vertexColors ? "|colored" : "")
+    let key = index + (skinned ? "|skinned" : "") + (vertexColors ? "|colored" : "") + (morphed ? "|morphed" : "")
     let made = variants.get(key)
     if (made === undefined) {
       made = make(
@@ -183,12 +186,13 @@ export function createModel(data: ModelData, opts: ModelOptions = {}): Model {
         },
         skinned,
         vertexColors,
+        morphed,
       )
       variants.set(key, made)
     }
     return made
   }
-  let materials = data.materials.map((_, i) => materialFor(i, false, false))
+  let materials = data.materials.map((_, i) => materialFor(i, false, false, false))
 
   let model = createGroup() as Model
   model._skins = []
@@ -204,6 +208,16 @@ export function createModel(data: ModelData, opts: ModelOptions = {}): Model {
   })
   data.nodes.forEach((n, i) => add(n.parent === null ? model : groups[n.parent]!, groups[i]!))
   model.nodes = data.nodes.map((n, i) => ({ name: n.name, node: groups[i]! }))
+  // A glTF node with morph targets owns its parts' weights (the file's
+  // node.weights / mesh.weights seed them): one register, one weights
+  // texture, every part of the mesh reads it - so setMorphWeights on
+  // the node (and a clip's weights track) moves the whole mesh.
+  data.nodes.forEach((n, i) => {
+    if (n.weights === undefined) return
+    let part = data.parts.find((p) => p.node === i && p.geometry.morphs !== undefined)
+    if (part === undefined) return
+    groups[i]!._morph = createMorphState(part.geometry.morphs!.names, n.weights, label ? label + "-" + n.name + "-weights" : n.name + "-weights")
+  })
   // Each skin's palette lives in an rgba32f texture, 4 texels wide, one
   // row per joint (the four columns of that joint's mat4), sized to the
   // RIG: rig size is bounded by texture height (>= 2048 everywhere), not
@@ -250,8 +264,11 @@ export function createModel(data: ModelData, opts: ModelOptions = {}): Model {
   refreshJointBounds(model)
   model.parts = data.parts.map((part) => {
     let skinned = part.skin !== null
-    let material = materialFor(part.material, skinned, layoutSlot(part.geometry.layout, "aColor") !== null)
+    let morphed = part.geometry.morphs !== undefined
+    let material = materialFor(part.material, skinned, layoutSlot(part.geometry.layout, "aColor") !== null, morphed)
     let mesh = createMesh(part.geometry, material)
+    // The part's weights are its glTF node's (above), not its own.
+    if (morphed) mesh._morphOwner = groups[part.node] ?? mesh
     if (skinned) {
       // A skinned part's vertices are model-space bind pose and the skin
       // matrices place them, so its mesh hangs off the model root (the
@@ -288,6 +305,14 @@ export function createModel(data: ModelData, opts: ModelOptions = {}): Model {
     for (let part of model.parts) disposeGeometry(part.mesh.geometry)
     for (let id of textures) destroyTexture(id)
     textures.length = 0
+    // The nodes' weights textures (the parts' entries are off the scene
+    // with the remove above).
+    for (let n of model.nodes) {
+      if (n.node._morph !== null) {
+        destroyTexture(n.node._morph.texture)
+        n.node._morph = null
+      }
+    }
     // Core clips a mixer registered; their players drop at the next
     // advance (the leave above already killed the target nodes).
     for (let clip of model.clips) {

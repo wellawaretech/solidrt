@@ -318,22 +318,31 @@ pub struct NodeEntryDecoded {
   pub exit: Option<(Vec<f32>, NodeMotion)>,
 }
 
-/// The motion alone: what the node `all` catch-all speaks - `{ duration,
-/// bounce?, delay? }` (a spring), `{ duration, curve, delay? }` (a tween)
-/// or the shorthand string; `from` and `exit` are rejected there (which
-/// component they would seed is unanswerable).
+/// What lane count a node entry's endpoints take: a component's fixed
+/// count (position and scale 3, rotation 4), any positive count (weights:
+/// one per morph target), or none - the entry speaks motion only (the
+/// `all` catch-all, a one-off motion on a write).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LaneRule {
+  Exactly(usize),
+  Any,
+  Forbidden,
+}
+
+/// The motion alone: what the node `all` catch-all and a one-off write
+/// motion speak - `{ duration, bounce?, delay? }` (a spring), `{ duration,
+/// curve, delay? }` (a tween) or the shorthand string; `from` and `exit`
+/// are rejected there (which component they would seed is unanswerable).
 pub fn decode_node_motion(at: &str, value: &PropValue) -> Result<NodeMotion, String> {
-  decode_node_entry(at, value, None).map(|d| d.motion)
+  decode_node_entry(at, value, LaneRule::Forbidden).map(|d| d.motion)
 }
 
 /// A node transition entry: the element entry vocabulary whole, minus
 /// nothing - `duration`, `curve`/`bounce`, `delay`, and the `from`/`exit`
-/// endpoints of a component with `lanes` lanes (position and scale 3,
-/// rotation 4 as a quaternion), each a bare lane array or the endpoint
-/// object `{ value, duration?, curve?, bounce?, delay? }` merged by the
-/// element rule (`decode_endpoint_with`). `lanes` None rejects the
-/// endpoints (the `all` catch-all).
-pub fn decode_node_entry(at: &str, value: &PropValue, lanes: Option<usize>) -> Result<NodeEntryDecoded, String> {
+/// endpoints of a component with the lanes `rule` allows, each a bare
+/// lane array or the endpoint object `{ value, duration?, curve?, bounce?,
+/// delay? }` merged by the element rule (`decode_endpoint_with`).
+pub fn decode_node_entry(at: &str, value: &PropValue, rule: LaneRule) -> Result<NodeEntryDecoded, String> {
   if let Some(s) = value.as_str() {
     let entry = parse_shorthand(at, s)?;
     return Ok(NodeEntryDecoded {
@@ -355,11 +364,11 @@ pub fn decode_node_entry(at: &str, value: &PropValue, lanes: Option<usize>) -> R
     match value.get(key) {
       None => Ok(None),
       Some(v) => {
-        let Some(lanes) = lanes else {
-          return Err(format!("{at}: {key} is per-component; name the component instead of 'all'"));
-        };
+        if rule == LaneRule::Forbidden {
+          return Err(format!("{at}: {key} belongs on a component entry of the declaration; name the component"));
+        }
         let (lanes, spec, delay_ms) =
-          decode_endpoint_with(at, key, v, value, spec, delay_ms, |at, key, v| decode_lanes(at, key, v, lanes))?;
+          decode_endpoint_with(at, key, v, value, spec, delay_ms, |at, key, v| decode_lanes(at, key, v, rule))?;
         Ok(Some((lanes, NodeMotion { spec, delay_ms })))
       }
     }
@@ -370,12 +379,18 @@ pub fn decode_node_entry(at: &str, value: &PropValue, lanes: Option<usize>) -> R
 }
 
 /// A node endpoint's value: the component's lanes, finite numbers.
-fn decode_lanes(at: &str, key: &str, value: &PropValue, lanes: usize) -> Result<Vec<f32>, String> {
-  let list = value
-    .as_list()
-    .filter(|l| l.len() == lanes)
-    .ok_or_else(|| format!("{at}: {key} must be an array of {lanes} numbers, got {}", describe(value)))?;
-  let mut out = Vec::with_capacity(lanes);
+fn decode_lanes(at: &str, key: &str, value: &PropValue, rule: LaneRule) -> Result<Vec<f32>, String> {
+  let list = match rule {
+    LaneRule::Exactly(lanes) => value
+      .as_list()
+      .filter(|l| l.len() == lanes)
+      .ok_or_else(|| format!("{at}: {key} must be an array of {lanes} numbers, got {}", describe(value)))?,
+    _ => value
+      .as_list()
+      .filter(|l| !l.is_empty())
+      .ok_or_else(|| format!("{at}: {key} must be a non-empty array of numbers, got {}", describe(value)))?,
+  };
+  let mut out = Vec::with_capacity(list.len());
   for x in list {
     let n = x.as_f64().ok_or_else(|| format!("{at}: {key} must be an array of numbers, got {}", describe(x)))? as f32;
     if !n.is_finite() {

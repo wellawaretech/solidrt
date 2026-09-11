@@ -7,17 +7,30 @@ import type { Quat } from "./math.ts"
 import type { ModelChannel } from "./gltf.ts"
 
 /**
+ * Floats per key value of a channel: 3 for position and scale, 4 for a
+ * rotation, and for a weights channel one per morph target - read off
+ * the data, since the key count and the cubic triple fix it.
+ */
+export function channelElements(channel: ModelChannel): number {
+  if (channel.path === "rotation") return 4
+  if (channel.path !== "weights") return 3
+  let perKey = channel.interpolation === "cubic" ? 3 : 1
+  return channel.times.length === 0 ? 0 : channel.values.length / (channel.times.length * perKey)
+}
+
+/**
  * Sample one channel at `time` (seconds, clamped to the key range) into
- * `out` - 3 floats for position/scale, 4 for rotation. Pure array math:
- * step holds the earlier key, linear lerps (rotation slerps the shortest
- * path), cubic evaluates the glTF CUBICSPLINE Hermite (rotation
- * renormalized, per spec).
+ * `out` - 3 floats for position/scale, 4 for rotation, one per target
+ * for weights (`channelElements`). Pure array math: step holds the
+ * earlier key, linear lerps (rotation slerps the shortest path), cubic
+ * evaluates the glTF CUBICSPLINE Hermite (rotation renormalized, per
+ * spec).
  */
 export function sampleChannel(channel: ModelChannel, time: number, out: number[]): void {
   let times = channel.times
   let values = channel.values
   let keys = times.length
-  let elements = channel.path === "rotation" ? 4 : 3
+  let elements = channelElements(channel)
   let stride = channel.interpolation === "cubic" ? elements * 3 : elements
   // The value element offset within a key: cubic keys are [in, value, out].
   let mid = channel.interpolation === "cubic" ? elements : 0

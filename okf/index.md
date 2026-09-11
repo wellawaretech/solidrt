@@ -113,9 +113,9 @@ Shaped, not started.
   parseGltf/createModel at runtime plus the srt tool 3d/model bake; v3
   container with retained hierarchy, skins and animation clips plus the JS
   mixer since 2026-08-31) covers rigged models end to end; still open are the
-  compressed real-world files (Draco/meshopt, KTX2), morph targets,
-  merge-by-material, per-material samplers and runtime-fetched content, each
-  demand-gated.
+  compressed real-world files (Draco/meshopt, KTX2), merge-by-material,
+  per-material samplers and runtime-fetched content, each demand-gated (morph
+  targets have their own item).
 - **[No way to ask why a mesh did not draw](backlog/3d-scene-draw-introspection.md)** [2026-09-08]
   Four independent mechanisms silently drop a mesh from a target - frustum
   culling, the layer mask, overrideMaterial skipping instanced meshes, and the
@@ -964,6 +964,13 @@ Finished, kept for the reasoning.
   through scene.texture), the standard set carries no camera basis so
   billboards reconstruct it from uViewProj rows, and shaderMaterial cannot
   express one program with many parameterisations.
+- **[Morph targets - sparse-by-vertex deltas, weights as palette rows, clip and transition driven](done/3d-morph-targets.md)** [2026-09-11]
+  The loader drops primitive targets and the "weights" channel and throws on
+  sparse accessors, so a face or a blend-shape character cannot even parse;
+  add morph targets as a geometry target list packed sparse by vertex into a
+  float texture, with weights a node register the spatial core publishes as a
+  row of a weights texture through the palette sink, driven by clip players,
+  node transitions and setMorphWeights, per instance included.
 - **[A geometry updated in place keeps picking against its old positions](done/3d-picking-shape-after-update.md)** [2026-09-11]
   updateVertices re-uploads a stream and drops the cached bounds, but the
   picking shape the spatial core built at first draw keeps the positions it

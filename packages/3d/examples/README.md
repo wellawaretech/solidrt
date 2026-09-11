@@ -70,6 +70,15 @@ depends on `@solidrt/3d` (or in-repo from the package directory).
   environment the ball reflects - six colored walls and four orbiting
   spheres show in it, blurred by the ball's roughness. Layers keep the
   ball out of its own probe. Drag to look around.
+- `morph.tsx` - morph targets: a sphere given two named targets with
+  `withMorphTargets` (a top-half spike, the sparse case, and a squash
+  with bent normals), drawn under `lit({ morph: true })` with weights
+  driven per frame by `setMorphWeights`, flipped through the
+  `morphWeights` prop under a `transition={{ weights }}` spring (the
+  core animates each flip), ignored by a plain material on the same
+  geometry, and per INSTANCE on a back row of six `<Instance>` blobs
+  under one `<InstancedMesh>`, each at its own blend; every morphed
+  blob's shadow morphs with it.
 - `sky-lit.tsx` - a sky-lit scene (`scene.bakeBackground`): a procedural
   GLSL sky is the background AND, baked into a prefiltered cube, the
   environment - no light nodes. Two rows of `standard` spheres, metal and

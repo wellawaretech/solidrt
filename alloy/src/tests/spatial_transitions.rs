@@ -15,7 +15,7 @@ fn all(spec: TransitionSpec) -> Option<NodeTransitionConfig> {
 /// A position entry on `spec` with the given lifecycle endpoints, each on
 /// the entry's own motion (the decoder's default when an endpoint names
 /// no motion of its own).
-fn position_entry(spec: TransitionSpec, from: Option<[f32; 3]>, exit: Option<[f32; 3]>) -> NodeTransitionEntry<3> {
+fn position_entry(spec: TransitionSpec, from: Option<[f32; 3]>, exit: Option<[f32; 3]>) -> NodeTransitionEntry<[f32; 3]> {
   NodeTransitionEntry {
     motion: spec.into(),
     from: from.map(|value| NodeEndpoint { value, motion: spec.into() }),
@@ -664,7 +664,7 @@ fn delayed_write_holds_then_runs_on_schedule() {
   s.write_transform(id, [10.0, 0.0, 0.0], Q, ONE).expect("write");
   assert_eq!(
     s.motion_of(id).expect("motion"),
-    vec![MotionState { component: Component::Position, to: [10.0, 0.0, 0.0, 0.0], held_until_ms: Some(100.0) }]
+    vec![MotionState { component: Component::Position, to: vec![10.0, 0.0, 0.0], held_until_ms: Some(100.0) }]
   );
   s.set_transition_now(150.0);
   s.advance_transitions();
@@ -961,4 +961,95 @@ fn a_deferred_exit_gates_its_node_until_it_runs() {
   assert!(s.motion_of(parent).expect("motion").len() == 1, "the parent's exit runs at the advance");
   assert!(!run_to(&mut s, 0.0, 150.0));
   assert_eq!(s.take_freed(), vec![child, parent]);
+}
+
+fn weights_entry(from: Option<&[f32]>, exit: Option<&[f32]>) -> Option<NodeTransitionConfig> {
+  Some(NodeTransitionConfig {
+    weights: Some(NodeTransitionEntry {
+      motion: LINEAR_100.into(),
+      from: from.map(|v| NodeEndpoint { value: v.to_vec(), motion: LINEAR_100.into() }),
+      exit: exit.map(|v| NodeEndpoint { value: v.to_vec(), motion: LINEAR_100.into() }),
+    }),
+    ..Default::default()
+  })
+}
+
+fn weights(s: &Spatial, id: u64) -> Vec<f32> {
+  s.weights_of(id).expect("weights").to_vec()
+}
+
+#[test]
+fn weights_lane_enters_animates_writes_and_exits() {
+  let mut s = Spatial::new();
+  s.set_transition_now(0.0);
+  let id = s.create([0.0; 3], Q, ONE, true);
+  s.set_weights(id, &[1.0, 0.5]).expect("weights");
+  s.set_node_transition(id, weights_entry(Some(&[0.0, 0.0]), Some(&[0.0, 0.0]))).expect("config");
+  assert!(s.advance_transitions(), "the enter starts at the advance");
+  assert_eq!(weights(&s, id), vec![0.0, 0.0], "the first advance snaps to from");
+  s.set_transition_now(50.0);
+  assert!(s.advance_transitions());
+  assert_eq!(weights(&s, id), vec![0.5, 0.25], "halfway to the held register");
+  s.set_transition_now(100.0);
+  assert!(!s.advance_transitions());
+  assert_eq!(weights(&s, id), vec![1.0, 0.5], "settles on the held register");
+  assert_eq!(s.take_settled_transitions(), vec![(id, Component::Weights)]);
+  // A write through the declaration animates; the same write again is a
+  // no-op; a raw set_weights is overwritten by the running track.
+  assert!(s.write_weights(id, &[0.0, 1.0], None).expect("write"));
+  s.set_transition_now(125.0);
+  s.advance_transitions();
+  // The same target again is left alone: the tween does not restart.
+  assert!(s.write_weights(id, &[0.0, 1.0], None).expect("write again"), "a track runs");
+  assert!(s.motion_of(id).expect("motion").iter().any(|m| m.component == Component::Weights && m.to == vec![0.0, 1.0]));
+  s.set_transition_now(150.0);
+  assert!(s.advance_transitions());
+  assert_eq!(weights(&s, id), vec![0.5, 0.75]);
+  s.set_transition_now(200.0);
+  assert!(!s.advance_transitions());
+  assert_eq!(weights(&s, id), vec![0.0, 1.0]);
+  assert_eq!(s.take_settled_transitions(), vec![(id, Component::Weights)]);
+  // The exit: the register animates to its exit lanes and the node frees
+  // at the settle, no settled event.
+  assert!(s.exit(id).expect("exit"), "an exit with somewhere to go keeps the node");
+  s.set_transition_now(250.0);
+  assert!(s.advance_transitions());
+  assert_eq!(weights(&s, id), vec![0.0, 0.5], "halfway out");
+  assert!(s.take_freed().is_empty());
+  s.set_transition_now(300.0);
+  assert!(!s.advance_transitions());
+  assert_eq!(s.take_freed(), vec![id]);
+  assert!(s.take_settled_transitions().is_empty(), "an exit settle is not an event");
+}
+
+#[test]
+fn weights_write_takes_a_one_off_motion_and_snaps_without_one() {
+  let mut s = Spatial::new();
+  s.set_transition_now(0.0);
+  let id = s.create([0.0; 3], Q, ONE, true);
+  s.set_weights(id, &[0.0]).expect("weights");
+  // No declaration: the write snaps, exactly set_weights.
+  assert!(s.write_weights(id, &[0.25], None).expect("write"));
+  assert_eq!(weights(&s, id), vec![0.25]);
+  assert!(!s.advance_transitions(), "a snap runs no track");
+  // A motion on the write animates without any declaration; the write
+  // may widen the register (a new target weighs from zero).
+  assert!(s.write_weights(id, &[1.0, 1.0], Some(LINEAR_100.into())).expect("write"));
+  s.set_transition_now(50.0);
+  assert!(s.advance_transitions());
+  assert_eq!(weights(&s, id), vec![0.625, 0.5]);
+  s.set_transition_now(100.0);
+  assert!(!s.advance_transitions());
+  assert_eq!(weights(&s, id), vec![1.0, 1.0]);
+  assert_eq!(s.take_settled_transitions(), vec![(id, Component::Weights)]);
+  // Clearing a declaration cancels a running weights track in place.
+  s.set_node_transition(id, weights_entry(None, None)).expect("config");
+  assert!(s.write_weights(id, &[0.0, 0.0], None).expect("write"));
+  s.set_transition_now(150.0);
+  s.advance_transitions();
+  assert_eq!(weights(&s, id), vec![0.5, 0.5]);
+  s.set_node_transition(id, None).expect("clear");
+  assert!(!s.advance_transitions());
+  assert_eq!(weights(&s, id), vec![0.5, 0.5], "kept mid-flight");
+  assert!(s.take_settled_transitions().is_empty());
 }

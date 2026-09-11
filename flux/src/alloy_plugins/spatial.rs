@@ -8,7 +8,7 @@ use rquickjs::module::{Declarations, Exports, ModuleDef};
 use rquickjs::{Array, Ctx, Function, Object, TypedArray, Value};
 
 use crate::alloy_plugins::properties::transition::{
-  decode_node_entry, decode_node_motion, decode_stagger, NodeEntryDecoded,
+  decode_node_entry, decode_node_motion, decode_stagger, LaneRule, NodeEntryDecoded,
 };
 use crate::alloy_plugins::value::PropValue;
 use crate::plugins::marshal::OptArg;
@@ -79,6 +79,11 @@ impl ModuleDef for SpatialModule {
     decl.declare("unbindSlot")?;
     decl.declare("bindTextureSlot")?;
     decl.declare("unbindTextureSlot")?;
+    decl.declare("bindWeightsSlot")?;
+    decl.declare("unbindWeightsSlot")?;
+    decl.declare("setWeights")?;
+    decl.declare("writeWeights")?;
+    decl.declare("readWeights")?;
     decl.declare("createClip")?;
     decl.declare("destroyClip")?;
     decl.declare("createPlayer")?;
@@ -130,6 +135,11 @@ impl ModuleDef for SpatialModule {
     exports.export("unbindSlot", Function::new(ctx.clone(), unbind_slot)?)?;
     exports.export("bindTextureSlot", Function::new(ctx.clone(), bind_texture_slot)?)?;
     exports.export("unbindTextureSlot", Function::new(ctx.clone(), unbind_texture_slot)?)?;
+    exports.export("bindWeightsSlot", Function::new(ctx.clone(), bind_weights_slot)?)?;
+    exports.export("unbindWeightsSlot", Function::new(ctx.clone(), unbind_weights_slot)?)?;
+    exports.export("setWeights", Function::new(ctx.clone(), set_weights)?)?;
+    exports.export("writeWeights", Function::new(ctx.clone(), write_weights)?)?;
+    exports.export("readWeights", Function::new(ctx.clone(), read_weights)?)?;
     exports.export("createClip", Function::new(ctx.clone(), create_clip)?)?;
     exports.export("destroyClip", Function::new(ctx.clone(), destroy_clip)?)?;
     exports.export("createPlayer", Function::new(ctx.clone(), create_player)?)?;
@@ -179,8 +189,7 @@ fn describe_node<'js>(ctx: Ctx<'js>, id: u64) -> rquickjs::Result<Object<'js>> {
   for (i, m) in motion.iter().enumerate() {
     let entry = Object::new(ctx.clone())?;
     entry.set("component", component_name(m.component))?;
-    let lanes = if m.component == Component::Rotation { 4 } else { 3 };
-    entry.set("to", m.to[..lanes].iter().map(|&x| x as f64).collect::<Vec<f64>>())?;
+    entry.set("to", m.to.iter().map(|&x| x as f64).collect::<Vec<f64>>())?;
     match m.held_until_ms {
       Some(at) => entry.set("heldUntil", at)?,
       None => entry.set("heldUntil", rquickjs::Null)?,
@@ -196,6 +205,7 @@ fn component_name(component: Component) -> &'static str {
     Component::Position => "position",
     Component::Rotation => "rotation",
     Component::Scale => "scale",
+    Component::Weights => "weights",
   }
 }
 
@@ -212,32 +222,35 @@ fn set_transform(ctx: Ctx<'_>, id: u64, data: TypedArray<'_, f32>) -> rquickjs::
     .map_err(|e| throw_str(&ctx, &format!("setTransform: {e}")))
 }
 
-/// The node transition declaration: an object keyed by transform component
-/// (position, rotation, scale, plus `all` as a catch-all) whose values
-/// speak the element transition vocabulary whole - `from`/`exit` on a
-/// component entry are its enter and exit values, the lanes of that
-/// component, bare or in the endpoint object form; `stagger` (ms) makes
-/// the node a stagger group for descendant enters and exits - or a bare
-/// shorthand string as the `all` catch-all.
+/// The node transition declaration: an object keyed by component
+/// (position, rotation, scale, weights, plus `all` as a catch-all) whose
+/// values speak the element transition vocabulary whole - `from`/`exit`
+/// on a component entry are its enter and exit values, the lanes of that
+/// component (weights: one per morph target), bare or in the endpoint
+/// object form; `stagger` (ms) makes the node a stagger group for
+/// descendant enters and exits - or a bare shorthand string as the `all`
+/// catch-all.
 fn decode_node_transition(value: &PropValue) -> Result<NodeTransitionConfig, String> {
   if value.as_str().is_some() {
     return Ok(NodeTransitionConfig { all: Some(decode_node_motion("transition", value)?), ..Default::default() });
   }
   let entries = value.as_map().ok_or_else(|| {
-    "transition must be a shorthand string or an object keyed by component (position, rotation, scale, all)".to_string()
+    "transition must be a shorthand string or an object keyed by component (position, rotation, scale, weights, all)"
+      .to_string()
   })?;
   let mut config = NodeTransitionConfig::default();
   for (key, entry) in entries {
     let at = format!("transition.{key}");
     match key.as_str() {
-      "position" => config.position = Some(node_entry::<3>(decode_node_entry(&at, entry, Some(3))?)),
-      "scale" => config.scale = Some(node_entry::<3>(decode_node_entry(&at, entry, Some(3))?)),
-      "rotation" => config.rotation = Some(node_entry::<4>(decode_node_entry(&at, entry, Some(4))?)),
+      "position" => config.position = Some(node_entry(decode_node_entry(&at, entry, LaneRule::Exactly(3))?, fixed::<3>)),
+      "scale" => config.scale = Some(node_entry(decode_node_entry(&at, entry, LaneRule::Exactly(3))?, fixed::<3>)),
+      "rotation" => config.rotation = Some(node_entry(decode_node_entry(&at, entry, LaneRule::Exactly(4))?, fixed::<4>)),
+      "weights" => config.weights = Some(node_entry(decode_node_entry(&at, entry, LaneRule::Any)?, |lanes| lanes)),
       "all" => config.all = Some(decode_node_motion(&at, entry)?),
       "stagger" => config.stagger_ms = Some(decode_stagger(entry)?),
       other => {
         return Err(format!(
-          "transition.{other}: '{other}' is not a transform component (expected position, rotation, scale, all or stagger)"
+          "transition.{other}: '{other}' is not a node component (expected position, rotation, scale, weights, all or stagger)"
         ))
       }
     }
@@ -245,15 +258,19 @@ fn decode_node_transition(value: &PropValue) -> Result<NodeTransitionConfig, Str
   Ok(config)
 }
 
-/// A decoded entry in the arena's per-component shape; the decoder checked
-/// the lane counts, so the arrays fill exactly.
-fn node_entry<const N: usize>(d: NodeEntryDecoded) -> NodeTransitionEntry<N> {
-  let endpoint = |(lanes, motion): (Vec<f32>, NodeMotion)| {
-    let mut value = [0.0f32; N];
-    value.copy_from_slice(&lanes);
-    NodeEndpoint { value, motion }
-  };
+/// A decoded entry in the arena's per-component shape, `carrier` turning
+/// each endpoint's lanes into the component's value type.
+fn node_entry<V>(d: NodeEntryDecoded, carrier: impl Fn(Vec<f32>) -> V) -> NodeTransitionEntry<V> {
+  let endpoint = |(lanes, motion): (Vec<f32>, NodeMotion)| NodeEndpoint { value: carrier(lanes), motion };
   NodeTransitionEntry { motion: d.motion, from: d.from.map(endpoint), exit: d.exit.map(endpoint) }
+}
+
+/// A fixed-lane component's value; the decoder checked the count, so the
+/// array fills exactly.
+fn fixed<const N: usize>(lanes: Vec<f32>) -> [f32; N] {
+  let mut value = [0.0f32; N];
+  value.copy_from_slice(&lanes);
+  value
 }
 
 /// Declare (or with null clear) the node's transition config; with one set,
@@ -836,13 +853,79 @@ fn unbind_texture_slot(ctx: Ctx<'_>, id: u64, texture: OptArg<u64>) -> rquickjs:
     .map_err(|e| throw_str(&ctx, &format!("unbindTextureSlot: {e}")))
 }
 
+/// Bind the node's weights register to row `row` of the rgba32f texture:
+/// four weights per texel, the register padded with zeros to the row -
+/// one whole-texture upload per texture per flush, like a palette.
+fn bind_weights_slot(ctx: Ctx<'_>, id: u64, texture: u64, row: u32) -> rquickjs::Result<()> {
+  super::gui(&ctx)
+    .alloy
+    .spatial_bind_weights_slot(id, texture, row)
+    .map_err(|e| throw_str(&ctx, &format!("bindWeightsSlot: {e}")))
+}
+
+/// Remove the node's weights slot on `texture`, or every weights slot
+/// without one; abandoned rows keep their last value.
+fn unbind_weights_slot(ctx: Ctx<'_>, id: u64, texture: OptArg<u64>) -> rquickjs::Result<()> {
+  super::gui(&ctx)
+    .alloy
+    .spatial_unbind_weights_slot(id, texture.0)
+    .map_err(|e| throw_str(&ctx, &format!("unbindWeightsSlot: {e}")))
+}
+
+/// Write the node's weights register (a Float32Array of any length).
+fn set_weights(ctx: Ctx<'_>, id: u64, weights: TypedArray<'_, f32>) -> rquickjs::Result<()> {
+  let w = floats(&ctx, &weights, "setWeights")?;
+  super::gui(&ctx)
+    .alloy
+    .spatial()
+    .set_weights(id, w)
+    .map_err(|e| throw_str(&ctx, &format!("setWeights: {e}")))
+}
+
+/// Write the weights register THROUGH a motion: `transition` given (a
+/// node motion spec, the `all` vocabulary), the write animates on it
+/// whatever the node declares; otherwise the declaration's `weights`
+/// entry (or `all`) decides, and without one the write snaps like
+/// setWeights. A started, retargeted or held write requests a frame.
+fn write_weights<'js>(ctx: Ctx<'js>, id: u64, weights: TypedArray<'js, f32>, transition: OptArg<Value<'js>>) -> rquickjs::Result<()> {
+  let w = floats(&ctx, &weights, "writeWeights")?;
+  let motion = match &transition.0 {
+    Some(v) if !v.is_null() && !v.is_undefined() => {
+      let pv = super::tree::to_prop_value(v)?;
+      Some(decode_node_motion("writeWeights: transition", &pv).map_err(|e| throw_str(&ctx, &e))?)
+    }
+    _ => None,
+  };
+  let st = super::gui(&ctx);
+  let changed = st.alloy.spatial().write_weights(id, w, motion).map_err(|e| throw_str(&ctx, &format!("writeWeights: {e}")))?;
+  if changed {
+    st.platform.request_frame();
+  }
+  Ok(())
+}
+
+/// Fill `out` from the node's weights register as the arena holds it
+/// (zeros past the register's length); returns the register's length.
+fn read_weights(ctx: Ctx<'_>, id: u64, out: TypedArray<'_, f32>) -> rquickjs::Result<u32> {
+  let gui = super::gui(&ctx);
+  let spatial = gui.alloy.spatial();
+  let weights = spatial.weights_of(id).map_err(|e| throw_str(&ctx, &format!("readWeights: {e}")))?;
+  let raw = out.as_raw().ok_or_else(|| throw_str(&ctx, "readWeights: detached buffer"))?;
+  let dst = unsafe { std::slice::from_raw_parts_mut(raw.ptr.as_ptr() as *mut f32, raw.len / 4) };
+  for (k, slot) in dst.iter_mut().enumerate() {
+    *slot = weights.get(k).copied().unwrap_or(0.0);
+  }
+  Ok(weights.len() as u32)
+}
+
 // Meta words per channel in createClip's packed layout.
-const CLIP_META_WORDS: usize = 4;
+const CLIP_META_WORDS: usize = 5;
 
 /// Register a baked clip: `meta` is [targetSlot, path (0 position,
-/// 1 rotation, 2 scale), interpolation (0 step, 1 linear, 2 cubic),
-/// keyCount] per channel; `times` and `values` are every channel's key
-/// arrays concatenated in meta order. One crossing per clip.
+/// 1 rotation, 2 scale, 3 weights), interpolation (0 step, 1 linear,
+/// 2 cubic), keyCount, elements] per channel; `times` and `values` are
+/// every channel's key arrays concatenated in meta order. One crossing
+/// per clip.
 fn create_clip<'js>(
   ctx: Ctx<'js>,
   duration: f64,
@@ -855,7 +938,7 @@ fn create_clip<'js>(
   let times = floats(&ctx, &times, "createClip")?;
   let values = floats(&ctx, &values, "createClip")?;
   if meta.len() % CLIP_META_WORDS != 0 {
-    return Err(throw_str(&ctx, "createClip: meta must be 4 words per channel"));
+    return Err(throw_str(&ctx, "createClip: meta must be 5 words per channel"));
   }
   let mut channels = Vec::with_capacity(meta.len() / CLIP_META_WORDS);
   let mut t_at = 0usize;
@@ -865,7 +948,8 @@ fn create_clip<'js>(
       0 => ChannelPath::Position,
       1 => ChannelPath::Rotation,
       2 => ChannelPath::Scale,
-      other => return Err(throw_str(&ctx, &format!("createClip: channel {i} path {other} is not 0, 1 or 2"))),
+      3 => ChannelPath::Weights,
+      other => return Err(throw_str(&ctx, &format!("createClip: channel {i} path {other} is not 0, 1, 2 or 3"))),
     };
     let interpolation = match entry[2] {
       0 => ChannelInterpolation::Step,
@@ -874,7 +958,8 @@ fn create_clip<'js>(
       other => return Err(throw_str(&ctx, &format!("createClip: channel {i} interpolation {other} is not 0, 1 or 2"))),
     };
     let keys = entry[3] as usize;
-    let elements = if path == ChannelPath::Rotation { 4 } else { 3 };
+    // The element count is the core's to validate against the path.
+    let elements = entry[4] as usize;
     let stride = if interpolation == ChannelInterpolation::Cubic { elements * 3 } else { elements };
     let t_end = t_at + keys;
     let v_end = v_at + keys * stride;
@@ -885,6 +970,7 @@ fn create_clip<'js>(
       target_slot: entry[0],
       path,
       interpolation,
+      elements,
       times: times[t_at..t_end].to_vec(),
       values: values[v_at..v_end].to_vec(),
     });

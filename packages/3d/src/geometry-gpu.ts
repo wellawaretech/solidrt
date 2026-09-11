@@ -12,12 +12,12 @@
 // disposeGeometry frees immediately, the explicit override; either way the
 // geometry stays usable - fresh buffers are created on next acquire.
 
-import { createBuffer, destroyBuffer, writeBuffer } from "@solidrt/core/gpu"
-import type { BufferId, IndexFormat } from "@solidrt/core/gpu"
+import { createBuffer, createTexture, destroyBuffer, destroyTexture, limits, writeBuffer } from "@solidrt/core/gpu"
+import type { BufferId, IndexFormat, TextureId } from "@solidrt/core/gpu"
 import { createShape, destroyShape, updateShape } from "flux:spatial"
 import type { ShapeId } from "flux:spatial"
-import { geometryStreams, geometryTopology, geometryVertexCount, layoutSlot, layoutStride, vertexBytes } from "./geometry.ts"
-import type { Geometry } from "./geometry.ts"
+import { geometryStreams, geometryTopology, geometryVertexCount, layoutSlot, layoutStride, vertexBytes, MORPH_TEXEL_FLOATS } from "./geometry.ts"
+import type { Geometry, MorphTargets } from "./geometry.ts"
 
 /** An acquired reference to a geometry's GPU buffers: what a draw entry
  * binds, and the token releaseGeometryBuffers takes - releasing the exact
@@ -33,9 +33,32 @@ export type GeometryBuffers = {
    * float32x2 aUV, uvs) for every topology, the box of each node set to
    * it; the triangle narrowphase too for a triangle list. */
   shape: ShapeId
+  /** The geometry's packed morph targets as an rgba32f texture (what a
+   * morphing material binds as `uMorphs`, `width` its `uMorphWidth`), or
+   * null for geometry without targets. */
+  morphs: { texture: TextureId; width: number } | null
 }
 
 type GpuEntry = GeometryBuffers & { geometry: Geometry; streams: ArrayBufferView[]; refs: number }
+
+// The packed texels laid into a texture: as square as the count allows
+// (the least padding), never wider than the device permits; the shader
+// turns a texel index back into coordinates by the width.
+function uploadMorphs(morphs: MorphTargets, label: string | undefined): { texture: TextureId; width: number } {
+  let texels = morphs.texels.length / MORPH_TEXEL_FLOATS
+  let width = Math.max(1, Math.min(limits.maxTextureSize, Math.ceil(Math.sqrt(texels))))
+  let height = Math.max(1, Math.ceil(texels / width))
+  if (height > limits.maxTextureSize) {
+    throw new Error("Morph targets need " + texels + " texels, past the device's " + limits.maxTextureSize + " x " + limits.maxTextureSize + " texture")
+  }
+  let data = morphs.texels
+  if (data.length !== width * height * MORPH_TEXEL_FLOATS) {
+    data = new Float32Array(width * height * MORPH_TEXEL_FLOATS)
+    data.set(morphs.texels)
+  }
+  let texture = createTexture(data, width, height, { format: "rgba32f", filter: "nearest", autoFree: false, label: label ? label + "-morphs" : undefined })
+  return { texture, width }
+}
 
 let entries = new WeakMap<Geometry, GpuEntry>()
 
@@ -106,6 +129,7 @@ export function acquireGeometryBuffers(geometry: Geometry): GeometryBuffers {
       }),
       indexFormat: geometry.indices instanceof Uint32Array ? "uint32" : "uint16",
       shape: createGeometryShape(geometry),
+      morphs: geometry.morphs === undefined ? null : uploadMorphs(geometry.morphs, geometry.label),
       refs: 0,
     }
     entries.set(geometry, entry)
@@ -127,10 +151,15 @@ export function releaseGeometryBuffers(acquired: GeometryBuffers): void {
   queueMicrotask(() => {
     if (entries.get(entry.geometry) !== entry || entry.refs > 0) return
     entries.delete(entry.geometry)
-    for (let vertices of entry.streams) releaseVertices(vertices)
-    destroyBuffer(entry.index)
-    destroyShape(entry.shape)
+    freeEntry(entry)
   })
+}
+
+function freeEntry(entry: GpuEntry): void {
+  for (let vertices of entry.streams) releaseVertices(vertices)
+  destroyBuffer(entry.index)
+  destroyShape(entry.shape)
+  if (entry.morphs !== null) destroyTexture(entry.morphs.texture)
 }
 
 /**
@@ -144,9 +173,7 @@ export function disposeGeometry(geometry: Geometry): void {
   let entry = entries.get(geometry)
   if (entry === undefined) return
   entries.delete(geometry)
-  for (let vertices of entry.streams) releaseVertices(vertices)
-  destroyBuffer(entry.index)
-  destroyShape(entry.shape)
+  freeEntry(entry)
 }
 
 /** Options of `updateVertices`: the stream (default 0, the main buffer)

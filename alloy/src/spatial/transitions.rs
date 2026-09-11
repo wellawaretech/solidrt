@@ -27,12 +27,14 @@ use std::collections::HashMap;
 use super::NodeId;
 use crate::motion::{spring_step, TransitionSpec};
 
-/// Which local-TRS component a node track animates.
+/// Which node register a track animates: a local-TRS component, or the
+/// weights register (morph target weights, one lane per target).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Component {
   Position,
   Rotation,
   Scale,
+  Weights,
 }
 
 /// The motion one entry or endpoint plays: the spec, and the hold (ms on
@@ -53,24 +55,25 @@ impl From<TransitionSpec> for NodeMotion {
 /// removal): the lanes the component animates from or to, with the motion
 /// that direction plays - resolved by the decoder, so an endpoint without
 /// its own curve, duration, bounce or delay carries its entry's and the
-/// runtime never falls back. `N` is the component's lane count: 3 for
-/// position and scale, 4 for a rotation quaternion.
-#[derive(Clone, Copy, Debug)]
-pub struct NodeEndpoint<const N: usize> {
-  pub value: [f32; N],
+/// runtime never falls back. `V` is the component's lane carrier: `[f32;
+/// 3]` for position and scale, `[f32; 4]` for a rotation quaternion,
+/// `Vec<f32>` for weights (one lane per morph target).
+#[derive(Clone, Debug)]
+pub struct NodeEndpoint<V> {
+  pub value: V,
   pub motion: NodeMotion,
 }
 
 /// One component's declaration: the motion its writes play plus the
 /// lifecycle endpoints (the element TransitionEntry, per component).
-#[derive(Clone, Copy, Debug)]
-pub struct NodeTransitionEntry<const N: usize> {
+#[derive(Clone, Debug)]
+pub struct NodeTransitionEntry<V> {
   pub motion: NodeMotion,
-  pub from: Option<NodeEndpoint<N>>,
-  pub exit: Option<NodeEndpoint<N>>,
+  pub from: Option<NodeEndpoint<V>>,
+  pub exit: Option<NodeEndpoint<V>>,
 }
 
-impl<const N: usize> From<TransitionSpec> for NodeTransitionEntry<N> {
+impl<V> From<TransitionSpec> for NodeTransitionEntry<V> {
   fn from(spec: TransitionSpec) -> Self {
     NodeTransitionEntry { motion: spec.into(), from: None, exit: None }
   }
@@ -84,11 +87,15 @@ impl<const N: usize> From<TransitionSpec> for NodeTransitionEntry<N> {
 /// first advance after `create` (mod.rs start_enter_transitions), so the
 /// declaration must be set before that advance; its `exit` plays from
 /// `exit` (mod.rs), whenever that comes.
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct NodeTransitionConfig {
-  pub position: Option<NodeTransitionEntry<3>>,
-  pub rotation: Option<NodeTransitionEntry<4>>,
-  pub scale: Option<NodeTransitionEntry<3>>,
+  pub position: Option<NodeTransitionEntry<[f32; 3]>>,
+  pub rotation: Option<NodeTransitionEntry<[f32; 4]>>,
+  pub scale: Option<NodeTransitionEntry<[f32; 3]>>,
+  /// The weights register's entry: its endpoints carry one lane per
+  /// morph target (an endpoint shorter than the register pads with
+  /// zeros, like a write).
+  pub weights: Option<NodeTransitionEntry<Vec<f32>>>,
   pub all: Option<NodeMotion>,
   /// Makes the node a stagger group: every descendant enter (`from`) or
   /// exit that begins in the same frame under it gets `index * stagger_ms`
@@ -103,9 +110,10 @@ impl NodeTransitionConfig {
   /// The motion a write to `component` plays: its entry's, else `all`'s.
   pub fn motion_for(&self, component: Component) -> Option<NodeMotion> {
     match component {
-      Component::Position => self.position.map(|e| e.motion),
-      Component::Rotation => self.rotation.map(|e| e.motion),
-      Component::Scale => self.scale.map(|e| e.motion),
+      Component::Position => self.position.as_ref().map(|e| e.motion),
+      Component::Rotation => self.rotation.as_ref().map(|e| e.motion),
+      Component::Scale => self.scale.as_ref().map(|e| e.motion),
+      Component::Weights => self.weights.as_ref().map(|e| e.motion),
     }
     .or(self.all)
   }
@@ -114,12 +122,17 @@ impl NodeTransitionConfig {
   /// leaving node's free.
   pub fn has_exit(&self, component: Component) -> bool {
     match component {
-      Component::Position => self.position.is_some_and(|e| e.exit.is_some()),
-      Component::Rotation => self.rotation.is_some_and(|e| e.exit.is_some()),
-      Component::Scale => self.scale.is_some_and(|e| e.exit.is_some()),
+      Component::Position => self.position.as_ref().is_some_and(|e| e.exit.is_some()),
+      Component::Rotation => self.rotation.as_ref().is_some_and(|e| e.exit.is_some()),
+      Component::Scale => self.scale.as_ref().is_some_and(|e| e.exit.is_some()),
+      Component::Weights => self.weights.as_ref().is_some_and(|e| e.exit.is_some()),
     }
   }
 }
+
+/// Every component a declaration can carry, the order lifecycle passes
+/// walk them in.
+pub const COMPONENTS: [Component; 4] = [Component::Position, Component::Rotation, Component::Scale, Component::Weights];
 
 /// A track's or a held write's target as lanes: a position or scale uses
 /// the first three, a rotation all four (its quaternion).
@@ -142,12 +155,24 @@ pub(super) struct PendingWrite {
   pub at_ms: f64,
 }
 
-/// The motion in force on one component, for the node dump: the target,
-/// and the clock a held write applies at when it is still waiting.
-#[derive(Clone, Copy, Debug, PartialEq)]
+/// A weights write held by `delay` (the `PendingWrite` of the weights
+/// lane, which has as many lanes as the register has targets).
+#[derive(Clone, Debug)]
+pub(super) struct PendingWeights {
+  pub node: NodeId,
+  pub to: Vec<f32>,
+  pub spec: TransitionSpec,
+  pub at_ms: f64,
+}
+
+/// The motion in force on one component, for the node dump: the target
+/// lanes (three for position and scale, four for rotation, one per target
+/// for weights), and the clock a held write applies at when it is still
+/// waiting.
+#[derive(Clone, Debug, PartialEq)]
 pub struct MotionState {
   pub component: Component,
-  pub to: Lanes,
+  pub to: Vec<f32>,
   pub held_until_ms: Option<f64>,
 }
 
@@ -285,6 +310,77 @@ impl RotationTrack {
   }
 }
 
+/// Interpolation state of a weights track: one independent lane per
+/// morph target, the linear track's math over a register-sized vector.
+#[derive(Clone, Debug)]
+pub(super) enum WeightsState {
+  Tween { from: Vec<f32>, start_ms: f64 },
+  Spring { pos: Vec<f32>, vel: Vec<f32> },
+}
+
+pub(super) struct WeightsTrack {
+  pub node: NodeId,
+  spec: TransitionSpec,
+  state: WeightsState,
+  since_ms: f64,
+  to: Vec<f32>,
+  eps: f32,
+}
+
+impl WeightsTrack {
+  /// Advance to `now_ms`, writing the value into `out` (resized to the
+  /// track's lanes). Returns whether the track settled; a settled track
+  /// reports the target exactly.
+  pub(super) fn advance(&mut self, now_ms: f64, out: &mut Vec<f32>) -> bool {
+    let dt_ms = (now_ms - self.since_ms).max(0.0);
+    self.since_ms = now_ms;
+    out.clear();
+    match (&mut self.state, self.spec) {
+      (WeightsState::Tween { from, start_ms }, TransitionSpec::Tween { duration_ms, curve }) => {
+        let p = ((now_ms - *start_ms) / duration_ms as f64).clamp(0.0, 1.0) as f32;
+        if p >= 1.0 {
+          out.extend_from_slice(&self.to);
+          return true;
+        }
+        let e = curve.eval(p);
+        out.extend(from.iter().zip(&self.to).map(|(&a, &b)| a + (b - a) * e));
+        false
+      }
+      (WeightsState::Spring { pos, vel }, TransitionSpec::Spring { omega, zeta }) => {
+        let dt = (dt_ms / 1000.0) as f32;
+        let mut settled = true;
+        for i in 0..self.to.len() {
+          let (x, v) = spring_step(pos[i] - self.to[i], vel[i], omega, zeta, dt);
+          pos[i] = self.to[i] + x;
+          vel[i] = v;
+          if x.abs() >= self.eps || v.abs() >= self.eps * omega {
+            settled = false;
+          }
+        }
+        if settled {
+          out.extend_from_slice(&self.to);
+          return true;
+        }
+        out.extend_from_slice(pos);
+        false
+      }
+      _ => {
+        out.extend_from_slice(&self.to);
+        true
+      }
+    }
+  }
+}
+
+/// `v` brought to `len` lanes: cut, or padded with zeros (a weights
+/// endpoint or write shorter than the register weighs the rest at zero,
+/// exactly as the register's rows publish).
+fn fit_lanes(v: &[f32], len: usize) -> Vec<f32> {
+  let mut out = v[..v.len().min(len)].to_vec();
+  out.resize(len, 0.0);
+  out
+}
+
 /// Arena-level transition state: the per-node declarations, the running
 /// tracks, the held writes and the animation clock, stamped once per frame
 /// from the app timeline before the frame's JS runs, so writes and the
@@ -296,8 +392,10 @@ pub(super) struct NodeTransitions {
   pub configs: HashMap<NodeId, NodeTransitionConfig>,
   pub linear: Vec<LinearTrack>,
   pub rotation: Vec<RotationTrack>,
+  pub weights: Vec<WeightsTrack>,
   // Writes held by `delay`, applied by the advance that finds them due.
   pub pending: Vec<PendingWrite>,
+  pub pending_weights: Vec<PendingWeights>,
   // (node, component) pairs whose track settled, awaiting the embedder's
   // drain. Cancelled tracks, and the tracks of a leaving node, never land
   // here.
@@ -340,7 +438,12 @@ impl NodeTransitions {
   /// waits for its place in a cascade. A held write keeps the advance
   /// live so its activation frame comes.
   pub fn is_empty(&self) -> bool {
-    self.linear.is_empty() && self.rotation.is_empty() && self.pending.is_empty() && self.staggered_exits.is_empty()
+    self.linear.is_empty()
+      && self.rotation.is_empty()
+      && self.weights.is_empty()
+      && self.pending.is_empty()
+      && self.pending_weights.is_empty()
+      && self.staggered_exits.is_empty()
   }
 
   /// Start or retarget the position/scale track for (node, component), as
@@ -444,6 +547,126 @@ impl NodeTransitions {
     true
   }
 
+  /// The weights counterpart of `retarget_linear`: the lanes are the
+  /// register's targets, as many as the longer of `current` and `to`
+  /// (the shorter padded with zeros). A running track keeps its lane
+  /// count unless the target is wider.
+  pub fn retarget_weights(
+    &mut self,
+    node: NodeId,
+    current: &[f32],
+    to: &[f32],
+    spec: TransitionSpec,
+    at_ms: f64,
+  ) -> bool {
+    let len = current.len().max(to.len());
+    let current = fit_lanes(current, len);
+    let to = fit_lanes(to, len);
+    let mut d = 0.0f32;
+    for i in 0..len {
+      d = d.max((to[i] - current[i]).abs());
+    }
+    if let Some(t) = self.weights.iter_mut().find(|t| t.node == node) {
+      if t.to == to {
+        return true;
+      }
+      let keep_spring_state =
+        matches!((&t.state, spec), (WeightsState::Spring { .. }, TransitionSpec::Spring { .. }));
+      if keep_spring_state {
+        if let WeightsState::Spring { pos, vel } = &mut t.state {
+          // A wider target grows the lanes; the new ones start at rest
+          // where the register holds them.
+          for i in pos.len()..len {
+            pos.push(current[i]);
+            vel.push(0.0);
+          }
+        }
+      } else {
+        t.state = match spec {
+          TransitionSpec::Tween { .. } => WeightsState::Tween { from: current, start_ms: at_ms },
+          TransitionSpec::Spring { .. } => WeightsState::Spring { pos: current, vel: vec![0.0; len] },
+        };
+        t.since_ms = at_ms;
+      }
+      t.to = to;
+      t.eps = eps_for(d);
+      t.spec = spec;
+      return true;
+    }
+    if to == current {
+      return false;
+    }
+    let state = match spec {
+      TransitionSpec::Tween { .. } => WeightsState::Tween { from: current, start_ms: at_ms },
+      TransitionSpec::Spring { .. } => WeightsState::Spring { pos: current, vel: vec![0.0; len] },
+    };
+    self.weights.push(WeightsTrack { node, spec, state, since_ms: at_ms, to, eps: eps_for(d) });
+    true
+  }
+
+  /// The weights counterpart of `write`: a write to the node's weights
+  /// register through `motion` - held when it carries a delay, started or
+  /// retargeted now otherwise. Returns whether the register now animates
+  /// or waits.
+  pub fn write_weights(&mut self, node: NodeId, current: &[f32], to: &[f32], motion: NodeMotion, unchanged: bool) -> bool {
+    let now = self.now_ms;
+    if motion.delay_ms > 0.0 {
+      if let Some(w) = self.pending_weights.iter().find(|w| w.node == node) {
+        if w.to == to {
+          return true;
+        }
+      } else if self.weights_target_of(node).is_some_and(|t| t == to) {
+        return true;
+      } else if unchanged {
+        return false;
+      }
+      self.schedule_weights(PendingWeights { node, to: to.to_vec(), spec: motion.spec, at_ms: now + motion.delay_ms as f64 });
+      return true;
+    }
+    self.unschedule_weights(node);
+    self.retarget_weights(node, current, to, motion.spec, now)
+  }
+
+  /// The target a running weights track for the node heads for.
+  fn weights_target_of(&self, node: NodeId) -> Option<&[f32]> {
+    self.weights.iter().find(|t| t.node == node).map(|t| t.to.as_slice())
+  }
+
+  /// Hold a delayed weights write (one per node; a newer one replaces it,
+  /// delay restarted).
+  pub fn schedule_weights(&mut self, write: PendingWeights) {
+    self.unschedule_weights(write.node);
+    self.pending_weights.push(write);
+  }
+
+  pub fn unschedule_weights(&mut self, node: NodeId) {
+    self.pending_weights.retain(|w| w.node != node);
+  }
+
+  /// Drain the held weights writes whose activation time has arrived.
+  pub fn take_due_weights(&mut self, now_ms: f64) -> Vec<PendingWeights> {
+    let mut due = Vec::new();
+    self.pending_weights.retain(|w| {
+      if w.at_ms <= now_ms {
+        due.push(w.clone());
+        false
+      } else {
+        true
+      }
+    });
+    due
+  }
+
+  /// Drop the node's weights track or held write and hand back its
+  /// target, if one was in force (the enter animation's retarget).
+  pub fn take_weights_target(&mut self, node: NodeId) -> Option<Vec<f32>> {
+    if let Some(i) = self.pending_weights.iter().position(|w| w.node == node) {
+      return Some(self.pending_weights.swap_remove(i).to);
+    }
+    let i = self.weights.iter().position(|t| t.node == node)?;
+    Some(self.weights.swap_remove(i).to)
+  }
+
   /// Apply a write to (node, component) through its motion: held when the
   /// motion carries a delay, started or retargeted now otherwise.
   /// `current` and `to` are lanes (see `Lanes`); `unchanged` says the
@@ -491,16 +714,18 @@ impl NodeTransitions {
   ) -> bool {
     match component {
       Component::Rotation => self.retarget_rotation(node, current, to, spec, at_ms),
+      Component::Weights => false,
       _ => {
         self.retarget_linear(node, component, [current[0], current[1], current[2]], [to[0], to[1], to[2]], spec, at_ms)
       }
     }
   }
 
-  /// The target a running track for the pair heads for, if one runs.
+  /// The target a running TRS track for the pair heads for, if one runs.
   fn target_of(&self, node: NodeId, component: Component) -> Option<Lanes> {
     match component {
       Component::Rotation => self.rotation.iter().find(|t| t.node == node).map(|t| t.to),
+      Component::Weights => None,
       _ => self.linear.iter().find(|t| t.node == node && t.component == component).map(|t| lanes3(t.to)),
     }
   }
@@ -532,6 +757,9 @@ impl NodeTransitions {
 
   /// Whether the pair animates or waits: a track runs or a write is held.
   pub fn any_running(&self, node: NodeId, component: Component) -> bool {
+    if component == Component::Weights {
+      return self.weights_target_of(node).is_some() || self.pending_weights.iter().any(|w| w.node == node);
+    }
     self.target_of(node, component).is_some() || self.pending.iter().any(|w| w.node == node && w.component == component)
   }
 
@@ -541,18 +769,21 @@ impl NodeTransitions {
   pub fn cancel_node(&mut self, node: NodeId) {
     self.linear.retain(|t| t.node != node);
     self.rotation.retain(|t| t.node != node);
+    self.weights.retain(|t| t.node != node);
     self.pending.retain(|w| w.node != node);
+    self.pending_weights.retain(|w| w.node != node);
     self.staggered_exits.retain(|(n, _)| *n != node);
   }
 
   /// Drop the pair's track or held write and hand back its target, if one
   /// was in force: the enter animation restarts the component from `from`
-  /// toward it.
+  /// toward it. TRS components only (`take_weights_target` for weights).
   pub fn take_target(&mut self, node: NodeId, component: Component) -> Option<Lanes> {
     if let Some(i) = self.pending.iter().position(|w| w.node == node && w.component == component) {
       return Some(self.pending.swap_remove(i).to);
     }
     match component {
+      Component::Weights => None,
       Component::Rotation => {
         let i = self.rotation.iter().position(|t| t.node == node)?;
         Some(self.rotation.swap_remove(i).to)
@@ -568,13 +799,20 @@ impl NodeTransitions {
   pub fn motion_of(&self, node: NodeId) -> Vec<MotionState> {
     let mut out = Vec::new();
     for t in self.linear.iter().filter(|t| t.node == node) {
-      out.push(MotionState { component: t.component, to: lanes3(t.to), held_until_ms: None });
+      out.push(MotionState { component: t.component, to: t.to.to_vec(), held_until_ms: None });
     }
     for t in self.rotation.iter().filter(|t| t.node == node) {
-      out.push(MotionState { component: Component::Rotation, to: t.to, held_until_ms: None });
+      out.push(MotionState { component: Component::Rotation, to: t.to.to_vec(), held_until_ms: None });
+    }
+    for t in self.weights.iter().filter(|t| t.node == node) {
+      out.push(MotionState { component: Component::Weights, to: t.to.clone(), held_until_ms: None });
     }
     for w in self.pending.iter().filter(|w| w.node == node) {
-      out.push(MotionState { component: w.component, to: w.to, held_until_ms: Some(w.at_ms) });
+      let lanes = if w.component == Component::Rotation { 4 } else { 3 };
+      out.push(MotionState { component: w.component, to: w.to[..lanes].to_vec(), held_until_ms: Some(w.at_ms) });
+    }
+    for w in self.pending_weights.iter().filter(|w| w.node == node) {
+      out.push(MotionState { component: Component::Weights, to: w.to.clone(), held_until_ms: Some(w.at_ms) });
     }
     out
   }
@@ -586,6 +824,7 @@ impl NodeTransitions {
 pub(super) fn targets_match(component: Component, a: Lanes, b: Lanes) -> bool {
   match component {
     Component::Rotation => same_quat(a, b),
+    Component::Weights => a == b,
     _ => a[0..3] == b[0..3],
   }
 }

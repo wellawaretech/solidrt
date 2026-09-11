@@ -574,15 +574,145 @@ export type Geometry = {
   /** Vertex layout; absent means "standard". Must match the material's
    * layout - the scene rejects a mismatched pair at add(). */
   layout?: VertexLayout
+  /** Morph targets (blend shapes), packed sparse by vertex - see
+   * `MorphTargets` and `packMorphTargets`. A morphed material displaces
+   * positions and normals by the node's weights in the vertex stage
+   * before any skinning; picking, the transparent sort and every read of
+   * the retained tree see the base shape, and `geometryBounds` grows by
+   * the targets' extent. Absent means none. */
+  morphs?: MorphTargets
   /** Debug name for the lazily-created GPU buffers. */
   label?: string
   _bounds?: Float32Array
 }
 
+/** One morph target as authored, glTF's primitive target: per-vertex
+ * POSITION deltas (3 per vertex over the geometry's vertex count) and
+ * optional NORMAL deltas, added to the base channels scaled by the
+ * target's weight. Deltas only: an absolute target is its shape minus
+ * the base. What `packMorphTargets` takes. */
+export type MorphTarget = { name: string; position: ArrayLike<number>; normal?: ArrayLike<number> | null }
+
+/** Floats per texel of the morph packing (an rgba32f texel). */
+export const MORPH_TEXEL_FLOATS = 4
+/** Texels per packed entry: [target, dx, dy, dz] then [nx, ny, nz, 0]. */
+export const MORPH_ENTRY_TEXELS = 2
+
+/**
+ * A geometry's morph targets packed SPARSE BY VERTEX, the form the vertex
+ * stage reads: rgba32f texels as a flat float array (the GPU step lays
+ * them into the rows of one texture; a shader turns a texel index into
+ * its coordinates by the texture width). Texel v, for every vertex v, is
+ * the vertex's header `[offset, count, 0, 0]`: the texel index of its
+ * first entry and how many targets displace it. The entries follow, two
+ * texels each (`MORPH_ENTRY_TEXELS`): `[target, dx, dy, dz]` and
+ * `[nx, ny, nz, 0]`. A vertex no target moves has count 0, and a target
+ * that leaves a vertex at zero delta (both position and normal exactly
+ * zero) writes no entry for it, so memory is proportional to the deltas
+ * the targets author (a mouth on a face, an exporter's sparse accessors)
+ * and never vertices x targets - which is what lifts a dense layout's
+ * ceiling of about a hundred targets on a 20k-vertex face. `extent` is
+ * the per-axis growth of the geometry's box under any weights in [0, 1]:
+ * `[minDx, minDy, minDz, maxDx, maxDy, maxDz]`, the most negative and
+ * most positive per-vertex sums of the deltas over that vertex's targets
+ * (weights past 1 may leave it).
+ */
+export type MorphTargets = {
+  /** One name per target, in target order: what setMorphWeights resolves. */
+  names: string[]
+  texels: Float32Array
+  extent: Float32Array
+}
+
+/**
+ * Pack morph targets for a geometry of `vertexCount` vertices (see
+ * `MorphTargets` for the layout). Pure array math, run by the glTF parser
+ * at bake time and by `withMorphTargets` for hand-built shapes.
+ */
+export function packMorphTargets(vertexCount: number, targets: MorphTarget[]): MorphTargets {
+  targets.forEach((t, i) => {
+    if (t.position.length !== vertexCount * 3) {
+      throw new Error("packMorphTargets: target " + i + " has " + t.position.length + " position floats for " + vertexCount + " vertices")
+    }
+    if (t.normal != null && t.normal.length !== vertexCount * 3) {
+      throw new Error("packMorphTargets: target " + i + " has " + t.normal.length + " normal floats for " + vertexCount + " vertices")
+    }
+  })
+  let moves = (t: MorphTarget, v: number): boolean => {
+    let p = v * 3
+    if (t.position[p] !== 0 || t.position[p + 1] !== 0 || t.position[p + 2] !== 0) return true
+    return t.normal != null && (t.normal[p] !== 0 || t.normal[p + 1] !== 0 || t.normal[p + 2] !== 0)
+  }
+  // Pass one: how many targets displace each vertex, which fixes every
+  // vertex's run of entries and so the headers.
+  let counts = new Uint32Array(vertexCount)
+  let total = 0
+  for (let t of targets) {
+    for (let v = 0; v < vertexCount; v++) {
+      if (moves(t, v)) {
+        counts[v]!++
+        total++
+      }
+    }
+  }
+  let texels = new Float32Array((vertexCount + total * MORPH_ENTRY_TEXELS) * MORPH_TEXEL_FLOATS)
+  let cursor = new Uint32Array(vertexCount)
+  let next = vertexCount
+  for (let v = 0; v < vertexCount; v++) {
+    texels[v * MORPH_TEXEL_FLOATS] = next
+    texels[v * MORPH_TEXEL_FLOATS + 1] = counts[v]!
+    cursor[v] = next
+    next += counts[v]! * MORPH_ENTRY_TEXELS
+  }
+  // Pass two: the entries, in target order per vertex, and the per-vertex
+  // negative and positive delta sums the extent reduces over.
+  let sums = new Float32Array(vertexCount * 6)
+  for (let t = 0; t < targets.length; t++) {
+    let target = targets[t]!
+    for (let v = 0; v < vertexCount; v++) {
+      if (!moves(target, v)) continue
+      let at = cursor[v]! * MORPH_TEXEL_FLOATS
+      cursor[v] = cursor[v]! + MORPH_ENTRY_TEXELS
+      let p = v * 3
+      texels[at] = t
+      for (let k = 0; k < 3; k++) {
+        let d = target.position[p + k]!
+        texels[at + 1 + k] = d
+        texels[at + MORPH_TEXEL_FLOATS + k] = target.normal != null ? target.normal[p + k]! : 0
+        let side = d < 0 ? v * 6 + k : v * 6 + 3 + k
+        sums[side] = sums[side]! + d
+      }
+    }
+  }
+  let extent = new Float32Array(6)
+  for (let v = 0; v < vertexCount; v++) {
+    for (let k = 0; k < 3; k++) {
+      if (sums[v * 6 + k]! < extent[k]!) extent[k] = sums[v * 6 + k]!
+      if (sums[v * 6 + 3 + k]! > extent[3 + k]!) extent[3 + k] = sums[v * 6 + 3 + k]!
+    }
+  }
+  return { names: targets.map((t) => t.name), texels, extent }
+}
+
+/**
+ * A geometry with morph targets: a new geometry over the source's
+ * vertices and indices (shared, so both bind the same GPU buffers) whose
+ * `morphs` is `targets` packed. Three's `geometry.morphAttributes` for
+ * relative targets; a shape's blend shapes from a modeller arrive this
+ * way through the glTF loader.
+ */
+export function withMorphTargets(geometry: Geometry, targets: MorphTarget[], label?: string): Geometry {
+  let out: Geometry = { ...geometry, morphs: packMorphTargets(geometryVertexCount(geometry, "withMorphTargets"), targets) }
+  delete out._bounds
+  if (label !== undefined) out.label = label
+  return out
+}
+
 /**
  * The geometry's LOCAL axis-aligned bounds as [minX, minY, minZ, maxX,
- * maxY, maxZ], computed from the vertices on first use and cached; a
- * stream-0 updateVertices drops the cache. What the transparent sort and
+ * maxY, maxZ], computed from the vertices on first use (grown by the
+ * morph targets' extent when it carries any) and cached; a stream-0
+ * updateVertices drops the cache. What the transparent sort and
  * a model's bounds read (the picking index keeps its own copy of the
  * positions and derives its box there); a flat geometry legitimately has
  * zero extent on an axis. An empty geometry yields a zero box at the
@@ -604,6 +734,11 @@ export function geometryBounds(geometry: Geometry): Float32Array {
       if (z > bounds[5]!) bounds[5] = z
     }
     if (bounds[0]! > bounds[3]!) bounds.fill(0)
+    else if (geometry.morphs !== undefined) {
+      // Morph targets displace vertices at draw time: the box grows by
+      // their extent so any weights in [0, 1] keep the shape inside it.
+      for (let k = 0; k < 6; k++) bounds[k] = bounds[k]! + geometry.morphs.extent[k]!
+    }
     geometry._bounds = bounds
   }
   return bounds
