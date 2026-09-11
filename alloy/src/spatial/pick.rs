@@ -202,10 +202,6 @@ impl Shapes {
     }
   }
 
-  pub fn check(&self, id: ShapeId) -> Result<(), String> {
-    self.index(id).map(|_| ()).ok_or_else(|| format!("spatial shape {id} not found"))
-  }
-
   pub fn get(&self, id: ShapeId) -> Option<&Shape> {
     self.index(id).and_then(|i| self.slots[i as usize].shape.as_ref())
   }

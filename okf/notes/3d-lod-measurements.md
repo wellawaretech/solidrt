@@ -29,8 +29,9 @@ in `packages/3d/AGENTS.md` (Level of detail).
   the camera write, 0.02 ms. The sync figure is the core flush: the
   walk, the LOD pass, the cull pass over three times as many sinks, and
   the fade writes (one draw-params command per entry in a band per
-  frame). Removing the per-instance level-list clone from the population
-  pass changed nothing measurable. A BVH-walked measure is the same
+  frame; the band position is quantized to 64 steps, so a slow camera
+  writes an entry only when its step changes). Removing the per-instance
+  level-list clone from the population pass changed nothing measurable. A BVH-walked measure is the same
   behavior at a better curve if a profile ever asks, the same note as
   the cull sweep.
 - A probe edit that zeroes an instanced capacity throws at startup and

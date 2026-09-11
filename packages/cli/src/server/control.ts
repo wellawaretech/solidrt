@@ -484,11 +484,20 @@ export async function handleControl(req: Request, path: string, query: Map<strin
       return handleQuery(query, "texture", extra)
     }
     case "/__control__/clock": {
-      // Clock control: ?scale=<x> sets the client's time scale (0 pauses),
-      // ?step=<n> advances n frames while paused. Applied by the client
-      // runtime; the reply carries the resulting clock state.
-      if (req.method !== "POST") return Response.json({ error: "Clock requires POST" }, { status: 405 })
+      // Clock control: POST ?scale=<x> sets the client's time scale (0
+      // pauses), ?step=<n> advances n frames while paused. Applied by the
+      // client runtime; the reply carries the resulting clock state. A
+      // GET reads that state without touching it - `pendingSteps` says
+      // whether stepped frames have all been applied yet.
+      if (req.method !== "POST" && req.method !== "GET") return Response.json({ error: "Clock requires GET or POST" }, { status: 405 })
       let extra: Record<string, unknown> = {}
+      if (req.method === "GET") {
+        let target = findClient(query.get("client"))
+        if ("error" in target) return target.error
+        let result = await queryClient(target.ws, "clock", extra)
+        if ("error" in result) return result.error
+        return Response.json(result.data)
+      }
       let scaleParam = query.get("scale")
       if (scaleParam !== undefined) {
         let scale = parseFloat(scaleParam)

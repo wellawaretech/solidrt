@@ -223,8 +223,11 @@ when exactly one client is connected.
   coordinates read from `/tree` just before: the window's logical size
   follows the display it sits on, so a size read earlier can be stale).
 - POST `/clock?scale=<x>` (0 pauses) / `?step=<n>` frames while paused;
-  `{ scale, pendingSteps }` back. `/clients` reports each client's `timeScale`,
-  reset to 1 by every push.
+  `{ scale, pendingSteps }` back. Steps apply at the client's frame rate,
+  so GET `/clock` (the same record, nothing changed) and wait for
+  `pendingSteps` to reach 0 before reading state or snapshotting the
+  stepped result. `/clients` reports each client's `timeScale`, reset to
+  1 by every push.
 - POST `/reload` - rebuild and push to every client; `{ ok, clients }` or
   the build error.
 - POST `/load` with `{ "entry": "<path>" }` - switch the entry and push it;

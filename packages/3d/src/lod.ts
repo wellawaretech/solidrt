@@ -64,10 +64,12 @@ export function createLod(levels: LodLevel[], opts?: LodOptions): SceneNode {
 }
 
 /**
- * Declare (or with an empty list clear) a node's LOD levels; a level node
- * not yet under the node is added as its child (re-parented if it was
- * elsewhere). On the population of createInstancedLod the levels are
- * sizes only (`{ size }`): its level meshes are fixed at creation.
+ * Declare (or with an empty list clear) a node's LOD levels. A level is
+ * a direct child of the node: a parentless node is adopted as one here,
+ * a node parented elsewhere is refused (move it with `add` first - a
+ * declaration never re-parents behind your back). On the population of
+ * createInstancedLod the levels are sizes only (`{ size }`): its level
+ * meshes are fixed at creation.
  */
 export function setLod(node: SceneNode, levels: (LodLevel | { size: number })[], opts?: LodOptions): void {
   if (node._destroyed) throw new Error("setLod: the node was destroyed")
@@ -87,6 +89,7 @@ export function setLod(node: SceneNode, levels: (LodLevel | { size: number })[],
         if (n.kind === "instance") throw new Error("setLod: an instance is slot-bound to its mesh and cannot be a level")
         if (n._destroyed) throw new Error("setLod: a level node was destroyed")
         if (nodes.indexOf(n) !== nodes.lastIndexOf(n)) throw new Error("setLod: a node is listed twice")
+        if (n.parent !== null && n.parent !== node) throw new Error("setLod: a level must be a direct child of the group (or parentless, to be adopted); add it first")
       }
       for (let n of nodes as SceneNode[]) if (n.parent !== node) add(node, n)
     }
@@ -117,7 +120,9 @@ export type InstancedLodOptions = InstancedMeshOptions &
  * and pick as on any InstancedMesh, and the other levels are its
  * children at identity, each with a matrix buffer of its own the core
  * stages an instance's record into (`_instances.levels`, nearest first;
- * their per-level style streams take setInstanceStyle together). Records
+ * their per-level style streams take setInstanceStyle together). A pick
+ * or pointer event on an instance names that first mesh whatever level
+ * the instance is drawn at (the instance is the population's). Records
  * are target-agnostic, so instances pick by the SCENE camera and every
  * view and shadow tile draws that choice; instanced levels switch hard
  * with hysteresis (`fade` is refused). Layers and castShadow set on the

@@ -1325,11 +1325,17 @@ fn a_fade_band_draws_both_levels_with_complementary_dither() {
   assert_eq!(f.len(), 2);
   assert!((f[0].1[0] - 0.5).abs() < 0.01 && f[0].1[1] == 1.0, "the near level keeps the low half: {f:?}");
   assert!((f[1].1[0] - 0.5).abs() < 0.01 && f[1].1[1] == -1.0, "the far level keeps the high half: {f:?}");
-  // Out of the band on the near side: solid, the far level off.
+  // Out of the band on the near side: solid, the far level off - and
+  // written solid too, so it keeps no band value while off.
   s.set_lod_view(1, lod_view(1.0));
   let w = flush(&mut s);
   assert_eq!(counts(&w), vec![(1, 2, 0)]);
-  assert_eq!(fades(&w), vec![(1, [1.0, 1.0])]);
+  assert_eq!(fades(&w), vec![(1, [1.0, 1.0]), (2, [1.0, 1.0])]);
+  // A band position moves in steps: a nudge inside one step writes nothing.
+  s.set_lod_view(1, lod_view(0.866 / 0.625));
+  flush(&mut s);
+  s.set_lod_view(1, lod_view(0.866 / 0.626));
+  assert!(flush(&mut s).is_empty(), "same fade step, no write");
   // A sink without fade support draws the band's majority side only.
   let (g2, l2) = lod_group(&mut s, 2, false);
   s.set_lod(g2, &[level(l2[0], 0.5), level(l2[1], 0.1), level(l2[2], 0.0)], 0.5, None).expect("lod");

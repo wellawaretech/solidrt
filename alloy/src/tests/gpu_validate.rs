@@ -2,10 +2,11 @@ use std::collections::HashMap;
 
 use crate::gpu::{
   check_cube_faces, mip_levels, mip_size, resolve_draw_range, validate_binding_shapes, validate_draw_range,
-  validate_params, validate_texture_bindings, AttrFormat, AttrKind, BoundTexture, BufferBound, BufferIds, BufferUpdate,
+  validate_params, validate_texture_bindings, AttrFormat, BoundTexture, BufferBound, BufferIds, BufferUpdate,
   DrawBounds, DrawRange, DrawUpdate, GpuLimits, IndexFormat, ParamValue, StepMode, TextureBinding, TextureFormat,
   TextureShape, UniformKind, UniformSlot, UniformTable, CUBE_FACES,
 };
+use crate::gpu::vocab::AttrKind;
 
 fn table(entries: &[(&str, UniformKind)]) -> UniformTable {
   entries.iter().map(|(name, kind)| (name.to_string(), UniformSlot { kind: *kind, count: 1 })).collect()

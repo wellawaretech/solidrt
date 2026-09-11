@@ -224,6 +224,12 @@ pub const LOD_HYSTERESIS: f32 = 0.1;
 /// eye would otherwise divide by zero).
 const LOD_MIN_DISTANCE: f32 = 1e-6;
 
+/// A fade band's position is quantized to this many steps: the dither
+/// hash is continuous, so 64 levels read as a smooth dissolve, and an
+/// entry inside a band is rewritten only when its step changes instead
+/// of every frame the camera moves.
+const LOD_FADE_STEPS: f32 = 64.0;
+
 /// A LOD group's configuration and its per-target choice.
 struct LodGroup {
   levels: Vec<LodLevel>,
@@ -265,7 +271,8 @@ fn select_level(levels: &[LodLevel], fade: f32, current: u32, c: f32) -> (u32, f
       let s = levels[level as usize].size;
       let top = s * (1.0 + fade);
       if s > 0.0 && c < top {
-        return (level, ((c - s) / (top - s)).clamp(0.0, 1.0));
+        let t = ((c - s) / (top - s)).clamp(0.0, 1.0);
+        return (level, (t * LOD_FADE_STEPS).round() / LOD_FADE_STEPS);
       }
     }
     return (level, 1.0);
@@ -1167,8 +1174,10 @@ impl Spatial {
             }
           }
         }
-        if want && sink.fade {
-          let fade = self.lod_fade(i, sink.target);
+        // The band position while on; solid again when off, so an entry
+        // never keeps a band value it is not drawing with.
+        if sink.fade {
+          let fade = if want { self.lod_fade(i, sink.target) } else { [1.0, 1.0] };
           if fade != b.fade {
             b.fade = fade;
             return out.write_fade(sink.target, sink.draw, fade);

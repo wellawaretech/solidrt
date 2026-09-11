@@ -217,7 +217,8 @@ a zoomed camera or a scaled-up tree). `createLod([{ node, size }, ...],
 { fade? })` / `<Lod fade?>` with `lodSize` on its direct children: the
 levels nearest first, `size` the projected size BELOW which a level
 hands over to the next, the last one's the cull threshold (0 = never
-culled). Every camera write also sets its target's LOD view (eye,
+culled); a level is a direct child (a parentless node is adopted by
+`setLod`, one parented elsewhere is refused, never moved). Every camera write also sets its target's LOD view (eye,
 focal, ortho flag, `lodBias`): the scene and each view pick by their
 own camera (a minimap sees the far level of the same tree), shadow
 tiles by the SCENE camera (a caster draws the level the camera sees, so
@@ -232,7 +233,9 @@ never flickers; with one, each threshold `s` widens into `[s, s * (1 +
 fade))` where both levels draw with COMPLEMENTARY screen-hash dithers
 (the near one keeps the pixels below the band position, the far one
 the rest - a partition, never a double draw) through the `uLodFade`
-vec2 every stock fragment composes; a custom class opts in by composing
+vec2 every stock fragment composes, its band position in 64 steps so an
+entry is rewritten when its step changes, not every frame, and written
+solid again when the entry switches off; a custom class opts in by composing
 `LOD_FADE` from `@solidrt/3d/glsl` and calling `lodFade()` first in
 main. Shadow tiles never fade: their depth pass switches hard at the
 band's midpoint, invisible for two variants of one shape.
@@ -243,7 +246,9 @@ record into the level ITS OWN size picks - a spread forest as three
 entries, near trees full and far ones cards. Returned as the first
 level's mesh (the other levels are its children at identity, sharing
 its instance slots; `setLayers`/`setCastShadow` on it reach them,
-`setInstanceStyle` writes every level's style stream). Records are
+`setInstanceStyle` writes every level's style stream; a pick or pointer
+event on an instance names that first mesh whatever level the instance
+is drawn at). Records are
 target-agnostic, so instances pick by the SCENE camera and every view
 draws that choice; instanced levels switch hard (`fade` is refused).
 `scene.setLodBias` (Unity's lodBias) multiplies every measured size:
