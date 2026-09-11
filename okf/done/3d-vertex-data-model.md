@@ -319,6 +319,6 @@ shape; the flux gpu_split and gpu_order examples were ported.
   the 32-bit integer formats (done 2026-09-11).
 - okf/backlog/3d-picking-shape-after-update.md: the picking shape does
   not follow updateVertices.
-- okf/backlog/3d-instance-records-as-bytes.md: the 3d package's instance
+- okf/done/3d-instance-records-as-bytes.md: the 3d package's instance
   buffers are float32 records, so packed instance formats stop at the
   engine.

@@ -11,12 +11,14 @@ import type { Material } from "../material.ts"
 
 export type RecordMeshProps = PopulatedMeshProps & {
   geometry: Geometry
-  /** Must declare instanceBuffers (shaderMaterialClass), the record buffer only. */
+  /** Must declare instanceBuffers (shaderMaterialClass); the first is
+   * the records' layout. */
   material: Material
-  /** Interleaved per-instance records (stride = the material's instance
-   * attributes summed). Reactive; a later array larger than the buffer
-   * grows it (capacity doubles into a replacement buffer). */
-  records: Float32Array
+  /** The records, laid out in the material's first instance layout (a
+   * Float32Array over an all-float layout, bytes otherwise; see
+   * setRecords). Reactive; a later value larger than the buffer grows it
+   * (capacity doubles into a replacement buffer). */
+  records: ArrayBufferView
   /** How many records draw; default all of the latest `records`. */
   count?: number
   /** LOCAL bounds covering every instance ([minX..maxZ]), fixed at

@@ -4,9 +4,10 @@
 // scene side is reached through the node's SceneHooks (node.ts).
 
 import { createBuffer, destroyBuffer, writeBuffer } from "@solidrt/core/gpu"
-import type { BufferId, DrawId, ShaderParams, TextureBindings, VertexBufferLayout } from "@solidrt/core/gpu"
-import { geometryBounds, plane, VERTEX_FORMATS } from "./geometry.ts"
-import type { Geometry } from "./geometry.ts"
+import type { BufferId, DrawId, ShaderParams, TextureBindings, VertexAttribute, VertexBufferLayout } from "@solidrt/core/gpu"
+import { geometryBounds, isFloatLayout, layoutKey, layoutStride, plane, vertexBytes, vertexView, VERTEX_FORMATS } from "./geometry.ts"
+import type { AttributeAccess, Geometry } from "./geometry.ts"
+import { INSTANCE_MATRIX_ATTRIBUTES } from "./glsl.ts"
 import type { GeometryBuffers } from "./geometry-gpu.ts"
 import type { Material } from "./material.ts"
 import type { TransformUpdate, Vec3 } from "./math.ts"
@@ -75,20 +76,25 @@ export type Mesh = SceneNode & {
   _sprite: boolean
 }
 
-/** The per-mesh half of instancing: the record buffer and its bookkeeping.
- * Read the public fields freely; write through the population's own
- * functions (addInstance/destroy, setRecords/setRecordCount) so
- * the draw range follows. */
+/** The per-mesh half of instancing: the population's bookkeeping, the
+ * core-written matrix buffer of an instanced mesh and the app-owned
+ * record streams. Read the public fields freely; write through the
+ * population's own functions (addInstance/destroy, setRecords/
+ * setRecordCount, instanceAttribute + updateRecords) so the draw range
+ * and the publishes follow. */
 export type MeshInstances = {
-  /** The GPU record buffer (instance slot 0), owned by the mesh
-   * (disposeInstances frees it): the core-written matrices on an
-   * instanced mesh, the app's records on a record mesh. */
-  buffer: BufferId
-  /** Floats per record: INSTANCE_FLOATS on an instanced mesh, the
-   * material's first instance buffer's floats summed on a record mesh. */
-  stride: number
-  /** Records the buffer has room for; doubles on growth (a replacement
-   * buffer, never a resize). */
+  /** The GPU matrix buffer of an instanced mesh - the material's first
+   * instance buffer, INSTANCE_MATRIX_ATTRIBUTES - which the core writes
+   * each instance node's placement into (JS never does; disposeInstances
+   * frees it). null on a record mesh, whose every buffer is a stream. */
+  matrix: BufferId | null
+  /** The app-owned record streams: one per instance buffer the mesh's
+   * material declared at creation, in declaration order, the matrix
+   * buffer excluded (so an instanced mesh's style record is streams[0],
+   * a record mesh's records are). */
+  streams: InstanceStream[]
+  /** Records every buffer has room for; doubles on growth (replacements,
+   * never a resize). */
   capacity: number
   /** The buffer label, carried to replacement buffers on growth. */
   label: string | undefined
@@ -106,47 +112,55 @@ export type MeshInstances = {
   /** The node-backed population (createInstancedMesh): handles by slot
    * (null = free) and the free list; null on a record mesh. */
   nodes: InstanceSlots | null
-  /** The app-written style records (instance slot 1) of an instanced mesh
-   * whose material declares slot-1 attributes; null otherwise (and on a
-   * record mesh, whose one buffer is the app's already). */
-  style: InstanceStyle | null
 }
 
 export type InstanceSlots = { slots: (InstanceNode | null)[]; free: number[] }
 
 /**
- * The style half of an instanced mesh: one record per instance slot of
- * the material's second instance buffer (a tint, a frame index, any
- * per-copy floats the vertex stage reads), owned by the app and written
- * per instance with setInstanceStyle - the JS twin of the core's matrix
- * records in slot 0, @solidrt/2d's pose/style split one dimension up.
- * Writes land in `data` and publish as ONE coalesced buffer write per
- * mesh at the scene's next sync, whatever the number of instances
- * styled; `buffer` grows with the matrix buffer.
+ * One app-owned per-instance buffer of a populated mesh: a vertex stream
+ * stepped per instance, Geometry.streams one step up. `layout` is the
+ * attribute list the material declared for it (any vertex format,
+ * tightly packed), `data` the JS mirror of `capacity` records - a
+ * Float32Array over an all-float layout, a Uint8Array otherwise
+ * (vertexView's rule) - and `buffer` the mesh-owned GPU copy. Writes go
+ * through instanceAttribute's accessor (or setInstanceStyle / setRecords,
+ * which encode for you), land in the mirror, and publish as ONE
+ * coalesced buffer write per stream at the scene's next sync over the
+ * `dirty` byte range - a frame-rate path, like setTransform. Growth
+ * replaces `data` and `buffer` (the accessor follows; a held `data`
+ * view does not).
  */
-export type InstanceStyle = {
-  /** The GPU style buffer (instance slot 1), mesh-owned like `buffer`. */
-  buffer: BufferId
-  /** Floats per style record: the material's slot-1 attributes summed. */
+export type InstanceStream = {
+  layout: VertexAttribute[]
+  /** Bytes per record: the layout's stride. */
   stride: number
-  /** The JS mirror, capacity * stride floats; the buffer is published
-   * from it. Read freely, write through setInstanceStyle. */
-  data: Float32Array
-  /** The record a fresh (or recycled) slot starts with: the material's
-   * instanceStyle, zeros without one. */
-  blank: Float32Array
-  /** The float range [lo, hi) of `data` written since the last publish,
+  buffer: BufferId
+  data: ArrayBufferView
+  /** The record a fresh (or recycled) instance slot starts with: the
+   * material's instanceStyle encoded, on the first stream of an
+   * instanced mesh; zeros otherwise. */
+  blank: Uint8Array
+  /** The byte range [lo, hi) of `data` written since the last publish,
    * or null. */
   dirty: [number, number] | null
+  /** The DataView the accessors read through; follows `data`. */
+  _view: DataView
+  /** All-float32 layout: `data` is a Float32Array and a record write is
+   * plain indexed stores instead of a codec pass per component. */
+  _floats: boolean
+  /** Values per record: the layout's components summed. */
+  _components: number
+  /** One accessor per attribute, in layout order. */
+  _fields: AttributeAccess[]
 }
 
 /** A mesh from createInstancedMesh: one draw entry drawing the geometry
  * once per instance node (addInstance). */
-export type InstancedMesh = Mesh & { _instances: MeshInstances & { nodes: InstanceSlots } }
+export type InstancedMesh = Mesh & { _instances: MeshInstances & { matrix: BufferId; nodes: InstanceSlots } }
 
 /** A mesh from createRecordMesh: one draw entry drawing the geometry once
- * per record of a JS-written buffer (setRecords). */
-export type RecordMesh = Mesh & { _instances: MeshInstances & { nodes: null } }
+ * per record of a JS-written stream (setRecords). */
+export type RecordMesh = Mesh & { _instances: MeshInstances & { matrix: null; nodes: null } }
 
 /**
  * One instance of an InstancedMesh: a scene node like any other
@@ -230,24 +244,124 @@ export function localBounds(mesh: Mesh): Float32Array | null {
   return mesh._sprite ? SPRITE_BOUNDS : geometryBounds(mesh.geometry)
 }
 
-/** Floats per record of one of a material's instance buffers (the first
- * by default, the record buffer; 1 is the style buffer); 0 when the
- * material declares no buffer at that index. */
-export function instanceStride(buffers: VertexBufferLayout[], index = 0): number {
-  let stride = 0
-  for (let a of buffers[index]?.attributes ?? []) stride += VERTEX_FORMATS[a.format].bytes / Float32Array.BYTES_PER_ELEMENT
-  return stride
-}
-
 /** Floats per instance record on an instanced mesh: one column-major
  * mat4, the instance's placement inside the mesh (the material reads it
  * through INSTANCE_MATRIX_ATTRIBUTES / INSTANCE_MATRIX in ./glsl). */
 export const INSTANCE_FLOATS = 16
+const INSTANCE_BYTES = INSTANCE_FLOATS * Float32Array.BYTES_PER_ELEMENT
+// The matrix layout by key: what an instanced material's first buffer
+// must be, and what binds the core's buffer in any material's list.
+const MATRIX_KEY = layoutKey(INSTANCE_MATRIX_ATTRIBUTES)
 // Instance slots an instanced mesh reserves without a capacity; growth
 // doubles past it.
 const DEFAULT_CAPACITY = 64
-// The instance buffers a mesh binds: the matrix slot and the style slot.
-const MESH_INSTANCE_SLOTS = 2
+
+// Values per record of a layout: its attributes' components summed - what
+// setInstanceStyle and a material's instanceStyle count in.
+function layoutComponents(layout: VertexAttribute[]): number {
+  let n = 0
+  for (let a of layout) n += VERTEX_FORMATS[a.format].components
+  return n
+}
+
+// Records in a byte view of `layout`: 4-aligned and a whole number of
+// strides, or a throw naming `site`.
+function recordCount(records: ArrayBufferView, layout: VertexAttribute[], site: string): number {
+  let stride = layoutStride(layout)
+  if (records.byteOffset % Float32Array.BYTES_PER_ELEMENT !== 0) throw new Error(site + ": records must start on a 4-byte boundary")
+  if (records.byteLength % stride !== 0) {
+    throw new Error(site + ": " + records.byteLength + " record bytes is not a whole number of " + stride + "-byte (" + layoutKey(layout) + ") records")
+  }
+  return records.byteLength / stride
+}
+
+// The accessors of a stream's attributes, reading through the stream's
+// current view so they survive growth.
+function streamFields(stream: InstanceStream): AttributeAccess[] {
+  let offset = 0
+  return stream.layout.map(attr => {
+    let codec = VERTEX_FORMATS[attr.format]
+    let at = offset
+    offset += codec.bytes
+    return {
+      format: attr.format,
+      components: codec.components,
+      get: (i, k) => codec.get(stream._view, i * stream.stride + at, k),
+      set: (i, k, v) => codec.set(stream._view, i * stream.stride + at, k, v),
+    }
+  })
+}
+
+// Point a stream's mirror at `bytes` (a fresh ArrayBuffer of whole
+// records): the handed-out view and the accessors' view.
+function viewStream(stream: InstanceStream, bytes: ArrayBuffer): void {
+  stream.data = vertexView(stream.layout, bytes)
+  stream._view = new DataView(bytes)
+}
+
+function streamLabel(label: string | undefined, index: number): string | undefined {
+  return label === undefined ? undefined : label + "-" + index
+}
+
+// A stream of `capacity` zeroed records over `layout`; its GPU buffer is
+// sized and unwritten (the mirror is the truth, publishes follow dirty).
+function makeStream(layout: VertexAttribute[], capacity: number, blank: Uint8Array | null, label: string | undefined): InstanceStream {
+  let stride = layoutStride(layout)
+  let stream: InstanceStream = {
+    layout,
+    stride,
+    buffer: createBuffer(capacity * stride, { autoFree: false, label }),
+    data: new Uint8Array(0),
+    blank: blank ?? new Uint8Array(stride),
+    dirty: null,
+    _view: new DataView(new ArrayBuffer(0)),
+    _floats: isFloatLayout(layout),
+    _components: layoutComponents(layout),
+    _fields: [],
+  }
+  viewStream(stream, new ArrayBuffer(capacity * stride))
+  stream._fields = streamFields(stream)
+  return stream
+}
+
+// Encode `values` (one per component, in layout order, as the shader
+// sees them) into record `i` of a stream: one typed-array set over an
+// all-float layout (the values ARE the bytes), the codecs otherwise.
+function writeRecord(stream: InstanceStream, i: number, values: ArrayLike<number>, site: string): void {
+  let n = stream._components
+  if (values.length !== n) throw new Error(site + ": a " + layoutKey(stream.layout) + " record is " + n + " values, got " + values.length)
+  if (stream._floats) {
+    // Indexed stores beat TypedArray.set over a plain array under QuickJS,
+    // which walks the array-like generically.
+    let data = stream.data as Float32Array
+    let at = i * n
+    for (let k = 0; k < n; k++) data[at + k] = values[k]!
+    return
+  }
+  let j = 0
+  for (let f of stream._fields) for (let k = 0; k < f.components; k++) f.set(i, k, values[j++]!)
+}
+
+// One record of `layout` encoded from `values`, the bytes a blank slot copies.
+function encodeRecord(layout: VertexAttribute[], values: ArrayLike<number>, site: string): Uint8Array {
+  let stride = layoutStride(layout)
+  let one: InstanceStream = { layout, stride, buffer: 0 as BufferId, data: new Uint8Array(0), blank: new Uint8Array(0), dirty: null, _view: new DataView(new ArrayBuffer(0)), _floats: isFloatLayout(layout), _components: layoutComponents(layout), _fields: [] }
+  viewStream(one, new ArrayBuffer(stride))
+  one._fields = streamFields(one)
+  writeRecord(one, 0, values, site)
+  return vertexBytes(one.data)
+}
+
+// Extend a stream's dirty range over [lo, hi) bytes of the mirror and ask
+// the scene to publish it at the next sync.
+function markRecords(mesh: Mesh, stream: InstanceStream, lo: number, hi: number): void {
+  if (stream.dirty === null) stream.dirty = [lo, hi]
+  else {
+    if (lo < stream.dirty[0]) stream.dirty[0] = lo
+    if (hi > stream.dirty[1]) stream.dirty[1] = hi
+  }
+  mesh._scene?._setRecords(mesh)
+}
 
 /** What both population kinds take. */
 type PopulationOptions = {
@@ -291,42 +405,37 @@ function instancedBuffers(material: Material, site: string): VertexBufferLayout[
   return buffers
 }
 
+// The mesh buffer a declared instance layout binds to: the core's matrix
+// buffer for the matrix layout, else the stream with the same attribute
+// list (names and formats - a byte-equal layout with other formats would
+// decode differently). Throws naming `site` when the mesh has none.
+function streamBuffer(inst: MeshInstances, layout: VertexBufferLayout, site: string): BufferId {
+  let key = layoutKey(layout.attributes)
+  if (inst.matrix !== null && key === MATRIX_KEY) return inst.matrix
+  let stream = inst.streams.find(s => layoutKey(s.layout) === key)
+  if (stream === undefined) {
+    let carried = [...(inst.matrix !== null ? [MATRIX_KEY] : []), ...inst.streams.map(s => layoutKey(s.layout))]
+    throw new Error(site + ": the material's instance buffer " + key + " is none of the mesh's record layouts (" + carried.join("; ") + ")")
+  }
+  return stream.buffer
+}
+
 /**
- * Whether a material's instance buffers fit a mesh's population: the
- * first layout's stride must be the mesh's record stride, a second must
- * match the mesh's style stride (a record mesh has none), and no layout
- * beyond. Throws otherwise - at creation for the mesh's own material, at
- * add() for a swapped one, at a shadow view's attach for a shadow variant.
+ * Whether a material's instance buffers fit a mesh's population: every
+ * layout it declares must be one the mesh carries (the matrix on an
+ * instanced mesh, else a stream with the same attribute list). Throws
+ * otherwise - at creation for the mesh's own material, at add() for a
+ * swapped one, at a shadow view's attach for a shadow variant.
  */
 export function checkInstancePairing(material: Material, inst: MeshInstances, site: string): void {
-  let buffers = instancedBuffers(material, site)
-  if (buffers.length > MESH_INSTANCE_SLOTS) {
-    throw new Error(site + ": the material declares " + buffers.length + " instance buffers; a mesh binds two (records and style) at most")
-  }
-  let stride = instanceStride(buffers, 0)
-  if (stride !== inst.stride) {
-    throw new Error(site + ": the material's first instance buffer takes " + stride + " floats per record but the mesh's records are " + inst.stride)
-  }
-  let styleStride = instanceStride(buffers, 1)
-  if (styleStride > 0) {
-    if (inst.style === null) {
-      throw new Error(site + ": the material declares a second (style) instance buffer but the mesh has no style records" + (inst.nodes === null ? " (a record mesh binds the record buffer only)" : ""))
-    }
-    if (styleStride !== inst.style.stride) {
-      throw new Error(site + ": the material's style buffer takes " + styleStride + " floats per record but the mesh's style records are " + inst.style.stride)
-    }
-  }
+  for (let layout of instancedBuffers(material, site)) streamBuffer(inst, layout, site)
 }
 
 /** The instance buffers a draw entry binds for a material over a
- * population, in the pipeline's layout order after the geometry's: the
- * record buffer, plus the style buffer when the material's pipeline reads
- * the style records too (the list must match the declared layouts
- * exactly). */
+ * population, one per declared layout in the pipeline's order after the
+ * geometry's: the matrix buffer or the stream with that layout. */
 export function instanceBinding(material: Material, inst: MeshInstances): BufferId[] {
-  let buffers = material.instanceBuffers
-  if (buffers !== undefined && inst.style !== null && buffers.length > 1) return [inst.buffer, inst.style.buffer]
-  return [inst.buffer]
+  return (material.instanceBuffers ?? []).map(b => streamBuffer(inst, b, "instanceBinding"))
 }
 
 /**
@@ -352,93 +461,115 @@ export function instanceBinding(material: Material, inst: MeshInstances): Buffer
  * frees the record buffers when done for good.
  */
 export function createInstancedMesh(geometry: Geometry, material: Material, opts?: InstancedMeshOptions): InstancedMesh {
-  let attrs = instancedBuffers(material, "createInstancedMesh")
-  let stride = instanceStride(attrs, 0)
-  if (stride !== INSTANCE_FLOATS) {
+  let buffers = instancedBuffers(material, "createInstancedMesh")
+  let first = buffers[0]
+  if (first === undefined || layoutKey(first.attributes) !== MATRIX_KEY) {
     throw new Error(
-      "createInstancedMesh: the material's first instance buffer takes " + stride + " floats per record; an instance record is the " + INSTANCE_FLOATS + "-float matrix of INSTANCE_MATRIX_ATTRIBUTES",
+      "createInstancedMesh: the material's first instance buffer must be the instance matrix the core writes (INSTANCE_MATRIX_ATTRIBUTES); got " + (first === undefined ? "none" : layoutKey(first.attributes)),
     )
   }
   let capacity = opts?.capacity ?? DEFAULT_CAPACITY
   if (!(Number.isInteger(capacity) && capacity > 0)) {
     throw new Error("createInstancedMesh: capacity must be a positive integer, got " + capacity)
   }
-  let styleStride = instanceStride(attrs, 1)
-  let style: InstanceStyle | null = null
-  if (styleStride > 0) {
-    let blank = new Float32Array(styleStride)
-    if (material.instanceStyle !== undefined) {
-      if (material.instanceStyle.length !== styleStride) {
-        throw new Error("createInstancedMesh: the material's instanceStyle has " + material.instanceStyle.length + " floats but its style buffer takes " + styleStride)
-      }
-      blank.set(material.instanceStyle)
-    }
-    style = {
-      buffer: createBuffer(capacity * styleStride * 4, { autoFree: false, label: opts?.label === undefined ? undefined : opts.label + "-style" }),
-      stride: styleStride,
-      data: new Float32Array(capacity * styleStride),
-      blank,
-      dirty: null,
-    }
-  }
+  let streams = buffers.slice(1).map((b, i) => {
+    let blank = i === 0 && material.instanceStyle !== undefined ? encodeRecord(b.attributes, material.instanceStyle, "createInstancedMesh: instanceStyle") : null
+    return makeStream(b.attributes, capacity, blank, streamLabel(opts?.label, i))
+  })
   let mesh = createMesh(geometry, material) as InstancedMesh
   mesh._instances = {
-    buffer: createBuffer(capacity * INSTANCE_FLOATS * 4, { autoFree: false, label: opts?.label }),
-    stride: INSTANCE_FLOATS,
+    matrix: createBuffer(capacity * INSTANCE_BYTES, { autoFree: false, label: opts?.label }),
+    streams,
     capacity,
     label: opts?.label,
     count: 0,
     bounds: copyBounds(opts?.bounds, "createInstancedMesh"),
     nodes: { slots: [], free: [] },
-    style,
   }
-  checkInstancePairing(material, mesh._instances, "createInstancedMesh")
   return mesh
 }
 
-// Extend a style's dirty range over [lo, hi) floats of the mirror and
-// ask the scene to publish it at the next sync.
-function markStyle(mesh: InstancedMesh, style: InstanceStyle, lo: number, hi: number): void {
-  if (style.dirty === null) style.dirty = [lo, hi]
-  else {
-    if (lo < style.dirty[0]) style.dirty[0] = lo
-    if (hi > style.dirty[1]) style.dirty[1] = hi
-  }
-  mesh._scene?._setStyle(mesh)
-}
-
 /**
- * Write an instance's style record - the floats of the material's
- * slot-1 instance attributes, in order (`[r, g, b, a]` for a stock
- * material's instanceColors): the app's per-copy data beside the matrix
- * the core writes. Any number of instances styled between two frames
- * cost one coalesced buffer write at the scene's sync, so this is a
- * frame-rate path like setTransform. Throws on a material without
- * slot-1 attributes or a record of the wrong length; a no-op on a
- * removed instance.
+ * Write an instance's style record: the values of the material's second
+ * instance buffer (the first stream), one per attribute component in
+ * order, as the shader sees them - `[r, g, b, a]` for a stock material's
+ * instanceColors, whatever the format stores them as. The app's per-copy
+ * data beside the matrix the core writes; any number of instances styled
+ * between two frames cost one coalesced buffer write at the scene's
+ * sync, so this is a frame-rate path like setTransform. Throws on a
+ * material without a second instance buffer or a record of the wrong
+ * length; a no-op on a removed instance. instanceAttribute + updateRecords
+ * is the same write by attribute name, and the only way into a third
+ * stream.
  */
 export function setInstanceStyle(instance: InstanceNode, values: ArrayLike<number>): void {
   let mesh = instance.mesh
   if (mesh === null) return
-  let style = mesh._instances.style
-  if (style === null) throw new Error("setInstanceStyle: the mesh's material declares no slot-1 (style) instance attributes")
-  if (values.length !== style.stride) {
-    throw new Error("setInstanceStyle: a style record is " + style.stride + " floats, got " + values.length)
-  }
-  let at = instance._slot * style.stride
-  style.data.set(values, at)
-  markStyle(mesh, style, at, at + style.stride)
+  let stream = mesh._instances.streams[0]
+  if (stream === undefined) throw new Error("setInstanceStyle: the mesh's material declares no instance buffer beyond the matrix (no style record)")
+  writeRecord(stream, instance._slot, values, "setInstanceStyle")
+  markRecords(mesh, stream, instance._slot * stream.stride, (instance._slot + 1) * stream.stride)
 }
 
-/** Publish an instanced mesh's pending style writes as one buffer write
- * (the scene calls it from its sync; nothing to do without a dirty
- * range). */
-export function publishInstanceStyle(mesh: InstancedMesh): void {
-  let style = mesh._instances.style
-  if (style === null || style.dirty === null) return
-  let [lo, hi] = style.dirty
-  style.dirty = null
-  writeBuffer(style.buffer, style.data.subarray(lo, hi), lo * 4)
+/**
+ * The accessor for per-instance attribute `name` over the mesh's record
+ * streams - geometryAttribute one step up: record index in, component
+ * values as the shader sees them (a unorm8x4 tint reads and writes as
+ * 0..1), encoded through the format's codec. Write through it, then
+ * updateRecords the range; the accessor stays valid across growth. null
+ * when no stream carries the name (the matrix columns are the core's,
+ * not reachable here); throws on a disposed mesh.
+ */
+export function instanceAttribute(mesh: InstancedMesh | RecordMesh, name: string): AttributeAccess | null {
+  let inst: MeshInstances | null = mesh._instances
+  if (inst === null) throw new Error("instanceAttribute: the mesh's instances are disposed")
+  for (let s of inst.streams) {
+    let i = s.layout.findIndex(a => a.name === name)
+    if (i >= 0) return s._fields[i]!
+  }
+  return null
+}
+
+/** Options of `updateRecords`: the stream (default 0) and the record
+ * range (default the whole stream, capacity wide). */
+export type UpdateRecordsOptions = { stream?: number; first?: number; count?: number }
+
+/**
+ * Publish records `[first, first + count)` of one record stream from its
+ * mirror at the scene's next sync: updateVertices for instance data, and
+ * the partial rewrite a population stepped in JS wants (ten moved records
+ * of ten thousand cost ten). Write the mirror first, through
+ * instanceAttribute, then call this. The range is against the stream's
+ * capacity, not the drawn count: a record mesh writes ahead and dials
+ * setRecordCount after.
+ */
+export function updateRecords(mesh: InstancedMesh | RecordMesh, options: UpdateRecordsOptions = {}): void {
+  let inst: MeshInstances | null = mesh._instances
+  if (inst === null) throw new Error("updateRecords: the mesh's instances are disposed")
+  let index = options.stream ?? 0
+  let stream = inst.streams[index]
+  if (!Number.isInteger(index) || stream === undefined) {
+    throw new Error("updateRecords: stream " + index + " is out of range; the mesh has record streams 0.." + (inst.streams.length - 1))
+  }
+  let first = options.first ?? 0
+  let count = options.count ?? inst.capacity - first
+  if (!Number.isInteger(first) || !Number.isInteger(count) || first < 0 || count < 0 || first + count > inst.capacity) {
+    throw new Error("updateRecords: range [" + first + ", " + (first + count) + ") is outside the mesh's " + inst.capacity + " records")
+  }
+  if (count > 0) markRecords(mesh, stream, first * stream.stride, (first + count) * stream.stride)
+}
+
+/** Publish a mesh's pending record writes, one buffer write per dirty
+ * stream (the scene calls it from its sync). */
+export function publishRecords(mesh: Mesh): void {
+  let inst = mesh._instances
+  if (inst === null) return
+  for (let s of inst.streams) {
+    if (s.dirty === null) continue
+    let [lo, hi] = s.dirty
+    s.dirty = null
+    writeBuffer(s.buffer, vertexBytes(s.data).subarray(lo, hi), lo)
+  }
 }
 
 /**
@@ -448,7 +579,7 @@ export function publishInstanceStyle(mesh: InstancedMesh): void {
  * mesh's subtree (a squad group within a fleet: the record stays
  * mesh-relative through it). Its record slot is fixed for its life (a
  * removed instance's slot recycles to the next add); past the
- * reservation the buffer doubles. From here on it is a node like any
+ * reservation the buffers double. From here on it is a node like any
  * other: setTransform/setTransition/setVisible, lookAt, worldPosition,
  * pointer handlers, children of its own (a headlight mesh under a car
  * instance) - and `destroy` (its slot hides at the next flush and recycles
@@ -474,43 +605,43 @@ export function addInstance(mesh: InstancedMesh, update?: TransformUpdate, paren
     inst.count = slot + 1
     mesh._scene?._setCount(mesh)
   }
-  // A recycled slot must not wear its last occupant's style.
-  let style = inst.style
-  if (style !== null) {
-    let at = slot * style.stride
-    style.data.set(style.blank, at)
-    markStyle(mesh, style, at, at + style.stride)
+  // A recycled slot must not wear its last occupant's records.
+  for (let s of inst.streams) {
+    vertexBytes(s.data).set(s.blank, slot * s.stride)
+    markRecords(mesh, s, slot * s.stride, (slot + 1) * s.stride)
   }
   if (parent._scene) enterScene(instance, parent._scene)
   return instance
 }
 
-// Double the record buffers: replacements (never a resize) the live
-// instances' record sinks move to in one core call, republished whole at
-// the next flush, and the style mirror re-published whole from JS; the
-// entry re-points, then the old buffers, which the entry held alive until
-// now, are freed.
-function growInstances(mesh: InstancedMesh, next: number): void {
-  let inst = mesh._instances
-  let previous = inst.buffer
-  inst.buffer = createBuffer(next * INSTANCE_FLOATS * 4, { autoFree: false, label: inst.label })
+// Grow the population's buffers to `next` records: replacements (never a
+// resize). An instanced mesh's live matrix records move to the new buffer
+// in one core call and republish at the next flush; every stream's mirror
+// is copied over and marked whole, so the scene republishes it; the entry
+// re-points, then the old buffers, which the entry held alive until now,
+// are freed.
+function growInstances(mesh: InstancedMesh | RecordMesh, next: number): void {
+  let inst: MeshInstances = mesh._instances
+  let previous = inst.capacity
   inst.capacity = next
-  // Out of a scene nothing is bound, and retargeting an empty source throws.
-  if (inst.nodes.slots.some(n => n !== null && n._node !== null)) spatial.retargetRecords(previous, inst.buffer)
-  let style = inst.style
-  let previousStyle: BufferId | null = null
-  if (style !== null) {
-    previousStyle = style.buffer
-    style.buffer = createBuffer(next * style.stride * 4, { autoFree: false, label: inst.label === undefined ? undefined : inst.label + "-style" })
-    let grown = new Float32Array(next * style.stride)
-    grown.set(style.data)
-    style.data = grown
-    style.dirty = null
-    markStyle(mesh, style, 0, inst.count * style.stride)
+  let freed: BufferId[] = []
+  if (inst.matrix !== null) {
+    freed.push(inst.matrix)
+    inst.matrix = createBuffer(next * INSTANCE_BYTES, { autoFree: false, label: inst.label })
+    // Out of a scene nothing is bound, and retargeting an empty source throws.
+    if (inst.nodes !== null && inst.nodes.slots.some(n => n !== null && n._node !== null)) spatial.retargetRecords(freed[0]!, inst.matrix)
   }
+  inst.streams.forEach((s, i) => {
+    freed.push(s.buffer)
+    s.buffer = createBuffer(next * s.stride, { autoFree: false, label: streamLabel(inst.label, i) })
+    let held = vertexBytes(s.data)
+    viewStream(s, new ArrayBuffer(next * s.stride))
+    vertexBytes(s.data).set(held)
+    s.dirty = null
+    markRecords(mesh, s, 0, previous * s.stride)
+  })
   mesh._scene?._setBuffer(mesh)
-  destroyBuffer(previous)
-  if (previousStyle !== null) destroyBuffer(previousStyle)
+  for (let b of freed) destroyBuffer(b)
 }
 
 /**
@@ -531,56 +662,55 @@ function growInstances(mesh: InstancedMesh, next: number): void {
 export function createRecordMesh(
   geometry: Geometry,
   material: Material,
-  records: Float32Array,
+  records: ArrayBufferView,
   count?: number,
   opts?: RecordMeshOptions,
 ): RecordMesh {
-  let attrs = instancedBuffers(material, "createRecordMesh")
-  let stride = instanceStride(attrs, 0)
-  if (records.length % stride !== 0) {
-    throw new Error("createRecordMesh: " + records.length + " floats is not a whole number of " + stride + "-float records")
-  }
-  let capacity = records.length / stride
+  let buffers = instancedBuffers(material, "createRecordMesh")
+  let capacity = recordCount(records, buffers[0]!.attributes, "createRecordMesh")
   let mesh = createMesh(geometry, material) as RecordMesh
   mesh._instances = {
-    buffer: createBuffer(records, { autoFree: false, label: opts?.label }),
-    stride,
+    matrix: null,
+    streams: buffers.map((b, i) => makeStream(b.attributes, capacity, null, streamLabel(opts?.label, i))),
     capacity,
     label: opts?.label,
     count: Math.max(0, Math.min(Math.floor(count ?? capacity), capacity)),
     bounds: copyBounds(opts?.bounds, "createRecordMesh"),
     nodes: null,
-    style: null,
   }
-  checkInstancePairing(material, mesh._instances, "createRecordMesh")
+  copyRecords(mesh, records, capacity)
   return mesh
 }
 
+// Overwrite the first `written` records of a record mesh's first stream
+// from `records` and mark them for publish.
+function copyRecords(mesh: RecordMesh, records: ArrayBufferView, written: number): void {
+  let stream = mesh._instances.streams[0]!
+  vertexBytes(stream.data).set(vertexBytes(records))
+  if (written > 0) markRecords(mesh, stream, 0, written * stream.stride)
+}
+
 /**
- * Overwrite a record mesh's records from the start of its buffer and (by
- * default) draw exactly the records written - pass `count` to draw fewer,
- * or to keep more previously written ones alive past a partial rewrite.
- * More records than the buffer holds grow it: capacity doubles (or jumps
- * to the records written when that is more), a new buffer is created and
- * written, the mesh's entry is re-pointed at it and the old buffer freed
- * - so a population grows without a new mesh, with the copies amortized
- * like any dynamic array (size the initial records to skip them).
- * Frame-rate-safe like setMeshParams when no growth happens.
+ * Overwrite a record mesh's records (its first stream) from the start
+ * and (by default) draw exactly the records written - pass `count` to
+ * draw fewer, or to keep more previously written ones alive past a
+ * partial rewrite. `records` is laid out in the material's first
+ * instance layout (a Float32Array over an all-float layout, bytes
+ * through instanceAttribute's codecs otherwise); a length that is not
+ * whole records throws. More records than the buffer holds grow it:
+ * capacity doubles (or jumps to the records written when that is more)
+ * into replacement buffers, the entry is re-pointed and the old ones
+ * freed - so a population grows without a new mesh, with the copies
+ * amortized like any dynamic array (size the initial records to skip
+ * them). The write publishes at the scene's next sync, one buffer write;
+ * for a few records of many, write the mirror through instanceAttribute
+ * and updateRecords the range instead.
  */
-export function setRecords(mesh: RecordMesh, records: Float32Array, count?: number): void {
+export function setRecords(mesh: RecordMesh, records: ArrayBufferView, count?: number): void {
   let inst = mesh._instances
-  if (records.length % inst.stride !== 0) {
-    throw new Error("setRecords: " + records.length + " floats is not a whole number of " + inst.stride + "-float records")
-  }
-  let written = records.length / inst.stride
-  if (written > inst.capacity) {
-    let previous = inst.buffer
-    inst.capacity = Math.max(written, inst.capacity * 2)
-    inst.buffer = createBuffer(inst.capacity * inst.stride * 4, { autoFree: false, label: inst.label })
-    mesh._scene?._setBuffer(mesh)
-    destroyBuffer(previous)
-  }
-  writeBuffer(inst.buffer, records)
+  let written = recordCount(records, inst.streams[0]!.layout, "setRecords")
+  if (written > inst.capacity) growInstances(mesh, Math.max(written, inst.capacity * 2))
+  copyRecords(mesh, records, written)
   setRecordCount(mesh, count ?? written)
 }
 
@@ -595,8 +725,8 @@ export function setRecordCount(mesh: RecordMesh, count: number): void {
 }
 
 /**
- * Detach the mesh (if attached) and free its record buffers (the style
- * buffer with the matrix one). The buffers are mesh-owned with no
+ * Detach the mesh (if attached) and free its record buffers (the matrix
+ * buffer and every stream). The buffers are mesh-owned with no
  * reference count (unlike geometry buffers they are never shared), so
  * this is the one explicit free; the mesh cannot be re-added afterwards.
  * An instanced mesh's instances go inert with it. On a mesh `destroy`
@@ -620,8 +750,8 @@ export function disposeInstances(mesh: InstancedMesh | RecordMesh): void {
     // buffer still exists (a write into a freed buffer warns).
     spatial.flush()
   }
-  destroyBuffer(inst.buffer)
-  if (inst.style !== null) destroyBuffer(inst.style.buffer)
+  if (inst.matrix !== null) destroyBuffer(inst.matrix)
+  for (let s of inst.streams) destroyBuffer(s.buffer)
   ;(mesh as Mesh)._instances = null
 }
 

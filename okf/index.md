@@ -108,11 +108,6 @@ Shaped, not started.
   union box, shear-exact normals as a second projection, instanced sprites,
   and a per-instance frame/atlas convention for the stock materials; none
   changes a shipped contract.
-- **[The 3d package's instance records are float32 only, so packed instance formats stop at the engine](backlog/3d-instance-records-as-bytes.md)** [2026-09-11]
-  A shaderMaterialClass instanceBuffers layout must be float32-family and
-  tightly packed because the mesh writes its record and style buffers as
-  Float32Arrays counted in floats, while the engine accepts every vertex
-  format and an explicit stride on an instance-step layout.
 - **[Level of detail - distance-selected mesh variants as a core sink](backlog/3d-lod.md)** [2026-08-30]
   A large scene ships every object at one triangle count; a track with a
   thousand trees either draws full-detail foliage at the horizon or nothing. A
@@ -950,6 +945,11 @@ Finished, kept for the reasoning.
   clip players and per-instance picking never reach an instance, while every
   2d sprite already is an arena node; the core's InstanceProjection has only
   Pose2D and the full-matrix sibling it anticipates is the missing piece.
+- **[The 3d package's instance records are float32 only, so packed instance formats stop at the engine](done/3d-instance-records-as-bytes.md)** [2026-09-11]
+  A shaderMaterialClass instanceBuffers layout must be float32-family and
+  tightly packed because the mesh writes its record and style buffers as
+  Float32Arrays counted in floats, while the engine accepts every vertex
+  format and an explicit stride on an instance-step layout.
 - **[Instanced meshes cast no shadow](done/3d-instanced-shadow-casters.md)** [2026-08-27]
   Landed 2026-09-02 as the per-class `shadowVertex` option on
   shaderMaterialClass - the class's vertex stage reduced to position (instance
@@ -1968,6 +1968,11 @@ Knowledge. No lifecycle - true or wrong, not open or closed.
   devices and the pointer feed), each against Godot's InputMap and Unity's
   Input System, the shared control vocabulary, and the traps met cutting the
   camera controls over.
+- **[What a per-frame restyle of instance records costs on each JS write path](notes/instance-write-path-costs.md)** [2026-09-11]
+  Measured on the release client under QuickJS - setInstanceStyle per instance
+  is about a microsecond of call machinery each, the codec path about two, the
+  accessor half that, and a bulk typed-array loop over the stream mirror the
+  floor; the app's own per-instance math dominates the floor.
 - **[Why offscreen rasters are multisampled](notes/offscreen-msaa-provenance.md)** [2026-08-13]
   Offscreen MSAA exists for one case - gradient emoji drawn through the svg
   path into a snapshot boundary - so that case is the regression test for any

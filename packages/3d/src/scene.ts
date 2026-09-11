@@ -60,7 +60,7 @@ import type { Material } from "./material.ts"
 import { orderEntries } from "./order.ts"
 import { fillTransform, freeLeaving, leaveScene, makeNode, setTransition, worldInto } from "./node.ts"
 import type { SceneHooks, SceneNode, ScenePointerListener } from "./node.ts"
-import { checkInstancePairing, checkMask, instanceBinding, localBounds, publishInstanceStyle } from "./mesh.ts"
+import { checkInstancePairing, checkMask, instanceBinding, localBounds, publishRecords } from "./mesh.ts"
 import type { InstancedMesh, InstanceNode, Mesh } from "./mesh.ts"
 import type { CastingLight, Light } from "./light.ts"
 
@@ -1000,8 +1000,8 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
   // _moved flag): what the light and transparent-order bookkeeping
   // reacts to, since which meshes moved is the core's knowledge now.
   let moved: SceneNode[] = []
-  // Instanced meshes with style writes to publish at the next sync.
-  let styleDirty = new Set<InstancedMesh>()
+  // Populated meshes with record writes to publish at the next sync.
+  let recordsDirty = new Set<Mesh>()
   // Instanced meshes whose cull group - their live instance nodes - changed
   // since the last sync: one setCullGroup per mesh however many entered
   // or left.
@@ -1571,11 +1571,11 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     // Light bookkeeping first, so a fresh direction-slot bind is seeded
     // by the flush below in the same sync.
     if (lightsDirty) writeLights()
-    // The instanced meshes' style writes since the last sync: one
-    // coalesced buffer write per mesh.
-    if (styleDirty.size > 0) {
-      for (let m of styleDirty) if (m._instances !== null) publishInstanceStyle(m)
-      styleDirty.clear()
+    // The populated meshes' record writes since the last sync: one
+    // coalesced buffer write per dirty stream.
+    if (recordsDirty.size > 0) {
+      for (let m of recordsDirty) publishRecords(m)
+      recordsDirty.clear()
     }
     // An instanced mesh without explicit bounds is culled by the union of
     // its instances' boxes: the core's cull group (a skinned part's joint
@@ -1691,12 +1691,9 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       mesh._buffers = bufs
       attachScene(mesh)
       for (let v of views) attachView(v, mesh)
-      // The style mirror may have been written while the mesh was out of
-      // a scene (or into a buffer this scene never saw): republish it.
-      if (inst !== null && inst.style !== null) {
-        inst.style.dirty = inst.count > 0 ? [0, inst.count * inst.style.stride] : null
-        if (inst.style.dirty !== null) styleDirty.add(mesh as InstancedMesh)
-      }
+      // Record writes made while the mesh was out of a scene kept their
+      // dirty ranges: publish them now.
+      if (inst !== null && inst.streams.some(s => s.dirty !== null)) recordsDirty.add(mesh)
       // Picking: the local box puts the node in the core index; an
       // ordinary mesh also gets its geometry's triangle shape, a
       // populated one is box-only (its instances are the leaves that
@@ -1739,7 +1736,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     },
     _detach(mesh) {
       if (mesh._buffers !== null) {
-        styleDirty.delete(mesh as InstancedMesh)
+        recordsDirty.delete(mesh)
         groupDirty.delete(mesh as InstancedMesh)
         for (let v of views) detachView(v, mesh)
         detachScene(mesh)
@@ -1769,7 +1766,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       spatial.setLayers(instance._node, mesh.layers)
       // The record is the instance's placement inside the mesh (the mesh
       // node is the anchor), staged by the core at the next flush.
-      spatial.bindMatrixRecord(instance._node, mesh._instances.buffer, instance._slot, mesh._node)
+      spatial.bindMatrixRecord(instance._node, mesh._instances.matrix, instance._slot, mesh._node)
       byNode.set(instance._node, instance)
       if (mesh._instances.bounds === null) groupDirty.add(mesh)
       this._schedule()
@@ -1834,9 +1831,9 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
         if (entry !== undefined) setDrawRange(v.texture, entry, range)
       }
     },
-    _setStyle(mesh) {
+    _setRecords(mesh) {
       if (disposed || mesh._buffers === null) return
-      styleDirty.add(mesh)
+      recordsDirty.add(mesh)
       this._schedule()
     },
     _reorder() {

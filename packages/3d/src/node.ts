@@ -150,9 +150,9 @@ export type SceneHooks = {
   _setBuffer(mesh: Mesh): void
   /** The mesh's draw range changed (setDrawRange): apply it to its entries. */
   _setRange(mesh: Mesh): void
-  /** The instanced mesh's style mirror has a dirty range: publish it at
+  /** One of the mesh's record streams has a dirty range: publish it at
    * the next sync. */
-  _setStyle(mesh: InstancedMesh): void
+  _setRecords(mesh: Mesh): void
   /** The mesh's castShadow flag changed: re-evaluate the filtered views. */
   _setCast(mesh: Mesh): void
   /** The mesh's layers bitmask changed: re-evaluate every target. */

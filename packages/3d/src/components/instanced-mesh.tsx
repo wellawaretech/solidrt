@@ -15,7 +15,7 @@ export type InstancedMeshProps = PopulatedMeshProps & {
   geometry: Geometry
   /** An instanced material: a stock one with `instanced` (or
    * `instanceColors`, for a per-instance tint), or a class declaring
-   * INSTANCE_MATRIX_ATTRIBUTES in slot 0 and any style layout in slot 1. */
+   * INSTANCE_MATRIX_ATTRIBUTES first and any style layout second. */
   material: Material
   /** Instance slots reserved up front (default 64; fixed at creation).
    * Past it the buffers double into replacements - amortized, but size it
@@ -75,10 +75,11 @@ export let InstancedMesh: ParentComponent<InstancedMeshProps> = props => {
 }
 
 export type InstanceProps = TransformProps & PointerEventProps & {
-  /** The instance's style record (setInstanceStyle as a prop): the
-   * floats of the material's slot-1 instance attributes - `[r, g, b, a]`
-   * under a stock material's `instanceColors`. Reactive; absent, the
-   * instance keeps the material's instanceStyle (white for a tint). */
+  /** The instance's style record (setInstanceStyle as a prop): one value
+   * per component of the material's second instance buffer, in order -
+   * `[r, g, b, a]` under a stock material's `instanceColors`. Reactive;
+   * absent, the instance keeps the material's instanceStyle (white for
+   * a tint). */
   style?: ArrayLike<number>
   ref?: (instance: InstanceNode) => void
 }

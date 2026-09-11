@@ -41,7 +41,7 @@ import type {
   Topology,
   VertexAttribute,
 } from "@solidrt/core/gpu"
-import { formatFeeds, geometryKey, geometryLayouts, geometrySlot, isFloatFormat, VERTEX_FORMATS } from "./geometry.ts"
+import { formatFeeds, geometryKey, geometryLayouts, geometrySlot, VERTEX_FORMATS } from "./geometry.ts"
 import type { Geometry } from "./geometry.ts"
 import type { VertexLayout } from "./geometry.ts"
 import { linearColor, premultipliedColor } from "./color.ts"
@@ -96,9 +96,10 @@ export type Material = {
    * app-written style records, a record mesh binds the first to its
    * records - and createMesh meshes are rejected at add(). */
   instanceBuffers?: VertexBufferLayout[]
-  /** The style record (the second instance buffer's floats, in order)
-   * every fresh instance of an instanced mesh starts with; absent = zeros.
-   * White for the stock materials' `instanceColors`. */
+  /** The style record (one value per component of the second instance
+   * buffer's attributes, in order) every fresh instance of an instanced
+   * mesh starts with; absent = zeros. White for the stock materials'
+   * `instanceColors`. */
   instanceStyle?: ArrayLike<number>
   /** What a shadow view draws this material's meshes with instead of its
    * default depth override: the depth pass culling the side this material
@@ -1052,25 +1053,27 @@ export type ShaderMaterialClassOptions = {
   fragment: string
   /**
    * Instance buffers: one layout per per-instance buffer (`{ attributes
-   * }`, float32-family formats, interleaved in list order; stepMode is
-   * "instance" by definition here). The vertex stage reads the attributes
-   * as `in` variables beside the geometry layout's own, and each drawn
-   * instance gets one record from each buffer. A class with instance
-   * buffers makes INSTANCED materials: attach their meshes with
-   * createInstancedMesh or createRecordMesh, which carry the records - a
-   * createMesh mesh is rejected at add(). An instanced mesh binds the
-   * core's matrix records (INSTANCE_MATRIX_ATTRIBUTES, exactly) to the
-   * first buffer and the app's style records - any layout, written per
-   * instance with setInstanceStyle - to the second; a record mesh binds
-   * the first only, its records whatever the stage reads (a
-   * position/yaw/scale record beats four vec4 columns for a JS-stepped
-   * fleet, and the composed uModel still places the whole population).
+   * }`: any vertex format, tightly packed in list order like a geometry
+   * layout; stepMode is "instance" by definition here). The vertex stage
+   * reads the attributes as `in` variables beside the geometry layout's
+   * own, and each drawn instance gets one record from each buffer. A
+   * class with instance buffers makes INSTANCED materials: attach their
+   * meshes with createInstancedMesh or createRecordMesh, which carry the
+   * records as streams - a createMesh mesh is rejected at add(). An
+   * instanced mesh binds the core's matrix records (the first buffer,
+   * INSTANCE_MATRIX_ATTRIBUTES exactly) and the app's style records (the
+   * second: any layout, written per instance with setInstanceStyle); a
+   * record mesh's buffers are all the app's, its records whatever the
+   * stage reads (a position/yaw/scale record beats four vec4 columns for
+   * a JS-stepped fleet, and the composed uModel still places the whole
+   * population). Every stream is written through instanceAttribute and
+   * published with updateRecords.
    */
   instanceBuffers?: VertexBufferLayout[]
-  /** The style record a fresh instance starts with (the second instance
-   * buffer's floats, in order); default zeros. The identity of
-   * whatever the stage does with the record - white for a multiplied
-   * tint. */
+  /** The style record a fresh instance starts with (one value per
+   * component of the second instance buffer's attributes, in order);
+   * default zeros. The identity of whatever the stage does with the
+   * record - white for a multiplied tint. */
   instanceStyle?: ArrayLike<number>
   /**
    * The class's vertex stage reduced to POSITION - the instance
@@ -1176,27 +1179,17 @@ export function shaderMaterialClass(opts: ShaderMaterialClassOptions): ShaderMat
   // An unknown format has no record stride: it would leave here intact,
   // make a NaN stride at the mesh, and fail as an arithmetic complaint
   // from createRecordMesh naming neither the attribute nor the format.
-  // Checked where the name is written instead. The instance records the
-  // meshes here write are Float32Arrays (instanceStride counts floats),
-  // so an instance attribute is float32-family and a layout is tightly
-  // packed; the packed formats and explicit strides are the engine's and
-  // reachable through core's own pipeline API.
+  // Checked where the name is written instead. Records are tightly
+  // packed like geometry layouts; explicit strides and offsets are the
+  // engine's, reachable through core's own pipeline API.
   for (let layout of opts.instanceBuffers ?? []) {
     if (layout.stepMode === "vertex") throw new Error("shaderMaterial instanceBuffers are instance-step by definition; drop stepMode")
     if (layout.arrayStride !== undefined || layout.attributes.some(a => a.offset !== undefined)) {
       throw new Error("shaderMaterial instanceBuffers are tightly packed records; drop arrayStride and offset")
     }
     for (let attr of layout.attributes) {
-      if (!(attr.format in VERTEX_FORMATS) || !isFloatFormat(attr.format)) {
-        throw new Error(
-          "shaderMaterial unsupported instance attribute format '" +
-            String(attr.format) +
-            "' for " +
-            attr.name +
-            " (expected " +
-            Object.keys(VERTEX_FORMATS).filter(isFloatFormat as (f: string) => boolean).join(", ") +
-            ")",
-        )
+      if (!(attr.format in VERTEX_FORMATS)) {
+        throw new Error("shaderMaterial unknown instance attribute format '" + String(attr.format) + "' for " + attr.name + " (expected " + Object.keys(VERTEX_FORMATS).join(", ") + ")")
       }
     }
   }

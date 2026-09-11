@@ -49,7 +49,7 @@ export const MAX_SHADOW_MAPS = 8
  * INSTANCE_MATRIX_ATTRIBUTES }] })`): the four vec4 columns of the
  * per-instance matrix the spatial core writes - the instance's placement
  * inside the mesh (createInstancedMesh, addInstance). Read them through
- * INSTANCE_MATRIX. An app's own per-instance floats go in the second
+ * INSTANCE_MATRIX. An app's own per-instance values go in the second
  * instance buffer (the style record, see INSTANCE_COLOR_ATTRIBUTES). */
 export const INSTANCE_MATRIX_ATTRIBUTES: VertexAttribute[] = [
   { name: "iModel0", format: "float32x4" },
@@ -64,9 +64,11 @@ export const INSTANCE_MATRIX_ATTRIBUTES: VertexAttribute[] = [
  * STYLE record - app-owned, written with setInstanceStyle(instance, [r,
  * g, b, a]) - beside the core's matrix in the first. A custom class
  * declares it (or any style layout of its own) as its second instance
- * buffer; the stock materials start every instance at white. Three's
- * instanceColor, Godot's MultiMesh instance color. */
-export const INSTANCE_COLOR_ATTRIBUTES: VertexAttribute[] = [{ name: "iColor", format: "float32x4" }]
+ * buffer; the stock materials start every instance at white. Stored as
+ * half floats: 8 bytes per instance, and a linear color at 10-bit
+ * mantissa precision shows none of the banding an 8-bit unorm would in
+ * the darks. Three's instanceColor, Godot's MultiMesh instance color. */
+export const INSTANCE_COLOR_ATTRIBUTES: VertexAttribute[] = [{ name: "iColor", format: "float16x4" }]
 
 /**
  * The vertex-stage declarations over INSTANCE_MATRIX_ATTRIBUTES:

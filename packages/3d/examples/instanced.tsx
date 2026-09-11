@@ -9,9 +9,12 @@
 //
 // setRecordCount is the population dial (the pines breathe); records are
 // data, not matrices - position/scale/tint here, whatever your shader
-// wants in general. The explicit `bounds` cover the scatter so picking
-// still works (one conservative box around the population; omit bounds and
-// the mesh simply never picks).
+// wants in general. The record layout is any vertex layout: the tint is
+// a unorm8x4, four bytes where four floats would be sixteen, written as
+// 0..1 values through the same attribute accessor a geometry channel
+// uses. The explicit `bounds` cover the scatter so picking still works
+// (one conservative box around the population; omit bounds and the mesh
+// simply never picks).
 //
 // The fleets CAST: the class declares `shadowVertex` - its vertex stage
 // reduced to the position math, instance placement included - and with it
@@ -29,11 +32,13 @@
 import { createSignal, onFrame, pct, render } from "@solidrt/core"
 import { glsl } from "@solidrt/core/gpu"
 import {
+  attributeAccess,
   box,
   cone,
   DirectionalLight,
   Group,
   HemisphereLight,
+  layoutStride,
   RecordMesh,
   lit,
   Mesh,
@@ -42,8 +47,10 @@ import {
   Scene,
   setRecordCount,
   shaderMaterialClass,
+  vertexView,
 } from "@solidrt/3d"
 import type { RecordMeshNode } from "@solidrt/3d"
+import type { VertexAttribute } from "@solidrt/core/gpu"
 import { litFragment } from "@solidrt/3d/glsl"
 
 // The lit varyings (vWorldPos, vNormal, vUv, and vColor for the tint), as
@@ -54,7 +61,7 @@ const INSTANCE_VERTEX = glsl`
   in vec2 aUV;
   in vec3 iPos;
   in float iScale;
-  in vec3 iTint;
+  in vec4 iTint;
   out vec3 vWorldPos;
   out vec3 vNormal;
   out vec2 vUv;
@@ -69,7 +76,7 @@ const INSTANCE_VERTEX = glsl`
     vWorldPos = world.xyz;
     vNormal = mat3(uNormal) * aNormal;
     vUv = aUV;
-    vColor = vec4(iTint, 1.0);
+    vColor = iTint;
   }
 `
 
@@ -87,44 +94,61 @@ const INSTANCE_SHADOW_VERTEX = glsl`
   }
 `
 
-// One record per instance, interleaved in attribute order: 7 floats.
-const STRIDE = 7
+// One record per instance, tightly packed in attribute order: 20 bytes.
+const RECORD: VertexAttribute[] = [
+  { name: "iPos", format: "float32x3" },
+  { name: "iScale", format: "float32" },
+  { name: "iTint", format: "unorm8x4" },
+]
 
-// A deterministic scatter (no per-run surprises when eyeballing).
-function rocks(count: number): Float32Array {
-  let records = new Float32Array(count * STRIDE)
-  let a = 0
+// `count` records of RECORD, filled through the attribute accessors:
+// `place` gives a record's position and scale, `tint` its color, and the
+// codecs pack the bytes (the tint's 0..1 floats become unorm bytes).
+function records(count: number, place: (i: number) => [number, number, number, number], tint: (i: number) => [number, number, number]): ArrayBufferView {
+  let out = vertexView(RECORD, new ArrayBuffer(count * layoutStride(RECORD)))
+  let pos = attributeAccess(out, RECORD, "iPos")!
+  let scale = attributeAccess(out, RECORD, "iScale")!
+  let color = attributeAccess(out, RECORD, "iTint")!
   for (let i = 0; i < count; i++) {
-    a += 2.399963 // golden angle: an even spiral scatter
-    let r = 0.35 + 3.4 * Math.sqrt((i + 0.5) / count)
-    let s = 0.05 + 0.11 * ((i * 7) % 10) / 10
-    let o = i * STRIDE
-    records[o] = Math.cos(a) * r
-    records[o + 1] = s / 2
-    records[o + 2] = Math.sin(a) * r
-    records[o + 3] = s
-    records[o + 4] = 0.55 + 0.3 * ((i * 3) % 5) / 5
-    records[o + 5] = 0.5 + 0.2 * ((i * 11) % 7) / 7
-    records[o + 6] = 0.45
+    let [x, y, z, s] = place(i)
+    pos.set(i, 0, x)
+    pos.set(i, 1, y)
+    pos.set(i, 2, z)
+    scale.set(i, 0, s)
+    let [r, g, b] = tint(i)
+    color.set(i, 0, r)
+    color.set(i, 1, g)
+    color.set(i, 2, b)
+    color.set(i, 3, 1)
   }
-  return records
+  return out
 }
 
-function pines(count: number): Float32Array {
-  let records = new Float32Array(count * STRIDE)
-  for (let i = 0; i < count; i++) {
-    let a = (i / count) * Math.PI * 2
-    let s = 0.5 + 0.25 * ((i * 5) % 8) / 8
-    let o = i * STRIDE
-    records[o] = Math.cos(a) * 2.4
-    records[o + 1] = s / 2
-    records[o + 2] = Math.sin(a) * 2.4
-    records[o + 3] = s
-    records[o + 4] = 0.15
-    records[o + 5] = 0.4 + 0.25 * ((i * 3) % 6) / 6
-    records[o + 6] = 0.2
-  }
-  return records
+// A deterministic scatter (no per-run surprises when eyeballing).
+function rocks(count: number): ArrayBufferView {
+  let a = 0
+  return records(
+    count,
+    i => {
+      a += 2.399963 // golden angle: an even spiral scatter
+      let r = 0.35 + 3.4 * Math.sqrt((i + 0.5) / count)
+      let s = 0.05 + 0.11 * ((i * 7) % 10) / 10
+      return [Math.cos(a) * r, s / 2, Math.sin(a) * r, s]
+    },
+    i => [0.55 + 0.3 * ((i * 3) % 5) / 5, 0.5 + 0.2 * ((i * 11) % 7) / 7, 0.45],
+  )
+}
+
+function pines(count: number): ArrayBufferView {
+  return records(
+    count,
+    i => {
+      let a = (i / count) * Math.PI * 2
+      let s = 0.5 + 0.25 * ((i * 5) % 8) / 8
+      return [Math.cos(a) * 2.4, s / 2, Math.sin(a) * 2.4, s]
+    },
+    i => [0.15, 0.4 + 0.25 * ((i * 3) % 6) / 6, 0.2],
+  )
 }
 
 const PINE_COUNT = 48
@@ -187,15 +211,7 @@ let instancedLook = shaderMaterialClass({
   vertex: INSTANCE_VERTEX,
   shadowVertex: INSTANCE_SHADOW_VERTEX,
   fragment: litFragment({ vertexColors: true }),
-  instanceBuffers: [
-    {
-      attributes: [
-        { name: "iPos", format: "float32x3" },
-        { name: "iScale", format: "float32" },
-        { name: "iTint", format: "float32x3" },
-      ],
-    },
-  ],
+  instanceBuffers: [{ attributes: RECORD }],
   label: "instanced-look",
 })
 

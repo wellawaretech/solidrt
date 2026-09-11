@@ -7,8 +7,8 @@
 
 export { add, createGroup, destroy, getRotation, getTransform, lookAt, remove, setTransform, setTransition, setVisible, worldPosition } from "./node.ts"
 export type { NodePointerEvent, NodeTapEvent, NodeWheelEvent, SceneEventBase, SceneNode, ScenePointerEvent, ScenePointerListener, SceneTapEvent, SceneWheelEvent, TransformUpdate, TransitionEndEvent } from "./node.ts"
-export { addInstance, createInstancedMesh, createMesh, createRecordMesh, createSprite, disposeInstances, setCastShadow, setCulling, setDrawRange, setGeometry, setInstanceStyle, setLayers, setMaterial, setMeshParams, setRecordCount, setRecords, setRenderOrder, INSTANCE_FLOATS } from "./mesh.ts"
-export type { InstancedMesh as InstancedMeshNode, InstancedMeshOptions, InstanceNode, InstanceSlots, InstanceStyle, Mesh as MeshNode, MeshInstances, RecordMesh as RecordMeshNode, RecordMeshOptions } from "./mesh.ts"
+export { addInstance, createInstancedMesh, createMesh, createRecordMesh, createSprite, disposeInstances, setCastShadow, setCulling, setDrawRange, setGeometry, setInstanceStyle, setLayers, setMaterial, setMeshParams, setRecordCount, setRecords, setRenderOrder, instanceAttribute, updateRecords, INSTANCE_FLOATS } from "./mesh.ts"
+export type { InstancedMesh as InstancedMeshNode, InstancedMeshOptions, InstanceNode, InstanceSlots, InstanceStream, Mesh as MeshNode, MeshInstances, RecordMesh as RecordMeshNode, RecordMeshOptions, UpdateRecordsOptions } from "./mesh.ts"
 export { createDirectionalLight, createHemisphereLight, createPointLight, createSpotLight, setLight, MAX_SHADOWS } from "./light.ts"
 export type {
   DirectionalLight as DirectionalLightNode,
