@@ -94,11 +94,6 @@ Shaped, not started.
   modulo that must SNAP (native transitions animate the wrap jump across the
   world), ghost copies at the seams - and the chunked tile layer has no way to
   draw the seam at all.
-- **[A 3d camera cannot be told to go somewhere, or to frame something](backlog/3d-camera-glide-and-fit.md)** [2026-09-11]
-  createOrbitCamera and createFirstPersonCamera move only by input deltas and
-  snapping set(), so "show me this object" and "return to the default view"
-  are app-side loops; the 2d camera has had glideTo and fit(rect) since it
-  shipped, and every 3d tool has frame-selection.
 - **[Environment tier leftovers - SH9, aoMap, packed .srte, EXR, loadCubeImages](backlog/3d-environment-additive.md)** [2026-09-06]
   The environment tier is complete (skybox, HDR environments, PBR, prefiltered
   HDR probes and sky bakes) and each of these is a deliberate non-goal of that
@@ -510,10 +505,6 @@ Shaped, not started.
   frame while the app keeps presenting partial frames, so on screen it reads
   as a logic bug (entities drawn after the throwing line vanish) and the only
   trace is a log line the reader has to think to look for.
-- **[Orbit camera - zoom damping and a pose clamp hook](backlog/orbit-camera-damping-pose-clamp.md)** [2026-09-07]
-  Two gaps the third-dimension demo hand-rolls around createOrbitCamera - an
-  eased wheel zoom (Three's enableDamping) and a distance-dependent elevation
-  floor (a clampPose hook beside the pan-only clampTarget).
 - **[Children drawn outside their parent's box are not hit-testable](backlog/overflow-visible-hit-testing.md)** [2026-08-14]
   A parent's bounds check gates descent into its children as well as its own
   hit, so a child painted outside the parent's layout box under overflow
@@ -899,6 +890,11 @@ Finished, kept for the reasoning.
   top-level headings across 1910 lines, with individual APIs documented inside
   multi-hundred-word paragraphs, so finding one prop means grepping the source
   instead.
+- **[A 3d camera cannot be told to go somewhere, or to frame something](done/3d-camera-glide-and-fit.md)** [2026-09-11]
+  createOrbitCamera and createFirstPersonCamera move only by input deltas and
+  snapping set(), so "show me this object" and "return to the default view"
+  are app-side loops; the 2d camera has had glideTo and fit(rect) since it
+  shipped, and every 3d tool has frame-selection.
 - **[Capsule primitive and helper - the collision volume gets a mesh and a gizmo](done/3d-capsule-primitive.md)** [2026-09-11]
   capsule() as a geometry generator next to sphere() and cylinder(), height
   the total extent as in Godot and Unity, and capsuleHelper(volume) drawing
@@ -1604,6 +1600,10 @@ Finished, kept for the reasoning.
   The tick timebase resets across hot reload after the new instance's first
   frame, handing apps one enormous negative delta; apps clamp dt as a
   workaround.
+- **[Orbit camera - zoom damping and a pose clamp hook](done/orbit-camera-damping-pose-clamp.md)** [2026-09-07]
+  Two gaps the third-dimension demo hand-rolls around createOrbitCamera - an
+  eased wheel zoom (Three's enableDamping) and a distance-dependent elevation
+  floor (a clampPose hook beside the pan-only clampTarget).
 - **[overflow + viewBox clips the wrong rectangle](done/overflow-viewbox-clip.md)** [2026-08-08]
   The overflow clip rect took the element's box extent as a raw number and
   applied it in the child's design (pre-viewBox) space, so a magnifying fit

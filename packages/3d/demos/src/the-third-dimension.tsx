@@ -52,7 +52,7 @@ import {
   layoutStride,
   STANDARD_FLOATS,
 } from "@solidrt/3d"
-import type { CameraUpdate, OrbitCameraHandle, SceneNode, SpotShadowOptions, Vec3 } from "@solidrt/3d"
+import type { CameraUpdate, OrbitCameraHandle, OrbitPoseState, SceneNode, SpotShadowOptions, Vec3 } from "@solidrt/3d"
 import { FRESNEL, LIT_VERTEX, litFragment, SCENE } from "@solidrt/3d/glsl"
 import { registerDebug } from "srt:dev"
 
@@ -68,17 +68,12 @@ const ORBIT_PERIOD = 68 // seconds for one full revolution
 const ORBIT_SPEED = (Math.PI * 2) / ORBIT_PERIOD // radians per second, every panel
 const MIN_DISTANCE = 2.6
 const MAX_DISTANCE = 14
-// Wheel zoom is eased by the app: each panel's map rebinds the wheel from
-// the orbit's `zoom` to an app action, a notch retargets the distance and
-// the camera glides there over the next few frames, so a scroll reads as
-// one push instead of a staircase.
-const ZOOM_EASE = 9 // e-foldings per second toward the pending distance
-const ZOOM_EPSILON = 0.0005 // world units; inside this the glide lands and stops
 // Lowest the eye may sit, world units. Eye height is target.y + distance *
 // sin(elevation), so an elevation that sits comfortably high up close digs
 // under the floor at full zoom-out: hence a floor on the EYE, turned back
-// into an elevation clamp against the distance of the moment. The ground is
-// one back-face-culled quad, so under it the picture simply vanishes.
+// into an elevation clamp against the distance of the moment (the orbit
+// camera's clampPose, below). The ground is one back-face-culled quad, so
+// under it the picture simply vanishes.
 const EYE_MIN_Y = 0.35
 
 // Three spot lights evenly spaced in azimuth and tilted down by the same
@@ -300,16 +295,11 @@ let bottomOrbit!: OrbitCameraHandle
 // a parked rig together are one repeatable frame.
 let rig!: SceneNode
 let rigAngle = 0
-// A panel as input and the frame loop see it: its camera, the distance range
-// its wheel may steer within, and the eased zoom in flight (null when there
-// is none). Left-then-right order. `cam` is a getter because the handles
-// above arrive after this array exists; nothing reads it before the app is up.
-type PanelCamera = { readonly cam: OrbitCameraHandle; minDistance: number; maxDistance: number; zoom: number | null }
-let cameras: PanelCamera[] = [
-  { get cam() { return orbit }, minDistance: MIN_DISTANCE, maxDistance: MAX_DISTANCE, zoom: null },
-  { get cam() { return topOrbit }, minDistance: PANEL_MIN_DISTANCE, maxDistance: PANEL_MAX_DISTANCE, zoom: null },
-  { get cam() { return bottomOrbit }, minDistance: PANEL_MIN_DISTANCE, maxDistance: PANEL_MAX_DISTANCE, zoom: null },
-]
+// A panel as input sees it: its camera. Left-then-right order. `cam` is a
+// getter because the handles above arrive after this array exists; nothing
+// reads it before the app is up.
+type PanelCamera = { readonly cam: OrbitCameraHandle }
+let cameras: PanelCamera[] = [{ get cam() { return orbit } }, { get cam() { return topOrbit } }, { get cam() { return bottomOrbit } }]
 
 // A tap toggles the auto-orbit, so tablets have a pause too. A tap is one
 // pointer that goes down and up within TAP_SLOP and TAP_MS without a second
@@ -332,13 +322,13 @@ let setAllOrbiting = (orbiting: boolean) => {
   bottomOrbit.set({ orbiting })
 }
 
-// Hold one camera's eye above the floor (see the EYE_MIN_Y note): the
-// elevation floor is a function of the distance, so it has to be re-derived
-// every frame rather than fixed once as a minElevation.
-let holdAboveFloor = (cam: OrbitCameraHandle) => {
-  let pose = cam.pose()
-  let minElevation = Math.asin(clamp((EYE_MIN_Y - KNOT_CENTER[1]) / pose.distance, -1, 1))
-  if (pose.elevation < minElevation) cam.set({ elevation: minElevation })
+// Hold a camera's eye above the floor (see the EYE_MIN_Y note): the
+// elevation floor is a function of the distance, so it is a clampPose hook
+// rather than a fixed minElevation - re-derived on every write, a wheel
+// glide's frames included.
+let aboveFloor = (pose: OrbitPoseState) => {
+  let minElevation = Math.asin(clamp((EYE_MIN_Y - pose.target[1]) / pose.distance, -1, 1))
+  return pose.elevation < minElevation ? { elevation: minElevation } : undefined
 }
 
 // The i-th rig light's local frame: evenly spaced in azimuth, tilted down
@@ -460,30 +450,16 @@ function App() {
   let casters = createMemo(() => casting().filter(Boolean).length)
 
   // One pointer feed and one input map per panel, in the panels' order:
-  // the panel's drag rotates and its pinch zooms through the orbit's
-  // standard bindings, while its wheel is rebound from `zoom` to the app's
-  // own `dolly` action, eased in the frame loop below.
-  // The panel leaves are detached d-textures with no layout box, so each
-  // feed is told its panel's box to normalize a drag by (one panel height
-  // sweeps the same angle in the small panels as in the hero).
+  // the panel's drag rotates and its pinch and wheel zoom through the
+  // orbit's standard bindings (a wheel notch glides, the control's own
+  // damping). The panel leaves are detached d-textures with no layout
+  // box, so each feed is told its panel's box to normalize a drag by (one
+  // panel height sweeps the same angle in the small panels as in the hero).
   let boxes = [() => panels().main, () => panels().top, () => panels().bottom]
   let feeds = boxes.map(box => createPointerFeed({ layout: () => ({ width: box().w, height: box().h }) }))
-  let maps = cameras.map((panel, i) => {
-    let pointer = feeds[i]!
-    let input = createInputMap({ ...orbitActions, dolly: "axis" })
+  let maps = feeds.map(pointer => {
+    let input = createInputMap(orbitActions)
     input.bind(orbitBindings({ pointer }))
-    input.unbind("zoom", pointer.wheel)
-    input.bind("dolly", pointer.wheel)
-    // Compounding from the PENDING distance rather than the current one,
-    // so a fast scroll accumulates its notches instead of each one
-    // restarting the glide from wherever the last had reached. The feed
-    // delivers a notch in octaves, wheel up positive.
-    input.onGesture("dolly", {
-      delta: octaves => {
-        let from = panel.zoom ?? panel.cam.pose().distance
-        panel.zoom = clamp(from * Math.pow(2, -octaves), panel.minDistance, panel.maxDistance)
-      },
-    })
     return input
   })
 
@@ -506,9 +482,6 @@ function App() {
         {...tile()}
         {...box()}
         onPointerDown={(e: PointerEvent) => {
-          // A pinch drives distance directly; drop this panel's glide so the
-          // two do not fight over the pose.
-          panel.zoom = null
           tap = tap === null ? { id: e.pointerId, x: e.clientX, y: e.clientY, at: performance.now() } : null
           orbit.onPointerDown(e)
         }}
@@ -536,26 +509,8 @@ function App() {
     // which makes exactly one frame's delta hugely negative.
     let dt = clamp(now - last, 0, 0.1)
     last = now
-    // Every panel in turn: glide its pending wheel zoom, then hold its eye
-    // above the floor. Both go through the <OrbitCamera> handle's set(),
-    // which pushes the pose itself; the auto-orbit is each component's own
-    // loop, running only while that panel is orbiting.
-    for (let panel of cameras) {
-      // The glide is an exponential ease, framerate independent because the
-      // step is 1 - e^(-rate*dt) rather than a fixed fraction.
-      if (panel.zoom !== null) {
-        let distance = panel.cam.pose().distance
-        let next = distance + (panel.zoom - distance) * (1 - Math.exp(-ZOOM_EASE * dt))
-        if (Math.abs(panel.zoom - next) < ZOOM_EPSILON) {
-          next = panel.zoom
-          panel.zoom = null
-        }
-        panel.cam.set({ distance: next })
-      }
-      // The clamp tightens as the zoom pulls out, so a camera slides up
-      // along the limit instead of sinking through the ground.
-      holdAboveFloor(panel.cam)
-    }
+    // The cameras run themselves: each <OrbitCamera> mounts its own loop
+    // while its panel orbits or a wheel glide is in flight.
     // Turn the light rig, on the same pause as the orbit so a parked scene
     // is a still frame end to end and snapshots of one pose repeat. This
     // single write moves three lights, their direction slots and the shadow
@@ -598,6 +553,7 @@ function App() {
           maxDistance={MAX_DISTANCE}
           minElevation={-0.15}
           maxElevation={1.35}
+          clampPose={aboveFloor}
           orbitSpeed={ORBIT_SPEED}
           ref={o => (orbit = o)}
         />
@@ -686,6 +642,7 @@ function App() {
             maxDistance={PANEL_MAX_DISTANCE}
             minElevation={-0.15}
             maxElevation={1.55}
+            clampPose={aboveFloor}
             orbitSpeed={ORBIT_SPEED}
             ref={o => (topOrbit = o)}
           />
@@ -719,6 +676,7 @@ function App() {
             maxDistance={PANEL_MAX_DISTANCE}
             minElevation={-0.15}
             maxElevation={1.55}
+            clampPose={aboveFloor}
             orbitSpeed={ORBIT_SPEED}
             ref={o => (bottomOrbit = o)}
           />
@@ -773,14 +731,10 @@ registerDebug("camera", (args?: Record<string, unknown>) => {
   // Which panel to park: "top" or "bottom" for the right-hand pair, the
   // large one otherwise. A pose is always one panel's; `orbiting` follows the
   // app's own split - named panel, that panel alone (a click), no panel, all
-  // three (space). A parked distance also drops that panel's pending wheel
-  // glide, which would otherwise slide it straight back off.
+  // three (space). A parked pose is a snap: set() drops a wheel glide in
+  // flight, which would otherwise slide it straight back off.
   let panel = args?.panel === "top" || args?.panel === "bottom" ? args.panel : "main"
   let cam = panel === "top" ? topOrbit : panel === "bottom" ? bottomOrbit : orbit
-  if (typeof args?.distance === "number") {
-    let entry = cameras.find(p => p.cam === cam)
-    if (entry !== undefined) entry.zoom = null
-  }
   if (typeof args?.orbiting === "boolean") {
     if (args.panel === undefined) setAllOrbiting(args.orbiting)
     else cam.set({ orbiting: args.orbiting })

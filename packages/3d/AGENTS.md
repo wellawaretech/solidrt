@@ -646,21 +646,42 @@ a drag and a stick both turn the eye.
 
 Camera control: `createOrbitCamera(scene, { target?, azimuth?, elevation?,
 distance?, min/maxDistance?, min/maxElevation?, orbitSpeed?, rotateSpeed?,
-zoomSpeed?, panSpeed?, clampTarget?, zoomAnchor?, rotateAnchor? })` -
-azimuth/elevation/distance around a target with optional auto-orbit. The
-first argument is anything with the scene's `setCamera` and `camera()`
-(the fov maps pan travel to world): a Scene, or a View to drive one view's
-camera independently. Its `axes` are `rotate` (a delta of one element
-height sweeps one full turn, Three's OrbitControls convention, so a drag
-feels the same on a phone and a 4k window; a rate turns at 0.5 turn/s at
-full deflection), `zoom` (octaves: a delta of 1 halves the distance, a
-rate of 1 halves it per second) and `pan` (the target slides so the scene
-tracks the fingers 1:1 at the target's depth, three.js DOLLY_PAN, weighted
-by `panSpeed`; `clampTarget(target)` bounds where a pan may put the
-pivot). The verbs: `rotateBy(azimuth, elevation)` radians, `zoomBy(factor,
-anchor?)` (factor > 1 in, as the 2d camera's zoomAt), `panBy(right, up)`
-world units, `setPivot(point)`, `set(pose)`; every one pushes the pose at
-once. Zoom aims at the target unless `zoomAnchor(focal, {eye, target})`
+zoomSpeed?, panSpeed?, damping?, clampPose?, zoomAnchor?, rotateAnchor? })`
+- azimuth/elevation/distance around a target with optional auto-orbit. The
+first argument is anything with the scene's `setCamera`, `camera()` (the
+fov maps pan travel to world) and `size()` (the aspect `fit` frames
+against): a Scene, or a View to drive one view's camera independently.
+Its `axes` are `rotate` (a delta of one element height sweeps one full
+turn, Three's OrbitControls convention, so a drag feels the same on a
+phone and a 4k window; a rate turns at 0.5 turn/s at full deflection),
+`zoom` (octaves: a delta of 1 halves the distance, a rate of 1 halves it
+per second) and `pan` (the target slides so the scene tracks the fingers
+1:1 at the target's depth, three.js DOLLY_PAN, weighted by `panSpeed`). A
+delta bracketed by a gesture (a drag, a pinch, two fingers) applies at
+once, the content staying under the fingers; an unbracketed one (a wheel
+notch, a key step) is an impulse and glides in - `damping` scales that
+settle time, 0 applies it at once - notches compounding on the pending
+value so a fast scroll is one push, the 2d camera's rule and the same
+knob there. The verbs: `rotateBy(azimuth, elevation)` radians,
+`zoomBy(factor, anchor?)` (factor > 1 in, as the 2d camera's zoomAt),
+`panBy(right, up)` world units, `setPivot(point)`, `set(pose)`; every one
+pushes the pose at once. Two commanded moves ease instead, inside
+update(dt): `glideTo({ azimuth?, elevation?, distance?, target? })`, and
+`fit(bounds, { glide? })`, which frames a `[minX, minY, minZ, maxX, maxY,
+maxZ]` box (geometryBounds, a model's `bounds`) - target to its centre,
+distance to where the bounding sphere fills the tighter of the vertical
+and horizontal fov at the target's size, azimuth and elevation kept,
+clamps applied; a snap unless `glide`, so a park-then-snapshot repeats
+(under ortho only the target moves). Any input drops a glide (a finger
+landing holds the view), and a `set()` that writes a pose field snaps
+and drops any motion; `set({})` and `set({ orbiting })` leave it running.
+Every write - input, verb, glide frame, set() - goes through the range
+clamps and then `clampPose(pose)`, which sees the whole pose and returns
+the fields to change: bound where a pan may put the target, or hold the
+eye above a floor (an elevation floor that depends on the distance, which
+a fixed `minElevation` cannot say); a glide's goal is clamped when set
+and its frames as they land, so it never shows an illegal pose.
+Zoom aims at the target unless `zoomAnchor(focal, {eye, target})`
 maps the gesture's focal point - a FRACTION of the element, [0..1, 0..1] -
 to a world point (ground hit, target-depth plane, ...): then that point
 stays pinned under the pointer and the target slides toward it; only the
@@ -673,13 +694,14 @@ called when a rotate gesture begins, its point is projected onto the
 view axis and re-seats the pivot without moving the picture, so a drag
 after an anchored zoom orbits what the camera looks at, not wherever the
 zoom left the target. Call `orbit.update(dt)` from your onFrame to
-integrate the rates and the auto-orbit (no frame loop of its own), and
-use its return - true when the pose changed since the previous update,
-nudges included - to gate per-frame dependents like reprojecting HUD
-overlays. `orbiting()` (the auto-orbit switch) and `active()` (the
-frame-loop gate: orbiting with a non-zero rate, or any rate driving - the
-predicate every camera control shares) are reactive (HUD-safe); the pose
-is plain state via `pose()`/`set()` (also the debug-command shape). It
+integrate the rates, the auto-orbit and any glide (no frame loop of its
+own), and use its return - true when the pose changed since the previous
+update, nudges included - to gate per-frame dependents like reprojecting
+HUD overlays. `orbiting()` (the auto-orbit switch) and `active()` (the
+frame-loop gate: orbiting with a non-zero rate, a glide or damped notch
+in flight, or any rate driving - the predicate every camera control
+shares) are reactive (HUD-safe); the pose is plain state via
+`pose()`/`set()` (also the debug-command shape). It
 drives position and target only; fov/near/far stay on scene.setCamera
 (or the Scene `camera` prop). The auto-orbit pauses while a gesture is
 open.
@@ -693,10 +715,13 @@ reconnects) and nothing else, and runs a frame loop only while
 `active()`, so a camera moved by drags alone keeps the app demand-driven
 idle. The pose props are initial values: runtime pose changes (and the
 debug-command hookup) go through `ref`'s handle, whose set() and verbs
-push the pose. Every other prop is live - forwarded to the control as a
-getter and read where it applies, never snapshotted - so clamps, rates
-and anchors follow their props without a remount, and a clamp change
-re-clamps the pose at once.
+push the pose and whose glideTo/fit ease it. Every other prop is live -
+forwarded to the control as a getter and read where it applies, never
+snapshotted - so clamps, rates, `damping` and anchors follow their props
+without a remount, and a clamp change (`clampPose` included) re-clamps
+the pose at once. A `fit` from `ref` at mount reads the scene's size of
+that moment: a fill-mode `<Scene>` has its creation size until its first
+layout, so fit after the first frame (or hand a fixed-size scene).
 
 ### First-person camera
 
@@ -715,7 +740,12 @@ length so they walk no faster) and `rise` (world up at `moveSpeed`, fly
 mode only). Walking (the default) flattens the heading onto the ground
 plane at fixed height; `fly` moves along the view. The verbs:
 `lookBy(yaw, pitch)` radians, `moveBy(right, forward, up?)` in the
-walker's frame, `set(pose)`. Every option but the initial pose is read
+walker's frame, `set(pose)`, and `glideTo({ position?, yaw?, pitch? })`,
+which eases there inside update(dt) (yaw to the number given, not the
+shortest turn), dropped by any input and by a set() of a pose field -
+the orbit camera's glide, without its damping: this control's unbracketed
+delta is mouse motion under pointer lock, and that is never eased. Every
+option but the initial pose is read
 where it applies (`fly` per step, `clampPosition` per move, the rates and
 pitch clamps per input), so a field changed on the options object takes
 effect on the next move: walk and fly are one control. The control NEVER
@@ -725,8 +755,10 @@ collision of its own: `clampPosition(next, current)` is the whole hook -
 bounds, a floor height, or `moveAndSlide` over `next - current` against
 the collision layer (see `examples/collision.tsx`, whose `jump` is one
 more action on the same map: Space or the pad's south button, read by
-name). Call `update(dt)` from onFrame; `active()` is reactive - a rate
-driving (a held key, a deflected stick) - and gates the loop. The map
+name); a glide consults it every frame as a walk does every step. Call
+`update(dt)` from onFrame; `active()` is reactive - a rate driving (a
+held key, a deflected stick), or a glide in flight - and gates the loop.
+The map
 tracks held keys from the down/up pair through `input.handlers`; spread
 its `onBlur` too, since the up never arrives once focus has left.
 

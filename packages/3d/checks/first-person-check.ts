@@ -1,8 +1,10 @@
 // Checks for the first-person control (first-person.ts) as a pure axes
 // consumer: the look and move verbs, the look/move/rise deltas in the
 // vocabulary's units, the rates integrated by update(dt) with the unit
-// clamp on diagonals, walk vs fly, clampPosition, the pitch clamps and
-// active(). Pure-module input only, headless on flux, from the repo root:
+// clamp on diagonals, walk vs fly, clampPosition, the pitch clamps,
+// glideTo (exact landing, clampPosition every frame, dropped by input and
+// set()) and active(). Pure-module input only, headless on flux, from the
+// repo root:
 //
 //   bunx srt bundle -f --stdout packages/3d/checks/first-person-check.ts | target/release/flux -
 //
@@ -21,6 +23,10 @@ let fail = (msg: string) => {
 }
 let near = (a: number, b: number, eps = 1e-9) => Math.abs(a - b) <= eps
 let nearV = (a: Vec3, b: Vec3, eps = 1e-9) => near(a[0], b[0], eps) && near(a[1], b[1], eps) && near(a[2], b[2], eps)
+// The frame time every glide is stepped at, and the ticks a glide must
+// have landed within.
+const DT = 1 / 60
+const SETTLE_TICKS = 300
 
 function make(options: FirstPersonCameraOptions = {}) {
   let last: CameraUpdate | null = null
@@ -118,7 +124,51 @@ function make(options: FirstPersonCameraOptions = {}) {
     }
   }
   throws("moveBy NaN", () => cam.moveBy(NaN, 0))
+  throws("glideTo NaN", () => cam.glideTo({ yaw: NaN }))
   throws("a target without setCamera", () => createFirstPersonCamera({} as never))
+}
+
+// ---- glideTo: eased pose, exact landing, clampPosition per frame, rest ----
+{
+  let opts: FirstPersonCameraOptions = { position: [0, 1.6, 0], maxPitch: 0.3 }
+  let { cam, last } = make(opts)
+  cam.glideTo({ position: [4, 1.6, -2], yaw: 1, pitch: 1 })
+  if (!nearV(cam.eye(), [0, 1.6, 0])) fail("glideTo does not jump")
+  flush()
+  if (!cam.active()) fail("a glide wakes active()")
+  let ticks = 0
+  for (; ticks < SETTLE_TICKS; ticks++) if (!cam.update(DT)) break
+  if (ticks === 0 || ticks >= SETTLE_TICKS) fail(`glideTo should run and then rest, ticks=${ticks}`)
+  let p = cam.pose()
+  if (!nearV(p.position, [4, 1.6, -2]) || p.yaw !== 1 || p.pitch !== 0.3) fail(`glideTo lands exactly on the clamped goal, got ${JSON.stringify(p)}`)
+  if (!nearV(last()!.position as Vec3, [4, 1.6, -2])) fail("the glide pushes the pose")
+  flush()
+  if (cam.active()) fail("a landed glide rests")
+  // clampPosition is consulted every frame: a wall at z = -1 stops the walk.
+  opts.clampPosition = next => (next[2] < -1 ? [next[0], next[1], -1] : next)
+  cam.set({ position: [0, 1.6, 0] })
+  cam.glideTo({ position: [0, 1.6, -5] })
+  for (let i = 0; i < SETTLE_TICKS; i++) {
+    if (!cam.update(DT)) break
+    if (cam.eye()[2] < -1 - 1e-9) {
+      fail(`a glide's frames go through clampPosition, z ${cam.eye()[2]} at tick ${i}`)
+      break
+    }
+  }
+  if (!near(cam.eye()[2], -1)) fail(`a glide lands where clampPosition allows, got ${cam.eye()}`)
+  // Any input drops a glide; so does a set() of a pose field.
+  opts.clampPosition = undefined
+  cam.set({ position: [0, 1.6, 0], yaw: 0 })
+  cam.glideTo({ yaw: 2 })
+  cam.update(DT)
+  cam.axes.nudge("look", [0, 0])
+  let yaw = cam.pose().yaw
+  cam.update(DT)
+  if (cam.update(DT) || cam.pose().yaw !== yaw) fail("a nudge drops a glide")
+  cam.glideTo({ yaw: 2 })
+  cam.set({ pitch: 0.1 })
+  cam.update(DT)
+  if (cam.update(DT) || cam.pose().yaw !== yaw) fail("set() of a pose field drops a glide")
 }
 
 console.log(failures === 0 ? "FIRST-PERSON-OK" : `FIRST-PERSON-FAIL ${failures}`)

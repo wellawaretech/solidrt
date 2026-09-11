@@ -187,6 +187,22 @@ for (let i = 0; i < SWEEP; i++) {
   if (cam.camera().zoom !== z) fail("set({ x }) cancels a glide in flight")
 }
 
+// ---- damping: 0 applies a notch at once, 2 coasts longer ----
+{
+  let snap = make({ minZoom: 0.01, maxZoom: 100, zoom: 1, damping: 0 })
+  notch(snap.cam, 400, 300, -400)
+  if (!near(snap.cam.camera().zoom!, Math.exp(400 * 0.0015), 1e-9)) fail(`damping 0 applies a wheel notch at once, got ${snap.cam.camera().zoom}`)
+  snap.cam.update(DT)
+  if (snap.cam.update(DT)) fail("damping 0 starts no glide")
+  let quick = make({ minZoom: 0.01, maxZoom: 100, zoom: 1 })
+  notch(quick.cam, 400, 300, -400)
+  let quickTicks = settle(quick.cam)
+  let slow = make({ minZoom: 0.01, maxZoom: 100, zoom: 1, damping: 2 })
+  notch(slow.cam, 400, 300, -400)
+  let slowTicks = settle(slow.cam)
+  if (!(slowTicks > quickTicks * 1.5)) fail(`damping 2 coasts longer: ${slowTicks} vs ${quickTicks} ticks`)
+}
+
 // ---- glideTo: eased pose, exact landing, rest ----
 {
   let { cam, writes } = make({ world: { width: 1000, height: 500 }, zoom: 2 })

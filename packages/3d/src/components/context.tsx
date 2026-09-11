@@ -5,8 +5,8 @@ import type { Scene as SceneHandle } from "../scene.ts"
 import type { CameraState, CameraUpdate } from "../camera.ts"
 
 /** The camera state a camera control drives: the scene, or a view (both
- * expose setCamera and camera()). */
-export type CameraTarget = { setCamera(update: CameraUpdate): void; camera(): CameraState }
+ * expose setCamera, camera() and size()). */
+export type CameraTarget = { setCamera(update: CameraUpdate): void; camera(): CameraState; size(): { width: number; height: number } }
 
 export type SceneCtx = { scene: SceneHandle; parent: SceneNode; viewport: CameraTarget; pointer: PointerFeed | null }
 export let SceneContext = createContext<SceneCtx>()

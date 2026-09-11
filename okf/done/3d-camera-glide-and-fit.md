@@ -87,3 +87,15 @@ is the same rule the damping item lands on for `set()`).
 through a clamp and push, so one motion slot fits beside it),
 `components/orbit-camera.tsx` for the `active()` gate that mounts the
 frame loop, and the AGENTS.md camera-control section.
+
+## Outcome
+
+Landed 2026-09-11 with the damping item, on one motion slot per control
+(`packages/3d/src/motion.ts` holds the shared ease). `glideTo(pose)` on
+both controls, `fit(bounds, { glide? })` on the orbit control, framing
+the bounding sphere against the tighter of the vertical and horizontal
+fov. The aspect needed a `size()` read on Scene and View, which the orbit
+target type now asks for beside `camera()`. `set()` of a pose field snaps
+and drops a motion; `set({})` and `set({ orbiting })` leave it running;
+`fit` without `glide` snaps. Deliberately not done: the first-person
+"stand back and look at it" verb, as written above.

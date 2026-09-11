@@ -562,6 +562,8 @@ export type ViewHandle = {
   /** Current camera state, exactly scene.camera. */
   camera(): CameraState
   setSize(width: number, height: number): void
+  /** The view's target size in pixels, as setSize/setRect last left it. */
+  size(): { width: number; height: number }
   /** Move and resize a view created `into` an atlas (top-left origin);
    * throws on a view with a target of its own. */
   setRect(rect: { x: number; y: number; width: number; height: number }): void
@@ -685,6 +687,11 @@ export type Scene = {
    * back through setCamera). Reflects a pending setCamera immediately. */
   camera(): CameraState
   setSize(width: number, height: number): void
+  /** The target size in pixels, as setSize last left it (a fill-mode
+   * `<Scene>` sets it from its layout box, so before the first layout
+   * this is the creation size). The aspect a camera control's fit()
+   * frames against. */
+  size(): { width: number; height: number }
   /**
    * Scene-wide uniforms: merge app-owned names into the target's SHARED
    * params, beside the standard uViewProj/uCamPos/uCamRight/uCamUp the
@@ -2205,6 +2212,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       camera.dirty = true
       hooks._schedule()
     },
+    size: () => ({ width, height }),
     setParams(params) {
       if (disposed) return
       Object.assign(sceneParams, params)
@@ -2435,6 +2443,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
           v.camera.dirty = true
           hooks._schedule()
         },
+        size: () => ({ width: v.width, height: v.height }),
         setResolve(r) {
           if (v.resolve === null) throw new Error("view.setResolve: a tiled view has no resolve of its own - resolve the atlas")
           if (v.disposed) return

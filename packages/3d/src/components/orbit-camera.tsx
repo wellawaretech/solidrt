@@ -15,8 +15,9 @@ export type OrbitCameraProps = OrbitCameraOptions & {
   input?: InputMap<any>
   /** Action names per axis when the map's differ (null skips an axis). */
   actions?: Partial<Record<keyof OrbitAxes, string | null>>
-  /** The control's handle (pose()/set()/eye()/orbiting()/active(), the
-   * verbs, `axes` - also the debug command shape). */
+  /** The control's handle (pose()/set()/glideTo()/fit()/eye()/
+   * orbiting()/active(), the verbs, `axes` - also the debug command
+   * shape). */
   ref?: (orbit: OrbitCameraHandle) => void
 }
 
@@ -29,9 +30,10 @@ export type OrbitCameraProps = OrbitCameraOptions & {
  * (target, azimuth, elevation, distance) are initial values - change the
  * pose at runtime through `ref`'s set() or the verbs; every other prop is
  * live, forwarded to the control as a getter and read where it applies,
- * so a clamp, a rate or an anchor callback follows its prop, and a clamp
- * change re-clamps the pose at once. The frame loop runs only while
- * `active()` (auto-orbit on, or an axis rate driving); a camera moved
+ * so a clamp, a rate, `damping` or an anchor callback follows its prop,
+ * and a clamp change (`clampPose` included) re-clamps the pose at once.
+ * The frame loop runs only while `active()` (auto-orbit on, a glide or
+ * damped wheel notch in flight, or an axis rate driving); a camera moved
  * by drags alone leaves the app demand-driven idle.
  */
 export let OrbitCamera: VoidComponent<OrbitCameraProps> = props => {
@@ -59,14 +61,15 @@ export let OrbitCamera: VoidComponent<OrbitCameraProps> = props => {
     },
   )
   // A clamp prop change re-clamps the pose at once (set({}) applies the
-  // clamps and pushes) - the update() call a Three OrbitControls app
-  // makes after setting minDistance, done by the prop. Deferred: the
-  // creation already clamped and pushed the initial pose. Untracked: the
-  // control reads the clamps through the getters while it applies them,
-  // and the apply wants the values of that moment (the compute above is
-  // what tracks them).
+  // clamps and pushes, and writes no pose field, so a glide in flight
+  // keeps running) - the update() call a Three OrbitControls app makes
+  // after setting minDistance, done by the prop. Deferred: the creation
+  // already clamped and pushed the initial pose. Untracked: the control
+  // reads the clamps through the getters while it applies them, and the
+  // apply wants the values of that moment (the compute above is what
+  // tracks them).
   createEffect(
-    () => [options.minDistance, options.maxDistance, options.minElevation, options.maxElevation],
+    () => [options.minDistance, options.maxDistance, options.minElevation, options.maxElevation, options.clampPose],
     () => untrack(() => orbit.set({})),
     { defer: true },
   )

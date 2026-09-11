@@ -130,3 +130,17 @@ read the same there.
 - A tap recognizer. The demo also hand-rolls tap-to-pause, but that is
   core's gap, already captured in ideas.md (`createPress` sits in
   packages/components, so no package-level control can reach it).
+
+## Outcome
+
+Landed 2026-09-11 with the glide item. `damping` is ON by default, not
+off as written above: the 2d camera has always glided a wheel notch, and
+the same app should read the same in 2d and 3d, so `damping` became one
+knob on all three controls (a multiple of the built-in settle time, 0 =
+apply at once). It eases unbracketed deltas on every axis - a wheel notch,
+a key step - never a gesture-bracketed delta or a rate, and never the
+first-person control's look (mouse motion under pointer lock). `clampPose`
+replaced `clampTarget` outright (no compatibility reason to keep both),
+runs after every write including a glide's frames, and the demo's floor
+is one prop; its wheel rebinding, pending distance, constants and debug
+command line are gone. `set()` snaps, as decided above.

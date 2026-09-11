@@ -219,7 +219,7 @@ functions over it.
 Camera control: `createCamera2d(view | views, { viewport: () =>
 ({ width, height }), world?: { width, height }, min/maxZoom?, pivot?,
 deadZone?: { width, height }, panSpeed?, zoomSpeed?, rollSpeed?,
-followSpeed?, inertia?, x?, y?, zoom?, rotation? })` - Godot's Camera2D
+damping?, followSpeed?, inertia?, x?, y?, zoom?, rotation? })` - Godot's Camera2D
 and Three's MapControls in one control over the shared CameraUpdate:
 pan with inertia on release, zoom about a point, eased `glideTo`/`fit`,
 `follow(x, y)` through a dead zone with damping, roll about the pivot,
@@ -245,7 +245,9 @@ finger; a rate slides at one viewport height per second), `zoom` (axis,
 octaves, positive in: a delta bracketed by a gesture - a pinch - applies
 at once about its focal point, an unbracketed one - a wheel notch -
 retargets an eased glide, which is how the control tells a finger from
-an impulse; notches compound on the pending target) and `roll` (axis,
+an impulse; notches compound on the pending target, and `damping` scales
+the settle time - 0 applies a notch at once - the 3d controls' knob) and
+`roll` (axis,
 turns); a pan gesture's begin stops any glide (a finger landing on a
 gliding view holds it) and its end flings with the drag's velocity. The
 verbs, each pushing the pose at once: `panBy(dx, dy)` screen pixels,

@@ -53,7 +53,8 @@ import { projectCamera, unprojectCamera } from "./camera.ts"
 import type { CameraUpdate } from "./camera.ts"
 
 // Glide rate toward a pending zoom or pose, e-foldings per second: high
-// enough that a wheel notch reads as one push, low enough to look smooth.
+// enough that a wheel notch reads as one push, low enough to look smooth
+// (the 3d controls' rate, motion.ts there); `damping` scales a notch's.
 const GLIDE_EASE = 9
 // A glide lands when the remaining zoom gap is under this (relative) ...
 const GLIDE_EPSILON = 0.002
@@ -122,6 +123,11 @@ export type Camera2dOptions = Camera2dPose & {
   panSpeed?: number
   zoomSpeed?: number
   rollSpeed?: number
+  /** How long an unbracketed zoom delta (a wheel notch) takes to ease in,
+   * as a multiple of the built-in settle time: 1 (the default) is the
+   * built-in ease, 2 coasts twice as long, 0 applies notches at once, as
+   * a pinch does. The 3d controls' knob, same meaning. */
+  damping?: number
   /** Multiplier over the built-in follow damping. */
   followSpeed?: number
   /** Whether a drag release keeps the view gliding (default true). */
@@ -226,6 +232,9 @@ function checkOptions(options: Camera2dOptions): void {
   }
   finite("pivot.x", options.pivot?.x)
   finite("pivot.y", options.pivot?.y)
+  if (options.damping !== undefined && !(Number.isFinite(options.damping) && options.damping >= 0)) {
+    throw new Error(`createCamera2d: damping must be a non-negative number, got ${options.damping}`)
+  }
   checkFraction("deadZone.width", options.deadZone?.width ?? 0)
   checkFraction("deadZone.height", options.deadZone?.height ?? 0)
 }
@@ -261,6 +270,7 @@ export function createCamera2d(target: Camera2dTarget | Camera2dTarget[], option
   let panSpeed = () => options.panSpeed ?? 1
   let zoomExponent = () => options.zoomSpeed ?? 1
   let rollSpeed = () => options.rollSpeed ?? 1
+  let damping = () => options.damping ?? 1
   let followEase = () => FOLLOW_EASE * (options.followSpeed ?? 1)
   let inertia = () => options.inertia ?? true
 
@@ -447,7 +457,7 @@ export function createCamera2d(target: Camera2dTarget | Camera2dTarget[], option
   let zoomAt = (sx: number, sy: number, factor: number, ease: boolean) => {
     positive("zoomAt factor", factor)
     readViewport()
-    if (!ease) {
+    if (!ease || damping() <= 0) {
       interrupt()
       zoomTo(sx, sy, zoom * factor)
       return
@@ -659,7 +669,9 @@ export function createCamera2d(target: Camera2dTarget | Camera2dTarget[], option
         touch()
       }
       if (glide !== null && dt > 0) {
-        let k = 1 - Math.exp(-GLIDE_EASE * dt)
+        // A wheel notch's glide coasts as `damping` says; a commanded
+        // glide (glideTo, fit) at the built-in rate.
+        let k = 1 - Math.exp(-(glide.kind === "anchor" ? GLIDE_EASE / damping() : GLIDE_EASE) * dt)
         if (glide.kind === "anchor") {
           let gap = Math.log(glide.target / zoom)
           zoom = Math.abs(gap) < GLIDE_EPSILON ? glide.target : zoom * Math.exp(gap * k)

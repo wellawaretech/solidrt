@@ -15,8 +15,8 @@ export type FirstPersonCameraProps = FirstPersonCameraOptions & {
   input?: InputMap<any>
   /** Action names per axis when the map's differ (null skips an axis). */
   actions?: Partial<Record<keyof FirstPersonAxes, string | null>>
-  /** The control's handle (pose()/set()/eye()/forward()/active(), the
-   * verbs, `axes` - also the debug command shape). */
+  /** The control's handle (pose()/set()/glideTo()/eye()/forward()/
+   * active(), the verbs, `axes` - also the debug command shape). */
   ref?: (camera: FirstPersonCameraHandle) => void
 }
 
@@ -35,8 +35,8 @@ export type FirstPersonCameraProps = FirstPersonCameraOptions & {
  * `fly={flying()}` swaps walk and fly on the running control (pose
  * carries over, no remount), `moveSpeed`, `lookSpeed` and
  * `clampPosition` follow their props, and a pitch clamp change re-clamps
- * at once. A frame loop runs only while `active()` - a rate driving - so
- * a still scene stays demand-driven idle.
+ * at once. A frame loop runs only while `active()` - a rate driving, or
+ * a glide in flight - so a still scene stays demand-driven idle.
  */
 export let FirstPersonCamera: VoidComponent<FirstPersonCameraProps> = props => {
   let ctx = useContext(SceneContext)
