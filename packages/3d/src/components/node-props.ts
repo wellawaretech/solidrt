@@ -36,13 +36,20 @@ export type TransformProps = {
  * the built-in <Scene> leaf does (opt out with events={false}); an `output`
  * leaf spreads them itself.
  */
-export type PointerEventProps = {
+export type PointerEventProps = BubblingPointerEventProps & {
+  /** Hover: enter/leave pair on the struck node alone, so only a hit
+   * target - a mesh or an instance - takes them; `<Group>` and `<Lod>`
+   * bubble and omit the pair. */
+  onPointerEnter?: (event: NodePointerEvent) => void
+  onPointerLeave?: (event: NodePointerEvent) => void
+}
+
+/** The pointer props every node takes: the events that bubble from the
+ * hit up through the Groups above it, without the hover pair. */
+export type BubblingPointerEventProps = {
   onPointerDown?: (event: NodePointerEvent) => void
   onPointerMove?: (event: NodePointerEvent) => void
   onPointerUp?: (event: NodePointerEvent) => void
-  /** Meshes and instances only: a Group never receives enter/leave. */
-  onPointerEnter?: (event: NodePointerEvent) => void
-  onPointerLeave?: (event: NodePointerEvent) => void
   /** The wheel over the node: `deltaX`/`deltaY`. */
   onWheel?: (event: NodeWheelEvent) => void
   /** A press released on the node within the slop, alone for its whole

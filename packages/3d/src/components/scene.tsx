@@ -267,6 +267,14 @@ export let Scene: ParentComponent<SceneProps> = props => {
   )
   let output = untrack(() => props.output)
   let events = untrack(() => props.events) !== false
+  // A feed on a built-in leaf carrying no handlers listens at a root no
+  // event reaches: a contradiction, so it throws (the dev validation
+  // policy) instead of feeding nothing.
+  if (pointer !== null && !events && !output) {
+    throw new Error(
+      "Scene: a pointer feed with events={false} receives nothing - the feed listens at the scene's root, which only the leaf's handlers reach; keep events on, or compose the leaf with output and spread scene.handlers on it",
+    )
+  }
   let leafNode: { id: number } | undefined
   // The built-in leaf's laid-out box in ITS units - what pointer
   // localX/localY report in and every handlersFor scales against. Fixed

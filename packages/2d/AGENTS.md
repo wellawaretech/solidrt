@@ -508,7 +508,9 @@ on approach, evict) - okf/backlog/2d-baked-layers.md.
 
 `SpriteLayer` owns the layer and its own view, rendered as the built-in
 `<texture>` leaf carrying the view's pointer handlers (opt out with
-`events={false}`; compose yourself with `output`, then spread
+`events={false}`, which throws at mount together with a `pointer` feed -
+the feed would listen at a root no event reaches; the same on `<View2d>`;
+compose yourself with `output`, then spread
 `useSpriteLayer().viewport.handlers` onto your leaf; `output={false}` for
 no own view at all). `useSpriteLayer()` returns `{ layer, parent,
 viewport, pointer }` - the same shape as `useScene()` in `@solidrt/3d` -

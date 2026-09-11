@@ -241,6 +241,14 @@ export let SpriteLayer: ParentComponent<SpriteLayerProps> = props => {
     }),
   )
   let events = untrack(() => props.events) !== false
+  // A feed on a built-in leaf carrying no handlers listens at a root no
+  // event reaches: a contradiction, so it throws (the dev validation
+  // policy) instead of feeding nothing.
+  if (pointer !== null && !events && !output) {
+    throw new Error(
+      "SpriteLayer: a pointer feed with events={false} receives nothing - the feed listens at the view's root, which only the leaf's handlers reach; keep events on, or compose the leaf with output and spread useSpriteLayer().viewport.handlers on it",
+    )
+  }
   let leaf: { id: number } | undefined
   // The view's pixel size: the props in fixed mode, the built-in leaf's
   // laid-out box in fill mode (getLayoutBox, the untransformed read, so a

@@ -11,7 +11,8 @@
 
 import { file } from "flux:fs"
 import * as spatial from "flux:spatial"
-import { decodeImage } from "@solidrt/core"
+import { decodeImage, getOwner, isDisposed, onCleanup, runWithOwner } from "@solidrt/core"
+import type { Owner } from "@solidrt/core"
 import { createMutableTexture, createTexture, destroyTexture } from "@solidrt/core/gpu"
 import type { TextureId } from "@solidrt/core/gpu"
 import { gltfExternalUris, parseGltf } from "./gltf.ts"
@@ -65,6 +66,11 @@ export type ModelOptions = {
   material?: (material: ModelMaterial, maps: ModelMaps, skinned: boolean, vertexColors: boolean, morphed: boolean) => Material
   /** Debug name for the textures. */
   label?: string
+  /** Free the model with the owning reactive scope (default true, like
+   * createScene: `dispose()` runs at the scope's cleanup); `false` opts
+   * out, then call dispose yourself. For loadGltf/loadModel the scope is
+   * the caller's at the call, before the await. */
+  autoFree?: boolean
 }
 
 /** A model in the scene: a Group carrying the file's node hierarchy as
@@ -290,7 +296,9 @@ export function createModel(data: ModelData, opts: ModelOptions = {}): Model {
   model.materials = materials
   model.clips = data.clips
   model.bounds = data.bounds
+  let disposed = false
   model.dispose = () => {
+    if (disposed) return
     // A worn piece comes off first (its rows sit on the body's joints);
     // a body takes its pieces with it (their skins read joints that are
     // about to go).
@@ -302,6 +310,7 @@ export function createModel(data: ModelData, opts: ModelOptions = {}): Model {
     // dispose is the unmount shape, and a corpse must not sample a
     // destroyed texture.
     if (afterFree(model, () => model.dispose())) return
+    disposed = true
     for (let part of model.parts) disposeGeometry(part.mesh.geometry)
     for (let id of textures) destroyTexture(id)
     textures.length = 0
@@ -326,7 +335,25 @@ export function createModel(data: ModelData, opts: ModelOptions = {}): Model {
       }
     }
   }
+  if (opts.autoFree !== false && getOwner()) onCleanup(() => model.dispose())
   return model
+}
+
+// Build under the reactive scope a loader was called from, captured
+// before its first await (an await leaves the reactive context; whatever
+// scope happens to be current when the bytes arrive is not the caller's).
+// autoFree then frees the model with that scope. A scope gone by the time
+// the load settles - a component unmounted mid-load - can own nothing
+// any more, so the model is freed on arrival and the promise resolves
+// with it disposed: the caller nobody listens to gets a valid, inert
+// object rather than a rejection or a leak.
+function buildOwned(owner: Owner | null, opts: ModelOptions | undefined, build: () => Model): Model {
+  if (opts?.autoFree !== false && owner !== null && isDisposed(owner)) {
+    let model = build()
+    model.dispose()
+    return model
+  }
+  return runWithOwner(owner, build)
 }
 
 /**
@@ -336,6 +363,7 @@ export function createModel(data: ModelData, opts: ModelOptions = {}): Model {
  * `srt tool 3d/model` and use loadModel.
  */
 export async function loadGltf(path: string, opts?: ModelOptions): Promise<Model> {
+  let owner = getOwner()
   let bytes = await file(path).bytes()
   // A .glb usually embeds everything, but external uris are legal there
   // too (some exporters keep images as files), so both containers get
@@ -345,11 +373,13 @@ export async function loadGltf(path: string, opts?: ModelOptions): Promise<Model
   for (let uri of gltfExternalUris(bytes)) {
     if (!files.has(uri)) files.set(uri, await file(dir + decodeURIComponent(uri)).bytes())
   }
-  return createModel(parseGltf(bytes, (uri) => files.get(uri)!), opts)
+  return buildOwned(owner, opts, () => createModel(parseGltf(bytes, (uri) => files.get(uri)!), opts))
 }
 
 /** Read a baked .srtm model (`srt tool 3d/model`) and build it: no parsing,
  * the geometry views the file's bytes directly. */
 export async function loadModel(path: string, opts?: ModelOptions): Promise<Model> {
-  return createModel(decodeModel(await file(path).bytes()), opts)
+  let owner = getOwner()
+  let bytes = await file(path).bytes()
+  return buildOwned(owner, opts, () => createModel(decodeModel(bytes), opts))
 }

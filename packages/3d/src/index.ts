@@ -61,6 +61,8 @@ export type {
   OrbitCameraProps,
   PerspectiveCameraProps,
   PointerEventProps,
+  BubblingPointerEventProps,
+  GroupProps,
   PointLightProps,
   RecordMeshProps,
   ScenePointerProps,

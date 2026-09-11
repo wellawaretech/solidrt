@@ -135,6 +135,14 @@ export let View3d: ParentComponent<View3dProps> = props => {
   )
   let output = untrack(() => props.output)
   let events = untrack(() => props.events) !== false
+  // A feed on a built-in leaf carrying no handlers listens at a root no
+  // event reaches: a contradiction, so it throws (the dev validation
+  // policy) instead of feeding nothing.
+  if (pointer !== null && !events && !output) {
+    throw new Error(
+      "View3d: a pointer feed with events={false} receives nothing - the feed listens at the view's root, which only the leaf's handlers reach; keep events on, or compose the leaf with output and spread view.handlers on it",
+    )
+  }
   return (
     <SceneContext value={{ scene: ctx.scene, parent: ctx.parent, viewport: view, pointer }}>
       {output ? (

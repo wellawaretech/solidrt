@@ -3,7 +3,7 @@ import type { ParentComponent } from "@solidrt/core"
 import { LodContext, SceneContext, provide } from "./context.tsx"
 import type { LodRegistry } from "./context.tsx"
 import { syncNode } from "./node-props.ts"
-import type { TransformProps, PointerEventProps } from "./node-props.ts"
+import type { TransformProps, BubblingPointerEventProps } from "./node-props.ts"
 import { syncMesh } from "./mesh.tsx"
 import type { PopulatedMeshProps } from "./mesh.tsx"
 import { InstancedMeshContext } from "./instanced-mesh.tsx"
@@ -15,7 +15,7 @@ import { disposeInstances, setCastShadow } from "../mesh.ts"
 import type { InstancedMesh as InstancedMeshNode } from "../mesh.ts"
 
 export type LodProps = TransformProps &
-  PointerEventProps & {
+  BubblingPointerEventProps & {
     /** The cross-fade band fraction (createLod's `fade`); default 0. */
     fade?: number
     ref?: (node: SceneNode) => void

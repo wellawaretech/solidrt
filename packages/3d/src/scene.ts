@@ -631,7 +631,10 @@ export type ReflectionProbe = {
    * sampled by the faces it renders (a black environment stands in): one
    * bounce. */
   update(): void
-  /** Destroy the cube (idempotent; probes also die with the scene). */
+  /** Destroy the cube (idempotent; probes also die with the scene). A
+   * scene whose `environment` or `background` names this cube drops it
+   * first (setEnvironment(null), setBackground(null)), so nothing samples
+   * a destroyed texture: set another when the probe's owner leaves. */
   dispose(): void
 }
 
@@ -1425,7 +1428,15 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     ownBloom: boolean
     width: number
     height: number
+    /** Debug label: the option, else the scene's plus -view/-probe. */
+    label: string
     override: Material | null
+    /** The instanced meshes an override view leaves out: the override
+     * declares no instanceBuffers, so it cannot place their records
+     * (ViewOptions.overrideMaterial). Kept so sync() reports them once
+     * per view, over the settled set. */
+    skipped: Set<Mesh>
+    skippedReported: boolean
     /** Non-null marks a SHADOW view and names its caster set (m =>
      * m.castShadow). Re-evaluated per mesh by _setCast; also picks the
      * caster's own shadow material variant over the depth override. */
@@ -1531,7 +1542,13 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     // instanced depth pass), whose attributes must fit the records like
     // the main material's did at add().
     if (v.override !== null && inst !== null) {
-      if (material.instanceBuffers === undefined) return
+      if (material.instanceBuffers === undefined) {
+        // A caster without an instanced shadow variant casts none by
+        // that rule; an app's override view dropping a mesh is invisible
+        // in its output, so it is recorded for sync() to report.
+        if (v.shadowFilter === null) v.skipped.add(mesh)
+        return
+      }
       checkInstancePairing(material, inst, "Shadow material")
     }
     let bufs = mesh._buffers!
@@ -1550,6 +1567,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     v.orderDirty = true
   }
   let detachView = (v: ViewRecord, mesh: Mesh) => {
+    v.skipped.delete(mesh)
     let entry = v.entries.get(mesh)
     if (entry === undefined) return
     v.entries.delete(mesh)
@@ -1656,7 +1674,10 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       ownBloom: vopts.bloom !== undefined,
       width: vopts.width,
       height: vopts.height,
+      label: viewLabel,
       override,
+      skipped: new Set(),
+      skippedReported: false,
       shadowFilter,
       mask: shadowFilter !== null ? sceneMask : checkMask(vopts.layers ?? 1, "createView"),
       ownNames: new Set(),
@@ -1742,6 +1763,18 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
   let sync = () => {
     scheduled = false
     if (disposed) return
+    // An override view's skipped instanced meshes (attachView), reported
+    // once per view over the settled set, as the budgets below are: the
+    // meshes of one flush are all in by this microtask, so the count is
+    // the whole set, not the first arrival.
+    for (let v of views) {
+      if (v.skippedReported || v.skipped.size === 0) continue
+      v.skippedReported = true
+      let n = v.skipped.size
+      console.warn(
+        `View '${v.label}' override material skips ${n} instanced ${n === 1 ? "mesh" : "meshes"}: it declares no instanceBuffers, so it cannot place their records, and they draw in no pass of this view; give it an instanced variant to include them`,
+      )
+    }
     // A per-scene budget - the light cap, the shadow slots - is tested
     // here over the settled set, never at attach: a declarative swap
     // (<Show>, <Switch>) attaches the incoming branch before the outgoing
@@ -2567,6 +2600,13 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
           chain?.run()
         },
         dispose() {
+          if (v.disposed) return
+          // The scene may sample this very cube - `environment={{ cube }}`,
+          // a skybox `background` - so those drop first: a subtree that
+          // owned the environment leaves the scene unlit by it, never
+          // sampling a destroyed texture until something re-bakes.
+          if (environment === v.probeCube) scene.setEnvironment(null)
+          if (background !== null && background.sky !== null && background.sky.cube === v.probeCube) scene.setBackground(null)
           chain?.dispose()
           disposeView(v)
         },

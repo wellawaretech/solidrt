@@ -548,7 +548,7 @@ collision claims - two copies of this contract have drifted before.
 | --- | --- |
 | `Scene` | `width?`, `height?` (target pixels - both, or neither = FILL, below), `clearColor?`, `camera?` (partial CameraUpdate, `ortho` included - the declarative scene.setCamera; same state as `PerspectiveCamera`, use one form; the camera CONTROLS are not a third form - `OrbitCamera`/`FirstPersonCamera` drive position and target only, so `fov`/`near`/`far` come from here even while a control moves the camera, and the default `far` of 100 is what clips a scene in metres), `background?` (fragment GLSL, or a skybox `{ cube, intensity?, rotation? }`), `environment?` (`{ cube, intensity?, rotation? }`, the cube reflective materials mirror), `fog?` (`{ color, near, far }`, linear by camera distance), `toneMapping?` (`"none"` default, `"aces"`, `"agx"` or `"neutral"`), `exposure?` (default 1), `bloom?` (`{ threshold?, intensity?, radius? }`, the stock bloom on the resolve, reactive), `layers?` (target mask, default 1), `depth?` (`"texture"` exposes scene.depthTexture; not with samples), `samples?` (1/2/4/8 MSAA), `label?`, `ref?(scene)`, `output?(texture)`, `resolve?` (the source, `{ source, textures }`, or a function of the buffer id returning either; fixed at creation - see Color), `events?` (pointer events, default on), `pointer?` (the leaf's pointer feed, fed from the scene's root), `onPointerDown/Move/Up?`, `onWheel?`, `onTap?` (the scene's own handlers, the last stop of the walk - `event.mesh` null over empty space) |
 | `View3d` | a Scene child rendering the scene again from a camera of its own (scene.createView as a component): `width`, `height` (target pixels, live; fixed-size only for now), `x?`, `y?` (the tile's top-left in `into`, live), `into?` (tile an app-owned draw target - one pass for every view into it; fixed at creation), `camera?` (partial CameraUpdate on the view's camera, live; same state as a `PerspectiveCamera` child), `layers?` (the view's mask, live), `clearColor?`, `label?`, `overrideMaterial?`, `fog?` (FogOptions, or null for none), `depth?`, `samples?`, `filter?`, `wrap?` (createView's, fixed), `ref?(view)`, `output?(texture)` (else a built-in `<texture>` leaf at the target size, a tile shown through srcX/srcY), `resolve?` (as Scene's; not with `into`), `bloom?` (BloomOptions overrides the scene's, null turns it off in this view, absent follows the scene; not with `into`), `events?`, `pointer?` (the view leaf's feed, fed from the view's root), `onPointerDown/Move/Up?`, `onWheel?`, `onTap?` (the view's own handlers); camera-control children drive the VIEW (inside, `useScene()` reports the view as `viewport` and the view's feed as `pointer`); node children mount to the scene as outside, and under the view's leaf get their ordinary pointer handlers, picked through the view's camera (`view.pick`), the view as the root of that walk |
-| `Group` | `position?`, `rotation?` (Euler radians, XYZ order), `quaternion?` (either, not both), `scale?` (number = uniform), `visible?`, pointer events (below), `ref?(node)` |
+| `Group` | `position?`, `rotation?` (Euler radians, XYZ order), `quaternion?` (either, not both), `scale?` (number = uniform), `visible?`, the bubbling pointer events (below: down/move/up/wheel/tap from a hit descendant; a group is never the struck node, so it takes no `onPointerEnter`/`onPointerLeave` - `Lod` likewise), `ref?(node)` |
 | `Lod` | a Group whose direct children carrying `lodSize` (a prop every node component takes: the projected size below which that child hands over, see Level of detail) are its levels, sorted by size, never by JSX position; plus `fade?` (the cross-fade band fraction, default 0); a child without `lodSize` is drawn always |
 | `InstancedLod` | as InstancedMesh minus `material`, plus `levels` (`[{ geometry, material, size }]` nearest first, fixed at creation; instanced materials as InstancedMesh's), `castShadow?` (every level); `<Instance>` children populate it as under `InstancedMesh`, each drawing the level its own projected size picks |
 | `Mesh` | `geometry`, `material`, transforms as Group, `params?` (per-mesh uniforms, merge semantics - no unset), `renderOrder?`, `castShadow?`, `layers?` (membership bitmask, default 1), pointer events (below), `ref?(mesh)` |
@@ -896,7 +896,9 @@ pointerType, button, modifiers) plus `x`/`y` in scene pixels
 (screenRay's input - a drag plane is one intersection away). Root
 listeners all run, in registration order (the root is the last stop,
 nothing is left to claim). Wiring: the built-in `<Scene>` leaf carries
-`scene.handlers` automatically (opt out: `events={false}`); an `output`
+`scene.handlers` automatically (opt out: `events={false}`, which throws
+at mount together with a `pointer` feed - the feed would listen at a root
+no event reaches; the same on `<View3d>`); an `output`
 leaf or imperative composition spreads `{...scene.handlers}` onto the
 element showing the texture. `scene.handlers` assumes that leaf is LAID
 OUT at the target size - true for the built-in leaf and a d-texture at
@@ -1430,7 +1432,11 @@ near?, far?, layers?, clearColor?, label? })` renders the scene into a
 cube map from a point - Three's CubeCamera, Unity's and Godot's
 realtime ReflectionProbe - and returns `{ cube, setPosition, update(),
 dispose() }`; `cube` is what `environment={{ cube }}` (a chrome ball
-mirroring its surroundings) or `background` takes. A view under the
+mirroring its surroundings) or `background` takes. `dispose()` destroys
+the cube, and a scene whose environment or background names it drops
+that first (setEnvironment(null) / setBackground(null)), so a subtree
+that owned the environment leaves the scene unlit by it rather than
+sampling a destroyed texture; set another when it goes. A view under the
 hood: one entry list mirrored from the scene, the light set and scene
 params fanned out, its own layer mask (keep the mirroring object out of
 its own probe with `layers`), the scene's background drawn first on
@@ -1912,7 +1918,7 @@ first error a real file hits.
 
 #### createModel
 
-`createModel(data, { material?, label? })` - uploads the images (repeat
+`createModel(data, { material?, label?, autoFree? })` - uploads the images (repeat
 wrap, mipmapped, 4x anisotropic), makes one material per glTF material (default `standard`
 with the file's color, maps, normal scale, metalness/roughness and
 packed map, emissive and transparency - the glTF material model, so a
@@ -1935,7 +1941,13 @@ them, nothing else frees them.
 #### loadGltf and loadModel
 
 `loadGltf(path)` / `loadModel(path)` - read from `assets/` with flux:fs
-and build. `loadModel` reads the baked `.srtm` written by `srt tool
+and build. Like every resource creator, a model frees with the owning
+reactive scope (`dispose()` at its cleanup; `autoFree: false` opts out):
+for the loaders that scope is the caller's at the call, captured before
+the await, so a model loaded inside a memo goes with the memo's rerun
+and one loaded in a component with its unmount. A load that settles
+after its scope is gone (unmounted mid-load) is freed on arrival and
+resolves already disposed - nothing owns it any more. `loadModel` reads the baked `.srtm` written by `srt tool
 3d/model <in.gltf|glb> -o assets/<name>.srtm`: the same parse run once
 under bun, stored in the GPU layout, so loading is views onto the file's
 bytes plus the image decodes. Numbers from a 32k-vertex, 6-texture model
@@ -2496,7 +2508,10 @@ with `srt tool 3d/model`.
   `overrideMaterial` is validated against every mesh's layout (at
   createView for the meshes present, at add() for later ones) exactly like
   a mesh's own material, so an override reading `aColor` throws for a
-  standard-layout mesh. Views are disposed by the scene; `view.dispose()`
+  standard-layout mesh. An instanced mesh the override cannot place (it
+  declares no `instanceBuffers`) is skipped, which the view's output
+  cannot show, so the scene warns once per view naming it and the count
+  (over the settled set, at the flush after the attach). Views are disposed by the scene; `view.dispose()`
   only for dropping one early.
 - SCENE-WIDE uniforms go through that same shared channel via
   `scene.setParams({ uTime })`, and this is the single highest-leverage

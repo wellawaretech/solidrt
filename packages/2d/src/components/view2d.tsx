@@ -113,6 +113,14 @@ export let View2d: ParentComponent<View2dProps> = props => {
   )
   let output = untrack(() => props.output)
   let events = untrack(() => props.events) !== false
+  // A feed on a built-in leaf carrying no handlers listens at a root no
+  // event reaches: a contradiction, so it throws (the dev validation
+  // policy) instead of feeding nothing.
+  if (pointer !== null && !events && !output) {
+    throw new Error(
+      "View2d: a pointer feed with events={false} receives nothing - the feed listens at the view's root, which only the leaf's handlers reach; keep events on, or compose the leaf with output and spread view.handlers on it",
+    )
+  }
   let leaf: { id: number } | undefined
   // Auto oversample from the built-in leaf's window box, in device pixels,
   // per view pixel: the same pick as SpriteLayer's fixed mode.

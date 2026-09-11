@@ -2011,6 +2011,10 @@ Knowledge. No lifecycle - true or wrong, not open or closed.
   Settled direction; one GLES contract over ANGLE on every platform, native
   Vulkan rejected, Metal-native kept only as a mapped contingency; includes
   the Impeller texture-interop analysis and the ANGLE-sunset risk ledger.
+- **[Headless verification traps](notes/headless-verification-traps.md)** [2026-09-11]
+  What bites a probe that verifies GPU state under srt render - deferred
+  texture destroys, sRGB has no readback, production bundling drops Solid's
+  diagnostics, Geometry.vertices typing.
 - **[Impeller text decoration, measured](notes/impeller-text-decoration.md)** [2026-08-18]
   What Impeller's paragraph underline does and does not do - trailing
   whitespace is never underlined, the stroke is the font's post thickness
