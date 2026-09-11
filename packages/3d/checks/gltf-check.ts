@@ -16,7 +16,7 @@ import { gltfExternalUris, isGlb, parseGltf } from "../src/gltf.ts"
 import type { ModelData } from "../src/gltf.ts"
 import { decodeModel, encodeModel } from "../src/model-file.ts"
 import { sampleChannel } from "../src/clip.ts"
-import { box, geometryAttribute, layoutKey, layoutStride, validateGeometry, vertexBytes, STANDARD_FLOATS, VERTEX_LAYOUTS } from "../src/geometry.ts"
+import { box, geometryAttribute, layoutKey, layoutStride, validateGeometry, vertexBytes, withAttribute, STANDARD_FLOATS, VERTEX_LAYOUTS } from "../src/geometry.ts"
 import type { Geometry } from "../src/geometry.ts"
 import { linearToSrgb } from "../src/color.ts"
 
@@ -574,6 +574,13 @@ let ragged = new Uint8Array(encoded.byteLength + 1)
 ragged.set(encoded, 1)
 sameModel(model, decodeModel(ragged.subarray(1)), "round trip (unaligned)")
 throws("decodeModel garbage", () => decodeModel(new Uint8Array(32)), "bad magic")
+// The container writes one interleaved buffer per part: extra streams are
+// run-time data and refused.
+{
+  let part = model.parts[0]!
+  let streamed = withAttribute(part.geometry, { name: "aWave", format: "float32" }, () => [0], { stream: 1 })
+  throws("encodeModel refuses streams", () => encodeModel({ ...model, parts: [{ ...part, geometry: streamed }] }), "streams")
+}
 
 // --- .gltf with external files, and the refusals --------------------------
 

@@ -16,7 +16,7 @@
 // every function returns its raw term, weighting and color belong to the
 // caller.
 
-import type { CullMode, InstanceAttribute } from "@solidrt/core/gpu"
+import type { CullMode, VertexAttribute } from "@solidrt/core/gpu"
 
 // core/gpu's glsl tag, aliased locally (it is String.raw) so this module
 // stays runtime-pure: no flux:gpu import, so the checks/ rigs and any
@@ -44,14 +44,14 @@ export const MAX_CASCADES = 4
  * every light is a fully cascaded sun. */
 export const MAX_SHADOW_MAPS = 8
 
-/** The instance attributes an instanced mesh's material declares
- * (`shaderMaterialClass({ instanceAttributes: INSTANCE_MATRIX_ATTRIBUTES
- * })`): the four vec4 columns of the per-instance matrix the spatial core
- * writes - the instance's placement inside the mesh (createInstancedMesh,
- * addInstance). Read them through INSTANCE_MATRIX. Slot 0, the core's
- * record; an app's own per-instance floats go in slot 1 (the style
- * record, see INSTANCE_COLOR_ATTRIBUTES). */
-export const INSTANCE_MATRIX_ATTRIBUTES: InstanceAttribute[] = [
+/** The record layout an instanced mesh's material declares as its first
+ * instance buffer (`shaderMaterialClass({ instanceBuffers: [{ attributes:
+ * INSTANCE_MATRIX_ATTRIBUTES }] })`): the four vec4 columns of the
+ * per-instance matrix the spatial core writes - the instance's placement
+ * inside the mesh (createInstancedMesh, addInstance). Read them through
+ * INSTANCE_MATRIX. An app's own per-instance floats go in the second
+ * instance buffer (the style record, see INSTANCE_COLOR_ATTRIBUTES). */
+export const INSTANCE_MATRIX_ATTRIBUTES: VertexAttribute[] = [
   { name: "iModel0", format: "float32x4" },
   { name: "iModel1", format: "float32x4" },
   { name: "iModel2", format: "float32x4" },
@@ -60,13 +60,13 @@ export const INSTANCE_MATRIX_ATTRIBUTES: InstanceAttribute[] = [
 
 /** The per-instance color the stock materials read with `instanceColors`
  * (`in vec4 iColor`, premultiplied linear like aColor, forwarded as
- * vColor): a slot-1 attribute, so it is the instance's STYLE record -
- * app-owned, written with setInstanceStyle(instance, [r, g, b, a]) - beside
- * the core's matrix in slot 0. A custom class appends it (or any slot-1
- * layout of its own) to INSTANCE_MATRIX_ATTRIBUTES; the stock materials
- * start every instance at white. Three's instanceColor, Godot's
- * MultiMesh instance color. */
-export const INSTANCE_COLOR_ATTRIBUTES: InstanceAttribute[] = [{ name: "iColor", format: "float32x4", slot: 1 }]
+ * vColor): the second instance buffer's layout, so it is the instance's
+ * STYLE record - app-owned, written with setInstanceStyle(instance, [r,
+ * g, b, a]) - beside the core's matrix in the first. A custom class
+ * declares it (or any style layout of its own) as its second instance
+ * buffer; the stock materials start every instance at white. Three's
+ * instanceColor, Godot's MultiMesh instance color. */
+export const INSTANCE_COLOR_ATTRIBUTES: VertexAttribute[] = [{ name: "iColor", format: "float32x4" }]
 
 /**
  * The vertex-stage declarations over INSTANCE_MATRIX_ATTRIBUTES:

@@ -18,7 +18,7 @@
 // a sprite under a minimap gets its ordinary handlers, and the view's
 // listeners are the last stop.
 import { addDraw, createDrawTarget, destroyTexture, removeDraw, setDrawBuffers, setDrawRange, setTargetParams, setTargetSize } from "@solidrt/core/gpu"
-import type { BufferId, BufferUpdate, DrawId, InstanceOrder, RenderPipelineId, TextureId } from "@solidrt/core/gpu"
+import type { BufferId, DrawId, InstanceOrder, RenderPipelineId, TextureId } from "@solidrt/core/gpu"
 import { applyCamera, cameraParams, checkCamera, defaultCamera, projectCamera, unprojectCamera } from "./camera.ts"
 import type { CameraState, CameraUpdate } from "./camera.ts"
 import { spriteDispatch } from "./dispatch.ts"
@@ -107,9 +107,10 @@ export type ViewDeps = {
   pipeline: RenderPipelineId
   quad: BufferId
   atlas: TextureId
-  /** The layer's current instance binding, in the entry's own spelling
-   * (`instanceBuffers` on the node layer, `instanceBuffer` on records). */
-  buffers: () => BufferUpdate
+  /** The layer's current instance buffers, in the pipeline's layout order
+   * after the quad (the pose and style pair on the node layer, the one
+   * record buffer on records). */
+  buffers: () => BufferId[]
   /** The instance count as last published. */
   count: () => number
   tint: () => [number, number, number, number]
@@ -123,7 +124,7 @@ export type Views = {
   create(opts: ViewOptions): ViewHandle
   /** The layer swapped its instance buffers (growth): every entry
    * follows. */
-  setBuffers(update: BufferUpdate): void
+  setBuffers(instanceBuffers: BufferId[]): void
   setCount(count: number): void
   setTint(tint: [number, number, number, number]): void
   dispose(): void
@@ -138,9 +139,8 @@ export function createViews(deps: ViewDeps): Views {
   let ordered: ViewRecord | null = null
   let entryFor = (texture: TextureId, order: InstanceOrder | undefined): DrawId =>
     addDraw(texture, deps.pipeline, null, {
-      buffer: deps.quad,
+      buffers: [deps.quad, ...deps.buffers()],
       vertexCount: 4,
-      ...deps.buffers(),
       instanceOrder: order,
       instanceCount: deps.count(),
     })
@@ -261,8 +261,8 @@ export function createViews(deps: ViewDeps): Views {
       views.add(record)
       return view
     },
-    setBuffers(update) {
-      for (let v of views) setDrawBuffers(v.texture, v.entry, update)
+    setBuffers(instanceBuffers) {
+      for (let v of views) setDrawBuffers(v.texture, v.entry, { buffers: [deps.quad, ...instanceBuffers] })
     },
     setCount(count) {
       for (let v of views) setDrawRange(v.texture, v.entry, { instanceCount: count })

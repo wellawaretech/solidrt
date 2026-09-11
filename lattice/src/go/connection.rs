@@ -1410,6 +1410,28 @@ fn sampler_json(s: &alloy::SamplerState) -> serde_json::Value {
   })
 }
 
+/// A pipeline's buffer layouts as the createRenderPipeline `buffers` shape,
+/// each field reported only off its default: `stepMode` absent means
+/// "vertex", `arrayStride` always (it is what a subset layout is for), an
+/// attribute's `offset` always.
+fn buffer_layouts_json(layouts: &[alloy::GpuBufferLayoutInfo]) -> Vec<serde_json::Value> {
+  layouts
+    .iter()
+    .map(|layout| {
+      let attributes: Vec<serde_json::Value> = layout
+        .attributes
+        .iter()
+        .map(|(name, format, offset)| serde_json::json!({"name": name, "format": format, "offset": offset}))
+        .collect();
+      let mut obj = serde_json::json!({"arrayStride": layout.stride, "attributes": attributes});
+      if layout.step != "vertex" {
+        obj.as_object_mut().expect("layout json is an object").insert("stepMode".into(), layout.step.into());
+      }
+      obj
+    })
+    .collect()
+}
+
 fn insert_label(obj: &mut serde_json::Value, label: &Option<String>) {
   if let Some(label) = label {
     obj.as_object_mut().expect("resource json is an object").insert("label".into(), label.clone().into());
@@ -1502,8 +1524,8 @@ fn gpu_reply(ctx: &flux::rquickjs::Ctx<'_>, id: u64, label: Option<&str>, draw: 
       if let Some(pipeline_id) = p.pipeline_id {
         map.insert("pipelineId".into(), pipeline_id.into());
       }
-      if let Some(buffer_id) = p.buffer_id {
-        map.insert("bufferId".into(), buffer_id.into());
+      if !p.buffer_ids.is_empty() {
+        map.insert("buffers".into(), p.buffer_ids.clone().into());
       }
       // An index binding is itself off-default; with one present the range
       // keys switch to the index spellings (the numbers count indices).
@@ -1513,15 +1535,6 @@ fn gpu_reply(ctx: &flux::rquickjs::Ctx<'_>, id: u64, label: Option<&str>, draw: 
       }
       if let Some(index_format) = p.index_format {
         map.insert("indexFormat".into(), index_format.into());
-      }
-      match p.instance_buffer_ids.as_slice() {
-        [] => {}
-        [id] => {
-          map.insert("instanceBuffer".into(), (*id).into());
-        }
-        ids => {
-          map.insert("instanceBuffers".into(), ids.to_vec().into());
-        }
       }
       if let Some(topology) = p.topology {
         map.insert("topology".into(), topology.into());
@@ -1563,26 +1576,8 @@ fn gpu_reply(ctx: &flux::rquickjs::Ctx<'_>, id: u64, label: Option<&str>, draw: 
       if let Some(cull) = p.cull.filter(|c| *c != "none") {
         map.insert("cull".into(), cull.into());
       }
-      if !p.attributes.is_empty() {
-        let attrs: Vec<serde_json::Value> =
-          p.attributes.iter().map(|(name, format)| serde_json::json!({"name": name, "format": format})).collect();
-        map.insert("attributes".into(), attrs.into());
-      }
-      if !p.instance_attributes.is_empty() {
-        // The buffer slot is reported only off its default, like the draw
-        // state fields: absent means slot 0.
-        let attrs: Vec<serde_json::Value> = p
-          .instance_attributes
-          .iter()
-          .map(|(name, format, slot)| {
-            if *slot == 0 {
-              serde_json::json!({"name": name, "format": format})
-            } else {
-              serde_json::json!({"name": name, "format": format, "slot": slot})
-            }
-          })
-          .collect();
-        map.insert("instanceAttributes".into(), attrs.into());
+      if !p.buffers.is_empty() {
+        map.insert("buffers".into(), buffer_layouts_json(&p.buffers).into());
       }
       // A draw target (kind "draws") reports its entries in list order; each
       // entry follows the flat fields' off-default conventions.
@@ -1601,8 +1596,8 @@ fn gpu_reply(ctx: &flux::rquickjs::Ctx<'_>, id: u64, label: Option<&str>, draw: 
             if let Some(pipeline_id) = d.pipeline_id {
               map.insert("pipelineId".into(), pipeline_id.into());
             }
-            if let Some(buffer_id) = d.buffer_id {
-              map.insert("bufferId".into(), buffer_id.into());
+            if !d.buffer_ids.is_empty() {
+              map.insert("buffers".into(), d.buffer_ids.clone().into());
             }
             // An index binding is itself off-default; with one present the
             // range keys switch to the index spellings (indices, not
@@ -1613,15 +1608,6 @@ fn gpu_reply(ctx: &flux::rquickjs::Ctx<'_>, id: u64, label: Option<&str>, draw: 
             }
             if let Some(index_format) = d.index_format {
               map.insert("indexFormat".into(), index_format.into());
-            }
-            match d.instance_buffer_ids.as_slice() {
-              [] => {}
-              [id] => {
-                map.insert("instanceBuffer".into(), (*id).into());
-              }
-              ids => {
-                map.insert("instanceBuffers".into(), ids.to_vec().into());
-              }
             }
             map.insert("topology".into(), d.topology.into());
             map.insert(if indexed { "indexCount".into() } else { "vertexCount".into() }, d.vertex_count.into());
@@ -1672,26 +1658,8 @@ fn gpu_reply(ctx: &flux::rquickjs::Ctx<'_>, id: u64, label: Option<&str>, draw: 
       if !p.depth_write {
         map.insert("depthWrite".into(), false.into());
       }
-      if !p.attributes.is_empty() {
-        let attrs: Vec<serde_json::Value> =
-          p.attributes.iter().map(|(name, format)| serde_json::json!({"name": name, "format": format})).collect();
-        map.insert("attributes".into(), attrs.into());
-      }
-      if !p.instance_attributes.is_empty() {
-        // The buffer slot is reported only off its default, like the draw
-        // state fields: absent means slot 0.
-        let attrs: Vec<serde_json::Value> = p
-          .instance_attributes
-          .iter()
-          .map(|(name, format, slot)| {
-            if *slot == 0 {
-              serde_json::json!({"name": name, "format": format})
-            } else {
-              serde_json::json!({"name": name, "format": format, "slot": slot})
-            }
-          })
-          .collect();
-        map.insert("instanceAttributes".into(), attrs.into());
+      if !p.buffers.is_empty() {
+        map.insert("buffers".into(), buffer_layouts_json(&p.buffers).into());
       }
       obj
     })

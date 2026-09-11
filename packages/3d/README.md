@@ -69,7 +69,7 @@ change - plus your own uniforms: scene-wide via `scene.setParams` (one write
 however many meshes read it), or per mesh, declaratively via the `params`
 prop on `<Mesh>` or imperatively via `setMeshParams`. `shaderMaterialClass`
 compiles one program and hands out `instance()` materials that differ only
-in params/textures - and with `instanceAttributes` it makes an instanced
+in params/textures - and with `instanceBuffers` it makes an instanced
 material. Populations come in two forms: `<InstancedMesh>` with
 `<Instance>` children (or `createInstancedMesh`/`addInstance`) draws the
 geometry once per instance NODE - each a scene node the spatial core

@@ -22,8 +22,8 @@ pub use lease::WriteLeases;
 pub use limits::GpuLimits;
 pub use order::{gather_ordered, gather_permuted, order_permutation, InstanceOrder, OrderKey, OrderScratch};
 pub use resources::{
-  GpuBufferInfo, GpuPipelineInfo, GpuProgramInfo, GpuRenderPipelineInfo, GpuResources, GpuTextureInfo,
-  GpuWindowShaderInfo, GpuRegionInfo,
+  GpuBufferInfo, GpuBufferLayoutInfo, GpuPipelineInfo, GpuProgramInfo, GpuRenderPipelineInfo, GpuResources,
+  GpuTextureInfo, GpuWindowShaderInfo, GpuRegionInfo,
 };
 pub use spec::{DepthStorage, DrawSpec, NodeShader, PipelineSpec, TargetSpec, WindowShader};
 pub use texture::{
@@ -33,10 +33,10 @@ pub use texture::{
 #[cfg(test)]
 pub use vocab::merge_bindings;
 pub use vocab::{
-  blend_name, cull_name, instance_strides, parse_blend, parse_cull, resolve_draw_range, validate_draw_range,
-  validate_binding_shapes, validate_instance_slots, validate_order, validate_param_if_declared, validate_params,
-  validate_texture_bindings, vertex_stride, AttrFormat, AttributeTable, BlendMode, BoundTexture, BufferIds,
-  BufferUpdate, CullMode, DepthState, DrawBounds,
-  DrawRange, DrawUpdate, IndexFormat, ParamValue, PipelineDesc, ShaderStage, TextureBinding, Topology, UniformKind,
-  UniformSlot, UniformTable, MAX_INSTANCE_SLOTS,
+  blend_name, buffer_strides, cull_name, parse_blend, parse_cull, resolve_draw_range, validate_buffers,
+  validate_draw_range, validate_binding_shapes, validate_order, validate_param_if_declared, validate_params,
+  validate_texture_bindings, AttrFormat, AttributeTable, BlendMode, BoundTexture, BufferBound, BufferIds,
+  BufferLayout, BufferStride, BufferUpdate, CullMode, DepthState, DrawBounds, DrawRange, DrawUpdate, IndexFormat,
+  ParamValue, PipelineDesc, ShaderStage, StepMode, TextureBinding, Topology, UniformKind, UniformSlot,
+  UniformTable, VertexAttr, MAX_BUFFERS,
 };

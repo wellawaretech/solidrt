@@ -77,7 +77,7 @@ function App() {
         fragColor = vec4(0.8, 0.4, 0.2, 1.0);
       }
     `,
-    instanceAttributes: [{ name: "iPos", format: "float32x3" }],
+    instanceBuffers: [{ attributes: [{ name: "iPos", format: "float32x3" }] }],
     label: "raycast-check-instanced",
   })
   let instanced = createRecordMesh(box(), look.instance(), new Float32Array([0, 0, 0]), 1, {

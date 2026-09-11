@@ -1,7 +1,8 @@
 use std::collections::HashMap;
 
 use crate::gpu::{
-  gather_ordered, gather_permuted, order_permutation, BufferIds, InstanceOrder, OrderScratch, MAX_INSTANCE_SLOTS,
+  gather_ordered, gather_permuted, order_permutation, BufferIds, BufferStride, InstanceOrder, OrderScratch, StepMode,
+  MAX_BUFFERS,
 };
 use crate::raster::RasterCmd;
 
@@ -17,8 +18,8 @@ pub(super) struct InstanceOrders {
   // unambiguous).
   entries: HashMap<(u64, u64), OrderedEntry>,
   // Instance buffer id -> the one entry ordering it (one ordered entry per
-  // buffer; the publish hooks resolve through this). Every instance buffer
-  // of a multi-slot ordered entry appears here.
+  // buffer; the publish hooks resolve through this). Every instance-step
+  // buffer of an ordered entry appears here.
   by_buffer: HashMap<u64, (u64, u64)>,
   // The sort's reusable working memory, shared by every ordered entry (the
   // UI thread publishes one buffer at a time).
@@ -27,23 +28,28 @@ pub(super) struct InstanceOrders {
 
 struct OrderedEntry {
   order: InstanceOrder,
-  // Per-slot instance record strides in bytes (pipeline layout state, fixed
-  // for the entry's life - a buffer swap never changes them; 0 = unused).
-  strides: [usize; MAX_INSTANCE_SLOTS],
-  // The currently ordered buffer per slot (0 after a destroy with no swap).
-  buffers: [u64; MAX_INSTANCE_SLOTS],
+  // The pipeline buffer index holding the key (the declared one, or the
+  // first instance-step buffer), resolved at registration.
+  key: usize,
+  // Per-index record strides in bytes of the entry's INSTANCE-step buffers
+  // (pipeline layout state, fixed for the entry's life - a buffer swap
+  // never changes them; 0 = a vertex-step buffer or none).
+  strides: [usize; MAX_BUFFERS],
+  // The currently ordered buffer per index (0 after a destroy with no
+  // swap, and at every vertex-step index).
+  buffers: [u64; MAX_BUFFERS],
   // The retained permutation (perm[i] = the slot drawn i-th) from the key
-  // slot's last publish. Retained only where `retains()` says so: on
-  // multi-slot entries sibling buffers must gather under the key buffer's
-  // permutation, and a `retain: true` entry keeps it to re-sort on a
-  // direction change; a single-slot gather entry recomputes at each
-  // publish and retains nothing (stage 1's contract, unchanged).
+  // buffer's last publish. Retained only where `retains()` says so: with
+  // several instance-step buffers the siblings must gather under the key
+  // buffer's permutation, and a `retain: true` entry keeps it to re-sort
+  // on a direction change; a single-buffer gather entry recomputes at
+  // each publish and retains nothing (stage 1's contract, unchanged).
   perm: Vec<u32>,
-  // Slot-order copies of each slot's last published records, so a
+  // Slot-order copies of each buffer's last published records, so a
   // permutation change can republish every buffer coherently with no
   // publish from the app. Kept where `retains()` says so (plus the byte
   // staging of any spatial-sink publish); empty otherwise.
-  mirrors: [Mirror; MAX_INSTANCE_SLOTS],
+  mirrors: [Mirror; MAX_BUFFERS],
 }
 
 #[derive(Default)]
@@ -64,11 +70,24 @@ impl OrderedEntry {
   }
 
   // Whether the entry keeps mirrors and the permutation between publishes:
-  // multi-slot coherence needs them, and `retain: true` opts a single-slot
-  // entry in (the write-once strategy).
+  // multi-buffer coherence needs them, and `retain: true` opts a
+  // single-buffer entry in (the write-once strategy).
   fn retains(&self) -> bool {
     self.order.retain || self.slots() > 1
   }
+}
+
+// The instance-step strides of a pipeline's buffers by index (0 at a
+// vertex-step index or past the declared layouts): the order registry's
+// view of a layout.
+fn instance_strides(strides: [BufferStride; MAX_BUFFERS]) -> [usize; MAX_BUFFERS] {
+  let mut out = [0usize; MAX_BUFFERS];
+  for (i, s) in strides.iter().enumerate() {
+    if s.step == StepMode::Instance {
+      out[i] = s.stride;
+    }
+  }
+  out
 }
 
 impl InstanceOrders {
@@ -81,42 +100,40 @@ impl Context {
   /// Validate an entry's declared instance order against its pipeline layout
   /// and buffers - the setup half, pure so creates can check before their
   /// RPC and commit with `insert_instance_order` after it succeeds. The
-  /// contract: the key reads from the declared key slot's records, every
-  /// instance buffer is ordered by exactly one entry, the buffers are
-  /// pairwise distinct and distinct from the entry's vertex and index
-  /// buffers.
+  /// contract: the key reads from an instance-step buffer's records, every
+  /// instance-step buffer is ordered by exactly one entry, and each is
+  /// distinct from every other buffer the entry binds (a buffer read at
+  /// two places, or as the index buffer, cannot hold instance records
+  /// only). Returns the resolved key buffer index.
   pub(super) fn check_instance_order(
     &self,
     order: &InstanceOrder,
-    instance_strides: [usize; MAX_INSTANCE_SLOTS],
+    strides: [BufferStride; MAX_BUFFERS],
     ids: BufferIds,
-  ) -> Result<(), String> {
-    if instance_strides.iter().all(|&s| s == 0) {
-      return Err("instanceOrder needs an instance buffer (the pipeline declares no instanceAttributes)".to_string());
+  ) -> Result<usize, String> {
+    let instance_strides = instance_strides(strides);
+    let key = match order.key_buffer {
+      Some(index) => index,
+      None => match instance_strides.iter().position(|&s| s > 0) {
+        Some(index) => index,
+        None => return Err("instanceOrder needs an instance-step buffer (the pipeline declares none)".to_string()),
+      },
+    };
+    if instance_strides[key] == 0 {
+      return Err(format!("instanceOrder keys on buffer {key}, but the pipeline's buffer {key} is not instance-step"));
     }
-    if instance_strides[order.key_slot] == 0 {
-      return Err(format!(
-        "instanceOrder keys on slot {}, but the pipeline declares no instance attributes there",
-        order.key_slot
-      ));
-    }
-    order.check_stride(instance_strides[order.key_slot])?;
+    order.check_stride(instance_strides[key])?;
     let orders = self.orders.borrow();
-    for (slot, &stride) in instance_strides.iter().enumerate() {
+    for (index, &stride) in instance_strides.iter().enumerate() {
       if stride == 0 {
         continue;
       }
-      let buffer = ids.instance_buffers[slot];
-      if buffer == ids.buffer || ids.index.is_some_and(|(i, _)| i == buffer) {
-        return Err(format!(
-          "instance buffer {buffer} is also the entry's {} buffer; an ordered buffer holds instance records only",
-          if buffer == ids.buffer { "vertex" } else { "index" }
-        ));
+      let buffer = ids.buffers[index];
+      if ids.index.is_some_and(|(i, _)| i == buffer) {
+        return Err(format!("buffer {buffer} is also the entry's index buffer; an ordered buffer holds instance records only"));
       }
-      if ids.instance_buffers[..slot].contains(&buffer) {
-        return Err(format!(
-          "instance buffer {buffer} is bound to two slots; an ordered entry's instance buffers must be distinct"
-        ));
+      if ids.buffers.iter().enumerate().any(|(j, &b)| j != index && b == buffer) {
+        return Err(format!("buffer {buffer} is bound twice on the entry; an ordered buffer holds instance records only"));
       }
       if let Some((t, d)) = orders.by_buffer.get(&buffer) {
         return Err(format!(
@@ -124,7 +141,7 @@ impl Context {
         ));
       }
     }
-    Ok(())
+    Ok(key)
   }
 
   /// Commit a checked instance order for entry (`target`, `draw`).
@@ -133,18 +150,23 @@ impl Context {
     target: u64,
     draw: u64,
     order: InstanceOrder,
-    strides: [usize; MAX_INSTANCE_SLOTS],
-    buffers: [u64; MAX_INSTANCE_SLOTS],
+    key: usize,
+    strides: [BufferStride; MAX_BUFFERS],
+    ids: BufferIds,
   ) {
+    let strides = instance_strides(strides);
+    let mut buffers = [0u64; MAX_BUFFERS];
     let mut orders = self.orders.borrow_mut();
-    for (slot, &stride) in strides.iter().enumerate() {
+    for (index, &stride) in strides.iter().enumerate() {
       if stride > 0 {
-        orders.by_buffer.insert(buffers[slot], (target, draw));
+        buffers[index] = ids.buffers[index];
+        orders.by_buffer.insert(buffers[index], (target, draw));
       }
     }
-    orders
-      .entries
-      .insert((target, draw), OrderedEntry { order, strides, buffers, perm: Vec::new(), mirrors: Default::default() });
+    orders.entries.insert(
+      (target, draw),
+      OrderedEntry { order, key, strides, buffers, perm: Vec::new(), mirrors: Default::default() },
+    );
   }
 
   /// Drop one entry's order (remove_draw).
@@ -165,37 +187,32 @@ impl Context {
     }
   }
 
-  /// The instance-buffer-swap half of the update transaction, split
-  /// check/commit so a rejected swap changes nothing. A swap on an
-  /// unordered entry passes untouched; on an ordered one the order follows
-  /// the entry to the new buffers, every swapped slot at once.
+  /// The buffer-swap half of the update transaction, split check/commit so
+  /// a rejected swap changes nothing. A swap on an unordered entry passes
+  /// untouched; on an ordered one the order follows the entry to the new
+  /// buffers, every swapped instance-step buffer at once.
   pub(super) fn check_order_swap(&self, target: u64, draw: u64, ids: BufferIds) -> Result<(), String> {
     let orders = self.orders.borrow();
     let Some(entry) = orders.entries.get(&(target, draw)) else {
       return Ok(());
     };
-    for (slot, &stride) in entry.strides.iter().enumerate() {
+    for (index, &stride) in entry.strides.iter().enumerate() {
       if stride == 0 {
         continue;
       }
-      let new_buffer = ids.instance_buffers[slot];
-      if ids.instance_buffers[..slot].contains(&new_buffer) {
-        return Err(format!(
-          "instance buffer {new_buffer} is bound to two slots; an ordered entry's instance buffers must be distinct"
-        ));
+      let new_buffer = ids.buffers[index];
+      if ids.buffers.iter().enumerate().any(|(j, &b)| j != index && b == new_buffer) {
+        return Err(format!("buffer {new_buffer} is bound twice on the entry; an ordered buffer holds instance records only"));
       }
-      if new_buffer == entry.buffers[slot] {
+      if ids.index.is_some_and(|(i, _)| i == new_buffer) {
+        return Err(format!("buffer {new_buffer} is also the entry's index buffer; an ordered buffer holds instance records only"));
+      }
+      if new_buffer == entry.buffers[index] {
         continue;
       }
       if let Some((t, d)) = orders.by_buffer.get(&new_buffer) {
         return Err(format!(
           "buffer {new_buffer} is already ordered by draw {d} of target {t}; one ordered entry per buffer"
-        ));
-      }
-      if new_buffer == ids.buffer || ids.index.is_some_and(|(i, _)| i == new_buffer) {
-        return Err(format!(
-          "instance buffer {new_buffer} is also the entry's {} buffer; an ordered buffer holds instance records only",
-          if new_buffer == ids.buffer { "vertex" } else { "index" }
         ));
       }
     }
@@ -208,19 +225,19 @@ impl Context {
     let Some(entry) = orders.entries.get_mut(&(target, draw)) else {
       return;
     };
-    for (slot, &stride) in entry.strides.iter().enumerate() {
+    for (index, &stride) in entry.strides.iter().enumerate() {
       if stride == 0 {
         continue;
       }
-      let new_buffer = ids.instance_buffers[slot];
-      let old = entry.buffers[slot];
+      let new_buffer = ids.buffers[index];
+      let old = entry.buffers[index];
       if new_buffer == old {
         continue;
       }
       if old != 0 {
         orders.by_buffer.remove(&old);
       }
-      entry.buffers[slot] = new_buffer;
+      entry.buffers[index] = new_buffer;
       orders.by_buffer.insert(new_buffer, (target, draw));
     }
   }
@@ -252,7 +269,7 @@ impl Context {
     let Some(entry) = orders.entries.get_mut(&(target, draw)) else {
       return;
     };
-    let key_slot = entry.order.key_slot;
+    let key_slot = entry.key;
     let len = entry.mirrors[key_slot].len;
     if !entry.retains() || len == 0 {
       return;
@@ -329,7 +346,7 @@ impl Context {
     mirror.data[..len].copy_from_slice(&block[..len]);
     mirror.len = len;
     let mut changed = false;
-    if slot == entry.order.key_slot {
+    if slot == entry.key {
       order_permutation(&entry.order, stride, &block[..len], &mut orders.scratch);
       changed = orders.scratch.perm() != entry.perm.as_slice();
       if changed {
@@ -382,7 +399,7 @@ impl Context {
     }
     mirror.len = len;
     let mut changed = false;
-    let perm: &[u32] = if slot == entry.order.key_slot {
+    let perm: &[u32] = if slot == entry.key {
       order_permutation(&entry.order, stride, &entry.mirrors[slot].data[..len], &mut orders.scratch);
       if entry.retains() {
         changed = orders.scratch.perm() != entry.perm.as_slice();

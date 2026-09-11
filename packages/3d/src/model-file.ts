@@ -101,6 +101,9 @@ export function encodeModel(data: ModelData): Uint8Array {
 
   let parts: PartHeader[] = data.parts.map((part) => {
     let g = part.geometry
+    if (g.streams !== undefined && g.streams.length > 0) {
+      throw new Error("encodeModel: part '" + part.name + "' carries extra vertex streams; the container writes one interleaved buffer per part")
+    }
     let layout = g.layout === undefined ? "standard" : g.layout
     let vertices = push(new Uint8Array(g.vertices.buffer, g.vertices.byteOffset, g.vertices.byteLength))
     let index = push(new Uint8Array(g.indices.buffer, g.indices.byteOffset, g.indices.byteLength))

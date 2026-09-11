@@ -4,7 +4,7 @@
 // scene side is reached through the node's SceneHooks (node.ts).
 
 import { createBuffer, destroyBuffer, writeBuffer } from "@solidrt/core/gpu"
-import type { BufferId, DrawId, InstanceAttribute, ShaderParams, TextureBindings } from "@solidrt/core/gpu"
+import type { BufferId, DrawId, ShaderParams, TextureBindings, VertexBufferLayout } from "@solidrt/core/gpu"
 import { geometryBounds, plane, VERTEX_FORMATS } from "./geometry.ts"
 import type { Geometry } from "./geometry.ts"
 import type { GeometryBuffers } from "./geometry-gpu.ts"
@@ -45,6 +45,9 @@ export type Mesh = SceneNode & {
    * null for an unskinned mesh. */
   _cullJoints: SceneNode[] | null
   _entry: DrawId | null
+  /** The index range the entries draw, or null for the whole index list.
+   * Set with setDrawRange; reset by setGeometry. */
+  _range: { first: number; count: number } | null
   /** The geometry-buffer reference the entry was built from, acquired at
    * attach and what _detach releases - like _transparent, a snapshot,
    * because setGeometry swaps mesh.geometry before the rebuild. */
@@ -82,7 +85,7 @@ export type MeshInstances = {
    * instanced mesh, the app's records on a record mesh. */
   buffer: BufferId
   /** Floats per record: INSTANCE_FLOATS on an instanced mesh, the
-   * material's slot-0 instanceAttributes summed on a record mesh. */
+   * material's first instance buffer's floats summed on a record mesh. */
   stride: number
   /** Records the buffer has room for; doubles on growth (a replacement
    * buffer, never a resize). */
@@ -113,7 +116,7 @@ export type InstanceSlots = { slots: (InstanceNode | null)[]; free: number[] }
 
 /**
  * The style half of an instanced mesh: one record per instance slot of
- * the material's slot-1 instanceAttributes (a tint, a frame index, any
+ * the material's second instance buffer (a tint, a frame index, any
  * per-copy floats the vertex stage reads), owned by the app and written
  * per instance with setInstanceStyle - the JS twin of the core's matrix
  * records in slot 0, @solidrt/2d's pose/style split one dimension up.
@@ -182,6 +185,7 @@ export function createMesh(geometry: Geometry, material: Material): Mesh {
   mesh.cullMargin = 0
   mesh._cullJoints = null
   mesh._entry = null
+  mesh._range = null
   mesh._buffers = null
   mesh._transparent = false
   mesh._center = [0, 0, 0]
@@ -226,19 +230,13 @@ export function localBounds(mesh: Mesh): Float32Array | null {
   return mesh._sprite ? SPRITE_BOUNDS : geometryBounds(mesh.geometry)
 }
 
-/** Floats per record of one instance slot of an attribute list (slot 0
- * by default; the list's `slot` keys pick the others). */
-export function instanceStride(attributes: InstanceAttribute[], slot = 0): number {
+/** Floats per record of one of a material's instance buffers (the first
+ * by default, the record buffer; 1 is the style buffer); 0 when the
+ * material declares no buffer at that index. */
+export function instanceStride(buffers: VertexBufferLayout[], index = 0): number {
   let stride = 0
-  for (let a of attributes) if ((a.slot ?? 0) === slot) stride += VERTEX_FORMATS[a.format].bytes / Float32Array.BYTES_PER_ELEMENT
+  for (let a of buffers[index]?.attributes ?? []) stride += VERTEX_FORMATS[a.format].bytes / Float32Array.BYTES_PER_ELEMENT
   return stride
-}
-
-// The highest instance slot an attribute list names.
-function instanceSlots(attributes: InstanceAttribute[]): number {
-  let top = 0
-  for (let a of attributes) top = Math.max(top, a.slot ?? 0)
-  return top + 1
 }
 
 /** Floats per instance record on an instanced mesh: one column-major
@@ -285,51 +283,50 @@ function copyBounds(bounds: ArrayLike<number> | undefined, site: string): Float3
   return out
 }
 
-function instancedAttributes(material: Material, site: string): InstanceAttribute[] {
-  let attributes = material.instanceAttributes
-  if (attributes === undefined) {
-    throw new Error(site + ": the material declares no instanceAttributes - build it with shaderMaterialClass({ instanceAttributes: [...] }) or a stock material's `instanced`")
+function instancedBuffers(material: Material, site: string): VertexBufferLayout[] {
+  let buffers = material.instanceBuffers
+  if (buffers === undefined) {
+    throw new Error(site + ": the material declares no instanceBuffers - build it with shaderMaterialClass({ instanceBuffers: [...] }) or a stock material's `instanced`")
   }
-  return attributes
+  return buffers
 }
 
 /**
- * Whether a material's instance attributes fit a mesh's population: the
- * slot-0 stride must be the mesh's record stride, a slot-1 layout must
- * match the mesh's style stride (a record mesh has no slot 1), and no
- * slot beyond. Throws otherwise - at creation for the mesh's own
- * material, at add() for a swapped one, at a shadow view's attach for a
- * shadow variant.
+ * Whether a material's instance buffers fit a mesh's population: the
+ * first layout's stride must be the mesh's record stride, a second must
+ * match the mesh's style stride (a record mesh has none), and no layout
+ * beyond. Throws otherwise - at creation for the mesh's own material, at
+ * add() for a swapped one, at a shadow view's attach for a shadow variant.
  */
 export function checkInstancePairing(material: Material, inst: MeshInstances, site: string): void {
-  let attrs = instancedAttributes(material, site)
-  let slots = instanceSlots(attrs)
-  if (slots > MESH_INSTANCE_SLOTS) {
-    throw new Error(site + ": instance attributes name slot " + (slots - 1) + "; a mesh binds slots 0 (records) and 1 (style) only")
+  let buffers = instancedBuffers(material, site)
+  if (buffers.length > MESH_INSTANCE_SLOTS) {
+    throw new Error(site + ": the material declares " + buffers.length + " instance buffers; a mesh binds two (records and style) at most")
   }
-  let stride = instanceStride(attrs, 0)
+  let stride = instanceStride(buffers, 0)
   if (stride !== inst.stride) {
-    throw new Error(site + ": the material's slot-0 instance attributes take " + stride + " floats but the mesh's records are " + inst.stride)
+    throw new Error(site + ": the material's first instance buffer takes " + stride + " floats per record but the mesh's records are " + inst.stride)
   }
-  let styleStride = instanceStride(attrs, 1)
+  let styleStride = instanceStride(buffers, 1)
   if (styleStride > 0) {
     if (inst.style === null) {
-      throw new Error(site + ": the material declares slot-1 (style) instance attributes but the mesh has no style records" + (inst.nodes === null ? " (a record mesh is slot 0 only)" : ""))
+      throw new Error(site + ": the material declares a second (style) instance buffer but the mesh has no style records" + (inst.nodes === null ? " (a record mesh binds the record buffer only)" : ""))
     }
     if (styleStride !== inst.style.stride) {
-      throw new Error(site + ": the material's slot-1 (style) attributes take " + styleStride + " floats but the mesh's style records are " + inst.style.stride)
+      throw new Error(site + ": the material's style buffer takes " + styleStride + " floats per record but the mesh's style records are " + inst.style.stride)
     }
   }
 }
 
-/** The instance-buffer binding of a draw entry for a material over a
- * population: the plain slot-0 key, or both slots when the material's
- * pipeline reads the style records too (the two spellings are exclusive
- * and must match the pipeline's slot count exactly). */
-export function instanceBinding(material: Material, inst: MeshInstances): { instanceBuffer?: BufferId; instanceBuffers?: BufferId[] } {
-  let attrs = material.instanceAttributes
-  if (attrs !== undefined && inst.style !== null && instanceSlots(attrs) > 1) return { instanceBuffers: [inst.buffer, inst.style.buffer] }
-  return { instanceBuffer: inst.buffer }
+/** The instance buffers a draw entry binds for a material over a
+ * population, in the pipeline's layout order after the geometry's: the
+ * record buffer, plus the style buffer when the material's pipeline reads
+ * the style records too (the list must match the declared layouts
+ * exactly). */
+export function instanceBinding(material: Material, inst: MeshInstances): BufferId[] {
+  let buffers = material.instanceBuffers
+  if (buffers !== undefined && inst.style !== null && buffers.length > 1) return [inst.buffer, inst.style.buffer]
+  return [inst.buffer]
 }
 
 /**
@@ -355,11 +352,11 @@ export function instanceBinding(material: Material, inst: MeshInstances): { inst
  * frees the record buffers when done for good.
  */
 export function createInstancedMesh(geometry: Geometry, material: Material, opts?: InstancedMeshOptions): InstancedMesh {
-  let attrs = instancedAttributes(material, "createInstancedMesh")
+  let attrs = instancedBuffers(material, "createInstancedMesh")
   let stride = instanceStride(attrs, 0)
   if (stride !== INSTANCE_FLOATS) {
     throw new Error(
-      "createInstancedMesh: the material's slot-0 instanceAttributes take " + stride + " floats per record; an instance record is the " + INSTANCE_FLOATS + "-float matrix of INSTANCE_MATRIX_ATTRIBUTES",
+      "createInstancedMesh: the material's first instance buffer takes " + stride + " floats per record; an instance record is the " + INSTANCE_FLOATS + "-float matrix of INSTANCE_MATRIX_ATTRIBUTES",
     )
   }
   let capacity = opts?.capacity ?? DEFAULT_CAPACITY
@@ -372,7 +369,7 @@ export function createInstancedMesh(geometry: Geometry, material: Material, opts
     let blank = new Float32Array(styleStride)
     if (material.instanceStyle !== undefined) {
       if (material.instanceStyle.length !== styleStride) {
-        throw new Error("createInstancedMesh: the material's instanceStyle has " + material.instanceStyle.length + " floats but its slot-1 attributes take " + styleStride)
+        throw new Error("createInstancedMesh: the material's instanceStyle has " + material.instanceStyle.length + " floats but its style buffer takes " + styleStride)
       }
       blank.set(material.instanceStyle)
     }
@@ -522,7 +519,7 @@ function growInstances(mesh: InstancedMesh, next: number): void {
  * floats - the raw escape hatch for motion only JS can compute at scale
  * (a particle sim, a crowd stepped in a worker), Three's InstancedMesh
  * and Godot's MultiMesh as plain data. The material must declare
- * `instanceAttributes` (shaderMaterialClass); its vertex stage reads each
+ * `instanceBuffers` (shaderMaterialClass); its vertex stage reads each
  * record through those `in` variables. `records` is the interleaved
  * attribute data (stride = the attributes' floats summed) and is uploaded
  * here; its length is the buffer's initial capacity, which setRecords
@@ -538,7 +535,7 @@ export function createRecordMesh(
   count?: number,
   opts?: RecordMeshOptions,
 ): RecordMesh {
-  let attrs = instancedAttributes(material, "createRecordMesh")
+  let attrs = instancedBuffers(material, "createRecordMesh")
   let stride = instanceStride(attrs, 0)
   if (records.length % stride !== 0) {
     throw new Error("createRecordMesh: " + records.length + " floats is not a whole number of " + stride + "-float records")
@@ -680,7 +677,29 @@ export function setGeometry(mesh: Mesh, geometry: Geometry): void {
   if (mesh._sprite) throw new Error("setGeometry: a sprite draws the shared unit quad and takes no geometry")
   if (mesh.geometry === geometry) return
   mesh.geometry = geometry
+  mesh._range = null
   rebuildEntry(mesh)
+}
+
+/**
+ * Draw indices `[first, first + count)` of the mesh's geometry instead of
+ * the whole list (Three's `geometry.setDrawRange`; on the mesh here
+ * because the scene owns the entries): the reveal-and-hide dial for
+ * geometry built once - a trail growing along its buffer, a level-of-
+ * detail cut, a strip drawn up to a moving end. `count` absent draws to
+ * the end. Applied to the mesh's entry and every view's; setGeometry
+ * resets it to the whole list. Throws on a range outside the index list;
+ * a partial primitive at the cut draws nothing, like GL.
+ */
+export function setDrawRange(mesh: Mesh, first: number, count?: number): void {
+  if (mesh._sprite) throw new Error("setDrawRange: a sprite draws the shared unit quad")
+  let total = mesh.geometry.indices.length
+  let n = count ?? total - first
+  if (!Number.isInteger(first) || !Number.isInteger(n) || first < 0 || n < 0 || first + n > total) {
+    throw new Error("setDrawRange: range [" + first + ", " + (first + n) + ") is outside the geometry's " + total + " indices")
+  }
+  mesh._range = first === 0 && n === total ? null : { first, count: n }
+  mesh._scene?._setRange(mesh)
 }
 
 /** Swap a mesh's material: its draw entry is rebuilt. */

@@ -74,11 +74,15 @@ function App() {
   let bufferId = createBuffer(particles(1500), { label: "particle-verts" })
   let id = createPipelineTexture(VERTEX, FRAGMENT, 512, 512, { uTime: 0, uTintA: [1.0, 0.45, 0.15], uTintB: [0.25, 0.5, 1.0] }, {
     label: "particles",
-    attributes: [
-      { name: "aPos", format: "float32x3" },
-      { name: "aSeed", format: "float32" },
+    buffers: [
+      {
+        attributes: [
+          { name: "aPos", format: "float32x3" },
+          { name: "aSeed", format: "float32" },
+        ],
+        buffer: bufferId,
+      },
     ],
-    buffer: bufferId,
     topology: "points",
     blend: "add",
     clearColor: [0.02, 0.02, 0.05, 1],

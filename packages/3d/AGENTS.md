@@ -165,7 +165,7 @@ fogged scene); absent follows the scene. `overrideMaterial` (Three's
 `scene.overrideMaterial`, scoped to the view) draws every mesh with one
 material - a depth pass, a normal/id visualizer - skips instanced
 meshes (unless the override itself declares their exact
-`instanceAttributes` record layout) and draws in add order. `depth: "texture"` exposes `view.depthTexture`, the shadow-map
+`instanceBuffers` record layouts) and draws in add order. `depth: "texture"` exposes `view.depthTexture`, the shadow-map
 input; the same option on createScene exposes `scene.depthTexture`,
 the input for a depth-reading post effect in `output` (not combinable
 with `samples` - no multisampled sampleable depth). `ortho: { left, right, top, bottom }` on any camera swaps
@@ -379,6 +379,31 @@ reading only aPos) on standard geometry. `layoutStride` (bytes)/
 `layoutSlot` (byte offset, format, components)/`layoutKey`/
 `layoutAttributes` are the layout arithmetic; two layouts with equal
 keys interleave identically (merge requires that).
+STREAMS: a geometry may carry more than one vertex buffer.
+`Geometry.vertices` under `layout` is stream 0 (where aPos lives) and
+`Geometry.streams` holds extra `{ layout, vertices }` buffers, each with
+its own attribute list and the same vertex count (Unity's vertex
+streams; Three's one buffer per channel when a stream carries one
+attribute). `withAttribute(geometry, attr, fill, { stream })` appends a
+channel to stream 1..n or opens stream n + 1; `geometryAttribute`,
+`geometrySlot`, `geometryKey`, `geometryLayouts`, `geometryStreams`
+and `geometryVertexCount` read across streams, and a material's
+pipeline is one per `geometryKey` (every stream's layout, `|` between
+them). Streams exist for data on its own schedule: `updateVertices(
+geometry, { stream?, first?, count? })` re-uploads that vertex range of
+that stream from the geometry's own array in place (write the array
+through the accessor first; Three's `needsUpdate` with an update
+range), reaching every mesh, view and wireframe over the geometry
+while the other streams never move; a stream-0 update drops the cached
+bounds, and the picking shape keeps the positions it was built from
+(re-attach a deforming geometry that must pick). transformGeometry and
+the edge builders share extra streams with their source; merge
+concatenates every stream; the `.srtm` container refuses streams (run
+time data). `setDrawRange(mesh, first, count?)` draws indices `[first,
+first + count)` of the mesh's geometry (Three's `setDrawRange`, on the
+mesh because the scene owns the entries), applied to every entry of the
+mesh and reset by setGeometry. The worked example is
+`examples/streams.tsx`.
 Indices are uint16 or uint32 - the `Geometry.indices` array type picks
 the draw's index format, so hand-built geometry past 64k vertices just
 uses a Uint32Array (generators emit uint16). What the indices LIST is
@@ -453,7 +478,7 @@ collision claims - two copies of this contract have drifted before.
 | `Mesh` | `geometry`, `material`, transforms as Group, `params?` (per-mesh uniforms, merge semantics - no unset), `renderOrder?`, `castShadow?`, `layers?` (membership bitmask, default 1), pointer events (below), `ref?(mesh)` |
 | `Sprite` | as Mesh minus `geometry`: a camera-facing unit quad, `scale` is its world size, rotation is ignored; pair with a `sprite()` material |
 | `InstancedMesh` | as Mesh (an instanced `material`: a stock one with `instanced`/`instanceColors`, or a class declaring INSTANCE_MATRIX_ATTRIBUTES), plus `capacity?` (instance slots, default 64; the buffers double past it), `bounds?` (optional: instances pick by themselves and the mesh culls by their union), `label?`; a PARENT: `<Instance>` children populate it, `<Group>` children are squads; the record buffers are component-owned and freed on unmount |
-| `Instance` | one instance of the enclosing `InstancedMesh`: transforms, `transition`, pointer events as Group, plus `style?` (the material's slot-1 floats - `[r, g, b, a]` under `instanceColors`), `ref?(instance)`; a parent too (a `<Mesh>` under an instance rides with it) |
+| `Instance` | one instance of the enclosing `InstancedMesh`: transforms, `transition`, pointer events as Group, plus `style?` (the material's style-buffer floats - `[r, g, b, a]` under `instanceColors`), `ref?(instance)`; a parent too (a `<Mesh>` under an instance rides with it) |
 | `RecordMesh` | as Mesh, plus `records` (interleaved per-instance floats; buffer capacity starts at the first value and grows on larger rewrites), `count?` (records drawn, default all), `bounds?` (local [minX..maxZ] over the population - without it the mesh never picks); the record buffer is component-owned and freed on unmount |
 | `PerspectiveCamera` | `fov?` (vertical DEGREES, default 60), `near?`, `far?`, `position?`, `lookAt?`, `up?` - or the Scene `camera` prop, the same state (last write wins) |
 | `SpotLight` | transforms as Group, `direction?` (local aim, default [0, -1, 0]), `color?`, `intensity?`, `distance?` (falloff cutoff, 0 = none), `angle?` (cone half-angle DEGREES, default 60), `penumbra?` (0..1 rim fade, default 0), `decay?` (falloff exponent, default 2), `castShadow?`, `shadow?` (mapSize, bias, normalBias, near), `ref?(light)` |
@@ -1019,18 +1044,19 @@ pipeline with its own values. `dispose()` lives on the class alone.
 
 #### Instanced materials
 
-`instanceAttributes: [{ name, format, slot? }]` (`format` is the
-float32 family of the vertex vocabulary, `"float32" | "float32x2" |
-"float32x3" | "float32x4"`: the record buffers here are Float32Arrays
-written in floats, so the packed formats are the engine's, through
-core's pipeline API) on either shader-material form makes an INSTANCED
-material: the vertex stage reads them as `in` variables beside the
-layout's own, and each drawn instance gets one
-record per slot from the mesh's instance buffers - slot 0 (default)
-is the record buffer, slot 1 an instanced mesh's STYLE buffer (below).
-Its meshes come from `createInstancedMesh` or `createRecordMesh`; a
-`createMesh` mesh is rejected at add(). `instanceStyle: [..]` is the
-slot-1 record a fresh instance starts with. The stock materials do
+`instanceBuffers: [{ attributes: [{ name, format }] }]` (one layout per
+per-instance buffer, instance-step by definition and tightly packed;
+`format` is the float32 family of the vertex vocabulary, `"float32" |
+"float32x2" | "float32x3" | "float32x4"`: the record buffers here are
+Float32Arrays written in floats, so the packed formats and explicit
+strides are the engine's, through core's pipeline API) on either
+shader-material form makes an INSTANCED material: the vertex stage reads
+the attributes as `in` variables beside the layout's own, and each drawn
+instance gets one record from each of the mesh's instance buffers - the
+first is the record buffer, the second an instanced mesh's STYLE buffer
+(below). Its meshes come from `createInstancedMesh` or
+`createRecordMesh`; a `createMesh` mesh is rejected at add().
+`instanceStyle: [..]` is the style record a fresh instance starts with. The stock materials do
 the same with one flag: `lit/standard/unlit({ instanced: true })`
 places by the instance matrix (the shadow pass too, so the fleet
 casts), and `{ instanceColors: true }` adds a per-instance
@@ -1067,16 +1093,17 @@ matrix RELATIVE to the mesh the spatial core writes into the record
 buffer (`bindMatrixRecord` anchored on the mesh node: one coalesced
 buffer write per flush however many instances moved, so native
 transitions and clip players move instances with zero per-frame JS).
-The material declares `INSTANCE_MATRIX_ATTRIBUTES` in slot 0 (four vec4
-columns, 16 floats; anything else throws at creation) and its vertex
+The material declares `INSTANCE_MATRIX_ATTRIBUTES` as its first instance
+buffer (four vec4 columns, 16 floats; anything else throws at creation)
+and its vertex
 stage splices `INSTANCE_MATRIX` from `@solidrt/3d/glsl`: `uModel *
 instanceMatrix() * vec4(aPos, 1.0)`, normals through
 `instanceNormalMatrix()` (Three's derivation, exact for any rotation and
 scale at no per-instance data; a sheared hierarchy - a non-uniformly
 scaled group above a rotated instance - takes
 `transpose(inverse(mat3(instanceMatrix())))` instead) - or is a stock
-material with `instanced`. Slot-1 attributes, when the material declares
-any, give every instance a STYLE record beside its matrix
+material with `instanced`. A second instance buffer, when the material
+declares one, gives every instance a STYLE record beside its matrix
 (`MeshInstances.style`): app-owned floats in a second, mesh-owned
 buffer, written per instance with `setInstanceStyle(instance, floats)`
 into a JS mirror and published as ONE coalesced buffer write per mesh at
@@ -1085,7 +1112,7 @@ recycled slot starts from the material's `instanceStyle` (white under
 `instanceColors`, zeros otherwise); under `alphaTest` the cutout shadow
 multiplies by the same color, so an instance faded below the cutoff
 casts nothing, like its pixels (Godot's alpha scissor holds in its
-shadow pass too). The core's pose slot and the app's style slot are
+shadow pass too). The core's pose buffer and the app's style buffer are
 @solidrt/2d's split one dimension up. Slots are fixed
 for an instance's life and recycle on `destroy` (at the free: an
 instance cannot exist outside its mesh, so the generic add/remove throw
@@ -1119,8 +1146,9 @@ or in five figures, belong to the function face.
 
 `createRecordMesh(geometry, material, records, count?, { bounds?,
 label? })` is the raw form: `records` is the interleaved per-instance
-data (stride = the material's slot-0 instanceAttributes summed, a
-mismatch throws; slot 1 is an instanced mesh's and throws here),
+data (stride = the material's first instance buffer's floats summed, a
+mismatch throws; a second, style buffer is an instanced mesh's and
+throws here),
 uploaded to a mesh-owned buffer whose capacity starts at the
 records given, and `count` picks how many draw (default all).
 `setRecords(mesh, records, count?)` rewrites from the start (count
@@ -2114,9 +2142,10 @@ older bakes are rejected - re-bake with `srt tool 3d/model`.
   flashes at the world origin for a frame.
 - Instancing pairs strictly at add(), like layout: an instanced material
   needs a createInstancedMesh or createRecordMesh mesh and vice versa,
-  and the record strides must match the material's attributes per slot
-  (the 16 floats of INSTANCE_MATRIX_ATTRIBUTES in slot 0 on an instanced
-  mesh, its style stride in slot 1; a record mesh is slot 0 only) - each
+  and the record strides must match the material's instance buffers in
+  order (the 16 floats of INSTANCE_MATRIX_ATTRIBUTES first on an
+  instanced mesh, its style stride second; a record mesh binds the first
+  only) - each
   mismatch throws there, at creation for the mesh's own material and at
   add() for a swapped one. The instance buffers are MESH-owned (unlike
   shared geometry buffers): `disposeInstances` is their one free, and
@@ -2127,7 +2156,7 @@ older bakes are rejected - re-bake with `srt tool 3d/model`.
   amortized like a dynamic array, same policy as @solidrt/2d; size
   `capacity` or the initial records to skip the copies. An instanced
   mesh's style stride comes from its material AT CREATION: a later
-  setMaterial to a class with another slot-1 layout throws at the
+  setMaterial to a class with another style layout throws at the
   rebuild.
 - Style writes are mirrored, not immediate: `setInstanceStyle` lands in
   `MeshInstances.style.data` and the scene's sync publishes the dirty

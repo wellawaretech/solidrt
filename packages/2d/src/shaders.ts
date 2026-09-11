@@ -21,7 +21,7 @@
 // against oracles but NOT against these shaders - if you touch one
 // rotation, touch all.
 import { compileShader, createBuffer, createRenderPipeline, destroyBuffer, destroyProgram, destroyRenderPipeline, destroyShader, glsl, linkProgram } from "@solidrt/core/gpu"
-import type { BufferId, InstanceAttribute, RenderPipelineId, VertexAttribute } from "@solidrt/core/gpu"
+import type { BufferId, RenderPipelineId, VertexAttribute } from "@solidrt/core/gpu"
 
 export let VERTEX = glsl`
   in vec2 aPos;
@@ -119,15 +119,20 @@ export let VERTEX_SPLIT = glsl`
   }
 `
 
-/** The split layout: slot 0 the Pose2D record, slot 1 the style record
- * (iRenderOrder is layout-only - see the header note). */
-export const INSTANCE_ATTRIBUTES_SPLIT: InstanceAttribute[] = [
-  { name: "iPos", format: "float32x2" },
-  { name: "iRot", format: "float32" },
-  { name: "iScale", format: "float32x2" },
-  { name: "iUv", format: "float32x4", slot: 1 },
-  { name: "iTint", format: "float32x4", slot: 1 },
-  { name: "iRenderOrder", format: "float32", slot: 1 },
+/** The split layout: one instance buffer holding the Pose2D record, a
+ * second holding the style record (iRenderOrder is layout-only - see the
+ * header note). */
+export const INSTANCE_LAYOUTS_SPLIT: VertexAttribute[][] = [
+  [
+    { name: "iPos", format: "float32x2" },
+    { name: "iRot", format: "float32" },
+    { name: "iScale", format: "float32x2" },
+  ],
+  [
+    { name: "iUv", format: "float32x4" },
+    { name: "iTint", format: "float32x4" },
+    { name: "iRenderOrder", format: "float32" },
+  ],
 ]
 
 /** What a layer's targets draw with: the unit quad every instance reuses
@@ -142,7 +147,7 @@ export type SpritePipeline = { quad: BufferId; pipeline: RenderPipelineId; dispo
  * view - add entries over the one pipeline. The program lives as long as
  * the pipeline; `dispose` frees both and the quad.
  */
-export function createSpritePipeline(label: string, vertex: string, instanceAttributes: InstanceAttribute[]): SpritePipeline {
+export function createSpritePipeline(label: string, vertex: string, instanceLayouts: VertexAttribute[][]): SpritePipeline {
   // One unit quad (triangle strip), reused by every instance.
   let quad = createBuffer(new Float32Array([-0.5, -0.5, 0.5, -0.5, -0.5, 0.5, 0.5, 0.5]), {
     label: `${label}-quad`,
@@ -156,8 +161,7 @@ export function createSpritePipeline(label: string, vertex: string, instanceAttr
   let pipeline = createRenderPipeline(program, {
     label,
     topology: "triangle-strip",
-    attributes: [{ name: "aPos", format: "float32x2" }],
-    instanceAttributes,
+    buffers: [{ attributes: [{ name: "aPos", format: "float32x2" }] }, ...instanceLayouts.map(attributes => ({ stepMode: "instance" as const, attributes }))],
     blend: "alpha",
   })
   return {

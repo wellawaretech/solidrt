@@ -1,7 +1,7 @@
 // Instanced drawing with per-instance attributes: one 3-vertex triangle in
 // the vertex buffer, drawn hundreds of times, each copy reading its own
-// record from an instance buffer (instanceAttributes on the pipeline +
-// instanceBuffer on the target, vertex divisor 1 underneath). Here each
+// record from an instance buffer (a `stepMode: "instance"` layout on the
+// pipeline, vertex divisor 1 underneath). Here each
 // record is one petal of a phyllotaxis spiral - its angle, radius, size, and
 // tint, computed once in JS - so the vertex stage just reads state instead
 // of re-deriving it from gl_InstanceID every frame, and the geometry buffer
@@ -45,7 +45,7 @@ let FRAGMENT = glsl`
   }
 `
 
-// One record per petal (matching instanceAttributes: 6 floats): radius grows
+// One record per petal (matching the instance layout: 6 floats): radius grows
 // with sqrt(index), the angle steps by the golden angle (~2.39996 rad) - the
 // sunflower layout - petals shrink toward the rim, and the tint walks a
 // cosine palette.
@@ -70,15 +70,19 @@ function App() {
   let instanceId = createBuffer(petalRecords(), { label: "petal-records" })
   let id = createPipelineTexture(VERTEX, FRAGMENT, 512, 512, { uTime: 0 }, {
     label: "petals",
-    attributes: [{ name: "aPos", format: "float32x2" }],
-    buffer: bufferId,
-    instanceAttributes: [
-      { name: "iAngle", format: "float32" },
-      { name: "iRadius", format: "float32" },
-      { name: "iScale", format: "float32" },
-      { name: "iTint", format: "float32x3" },
+    buffers: [
+      { attributes: [{ name: "aPos", format: "float32x2" }], buffer: bufferId },
+      {
+        stepMode: "instance",
+        attributes: [
+          { name: "iAngle", format: "float32" },
+          { name: "iRadius", format: "float32" },
+          { name: "iScale", format: "float32" },
+          { name: "iTint", format: "float32x3" },
+        ],
+        buffer: instanceId,
+      },
     ],
-    instanceBuffer: instanceId,
     instanceCount: 1,
     clearColor: [0.03, 0.03, 0.06, 1],
   })

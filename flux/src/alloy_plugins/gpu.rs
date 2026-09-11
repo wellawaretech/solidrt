@@ -291,14 +291,18 @@ fn collect_target_half(
   Ok(alloy::TargetSpec { width, height, clear_color, sampler, manual, load, samples, label })
 }
 
-// The draw-entry half: params (its own argument), textures, buffer, and the
-// draw range. Shared by the single-draw creates and addDraw; `pipeline` is 0
-// on the fused path (anonymous) and the registry id everywhere else.
+// The draw-entry half: params (its own argument), textures, buffers, and
+// the draw range. Shared by the single-draw creates and addDraw; `pipeline`
+// is 0 on the fused path (anonymous) and the registry id everywhere else.
+// `fused_buffers` is the fused create's buffer ids, taken off its layouts
+// (the `buffers` key there lists layouts, not ids); None reads `buffers`
+// from opts as the id list.
 fn collect_entry_half(
   ctx: &Ctx<'_>,
   pipeline: u64,
   params: &Option<Object<'_>>,
   opts: &Option<Object<'_>>,
+  fused_buffers: Option<[u64; alloy::MAX_BUFFERS]>,
   api: &str,
 ) -> rquickjs::Result<alloy::DrawSpec> {
   // Params is its own argument (before opts): a params key left in the bag
@@ -326,9 +330,13 @@ fn collect_entry_half(
     Some(o) => collect_textures(ctx, &o, api)?,
     None => Vec::new(),
   };
-  let buffer = match opts {
-    Some(o) => o.get::<_, Option<u64>>("buffer")?.unwrap_or(0),
-    None => 0,
+  // The buffers the pipeline's layouts read, one id per layout in
+  // declaration order; the pairing with the layouts is validated in alloy
+  // against the pipeline mirror (the desc is not in this bag on the split
+  // paths).
+  let buffers = match fused_buffers {
+    Some(ids) => ids,
+    None => collect_buffer_ids(ctx, opts, api)?,
   };
   // The index binding: indexBuffer + indexFormat arrive together (the
   // buffer is typeless - any createBuffer result - so the format must be
@@ -353,12 +361,6 @@ fn collect_entry_half(
     }
     (None, Some(_)) => return Err(throw_str(ctx, &format!("{api}: indexFormat requires indexBuffer"))),
   };
-  // The per-instance buffers, fetched through the pipeline's
-  // instanceAttributes; that pairing is validated in alloy against the
-  // pipeline mirror (the desc is not in this bag on the split paths).
-  // `instanceBuffer` is the single-slot spelling, `instanceBuffers` the
-  // per-slot list (index = the attributes' `slot`).
-  let instance_buffers = collect_instance_buffers(ctx, opts, api)?;
   // The draw range, in the entry's vocabulary: firstVertex + vertexCount
   // pick the vertices on a plain entry, firstIndex + indexCount pick the
   // indices on an indexed one (WebGPU's spellings for both draw calls);
@@ -427,15 +429,15 @@ fn collect_entry_half(
     instance_count: instances.unwrap_or(-1),
   };
   let order = collect_instance_order(ctx, opts, api)?;
-  Ok(alloy::DrawSpec { pipeline, buffer, index, instance_buffers, draw, params, textures, order })
+  Ok(alloy::DrawSpec { pipeline, buffers, index, draw, params, textures, order })
 }
 
 // The instanceOrder option: a field key ({ field }) or a projected key
 // ({ position, direction }), float offsets into one instance record, plus
 // descending, the key slot ({ slot }, default 0) and the retained-copy
 // opt-in ({ retain }). Only the array shape is checked here; the key rules
-// (exactly one of the two, offset values, direction values, slot bounds,
-// retain with position only, stride fit) are alloy's.
+// (exactly one of the two, offset values, direction values, buffer index
+// bounds, retain with position only, stride fit) are alloy's.
 fn collect_instance_order(
   ctx: &Ctx<'_>,
   opts: &Option<Object<'_>>,
@@ -452,9 +454,9 @@ fn collect_instance_order(
   let position = o.get::<_, Option<f64>>("position")?;
   let direction = collect_direction(ctx, &o, "direction", api)?;
   let descending = o.get::<_, Option<bool>>("descending")?.unwrap_or(false);
-  let slot = o.get::<_, Option<f64>>("slot")?;
+  let buffer = o.get::<_, Option<f64>>("buffer")?;
   let retain = o.get::<_, Option<bool>>("retain")?.unwrap_or(false);
-  alloy::InstanceOrder::parse(field, position, direction, descending, slot, retain)
+  alloy::InstanceOrder::parse(field, position, direction, descending, buffer, retain)
     .map(Some)
     .map_err(|e| throw_str(ctx, &format!("{api}: {e}")))
 }
@@ -471,34 +473,33 @@ fn collect_direction(ctx: &Ctx<'_>, obj: &Object<'_>, key: &str, api: &str) -> r
   Ok(Some([list[0] as f32, list[1] as f32, list[2] as f32]))
 }
 
-// The instanceBuffer / instanceBuffers pair at create: one buffer id for
-// slot 0, or the per-slot list (index = the attributes' `slot`). Both at
-// once contradict each other and throw; neither = no instance buffers.
-fn collect_instance_buffers(
-  ctx: &Ctx<'_>,
-  opts: &Option<Object<'_>>,
-  api: &str,
-) -> rquickjs::Result<[u64; alloy::MAX_INSTANCE_SLOTS]> {
-  let (single, list) = match opts {
-    Some(o) => (o.get::<_, Option<u64>>("instanceBuffer")?, o.get::<_, Option<Vec<u64>>>("instanceBuffers")?),
-    None => (None, None),
+// An entry's `buffers` list at create or swap: one buffer id per pipeline
+// layout, in declaration order (the pairing is alloy's check). A layout
+// object where an id belongs is the split-object mistake worth naming.
+fn collect_buffer_ids(ctx: &Ctx<'_>, opts: &Option<Object<'_>>, api: &str) -> rquickjs::Result<[u64; alloy::MAX_BUFFERS]> {
+  let list = match opts {
+    Some(o) => o.get::<_, Option<Array>>("buffers")?,
+    None => None,
   };
-  match (single, list) {
-    (Some(_), Some(_)) => Err(throw_str(ctx, &format!("{api}: pass instanceBuffer or instanceBuffers, not both"))),
-    (Some(id), None) => Ok([id, 0, 0, 0]),
-    (None, Some(list)) => {
-      if list.len() > alloy::MAX_INSTANCE_SLOTS {
-        return Err(throw_str(
-          ctx,
-          &format!("{api}: instanceBuffers holds {} buffers; slots are 0..{}", list.len(), alloy::MAX_INSTANCE_SLOTS),
-        ));
-      }
-      let mut ids = [0u64; alloy::MAX_INSTANCE_SLOTS];
-      ids[..list.len()].copy_from_slice(&list);
-      Ok(ids)
-    }
-    (None, None) => Ok([0; alloy::MAX_INSTANCE_SLOTS]),
+  let mut ids = [0u64; alloy::MAX_BUFFERS];
+  let Some(list) = list else {
+    return Ok(ids);
+  };
+  if list.len() > alloy::MAX_BUFFERS {
+    return Err(throw_str(ctx, &format!("{api}: buffers holds {} ids; a pipeline declares at most {}", list.len(), alloy::MAX_BUFFERS)));
   }
+  for (i, item) in list.iter::<rquickjs::Value>().enumerate() {
+    let item = item?;
+    if item.is_object() {
+      return Err(throw_str(ctx, &format!("{api}: buffers lists buffer ids here; layouts belong to createRenderPipeline")));
+    }
+    let id = match item.as_number() {
+      Some(n) if n.fract() == 0.0 && n >= 1.0 => n as u64,
+      _ => return Err(throw_str(ctx, &format!("{api}: buffers[{i}] must be a buffer id"))),
+    };
+    ids[i] = id;
+  }
+  Ok(ids)
 }
 
 fn collect_target_spec(
@@ -509,7 +510,8 @@ fn collect_target_spec(
   height: u32,
   api: &str,
 ) -> rquickjs::Result<(alloy::TargetSpec, alloy::DrawSpec)> {
-  Ok((collect_target_half(ctx, opts, width, height, api)?, collect_entry_half(ctx, 0, params, opts, api)?))
+  reject_layout_buffers(ctx, opts, api)?;
+  Ok((collect_target_half(ctx, opts, width, height, api)?, collect_entry_half(ctx, 0, params, opts, None, api)?))
 }
 
 // Decode a partial draw-range update (setDraw / setDrawRange). Both range
@@ -530,10 +532,10 @@ fn collect_draw_update(ctx: &Ctx<'_>, update: &Object<'_>, api: &str) -> rquickj
   })
 }
 
-// The buffer half of a draw-entry update: buffer / indexBuffer + indexFormat
-// / instanceBuffer, each absent = keep. The index pair travels together as
-// at create; alloy applies the replace-only rule (a present key must name a
-// role the entry already fills).
+// The buffer half of a draw-entry update: buffers / indexBuffer +
+// indexFormat, each absent = keep. The index pair travels together as at
+// create; alloy applies the replace-only rule (the list must fill exactly
+// the declared layouts, an index buffer only replaces one).
 fn collect_buffer_update(ctx: &Ctx<'_>, update: &Object<'_>, api: &str) -> rquickjs::Result<alloy::BufferUpdate> {
   let index = match (update.get::<_, Option<u64>>("indexBuffer")?, update.get::<_, Option<String>>("indexFormat")?) {
     (Some(ib), Some(f)) => {
@@ -546,25 +548,9 @@ fn collect_buffer_update(ctx: &Ctx<'_>, update: &Object<'_>, api: &str) -> rquic
     }
     (None, Some(_)) => return Err(throw_str(ctx, &format!("{api}: indexFormat requires indexBuffer"))),
   };
-  let instance_buffer = update.get::<_, Option<u64>>("instanceBuffer")?;
-  let instance_buffers = match update.get::<_, Option<Vec<u64>>>("instanceBuffers")? {
-    Some(list) => {
-      if instance_buffer.is_some() {
-        return Err(throw_str(ctx, &format!("{api}: pass instanceBuffer or instanceBuffers, not both")));
-      }
-      if list.len() > alloy::MAX_INSTANCE_SLOTS {
-        return Err(throw_str(
-          ctx,
-          &format!("{api}: instanceBuffers holds {} buffers; slots are 0..{}", list.len(), alloy::MAX_INSTANCE_SLOTS),
-        ));
-      }
-      let mut ids = [0u64; alloy::MAX_INSTANCE_SLOTS];
-      ids[..list.len()].copy_from_slice(&list);
-      Some(ids)
-    }
-    None => None,
-  };
-  Ok(alloy::BufferUpdate { buffer: update.get::<_, Option<u64>>("buffer")?, index, instance_buffer, instance_buffers })
+  let has_buffers = update.get::<_, rquickjs::Value>("buffers").map(|v| !v.is_undefined()).unwrap_or(false);
+  let buffers = if has_buffers { Some(collect_buffer_ids(ctx, &Some(update.clone()), api)?) } else { None };
+  Ok(alloy::BufferUpdate { buffers, index })
 }
 
 // Decode createDrawTarget's options: the target half, `depth` (the
@@ -612,11 +598,9 @@ fn collect_draw_target_spec(
       ));
     }
     for key in [
-      "buffer",
+      "buffers",
       "indexBuffer",
       "indexFormat",
-      "instanceBuffer",
-      "instanceBuffers",
       "firstVertex",
       "vertexCount",
       "firstIndex",
@@ -628,7 +612,7 @@ fn collect_draw_target_spec(
         return Err(throw_str(ctx, &format!("{api}: '{key}' is draw-entry state; pass it to addDraw")));
       }
     }
-    for key in ["attributes", "instanceAttributes", "topology", "blend", "cull", "depthWrite"] {
+    for key in ["topology", "blend", "cull", "depthWrite"] {
       if o.get::<_, rquickjs::Value>(key).map(|v| !v.is_undefined()).unwrap_or(false) {
         return Err(throw_str(ctx, &format!("{api}: '{key}' is pipeline state; pass it to createRenderPipeline")));
       }
@@ -671,46 +655,69 @@ fn collect_draw_target_spec(
 }
 
 // Decode the draw-state options of createRenderPipeline and
-// createPipelineTexture -
-// { attributes: [{name, format}], instanceAttributes: [{name, format}],
-// topology, blend, depth, depthWrite }, everything optional - into the typed
-// alloy desc. The vocabulary parses here, at the boundary, so `blend:
-// "addd"` (or an invalid depth/depthWrite combination) throws at the call
-// site instead of failing on the raster thread.
-fn collect_pipeline_desc(ctx: &Ctx<'_>, opts: &Option<Object<'_>>, api: &str) -> rquickjs::Result<alloy::PipelineDesc> {
-  let collect_layout = |key: &str| -> rquickjs::Result<Vec<(String, alloy::AttrFormat)>> {
-    let mut attributes: Vec<(String, alloy::AttrFormat)> = Vec::new();
-    if let Some(opts) = opts {
-      if let Some(arr) = opts.get::<_, Option<Array>>(key)? {
-        for item in arr.iter::<Object>() {
-          let entry = item?;
+// createPipelineTexture - { buffers: [{ stepMode?, arrayStride?,
+// attributes: [{ name, format, offset? }] }], topology, blend, depth,
+// depthWrite, cull }, everything optional - into the typed alloy desc. The
+// vocabulary parses here, at the boundary, so `blend: "addd"` (or an
+// invalid depth/depthWrite combination) throws at the call site instead of
+// failing on the raster thread; the layout arithmetic (offsets within the
+// stride, unique names, the buffer cap) is alloy's. On the fused create
+// (`fused`) each layout also carries `buffer`, the id it reads, returned
+// as the entry's buffer list; on the split create that key is rejected
+// with a pointer to the entry side.
+fn collect_pipeline_desc(
+  ctx: &Ctx<'_>,
+  opts: &Option<Object<'_>>,
+  fused: bool,
+  api: &str,
+) -> rquickjs::Result<(alloy::PipelineDesc, [u64; alloy::MAX_BUFFERS])> {
+  let mut buffers: Vec<alloy::BufferLayout> = Vec::new();
+  let mut ids = [0u64; alloy::MAX_BUFFERS];
+  if let Some(o) = opts {
+    if let Some(arr) = o.get::<_, Option<Array>>("buffers")? {
+      for (i, item) in arr.iter::<rquickjs::Value>().enumerate() {
+        let item = item?;
+        let Some(layout) = item.as_object() else {
+          return Err(throw_str(ctx, &format!("{api}: buffers[{i}] is not a layout object ({{ attributes, stepMode?, arrayStride? }})")));
+        };
+        let step = match layout.get::<_, Option<String>>("stepMode")? {
+          Some(s) => alloy::StepMode::parse(&s).map_err(|e| throw_str(ctx, &format!("{api}: buffers[{i}]: {e}")))?,
+          None => alloy::StepMode::Vertex,
+        };
+        let Some(attrs) = layout.get::<_, Option<Array>>("attributes")? else {
+          return Err(throw_str(ctx, &format!("{api}: buffers[{i}] has no attributes list")));
+        };
+        let mut attributes: Vec<alloy::VertexAttr> = Vec::new();
+        let mut next_offset = 0i32;
+        for entry in attrs.iter::<Object>() {
+          let entry = entry?;
           let name: String = entry.get("name")?;
           let format: String = entry.get("format")?;
           let format = alloy::AttrFormat::parse(&format).map_err(|e| throw_str(ctx, &format!("{api}: {e}")))?;
-          attributes.push((name, format));
+          let offset = match entry.get::<_, Option<i32>>("offset")? {
+            Some(offset) => offset,
+            None => next_offset,
+          };
+          next_offset = offset + format.bytes();
+          attributes.push(alloy::VertexAttr { name, format, offset });
         }
-      }
-    }
-    Ok(attributes)
-  };
-  let attributes = collect_layout("attributes")?;
-  // Instance attributes additionally take `slot` (default 0): which entry
-  // of the entry's instanceBuffers list the attribute fetches from.
-  // Attributes sharing a slot interleave into one record; slot density and
-  // the cap are validated in alloy.
-  let mut instance_attributes: Vec<(String, alloy::AttrFormat, u32)> = Vec::new();
-  if let Some(o) = opts {
-    if let Some(arr) = o.get::<_, Option<Array>>("instanceAttributes")? {
-      for item in arr.iter::<Object>() {
-        let entry = item?;
-        let name: String = entry.get("name")?;
-        let format: String = entry.get("format")?;
-        let format = alloy::AttrFormat::parse(&format).map_err(|e| throw_str(ctx, &format!("{api}: {e}")))?;
-        let slot = entry.get::<_, Option<i32>>("slot")?.unwrap_or(0);
-        if slot < 0 {
-          return Err(throw_str(ctx, &format!("{api}: instance attribute '{name}' slot must be >= 0, got {slot}")));
+        let stride = match layout.get::<_, Option<i32>>("arrayStride")? {
+          Some(stride) => stride,
+          None => next_offset,
+        };
+        match (fused, layout.get::<_, Option<u64>>("buffer")?) {
+          (true, Some(id)) => {
+            if i < alloy::MAX_BUFFERS {
+              ids[i] = id;
+            }
+          }
+          (true, None) => return Err(throw_str(ctx, &format!("{api}: buffers[{i}] names no buffer (the id its layout reads)"))),
+          (false, Some(_)) => {
+            return Err(throw_str(ctx, &format!("{api}: buffers[{i}].buffer is entry state; bind ids through the entry's buffers list")))
+          }
+          (false, None) => {}
         }
-        instance_attributes.push((name, format, slot as u32));
+        buffers.push(alloy::BufferLayout { step, stride, attributes });
       }
     }
   }
@@ -749,7 +756,23 @@ fn collect_pipeline_desc(ctx: &Ctx<'_>, opts: &Option<Object<'_>>, api: &str) ->
     }
     (false, _) => None,
   };
-  Ok(alloy::PipelineDesc { attributes, instance_attributes, topology, blend, depth, cull })
+  Ok((alloy::PipelineDesc { buffers, topology, blend, depth, cull }, ids))
+}
+
+// The entry-side twin of collect_pipeline_desc's `buffer` rejection: a
+// layout object in an entry's `buffers` list is the split-object mistake
+// (draw state on a target create), named with a pointer.
+fn reject_layout_buffers(ctx: &Ctx<'_>, opts: &Option<Object<'_>>, api: &str) -> rquickjs::Result<()> {
+  if let Some(o) = opts {
+    if let Some(arr) = o.get::<_, Option<Array>>("buffers")? {
+      if let Some(first) = arr.iter::<rquickjs::Value>().next() {
+        if first?.is_object() {
+          return Err(throw_str(ctx, &format!("{api}: buffers lists buffer ids here; layouts belong to createRenderPipeline")));
+        }
+      }
+    }
+  }
+  Ok(())
 }
 
 // The migration guard for the split object model: draw state belongs to
@@ -757,7 +780,7 @@ fn collect_pipeline_desc(ctx: &Ctx<'_>, opts: &Option<Object<'_>>, api: &str) ->
 // exactly the bug class the split removes - so their presence throws.
 fn reject_pipeline_keys(ctx: &Ctx<'_>, opts: &Option<Object<'_>>, api: &str) -> rquickjs::Result<()> {
   if let Some(o) = opts {
-    for key in ["attributes", "instanceAttributes", "topology", "blend", "cull", "depth", "depthWrite"] {
+    for key in ["topology", "blend", "cull", "depth", "depthWrite"] {
       if o.get::<_, rquickjs::Value>(key).map(|v| !v.is_undefined()).unwrap_or(false) {
         return Err(throw_str(ctx, &format!("{api}: '{key}' is pipeline state; pass it to createRenderPipeline")));
       }
@@ -1129,8 +1152,9 @@ fn create_pipeline_texture(
   params: Option<Object<'_>>,
   opts: OptArg<Object<'_>>,
 ) -> rquickjs::Result<u64> {
-  let pipeline = collect_pipeline_desc(&ctx, &opts.0, "createPipelineTexture")?;
-  let (target, entry) = collect_target_spec(&ctx, &params, &opts.0, width, height, "createPipelineTexture")?;
+  let (pipeline, buffers) = collect_pipeline_desc(&ctx, &opts.0, true, "createPipelineTexture")?;
+  let target = collect_target_half(&ctx, &opts.0, width, height, "createPipelineTexture")?;
+  let entry = collect_entry_half(&ctx, 0, &params, &opts.0, Some(buffers), "createPipelineTexture")?;
   let st = state(&ctx);
   let id = st
     .gui
@@ -1145,7 +1169,7 @@ fn create_pipeline_texture(
 // program with draw state. Its own id space (like programs and buffers);
 // creating one compiles nothing.
 fn create_render_pipeline(ctx: Ctx<'_>, program: u64, opts: OptArg<Object<'_>>) -> rquickjs::Result<u64> {
-  let desc = collect_pipeline_desc(&ctx, &opts.0, "createRenderPipeline")?;
+  let (desc, _) = collect_pipeline_desc(&ctx, &opts.0, false, "createRenderPipeline")?;
   let label = collect_label(&opts.0)?;
   let st = state(&ctx);
   let id = st
@@ -1227,8 +1251,8 @@ fn create_shader_target(
 
 // programAttributes(program) -> [{ name, format }]: the vertex attributes
 // the linked program actually reads, as the compiler left them - the
-// list a pipeline's attributes + instanceAttributes must cover. Answered
-// from the UI-side mirror, no raster round trip.
+// list a pipeline's buffer layouts must cover. Answered from the UI-side
+// mirror, no raster round trip.
 fn program_attributes<'js>(ctx: Ctx<'js>, id: u64) -> rquickjs::Result<Array<'js>> {
   let table =
     state(&ctx).gui.alloy.program_attributes(id).map_err(|e| throw_str(&ctx, &format!("programAttributes: {e}")))?;
@@ -1475,7 +1499,8 @@ fn add_draw(
   opts: OptArg<Object<'_>>,
 ) -> rquickjs::Result<u64> {
   reject_pipeline_keys(&ctx, &opts.0, "addDraw")?;
-  let entry = collect_entry_half(&ctx, pipeline, &params, &opts.0, "addDraw")?;
+  reject_layout_buffers(&ctx, &opts.0, "addDraw")?;
+  let entry = collect_entry_half(&ctx, pipeline, &params, &opts.0, None, "addDraw")?;
   let before = match &opts.0 {
     Some(o) => o.get::<_, Option<u64>>("before")?,
     None => None,

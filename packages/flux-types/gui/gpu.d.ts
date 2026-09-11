@@ -422,14 +422,14 @@ declare module "flux:gpu" {
    * Pair a linked program with draw state, returning a render pipeline id
    * (its own id space, like programs and buffers - not a texture id): the
    * pipeline state object of every modern GPU API. The pipeline owns HOW its
-   * targets draw - `attributes` (the interleaved vertex layout; omit for
-   * attributeless rendering via gl_VertexID), `instanceAttributes` (the
-   * per-instance layout, fetched from each entry's `instanceBuffer` - see
-   * the option's doc), `topology`, `blend`, `cull`, `depth`, `depthWrite`
+   * targets draw - `buffers` (the layouts of the buffers its vertex stage
+   * reads, see {@link VertexBufferLayout}; omit for attributeless rendering
+   * via gl_VertexID), `topology`, `blend`, `cull`, `depth`, `depthWrite`
    * (`false` requires `depth: true`) - while each target brings its own
-   * size, buffers, uniforms, and clear. Both layouts share one attribute
-   * namespace (each name is one `in` of the vertex stage), so a name in
-   * both lists throws. Creating a pipeline compiles nothing, and many
+   * size, buffers, uniforms, and clear. Every attribute name across the
+   * layouts is one `in` of the vertex stage, so a name twice throws, and
+   * every `in` the program reads must appear in some layout with a format
+   * of its component count. Creating a pipeline compiles nothing, and many
    * pipelines may share one program. The vocabulary is validated here, so a
    * bad word throws at this call site. Free with
    * {@link destroyRenderPipeline}; the program is yours and outlives it.
@@ -437,26 +437,7 @@ declare module "flux:gpu" {
   export function createRenderPipeline(
     program: ProgramId,
     opts?: {
-      attributes?: VertexAttribute[]
-      /**
-       * One interleaved record per INSTANCE (WebGPU's `stepMode:
-       * "instance"`): these attributes read from the entry's
-       * `instanceBuffer` and advance per instance instead of per vertex, so
-       * every vertex of instance N sees record N - real per-instance state
-       * (offsets, colors, a packed transform) with no `gl_InstanceID`
-       * arithmetic. Declaring any makes `instanceBuffer` required on every
-       * entry drawn with this pipeline. A mat4 per instance is its four
-       * vec4 columns, reassembled in the shader (attributes have no matrix
-       * formats, as in WebGPU). Instance N always reads record N of the
-       * entry's buffer, from record 0 (ES 3.0 has no base instance), so
-       * several independently culled groups cannot share one buffer as
-       * sub-ranges: give each group its own `instanceBuffer` and entry, and
-       * cull it by `instanceCount`. Each attribute's `slot` (default 0)
-       * picks a buffer of the entry's `instanceBuffers` list (see
-       * {@link InstanceAttribute}); a pipeline using only slot 0 binds via
-       * the plain `instanceBuffer` key.
-       */
-      instanceAttributes?: InstanceAttribute[]
+      buffers?: VertexBufferLayout[]
       topology?: Topology
       blend?: BlendMode
       cull?: CullMode
@@ -477,19 +458,18 @@ declare module "flux:gpu" {
    * a texture id exactly like the fused creates do (drive uniforms
    * via the `params` prop or {@link setTargetParams}, resize with
    * {@link setTargetSize}, destroy with {@link destroyTexture}). Many targets
-   * may share one pipeline, and creating a target compiles nothing. `buffer`
-   * supplies the concrete vertex buffer the pipeline's attribute layout
-   * describes (required when the pipeline declares attributes), and
-   * `instanceBuffer` the per-instance records its `instanceAttributes`
-   * describe (required exactly when it declares any); the
-   * {@link DrawRange} keys pick what is drawn from them - `vertexCount`
-   * defaults to the rest of the buffer from `firstVertex` on,
-   * `instanceCount` to one instance per instance-buffer record (1 without
-   * one) - and a fetch past either buffer's end throws here. A fullscreen
+   * may share one pipeline, and creating a target compiles nothing.
+   * `buffers` supplies the concrete buffers the pipeline's layouts
+   * describe, one id per layout in declaration order (required exactly for
+   * the declared layouts); the {@link DrawRange} keys pick what is drawn
+   * from them - `vertexCount` defaults to the rest of the tightest
+   * vertex-step buffer from `firstVertex` on, `instanceCount` to one
+   * instance per record of the tightest instance-step buffer (1 without
+   * one) - and a fetch past any buffer's end throws here. A fullscreen
    * pass over an attributeless pipeline is `vertexCount: 3` with a
-   * covering-triangle vertex stage. Draw-state keys
-   * (`attributes`, `topology`, `blend`, `depth`, `depthWrite`) belong to the
-   * pipeline and throw here. `params` and `textures` are validated against
+   * covering-triangle vertex stage. Draw-state keys (`topology`, `blend`,
+   * `depth`, `depthWrite`) belong to the pipeline and throw here, and so
+   * does a layout object where a buffer id belongs. `params` and `textures` are validated against
    * the pipeline's program (see {@link ShaderParams}).
    *
    * `render: "manual"` opts the target out of runtime-driven rendering (see
@@ -528,11 +508,8 @@ declare module "flux:gpu" {
     params?: ShaderParams | null,
     opts?: {
       textures?: TextureBindings
-      buffer?: BufferId
-      instanceBuffer?: BufferId
-      /** One buffer per instance slot of the pipeline (index = the
-       * attributes' `slot`); pass this OR `instanceBuffer`, not both. */
-      instanceBuffers?: BufferId[]
+      /** One buffer id per layout of the pipeline, in declaration order. */
+      buffers?: BufferId[]
       /** Draw the instance records in key order (see {@link InstanceOrder}). */
       instanceOrder?: InstanceOrder
       clearColor?: [number, number, number, number]
@@ -557,8 +534,7 @@ declare module "flux:gpu" {
    * linkProgram. The format is the float form the shader declares
    * (`float32`..`float32x4`); a layout feeds it with any format of the same
    * component count. This is the list a pipeline over the program must
-   * cover between `attributes` and `instanceAttributes`. Answered locally,
-   * no GPU round trip.
+   * cover across its buffer layouts. Answered locally, no GPU round trip.
    */
   export function programAttributes(program: ProgramId): VertexAttribute[]
   export type Topology = "points" | "lines" | "line-strip" | "triangles" | "triangle-strip"
@@ -620,39 +596,53 @@ declare module "flux:gpu" {
     | "unorm16x2" | "unorm16x4" | "snorm16x2" | "snorm16x4"
     | "uint8x4" | "uint16x2" | "uint16x4"
   /**
-   * One attribute of an interleaved record - a vertex of `attributes` or
-   * an instance record of `instanceAttributes`. The list's order defines
-   * the byte layout; locations are resolved by name against the vertex
+   * One attribute of a buffer layout: the vertex-stage `in` it feeds (by
+   * name), its byte format, and its byte offset within the record
+   * (`offset`, default: right after the previous attribute in list order,
+   * 0 for the first). Locations are resolved by name against the vertex
    * shader's `in` declarations.
    */
-  export type VertexAttribute = { name: string; format: VertexFormat }
+  export type VertexAttribute = { name: string; format: VertexFormat; offset?: number }
   /**
-   * One attribute of a per-instance record. `slot` (default 0) picks
-   * which buffer of the entry's `instanceBuffers` list the attribute
-   * fetches from: attributes sharing a slot interleave into one record in
-   * list order, distinct slots are distinct buffers with their own strides
-   * - which is what lets two writers own instance data independently (a
-   * core-written pose buffer beside an app-written style buffer). Slots
-   * must be dense from 0, at most 4; a single-slot pipeline (every `slot`
-   * omitted) binds via the plain `instanceBuffer` key.
+   * The layout of one buffer a pipeline reads, WebGPU's
+   * `GPUVertexBufferLayout`: a record of `arrayStride` bytes (default: the
+   * attributes' byte sum, so a plain list is tightly interleaved in list
+   * order) fetched once per vertex (`stepMode: "vertex"`, the default) or
+   * once per INSTANCE (`"instance"`: every vertex of instance N reads
+   * record N - real per-instance state, offsets, colors, a packed
+   * transform, with no `gl_InstanceID` arithmetic; a mat4 per instance is
+   * its four vec4 columns, reassembled in the shader). An explicit
+   * `arrayStride` wider than the attributes lets a layout name only some
+   * fields of a record - a depth pass reading positions alone out of a
+   * full vertex record - and attributes the shader does not read are
+   * skipped over the stride. Strides and offsets are multiples of 4, an
+   * attribute stays inside its record, a pipeline declares at most 8
+   * layouts, and the entry binds exactly one buffer per layout, in the
+   * same order. Instance N always reads record N (ES 3.0 has no base
+   * instance), so several independently culled groups cannot share one
+   * instance buffer as sub-ranges: give each group its own buffer and
+   * entry, and cull it by `instanceCount`. Two instance-step buffers on
+   * one entry are how two writers own instance data independently (a
+   * core-written pose buffer beside an app-written style buffer).
    */
-  export type InstanceAttribute = VertexAttribute & { slot?: number }
+  export type VertexBufferLayout = { stepMode?: "vertex" | "instance"; arrayStride?: number; attributes: VertexAttribute[] }
   /**
    * A pipeline target's draw as data, WebGPU-style: `firstVertex` +
    * `vertexCount` pick the vertex range `[firstVertex, firstVertex +
    * vertexCount)` of the buffer, `instanceCount` draws that range as N
    * instances (`glDrawArraysInstanced`) told apart by `gl_InstanceID` (and
-   * by their `instanceAttributes` records, when the pipeline declares any).
+   * by their instance-step records, when the pipeline declares any).
    * All keys optional: at create, `firstVertex` defaults to 0, `vertexCount`
-   * to the rest of the buffer, and `instanceCount` to one instance per
-   * record of the entry's `instanceBuffer` - 1 without one, the plain draw;
+   * to the rest of the tightest vertex-step buffer, and `instanceCount` to
+   * one instance per record of the tightest instance-step buffer - 1
+   * without one, the plain draw;
    * in {@link setDraw}, absent keys keep their current value.
    * `instanceCount: 0` draws nothing - a cheap off switch. With an instance
    * buffer bound, `instanceCount` is bounds-checked against it like every
    * fetch (instances 0..N-1 each read one record). Two GL facts worth
    * knowing: `gl_VertexID` includes `firstVertex` (as in WebGPU), and
    * `gl_InstanceID` always counts from 0 - ES 3.0 has no base instance, so
-   * instance N reads record N of the entry's `instanceBuffer` and a group
+   * instance N reads record N of every instance-step buffer and a group
    * that is culled independently needs its own buffer and entry.
    */
   export type DrawRange = { firstVertex?: number; vertexCount?: number; instanceCount?: number }
@@ -687,27 +677,21 @@ declare module "flux:gpu" {
    */
   export type IndexRange = { firstIndex?: number; indexCount?: number; instanceCount?: number }
   /**
-   * A draw entry's buffer swap: each key present re-points that role of the
-   * entry at another {@link createBuffer} buffer, absent keys keep their
-   * current buffer. Replace-only - the roles an entry fills are pipeline
-   * layout state (`attributes` needs a `buffer`, `instanceAttributes` an
-   * `instanceBuffer`) and indexing is its draw vocabulary, so naming a role
-   * the entry does not fill throws; `indexBuffer` travels with
-   * `indexFormat` as at create. The entry's current range is kept and
-   * rechecked against the new buffers' sizes: a swap to a buffer too small
-   * for the live range throws (shrink the range first); a larger buffer
-   * never does. This is the growth primitive: a population outgrowing its
-   * instance buffer creates a larger one, writes it, swaps, and destroys
-   * the old (the entry holds the old buffer alive until the swap lands, so
-   * either order is safe). `instanceBuffer` swaps slot 0;
-   * `instanceBuffers` swaps every slot at once and must fill exactly the
-   * slots the entry fills (pass one spelling or the other).
+   * A draw entry's buffer swap: `buffers` re-points every declared layout
+   * at another {@link createBuffer} buffer (one id per layout, the full
+   * list, as at create), an `indexBuffer` + `indexFormat` pair re-points
+   * the index binding; absent keys keep their current buffers.
+   * Replace-only - which buffers an entry binds is pipeline layout state
+   * and indexing is its draw vocabulary, so a list that adds or drops a
+   * layout throws, as does an index pair on an unindexed entry. The
+   * entry's current range is kept and rechecked against the new buffers'
+   * sizes: a swap to a buffer too small for the live range throws (shrink
+   * the range first); a larger buffer never does. This is the growth
+   * primitive: a population outgrowing its instance buffer creates a
+   * larger one, writes it, swaps, and destroys the old (the entry holds
+   * the old buffer alive until the swap lands, so either order is safe).
    */
-  export type BufferUpdate = {
-    buffer?: BufferId
-    instanceBuffer?: BufferId
-    instanceBuffers?: BufferId[]
-  } & ({} | IndexBinding)
+  export type BufferUpdate = { buffers?: BufferId[] } & ({} | IndexBinding)
   /**
    * A draw entry's instance ORDER, declared at creation via the
    * `instanceOrder` option: the entry draws the records of its instance
@@ -743,33 +727,36 @@ declare module "flux:gpu" {
    * `instanceCount` below the published record count draws the first N in
    * key order.
    *
-   * An entry with SEVERAL instance buffers orders them all under ONE
-   * permutation: the key reads from slot 0's records, and every other
-   * slot's publishes gather to match, so split records (a core-written
+   * An entry with SEVERAL instance-step buffers orders them all under ONE
+   * permutation: the key reads from the key buffer's records (`buffer`,
+   * default the first instance-step layout), and every other instance-step
+   * buffer's publishes gather to match, so split records (a core-written
    * pose buffer plus an app-written style buffer) always describe the same
-   * draw order. This retains a copy of each slot's records: when the key
+   * draw order. This retains a copy of each buffer's records: when the key
    * order changes - including through spatial record sinks, with no
    * publish from the app anywhere - the sibling buffers republish
-   * themselves in the same frame. The entry's instance buffers must be
-   * pairwise distinct, each ordered by no other entry; a buffer swap
-   * ({@link BufferUpdate}) carries the order to the new buffers, every
-   * swapped slot at once - republish app-written slots after a swap, the
-   * new buffer starts empty.
+   * themselves in the same frame. An ordered buffer must be bound once on
+   * the entry (not as another layout's buffer nor as its index buffer) and
+   * ordered by no other entry; a buffer swap ({@link BufferUpdate})
+   * carries the order to the new buffers, every swapped instance-step
+   * buffer at once - republish app-written buffers after a swap, the new
+   * buffer starts empty.
    */
   export type InstanceOrder = ({ field: number } | { position: number; direction: [number, number, number] }) & {
     descending?: boolean
     /**
-     * Which instance slot's records hold the key (default 0). On a
-     * multi-buffer entry the key may live in any one slot - a core-written
-     * pose slot keyed by position, or an app-written style slot keyed by
-     * an explicit sort field - and every other slot gathers under its
-     * permutation.
+     * The pipeline buffer index (into its `buffers` layouts) whose
+     * records hold the key; default the first instance-step layout. With
+     * several instance-step buffers the key may live in any one of them -
+     * a core-written pose buffer keyed by position, or an app-written
+     * style buffer keyed by an explicit sort field - and every other one
+     * gathers under its permutation.
      */
-    slot?: number
+    buffer?: number
     /**
      * The retained-copy strategy, for write-once populations (a splat
      * cloud: records written once, only the ORDER changes per camera
-     * move). Core keeps a CPU copy of each slot's published records, and
+     * move). Core keeps a CPU copy of each buffer's published records, and
      * an `orderDirection` update re-sorts that copy and republishes the
      * entry's buffers core-side, in the same call, with no publish from
      * the app; when the re-sort leaves the order unchanged nothing
@@ -800,16 +787,16 @@ declare module "flux:gpu" {
    * pipeline's own; app-driven uniforms are the source's own declarations).
    * Clip space is y-down: `gl_Position` y = -1 is the top
    * row of the target and +1 the bottom, so camera-up geometry must negate y
-   * (or fold the flip into its projection) to display up. `attributes`
-   * describes one interleaved vertex in `buffer` (a {@link createBuffer} id);
-   * omit both for attributeless rendering via gl_VertexID.
-   * `instanceAttributes` describes one per-instance record in
-   * `instanceBuffer` (see {@link createRenderPipeline}; declare both or
-   * neither). The {@link DrawRange} keys pick what is drawn: `vertexCount`
-   * defaults to the rest of the buffer from `firstVertex` on,
-   * `instanceCount` draws the range as N instances told apart by
-   * `gl_InstanceID` and defaults to one per instance-buffer record; a fetch
-   * past either buffer's end throws. With
+   * (or fold the flip into its projection) to display up. `buffers` lists
+   * the layouts the vertex stage reads (see {@link VertexBufferLayout}),
+   * each naming the {@link createBuffer} id it reads as `buffer` - the
+   * fused create's spelling of what the split API declares on the pipeline
+   * and binds on the entry; omit it for attributeless rendering via
+   * gl_VertexID. The {@link DrawRange} keys pick what is drawn:
+   * `vertexCount` defaults to the rest of the tightest vertex-step buffer
+   * from `firstVertex` on, `instanceCount` draws the range as N instances
+   * told apart by `gl_InstanceID` and defaults to one per record of the
+   * tightest instance-step buffer; a fetch past any buffer's end throws. With
    * `depth: true` the pipeline gets a private depth buffer, cleared and tested
    * on every render; `depthWrite: false` (requires `depth: true`) keeps the
    * test but stops the draw from writing depth. `blend` sets the draw's own blending (see
@@ -832,14 +819,8 @@ declare module "flux:gpu" {
     params?: ShaderParams | null,
     opts?: {
       textures?: TextureBindings
-      attributes?: VertexAttribute[]
-      buffer?: BufferId
-      /** See {@link createRenderPipeline}'s `instanceAttributes`. */
-      instanceAttributes?: InstanceAttribute[]
-      instanceBuffer?: BufferId
-      /** One buffer per instance slot (index = the attributes' `slot`);
-       * pass this OR `instanceBuffer`, not both. */
-      instanceBuffers?: BufferId[]
+      /** The pipeline's layouts, each with the buffer it reads. */
+      buffers?: (VertexBufferLayout & { buffer: BufferId })[]
       /** Draw the instance records in key order (see {@link InstanceOrder}). */
       instanceOrder?: InstanceOrder
       topology?: Topology
@@ -1091,9 +1072,10 @@ declare module "flux:gpu" {
    * {@link setDrawOrder}. An {@link IndexBinding} makes the entry draw
    * indexed - real meshes share most vertices, and indexing stores and
    * shades each one once - with the range in {@link IndexRange} spelling.
-   * `instanceBuffer` supplies the per-instance records the pipeline's
-   * `instanceAttributes` describe (required exactly when it declares any);
-   * `instanceCount` then defaults to one instance per record.
+   * `buffers` binds one buffer per layout the pipeline declares, in
+   * declaration order (required exactly for the declared layouts); with an
+   * instance-step layout bound, `instanceCount` defaults to one instance
+   * per record.
    *
    * Seed every uniform the entry's program declares - here, via the
    * target's shared params, or with a later write. GL uniform state lives
@@ -1109,11 +1091,8 @@ declare module "flux:gpu" {
     params?: ShaderParams | null,
     opts?: {
       textures?: TextureBindings
-      buffer?: BufferId
-      instanceBuffer?: BufferId
-      /** One buffer per instance slot of the pipeline (index = the
-       * attributes' `slot`); pass this OR `instanceBuffer`, not both. */
-      instanceBuffers?: BufferId[]
+      /** One buffer id per layout of the pipeline, in declaration order. */
+      buffers?: BufferId[]
       /** Draw the instance records in key order (see {@link InstanceOrder}). */
       instanceOrder?: InstanceOrder
       before?: DrawId

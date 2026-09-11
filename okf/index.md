@@ -17,11 +17,6 @@ Decided and being worked on now. A plan nobody is working on goes back to backlo
   An instanced sprite layer as the third extension, built on a new zero-copy
   GPU buffer write lease in core; tiers, measurements, and the design
   decisions
-- **[Every vertex attribute is a 32-bit float in one immutable interleaved buffer](plans/3d-vertex-data-model.md)** [2026-09-11]
-  The vertex vocabulary is f32/vec2/vec3/vec4 only and a geometry is one
-  interleaved Float32Array uploaded once, so a color costs 16 bytes where 4
-  would do, a normal 12 where 4 would do, and a channel that changes every
-  frame re-uploads the channels that do not.
 - **[Client storage and bundle updates](plans/client-storage-updates.md)** [2026-07-20]
   "Implements the update-mechanism research: data-root resolution, a
   hardlinked version store with dev-push-as-install and offline relaunch,
@@ -113,6 +108,11 @@ Shaped, not started.
   union box, shear-exact normals as a second projection, instanced sprites,
   and a per-instance frame/atlas convention for the stock materials; none
   changes a shipped contract.
+- **[The 3d package's instance records are float32 only, so packed instance formats stop at the engine](backlog/3d-instance-records-as-bytes.md)** [2026-09-11]
+  A shaderMaterialClass instanceBuffers layout must be float32-family and
+  tightly packed because the mesh writes its record and style buffers as
+  Float32Arrays counted in floats, while the engine accepts every vertex
+  format and an explicit stride on an instance-step layout.
 - **[Level of detail - distance-selected mesh variants as a core sink](backlog/3d-lod.md)** [2026-08-30]
   A large scene ships every object at one triangle count; a track with a
   thousand trees either draws full-detail foliage at the horizon or nothing. A
@@ -133,6 +133,11 @@ Shaped, not started.
   compressed real-world files (Draco/meshopt, KTX2), morph targets,
   merge-by-material, per-material samplers and runtime-fetched content, each
   demand-gated.
+- **[A geometry updated in place keeps picking against its old positions](backlog/3d-picking-shape-after-update.md)** [2026-09-11]
+  updateVertices re-uploads a stream and drops the cached bounds, but the
+  picking shape the spatial core built at first draw keeps the positions it
+  was built from, so a deforming mesh picks where it used to be until it is
+  re-attached.
 - **[No way to ask why a mesh did not draw](backlog/3d-scene-draw-introspection.md)** [2026-09-08]
   Four independent mechanisms silently drop a mesh from a target - frustum
   culling, the layer mask, overrideMaterial skipping instanced meshes, and the
@@ -385,6 +390,11 @@ Shaped, not started.
   what the runtime fills). Still open - the composition questions - whether
   the fused paths become thin compositions of the raw layer, whether a
   mid-level program shorthand is wanted, and the two-dialect preamble story.
+- **[A vertex stage cannot declare an integer input, so joint indices ride as floats](backlog/gpu-integer-vertex-inputs.md)** [2026-09-11]
+  Program reflection rejects an integer or unsigned `in` at link, every vertex
+  format feeds a float `in` through the pointer's conversion, and the 32-bit
+  integer formats do not exist; a skinned vertex reads `in vec4 aJoints` and
+  casts, and an id or index channel past 2^24 has no exact home.
 - **[Pass counters are whole-frame, so no one target can be blamed](backlog/gpu-per-target-pass-attribution.md)** [2026-09-08]
   get_stats reports gpuPassesPerFrame and gpuPassExecMsPerFrame for the whole
   client, but an app drawing a scene, two views, a shadow atlas and a probe
@@ -1011,6 +1021,11 @@ Finished, kept for the reasoning.
   shaderMaterial. Shipped as class-key options on lit with derivative-based
   normal mapping (no tangent layout), the glTF loader and .srtm v2 carrying
   normal and emissive, and the names settled against Three, Unity and Godot.
+- **[Every vertex attribute is a 32-bit float in one immutable interleaved buffer](done/3d-vertex-data-model.md)** [2026-09-11]
+  The vertex vocabulary is f32/vec2/vec3/vec4 only and a geometry is one
+  interleaved Float32Array uploaded once, so a color costs 16 bytes where 4
+  would do, a normal 12 where 4 would do, and a channel that changes every
+  frame re-uploads the channels that do not.
 - **[Per-view mesh selection (Three's layers) and the scene's own depth texture](done/3d-view-mesh-selection.md)** [2026-08-31]
   createView mirrors EVERY mesh, so a minimap cannot show markers only, a
   rear-view mirror cannot leave out the HUD meshes and a reflection view draws
@@ -2034,6 +2049,11 @@ Knowledge. No lifecycle - true or wrong, not open or closed.
   "Survey and agreed direction: bundle OTA first with a signed manifest, dev
   and production converging on one client binary, a named data dir with a
   hardlinked per-app version store."
+- **[Verifying engine and vertex-data changes - where the checks stop](notes/vertex-data-verification.md)** [2026-09-11]
+  Four facts about the verification surface met while landing the vertex data
+  model (2026-09-11) - the release client srt run launches, what srt check
+  covers, where the engine matches a pipeline against its program, and
+  half-float support in bun and flux.
 
 ## Upstream
 

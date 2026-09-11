@@ -45,14 +45,14 @@ pub use event::{
   TextCapitalization, TextInputOptions, TextInputType,
 };
 pub use gpu::{
-  parse_blend, parse_cull, AttrFormat, BlendMode, BufferIds, BufferUpdate, CullMode, DepthState, DepthStorage,
-  DrawBounds, DrawRange, DrawSpec, DrawUpdate, GpuLimits, IndexFormat, InstanceOrder, NodeShader, OrderKey,
-  ParamValue, PipelineDesc, PipelineSpec, ShaderStage, TargetSpec, TextureBinding, Topology, UniformKind,
-  UniformSlot, UniformTable, WindowShader, MAX_INSTANCE_SLOTS,
+  parse_blend, parse_cull, AttrFormat, BlendMode, BufferIds, BufferLayout, BufferUpdate, CullMode, DepthState,
+  DepthStorage, DrawBounds, DrawRange, DrawSpec, DrawUpdate, GpuLimits, IndexFormat, InstanceOrder, NodeShader,
+  OrderKey, ParamValue, PipelineDesc, PipelineSpec, ShaderStage, StepMode, TargetSpec, TextureBinding, Topology,
+  UniformKind, UniformSlot, UniformTable, VertexAttr, WindowShader, MAX_BUFFERS,
 };
 pub use gpu::{
-  check_cube_faces, mip_levels, mip_size, SamplerFilter, SamplerOptions, SamplerOverride, SamplerState, TextureEntry,
-  TextureFormat, TextureRegistry, TextureShape, CUBE_FACES,
+  check_cube_faces, mip_levels, mip_size, GpuBufferLayoutInfo, SamplerFilter, SamplerOptions, SamplerOverride,
+  SamplerState, TextureEntry, TextureFormat, TextureRegistry, TextureShape, CUBE_FACES,
 };
 pub use input::InputState;
 pub use keymap::w3c_code_for_key;

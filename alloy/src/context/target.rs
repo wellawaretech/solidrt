@@ -2,10 +2,10 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use crate::gpu::{
-  instance_strides, resolve_draw_range, validate_draw_range, validate_instance_slots, validate_order,
-  validate_param_if_declared, validate_params, validate_texture_bindings, vertex_stride, BufferIds, DepthStorage,
-  DrawBounds, DrawSpec, DrawUpdate, ParamValue, PipelineSpec, SamplerState, TargetSpec, TextureBinding, TextureEntry,
-  TextureFormat, TextureShape, UniformKind, UniformTable, WindowShader, CUBE_FACES, MAX_INSTANCE_SLOTS,
+  buffer_strides, resolve_draw_range, validate_buffers, validate_draw_range, validate_order,
+  validate_param_if_declared, validate_params, validate_texture_bindings, BufferBound, BufferIds, BufferStride,
+  DepthStorage, DrawBounds, DrawSpec, DrawUpdate, ParamValue, PipelineSpec, SamplerState, TargetSpec, TextureBinding,
+  TextureEntry, TextureFormat, TextureShape, UniformKind, UniformTable, WindowShader, CUBE_FACES, MAX_BUFFERS,
 };
 use crate::raster::RasterCmd;
 
@@ -140,19 +140,19 @@ impl Context {
     for b in &spec.entry.textures {
       self.check_depth_binding(b)?;
     }
-    limits.check_vertex_attribs(spec.pipeline.attributes.len() + spec.pipeline.instance_attributes.len())?;
-    validate_instance_slots(&spec.pipeline.instance_attributes)?;
+    limits.check_vertex_attribs(spec.pipeline.attribute_count())?;
+    validate_buffers(&spec.pipeline.buffers)?;
     validate_load(&spec.target)?;
-    let stride = vertex_stride(&spec.pipeline.attributes) as usize;
-    let instance_strides = instance_strides(&spec.pipeline.instance_attributes);
-    let bounds = self.resolve_entry_range(&mut spec.entry, stride, instance_strides)?;
+    let strides = buffer_strides(&spec.pipeline.buffers);
+    let bounds = self.resolve_entry_range(&mut spec.entry, strides)?;
     // The instance order is UI-side state: checked before the create RPC (so
     // a bad declaration throws with nothing created), taken off the spec (the
     // raster thread never sees it), committed only once the create succeeds.
     let order = spec.entry.order.take();
-    if let Some(order) = &order {
-      self.check_instance_order(order, instance_strides, spec.entry.buffer_ids())?;
-    }
+    let key = match &order {
+      Some(order) => self.check_instance_order(order, strides, spec.entry.buffer_ids())?,
+      None => 0,
+    };
     let id = self.textures.allocate_id();
     let (width, height, sampler) = (spec.target.width, spec.target.height, spec.target.sampler);
     let manual = spec.target.manual;
@@ -171,69 +171,46 @@ impl Context {
       self.manual_targets.borrow_mut().insert(id);
     }
     if let Some(order) = order {
-      self.insert_instance_order(id, 0, order, instance_strides, buffers.instance_buffers);
+      self.insert_instance_order(id, 0, order, key, strides, buffers);
     }
     Ok(id)
   }
 
   /// Check an entry's buffers against the pipeline's declared layouts and
   /// resolve its draw range in place, capturing the bounds for the entry's
-  /// mirror: the fetch bound against the vertex buffer at the pipeline's
-  /// stride for a plain entry, against the index buffer at the format's
-  /// element size for an indexed one - whose vertex fetch runs through the
-  /// index VALUES and so cannot be bounds-checked here (raw GL semantics;
-  /// robust drivers clamp) - and the instance bound against the instance
-  /// buffer at the per-instance record stride. Shared by the two split
-  /// creates, the fused create, and add_draw.
-  fn resolve_entry_range(
-    &self,
-    entry: &mut DrawSpec,
-    stride: usize,
-    instance_strides: [usize; MAX_INSTANCE_SLOTS],
-  ) -> Result<DrawBounds, String> {
-    let size = self.buffer_size(entry.buffer)?;
-    if stride > 0 && size.is_none() {
-      return Err("pipeline declares attributes but no vertex buffer".to_string());
-    }
-    let mut instances = [(0usize, 0usize); MAX_INSTANCE_SLOTS];
-    for (slot, (&slot_stride, &id)) in instance_strides.iter().zip(entry.instance_buffers.iter()).enumerate() {
-      match (slot_stride, id) {
+  /// mirror: one bound per declared buffer at its layout's step and
+  /// stride, and the index buffer at the format's element size on an
+  /// indexed entry - whose vertex fetch runs through the index VALUES and
+  /// so cannot be bounds-checked here (raw GL semantics; robust drivers
+  /// clamp). Shared by the two split creates, the fused create, and
+  /// add_draw.
+  fn resolve_entry_range(&self, entry: &mut DrawSpec, strides: [BufferStride; MAX_BUFFERS]) -> Result<DrawBounds, String> {
+    let mut buffers = [BufferBound::default(); MAX_BUFFERS];
+    for (index, (layout, &id)) in strides.iter().zip(entry.buffers.iter()).enumerate() {
+      match (layout.stride, id) {
         (0, 0) => {}
         (0, _) => {
-          return Err(if slot == 0 {
-            "pipeline declares no instanceAttributes; the instance buffer would never be read".to_string()
-          } else {
-            format!(
-              "pipeline declares no instance attributes in buffer slot {slot}; the instance buffer would never be read"
-            )
-          })
+          return Err(format!("the entry binds buffer {id} at index {index} but the pipeline declares no layout there; it would never be read"))
         }
-        (_, 0) => {
-          return Err(if slot == 0 {
-            "pipeline declares instanceAttributes but no instance buffer".to_string()
-          } else {
-            format!("pipeline declares instance attributes in buffer slot {slot} but the entry binds no instance buffer there")
-          })
-        }
-        (slot_stride, id) => {
-          let size =
-            self.buffer_sizes.borrow().get(&id).copied().ok_or_else(|| format!("instance buffer {id} not found"))?;
-          instances[slot] = (slot_stride, size);
+        (_, 0) => return Err(format!("pipeline declares buffer layout {index} but the entry binds no buffer there")),
+        (stride, id) => {
+          let size = self.buffer_sizes.borrow().get(&id).copied().ok_or_else(|| format!("buffer {id} not found"))?;
+          buffers[index] = BufferBound { step: layout.step, stride, size };
         }
       }
     }
-    let (fetch, indexed) = match entry.index {
+    let index = match entry.index {
       Some((index_buffer, format)) => {
         let bytes = match index_buffer {
           0 => None,
           id => self.buffer_sizes.borrow().get(&id).copied(),
         }
         .ok_or_else(|| format!("index buffer {index_buffer} not found"))?;
-        (Some((format.size() as usize, bytes)), true)
+        Some((format.size() as usize, bytes))
       }
-      None => (size.filter(|_| stride > 0).map(|size| (stride, size)), false),
+      None => None,
     };
-    let bounds = DrawBounds { fetch, indexed, instances };
+    let bounds = DrawBounds { index, buffers };
     entry.draw = resolve_draw_range(entry.draw, bounds)?;
     Ok(bounds)
   }
@@ -250,19 +227,20 @@ impl Context {
     for b in &entry.textures {
       self.check_depth_binding(b)?;
     }
-    let (uniforms, stride, instance_strides) = match self.pipeline_mirrors.borrow().get(&pipeline) {
-      Some(mirror) => (mirror.uniforms.clone(), mirror.stride, mirror.instance_strides),
+    let (uniforms, strides) = match self.pipeline_mirrors.borrow().get(&pipeline) {
+      Some(mirror) => (mirror.uniforms.clone(), mirror.strides),
       None => return Err(format!("pipeline {pipeline} not found")),
     };
     validate_load(&spec)?;
     entry.pipeline = pipeline;
-    let bounds = self.resolve_entry_range(&mut entry, stride, instance_strides)?;
+    let bounds = self.resolve_entry_range(&mut entry, strides)?;
     // Same order handling as create_pipeline_texture: check before the RPC,
     // take off the spec, commit after success.
     let order = entry.order.take();
-    if let Some(order) = &order {
-      self.check_instance_order(order, instance_strides, entry.buffer_ids())?;
-    }
+    let key = match &order {
+      Some(order) => self.check_instance_order(order, strides, entry.buffer_ids())?,
+      None => 0,
+    };
     let id = self.textures.allocate_id();
     let (width, height, sampler) = (spec.width, spec.height, spec.sampler);
     let manual = spec.manual;
@@ -278,7 +256,7 @@ impl Context {
       self.manual_targets.borrow_mut().insert(id);
     }
     if let Some(order) = order {
-      self.insert_instance_order(id, 0, order, instance_strides, buffers.instance_buffers);
+      self.insert_instance_order(id, 0, order, key, strides, buffers);
     }
     Ok(id)
   }
@@ -523,7 +501,7 @@ impl Context {
   }
 
   /// Add a draw entry to a draw target: `entry.pipeline` draws
-  /// `entry.buffer` over the target's shared storage, with its own params
+  /// `entry.buffers` over the target's shared storage, with its own params
   /// and sampler inputs - appended (drawing last in list order), or
   /// inserted immediately before entry `before` when given. Returns the
   /// entry's stable draw id (target-scoped, never reused), the handle every
@@ -544,8 +522,8 @@ impl Context {
         return Err(format!("draw {before_id} (before) not found on target {target}"));
       }
     }
-    let (uniforms, stride, instance_strides, depth) = match self.pipeline_mirrors.borrow().get(&entry.pipeline) {
-      Some(pm) => (pm.uniforms.clone(), pm.stride, pm.instance_strides, pm.depth),
+    let (uniforms, strides, depth) = match self.pipeline_mirrors.borrow().get(&entry.pipeline) {
+      Some(pm) => (pm.uniforms.clone(), pm.strides, pm.depth),
       None => return Err(format!("pipeline {} not found", entry.pipeline)),
     };
     if depth && !list.depth {
@@ -554,7 +532,7 @@ impl Context {
         entry.pipeline
       ));
     }
-    let bounds = self.resolve_entry_range(&mut entry, stride, instance_strides)?;
+    let bounds = self.resolve_entry_range(&mut entry, strides)?;
     validate_params(&uniforms, &entry.params)?;
     validate_texture_bindings(&uniforms, &entry.textures)?;
     self.check_binding_shapes(&uniforms, &entry.textures)?;
@@ -582,14 +560,15 @@ impl Context {
     // declaration commits nothing), taken off the spec before it crosses
     // the channel, registered with the mirror insert.
     let order = entry.order.take();
-    if let Some(order) = &order {
-      self.check_instance_order(order, instance_strides, entry.buffer_ids())?;
-    }
+    let key = match &order {
+      Some(order) => self.check_instance_order(order, strides, entry.buffer_ids())?,
+      None => 0,
+    };
     list.next_draw += 1;
     list.entries.insert(draw_id, EntryMirror { uniforms, draw: entry.draw, bounds, buffers: entry.buffer_ids() });
     drop(targets);
     if let Some(order) = order {
-      self.insert_instance_order(target, draw_id, order, instance_strides, entry.buffer_ids().instance_buffers);
+      self.insert_instance_order(target, draw_id, order, key, strides, entry.buffer_ids());
     }
     let mut sources = self.shader_sources.borrow_mut();
     let record = sources.entry(target).or_default();
@@ -891,15 +870,15 @@ impl Context {
     let next_ids = ids.merged(update.buffers)?;
     let swapped = next_ids != *ids;
     let next_bounds = if swapped { self.rebound(*bounds, next_ids)? } else { *bounds };
-    let next_range = range.merged(update, next_bounds.indexed)?;
+    let next_range = range.merged(update, next_bounds.indexed())?;
     validate_draw_range(next_range, next_bounds)?;
     // The order half of the transaction: on an ordered entry the order
-    // follows an instance-buffer swap to the new buffers (every swapped
-    // slot at once), and orderDirection replaces the projected key's
-    // direction. Checked here, before anything commits, so a rejected
-    // update leaves entry and registry as they were.
+    // follows a buffer swap to the new buffers (every swapped
+    // instance-step buffer at once), and orderDirection replaces the
+    // projected key's direction. Checked here, before anything commits, so
+    // a rejected update leaves entry and registry as they were.
     let entry_key = draw.unwrap_or(0);
-    let instance_swap = next_ids.instance_buffers != ids.instance_buffers;
+    let instance_swap = next_ids.buffers != ids.buffers;
     if instance_swap {
       self.check_order_swap(target, entry_key, next_ids)?;
     }
@@ -938,27 +917,24 @@ impl Context {
     Ok(())
   }
 
-  /// `bounds` re-sized for `ids`: the fetch bounds keep their strides (the
-  /// pipeline layout and vocabulary are unchanged by a swap; only an index
-  /// format change moves the element size) and take the named buffers'
-  /// sizes. Errs on an id the buffer registry does not know.
+  /// `bounds` re-sized for `ids`: the fetch bounds keep their steps and
+  /// strides (the pipeline layout and vocabulary are unchanged by a swap;
+  /// only an index format change moves the element size) and take the
+  /// named buffers' sizes. Errs on an id the buffer registry does not know.
   fn rebound(&self, bounds: DrawBounds, ids: BufferIds) -> Result<DrawBounds, String> {
     let sizes = self.buffer_sizes.borrow();
     let size_of = |id: u64, role: &str| sizes.get(&id).copied().ok_or_else(|| format!("{role} {id} not found"));
-    let fetch = match bounds.fetch {
-      None => None,
-      Some((stride, _)) => Some(match ids.index {
-        Some((id, format)) => (format.size() as usize, size_of(id, "index buffer")?),
-        None => (stride, size_of(ids.buffer, "buffer")?),
-      }),
+    let index = match (bounds.index, ids.index) {
+      (Some(_), Some((id, format))) => Some((format.size() as usize, size_of(id, "index buffer")?)),
+      (index, _) => index,
     };
-    let mut instances = bounds.instances;
-    for (slot, pair) in instances.iter_mut().enumerate() {
-      if pair.0 > 0 {
-        pair.1 = size_of(ids.instance_buffers[slot], "instance buffer")?;
+    let mut buffers = bounds.buffers;
+    for (i, bound) in buffers.iter_mut().enumerate() {
+      if bound.stride > 0 {
+        bound.size = size_of(ids.buffers[i], "buffer")?;
       }
     }
-    Ok(DrawBounds { fetch, indexed: bounds.indexed, instances })
+    Ok(DrawBounds { index, buffers })
   }
 
   /// Update a pipeline texture's draw range - which vertices are drawn

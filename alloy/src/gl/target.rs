@@ -22,7 +22,7 @@ use crate::gpu::resources::GpuDrawInfo;
 use crate::gpu::spec::DepthStorage;
 use crate::gpu::texture::TextureFormat;
 use crate::gpu::vocab::{
-  blend_name, cull_name, merge_bindings, validate_order, AttrFormat, DrawRange, ParamValue, PipelineDesc,
+  blend_name, cull_name, merge_bindings, validate_order, BufferLayout, DrawRange, ParamValue, PipelineDesc,
   TextureBinding,
 };
 
@@ -494,25 +494,13 @@ impl ShaderTexture {
   /// or instance buffer: buffer writes re-render the targets this returns
   /// true for.
   pub fn reads_buffer(&self, id: u64) -> bool {
-    self.mesh().is_some_and(|m| {
-      m.entries.iter().any(|e| {
-        e.buffers.vertex.as_ref().is_some_and(|(_, bid)| *bid == id)
-          || e.buffers.index.as_ref().is_some_and(|(_, iid, _)| *iid == id)
-          || e.buffers.instances.iter().any(|(_, iid)| *iid == id)
-      })
-    })
+    self.mesh().is_some_and(|m| m.entries.iter().any(|e| e.buffers.reads(id)))
   }
 
-  /// The first entry's declared interleaved attribute layout; empty for
-  /// fragment-only shaders and attributeless pipelines.
-  pub fn attributes(&self) -> &[(String, AttrFormat)] {
-    self.entry0().map(|e| e.pipeline.desc.attributes.as_slice()).unwrap_or(&[])
-  }
-
-  /// The first entry's declared per-instance layout; empty when its
-  /// pipeline declares none (and for fragment-only shaders).
-  pub fn instance_attributes(&self) -> &[(String, AttrFormat, u32)] {
-    self.entry0().map(|e| e.pipeline.desc.instance_attributes.as_slice()).unwrap_or(&[])
+  /// The first entry's declared buffer layouts; empty for fragment-only
+  /// shaders and attributeless pipelines.
+  pub fn buffer_layouts(&self) -> &[BufferLayout] {
+    self.entry0().map(|e| e.pipeline.desc.buffers.as_slice()).unwrap_or(&[])
   }
 
   /// Whether the target owns depth storage.
@@ -984,10 +972,9 @@ impl ShaderTexture {
           .map(|e| GpuDrawInfo {
             id: e.id,
             pipeline_id: e.pipeline_id,
-            buffer_id: e.buffers.vertex.as_ref().map(|(_, id)| *id),
+            buffer_ids: e.buffers.ids(),
             index_buffer_id: e.buffers.index.as_ref().map(|(_, iid, _)| *iid),
             index_format: e.buffers.index.as_ref().map(|(_, _, fmt)| fmt.name()),
-            instance_buffer_ids: e.buffers.instances.iter().map(|(_, id)| *id).collect(),
             topology: e.pipeline.desc.topology.name(),
             blend: blend_name(e.pipeline.desc.blend),
             cull: cull_name(e.pipeline.desc.cull),

@@ -104,7 +104,7 @@ export function createRecordLayer(atlas: TextureId, opts?: RecordLayerOptions): 
       : orderBy === "y"
         ? { field: Y_FIELD_OFFSET }
         : { field: orderBy.field, descending: orderBy.descending }
-  let gpu = createSpritePipeline(label, VERTEX, INSTANCE_ATTRIBUTES)
+  let gpu = createSpritePipeline(label, VERTEX, [INSTANCE_ATTRIBUTES])
 
   let disposed = false
   let dirty = false
@@ -132,7 +132,7 @@ export function createRecordLayer(atlas: TextureId, opts?: RecordLayerOptions): 
     out.set(layer.records.subarray(0, count * FLOATS_PER_SPRITE))
     endBufferWrite(target, count * FLOATS_PER_SPRITE * 4)
     if (grown !== null) {
-      views.setBuffers({ instanceBuffer: grown })
+      views.setBuffers([grown])
       views.setCount(count)
       if (instanceOrder !== undefined) {
         // The growth publish above landed BEFORE the swap (the entry must
@@ -192,7 +192,7 @@ export function createRecordLayer(atlas: TextureId, opts?: RecordLayerOptions): 
     pipeline: gpu.pipeline,
     quad: gpu.quad,
     atlas,
-    buffers: () => ({ instanceBuffer: records }),
+    buffers: () => [records],
     count: () => published,
     tint: () => tint,
     pick: (x, y) => layer.pick(x, y),

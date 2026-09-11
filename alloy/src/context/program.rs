@@ -1,6 +1,6 @@
 use std::rc::Rc;
 
-use crate::gpu::{instance_strides, validate_instance_slots, vertex_stride, AttributeTable, PipelineDesc, ShaderStage};
+use crate::gpu::{buffer_strides, validate_buffers, AttributeTable, PipelineDesc, ShaderStage};
 use crate::raster::RasterCmd;
 
 use super::mirror::PipelineMirror;
@@ -50,7 +50,7 @@ impl Context {
   /// The active vertex attributes (name, format) of a program from
   /// `link_shader_program`, as the compiler left them: an `in` the vertex
   /// stage never reads is not listed. A pipeline over the program must
-  /// declare every one of these (attributes or instanceAttributes).
+  /// declare every one of these across its buffer layouts.
   pub fn program_attributes(&self, id: u64) -> Result<Rc<AttributeTable>, String> {
     self.program_attributes.borrow().get(&id).cloned().ok_or_else(|| format!("program {id} not found"))
   }
@@ -67,19 +67,18 @@ impl Context {
   /// is the draw-state object every target created from it shares; creating
   /// one compiles nothing. Free with `destroy_render_pipeline`.
   pub fn create_render_pipeline(&self, program: u64, desc: PipelineDesc, label: Option<String>) -> Result<u64, String> {
-    self.gpu_limits().check_vertex_attribs(desc.attributes.len() + desc.instance_attributes.len())?;
-    validate_instance_slots(&desc.instance_attributes)?;
+    self.gpu_limits().check_vertex_attribs(desc.attribute_count())?;
+    validate_buffers(&desc.buffers)?;
     let uniforms = match self.program_uniforms.borrow().get(&program) {
       Some(uniforms) => uniforms.clone(),
       None => return Err(format!("program {program} not found")),
     };
-    let stride = vertex_stride(&desc.attributes) as usize;
-    let instance_strides = instance_strides(&desc.instance_attributes);
+    let strides = buffer_strides(&desc.buffers);
     let depth = desc.depth.is_some();
     let id = self.next_pipeline_id.get();
     self.rpc(|reply| RasterCmd::CreateRenderPipeline { id, program, desc, label, reply })??;
     self.next_pipeline_id.set(id + 1);
-    self.pipeline_mirrors.borrow_mut().insert(id, PipelineMirror { uniforms, stride, instance_strides, depth });
+    self.pipeline_mirrors.borrow_mut().insert(id, PipelineMirror { uniforms, strides, depth });
     Ok(id)
   }
 

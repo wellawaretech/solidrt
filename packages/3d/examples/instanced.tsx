@@ -1,5 +1,5 @@
 // Instanced meshes: one draw entry covering a whole population. A material
-// class declares `instanceAttributes`, createRecordMesh (here via the
+// class declares `instanceBuffers`, createRecordMesh (here via the
 // <RecordMesh> component) supplies one interleaved record per instance,
 // and the vertex stage reads each record through the matching `in`
 // variables. Two meshes share the one class: 400 scattered "rocks" and a
@@ -187,10 +187,14 @@ let instancedLook = shaderMaterialClass({
   vertex: INSTANCE_VERTEX,
   shadowVertex: INSTANCE_SHADOW_VERTEX,
   fragment: litFragment({ vertexColors: true }),
-  instanceAttributes: [
-    { name: "iPos", format: "float32x3" },
-    { name: "iScale", format: "float32" },
-    { name: "iTint", format: "float32x3" },
+  instanceBuffers: [
+    {
+      attributes: [
+        { name: "iPos", format: "float32x3" },
+        { name: "iScale", format: "float32" },
+        { name: "iTint", format: "float32x3" },
+      ],
+    },
   ],
   label: "instanced-look",
 })

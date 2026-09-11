@@ -936,8 +936,8 @@ impl RasterState {
   }
 }
 
-/// Resolve an entry's buffer ids (vertex, index, instance) against the
-/// buffer registry: the Rc clones the entry keeps for its VAO's lifetime.
+/// Resolve an entry's buffer ids (layouts and index) against the buffer
+/// registry: the Rc clones the entry keeps for its VAO's lifetime.
 /// The draw range itself arrives already resolved and bounds-checked from
 /// the UI thread (`resolve_draw_range`), which owns the stride/size mirrors;
 /// a miss here means those mirrors diverged.
@@ -945,17 +945,13 @@ fn resolve_entry_buffers(buffers: &HashMap<u64, Rc<GpuBuffer>>, ids: BufferIds) 
   let lookup = |id: u64, role: &str| -> Result<Rc<GpuBuffer>, String> {
     buffers.get(&id).cloned().ok_or_else(|| format!("{role} {id} not found"))
   };
-  let vertex = match ids.buffer {
-    0 => None,
-    id => Some((lookup(id, "buffer")?, id)),
-  };
+  let mut buffers = Vec::new();
+  for id in ids.bound() {
+    buffers.push((lookup(id, "buffer")?, id));
+  }
   let index = match ids.index {
     Some((id, format)) => Some((lookup(id, "index buffer")?, id, format)),
     None => None,
   };
-  let mut instances = Vec::new();
-  for &id in ids.instance_buffers.iter().take_while(|&&id| id != 0) {
-    instances.push((lookup(id, "instance buffer")?, id));
-  }
-  Ok(EntryBuffers { vertex, index, instances })
+  Ok(EntryBuffers { buffers, index })
 }

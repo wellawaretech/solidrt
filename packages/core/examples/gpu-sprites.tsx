@@ -60,14 +60,18 @@ function App() {
     label: "sprites",
     topology: "triangle-strip",
     vertexCount: 4,
-    attributes: [{ name: "aPos", format: "float32x2" }],
-    buffer: quad,
-    instanceAttributes: [
-      { name: "iCenter", format: "float32x2" },
-      { name: "iSize", format: "float32" },
-      { name: "iTint", format: "float32x3" },
+    buffers: [
+      { attributes: [{ name: "aPos", format: "float32x2" }], buffer: quad },
+      {
+        stepMode: "instance",
+        attributes: [
+          { name: "iCenter", format: "float32x2" },
+          { name: "iSize", format: "float32" },
+          { name: "iTint", format: "float32x3" },
+        ],
+        buffer: records,
+      },
     ],
-    instanceBuffer: records,
     instanceCount: MAX_SPRITES,
     clearColor: [0.03, 0.03, 0.06, 1],
   })

@@ -44,7 +44,7 @@ import type { CameraState, CameraUpdate } from "./camera.ts"
 import type { Frame } from "./frames.ts"
 import { FULL_FRAME, writeFrame } from "./frames.ts"
 import type { RecordLayer } from "./records.ts"
-import { createSpritePipeline, INSTANCE_ATTRIBUTES_SPLIT, VERTEX_SPLIT } from "./shaders.ts"
+import { createSpritePipeline, INSTANCE_LAYOUTS_SPLIT, VERTEX_SPLIT } from "./shaders.ts"
 import { createViews } from "./views.ts"
 import type { ViewHandle, ViewOptions } from "./views.ts"
 
@@ -738,7 +738,7 @@ export function createSpriteLayer(atlas: TextureId, opts?: SpriteLayerOptions): 
   checkTint("createSpriteLayer", tint)
   let pose: BufferId = createBuffer(capacity * POSE_FLOATS * 4, { label: `${label}-pose`, autoFree: false })
   let style: BufferId = createBuffer(capacity * STYLE_FLOATS * 4, { label: `${label}-style`, autoFree: false })
-  let gpu = createSpritePipeline(label, VERTEX_SPLIT, INSTANCE_ATTRIBUTES_SPLIT)
+  let gpu = createSpritePipeline(label, VERTEX_SPLIT, INSTANCE_LAYOUTS_SPLIT)
 
   let disposed = false
   let scheduled = false
@@ -812,7 +812,7 @@ export function createSpriteLayer(atlas: TextureId, opts?: SpriteLayerOptions): 
     let grownStyle = new Float32Array(next * STYLE_FLOATS)
     grownStyle.set(styleData)
     styleData = grownStyle
-    views.setBuffers({ instanceBuffers: [newPose, newStyle] })
+    views.setBuffers([newPose, newStyle])
     destroyBuffer(pose)
     destroyBuffer(style)
     pose = newPose
@@ -854,7 +854,7 @@ export function createSpriteLayer(atlas: TextureId, opts?: SpriteLayerOptions): 
     pipeline: gpu.pipeline,
     quad: gpu.quad,
     atlas,
-    buffers: () => ({ instanceBuffers: [pose, style] }),
+    buffers: () => [pose, style],
     count: () => published,
     tint: () => tint,
     pick: (x, y) => layer.pick(x, y),
@@ -867,7 +867,7 @@ export function createSpriteLayer(atlas: TextureId, opts?: SpriteLayerOptions): 
       opts?.orderBy === "y"
         ? { field: POSE_Y_FIELD }
         : opts?.orderBy === "renderOrder"
-          ? { field: STYLE_KEY_FIELD, slot: 1 }
+          ? { field: STYLE_KEY_FIELD, buffer: 2 }
           : undefined,
   })
 

@@ -11,7 +11,7 @@ import type { Material } from "../material.ts"
 
 export type RecordMeshProps = PopulatedMeshProps & {
   geometry: Geometry
-  /** Must declare instanceAttributes (shaderMaterialClass), slot 0 only. */
+  /** Must declare instanceBuffers (shaderMaterialClass), the record buffer only. */
   material: Material
   /** Interleaved per-instance records (stride = the material's instance
    * attributes summed). Reactive; a later array larger than the buffer

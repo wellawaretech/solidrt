@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use crate::gpu::{BufferIds, DrawBounds, DrawRange, UniformTable};
+use crate::gpu::{BufferIds, BufferStride, DrawBounds, DrawRange, UniformTable, MAX_BUFFERS};
 
 // UI-side mirror of one shader/pipeline target, seeded by its create reply
 // (fused paths, whose program is anonymous) or derived from the pipeline
@@ -18,8 +18,8 @@ pub(super) struct TargetMirror {
   /// The fetch bounds and range vocabulary for set_draw, captured at create
   /// (see `DrawBounds` for why a captured bound stays correct).
   pub(super) bounds: DrawBounds,
-  /// The buffer ids the target's fixed-kind pass reads (vertex, index,
-  /// instance), so a buffer write can name the targets whose pixels it
+  /// The buffer ids the target's fixed-kind pass reads (layouts and
+  /// index), so a buffer write can name the targets whose pixels it
   /// changes (see `note_buffer_content`) and a buffer swap has a current
   /// value to merge into. All zero for draw targets, whose buffers live per
   /// entry.
@@ -73,13 +73,12 @@ pub(super) struct EntryMirror {
 }
 
 // UI-side mirror of a registered render pipeline: its program's uniforms, the
-// record strides of its attribute layouts (vertex and per-instance), and
-// whether it declares depth state, for deriving target/entry mirrors and
-// validating adds without an RPC.
+// step and record stride of each declared buffer layout, and whether it
+// declares depth state, for deriving target/entry mirrors and validating
+// adds without an RPC.
 pub(super) struct PipelineMirror {
   pub(super) uniforms: Rc<UniformTable>,
-  pub(super) stride: usize,
-  pub(super) instance_strides: [usize; crate::gpu::MAX_INSTANCE_SLOTS],
+  pub(super) strides: [BufferStride; MAX_BUFFERS],
   pub(super) depth: bool,
 }
 

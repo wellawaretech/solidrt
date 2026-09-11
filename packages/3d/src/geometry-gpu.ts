@@ -11,11 +11,11 @@
 // disposeGeometry frees immediately, the explicit override; either way the
 // geometry stays usable - fresh buffers are created on next acquire.
 
-import { createBuffer, destroyBuffer } from "@solidrt/core/gpu"
+import { createBuffer, destroyBuffer, writeBuffer } from "@solidrt/core/gpu"
 import type { BufferId, IndexFormat } from "@solidrt/core/gpu"
 import { createShape, destroyShape } from "flux:spatial"
 import type { ShapeId } from "flux:spatial"
-import { geometryTopology, layoutSlot, layoutStride } from "./geometry.ts"
+import { geometryStreams, geometryTopology, geometryVertexCount, layoutSlot, layoutStride, vertexBytes } from "./geometry.ts"
 import type { Geometry } from "./geometry.ts"
 
 /** An acquired reference to a geometry's GPU buffers: what a draw entry
@@ -23,7 +23,9 @@ import type { Geometry } from "./geometry.ts"
  * acquisition keeps the pairing correct however the caller's geometry
  * fields have moved since. */
 export type GeometryBuffers = {
-  buffer: BufferId
+  /** One vertex buffer per stream, in stream order: what the entry binds
+   * before the material's instance buffers. */
+  buffers: BufferId[]
   index: BufferId
   indexFormat: IndexFormat
   /** The picking shape (positions and, when the layout carries a
@@ -32,26 +34,22 @@ export type GeometryBuffers = {
   shape: ShapeId | null
 }
 
-type GpuEntry = GeometryBuffers & { geometry: Geometry; vertices: ArrayBufferView; refs: number }
+type GpuEntry = GeometryBuffers & { geometry: Geometry; streams: ArrayBufferView[]; refs: number }
 
 let entries = new WeakMap<Geometry, GpuEntry>()
 
 /** Vertex uploads keyed by the array itself: geometries sharing one
- * vertex array (a wireframe or edges geometry over its source's) share
- * one GPU buffer, each entry holding a reference to it. */
+ * vertex array (a wireframe or edges geometry over its source's, a
+ * stream shared through withAttribute) share one GPU buffer, each entry
+ * holding a reference to it - which is also what makes an in-place
+ * update (updateVertices) reach every sharer. */
 let vertexUploads = new WeakMap<ArrayBufferView, { buffer: BufferId; refs: number }>()
 
-function acquireVertices(geometry: Geometry): BufferId {
-  let upload = vertexUploads.get(geometry.vertices)
+function acquireVertices(vertices: ArrayBufferView, label: string | undefined): BufferId {
+  let upload = vertexUploads.get(vertices)
   if (upload === undefined) {
-    upload = {
-      buffer: createBuffer(geometry.vertices, {
-        autoFree: false,
-        label: geometry.label ? geometry.label + "-verts" : undefined,
-      }),
-      refs: 0,
-    }
-    vertexUploads.set(geometry.vertices, upload)
+    upload = { buffer: createBuffer(vertices, { autoFree: false, label }), refs: 0 }
+    vertexUploads.set(vertices, upload)
   }
   upload.refs++
   return upload.buffer
@@ -66,11 +64,12 @@ function releaseVertices(vertices: ArrayBufferView): void {
   destroyBuffer(upload.buffer)
 }
 
-// The picking shape reads positions (and uvs, when they are plain floats)
-// through a Float32Array view over the vertex bytes: every stride and
-// offset is a multiple of 4, so the view is exact whatever the layout
-// packs elsewhere. A uv in a packed format is left out (hits carry no
-// uv); positions are float32x3 by the layout rule.
+// The picking shape reads positions (and uvs, when they are plain floats
+// in stream 0) through a Float32Array view over the main buffer's bytes:
+// every stride and offset is a multiple of 4, so the view is exact
+// whatever the layout packs elsewhere. A uv in a packed format or in
+// another stream is left out (hits carry no uv); positions are float32x3
+// in stream 0 by the layout rule.
 function createPickingShape(geometry: Geometry): ShapeId {
   let v = geometry.vertices
   let floats = new Float32Array(v.buffer, v.byteOffset, v.byteLength / Float32Array.BYTES_PER_ELEMENT)
@@ -86,10 +85,11 @@ function createPickingShape(geometry: Geometry): ShapeId {
 export function acquireGeometryBuffers(geometry: Geometry): GeometryBuffers {
   let entry = entries.get(geometry)
   if (entry === undefined) {
+    let streams = geometryStreams(geometry).map(s => s.vertices)
     entry = {
       geometry,
-      vertices: geometry.vertices,
-      buffer: acquireVertices(geometry),
+      streams,
+      buffers: streams.map((vertices, i) => acquireVertices(vertices, geometry.label ? geometry.label + (i === 0 ? "-verts" : "-stream" + i) : undefined)),
       index: createBuffer(geometry.indices, {
         autoFree: false,
         label: geometry.label ? geometry.label + "-indices" : undefined,
@@ -117,7 +117,7 @@ export function releaseGeometryBuffers(acquired: GeometryBuffers): void {
   queueMicrotask(() => {
     if (entries.get(entry.geometry) !== entry || entry.refs > 0) return
     entries.delete(entry.geometry)
-    releaseVertices(entry.vertices)
+    for (let vertices of entry.streams) releaseVertices(vertices)
     destroyBuffer(entry.index)
     if (entry.shape !== null) destroyShape(entry.shape)
   })
@@ -134,7 +134,44 @@ export function disposeGeometry(geometry: Geometry): void {
   let entry = entries.get(geometry)
   if (entry === undefined) return
   entries.delete(geometry)
-  releaseVertices(entry.vertices)
+  for (let vertices of entry.streams) releaseVertices(vertices)
   destroyBuffer(entry.index)
   if (entry.shape !== null) destroyShape(entry.shape)
+}
+
+/** Options of `updateVertices`: the stream (default 0, the main buffer)
+ * and the vertex range (default the whole stream). */
+export type UpdateVerticesOptions = { stream?: number; first?: number; count?: number }
+
+/**
+ * Re-upload vertices `[first, first + count)` of one stream from the
+ * geometry's own array, in place: Three's `attribute.needsUpdate` with an
+ * update range. Write the array first (through geometryAttribute or
+ * fillAttribute), then call this; every mesh, view and wireframe over the
+ * geometry sees the new bytes, and the other streams are untouched -
+ * which is what a per-frame channel in a stream of its own buys. A
+ * stream-0 update drops the cached bounds. The picking shape keeps the
+ * positions it was built from (a collision shape never follows a mesh
+ * update in Unity or Godot either); a deforming geometry that must pick
+ * re-attaches. A geometry not yet on the GPU has nothing to update: its
+ * first acquire uploads the array as it is then.
+ */
+export function updateVertices(geometry: Geometry, options: UpdateVerticesOptions = {}): void {
+  let streams = geometryStreams(geometry)
+  let index = options.stream ?? 0
+  if (!Number.isInteger(index) || index < 0 || index >= streams.length) {
+    throw new Error("updateVertices: stream " + index + " is out of range; the geometry has streams 0.." + (streams.length - 1))
+  }
+  let total = geometryVertexCount(geometry, "updateVertices")
+  let first = options.first ?? 0
+  let count = options.count ?? total - first
+  if (!Number.isInteger(first) || !Number.isInteger(count) || first < 0 || count < 0 || first + count > total) {
+    throw new Error("updateVertices: range [" + first + ", " + (first + count) + ") is outside the geometry's " + total + " vertices")
+  }
+  if (index === 0) geometry._bounds = undefined
+  let stream = streams[index]!
+  let upload = vertexUploads.get(stream.vertices)
+  if (upload === undefined || count === 0) return
+  let stride = layoutStride(stream.layout)
+  writeBuffer(upload.buffer, vertexBytes(stream.vertices).subarray(first * stride, (first + count) * stride), first * stride)
 }

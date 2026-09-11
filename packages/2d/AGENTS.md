@@ -95,7 +95,7 @@ real draw order says so with `orderBy` ("y" or "renderOrder" - see below).
 
 Growth (past `capacity`, doubling): pose sinks move in ONE core
 `retargetRecords` call (full republish next flush), style re-uploads,
-`setDraw({ instanceBuffers })` swaps both, old buffers destroyed.
+`setDrawBuffers({ buffers })` swaps both, old buffers destroyed.
 
 ### Picking
 

@@ -465,12 +465,15 @@ pub struct RenderPipeline {
 impl RenderPipeline {
   /// Pair a linked program with draw state. Fragment programs never get here
   /// through the public surface (a fullscreen fragment pass has no draw
-  /// state); that check is the raster-side backstop. The attribute lists
-  /// share one namespace (each name is one `in` of the vertex stage), so a
-  /// name in both is a contradiction - two layouts for one attribute - and
-  /// is rejected here, the one place every create path runs through (the
-  /// create RPCs block, so the error still surfaces at the call site). On
-  /// error the program Rc is handed back so the caller decides its fate.
+  /// state); that check is the raster-side backstop. Every attribute the
+  /// program actually reads must have a home in one of the buffer layouts,
+  /// with a format of the same component count: an uncovered one would
+  /// bind nothing (GL feeds a constant and the draw shows garbage), and a
+  /// count mismatch would feed a vec4 `in` from three components. The
+  /// byte format itself is free (a unorm8x4 feeds a vec4 like a float32x4
+  /// does); the layouts' own consistency (unique names, offsets within
+  /// strides) is `validate_buffers`' UI-side check. On error the program Rc
+  /// is handed back so the caller decides its fate.
   pub fn new(
     program: Rc<ShaderProgram>,
     program_id: Option<u64>,
@@ -479,31 +482,18 @@ impl RenderPipeline {
     if !program.is_pipeline() {
       return Err((program, "program is a fragment shader, not a pipeline".to_string()));
     }
-    for (name, _, _) in &desc.instance_attributes {
-      if desc.attributes.iter().any(|(n, _)| n == name) {
-        return Err((program, format!("attribute '{name}' appears in both attributes and instanceAttributes")));
-      }
-    }
-    // Every attribute the program actually reads must have a home in one of
-    // the two lists, with the declared format: an uncovered one would bind
-    // nothing (GL feeds a constant and the draw shows garbage), and a
-    // format mismatch would stride the fetch wrong.
     let uncovered = program.attributes.iter().find_map(|(name, format)| {
-      let found = desc
-        .attributes
-        .iter()
-        .map(|(n, f)| (n, f))
-        .chain(desc.instance_attributes.iter().map(|(n, f, _)| (n, f)))
-        .find(|(n, _)| *n == name);
+      let found = desc.buffers.iter().flat_map(|b| b.attributes.iter()).find(|a| a.name == *name);
       match found {
         None => Some(format!(
-          "program reads vertex attribute '{name}' ({}) which neither attributes nor instanceAttributes declares",
+          "program reads vertex attribute '{name}' ({}) which no buffer layout declares",
           format.name()
         )),
-        Some((_, declared)) if declared != format => Some(format!(
-          "vertex attribute '{name}' is {} in the program but declared as {}",
+        Some(declared) if declared.format.components() != format.components() => Some(format!(
+          "vertex attribute '{name}' is {} in the program but declared as {} ({} components)",
           format.name(),
-          declared.name()
+          declared.format.name(),
+          declared.format.components()
         )),
         Some(_) => None,
       }

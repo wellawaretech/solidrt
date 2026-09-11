@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use crate::gpu::{
   check_cube_faces, mip_levels, mip_size, resolve_draw_range, validate_binding_shapes, validate_draw_range,
-  validate_params, validate_texture_bindings, BoundTexture, BufferIds, BufferUpdate, DrawBounds, DrawRange,
+  validate_params, validate_texture_bindings, BoundTexture, BufferBound, BufferIds, BufferUpdate, DrawBounds, DrawRange, StepMode,
   DrawUpdate, GpuLimits, IndexFormat, ParamValue, TextureBinding, TextureFormat, TextureShape, UniformKind,
   UniformSlot, UniformTable, CUBE_FACES,
 };
@@ -117,14 +117,28 @@ fn range(first: i32, count: i32, instances: i32) -> DrawRange {
   DrawRange { first_vertex: first, vertex_count: count, instance_count: instances }
 }
 
+/// One bound buffer: `size` bytes at `stride` bytes/record, at `step`.
+fn bbound(step: StepMode, stride: usize, size: usize) -> BufferBound {
+  BufferBound { step, stride, size }
+}
+
 /// A plain vertex fetch bound: `size` bytes at `stride` bytes/vertex.
 fn vbounds(stride: usize, size: usize) -> DrawBounds {
-  DrawBounds { fetch: Some((stride, size)), indexed: false, instances: [(0, 0); 4] }
+  let mut b = DrawBounds::default();
+  b.buffers[0] = bbound(StepMode::Vertex, stride, size);
+  b
 }
 
 /// An index fetch bound: `size` bytes at `elem` bytes/index.
 fn ibounds(elem: usize, size: usize) -> DrawBounds {
-  DrawBounds { fetch: Some((elem, size)), indexed: true, instances: [(0, 0); 4] }
+  DrawBounds { index: Some((elem, size)), ..DrawBounds::default() }
+}
+
+/// `bounds` with an instance-step buffer of `size` bytes at `stride`
+/// bytes/record bound at index `at`.
+fn with_instances(mut bounds: DrawBounds, at: usize, stride: usize, size: usize) -> DrawBounds {
+  bounds.buffers[at] = bbound(StepMode::Instance, stride, size);
+  bounds
 }
 
 #[test]
@@ -186,7 +200,7 @@ fn resolve_rejects_bad_ranges() {
 #[test]
 fn instance_ranges_bound_and_derive() {
   // 8 instance records at 12 bytes each in a 96-byte instance buffer.
-  let b = DrawBounds { instances: [(12, 96), (0, 0), (0, 0), (0, 0)], ..vbounds(20, 2000) };
+  let b = with_instances(vbounds(20, 2000), 1, 12, 96);
   assert_eq!(validate_draw_range(range(0, 100, 8), b), Ok(()));
   assert_eq!(validate_draw_range(range(0, 100, 0), b), Ok(()));
   let err = validate_draw_range(range(0, 100, 9), b).expect_err("one instance past the end must error");
@@ -195,7 +209,7 @@ fn instance_ranges_bound_and_derive() {
   // and stays 1 without one (the plain draw, covered above).
   assert_eq!(resolve_draw_range(DrawRange::default(), b), Ok(range(0, 100, 8)));
   // The instance bound also holds on an attributeless entry.
-  let b = DrawBounds { instances: [(12, 96), (0, 0), (0, 0), (0, 0)], ..DrawBounds::default() };
+  let b = with_instances(DrawBounds::default(), 0, 12, 96);
   assert_eq!(resolve_draw_range(DrawRange::default(), b), Ok(range(0, 0, 8)));
   let err = validate_draw_range(range(0, 0, 100), b).expect_err("instance bound must hold without vertices");
   assert!(err.contains("instance buffer holds 96 bytes"), "{err}");
@@ -327,81 +341,80 @@ void main() {}
 
 #[test]
 fn buffer_swap_replaces_filled_roles() {
-  let ids = BufferIds { buffer: 1, index: Some((2, IndexFormat::U16)), instance_buffers: [3, 0, 0, 0] };
+  let ids = BufferIds { buffers: [1, 3, 0, 0, 0, 0, 0, 0], index: Some((2, IndexFormat::U16)) };
   let next = ids
-    .merged(BufferUpdate {
-      buffer: None,
-      index: Some((7, IndexFormat::U32)),
-      instance_buffer: Some(9),
-      ..Default::default()
-    })
+    .merged(BufferUpdate { buffers: Some([1, 9, 0, 0, 0, 0, 0, 0]), index: Some((7, IndexFormat::U32)) })
     .expect("swap filled roles");
-  assert_eq!(next, BufferIds { buffer: 1, index: Some((7, IndexFormat::U32)), instance_buffers: [9, 0, 0, 0] });
+  assert_eq!(next, BufferIds { buffers: [1, 9, 0, 0, 0, 0, 0, 0], index: Some((7, IndexFormat::U32)) });
   assert!(next.reads(9) && next.reads(7) && !next.reads(3) && !next.reads(0));
+  assert_eq!(next.bound().collect::<Vec<_>>(), vec![1, 9]);
 }
 
 #[test]
 fn buffer_swap_rejects_new_roles_and_zero_ids() {
-  let plain = BufferIds { buffer: 1, index: None, instance_buffers: [0; 4] };
-  let err =
-    plain.merged(BufferUpdate { instance_buffer: Some(5), ..Default::default() }).expect_err("no instance role");
-  assert!(err.contains("instanceAttributes"), "{err}");
-  let err =
-    plain.merged(BufferUpdate { index: Some((5, IndexFormat::U16)), ..Default::default() }).expect_err("not indexed");
+  let plain = BufferIds { buffers: [1, 0, 0, 0, 0, 0, 0, 0], index: None };
+  let err = plain
+    .merged(BufferUpdate { buffers: Some([1, 5, 0, 0, 0, 0, 0, 0]), index: None })
+    .expect_err("an undeclared index must error");
+  assert!(err.contains("buffer 1") && err.contains("not declared"), "{err}");
+  let err = plain
+    .merged(BufferUpdate { buffers: Some([0; 8]), index: None })
+    .expect_err("dropping a declared buffer must error");
+  assert!(err.contains("buffer 0") && err.contains("dropped"), "{err}");
+  let err = plain.merged(BufferUpdate { index: Some((5, IndexFormat::U16)), buffers: None }).expect_err("not indexed");
   assert!(err.contains("not indexed"), "{err}");
-  let err = plain.merged(BufferUpdate { buffer: Some(0), ..Default::default() }).expect_err("zero id");
-  assert!(err.contains("buffer id"), "{err}");
-  let attributeless = BufferIds::default();
-  let err = attributeless.merged(BufferUpdate { buffer: Some(4), ..Default::default() }).expect_err("no vertex role");
-  assert!(err.contains("no attributes"), "{err}");
 }
 
 #[test]
-fn instance_slots_stride_density_and_limit() {
-  use crate::gpu::{instance_strides, validate_instance_slots, AttrFormat};
-  let attrs = vec![
-    ("iOffset".to_string(), AttrFormat::Float32x2, 0),
-    ("iRot".to_string(), AttrFormat::Float32, 0),
-    ("iColor".to_string(), AttrFormat::Unorm8x4, 1),
+fn buffer_layouts_validate_and_bound() {
+  use crate::gpu::{buffer_strides, validate_buffers, AttrFormat, BufferLayout, VertexAttr};
+  let layouts = vec![
+    BufferLayout::vertex(vec![("aPos".to_string(), AttrFormat::Float32x3), ("aUV".to_string(), AttrFormat::Unorm16x2)]),
+    BufferLayout::instance(vec![("iOffset".to_string(), AttrFormat::Float32x2), ("iColor".to_string(), AttrFormat::Unorm8x4)]),
   ];
-  assert_eq!(validate_instance_slots(&attrs), Ok(()));
-  // Per-slot strides: slot 0 interleaves float32x2 + float32 (12 bytes),
-  // slot 1 is the packed color alone (4 bytes), the rest unused.
-  assert_eq!(instance_strides(&attrs), [12, 4, 0, 0]);
-  let gap = vec![("a".to_string(), AttrFormat::Float32x2, 0), ("b".to_string(), AttrFormat::Float32x2, 2)];
-  let err = validate_instance_slots(&gap).expect_err("a slot gap must error");
-  assert!(err.contains("dense") && err.contains("slot 1"), "{err}");
-  let high = vec![("a".to_string(), AttrFormat::Float32x2, 9)];
-  let err = validate_instance_slots(&high).expect_err("a slot past the cap must error");
-  assert!(err.contains("slots are 0..4"), "{err}");
-  // The draw bound derives from the tightest slot: 96 bytes of 12-byte
-  // records (8) beside 60 bytes of 12-byte records (5).
-  let b = DrawBounds { instances: [(12, 96), (12, 60), (0, 0), (0, 0)], ..DrawBounds::default() };
+  assert_eq!(validate_buffers(&layouts), Ok(()));
+  // Packed offsets run in list order; strides are the byte sums.
+  assert_eq!(layouts[0].attributes[1].offset, 12);
+  assert_eq!(layouts[0].stride, 16);
+  let strides = buffer_strides(&layouts);
+  assert_eq!((strides[0].step, strides[0].stride), (StepMode::Vertex, 16));
+  assert_eq!((strides[1].step, strides[1].stride), (StepMode::Instance, 12));
+  assert_eq!(strides[2].stride, 0);
+  // A subset layout: positions alone out of a 36-byte record.
+  let subset = BufferLayout {
+    step: StepMode::Vertex,
+    stride: 36,
+    attributes: vec![VertexAttr { name: "aPos".to_string(), format: AttrFormat::Float32x3, offset: 0 }],
+  };
+  assert_eq!(validate_buffers(&[subset.clone()]), Ok(()));
+  let mut past = subset.clone();
+  past.attributes[0].offset = 28;
+  let err = validate_buffers(&[past]).expect_err("an attribute past the stride must error");
+  assert!(err.contains("does not fit"), "{err}");
+  let mut odd = subset.clone();
+  odd.stride = 30;
+  let err = validate_buffers(&[odd]).expect_err("a stride off 4 must error");
+  assert!(err.contains("multiple of 4"), "{err}");
+  let twice = vec![layouts[0].clone(), BufferLayout::vertex(vec![("aPos".to_string(), AttrFormat::Float32x3)])];
+  let err = validate_buffers(&twice).expect_err("a name twice must error");
+  assert!(err.contains("aPos") && err.contains("twice"), "{err}");
+  let many: Vec<BufferLayout> = (0..9).map(|i| BufferLayout::vertex(vec![(format!("a{i}"), AttrFormat::Float32)])).collect();
+  let err = validate_buffers(&many).expect_err("past the buffer cap must error");
+  assert!(err.contains("at most 8"), "{err}");
+  // The draw bound derives from the tightest buffer of each step: two
+  // vertex streams of 20 and 25 vertices, two instance buffers of 8 and 5
+  // records.
+  let mut b = vbounds(20, 400);
+  b.buffers[1] = bbound(StepMode::Vertex, 8, 200);
+  b.buffers[2] = bbound(StepMode::Instance, 12, 96);
+  b.buffers[3] = bbound(StepMode::Instance, 12, 60);
+  assert_eq!(b.fetch(), Some((20, 400)));
   assert_eq!(b.instance_limit(), Some((12, 60)));
-  assert_eq!(resolve_draw_range(range(0, 0, -1), b), Ok(range(0, 0, 5)));
-  let err = validate_draw_range(range(0, 0, 6), b).expect_err("past the tightest slot must error");
+  assert_eq!(resolve_draw_range(DrawRange::default(), b), Ok(range(0, 20, 5)));
+  let err = validate_draw_range(range(0, 0, 6), b).expect_err("past the tightest instance buffer must error");
   assert!(err.contains("60 bytes") && err.contains("5 instances"), "{err}");
-}
-
-#[test]
-fn instance_buffers_full_swap_preserves_slot_shape() {
-  let two = BufferIds { buffer: 1, index: None, instance_buffers: [3, 4, 0, 0] };
-  let next =
-    two.merged(BufferUpdate { instance_buffers: Some([5, 6, 0, 0]), ..Default::default() }).expect("full swap");
-  assert_eq!(next.instance_buffers, [5, 6, 0, 0]);
-  assert!(next.reads(6) && !next.reads(4));
-  // slot-0 spelling still works on a multi-slot entry and touches only slot 0.
-  let next = two.merged(BufferUpdate { instance_buffer: Some(9), ..Default::default() }).expect("slot-0 swap");
-  assert_eq!(next.instance_buffers, [9, 4, 0, 0]);
-  // Dropping or adding a slot through the full swap errors.
-  let err = two
-    .merged(BufferUpdate { instance_buffers: Some([5, 0, 0, 0]), ..Default::default() })
-    .expect_err("dropping a slot must error");
-  assert!(err.contains("slot 1") && err.contains("dropped"), "{err}");
-  let err = two
-    .merged(BufferUpdate { instance_buffers: Some([5, 6, 7, 0]), ..Default::default() })
-    .expect_err("adding a slot must error");
-  assert!(err.contains("slot 2") && err.contains("not declared"), "{err}");
+  let err = validate_draw_range(range(0, 21, 1), b).expect_err("past the tightest vertex stream must error");
+  assert!(err.contains("20 vertices"), "{err}");
 }
 
 fn bound(shape: TextureShape, format: TextureFormat) -> BoundTexture {

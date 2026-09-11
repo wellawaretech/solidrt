@@ -33,7 +33,7 @@ import type {
   BlendMode,
   CullMode,
   ProgramId,
-  InstanceAttribute,
+  VertexBufferLayout,
   RenderPipelineId,
   ShaderParams,
   TextureBindings,
@@ -41,7 +41,8 @@ import type {
   Topology,
   VertexAttribute,
 } from "@solidrt/core/gpu"
-import { isFloatFormat, layoutAttributes, layoutKey, layoutSlot, VERTEX_FORMATS } from "./geometry.ts"
+import { geometryKey, geometryLayouts, geometrySlot, isFloatFormat, VERTEX_FORMATS } from "./geometry.ts"
+import type { Geometry } from "./geometry.ts"
 import type { VertexLayout } from "./geometry.ts"
 import { linearColor, premultipliedColor } from "./color.ts"
 import {
@@ -66,7 +67,7 @@ export type Material = {
   /** The pipeline this material draws with for geometry of `layout` and
    * `topology` (lazily created, one per pair met): the geometry says what
    * its indices are, the material draws them that way. */
-  pipeline(layout: VertexLayout | undefined, topology: Topology): RenderPipelineId
+  pipeline(geometry: Geometry, topology: Topology): RenderPipelineId
   /** Per-entry uniform values this material contributes at addDraw. */
   params: ShaderParams
   /** Per-entry sampler bindings, when the material samples textures. */
@@ -87,15 +88,16 @@ export type Material = {
    * the scene draws this material's meshes after every opaque one, sorted
    * back-to-front by mesh origin, and re-sorts them when the camera moves. */
   transparent?: boolean
-  /** Per-instance attributes, when the material's pipeline declares them
-   * (shaderMaterialClass's `instanceAttributes`; the stock materials'
-   * `instanced`). Such a material draws populated meshes only - an
-   * instanced mesh binds slot 0 to the core-written matrix records and
-   * slot 1 to its app-written style records, a record mesh binds slot 0
-   * to its records - and createMesh meshes are rejected at add(). */
-  instanceAttributes?: InstanceAttribute[]
-  /** The style record (the slot-1 attributes' floats, in order) every
-   * fresh instance of an instanced mesh starts with; absent = zeros.
+  /** The instance buffers, when the material's pipeline declares them
+   * (shaderMaterialClass's `instanceBuffers`; the stock materials'
+   * `instanced`), one layout per buffer after the geometry's. Such a
+   * material draws populated meshes only - an instanced mesh binds the
+   * first to the core-written matrix records and the second to its
+   * app-written style records, a record mesh binds the first to its
+   * records - and createMesh meshes are rejected at add(). */
+  instanceBuffers?: VertexBufferLayout[]
+  /** The style record (the second instance buffer's floats, in order)
+   * every fresh instance of an instanced mesh starts with; absent = zeros.
    * White for the stock materials' `instanceColors`. */
   instanceStyle?: ArrayLike<number>
   /** What a shadow view draws this material's meshes with instead of its
@@ -213,11 +215,12 @@ function fogForm(fog: boolean | undefined, blend: BlendMode | undefined): boolea
   return blend === "add" ? "additive" : true
 }
 
-// The instance attributes a stock instanced material declares: the
-// matrix always, the color record beside it under instanceColors.
-function stockInstanceAttributes(instanced: boolean, instanceColors: boolean): InstanceAttribute[] | undefined {
+// The instance buffers a stock instanced material declares: the matrix
+// record always, the color record beside it under instanceColors.
+function stockInstanceBuffers(instanced: boolean, instanceColors: boolean): VertexBufferLayout[] | undefined {
   if (!instanced) return undefined
-  return instanceColors ? [...INSTANCE_MATRIX_ATTRIBUTES, ...INSTANCE_COLOR_ATTRIBUTES] : INSTANCE_MATRIX_ATTRIBUTES
+  let matrix = { attributes: INSTANCE_MATRIX_ATTRIBUTES }
+  return instanceColors ? [matrix, { attributes: INSTANCE_COLOR_ATTRIBUTES }] : [matrix]
 }
 // A fresh instance's color: white, the multiplicative identity, so an
 // instance never written shows the material's own color (Godot's default;
@@ -258,7 +261,7 @@ export function unlit(opts: UnlitOptions = {}): Material {
       vertex: unlitVertex({ vertexColors, skinned, instanced, instanceColors }),
       fragment: unlitFragment({ map, vertexColors, alphaTest, transparent, fog, mapTransform, instanceColors }),
       shadowVertex: instanced ? shadowDepthVertex(skinned, true) : undefined,
-      instanceAttributes: stockInstanceAttributes(instanced, instanceColors),
+      instanceBuffers: stockInstanceBuffers(instanced, instanceColors),
       instanceStyle: instanceColors ? INSTANCE_COLOR_DEFAULT : undefined,
       transparent,
       blend,
@@ -468,7 +471,7 @@ export function lit(opts: LitOptions = {}): Material {
       vertex: litVertex(flags),
       fragment: litFragment(flags),
       shadowVertex: flags.instanced ? shadowDepthVertex(flags.skinned, true) : undefined,
-      instanceAttributes: stockInstanceAttributes(flags.instanced, flags.instanceColors),
+      instanceBuffers: stockInstanceBuffers(flags.instanced, flags.instanceColors),
       instanceStyle: flags.instanceColors ? INSTANCE_COLOR_DEFAULT : undefined,
       transparent: flags.transparent,
       blend: flags.blend,
@@ -640,7 +643,7 @@ export function standard(opts: StandardOptions = {}): Material {
       vertex: litVertex(flags),
       fragment: standardFragment(flags),
       shadowVertex: flags.instanced ? shadowDepthVertex(flags.skinned, true) : undefined,
-      instanceAttributes: stockInstanceAttributes(flags.instanced, flags.instanceColors),
+      instanceBuffers: stockInstanceBuffers(flags.instanced, flags.instanceColors),
       instanceStyle: flags.instanceColors ? INSTANCE_COLOR_DEFAULT : undefined,
       transparent: flags.transparent,
       blend: flags.blend,
@@ -707,7 +710,7 @@ function litShadowMaterial(
       vertex: litVertex(flags),
       fragment,
       cull: shadowCull(flags.cull),
-      instanceAttributes: stockInstanceAttributes(flags.instanced, flags.instanceColors),
+      instanceBuffers: stockInstanceBuffers(flags.instanced, flags.instanceColors),
       label: "scene-lit-shadow-" + key,
     })
     litShadowClasses.set(key, cls)
@@ -818,7 +821,7 @@ function unlitShadowMaterial(
       vertex: unlitVertex({ vertexColors, skinned, instanced, instanceColors }),
       fragment,
       cull,
-      instanceAttributes: stockInstanceAttributes(instanced, instanceColors),
+      instanceBuffers: stockInstanceBuffers(instanced, instanceColors),
       label: "scene-unlit-shadow-" + key,
     })
     unlitShadowClasses.set(key, cls)
@@ -934,12 +937,12 @@ export function sprite(opts: SpriteOptions = {}): Material {
 
 /** The attributes `material` reads that `layout` does not carry (name and
  * format) - empty when the pair is drawable. */
-export function missingAttributes(material: Material, layout: VertexLayout | undefined): VertexAttribute[] {
+export function missingAttributes(material: Material, geometry: Geometry): VertexAttribute[] {
   let missing: VertexAttribute[] = []
   for (let attr of material.attributes()) {
     // A format matches a shader `in` by component count: a packed color
-    // feeds `in vec4 aColor` like a float one.
-    let slot = layoutSlot(layout, attr.name)
+    // feeds `in vec4 aColor` like a float one. Any stream may carry it.
+    let slot = geometrySlot(geometry, attr.name)
     if (slot === null || slot.components !== VERTEX_FORMATS[attr.format].components) missing.push(attr)
   }
   return missing
@@ -1047,23 +1050,24 @@ export type ShaderMaterialClassOptions = {
   vertex: string
   fragment: string
   /**
-   * Per-instance attributes: the vertex stage reads these as `in` variables
-   * beside the layout's own, and each drawn instance gets one record from
-   * the mesh's instance buffer (interleaved floats in this order). A class
-   * with instance attributes makes INSTANCED materials: attach their meshes
-   * with createInstancedMesh or createRecordMesh, which carry the records
-   * - a createMesh mesh is rejected at add(). Each attribute's `slot`
-   * (default 0) picks the buffer: an instanced mesh binds the core's
-   * matrix records (INSTANCE_MATRIX_ATTRIBUTES, exactly) to slot 0 and
-   * the app's style records - any layout, written per instance with
-   * setInstanceStyle - to slot 1; a record mesh is slot 0 only, its
-   * records whatever the stage reads (a position/yaw/scale record beats
-   * four vec4 columns for a JS-stepped fleet, and the composed uModel
-   * still places the whole population).
+   * Instance buffers: one layout per per-instance buffer (`{ attributes
+   * }`, float32-family formats, interleaved in list order; stepMode is
+   * "instance" by definition here). The vertex stage reads the attributes
+   * as `in` variables beside the geometry layout's own, and each drawn
+   * instance gets one record from each buffer. A class with instance
+   * buffers makes INSTANCED materials: attach their meshes with
+   * createInstancedMesh or createRecordMesh, which carry the records - a
+   * createMesh mesh is rejected at add(). An instanced mesh binds the
+   * core's matrix records (INSTANCE_MATRIX_ATTRIBUTES, exactly) to the
+   * first buffer and the app's style records - any layout, written per
+   * instance with setInstanceStyle - to the second; a record mesh binds
+   * the first only, its records whatever the stage reads (a
+   * position/yaw/scale record beats four vec4 columns for a JS-stepped
+   * fleet, and the composed uModel still places the whole population).
    */
-  instanceAttributes?: InstanceAttribute[]
-  /** The style record a fresh instance starts with (the slot-1
-   * attributes' floats, in order); default zeros. The identity of
+  instanceBuffers?: VertexBufferLayout[]
+  /** The style record a fresh instance starts with (the second instance
+   * buffer's floats, in order); default zeros. The identity of
    * whatever the stage does with the record - white for a multiplied
    * tint. */
   instanceStyle?: ArrayLike<number>
@@ -1173,37 +1177,45 @@ export function shaderMaterialClass(opts: ShaderMaterialClassOptions): ShaderMat
   // from createRecordMesh naming neither the attribute nor the format.
   // Checked where the name is written instead. The instance records the
   // meshes here write are Float32Arrays (instanceStride counts floats),
-  // so an instance attribute is float32-family; the packed formats are
-  // the engine's and reachable through core's own pipeline API.
-  for (let attr of opts.instanceAttributes ?? []) {
-    if (!(attr.format in VERTEX_FORMATS) || !isFloatFormat(attr.format)) {
-      throw new Error(
-        "shaderMaterial unsupported instance attribute format '" +
-          String(attr.format) +
-          "' for " +
-          attr.name +
-          " (expected " +
-          Object.keys(VERTEX_FORMATS).filter(isFloatFormat as (f: string) => boolean).join(", ") +
-          ")",
-      )
+  // so an instance attribute is float32-family and a layout is tightly
+  // packed; the packed formats and explicit strides are the engine's and
+  // reachable through core's own pipeline API.
+  for (let layout of opts.instanceBuffers ?? []) {
+    if (layout.stepMode === "vertex") throw new Error("shaderMaterial instanceBuffers are instance-step by definition; drop stepMode")
+    if (layout.arrayStride !== undefined || layout.attributes.some(a => a.offset !== undefined)) {
+      throw new Error("shaderMaterial instanceBuffers are tightly packed records; drop arrayStride and offset")
+    }
+    for (let attr of layout.attributes) {
+      if (!(attr.format in VERTEX_FORMATS) || !isFloatFormat(attr.format)) {
+        throw new Error(
+          "shaderMaterial unsupported instance attribute format '" +
+            String(attr.format) +
+            "' for " +
+            attr.name +
+            " (expected " +
+            Object.keys(VERTEX_FORMATS).filter(isFloatFormat as (f: string) => boolean).join(", ") +
+            ")",
+        )
+      }
     }
   }
-  // An empty list declares nothing - same as absent (the engine requires an
-  // instance buffer exactly when attributes are declared).
-  let instanceAttributes = opts.instanceAttributes?.length ? opts.instanceAttributes.map(a => ({ ...a })) : undefined
-  // The shadowVertex depth pass binds the instance slots its stage reads
-  // from - the record slot always (a stage reading none of it cannot
-  // place the instances, an error here), a style slot only when the
-  // stage names one of its attributes - and declares each bound slot's
-  // whole layout, since a slot's stride is the record's (an unread
-  // attribute in a bound slot is inactive, like an extra geometry channel).
-  let shadowAttributes: InstanceAttribute[] | undefined
-  if (opts.shadowVertex !== undefined && instanceAttributes !== undefined) {
+  // An empty list declares nothing - same as absent (the engine requires a
+  // buffer exactly when a layout is declared).
+  let instanceBuffers = opts.instanceBuffers?.length ? opts.instanceBuffers.map(b => ({ stepMode: "instance" as const, attributes: b.attributes.map(a => ({ ...a })) })) : undefined
+  // The shadowVertex depth pass binds the instance buffers its stage reads
+  // from - the record buffer always (a stage reading none of it cannot
+  // place the instances, an error here), the style buffer only when the
+  // stage names one of its attributes - and declares each bound buffer's
+  // whole layout, since a buffer's stride is the record's (an unread
+  // attribute in a bound buffer is inactive, like an extra geometry
+  // channel).
+  let shadowBuffers: VertexBufferLayout[] | undefined
+  if (opts.shadowVertex !== undefined && instanceBuffers !== undefined) {
     let source = opts.shadowVertex
-    let named = (a: InstanceAttribute) => new RegExp("\\b" + a.name + "\\b").test(source)
-    let slots = new Set(instanceAttributes.filter(named).map(a => a.slot ?? 0))
-    if (!slots.has(0)) throw new Error("shaderMaterial shadowVertex must read the slot-0 instance attributes it places instances by")
-    shadowAttributes = instanceAttributes.filter(a => slots.has(a.slot ?? 0))
+    let named = (a: VertexAttribute) => new RegExp("\\b" + a.name + "\\b").test(source)
+    let read = instanceBuffers.map(b => b.attributes.some(named))
+    if (!read[0]) throw new Error("shaderMaterial shadowVertex must read the first instance buffer's attributes, which place the instances")
+    shadowBuffers = instanceBuffers.filter((_, i) => read[i])
   }
   // The shadowVertex depth material: one class and one shared instance,
   // built the first time a caster of this class meets a shadow view.
@@ -1216,7 +1228,7 @@ export function shaderMaterialClass(opts: ShaderMaterialClassOptions): ShaderMat
         vertex: opts.shadowVertex,
         fragment: SHADOW_DEPTH_FRAGMENT,
         cull: shadowCull(cull),
-        instanceAttributes: shadowAttributes,
+        instanceBuffers: shadowBuffers,
         label: (opts.label ?? "shader-material") + "-shadow",
       })
       classShadow = shadowClass.instance()
@@ -1235,16 +1247,17 @@ export function shaderMaterialClass(opts: ShaderMaterialClassOptions): ShaderMat
   }
   // What the program reads from the GEOMETRY: the engine's reflection of
   // the linked program minus the per-instance names (those come from the
-  // record buffer, declared on the pipeline beside the layout).
+  // instance buffers, declared on the pipeline after the layout).
   let attributes = (): VertexAttribute[] =>
-    programAttributes(programFor()).filter(a => !instanceAttributes?.some(i => i.name === a.name))
-  let pipelineFor = (layout: VertexLayout | undefined, topology: Topology): RenderPipelineId => {
-    let key = layoutKey(layout) + "|" + topology
+    programAttributes(programFor()).filter(a => !instanceBuffers?.some(b => b.attributes.some(i => i.name === a.name)))
+  let pipelineFor = (geometry: Geometry, topology: Topology): RenderPipelineId => {
+    let key = geometryKey(geometry) + "|" + topology
     let pipeline = pipelines.get(key)
     if (pipeline === undefined) {
+      // One vertex-step layout per geometry stream, the instance buffers
+      // after them.
       pipeline = createRenderPipeline(programFor(), {
-        attributes: layoutAttributes(layout),
-        instanceAttributes,
+        buffers: [...geometryLayouts(geometry).map(attributes => ({ attributes })), ...(instanceBuffers ?? [])],
         depth,
         // depthWrite needs a depth buffer, so the transparent default
         // only applies when there is one.
@@ -1265,7 +1278,7 @@ export function shaderMaterialClass(opts: ShaderMaterialClassOptions): ShaderMat
         skinned,
         attributes,
         transparent,
-        instanceAttributes,
+        instanceBuffers,
         instanceStyle: opts.instanceStyle,
         pipeline: pipelineFor,
         params: inst.params ?? {},

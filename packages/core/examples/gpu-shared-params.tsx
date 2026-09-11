@@ -67,10 +67,10 @@ function App() {
   let vs = compileShader("vertex", VERTEX, { header: true })
   let attrs = [{ name: "aPos", format: "float32x2" as const }]
   let tint = createRenderPipeline(linkProgram(vs, compileShader("fragment", FRAGMENT_TINT, { header: true })), {
-    attributes: attrs,
+    buffers: [{ attributes: attrs }],
   })
   let mapped = createRenderPipeline(linkProgram(vs, compileShader("fragment", FRAGMENT_MAP, { header: true })), {
-    attributes: attrs,
+    buffers: [{ attributes: attrs }],
   })
 
   // 2x2 patterns, nearest + repeat, so gl_FragCoord tiling shows hard cells.
@@ -99,12 +99,12 @@ function App() {
     if (i === 1 || i === 5) {
       // Patterned entries read the shared uMap; the one at i === 5 brings
       // its own binding and keeps its stripes through every shared swap.
-      addDraw(target, mapped, { uCenter }, i === 5 ? { buffer: quad, textures: { uMap: stripes } } : { buffer: quad })
+      addDraw(target, mapped, { uCenter }, i === 5 ? { buffers: [quad], textures: { uMap: stripes } } : { buffers: [quad] })
     } else if (i === 3) {
       // The override quad: its own uTint beats the shared color cycle.
-      addDraw(target, tint, { uCenter, uTint: [1, 0.62, 0.1, 1] }, { buffer: quad })
+      addDraw(target, tint, { uCenter, uTint: [1, 0.62, 0.1, 1] }, { buffers: [quad] })
     } else {
-      addDraw(target, tint, { uCenter }, { buffer: quad })
+      addDraw(target, tint, { uCenter }, { buffers: [quad] })
     }
   }
 

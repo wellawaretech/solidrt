@@ -11,7 +11,7 @@ use super::pass::{PassInput, ResolvedDraw};
 use super::program::{RenderPipeline, ShaderProgram};
 use super::storage::{DepthAttachment, Msaa};
 use super::{prev_buffer, prev_vertex_array};
-use crate::gpu::vocab::{AttrFormat, DrawRange, IndexFormat, ParamValue, PipelineDesc, TextureBinding};
+use crate::gpu::vocab::{BufferLayout, DrawRange, IndexFormat, ParamValue, PipelineDesc, TextureBinding};
 
 /// The buffers one draw entry fetches through, resolved from registry ids to
 /// live Rc clones (the raster-side counterpart of `DrawSpec`'s id fields).
@@ -20,16 +20,25 @@ use crate::gpu::vocab::{AttrFormat, DrawRange, IndexFormat, ParamValue, Pipeline
 /// registry ids stay alongside for `reads_buffer` and introspection.
 #[derive(Default)]
 pub struct EntryBuffers {
-  /// The interleaved vertex buffer the pipeline's `attributes` describe;
-  /// None when the pipeline is attributeless.
-  pub vertex: Option<(Rc<GpuBuffer>, u64)>,
+  /// One buffer per layout the pipeline declares, in declaration order,
+  /// each captured in the VAO at its layout's step (divisor 0 per vertex,
+  /// 1 per instance); empty when the pipeline is attributeless.
+  pub buffers: Vec<(Rc<GpuBuffer>, u64)>,
   /// Index binding: present = the entry draws indexed; the buffer's
   /// ELEMENT_ARRAY binding is captured in the entry's VAO at build time.
   pub index: Option<(Rc<GpuBuffer>, u64, IndexFormat)>,
-  /// The per-instance buffers, one per instance slot the pipeline's
-  /// `instance_attributes` declare (dense from 0), each captured in the
-  /// VAO at divisor 1; empty when it declares none.
-  pub instances: Vec<(Rc<GpuBuffer>, u64)>,
+}
+
+impl EntryBuffers {
+  /// Whether the entry reads registry buffer `id` in any role.
+  pub fn reads(&self, id: u64) -> bool {
+    self.buffers.iter().any(|(_, bid)| *bid == id) || self.index.as_ref().is_some_and(|(_, iid, _)| *iid == id)
+  }
+
+  /// The bound buffers' registry ids in layout order.
+  pub fn ids(&self) -> Vec<u64> {
+    self.buffers.iter().map(|(_, id)| *id).collect()
+  }
 }
 
 /// One draw of a mesh target's ordered list: the pipeline it draws with
@@ -44,7 +53,7 @@ pub(super) struct DrawEntry {
   /// fused create path, whose pipeline is anonymous and dies with the target.
   pub(super) pipeline_id: Option<u64>,
   pub(super) vao: glow::VertexArray,
-  /// The entry's resolved buffers (vertex, index, instance): what the VAO
+  /// The entry's resolved buffers (layouts and index): what the VAO
   /// reads, and what buffer writes re-render through (see `reads_buffer`).
   pub(super) buffers: EntryBuffers,
   /// Resolved and bounds-checked UI-side (see `resolve_draw_range`) before
@@ -142,37 +151,30 @@ impl MeshState {
   }
 }
 
-unsafe fn record_layout(
-  gl: &glow::Context,
-  program: &ShaderProgram,
-  attributes: &[(String, AttrFormat)],
-  divisor: u32,
-) {
-  let stride = crate::gpu::vocab::vertex_stride(attributes);
-  let mut offset = 0i32;
-  for (name, fmt) in attributes {
+unsafe fn record_layout(gl: &glow::Context, program: &ShaderProgram, layout: &BufferLayout) {
+  let divisor = layout.step.divisor();
+  for attr in &layout.attributes {
     // None means the shader does not (actively) use the attribute; that
     // is fine, the bytes are simply skipped over via the stride.
-    if let Some(loc) = gl.get_attrib_location(program.program, name) {
+    if let Some(loc) = gl.get_attrib_location(program.program, &attr.name) {
+      let fmt = attr.format;
       gl.enable_vertex_attrib_array(loc);
-      gl.vertex_attrib_pointer_f32(loc, fmt.components(), fmt.gl_type(), fmt.normalized(), stride, offset);
+      gl.vertex_attrib_pointer_f32(loc, fmt.components(), fmt.gl_type(), fmt.normalized(), layout.stride, attr.offset);
       if divisor != 0 {
         gl.vertex_attrib_divisor(loc, divisor);
       }
     }
-    offset += fmt.bytes();
   }
 }
 
-/// Record a pipeline's vertex and instance layouts against an entry's
-/// concrete buffers in a fresh VAO: `desc.attributes` over the vertex buffer
-/// (divisor 0), `desc.instance_attributes` over the instance buffer (divisor
-/// 1 - the divisor is VAO state in ES 3.0, like the attribute pointers). The
-/// index buffer, when given, is bound as ELEMENT_ARRAY while the VAO is
-/// current: that binding is VAO state too, so it is captured here once and
-/// needs no per-draw rebinding (and no explicit save - restoring the
-/// previous VAO restores its own element binding). Restores the VAO and
-/// array-buffer bindings it touches.
+/// Record a pipeline's buffer layouts against an entry's concrete buffers
+/// in a fresh VAO: layout i over `buffers[i]` at its step's divisor (the
+/// divisor is VAO state in ES 3.0, like the attribute pointers). The index
+/// buffer, when given, is bound as ELEMENT_ARRAY while the VAO is current:
+/// that binding is VAO state too, so it is captured here once and needs no
+/// per-draw rebinding (and no explicit save - restoring the previous VAO
+/// restores its own element binding). Restores the VAO and array-buffer
+/// bindings it touches.
 pub(super) fn build_vao(
   gl: &glow::Context,
   program: &ShaderProgram,
@@ -184,19 +186,9 @@ pub(super) fn build_vao(
     let prev_ab = gl.get_parameter_i32(glow::ARRAY_BUFFER_BINDING);
     let vao = gl.create_vertex_array().map_err(|e| format!("glGenVertexArrays failed: {e}"))?;
     gl.bind_vertex_array(Some(vao));
-    if let Some((buffer, _)) = &buffers.vertex {
+    for (layout, (buffer, _)) in desc.buffers.iter().zip(buffers.buffers.iter()) {
       gl.bind_buffer(glow::ARRAY_BUFFER, Some(buffer.vbo));
-      record_layout(gl, program, &desc.attributes, 0);
-    }
-    for (slot, (buffer, _)) in buffers.instances.iter().enumerate() {
-      let layout: Vec<(String, AttrFormat)> = desc
-        .instance_attributes
-        .iter()
-        .filter(|(_, _, s)| *s as usize == slot)
-        .map(|(n, f, _)| (n.clone(), *f))
-        .collect();
-      gl.bind_buffer(glow::ARRAY_BUFFER, Some(buffer.vbo));
-      record_layout(gl, program, &layout, 1);
+      record_layout(gl, program, layout);
     }
     if let Some((index, _, _)) = &buffers.index {
       gl.bind_buffer(glow::ELEMENT_ARRAY_BUFFER, Some(index.vbo));
@@ -207,20 +199,18 @@ pub(super) fn build_vao(
   }
 }
 
-/// The buffer-presence contract between a pipeline and an entry: a declared
-/// layout needs its buffer, and an instance buffer without a declared layout
-/// would never be read. Validated at the call site against the UI mirrors;
-/// this copy is the raster-side backstop for the create paths.
+/// The buffer-presence contract between a pipeline and an entry: one
+/// buffer per declared layout, no more (a buffer without a layout would
+/// never be read). Validated at the call site against the UI mirrors; this
+/// copy is the raster-side backstop for the create paths.
 pub(super) fn check_entry_buffers(desc: &PipelineDesc, buffers: &EntryBuffers) -> Result<(), String> {
-  if !desc.attributes.is_empty() && buffers.vertex.is_none() {
-    return Err("pipeline declares attributes but no vertex buffer".to_string());
+  let declared = desc.buffers.len();
+  let bound = buffers.buffers.len();
+  if bound < declared {
+    return Err(format!("pipeline declares {declared} buffer layout(s) but the entry binds {bound} buffer(s)"));
   }
-  let slots = desc.instance_attributes.iter().map(|(_, _, s)| *s as usize + 1).max().unwrap_or(0);
-  if slots > buffers.instances.len() {
-    return Err("pipeline declares instanceAttributes but no instance buffer".to_string());
-  }
-  if slots < buffers.instances.len() {
-    return Err("pipeline declares no instanceAttributes; the instance buffer would never be read".to_string());
+  if bound > declared {
+    return Err(format!("the entry binds {bound} buffer(s) but the pipeline declares {declared} layout(s); the rest would never be read"));
   }
   Ok(())
 }
@@ -228,13 +218,10 @@ pub(super) fn check_entry_buffers(desc: &PipelineDesc, buffers: &EntryBuffers) -
 /// Drop an entry's uses of its buffers, deleting each GL buffer when the
 /// entry held the last reference (see `release_buffer`).
 pub(super) fn release_entry_buffers(gl: &glow::Context, buffers: EntryBuffers) {
-  if let Some((buffer, _)) = buffers.vertex {
+  for (buffer, _) in buffers.buffers {
     release_buffer(gl, buffer);
   }
   if let Some((buffer, _, _)) = buffers.index {
-    release_buffer(gl, buffer);
-  }
-  for (buffer, _) in buffers.instances {
     release_buffer(gl, buffer);
   }
 }

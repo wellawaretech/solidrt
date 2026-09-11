@@ -36,7 +36,7 @@
 // and pointer subsystems are scene-shadows.ts / scene-pointer.ts,
 // built here with the scene's seams as their deps.
 
-import { addDraw, createCubeDrawTarget, createDrawTarget, depthTexture, destroyProgram, destroyRenderPipeline, destroyTexture, removeDraw, renderTarget, setDrawBuffers, setDrawOrder, setDrawParams, setDrawTextures, setTargetParams, setTargetRect, setTargetSize, setTargetTextures } from "@solidrt/core/gpu"
+import { addDraw, createCubeDrawTarget, createDrawTarget, depthTexture, destroyProgram, destroyRenderPipeline, destroyTexture, removeDraw, renderTarget, setDrawBuffers, setDrawOrder, setDrawParams, setDrawRange, setDrawTextures, setTargetParams, setTargetRect, setTargetSize, setTargetTextures } from "@solidrt/core/gpu"
 import * as spatial from "flux:spatial"
 import type { Impact as CoreImpact, NodeId, QueryFilter } from "flux:spatial"
 import type { DrawId, FilterMode, ProgramId, RenderPipelineId, ShaderParams, TextureId, WrapMode } from "@solidrt/core/gpu"
@@ -50,7 +50,7 @@ import { cameraParams, cameraState, ensureCamera, makeCamera, updateCamera } fro
 import type { Camera, CameraState, CameraUpdate } from "./camera.ts"
 import { makeShadowSystem } from "./scene-shadows.ts"
 import { makePointerInput } from "./scene-pointer.ts"
-import { geometryBounds, geometryTopology, layoutKey, validateGeometry } from "./geometry.ts"
+import { geometryBounds, geometryKey, geometryTopology, validateGeometry } from "./geometry.ts"
 import type { Geometry } from "./geometry.ts"
 import { acquireGeometryBuffers, releaseGeometryBuffers } from "./geometry-gpu.ts"
 import { backgroundPipeline, missingAttributes, SKYBOX_FRAGMENT } from "./material.ts"
@@ -902,14 +902,20 @@ export type Scene = {
 // missing channel would have no home) - an error, like the rest of the
 // strict entry path. Extra channels are fine.
 function checkLayout(material: Material, geometry: Geometry, what: string): void {
-  let missing = missingAttributes(material, geometry.layout)
+  let missing = missingAttributes(material, geometry)
   if (missing.length > 0) {
     throw new Error(
-      what + " reads attributes the geometry layout (" + layoutKey(geometry.layout) + ") lacks: " +
+      what + " reads attributes the geometry layout (" + geometryKey(geometry) + ") lacks: " +
         missing.map(a => a.name + " " + a.format).join(", ") +
         " - add the channel with withAttribute()/withColors(), or use a material that does not read it",
     )
   }
+}
+
+// The index range a mesh's entries draw: its own (setDrawRange) or the
+// whole index list.
+function meshRange(mesh: Mesh): { firstIndex: number; indexCount: number } {
+  return mesh._range === null ? { firstIndex: 0, indexCount: mesh.geometry.indices.length } : { firstIndex: mesh._range.first, indexCount: mesh._range.count }
 }
 
 // An entry's initial params. The uNormal seed keys off the material flag
@@ -1308,12 +1314,12 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     // so added live it would draw at the seeded identity until then. The
     // mismatch branch in sync() turns it on in the same pass that writes
     // uModel.
-    mesh._entry = addDraw(texture, mesh.material.pipeline(mesh.geometry.layout, geometryTopology(mesh.geometry)), entrySeed(mesh.material, mesh._params), {
-      buffer: bufs.buffer,
+    mesh._entry = addDraw(texture, mesh.material.pipeline(mesh.geometry, geometryTopology(mesh.geometry)), entrySeed(mesh.material, mesh._params), {
+      buffers: [...bufs.buffers, ...(inst !== null ? instanceBinding(mesh.material, inst) : [])],
       indexBuffer: bufs.index,
       indexFormat: bufs.indexFormat,
+      ...meshRange(mesh),
       textures: mesh._textures !== null ? { ...mesh.material.textures, ...mesh._textures } : mesh.material.textures,
-      ...(inst !== null ? instanceBinding(mesh.material, inst) : {}),
       instanceCount: 0,
     })
     // The core turns the entry on (with the world matrix) at the next
@@ -1349,20 +1355,20 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     // instanced depth pass), whose attributes must fit the records like
     // the main material's did at add().
     if (v.override !== null && inst !== null) {
-      if (material.instanceAttributes === undefined) return
+      if (material.instanceBuffers === undefined) return
       checkInstancePairing(material, inst, "Shadow material")
     }
     let bufs = mesh._buffers!
-    let entry = addDraw(v.texture, material.pipeline(mesh.geometry.layout, geometryTopology(mesh.geometry)), entrySeed(material, v.override !== null ? null : mesh._params), {
-      buffer: bufs.buffer,
+    let entry = addDraw(v.texture, material.pipeline(mesh.geometry, geometryTopology(mesh.geometry)), entrySeed(material, v.override !== null ? null : mesh._params), {
+      buffers: [...bufs.buffers, ...(inst !== null ? instanceBinding(material, inst) : [])],
       indexBuffer: bufs.index,
       indexFormat: bufs.indexFormat,
+      ...meshRange(mesh),
       // The mesh's own bindings ride with its own material and with any
       // skinned stand-in (a skinned shadow variant declares uBones and
       // needs the mesh's palette); other override programs may not
       // declare the names, and per-entry bindings validate strictly.
       textures: (material === mesh.material || material.skinned === true) && mesh._textures !== null ? { ...material.textures, ...mesh._textures } : material.textures,
-      ...(inst !== null ? instanceBinding(material, inst) : {}),
       instanceCount: 0,
     })
     spatial.bindDraw(mesh._node!, v.texture, entry, material.normalMatrix === true, inst !== null ? inst.count : 1)
@@ -1675,9 +1681,9 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       // other (or a record stride from a different attribute list) would
       // bind garbage - errors here, at add().
       let inst = mesh._instances
-      if (mesh.material.instanceAttributes !== undefined && inst === null) {
+      if (mesh.material.instanceBuffers !== undefined && inst === null) {
         throw new Error(
-          "Material declares instanceAttributes - create its meshes with createInstancedMesh or createRecordMesh, not createMesh",
+          "Material declares instanceBuffers - create its meshes with createInstancedMesh or createRecordMesh, not createMesh",
         )
       }
       if (inst !== null) checkInstancePairing(mesh.material, inst, "Mesh material")
@@ -1803,14 +1809,29 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       // The entries keep their range (at most the old capacity, so the
       // larger buffers always pass the swap's bounds check); the caller
       // destroys the old buffers after this, which the entries held alive
-      // until now. Each entry swaps the slots its own material binds.
+      // until now. Each entry swaps the buffers its own material binds
+      // (the full list: the geometry's buffer stays, the instance
+      // buffers follow the population).
       let inst = mesh._instances
-      if (mesh._buffers !== null && !disposed && inst !== null) {
-        if (mesh._entry !== null) setDrawBuffers(texture, mesh._entry, instanceBinding(mesh.material, inst))
+      let bufs = mesh._buffers
+      if (bufs !== null && !disposed && inst !== null) {
+        if (mesh._entry !== null) setDrawBuffers(texture, mesh._entry, { buffers: [...bufs.buffers, ...instanceBinding(mesh.material, inst)] })
         for (let v of views) {
           let entry = v.entries.get(mesh)
-          if (entry !== undefined) setDrawBuffers(v.texture, entry, instanceBinding(viewMaterial(v, mesh), inst))
+          if (entry !== undefined) setDrawBuffers(v.texture, entry, { buffers: [...bufs.buffers, ...instanceBinding(viewMaterial(v, mesh), inst)] })
         }
+      }
+    },
+    _setRange(mesh) {
+      // The index range travels to every entry of the mesh; the instance
+      // count (the core's visibility switch) is not in the update, so it
+      // keeps whatever the core last wrote.
+      if (mesh._buffers === null || disposed) return
+      let range = meshRange(mesh)
+      if (mesh._entry !== null) setDrawRange(texture, mesh._entry, range)
+      for (let v of views) {
+        let entry = v.entries.get(mesh)
+        if (entry !== undefined) setDrawRange(v.texture, entry, range)
       }
     },
     _setStyle(mesh) {

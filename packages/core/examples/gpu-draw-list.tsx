@@ -62,20 +62,20 @@ function App() {
   let vs = compileShader("vertex", VERTEX, { header: true })
   let attrs = [{ name: "aPos", format: "float32x2" as const }]
   let warm = createRenderPipeline(linkProgram(vs, compileShader("fragment", FRAGMENT_WARM, { header: true })), {
-    attributes: attrs,
+    buffers: [{ attributes: attrs }],
     depth: true,
   })
   let cool = createRenderPipeline(linkProgram(vs, compileShader("fragment", FRAGMENT_COOL, { header: true })), {
-    attributes: attrs,
+    buffers: [{ attributes: attrs }],
     depth: true,
   })
   let pulse = createRenderPipeline(linkProgram(vs, compileShader("fragment", FRAGMENT_PULSE, { header: true })), {
-    attributes: attrs,
+    buffers: [{ attributes: attrs }],
   })
 
   let target = createDrawTarget(512, 512, null, { depth: true, clearColor: [0.04, 0.04, 0.08, 1], label: "orbits" })
-  let warmDraw = addDraw(target, warm, { uAngle: 0 }, { buffer: triangle })
-  let coolDraw = addDraw(target, cool, { uAngle: Math.PI }, { buffer: triangle })
+  let warmDraw = addDraw(target, warm, { uAngle: 0 }, { buffers: [triangle] })
+  let coolDraw = addDraw(target, cool, { uAngle: Math.PI }, { buffers: [triangle] })
 
   // A third entry blinks in and out every second: add/remove are ordinary
   // per-frame-affordable writes, and a removed DrawId simply retires. Its
@@ -91,7 +91,7 @@ function App() {
     setDrawParams(target, coolDraw, { uAngle: t + Math.PI })
     let wantPulse = Math.floor(t) % 2 === 0
     if (wantPulse && pulseDraw === null) {
-      pulseDraw = addDraw(target, pulse, { uAngle: t * 0.3, uPhase: t * 5 }, { buffer: triangle, before: warmDraw })
+      pulseDraw = addDraw(target, pulse, { uAngle: t * 0.3, uPhase: t * 5 }, { buffers: [triangle], before: warmDraw })
     } else if (!wantPulse && pulseDraw !== null) {
       removeDraw(target, pulseDraw)
       pulseDraw = null

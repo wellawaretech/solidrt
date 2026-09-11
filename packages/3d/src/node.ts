@@ -148,6 +148,8 @@ export type SceneHooks = {
   _setCount(mesh: Mesh): void
   /** Re-point the mesh's entries at its (replaced) instance buffers. */
   _setBuffer(mesh: Mesh): void
+  /** The mesh's draw range changed (setDrawRange): apply it to its entries. */
+  _setRange(mesh: Mesh): void
   /** The instanced mesh's style mirror has a dirty range: publish it at
    * the next sync. */
   _setStyle(mesh: InstancedMesh): void

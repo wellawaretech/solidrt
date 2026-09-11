@@ -34,19 +34,20 @@ pub enum OrderKey {
   Projected { offset: usize, direction: [f32; 3] },
 }
 
-/// One entry's declared instance order: the key source, which instance
-/// slot's records hold it, and the direction of the sort. Ascending draws
+/// One entry's declared instance order: the key source, which buffer's
+/// records hold it, and the direction of the sort. Ascending draws
 /// smallest key first; descending is the back-to-front alpha case when
 /// larger keys are nearer.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct InstanceOrder {
   pub key: OrderKey,
   pub descending: bool,
-  /// The instance slot whose records hold the key (default 0). On a
-  /// multi-buffer entry every slot gathers under the key slot's
-  /// permutation, whoever writes it - a core-written pose slot keyed by
-  /// world y, or an app-written style slot keyed by an explicit sort field.
-  pub key_slot: usize,
+  /// The pipeline buffer index whose records hold the key; None = the
+  /// first instance-step buffer. On an entry with several instance-step
+  /// buffers every one gathers under the key buffer's permutation,
+  /// whoever writes it - a core-written pose buffer keyed by world y, or
+  /// an app-written style buffer keyed by an explicit sort field.
+  pub key_buffer: Option<usize>,
   /// The retained-copy strategy, for write-once populations (splat
   /// clouds): the registry keeps a CPU copy of each slot's published
   /// records, and a direction update re-sorts and republishes them
@@ -58,27 +59,25 @@ pub struct InstanceOrder {
 impl InstanceOrder {
   /// Parse the API-boundary shape: `field` or `position` are float offsets
   /// into one instance record (exactly one of the two), `direction` is
-  /// required with `position` and rejected with `field`, `slot` names the
-  /// instance slot holding the key (default 0), `retain` opts into the
-  /// retained-copy strategy (position keys only). Stored offsets are bytes.
+  /// required with `position` and rejected with `field`, `buffer` names the
+  /// pipeline buffer index holding the key (default: the first
+  /// instance-step buffer), `retain` opts into the retained-copy strategy
+  /// (position keys only). Stored offsets are bytes.
   pub fn parse(
     field: Option<f64>,
     position: Option<f64>,
     direction: Option<[f32; 3]>,
     descending: bool,
-    slot: Option<f64>,
+    buffer: Option<f64>,
     retain: bool,
   ) -> Result<InstanceOrder, String> {
-    let key_slot = match slot {
-      None => 0,
-      Some(s) => {
-        if !(s.is_finite() && s >= 0.0 && s.fract() == 0.0 && (s as usize) < super::vocab::MAX_INSTANCE_SLOTS) {
-          return Err(format!(
-            "instanceOrder slot must be an integer 0..{}, got {s}",
-            super::vocab::MAX_INSTANCE_SLOTS - 1
-          ));
+    let key_buffer = match buffer {
+      None => None,
+      Some(b) => {
+        if !(b.is_finite() && b >= 0.0 && b.fract() == 0.0 && (b as usize) < super::vocab::MAX_BUFFERS) {
+          return Err(format!("instanceOrder buffer must be an integer 0..{}, got {b}", super::vocab::MAX_BUFFERS - 1));
         }
-        s as usize
+        Some(b as usize)
       }
     };
     let key = match (field, position) {
@@ -103,7 +102,7 @@ impl InstanceOrder {
         OrderKey::Projected { offset: float_offset(p, "position")?, direction }
       }
     };
-    Ok(InstanceOrder { key, descending, key_slot, retain })
+    Ok(InstanceOrder { key, descending, key_buffer, retain })
   }
 
   /// The key bytes must sit inside one record of `stride` bytes: a field key

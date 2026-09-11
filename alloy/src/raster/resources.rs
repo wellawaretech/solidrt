@@ -10,7 +10,7 @@ use super::RasterState;
 use crate::gl;
 use crate::gl::{GpuTexture, RenderPipeline, ShaderProgram, Timed};
 use crate::gpu::{
-  AttributeTable, GpuBufferInfo, GpuPipelineInfo, GpuProgramInfo, GpuRegionInfo, GpuRenderPipelineInfo, GpuResources,
+  AttributeTable, BufferLayout, GpuBufferInfo, GpuBufferLayoutInfo, GpuPipelineInfo, GpuProgramInfo, GpuRegionInfo, GpuRenderPipelineInfo, GpuResources,
   GpuTextureInfo, GpuWindowShaderInfo, PipelineDesc, SamplerState, TextureFormat, TextureShape, UniformTable,
 };
 use std::rc::Rc;
@@ -229,10 +229,9 @@ impl RasterState {
           },
           program_id: if flat { shader.program_id() } else { None },
           pipeline_id: entry0.as_ref().and_then(|e| e.pipeline_id),
-          buffer_id: entry0.as_ref().and_then(|e| e.buffer_id),
+          buffer_ids: entry0.as_ref().map(|e| e.buffer_ids.clone()).unwrap_or_default(),
           index_buffer_id: entry0.as_ref().and_then(|e| e.index_buffer_id),
           index_format: entry0.as_ref().and_then(|e| e.index_format),
-          instance_buffer_ids: entry0.as_ref().map(|e| e.instance_buffer_ids.clone()).unwrap_or_default(),
           topology: entry0.as_ref().map(|e| e.topology),
           draw_count: entry0.as_ref().map(|e| e.vertex_count),
           first_vertex: entry0.as_ref().map(|e| e.first_vertex),
@@ -242,20 +241,7 @@ impl RasterState {
           depth_write: entry0.as_ref().map(|e| e.depth_write),
           blend: entry0.as_ref().map(|e| e.blend),
           cull: entry0.as_ref().map(|e| e.cull),
-          attributes: if flat {
-            shader.attributes().iter().map(|(name, fmt)| (name.clone(), fmt.name().to_string())).collect()
-          } else {
-            Vec::new()
-          },
-          instance_attributes: if flat {
-            shader
-              .instance_attributes()
-              .iter()
-              .map(|(name, fmt, slot)| (name.clone(), fmt.name().to_string(), *slot))
-              .collect()
-          } else {
-            Vec::new()
-          },
+          buffers: if flat { layout_infos(shader.buffer_layouts()) } else { Vec::new() },
           // For a draw target the flat textures/params fields carry its
           // shared (target-level) bindings and params; the per-entry ones
           // live in `draws`.
@@ -286,12 +272,7 @@ impl RasterState {
           cull: crate::gpu::cull_name(desc.cull),
           depth: desc.depth.is_some(),
           depth_write: desc.depth.map_or(true, |d| d.write),
-          attributes: desc.attributes.iter().map(|(name, fmt)| (name.clone(), fmt.name().to_string())).collect(),
-          instance_attributes: desc
-            .instance_attributes
-            .iter()
-            .map(|(name, fmt, slot)| (name.clone(), fmt.name().to_string(), *slot))
-            .collect(),
+          buffers: layout_infos(&desc.buffers),
         }
       })
       .collect();
@@ -315,6 +296,18 @@ impl RasterState {
 
 /// `7 (bloom-h)` with a label, `7` without: the one spelling for a labeled id
 /// in raster-side messages.
+/// The reported form of a pipeline's buffer layouts.
+fn layout_infos(layouts: &[BufferLayout]) -> Vec<GpuBufferLayoutInfo> {
+  layouts
+    .iter()
+    .map(|layout| GpuBufferLayoutInfo {
+      step: layout.step.name(),
+      stride: layout.stride,
+      attributes: layout.attributes.iter().map(|a| (a.name.clone(), a.format.name().to_string(), a.offset)).collect(),
+    })
+    .collect()
+}
+
 fn describe(id: u64, label: &Option<String>) -> String {
   match label {
     Some(label) => format!("{id} ({label})"),

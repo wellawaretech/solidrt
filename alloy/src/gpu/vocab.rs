@@ -326,31 +326,108 @@ pub struct DepthState {
   pub write: bool,
 }
 
+/// Whether a buffer's records advance per vertex or per instance: WebGPU's
+/// `GPUVertexStepMode`. Per instance is GL's vertex divisor 1: every
+/// vertex of instance N reads record N, so per-instance state rides in a
+/// buffer, not in uniforms.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum StepMode {
+  #[default]
+  Vertex,
+  Instance,
+}
+
+impl StepMode {
+  pub fn parse(s: &str) -> Result<Self, String> {
+    Ok(match s {
+      "vertex" => StepMode::Vertex,
+      "instance" => StepMode::Instance,
+      _ => return Err(format!("unsupported stepMode '{s}' (expected vertex|instance)")),
+    })
+  }
+
+  /// The string form `parse` accepts, for reporting back out.
+  pub fn name(self) -> &'static str {
+    match self {
+      StepMode::Vertex => "vertex",
+      StepMode::Instance => "instance",
+    }
+  }
+
+  pub(crate) fn divisor(self) -> u32 {
+    match self {
+      StepMode::Vertex => 0,
+      StepMode::Instance => 1,
+    }
+  }
+}
+
+/// One attribute of a buffer layout: the shader `in` it feeds (by name),
+/// its byte format, and its byte offset within the record.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct VertexAttr {
+  pub name: String,
+  pub format: AttrFormat,
+  pub offset: i32,
+}
+
+/// The layout of one buffer a pipeline reads: WebGPU's
+/// `GPUVertexBufferLayout`. A record of `stride` bytes per vertex or per
+/// instance (`step`), holding `attributes` at their offsets. Attributes the
+/// shader does not read are skipped over via the stride, and a layout may
+/// name only some of a record's fields (an explicit stride wider than the
+/// attributes' sum), which is how a depth pass reads positions alone out
+/// of a full vertex record.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BufferLayout {
+  pub step: StepMode,
+  pub stride: i32,
+  pub attributes: Vec<VertexAttr>,
+}
+
+impl BufferLayout {
+  /// A tightly packed layout from an ordered attribute list: offsets run
+  /// in list order and the stride is their byte sum (the defaults the API
+  /// boundary derives when a layout gives neither).
+  pub fn packed(step: StepMode, attributes: Vec<(String, AttrFormat)>) -> Self {
+    let mut offset = 0;
+    let attributes = attributes
+      .into_iter()
+      .map(|(name, format)| {
+        let attr = VertexAttr { name, format, offset };
+        offset += format.bytes();
+        attr
+      })
+      .collect();
+    BufferLayout { step, stride: offset, attributes }
+  }
+
+  /// The tightly packed vertex-step layout: what most pipelines declare.
+  pub fn vertex(attributes: Vec<(String, AttrFormat)>) -> Self {
+    Self::packed(StepMode::Vertex, attributes)
+  }
+
+  /// The tightly packed instance-step layout.
+  pub fn instance(attributes: Vec<(String, AttrFormat)>) -> Self {
+    Self::packed(StepMode::Instance, attributes)
+  }
+}
+
 /// The draw-state half of a render pipeline: everything about HOW a program
-/// draws (vertex layout, primitive assembly, blending, depth), as opposed to
-/// where it draws (the target's size, buffer, and clear are per-target).
+/// draws (buffer layouts, primitive assembly, blending, depth), as opposed
+/// to where it draws (the target's size, buffer, and clear are per-target).
 /// Vocabulary is typed here - callers parse strings at their own boundary
 /// (`AttrFormat::parse`, `Topology::parse`, `parse_blend`), so an invalid
 /// word fails at the call site, not on the raster thread.
 #[derive(Clone, Debug)]
 pub struct PipelineDesc {
-  /// One interleaved vertex, in buffer order: (attribute name, format).
-  /// Empty for attributeless rendering driven by gl_VertexID.
-  pub attributes: Vec<(String, AttrFormat)>,
-  /// The per-INSTANCE attributes as (name, format, buffer slot): fetched
-  /// from the entry's instance buffer for that slot with vertex divisor 1,
-  /// so every vertex of an instance reads the same record and the record
-  /// advances per instance. Attributes sharing a slot interleave into one
-  /// record in declaration order (WebGPU's stepMode "instance"); distinct
-  /// slots are distinct buffers with their own strides, which is what lets
-  /// two writers own instance data independently (a core-written pose
-  /// buffer beside a JS-written style buffer). Slots must be dense from 0
-  /// and below `MAX_INSTANCE_SLOTS` (`validate_instance_slots`). Names
-  /// share the vertex-attribute namespace (each is one `in` of the vertex
-  /// stage), so a name in both lists is rejected at pipeline creation.
-  /// Empty = no per-instance fetch; instances then differ only through
-  /// gl_InstanceID.
-  pub instance_attributes: Vec<(String, AttrFormat, u32)>,
+  /// The buffers the vertex stage fetches from, one layout per buffer in
+  /// binding order: an entry binds `buffers[i]` for layout i. Every
+  /// attribute name across the list is one `in` of the vertex stage, so a
+  /// name twice is rejected at pipeline creation. Empty for attributeless
+  /// rendering driven by gl_VertexID; without an instance-step layout,
+  /// instances differ only through gl_InstanceID.
+  pub buffers: Vec<BufferLayout>,
   pub topology: Topology,
   /// None = overwrite (the default); see `BlendMode`.
   pub blend: Option<BlendMode>,
@@ -361,58 +438,75 @@ pub struct PipelineDesc {
 
 impl Default for PipelineDesc {
   fn default() -> Self {
-    PipelineDesc {
-      attributes: Vec::new(),
-      instance_attributes: Vec::new(),
-      topology: Topology::Triangles,
-      blend: None,
-      depth: None,
-      cull: None,
-    }
+    PipelineDesc { buffers: Vec::new(), topology: Topology::Triangles, blend: None, depth: None, cull: None }
   }
 }
 
-/// Byte stride of one interleaved record for the given attribute list - a
-/// vertex of `attributes`, or an instance record of `instance_attributes`.
-pub fn vertex_stride(attributes: &[(String, AttrFormat)]) -> i32 {
-  attributes.iter().map(|(_, f)| f.bytes()).sum()
+impl PipelineDesc {
+  /// Every attribute the layouts declare, in buffer then offset order.
+  pub fn attribute_count(&self) -> usize {
+    self.buffers.iter().map(|b| b.attributes.len()).sum()
+  }
 }
 
-/// The most instance buffer slots a pipeline may declare. A hard engine
-/// cap so per-slot state stays fixed-size (and `Copy`) everywhere; two is
-/// the designed-for case (a core-owned pose buffer beside a JS-owned
-/// style buffer), four leaves headroom.
-pub const MAX_INSTANCE_SLOTS: usize = 4;
+/// The most buffers a pipeline may declare. A hard engine cap so per-buffer
+/// state stays fixed-size (and `Copy`) everywhere: a vertex stream or two
+/// beside a pose buffer and a style buffer is the designed-for case, eight
+/// leaves headroom.
+pub const MAX_BUFFERS: usize = 8;
 
-/// Per-slot byte strides of a pipeline's instance attributes (0 = the slot
-/// is unused). Callers index it by an entry's instance-buffer slot.
-pub fn instance_strides(attributes: &[(String, AttrFormat, u32)]) -> [usize; MAX_INSTANCE_SLOTS] {
-  let mut strides = [0usize; MAX_INSTANCE_SLOTS];
-  for (_, f, slot) in attributes {
-    if let Some(s) = strides.get_mut(*slot as usize) {
-      *s += f.bytes() as usize;
-    }
+/// The stride and step of one declared buffer, what the UI-side mirrors
+/// keep per pipeline to bound draw ranges without an RPC. Stride 0 = no
+/// layout at that index.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct BufferStride {
+  pub step: StepMode,
+  pub stride: usize,
+}
+
+/// The per-index strides of a pipeline's buffers (see `BufferStride`).
+pub fn buffer_strides(buffers: &[BufferLayout]) -> [BufferStride; MAX_BUFFERS] {
+  let mut strides = [BufferStride::default(); MAX_BUFFERS];
+  for (i, layout) in buffers.iter().enumerate().take(MAX_BUFFERS) {
+    strides[i] = BufferStride { step: layout.step, stride: layout.stride as usize };
   }
   strides
 }
 
-/// The slot contract of `PipelineDesc::instance_attributes`: every slot
-/// below `MAX_INSTANCE_SLOTS`, and the used slots dense from 0 (a gap
-/// would be an entry buffer nothing reads). Checked at both pipeline
-/// creates, so a bad layout throws at its call site.
-pub fn validate_instance_slots(attributes: &[(String, AttrFormat, u32)]) -> Result<(), String> {
-  let mut used = [false; MAX_INSTANCE_SLOTS];
-  for (name, _, slot) in attributes {
-    let i = *slot as usize;
-    if i >= MAX_INSTANCE_SLOTS {
-      return Err(format!("instance attribute '{name}' uses buffer slot {slot}; slots are 0..{MAX_INSTANCE_SLOTS}"));
-    }
-    used[i] = true;
+/// The layout contract of `PipelineDesc::buffers`: at most `MAX_BUFFERS`
+/// layouts, each with at least one attribute, a positive stride that is a
+/// multiple of 4, attribute offsets that are multiples of 4 and keep the
+/// attribute inside the record, and no attribute name twice across the
+/// list (each name is one shader `in`). Checked at both pipeline creates,
+/// so a bad layout throws at its call site.
+pub fn validate_buffers(buffers: &[BufferLayout]) -> Result<(), String> {
+  if buffers.len() > MAX_BUFFERS {
+    return Err(format!("{} buffer layouts; a pipeline declares at most {MAX_BUFFERS}", buffers.len()));
   }
-  let count = used.iter().rposition(|&u| u).map_or(0, |p| p + 1);
-  for (i, &u) in used[..count].iter().enumerate() {
-    if !u {
-      return Err(format!("instance buffer slots must be dense from 0: slot {i} has no attributes"));
+  let mut names: HashSet<&str> = HashSet::new();
+  for (i, layout) in buffers.iter().enumerate() {
+    if layout.attributes.is_empty() {
+      return Err(format!("buffer layout {i} declares no attributes"));
+    }
+    if layout.stride <= 0 || layout.stride % 4 != 0 {
+      return Err(format!("buffer layout {i} has arrayStride {}; a stride is a positive multiple of 4", layout.stride));
+    }
+    for attr in &layout.attributes {
+      if attr.offset < 0 || attr.offset % 4 != 0 {
+        return Err(format!("attribute '{}' has offset {}; an offset is a non-negative multiple of 4", attr.name, attr.offset));
+      }
+      if attr.offset + attr.format.bytes() > layout.stride {
+        return Err(format!(
+          "attribute '{}' ({} at offset {}) does not fit the {}-byte record of buffer layout {i}",
+          attr.name,
+          attr.format.name(),
+          attr.offset,
+          layout.stride
+        ));
+      }
+      if !names.insert(attr.name.as_str()) {
+        return Err(format!("attribute '{}' is declared twice; each name is one vertex-stage input", attr.name));
+      }
     }
   }
   Ok(())
@@ -808,35 +902,34 @@ pub struct DrawUpdate {
   pub order_direction: Option<[f32; 3]>,
 }
 
-/// The registry ids of one draw entry's buffers by role (vertex, index with
-/// its element format, per-instance); 0 / None = the entry fills no such
-/// role. What `BufferUpdate` merges into, and what the swap carries to the
-/// raster thread.
+/// The registry ids of one draw entry's buffers: one per declared layout
+/// (0 = no buffer at that index) plus the index binding with its element
+/// format (None = the entry draws unindexed). What `BufferUpdate` merges
+/// into, and what the swap carries to the raster thread.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct BufferIds {
-  pub buffer: u64,
+  pub buffers: [u64; MAX_BUFFERS],
   pub index: Option<(u64, IndexFormat)>,
-  /// One buffer per instance slot of the pipeline (0 = the slot is unused;
-  /// used slots are dense from 0, mirroring the layout contract).
-  pub instance_buffers: [u64; MAX_INSTANCE_SLOTS],
 }
 
 impl BufferIds {
   /// These ids with the update's present fields replaced: the setDrawBuffers
-  /// merge. Replace-only - which roles an entry fills is pipeline layout
-  /// state (attributes, instanceAttributes) and the index binding is the
-  /// entry's draw vocabulary, so a present field must name a role the entry
-  /// already fills and a buffer must be nonzero.
+  /// merge. Replace-only - which buffers an entry binds is pipeline layout
+  /// state and the index binding is the entry's draw vocabulary, so a
+  /// buffers list must fill exactly the declared indices with nonzero ids
+  /// and an index buffer can only replace one.
   pub fn merged(self, update: BufferUpdate) -> Result<BufferIds, String> {
     let mut next = self;
-    if let Some(id) = update.buffer {
-      if self.buffer == 0 {
-        return Err("the entry has no vertex buffer (the pipeline declares no attributes)".to_string());
+    if let Some(ids) = update.buffers {
+      for (i, (&cur, &id)) in self.buffers.iter().zip(ids.iter()).enumerate() {
+        if (cur == 0) != (id == 0) {
+          return Err(format!(
+            "buffers must cover exactly the pipeline's declared layouts; buffer {i} {}",
+            if cur == 0 { "is not declared" } else { "cannot be dropped" }
+          ));
+        }
       }
-      if id == 0 {
-        return Err("buffer must be a buffer id".to_string());
-      }
-      next.buffer = id;
+      next.buffers = ids;
     }
     if let Some((id, format)) = update.index {
       if self.index.is_none() {
@@ -847,32 +940,17 @@ impl BufferIds {
       }
       next.index = Some((id, format));
     }
-    if let Some(id) = update.instance_buffer {
-      if self.instance_buffers[0] == 0 {
-        return Err("the entry has no instance buffer (the pipeline declares no instanceAttributes)".to_string());
-      }
-      if id == 0 {
-        return Err("instanceBuffer must be a buffer id".to_string());
-      }
-      next.instance_buffers[0] = id;
-    }
-    if let Some(ids) = update.instance_buffers {
-      for (slot, (&cur, &id)) in self.instance_buffers.iter().zip(ids.iter()).enumerate() {
-        if (cur == 0) != (id == 0) {
-          return Err(format!(
-            "instanceBuffers must cover exactly the pipeline's instance slots; slot {slot} {}",
-            if cur == 0 { "is not declared" } else { "cannot be dropped" }
-          ));
-        }
-      }
-      next.instance_buffers = ids;
-    }
     Ok(next)
   }
 
   /// The nonzero ids, for "which targets read this buffer" bookkeeping.
   pub fn reads(&self, id: u64) -> bool {
-    id != 0 && (self.buffer == id || self.instance_buffers.contains(&id) || self.index.is_some_and(|(i, _)| i == id))
+    id != 0 && (self.buffers.contains(&id) || self.index.is_some_and(|(i, _)| i == id))
+  }
+
+  /// The bound buffers in layout order (the leading nonzero ids).
+  pub fn bound(&self) -> impl Iterator<Item = u64> + '_ {
+    self.buffers.iter().copied().take_while(|&id| id != 0)
   }
 }
 
@@ -881,25 +959,31 @@ impl BufferIds {
 /// replace-only rule.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct BufferUpdate {
-  pub buffer: Option<u64>,
+  /// Swap every declared buffer at once; must fill exactly the layouts
+  /// the pipeline declares (see `BufferIds::merged`).
+  pub buffers: Option<[u64; MAX_BUFFERS]>,
   pub index: Option<(u64, IndexFormat)>,
-  /// Swap the slot-0 instance buffer (the single-slot common case).
-  pub instance_buffer: Option<u64>,
-  /// Swap every instance slot at once; must fill exactly the slots the
-  /// entry fills (see `BufferIds::merged`). Applied after
-  /// `instance_buffer` when both are present, so pass one or the other.
-  pub instance_buffers: Option<[u64; MAX_INSTANCE_SLOTS]>,
 }
 
 /// The unit nouns of a fetch bound: what the range counts. Vertices through
-/// the pipeline's stride on plain entries, indices through the index format's
-/// element size on indexed ones - the bound math is identical either way.
+/// the vertex-step strides on plain entries, indices through the index
+/// format's element size on indexed ones - the bound math is identical
+/// either way.
 fn fetch_nouns(indexed: bool) -> (&'static str, &'static str) {
   if indexed {
     ("index", "indices")
   } else {
     ("vertex", "vertices")
   }
+}
+
+/// The fetch bound of one bound buffer: its layout's step and stride and
+/// the buffer's byte size (stride 0 = no buffer at that index).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct BufferBound {
+  pub step: StepMode,
+  pub stride: usize,
+  pub size: usize,
 }
 
 /// The fetch bounds one entry's draw range is checked against, captured at
@@ -910,44 +994,65 @@ fn fetch_nouns(indexed: bool) -> (&'static str, &'static str) {
 /// merged range against all of it, synchronously, without an RPC.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct DrawBounds {
-  /// The range's fetch as (element stride, buffer byte size): the VERTEX
-  /// buffer at the pipeline's stride on a plain entry, the INDEX buffer at
-  /// the format's element size on an indexed one. None when the entry
-  /// fetches nothing per vertex (attributeless and unindexed) - gl_VertexID
-  /// fetches nothing, so any range is safe.
-  pub fetch: Option<(usize, usize)>,
-  /// Whether the range counts indices: picks the vocabulary the update
-  /// paths accept (firstIndex/indexCount vs firstVertex/vertexCount) and
-  /// the fetch bound's error nouns.
-  pub indexed: bool,
-  /// The per-instance fetch as (record stride, buffer byte size) per
-  /// instance slot (stride 0 = the slot is unused). Instances `[0,
-  /// instance_count)` fetch one record from EVERY slot - there is no base
-  /// instance - so `instance_count` bounds against the tightest slot
-  /// (`instance_limit`).
-  pub instances: [(usize, usize); MAX_INSTANCE_SLOTS],
+  /// Present when the entry is indexed: the INDEX buffer as (element
+  /// size, byte size). The range then counts indices, and the vertex
+  /// fetch runs through the index VALUES, which are not checked against
+  /// the vertex buffers (that would mean reading them back).
+  pub index: Option<(usize, usize)>,
+  /// One bound per declared buffer layout (see `BufferBound`). Vertices
+  /// `[first, first + count)` fetch one record from EVERY vertex-step
+  /// buffer and instances `[0, instance_count)` one from every
+  /// instance-step buffer - there is no base instance - so each count
+  /// bounds against the tightest buffer of its step.
+  pub buffers: [BufferBound; MAX_BUFFERS],
 }
 
 impl DrawBounds {
-  /// The binding slot with the fewest whole records - what the instance
-  /// count derives from and validates against - as (stride, byte size).
-  /// None when the entry fetches nothing per instance.
+  /// Whether the range counts indices: picks the vocabulary the update
+  /// paths accept (firstIndex/indexCount vs firstVertex/vertexCount) and
+  /// the fetch bound's error nouns.
+  pub fn indexed(&self) -> bool {
+    self.index.is_some()
+  }
+
+  /// The buffer of `step` with the fewest whole records, as (stride, byte
+  /// size); None when the entry fetches nothing at that step.
+  fn tightest(&self, step: StepMode) -> Option<(usize, usize)> {
+    self
+      .buffers
+      .iter()
+      .filter(|b| b.stride > 0 && b.step == step)
+      .map(|b| (b.stride, b.size))
+      .min_by_key(|(stride, size)| size / stride)
+  }
+
+  /// What the range's first/count fetch is bounded by: the index buffer
+  /// at its element size on an indexed entry, the tightest vertex-step
+  /// buffer on a plain one. None when the entry fetches nothing per
+  /// vertex (attributeless and unindexed) - gl_VertexID fetches nothing,
+  /// so any range is safe.
+  pub fn fetch(&self) -> Option<(usize, usize)> {
+    self.index.or_else(|| self.tightest(StepMode::Vertex))
+  }
+
+  /// The instance-step buffer with the fewest whole records - what the
+  /// instance count derives from and validates against - as (stride, byte
+  /// size). None when the entry fetches nothing per instance.
   pub fn instance_limit(&self) -> Option<(usize, usize)> {
-    self.instances.iter().filter(|(stride, _)| *stride > 0).min_by_key(|(stride, size)| size / stride).copied()
+    self.tightest(StepMode::Instance)
   }
 }
 
 /// Check a resolved draw range against the buffers it fetches from: every
 /// field must be >= 0 and each fetch must stay within its buffer, or the
 /// draw is undefined-behaviour fetch (raw GLES 3.0 has no draw-time bounds
-/// check; WebGL made the same case INVALID_OPERATION). `bounds.fetch` bounds
-/// `[first, first + count) * stride` - on an indexed entry that is the INDEX
-/// buffer; the index VALUES are not checked against the vertex buffer, which
-/// would mean reading them back. `bounds.instance` bounds `instance_count`
-/// records. Runs UI-side at the call-site boundary: the create paths via
-/// `resolve_draw_range` and the range updates against the mirrored bounds.
+/// check; WebGL made the same case INVALID_OPERATION). `bounds.fetch()`
+/// bounds `[first, first + count) * stride`; `bounds.instance_limit()`
+/// bounds `instance_count` records. Runs UI-side at the call-site boundary:
+/// the create paths via `resolve_draw_range` and the range updates against
+/// the mirrored bounds.
 pub fn validate_draw_range(range: DrawRange, bounds: DrawBounds) -> Result<(), String> {
-  let (noun, nouns) = fetch_nouns(bounds.indexed);
+  let (noun, nouns) = fetch_nouns(bounds.indexed());
   if range.first_vertex < 0 {
     return Err(format!("first {noun} must be >= 0, got {}", range.first_vertex));
   }
@@ -957,7 +1062,7 @@ pub fn validate_draw_range(range: DrawRange, bounds: DrawBounds) -> Result<(), S
   if range.instance_count < 0 {
     return Err(format!("instance count must be >= 0, got {}", range.instance_count));
   }
-  if let Some((stride, size)) = bounds.fetch {
+  if let Some((stride, size)) = bounds.fetch() {
     let end = range.first_vertex as usize + range.vertex_count as usize;
     let need = end * stride;
     if need > size {
@@ -990,11 +1095,11 @@ pub fn validate_draw_range(range: DrawRange, bounds: DrawBounds) -> Result<(), S
 /// resolved ranges.
 pub fn resolve_draw_range(mut range: DrawRange, bounds: DrawBounds) -> Result<DrawRange, String> {
   if range.vertex_count < 0 {
-    range.vertex_count = match bounds.fetch {
+    range.vertex_count = match bounds.fetch() {
       Some((stride, size)) => {
         let capacity = (size / stride) as i32;
         if range.first_vertex > capacity {
-          let (noun, nouns) = fetch_nouns(bounds.indexed);
+          let (noun, nouns) = fetch_nouns(bounds.indexed());
           return Err(format!(
             "first {noun} {} is past the end of the buffer ({capacity} {nouns})",
             range.first_vertex

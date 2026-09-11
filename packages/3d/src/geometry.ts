@@ -23,10 +23,17 @@
 // layout is ready for lights without a geometry change (inactive
 // attributes are skipped but keep the stride).
 //
+// A geometry may carry more than one vertex buffer: `vertices` under
+// `layout` is stream 0 (where aPos lives), and `streams` holds any number
+// of extra buffers with layouts of their own, every one holding the same
+// vertex count - Unity's vertex streams, Three's one-buffer-per-channel
+// when each stream carries one attribute. A stream is what an app rewrites
+// per frame without touching the rest (updateVertices in geometry-gpu.ts).
+//
 // No function here knows an offset or a stride: vertex data is read and
-// written through `attributeAccess`, an accessor bound to one attribute
-// that decodes and encodes through the format's codec. That is also what
-// keeps a later multi-stream geometry a change inside the accessor.
+// written through `geometryAttribute`, an accessor bound to one attribute
+// that finds the stream carrying it and decodes and encodes through the
+// format's codec.
 //
 // Pure module by design - geometry is data, and every function here is
 // array math (the check rig checks/geometry-check.ts runs it headless on
@@ -270,9 +277,64 @@ export function attributeAccess(vertices: ArrayBufferView, layout: VertexLayout 
   }
 }
 
-/** `attributeAccess` over a geometry's own buffer and layout. */
+/** One extra vertex buffer of a geometry (see `Geometry.streams`): its
+ * own attribute list and bytes, holding the geometry's vertex count. */
+export type VertexStream = { layout: VertexAttribute[]; vertices: ArrayBufferView }
+
+/** Every vertex buffer of a geometry in pipeline order: stream 0
+ * (`vertices` under `layout`), then `streams`. */
+export function geometryStreams(geometry: Geometry): { layout: VertexLayout | undefined; vertices: ArrayBufferView }[] {
+  let out: { layout: VertexLayout | undefined; vertices: ArrayBufferView }[] = [{ layout: geometry.layout, vertices: geometry.vertices }]
+  for (let stream of geometry.streams ?? []) out.push(stream)
+  return out
+}
+
+/** The attribute lists of a geometry's streams, in order: what a pipeline
+ * declares as its vertex-step buffer layouts. */
+export function geometryLayouts(geometry: Geometry): VertexAttribute[][] {
+  return geometryStreams(geometry).map(s => layoutAttributes(s.layout))
+}
+
+/** A geometry's layout identity across every stream (`layoutKey` per
+ * stream, `|` between them): two geometries with equal keys bind the same
+ * pipeline. */
+export function geometryKey(geometry: Geometry): string {
+  return geometryStreams(geometry)
+    .map(s => layoutKey(s.layout))
+    .join("|")
+}
+
+/** Where an attribute sits in a geometry: its stream index and its slot
+ * there. Null when no stream carries the name. */
+export function geometrySlot(geometry: Geometry, name: string): { stream: number; offset: number; format: VertexFormat; components: number } | null {
+  let streams = geometryStreams(geometry)
+  for (let i = 0; i < streams.length; i++) {
+    let slot = layoutSlot(streams[i]!.layout, name)
+    if (slot !== null) return { stream: i, ...slot }
+  }
+  return null
+}
+
+/** The geometry's vertex count: stream 0's, which every extra stream must
+ * hold too. Throws naming `where` on a stream of another count. */
+export function geometryVertexCount(geometry: Geometry, where: string): number {
+  let streams = geometryStreams(geometry)
+  let count = vertexCount(streams[0]!.vertices, streams[0]!.layout, where)
+  for (let i = 1; i < streams.length; i++) {
+    let n = vertexCount(streams[i]!.vertices, streams[i]!.layout, where + " stream " + i)
+    if (n !== count) throw new Error(where + ": stream " + i + " holds " + n + " vertices, stream 0 holds " + count)
+  }
+  return count
+}
+
+/** `attributeAccess` over whichever of a geometry's streams carries
+ * `name`; null when none does. */
 export function geometryAttribute(geometry: Geometry, name: string): AttributeAccess | null {
-  return attributeAccess(geometry.vertices, geometry.layout, name)
+  for (let stream of geometryStreams(geometry)) {
+    let access = attributeAccess(stream.vertices, stream.layout, name)
+    if (access !== null) return access
+  }
+  return null
 }
 
 // The accessor a reader of the standard channels falls back on when the
@@ -280,10 +342,26 @@ export function geometryAttribute(geometry: Geometry, name: string): AttributeAc
 // uv reads (0, 0, 0) and (0, 0).
 const ZERO_ACCESS: AttributeAccess = { format: "float32", components: 0, get: () => 0, set: () => {} }
 
+/** The stream rules: every extra stream declares at least one attribute
+ * and no name appears in two streams (each is one shader `in`). */
+function checkStreams(geometry: Geometry, where: string): void {
+  let seen = new Set<string>()
+  let layouts = geometryLayouts(geometry)
+  for (let i = 0; i < layouts.length; i++) {
+    let attrs = layouts[i]!
+    if (i > 0 && attrs.length === 0) throw new Error(where + ": stream " + i + " declares no attributes")
+    for (let attr of attrs) {
+      if (seen.has(attr.name)) throw new Error(where + ": attribute '" + attr.name + "' appears in two streams")
+      seen.add(attr.name)
+    }
+  }
+}
+
 /**
  * The structural check for geometry about to draw: the layout starts
- * with aPos, the vertex byte count is a whole number of its stride, and
- * indices are present. Throws naming the geometry. The scene runs it at
+ * with aPos, every stream holds a whole number of the geometry's
+ * vertices under its stride, no attribute name repeats across streams,
+ * and indices are present. Throws naming the geometry. The scene runs it at
  * add() so hand-built geometry (a bare `layout: "colored"` over a
  * miscounted array) fails there instead of drawing garbage triangles.
  * Deliberately no max-index scan: that is O(indices) per add, and the
@@ -293,7 +371,8 @@ export function validateGeometry(geometry: Geometry): void {
   let name = geometry.label ? "geometry '" + geometry.label + "'" : "geometry"
   let layout = geometry.layout
   if (layout !== undefined && typeof layout !== "string") checkLayout(layout, name)
-  vertexCount(geometry.vertices, layout, name)
+  checkStreams(geometry, name)
+  geometryVertexCount(geometry, name)
   let topology = geometryTopology(geometry)
   let count = geometry.indices.length
   // Lines and points may be empty: a feature-edge pass over a smooth
@@ -416,6 +495,15 @@ export type Geometry = {
   /** The array type picks the draw's index format: Uint32Array past 64k
    * vertices. */
   indices: Uint16Array | Uint32Array
+  /** Extra vertex buffers beside `vertices` (which is stream 0, where
+   * aPos lives): each its own attribute list over its own bytes, holding
+   * the same vertex count. A pipeline reads every stream; a material
+   * finds a channel by name whichever stream carries it. The shape for
+   * data that changes on its own schedule: the per-frame channel in a
+   * stream of its own, rewritten in place with updateVertices while the
+   * static channels stay put. `withAttribute` with a `stream` option
+   * appends to or opens one. Absent means one buffer. */
+  streams?: VertexStream[]
   /** What the indices describe; absent means "triangles". The index
    * buffer and the primitive it lists travel together (Godot's surface
    * primitive, Unity's Mesh.SetIndices topology, Three's Line/Points
@@ -449,7 +537,7 @@ export function geometryBounds(geometry: Geometry): Float32Array {
   let bounds = geometry._bounds
   if (bounds === undefined) {
     bounds = new Float32Array([Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity])
-    let count = vertexCount(geometry.vertices, geometry.layout, "geometryBounds")
+    let count = geometryVertexCount(geometry, "geometryBounds")
     let pos = geometryAttribute(geometry, "aPos")!
     for (let i = 0; i < count; i++) {
       let x = pos.get(i, 0), y = pos.get(i, 1), z = pos.get(i, 2)
@@ -474,6 +562,13 @@ export type AttributeFill = ArrayLike<number> | ((index: number, pos: Vec3, norm
 /** AttributeFill for the aColor vec4 channel (4 per vertex). */
 export type ColorFill = AttributeFill
 
+/** Options of `withAttribute`: the result's label, and which stream the
+ * channel lands in - 0 (the default) interleaves it into the main buffer,
+ * 1..n appends it to that extra stream, n + 1 opens a new stream holding
+ * it alone (Three's one buffer per channel; the shape for a channel
+ * rewritten per frame). */
+export type WithAttributeOptions = { label?: string; stream?: number }
+
 /**
  * Append a named channel to a geometry: a new geometry (the source is
  * untouched, its GPU buffers stay independent) whose layout is the
@@ -484,33 +579,62 @@ export type ColorFill = AttributeFill
  * the matching name and component count in its vertex stage. A packed
  * format (`unorm8x4` for a color, `snorm16x2`, `float16x4`, ...) is how a
  * channel is compressed: the fill is given in float and encoded on write.
+ * `options.stream` picks the stream the channel lands in (see
+ * `WithAttributeOptions`); the other streams are shared with the source.
  */
-export function withAttribute(geometry: Geometry, attr: VertexAttribute, fill: AttributeFill, label?: string): Geometry {
-  let srcLayout = layoutAttributes(geometry.layout)
-  if (layoutSlot(srcLayout, attr.name) !== null) {
+export function withAttribute(geometry: Geometry, attr: VertexAttribute, fill: AttributeFill, options: WithAttributeOptions = {}): Geometry {
+  if (geometrySlot(geometry, attr.name) !== null) {
     throw new Error("withAttribute: geometry already carries '" + attr.name + "'")
   }
   if (!(attr.format in VERTEX_FORMATS)) {
     throw new Error("withAttribute: unknown format '" + String(attr.format) + "' for " + attr.name + " (expected " + Object.keys(VERTEX_FORMATS).join(", ") + ")")
   }
-  let count = vertexCount(geometry.vertices, srcLayout, "withAttribute")
-  let srcStride = layoutStride(srcLayout)
-  let layout = [...srcLayout, { name: attr.name, format: attr.format }]
-  checkLayout(layout, "withAttribute")
-  let stride = layoutStride(layout)
-  let src = vertexBytes(geometry.vertices)
-  let buffer = new ArrayBuffer(count * stride)
-  let dst = new Uint8Array(buffer)
-  for (let i = 0; i < count; i++) dst.set(src.subarray(i * srcStride, (i + 1) * srcStride), i * stride)
-  let vertices = vertexView(layout, buffer)
-  fillSlot(vertices, layout, attr.name, fill, 0)
-  return {
-    vertices,
+  let count = geometryVertexCount(geometry, "withAttribute")
+  let streams = geometryStreams(geometry)
+  let target = options.stream ?? 0
+  if (!Number.isInteger(target) || target < 0 || target > streams.length) {
+    throw new Error("withAttribute: stream " + target + " is out of range; the geometry has streams 0.." + (streams.length - 1) + " and " + streams.length + " opens a new one")
+  }
+  let added: VertexAttribute = { name: attr.name, format: attr.format }
+  let layout: VertexAttribute[]
+  let vertices: ArrayBufferView
+  if (target === streams.length) {
+    layout = [added]
+    vertices = vertexView(layout, new ArrayBuffer(count * layoutStride(layout)))
+  } else {
+    let source = streams[target]!
+    let srcLayout = layoutAttributes(source.layout)
+    let srcStride = layoutStride(srcLayout)
+    layout = [...srcLayout, added]
+    if (target === 0) checkLayout(layout, "withAttribute")
+    let stride = layoutStride(layout)
+    let src = vertexBytes(source.vertices)
+    let buffer = new ArrayBuffer(count * stride)
+    let dst = new Uint8Array(buffer)
+    for (let i = 0; i < count; i++) dst.set(src.subarray(i * srcStride, (i + 1) * srcStride), i * stride)
+    vertices = vertexView(layout, buffer)
+  }
+  // The callback reads the standard channels from the SOURCE geometry,
+  // whichever stream carries them; the new slot is written on the fresh
+  // buffer.
+  fillWith(attributeAccess(vertices, layout, attr.name)!, geometry, count, attr.name, fill, 0)
+  let extra = (geometry.streams ?? []).slice()
+  if (target === 0) {
+    // The main buffer was rebuilt; the extra streams ride along.
+  } else if (target === streams.length) {
+    extra.push({ layout, vertices })
+  } else {
+    extra[target - 1] = { layout, vertices }
+  }
+  let out: Geometry = {
+    vertices: target === 0 ? vertices : geometry.vertices,
     indices: geometry.indices,
     topology: geometry.topology,
-    layout,
-    label: label ?? (geometry.label ? geometry.label + "-" + attr.name : undefined),
+    layout: target === 0 ? layout : geometry.layout,
+    label: options.label ?? (geometry.label ? geometry.label + "-" + attr.name : undefined),
   }
+  if (extra.length > 0) out.streams = extra
+  return out
 }
 
 /**
@@ -526,36 +650,38 @@ export function withAttribute(geometry: Geometry, attr: VertexAttribute, fill: A
  * `unorm8x4` directly.
  */
 export function withColors(geometry: Geometry, fill: ColorFill, label?: string): Geometry {
-  if (layoutSlot(geometry.layout, "aColor") !== null) {
+  if (geometrySlot(geometry, "aColor") !== null) {
     throw new Error("withColors: geometry already carries an aColor channel")
   }
-  let out = withAttribute(geometry, { name: "aColor", format: "float32x4" }, fill, label ?? (geometry.label ? geometry.label + "-colored" : undefined))
+  let out = withAttribute(geometry, { name: "aColor", format: "float32x4" }, fill, { label: label ?? (geometry.label ? geometry.label + "-colored" : undefined) })
   if (layoutKey(out.layout) === layoutKey("colored")) out.layout = "colored"
   return out
 }
 
 /**
  * The in-place primitive under withAttribute: write one channel the
- * geometry's layout already carries (withAttribute ADDS a channel; this
- * overwrites an existing one). The pos/normal/uv the callback receives
- * are read from the buffer itself, so a builder baking transforms while
- * writing hands the baker world-space vertices. Fills vertices
- * [first, first + count) - count defaults to the rest of the buffer -
- * and `fill` indexes relative to `first`, so a per-part callback works
- * unchanged for both APIs. Returns `geometry.vertices`.
+ * geometry already carries, in whichever stream (withAttribute ADDS a
+ * channel; this overwrites an existing one). The pos/normal/uv the
+ * callback receives are read from the geometry itself, so a builder
+ * baking transforms while writing hands the baker world-space vertices.
+ * Fills vertices [first, first + count) - count defaults to the rest of
+ * the buffer - and `fill` indexes relative to `first`, so a per-part
+ * callback works unchanged for both APIs. Returns the vertices of the
+ * stream holding the channel (what updateVertices re-uploads).
  */
 export function fillAttribute(geometry: Geometry, name: string, fill: AttributeFill, first = 0, count?: number): ArrayBufferView {
-  return fillSlot(geometry.vertices, geometry.layout, name, fill, first, count)
+  let slot = geometrySlot(geometry, name)
+  if (slot === null) throw new Error("fillAttribute: geometry has no '" + name + "' attribute")
+  let total = geometryVertexCount(geometry, "fillAttribute")
+  fillWith(geometryAttribute(geometry, name)!, geometry, total, name, fill, first, count)
+  return geometryStreams(geometry)[slot.stream]!.vertices
 }
 
-/** The raw form behind fillAttribute (withAttribute writes its fresh
- * buffer through it, before the Geometry exists): a bare array carries no
- * layout tag, so the caller states the layout and only the arithmetic is
- * checked. */
-function fillSlot(vertices: ArrayBufferView, layout: VertexLayout | undefined, name: string, fill: AttributeFill, first: number, count?: number): ArrayBufferView {
-  let slot = attributeAccess(vertices, layout, name)
-  if (slot === null) throw new Error("fillAttribute: layout has no '" + name + "' attribute")
-  let total = vertexCount(vertices, layout, "fillAttribute")
+/** The write loop behind withAttribute and fillAttribute: `slot` is the
+ * accessor written, `source` the geometry the callback's standard
+ * channels are read from (zeros for a channel it lacks), `total` its
+ * vertex count. */
+function fillWith(slot: AttributeAccess, source: Geometry, total: number, name: string, fill: AttributeFill, first: number, count?: number): void {
   let n = count ?? total - first
   if (!Number.isInteger(first) || !Number.isInteger(n) || first < 0 || n < 0 || first + n > total) {
     throw new Error("fillAttribute: range [" + first + ", " + (first + n) + ") is outside the buffer's " + total + " vertices")
@@ -566,11 +692,9 @@ function fillSlot(vertices: ArrayBufferView, layout: VertexLayout | undefined, n
   if (flat !== null && flat.length !== n * size) {
     throw new Error("fillAttribute: fill has " + flat.length + " values, expected " + size + " per vertex (" + n * size + ")")
   }
-  // The standard channels the callback sees: a layout without a normal
-  // or uv reads zeros for them.
-  let pos = attributeAccess(vertices, layout, "aPos")!
-  let nrm = attributeAccess(vertices, layout, "aNormal") ?? ZERO_ACCESS
-  let uv = attributeAccess(vertices, layout, "aUV") ?? ZERO_ACCESS
+  let pos = geometryAttribute(source, "aPos")!
+  let nrm = geometryAttribute(source, "aNormal") ?? ZERO_ACCESS
+  let uv = geometryAttribute(source, "aUV") ?? ZERO_ACCESS
   for (let i = 0; i < n; i++) {
     let v = first + i
     let value: ArrayLike<number>
@@ -587,7 +711,6 @@ function fillSlot(vertices: ArrayBufferView, layout: VertexLayout | undefined, n
     }
     for (let k = 0; k < size; k++) slot.set(v, k, value[s + k]!)
   }
-  return vertices
 }
 
 /** `fillAttribute` for the aColor channel of a color-carrying geometry
@@ -603,7 +726,9 @@ export function fillColors(geometry: Geometry, fill: ColorFill, first = 0, count
  * untouched, its GPU buffers stay independent) whose positions are moved
  * by the transform and whose normals (when the layout carries aNormal)
  * follow through the inverse-transpose, renormalized - correct under
- * non-uniform scale. UVs, colors, indices and layout copy through. This is Three's `geometry.applyMatrix4`, the first
+ * non-uniform scale. UVs, colors, indices and layout copy through; extra
+ * streams are shared with the source (positions and normals live in
+ * stream 0). This is Three's `geometry.applyMatrix4`, the first
  * half of authoring a static scene as data: transform each part into place,
  * mergeGeometries the parts, draw one mesh.
  */
@@ -614,7 +739,7 @@ export function transformGeometry(geometry: Geometry, transform: TransformUpdate
   if (transform.scale !== undefined) updateScale(scl, transform.scale)
   let m = compose(mat4(), transform.position ?? [0, 0, 0], rot, scl)
   let n = normalMatrix(mat4(), m)
-  let count = vertexCount(geometry.vertices, geometry.layout, "transformGeometry")
+  let count = geometryVertexCount(geometry, "transformGeometry")
   let out = vertexView(geometry.layout, vertexBytes(geometry.vertices).slice().buffer)
   let pos = attributeAccess(out, geometry.layout, "aPos")!
   let nrm = attributeAccess(out, geometry.layout, "aNormal")
@@ -633,13 +758,15 @@ export function transformGeometry(geometry: Geometry, transform: TransformUpdate
     nrm.set(i, 1, ty / len)
     nrm.set(i, 2, tz / len)
   }
-  return {
+  let result: Geometry = {
     vertices: out,
     indices: geometry.indices,
     topology: geometry.topology,
     layout: geometry.layout,
     label: label ?? (geometry.label ? geometry.label + "-transformed" : undefined),
   }
+  if (geometry.streams !== undefined) result.streams = geometry.streams
+  return result
 }
 
 /**
@@ -656,37 +783,44 @@ export function transformGeometry(geometry: Geometry, transform: TransformUpdate
  */
 export function mergeGeometries(parts: Geometry[], label?: string): Geometry {
   if (parts.length === 0) throw new Error("mergeGeometries: no parts")
-  let layout = parts[0]!.layout
-  let key = layoutKey(layout)
-  let stride = layoutStride(layout)
-  let topology = geometryTopology(parts[0]!)
+  let first = parts[0]!
+  let key = geometryKey(first)
+  let topology = geometryTopology(first)
   if (topology === "line-strip" || topology === "triangle-strip") throw new Error("mergeGeometries: cannot merge " + topology + " geometry")
   let vertexTotal = 0
   let indexCount = 0
   for (let part of parts) {
-    if (layoutKey(part.layout) !== key) {
-      throw new Error("mergeGeometries: mixed layouts (" + key + " and " + layoutKey(part.layout) + ")")
+    if (geometryKey(part) !== key) {
+      throw new Error("mergeGeometries: mixed layouts (" + key + " and " + geometryKey(part) + ")")
     }
     if (geometryTopology(part) !== topology) {
       throw new Error("mergeGeometries: mixed topologies (" + topology + " and " + geometryTopology(part) + ")")
     }
-    vertexTotal += vertexCount(part.vertices, layout, "mergeGeometries")
+    vertexTotal += geometryVertexCount(part, "mergeGeometries")
     indexCount += part.indices.length
   }
-  let buffer = new ArrayBuffer(vertexTotal * stride)
-  let bytes = new Uint8Array(buffer)
+  // Every stream concatenates the same way: part after part, at the
+  // stream's own stride.
+  let layouts = geometryStreams(first).map(s => s.layout)
+  let merged = layouts.map(layout => {
+    let stride = layoutStride(layout)
+    let bytes = new Uint8Array(vertexTotal * stride)
+    return { layout, stride, bytes }
+  })
   let indices = vertexTotal > 65535 ? new Uint32Array(indexCount) : new Uint16Array(indexCount)
   let base = 0
   let iOffset = 0
   for (let part of parts) {
-    bytes.set(vertexBytes(part.vertices), base * stride)
+    let streams = geometryStreams(part)
+    for (let k = 0; k < merged.length; k++) merged[k]!.bytes.set(vertexBytes(streams[k]!.vertices), base * merged[k]!.stride)
     let src = part.indices
     for (let i = 0; i < src.length; i++) indices[iOffset + i] = src[i]! + base
-    base += part.vertices.byteLength / stride
+    base += geometryVertexCount(part, "mergeGeometries")
     iOffset += src.length
   }
-  let vertices = vertexView(layout, buffer)
-  return { vertices, indices, topology: parts[0]!.topology, layout, label }
+  let out: Geometry = { vertices: vertexView(first.layout, merged[0]!.bytes.buffer), indices, topology: first.topology, layout: first.layout, label }
+  if (merged.length > 1) out.streams = merged.slice(1).map(m => ({ layout: layoutAttributes(m.layout), vertices: vertexView(m.layout, m.bytes.buffer) }))
+  return out
 }
 
 /** Positions closer than this (model units) are one vertex to the edge
@@ -702,7 +836,7 @@ const EDGES_THRESHOLD_ANGLE = 1
 /** One id per vertex, shared by every vertex at the same position (to
  * WELD_PRECISION) whatever its normal and uv; plus the id count. */
 function weldPositions(geometry: Geometry): { ids: Uint32Array; count: number } {
-  let count = vertexCount(geometry.vertices, geometry.layout, "weldPositions")
+  let count = geometryVertexCount(geometry, "weldPositions")
   let pos = geometryAttribute(geometry, "aPos")!
   let ids = new Uint32Array(count)
   let seen = new Map<string, number>()
@@ -778,13 +912,15 @@ function edgeIndices(geometry: Geometry, name: string, cosThreshold: number | nu
  * geometry. Lines are one pixel wide.
  */
 export function wireframeGeometry(geometry: Geometry, label?: string): Geometry {
-  return {
-    vertices: geometry.vertices,
-    indices: edgeIndices(geometry, "wireframeGeometry", null),
-    topology: "lines",
-    layout: geometry.layout,
-    label: label ?? (geometry.label ? geometry.label + "-wireframe" : undefined),
-  }
+  return overVertices(geometry, edgeIndices(geometry, "wireframeGeometry", null), label ?? (geometry.label ? geometry.label + "-wireframe" : undefined))
+}
+
+// A "lines" geometry over the same vertices (every stream shared) as its
+// source, with its own indices: the edge builders' tail.
+function overVertices(geometry: Geometry, indices: Uint16Array | Uint32Array, label: string | undefined): Geometry {
+  let out: Geometry = { vertices: geometry.vertices, indices, topology: "lines", layout: geometry.layout, label }
+  if (geometry.streams !== undefined) out.streams = geometry.streams
+  return out
 }
 
 /**
@@ -803,13 +939,7 @@ export function wireframeGeometry(geometry: Geometry, label?: string): Geometry 
  * wireframeGeometry.
  */
 export function edgesGeometry(geometry: Geometry, thresholdAngle = EDGES_THRESHOLD_ANGLE, label?: string): Geometry {
-  return {
-    vertices: geometry.vertices,
-    indices: edgeIndices(geometry, "edgesGeometry", Math.cos((thresholdAngle * Math.PI) / 180)),
-    topology: "lines",
-    layout: geometry.layout,
-    label: label ?? (geometry.label ? geometry.label + "-edges" : undefined),
-  }
+  return overVertices(geometry, edgeIndices(geometry, "edgesGeometry", Math.cos((thresholdAngle * Math.PI) / 180)), label ?? (geometry.label ? geometry.label + "-edges" : undefined))
 }
 
 // The debug helpers: Three's GridHelper, AxesHelper, Box3Helper and

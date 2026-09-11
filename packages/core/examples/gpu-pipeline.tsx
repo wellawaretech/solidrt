@@ -87,11 +87,15 @@ function App() {
   let indexId = createBuffer(cubeIndices(), { label: "cube-indices" })
   let id = createPipelineTexture(VERTEX, FRAGMENT, 1024, 1024, { uTime: 0 }, {
     label: "cube",
-    attributes: [
-      { name: "aPos", format: "float32x3" },
-      { name: "aColor", format: "float32x3" },
+    buffers: [
+      {
+        attributes: [
+          { name: "aPos", format: "float32x3" },
+          { name: "aColor", format: "float32x3" },
+        ],
+        buffer: bufferId,
+      },
     ],
-    buffer: bufferId,
     indexBuffer: indexId,
     indexFormat: "uint16",
     depth: true,

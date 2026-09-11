@@ -74,11 +74,18 @@ pub struct GpuRenderPipelineInfo {
   pub cull: &'static str,
   pub depth: bool,
   pub depth_write: bool,
-  /// (name, format string) of the declared interleaved vertex layout.
-  pub attributes: Vec<(String, String)>,
-  /// (name, format string, buffer slot) of the declared per-instance
-  /// layout; empty when the pipeline declares none.
-  pub instance_attributes: Vec<(String, String, u32)>,
+  /// The declared buffer layouts in binding order; empty for an
+  /// attributeless pipeline.
+  pub buffers: Vec<GpuBufferLayoutInfo>,
+}
+
+/// One declared buffer layout, as reported: its step ("vertex" or
+/// "instance"), record stride, and (name, format string, byte offset) per
+/// attribute.
+pub struct GpuBufferLayoutInfo {
+  pub step: &'static str,
+  pub stride: i32,
+  pub attributes: Vec<(String, String, i32)>,
 }
 
 /// A sub-target's place, as reported in `GpuPipelineInfo::region`: the
@@ -98,15 +105,14 @@ pub struct GpuDrawInfo {
   pub id: u64,
   /// The registered pipeline this entry draws with.
   pub pipeline_id: Option<u64>,
-  pub buffer_id: Option<u64>,
+  /// The entry's bound buffers in layout order; empty when its pipeline
+  /// declares no layouts.
+  pub buffer_ids: Vec<u64>,
   /// The entry's index buffer; present = it draws indexed, and the range
   /// fields below count indices.
   pub index_buffer_id: Option<u64>,
   /// "uint16" or "uint32", present with `index_buffer_id`.
   pub index_format: Option<&'static str>,
-  /// The entry's per-instance buffers in slot order; empty when its
-  /// pipeline declares no instance attributes.
-  pub instance_buffer_ids: Vec<u64>,
   pub topology: &'static str,
   /// "none", "add", "multiply" or "alpha".
   pub blend: &'static str,
@@ -138,15 +144,14 @@ pub struct GpuPipelineInfo {
   /// The registered pipeline this target was created from; None for fragment
   /// targets and the fused path.
   pub pipeline_id: Option<u64>,
-  pub buffer_id: Option<u64>,
+  /// The first entry's bound buffers in layout order; empty when its
+  /// pipeline declares no layouts.
+  pub buffer_ids: Vec<u64>,
   /// The first entry's index buffer; present = it draws indexed, and the
   /// range fields below count indices.
   pub index_buffer_id: Option<u64>,
   /// "uint16" or "uint32", present with `index_buffer_id`.
   pub index_format: Option<&'static str>,
-  /// The first entry's per-instance buffers in slot order; empty when its
-  /// pipeline declares no instance attributes.
-  pub instance_buffer_ids: Vec<u64>,
   pub topology: Option<&'static str>,
   /// The vertex count of the target's draw range; None on a fragment-only
   /// target, like the two range fields below.
@@ -165,11 +170,10 @@ pub struct GpuPipelineInfo {
   pub blend: Option<&'static str>,
   /// "none", "back", or "front"; None on a fragment-only target.
   pub cull: Option<&'static str>,
-  /// (name, format string) of the declared interleaved vertex layout.
-  pub attributes: Vec<(String, String)>,
-  /// (name, format string, buffer slot) of the declared per-instance
-  /// layout; empty when the pipeline declares none.
-  pub instance_attributes: Vec<(String, String, u32)>,
+  /// The first entry's declared buffer layouts (see
+  /// `GpuBufferLayoutInfo`); empty for fragment targets, attributeless
+  /// pipelines and draw targets (whose layouts live per entry's pipeline).
+  pub buffers: Vec<GpuBufferLayoutInfo>,
   /// sampler2D uniform name -> source texture id; for a draw target (kind
   /// "draws"), its shared (target-level) bindings - per-entry bindings live
   /// in `draws`.

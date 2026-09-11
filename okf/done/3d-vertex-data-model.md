@@ -2,6 +2,7 @@
 title: Every vertex attribute is a 32-bit float in one immutable interleaved buffer
 description: The vertex vocabulary is f32/vec2/vec3/vec4 only and a geometry is one interleaved Float32Array uploaded once, so a color costs 16 bytes where 4 would do, a normal 12 where 4 would do, and a channel that changes every frame re-uploads the channels that do not.
 created: 2026-09-11
+completed: 2026-09-11
 ---
 
 # Every vertex attribute is a 32-bit float in one immutable interleaved buffer
@@ -175,38 +176,107 @@ round-trips one through the model file; `bunx srt check packages/3d`
 passes; the alloy tests cover `vertex_stride` over packed formats and
 the component-count match.
 
-## Stage 2
+## Stage 2: streams and updates
 
-Streams: a geometry may carry more than one vertex buffer, each its own
-interleaved layout, and a stream can be rewritten in place
-(`writeBuffer` on the geometry's buffer for that stream) without
-touching the others. Three's `setDrawRange` (a `DrawRange` type exists
-in core) fits here too. Point size and a stock points material are a
-separate, smaller item (the survey's list,
-okf/notes/three-feature-survey.md).
+What lands: a geometry may carry more than one vertex buffer (a stream),
+each with its own interleaved layout; a stream is rewritten in place
+without touching the others; and a mesh draws a slice of its indices
+(Three's `setDrawRange`). Point size and a stock points material stay a
+separate item (okf/notes/three-feature-survey.md).
 
-The engine already has the mechanism: instance attributes carry a
-buffer slot, an entry binds one buffer per slot, and the VAO builder
-records each slot's layout with its own stride and divisor. Vertex
-streams are the same list at divisor 0. With no compatibility to keep,
-the pipeline takes WebGPU's shape: one list of buffers, each with a
-step mode (`vertex` or `instance`) and its attributes, replacing the
-separate `attributes` and `instanceAttributes` lists in `PipelineDesc`,
-the flux marshalling, the `flux:gpu` types and core. Three's
-one-buffer-per-channel is then a stream per attribute, so no third
-shape is needed. Stage 1 must not add anything that assumes one vertex
-buffer beyond what exists.
+### Engine: WebGPU's buffers list
 
-In the 3d package stage 2 touches `Geometry` (a streams form beside
-`vertices`, the accessor picking the stream), `geometry-gpu.ts`
-acquisition and release, the entry binding in `scene.ts`, and the
-picking shape, which needs to know which stream positions live in.
-The identity-keyed upload cache in `geometry-gpu.ts` (keyed by the
-vertices array) is what in-place updates replace: a stream update
-needs an explicit geometry handle, not array identity.
+Step rate and stride are properties of a buffer, not of an attribute:
+Vulkan's binding description, Metal's layout per buffer index and
+WebGPU's `GPUVertexBufferLayout` all say so, and the slot form (D3D11's
+input slots, Unity's stream index) only works because step mode has two
+values that can be encoded as which of two lists an attribute sits in.
+So the pipeline takes WebGPU's shape, names instead of shader
+locations:
 
-Falls out of stage 1 for free: instance records take packed formats
-from the same table.
+```ts
+createRenderPipeline(program, {
+  buffers: [
+    { attributes: [{ name: "aPos", format: "float32x3" }, { name: "aUV", format: "float32x2" }] },
+    { stepMode: "instance", attributes: [{ name: "iOffset", format: "float32x2" }] },
+    { arrayStride: 36, attributes: [{ name: "aPos", format: "float32x3", offset: 0 }] },
+  ],
+})
+addDraw(target, pipeline, params, { buffers: [verts, poses], indexBuffer, indexFormat })
+setDrawBuffers(target, draw, { buffers: [verts, poses2] })
+```
+
+`stepMode` defaults to `"vertex"`, `arrayStride` to the attributes'
+byte sum, `offset` to the running offset. Validation at the call site:
+offsets and strides multiples of 4, offset plus size within the stride,
+no attribute name twice across buffers, at most `MAX_BUFFERS` (8)
+buffers, an entry binding exactly one buffer per declared layout. The
+entry side has one spelling, the `buffers` list; `attributes`,
+`instanceAttributes`, `buffer`, `instanceBuffer` and `instanceBuffers`
+are gone. Instance order keys on the first instance-step buffer.
+
+What it buys beyond streams: a depth pass declares `arrayStride: 36`
+with `aPos` alone, so a shadow pipeline is one per stride, not one per
+layout key; a pipeline binds a subset of a wider record; later
+per-buffer properties (a dynamic-usage hint, a sub-allocation offset)
+are additive fields. Inside the engine one list with a step per entry
+replaces the vertex buffer plus instance-slot array pair: the fetch
+bound of an unindexed entry is the tightest vertex-step buffer, the
+instance limit the tightest instance-step buffer.
+
+The 3d material's `instanceAttributes` option becomes `instanceBuffers:
+[{ attributes }]`, the record buffer first and the style buffer second,
+matching the engine's spelling.
+
+### 3d package
+
+- `Geometry.streams?: { layout: VertexAttribute[]; vertices:
+  ArrayBufferView }[]` holds streams 1..n; `vertices`/`layout` stay
+  stream 0, where aPos lives by the layout rule. A stream's layout is a
+  bare attribute list (the presets name stream 0 shapes). Names are
+  unique across all streams. `layoutKey` of a geometry covers every
+  stream (`|` between them), so a material's pipeline is per
+  (all streams, topology) as it is per (layout, topology) now.
+- `attributeAccess`/`geometryAttribute` find the name in whichever
+  stream carries it; that is the whole reason the accessor exists, and
+  no caller in geometry.ts changes. `vertexCount` requires every stream
+  to hold the same count. `validateGeometry` checks each stream.
+- `withAttribute(geometry, attr, fill, options?)` takes `{ label?,
+  stream? }`: `stream` names the extra stream (1..n) to append the
+  channel to, or n + 1 to open a new one; absent, the channel
+  interleaves into stream 0 as today. Three's one-buffer-per-channel is
+  a new stream per channel.
+- `updateVertices(geometry, { stream?, first?, count? })` is Three's
+  `needsUpdate` with an update range: the app writes into the stream's
+  array through the accessor, then this re-uploads vertices `[first,
+  first + count)` of that stream in place (`writeBuffer` at the byte
+  offset) into the shared GPU buffer, which every mesh, view and
+  wireframe over the geometry sees. A stream-0 update drops the cached
+  bounds. The picking shape keeps the positions it was built from
+  (Unity's and Godot's collision shapes never follow a mesh update
+  either); a deforming geometry that must pick re-attaches. Updating a
+  shape in place is an additive `flux:spatial` change later.
+- `setDrawRange(mesh, first, count?)` draws indices `[first, first +
+  count)` of the mesh's geometry (`count` absent = the rest), applied
+  to the mesh's entry and its per-view entries through core's
+  `setDrawRange`. On the mesh rather than the geometry because the
+  scene owns the entries; Three's geometry-level range is the same
+  slice.
+- The model container writes stream 0 only and refuses a geometry with
+  extra streams (a baked asset is static data; a dynamic stream is
+  built at run time).
+- `geometry-gpu.ts`: one upload per stream array, keyed by the array
+  as now (that key is what makes in-place updates reach every sharer,
+  so it stays), the entry binding `buffers` for every stream.
+
+### Done looks like
+
+The geometry rig builds a two-stream geometry, reads across streams
+through the accessor, merges and transforms it, and rejects mismatched
+stream counts; the alloy tests cover per-slot vertex strides and the
+tightest-slot fetch bound; a core example draws a static stream beside
+a per-frame stream written through `updateVertices`; `srt check` passes
+on core, 2d and 3d.
 
 ## Stage 1 landed (2026-09-11)
 
@@ -218,18 +288,37 @@ buffers are Float32Arrays written in floats); the packed formats are
 reachable for instance records through core's pipeline API. Additive
 later: records as byte views.
 
+## Stage 2 landed (2026-09-11)
+
+The buffers list across alloy, flux, the types, core, 2d and 3d: one
+`buffers` list of layouts on a pipeline (`stepMode`, `arrayStride`,
+attribute `offset`, all defaulted), one `buffers` id list on an entry,
+`setDrawBuffers({ buffers })`, and `instanceOrder.buffer` naming the key
+buffer by pipeline index. The 3d material's option is `instanceBuffers:
+[{ attributes }]`. In the 3d package `Geometry.streams`, `withAttribute`'s
+`stream` option, the accessor across streams, `updateVertices` and
+`setDrawRange(mesh, first, count?)` as designed above; the container
+refuses streams. Verified by the alloy and flux test suites, the two flux
+GPU examples on a window (split buffers, key-buffer orders, the fused
+create and its rejections), the geometry, glTF, sweep, order, pick,
+dispatch, orbit and first-person rigs, `srt check` on core, 2d and 3d,
+and `examples/streams.tsx` on a window. Point size and a stock points
+material stay a separate item.
+
 ## Findings
 
-- The engine never matched a pipeline's attribute formats against the
-  program's reflection: `program_attributes` is reported to JS and the
-  by-name match lives in the 3d package (`missingAttributes`), so the
-  component-count rule has exactly one home.
-- `srt check <package>` typechecks `examples/`, not `checks/`: a rig
-  is runtime-only, and a type change that breaks a rig shows up as a
-  failed run, not a failed check.
-- `DataView.getFloat16/setFloat16` and `Float16Array` exist in bun and
-  in flux's QuickJS, and TypeScript 7 under `lib: ["ESNext"]` knows
-  them, so half floats need no conversion helper.
-- Three untracked alloy examples (draw_ordered, draw_instanced,
-  sub_target) fail to compile on a `create_draw_target` argument-count
-  drift that predates this work.
+Cut into okf/notes/vertex-data-verification.md. Plan archaeology that
+stays here: three untracked alloy examples (draw_ordered,
+draw_instanced, sub_target) failed to compile on a `create_draw_target`
+argument-count drift before this work and now also on the pipeline
+shape; the flux gpu_split and gpu_order examples were ported.
+
+## Deferred, as backlog
+
+- okf/backlog/gpu-integer-vertex-inputs.md: integer shader inputs and
+  the 32-bit integer formats.
+- okf/backlog/3d-picking-shape-after-update.md: the picking shape does
+  not follow updateVertices.
+- okf/backlog/3d-instance-records-as-bytes.md: the 3d package's instance
+  buffers are float32 records, so packed instance formats stop at the
+  engine.

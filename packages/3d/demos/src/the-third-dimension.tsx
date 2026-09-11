@@ -49,6 +49,7 @@ import {
   torusKnot,
   useScene,
   View3d,
+  layoutStride,
   STANDARD_FLOATS,
 } from "@solidrt/3d"
 import type { CameraUpdate, OrbitCameraHandle, SceneNode, SpotShadowOptions, Vec3 } from "@solidrt/3d"
@@ -369,7 +370,7 @@ function App() {
   })
   let groundGeometry = plane({ width: FLOOR_SIZE, height: FLOOR_SIZE, label: "ground" })
   let triangles = (knotGeometry.indices.length + groundGeometry.indices.length) / 3
-  let vertexCount = (knotGeometry.vertices.length + groundGeometry.vertices.length) / STANDARD_FLOATS
+  let vertexCount = (knotGeometry.vertices.byteLength + groundGeometry.vertices.byteLength) / layoutStride("standard")
   let bytes =
     knotGeometry.vertices.byteLength +
     knotGeometry.indices.byteLength +

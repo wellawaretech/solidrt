@@ -135,7 +135,7 @@ export {
 // updated draw range (vertexCount after its buffer gained or lost dynamic
 // geometry, firstVertex for a different window of a shared buffer,
 // instanceCount for an instanced population; absent keys keep their current
-// value, like params) and/or swapped buffers (instanceBuffer pointed at a
+// value, like params) and/or swapped buffers (an instance buffer pointed at a
 // larger buffer once a population outgrows the old one - the growth
 // primitive; replace-only, the range is rechecked); destroyBuffer is the manual
 // cleanup path for buffers created outside a reactive scope. renderTarget is
@@ -147,7 +147,7 @@ export {
 // GPU-side (exact, same size): seed a loadOp "load" accumulator, snapshot a
 // ping-pong buffer, reset state to a known image.
 export { copyTexture, destroyBuffer, renderTarget, setDraw } from "flux:gpu"
-export type { BlendMode, BufferUpdate, CullMode, DrawRange, IndexBinding, IndexFormat, IndexRange, InstanceAttribute, InstanceOrder, OrderUpdate, ShaderParams, Topology, VertexAttribute, VertexFormat } from "flux:gpu"
+export type { BlendMode, BufferUpdate, CullMode, DrawRange, IndexBinding, IndexFormat, IndexRange, InstanceOrder, OrderUpdate, ShaderParams, Topology, VertexAttribute, VertexBufferLayout, VertexFormat } from "flux:gpu"
 
 // The draw-list verbs, re-exported raw: entries live and die with their draw
 // target (see createDrawTarget below), so there is no per-entry lifetime to
@@ -366,20 +366,18 @@ export function createShaderTexture(
  * texture id is, e.g. `<texture src>`; resize with `setTargetSize`, drive
  * uniforms with `<texture params>` or `setTargetParams`). Many targets may
  * share one pipeline, and creating a target compiles nothing. The target
- * brings the per-target half: size, the concrete vertex `buffer` the
- * pipeline's attribute layout describes, the `instanceBuffer` its
- * `instanceAttributes` describe (required exactly when it declares any),
- * the draw range (`vertexCount` defaults to the rest of the buffer from
- * `firstVertex` on, `instanceCount` repeats it as instances told apart by
- * `gl_InstanceID` and defaults to one per instance-buffer record; a
- * fullscreen pass over an attributeless pipeline is `{ vertexCount: 3 }`
- * with a covering-triangle vertex stage), uniforms, and
- * `clearColor`. An `indexBuffer` + `indexFormat` pair makes the draw indexed
- * (shared vertices stored once), with the range in `firstIndex`/`indexCount`
- * spelling - see IndexBinding/IndexRange. Draw state (`attributes`,
- * `instanceAttributes`, `topology`, `blend`, `cull`, `depth`, `depthWrite`)
- * lives on the pipeline
- * and throws here. Frees the target when the reactive owner is disposed (opt
+ * brings the per-target half: size, the concrete `buffers` the pipeline's
+ * layouts describe (one id per layout, in declaration order), the draw
+ * range (`vertexCount` defaults to the rest of the tightest vertex-step
+ * buffer from `firstVertex` on, `instanceCount` repeats it as instances
+ * told apart by `gl_InstanceID` and defaults to one per record of the
+ * tightest instance-step buffer; a fullscreen pass over an attributeless
+ * pipeline is `{ vertexCount: 3 }` with a covering-triangle vertex stage),
+ * uniforms, and `clearColor`. An `indexBuffer` + `indexFormat` pair makes
+ * the draw indexed (shared vertices stored once), with the range in
+ * `firstIndex`/`indexCount` spelling - see IndexBinding/IndexRange. Draw
+ * state (`topology`, `blend`, `cull`, `depth`, `depthWrite`) lives on the
+ * pipeline and throws here. Frees the target when the reactive owner is disposed (opt
  * out with `autoFree: false`); the pipeline is yours and outlives it.
  *
  * `render: "manual"` makes it a manual target: the runtime never renders it
@@ -404,11 +402,8 @@ export function createShaderTarget(
   params?: gpu.ShaderParams | null,
   opts?: {
     textures?: gpu.TextureBindings
-    buffer?: gpu.BufferId
-    instanceBuffer?: gpu.BufferId
-    /** One buffer per instance slot of the pipeline (index = the
-     * attributes' `slot`); pass this OR `instanceBuffer`, not both. */
-    instanceBuffers?: gpu.BufferId[]
+    /** One buffer id per layout of the pipeline, in declaration order. */
+    buffers?: gpu.BufferId[]
     /** Draw the instance records in key order (see InstanceOrder). */
     instanceOrder?: gpu.InstanceOrder
     clearColor?: [number, number, number, number]
@@ -658,9 +653,9 @@ function toUint8(data: ArrayBuffer | ArrayBufferView): Uint8Array {
  * texture, returning the texture id (usable anywhere a normal texture id is,
  * e.g. `<texture src>`) - named, like `createShaderTexture`, for what comes
  * back. Unlike `createShaderTexture` the vertex stage is yours:
- * declare `in` attributes matching `opts.attributes` (one interleaved vertex
- * in `opts.buffer`, a {@link createBuffer} id) and your own varyings toward
- * the fragment stage. Clip space is y-down: `gl_Position` y = -1 is the top
+ * declare `in` attributes matching `opts.buffers` (each layout with the
+ * {@link createBuffer} id it reads) and your own varyings toward the
+ * fragment stage. Clip space is y-down: `gl_Position` y = -1 is the top
  * row of the target and +1 the bottom, so camera-up geometry must negate y
  * (or fold the flip into its projection) to display up. Both sources may
  * reference `iResolution` and any uniform they declare (`float`/`int`
@@ -679,10 +674,10 @@ function toUint8(data: ArrayBuffer | ArrayBufferView): Uint8Array {
  * see DrawRange) defaults to the whole buffer drawn once and can be changed
  * later with `setDraw`; `instanceCount` is the standard answer to particles
  * and repeated meshes, N copies of the range told apart by `gl_InstanceID`
- * in the vertex stage. `opts.instanceAttributes` + `opts.instanceBuffer`
- * (declare both or neither) give each instance its own interleaved record -
- * real per-instance state instead of `gl_InstanceID` arithmetic - and
- * `instanceCount` then defaults to one instance per record. An
+ * in the vertex stage. A layout with `stepMode: "instance"` gives each
+ * instance its own interleaved record - real per-instance state instead of
+ * `gl_InstanceID` arithmetic - and `instanceCount` then defaults to one
+ * instance per record. An
  * `indexBuffer` + `indexFormat` pair makes the draw
  * indexed (shared vertices stored once), with the range in
  * `firstIndex`/`indexCount` spelling; `opts.cull` discards one face set by
@@ -701,13 +696,8 @@ export function createPipelineTexture(
   params?: gpu.ShaderParams | null,
   opts?: {
     textures?: gpu.TextureBindings
-    attributes?: gpu.VertexAttribute[]
-    buffer?: gpu.BufferId
-    instanceAttributes?: gpu.InstanceAttribute[]
-    instanceBuffer?: gpu.BufferId
-    /** One buffer per instance slot (index = the attributes' `slot`);
-     * pass this OR `instanceBuffer`, not both. */
-    instanceBuffers?: gpu.BufferId[]
+    /** The pipeline's layouts, each with the buffer it reads. */
+    buffers?: (gpu.VertexBufferLayout & { buffer: gpu.BufferId })[]
     /** Draw the instance records in key order (see InstanceOrder). */
     instanceOrder?: gpu.InstanceOrder
     topology?: gpu.Topology

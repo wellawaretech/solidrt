@@ -9,7 +9,7 @@
 //
 // A failure prints FAIL lines and throws at the end, so the run exits nonzero.
 
-import { arrowHelper, axesHelper, box, box3Helper, cylinder, dodecahedron, edgesGeometry, validateGeometry, fillAttribute, fillColors, gridHelper, icosahedron, octahedron, packGeometry, planeHelper, polyhedron, sphere, tetrahedron, torus, torusKnot, geometryAttribute, geometryBounds, layoutKey, layoutSlot, layoutStride, mergeGeometries, plane, transformGeometry, wireframeGeometry, vertexBytes, vertexCount, withAttribute, withColors, STANDARD_FLOATS, VERTEX_FORMATS, VERTEX_LAYOUTS } from "../src/geometry.ts"
+import { arrowHelper, axesHelper, box, box3Helper, cylinder, dodecahedron, edgesGeometry, validateGeometry, fillAttribute, fillColors, gridHelper, icosahedron, octahedron, packGeometry, planeHelper, polyhedron, sphere, tetrahedron, torus, torusKnot, geometryAttribute, geometryBounds, geometryKey, geometrySlot, geometryStreams, geometryVertexCount, layoutKey, layoutSlot, layoutStride, mergeGeometries, plane, transformGeometry, wireframeGeometry, vertexBytes, vertexCount, withAttribute, withColors, STANDARD_FLOATS, VERTEX_FORMATS, VERTEX_LAYOUTS } from "../src/geometry.ts"
 import { cross, normalize, rayBoxDistance, sub } from "../src/math.ts"
 import type { Geometry, PolyhedronOptions } from "../src/geometry.ts"
 import type { VertexFormat } from "@solidrt/core/gpu"
@@ -528,6 +528,49 @@ throws("merge empty", () => mergeGeometries([]))
   throws("packed byte count", () => validateGeometry({ ...packed, vertices: vertexBytes(packed.vertices).subarray(0, 50) }))
   throws("unaligned view", () => validateGeometry({ ...packed, vertices: new Uint8Array(new ArrayBuffer(packed.vertices.byteLength + 1), 1) }))
   throws("packed generator layout", () => box({ layout: [...VERTEX_LAYOUTS.standard, { name: "aColor", format: "unorm8x4" }] }))
+}
+
+// Streams: a channel in a buffer of its own, found by name across streams,
+// carried through transform, merge and the edge builders, and the stream
+// rules (equal counts, unique names, valid indices).
+{
+  let base = tri()
+  let waved = withAttribute(base, { name: "aWave", format: "float32" }, (i) => [i * 0.5], { stream: 1 })
+  if (waved.streams?.length !== 1) fail("stream count: " + waved.streams?.length)
+  if (geometryKey(waved) !== "aPos:float32x3,aNormal:float32x3,aUV:float32x2|aWave:float32") fail("stream key: " + geometryKey(waved))
+  if (waved.vertices !== base.vertices) fail("stream 0 shared when the channel opens a stream")
+  expectVec("stream read by name", [read(waved, "aWave", 0)[0]!, read(waved, "aWave", 2)[0]!], [0, 1])
+  let slot = geometrySlot(waved, "aWave")
+  if (slot === null || slot.stream !== 1 || slot.offset !== 0) fail("stream slot lookup")
+  if (geometryVertexCount(waved, "rig") !== 3) fail("stream vertex count")
+  validateGeometry(waved)
+  // Append to the extra stream: its layout grows, stream 0 stays shared.
+  let tagged = withAttribute(waved, { name: "aTag", format: "unorm8x4" }, (i, pos) => [pos[0], 0, 0, 1], { stream: 1 })
+  if (geometryKey(tagged) !== "aPos:float32x3,aNormal:float32x3,aUV:float32x2|aWave:float32,aTag:unorm8x4") fail("stream append key: " + geometryKey(tagged))
+  if (tagged.vertices !== base.vertices || layoutStride(tagged.streams![0]!.layout) !== 8) fail("stream append shape")
+  expectVec("stream append keeps aWave", read(tagged, "aWave", 2), [1])
+  expectVec("stream append fill sees stream-0 pos", read(tagged, "aTag", 0), [1, 0, 0, 1])
+  // fillAttribute writes into the stream and returns its buffer.
+  let written = fillAttribute(tagged, "aWave", [7, 8, 9])
+  if (written !== tagged.streams![0]!.vertices) fail("fillAttribute returns the stream's vertices")
+  expectVec("fillAttribute into a stream", read(tagged, "aWave", 1), [8])
+  // Transform rewrites stream 0 and shares the rest; merge concatenates
+  // every stream; the edge builders share every stream.
+  let moved = transformGeometry(tagged, { position: [0, 0, 5] })
+  if (moved.streams !== tagged.streams) fail("transform shares extra streams")
+  expectVec("transform moves stream 0", read(moved, "aPos", 0), [1, 0, 5])
+  let merged = mergeGeometries([tagged, moved])
+  if (geometryKey(merged) !== geometryKey(tagged) || geometryVertexCount(merged, "rig") !== 6) fail("stream merge shape")
+  expectVec("stream merge second part", read(merged, "aWave", 4), [8])
+  expectVec("stream merge second pos", read(merged, "aPos", 3), [1, 0, 5])
+  let wire = wireframeGeometry(merged)
+  if (wire.streams !== merged.streams) fail("wireframe shares streams")
+  throws("stream count mismatch", () => validateGeometry({ ...tagged, streams: [{ layout: tagged.streams![0]!.layout, vertices: new Float32Array(4) }] }))
+  throws("name in two streams", () => validateGeometry({ ...tagged, streams: [{ layout: [{ name: "aPos", format: "float32x3" }], vertices: new Float32Array(9) }] }))
+  throws("stream index past the next", () => withAttribute(waved, { name: "aX", format: "float32" }, () => [0], { stream: 3 }))
+  throws("duplicate across streams", () => withAttribute(waved, { name: "aWave", format: "float32" }, () => [0]))
+  throws("mixed stream layouts merge", () => mergeGeometries([waved, base]))
+  if (geometryStreams(base).length !== 1) fail("a plain geometry is one stream")
 }
 
 if (failures > 0) throw new Error(failures + " geometry check(s) failed")

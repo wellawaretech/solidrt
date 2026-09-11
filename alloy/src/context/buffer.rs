@@ -113,12 +113,6 @@ impl Context {
   /// before the create RPC, so the mistake throws at the call site. What the
   /// draw-range resolution and the captured draw bound (see
   /// `TargetMirror::bounds`) both read.
-  pub(super) fn buffer_size(&self, id: u64) -> Result<Option<usize>, String> {
-    if id == 0 {
-      return Ok(None);
-    }
-    self.buffer_sizes.borrow().get(&id).copied().map(Some).ok_or_else(|| format!("buffer {id} not found"))
-  }
 
   /// Read back part of a vertex buffer's contents by registry id. An
   /// ordered instance buffer reads back in gathered (key) order, not slot

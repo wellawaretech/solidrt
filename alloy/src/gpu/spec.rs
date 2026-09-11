@@ -69,29 +69,27 @@ pub struct TargetSpec {
 }
 
 /// One draw entry of a mesh target: the pipeline it draws with and everything
-/// bound to this entry - the concrete vertex buffer, draw range, uniform
-/// values, and sampler inputs. The single-draw creates carry exactly one;
+/// bound to this entry - the concrete buffers, draw range, uniform values,
+/// and sampler inputs. The single-draw creates carry exactly one;
 /// `add_draw` appends one to a draw target's ordered list. The default is
-/// attributeless: no pipeline, no buffer, the whole-buffer draw range.
+/// attributeless: no pipeline, no buffers, the whole-buffer draw range.
 #[derive(Default)]
 pub struct DrawSpec {
   /// Registry id of the render pipeline; 0 only on the fused create path,
   /// whose pipeline is anonymous and travels as `PipelineSpec::pipeline`.
   pub pipeline: u64,
-  /// Registry id of the interleaved vertex buffer the pipeline's attributes
-  /// describe; 0 = attributeless rendering via gl_VertexID.
-  pub buffer: u64,
+  /// Registry ids of the buffers the pipeline's layouts describe, one per
+  /// layout in declaration order (0 = none at that index); the buffer at
+  /// index i is read at `PipelineDesc::buffers[i]`'s step and stride.
+  /// Required exactly for the declared layouts. All zero = attributeless
+  /// rendering via gl_VertexID.
+  pub buffers: [u64; super::vocab::MAX_BUFFERS],
   /// Index binding: (index buffer registry id, element format). Present =
   /// the entry draws indexed (glDrawElements): `draw` then counts indices
   /// into this buffer, and vertices are fetched through their values. One
   /// buffer kind serves both roles (as in WebGPU and WebGL) - any
   /// `create_gpu_buffer` result works here.
   pub index: Option<(u64, IndexFormat)>,
-  /// Registry ids of the per-instance buffers, one per instance slot the
-  /// pipeline's `instance_attributes` declare (fetched at vertex divisor 1:
-  /// one record per instance; 0 = the slot is unused). Required exactly for
-  /// the declared slots; the same one-buffer kind as the other two roles.
-  pub instance_buffers: [u64; super::vocab::MAX_INSTANCE_SLOTS],
   /// Which vertices (or, indexed, which indices) to draw and how many
   /// instances (see `DrawRange`). A negative count here means "the rest of
   /// the buffer"; Context resolves it (`resolve_draw_range`) before the
@@ -100,7 +98,7 @@ pub struct DrawSpec {
   pub params: Vec<(String, ParamValue)>,
   pub textures: Vec<TextureBinding>,
   /// The entry's declared instance order (see `InstanceOrder`): records of
-  /// its one instance buffer draw in key order, gathered at each lease
+  /// its instance-step buffers draw in key order, gathered at each lease
   /// publish. UI-side state only - Context takes it before the spec crosses
   /// the channel; the raster thread receives already-gathered blocks and
   /// never sees this field.
@@ -110,7 +108,7 @@ pub struct DrawSpec {
 impl DrawSpec {
   /// The entry's buffer ids by role (see `BufferIds`).
   pub fn buffer_ids(&self) -> BufferIds {
-    BufferIds { buffer: self.buffer, index: self.index, instance_buffers: self.instance_buffers }
+    BufferIds { buffers: self.buffers, index: self.index }
   }
 }
 
