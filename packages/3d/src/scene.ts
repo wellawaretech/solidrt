@@ -39,7 +39,7 @@
 import { addDraw, createCubeDrawTarget, createDrawTarget, depthTexture, destroyProgram, destroyRenderPipeline, destroyTexture, removeDraw, renderTarget, setDrawBuffers, setDrawOrder, setDrawParams, setDrawRange, setDrawTextures, setTargetParams, setTargetRect, setTargetSize, setTargetTextures } from "@solidrt/core/gpu"
 import * as spatial from "flux:spatial"
 import type { Impact as CoreImpact, NodeId, QueryFilter } from "flux:spatial"
-import type { DrawId, FilterMode, ProgramId, RenderPipelineId, ShaderParams, TextureId, WrapMode } from "@solidrt/core/gpu"
+import type { BufferId, DrawId, FilterMode, ProgramId, RenderPipelineId, ShaderParams, TextureId, WrapMode } from "@solidrt/core/gpu"
 import { getOwner, onCleanup } from "@solidrt/core"
 import type { PointerEvent as ElementPointerEvent, WheelEvent as ElementWheelEvent } from "@solidrt/core"
 import { copy, mat4, transformPoint } from "./math.ts"
@@ -416,6 +416,11 @@ export type SceneOptions = {
   toneMapping?: ToneMapping
   /** Output exposure, default 1; see setExposure. */
   exposure?: number
+  /** LOD quality knob, default 1: every measured projected size is
+   * multiplied by it before the level select, so below 1 the groups hand
+   * over to their far levels sooner (Unity's lodBias). Live via
+   * scene.setLodBias; views and shadow tiles follow it. */
+  lodBias?: number
   /** The scene target's layer mask (bitmask, default 1): the scene draws
    * the meshes whose `layers` intersect it. Live via scene.setLayers. */
   layers?: number
@@ -711,6 +716,10 @@ export type Scene = {
    * shared-params write (`uExposure`), like Three's toneMappingExposure.
    */
   setExposure(exposure: number): void
+  /** The LOD quality knob (SceneOptions.lodBias): a multiplier on every
+   * measured projected size, for the scene, its views and its shadow
+   * tiles. Below 1 switches to far levels sooner. */
+  setLodBias(bias: number): void
   /**
    * Project a world point to scene pixels: origin top-left, y down - the
    * output texture's own coordinate space, ready for overlay layout (HUD
@@ -921,10 +930,16 @@ function meshRange(mesh: Mesh): { firstIndex: number; indexCount: number } {
 // An entry's initial params. The uNormal seed keys off the material flag
 // because entry params validate strictly - and a material declaring
 // uNormal without using it therefore throws right here, at add().
+// The solid uLodFade: a fresh entry draws whole until the core writes a
+// band position (a GL uniform reads zero until written, which would
+// discard everything).
+const LOD_SOLID = [1, 1]
+
 function entrySeed(material: Material, params: ShaderParams | null): ShaderParams {
-  return material.normalMatrix
-    ? { uModel: IDENTITY, uNormal: IDENTITY, ...material.params, ...params }
-    : { uModel: IDENTITY, ...material.params, ...params }
+  let seed: ShaderParams = { uModel: IDENTITY }
+  if (material.normalMatrix) seed.uNormal = IDENTITY
+  if (material.lodFade) seed.uLodFade = LOD_SOLID
+  return { ...seed, ...material.params, ...params }
 }
 
 /**
@@ -965,8 +980,11 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
   // One filter object per scene, refilled per query (the bindings read it
   // synchronously), so a query allocates nothing but its hits.
   let filter: QueryFilter = {}
-  let queryFilter = (qopts: QueryOptions | undefined, site: string): QueryFilter => {
+  // `target` names the draw target whose LOD levels the query sees: the
+  // scene's for its own queries, a view's for view.pick.
+  let queryFilter = (qopts: QueryOptions | undefined, site: string, target: TextureId = texture): QueryFilter => {
     filter.root = root._node!
+    filter.target = target
     filter.layers = qopts?.layers !== undefined ? checkMask(qopts.layers, site) : sceneMask
     if (qopts?.meshes === undefined) {
       filter.nodes = undefined
@@ -1006,6 +1024,8 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
   // since the last sync: one setCullGroup per mesh however many entered
   // or left.
   let groupDirty = new Set<InstancedMesh>()
+  // bindMatrixRecord's buffer list, refilled per instance.
+  let instanceBuffers: BufferId[] = []
   let instanceGroup = (mesh: InstancedMesh): NodeId[] => {
     let members: NodeId[] = []
     for (let n of mesh._instances.nodes.slots) if (n !== null && n._node !== null) members.push(n._node)
@@ -1272,6 +1292,9 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     entries: Map<Mesh, DrawId>
     orderDirty: boolean
     lastOrder: DrawId[]
+    /** A shadow tile measures LOD by the SCENE camera: set once at
+     * creation, then on every scene camera move. */
+    lodViewSet: boolean
     /** A reflection probe's target is a cube draw target of this face
      * edge, rendered face by face through probe.update(); null for a
      * 2D view. */
@@ -1324,7 +1347,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     })
     // The core turns the entry on (with the world matrix) at the next
     // flush, and off again whenever the node or an ancestor hides.
-    spatial.bindDraw(mesh._node!, texture, mesh._entry, mesh.material.normalMatrix === true, inst !== null ? inst.count : 1)
+    spatial.bindDraw(mesh._node!, texture, mesh._entry, mesh.material.normalMatrix === true, inst !== null ? inst.count : 1, mesh.material.lodFade === true)
     orderDirty = true
   }
   let detachScene = (mesh: Mesh) => {
@@ -1371,7 +1394,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       textures: (material === mesh.material || material.skinned === true) && mesh._textures !== null ? { ...material.textures, ...mesh._textures } : material.textures,
       instanceCount: 0,
     })
-    spatial.bindDraw(mesh._node!, v.texture, entry, material.normalMatrix === true, inst !== null ? inst.count : 1)
+    spatial.bindDraw(mesh._node!, v.texture, entry, material.normalMatrix === true, inst !== null ? inst.count : 1, material.lodFade === true)
     v.entries.set(mesh, entry)
     v.orderDirty = true
   }
@@ -1399,6 +1422,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     v.entries.clear()
     for (let light of lights) if (light.type === "directional" && light._node !== null) spatial.unbindSlot(light._node, v.texture)
     spatial.setFrustum(v.texture, null)
+    spatial.setLodView(v.texture, null)
     // Drain the zeroed direction slots while the target still exists.
     spatial.flush()
     destroyTexture(v.texture)
@@ -1479,6 +1503,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       entries: new Map(),
       orderDirty: true,
       lastOrder: [],
+      lodViewSet: false,
       cube,
       probeCube: null,
       sky,
@@ -1528,6 +1553,26 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     frustumScratch.set(cam.viewProj)
     spatial.setFrustum(target, frustumScratch)
   }
+  // A camera write is also the target's LOD view - eye, vertical focal
+  // factor (the magnitude of proj[5] under either projection: the
+  // projections bake in a y-down clip flip, so the element is negative),
+  // the ortho flag and the scene's bias - what the core measures
+  // projected size with. The scene and each view measure by their own
+  // camera; a shadow tile by the SCENE camera, so a caster draws the
+  // level the camera sees and its shadow matches.
+  let lodBias = opts?.lodBias ?? 1
+  if (!(lodBias > 0 && Number.isFinite(lodBias))) throw new Error("createScene: lodBias must be a positive number, got " + lodBias)
+  let lodBiasDirty = false
+  let lodScratch = new Float32Array(6)
+  let setLodView = (target: TextureId, cam: Camera) => {
+    lodScratch[0] = cam.eye[0]
+    lodScratch[1] = cam.eye[1]
+    lodScratch[2] = cam.eye[2]
+    lodScratch[3] = Math.abs(cam.proj[5]!)
+    lodScratch[4] = cam.ortho !== null ? 1 : 0
+    lodScratch[5] = lodBias
+    spatial.setLodView(target, lodScratch)
+  }
   let sync = () => {
     scheduled = false
     if (disposed) return
@@ -1551,21 +1596,36 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     if (budgetError === null) budgetError = shadowError
     ensureCamera(camera, width, height)
     let cameraMoved = camera.pending
+    let biasChanged = lodBiasDirty
+    lodBiasDirty = false
     if (camera.pending) {
       camera.pending = false
       setTargetParams(texture, cameraParams(camera))
       setFrustum(texture, camera)
       if (transparentCount > 1) orderDirty = true
     }
+    if (cameraMoved || biasChanged) setLodView(texture, camera)
     shadowSys.placeCameras(cameraMoved)
     for (let v of views) {
       ensureCamera(v.camera, v.width, v.height)
-      if (v.camera.pending) {
+      let viewMoved = v.camera.pending
+      if (viewMoved) {
         v.camera.pending = false
         setTargetParams(v.texture, cameraParams(v.camera))
         setFrustum(v.texture, v.camera)
         if (transparentCount > 1) v.orderDirty = true
         if (v.shadowFilter !== null) shadowSys.markMatricesDirty()
+      }
+      // Probe faces measure nothing (six cameras, one target), like their
+      // frustum.
+      if (v.cube !== null) continue
+      if (v.shadowFilter !== null) {
+        if (cameraMoved || biasChanged || !v.lodViewSet) {
+          v.lodViewSet = true
+          setLodView(v.texture, camera)
+        }
+      } else if (viewMoved || biasChanged) {
+        setLodView(v.texture, v.camera)
       }
     }
     // Light bookkeeping first, so a fresh direction-slot bind is seeded
@@ -1763,7 +1823,13 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       spatial.setLayers(instance._node, mesh.layers)
       // The record is the instance's placement inside the mesh (the mesh
       // node is the anchor), staged by the core at the next flush.
-      spatial.bindMatrixRecord(instance._node, mesh._instances.matrix, instance._slot, mesh._node)
+      // One buffer per LOD level of an instanced LOD (the population is
+      // the group and the anchor, its levels its children at identity).
+      let levels = mesh._instances.levels
+      instanceBuffers.length = 0
+      if (levels === null) instanceBuffers.push(mesh._instances.matrix)
+      else for (let l of levels) instanceBuffers.push(l._instances.matrix)
+      spatial.bindMatrixRecord(instance._node, instanceBuffers, instance._slot, mesh._node)
       byNode.set(instance._node, instance)
       if (mesh._instances.bounds === null) groupDirty.add(mesh)
       this._schedule()
@@ -1845,6 +1911,19 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       }
       this._schedule()
     },
+    _bindLod(node) {
+      if (disposed || node._node === null) return
+      let config = node._lod
+      let levels: { node?: NodeId; size: number }[] = []
+      if (config !== null) {
+        for (let l of config.levels) {
+          if (l.node === null) levels.push({ size: l.size })
+          else if (l.node._node !== null) levels.push({ node: l.node._node, size: l.size })
+        }
+      }
+      spatial.setLod(node._node, levels, config?.fade ?? 0, texture)
+      this._schedule()
+    },
   }
 
   let root = makeNode("group")
@@ -1860,6 +1939,34 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
   // The scene's root listeners (scene.listen): the last stop of the
   // pointer walk scene-pointer.ts runs behind scene.handlers.
   let listeners = new Set<ScenePointerListener>()
+
+  // The raycast every pick shares: `target` names the draw target whose
+  // LOD levels the query sees (the scene's own, or a view's).
+  let raycastAs = (target: TextureId, origin: Vec3, direction: Vec3, rayOpts: QueryOptions | undefined): Hit[] => {
+    // Flush pending writes: picking sees the tree as the app just wrote
+    // it, the same immediacy contract as lookAt()/project(). (The queued
+    // microtask still runs and finds nothing dirty - harmless.)
+    if (scheduled) sync()
+    if (disposed) return []
+    let f = queryFilter(rayOpts, "raycast", target)
+    let hits: Hit[] = []
+    rayOriginScratch[0] = origin[0]
+    rayOriginScratch[1] = origin[1]
+    rayOriginScratch[2] = origin[2]
+    rayDirScratch[0] = direction[0]
+    rayDirScratch[1] = direction[1]
+    rayDirScratch[2] = direction[2]
+    for (let h of spatial.raycast(rayOriginScratch, rayDirScratch, f)) {
+      let leaf = leafOf(h.node)
+      if (leaf === null) continue
+      let hit: Hit = { mesh: leaf.mesh, distance: h.distance, point: h.point, normal: h.normal }
+      if (leaf.instance !== null) hit.instance = leaf.instance
+      if (h.face !== undefined) hit.face = h.face
+      if (h.uv !== undefined) hit.uv = h.uv
+      hits.push(hit)
+    }
+    return hits
+  }
 
   let scene: Scene = {
     texture,
@@ -1892,6 +1999,13 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     },
     setFog(fog) {
       scene.setParams(fogParams(fog))
+    },
+    setLodBias(bias) {
+      if (!(bias > 0 && Number.isFinite(bias))) throw new Error("scene.setLodBias: bias must be a positive number, got " + bias)
+      if (disposed || bias === lodBias) return
+      lodBias = bias
+      lodBiasDirty = true
+      hooks._schedule()
     },
     setLayers(mask) {
       checkMask(mask, "scene.setLayers")
@@ -1987,7 +2101,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     },
     pick(x, y) {
       pixelRay(x, y)
-      return scene.raycast(pickOrigin, pickDir)
+      return raycastAs(texture, pickOrigin, pickDir, undefined)
     },
     unproject(x, y, w, out = [0, 0, 0]) {
       pixelRay(x, y)
@@ -2004,29 +2118,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       }
     },
     raycast(origin, direction, rayOpts) {
-      // Flush pending writes: picking sees the tree as the app just wrote
-      // it, the same immediacy contract as lookAt()/project(). (The queued
-      // microtask still runs and finds nothing dirty - harmless.)
-      if (scheduled) sync()
-      if (disposed) return []
-      let f = queryFilter(rayOpts, "raycast")
-      let hits: Hit[] = []
-      rayOriginScratch[0] = origin[0]
-      rayOriginScratch[1] = origin[1]
-      rayOriginScratch[2] = origin[2]
-      rayDirScratch[0] = direction[0]
-      rayDirScratch[1] = direction[1]
-      rayDirScratch[2] = direction[2]
-      for (let h of spatial.raycast(rayOriginScratch, rayDirScratch, f)) {
-        let leaf = leafOf(h.node)
-        if (leaf === null) continue
-        let hit: Hit = { mesh: leaf.mesh, distance: h.distance, point: h.point, normal: h.normal }
-        if (leaf.instance !== null) hit.instance = leaf.instance
-        if (h.face !== undefined) hit.face = h.face
-        if (h.uv !== undefined) hit.uv = h.uv
-        hits.push(hit)
-      }
-      return hits
+      return raycastAs(texture, origin, direction, rayOpts)
     },
     overlap(volume, qopts) {
       if (scheduled) sync()
@@ -2135,7 +2227,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
         pick(x, y) {
           if (v.disposed) return []
           pixelRayOf(v.camera, v.width, v.height, x, y)
-          return scene.raycast(pickOrigin, pickDir)
+          return raycastAs(v.texture, pickOrigin, pickDir, undefined)
         },
         get handlers() {
           return viewPointer.handlers
@@ -2195,6 +2287,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
         root._node = null
       }
       spatial.setFrustum(texture, null)
+      spatial.setLodView(texture, null)
       // Drain the zeroed direction slots the teardown queued while the
       // targets still exist; afterwards their groups are gone.
       spatial.flush()

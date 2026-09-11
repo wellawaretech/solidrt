@@ -40,10 +40,13 @@ export type MeshProps = TransformProps & PointerEventProps & {
 // take them); the
 // ref and the cleanup are each component's own (a populated mesh frees
 // its buffers, a plain one is removed).
-export function syncMesh(mesh: MeshNode, props: Omit<MeshProps, "geometry" | "castShadow" | "ref">): void {
+export function syncMesh(mesh: MeshNode, props: Omit<MeshProps, "geometry" | "material" | "castShadow" | "ref"> & { material?: Material }): void {
+  // Absent on an <InstancedLod>, whose levels each carry their own.
   createEffect(
     () => props.material,
-    m => setMaterial(mesh, m),
+    m => {
+      if (m !== undefined) setMaterial(mesh, m)
+    },
     { defer: true },
   )
   createEffect(

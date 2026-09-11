@@ -35,7 +35,9 @@ export type InstancedMeshProps = PopulatedMeshProps & {
   ref?: (mesh: InstancedMeshNode) => void
 }
 
-let InstancedMeshContext = createContext<InstancedMeshNode | null>(null)
+/** The enclosing population, what `<Instance>` adds itself to: an
+ * `<InstancedMesh>`, or an `<InstancedLod>`'s first level. */
+export let InstancedMeshContext = createContext<InstancedMeshNode | null>(null)
 
 /**
  * One draw entry covering N instance NODES (createInstancedMesh as a

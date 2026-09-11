@@ -11,6 +11,7 @@ const ONE: [f32; 3] = [1.0, 1.0, 1.0];
 pub(super) enum Write {
   Params { target: u64, draw: u64, model: Mat4, normal: Option<Mat4> },
   Count { target: u64, draw: u64, count: u32 },
+  Fade { target: u64, draw: u64, fade: [f32; 2] },
   Shared { target: u64, name: String, values: Vec<f32> },
   Instances { buffer: u64, first: u32, values: Vec<f32> },
   Texture { texture: u64, values: Vec<f32> },
@@ -40,6 +41,10 @@ impl SinkWriter for Recorder {
     self.writes.push(Write::Count { target, draw, count });
     self.landed(target)
   }
+  fn write_fade(&mut self, target: u64, draw: u64, fade: [f32; 2]) -> bool {
+    self.writes.push(Write::Fade { target, draw, fade });
+    self.landed(target)
+  }
   fn write_shared(&mut self, target: u64, name: &str, values: &[f32]) -> bool {
     self.writes.push(Write::Shared { target, name: name.to_string(), values: values.to_vec() });
     self.landed(target)
@@ -56,7 +61,7 @@ impl SinkWriter for Recorder {
 }
 
 fn sink(draw: u64) -> DrawSink {
-  DrawSink { target: 1, draw, normal: false, count: 1 }
+  DrawSink { target: 1, draw, normal: false, count: 1, fade: false }
 }
 
 pub(super) fn flush(s: &mut Spatial) -> Vec<Write> {
@@ -129,7 +134,7 @@ fn hiding_flips_counts_and_unhide_rewrites_params() {
   let root = s.create([0.0; 3], Q, ONE, true);
   let m = s.create([0.0; 3], Q, ONE, true);
   s.set_parent(m, Some(root)).expect("parent");
-  s.bind_sink(m, DrawSink { target: 1, draw: 9, normal: false, count: 4 }).expect("sink");
+  s.bind_sink(m, DrawSink { target: 1, draw: 9, normal: false, count: 4, fade: false }).expect("sink");
   flush(&mut s);
   s.set_visible(root, false).expect("hide");
   assert_eq!(flush(&mut s), vec![Write::Count { target: 1, draw: 9, count: 0 }]);
@@ -147,15 +152,15 @@ fn hiding_flips_counts_and_unhide_rewrites_params() {
 fn sinks_are_per_target_and_one_move_feeds_them_all() {
   let mut s = Spatial::new();
   let m = s.create([0.0; 3], Q, ONE, true);
-  s.bind_sink(m, DrawSink { target: 1, draw: 7, normal: false, count: 1 }).expect("sink");
-  s.bind_sink(m, DrawSink { target: 2, draw: 8, normal: true, count: 1 }).expect("sink");
+  s.bind_sink(m, DrawSink { target: 1, draw: 7, normal: false, count: 1, fade: false }).expect("sink");
+  s.bind_sink(m, DrawSink { target: 2, draw: 8, normal: true, count: 1, fade: false }).expect("sink");
   let writes = flush(&mut s);
   assert_eq!(writes.len(), 4, "count + params per sink: {writes:?}");
   assert_eq!(writes[0], Write::Count { target: 1, draw: 7, count: 1 });
   assert_eq!(writes[2], Write::Count { target: 2, draw: 8, count: 1 });
   // Rebinding on a target replaces that sink; the other stays (and, the
   // node being re-queued, gets a params rewrite - the reparent rule).
-  s.bind_sink(m, DrawSink { target: 1, draw: 9, normal: false, count: 1 }).expect("rebind");
+  s.bind_sink(m, DrawSink { target: 1, draw: 9, normal: false, count: 1, fade: false }).expect("rebind");
   let writes = flush(&mut s);
   assert!(writes.contains(&Write::Count { target: 1, draw: 9, count: 1 }));
   assert!(writes.contains(&Write::Params { target: 1, draw: 9, model: IDENTITY, normal: None }));
@@ -1073,8 +1078,8 @@ fn culling_is_per_target_and_respects_the_opt_out_and_margin() {
   let mut s = Spatial::new();
   let n = s.create([0.0; 3], Q, ONE, true);
   s.set_bounds(n, Some(UNIT)).expect("bounds");
-  s.bind_sink(n, DrawSink { target: 1, draw: 1, normal: false, count: 1 }).expect("sink");
-  s.bind_sink(n, DrawSink { target: 2, draw: 2, normal: false, count: 1 }).expect("sink");
+  s.bind_sink(n, DrawSink { target: 1, draw: 1, normal: false, count: 1, fade: false }).expect("sink");
+  s.bind_sink(n, DrawSink { target: 2, draw: 2, normal: false, count: 1, fade: false }).expect("sink");
   s.set_frustum(1, Some(cube_at(0.0)));
   s.set_frustum(2, Some(cube_at(2.0)));
   let writes = flush(&mut s);
@@ -1210,4 +1215,239 @@ fn box_only_shape_picks_by_its_box() {
     s.raycast([0.5, 0.5, 0.0], [0.0, 0.0, -1.0], &QueryFilter::default()).expect("raycast").is_empty(),
     "taking the shape away takes the box with it"
   );
+}
+
+// --- Level of detail ---
+
+use crate::spatial::{LodLevel, LodView};
+
+/// A perspective view at `d` along +z looking at the origin, focal 1: a
+/// unit box there (radius sqrt(3)/2) measures 0.866 / d.
+fn lod_view(d: f32) -> Option<LodView> {
+  Some(LodView { eye: [0.0, 0.0, d], focal: 1.0, ortho: false, bias: 1.0 })
+}
+
+fn level(node: u64, size: f32) -> LodLevel {
+  LodLevel { node: Some(node), size }
+}
+
+/// A group of three levels under `target`, each a unit box with one sink
+/// (draw ids 1, 2, 3); returns (group, [levels]).
+fn lod_group(s: &mut Spatial, target: u64, fade: bool) -> (u64, [u64; 3]) {
+  let g = s.create([0.0; 3], Q, ONE, true);
+  let mut ids = [0u64; 3];
+  for (k, id) in ids.iter_mut().enumerate() {
+    let n = s.create([0.0; 3], Q, ONE, true);
+    s.set_parent(n, Some(g)).expect("parent");
+    s.set_bounds(n, Some(UNIT)).expect("bounds");
+    s.bind_sink(n, DrawSink { target, draw: k as u64 + 1, normal: false, count: 1, fade }).expect("sink");
+    *id = n;
+  }
+  (g, ids)
+}
+
+fn counts(writes: &[Write]) -> Vec<(u64, u64, u32)> {
+  writes
+    .iter()
+    .filter_map(|w| match w {
+      Write::Count { target, draw, count } => Some((*target, *draw, *count)),
+      _ => None,
+    })
+    .collect()
+}
+
+fn fades(writes: &[Write]) -> Vec<(u64, [f32; 2])> {
+  writes
+    .iter()
+    .filter_map(|w| match w {
+      Write::Fade { draw, fade, .. } => Some((*draw, *fade)),
+      _ => None,
+    })
+    .collect()
+}
+
+#[test]
+fn a_group_draws_the_level_its_projected_size_picks_with_hysteresis() {
+  let mut s = Spatial::new();
+  let (g, l) = lod_group(&mut s, 1, false);
+  s.set_lod(g, &[level(l[0], 0.5), level(l[1], 0.1), level(l[2], 0.02)], 0.0, None).expect("lod");
+  s.set_lod_view(1, lod_view(1.0));
+  // Near: the first level alone comes on (the others start off).
+  assert_eq!(counts(&flush(&mut s)), vec![(1, 1, 1)]);
+  // A still view re-measures nothing.
+  assert!(flush(&mut s).is_empty());
+  // 0.866 / 5 = 0.17: the second level.
+  s.set_lod_view(1, lod_view(5.0));
+  let w = flush(&mut s);
+  assert_eq!(counts(&w), vec![(1, 1, 0), (1, 2, 1)]);
+  assert!(matches!(w[2], Write::Params { draw: 2, .. }), "the level turning on gets its params");
+  // Hysteresis: 0.866 / 1.7 = 0.51 is above the 0.5 threshold but inside
+  // the 10% band, so the second level holds...
+  s.set_lod_view(1, lod_view(1.7));
+  assert!(flush(&mut s).is_empty());
+  // ...and 0.866 / 1.5 = 0.58 clears it.
+  s.set_lod_view(1, lod_view(1.5));
+  assert_eq!(counts(&flush(&mut s)), vec![(1, 2, 0), (1, 1, 1)]);
+  // Far: 0.866 / 100 = 0.0087 is below the last threshold - culled.
+  s.set_lod_view(1, lod_view(100.0));
+  assert_eq!(counts(&flush(&mut s)), vec![(1, 1, 0)]);
+  // Lifting the view draws the first level again.
+  s.set_lod_view(1, None);
+  assert_eq!(counts(&flush(&mut s)), vec![(1, 1, 1)]);
+}
+
+#[test]
+fn a_group_re_measures_when_it_moves() {
+  let mut s = Spatial::new();
+  let (g, l) = lod_group(&mut s, 1, false);
+  let stranger = s.create([0.0; 3], Q, ONE, true);
+  s.set_lod(g, &[level(stranger, 0.5), level(l[1], 0.1)], 0.0, None).expect_err("a level must name a child");
+  s.set_lod(g, &[level(l[0], 0.5), level(l[1], 0.1), level(l[2], 0.0)], 0.0, None).expect("lod");
+  s.set_lod_view(1, lod_view(1.0));
+  assert_eq!(counts(&flush(&mut s)), vec![(1, 1, 1)]);
+  // The group walks away from the still eye: the size falls with it.
+  s.set_transform(g, [0.0, 0.0, -20.0], Q, ONE).expect("move");
+  let w = flush(&mut s);
+  assert_eq!(counts(&w), vec![(1, 1, 0), (1, 3, 1)]);
+}
+
+#[test]
+fn a_fade_band_draws_both_levels_with_complementary_dither() {
+  let mut s = Spatial::new();
+  let (g, l) = lod_group(&mut s, 1, true);
+  // Threshold 0.5 with a 50% band: sizes in [0.5, 0.75) draw both.
+  s.set_lod(g, &[level(l[0], 0.5), level(l[1], 0.1), level(l[2], 0.0)], 0.5, None).expect("lod");
+  // 0.866 / 1.386 = 0.625: halfway through the band.
+  s.set_lod_view(1, lod_view(0.866 / 0.625));
+  let w = flush(&mut s);
+  assert_eq!(counts(&w), vec![(1, 1, 1), (1, 2, 1)]);
+  let f = fades(&w);
+  assert_eq!(f.len(), 2);
+  assert!((f[0].1[0] - 0.5).abs() < 0.01 && f[0].1[1] == 1.0, "the near level keeps the low half: {f:?}");
+  assert!((f[1].1[0] - 0.5).abs() < 0.01 && f[1].1[1] == -1.0, "the far level keeps the high half: {f:?}");
+  // Out of the band on the near side: solid, the far level off.
+  s.set_lod_view(1, lod_view(1.0));
+  let w = flush(&mut s);
+  assert_eq!(counts(&w), vec![(1, 2, 0)]);
+  assert_eq!(fades(&w), vec![(1, [1.0, 1.0])]);
+  // A sink without fade support draws the band's majority side only.
+  let (g2, l2) = lod_group(&mut s, 2, false);
+  s.set_lod(g2, &[level(l2[0], 0.5), level(l2[1], 0.1), level(l2[2], 0.0)], 0.5, None).expect("lod");
+  s.set_lod_view(2, lod_view(0.866 / 0.6));
+  let w = flush(&mut s);
+  assert_eq!(counts(&w), vec![(2, 2, 1)], "weight 0.4: the far level holds most pixels");
+  assert!(fades(&w).is_empty());
+}
+
+#[test]
+fn levels_are_picked_per_target_and_shadow_targets_follow_the_view_they_are_given() {
+  let mut s = Spatial::new();
+  let (g, l) = lod_group(&mut s, 1, false);
+  for (k, &n) in l.iter().enumerate() {
+    s.bind_sink(n, DrawSink { target: 2, draw: 10 + k as u64, normal: false, count: 1, fade: false }).expect("sink");
+  }
+  s.set_lod(g, &[level(l[0], 0.5), level(l[1], 0.0)], 0.0, None).expect("lod");
+  s.set_lod_view(1, lod_view(1.0));
+  s.set_lod_view(2, lod_view(50.0));
+  let c = counts(&flush(&mut s));
+  assert!(c.contains(&(1, 1, 1)) && c.contains(&(2, 11, 1)), "near on 1, far on 2: {c:?}");
+  assert!(!c.contains(&(1, 2, 1)) && !c.contains(&(2, 10, 1)));
+  // A target without a view draws the first level.
+  for (k, &n) in l.iter().enumerate() {
+    s.bind_sink(n, DrawSink { target: 3, draw: 20 + k as u64, normal: false, count: 1, fade: false }).expect("sink");
+  }
+  let c = counts(&flush(&mut s));
+  assert!(c.contains(&(3, 20, 1)) && !c.contains(&(3, 21, 1)), "{c:?}");
+}
+
+#[test]
+fn queries_see_the_level_their_target_draws() {
+  let mut s = Spatial::new();
+  let (g, l) = lod_group(&mut s, 1, false);
+  s.set_lod(g, &[level(l[0], 0.5), level(l[1], 0.1), level(l[2], 0.0)], 0.0, None).expect("lod");
+  s.set_lod_view(1, lod_view(50.0));
+  flush(&mut s);
+  let all = s.raycast([0.0, 0.0, 10.0], [0.0, 0.0, -1.0], &QueryFilter::default()).expect("ray");
+  assert_eq!(all.len(), 3, "no target: every level");
+  let drawn =
+    s.raycast([0.0, 0.0, 10.0], [0.0, 0.0, -1.0], &QueryFilter { target: Some(1), ..Default::default() }).expect("ray");
+  assert_eq!(drawn.len(), 1);
+  assert_eq!(drawn[0].node, l[2]);
+}
+
+#[test]
+fn nested_groups_chain_and_clearing_a_group_draws_everything_again() {
+  let mut s = Spatial::new();
+  let (outer, ol) = lod_group(&mut s, 1, false);
+  // The outer's far level is itself a group of two.
+  let inner = ol[1];
+  let a = s.create([0.0; 3], Q, ONE, true);
+  let b = s.create([0.0; 3], Q, ONE, true);
+  for (k, &n) in [a, b].iter().enumerate() {
+    s.set_parent(n, Some(inner)).expect("parent");
+    s.set_bounds(n, Some(UNIT)).expect("bounds");
+    s.bind_sink(n, DrawSink { target: 1, draw: 30 + k as u64, normal: false, count: 1, fade: false }).expect("sink");
+  }
+  s.set_lod(outer, &[level(ol[0], 0.5), level(inner, 0.1), level(ol[2], 0.0)], 0.0, None).expect("outer");
+  s.set_lod(inner, &[level(a, 0.3), level(b, 0.0)], 0.0, None).expect("inner");
+  s.set_lod_view(1, lod_view(1.0));
+  let c = counts(&flush(&mut s));
+  assert_eq!(c, vec![(1, 1, 1)], "near: the outer picks its first level; the inner's choice is gated off: {c:?}");
+  // 0.866 / 5 = 0.17: the outer's middle level, whose own group picks its far one.
+  s.set_lod_view(1, lod_view(5.0));
+  let c = counts(&flush(&mut s));
+  assert!(c.contains(&(1, 1, 0)) && c.contains(&(1, 2, 1)) && c.contains(&(1, 31, 1)), "{c:?}");
+  assert!(!c.contains(&(1, 30, 1)), "size 0.17 is below the inner's 0.3");
+  s.set_lod(inner, &[], 0.0, None).expect("clear");
+  let c = counts(&flush(&mut s));
+  assert_eq!(c, vec![(1, 30, 1)], "both inner levels draw: {c:?}");
+}
+
+#[test]
+fn population_members_pick_a_record_buffer_per_level() {
+  let mut s = Spatial::new();
+  let anchor = s.create([0.0; 3], Q, ONE, true);
+  let m = s.create([0.0, 0.0, 0.0], Q, ONE, true);
+  s.set_parent(m, Some(anchor)).expect("parent");
+  s.set_bounds(m, Some(UNIT)).expect("bounds");
+  s.set_lod(anchor, &[LodLevel { node: None, size: 0.5 }, LodLevel { node: None, size: 0.05 }], 0.0, Some(1))
+    .expect("lod");
+  s.set_instance_records(m, vec![matrix(4, 0).expect("sink"), matrix(5, 0).expect("sink")], Some(anchor))
+    .expect("bind");
+  s.set_lod_view(1, lod_view(1.0));
+  let w = flush(&mut s);
+  let staged: Vec<u64> = w
+    .iter()
+    .filter_map(|w| match w {
+      Write::Instances { buffer, .. } => Some(*buffer),
+      _ => None,
+    })
+    .collect();
+  assert_eq!(staged, vec![4], "near: the first level's buffer");
+  // Far: the record moves to the second buffer, the first hides.
+  s.set_lod_view(1, lod_view(10.0));
+  let w = flush(&mut s);
+  let mut staged: Vec<(u64, f32)> = w
+    .iter()
+    .filter_map(|w| match w {
+      Write::Instances { buffer, values, .. } => Some((*buffer, values[15])),
+      _ => None,
+    })
+    .collect();
+  staged.sort_by(|a, b| a.0.cmp(&b.0));
+  assert_eq!(staged.len(), 2);
+  assert_eq!(staged[0].0, 4);
+  let hidden: Vec<Write> = w.iter().filter(|w| matches!(w, Write::Instances { buffer: 4, .. })).cloned().collect();
+  assert!(
+    matches!(&hidden[0], Write::Instances { values, .. } if values[0] == 0.0 && values[15] == 1.0),
+    "zero scale, w kept"
+  );
+  assert_eq!(staged[1].0, 5);
+  // Culled: both hidden; then the member moves back in and draws again.
+  s.set_lod_view(1, lod_view(100.0));
+  let w = flush(&mut s);
+  assert!(matches!(&w[0], Write::Instances { buffer: 5, values, .. } if values[0] == 0.0));
+  s.set_transform(m, [0.0, 0.0, 99.0], Q, ONE).expect("move");
+  let w = flush(&mut s);
+  assert!(matches!(&w[0], Write::Instances { buffer: 4, values, .. } if values[0] == 1.0), "{w:?}");
 }

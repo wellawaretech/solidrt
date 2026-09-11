@@ -69,6 +69,10 @@ pub struct QueryFilter {
   /// still admitted, so a caller that wants the mask rule passes one).
   pub layers: Option<u32>,
   pub nodes: Option<Vec<NodeId>>,
+  /// A draw target: the query then sees the LOD levels that target draws
+  /// (a node under a level the target has switched off is skipped like a
+  /// hidden one). None sees every level.
+  pub target: Option<u64>,
 }
 
 /// Where a node's fresh world matrix goes: the `uModel` (+ `uNormal`) params
@@ -83,6 +87,10 @@ pub struct DrawSink {
   pub draw: u64,
   pub normal: bool,
   pub count: u32,
+  /// The entry's program takes `uLodFade`: the LOD pass writes the
+  /// cross-fade band position there (see `write_fade`). Without it the
+  /// entry switches hard at the band's midpoint.
+  pub fade: bool,
 }
 
 /// A bound draw sink and its per-entry flush state.
@@ -94,6 +102,9 @@ struct BoundSink {
   /// The entry owes a params write at the next shown flush: newly bound,
   /// or the node moved while hidden.
   fresh: bool,
+  /// The `uLodFade` value last written (the solid `[1, 1]` until a band
+  /// is entered; entries are created solid).
+  fade: [f32; 2],
 }
 
 /// The consumer of sink writes, one method per write kind, called in flush
@@ -115,6 +126,11 @@ pub trait SinkWriter {
   /// An entry's instance count - the visibility switch (0 = hidden, the
   /// sink's count = shown).
   fn write_count(&mut self, target: u64, draw: u64, count: u32) -> bool;
+  /// An entry's `uLodFade` (threshold, side): inside a LOD cross-fade
+  /// band the nearer level keeps the fragments whose screen hash is below
+  /// the threshold (side 1) and the farther level the rest (side -1);
+  /// `[1, 1]` is solid. Written only for sinks bound with `fade`.
+  fn write_fade(&mut self, target: u64, draw: u64, fade: [f32; 2]) -> bool;
   /// A shared-slot group's array param, rewritten whole (slot sinks share
   /// one array value; see `SharedSlotSink`).
   fn write_shared(&mut self, target: u64, name: &str, values: &[f32]) -> bool;
@@ -169,6 +185,127 @@ struct SharedGroup {
   values: Vec<f32>,
   refs: u32,
   dirty: bool,
+}
+
+/// One level of a LOD group (`set_lod`): the node drawn at this level (a
+/// direct child of the group), or None for a population level (the
+/// instance nodes under the group carry one record sink per level and
+/// pick among them), and `size` - the projected size (the group's
+/// bounding sphere's diameter as a fraction of the viewport height) BELOW
+/// which the level hands over to the next. Levels are listed nearest
+/// first, sizes strictly descending; the last level's size is the cull
+/// threshold, 0 for never culled.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LodLevel {
+  pub node: Option<NodeId>,
+  pub size: f32,
+}
+
+/// What a target measures projected size with (`set_lod_view`): the eye
+/// position, the projection's vertical focal factor (`1 / tan(fov / 2)`
+/// for a perspective projection, `2 / (top - bottom)` for an orthographic
+/// one, `ortho` telling which), and a bias every measured size is
+/// multiplied by (a quality knob: below 1 switches sooner).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LodView {
+  pub eye: [f32; 3],
+  pub focal: f32,
+  pub ortho: bool,
+  pub bias: f32,
+}
+
+/// The one-sided hysteresis band of a hard LOD switch, as a fraction of
+/// the level size: a level is left when the size falls below its
+/// threshold and re-entered only once the size climbs above the threshold
+/// times (1 + this), so a boundary never flickers frame to frame.
+pub const LOD_HYSTERESIS: f32 = 0.1;
+
+/// Below this eye distance the measured size is capped (a group at the
+/// eye would otherwise divide by zero).
+const LOD_MIN_DISTANCE: f32 = 1e-6;
+
+/// A LOD group's configuration and its per-target choice.
+struct LodGroup {
+  levels: Vec<LodLevel>,
+  /// The cross-fade band as a fraction of each threshold (0 = a hard
+  /// switch with hysteresis).
+  fade: f32,
+  /// The target whose view population levels (record sinks) pick by;
+  /// node levels pick per target and ignore it.
+  reference: Option<u64>,
+  /// One per target that has a view, in the order they were first met.
+  states: Vec<LodState>,
+}
+
+/// A LOD group's choice on one target: the level drawn (`levels.len()` =
+/// culled) and the band position - 1 = solid; below 1 the level keeps
+/// that fraction of the pixels and the next level the rest.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct LodState {
+  target: u64,
+  level: u32,
+  weight: f32,
+}
+
+/// The state a group holds on a target before its first evaluation:
+/// unlike any computed one, so the first evaluation always publishes.
+const LOD_UNSET: LodState = LodState { target: 0, level: u32::MAX, weight: 1.0 };
+
+/// Pick the level for a measured size `c` (see `LodLevel`), given the
+/// level currently held (`u32::MAX` for none yet). Hard switches keep the
+/// current level inside its hysteresis band; a fade instead widens each
+/// threshold `s` into the band `[s, s * (1 + fade))`, over which the
+/// weight runs from 0 (all of the next level) to 1 (all of this one).
+fn select_level(levels: &[LodLevel], fade: f32, current: u32, c: f32) -> (u32, f32) {
+  let n = levels.len() as u32;
+  let plain = |c: f32| levels.iter().position(|l| c >= l.size).map(|p| p as u32).unwrap_or(n);
+  if fade > 0.0 {
+    let level = plain(c);
+    if level < n {
+      let s = levels[level as usize].size;
+      let top = s * (1.0 + fade);
+      if s > 0.0 && c < top {
+        return (level, ((c - s) / (top - s)).clamp(0.0, 1.0));
+      }
+    }
+    return (level, 1.0);
+  }
+  if current < n {
+    let above_floor = c >= levels[current as usize].size;
+    let below_ceiling = current == 0 || c < levels[current as usize - 1].size * (1.0 + LOD_HYSTERESIS);
+    if above_floor && below_ceiling {
+      return (current, 1.0);
+    }
+  } else if current == n && n > 0 && c < levels[n as usize - 1].size * (1.0 + LOD_HYSTERESIS) {
+    return (n, 1.0);
+  }
+  (plain(c), 1.0)
+}
+
+/// The projected size of a sphere: its diameter as a fraction of the
+/// viewport height under `view`.
+fn projected_size(view: &LodView, center: [f32; 3], radius: f32) -> f32 {
+  let d = if view.ortho {
+    1.0
+  } else {
+    let dx = center[0] - view.eye[0];
+    let dy = center[1] - view.eye[1];
+    let dz = center[2] - view.eye[2];
+    (dx * dx + dy * dy + dz * dz).sqrt().max(LOD_MIN_DISTANCE)
+  };
+  view.bias * radius * view.focal / d
+}
+
+/// The level a target draws for a sink without fade support: the band's
+/// majority side.
+fn dominant_level(state: &LodState) -> u32 {
+  // The band midpoint: below it the next level holds most of the pixels.
+  const HALF: f32 = 0.5;
+  if state.weight >= HALF {
+    state.level
+  } else {
+    state.level + 1
+  }
 }
 
 /// How an instance-record sink projects the node's transform into its
@@ -370,6 +507,19 @@ fn ray_box(bounds: &Box3, o: [f32; 3], d: [f32; 3]) -> Option<(f32, [f32; 3])> {
   best
 }
 
+/// A world box's bounding sphere (center, half diagonal); without a box
+/// the matrix's translation at radius 0.
+fn sphere_of(b: Option<Box3>, world: &Mat4) -> ([f32; 3], f32) {
+  match b {
+    Some(b) => {
+      let c = [(b[0] + b[3]) / 2.0, (b[1] + b[4]) / 2.0, (b[2] + b[5]) / 2.0];
+      let e = [(b[3] - b[0]) / 2.0, (b[4] - b[1]) / 2.0, (b[5] - b[2]) / 2.0];
+      (c, (e[0] * e[0] + e[1] * e[1] + e[2] * e[2]).sqrt())
+    }
+    None => ([world[12], world[13], world[14]], 0.0),
+  }
+}
+
 struct Node {
   generation: u32,
   alive: bool,
@@ -427,10 +577,23 @@ struct Node {
   slots: Vec<SharedSlotSink>,
   /// One per texture.
   texture_slots: Vec<TextureSlotSink>,
-  record: Option<InstanceRecordSink>,
+  /// One per LOD level (one for a plain population); `record_level`
+  /// names the one holding the pose, the others hold the hidden record.
+  records: Vec<InstanceRecordSink>,
+  record_level: u32,
   /// The record slot holds this node's shown pose (false = zeroed or
   /// never written; the next shown flush writes it).
   record_on: bool,
+  /// The LOD group this node heads (`set_lod`).
+  lod: Option<Box<LodGroup>>,
+  /// This node is a level of its parent's group: (group index, level).
+  lod_level: Option<(u32, u32)>,
+  /// The nearest level this node lies under, itself included, as of the
+  /// last walk - what the gate tests; inherited like `shown`.
+  lod_scope: Option<(u32, u32)>,
+  /// Moved this flush: the LOD pass re-measures it (a group, or a node
+  /// with population levels).
+  lod_check: bool,
 }
 
 #[derive(Default)]
@@ -457,6 +620,19 @@ pub struct Spatial {
   /// Counts flushes: what per-flush caches (an instance group's anchor
   /// inverse) are stamped with.
   flush_id: u64,
+  /// Per target, what projected size is measured with (a target without
+  /// one draws every group's first level).
+  lod_views: HashMap<u64, LodView>,
+  /// Targets whose view changed since the last flush: every group is
+  /// re-measured on them by the LOD pass.
+  lod_dirty: Vec<u64>,
+  /// The nodes heading a LOD group (dead ones drop at the next pass).
+  lod_groups: Vec<u32>,
+  /// The nodes carrying more than one record sink: population members
+  /// whose level the LOD pass picks.
+  lod_records: Vec<u32>,
+  /// Groups and population members the walk moved this flush.
+  lod_moved: Vec<u32>,
 }
 
 /// The layer mask a node starts with: layer 0 alone, Three's default.
@@ -523,8 +699,13 @@ impl Spatial {
       layers: DEFAULT_LAYERS,
       slots: Vec::new(),
       texture_slots: Vec::new(),
-      record: None,
+      records: Vec::new(),
+      record_level: 0,
       record_on: false,
+      lod: None,
+      lod_level: None,
+      lod_scope: None,
+      lod_check: false,
     };
     let i = match self.free.pop() {
       Some(i) => {
@@ -590,9 +771,10 @@ impl Spatial {
     for slot in std::mem::take(&mut self.nodes[i as usize].texture_slots) {
       self.release_texture_slot(&slot);
     }
-    if let Some(record) = self.nodes[i as usize].record.take() {
+    for record in std::mem::take(&mut self.nodes[i as usize].records) {
       self.release_record(&record);
     }
+    self.clear_lod(i);
     self.transitions.configs.remove(&id);
     self.transitions.cancel_node(id);
     let n = &mut self.nodes[i as usize];
@@ -609,6 +791,10 @@ impl Spatial {
     n.cull_group.clear();
     n.cull_owners.clear();
     n.shape = None;
+    n.lod_level = None;
+    n.lod_scope = None;
+    n.lod_check = false;
+    n.record_level = 0;
     self.free.push(i);
   }
 
@@ -965,26 +1151,350 @@ impl Spatial {
         if !every && !dirty.contains(&sink.target) {
           return true;
         }
-        let want = shown && self.frustum_allows(i, sink.target);
-        if want == b.entry_on {
-          return true;
-        }
-        b.entry_on = want;
-        if !out.write_count(sink.target, sink.draw, if want { sink.count } else { 0 }) {
-          return false;
-        }
-        if want && b.fresh {
-          if sink.normal && normal.is_none() {
-            normal = Some(normal_matrix(&world));
+        let want = shown && self.frustum_allows(i, sink.target) && self.lod_allows(i, sink.target, sink.fade);
+        if want != b.entry_on {
+          b.entry_on = want;
+          if !out.write_count(sink.target, sink.draw, if want { sink.count } else { 0 }) {
+            return false;
           }
-          b.fresh = false;
-          return out.write_params(sink.target, sink.draw, &world, if sink.normal { normal.as_ref() } else { None });
+          if want && b.fresh {
+            if sink.normal && normal.is_none() {
+              normal = Some(normal_matrix(&world));
+            }
+            b.fresh = false;
+            if !out.write_params(sink.target, sink.draw, &world, if sink.normal { normal.as_ref() } else { None }) {
+              return false;
+            }
+          }
+        }
+        if want && sink.fade {
+          let fade = self.lod_fade(i, sink.target);
+          if fade != b.fade {
+            b.fade = fade;
+            return out.write_fade(sink.target, sink.draw, fade);
+          }
         }
         true
       });
       let n = &mut self.nodes[i as usize];
       n.sinks = sinks;
       n.queued_touch = false;
+    }
+  }
+
+  /// Make the node a LOD group (or with an empty list a plain node
+  /// again): `levels` nearest first with strictly descending sizes, each
+  /// naming a direct child (node levels) or none at all (population
+  /// levels, picked per instance node by its record sinks - see
+  /// `set_instance_records`); one form per group, never mixed. `fade` is
+  /// the cross-fade band as a fraction of each threshold, 0 for a hard
+  /// switch with hysteresis. `reference` is the target population levels
+  /// measure by (node levels measure per target). The group measures the
+  /// sphere around its own box, else around every level's world boxes.
+  pub fn set_lod(&mut self, id: NodeId, levels: &[LodLevel], fade: f32, reference: Option<u64>) -> Result<(), String> {
+    let i = self.resolve(id)?;
+    if !(fade >= 0.0 && fade.is_finite()) {
+      return Err(format!("lod fade must be a finite fraction >= 0, got {fade}"));
+    }
+    let mut members = Vec::with_capacity(levels.len());
+    for (k, level) in levels.iter().enumerate() {
+      if !(level.size >= 0.0 && level.size.is_finite()) {
+        return Err(format!("lod level {k} size must be finite and >= 0, got {}", level.size));
+      }
+      if k > 0 && level.size >= levels[k - 1].size {
+        return Err(format!(
+          "lod level sizes must be strictly descending (level {k}: {} after {})",
+          level.size,
+          levels[k - 1].size
+        ));
+      }
+      if level.node.is_some() != levels[0].node.is_some() {
+        return Err("lod levels are all nodes or all population levels, not a mix".to_string());
+      }
+      if let Some(node) = level.node {
+        let j = self.resolve(node)?;
+        if self.nodes[j as usize].parent != Some(i) {
+          return Err(format!("lod level {k} (node {node}) is not a direct child of node {id}"));
+        }
+        if members.contains(&j) {
+          return Err(format!("lod level {k} names node {node} twice"));
+        }
+        members.push(j);
+      }
+    }
+    self.clear_lod(i);
+    if levels.is_empty() {
+      self.enqueue(i);
+      return Ok(());
+    }
+    for (k, &j) in members.iter().enumerate() {
+      self.nodes[j as usize].lod_level = Some((i, k as u32));
+    }
+    self.nodes[i as usize].lod =
+      Some(Box::new(LodGroup { levels: levels.to_vec(), fade, reference, states: Vec::new() }));
+    if !self.lod_groups.contains(&i) {
+      self.lod_groups.push(i);
+    }
+    // The subtree recomputes (scopes propagate) and the pass re-measures.
+    self.enqueue(i);
+    Ok(())
+  }
+
+  /// Drop the node's group: its levels' membership goes with it, and every
+  /// entry under them re-tests (all draw again).
+  fn clear_lod(&mut self, i: u32) {
+    let Some(group) = self.nodes[i as usize].lod.take() else {
+      return;
+    };
+    for level in &group.levels {
+      if let Some(node) = level.node {
+        if let Ok(j) = self.resolve(node) {
+          self.nodes[j as usize].lod_level = None;
+          self.touch_subtree(j);
+        }
+      }
+    }
+    self.lod_groups.retain(|&g| g != i);
+  }
+
+  /// What `target` measures projected size with (None lifts it: the
+  /// target draws every group's first level again). Read at flush, like
+  /// the frustum.
+  pub fn set_lod_view(&mut self, target: u64, view: Option<LodView>) {
+    let changed = match view {
+      Some(v) => self.lod_views.insert(target, v) != Some(v),
+      None => self.lod_views.remove(&target).is_some(),
+    };
+    if changed && !self.lod_dirty.contains(&target) {
+      self.lod_dirty.push(target);
+    }
+  }
+
+  /// Hand every sink-carrying node under `i` (itself included) to the
+  /// next cull pass.
+  fn touch_subtree(&mut self, i: u32) {
+    self.touch(i);
+    let mut k = 0;
+    while k < self.nodes[i as usize].children.len() {
+      let c = self.nodes[i as usize].children[k];
+      self.touch_subtree(c);
+      k += 1;
+    }
+  }
+
+  /// The box enclosing every world box under `i`, itself included.
+  fn subtree_box(&self, i: u32, acc: &mut Option<Box3>) {
+    let n = &self.nodes[i as usize];
+    if let Some(b) = n.world_box {
+      *acc = Some(match acc {
+        Some(a) => union(a, &b),
+        None => b,
+      });
+    }
+    for &c in &n.children {
+      self.subtree_box(c, acc);
+    }
+  }
+
+  /// The sphere a LOD group is measured by: its own world box, else the
+  /// union of its levels' subtrees' boxes, else its position at radius 0.
+  fn lod_sphere(&self, g: u32) -> ([f32; 3], f32) {
+    let n = &self.nodes[g as usize];
+    let mut b = n.world_box;
+    if b.is_none() {
+      if let Some(group) = &n.lod {
+        for level in &group.levels {
+          if let Some(node) = level.node {
+            if let Ok(j) = self.resolve(node) {
+              self.subtree_box(j, &mut b);
+            }
+          }
+        }
+      }
+    }
+    sphere_of(b, &n.world)
+  }
+
+  /// Re-measure every group and population member the flush moved, and
+  /// all of them on the targets whose view changed: a group whose choice
+  /// changed on a target hands the levels involved to the cull pass, a
+  /// member whose level changed re-stages its record.
+  fn lod_pass(&mut self) {
+    let dirty = std::mem::take(&mut self.lod_dirty);
+    let moved = std::mem::take(&mut self.lod_moved);
+    let mut groups = std::mem::take(&mut self.lod_groups);
+    groups.retain(|&g| self.nodes[g as usize].alive && self.nodes[g as usize].lod.is_some());
+    let views: Vec<(u64, LodView)> = self.lod_views.iter().map(|(&t, &v)| (t, v)).collect();
+    for &g in &groups {
+      let check = std::mem::replace(&mut self.nodes[g as usize].lod_check, false);
+      let (center, radius) = self.lod_sphere(g);
+      for &(target, view) in &views {
+        let group = self.nodes[g as usize].lod.as_ref().expect("retained above");
+        let known = group.states.iter().position(|st| st.target == target);
+        if !(check || known.is_none() || dirty.contains(&target)) {
+          continue;
+        }
+        let old = known.map(|k| group.states[k]).unwrap_or(LodState { target, ..LOD_UNSET });
+        let c = projected_size(&view, center, radius);
+        let (level, weight) = select_level(&group.levels, group.fade, old.level, c);
+        let new = LodState { target, level, weight };
+        if new == old {
+          continue;
+        }
+        let group = self.nodes[g as usize].lod.as_mut().expect("retained above");
+        match known {
+          Some(k) => group.states[k] = new,
+          None => group.states.push(new),
+        }
+        // Every level that was or is drawn on this target re-tests, the
+        // outgoing ones first (off before on).
+        let mut involved = Vec::with_capacity(4);
+        if old.level != u32::MAX {
+          involved.push(old.level);
+          involved.push(old.level + 1);
+        }
+        involved.push(new.level);
+        involved.push(new.level + 1);
+        for level in involved {
+          let node =
+            self.nodes[g as usize].lod.as_ref().and_then(|group| group.levels.get(level as usize)).and_then(|l| l.node);
+          if let Some(node) = node {
+            if let Ok(j) = self.resolve(node) {
+              self.touch_subtree(j);
+            }
+          }
+        }
+      }
+    }
+    // Lifted views: a target no longer measured draws the first level.
+    for &t in &dirty {
+      if self.lod_views.contains_key(&t) {
+        continue;
+      }
+      for &g in &groups {
+        let group = self.nodes[g as usize].lod.as_mut().expect("retained above");
+        if let Some(k) = group.states.iter().position(|st| st.target == t) {
+          group.states.remove(k);
+          self.touch_subtree(g);
+        }
+      }
+    }
+    self.lod_groups = groups;
+    let mut records = std::mem::take(&mut self.lod_records);
+    records.retain(|&r| self.nodes[r as usize].alive && self.nodes[r as usize].records.len() > 1);
+    for &r in &records {
+      let check = std::mem::replace(&mut self.nodes[r as usize].lod_check, false);
+      let Some(anchor) = self.instances.get(&self.nodes[r as usize].records[0].buffer).and_then(|g| g.anchor) else {
+        continue;
+      };
+      let Ok(a) = self.resolve(anchor) else {
+        continue;
+      };
+      let Some((reference, level_count)) =
+        self.nodes[a as usize].lod.as_ref().map(|g| (g.reference, g.levels.len() as u32))
+      else {
+        continue;
+      };
+      let Some(target) = reference else {
+        continue;
+      };
+      if !(check || moved.contains(&r) || dirty.contains(&target)) {
+        continue;
+      }
+      let Some(view) = self.lod_views.get(&target).copied() else {
+        continue;
+      };
+      let n = &self.nodes[r as usize];
+      let (center, radius) = sphere_of(n.world_box, &n.world);
+      let current = n.record_level;
+      let count = n.records.len() as u32;
+      let c = projected_size(&view, center, radius);
+      let levels = &self.nodes[a as usize].lod.as_ref().expect("checked above").levels;
+      let (mut level, _) = select_level(levels, 0.0, current, c);
+      // Fewer sinks than levels: the last sink stands for the rest; a
+      // culled level hides the record in every sink.
+      let hidden = level >= level_count;
+      if level >= count && !hidden {
+        level = count - 1;
+      }
+      if level == current {
+        continue;
+      }
+      let world = self.nodes[r as usize].world;
+      let shown = self.nodes[r as usize].shown;
+      let record_on = self.nodes[r as usize].record_on;
+      if let Some(old) = self.nodes[r as usize].records.get(current as usize).copied() {
+        if record_on {
+          self.stage_record(&old, old.projection.hidden());
+        }
+      }
+      self.nodes[r as usize].record_level = level;
+      if hidden {
+        self.nodes[r as usize].record_on = false;
+        continue;
+      }
+      let new = self.nodes[r as usize].records[level as usize];
+      if shown {
+        let m = self.anchored(new.buffer, &world);
+        match new.projection {
+          InstanceProjection::Pose2D => self.stage_record(&new, &pose2d(&m)),
+          InstanceProjection::Matrix => self.stage_record(&new, &m),
+        }
+        self.nodes[r as usize].record_on = true;
+      }
+    }
+    self.lod_records = records;
+  }
+
+  /// Whether the LOD groups above node `i` let it draw on `target`: every
+  /// level it lies under (nested groups chain) must be the one that
+  /// target picked - or, for a sink that fades, either level of an open
+  /// band. A target without a view draws the first level.
+  fn lod_allows(&self, i: u32, target: u64, fade: bool) -> bool {
+    let mut scope = self.nodes[i as usize].lod_scope;
+    while let Some((g, level)) = scope {
+      let gn = &self.nodes[g as usize];
+      let Some(group) = &gn.lod else {
+        break;
+      };
+      let state = group.states.iter().find(|st| st.target == target).copied().unwrap_or(LodState {
+        target,
+        level: 0,
+        weight: 1.0,
+      });
+      let drawn = if fade && state.weight < 1.0 {
+        level == state.level || level == state.level + 1
+      } else {
+        level == dominant_level(&state)
+      };
+      if !drawn {
+        return false;
+      }
+      scope = gn.lod_scope;
+    }
+    true
+  }
+
+  /// The `uLodFade` value node `i` draws with on `target`: the innermost
+  /// open band's position and which side of it this level keeps.
+  fn lod_fade(&self, i: u32, target: u64) -> [f32; 2] {
+    let Some((g, level)) = self.nodes[i as usize].lod_scope else {
+      return [1.0, 1.0];
+    };
+    let Some(group) = &self.nodes[g as usize].lod else {
+      return [1.0, 1.0];
+    };
+    let Some(state) = group.states.iter().find(|st| st.target == target) else {
+      return [1.0, 1.0];
+    };
+    if state.weight >= 1.0 {
+      [1.0, 1.0]
+    } else if level == state.level {
+      [state.weight, 1.0]
+    } else if level == state.level + 1 {
+      [state.weight, -1.0]
+    } else {
+      [1.0, 1.0]
     }
   }
 
@@ -1170,11 +1680,37 @@ impl Spatial {
     sink: Option<InstanceRecordSink>,
     anchor: Option<NodeId>,
   ) -> Result<(), String> {
+    self.set_instance_records(id, sink.into_iter().collect(), anchor)
+  }
+
+  /// The population-level form of `set_instance_record`: one sink per LOD
+  /// level of the anchor's group (`set_lod` with population levels), on
+  /// distinct buffers sharing one projection. The LOD pass measures the
+  /// node's own projected size on the group's reference target and stages
+  /// its pose into the level picked, the hidden record into the others.
+  /// A node with one sink and no group simply draws that one; an empty
+  /// list unbinds.
+  pub fn set_instance_records(
+    &mut self,
+    id: NodeId,
+    sinks: Vec<InstanceRecordSink>,
+    anchor: Option<NodeId>,
+  ) -> Result<(), String> {
     let i = self.resolve(id)?;
-    if let Some(sink) = &sink {
-      if let Some(a) = anchor {
+    if let Some(a) = anchor {
+      if !sinks.is_empty() {
         self.resolve(a)?;
       }
+    }
+    for (k, sink) in sinks.iter().enumerate() {
+      if sinks[..k].iter().any(|other| other.buffer == sink.buffer) {
+        return Err(format!("instance buffer {} is bound twice on one node", sink.buffer));
+      }
+      if sink.projection != sinks[0].projection {
+        return Err("instance record levels must share one projection".to_string());
+      }
+    }
+    for sink in &sinks {
       let group = self.instances.entry(sink.buffer).or_insert_with(|| InstanceGroup {
         projection: sink.projection,
         anchor,
@@ -1200,12 +1736,17 @@ impl Spatial {
       group.reserve(sink.index as usize + 1);
       group.refs += 1;
     }
-    if let Some(old) = self.nodes[i as usize].record.take() {
+    for old in std::mem::take(&mut self.nodes[i as usize].records) {
       self.release_record(&old);
     }
+    let leveled = sinks.len() > 1;
     let n = &mut self.nodes[i as usize];
-    n.record = sink;
+    n.records = sinks;
+    n.record_level = 0;
     n.record_on = false;
+    if leveled && !self.lod_records.contains(&i) {
+      self.lod_records.push(i);
+    }
     self.enqueue(i);
     Ok(())
   }
@@ -1239,7 +1780,7 @@ impl Spatial {
     }
     self.instances.insert(new, group);
     for n in self.nodes.iter_mut() {
-      if let Some(record) = n.record.as_mut() {
+      for record in n.records.iter_mut() {
         if record.buffer == old {
           record.buffer = new;
         }
@@ -1519,6 +2060,9 @@ impl Spatial {
       return None;
     }
     if filter.nodes.as_ref().is_some_and(|ids| !ids.contains(&self.id_of(i))) {
+      return None;
+    }
+    if filter.target.is_some_and(|t| !self.lod_allows(i, t, false)) {
       return None;
     }
     // A shape id that no longer resolves (destroyed), or one naming no
@@ -1917,7 +2461,7 @@ impl Spatial {
     let i = self.resolve(id)?;
     let sinks = &mut self.nodes[i as usize].sinks;
     sinks.retain(|b| b.sink.target != sink.target);
-    sinks.push(BoundSink { sink, entry_on: false, fresh: true });
+    sinks.push(BoundSink { sink, entry_on: false, fresh: true, fade: [1.0, 1.0] });
     self.enqueue(i);
     Ok(())
   }
@@ -2006,11 +2550,18 @@ impl Spatial {
           Some(p) => (self.nodes[p as usize].world, self.nodes[p as usize].shown),
           None => (IDENTITY, true),
         };
-        self.recompute(i, &parent_world, false, parent_shown, out);
+        let parent_scope = match self.nodes[i as usize].parent {
+          Some(p) => self.nodes[p as usize].lod_scope,
+          None => None,
+        };
+        self.recompute(i, &parent_world, false, parent_shown, parent_scope, out);
       }
       for &i in &queue {
         self.nodes[i as usize].queued = false;
       }
+    }
+    if !self.lod_dirty.is_empty() || !self.lod_moved.is_empty() {
+      self.lod_pass();
     }
     if !self.touched.is_empty() || !self.frustum_dirty.is_empty() {
       self.cull_pass(out);
@@ -2087,6 +2638,7 @@ impl Spatial {
     parent_world: &Mat4,
     parent_changed: bool,
     parent_shown: bool,
+    parent_scope: Option<(u32, u32)>,
     out: &mut dyn SinkWriter,
   ) {
     let n = &mut self.nodes[i as usize];
@@ -2104,8 +2656,14 @@ impl Spatial {
       changed = true;
     }
     let shown = parent_shown && n.visible;
-    let touched = changed || shown != n.shown || n.queued;
+    let scope = n.lod_level.or(parent_scope);
+    let touched = changed || shown != n.shown || n.queued || scope != n.lod_scope;
     n.shown = shown;
+    n.lod_scope = scope;
+    if changed && !n.lod_check && (n.lod.is_some() || n.records.len() > 1) {
+      n.lod_check = true;
+      self.lod_moved.push(i);
+    }
     let refit = n.bounds.is_some() && (changed || n.leaf.is_none());
     if changed || n.world_box.is_none() {
       n.world_box = n.cull_bounds.or(n.bounds).map(|b| world_box(&b, &n.world));
@@ -2175,7 +2733,8 @@ impl Spatial {
     let mut k = 0;
     while k < self.nodes[i as usize].sinks.len() {
       let b = self.nodes[i as usize].sinks[k];
-      let staying_on = shown && b.entry_on && self.frustum_allows(i, b.sink.target);
+      let staying_on =
+        shown && b.entry_on && self.frustum_allows(i, b.sink.target) && self.lod_allows(i, b.sink.target, b.sink.fade);
       let sinks = &mut self.nodes[i as usize].sinks;
       if staying_on && (changed || b.fresh) {
         if b.sink.normal && normal.is_none() {
@@ -2191,7 +2750,8 @@ impl Spatial {
       }
       k += 1;
     }
-    let record = self.nodes[i as usize].record;
+    let level = self.nodes[i as usize].record_level as usize;
+    let record = self.nodes[i as usize].records.get(level).copied();
     let record_on = self.nodes[i as usize].record_on;
     if let Some(rec) = record {
       if shown && (changed || !record_on) {
@@ -2212,7 +2772,7 @@ impl Spatial {
     let mut k = 0;
     while k < self.nodes[i as usize].children.len() {
       let c = self.nodes[i as usize].children[k];
-      self.recompute(c, &world, changed, shown, out);
+      self.recompute(c, &world, changed, shown, scope, out);
       k += 1;
     }
   }

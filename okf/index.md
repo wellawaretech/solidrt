@@ -108,12 +108,6 @@ Shaped, not started.
   union box, shear-exact normals as a second projection, instanced sprites,
   and a per-instance frame/atlas convention for the stock materials; none
   changes a shipped contract.
-- **[Level of detail - distance-selected mesh variants as a core sink](backlog/3d-lod.md)** [2026-08-30]
-  A large scene ships every object at one triangle count; a track with a
-  thousand trees either draws full-detail foliage at the horizon or nothing. A
-  per-frame JS distance test over every LOD group is the O(scene) loop roadmap
-  item 19 rules out, so the level select is a spatial-core sink - distance
-  from a camera node picks which variant's visibility switch is on.
 - **[3D fill and pass count put low-end Android GPUs far off 60 fps](backlog/3d-low-end-gpu-performance.md)** [2026-08-27]
   The third-dimension demo runs at 13 fps on an Adreno 610 tablet. Measured
   budget: ~44 ms fragment work, ~13 ms of flat per-pass overhead, ~2 ms
@@ -956,6 +950,12 @@ Finished, kept for the reasoning.
   placement included), from which the class builds one shared depth material
   the shadow views draw its casters with. `castShadow` on an InstancedMesh now
   works like on any mesh.
+- **[Level of detail - screen-size selected variants as a core gate](done/3d-lod.md)** [2026-09-11]
+  A large scene ships every object at one triangle count; a track with a
+  thousand trees either draws full-detail foliage at the horizon or nothing.
+  The level select is a spatial-core gate beside frustum culling - projected
+  size per target picks a level for node groups, per instance for populations
+  - with a dithered cross-fade, so a thousand trees cost no per-frame JS.
 - **[Scene uniform channel, camera basis, material class/instance split](done/3d-material-uniform-plumbing.md)** [2026-08-17]
   The three ways an app talks to the shared uniform set and to a pipeline all
   have a gap: a Scene has no app-writable shared params (the workaround goes
@@ -1867,6 +1867,11 @@ Knowledge. No lifecycle - true or wrong, not open or closed.
   the driver surface is ours. The interpreter losses are a routing decision,
   not a ceiling: JS, wasm, FFI and into-core are four rungs, and the browser
   ladder stops at rung two.
+- **[3D LOD measurements and traps](notes/3d-lod-measurements.md)** [2026-09-11]
+  What building level of detail in the spatial core established - the
+  projection's negative proj[5], the half-diagonal measure, and the per-frame
+  cost of re-measuring a thousand groups and a thousand instances under a
+  moving camera.
 - **[3D roadmap - toward Three.js parity](notes/3d-roadmap.md)** [2026-08-06]
   A ranked list of what @solidrt/3d still needs to be practically comparable
   to Three.js, ordered by structural leverage first and then by the research

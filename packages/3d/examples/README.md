@@ -98,6 +98,11 @@ depends on `@solidrt/3d` (or in-repo from the package directory).
   instance; every style write between two frames is one buffer write).
   Drag to orbit; the `formation` and `state` debug commands drive it
   headlessly.
+- `lod.tsx` - level of detail: a thousand trees as one `<InstancedLod>`
+  (three entries, each instance at the level its own projected size
+  picks) and a hero solid as a `<Lod>` of three `lodSize` meshes
+  cross-fading through a dithered band, the camera flying over both
+  with no per-frame JS; the levels are tinted so the hand-overs show.
 - `first-person.tsx` - a first-person walk: `<FirstPersonCamera>` over
   a walled courtyard of shadow-casting pillars, driven by an input map
   the app binds (`firstPersonBindings`: WASD/arrows and the pad sticks

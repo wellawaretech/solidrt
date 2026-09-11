@@ -119,6 +119,13 @@ export type Material = {
    * so a shadow or override entry for a skinned mesh merges the mesh's
    * own uBones binding even though this material is not the mesh's. */
   skinned?: boolean
+  /** True when the fragment stage declares `uLodFade` (read from the
+   * source, like normalMatrix): the scene then writes the LOD cross-fade
+   * band to entries drawn with this material (every stock material; a
+   * custom class composes LOD_FADE from `@solidrt/3d/glsl`). Without it
+   * an entry under a fading LOD level switches hard at the band's
+   * midpoint. */
+  lodFade?: boolean
   /** Present on materials that own their pipeline (shaderMaterial). */
   dispose?(): void
 }
@@ -1173,6 +1180,8 @@ export function shaderMaterialClass(opts: ShaderMaterialClassOptions): ShaderMat
   // Skinning is a vertex-stage affair like the attributes; a source that
   // mentions uBones skins by the mesh's palette texture (Material.skinned).
   let skinned = /\buBones\b/.test(opts.vertex)
+  // The LOD cross-fade is a fragment-stage discard (Material.lodFade).
+  let lodFade = /\buLodFade\b/.test(opts.fragment)
   let transparent = opts.transparent ?? (opts.blend !== undefined && opts.blend !== "none")
   let depth = opts.depth ?? true
   let cull = opts.cull ?? "back"
@@ -1270,6 +1279,7 @@ export function shaderMaterialClass(opts: ShaderMaterialClassOptions): ShaderMat
       return {
         normalMatrix,
         skinned,
+        lodFade,
         attributes,
         transparent,
         instanceBuffers,

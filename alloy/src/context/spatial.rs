@@ -53,6 +53,15 @@ impl SinkWriter for Writer<'_> {
     self.landed(self.ctx.update_draw(target, Some(draw), update))
   }
 
+  fn write_fade(&mut self, target: u64, draw: u64, fade: [f32; 2]) -> bool {
+    let params = vec![("uLodFade".to_string(), ParamValue::Array(fade.to_vec()))];
+    let known = entry_mirror(&self.ctx.targets.borrow(), target, draw).map(|_| ());
+    self.landed(known.map(|_| {
+      self.ctx.send(RasterCmd::UpdateDrawParams { target, draw, params });
+      self.ctx.note_target_content(target);
+    }))
+  }
+
   // A shared-slot group's array, whole, through the ordinary shared
   // channel (draw targets store unknown names until a declaring
   // material arrives, so this validates like any setTargetParams).
@@ -115,8 +124,8 @@ impl Context {
   /// Bind a node's draw sink on the sink's target (replacing the one it
   /// had there). Validated like the entry path: the target/draw must
   /// exist and the entry's program must take `uModel` (and `uNormal` when
-  /// `normal`), so a bad binding throws at its call site instead of
-  /// failing silently at every flush.
+  /// `normal`, `uLodFade` when `fade`), so a bad binding throws at its
+  /// call site instead of failing silently at every flush.
   pub fn spatial_bind(&self, node: NodeId, sink: DrawSink) -> Result<(), String> {
     {
       let targets = self.targets.borrow();
@@ -125,6 +134,9 @@ impl Context {
       let mut probe = vec![("uModel".to_string(), identity.clone())];
       if sink.normal {
         probe.push(("uNormal".to_string(), identity));
+      }
+      if sink.fade {
+        probe.push(("uLodFade".to_string(), ParamValue::Array(vec![1.0, 1.0])));
       }
       validate_params(&entry.uniforms, &probe)?;
     }
@@ -189,17 +201,18 @@ impl Context {
     self.spatial.borrow_mut().unbind_texture_slot(node, texture)
   }
 
-  /// Bind (or with None unbind) a node's instance-record sink, relative to
-  /// `anchor` when given (see `Spatial::set_instance_record`). Validated
-  /// at bind time like the draw path: the buffer must exist and the slot
-  /// must fit its byte size, so a bad binding throws at its call site.
-  pub fn spatial_bind_record(
+  /// Bind (or with an empty list unbind) a node's instance-record sinks -
+  /// one per LOD level, one for a plain population - relative to `anchor`
+  /// when given (see `Spatial::set_instance_records`). Validated at bind
+  /// time like the draw path: every buffer must exist and the slot must
+  /// fit its byte size, so a bad binding throws at its call site.
+  pub fn spatial_bind_records(
     &self,
     node: NodeId,
-    sink: Option<InstanceRecordSink>,
+    sinks: Vec<InstanceRecordSink>,
     anchor: Option<NodeId>,
   ) -> Result<(), String> {
-    if let Some(sink) = &sink {
+    for sink in &sinks {
       let size = self.gpu_buffer_len(sink.buffer)?;
       let stride = sink.projection.floats() as usize;
       let need = (sink.index as usize + 1) * stride * 4;
@@ -210,7 +223,7 @@ impl Context {
         ));
       }
     }
-    self.spatial.borrow_mut().set_instance_record(node, sink, anchor)
+    self.spatial.borrow_mut().set_instance_records(node, sinks, anchor)
   }
 
   /// Move every record sink on buffer `old` to buffer `new` (the growth

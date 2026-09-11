@@ -147,7 +147,8 @@ declare module "flux:spatial" {
   export function setVisible(node: NodeId, visible: boolean): void
   /**
    * Route the node's world matrix to one draw entry's `uModel` (and
-   * `uNormal`, the inverse-transpose, when `normal`). Validated like
+   * `uNormal`, the inverse-transpose, when `normal`; and with `fade` the
+   * LOD cross-fade band into `uLodFade`, see setLod). Validated like
    * setDrawParams: the entry must exist and declare those uniforms. The
    * entry is assumed switched off (instanceCount 0); the next flush turns it
    * on with `count` when the node is shown, and off again when hidden.
@@ -155,7 +156,7 @@ declare module "flux:spatial" {
    * into replaces that sink, binding on another target adds one - a mesh
    * drawn by a scene and by each of its views is one node with one flush.
    */
-  export function bindDraw(node: NodeId, target: TextureId, draw: DrawId, normal: boolean, count: number): void
+  export function bindDraw(node: NodeId, target: TextureId, draw: DrawId, normal: boolean, count: number, fade: boolean): void
   /** Remove the node's draw sink on `target`, or every draw sink without
    * one. Issues no write: the entries are the caller's to remove. */
   export function unbindDraw(node: NodeId, target?: TextureId): void
@@ -214,6 +215,44 @@ declare module "flux:spatial" {
    * own. Members without a box contribute nothing; with none at all the
    * node is not culled. */
   export function setCullGroup(node: NodeId, members: NodeId[]): void
+  /** One level of a LOD group (setLod): the node drawn at this level (a
+   * direct child of the group), absent for a population level (the
+   * instance nodes under the group carry one record buffer per level,
+   * bindMatrixRecord's list), and `size` - the projected size (the group's
+   * bounding sphere's diameter as a fraction of the viewport height) below
+   * which the level hands over to the next. */
+  export type LodLevel = { node?: NodeId; size: number }
+  /**
+   * Make the node a LOD group (an empty list makes it plain again):
+   * `levels` nearest first with strictly descending sizes, all naming a
+   * child or none at all (never mixed); the last level's size is the cull
+   * threshold, 0 for never culled. After the walk each flush measures the
+   * group on every target with a LOD view (setLodView) - the sphere
+   * around its own box, else around its levels' world boxes - and gates
+   * the draw sinks under each level to the level that target picked, so
+   * a thousand groups cost no JS per frame. `fade` widens each threshold
+   * `s` into a cross-fade band `[s, s * (1 + fade))` in which both levels
+   * draw with complementary screen-hash dithers (entries bound with
+   * bindDraw's `fade`; others switch hard at the band's midpoint); 0 is a
+   * hard switch with a one-sided hysteresis band, so a boundary never
+   * flickers. `reference` is the target population levels measure by
+   * (records are target-agnostic); node levels measure per target. A
+   * nested group chains: a node draws only where every group above it
+   * picked its level. A target with no LOD view draws the first level.
+   */
+  export function setLod(node: NodeId, levels: LodLevel[], fade: number, reference?: TextureId): void
+  /**
+   * What `target` measures projected size with: a Float32Array of 6 - the
+   * eye position xyz, the projection's vertical focal factor (the
+   * magnitude of `proj[5]`: `1 / tan(fov / 2)` for a perspective
+   * projection, `2 / (top - bottom)` for an orthographic one - positive,
+   * whatever clip flip the projection bakes in), 1 for orthographic else
+   * 0, and a bias every
+   * measured size is multiplied by (below 1 switches sooner) - or null to
+   * lift it. Read at flush, like setFrustum; set it beside the frustum on
+   * every camera move.
+   */
+  export function setLodView(target: TextureId, view: Float32Array | null): void
   /**
    * A geometry's positions as the core keeps them, one copy shared by
    * every node that references it: the source of those nodes' local
@@ -247,12 +286,15 @@ declare module "flux:spatial" {
    * optional: `root` admits only the nodes under it (the caller's own
    * subtree in the arena every scene and layer shares), `layers` only
    * nodes whose mask intersects it (a node's mask of 0 then never
-   * reports), `nodes` only the listed ones. A dead root throws.
+   * reports), `nodes` only the listed ones, `target` only the LOD levels
+   * that draw target picks (setLod; without it every level reports). A
+   * dead root throws.
    */
   export type QueryFilter = {
     root?: NodeId
     layers?: number
     nodes?: NodeId[]
+    target?: TextureId
   }
   /** Every shown node with bounds the ray strikes, nearest first. The
    * direction need not be normalized; distances are world units. Reads
@@ -410,9 +452,13 @@ declare module "flux:spatial" {
    * rebinding as bindPoseRecord; a hidden, unbound or destroyed node's
    * slot becomes a zero-scale matrix (w stays 1), so the instance
    * collapses to a point and draws nothing. Every sink on one buffer
-   * shares one projection.
+   * shares one projection. `buffers` names one buffer per LOD level of
+   * the anchor's group (setLod with population levels), slot `index` in
+   * each: the flush stages the record into the level the node's own
+   * projected size picks on the group's reference target and the hidden
+   * record into the others; one buffer is the plain population.
    */
-  export function bindMatrixRecord(node: NodeId, buffer: BufferId, index: number, anchor?: NodeId): void
+  export function bindMatrixRecord(node: NodeId, buffers: BufferId[], index: number, anchor?: NodeId): void
   /** Remove the node's record sink (its slot hides at the next flush). */
   export function unbindRecord(node: NodeId): void
   /**

@@ -244,13 +244,13 @@ what it delivered is documented in `packages/3d/AGENTS.md`, not here.
     NOT needed and returns only as a quality option if mirrored-UV seams
     show up in a real model; item 17's lighting model and color-space
     decision stay untouched.
-22. [ ] **Level of detail.** Core, a sink beside item 19's culling: a
-    LOD group's level is picked by distance from a reference node after
-    the flush and drives the variants' visibility switches, so a
-    thousand-tree scene costs no per-frame JS; a JS distance loop is the
-    O(scene) walk item 19 rules out. Shaped in
-    [3d-lod](../backlog/3d-lod.md). Mesh simplification stays a bake-tool
-    job.
+22. [x] **Level of detail.** Core, a gate beside item 19's culling,
+    by projected size per target, with per-instance levels for
+    populations and a dithered cross-fade - see `packages/3d/AGENTS.md`
+    (Level of detail); record in [3d-lod](../done/3d-lod.md). Left
+    deliberately: mesh simplification stays a bake-tool job (a model
+    part carrying levels should load as an LOD group without authoring
+    when it comes), per-instance fades, impostor baking, HLOD.
 23. [x] **Collision without a physics engine: overlap, sweep,
     move-and-slide.** Core queries over the spatial index picking already
     uses (sphere, capsule and box; exact sweeps), `scene.overlap` /

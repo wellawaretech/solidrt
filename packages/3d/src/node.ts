@@ -162,7 +162,16 @@ export type SceneHooks = {
   _reorder(): void
   /** The node's transform changed (for the sort and light bookkeeping). */
   _moved(node: SceneNode): void
+  /** Push the node's LOD declaration (`_lod`) to the core: at scene enter
+   * once its level children are in, and on every setLod. */
+  _bindLod(node: SceneNode): void
 }
+
+/** A node's LOD declaration (createLod/setLod, createInstancedLod): the
+ * levels nearest first - each a child node, or none for a population's
+ * levels - with the projected size below which each hands over, and the
+ * cross-fade band. Re-applied whenever the node enters a scene. */
+export type LodConfig = { levels: { node: SceneNode | null; size: number }[]; fade: number }
 
 export type SceneNode = {
   kind: "group" | "mesh" | "light" | "instance"
@@ -225,6 +234,9 @@ export type SceneNode = {
    * space): bound at every scene enter so the joint's world box follows
    * the pose without joining the picking index. null for the common case. */
   _cullBounds: Float32Array | null
+  /** The LOD group this node heads (see LodConfig); null for the common
+   * case. */
+  _lod: LodConfig | null
 }
 
 /** The settled component of a node transition. */
@@ -343,6 +355,7 @@ export function makeNode(kind: SceneNode["kind"]): SceneNode {
     _transition: null,
     _palettes: null,
     _cullBounds: null,
+    _lod: null,
   }
 }
 
@@ -490,6 +503,8 @@ export function enterScene(node: SceneNode, scene: SceneHooks): void {
   else if (node.kind === "light") scene._attachLight(node as Light)
   else if (node.kind === "instance") scene._attachInstance(node as InstanceNode)
   for (let c of node.children) enterScene(c, scene)
+  // After the children: node levels must be live to be named.
+  if (node._lod !== null) scene._bindLod(node)
   scene._schedule()
 }
 

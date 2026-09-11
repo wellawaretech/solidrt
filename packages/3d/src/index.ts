@@ -6,7 +6,7 @@
 // PerspectiveCamera) on top. See AGENTS.md for the model and the traps.
 
 export { add, createGroup, destroy, getRotation, getTransform, lookAt, remove, setTransform, setTransition, setVisible, worldPosition } from "./node.ts"
-export type { NodePointerEvent, NodeTapEvent, NodeWheelEvent, SceneEventBase, SceneNode, ScenePointerEvent, ScenePointerListener, SceneTapEvent, SceneWheelEvent, TransformUpdate, TransitionEndEvent } from "./node.ts"
+export type { LodConfig, NodePointerEvent, NodeTapEvent, NodeWheelEvent, SceneEventBase, SceneNode, ScenePointerEvent, ScenePointerListener, SceneTapEvent, SceneWheelEvent, TransformUpdate, TransitionEndEvent } from "./node.ts"
 export { addInstance, createInstancedMesh, createMesh, createRecordMesh, createSprite, disposeInstances, setCastShadow, setCulling, setDrawRange, setGeometry, setInstanceStyle, setLayers, setMaterial, setMeshParams, setRecordCount, setRecords, setRenderOrder, instanceAttribute, updateRecords, INSTANCE_FLOATS } from "./mesh.ts"
 export type { InstancedMesh as InstancedMeshNode, InstancedMeshOptions, InstanceNode, InstanceSlots, InstanceStream, Mesh as MeshNode, MeshInstances, RecordMesh as RecordMeshNode, RecordMeshOptions, UpdateRecordsOptions } from "./mesh.ts"
 export { createDirectionalLight, createHemisphereLight, createPointLight, createSpotLight, setLight, MAX_SHADOWS } from "./light.ts"
@@ -25,6 +25,8 @@ export type {
   SpotLightOptions,
   SpotShadowOptions,
 } from "./light.ts"
+export { createInstancedLod, createLod, setLod } from "./lod.ts"
+export type { InstancedLodLevel, InstancedLodOptions, LodLevel, LodOptions } from "./lod.ts"
 export { createScene } from "./scene.ts"
 export { feedPointer } from "./scene-pointer.ts"
 export type { Capsule, EnvironmentOptions, FogOptions, Hit, Impact, MoveOptions, MoveResult, OrientedBox, Overlap, QueryOptions, ReflectionProbe, ReflectionProbeOptions, Scene as SceneHandle, SceneHandlers, SceneOptions, ScreenRay, SkyboxOptions, Sphere, ToneMapping, ViewHandle, ViewOptions, Volume } from "./scene.ts"
@@ -44,14 +46,16 @@ export { extrude, lathe, pathFrames, sweep, tube } from "./sweep.ts"
 export type { ExtrudeOptions, LatheOptions, PathFrames, PathPoint, SweepPath, TubeOptions } from "./sweep.ts"
 export { lit, shaderMaterial, shaderMaterialClass, sprite, standard, unlit } from "./material.ts"
 export type { LitOptions, Material, ShaderMaterialClass, ShaderMaterialClassOptions, ShaderMaterialInstanceOptions, ShaderMaterialOptions, SpriteOptions, StandardOptions, UnlitOptions } from "./material.ts"
-export { DirectionalLight, FirstPersonCamera, Group, HemisphereLight, Instance, InstancedMesh, Mesh, OrbitCamera, PerspectiveCamera, PointLight, RecordMesh, Scene, SpotLight, Sprite, View3d, useScene } from "./components/index.ts"
+export { DirectionalLight, FirstPersonCamera, Group, HemisphereLight, Instance, InstancedLod, InstancedMesh, Lod, Mesh, OrbitCamera, PerspectiveCamera, PointLight, RecordMesh, Scene, SpotLight, Sprite, View3d, useScene } from "./components/index.ts"
 export type {
   CameraTarget,
   DirectionalLightProps,
   FirstPersonCameraProps,
   HemisphereLightProps,
+  InstancedLodProps,
   InstancedMeshProps,
   InstanceProps,
+  LodProps,
   MeshProps,
   OrbitCameraProps,
   PerspectiveCameraProps,

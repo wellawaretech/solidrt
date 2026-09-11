@@ -33,3 +33,12 @@ export function provide(ctx: SceneCtx, parent: SceneNode, props: { children?: El
   if (!("children" in props)) return undefined
   return <SceneContext value={{ scene: ctx.scene, parent, viewport: ctx.viewport, pointer: ctx.pointer }}>{props.children}</SceneContext>
 }
+
+/** What a `<Lod>` hands its children: a direct child with `lodSize`
+ * registers itself as a level. */
+export type LodRegistry = {
+  group: SceneNode
+  register(node: SceneNode, size: number): void
+  unregister(node: SceneNode): void
+}
+export let LodContext = createContext<LodRegistry | undefined>(undefined)

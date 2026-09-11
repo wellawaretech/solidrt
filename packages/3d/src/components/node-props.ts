@@ -1,4 +1,5 @@
-import { createEffect } from "@solidrt/core"
+import { createEffect, onCleanup, useContext } from "@solidrt/core"
+import { LodContext } from "./context.tsx"
 import { setTransform, setTransition, setVisible } from "../node.ts"
 import type { NodePointerEvent, NodeTapEvent, NodeWheelEvent, SceneNode, TransitionEndEvent } from "../node.ts"
 import type { NodeTransition } from "flux:spatial"
@@ -18,6 +19,10 @@ export type TransformProps = {
   transition?: NodeTransition | string | null
   /** A declared transition settled on one component. */
   onTransitionEnd?: (event: TransitionEndEvent) => void
+  /** Under a `<Lod>`: this node is a level of it, drawn while the group's
+   * projected size is at or above this and below the next larger level's
+   * (see createLod). Only on a direct child of `<Lod>`; throws elsewhere. */
+  lodSize?: number
 }
 
 /**
@@ -87,4 +92,22 @@ export function syncNode(node: SceneNode, props: TransformProps & PointerEventPr
     () => props.transition,
     transition => setTransition(node, transition ?? null),
   )
+  // A level of the enclosing <Lod>, keyed by size; built only when the
+  // prop is present (the compiler emits the getter only then), so a plain
+  // node pays nothing.
+  if ("lodSize" in props) {
+    let lod = useContext(LodContext)
+    createEffect(
+      () => props.lodSize,
+      size => {
+        if (size === undefined) {
+          lod?.unregister(node)
+          return
+        }
+        if (lod === undefined) throw new Error("lodSize needs a <Lod> parent")
+        lod.register(node, size)
+      },
+    )
+    onCleanup(() => lod?.unregister(node))
+  }
 }

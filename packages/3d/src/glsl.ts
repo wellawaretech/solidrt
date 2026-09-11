@@ -477,6 +477,31 @@ export const SRGB = glsl`
  * alpha);` - a fragment that writes fragColor directly writes final
  * encoded pixels and skips exposure and tone mapping. Includes SRGB.
  */
+/**
+ * The LOD cross-fade: `uLodFade` is (threshold, side) - the scene writes
+ * the band position of the level this entry draws (see createLod's
+ * `fade`), `[1, 1]` when solid. Inside a band the nearer level keeps the
+ * fragments whose screen hash falls below the threshold (side 1) and the
+ * farther level the rest (side -1): a partition, so nothing draws twice
+ * and nothing is missed. Call `lodFade()` first thing in main. Every
+ * stock fragment composes it; a custom class that declares `uLodFade`
+ * opts in (the scene detects the name, like uNormal).
+ */
+export const LOD_FADE = glsl`
+  uniform vec2 uLodFade;
+  // Interleaved gradient noise (Jimenez 2014): a screen-position hash
+  // whose pattern stays put as the band moves, so the dissolve reads as
+  // a steady grain rather than a crawl.
+  float lodHash(vec2 p) {
+    return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715))));
+  }
+  void lodFade() {
+    if (uLodFade.x < 1.0) {
+      if ((lodHash(gl_FragCoord.xy) - uLodFade.x) * uLodFade.y >= 0.0) discard;
+    }
+  }
+`
+
 export const OUTPUT = glsl`
   uniform float uExposure;
   uniform float uToneMapping;
@@ -1307,10 +1332,12 @@ function lightingFragment(c: LitSource): string {
     ${c.mapTransform ? "uniform vec4 uMapTransform;" : ""}
     ${c.normalMap ? NORMAL_MAP : ""}
     ${sceneSource({ receiveShadow: c.receiveShadow, env: c.env, fog: c.fog })}
+    ${LOD_FADE}
     ${c.prelude}
     ${c.surface}
 
     void main() {
+      lodFade();
       ${litBase(c, c.cull !== "back")}
       ${c.normalMap ? "n = perturbNormal(n, vWorldPos, uv);" : ""}
       Surface s = surfaceOf(base, n);
@@ -1536,9 +1563,11 @@ export function unlitFragment(o: UnlitSourceOptions = {}): string {
     ${c.alphaTest ? "uniform float uAlphaTest;" : ""}
     ${c.mapTransform ? "uniform vec4 uMapTransform;" : ""}
     ${sceneSource({ lights: false, fog: c.fog })}
+    ${LOD_FADE}
     ${c.prelude}
     ${c.surface}
     void main() {
+      lodFade();
       ${unlitBase(c)}
       ${c.alphaTest ? "if (base.a < uAlphaTest) discard;" : ""}
       ${c.surface ? "Surface s = surfaceOf(base, vec3(0.0));\n      surface(s);\n      base = s.base;" : ""}

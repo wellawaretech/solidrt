@@ -38,6 +38,9 @@ impl SinkWriter for Sink {
   fn write_count(&mut self, _: u64, _: u64, _: u32) -> bool {
     true
   }
+  fn write_fade(&mut self, _: u64, _: u64, _: [f32; 2]) -> bool {
+    true
+  }
   fn write_shared(&mut self, _: u64, _: &str, _: &[f32]) -> bool {
     true
   }

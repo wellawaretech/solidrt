@@ -112,6 +112,12 @@ export type MeshInstances = {
   /** The node-backed population (createInstancedMesh): handles by slot
    * (null = free) and the free list; null on a record mesh. */
   nodes: InstanceSlots | null
+  /** The level meshes of an instanced LOD (createInstancedLod), nearest
+   * first - the first is the population itself, the rest its children -
+   * sharing this population's instance slots, each with a matrix buffer
+   * of its own the core stages an instance into by its projected size.
+   * null on a plain population. */
+  levels: InstancedMesh[] | null
 }
 
 export type InstanceSlots = { slots: (InstanceNode | null)[]; free: number[] }
@@ -485,8 +491,15 @@ export function createInstancedMesh(geometry: Geometry, material: Material, opts
     count: 0,
     bounds: copyBounds(opts?.bounds, "createInstancedMesh"),
     nodes: { slots: [], free: [] },
+    levels: null,
   }
   return mesh
+}
+
+/** The meshes sharing a population's instance slots: the LOD levels of an
+ * instanced LOD, else the mesh alone. */
+function populationLevels(mesh: InstancedMesh): InstancedMesh[] {
+  return mesh._instances.levels ?? [mesh]
 }
 
 /**
@@ -505,10 +518,15 @@ export function createInstancedMesh(geometry: Geometry, material: Material, opts
 export function setInstanceStyle(instance: InstanceNode, values: ArrayLike<number>): void {
   let mesh = instance.mesh
   if (mesh === null) return
-  let stream = mesh._instances.streams[0]
-  if (stream === undefined) throw new Error("setInstanceStyle: the mesh's material declares no instance buffer beyond the matrix (no style record)")
-  writeRecord(stream, instance._slot, values, "setInstanceStyle")
-  markRecords(mesh, stream, instance._slot * stream.stride, (instance._slot + 1) * stream.stride)
+  if (mesh._instances.streams[0] === undefined) throw new Error("setInstanceStyle: the mesh's material declares no instance buffer beyond the matrix (no style record)")
+  // Every level of an instanced LOD takes the style; a level whose
+  // material carries no style record is left alone.
+  for (let l of populationLevels(mesh)) {
+    let stream = l._instances.streams[0]
+    if (stream === undefined) continue
+    writeRecord(stream, instance._slot, values, "setInstanceStyle")
+    markRecords(l, stream, instance._slot * stream.stride, (instance._slot + 1) * stream.stride)
+  }
 }
 
 /**
@@ -593,7 +611,10 @@ export function addInstance(mesh: InstancedMesh, update?: TransformUpdate, paren
     if (p === null) throw new Error("addInstance: parent must be the mesh or a node inside its subtree")
   }
   let slot = inst.nodes.free.pop() ?? inst.nodes.slots.length
-  if (slot >= inst.capacity) growInstances(mesh, inst.capacity * 2)
+  // The levels of an instanced LOD grow, count and blank together: one
+  // slot, one record per level.
+  let levels = populationLevels(mesh)
+  if (slot >= inst.capacity) for (let l of levels) growInstances(l, inst.capacity * 2)
   let instance = makeNode("instance") as InstanceNode
   instance.mesh = mesh
   ;(instance as { _slot: number })._slot = slot
@@ -601,14 +622,17 @@ export function addInstance(mesh: InstancedMesh, update?: TransformUpdate, paren
   inst.nodes.slots[slot] = instance
   instance.parent = parent
   parent.children.push(instance)
-  if (slot >= inst.count) {
-    inst.count = slot + 1
-    mesh._scene?._setCount(mesh)
-  }
-  // A recycled slot must not wear its last occupant's records.
-  for (let s of inst.streams) {
-    vertexBytes(s.data).set(s.blank, slot * s.stride)
-    markRecords(mesh, s, slot * s.stride, (slot + 1) * s.stride)
+  for (let l of levels) {
+    let li = l._instances
+    if (slot >= li.count) {
+      li.count = slot + 1
+      l._scene?._setCount(l)
+    }
+    // A recycled slot must not wear its last occupant's records.
+    for (let s of li.streams) {
+      vertexBytes(s.data).set(s.blank, slot * s.stride)
+      markRecords(l, s, slot * s.stride, (slot + 1) * s.stride)
+    }
   }
   if (parent._scene) enterScene(instance, parent._scene)
   return instance
@@ -677,6 +701,7 @@ export function createRecordMesh(
     count: Math.max(0, Math.min(Math.floor(count ?? capacity), capacity)),
     bounds: copyBounds(opts?.bounds, "createRecordMesh"),
     nodes: null,
+    levels: null,
   }
   copyRecords(mesh, records, capacity)
   return mesh
@@ -738,6 +763,14 @@ export function setRecordCount(mesh: RecordMesh, count: number): void {
 export function disposeInstances(mesh: InstancedMesh | RecordMesh): void {
   let inst: MeshInstances | null = mesh._instances
   if (inst === null) return
+  // An instanced LOD frees every level's buffers; the levels are untied
+  // first so each disposes as a plain population.
+  if (inst.levels !== null) {
+    let levels = inst.levels
+    for (let l of levels) if (l._instances !== null) l._instances.levels = null
+    for (let l of levels) disposeInstances(l)
+    return
+  }
   // A destroyed mesh still animating out (its own exit, or its instances'
   // - it waits for them) keeps the buffers until it is gone: the
   // component unmount is destroy then dispose, and an exit that dispose
@@ -777,6 +810,8 @@ export function setLayers(mesh: Mesh, layers: number): void {
   if (mesh.layers === layers) return
   mesh.layers = layers
   mesh._scene?._setLayers(mesh)
+  // An instanced LOD's levels draw where the population draws.
+  for (let l of mesh._instances?.levels ?? []) if (l !== mesh) setLayers(l, layers)
 }
 
 /** Draw the mesh into the scene's shadow map, or stop (see Mesh.castShadow). */
@@ -784,6 +819,7 @@ export function setCastShadow(mesh: Mesh, cast: boolean): void {
   if (mesh.castShadow === cast) return
   mesh.castShadow = cast
   mesh._scene?._setCast(mesh)
+  for (let l of mesh._instances?.levels ?? []) if (l !== mesh) setCastShadow(l, cast)
 }
 
 /** Frustum culling per mesh: `frustumCulled` (default true) switches the

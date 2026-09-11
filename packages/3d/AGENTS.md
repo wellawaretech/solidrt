@@ -24,6 +24,7 @@ Contents:
   - [Rendering is the runtime's](#rendering-is-the-runtimes)
   - [Views and layers](#views-and-layers)
   - [Culling](#culling)
+  - [Level of detail](#level-of-detail)
   - [Shadows](#shadows)
   - [Retargeted motion](#retargeted-motion)
   - [Geometry layout, indices and topology](#geometry-layout-indices-and-topology)
@@ -202,6 +203,57 @@ Unity's bone bounds, Godot's per-bone AABBs; no `updateWhenOffscreen`
 knob is needed. Probe faces set no frustum (six cameras, one target).
 Shadow tiles cull casters against their light frustum, which is what
 makes `shadow.distance` and cascades cheaper.
+
+### Level of detail
+
+LOD is the core's too, beside culling: a group's level is picked per
+target after each flush by PROJECTED SIZE - the sphere around the
+group's boxes (radius = half the box diagonal, conservative like the
+frustum box), its diameter as a fraction of the viewport height,
+`radius / (distance * tan(fov / 2))` under a perspective camera and
+`radius * 2 / (top - bottom)` under an orthographic one (Unity's
+screen-relative model; Three's distance is wrong for an ortho minimap,
+a zoomed camera or a scaled-up tree). `createLod([{ node, size }, ...],
+{ fade? })` / `<Lod fade?>` with `lodSize` on its direct children: the
+levels nearest first, `size` the projected size BELOW which a level
+hands over to the next, the last one's the cull threshold (0 = never
+culled). Every camera write also sets its target's LOD view (eye,
+focal, ortho flag, `lodBias`): the scene and each view pick by their
+own camera (a minimap sees the far level of the same tree), shadow
+tiles by the SCENE camera (a caster draws the level the camera sees, so
+its shadow matches - Unity's and Godot's rule), probe faces pick
+nothing. The gate composes with the frustum and `visible` into the same
+instance-count switch, so a still camera re-tests nothing and a thousand
+groups cost no JS per frame; a child of the group that carries no
+`lodSize` is drawn always. Without a `fade` the switch is hard with a
+one-sided hysteresis band (a level is left at its threshold and
+re-entered only once the size climbs a tenth above it), so a boundary
+never flickers; with one, each threshold `s` widens into `[s, s * (1 +
+fade))` where both levels draw with COMPLEMENTARY screen-hash dithers
+(the near one keeps the pixels below the band position, the far one
+the rest - a partition, never a double draw) through the `uLodFade`
+vec2 every stock fragment composes; a custom class opts in by composing
+`LOD_FADE` from `@solidrt/3d/glsl` and calling `lodFade()` first in
+main. Shadow tiles never fade: their depth pass switches hard at the
+band's midpoint, invisible for two variants of one shape.
+`createInstancedLod([{ geometry, material, size }, ...], opts)` /
+`<InstancedLod levels capacity?>` is the population form: one instance
+set, one matrix buffer PER LEVEL, and the core stages each instance's
+record into the level ITS OWN size picks - a spread forest as three
+entries, near trees full and far ones cards. Returned as the first
+level's mesh (the other levels are its children at identity, sharing
+its instance slots; `setLayers`/`setCastShadow` on it reach them,
+`setInstanceStyle` writes every level's style stream). Records are
+target-agnostic, so instances pick by the SCENE camera and every view
+draws that choice; instanced levels switch hard (`fade` is refused).
+`scene.setLodBias` (Unity's lodBias) multiplies every measured size:
+below 1 hands over sooner, the one-line quality knob for a low-end
+device. Picking and collision see the level the queried target draws
+(`scene.pick`/overlap/sweep/moveAndSlide the scene's, `view.pick` the
+view's); a collider that must not follow the camera is its own undrawn
+mesh on a collision layer. Nested groups chain. Mesh simplification is
+a bake job, not a runtime one. `examples/lod.tsx` is the shape;
+`probes/3d-lod-bench.tsx` the cost.
 
 ### Shadows
 
@@ -485,6 +537,8 @@ collision claims - two copies of this contract have drifted before.
 | `Scene` | `width?`, `height?` (target pixels - both, or neither = FILL, below), `clearColor?`, `camera?` (partial CameraUpdate, `ortho` included - the declarative scene.setCamera; same state as `PerspectiveCamera`, use one form; the camera CONTROLS are not a third form - `OrbitCamera`/`FirstPersonCamera` drive position and target only, so `fov`/`near`/`far` come from here even while a control moves the camera, and the default `far` of 100 is what clips a scene in metres), `background?` (fragment GLSL, or a skybox `{ cube, intensity?, rotation? }`), `environment?` (`{ cube, intensity?, rotation? }`, the cube reflective materials mirror), `fog?` (`{ color, near, far }`, linear by camera distance), `toneMapping?` (`"none"` default or `"aces"`), `exposure?` (default 1), `layers?` (target mask, default 1), `depth?` (`"texture"` exposes scene.depthTexture; not with samples), `samples?` (1/2/4/8 MSAA), `label?`, `ref?(scene)`, `output?(texture)`, `events?` (pointer events, default on), `pointer?` (the leaf's pointer feed, fed from the scene's root), `onPointerDown/Move/Up?`, `onWheel?`, `onTap?` (the scene's own handlers, the last stop of the walk - `event.mesh` null over empty space) |
 | `View3d` | a Scene child rendering the scene again from a camera of its own (scene.createView as a component): `width`, `height` (target pixels, live; fixed-size only for now), `x?`, `y?` (the tile's top-left in `into`, live), `into?` (tile an app-owned draw target - one pass for every view into it; fixed at creation), `camera?` (partial CameraUpdate on the view's camera, live; same state as a `PerspectiveCamera` child), `layers?` (the view's mask, live), `clearColor?`, `label?`, `overrideMaterial?`, `fog?` (FogOptions, or null for none), `depth?`, `samples?`, `filter?`, `wrap?` (createView's, fixed), `ref?(view)`, `output?(texture)` (else a built-in `<texture>` leaf at the target size, a tile shown through srcX/srcY), `events?`, `pointer?` (the view leaf's feed, fed from the view's root), `onPointerDown/Move/Up?`, `onWheel?`, `onTap?` (the view's own handlers); camera-control children drive the VIEW (inside, `useScene()` reports the view as `viewport` and the view's feed as `pointer`); node children mount to the scene as outside, and under the view's leaf get their ordinary pointer handlers, picked through the view's camera (`view.pick`), the view as the root of that walk |
 | `Group` | `position?`, `rotation?` (Euler radians, XYZ order), `quaternion?` (either, not both), `scale?` (number = uniform), `visible?`, pointer events (below), `ref?(node)` |
+| `Lod` | a Group whose direct children carrying `lodSize` (a prop every node component takes: the projected size below which that child hands over, see Level of detail) are its levels, sorted by size, never by JSX position; plus `fade?` (the cross-fade band fraction, default 0); a child without `lodSize` is drawn always |
+| `InstancedLod` | as InstancedMesh minus `material`, plus `levels` (`[{ geometry, material, size }]` nearest first, fixed at creation; instanced materials as InstancedMesh's), `castShadow?` (every level); `<Instance>` children populate it as under `InstancedMesh`, each drawing the level its own projected size picks |
 | `Mesh` | `geometry`, `material`, transforms as Group, `params?` (per-mesh uniforms, merge semantics - no unset), `renderOrder?`, `castShadow?`, `layers?` (membership bitmask, default 1), pointer events (below), `ref?(mesh)` |
 | `Sprite` | as Mesh minus `geometry`: a camera-facing unit quad, `scale` is its world size, rotation is ignored; pair with a `sprite()` material |
 | `InstancedMesh` | as Mesh (an instanced `material`: a stock one with `instanced`/`instanceColors`, or a class declaring INSTANCE_MATRIX_ATTRIBUTES), plus `capacity?` (instance slots, default 64; the buffers double past it), `bounds?` (optional: instances pick by themselves and the mesh culls by their union), `label?`; a PARENT: `<Instance>` children populate it, `<Group>` children are squads; the record buffers are component-owned and freed on unmount |

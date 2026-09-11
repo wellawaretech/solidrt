@@ -14,8 +14,9 @@ use crate::alloy_plugins::value::PropValue;
 use crate::plugins::marshal::OptArg;
 use alloy::spatial::{
   ChannelInterpolation, ChannelPath, ClipChannel, ClipEvent, Component, DrawSink, InstanceProjection,
-  InstanceRecordSink, MoveOptions, NodeEndpoint, NodeMotion, NodeTransitionConfig, NodeTransitionEntry, PlayerUpdate,
-  Projection, QueryFilter, RootMotion, Shape, SharedSlotSink, TextureSlotSink, Volume,
+  InstanceRecordSink, LodLevel, LodView, MoveOptions, NodeEndpoint, NodeMotion, NodeTransitionConfig,
+  NodeTransitionEntry, PlayerUpdate, Projection, QueryFilter, RootMotion, Shape, SharedSlotSink, TextureSlotSink,
+  Volume,
 };
 
 fn throw_str(ctx: &Ctx<'_>, msg: &str) -> rquickjs::Error {
@@ -62,6 +63,8 @@ impl ModuleDef for SpatialModule {
     decl.declare("setCull")?;
     decl.declare("setCullBounds")?;
     decl.declare("setCullGroup")?;
+    decl.declare("setLod")?;
+    decl.declare("setLodView")?;
     decl.declare("createShape")?;
     decl.declare("updateShape")?;
     decl.declare("destroyShape")?;
@@ -111,6 +114,8 @@ impl ModuleDef for SpatialModule {
     exports.export("setCull", Function::new(ctx.clone(), set_cull)?)?;
     exports.export("setCullBounds", Function::new(ctx.clone(), set_cull_bounds)?)?;
     exports.export("setCullGroup", Function::new(ctx.clone(), set_cull_group)?)?;
+    exports.export("setLod", Function::new(ctx.clone(), set_lod)?)?;
+    exports.export("setLodView", Function::new(ctx.clone(), set_lod_view)?)?;
     exports.export("createShape", Function::new(ctx.clone(), create_shape)?)?;
     exports.export("updateShape", Function::new(ctx.clone(), update_shape)?)?;
     exports.export("destroyShape", Function::new(ctx.clone(), destroy_shape)?)?;
@@ -287,10 +292,18 @@ fn set_visible(ctx: Ctx<'_>, id: u64, visible: bool) -> rquickjs::Result<()> {
   super::gui(&ctx).alloy.spatial().set_visible(id, visible).map_err(|e| throw_str(&ctx, &format!("setVisible: {e}")))
 }
 
-fn bind_draw(ctx: Ctx<'_>, id: u64, target: u64, draw: u64, normal: bool, count: u32) -> rquickjs::Result<()> {
+fn bind_draw(
+  ctx: Ctx<'_>,
+  id: u64,
+  target: u64,
+  draw: u64,
+  normal: bool,
+  count: u32,
+  fade: bool,
+) -> rquickjs::Result<()> {
   super::gui(&ctx)
     .alloy
-    .spatial_bind(id, DrawSink { target, draw, normal, count })
+    .spatial_bind(id, DrawSink { target, draw, normal, count, fade })
     .map_err(|e| throw_str(&ctx, &format!("bindDraw: {e}")))
 }
 
@@ -408,6 +421,42 @@ fn set_cull_group(ctx: Ctx<'_>, id: u64, members: Vec<u64>) -> rquickjs::Result<
     .map_err(|e| throw_str(&ctx, &format!("setCullGroup: {e}")))
 }
 
+/// Make the node a LOD group: `levels` is an array of `{ node?, size }`
+/// objects, nearest first (see `Spatial::set_lod`); an empty array
+/// clears. `fade` is the cross-fade band fraction, `reference` the target
+/// population levels measure by.
+fn set_lod<'js>(ctx: Ctx<'js>, id: u64, levels: Array<'js>, fade: f64, reference: OptArg<u64>) -> rquickjs::Result<()> {
+  let mut out = Vec::with_capacity(levels.len());
+  for entry in levels.iter::<Object<'js>>() {
+    let entry = entry?;
+    let node = entry.get::<_, Option<u64>>("node")?;
+    let size = entry.get::<_, f64>("size")?;
+    out.push(LodLevel { node, size: size as f32 });
+  }
+  super::gui(&ctx)
+    .alloy
+    .spatial()
+    .set_lod(id, &out, fade as f32, reference.0)
+    .map_err(|e| throw_str(&ctx, &format!("setLod: {e}")))
+}
+
+/// What a target measures projected size with: a Float32Array of 6 (eye
+/// xyz, focal, ortho as 0/1, bias), or null to lift it.
+fn set_lod_view(ctx: Ctx<'_>, target: u64, view: OptArg<TypedArray<'_, f32>>) -> rquickjs::Result<()> {
+  let v = match &view.0 {
+    Some(data) => {
+      let f = floats(&ctx, data, "setLodView")?;
+      if f.len() != 6 {
+        return Err(throw_str(&ctx, "setLodView: view must be a Float32Array of 6 (eye xyz, focal, ortho, bias)"));
+      }
+      Some(LodView { eye: [f[0], f[1], f[2]], focal: f[3], ortho: f[4] != 0.0, bias: f[5] })
+    }
+    None => None,
+  };
+  super::gui(&ctx).alloy.spatial().set_lod_view(target, v);
+  Ok(())
+}
+
 /// Positions (and uvs, when `uv_offset` is not -1) gathered out of an
 /// interleaved vertex array: `stride` floats per vertex, xyz at
 /// `pos_offset`, uv at `uv_offset`.
@@ -521,6 +570,7 @@ fn filter_arg(filter: OptArg<Object<'_>>) -> rquickjs::Result<QueryFilter> {
     root: f.get::<_, Option<u64>>("root")?,
     layers: f.get::<_, Option<u32>>("layers")?,
     nodes: f.get::<_, Option<Vec<u64>>>("nodes")?,
+    target: f.get::<_, Option<u64>>("target")?,
   })
 }
 
@@ -950,23 +1000,38 @@ fn bind_pose_record(ctx: Ctx<'_>, id: u64, buffer: u64, index: u32) -> rquickjs:
   let sink = InstanceRecordSink { buffer, index, projection: InstanceProjection::Pose2D };
   super::gui(&ctx)
     .alloy
-    .spatial_bind_record(id, Some(sink), None)
+    .spatial_bind_records(id, vec![sink], None)
     .map_err(|e| throw_str(&ctx, &format!("bindPoseRecord: {e}")))
 }
 
 /// Bind the node's instance-record sink with the matrix projection: the
 /// flush writes the node's world matrix, relative to `anchor` when given,
 /// as 16 floats to record slot `index` of vertex buffer `buffer`.
-fn bind_matrix_record(ctx: Ctx<'_>, id: u64, buffer: u64, index: u32, anchor: OptArg<u64>) -> rquickjs::Result<()> {
-  let sink = InstanceRecordSink { buffer, index, projection: InstanceProjection::Matrix };
+fn bind_matrix_record(
+  ctx: Ctx<'_>,
+  id: u64,
+  buffers: Vec<u64>,
+  index: u32,
+  anchor: OptArg<u64>,
+) -> rquickjs::Result<()> {
+  if buffers.is_empty() {
+    return Err(throw_str(&ctx, "bindMatrixRecord: buffers must name at least one buffer"));
+  }
+  let sinks = buffers
+    .into_iter()
+    .map(|buffer| InstanceRecordSink { buffer, index, projection: InstanceProjection::Matrix })
+    .collect();
   super::gui(&ctx)
     .alloy
-    .spatial_bind_record(id, Some(sink), anchor.0)
+    .spatial_bind_records(id, sinks, anchor.0)
     .map_err(|e| throw_str(&ctx, &format!("bindMatrixRecord: {e}")))
 }
 
 fn unbind_record(ctx: Ctx<'_>, id: u64) -> rquickjs::Result<()> {
-  super::gui(&ctx).alloy.spatial_bind_record(id, None, None).map_err(|e| throw_str(&ctx, &format!("unbindRecord: {e}")))
+  super::gui(&ctx)
+    .alloy
+    .spatial_bind_records(id, Vec::new(), None)
+    .map_err(|e| throw_str(&ctx, &format!("unbindRecord: {e}")))
 }
 
 /// Move every record sink on buffer `old` to buffer `new` - the growth
