@@ -1,7 +1,9 @@
 // Geometry: one interleaved vertex buffer described by a layout - an
-// ordered attribute list that always starts with the standard prefix
-// (position vec3, normal vec3, uv vec2: 8 floats, what every generator
-// emits) and may carry further channels after it. The layout is open data:
+// ordered attribute list that starts with the position (vec3) and may
+// carry any named channels after it. The standard prefix (position vec3,
+// normal vec3, uv vec2: 8 floats) is what every generator emits and what
+// the stock materials read; a hand-built layout may leave the normal and
+// uv out when nothing reads them. The layout is open data:
 // `withAttribute` appends any named channel (Three's `setAttribute`), and
 // "colored" names the one common case, the prefix plus an aColor vec4 (12
 // floats) as the per-vertex data channel for custom materials (tint, baked
@@ -26,9 +28,14 @@ import { premultipliedColor } from "./color.ts"
 import { add, compose, cross, mat4, normalize, normalMatrix, sub, updateRotation, updateScale } from "./math.ts"
 import type { Quat, TransformUpdate, Vec2, Vec3 } from "./math.ts"
 
-/** A vertex layout: the named presets, or an explicit attribute list that
- * must begin with the standard prefix (aPos vec3, aNormal vec3, aUV vec2).
- * Absent on a Geometry means "standard". */
+/** A vertex layout: the named presets, or an explicit attribute list
+ * that begins with `aPos` vec3 (placement is universal) and carries any
+ * named channels after it. The standard prefix (aPos vec3, aNormal vec3,
+ * aUV vec2) is what every generator emits and what the stock materials
+ * read, not a rule a layout must follow: a material reads channels by
+ * name and a missing one throws at add(), so a point carrying a position
+ * and one packed channel is 4 floats, not 12. Absent on a Geometry means
+ * "standard". */
 export type VertexLayout = "standard" | "colored" | "skinned" | VertexAttribute[]
 
 const STANDARD_ATTRIBUTES: VertexAttribute[] = [
@@ -91,15 +98,12 @@ export function layoutSlot(layout: VertexLayout | undefined, name: string): { of
   return null
 }
 
-/** The prefix check every layout must pass: standard attributes first, in
- * order, and no duplicate names after them. */
+/** The check every layout must pass: aPos vec3 first and no duplicate
+ * names. */
 function checkLayout(layout: VertexAttribute[], where: string): void {
-  for (let i = 0; i < STANDARD_ATTRIBUTES.length; i++) {
-    let want = STANDARD_ATTRIBUTES[i]!
-    let got = layout[i]
-    if (got === undefined || got.name !== want.name || got.format !== want.format) {
-      throw new Error(where + ": a layout must start with the standard prefix (aPos vec3, aNormal vec3, aUV vec2)")
-    }
+  let first = layout[0]
+  if (first === undefined || first.name !== "aPos" || first.format !== "vec3") {
+    throw new Error(where + ": a layout must start with aPos vec3")
   }
   let seen = new Set<string>()
   for (let attr of layout) {
@@ -109,8 +113,8 @@ function checkLayout(layout: VertexAttribute[], where: string): void {
 }
 
 /**
- * The structural check for geometry about to draw: the layout passes the
- * prefix rule, the vertex float count is a whole number of its stride,
+ * The structural check for geometry about to draw: the layout starts
+ * with aPos, the vertex float count is a whole number of its stride,
  * and indices are present. Throws naming the geometry. The scene runs it
  * at add() so hand-built geometry (a bare `layout: "colored"` over a
  * miscounted array) fails there instead of drawing garbage triangles.
@@ -166,6 +170,20 @@ export function geometryTopology(geometry: Geometry): Topology {
  * channel geometry is built in one pass instead of generate-then-repack. */
 export type GeometryOptions = { label?: string; layout?: VertexLayout }
 
+/** The generator path writes the standard channels in their standard
+ * order, so a layout a generator is asked to emit must start with the
+ * prefix; past it the layout is open. */
+function checkGeneratorLayout(layout: VertexAttribute[], where: string): void {
+  checkLayout(layout, where)
+  for (let i = 0; i < STANDARD_ATTRIBUTES.length; i++) {
+    let want = STANDARD_ATTRIBUTES[i]!
+    let got = layout[i]
+    if (got === undefined || got.name !== want.name || got.format !== want.format) {
+      throw new Error(where + ": a generator layout must start with the standard prefix (aPos vec3, aNormal vec3, aUV vec2)")
+    }
+  }
+}
+
 /** The generator tail: pack standard-layout vertices (number[] of 8 per
  * vertex, or an already-written Float32Array) and indices into a Geometry
  * of the requested layout. A wider layout spreads the standard channels
@@ -182,7 +200,7 @@ export function packGeometry(
   let count = verts.length / STANDARD_FLOATS
   let packedIndices = indices instanceof Uint16Array || indices instanceof Uint32Array ? indices : packIndices(indices, count)
   let attrs = layoutAttributes(layout)
-  if (layout !== undefined && typeof layout !== "string") checkLayout(attrs, "packGeometry")
+  if (layout !== undefined && typeof layout !== "string") checkGeneratorLayout(attrs, "packGeometry")
   let stride = layoutStride(attrs)
   if (stride === STANDARD_FLOATS) {
     let vertices = verts instanceof Float32Array ? verts : new Float32Array(verts)
@@ -203,7 +221,7 @@ export function packGeometry(
 function generatorStride(options: GeometryOptions): number {
   let { layout } = options
   let attrs = layoutAttributes(layout)
-  if (layout !== undefined && typeof layout !== "string") checkLayout(attrs, "generator layout")
+  if (layout !== undefined && typeof layout !== "string") checkGeneratorLayout(attrs, "generator layout")
   return layoutStride(attrs)
 }
 
@@ -278,7 +296,8 @@ export function geometryBounds(geometry: Geometry): Float32Array {
 
 /** Per-vertex values for withAttribute/fillAttribute: a flat array of the
  * attribute's size per vertex, or a callback deriving each vertex's value
- * from the standard channels (what a baker wants). */
+ * from the standard channels (what a baker wants). A channel the layout
+ * lacks (a point cloud without a normal or uv) arrives as zeros. */
 export type AttributeFill = ArrayLike<number> | ((index: number, pos: Vec3, normal: Vec3, uv: Vec2) => ArrayLike<number>)
 /** AttributeFill for the aColor vec4 channel (4 per vertex). */
 export type ColorFill = AttributeFill
@@ -377,12 +396,18 @@ function fillSlot(vertices: Float32Array, layout: VertexLayout | undefined, name
   if (flat !== null && flat.length !== n * size) {
     throw new Error("fillAttribute: fill has " + flat.length + " floats, expected " + size + " per vertex (" + n * size + ")")
   }
+  // The standard channels the callback sees, by slot: a layout without
+  // a normal or uv reads zeros for them.
+  let normalAt = layoutSlot(layout, "aNormal")?.offset ?? -1
+  let uvAt = layoutSlot(layout, "aUV")?.offset ?? -1
   for (let i = 0; i < n; i++) {
     let d = (first + i) * stride
     let value: ArrayLike<number>
     let s: number
     if (fn !== null) {
-      value = fn(i, [vertices[d]!, vertices[d + 1]!, vertices[d + 2]!], [vertices[d + 3]!, vertices[d + 4]!, vertices[d + 5]!], [vertices[d + 6]!, vertices[d + 7]!])
+      let normal: Vec3 = normalAt < 0 ? [0, 0, 0] : [vertices[d + normalAt]!, vertices[d + normalAt + 1]!, vertices[d + normalAt + 2]!]
+      let uv: Vec2 = uvAt < 0 ? [0, 0] : [vertices[d + uvAt]!, vertices[d + uvAt + 1]!]
+      value = fn(i, [vertices[d]!, vertices[d + 1]!, vertices[d + 2]!], normal, uv)
       s = 0
       if (value.length !== size) {
         throw new Error("fillAttribute: fill callback returned " + value.length + " floats for '" + name + "', expected " + size)
@@ -407,9 +432,9 @@ export function fillColors(geometry: Geometry, fill: ColorFill, first = 0, count
  * quaternion, not both; number = uniform scale; absent = identity) into a
  * geometry: a new geometry (the source is
  * untouched, its GPU buffers stay independent) whose positions are moved
- * by the transform and whose normals follow through the inverse-transpose,
- * renormalized - correct under non-uniform scale. UVs, colors, indices and
- * layout copy through. This is Three's `geometry.applyMatrix4`, the first
+ * by the transform and whose normals (when the layout carries aNormal)
+ * follow through the inverse-transpose, renormalized - correct under
+ * non-uniform scale. UVs, colors, indices and layout copy through. This is Three's `geometry.applyMatrix4`, the first
  * half of authoring a static scene as data: transform each part into place,
  * mergeGeometries the parts, draw one mesh.
  */
@@ -426,19 +451,22 @@ export function transformGeometry(geometry: Geometry, transform: TransformUpdate
     throw new Error("transformGeometry: vertex data is not a whole number of " + layoutKey(geometry.layout) + " vertices")
   }
   let out = new Float32Array(src)
+  let normalAt = layoutSlot(geometry.layout, "aNormal")?.offset ?? -1
   for (let i = 0; i < out.length; i += stride) {
     let x = src[i]!, y = src[i + 1]!, z = src[i + 2]!
     out[i] = m[0] * x + m[4] * y + m[8] * z + m[12]
     out[i + 1] = m[1] * x + m[5] * y + m[9] * z + m[13]
     out[i + 2] = m[2] * x + m[6] * y + m[10] * z + m[14]
-    let nx = src[i + 3]!, ny = src[i + 4]!, nz = src[i + 5]!
+    if (normalAt < 0) continue
+    let na = i + normalAt
+    let nx = src[na]!, ny = src[na + 1]!, nz = src[na + 2]!
     let tx = n[0] * nx + n[4] * ny + n[8] * nz
     let ty = n[1] * nx + n[5] * ny + n[9] * nz
     let tz = n[2] * nx + n[6] * ny + n[10] * nz
     let len = Math.hypot(tx, ty, tz) || 1
-    out[i + 3] = tx / len
-    out[i + 4] = ty / len
-    out[i + 5] = tz / len
+    out[na] = tx / len
+    out[na + 1] = ty / len
+    out[na + 2] = tz / len
   }
   return {
     vertices: out,

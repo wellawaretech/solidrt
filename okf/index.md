@@ -144,6 +144,11 @@ Shaped, not started.
   (a high viewpoint, a driving game) cannot push resolution outward and a
   close-quarters one cannot pull it in; Godot's shadow_split_1..3 and Unity's
   cascade splits are per-light ratios, Three's CSM addon a mode switch.
+- **[Every vertex attribute is a 32-bit float in one immutable interleaved buffer](backlog/3d-vertex-data-model.md)** [2026-09-11]
+  The vertex vocabulary is f32/vec2/vec3/vec4 only and a geometry is one
+  interleaved Float32Array uploaded once, so a color costs 16 bytes where 4
+  would do, a normal 12 where 4 would do, and a channel that changes every
+  frame re-uploads the channels that do not.
 - **[Adaptive present-fence depth](backlog/adaptive-present-fence-depth.md)** [2026-07-27]
   Fallback design if unconditional two-deep present fencing ever shows up as
   desktop drag latency - allow the second in-flight frame only when observed
@@ -496,11 +501,6 @@ Shaped, not started.
   the Babel plugin, but it only lowers JSX, so adopting it means finding new
   homes for TypeScript stripping and the binary/text import inlining that live
   in our Babel pipeline.
-- **[The standard vertex prefix has no opt-out, so a point cloud pays double](backlog/non-surface-vertex-layouts.md)** [2026-09-08]
-  Every layout must start with aPos/aNormal/aUV, 8 floats a vertex, but a
-  lidar point is 4 (position plus one packed channel) and has neither a normal
-  nor a UV; a 14.3M-point cloud therefore carries 458 MB of vertex buffer for
-  229 MB of data, structurally unusable.
 - **[A throwing onFrame callback needs a dev-mode banner, not just a log line](backlog/onframe-throw-dev-banner.md)** [2026-09-07]
   A throw inside an onFrame callback is caught, logged and repeated every
   frame while the app keeps presenting partial frames, so on screen it reads
@@ -1529,6 +1529,11 @@ Finished, kept for the reasoning.
   A press on a Pressable nested inside another fires both onPress callbacks;
   the contract is resolved by component-gestures' innermost-wins arena and the
   usage survey stands.
+- **[The standard vertex prefix has no opt-out, so a point cloud pays double](done/non-surface-vertex-layouts.md)** [2026-09-11]
+  Every layout must start with aPos/aNormal/aUV, 8 floats a vertex, but a
+  lidar point is 4 (position plus one packed channel) and has neither a normal
+  nor a UV; a 14.3M-point cloud therefore carries 458 MB of vertex buffer for
+  229 MB of data, structurally unusable.
 - **[Clearing a numeric or transform prop throws instead of resetting it](done/null-resets-numeric-props.md)** [2026-08-14]
   Binding scale/x/y/rotate/radius/strokeWidth to a value that flips back to
   undefined errors out, because the decoders accept only numbers; null should

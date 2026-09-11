@@ -167,6 +167,37 @@ throws("merge empty", () => mergeGeometries([]))
   throws("fillAttribute unknown name", () => fillAttribute(t, "aNope", () => [0]))
 }
 
+// Prefixless layouts: a geometry may drop the normal and uv and carry
+// [aPos, aData] at 4 floats a vertex, whatever its topology; transform
+// and the fill callback read the standard channels by slot, so aData is
+// never touched and an absent normal/uv arrives as zeros. Only aPos
+// first is required, and only the generators demand the prefix.
+{
+  let cloud: Geometry = {
+    vertices: new Float32Array([0, 0, 0, 7, 1, 2, 3, 8]),
+    indices: new Uint16Array([0, 1]),
+    topology: "points",
+    layout: [
+      { name: "aPos", format: "vec3" },
+      { name: "aData", format: "f32" },
+    ],
+    label: "cloud",
+  }
+  validateGeometry(cloud)
+  if (layoutStride(cloud.layout) !== 4) fail("cloud stride: " + layoutStride(cloud.layout))
+  expectVec("cloud bounds", geometryBounds(cloud), [0, 0, 0, 1, 2, 3])
+  let moved = transformGeometry(cloud, { position: [1, 0, 0], rotation: [0, Math.PI / 2, 0] })
+  expectVec("cloud transform moves positions", moved.vertices.subarray(4, 7), [4, 2, -1])
+  expectVec("cloud transform keeps aData", [moved.vertices[3]!, moved.vertices[7]!], [7, 8])
+  let tagged = withAttribute(cloud, { name: "aTag", format: "vec2" }, (i, pos, normal, uv) => [pos[2] + normal[0] + uv[1], i])
+  if (layoutKey(tagged.layout) !== "aPos:vec3,aData:f32,aTag:vec2") fail("cloud withAttribute key: " + layoutKey(tagged.layout))
+  expectVec("cloud fill callback sees zero normal/uv", tagged.vertices.subarray(6 + 4, 6 + 6), [3, 1])
+  expectVec("cloud withAttribute keeps aData", [tagged.vertices[3]!, tagged.vertices[9]!], [7, 8])
+  validateGeometry({ ...cloud, topology: undefined, indices: new Uint16Array([0, 1, 0]) })
+  throws("layout without aPos first", () => validateGeometry({ ...cloud, layout: [{ name: "aData", format: "f32" }, { name: "aPos", format: "vec3" }] }))
+  throws("prefixless generator layout", () => plane({ layout: [{ name: "aPos", format: "vec3" }] }))
+}
+
 // Generators emitting a wider layout in one pass: identical bytes to
 // generate-then-repack, and the string tail still means label.
 {

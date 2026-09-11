@@ -14,12 +14,20 @@ dist/server.js: $(wildcard src/server/*.ts) $(wildcard src/types/*.d.ts)
 
 # The dev console (apps/console) a published CLI ships pre-compiled: one
 # .srtapp (manifest + bytecode + assets, no runner; `srt pack --app`) that
-# `srt console` hands to the platform package's solidrt runner. Rebuilt when
-# the console's own files change (not when @solidrt/core or components do);
-# `srt console` never builds, so a checkout runs this after console edits.
+# `srt console` hands to the platform package's solidrt runner. `srt console`
+# never builds, so a checkout runs this after console edits. The packages it
+# bakes in are prerequisites for the reason the player bundle lists them
+# (lattice/Makefile): a core/components surface change otherwise leaves a
+# stale pack importing a runtime export that no longer exists, failing at
+# module link on engine start. The root bun.lock stands in for the inlined
+# third-party deps (solid-js).
 CONSOLE := ../../apps/console
+CONSOLE_DEPS = $(wildcard ../core/src/*.ts*) $(wildcard ../components/src/*.ts*) $(wildcard ../../bun.lock)
 
-dist/console.srtapp: $(wildcard $(CONSOLE)/src/*) $(wildcard $(CONSOLE)/assets/*) $(CONSOLE)/package.json
+.PHONY: console
+console: dist/console.srtapp
+
+dist/console.srtapp: $(wildcard $(CONSOLE)/src/*) $(wildcard $(CONSOLE)/assets/*) $(CONSOLE)/package.json $(CONSOLE_DEPS)
 	cd $(CONSOLE) && bun $(CURDIR)/bin/srt pack --app -o $(CURDIR)/$@
 
 # The package demos (packages/*/demos/, one project per package) the CLI

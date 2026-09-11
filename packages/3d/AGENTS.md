@@ -328,15 +328,22 @@ flux:spatial consumers.
 
 One interleaved vertex buffer per geometry, described by an open layout
 (`Geometry.layout`, absent = "standard"): an ordered attribute list that
-always starts with the standard prefix `aPos` vec3 + `aNormal` vec3 +
-`aUV` vec2 (what every generator emits) and may carry any named channels
-after it. `withAttribute(geometry, { name, format }, fill)` appends one
+starts with `aPos` vec3 and may carry any named channels after it. The
+standard prefix `aPos` vec3 + `aNormal` vec3 + `aUV` vec2 is what every
+generator emits and what the stock materials read, not a rule: a
+hand-built geometry declares what it has, so a point cloud may carry
+`[aPos vec3, aData f32]` at 4 floats a point instead of 9, halving a
+large cloud's vertex buffer. Pair it with a material that reads only what
+it carries: `unlit` (aPos only) or a shaderMaterial; a stock lit material
+over it throws the ordinary missing-attribute error at add(). A layout
+handed to a generator must start with the prefix (the generator writes
+those channels). `withAttribute(geometry, { name, format }, fill)` appends one
 (Three's `setAttribute` for an interleave); "colored" names the common
 case, the prefix plus `aColor` vec4 - the per-vertex data channel (a
 tint, baked AO, any four scalars; standard name, your contents) - and
 `withColors(geometry, fill)` is its spelling. Fill is a flat
 size-per-vertex array or a per-vertex callback receiving `(index, pos,
-normal, uv)`. The fill is raw floats: a tint the stock materials read
+normal, uv)` (zeros for a channel the layout lacks). The fill is raw floats: a tint the stock materials read
 under `vertexColors` is premultiplied linear like every shader color,
 so encode an sRGB pick with `premultipliedColor(color)`. Materials read attributes BY NAME: a material's vertex
 stage may declare any subset of its geometry's channels, and a channel
@@ -351,11 +358,7 @@ so a geometry may carry more than a material reads. The whole layout
 ships whether a material reads every attribute or not (inactive
 attributes only keep the stride), so extra channels cost their floats on
 every draw of that geometry - keep data-light passes (a wireframe
-reading only aPos) on standard geometry. The prefix has no opt-out, so
-geometry that is not a surface pays for it anyway: a lidar point
-carrying a position and one packed channel still costs the 8-float
-prefix, doubling a large cloud's vertex buffer
-(okf/backlog/non-surface-vertex-layouts.md). `layoutStride`/`layoutSlot`/
+reading only aPos) on standard geometry. `layoutStride`/`layoutSlot`/
 `layoutKey`/`layoutAttributes` are the layout arithmetic; two layouts
 with equal keys interleave identically (merge requires that).
 Indices are uint16 or uint32 - the `Geometry.indices` array type picks

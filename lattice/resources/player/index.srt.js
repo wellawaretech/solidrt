@@ -5986,11 +5986,12 @@ var pendingDestroy = new Map;
 var destroyScheduled = false;
 function destroyNode2(node) {
   tree2.destroyNode(node.id);
+  let focused = untrack(focusedNode);
   let cleanup2 = (n) => {
     for (let child of n.children)
       if (child.parent === n)
         cleanup2(child);
-    if (n.id === focusedNode())
+    if (n.id === focused)
       setFocus(null);
     nodes.delete(n.id);
     cleanupNode(n.id);

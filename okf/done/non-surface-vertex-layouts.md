@@ -2,6 +2,7 @@
 title: The standard vertex prefix has no opt-out, so a point cloud pays double
 description: Every layout must start with aPos/aNormal/aUV, 8 floats a vertex, but a lidar point is 4 (position plus one packed channel) and has neither a normal nor a UV; a 14.3M-point cloud therefore carries 458 MB of vertex buffer for 229 MB of data, structurally unusable.
 created: 2026-09-08
+completed: 2026-09-11
 ---
 
 # The standard vertex prefix has no opt-out, so a point cloud pays double
@@ -54,3 +55,30 @@ but the prefix is the part that is pure waste.
 `layoutAttributes`/`layoutStride` consumer for a prefix assumption, and
 the glTF loader, which builds layouts by name and would want to keep
 emitting the prefix for surfaces regardless.
+
+## Outcome
+
+Landed 2026-09-11 in `packages/3d/src/geometry.ts`, and wider than
+"done looks like" asked: the prefix rule is gone for every topology,
+not only for lines and points. `checkLayout` requires `aPos` vec3 first
+and no duplicate names; only the generator path (`packGeometry`,
+`generatorStride`) still demands the prefix, because it writes those
+channels in that order. The reasoning: after this change nothing reads
+aNormal or aUV by offset, materials check the channels they read by
+name at add(), so a surface rule would only reject valid pairings (a
+`[aPos, aColor]` triangle mesh under `unlit` draws correctly). The
+prefix is what generators emit and stock materials read, not a property
+a surface needs. The two readers that assumed the prefix by offset now
+read the slot by name:
+`transformGeometry` rotates a normal only when the layout carries
+`aNormal`, and the fill callback's normal and uv arguments are zeros
+when absent. Nothing else assumed the prefix: bounds read offset 0, the
+Rust pipeline layer builds from the attribute list as given, the model
+file serializes the list, and the glTF loader keeps emitting the prefix
+for every primitive, as intended. `checks/geometry-check.ts` covers a
+`[aPos, aData]` geometry through validate, bounds, transform and
+withAttribute as points and as triangles, and the generator rejection.
+
+The wider vertex data model (attribute formats beyond f32, buffer
+streams) is a separate item: okf/backlog/3d-vertex-data-model.md.
+
