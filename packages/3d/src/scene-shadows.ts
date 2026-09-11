@@ -11,7 +11,7 @@ import { createDrawTarget, depthTexture, destroyTexture, limits, setTargetRect, 
 import type { ShaderParams, TextureId } from "@solidrt/core/gpu"
 import { cascadeSplit, copy, frustumSliceSphere, lookAt as lookAtMatrix, mat4, snapToGrid, transformVector } from "./math.ts"
 import type { Mat4, Vec3 } from "./math.ts"
-import { MAX_SHADOW_MAPS } from "./glsl.ts"
+import { MAX_LIGHTS, MAX_SHADOW_MAPS } from "./glsl.ts"
 import { shadowDepthMaterial } from "./material.ts"
 import type { Material } from "./material.ts"
 import { updateCamera } from "./camera.ts"
@@ -113,14 +113,22 @@ export type ShadowSystem = {
    * uShadow*[i] slot): every non-hemisphere light counts, casting or
    * not, so it matches the lit loop's index. */
   forEachShadowSlot(fn: (slot: number, lightIndex: number, cascade: number, rect: ShadowRect) => void): void
-  /** The light started casting (attach, or castShadow flipped on). */
-  createShadow(light: CastingLight): void
-  /** The light stopped casting (detach, or castShadow flipped off).
-   * Safe when it never cast. */
-  destroyShadow(light: CastingLight): void
-  /** The light's castShadow/shadow options changed: rebuild, re-place or
-   * re-fit whatever the change touches (SceneHooks._shadowChanged). */
-  shadowChanged(light: CastingLight): void
+  /** The light attached, detached, or its castShadow/shadow options
+   * changed: the shadow set settles at the next sync (`settle`), never
+   * here. A declarative swap attaches the incoming branch before the
+   * outgoing one detaches, inside one flush, so a budget summed at attach
+   * counts both. Safe for a light that never cast. */
+  invalidate(light: CastingLight): void
+  /** Settle the shadow set against the light list, early in the scene's
+   * sync: drop the shadows of lights that left, stopped casting or
+   * changed shape (cascade count), place every wanted caster's tiles in
+   * attach order while the budget holds (first fit: a later spot still
+   * gets its map when an earlier point light does not), create the views
+   * of new casters. A set past the budget returns the error for the sync
+   * to throw AFTER its own writes, so a failing set never leaves the
+   * scene half-written: the casters that fit keep their maps, the rest
+   * light the scene unshadowed. Reported once per change of the set. */
+  settle(): Error | null
   /** Re-place every caster's map cameras from its light's current world
    * matrix (each compares against the matrix it was last placed from, so
    * a scene animating elsewhere rewrites nothing). Run per sync;
@@ -184,37 +192,88 @@ export function makeShadowSystem<V extends ShadowView>(deps: ShadowSystemDeps<V>
   let forEachShadowSlot = (fn: (slot: number, lightIndex: number, cascade: number, rect: ShadowRect) => void): void => {
     eachSlot((slot, i, shadow, c) => fn(slot, i, c, shadow.rects[c]!))
   }
-  // Place every shadow tile for the current caster set plus `adding` (not
-  // yet in `shadows`; its rects are returned for the view creates), in
-  // light order, a light's cascades consecutive. Sizes the atlas, moves
-  // tiles whose place changed, and drops the atlas when nothing casts.
-  // The rects reach receivers through the next light rewrite.
-  let placeShadows = (adding: CastingLight | null): ShadowRect[] | null => {
+  // The set changed (attach, detach, options) since the last settle.
+  let setDirty = false
+  let invalidate = (light: CastingLight) => {
+    // An option that moves no tile (near, the box camera) still
+    // re-places the map cameras.
+    let shadow = shadows.get(light)
+    if (shadow !== undefined) shadow.dirty = true
+    setDirty = true
+    deps.schedule()
+  }
+  // A caster's views: one square tile of the shadow atlas per map,
+  // drawing the casting meshes with the depth override from that map's
+  // frustum. The light rewrite writes the rects in the light's slots on
+  // every receiving target.
+  let createShadow = (light: CastingLight, rects: ShadowRect[]) => {
+    let atlas = shadowAtlas!
+    let views = rects.map(rect =>
+      deps.makeView(
+        {
+          width: rect.width,
+          height: rect.height,
+          into: atlas.texture,
+          x: rect.x,
+          y: rect.y,
+          overrideMaterial: shadowDepthMaterial(),
+          clearColor: [1, 1, 1, 1],
+          label: deps.label + "-shadow",
+        },
+        m => m.castShadow,
+      ),
+    )
+    shadows.set(light, { light, views, lastWorld: mat4(), dirty: true, rects })
+  }
+  // Settle the set (ShadowSystem.settle): the wanted casters in light
+  // order, as many as fit, then the atlas sized to them, tiles whose
+  // place changed moved, new casters' views made. The rects reach
+  // receivers through the light rewrite this marks.
+  let settle = (): Error | null => {
+    if (!setDirty) return null
+    setDirty = false
+    // Every casting light within the light cap (one past it is not lit,
+    // and its slots would name a uShadow*[i] that does not exist) whose
+    // tiles still fit the budget.
     let casters: CastingLight[] = []
+    let tiles = 0
+    let wanted = 0
+    let index = 0
     for (let l of deps.lights) {
-      if (l.type !== "hemisphere" && (shadows.has(l) || l === adding)) casters.push(l)
+      if (l.type === "hemisphere") continue
+      let i = index++
+      if (!l.castShadow || i >= MAX_LIGHTS) continue
+      let n = shadowTiles(l)
+      wanted += n
+      if (tiles + n > MAX_SHADOW_MAPS) continue
+      casters.push(l)
+      tiles += n
     }
-    if (adding !== null && !casters.includes(adding)) casters.push(adding)
+    // A shadow no longer wanted (its light left, stopped casting or fell
+    // past the budget) or of the wrong shape (a cascade count change is a
+    // different view set) goes; its light draws plain.
+    for (let [light, shadow] of shadows) {
+      if (casters.includes(light) && shadow.views.length === shadowTiles(light)) continue
+      shadows.delete(light)
+      for (let v of shadow.views) deps.disposeView(v)
+    }
     deps.markLightsDirty()
+    let error =
+      wanted > MAX_SHADOW_MAPS
+        ? new Error(
+            "The scene's shadow set is full: " + wanted + " maps over the " + MAX_SHADOW_MAPS +
+              "-slot budget, the casters that do not fit light the scene unshadowed (a cascaded light claims shadow.cascades slots, a point light six)",
+          )
+        : null
     if (casters.length === 0) {
       if (shadowAtlas !== null) {
         destroyTexture(shadowAtlas.texture)
         shadowAtlas = null
       }
-      return null
+      return error
     }
     let maxSize = 1
-    let tiles = 0
-    for (let l of casters) {
-      maxSize = Math.max(maxSize, l.shadow.mapSize)
-      tiles += shadowTiles(l)
-    }
-    if (tiles > MAX_SHADOW_MAPS) {
-      throw new Error(
-        "The scene's shadow set is full: " + tiles + " maps over the " + MAX_SHADOW_MAPS +
-          "-slot budget (a cascaded light claims shadow.cascades slots, a point light six)",
-      )
-    }
+    for (let l of casters) maxSize = Math.max(maxSize, l.shadow.mapSize)
     let lay = shadowLayout(tiles, maxSize)
     if (shadowAtlas === null) {
       shadowAtlas = {
@@ -232,16 +291,15 @@ export function makeShadowSystem<V extends ShadowView>(deps: ShadowSystemDeps<V>
       shadowAtlas.width = lay.width
       shadowAtlas.height = lay.height
     }
-    let placed: ShadowRect[] | null = null
     let k = 0
     for (let l of casters) {
       let size = Math.max(1, Math.floor(l.shadow.mapSize * lay.scale))
       let shadow = shadows.get(l)
+      let fresh: ShadowRect[] = []
       for (let c = 0; c < shadowTiles(l); c++, k++) {
         let rect: ShadowRect = { x: (k % lay.cols) * lay.cell, y: Math.floor(k / lay.cols) * lay.cell, width: size, height: size }
         if (shadow === undefined) {
-          if (placed === null) placed = []
-          placed.push(rect)
+          fresh.push(rect)
           continue
         }
         let r = shadow.rects[c]!
@@ -254,43 +312,9 @@ export function makeShadowSystem<V extends ShadowView>(deps: ShadowSystemDeps<V>
         // A tile's texel size moved: the cascade fit snaps to it.
         shadow.dirty = true
       }
+      if (shadow === undefined) createShadow(l, fresh)
     }
-    return placed
-  }
-  // A shadow's views: one square tile of the shadow atlas per map drawing
-  // the casting meshes with the depth override from that map's frustum.
-  // The light rewrite writes the rects in the light's slots on every
-  // receiving target.
-  let createShadow = (light: CastingLight) => {
-    let rects = placeShadows(light)
-    if (rects === null || shadowAtlas === null) return
-    let atlas = shadowAtlas
-    let views = rects.map(rect =>
-      deps.makeView(
-        {
-          width: rect.width,
-          height: rect.height,
-          into: atlas.texture,
-          x: rect.x,
-          y: rect.y,
-          overrideMaterial: shadowDepthMaterial(),
-          clearColor: [1, 1, 1, 1],
-          label: deps.label + "-shadow",
-        },
-        m => m.castShadow,
-      ),
-    )
-    shadows.set(light, { light, views, lastWorld: mat4(), dirty: true, rects })
-    deps.markLightsDirty()
-  }
-  let destroyShadow = (light: CastingLight) => {
-    let shadow = shadows.get(light)
-    if (shadow === undefined) return
-    shadows.delete(light)
-    for (let v of shadow.views) deps.disposeView(v)
-    placeShadows(null)
-    deps.markLightsDirty()
-    deps.schedule()
+    return error
   }
   // Place a shadow's cameras from its light's world matrix. A box light:
   // at its world position, looking along its world direction, the light
@@ -407,31 +431,8 @@ export function makeShadowSystem<V extends ShadowView>(deps: ShadowSystemDeps<V>
   return {
     atlas: () => shadowAtlas,
     forEachShadowSlot,
-    createShadow,
-    destroyShadow,
-    shadowChanged(light) {
-      let shadow = shadows.get(light)
-      if (shadow !== undefined) {
-        if (!light.castShadow) {
-          destroyShadow(light)
-          return
-        }
-        // A cascade count change is a different view set: rebuild it. A
-        // mapSize change re-places every tile (the grid cell follows the
-        // largest map).
-        if (shadow.views.length !== shadowTiles(light)) {
-          destroyShadow(light)
-          createShadow(light)
-          return
-        }
-        placeShadows(null)
-        shadow.dirty = true
-        deps.markLightsDirty()
-        deps.schedule()
-      } else if (light.castShadow) {
-        createShadow(light)
-      }
-    },
+    invalidate,
+    settle,
     placeCameras(sceneCameraMoved) {
       for (let shadow of shadows.values()) placeShadowCamera(shadow, sceneCameraMoved)
     },

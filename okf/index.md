@@ -138,11 +138,6 @@ Shaped, not started.
   the way <Scene> does, and a view handle has no project, unproject or
   screenRay, so an overlay or a drag plane over a minimap has to redo the view
   camera's math by hand; the 2d views have the same additive list.
-- **[A transient shadow-slot overlap during a subtree swap kills the app](backlog/3d-shadow-budget-mount-overlap.md)** [2026-09-08]
-  Shadow placement runs synchronously at light attach, so a declarative swap
-  whose incoming branch attaches before the outgoing one detaches sums both
-  branches against the 8-slot budget and throws; a casting point light (6
-  slots) is unusable in any app that swaps scene content.
 - **[Cascade split ratios are fixed](backlog/3d-shadow-cascade-splits.md)** [2026-09-06]
   A cascaded sun slices its range with one fixed practical split
   (CASCADE_SPLIT_LAMBDA 0.5), so a scene whose detail sits far from the camera
@@ -986,6 +981,11 @@ Finished, kept for the reasoning.
   every event, with claiming by stopPropagation, capture to the root, wheel,
   synthesized taps and the feed listening at the root - the 2d layer's model
   one dimension up.
+- **[A transient shadow-slot overlap during a subtree swap kills the app](done/3d-shadow-budget-mount-overlap.md)** [2026-09-11]
+  Shadow placement runs synchronously at light attach, so a declarative swap
+  whose incoming branch attaches before the outgoing one detaches sums both
+  branches against the 8-slot budget and throws; a casting point light (6
+  slots) is unusable in any app that swaps scene content.
 - **[Cascaded shadow maps](done/3d-shadow-cascades.md)** [2026-08-27]
   One shadow.camera box per casting light: a large outdoor scene either blurs
   (the box covers everything at one map's resolution) or clips (the box covers
@@ -1985,6 +1985,11 @@ Knowledge. No lifecycle - true or wrong, not open or closed.
   about 10 us per animated element per frame, three quarters of it Solid
   (setSignal + recompute + reads), the renderer glue and the FFI crossing
   about 0.4 us each per write.
+- **[A declarative swap attaches the incoming branch before the outgoing one detaches](notes/solid-swap-attach-before-detach.md)** [2026-09-11]
+  Solid 2.0 runs the incoming branch's body before the outgoing branch's
+  cleanup on a Show/Switch flip, both inside one flush, so a per-scene budget
+  summed at attach counts both branches; test budgets over the settled set at
+  the flush instead.
 - **[Crate alternatives for hand-rolled spatial code](notes/spatial-crate-alternatives.md)** [2026-08-31]
   Survey of crates that could replace or extend alloy/src/spatial, with
   measured dependency costs; conclusion is no action, demand-gated pointers

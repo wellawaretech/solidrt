@@ -1,4 +1,4 @@
-import { createRoot, onCleanup, NotReadyError } from "@solidjs/signals"
+import { createRoot, onCleanup, NotReadyError, untrack } from "@solidjs/signals"
 import { createRenderer } from "@solidjs/universal"
 import { createErrorBoundary } from "solid-js"
 import type { Element } from "solid-js"
@@ -51,9 +51,13 @@ let destroyScheduled = false
 // before dropping handlers so onBlur still fires for a focused descendant.
 function destroyNode(node: ProxyNode): void {
   tree.destroyNode(node.id)
+  // Read once, untracked: destroyNode runs inside effect apply phases (the
+  // root boundary's swap, the end-of-tick sweep), where a per-node signal
+  // read is a STRICT_READ_UNTRACKED warning per node.
+  let focused = untrack(focusedNode)
   let cleanup = (n: ProxyNode) => {
     for (let child of n.children) if (child.parent === n) cleanup(child)
-    if (n.id === focusedNode()) setFocus(null)
+    if (n.id === focused) setFocus(null)
     nodes.delete(n.id)
     cleanupNode(n.id)
   }

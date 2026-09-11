@@ -444,6 +444,13 @@ export type SceneOptions = {
   /** Multisample count of the target (1, 2, 4 or 8; default 1). Storage-only
    * anti-aliasing of mesh edges; see createDrawTarget. */
   samples?: 1 | 2 | 4 | 8
+  /** Where a per-scene budget error goes: the light cap and the
+   * shadow-slot budget are checked over the settled set at the sync and
+   * reported once per change of the set, the scene rendering on with
+   * what fits. Without a handler the sync throws it, uncaught (a
+   * microtask): the `<Scene>` component hands one in and rethrows inside
+   * the tree, so the app's error boundary shows it. */
+  onError?: (error: Error) => void
 }
 
 export type ViewOptions = {
@@ -1011,6 +1018,9 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
   // light params at the end of the sync - one write, however many meshes.
   let lights: Light[] = []
   let lightsDirty = false
+  // The list changed shape (attach, detach) since sync last checked the
+  // light cap.
+  let lightSetDirty = false
   // uLightDir and uLightPos are CORE-DRIVEN: each light's slots are
   // shared-slot sinks following the node's world transform - the
   // direction slot (bindDirectionSlot) with -direction as the local
@@ -1045,6 +1055,9 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
         ground = [g[0]! * k, g[1]! * k, g[2]! * k]
         continue
       }
+      // A light past the cap is not lit (sync reports the set once): its
+      // slots would overrun the MAX_LIGHTS arrays.
+      if (count >= MAX_LIGHTS) continue
       if (light.type !== "point") {
         vecScratch[0] = -light.direction[0]
         vecScratch[1] = -light.direction[1]
@@ -1512,6 +1525,24 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
   let sync = () => {
     scheduled = false
     if (disposed) return
+    // A per-scene budget - the light cap, the shadow slots - is tested
+    // here over the settled set, never at attach: a declarative swap
+    // (<Show>, <Switch>) attaches the incoming branch before the outgoing
+    // one detaches, inside one Solid flush, and both are gone by this
+    // microtask. A set past a budget is reported once, at the end, after
+    // every write below, so the scene is never left half-written.
+    let budgetError: Error | null = null
+    if (lightSetDirty) {
+      lightSetDirty = false
+      let n = lights.filter(l => l.type !== "hemisphere").length
+      if (n > MAX_LIGHTS) {
+        budgetError = new Error(
+          "A scene takes at most " + MAX_LIGHTS + " lights (directional, spot and point together): " + n + " attached, the lights past the cap are not lit",
+        )
+      }
+    }
+    let shadowError = shadowSys.settle()
+    if (budgetError === null) budgetError = shadowError
     ensureCamera(camera, width, height)
     let cameraMoved = camera.pending
     if (camera.pending) {
@@ -1569,6 +1600,10 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     if (orderDirty || views.some(v => v.orderDirty)) refreshCenters()
     if (orderDirty) sortEntries()
     for (let v of views) if (v.orderDirty) sortView(v)
+    if (budgetError !== null) {
+      if (opts?.onError !== undefined) opts.onError(budgetError)
+      else throw budgetError
+    }
   }
 
   let hooks: SceneHooks = {
@@ -1579,23 +1614,25 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     },
     _attachLight(light) {
       if (disposed) return
-      if (light.type !== "hemisphere" && lights.filter(l => l.type !== "hemisphere").length >= MAX_LIGHTS) {
-        throw new Error("A scene takes at most " + MAX_LIGHTS + " lights (directional, spot and point together)")
-      }
       lights.push(light)
       lightsDirty = true
-      if (light.type !== "hemisphere" && light.castShadow) shadowSys.createShadow(light)
+      if (light.type === "hemisphere") return
+      lightSetDirty = true
+      if (light.castShadow) shadowSys.invalidate(light)
     },
     _detachLight(light) {
       let i = lights.indexOf(light)
       if (i >= 0) lights.splice(i, 1)
       lightsDirty = true
-      if (light.type !== "hemisphere") shadowSys.destroyShadow(light)
+      if (light.type !== "hemisphere") {
+        lightSetDirty = true
+        shadowSys.invalidate(light)
+      }
       hooks._schedule()
     },
     _shadowChanged(light) {
       if (disposed) return
-      shadowSys.shadowChanged(light)
+      shadowSys.invalidate(light)
     },
     _setCast(mesh) {
       if (mesh._buffers === null || disposed) return

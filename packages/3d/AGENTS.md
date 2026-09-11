@@ -214,8 +214,18 @@ orthographic camera at the light's WORLD position along its world
 direction, `shadow.camera` (+-5, 0.5..500 by default) as the frustum.
 Any light may cast, bounded by the shadow-slot budget
 (MAX_SHADOW_MAPS = 8, its own constant: a directional light claims
-`shadow.cascades` consecutive slots, a point light six, a spot one,
-and a caster past the budget throws at attach). `<SpotLight castShadow
+`shadow.cascades` consecutive slots, a point light six, a spot one).
+The budget is checked when the set settles (the scene's sync), never
+at attach, so a `<Show>`/`<Switch>` swap whose branches each fit is
+fine even though both are attached for an instant. A set over budget
+once settled is reported once per change of the set: `<Scene>`
+rethrows it inside the tree, so the app's error boundary (or an
+`<Errored>` closer in) shows it, and Reset returns to the scene, which
+kept rendering - the casters that fit in attach order keep their maps,
+the rest light the scene unshadowed. A bare `createScene` throws it
+from its sync unless given `onError`. A deliberate overlap must fit
+alongside its successor: a casting light with its own exit transition
+keeps casting until it frees. `<SpotLight castShadow
 shadow={{ mapSize?, bias?, normalBias?, near? }}>` is the same
 machinery with a PERSPECTIVE camera: at the light's world position
 along its world direction, fov = its cone (2 * angle), near from
@@ -1496,8 +1506,10 @@ scene, the last attached wins. Placement goes through setTransform, the
 light's own fields through `setLight(light, { ... })` (frame-rate-safe,
 like setMeshParams). At most `MAX_LIGHTS` (8, exported from `/glsl`)
 lights per scene, directional, spot and point together (the hemisphere
-is not in the list) - the ninth throws at add(); it is a shader-source
-constant, fixed per app. `uLightDir` and `uLightPos` are core-driven:
+is not in the list) - a ninth is reported at the sync that settles the
+set, not at add() (a declarative swap's transient overlap is fine),
+the way a shadow-budget overflow is (see there), and the lights past
+the cap are not lit; it is a shader-source constant, fixed per app. `uLightDir` and `uLightPos` are core-driven:
 each light's slots are spatial-core shared-slot sinks following the
 node's world rotation (direction, negated so the shader reads the
 vector TOWARD the light) and world position, so a MOVING light costs no

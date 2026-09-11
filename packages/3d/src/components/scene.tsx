@@ -1,4 +1,4 @@
-import { createEffect, displayScale, getBoundingBoxViewport, getLayoutBox, onCleanup, onLayout, untrack } from "@solidrt/core"
+import { createEffect, createRenderEffect, createSignal, displayScale, getBoundingBoxViewport, getLayoutBox, onCleanup, onLayout, untrack } from "@solidrt/core"
 import type { Element, ParentComponent, PointerFeed, TextureId } from "@solidrt/core"
 import { SceneContext } from "./context.tsx"
 import { createScene } from "../scene.ts"
@@ -143,6 +143,14 @@ export let Scene: ParentComponent<SceneProps> = props => {
     }
     return props.width === undefined
   })
+  // A budget error the scene reports from its sync (a microtask, outside
+  // the tree) is rethrown inside it, so the app's error boundary shows
+  // it: the handler parks the error and bumps a signal, the render effect
+  // below takes and throws it. Taking it first means the boundary's reset
+  // finds nothing to throw and returns to the scene, which kept rendering
+  // with what fits.
+  let pendingError: Error | null = null
+  let [errorTick, setErrorTick] = createSignal(0)
   // The initial props seed createScene, so `ref` (below) hands out a
   // configured scene and the first frame draws it whole; the effects
   // after this follow changes only (`defer`).
@@ -159,10 +167,24 @@ export let Scene: ParentComponent<SceneProps> = props => {
       exposure: props.exposure,
       layers: props.layers,
       stagger: props.stagger,
+      onError: e => {
+        pendingError = e
+        setErrorTick(errorTick() + 1)
+      },
     })
     if (props.camera) s.setCamera(props.camera)
     return s
   })
+  createRenderEffect(
+    () => {
+      errorTick()
+      let e = pendingError
+      pendingError = null
+      if (e !== null) throw e
+      return null
+    },
+    () => {},
+  )
   createEffect(
     () => [props.width, props.height] as const,
     ([w, h]) => {
