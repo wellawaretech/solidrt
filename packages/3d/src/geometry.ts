@@ -1476,7 +1476,7 @@ export function cylinder(options: CylinderOptions = {}): Geometry {
 /** A capped cone on the y axis, centered on the origin: `cylinder()` with
  * a zero top radius (each apex vertex carries its column's side normal, so
  * the surface shades smoothly around). */
-export type ConeOptions = GeometryOptions & { radius?: number; height?: number; radialSegments?: number }
+export type ConeOptions = GeometryOptions & { radius?: number; height?: number; radialSegments?: number; heightSegments?: number }
 
 export function cone(options: ConeOptions = {}): Geometry {
   let { radius = 0.5, height = 1, radialSegments = 24, ...rest } = options

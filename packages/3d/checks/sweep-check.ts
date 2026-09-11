@@ -22,6 +22,9 @@ let fail = (msg: string): void => {
   console.log("FAIL:", msg)
 }
 let near = (a: number, b: number, eps = 1e-5): boolean => Math.abs(a - b) <= eps
+// The rigs here build standard all-float layouts, so the vertex bytes read
+// back as floats; the view type is not the geometry contract.
+let floats = (g: Geometry): Float32Array => new Float32Array(g.vertices.buffer, g.vertices.byteOffset, g.vertices.byteLength / Float32Array.BYTES_PER_ELEMENT)
 let throws = (label: string, fn: () => unknown): void => {
   try {
     fn()
@@ -94,7 +97,7 @@ let square: Profile = [[-0.5, -0.5], [0.5, -0.5], [0.5, 0.5], [-0.5, 0.5]]
   let g = extrude(square, { depth: 2 })
   structure("extrude plain", g)
   outward("extrude plain", g, [0, 0, 0])
-  let count = g.vertices.length / STANDARD_FLOATS
+  let count = floats(g).length / STANDARD_FLOATS
   if (count !== 9 * 2 + 4 * 2) fail("extrude plain vertex count: " + count)
   let b = geometryBounds(g)
   if (!near(b[2]!, -1) || !near(b[5]!, 1)) fail("extrude depth centered: " + b[2] + ".." + b[5])
@@ -109,7 +112,7 @@ let square: Profile = [[-0.5, -0.5], [0.5, -0.5], [0.5, 0.5], [-0.5, 0.5]]
   outward("extrude bevel", g, [0, 0, 0])
   let b = geometryBounds(g)
   if (!near(b[5]!, 0.5) || !near(b[3]!, 0.5)) fail("extrude bevel bounds")
-  let count = g.vertices.length / STANDARD_FLOATS
+  let count = floats(g).length / STANDARD_FLOATS
   if (count !== 9 * 8 + 4 * 2) fail("extrude bevel vertex count: " + count)
   let huge = extrude(square, { depth: 1, bevel: 5, bevelSegments: 2 })
   structure("extrude bevel clamp", huge)
@@ -122,9 +125,9 @@ let square: Profile = [[-0.5, -0.5], [0.5, -0.5], [0.5, 0.5], [-0.5, 0.5]]
   let g = shape(roundRect(1, 0.5, 0.1, 3))
   structure("shape", g)
   let stride = STANDARD_FLOATS
-  let count = g.vertices.length / stride
+  let count = floats(g).length / stride
   for (let i = 0; i < count; i++) {
-    if (!near(g.vertices[i * stride + 5]!, 1)) {
+    if (!near(floats(g)[i * stride + 5]!, 1)) {
       fail("shape normal +z")
       break
     }
@@ -149,7 +152,7 @@ let wall: Profile = [[0.3, -0.5], [0.5, -0.5], [0.5, 0.5], [0.3, 0.5]]
   if (!near(b[1]!, -0.5) || !near(b[4]!, 0.5)) fail("lathe height bounds")
   let half = lathe(wall, { segments: 12, angle: Math.PI })
   structure("lathe half", half)
-  if (half.vertices.length <= g.vertices.length / 2) fail("lathe half carries caps")
+  if (floats(half).length <= floats(g).length / 2) fail("lathe half carries caps")
   let hb = geometryBounds(half)
   if (hb[5]! > 1e-6 && hb[2]! < -1e-6) fail("lathe half spans both z signs: " + hb[2] + ".." + hb[5])
   throws("lathe zero angle", () => lathe(wall, { angle: 0 }))
@@ -173,7 +176,7 @@ let straight: Vec3[] = [[0, 0, -1], [0, 0, 1]]
   let creased = sweep(square, [[0, 0, 0], [0, 0, 1], [1, 0, 2]])
   structure("sweep smooth", smooth)
   structure("sweep creased", creased)
-  if (creased.vertices.length <= smooth.vertices.length) fail("creased joint duplicates its ring")
+  if (floats(creased).length <= floats(smooth).length) fail("creased joint duplicates its ring")
   throws("sweep one point", () => sweep(square, [[0, 0, 0]]))
 }
 
@@ -208,9 +211,9 @@ let straight: Vec3[] = [[0, 0, -1], [0, 0, 1]]
   let same = (name: string, std: Geometry, wide: Geometry) => {
     let via = withColors(std, () => [0, 0, 0, 0])
     if (layoutKey(wide.layout) !== layoutKey("colored")) fail(name + ": wide layout")
-    if (via.vertices.length !== wide.vertices.length) fail(name + ": wide length")
-    for (let i = 0; i < via.vertices.length; i++) {
-      if (via.vertices[i] !== wide.vertices[i]) {
+    if (floats(via).length !== floats(wide).length) fail(name + ": wide length")
+    for (let i = 0; i < floats(via).length; i++) {
+      if (floats(via)[i] !== floats(wide)[i]) {
         fail(name + ": wide bytes differ at " + i)
         break
       }
