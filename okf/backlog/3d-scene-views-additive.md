@@ -15,8 +15,12 @@ onLayout). A view handle exposes `setCamera`/`camera`, `pick`, the
 pointer handlers and `listen`, but not `project`, `unproject` or
 `screenRay`: a marker over a minimap, or a drag plane under a view's
 pointer events, recomputes the view camera's projection in the app.
-The 2d views carry the same open list in
-[2d-layer-views-additive](2d-layer-views-additive.md).
+
+The 2d views carry the fill-mode half of this in
+[2d-layer-views-additive](2d-layer-views-additive.md), not the
+projection half: a `ViewHandle` there already has `project`/`unproject`,
+and it is `pick` that it lacks. So each package shipped one half of the
+pair, and whichever side moves first should settle the shape for both.
 
 ## Done looks like
 

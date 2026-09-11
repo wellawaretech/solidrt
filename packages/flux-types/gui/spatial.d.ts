@@ -287,6 +287,20 @@ declare module "flux:spatial" {
    * when the range runs past the shape's vertices.
    */
   export function updateShape(shape: ShapeId, vertices: Float32Array, stride: number, posOffset: number, uvOffset: number, first: number): void
+  /** One channel of an interleaved float vertex array: `stride` floats
+   * per vertex, the channel's floats at `offset` within each. */
+  export type VertexChannel = { data: Float32Array; stride: number; offset: number }
+  /**
+   * Recompute vertex normals in place from a triangle list (a
+   * Uint16Array/Uint32Array): positions are read from the `positions`
+   * channel and unit normals written into the `normals` channel (its
+   * `data` may be the same array when the layout interleaves them). Each
+   * vertex sums the normals of the faces that name it, weighted by the
+   * corner angle, so the result does not depend on how a surface was
+   * triangulated; a vertex no face names gets zero. Throws on an index
+   * past the last vertex or an offset outside its stride.
+   */
+  export function computeNormals(positions: VertexChannel, normals: VertexChannel, indices: Uint16Array | Uint32Array): void
   /** Free a shape; nodes still referencing it keep their last box and
    * fall back to it. */
   export function destroyShape(shape: ShapeId): void

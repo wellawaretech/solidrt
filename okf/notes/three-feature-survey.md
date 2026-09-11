@@ -52,6 +52,11 @@ Each one's shape decision and its divergences live where they govern -
   `StandardOptions` extend that type, so an additive glow or a darkening decal
   no longer drops to a custom shader. `depth` and `depthWrite` stay
   `shaderMaterial`-only.
+- The geometry operations: `computeVertexNormals` in place,
+  `withNormals(geometry, creaseAngle)` (Three's `toCreasedNormals`, welded
+  back to an indexed result), `toNonIndexed`, `mergeVertices`, and the
+  `normalsHelper` builder (Three's `VertexNormalsHelper`)
+  ([3d-compute-vertex-normals](../done/3d-compute-vertex-normals.md)).
 
 One first-pass claim was wrong rather than stale, and is corrected in place
 below: `gl_PointSize` works.
@@ -68,7 +73,6 @@ polar variant:
 | `CameraHelper` (frustum lines) | missing |
 | `Directional/Point/Spot/HemisphereLightHelper` | missing |
 | `SkeletonHelper` | missing, though skeletons and `bindSkeleton` exist |
-| `VertexNormalsHelper` | missing |
 
 The split is the one settled in
 [3d-debug-helper-builders](../done/3d-debug-helper-builders.md): Three makes
@@ -84,19 +88,8 @@ legible on a HiDPI display this is a real follow-up, not a nicety.
 
 ## Geometry operations
 
-- `computeVertexNormals`. We cannot recompute normals at all. Needed after
-  `mergeGeometries`, after any deformation, and for any hand-authored vertex
-  array. The most glaring gap in the whole survey now that the helpers have
-  landed; filed as
-  [3d-compute-vertex-normals](../backlog/3d-compute-vertex-normals.md), which
-  carries `center`, `normalizeNormals` and `computeBoundingSphere` with it.
-- `toNonIndexed`. Flat shading and per-face attributes have no path.
-- `mergeVertices` (weld/dedupe). We weld by position inside `edgesGeometry` and
-  nowhere else; not exposed.
-- `toCreasedNormals` (smoothing-angle normals). The `smooth` flag on profile
-  points covers the sweep builders only.
-- `center`, `computeBoundingSphere`, `normalizeNormals`. Small; `center` is two
-  lines over `geometryBounds` and `transformGeometry`.
+At parity since the normals ops landed (Closed above). `center`,
+`normalizeNormals` and `computeBoundingSphere` moved to Not gaps.
 
 ## Primitives
 
@@ -296,6 +289,11 @@ Worth recording so they are not re-raised as findings:
 - `interleaveAttributes`, `deinterleaveGeometry`, `estimateBytesUsed`. We are
   packed and interleaved by construction.
 - `toTrianglesDrawMode`. Strips are a native topology.
+- `center`, `normalizeNormals`, `computeBoundingSphere`. `center` is one
+  `transformGeometry` over `geometryBounds` (the recipe is in
+  `packages/3d/AGENTS.md`), computed and transformed normals are unit already,
+  and Unity and Godot stop at the box, which every query and the LOD read
+  here. Three names for one-liners.
 - `Raycaster` as an object. `scene.raycast`/`pick` run in Rust over the
   retained index instead, which is strictly better than a per-frame JS walk.
 - Multi-backend abstraction and shader node graphs. Declared non-goals in the
@@ -335,13 +333,14 @@ Not a decision, a suggested order for turning the untracked entries into
 backlog files, by how many ports each one unblocks:
 
 1. Stock-material extension hooks (the `onBeforeCompile` slot).
-2. `toNonIndexed` (its partner `computeVertexNormals` is filed).
-3. Clipping planes.
-4. A stock points material (size and attenuation over the working
+2. Clipping planes.
+3. A stock points material (size and attenuation over the working
    `gl_PointSize`).
-5. Shape holes and a curve sampler.
-6. Graph traversal helpers (`traverse`, `getObjectByName`, `name`, `userData`).
-7. The line-width question (`Line2`-style quad expansion).
+4. Shape holes and a curve sampler.
+5. Graph traversal helpers (`traverse`, `getObjectByName`, `name`, `userData`).
+6. The line-width question (`Line2`-style quad expansion).
+7. A `packGeometry` form over planar position, uv and index arrays, the
+   shape a port holds them in (the normals half of that friction is gone).
 
 Each carries the standing shape gate: the Three/Godot/Unity comparison in the
 proposal, per `packages/3d/CLAUDE.md`.

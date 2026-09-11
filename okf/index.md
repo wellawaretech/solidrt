@@ -43,6 +43,12 @@ Decided and being worked on now. A plan nobody is working on goes back to backlo
 
 Shaped, not started.
 
+- **[Four names drifted apart between @solidrt/2d and @solidrt/3d after the symmetry passes](backlog/2d-3d-vocabulary-drift.md)** [2026-09-11]
+  The same element-handler type is SpriteHandlers in one package and
+  SceneHandlers in the other, a ray contact is RayHit against Hit, reading a
+  camera control is camera() against pose(), and "is it playing" is a boolean
+  field against a method returning names; each landed separately after the
+  08-31 and 09-06 unison reviews.
 - **[Extrude atlas cells into gutters so a mipmapped sheet does not bleed](backlog/2d-atlas-extrude.md)** [2026-09-07]
   The layer shaders clamp samples into their frame, which stops edge bleed at
   mip level 0, but a mip chain averages blocks that straddle cell edges before
@@ -63,6 +69,11 @@ Shaped, not started.
   cannot be shown twice, a minimap cannot admit marker sprites only, several
   views cannot share one atlas target, and a view cannot tint itself apart
   from the layer. Each is an additive step on the landed view contract.
+- **[A sprite layer has one hardwired pipeline, so there is no additive blend and no custom fragment](backlog/2d-materials-and-blend.md)** [2026-09-11]
+  Every 2d draw goes through one alpha-blended pipeline with tint as the only
+  knob, so explosions, glows, palette swaps, dissolves and outlines have no
+  path at all, while @solidrt/3d ships four stock materials, a custom shader
+  class and a per-material blend mode.
 - **[Retro presets for @solidrt/2d](backlog/2d-retro-presets.md)** [2026-08-19]
   The pixel-art identity kit - fixed logical resolution with integer nearest
   scaling, palette LUT, and scanline/CRT passes - as thin layers over what
@@ -89,12 +100,11 @@ Shaped, not started.
   modulo that must SNAP (native transitions animate the wrap jump across the
   world), ghost copies at the seams - and the chunked tile layer has no way to
   draw the seam at all.
-- **[Normals cannot be computed or recomputed](backlog/3d-compute-vertex-normals.md)** [2026-09-11]
-  Nothing in the geometry surface generates normals, so a hand-authored vertex
-  array, a geometry deformed through updateVertices and anything wanting flat
-  shading all have no path; Three, Godot and Unity all ship it and all mutate
-  in place, where our packed Geometry wants the withColors/transformGeometry
-  copy shape instead.
+- **[A 3d camera cannot be told to go somewhere, or to frame something](backlog/3d-camera-glide-and-fit.md)** [2026-09-11]
+  createOrbitCamera and createFirstPersonCamera move only by input deltas and
+  snapping set(), so "show me this object" and "return to the default view"
+  are app-side loops; the 2d camera has had glideTo and fit(rect) since it
+  shipped, and every 3d tool has frame-selection.
 - **[Environment tier leftovers - SH9, aoMap, packed .srte, EXR, loadCubeImages](backlog/3d-environment-additive.md)** [2026-09-06]
   The environment tier is complete (skybox, HDR environments, PBR, prefiltered
   HDR probes and sky bakes) and each of these is a deliberate non-goal of that
@@ -138,6 +148,11 @@ Shaped, not started.
   the way <Scene> does, and a view handle has no project, unproject or
   screenRay, so an overlay or a drag plane over a minimap has to redo the view
   camera's math by hand; the 2d views have the same additive list.
+- **[A scene always owns a draw target, so a split-screen app pays for one it never shows](backlog/3d-scene-without-own-target.md)** [2026-09-11]
+  createScene allocates its buffer, depth and resolve chain unconditionally,
+  and there is no output={false}, so an app that renders only through
+  <View3d>s carries a full unused scene target; @solidrt/2d took the opposite
+  structure on 09-07 and layers render only through views.
 - **[Cascade split ratios are fixed](backlog/3d-shadow-cascade-splits.md)** [2026-09-06]
   A cascaded sun slices its range with one fixed practical split
   (CASCADE_SPLIT_LAMBDA 0.5), so a scene whose detail sits far from the camera
@@ -895,6 +910,12 @@ Finished, kept for the reasoning.
   attribute lists (withAttribute, one pipeline per layout per material) and
   every generator takes a layout option to emit the wider stride in one pass.
   Split from 3d-geometry-ops when that shipped 2026-08-19.
+- **[Normals cannot be computed or recomputed](done/3d-compute-vertex-normals.md)** [2026-09-11]
+  Nothing in the geometry surface generates normals, so a hand-authored vertex
+  array, a geometry deformed through updateVertices and anything wanting flat
+  shading all have no path; Three, Godot and Unity all ship it and all mutate
+  in place, where our packed Geometry wants the withColors/transformGeometry
+  copy shape instead.
 - **[Scene-wide effects on custom materials - one answer for fog, shadows and what comes next](done/3d-custom-material-scene-effects.md)** [2026-08-30]
   A shaderMaterial got the scene's fog, shadows, lights and output only by
   composing each set itself, so an instanced forest stayed crisp and

@@ -9,7 +9,7 @@
 //
 // A failure prints FAIL lines and throws at the end, so the run exits nonzero.
 
-import { arrowHelper, axesHelper, box, box3Helper, capsule, capsuleHelper, cone, cylinder, dodecahedron, edgesGeometry, validateGeometry, fillAttribute, fillColors, gridHelper, icosahedron, octahedron, packGeometry, planeHelper, polyhedron, sphere, tetrahedron, torus, torusKnot, geometryAttribute, geometryBounds, geometryKey, geometrySlot, geometryStreams, geometryVertexCount, layoutKey, layoutSlot, layoutStride, mergeGeometries, plane, transformGeometry, wireframeGeometry, vertexBytes, vertexCount, withAttribute, withColors, STANDARD_FLOATS, VERTEX_FORMATS, VERTEX_LAYOUTS } from "../src/geometry.ts"
+import { arrowHelper, axesHelper, box, box3Helper, capsule, capsuleHelper, cone, cylinder, dodecahedron, edgesGeometry, mergeVertices, normalsHelper, toNonIndexed, withMorphTargets, withNormals, validateGeometry, fillAttribute, fillColors, gridHelper, icosahedron, octahedron, packGeometry, planeHelper, polyhedron, sphere, tetrahedron, torus, torusKnot, geometryAttribute, geometryBounds, geometryKey, geometrySlot, geometryStreams, geometryVertexCount, layoutKey, layoutSlot, layoutStride, mergeGeometries, plane, transformGeometry, wireframeGeometry, vertexBytes, vertexCount, withAttribute, withColors, STANDARD_FLOATS, VERTEX_FORMATS, VERTEX_LAYOUTS } from "../src/geometry.ts"
 import { cross, normalize, rayBoxDistance, sub } from "../src/math.ts"
 import type { Geometry, PolyhedronOptions } from "../src/geometry.ts"
 import type { VertexFormat } from "@solidrt/core/gpu"
@@ -653,6 +653,138 @@ throws("merge empty", () => mergeGeometries([]))
   expectVec("capsuleHelper sphere bounds", geometryBounds(ball), [-1, -1, -1, 1, 1, 1])
   throws("capsuleHelper segments not a multiple of 4", () => capsuleHelper(volume, { segments: 6 }))
   throws("capsuleHelper zero segments", () => capsuleHelper(volume, { segments: 0 }))
+}
+
+
+// The normals ops and the index pair. Standard-layout readers: vertex i's
+// position and normal as Vec3.
+{
+  let posOf = (g: Geometry, i: number): Vec3 => [floats(g)[i * STANDARD_FLOATS]!, floats(g)[i * STANDARD_FLOATS + 1]!, floats(g)[i * STANDARD_FLOATS + 2]!]
+  let nrmOf = (g: Geometry, i: number): Vec3 => [floats(g)[i * STANDARD_FLOATS + 3]!, floats(g)[i * STANDARD_FLOATS + 4]!, floats(g)[i * STANDARD_FLOATS + 5]!]
+  let count = (g: Geometry): number => geometryVertexCount(g, "check")
+  let dot = (a: Vec3, b: Vec3): number => a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+  // The unit normal of face f from its corner positions.
+  let faceNormal = (g: Geometry, f: number): Vec3 => {
+    let a = posOf(g, g.indices[f * 3]!), b = posOf(g, g.indices[f * 3 + 1]!), c = posOf(g, g.indices[f * 3 + 2]!)
+    return normalize(cross(sub(b, a), sub(c, a)))
+  }
+  // Every vertex of `got` has a twin in `want` with the same position and
+  // normal, and the counts agree: an order-free comparison for the ops
+  // that rebuild vertex order.
+  let sameVertexSet = (label: string, got: Geometry, want: Geometry): void => {
+    if (count(got) !== count(want)) fail(label + ": " + count(got) + " vertices, want " + count(want))
+    for (let i = 0; i < count(got); i++) {
+      let p = posOf(got, i), n = nrmOf(got, i)
+      let found = false
+      for (let j = 0; j < count(want) && !found; j++) {
+        let q = posOf(want, j), m = nrmOf(want, j)
+        found = near(p[0], q[0]) && near(p[1], q[1]) && near(p[2], q[2]) && near(n[0], m[0], 1e-4) && near(n[1], m[1], 1e-4) && near(n[2], m[2], 1e-4)
+      }
+      if (!found) fail(label + ": vertex " + i + " [" + p.map(v => v.toFixed(3)) + "] normal [" + n.map(v => v.toFixed(3)) + "] has no twin")
+    }
+  }
+
+  // computeVertexNormals is core-backed (flux:spatial, gui-only), so its
+  // math is pinned in alloy/src/tests/spatial_normals.rs and the loop in
+  // examples/normals.tsx; the pure ops are checked here.
+  let want = box()
+  let bare: Geometry = { vertices: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]), indices: new Uint16Array([0, 1, 2]), layout: [{ name: "aPos", format: "float32x3" }] }
+
+  // toNonIndexed: every index its own vertex, identity indices, streams
+  // gathered; mergeVertices is its inverse.
+  let split = toNonIndexed(box(), "split")
+  if (count(split) !== 36 || split.indices.length !== 36) fail("toNonIndexed box counts")
+  if (split.label !== "split") fail("toNonIndexed label")
+  for (let i = 0; i < 36; i++) {
+    if (split.indices[i] !== i) fail("toNonIndexed identity index " + i)
+    expectVec("toNonIndexed gathered vertex " + i, posOf(split, i), posOf(want, want.indices[i]!))
+  }
+  let welded = mergeVertices(split)
+  if (count(welded) !== 24) fail("mergeVertices box welds back to 24, got " + count(welded))
+  for (let i = 0; i < 36; i++) expectVec("mergeVertices triangle corner " + i, posOf(welded, welded.indices[i]!), posOf(want, want.indices[i]!))
+  sameVertexSet("mergeVertices box", welded, want)
+  // The generator leaves one pole vertex per pole unreferenced, which the
+  // split drops, so the round trip lands on the referenced count.
+  let referenced = new Set(sphere().indices).size
+  if (count(mergeVertices(toNonIndexed(sphere()))) !== referenced) fail("mergeVertices keeps a sphere's uv seam split")
+  throws("mergeVertices zero tolerance", () => mergeVertices(split, 0))
+  let morphed = withMorphTargets(box(), [{ name: "t", position: new Float32Array(24 * 3) }])
+  throws("toNonIndexed morphed", () => toNonIndexed(morphed))
+  throws("mergeVertices morphed", () => mergeVertices(morphed))
+  let colored = toNonIndexed(withColors(box(), (i) => [i / 24, 0, 0, 1]))
+  if (layoutKey(colored.layout) !== layoutKey("colored")) fail("toNonIndexed keeps the layout")
+  let streamed = withAttribute(box(), { name: "aExtra", format: "float32" }, (i) => [i], { stream: 1 })
+  let splitStreams = toNonIndexed(streamed)
+  if (splitStreams.streams?.length !== 1) fail("toNonIndexed gathers extra streams")
+  else {
+    let extra = geometryAttribute(splitStreams, "aExtra")!
+    for (let i = 0; i < 36; i++) if (!near(extra.get(i, 0), want.indices[i]!)) fail("toNonIndexed stream 1 vertex " + i)
+  }
+
+  let ico = icosahedron({ detail: 1 })
+
+  // withNormals: a box keeps its 24 vertices and its normals under the
+  // crease angle; at 180 the normals become the corner diagonals while
+  // the per-face uvs keep the vertices apart; at 0 an icosphere splits
+  // every corner and shades flat.
+  sameVertexSet("withNormals box", withNormals(box()), want)
+  let rounded = withNormals(box(), 180)
+  // One normal per position now, so the vertices left are the distinct
+  // (position, uv) pairs: two faces hand some corners the same uv.
+  let pairs = new Set<string>()
+  for (let i = 0; i < 24; i++) pairs.add(floats(want).subarray(i * STANDARD_FLOATS, i * STANDARD_FLOATS + 3).join(",") + "|" + floats(want).subarray(i * STANDARD_FLOATS + 6, i * STANDARD_FLOATS + 8).join(","))
+  if (count(rounded) !== pairs.size) fail("withNormals box 180 vertex count " + count(rounded) + ", want " + pairs.size)
+  let d = 1 / Math.sqrt(3)
+  for (let i = 0; i < count(rounded); i++) {
+    let p = posOf(rounded, i)
+    expectVec("withNormals box 180 vertex " + i, nrmOf(rounded, i), [Math.sign(p[0]) * d, Math.sign(p[1]) * d, Math.sign(p[2]) * d])
+  }
+  let faceted = withNormals(ico, 0)
+  if (count(faceted) !== ico.indices.length) fail("withNormals 0 splits every corner: " + count(faceted) + " vs " + ico.indices.length)
+  for (let f = 0; f < faceted.indices.length / 3; f++) {
+    let n = faceNormal(faceted, f)
+    for (let k = 0; k < 3; k++) expectVec("withNormals 0 corner " + (f * 3 + k), nrmOf(faceted, faceted.indices[f * 3 + k]!), n)
+  }
+  // A sphere: the uv seam stays split and shades smooth across it, the
+  // vertex count survives the round trip, the normals stay radial.
+  let smooth = withNormals(sphere())
+  if (count(smooth) !== referenced) fail("withNormals sphere keeps its vertex count: " + count(smooth) + " vs " + referenced)
+  for (let i = 0; i < count(smooth); i++) {
+    if (dot(nrmOf(smooth, i), normalize(posOf(smooth, i))) < 0.995) fail("withNormals sphere vertex " + i + " not radial")
+  }
+  // A soup without a normal channel gets one, after its channels.
+  let soupPos = [0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1]
+  let soup: Geometry = { vertices: new Float32Array(soupPos), indices: new Uint16Array([0, 2, 1, 0, 1, 3, 0, 3, 2, 1, 2, 3]), layout: [{ name: "aPos", format: "float32x3" }], label: "tetra" }
+  let lit = withNormals(soup)
+  let slot = geometrySlot(lit, "aNormal")
+  if (slot === null || slot.format !== "float32x3") fail("withNormals adds aNormal float32x3")
+  if (count(lit) !== 12) fail("withNormals tetra soup creases every corner: " + count(lit))
+  if (lit.label !== "tetra-normals") fail("withNormals label")
+  let nrm = geometryAttribute(lit, "aNormal")!
+  for (let f = 0; f < 4; f++) {
+    let a = geometryAttribute(lit, "aPos")!
+    let at = (i: number): Vec3 => [a.get(i, 0), a.get(i, 1), a.get(i, 2)]
+    let i0 = lit.indices[f * 3]!, i1 = lit.indices[f * 3 + 1]!, i2 = lit.indices[f * 3 + 2]!
+    let n = normalize(cross(sub(at(i1), at(i0)), sub(at(i2), at(i0))))
+    for (let i of [i0, i1, i2]) expectVec("withNormals tetra corner " + i, [nrm.get(i, 0), nrm.get(i, 1), nrm.get(i, 2)], n)
+  }
+  throws("withNormals angle out of range", () => withNormals(box(), 200))
+  throws("withNormals on lines", () => withNormals(gridHelper()))
+
+  // normalsHelper: two line ends per vertex, the second along the normal.
+  let h = normalsHelper(box(), { size: 0.5 })
+  if (count(h) !== 48 || h.indices.length !== 48 || h.topology !== "lines") fail("normalsHelper counts")
+  if (layoutKey(h.layout) !== layoutKey("colored")) fail("normalsHelper layout")
+  let color = geometryAttribute(h, "aColor")!
+  let hp = geometryAttribute(h, "aPos")!
+  let hPos = (i: number): Vec3 => [hp.get(i, 0), hp.get(i, 1), hp.get(i, 2)]
+  for (let i = 0; i < 24; i++) {
+    let p = posOf(want, i), n = nrmOf(want, i)
+    expectVec("normalsHelper start " + i, hPos(i * 2), p)
+    expectVec("normalsHelper end " + i, hPos(i * 2 + 1), [p[0] + n[0] * 0.5, p[1] + n[1] * 0.5, p[2] + n[2] * 0.5])
+    expectVec("normalsHelper color " + i, [color.get(i * 2, 0), color.get(i * 2, 1), color.get(i * 2, 2), color.get(i * 2, 3)], [1, 0, 0, 1])
+  }
+  throws("normalsHelper without aNormal", () => normalsHelper(bare))
 }
 
 if (failures > 0) throw new Error(failures + " geometry check(s) failed")

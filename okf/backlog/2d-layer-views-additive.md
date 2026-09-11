@@ -33,6 +33,19 @@ still lacks, each a separate additive step on that contract:
   that wants its own (a dimmed minimap) needs the 3d rule - names the
   view writes itself become view-owned and the layer's fan-out skips
   them.
+- Fill mode. `<View2d width height>` is the only shape, so a second view
+  cannot say "fill this box" and follow it at device density the way
+  `<SpriteLayer>` does (both or neither, mount-fixed; `output` needs
+  explicit sizes). Exactly the `<View3d>` half of
+  [3d-scene-views-additive](3d-scene-views-additive.md), and the fill
+  branch is shared code in both packages.
+- `view.pick(x, y)`. The 3d view handle picks through ITS camera and
+  size; the 2d one has `project`/`unproject` but no pick, so a view picks
+  by composing `layer.pick(...view.unproject(x, y))` by hand. That
+  composition is correct and one line, which is why this is last: the
+  reason to add it is that the pointer walk already does exactly this
+  internally, and the pair reads better with both halves on both
+  handles.
 
 ## The goal these serve: a viewport over several layers
 

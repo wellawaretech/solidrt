@@ -1025,6 +1025,52 @@ slab test (entry t >= 0 in units of the direction's length, 0 from
 inside, -1 for a miss) - for ray-testing boxes you keep yourself
 (triggers, collision volumes) without meshes you do not want to draw.
 
+Normals as data: two ops, split by whether the vertex count survives.
+`computeVertexNormals(geometry)` recomputes a triangle geometry's
+normals IN PLACE from the faces that name each vertex by index (Three's
+`computeVertexNormals`, Unity's `RecalculateNormals`, Godot's
+`generate_normals`, all in place), each face weighted by its corner
+angle so the result does not depend on how a surface was triangulated.
+The math runs in the core in one call over the vertex floats (so aNormal
+must be float32x3; a packed normal is an authoring format, pack after
+withNormals), and it returns the stream carrying aNormal, which
+`updateVertices` re-uploads: the CPU deformation loop is
+`fillAttribute(g, "aPos", ...)`, `computeVertexNormals(g)`,
+`updateVertices(g)`. That loop is for data that genuinely changes on the
+CPU - a streamed cloud, a cloth solved in JS, an editor edit. A
+per-frame ripple, sway or wave belongs in a vertex shader: displace and
+derive the normal in the vertex stage (`shaderMaterial`), and no
+per-vertex work touches the CPU at all; the fillAttribute callback alone
+is an interpreter call per vertex per frame. A vertex shared across faces
+shades smooth and a split one per face, so a merged or deformed
+generator geometry comes out right; a uv seam's copies each see one side
+and the seam shows (Three's artifact too). `withNormals(
+geometry, creaseAngle = 60, label?)` is the authoring path and a COPY:
+faces are matched by position, so a triangle soup, a hand-written face
+list, a merged result or a geometry with no aNormal channel at all (one
+is added, float32x3) all work and a seam shades smooth across it; 0 is
+flat shading, 180 smooths everything, 60 (Three's `toCreasedNormals`
+and Unity's import smoothing angle) keeps hard edges hard. It is
+`toNonIndexed` + per-corner normals + `mergeVertices`, so the result is
+indexed and split only where a crease or a seam needs it (a box stays
+24 vertices under 90 degrees). Both pieces are exported:
+`toNonIndexed(geometry, label?)` gives every index its own vertex
+(identity indices; per-face colors via fillAttribute, flat shading via
+computeVertexNormals), `mergeVertices(geometry, tolerance = 1e-4,
+label?)` welds vertices equal in every channel back together, the exact
+inverse (a normal or uv that differs keeps them apart). Neither takes a
+morphed geometry: split or weld before `withMorphTargets`.
+`normalsHelper(geometry, { size?, color? })` draws one line per vertex
+along its normal (Three's VertexNormalsHelper as a static builder,
+"colored" layout, red by default, drawn by `unlit({ vertexColors: true
+})` under the mesh's node), the way to look at any of this;
+`examples/normals.tsx` shows the three crease angles on one soup, a
+rippling sphere on the per-frame loop, and the helper refreshed in place
+with the same loop. Three's `center()` is `transformGeometry(g, {
+position: [-(b[0] + b[3]) / 2, -(b[1] + b[4]) / 2, -(b[2] + b[5]) / 2]
+})` over `geometryBounds`; there is no bounding sphere op, the box is
+what every query and the LOD read.
+
 ### Profile kit
 
 Profile kit (2D outlines to solids, real texture UVs): a `Profile` is a

@@ -5,7 +5,7 @@
 //! numbers (generation-tagged, never reused).
 
 use rquickjs::module::{Declarations, Exports, ModuleDef};
-use rquickjs::{Array, Ctx, Function, Object, TypedArray, Value};
+use rquickjs::{Array, Ctx, FromJs, Function, Object, TypedArray, Value};
 
 use crate::alloy_plugins::properties::transition::{
   decode_node_entry, decode_node_motion, decode_stagger, LaneRule, NodeEntryDecoded,
@@ -13,10 +13,10 @@ use crate::alloy_plugins::properties::transition::{
 use crate::alloy_plugins::value::PropValue;
 use crate::plugins::marshal::OptArg;
 use alloy::spatial::{
-  ChannelInterpolation, ChannelPath, ClipChannel, ClipEvent, Component, DrawSink, InstanceProjection,
-  InstanceRecordSink, LodLevel, LodView, MoveOptions, NodeEndpoint, NodeMotion, NodeTransitionConfig,
-  NodeTransitionEntry, PlayerUpdate, Projection, QueryFilter, RootMotion, Shape, SharedSlotSink, TextureSlotSink,
-  Volume,
+  vertex_normals, write_channel, ChannelInterpolation, ChannelPath, ClipChannel, ClipEvent, Component, DrawSink,
+  InstanceProjection, InstanceRecordSink, LodLevel, LodView, MoveOptions, NodeEndpoint, NodeMotion,
+  NodeTransitionConfig, NodeTransitionEntry, PlayerUpdate, Projection, QueryFilter, RootMotion, Shape, SharedSlotSink,
+  TextureSlotSink, Volume,
 };
 
 fn throw_str(ctx: &Ctx<'_>, msg: &str) -> rquickjs::Error {
@@ -67,6 +67,7 @@ impl ModuleDef for SpatialModule {
     decl.declare("setLodView")?;
     decl.declare("createShape")?;
     decl.declare("updateShape")?;
+    decl.declare("computeNormals")?;
     decl.declare("destroyShape")?;
     decl.declare("setShape")?;
     decl.declare("setLayers")?;
@@ -123,6 +124,7 @@ impl ModuleDef for SpatialModule {
     exports.export("setLodView", Function::new(ctx.clone(), set_lod_view)?)?;
     exports.export("createShape", Function::new(ctx.clone(), create_shape)?)?;
     exports.export("updateShape", Function::new(ctx.clone(), update_shape)?)?;
+    exports.export("computeNormals", Function::new(ctx.clone(), compute_normals)?)?;
     exports.export("destroyShape", Function::new(ctx.clone(), destroy_shape)?)?;
     exports.export("setShape", Function::new(ctx.clone(), set_shape)?)?;
     exports.export("setLayers", Function::new(ctx.clone(), set_layers)?)?;
@@ -368,6 +370,32 @@ fn floats<'a, 'js>(ctx: &Ctx<'_>, data: &'a TypedArray<'js, f32>, api: &str) -> 
   Ok(unsafe { std::slice::from_raw_parts(raw.ptr.as_ptr() as *const f32, raw.len / 4) })
 }
 
+/// The writable view of a Float32Array, for an op that writes results
+/// back into the caller's buffer. Never held across another borrow of
+/// the same array: read first, drop the read slice, then take this.
+fn floats_mut<'a, 'js>(ctx: &Ctx<'_>, data: &'a TypedArray<'js, f32>, api: &str) -> rquickjs::Result<&'a mut [f32]> {
+  let raw = data.as_raw().ok_or_else(|| throw_str(ctx, &format!("{api}: detached buffer")))?;
+  Ok(unsafe { std::slice::from_raw_parts_mut(raw.ptr.as_ptr() as *mut f32, raw.len / 4) })
+}
+
+/// A triangle list argument, a Uint16Array or Uint32Array, widened to u32.
+fn index_list<'js>(ctx: &Ctx<'js>, indices: &Value<'js>, api: &str) -> rquickjs::Result<Vec<u32>> {
+  if let Some(u16s) = indices.as_object().and_then(|o| TypedArray::<u16>::from_object(o.clone()).ok()) {
+    let raw = u16s.as_raw().ok_or_else(|| throw_str(ctx, &format!("{api}: detached buffer")))?;
+    Ok(
+      unsafe { std::slice::from_raw_parts(raw.ptr.as_ptr() as *const u16, raw.len / 2) }
+        .iter()
+        .map(|&i| i as u32)
+        .collect(),
+    )
+  } else if let Some(u32s) = indices.as_object().and_then(|o| TypedArray::<u32>::from_object(o.clone()).ok()) {
+    let raw = u32s.as_raw().ok_or_else(|| throw_str(ctx, &format!("{api}: detached buffer")))?;
+    Ok(unsafe { std::slice::from_raw_parts(raw.ptr.as_ptr() as *const u32, raw.len / 4) }.to_vec())
+  } else {
+    Err(throw_str(ctx, &format!("{api}: indices must be a Uint16Array or Uint32Array")))
+  }
+}
+
 /// Set (null clears) the node's local tight box [minX, minY, minZ, maxX,
 /// maxY, maxZ]; with one the node is in the picking index.
 fn set_bounds(ctx: Ctx<'_>, id: u64, bounds: OptArg<TypedArray<'_, f32>>) -> rquickjs::Result<()> {
@@ -520,20 +548,7 @@ fn create_shape<'js>(
   let (positions, uvs) = gather_vertices(&ctx, &vertices, stride, pos_offset, uv_offset, "createShape")?;
   let indices: Vec<u32> = match indices.0 {
     None => Vec::new(),
-    Some(indices) => {
-      if let Some(u16s) = indices.as_object().and_then(|o| TypedArray::<u16>::from_object(o.clone()).ok()) {
-        let raw = u16s.as_raw().ok_or_else(|| throw_str(&ctx, "createShape: detached buffer"))?;
-        unsafe { std::slice::from_raw_parts(raw.ptr.as_ptr() as *const u16, raw.len / 2) }
-          .iter()
-          .map(|&i| i as u32)
-          .collect()
-      } else if let Some(u32s) = indices.as_object().and_then(|o| TypedArray::<u32>::from_object(o.clone()).ok()) {
-        let raw = u32s.as_raw().ok_or_else(|| throw_str(&ctx, "createShape: detached buffer"))?;
-        unsafe { std::slice::from_raw_parts(raw.ptr.as_ptr() as *const u32, raw.len / 4) }.to_vec()
-      } else {
-        return Err(throw_str(&ctx, "createShape: indices must be a Uint16Array or Uint32Array"));
-      }
-    }
+    Some(indices) => index_list(&ctx, &indices, "createShape")?,
   };
   super::gui(&ctx)
     .alloy
@@ -560,6 +575,42 @@ fn update_shape<'js>(
     .spatial()
     .update_shape(id, first as usize, &positions, uvs.as_deref())
     .map_err(|e| throw_str(&ctx, &format!("updateShape: {e}")))
+}
+
+/// One channel of an interleaved float vertex array as JS describes it:
+/// `{ data: Float32Array, stride, offset }`, stride and offset in floats.
+struct Channel<'js> {
+  data: TypedArray<'js, f32>,
+  stride: u32,
+  offset: u32,
+}
+
+impl<'js> FromJs<'js> for Channel<'js> {
+  fn from_js(ctx: &Ctx<'js>, value: Value<'js>) -> rquickjs::Result<Self> {
+    let obj = Object::from_js(ctx, value)?;
+    Ok(Channel { data: obj.get("data")?, stride: obj.get("stride")?, offset: obj.get("offset")? })
+  }
+}
+
+/// Recompute vertex normals in place from a triangle list: positions read
+/// from the `positions` channel, unit normals written into the `normals`
+/// channel (its data may be the same array when the layout interleaves
+/// them), the math in `alloy::spatial::vertex_normals`.
+fn compute_normals<'js>(
+  ctx: Ctx<'js>,
+  positions: Channel<'js>,
+  normals: Channel<'js>,
+  indices: Value<'js>,
+) -> rquickjs::Result<()> {
+  let indices = index_list(&ctx, &indices, "computeNormals")?;
+  let computed = {
+    let v = floats(&ctx, &positions.data, "computeNormals")?;
+    vertex_normals(v, positions.stride as usize, positions.offset as usize, &indices)
+      .map_err(|e| throw_str(&ctx, &format!("computeNormals: {e}")))?
+  };
+  let target = floats_mut(&ctx, &normals.data, "computeNormals")?;
+  write_channel(&computed, 3, target, normals.stride as usize, normals.offset as usize)
+    .map_err(|e| throw_str(&ctx, &format!("computeNormals: {e}")))
 }
 
 fn destroy_shape(ctx: Ctx<'_>, id: u64) -> rquickjs::Result<()> {
@@ -875,11 +926,7 @@ fn unbind_weights_slot(ctx: Ctx<'_>, id: u64, texture: OptArg<u64>) -> rquickjs:
 /// Write the node's weights register (a Float32Array of any length).
 fn set_weights(ctx: Ctx<'_>, id: u64, weights: TypedArray<'_, f32>) -> rquickjs::Result<()> {
   let w = floats(&ctx, &weights, "setWeights")?;
-  super::gui(&ctx)
-    .alloy
-    .spatial()
-    .set_weights(id, w)
-    .map_err(|e| throw_str(&ctx, &format!("setWeights: {e}")))
+  super::gui(&ctx).alloy.spatial().set_weights(id, w).map_err(|e| throw_str(&ctx, &format!("setWeights: {e}")))
 }
 
 /// Write the weights register THROUGH a motion: `transition` given (a
@@ -887,7 +934,12 @@ fn set_weights(ctx: Ctx<'_>, id: u64, weights: TypedArray<'_, f32>) -> rquickjs:
 /// whatever the node declares; otherwise the declaration's `weights`
 /// entry (or `all`) decides, and without one the write snaps like
 /// setWeights. A started, retargeted or held write requests a frame.
-fn write_weights<'js>(ctx: Ctx<'js>, id: u64, weights: TypedArray<'js, f32>, transition: OptArg<Value<'js>>) -> rquickjs::Result<()> {
+fn write_weights<'js>(
+  ctx: Ctx<'js>,
+  id: u64,
+  weights: TypedArray<'js, f32>,
+  transition: OptArg<Value<'js>>,
+) -> rquickjs::Result<()> {
   let w = floats(&ctx, &weights, "writeWeights")?;
   let motion = match &transition.0 {
     Some(v) if !v.is_null() && !v.is_undefined() => {
@@ -897,7 +949,8 @@ fn write_weights<'js>(ctx: Ctx<'js>, id: u64, weights: TypedArray<'js, f32>, tra
     _ => None,
   };
   let st = super::gui(&ctx);
-  let changed = st.alloy.spatial().write_weights(id, w, motion).map_err(|e| throw_str(&ctx, &format!("writeWeights: {e}")))?;
+  let changed =
+    st.alloy.spatial().write_weights(id, w, motion).map_err(|e| throw_str(&ctx, &format!("writeWeights: {e}")))?;
   if changed {
     st.platform.request_frame();
   }

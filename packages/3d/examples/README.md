@@ -186,6 +186,14 @@ depends on `@solidrt/3d` (or in-repo from the package directory).
   Under it the debug helpers: `gridHelper` on the rover's floor and
   `axesHelper` at the origin through one `unlit({ vertexColors: true })`,
   and `box3Helper` around its bounds, turning with it.
+- `normals.tsx` - normals as data: three cylinders from one triangle
+  soup (`toNonIndexed` of a cylinder) shaded by `withNormals` at crease
+  angles 0, 60 and 180 (flat, rims kept, rims blended), each welded back
+  to an indexed mesh, and a rippling sphere on the per-frame loop
+  (`fillAttribute` positions, `computeVertexNormals` in place,
+  `updateVertices`). `normalsHelper` lines on every mesh, the sphere's
+  refreshed in place each frame; space or the `helpers` debug command
+  (`{ on?: boolean }`) toggles them.
 - `model-load.tsx` - the same rover loaded ASYNC with `loadModel` from
   `assets/` under a `<Loading>` boundary: the async read lives in a memo,
   a second memo derives the scene JSX after that read, and the shell

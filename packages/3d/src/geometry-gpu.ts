@@ -14,9 +14,9 @@
 
 import { createBuffer, createTexture, destroyBuffer, destroyTexture, limits, writeBuffer } from "@solidrt/core/gpu"
 import type { BufferId, IndexFormat, TextureId } from "@solidrt/core/gpu"
-import { createShape, destroyShape, updateShape } from "flux:spatial"
+import { computeNormals, createShape, destroyShape, updateShape } from "flux:spatial"
 import type { ShapeId } from "flux:spatial"
-import { geometryStreams, geometryTopology, geometryVertexCount, layoutSlot, layoutStride, vertexBytes, MORPH_TEXEL_FLOATS } from "./geometry.ts"
+import { geometrySlot, geometryStreams, geometryTopology, geometryVertexCount, layoutSlot, layoutStride, vertexBytes, MORPH_TEXEL_FLOATS } from "./geometry.ts"
 import type { Geometry, MorphTargets } from "./geometry.ts"
 
 /** An acquired reference to a geometry's GPU buffers: what a draw entry
@@ -218,4 +218,45 @@ export function updateVertices(geometry: Geometry, options: UpdateVerticesOption
     let view = shapeView(geometry)
     updateShape(entry.shape, view.floats.subarray(first * view.stride, (first + count) * view.stride), view.stride, 0, view.uvAt, first)
   }
+}
+
+/**
+ * Recompute a triangle geometry's normals in place from its faces
+ * (Three's computeVertexNormals, Unity's RecalculateNormals, Godot's
+ * generate_normals, all in place): each vertex takes the normals of the
+ * faces that name its INDEX, weighted by the corner angle, normalized -
+ * a vertex shared across faces shades smooth, a split one per face, so a
+ * merged or deformed generator geometry comes out right with no options
+ * (except along a uv seam, whose copies each see one side; Three's
+ * artifact too, and withNormals, which matches faces by position, has
+ * none). The math runs in the core in one call over the vertex floats;
+ * only the layout is resolved here. Needs aNormal in float32x3 (or x4):
+ * a packed normal is an authoring format, so pack after withNormals
+ * instead. Returns the stream carrying aNormal, the one updateVertices
+ * re-uploads, which makes the CPU deformation loop `fillAttribute(g,
+ * "aPos", ...)`, `computeVertexNormals(g)`, `updateVertices(g)`. That
+ * loop is for data that genuinely changes on the CPU - a streamed cloud,
+ * a cloth solved in JS, an editor edit. A per-frame ripple, sway or wave
+ * belongs in a vertex shader: displace and derive the normal in the
+ * vertex stage (shaderMaterial) and no per-vertex work touches the CPU
+ * at all. Morph normal deltas are left alone.
+ */
+export function computeVertexNormals(geometry: Geometry): ArrayBufferView {
+  if (geometryTopology(geometry) !== "triangles") throw new Error("computeVertexNormals: needs a triangle geometry, got " + geometryTopology(geometry))
+  let slot = geometrySlot(geometry, "aNormal")
+  if (slot === null) throw new Error("computeVertexNormals: geometry has no aNormal channel; withNormals adds one")
+  if (slot.format !== "float32x3" && slot.format !== "float32x4") {
+    throw new Error("computeVertexNormals: aNormal is " + slot.format + "; a packed normal is an authoring format, compute with withNormals before packing")
+  }
+  geometryVertexCount(geometry, "computeVertexNormals")
+  let { floats, stride } = shapeView(geometry)
+  let target = geometryStreams(geometry)[slot.stream]!
+  let t = target.vertices
+  let normals = new Float32Array(t.buffer, t.byteOffset, t.byteLength / Float32Array.BYTES_PER_ELEMENT)
+  computeNormals(
+    { data: floats, stride, offset: 0 },
+    { data: normals, stride: layoutStride(target.layout) / Float32Array.BYTES_PER_ELEMENT, offset: slot.offset / Float32Array.BYTES_PER_ELEMENT },
+    geometry.indices,
+  )
+  return t
 }

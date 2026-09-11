@@ -39,6 +39,12 @@ symptom shows. A heading that outgrows this file splits into its own.
 - `@solidrt/3d` bindSkeleton matches joints by case-insensitive name only; a pipeline that differs by prefix or suffix (Mixamo's `mixamorig:`, a one-sided `_JNT`) needs a `match` option mapping a piece name to a body name - Unity matches exact names and leaves the rest to the app, so add it when a consumer shows up.
 - `@solidrt/3d` scene.ts: an `overrideMaterial` view silently drops every instanced mesh whose record layout the override does not declare (the documented rule), which is invisible in the output - warn once per view in dev, naming the view label and the count.
 - `@solidrt/3d` a ReflectionProbe's `dispose()` destroys its chain cube while the scene may still be pointing at it as the environment (a subtree that owns the environment leaves the scene sampling a destroyed texture until something re-bakes); clear the environment when the cube it names is the one being destroyed.
+- `@solidrt/2d` `SpriteTransition.all` is typed `NodeTransitionSpec`, so it accepts `from`/`exit`, and `toNodeTransition` passes `all` through without the unit lift every other lane gets; type it `NodeMotionSpec` like the core and 3d, where `all` is a motion with no endpoints.
+- `@solidrt/3d` `<Group>` takes the whole `PointerEventProps`, but hover targets are meshes and instances only (`targetOf`/`nodeOf` in scene-pointer.ts), so `onPointerEnter`/`onPointerLeave` on a group type-check and never fire; drop the pair there as 2d's `SpriteGroup` already does.
+- `@solidrt/3d` `ModelOptions` has no `autoFree`, leaving `createModel`/`loadModel`/`loadGltf` the only resource creators in either package that never free with the owning scope (createScene, createSpriteLayer, createRecordLayer, createTileLayer, createAtlas and createAnimation all take it).
+- `@solidrt/2d` `<SpriteLayer>` has no `stagger` prop though `SpriteLayerOptions.stagger` and `layer.setStagger()` exist and `<Scene stagger>` does too, so the layer-root stagger is imperative-only.
+- `@solidrt/2d` `Camera2d.camera()` is declared `CameraUpdate` (every field optional) but always returns all six, unlike `layer.camera()` and `view.camera()` in the same package; declare it `CameraState` and drop the `??` at every call site.
+- `@solidrt/2d` AGENTS.md never states the colour contract: tint multiplies against premultiplied sRGB texels with no decode, which is right for an unlit pipeline but means `[0.5, 0.5, 0.5]` is a different brightness than in 3d, whose color.ts documents sRGB in, linear shading.
 
 ## Components
 

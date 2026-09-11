@@ -17,6 +17,7 @@ mod collide;
 mod cull;
 mod math;
 mod mover;
+mod normals;
 mod pick;
 mod players;
 mod transitions;
@@ -27,6 +28,7 @@ pub use bvh::{ray_box_distance, Box3};
 pub use collide::{Impact, Overlap, Volume};
 pub use math::{compose, invert_affine, multiply, normal_matrix, transform_point, transform_vector, IDENTITY};
 pub use mover::{MoveOptions, MoveResult};
+pub use normals::{vertex_normals, write_channel};
 pub use pick::{Hit, Shape, ShapeId};
 // The per-triangle narrowphase, for tests: the brute-force oracle the
 // indexed volume queries are checked against.

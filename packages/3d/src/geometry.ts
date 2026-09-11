@@ -1013,9 +1013,9 @@ export function mergeGeometries(parts: Geometry[], label?: string): Geometry {
   return out
 }
 
-/** Positions closer than this (model units) are one vertex to the edge
- * builders: a uv seam or a per-face normal split duplicates a position,
- * and an edge is the same edge whichever copy a triangle names. */
+/** Vertex values closer than this are equal to the welds: positions
+ * (model units) to the edge builders, every channel to mergeVertices and
+ * the corner weld of withNormals. Three's mergeVertices tolerance. */
 const WELD_PRECISION = 1e-4
 
 /** Degrees between two faces' normals from which the edge between them
@@ -1023,16 +1023,27 @@ const WELD_PRECISION = 1e-4
  * one smooth surface and the edge stays hidden. Three's default. */
 const EDGES_THRESHOLD_ANGLE = 1
 
-/** One id per vertex, shared by every vertex at the same position (to
- * WELD_PRECISION) whatever its normal and uv; plus the id count. */
-function weldPositions(geometry: Geometry): { ids: Uint32Array; count: number } {
-  let count = geometryVertexCount(geometry, "weldPositions")
-  let pos = geometryAttribute(geometry, "aPos")!
+/** Degrees between two faces' normals from which the edge between them
+ * shades as a crease in withNormals; under it the faces blend into one
+ * smooth surface. Three's toCreasedNormals default and Unity's import
+ * smoothing angle. */
+const CREASE_ANGLE = 60
+
+/** One id per vertex, shared by every vertex whose `channels` agree to
+ * `precision` in every component; plus the id count. Ids are dense, in
+ * first-occurrence order. The edge builders weld on the position alone
+ * (a uv seam or a per-face normal split is one edge whichever copy a
+ * triangle names); mergeVertices welds on every channel. */
+function weldVertices(geometry: Geometry, channels: AttributeAccess[], precision: number, where: string): { ids: Uint32Array; count: number } {
+  let count = geometryVertexCount(geometry, where)
   let ids = new Uint32Array(count)
   let seen = new Map<string, number>()
-  let scale = 1 / WELD_PRECISION
+  let scale = 1 / precision
   for (let i = 0; i < count; i++) {
-    let key = Math.round(pos.get(i, 0) * scale) + "," + Math.round(pos.get(i, 1) * scale) + "," + Math.round(pos.get(i, 2) * scale)
+    let key = ""
+    for (let c of channels) {
+      for (let k = 0; k < c.components; k++) key += Math.round(c.get(i, k) * scale) + ","
+    }
     let id = seen.get(key)
     if (id === undefined) {
       id = seen.size
@@ -1041,6 +1052,19 @@ function weldPositions(geometry: Geometry): { ids: Uint32Array; count: number } 
     ids[i] = id
   }
   return { ids, count: seen.size }
+}
+
+function weldPositions(geometry: Geometry, where: string): { ids: Uint32Array; count: number } {
+  return weldVertices(geometry, [geometryAttribute(geometry, "aPos")!], WELD_PRECISION, where)
+}
+
+/** An accessor per attribute of every stream, in layout order. */
+function allChannels(geometry: Geometry): AttributeAccess[] {
+  let out: AttributeAccess[] = []
+  for (let stream of geometryStreams(geometry)) {
+    for (let attr of layoutAttributes(stream.layout)) out.push(attributeAccess(stream.vertices, stream.layout, attr.name)!)
+  }
+  return out
 }
 
 /** The edge table of a triangle geometry, welded by position, as a lines
@@ -1053,7 +1077,7 @@ function edgeIndices(geometry: Geometry, name: string, cosThreshold: number | nu
     throw new Error(name + ": needs a triangle geometry, got " + geometryTopology(geometry))
   }
   let pos = geometryAttribute(geometry, "aPos")!
-  let weld = weldPositions(geometry)
+  let weld = weldPositions(geometry, name)
   let src = geometry.indices
   type Edge = { a: number; b: number; nx: number; ny: number; nz: number; faces: number; sharp: boolean }
   let edges = new Map<number, Edge>()
@@ -1132,6 +1156,224 @@ export function edgesGeometry(geometry: Geometry, thresholdAngle = EDGES_THRESHO
   return overVertices(geometry, edgeIndices(geometry, "edgesGeometry", Math.cos((thresholdAngle * Math.PI) / 180)), label ?? (geometry.label ? geometry.label + "-edges" : undefined))
 }
 
+/** The identity index list over `count` vertices, in the width
+ * packIndices picks. */
+function identityIndices(count: number): Uint16Array | Uint32Array {
+  let out = count > 65535 ? new Uint32Array(count) : new Uint16Array(count)
+  for (let i = 0; i < count; i++) out[i] = i
+  return out
+}
+
+/** Every stream of `geometry` rebuilt over `count` vertices, vertex `i`
+ * of the result copied from source vertex `from[i]` - the gather behind
+ * toNonIndexed (from = the index list) and mergeVertices (from = the
+ * first vertex of each weld id). Throws on a source index out of range,
+ * which the O(n) pass gets for free. */
+function gatherVertices(geometry: Geometry, from: ArrayLike<number>, count: number, where: string): ArrayBufferView[] {
+  let total = geometryVertexCount(geometry, where)
+  return geometryStreams(geometry).map(stream => {
+    let stride = layoutStride(stream.layout)
+    let src = vertexBytes(stream.vertices)
+    let dst = new Uint8Array(count * stride)
+    for (let i = 0; i < count; i++) {
+      let v = from[i]!
+      if (v >= total) throw new Error(where + ": index " + v + " is outside the geometry's " + total + " vertices")
+      dst.set(src.subarray(v * stride, (v + 1) * stride), i * stride)
+    }
+    return vertexView(stream.layout, dst.buffer)
+  })
+}
+
+// A geometry over gathered streams with its own indices: the tail of the
+// index ops. Layout and topology copy through.
+function overGathered(geometry: Geometry, gathered: ArrayBufferView[], indices: Uint16Array | Uint32Array, label: string | undefined): Geometry {
+  let out: Geometry = { vertices: gathered[0]!, indices, topology: geometry.topology, layout: geometry.layout, label }
+  if (geometry.streams !== undefined) out.streams = geometry.streams.map((s, k) => ({ layout: s.layout, vertices: gathered[k + 1]! }))
+  return out
+}
+
+/**
+ * Every index its own vertex (Three's toNonIndexed, Godot's
+ * SurfaceTool.deindex): a new geometry of `indices.length` vertices, each
+ * stream gathered through the index list, whose own indices are the
+ * identity 0..n-1 - a draw entry always indexes here, so "non-indexed"
+ * means no vertex is shared. What per-face data needs: after the split a
+ * face's three corners are its own, so computeVertexNormals gives flat
+ * shading and fillAttribute can write a per-face color. Topology copies
+ * through (a strip stays a strip); mergeVertices is the inverse. Throws
+ * on a morphed geometry: the sparse packing is per base vertex, so split
+ * before withMorphTargets.
+ */
+export function toNonIndexed(geometry: Geometry, label?: string): Geometry {
+  if (geometry.morphs !== undefined) throw new Error("toNonIndexed: geometry carries morph targets; split before withMorphTargets")
+  let n = geometry.indices.length
+  return overGathered(geometry, gatherVertices(geometry, geometry.indices, n, "toNonIndexed"), identityIndices(n), label ?? (geometry.label ? geometry.label + "-nonindexed" : undefined))
+}
+
+/**
+ * Weld the vertices that agree in every channel of every stream to
+ * `tolerance` (model units for positions, the same absolute step for
+ * every other channel) into one (Three's BufferGeometryUtils.mergeVertices,
+ * Godot's SurfaceTool.index): a new geometry keeping the first copy of
+ * each in first-occurrence order, indices remapped, so a triangle soup
+ * (an STL, a hand-written face list, a toNonIndexed result) becomes an
+ * indexed mesh whose shared vertices computeVertexNormals averages
+ * across. Vertices that differ only in a normal or a uv stay apart: this
+ * is the exact inverse of toNonIndexed, not a position weld, so a seam
+ * or a crease survives it (withNormals is the op that decides creases).
+ * Faces are kept as they are, degenerate ones included. Throws on a
+ * morphed geometry like toNonIndexed.
+ */
+export function mergeVertices(geometry: Geometry, tolerance = WELD_PRECISION, label?: string): Geometry {
+  if (geometry.morphs !== undefined) throw new Error("mergeVertices: geometry carries morph targets; weld before withMorphTargets")
+  if (!(tolerance > 0)) throw new Error("mergeVertices: tolerance must be positive, got " + tolerance)
+  let weld = weldVertices(geometry, allChannels(geometry), tolerance, "mergeVertices")
+  let first = new Uint32Array(weld.count)
+  let seen = new Uint8Array(weld.count)
+  for (let i = 0; i < weld.ids.length; i++) {
+    let id = weld.ids[i]!
+    if (seen[id] === 0) {
+      seen[id] = 1
+      first[id] = i
+    }
+  }
+  let src = geometry.indices
+  let indices = weld.count > 65535 ? new Uint32Array(src.length) : new Uint16Array(src.length)
+  for (let i = 0; i < src.length; i++) {
+    let id = weld.ids[src[i]!]
+    if (id === undefined) throw new Error("mergeVertices: index " + src[i] + " is outside the geometry's " + weld.ids.length + " vertices")
+    indices[i] = id
+  }
+  return overGathered(geometry, gatherVertices(geometry, first, weld.count, "mergeVertices"), indices, label ?? (geometry.label ? geometry.label + "-merged" : undefined))
+}
+
+/** Per face its unit normal (3 floats per face) and per corner the
+ * angle the face makes there (radians, 3 per face): the weight every
+ * normal computed here sums with. Weighting by the corner angle rather
+ * than by face area (Three's computeVertexNormals) or not at all (Godot)
+ * makes the result independent of how a surface was triangulated: a
+ * quad split into two triangles contributes the same 90 degrees at each
+ * corner whichever way its diagonal runs, so a fully smoothed cube gets
+ * exact corner diagonals where an area sum leans toward the faces whose
+ * diagonal touches the corner. A degenerate face has a zero normal and
+ * zero angles, so it counts for nothing. */
+function faceFrames(geometry: Geometry, where: string): { normals: Float32Array; angles: Float32Array } {
+  let count = geometryVertexCount(geometry, where)
+  let pos = geometryAttribute(geometry, "aPos")!
+  let src = geometry.indices
+  let faces = Math.floor(src.length / 3)
+  let normals = new Float32Array(faces * 3)
+  let angles = new Float32Array(faces * 3)
+  let corner = (a2: number, b2: number, c2: number): number => {
+    // The angle opposite side b, by the law of cosines; 0 for a corner
+    // with a zero-length side.
+    let denom = 2 * Math.sqrt(a2 * c2)
+    return denom === 0 ? 0 : Math.acos(Math.min(1, Math.max(-1, (a2 + c2 - b2) / denom)))
+  }
+  for (let f = 0; f < faces; f++) {
+    let i0 = src[f * 3]!, i1 = src[f * 3 + 1]!, i2 = src[f * 3 + 2]!
+    if (i0 >= count || i1 >= count || i2 >= count) throw new Error(where + ": face " + f + " names a vertex outside the geometry's " + count)
+    let x0 = pos.get(i0, 0), y0 = pos.get(i0, 1), z0 = pos.get(i0, 2)
+    let x1 = pos.get(i1, 0), y1 = pos.get(i1, 1), z1 = pos.get(i1, 2)
+    let x2 = pos.get(i2, 0), y2 = pos.get(i2, 1), z2 = pos.get(i2, 2)
+    let ux = x1 - x0, uy = y1 - y0, uz = z1 - z0
+    let wx = x2 - x0, wy = y2 - y0, wz = z2 - z0
+    let nx = uy * wz - uz * wy, ny = uz * wx - ux * wz, nz = ux * wy - uy * wx
+    let len = Math.hypot(nx, ny, nz)
+    if (len === 0) continue
+    normals[f * 3] = nx / len
+    normals[f * 3 + 1] = ny / len
+    normals[f * 3 + 2] = nz / len
+    // Squared side lengths: a = i0-i1, b = i1-i2, c = i2-i0.
+    let a2 = ux * ux + uy * uy + uz * uz
+    let b2 = (x2 - x1) ** 2 + (y2 - y1) ** 2 + (z2 - z1) ** 2
+    let c2 = wx * wx + wy * wy + wz * wz
+    angles[f * 3] = corner(a2, b2, c2)
+    angles[f * 3 + 1] = corner(a2, c2, b2)
+    angles[f * 3 + 2] = corner(b2, a2, c2)
+  }
+  return { normals, angles }
+}
+
+/** Write the unit vector along (x, y, z) as vertex `i`'s normal; a zero
+ * sum (a vertex no face names, or only degenerate ones) writes zero. */
+function writeUnit(nrm: AttributeAccess, i: number, x: number, y: number, z: number): void {
+  let len = Math.hypot(x, y, z) || 1
+  nrm.set(i, 0, x / len)
+  nrm.set(i, 1, y / len)
+  nrm.set(i, 2, z / len)
+}
+
+/**
+ * A copy with normals computed from its faces, creased where faces meet
+ * at `creaseAngle` degrees or more (Three's toCreasedNormals, Unity's
+ * import smoothing angle; Godot's smooth groups are the same decision
+ * made per vertex): the authoring path, where computeVertexNormals
+ * (geometry-gpu.ts, the core-backed in-place recompute) is the per-frame
+ * one. Faces are matched by POSITION, so a triangle soup,
+ * a hand-written face list, a mergeGeometries result and a geometry
+ * with no aNormal channel at all (one is added, float32x3, after the
+ * existing channels) all work, and a uv seam shades smooth across it.
+ * 0 is flat shading, 180 smooths everything, the default keeps a
+ * hard-edged mesh hard. Each face corner takes the corner-angle-weighted
+ * sum of the faces at its position within the angle of its own face,
+ * then the corners weld back by every channel, so the result is indexed
+ * and split only where a crease or a seam needs it: a box comes out at
+ * its 24 vertices under 90 degrees, and at 180 its normals become the
+ * exact corner diagonals (corners whose uvs coincide weld too). Composed
+ * from three exported ops - toNonIndexed, the corner normals,
+ * mergeVertices - so every stream is rebuilt (a copy) and a morphed
+ * geometry throws like toNonIndexed.
+ */
+export function withNormals(geometry: Geometry, creaseAngle = CREASE_ANGLE, label?: string): Geometry {
+  if (geometryTopology(geometry) !== "triangles") throw new Error("withNormals: needs a triangle geometry, got " + geometryTopology(geometry))
+  if (!(creaseAngle >= 0 && creaseAngle <= 180)) throw new Error("withNormals: creaseAngle must be 0..180 degrees, got " + creaseAngle)
+  let count = geometryVertexCount(geometry, "withNormals")
+  let source = geometrySlot(geometry, "aNormal") === null ? withAttribute(geometry, { name: "aNormal", format: "float32x3" }, new Float32Array(count * 3)) : geometry
+  let slot = geometrySlot(source, "aNormal")!
+  // Written through the accessor, so any float-kind format with room for
+  // three components takes the result, a packed snorm16x4 included.
+  if (VERTEX_FORMATS[slot.format].kind !== "float" || slot.components < 3) {
+    throw new Error("withNormals: aNormal is " + slot.format + ", not a float format of three or more components")
+  }
+  let split = toNonIndexed(source)
+  let { normals, angles } = faceFrames(split, "withNormals")
+  let corners = angles.length
+  // The corners at each welded position, as a CSR table: corner c of the
+  // split geometry is its vertex c and belongs to face c / 3.
+  let weld = weldPositions(split, "withNormals")
+  let starts = new Uint32Array(weld.count + 1)
+  for (let c = 0; c < corners; c++) starts[weld.ids[c]! + 1] = starts[weld.ids[c]! + 1]! + 1
+  for (let p = 0; p < weld.count; p++) starts[p + 1] = starts[p + 1]! + starts[p]!
+  let fill = starts.slice(0, weld.count)
+  let at = new Uint32Array(corners)
+  for (let c = 0; c < corners; c++) {
+    let p = weld.ids[c]!
+    at[fill[p]!] = c
+    fill[p] = fill[p]! + 1
+  }
+  let cosCrease = Math.cos((creaseAngle * Math.PI) / 180)
+  let nrm = geometryAttribute(split, "aNormal")!
+  for (let c = 0; c < corners; c++) {
+    let f = Math.floor(c / 3) * 3
+    let p = weld.ids[c]!
+    let sx = 0, sy = 0, sz = 0
+    for (let k = starts[p]!; k < starts[p + 1]!; k++) {
+      let other = at[k]!
+      let g = Math.floor(other / 3) * 3
+      // A face always counts toward its own corners: its self-dot can
+      // fall a rounding step under 1, which the angle 0 test would miss.
+      if (g !== f && normals[f]! * normals[g]! + normals[f + 1]! * normals[g + 1]! + normals[f + 2]! * normals[g + 2]! < cosCrease) continue
+      let w = angles[other]!
+      sx += normals[g]! * w
+      sy += normals[g + 1]! * w
+      sz += normals[g + 2]! * w
+    }
+    writeUnit(nrm, c, sx, sy, sz)
+  }
+  return mergeVertices(split, WELD_PRECISION, label ?? (geometry.label ? geometry.label + "-normals" : undefined))
+}
+
 // The debug helpers: Three's GridHelper, AxesHelper, Box3Helper and
 // PlaneHelper as "lines" builders (Godot and Unity keep the equivalents in
 // the editor; with no editor and topology on the geometry they are plain
@@ -1158,7 +1400,7 @@ function helperLayout(options: GeometryOptions, name: string): VertexLayout {
 }
 
 // The helper tail: pack, mark as lines, write the colors when there are any.
-function packLines(verts: number[], indices: number[], options: GeometryOptions, colors?: number[]): Geometry {
+function packLines(verts: number[], indices: number[] | Uint16Array | Uint32Array, options: GeometryOptions, colors?: number[]): Geometry {
   let geometry = packGeometry(verts, indices, options)
   geometry.topology = "lines"
   if (colors !== undefined) fillColors(geometry, colors)
@@ -1427,6 +1669,45 @@ function gridIndices(cellRows: number, cellCols: number, skipFirst = false, skip
 }
 
 /** An axis-aligned box centered on the origin: 24 vertices, 36 indices. */
+/** Options of normalsHelper: the line length and color. */
+export type NormalsHelperOptions = GeometryOptions & {
+  /** Length of each normal line, default 1 (Three's). */
+  size?: number
+  /** Line color, sRGB 0..1; default red (Three's). */
+  color?: [number, number, number]
+}
+
+// Three's VertexNormalsHelper default, sRGB red.
+const NORMALS_HELPER_COLOR: [number, number, number] = [1, 0, 0]
+
+/**
+ * One line per vertex from its position along its normal, `size` long
+ * (Three's VertexNormalsHelper as a static builder like the other
+ * helpers): 2 vertices per source vertex, "colored" layout in `color`,
+ * drawn by `unlit({ vertexColors: true })` under the same node as the
+ * mesh so the lines follow it. The way to see what computeVertexNormals
+ * and withNormals produced: a crease shows as lines fanning from one
+ * position, a smooth vertex as one line. Any layout carrying aNormal in
+ * any format qualifies; a "skinned" mesh's helper is its rest pose.
+ */
+export function normalsHelper(geometry: Geometry, options: NormalsHelperOptions = {}): Geometry {
+  let { size = 1, color = NORMALS_HELPER_COLOR } = options
+  let nrm = geometryAttribute(geometry, "aNormal")
+  if (nrm === null) throw new Error("normalsHelper: geometry has no aNormal channel")
+  let pos = geometryAttribute(geometry, "aPos")!
+  let count = geometryVertexCount(geometry, "normalsHelper")
+  let c = premultipliedColor(color)
+  let verts: number[] = []
+  let colors: number[] = []
+  for (let i = 0; i < count; i++) {
+    let x = pos.get(i, 0), y = pos.get(i, 1), z = pos.get(i, 2)
+    let nx = nrm.get(i, 0), ny = nrm.get(i, 1), nz = nrm.get(i, 2)
+    verts.push(x, y, z, nx, ny, nz, 0, 0, x + nx * size, y + ny * size, z + nz * size, nx, ny, nz, 1, 0)
+    colors.push(c[0]!, c[1]!, c[2]!, c[3]!, c[0]!, c[1]!, c[2]!, c[3]!)
+  }
+  return packLines(verts, identityIndices(count * 2), { label: options.label ?? (geometry.label ? geometry.label + "-normals-helper" : undefined), layout: helperLayout(options, "normalsHelper") }, colors)
+}
+
 export type BoxOptions = GeometryOptions & { width?: number; height?: number; depth?: number }
 
 export function box(options: BoxOptions = {}): Geometry {
