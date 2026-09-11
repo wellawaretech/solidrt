@@ -1157,3 +1157,209 @@ export function sphere(options: SphereOptions = {}): Geometry {
   let indices = gridIndices(heightSegments, widthSegments, true, true)
   return packGeometry(verts, indices, options)
 }
+
+// The polyhedron family, Three's PolyhedronGeometry: a convex solid's
+// corner list projected onto its circumsphere. `detail` splits every face
+// into (detail + 1)^2 triangles before the projection, so one builder is
+// the flat-shaded solid at 0 and a sphere of uniform triangles above it:
+// icosahedron({ detail: 3 }) is the icosphere, no pole pinch, which the
+// lat/long sphere() cannot express. Non-indexed as in Three, every
+// triangle owning its three vertices, which is what lets the normals
+// switch with detail: face normals at 0 (a dodecahedron reads as twelve
+// flat pentagons), radial above (smooth). UVs are the spherical map with
+// Three's per-triangle seam patch, which stretches toward the poles: the
+// textured sphere stays sphere(), these serve flat-shaded, low-poly and
+// procedurally shaded looks. Three's corner tables port verbatim, their
+// winding already CCW from outside. Godot and Unity ship neither the
+// family nor an icosphere (their primitives are blockout shapes and
+// modeling happens in Blender); nothing here touches the collision
+// volumes, which are analytic.
+
+// The seam patch, Three's thresholds: a triangle with a u above
+// UV_SEAM_HIGH and one below UV_SEAM_LOW straddles the u = 0/1 seam, so
+// its u values below UV_SEAM_WRAP are lifted by a full turn and the
+// triangle samples across the seam instead of the whole texture backwards.
+const UV_SEAM_HIGH = 0.9
+const UV_SEAM_LOW = 0.1
+const UV_SEAM_WRAP = 0.2
+
+export type PolyhedronOptions = GeometryOptions & {
+  /** Circumsphere radius, default 0.5 like sphere() (Three's is 1). */
+  radius?: number
+  /** Subdivision: every edge split `detail + 1` ways, a non-negative
+   * integer. Default 0, the flat solid. */
+  detail?: number
+}
+
+/**
+ * The generic builder over Three's data form: `vertices` a flat xyz list,
+ * `indices` its triangles, CCW seen from outside. F * (detail + 1)^2
+ * triangles, three vertices each, indices 0..n-1.
+ */
+export function polyhedron(vertices: ArrayLike<number>, indices: ArrayLike<number>, options: PolyhedronOptions = {}): Geometry {
+  let { radius = 0.5, detail = 0 } = options
+  if (!Number.isInteger(detail) || detail < 0) throw new Error("polyhedron: detail must be a non-negative integer")
+  if (vertices.length % 3 !== 0) throw new Error("polyhedron: vertices must be xyz triples")
+  if (indices.length % 3 !== 0) throw new Error("polyhedron: indices must be triangles")
+  let cols = detail + 1
+  // Unit directions of the subdivided triangles' corners, three per
+  // triangle. A grid point is the integer-weighted mean of its face's
+  // corners (weights summing to cols), always summed in corner order: a
+  // point on a shared edge has one zero weight, so both faces compute the
+  // same two-term sum and it comes out bit-identical, one vertex to the
+  // position weld in edgesGeometry/wireframeGeometry.
+  let dirs: number[] = []
+  let corner = (i: number): Vec3 => [vertices[i * 3]!, vertices[i * 3 + 1]!, vertices[i * 3 + 2]!]
+  for (let t = 0; t < indices.length; t += 3) {
+    let a = corner(indices[t]!)
+    let b = corner(indices[t + 1]!)
+    let c = corner(indices[t + 2]!)
+    let point = (wa: number, wb: number, wc: number): void => {
+      let x = (wa * a[0] + wb * b[0] + wc * c[0]) / cols
+      let y = (wa * a[1] + wb * b[1] + wc * c[1]) / cols
+      let z = (wa * a[2] + wb * b[2] + wc * c[2]) / cols
+      let len = Math.hypot(x, y, z)
+      dirs.push(x / len, y / len, z / len)
+    }
+    // Rows climb from the a-b edge to c, a row runs from a's side to b's;
+    // row r holds span + 1 points with weights (span - j, j, r). Per cell
+    // an upright triangle, and below the last an inverted one - Three's
+    // order, so the two agree vertex for vertex.
+    for (let r = 0; r < cols; r++) {
+      let span = cols - r
+      for (let j = 0; j < span; j++) {
+        point(span - j - 1, j + 1, r)
+        point(span - j - 1, j, r + 1)
+        point(span - j, j, r)
+        if (j < span - 1) {
+          point(span - j - 1, j + 1, r)
+          point(span - j - 2, j + 1, r + 1)
+          point(span - j - 1, j, r + 1)
+        }
+      }
+    }
+  }
+  let count = dirs.length / 3
+  let verts = new Float32Array(count * STANDARD_FLOATS)
+  for (let i = 0; i < count; i++) {
+    let d = i * 3
+    let x = dirs[d]!
+    let y = dirs[d + 1]!
+    let z = dirs[d + 2]!
+    let o = i * STANDARD_FLOATS
+    verts[o] = x * radius
+    verts[o + 1] = y * radius
+    verts[o + 2] = z * radius
+    verts[o + 3] = x
+    verts[o + 4] = y
+    verts[o + 5] = z
+    // The spherical map: u the azimuth around y (from -x, counter-clockwise
+    // seen from above), v the inclination, 0 at the top like sphere().
+    verts[o + 6] = Math.atan2(z, -x) / (2 * Math.PI) + 0.5
+    verts[o + 7] = Math.atan2(-y, Math.hypot(x, z)) / Math.PI + 0.5
+  }
+  for (let t = 0; t < count; t += 3) {
+    let o0 = t * STANDARD_FLOATS
+    let o1 = o0 + STANDARD_FLOATS
+    let o2 = o1 + STANDARD_FLOATS
+    // Three's UV fixes, keyed on the triangle's own azimuth: a corner on
+    // the y axis (atan2(0, 0) says nothing) takes it, and on the -x side
+    // of the seam a u of exactly 1 becomes 0 so the triangle stays whole.
+    let azimuth = Math.atan2(verts[o0 + 5]! + verts[o1 + 5]! + verts[o2 + 5]!, -(verts[o0 + 3]! + verts[o1 + 3]! + verts[o2 + 3]!))
+    let centerU = azimuth / (2 * Math.PI) + 0.5
+    for (let o of [o0, o1, o2]) {
+      if (azimuth < 0 && verts[o + 6] === 1) verts[o + 6] = 0
+      if (verts[o + 3] === 0 && verts[o + 5] === 0) verts[o + 6] = centerU
+    }
+    let u0 = verts[o0 + 6]!
+    let u1 = verts[o1 + 6]!
+    let u2 = verts[o2 + 6]!
+    if (Math.max(u0, u1, u2) > UV_SEAM_HIGH && Math.min(u0, u1, u2) < UV_SEAM_LOW) {
+      for (let o of [o0, o1, o2]) if (verts[o + 6]! < UV_SEAM_WRAP) verts[o + 6] = verts[o + 6]! + 1
+    }
+    if (detail === 0) {
+      let p0: Vec3 = [verts[o0]!, verts[o0 + 1]!, verts[o0 + 2]!]
+      let p1: Vec3 = [verts[o1]!, verts[o1 + 1]!, verts[o1 + 2]!]
+      let p2: Vec3 = [verts[o2]!, verts[o2 + 1]!, verts[o2 + 2]!]
+      let n = normalize(cross(sub(p1, p0), sub(p2, p0)))
+      for (let o of [o0, o1, o2]) {
+        verts[o + 3] = n[0]
+        verts[o + 4] = n[1]
+        verts[o + 5] = n[2]
+      }
+    }
+  }
+  let order: number[] = []
+  for (let i = 0; i < count; i++) order.push(i)
+  return packGeometry(verts, order, options)
+}
+
+// The golden ratio: the corner coordinate of the icosahedron and the
+// dodecahedron.
+const PHI = (1 + Math.sqrt(5)) / 2
+const PHI_INV = 1 / PHI
+
+// Three's corner tables: the regular solids centered on the origin, CCW
+// triangles seen from outside (the dodecahedron's twelve pentagons fanned
+// into 36).
+const TETRAHEDRON_VERTICES = [1, 1, 1, -1, -1, 1, -1, 1, -1, 1, -1, -1]
+const TETRAHEDRON_INDICES = [2, 1, 0, 0, 3, 2, 1, 3, 0, 2, 3, 1]
+const OCTAHEDRON_VERTICES = [1, 0, 0, -1, 0, 0, 0, 1, 0, 0, -1, 0, 0, 0, 1, 0, 0, -1]
+const OCTAHEDRON_INDICES = [0, 2, 4, 0, 4, 3, 0, 3, 5, 0, 5, 2, 1, 2, 5, 1, 5, 3, 1, 3, 4, 1, 4, 2]
+// prettier-ignore
+const ICOSAHEDRON_VERTICES = [
+  -1, PHI, 0, 1, PHI, 0, -1, -PHI, 0, 1, -PHI, 0,
+  0, -1, PHI, 0, 1, PHI, 0, -1, -PHI, 0, 1, -PHI,
+  PHI, 0, -1, PHI, 0, 1, -PHI, 0, -1, -PHI, 0, 1,
+]
+// prettier-ignore
+const ICOSAHEDRON_INDICES = [
+  0, 11, 5, 0, 5, 1, 0, 1, 7, 0, 7, 10, 0, 10, 11,
+  1, 5, 9, 5, 11, 4, 11, 10, 2, 10, 7, 6, 7, 1, 8,
+  3, 9, 4, 3, 4, 2, 3, 2, 6, 3, 6, 8, 3, 8, 9,
+  4, 9, 5, 2, 4, 11, 6, 2, 10, 8, 6, 7, 9, 8, 1,
+]
+// prettier-ignore
+const DODECAHEDRON_VERTICES = [
+  -1, -1, -1, -1, -1, 1, -1, 1, -1, -1, 1, 1,
+  1, -1, -1, 1, -1, 1, 1, 1, -1, 1, 1, 1,
+  0, -PHI_INV, -PHI, 0, -PHI_INV, PHI, 0, PHI_INV, -PHI, 0, PHI_INV, PHI,
+  -PHI_INV, -PHI, 0, -PHI_INV, PHI, 0, PHI_INV, -PHI, 0, PHI_INV, PHI, 0,
+  -PHI, 0, -PHI_INV, PHI, 0, -PHI_INV, -PHI, 0, PHI_INV, PHI, 0, PHI_INV,
+]
+// prettier-ignore
+const DODECAHEDRON_INDICES = [
+  3, 11, 7, 3, 7, 15, 3, 15, 13,
+  7, 19, 17, 7, 17, 6, 7, 6, 15,
+  17, 4, 8, 17, 8, 10, 17, 10, 6,
+  8, 0, 16, 8, 16, 2, 8, 2, 10,
+  0, 12, 1, 0, 1, 18, 0, 18, 16,
+  6, 10, 2, 6, 2, 13, 6, 13, 15,
+  2, 16, 18, 2, 18, 3, 2, 3, 13,
+  18, 1, 9, 18, 9, 11, 18, 11, 3,
+  4, 14, 12, 4, 12, 0, 4, 0, 8,
+  11, 9, 5, 11, 5, 19, 11, 19, 7,
+  19, 5, 14, 19, 14, 4, 19, 4, 17,
+  1, 12, 14, 1, 14, 5, 1, 5, 9,
+]
+
+/** The regular tetrahedron: 4 faces. */
+export function tetrahedron(options: PolyhedronOptions = {}): Geometry {
+  return polyhedron(TETRAHEDRON_VERTICES, TETRAHEDRON_INDICES, options)
+}
+
+/** The regular octahedron: 8 faces, corners on the axes. */
+export function octahedron(options: PolyhedronOptions = {}): Geometry {
+  return polyhedron(OCTAHEDRON_VERTICES, OCTAHEDRON_INDICES, options)
+}
+
+/** The regular icosahedron: 20 faces; with `detail` above 0 the
+ * icosphere. */
+export function icosahedron(options: PolyhedronOptions = {}): Geometry {
+  return polyhedron(ICOSAHEDRON_VERTICES, ICOSAHEDRON_INDICES, options)
+}
+
+/** The regular dodecahedron: 12 pentagons, 36 triangles. */
+export function dodecahedron(options: PolyhedronOptions = {}): Geometry {
+  return polyhedron(DODECAHEDRON_VERTICES, DODECAHEDRON_INDICES, options)
+}

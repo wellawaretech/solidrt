@@ -967,6 +967,12 @@ Finished, kept for the reasoning.
   tiles in the existing shadow atlas with a dominant-axis face select in
   SHADOW_LOOKUP - the Three/Godot/URP atlas route, library-only, no cube maps;
   a fov guard band (URP's fovBias) closes the face-seam slits.
+- **[Polyhedron primitives - the platonic solids and the icosphere as geometry builders](done/3d-polyhedron-primitives.md)** [2026-09-11]
+  Three's PolyhedronGeometry family (tetrahedron, octahedron, icosahedron,
+  dodecahedron and the generic builder with detail subdivision) ported into
+  @solidrt/3d as five pure generators next to sphere(), giving the flat-shaded
+  solids at detail 0 and the icosphere above it; Godot and Unity ship neither,
+  and the reason why shaped what the item does not claim.
 - **[Root motion - in-place playback, and the travel moved onto the character](done/3d-root-motion.md)** [2026-09-03]
   Authored clips carry root motion; the mixer now strips it for viewers
   (inPlace, by net drift) and, for games, moves it onto the model through a

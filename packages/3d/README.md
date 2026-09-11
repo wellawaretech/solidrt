@@ -87,7 +87,9 @@ v1 scope: unlit color/textured materials plus `shaderMaterial` (your own
 GLSL as a first-class material), sprites (`<Sprite>` with a `sprite()`
 material: a quad facing the camera in the vertex stage, full or fixed-y
 billboarding), geometry generators (box, plane, circle,
-ring, sphere, cylinder, cone, torus, torus knot), a profile kit for custom
+ring, sphere, cylinder, cone, torus, torus knot, the platonic solids with
+`detail` subdivision, so the icosahedron is also the icosphere), a profile
+kit for custom
 solids (`extrude` with bevels, `lathe`, polyline `sweep`/`tube` with
 mitred joints, flat `shape`, with `fillet`/`roundRect`/`triangulate`
 helpers), geometry as data (`transformGeometry` bakes a placement into

@@ -84,7 +84,11 @@ real follow-up, not a nicety.
   `Dodecahedron` and the generic `PolyhedronGeometry` with `detail`
   subdivision. Gets you an icosphere, which is the better sphere for
   most shading (uniform triangles, no pole pinch) and which our
-  lat/long `sphere` cannot express.
+  lat/long `sphere` cannot express. Landed 2026-09-11 as `tetrahedron`,
+  `octahedron`, `icosahedron`, `dodecahedron` and `polyhedron(vertices,
+  indices, options)` (okf/done/3d-polyhedron-primitives.md): Three's
+  non-indexed form and tables verbatim, radius 0.5 to match `sphere()`,
+  which stays the textured default.
 
 ## Curves and shapes
 

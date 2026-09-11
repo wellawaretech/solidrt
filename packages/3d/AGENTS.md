@@ -785,7 +785,22 @@ radialSegments, tubularSegments })` (lying flat, hole on the y axis) and
 `torusKnot({ radius, tube, tubularSegments, radialSegments, p, q })`
 (standing y-up) - both oriented for the y-up world, unlike Three's z-up.
 No positional form: `box()` is the default cube, `box({ label: "rock" })`
-names it. Every options object (the profile kit's `extrude`/`lathe`/
+names it. The polyhedra: `tetrahedron`, `octahedron`, `icosahedron` and
+`dodecahedron` (`{ radius, detail }`, radius 0.5 like sphere where
+Three's is 1) and the generic `polyhedron(vertices, indices, { radius,
+detail })` over Three's data form (flat xyz list, CCW triangle list, the
+data first like `box3Helper`), each solid projected onto its
+circumsphere. `detail` splits every edge `detail + 1` ways first, so
+`detail: 0` is the flat-shaded solid (face normals) and anything above a
+sphere of uniform triangles with radial normals: `icosahedron({ detail:
+3 })` is the icosphere, no pole pinch. Non-indexed like Three, every
+triangle owning its three vertices; `edgesGeometry` welds by position,
+so `edgesGeometry(dodecahedron())` is the twelve pentagons (the fan
+diagonals are coplanar and drop out) where `wireframeGeometry` shows the
+triangulation. UVs are the spherical map with Three's seam patch,
+stretched toward the poles: the textured sphere stays `sphere()`, the
+polyhedra are for flat-shaded, low-poly and procedurally shaded looks
+(examples/polyhedra.tsx). Every options object (the profile kit's `extrude`/`lathe`/
 `sweep`/`tube` too) also takes `label` and `layout` - `layout` makes the
 generator emit that layout in one pass (standard channels written, the
 extra slots zero), so `box({ layout: "colored" })` then

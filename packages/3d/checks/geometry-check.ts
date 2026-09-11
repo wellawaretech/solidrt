@@ -9,9 +9,10 @@
 //
 // A failure prints FAIL lines and throws at the end, so the run exits nonzero.
 
-import { arrowHelper, axesHelper, box, box3Helper, cylinder, edgesGeometry, validateGeometry, fillAttribute, fillColors, gridHelper, packGeometry, planeHelper, sphere, torus, torusKnot, geometryBounds, layoutKey, layoutSlot, layoutStride, mergeGeometries, plane, transformGeometry, wireframeGeometry, withAttribute, withColors, STANDARD_FLOATS, VERTEX_LAYOUTS } from "../src/geometry.ts"
-import { rayBoxDistance } from "../src/math.ts"
-import type { Geometry } from "../src/geometry.ts"
+import { arrowHelper, axesHelper, box, box3Helper, cylinder, dodecahedron, edgesGeometry, validateGeometry, fillAttribute, fillColors, gridHelper, icosahedron, octahedron, packGeometry, planeHelper, polyhedron, sphere, tetrahedron, torus, torusKnot, geometryBounds, layoutKey, layoutSlot, layoutStride, mergeGeometries, plane, transformGeometry, wireframeGeometry, withAttribute, withColors, STANDARD_FLOATS, VERTEX_LAYOUTS } from "../src/geometry.ts"
+import { cross, normalize, rayBoxDistance, sub } from "../src/math.ts"
+import type { Geometry, PolyhedronOptions } from "../src/geometry.ts"
+import type { Vec3 } from "../src/math.ts"
 
 let failures = 0
 let fail = (msg: string): void => {
@@ -183,6 +184,7 @@ throws("merge empty", () => mergeGeometries([]))
   check("cylinder", cylinder({ radiusTop: 0.2, radialSegments: 5 }), cylinder({ radiusTop: 0.2, radialSegments: 5, layout: "colored" }))
   check("torus", torus({ radius: 1, tube: 0.3, radialSegments: 4, tubularSegments: 6 }), torus({ radius: 1, tube: 0.3, radialSegments: 4, tubularSegments: 6, layout: "colored" }))
   check("torusKnot", torusKnot({ tube: 0.3, tubularSegments: 8, radialSegments: 4 }), torusKnot({ tube: 0.3, tubularSegments: 8, radialSegments: 4, layout: "colored" }))
+  check("icosahedron", icosahedron({ detail: 1 }), icosahedron({ detail: 1, layout: "colored" }))
   let custom = sphere({ radius: 1, widthSegments: 4, heightSegments: 3, layout: [{ name: "aPos", format: "vec3" }, { name: "aNormal", format: "vec3" }, { name: "aUV", format: "vec2" }, { name: "aW", format: "f32" }], label: "w" })
   if (layoutStride(custom.layout) !== 9 || custom.label !== "w") fail("custom generator layout")
   expectVec("custom generator prefix", custom.vertices.subarray(9, 17), sphere({ radius: 1, widthSegments: 4, heightSegments: 3 }).vertices.subarray(8, 16))
@@ -191,6 +193,105 @@ throws("merge empty", () => mergeGeometries([]))
   throws("generator bad layout", () => box({ layout: [{ name: "aColor", format: "vec4" }] }))
   throws("torus bad layout", () => torus({ layout: [{ name: "aColor", format: "vec4" }] }))
   throws("packGeometry ragged", () => packGeometry([1, 2, 3], [0]))
+}
+
+// The polyhedron family: counts per detail, every corner on the
+// circumsphere, CCW winding seen from outside, face normals at detail 0
+// and radial normals above, UVs in range with no triangle left straddling
+// the seam and the y-axis corners taking their triangle's azimuth, the
+// closed solids' edge counts through the position weld, and the generic
+// builder over an open face list.
+{
+  // After the seam patch a u lifted by a full turn stays under 1 + the
+  // lift threshold (0.2).
+  let U_MAX = 1.2
+  let inspect = (name: string, g: Geometry, faces: number, radius: number, detail: number): void => {
+    let tris = faces * (detail + 1) * (detail + 1)
+    if (g.vertices.length !== tris * 3 * STANDARD_FLOATS) fail(name + ": vertex count " + g.vertices.length / STANDARD_FLOATS)
+    if (g.indices.length !== tris * 3) fail(name + ": index count " + g.indices.length)
+    for (let i = 0; i < g.indices.length; i++) {
+      if (g.indices[i] !== i) {
+        fail(name + ": indices are not 0..n-1")
+        break
+      }
+    }
+    let v = g.vertices
+    let at = (i: number, k: number): Vec3 => [v[i * STANDARD_FLOATS + k]!, v[i * STANDARD_FLOATS + k + 1]!, v[i * STANDARD_FLOATS + k + 2]!]
+    for (let t = 0; t < tris; t++) {
+      let p = [at(t * 3, 0), at(t * 3 + 1, 0), at(t * 3 + 2, 0)]
+      let n = normalize(cross(sub(p[1]!, p[0]!), sub(p[2]!, p[0]!)))
+      let cx = (p[0]![0] + p[1]![0] + p[2]![0]) / 3
+      let cy = (p[0]![1] + p[1]![1] + p[2]![1]) / 3
+      let cz = (p[0]![2] + p[1]![2] + p[2]![2]) / 3
+      if (n[0] * cx + n[1] * cy + n[2] * cz <= 0) {
+        fail(name + ": triangle " + t + " winds inward")
+        return
+      }
+      let us: number[] = []
+      for (let k = 0; k < 3; k++) {
+        let q = p[k]!
+        if (!near(Math.hypot(q[0], q[1], q[2]), radius)) {
+          fail(name + ": corner off the circumsphere: " + Math.hypot(q[0], q[1], q[2]))
+          return
+        }
+        let want = detail === 0 ? n : normalize(q)
+        let got = at(t * 3 + k, 3)
+        if (!near(got[0], want[0]) || !near(got[1], want[1]) || !near(got[2], want[2])) {
+          fail(name + ": normal of triangle " + t + " corner " + k)
+          return
+        }
+        let u = v[(t * 3 + k) * STANDARD_FLOATS + 6]!
+        let vv = v[(t * 3 + k) * STANDARD_FLOATS + 7]!
+        if (u < 0 || u > U_MAX || vv < 0 || vv > 1) {
+          fail(name + ": uv out of range " + u + "," + vv)
+          return
+        }
+        us.push(u)
+      }
+      if (Math.max(...us) > 0.9 && Math.min(...us) < 0.1) {
+        fail(name + ": triangle " + t + " straddles the seam: " + us.join(","))
+        return
+      }
+      for (let k = 0; k < 3; k++) {
+        let q = p[k]!
+        if (q[0] !== 0 || q[2] !== 0) continue
+        let others = us.filter((_u, i) => i !== k)
+        if (us[k]! < Math.min(...others) - 1e-5 || us[k]! > Math.max(...others) + 1e-5) {
+          fail(name + ": y-axis corner u " + us[k] + " outside its triangle's " + others.join(","))
+          return
+        }
+      }
+    }
+  }
+  // Triangles, feature edges and wireframe edges: the dodecahedron's fan
+  // diagonals are coplanar, so edgesGeometry drops them (the twelve
+  // pentagons) while wireframeGeometry lists the triangulation.
+  let solids: [string, (o?: PolyhedronOptions) => Geometry, number, number, number][] = [
+    ["tetrahedron", tetrahedron, 4, 6, 6],
+    ["octahedron", octahedron, 8, 12, 12],
+    ["icosahedron", icosahedron, 20, 30, 30],
+    ["dodecahedron", dodecahedron, 36, 30, 54],
+  ]
+  for (let [name, build, faces, edges, wires] of solids) {
+    inspect(name, build(), faces, 0.5, 0)
+    inspect(name + " r2 d1", build({ radius: 2, detail: 1 }), faces, 2, 1)
+    inspect(name + " d3", build({ detail: 3 }), faces, 0.5, 3)
+    if (edgesGeometry(build()).indices.length !== edges * 2) fail(name + ": edges " + edgesGeometry(build()).indices.length / 2 + " want " + edges)
+    if (wireframeGeometry(build()).indices.length !== wires * 2) fail(name + ": wireframe edges " + wireframeGeometry(build()).indices.length / 2 + " want " + wires)
+    validateGeometry(build({ detail: 2 }))
+  }
+  // Detail 1 on the icosahedron: every original edge halves and each face
+  // gains three interior edges, all of them creases once projected.
+  if (edgesGeometry(icosahedron({ detail: 1 })).indices.length !== 120 * 2) fail("icosphere d1 edges " + edgesGeometry(icosahedron({ detail: 1 })).indices.length / 2)
+  if (icosahedron({ label: "ico" }).label !== "ico") fail("polyhedron label")
+  // The generic builder over one open triangle: F * (detail + 1)^2.
+  let open = polyhedron([1, 0, 0, 0, 1, 0, 0, 0, 1], [0, 1, 2], { detail: 2 })
+  if (open.vertices.length !== 9 * 3 * STANDARD_FLOATS) fail("open polyhedron count " + open.vertices.length / STANDARD_FLOATS)
+  expectVec("open polyhedron corner", open.vertices.subarray(2 * STANDARD_FLOATS, 2 * STANDARD_FLOATS + 3), [0.5, 0, 0])
+  throws("polyhedron fractional detail", () => icosahedron({ detail: 1.5 }))
+  throws("polyhedron negative detail", () => icosahedron({ detail: -1 }))
+  throws("polyhedron ragged vertices", () => polyhedron([1, 0], [0, 1, 2]))
+  throws("polyhedron ragged indices", () => polyhedron([1, 0, 0, 0, 1, 0, 0, 0, 1], [0, 1]))
 }
 
 // validateGeometry: the add()-time structural check.

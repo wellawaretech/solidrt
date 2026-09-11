@@ -11,6 +11,11 @@ depends on `@solidrt/3d` (or in-repo from the package directory).
   over a crate (bare path points crease on the mitred bends) and a coiled
   tube (smooth-tagged helix, one continuous mesh), lit so the
   creased-vs-smooth normals actually show.
+- `polyhedra.tsx` - the polyhedron family: the four platonic solids
+  flat-shaded (`detail: 0` keeps face normals), the icosahedron at
+  `detail` 1, 2 and 3 turning into the icosphere, and a wireframe pair
+  showing why - `sphere()` bunches slivers at its poles at the same
+  triangle count where the icosphere's triangles stay uniform.
 - `lit.tsx` - the lit material and light nodes: `<HemisphereLight>` plus
   a warm key `<DirectionalLight>` turning inside a spinning `<Group>` and
   a fixed cool fill,
