@@ -452,7 +452,7 @@ export const FOG = glsl`
  * and `vec3 linearToSrgb(vec3)`, clamped at zero. An "rgba8-srgb" texture
  * decodes in hardware and needs neither; these serve pixels a format
  * cannot tag (a render target sampled as a map) and the output stage.
- * OUTPUT includes this set - never compose both.
+ * RESOLVE includes this set - never compose both.
  */
 export const SRGB = glsl`
   vec3 srgbToLinear(vec3 c) {
@@ -465,18 +465,6 @@ export const SRGB = glsl`
   }
 `
 
-/**
- * The output stage every library fragment ends with: `vec4
- * outputColor(vec3 rgb, float alpha)` takes the PREMULTIPLIED linear
- * result and its alpha, applies the scene's exposure and tone mapping
- * (`uniform float uExposure`; `uniform float uToneMapping`, 0 none, 1
- * ACES - the shared params scene.setExposure / setToneMapping write),
- * encodes to sRGB and returns the premultiplied pixel the target holds.
- * It un-premultiplies inside so the encode is exact at partial alpha.
- * Compose it last in a custom fragment: `fragColor = outputColor(rgb,
- * alpha);` - a fragment that writes fragColor directly writes final
- * encoded pixels and skips exposure and tone mapping. Includes SRGB.
- */
 /**
  * The LOD cross-fade: `uLodFade` is (threshold, side) - the scene writes
  * the band position of the level this entry draws (see createLod's
@@ -502,14 +490,24 @@ export const LOD_FADE = glsl`
   }
 `
 
-export const OUTPUT = glsl`
+/**
+ * The resolve set: the display stage of a target, run ONCE per pixel by
+ * the resolve pass that turns a scene buffer (premultiplied linear light,
+ * half float where the device renders it) into the displayed rgba8
+ * pixels. `vec4 resolveColor(vec3 rgb, float alpha)` takes a buffer
+ * texel, applies the scene's exposure and tone mapping (`uniform float
+ * uExposure`; `uniform float uToneMapping`, 0 none, 1 ACES, 2 AgX, 3
+ * Neutral - the shared params scene.setExposure / setToneMapping
+ * write), clamps, encodes to
+ * sRGB with an ordered dither against 8-bit banding, and returns the
+ * premultiplied pixel. It un-premultiplies inside so the encode is exact
+ * at partial alpha. A custom resolve (SceneOptions.resolve) gets this set
+ * declared and ends with it; a scene fragment never composes it - a
+ * fragment writes linear light (see sceneOutput). Includes SRGB.
+ */
+export const RESOLVE = glsl`
   uniform float uExposure;
   uniform float uToneMapping;
-  // 1 (the scene's default) clamps and encodes to sRGB for display; 0
-  // writes linear light unclamped, what a reflection probe's faces hold
-  // so the environment lookups read radiance (the scene sets it per
-  // target; an 8-bit target clamps it on write regardless).
-  uniform float uOutputEncode;
   ${SRGB}
   // Stephen Hill's fit of the ACES RRT and ODT (Three's ACESFilmic, Godot's
   // ACES): the matrices between sRGB and the fit's working space, and the
@@ -533,17 +531,175 @@ export const OUTPUT = glsl`
     c = acesFit(c);
     return clamp(ACES_OUTPUT * c, 0.0, 1.0);
   }
-  vec4 outputColor(vec3 rgb, float alpha) {
+  // AgX (Blender's, through Filament and Three's AgXToneMapping): rec
+  // 2020 primaries in, an inset toward gray, log2 encoding over the
+  // scene's dynamic range, the sigmoid, the outset, back to sRGB
+  // primaries. The 6th-order fit of the sigmoid is the iolite
+  // approximation Three ships.
+  const mat3 AGX_SRGB_TO_REC2020 = mat3(
+    0.6274, 0.0691, 0.0164,
+    0.3293, 0.9195, 0.0880,
+    0.0433, 0.0113, 0.8956);
+  const mat3 AGX_REC2020_TO_SRGB = mat3(
+    1.6605, -0.1246, -0.0182,
+    -0.5876, 1.1329, -0.1006,
+    -0.0728, -0.0083, 1.1187);
+  const mat3 AGX_INSET = mat3(
+    0.856627153315983, 0.137318972929847, 0.11189821299995,
+    0.0951212405381588, 0.761241990602591, 0.0767994186031903,
+    0.0482516061458583, 0.101439036467562, 0.811302368396859);
+  const mat3 AGX_OUTSET = mat3(
+    1.1271005818144368, -0.1413297634984383, -0.14132976349843826,
+    -0.11060664309660323, 1.157823702216272, -0.11060664309660294,
+    -0.016493938717834573, -0.016493938717834257, 1.2519364065950405);
+  // log2 of middle gray (0.18) at the range's ends, 10 stops below and
+  // 6.5 above.
+  const float AGX_MIN_EV = -12.47393;
+  const float AGX_MAX_EV = 4.026069;
+  // The encoded value's display gamma before the primaries go back.
+  const float AGX_GAMMA = 2.2;
+  vec3 agxSigmoid(vec3 x) {
+    vec3 x2 = x * x;
+    vec3 x4 = x2 * x2;
+    return 15.5 * x4 * x2 - 40.14 * x4 * x + 31.96 * x4 - 6.868 * x2 * x + 0.4298 * x2 + 0.1191 * x - 0.00232;
+  }
+  vec3 agxToneMap(vec3 c) {
+    c = AGX_INSET * (AGX_SRGB_TO_REC2020 * c);
+    c = log2(max(c, vec3(1e-10)));
+    c = clamp((c - AGX_MIN_EV) / (AGX_MAX_EV - AGX_MIN_EV), 0.0, 1.0);
+    c = AGX_OUTSET * agxSigmoid(c);
+    c = pow(max(c, vec3(0.0)), vec3(AGX_GAMMA));
+    return clamp(AGX_REC2020_TO_SRGB * c, 0.0, 1.0);
+  }
+  // Khronos PBR Neutral (Three's NeutralToneMapping, Unity's Neutral):
+  // hue-preserving, a black-level lift below a knee, then a soft peak
+  // compression above START_COMPRESSION that desaturates toward white.
+  const float NEUTRAL_START_COMPRESSION = 0.8 - 0.04;
+  const float NEUTRAL_DESATURATION = 0.15;
+  const float NEUTRAL_KNEE = 0.08;
+  const float NEUTRAL_KNEE_CURVE = 6.25;
+  const float NEUTRAL_OFFSET = 0.04;
+  vec3 neutralToneMap(vec3 c) {
+    float x = min(c.r, min(c.g, c.b));
+    float offset = x < NEUTRAL_KNEE ? x - NEUTRAL_KNEE_CURVE * x * x : NEUTRAL_OFFSET;
+    c -= offset;
+    float peak = max(c.r, max(c.g, c.b));
+    if (peak < NEUTRAL_START_COMPRESSION) return max(c, vec3(0.0));
+    float d = 1.0 - NEUTRAL_START_COMPRESSION;
+    float newPeak = 1.0 - d * d / (peak + d - NEUTRAL_START_COMPRESSION);
+    c *= newPeak / peak;
+    float g = 1.0 - 1.0 / (NEUTRAL_DESATURATION * (peak - newPeak) + 1.0);
+    return clamp(mix(c, vec3(newPeak), g), 0.0, 1.0);
+  }
+  // Debanding: one 8-bit step of interleaved gradient noise (Jimenez
+  // 2014) centered on zero, added to the encoded value before the target
+  // quantizes it, so a slow gradient dithers instead of stepping.
+  const float DITHER_STEP = 1.0 / 255.0;
+  float resolveDither(vec2 p) {
+    return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715)))) - 0.5;
+  }
+  vec4 resolveColor(vec3 rgb, float alpha) {
     vec3 c = alpha > 0.0 ? rgb / alpha : rgb;
     c *= uExposure;
-    if (uToneMapping > 0.5) c = acesToneMap(c);
-    // Linear output keeps its range (a half-float probe holds a sun's
-    // radiance); the display encode is 8-bit and clamps first.
-    if (uOutputEncode > 0.5) c = linearToSrgb(clamp(c, 0.0, 1.0));
-    else c = max(c, vec3(0.0));
+    if (uToneMapping > 2.5) c = neutralToneMap(c);
+    else if (uToneMapping > 1.5) c = agxToneMap(c);
+    else if (uToneMapping > 0.5) c = acesToneMap(c);
+    c = linearToSrgb(clamp(c, 0.0, 1.0));
+    c += resolveDither(gl_FragCoord.xy) * DITHER_STEP;
     return vec4(c * alpha, alpha);
   }
 `
+
+/**
+ * The default resolve fragment (SceneOptions.resolve when absent): one
+ * sample of the scene buffer through resolveColor. The contract a custom
+ * resolve gets: `vUV` (0..1, origin top-left), `iResolution`, `fragColor`,
+ * `uniform sampler2D uScene` (the buffer, premultiplied linear) and the
+ * RESOLVE set, all declared by the preamble; any name written through
+ * scene.setParams (uExposure and uToneMapping among them) is readable.
+ * Start a grade from this source and end in resolveColor.
+ */
+export const DEFAULT_RESOLVE = glsl`
+  void main() {
+    vec4 s = texture(uScene, vUV);
+    fragColor = resolveColor(s.rgb, s.a);
+  }
+`
+
+/**
+ * The default resolve while the stock bloom is on (SceneOptions.bloom):
+ * the buffer's texel plus the blurred excess the bloom chain rendered,
+ * bound on the resolve target as `uniform sampler2D uBloom` with its
+ * weight in `uniform float uBloomIntensity` - both declared by the
+ * source, not the preamble. The glow is LIGHT over the pixel whatever it
+ * covers: the alpha grows with the glow's brightness (a premultiplied
+ * light layer), so it shows over a transparent backdrop - a view with no
+ * clearColor composited over UI - and an opaque pixel is exactly the
+ * sum. A custom resolve composes the stock bloom by declaring the same
+ * two names and adding the term; start from this.
+ */
+export const BLOOM_RESOLVE = glsl`
+  uniform sampler2D uBloom;
+  uniform float uBloomIntensity;
+  void main() {
+    vec4 s = texture(uScene, vUV);
+    vec3 glow = texture(uBloom, vUV).rgb * uBloomIntensity;
+    float coverage = clamp(max(glow.r, max(glow.g, glow.b)), 0.0, 1.0);
+    fragColor = resolveColor(s.rgb + glow, max(s.a, coverage));
+  }
+`
+
+/**
+ * The stock bloom's threshold pass (a shader texture over the buffer):
+ * the texel's excess over `uniform float uThreshold` by its brightest
+ * channel, so a colored highlight keeps its hue, black below it.
+ */
+export const BLOOM_THRESHOLD = glsl`
+  uniform sampler2D uSource;
+  uniform float uThreshold;
+  void main() {
+    vec4 s = texture(uSource, vUV);
+    vec3 c = s.a > 0.0 ? s.rgb / s.a : s.rgb;
+    float peak = max(max(c.r, c.g), c.b);
+    float keep = max(peak - uThreshold, 0.0) / max(peak, 0.0001);
+    fragColor = vec4(c * keep, 1.0);
+  }
+`
+
+/**
+ * The stock bloom's blur pass: a 9-tap gaussian along `uniform vec2
+ * uDir` (one texel step on the given axis), run across then down per
+ * round of the chain.
+ */
+export const BLOOM_BLUR = glsl`
+  uniform sampler2D uSource;
+  uniform vec2 uDir;
+  const float WEIGHT[5] = float[5](0.2270270270, 0.1945945946, 0.1216216216, 0.0540540541, 0.0162162162);
+  void main() {
+    vec2 step = uDir / iResolution;
+    vec3 sum = texture(uSource, vUV).rgb * WEIGHT[0];
+    for (int i = 1; i < 5; i++) {
+      vec2 o = step * float(i);
+      sum += texture(uSource, vUV + o).rgb * WEIGHT[i];
+      sum += texture(uSource, vUV - o).rgb * WEIGHT[i];
+    }
+    fragColor = vec4(sum, 1.0);
+  }
+`
+
+/**
+ * A resolve source as a shader-texture fragment of your own: `uniform
+ * sampler2D uScene` and the RESOLVE set declared over `source` (default
+ * DEFAULT_RESOLVE), the engine preamble supplying vUV, iResolution and
+ * fragColor. The way an app resolves a buffer the library does not - the
+ * atlas its tiled views (`into`) render linear light into:
+ * `createShaderTexture(resolveFragment(), w, h, resolveParams(opts), {
+ * textures: { uScene: atlas } })`. A shader target validates its params
+ * strictly, so write both uExposure and uToneMapping (resolveParams does).
+ */
+export function resolveFragment(source: string = DEFAULT_RESOLVE): string {
+  return "uniform sampler2D uScene;\n" + RESOLVE + "\n" + source
+}
 
 /**
  * The scene's environment as a reflecting program declares it: `uEnv`
@@ -850,12 +1006,12 @@ export type SceneSourceOptions = {
 /**
  * The scene as a program declares it, in one set: everything a fragment
  * needs to be a citizen of the scene - lit by its lights, shadowed by its
- * casters, reflecting its environment, fogged, exposed, tone mapped and
- * encoded like the stock materials, because the stock materials are
- * built from this very source. It declares `uCamPos`, `uHemiSky` /
- * `uHemiGround`, LIGHT_SLOTS + LIGHT_LOOKUP, the SHADOW trio, the pure
- * light functions (HEMISPHERE, LAMBERT, BLINN_SPECULAR, PBR),
- * ENVIRONMENT, FOG and OUTPUT (per the flags), SURFACE, and exports:
+ * casters, reflecting its environment and fogged like the stock
+ * materials, because the stock materials are built from this very
+ * source. It declares `uCamPos`, `uHemiSky` / `uHemiGround`, LIGHT_SLOTS
+ * + LIGHT_LOOKUP, the SHADOW trio, the pure light functions (HEMISPHERE,
+ * LAMBERT, BLINN_SPECULAR, PBR), ENVIRONMENT and FOG (per the flags),
+ * SURFACE, and exports:
  *
  *   struct SceneLight { vec3 dir; vec3 color; };
  *   SceneLight sceneLight(int i, vec3 position, vec3 normal);
@@ -880,8 +1036,12 @@ export type SceneSourceOptions = {
  * stage carries the world position in.
  *
  * `sceneOutput` is the tail every library fragment ends with: fog over
- * the premultiplied color, then OUTPUT's exposure, tone mapping and
- * encode - the one place a post effect or a scene buffer change lands.
+ * the premultiplied color, clamped at zero, and that is the pixel the
+ * scene buffer holds - LINEAR light, unclamped above (a sun disc of 40
+ * stays 40 in a half-float buffer). Exposure, tone mapping and the sRGB
+ * encode happen once per pixel in the target's resolve pass (RESOLVE),
+ * never in a scene fragment: a fragment that writes fragColor directly
+ * writes linear premultiplied light too.
  *
  *   ${SCENE}
  *   void main() {
@@ -927,12 +1087,11 @@ export function sceneSource(o: SceneSourceOptions = {}): string {
     }
     ${env ? ENVIRONMENT : ""}
     ${fog ? FOG : ""}
-    ${OUTPUT}
     ${lights ? sceneShadeSource(receiveShadow, env) : ""}
 
     vec4 sceneOutput(vec3 rgb, float alpha, vec3 position) {
       ${fog === "additive" ? "rgb = fogAdditive(rgb, position, uCamPos);" : fog ? "rgb = fog(rgb, alpha, position, uCamPos);" : ""}
-      return outputColor(rgb, alpha);
+      return vec4(max(rgb, vec3(0.0)), alpha);
     }
   `
 }

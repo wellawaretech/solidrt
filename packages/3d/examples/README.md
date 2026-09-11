@@ -76,6 +76,17 @@ depends on `@solidrt/3d` (or in-repo from the package directory).
   dielectric, roughness 0 to 1 across; the sun disc bakes at 40x (the
   probe format is half float where the device renders it), so the rough
   metals carry its energy as a broad highlight. Drag to look around.
+- `scene-atlas.tsx` - four `<View3d>` tiled `into` one app-owned atlas
+  (one pass for all four, `bufferFormat()` storage) and resolved once by
+  the app: `resolveFragment()` over a `createShaderTexture` sampling the
+  atlas, `resolveParams` for its tone mapping - the recipe for any buffer
+  the library does not resolve itself.
+- `bloom.tsx` - the stock `bloom` option on sky-lit's scene with the sun
+  in frame (the disc and its mirror images bloom, the sky gradient does
+  not), composed with a custom `resolve` that declares the chain's
+  `uBloom`/`uBloomIntensity`, adds the term and a vignette, and ends in
+  `resolveColor` - the two halves of the resolve slot. Drag to look
+  around.
 - `sprites.tsx` - sprites: a ring of `"full"` billboard glows that stay
   flat to the screen and `"fixed-y"` cutout trees that only yaw toward
   the camera and stay upright as it climbs, both turned in the vertex

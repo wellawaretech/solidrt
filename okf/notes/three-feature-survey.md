@@ -168,11 +168,13 @@ Two items that matter more than the class list:
   declared non-goal there (the window shader and `<texture blendMode>`
   cover that tier), so this entry is not an argument for `EffectComposer`.
   It is the observation that the individual effects have no home either,
-  and that half of them are blocked on the same thing regardless of where
-  they live: we tone map and sRGB-encode in every fragment, so nothing
-  downstream can see radiance
-  ([3d-hdr-scene-buffer](../backlog/3d-hdr-scene-buffer.md), roadmap
-  item 17).
+  and that half of them were blocked on the same thing regardless of
+  where they live: tone mapping and the sRGB encode ran in every
+  fragment, so nothing downstream could see radiance. Unblocked
+  2026-09-11 by the scene buffer and its resolve slot
+  ([3d-hdr-scene-buffer](../done/3d-hdr-scene-buffer.md), roadmap item
+  17): a bloom is a chain over `scene.hdrTexture` and a custom
+  `resolve`.
 - **Draw and triangle introspection** (`renderer.info`): tracked as
   [3d-scene-draw-introspection](../backlog/3d-scene-draw-introspection.md).
 - **WebXR.** Absent entirely. A whole category that deserves an explicit

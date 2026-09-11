@@ -43,7 +43,7 @@ import type { BufferId, DrawId, FilterMode, ProgramId, RenderPipelineId, ShaderP
 import { getOwner, onCleanup } from "@solidrt/core"
 import type { PointerEvent as ElementPointerEvent, WheelEvent as ElementWheelEvent } from "@solidrt/core"
 import { copy, mat4, transformPoint } from "./math.ts"
-import { linearColor } from "./color.ts"
+import { linearColor, premultipliedColor } from "./color.ts"
 import type { Mat4, Quat, Vec3, Vec4 } from "./math.ts"
 import { MAX_LIGHTS, MAX_SHADOW_MAPS } from "./glsl.ts"
 import { cameraParams, cameraState, ensureCamera, makeCamera, updateCamera } from "./camera.ts"
@@ -54,7 +54,9 @@ import { geometryKey, geometryTopology, validateGeometry } from "./geometry.ts"
 import type { Geometry } from "./geometry.ts"
 import { acquireGeometryBuffers, releaseGeometryBuffers } from "./geometry-gpu.ts"
 import { backgroundPipeline, missingAttributes, SKYBOX_FRAGMENT } from "./material.ts"
-import { createEnvironmentPlaceholder, createPrefilter, probeFormat } from "./environment.ts"
+import { disposeResolve, makeResolve, replaceResolve, resizeResolve, setResolveBloom } from "./resolve.ts"
+import type { BloomOptions, ResolveInput, ResolveOptions, ResolveRecord } from "./resolve.ts"
+import { createEnvironmentPlaceholder, createPrefilter, bufferFormat } from "./environment.ts"
 import type { Prefilter } from "./environment.ts"
 import type { Material } from "./material.ts"
 import { orderEntries } from "./order.ts"
@@ -397,19 +399,44 @@ function environmentParams(env: EnvironmentOptions | null): ShaderParams {
   return { uEnvIntensity: k.intensity, uEnvRotation: cubeTurn(k.rotation), uEnvOn: 1 }
 }
 
-/** The output tone mapping (setToneMapping): "none" clamps, "aces" is the
- * filmic curve every engine ships (Three's ACESFilmic, Godot's ACES,
- * Unity's ACES). */
-export type ToneMapping = "none" | "aces"
+export type { BloomOptions, ResolveInput, ResolveOptions } from "./resolve.ts"
 
-// The uToneMapping value per mode; the OUTPUT set branches on it.
-const TONE_MAPPING_CODE: Record<ToneMapping, number> = { none: 0, aces: 1 }
+/** The resolve's tone mapping (setToneMapping): "none" clamps, "aces" is
+ * the filmic curve every engine ships (Three's ACESFilmic, Godot's ACES,
+ * Unity's ACES), "agx" Blender's AgX (Three, Godot 4.3+) and "neutral"
+ * the Khronos PBR Neutral curve (Three, Unity) that keeps product colors
+ * where a filmic curve shifts them. */
+export type ToneMapping = "none" | "aces" | "agx" | "neutral"
+
+// The uToneMapping value per mode; the RESOLVE set branches on it.
+const TONE_MAPPING_CODE: Record<ToneMapping, number> = { none: 0, aces: 1, agx: 2, neutral: 3 }
+
+/** The RESOLVE set's params for a resolve pass of your own (an app-owned
+ * atlas tiled views render into, resolved through `resolveFragment` from
+ * `/glsl`): `uToneMapping` and `uExposure` as the scene's setToneMapping
+ * and setExposure would write them - a shader target validates its
+ * params strictly, so both are always written. */
+export function resolveParams(opts?: { toneMapping?: ToneMapping; exposure?: number }): ShaderParams {
+  let mode = opts?.toneMapping ?? "none"
+  let code = TONE_MAPPING_CODE[mode]
+  if (code === undefined) throw new Error('resolveParams: expected "none", "aces", "agx" or "neutral", got ' + mode)
+  let exposure = opts?.exposure ?? 1
+  if (!Number.isFinite(exposure) || exposure < 0) throw new Error("resolveParams: expected a finite exposure >= 0, got " + exposure)
+  return { uToneMapping: code, uExposure: exposure }
+}
 
 export type SceneOptions = {
-  /** The target's clear, written as given: encoded pixels, untouched by
-   * exposure and tone mapping (a GLSL background or skybox goes through
-   * both). */
+  /** The buffer's clear: an sRGB color like every color option (decoded
+   * to linear light on write), so the backdrop takes the scene's exposure
+   * and tone mapping in the resolve exactly as a background does. */
   clearColor?: [number, number, number, number]
+  /** The resolve fragment (see setResolve), or a function of the buffer
+   * id returning it - the chain over `hdrTexture` is built right there;
+   * absent is DEFAULT_RESOLVE. */
+  resolve?: ResolveInput
+  /** The stock bloom on the resolve; see setBloom. Views follow it
+   * unless they carry a `bloom` of their own. */
+  bloom?: BloomOptions
   /** Scene-wide fog; see setFog. */
   fog?: FogOptions
   /** Output tone mapping, default "none"; see setToneMapping. */
@@ -485,17 +512,29 @@ export type ViewOptions = {
    * "texture" for a sampleable one exposed as `view.depthTexture`. Not
    * with `into` (the depth is the parent's). */
   depth?: true | "texture"
+  /** The view buffer's clear, an sRGB color like the scene's. */
   clearColor?: [number, number, number, number]
   samples?: 1 | 2 | 4 | 8
   filter?: FilterMode
   wrap?: WrapMode
   label?: string
+  /** The view's resolve fragment (see Scene.setResolve), or a function
+   * of the view's buffer id; not with `into` (a tile renders linear into
+   * the atlas, which the app resolves once). */
+  resolve?: ResolveInput
+  /** The view's own bloom: BloomOptions overrides the scene's, null turns
+   * it off in this view (a clean minimap). Absent follows the scene's
+   * setBloom, like `fog`. Not with `into`. */
+  bloom?: BloomOptions | null
   /** Render into a rectangle of this draw target (an app-owned atlas)
    * instead of a target of the view's own: every view into one atlas
    * costs ONE pass. `x`/`y` (top-left origin, default 0) place the tile;
    * display it with `<d-texture src={atlas} srcX srcY srcW srcH>`. The
-   * atlas carries depth and samples; `view.texture` is then the tile's id
-   * (a draw target, not a texture) and `view.depthTexture` is null. */
+   * atlas carries depth, samples and the format; `view.texture` is then
+   * the tile's id (a draw target, not a texture), `view.depthTexture` and
+   * `view.hdrTexture` are null, and the tile holds LINEAR light like every
+   * buffer - resolve the atlas once with a DEFAULT_RESOLVE pass over it
+   * (`uScene` bound to the atlas) and display that. */
   into?: TextureId
   x?: number
   y?: number
@@ -503,11 +542,21 @@ export type ViewOptions = {
 
 /** A second rendering of a scene from its own camera; see Scene.createView. */
 export type ViewHandle = {
-  /** The view's output, an ordinary texture id. */
+  /** The view's output, an ordinary texture id: its resolve (or, tiled,
+   * the tile's id). */
   texture: TextureId
-  /** The view target's depth as a sampler-only texture id when created
+  /** The view's buffer, the linear light its resolve reads (sampler-only;
+   * null for a tiled view). */
+  hdrTexture: TextureId | null
+  /** The view buffer's depth as a sampler-only texture id when created
    * with `depth: "texture"` (the shadow-map input), else null. */
   depthTexture: TextureId | null
+  /** Replace the view's resolve fragment; exactly Scene.setResolve. Throws
+   * on a tiled view. */
+  setResolve(resolve: ResolveInput): void
+  /** The view's own bloom from now on (null = off): the scene's setBloom
+   * skips this view afterwards. Throws on a tiled view. */
+  setBloom(bloom: BloomOptions | null): void
   /** Partial camera update, exactly scene.setCamera. */
   setCamera(update: CameraUpdate): void
   /** Current camera state, exactly scene.camera. */
@@ -612,16 +661,17 @@ const PROBE_FACE_UP: Vec3[] = [
 const PROBE_SIZE = 128
 // A cube face spans a quarter turn.
 const PROBE_FOV = 90
-// The output stage of a cube that holds light rather than display pixels
-// (a probe's faces, a baked sky): no sRGB encode, no tone mapping, unit
-// exposure - so the environment lookups read radiance.
-const LINEAR_OUTPUT: ShaderParams = { uOutputEncode: 0, uToneMapping: TONE_MAPPING_CODE.none, uExposure: 1 }
-
 export type Scene = {
-  /** The scene's output: an ordinary texture id (`<texture src>`). */
+  /** The scene's output: an ordinary texture id (`<texture src>`) - the
+   * resolve of the buffer, encoded display pixels. */
   texture: TextureId
-  /** The scene target's depth as a sampler-only texture id when created
-   * with `depth: "texture"`, else null. */
+  /** The scene's BUFFER: the target the meshes draw into, premultiplied
+   * linear light (half float where the device renders it, see
+   * bufferFormat), sampler-only - the input of a radiance-reading pass (a
+   * bloom chain) whose result a custom resolve adds back in. */
+  hdrTexture: TextureId
+  /** The buffer's depth as a sampler-only texture id when created with
+   * `depth: "texture"`, else null. */
   depthTexture: TextureId | null
   /** The tree root; add(scene.root, node) attaches top-level nodes. */
   root: SceneNode
@@ -698,24 +748,51 @@ export type Scene = {
    */
   setEnvironment(env: EnvironmentOptions | null): void
   /**
-   * The output stage's tone mapping, applied by every library material,
-   * the skybox and a GLSL background that ends with outputColor: "none"
+   * The resolve's tone mapping, applied once per pixel to the buffer -
+   * every material, the background, the clearColor alike: "none"
    * (default) clamps the linear result, "aces" compresses highlights on
-   * the filmic curve. One shared-params write (`uToneMapping`, the OUTPUT
-   * set in `@solidrt/3d/glsl` declares), like Three's
-   * renderer.toneMapping and Godot's Environment tonemap; a custom
-   * fragment that writes fragColor directly is untouched. The clearColor
-   * is not tone mapped: with a curve on, draw the backdrop as a
-   * background.
+   * the filmic curve. One shared-params write (`uToneMapping`, the
+   * RESOLVE set in `@solidrt/3d/glsl` declares), like Three's
+   * renderer.toneMapping and Godot's Environment tonemap.
    */
   setToneMapping(mode: ToneMapping): void
   /**
-   * The output stage's exposure (default 1): the linear result is scaled
-   * by it before tone mapping, so a scene lit in physical-ish units is
-   * brought into range here rather than by dimming every light. One
-   * shared-params write (`uExposure`), like Three's toneMappingExposure.
+   * The resolve's exposure (default 1): the buffer is scaled by it before
+   * tone mapping, so a scene lit in physical-ish units is brought into
+   * range here rather than by dimming every light. One shared-params
+   * write (`uExposure`), like Three's toneMappingExposure.
    */
   setExposure(exposure: number): void
+  /**
+   * Replace the scene's RESOLVE: the one full-screen pass that turns the
+   * buffer (`hdrTexture`, premultiplied linear light) into `texture`
+   * (display pixels) - the place a post effect that needs radiance
+   * lives (Godot's glow sits in its tonemap pass; Three's bloom reads the
+   * HDR render before OutputPass). Fragment GLSL with the shader-target
+   * contract (vUV 0..1 top-left origin, iResolution, fragColor; no
+   * `#version` line means the standard preamble), `uniform sampler2D
+   * uScene` (the buffer) and the RESOLVE set declared: end with
+   * `fragColor = resolveColor(rgb, alpha)` for the scene's exposure, tone
+   * mapping and encode. The object form binds extra textures the source
+   * declares (a bloom chain's result). Any name written through
+   * scene.setParams is readable. The default is DEFAULT_RESOLVE (one
+   * sample through resolveColor). A textures-only change rebinds in
+   * place; a source change recompiles. A function form receives the
+   * buffer id, like the option.
+   */
+  setResolve(resolve: ResolveInput): void
+  /**
+   * The stock bloom, or null for none (default): radiance above
+   * `threshold` (default 1) blurred over `radius` rounds (default 2) at a
+   * quarter of the target's size and added back at `intensity` (default
+   * 0.5) - Godot's glow, Unity's Bloom, Three's UnrealBloomPass. A chain
+   * of small passes per resolving target, re-rendered when the buffer
+   * is; the default resolve composes it, and a custom one does by
+   * declaring `uBloom` / `uBloomIntensity` (start from BLOOM_RESOLVE in
+   * `@solidrt/3d/glsl`). Fans out to every view that has not set a
+   * bloom of its own, like setFog.
+   */
+  setBloom(bloom: BloomOptions | null): void
   /** The LOD quality knob (SceneOptions.lodBias): a multiplier on every
    * measured projected size, for the scene, its views and its shadow
    * tiles. Below 1 switches to far levels sooner. */
@@ -887,9 +964,9 @@ export type Scene = {
    * Bake the background into an environment: a reflection probe at the
    * origin that sees no mesh (layer mask 0), so its six `size` faces
    * (default 128) hold the background alone - the GLSL sky or the skybox,
-   * exactly as the scene draws it, written LINEAR (uOutputEncode 0, no tone mapping, unit exposure,
-   * so a sky ending in outputColor bakes its light; one writing fragColor
-   * raw bakes those bytes as light) - then GGX-prefiltered into the chain
+   * exactly as the scene draws it, LINEAR like every buffer (a sky
+   * fragment writes light, never display pixels) - then GGX-prefiltered
+   * into the chain
    * `standard` samples by roughness: Godot's sky-to-radiance bake, a
    * procedural sky lighting the scene, or a hi-res LDR skybox reduced to
    * an environment. A snapshot: bake again when the sky changed. Returns
@@ -942,6 +1019,14 @@ function entrySeed(material: Material, params: ShaderParams | null): ShaderParam
   return { ...seed, ...material.params, ...params }
 }
 
+// A buffer's clear color: the sRGB option decoded to premultiplied linear
+// light, what the buffer holds and the resolve tone maps.
+function bufferClear(color: [number, number, number, number] | undefined): [number, number, number, number] | undefined {
+  if (color === undefined) return undefined
+  let c = premultipliedColor(color)
+  return [c[0]!, c[1]!, c[2]!, c[3]!]
+}
+
 /**
  * Create a scene rendering into a depth-buffered draw target of the given
  * size. Returns the scene handle; `scene.texture` is the output. Inside a
@@ -956,15 +1041,19 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
   // The scene target's layer mask; shadow views follow it (a mesh the
   // scene cannot see must not darken it).
   let sceneMask = checkMask(opts?.layers ?? 1, "createScene")
+  let label = opts?.label ?? "scene"
+  // `texture` is the scene's BUFFER throughout this file: the draw target
+  // every entry, sink, sort and param write names. The handle's `texture`
+  // is its resolve (below), the displayable id.
   let texture = createDrawTarget(width, height, null, {
     depth: depthMode,
-    clearColor: opts?.clearColor,
-    filter: opts?.filter,
-    wrap: opts?.wrap,
+    format: bufferFormat(),
+    clearColor: bufferClear(opts?.clearColor),
     samples: opts?.samples,
-    label: opts?.label ?? "scene",
+    label,
     autoFree: false,
   })
+  let resolve = makeResolve(texture, width, height, opts?.resolve, { filter: opts?.filter, wrap: opts?.wrap }, label)
   let disposed = false
   let scheduled = false
 
@@ -1192,7 +1281,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
   // light rewrite seeds it on new targets); null binds the placeholder,
   // the scene's own 1x1 black cube.
   let environment: TextureId | null = null
-  let envPlaceholder = createEnvironmentPlaceholder((opts?.label ?? "scene") + "-env-none")
+  let envPlaceholder = createEnvironmentPlaceholder(label + "-env-none")
   let sortEntries = () => {
     orderDirty = false
     let order = orderEntries(meshes, camera.view, background?.entries.get(texture))
@@ -1273,7 +1362,14 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
   // scene (view-space keys from the view's own camera); an overridden
   // view is not sorted at all.
   type ViewRecord = {
+    /** The view's BUFFER (a 2D draw target, a tile, or a cube). */
     texture: TextureId
+    /** The view's resolve, the displayable output; null for a shadow
+     * view, a probe and a tile (the atlas is the app's to resolve). */
+    resolve: ResolveRecord | null
+    /** Whether the view set its own bloom (the `bloom` option or
+     * view.setBloom): the scene's setBloom then skips it. */
+    ownBloom: boolean
     width: number
     height: number
     override: Material | null
@@ -1312,6 +1408,9 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
   let views: ViewRecord[] = []
   // Every name scene.setParams has merged so far, replayed on a new view.
   let sceneParams: ShaderParams = {}
+  // The scene's bloom (setBloom), applied to every resolving view that
+  // has not set its own.
+  let sceneBloom: BloomOptions | null = null
   // Every target a receiving material can draw into: the scene's and each
   // view's but the shadow views (binding a target's own depth into it
   // would be same-pass feedback).
@@ -1425,6 +1524,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     spatial.setLodView(v.texture, null)
     // Drain the zeroed direction slots while the target still exists.
     spatial.flush()
+    if (v.resolve !== null) disposeResolve(v.resolve)
     destroyTexture(v.texture)
     let i = views.indexOf(v)
     if (i >= 0) views.splice(i, 1)
@@ -1467,32 +1567,41 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       for (let mesh of meshes) if (mesh._instances === null) checkLayout(override, mesh.geometry, "View override material")
     }
     let tiled = vopts.into !== undefined
+    if (tiled && vopts.resolve !== undefined) throw new Error("createView: a tiled view (into) has no resolve of its own - resolve the atlas")
+    if (tiled && vopts.bloom !== undefined) throw new Error("createView: a tiled view (into) has no resolve to bloom on - resolve the atlas")
+    let viewLabel = vopts.label ?? label + (cube !== null ? "-probe" : "-view")
+    let buffer =
+      cube !== null
+        ? createCubeDrawTarget(cube, null, {
+            depth: true,
+            // The prefilter reads the faces at the lod of each sample's
+            // solid angle: a generated chain, refreshed per face render.
+            mipmap,
+            format: bufferFormat(),
+            clearColor: bufferClear(vopts.clearColor),
+            label: viewLabel,
+            autoFree: false,
+          })
+        : createDrawTarget(vopts.width, vopts.height, null, {
+            depth: tiled ? undefined : (vopts.depth ?? true),
+            format: tiled ? undefined : bufferFormat(),
+            clearColor: bufferClear(vopts.clearColor),
+            samples: vopts.samples,
+            label: viewLabel,
+            autoFree: false,
+            into: vopts.into,
+            x: vopts.x,
+            y: vopts.y,
+          })
     let v: ViewRecord = {
-      texture:
-        cube !== null
-          ? createCubeDrawTarget(cube, null, {
-              depth: true,
-              // The prefilter reads the faces at the lod of each sample's
-              // solid angle: a generated chain, refreshed per face render.
-              mipmap,
-              // Linear radiance, HDR where the device renders half float.
-              format: probeFormat(),
-              clearColor: vopts.clearColor,
-              label: vopts.label ?? (opts?.label ?? "scene") + "-probe",
-              autoFree: false,
-            })
-          : createDrawTarget(vopts.width, vopts.height, null, {
-              depth: tiled ? undefined : (vopts.depth ?? true),
-              clearColor: vopts.clearColor,
-              filter: vopts.filter,
-              wrap: vopts.wrap,
-              samples: vopts.samples,
-              label: vopts.label ?? (opts?.label ?? "scene") + "-view",
-              autoFree: false,
-              into: vopts.into,
-              x: vopts.x,
-              y: vopts.y,
-            }),
+      texture: buffer,
+      // A shadow view is depth only, a probe's faces are read as a cube,
+      // a tile is the atlas's: none of them displays, so none resolves.
+      resolve:
+        cube === null && shadowFilter === null && !tiled
+          ? makeResolve(buffer, vopts.width, vopts.height, vopts.resolve, { filter: vopts.filter, wrap: vopts.wrap }, viewLabel)
+          : null,
+      ownBloom: vopts.bloom !== undefined,
       width: vopts.width,
       height: vopts.height,
       override,
@@ -1522,6 +1631,11 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     if (ownFog !== null) for (let k of Object.keys(ownFog)) v.ownNames.add(k)
     setTargetParams(v.texture, ownFog === null ? sceneParams : withoutNames(sceneParams, v.ownNames))
     if (ownFog !== null) setTargetParams(v.texture, ownFog)
+    if (v.resolve !== null) {
+      setTargetParams(v.resolve.target, sceneParams)
+      let bloom = vopts.bloom !== undefined ? vopts.bloom : sceneBloom
+      if (bloom !== null) setResolveBloom(v.resolve, v.texture, vopts.width, vopts.height, bloom)
+    }
     for (let mesh of meshes) attachView(v, mesh)
     hooks._schedule()
     return v
@@ -1534,7 +1648,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     lights,
     camera,
     targetSize: () => ({ width, height }),
-    label: opts?.label ?? "scene",
+    label,
     makeView,
     disposeView,
     markLightsDirty: () => {
@@ -1969,7 +2083,8 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
   }
 
   let scene: Scene = {
-    texture,
+    texture: resolve.target,
+    hdrTexture: texture,
     depthTexture: depthMode === "texture" ? depthTexture(texture) : null,
     root,
     setCamera(update) {
@@ -1982,6 +2097,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       width = w
       height = h
       setTargetSize(texture, w, h)
+      resizeResolve(resolve, w, h)
       camera.dirty = true
       hooks._schedule()
     },
@@ -1989,12 +2105,14 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       if (disposed) return
       Object.assign(sceneParams, params)
       setTargetParams(texture, params)
+      setTargetParams(resolve.target, params)
       for (let v of views) {
         // A view's own names (view.setParams, its fog) win over the
         // scene-wide fan-out.
         let fanned = v.ownNames.size === 0 ? params : withoutNames(params, v.ownNames)
         if (fanned !== params && Object.keys(fanned).length === 0) continue
         setTargetParams(v.texture, fanned)
+        if (v.resolve !== null) setTargetParams(v.resolve.target, fanned)
       }
     },
     setFog(fog) {
@@ -2049,7 +2167,6 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
         background = null
       }
       if (source === null) return
-      let label = opts?.label ?? "scene"
       let built = sky === null ? backgroundPipeline(source as string, label + "-background") : backgroundPipeline(SKYBOX_FRAGMENT, label + "-skybox")
       background = { pipeline: built.pipeline, program: built.program, sky, entries: new Map() }
       // First in list order on every target that draws it: inserted before
@@ -2069,12 +2186,24 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
     },
     setToneMapping(mode) {
       let code = TONE_MAPPING_CODE[mode]
-      if (code === undefined) throw new Error('scene.setToneMapping: expected "none" or "aces", got ' + mode)
+      if (code === undefined) throw new Error('scene.setToneMapping: expected "none", "aces", "agx" or "neutral", got ' + mode)
       scene.setParams({ uToneMapping: code })
     },
     setExposure(exposure) {
       if (!Number.isFinite(exposure) || exposure < 0) throw new Error("scene.setExposure: expected a finite number >= 0, got " + exposure)
       scene.setParams({ uExposure: exposure })
+    },
+    setResolve(r) {
+      if (disposed) return
+      replaceResolve(resolve, texture, r)
+      hooks._schedule()
+    },
+    setBloom(bloom) {
+      if (disposed) return
+      sceneBloom = bloom
+      setResolveBloom(resolve, texture, width, height, bloom)
+      for (let v of views) if (v.resolve !== null && !v.ownBloom) setResolveBloom(v.resolve, v.texture, v.width, v.height, bloom)
+      hooks._schedule()
     },
     project(point) {
       ensureCamera(camera, width, height)
@@ -2185,7 +2314,8 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       // dispatch with its own capture and hover bookkeeping.
       let viewListeners = new Set<ScenePointerListener>()
       let handle: ViewHandle = {
-        texture: v.texture,
+        texture: v.resolve !== null ? v.resolve.target : v.texture,
+        hdrTexture: v.resolve !== null ? v.texture : null,
         depthTexture: vopts.depth === "texture" && vopts.into === undefined ? depthTexture(v.texture) : null,
         setCamera(update) {
           updateCamera(v.camera, update)
@@ -2197,7 +2327,21 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
           v.width = w
           v.height = h
           setTargetSize(v.texture, w, h)
+          if (v.resolve !== null) resizeResolve(v.resolve, w, h)
           v.camera.dirty = true
+          hooks._schedule()
+        },
+        setResolve(r) {
+          if (v.resolve === null) throw new Error("view.setResolve: a tiled view has no resolve of its own - resolve the atlas")
+          if (v.disposed) return
+          replaceResolve(v.resolve, v.texture, r)
+          hooks._schedule()
+        },
+        setBloom(bloom) {
+          if (v.resolve === null) throw new Error("view.setBloom: a tiled view has no resolve to bloom on - resolve the atlas")
+          if (v.disposed) return
+          v.ownBloom = true
+          setResolveBloom(v.resolve, v.texture, v.width, v.height, bloom)
           hooks._schedule()
         },
         setRect(rect) {
@@ -2213,6 +2357,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
           if (v.disposed) return
           for (let k of Object.keys(params)) v.ownNames.add(k)
           setTargetParams(v.texture, params)
+          if (v.resolve !== null) setTargetParams(v.resolve.target, params)
         },
         setLayers(mask) {
           checkMask(mask, "view.setLayers")
@@ -2265,7 +2410,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       if (!Number.isInteger(size) || size < 1) throw new Error("scene.bakeBackground: size must be a positive integer, got " + size)
       // A probe that sees no mesh (mask 0) draws the background alone: the
       // same face cameras, linear output and prefilter as any probe.
-      let probe = makeProbe({ position: [0, 0, 0], size, label: (opts?.label ?? "scene") + "-sky" }, 0)
+      let probe = makeProbe({ position: [0, 0, 0], size, label: label + "-sky" }, 0)
       probe.update()
       return probe.finish()
     },
@@ -2291,6 +2436,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       // Drain the zeroed direction slots the teardown queued while the
       // targets still exist; afterwards their groups are gone.
       spatial.flush()
+      disposeResolve(resolve)
       destroyTexture(texture)
       for (let v of views.slice()) disposeView(v)
       shadowSys.dispose()
@@ -2329,12 +2475,7 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
       )
       v.camera.mirror = true
       updateCamera(v.camera, { fov: PROBE_FOV, near: popts.near, far: popts.far })
-      // The faces hold LINEAR radiance, untouched by the scene's output
-      // stage: no sRGB encode, no tone mapping, unit exposure - the
-      // probe's own names, so the scene's fan-out leaves them alone.
-      for (let k of Object.keys(LINEAR_OUTPUT)) v.ownNames.add(k)
-      setTargetParams(v.texture, LINEAR_OUTPUT)
-      let chain = prefilter ? createPrefilter(size, v.texture, probeFormat(), (popts.label ?? (opts?.label ?? "scene") + "-probe") + "-chain") : null
+      let chain = prefilter ? createPrefilter(size, v.texture, bufferFormat(), (popts.label ?? label + "-probe") + "-chain") : null
       v.probeCube = chain?.cube ?? v.texture
       let position: Vec3 = [popts.position[0], popts.position[1], popts.position[2]]
       return {
@@ -2374,12 +2515,12 @@ export function createScene(width: number, height: number, opts?: SceneOptions):
   // Likewise the environment set starts at "none" (uEnvOn 0), so a
   // reflective material has coverage before setEnvironment.
   scene.setParams(environmentParams(null))
-  // And the output stage at its defaults (exposure 1, no tone mapping),
-  // which every library fragment declares.
-  scene.setParams({ uExposure: 1, uToneMapping: TONE_MAPPING_CODE.none, uOutputEncode: 1 })
+  // And the resolve at its defaults (exposure 1, no tone mapping).
+  scene.setParams({ uExposure: 1, uToneMapping: TONE_MAPPING_CODE.none })
   if (opts?.fog !== undefined) scene.setFog(opts.fog)
   if (opts?.toneMapping !== undefined) scene.setToneMapping(opts.toneMapping)
   if (opts?.exposure !== undefined) scene.setExposure(opts.exposure)
+  if (opts?.bloom !== undefined) scene.setBloom(opts.bloom)
   if (opts?.background !== undefined) scene.setBackground(opts.background)
   if (opts?.environment !== undefined) scene.setEnvironment(opts.environment)
   if (opts?.autoFree !== false && getOwner()) onCleanup(() => scene.dispose())

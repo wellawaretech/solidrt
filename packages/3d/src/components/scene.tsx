@@ -3,7 +3,7 @@ import type { Element, ParentComponent, PointerFeed, TextureId } from "@solidrt/
 import { SceneContext } from "./context.tsx"
 import { createScene } from "../scene.ts"
 import { feedPointer } from "../scene-pointer.ts"
-import type { EnvironmentOptions, FogOptions, Scene as SceneHandle, SkyboxOptions, ToneMapping } from "../scene.ts"
+import type { BloomOptions, EnvironmentOptions, FogOptions, ResolveInput, Scene as SceneHandle, SkyboxOptions, ToneMapping } from "../scene.ts"
 import type { ScenePointerEvent, SceneTapEvent, SceneWheelEvent } from "../node.ts"
 import type { CameraUpdate } from "../camera.ts"
 
@@ -100,6 +100,16 @@ export type SceneProps = ScenePointerProps & {
    */
   output?: (texture: TextureId) => Element
   /**
+   * The scene's resolve (SceneOptions.resolve): the source, `{ source,
+   * textures }`, or a function of the buffer id `scene.hdrTexture` so a
+   * radiance-reading chain (a bloom) is built over it right there and its
+   * result bound. Fixed at creation, like `output`.
+   */
+  resolve?: ResolveInput
+  /** The stock bloom (scene.setBloom as a prop): `{ threshold?,
+   * intensity?, radius? }`, reactive; undefined turns it off. */
+  bloom?: BloomOptions
+  /**
    * Pointer events (default on): the built-in leaf carries scene.handlers,
    * so nodes, the scene's own handlers and a camera control's feed
    * receive input. `false` detaches them - the leaf then costs no pointer
@@ -165,6 +175,8 @@ export let Scene: ParentComponent<SceneProps> = props => {
       fog: props.fog,
       toneMapping: props.toneMapping,
       exposure: props.exposure,
+      resolve: props.resolve,
+      bloom: props.bloom,
       layers: props.layers,
       stagger: props.stagger,
       onError: e => {
@@ -224,6 +236,11 @@ export let Scene: ParentComponent<SceneProps> = props => {
   createEffect(
     () => props.exposure,
     e => scene.setExposure(e ?? 1),
+    { defer: true },
+  )
+  createEffect(
+    () => props.bloom,
+    b => scene.setBloom(b ?? null),
     { defer: true },
   )
   createEffect(

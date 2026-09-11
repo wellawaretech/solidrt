@@ -6,7 +6,7 @@ import type { ViewHandle, ViewOptions } from "../scene.ts"
 import type { CameraUpdate } from "../camera.ts"
 import type { ScenePointerProps } from "./scene.tsx"
 
-export type View3dProps = Pick<ViewOptions, "clearColor" | "label" | "overrideMaterial" | "fog" | "depth" | "samples" | "filter" | "wrap" | "into"> &
+export type View3dProps = Pick<ViewOptions, "clearColor" | "label" | "overrideMaterial" | "fog" | "depth" | "samples" | "filter" | "wrap" | "into" | "resolve" | "bloom"> &
   ScenePointerProps & {
   /** Target pixels, live: the view resizes, or its tile moves. Fixed
    * only, for now: a fill mode like Scene's is a later, additive step. */
@@ -83,6 +83,8 @@ export let View3d: ParentComponent<View3dProps> = props => {
       filter: props.filter,
       wrap: props.wrap,
       into: props.into,
+      resolve: props.resolve,
+      bloom: props.bloom,
     })
     if (props.camera) v.setCamera(props.camera)
     return v
@@ -105,6 +107,13 @@ export let View3d: ParentComponent<View3dProps> = props => {
   createEffect(
     () => props.layers,
     l => view.setLayers(l ?? 1),
+    { defer: true },
+  )
+  // A bloom prop that changes claims the view's own (undefined = off);
+  // one never given leaves the view following the scene's.
+  createEffect(
+    () => props.bloom,
+    b => view.setBloom(b ?? null),
     { defer: true },
   )
   untrack(() => props.ref)?.(view)

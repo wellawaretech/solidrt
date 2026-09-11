@@ -392,7 +392,7 @@ Where the different internal model helps, beyond parity:
      updated every frame) reads the same ~14.8 ms of GPU per frame at
      half float as at rgba8, 60 fps held (Intel/Mesa, screen saver off).
      Follow-on, its own item:
-     [3d-hdr-scene-buffer](../backlog/3d-hdr-scene-buffer.md); the
+     [3d-hdr-scene-buffer](../done/3d-hdr-scene-buffer.md); the
      additive leftovers of the whole tier:
      [3d-environment-additive](../backlog/3d-environment-additive.md).
 

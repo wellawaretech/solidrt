@@ -151,9 +151,7 @@ what it delivered is documented in `packages/3d/AGENTS.md`, not here.
     [gpu-cube-render-targets](../done/gpu-cube-render-targets.md),
     [gpu-half-float-format](../done/gpu-half-float-format.md). What
     remains is additive - SH9, `aoMap`, a packed .srte payload,
-    `loadCubeImages` - plus the follow-on
-    [3d-hdr-scene-buffer](../backlog/3d-hdr-scene-buffer.md), tracked
-    under item 17. Two settled constraints outlive the work: the cube
+    `loadCubeImages`. Two settled constraints outlive the work: the cube
     convention is "a cube holds what a lookup returns" (no shader flip),
     and a prefilter always writes a second cube, never in place.
 15. [x] **Shadow maps.** Directional, spot and point casters, instanced and
@@ -189,19 +187,18 @@ what it delivered is documented in `packages/3d/AGENTS.md`, not here.
     [animation-core](../done/animation-core.md), not this item
     (clip evaluator DELIVERED 2026-09-03; the crowd tier is open until an
     app pushes it).
-17. [ ] **PBR and the color-space decision.** The color-space half is
-    DECIDED: linear-only lighting inside `@solidrt/3d` (sRGB color options
-    decoded on write, color maps as `rgba8-srgb`, exposure, tone mapping
-    and encode in every library fragment), while the runtime's pixel
+17. [x] **PBR and the color-space decision.** Linear-only lighting, the
+    `standard` material, the HDR asset path and half-float probes
+    ([3d-environment](../done/3d-environment.md)), then the scene buffer
+    and resolve pass
+    ([3d-hdr-scene-buffer](../done/3d-hdr-scene-buffer.md)) - all
+    documented in `packages/3d/AGENTS.md` (Color). The runtime's pixel
     contract stays non-linear RGBA8 with the sRGB and half-float formats
-    as the opt-in decode. The `standard` metalness/roughness material,
-    the HDR asset path and half-float probes shipped with item 14
-    ([3d-environment](../done/3d-environment.md)) and are documented in
-    `packages/3d/AGENTS.md`. What keeps the box open is the scene buffer
-    itself ([3d-hdr-scene-buffer](../backlog/3d-hdr-scene-buffer.md):
-    render the view into half float, tone map once in a resolve pass, so
-    transparency blends in linear space and post effects can see
-    radiance). Additive on demand: SH9, `aoMap`, a packed .srte payload.
+    as the opt-in decode: the library resolves into it. Additive on
+    demand: SH9, `aoMap`, a packed .srte payload
+    ([3d-environment-additive](../backlog/3d-environment-additive.md));
+    the stock bloom and the AgX/Neutral curves sit on the resolve
+    already.
 18. [x] **Scene background.** Deferred within the item: the texture-id form (a
     reserved non-breaking union widening - decide fit semantics when a
     consumer arrives). The boundary with item 14 stands: a camera-linked

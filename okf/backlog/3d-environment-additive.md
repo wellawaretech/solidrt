@@ -26,7 +26,7 @@ consumer today. Pick up when one asks.
 - **`loadCubeImages`**: a Three-style six-face image set is seen from
   inside and must be mirrored per image at load; the helper does that
   once so app code never learns the convention.
-- **Per-probe format override**: probes follow `probeFormat()` (half
+- **Per-probe format override**: probes follow `bufferFormat()` (half
   float where renderable). Unity's per-probe `hdr` toggle is a one-line
   pass-through of the cube draw target's `format` if a probe ever needs
   to be 8-bit on purpose.

@@ -47,7 +47,7 @@ format, a sub-target inherits its parent's. A non-rgba8 2D target follows
 the cube map's rule - never Impeller-adopted, so sampler-only (no
 display, readback, copy) and the raster thread deletes its name.
 Nothing is open here; the HDR scene buffer that this enables is
-[3d-hdr-scene-buffer](../backlog/3d-hdr-scene-buffer.md).
+[3d-hdr-scene-buffer](../done/3d-hdr-scene-buffer.md).
 
 Shape:
 

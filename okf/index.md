@@ -96,12 +96,6 @@ Shaped, not started.
   the chain's rough level, ambient occlusion maps, a smaller environment file,
   EXR input, Three-style face sets, a per-probe format, half-float readback,
   and the probe cost on the low-end devices.
-- **[HDR scene buffer - tone map in a resolve pass](backlog/3d-hdr-scene-buffer.md)** [2026-09-06]
-  A 3d view renders straight into its 8-bit target with exposure, tone mapping
-  and the sRGB encode in every fragment, so transparent meshes blend in
-  encoded space, the clearColor is never tone mapped and no post effect
-  (bloom) can see radiance; Godot and Unity render the scene into a half-float
-  buffer and tone map once, in a final pass.
 - **[Instanced meshes - the additive follow-ups](backlog/3d-instance-additive.md)** [2026-09-06]
   What the instance-citizenship item left as strictly additive work -
   per-instance frustum gating, the transparent sort center from the instances'
@@ -934,6 +928,14 @@ Finished, kept for the reasoning.
   SHADOW_LOOKUP (shadowAt + lightShadow) joined SHADOW_SLOTS and SHADOW in
   @solidrt/3d/glsl on 2026-08-27; lit and the one custom receiver compose it,
   so the sampler if-chain has one generator.
+- **[HDR scene buffer - tone map in a resolve pass](done/3d-hdr-scene-buffer.md)** [2026-09-11]
+  "Done 2026-09-11: every scene and view target is a linear buffer (half float
+  where renderable) plus one resolve pass that exposes, tone maps, dithers and
+  encodes; the per-fragment OUTPUT stage is gone, clearColor is an sRGB color
+  option, probes are buffers without a resolve, and the resolve is the
+  post-effect slot (resolve/setResolve, hdrTexture), with the stock bloom
+  option, the AgX and Neutral curves and the app-resolved atlas recipe landed
+  the same day. Left open: the low-end cost measurement."
 - **[3d instances as spatial arena nodes - the full-matrix record projection](done/3d-instance-citizenship.md)** [2026-09-06]
   An instanced mesh's records are JS-written floats, so native transitions,
   clip players and per-instance picking never reach an instance, while every
@@ -1876,6 +1878,11 @@ Knowledge. No lifecycle - true or wrong, not open or closed.
   A ranked list of what @solidrt/3d still needs to be practically comparable
   to Three.js, ordered by structural leverage first and then by the research
   staging, each entry checked off when the capability is delivered.
+- **[The scene buffer and its resolve - what the measurements said](notes/3d-scene-buffer-resolve.md)** [2026-09-11]
+  Findings from making the linear buffer plus resolve pass the only 3d
+  pipeline - why the resolve is a draw target, the pass cost on the Intel/Mesa
+  laptop, and the bytes that prove linear-space blending, the round trip and
+  the orientation.
 - **[Alloy architecture review](notes/alloy-architecture-review.md)** [2026-09-02]
   Structural review of the alloy crate; macro-architecture is sound, the
   recurring debt is policies held by call-site convention, with a ranked list

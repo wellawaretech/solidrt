@@ -30,8 +30,8 @@ const SUN: Vec3 = normalize([0.6, 0.5, 0.6])
 const BAKE_SIZE = 128
 
 // Horizon gradient (zenith blue to a pale horizon, a dark ground), a sun
-// disc with a glow. Linear colors in, the output stage encodes for the
-// screen and leaves them linear for the bake.
+// disc with a glow, written as linear light: the scene's resolve exposes,
+// tone maps and encodes it for the screen, and the bake stores it as is.
 const SKY = glsl`
   uniform vec3 uSunDir;
   // Cosine of the disc's angular radius (about 2 degrees), the glow's
@@ -50,7 +50,7 @@ const SKY = glsl`
     float s = max(dot(d, uSunDir), 0.0);
     col += vec3(1.0, 0.85, 0.6) * pow(s, SUN_GLOW) * 0.6;
     if (s > SUN_DISC) col = vec3(1.0, 0.87, 0.67) * SUN_RADIANCE;
-    fragColor = outputColor(col, 1.0);
+    fragColor = vec4(col, 1.0);
   }
 `
 

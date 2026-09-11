@@ -147,7 +147,14 @@ sets itself (or its `fog` option, below) become VIEW-OWNED: the
 scene's setParams/setFog fan-out skips them from then on, so a view
 override survives scene-wide writes. A view's backdrop is its
 clearColor (the scene background draws on PROBES, not views); a view
-has no picking. LAYERS select what a target
+has no picking. A view is a buffer plus a resolve like the scene
+(`view.hdrTexture`, `view.texture`, the `resolve` option and
+`view.setResolve` - see Color); a tiled view (`into`) renders LINEAR
+light into the atlas and the app resolves the atlas once: a
+`createShaderTexture` over `resolveFragment()` from `/glsl` (the stock
+source with `uScene` and the RESOLVE set declared) with the atlas bound
+as `uScene` and `resolveParams({ toneMapping, exposure })` as its params
+- `examples/scene-atlas.tsx`. LAYERS select what a target
 draws, Three's model exactly: `layers` on a mesh is its membership
 bitmask (default 1, `setLayers`/the `layers` prop, NOT inherited from
 Groups), and each target carries a mask (default 1) - `layers` on
@@ -539,8 +546,8 @@ collision claims - two copies of this contract have drifted before.
 
 | Component | Props |
 | --- | --- |
-| `Scene` | `width?`, `height?` (target pixels - both, or neither = FILL, below), `clearColor?`, `camera?` (partial CameraUpdate, `ortho` included - the declarative scene.setCamera; same state as `PerspectiveCamera`, use one form; the camera CONTROLS are not a third form - `OrbitCamera`/`FirstPersonCamera` drive position and target only, so `fov`/`near`/`far` come from here even while a control moves the camera, and the default `far` of 100 is what clips a scene in metres), `background?` (fragment GLSL, or a skybox `{ cube, intensity?, rotation? }`), `environment?` (`{ cube, intensity?, rotation? }`, the cube reflective materials mirror), `fog?` (`{ color, near, far }`, linear by camera distance), `toneMapping?` (`"none"` default or `"aces"`), `exposure?` (default 1), `layers?` (target mask, default 1), `depth?` (`"texture"` exposes scene.depthTexture; not with samples), `samples?` (1/2/4/8 MSAA), `label?`, `ref?(scene)`, `output?(texture)`, `events?` (pointer events, default on), `pointer?` (the leaf's pointer feed, fed from the scene's root), `onPointerDown/Move/Up?`, `onWheel?`, `onTap?` (the scene's own handlers, the last stop of the walk - `event.mesh` null over empty space) |
-| `View3d` | a Scene child rendering the scene again from a camera of its own (scene.createView as a component): `width`, `height` (target pixels, live; fixed-size only for now), `x?`, `y?` (the tile's top-left in `into`, live), `into?` (tile an app-owned draw target - one pass for every view into it; fixed at creation), `camera?` (partial CameraUpdate on the view's camera, live; same state as a `PerspectiveCamera` child), `layers?` (the view's mask, live), `clearColor?`, `label?`, `overrideMaterial?`, `fog?` (FogOptions, or null for none), `depth?`, `samples?`, `filter?`, `wrap?` (createView's, fixed), `ref?(view)`, `output?(texture)` (else a built-in `<texture>` leaf at the target size, a tile shown through srcX/srcY), `events?`, `pointer?` (the view leaf's feed, fed from the view's root), `onPointerDown/Move/Up?`, `onWheel?`, `onTap?` (the view's own handlers); camera-control children drive the VIEW (inside, `useScene()` reports the view as `viewport` and the view's feed as `pointer`); node children mount to the scene as outside, and under the view's leaf get their ordinary pointer handlers, picked through the view's camera (`view.pick`), the view as the root of that walk |
+| `Scene` | `width?`, `height?` (target pixels - both, or neither = FILL, below), `clearColor?`, `camera?` (partial CameraUpdate, `ortho` included - the declarative scene.setCamera; same state as `PerspectiveCamera`, use one form; the camera CONTROLS are not a third form - `OrbitCamera`/`FirstPersonCamera` drive position and target only, so `fov`/`near`/`far` come from here even while a control moves the camera, and the default `far` of 100 is what clips a scene in metres), `background?` (fragment GLSL, or a skybox `{ cube, intensity?, rotation? }`), `environment?` (`{ cube, intensity?, rotation? }`, the cube reflective materials mirror), `fog?` (`{ color, near, far }`, linear by camera distance), `toneMapping?` (`"none"` default, `"aces"`, `"agx"` or `"neutral"`), `exposure?` (default 1), `bloom?` (`{ threshold?, intensity?, radius? }`, the stock bloom on the resolve, reactive), `layers?` (target mask, default 1), `depth?` (`"texture"` exposes scene.depthTexture; not with samples), `samples?` (1/2/4/8 MSAA), `label?`, `ref?(scene)`, `output?(texture)`, `resolve?` (the source, `{ source, textures }`, or a function of the buffer id returning either; fixed at creation - see Color), `events?` (pointer events, default on), `pointer?` (the leaf's pointer feed, fed from the scene's root), `onPointerDown/Move/Up?`, `onWheel?`, `onTap?` (the scene's own handlers, the last stop of the walk - `event.mesh` null over empty space) |
+| `View3d` | a Scene child rendering the scene again from a camera of its own (scene.createView as a component): `width`, `height` (target pixels, live; fixed-size only for now), `x?`, `y?` (the tile's top-left in `into`, live), `into?` (tile an app-owned draw target - one pass for every view into it; fixed at creation), `camera?` (partial CameraUpdate on the view's camera, live; same state as a `PerspectiveCamera` child), `layers?` (the view's mask, live), `clearColor?`, `label?`, `overrideMaterial?`, `fog?` (FogOptions, or null for none), `depth?`, `samples?`, `filter?`, `wrap?` (createView's, fixed), `ref?(view)`, `output?(texture)` (else a built-in `<texture>` leaf at the target size, a tile shown through srcX/srcY), `resolve?` (as Scene's; not with `into`), `bloom?` (BloomOptions overrides the scene's, null turns it off in this view, absent follows the scene; not with `into`), `events?`, `pointer?` (the view leaf's feed, fed from the view's root), `onPointerDown/Move/Up?`, `onWheel?`, `onTap?` (the view's own handlers); camera-control children drive the VIEW (inside, `useScene()` reports the view as `viewport` and the view's feed as `pointer`); node children mount to the scene as outside, and under the view's leaf get their ordinary pointer handlers, picked through the view's camera (`view.pick`), the view as the root of that walk |
 | `Group` | `position?`, `rotation?` (Euler radians, XYZ order), `quaternion?` (either, not both), `scale?` (number = uniform), `visible?`, pointer events (below), `ref?(node)` |
 | `Lod` | a Group whose direct children carrying `lodSize` (a prop every node component takes: the projected size below which that child hands over, see Level of detail) are its levels, sorted by size, never by JSX position; plus `fade?` (the cross-fade band fraction, default 0); a child without `lodSize` is drawn always |
 | `InstancedLod` | as InstancedMesh minus `material`, plus `levels` (`[{ geometry, material, size }]` nearest first, fixed at creation; instanced materials as InstancedMesh's), `castShadow?` (every level); `<Instance>` children populate it as under `InstancedMesh`, each drawing the level its own projected size picks |
@@ -562,7 +569,9 @@ a `<d-texture>`, a leaf with blendMode/fit/pointer/layout props, or a
 post-effect chain (`createShaderTarget` sampling the id with a
 covering-triangle pass; created in the callback it disposes with the
 Scene). Return null for no leaf at all and compose `scene.texture`
-elsewhere. Called once, untracked, inside the scene context. Scene
+elsewhere. Called once, untracked, inside the scene context. `output`
+composes the DISPLAYED texture, the resolve's output: an LDR effect
+lives here; one that needs the scene's radiance is a `resolve` (Color). Scene
 `width`/`height` are target pixels and the leaf's own width/height are
 layout, so render and display size separate - render at 2x and display
 smaller for supersampling.
@@ -1090,12 +1099,7 @@ with uViewProj - the specular/fresnel view vector is
 uViewProj rows, that carries the clip flip), `uniform mat4
 uInvViewProj` (the camera's inverse view-projection, shared likewise -
 a clip position back to world, the world-space ray through a pixel
-without knowing the projection), the output stage's `uniform float
-uExposure` / `uToneMapping` (compose `OUTPUT` from `/glsl` and end with
-`fragColor = outputColor(rgb, alpha)` to take the scene's exposure and
-tone mapping and encode like the library materials do; a fragment
-writing fragColor directly writes final encoded pixels) and `uniform
-mat4 uNormal` (the world
+without knowing the projection) and `uniform mat4 uNormal` (the world
 inverse-transpose, written beside uModel for this material's meshes;
 take `mat3(uNormal)` - correct under non-uniform scale, where
 mat3(uModel) bends normals off the surface). Attributes come from the
@@ -1290,11 +1294,10 @@ no separate resize plumbing. Two forms:
   written through `scene.setParams` (an app clock for an animated sky).
   Godot's sky shader and Unity's skybox material are the same idea; the
   radiance bake for environment lighting will consume this same source
-  later, so a procedural sky written here lights the scene then. The
-  preamble declares the OUTPUT set: end with `fragColor =
-  outputColor(rgb, 1.0)` for a sky that takes the scene's exposure and
-  tone mapping (the skybox form does); a direct fragColor write is final
-  encoded pixels.
+  later, so a procedural sky written here lights the scene then. A sky
+  writes LINEAR light to fragColor (the skybox form does) and the
+  scene's resolve exposes, tone maps and encodes it with everything
+  else.
 - A skybox `{ cube, intensity?, rotation? }` (SkyboxOptions): a cube
   map from createCubeTexture sampled along the same ray - Three's
   `scene.background = cubeTexture` with `backgroundIntensity` and
@@ -1408,13 +1411,12 @@ costs ~14 ms of GPU there against ~1 ms for the six face passes: fine at
 probes are the expensive option in every engine (Unity time-slices
 them): update a prefiltered probe when the surroundings changed, or
 every few frames, and keep `prefilter: false` for a probe that must
-refresh every frame on a tight budget. The faces hold LINEAR light (the probe owns
-`uOutputEncode` 0, `uToneMapping` 0 and `uExposure` 1 on its target,
-names the scene's fan-out then skips), HALF FLOAT where the device
+refresh every frame on a tight budget. The faces hold LINEAR light like every buffer (a
+probe is a buffer without a resolve), HALF FLOAT where the device
 renders it (`limits.halfFloatRenderable`, every GLES 3 device here: a
 sun's or an emissive's range survives into the reflection, as in every
 engine's HDR probe) and 8-bit clamped elsewhere - the renderer decides
-for all probes (Godot), not a per-probe knob (`probeFormat()` in
+for every target (Godot), not a per-probe knob (`bufferFormat()` in
 environment.ts) - and the probe never samples its own cube while
 rendering (a black environment stands in: one bounce). The face cameras are plain world-up cameras through an
 x-mirrored projection (`Camera.mirror`), because a GL cube face is seen
@@ -1425,9 +1427,8 @@ passes so cull modes keep their meaning. `examples/probe.tsx`.
 
 Baked sky: `scene.bakeBackground(size?)` is a reflection probe at the
 origin that sees no mesh (layer mask 0): the scene's background - the
-GLSL sky or the skybox - alone on its six faces, LINEAR (a sky ending in
-`outputColor` bakes its light; one writing fragColor raw bakes those
-bytes as light), prefilters it like a probe and returns the chain's
+GLSL sky or the skybox - alone on its six faces, LINEAR (a sky fragment writes light, so the bake stores exactly
+what the backdrop draws), prefilters it like a probe and returns the chain's
 TextureId for `environment={{ cube }}`: Godot's sky-to-radiance bake, so
 a procedural sky lights the scene with no light nodes, and the runtime
 way to turn a hi-res LDR skybox into a properly convolved environment
@@ -1435,8 +1436,8 @@ way to turn a hi-res LDR skybox into a properly convolved environment
 alternative). A snapshot at the probe format (half float where
 renderable; default size 128): bake again when the sky changes, and
 destroy the old cube - it is not auto-freed (an environment normally
-lives as long as the app). `outputColor` leaves linear output UNCLAMPED
-(the clamp sits in the display encode), so a sky's sun disc of 40.0
+lives as long as the app). A buffer is UNCLAMPED (the clamp sits in the
+resolve's encode), so a sky's sun disc of 40.0
 bakes as 40.0 and shows as the broad bright highlight on rough metal
 that HDR is for. A sky that reads
 `uCamPos` bakes from the origin; scene params (an app clock) are seen as
@@ -1499,26 +1500,65 @@ Color: the scene shades in LINEAR light and outputs sRGB, like Three
 (ColorManagement), Godot and Unity's linear space - no gamma mode. Every
 `[r, g, b]` color option is sRGB, what a color picker shows: material
 `color` and `emissive`, light `color`, the hemisphere's `sky`/`ground`,
-fog `color`; the library decodes it when it writes the uniform
-(`srgbToLinear`/`linearColor` are exported for values you write straight
-to a uniform yourself). Color MAPS decode through their format: create a
-base color, emissive or sky image with `format: "rgba8-srgb"`
-(createTexture, createCubeTexture; createModel does it for glTF's base
-color and emissive images) - a plain rgba8 map reads as linear data and
-renders washed out; data maps (normal, specular, roughness, light maps)
-stay rgba8, and an HDR image is "rgba16f". Vertex colors are linear, as
-glTF stores them. Every library fragment ends in the OUTPUT set's
-`outputColor(rgb, alpha)`: exposure (`scene.setExposure`, default 1),
-tone mapping (`scene.setToneMapping("none" | "aces")`, the reactive
-`toneMapping`/`exposure` props) and the sRGB encode, premultiplied. The
-scene target therefore holds encoded pixels like every texture the
-runtime displays; `clearColor` is written as given and is NOT tone
-mapped (with a curve on, draw the backdrop as a background), and a
-transparent mesh blends in encoded space (Three's compromise; the
-hardware-encode alternative would display wrong through the runtime's
-raw sampling). What changed for a scene tuned before this: terminators
-soften, mid-tones brighten, highlights widen - drop ambient rather than
-lights. `emissiveIntensity` scales the emissive in linear light.
+fog `color`, the scene's and a view's `clearColor`; the library decodes
+it when it writes the uniform or the clear (`srgbToLinear`/`linearColor`
+are exported for values you write straight to a uniform yourself). Color
+MAPS decode through their format: create a base color, emissive or sky
+image with `format: "rgba8-srgb"` (createTexture, createCubeTexture;
+createModel does it for glTF's base color and emissive images) - a plain
+rgba8 map reads as linear data and renders washed out; data maps
+(normal, specular, roughness, light maps) stay rgba8, and an HDR image
+is "rgba16f". Vertex colors are linear, as glTF stores them.
+
+Every target is a BUFFER plus a RESOLVE, Godot's and Unity's pipeline:
+the meshes draw into a linear buffer (`scene.hdrTexture` /
+`view.hdrTexture`: premultiplied linear light, half float where the
+device renders it - `limits.halfFloatRenderable`, every GLES 3 device
+here - else rgba8 linear and clamped; the renderer decides, no knob),
+and one full-screen pass, the resolve, writes the displayed rgba8
+`scene.texture`: exposure (`scene.setExposure`, default 1), tone mapping
+(`scene.setToneMapping("none" | "aces" | "agx" | "neutral")` - ACES the
+filmic curve every engine ships, AgX Blender's (Three, Godot 4.3+),
+Neutral the Khronos PBR curve (Three, Unity) that keeps product colors
+where a filmic curve shifts them; the reactive `toneMapping`/`exposure`
+props), then the sRGB encode with an ordered dither against banding,
+premultiplied. So a fragment - stock or custom -
+writes LINEAR light and never encodes (`sceneOutput` is fog only; a
+material has no output stage), a `transparent` mesh blends in linear
+space, the clearColor is tone mapped like a background is, and the
+resolve is an auto target, so a static scene still costs zero passes.
+The resolve is the post-effect slot: `resolve` on createScene/createView
+and the `<Scene>`/`<View3d>` prop - a source, `{ source, textures }`,
+or a function of the buffer id returning either, so a chain over
+`hdrTexture` is built before the resolve compiles - and
+`scene.setResolve` live with the same input. The
+source gets the shader-target contract (vUV, iResolution, fragColor),
+`uniform sampler2D uScene` (the buffer) and the RESOLVE set from `/glsl`
+declared: end with `fragColor = resolveColor(rgb, alpha)`; any
+`scene.setParams` name is readable; `DEFAULT_RESOLVE` is the stock one
+sample. BLOOM is stock: `bloom: { threshold?, intensity?, radius? }` on
+createScene, `scene.setBloom(opts | null)`, the reactive `bloom` prop -
+radiance above `threshold` (default 1, what a fully lit white surface
+reaches) blurred over `radius` rounds (default 2) of a separable blur
+at a quarter of the target's size and added back at `intensity`
+(default 0.5): Godot's glow, Unity's Bloom, Three's UnrealBloomPass. A
+chain of small auto passes per resolving target, re-rendered when the
+buffer is; views follow the scene's bloom unless they carry a `bloom`
+of their own (null = off, a clean minimap), the fog model. The glow is
+light: over a transparent backdrop (a view with no clearColor over UI)
+it still shows, its alpha its own brightness, and an opaque pixel is the
+plain sum. The default resolve composes it; a custom resolve does by declaring `uniform
+sampler2D uBloom; uniform float uBloomIntensity;` and adding the term
+(start from `BLOOM_RESOLVE` in `/glsl`; `examples/bloom.tsx` adds a
+vignette that way). `output` composes the DISPLAYED texture after the
+resolve, the place for an LDR effect (`examples/scene-post-effect.tsx`). Cost: one full-screen pass and
+double the color bandwidth per target, about 0.2 ms per 1080p target on
+an Intel iGPU (21 full-HD targets at once still ran at 36 fps); a
+device that cannot afford it renders a smaller buffer and the leaf
+scales it up. What changed for a scene tuned before linear light:
+terminators soften, mid-tones brighten, highlights widen - drop ambient
+rather than lights. `emissiveIntensity` scales the emissive in linear
+light.
 
 ### Lighting GLSL
 
@@ -1559,9 +1599,9 @@ same constants - customizing never means leaving the system.
 
 ### Custom looks: three tiers
 
-A custom look is a citizen of the scene - lit by its lights, shadowed,
-fogged, exposed and tone mapped like the stock materials - at one of
-three tiers, top first:
+A custom look is a citizen of the scene - lit by its lights, shadowed
+and fogged like the stock materials, exposed and tone mapped by the same
+resolve - at one of three tiers, top first:
 
 1. STANDARD FRAGMENT, CUSTOM VERTEX. Any vertex stage that writes the lit
    varyings (vWorldPos, vNormal, vUv, plus vColor with `vertexColors`,
@@ -1595,18 +1635,19 @@ three tiers, top first:
    surface: a point splat discarding outside `gl_PointCoord`'s inscribed
    circle and flipping a fitted normal towards the viewer keeps the
    scene's whole light model in about fifteen lines, where hand-rolling
-   the light loop (tier 3) would have to match the tone mapping and
-   output encoding by hand.
+   the light loop (tier 3) would have to match every light's falloff,
+   cone and shadow by hand.
 3. A FRAGMENT OF YOUR OWN over the scene set. Compose `SCENE` (or
    `sceneSource({ lights, receiveShadow, env, fog })`, each flag leaving a
    declaration out): it declares uCamPos, uHemiSky/uHemiGround, the
-   light list, the shadow set, the environment, fog and OUTPUT - declare
-   none of them yourself. Build a `Surface` with `surfaceOf(base,
+   light list, the shadow set, the environment and fog - declare none
+   of them yourself. Build a `Surface` with `surfaceOf(base,
    normal)`, set the fields you mean, call `shadeBlinn(s, position)` or
    `shadePbr(s, position)` (premultiplied rgb back: hemisphere, every
    light with its shadow, the environment term, the emissive), add your
    own terms times the alpha, and end with `sceneOutput(rgb, alpha,
-   position)` (fog, exposure, tone mapping, encode). A custom LIGHT MODEL
+   position)` (fog; the pixel is linear light, the resolve exposes, tone
+   maps and encodes it). A custom LIGHT MODEL
    loops `sceneLight(i, position, normal)` to `uLightCount` instead of a
    shade function: light i's direction and its color already attenuated,
    cone-faded and shadowed (zero when it cannot reach). The stock
@@ -2110,9 +2151,11 @@ older bakes are rejected - re-bake with `srt tool 3d/model`.
   custom fragment (no material option yet); a draw target you create
   yourself can be `format: "rgba8-srgb"` and then decodes on sample (it
   is sampler-only: no display, readback or copy).
-- Reading the scene texture back (a probe's readTexture, a snapshot)
-  gives ENCODED pixels: an expected linear value v shows as
-  `linearToSrgb(v) * 255` - intensity 0.5 reads 188, not 128.
+- Reading `scene.texture` back (readTexture, a snapshot) gives ENCODED
+  pixels: an expected linear value v shows as `linearToSrgb(v) * 255` -
+  intensity 0.5 reads 188, not 128. The buffer, `scene.hdrTexture`, is
+  sampler-only (no readback, copy or display): read radiance through a
+  `createShaderTexture` pass over it, scaled into 0..1.
 
 ### Environment and background
 
@@ -2357,9 +2400,9 @@ older bakes are rejected - re-bake with `srt tool 3d/model`.
   however many meshes read it, with the motion itself in vertex shaders
   off that one clock. `params`/`setMeshParams` is the PER-MESH answer and
   is O(meshes) per frame; reach for it only when the value genuinely
-  differs per mesh. (`scene.texture` IS the draw target id, so
-  `setTargetParams(scene.texture, ...)` is the same write - setParams is
-  the sanctioned spelling.)
+  differs per mesh. (`scene.texture` is the RESOLVE's id, not the buffer the meshes
+  draw into, so `setTargetParams(scene.texture, ...)` reaches the
+  resolve alone - setParams is the only spelling.)
 
 ### Shader materials
 
@@ -2390,7 +2433,8 @@ older bakes are rejected - re-bake with `srt tool 3d/model`.
   the material then rejects standard geometry at add(). Do not mention
   aColor you do not read.
 - A custom fragment that ends in `fragColor = vec4(...)` bypasses the
-  scene: no fog, no exposure or tone mapping, no encode - and a
+  scene: no fog (exposure, tone mapping and the encode still happen, in
+  the resolve, so it must write LINEAR premultiplied light) - and a
   hand-rolled loop over `uLightDir` renders a spot light as a
   directional one (a lit rectangle on the floor, no cone). What you
   declare is what runs, and the engine injects nothing, so pick a tier

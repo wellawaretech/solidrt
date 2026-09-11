@@ -60,7 +60,7 @@ import {
   unlitFragment,
   unlitShadowFragment,
   unlitVertex,
-  OUTPUT,
+  resolveFragment,
 } from "./glsl.ts"
 
 export type Material = {
@@ -991,25 +991,25 @@ const BACKGROUND_VERTEX = glsl`
 
 // Pipeline fragments get no vUV from the engine preamble (a pipeline's
 // varyings are its own), so the background slot injects the full
-// shader-target fragment contract itself: vUV, fragColor, iResolution,
-// its own vRay, and the OUTPUT set, so a sky can end with outputColor
-// and take the scene's exposure and tone mapping.
+// shader-target fragment contract itself: vUV, fragColor, iResolution
+// and its own vRay. A sky writes linear light like every scene fragment;
+// the target's resolve exposes, tone maps and encodes it.
 const BACKGROUND_FRAGMENT_PREAMBLE =
-  "#version 300 es\nprecision highp float;\nin vec2 vUV;\nin vec3 vRay;\nout vec4 fragColor;\nuniform vec2 iResolution;\n" + OUTPUT + "\n"
+  "#version 300 es\nprecision highp float;\nin vec2 vUV;\nin vec3 vRay;\nout vec4 fragColor;\nuniform vec2 iResolution;\n"
 
 // The skybox fragment behind setBackground({ cube }): the view ray through
 // the sky's rotation (the INVERSE turn, written by skyboxParams, so the
 // sky itself turns by +rotation like a node would), then the cube lookup
-// times the intensity, through the output
-// stage (the preamble declares it) like every lit pixel. Opaque: the
-// skybox replaces the clearColor exactly as a GLSL background does.
+// times the intensity, written as linear light like every lit pixel.
+// Opaque: the skybox replaces the clearColor exactly as a GLSL
+// background does.
 export const SKYBOX_FRAGMENT = glsl`
   uniform samplerCube uSky;
   uniform float uSkyIntensity;
   uniform mat4 uSkyRotation;
   void main() {
     vec3 dir = mat3(uSkyRotation) * normalize(vRay);
-    fragColor = outputColor(texture(uSky, dir).rgb * uSkyIntensity, 1.0);
+    fragColor = vec4(max(texture(uSky, dir).rgb * uSkyIntensity, vec3(0.0)), 1.0);
   }
 `
 
@@ -1023,6 +1023,35 @@ export function backgroundPipeline(fragment: string, label: string): { pipeline:
     needsHeader(fragment) ? BACKGROUND_FRAGMENT_PREAMBLE + fragment : fragment,
     { header: false },
   )
+  let program = linkProgram(vs, fs, { label })
+  destroyShader(vs)
+  destroyShader(fs)
+  let pipeline = createRenderPipeline(program, { label })
+  return { pipeline, program }
+}
+
+// The resolve pass (a scene's or view's display stage): the attributeless
+// covering triangle emitting the shader-target vUV, over a fragment that
+// samples the scene buffer once and ends in resolveColor.
+const RESOLVE_VERTEX = glsl`
+  out vec2 vUV;
+  void main() {
+    vec2 p = vec2(float((gl_VertexID << 1) & 2), float(gl_VertexID & 2));
+    vUV = p;
+    gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);
+  }
+`
+
+// The resolve fragment's contract, injected like the background's: the
+// shader-target names, then resolveFragment's `uScene` and RESOLVE set.
+const RESOLVE_FRAGMENT_PREAMBLE = "#version 300 es\nprecision highp float;\nin vec2 vUV;\nout vec4 fragColor;\nuniform vec2 iResolution;\n"
+
+/** A target's resolve pipeline (internal - reached via SceneOptions.resolve
+ * and scene.setResolve): depth-free, attributeless, the one entry of the
+ * resolve target. */
+export function resolvePipeline(fragment: string, label: string): { pipeline: RenderPipelineId; program: ProgramId } {
+  let vs = compileShader("vertex", RESOLVE_VERTEX, { header: true })
+  let fs = compileShader("fragment", needsHeader(fragment) ? RESOLVE_FRAGMENT_PREAMBLE + resolveFragment(fragment) : fragment, { header: false })
   let program = linkProgram(vs, fs, { label })
   destroyShader(vs)
   destroyShader(fs)

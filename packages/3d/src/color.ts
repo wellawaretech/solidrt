@@ -4,8 +4,8 @@
 // is sRGB-encoded, what a color picker shows, and the library decodes it to
 // linear light when it writes the uniform (Three's ColorManagement,
 // Godot's inspector colors, Unity's linear color space all do the same).
-// Shading then runs in linear light and the fragment's output stage
-// (OUTPUT in ./glsl) encodes the result back. Values written straight to
+// Shading then runs in linear light into the scene's buffer, and the
+// target's resolve pass (RESOLVE in ./glsl) encodes the result back. Values written straight to
 // a uniform (scene.setParams, setMeshParams) and vertex colors are linear,
 // as in every engine; encode or decode them here when they come from a
 // picker.

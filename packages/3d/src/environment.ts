@@ -262,14 +262,15 @@ export type Prefilter = {
   dispose(): void
 }
 
-/** The format of a rendered radiance cube (a probe's faces, its chain, a
- * baked sky): half float where the device renders it, so the range of a
- * sun or an emissive survives into reflections as in every engine's HDR
- * probe, else 8-bit and clamped - the picture degrades, the app runs. Not
- * a knob: the renderer decides for all probes (Godot), HDR by default
+/** The format of every buffer the scene renders light into - a scene's
+ * or view's buffer, a probe's faces, its chain, a baked sky: half float
+ * where the device renders it, so the range of a sun or an emissive
+ * survives into the resolve and into reflections as in every engine's HDR
+ * path, else 8-bit and clamped - the picture degrades, the app runs. Not
+ * a knob: the renderer decides for every target (Godot), HDR by default
  * (Unity). */
-export type ProbeFormat = "rgba8" | "rgba16f"
-export function probeFormat(): ProbeFormat {
+export type BufferFormat = "rgba8" | "rgba16f"
+export function bufferFormat(): BufferFormat {
   return limits.halfFloatRenderable ? "rgba16f" : "rgba8"
 }
 
@@ -282,7 +283,7 @@ export function probeFormat(): ProbeFormat {
  * convolution, on the same roughness-to-level rule as the .srte chain
  * (levelRoughness), so `standard` reads both alike.
  */
-export function createPrefilter(size: number, source: TextureId, format: ProbeFormat, label: string): Prefilter {
+export function createPrefilter(size: number, source: TextureId, format: BufferFormat, label: string): Prefilter {
   let pass: ReturnType<typeof facePipeline> | null = facePipeline(PREFILTER_FACE, label + "-prefilter")
   let cube = createCubeDrawTarget(size, null, { mipmap: true, format, autoFree: false, label })
   let entry = addDraw(cube, pass.pipeline, { uFace: 0, uRoughness: 0 }, { vertexCount: 3, textures: { uSource: source } })
