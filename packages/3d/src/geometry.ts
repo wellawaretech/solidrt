@@ -1,8 +1,8 @@
 // Geometry: one interleaved vertex buffer described by a layout - an
 // ordered attribute list that starts with the position (float32x3) and
 // may carry any named channels after it, each in one of the vertex formats
-// (the float32 family, halves, normalized and unsigned integers; see
-// VERTEX_FORMATS). The standard prefix (position, normal, uv: 8 floats)
+// (the float32 family, halves, normalized integers, and unsigned and
+// signed integers up to 32 bits; see VERTEX_FORMATS). The standard prefix (position, normal, uv: 8 floats)
 // is what every generator emits and what the stock materials read; a
 // hand-built layout may leave the normal and uv out when nothing reads
 // them, and may pack a channel (a color in unorm8x4 is 4 bytes, not 16).
@@ -13,7 +13,8 @@
 // attributes by name and adapt to whatever layout their geometry carries
 // (one pipeline per layout met), so a geometry may carry more channels
 // than a material reads, and a packed channel feeds the same float `in`
-// as a float one. Indices are uint16 or uint32 (the generators here emit
+// as a float one; an integer channel (uint*/sint*) feeds an integer `in`
+// (uvec*/ivec*) and nothing else, WebGPU's rule. Indices are uint16 or uint32 (the generators here emit
 // uint16; hand-built geometry past 64k vertices uses a Uint32Array and
 // the draw entry follows the array type). Winding is counter-clockwise
 // seen from outside in the y-up world, which the standard camera rig
@@ -65,25 +66,33 @@ const STANDARD_ATTRIBUTES: VertexAttribute[] = [
 export const VERTEX_LAYOUTS: Record<"standard" | "colored" | "skinned", VertexAttribute[]> = {
   standard: STANDARD_ATTRIBUTES,
   colored: [...STANDARD_ATTRIBUTES, { name: "aColor", format: "float32x4" }],
-  // The rigged-model layout: 4 joint indices (as floats - exact to 2^24)
-  // and their weights per vertex, what a skinned vertex stage reads.
-  skinned: [...STANDARD_ATTRIBUTES, { name: "aJoints", format: "float32x4" }, { name: "aWeights", format: "float32x4" }],
+  // The rigged-model layout: 4 joint indices (unsigned bytes, what an
+  // exporter writes for a rig under 256 joints; a wider rig lands in list
+  // form with uint16x4) and their weights per vertex, what a skinned
+  // vertex stage reads (`in uvec4 aJoints`).
+  skinned: [...STANDARD_ATTRIBUTES, { name: "aJoints", format: "uint8x4" }, { name: "aWeights", format: "float32x4" }],
 }
 
 /** Floats per vertex in the "standard" layout (the generators' own write
  * format before packing). */
 export const STANDARD_FLOATS = 8
 
-/** One vertex format's codec: its size, its component count, and the
- * read and write of component `k` of an attribute at byte `at` of a
- * DataView, in the float value the shader sees (a normalized integer
- * decodes to 0..1 / -1..1, an unsigned one to its exact value). Every
- * format is a multiple of 4 bytes (WebGPU's alignment rule), which is
- * what keeps every offset and stride 4-aligned with no padding
+/** The shader `in` family a vertex format feeds (WebGPU's rule: the
+ * format decides): "float" for the float and normalized formats (`in
+ * vec*`), "uint" for uint* (`in uvec*`), "sint" for sint* (`in ivec*`). */
+export type FormatKind = "float" | "uint" | "sint"
+
+/** One vertex format's codec: its size, its component count, its kind,
+ * and the read and write of component `k` of an attribute at byte `at`
+ * of a DataView, in the value the shader sees (a normalized integer
+ * decodes to 0..1 / -1..1, an unnormalized one to its exact value).
+ * Every format is a multiple of 4 bytes (WebGPU's alignment rule), which
+ * is what keeps every offset and stride 4-aligned with no padding
  * arithmetic anywhere. */
 export type FormatCodec = {
   bytes: number
   components: number
+  kind: FormatKind
   get(dv: DataView, at: number, k: number): number
   set(dv: DataView, at: number, k: number, v: number): void
 }
@@ -96,19 +105,28 @@ const U8: IntKind = { bytes: 1, max: 255, get: (dv, at) => dv.getUint8(at), set:
 const S8: IntKind = { bytes: 1, max: 127, get: (dv, at) => dv.getInt8(at), set: (dv, at, v) => dv.setInt8(at, v) }
 const U16: IntKind = { bytes: 2, max: 65535, get: (dv, at) => dv.getUint16(at, true), set: (dv, at, v) => dv.setUint16(at, v, true) }
 const S16: IntKind = { bytes: 2, max: 32767, get: (dv, at) => dv.getInt16(at, true), set: (dv, at, v) => dv.setInt16(at, v, true) }
+const U32: IntKind = { bytes: 4, max: 4294967295, get: (dv, at) => dv.getUint32(at, true), set: (dv, at, v) => dv.setUint32(at, v, true) }
+const S32: IntKind = { bytes: 4, max: 2147483647, get: (dv, at) => dv.getInt32(at, true), set: (dv, at, v) => dv.setInt32(at, v, true) }
 
 function clamp(v: number, lo: number, hi: number): number {
   return v < lo ? lo : v > hi ? hi : v
 }
 
 function floatCodec(components: number, bytes: number, get: (dv: DataView, at: number) => number, set: (dv: DataView, at: number, v: number) => void): FormatCodec {
-  return { bytes: components * bytes, components, get: (dv, at, k) => get(dv, at + k * bytes), set: (dv, at, k, v) => set(dv, at + k * bytes, v) }
+  return {
+    bytes: components * bytes,
+    components,
+    kind: "float",
+    get: (dv, at, k) => get(dv, at + k * bytes),
+    set: (dv, at, k, v) => set(dv, at + k * bytes, v),
+  }
 }
 
 function unormCodec(components: number, int: IntKind): FormatCodec {
   return {
     bytes: components * int.bytes,
     components,
+    kind: "float",
     get: (dv, at, k) => int.get(dv, at + k * int.bytes) / int.max,
     set: (dv, at, k, v) => int.set(dv, at + k * int.bytes, Math.round(clamp(v, 0, 1) * int.max)),
   }
@@ -118,6 +136,7 @@ function snormCodec(components: number, int: IntKind): FormatCodec {
   return {
     bytes: components * int.bytes,
     components,
+    kind: "float",
     get: (dv, at, k) => Math.max(int.get(dv, at + k * int.bytes) / int.max, -1),
     set: (dv, at, k, v) => int.set(dv, at + k * int.bytes, Math.round(clamp(v, -1, 1) * int.max)),
   }
@@ -127,8 +146,19 @@ function uintCodec(components: number, int: IntKind): FormatCodec {
   return {
     bytes: components * int.bytes,
     components,
+    kind: "uint",
     get: (dv, at, k) => int.get(dv, at + k * int.bytes),
     set: (dv, at, k, v) => int.set(dv, at + k * int.bytes, Math.round(clamp(v, 0, int.max))),
+  }
+}
+
+function sintCodec(components: number, int: IntKind): FormatCodec {
+  return {
+    bytes: components * int.bytes,
+    components,
+    kind: "sint",
+    get: (dv, at, k) => int.get(dv, at + k * int.bytes),
+    set: (dv, at, k, v) => int.set(dv, at + k * int.bytes, Math.round(clamp(v, -int.max - 1, int.max))),
   }
 }
 
@@ -139,7 +169,8 @@ let setF16 = (dv: DataView, at: number, v: number) => dv.setFloat16(at, v, true)
 
 /** The vertex vocabulary: one codec per format (the engine's table in
  * the same spelling), so it is also the list a declared format must be
- * one of. Every format feeds a float shader `in` of its component count. */
+ * one of. A format feeds the shader `in` of its kind and component
+ * count (`formatFeeds`). */
 export const VERTEX_FORMATS: Record<VertexFormat, FormatCodec> = {
   float32: floatCodec(1, Float32Array.BYTES_PER_ELEMENT, getF32, setF32),
   float32x2: floatCodec(2, Float32Array.BYTES_PER_ELEMENT, getF32, setF32),
@@ -156,6 +187,27 @@ export const VERTEX_FORMATS: Record<VertexFormat, FormatCodec> = {
   uint8x4: uintCodec(4, U8),
   uint16x2: uintCodec(2, U16),
   uint16x4: uintCodec(4, U16),
+  uint32: uintCodec(1, U32),
+  uint32x2: uintCodec(2, U32),
+  uint32x3: uintCodec(3, U32),
+  uint32x4: uintCodec(4, U32),
+  sint8x4: sintCodec(4, S8),
+  sint16x2: sintCodec(2, S16),
+  sint16x4: sintCodec(4, S16),
+  sint32: sintCodec(1, S32),
+  sint32x2: sintCodec(2, S32),
+  sint32x3: sintCodec(3, S32),
+  sint32x4: sintCodec(4, S32),
+}
+
+/** Whether a layout declaring `declared` may feed a program input the
+ * engine reflects as `reflected` (float32xN for `vec*`, uint32xN for
+ * `uvec*`, sint32xN for `ivec*`): same component count and same kind,
+ * the engine's own pipeline rule. */
+export function formatFeeds(declared: VertexFormat, reflected: VertexFormat): boolean {
+  let d = VERTEX_FORMATS[declared]
+  let r = VERTEX_FORMATS[reflected]
+  return d.components === r.components && d.kind === r.kind
 }
 
 /** Whether a format is one of the float32 family: what a Float32Array

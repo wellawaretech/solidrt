@@ -315,8 +315,8 @@ shape; the flux gpu_split and gpu_order examples were ported.
 
 ## Deferred, as backlog
 
-- okf/backlog/gpu-integer-vertex-inputs.md: integer shader inputs and
-  the 32-bit integer formats.
+- okf/done/gpu-integer-vertex-inputs.md: integer shader inputs and
+  the 32-bit integer formats (done 2026-09-11).
 - okf/backlog/3d-picking-shape-after-update.md: the picking shape does
   not follow updateVertices.
 - okf/backlog/3d-instance-records-as-bytes.md: the 3d package's instance

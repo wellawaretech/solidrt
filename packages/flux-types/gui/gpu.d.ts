@@ -530,11 +530,13 @@ declare module "flux:gpu" {
   /**
    * The vertex attributes a linked program actually reads, as the compiler
    * left them: an `in` the vertex stage never uses is not listed, and a
-   * type no layout can feed (a matrix, an integer vector) is rejected at
-   * linkProgram. The format is the float form the shader declares
-   * (`float32`..`float32x4`); a layout feeds it with any format of the same
-   * component count. This is the list a pipeline over the program must
-   * cover across its buffer layouts. Answered locally, no GPU round trip.
+   * type no layout can feed (a matrix) is rejected at linkProgram. The
+   * format is the 32-bit form of the family the shader declares
+   * (`float32`..`float32x4` for `float`/`vec*`, `uint32`.. for `uint`/
+   * `uvec*`, `sint32`.. for `int`/`ivec*`); a layout feeds it with any
+   * format of the same kind and component count. This is the list a
+   * pipeline over the program must cover across its buffer layouts.
+   * Answered locally, no GPU round trip.
    */
   export function programAttributes(program: ProgramId): VertexAttribute[]
   export type Topology = "points" | "lines" | "line-strip" | "triangles" | "triangle-strip"
@@ -584,10 +586,13 @@ declare module "flux:gpu" {
   /**
    * The byte format of one vertex attribute: WebGPU's spelling of the
    * (component type, count, normalized) triple. Every format is a multiple
-   * of 4 bytes, so offsets and strides are 4-aligned by construction. Every
-   * format feeds a FLOAT-typed shader `in` of the same component count:
-   * the fetch converts, mapping `unorm`/`snorm` integers onto 0..1 / -1..1
-   * and passing `uint` integers through as exact floats (joint indices).
+   * of 4 bytes, so offsets and strides are 4-aligned by construction. A
+   * format feeds the shader `in` of its kind and component count, WebGPU's
+   * rule: the float and normalized formats feed a float `in` (`vec4`; the
+   * fetch converts, mapping `unorm`/`snorm` integers onto 0..1 / -1..1),
+   * the `uint*` formats an unsigned integer `in` (`uvec4`) and the `sint*`
+   * formats a signed one (`ivec4`), each exact at every width. A pipeline
+   * whose layout crosses kinds is refused at creation.
    */
   export type VertexFormat =
     | "float32" | "float32x2" | "float32x3" | "float32x4"
@@ -595,6 +600,9 @@ declare module "flux:gpu" {
     | "unorm8x4" | "snorm8x4"
     | "unorm16x2" | "unorm16x4" | "snorm16x2" | "snorm16x4"
     | "uint8x4" | "uint16x2" | "uint16x4"
+    | "uint32" | "uint32x2" | "uint32x3" | "uint32x4"
+    | "sint8x4" | "sint16x2" | "sint16x4"
+    | "sint32" | "sint32x2" | "sint32x3" | "sint32x4"
   /**
    * One attribute of a buffer layout: the vertex-stage `in` it feeds (by
    * name), its byte format, and its byte offset within the record

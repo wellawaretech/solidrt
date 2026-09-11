@@ -28,7 +28,11 @@ const MAGIC = 0x4d545253
 // Version 6 spells attribute formats in the WebGPU vocabulary
 // (float32x3, unorm8x4, ...) and counts vertices in bytes, so a part may
 // carry packed channels; a version-5 file's "vec3" words do not parse.
-const VERSION = 6
+// Version 7 changes the named "skinned" layout's joints from float32x4 to
+// uint8x4 (an integer shader input), so a version-6 skinned part would
+// decode at the wrong stride; it is rejected. Re-bake with `srt tool
+// 3d/model`.
+const VERSION = 7
 
 // The named layouts the container writes by name; a custom attribute-list
 // layout (a skinned primitive with COLOR_0, a withAttribute channel) is

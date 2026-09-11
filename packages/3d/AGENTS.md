@@ -332,12 +332,19 @@ starts with `aPos` float32x3 and may carry any named channels after it,
 each in a vertex format. Formats are WebGPU's spelling of (component
 type, count, normalized): the float32 family (`float32` .. `float32x4`),
 `float16x2/x4`, the normalized integers `unorm8x4`, `snorm8x4`,
-`unorm16x2/x4`, `snorm16x2/x4`, and the unsigned integers `uint8x4`,
-`uint16x2/x4` (joint indices); `VERTEX_FORMATS` is the table. Every
-format is a multiple of 4 bytes, so offsets and strides are 4-aligned by
-construction, and every format feeds a FLOAT shader `in` of its
-component count (the fetch converts: `in vec4 aColor` reads a
-`unorm8x4` as 0..1). The standard prefix `aPos` float32x3 + `aNormal`
+`unorm16x2/x4`, `snorm16x2/x4`, the unsigned integers `uint8x4`,
+`uint16x2/x4`, `uint32` .. `uint32x4` and the signed integers `sint8x4`,
+`sint16x2/x4`, `sint32` .. `sint32x4`; `VERTEX_FORMATS` is the table.
+Every format is a multiple of 4 bytes, so offsets and strides are
+4-aligned by construction. A format feeds the shader `in` of its KIND
+and component count, WebGPU's rule: float and normalized formats feed
+`in vec4` (the fetch converts: `in vec4 aColor` reads a `unorm8x4` as
+0..1), `uint*` formats feed `in uvec4` and `sint*` formats `in ivec4`,
+exact at every width - so a per-vertex id or an index into a wide
+table rides as `uint32` into `in uint aId`, and the "skinned" layout's
+`aJoints` is `uint8x4` into `in uvec4 aJoints`. A layout that crosses
+kinds (`uint8x4` into `in vec4`) is the missing-attribute error at
+add() (`formatFeeds` is the rule). The standard prefix `aPos` float32x3 + `aNormal`
 float32x3 + `aUV` float32x2 is what every generator emits and what the
 stock materials read, not a rule: a hand-built geometry declares what
 it has, so a point cloud may carry `[aPos float32x3, aData float32]` at
@@ -1708,7 +1715,9 @@ index into `images`, `doubleSided`, `transparent` = alphaMode BLEND,
 normal and emissive slots, `metalness`/`roughness` factors and the
 packed `metalnessRoughnessMap` - standard's inputs), `images`
 (the encoded PNG/JPEG bytes, undecoded) and `bounds` (world-space rest
-pose, conservative for parts under rotated nodes). External
+pose: a part's box through its node, a skinned part's per-joint boxes
+through the joints' rest transforms - where the skin places it, armature
+scale included; conservative under rotation). External
 files come through `resolve(uri)` (uri as written, still
 percent-encoded; `gltfExternalUris(bytes)` lists them so an async
 caller can read them first) - for a .gltf AND for a .glb, which is

@@ -6,8 +6,8 @@
 //! validators at the bottom: params, sampler bindings, and draw counts are
 //! checked against reflected/mirrored state where the app made the mistake.
 
-use std::collections::{HashMap, HashSet};
 use crate::gpu::texture::{TextureFormat, TextureShape};
+use std::collections::{HashMap, HashSet};
 
 /// A shader uniform value as supplied from the app: a scalar or a flat
 /// component array. The shader's own declaration decides how components are
@@ -29,15 +29,38 @@ impl ParamValue {
   }
 }
 
+/// The shader `in` family a vertex format feeds: WebGPU's rule, where the
+/// format decides. Float and normalized formats feed a float `in` through
+/// the converting attribute pointer; unnormalized integer formats feed an
+/// integer `in` of their signedness through the integer pointer, exact at
+/// every width. A format never crosses kinds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AttrKind {
+  Float,
+  Uint,
+  Sint,
+}
+
+impl AttrKind {
+  /// The GLSL vector family of this kind, for messages.
+  fn glsl_family(self) -> &'static str {
+    match self {
+      AttrKind::Float => "float/vec*",
+      AttrKind::Uint => "uint/uvec*",
+      AttrKind::Sint => "int/ivec*",
+    }
+  }
+}
+
 /// The byte format of one vertex attribute within an interleaved record:
 /// WebGPU's `GPUVertexFormat` spelling of the (component type, count,
 /// normalized) triple the GL attribute pointer takes. Every format is a
 /// multiple of 4 bytes, so offsets and strides are 4-aligned by
 /// construction and no padding rule exists; that is why the 8-bit formats
-/// come in x4 only and the 16-bit ones in x2 and x4. Every format feeds a
-/// FLOAT-typed shader `in` (the pointer converts on fetch, normalized or
-/// not), so the shader side of the vocabulary stays `float`/`vec2`/`vec3`/
-/// `vec4` and a format matches an `in` by component count.
+/// come in x4 only and the 16-bit ones in x2 and x4. A format matches a
+/// shader `in` by component count and by kind (`AttrKind`): the float
+/// and normalized rows feed `float`/`vec*`, the `uint*` rows `uint`/
+/// `uvec*` and the `sint*` rows `int`/`ivec*`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AttrFormat {
   Float32,
@@ -55,6 +78,17 @@ pub enum AttrFormat {
   Uint8x4,
   Uint16x2,
   Uint16x4,
+  Uint32,
+  Uint32x2,
+  Uint32x3,
+  Uint32x4,
+  Sint8x4,
+  Sint16x2,
+  Sint16x4,
+  Sint32,
+  Sint32x2,
+  Sint32x3,
+  Sint32x4,
 }
 
 /// One row of the format table: the spelling, the component count, the
@@ -65,24 +99,38 @@ struct AttrSpec {
   components: i32,
   gl_type: u32,
   normalized: bool,
+  kind: AttrKind,
 }
 
-const ATTR_FORMATS: [AttrSpec; 15] = [
-  AttrSpec { format: AttrFormat::Float32, name: "float32", components: 1, gl_type: glow::FLOAT, normalized: false },
-  AttrSpec { format: AttrFormat::Float32x2, name: "float32x2", components: 2, gl_type: glow::FLOAT, normalized: false },
-  AttrSpec { format: AttrFormat::Float32x3, name: "float32x3", components: 3, gl_type: glow::FLOAT, normalized: false },
-  AttrSpec { format: AttrFormat::Float32x4, name: "float32x4", components: 4, gl_type: glow::FLOAT, normalized: false },
-  AttrSpec { format: AttrFormat::Float16x2, name: "float16x2", components: 2, gl_type: glow::HALF_FLOAT, normalized: false },
-  AttrSpec { format: AttrFormat::Float16x4, name: "float16x4", components: 4, gl_type: glow::HALF_FLOAT, normalized: false },
-  AttrSpec { format: AttrFormat::Unorm8x4, name: "unorm8x4", components: 4, gl_type: glow::UNSIGNED_BYTE, normalized: true },
-  AttrSpec { format: AttrFormat::Snorm8x4, name: "snorm8x4", components: 4, gl_type: glow::BYTE, normalized: true },
-  AttrSpec { format: AttrFormat::Unorm16x2, name: "unorm16x2", components: 2, gl_type: glow::UNSIGNED_SHORT, normalized: true },
-  AttrSpec { format: AttrFormat::Unorm16x4, name: "unorm16x4", components: 4, gl_type: glow::UNSIGNED_SHORT, normalized: true },
-  AttrSpec { format: AttrFormat::Snorm16x2, name: "snorm16x2", components: 2, gl_type: glow::SHORT, normalized: true },
-  AttrSpec { format: AttrFormat::Snorm16x4, name: "snorm16x4", components: 4, gl_type: glow::SHORT, normalized: true },
-  AttrSpec { format: AttrFormat::Uint8x4, name: "uint8x4", components: 4, gl_type: glow::UNSIGNED_BYTE, normalized: false },
-  AttrSpec { format: AttrFormat::Uint16x2, name: "uint16x2", components: 2, gl_type: glow::UNSIGNED_SHORT, normalized: false },
-  AttrSpec { format: AttrFormat::Uint16x4, name: "uint16x4", components: 4, gl_type: glow::UNSIGNED_SHORT, normalized: false },
+// One row per line: the table reads as a table.
+#[rustfmt::skip]
+const ATTR_FORMATS: [AttrSpec; 26] = [
+  AttrSpec { format: AttrFormat::Float32, name: "float32", components: 1, gl_type: glow::FLOAT, normalized: false, kind: AttrKind::Float },
+  AttrSpec { format: AttrFormat::Float32x2, name: "float32x2", components: 2, gl_type: glow::FLOAT, normalized: false, kind: AttrKind::Float },
+  AttrSpec { format: AttrFormat::Float32x3, name: "float32x3", components: 3, gl_type: glow::FLOAT, normalized: false, kind: AttrKind::Float },
+  AttrSpec { format: AttrFormat::Float32x4, name: "float32x4", components: 4, gl_type: glow::FLOAT, normalized: false, kind: AttrKind::Float },
+  AttrSpec { format: AttrFormat::Float16x2, name: "float16x2", components: 2, gl_type: glow::HALF_FLOAT, normalized: false, kind: AttrKind::Float },
+  AttrSpec { format: AttrFormat::Float16x4, name: "float16x4", components: 4, gl_type: glow::HALF_FLOAT, normalized: false, kind: AttrKind::Float },
+  AttrSpec { format: AttrFormat::Unorm8x4, name: "unorm8x4", components: 4, gl_type: glow::UNSIGNED_BYTE, normalized: true, kind: AttrKind::Float },
+  AttrSpec { format: AttrFormat::Snorm8x4, name: "snorm8x4", components: 4, gl_type: glow::BYTE, normalized: true, kind: AttrKind::Float },
+  AttrSpec { format: AttrFormat::Unorm16x2, name: "unorm16x2", components: 2, gl_type: glow::UNSIGNED_SHORT, normalized: true, kind: AttrKind::Float },
+  AttrSpec { format: AttrFormat::Unorm16x4, name: "unorm16x4", components: 4, gl_type: glow::UNSIGNED_SHORT, normalized: true, kind: AttrKind::Float },
+  AttrSpec { format: AttrFormat::Snorm16x2, name: "snorm16x2", components: 2, gl_type: glow::SHORT, normalized: true, kind: AttrKind::Float },
+  AttrSpec { format: AttrFormat::Snorm16x4, name: "snorm16x4", components: 4, gl_type: glow::SHORT, normalized: true, kind: AttrKind::Float },
+  AttrSpec { format: AttrFormat::Uint8x4, name: "uint8x4", components: 4, gl_type: glow::UNSIGNED_BYTE, normalized: false, kind: AttrKind::Uint },
+  AttrSpec { format: AttrFormat::Uint16x2, name: "uint16x2", components: 2, gl_type: glow::UNSIGNED_SHORT, normalized: false, kind: AttrKind::Uint },
+  AttrSpec { format: AttrFormat::Uint16x4, name: "uint16x4", components: 4, gl_type: glow::UNSIGNED_SHORT, normalized: false, kind: AttrKind::Uint },
+  AttrSpec { format: AttrFormat::Uint32, name: "uint32", components: 1, gl_type: glow::UNSIGNED_INT, normalized: false, kind: AttrKind::Uint },
+  AttrSpec { format: AttrFormat::Uint32x2, name: "uint32x2", components: 2, gl_type: glow::UNSIGNED_INT, normalized: false, kind: AttrKind::Uint },
+  AttrSpec { format: AttrFormat::Uint32x3, name: "uint32x3", components: 3, gl_type: glow::UNSIGNED_INT, normalized: false, kind: AttrKind::Uint },
+  AttrSpec { format: AttrFormat::Uint32x4, name: "uint32x4", components: 4, gl_type: glow::UNSIGNED_INT, normalized: false, kind: AttrKind::Uint },
+  AttrSpec { format: AttrFormat::Sint8x4, name: "sint8x4", components: 4, gl_type: glow::BYTE, normalized: false, kind: AttrKind::Sint },
+  AttrSpec { format: AttrFormat::Sint16x2, name: "sint16x2", components: 2, gl_type: glow::SHORT, normalized: false, kind: AttrKind::Sint },
+  AttrSpec { format: AttrFormat::Sint16x4, name: "sint16x4", components: 4, gl_type: glow::SHORT, normalized: false, kind: AttrKind::Sint },
+  AttrSpec { format: AttrFormat::Sint32, name: "sint32", components: 1, gl_type: glow::INT, normalized: false, kind: AttrKind::Sint },
+  AttrSpec { format: AttrFormat::Sint32x2, name: "sint32x2", components: 2, gl_type: glow::INT, normalized: false, kind: AttrKind::Sint },
+  AttrSpec { format: AttrFormat::Sint32x3, name: "sint32x3", components: 3, gl_type: glow::INT, normalized: false, kind: AttrKind::Sint },
+  AttrSpec { format: AttrFormat::Sint32x4, name: "sint32x4", components: 4, gl_type: glow::INT, normalized: false, kind: AttrKind::Sint },
 ];
 
 impl AttrFormat {
@@ -114,7 +162,7 @@ impl AttrFormat {
   pub fn bytes(self) -> i32 {
     let spec = self.spec();
     let component = match spec.gl_type {
-      glow::FLOAT => 4,
+      glow::FLOAT | glow::UNSIGNED_INT | glow::INT => 4,
       glow::HALF_FLOAT | glow::SHORT | glow::UNSIGNED_SHORT => 2,
       _ => 1,
     };
@@ -131,18 +179,56 @@ impl AttrFormat {
     self.spec().normalized
   }
 
+  /// The shader `in` family this format feeds.
+  pub fn kind(self) -> AttrKind {
+    self.spec().kind
+  }
+
   /// The format of a linked program's active attribute by its GL type: the
-  /// float form the shader declares, which any format of that component
-  /// count may feed. None for types no pipeline layout can feed (matrices,
-  /// integer vectors).
+  /// 32-bit form of the family the shader declares (`vec4` -> float32x4,
+  /// `uvec4` -> uint32x4, `ivec4` -> sint32x4), which any format of that
+  /// kind and component count may feed (`feeds`). None for types no
+  /// pipeline layout can feed (matrices).
   pub fn from_gl(atype: u32) -> Option<Self> {
     Some(match atype {
       glow::FLOAT => AttrFormat::Float32,
       glow::FLOAT_VEC2 => AttrFormat::Float32x2,
       glow::FLOAT_VEC3 => AttrFormat::Float32x3,
       glow::FLOAT_VEC4 => AttrFormat::Float32x4,
+      glow::UNSIGNED_INT => AttrFormat::Uint32,
+      glow::UNSIGNED_INT_VEC2 => AttrFormat::Uint32x2,
+      glow::UNSIGNED_INT_VEC3 => AttrFormat::Uint32x3,
+      glow::UNSIGNED_INT_VEC4 => AttrFormat::Uint32x4,
+      glow::INT => AttrFormat::Sint32,
+      glow::INT_VEC2 => AttrFormat::Sint32x2,
+      glow::INT_VEC3 => AttrFormat::Sint32x3,
+      glow::INT_VEC4 => AttrFormat::Sint32x4,
       _ => return None,
     })
+  }
+
+  /// Whether a buffer layout declaring `self` may feed a program input
+  /// reflected as `reflected` (a `from_gl` form): same component count and
+  /// same kind. Err names the mismatch for the pipeline error.
+  pub fn feeds(self, name: &str, reflected: AttrFormat) -> Result<(), String> {
+    if self.components() != reflected.components() {
+      return Err(format!(
+        "vertex attribute '{name}' is {} in the program but declared as {} ({} components)",
+        reflected.name(),
+        self.name(),
+        self.components()
+      ));
+    }
+    if self.kind() != reflected.kind() {
+      return Err(format!(
+        "vertex attribute '{name}' is {} in the program ({}) but declared as {}, which feeds {} inputs only",
+        reflected.name(),
+        reflected.kind().glsl_family(),
+        self.name(),
+        self.kind().glsl_family()
+      ));
+    }
+    Ok(())
   }
 }
 
@@ -493,7 +579,10 @@ pub fn validate_buffers(buffers: &[BufferLayout]) -> Result<(), String> {
     }
     for attr in &layout.attributes {
       if attr.offset < 0 || attr.offset % 4 != 0 {
-        return Err(format!("attribute '{}' has offset {}; an offset is a non-negative multiple of 4", attr.name, attr.offset));
+        return Err(format!(
+          "attribute '{}' has offset {}; an offset is a non-negative multiple of 4",
+          attr.name, attr.offset
+        ));
       }
       if attr.offset + attr.format.bytes() > layout.stride {
         return Err(format!(
@@ -806,7 +895,9 @@ pub fn validate_binding_shapes(
     if bound.shape != wanted {
       return Err(match wanted {
         TextureShape::Cube => {
-          format!("uniform '{name}' is a samplerCube; texture {id} is a 2D texture (bind a cube map from createCubeTexture)")
+          format!(
+            "uniform '{name}' is a samplerCube; texture {id} is a 2D texture (bind a cube map from createCubeTexture)"
+          )
         }
         TextureShape::D2 => {
           format!("texture {id} is a cube map; uniform '{name}' is a {} (declare it samplerCube)", slot.glsl_name())

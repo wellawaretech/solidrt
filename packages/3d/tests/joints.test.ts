@@ -10,7 +10,8 @@ describe("skinned palette", () => {
     for (let src of [litVertex({ skinned: true }), unlitVertex({ skinned: true })]) {
       expect(src).toContain("uniform sampler2D uBones;")
       expect(src).toContain("texelFetch(uBones")
-      expect(src).toContain("boneAt(int(aJoints.x))")
+      expect(src).toContain("in uvec4 aJoints;")
+      expect(src).toContain("boneAt(aJoints.x)")
       expect(src).not.toContain("uniform mat4 uBones[")
     }
   })

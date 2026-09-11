@@ -113,7 +113,9 @@ export type ModelPart = {
    * aJoints/aWeights for a rigged primitive, aColor for one with COLOR_0
    * (premultiplied linear), each channel in the file's own format when
    * the vertex vocabulary has it (a quantized uv, a byte color, u8/u16
-   * joints) and float otherwise; positions and normals are always float.
+   * joints) and float otherwise - except joints, an integer channel:
+   * an off-spec float JOINTS_0 lands in uint16x4. Positions and normals
+   * are always float.
    * The preset name ("standard", "colored", "skinned") is used when the
    * list equals it. */
   geometry: Geometry
@@ -185,8 +187,11 @@ export type ModelData = {
   /** Encoded image files (PNG/JPEG bytes) the materials' `map` index. */
   images: Uint8Array[]
   /** World-space rest-pose [minX, minY, minZ, maxX, maxY, maxZ] over every
-   * part - each part's local box through its node's composed transform, so
-   * it is conservative (not vertex-tight) for parts under rotated nodes. */
+   * part - each part's local box through its node's composed transform, and
+   * a skinned part's per-joint boxes through the joints' rest transforms
+   * (where the skin places its vertices, armature scale included) - so it
+   * is conservative (not vertex-tight) for parts under rotated nodes and
+   * for skinned parts. */
   bounds: Float32Array
 }
 
@@ -273,8 +278,6 @@ function presetOrList(attrs: VertexAttribute[]): VertexLayout | undefined {
   if (key === layoutKey("skinned")) return "skinned"
   return attrs
 }
-
-const IDENTITY = mat4()
 
 const COMPONENT_BYTES: Record<number, number> = { 5120: 1, 5121: 1, 5122: 2, 5123: 2, 5125: 4, 5126: 4 }
 const TYPE_ELEMENTS: Record<string, number> = { SCALAR: 1, VEC2: 2, VEC3: 3, VEC4: 4, MAT2: 4, MAT3: 9, MAT4: 16 }
@@ -453,7 +456,7 @@ export function parseGltf(bytes: Uint8Array, resolve?: UriResolver): ModelData {
   // part somewhere below it needs the chain (materialize walks ancestors
   // first, so the table stays in pre-order), which is what prunes cameras,
   // lights and unused empties.
-  type PendingNode = { name: string; parent: PendingNode | null; position: Vec3; rotation: Quat; scale: Vec3; index: number | null }
+  type PendingNode = { name: string; parent: PendingNode | null; position: Vec3; rotation: Quat; scale: Vec3; world: Mat4; index: number | null }
   let nodes: ModelNode[] = []
   let materialize = (p: PendingNode): number => {
     if (p.index !== null) return p.index
@@ -466,6 +469,24 @@ export function parseGltf(bytes: Uint8Array, resolve?: UriResolver): ModelData {
   let parts: ModelPart[] = []
   let pendingJointBounds: { skin: number; positions: Float32Array; count: number; joints: Float32Array; weights: Float32Array }[] = []
   let bounds = new Float32Array([Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity])
+  // Grow a bounds box by a local box through a transform: its 8 corners,
+  // conservative under rotation, exact under translation and axis-aligned
+  // scale. An empty box (no vertex grew it) contributes nothing.
+  let growBounds = (into: Float32Array, box: ArrayLike<number>, m: Mat4): void => {
+    if (!(box[0]! <= box[3]!)) return
+    for (let corner = 0; corner < 8; corner++) {
+      let x = corner & 1 ? box[3]! : box[0]!, y = corner & 2 ? box[4]! : box[1]!, z = corner & 4 ? box[5]! : box[2]!
+      let wx = m[0] * x + m[4] * y + m[8] * z + m[12]
+      let wy = m[1] * x + m[5] * y + m[9] * z + m[13]
+      let wz = m[2] * x + m[6] * y + m[10] * z + m[14]
+      if (wx < into[0]!) into[0] = wx
+      if (wy < into[1]!) into[1] = wy
+      if (wz < into[2]!) into[2] = wz
+      if (wx > into[3]!) into[3] = wx
+      if (wy > into[4]!) into[4] = wy
+      if (wz > into[5]!) into[5] = wz
+    }
+  }
 
   let emit = (prim: any, name: string, node: number, world: Mat4, skin: number | null): void => {
     if (prim.attributes?.POSITION === undefined) return
@@ -496,7 +517,8 @@ export function parseGltf(bytes: Uint8Array, resolve?: UriResolver): ModelData {
     }
     // The layout the vertices are written in: the standard prefix (a
     // position is always float; a uv keeps a quantized form), the skin
-    // channels for a skinned primitive in the file's own integer forms,
+    // channels for a skinned primitive in the file's own integer forms
+    // (joints feed an integer `in`, so a float JOINTS_0 narrows to u16),
     // aColor after them for one with COLOR_0 (a VEC3 color widens to four
     // floats: it gains an alpha).
     let attrs: VertexAttribute[] = [
@@ -505,7 +527,7 @@ export function parseGltf(bytes: Uint8Array, resolve?: UriResolver): ModelData {
       { name: "aUV", format: channelFormat(uv?.format ?? null, 2) },
     ]
     if (joints !== null && weights !== null) {
-      attrs.push({ name: "aJoints", format: channelFormat(joints.format, 4) }, { name: "aWeights", format: channelFormat(weights.format, 4) })
+      attrs.push({ name: "aJoints", format: joints.format ?? "uint16x4" }, { name: "aWeights", format: channelFormat(weights.format, 4) })
     }
     if (color !== null) attrs.push({ name: "aColor", format: channelFormat(color.elements === 4 ? color.format : null, 4) })
     let layout = presetOrList(attrs)
@@ -619,29 +641,20 @@ export function parseGltf(bytes: Uint8Array, resolve?: UriResolver): ModelData {
 
     // Model bounds: the part's local box through the node's rest-pose
     // world transform (8 corners - conservative under rotation, exact
-    // under translation and axis-aligned scale). Skinned vertices are
-    // already model-space, so their box goes through identity.
-    let bw = skinned ? IDENTITY : world
-    let lo: Vec3 = [Infinity, Infinity, Infinity]
-    let hi: Vec3 = [-Infinity, -Infinity, -Infinity]
-    for (let i = 0; i < count; i++) {
-      for (let k = 0; k < 3; k++) {
-        let v = writer.pos.get(i, k)
-        if (v < lo[k]!) lo[k] = v
-        if (v > hi[k]!) hi[k] = v
+    // under translation and axis-aligned scale). A skinned part's
+    // vertices are placed by its joints, not its node, so its box is
+    // folded in after the skins exist (growBounds over the joint boxes).
+    if (!skinned) {
+      let lo: Vec3 = [Infinity, Infinity, Infinity]
+      let hi: Vec3 = [-Infinity, -Infinity, -Infinity]
+      for (let i = 0; i < count; i++) {
+        for (let k = 0; k < 3; k++) {
+          let v = writer.pos.get(i, k)
+          if (v < lo[k]!) lo[k] = v
+          if (v > hi[k]!) hi[k] = v
+        }
       }
-    }
-    for (let corner = 0; corner < 8; corner++) {
-      let x = corner & 1 ? hi[0] : lo[0], y = corner & 2 ? hi[1] : lo[1], z = corner & 4 ? hi[2] : lo[2]
-      let wx = bw[0] * x + bw[4] * y + bw[8] * z + bw[12]
-      let wy = bw[1] * x + bw[5] * y + bw[9] * z + bw[13]
-      let wz = bw[2] * x + bw[6] * y + bw[10] * z + bw[14]
-      if (wx < bounds[0]!) bounds[0] = wx
-      if (wy < bounds[1]!) bounds[1] = wy
-      if (wz < bounds[2]!) bounds[2] = wz
-      if (wx > bounds[3]!) bounds[3] = wx
-      if (wy > bounds[4]!) bounds[4] = wy
-      if (wz > bounds[5]!) bounds[5] = wz
+      growBounds(bounds, [lo[0], lo[1], lo[2], hi[0], hi[1], hi[2]], world)
     }
 
     let material = prim.material
@@ -678,7 +691,7 @@ export function parseGltf(bytes: Uint8Array, resolve?: UriResolver): ModelData {
     // winding and bounds match what the runtime will render.
     let world = mat4()
     multiply(world, parentWorld, compose(local, position, rotation, scale))
-    let pending: PendingNode = { name: node.name ?? "node" + index, parent, position, rotation, scale, index: null }
+    let pending: PendingNode = { name: node.name ?? "node" + index, parent, position, rotation, scale, world, index: null }
     pendingByIndex.set(index, pending)
     if (node.mesh !== undefined) {
       let mesh = gltf.meshes[node.mesh]
@@ -729,15 +742,19 @@ export function parseGltf(bytes: Uint8Array, resolve?: UriResolver): ModelData {
     }
   }
   let skinSlots = new Map<number, number>()
+  // Each compact skin's joints' rest-pose world transforms, for the bounds.
+  let skinJointWorlds: Mat4[][] = []
   for (let part of parts) {
     if (part.skin === null) continue
     let slot = skinSlots.get(part.skin)
     if (slot === undefined) {
       let sk = gltf.skins?.[part.skin]
       if (sk === undefined) throw new Error("parseGltf: part '" + part.name + "' names a missing skin " + part.skin)
+      let jointWorlds: Mat4[] = []
       let jointIndices: number[] = (sk.joints ?? []).map((j: number): number => {
         let pending = pendingByIndex.get(j)
         if (pending === undefined) throw new Error("parseGltf: skin joint node " + j + " is not in the scene")
+        jointWorlds.push(pending.world)
         return materialize(pending)
       })
       if (jointIndices.length === 0) throw new Error("parseGltf: skin " + part.skin + " has no joints")
@@ -762,6 +779,7 @@ export function parseGltf(bytes: Uint8Array, resolve?: UriResolver): ModelData {
       let jointBounds = new Float32Array(jointIndices.length * 6)
       for (let j = 0; j < jointIndices.length; j++) jointBounds.set([Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity], j * 6)
       skins.push({ joints: jointIndices, inverseBind, jointBounds })
+      skinJointWorlds.push(jointWorlds)
       skinSlots.set(part.skin, slot)
     }
     part.skin = slot
@@ -770,6 +788,16 @@ export function parseGltf(bytes: Uint8Array, resolve?: UriResolver): ModelData {
     let slot = skinSlots.get(parked.skin)
     if (slot !== undefined) growJointBounds(skins[slot]!, parked.positions, parked.count, parked.joints, parked.weights)
   }
+  // Skinned parts' share of the model bounds: each joint's box (joint
+  // space) through that joint's rest-pose world transform, which is where
+  // the skin places the vertices it influences at rest (a vertex blended
+  // between joints lands inside the union's box). The bind-pose vertex
+  // box itself is not where the part renders once an armature carries a
+  // rotation or a scale.
+  skins.forEach((skin, s) => {
+    let worlds = skinJointWorlds[s]!
+    for (let j = 0; j < skin.joints.length; j++) growBounds(bounds, skin.jointBounds.subarray(j * 6, j * 6 + 6), worlds[j]!)
+  })
 
   // Animations, after the walk so channels can materialize their target
   // nodes (a channel may target a meshless node - a joint, a rig pivot).
@@ -804,7 +832,9 @@ export function parseGltf(bytes: Uint8Array, resolve?: UriResolver): ModelData {
     return { name: clipName, duration, channels }
   })
 
-  if (parts.length === 0) bounds.fill(0)
+  // Nothing grew the box (no parts, or skinned parts whose weights reach
+  // no joint): an empty model sits at the origin.
+  if (!(bounds[0]! <= bounds[3]!)) bounds.fill(0)
   return { nodes, parts, skins, clips, materials, images, bounds }
 }
 

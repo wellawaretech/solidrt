@@ -336,10 +336,9 @@ impl ShaderProgram {
   /// UI-side mirror and call-site validation (see `vocab::UniformTable`),
   /// plus an `Inactive` slot per declared-but-optimized-out name.
   pub fn uniform_table(&self) -> crate::gpu::vocab::UniformTable {
-    let inactive = self
-      .inactive
-      .iter()
-      .map(|name| (name.clone(), crate::gpu::vocab::UniformSlot { kind: crate::gpu::vocab::UniformKind::Inactive, count: 1 }));
+    let inactive = self.inactive.iter().map(|name| {
+      (name.clone(), crate::gpu::vocab::UniformSlot { kind: crate::gpu::vocab::UniformKind::Inactive, count: 1 })
+    });
     self.uniforms.iter().map(|(name, (_, slot))| (name.clone(), *slot)).chain(inactive).collect()
   }
 
@@ -404,8 +403,8 @@ fn reflect_uniforms(
 /// Reflect active vertex attributes. The compiler drops unused `in`s, so
 /// this is exactly the set a pipeline layout must feed. Built-in inputs
 /// (gl_VertexID, gl_InstanceID) are not reported by GL. A type no layout
-/// can express (a matrix or integer attribute) is an error here, at link,
-/// rather than a silent mis-bind at draw.
+/// can express (a matrix attribute) is an error here, at link, rather
+/// than a silent mis-bind at draw.
 fn reflect_attributes(gl: &glow::Context, program: glow::Program) -> Result<crate::gpu::vocab::AttributeTable, String> {
   let mut attributes = Vec::new();
   unsafe {
@@ -417,7 +416,7 @@ fn reflect_attributes(gl: &glow::Context, program: glow::Program) -> Result<crat
         }
         let format = crate::gpu::vocab::AttrFormat::from_gl(a.atype).ok_or_else(|| {
           format!(
-            "vertex attribute '{}' has type {:#x}, which no pipeline layout can feed (use float, vec2, vec3 or vec4)",
+            "vertex attribute '{}' has type {:#x}, which no pipeline layout can feed (use a float, uint or int scalar or vector)",
             a.name, a.atype
           )
         })?;
@@ -485,17 +484,10 @@ impl RenderPipeline {
     let uncovered = program.attributes.iter().find_map(|(name, format)| {
       let found = desc.buffers.iter().flat_map(|b| b.attributes.iter()).find(|a| a.name == *name);
       match found {
-        None => Some(format!(
-          "program reads vertex attribute '{name}' ({}) which no buffer layout declares",
-          format.name()
-        )),
-        Some(declared) if declared.format.components() != format.components() => Some(format!(
-          "vertex attribute '{name}' is {} in the program but declared as {} ({} components)",
-          format.name(),
-          declared.format.name(),
-          declared.format.components()
-        )),
-        Some(_) => None,
+        None => {
+          Some(format!("program reads vertex attribute '{name}' ({}) which no buffer layout declares", format.name()))
+        }
+        Some(declared) => declared.format.feeds(name, *format).err(),
       }
     });
     if let Some(message) = uncovered {

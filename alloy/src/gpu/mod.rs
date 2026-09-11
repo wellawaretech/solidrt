@@ -35,7 +35,7 @@ pub use vocab::merge_bindings;
 pub use vocab::{
   blend_name, buffer_strides, cull_name, parse_blend, parse_cull, resolve_draw_range, validate_buffers,
   validate_draw_range, validate_binding_shapes, validate_order, validate_param_if_declared, validate_params,
-  validate_texture_bindings, AttrFormat, AttributeTable, BlendMode, BoundTexture, BufferBound, BufferIds,
+  validate_texture_bindings, AttrFormat, AttrKind, AttributeTable, BlendMode, BoundTexture, BufferBound, BufferIds,
   BufferLayout, BufferStride, BufferUpdate, CullMode, DepthState, DrawBounds, DrawRange, DrawUpdate, IndexFormat,
   ParamValue, PipelineDesc, ShaderStage, StepMode, TextureBinding, Topology, UniformKind, UniformSlot,
   UniformTable, VertexAttr, MAX_BUFFERS,

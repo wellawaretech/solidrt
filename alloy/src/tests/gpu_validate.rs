@@ -2,9 +2,9 @@ use std::collections::HashMap;
 
 use crate::gpu::{
   check_cube_faces, mip_levels, mip_size, resolve_draw_range, validate_binding_shapes, validate_draw_range,
-  validate_params, validate_texture_bindings, BoundTexture, BufferBound, BufferIds, BufferUpdate, DrawBounds, DrawRange, StepMode,
-  DrawUpdate, GpuLimits, IndexFormat, ParamValue, TextureBinding, TextureFormat, TextureShape, UniformKind,
-  UniformSlot, UniformTable, CUBE_FACES,
+  validate_params, validate_texture_bindings, AttrFormat, AttrKind, BoundTexture, BufferBound, BufferIds, BufferUpdate,
+  DrawBounds, DrawRange, DrawUpdate, GpuLimits, IndexFormat, ParamValue, StepMode, TextureBinding, TextureFormat,
+  TextureShape, UniformKind, UniformSlot, UniformTable, CUBE_FACES,
 };
 
 fn table(entries: &[(&str, UniformKind)]) -> UniformTable {
@@ -370,7 +370,10 @@ fn buffer_layouts_validate_and_bound() {
   use crate::gpu::{buffer_strides, validate_buffers, AttrFormat, BufferLayout, VertexAttr};
   let layouts = vec![
     BufferLayout::vertex(vec![("aPos".to_string(), AttrFormat::Float32x3), ("aUV".to_string(), AttrFormat::Unorm16x2)]),
-    BufferLayout::instance(vec![("iOffset".to_string(), AttrFormat::Float32x2), ("iColor".to_string(), AttrFormat::Unorm8x4)]),
+    BufferLayout::instance(vec![
+      ("iOffset".to_string(), AttrFormat::Float32x2),
+      ("iColor".to_string(), AttrFormat::Unorm8x4),
+    ]),
   ];
   assert_eq!(validate_buffers(&layouts), Ok(()));
   // Packed offsets run in list order; strides are the byte sums.
@@ -398,7 +401,8 @@ fn buffer_layouts_validate_and_bound() {
   let twice = vec![layouts[0].clone(), BufferLayout::vertex(vec![("aPos".to_string(), AttrFormat::Float32x3)])];
   let err = validate_buffers(&twice).expect_err("a name twice must error");
   assert!(err.contains("aPos") && err.contains("twice"), "{err}");
-  let many: Vec<BufferLayout> = (0..9).map(|i| BufferLayout::vertex(vec![(format!("a{i}"), AttrFormat::Float32)])).collect();
+  let many: Vec<BufferLayout> =
+    (0..9).map(|i| BufferLayout::vertex(vec![(format!("a{i}"), AttrFormat::Float32)])).collect();
   let err = validate_buffers(&many).expect_err("past the buffer cap must error");
   assert!(err.contains("at most 8"), "{err}");
   // The draw bound derives from the tightest buffer of each step: two
@@ -458,9 +462,11 @@ fn binding_shapes_reject_cross_shape_both_ways() {
 #[test]
 fn binding_shapes_require_depth_behind_compare_sampler() {
   let t = table(&[("uShadow", UniformKind::Sampler2DShadow)]);
-  let err = validate_binding_shapes(&t, &[TextureBinding::new("uShadow", 1)], lookup).expect_err("color on shadow must error");
+  let err =
+    validate_binding_shapes(&t, &[TextureBinding::new("uShadow", 1)], lookup).expect_err("color on shadow must error");
   assert!(err.contains("sampler2DShadow") && err.contains("depthTexture"), "{err}");
-  let err = validate_binding_shapes(&t, &[TextureBinding::new("uShadow", 2)], lookup).expect_err("cube on shadow must error");
+  let err =
+    validate_binding_shapes(&t, &[TextureBinding::new("uShadow", 2)], lookup).expect_err("cube on shadow must error");
   assert!(err.contains("cube map"), "{err}");
 }
 
@@ -509,4 +515,52 @@ fn cube_faces_base_or_full_chain() {
   short[7] = vec![0u8; 4];
   let err = check_cube_faces(4, &short, rgba).expect_err("a wrong level edge must error");
   assert!(err.contains("face 1 of level 1") && err.contains("expected 16 (2x2 rgba8)"), "{err}");
+}
+
+// The vertex format table: WebGPU's rule that the format decides which
+// shader input family it feeds, checked without a GL context.
+
+fn attr(name: &str) -> AttrFormat {
+  AttrFormat::parse(name).expect(name)
+}
+
+#[test]
+fn attr_formats_feed_their_own_kind() {
+  // A float `in vec4` takes any float or normalized 4-component row.
+  for name in ["float32x4", "float16x4", "unorm8x4", "snorm16x4"] {
+    assert_eq!(attr(name).feeds("aColor", AttrFormat::Float32x4), Ok(()), "{name}");
+  }
+  // An integer `in` takes unnormalized rows of its signedness at any width.
+  for name in ["uint8x4", "uint16x4", "uint32x4"] {
+    assert_eq!(attr(name).feeds("aJoints", AttrFormat::Uint32x4), Ok(()), "{name}");
+  }
+  for name in ["sint8x4", "sint16x4", "sint32x4"] {
+    assert_eq!(attr(name).feeds("aCell", AttrFormat::Sint32x4), Ok(()), "{name}");
+  }
+  assert_eq!(attr("uint32").feeds("aId", AttrFormat::Uint32), Ok(()));
+}
+
+#[test]
+fn attr_formats_never_cross_kinds() {
+  // Unnormalized integers no longer feed a float input.
+  let err = attr("uint8x4").feeds("aJoints", AttrFormat::Float32x4).expect_err("uint into vec4");
+  assert!(err.contains("uint/uvec*"), "{err}");
+  // A float or normalized row cannot feed an integer input.
+  assert!(attr("float32x4").feeds("aJoints", AttrFormat::Uint32x4).is_err());
+  assert!(attr("unorm8x4").feeds("aJoints", AttrFormat::Uint32x4).is_err());
+  // Signedness is part of the kind.
+  assert!(attr("sint32x4").feeds("aJoints", AttrFormat::Uint32x4).is_err());
+  // Component count is checked first.
+  let err = attr("uint32x2").feeds("aId", AttrFormat::Uint32x4).expect_err("count");
+  assert!(err.contains("2 components"), "{err}");
+}
+
+#[test]
+fn attr_format_sizes_follow_component_width() {
+  assert_eq!(attr("uint32x3").bytes(), 12);
+  assert_eq!(attr("sint32").bytes(), 4);
+  assert_eq!(attr("sint16x2").bytes(), 4);
+  assert_eq!(attr("sint8x4").bytes(), 4);
+  assert_eq!(attr("uint32x4").kind(), AttrKind::Uint);
+  assert_eq!(attr("snorm8x4").kind(), AttrKind::Float);
 }

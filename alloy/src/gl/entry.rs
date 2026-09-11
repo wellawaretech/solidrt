@@ -11,7 +11,7 @@ use super::pass::{PassInput, ResolvedDraw};
 use super::program::{RenderPipeline, ShaderProgram};
 use super::storage::{DepthAttachment, Msaa};
 use super::{prev_buffer, prev_vertex_array};
-use crate::gpu::vocab::{BufferLayout, DrawRange, IndexFormat, ParamValue, PipelineDesc, TextureBinding};
+use crate::gpu::vocab::{AttrKind, BufferLayout, DrawRange, IndexFormat, ParamValue, PipelineDesc, TextureBinding};
 
 /// The buffers one draw entry fetches through, resolved from registry ids to
 /// live Rc clones (the raster-side counterpart of `DrawSpec`'s id fields).
@@ -121,7 +121,10 @@ impl MeshState {
   /// entry's program so a comparison-sampler uniform (sampler2DShadow) picks
   /// the comparison sampler per ENTRY - one shared depth binding serves a
   /// comparing receiver and a raw-reading one in the same pass.
-  pub(super) fn resolved_draws(&self, resolve: &dyn Fn(&[TextureBinding], &ShaderProgram) -> Vec<PassInput>) -> Vec<ResolvedDraw<'_>> {
+  pub(super) fn resolved_draws(
+    &self,
+    resolve: &dyn Fn(&[TextureBinding], &ShaderProgram) -> Vec<PassInput>,
+  ) -> Vec<ResolvedDraw<'_>> {
     self
       .entries
       .iter()
@@ -159,7 +162,20 @@ unsafe fn record_layout(gl: &glow::Context, program: &ShaderProgram, layout: &Bu
     if let Some(loc) = gl.get_attrib_location(program.program, &attr.name) {
       let fmt = attr.format;
       gl.enable_vertex_attrib_array(loc);
-      gl.vertex_attrib_pointer_f32(loc, fmt.components(), fmt.gl_type(), fmt.normalized(), layout.stride, attr.offset);
+      // An integer format feeds an integer `in` through the integer
+      // pointer (no conversion); every other format converts to float.
+      if fmt.kind() == AttrKind::Float {
+        gl.vertex_attrib_pointer_f32(
+          loc,
+          fmt.components(),
+          fmt.gl_type(),
+          fmt.normalized(),
+          layout.stride,
+          attr.offset,
+        );
+      } else {
+        gl.vertex_attrib_pointer_i32(loc, fmt.components(), fmt.gl_type(), layout.stride, attr.offset);
+      }
       if divisor != 0 {
         gl.vertex_attrib_divisor(loc, divisor);
       }
@@ -210,7 +226,9 @@ pub(super) fn check_entry_buffers(desc: &PipelineDesc, buffers: &EntryBuffers) -
     return Err(format!("pipeline declares {declared} buffer layout(s) but the entry binds {bound} buffer(s)"));
   }
   if bound > declared {
-    return Err(format!("the entry binds {bound} buffer(s) but the pipeline declares {declared} layout(s); the rest would never be read"));
+    return Err(format!(
+      "the entry binds {bound} buffer(s) but the pipeline declares {declared} layout(s); the rest would never be read"
+    ));
   }
   Ok(())
 }

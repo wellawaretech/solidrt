@@ -390,11 +390,6 @@ Shaped, not started.
   what the runtime fills). Still open - the composition questions - whether
   the fused paths become thin compositions of the raw layer, whether a
   mid-level program shorthand is wanted, and the two-dialect preamble story.
-- **[A vertex stage cannot declare an integer input, so joint indices ride as floats](backlog/gpu-integer-vertex-inputs.md)** [2026-09-11]
-  Program reflection rejects an integer or unsigned `in` at link, every vertex
-  format feeds a float `in` through the pointer's conversion, and the 32-bit
-  integer formats do not exist; a skinned vertex reads `in vec4 aJoints` and
-  casts, and an id or index channel past 2^24 has no exact home.
 - **[Pass counters are whole-frame, so no one target can be blamed](backlog/gpu-per-target-pass-attribution.md)** [2026-09-08]
   get_stats reports gpuPassesPerFrame and gpuPassExecMsPerFrame for the whole
   client, but an app drawing a scene, two views, a shadow atlas and a probe
@@ -1340,6 +1335,11 @@ Finished, kept for the reasoning.
   (field or view-projected depth); slots stay stable, JS never touches the
   order. Settled 2026-08-31 - one API, key mode and materialization
   orthogonal, gather-at-publish default, retained copy opt-in.
+- **[A vertex stage cannot declare an integer input, so joint indices ride as floats](done/gpu-integer-vertex-inputs.md)** [2026-09-11]
+  Program reflection rejects an integer or unsigned `in` at link, every vertex
+  format feeds a float `in` through the pointer's conversion, and the 32-bit
+  integer formats do not exist; a skinned vertex reads `in vec4 aJoints` and
+  casts, and an id or index channel past 2^24 has no exact home.
 - **[GPU object labels and device limits](done/gpu-labels-limits.md)** [2026-07-31]
   Debug labels on every GPU create (surfaced in get_gpu_resources and error
   strings) and a queryable gpu.limits with bounds checks at create, so

@@ -93,7 +93,9 @@ let cubicPosView = pushView(asBytes(cubicPos))
 
 // Skin accessors: every vertex weighted between joints 0 and 1 with
 // weights that sum to 2 (the parser must renormalize to 0.6/0.4), and
-// two inverse binds - identity, and a translate(-1, 0, 0).
+// two inverse binds - identity, and a translate(-1, 0, 0). The float
+// joints accessor is off-spec (JOINTS_0 is u8 or u16) and is what the
+// narrowing check below feeds; "skinny" itself uses the u8 accessor.
 let jointsData = new Float32Array(vertexCount * 4)
 let weightsData = new Float32Array(vertexCount * 4)
 for (let i = 0; i < vertexCount; i++) {
@@ -174,7 +176,7 @@ let document = {
   meshes: [
     { primitives: [{ attributes: { POSITION: 0, NORMAL: 1, TEXCOORD_0: 2 }, indices: 3, material: 0 }] },
     { primitives: [{ attributes: { POSITION: 0 }, indices: 3, material: 1 }] },
-    { primitives: [{ attributes: { POSITION: 0, NORMAL: 1, TEXCOORD_0: 2, JOINTS_0: 10, WEIGHTS_0: 11 }, indices: 3, material: 0 }] },
+    { primitives: [{ attributes: { POSITION: 0, NORMAL: 1, TEXCOORD_0: 2, JOINTS_0: 14, WEIGHTS_0: 11 }, indices: 3, material: 0 }] },
   ],
   accessors: [
     { bufferView: posView, componentType: 5126, count: vertexCount, type: "VEC3", ...bounds(positions, 3) },
@@ -367,19 +369,17 @@ if (skin.joints.join() !== "5,6") fail(`skin joints: ${skin.joints.join()}`)
 if (skin.inverseBind.length !== 32 || !near(skin.inverseBind[28]!, -1)) fail(`skin inverse binds: ${skin.inverseBind.length} floats, [28] = ${skin.inverseBind[28]}`)
 let skinny = model.parts[3]!.geometry
 if (skinny.layout !== "skinned") fail(`skinny layout: ${String(skinny.layout)}`)
-if (skinny.vertices.length !== vertexCount * 16) fail(`skinny stride: ${skinny.vertices.length / vertexCount} floats per vertex`)
+let skinnedStride = layoutStride("skinned")
+if (vertexBytes(skinny.vertices).byteLength !== vertexCount * skinnedStride) {
+  fail(`skinny stride: ${vertexBytes(skinny.vertices).byteLength / vertexCount} bytes per vertex, expected ${skinnedStride}`)
+}
 for (let i = 0; i < vertexCount; i++) {
-  let at = i * 16
-  for (let k = 0; k < 8; k++) {
-    if (!near(skinny.vertices[at + k]!, cube.vertices[i * STANDARD_FLOATS + k]!)) {
-      fail(`skinny: vertex ${i} standard float ${k} differs (node transform baked?)`)
-      break
-    }
+  let standard = [...read(skinny, "aPos", i), ...read(skinny, "aNormal", i), ...read(skinny, "aUV", i)]
+  if (!nearAll(standard, Array.from(cube.vertices.subarray(i * STANDARD_FLOATS, (i + 1) * STANDARD_FLOATS)))) {
+    fail(`skinny: vertex ${i} standard prefix differs (node transform baked?)`)
   }
-  if (skinny.vertices[at + 8] !== 0 || skinny.vertices[at + 9] !== 1) fail(`skinny: vertex ${i} joints ${skinny.vertices[at + 8]},${skinny.vertices[at + 9]}`)
-  if (!near(skinny.vertices[at + 12]!, 0.6) || !near(skinny.vertices[at + 13]!, 0.4)) {
-    fail(`skinny: vertex ${i} weights not renormalized: ${skinny.vertices[at + 12]},${skinny.vertices[at + 13]}`)
-  }
+  if (!nearAll(read(skinny, "aJoints", i), [0, 1, 0, 0])) fail(`skinny: vertex ${i} joints ${read(skinny, "aJoints", i)}`)
+  if (!nearAll(read(skinny, "aWeights", i), [0.6, 0.4, 0, 0])) fail(`skinny: vertex ${i} weights not renormalized: ${read(skinny, "aWeights", i)}`)
   if (i > 2) break
 }
 // Joint boxes: every vertex is weighted to both joints, so joint 0 (an
@@ -489,8 +489,14 @@ if (leaf.alphaMode !== "MASK" || leaf.alphaCutoff !== 0.3 || leaf.transparent) f
 if (cutout.alphaMode !== "MASK" || cutout.alphaCutoff !== 0.5) fail(`cutout default: ${JSON.stringify(cutout)}`)
 if (model.parts[0]!.material !== 0 || model.parts[2]!.material !== 1) fail("parts: material indices")
 
+// The unskinned parts span x -0.5..2.5 (the cube under "shifted" at
+// x 2, "mirrored", "flat"); the skinned part is placed by its joints at
+// rest, not by its node or its bind-pose box: joint 0 ("empty", world
+// (10, 9, 9), identity bind) puts the cube at 9.5..10.5 / 8.5..9.5 /
+// 8.5..9.5 and joint 1 ("tail", world (1, 0, 2), bind translate(-1, 0, 0))
+// at -0.5..0.5 / -0.5..0.5 / 1.5..2.5.
 let b = model.bounds
-if (!(near(b[0]!, -0.5) && near(b[3]!, 2.5) && near(b[1]!, -0.5) && near(b[4]!, 0.5) && near(b[2]!, -0.5) && near(b[5]!, 0.5))) fail(`bounds: ${Array.from(b).join()}`)
+if (!(near(b[0]!, -0.5) && near(b[3]!, 10.5) && near(b[1]!, -0.5) && near(b[4]!, 9.5) && near(b[2]!, -0.5) && near(b[5]!, 9.5))) fail(`bounds: ${Array.from(b).join()}`)
 
 // --- clips and sampling ---------------------------------------------------
 

@@ -41,7 +41,7 @@ import type {
   Topology,
   VertexAttribute,
 } from "@solidrt/core/gpu"
-import { geometryKey, geometryLayouts, geometrySlot, isFloatFormat, VERTEX_FORMATS } from "./geometry.ts"
+import { formatFeeds, geometryKey, geometryLayouts, geometrySlot, isFloatFormat, VERTEX_FORMATS } from "./geometry.ts"
 import type { Geometry } from "./geometry.ts"
 import type { VertexLayout } from "./geometry.ts"
 import { linearColor, premultipliedColor } from "./color.ts"
@@ -940,10 +940,11 @@ export function sprite(opts: SpriteOptions = {}): Material {
 export function missingAttributes(material: Material, geometry: Geometry): VertexAttribute[] {
   let missing: VertexAttribute[] = []
   for (let attr of material.attributes()) {
-    // A format matches a shader `in` by component count: a packed color
-    // feeds `in vec4 aColor` like a float one. Any stream may carry it.
+    // A format matches a shader `in` by component count and kind: a
+    // packed color feeds `in vec4 aColor` like a float one, byte joints
+    // feed `in uvec4 aJoints` like 32-bit ones. Any stream may carry it.
     let slot = geometrySlot(geometry, attr.name)
-    if (slot === null || slot.components !== VERTEX_FORMATS[attr.format].components) missing.push(attr)
+    if (slot === null || !formatFeeds(slot.format, attr.format)) missing.push(attr)
   }
   return missing
 }

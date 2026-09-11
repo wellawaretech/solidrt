@@ -106,7 +106,9 @@ export const INSTANCE_MATRIX = glsl`
  * `normalize(uCamPos - vWorldPos)`.
  */
 /** The skinned-layout declarations a vertex stage splices in: the
- * aJoints/aWeights channels, the `uBones` palette and `mat4 boneAt(int)`.
+ * aJoints (integer input, fed by the layout's uint8x4 or uint16x4 joint
+ * channel) and aWeights channels, the `uBones` palette and `mat4
+ * boneAt(uint)`.
  * The palette is a float texture, not a uniform array, so rig size is
  * bounded only by texture height (>= 2048 everywhere), never by the
  * vertex uniform budget: an rgba32f texture 4 texels wide, one row per
@@ -115,12 +117,13 @@ export const INSTANCE_MATRIX = glsl`
  * skinned mesh). Pair with
  * SKIN_MATRIX in main(). */
 export const SKIN_DECLS = glsl`
-  in vec4 aJoints;
+  in uvec4 aJoints;
   in vec4 aWeights;
   uniform sampler2D uBones;
-  mat4 boneAt(int j) {
-    return mat4(texelFetch(uBones, ivec2(0, j), 0), texelFetch(uBones, ivec2(1, j), 0),
-      texelFetch(uBones, ivec2(2, j), 0), texelFetch(uBones, ivec2(3, j), 0));
+  mat4 boneAt(uint j) {
+    int row = int(j);
+    return mat4(texelFetch(uBones, ivec2(0, row), 0), texelFetch(uBones, ivec2(1, row), 0),
+      texelFetch(uBones, ivec2(2, row), 0), texelFetch(uBones, ivec2(3, row), 0));
   }
 `
 /** The linear-blend skin matrix, spliced into main() after SKIN_DECLS:
@@ -128,8 +131,8 @@ export const SKIN_DECLS = glsl`
  * through `mat3(skin)` - exact for rigid bones, the standard
  * approximation under bone scale. */
 export const SKIN_MATRIX = glsl`
-    mat4 skin = aWeights.x * boneAt(int(aJoints.x)) + aWeights.y * boneAt(int(aJoints.y)) +
-      aWeights.z * boneAt(int(aJoints.z)) + aWeights.w * boneAt(int(aJoints.w));
+    mat4 skin = aWeights.x * boneAt(aJoints.x) + aWeights.y * boneAt(aJoints.y) +
+      aWeights.z * boneAt(aJoints.z) + aWeights.w * boneAt(aJoints.w);
 `
 
 // The per-instance placement, spliced into a vertex stage's position and
