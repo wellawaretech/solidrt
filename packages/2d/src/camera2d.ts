@@ -86,6 +86,7 @@ const ROLL_RATE = 0.5
 /** What a 2d camera drives: anything with the layers' `setCamera`. */
 export type Camera2dTarget = { setCamera(update: CameraUpdate): void }
 
+/** The control's parameters: what set() takes and pose() returns filled. */
 export type Camera2dPose = {
   x?: number
   y?: number
@@ -133,6 +134,9 @@ export type Camera2d = {
   /** The pose as the layers receive it (a fresh object per call): the
    * argument for projectCamera/unprojectCamera. */
   camera(): CameraUpdate
+  /** Pose snapshot - the control's own four values, the shape set() takes
+   * (camera() adds the pivot the layers are told). */
+  pose(): Required<Camera2dPose>
   /** Merge a pose in (clamps apply) and push it. A snap: an x/y/zoom
    * write cancels a glide or fling in flight; rotation alone leaves them
    * running. */
@@ -512,6 +516,7 @@ export function createCamera2d(target: Camera2dTarget | Camera2dTarget[], option
 
   return {
     camera,
+    pose: () => ({ x, y, zoom, rotation }),
     active,
     axes,
     set(pose) {

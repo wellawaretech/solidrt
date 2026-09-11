@@ -62,15 +62,15 @@ function App() {
   }, period / 2)
   setTimeout(() => {
     check(shownIndex(looped[1]!) === 1, "loop advanced to frame 1")
-    check(looping.frame === shownIndex(looped[1]!), "anim.frame matches the sprite's shown frame")
+    check(looping.frame() === shownIndex(looped[1]!), "anim.frame matches the sprite's shown frame")
   }, period * 1.5)
   setTimeout(() => {
     check(shownIndex(looped[2]!) === 0, "loop wrapped back to frame 0 after a full cycle")
     // One-shot: 4 frames at 5fps end at 800ms - long since done here.
     check(shownIndex(shotSprite) === frames.length - 1, "one-shot holds its last frame")
-    check(!shot.playing, "one-shot stopped playing")
+    check(!shot.playing(), "one-shot stopped playing")
     check(ended === 1, `onFinish fired once, got ${ended}`)
-    check(looping.playing, "the looping clip is still playing")
+    check(looping.playing(), "the looping clip is still playing")
     console.log(failures.length === 0 ? "ANIM-OK" : `ANIM-FAIL: ${failures.join("; ")}`)
   }, period * 4.5)
 

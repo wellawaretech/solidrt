@@ -28,10 +28,10 @@ export type AnimationOptions = {
 
 export type SpriteAnimation = {
   /** Current frame index into the clip. */
-  readonly frame: number
+  frame(): number
   /** True while the clock advances: born playing, false after pause() and
    * after a one-shot ends. */
-  readonly playing: boolean
+  playing(): boolean
   /**
    * Attach a sprite: it shows the clip's current frame immediately and
    * steps with the shared clock (every attached sprite shows the SAME
@@ -127,12 +127,8 @@ export function createAnimation(frames: Frame[], fps: number, opts?: AnimationOp
   }
 
   let handle: SpriteAnimation = {
-    get frame() {
-      return current
-    },
-    get playing() {
-      return playing
-    },
+    frame: () => current,
+    playing: () => playing,
     onFinish: undefined,
     add(sprite) {
       if (disposed) throw new Error("createAnimation: add on a disposed animation")

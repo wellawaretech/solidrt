@@ -23,7 +23,7 @@ import { applyCamera, cameraParams, checkCamera, defaultCamera, projectCamera, u
 import type { CameraState, CameraUpdate } from "./camera.ts"
 import { spriteDispatch } from "./dispatch.ts"
 import type { PointerFeed } from "@solidrt/core"
-import type { LayerPointerListener, Sprite, SpriteHandlers } from "./layer.ts"
+import type { LayerPointerListener, Sprite, LayerHandlers } from "./layer.ts"
 import { checkOversample, thrashSentinel } from "./oversample.ts"
 
 export type ViewOptions = {
@@ -51,7 +51,7 @@ export type ViewHandle = {
   texture: TextureId
   /** Element handlers wiring the view's pointer events (sprites, groups
    * and the root listeners); see handlersFor. */
-  handlers: SpriteHandlers
+  handlers: LayerHandlers
   /** View pixels, as created or last set by setSize. */
   readonly width: number
   readonly height: number
@@ -95,7 +95,7 @@ export type ViewHandle = {
    * `handlers`). `layout` is read per event, so a resize-reactive layout
    * just works - @solidrt/3d's handlersFor, one dimension down.
    */
-  handlersFor(layout: () => { width: number; height: number }): SpriteHandlers
+  handlersFor(layout: () => { width: number; height: number }): LayerHandlers
   dispose(): void
 }
 
@@ -199,7 +199,7 @@ export function createViews(deps: ViewDeps): Views {
       if (order !== undefined) ordered = record
       let view: ViewHandle = {
         texture,
-        handlers: undefined as unknown as SpriteHandlers,
+        handlers: undefined as unknown as LayerHandlers,
         get width() {
           return width
         },

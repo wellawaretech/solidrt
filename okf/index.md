@@ -43,12 +43,6 @@ Decided and being worked on now. A plan nobody is working on goes back to backlo
 
 Shaped, not started.
 
-- **[Four names drifted apart between @solidrt/2d and @solidrt/3d after the symmetry passes](backlog/2d-3d-vocabulary-drift.md)** [2026-09-11]
-  The same element-handler type is SpriteHandlers in one package and
-  SceneHandlers in the other, a ray contact is RayHit against Hit, reading a
-  camera control is camera() against pose(), and "is it playing" is a boolean
-  field against a method returning names; each landed separately after the
-  08-31 and 09-06 unison reviews.
 - **[Extrude atlas cells into gutters so a mipmapped sheet does not bleed](backlog/2d-atlas-extrude.md)** [2026-09-07]
   The layer shaders clamp samples into their frame, which stops edge bleed at
   mip level 0, but a mip chain averages blocks that straddle cell edges before
@@ -804,6 +798,12 @@ Shaped, not started.
 
 Finished, kept for the reasoning.
 
+- **[Four names drifted apart between @solidrt/2d and @solidrt/3d after the symmetry passes](done/2d-3d-vocabulary-drift.md)** [2026-09-11]
+  The same element-handler type is SpriteHandlers in one package and
+  SceneHandlers in the other, a ray contact is RayHit against Hit, reading a
+  camera control is camera() against pose(), and "is it playing" is a boolean
+  field against a method returning names; each landed separately after the
+  08-31 and 09-06 unison reviews.
 - **[An inset option on grid and namedFrames for hand-packed atlases without gutters](done/2d-atlas-frame-inset.md)** [2026-09-07]
   Frames addressed as whole-pixel rects that share an edge bleed a one-texel
   line of the neighbouring cell on the odd frame of any fractional motion; the

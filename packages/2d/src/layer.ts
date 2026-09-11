@@ -341,7 +341,9 @@ export type LayerPointerListener = {
   onTap?: (event: LayerTapEvent) => void
 }
 
-export type SpriteHandlers = {
+/** The element handlers for the leaf that shows a view (`ViewHandle.handlers`);
+ * spread onto the host element. */
+export type LayerHandlers = {
   onPointerDown: (event: ElementPointerEvent) => void
   onPointerMove: (event: ElementPointerEvent) => void
   onPointerUp: (event: ElementPointerEvent) => void
@@ -533,7 +535,7 @@ export type QueryOptions = {
 
 /** One sprite a raycast() ray strikes: the distance along the ray, the
  * point on the sprite's edge and the unit edge normal facing the ray. */
-export type RayHit = { sprite: Sprite; distance: number; point: [number, number]; normal: [number, number] }
+export type Hit = { sprite: Sprite; distance: number; point: [number, number]; normal: [number, number] }
 
 /** One sprite an overlap() volume touches: its deepest contact - the
  * point on the sprite's edge, the unit direction out of the sprite, and
@@ -598,7 +600,7 @@ export type SpriteLayer = LayerBase & {
    * Reads the index as of the last flush, the pending batch run first,
    * like pick.
    */
-  raycast(x: number, y: number, dx: number, dy: number, opts?: QueryOptions): RayHit[]
+  raycast(x: number, y: number, dx: number, dy: number, opts?: QueryOptions): Hit[]
   /**
    * Every shown sprite the volume touches, each with its deepest contact
    * (Godot's intersect_shape, Unity's OverlapCircle/Box/Capsule: a blast
@@ -918,7 +920,7 @@ export function createSpriteLayer(atlas: TextureId, opts?: SpriteLayerOptions): 
       RAY_DIR[1] = dy
       RAY_DIR[2] = 0
       queryFilter(opts, "raycast")
-      let out: RayHit[] = []
+      let out: Hit[] = []
       for (let h of spatial.raycast(RAY_ORIGIN, RAY_DIR, filter)) {
         let sprite = byNode.get(h.node)
         if (sprite) out.push({ sprite, distance: h.distance, point: [h.point[0], h.point[1]], normal: [h.normal[0], h.normal[1]] })

@@ -2,6 +2,7 @@
 title: Four names drifted apart between @solidrt/2d and @solidrt/3d after the symmetry passes
 description: The same element-handler type is SpriteHandlers in one package and SceneHandlers in the other, a ray contact is RayHit against Hit, reading a camera control is camera() against pose(), and "is it playing" is a boolean field against a method returning names; each landed separately after the 08-31 and 09-06 unison reviews.
 created: 2026-09-11
+completed: 2026-09-11
 ---
 
 # Four names drifted apart between the 2d and 3d packages
@@ -118,3 +119,16 @@ items 2 and 4 do, and it is cited above.
 `packages/3d/src/mixer.ts`, both index re-export lists, and both
 AGENTS.md files where the names appear in the pointer and camera
 sections.
+
+## Outcome (2026-09-11)
+
+All four landed as renames in @solidrt/2d; the 3d package did not move.
+
+- `SpriteHandlers` is `LayerHandlers`; `RayHit` is `Hit`.
+- `Camera2d.pose(): Required<Camera2dPose>` sits beside `camera()`, which
+  stays: it is what the control pushes to its targets (pivot included)
+  and what projectCamera takes, the 3d `eye()` role.
+- `SpriteAnimation.frame()` and `playing()` are methods. The mixer's
+  `clips` stays a field on purpose: it describes the model, it is not
+  clock state, the same line the sprite clip draws between its options
+  and its clock.

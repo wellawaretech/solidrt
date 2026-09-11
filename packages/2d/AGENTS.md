@@ -277,7 +277,8 @@ inertia and the axis rates, pushes one setCamera per driven view when
 the pose changed and reports that), gated on the reactive
 `cam.active()` (true while a glide, fling, fit, follow or pan gesture
 needs frames, or a rate drives; false at rest), read `cam.camera()` for
-projectCamera. The camera has NO tap of its own: taps are the
+projectCamera and `cam.pose()` for the control's own four values (the
+shape `set()` takes, the 3d controls' `pose()`). The camera has NO tap of its own: taps are the
 dispatch's (`onTap` on the root with `e.sprite` null is "tap on empty
 space"). `<Camera2d input={input}>` inside `<SpriteLayer>` is all of
 that wired through context, the 3d `<OrbitCamera>` shape: options read
@@ -404,8 +405,9 @@ re-runs an effect per sprite per frame for nothing.
 
 Frame animation (animation.ts): `createAnimation(frames, fps, { loop })`
 is a clip with a shared wall-clock timer stepping every attached sprite
-(`anim.add(sprite)` / `remove`; `play`/`pause`; `loop: false` holds the
-last frame and fires `onFinish`, the mixer's name for it in
+(`anim.add(sprite)` / `remove`; `play`/`pause`; `frame()`/`playing()`
+read the clock, methods like the 3d mixer's `playing()`; `loop: false`
+holds the last frame and fires `onFinish`, the mixer's name for it in
 @solidrt/3d). One timer per playing clip, one setSprite
 per sprite per STEP - an 8fps cycle is 8 publishes a second regardless of
 display rate, and a paused clip costs nothing. A sprite belongs to at

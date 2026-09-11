@@ -22,7 +22,7 @@
 import type { PointerEvent as ElementPointerEvent } from "@solidrt/core"
 import { unprojectCamera } from "./camera.ts"
 import type { CameraUpdate } from "./camera.ts"
-import type { LayerPointerListener, Sprite, SpriteGroup, SpriteHandlers, SpritePointerEvent } from "./layer.ts"
+import type { LayerPointerListener, Sprite, SpriteGroup, LayerHandlers, SpritePointerEvent } from "./layer.ts"
 import type { ViewHandle } from "./views.ts"
 
 // Finger travel from the down point, in window pixels, past which a press
@@ -88,7 +88,7 @@ type Press = {
   alone: boolean
 }
 
-export function spriteDispatch(deps: DispatchDeps): (layout: (() => { width: number; height: number }) | null) => SpriteHandlers {
+export function spriteDispatch(deps: DispatchDeps): (layout: (() => { width: number; height: number }) | null) => LayerHandlers {
   let now = deps.now ?? (() => performance.now())
   let presses = new Map<number, Press>()
   let hover = new Map<number, Sprite>()
