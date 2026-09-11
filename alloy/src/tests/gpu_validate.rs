@@ -360,18 +360,18 @@ fn buffer_swap_rejects_new_roles_and_zero_ids() {
 fn instance_slots_stride_density_and_limit() {
   use crate::gpu::{instance_strides, validate_instance_slots, AttrFormat};
   let attrs = vec![
-    ("iOffset".to_string(), AttrFormat::Vec2, 0),
-    ("iRot".to_string(), AttrFormat::F32, 0),
-    ("iColor".to_string(), AttrFormat::Vec3, 1),
+    ("iOffset".to_string(), AttrFormat::Float32x2, 0),
+    ("iRot".to_string(), AttrFormat::Float32, 0),
+    ("iColor".to_string(), AttrFormat::Unorm8x4, 1),
   ];
   assert_eq!(validate_instance_slots(&attrs), Ok(()));
-  // Per-slot strides: slot 0 interleaves vec2 + f32 (12 bytes), slot 1 is
-  // the vec3 alone (12 bytes), the rest unused.
-  assert_eq!(instance_strides(&attrs), [12, 12, 0, 0]);
-  let gap = vec![("a".to_string(), AttrFormat::Vec2, 0), ("b".to_string(), AttrFormat::Vec2, 2)];
+  // Per-slot strides: slot 0 interleaves float32x2 + float32 (12 bytes),
+  // slot 1 is the packed color alone (4 bytes), the rest unused.
+  assert_eq!(instance_strides(&attrs), [12, 4, 0, 0]);
+  let gap = vec![("a".to_string(), AttrFormat::Float32x2, 0), ("b".to_string(), AttrFormat::Float32x2, 2)];
   let err = validate_instance_slots(&gap).expect_err("a slot gap must error");
   assert!(err.contains("dense") && err.contains("slot 1"), "{err}");
-  let high = vec![("a".to_string(), AttrFormat::Vec2, 9)];
+  let high = vec![("a".to_string(), AttrFormat::Float32x2, 9)];
   let err = validate_instance_slots(&high).expect_err("a slot past the cap must error");
   assert!(err.contains("slots are 0..4"), "{err}");
   // The draw bound derives from the tightest slot: 96 bytes of 12-byte

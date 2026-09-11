@@ -9,9 +9,10 @@
 //
 // A failure prints FAIL lines and throws at the end, so the run exits nonzero.
 
-import { arrowHelper, axesHelper, box, box3Helper, cylinder, dodecahedron, edgesGeometry, validateGeometry, fillAttribute, fillColors, gridHelper, icosahedron, octahedron, packGeometry, planeHelper, polyhedron, sphere, tetrahedron, torus, torusKnot, geometryBounds, layoutKey, layoutSlot, layoutStride, mergeGeometries, plane, transformGeometry, wireframeGeometry, withAttribute, withColors, STANDARD_FLOATS, VERTEX_LAYOUTS } from "../src/geometry.ts"
+import { arrowHelper, axesHelper, box, box3Helper, cylinder, dodecahedron, edgesGeometry, validateGeometry, fillAttribute, fillColors, gridHelper, icosahedron, octahedron, packGeometry, planeHelper, polyhedron, sphere, tetrahedron, torus, torusKnot, geometryAttribute, geometryBounds, layoutKey, layoutSlot, layoutStride, mergeGeometries, plane, transformGeometry, wireframeGeometry, vertexBytes, vertexCount, withAttribute, withColors, STANDARD_FLOATS, VERTEX_FORMATS, VERTEX_LAYOUTS } from "../src/geometry.ts"
 import { cross, normalize, rayBoxDistance, sub } from "../src/math.ts"
 import type { Geometry, PolyhedronOptions } from "../src/geometry.ts"
+import type { VertexFormat } from "@solidrt/core/gpu"
 import type { Vec3 } from "../src/math.ts"
 
 let failures = 0
@@ -35,6 +36,18 @@ let throws = (label: string, fn: () => unknown): void => {
   } catch {
     // expected
   }
+}
+
+// Vertex i of channel `name` as floats, through the accessor.
+let read = (g: Geometry, name: string, i: number): number[] => {
+  let a = geometryAttribute(g, name)
+  if (a === null) {
+    fail("read: no " + name + " channel")
+    return []
+  }
+  let out: number[] = []
+  for (let k = 0; k < a.components; k++) out.push(a.get(i, k))
+  return out
 }
 
 // One-triangle geometry with a known position and normal.
@@ -131,18 +144,18 @@ throws("merge empty", () => mergeGeometries([]))
 // stride and slots follow the list, and withColors is the aColor spelling
 // (preset name kept, identical bytes).
 {
-  let t = withAttribute(tri(), { name: "aTangent", format: "vec3" }, (_i, pos) => [pos[0], pos[1], 9])
-  if (layoutStride(t.layout) !== 11) fail("tangent stride: " + layoutStride(t.layout))
-  if (layoutKey(t.layout) !== "aPos:vec3,aNormal:vec3,aUV:vec2,aTangent:vec3") fail("tangent key: " + layoutKey(t.layout))
+  let t = withAttribute(tri(), { name: "aTangent", format: "float32x3" }, (_i, pos) => [pos[0], pos[1], 9])
+  if (layoutStride(t.layout) !== 44) fail("tangent stride: " + layoutStride(t.layout))
+  if (layoutKey(t.layout) !== "aPos:float32x3,aNormal:float32x3,aUV:float32x2,aTangent:float32x3") fail("tangent key: " + layoutKey(t.layout))
   expectVec("tangent slot", t.vertices.subarray(11 + 8, 11 + 11), [0, 1, 9])
   expectVec("tangent prefix kept", t.vertices.subarray(11, 11 + 8), [0, 1, 0, 0, 0, 1, 1, 0])
   if (t.label !== "tri-aTangent") fail("tangent label: " + t.label)
   let slot = layoutSlot(t.layout, "aTangent")
-  if (slot === null || slot.offset !== 8 || slot.size !== 3) fail("tangent slot lookup")
+  if (slot === null || slot.offset !== 32 || slot.components !== 3) fail("tangent slot lookup")
   if (layoutSlot(t.layout, "aColor") !== null) fail("absent slot is null")
 
-  let two = withAttribute(t, { name: "aColor", format: "vec4" }, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12])
-  if (layoutStride(two.layout) !== 15) fail("two-channel stride")
+  let two = withAttribute(t, { name: "aColor", format: "float32x4" }, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12])
+  if (layoutStride(two.layout) !== 60) fail("two-channel stride")
   expectVec("second channel", two.vertices.subarray(15 + 11, 15 + 15), [5, 6, 7, 8])
   expectVec("first channel kept", two.vertices.subarray(15 + 8, 15 + 11), [0, 1, 9])
   fillAttribute(two, "aTangent", () => [7, 7, 7], 1, 1)
@@ -150,7 +163,7 @@ throws("merge empty", () => mergeGeometries([]))
   expectVec("fillAttribute outside range untouched", two.vertices.subarray(8, 11), [1, 0, 9])
 
   let c = withColors(tri(), [1, 0, 0, 1, 0, 1, 0, 1, 0, 0, 1, 1])
-  let viaAttr = withAttribute(tri(), { name: "aColor", format: "vec4" }, [1, 0, 0, 1, 0, 1, 0, 1, 0, 0, 1, 1])
+  let viaAttr = withAttribute(tri(), { name: "aColor", format: "float32x4" }, [1, 0, 0, 1, 0, 1, 0, 1, 0, 0, 1, 1])
   if (c.layout !== "colored") fail("withColors keeps preset name")
   if (layoutKey(c.layout) !== layoutKey(viaAttr.layout)) fail("colored key equals explicit list")
   expectVec("colored equals withAttribute", c.vertices, viaAttr.vertices)
@@ -160,10 +173,10 @@ throws("merge empty", () => mergeGeometries([]))
   expectVec("transform keeps extra channel", t2.vertices.subarray(8, 11), [1, 0, 9])
   expectVec("transform on wide stride", t2.vertices.subarray(11, 14), [1, 1, 0])
 
-  throws("duplicate attribute", () => withAttribute(t, { name: "aTangent", format: "vec3" }, () => [0, 0, 0]))
-  throws("duplicate prefix name", () => withAttribute(tri(), { name: "aUV", format: "vec2" }, () => [0, 0]))
-  throws("fill size mismatch", () => withAttribute(tri(), { name: "aW", format: "f32" }, [1, 2]))
-  throws("callback size mismatch", () => withAttribute(tri(), { name: "aW", format: "f32" }, () => [1, 2]))
+  throws("duplicate attribute", () => withAttribute(t, { name: "aTangent", format: "float32x3" }, () => [0, 0, 0]))
+  throws("duplicate prefix name", () => withAttribute(tri(), { name: "aUV", format: "float32x2" }, () => [0, 0]))
+  throws("fill size mismatch", () => withAttribute(tri(), { name: "aW", format: "float32" }, [1, 2]))
+  throws("callback size mismatch", () => withAttribute(tri(), { name: "aW", format: "float32" }, () => [1, 2]))
   throws("fillAttribute unknown name", () => fillAttribute(t, "aNope", () => [0]))
 }
 
@@ -178,24 +191,24 @@ throws("merge empty", () => mergeGeometries([]))
     indices: new Uint16Array([0, 1]),
     topology: "points",
     layout: [
-      { name: "aPos", format: "vec3" },
-      { name: "aData", format: "f32" },
+      { name: "aPos", format: "float32x3" },
+      { name: "aData", format: "float32" },
     ],
     label: "cloud",
   }
   validateGeometry(cloud)
-  if (layoutStride(cloud.layout) !== 4) fail("cloud stride: " + layoutStride(cloud.layout))
+  if (layoutStride(cloud.layout) !== 16) fail("cloud stride: " + layoutStride(cloud.layout))
   expectVec("cloud bounds", geometryBounds(cloud), [0, 0, 0, 1, 2, 3])
   let moved = transformGeometry(cloud, { position: [1, 0, 0], rotation: [0, Math.PI / 2, 0] })
   expectVec("cloud transform moves positions", moved.vertices.subarray(4, 7), [4, 2, -1])
   expectVec("cloud transform keeps aData", [moved.vertices[3]!, moved.vertices[7]!], [7, 8])
-  let tagged = withAttribute(cloud, { name: "aTag", format: "vec2" }, (i, pos, normal, uv) => [pos[2] + normal[0] + uv[1], i])
-  if (layoutKey(tagged.layout) !== "aPos:vec3,aData:f32,aTag:vec2") fail("cloud withAttribute key: " + layoutKey(tagged.layout))
+  let tagged = withAttribute(cloud, { name: "aTag", format: "float32x2" }, (i, pos, normal, uv) => [pos[2] + normal[0] + uv[1], i])
+  if (layoutKey(tagged.layout) !== "aPos:float32x3,aData:float32,aTag:float32x2") fail("cloud withAttribute key: " + layoutKey(tagged.layout))
   expectVec("cloud fill callback sees zero normal/uv", tagged.vertices.subarray(6 + 4, 6 + 6), [3, 1])
   expectVec("cloud withAttribute keeps aData", [tagged.vertices[3]!, tagged.vertices[9]!], [7, 8])
   validateGeometry({ ...cloud, topology: undefined, indices: new Uint16Array([0, 1, 0]) })
-  throws("layout without aPos first", () => validateGeometry({ ...cloud, layout: [{ name: "aData", format: "f32" }, { name: "aPos", format: "vec3" }] }))
-  throws("prefixless generator layout", () => plane({ layout: [{ name: "aPos", format: "vec3" }] }))
+  throws("layout without aPos first", () => validateGeometry({ ...cloud, layout: [{ name: "aData", format: "float32" }, { name: "aPos", format: "float32x3" }] }))
+  throws("prefixless generator layout", () => plane({ layout: [{ name: "aPos", format: "float32x3" }] }))
 }
 
 // Generators emitting a wider layout in one pass: identical bytes to
@@ -216,13 +229,13 @@ throws("merge empty", () => mergeGeometries([]))
   check("torus", torus({ radius: 1, tube: 0.3, radialSegments: 4, tubularSegments: 6 }), torus({ radius: 1, tube: 0.3, radialSegments: 4, tubularSegments: 6, layout: "colored" }))
   check("torusKnot", torusKnot({ tube: 0.3, tubularSegments: 8, radialSegments: 4 }), torusKnot({ tube: 0.3, tubularSegments: 8, radialSegments: 4, layout: "colored" }))
   check("icosahedron", icosahedron({ detail: 1 }), icosahedron({ detail: 1, layout: "colored" }))
-  let custom = sphere({ radius: 1, widthSegments: 4, heightSegments: 3, layout: [{ name: "aPos", format: "vec3" }, { name: "aNormal", format: "vec3" }, { name: "aUV", format: "vec2" }, { name: "aW", format: "f32" }], label: "w" })
-  if (layoutStride(custom.layout) !== 9 || custom.label !== "w") fail("custom generator layout")
+  let custom = sphere({ radius: 1, widthSegments: 4, heightSegments: 3, layout: [{ name: "aPos", format: "float32x3" }, { name: "aNormal", format: "float32x3" }, { name: "aUV", format: "float32x2" }, { name: "aW", format: "float32" }], label: "w" })
+  if (layoutStride(custom.layout) !== 36 || custom.label !== "w") fail("custom generator layout")
   expectVec("custom generator prefix", custom.vertices.subarray(9, 17), sphere({ radius: 1, widthSegments: 4, heightSegments: 3 }).vertices.subarray(8, 16))
   if (box({ label: "named" }).label !== "named") fail("label option")
   if (box().layout !== undefined) fail("default layout stays absent")
-  throws("generator bad layout", () => box({ layout: [{ name: "aColor", format: "vec4" }] }))
-  throws("torus bad layout", () => torus({ layout: [{ name: "aColor", format: "vec4" }] }))
+  throws("generator bad layout", () => box({ layout: [{ name: "aColor", format: "float32x4" }] }))
+  throws("torus bad layout", () => torus({ layout: [{ name: "aColor", format: "float32x4" }] }))
   throws("packGeometry ragged", () => packGeometry([1, 2, 3], [0]))
 }
 
@@ -330,7 +343,7 @@ throws("merge empty", () => mergeGeometries([]))
   validateGeometry(box())
   validateGeometry(withColors(box(), () => [0, 0, 0, 0]))
   throws("validate ragged colored", () => validateGeometry({ vertices: new Float32Array(16), indices: new Uint16Array([0, 1]), layout: "colored", label: "ragged" }))
-  throws("validate bad layout", () => validateGeometry({ vertices: new Float32Array(8), indices: new Uint16Array([0]), layout: [{ name: "aColor", format: "vec4" }] }))
+  throws("validate bad layout", () => validateGeometry({ vertices: new Float32Array(8), indices: new Uint16Array([0]), layout: [{ name: "aColor", format: "float32x4" }] }))
   throws("validate no indices", () => validateGeometry({ vertices: new Float32Array(24), indices: new Uint16Array(0) }))
 }
 
@@ -394,14 +407,14 @@ throws("merge empty", () => mergeGeometries([]))
 // The debug helpers: lines topology, counts, bounds, and the color channel
 // where there is one (pure primaries survive the sRGB decode exactly).
 {
-  let stride = layoutStride("colored")
+  let count = (g: Geometry): number => vertexCount(g.vertices, g.layout, "rig")
   let slot = layoutSlot("colored", "aColor")!
-  let colorAt = (g: Geometry, i: number): Float32Array => g.vertices.subarray(i * stride + slot.offset, i * stride + slot.offset + 4)
-  let posAt = (g: Geometry, i: number): Float32Array => g.vertices.subarray(i * stride, i * stride + 3)
+  let colorAt = (g: Geometry, i: number): number[] => read(g, "aColor", i)
+  let posAt = (g: Geometry, i: number): number[] => read(g, "aPos", i)
 
   let grid = gridHelper({ size: 2, divisions: 2, color: [1, 0, 0], centerColor: [0, 0, 1] })
   if (grid.topology !== "lines" || grid.layout !== "colored") fail("gridHelper shape")
-  if (grid.vertices.length !== 12 * stride || grid.indices.length !== 12) fail("gridHelper counts")
+  if (count(grid) !== 12 || grid.indices.length !== 12) fail("gridHelper counts")
   validateGeometry(grid)
   expectVec("gridHelper bounds", geometryBounds(grid), [-1, 0, -1, 1, 0, 1])
   expectVec("gridHelper first line start", posAt(grid, 0), [-1, 0, -1])
@@ -410,7 +423,7 @@ throws("merge empty", () => mergeGeometries([]))
   expectVec("gridHelper center color x", colorAt(grid, 4), [0, 0, 1, 1])
   expectVec("gridHelper center color z", colorAt(grid, 7), [0, 0, 1, 1])
   let dflt = gridHelper()
-  if (dflt.vertices.length !== 44 * stride || dflt.indices.length !== 44) fail("gridHelper default counts")
+  if (count(dflt) !== 44 || dflt.indices.length !== 44) fail("gridHelper default counts")
   expectVec("gridHelper default bounds", geometryBounds(dflt), [-5, 0, -5, 5, 0, 5])
   let odd = gridHelper({ divisions: 3, color: [1, 0, 0], centerColor: [0, 0, 1] })
   for (let i = 0; i < 16; i++) if (colorAt(odd, i)[2] !== 0) fail("gridHelper odd divisions has a center line at vertex " + i)
@@ -419,7 +432,7 @@ throws("merge empty", () => mergeGeometries([]))
 
   let axes = axesHelper({ size: 2 })
   if (axes.topology !== "lines" || axes.layout !== "colored") fail("axesHelper shape")
-  if (axes.vertices.length !== 6 * stride || axes.indices.length !== 6) fail("axesHelper counts")
+  if (count(axes) !== 6 || axes.indices.length !== 6) fail("axesHelper counts")
   validateGeometry(axes)
   expectVec("axesHelper x tip", posAt(axes, 1), [2, 0, 0])
   expectVec("axesHelper y tip", posAt(axes, 3), [0, 2, 0])
@@ -428,9 +441,8 @@ throws("merge empty", () => mergeGeometries([]))
   expectVec("axesHelper y green", colorAt(axes, 3), [0, 1, 0, 1])
   expectVec("axesHelper z blue", colorAt(axes, 5), [0, 0, 1, 1])
   // A wider layout that still carries aColor takes the colors at its slot.
-  let wide = axesHelper({ layout: [...VERTEX_LAYOUTS.colored, { name: "aW", format: "f32" }] })
-  let wideSlot = layoutSlot(wide.layout, "aColor")!
-  expectVec("axesHelper wide layout color", wide.vertices.subarray(wideSlot.offset, wideSlot.offset + 4), [1, 0, 0, 1])
+  let wide = axesHelper({ layout: [...VERTEX_LAYOUTS.colored, { name: "aW", format: "float32" }] })
+  expectVec("axesHelper wide layout color", read(wide, "aColor", 1), [1, 0, 0, 1])
   throws("axesHelper skinned layout", () => axesHelper({ layout: "skinned" }))
 
   let bounds = [-1, -2, -3, 4, 5, 6]
@@ -465,6 +477,57 @@ throws("merge empty", () => mergeGeometries([]))
   expectVec("arrowHelper base corner", arrow.vertices.subarray(3 * STANDARD_FLOATS, 3 * STANDARD_FLOATS + 3), [0.04, 1.6, 0])
   let custom = arrowHelper({ length: 1, headLength: 0.5, headWidth: 1 })
   expectVec("arrowHelper custom head", geometryBounds(custom), [-0.5, 0, -0.5, 0.5, 1, 0.5])
+}
+
+// Packed formats: every codec round-trips through the bytes the engine
+// reads, the packed channel survives transform and merge, and the
+// float32 view rule holds (a packed layout is a Uint8Array, an all-float
+// one a Float32Array).
+{
+  // The raw bytes each format encodes a known value to, little-endian.
+  let cases: { format: VertexFormat; value: number[]; bytes: number[]; back?: number[] }[] = [
+    { format: "float32", value: [1.5], bytes: [0, 0, 0xc0, 0x3f] },
+    { format: "float16x2", value: [0.5, -2], bytes: [0x00, 0x38, 0x00, 0xc0] },
+    { format: "unorm8x4", value: [1, 0.5, 0, 0.2], bytes: [255, 128, 0, 51], back: [1, 128 / 255, 0, 51 / 255] },
+    { format: "snorm8x4", value: [1, -1, 0.5, -2], bytes: [127, 0x81, 64, 0x81], back: [1, -1, 64 / 127, -1] },
+    { format: "unorm16x2", value: [1, 0.25], bytes: [0xff, 0xff, 0x00, 0x40], back: [1, 0x4000 / 65535] },
+    { format: "snorm16x2", value: [-1, 0.5], bytes: [0x01, 0x80, 0x00, 0x40], back: [-1, 0x4000 / 32767] },
+    { format: "uint8x4", value: [3, 200, 255, 0], bytes: [3, 200, 255, 0] },
+    { format: "uint16x2", value: [7, 65535], bytes: [7, 0, 0xff, 0xff] },
+  ]
+  for (let c of cases) {
+    let g = withAttribute(tri(), { name: "aX", format: c.format }, () => c.value)
+    let stride = 32 + VERTEX_FORMATS[c.format].bytes
+    if (layoutStride(g.layout) !== stride) fail(c.format + " stride: " + layoutStride(g.layout))
+    if (!(g.vertices instanceof (c.format.startsWith("float32") ? Float32Array : Uint8Array))) fail(c.format + " view type")
+    expectVec(c.format + " bytes", Array.from(vertexBytes(g.vertices).subarray(32, stride)), c.bytes)
+    expectVec(c.format + " decoded", read(g, "aX", 1), c.back ?? c.value)
+    expectVec(c.format + " prefix kept", read(g, "aPos", 1), [0, 1, 0])
+    validateGeometry(g)
+  }
+  if (!(withAttribute(tri(), { name: "aW", format: "float32x2" }, () => [1, 2]).vertices instanceof Float32Array)) fail("float layout view is not floats")
+  throws("unknown format", () => withAttribute(tri(), { name: "aW", format: "vec3" as VertexFormat }, () => [0, 0, 0]))
+
+  // A quantized normal beside a byte color: transform rotates the packed
+  // normal in place (re-encoded), the color rides through, and the merge
+  // concatenates bytes.
+  let packed = withAttribute(withAttribute(tri(), { name: "aColor", format: "unorm8x4" }, (_i, pos) => [pos[0], 1, 0, 1]), { name: "aN2", format: "snorm16x4" }, (_i, _p, n) => [n[0], n[1], n[2], 0])
+  let turned = transformGeometry(packed, { rotation: [0, Math.PI / 2, 0] })
+  expectVec("packed transform normal", read(turned, "aNormal", 0), [1, 0, 0])
+  expectVec("packed transform keeps color", read(turned, "aColor", 0), [1, 1, 0, 1])
+  expectVec("packed transform keeps snorm", read(turned, "aN2", 2), [0, 0, 1, 0])
+  let merged = mergeGeometries([packed, turned])
+  if (vertexCount(merged.vertices, merged.layout, "rig") !== 6 || !(merged.vertices instanceof Uint8Array)) fail("packed merge shape")
+  expectVec("packed merge second part", read(merged, "aPos", 3), read(turned, "aPos", 0))
+  expectVec("packed merge color", read(merged, "aColor", 3), [1, 1, 0, 1])
+  expectVec("packed bounds", geometryBounds(merged), [0, 0, -1, 1, 1, 0])
+  // The two triangles share two welded positions, so one edge is shared:
+  // five edges, not six.
+  let wire = wireframeGeometry(merged)
+  if (wire.indices.length !== 10) fail("packed wireframe edges: " + wire.indices.length)
+  throws("packed byte count", () => validateGeometry({ ...packed, vertices: vertexBytes(packed.vertices).subarray(0, 50) }))
+  throws("unaligned view", () => validateGeometry({ ...packed, vertices: new Uint8Array(new ArrayBuffer(packed.vertices.byteLength + 1), 1) }))
+  throws("packed generator layout", () => box({ layout: [...VERTEX_LAYOUTS.standard, { name: "aColor", format: "unorm8x4" }] }))
 }
 
 if (failures > 0) throw new Error(failures + " geometry check(s) failed")

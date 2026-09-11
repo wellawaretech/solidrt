@@ -88,8 +88,8 @@ function App() {
   let id = createPipelineTexture(VERTEX, FRAGMENT, 1024, 1024, { uTime: 0 }, {
     label: "cube",
     attributes: [
-      { name: "aPos", format: "vec3" },
-      { name: "aColor", format: "vec3" },
+      { name: "aPos", format: "float32x3" },
+      { name: "aColor", format: "float32x3" },
     ],
     buffer: bufferId,
     indexBuffer: indexId,

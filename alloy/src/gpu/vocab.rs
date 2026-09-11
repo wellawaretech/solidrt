@@ -29,55 +29,120 @@ impl ParamValue {
   }
 }
 
-/// A float vertex attribute's shape within the interleaved vertex buffer.
+/// The byte format of one vertex attribute within an interleaved record:
+/// WebGPU's `GPUVertexFormat` spelling of the (component type, count,
+/// normalized) triple the GL attribute pointer takes. Every format is a
+/// multiple of 4 bytes, so offsets and strides are 4-aligned by
+/// construction and no padding rule exists; that is why the 8-bit formats
+/// come in x4 only and the 16-bit ones in x2 and x4. Every format feeds a
+/// FLOAT-typed shader `in` (the pointer converts on fetch, normalized or
+/// not), so the shader side of the vocabulary stays `float`/`vec2`/`vec3`/
+/// `vec4` and a format matches an `in` by component count.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AttrFormat {
-  F32,
-  Vec2,
-  Vec3,
-  Vec4,
+  Float32,
+  Float32x2,
+  Float32x3,
+  Float32x4,
+  Float16x2,
+  Float16x4,
+  Unorm8x4,
+  Snorm8x4,
+  Unorm16x2,
+  Unorm16x4,
+  Snorm16x2,
+  Snorm16x4,
+  Uint8x4,
+  Uint16x2,
+  Uint16x4,
 }
 
+/// One row of the format table: the spelling, the component count, the
+/// GL component type and whether the pointer normalizes integers.
+struct AttrSpec {
+  format: AttrFormat,
+  name: &'static str,
+  components: i32,
+  gl_type: u32,
+  normalized: bool,
+}
+
+const ATTR_FORMATS: [AttrSpec; 15] = [
+  AttrSpec { format: AttrFormat::Float32, name: "float32", components: 1, gl_type: glow::FLOAT, normalized: false },
+  AttrSpec { format: AttrFormat::Float32x2, name: "float32x2", components: 2, gl_type: glow::FLOAT, normalized: false },
+  AttrSpec { format: AttrFormat::Float32x3, name: "float32x3", components: 3, gl_type: glow::FLOAT, normalized: false },
+  AttrSpec { format: AttrFormat::Float32x4, name: "float32x4", components: 4, gl_type: glow::FLOAT, normalized: false },
+  AttrSpec { format: AttrFormat::Float16x2, name: "float16x2", components: 2, gl_type: glow::HALF_FLOAT, normalized: false },
+  AttrSpec { format: AttrFormat::Float16x4, name: "float16x4", components: 4, gl_type: glow::HALF_FLOAT, normalized: false },
+  AttrSpec { format: AttrFormat::Unorm8x4, name: "unorm8x4", components: 4, gl_type: glow::UNSIGNED_BYTE, normalized: true },
+  AttrSpec { format: AttrFormat::Snorm8x4, name: "snorm8x4", components: 4, gl_type: glow::BYTE, normalized: true },
+  AttrSpec { format: AttrFormat::Unorm16x2, name: "unorm16x2", components: 2, gl_type: glow::UNSIGNED_SHORT, normalized: true },
+  AttrSpec { format: AttrFormat::Unorm16x4, name: "unorm16x4", components: 4, gl_type: glow::UNSIGNED_SHORT, normalized: true },
+  AttrSpec { format: AttrFormat::Snorm16x2, name: "snorm16x2", components: 2, gl_type: glow::SHORT, normalized: true },
+  AttrSpec { format: AttrFormat::Snorm16x4, name: "snorm16x4", components: 4, gl_type: glow::SHORT, normalized: true },
+  AttrSpec { format: AttrFormat::Uint8x4, name: "uint8x4", components: 4, gl_type: glow::UNSIGNED_BYTE, normalized: false },
+  AttrSpec { format: AttrFormat::Uint16x2, name: "uint16x2", components: 2, gl_type: glow::UNSIGNED_SHORT, normalized: false },
+  AttrSpec { format: AttrFormat::Uint16x4, name: "uint16x4", components: 4, gl_type: glow::UNSIGNED_SHORT, normalized: false },
+];
+
 impl AttrFormat {
+  // The table is indexed by discriminant, so it must list the variants in
+  // declaration order; the assertion catches a reordered row in tests.
+  fn spec(self) -> &'static AttrSpec {
+    let spec = &ATTR_FORMATS[self as usize];
+    debug_assert_eq!(spec.format, self, "ATTR_FORMATS row order");
+    spec
+  }
+
   pub fn parse(s: &str) -> Result<Self, String> {
-    Ok(match s {
-      "f32" => AttrFormat::F32,
-      "vec2" => AttrFormat::Vec2,
-      "vec3" => AttrFormat::Vec3,
-      "vec4" => AttrFormat::Vec4,
-      _ => return Err(format!("unsupported attribute format '{s}' (expected f32|vec2|vec3|vec4)")),
-    })
-  }
-
-  pub(crate) fn components(self) -> i32 {
-    match self {
-      AttrFormat::F32 => 1,
-      AttrFormat::Vec2 => 2,
-      AttrFormat::Vec3 => 3,
-      AttrFormat::Vec4 => 4,
-    }
-  }
-
-  /// The format of a linked program's active attribute by its GL type;
-  /// None for types no pipeline layout can feed (matrices, integer vectors).
-  pub fn from_gl(atype: u32) -> Option<Self> {
-    Some(match atype {
-      glow::FLOAT => AttrFormat::F32,
-      glow::FLOAT_VEC2 => AttrFormat::Vec2,
-      glow::FLOAT_VEC3 => AttrFormat::Vec3,
-      glow::FLOAT_VEC4 => AttrFormat::Vec4,
-      _ => return None,
+    ATTR_FORMATS.iter().find(|spec| spec.name == s).map(|spec| spec.format).ok_or_else(|| {
+      let names: Vec<&str> = ATTR_FORMATS.iter().map(|spec| spec.name).collect();
+      format!("unsupported attribute format '{s}' (expected one of {})", names.join("|"))
     })
   }
 
   /// The string form `parse` accepts, for reporting the layout back out.
   pub fn name(self) -> &'static str {
-    match self {
-      AttrFormat::F32 => "f32",
-      AttrFormat::Vec2 => "vec2",
-      AttrFormat::Vec3 => "vec3",
-      AttrFormat::Vec4 => "vec4",
-    }
+    self.spec().name
+  }
+
+  pub(crate) fn components(self) -> i32 {
+    self.spec().components
+  }
+
+  /// Bytes one attribute of this format occupies in its record.
+  pub fn bytes(self) -> i32 {
+    let spec = self.spec();
+    let component = match spec.gl_type {
+      glow::FLOAT => 4,
+      glow::HALF_FLOAT | glow::SHORT | glow::UNSIGNED_SHORT => 2,
+      _ => 1,
+    };
+    spec.components * component
+  }
+
+  /// The GL component type the attribute pointer reads.
+  pub(crate) fn gl_type(self) -> u32 {
+    self.spec().gl_type
+  }
+
+  /// Whether the pointer maps integer components onto 0..1 / -1..1.
+  pub(crate) fn normalized(self) -> bool {
+    self.spec().normalized
+  }
+
+  /// The format of a linked program's active attribute by its GL type: the
+  /// float form the shader declares, which any format of that component
+  /// count may feed. None for types no pipeline layout can feed (matrices,
+  /// integer vectors).
+  pub fn from_gl(atype: u32) -> Option<Self> {
+    Some(match atype {
+      glow::FLOAT => AttrFormat::Float32,
+      glow::FLOAT_VEC2 => AttrFormat::Float32x2,
+      glow::FLOAT_VEC3 => AttrFormat::Float32x3,
+      glow::FLOAT_VEC4 => AttrFormat::Float32x4,
+      _ => return None,
+    })
   }
 }
 
@@ -269,7 +334,7 @@ pub struct DepthState {
 /// word fails at the call site, not on the raster thread.
 #[derive(Clone, Debug)]
 pub struct PipelineDesc {
-  /// One interleaved float vertex, in buffer order: (attribute name, format).
+  /// One interleaved vertex, in buffer order: (attribute name, format).
   /// Empty for attributeless rendering driven by gl_VertexID.
   pub attributes: Vec<(String, AttrFormat)>,
   /// The per-INSTANCE attributes as (name, format, buffer slot): fetched
@@ -310,7 +375,7 @@ impl Default for PipelineDesc {
 /// Byte stride of one interleaved record for the given attribute list - a
 /// vertex of `attributes`, or an instance record of `instance_attributes`.
 pub fn vertex_stride(attributes: &[(String, AttrFormat)]) -> i32 {
-  attributes.iter().map(|(_, f)| f.components() * 4).sum()
+  attributes.iter().map(|(_, f)| f.bytes()).sum()
 }
 
 /// The most instance buffer slots a pipeline may declare. A hard engine
@@ -325,7 +390,7 @@ pub fn instance_strides(attributes: &[(String, AttrFormat, u32)]) -> [usize; MAX
   let mut strides = [0usize; MAX_INSTANCE_SLOTS];
   for (_, f, slot) in attributes {
     if let Some(s) = strides.get_mut(*slot as usize) {
-      *s += f.components() as usize * 4;
+      *s += f.bytes() as usize;
     }
   }
   strides

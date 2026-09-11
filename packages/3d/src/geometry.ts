@@ -1,67 +1,161 @@
 // Geometry: one interleaved vertex buffer described by a layout - an
-// ordered attribute list that starts with the position (vec3) and may
-// carry any named channels after it. The standard prefix (position vec3,
-// normal vec3, uv vec2: 8 floats) is what every generator emits and what
-// the stock materials read; a hand-built layout may leave the normal and
-// uv out when nothing reads them. The layout is open data:
-// `withAttribute` appends any named channel (Three's `setAttribute`), and
-// "colored" names the one common case, the prefix plus an aColor vec4 (12
-// floats) as the per-vertex data channel for custom materials (tint, baked
-// AO, any four scalars). Materials read attributes by name and adapt to
-// whatever layout their geometry carries (one pipeline per layout met),
-// so a geometry may carry more channels than a material reads.
-// Indices are uint16 or uint32 (the generators here emit uint16; hand-built
-// geometry past 64k vertices uses a Uint32Array and the draw entry follows
-// the array type). Winding is counter-clockwise seen from outside in the
-// y-up world, which the standard camera rig (perspective() with its baked
-// y flip) presents as the engine's displayed-CCW front faces: every
-// generator here culls correctly with cull: "back". Normals ride along
-// unused by the unlit materials so the layout is ready for lights without
-// a geometry change (inactive attributes are skipped but keep the stride).
+// ordered attribute list that starts with the position (float32x3) and
+// may carry any named channels after it, each in one of the vertex formats
+// (the float32 family, halves, normalized and unsigned integers; see
+// VERTEX_FORMATS). The standard prefix (position, normal, uv: 8 floats)
+// is what every generator emits and what the stock materials read; a
+// hand-built layout may leave the normal and uv out when nothing reads
+// them, and may pack a channel (a color in unorm8x4 is 4 bytes, not 16).
+// The layout is open data: `withAttribute` appends any named channel
+// (Three's `setAttribute`), and "colored" names the one common case, the
+// prefix plus an aColor float32x4 as the per-vertex data channel for
+// custom materials (tint, baked AO, any four scalars). Materials read
+// attributes by name and adapt to whatever layout their geometry carries
+// (one pipeline per layout met), so a geometry may carry more channels
+// than a material reads, and a packed channel feeds the same float `in`
+// as a float one. Indices are uint16 or uint32 (the generators here emit
+// uint16; hand-built geometry past 64k vertices uses a Uint32Array and
+// the draw entry follows the array type). Winding is counter-clockwise
+// seen from outside in the y-up world, which the standard camera rig
+// (perspective() with its baked y flip) presents as the engine's
+// displayed-CCW front faces: every generator here culls correctly with
+// cull: "back". Normals ride along unused by the unlit materials so the
+// layout is ready for lights without a geometry change (inactive
+// attributes are skipped but keep the stride).
+//
+// No function here knows an offset or a stride: vertex data is read and
+// written through `attributeAccess`, an accessor bound to one attribute
+// that decodes and encodes through the format's codec. That is also what
+// keeps a later multi-stream geometry a change inside the accessor.
 //
 // Pure module by design - geometry is data, and every function here is
 // array math (the check rig checks/geometry-check.ts runs it headless on
 // flux). The GPU buffer step lives in geometry-gpu.ts.
 
-import type { Topology, VertexAttribute } from "@solidrt/core/gpu"
+import type { Topology, VertexAttribute, VertexFormat } from "@solidrt/core/gpu"
 import { premultipliedColor } from "./color.ts"
 import { add, compose, cross, mat4, normalize, normalMatrix, sub, updateRotation, updateScale } from "./math.ts"
 import type { Quat, TransformUpdate, Vec2, Vec3 } from "./math.ts"
 
 /** A vertex layout: the named presets, or an explicit attribute list
- * that begins with `aPos` vec3 (placement is universal) and carries any
- * named channels after it. The standard prefix (aPos vec3, aNormal vec3,
- * aUV vec2) is what every generator emits and what the stock materials
- * read, not a rule a layout must follow: a material reads channels by
- * name and a missing one throws at add(), so a point carrying a position
- * and one packed channel is 4 floats, not 12. Absent on a Geometry means
- * "standard". */
+ * that begins with `aPos` float32x3 (placement is universal) and carries
+ * any named channels after it. The standard prefix (aPos float32x3,
+ * aNormal float32x3, aUV float32x2) is what every generator emits and
+ * what the stock materials read, not a rule a layout must follow: a
+ * material reads channels by name and a missing one throws at add(), so
+ * a point carrying a position and one packed channel is 16 bytes, not
+ * 48. Absent on a Geometry means "standard". */
 export type VertexLayout = "standard" | "colored" | "skinned" | VertexAttribute[]
 
 const STANDARD_ATTRIBUTES: VertexAttribute[] = [
-  { name: "aPos", format: "vec3" },
-  { name: "aNormal", format: "vec3" },
-  { name: "aUV", format: "vec2" },
+  { name: "aPos", format: "float32x3" },
+  { name: "aNormal", format: "float32x3" },
+  { name: "aUV", format: "float32x2" },
 ]
 
 /** The attribute lists behind the named layouts. Every layout shares the
  * standard prefix, so one shader vocabulary serves all of them. */
 export const VERTEX_LAYOUTS: Record<"standard" | "colored" | "skinned", VertexAttribute[]> = {
   standard: STANDARD_ATTRIBUTES,
-  colored: [...STANDARD_ATTRIBUTES, { name: "aColor", format: "vec4" }],
+  colored: [...STANDARD_ATTRIBUTES, { name: "aColor", format: "float32x4" }],
   // The rigged-model layout: 4 joint indices (as floats - exact to 2^24)
   // and their weights per vertex, what a skinned vertex stage reads.
-  skinned: [...STANDARD_ATTRIBUTES, { name: "aJoints", format: "vec4" }, { name: "aWeights", format: "vec4" }],
+  skinned: [...STANDARD_ATTRIBUTES, { name: "aJoints", format: "float32x4" }, { name: "aWeights", format: "float32x4" }],
 }
 
 /** Floats per vertex in the "standard" layout (the generators' own write
  * format before packing). */
 export const STANDARD_FLOATS = 8
 
-/** Floats per attribute format: the vertex vocabulary itself, so it is
- * also the list a declared format must be one of (vertex attributes and
- * instance attributes both). */
-export const FORMAT_FLOATS: Record<VertexAttribute["format"], number> = { f32: 1, vec2: 2, vec3: 3, vec4: 4 }
+/** One vertex format's codec: its size, its component count, and the
+ * read and write of component `k` of an attribute at byte `at` of a
+ * DataView, in the float value the shader sees (a normalized integer
+ * decodes to 0..1 / -1..1, an unsigned one to its exact value). Every
+ * format is a multiple of 4 bytes (WebGPU's alignment rule), which is
+ * what keeps every offset and stride 4-aligned with no padding
+ * arithmetic anywhere. */
+export type FormatCodec = {
+  bytes: number
+  components: number
+  get(dv: DataView, at: number, k: number): number
+  set(dv: DataView, at: number, k: number, v: number): void
+}
+
+// The integer component kinds behind the packed formats: width, the
+// value that maps to 1 (GL ES 3.0's normalization rule, -max mapping to
+// -1 and the one value below it clamped there), and the raw accessors.
+type IntKind = { bytes: number; max: number; get(dv: DataView, at: number): number; set(dv: DataView, at: number, v: number): void }
+const U8: IntKind = { bytes: 1, max: 255, get: (dv, at) => dv.getUint8(at), set: (dv, at, v) => dv.setUint8(at, v) }
+const S8: IntKind = { bytes: 1, max: 127, get: (dv, at) => dv.getInt8(at), set: (dv, at, v) => dv.setInt8(at, v) }
+const U16: IntKind = { bytes: 2, max: 65535, get: (dv, at) => dv.getUint16(at, true), set: (dv, at, v) => dv.setUint16(at, v, true) }
+const S16: IntKind = { bytes: 2, max: 32767, get: (dv, at) => dv.getInt16(at, true), set: (dv, at, v) => dv.setInt16(at, v, true) }
+
+function clamp(v: number, lo: number, hi: number): number {
+  return v < lo ? lo : v > hi ? hi : v
+}
+
+function floatCodec(components: number, bytes: number, get: (dv: DataView, at: number) => number, set: (dv: DataView, at: number, v: number) => void): FormatCodec {
+  return { bytes: components * bytes, components, get: (dv, at, k) => get(dv, at + k * bytes), set: (dv, at, k, v) => set(dv, at + k * bytes, v) }
+}
+
+function unormCodec(components: number, int: IntKind): FormatCodec {
+  return {
+    bytes: components * int.bytes,
+    components,
+    get: (dv, at, k) => int.get(dv, at + k * int.bytes) / int.max,
+    set: (dv, at, k, v) => int.set(dv, at + k * int.bytes, Math.round(clamp(v, 0, 1) * int.max)),
+  }
+}
+
+function snormCodec(components: number, int: IntKind): FormatCodec {
+  return {
+    bytes: components * int.bytes,
+    components,
+    get: (dv, at, k) => Math.max(int.get(dv, at + k * int.bytes) / int.max, -1),
+    set: (dv, at, k, v) => int.set(dv, at + k * int.bytes, Math.round(clamp(v, -1, 1) * int.max)),
+  }
+}
+
+function uintCodec(components: number, int: IntKind): FormatCodec {
+  return {
+    bytes: components * int.bytes,
+    components,
+    get: (dv, at, k) => int.get(dv, at + k * int.bytes),
+    set: (dv, at, k, v) => int.set(dv, at + k * int.bytes, Math.round(clamp(v, 0, int.max))),
+  }
+}
+
+let getF32 = (dv: DataView, at: number) => dv.getFloat32(at, true)
+let setF32 = (dv: DataView, at: number, v: number) => dv.setFloat32(at, v, true)
+let getF16 = (dv: DataView, at: number) => dv.getFloat16(at, true)
+let setF16 = (dv: DataView, at: number, v: number) => dv.setFloat16(at, v, true)
+
+/** The vertex vocabulary: one codec per format (the engine's table in
+ * the same spelling), so it is also the list a declared format must be
+ * one of. Every format feeds a float shader `in` of its component count. */
+export const VERTEX_FORMATS: Record<VertexFormat, FormatCodec> = {
+  float32: floatCodec(1, Float32Array.BYTES_PER_ELEMENT, getF32, setF32),
+  float32x2: floatCodec(2, Float32Array.BYTES_PER_ELEMENT, getF32, setF32),
+  float32x3: floatCodec(3, Float32Array.BYTES_PER_ELEMENT, getF32, setF32),
+  float32x4: floatCodec(4, Float32Array.BYTES_PER_ELEMENT, getF32, setF32),
+  float16x2: floatCodec(2, Float16Array.BYTES_PER_ELEMENT, getF16, setF16),
+  float16x4: floatCodec(4, Float16Array.BYTES_PER_ELEMENT, getF16, setF16),
+  unorm8x4: unormCodec(4, U8),
+  snorm8x4: snormCodec(4, S8),
+  unorm16x2: unormCodec(2, U16),
+  unorm16x4: unormCodec(4, U16),
+  snorm16x2: snormCodec(2, S16),
+  snorm16x4: snormCodec(4, S16),
+  uint8x4: uintCodec(4, U8),
+  uint16x2: uintCodec(2, U16),
+  uint16x4: uintCodec(4, U16),
+}
+
+/** Whether a format is one of the float32 family: what a Float32Array
+ * holds directly, and what the generators write. */
+export function isFloatFormat(format: VertexFormat): boolean {
+  return format.startsWith("float32")
+}
 
 /** The attribute list of a layout (a preset name resolves to its list). */
 export function layoutAttributes(layout?: VertexLayout): VertexAttribute[] {
@@ -71,10 +165,10 @@ export function layoutAttributes(layout?: VertexLayout): VertexAttribute[] {
   return layout
 }
 
-/** Floats per vertex of a layout - its interleave stride. */
+/** Bytes per vertex of a layout - its interleave stride. */
 export function layoutStride(layout?: VertexLayout): number {
   let stride = 0
-  for (let attr of layoutAttributes(layout)) stride += FORMAT_FLOATS[attr.format]
+  for (let attr of layoutAttributes(layout)) stride += VERTEX_FORMATS[attr.format].bytes
   return stride
 }
 
@@ -86,24 +180,31 @@ export function layoutKey(layout?: VertexLayout): string {
     .join(",")
 }
 
-/** Where an attribute sits in the interleave: its float offset and size.
- * Null when the layout does not carry that name. */
-export function layoutSlot(layout: VertexLayout | undefined, name: string): { offset: number; size: number; format: VertexAttribute["format"] } | null {
+/** Where an attribute sits in the interleave: its byte offset, format
+ * and component count. Null when the layout does not carry that name. */
+export function layoutSlot(layout: VertexLayout | undefined, name: string): { offset: number; format: VertexFormat; components: number } | null {
   let offset = 0
   for (let attr of layoutAttributes(layout)) {
-    let size = FORMAT_FLOATS[attr.format]
-    if (attr.name === name) return { offset, size, format: attr.format }
-    offset += size
+    let codec = VERTEX_FORMATS[attr.format]
+    if (attr.name === name) return { offset, format: attr.format, components: codec.components }
+    offset += codec.bytes
   }
   return null
 }
 
-/** The check every layout must pass: aPos vec3 first and no duplicate
- * names. */
+/** Whether every attribute of a layout is float32-family: such a buffer
+ * is a Float32Array of `layoutStride / 4` floats per vertex, the
+ * generators' write form. */
+export function isFloatLayout(layout?: VertexLayout): boolean {
+  return layoutAttributes(layout).every(a => isFloatFormat(a.format))
+}
+
+/** The check every layout must pass: aPos float32x3 first and no
+ * duplicate names. */
 function checkLayout(layout: VertexAttribute[], where: string): void {
   let first = layout[0]
-  if (first === undefined || first.name !== "aPos" || first.format !== "vec3") {
-    throw new Error(where + ": a layout must start with aPos vec3")
+  if (first === undefined || first.name !== "aPos" || first.format !== "float32x3") {
+    throw new Error(where + ": a layout must start with aPos float32x3")
   }
   let seen = new Set<string>()
   for (let attr of layout) {
@@ -112,11 +213,78 @@ function checkLayout(layout: VertexAttribute[], where: string): void {
   }
 }
 
+/** The bytes of a vertex buffer, whatever view holds them. */
+export function vertexBytes(vertices: ArrayBufferView): Uint8Array {
+  return new Uint8Array(vertices.buffer, vertices.byteOffset, vertices.byteLength)
+}
+
+/** The view a vertex buffer of `layout` is handed out as: a Float32Array
+ * over an all-float layout (the generators' form, indexable as floats),
+ * a Uint8Array over a layout with a packed channel. */
+export function vertexView(layout: VertexLayout | undefined, buffer: ArrayBuffer, byteOffset = 0, byteLength = buffer.byteLength - byteOffset): ArrayBufferView {
+  return isFloatLayout(layout)
+    ? new Float32Array(buffer, byteOffset, byteLength / Float32Array.BYTES_PER_ELEMENT)
+    : new Uint8Array(buffer, byteOffset, byteLength)
+}
+
+/** Vertices in a buffer of `layout`. Throws naming `where` when the byte
+ * length is not a whole number of them, or the view is not 4-aligned
+ * (every stride is, and the GPU upload and the picking shape count on
+ * it). */
+export function vertexCount(vertices: ArrayBufferView, layout: VertexLayout | undefined, where: string): number {
+  let stride = layoutStride(layout)
+  if (vertices.byteOffset % Float32Array.BYTES_PER_ELEMENT !== 0) {
+    throw new Error(where + ": vertex data must start on a 4-byte boundary")
+  }
+  if (vertices.byteLength % stride !== 0) {
+    throw new Error(where + ": " + vertices.byteLength + " vertex bytes is not a whole number of " + stride + "-byte (" + layoutKey(layout) + ") vertices")
+  }
+  return vertices.byteLength / stride
+}
+
+/** A view on one attribute of a vertex buffer: component `k` of vertex
+ * `i`, read and written as the float the shader sees, through the
+ * format's codec. The one way anything touches vertex data, so no
+ * caller knows an offset, a stride or a format. */
+export type AttributeAccess = {
+  format: VertexFormat
+  components: number
+  get(i: number, k: number): number
+  set(i: number, k: number, v: number): void
+}
+
+/** The accessor for `name` over a bare vertex buffer of `layout`; null
+ * when the layout lacks the name. */
+export function attributeAccess(vertices: ArrayBufferView, layout: VertexLayout | undefined, name: string): AttributeAccess | null {
+  let slot = layoutSlot(layout, name)
+  if (slot === null) return null
+  let stride = layoutStride(layout)
+  let codec = VERTEX_FORMATS[slot.format]
+  let offset = slot.offset
+  let dv = new DataView(vertices.buffer, vertices.byteOffset, vertices.byteLength)
+  return {
+    format: slot.format,
+    components: codec.components,
+    get: (i, k) => codec.get(dv, i * stride + offset, k),
+    set: (i, k, v) => codec.set(dv, i * stride + offset, k, v),
+  }
+}
+
+/** `attributeAccess` over a geometry's own buffer and layout. */
+export function geometryAttribute(geometry: Geometry, name: string): AttributeAccess | null {
+  return attributeAccess(geometry.vertices, geometry.layout, name)
+}
+
+// The accessor a reader of the standard channels falls back on when the
+// layout lacks the channel: zeros, so a point cloud without a normal or
+// uv reads (0, 0, 0) and (0, 0).
+const ZERO_ACCESS: AttributeAccess = { format: "float32", components: 0, get: () => 0, set: () => {} }
+
 /**
  * The structural check for geometry about to draw: the layout starts
- * with aPos, the vertex float count is a whole number of its stride,
- * and indices are present. Throws naming the geometry. The scene runs it
- * at add() so hand-built geometry (a bare `layout: "colored"` over a
+ * with aPos, the vertex byte count is a whole number of its stride, and
+ * indices are present. Throws naming the geometry. The scene runs it at
+ * add() so hand-built geometry (a bare `layout: "colored"` over a
  * miscounted array) fails there instead of drawing garbage triangles.
  * Deliberately no max-index scan: that is O(indices) per add, and the
  * generators and merge/transform keep indices in range by construction.
@@ -125,12 +293,7 @@ export function validateGeometry(geometry: Geometry): void {
   let name = geometry.label ? "geometry '" + geometry.label + "'" : "geometry"
   let layout = geometry.layout
   if (layout !== undefined && typeof layout !== "string") checkLayout(layout, name)
-  let stride = layoutStride(layout)
-  if (geometry.vertices.length % stride !== 0) {
-    throw new Error(
-      name + ": " + geometry.vertices.length + " vertex floats is not a whole number of " + stride + "-float (" + layoutKey(layout) + ") vertices",
-    )
-  }
+  vertexCount(geometry.vertices, layout, name)
   let topology = geometryTopology(geometry)
   let count = geometry.indices.length
   // Lines and points may be empty: a feature-edge pass over a smooth
@@ -171,15 +334,22 @@ export function geometryTopology(geometry: Geometry): Topology {
 export type GeometryOptions = { label?: string; layout?: VertexLayout }
 
 /** The generator path writes the standard channels in their standard
- * order, so a layout a generator is asked to emit must start with the
- * prefix; past it the layout is open. */
+ * order into a Float32Array, so a layout a generator is asked to emit
+ * must start with the prefix and stay float32-family throughout; past
+ * the prefix the names are open. Packing is a pass over the result
+ * (`withAttribute` with a packed format), not a generator option. */
 function checkGeneratorLayout(layout: VertexAttribute[], where: string): void {
   checkLayout(layout, where)
   for (let i = 0; i < STANDARD_ATTRIBUTES.length; i++) {
     let want = STANDARD_ATTRIBUTES[i]!
     let got = layout[i]
     if (got === undefined || got.name !== want.name || got.format !== want.format) {
-      throw new Error(where + ": a generator layout must start with the standard prefix (aPos vec3, aNormal vec3, aUV vec2)")
+      throw new Error(where + ": a generator layout must start with the standard prefix (aPos float32x3, aNormal float32x3, aUV float32x2)")
+    }
+  }
+  for (let attr of layout) {
+    if (!isFloatFormat(attr.format)) {
+      throw new Error(where + ": a generator layout is float32-family throughout ('" + attr.name + "' is " + attr.format + "); pack a channel with withAttribute over the result")
     }
   }
 }
@@ -199,9 +369,7 @@ export function packGeometry(
   }
   let count = verts.length / STANDARD_FLOATS
   let packedIndices = indices instanceof Uint16Array || indices instanceof Uint32Array ? indices : packIndices(indices, count)
-  let attrs = layoutAttributes(layout)
-  if (layout !== undefined && typeof layout !== "string") checkGeneratorLayout(attrs, "packGeometry")
-  let stride = layoutStride(attrs)
+  let stride = generatorStride(options, "packGeometry")
   if (stride === STANDARD_FLOATS) {
     let vertices = verts instanceof Float32Array ? verts : new Float32Array(verts)
     return layout === undefined ? { vertices, indices: packedIndices, label } : { vertices, indices: packedIndices, layout, label }
@@ -215,19 +383,20 @@ export function packGeometry(
   return { vertices, indices: packedIndices, layout, label }
 }
 
-// The stride a generator writing a Float32Array directly must use for the
-// requested layout, and the matching finish (no repack: the data is
-// already laid out).
-function generatorStride(options: GeometryOptions): number {
+// The stride in FLOATS a generator writing a Float32Array directly must
+// use for the requested layout (float32-family by the generator rule, so
+// the byte stride is a whole number of floats), and the matching finish
+// (no repack: the data is already laid out).
+function generatorStride(options: GeometryOptions, where = "generator layout"): number {
   let { layout } = options
   let attrs = layoutAttributes(layout)
-  if (layout !== undefined && typeof layout !== "string") checkGeneratorLayout(attrs, "generator layout")
-  return layoutStride(attrs)
+  if (layout !== undefined && typeof layout !== "string") checkGeneratorLayout(attrs, where)
+  return layoutStride(attrs) / Float32Array.BYTES_PER_ELEMENT
 }
 
 function finishGeometry(vertices: Float32Array, indices: number[], options: GeometryOptions): Geometry {
   let { label, layout } = options
-  let packed = packIndices(indices, vertices.length / layoutStride(layout))
+  let packed = packIndices(indices, vertexCount(vertices, layout, "generator"))
   return layout === undefined ? { vertices, indices: packed, label } : { vertices, indices: packed, layout, label }
 }
 
@@ -238,9 +407,12 @@ export function packIndices(indices: number[], vertexCount: number): Uint16Array
 }
 
 export type Geometry = {
-  /** Interleaved [pos.xyz, normal.xyz, uv.xy] per vertex, plus color.rgba
-   * in the "colored" layout. */
-  vertices: Float32Array
+  /** The interleaved vertex bytes in the layout's order: a Float32Array
+   * for an all-float layout (the generators' form: [pos.xyz, normal.xyz,
+   * uv.xy] per vertex, plus color.rgba in "colored"), any 4-aligned view
+   * otherwise. Read and write channels through `geometryAttribute`; the
+   * view type is never the contract. */
+  vertices: ArrayBufferView
   /** The array type picks the draw's index format: Uint32Array past 64k
    * vertices. */
   indices: Uint16Array | Uint32Array
@@ -277,10 +449,10 @@ export function geometryBounds(geometry: Geometry): Float32Array {
   let bounds = geometry._bounds
   if (bounds === undefined) {
     bounds = new Float32Array([Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity])
-    let v = geometry.vertices
-    let stride = layoutStride(geometry.layout)
-    for (let i = 0; i + 2 < v.length; i += stride) {
-      let x = v[i]!, y = v[i + 1]!, z = v[i + 2]!
+    let count = vertexCount(geometry.vertices, geometry.layout, "geometryBounds")
+    let pos = geometryAttribute(geometry, "aPos")!
+    for (let i = 0; i < count; i++) {
+      let x = pos.get(i, 0), y = pos.get(i, 1), z = pos.get(i, 2)
       if (x < bounds[0]!) bounds[0] = x
       if (y < bounds[1]!) bounds[1] = y
       if (z < bounds[2]!) bounds[2] = z
@@ -308,32 +480,32 @@ export type ColorFill = AttributeFill
  * source's plus `attr`, every existing channel copied through and the new
  * slots written from `fill`. This is Three's `geometry.setAttribute` for
  * an interleaved buffer - the one generic primitive; `withColors` is its
- * aColor spelling. A material reads the channel by declaring the matching
- * `in` (name and format) in its vertex stage.
+ * aColor spelling. A material reads the channel by declaring an `in` of
+ * the matching name and component count in its vertex stage. A packed
+ * format (`unorm8x4` for a color, `snorm16x2`, `float16x4`, ...) is how a
+ * channel is compressed: the fill is given in float and encoded on write.
  */
 export function withAttribute(geometry: Geometry, attr: VertexAttribute, fill: AttributeFill, label?: string): Geometry {
   let srcLayout = layoutAttributes(geometry.layout)
   if (layoutSlot(srcLayout, attr.name) !== null) {
     throw new Error("withAttribute: geometry already carries '" + attr.name + "'")
   }
-  let srcStride = layoutStride(srcLayout)
-  if (geometry.vertices.length % srcStride !== 0) {
-    throw new Error("withAttribute: vertex data is not a whole number of " + layoutKey(srcLayout) + " vertices")
+  if (!(attr.format in VERTEX_FORMATS)) {
+    throw new Error("withAttribute: unknown format '" + String(attr.format) + "' for " + attr.name + " (expected " + Object.keys(VERTEX_FORMATS).join(", ") + ")")
   }
+  let count = vertexCount(geometry.vertices, srcLayout, "withAttribute")
+  let srcStride = layoutStride(srcLayout)
   let layout = [...srcLayout, { name: attr.name, format: attr.format }]
   checkLayout(layout, "withAttribute")
   let stride = layoutStride(layout)
-  let count = geometry.vertices.length / srcStride
-  let src = geometry.vertices
-  let out = new Float32Array(count * stride)
-  for (let i = 0; i < count; i++) {
-    let s = i * srcStride
-    let d = i * stride
-    for (let k = 0; k < srcStride; k++) out[d + k] = src[s + k]!
-  }
-  fillSlot(out, layout, attr.name, fill, 0)
+  let src = vertexBytes(geometry.vertices)
+  let buffer = new ArrayBuffer(count * stride)
+  let dst = new Uint8Array(buffer)
+  for (let i = 0; i < count; i++) dst.set(src.subarray(i * srcStride, (i + 1) * srcStride), i * stride)
+  let vertices = vertexView(layout, buffer)
+  fillSlot(vertices, layout, attr.name, fill, 0)
   return {
-    vertices: out,
+    vertices,
     indices: geometry.indices,
     topology: geometry.topology,
     layout,
@@ -343,19 +515,21 @@ export function withAttribute(geometry: Geometry, attr: VertexAttribute, fill: A
 
 /**
  * Derive a "colored"-layout geometry from a standard one: the same
- * positions, normals, uvs and indices, plus an aColor vec4 per vertex -
- * the data channel for materials whose vertex stage reads `in vec4 aColor`
- * (a tint, baked ambient occlusion, any four scalars; the name is the
- * standard vocabulary, the contents are yours - raw floats, so a tint the
- * stock materials read under `vertexColors` is premultiplied linear:
- * encode an sRGB pick with premultipliedColor). `withAttribute` with the
- * aColor channel; the "colored" preset name is kept on the result.
+ * positions, normals, uvs and indices, plus an aColor float32x4 per
+ * vertex - the data channel for materials whose vertex stage reads `in
+ * vec4 aColor` (a tint, baked ambient occlusion, any four scalars; the
+ * name is the standard vocabulary, the contents are yours - raw floats,
+ * so a tint the stock materials read under `vertexColors` is
+ * premultiplied linear: encode an sRGB pick with premultipliedColor).
+ * `withAttribute` with the aColor channel; the "colored" preset name is
+ * kept on the result. For a 4-byte color use `withAttribute` with
+ * `unorm8x4` directly.
  */
 export function withColors(geometry: Geometry, fill: ColorFill, label?: string): Geometry {
   if (layoutSlot(geometry.layout, "aColor") !== null) {
     throw new Error("withColors: geometry already carries an aColor channel")
   }
-  let out = withAttribute(geometry, { name: "aColor", format: "vec4" }, fill, label ?? (geometry.label ? geometry.label + "-colored" : undefined))
+  let out = withAttribute(geometry, { name: "aColor", format: "float32x4" }, fill, label ?? (geometry.label ? geometry.label + "-colored" : undefined))
   if (layoutKey(out.layout) === layoutKey("colored")) out.layout = "colored"
   return out
 }
@@ -370,7 +544,7 @@ export function withColors(geometry: Geometry, fill: ColorFill, label?: string):
  * and `fill` indexes relative to `first`, so a per-part callback works
  * unchanged for both APIs. Returns `geometry.vertices`.
  */
-export function fillAttribute(geometry: Geometry, name: string, fill: AttributeFill, first = 0, count?: number): Float32Array {
+export function fillAttribute(geometry: Geometry, name: string, fill: AttributeFill, first = 0, count?: number): ArrayBufferView {
   return fillSlot(geometry.vertices, geometry.layout, name, fill, first, count)
 }
 
@@ -378,52 +552,47 @@ export function fillAttribute(geometry: Geometry, name: string, fill: AttributeF
  * buffer through it, before the Geometry exists): a bare array carries no
  * layout tag, so the caller states the layout and only the arithmetic is
  * checked. */
-function fillSlot(vertices: Float32Array, layout: VertexLayout | undefined, name: string, fill: AttributeFill, first: number, count?: number): Float32Array {
-  let slot = layoutSlot(layout, name)
+function fillSlot(vertices: ArrayBufferView, layout: VertexLayout | undefined, name: string, fill: AttributeFill, first: number, count?: number): ArrayBufferView {
+  let slot = attributeAccess(vertices, layout, name)
   if (slot === null) throw new Error("fillAttribute: layout has no '" + name + "' attribute")
-  let stride = layoutStride(layout)
-  if (vertices.length % stride !== 0) {
-    throw new Error("fillAttribute: vertex data is not a whole number of " + layoutKey(layout) + " vertices")
-  }
-  let total = vertices.length / stride
+  let total = vertexCount(vertices, layout, "fillAttribute")
   let n = count ?? total - first
   if (!Number.isInteger(first) || !Number.isInteger(n) || first < 0 || n < 0 || first + n > total) {
     throw new Error("fillAttribute: range [" + first + ", " + (first + n) + ") is outside the buffer's " + total + " vertices")
   }
-  let size = slot.size
+  let size = slot.components
   let fn = typeof fill === "function" ? fill : null
   let flat = typeof fill === "function" ? null : fill
   if (flat !== null && flat.length !== n * size) {
-    throw new Error("fillAttribute: fill has " + flat.length + " floats, expected " + size + " per vertex (" + n * size + ")")
+    throw new Error("fillAttribute: fill has " + flat.length + " values, expected " + size + " per vertex (" + n * size + ")")
   }
-  // The standard channels the callback sees, by slot: a layout without
-  // a normal or uv reads zeros for them.
-  let normalAt = layoutSlot(layout, "aNormal")?.offset ?? -1
-  let uvAt = layoutSlot(layout, "aUV")?.offset ?? -1
+  // The standard channels the callback sees: a layout without a normal
+  // or uv reads zeros for them.
+  let pos = attributeAccess(vertices, layout, "aPos")!
+  let nrm = attributeAccess(vertices, layout, "aNormal") ?? ZERO_ACCESS
+  let uv = attributeAccess(vertices, layout, "aUV") ?? ZERO_ACCESS
   for (let i = 0; i < n; i++) {
-    let d = (first + i) * stride
+    let v = first + i
     let value: ArrayLike<number>
     let s: number
     if (fn !== null) {
-      let normal: Vec3 = normalAt < 0 ? [0, 0, 0] : [vertices[d + normalAt]!, vertices[d + normalAt + 1]!, vertices[d + normalAt + 2]!]
-      let uv: Vec2 = uvAt < 0 ? [0, 0] : [vertices[d + uvAt]!, vertices[d + uvAt + 1]!]
-      value = fn(i, [vertices[d]!, vertices[d + 1]!, vertices[d + 2]!], normal, uv)
+      value = fn(i, [pos.get(v, 0), pos.get(v, 1), pos.get(v, 2)], [nrm.get(v, 0), nrm.get(v, 1), nrm.get(v, 2)], [uv.get(v, 0), uv.get(v, 1)])
       s = 0
       if (value.length !== size) {
-        throw new Error("fillAttribute: fill callback returned " + value.length + " floats for '" + name + "', expected " + size)
+        throw new Error("fillAttribute: fill callback returned " + value.length + " values for '" + name + "', expected " + size)
       }
     } else {
       value = flat!
       s = i * size
     }
-    for (let k = 0; k < size; k++) vertices[d + slot.offset + k] = value[s + k]!
+    for (let k = 0; k < size; k++) slot.set(v, k, value[s + k]!)
   }
   return vertices
 }
 
 /** `fillAttribute` for the aColor channel of a color-carrying geometry
  * (fill is 4 per vertex). */
-export function fillColors(geometry: Geometry, fill: ColorFill, first = 0, count?: number): Float32Array {
+export function fillColors(geometry: Geometry, fill: ColorFill, first = 0, count?: number): ArrayBufferView {
   return fillAttribute(geometry, "aColor", fill, first, count)
 }
 
@@ -445,28 +614,24 @@ export function transformGeometry(geometry: Geometry, transform: TransformUpdate
   if (transform.scale !== undefined) updateScale(scl, transform.scale)
   let m = compose(mat4(), transform.position ?? [0, 0, 0], rot, scl)
   let n = normalMatrix(mat4(), m)
-  let stride = layoutStride(geometry.layout)
-  let src = geometry.vertices
-  if (src.length % stride !== 0) {
-    throw new Error("transformGeometry: vertex data is not a whole number of " + layoutKey(geometry.layout) + " vertices")
-  }
-  let out = new Float32Array(src)
-  let normalAt = layoutSlot(geometry.layout, "aNormal")?.offset ?? -1
-  for (let i = 0; i < out.length; i += stride) {
-    let x = src[i]!, y = src[i + 1]!, z = src[i + 2]!
-    out[i] = m[0] * x + m[4] * y + m[8] * z + m[12]
-    out[i + 1] = m[1] * x + m[5] * y + m[9] * z + m[13]
-    out[i + 2] = m[2] * x + m[6] * y + m[10] * z + m[14]
-    if (normalAt < 0) continue
-    let na = i + normalAt
-    let nx = src[na]!, ny = src[na + 1]!, nz = src[na + 2]!
+  let count = vertexCount(geometry.vertices, geometry.layout, "transformGeometry")
+  let out = vertexView(geometry.layout, vertexBytes(geometry.vertices).slice().buffer)
+  let pos = attributeAccess(out, geometry.layout, "aPos")!
+  let nrm = attributeAccess(out, geometry.layout, "aNormal")
+  for (let i = 0; i < count; i++) {
+    let x = pos.get(i, 0), y = pos.get(i, 1), z = pos.get(i, 2)
+    pos.set(i, 0, m[0] * x + m[4] * y + m[8] * z + m[12])
+    pos.set(i, 1, m[1] * x + m[5] * y + m[9] * z + m[13])
+    pos.set(i, 2, m[2] * x + m[6] * y + m[10] * z + m[14])
+    if (nrm === null) continue
+    let nx = nrm.get(i, 0), ny = nrm.get(i, 1), nz = nrm.get(i, 2)
     let tx = n[0] * nx + n[4] * ny + n[8] * nz
     let ty = n[1] * nx + n[5] * ny + n[9] * nz
     let tz = n[2] * nx + n[6] * ny + n[10] * nz
     let len = Math.hypot(tx, ty, tz) || 1
-    out[na] = tx / len
-    out[na + 1] = ty / len
-    out[na + 2] = tz / len
+    nrm.set(i, 0, tx / len)
+    nrm.set(i, 1, ty / len)
+    nrm.set(i, 2, tz / len)
   }
   return {
     vertices: out,
@@ -496,7 +661,7 @@ export function mergeGeometries(parts: Geometry[], label?: string): Geometry {
   let stride = layoutStride(layout)
   let topology = geometryTopology(parts[0]!)
   if (topology === "line-strip" || topology === "triangle-strip") throw new Error("mergeGeometries: cannot merge " + topology + " geometry")
-  let floats = 0
+  let vertexTotal = 0
   let indexCount = 0
   for (let part of parts) {
     if (layoutKey(part.layout) !== key) {
@@ -505,25 +670,22 @@ export function mergeGeometries(parts: Geometry[], label?: string): Geometry {
     if (geometryTopology(part) !== topology) {
       throw new Error("mergeGeometries: mixed topologies (" + topology + " and " + geometryTopology(part) + ")")
     }
-    if (part.vertices.length % stride !== 0) {
-      throw new Error("mergeGeometries: a part's vertex data is not a whole number of " + key + " vertices")
-    }
-    floats += part.vertices.length
+    vertexTotal += vertexCount(part.vertices, layout, "mergeGeometries")
     indexCount += part.indices.length
   }
-  let vertexCount = floats / stride
-  let vertices = new Float32Array(floats)
-  let indices = vertexCount > 65535 ? new Uint32Array(indexCount) : new Uint16Array(indexCount)
-  let vOffset = 0
+  let buffer = new ArrayBuffer(vertexTotal * stride)
+  let bytes = new Uint8Array(buffer)
+  let indices = vertexTotal > 65535 ? new Uint32Array(indexCount) : new Uint16Array(indexCount)
+  let base = 0
   let iOffset = 0
   for (let part of parts) {
-    vertices.set(part.vertices, vOffset)
-    let base = vOffset / stride
+    bytes.set(vertexBytes(part.vertices), base * stride)
     let src = part.indices
     for (let i = 0; i < src.length; i++) indices[iOffset + i] = src[i]! + base
-    vOffset += part.vertices.length
+    base += part.vertices.byteLength / stride
     iOffset += src.length
   }
+  let vertices = vertexView(layout, buffer)
   return { vertices, indices, topology: parts[0]!.topology, layout, label }
 }
 
@@ -540,15 +702,13 @@ const EDGES_THRESHOLD_ANGLE = 1
 /** One id per vertex, shared by every vertex at the same position (to
  * WELD_PRECISION) whatever its normal and uv; plus the id count. */
 function weldPositions(geometry: Geometry): { ids: Uint32Array; count: number } {
-  let v = geometry.vertices
-  let stride = layoutStride(geometry.layout)
-  let count = v.length / stride
+  let count = vertexCount(geometry.vertices, geometry.layout, "weldPositions")
+  let pos = geometryAttribute(geometry, "aPos")!
   let ids = new Uint32Array(count)
   let seen = new Map<string, number>()
   let scale = 1 / WELD_PRECISION
   for (let i = 0; i < count; i++) {
-    let b = i * stride
-    let key = Math.round(v[b]! * scale) + "," + Math.round(v[b + 1]! * scale) + "," + Math.round(v[b + 2]! * scale)
+    let key = Math.round(pos.get(i, 0) * scale) + "," + Math.round(pos.get(i, 1) * scale) + "," + Math.round(pos.get(i, 2) * scale)
     let id = seen.get(key)
     if (id === undefined) {
       id = seen.size
@@ -568,18 +728,16 @@ function edgeIndices(geometry: Geometry, name: string, cosThreshold: number | nu
   if (geometryTopology(geometry) !== "triangles") {
     throw new Error(name + ": needs a triangle geometry, got " + geometryTopology(geometry))
   }
-  let v = geometry.vertices
-  let stride = layoutStride(geometry.layout)
+  let pos = geometryAttribute(geometry, "aPos")!
   let weld = weldPositions(geometry)
   let src = geometry.indices
   type Edge = { a: number; b: number; nx: number; ny: number; nz: number; faces: number; sharp: boolean }
   let edges = new Map<number, Edge>()
   for (let t = 0; t + 2 < src.length; t += 3) {
     let i0 = src[t]!, i1 = src[t + 1]!, i2 = src[t + 2]!
-    let p0 = i0 * stride, p1 = i1 * stride, p2 = i2 * stride
     // The face normal, for the feature test.
-    let ux = v[p1]! - v[p0]!, uy = v[p1 + 1]! - v[p0 + 1]!, uz = v[p1 + 2]! - v[p0 + 2]!
-    let wx = v[p2]! - v[p0]!, wy = v[p2 + 1]! - v[p0 + 1]!, wz = v[p2 + 2]! - v[p0 + 2]!
+    let ux = pos.get(i1, 0) - pos.get(i0, 0), uy = pos.get(i1, 1) - pos.get(i0, 1), uz = pos.get(i1, 2) - pos.get(i0, 2)
+    let wx = pos.get(i2, 0) - pos.get(i0, 0), wy = pos.get(i2, 1) - pos.get(i0, 1), wz = pos.get(i2, 2) - pos.get(i0, 2)
     let nx = uy * wz - uz * wy, ny = uz * wx - ux * wz, nz = ux * wy - uy * wx
     let len = Math.hypot(nx, ny, nz) || 1
     nx /= len
@@ -604,7 +762,7 @@ function edgeIndices(geometry: Geometry, name: string, cosThreshold: number | nu
   for (let e of edges.values()) {
     if (cosThreshold === null || e.faces === 1 || e.sharp) out.push(e.a, e.b)
   }
-  return packIndices(out, v.length / stride)
+  return packIndices(out, weld.ids.length)
 }
 
 /**

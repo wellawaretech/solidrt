@@ -304,7 +304,7 @@ export function createTileLayer(
         label: `${label}-chunk`,
         topology: "triangle-strip",
         vertexCount: 4,
-        attributes: [{ name: "aPos", format: "vec2" }],
+        attributes: [{ name: "aPos", format: "float32x2" }],
         buffer: quad,
         instanceAttributes: INSTANCE_ATTRIBUTES,
         instanceBuffer: buffer,

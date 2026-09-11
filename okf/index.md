@@ -17,6 +17,11 @@ Decided and being worked on now. A plan nobody is working on goes back to backlo
   An instanced sprite layer as the third extension, built on a new zero-copy
   GPU buffer write lease in core; tiers, measurements, and the design
   decisions
+- **[Every vertex attribute is a 32-bit float in one immutable interleaved buffer](plans/3d-vertex-data-model.md)** [2026-09-11]
+  The vertex vocabulary is f32/vec2/vec3/vec4 only and a geometry is one
+  interleaved Float32Array uploaded once, so a color costs 16 bytes where 4
+  would do, a normal 12 where 4 would do, and a channel that changes every
+  frame re-uploads the channels that do not.
 - **[Client storage and bundle updates](plans/client-storage-updates.md)** [2026-07-20]
   "Implements the update-mechanism research: data-root resolution, a
   hardlinked version store with dev-push-as-install and offline relaunch,
@@ -144,11 +149,6 @@ Shaped, not started.
   (a high viewpoint, a driving game) cannot push resolution outward and a
   close-quarters one cannot pull it in; Godot's shadow_split_1..3 and Unity's
   cascade splits are per-light ratios, Three's CSM addon a mode switch.
-- **[Every vertex attribute is a 32-bit float in one immutable interleaved buffer](backlog/3d-vertex-data-model.md)** [2026-09-11]
-  The vertex vocabulary is f32/vec2/vec3/vec4 only and a geometry is one
-  interleaved Float32Array uploaded once, so a color costs 16 bytes where 4
-  would do, a normal 12 where 4 would do, and a channel that changes every
-  frame re-uploads the channels that do not.
 - **[Adaptive present-fence depth](backlog/adaptive-present-fence-depth.md)** [2026-07-27]
   Fallback design if unconditional two-deep present fencing ever shows up as
   desktop drag latency - allow the second in-flight frame only when observed

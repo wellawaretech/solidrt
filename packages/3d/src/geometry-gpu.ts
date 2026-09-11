@@ -15,7 +15,7 @@ import { createBuffer, destroyBuffer } from "@solidrt/core/gpu"
 import type { BufferId, IndexFormat } from "@solidrt/core/gpu"
 import { createShape, destroyShape } from "flux:spatial"
 import type { ShapeId } from "flux:spatial"
-import { geometryTopology, layoutStride } from "./geometry.ts"
+import { geometryTopology, layoutSlot, layoutStride } from "./geometry.ts"
 import type { Geometry } from "./geometry.ts"
 
 /** An acquired reference to a geometry's GPU buffers: what a draw entry
@@ -26,19 +26,20 @@ export type GeometryBuffers = {
   buffer: BufferId
   index: BufferId
   indexFormat: IndexFormat
-  /** The picking shape (positions at 0, uv at 6 of every layout); null
-   * for anything but a triangle list, which picks by its box. */
+  /** The picking shape (positions and, when the layout carries a
+   * float32x2 aUV, uvs); null for anything but a triangle list, which
+   * picks by its box. */
   shape: ShapeId | null
 }
 
-type GpuEntry = GeometryBuffers & { geometry: Geometry; vertices: Float32Array; refs: number }
+type GpuEntry = GeometryBuffers & { geometry: Geometry; vertices: ArrayBufferView; refs: number }
 
 let entries = new WeakMap<Geometry, GpuEntry>()
 
 /** Vertex uploads keyed by the array itself: geometries sharing one
  * vertex array (a wireframe or edges geometry over its source's) share
  * one GPU buffer, each entry holding a reference to it. */
-let vertexUploads = new WeakMap<Float32Array, { buffer: BufferId; refs: number }>()
+let vertexUploads = new WeakMap<ArrayBufferView, { buffer: BufferId; refs: number }>()
 
 function acquireVertices(geometry: Geometry): BufferId {
   let upload = vertexUploads.get(geometry.vertices)
@@ -56,13 +57,26 @@ function acquireVertices(geometry: Geometry): BufferId {
   return upload.buffer
 }
 
-function releaseVertices(vertices: Float32Array): void {
+function releaseVertices(vertices: ArrayBufferView): void {
   let upload = vertexUploads.get(vertices)
   if (upload === undefined) return
   upload.refs--
   if (upload.refs > 0) return
   vertexUploads.delete(vertices)
   destroyBuffer(upload.buffer)
+}
+
+// The picking shape reads positions (and uvs, when they are plain floats)
+// through a Float32Array view over the vertex bytes: every stride and
+// offset is a multiple of 4, so the view is exact whatever the layout
+// packs elsewhere. A uv in a packed format is left out (hits carry no
+// uv); positions are float32x3 by the layout rule.
+function createPickingShape(geometry: Geometry): ShapeId {
+  let v = geometry.vertices
+  let floats = new Float32Array(v.buffer, v.byteOffset, v.byteLength / Float32Array.BYTES_PER_ELEMENT)
+  let uv = layoutSlot(geometry.layout, "aUV")
+  let uvAt = uv !== null && uv.format === "float32x2" ? uv.offset / Float32Array.BYTES_PER_ELEMENT : -1
+  return createShape(floats, layoutStride(geometry.layout) / Float32Array.BYTES_PER_ELEMENT, 0, uvAt, geometry.indices)
 }
 
 /** The geometry's GPU buffers, created on first use, plus the index format
@@ -81,10 +95,7 @@ export function acquireGeometryBuffers(geometry: Geometry): GeometryBuffers {
         label: geometry.label ? geometry.label + "-indices" : undefined,
       }),
       indexFormat: geometry.indices instanceof Uint32Array ? "uint32" : "uint16",
-      shape:
-        geometryTopology(geometry) === "triangles"
-          ? createShape(geometry.vertices, layoutStride(geometry.layout), 0, 6, geometry.indices)
-          : null,
+      shape: geometryTopology(geometry) === "triangles" ? createPickingShape(geometry) : null,
       refs: 0,
     }
     entries.set(geometry, entry)

@@ -328,27 +328,44 @@ flux:spatial consumers.
 
 One interleaved vertex buffer per geometry, described by an open layout
 (`Geometry.layout`, absent = "standard"): an ordered attribute list that
-starts with `aPos` vec3 and may carry any named channels after it. The
-standard prefix `aPos` vec3 + `aNormal` vec3 + `aUV` vec2 is what every
-generator emits and what the stock materials read, not a rule: a
-hand-built geometry declares what it has, so a point cloud may carry
-`[aPos vec3, aData f32]` at 4 floats a point instead of 9, halving a
-large cloud's vertex buffer. Pair it with a material that reads only what
-it carries: `unlit` (aPos only) or a shaderMaterial; a stock lit material
-over it throws the ordinary missing-attribute error at add(). A layout
-handed to a generator must start with the prefix (the generator writes
-those channels). `withAttribute(geometry, { name, format }, fill)` appends one
-(Three's `setAttribute` for an interleave); "colored" names the common
-case, the prefix plus `aColor` vec4 - the per-vertex data channel (a
-tint, baked AO, any four scalars; standard name, your contents) - and
-`withColors(geometry, fill)` is its spelling. Fill is a flat
-size-per-vertex array or a per-vertex callback receiving `(index, pos,
-normal, uv)` (zeros for a channel the layout lacks). The fill is raw floats: a tint the stock materials read
-under `vertexColors` is premultiplied linear like every shader color,
-so encode an sRGB pick with `premultipliedColor(color)`. Materials read attributes BY NAME: a material's vertex
-stage may declare any subset of its geometry's channels, and a channel
-the program reads that the geometry lacks (name + format) throws at
-add(). What a program reads is the ENGINE's word (`material.attributes()`
+starts with `aPos` float32x3 and may carry any named channels after it,
+each in a vertex format. Formats are WebGPU's spelling of (component
+type, count, normalized): the float32 family (`float32` .. `float32x4`),
+`float16x2/x4`, the normalized integers `unorm8x4`, `snorm8x4`,
+`unorm16x2/x4`, `snorm16x2/x4`, and the unsigned integers `uint8x4`,
+`uint16x2/x4` (joint indices); `VERTEX_FORMATS` is the table. Every
+format is a multiple of 4 bytes, so offsets and strides are 4-aligned by
+construction, and every format feeds a FLOAT shader `in` of its
+component count (the fetch converts: `in vec4 aColor` reads a
+`unorm8x4` as 0..1). The standard prefix `aPos` float32x3 + `aNormal`
+float32x3 + `aUV` float32x2 is what every generator emits and what the
+stock materials read, not a rule: a hand-built geometry declares what
+it has, so a point cloud may carry `[aPos float32x3, aData float32]` at
+16 bytes a point instead of 36, or a color as `unorm8x4` at 4 bytes
+instead of 16. Pair a prefixless layout with a material that reads only
+what it carries: `unlit` (aPos only) or a shaderMaterial; a stock lit
+material over it throws the ordinary missing-attribute error at add().
+A layout handed to a generator must start with the prefix and stay
+float32-family (the generator writes floats); packing is a pass over
+the result. `withAttribute(geometry, { name, format }, fill)` appends
+one channel in any format (Three's `setAttribute` for an interleave;
+the fill is given in float and encoded on write); "colored" names the
+common case, the prefix plus `aColor` float32x4 - the per-vertex data
+channel (a tint, baked AO, any four scalars; standard name, your
+contents) - and `withColors(geometry, fill)` is its spelling. Fill is a
+flat size-per-vertex array or a per-vertex callback receiving `(index,
+pos, normal, uv)` (zeros for a channel the layout lacks). The fill is
+raw floats: a tint the stock materials read under `vertexColors` is
+premultiplied linear like every shader color, so encode an sRGB pick
+with `premultipliedColor(color)`. `Geometry.vertices` is an
+`ArrayBufferView` (a Float32Array for an all-float layout, a Uint8Array
+when a channel is packed; never the contract): read and write a channel
+through `geometryAttribute(geometry, name)`, an accessor whose
+`get(i, k)`/`set(i, k, v)` speak floats whatever the format, and count
+vertices with `vertexCount`. Materials read attributes BY NAME: a
+material's vertex stage may declare any subset of its geometry's
+channels, and a channel the program reads that the geometry lacks (by
+name, or with a different component count) throws at add(). What a program reads is the ENGINE's word (`material.attributes()`
 = `programAttributes` reflection of the linked program, instance
 attributes excluded), not a parse of the GLSL: an `in` the compiler
 dropped does not count, and the engine also rejects a pipeline whose
@@ -356,11 +373,12 @@ attribute lists leave a read attribute uncovered. The material
 keeps one program and builds one pipeline per layout its meshes bring,
 so a geometry may carry more than a material reads. The whole layout
 ships whether a material reads every attribute or not (inactive
-attributes only keep the stride), so extra channels cost their floats on
+attributes only keep the stride), so extra channels cost their bytes on
 every draw of that geometry - keep data-light passes (a wireframe
-reading only aPos) on standard geometry. `layoutStride`/`layoutSlot`/
-`layoutKey`/`layoutAttributes` are the layout arithmetic; two layouts
-with equal keys interleave identically (merge requires that).
+reading only aPos) on standard geometry. `layoutStride` (bytes)/
+`layoutSlot` (byte offset, format, components)/`layoutKey`/
+`layoutAttributes` are the layout arithmetic; two layouts with equal
+keys interleave identically (merge requires that).
 Indices are uint16 or uint32 - the `Geometry.indices` array type picks
 the draw's index format, so hand-built geometry past 64k vertices just
 uses a Uint32Array (generators emit uint16). What the indices LIST is
@@ -386,7 +404,7 @@ cost model). Geometry GPU buffers are lazy, shared, and
 reference-counted by draw entries: removing the last
 entry frees them at the end of the microtask (a same-tick rebuild keeps
 the upload), so swapping `<Mesh geometry>` reactively never accumulates
-old generations; the vertex upload is keyed on the `Float32Array`
+old generations; the vertex upload is keyed on the vertices view
 itself, so geometries sharing a vertex array (a wireframe over its
 source) share one buffer. `disposeGeometry` is the immediate explicit
 free.
@@ -824,7 +842,8 @@ the tail every generator ends in, for your own generators.
 `withAttribute(geometry, attr, fill, label?)` derives a copy of any
 geometry (generator or hand-built) with one more channel after its
 current layout; the source is untouched. `withColors(geometry, fill,
-label?)` is the aColor vec4 case, keeping the "colored" preset name.
+label?)` is the aColor float32x4 case, keeping the "colored" preset
+name (`withAttribute` with `unorm8x4` is the 4-byte color).
 `fillAttribute(geometry, name, fill, first?, count?)` is the in-place
 primitive under both: overwrites one channel the geometry's layout
 already carries (withAttribute ADDS one), reading pos/normal/uv from the
@@ -1000,9 +1019,11 @@ pipeline with its own values. `dispose()` lives on the class alone.
 
 #### Instanced materials
 
-`instanceAttributes: [{ name, format, slot? }]` (`format` is the vertex
-vocabulary, `"f32" | "vec2" | "vec3" | "vec4"`, NOT WebGPU's
-`float32x3` spelling) on either shader-material form makes an INSTANCED
+`instanceAttributes: [{ name, format, slot? }]` (`format` is the
+float32 family of the vertex vocabulary, `"float32" | "float32x2" |
+"float32x3" | "float32x4"`: the record buffers here are Float32Arrays
+written in floats, so the packed formats are the engine's, through
+core's pipeline API) on either shader-material form makes an INSTANCED
 material: the vertex stage reads them as `in` variables beside the
 layout's own, and each drawn instance gets one
 record per slot from the mesh's instance buffers - slot 0 (default)
@@ -1795,8 +1816,11 @@ material takes `vertexColors: true` for such parts - the callback's
 fourth argument says so, and a material shared by painted and unpainted
 parts is made once per variant, like the skinned split.
 A `.srtm` baked before the material records carried the PBR fields
-(file version 3) is rejected by loadModel - re-bake with `srt tool
-3d/model`.
+(file version 3), or before the vertex formats took the WebGPU spelling
+and byte counts (file version 5), is rejected by loadModel - re-bake
+with `srt tool 3d/model`. A baked part keeps a quantized export's
+bytes: u8 colors, u8/u16 joints and normalized weights, u16 uvs land in
+their own formats, positions and normals as floats.
 
 ### Animation
 

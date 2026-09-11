@@ -551,12 +551,13 @@ declare module "flux:gpu" {
    */
   export function destroyProgram(id: ProgramId): void
   /**
-   * The vertex attributes a linked program actually reads (name and format),
-   * as the compiler left them: an `in` the vertex stage never uses is not
-   * listed, and a type no layout can feed (a matrix, an integer vector) is
-   * rejected at linkProgram. This is the list a pipeline over the program
-   * must cover between `attributes` and `instanceAttributes` - an uncovered
-   * or mis-formatted one throws at createRenderPipeline. Answered locally,
+   * The vertex attributes a linked program actually reads, as the compiler
+   * left them: an `in` the vertex stage never uses is not listed, and a
+   * type no layout can feed (a matrix, an integer vector) is rejected at
+   * linkProgram. The format is the float form the shader declares
+   * (`float32`..`float32x4`); a layout feeds it with any format of the same
+   * component count. This is the list a pipeline over the program must
+   * cover between `attributes` and `instanceAttributes`. Answered locally,
    * no GPU round trip.
    */
   export function programAttributes(program: ProgramId): VertexAttribute[]
@@ -605,14 +606,28 @@ declare module "flux:gpu" {
    */
   export type CullMode = "none" | "back" | "front"
   /**
-   * One float attribute of an interleaved record - a vertex of `attributes`
-   * or an instance record of `instanceAttributes`. The list's order defines
+   * The byte format of one vertex attribute: WebGPU's spelling of the
+   * (component type, count, normalized) triple. Every format is a multiple
+   * of 4 bytes, so offsets and strides are 4-aligned by construction. Every
+   * format feeds a FLOAT-typed shader `in` of the same component count:
+   * the fetch converts, mapping `unorm`/`snorm` integers onto 0..1 / -1..1
+   * and passing `uint` integers through as exact floats (joint indices).
+   */
+  export type VertexFormat =
+    | "float32" | "float32x2" | "float32x3" | "float32x4"
+    | "float16x2" | "float16x4"
+    | "unorm8x4" | "snorm8x4"
+    | "unorm16x2" | "unorm16x4" | "snorm16x2" | "snorm16x4"
+    | "uint8x4" | "uint16x2" | "uint16x4"
+  /**
+   * One attribute of an interleaved record - a vertex of `attributes` or
+   * an instance record of `instanceAttributes`. The list's order defines
    * the byte layout; locations are resolved by name against the vertex
    * shader's `in` declarations.
    */
-  export type VertexAttribute = { name: string; format: "f32" | "vec2" | "vec3" | "vec4" }
+  export type VertexAttribute = { name: string; format: VertexFormat }
   /**
-   * One float attribute of a per-instance record. `slot` (default 0) picks
+   * One attribute of a per-instance record. `slot` (default 0) picks
    * which buffer of the entry's `instanceBuffers` list the attribute
    * fetches from: attributes sharing a slot interleave into one record in
    * list order, distinct slots are distinct buffers with their own strides

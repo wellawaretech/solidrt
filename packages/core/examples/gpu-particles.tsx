@@ -75,8 +75,8 @@ function App() {
   let id = createPipelineTexture(VERTEX, FRAGMENT, 512, 512, { uTime: 0, uTintA: [1.0, 0.45, 0.15], uTintB: [0.25, 0.5, 1.0] }, {
     label: "particles",
     attributes: [
-      { name: "aPos", format: "vec3" },
-      { name: "aSeed", format: "f32" },
+      { name: "aPos", format: "float32x3" },
+      { name: "aSeed", format: "float32" },
     ],
     buffer: bufferId,
     topology: "points",

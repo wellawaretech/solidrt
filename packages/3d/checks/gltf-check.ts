@@ -16,7 +16,8 @@ import { gltfExternalUris, isGlb, parseGltf } from "../src/gltf.ts"
 import type { ModelData } from "../src/gltf.ts"
 import { decodeModel, encodeModel } from "../src/model-file.ts"
 import { sampleChannel } from "../src/clip.ts"
-import { box, layoutKey, layoutSlot, layoutStride, validateGeometry, STANDARD_FLOATS, VERTEX_LAYOUTS } from "../src/geometry.ts"
+import { box, geometryAttribute, layoutKey, layoutStride, validateGeometry, vertexBytes, STANDARD_FLOATS, VERTEX_LAYOUTS } from "../src/geometry.ts"
+import type { Geometry } from "../src/geometry.ts"
 import { linearToSrgb } from "../src/color.ts"
 
 let failures = 0
@@ -114,6 +115,31 @@ let colorData = new Uint8Array(vertexCount * 4)
 for (let i = 0; i < vertexCount; i++) colorData.set([255, 0, 0, 128], i * 4)
 let colorView = pushView(asBytes(colorData))
 
+// Quantized skin channels the way exporters write them: u8 joints and
+// normalized u8 weights [255, 170] (sum above 1, so the parser
+// renormalizes to 0.6/0.4).
+let jointsU8 = new Uint8Array(vertexCount * 4)
+let weightsU8 = new Uint8Array(vertexCount * 4)
+for (let i = 0; i < vertexCount; i++) {
+  jointsU8[i * 4 + 1] = 1
+  weightsU8[i * 4] = 255
+  weightsU8[i * 4 + 1] = 170
+}
+let jointsU8View = pushView(asBytes(jointsU8))
+let weightsU8View = pushView(asBytes(weightsU8))
+
+// Vertex i of channel `name` as floats, through the accessor.
+let read = (g: Geometry, name: string, i: number): number[] => {
+  let a = geometryAttribute(g, name)
+  if (a === null) {
+    fail("read: no " + name + " channel")
+    return []
+  }
+  let out: number[] = []
+  for (let k = 0; k < a.components; k++) out.push(a.get(i, k))
+  return out
+}
+
 let bounds = (data: Float32Array, n: number): { min: number[]; max: number[] } => {
   let min = new Array(n).fill(Infinity)
   let max = new Array(n).fill(-Infinity)
@@ -165,6 +191,8 @@ let document = {
     { bufferView: weightsView, componentType: 5126, count: vertexCount, type: "VEC4" },
     { bufferView: bindView, componentType: 5126, count: 2, type: "MAT4" },
     { bufferView: colorView, componentType: 5121, normalized: true, count: vertexCount, type: "VEC4" },
+    { bufferView: jointsU8View, componentType: 5121, count: vertexCount, type: "VEC4" },
+    { bufferView: weightsU8View, componentType: 5121, normalized: true, count: vertexCount, type: "VEC4" },
   ],
   animations: [
     {
@@ -576,10 +604,11 @@ throws("draco", () => parseGltf(glb(draco, binBlocks, binLength)), "compressed")
 let unknownExt = { ...document, extensionsRequired: ["KHR_lights_punctual"] }
 throws("unknown required extension", () => parseGltf(glb(unknownExt, binBlocks, binLength)), "KHR_lights_punctual")
 // COLOR_0: the quantized u8 VEC4 lands in aColor premultiplied and
-// linear (no sRGB decode: glTF vertex colors are linear) - the "colored"
-// layout for a static primitive, the skinned list plus aColor for a
-// rigged one - and both round-trip through the container, the custom
-// list written as its attribute list.
+// linear (no sRGB decode: glTF vertex colors are linear) IN ITS OWN
+// FORMAT (unorm8x4, 4 bytes a vertex), and a rigged primitive with u8
+// joints and normalized u8 weights keeps those too (uint8x4, unorm8x4,
+// the weights renormalized before encoding); both round-trip through
+// the container as attribute lists with their packed bytes intact.
 {
   let half = 128 / 255
   let painted = parseGltf(
@@ -591,7 +620,7 @@ throws("unknown required extension", () => parseGltf(glb(unknownExt, binBlocks, 
         skins: [{ joints: [2, 3], inverseBindMatrices: 12 }],
         meshes: [
           { primitives: [{ attributes: { POSITION: 0, NORMAL: 1, TEXCOORD_0: 2, COLOR_0: 13 }, indices: 3, material: 0 }] },
-          { primitives: [{ attributes: { POSITION: 0, NORMAL: 1, TEXCOORD_0: 2, JOINTS_0: 10, WEIGHTS_0: 11, COLOR_0: 13 }, indices: 3, material: 0 }] },
+          { primitives: [{ attributes: { POSITION: 0, NORMAL: 1, TEXCOORD_0: 2, JOINTS_0: 14, WEIGHTS_0: 15, COLOR_0: 13 }, indices: 3, material: 0 }] },
         ],
         animations: [],
       },
@@ -602,23 +631,23 @@ throws("unknown required extension", () => parseGltf(glb(unknownExt, binBlocks, 
   for (let part of painted.parts) validateGeometry(part.geometry)
   if (painted.parts.length !== 2) fail(`painted parts: ${painted.parts.length}`)
   let flat = painted.parts[0]!.geometry
-  if (flat.layout !== "colored") fail(`painted layout: ${String(flat.layout)}`)
-  let cs = layoutSlot(flat.layout, "aColor")!
-  if (!nearAll(flat.vertices.subarray(cs.offset, cs.offset + 4), [half, 0, 0, half])) fail(`painted color: ${Array.from(flat.vertices.subarray(cs.offset, cs.offset + 4))}`)
-  let st = layoutStride(flat.layout)
-  if (flat.vertices.length !== vertexCount * st) fail(`painted stride: ${flat.vertices.length / vertexCount}`)
-  if (!near(flat.vertices[st + 6]!, cube.vertices[STANDARD_FLOATS + 6]!)) fail("painted: the standard prefix shifted")
+  let paintedKey = layoutKey([...VERTEX_LAYOUTS.standard, { name: "aColor", format: "unorm8x4" }])
+  if (layoutKey(flat.layout) !== paintedKey) fail(`painted layout: ${layoutKey(flat.layout)}`)
+  if (!(flat.vertices instanceof Uint8Array)) fail("painted: a packed layout is bytes")
+  if (!nearAll(read(flat, "aColor", 0), [half, 0, 0, half])) fail(`painted color: ${read(flat, "aColor", 0)}`)
+  if (flat.vertices.byteLength !== vertexCount * layoutStride(flat.layout) || layoutStride(flat.layout) !== 36) fail(`painted stride: ${layoutStride(flat.layout)}`)
+  if (!near(read(flat, "aUV", 1)[0]!, cube.vertices[STANDARD_FLOATS + 6]!)) fail("painted: the standard prefix shifted")
   let rig = painted.parts[1]!.geometry
-  let want = layoutKey([...VERTEX_LAYOUTS.skinned, { name: "aColor", format: "vec4" }])
+  let want = layoutKey([...VERTEX_LAYOUTS.standard, { name: "aJoints", format: "uint8x4" }, { name: "aWeights", format: "unorm8x4" }, { name: "aColor", format: "unorm8x4" }])
   if (layoutKey(rig.layout) !== want) fail(`paintedskin layout: ${layoutKey(rig.layout)}`)
-  let rs = layoutSlot(rig.layout, "aColor")!
-  if (!nearAll(rig.vertices.subarray(rs.offset, rs.offset + 4), [half, 0, 0, half])) fail("paintedskin color")
-  let js = layoutSlot(rig.layout, "aJoints")!
-  if (!near(rig.vertices[js.offset + 1]!, 1)) fail("paintedskin: joints shifted")
+  if (!nearAll(read(rig, "aColor", 0), [half, 0, 0, half])) fail("paintedskin color")
+  if (!nearAll(read(rig, "aJoints", 0), [0, 1, 0, 0])) fail(`paintedskin joints: ${read(rig, "aJoints", 0)}`)
+  if (!nearAll(read(rig, "aWeights", 0), [0.6, 0.4, 0, 0])) fail(`paintedskin weights not renormalized: ${read(rig, "aWeights", 0)}`)
   let back = decodeModel(encodeModel(painted))
-  if (layoutKey(back.parts[0]!.geometry.layout) !== layoutKey("colored")) fail("container: colored layout round trip")
-  if (layoutKey(back.parts[1]!.geometry.layout) !== want) fail(`container: custom layout round trip: ${layoutKey(back.parts[1]!.geometry.layout)}`)
-  if (!nearAll(back.parts[1]!.geometry.vertices.subarray(rs.offset, rs.offset + 4), [half, 0, 0, half])) fail("container: colored skinned vertices")
+  if (layoutKey(back.parts[0]!.geometry.layout) !== paintedKey) fail("container: packed color layout round trip")
+  if (layoutKey(back.parts[1]!.geometry.layout) !== want) fail(`container: packed skin layout round trip: ${layoutKey(back.parts[1]!.geometry.layout)}`)
+  if (vertexBytes(back.parts[1]!.geometry.vertices).join() !== vertexBytes(rig.vertices).join()) fail("container: packed bytes changed")
+  if (!nearAll(read(back.parts[1]!.geometry, "aWeights", 0), [0.6, 0.4, 0, 0])) fail("container: packed weights")
   throws("COLOR_0 not VEC3/VEC4", () => parseGltf(glb({ ...document, scenes: [{ nodes: [0] }], nodes: [{ mesh: 0 }], meshes: [{ primitives: [{ attributes: { POSITION: 0, COLOR_0: 2 }, indices: 3 }] }], skins: [], animations: [] }, binBlocks, binLength)), "COLOR_0")
 }
 

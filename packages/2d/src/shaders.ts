@@ -84,11 +84,11 @@ export let FRAGMENT = glsl`
 
 /** The instance attribute list matching the 13-float record layout. */
 export const INSTANCE_ATTRIBUTES: VertexAttribute[] = [
-  { name: "iCenter", format: "vec2" },
-  { name: "iSize", format: "vec2" },
-  { name: "iUv", format: "vec4" },
-  { name: "iRot", format: "f32" },
-  { name: "iTint", format: "vec4" },
+  { name: "iCenter", format: "float32x2" },
+  { name: "iSize", format: "float32x2" },
+  { name: "iUv", format: "float32x4" },
+  { name: "iRot", format: "float32" },
+  { name: "iTint", format: "float32x4" },
 ]
 
 export let VERTEX_SPLIT = glsl`
@@ -122,12 +122,12 @@ export let VERTEX_SPLIT = glsl`
 /** The split layout: slot 0 the Pose2D record, slot 1 the style record
  * (iRenderOrder is layout-only - see the header note). */
 export const INSTANCE_ATTRIBUTES_SPLIT: InstanceAttribute[] = [
-  { name: "iPos", format: "vec2" },
-  { name: "iRot", format: "f32" },
-  { name: "iScale", format: "vec2" },
-  { name: "iUv", format: "vec4", slot: 1 },
-  { name: "iTint", format: "vec4", slot: 1 },
-  { name: "iRenderOrder", format: "f32", slot: 1 },
+  { name: "iPos", format: "float32x2" },
+  { name: "iRot", format: "float32" },
+  { name: "iScale", format: "float32x2" },
+  { name: "iUv", format: "float32x4", slot: 1 },
+  { name: "iTint", format: "float32x4", slot: 1 },
+  { name: "iRenderOrder", format: "float32", slot: 1 },
 ]
 
 /** What a layer's targets draw with: the unit quad every instance reuses
@@ -156,7 +156,7 @@ export function createSpritePipeline(label: string, vertex: string, instanceAttr
   let pipeline = createRenderPipeline(program, {
     label,
     topology: "triangle-strip",
-    attributes: [{ name: "aPos", format: "vec2" }],
+    attributes: [{ name: "aPos", format: "float32x2" }],
     instanceAttributes,
     blend: "alpha",
   })

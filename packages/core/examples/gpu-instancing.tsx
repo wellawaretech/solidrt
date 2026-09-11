@@ -70,13 +70,13 @@ function App() {
   let instanceId = createBuffer(petalRecords(), { label: "petal-records" })
   let id = createPipelineTexture(VERTEX, FRAGMENT, 512, 512, { uTime: 0 }, {
     label: "petals",
-    attributes: [{ name: "aPos", format: "vec2" }],
+    attributes: [{ name: "aPos", format: "float32x2" }],
     buffer: bufferId,
     instanceAttributes: [
-      { name: "iAngle", format: "f32" },
-      { name: "iRadius", format: "f32" },
-      { name: "iScale", format: "f32" },
-      { name: "iTint", format: "vec3" },
+      { name: "iAngle", format: "float32" },
+      { name: "iRadius", format: "float32" },
+      { name: "iScale", format: "float32" },
+      { name: "iTint", format: "float32x3" },
     ],
     instanceBuffer: instanceId,
     instanceCount: 1,

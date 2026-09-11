@@ -147,7 +147,7 @@ export {
 // GPU-side (exact, same size): seed a loadOp "load" accumulator, snapshot a
 // ping-pong buffer, reset state to a known image.
 export { copyTexture, destroyBuffer, renderTarget, setDraw } from "flux:gpu"
-export type { BlendMode, BufferUpdate, CullMode, DrawRange, IndexBinding, IndexFormat, IndexRange, InstanceAttribute, InstanceOrder, OrderUpdate, ShaderParams, Topology, VertexAttribute } from "flux:gpu"
+export type { BlendMode, BufferUpdate, CullMode, DrawRange, IndexBinding, IndexFormat, IndexRange, InstanceAttribute, InstanceOrder, OrderUpdate, ShaderParams, Topology, VertexAttribute, VertexFormat } from "flux:gpu"
 
 // The draw-list verbs, re-exported raw: entries live and die with their draw
 // target (see createDrawTarget below), so there is no per-entry lifetime to

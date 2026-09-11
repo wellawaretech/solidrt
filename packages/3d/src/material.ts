@@ -41,7 +41,7 @@ import type {
   Topology,
   VertexAttribute,
 } from "@solidrt/core/gpu"
-import { FORMAT_FLOATS, layoutAttributes, layoutKey, layoutSlot } from "./geometry.ts"
+import { isFloatFormat, layoutAttributes, layoutKey, layoutSlot, VERTEX_FORMATS } from "./geometry.ts"
 import type { VertexLayout } from "./geometry.ts"
 import { linearColor, premultipliedColor } from "./color.ts"
 import {
@@ -937,8 +937,10 @@ export function sprite(opts: SpriteOptions = {}): Material {
 export function missingAttributes(material: Material, layout: VertexLayout | undefined): VertexAttribute[] {
   let missing: VertexAttribute[] = []
   for (let attr of material.attributes()) {
+    // A format matches a shader `in` by component count: a packed color
+    // feeds `in vec4 aColor` like a float one.
     let slot = layoutSlot(layout, attr.name)
-    if (slot === null || slot.format !== attr.format) missing.push(attr)
+    if (slot === null || slot.components !== VERTEX_FORMATS[attr.format].components) missing.push(attr)
   }
   return missing
 }
@@ -1166,20 +1168,22 @@ export function shaderMaterialClass(opts: ShaderMaterialClassOptions): ShaderMat
   let transparent = opts.transparent ?? (opts.blend !== undefined && opts.blend !== "none")
   let depth = opts.depth ?? true
   let cull = opts.cull ?? "back"
-  // Formats are the vertex vocabulary (f32/vec2/vec3/vec4), not WebGPU's
-  // spelling, and an unknown one has no float count: it would leave here
-  // intact, make a NaN record stride at the mesh, and fail as an arithmetic
-  // complaint from createRecordMesh naming neither the attribute nor the
-  // format. Checked where the name is written instead.
+  // An unknown format has no record stride: it would leave here intact,
+  // make a NaN stride at the mesh, and fail as an arithmetic complaint
+  // from createRecordMesh naming neither the attribute nor the format.
+  // Checked where the name is written instead. The instance records the
+  // meshes here write are Float32Arrays (instanceStride counts floats),
+  // so an instance attribute is float32-family; the packed formats are
+  // the engine's and reachable through core's own pipeline API.
   for (let attr of opts.instanceAttributes ?? []) {
-    if (!(attr.format in FORMAT_FLOATS)) {
+    if (!(attr.format in VERTEX_FORMATS) || !isFloatFormat(attr.format)) {
       throw new Error(
-        "shaderMaterial unknown instance attribute format '" +
+        "shaderMaterial unsupported instance attribute format '" +
           String(attr.format) +
           "' for " +
           attr.name +
           " (expected " +
-          Object.keys(FORMAT_FLOATS).join(", ") +
+          Object.keys(VERTEX_FORMATS).filter(isFloatFormat as (f: string) => boolean).join(", ") +
           ")",
       )
     }

@@ -188,9 +188,9 @@ let instancedLook = shaderMaterialClass({
   shadowVertex: INSTANCE_SHADOW_VERTEX,
   fragment: litFragment({ vertexColors: true }),
   instanceAttributes: [
-    { name: "iPos", format: "vec3" },
-    { name: "iScale", format: "f32" },
-    { name: "iTint", format: "vec3" },
+    { name: "iPos", format: "float32x3" },
+    { name: "iScale", format: "float32" },
+    { name: "iTint", format: "float32x3" },
   ],
   label: "instanced-look",
 })

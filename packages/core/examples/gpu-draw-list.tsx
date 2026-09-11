@@ -60,7 +60,7 @@ let FRAGMENT_PULSE = glsl`
 function App() {
   let triangle = createBuffer(new Float32Array([0, 0.6, -0.5, -0.4, 0.5, -0.4]), { label: "tri" })
   let vs = compileShader("vertex", VERTEX, { header: true })
-  let attrs = [{ name: "aPos", format: "vec2" as const }]
+  let attrs = [{ name: "aPos", format: "float32x2" as const }]
   let warm = createRenderPipeline(linkProgram(vs, compileShader("fragment", FRAGMENT_WARM, { header: true })), {
     attributes: attrs,
     depth: true,

@@ -115,7 +115,7 @@ function App() {
   let belt = lit({ map: chevronMap(), mapTransform: { repeat: [3, 1] } })
   // The ground carries its own uv2 island (here just the 0..1 plane UVs
   // recomputed from position) and adds the "baked" glow with no light.
-  let groundGeometry = withAttribute(plane({ width: 8, height: 8 }), { name: "aUV2", format: "vec2" }, (_i, pos) => [
+  let groundGeometry = withAttribute(plane({ width: 8, height: 8 }), { name: "aUV2", format: "float32x2" }, (_i, pos) => [
     pos[0] / 8 + 0.5,
     pos[1] / 8 + 0.5,
   ])

@@ -155,12 +155,12 @@ unsafe fn record_layout(
     // is fine, the bytes are simply skipped over via the stride.
     if let Some(loc) = gl.get_attrib_location(program.program, name) {
       gl.enable_vertex_attrib_array(loc);
-      gl.vertex_attrib_pointer_f32(loc, fmt.components(), glow::FLOAT, false, stride, offset);
+      gl.vertex_attrib_pointer_f32(loc, fmt.components(), fmt.gl_type(), fmt.normalized(), stride, offset);
       if divisor != 0 {
         gl.vertex_attrib_divisor(loc, divisor);
       }
     }
-    offset += fmt.components() * 4;
+    offset += fmt.bytes();
   }
 }
 

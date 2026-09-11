@@ -65,7 +65,7 @@ let FRAGMENT_MAP = glsl`
 function App() {
   let quad = createBuffer(new Float32Array([-1, -1, 1, -1, 1, 1, -1, -1, 1, 1, -1, 1]), { label: "quad" })
   let vs = compileShader("vertex", VERTEX, { header: true })
-  let attrs = [{ name: "aPos", format: "vec2" as const }]
+  let attrs = [{ name: "aPos", format: "float32x2" as const }]
   let tint = createRenderPipeline(linkProgram(vs, compileShader("fragment", FRAGMENT_TINT, { header: true })), {
     attributes: attrs,
   })

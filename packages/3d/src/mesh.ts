@@ -5,7 +5,7 @@
 
 import { createBuffer, destroyBuffer, writeBuffer } from "@solidrt/core/gpu"
 import type { BufferId, DrawId, InstanceAttribute, ShaderParams, TextureBindings } from "@solidrt/core/gpu"
-import { FORMAT_FLOATS, geometryBounds, plane } from "./geometry.ts"
+import { geometryBounds, plane, VERTEX_FORMATS } from "./geometry.ts"
 import type { Geometry } from "./geometry.ts"
 import type { GeometryBuffers } from "./geometry-gpu.ts"
 import type { Material } from "./material.ts"
@@ -230,7 +230,7 @@ export function localBounds(mesh: Mesh): Float32Array | null {
  * by default; the list's `slot` keys pick the others). */
 export function instanceStride(attributes: InstanceAttribute[], slot = 0): number {
   let stride = 0
-  for (let a of attributes) if ((a.slot ?? 0) === slot) stride += FORMAT_FLOATS[a.format]
+  for (let a of attributes) if ((a.slot ?? 0) === slot) stride += VERTEX_FORMATS[a.format].bytes / Float32Array.BYTES_PER_ELEMENT
   return stride
 }
 

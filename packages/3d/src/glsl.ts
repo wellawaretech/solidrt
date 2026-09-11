@@ -52,10 +52,10 @@ export const MAX_SHADOW_MAPS = 8
  * record; an app's own per-instance floats go in slot 1 (the style
  * record, see INSTANCE_COLOR_ATTRIBUTES). */
 export const INSTANCE_MATRIX_ATTRIBUTES: InstanceAttribute[] = [
-  { name: "iModel0", format: "vec4" },
-  { name: "iModel1", format: "vec4" },
-  { name: "iModel2", format: "vec4" },
-  { name: "iModel3", format: "vec4" },
+  { name: "iModel0", format: "float32x4" },
+  { name: "iModel1", format: "float32x4" },
+  { name: "iModel2", format: "float32x4" },
+  { name: "iModel3", format: "float32x4" },
 ]
 
 /** The per-instance color the stock materials read with `instanceColors`
@@ -66,7 +66,7 @@ export const INSTANCE_MATRIX_ATTRIBUTES: InstanceAttribute[] = [
  * layout of its own) to INSTANCE_MATRIX_ATTRIBUTES; the stock materials
  * start every instance at white. Three's instanceColor, Godot's
  * MultiMesh instance color. */
-export const INSTANCE_COLOR_ATTRIBUTES: InstanceAttribute[] = [{ name: "iColor", format: "vec4", slot: 1 }]
+export const INSTANCE_COLOR_ATTRIBUTES: InstanceAttribute[] = [{ name: "iColor", format: "float32x4", slot: 1 }]
 
 /**
  * The vertex-stage declarations over INSTANCE_MATRIX_ATTRIBUTES:

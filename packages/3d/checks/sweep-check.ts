@@ -12,7 +12,7 @@
 import { extrude, lathe, pathFrames, sweep, tube } from "../src/sweep.ts"
 import { roundRect, shape } from "../src/profile.ts"
 import type { Profile } from "../src/profile.ts"
-import { geometryBounds, layoutKey, layoutStride, validateGeometry, withColors, STANDARD_FLOATS } from "../src/geometry.ts"
+import { geometryAttribute, geometryBounds, layoutKey, layoutStride, validateGeometry, withColors, STANDARD_FLOATS } from "../src/geometry.ts"
 import type { Geometry } from "../src/geometry.ts"
 import type { Vec3 } from "../src/math.ts"
 
@@ -39,8 +39,7 @@ let structure = (name: string, g: Geometry): void => {
     fail(`${name}: ${String(e)}`)
     return
   }
-  let stride = layoutStride(g.layout)
-  let count = g.vertices.length / stride
+  let count = g.vertices.byteLength / layoutStride(g.layout)
   if (g.indices.length % 3 !== 0) fail(`${name}: index count ${g.indices.length} not triangles`)
   for (let i = 0; i < g.indices.length; i++) {
     if (g.indices[i]! >= count) {
@@ -48,15 +47,16 @@ let structure = (name: string, g: Geometry): void => {
       break
     }
   }
+  let nrm = geometryAttribute(g, "aNormal")!
+  let uv = geometryAttribute(g, "aUV")!
   for (let i = 0; i < count; i++) {
-    let d = i * stride
-    let len = Math.hypot(g.vertices[d + 3]!, g.vertices[d + 4]!, g.vertices[d + 5]!)
+    let len = Math.hypot(nrm.get(i, 0), nrm.get(i, 1), nrm.get(i, 2))
     if (!near(len, 1, 1e-4)) {
       fail(`${name}: vertex ${i} normal length ${len.toFixed(5)}`)
       break
     }
-    let u = g.vertices[d + 6]!
-    let v = g.vertices[d + 7]!
+    let u = uv.get(i, 0)
+    let v = uv.get(i, 1)
     if (u < -1e-6 || u > 1 + 1e-6 || v < -1e-6 || v > 1 + 1e-6) {
       fail(`${name}: vertex ${i} uv (${u}, ${v}) outside 0..1`)
       break
@@ -68,8 +68,8 @@ let structure = (name: string, g: Geometry): void => {
 // centered near `center`, every face normal (CCW winding) should point
 // away from the center.
 let outward = (name: string, g: Geometry, center: Vec3): void => {
-  let stride = layoutStride(g.layout)
-  let at = (i: number): Vec3 => [g.vertices[i * stride]!, g.vertices[i * stride + 1]!, g.vertices[i * stride + 2]!]
+  let pos = geometryAttribute(g, "aPos")!
+  let at = (i: number): Vec3 => [pos.get(i, 0), pos.get(i, 1), pos.get(i, 2)]
   let bad = 0
   for (let i = 0; i < g.indices.length; i += 3) {
     let a = at(g.indices[i]!)

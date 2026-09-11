@@ -10,7 +10,7 @@
 // directly. Images travel as their encoded files (PNG/JPEG bytes).
 
 import type { ModelChannel, ModelData, ModelMaterial, ModelNode, ModelSkin } from "./gltf.ts"
-import { layoutStride, FORMAT_FLOATS } from "./geometry.ts"
+import { layoutStride, vertexView, VERTEX_FORMATS } from "./geometry.ts"
 import type { VertexAttribute } from "@solidrt/core/gpu"
 import type { VertexLayout } from "./geometry.ts"
 
@@ -25,7 +25,10 @@ const MAGIC = 0x4d545253
 // Version 4 adds the metalness/roughness fields to the material records
 // (metalness, roughness, metalnessRoughnessMap); a version-3 file lacks
 // them, so it is rejected the same way rather than read as all-metal.
-const VERSION = 5
+// Version 6 spells attribute formats in the WebGPU vocabulary
+// (float32x3, unorm8x4, ...) and counts vertices in bytes, so a part may
+// carry packed channels; a version-5 file's "vec3" words do not parse.
+const VERSION = 6
 
 // The named layouts the container writes by name; a custom attribute-list
 // layout (a skinned primitive with COLOR_0, a withAttribute channel) is
@@ -39,7 +42,7 @@ function decodeLayout(layout: string | VertexAttribute[], name: string): VertexL
     if (!NAMED_LAYOUTS.includes(layout)) throw new Error("decodeModel: part '" + name + "' has an unsupported layout " + layout)
     return layout as VertexLayout
   }
-  if (!Array.isArray(layout) || !layout.every((a) => typeof a.name === "string" && a.format in FORMAT_FLOATS)) {
+  if (!Array.isArray(layout) || !layout.every((a) => typeof a.name === "string" && a.format in VERTEX_FORMATS)) {
     throw new Error("decodeModel: part '" + name + "' has a malformed attribute list")
   }
   return layout
@@ -108,7 +111,7 @@ export function encodeModel(data: ModelData): Uint8Array {
       skin: part.skin,
       material: part.material,
       layout,
-      vertexCount: g.vertices.length / layoutStride(layout),
+      vertexCount: g.vertices.byteLength / layoutStride(layout),
       indexBits: g.indices instanceof Uint32Array ? 32 : 16,
       index,
     }
@@ -167,7 +170,7 @@ export function decodeModel(bytes: Uint8Array): ModelData {
     let layout = decodeLayout(part.layout, part.name)
     let indexCount = part.index.bytes / (part.indexBits / 8)
     let geometry: ModelData["parts"][0]["geometry"] = {
-      vertices: new Float32Array(buffer, payload + part.offset, part.vertexCount * layoutStride(layout)),
+      vertices: vertexView(layout, buffer, payload + part.offset, part.vertexCount * layoutStride(layout)),
       indices: part.indexBits === 32 ? new Uint32Array(buffer, payload + part.index.offset, indexCount) : new Uint16Array(buffer, payload + part.index.offset, indexCount),
       label: part.name,
     }
